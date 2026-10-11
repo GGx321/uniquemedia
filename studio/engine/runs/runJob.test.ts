@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AvatarDescriptor, EngineError, ImageQuality } from "../../shared/engine";
-import { NoFaceInReferenceError } from "../face";
+import { defaultFaceGateConfig, NoFaceInReferenceError } from "../face";
+import { runFaceGate } from "../face/gate";
+import type { Detector } from "../face/yunet";
 import { openLibrary, type Library } from "../library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../library/testing/helpers";
 import { Budget, scopeKey } from "../money/budget";
@@ -19,6 +21,7 @@ import { buildRunPlan, FALLBACK_IMAGE_MODEL, plannedSlots, RunPlanSchema, runEst
 import { CpuPool, NetworkPool } from "./pools";
 import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaVerdict } from "./qa";
 import { createAgeGate } from "./ageGate";
+import { createFaceQaGate } from "./faceGate";
 import { CANCELLED_GATE_TIMEOUT_MS, preflightMaster, reportingTo, runPhotoRun, type RunJobDeps, type RunJobEnd } from "./runJob";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -467,6 +470,104 @@ describe("a run from the start", () => {
     await start(run).end;
     const recent = await library.recentPairs(avatarId, 10);
     expect(recent.map((e) => [e.location, e.outfit]).sort()).toEqual(plannedSlots(run).map((s) => [s.location, s.outfit]).sort());
+  });
+});
+
+// ---------- S5.6f: face-hidden and back frames in the real face gate ----------
+
+// The real QA adapter over the real `runFaceGate` and policy, with only the detector and the embedding scripted. A back slot is checked under `body`
+// (a face-hidden frame is the same path: faceGate.test.ts pins the capture mapping). The money claim: such a frame is never sent to a paid retry
+// by its likeness; `multiple-faces` is the one retry it can still take.
+describe("back frames through the real face gate (S5.6f)", () => {
+  const FACE_CONFIG = defaultFaceGateConfig();
+
+  /** A face gate over `runFaceGate` whose detector finds `rows` faces on every image and whose likeness is `similarity`. */
+  function bodyGate(rows: readonly Float32Array[], similarity: number): { gate: QaGate; checks: string[] } {
+    const checks: string[] = [];
+    const detector: Detector = { session: { run: async () => ({}) } as never, options: FACE_CONFIG.detector };
+    const gate = createFaceQaGate({
+      faceGate: {
+        isBroken: () => false,
+        embed: async () => new Float32Array([1, 0]),
+        check: async (checkInput) => {
+          checks.push(checkInput.pose);
+          const image = { width: 100, height: 100, data: new Uint8Array(100 * 100 * 3) };
+          return runFaceGate(image, { pose: checkInput.pose, masterEmbedding: checkInput.masterEmbedding }, detector, FACE_CONFIG, async () => similarity, async () => [...rows]);
+        },
+      },
+    });
+    return { gate, checks };
+  }
+
+  function faceRow(x: number, y: number, size: number): Float32Array {
+    const row = new Float32Array(15);
+    row[0] = x;
+    row[1] = y;
+    row[2] = size;
+    row[3] = size;
+    row[14] = 0.95;
+    return row;
+  }
+
+  /** A run whose every slot is an old back slot (a friend shot, pose back). */
+  async function newBackRun(count: number): Promise<RunPlan> {
+    const request = { avatarId, count, categories: ["home" as const], poses: { profile: false, back: true } };
+    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, request, "off").worstMicros;
+    const planned = planScenes({ seed: 5, count, categories: ["home"] });
+    const run = buildRunPlan({
+      runId: RUN_ID,
+      avatarId,
+      createdAt: new Date(NOW).toISOString(),
+      request,
+      imageAgeCheck: "off",
+      models: { imageModel: PRIMARY, textModel: TEXT },
+      capMicros: estimated,
+      plannedWorstMicros: estimated,
+      scenes: { ...planned, slots: planned.slots.map((slot) => ({ ...slot, shot: "friend" as const, pose: "back" as const })) },
+    });
+    await library.createRun(RUN_ID, run, RunPlanSchema);
+    caps.set(scopeKey(SCOPE), estimated);
+    return run;
+  }
+
+  const imageReservesOf = (): string[] => reservedIds().filter((id) => id.includes(":slot-"));
+
+  test("one face: every slot is marked on its first attempt, the run continues, and each photo keeps its likeness", async () => {
+    const run = await newBackRun(3);
+    const { gate, checks } = bodyGate([faceRow(0, 0, 50)], 0.31);
+    const result = await start(run, { gates: [gate] }).end;
+
+    expect(result).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(checks).toEqual(["body", "body", "body"]);
+    expect(imageReservesOf()).toHaveLength(3);
+    if (result.status === "done") for (const id of result.photoIds) expect(library.getPhoto(id)?.qa.faceCos).toBeCloseTo(0.31, 6);
+  });
+
+  test("no face: every slot passes on its first attempt with 3 image reserves in all", async () => {
+    const run = await newBackRun(3);
+    const { gate } = bodyGate([], 0);
+    const result = await start(run, { gates: [gate] }).end;
+
+    expect(result).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(imageReservesOf()).toHaveLength(3);
+  });
+
+  test("one face with a likeness far below the identity threshold is still marked: 3 image reserves, no retry", async () => {
+    const run = await newBackRun(3);
+    const { gate } = bodyGate([faceRow(0, 0, 50)], -0.2);
+    const result = await start(run, { gates: [gate] }).end;
+
+    expect(result).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(imageReservesOf()).toHaveLength(3);
+  });
+
+  test("two prominent faces stay the one paid retry: every attempt is retried, 3 slots reserve 9 images", async () => {
+    const run = await newBackRun(3);
+    const { gate } = bodyGate([faceRow(0, 0, 40), faceRow(50, 0, 40)], 0.9);
+    const result = await start(run, { gates: [gate] }).end;
+
+    expect(result).toMatchObject({ status: "done", photoIds: [], failedSlots: 3 });
+    expect(imageReservesOf()).toHaveLength(9);
   });
 });
 

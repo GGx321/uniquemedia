@@ -20,6 +20,9 @@ import { EMBEDDING_COMPUTE_TIMEOUT_MS } from "./timeouts";
 // (`no-face`, `multiple-faces`, `unexpected-face`, `mismatch`) retries —
 // exactly the mapping face/verdict.ts's own header documents.
 //
+// S5.6f: a face-hidden or back frame is checked under the `body` pose (`facePoseOf`): one face is `marked` (it passes, its likeness stored as
+// `faceCos`), none is `skipped-by-pose`, and neither is ever retried. `multiple-faces` stays the one paid retry such a frame can take.
+//
 // Free (`paid: false`): the decode costs no money, and neither does the ONNX
 // inference — both run in the face worker thread (T7c), off the engine's
 // event loop, inside a slot of the run's CPU pool like the pdq gate. No `releaseClaim`: this gate makes no provisional claim of its
