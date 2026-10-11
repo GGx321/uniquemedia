@@ -11,6 +11,17 @@ import { CATEGORY_LABEL, type RunCategory } from "./runForm";
 // custom ones: the first four and every one turned on stay, the rest wait behind «ещё N» and open in place (decision 1). While this
 // window composes a pool, its chip spins in the row; hidden with «Скрыть» it takes the focus, and a click opens the dialog again.
 
+/** What a built-in chip says about itself (mockup 24a); Фитнес has no hint of its own. */
+const CHIP_HINT: Partial<Record<RunCategory, string>> = {
+  home: "Дом — зеркало, кровать, свет лампы; в части кадров лицо закрыто телефоном.",
+  shoot: "Улица — снимает подруга или прохожий, иногда телефон на таймере; город днём и ночью.",
+  travel: "Виды — балкон над городом, сад, горы, набережная.",
+  glam: "Гламур — вечер выхода: бар, ресторан, такси и сборы дома.",
+};
+
+/** The two chips kept for «Смелая»: drawn dimmed, never a button. */
+const RESERVED_CHIPS = ["Ночнушки и бельё", "Пляж и бассейн"] as const;
+
 /** Custom chips the row always shows, in creation order, besides every one turned on. */
 const CUSTOM_SHOWN = 4;
 
@@ -71,10 +82,14 @@ export function CategoryRow({
   const groupRef = useRef<HTMLDivElement>(null);
   const addRef = useRef<HTMLButtonElement>(null);
   const [expanded, setExpanded] = useState(false);
+  // The chip under the pointer or in focus: its hint takes the one hint line.
+  const [hinted, setHinted] = useState<RunCategory | null>(null);
   const customs: readonly CategorySummary[] = list.status === "ready" ? list.categories : [];
   const held = list.status === "ready" ? libraryHeld(list) : null;
   const full = held !== null && held >= MAX_CUSTOM_CATEGORIES;
   const on = new Set<string>(categories);
+  // A chip with no hint of its own (Фитнес, a custom one) leaves the line as it was: Гламур's, while Гламур is on.
+  const hint = (hinted !== null ? CHIP_HINT[hinted] : undefined) ?? (on.has("glam") ? CHIP_HINT.glam : undefined);
 
   const visible = expanded ? customs : customs.filter((c, i) => i < CUSTOM_SHOWN || on.has(c.categoryId));
   const hidden = customs.length - customs.filter((c, i) => i < CUSTOM_SHOWN || on.has(c.categoryId)).length;
@@ -102,6 +117,10 @@ export function CategoryRow({
         aria-label={isOn && n !== undefined ? `${label}: ${n} фото` : label}
         title={label}
         onClick={() => onToggle(ref)}
+        onPointerEnter={() => setHinted(ref)}
+        onPointerLeave={() => setHinted(null)}
+        onFocus={() => setHinted(ref)}
+        onBlur={() => setHinted(null)}
       >
         <span className="chip-cap">{label}</span>
         {/* Always present, like the mockup's: an off chip keeps the same 6px gap after its label. */}
@@ -158,7 +177,13 @@ export function CategoryRow({
           <Icon name="plus" size={11} strokeWidth={2.6} />
           Своя
         </button>
+        {RESERVED_CHIPS.map((name) => (
+          <span key={name} className="chip chip-reserved" aria-disabled="true">
+            {name}
+          </span>
+        ))}
       </div>
+      <span className="faint photos-note">Со «Смелой» — появятся позже.</span>
       {full && (
         <span id={limitId} className="faint photos-note">
           {MAX_CUSTOM_CATEGORIES} из {MAX_CUSTOM_CATEGORIES} — удалите ненужную в «Мои категории».
@@ -172,7 +197,7 @@ export function CategoryRow({
           </button>
         </span>
       )}
-      {on.has("glam") && <span className="faint photos-note photos-cats-note">Гламур — вечер выхода: бар, ресторан, такси и сборы дома.</span>}
+      {hint !== undefined && <span className="faint photos-note photos-cats-note">{hint}</span>}
     </div>
   );
 }

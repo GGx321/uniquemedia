@@ -214,6 +214,12 @@
   cursor: pointer;
 }
 
+/* A chip kept for a later feature: dimmed, no pointer. */
+.chip-reserved {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .chip-on {
   border-color: var(--accent-ring);
   background: var(--accent-soft);
