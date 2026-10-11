@@ -53,7 +53,7 @@ function formOfLaunch(launch: LaunchView): LaunchForm {
     videosPerAvatar: draft.videosPerAvatar,
     mix: draft.mix,
     categories: draft.categories,
-    poses: draft.poses,
+    poses: draft.poses ?? { profile: false, back: false },
     library: draft.library,
     generate: draft.generate,
     sceneReview: draft.sceneReview,

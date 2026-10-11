@@ -33,6 +33,54 @@ const withWrite = (set: StoredSceneSet, write: StoredSceneSet["write"]): StoredS
 const COMPOSE = { k: 1, kind: "compose" as const, jobId: "job-aaaa-0001" };
 const allWritten = (set: StoredSceneSet): StoredSceneSet => ({ ...set, scenes: set.scenes.map((s) => ({ ...s, text: s.text ?? "A sentence." })) });
 
+// S5.7a: the echo rule. `poses` is shown only when the set stored them (a new set stores none); `level` only when it is not ordinary; a scene shows its
+// `capture` when its slot stored one and `level: "flirty"` when its slot is flirty.
+describe("poses, level and capture", () => {
+  const bare = (): PlannedSceneSet => {
+    const set = stored();
+    const { poses: _poses, ...request } = set.request;
+    return { ...set, request } as PlannedSceneSet;
+  };
+
+  test("the stored poses are echoed", () => {
+    expect(viewOf(stored()).poses).toEqual({ profile: false, back: false });
+  });
+
+  test("a set that stored no poses shows none", () => {
+    expect("poses" in viewOf(bare())).toBe(false);
+  });
+
+  test("a flirty set shows its level", () => {
+    const set = bare();
+    expect(viewOf({ ...set, request: { ...set.request, level: "flirty" } } as PlannedSceneSet).level).toBe("flirty");
+  });
+
+  test("an ordinary set, stored with the level or without, shows none", () => {
+    const set = bare();
+    expect("level" in viewOf(set)).toBe(false);
+    expect("level" in viewOf({ ...set, request: { ...set.request, level: "ordinary" } } as PlannedSceneSet)).toBe(false);
+  });
+
+  test("a scene shows the capture its slot stored, and none when the slot stored none", () => {
+    const set = stored();
+    const [first, second, ...rest] = set.scenes;
+    if (first?.origin !== "planned" || second?.origin !== "planned") throw new Error("the sample plans scenes");
+    const { capture: _capture, ...plain } = second.slot;
+    const view = viewOf({ ...set, scenes: [{ ...first, slot: { ...first.slot, capture: "timer" } }, { ...second, slot: plain }, ...rest] } as PlannedSceneSet);
+    expect(view.scenes[0]?.capture).toBe("timer");
+    expect("capture" in (view.scenes[1] ?? {})).toBe(false);
+  });
+
+  test("a scene shows level flirty only when its slot is flirty", () => {
+    const set = stored();
+    const [first, second, ...rest] = set.scenes;
+    if (first?.origin !== "planned" || second?.origin !== "planned") throw new Error("the sample plans scenes");
+    const view = viewOf({ ...set, scenes: [{ ...first, slot: { ...first.slot, level: "flirty" } }, { ...second, slot: { ...second.slot, level: "ordinary" } }, ...rest] } as PlannedSceneSet);
+    expect(view.scenes[0]?.level).toBe("flirty");
+    expect("level" in (view.scenes[1] ?? {})).toBe(false);
+  });
+});
+
 describe("status", () => {
   test("a set with a recorded write, no live job and scenes still waiting is stopped, and says `closed`: no outcome, no job", () => {
     const view = viewOf(withWrite(stored(), COMPOSE));

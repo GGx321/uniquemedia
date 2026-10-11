@@ -97,6 +97,30 @@ describe("planSceneSet", () => {
     expect(set.models).toEqual({ text: "x-ai/grok-4.3" });
   });
 
+  // S5.7a: the request's `poses` and `level` are optional and stored as given; the view echoes them by the rule in view.test.ts. `level` draws nothing yet.
+  test("a request without poses stores none, and plans as a request with neither extra pose does", () => {
+    const { poses: _poses, ...bare } = input({ count: 40 });
+    const set = planSceneSet(bare);
+    expect("poses" in set.request).toBe(false);
+    expect(set.scenes).toEqual(planSceneSet(input({ count: 40 })).scenes);
+  });
+
+  test("a flirty level is stored on the request and, until S5.7b, changes no scene", () => {
+    const flirty = planSceneSet(input({ count: 40, level: "flirty" }));
+    expect(flirty.request.level).toBe("flirty");
+    expect(flirty.scenes).toEqual(planSceneSet(input({ count: 40 })).scenes);
+  });
+
+  test("a request with no level stores none", () => {
+    expect("level" in planSceneSet(input()).request).toBe(false);
+  });
+
+  test("a set stored without poses is one the store accepts", () => {
+    const { poses: _poses, ...bare } = input({ count: 5, level: "flirty" });
+    const parsed = SceneSetFile.safeParse({ schemaVersion: 1, revision: 1, createdAt: "2026-10-07T10:00:00.000Z", updatedAt: "2026-10-07T10:00:00.000Z", ...planSceneSet(bare) });
+    expect(parsed.success).toBe(true);
+  });
+
   test("issues every writer chunk's attempt ids in the set, in chunks of 25: two answered attempts plus two spares each", () => {
     const set = planSceneSet(input({ count: 60 }));
     expect(set.chunks.map((c) => c.sceneIds.length)).toEqual([25, 25, 10]);

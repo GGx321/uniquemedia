@@ -3027,7 +3027,7 @@ export class Engine {
     const key = this.#usableKey("start a photo run");
     const budget = this.#paidBudget();
     const library = await this.#liveLibrary();
-    const { avatarId, count, categories, poses } = payload;
+    const { avatarId, count, categories, poses, level } = payload;
     const manifest = this.#runnableAvatar(library, avatarId);
     await this.#assertAvatarOnDisk(library, avatarId);
     // The custom categories the run names, read once: the pool the planner draws from and the snapshot the plan keeps come from this one read.
@@ -3077,7 +3077,7 @@ export class Engine {
       runId,
       avatarId,
       createdAt: new Date(this.#deps.clock()).toISOString(),
-      request: { avatarId, count, categories, poses },
+      request: { avatarId, count, categories, ...(poses === undefined ? {} : { poses }), ...(level === undefined ? {} : { level }) },
       imageAgeCheck,
       models,
       capMicros: estimate.worstMicros,

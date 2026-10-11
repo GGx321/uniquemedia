@@ -14,6 +14,7 @@ import {
   type EngineError,
   type JobState,
   type ScenePlace,
+  type SceneLevel,
   type ScenePose,
   type SceneEditOp,
   type SceneGaveUpBy,
@@ -186,7 +187,10 @@ interface MockSet {
   createdAt: string;
   revision: number;
   runId: string;
-  poses: { profile: boolean; back: boolean };
+  /** Absent when the request sent none (S5.7a); the mock then draws with neither extra pose. */
+  poses?: { profile: boolean; back: boolean };
+  /** «Подача» (S5.7a), as sent; echoed only when flirty. It changes no scene until S5.7b. */
+  level?: SceneLevel;
   categories: { ref: CategoryRef; name: string | null; poses?: ScenePose[] }[];
   scenes: Scene[];
   chunks: Chunk[];
@@ -281,6 +285,8 @@ function tablesOf(custom: CategorySummary | undefined): readonly PlaceTable[] {
   if (custom === undefined) return MISSING_CATEGORY_ROWS;
   return custom.pool.locations.map((l, i): PlaceTable => ({ place: l.name, time: l.times[0] ?? "midday", activity: l.activities[0]?.text ?? "standing", outfit: custom.pool.outfits[i % custom.pool.outfits.length] ?? "a plain dress", mirror: l.mirror }));
 }
+
+const NO_POSES = { profile: false, back: false } as const;
 
 function planScenes(
   count: number,
@@ -796,6 +802,7 @@ export class MockSceneSets {
         categoryName: isCustomCategory(scene.category) ? (set.categories.find((c) => c.ref === scene.category)?.name ?? null) : null,
         shot: scene.shot,
         pose: scene.pose,
+        ...(scene.capture === undefined ? {} : { capture: scene.capture }),
         place: { ...scene.place },
         idea: null,
         text: scene.text,
@@ -817,7 +824,8 @@ export class MockSceneSets {
       stoppedBy,
       stoppedError: stoppedBy === "failed" ? (set.write?.stoppedError ?? { code: "INTERNAL" }) : null,
       runId: set.used ? set.runId : null,
-      poses: { ...set.poses },
+      ...(set.poses === undefined ? {} : { poses: { ...set.poses } }),
+      ...(set.level === "flirty" ? { level: "flirty" as const } : {}),
       categories: set.categories.map((c) => ({ ...c })),
       textModel: set.textModel,
       // The engine reads the spend off the ledger: with a ledger that cannot be read it is unknown, and so is the open part of it.
@@ -972,17 +980,18 @@ export class MockSceneSets {
   }
 
   /** A compose that passed the engine's gates: plans and stores the set, launches its job (none for an empty set). */
-  compose(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; poses: { profile: boolean; back: boolean } }): { sceneSetId: string; jobId: string | null } {
+  compose(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; poses?: { profile: boolean; back: boolean }; level?: SceneLevel }): { sceneSetId: string; jobId: string | null } {
     const sceneSetId = this.#deps.nextId("set");
     const refs = orderCategories(request.categories);
-    const scenes = request.count === 0 ? [] : planScenes(request.count, refs, request.poses, this.#deps.category);
+    const scenes = request.count === 0 ? [] : planScenes(request.count, refs, request.poses ?? NO_POSES, this.#deps.category);
     const set: MockSet = {
       sceneSetId,
       avatarId: request.avatarId,
       createdAt: this.#deps.nowIso(),
       revision: 1,
       runId: this.#deps.nextId("run"),
-      poses: { ...request.poses },
+      ...(request.poses === undefined ? {} : { poses: { ...request.poses } }),
+      ...(request.level === undefined ? {} : { level: request.level }),
       categories: request.categories.map((ref) => this.#categoryEntry(ref)),
       scenes,
       chunks: chunksOf(sceneSetId, scenes),
@@ -1145,7 +1154,7 @@ export class MockSceneSets {
         const ref = scene.category === "own" ? "home" : scene.category;
         if (!isCustomCategory(ref)) {
           // A built-in scene is drawn anew among the bank's pairs for the capture it keeps (who takes the photo), away from the places and outfits the set already shows.
-          const draw = bankDraw(ref, k + scene.sceneId, set.poses, { avoid: { locations: shown, outfits: shownOutfits }, capture: scene.capture ?? captureOfShot(scene.shot), ...(scene.place === null ? {} : { leaving: scene.place.location }) });
+          const draw = bankDraw(ref, k + scene.sceneId, set.poses ?? NO_POSES, { avoid: { locations: shown, outfits: shownOutfits }, capture: scene.capture ?? captureOfShot(scene.shot), ...(scene.place === null ? {} : { leaving: scene.place.location }) });
           shown.add(draw.place.location);
           shownOutfits.add(draw.place.outfit);
           draws.set(scene.sceneId, { place: draw.place, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose });
@@ -1174,7 +1183,7 @@ export class MockSceneSets {
         const outfit = pickFrom[(k + scene.sceneId) % pickFrom.length] ?? row.outfit;
         shown.add(row.place);
         shownOutfits.add(outfit);
-        draws.set(scene.sceneId, { place: { location: row.place, timeOfDay: row.time, activity: row.activity, outfit }, shot, pose: angled?.pose ?? poseFor(shot, set.poses, k + scene.sceneId) });
+        draws.set(scene.sceneId, { place: { location: row.place, timeOfDay: row.time, activity: row.activity, outfit }, shot, pose: angled?.pose ?? poseFor(shot, set.poses ?? NO_POSES, k + scene.sceneId) });
       }
     }
     return {

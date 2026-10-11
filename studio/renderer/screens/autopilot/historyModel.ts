@@ -188,7 +188,7 @@ export function categoryName(ref: CategoryRef, customName: (categoryId: string) 
 /** The launch's settings as one wrapping mono line of bits (ApLaunch): what it was run with, read only. */
 export function settingsBits(draft: LaunchDraft, customName: (categoryId: string) => string | null): string[] {
   const { mix } = draft;
-  const angles = ["анфас и три четверти", ...(draft.poses.profile ? ["профиль"] : []), ...(draft.poses.back ? ["со спины"] : [])].join(", ");
+  const angles = ["анфас и три четверти", ...(draft.poses?.profile === true ? ["профиль"] : []), ...(draft.poses?.back === true ? ["со спины"] : [])].join(", ");
   const source = draft.library && draft.generate ? "сначала библиотека, недостающее — новыми" : draft.library ? "только фото из библиотеки" : "только новые фото";
   return [
     `${draft.videosPerAvatar} на аватар`,

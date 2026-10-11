@@ -1,4 +1,4 @@
-import type { PoolShot, ScenePose } from "../engine";
+import { CAPTURES, type Capture, type PoolShot, type ScenePose } from "../engine";
 
 // 5a.2 r1.2 (I5.32, plan s5a2 §5.1, §5.4): who takes the photo, as a first-class `capture` on the slot. The owner's references (2026-10-11): at home
 // she shoots herself (in the mirror, often with the phone over her face; at arm's length from above; lying on her stomach; on a timer); outside she
@@ -7,8 +7,7 @@ import type { PoolShot, ScenePose } from "../engine";
 // shoulder, looking back along her body as she lies on her stomach (her hair in the foreground, her hips, her feet raised; her face may show). Its
 // capture line comes with the others in engine/scenes/phoneLook.ts (S5.6b).
 
-export const CAPTURES = ["mirror-hidden", "mirror", "above", "prone", "over-shoulder", "selfie", "timer", "friend", "candid", "pov-legs", "low-feet"] as const;
-export type Capture = (typeof CAPTURES)[number];
+export { CAPTURES, type Capture };
 
 /** «Ножки»'s own captures (5a.2c): drawn only on legs slots. */
 export const LEGS_CAPTURES: readonly Capture[] = ["pov-legs", "low-feet"];

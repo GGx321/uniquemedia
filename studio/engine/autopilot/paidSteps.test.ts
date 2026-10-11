@@ -880,3 +880,39 @@ describe("restore: the slots a started slice could still draw (S4.6v)", () => {
     expect(r.steps.mirror(LAUNCH, A)?.setRevision).toBe(4);
   });
 });
+
+// ---------- S5.7a: the compose carries the draft's «Подача» and, only when it has them, its poses ----------
+
+describe("the compose a launch sends (S5.7a)", () => {
+  async function composeSentFor(draft: Parameters<Rig["start"]>[0]): Promise<LaunchComposePayload> {
+    const r = await rig();
+    const sent: LaunchComposePayload[] = [];
+    const compose = composes(r.port, LAUNCH);
+    r.port.compose = async (payload, ids) => {
+      sent.push(payload);
+      return compose(payload, ids);
+    };
+    const launch = await r.start(draft);
+    await until(() => sent.length > 0, "the compose call");
+    await r.orchestrator.stop(launch.launchId);
+    const [payload] = sent;
+    if (payload === undefined) throw new Error("the launch composed nothing");
+    return payload;
+  }
+
+  test("a flirty draft composes flirty", async () => {
+    expect((await composeSentFor({ level: "flirty" })).level).toBe("flirty");
+  });
+
+  test("a draft with no level composes with none", async () => {
+    expect("level" in (await composeSentFor({}))).toBe(false);
+  });
+
+  test("a draft that still carries poses sends them, as a launch paused before this build does", async () => {
+    expect((await composeSentFor({ poses: { profile: true, back: false } })).poses).toEqual({ profile: true, back: false });
+  });
+
+  test("a draft without poses sends none", async () => {
+    expect("poses" in (await composeSentFor({ poses: undefined }))).toBe(false);
+  });
+});

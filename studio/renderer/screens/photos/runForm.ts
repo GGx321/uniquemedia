@@ -9,7 +9,7 @@ export interface RunForm {
   count: number;
   categories: readonly RunCategory[];
   /** Beyond front and three-quarter, which are always on (T5c, owner decision). */
-  poses: RunRequest["poses"];
+  poses: NonNullable<RunRequest["poses"]>;
 }
 
 /** The mockup's stepper: 5 to 100 photos in steps of 5 (the contract allows 1–100). */
@@ -98,7 +98,7 @@ export function runRequest(avatarId: string, form: RunForm): RunRequest {
 
 /** A stable identity for a request: an estimate belongs to exactly one. */
 export function requestKey(request: RunRequest): string {
-  return JSON.stringify([request.avatarId, request.count, request.categories, request.poses.profile, request.poses.back]);
+  return JSON.stringify([request.avatarId, request.count, request.categories, request.poses?.profile ?? false, request.poses?.back ?? false]);
 }
 
 /** Why a paid photo command cannot be sent right now (the wizard's own order and wording), or null. */

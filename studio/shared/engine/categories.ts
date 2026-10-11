@@ -34,6 +34,20 @@ export type CategoryRef = z.infer<typeof CategoryRef>;
 export const ScenePose = z.enum(["front", "three-quarter", "profile", "back"]);
 export type ScenePose = z.infer<typeof ScenePose>;
 
+/**
+ * Who takes the photo (5a.2, I5.32). The list lives here, inside the contract, so a scene view can name its capture; `shared/scenes/captures.ts` holds the rest of
+ * what a capture means (its shot, its poses, whether the face shows) and re-exports this.
+ */
+export const CAPTURES = ["mirror-hidden", "mirror", "above", "prone", "over-shoulder", "selfie", "timer", "friend", "candid", "pov-legs", "low-feet"] as const;
+export type Capture = (typeof CAPTURES)[number];
+
+/**
+ * «Подача» (S5.7a): how a scene is presented. Absent means ordinary. `bold` does not exist yet and is refused, so a request cannot ask for what no
+ * engine draws. The level picks moments; it is never a price input.
+ */
+export const SceneLevel = z.enum(["ordinary", "flirty"]);
+export type SceneLevel = z.infer<typeof SceneLevel>;
+
 /** A category's angles: one to four distinct poses of the shared vocabulary. Absent on a pool or a snapshot means «no preference» (what the run's toggles say). */
 export const CategoryPoses = z
   .array(ScenePose)

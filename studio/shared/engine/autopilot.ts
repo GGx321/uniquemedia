@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CategoryRef, MAX_RUN_CATEGORIES } from "./categories";
+import { CategoryRef, MAX_RUN_CATEGORIES, SceneLevel } from "./categories";
 import { ExportUnavailableReason } from "./errors";
 import { Count, Id, LaunchId, LaunchVideoKey, Micros } from "./primitives";
 import { SceneId } from "./scenes";
@@ -63,8 +63,10 @@ export const LaunchSettings = z.strictObject({
   videosPerAvatar: z.number().int().min(1).max(MAX_VIDEOS_PER_AVATAR),
   mix: LaunchMix,
   categories: z.array(CategoryRef).min(1).max(MAX_RUN_CATEGORIES).refine(unique, "a category must not repeat"),
-  /** «Ракурсы»: the built-in categories' toggles (front and three-quarter are always on). A custom category with its own angles ignores them. */
-  poses: RunPoses,
+  /** «Ракурсы» (S5.7a: optional, ignored for the angle; a launch file from before still carries it). */
+  poses: RunPoses.optional(),
+  /** «Подача» (S5.7a); absent = ordinary. Optional with no launch-file bump: a stored launch file parses as it is. */
+  level: SceneLevel.optional(),
   /** «Сначала свободные фото из библиотеки». */
   library: z.boolean(),
   /** «Догенерировать недостающие». */

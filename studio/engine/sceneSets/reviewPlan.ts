@@ -7,6 +7,7 @@ import { POOLS, type PlanSlot, type PlannerCategory, type Pool } from "../scenes
 import { poolOf } from "../scenes/poolGen";
 import { drawOwnScenes, redrawSlot } from "../scenes/redraw";
 import { templateSentence } from "../../shared/scenes/template";
+import { NO_EXTRA_POSES } from "../scenes/poses";
 import { seedOfSet } from "./compose";
 import { beginIdea, beginRewrite, resumeReviewWrite } from "./reviewMutations";
 import { sceneRefusal } from "./refusal";
@@ -74,7 +75,7 @@ function planRewrite(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: 
     };
     for (const scene of planned) {
       const pool = pools.of(scene.slot.category);
-      const drawn = redrawSlot({ seed: seedOfSet(set.sceneSetId), k, slot: scene.slot, pool, avoid, poses: set.request.poses });
+      const drawn = redrawSlot({ seed: seedOfSet(set.sceneSetId), k, slot: scene.slot, pool, avoid, poses: set.request.poses ?? NO_EXTRA_POSES });
       avoid.locations.add(drawn.location);
       avoid.outfits.add(drawn.outfit);
       draws.push(drawn);
@@ -102,7 +103,7 @@ function planIdea(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "id
   }
   const k = set.writes + 1;
   const first = nextSceneId(set);
-  const drawn = drawOwnScenes({ seed: seedOfSet(set.sceneSetId), k, count: target.count, shot: target.shot, poses: set.request.poses });
+  const drawn = drawOwnScenes({ seed: seedOfSet(set.sceneSetId), k, count: target.count, shot: target.shot, poses: set.request.poses ?? NO_EXTRA_POSES });
   const scenes = drawn.map((d, i) => ({ sceneId: first + i, shot: d.shot, pose: d.pose }));
   return {
     kind: "idea",

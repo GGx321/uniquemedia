@@ -246,7 +246,7 @@ export interface StripAngles {
  * own (named, their lists not repeated: they are in «Мои категории») and own scenes, whose angle the model takes from the idea (an idea write running counts).
  */
 export function stripAngles(set: SceneSetView): StripAngles {
-  const poses: ScenePose[] = ["front", "three-quarter", ...(set.poses.profile ? (["profile"] as const) : []), ...(set.poses.back ? (["back"] as const) : [])];
+  const poses: ScenePose[] = ["front", "three-quarter", ...(set.poses?.profile === true ? (["profile"] as const) : []), ...(set.poses?.back === true ? (["back"] as const) : [])];
   const rows = set.categories.flatMap((c) => (c.poses === undefined ? [] : [{ name: c.name ?? CUSTOM_FALLBACK, list: posesText(c.poses) }]));
   return {
     lead: `Ракурсы: ${posesText(poses)}`,

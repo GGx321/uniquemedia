@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CustomCategoryId, isCustomCategory, PoolText, SceneText, TimeOfDay } from "../../shared/engine";
+import { CustomCategoryId, isCustomCategory, PoolText, SceneLevel, SceneText, TimeOfDay } from "../../shared/engine";
 import { CAPTURES, captureOfShot, shotOf } from "../../shared/scenes/captures";
 import type { FacePose } from "../face/config";
 import { CATEGORIES, SHOTS } from "./types";
@@ -77,6 +77,8 @@ export const PlanSlotSchema = z
     // the legwear slot of an outfit that shows her legs. A slot stored before them has neither and reads as it always did.
     capture: z.enum(CAPTURES).optional(),
     legwear: PoolText.optional(),
+    // Additive (S5.7a): «Подача» of the slot. Absent reads as ordinary. The planner does not set it until S5.7b draws the mix.
+    level: SceneLevel.optional(),
   })
   .refine((slot) => slot.capture === undefined || shotOf(slot.capture) === shotOf(captureOfShot(slot.shot)), {
     message: "a capture rides on the shot the slot is stored with",

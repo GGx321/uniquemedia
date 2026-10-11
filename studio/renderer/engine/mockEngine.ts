@@ -3058,7 +3058,7 @@ export class MockEngine implements EngineBridge {
           runId: set.runId,
           avatarId: set.avatarId,
           createdAt: this.nowIso(),
-          request: { avatarId: set.avatarId, count: active.length, categories, poses: set.poses },
+          request: { avatarId: set.avatarId, count: active.length, categories, ...(set.poses === undefined ? {} : { poses: set.poses }), ...(set.level === undefined ? {} : { level: set.level }) },
           capMicros: price.worstMicros,
           settledMicros: 0,
           ageCheck: this.settings.imageAgeCheck === "on",

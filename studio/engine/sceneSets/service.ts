@@ -3,6 +3,7 @@ import {
   splitCount,
   type CategoryRef,
   type EngineError,
+  type SceneLevel,
   type Estimate,
   type SceneSetView,
   type ScenesEditResult,
@@ -392,10 +393,10 @@ export class SceneSetService {
    * start minus the image side (no master, no gates: nothing visual is paid yet). Count 0 is an empty set and costs nothing: no key, no job.
    */
   async compose(
-    payload: { avatarId: string; count: number; categories: readonly CategoryRef[]; poses: { profile: boolean; back: boolean }; acceptedWorstMicros: number },
+    payload: { avatarId: string; count: number; categories: readonly CategoryRef[]; poses?: { profile: boolean; back: boolean }; level?: SceneLevel; acceptedWorstMicros: number },
     launch?: LaunchComposeOptions,
   ): Promise<{ sceneSetId: string; jobId: string | null }> {
-    const { avatarId, count, categories, poses } = payload;
+    const { avatarId, count, categories, poses, level } = payload;
     const free = count === 0;
     const deps = this.#deps;
     if (launch !== undefined) {
@@ -471,7 +472,8 @@ export class SceneSetService {
         jobId: jobId ?? "none",
         count,
         categories,
-        poses,
+        ...(poses === undefined ? {} : { poses }),
+        ...(level === undefined ? {} : { level }),
         pools: { ...POOLS, ...Object.fromEntries(custom.map((c): [string, Pool] => [c.categoryId, poolOf(c.pool)])) },
         snapshots: custom.map(snapshotOf),
         recentPairs: recent,

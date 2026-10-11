@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CategoryPoses, CategoryRef, PhotoCategory, PoolShot, ScenePose, MAX_RUN_CATEGORIES } from "./categories";
+import { CAPTURES, CategoryPoses, CategoryRef, PhotoCategory, PoolShot, SceneLevel, ScenePose, MAX_RUN_CATEGORIES } from "./categories";
 import { EngineError } from "./errors";
 import { Count, Id, LaunchId, Micros, ModelId } from "./primitives";
 
@@ -119,6 +119,10 @@ export const SceneView = z
     categoryName: z.string().min(1).max(40).nullable(),
     shot: PoolShot,
     pose: ScenePose,
+    /** S5.7a: «Подача» of a flirty scene. Absent = ordinary (never stored as a value). */
+    level: z.literal("flirty").optional(),
+    /** S5.7a: who took the photo, when it is not just what the shot says. Absent = the shot's default capture. */
+    capture: z.enum(CAPTURES).optional(),
     /** Null for an own scene, which has no place. */
     place: ScenePlace.nullable(),
     idea: SceneIdea.nullable(),
@@ -194,7 +198,10 @@ export const SceneSetView = z
     stoppedError: EngineError.nullable(),
     /** The run id issued at compose; named only once the set is used. */
     runId: Id.nullable(),
-    poses: z.strictObject({ profile: z.boolean(), back: z.boolean() }),
+    /** Echoed only when the set stored them (S5.7a: a new set stores none). */
+    poses: z.strictObject({ profile: z.boolean(), back: z.boolean() }).optional(),
+    /** S5.7a: only when the set was composed flirty; absent = ordinary. */
+    level: z.literal("flirty").optional(),
     categories: z.array(SceneSetCategory).max(MAX_RUN_CATEGORIES),
     textModel: ModelId,
     /**
@@ -229,7 +236,10 @@ export const COMPOSE_REQUEST_FIELDS = {
   avatarId: Id,
   count: z.number().int().min(0).max(MAX_COMPOSE_SCENES),
   categories: z.array(CategoryRef).max(MAX_RUN_CATEGORIES).refine(unique, "categories must not repeat"),
-  poses: z.strictObject({ profile: z.boolean(), back: z.boolean() }),
+  /** Accepted for compatibility and ignored for the angle (S5.7a). */
+  poses: z.strictObject({ profile: z.boolean(), back: z.boolean() }).optional(),
+  /** «Подача» (S5.7a); absent = ordinary. */
+  level: SceneLevel.optional(),
 };
 
 /** Scenes need a category to be drawn from; an empty set needs none. */

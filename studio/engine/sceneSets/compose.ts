@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { CategoryRef, CategorySnapshot } from "../../shared/engine";
+import type { CategoryRef, CategorySnapshot, SceneLevel } from "../../shared/engine";
 import type { PlannedNewSceneSet } from "../library/sceneSets";
 import { writerAttemptIds } from "../runs/plan";
 import { planWithPools, plannerCategoryOf, type Pool } from "../scenes";
@@ -17,7 +17,10 @@ export interface ComposeInput {
   jobId: string;
   count: number;
   categories: readonly CategoryRef[];
-  poses: { profile: boolean; back: boolean };
+  /** Absent from a build with «Подача» (S5.7a): the planner then draws front and three-quarter only. */
+  poses?: { profile: boolean; back: boolean };
+  /** «Подача» (S5.7a), stored on the request; the mix is S5.7b's, so it changes no scene yet. */
+  level?: SceneLevel;
   /** Every pool the categories name, by planner name or custom id. */
   pools: Record<string, Pool>;
   /** A snapshot of every custom category the set uses (none for a built-in-only set). */
@@ -47,7 +50,7 @@ export function planSceneSet(input: ComposeInput): PlannedNewSceneSet {
             count: input.count,
             categories: input.categories.map(plannerCategoryOf),
             excludePairs: input.recentPairs.map(({ location, outfit, activity }) => ({ location, outfit, activity })),
-            poses: input.poses,
+            ...(input.poses === undefined ? {} : { poses: input.poses }),
             ...(input.split === undefined ? {} : { split: input.split }),
           },
           input.pools,
@@ -56,7 +59,7 @@ export function planSceneSet(input: ComposeInput): PlannedNewSceneSet {
     sceneSetId: input.sceneSetId,
     avatarId: input.avatarId,
     runId: input.runId,
-    request: { count: input.count, categories: [...input.categories], poses: { ...input.poses } },
+    request: { count: input.count, categories: [...input.categories], ...(input.poses === undefined ? {} : { poses: { ...input.poses } }), ...(input.level === undefined ? {} : { level: input.level }) },
     // Omitted, not empty, for a built-in-only set: the same rule as a built-in run's plan.json.
     ...(input.snapshots.length === 0 ? {} : { categories: [...input.snapshots] }),
     models: { text: input.textModel },

@@ -10,6 +10,7 @@ import {
   isCustomCategory,
   LAUNCH_SLICE_MAX_PHOTOS,
   LaunchId,
+  SceneLevel,
   MAX_COMPOSE_SCENES,
   MAX_RUN_CATEGORIES,
   MAX_SCENES_PER_SET,
@@ -211,7 +212,10 @@ export const SceneSetFile = z
     request: z.strictObject({
       count: z.number().int().min(0),
       categories: z.array(CategoryRef).max(MAX_RUN_CATEGORIES),
-      poses: z.strictObject({ profile: z.boolean(), back: z.boolean() }),
+      /** Absent in a set composed by a build with «Подача» (S5.7a); present in an older one, and echoed only then. */
+      poses: z.strictObject({ profile: z.boolean(), back: z.boolean() }).optional(),
+      /** «Подача» (S5.7a); absent = ordinary. The mix is S5.7b's. */
+      level: SceneLevel.optional(),
     }),
     /** A snapshot of every custom category the set uses, so a later rename, regeneration or delete changes nothing in it. */
     categories: z.array(CategorySnapshot).optional(),

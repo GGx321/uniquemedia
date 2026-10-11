@@ -1,6 +1,6 @@
 import type { BudgetHoldDetail, MonthRoom } from "../../shared/autopilot/money";
 import type { Estimate } from "../../shared/engine";
-import type { CategoryRef } from "../../shared/engine/categories";
+import type { CategoryRef, SceneLevel } from "../../shared/engine/categories";
 import type { StoredSceneSet } from "../library/sceneSets";
 import type { Budget } from "../money/budget";
 import type { RunJobEnd } from "../runs/runJob";
@@ -19,7 +19,10 @@ export interface LaunchComposePayload {
   avatarId: string;
   count: number;
   categories: readonly CategoryRef[];
-  poses: { profile: boolean; back: boolean };
+  /** Absent when the draft carries none (S5.7a). */
+  poses?: { profile: boolean; back: boolean };
+  /** «Подача» of the draft; absent = ordinary (S5.7a). */
+  level?: SceneLevel;
   acceptedWorstMicros: number;
 }
 

@@ -10,7 +10,7 @@ import { pendingChunks } from "../sceneSets/chunks";
 import type { LiveScope } from "./room";
 import type { FileAvatar, LaunchFile } from "./launchFile";
 import { causeOf, failureRateTripped, isWaitingHold, NETWORK_WAITS_MS, PRICE_WAITS_MS, sameHold } from "./paidFailures";
-import { NOT_PAYABLE_DETAIL, type PaidPort } from "./paidPort";
+import { NOT_PAYABLE_DETAIL, type LaunchComposePayload, type PaidPort } from "./paidPort";
 import type { AvatarMirror, ContinueInput, ContinueOutcome, LaunchSteps, LaunchStepsContext, MirrorSource, StepTimers, TimerHandle } from "./steps";
 
 // Stage 4, S4.6b1 (plan §3.2, §3.4, §3.6 rows 2–5, §4.3, §4.4, §4.7, §18, §19): the launch's PAID path, plugged in behind `LaunchSteps`. Per avatar that generates:
@@ -77,6 +77,11 @@ const isFailure = (error: unknown, code: string): error is EngineFailure => erro
 const isNotPayable = (error: unknown): boolean => isFailure(error, "VALIDATION") && (error.error.detail ?? "").startsWith(NOT_PAYABLE_DETAIL);
 const plannedOf = (set: MirrorSource) => set.scenes.filter((s) => s.origin === "planned" && !s.removed);
 const FINAL_PHASES: readonly string[] = ["montage", "done", "skipped"];
+
+/** What of the draft's look a compose carries (S5.7a): the angle toggles only when it has them, and «Подача» only when it was chosen. */
+function composeLookOf(draft: LaunchFile["draft"]): Pick<LaunchComposePayload, "poses" | "level"> {
+  return { ...(draft.poses === undefined ? {} : { poses: draft.poses }), ...(draft.level === undefined ? {} : { level: draft.level }) };
+}
 /** The price request of a slice's sizing, in the same counters. */
 const PRICES_JOB = "prices";
 
@@ -462,7 +467,7 @@ export class PaidSteps implements LaunchSteps {
       let started: { jobId: string | null };
       try {
         started = await port.composeLaunchSet(
-          { avatarId: row.avatarId, count, categories: split.map((s) => s.ref), poses: ctx.file().draft.poses, acceptedWorstMicros: row.allocation.composeMicros },
+          { avatarId: row.avatarId, count, categories: split.map((s) => s.ref), ...composeLookOf(ctx.file().draft), acceptedWorstMicros: row.allocation.composeMicros },
           { ids: { sceneSetId: generation.sceneSetId, runId: generation.setRunId }, split, launchId: ctx.launchId },
         );
       } catch (error) {

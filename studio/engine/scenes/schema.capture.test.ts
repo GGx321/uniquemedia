@@ -51,6 +51,16 @@ describe("a plan slot's capture and legwear (additive, I5.27)", () => {
     expect(PlanSlotSchema.safeParse({ ...baseSlot(), legwear: "x".repeat(35) }).success).toBe(true);
   });
 
+  // S5.7a: «Подача» rides on the slot as an optional `level`; the planner does not set it yet (S5.7b draws the mix).
+  test("a slot's level is kept as written, flirty or ordinary", () => {
+    expect(PlanSlotSchema.parse({ ...baseSlot(), level: "flirty" }).level).toBe("flirty");
+    expect(PlanSlotSchema.parse({ ...baseSlot(), level: "ordinary" }).level).toBe("ordinary");
+  });
+
+  test("a slot level of bold is refused", () => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), level: "bold" }).success).toBe(false);
+  });
+
   test("a hand capture still faces the phone: over-shoulder with a back pose is refused", () => {
     expect(PlanSlotSchema.safeParse({ ...baseSlot(), capture: "over-shoulder", shot: "selfie", pose: "back" }).success).toBe(false);
   });

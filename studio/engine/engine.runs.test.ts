@@ -650,6 +650,23 @@ describe("runs.start", () => {
     await jobEnd(events, jobId);
   });
 
+  // S5.7a: «Подача» is on the contract, but the mix is S5.7b's. Until then a flirty request stores its level and draws exactly the plan an ordinary one does.
+  test("a run asked flirty without poses stores the level, keeps no poses, and draws the plan an ordinary request draws (S5.7b implements the mix)", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(runNetwork({ image: () => ({ hang: true }) }));
+    const twenty = 20 * 3 * 50_000 + 2 * 37_500;
+
+    const { runId, jobId } = started(await engine.handle(command("runs.start", { avatarId, count: 20, categories: ["home", "travel"], level: "flirty", acceptedWorstMicros: twenty })));
+    const stored = planOf(runId);
+
+    expect(stored.request?.level).toBe("flirty");
+    expect(stored.request && "poses" in stored.request).toBe(false);
+    expect(stored.scenes).toEqual(planScenes({ seed: stored.scenes.seed, count: 20, categories: ["home", "travel"] }));
+
+    ok(await engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(events, jobId);
+  });
+
   test("invariant 6: plan.json, every slot with its pre-allocated attempt ids, is on disk before the writer's first request", async () => {
     const avatarId = await seedAvatar();
     const seen: RunPlan[] = [];

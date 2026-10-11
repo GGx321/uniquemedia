@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { LaunchFile, LAUNCH_FILE_SCHEMA_VERSION } from "./launchFile";
 import { A, B, newLaunchFile } from "./testing/launchFixtures";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -78,6 +80,24 @@ describe("the launch file a start builds", () => {
 describe("the launch file schema", () => {
   test("accepts a file as the store writes it", () => {
     expect(LaunchFile.safeParse(stamped()).success).toBe(true);
+  });
+
+  // S5.7a (plan s5a2 §6.1): `poses` and `level` joined the draft as optional fields WITHOUT a version bump. A launch file written before them (630e30e6, the last
+  // commit before «Подача») must parse as it is, and keep the draft it was written with.
+  test("a launch file written at 630e30e6, with its required poses, still parses unchanged", () => {
+    const raw: unknown = JSON.parse(readFileSync(join(import.meta.dir, "testing", "fixtures", "launch-630e30e6.json"), "utf8"));
+    const parsed = LaunchFile.parse(raw);
+    expect(parsed.draft.poses).toEqual({ profile: false, back: false });
+    expect("level" in parsed.draft).toBe(false);
+    expect(parsed).toEqual(raw as typeof parsed);
+  });
+
+  test("a file whose draft has no poses, or a flirty level, parses too", () => {
+    const file = stamped();
+    const { poses: _poses, ...bare } = file.draft;
+    expect(LaunchFile.safeParse({ ...file, draft: bare }).success).toBe(true);
+    expect(LaunchFile.safeParse({ ...file, draft: { ...bare, level: "flirty" } }).success).toBe(true);
+    expect(LaunchFile.safeParse({ ...file, draft: { ...bare, level: "bold" } }).success).toBe(false);
   });
 
   test("is strict: an unknown field is refused, so a newer build's file is never half-read", () => {

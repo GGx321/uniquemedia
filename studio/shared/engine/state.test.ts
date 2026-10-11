@@ -1147,9 +1147,10 @@ describe("RunRequest", () => {
     expect(RunRequest.safeParse({ ...run, poses }).success).toBe(true);
   });
 
-  test("requires the poses, each a yes or a no, and nothing else in them", () => {
+  // S5.7a changed this on purpose (plan s5a2 §6.1): `poses` is optional now and ignored for the angle; when it is sent it is still held to its shape.
+  test("takes no poses, and holds the poses it is sent to a yes or a no each, and nothing else in them", () => {
     const { poses: _p, ...withoutPoses } = run;
-    expect(RunRequest.safeParse(withoutPoses).success).toBe(false);
+    expect(RunRequest.safeParse(withoutPoses).success).toBe(true);
     expect(RunRequest.safeParse({ ...run, poses: { profile: true } }).success).toBe(false);
     expect(RunRequest.safeParse({ ...run, poses: { profile: "yes", back: false } }).success).toBe(false);
     expect(RunRequest.safeParse({ ...run, poses: { profile: false, back: false, front: true } }).success).toBe(false);

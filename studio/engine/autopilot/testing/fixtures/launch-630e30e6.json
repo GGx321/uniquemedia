@@ -1,0 +1,124 @@
+{
+  "launchId": "launch-fixture-0001",
+  "createdAt": "2026-10-09T10:00:00.000Z",
+  "endedAt": null,
+  "draft": {
+    "avatarIds": [
+      "avatar-mia-0001"
+    ],
+    "videosPerAvatar": 4,
+    "mix": {
+      "single": 50,
+      "collage": 25,
+      "slides": 25
+    },
+    "categories": [
+      "home",
+      "travel"
+    ],
+    "poses": {
+      "profile": false,
+      "back": false
+    },
+    "library": false,
+    "generate": true,
+    "sceneReview": true,
+    "stickers": false,
+    "planSeed": 77
+  },
+  "acceptedMicros": 20000000,
+  "plannedWorstMicros": 2175000,
+  "plannedExpectedMicros": 704500,
+  "priceSource": "fallback",
+  "pricesAsOf": "2026-10-09",
+  "plan": {
+    "videos": 4,
+    "photos": 10,
+    "fromLibrary": 0,
+    "toGenerate": 10
+  },
+  "status": "running",
+  "activeMs": 0,
+  "activeSince": "2026-10-09T10:00:00.000Z",
+  "paused": null,
+  "paidHold": null,
+  "freeHold": null,
+  "spentMicros": 0,
+  "avatars": [
+    {
+      "avatarId": "avatar-mia-0001",
+      "phase": "planned",
+      "waiting": null,
+      "skipped": null,
+      "photosDone": 0,
+      "allocation": {
+        "composeMicros": 75000,
+        "drawMicros": 2100000
+      },
+      "generation": {
+        "sceneSetId": "fixture-0001",
+        "setRunId": "fixture-0002",
+        "split": [
+          {
+            "ref": "home",
+            "count": 6
+          },
+          {
+            "ref": "travel",
+            "count": 4
+          }
+        ],
+        "review": true
+      },
+      "videos": [
+        {
+          "key": "0-1",
+          "shape": "single",
+          "size": 1,
+          "category": "home",
+          "source": "generated",
+          "photoIds": [],
+          "state": "planned",
+          "dropReason": null,
+          "videoId": null
+        },
+        {
+          "key": "0-2",
+          "shape": "collage",
+          "size": 3,
+          "category": "travel",
+          "source": "generated",
+          "photoIds": [],
+          "state": "planned",
+          "dropReason": null,
+          "videoId": null
+        },
+        {
+          "key": "0-3",
+          "shape": "single",
+          "size": 1,
+          "category": "travel",
+          "source": "generated",
+          "photoIds": [],
+          "state": "planned",
+          "dropReason": null,
+          "videoId": null
+        },
+        {
+          "key": "0-4",
+          "shape": "slides",
+          "size": 5,
+          "category": "home",
+          "source": "generated",
+          "photoIds": [],
+          "state": "planned",
+          "dropReason": null,
+          "videoId": null
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 1,
+  "revision": 1,
+  "updatedAt": "2026-10-09T10:00:00.000Z"
+}

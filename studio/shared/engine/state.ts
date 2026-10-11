@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
 import { AvatarBody, BodyProposal } from "./body";
-import { CategoryName, CategoryRef, MAX_RUN_CATEGORIES, PhotoCategory, SceneCategory } from "./categories";
+import { CategoryName, CategoryRef, MAX_RUN_CATEGORIES, PhotoCategory, SceneCategory, SceneLevel } from "./categories";
 import { EngineError, ExportUnavailableReason } from "./errors";
 import { ImageQuality } from "./imageModels";
 import { MediaFileName, MediaKind, MediaSummary } from "./media";
@@ -839,7 +839,10 @@ export const RunRequest = z.strictObject({
   avatarId: Id,
   count: z.number().int().min(1).max(100),
   categories: z.array(CategoryRef).min(1).max(MAX_RUN_CATEGORIES).refine(unique, "categories must not repeat"),
-  poses: RunPoses,
+  /** Accepted for compatibility and ignored for the angle (S5.7a): a window of a build before «Подача» still sends it. */
+  poses: RunPoses.optional(),
+  /** «Подача» (S5.7a); absent = ordinary. */
+  level: SceneLevel.optional(),
 });
 
 /**
