@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AvatarDescriptor, EngineError, ImageQuality } from "../../shared/engine";
-import { NoFaceInReferenceError } from "../face";
+import { defaultFaceGateConfig, NoFaceInReferenceError } from "../face";
+import { runFaceGate } from "../face/gate";
+import type { Detector } from "../face/yunet";
 import { openLibrary, type Library } from "../library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../library/testing/helpers";
 import { Budget, scopeKey } from "../money/budget";
@@ -19,6 +21,7 @@ import { buildRunPlan, FALLBACK_IMAGE_MODEL, plannedSlots, RunPlanSchema, runEst
 import { CpuPool, NetworkPool } from "./pools";
 import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaVerdict } from "./qa";
 import { createAgeGate } from "./ageGate";
+import { createFaceQaGate } from "./faceGate";
 import { CANCELLED_GATE_TIMEOUT_MS, preflightMaster, reportingTo, runPhotoRun, type RunJobDeps, type RunJobEnd } from "./runJob";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -221,6 +224,7 @@ function start(
     cancelledGateTimeoutMs?: number;
     referenceTimeoutMs?: number;
     gateTimeout?: RunJobDeps["gateTimeout"];
+    hairLengthOf?: RunJobDeps["hairLengthOf"];
   } = {},
 ): Harness {
   const net = opts.net ?? network();
@@ -253,6 +257,7 @@ function start(
       ...(opts.cancelledGateTimeoutMs === undefined ? {} : { cancelledGateTimeoutMs: opts.cancelledGateTimeoutMs }),
       ...(opts.referenceTimeoutMs === undefined ? {} : { referenceTimeoutMs: opts.referenceTimeoutMs }),
       ...(opts.gateTimeout === undefined ? {} : { gateTimeout: opts.gateTimeout }),
+      ...(opts.hairLengthOf === undefined ? {} : { hairLengthOf: opts.hairLengthOf }),
     },
     { plan: run, jobId: opts.jobId ?? JOB_ID, descriptor: DESCRIPTOR, signal: opts.signal ?? new AbortController().signal, ...(opts.softStop === undefined ? {} : { softStop: opts.softStop }) },
   );
@@ -467,6 +472,151 @@ describe("a run from the start", () => {
     await start(run).end;
     const recent = await library.recentPairs(avatarId, 10);
     expect(recent.map((e) => [e.location, e.outfit]).sort()).toEqual(plannedSlots(run).map((s) => [s.location, s.outfit]).sort());
+  });
+
+  // 5a.2 (S5.6b, I5.25): the run reads the avatar's hair length and gives every prompt a hair line: the style varies, the colour is always the reference photo's.
+  test("with a hair length, every journalled prompt carries a hair line except where the moment names her hair itself", async () => {
+    const run = await newRun(8);
+    await start(run, { hairLengthOf: () => "shoulder" }).end;
+    const event = (await journal()).find((e) => e.type === "prompts");
+    const byIndex = new Map(event?.type === "prompts" ? event.prompts.map((p) => [p.slotIndex, p.prompt]) : []);
+    expect(byIndex.size).toBe(8);
+    for (const slot of plannedSlots(run)) {
+      const own = POOLS.home.locations.find((l) => l.name === slot.location)?.activities.find((a) => a.text === slot.activity)?.hair === "own";
+      const prompt = byIndex.get(slot.slotIndex) ?? "";
+      if (own) expect(prompt).not.toContain("Today her hair");
+      else expect(prompt).toMatch(/Today her hair is [^:]+: the same hair colour as in the reference photo, only styled differently\./);
+    }
+  });
+
+  test("an avatar whose hair length is unknown gets no hair line", async () => {
+    const run = await newRun(3);
+    await start(run, { hairLengthOf: () => undefined }).end;
+    const event = (await journal()).find((e) => e.type === "prompts");
+    for (const prompt of event?.type === "prompts" ? event.prompts.map((p) => p.prompt) : []) expect(prompt).not.toContain("Today her hair");
+  });
+
+  // 5a.2 (S5.6b, I5.34): a «Дом» lamp place at evening or night keeps the lamp mood instead of «everything in focus».
+  test("a «Дом» lamp place at evening or night carries the lamp mood in its prompt, any other prompt keeps «everything in focus»", async () => {
+    const run = await newRun(12);
+    await start(run).end;
+    const event = (await journal()).find((e) => e.type === "prompts");
+    const prompts = new Map(event?.type === "prompts" ? event.prompts.map((p) => [p.slotIndex, p.prompt]) : []);
+    for (const slot of plannedSlots(run)) {
+      const lamp = POOLS.home.locations.find((l) => l.name === slot.location)?.lamp === true && (slot.timeOfDay === "evening" || slot.timeOfDay === "night");
+      const prompt = prompts.get(slot.slotIndex) ?? "";
+      expect(prompt.includes("bedside lamp, the room in soft shadow"), `${slot.location} at ${slot.timeOfDay}`).toBe(lamp);
+      expect(prompt.includes("everything in focus"), `${slot.location} at ${slot.timeOfDay}`).toBe(!lamp);
+    }
+  });
+
+  // 5a.2 (S5.6b): the history line also names the moment, so the next run steers away from the (place, moment) pairs the avatar used lately.
+  test("records each stored photo's moment too", async () => {
+    const run = await newRun(2);
+    await start(run).end;
+    const recent = await library.recentPairs(avatarId, 10);
+    expect(recent.map((e) => [e.location, e.activity]).sort()).toEqual(plannedSlots(run).map((s) => [s.location, s.activity]).sort());
+  });
+});
+
+// ---------- S5.6f: face-hidden and back frames in the real face gate ----------
+
+// The real QA adapter over the real `runFaceGate` and policy, with only the detector and the embedding scripted. A back slot is checked under `body`
+// (a face-hidden frame is the same path: faceGate.test.ts pins the capture mapping). The money claim: such a frame is never sent to a paid retry
+// by its likeness; `multiple-faces` is the one retry it can still take.
+describe("back frames through the real face gate (S5.6f)", () => {
+  const FACE_CONFIG = defaultFaceGateConfig();
+
+  /** A face gate over `runFaceGate` whose detector finds `rows` faces on every image and whose likeness is `similarity`. */
+  function bodyGate(rows: readonly Float32Array[], similarity: number): { gate: QaGate; checks: string[] } {
+    const checks: string[] = [];
+    const detector: Detector = { session: { run: async () => ({}) } as never, options: FACE_CONFIG.detector };
+    const gate = createFaceQaGate({
+      faceGate: {
+        isBroken: () => false,
+        embed: async () => new Float32Array([1, 0]),
+        check: async (checkInput) => {
+          checks.push(checkInput.pose);
+          const image = { width: 100, height: 100, data: new Uint8Array(100 * 100 * 3) };
+          return runFaceGate(image, { pose: checkInput.pose, masterEmbedding: checkInput.masterEmbedding }, detector, FACE_CONFIG, async () => similarity, async () => [...rows]);
+        },
+      },
+    });
+    return { gate, checks };
+  }
+
+  function faceRow(x: number, y: number, size: number): Float32Array {
+    const row = new Float32Array(15);
+    row[0] = x;
+    row[1] = y;
+    row[2] = size;
+    row[3] = size;
+    row[14] = 0.95;
+    return row;
+  }
+
+  /** A run whose every slot is an old back slot (a friend shot, pose back, stored before 5a.2: no capture, no legwear). */
+  async function newBackRun(count: number): Promise<RunPlan> {
+    const request = { avatarId, count, categories: ["home" as const], poses: { profile: false, back: true } };
+    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, request, "off").worstMicros;
+    const planned = planScenes({ seed: 5, count, categories: ["home"] });
+    const run = buildRunPlan({
+      runId: RUN_ID,
+      avatarId,
+      createdAt: new Date(NOW).toISOString(),
+      request,
+      imageAgeCheck: "off",
+      models: { imageModel: PRIMARY, textModel: TEXT },
+      capMicros: estimated,
+      plannedWorstMicros: estimated,
+      scenes: {
+        ...planned,
+        slots: planned.slots.map(({ capture: _capture, legwear: _legwear, ...slot }) => ({ ...slot, shot: "friend" as const, pose: "back" as const })),
+      },
+    });
+    await library.createRun(RUN_ID, run, RunPlanSchema);
+    caps.set(scopeKey(SCOPE), estimated);
+    return run;
+  }
+
+  const imageReservesOf = (): string[] => reservedIds().filter((id) => id.includes(":slot-"));
+
+  test("one face: every slot is marked on its first attempt, the run continues, and each photo keeps its likeness", async () => {
+    const run = await newBackRun(3);
+    const { gate, checks } = bodyGate([faceRow(0, 0, 50)], 0.31);
+    const result = await start(run, { gates: [gate] }).end;
+
+    expect(result).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(checks).toEqual(["body", "body", "body"]);
+    expect(imageReservesOf()).toHaveLength(3);
+    if (result.status === "done") for (const id of result.photoIds) expect(library.getPhoto(id)?.qa.faceCos).toBeCloseTo(0.31, 6);
+  });
+
+  test("no face: every slot passes on its first attempt with 3 image reserves in all", async () => {
+    const run = await newBackRun(3);
+    const { gate } = bodyGate([], 0);
+    const result = await start(run, { gates: [gate] }).end;
+
+    expect(result).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(imageReservesOf()).toHaveLength(3);
+  });
+
+  test("one face with a likeness far below the identity threshold is still marked: 3 image reserves, no retry", async () => {
+    const run = await newBackRun(3);
+    const { gate } = bodyGate([faceRow(0, 0, 50)], -0.2);
+    const result = await start(run, { gates: [gate] }).end;
+
+    expect(result).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(imageReservesOf()).toHaveLength(3);
+  });
+
+  test("two prominent faces stay the one paid retry: every attempt is retried, 3 slots reserve 9 images", async () => {
+    const run = await newBackRun(3);
+    const { gate } = bodyGate([faceRow(0, 0, 40), faceRow(50, 0, 40)], 0.9);
+    const result = await start(run, { gates: [gate] }).end;
+
+    expect(result).toMatchObject({ status: "done", photoIds: [], failedSlots: 3 });
+    expect(imageReservesOf()).toHaveLength(9);
   });
 });
 

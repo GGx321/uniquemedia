@@ -96,9 +96,9 @@ describe("the bank sweep: the engine's word lists", () => {
 });
 
 describe("one source of truth with the engine", () => {
-  test("the shared phone and selfie words are the engine's own (S5.6b points pools.ts at the shared copies)", () => {
-    expect({ source: SHARED_PHONE_WORDS.source, flags: SHARED_PHONE_WORDS.flags }).toEqual({ source: PHONE_WORDS.source, flags: PHONE_WORDS.flags });
-    expect({ source: SHARED_SELFIE_WORDS.source, flags: SHARED_SELFIE_WORDS.flags }).toEqual({ source: SELFIE_WORDS.source, flags: SELFIE_WORDS.flags });
+  test("pools.ts re-exports the shared phone and selfie words, not copies of them (S5.6b)", () => {
+    expect(PHONE_WORDS).toBe(SHARED_PHONE_WORDS);
+    expect(SELFIE_WORDS).toBe(SHARED_SELFIE_WORDS);
   });
 
   test("the banks' categories are the engine's, in the canonical order (I5.33: the ids stay)", () => {

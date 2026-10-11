@@ -49,6 +49,8 @@ export interface Moment {
   hair?: MomentHair;
   /** The moment shows her expression itself (laughs, smiles): no cue is added, so none contradicts it. */
   expression?: true;
+  /** A hand is already at her face (cheek on her hand): no hand cue («her hand at her cheek», «a finger near her lips») is added. */
+  handAtFace?: true;
   /** Outdoors in daylight: the only moments a cap may go to. */
   outdoor?: true;
   /** Posing by an object (a lamppost, a shop window): a moment, not a capture kind (r1.2). */
@@ -57,6 +59,11 @@ export interface Moment {
   outfits?: readonly string[];
   /** «Ножки» (5a.2c): a legs moment, drawn only on a legs slot. */
   legs?: { framing?: "legs" };
+  /**
+   * Back or side to the mirror (plan r1.5, the owner's note): only her reflection is in the picture, so the capture line adds «Only her reflection is in
+   * the picture; she holds the phone up and it hides her face.» (engine/scenes/phoneLook.ts). Phone-over-face mirror frames (`mirror-hidden`) only; front-facing mirror selfies may show or hide her face.
+   */
+  mirrorBack?: true;
   /** No legwear slot on this moment (plan r1.4): her feet or legs are up (Grok refused legs up in tights), or another reason the bank names. */
   noLegwear?: true;
 }
@@ -119,6 +126,8 @@ export interface Cue {
   level?: "flirty";
   /** The only captures this cue goes with («a finger near her lips» on «Дом»'s close selfies). Absent: every capture. */
   captures?: readonly Capture[];
+  /** The cue uses her free hand: never added to a moment with a hand at her face (`handAtFace`). */
+  hand?: true;
 }
 
 /** A hairstyle, as it reads after «Today her hair is …». */

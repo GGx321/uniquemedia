@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { CustomCategoryId, isCustomCategory, PoolText, SceneText, TimeOfDay } from "../../shared/engine";
-import { FacePoseSchema } from "../face/config";
+import { CAPTURES, captureOfShot, shotOf } from "../../shared/scenes/captures";
+import type { FacePose } from "../face/config";
 import { CATEGORIES, SHOTS } from "./types";
 
 // The plan's on-disk/on-wire contract (T5a, item 4, invariant 6). Kept
@@ -21,14 +22,12 @@ export const PlannerCategorySchema = z.union([CategorySchema, CustomCategoryId])
 export const ShotSchema = z.enum(SHOTS);
 
 /**
- * T5c: the same pose vocabulary the face gate's policy already takes
- * (studio/engine/face/config.ts's `FacePoseSchema` — front/three-quarter get
- * a full identity check, profile is skipped, back is skipped unless a
- * confident face turns up). Re-exported here rather than redeclared, so the
- * planner's own `pose` value and the face gate's `pose` input can never
- * drift into two different enums.
+ * T5c: the planner's four poses. The face gate's `FacePoseSchema`
+ * (studio/engine/face/config.ts) is these plus its own `body` (S5.6f), so this
+ * enum is declared anew; `satisfies` keeps every planner pose a valid gate
+ * pose, and face/worker/protocol.marked.test.ts pins both lists.
  */
-export const PoseSchema = FacePoseSchema;
+export const PoseSchema = z.enum(["front", "three-quarter", "profile", "back"]) satisfies z.ZodType<FacePose>;
 export type Pose = z.infer<typeof PoseSchema>;
 
 /** A selfie/mirror shot always holds the phone in one hand, so her face is
@@ -74,6 +73,14 @@ export const PlanSlotSchema = z
     // Additive (CS.5): the sentence a reviewed scene set already holds for this slot. Present on every slot of a run made from a set, never otherwise
     // (runs/plan.ts's invariant); a writer's sentence has no upper bound, so neither has this.
     sentence: SceneText.optional(),
+    // Additive (5a.2, I5.27): who took the photo, when it is not just what its stored `shot` says (a timer is a friend's shot, a prone selfie a selfie's), and
+    // the legwear slot of an outfit that shows her legs. A slot stored before them has neither and reads as it always did.
+    capture: z.enum(CAPTURES).optional(),
+    legwear: PoolText.optional(),
+  })
+  .refine((slot) => slot.capture === undefined || shotOf(slot.capture) === shotOf(captureOfShot(slot.shot)), {
+    message: "a capture rides on the shot the slot is stored with",
+    path: ["capture"],
   })
   .refine((slot) => !isPhoneInHandShot(slot.shot) || slot.pose === "front" || slot.pose === "three-quarter", {
     message: "a selfie or mirror shot always faces the camera: pose must be front or three-quarter",

@@ -22,3 +22,21 @@ export function roomPlaceOf(slot: RoomSlotKey): RoomPlace | null {
   const activity = place.activities.find((a) => a.text === slot.activity);
   return { room: true, details: place.details, activity: { messyOk: activity?.messyOk === true } };
 }
+
+/** What the look reads of a slot's place and moment, beyond the room draw (5a.2, S5.6b). */
+export interface SlotLook {
+  /** The place has a lamp: «Дом»'s lamp mood at evening and night (I5.34). */
+  lamp: boolean;
+  /** The moment is back or side to the mirror: only her reflection is in the picture (r1.5). */
+  mirrorBack: boolean;
+}
+
+/** The lamp and back-to-the-mirror marks of a slot's place and moment, or null when the slot names neither a built-in place nor one of its moments (an own scene, a custom category, a renamed place). */
+export function slotLookOf(slot: RoomSlotKey): SlotLook | null {
+  const category = CATEGORIES.find((c) => c === slot.category);
+  if (category === undefined || slot.location === undefined) return null;
+  const place = POOLS[category].locations.find((l) => l.name === slot.location);
+  if (place === undefined) return null;
+  const activity = place.activities.find((a) => a.text === slot.activity);
+  return { lamp: place.lamp === true, mirrorBack: activity?.mirrorBack === true };
+}

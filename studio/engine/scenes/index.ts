@@ -5,7 +5,8 @@
 export { CATEGORIES, SHOTS, type Category, type PlannerCategory, type Shot } from "./types";
 export { BUILT_IN_LABEL, categoryLabelOf, categoryRefOf, categoryStyleOf, photoCategoryOf, plannerCategoryOf, type CategoryLabelOf } from "./categories";
 export { allowedActivities, BuiltInPoolSchema, hasCleanActivity, isPhoneActivity, POOLS, PoolSchema, validatePools, type Activity, type Place, type Pool } from "./pools";
-export { roomPlaceOf, type RoomSlotKey } from "./roomPlace";
+export { hairLengthOf, hairLinesOf } from "./hairLines";
+export { roomPlaceOf, slotLookOf, type RoomSlotKey, type SlotLook } from "./roomPlace";
 export {
   AttemptIdBaseSchema,
   CategorySchema,

@@ -219,16 +219,17 @@ describe("mirror placement: a mirror shot lands only on a mirror location", () =
   });
 });
 
-describe("Photoshoot's own shot deck: 3 photographer, 2 candid", () => {
-  test("a full 5-slot photoshoot plan draws exactly 3 photographer and 2 candid shots", () => {
-    const p = plan({ seed: 1, count: 5, categories: ["photoshoot"] });
-    expect(p.slots.map((s) => s.shot).sort()).toEqual(["candid", "candid", "photographer", "photographer", "photographer"]);
+// 5a.2 (S5.6b): «Улица» deals 3 friends, a selfie, a timer and a candid of 6 (I5.32); the stored shot stays one of five and is never a photographer.
+describe("«Улица»'s deck: 3 friends, a selfie, a timer and a candid", () => {
+  test("a full 6-slot plan draws the stored shots those captures ride on: 4 friend (3 friends and the timer), 1 selfie, 1 candid", () => {
+    const p = plan({ seed: 1, count: 6, categories: ["photoshoot"] });
+    expect(p.slots.map((s) => s.shot).sort()).toEqual(["candid", "friend", "friend", "friend", "friend", "selfie"]);
   });
 
-  test("no photoshoot slot is ever a selfie, mirror or friend shot, across many seeds", () => {
+  test("no photoshoot slot is ever a mirror or a photographer shot, across many seeds", () => {
     for (let seed = 1; seed <= 10; seed++) {
       const p = plan({ seed, count: 12, categories: ["photoshoot"] });
-      expect(p.slots.every((s) => s.shot === "photographer" || s.shot === "candid")).toBe(true);
+      expect(p.slots.every((s) => s.shot === "friend" || s.shot === "selfie" || s.shot === "candid")).toBe(true);
     }
   });
 });
@@ -282,9 +283,10 @@ describe("exclusion of the avatar's recent (location, outfit) pairs", () => {
 });
 
 describe("outfits and locations never repeat within one category before every option is used once", () => {
+  // «Фитнес» pins no outfit and has no pin-only one, so its general bag is all of its outfits (a pinned or pin-only outfit never enters the bag, S5.6b).
   test("a full pass (count = pool size) uses every outfit exactly once", () => {
-    const n = POOLS.home.outfits.length;
-    const p = plan({ seed: 1, count: n, categories: ["home"] });
+    const n = POOLS.fitness.outfits.length;
+    const p = plan({ seed: 1, count: n, categories: ["fitness"] });
     expect(new Set(p.slots.map((s) => s.outfit)).size).toBe(n);
   });
 });

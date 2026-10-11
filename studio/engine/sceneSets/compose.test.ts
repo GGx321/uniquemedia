@@ -66,6 +66,15 @@ describe("planSceneSet", () => {
     expect(set.scenes.map((s) => s.slot)).toEqual(direct.slots);
   });
 
+  // 5a.2 (S5.6b): a history line's moment reaches the planner, so a set steers away from the avatar's recent (place, moment) pairs too.
+  test("hands the recent pairs' moments to the planner", () => {
+    const first = planSceneSet(input({ count: 1, categories: ["travel"] })).scenes[0]?.slot;
+    if (first === undefined) throw new Error("no scene");
+    const recent = [{ location: first.location, outfit: first.outfit, activity: first.activity }];
+    const again = planSceneSet(input({ count: 1, categories: ["travel"], recentPairs: recent })).scenes[0]?.slot;
+    expect(again && [again.location, again.activity]).not.toEqual([first.location, first.activity]);
+  });
+
   test("the seed is fixed by the set's id: the first 8 hex digits of its sha256", () => {
     const expected = Number.parseInt(createHash("sha256").update("set-aaaa-0001").digest("hex").slice(0, 8), 16);
     expect(seedOfSet("set-aaaa-0001")).toBe(expected);

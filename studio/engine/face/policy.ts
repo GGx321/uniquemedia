@@ -14,8 +14,8 @@ export interface FaceGatePolicyInput {
   pose: FacePose;
   faces: readonly DetectedFaceBox[];
   /**
-   * Required, and only meaningful, for front/three-quarter with exactly one
-   * prominent face: the identity similarity the caller already computed
+   * Required, and only meaningful, for front/three-quarter/body with exactly
+   * one prominent face (under body it is only marked, never judged): the identity similarity the caller already computed
    * (cosine to the master, or the strategy's max/mean aggregate over a
    * gallery — the policy only ever compares one final number to the
    * configured threshold, whatever produced it).
@@ -58,6 +58,22 @@ export function decideFaceVerdict(input: FaceGatePolicyInput, config: FaceGateCo
 
   if (pose === "profile") return { kind: "skipped-by-pose", faces: faces.length };
 
+  // S5.6f: a face-hidden or back frame. One face is marked (the likeness is kept, never judged); none is nothing to check. Never a retry.
+  if (pose === "body") {
+    const face = prominent[0];
+    if (face === undefined) return { kind: "skipped-by-pose", faces: faces.length };
+    if (similarity === undefined) {
+      throw new Error(`face/policy: pose "body" with a face needs a similarity score (compute the embedding and cosine before deciding)`);
+    }
+    // A degenerate box or a broken embedding must not put a non-finite or non-positive value on the wire (the strict schema would kill the worker)
+    // or in the photo's qa (positive headRatio): nothing trustworthy to mark, so it reads as a frame with no face to check.
+    const headRatio = headRatioOf(face, imageHeight);
+    if (!Number.isFinite(similarity) || !Number.isFinite(headRatio) || headRatio <= 0) return { kind: "skipped-by-pose", faces: faces.length };
+    return { kind: "marked", similarity, faces: faces.length, headRatio };
+  }
+
+  // Kept for compatibility, unreachable from a run: runs/faceGate.ts's `facePoseOf` checks every back slot under `body` (S5.6f), so the gate never
+  // asks for `back`. The branch stays for direct callers and old tests.
   if (pose === "back") {
     const face = prominent[0];
     // `face.score` is a plain number, but it originated in a Float32Array

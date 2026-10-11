@@ -6,8 +6,14 @@ import { z } from "zod";
  * profile skips it (YuNet detects profiles poorly and SFace is unreliable on
  * them); back skips it too, but a confidently detected face is suspicious —
  * the model ignored the "from behind" instruction.
+ *
+ * S5.6f: `body` is the gate's own pose, never a planner pose: a frame whose face
+ * is hidden or not meant to show (`faceVisibleOf` no or maybe — the phone over
+ * her face, her legs, a back view). Its likeness is only marked, never judged
+ * and never retried (policy.ts); the planner's `PoseSchema` stays 4-valued
+ * without it (scenes/schema.ts).
  */
-export const FacePoseSchema = z.enum(["front", "three-quarter", "profile", "back"]);
+export const FacePoseSchema = z.enum(["front", "three-quarter", "profile", "back", "body"]);
 export type FacePose = z.infer<typeof FacePoseSchema>;
 
 /**
@@ -53,6 +59,8 @@ export const FaceGateConfigSchema = z.strictObject({
    * Pose "back": a detected face only becomes "unexpected-face" at or above
    * this YuNet score (plan: "a face IS detected with good confidence"). Below
    * it, a stray low-confidence detection is treated the same as no face.
+   * Kept for compatibility: a run checks back slots under `body` (S5.6f), so
+   * nothing in a run reaches this branch any more.
    */
   unexpectedFace: z.strictObject({ minScore: z.number().min(0).max(1) }),
   wasm: z.strictObject({ numThreads: z.number().int().positive() }),

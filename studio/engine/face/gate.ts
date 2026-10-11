@@ -78,7 +78,7 @@ export type DetectFn = (detector: Detector, bgr: BgrImage) => Promise<Float32Arr
  * gate.test.ts. `createFaceGate` below wires the real ones in.
  *
  * Detection always runs (any pose can hit "multiple-faces"). The identity
- * embedding+cosine only runs for front/three-quarter with exactly one
+ * embedding+cosine only runs for front/three-quarter/body with exactly one
  * prominent face, matching `decideFaceVerdict`'s own rule — every other path
  * (no face, profile, back, multiple faces) never touches the recognizer.
  */
@@ -95,7 +95,8 @@ export async function runFaceGate(
   const prominent = prominentFaces(boxes, config.multipleFaces.minRelativeArea);
 
   let similarity: number | undefined;
-  if ((input.pose === "front" || input.pose === "three-quarter") && prominent.length === 1) {
+  // `body` needs the score too: it is only marked, but the policy would otherwise throw and a gate throw stops the whole run (GateBroken).
+  if ((input.pose === "front" || input.pose === "three-quarter" || input.pose === "body") && prominent.length === 1) {
     const chosenBox = prominent[0];
     const face = rawFaces.find((row, i) => boxes[i] === chosenBox);
     if (face !== undefined) {

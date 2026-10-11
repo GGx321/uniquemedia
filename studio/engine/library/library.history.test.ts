@@ -45,6 +45,33 @@ describe("appendHistory", () => {
   });
 });
 
+// 5a.2 (S5.6b): a history line may also name the moment the scene was, so the planner steers away from the avatar's recent (place, moment) pairs. The field is
+// optional both ways: a line written before it reads as it did, and a line without one is written as it always was.
+describe("the moment of a history line", () => {
+  test("is appended as `activity` and read back", async () => {
+    const { library, avatarId } = await libraryWithAvatar();
+    const entry = { ...scene(1), activity: "sits on the edge of the bed" };
+    await library.appendHistory(avatarId, entry);
+    expect(await readFile(join(root(), "avatars", avatarId, "history.jsonl"), "utf8")).toBe(`${JSON.stringify(entry)}\n`);
+    expect(await library.recentPairs(avatarId, 1)).toEqual([entry]);
+  });
+
+  test("a line written before it reads without one, next to a line that has one", async () => {
+    const { library, avatarId } = await libraryWithAvatar();
+    await appendFile(join(root(), "avatars", avatarId, "history.jsonl"), `${JSON.stringify(scene(1))}\n`);
+    await library.appendHistory(avatarId, { ...scene(2), activity: "stirs her coffee" });
+    const [newest, oldest] = await library.recentPairs(avatarId, 2);
+    expect(newest?.activity).toBe("stirs her coffee");
+    expect(oldest).toEqual(scene(1));
+    expect(oldest && "activity" in oldest).toBe(false);
+  });
+
+  test("refuses an empty moment with invalid-record", async () => {
+    const { library, avatarId } = await libraryWithAvatar();
+    await expectLibraryError(library.appendHistory(avatarId, { ...scene(1), activity: "" }), "invalid-record");
+  });
+});
+
 describe("recentPairs", () => {
   test("returns the most recent entries first, limited to n", async () => {
     const { library, avatarId } = await libraryWithAvatar();

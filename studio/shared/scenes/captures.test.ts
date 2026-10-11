@@ -56,8 +56,11 @@ describe("hand-held captures (one hand holds the phone)", () => {
     expect(isHandCapture(capture)).toBe(hand);
   });
 
-  test("a hand-held capture faces the phone: front or three-quarter only; the others take every pose", () => {
-    for (const capture of CAPTURES) expect([...posesFor(capture)]).toEqual(isHandCapture(capture) ? ["front", "three-quarter"] : ["front", "three-quarter", "profile", "back"]);
+  test("a hand-held capture faces the phone: front or three-quarter only (the over-the-shoulder look back is three-quarter only); the others take every pose", () => {
+    for (const capture of CAPTURES) {
+      const expected = capture === "over-shoulder" ? ["three-quarter"] : isHandCapture(capture) ? ["front", "three-quarter"] : ["front", "three-quarter", "profile", "back"];
+      expect<readonly string[]>([...posesFor(capture)]).toEqual(expected);
+    }
   });
 
   test("the legs captures are «Ножки»'s own (5a.2c)", () => {

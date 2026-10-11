@@ -21,6 +21,12 @@
  * - `unexpected-face`: back, but a face was detected with good confidence —
  *   the model ignored the "from behind" instruction.
  *
+ * - `marked` (S5.6f): the `body` pose (a face-hidden or back frame) with exactly
+ *   one prominent face. The likeness is computed and stored (`faceCos`) but
+ *   never judged: not a pass/fail, never a retry. A `body` frame with no face is
+ *   `skipped-by-pose`; with several prominent faces it is `multiple-faces`, the
+ *   one paid retry such a frame can still take (checked before any pose rule).
+ *
  * Which verdicts the job queue (T6) auto-retries: exactly the four "clear
  * failure" kinds the owner named — `no-face`, `multiple-faces`,
  * `unexpected-face`, and `mismatch` — never `match` (kept as is) and never
@@ -33,4 +39,5 @@ export type FaceVerdict =
   | { kind: "no-face"; faces: 0 }
   | { kind: "multiple-faces"; faces: number }
   | { kind: "skipped-by-pose"; faces: number }
-  | { kind: "unexpected-face"; faces: number; headRatio: number };
+  | { kind: "unexpected-face"; faces: number; headRatio: number }
+  | { kind: "marked"; similarity: number; faces: number; headRatio: number };

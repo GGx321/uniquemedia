@@ -40,11 +40,15 @@ export function photoCategoryOf(category: PlannerCategory | "own"): PhotoCategor
   return category === "own" ? OWN_CATEGORY : categoryRefOf(category);
 }
 
-/** The English name the writer is told each built-in category is. Byte-pinned: a built-in run's prompt never changes. */
+/**
+ * The English name the writer is told each built-in category is. The ids stay (I5.33); the names follow the built-in set of 5a.2: «Дом», «Улица» (`photoshoot`),
+ * «Виды» (`travel`), «Гламур», «Фитнес». The writer is never told «photoshoot» (its soft list), and a shorter name keeps the built-in writer pin's margin
+ * (writer.custom.test.ts) where it was or higher.
+ */
 export const BUILT_IN_LABEL: Record<Category, string> = {
   home: "Home",
-  travel: "Travel",
-  photoshoot: "Own phone photos",
+  travel: "Views",
+  photoshoot: "Street",
   glamour: "Glamour",
   fitness: "Fitness",
 };
