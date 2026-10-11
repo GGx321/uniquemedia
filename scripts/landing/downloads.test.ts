@@ -8,6 +8,7 @@ import {
   classifyAssets,
   currentRefsOf,
   currentVersionOf,
+  effectiveVersion,
   executePlan,
   parseVersion,
   planUpload,
@@ -165,7 +166,8 @@ describe("planUpload", () => {
   });
 
   test("the wait outlasts the 60 s cache of latest.json", () => {
-    expect(CACHE_WAIT_SECONDS).toBeGreaterThanOrEqual(65);
+    // CDN propagation (up to 60 s) plus the browser max-age (60 s).
+    expect(CACHE_WAIT_SECONDS).toBeGreaterThanOrEqual(125);
   });
 
   test("refuses, touching nothing, when even the rolling peak does not fit", () => {
@@ -196,11 +198,55 @@ describe("planUpload", () => {
     expect(planUpload({ version: "0.7.1", current, blobs: small, files: files(half + 1, half) }).mode).toBe("rolling");
   });
 
-  test("stale versions are deleted first and do not count toward the peak", () => {
+  test("stale versions are deleted first, after a wait, and do not count toward the peak", () => {
     const old = { pathname: P("0.6.0", "a.dmg"), size: 400 * MB };
     const plan = planUpload({ version: "0.7.1", current, blobs: [old, ...store], files: files(150 * MB, 140 * MB) });
-    expect(plan.steps[0]).toEqual({ kind: "delete", pathnames: [old.pathname] });
+    expect(plan.steps.slice(0, 2)).toEqual([
+      { kind: "wait", seconds: CACHE_WAIT_SECONDS },
+      { kind: "delete", pathnames: [old.pathname] },
+    ]);
     expect(plan.peakBytes).toBe((272 + 252 + 150 + 140) * MB);
+  });
+
+  test("latest.json is never deleted and never counted, in either mode", () => {
+    const latest = { pathname: "uniquemedia/latest.json", size: 5 * MB };
+    for (const [mac, win] of [[150 * MB, 140 * MB], [260 * MB, 218 * MB]]) {
+      const plan = planUpload({ version: "0.7.1", current, blobs: [latest, ...store], files: files(mac, win) });
+      expect(plan.steps.some((s) => s.kind === "delete" && s.pathnames.includes(latest.pathname))).toBe(false);
+      expect(plan.peakBytes).toBe(planUpload({ version: "0.7.1", current, blobs: store, files: files(mac, win) }).peakBytes);
+    }
+  });
+
+  test("blobs outside uniquemedia/ are neither deleted nor counted", () => {
+    const other = { pathname: "other/keep.bin", size: 900 * MB };
+    const plan = planUpload({ version: "0.7.1", current, blobs: [other, ...store], files: files(150 * MB, 140 * MB) });
+    expect(plan.steps.some((s) => s.kind === "delete" && s.pathnames.includes(other.pathname))).toBe(false);
+    expect(plan.mode).toBe("all");
+  });
+
+  test("a leftover at a path the upload overwrites is not garbage; one at another path in the same version is", () => {
+    const sameName = { pathname: P("0.7.1", "n.dmg"), size: 10 * MB }; // half-written earlier attempt
+    const otherName = { pathname: P("0.7.1", "old-name.dmg"), size: 10 * MB };
+    const plan = planUpload({ version: "0.7.1", current, blobs: [sameName, otherName, ...store], files: files(150 * MB, 140 * MB) });
+    const deleted = plan.steps.flatMap((s) => (s.kind === "delete" ? s.pathnames : []));
+    expect(deleted).toContain(otherName.pathname);
+    expect(deleted).not.toContain(sameName.pathname);
+  });
+
+  test("the rolling peak may equal the limit but not exceed it", () => {
+    const peak = (272 + 252 + 260) * MB;
+    expect(planUpload({ version: "0.7.1", current, blobs: store, files: files(260 * MB, 218 * MB), limitBytes: peak }).mode).toBe("rolling");
+    expect(() =>
+      planUpload({ version: "0.7.1", current, blobs: store, files: files(260 * MB, 218 * MB), limitBytes: peak - 1 }),
+    ).toThrow(/over the/);
+  });
+
+  test("a file already in the store with the same path and size is not uploaded again", () => {
+    const blobs = [{ pathname: P("0.7.1", "n.dmg"), size: 150 * MB }, ...store];
+    const plan = planUpload({ version: "0.7.1", current, blobs, files: files(150 * MB, 140 * MB) });
+    expect(kinds(plan)).toEqual(["upload:win", "publish", "wait", "delete"]);
+    const resized = planUpload({ version: "0.7.1", current, blobs, files: files(151 * MB, 140 * MB) });
+    expect(kinds(resized)).toContain("upload:mac");
   });
 
   test("re-uploading the current version overwrites it and deletes nothing", () => {
@@ -214,19 +260,24 @@ describe("planUpload", () => {
       ],
     });
     expect(plan.mode).toBe("all");
-    expect(plan.steps.some((s) => s.kind === "delete")).toBe(false);
+    expect(plan.steps.some((s) => s.kind === "delete" || s.kind === "upload")).toBe(false);
     expect(plan.peakBytes).toBe(524 * MB);
   });
 
-  test("a retry after a run died in the mixed state finishes the roll", () => {
+  test("a retry after a run died in the mixed state finishes the roll", async () => {
     const mixed = { version: "0.7.0", mac: P("0.7.1", "n.dmg"), win: current.win };
     const blobs = [
+      { pathname: "uniquemedia/latest.json", size: 0 },
       { pathname: P("0.7.1", "n.dmg"), size: 260 * MB },
       { pathname: current.win, size: 252 * MB },
     ];
     const plan = planUpload({ version: "0.7.1", current: mixed, blobs, files: files(260 * MB, 218 * MB) });
     expect(plan.steps.at(-1)).toEqual({ kind: "delete", pathnames: [current.win] });
     expect(plan.steps.some((s) => s.kind === "delete" && s.pathnames.includes(P("0.7.1", "n.dmg")))).toBe(false);
+    const r = replay(blobs, plan, mixed);
+    await executePlan(plan, r.io);
+    expect(r.live()).toEqual({ mac: P("0.7.1", "n.dmg"), win: P("0.7.1", "n.exe") });
+    expect([...r.store.keys()].sort()).toEqual([P("0.7.1", "n.dmg"), P("0.7.1", "n.exe"), "uniquemedia/latest.json"]);
   });
 
   test("a mixed publish needs the old installers to exist", () => {
@@ -236,11 +287,11 @@ describe("planUpload", () => {
 });
 
 /** Replays a plan against a fake store and checks what protects visitors and the quota. */
-function replay(blobs: { pathname: string; size: number }[], plan: Plan, current: { mac: string; win: string }) {
+function replay(blobs: { pathname: string; size: number }[], plan: Plan, current: { mac: string; win: string }, cachedAtStart: { mac: string; win: string }[] = []) {
   const store = new Map(blobs.map((b) => [b.pathname, b.size]));
   const sizes = new Map(plan.steps.flatMap((s) => (s.kind === "upload" ? [[s.pathname, s.bytes] as const] : [])));
   let live = current; // what latest.json says now
-  let cached: { mac: string; win: string }[] = []; // copies a browser may still hold
+  let cached = [...cachedAtStart]; // copies a browser may still hold
   let peak = 0;
   const track = () => {
     peak = Math.max(peak, [...store.values()].reduce((n, v) => n + v, 0));
@@ -258,6 +309,7 @@ function replay(blobs: { pathname: string; size: number }[], plan: Plan, current
     },
     remove: async (pathnames) => {
       for (const p of pathnames) {
+        expect(p).not.toBe("uniquemedia/latest.json");
         expect([live.mac, live.win]).not.toContain(p); // not referenced by the live latest.json
         expect(cached.some((c) => c.mac === p || c.win === p)).toBe(false); // nor by a copy that may be cached
         store.delete(p);
@@ -334,5 +386,45 @@ describe("executePlan", () => {
     });
     await expect(executePlan(plan, io)).rejects.toThrow("boom");
     expect(calls).toEqual([]);
+  });
+});
+
+describe("garbage deletion on a re-run", () => {
+  test("waits first, so a cached latest.json that pointed at the garbage has expired", async () => {
+    const cur = { version: "0.7.1", mac: P("0.7.1", "n.dmg"), win: P("0.7.1", "n.exe") };
+    const garbage = { pathname: P("0.7.0", "a.dmg"), size: 272 * MB };
+    const blobs = [
+      garbage,
+      { pathname: cur.mac, size: 260 * MB },
+      { pathname: cur.win, size: 218 * MB },
+    ];
+    const plan = planUpload({
+      version: "0.7.1",
+      current: cur,
+      blobs,
+      files: [
+        { platform: "mac", name: "n.dmg", size: 260 * MB },
+        { platform: "win", name: "n.exe", size: 218 * MB },
+      ],
+    });
+    const r = replay(blobs, plan, cur, [{ mac: garbage.pathname, win: P("0.7.0", "b.exe") }]);
+    await executePlan(plan, r.io);
+    expect(r.store.has(garbage.pathname)).toBe(false);
+  });
+});
+
+describe("effectiveVersion", () => {
+  test("is the label of latest.json when its files belong to it", () => {
+    expect(effectiveVersion({ version: "0.7.0", mac: P("0.7.0", "a.dmg"), win: P("0.7.0", "b.exe") })).toBe("0.7.0");
+    expect(effectiveVersion(null)).toBeNull();
+  });
+  test("a mixed latest.json counts as its newest installer, so an older tag cannot roll it back", () => {
+    const mixed = { version: "0.7.0", mac: P("0.7.1", "n.dmg"), win: P("0.7.0", "b.exe") };
+    expect(effectiveVersion(mixed)).toBe("0.7.1");
+    expect(() => checkDowngrade("0.7.0", effectiveVersion(mixed), false)).toThrow(/downgrade/i);
+    expect(() => checkDowngrade("0.7.1", effectiveVersion(mixed), false)).not.toThrow();
+  });
+  test("compares numerically", () => {
+    expect(effectiveVersion({ version: "0.9.0", mac: P("0.10.0", "a.dmg"), win: P("0.9.0", "b.exe") })).toBe("0.10.0");
   });
 });

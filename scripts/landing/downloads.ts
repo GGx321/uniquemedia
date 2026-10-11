@@ -78,9 +78,13 @@ export function checkDowngrade(next: string, current: string | null, force: bool
 }
 
 
-/** latest.json is put with a 60 s cache; wait this long after publishing before deleting what the previous copy pointed at. */
+/**
+ * latest.json is put with a 60 s max-age. A copy can sit in the CDN for that long and then in a browser for
+ * another 60 s, so a file is deleted no earlier than twice that (plus a margin) after the last latest.json
+ * that referenced it was replaced.
+ */
 export const LATEST_CACHE_SECONDS = 60;
-export const CACHE_WAIT_SECONDS = LATEST_CACHE_SECONDS + 5;
+export const CACHE_WAIT_SECONDS = 2 * LATEST_CACHE_SECONDS + 5;
 
 /** What latest.json points at, as store pathnames. */
 export interface Current {
@@ -168,12 +172,15 @@ export function planUpload(input: {
   // Leftovers nothing references (and the upload will not overwrite) go first; they never count toward the peak.
   const stale = [...inStore.keys()].filter((p) => !refs.includes(p) && !newPaths.has(p));
   const start = new Map([...inStore].filter(([p]) => !stale.includes(p)));
-  const head: PlanStep[] = stale.length > 0 ? [{ kind: "delete", pathnames: stale }] : [];
+  // A latest.json cached from an earlier run may still point at them, so wait before deleting.
+  const head: PlanStep[] =
+    stale.length > 0 ? [{ kind: "wait", seconds: CACHE_WAIT_SECONDS }, { kind: "delete", pathnames: stale }] : [];
   const kept = refs.filter((p) => !newPaths.has(p) && start.has(p)); // the old installers that outlive the uploads
 
-  const uploadOf = (platform: Platform): PlanStep => {
+  // Nothing to send when the same path with the same size is already there (a re-run after a partial one).
+  const uploadOf = (platform: Platform): PlanStep[] => {
     const f = files.find((x) => x.platform === platform) as (typeof files)[number];
-    return { kind: "upload", platform, pathname: f.pathname, bytes: f.size };
+    return inStore.get(f.pathname) === f.size ? [] : [{ kind: "upload", platform, pathname: f.pathname, bytes: f.size }];
   };
   const newPath = (platform: Platform) => (files.find((f) => f.platform === platform) as (typeof files)[number]).pathname;
   const tooBig = (peak: number, what: string) =>
@@ -181,8 +188,8 @@ export function planUpload(input: {
 
   const allSteps: PlanStep[] = [
     ...head,
-    uploadOf("mac"),
-    uploadOf("win"),
+    ...uploadOf("mac"),
+    ...uploadOf("win"),
     { kind: "publish", version, mac: newPath("mac"), win: newPath("win") },
     ...(kept.length > 0 ? [{ kind: "wait", seconds: CACHE_WAIT_SECONDS } as const, { kind: "delete", pathnames: kept } as const] : []),
   ];
@@ -196,7 +203,7 @@ export function planUpload(input: {
   const rolling: PlanStep[] = [...head];
   for (const platform of ["mac", "win"] as const) {
     const old = current[platform];
-    rolling.push(uploadOf(platform));
+    rolling.push(...uploadOf(platform));
     // The mixed step keeps the old version label: the other platform still serves the old installer.
     rolling.push(
       platform === "mac"
@@ -217,4 +224,16 @@ export async function executePlan(plan: Plan, io: PlanIo): Promise<void> {
     else if (step.kind === "delete") await io.remove(step.pathnames);
     else await io.sleep(step.seconds * 1000);
   }
+}
+
+/**
+ * The newest version latest.json involves: its label, or the version directory of either installer it points
+ * at (a half-rolled latest.json keeps the old label but already serves a new installer).
+ */
+export function effectiveVersion(current: Current | null): string | null {
+  if (!current) return null;
+  const found = [current.mac, current.win]
+    .map((p) => new RegExp(`^${BLOB_PREFIX}(\\d+\\.\\d+\\.\\d+)/`).exec(p)?.[1])
+    .filter((v): v is string => v !== undefined);
+  return [current.version, ...found].reduce((a, b) => (compareVersions(a, b) >= 0 ? a : b));
 }

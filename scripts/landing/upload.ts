@@ -13,6 +13,7 @@ import {
   checkDowngrade,
   classifyAssets,
   currentRefsOf,
+  effectiveVersion,
   executePlan,
   parseVersion,
   planUpload,
@@ -64,7 +65,7 @@ async function main(): Promise<void> {
     if (!res.ok) throw new Error(`Could not read the current latest.json (HTTP ${res.status})`);
     current = currentRefsOf(await res.json());
   }
-  checkDowngrade(version, current?.version ?? null, force);
+  checkDowngrade(version, effectiveVersion(current), force);
 
   // Throws before anything is deleted or uploaded when the plan cannot stay under the limit.
   const plan = planUpload({
