@@ -13,8 +13,9 @@ import { setLocal } from "./local";
 // prompt, answer rules, re-ask feedback and call shape, unchanged) ONE PENDING CHUNK AT A TIME:
 //
 //  - an accepted chunk is written into the set (its sentences into their scenes) before the next chunk is asked, so a stop loses no paid chunk;
-//  - a chunk that cannot be written (two rejected answers, or a provider's refusal) is given up on and the job GOES ON with the next one. A run's own
-//    phase stops at its first unwritable chunk, and stays so; a set must not let one bad chunk block the others forever;
+//  - a scene the model cannot write in the chunk's two answers (S5.6d) takes the plain sentence of its place, so a rejected chunk is written, not given up;
+//    only a provider's refusal of the prompt is given up on, and the job GOES ON with the next chunk. A run's own phase stops at its first unwritable
+//    chunk, and stays so; a set must not let one bad chunk block the others forever;
 //  - an attempt that got no answer (a final 429, a 5xx, the network, a timeout) stops the job, resumable: the set keeps its ids, and the ledger what became
 //    of them;
 //  - a chunk is asked only for the scenes still without text that are not removed, from its first id the ledger holds no reserve for, with the answered

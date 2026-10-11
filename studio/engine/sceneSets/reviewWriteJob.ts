@@ -19,9 +19,12 @@ import { lastAttemptWasFree, stoppedByOf } from "./writeJob";
 //  - a rewrite of planned scenes sends the compose prompt (writer.ts, byte for byte) with each scene's slot, or with the redrawn slot the write drew before
 //    its first call (a resume sends the same one) and the category's refreshed label;
 //  - a rewrite of own scenes and an idea write send the idea prompt, with the scene's STORED idea (never the current text, which may be a hand edit);
-//  - an accepted answer is stored whole (`accept`) before the job ends; a scene changes only then, and only the scenes of the write;
-//  - a write that can never be answered (two rejected answers, a provider's refusal, no attempt left) is RESOLVED (`giveUp`): nothing changed, nothing to
-//    resume, its ids burnt; one that got no answer stays open and resumable under its own ids.
+//  - an accepted answer is stored (`accept`) before the job ends; a scene changes only then, and only the scenes of the write;
+//  - 5a.2 (S5.6d): the second attempt asks only the scenes the first got wrong. A PLANNED scene still wrong takes the plain sentence of its (redrawn) place, so a
+//    planned rewrite is always written; an idea write and a rewrite of own scenes have no place to build one from, so they keep the scenes they accepted
+//    (stored as a partial answer, the rest unwritten) and fail only when they accepted none;
+//  - a write that can never be answered (a provider's refusal, an idea write that accepted nothing in two attempts) is RESOLVED (`giveUp`): nothing changed,
+//    nothing to resume, its ids burnt; one that got no answer stays open and resumable under its own ids.
 
 export interface ReviewWriteDeps {
   /** The OpenRouter client's chat: reserve on disk, send, settle. */

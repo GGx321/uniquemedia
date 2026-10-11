@@ -127,6 +127,18 @@ describe("runWriterPhase: attempt 2 repairs only the marked slots", () => {
     expect(told).not.toContain('"slotIndex":1');
   });
 
+  // The honest worst of attempt 2 is pinned at the whole chunk plus the longest refusal (scenes/writer.custom.test.ts, sceneSets/floor.test.ts): asking only the marked slots may not grow it.
+  test("attempt 2's messages are never longer than the whole chunk's would be under the same refusal", async () => {
+    const phase = phaseOf(4);
+    const { net, result } = start([answering((n) => (n === 2 ? REVEALING : GOOD)), answering(() => REPAIRED)], phase);
+    await result;
+
+    const refusal = { problems: ["revealing-word" as const], missingSlots: [], twoHandedSlots: [], wordSlots: [2], words: ["bikini"], poseSlots: [] };
+    const whole = JSON.stringify(phase.messages(phase.slots, refusal));
+    const sent = JSON.stringify((net.calls[1] as FetchCall).json().messages);
+    expect(sent.length).toBeLessThan(whole.length);
+  });
+
   test("asks several marked slots in slot order", async () => {
     const { net, result } = start([answering((n) => (n === 1 || n === 3 ? REVEALING : GOOD)), answering(() => REPAIRED)], phaseOf(4));
     await result;
