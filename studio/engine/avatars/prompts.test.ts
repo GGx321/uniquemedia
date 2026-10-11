@@ -4,7 +4,9 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { AvatarDescriptor, Draft, type AvatarTraits } from "../../shared/engine";
-import { candidatePrompt, promptSubject, PromptSubjectError } from "./prompts";
+import { youthWords } from "../../shared/engine";
+import { firstHit, NEGATED_LOOK } from "../scenes/testing/lookRules";
+import { candidatePrompt, promptSubject, PromptSubjectError, referencePortraitPrompt } from "./prompts";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -138,4 +140,34 @@ test("L9: importDescribe.ts's fixed vibe: \"\" is exempt, but any other mention 
   expect(isSetToFixedEmptyString(ts.factory.createPropertyAssignment("vibe", ts.factory.createStringLiteral("")))).toBe(true);
   expect(isSetToFixedEmptyString(ts.factory.createPropertyAssignment("vibe", ts.factory.createStringLiteral("zebra")))).toBe(false);
   expect(isSetToFixedEmptyString(ts.factory.createPropertyAssignment("vibeOther", ts.factory.createStringLiteral("")))).toBe(false);
+});
+
+describe("the reference portrait prompt (Stage 5, S5.3b)", () => {
+  test("is the spike's wording around the descriptor, on one line, with the adult sentence closing it", () => {
+    expect(referencePortraitPrompt(DESCRIPTOR)).toBe(
+      "The same woman as in the reference photo, with her exact face, facial proportions, exact hair colour and exact haircut. " +
+        "Head-and-shoulders portrait photo of a 25-year-old European woman, light olive skin, hazel eyes, shoulder-length wavy chestnut hair, " +
+        "athletic build, light freckles across the nose, looking straight at the camera with a relaxed, slight smile. " +
+        "Soft natural daylight, plain light grey background, nothing else in the picture, her hands out of the frame. " +
+        "Natural skin texture, minimal makeup, ordinary phone photo. She is an adult woman.",
+    );
+  });
+
+  test("takes the descriptor's text alone: her body phrase never reaches it", () => {
+    const withBody = referencePortraitPrompt({ age: 25, text: GOOD, body: "tall, a full bust and long slim legs" });
+    expect(withBody).toBe(referencePortraitPrompt(DESCRIPTOR));
+    expect(withBody).not.toContain("full bust");
+  });
+
+  test("negates no look term (I5.10): it says what the photo is", () => {
+    expect(firstHit(referencePortraitPrompt(DESCRIPTOR), NEGATED_LOOK)).toBeNull();
+  });
+
+  test("carries no youth word", () => {
+    expect(youthWords(referencePortraitPrompt(DESCRIPTOR))).toEqual([]);
+  });
+
+  test("a descriptor that today's rules refuse throws PromptSubjectError before any prompt is built", () => {
+    expect(() => referencePortraitPrompt({ age: 25, text: "25-year-old European woman who looks 17." })).toThrow(PromptSubjectError);
+  });
 });
