@@ -48,7 +48,7 @@ const POOLS_ALL: Record<string, Pool> = { ...POOLS, [CUSTOM_REF]: SWEEP_CUSTOM_P
 const sentenceOf = (slot: PlanSlot): string => `She is ${slot.activity} at ${slot.location}, wearing ${slot.outfit}`;
 
 /** The captures that carry the body binding when the avatar has a body (plan r1.5 §5.4): the close self-shots from above and the plain selfie do not. */
-const BODY_CAPTURES: readonly Capture[] = ["mirror-hidden", "mirror", "prone", "timer", "friend", "candid", "pov-legs", "low-feet"];
+const BODY_CAPTURES: readonly Capture[] = ["mirror-hidden", "mirror", "prone", "over-shoulder", "timer", "friend", "candid", "pov-legs", "low-feet"];
 
 interface Swept {
   label: string;
@@ -222,7 +222,7 @@ describe("the body axis (S5.2c)", () => {
     expect(hits((s) => (s.body === undefined || (s.prompt.split(s.body).length === 2 && s.prompt.indexOf(DESCRIPTOR.text.replace(/\.$/, "")) < s.prompt.indexOf(s.body)) ? null : "placement"))).toEqual([]);
   });
 
-  test("a body prompt carries the binding clause once on the captures that take it (not the plain selfie, the close shot from above or over the shoulder), and a prompt with no body never carries it", () => {
+  test("a body prompt carries the binding clause once on the captures that take it (not the plain selfie or the close shot from above), and a prompt with no body never carries it", () => {
     expect(hits((s) => (s.body !== undefined && BODY_CAPTURES.includes(s.capture) ? (s.prompt.split(BODY_CLAUSE).length === 2 ? null : "missing") : s.prompt.includes(BODY_CLAUSE) ? "unexpected" : null))).toEqual([]);
   });
 

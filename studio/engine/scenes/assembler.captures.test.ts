@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { AvatarDescriptor } from "../../shared/engine";
+import { youthWords, type AvatarDescriptor } from "../../shared/engine";
 import { captureOfShot, CAPTURES, shotOf, type Capture } from "../../shared/scenes/captures";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
-import { assembleSlot, BINDING_ANCHOR, POSE_PHRASE } from "./assembler";
+import { assembleSlot, BINDING_ANCHOR, HIDDEN_FACE_POSE_PHRASE, MIRROR_BACK_POSE_PHRASE, POSE_PHRASE } from "./assembler";
 import { artefactLine, captureLineOf, CONSTRAINTS, hairLine, imperfectionOf, lightOf, MIRROR_BACK_LINE, phoneHandLineOf, slotKeyOf } from "./phoneLook";
 import { plan } from "./planner";
 import { slotLookOf } from "./roomPlace";
@@ -65,15 +65,37 @@ describe("back or side to the mirror", () => {
   test("it is added by the tag alone: no sentence without the lookup, and none on any other moment of a real plan", () => {
     const tagged = slotOf("mirror-hidden", { location: "her bathroom", activity: "sits on the counter by the mirror", outfit: "an open-back top and grey jeans", pose: "three-quarter" });
     expect(assemble(tagged)).not.toContain(MIRROR_BACK_LINE);
+    const tags = (activity: string): boolean => activity === "sits on the counter by the mirror" || activity === "stands sideways to the mirror";
     let seen = 0;
     for (let seed = 1; seed <= 40; seed++) {
       for (const slot of plan({ seed, count: 60, categories: ["home", "travel", "photoshoot", "glamour", "fitness"], poses: { profile: true, back: true } }).slots) {
         const hit = assemble(slot, { lookOf: slotLookOf }).includes(MIRROR_BACK_LINE);
-        expect(hit, `${slot.location} / ${slot.activity}`).toBe(slot.activity === "sits on the counter by the mirror");
+        expect(hit, `${slot.location} / ${slot.activity}`).toBe(tags(slot.activity));
         if (hit) seen++;
       }
     }
     expect(seen).toBeGreaterThan(0);
+  });
+});
+
+describe("the pose phrase of a frame seen in profile to the mirror", () => {
+  const counter = slotOf("mirror-hidden", { location: "her bathroom", activity: "sits on the counter by the mirror", outfit: "an open-back top and grey jeans", pose: "three-quarter" });
+
+  test("a mirrorBack moment says she is in profile to the mirror with her face behind her phone, not turned three-quarter toward it", () => {
+    const prompt = assemble(counter, { lookOf: slotLookOf });
+    expect(prompt).toContain(MIRROR_BACK_POSE_PHRASE);
+    expect(prompt).not.toContain(HIDDEN_FACE_POSE_PHRASE["three-quarter"]);
+    expect(prompt).not.toContain("face clearly visible");
+  });
+
+  test("it is the tag that decides: the same frame without the lookup keeps the ordinary phrase", () => {
+    expect(assemble(counter)).toContain(HIDDEN_FACE_POSE_PHRASE["three-quarter"]);
+  });
+
+  test("the phrase says profile and her reflection, and passes the same word lists", () => {
+    expect(MIRROR_BACK_POSE_PHRASE).toMatch(/profile to the mirror/);
+    expect(MIRROR_BACK_POSE_PHRASE).toMatch(/reflection/);
+    expect(youthWords(MIRROR_BACK_POSE_PHRASE, "descriptor")).toEqual([]);
   });
 });
 
@@ -99,7 +121,7 @@ describe("the body binding, by capture", () => {
     ["candid", true],
     ["above", false],
     ["selfie", false],
-    ["over-shoulder", false],
+    ["over-shoulder", true],
   ])("%s: %s", (capture, on) => {
     expect(assemble(slotOf(capture), {}, WITH_BODY).includes(BODY_BINDING)).toBe(on);
   });

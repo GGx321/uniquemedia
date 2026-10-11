@@ -79,6 +79,9 @@ export const HIDDEN_FACE_POSE_PHRASE: Record<Pose, string> = {
   back: "Photographed from behind, her face not visible",
 };
 
+/** Back or side to the mirror (the approved T42 composition): she stands or sits in profile to the mirror, only her reflection in the picture, her face behind her phone. */
+export const MIRROR_BACK_POSE_PHRASE = "Her body is in profile to the mirror and only her reflection is in the picture, her face behind her phone";
+
 const BINDING = "The same woman as in the reference photo,";
 
 /** Binding for a frame without her face (plan r1.5 §5.4): the face binding is dropped; her hair, build and skin tone carry the likeness. */
@@ -87,8 +90,8 @@ export const NO_FACE_ANCHOR = "with the exact hair colour and hair length from t
 /** The frames whose face the phone or her own legs hide (`captures.ts` faceVisibleOf, by capture): the binding is NO_FACE_ANCHOR. A back pose keeps its own, as it always did. */
 const FACELESS_CAPTURES: readonly Capture[] = ["mirror-hidden", "pov-legs"];
 
-/** The captures that get the body binding when the avatar has a body (plan r1.5 §5.4); the close self-shots above, selfie and over-shoulder do not. */
-const BODY_BINDING_CAPTURES: readonly Capture[] = ["mirror-hidden", "mirror", "prone", "timer", "friend", "candid", "pov-legs", "low-feet"];
+/** The captures that get the body binding when the avatar has a body (plan r1.5 §5.4, review S5.6b #8: her hips and legs are in the over-the-shoulder frame); the close self-shots from above and the selfie do not. */
+const BODY_BINDING_CAPTURES: readonly Capture[] = ["mirror-hidden", "mirror", "prone", "over-shoulder", "timer", "friend", "candid", "pov-legs", "low-feet"];
 
 /**
  * T5c: the reference-binding anchor, pose-aware. Front/three-quarter keep
@@ -199,7 +202,7 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, senten
   const artefact = artefactLine({ cameraRealism: options.cameraRealism === true, light, imperfection: imperfectionOf(slot.shot, key), lampMood: isLampMood(look, timeOfDay) });
   const hairStyle = options.hairStyleOf?.(slot) ?? null;
   const faceless = FACELESS_CAPTURES.includes(capture);
-  const posePhrase = capture === "mirror-hidden" ? HIDDEN_FACE_POSE_PHRASE[slot.pose] : POSE_PHRASE[slot.pose];
+  const posePhrase = capture === "mirror-hidden" ? (look?.mirrorBack === true ? MIRROR_BACK_POSE_PHRASE : HIDDEN_FACE_POSE_PHRASE[slot.pose]) : POSE_PHRASE[slot.pose];
   const bindingAnchor = faceless ? NO_FACE_ANCHOR : BINDING_ANCHOR[slot.pose];
   const raw =
     `${captureLineOf(capture, key)} ${look?.mirrorBack === true ? `${MIRROR_BACK_LINE} ` : ""}${posePhrase}. ${field(sentence)}. ` +
