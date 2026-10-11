@@ -1,4 +1,7 @@
-import { allowedActivities, hasCleanActivity, type Place, type Pool } from "./pools";
+import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
+import { legwearFits } from "../../shared/scenes/template";
+import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, settleFit } from "./fit";
+import { allowedActivities, hasCleanActivity, usableOutfits, type Place, type Pool } from "./pools";
 import { drawFromPoses, drawPose, type PoseAllowance } from "./poses";
 import { makeRng, rngPick, subSeed } from "./rngUtil";
 import { isPhoneInHandShot, type PlanSlot, type Pose } from "./schema";
@@ -38,6 +41,8 @@ function preferred<T>(items: readonly T[], nameOf: (item: T) => string, avoid: R
  * becomes a selfie in a pool that has none, as the planner does); a selfie or mirror never gets a two-handed activity and faces the camera.
  */
 export function redrawSlot(input: RedrawInput): PlanSlot {
+  // 5a.2 (S5.6b): a built-in pool deals captures, and its scene is redrawn the way the planner draws it.
+  if (input.pool.captureDeck !== undefined) return redrawBuiltIn(input, input.pool.captureDeck);
   const { seed, k, slot, pool, avoid } = input;
   const rng = makeRng(subSeed(seed, `redraw:${slot.slotIndex}:${k}`));
   const poseRng = makeRng(subSeed(seed, `redraw-pose:${slot.slotIndex}:${k}`));
@@ -68,7 +73,8 @@ export function redrawSlot(input: RedrawInput): PlanSlot {
     }
   }
   const place = rngPick(rng, preferred(places, (p) => p.name, avoid.locations, slot.location));
-  const outfit = rngPick(rng, preferred(pool.outfits, (o) => o, avoid.outfits, slot.outfit));
+  // The owner's denim rule (S5.6b): a custom pool stored before it may hold denim shorts or skirts; they are never drawn.
+  const outfit = rngPick(rng, preferred(usableOutfits(pool.outfits), (o) => o, avoid.outfits, slot.outfit));
   return {
     slotIndex: slot.slotIndex,
     category: slot.category,
@@ -80,6 +86,48 @@ export function redrawSlot(input: RedrawInput): PlanSlot {
     pose: angled === null ? drawPose(poseRng, shot, input.poses) : angled.pose,
     attemptIdBase: slot.attemptIdBase,
     repeatedPair: false,
+  };
+}
+
+/**
+ * A built-in scene's redraw (plan r1.5 §5.2): the scene keeps its capture (an old scene whose capture the pool no longer deals takes one of the deck's, its own
+ * shot's if the deck has one), draws a pose, then a place with a fitting moment (tiered against the set as before), one of its fitting moments, the moment's
+ * pinned outfits first, and the legwear. The tiers prefer what the set does not already show, then anything but the scene's own.
+ */
+function redrawBuiltIn(input: RedrawInput, deck: readonly Capture[]): PlanSlot {
+  const { seed, k, slot, pool, avoid } = input;
+  const rng = makeRng(subSeed(seed, `redraw:${slot.slotIndex}:${k}`));
+  const poseRng = makeRng(subSeed(seed, `redraw-pose:${slot.slotIndex}:${k}`));
+  const fixRng = makeRng(subSeed(seed, `redraw-clean:${slot.slotIndex}:${k}`));
+  const stored = slot.capture ?? captureOfShot(slot.shot);
+  const sameShot = deck.filter((capture) => shotOf(capture) === shotOf(stored));
+  const capture = deck.includes(stored) ? stored : rngPick(rng, sameShot.length > 0 ? sameShot : deck);
+  const drawnPose = drawPose(poseRng, shotOf(capture), input.poses);
+  const settled = settleFit(pool, kindOfDeck(deck), capture, drawnPose);
+  const stepped = settled.capture !== capture || settled.pose !== drawnPose;
+  const place = rngPick(stepped ? fixRng : rng, preferred(settled.places, (p) => p.name, avoid.locations, slot.location));
+  const moments = fittingMoments(place, settled.capture, settled.pose);
+  const others = moments.filter((m) => m.text !== slot.activity);
+  const moment = rngPick(rng, others.length > 0 ? others : moments);
+  const pinned = pinnedOutfitsOf(moment);
+  const outfit = rngPick(rng, preferred(pinned.length > 0 ? pinned : generalOutfits(pool), (o) => o, avoid.outfits, slot.outfit));
+  const roll = rng();
+  const item = pool.legwear === undefined ? undefined : rngPick(rng, pool.legwear.items);
+  const meta = outfitInfoOf(pool).find((o) => o.text === outfit);
+  const legwear = pool.legwear !== undefined && meta !== undefined && legwearFits(moment, meta) && roll < pool.legwear.share ? item : undefined;
+  return {
+    slotIndex: slot.slotIndex,
+    category: slot.category,
+    location: place.name,
+    timeOfDay: rngPick(rng, place.times),
+    activity: moment.text,
+    outfit,
+    shot: shotOf(settled.capture),
+    pose: settled.pose,
+    attemptIdBase: slot.attemptIdBase,
+    repeatedPair: false,
+    ...(settled.capture === captureOfShot(shotOf(settled.capture)) ? {} : { capture: settled.capture }),
+    ...(legwear === undefined ? {} : { legwear }),
   };
 }
 
