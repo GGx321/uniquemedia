@@ -34,7 +34,7 @@ export const CATEGORY_LABEL: Record<SceneCategory, string> = {
   home: "Дом",
   travel: "Путешествия",
   shoot: "Фотосессия на телефон",
-  glam: "Гламур 18+",
+  glam: "Гламур",
   fit: "Фитнес",
 };
 

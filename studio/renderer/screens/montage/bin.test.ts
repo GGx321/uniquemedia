@@ -69,13 +69,13 @@ describe("the chips' counts", () => {
       categories: [
         { category: "home", label: "Дом", count: 2 },
         { category: "travel", label: "Путешествия", count: 2 },
-        { category: "glam", label: "Гламур 18+", count: 1 },
+        { category: "glam", label: "Гламур", count: 1 },
       ],
     });
     expect(binFacets(PHOTOS, { unusedOnly: true, category: null }).categories).toEqual([
       { category: "home", label: "Дом", count: 1 },
       { category: "travel", label: "Путешествия", count: 1 },
-      { category: "glam", label: "Гламур 18+", count: 1 },
+      { category: "glam", label: "Гламур", count: 1 },
     ]);
   });
 

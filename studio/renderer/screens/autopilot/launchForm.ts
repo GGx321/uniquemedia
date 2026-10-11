@@ -38,7 +38,7 @@ export const MIN_VIDEOS_PER_AVATAR = 1;
 /** A mix handle moves by 5 % from the keyboard (the design's keyboard table). */
 export const MIX_STEP = 5;
 /**
- * The categories a first launch asks for: the four everyday built-ins. «Гламур 18+» is opt-in, as the design draws it (AutopilotS4 `D0`), and the owner's
+ * The categories a first launch asks for: the four everyday built-ins. «Гламур» is opt-in, as the design draws it (AutopilotS4 `D0`), and the owner's
  * own categories are added by a click.
  */
 export const DEFAULT_CATEGORIES: readonly CategoryRef[] = ["home", "travel", "shoot", "fit"];

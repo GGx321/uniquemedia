@@ -9,7 +9,7 @@ import { category, chipsGroup, MONO, openPhotos, PARIS, WINTER } from "./photos/
 // (.omc/stage3/design/custom-categories). The paid button follows the app's rules: its price on it, keyed to the exact request and the
 // text model the pool call runs on; PRICE_CHANGED asks for a new click; never sent twice; disabled with paidBlockedReason while blocked.
 
-const BUILT_INS = ["Дом", "Путешествия", "Фотосессия на телефон", "Гламур 18+", "Фитнес"];
+const BUILT_INS = ["Дом", "Путешествия", "Фотосессия на телефон", "Гламур", "Фитнес"];
 
 function chipNames(): string[] {
   return within(chipsGroup())
