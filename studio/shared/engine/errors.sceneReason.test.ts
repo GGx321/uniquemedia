@@ -60,6 +60,27 @@ describe("library-unreadable (CS.7 fix round 2)", () => {
   });
 });
 
+// 5a.2 (S5.6d, plan s5a2 I5.31): the per-slot end of a run whose sentence broke today's word rules at the assembler. Additive: it names no scene (the slot is a
+// slot of a run, not a scene of a set), and a reader that does not know the code reads the error as any VALIDATION.
+describe("slot-text-problem (S5.6d)", () => {
+  test("is a scene reason that names no scene", () => {
+    expect(SCENE_REASONS).toContain("slot-text-problem");
+    expect(EngineError.safeParse({ code: "VALIDATION", sceneReason: "slot-text-problem" }).success).toBe(true);
+    expect(EngineError.safeParse({ code: "VALIDATION", sceneReason: "slot-text-problem", sceneId: 3 }).success).toBe(false);
+  });
+
+  test("its text says the frame was skipped and that it cost nothing", () => {
+    expect(SCENE_REASONS_RU["slot-text-problem"]).toBe("Текст сцены не прошёл проверку слов — кадр пропущен, бесплатно.");
+  });
+
+  test("the reasons that existed before it are all still there, in order", () => {
+    expect(SCENE_REASONS.slice(0, 20)).toEqual([
+      "set-used", "open-set", "nothing-waiting", "scene-missing", "target-removed", "scene-without-text", "no-active-scenes", "too-many-active", "scene-text-problem",
+      "write-record-cap", "idea-room", "mixed-kinds", "own-redraw", "no-open-write", "no-attempts-left", "nothing-to-dismiss", "library-unreadable", "launch-set", "over-plan", "not-awaiting",
+    ]);
+  });
+});
+
 describe("SCENE_REASONS_RU", () => {
   test("every reason has a text of its own, and none is the general one", () => {
     const texts = SCENE_REASONS.map((reason) => SCENE_REASONS_RU[reason]);

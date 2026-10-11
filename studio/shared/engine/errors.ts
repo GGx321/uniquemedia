@@ -345,6 +345,8 @@ const SceneIdNumber = z.number().int().min(1).max(10_000);
  * - launch-set (Stage 4): the set, or the run, belongs to a batch launch that is not finished; the launch moves it («управляйте им в «Автопилоте»»). Also the answer of `runs.resume` / `runs.cancel` on a launch's slice run.
  * - over-plan (Stage 4): at `autopilot.continueAfterReview`, the set has more active scenes than the launch planned for the avatar; adding scenes cannot raise the launch's spend.
  * - not-awaiting (Stage 4): at `autopilot.continueAfterReview`, the avatar of the launch is not waiting for the owner's review of this set.
+ * - slot-text-problem (Stage 5, S5.6d): not a refusal of a command. The run ended ONE slot, free, because its sentence broke today's youth or revealing word rules at the
+ *   assembler (the last gate before an image is paid for); it travels as that slot's end error. It names no scene (a run's slot is not a scene of a set).
  */
 export const SCENE_REASONS = [
   "set-used",
@@ -367,6 +369,7 @@ export const SCENE_REASONS = [
   "launch-set",
   "over-plan",
   "not-awaiting",
+  "slot-text-problem",
 ] as const;
 export const SceneReason = z.enum(SCENE_REASONS);
 export type SceneReason = z.infer<typeof SceneReason>;
