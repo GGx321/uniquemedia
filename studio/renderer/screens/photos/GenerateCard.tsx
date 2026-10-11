@@ -6,6 +6,7 @@ import type { EngineView, JobView } from "../../engine/store";
 import { countOf } from "../../lib/format";
 import { formatUsd } from "../../lib/money";
 import { useNavigate } from "../../navigation";
+import { PORTRAITS_DRAWING_REASON, portraitsDrawing } from "../look/lookModel";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
 import { CardAnglesLine } from "./AnglesLines";
@@ -326,6 +327,8 @@ export function GenerateCard({
   // Another paid command (a resume row's) is in flight for this avatar (L5): this card locks too, though it is not the one sending.
   const lockedByOther = paidInFlight && !busy;
   const locked = busy || lockedByOther;
+  // S5.3d review M3: her reference-portrait batch claims her like a run: a run or a compose now would be refused IN_FLIGHT.
+  const portraitsBusy = portraitsDrawing(view, avatar.avatarId);
   const perCategory = photosPerCategory(form.count, categories);
   const blockedReason =
     paidBlockedReason(view) ??
@@ -335,12 +338,14 @@ export function GenerateCard({
         ? "Выберите хотя бы одну категорию."
         : runActive
           ? "Дождитесь конца текущего запуска."
-          : scenesJob !== null
-            ? // CS.6: the avatar's scenes job holds it (the engine refuses a run meanwhile, IN_FLIGHT), review on or off.
-              "Дождитесь, пока модель допишет сцены."
-            : lockedByOther
-              ? "Дождитесь окончания другого платного действия."
-              : null);
+          : portraitsBusy
+            ? PORTRAITS_DRAWING_REASON
+            : scenesJob !== null
+              ? // CS.6: the avatar's scenes job holds it (the engine refuses a run meanwhile, IN_FLIGHT), review on or off.
+                "Дождитесь, пока модель допишет сцены."
+              : lockedByOther
+                ? "Дождитесь окончания другого платного действия."
+                : null);
 
   function toggle(category: RunCategory): void {
     onFormChange({ ...form, categories: toggleCategory(categories, category, customOrder) });
@@ -470,12 +475,14 @@ export function GenerateCard({
         ? "Выберите хотя бы одну категорию."
         : runActive
           ? "Дождитесь конца текущего запуска."
-          : scenesJob !== null
-            ? // Compose answered, its set not yet on screen: the tracked job holds the button (a second compose would be refused or paid twice).
-              "Дождитесь, пока модель допишет сцены."
-            : paidInFlight && !compose.sending
-            ? "Дождитесь окончания другого платного действия."
-            : null);
+          : portraitsBusy
+            ? PORTRAITS_DRAWING_REASON
+            : scenesJob !== null
+              ? // Compose answered, its set not yet on screen: the tracked job holds the button (a second compose would be refused or paid twice).
+                "Дождитесь, пока модель допишет сцены."
+              : paidInFlight && !compose.sending
+                ? "Дождитесь окончания другого платного действия."
+                : null);
   const composeButton = paidButtonState(compose, composeTitle(form.count), composeBlocked !== null, form.count === 0);
 
   const fullCard = (

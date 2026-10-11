@@ -163,6 +163,14 @@ export function paidSettingsFocus(view: Pick<EngineView, "phase" | "money" | "en
   return stop?.kind === "reconcile" ? "money" : null;
 }
 
+/** S5.3d review M3: why «Фото» does not offer a run, a compose or a draw while her reference portraits draw (the engine would refuse IN_FLIGHT). */
+export const PORTRAITS_DRAWING_REASON = "Дождитесь, пока дорисуются варианты мастер-портрета.";
+
+/** Whether a reference-portrait batch of hers is queued or running: it claims her like a photo run, so her paid photo work waits for it. */
+export function portraitsDrawing(view: Pick<EngineView, "jobs">, avatarId: string): boolean {
+  return view.jobs.some((job) => job.avatarId === avatarId && job.kind === "avatar.portraits" && isActiveJob(job));
+}
+
 /** Whether a photo run of hers is drawing now: an edit is allowed, and that run finishes with the text it started with. */
 export function runDrawing(view: Pick<EngineView, "jobs">, avatarId: string): boolean {
   return view.jobs.some((job) => job.avatarId === avatarId && job.kind === "run" && isActiveJob(job));

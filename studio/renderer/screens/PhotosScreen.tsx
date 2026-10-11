@@ -10,6 +10,7 @@ import { ErrorNotice } from "../ui/Notice";
 import { Portrait } from "../ui/Portrait";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { LookTab } from "./look/LookTab";
+import { PORTRAITS_DRAWING_REASON, portraitsDrawing } from "./look/lookModel";
 import { useLookCheck, useReadFromPhoto } from "./look/useLookCheck";
 import { usePortraits } from "./look/usePortraits";
 import { Gallery, type PendingSlots } from "./photos/Gallery";
@@ -496,7 +497,15 @@ function AvatarPhotos({
                 onRetryRuns={() => setRunsRefresh((n) => n + 1)}
                 paidInFlight={paidInFlight}
                 onPaidInFlightChange={setPaidInFlight}
-                blockedReason={paidBlockedReason(view) ?? (avatar.status !== "active" ? "Аватар в архиве — новые фото для него не создаются." : null)}
+                blockedReason={
+                  paidBlockedReason(view) ??
+                  (avatar.status !== "active"
+                    ? "Аватар в архиве — новые фото для него не создаются."
+                    : // S5.3d review M3: a resume now would be refused IN_FLIGHT while her portraits draw.
+                      portraitsDrawing(view, avatarId)
+                      ? PORTRAITS_DRAWING_REASON
+                      : null)
+                }
                 onResumed={launched}
                 launchLink={launchLink}
               />

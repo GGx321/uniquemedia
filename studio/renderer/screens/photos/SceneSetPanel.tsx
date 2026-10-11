@@ -5,6 +5,7 @@ import type { SceneSetSliceView } from "../../engine/sceneSetSlice";
 import type { EngineView, JobView } from "../../engine/store";
 import { errorText } from "../../lib/errors";
 import { ErrorNotice, Notice } from "../../ui/Notice";
+import { PORTRAITS_DRAWING_REASON, portraitsDrawing } from "../look/lookModel";
 import { paidBlockedReason } from "./runForm";
 import { SceneCard, ScenePlaceholder, type SceneWriting } from "./SceneCard";
 import { type IdeaStart, SceneIdeaForm } from "./SceneIdeaForm";
@@ -227,9 +228,11 @@ export function SceneSetPanel({
       ? "Аватар в архиве — новые фото для него не создаются."
       : runActive
         ? "Дождитесь конца текущего запуска."
-        : paidInFlight
-          ? "Дождитесь окончания другого платного действия."
-          : null);
+        : portraitsDrawing(view, avatar.avatarId)
+          ? PORTRAITS_DRAWING_REASON
+          : paidInFlight
+            ? "Дождитесь окончания другого платного действия."
+            : null);
 
   // ---------- the job ----------
 
