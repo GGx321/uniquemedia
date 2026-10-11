@@ -688,21 +688,42 @@ describe("a share that stops answering", () => {
     expect(answers.map((r) => r.status)).toEqual(Array.from({ length: 24 }, () => 200));
   });
 
-  test("a read in the middle of a stream that never answers ends the stream with an error instead of hanging it", async () => {
+  // The first chunk is read from a healthy disk and the second from a dead one. `firstChunkMs` is how long the healthy read takes: 0 on a quick disk, longer
+  // where a scanner or a cold cache holds a freshly written file (the Windows runners). It must not matter to what the test proves.
+  const midStreamStall = async (firstChunkMs: number): Promise<string> => {
     await commitVideo();
     const stall = stalled();
-    let stalling = false;
+    let phase: "route" | "first" | "stalled" = "route";
+    let slowed = false;
     // The route's own disk work and the first chunk are served; from then on every lstat (each read starts with one) stands still.
     const fs = countingFs({
       afterLstat: async () => {
-        if (stalling) await stall.promise;
+        if (phase === "stalled") await stall.promise;
+        else if (phase === "first" && !slowed) {
+          slowed = true;
+          await pause(firstChunkMs);
+        }
       },
     });
-    const response = await get(videoUrl(), {}, { gate: gateOf(2, 80), fs });
+    // The 80 ms deadline is what the dead disk is held to; a healthy read (the route, the first chunk) gets a generous one, so the speed of the runner's disk
+    // cannot end the stream before the stall does.
+    const healthy = createDiskGate({ maxConcurrent: 2, deadlineMs: 5000, maxQueued: 16 });
+    const dead = createDiskGate({ maxConcurrent: 2, deadlineMs: 80, maxQueued: 16 });
+    const gate: NonNullable<MediaDeps["gate"]> = {
+      get inFlight() {
+        return healthy.inFlight + dead.inFlight;
+      },
+      get queued() {
+        return healthy.queued + dead.queued;
+      },
+      run: (operation, signal) => (phase === "stalled" ? dead : healthy).run(operation, signal),
+    };
+    const response = await get(videoUrl(), {}, { gate, fs });
     expect(response.status).toBe(200);
+    phase = "first";
     const reader = response.body?.getReader();
     expect((await reader?.read())?.value?.length).toBe(CHUNK_BYTES);
-    stalling = true;
+    phase = "stalled";
     const next = (async (): Promise<string> => {
       try {
         await reader?.read();
@@ -713,7 +734,15 @@ describe("a share that stops answering", () => {
     })();
     const outcome = await Promise.race([next, pause(3000).then(() => "hung")]);
     stall.release();
-    expect(outcome).toBe("errored");
+    return outcome;
+  };
+
+  test("a read in the middle of a stream that never answers ends the stream with an error instead of hanging it", async () => {
+    expect(await midStreamStall(0)).toBe("errored");
+  });
+
+  test("a healthy first chunk that is slower than the deadline is not what ends the stream: the stall after it is", async () => {
+    expect(await midStreamStall(120)).toBe("errored");
   });
 
   // Round 2, L-2: one gate for every route let a dead EXPORT share (videos) hold the slots the healthy local library (photos, posters) needs. Each root has its own.
