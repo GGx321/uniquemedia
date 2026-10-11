@@ -51,6 +51,31 @@ describe("plainSentence", () => {
     expect(plainSentence({ category: "cat-summer-days", location: "her living room", activity, outfit: "a sundress" })).toBe(expected);
   });
 
+  // S5.6R (round D, LOW): a noun that ends in «s» is not a verb («pilates class», «tennis practice», «aerobics»); an activity that already opens with «is» is not wrapped again.
+  test.each([
+    ["pilates class", "In her living room, she is enjoying pilates class, wearing a sundress."],
+    ["tennis practice", "In her living room, she is enjoying tennis practice, wearing a sundress."],
+    ["aerobics", "In her living room, she is enjoying aerobics, wearing a sundress."],
+    ["pilates in the park", "In her living room, she is enjoying pilates in the park, wearing a sundress."],
+    ["is reading", "In her living room, she is reading, wearing a sundress."],
+    ["is reading a book", "In her living room, she is reading a book, wearing a sundress."],
+    ["takes a short break", "In her living room, she takes a short break, wearing a sundress."],
+    ["waters the plants", "In her living room, she waters the plants, wearing a sundress."],
+    ["stretches by the window", "In her living room, she stretches by the window, wearing a sundress."],
+    ["sips her coffee", "In her living room, she sips her coffee, wearing a sundress."],
+  ])("a custom activity %j that a plain «-s» test took for a verb reads: %j", (activity, expected) => {
+    expect(plainSentence({ category: "cat-summer-days", location: "her living room", activity, outfit: "a sundress" })).toBe(expected);
+  });
+
+  test("a real custom pool's activities never read «she is enjoying is», and a noun never follows «she» bare", () => {
+    const activities = ["pilates class", "tennis practice", "aerobics", "is reading", "yoga flow", "gymnastics", "darts night", "waters the plants", "takes a short break"];
+    for (const activity of activities) {
+      const sentence = plainSentence({ category: "cat-summer-days", location: "her living room", activity, outfit: "a sundress" });
+      expect(sentence).not.toMatch(/enjoying is\b|\bis is\b/);
+      expect(sentence).not.toMatch(/\bshe (?:pilates|tennis|aerobics|gymnastics|darts)\b/);
+    }
+  });
+
   test("a place and a moment the bank knows by name read as the template reads them: «she {moment}»", () => {
     const place = BANKS.home.places.find((p) => p.moments.length > 0);
     const moment = place?.moments[0];

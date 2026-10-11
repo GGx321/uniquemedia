@@ -31,10 +31,30 @@ export interface PlainSlot {
 
 /** An activity that opens with a preposition reads after «she is» («on the phone with her sister», «at the window, smiling»). */
 const OPENS_WITH_PREPOSITION = /^(?:in|on|at|by|under|near|beside|behind|along|against|inside|outside|over|across|around|with)\s/i;
-/** An activity that opens with a third-person verb of its own («takes a short break», «waters the plants») reads after «she». */
-const OPENS_WITH_A_VERB = /^[a-z]{2,}[^s\W]s\b/i;
+/** An activity that opens with «is» («is reading») already carries its verb: it reads after «she» as it is. */
+const OPENS_WITH_BE = /^is\s/i;
+/** The leading words of the bank's moments («holds», «stretches»): a positive list of third-person verbs. */
+const BANK_VERBS: ReadonlySet<string> = new Set(
+  Object.values(BANKS).flatMap((bank) => bank.places.flatMap((place) => place.moments.map((moment) => /^[a-z]+/i.exec(moment.text)?.[0]?.toLowerCase() ?? ""))).filter((word) => word !== ""),
+);
+/** A word that looks like a third-person verb («waters»). «pilates», «tennis» and «aerobics» look like one too. */
+const LOOKS_LIKE_A_THIRD_PERSON = /^[a-z]{2,}[^s\W]s$/i;
+/** What follows a verb that has an object: a determiner or a pronoun («takes a short break», «sips her coffee»). Never a preposition: «pilates in the park» is a noun phrase. */
+const OPENS_AN_OBJECT = /^(?:a|an|the|some|her|his|their|its|it|them|one|another|more)\b/i;
 /** A determiner opens a noun phrase, never a verb («a slow walk by the water»). */
 const OPENS_WITH_A_DETERMINER = /^(?:a|an|the|some|her|two|his|their)\s/i;
+
+/**
+ * Whether the activity opens with a verb of its own. A leading word of the bank's moments is one. Any other word that ends in «s» is taken for one only
+ * when an object follows («waters the plants»): a noun that ends in «s» («pilates class», «tennis practice», «aerobics») and a noun phrase with a
+ * preposition («pilates in the park») are not verbs.
+ */
+function opensWithAVerb(activity: string): boolean {
+  const [first = "", ...rest] = activity.trim().split(/\s+/);
+  const word = first.replace(/[^a-z]+$/i, "").toLowerCase();
+  if (BANK_VERBS.has(word)) return true;
+  return LOOKS_LIKE_A_THIRD_PERSON.test(word) && OPENS_AN_OBJECT.test(rest.join(" "));
+}
 
 /**
  * What follows «she» for a custom activity (S5.6R): «is {activity}» for an «-ing» verb or a position (custom.ts `rendersActivity`) and for a preposition; the
@@ -42,7 +62,7 @@ const OPENS_WITH_A_DETERMINER = /^(?:a|an|the|some|her|two|his|their)\s/i;
  */
 function customDoing(activity: string): string {
   if (rendersActivity(activity) || OPENS_WITH_PREPOSITION.test(activity)) return `is ${activity}`;
-  if (OPENS_WITH_A_VERB.test(activity) && !OPENS_WITH_A_DETERMINER.test(activity)) return activity;
+  if (OPENS_WITH_BE.test(activity) || (opensWithAVerb(activity) && !OPENS_WITH_A_DETERMINER.test(activity))) return activity;
   return `is enjoying ${activity}`;
 }
 
