@@ -48,6 +48,7 @@ describe("who takes the photo (I5.32: the capture decks, exact cycles)", () => {
       expect(moment.outfits?.length ?? 0).toBeGreaterThan(0);
       for (const outfit of moment.outfits ?? []) expect(outfit).toMatch(/(leggings|lounge shorts).*platform sneakers/);
     }
+    for (const outfit of BANKS.home.outfits.filter((o) => /platform sneakers/.test(o.text))) expect(outfit.pinOnly).toBe(true);
   });
 
   test.each<BankCategory>(["photoshoot", "travel"])("%s («Улица», «Виды»): mostly she asked someone, 3 of 6, plus a selfie, a timer and a candid", (category) => {

@@ -144,8 +144,10 @@ describe("a category bank", () => {
       { ...plain, text: "stretches her legs out on the bed", captures: ["pov-legs", "mirror-hidden"], legs: { framing: "legs" } },
       { ...plain, text: "lies on her back, legs up", noLegwear: true },
       { ...plain, text: "sits on the rug in her slippers", noLegwear: true },
+      { ...plain, text: "lies on her back, knees up", outfits: ["a tee and platform sneakers"] },
     ];
-    expect(categoryBankProblems({ ...BANK, places: [{ ...ROOM, moments: [...MOMENTS, ...rich] }, STREET] }, "home")).toEqual([]);
+    const outfits = [...BANK.outfits, { text: "a tee and platform sneakers", pinOnly: true as const }];
+    expect(categoryBankProblems({ ...BANK, outfits, places: [{ ...ROOM, moments: [...MOMENTS, ...rich] }, STREET] }, "home")).toEqual([]);
   });
 
   const PLACE_ROWS: Array<[string, CategoryBank, string]> = [
@@ -183,6 +185,7 @@ describe("a category bank", () => {
     ["legwear on no slot", { ...BANK, legwear: { items: ["sheer black tights"], share: 0 } }, BANK_RULE.legwear],
     ["legwear on more than every slot", { ...BANK, legwear: { items: ["sheer black tights"], share: 1.5 } }, BANK_RULE.legwear],
     ["legwear with no outfit that shows her legs", { ...BANK, outfits: [{ text: "a grey lounge set" }] }, BANK_RULE.legwear],
+    ["a pin-only outfit no moment pins (it could never be drawn)", { ...BANK, outfits: [...BANK.outfits, { text: "a tee and platform sneakers", pinOnly: true }] }, BANK_RULE.pinOnly],
   ];
 
   test.each(PLACE_ROWS)("refuses %s", (_name, bank, rule) => {

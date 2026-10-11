@@ -58,6 +58,7 @@ export const BANK_RULE = {
   hipsHigh: "hips-high",
   repeat: "repeat",
   pinnedOutfit: "pinned-outfit",
+  pinOnly: "pin-only",
   motionGrammar: "motion-grammar",
   motionStaging: "motion-staging",
   motionPhone: "motion-phone",
@@ -232,7 +233,7 @@ function categoryBankSchema(category: BankCategory) {
   return z
     .strictObject({
       places: z.array(PlaceSchema).min(1),
-      outfits: z.array(z.strictObject({ text: z.string(), showsLegs: z.literal(true).optional() })).min(1),
+      outfits: z.array(z.strictObject({ text: z.string(), showsLegs: z.literal(true).optional(), pinOnly: z.literal(true).optional() })).min(1),
       legwear: z.strictObject({ items: z.array(z.string()), share: z.number() }).optional(),
       captureDeck: z.array(CaptureSchema).min(1),
     })
@@ -251,6 +252,10 @@ function categoryBankSchema(category: BankCategory) {
         if (bank.legwear.items.length === 0) add(BANK_RULE.legwear, "legwear", "names one item at least");
         if (!(bank.legwear.share > 0 && bank.legwear.share <= 1)) add(BANK_RULE.legwear, "legwear", "goes on a share of the slots above 0 and at most 1");
         if (!bank.outfits.some((o) => o.showsLegs === true)) add(BANK_RULE.legwear, "legwear", "needs an outfit that shows her legs");
+      }
+      const pinned = new Set(bank.places.flatMap((p) => p.moments.flatMap((m) => m.outfits ?? [])));
+      for (const outfit of bank.outfits) {
+        if (outfit.pinOnly === true && !pinned.has(outfit.text)) add(BANK_RULE.pinOnly, "outfits", `«${outfit.text}» is pin-only, but no moment pins it`);
       }
       for (const capture of bank.captureDeck) if (LEGS_CAPTURES.includes(capture)) add(BANK_RULE.deck, "captureDeck", `«${capture}» is a legs capture: «Ножки» deals it apart (5a.2c)`);
       for (const capture of new Set(bank.captureDeck)) {

@@ -42,7 +42,9 @@ function builtInSentence(category: BankCategory, slot: TemplateSlot, ctx: Templa
   const moment = place?.moments.find((m) => m.text === slot.activity);
   const outfit = bank.outfits.find((o) => o.text === slot.outfit);
   if (capture === null || place === undefined || moment === undefined || outfit === undefined) return null;
+  // A pinning moment wears only its outfits; a pin-only outfit goes only to a moment that pins it (re-review 1).
   if (moment.outfits !== undefined && !moment.outfits.includes(outfit.text)) return null;
+  if (outfit.pinOnly === true && moment.outfits === undefined) return null;
   if (!momentAllowed(moment, capture, slot.pose, ctx.level ?? "ordinary", slot.framing)) return null;
   let wearing = outfit.text;
   if (slot.legwear !== undefined) {

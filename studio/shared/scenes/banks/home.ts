@@ -138,8 +138,8 @@ export const HOME: CategoryBank = {
     { text: PRONE_OUTFIT, showsLegs: true },
     { text: LEGGINGS },
     { text: OPEN_BACK },
-    { text: "grey leggings and platform sneakers" },
-    { text: "lounge shorts and platform sneakers", showsLegs: true },
+    { text: "grey leggings and platform sneakers", pinOnly: true },
+    { text: "lounge shorts and platform sneakers", showsLegs: true, pinOnly: true },
   ],
   legwear: { items: ["white knee-high socks", "black knee-high socks", "thigh-high socks", "sheer black tights"], share: 0.4 },
   // ⅓ phone-over-face mirror frames (I5.32), never a friend; the prone selfie and the over-her-shoulder POV share the prone body's 1 in 6.

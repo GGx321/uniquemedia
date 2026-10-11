@@ -82,6 +82,11 @@ export interface Outfit {
   text: string;
   /** The outfit shows her legs: the only outfits legwear goes with. */
   showsLegs?: true;
+  /**
+   * Worn only by a moment that pins it (the over-her-shoulder POV's platform sneakers): the planner (S5.6b) leaves it out of the category's general
+   * outfit draw, and the template renders it on no other moment.
+   */
+  pinOnly?: true;
 }
 
 /** Legwear, its own outfit slot (I5.29, K-17): drawn on about `share` of the slots whose outfit shows her legs. Stockings stay in 5a.3. */

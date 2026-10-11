@@ -26,7 +26,7 @@ const POSES_ALL = ["front", "three-quarter", "profile", "back"] as const;
 
 /** The outfits a slot of this moment can wear: its pinned ones, or the category's; each with its legwear options. */
 function wardrobe(category: BankCategory, moment: Moment): Array<{ outfit: string; legwear?: string }> {
-  const outfits = BANKS[category].outfits.filter((o) => moment.outfits === undefined || moment.outfits.includes(o.text));
+  const outfits = BANKS[category].outfits.filter((o) => (moment.outfits === undefined ? o.pinOnly !== true : moment.outfits.includes(o.text)));
   return outfits.flatMap((o) => [{ outfit: o.text }, ...(legwearFits(moment, o) ? (BANKS[category].legwear?.items ?? []).map((legwear) => ({ outfit: o.text, legwear })) : [])]);
 }
 

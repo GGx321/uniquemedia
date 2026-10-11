@@ -210,6 +210,27 @@ describe("outfits: pinned ones and the legwear slot", () => {
     expect(templateSentence(slotOf("home", prone.place, prone.moment, "prone", "front", { outfit: coveredOutfit }), { key: "k" })).toBeNull();
   });
 
+  // Re-review 1: a pin-only outfit (the over-her-shoulder POV's platform sneakers) is worn only by a moment that pins it, never «lies curled under
+  // the blanket, wearing … platform sneakers».
+  test("no unpinned moment ever renders a pin-only outfit; a moment that pins one does", () => {
+    const pinOnly = BANKS.home.outfits.filter((o) => o.pinOnly === true).map((o) => o.text);
+    expect(pinOnly.length).toBeGreaterThan(0);
+    let pinnedRenders = 0;
+    for (const place of BANKS.home.places) {
+      for (const moment of place.moments) {
+        for (const capture of moment.captures) {
+          for (const outfit of pinOnly) {
+            const sentence = templateSentence(slotOf("home", place, moment, capture, "front", { outfit }), { key: "k" });
+            if (moment.outfits?.includes(outfit) === true) {
+              if (sentence !== null) pinnedRenders++;
+            } else expect(sentence).toBeNull();
+          }
+        }
+      }
+    }
+    expect(pinnedRenders).toBeGreaterThan(0);
+  });
+
   test("legwear reads «wearing {outfit} with {legwear}» on an outfit that shows her legs", () => {
     expect(templateSentence(slotOf("home", sitting.place, sitting.moment, "mirror", "front", { outfit: legsOutfit, legwear }), { key: "k" })).toContain(`, wearing ${legsOutfit} with ${legwear}, `);
   });

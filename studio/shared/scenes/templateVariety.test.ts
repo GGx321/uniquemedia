@@ -128,6 +128,15 @@ describe("the stand-in planner itself", () => {
     }
   });
 
+  test("never draws a pin-only outfit for a moment that does not pin it", () => {
+    for (const category of BANK_CATEGORIES) {
+      const pinOnly = new Set(BANKS[category].outfits.filter((o) => o.pinOnly === true).map((o) => o.text));
+      for (const slot of SEEDS.slice(0, 10).flatMap((seed) => simulatePlan(category, N, seed))) {
+        if (pinOnly.has(slot.outfit ?? "")) expect(slot.moment.outfits).toContain(slot.outfit ?? "");
+      }
+    }
+  });
+
   test("draws the prone selfie only in its pinned outfit", () => {
     for (const slot of SEEDS.flatMap((seed) => simulatePlan("home", N, seed)).filter((s) => s.capture === "prone")) expect(slot.moment.outfits).toContain(slot.outfit);
   });

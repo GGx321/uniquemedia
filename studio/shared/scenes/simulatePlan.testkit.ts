@@ -65,7 +65,8 @@ export function simulatePlan(category: BankCategory, n: number, seed: number, le
   const next = generator(`${category}:${seed}:${level}`);
   const nextPlace = bag(next, bank.places);
   const nextCapture = bag(next, bank.captureDeck);
-  const nextOutfit = bag(next, bank.outfits);
+  // A pin-only outfit stays out of the general draw: only a moment that pins it wears it.
+  const nextOutfit = bag(next, bank.outfits.filter((o) => o.pinOnly !== true));
   const places = Array.from({ length: n }, nextPlace);
   const captures: Capture[] = Array.from({ length: n }, nextCapture);
   // Mirror placement: a mirror capture swaps with a later slot on a mirror place that holds none; with none left it steps down to a selfie.
