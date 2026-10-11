@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { buildArgs } from "./filterGraph";
+import { sourceToBt709 } from "./colour";
 import type { MediaInfo, Recipe } from "./types";
 
 const info: MediaInfo = { kind: "video", durationSec: 5, width: 1280, height: 720, hasAudio: true };
@@ -199,4 +200,35 @@ test("a 10-minute clip with 224k audio still fits 50 MB, audio included", () => 
   const kbps = parseInt(args[args.indexOf("-maxrate") + 1], 10);
   expect(kbps).toBeGreaterThan(0);
   expect(((kbps + 224) * 600) / 8 / 1024).toBeLessThanOrEqual(50);
+});
+
+// ── the source's colour ─────────────────────────────────────────────────────
+
+const SD601: MediaInfo = {
+  ...info,
+  width: 640,
+  height: 480,
+  color: { pixFmt: "yuv420p", space: "", transfer: "", primaries: "", range: "" },
+};
+
+test("a source that is not BT.709 is converted on [0:v], before the recipe touches it", () => {
+  // The conversion goes first and is the whole difference: the rest of the
+  // graph is the one an already-BT.709 source gets.
+  const fc = complexOf(buildArgs(recipe, SD601));
+  const recipeOnly = complexOf(buildArgs(recipe, info)).slice("[0:v]".length);
+  expect(fc).toBe(`[0:v]${sourceToBt709(SD601, true)},${recipeOnly}`);
+});
+
+test("a BT.709 limited-range 8-bit source keeps the graph it had", () => {
+  const tagged: MediaInfo = {
+    ...info,
+    color: { pixFmt: "yuv420p", space: "bt709", transfer: "bt709", primaries: "bt709", range: "tv" },
+  };
+  expect(buildArgs(recipe, tagged)).toEqual(buildArgs(recipe, info));
+});
+
+test("without zscale the conversion is the colorspace filter's", () => {
+  const fc = complexOf(buildArgs(recipe, SD601, false));
+  expect(fc.startsWith(`[0:v]${sourceToBt709(SD601, false)},`)).toBe(true);
+  expect(fc).toContain("[0:v]colorspace=");
 });

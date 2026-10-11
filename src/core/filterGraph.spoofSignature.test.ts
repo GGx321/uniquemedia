@@ -109,6 +109,10 @@ test("no-spoof: the encode tail is byte-identical to what ships today", () => {
   expect(encodeTail(buildArgs(recipe, info))).toEqual([
     "-c:v", "libx264",
     "-preset", "medium",
+    "-colorspace", "bt709",
+    "-color_primaries", "bt709",
+    "-color_trc", "bt709",
+    "-color_range", "tv",
     "-crf", "21",
     "-maxrate", "12000k",
     "-bufsize", "24000k",
@@ -126,6 +130,10 @@ test("no-spoof without audio: the encode tail is byte-identical to what ships to
   expect(encodeTail(buildArgs(recipe, { ...info, hasAudio: false }))).toEqual([
     "-c:v", "libx264",
     "-preset", "medium",
+    "-colorspace", "bt709",
+    "-color_primaries", "bt709",
+    "-color_trc", "bt709",
+    "-color_range", "tv",
     "-crf", "21",
     "-maxrate", "12000k",
     "-bufsize", "24000k",
@@ -149,6 +157,7 @@ test("spoof: the encode tail is the non-spoof tail plus exactly the spoof flags"
     "-colorspace", "bt709",
     "-color_primaries", "bt709",
     "-color_trc", "bt709",
+    "-color_range", "tv",
     "-crf", "21",
     "-maxrate", "12000k",
     "-bufsize", "24000k",
@@ -173,8 +182,10 @@ test("spoof: the encode tail is the non-spoof tail plus exactly the spoof flags"
 /**
  * `clean` is the iphone scrub without the iphone: every place ffmpeg signs its
  * work is turned off, and nothing is written in its place — no Apple handler
- * names, no `encoder=H.264`, no bt709 tagging, and the container stays the MP4
- * the output extension asks for rather than being forced to MOV.
+ * names, no `encoder=H.264`, and the container stays the MP4 the output
+ * extension asks for rather than being forced to MOV. The colour tags are not
+ * identity: every mode states BT.709, which is what the graph made the
+ * picture, so no player has to guess.
  */
 
 test("clean: asks the muxer and both encoders for bitexact output", () => {
@@ -194,14 +205,24 @@ test("clean: strips SEI NAL units (type 6) from the H.264 stream", () => {
   expect(valueAfter(buildArgs(cleanRecipe, info), "-bsf:v")).toBe("filter_units=remove_types=6");
 });
 
-test("clean: writes no identity of its own — no handler names, no compressor name, no colour tags", () => {
+test("clean: writes no identity of its own — no handler names, no compressor name, no profile", () => {
   const args = buildArgs(cleanRecipe, info);
-  for (const flag of ["-metadata:s:v", "-metadata:s:a", "-profile:v", "-colorspace", "-color_primaries", "-color_trc"]) {
+  for (const flag of ["-metadata:s:v", "-metadata:s:a", "-profile:v"]) {
     expect(args).not.toContain(flag);
   }
   expect(args.join(" ")).not.toContain("Core Media");
   expect(args.join(" ")).not.toContain("encoder=");
-  expect(args.join(" ")).not.toContain("bt709");
+});
+
+test.each(["engine", "iphone", "clean"] as const)("%s: states BT.709 limited range for the picture it wrote", (identity) => {
+  // Without the tags a player falls back on the frames' own, and in frame
+  // mode those were the background JPEG's bt470bg: BT.709 data shown as
+  // BT.601 turned a saturated green (30,190,40) into (41,217,42).
+  const args = buildArgs({ ...recipe, identity }, info);
+  expect(valueAfter(args, "-colorspace")).toBe("bt709");
+  expect(valueAfter(args, "-color_primaries")).toBe("bt709");
+  expect(valueAfter(args, "-color_trc")).toBe("bt709");
+  expect(valueAfter(args, "-color_range")).toBe("tv");
 });
 
 test("clean: leaves the container to the output extension instead of forcing MOV", () => {
@@ -214,6 +235,10 @@ test("clean: the encode tail is the engine tail plus exactly the scrub flags", (
   expect(encodeTail(buildArgs(cleanRecipe, info))).toEqual([
     "-c:v", "libx264",
     "-preset", "medium",
+    "-colorspace", "bt709",
+    "-color_primaries", "bt709",
+    "-color_trc", "bt709",
+    "-color_range", "tv",
     "-crf", "21",
     "-maxrate", "12000k",
     "-bufsize", "24000k",

@@ -14,6 +14,13 @@ export interface ProbeStream {
   width: number | null; // null, not 0 — 0 would read as a real 0x0 image
   height: number | null;
   durationSec: number | null;
+  // How the numbers are to be read, in ffprobe's own names; "" when the
+  // stream does not say, which the bundled ffprobe shows by omitting the key.
+  pixFmt: string; // "yuv420p", "yuv420p10le", "yuvj420p", ...
+  colorSpace: string; // "bt709", "smpte170m", "bt2020nc", ...
+  colorTransfer: string; // "bt709", "arib-std-b67", "smpte2084", ...
+  colorPrimaries: string; // "bt709", "bt2020", ...
+  colorRange: string; // "tv" | "pc"
 }
 
 export interface ProbeResult {
@@ -67,8 +74,16 @@ export function parseFfprobeJson(stdout: string): ProbeResult {
               width: asFiniteNumber(own(raw, "width")),
               height: asFiniteNumber(own(raw, "height")),
               durationSec: asFiniteNumber(own(raw, "duration")),
+              pixFmt: asString(own(raw, "pix_fmt")),
+              colorSpace: asString(own(raw, "color_space")),
+              colorTransfer: asString(own(raw, "color_transfer")),
+              colorPrimaries: asString(own(raw, "color_primaries")),
+              colorRange: asString(own(raw, "color_range")),
             }
-          : { codecType: "", codecName: "", width: null, height: null, durationSec: null }
+          : {
+              codecType: "", codecName: "", width: null, height: null, durationSec: null,
+              pixFmt: "", colorSpace: "", colorTransfer: "", colorPrimaries: "", colorRange: "",
+            }
       )
     : [];
 

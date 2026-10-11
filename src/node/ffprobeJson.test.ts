@@ -109,3 +109,48 @@ test("does not inherit properties from the prototype chain", () => {
   const hostile = '{"streams":[{"__proto__":{"codec_type":"video"}}]}';
   expect(parseFfprobeJson(hostile).streams[0].codecType).toBe("");
 });
+
+// ── colour description ──────────────────────────────────────────────────────
+
+const HLG_CLIP = JSON.stringify({
+  streams: [
+    {
+      codec_name: "hevc",
+      codec_type: "video",
+      width: 1080,
+      height: 1920,
+      pix_fmt: "yuv420p10le",
+      color_range: "tv",
+      color_space: "bt2020nc",
+      color_transfer: "arib-std-b67",
+      color_primaries: "bt2020",
+    },
+  ],
+  format: { duration: "5.0" },
+});
+
+const colourOf = (s: ReturnType<typeof parseFfprobeJson>["streams"][number]) => [
+  s.pixFmt, s.colorSpace, s.colorTransfer, s.colorPrimaries, s.colorRange,
+];
+
+test("reads the pixel format and the four colour tags off a stream", () => {
+  const [video] = parseFfprobeJson(HLG_CLIP).streams;
+  expect(colourOf(video)).toEqual(["yuv420p10le", "bt2020nc", "arib-std-b67", "bt2020", "tv"]);
+});
+
+test("an untagged stream states no colour, as empty strings", () => {
+  // The bundled ffprobe omits the keys outright for a stream that carries none.
+  const [video] = parseFfprobeJson(REAL_CLIP).streams;
+  expect(colourOf(video)).toEqual(["", "", "", "", ""]);
+});
+
+test("a colour tag of the wrong type is no tag at all", () => {
+  const [video] = parseFfprobeJson(
+    '{"streams":[{"codec_type":"video","pix_fmt":7,"color_space":null,"color_transfer":["bt709"],"color_primaries":{},"color_range":true}]}'
+  ).streams;
+  expect(colourOf(video)).toEqual(["", "", "", "", ""]);
+});
+
+test("a stream entry that is not an object states no colour either", () => {
+  expect(colourOf(parseFfprobeJson('{"streams":[42]}').streams[0])).toEqual(["", "", "", "", ""]);
+});

@@ -6,7 +6,10 @@ import { parseFfprobeJson } from "./ffprobeJson";
  *  determine, so a payload is built here the way ffprobe actually emits one. */
 const full = JSON.stringify({
   streams: [
-    { codec_type: "video", codec_name: "h264", width: "1920", height: "1080", duration: "4.020000" },
+    {
+      codec_type: "video", codec_name: "h264", width: "1920", height: "1080", duration: "4.020000",
+      pix_fmt: "yuv420p", color_range: "tv", color_space: "bt709", color_transfer: "bt709", color_primaries: "bt709",
+    },
     { codec_type: "audio", codec_name: "aac", duration: "4.010000" },
   ],
   format: { duration: "4.008000" },
@@ -14,14 +17,25 @@ const full = JSON.stringify({
 
 const info = (stdout: string) => videoInfoFromProbe(parseFfprobeJson(stdout), "clip.mp4");
 
-test("reads the dimensions, duration and audio flag off an ffprobe payload", () => {
+test("reads the dimensions, duration, audio flag and colour off an ffprobe payload", () => {
   expect(info(full)).toEqual({
     kind: "video",
     durationSec: 4.008,
     width: 1920,
     height: 1080,
     hasAudio: true,
+    color: { pixFmt: "yuv420p", space: "bt709", transfer: "bt709", primaries: "bt709", range: "tv" },
   });
+});
+
+test("an untagged video stream still carries a colour description, all empty", () => {
+  // Empty, not absent: the graph reads an absent description as "already
+  // BT.709", but an untagged SD clip is BT.601 and has to be converted.
+  const bare = JSON.stringify({
+    streams: [{ codec_type: "video", codec_name: "h264", width: "640", height: "480" }],
+    format: { duration: "2.000000" },
+  });
+  expect(info(bare).color).toEqual({ pixFmt: "", space: "", transfer: "", primaries: "", range: "" });
 });
 
 test("reports no audio for a payload carrying only a video stream", () => {

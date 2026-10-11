@@ -1,11 +1,15 @@
 import { FRAGMENTS } from "./filters";
 import { photoChain } from "./photo/filterGraph";
+import { sourceToBt709 } from "./colour";
 import { EXPORT_DIMS, type FirstFrame, type MediaInfo, type Recipe } from "./types";
 
 /** Spatial filter chain (everything except per-segment speed). Applied once to
- *  the source before it is split into time segments. */
-function spatialChain(recipe: Recipe, info: MediaInfo): string {
+ *  the source before it is split into time segments, and after the source is
+ *  brought to BT.709 SDR limited 8-bit, which every op below assumes. */
+function spatialChain(recipe: Recipe, info: MediaInfo, zscale: boolean): string {
   const parts: string[] = [];
+  const toBt709 = sourceToBt709(info, zscale);
+  if (toBt709) parts.push(toBt709);
   for (const op of recipe.video) {
     if (op.id === "encode") continue;
     const frag = FRAGMENTS[op.id]?.(op.params, info);
@@ -105,10 +109,10 @@ function coverFirstFrame(
 
 /** Video graph: spatial -> split -> per-segment trim+setpts -> concat -> [outv],
  *  with the first-frame branch, if any, on the concat output. */
-function videoComplex(recipe: Recipe, info: MediaInfo, fps: number): string {
+function videoComplex(recipe: Recipe, info: MediaInfo, fps: number, zscale: boolean): string {
   const n = recipe.segments.length;
   const b = boundaries(recipe, info);
-  const spatial = spatialChain(recipe, info);
+  const spatial = spatialChain(recipe, info, zscale);
   const lines = [`[0:v]${spatial ? spatial + "," : ""}split=${n}${splitLabels("v", n)}`];
   recipe.segments.forEach((seg, i) => {
     lines.push(
@@ -193,7 +197,12 @@ const DEFAULT_AUDIO_KBPS = 192;
 /** VBV window in seconds: `-bufsize` is `-maxrate` times this. */
 const VBV_WINDOW_SEC = 2;
 
-export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
+/**
+ * `zscale` says whether the running ffmpeg has the zscale filter, which the
+ * conversion of a non-BT.709 source uses (see `sourceToBt709`). Both bundled
+ * builds have it; the executor asks the binary rather than assuming.
+ */
+export function buildArgs(recipe: Recipe, info: MediaInfo, zscale = true): string[] {
   const enc = recipe.video.find((o) => o.id === "encode")?.params ?? {};
   const crf = String(enc.crf ?? 21);
   const preset = String(enc.preset ?? "medium");
@@ -215,8 +224,8 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
   const capKbps = Math.min(MAX_VIDEO_KBPS, fileCapKbps);
 
   const complex = info.hasAudio
-    ? `${videoComplex(recipe, info, fps)};${audioComplex(recipe, info)}`
-    : videoComplex(recipe, info, fps);
+    ? `${videoComplex(recipe, info, fps, zscale)};${audioComplex(recipe, info)}`
+    : videoComplex(recipe, info, fps, zscale);
   // The cover is the graph's second input, named here so the executor's
   // `-i <source>` is followed by `-i <cover>` and `[1:v]` means the still.
   // Frame mode's background is the next input after it, a single frame the
@@ -235,14 +244,19 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
 
   args.push("-c:v", "libx264", "-preset", preset);
 
-  if (recipe.identity === "iphone") {
-    args.push(
-      "-profile:v", "high",
-      "-colorspace", "bt709",
-      "-color_primaries", "bt709",
-      "-color_trc", "bt709",
-    );
-  }
+  if (recipe.identity === "iphone") args.push("-profile:v", "high");
+
+  // What the graph made the picture, stated for every identity: the tags are
+  // not an identity, they say how to read the numbers. Left out, the encoder
+  // takes the frames' own tags, and in frame mode those are the background
+  // JPEG's bt470bg — a player honouring them showed BT.709 green (30,190,40)
+  // as (41,217,42).
+  args.push(
+    "-colorspace", "bt709",
+    "-color_primaries", "bt709",
+    "-color_trc", "bt709",
+    "-color_range", "tv",
+  );
 
   args.push(
     "-crf", crf,
