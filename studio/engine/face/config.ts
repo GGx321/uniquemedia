@@ -6,8 +6,14 @@ import { z } from "zod";
  * profile skips it (YuNet detects profiles poorly and SFace is unreliable on
  * them); back skips it too, but a confidently detected face is suspicious —
  * the model ignored the "from behind" instruction.
+ *
+ * S5.6f: `body` is the gate's own pose, never a planner pose: a frame whose face
+ * is hidden or not meant to show (`faceVisibleOf` no or maybe — the phone over
+ * her face, her legs, a back view). Its likeness is only marked, never judged
+ * and never retried (policy.ts); the planner's `PoseSchema` stays 4-valued
+ * without it (scenes/schema.ts).
  */
-export const FacePoseSchema = z.enum(["front", "three-quarter", "profile", "back"]);
+export const FacePoseSchema = z.enum(["front", "three-quarter", "profile", "back", "body"]);
 export type FacePose = z.infer<typeof FacePoseSchema>;
 
 /**

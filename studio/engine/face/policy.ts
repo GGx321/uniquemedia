@@ -58,6 +58,16 @@ export function decideFaceVerdict(input: FaceGatePolicyInput, config: FaceGateCo
 
   if (pose === "profile") return { kind: "skipped-by-pose", faces: faces.length };
 
+  // S5.6f: a face-hidden or back frame. One face is marked (the likeness is kept, never judged); none is nothing to check. Never a retry.
+  if (pose === "body") {
+    const face = prominent[0];
+    if (face === undefined) return { kind: "skipped-by-pose", faces: faces.length };
+    if (similarity === undefined) {
+      throw new Error(`face/policy: pose "body" with a face needs a similarity score (compute the embedding and cosine before deciding)`);
+    }
+    return { kind: "marked", similarity, faces: faces.length, headRatio: headRatioOf(face, imageHeight) };
+  }
+
   if (pose === "back") {
     const face = prominent[0];
     // `face.score` is a plain number, but it originated in a Float32Array

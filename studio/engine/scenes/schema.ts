@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { CustomCategoryId, isCustomCategory, PoolText, SceneText, TimeOfDay } from "../../shared/engine";
-import { FacePoseSchema } from "../face/config";
+import type { FacePose } from "../face/config";
 import { CATEGORIES, SHOTS } from "./types";
 
 // The plan's on-disk/on-wire contract (T5a, item 4, invariant 6). Kept
@@ -28,7 +28,7 @@ export const ShotSchema = z.enum(SHOTS);
  * planner's own `pose` value and the face gate's `pose` input can never
  * drift into two different enums.
  */
-export const PoseSchema = FacePoseSchema;
+export const PoseSchema = z.enum(["front", "three-quarter", "profile", "back"]) satisfies z.ZodType<FacePose>;
 export type Pose = z.infer<typeof PoseSchema>;
 
 /** A selfie/mirror shot always holds the phone in one hand, so her face is

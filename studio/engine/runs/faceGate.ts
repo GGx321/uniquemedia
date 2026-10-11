@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
+import { faceVisibleOf } from "../../shared/scenes/captures";
+import type { FacePose } from "../face/config";
 import type { WorkerFaceGate } from "../face/worker/workerGate";
+import type { RunSlot } from "../scenes";
 import type { PhotoQa } from "../library";
 import { timeoutSignal } from "../money/timeoutSignal";
 import type { QaGate, QaInput, QaPrepareInput, QaVerdict } from "./qa";
@@ -105,8 +108,17 @@ export function clampCosine(similarity: number): number {
   return Math.min(1, Math.max(-1, similarity));
 }
 
-function qaOf(verdict: { kind: "match" | "mismatch"; similarity: number; headRatio: number }): PhotoQa {
+function qaOf(verdict: { kind: "match" | "mismatch" | "marked"; similarity: number; headRatio: number }): PhotoQa {
   return { faceCos: clampCosine(verdict.similarity), headRatio: verdict.headRatio };
+}
+
+/**
+ * S5.6f: the pose the face gate checks a slot under. A frame whose face is hidden or not meant to show (`faceVisibleOf` no or maybe: the phone over
+ * her face, her legs, a back view — an old back slot included) is checked as `body`: its likeness is marked, never judged and never retried. Every
+ * other slot keeps its own pose. `multiple-faces` is the one paid retry such a frame can still take (policy.ts checks it before the pose).
+ */
+export function facePoseOf(slot: RunSlot): FacePose {
+  return faceVisibleOf(slot) === "yes" ? slot.pose : "body";
 }
 
 /** Waits for `promise` without affecting it: rejects early if `signal` aborts first, but the underlying computation (and any other caller waiting on it) keeps running either way. */
@@ -246,9 +258,12 @@ export function createFaceQaGate(deps: FaceQaGateDeps): QaGate {
       // own header. The worker gate queues this behind any check already
       // running (FIFO) and terminates the worker if `input.signal` aborts
       // while it computes.
-      const verdict = await deps.faceGate.check({ pose: input.slot.pose, bytes: input.image.bytes, masterEmbedding }, input.signal);
+      const verdict = await deps.faceGate.check({ pose: facePoseOf(input.slot), bytes: input.image.bytes, masterEmbedding }, input.signal);
       switch (verdict.kind) {
         case "match":
+          return { verdict: "pass", qa: qaOf(verdict) };
+        case "marked":
+          // S5.6f: a face-hidden or back frame with one face: the likeness is kept for the tile, never judged, never retried.
           return { verdict: "pass", qa: qaOf(verdict) };
         case "skipped-by-pose":
           return { verdict: "pass" };

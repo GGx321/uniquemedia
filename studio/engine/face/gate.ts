@@ -95,7 +95,8 @@ export async function runFaceGate(
   const prominent = prominentFaces(boxes, config.multipleFaces.minRelativeArea);
 
   let similarity: number | undefined;
-  if ((input.pose === "front" || input.pose === "three-quarter") && prominent.length === 1) {
+  // `body` needs the score too: it is only marked, but the policy would otherwise throw and a gate throw stops the whole run (GateBroken).
+  if ((input.pose === "front" || input.pose === "three-quarter" || input.pose === "body") && prominent.length === 1) {
     const chosenBox = prominent[0];
     const face = rawFaces.find((row, i) => boxes[i] === chosenBox);
     if (face !== undefined) {

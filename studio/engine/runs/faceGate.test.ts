@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import type { Capture } from "../../shared/scenes/captures";
 import type { PlanSlot } from "../scenes";
 import { asLibraryReference, setupMoney, type Money } from "../openrouter/testing/fakes";
 import type { QaInput, QaPrepareInput } from "./qa";
@@ -385,6 +386,85 @@ describe("check() requires a prior prepare()", () => {
     const verdict = await gate.check(input({ masterSha256: MASTER_ORIGINAL_A_SHA256 }, m));
 
     expect(verdict.verdict).toBe("pass");
+  });
+});
+
+// S5.6f: a face-hidden or back frame is checked under the gate's `body` pose; its likeness is marked, never judged, and never retried.
+describe("face-hidden and body frames (S5.6f)", () => {
+  /** The pose the worker gate is asked to check for `slot`. */
+  async function poseSentFor(slot: PlanSlot): Promise<string> {
+    const m = await money();
+    let sent = "";
+    const gate = createFaceQaGate({
+      faceGate: fakeFaceGate({
+        check: async (checkInput) => {
+          sent = checkInput.pose;
+          return { kind: "skipped-by-pose", faces: 0 };
+        },
+      }),
+    });
+    await gate.prepare?.(prepareInput());
+    await gate.check(input({ slot }, m));
+    return sent;
+  }
+
+  /** A slot carrying a capture (S5.6b adds the field to the plan; the gate already reads it through `faceVisibleOf`). */
+  const withCapture = (capture: Capture, pose: PlanSlot["pose"] = "front", extra: { framing?: "legs" } = {}): PlanSlot & { capture: Capture; framing?: "legs" } => ({ ...SLOT, capture, pose, ...extra });
+
+  test("a marked verdict passes and stores the likeness as faceCos with the head ratio", async () => {
+    const m = await money();
+    const gate = createFaceQaGate({ faceGate: fakeFaceGate({ check: async () => ({ kind: "marked", similarity: 0.42, faces: 1, headRatio: 0.12 }) }) });
+    await gate.prepare?.(prepareInput());
+
+    expect(await gate.check(input({}, m))).toEqual({ verdict: "pass", qa: { faceCos: 0.42, headRatio: 0.12 } });
+  });
+
+  test("a marked verdict far below the identity threshold still passes, never a retry", async () => {
+    const m = await money();
+    const gate = createFaceQaGate({ faceGate: fakeFaceGate({ check: async () => ({ kind: "marked", similarity: -0.3, faces: 1, headRatio: 0.12 }) }) });
+    await gate.prepare?.(prepareInput());
+
+    expect(await gate.check(input({}, m))).toEqual({ verdict: "pass", qa: { faceCos: -0.3, headRatio: 0.12 } });
+  });
+
+  test("a marked likeness a rounding step past 1 is clamped into the photo schema's range", async () => {
+    const m = await money();
+    const gate = createFaceQaGate({ faceGate: fakeFaceGate({ check: async () => ({ kind: "marked", similarity: 1.0000001, faces: 1, headRatio: 0.12 }) }) });
+    await gate.prepare?.(prepareInput());
+
+    expect(await gate.check(input({}, m))).toMatchObject({ qa: { faceCos: 1 } });
+  });
+
+  test("a mirror-hidden frame is checked under body", async () => {
+    expect(await poseSentFor(withCapture("mirror-hidden"))).toBe("body");
+  });
+
+  test("a pov-legs frame is checked under body", async () => {
+    expect(await poseSentFor(withCapture("pov-legs"))).toBe("body");
+  });
+
+  test("a low-feet frame is checked under body", async () => {
+    expect(await poseSentFor(withCapture("low-feet"))).toBe("body");
+  });
+
+  test("a legs-framed frame is checked under body", async () => {
+    expect(await poseSentFor(withCapture("friend", "front", { framing: "legs" }))).toBe("body");
+  });
+
+  test("an old back slot (no capture, a friend shot) is checked under body", async () => {
+    expect(await poseSentFor({ ...SLOT, shot: "friend", pose: "back" })).toBe("body");
+  });
+
+  test("a front frame whose face shows keeps its pose", async () => {
+    expect(await poseSentFor(withCapture("friend", "front"))).toBe("front");
+  });
+
+  test("a three-quarter frame whose face shows keeps its pose", async () => {
+    expect(await poseSentFor({ ...SLOT, pose: "three-quarter" })).toBe("three-quarter");
+  });
+
+  test("a profile frame whose face shows keeps its pose", async () => {
+    expect(await poseSentFor({ ...SLOT, shot: "friend", pose: "profile" })).toBe("profile");
   });
 });
 
