@@ -90,7 +90,17 @@ describe("«Фитнес» at home is self-shot: on a timer, at arm's length or 
 
 
 describe("side or back to the mirror, only her reflection is in the picture", () => {
-  const SIDE_TO_MIRROR = /\bsideways\b|\bside to the mirror\b|\bback to the mirror\b/;
+  // S5.6R (round C): «turns to check her outfit» turns her side to the mirror too; the sweep found it 608 times a plain mirror selfie in «Гламур».
+  const SIDE_TO_MIRROR = /\bsideways\b|\bside to the mirror\b|\bback to the mirror\b|\bturns to check\b/;
+
+  test("the sweep holds side-to-the-mirror moments of «Дом» and «Гламур»", () => {
+    const side = ALL.filter((f) => SIDE_TO_MIRROR.test(f.slot.activity));
+    expect([...new Set(side.map((f) => f.slot.category))].sort()).toEqual(["glamour", "home"]);
+  });
+
+  test("no side-to-the-mirror moment is a plain mirror selfie", () => {
+    expect(offenders(ALL, (f) => SIDE_TO_MIRROR.test(f.slot.activity) && f.capture === "mirror")).toEqual(NONE);
+  });
 
   test("a sideways moment is never a plain mirror selfie that claims her face is clearly visible", () => {
     expect(offenders(ALL, (f) => SIDE_TO_MIRROR.test(f.slot.activity) && shotOf(f.capture) === "mirror" && /face clearly visible/.test(f.prompt()))).toEqual(NONE);

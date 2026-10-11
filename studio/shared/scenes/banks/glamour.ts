@@ -67,14 +67,15 @@ export const GLAMOUR: CategoryBank = {
       details: ["some makeup on the counter", "a curling iron"],
       times: ["evening"],
       mirror: true,
-      // S5.6R (the owner: at home she shoots herself): getting ready is in her mirror or at arm's length; the friend's photos go out with her.
+      // S5.6R (the owner: at home she shoots herself): getting ready is in her mirror or at arm's length; the friend's photos go out with her. Turning to check
+      // her outfit puts her side to the mirror, where only her reflection shows (the owner): the phone over her face, never a plain mirror selfie.
       moments: [
         { text: "applies lipstick", motion: "she presses her lips together a bit", captures: ["mirror", "selfie"], twoHanded: false, gaze: "focus" },
         { text: "puts on mascara", motion: "she blinks slowly", captures: ["mirror"], twoHanded: false, gaze: "focus" },
         { text: "tucks her hair behind one ear", motion: "she tucks her hair back slowly", captures: ["mirror", "selfie"], twoHanded: false, hair: "own" },
         { text: "puts on her earrings", motion: "she turns her head a little", captures: ["mirror", "mirror-hidden"], twoHanded: false, gaze: "focus" },
         { text: "sprays on some perfume", motion: "she tilts her neck a little", captures: ["mirror", "mirror-hidden", "selfie"], twoHanded: false },
-        { text: "turns to check her outfit", motion: "she turns a little to each side", captures: ["mirror-hidden", "mirror"], twoHanded: false },
+        { text: "turns to check her outfit", motion: "she turns a little to each side", captures: ["mirror-hidden"], twoHanded: false, angle: "three-quarter", mirrorBack: true },
       ],
     },
     {

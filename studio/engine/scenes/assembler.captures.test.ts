@@ -95,7 +95,8 @@ describe("back or side to the mirror", () => {
   test("it is added by the tag alone: no sentence without the lookup, and none on any other moment of a real plan", () => {
     const tagged = slotOf("mirror-hidden", { location: "her bathroom", activity: "sits on the counter by the mirror", outfit: "an open-back top and grey jeans", pose: "three-quarter" });
     expect(assemble(tagged)).not.toContain(MIRROR_BACK_LINE);
-    const tags = (activity: string): boolean => activity === "sits on the counter by the mirror" || activity === "stands sideways to the mirror";
+    // S5.6R (round C): «Гламур»'s «turns to check her outfit» is tagged too.
+    const tags = (activity: string): boolean => ["sits on the counter by the mirror", "stands sideways to the mirror", "turns to check her outfit"].includes(activity);
     let seen = 0;
     for (let seed = 1; seed <= 40; seed++) {
       for (const slot of plan({ seed, count: 60, categories: ["home", "travel", "photoshoot", "glamour", "fitness"], poses: { profile: true, back: true } }).slots) {

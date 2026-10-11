@@ -187,7 +187,12 @@ describe("what any content must keep", () => {
     expect(counter).toMatchObject({ captures: ["mirror-hidden"], angle: "three-quarter", outfits: ["an open-back top and grey jeans"] });
     // r1.5 (owner note): side to the mirror, only her reflection is in the picture, so S5.6b's capture line adds that sentence for this moment alone.
     expect(counter?.mirrorBack).toBe(true);
-    expect(BANK_CATEGORIES.flatMap((c) => places(c).flatMap((p) => p.moments)).filter((m) => m.mirrorBack === true)).toHaveLength(2);
+    // S5.6R (round C): «Гламур»'s turn to check her outfit is side to the mirror too, so it shows only her reflection.
+    expect(BANK_CATEGORIES.flatMap((c) => places(c).flatMap((p) => p.moments.filter((m) => m.mirrorBack === true).map((m) => `${c}: ${m.text}`)))).toEqual([
+      "home: stands sideways to the mirror",
+      "home: sits on the counter by the mirror",
+      "glamour: turns to check her outfit",
+    ]);
     for (const moment of moments("home").filter((m) => /lies on her stomach/.test(m.text))) expect(moment.outfits ?? []).toContain("grey leggings and a cropped tee");
     expect(CUES.find((c) => c.text === "her tongue out a little")?.captures).toEqual(["above", "prone"]);
   });
