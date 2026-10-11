@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { NoFaceInReferenceError } from "../face/noFaceError";
 import { asLibraryReference } from "../openrouter/testing/fakes";
-import { embedFaceReference, masterOriginalFor } from "./faceBytes";
+import { embedFaceReference, masterOriginalFor, withReferenceRetry } from "./faceBytes";
 
 // The bytes a face embedding is computed from (shared by the photo runs' QA gate and the reference portrait batch). The WASM decoder reads JPEG and PNG only, and a CMYK JPEG fails
 // it too, so the original file is used when it is a JPEG or PNG, and the <= 1024 px JPEG reference stands in for anything else, or after a decode failure.
@@ -23,6 +23,39 @@ describe("masterOriginalFor", () => {
 
   test("takes the JPEG reference for a WebP original, which the decoder cannot read", () => {
     expect(masterOriginalFor(WEBP_ORIGINAL, REFERENCE)).toBe(REFERENCE);
+  });
+});
+
+describe("withReferenceRetry", () => {
+  const live = new AbortController().signal;
+
+  test("runs the work on the usable bytes and, when it fails to decode, once more on the reference", async () => {
+    const seen: Uint8Array[] = [];
+    const result = await withReferenceRetry(
+      async (bytes) => {
+        seen.push(bytes);
+        if (seen.length === 1) throw new Error("unsupported colour space");
+        return "ok";
+      },
+      { original: JPEG_ORIGINAL, reference: REFERENCE, signal: live },
+    );
+
+    expect(result).toBe("ok");
+    expect(seen).toEqual([JPEG_ORIGINAL, REFERENCE]);
+  });
+
+  test("does not retry a photo with no face", async () => {
+    let calls = 0;
+    await expect(
+      withReferenceRetry(
+        async () => {
+          calls++;
+          throw new NoFaceInReferenceError();
+        },
+        { original: JPEG_ORIGINAL, reference: REFERENCE, signal: live },
+      ),
+    ).rejects.toBeInstanceOf(NoFaceInReferenceError);
+    expect(calls).toBe(1);
   });
 });
 

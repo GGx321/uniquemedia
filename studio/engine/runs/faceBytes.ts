@@ -28,12 +28,21 @@ export async function embedFaceReference(args: {
   reference: LibraryReference;
   signal: AbortSignal;
 }): Promise<Float32Array> {
-  const { embed, original, reference, signal } = args;
+  const { embed, ...rest } = args;
+  return withReferenceRetry((bytes) => embed(bytes, rest.signal), rest);
+}
+
+/**
+ * The one retry rule behind every face embedding of a reference photo (the runs' QA gate prepares its gates with it, the portrait batch embeds with it): `work` runs on
+ * `masterOriginalFor`'s bytes, and a failure that is not a genuine «no face», not already a run on the reference and not after `signal` aborted is tried once more on the reference.
+ */
+export async function withReferenceRetry<T>(work: (bytes: Uint8Array) => Promise<T>, source: { original: Uint8Array; reference: LibraryReference; signal: AbortSignal }): Promise<T> {
+  const { original, reference, signal } = source;
   const bytes = masterOriginalFor(original, reference);
   try {
-    return await embed(bytes, signal);
+    return await work(bytes);
   } catch (error) {
     if (bytes === reference || error instanceof NoFaceInReferenceError || signal.aborted) throw error;
-    return embed(reference, signal);
+    return work(reference);
   }
 }

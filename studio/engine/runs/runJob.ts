@@ -15,7 +15,7 @@ import { classifyFailure } from "./failures";
 import { foldRun, nextAttemptId, paidAttempts, RunEventSchema, type AttemptOutcome, type LedgerView, type RunEvent, type RunState, type SlotEnd, type SlotState } from "./journal";
 import { RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, plannedSlots, planRoute, runWriterConfig, type RunPlan } from "./plan";
 import type { CpuPool, NetworkPool, Release } from "./pools";
-import { masterOriginalFor } from "./faceBytes";
+import { withReferenceRetry } from "./faceBytes";
 import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaPrepareInput, type QaVerdict } from "./qa";
 import { runWriterPhase } from "./writerPhase";
 
@@ -332,30 +332,9 @@ async function prepareGates(target: MasterTarget, reference: LibraryReference): 
     if (original === null) {
       return { ok: false, end: { status: "failed", error: { code: "NOT_FOUND", detail: `avatar ${avatarId} has no usable master photo` } } };
     }
-    const masterOriginal = masterOriginalFor(original, reference);
-    try {
-      await runPrepare(target, masterOriginal, signal);
-    } catch (error) {
-      // M1: masterOriginalFor() only sniffs the FORMAT (JPEG/PNG vs. not) —
-      // a JPEG/PNG original can still fail to DECODE (e.g. a CMYK color
-      // space; ffmpeg/import tolerate it, the WASM decoder does not,
-      // decode/realBackend.ts). A genuine "no face" is not retried (the
-      // reference is the same photo, just smaller — it would not have a
-      // different face); nor is anything already run against the reference
-      // (nothing left to fall back to). Any other failure gets exactly one
-      // retry against loadMaster()'s own <=1024px reference, already
-      // downscaled to a format (JPEG) the decoder is known to read — under
-      // the SAME signal/timeout, so the retry never doubles the deadline
-      // budget. 2b whole-slice review blocker: never once `signal` has
-      // already aborted (the run's own cancel, or this function's own
-      // timeout) — a gate's own prepare() starts a real embedding
-      // computation the caller's signal does not actually stop (T7b's
-      // H2/N11: the shared computation runs on its own internal
-      // AbortController), so retrying here after a stop would start real,
-      // wasted work that outlives the job instead of just rethrowing.
-      if (masterOriginal === reference || error instanceof NoFaceInReferenceError || signal.aborted) throw error;
-      await runPrepare(target, reference, signal);
-    }
+    // M1: a JPEG/PNG original can still fail to DECODE (a CMYK colour space) and a WebP is not read at all: the one retry rule of runs/faceBytes.ts (a genuine «no face» is final, nothing is
+    // retried once the signal has aborted, and the retry shares this signal and timeout, so it never doubles the deadline).
+    await withReferenceRetry((bytes) => runPrepare(target, bytes, signal), { original, reference, signal });
     return { ok: true };
   } catch (error) {
     if (target.signal.aborted) return { ok: false, end: { status: "cancelled" } };
