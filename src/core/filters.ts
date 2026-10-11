@@ -37,6 +37,19 @@ function panWindow(pct: number, panX: number, panY: number, info: MediaInfo): Pa
   return { w, h, x: place(marginX, panX), y: place(marginY, panY) };
 }
 
+/**
+ * How far luma-only uniform noise of strength `s` lifts pure black, measured as
+ * the peak of the gray plane of a black 1080x1920 yuv420p frame (the plane the
+ * JPEG's luma is made from): 0 up to strength 2, then 1, 1, 2, 2, 3, 3, 5, 5, 6,
+ * 6 for 3..12. Above 12 (past the sampler's ceiling) it is half the strength,
+ * rounded up. Noise on the chroma planes lifted an RGB channel about three
+ * times as far and speckled colour onto the picture, hence luma only.
+ */
+const NOISE_BLACK_LIFT = [0, 0, 0, 1, 1, 2, 2, 3, 3, 5, 5, 6, 6] as const;
+function noiseBlackLift(s: number): number {
+  return s < NOISE_BLACK_LIFT.length ? NOISE_BLACK_LIFT[s] : Math.ceil(s / 2);
+}
+
 export const FRAGMENTS: Record<string, Fragment> = {
   /** Each term is emitted only when the recipe drew one, in the order the video
    *  path has always written them — its chains are pinned byte-for-byte.
@@ -131,11 +144,17 @@ export const FRAGMENTS: Record<string, Fragment> = {
     if (s <= 0) return null;
     // `t` is temporal — meaningless for a still, so photos pass temporal=false.
     if (p.temporal !== false) return `noise=alls=${s}:allf=t+u`;
-    // A still: uniform noise lifts pure black by up to half its strength, which
-    // glows on an AMOLED screen, so the black point it added comes back out.
-    const b = Math.ceil(s / 2);
-    const channel = `clip((val-${b})*255/${255 - b},0,255)`;
-    return `noise=alls=${s}:allf=u,lutrgb=r='${channel}':g='${channel}':b='${channel}'`;
+    // A still: uniform noise lifts pure black, which glows on an AMOLED
+    // screen, so the lift comes back out. Only the lifted floor is touched: the
+    // knee maps [black + b, black + 2b) back down to [black, black + 2b) and
+    // leaves everything from black + 2b up alone, so no shadow, gradient or
+    // midtone gets darker. It works on the luma plane in place (`lutyuv`),
+    // relative to that plane's own `minval` (16 limited, 0 full range), so there
+    // is no round trip through RGB and no assumption about the range.
+    const b = noiseBlackLift(s);
+    if (b === 0) return `noise=c0s=${s}:c0f=u`;
+    const y = `if(lt(val,minval+${2 * b}),max(minval,minval+2*(val-minval-${b})),val)`;
+    return `noise=c0s=${s}:c0f=u,lutyuv=y='${y}'`;
   },
 
   /** `{ on }` alone keeps the video path's bare `vignette`, unchanged.

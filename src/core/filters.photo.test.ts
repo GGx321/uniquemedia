@@ -185,20 +185,22 @@ test("noise keeps the temporal flag when `temporal` is not specified (video path
 });
 
 test("noise drops the temporal flag when `temporal` is false", () => {
-  expect(FRAGMENTS.noise({ strength: 5, temporal: false }, info)).toContain("noise=alls=5:allf=u");
+  expect(FRAGMENTS.noise({ strength: 5, temporal: false }, info)).toContain("noise=c0s=5:c0f=u");
 });
 
-/** Uniform noise lifts pure black by up to half its strength (measured: max 2
- *  at 6, max 6 at 12) and clamps the other half away. On a still that glows on
- *  an AMOLED screen, so the chain takes the black point back out afterwards. */
-test("a still's noise is followed by a black point of half its strength", () => {
+/** Uniform noise lifts pure black (measured peak per RGB channel:
+ *  1 per channel at 6, 4 at 12, with luma-only noise) and clamps the
+ *  other half away. On a still that
+ *  glows on an AMOLED screen, so a knee takes the lift back out: only the
+ *  floor the noise lifted is remapped, everything above twice the lift stays. */
+test("a still's noise is followed by a luma knee over the lifted floor only", () => {
   const out = FRAGMENTS.noise({ strength: 5, temporal: false }, info);
-  const channel = "clip((val-3)*255/252,0,255)";
-  expect(out).toBe(`noise=alls=5:allf=u,lutrgb=r='${channel}':g='${channel}':b='${channel}'`);
+  const luma = "if(lt(val,minval+4),max(minval,minval+2*(val-minval-2)),val)";
+  expect(out).toBe(`noise=c0s=5:c0f=u,lutyuv=y='${luma}'`);
 });
 
 test("the video's noise carries no black point", () => {
-  expect(FRAGMENTS.noise({ strength: 5 }, info)).not.toContain("lutrgb");
+  expect(FRAGMENTS.noise({ strength: 5 }, info)).not.toContain("lut");
 });
 
 test("noise stays a no-op at zero strength regardless of the temporal flag", () => {

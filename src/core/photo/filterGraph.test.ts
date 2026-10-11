@@ -72,7 +72,7 @@ test("the off-centre vignette centre is resolved against the frame size", () => 
 
 test("photo noise carries no temporal component", () => {
   const vf = vfOf(buildPhotoArgs(recipe, info));
-  expect(vf).toContain("noise=alls=4:allf=u");
+  expect(vf).toContain("noise=c0s=4:c0f=u");
   expect(vf).not.toContain("allf=t");
 });
 
