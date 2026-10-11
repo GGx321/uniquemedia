@@ -9,10 +9,6 @@ test("eq fragment formats params", () => {
   expect(out).toBe("eq=brightness=0.02:contrast=1.03:saturation=0.97:gamma=1.01");
 });
 
-test("hue fragment", () => {
-  expect(FRAGMENTS.hue({ h: -4 }, info)).toBe("hue=h=-4");
-});
-
 test("zoomcrop scales then crops to source size", () => {
   expect(FRAGMENTS.zoomcrop({ zoomPct: 4 }, info)).toBe(
     "scale=iw*1.04:ih*1.04,crop=1280:720"
@@ -27,11 +23,6 @@ test("rotate converts degrees to radians", () => {
 
 test("noise zero strength is a no-op (null)", () => {
   expect(FRAGMENTS.noise({ strength: 0 }, info)).toBeNull();
-});
-
-test("vignette off is null, on emits filter", () => {
-  expect(FRAGMENTS.vignette({ on: false }, info)).toBeNull();
-  expect(FRAGMENTS.vignette({ on: true }, info)).toBe("vignette");
 });
 
 test("perspective emits 8 coordinates", () => {

@@ -6,9 +6,6 @@ type Fragment = (p: Params, info: MediaInfo) => string | null;
 
 const n = (v: unknown) => Number(v);
 
-/** Round down to the chroma grid — subsampled formats need even geometry. */
-const even = (v: number) => Math.floor(v / 2) * 2;
-
 interface PanWindow {
   w: number;
   h: number;
@@ -69,8 +66,6 @@ export const FRAGMENTS: Record<string, Fragment> = {
     }
     return terms.length > 0 ? `eq=${terms.join(":")}` : null;
   },
-
-  hue: (p) => `hue=h=${n(p.h)}`,
 
   zoomcrop: (p, info) => {
     const f = round(1 + n(p.zoomPct) / 100, 4);
@@ -155,40 +150,6 @@ export const FRAGMENTS: Record<string, Fragment> = {
     if (b === 0) return `noise=c0s=${s}:c0f=u`;
     const y = `if(lt(val,minval+${2 * b}),max(minval,minval+2*(val-minval-${b})),val)`;
     return `noise=c0s=${s}:c0f=u,lutyuv=y='${y}'`;
-  },
-
-  /** `{ on }` alone keeps the video path's bare `vignette`, unchanged.
-   *
-   *  `angle`/`x0`/`y0` produce an off-centre vignette, with `x0`/`y0` given as
-   *  fractions of the frame. ffmpeg's vignette hard-blacks every pixel further
-   *  than hypot(w/2, h/2) from its centre (`dnorm > 1` returns 0), so moving the
-   *  centre by as little as 3% puts a pure-black wedge in the far corner —
-   *  measured. Padding the canvas first pushes that cutoff outside the visible
-   *  area; the pad is cropped back off immediately after. */
-  vignette: (p, info) => {
-    if (p.on === false) return null;
-    if (p.angle === undefined || p.x0 === undefined || p.y0 === undefined) {
-      return p.on ? "vignette" : null;
-    }
-    const { width: w, height: h } = info;
-    const dx = (n(p.x0) - 0.5) * w;
-    const dy = (n(p.y0) - 0.5) * h;
-    // Farthest visible corner from the vignette centre, plus 2% headroom for
-    // integer rounding; the pad must reach at least that far.
-    const reach = Math.hypot(w / 2 + Math.abs(dx), h / 2 + Math.abs(dy)) * 1.02;
-    const factor = reach / Math.hypot(w / 2, h / 2);
-    const padW = even(Math.max(w + 2, Math.ceil(w * factor)));
-    const padH = even(Math.max(h + 2, Math.ceil(h * factor)));
-    // Same offset for pad and crop, so the frame comes back pixel-identical.
-    const padX = even(Math.floor((padW - w) / 2));
-    const padY = even(Math.floor((padH - h) / 2));
-    const x0 = Math.round(padX + w / 2 + dx);
-    const y0 = Math.round(padY + h / 2 + dy);
-    return (
-      `pad=${padW}:${padH}:${padX}:${padY},` +
-      `vignette=angle=${n(p.angle)}:x0=${x0}:y0=${y0},` +
-      `crop=${w}:${h}:${padX}:${padY}`
-    );
   },
 
   hflip: (p) => (p.on ? "hflip" : null),

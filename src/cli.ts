@@ -21,8 +21,9 @@ async function main() {
       "  --first-frame says what every video copy opens on: off (the default) leaves the footage,\n" +
       "  black paints one pure black frame, photo puts the --cover image there — run through the\n" +
       "  photo recipe with each copy's own seed, then fitted to the video. Ignored for a still.\n" +
-      "  --frame on puts every video copy in a frame: scaled to 90-95% of the canvas (the --format size; 9:16 for original), kept off the\n" +
-      "  edges, at a random offset, over a random nature background from the bundled pack. Off by default.\n" +
+      "  --frame on puts every video copy in a frame: scaled to 90-95% of the canvas (the\n" +
+      "  --format size, 9:16 for original), kept off the edges, at a random offset, over a\n" +
+      "  random nature background from the bundled pack. Off by default.\n" +
       "  --black-first-frame is the old spelling of --first-frame black and still works.");
     process.exit(1);
   }

@@ -87,8 +87,8 @@ export function photoChain(recipe: PhotoRecipe, info: MediaInfo): string {
   const cover = geometryCover(recipe, info);
   if (cover < 1) {
     // Closes the geometry section rather than trailing the chain: everything
-    // downstream (the vignette's pad/crop, the export framing) assumes the frame
-    // is back at its nominal size.
+    // downstream (the export framing) assumes the frame is back at its nominal
+    // size.
     parts.splice(
       afterGeometry,
       0,

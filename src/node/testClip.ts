@@ -84,8 +84,7 @@ export const STORY_EDGE_MARKS: ReadonlyArray<{ x: number; y: number }> = [
  * This is the shape the crop recipe was measured to damage — a 1080x1920 story
  * whose graphics sit at the edges, where a 4% off-centre crop window takes a
  * whole glyph off one side. The four marks sit inside that band, at the middle
- * of each side rather than in a corner so the vignette cannot dim them below a
- * threshold, and far enough from the centre block that a search around them
+ * of each side rather than in a corner so the geometry cannot push them off the frame, and far enough from the centre block that a search around them
  * cannot mistake it for one of them.
  *
  * PNG rather than JPEG, in RGB: the background has to be exactly 0, which is

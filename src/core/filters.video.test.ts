@@ -6,7 +6,7 @@ import type { ResolvedCopyOptions, MediaInfo, Operation } from "./types";
 /**
  * `filters.ts` is now shared: the photo path added branches inside fragments
  * the video path has shipped for months (`noise` gained a temporal switch,
- * `vignette` gained an off-centre form, `pancrop` appeared beside `zoomcrop`).
+ * `pancrop` appeared beside `zoomcrop`).
  * Nothing pinned the video strings byte-for-byte, so a change to a shared
  * fragment could alter every rendered clip while the whole suite stayed green.
  *
@@ -35,14 +35,6 @@ function spatialChain(ops: Operation[]): string {
     .filter((frag): frag is string => frag !== null && frag !== undefined)
     .join(",");
 }
-
-test("the video sampler's vignette shape stays the bare filter", () => {
-  // `{ on }` with no centre is the video shape. The photo path passes
-  // angle/x0/y0 and gets a pad/vignette/crop sandwich; that branch must stay
-  // unreachable from a video recipe.
-  expect(FRAGMENTS.vignette({ on: true }, info)).toBe("vignette");
-  expect(FRAGMENTS.vignette({ on: false }, info)).toBeNull();
-});
 
 test("the video sampler's noise shape keeps the temporal flag", () => {
   // Video omits `temporal` entirely; a still passes `temporal: false` and drops
@@ -83,10 +75,9 @@ test("no photo-only branch is reachable from a video recipe, across 200 seeds", 
     for (const op of sampleRecipe(opts, seed, 1).video) {
       const frag = FRAGMENTS[op.id]?.(op.params, info);
       if (frag === null || frag === undefined) continue;
-      if (op.id === "vignette") expect(frag).toBe("vignette");
       if (op.id === "noise") expect(frag).toMatch(/^noise=alls=\d+:allf=t\+u$/);
-      // `pad`/`crop=W:H:X:Y` belong to the still's off-centre vignette and
-      // pancrop; the only crop a clip draws is the zoom-crop's `crop=W:H`.
+      // `pad`/`crop=W:H:X:Y` belong to a still's pancrop; the only crop a
+      // clip draws is the zoom-crop's `crop=W:H`.
       expect(frag).not.toContain("pad=");
       expect(frag.includes("crop=") && !frag.includes(`crop=${info.width}:${info.height}`)).toBe(
         false

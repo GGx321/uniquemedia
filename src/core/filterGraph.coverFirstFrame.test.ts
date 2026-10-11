@@ -33,11 +33,9 @@ const coverRecipe: PhotoRecipe = {
   exportFormat: "original",
   ops: [
     { id: "eq", params: { contrast: 1.02, saturation: 0.99, gamma: 0.98 } },
-    { id: "hue", params: { h: -2 } },
     { id: "pancrop", params: { windowPct: 0.96, panX: 0.5, panY: -0.5 } },
     { id: "rotate", params: { deg: 0.1 } },
     { id: "lenscorrection", params: { k1: 0.008 } },
-    { id: "vignette", params: { angle: 0.5, x0: 0.4, y0: 0.6 } },
     { id: "noise", params: { strength: 4, temporal: false } },
   ],
   encode: { quality: 5, subsampling: "420" },

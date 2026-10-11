@@ -17,11 +17,9 @@ const recipe: PhotoRecipe = {
   exportFormat: "original",
   ops: [
     { id: "eq", params: { brightness: 0.01, contrast: 1.02, saturation: 0.99, gamma: 1 } },
-    { id: "hue", params: { h: -2 } },
     { id: "pancrop", params: { windowPct: 0.96, panX: 0.5, panY: -0.5 } },
     { id: "rotate", params: { deg: 0.1 } },
     { id: "lenscorrection", params: { k1: 0.008 } },
-    { id: "vignette", params: { angle: 0.5, x0: 0.4, y0: 0.6 } },
     { id: "noise", params: { strength: 4, temporal: false } },
   ],
   encode: { quality: 5, subsampling: "420" },
@@ -50,8 +48,7 @@ test("the chain keeps recipe order and ends with setsar=1", () => {
   const parts = vf.split(",");
   expect(parts[parts.length - 1]).toBe("setsar=1");
   expect(vf.indexOf("eq=brightness=0.01")).toBeLessThan(vf.indexOf("crop=1152:864"));
-  expect(vf.indexOf("crop=1152:864")).toBeLessThan(vf.indexOf("vignette="));
-  expect(vf).toContain("hue=h=-2");
+  expect(vf.indexOf("crop=1152:864")).toBeLessThan(vf.indexOf("noise="));
   expect(vf).toContain("lenscorrection=k1=0.008");
   expect(vf).toContain("rotate=");
 });
@@ -60,14 +57,6 @@ test("pancrop renders as an off-centre crop scaled back to the source size", () 
   const vf = vfOf(buildPhotoArgs(recipe, info));
   // 1200x900 * 0.96 -> 1152x864, free margin 48x36, panX 0.5 -> x=36, panY -0.5 -> y=9
   expect(vf).toContain("crop=1152:864:36:9,scale=1200:900");
-});
-
-test("the off-centre vignette centre is resolved against the frame size", () => {
-  const vf = vfOf(buildPhotoArgs(recipe, info));
-  const m = vf.match(/pad=\d+:\d+:(\d+):(\d+),vignette=angle=0\.5:x0=(\d+):y0=(\d+)/);
-  if (!m) throw new Error(`no padded vignette in ${vf}`);
-  expect((Number(m[3]) - Number(m[1])) / info.width).toBeCloseTo(0.4, 2);
-  expect((Number(m[4]) - Number(m[2])) / info.height).toBeCloseTo(0.6, 2);
 });
 
 test("photo noise carries no temporal component", () => {
@@ -205,26 +194,6 @@ test("a recipe with no edge-eating geometry gets no cover step", () => {
     )
   );
   expect(vf).toBe("eq=brightness=0.01:contrast=1:saturation=1:gamma=1,crop=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1");
-});
-
-/** The vignette pads the canvas and crops it back at a fixed offset, which is
- *  only correct if the frame still has its nominal size — so the cover has to
- *  close the geometry section, not trail at the end of the chain. */
-test("the cover closes the geometry section before the vignette pads the canvas", () => {
-  const vf = vfOf(buildPhotoArgs(recipe, info));
-  // The cover is the offset-less `crop=A:B,scale=W:H`; pancrop's crop carries x/y.
-  const cover = vf.search(new RegExp(`crop=\\d+:\\d+,scale=${info.width}:${info.height}`));
-  expect(cover).toBeGreaterThan(vf.indexOf("lenscorrection="));
-  expect(cover).toBeLessThan(vf.indexOf("pad="));
-});
-
-test("the padded vignette crop matches the frame the cover restores", () => {
-  const vf = vfOf(buildPhotoArgs(recipe, info));
-  const m = vf.match(/pad=(\d+):(\d+):(\d+):(\d+)/);
-  if (!m) throw new Error(`no pad in ${vf}`);
-  expect(Number(m[1])).toBeGreaterThanOrEqual(info.width + Number(m[3]));
-  expect(Number(m[2])).toBeGreaterThanOrEqual(info.height + Number(m[4]));
-  expect(vf).toContain(`crop=${info.width}:${info.height}:${m[3]}:${m[4]}`);
 });
 
 test("the cover runs after the geometry ops and before the export framing", () => {

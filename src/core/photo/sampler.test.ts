@@ -143,7 +143,7 @@ for (const intensity of INTENSITIES) {
     for (let seed = 0; seed < 150; seed++) {
       const r = samplePhotoRecipe({ ...opts, strength: 1.5 }, seed, intensity);
       // brightness is not bounded here, it is absent — see the dedicated test.
-      // contrast and gamma are one-sided, so their neutral value IS a bound.
+      // contrast and saturation are one-sided, so their neutral value IS a bound.
       expect(num(r, "eq", "contrast")).toBeGreaterThanOrEqual(1);
       expect(num(r, "eq", "contrast")).toBeLessThanOrEqual(1.25);
       expect(num(r, "eq", "saturation")).toBeGreaterThanOrEqual(1);

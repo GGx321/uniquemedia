@@ -14,7 +14,7 @@ import { DEFAULT_FRAME_PACK_DIR, listFrameBackgrounds } from "./framePack";
 const FFPROBE = ffprobeStatic.path.replace("app.asar", "app.asar.unpacked");
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
 const MAX_FILE_BYTES = 400 * 1024;
-const FREE_LICENCE = /^(CC0|Public domain)/i;
+const FREE_LICENCE = /^CC0\b/i;
 
 interface Credit {
   file: string;
@@ -67,7 +67,7 @@ test("every background has a credit, and every credit a background", async () =>
   expect(credits().map((c) => c.file).sort()).toEqual(files);
 });
 
-test("every credit is CC0 or public domain, with an author and a Commons source page", () => {
+test("every credit is CC0, with an author and a Commons source page", () => {
   for (const c of credits()) {
     expect(c.licence).toMatch(FREE_LICENCE);
     expect(c.author.trim().length).toBeGreaterThan(0);
