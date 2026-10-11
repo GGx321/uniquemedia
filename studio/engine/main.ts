@@ -260,8 +260,9 @@ parentPort.once("message", (event) => {
       // The runtime's own fetch (Electron's Node); only the OpenRouter client uses it.
       fetch: (url, init) => fetch(url, init),
       qaGates,
-      // The same worker gate serves the render's focus points (`videos.render`, S8); without it every photo takes the stand-in point.
-      ...("error" in loaded ? { faceGateLoadError: loaded.error } : { faceGate: loaded.faceGate }),
+      // The same worker gate serves the render's focus points (`videos.render`, S8); without it every photo takes the stand-in point. It also embeds an imported photo and ranks the reference
+      // portraits against it (`avatars.generatePortraits`, S5.3c); without it that batch is refused for free. The runs' own QA gate above is unchanged.
+      ...("error" in loaded ? { faceGateLoadError: loaded.error } : { faceGate: loaded.faceGate, portraitFaceGate: loaded.faceGate }),
       text: { gate: textGate, loadError: () => textLoadError },
       // 3a.9: only an E2E build lets the smoke stop a commit right after the rename (the file is under its final name, the record
       // is not linked) to kill the engine there. `STUDIO_E2E` is a build-time constant: a production bundle has neither the
