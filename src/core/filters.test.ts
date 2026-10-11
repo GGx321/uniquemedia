@@ -5,8 +5,10 @@ import type { MediaInfo } from "./types";
 const info: MediaInfo = { kind: "video", durationSec: 5, width: 1280, height: 720, hasAudio: true };
 
 test("eq fragment formats params", () => {
-  const out = FRAGMENTS.eq({ brightness: 0.02, contrast: 1.03, saturation: 0.97, gamma: 1.01 }, info);
-  expect(out).toBe("eq=brightness=0.02:contrast=1.03:saturation=0.97:gamma=1.01");
+  const out = FRAGMENTS.eq({ contrast: 1.03, saturation: 0.97 }, info);
+  expect(out).toBe(
+    "lutyuv=y='clip(round((val-(minval+maxval)/2)*1.03+(minval+maxval)/2),minval,maxval)',hue=s=0.97"
+  );
 });
 
 test("zoomcrop scales then crops to source size", () => {

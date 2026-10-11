@@ -27,7 +27,7 @@ const recipe: Recipe = {
     { fraction: 0.5, speed: 0.97 },
   ],
   video: [
-    { id: "eq", params: { brightness: 0.01, contrast: 1.0, saturation: 1.0, gamma: 1 } },
+    { id: "eq", params: { contrast: 1.0, saturation: 1.0 } },
     { id: "encode", params: { crf: 23, fps: 30, gop: 60, keyintMin: 30, preset: "faster", audioKbps: 128 } },
   ],
   audio: [{ id: "aeq", params: { gain: 1.0 } }],

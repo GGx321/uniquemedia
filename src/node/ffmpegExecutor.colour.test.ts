@@ -237,6 +237,13 @@ beforeAll(async () => {
     src.full,
   ]);
   await render("full");
+  // The same source with the recipe's contrast and saturation on: the
+  // contrast has to keep black on the floor of the range the numbers are in
+  // once they reach it, which is limited range by then.
+  const toned = sampleRecipe(opts, 5, 1);
+  toned.video = toned.video.map((op) => (op.id === "eq" ? { ...op, params: { contrast: 1.05, saturation: 1.05 } } : op));
+  out.fullToned = join(dir, "full_toned_out.mp4");
+  await exec.render(src.full, await exec.probe(src.full), toned, out.fullToned);
 }, 120_000);
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -271,6 +278,12 @@ test("a full-range source's black and white land on 16 and 235", () => {
   expect(lumaAt(src.full, rows, 1)).toEqual([255, 0]);
   // ...and the copy's are limited range.
   const [white, black] = lumaAt(out.full, rows, 1.05);
+  expect(Math.abs(white - 235)).toBeLessThanOrEqual(1);
+  expect(Math.abs(black - 16)).toBeLessThanOrEqual(1);
+});
+
+test("the recipe's contrast keeps a full-range source's black and white on 16 and 235", () => {
+  const [white, black] = lumaAt(out.fullToned, [H / 4, (3 * H) / 4], 1.05);
   expect(Math.abs(white - 235)).toBeLessThanOrEqual(1);
   expect(Math.abs(black - 16)).toBeLessThanOrEqual(1);
 });

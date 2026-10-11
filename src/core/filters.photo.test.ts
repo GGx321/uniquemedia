@@ -96,31 +96,29 @@ test("noise stays a no-op at zero strength regardless of the temporal flag", () 
   expect(FRAGMENTS.noise({ strength: 0, temporal: false }, info)).toBeNull();
 });
 
-/** `eq` is the one fragment shared with the video path that a still now feeds
- *  differently: a photo draws no `brightness` at all. ffmpeg's `eq` brightness
- *  is ADDITIVE, so it lifts pure black off zero — measured at 5/255 for
- *  brightness=0.03 — while contrast, gamma and saturation are multiplicative
- *  and leave zero at zero. On an AMOLED phone, which is where a story is read,
- *  a black pixel is an off pixel and 7/255 glows. It buys nothing in exchange:
- *  the whole `eq` block moves PDQ by 0 on real content. */
-test("eq omits brightness entirely when the recipe draws none", () => {
-  expect(FRAGMENTS.eq({ contrast: 1.02, saturation: 0.99, gamma: 1.01 }, info)).toBe(
-    "eq=contrast=1.02:saturation=0.99:gamma=1.01"
-  );
+/** The tone op is shared by the video, the still and the cover, and both
+ *  samplers feed it the same two terms. Contrast is a luma lookup about the
+ *  middle of the plane's range, clipped to that range, so a still's black
+ *  stays at 0 and a clip's at 16; saturation is `hue`'s, which keeps a neutral
+ *  pixel neutral where `eq`'s turned 128 into 127. `toneNeutral.test.ts`
+ *  measures both through ffmpeg. */
+const LUT_102 = "lutyuv=y='clip(round((val-(minval+maxval)/2)*1.02+(minval+maxval)/2),minval,maxval)'";
+
+test("the tone op emits contrast, then saturation", () => {
+  expect(FRAGMENTS.eq({ contrast: 1.02, saturation: 0.99 }, info)).toBe(`${LUT_102},hue=s=0.99`);
 });
 
-test("eq still emits every term in the order the video path pins", () => {
-  expect(
-    FRAGMENTS.eq({ brightness: 0.01, contrast: 1.02, saturation: 0.99, gamma: 1.01 }, info)
-  ).toBe("eq=brightness=0.01:contrast=1.02:saturation=0.99:gamma=1.01");
+test("a tone term left at 1 emits nothing", () => {
+  expect(FRAGMENTS.eq({ contrast: 1.02, saturation: 1 }, info)).toBe(LUT_102);
+  expect(FRAGMENTS.eq({ contrast: 1, saturation: 1.05 }, info)).toBe("hue=s=1.05");
+  expect(FRAGMENTS.eq({ contrast: 1, saturation: 1 }, info)).toBeNull();
+  expect(FRAGMENTS.eq({}, info)).toBeNull();
 });
 
-test("eq keeps a brightness of exactly zero when one is drawn", () => {
-  // Absent and zero are different statements: the video sampler can legitimately
-  // draw 0.0 and its chain is pinned byte-for-byte including that term.
-  expect(FRAGMENTS.eq({ brightness: 0, contrast: 1, saturation: 1, gamma: 1 }, info)).toBe(
-    "eq=brightness=0:contrast=1:saturation=1:gamma=1"
-  );
+test("the tone op is never ffmpeg's eq", () => {
+  // `eq`'s integer saturation is the green cast; its contrast put limited-range
+  // black under the floor. Neither may come back through this fragment.
+  expect(FRAGMENTS.eq({ contrast: 1.25, saturation: 1.3 }, info)).not.toContain("eq=");
 });
 
 interface FitPad {

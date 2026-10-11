@@ -31,7 +31,7 @@ const off: Recipe = {
     { fraction: 0.5, speed: 0.97 },
   ],
   video: [
-    { id: "eq", params: { brightness: 0.01, contrast: 1.02, saturation: 0.99, gamma: 1 } },
+    { id: "eq", params: { contrast: 1.02, saturation: 0.99 } },
     { id: "encode", params: { crf: 21, fps: 30, gop: 60, keyintMin: 30, preset: "faster", audioKbps: 128 } },
   ],
   audio: [{ id: "aeq", params: { gain: 1.5 } }],
@@ -46,7 +46,7 @@ const DRAWBOX = "drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='eq(n,0)'";
 /** The graph exactly as it ships today with the toggle off. A characterisation
  *  pin: the toggle must be invisible in the graph until it is switched on. */
 const BASELINE_OFF =
-  "[0:v]eq=brightness=0.01:contrast=1.02:saturation=0.99:gamma=1," +
+  "[0:v]lutyuv=y='clip(round((val-(minval+maxval)/2)*1.02+(minval+maxval)/2),minval,maxval)',hue=s=0.99," +
   "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,split=2[v0][v1];" +
   "[v0]trim=start=0.000:end=2.500,setpts=(PTS-STARTPTS)/1.03[s0];" +
   "[v1]trim=start=2.500:end=5.000,setpts=(PTS-STARTPTS)/0.97[s1];" +

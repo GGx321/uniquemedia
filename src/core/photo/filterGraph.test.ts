@@ -16,7 +16,7 @@ const recipe: PhotoRecipe = {
   intensity: 1,
   exportFormat: "original",
   ops: [
-    { id: "eq", params: { brightness: 0.01, contrast: 1.02, saturation: 0.99, gamma: 1 } },
+    { id: "eq", params: { contrast: 1.02, saturation: 0.99 } },
     { id: "pancrop", params: { windowPct: 0.96, panX: 0.5, panY: -0.5 } },
     { id: "rotate", params: { deg: 0.1 } },
     { id: "lenscorrection", params: { k1: 0.008 } },
@@ -47,7 +47,7 @@ test("the chain keeps recipe order and ends with setsar=1", () => {
   const vf = vfOf(buildPhotoArgs(recipe, info));
   const parts = vf.split(",");
   expect(parts[parts.length - 1]).toBe("setsar=1");
-  expect(vf.indexOf("eq=brightness=0.01")).toBeLessThan(vf.indexOf("crop=1152:864"));
+  expect(vf.indexOf("hue=s=0.99")).toBeLessThan(vf.indexOf("crop=1152:864"));
   expect(vf.indexOf("crop=1152:864")).toBeLessThan(vf.indexOf("noise="));
   expect(vf).toContain("lenscorrection=k1=0.008");
   expect(vf).toContain("rotate=");
@@ -186,14 +186,17 @@ test("a recipe with no edge-eating geometry gets no cover step", () => {
   const vf = vfOf(
     buildPhotoArgs(
       geometry([
-        { id: "eq", params: { brightness: 0.01, contrast: 1, saturation: 1, gamma: 1 } },
+        { id: "eq", params: { contrast: 1.02, saturation: 1 } },
         { id: "rotate", params: { deg: 0 } },
         { id: "lenscorrection", params: { k1: 0 } },
       ]),
       info
     )
   );
-  expect(vf).toBe("eq=brightness=0.01:contrast=1:saturation=1:gamma=1,crop=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1");
+  expect(vf).toBe(
+    "lutyuv=y='clip(round((val-(minval+maxval)/2)*1.02+(minval+maxval)/2),minval,maxval)'," +
+      "crop=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1"
+  );
 });
 
 test("the cover runs after the geometry ops and before the export framing", () => {

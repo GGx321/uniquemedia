@@ -17,7 +17,7 @@ const recipe: Recipe = {
     { fraction: 0.5, speed: 0.97 },
   ],
   video: [
-    { id: "eq", params: { brightness: 0.01, contrast: 1.02, saturation: 0.99, gamma: 1 } },
+    { id: "eq", params: { contrast: 1.02, saturation: 0.99 } },
     { id: "noise", params: { strength: 0 } }, // no-op, must be skipped
     { id: "encode", params: { crf: 21, fps: 30, gop: 60, keyintMin: 30, preset: "medium", audioKbps: 128 } },
   ],
@@ -30,8 +30,8 @@ test("uses filter_complex (not -vf): spatial chain before split, N trims, concat
   const args = buildArgs(recipe, info);
   expect(args).not.toContain("-vf");
   const fc = complexOf(args);
-  expect(fc.indexOf("eq=brightness=0.01")).toBeGreaterThanOrEqual(0);
-  expect(fc.indexOf("eq=brightness=0.01")).toBeLessThan(fc.indexOf("split=2"));
+  expect(fc.indexOf("[0:v]lutyuv=y=")).toBeGreaterThanOrEqual(0);
+  expect(fc.indexOf("hue=s=0.99")).toBeLessThan(fc.indexOf("split=2"));
   expect(fc).not.toContain("noise"); // no-op skipped
   expect(fc).toContain("scale=1080:1920:force_original_aspect_ratio=increase");
   expect(fc).toContain("crop=1080:1920");
@@ -76,7 +76,7 @@ test("original format: skips fixed scale/crop, keeps setsar + effect filters", (
   expect(fc).not.toContain("scale=1080");
   expect(fc).not.toContain("crop=1080");
   expect(fc).toContain("setsar=1");
-  expect(fc).toContain("eq=brightness=0.01");
+  expect(fc).toContain("hue=s=0.99");
   expect(fc).toContain("crop=trunc(iw/2)*2:trunc(ih/2)*2");
 });
 

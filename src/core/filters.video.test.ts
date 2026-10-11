@@ -45,9 +45,11 @@ test("the video sampler's noise shape keeps the temporal flag", () => {
 });
 
 test("the whole video spatial chain is byte-identical for seed 1", () => {
-  // Re-pinned when hue, vignette, brightness and gamma left the video recipe.
+  // Re-pinned when hue, vignette, brightness and gamma left the video recipe,
+  // and again when `eq` gave way to an exact contrast lookup and `hue`'s
+  // saturation (eq's turned neutral chroma 128 into 127, a green-yellow cast).
   expect(spatialChain(sampleRecipe(opts, 1, 1).video)).toBe(
-    "eq=contrast=1.0376:saturation=1.0002," +
+    "lutyuv=y='clip(round((val-(minval+maxval)/2)*1.0376+(minval+maxval)/2),minval,maxval)',hue=s=1.0002," +
       "scale=iw*1.0658:ih*1.0658,crop=1280:720," +
       "rotate=0.00084:ow=rotw(0.00084):oh=roth(0.00084):c=black," +
       "perspective=2.4:1.4:1277.6:1.4:0:720:1280:720:interpolation=linear," +
@@ -58,7 +60,7 @@ test("the whole video spatial chain is byte-identical for seed 1", () => {
 
 test("the whole video spatial chain is byte-identical for seed 2", () => {
   expect(spatialChain(sampleRecipe(opts, 2, 1).video)).toBe(
-    "eq=contrast=1.0441:saturation=1.026," +
+    "lutyuv=y='clip(round((val-(minval+maxval)/2)*1.0441+(minval+maxval)/2),minval,maxval)',hue=s=1.026," +
       "scale=iw*1.0586:ih*1.0586,crop=1280:720," +
       "rotate=0.000066:ow=rotw(0.000066):oh=roth(0.000066):c=black," +
       "perspective=2.3:1.3:1277.7:1.3:0:720:1280:720:interpolation=linear," +
