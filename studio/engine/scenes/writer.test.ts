@@ -349,6 +349,10 @@ describe("readWriterAnswer", () => {
         expect(readWriterAnswer(output([{ slotIndex: 1, sentence: "She laughs at the counter, looking at the viewer." }]), slots)).toMatchObject({ ok: true });
       });
 
+      test("a candid contradicts a gaze into the phone in any pose", () => {
+        expect(contradictsPose("She stares into the phone with a grin.", "front", "candid")).toBe(true);
+      });
+
       test("contradictsPose takes the shot: a candid contradicts a gaze at the viewer in any pose, a friend's snap does not", () => {
         expect(contradictsPose("She looks at the viewer.", "front", "candid")).toBe(true);
         expect(contradictsPose("She looks at the viewer.", "three-quarter", "candid")).toBe(true);
@@ -457,6 +461,11 @@ describe("detectors", () => {
     ["profile", "she smiles into the lens.", true],
     ["profile", "she is not looking at the viewer, her eyes on the window.", false],
     ["front", "she looks at the viewer and laughs.", false],
+    // 5a.2 (S5.6d): «into the phone» is a gaze into the lens in its own right (the selfie's phone is the camera); looking down AT her phone stays allowed.
+    ["back", "she looks into the phone and laughs.", true],
+    ["profile", "she smiles into the phone with her chin lifted.", true],
+    ["profile", "she is not looking into the phone, her eyes on the window.", false],
+    ["front", "she looks into the phone and laughs.", false],
   ] as const)("contradictsPose(%j, %j) -> %p", (pose, sentence, expected) => {
     expect(contradictsPose(sentence, pose)).toBe(expected);
   });

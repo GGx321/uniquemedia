@@ -383,10 +383,10 @@ function phoneNamedInSelfie(slot: ReadableSlot, sentence: string): boolean {
  */
 const CAMERA_GAZE_VERB = "(?:look(?:ing|s)?|gaz(?:ing|es)?|star(?:ing|es)?|glanc(?:ing|es)?|smil(?:ing|es)?|peer(?:ing|s)?)";
 const CAMERA_GAZE_NEGATOR = "(?:not|isn't|is\\s+not|never|without|no\\s+longer)\\s+";
-const CAMERA_GAZE = new RegExp(
-  `\\b(?<!${CAMERA_GAZE_NEGATOR})${CAMERA_GAZE_VERB}\\b[^.]{0,25}?\\b(?:at|toward|towards|into)\\s+the\\s+(?:camera|viewer|lens)\\b`,
-  "i",
-);
+// 5a.2 (S5.6d): «into the phone» is a gaze into the lens in its own right (a selfie's phone is the camera), so it is a phrase of its own and not a fourth
+// noun after «at|toward|into the». «at the phone» stays allowed: a look down at her own phone is a slot's activity, not a gaze at the viewer.
+const CAMERA_GAZE_TARGET = "(?:(?:at|toward|towards|into)\\s+the\\s+(?:camera|viewer|lens)|into\\s+the\\s+phone)\\b";
+const CAMERA_GAZE = new RegExp(`\\b(?<!${CAMERA_GAZE_NEGATOR})${CAMERA_GAZE_VERB}\\b[^.]{0,25}?\\b${CAMERA_GAZE_TARGET}`, "i");
 
 /**
  * Whether `sentence` contradicts `pose` in a cheaply detectable way (T5c,
