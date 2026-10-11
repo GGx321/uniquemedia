@@ -16,7 +16,7 @@ export const LLM_ONLY_CATEGORY_POOL: CategoryPool = {
     { name: "a Paris bakery counter", times: ["morning"], activities: [{ text: "a croissant break", twoHanded: false }, { text: "a box of pastries", twoHanded: true }], mirror: true },
     { name: "a bridge over the Seine", times: ["golden hour", "evening"], activities: [{ text: "a long look at the river", twoHanded: false }, { text: "a slow walk", twoHanded: false }], mirror: false },
     { name: "a flower stall", times: ["midday"], activities: [{ text: "a bouquet in her arms", twoHanded: false }, { text: "a stem between her fingers", twoHanded: false }], mirror: false },
-    { name: "a tiny bookshop", times: ["midday", "evening"], activities: [{ text: "a shelf at eye level", twoHanded: false }, { text: "a book held open", twoHanded: false }], mirror: false },
+    { name: "a quiet bookshop", times: ["midday", "evening"], activities: [{ text: "a shelf at eye level", twoHanded: false }, { text: "a book held open", twoHanded: false }], mirror: false },
   ],
   outfits: ["a beige trench coat and jeans", "a striped knit top and a midi skirt", "a long cardigan and trousers"],
   shotDeck: ["friend", "selfie", "mirror", "candid", "friend"],

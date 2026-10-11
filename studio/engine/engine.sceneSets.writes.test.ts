@@ -5,7 +5,9 @@ import type { EventMessage, ResponseMessage, SceneSetView } from "../shared/engi
 import { manifestTraits } from "./avatars/records";
 import { openLibrary, type LibraryDeps } from "./library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
-import { ownScene, sampleSet } from "./library/testing/sceneSetSample";
+import { llmOnlySet, ownScene, sampleSet } from "./library/testing/sceneSetSample";
+import { LLM_ONLY_REF, llmOnlySnapshot } from "./scenes/testing/llmOnlyFixture";
+import { seedLlmOnlyCategory } from "./testing/llmOnlyCategory";
 import type { PlanSlot } from "./scenes";
 import { poolOf } from "./scenes/poolGen";
 import { SHOT_LABEL } from "./scenes/writer";
@@ -47,6 +49,9 @@ async function seedAvatar(vibe?: string): Promise<string> {
   const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(traits), descriptor: GOOD });
   const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
   await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+  // 5a.2 (S5.6c2, m11): the set's scenes are `cat-llm-only-fixture` scenes, which the code template cannot write, so these tests exercise the model path (a
+  // built-in scene is rewritten by the template at no cost: the twins are in the «redraw» tests of sceneSets/reviewPlan.test.ts and reviewWriteJob.test.ts).
+  await seedLlmOnlyCategory(libraryDir());
   return avatar.id;
 }
 
@@ -80,6 +85,8 @@ async function seedCategory(): Promise<void> {
 interface SeedOptions {
   /** Scenes 1 and 2 are in the custom category (the set's snapshot of it is stale). */
   custom?: boolean;
+  /** The scenes are «Дом» scenes the code template writes (the default is `cat-llm-only-fixture`, which only the model writes). */
+  builtIn?: boolean;
   /** An own scene 5 written from an idea, then hand-edited. */
   own?: boolean;
   /** Writes already started (the next is `writes + 1`). */
@@ -93,13 +100,14 @@ interface SeedOptions {
 /** A set as earlier writes left it: four written planned scenes, maybe an own one, and the records of the writes that are not resolved. */
 async function seedReview(avatarId: string, options: SeedOptions = {}): Promise<string> {
   const { library } = await openLibrary(libraryDir(), { now: steppingClock("2026-09-01T10:00:00.000Z"), newId: sequentialIds(`seedset${++seeded}`) });
-  const base = sampleSet({ sceneSetId: SET, avatarId, runId: RUN, count: options.count ?? 4, written: options.count ?? 4 });
+  const seedOptions = { sceneSetId: SET, avatarId, runId: RUN, count: options.count ?? 4, written: options.count ?? 4 };
+  const base = options.builtIn === true ? sampleSet(seedOptions) : llmOnlySet(seedOptions);
   const planned = base.scenes.map((s) => ({ ...s, text: OLD, ...(options.custom === true && s.sceneId <= 2 ? { slot: { ...s.slot, ...CAFE } } : {}) }));
   const scenes = options.own === true ? [...planned, ownScene(5, { idea: "кофе на балконе утром", text: "Typed by hand, not the idea.", edited: true, shot: "selfie", pose: "front" })] : planned;
   await library.sceneSets.create({
     ...base,
     scenes,
-    ...(options.custom === true ? { categories: [{ ref: CAT, name: "Кофейни Парижа", label: "Paris cafes (old)", style: "phone" }], request: { ...base.request, categories: ["home", CAT] } } : {}),
+    ...(options.custom === true ? { categories: [{ ref: CAT, name: "Кофейни Парижа", label: "Paris cafes (old)", style: "phone" }, llmOnlySnapshot()], request: { ...base.request, categories: [LLM_ONLY_REF, CAT] } } : {}),
     ...(options.poses === undefined ? {} : { request: { ...base.request, poses: options.poses } }),
     write: null,
     writes: options.writes ?? 0,
@@ -409,7 +417,7 @@ describe("scenes.write: a rewrite", () => {
     expect(asked).toContain(scene?.place?.location ?? "?");
     expect(asked).toContain("Parisian cafes (current)");
     expect(asked).not.toContain("Paris cafes (old)");
-    expect(fileOf(avatarId).categories).toEqual([{ ref: CAT, name: "Кофейни Парижа", label: "Parisian cafes (current)", style: "editorial" }]);
+    expect(fileOf(avatarId).categories).toEqual([{ ref: CAT, name: "Кофейни Парижа", label: "Parisian cafes (current)", style: "editorial" }, llmOnlySnapshot()]);
     // Scenes written earlier keep their text.
     expect(after.scenes.slice(1).map((s) => s.text)).toEqual([OLD, OLD, OLD]);
   });
@@ -1165,7 +1173,7 @@ describe("a crashed «Дописать» does not leave a stale «Готово»
     const avatarId = await seedAvatar();
     // 35 scenes, 25 written; the last job said «Готово 20 из 35» before the owner typed into five more.
     const { library } = await openLibrary(libraryDir(), { now: steppingClock("2026-09-01T10:00:00.000Z"), newId: sequentialIds(`stale${++seeded}`) });
-    const base = sampleSet({ sceneSetId: SET, avatarId, runId: RUN, count: 35, written: 25 });
+    const base = llmOnlySet({ sceneSetId: SET, avatarId, runId: RUN, count: 35, written: 25 });
     await library.sceneSets.create({ ...base, write: { k: 1, kind: "compose", jobId: "job-seed-0001", stoppedBy: "network" }, writes: 1, lastOutcome: { total: 35, written: 20, gaveUp: 0 } });
     const gate = held();
     const { engine, events } = await engineOver(sceneNetwork({ writer: gate.handler }));
@@ -1193,7 +1201,7 @@ describe("a store refusal is not a transient disk error", () => {
   test("an accepted chunk whose set is gone is not retried: the store said no, and no is not a hiccup", async () => {
     const avatarId = await seedAvatar();
     const { library } = await openLibrary(libraryDir(), { now: steppingClock("2026-09-01T10:00:00.000Z"), newId: sequentialIds(`refuse${++seeded}`) });
-    await library.sceneSets.create({ ...sampleSet({ sceneSetId: SET, avatarId, runId: RUN, count: 3 }), write: { k: 1, kind: "compose", jobId: "job-seed-0001" }, writes: 1 });
+    await library.sceneSets.create({ ...llmOnlySet({ sceneSetId: SET, avatarId, runId: RUN, count: 3 }), write: { k: 1, kind: "compose", jobId: "job-seed-0001" }, writes: 1 });
     const gate = held();
     const { engine, events } = await engineOver(sceneNetwork({ writer: gate.handler }));
     const view = await setOf(engine, avatarId);
@@ -1362,7 +1370,7 @@ describe("an accepted answer whose save meets a read the OS fails (fix round 2)"
 describe("m1 on a built-in category (wave 5b)", () => {
   test("m1 redraw on a built-in category sends 0 writer requests", async () => {
     const avatarId = await seedAvatar();
-    await seedReview(avatarId);
+    await seedReview(avatarId, { builtIn: true });
     const net = sceneNetwork();
     const { engine, events } = await engineOver(net);
     const before = fileOf(avatarId).scenes;

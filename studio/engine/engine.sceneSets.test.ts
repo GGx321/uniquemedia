@@ -8,7 +8,9 @@ import type { EventMessage, ResponseMessage, SceneSetView } from "../shared/engi
 import { manifestTraits } from "./avatars/records";
 import { openLibrary } from "./library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
-import { sampleSet } from "./library/testing/sceneSetSample";
+import { llmOnlySet } from "./library/testing/sceneSetSample";
+import { LLM_ONLY_REF } from "./scenes/testing/llmOnlyFixture";
+import { seedLlmOnlyCategory } from "./testing/llmOnlyCategory";
 import type { LedgerLine } from "./money/ledger";
 import { chatBody, fakeFetch, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import { command, engineSettings, failed, GOOD, jobEnd, NOW, OFFLINE, ok, portraitPng, startEngine, TRAITS, until, useEngineDir, writeLedger } from "./testing/engineHarness";
@@ -44,6 +46,8 @@ async function seedAvatar(): Promise<string> {
   const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
   const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
   await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+  // 5a.2 (S5.6c2, m11): the model path of these tests plans from `cat-llm-only-fixture`; a built-in category is written by the code template with no request.
+  await seedLlmOnlyCategory(libraryDir());
   return avatar.id;
 }
 
@@ -60,7 +64,7 @@ interface SeedOptions {
 async function seedSet(avatarId: string, options: SeedOptions = {}): Promise<string> {
   const { library } = await openLibrary(libraryDir(), { now: steppingClock("2026-09-01T10:00:00.000Z"), newId: sequentialIds(`seedset${++seeded}`) });
   const sceneSetId = options.sceneSetId ?? SET;
-  const set = sampleSet({ sceneSetId, avatarId, runId: options.runId ?? RUN, count: options.count ?? 35, written: options.written ?? 0 });
+  const set = llmOnlySet({ sceneSetId, avatarId, runId: options.runId ?? RUN, count: options.count ?? 35, written: options.written ?? 0 });
   await library.sceneSets.create({ ...set, write: options.write ?? null, writes: options.write?.k ?? 0 });
   return sceneSetId;
 }
@@ -152,7 +156,7 @@ const RUN_SCHEMA = z.object({ n: z.number() });
 function composeCommand(avatarId: string, over: Record<string, unknown> = {}): unknown {
   const count = typeof over.count === "number" ? over.count : 20;
   // The accepted worst case a window would send: what the estimate says (chunks of 25, two attempts each at the ceiling).
-  return command("scenes.compose", { avatarId, count, categories: ["home"], poses: POSES, acceptedWorstMicros: Math.ceil(count / 25) * 2 * ATTEMPT, ...over });
+  return command("scenes.compose", { avatarId, count, categories: [LLM_ONLY_REF], poses: POSES, acceptedWorstMicros: Math.ceil(count / 25) * 2 * ATTEMPT, ...over });
 }
 
 function composed(response: ResponseMessage): { sceneSetId: string; jobId: string | null } {
@@ -228,11 +232,39 @@ describe("scenes.estimateCompose", () => {
   test("is the writer's worst case for the scenes at the prices it can get: chunks of 25, two attempts each", async () => {
     const avatarId = await seedAvatar();
     const { engine } = await engineOver(sceneNetwork());
-    const worst = async (count: number) => estimateOf(await engine.handle(command("scenes.estimateCompose", { avatarId, count, categories: ["home"], poses: POSES }))).worstMicros;
+    // 5a.2 (S5.6c2, m11): the model path is `cat-llm-only-fixture`; a built-in category is written by the code template, so its twin below costs nothing.
+    const worst = async (count: number, categories: string[] = [LLM_ONLY_REF]) => estimateOf(await engine.handle(command("scenes.estimateCompose", { avatarId, count, categories, poses: POSES }))).worstMicros;
 
     expect(await worst(20)).toBe(2 * ATTEMPT);
     expect(await worst(26)).toBe(4 * ATTEMPT);
     expect(await worst(100)).toBe(8 * ATTEMPT);
+  });
+
+  test("a built-in category composes for nothing: the code template writes every scene, so the estimate is $0", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await engineOver(sceneNetwork());
+    const estimate = async (count: number) => estimateOf(await engine.handle(command("scenes.estimateCompose", { avatarId, count, categories: ["home"], poses: POSES })));
+
+    for (const count of [1, 20, 26, 100]) expect(await estimate(count)).toMatchObject({ expectedMicros: 0, worstMicros: 0 });
+  });
+
+  test("Home 50 plus the uncovered fixture 50 is three writer chunks at two attempts: $0.225", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await engineOver(sceneNetwork());
+    const mixed = estimateOf(await engine.handle(command("scenes.estimateCompose", { avatarId, count: 100, categories: ["home", LLM_ONLY_REF], poses: POSES })));
+    expect(mixed.worstMicros).toBe(3 * 2 * ATTEMPT);
+  });
+
+  test("a built-in compose sends no writer request, reserves nothing and writes the whole set", async () => {
+    const avatarId = await seedAvatar();
+    const net = sceneNetwork();
+    const { engine, events } = await engineOver(net);
+    const { jobId } = composed(await engine.handle(composeCommand(avatarId, { count: 30, categories: ["home"], acceptedWorstMicros: 0 })));
+    await jobEnd(events, jobId ?? "none");
+
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(ledgerReserves()).toEqual([]);
+    expect((await setOf(engine, avatarId)).scenes.every((s) => s.text !== null)).toBe(true);
   });
 
   test("an empty set is free", async () => {
@@ -490,6 +522,7 @@ describe("scenes.compose", () => {
     const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits({ ...TRAITS, vibe: "zebra lantern marmalade" }), descriptor: GOOD });
     const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
     await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+    await seedLlmOnlyCategory(libraryDir());
     const net = sceneNetwork();
     const { engine, events } = await engineOver(net);
     const { jobId } = composed(await engine.handle(composeCommand(avatar.id, { count: 30 })));
@@ -738,7 +771,7 @@ describe("the state machine at every crash point", () => {
   test("killed after chunk 1 was written, before chunk 2: stopped (closed) with the 10 scenes of chunk 2 waiting", async () => {
     const avatarId = await seedAvatar();
     const { library } = await openLibrary(libraryDir(), { now: steppingClock(), newId: sequentialIds("c1") });
-    const set = sampleSet({ sceneSetId: SET, avatarId, runId: RUN, count: 35, written: 25 });
+    const set = llmOnlySet({ sceneSetId: SET, avatarId, runId: RUN, count: 35, written: 25 });
     await library.sceneSets.create({ ...set, write: compose, writes: 1 });
     await writeLedger(dir(), [reserve(attemptId(1, 1)), settle(attemptId(1, 1), 11_000)]);
     const { engine } = await engineOver(sceneNetwork());
@@ -787,7 +820,7 @@ describe("scenes.write: «Дописать»", () => {
   test("writes only the chunks still waiting, from their next unused id, and ends with the set ready", async () => {
     const avatarId = await seedAvatar();
     const { library } = await openLibrary(libraryDir(), { now: steppingClock(), newId: sequentialIds("w1") });
-    await library.sceneSets.create({ ...sampleSet({ sceneSetId: SET, avatarId, runId: RUN, count: 35, written: 25 }), write: compose, writes: 1 });
+    await library.sceneSets.create({ ...llmOnlySet({ sceneSetId: SET, avatarId, runId: RUN, count: 35, written: 25 }), write: compose, writes: 1 });
     await writeLedger(dir(), [reserve(attemptId(1, 1)), settle(attemptId(1, 1), 11_000), reserve(attemptId(2, 1)), settle(attemptId(2, 1), 0)]);
     const net = sceneNetwork();
     const { engine, events } = await engineOver(net);

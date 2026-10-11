@@ -3,6 +3,7 @@ import { CategoryPool as CategoryPoolSchema, type CategoryPool } from "../../sha
 import { covers } from "../../shared/scenes/custom";
 import { coversOfStored } from "./coverage";
 import { poolOf } from "./poolGen";
+import { PoolSchema } from "./pools";
 import { LLM_ONLY_CATEGORY_POOL, LLM_ONLY_POOL, LLM_ONLY_REF } from "./testing/llmOnlyFixture";
 
 /** A pool whose every activity reads after «she is» and whose shots are a friend's: the template writes all of it. */
@@ -20,6 +21,8 @@ const GERUND_POOL: CategoryPool = {
 describe("coversOfStored", () => {
   test("the test-only fixture is a valid stored pool the template cannot write", () => {
     expect(() => CategoryPoolSchema.parse(LLM_ONLY_CATEGORY_POOL)).not.toThrow();
+    // The library only keeps a pool the engine's own rules accept (no youth word in a text, etc.): a fixture it would refuse could not be seeded.
+    expect(PoolSchema.safeParse(LLM_ONLY_POOL).success).toBe(true);
     expect(covers(LLM_ONLY_POOL)).toBe(false);
   });
 
