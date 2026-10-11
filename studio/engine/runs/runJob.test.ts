@@ -17,8 +17,10 @@ import type { ImageResult, OpenRouterClientOptions, OpenRouterFetch } from "../o
 import { plan as planScenes, planWithPools, POOLS, type PlanSlot } from "../scenes";
 import { BANKS } from "../../shared/scenes/banks";
 import { CUSTOM_POOL, CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
+import { LLM_ONLY_POOL, LLM_ONLY_REF, llmOnlySnapshot } from "../scenes/testing/llmOnlyFixture";
+import type { CoversOf } from "../../shared/scenes/writerBound";
 import { attemptPaid, RunEventSchema, type RunEvent } from "./journal";
-import { buildRunPlan, FALLBACK_IMAGE_MODEL, plannedSlots, RunPlanSchema, runEstimate, type RunPlan } from "./plan";
+import { buildRunPlan, FALLBACK_IMAGE_MODEL, plannedSlots, RunPlanSchema, runEstimate, sceneCategory, type RunPlan } from "./plan";
 import { CpuPool, NetworkPool } from "./pools";
 import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaVerdict } from "./qa";
 import { createAgeGate } from "./ageGate";
@@ -97,11 +99,16 @@ async function openMoney(clock: () => number): Promise<{ ledger: Ledger; budget:
 
 // ---------- the run ----------
 
-async function newRun(count: number, opts: { cap?: number; imageModel?: string; avatar?: string; imageQuality?: ImageQuality | null; cameraRealism?: boolean } = {}): Promise<RunPlan> {
+// 5a.2 (S5.6c2, m11): a built-in run is written by the code template with no writer request, so the runs of the writer-money tests plan from
+// `cat-llm-only-fixture`, whose activities the template cannot write (every slot goes to the model). `builtIn: true` plans «Дом» instead: the template's side.
+const NOTHING_COVERED: CoversOf = () => false;
+
+async function newRun(count: number, opts: { cap?: number; imageModel?: string; avatar?: string; imageQuality?: ImageQuality | null; cameraRealism?: boolean; builtIn?: boolean } = {}): Promise<RunPlan> {
   const imageModel = opts.imageModel ?? PRIMARY;
   const runAvatar = opts.avatar ?? avatarId;
-  const request = { avatarId: runAvatar, count, categories: ["home" as const], poses: { profile: false, back: false } };
-  const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel, imageQuality: opts.imageQuality, textModel: TEXT }, request, "off").worstMicros;
+  const refs = opts.builtIn === true ? (["home"] as const) : ([LLM_ONLY_REF] as const);
+  const request = { avatarId: runAvatar, count, categories: [...refs], poses: { profile: false, back: false } };
+  const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel, imageQuality: opts.imageQuality, textModel: TEXT }, request, "off", NOTHING_COVERED).worstMicros;
   const cap = opts.cap ?? estimated;
   const run = buildRunPlan({
     runId: RUN_ID,
@@ -113,7 +120,8 @@ async function newRun(count: number, opts: { cap?: number; imageModel?: string; 
     cameraRealism: opts.cameraRealism,
     capMicros: cap,
     plannedWorstMicros: Math.max(cap, estimated),
-    scenes: planScenes({ seed: 5, count, categories: ["home"] }),
+    ...(opts.builtIn === true ? {} : { categories: [llmOnlySnapshot()] }),
+    scenes: planWithPools({ seed: 5, count, categories: refs.map(sceneCategory) }, { ...POOLS, [LLM_ONLY_REF]: LLM_ONLY_POOL }),
   });
   await library.createRun(RUN_ID, run, RunPlanSchema);
   caps.set(scopeKey(SCOPE), cap);
@@ -346,7 +354,7 @@ function modelOf(call: FetchCall): unknown {
 
 describe("a run from the start", () => {
   test("stores one photo per slot under the slot's first attempt id, with its scene in the sidecar", async () => {
-    const run = await newRun(3);
+    const run = await newRun(3, { builtIn: true });
     const { end, sent } = start(run);
 
     const result = await end;
@@ -366,9 +374,32 @@ describe("a run from the start", () => {
     expect(photos.map((p) => p !== undefined && "resolution" in p)).toEqual([false, false, false]);
   });
 
+  // 5a.2 (S5.6c2, I5.30): the cap of a built-in run is its images alone (count × 3 attempts × the dearest model), the estimate it was started at; the template
+  // writes every sentence, so the run sends no writer request and reserves no writer id. The twin on the fixture carries the writer's two attempts as well.
+  test("a built-in run's cap is its images alone and equals what the plan was estimated at; it sends no writer request", async () => {
+    const run = await newRun(3, { builtIn: true });
+    const { end, net } = start(run);
+
+    expect(await end).toMatchObject({ status: "done" });
+    expect(run.capMicros).toBe(3 * 3 * IMAGE_WORST);
+    expect(run.plannedWorstMicros).toBe(run.capMicros);
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(reservedIds().some((id) => id.includes("writer"))).toBe(false);
+  });
+
+  test("twin on the fixture: the cap carries one writer chunk at two attempts, and the run asks the model for all its slots", async () => {
+    const run = await newRun(3);
+    const { end, net } = start(run);
+
+    expect(await end).toMatchObject({ status: "done" });
+    expect(run.capMicros).toBe(3 * 3 * IMAGE_WORST + 2 * WRITER_WORST);
+    expect(run.plannedWorstMicros).toBe(run.capMicros);
+    expect(net.writerCalls()).toHaveLength(1);
+  });
+
   // S5.1c: the run wires the room lookup into the assembler (I5.1, I5.4): a slot in a room of today's pools gets the room sentence, any other slot none.
   test("a slot in a room carries a room sentence in its journalled prompt, and a slot elsewhere carries none", async () => {
-    const run = await newRun(8);
+    const run = await newRun(8, { builtIn: true });
     await start(run).end;
 
     const event = (await journal()).find((e) => e.type === "prompts");
@@ -559,7 +590,7 @@ describe("back frames through the real face gate (S5.6f)", () => {
   /** A run whose every slot is an old back slot (a friend shot, pose back, stored before 5a.2: no capture, no legwear). */
   async function newBackRun(count: number): Promise<RunPlan> {
     const request = { avatarId, count, categories: ["home" as const], poses: { profile: false, back: true } };
-    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, request, "off").worstMicros;
+    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, request, "off", NOTHING_COVERED).worstMicros;
     const planned = planScenes({ seed: 5, count, categories: ["home"] });
     const run = buildRunPlan({
       runId: RUN_ID,
@@ -629,7 +660,7 @@ describe("back frames through the real face gate (S5.6f)", () => {
 describe("a run with a custom category", () => {
   async function newCustomRun(count: number, style: "phone" | "editorial", categories: readonly ("home" | typeof CUSTOM_REF)[] = [CUSTOM_REF], llmOnly = false): Promise<RunPlan> {
     const request = { avatarId, count, categories: [...categories], poses: { profile: false, back: false } };
-    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, request, "off").worstMicros;
+    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, request, "off", NOTHING_COVERED).worstMicros;
     const run = buildRunPlan({
       runId: RUN_ID,
       avatarId,
@@ -2488,12 +2519,15 @@ describe("runPhotoRun: the writer seam", () => {
     throw new Error("no glamour draw for a friend's shot");
   }
 
-  /** `count` slots, the first `bankSlots` of them drawn from the banks, the rest from the old pools. */
+  /**
+   * `count` slots, the first `bankSlots` of them drawn from the banks, the rest from the old pools (a place no bank names, as a plan made before 5a.2 holds). The
+   * plan keeps the cap it was made with: a plan from before 5a.2 priced every slot at the writer, which is the fixture category's all-model figure.
+   */
   async function seamRun(count: number, bankSlots: number): Promise<RunPlan> {
     const request = { avatarId, count, categories: ["glam" as const], poses: { profile: false, back: false } };
     const drawn = planScenes({ seed: 5, count, categories: ["glamour"] });
-    const slots = drawn.slots.map((slot, i) => (i < bankSlots ? { ...slot, category: "glamour" as const, shot: "friend" as const, pose: "front" as const, ...bankDraw() } : slot));
-    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, request, "off").worstMicros;
+    const slots = drawn.slots.map((slot, i) => (i < bankSlots ? { ...slot, category: "glamour" as const, shot: "friend" as const, pose: "front" as const, ...bankDraw() } : { ...slot, location: "a place no bank has" }));
+    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, { ...request, categories: [LLM_ONLY_REF] }, "off", NOTHING_COVERED).worstMicros;
     const run = buildRunPlan({
       runId: RUN_ID,
       avatarId,

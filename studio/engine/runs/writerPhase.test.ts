@@ -6,6 +6,7 @@ import type { Scope } from "../money/ledger";
 import { chatBody, fakeFetch, makeClient, setupMoney, withoutAt, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
 import { plan, planWithPools, POOLS, type PlanSlot } from "../scenes";
 import { CUSTOM_POOL, CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
+import { LLM_ONLY_POOL, LLM_ONLY_REF, llmOnlySnapshot } from "../scenes/testing/llmOnlyFixture";
 import { buildRunPlan, plannedSlots, runWriterConfig } from "./plan";
 import { NetworkPool } from "./pools";
 import { localSentences } from "../scenes/localSentences";
@@ -254,16 +255,17 @@ describe("runWriterPhase: a built-in run's requests are pinned to the S5.1b phon
 // activities do not read after «she is» (so none renders) sends the same request bodies and reserves the same ids and worst cases with
 // `local` wired to the template as with no `local` at all. The built-in pin above is the phase without the seam; a built-in run's template side is
 // pinned in runJob.test.ts («a built-in run … sends no writer request»).
+// 5a.2 (S5.6c2, m11): the category is `cat-llm-only-fixture`, whose activities the template cannot write by construction (it replaces the by-hand
+// «takes a short break» override this test used to apply to the paris-cafes pool).
 describe("runWriterPhase: a custom run the template cannot write is asked as before, with the seam on", () => {
   function customRun() {
-    const drawn = planWithPools({ seed: 3, count: 30, categories: [CUSTOM_REF] }, { ...POOLS, [CUSTOM_REF]: CUSTOM_POOL });
-    const scenes = { ...drawn, slots: drawn.slots.map((slot) => ({ ...slot, activity: "takes a short break" })) };
+    const scenes = planWithPools({ seed: 3, count: 30, categories: [LLM_ONLY_REF] }, { ...POOLS, [LLM_ONLY_REF]: LLM_ONLY_POOL });
     return buildRunPlan({
       runId: RUN_ID,
       avatarId: "avatar-0001",
       createdAt: "2026-09-24T12:00:00.000Z",
-      request: { avatarId: "avatar-0001", count: 30, categories: [CUSTOM_REF], poses: { profile: false, back: false } },
-      categories: [customSnapshot()],
+      request: { avatarId: "avatar-0001", count: 30, categories: [LLM_ONLY_REF], poses: { profile: false, back: false } },
+      categories: [llmOnlySnapshot()],
       imageAgeCheck: "off",
       models: { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-4.3" },
       capMicros: 10_000_000,
@@ -295,6 +297,25 @@ describe("runWriterPhase: a custom run the template cannot write is asked as bef
     const without = await bodiesAndReserves(false);
     const withSeam = await bodiesAndReserves(true);
     expect(withSeam.reserves).toEqual(without.reserves);
+  });
+});
+
+// 5a.2 (S5.6c2, m11): the twin. A built-in run's slots all render in code, so the same phase with the seam wired sends no request at all, reserves nothing
+// and journals every chunk with the template's sentences. (The pin above is the phase WITHOUT the seam, the model path a built-in slot the banks cannot
+// name still takes; its writer golden does not move.)
+describe("runWriterPhase: a built-in run sends no writer request", () => {
+  test("with the seam wired to the template, 30 «Дом» slots are written with no call and no reserve", async () => {
+    const run = runPlan(30);
+    const slots = plannedSlots(run);
+    const local = localSentences({ slots, keyOf: (slot: PlanSlot) => slotKeyOf(RUN_ID, slot.attemptIdBase), snapshots: run.categories });
+    const { net, result, chunks } = start([], { ...phaseOf(30), slots, chunks: run.writerChunks, ...runWriterConfig(run.categories), local });
+
+    const answer = await result;
+    expect(answer.ok).toBe(true);
+    expect(net.calls).toHaveLength(0);
+    expect(money.lines().filter((l) => l.type === "reserve")).toEqual([]);
+    expect(chunks.map((c) => c.chunk)).toEqual(run.writerChunks.map((c) => c.chunk));
+    expect(answer.ok ? answer.sentences.size : 0).toBe(30);
   });
 });
 
