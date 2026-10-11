@@ -1,6 +1,6 @@
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { legwearFits } from "../../shared/scenes/template";
-import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, settleFit } from "./fit";
+import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
 import { allowedActivities, hasCleanActivity, usableOutfits, type Place, type Pool } from "./pools";
 import { drawFromPoses, drawPose, type PoseAllowance } from "./poses";
 import { makeRng, rngPick, subSeed } from "./rngUtil";
@@ -102,7 +102,7 @@ function redrawBuiltIn(input: RedrawInput, deck: readonly Capture[]): PlanSlot {
   const stored = slot.capture ?? captureOfShot(slot.shot);
   const sameShot = deck.filter((capture) => shotOf(capture) === shotOf(stored));
   const capture = deck.includes(stored) ? stored : rngPick(rng, sameShot.length > 0 ? sameShot : deck);
-  const drawnPose = drawPose(poseRng, shotOf(capture), input.poses);
+  const drawnPose = poseForCapture(capture, drawPose(poseRng, shotOf(capture), input.poses));
   const settled = settleFit(pool, kindOfDeck(deck), capture, drawnPose);
   const stepped = settled.capture !== capture || settled.pose !== drawnPose;
   const place = rngPick(stepped ? fixRng : rng, preferred(settled.places, (p) => p.name, avoid.locations, slot.location));

@@ -82,13 +82,20 @@ export function outfitInfoOf(pool: Pick<Pool, "outfits" | "outfitInfo">): readon
 }
 
 /**
- * The outfits of the general draw (plan r1.5, 22.3): not pin-only, not one that any moment of the pool pins (those are worn where the wording was probed), and not
- * the owner's denim shorts or skirts. A pool left with none draws the shared everyday list.
+ * The pose a drawn pose becomes for a capture (plan r1.5 #3): the over-the-shoulder POV looks back along her body, so it is always three-quarter; the pose stream still
+ * draws one pose per slot, so no other stream moves. Any other capture keeps the pose it drew (a hand-held one was drawn front or three-quarter already).
+ */
+export function poseForCapture(capture: Capture, drawn: ScenePose): ScenePose {
+  return posesFor(capture).includes(drawn) ? drawn : "three-quarter";
+}
+
+/**
+ * The outfits of the general draw (plan r1.5, 22.3): not pin-only (those are worn only by the moment that pins them) and not the owner's denim shorts or skirts. An
+ * outfit some moment pins stays in the general draw: the pin only decides what THAT moment wears. A pool left with none draws the shared everyday list.
  */
 export function generalOutfits(pool: Pick<Pool, "outfits" | "outfitInfo" | "locations">): readonly string[] {
-  const pinned = new Set(pool.locations.flatMap((place) => place.activities.flatMap((a) => a.outfits ?? [])));
   const general = outfitInfoOf(pool)
-    .filter((o) => o.pinOnly !== true && !pinned.has(o.text) && !isOwnerBannedOutfit(o.text))
+    .filter((o) => o.pinOnly !== true && !isOwnerBannedOutfit(o.text))
     .map((o) => o.text);
   return general.length > 0 ? general : EVERYDAY_OUTFITS;
 }

@@ -45,8 +45,7 @@ describe.each([...CATEGORIES])("redrawing a %s scene", (category) => {
     }
   });
 
-  test("a moment that pins outfits draws only those; any other moment draws none that a moment pins or that is pin-only", () => {
-    const pinned = new Set(pool.locations.flatMap((l) => l.activities.flatMap((a) => a.outfits ?? [])));
+  test("a moment that pins outfits draws only those; any other moment draws no pin-only outfit", () => {
     const pinOnly = new Set((pool.outfitInfo ?? []).filter((o) => o.pinOnly === true).map((o) => o.text));
     for (const slot of slotsOf(category)) {
       for (let k = 1; k <= 6; k++) {
@@ -54,7 +53,6 @@ describe.each([...CATEGORIES])("redrawing a %s scene", (category) => {
         const moment = momentOf(category, out);
         if (moment?.outfits !== undefined) expect(moment.outfits).toContain(out.outfit);
         else {
-          expect(pinned.has(out.outfit)).toBe(false);
           expect(pinOnly.has(out.outfit)).toBe(false);
         }
       }

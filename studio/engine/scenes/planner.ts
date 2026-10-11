@@ -4,7 +4,7 @@ import type { PlannerCategory, Shot } from "./types";
 import type { Outfit } from "../../shared/scenes/banks/types";
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { legwearFits } from "../../shared/scenes/template";
-import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, settleFit } from "./fit";
+import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
 import { allowedActivities, hasCleanActivity, POOLS, usableOutfits, type Place, type Pool } from "./pools";
 import { drawFromPoses, drawPose, NO_EXTRA_POSES, type PoseAllowance } from "./poses";
 import { Bag, makeRng, rngPick, subSeed, type Rng } from "./rngUtil";
@@ -270,7 +270,7 @@ function planBuiltIn(
   const slots: PlanSlot[] = [];
   for (let i = 0; i < n; i++) {
     const drawnCapture = deck.next();
-    const drawnPose = drawPose(streams.poseRng, shotOf(drawnCapture), poses);
+    const drawnPose = poseForCapture(drawnCapture, drawPose(streams.poseRng, shotOf(drawnCapture), poses));
     const settled = settleFit(pool, kind, drawnCapture, drawnPose);
     const { capture, pose } = settled;
     const stepped = capture !== drawnCapture || pose !== drawnPose;

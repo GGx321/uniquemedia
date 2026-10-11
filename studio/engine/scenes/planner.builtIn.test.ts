@@ -3,7 +3,7 @@ import { POOL_TEXT_MAX } from "../../shared/engine";
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { momentAllowed } from "../../shared/scenes/render";
 import { legwearFits, templateSentence } from "../../shared/scenes/template";
-import { fittingMoments, fittingPlaces } from "./fit";
+import { fittingMoments, fittingPlaces, poseForCapture } from "./fit";
 import { plan, planWithPools, poseSeed } from "./planner";
 import { drawPose } from "./poses";
 import { POOLS, type Activity, type Pool } from "./pools";
@@ -62,6 +62,21 @@ describe("the capture comes from the category's deck, in exact cycles (I5.32)", 
     expect(timer?.capture).toBe("timer");
   });
 
+  // Review S5.6b #1, #2: the prone and over-the-shoulder lines say «on the bed», and the look back along her body is turned.
+  test("a prone or over-the-shoulder slot lies on her bed, and an over-the-shoulder slot is always three-quarter", () => {
+    let seen = 0;
+    for (let seed = 1; seed <= 60; seed++) {
+      for (const slot of plan({ seed, count: 24, categories: ["home"], poses: ALL_POSES }).slots) {
+        const capture = captureOf(slot);
+        if (capture !== "prone" && capture !== "over-shoulder") continue;
+        seen++;
+        expect(slot.location).toBe("her bed");
+        if (capture === "over-shoulder") expect(slot.pose).toBe("three-quarter");
+      }
+    }
+    expect(seen).toBeGreaterThan(100);
+  });
+
   test("a mirror capture sits on a mirror place", () => {
     for (const category of CATEGORIES) {
       for (const slot of plan({ seed: 9, count: 36, categories: [category] }).slots) if (shotOf(captureOf(slot)) === "mirror") expect(placeOf(slot)?.mirror).toBe(true);
@@ -84,7 +99,8 @@ describe("pose, then a place with a fitting moment, then the least-used moment (
     const seed = 42;
     const slots = plan({ seed, count: 40, categories: [category], poses: ALL_POSES }).slots;
     const rng = makeRng(poseSeed(seed, category));
-    expect(slots.map((s) => s.pose)).toEqual(slots.map((s) => drawPose(rng, s.shot, ALL_POSES)));
+    // The over-the-shoulder POV looks back along her body: whatever the stream draws, its pose is three-quarter (poseForCapture); no other pose moves.
+    expect(slots.map((s) => s.pose)).toEqual(slots.map((s) => poseForCapture(captureOf(s), drawPose(rng, s.shot, ALL_POSES))));
   });
 
   test.each([...CATEGORIES])("%s: each slot takes the least-used place that has a fitting moment, and the least-used fitting moment there", (category) => {
@@ -144,7 +160,7 @@ describe("no built-in plan reads the fallback chain (coverage, r1.3 M1)", () => 
       const captures = slots.map(captureOf);
       if (!captures.every((c) => deck.has(c)) || counted(captures).size !== deck.size) throw new Error(`${category} seed ${seed}: a slot stepped off its deck (${captures.join(", ")})`);
       const rng = makeRng(poseSeed(seed, category));
-      for (const slot of slots) if (slot.pose !== drawPose(rng, slot.shot, ALL_POSES)) throw new Error(`${category} seed ${seed}: slot ${slot.slotIndex} changed its pose`);
+      for (const slot of slots) if (slot.pose !== poseForCapture(captureOf(slot), drawPose(rng, slot.shot, ALL_POSES))) throw new Error(`${category} seed ${seed}: slot ${slot.slotIndex} changed its pose`);
     }
   });
 });
@@ -171,15 +187,20 @@ describe("outfits: pinned and pin-only (plan r1.5, 22.3)", () => {
     for (const slot of prone) expect(["grey lounge shorts and a fitted tee", "grey leggings and a cropped tee"]).toContain(slot.outfit);
   });
 
-  test("a pin-only outfit and an outfit some moment pins stay out of the general draw", () => {
-    const banned = pinnedByAMoment("home");
-    for (const outfit of POOLS.home.outfitInfo ?? []) if (outfit.pinOnly === true) banned.add(outfit.text);
+  // Plan 22.3: only pin-only outfits leave the general draw; an outfit some moment pins (the prone lounge shorts) is still a general outfit for the others.
+  test("a pin-only outfit stays out of the general draw, and an outfit some moment pins is still drawn by other moments", () => {
+    const banned = new Set((POOLS.home.outfitInfo ?? []).filter((o) => o.pinOnly === true).map((o) => o.text));
     expect(banned.size).toBeGreaterThan(0);
+    const worn = new Set<string>();
     for (const seed of [1, 2, 3, 4, 5, 6]) {
       for (const slot of plan({ seed, count: 48, categories: ["home"], poses: ALL_POSES }).slots) {
-        if (momentOf(slot)?.outfits === undefined) expect(banned.has(slot.outfit), `${slot.activity} wore ${slot.outfit}`).toBe(false);
+        if (momentOf(slot)?.outfits === undefined) {
+          expect(banned.has(slot.outfit), `${slot.activity} wore ${slot.outfit}`).toBe(false);
+          worn.add(slot.outfit);
+        }
       }
     }
+    expect([...pinnedByAMoment("home")].some((outfit) => worn.has(outfit))).toBe(true);
   });
 
   test("an outfit that breaks the owner's denim rule is never drawn, in a pinned list or a general one", () => {
