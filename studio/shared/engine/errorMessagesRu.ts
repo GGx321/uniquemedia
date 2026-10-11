@@ -219,7 +219,7 @@ export function descriptorReasonRu(reason: DescriptorReason, words: readonly str
   return text;
 }
 
-/** Why a portrait command was refused, for VALIDATION's `portraitReason`: each text names the cause and the way out, and says when nothing was spent. */
+/** Why a portrait command was refused, for `portraitReason` (VALIDATION; INTERNAL for `source-unavailable`): each text names the cause and the way out, and says when nothing was spent. */
 export const PORTRAIT_REASONS_RU = {
   "not-imported": "Мастер-портрет делают из импортированного фото, а у этого аватара его нет. Ничего не потрачено.",
   "too-many-candidates":

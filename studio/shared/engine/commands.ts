@@ -362,7 +362,7 @@ const ENGINE_SPECS = [
   // «Сохранить»); NOT_FOUND for an unknown avatar, LIBRARY_UNAVAILABLE without a library. `checkDescriptor` is paid, accepted like `rewriteDescriptor`, and refused, before any
   // spend and in this order: AUTH_INVALID (no usable key), the ledger's own refusals, LIBRARY_UNAVAILABLE, NOT_FOUND, VALIDATION (a draft),
   // DESCRIPTOR_INVALID (a stored descriptor that fails today's rules: mend it with `editDescriptor`), PRICE_CHANGED, BUDGET_EXCEEDED, IN_FLIGHT (a job, a command or a photo run holds
-  // the avatar; checked first of all). A master photo that is missing on disk or cannot be read is INTERNAL and free (an active avatar always has one in its manifest).
+  // the avatar; checked first of all). The check reads the avatar's source photo (the imported one; a wizard avatar's own master), never a portrait master: a photo to check against that is missing on disk or cannot be read is INTERNAL and free, and a portrait master whose source is gone is INTERNAL with `portraitReason` `source-unavailable`.
   defineCommand("avatars.estimateCheckDescriptor", z.strictObject({ avatarId: Id }), Estimate),
   defineCommand("avatars.checkDescriptor", z.strictObject({ avatarId: Id, ...AcceptedWorst }), z.strictObject({ check: DescriptorCheck })),
   // Stage 5, S5.3a (additive): the reference portrait of an IMPORTED avatar. An imported photo that shows a phone, a mirror or a room leaks all three into every scene, so five clean
@@ -373,9 +373,9 @@ const ENGINE_SPECS = [
   //    Refused free, in this order: IN_FLIGHT (a run, a check, another batch or a delete holds the avatar), the usual key, ledger and library refusals, NOT_FOUND (a draft, an
   //    archived avatar or an unknown id: only an active avatar has portraits), DESCRIPTOR_INVALID, VALIDATION with `portraitReason` `not-imported` (no source photo) or
   //    `too-many-candidates` (15 unpicked portraits already), FACE_GATE_UNAVAILABLE, PRICE_UNAVAILABLE, PRICE_CHANGED, BUDGET_EXCEEDED, INTERNAL (the source photo is
-  //    unavailable: the master is a portrait and its source is missing; the batch never falls back to the portrait), MASTER_FACE_UNUSABLE (no face in the source).
+  //    unavailable: the master is a portrait and its source is missing; the batch never falls back to the portrait), MASTER_FACE_UNUSABLE (no face in the source, or a source embedding that is not finite or is all zero: found free, before any image). A portrait master whose own file is missing does not refuse the batch: it is drawn from the live source.
   //  - `portraits` is a free read: the master's id, the source photo's id (null for a wizard avatar), the master's likeness when the master is a portrait (null when it is the source
-  //    photo, or there is no source), and the pending portraits the pick accepts, best first. NOT_FOUND for a draft or an unknown id, LIBRARY_UNAVAILABLE without a library.
+  //    photo, there is no source, or the master is missing: `masterMissing` is then true, omitted otherwise), and the pending portraits the pick accepts, best first. NOT_FOUND for a draft or an unknown id, LIBRARY_UNAVAILABLE without a library.
   //  - `pickPortrait` is free: the named photo (a pending portrait, or the source photo to go back to it) becomes the master, `avatar.changed` follows, and the other portraits go.
   //    The current master is answered as it is. Refused, in this order: LIBRARY_UNAVAILABLE, NOT_FOUND (a draft, an archived avatar or an unknown id: asked first, so it never
   //    shows as `not-a-candidate`), IN_FLIGHT (a run, a launch's run, the portraits job or a check holds the avatar, or a delete or a library switch is under way), VALIDATION with

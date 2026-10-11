@@ -101,10 +101,12 @@ import { z } from "zod";
 //    `AvatarPortraits` (free read), `avatars.pickPortrait { avatarId, photoId }` → `{ avatar }` and `avatars.discardPortraits { avatarId }` → `{ avatarId, removed }` (free).
 //  - the job kind `avatar.portraits` in the job events and `JobState` (`done / total` count its five slots) and its result `PortraitsResult`; `PortraitCandidate` (with its likeness, 0.55 to 1),
 //    `FailedPortraitSlot` (`age-rejected`, `unlike`, `no-face`, `multiple-faces`, `failed`) and `PortraitSlot` live in state.ts.
-//  - `EngineError.portraitReason` (`PORTRAIT_REASONS`, only on VALIDATION, never beside another reason; Russian texts `PORTRAIT_REASONS_RU`). No new ErrorCode.
+//  - `EngineError.portraitReason` (`PORTRAIT_REASONS`, on VALIDATION, and on INTERNAL for `source-unavailable`; never beside another reason; Russian texts `PORTRAIT_REASONS_RU`). No new ErrorCode.
 //  - `AvatarSummary` is unchanged: a portrait is an ordinary photo of the avatar and `masterPhotoId` moves to it.
-//  - S5.3c (a refinement of the shape above, before any window reads it): `AvatarPortraits.masterLikeness` is null exactly when the master is the source photo or the avatar has no source photo.
+//  - S5.3c (a refinement of the shape above, before any window reads it): `AvatarPortraits.masterLikeness` is null exactly when the master is the source photo, the avatar has no source photo, or its master is missing (`AvatarPortraits.masterMissing`, omitted unless true: the master is a portrait whose file is gone while the source is alive; the batch and the check still run from the source).
 //    An `avatar.portraits` job stores a slot's portrait BEFORE it emits the `job.progress` that counts it, so a window that re-reads `avatars.portraits` on every progress sees it.
+//  - S5.3R (additive): a `failed` slot of `PortraitsResult.failedSlots` carries `charge` (`free`, `paid` or `worst-until-reconcile`): what the slot cost as the ledger settled its image and its age check
+//    for the mode the batch was started in. The window shows it and no longer guesses it from the age-check setting.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 
