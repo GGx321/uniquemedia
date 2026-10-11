@@ -64,6 +64,7 @@ export const BANK_RULE = {
   motionPhone: "motion-phone",
   mirrorWord: "mirror-word",
   mirrorPlace: "mirror-place",
+  mirrorBack: "mirror-back",
   details: "details",
   detailGrammar: "detail-grammar",
   at: "at",
@@ -191,6 +192,7 @@ function checkMoment(add: Add, where: string, moment: Moment, place: { room?: tr
     if (HIPS_WORDS.test(said) && HIGH_WORDS.test(said)) add(BANK_RULE.hipsHigh, where, "her hips stay behind her in natural proportions, never high or above her head (the owner)");
   }
   if (MIRROR.test(text) && !captures.every(isMirrorCapture)) add(BANK_RULE.mirrorWord, where, "a moment that names a mirror fits mirror captures only");
+  if (moment.mirrorBack === true && !captures.every(isMirrorCapture)) add(BANK_RULE.mirrorBack, where, "back or side to the mirror fits mirror captures only");
   if (captures.some(isMirrorCapture) && place.mirror !== true) add(BANK_RULE.mirrorPlace, where, "a mirror capture needs a mirror place");
   for (const outfit of moment.outfits ?? []) if (!outfits.has(outfit)) add(BANK_RULE.pinnedOutfit, where, `pins «${outfit}», which is not one of the category's outfits`);
   checkMotion(add, where, moment);
@@ -216,6 +218,7 @@ const MomentSchema = z.strictObject({
   outfits: z.array(z.string()).optional(),
   legs: z.strictObject({ framing: z.literal("legs").optional() }).optional(),
   noLegwear: z.literal(true).optional(),
+  mirrorBack: z.literal(true).optional(),
 });
 
 const PlaceSchema = z.strictObject({

@@ -93,7 +93,7 @@ export const HOME: CategoryBank = {
       details: ["a towel on the hook", "a plant on the windowsill"],
       times: ["morning", "evening"],
       moments: [
-        { text: "sits on the counter by the mirror", motion: "she swings one foot a little", captures: ["mirror-hidden"], twoHanded: false, angle: "three-quarter", outfits: [OPEN_BACK] },
+        { text: "sits on the counter by the mirror", motion: "she swings one foot a little", captures: ["mirror-hidden"], twoHanded: false, angle: "three-quarter", outfits: [OPEN_BACK], mirrorBack: true },
         { text: "leans on the edge of the sink", motion: "she leans in a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "brushes her hair", motion: "she brushes slowly", captures: ["mirror"], twoHanded: false, hair: "own" },
         { text: "applies lip balm", motion: "she presses her lips a bit", captures: ["mirror"], twoHanded: false, gaze: "focus" },

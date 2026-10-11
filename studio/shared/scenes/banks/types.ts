@@ -57,6 +57,11 @@ export interface Moment {
   outfits?: readonly string[];
   /** «Ножки» (5a.2c): a legs moment, drawn only on a legs slot. */
   legs?: { framing?: "legs" };
+  /**
+   * Back or side to the mirror (plan r1.5, the owner's note): only her reflection is in the picture, so the capture line adds «Only her reflection is in
+   * the picture; she holds the phone up and it hides her face.» (engine/scenes/phoneLook.ts). Mirror captures only; front-facing mirror selfies may show or hide her face.
+   */
+  mirrorBack?: true;
   /** No legwear slot on this moment (plan r1.4): her feet or legs are up (Grok refused legs up in tights), or another reason the bank names. */
   noLegwear?: true;
 }

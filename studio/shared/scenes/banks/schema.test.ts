@@ -115,10 +115,16 @@ describe("a category bank", () => {
     ["hips above her head in a start pose", { ...plain, startPose: "hips above her head" }, BANK_RULE.hipsHigh],
     ["a feet-up moment without the no-legwear tag (plan r1.4: Grok refused legs up in tights)", { ...plain, text: "lies on her stomach, feet raised" }, BANK_RULE.noLegwear],
     ["feet on a railing without the no-legwear tag", { ...plain, text: "sits with her feet on the railing" }, BANK_RULE.noLegwear],
+    ["a back-to-the-mirror moment on a capture that is no mirror one (r1.5: only her reflection is in the picture)", { ...plain, mirrorBack: true }, BANK_RULE.mirrorBack],
   ];
 
   test.each(MOMENT_ROWS)("refuses %s", (_name, moment, rule) => {
     expect(rulesOf(categoryBankProblems(withMoment(moment), "home"))).toContain(rule);
+  });
+
+  test("a back-to-the-mirror moment on mirror captures only is valid (r1.5)", () => {
+    const back: Moment = { ...plain, text: "sits on the stool", captures: ["mirror-hidden"], mirrorBack: true };
+    expect(categoryBankProblems({ ...withMoment(back), places: [{ ...ROOM, moments: [...MOMENTS, back] }, STREET] }, "home")).toEqual([]);
   });
 
   test("refuses a moment without a motion (I5.35: every moment carries one)", () => {
