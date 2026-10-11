@@ -58,9 +58,11 @@ describe("boundaries", () => {
     expect(() => plan({ seed: 1, count: 1.5, categories: ["home"] })).toThrow(RangeError);
   });
 
+  // S5.6R: «Фитнес» at home is self-shot, so its home places take only the timer and the selfie; a friend's draw never lands there. «Виды» still has a
+  // moment for every capture of its deck at every place, so it is the category whose full pass must visit each place once.
   test("max: a single category filled up to its location count repeats no location", () => {
-    const max = POOLS.fitness.locations.length;
-    const p = plan({ seed: 1, count: max, categories: ["fitness"] });
+    const max = POOLS.travel.locations.length;
+    const p = plan({ seed: 1, count: max, categories: ["travel"] });
     expect(new Set(p.slots.map((s) => s.location)).size).toBe(max);
   });
 

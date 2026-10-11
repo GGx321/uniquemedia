@@ -62,8 +62,13 @@ describe("the shipped pools", () => {
     for (const category of ["photoshoot", "travel"] as const) expect(sortedDeck(POOLS[category].captureDeck)).toEqual(sortedDeck(["friend", "friend", "friend", "selfie", "timer", "candid"]));
   });
 
-  test("«Гламур» and «Фитнес» deal 6: two friends, a selfie, a mirror, a phone-over-face mirror and a candid", () => {
-    for (const category of ["glamour", "fitness"] as const) expect(sortedDeck(POOLS[category].captureDeck)).toEqual(sortedDeck(["friend", "friend", "selfie", "mirror", "mirror-hidden", "candid"]));
+  test("«Гламур» deals 6: two friends, a selfie, a mirror, a phone-over-face mirror and a candid", () => {
+    expect(sortedDeck(POOLS.glamour.captureDeck)).toEqual(sortedDeck(["friend", "friend", "selfie", "mirror", "mirror-hidden", "candid"]));
+  });
+
+  // S5.6R: at home she shoots herself, so «Фитнес» deals a timer for the home workout beside the gym's and the park's.
+  test("«Фитнес» deals 7: two friends, a selfie, a mirror, a phone-over-face mirror, a candid and a timer", () => {
+    expect(sortedDeck(POOLS.fitness.captureDeck)).toEqual(sortedDeck(["friend", "friend", "selfie", "mirror", "mirror-hidden", "candid", "timer"]));
   });
 
   test("the stored shot deck of every pool is the shots its captures ride on, and never a photographer", () => {

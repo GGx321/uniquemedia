@@ -93,8 +93,13 @@ describe("who takes the photo (I5.32: the capture decks, exact cycles)", () => {
     expect(sorted(BANKS[category].captureDeck)).toEqual(sorted(["friend", "friend", "friend", "selfie", "timer", "candid"]));
   });
 
-  test.each<BankCategory>(["glamour", "fitness"])("%s: mixed, a friend twice, a selfie, a mirror, a phone-over-face mirror, a candid", (category) => {
-    expect(sorted(BANKS[category].captureDeck)).toEqual(sorted(["friend", "friend", "selfie", "mirror", "mirror-hidden", "candid"]));
+  test("glamour: mixed, a friend twice, a selfie, a mirror, a phone-over-face mirror, a candid", () => {
+    expect(sorted(BANKS.glamour.captureDeck)).toEqual(sorted(["friend", "friend", "selfie", "mirror", "mirror-hidden", "candid"]));
+  });
+
+  // S5.6R (HIGH 2): at home she shoots herself, so the home workout takes the timer the deck now deals beside the gym's and the park's friend and candid.
+  test("fitness: mixed, a friend twice, a selfie, a mirror, a phone-over-face mirror, a candid, and a timer for the home workout", () => {
+    expect(sorted(BANKS.fitness.captureDeck)).toEqual(sorted(["friend", "friend", "selfie", "mirror", "mirror-hidden", "candid", "timer"]));
   });
 
   // The plan critic (r1.3): the planner's capture fallback (timer → friend, prone → above → selfie, mirror-hidden → mirror → selfie) must never fire
