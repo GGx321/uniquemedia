@@ -176,8 +176,10 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
   // (8% safety margin) minus the audio track, per second — it only binds on a
   // clip long enough for 12000k to overflow the file cap (from roughly 30 s).
   const audioKbps = info.hasAudio ? aBitrate : 0;
+  // No floor: the cap wins for any duration, or a very long clip would
+  // overflow 50 MB (1 kbit/s only keeps the flag valid when audio eats it all).
   const fileCapKbps = Math.max(
-    600,
+    1,
     Math.floor((MAX_FILE_MB * 1024 * 8 * 0.92) / Math.max(1, info.durationSec)) - audioKbps
   );
   const capKbps = Math.min(MAX_VIDEO_KBPS, fileCapKbps);

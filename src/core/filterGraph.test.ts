@@ -187,3 +187,16 @@ test("falls back to 192k AAC when the recipe carries no audio bitrate", () => {
   };
   expect(buildArgs(bare, info)[buildArgs(bare, info).indexOf("-b:a") + 1]).toBe("192k");
 });
+
+test("a 10-minute clip with 224k audio still fits 50 MB, audio included", () => {
+  const loud = {
+    ...recipe,
+    video: recipe.video.map((o) =>
+      o.id === "encode" ? { ...o, params: { ...o.params, audioKbps: 224 } } : o
+    ),
+  };
+  const args = buildArgs(loud, { ...info, durationSec: 600 });
+  const kbps = parseInt(args[args.indexOf("-maxrate") + 1], 10);
+  expect(kbps).toBeGreaterThan(0);
+  expect(((kbps + 224) * 600) / 8 / 1024).toBeLessThanOrEqual(50);
+});
