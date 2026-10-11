@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Scope } from "../money/ledger";
 import { chatBody, fakeFetch, makeClient, setupMoney, withoutAt, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
 import { plan, planWithPools, POOLS, type PlanSlot } from "../scenes";
+import { ScenePlanSchema } from "../scenes/schema";
 import { CUSTOM_POOL, CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
 import { LLM_ONLY_POOL, LLM_ONLY_REF, llmOnlySnapshot } from "../scenes/testing/llmOnlyFixture";
 import { buildRunPlan, plannedSlots, runWriterConfig } from "./plan";
@@ -32,7 +33,7 @@ function runPlan(count: number) {
     runId: RUN_ID,
     avatarId: "avatar-0001",
     createdAt: "2026-09-24T12:00:00.000Z",
-    request: { avatarId: "avatar-0001", count, categories: ["home"], poses: { profile: false, back: false } },
+    request: { avatarId: "avatar-0001", count, categories: ["home"] },
     imageAgeCheck: "off",
     models: { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-4.3" },
     capMicros: 10_000_000,
@@ -223,6 +224,10 @@ describe("runWriterPhase", () => {
 
 // CS.1: the call shape and the messages are the caller's. A run passes exactly
 // today's values, so what a built-in run sends must not move by one byte.
+// S5.7b: the input is a FROZEN plan (the seed-3, 30-slot plan the planner drew on feat/s5-7a with the angle toggles on), not the live planner: the golden pins what the writer sends for these slots, and the
+// planner's own re-pin (angle from the moment, the flirty mix) must not move it.
+const FROZEN_PLAN = ScenePlanSchema.parse(JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "writer-input-plan-seed3.json"), "utf8")));
+
 describe("runWriterPhase: a built-in run's requests are pinned to the S5.1b phone-look prompts (re-pinned from main 3a9cd498)", () => {
   const sha = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
   const fixture: { bodies: string[]; reserves: { attemptId: string; worstMicros: number; model: string }[] } = JSON.parse(
@@ -234,12 +239,12 @@ describe("runWriterPhase: a built-in run's requests are pinned to the S5.1b phon
       runId: RUN_ID,
       avatarId: "avatar-0001",
       createdAt: "2026-09-24T12:00:00.000Z",
-      request: { avatarId: "avatar-0001", count: 30, categories: ["home", "travel", "shoot", "glam", "fit"], poses: { profile: true, back: true } },
+      request: { avatarId: "avatar-0001", count: 30, categories: ["home", "travel", "shoot", "glam", "fit"] },
       imageAgeCheck: "off",
       models: { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-4.3" },
       capMicros: 10_000_000,
       plannedWorstMicros: 10_000_000,
-      scenes: plan({ seed: 3, count: 30, categories: ["home", "travel", "photoshoot", "glamour", "fitness"], poses: { profile: true, back: true } }),
+      scenes: FROZEN_PLAN,
     });
     const phase = { ...phaseOf(30), slots: plannedSlots(run), chunks: run.writerChunks, ...runWriterConfig(run.categories) };
     const { net, result } = start([refusedAnswer, good, good], phase);
@@ -264,7 +269,7 @@ describe("runWriterPhase: a custom run the template cannot write is asked as bef
       runId: RUN_ID,
       avatarId: "avatar-0001",
       createdAt: "2026-09-24T12:00:00.000Z",
-      request: { avatarId: "avatar-0001", count: 30, categories: [LLM_ONLY_REF], poses: { profile: false, back: false } },
+      request: { avatarId: "avatar-0001", count: 30, categories: [LLM_ONLY_REF] },
       categories: [llmOnlySnapshot()],
       imageAgeCheck: "off",
       models: { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-4.3" },
@@ -365,7 +370,7 @@ describe("runWriterPhase: the call shape and the messages are the caller's", () 
       runId: RUN_ID,
       avatarId: "avatar-0001",
       createdAt: "2026-10-05T12:00:00.000Z",
-      request: { avatarId: "avatar-0001", count: 3, categories: [custom], poses: { profile: false, back: false } },
+      request: { avatarId: "avatar-0001", count: 3, categories: [custom] },
       categories: [snapshot],
       imageAgeCheck: "off",
       models: { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-4.3" },

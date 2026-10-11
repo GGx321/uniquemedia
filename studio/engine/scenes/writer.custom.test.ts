@@ -9,7 +9,7 @@ import { categoryLabelOf, categoryStyleOf } from "./categories";
 import { plan, planWithPools } from "./planner";
 import { POOLS, type Pool } from "./pools";
 import { lightOf } from "./phoneLook";
-import type { PlanSlot, Pose } from "./schema";
+import { ScenePlanSchema, type PlanSlot, type Pose } from "./schema";
 import { CATEGORIES, SHOTS as CANON_SHOTS } from "./types";
 import { chunkSlots, POSE_LABEL, REFUSAL_WORD_BYTES_MAX, REFUSAL_WORDS_MAX, SHOT_LABEL, writerMessages, writerRefusalText, WRITER_JSON_SCHEMA, type WriterRefusal } from "./writer";
 import { worstSlotList } from "./testing/worstSlotList";
@@ -84,7 +84,8 @@ describe("categoryStyleOf", () => {
 
 describe("a built-in run's writer messages are pinned to the S5.1b phone-look prompts (re-pinned from main 3a9cd498)", () => {
   const fixture: { messages: Record<string, string> } = JSON.parse(readFileSync(join(import.meta.dir, "..", "runs", "fixtures", "writer-main-3a9cd498.json"), "utf8"));
-  const slots = plan({ seed: 3, count: 30, categories: [...CATEGORIES], poses: { profile: true, back: true } }).slots;
+  // S5.7b: a FROZEN plan (what the planner drew for seed 3 on feat/s5-7a), so the planner's own re-pin cannot move the writer golden.
+  const slots = ScenePlanSchema.parse(JSON.parse(readFileSync(join(import.meta.dir, "..", "runs", "fixtures", "writer-input-plan-seed3.json"), "utf8"))).slots;
 
   test("chunk 1 and chunk 2, plain and after an empty answer", () => {
     const chunks = chunkSlots(slots);
@@ -263,7 +264,7 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
       outfits: Array.from({ length: 6 }, (_, i) => long(`outfit ${i}`)),
       shotDeck: ["photographer", "photographer", "photographer", "candid", "candid"],
     };
-    const drawnSlots = planWithPools({ seed: 20261005, count: WRITER_CALL.slotsPerCall, categories: [CUSTOM], poses: { profile: true, back: true } }, { ...POOLS, [CUSTOM]: pool }).slots;
+    const drawnSlots = planWithPools({ seed: 20261005, count: WRITER_CALL.slotsPerCall, categories: [CUSTOM] }, { ...POOLS, [CUSTOM]: pool }).slots;
     expect(drawnSlots.every((s) => s.location.length === POOL_TEXT_MAX && s.outfit.length === POOL_TEXT_MAX && s.activity.length === POOL_TEXT_MAX)).toBe(true);
     expect(floorOf(drawnSlots)).toBeLessThanOrEqual(floorOf(worstSlots(POOL_TEXT_MAX)));
   });
