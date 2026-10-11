@@ -540,6 +540,16 @@ describe("a run with a custom category", () => {
     }
   });
 
+  test("a custom category whose activities read after «she is» is written by the template: no writer request is sent", async () => {
+    const run = await newCustomRun(3, "phone");
+    const net = network();
+    const result = await start(run, { net }).end;
+
+    expect(result.status).toBe("done");
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(reservedIds().some((id) => id.includes("writer"))).toBe(false);
+  });
+
   test("a custom slot is written to the avatar's scene history like any other", async () => {
     const run = await newCustomRun(2, "phone");
     await start(run).end;
