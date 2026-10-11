@@ -532,6 +532,12 @@ export interface MockOpenRouter {
    * is released; a request that arrives after the release is answered at once. `arrived()` counts the requests that came while held. A new hold releases the old one.
    */
   holdImages(): ImageHold;
+  /**
+   * Only with `faceFixture` and `distinctImages`: the next image request whose `prompt` is exactly `prompt` is answered with a genuine "no face detected" image
+   * (once; the slot's retry gets a matching face again). Chosen by prompt, not by arrival order, so a scenario can aim the mismatch at a slot whose face shows
+   * (a faceless image on a face-hidden frame is only marked, never retried) once it has read the run's plan. The render is paid here, not inside a request.
+   */
+  armFaceMismatch(prompt: string): void;
   stop(): Promise<void>;
 }
 
@@ -542,6 +548,13 @@ interface SentBody {
 }
 
 const NO_BODY: SentBody = { json: null, text: "" };
+
+/** The `prompt` of an image request body, or null when it has none. */
+function promptOf(body: unknown): string | null {
+  if (typeof body !== "object" || body === null) return null;
+  const prompt: unknown = Reflect.get(body, "prompt");
+  return typeof prompt === "string" ? prompt : null;
+}
 
 export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<MockOpenRouter> {
   const imageModel = opts.imageModel ?? DEFAULT_IMAGE_MODEL;
@@ -559,6 +572,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
   const poolSize = opts.poolSize ?? DEFAULT_POOL_SIZE;
   const distinctPool = opts.distinctImages ? (opts.faceFixture ? buildFacePool(poolSize, opts.faceMismatchAt ?? null) : buildDistinctPool(poolSize)) : [];
   // S4.E2E: while a hold is set, an image request is recorded on arrival and answered only when the hold is released.
+  let armedMismatch: { prompt: string; bytes: Uint8Array } | null = null;
   let imageHold: { promise: Promise<void>; release: () => void; arrived: number } | null = null;
 
   // Reused verbatim: the exact bodies studio/engine/money/prices.test.ts
@@ -680,7 +694,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
         return loudly404(entry);
       }
       if (method === "POST" && path === "/api/v1/images") {
-        record(req, path, await bodyOf(req));
+        const imageEntry = record(req, path, await bodyOf(req));
         const held = imageHold;
         if (held !== null) {
           held.arrived++;
@@ -689,7 +703,11 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
         if (imageDelayMs > 0) await Bun.sleep(imageDelayMs);
         totalUsageUsd += costs.image;
         const fallback = opts.faceFixture ? faceFixtureBytes() : portraitPng();
-        const bytes = distinctPool.length > 0 ? (distinctPool[imageCount++ % distinctPool.length] ?? fallback) : fallback;
+        const armed = armedMismatch;
+        const mismatched = armed !== null && promptOf(imageEntry.body) === armed.prompt;
+        if (mismatched) armedMismatch = null;
+        // The faceless image takes no pool slot: every other request is served exactly as it would be without it.
+        const bytes = mismatched ? armed.bytes : distinctPool.length > 0 ? (distinctPool[imageCount++ % distinctPool.length] ?? fallback) : fallback;
         // L9: the media type must describe the actual bytes — faceFixture mode
         // serves real JPEG (faceFixtureBytes()/buildFacePool(), both JPEG-encoded
         // now), every other mode the rendered PNG it always was.
@@ -714,6 +732,11 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
     priceRequests: () => requests.filter((r) => r.path.endsWith("/endpoints") || r.path === "/api/v1/models"),
     creditsRequests: () => requests.filter((r) => r.path === "/api/v1/credits"),
     totalUsageUsd: () => totalUsageUsd,
+    armFaceMismatch: (prompt) => {
+      if (!opts.faceFixture || !opts.distinctImages) throw new Error("armFaceMismatch needs faceFixture and distinctImages");
+      // One index past the pool: PDQ-distinct from every pooled image, and the pool's own order is left untouched.
+      armedMismatch = { prompt, bytes: facePoolNoFacePng(poolSize, "jpeg") };
+    },
     holdImages: () => {
       imageHold?.release();
       let release: () => void = () => undefined;

@@ -565,6 +565,37 @@ describe("poolSize", () => {
   });
 });
 
+describe("armFaceMismatch", () => {
+  const postPrompt = async (m: MockOpenRouter, prompt: string): Promise<string> => {
+    const response = await nativeFetch(`${m.url}/images`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt }) });
+    const body = (await response.json()) as { data: { b64_json: string }[] };
+    return body.data[0]?.b64_json ?? "";
+  };
+
+  test("only the request carrying the armed prompt gets the faceless image, once, and the pool order is untouched", async () => {
+    mock = await startMockOpenRouter({ descriptorText: "x", distinctImages: true, faceFixture: true, poolSize: 3 });
+    const control = await startMockOpenRouter({ descriptorText: "x", distinctImages: true, faceFixture: true, poolSize: 3 });
+    try {
+      mock.armFaceMismatch("target");
+      const other = await bounded(postPrompt(mock, "other"), 30_000, "an unarmed prompt");
+      const hit = await bounded(postPrompt(mock, "target"), 30_000, "the armed prompt");
+      const again = await bounded(postPrompt(mock, "target"), 30_000, "the armed prompt a second time");
+      const plain = [await postPrompt(control, "x"), await postPrompt(control, "x"), await postPrompt(control, "x")];
+      expect(other).toBe(plain[0]);
+      expect(hit).not.toBe(plain[1]);
+      expect(plain).not.toContain(hit);
+      expect(again).toBe(plain[1]);
+    } finally {
+      await control.stop();
+    }
+  });
+
+  test("it refuses a mock that serves no fixture face", async () => {
+    mock = await startMockOpenRouter({ descriptorText: "x" });
+    expect(() => mock?.armFaceMismatch("x")).toThrow();
+  });
+});
+
 // S5.2b review M1: the retry after an unusable answer asks without the body keys in the schema. The mock answers what it was asked: no body keys when the schema has none.
 describe("the import describe call without the body request", () => {
   const postWith = (m: MockOpenRouter, schema: unknown) =>
