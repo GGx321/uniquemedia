@@ -239,14 +239,14 @@ describe("scenes.compose with a category that has poses", () => {
     }
   });
 
-  test("a category without poses plans as it always did: its poses follow the toggles", async () => {
+  test("a category without poses faces the camera, whatever toggles the request sends (S5.7b: the angle comes from the scene)", async () => {
     const m = makeMock();
     const category = await createCategory(m, "кофейни");
     const off = await composed(m, 30, [category.categoryId], OFF);
     expect(off.scenes.every((s) => s.pose === "front" || s.pose === "three-quarter")).toBe(true);
     await unwrap(m.client.request("scenes.discard", { sceneSetId: off.sceneSetId } as never));
     const on = await composed(m, 30, [category.categoryId], { profile: true, back: true });
-    expect(on.scenes.some((s) => s.pose === "back")).toBe(true);
+    expect(on.scenes.every((s) => s.pose === "front" || s.pose === "three-quarter")).toBe(true);
   });
 });
 

@@ -28,6 +28,7 @@ import {
 } from "../../shared/engine";
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { covers } from "../../shared/scenes/custom";
+import { flirtyCountOf } from "../../shared/scenes/level";
 import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
 import { bankDraw, localTexts, plainTextOf, type LocalScene } from "./mockBankScenes";
 import { mockAnglesOf } from "./mockCategories";
@@ -123,6 +124,8 @@ interface Scene {
   /** 5a.2: who takes the photo, when the mock dealt it from a bank's deck (a built-in scene); a stored shot says it otherwise. */
   capture?: Capture;
   pose: SceneView["pose"];
+  /** «Подача» of the scene (S5.7b): only a built-in scene of a flirty set can be flirty. */
+  level?: "flirty";
   place: ScenePlace | null;
   /** The idea an own scene was written from; null for a planned one. */
   idea: string | null;
@@ -189,7 +192,7 @@ interface MockSet {
   runId: string;
   /** Absent when the request sent none (S5.7a); the mock then draws with neither extra pose. */
   poses?: { profile: boolean; back: boolean };
-  /** «Подача» (S5.7a), as sent; echoed only when flirty. It changes no scene until S5.7b. */
+  /** «Подача» (S5.7a), as sent; echoed only when flirty. The scenes' own levels are drawn from it (S5.7b). */
   level?: SceneLevel;
   categories: { ref: CategoryRef; name: string | null; poses?: ScenePose[] }[];
   scenes: Scene[];
@@ -286,30 +289,33 @@ function tablesOf(custom: CategorySummary | undefined): readonly PlaceTable[] {
   return custom.pool.locations.map((l, i): PlaceTable => ({ place: l.name, time: l.times[0] ?? "midday", activity: l.activities[0]?.text ?? "standing", outfit: custom.pool.outfits[i % custom.pool.outfits.length] ?? "a plain dress", mirror: l.mirror }));
 }
 
-const NO_POSES = { profile: false, back: false } as const;
+/** The k-th of n slots is one of f evenly spread ones (exactly f of the n are): the mock's deterministic stand-in for the engine's seeded choice. */
+function spread(k: number, n: number, f: number): boolean {
+  return Math.floor(((k + 1) * f) / n) - Math.floor((k * f) / n) === 1;
+}
 
-function planScenes(
-  count: number,
-  refs: readonly CategoryRef[],
-  poses: { profile: boolean; back: boolean },
-  category: (ref: string) => CategorySummary | undefined,
-): Scene[] {
+function planScenes(count: number, refs: readonly CategoryRef[], level: SceneLevel, category: (ref: string) => CategorySummary | undefined): Scene[] {
   const scenes: Scene[] = [];
   let index = 0;
   for (const { ref, count: n } of splitCount(count, refs)) {
     const custom = isCustomCategory(ref) ? category(ref) : undefined;
     // 5a.2 (S5.6e): a built-in scene is a pair of its category's bank dealt a capture from the deck, so the shared template can write it.
     if (!isCustomCategory(ref)) {
+      // «Подача» (I5.28): exactly round(0.6 × n) of the category's scenes are flirty. The angle comes from the scene (I5.26): the category wants ⌈n/10⌉ scenes facing away,
+      // within its ⌊n/5⌋ cap, and a hand-held capture is never one of them.
+      const flirty = flirtyCountOf(n, level);
+      const wantedAway = Math.min(Math.ceil(n / 10), Math.floor(n / 5));
       for (let k = 0; k < n; k++) {
         index += 1;
-        const draw = bankDraw(ref, k, poses);
-        scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, place: draw.place, idea: null, text: null, edited: false, removed: false });
+        const flirtyScene = spread(k, n, flirty);
+        const draw = bankDraw(ref, k, { level: flirtyScene ? "flirty" : "ordinary", away: spread(k, n, wantedAway) ? "prefer" : "never" });
+        scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(flirtyScene ? { level: "flirty" as const } : {}), place: draw.place, idea: null, text: null, edited: false, removed: false });
       }
       continue;
     }
     const tables = tablesOf(custom);
     const deck: SceneView["shot"][] = custom !== undefined ? [...custom.pool.shotDeck] : ["friend", "selfie", "mirror", "candid"];
-    // CS.8a: a custom category with `poses` draws every pose from them (the run's toggles are not asked); a phone-in-hand shot that turns away takes another shot.
+    // CS.8a: a custom category with `poses` draws every pose from them; a phone-in-hand shot that turns away takes another shot.
     const angles = custom?.pool.poses;
     for (let k = 0; k < n; k++) {
       index += 1;
@@ -321,20 +327,8 @@ function planScenes(
       if (shot === "mirror" && mirrors.length === 0) shot = "friend";
       const row = shot === "mirror" ? (mirrors[k % mirrors.length] ?? tables[0]) : (tables.filter((t) => !t.mirror)[k % Math.max(1, tables.filter((t) => !t.mirror).length)] ?? tables[0]);
       if (row === undefined) throw new Error("the mock has no place to plan a scene in");
-      // Selfies and mirror shots face the camera whatever the run allows; the others may turn when the run says so.
-      const phone = shot === "selfie" || shot === "mirror";
-      const pose: SceneView["pose"] =
-        angled !== undefined
-          ? angled.pose
-          : phone || k % 5 < 3
-            ? k % 2 === 0
-              ? "front"
-              : "three-quarter"
-            : poses.profile && k % 5 === 3
-              ? "profile"
-              : poses.back && k % 5 === 4
-                ? "back"
-                : "three-quarter";
+      // A custom category without angles of its own faces the camera (the run's «Ракурсы» are gone, S5.7b); one with angles draws them from its list.
+      const pose: SceneView["pose"] = angled !== undefined ? angled.pose : k % 2 === 0 ? "front" : "three-quarter";
       scenes.push({ sceneId: index, category: ref, shot, pose, place: { location: row.place, timeOfDay: row.time, activity: row.activity, outfit: row.outfit }, idea: null, text: null, edited: false, removed: false });
     }
   }
@@ -369,11 +363,9 @@ function sentenceOf(scene: Scene, take = 0): string {
   return `A friend catches her ${scene.place.activity} at ${scene.place.location} in the ${scene.place.timeOfDay}, wearing ${scene.place.outfit} (${mark}).`;
 }
 
-/** The poses a set allows a scene: a selfie or mirror faces the camera whatever the set allows, the others may turn when it says so. */
-function poseFor(shot: SceneView["shot"], poses: { profile: boolean; back: boolean }, n: number): SceneView["pose"] {
-  if (shot === "selfie" || shot === "mirror") return n % 2 === 0 ? "front" : "three-quarter";
-  const allowed: SceneView["pose"][] = ["front", "three-quarter", ...(poses.profile ? (["profile"] as const) : []), ...(poses.back ? (["back"] as const) : [])];
-  return allowed[n % allowed.length] ?? "front";
+/** The pose of a redrawn custom scene with no angles of its own: it faces the camera (S5.7b: the set's toggles are gone). */
+function poseFor(n: number): SceneView["pose"] {
+  return n % 2 === 0 ? "front" : "three-quarter";
 }
 
 /** What «Авто» draws a shot from: never the mirror (an own scene has no place for one to sit on). */
@@ -444,7 +436,7 @@ export class MockSceneSets {
     const refs = seed.categories ?? ["home"];
     const scenes: Scene[] =
       seed.scenes === undefined
-        ? planScenes(seed.count, refs, { profile: false, back: false }, this.#deps.category)
+        ? planScenes(seed.count, refs, "ordinary", this.#deps.category)
         : seed.scenes.map(
             (s, i): Scene =>
               "idea" in s
@@ -803,6 +795,7 @@ export class MockSceneSets {
         shot: scene.shot,
         pose: scene.pose,
         ...(scene.capture === undefined ? {} : { capture: scene.capture }),
+        ...(scene.level === "flirty" ? { level: "flirty" as const } : {}),
         place: { ...scene.place },
         idea: null,
         text: scene.text,
@@ -983,7 +976,7 @@ export class MockSceneSets {
   compose(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; poses?: { profile: boolean; back: boolean }; level?: SceneLevel }): { sceneSetId: string; jobId: string | null } {
     const sceneSetId = this.#deps.nextId("set");
     const refs = orderCategories(request.categories);
-    const scenes = request.count === 0 ? [] : planScenes(request.count, refs, request.poses ?? NO_POSES, this.#deps.category);
+    const scenes = request.count === 0 ? [] : planScenes(request.count, refs, request.level ?? "ordinary", this.#deps.category);
     const set: MockSet = {
       sceneSetId,
       avatarId: request.avatarId,
@@ -1154,7 +1147,14 @@ export class MockSceneSets {
         const ref = scene.category === "own" ? "home" : scene.category;
         if (!isCustomCategory(ref)) {
           // A built-in scene is drawn anew among the bank's pairs for the capture it keeps (who takes the photo), away from the places and outfits the set already shows.
-          const draw = bankDraw(ref, k + scene.sceneId, set.poses ?? NO_POSES, { avoid: { locations: shown, outfits: shownOutfits }, capture: scene.capture ?? captureOfShot(scene.shot), ...(scene.place === null ? {} : { leaving: scene.place.location }) });
+          // The scene keeps its level; a scene facing the camera never turns away (the set keeps its cap), one that faces away may stay so.
+          const draw = bankDraw(ref, k + scene.sceneId, {
+            avoid: { locations: shown, outfits: shownOutfits },
+            capture: scene.capture ?? captureOfShot(scene.shot),
+            level: scene.level ?? "ordinary",
+            away: scene.pose === "profile" || scene.pose === "back" ? "may" : "never",
+            ...(scene.place === null ? {} : { leaving: scene.place.location }),
+          });
           shown.add(draw.place.location);
           shownOutfits.add(draw.place.outfit);
           draws.set(scene.sceneId, { place: draw.place, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose });
@@ -1183,7 +1183,7 @@ export class MockSceneSets {
         const outfit = pickFrom[(k + scene.sceneId) % pickFrom.length] ?? row.outfit;
         shown.add(row.place);
         shownOutfits.add(outfit);
-        draws.set(scene.sceneId, { place: { location: row.place, timeOfDay: row.time, activity: row.activity, outfit }, shot, pose: angled?.pose ?? poseFor(shot, set.poses ?? NO_POSES, k + scene.sceneId) });
+        draws.set(scene.sceneId, { place: { location: row.place, timeOfDay: row.time, activity: row.activity, outfit }, shot, pose: angled?.pose ?? poseFor(k + scene.sceneId) });
       }
     }
     return {

@@ -5,7 +5,7 @@ import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
 
 // S5.7a: «Подача» (`level`) and the optional `poses` on the mock, as the engine takes them: the old shapes still answer, `poses` is echoed on a set only when it
-// was sent, `level` only when it is flirty, and until S5.7b draws the mix `level` changes no scene.
+// was sent, `level` only when it is flirty, and a flirty level draws the mix (S5.7b).
 
 const MIA: AvatarSummary = {
   avatarId: "avatar-mia-0001",
@@ -56,10 +56,12 @@ describe("a set composed on the mock", () => {
     expect("level" in (await composedSet({ level: "ordinary" }))).toBe(false);
   });
 
-  test("draws the very scenes an ordinary request draws, whatever the level (S5.7b implements the mix)", async () => {
+  test("draws the mix a flirty level asks for and the same captures an ordinary request draws (the mix itself is in mockEngine.levelMix.test.ts)", async () => {
     const ordinary = await composedSet({});
     const flirty = await composedSet({ level: "flirty" });
-    expect(flirty.scenes).toEqual(ordinary.scenes);
+    expect(flirty.scenes.some((scene) => scene.level === "flirty")).toBe(true);
+    expect(ordinary.scenes.some((scene) => scene.level !== undefined)).toBe(false);
+    expect(flirty.scenes.map((scene) => scene.capture)).toEqual(ordinary.scenes.map((scene) => scene.capture));
   });
 
   test("shows each scene's capture, the way the engine does", async () => {
