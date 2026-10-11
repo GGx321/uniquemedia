@@ -102,4 +102,52 @@ export const PRESENTATION_SCENARIOS: readonly Scenario[] = [
       t.note(`no judged frame carries the flag, and every frame under the line is marked: ${String(drawn.every((p) => p.marked === (p.faceCos !== null && p.faceCos < 0.55)))}`);
     },
   },
+  {
+    name: "scene sets, «Подача» and the angle from the scene (S5.7b): a flirty compose holds exactly round(0.6 × n) flirty scenes, a category faces away in at most a fifth of its scenes and never on a hand-held capture",
+    rig: { launch: true },
+    async run(t, w, control) {
+      await control.musicTracks();
+      const HAND = new Set(["mirror-hidden", "mirror", "above", "prone", "over-shoulder", "selfie"]);
+      /** The avatar's set once its write has settled, read quietly: the transcript tells the facts below as notes (which scene is which is each engine's own deal). */
+      const settled = async (): Promise<Record<string, unknown>[]> => {
+        const scenes: Record<string, unknown>[] = [];
+        await t.quiet(async () => {
+          for (let i = 0; i < 2_000; i++) {
+            const answer = await t.call("scenes.get", { avatarId: w.avatarId });
+            const set = answer.ok ? record(answer.result.sceneSet) : null;
+            if (set !== null && set.status === "ready") {
+              const listed: unknown[] = Array.isArray(set.scenes) ? set.scenes : [];
+              for (const scene of listed) {
+                const row = record(scene);
+                if (row !== null) scenes.push(row);
+              }
+              return;
+            }
+            await t.settle();
+            await t.quiesce();
+          }
+          throw new Error("the scene set never finished its write");
+        });
+        return scenes;
+      };
+      const facts = (scenes: readonly Record<string, unknown>[]): void => {
+        const away = scenes.filter((s) => s.pose === "profile" || s.pose === "back");
+        t.note(`the set holds ${scenes.length} scenes, ${scenes.filter((s) => s.level === "flirty").length} of them flirty`);
+        t.note(`at most a fifth of the scenes face away: ${String(away.length <= Math.floor(scenes.length / 5))}`);
+        t.note(`no scene on a hand-held capture faces away: ${String(away.every((s) => !HAND.has(String(s.capture))))}`);
+      };
+      t.note("a flirty compose of 10 scenes of «Дом», with the poses a window of the last build sends (the angle comes from the scene, so they are ignored)");
+      await t.callLaunch("scenes.compose", { avatarId: w.avatarId, count: 10, categories: ["home"], level: "flirty", poses: { profile: true, back: true }, acceptedWorstMicros: ENOUGH });
+      const flirty = await settled();
+      facts(flirty);
+      t.note("the same compose ordinary: no scene is flirty");
+      const found = await t.callLaunch("scenes.get", { avatarId: w.avatarId });
+      const sceneSetId = found.ok ? record(found.result.sceneSet)?.sceneSetId : undefined;
+      if (typeof sceneSetId !== "string") throw new Error("the avatar has no scene set to discard");
+      await t.callLaunch("scenes.discard", { sceneSetId });
+      await t.callLaunch("scenes.compose", { avatarId: w.avatarId, count: 10, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: ENOUGH });
+      const ordinary = await settled();
+      facts(ordinary);
+    },
+  },
 ];
