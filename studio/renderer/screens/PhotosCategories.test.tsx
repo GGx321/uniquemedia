@@ -15,6 +15,8 @@ const BUILT_INS = ["Дом", "Виды", "Улица", "Гламур", "Фитн
 function chipNames(): string[] {
   return within(chipsGroup())
     .getAllByRole("button")
+    // The chips kept for «Смелая» are disabled buttons (not choices of the row).
+    .filter((b) => !(b as HTMLButtonElement).disabled)
     .map((b) => b.getAttribute("aria-label") ?? b.textContent ?? "");
 }
 
