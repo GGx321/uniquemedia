@@ -6,6 +6,7 @@ import type { PriceBook } from "../money/prices";
 import { runWriterConfig } from "../runs/plan";
 import { runWriterPhase, type WriterPhase, type WriterPhaseDeps } from "../runs/writerPhase";
 import { chunkState, pendingChunks } from "./chunks";
+import { setLocal } from "./local";
 
 // CS.4a: the scene set's writer job (a compose and a «Дописать» are the same job). It drives the run's own writer phase (`runWriterPhase`, the writer's
 // prompt, answer rules, re-ask feedback and call shape, unchanged) ONE PENDING CHUNK AT A TIME:
@@ -93,7 +94,9 @@ export async function runSceneWrite(deps: SceneWriteDeps, request: SceneWriteReq
   for (;;) {
     if (request.signal.aborted) return { status: "cancelled" };
     const set = await deps.load();
-    const next = pendingChunks(set, ledger).find((pending) => !asked.has(pending.chunk.chunk));
+    // 5a.2 (M4): the chunks the code template writes whole go first, so a stop during a chunk for the model never strands template sentences.
+    const waiting = pendingChunks(set, ledger).filter((pending) => !asked.has(pending.chunk.chunk));
+    const next = waiting.find((pending) => pending.free) ?? waiting[0];
     if (next === undefined) break;
     // A soft stop with nothing left to ask changes nothing (the job is done); with a chunk still waiting it is not asked.
     if (request.stop?.aborted === true) return { status: "cancelled" };
@@ -113,6 +116,7 @@ export async function runSceneWrite(deps: SceneWriteDeps, request: SceneWriteReq
       signal: request.signal,
       ...(request.stop === undefined ? {} : { stop: request.stop }),
       slots,
+      local: setLocal(set),
       chunks: [{ chunk: next.chunk.chunk, slotIndexes: next.sceneIds, attemptIds: next.chunk.attemptIds }],
       sentences: new Map(),
       writerDone: new Set(),

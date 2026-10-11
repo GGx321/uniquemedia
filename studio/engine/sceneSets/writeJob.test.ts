@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Scope } from "../money/ledger";
 import { SceneSetStore, type StoredSceneSet } from "../library/sceneSets";
+import { sceneSetOnTheBanks } from "../library/testing/bankScenes";
 import { sampleSet } from "../library/testing/sceneSetSample";
 import { useTempDir } from "../library/testing/helpers";
 import { until } from "../testing/engineHarness";
@@ -516,5 +517,79 @@ describe("runSceneWrite: progress", () => {
     const result = (await end) as Extract<SceneWriteEnd, { status: "done" }>;
     expect(progress).toEqual([5]);
     expect(progress.every((done) => done <= result.written + result.unwritten)).toBe(true);
+  });
+});
+
+// S5.6c1 (plan s5a2 r1.5 §5.5, M4): the seam in a compose. A scene whose place and moment the banks find by name is written by the template at once; the
+// chunks the template writes whole are saved first, with no request and no reserve, and a chunk with a scene the banks cannot name sends only that scene.
+describe("runSceneWrite: the writer seam", () => {
+  const range = (from: number, to: number): number[] => Array.from({ length: to - from + 1 }, (_, i) => from + i);
+
+  async function seedBanks(count: number, onBanks: readonly number[]): Promise<void> {
+    await store.create(sceneSetOnTheBanks(sampleSet({ count }), onBanks));
+  }
+
+  test("a set whose scenes the banks render is written with no request and no reserve", async () => {
+    await seedBanks(30, range(1, 30));
+    const { net, end } = run([]);
+
+    expect(await end).toEqual({ status: "done", written: 30, unwritten: 0 });
+    expect(net.calls).toHaveLength(0);
+    expect(reserveIds()).toEqual([]);
+    expect((await setNow()).scenes.every((s) => s.text !== null)).toBe(true);
+  });
+
+  test("the template chunks are saved before a chunk that needs the model, with no request yet", async () => {
+    await seedBanks(30, range(26, 30));
+    const { saves, end } = run([good]);
+    await end;
+
+    expect(saves.map((s) => [s.chunk, s.callsSoFar])).toEqual([
+      [2, 0],
+      [1, 1],
+    ]);
+  });
+
+  test("a chunk with scenes the banks render sends only the others", async () => {
+    await seedBanks(30, range(1, 3));
+    const { net, end } = run([good, good]);
+    await end;
+
+    expect(slotsAskedFor(net.calls[0] as FetchCall)).toEqual(range(4, 25));
+    expect(reserveIds()).toEqual([id(1, 1), id(2, 1)]);
+  });
+
+  test("a stop during the model's chunk leaves the template chunk saved in the set", async () => {
+    await seedBanks(30, range(26, 30));
+    const { end } = run([rateLimited]);
+
+    expect(await end).toMatchObject({ status: "failed", stoppedBy: "rate-limited" });
+    const set = await setNow();
+    expect(set.scenes.filter((s) => s.sceneId >= 26).every((s) => s.text !== null)).toBe(true);
+    expect(set.scenes.filter((s) => s.sceneId <= 25).every((s) => s.text === null)).toBe(true);
+  });
+
+  test("a chunk given up on whose scenes the banks now render is written, free, and the model is not asked", async () => {
+    await seedBanks(30, range(1, 25));
+    await store.update(AVATAR, SET, (s) => withChunkGivenUp(s, 1, "rejected"));
+    const { net, end } = run([good]);
+
+    expect(await end).toEqual({ status: "done", written: 30, unwritten: 0 });
+    expect(net.calls).toHaveLength(1);
+    expect(slotsAskedFor(net.calls[0] as FetchCall)).toEqual(range(26, 30));
+    expect((await setNow()).scenes.filter((s) => s.sceneId <= 25).every((s) => s.text !== null)).toBe(true);
+  });
+
+  test("a resume does not render again a chunk the set already holds", async () => {
+    await seedBanks(30, range(26, 30));
+    const first = run([rateLimited]);
+    await first.end;
+    const before = textsOf(await setNow()).slice(25);
+
+    const second = run([good], { jobId: "job-aaaa-0002" });
+    await second.end;
+
+    expect(textsOf(await setNow()).slice(25)).toEqual(before);
+    expect(second.saves.map((s) => s.chunk)).toEqual([1]);
   });
 });
