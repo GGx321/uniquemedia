@@ -1,7 +1,7 @@
 import { begin, ENOUGH, record, review } from "./scenarios.autopilotRun";
 import type { Scenario } from "./scenarios";
 import type { Answer } from "./transcript";
-import { LLM_ONLY_REF } from "../../scenes/testing/llmOnlyFixture";
+import { ON_THE_WRITER } from "../../scenes/testing/llmOnlyFixture";
 import { plainSentence } from "../../../shared/scenes/plain";
 
 // Stage 5, S5.6d (APPENDED; the golden is append-only, plan s5a2 §5.7): what a writer that cannot write a scene changed, told against both engines. Before S5.6d a chunk the model rejected twice was
@@ -12,8 +12,6 @@ import { plainSentence } from "../../../shared/scenes/plain";
 // What is not here: an idea write that keeps the scenes the model got right, and the slot a sentence that breaks the word rules ends. The fake writer answers a request with a sentence per scene
 // and no shot or pose, which an idea write asks for, and a run draws its sentences from the engine's planner, so neither can be told the same way to both engines; their tests are in
 // the engine's (writerPhase.repair, reviewWriteJob, runJob) and the mock's (mockEngine.sceneSets.writes, mockEngine.runs) own suites.
-
-const ON_THE_WRITER = { categories: [LLM_ONLY_REF] };
 
 /** The scenes of the avatar's set as a story reads them, and the revision the set is at (each engine counts its own; the transcript writes `<seen>`). */
 async function readSet(t: Parameters<Scenario["run"]>[0], avatarId: string): Promise<{ sceneSetId: string; revision: number }> {

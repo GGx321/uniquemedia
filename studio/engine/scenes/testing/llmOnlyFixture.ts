@@ -41,5 +41,8 @@ export const LLM_ONLY_CATEGORY_RECORD: Omit<CategorySummary, "createdAt" | "upda
 export const LLM_ONLY_POOL: Pool = poolOf(LLM_ONLY_CATEGORY_POOL);
 
 export function llmOnlySnapshot(style: CategorySnapshot["style"] = "phone"): CategorySnapshot {
-  return { ref: LLM_ONLY_REF, name: "Только модель", label: "Model only", style };
+  return { ref: LLM_ONLY_REF, name: LLM_ONLY_CATEGORY_RECORD.name, label: LLM_ONLY_CATEGORY_RECORD.label, style };
 }
+
+/** The draft's categories of a story or a test whose subject is the compose WRITER (a fault or a hang there): the category only the model writes. ONE definition, read by the parity stories and the mock's launch testkit. */
+export const ON_THE_WRITER = { categories: [LLM_ONLY_REF] };

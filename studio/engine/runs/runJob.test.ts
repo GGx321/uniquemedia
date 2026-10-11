@@ -2327,7 +2327,7 @@ describe("crash and resume", () => {
 
 describe("a slot whose sentence breaks the word rules ends alone", () => {
   const BAD = "She lounges by the pool in a bikini, laughing at the camera.";
-  const writerLine = (sentences: { slotIndex: number; sentence: string }[]) => ({ type: "writer" as const, chunk: 1, sentences, at: new Date(NOW).toISOString() });
+  const writerLine = (sentences: { slotIndex: number; sentence: string }[]): RunEvent => ({ type: "writer" as const, chunk: 1, sentences, at: new Date(NOW).toISOString() });
 
   /** Journals the writer's chunk for `run` with slot 2's sentence replaced by `bad`, so the job starts with every sentence written and no writer request left. */
   async function journalWriterWith(run: RunPlan, bad: string): Promise<void> {

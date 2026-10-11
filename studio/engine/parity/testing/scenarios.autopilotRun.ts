@@ -1,7 +1,7 @@
 import type { Scenario } from "./scenarios";
 import type { World } from "./rigs";
 import type { Answer } from "./transcript";
-import { LLM_ONLY_REF } from "../../scenes/testing/llmOnlyFixture";
+import { ON_THE_WRITER } from "../../scenes/testing/llmOnlyFixture";
 
 // Stage 4, S4.8: the batch autopilot as a launch that RUNS, told through its commands and compared engine against mock, line for line. The real rig runs the engine as the app builds it (its
 // default launch steps over a fake OpenRouter, the rig's fake ffmpeg and a track store) and the mock runs its launch on its clock; a story reads the launch only at the STABLE points it waits
@@ -20,7 +20,6 @@ const NO_LAUNCH = "launch-00000000";
  * 5a.2 (S5.6e, the dated list of plan s5a2 §5.7): the stories whose subject is a fault or a hang at the compose WRITER plan from `cat-llm-only-fixture` (the rig's `llmOnlyFixture`), a custom category
  * whose activities the code template cannot write. A launch on «home» is composed by the template with no request since S5.6c1, so there is no writer to fault or to hang.
  */
-const ON_THE_WRITER = { categories: [LLM_ONLY_REF] };
 
 /** The draft of these stories: Mia, two slides videos, every photo new. */
 const draftOf = (w: World, over: Record<string, unknown> = {}) => ({
