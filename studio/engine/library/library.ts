@@ -761,13 +761,21 @@ export class Library {
   /**
    * Stage 5, S5.3a: which of the avatar's photos a face reference is read from. `"master"` is `referencePhoto()`. `"source"` is the imported photo (`sourcePhoto()`), the one the
    * reference portrait is drawn FROM and compared with; for an avatar that has none (a wizard avatar) it is the master, so a caller that always asks for the source needs no branch.
-   * Null in exactly the cases `referencePhoto()` is. When the master is a portrait and the source photo is missing or quarantined it throws
+   * Null for a draft or unknown avatar, and for a missing master with no live source (for `"master"`: exactly when `referencePhoto()` is); a live source is answered even when the
+   * master's file is missing. When the master is a portrait and the source photo is missing or quarantined it throws
    * `LibraryError("source-unavailable")` instead of answering the portrait; the engine maps that to INTERNAL «исходное фото недоступно» (S5.3c), free, for the batch and the check.
    */
   #referenceOf(avatarId: string, of: ReferenceOf): ReferencePhoto | null {
     const master = this.referencePhoto(avatarId);
-    if (master === null || of === "master") return master;
+    if (of === "master") return master;
     const source = this.sourcePhoto(avatarId);
+    // A live source does not depend on the master's file (I5.20): a portrait master whose file or sidecar is gone leaves the avatar's source usable, so the batch and the check can
+    // still run and the window's «get new variants» way out works. A draft or an unknown avatar has no reference at all.
+    if (master === null) {
+      const avatar = this.#avatars.get(avatarId);
+      if (source === null || !avatar || avatar.status === "draft") return null;
+      return { photo: source, path: join(this.#photosDir(avatarId), source.file) };
+    }
     if (source === null) {
       // A portrait master with no source is an imported avatar whose source photo is missing or quarantined. Falling back to the portrait would make the descriptor check
       // circular (I5.20) and draw a portrait from a portrait, so it is refused; only a non-portrait master (a wizard avatar) stands in for the source.

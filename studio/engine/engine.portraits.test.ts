@@ -458,6 +458,15 @@ describe("avatars.checkDescriptor of an imported avatar (I5.20)", () => {
     expect(ledgerLines(dir())).toEqual([]);
   });
 
+  test("a portrait master whose file is missing while the source is alive: the check compares the source, not an INTERNAL", async () => {
+    const { avatarId, portraitIds } = await seedImportedAvatar(dir(), { portraits: [0.76, 0.7], master: 0 });
+    await rm(join(dir(), "library", "avatars", avatarId, "photos", `${portraitIds[0]}.json`));
+    const net = network();
+    const { engine } = await started({ net });
+
+    ok(await engine.handle(check(avatarId)));
+  });
+
   test("a switch back and forth changes nothing about what is sent", async () => {
     const { avatarId, sourceId, portraitIds } = await seedImportedAvatar(dir(), { portraits: [0.76] });
     const net = network();

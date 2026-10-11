@@ -448,6 +448,18 @@ describe("avatars.generatePortraits: checked before anything is spent", () => {
     expect(rig?.embedded).toEqual([]);
   });
 
+  test("a portrait master whose file is missing while the source is alive: the batch still starts, drawn from the source", async () => {
+    const seeded = await seedImportedAvatar(dir(), { portraits: [0.76, 0.7], master: 0 });
+    await rm(join(dir(), "library", "avatars", seeded.avatarId, "photos", `${seeded.portraitIds[0]}.json`));
+    const rig = fakeGate();
+    const { engine, events } = await started({ gate: rig });
+
+    const jobId = jobIdOf(await engine.handle(generate(seeded.avatarId, BATCH_OFF)));
+    await jobEnd(events, jobId);
+
+    expect(rig.embedded).toHaveLength(1);
+  });
+
   test("a source photo with no face: MASTER_FACE_UNUSABLE, tried once and free", async () => {
     const rig = fakeGate({
       embed: async () => {
