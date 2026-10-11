@@ -296,6 +296,47 @@ describe("readIdeaAnswer", () => {
   });
 });
 
+// ---------- 5a.2 (S5.6d): an idea answer that is wrong for some scenes keeps the others, with the angle each settled on ----------
+
+describe("readIdeaAnswer: what is marked and what is kept (S5.6d)", () => {
+  const answer = (...scenes: Record<string, unknown>[]) => JSON.stringify({ scenes });
+  const SECOND: IdeaSlot = { slotIndex: 6, idea: "лежит на животе, вид сзади", shot: null, pose: null };
+  const GOOD_TWO = { slotIndex: 6, sentence: SENTENCE, shot: "friend", pose: "three-quarter" };
+  const repairOf = (read: ReturnType<typeof readIdeaAnswer>) => {
+    if (read.ok) throw new Error("expected a refusal");
+    return read.repair;
+  };
+
+  test("a scene with a missing pick is marked; the other keeps its sentence and the angle it settled on", () => {
+    const repair = repairOf(readIdeaAnswer(answer({ slotIndex: 5, sentence: SENTENCE, pose: "back" }, GOOD_TWO), [AUTO, SECOND]));
+    expect(repair).toEqual({ marked: [5], accepted: new Map([[6, SENTENCE]]), angles: new Map([[6, { shot: "friend", pose: "three-quarter" }]]) });
+  });
+
+  test("a two-handed selfie scene is marked; the other is kept with its angle", () => {
+    const repair = repairOf(readIdeaAnswer(answer({ slotIndex: 5, sentence: "She holds the cup with both hands.", shot: "selfie", pose: "front" }, GOOD_TWO), [AUTO, SECOND]));
+    expect(repair).toEqual({ marked: [5], accepted: new Map([[6, SENTENCE]]), angles: new Map([[6, { shot: "friend", pose: "three-quarter" }]]) });
+  });
+
+  test("a bad pick and a sentence problem in different scenes mark both, in scene order", () => {
+    const repair = repairOf(
+      readIdeaAnswer(answer({ slotIndex: 6, sentence: "She holds the cup with both hands.", shot: "selfie", pose: "front" }, { slotIndex: 5, sentence: SENTENCE, shot: "photographer", pose: "back" }), [AUTO, SECOND]),
+    );
+    expect(repair).toEqual({ marked: [5, 6], accepted: new Map(), angles: new Map() });
+  });
+
+  test("a youth word refuses the whole answer: nothing is kept", () => {
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence: "A teenage girl lies on a bed.", shot: "candid", pose: "back" }, GOOD_TWO), [AUTO, SECOND]);
+    expect(read).toMatchObject({ ok: false, problems: ["youth-word"] });
+    expect(repairOf(read)).toBeUndefined();
+  });
+
+  test("a bad pick beside a youth word still refuses the whole answer", () => {
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence: "A teenage girl lies on a bed.", shot: "photographer", pose: "back" }, GOOD_TWO), [AUTO, SECOND]);
+    expect(read).toMatchObject({ ok: false, problems: expect.arrayContaining(["youth-word", "bad-angle"]) });
+    expect(repairOf(read)).toBeUndefined();
+  });
+});
+
 // ---------- CS.8a fix round 1: the bad-angle reason fits every case ----------
 
 describe("the bad-angle retry reason is neutral: it holds for «Авто», for an idea that names a mirror, and for an owner's mirror", () => {

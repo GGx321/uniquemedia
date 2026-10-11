@@ -3,7 +3,7 @@ import { ScenePose } from "../../shared/engine";
 import type { ChatMessage } from "../openrouter/types";
 import { isPhoneInHandShot, type Pose } from "./schema";
 import type { Shot } from "./types";
-import { NO_REFUSAL, POSE_LABEL, readWriterScenes, SHOT_LABEL, writerRefusalText, type ReadableSlot, type WriterRefusal } from "./writer";
+import { NO_REFUSAL, POSE_LABEL, readWriterScenes, SHOT_LABEL, writerRefusalText, type ReadableSlot, type SlotRepair, type WriterRefusal } from "./writer";
 
 // CS.4b: the idea variant of the scene writer. «+ Своя сцена» gives the writer the owner's idea (any language, up to 500 chars) and a shot and a pose for each
 // scene, and it writes one English sentence per scene. Its system prompt is its own: the compose prompt (writer.ts) is byte-pinned and never changes. What the
@@ -172,7 +172,12 @@ const IdeaOutputSchema = z.strictObject({
   scenes: z.array(z.strictObject({ slotIndex: z.int().positive(), sentence: z.string().min(1), shot: z.unknown().optional(), pose: z.unknown().optional() })),
 });
 
-export type IdeaAnswer = { ok: true; sentences: Map<number, string>; angles: Map<number, IdeaAngle> } | ({ ok: false } & WriterRefusal);
+/** What a refusal that belongs to some scenes leaves for the next attempt: the scenes to ask again, and the others with their sentence and the angle they settled on. */
+export interface IdeaRepair extends SlotRepair {
+  angles: Map<number, IdeaAngle>;
+}
+
+export type IdeaAnswer = { ok: true; sentences: Map<number, string>; angles: Map<number, IdeaAngle> } | ({ ok: false } & WriterRefusal & { repair?: IdeaRepair });
 
 function pickedShot(value: unknown, mirrorAllowed: boolean): Shot | undefined {
   return pickable(mirrorAllowed).find((shot) => shot === value);
@@ -219,6 +224,16 @@ export function readIdeaAnswer(content: string, slots: readonly IdeaSlot[], mirr
 
   const read = readWriterScenes(parsed.data.scenes, readable);
   if (read.ok && angleSlots.length === 0) return { ok: true, sentences: read.sentences, angles };
-  const refusal: WriterRefusal = read.ok ? { problems: [], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] } : read;
-  return { ok: false, ...refusal, problems: angleSlots.length === 0 ? refusal.problems : [...refusal.problems, "bad-angle"], ...(angleSlots.length === 0 ? {} : { angleSlots }) };
+  const { repair: sentenceRepair, ...refusal }: WriterRefusal & { repair?: SlotRepair } = read.ok
+    ? { problems: [], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] }
+    : read;
+  const told = { ...refusal, problems: angleSlots.length === 0 ? refusal.problems : [...refusal.problems, "bad-angle" as const], ...(angleSlots.length === 0 ? {} : { angleSlots }) };
+  // 5a.2 (S5.6d): a bad pick belongs to its scene like a sentence problem does, so the other scenes are kept with the angle each settled on. A problem of the
+  // whole answer (a youth word, an unreadable answer) keeps nothing.
+  if (!read.ok && sentenceRepair === undefined) return { ok: false, ...told };
+  const keptSentences = read.ok ? read.sentences : (sentenceRepair?.accepted ?? new Map<number, string>());
+  const markedSet = new Set<number>([...(sentenceRepair?.marked ?? []), ...angleSlots]);
+  const accepted = new Map([...keptSentences].filter(([slotIndex]) => !markedSet.has(slotIndex)));
+  const keptAngles = new Map([...angles].filter(([slotIndex]) => accepted.has(slotIndex)));
+  return { ok: false, ...told, repair: { marked: slots.map((s) => s.slotIndex).filter((slotIndex) => markedSet.has(slotIndex)), accepted, angles: keptAngles } };
 }
