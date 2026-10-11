@@ -660,7 +660,8 @@ export const PortraitsResult = z
     message: "candidates and failed slots are at most the five slots of a batch",
     path: ["failedSlots"],
   })
-  .refine((r) => unique(r.failedSlots.map((f) => f.slot)), { message: "a slot must not repeat", path: ["failedSlots"] });
+  .refine((r) => unique(r.failedSlots.map((f) => f.slot)), { message: "a slot must not repeat", path: ["failedSlots"] })
+  .refine((r) => unique(r.candidates.map((c) => c.photoId)), { message: "a photo must not repeat", path: ["candidates"] });
 
 /**
  * `avatars.portraits`: where the avatar's reference portrait stands. `sourcePhotoId` is the imported photo (null for a wizard avatar, which has none and gets no action),
@@ -670,6 +671,8 @@ export const PortraitsResult = z
 export const AvatarPortraits = z
   .strictObject({
     avatarId: Id,
+    /** The avatar's master now: the source photo, or a portrait. Never among `candidates`. */
+    masterPhotoId: Id,
     sourcePhotoId: Id.nullable(),
     masterLikeness: z.number().min(-1).max(1).nullable(),
     candidates: z.array(PortraitCandidate).max(PORTRAIT_CANDIDATES_MAX),
@@ -679,6 +682,10 @@ export const AvatarPortraits = z
     path: ["candidates"],
   })
   .refine((r) => unique(r.candidates.map((c) => c.photoId)), { message: "a photo must not repeat", path: ["candidates"] })
+  .refine((r) => r.candidates.every((c) => c.photoId !== r.sourcePhotoId && c.photoId !== r.masterPhotoId), {
+    message: "the source photo and the master are not candidates",
+    path: ["candidates"],
+  })
   .refine((r) => r.sourcePhotoId !== null || r.candidates.length === 0, {
     message: "an avatar with no source photo has no portrait candidates",
     path: ["candidates"],

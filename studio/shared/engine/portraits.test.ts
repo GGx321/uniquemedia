@@ -81,7 +81,7 @@ describe("the five portrait commands", () => {
 });
 
 describe("avatars.portraits (the list)", () => {
-  const list = (over: object) => okResponse("avatars.portraits", { avatarId: AVATAR, sourcePhotoId: "photo-0010", masterLikeness: null, candidates: [], ...over });
+  const list = (over: object) => okResponse("avatars.portraits", { avatarId: AVATAR, masterPhotoId: "photo-0011", sourcePhotoId: "photo-0010", masterLikeness: null, candidates: [], ...over });
 
   test("accepts a source photo, no master likeness and no candidates", () => {
     expect(parseMessage(list({})).ok).toBe(true);
@@ -120,6 +120,19 @@ describe("avatars.portraits (the list)", () => {
 
   test("refuses a key the contract does not know", () => {
     expect(parseMessage(list({ path: "/x" })).ok).toBe(false);
+  });
+
+  test("refuses the source photo listed as a candidate", () => {
+    expect(parseMessage(list({ candidates: [candidate("photo-0010", 0.7)] })).ok).toBe(false);
+  });
+
+  test("refuses the master listed as a candidate", () => {
+    expect(parseMessage(list({ masterPhotoId: "photo-0101", masterLikeness: 0.7, candidates: [candidate("photo-0101", 0.7)] })).ok).toBe(false);
+  });
+
+  test("names the master, which is the source or a portrait", () => {
+    expect(parseMessage(list({ masterPhotoId: "photo-0010" })).ok).toBe(true);
+    expect(parseMessage(okResponse("avatars.portraits", { avatarId: AVATAR, sourcePhotoId: null, masterLikeness: null, candidates: [] })).ok).toBe(false);
   });
 });
 
@@ -192,6 +205,10 @@ describe("PortraitsResult", () => {
 
   test("refuses a candidate of another avatar", () => {
     expect(parses(result({ candidates: [candidate("photo-0101", 0.7, OTHER_AVATAR)] }))).toBe(false);
+  });
+
+  test("refuses the same photo twice among the candidates", () => {
+    expect(parses(result({ candidates: [candidate("photo-0101", 0.7), candidate("photo-0101", 0.6)] }))).toBe(false);
   });
 
   test("refuses a candidate under the gate or above 1", () => {

@@ -372,7 +372,7 @@ const ENGINE_SPECS = [
   //  - `generatePortraits` is paid, accepted like `generateCandidates`, and answers the `avatar.portraits` job that runs on (job.progress, then job.done/failed/cancelled).
   //    Refused free, with VALIDATION and `portraitReason` `not-imported` (no source photo) or `too-many-candidates` (15 unpicked portraits already), NOT_FOUND, IN_FLIGHT,
   //    MASTER_FACE_UNUSABLE (no face in the source), FACE_GATE_UNAVAILABLE, PRICE_CHANGED, BUDGET_EXCEEDED, RECONCILE_REQUIRED and the usual key and library refusals.
-  //  - `portraits` is a free read: the source photo's id (null for a wizard avatar), the master's likeness when the master is a portrait, and the pending portraits the pick accepts, best first.
+  //  - `portraits` is a free read: the master's id, the source photo's id (null for a wizard avatar), the master's likeness when the master is a portrait, and the pending portraits the pick accepts, best first.
   //  - `pickPortrait` is free: the named photo (a pending portrait, or the source photo to go back to it) becomes the master, `avatar.changed` follows, and the other portraits go.
   //    The current master is answered as it is. VALIDATION with `portraitReason` `not-a-candidate` for any other photo, `not-imported` for a wizard avatar.
   //  - `discardPortraits` is free («Оставить как есть»): removes every pending portrait and says how many.

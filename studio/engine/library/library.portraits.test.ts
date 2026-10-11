@@ -385,7 +385,7 @@ describe("switchMaster commits before it cleans up (I5.18)", () => {
   });
 
   test("memory already names the new master when a failed cleanup is reported (it is updated at the commit, not after the cleanup)", async () => {
-    let masterSeen: string | undefined;
+    let masterSeen: string | null | undefined;
     let libraryRef: Library | undefined;
     const rig = await withPortraits({
       onPortraitCleanupFailure: () => {

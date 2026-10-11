@@ -393,7 +393,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "avatars.generatePortraits": { payload: { avatarId: "avatar-0001", acceptedWorstMicros: 300_000 }, result: { jobId: "job-00000001" } },
   "avatars.portraits": {
     payload: { avatarId: "avatar-0001" },
-    result: { avatarId: "avatar-0001", sourcePhotoId: "photo-0010", masterLikeness: null, candidates: [{ avatarId: "avatar-0001", photoId: "photo-0101", likeness: 0.76 }] },
+    result: { avatarId: "avatar-0001", masterPhotoId: "photo-0010", sourcePhotoId: "photo-0010", masterLikeness: null, candidates: [{ avatarId: "avatar-0001", photoId: "photo-0101", likeness: 0.76 }] },
   },
   "avatars.pickPortrait": { payload: { avatarId: "avatar-0001", photoId: "photo-0101" }, result: { avatar: { ...avatar, masterPhotoId: "photo-0101" } } },
   "avatars.discardPortraits": { payload: { avatarId: "avatar-0001" }, result: { avatarId: "avatar-0001", removed: 4 } },
