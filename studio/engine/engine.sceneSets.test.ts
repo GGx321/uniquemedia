@@ -874,7 +874,8 @@ describe("scenes.write: «Дописать»", () => {
     expect(code(await engine.handle(writeCommand(view.revision, 4 * ATTEMPT)))).toBe("VALIDATION");
   });
 
-  test("a provider's refusal ends that chunk and the job goes on", async () => {
+  // Round-1 review of S5.6d (I5.31): the refusal is final for the request (one call, free), never for the scenes: its chunk is written plain and the job goes on.
+  test("a provider's refusal writes that chunk plain, gives nothing up, and the job goes on", async () => {
     const avatarId = await seedAvatar();
     await seedSet(avatarId, { count: 35, write: compose });
     const net = sceneNetwork({ writer: (call, n) => (n === 1 ? refusal : goodAnswer(call, n)) });
@@ -883,7 +884,9 @@ describe("scenes.write: «Дописать»", () => {
     await jobEnd(events, jobId);
 
     const view = await setOf(engine, avatarId);
-    expect(view.chunks.map((c) => c.gaveUpBy)).toEqual(["refused", null]);
+    expect(view.chunks.map((c) => c.gaveUpBy)).toEqual([null, null]);
+    expect(view.scenes.every((s) => s.text !== null)).toBe(true);
+    expect(view.spentMicros).toBe(11_200);
     expect(net.writerCalls()).toHaveLength(2);
   });
 
@@ -1571,17 +1574,17 @@ describe("what the view claims stays true (fix round 1)", () => {
 
   test("the compose outcome is the one the job ended with: removing scenes afterwards does not change it", async () => {
     const avatarId = await seedAvatar();
-    // The second chunk is refused by the provider (a chunk given up on): two rejected answers no longer give a chunk up (S5.6d), they take the plain sentence.
+    // No job gives a chunk up any more (S5.6d), so the tally is all written; what it pins is that the outcome is what the job ended with.
     const net = sceneNetwork({ writer: (call, n) => (n === 1 ? goodAnswer(call, n) : refusal) });
     const { engine, events } = await engineOver(net);
     const { sceneSetId, jobId } = composed(await engine.handle(composeCommand(avatarId, { count: 30 })));
     await jobEnd(events, jobId ?? "none");
     const ended = await setOf(engine, avatarId);
-    expect(ended.lastCompose).toEqual({ total: 30, written: 25, gaveUp: 5 });
+    expect(ended.lastCompose).toEqual({ total: 30, written: 30, gaveUp: 0 });
 
     ok(await engine.handle(edit(ended.revision, { op: "remove", sceneIds: [1, 2, 3, 26, 27] }, sceneSetId)));
 
-    expect((await setOf(engine, avatarId)).lastCompose).toEqual({ total: 30, written: 25, gaveUp: 5 });
+    expect((await setOf(engine, avatarId)).lastCompose).toEqual({ total: 30, written: 30, gaveUp: 0 });
   });
 });
 

@@ -1,6 +1,8 @@
 import { begin, ENOUGH, record, review } from "./scenarios.autopilotRun";
 import type { Scenario } from "./scenarios";
+import type { Answer } from "./transcript";
 import { LLM_ONLY_REF } from "../../scenes/testing/llmOnlyFixture";
+import { plainSentence } from "../../../shared/scenes/plain";
 
 // Stage 5, S5.6d (APPENDED; the golden is append-only, plan s5a2 §5.7): what a writer that cannot write a scene changed, told against both engines. Before S5.6d a chunk the model rejected twice was
 // given up on (its scenes read «не составлена»), and a rewrite it rejected twice failed. Now a PLANNED scene the model could not write in the chunk's two answers takes the plain sentence, so the
@@ -34,6 +36,27 @@ async function untilSetReady(t: Parameters<Scenario["run"]>[0], avatarId: string
   });
 }
 
+/** The scenes of the avatar's set as the story reads them: text and the place the sentence is built from (the transcript summarises the set, so a story that wants the text says what it saw). */
+async function scenesOf(t: Parameters<Scenario["run"]>[0], avatarId: string): Promise<{ sceneId: number; text: string | null; plain: string | null }[]> {
+  const answers: Answer[] = [];
+  await t.quiet(async () => {
+    answers.push(await t.callLaunch("scenes.get", { avatarId }));
+  });
+  const answer = answers[0];
+  const scenes = answer?.ok === true ? record(answer.result.sceneSet)?.scenes : undefined;
+  if (!Array.isArray(scenes)) throw new Error("the avatar has no scene set to read");
+  return scenes.flatMap((scene) => {
+    const s = record(scene);
+    const place = record(s?.place);
+    if (s === null || typeof s.sceneId !== "number") return [];
+    const plain =
+      place !== null && typeof s.category === "string" && typeof place.location === "string" && typeof place.activity === "string" && typeof place.outfit === "string"
+        ? plainSentence({ category: s.category, location: place.location, activity: place.activity, outfit: place.outfit, ...(typeof s.shot === "string" && (s.shot === "friend" || s.shot === "selfie" || s.shot === "mirror" || s.shot === "candid" || s.shot === "photographer") ? { shot: s.shot } : {}) })
+        : null;
+    return [{ sceneId: s.sceneId, text: typeof s.text === "string" ? s.text : null, plain }];
+  });
+}
+
 export const PLAIN_FALLBACK_SCENARIOS: readonly Scenario[] = [
   {
     name: "scene writer (running launch): a compose whose writer is rejected twice writes the plain sentence for every scene — nothing is given up, and the set waits for the review",
@@ -45,6 +68,8 @@ export const PLAIN_FALLBACK_SCENARIOS: readonly Scenario[] = [
       const { launch } = await begin(t, w, { sceneReview: true, ...ON_THE_WRITER });
       await review(t, launch);
       t.note("every scene is written (its place, its moment and its outfit in a sentence of the code's own), no chunk is given up, and both rejected answers were paid for");
+      const composed = await scenesOf(t, w.avatarId);
+      t.note(`every scene reads the plain sentence of its place: ${String(composed.length > 0 && composed.every((s) => s.text !== null && s.text === s.plain))}`);
       await t.callLaunch("scenes.get", { avatarId: w.avatarId });
       await t.callLaunch("autopilot.get", { launchId: launch });
     },
@@ -59,12 +84,15 @@ export const PLAIN_FALLBACK_SCENARIOS: readonly Scenario[] = [
       t.note("«Стоп» gives the composed set back to the owner");
       await t.callLaunch("autopilot.stop", { launchId: launch });
       const set = await readSet(t, w.avatarId);
+      const before = (await scenesOf(t, w.avatarId)).find((s) => s.sceneId === 2);
       t.note("the owner asks for another scene 2; the model's two answers are rejected");
       control.launch.rejectWriter(2);
       const sent = { sceneSetId: set.sceneSetId, revision: set.revision, target: { kind: "rewrite", sceneIds: [2], redraw: false }, acceptedWorstMicros: ENOUGH };
       await t.callLaunch("scenes.write", sent, { written: { ...sent, revision: "<seen>" } });
       await untilSetReady(t, w.avatarId);
-      t.note("scene 2 reads the plain sentence of its place, and no marker is left on it");
+      const after = (await scenesOf(t, w.avatarId)).find((s) => s.sceneId === 2);
+      t.note(`scene 2 changed: ${String(after?.text !== before?.text)}; it reads the plain sentence of its place: ${String(after?.text !== null && after?.text === after?.plain)}`);
+      t.note(`the scene was not plain before the write: ${String(before?.text !== before?.plain)}`);
       await t.callLaunch("scenes.get", { avatarId: w.avatarId });
     },
   },

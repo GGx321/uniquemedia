@@ -482,7 +482,7 @@ describe("scenes.write: a rewrite", () => {
     expect(ledgerReserves()).toEqual([writeId(1, 1), writeId(1, 2)]);
     const scene = fileOf(avatarId).scenes.find((s) => s.sceneId === 1);
     const slot = scene?.slot as { location: string; activity: string; outfit: string } | undefined;
-    expect(scene?.text).toBe(`At ${slot?.location}, she is ${slot?.activity}, wearing ${slot?.outfit}.`);
+    expect(scene?.text).toBe(`In ${slot?.location}, she ${slot?.activity}, wearing ${slot?.outfit}.`);
     expect((await setOf(engine, avatarId)).scenes.some((s) => s.rewriteInterrupted !== undefined)).toBe(false);
   });
 
@@ -508,17 +508,24 @@ describe("scenes.write: a rewrite", () => {
     expect(view.interruptedIdeas).toBeUndefined();
   });
 
-  test("a provider's refusal is final and free of marks: MODERATION_REFUSED, one call, nothing changed", async () => {
+  // Round-1 review of S5.6d: the provider's refusal is final for the request (one call) but ends no planned scene: it takes the plain sentence at once. An idea has no place to build
+  // one from, so its refusal fails the write and leaves the set as it was.
+  test("a provider's refusal of a planned rewrite is one call and writes the plain sentence; of an idea, it is MODERATION_REFUSED and changes nothing", async () => {
     const avatarId = await seedAvatar();
     await seedReview(avatarId);
     const net = sceneNetwork({ writer: () => refusal });
     const { engine, events } = await engineOver(net);
 
-    const end = await writeAndWait(engine, events, avatarId, rewrite([2]));
-
-    expect(end).toMatchObject({ type: "job.failed", payload: { error: { code: "MODERATION_REFUSED" } } });
+    const done = await writeAndWait(engine, events, avatarId, rewrite([2]));
+    expect(done).toMatchObject({ type: "job.done", payload: { result: { written: 1, unwritten: 0 } } });
     expect(net.writerCalls()).toHaveLength(1);
-    expect((await setOf(engine, avatarId)).scenes.map((s) => s.text)).toEqual([OLD, OLD, OLD, OLD]);
+    const texts = (await setOf(engine, avatarId)).scenes.map((s) => s.text);
+    expect(texts[1]).not.toBe(OLD);
+    expect([texts[0], texts[2], texts[3]]).toEqual([OLD, OLD, OLD]);
+
+    const failed = await writeAndWait(engine, events, avatarId, idea("кофе", 1));
+    expect(failed).toMatchObject({ type: "job.failed", payload: { error: { code: "MODERATION_REFUSED" } } });
+    expect((await setOf(engine, avatarId)).scenes).toHaveLength(4);
   });
 
   test("a rewrite of several scenes writes them in ONE request", async () => {

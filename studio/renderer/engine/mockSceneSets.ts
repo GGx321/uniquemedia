@@ -521,11 +521,32 @@ export class MockSceneSets {
     // 5a.2: the template's scenes are written at once and cost nothing; a chunk is asked (and paid) for the scenes only the model could write.
     const local = this.#local(set);
     const asked = set.chunks.map((chunk) => chunk.sceneIds.filter((id) => set.scenes.find((s) => s.sceneId === id)?.text === null && local(id) === null).length);
-    for (const scene of set.scenes) if (scene.text === null) scene.text = local(scene.sceneId) ?? sentenceOf(scene);
+    // S5.6d: a chunk whose answers the story scripted as rejected (twice) or refused takes the plain sentence, as the engine's launch compose does (the launch's own reserves carry its money).
+    const plainChunks = new Set<number>();
     set.chunks.forEach((chunk, i) => {
-      const model = asked[i] ?? 0;
-      if (model > 0) chunk.attempts.push({ key: `${set.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`, paid: true, cost: Math.round(model * TYPICAL_PER_SCENE), open: false });
+      if ((asked[i] ?? 0) === 0) return;
+      const attempt = (cost: number, paid: boolean): void => {
+        chunk.attempts.push({ key: `${set.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`, paid, cost, open: false });
+      };
+      if (this.#scripted[0] === "refused") {
+        this.#scripted.shift();
+        attempt(0, false);
+        plainChunks.add(chunk.chunk);
+      } else if (this.#scripted[0] === "rejected") {
+        this.#scripted.shift();
+        attempt(REJECTED_COST, true);
+        if (this.#scripted[0] === "rejected") {
+          this.#scripted.shift();
+          attempt(REJECTED_COST, true);
+          plainChunks.add(chunk.chunk);
+        } else attempt(Math.round((asked[i] ?? 0) * TYPICAL_PER_SCENE), true);
+      } else attempt(Math.round((asked[i] ?? 0) * TYPICAL_PER_SCENE), true);
     });
+    for (const scene of set.scenes) {
+      if (scene.text !== null) continue;
+      const chunk = set.chunks.find((c) => c.sceneIds.includes(scene.sceneId));
+      scene.text = local(scene.sceneId) ?? (chunk !== undefined && plainChunks.has(chunk.chunk) ? plainTextOf(scene) : null) ?? sentenceOf(scene);
+    }
     const job = this.#liveJob(sceneSetId);
     if (job === undefined) {
       this.#announce(set);
