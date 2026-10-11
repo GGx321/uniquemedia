@@ -33,7 +33,7 @@ import { PNG_1X1, SAMPLE_IMPORTED_SOURCE, samplePhotoMeta, sequentialIds, steppi
 import { RenderFailure } from "../../renderQueue/queue";
 import { command, engineSettings, GOOD, MODERATION, NOW, network as portraitNetwork, portraitPng, portraitReply, startEngine, TRAITS, until } from "../../testing/engineHarness";
 import { fakeGate, match } from "../../testing/portraitKit";
-import type { Reply } from "../../openrouter/testing/fakes";
+import { chatBody, type Reply } from "../../openrouter/testing/fakes";
 import { imageReply, network as launchNetwork, writerReply } from "../../testing/wiringKit";
 import { within } from "../../testing/within";
 import { acceptingVerify } from "../../videos/testing/kit";
@@ -142,6 +142,11 @@ export interface LaunchControl {
   newKey(): Promise<void>;
   /** The next writer request leaves and gets no answer, for as long as the scenario lasts (a request in flight whose reserve a quit leaves open). */
   hangWriter(): void;
+  /**
+   * S5.6d: the next `times` writer requests are answered with a sentence for no scene at all, paid and unusable (the engine's reader marks every slot; the mock's `rejected` outcome). A chunk the model
+   * cannot write in its two answers takes the plain sentence, so the story reads the set the launch composed.
+   */
+  rejectWriter(times: number): void;
   /** The owner quits the app and starts it again: a request in flight died with the process, and the engine reads the running launch as paused by the quit. */
   quit(): Promise<void>;
 }
@@ -636,6 +641,9 @@ export function mockRig(options: RigOptions = {}): ParityRig {
         },
         // The mock's request is in flight between two ticks of its clock; the scenario stops pumping when it sees one.
         hangWriter: () => undefined,
+        rejectWriter: (times) => {
+          for (let i = 0; i < times; i++) engine.failNextSceneAttempt("rejected");
+        },
         quit: async () => engine.quitLaunch(),
       },
       failNextRender: (at = "encode") =>
@@ -1075,9 +1083,15 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   const launching = options.launch === true;
   let faultNext: "credits" | "key" | null = null;
   let writerHung = false;
+  /** S5.6d: how many writer requests are still to be answered with nothing usable (`LaunchControl.rejectWriter`). */
+  let writerRejects = 0;
   /** How far the launching engines' clock has moved on (ms): the owner was away. */
   let shifted = 0;
   const failureOf = (cause: "credits" | "key"): Reply => (cause === "credits" ? { status: 402, body: { error: { message: "Insufficient credits" } } } : { status: 401, body: { error: { message: "No auth credentials found" } } });
+  const rejectedWriterReply = (): Reply => {
+    writerRejects -= 1;
+    return { status: 200, body: chatBody(JSON.stringify({ scenes: [] }), { cost: 0.002 }) };
+  };
   const meetFault = (): Reply | null => {
     if (faultNext === null) return null;
     const reply = failureOf(faultNext);
@@ -1086,7 +1100,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   };
   const launchNet = launching
     ? launchNetwork({
-        writer: (call) => meetFault() ?? (writerHung ? new Promise<Reply>(() => undefined) : writerReply(call)),
+        writer: (call) => meetFault() ?? (writerHung ? new Promise<Reply>(() => undefined) : writerRejects > 0 ? rejectedWriterReply() : writerReply(call)),
         image: (_call, n) => meetFault() ?? imageReply(n),
       })
     : undefined;
@@ -1381,6 +1395,9 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
         },
         hangWriter: () => {
           writerHung = true;
+        },
+        rejectWriter: (times) => {
+          writerRejects += times;
         },
         quit: quitAndReopen,
       },
