@@ -689,6 +689,10 @@ export const AvatarPortraits = z
   .refine((r) => r.sourcePhotoId !== null || r.candidates.length === 0, {
     message: "an avatar with no source photo has no portrait candidates",
     path: ["candidates"],
+  })
+  .refine((r) => (r.masterLikeness === null) === (r.sourcePhotoId === null || r.masterPhotoId === r.sourcePhotoId), {
+    message: "the master's likeness is null exactly when the master is the source photo or the avatar has no source photo",
+    path: ["masterLikeness"],
   });
 
 /**

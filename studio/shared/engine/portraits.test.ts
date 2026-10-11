@@ -81,14 +81,14 @@ describe("the five portrait commands", () => {
 });
 
 describe("avatars.portraits (the list)", () => {
-  const list = (over: object) => okResponse("avatars.portraits", { avatarId: AVATAR, masterPhotoId: "photo-0011", sourcePhotoId: "photo-0010", masterLikeness: null, candidates: [], ...over });
+  const list = (over: object) => okResponse("avatars.portraits", { avatarId: AVATAR, masterPhotoId: "photo-0010", sourcePhotoId: "photo-0010", masterLikeness: null, candidates: [], ...over });
 
   test("accepts a source photo, no master likeness and no candidates", () => {
     expect(parseMessage(list({})).ok).toBe(true);
   });
 
   test("accepts candidates with their likeness and a master that is a portrait", () => {
-    expect(parseMessage(list({ masterLikeness: 0.72, candidates: [candidate("photo-0101", 0.76), candidate("photo-0102", 0.55)] })).ok).toBe(true);
+    expect(parseMessage(list({ masterPhotoId: "photo-0011", masterLikeness: 0.72, candidates: [candidate("photo-0101", 0.76), candidate("photo-0102", 0.55)] })).ok).toBe(true);
   });
 
   test("a wizard avatar has no source photo: sourcePhotoId null with no candidates is the answer", () => {
@@ -128,6 +128,19 @@ describe("avatars.portraits (the list)", () => {
 
   test("refuses the master listed as a candidate", () => {
     expect(parseMessage(list({ masterPhotoId: "photo-0101", masterLikeness: 0.7, candidates: [candidate("photo-0101", 0.7)] })).ok).toBe(false);
+  });
+
+  // S5.3c: the master's likeness is null exactly when there is nothing to compare it with: the master IS the source photo, or the avatar has no source (a wizard avatar).
+  test("refuses a likeness for a master that is the source photo", () => {
+    expect(parseMessage(list({ masterLikeness: 0.9 })).ok).toBe(false);
+  });
+
+  test("refuses a missing likeness for a portrait master", () => {
+    expect(parseMessage(list({ masterPhotoId: "photo-0011", masterLikeness: null })).ok).toBe(false);
+  });
+
+  test("refuses a likeness for an avatar with no source photo", () => {
+    expect(parseMessage(list({ sourcePhotoId: null, masterLikeness: 0.7 })).ok).toBe(false);
   });
 
   test("names the master, which is the source or a portrait", () => {
