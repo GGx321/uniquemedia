@@ -4,6 +4,7 @@ import type { AvatarSummary, LaunchDraftInput, PhotoSummary } from "../../shared
 import { freePhotos, MIA, SOFIA } from "../engine/mockEngine.testkit";
 import type { MockEngine } from "../engine/mockEngine";
 import { callsOf, flush, openSection, setup } from "../testing";
+import { historyLibrary, octAt } from "./autopilot/historyTestkit";
 import { flirtyFrames } from "./photos/level";
 
 // S5.7c (plan s5a2 §6.1, §6.3; mockup 30 of .omc/stage5/design): «Автопилот»'s settings lose «Ракурсы» and gain a «Подача» row («ракурс берётся из
@@ -98,6 +99,39 @@ describe("«Подача» in «Настройки запуска» (mockup 30)"
     const started = callsOf(engine, "autopilot.start").at(-1)?.payload.draft;
     expect(started?.level).toBe("flirty");
     expect(started !== undefined && "poses" in started).toBe(false);
+  });
+});
+
+describe("a launch's page (mockup 31)", () => {
+  /** One ended launch of Mia's, as the history keeps it, its page open. */
+  async function openLaunch(draft: Partial<LaunchDraftInput>): Promise<string[]> {
+    const h = setup(historyLibrary());
+    h.engine.seedLaunch({
+      createdAt: octAt(11, 14, 2),
+      endedAt: octAt(11, 14, 31),
+      draft: { avatarIds: [MIA.avatarId], videosPerAvatar: 1, categories: ["home", "shoot", "glam"], ...draft },
+      videos: [{ avatarId: MIA.avatarId, shape: "single", size: 1, state: "done", durationMs: 8_000, bytes: 2_000_000 }],
+    });
+    await openAutopilot();
+    fireEvent.click(screen.getByRole("button", { name: /^История запусков/ }));
+    await screen.findByRole("heading", { level: 1, name: "История запусков" });
+    await flush();
+    fireEvent.click(within(screen.getByRole("region", { name: "Запуски" })).getAllByRole("button", { name: /^Запуск / })[0] ?? document.body);
+    await screen.findByRole("heading", { level: 1, name: "Запуск 11 окт., 14:02" });
+    await flush();
+    return Array.from(document.querySelectorAll(".ap-launch-bits > span")).map((s) => `${s.textContent ?? ""}${s.classList.contains("ap-bit-new") ? " [new]" : ""}`);
+  }
+
+  test("«Подача: кокетливая» after the categories, a brighter bit; no angles phrase", async () => {
+    const bits = await openLaunch({ level: "flirty" });
+    expect(bits.slice(2, 4)).toEqual(["Дом, Улица, Гламур", "Подача: кокетливая [new]"]);
+    expect(bits.some((bit) => /анфас|профиль|со спины/.test(bit))).toBe(false);
+  });
+
+  test("a launch from before «Подача» names neither its «Ракурсы» nor a «Подача», with the new names of its categories", async () => {
+    const bits = await openLaunch({ poses: { profile: true, back: false } });
+    expect(bits[2]).toBe("Дом, Улица, Гламур");
+    expect(bits.some((bit) => bit.startsWith("Подача") || /анфас|профиль|со спины/.test(bit))).toBe(false);
   });
 });
 

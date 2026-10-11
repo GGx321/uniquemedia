@@ -1729,6 +1729,11 @@
   white-space: nowrap;
 }
 
+/* S5.7c (mockup 31): «Подача», the launch page's new bit, a little brighter than the muted line. */
+.ap-launch-bits > .ap-bit-new {
+  color: var(--text-2);
+}
+
 /* «История запусков»: one card of rows, each a button to its launch. */
 .ap-history,
 .ap-history-empty {

@@ -185,20 +185,34 @@ export function categoryName(ref: CategoryRef, customName: (categoryId: string) 
   return isCustomCategory(ref) ? (customName(ref) ?? "своя категория") : CATEGORY_LABEL[ref];
 }
 
-/** The launch's settings as one wrapping mono line of bits (ApLaunch): what it was run with, read only. */
-export function settingsBits(draft: LaunchDraft, customName: (categoryId: string) => string | null): string[] {
+/** One bit of a launch's settings line; `strong` reads a little brighter (S5.7c, mockup 31: «Подача»). */
+export interface SettingsBit {
+  readonly text: string;
+  readonly strong?: true;
+}
+
+/**
+ * The launch's «Подача» (S5.7c, mockup 31): «кокетливая» when it was; «обычная» for a launch made with «Подача» left at its default (it stores no
+ * «Ракурсы»); none for a launch from before «Подача», whose stored «Ракурсы» changed nothing the history needs to say.
+ */
+function levelBit(draft: LaunchDraft): SettingsBit[] {
+  if (draft.level === "flirty") return [{ text: "Подача: кокетливая", strong: true }];
+  return draft.poses === undefined ? [{ text: "Подача: обычная", strong: true }] : [];
+}
+
+/** The launch's settings as one wrapping mono line of bits (ApLaunch): what it was run with, read only. S5.7c: no angles phrase, «Подача» instead. */
+export function settingsBits(draft: LaunchDraft, customName: (categoryId: string) => string | null): SettingsBit[] {
   const { mix } = draft;
-  const angles = ["анфас и три четверти", ...(draft.poses?.profile === true ? ["профиль"] : []), ...(draft.poses?.back === true ? ["со спины"] : [])].join(", ");
   const source = draft.library && draft.generate ? "сначала библиотека, недостающее — новыми" : draft.library ? "только фото из библиотеки" : "только новые фото";
   return [
-    `${draft.videosPerAvatar} на аватар`,
-    `одно фото / коллаж / слайды · ${mix.single} / ${mix.collage} / ${mix.slides}`,
-    draft.categories.map((ref) => categoryName(ref, customName)).join(", "),
-    angles,
-    source,
-    ...(draft.generate ? [draft.sceneReview ? "сцены на проверку" : "сцены без проверки"] : []),
-    "музыка: тренды + мои",
-    draft.stickers ? "со стикерами" : "без стикеров",
+    { text: `${draft.videosPerAvatar} на аватар` },
+    { text: `одно фото / коллаж / слайды · ${mix.single} / ${mix.collage} / ${mix.slides}` },
+    { text: draft.categories.map((ref) => categoryName(ref, customName)).join(", ") },
+    ...levelBit(draft),
+    { text: source },
+    ...(draft.generate ? [{ text: draft.sceneReview ? "сцены на проверку" : "сцены без проверки" }] : []),
+    { text: "музыка: тренды + мои" },
+    { text: draft.stickers ? "со стикерами" : "без стикеров" },
   ];
 }
 
