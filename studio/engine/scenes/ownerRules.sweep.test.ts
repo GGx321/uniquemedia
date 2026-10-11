@@ -132,6 +132,15 @@ describe("«Гламур»: the photo fits the place it is taken in", () => {
     expect(offenders(elevator, (f) => FAR.test(f.prompt()))).toEqual(NONE);
     expect([...new Set(elevator.map((f) => shotOf(f.capture)))].sort()).toEqual(["mirror", "selfie"]);
   });
+
+  // The taxi and the elevator left the friend's draws with fewer places, and the getting-ready rooms took them (26 % of their frames before, 38 % after):
+  // at home she shoots herself, so those rooms take her mirror and her arm's length only, and the friend's photos go out with her.
+  test("at home, getting ready at the sink or by the front door, she shoots herself: no «Гламур» frame there is someone else's photo", () => {
+    const home = roomsOf("glamour");
+    expect(home.size).toBeGreaterThan(0);
+    expect(FRAMES.glamour.filter((f) => home.has(f.slot.location)).length).toBeGreaterThan(PLANS);
+    expect(offenders(FRAMES.glamour, (f) => home.has(f.slot.location) && !isSelfShot(f.capture))).toEqual(NONE);
+  });
 });
 
 describe("«Дом»: a moment of going out wears going-out clothes", () => {

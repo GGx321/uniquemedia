@@ -67,11 +67,12 @@ export const GLAMOUR: CategoryBank = {
       details: ["some makeup on the counter", "a curling iron"],
       times: ["evening"],
       mirror: true,
+      // S5.6R (the owner: at home she shoots herself): getting ready is in her mirror or at arm's length; the friend's photos go out with her.
       moments: [
-        { text: "applies lipstick", motion: "she presses her lips together a bit", captures: ["mirror", "candid", "friend"], twoHanded: false, gaze: "focus" },
-        { text: "puts on mascara", motion: "she blinks slowly", captures: ["mirror", "candid"], twoHanded: false, gaze: "focus" },
-        { text: "curls her hair", motion: "she turns the curler slowly", captures: ["candid", "friend"], twoHanded: true, hair: "own" },
-        { text: "puts on her earrings", motion: "she turns her head a little", captures: ["mirror", "mirror-hidden", "friend"], twoHanded: false, gaze: "focus" },
+        { text: "applies lipstick", motion: "she presses her lips together a bit", captures: ["mirror", "selfie"], twoHanded: false, gaze: "focus" },
+        { text: "puts on mascara", motion: "she blinks slowly", captures: ["mirror"], twoHanded: false, gaze: "focus" },
+        { text: "tucks her hair behind one ear", motion: "she tucks her hair back slowly", captures: ["mirror", "selfie"], twoHanded: false, hair: "own" },
+        { text: "puts on her earrings", motion: "she turns her head a little", captures: ["mirror", "mirror-hidden"], twoHanded: false, gaze: "focus" },
         { text: "sprays on some perfume", motion: "she tilts her neck a little", captures: ["mirror", "mirror-hidden", "selfie"], twoHanded: false },
         { text: "turns to check her outfit", motion: "she turns a little to each side", captures: ["mirror-hidden", "mirror"], twoHanded: false },
       ],
@@ -98,12 +99,12 @@ export const GLAMOUR: CategoryBank = {
       details: ["a small shelf", "her shoes on the mat"],
       times: ["evening"],
       mirror: true,
+      // S5.6R: at her own front door she shoots herself too; «slips on her heels» needs both hands, which only a friend's photo had, so it left.
       moments: [
-        { text: "slips on her heels", motion: "she wiggles her heel in slowly", captures: ["friend", "candid"], twoHanded: true },
-        { text: "grabs her keys", motion: "she jingles her keys a little", captures: ["mirror-hidden", "mirror", "friend"], twoHanded: false },
+        { text: "grabs her keys", motion: "she jingles her keys a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "checks her outfit", motion: "she turns a little to each side", captures: ["mirror-hidden", "mirror"], twoHanded: false },
-        { text: "picks up a small clutch", motion: "she tucks the clutch away slowly", captures: ["mirror", "mirror-hidden", "friend", "selfie"], twoHanded: false },
-        { text: "takes her coat from the rack", motion: "she slides one arm in slowly", captures: ["friend", "candid", "selfie"], twoHanded: false },
+        { text: "picks up a small clutch", motion: "she tucks the clutch away slowly", captures: ["mirror", "mirror-hidden", "selfie"], twoHanded: false },
+        { text: "takes her coat from the rack", motion: "she slides one arm in slowly", captures: ["mirror-hidden", "selfie"], twoHanded: false },
       ],
     },
   ],
