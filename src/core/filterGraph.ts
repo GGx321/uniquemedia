@@ -179,7 +179,9 @@ function audioComplex(recipe: Recipe, info: MediaInfo): string {
   return lines.join(";");
 }
 
-/** Instagram rejects video files over 50 MB — cap the bitrate so the encode can't exceed it. */
+/** A size cap of our own choosing, not a platform limit (Instagram takes far
+ *  larger uploads): copies are kept small to move and store, so the bitrate
+ *  is capped so that the encode can't exceed it. */
 const MAX_FILE_MB = 50;
 
 /**
