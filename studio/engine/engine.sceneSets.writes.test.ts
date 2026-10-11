@@ -1354,6 +1354,38 @@ describe("an accepted answer whose save meets a read the OS fails (fix round 2)"
   });
 });
 
+// ---------- wave 5b: m1 end to end on a built-in category ----------
+
+// S5.6b plans every built-in scene from the scene banks, and S5.6c1 lets the code template write any scene whose place and moment the banks name. Together,
+// «⟳» without a redraw on a planned «Дом» scene (m1, plan s5a2 §5.5) is a redraw the template writes: a new place and moment, assembled locally, with no
+// writer request and nothing reserved.
+describe("m1 on a built-in category (wave 5b)", () => {
+  test("m1 redraw on a built-in category sends 0 writer requests", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const net = sceneNetwork();
+    const { engine, events } = await engineOver(net);
+    const before = fileOf(avatarId).scenes;
+    const oldSlot = (before[1] as { slot: PlanSlot }).slot;
+    expect(oldSlot.category).toBe("home");
+
+    const end = await writeAndWait(engine, events, avatarId, rewrite([2]));
+
+    expect(end).toMatchObject({ type: "job.done", payload: { result: { kind: "scenes", sceneSetId: SET, avatarId, written: 1, unwritten: 0 } } });
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(readLedger()).toEqual([]);
+    const after = fileOf(avatarId);
+    expect(after.reviewWrites?.[0]).toMatchObject({ kind: "rewrite", k: 1, sceneIds: [2], redraw: true });
+    const scene = after.scenes[1] as { slot: PlanSlot; text: string };
+    expect(scene.slot).toMatchObject({ slotIndex: 2, category: "home" });
+    expect([scene.slot.location, scene.slot.activity]).not.toEqual([oldSlot.location, oldSlot.activity]);
+    expect(scene.text).not.toBe(OLD);
+    expect(scene.text).toContain(scene.slot.activity);
+    expect(after.scenes.filter((s) => s.sceneId !== 2)).toEqual(before.filter((s) => s.sceneId !== 2));
+    expect(await setOf(engine, avatarId)).toMatchObject({ status: "ready", write: null, spentMicros: 0 });
+  });
+});
+
 describe("the files of the set", () => {
   test("a review write rewrites only the set's own file: no other file appears next to it", async () => {
     const avatarId = await seedAvatar();
