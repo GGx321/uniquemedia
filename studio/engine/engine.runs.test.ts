@@ -116,8 +116,8 @@ async function seedCustomCategory(opts: { name?: string; label?: string; style?:
   const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds(`seedcat${++seededCategories}`) });
   const categoryId = `cat-seed-${String(++seededCategories).padStart(6, "0")}` as const;
   const activities = [
-    { text: "reading a menu", twoHanded: false },
-    { text: "stirring a cappuccino", twoHanded: true },
+    { text: "takes a long look at the menu", twoHanded: false },
+    { text: "takes a cappuccino in both hands", twoHanded: true },
   ];
   await library.categories.create({
     categoryId,
