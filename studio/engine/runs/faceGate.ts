@@ -3,6 +3,7 @@ import type { WorkerFaceGate } from "../face/worker/workerGate";
 import type { PhotoQa } from "../library";
 import { timeoutSignal } from "../money/timeoutSignal";
 import type { QaGate, QaInput, QaPrepareInput, QaVerdict } from "./qa";
+import { EMBEDDING_COMPUTE_TIMEOUT_MS } from "./timeouts";
 
 // T7b: the face gate's QaGate adapter. `studio/engine/face` (createFaceGate,
 // runFaceGate, decideFaceVerdict) never decodes an image file and never
@@ -97,7 +98,7 @@ export interface FaceQaGateDeps {
  * attempt; the original hung computation is not cancelled (nothing here can
  * force that), it simply stops being trusted as the cache's own answer.
  */
-export const EMBEDDING_COMPUTE_TIMEOUT_MS = 30_000;
+export { EMBEDDING_COMPUTE_TIMEOUT_MS };
 
 /** L7: the photo schema caps faceCos at [-1, 1] (schemas.ts); a rounding-step overflow past either edge would otherwise throw in Library.addPhoto and stop the run. */
 export function clampCosine(similarity: number): number {
