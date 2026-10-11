@@ -1,4 +1,4 @@
-import type { CategoryPool, CategorySnapshot } from "../../../shared/engine";
+import type { CategoryPool, CategorySnapshot, CategorySummary } from "../../../shared/engine";
 import { poolOf } from "../poolGen";
 import type { Pool } from "../pools";
 
@@ -20,6 +20,21 @@ export const LLM_ONLY_CATEGORY_POOL: CategoryPool = {
   ],
   outfits: ["a beige trench coat and jeans", "a striped knit top and a midi skirt", "a long cardigan and trousers"],
   shotDeck: ["friend", "selfie", "mirror", "candid", "friend"],
+};
+
+/**
+ * The category as a library stores it (and the mock lists it): ONE definition, read by the engine's seeder (`testing/llmOnlyCategory.ts`), the parity rigs (the
+ * real library and the mock's seed alike) and the mock's own tests, so no side keeps a copy of it. The timestamps are each store's own.
+ */
+export const LLM_ONLY_CATEGORY_RECORD: Omit<CategorySummary, "createdAt" | "updatedAt"> = {
+  categoryId: LLM_ONLY_REF,
+  name: "Только модель",
+  description: "тестовая категория: шаблон её не пишет",
+  label: "Model only",
+  style: "phone",
+  pool: LLM_ONLY_CATEGORY_POOL,
+  model: "x-ai/grok-4.3",
+  spentMicros: 5_000,
 };
 
 /** The same pool in the engine's planning shape. */
