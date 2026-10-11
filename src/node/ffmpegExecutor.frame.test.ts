@@ -44,7 +44,12 @@ const opts = (bg: string): ResolvedCopyOptions => ({
 function pixelAt(file: string, x: number, y: number): number[] {
   const r = spawnSync(
     FFMPEG,
-    ["-v", "error", "-ss", "1", "-i", file, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+    [
+      "-v", "error", "-ss", "1", "-i", file, "-frames:v", "1",
+      // Read it the way a player reads an untagged HD file: BT.709, limited range.
+      "-vf", "scale=in_range=tv:in_color_matrix=bt709:out_range=pc,format=rgb24",
+      "-f", "rawvideo", "-",
+    ],
     { maxBuffer: W * H * 3 + 1024 }
   );
   expect(r.status).toBe(0);
@@ -96,7 +101,8 @@ test("the canvas corners are the background picture", () => {
   expect(corners.length).toBeGreaterThan(0);
   for (const [x, y] of corners) {
     const px = pixelAt(output, x, y);
-    px.forEach((v, i) => expect(Math.abs(v - BG_RGB[i])).toBeLessThan(12));
+    // Read as BT.709 (above); the JPEG and the 8-bit round trips cost a few levels.
+    px.forEach((v, i) => expect(Math.abs(v - BG_RGB[i])).toBeLessThan(6));
   }
 });
 

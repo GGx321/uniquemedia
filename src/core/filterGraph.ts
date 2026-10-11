@@ -136,7 +136,13 @@ function videoComplex(recipe: Recipe, info: MediaInfo, fps: number): string {
       : `x=${fr.x}:y=${fr.y}`;
     lines.push(
       `${concat},fps=${fps},${scaleTo},setsar=1[vsm]`,
-      `[${bg}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1[bg]`,
+      // The background is a JPEG (full-range BT.601); the video is BT.709
+      // limited range, and the overlay would read the JPEG's numbers as
+      // BT.709 and come out darker. It is scaled, converted and cached as ONE
+      // frame (`loop` replays it) so the still is not decoded and scaled again
+      // for every frame of the clip.
+      `[${bg}:v]scale=${W}:${H}:force_original_aspect_ratio=increase:in_range=pc:in_color_matrix=bt601:out_range=tv:out_color_matrix=bt709,` +
+        `crop=${W}:${H},setsar=1,format=yuv420p,loop=loop=-1:size=1,setpts=N/(${fps}*TB),fps=${fps}[bg]`,
       `[bg][vsm]overlay=${at}:shortest=1[${composed}]`
     );
     if (ff.mode === "black") lines.push(`[vfr]${blackFirstFrame(fps).slice(1)}[outv]`);
@@ -213,11 +219,11 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
     : videoComplex(recipe, info, fps);
   // The cover is the graph's second input, named here so the executor's
   // `-i <source>` is followed by `-i <cover>` and `[1:v]` means the still.
-  // Frame mode's background is the next input after it: looped, at the encode
-  // rate so the overlay does not resample the footage's timing.
+  // Frame mode's background is the next input after it, a single frame the
+  // graph loops itself.
   const inputs = [
     ...(recipe.firstFrame.mode === "photo" ? ["-i", recipe.firstFrame.path] : []),
-    ...(recipe.frame ? ["-loop", "1", "-framerate", String(fps), "-i", recipe.frame.background] : []),
+    ...(recipe.frame ? ["-i", recipe.frame.background] : []),
   ];
   const args: string[] = [...inputs, "-filter_complex", complex, "-map", "[outv]"];
 

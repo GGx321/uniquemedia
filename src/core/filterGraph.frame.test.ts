@@ -23,14 +23,25 @@ const recipe: Recipe = {
 const complexOf = (args: string[]) => args[args.indexOf("-filter_complex") + 1];
 const inputsOf = (args: string[]) => args.slice(0, args.indexOf("-filter_complex"));
 
-test("frame: the background is a looped second input at the encode fps", () => {
+test("frame: the background is a plain second input, decoded once and looped inside the graph", () => {
   const args = buildArgs(recipe, info);
-  expect(inputsOf(args)).toEqual(["-loop", "1", "-framerate", "30", "-i", "/pack/lake.jpg"]);
+  expect(inputsOf(args)).toEqual(["-i", "/pack/lake.jpg"]);
+  expect(args).not.toContain("-loop");
+  const fc = complexOf(args);
+  // Scaled and converted BEFORE the loop, so the work is done for one frame.
+  expect(fc.indexOf("[1:v]scale=1080:1920")).toBeLessThan(fc.indexOf("loop=loop=-1:size=1"));
+  expect(fc).toContain("loop=loop=-1:size=1,setpts=N/(30*TB),fps=30[bg]");
+});
+
+test("frame: the background is converted from JPEG (full-range BT.601) to the video's BT.709 limited range", () => {
+  const fc = complexOf(buildArgs(recipe, info));
+  expect(fc).toContain("in_range=pc:in_color_matrix=bt601:out_range=tv:out_color_matrix=bt709");
 });
 
 test("frame: the background is cover-scaled to the canvas", () => {
   const fc = complexOf(buildArgs(recipe, info));
-  expect(fc).toContain("[1:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1[bg]");
+  expect(fc).toContain("[1:v]scale=1080:1920:force_original_aspect_ratio=increase:");
+  expect(fc).toContain(",crop=1080:1920,setsar=1,format=yuv420p,loop=");
 });
 
 test("frame: the finished video is scaled down and overlaid at its offset, ending with the video", () => {
@@ -66,7 +77,7 @@ test("frame with a cover first frame: the background is the third input, the cov
   const args = buildArgs(withCover, info);
   const ins = inputsOf(args);
   expect(ins.slice(0, 2)).toEqual(["-i", "/c/cover.jpg"]);
-  expect(ins.slice(2)).toEqual(["-loop", "1", "-framerate", "30", "-i", "/pack/lake.jpg"]);
+  expect(ins.slice(2)).toEqual(["-i", "/pack/lake.jpg"]);
   expect(complexOf(args)).toContain("[2:v]scale=1080:1920");
 });
 
