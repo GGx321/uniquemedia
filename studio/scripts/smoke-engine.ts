@@ -123,6 +123,10 @@ import { videoPaths } from "../engine/videos/record";
 import { Ledger } from "../engine/money/ledger";
 import { timeoutSignal } from "../engine/money/timeoutSignal";
 import { RunEventSchema, type RunEvent } from "../engine/runs/journal";
+import { RunPlanSchema } from "../engine/runs/plan";
+import type { RunSlot } from "../engine/scenes";
+import { JOURNAL_FILE, PLAN_FILE, RUNS_DIR } from "../engine/library/layout";
+import { faceRetryProblems, faceScoreProblems, isFaceJudged, pickMismatchTarget, slotIndexByPhoto, type MismatchTarget } from "./runFaceSmoke";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
 import { APP_PAGE_URL, APP_SCHEME, isAppPage } from "../main/appProtocol";
 import { AutopilotGetResult, PROTOCOL_VERSION } from "../shared/engine";
@@ -2165,6 +2169,42 @@ function findRunSummary(listResult: unknown, runId: unknown): unknown {
 }
 
 /** Whichever of job.done/job.failed/job.cancelled came in for `jobId`, or null until one has. */
+/**
+ * The photo run's face-mismatch aim: reads the run's own plan.json and its journal's prompts (plain files, like every other direct library read here), arms
+ * the mock's faceless image for the first slot whose face shows, then lets the held image requests through. Always releases the hold, whatever it finds.
+ */
+async function aimFaceMismatch(mock: MockOpenRouter, hold: ImageHold, libraryRoot: string, runId: string): Promise<{ slots: RunSlot[]; target: MismatchTarget | null }> {
+  try {
+    const runDir = join(libraryRoot, RUNS_DIR, runId);
+    const plan = RunPlanSchema.parse(JSON.parse(await readFile(join(runDir, PLAN_FILE), "utf8")));
+    const prompts = await waitFor(
+      "the run's prompts in its journal",
+      async () => {
+        const lines = (await readFile(join(runDir, JOURNAL_FILE), "utf8").catch(() => "")).split("\n");
+        const latest = new Map<number, string>();
+        for (const line of lines) {
+          if (line.trim() === "") continue;
+          let parsed: ReturnType<typeof RunEventSchema.safeParse>;
+          try {
+            parsed = RunEventSchema.safeParse(JSON.parse(line));
+          } catch {
+            continue; // a line the engine is still appending
+          }
+          if (parsed.success && parsed.data.type === "prompts") for (const p of parsed.data.prompts) latest.set(p.slotIndex, p.prompt);
+        }
+        return latest.size > 0 ? latest : null;
+      },
+      60_000,
+    );
+    const slots = plan.scenes.slots;
+    const target = pickMismatchTarget(slots, prompts);
+    if (target !== null) mock.armFaceMismatch(target.prompt);
+    return { slots, target };
+  } finally {
+    hold.release();
+  }
+}
+
 async function endEventOf(cdp: Cdp, jobId: unknown): Promise<unknown> {
   const found = await cdp.evaluate(
     `window.__smoke.events.find((e) => (e.type === "job.done" || e.type === "job.failed" || e.type === "job.cancelled") && e.payload.jobId === ${JSON.stringify(jobId)}) ?? null`,
@@ -2263,11 +2303,11 @@ async function createActiveAvatarForRun(cdp: Cdp, name: string, scenario = "run 
  * not; `faceFixture: true` makes the mock serve a real, matching face, real
  * JPEG bytes (studio/engine/face/fixtures, composited onto every run
  * image's own PDQ-distinct background by facePool.ts) instead of a faceless
- * mandelbrot portrait and pattern, so every front/three-quarter slot
- * (RUN_POSES keeps profile/back off) can actually pass instead of retrying
- * forever. L9: `faceMismatchAt` additionally makes exactly one served
- * image — the run's own first slot attempt, past the 4 candidate portraits
- * generated before it — a genuine "no face detected" instead: this
+ * mandelbrot portrait and pattern, so every face-visible slot can actually
+ * pass instead of retrying forever (face-hidden and body frames are only
+ * marked). L9: `armFaceMismatch` additionally makes exactly one served
+ * image — the one for the prompt of the first face-visible slot of the
+ * run's own plan, read at start — a genuine "no face detected" instead: this
  * scenario's own step 8c proves that slot's first attempt retries and a
  * later attempt passes, not only that the always-matches path works.
  *
@@ -2277,27 +2317,15 @@ async function createActiveAvatarForRun(cdp: Cdp, name: string, scenario = "run 
  * requests, and no `qa.age` verdict on any photo.
  */
 async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
-  // L9: `createActiveAvatarForRun` below always generates exactly 4
-  // candidates (avatars.generateCandidates' own fixed batch size) before the
-  // run's own first image request — the mismatch index must land AFTER all
-  // of them, or it corrupts the master itself instead of a run slot
-  // (mockOpenRouter.ts's `buildFacePool` own comment has the full story of
-  // the bug this fixed: a mismatch at index 0 made `avatars.pick`'s own
-  // `candidates[0]` — always the FIRST generated candidate — a faceless
-  // master, failing the whole run as MASTER_FACE_UNUSABLE before any slot
-  // ever ran).
-  const CANDIDATES_BEFORE_RUN = 4;
+  // The induced "no face detected" image is aimed by PROMPT, after the run's own plan is read (`aimFaceMismatch` below): the plan is seeded per run and
+  // holds face-hidden and body frames the gate only marks and never retries, so a mismatch by arrival index would land on one of them by chance. It
+  // is armed after the avatar's candidates and master are made, so it can never corrupt the master (MASTER_FACE_UNUSABLE).
   const mock = await startMockOpenRouter({
     descriptorText: AVATAR_DESCRIPTOR,
     imageDelayMs: RUN_REQUEST_DELAY_MS,
     writerDelayMs: RUN_REQUEST_DELAY_MS,
     distinctImages: true,
     faceFixture: true,
-    // Exactly one served image — the run's own first slot attempt — is a
-    // genuine "no face detected" instead of the matching fixture face, so
-    // this scenario also proves a real face-gate retry, not just the
-    // always-matches path.
-    faceMismatchAt: CANDIDATES_BEFORE_RUN,
   });
   const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-run-"));
   const userData = join(tmp, "userData");
@@ -2330,10 +2358,18 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
     const usageBeforeRun = mock.totalUsageUsd();
     const imagesBeforeRun = mock.imageRequests().length;
     const writersBeforeRun = mock.sceneWriterRequests().length;
+    // Every image request of the run waits until the mismatch is aimed at a slot whose face shows (read from the run's own plan).
+    const imageHold = mock.holdImages();
     const started = await req(cdp, "runs.start", { ...runRequest, acceptedWorstMicros: startAcceptedWorstMicros });
     check("run scenario: runs.start plans and launches the run", field(started, "ok") === true, started);
     const runId = String(field(started, "result", "runId"));
     const firstJobId = field(started, "result", "jobId");
+    const aimed = await aimFaceMismatch(mock, imageHold, libraryRoot, runId);
+    check(
+      "run scenario: the plan has a face-visible slot, and the induced face mismatch is aimed at it by its prompt",
+      aimed.target !== null,
+      { slots: aimed.slots.map((s) => ({ slotIndex: s.slotIndex, faceJudged: isFaceJudged(s) })) },
+    );
 
     // 2. Kill on an observed state — some slots done, some still in flight — never a fixed sleep.
     const midFlight = await waitFor(
@@ -2463,12 +2499,14 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
     // image (this scenario's own `faceFixture: true` mock option), the gate
     // must have actually run — for real, models, onnxruntime-web's WASM and
     // the engine's own WASM JPEG decoder all loaded from inside app.asar
-    // (electron-builder.studio.yml) — and passed: every generated photo's
-    // sidecar carries a `qa.faceCos` at or above the gate's own 0.55 hybrid
-    // threshold (RUN_POSES keeps profile/back off, so every slot is
-    // front/three-quarter — identity is checked on all of them, invariant:
-    // a pass never stores below the threshold). L9: also the exact stored
-    // count, not just "some photos exist". Read the same way step 3's
+    // (electron-builder.studio.yml). The plan is seeded per run and holds
+    // face-hidden and body frames (S5.6b/f) the gate only MARKS (its likeness
+    // stored, never judged, never retried), so the contract is per slot, read
+    // from the run's own plan (runFaceSmoke.ts): every photo on a face-visible
+    // slot carries a `qa.faceCos` at or above the gate's own 0.55 hybrid
+    // threshold (and at least one exists — the asar proof), every photo on a
+    // face-hidden or body slot carries a marked faceCos. L9: also the exact
+    // stored count, not just "some photos exist". Read the same way step 3's
     // import scenario already reads a photo's own qa verdict.
     const avatarIdStr = String(avatarId);
     const generatedPhotos = library.photosByAvatar(avatarIdStr).filter((p) => p.id !== library.getAvatar(avatarIdStr)?.masterPhotoId);
@@ -2477,26 +2515,27 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
       generatedPhotos.length === PHOTO_COUNT && generatedPhotos.length === photoIdCount,
       { stored: generatedPhotos.length, reported: photoIdCount, PHOTO_COUNT },
     );
+    const faceScores = faceScoreProblems(aimed.slots, generatedPhotos.map((p) => ({ id: p.id, faceCos: p.qa.faceCos })), slotIndexByPhoto(journalEvents));
     check(
-      "run scenario: every generated photo carries qa.faceCos >= 0.55 — the face gate ran for real, models and ORT loaded from inside app.asar",
-      generatedPhotos.length > 0 && generatedPhotos.every((p) => typeof p.qa.faceCos === "number" && p.qa.faceCos >= 0.55),
-      generatedPhotos.map((p) => ({ id: p.id, faceCos: p.qa.faceCos })),
+      "run scenario: every photo on a face-visible slot carries qa.faceCos >= 0.55 and every face-hidden/body photo a marked faceCos — the face gate ran for real, models and ORT loaded from inside app.asar",
+      faceScores.length === 0,
+      faceScores,
     );
 
     // 8c. L9: this scenario's own induced face mismatch (mockOpenRouter's
-    // `faceMismatchAt`: exactly one served run image is a genuine "no
-    // face detected") must have made at least one slot actually retry — a
-    // qa-retry attempt outcome in the journal — and every slot still ended
-    // with a stored photo (step 8b's own exact-count check already proves
-    // the run fully recovered): the gate does not just always pass, it
-    // genuinely rejects a bad image and the retry mechanism genuinely works
-    // end to end in the packaged app.
-    const isQaRetry = (e: RunEvent): boolean => e.type === "attempt" && e.outcome === "qa-retry";
-    const qaRetries = journalEvents.filter(isQaRetry);
+    // `armFaceMismatch`: the one image served for a face-visible slot's prompt
+    // is a genuine "no face detected") must have made THAT slot retry through
+    // the face gate — a qa-retry attempt outcome naming the gate in the
+    // journal — and every slot still ended with a stored photo (step 8b's own
+    // exact-count check already proves the run fully recovered): the gate
+    // does not just always pass, it genuinely rejects a bad image and the
+    // retry mechanism genuinely works end to end in the packaged app. The
+    // face gate never retries a face-hidden or body slot.
+    const faceRetries = aimed.target === null ? ["no mismatch target"] : faceRetryProblems(aimed.slots, journalEvents, aimed.target);
     check(
-      "run scenario: the induced face mismatch made at least one slot retry (qa-retry in the journal), and the run still finished with every photo stored",
-      qaRetries.length >= 1,
-      { qaRetries: qaRetries.length },
+      "run scenario: the induced face mismatch made its face-visible slot retry (qa-retry in the journal), no face-hidden slot was retried, and the run still finished with every photo stored",
+      faceRetries.length === 0 && generatedPhotos.length === PHOTO_COUNT,
+      faceRetries,
     );
 
     // 9. The wire, not only the journal: a crash can end the engine between
