@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { POOL_TIMES, youthWords } from "../../shared/engine";
-import { artefactLine, CAPTURE_LINE, CONSTRAINTS, IMPERFECTIONS, imperfectionOf, lightOf, NEUTRAL_LIGHT, phoneHandLine, roomStateOf, slotKeyOf, type RoomPlace } from "./phoneLook";
+import { CAPTURES, shotOf, type Capture } from "../../shared/scenes/captures";
+import { artefactLine, captureLineOf, CONSTRAINTS, IMPERFECTIONS, imperfectionOf, lightOf, NEUTRAL_LIGHT, phoneHandLineOf, roomStateOf, slotKeyOf, type RoomPlace } from "./phoneLook";
 import { SHOTS, type Shot } from "./types";
 import { revealingWordsIn } from "./words";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -22,63 +23,66 @@ const NEGATED_LOOK = [/\bno (retouching|airbrushing|beauty filter|bokeh|blur|mak
 const KITCHEN: RoomPlace = { room: true, details: ["a kettle on the counter", "a fruit bowl", "a towel on the oven door"], activity: { messyOk: false } };
 const BEDROOM: RoomPlace = { room: true, details: ["a charger cable on the bed", "a hoodie on the chair"], activity: { messyOk: true } };
 
-describe("CAPTURE_LINE", () => {
-  test.each([...SHOTS])("has a line for the %s author", (shot) => {
-    expect(CAPTURE_LINE[shot].length).toBeGreaterThan(40);
+// 5a.2 (S5.6b): the capture line is keyed by who took the photo (a capture rides on one of the five stored shots). The plan's wording, verbatim, is pinned in
+// phoneLook.captures.test.ts; these are the invariants that bind every line.
+const NOT_MIRROR_CAPTURES = CAPTURES.filter((capture) => shotOf(capture) !== "mirror");
+const lineOf = (capture: Capture, key = "run-1:slot-1"): string => captureLineOf(capture, key);
+
+describe("captureLineOf", () => {
+  test.each([...CAPTURES])("has a line for the %s capture", (capture) => {
+    expect(lineOf(capture).length).toBeGreaterThan(40);
   });
 
   test("the selfie line is the arm's-length wording that never says selfie or front camera (C1: the word drew a phone)", () => {
-    expect(CAPTURE_LINE.selfie).toBe(
-      "A photo she took of herself at arm's length, seen from the camera's own point of view, held a little above eye level, the frame slightly tilted; her near arm stretches toward the viewer and leaves the frame at the bottom edge, so nothing in her near hand can be seen.",
-    );
-    expect(CAPTURE_LINE.selfie).not.toMatch(/selfie|front[ -]camera/i);
+    expect(lineOf("selfie")).toContain("at arm's length, seen from the camera's own point of view");
+    expect(lineOf("selfie")).not.toMatch(/selfie|front[ -]camera/i);
   });
 
   test("the mirror line is the one that shows the phone, held low enough to leave her face clear", () => {
-    expect(CAPTURE_LINE.mirror).toContain("her phone in her hand at chest height");
-    expect(CAPTURE_LINE.mirror).toContain("visible in the mirror");
-    expect(CAPTURE_LINE.mirror).toContain("leave her face clear");
+    expect(lineOf("mirror")).toContain("her phone in her hand at chest height");
+    expect(lineOf("mirror")).toContain("visible in the mirror");
+    expect(lineOf("mirror")).toContain("leave her face clear");
   });
 
-  test.each(["friend", "photographer"] as const)("the %s line is a friend's rear-camera snap, with her not taking the photo herself", (shot) => {
-    expect(CAPTURE_LINE[shot]).toContain("a friend took of her");
-    expect(CAPTURE_LINE[shot]).toContain("rear camera");
-    expect(CAPTURE_LINE[shot]).toContain("she is not taking the photo herself");
+  test("the phone-over-face mirror line says the phone hides most of her face", () => {
+    expect(lineOf("mirror-hidden")).toContain("so the phone hides most of her face");
   });
 
-  test("a photographer slot reads exactly like a friend slot (the stored shot stays, the author is a friend)", () => {
-    expect(CAPTURE_LINE.photographer).toBe(CAPTURE_LINE.friend);
-  });
-
-  test("the friend line asks for the whole body, so a head-and-shoulders frame is not the default", () => {
-    expect(CAPTURE_LINE.friend).toContain("her whole body is in the picture");
+  test("the friend line is someone she asked, with her not taking the photo herself and her body in the picture", () => {
+    for (const key of KEYS.slice(0, 50)) {
+      expect(lineOf("friend", key)).toContain("someone she asked took of her");
+      expect(lineOf("friend", key)).toContain("she is not taking the photo herself");
+      expect(lineOf("friend", key)).toMatch(/her whole body (is )?in the picture|from her knees up/);
+    }
   });
 
   test("the candid line is the friend line plus her being busy and not looking toward the camera, with no further phone named", () => {
-    expect(CAPTURE_LINE.candid).toBe(`${CAPTURE_LINE.friend} She is busy with something and not looking toward the camera.`);
-    expect(CAPTURE_LINE.candid.replace("A quick phone snap", "")).not.toMatch(/\bphone\b/i);
+    for (const key of KEYS.slice(0, 50)) {
+      expect(lineOf("candid", key)).toBe(`${lineOf("friend", key)} She is busy with something and not looking toward the camera.`);
+      expect(lineOf("candid", key).replace("A quick phone photo", "")).not.toMatch(/\bphone\b/i);
+    }
   });
 
-  test.each(NOT_MIRROR)("the %s line matches no held-phone pattern (I5.2)", (shot) => {
-    for (const pattern of HELD_PHONE) expect(CAPTURE_LINE[shot]).not.toMatch(pattern);
+  test.each(NOT_MIRROR_CAPTURES)("the %s line matches no held-phone pattern (I5.2)", (capture) => {
+    for (const key of KEYS.slice(0, 50)) for (const pattern of HELD_PHONE) expect(lineOf(capture, key)).not.toMatch(pattern);
   });
 });
 
-describe("phoneHandLine", () => {
+describe("phoneHandLineOf", () => {
   test("the mirror author holds the phone with one hand and acts with the other", () => {
-    expect(phoneHandLine("mirror")).toBe("One hand holds the phone; only her other hand acts.");
+    expect(phoneHandLineOf("mirror")).toBe("One hand holds the phone; only her other hand acts.");
   });
 
   test("the selfie author's near arm is out of the frame, so no phone is held in view and none is named", () => {
-    expect(phoneHandLine("selfie")).toBe("Her near arm is out of the frame; only her other hand acts.");
+    expect(phoneHandLineOf("selfie")).toBe("Her near arm is out of the frame; only her other hand acts.");
   });
 
-  test.each(["friend", "candid", "photographer"] as const)("the %s author has no phone-hand line", (shot) => {
-    expect(phoneHandLine(shot)).toBeNull();
+  test.each(["friend", "candid", "timer", "low-feet"] as const)("the %s author has no phone-hand line", (capture) => {
+    expect(phoneHandLineOf(capture)).toBeNull();
   });
 
-  test.each(NOT_MIRROR)("the %s phone-hand line matches no held-phone pattern (I5.2)", (shot) => {
-    const line = phoneHandLine(shot) ?? "";
+  test.each(NOT_MIRROR_CAPTURES)("the %s phone-hand line matches no held-phone pattern (I5.2)", (capture) => {
+    const line = phoneHandLineOf(capture) ?? "";
     for (const pattern of HELD_PHONE) expect(line).not.toMatch(pattern);
   });
 });
@@ -179,9 +183,10 @@ describe("IMPERFECTIONS and imperfectionOf", () => {
 });
 
 describe("an imperfection never repeats its capture line", () => {
-  test.each([...SHOTS])("no %s imperfection is part of, or restates, the capture line over 1000 keys", (shot) => {
-    const line = CAPTURE_LINE[shot].toLowerCase();
+  test.each([...CAPTURES])("no imperfection of the %s capture's shot is part of, or restates, its capture line over 1000 keys", (capture) => {
+    const shot = shotOf(capture);
     for (const key of KEYS.slice(0, 1000)) {
+      const line = lineOf(capture, key).toLowerCase();
       const imperfection = imperfectionOf(shot, key);
       expect(line).not.toContain(imperfection.toLowerCase());
       // «tilted» is the one word both texts use: a capture line that says it leaves it out of the draw.
@@ -189,9 +194,11 @@ describe("an imperfection never repeats its capture line", () => {
     }
   });
 
-  test.each([...SHOTS])("every %s list entry is safe against the capture line, so no draw needs a retry", (shot) => {
-    const line = CAPTURE_LINE[shot].toLowerCase();
-    for (const entry of IMPERFECTIONS[shot]) expect(line).not.toContain(entry.toLowerCase());
+  test.each([...CAPTURES])("every list entry of the %s capture's shot is safe against its capture line, so no draw needs a retry", (capture) => {
+    for (const key of KEYS.slice(0, 30)) {
+      const line = lineOf(capture, key).toLowerCase();
+      for (const entry of IMPERFECTIONS[shotOf(capture)]) expect(line).not.toContain(entry.toLowerCase());
+    }
   });
 
   test("no imperfection says softness or blur of focus, which conflicts with everything in focus", () => {
@@ -337,8 +344,8 @@ describe("artefactLine", () => {
 
 describe("every static phrase", () => {
   const phrases = (): [string, string][] => [
-    ...SHOTS.map((shot): [string, string] => [`CAPTURE_LINE.${shot}`, CAPTURE_LINE[shot]]),
-    ...SHOTS.map((shot): [string, string] => [`phoneHandLine(${shot})`, phoneHandLine(shot) ?? ""]),
+    ...CAPTURES.map((capture): [string, string] => [`captureLineOf(${capture})`, lineOf(capture)]),
+    ...CAPTURES.map((capture): [string, string] => [`phoneHandLineOf(${capture})`, phoneHandLineOf(capture) ?? ""]),
     ...SHOTS.flatMap((shot: Shot) => IMPERFECTIONS[shot].map((text): [string, string] => [`IMPERFECTIONS.${shot}`, text])),
     ["CONSTRAINTS", CONSTRAINTS],
     ["artefact ON", artefactLine({ cameraRealism: true, light: NEUTRAL_LIGHT, imperfection: IMPERFECTIONS.friend[0] ?? "" })],

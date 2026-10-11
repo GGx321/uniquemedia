@@ -1,7 +1,9 @@
 import { youthWords, type AvatarDescriptor } from "../../shared/engine";
 import { promptSubject } from "../avatars/prompts";
 import type { LibraryReference } from "../library/media";
-import { artefactLine, CAPTURE_LINE, CONSTRAINTS, imperfectionOf, lightOf, phoneHandLine, roomStateOf, slotKeyOf, type RoomPlace } from "./phoneLook";
+import { captureOfShot, type Capture } from "../../shared/scenes/captures";
+import { artefactLine, captureLineOf, CONSTRAINTS, hairLine, imperfectionOf, isLampMood, lightOf, MIRROR_BACK_LINE, phoneHandLineOf, roomStateOf, slotKeyOf, type RoomPlace } from "./phoneLook";
+import type { SlotLook } from "./roomPlace";
 import { revealingWordsIn } from "./words";
 import { isOwnSlot, type Pose, type RunSlot, type ScenePlan } from "./schema";
 import type { Shot } from "./types";
@@ -66,7 +68,27 @@ export const POSE_PHRASE: Record<Pose, string> = {
   back: "Photographed from behind, her face not visible",
 };
 
+/**
+ * 5a.2 (S5.6b): a frame with the phone over her face (`mirror-hidden`) does not claim her face is clearly visible; it says which way her body is turned. Only
+ * front and three-quarter occur: a hand-held capture faces the phone.
+ */
+export const HIDDEN_FACE_POSE_PHRASE: Record<Pose, string> = {
+  front: "Her body is turned toward the mirror, her face behind her phone",
+  "three-quarter": "Her body is turned to a three-quarter angle toward the mirror, her face behind her phone",
+  profile: "She is seen in profile, her face behind her phone",
+  back: "Photographed from behind, her face not visible",
+};
+
 const BINDING = "The same woman as in the reference photo,";
+
+/** Binding for a frame without her face (plan r1.5 §5.4): the face binding is dropped; her hair, build and skin tone carry the likeness. */
+export const NO_FACE_ANCHOR = "with the exact hair colour and hair length from the reference photo, her build and skin tone";
+
+/** The frames whose face the phone or her own legs hide (`captures.ts` faceVisibleOf, by capture): the binding is NO_FACE_ANCHOR. A back pose keeps its own, as it always did. */
+const FACELESS_CAPTURES: readonly Capture[] = ["mirror-hidden", "pov-legs"];
+
+/** The captures that get the body binding when the avatar has a body (plan r1.5 §5.4); the close self-shots above, selfie and over-shoulder do not. */
+const BODY_BINDING_CAPTURES: readonly Capture[] = ["mirror-hidden", "mirror", "prone", "timer", "friend", "candid", "pov-legs", "low-feet"];
 
 /**
  * T5c: the reference-binding anchor, pose-aware. Front/three-quarter keep
@@ -118,9 +140,14 @@ function normalize(text: string): string {
     .trim();
 }
 
-function constraintsFor(slot: RunSlot): string {
-  const hand = phoneHandLine(slot.shot);
+function constraintsFor(capture: Capture): string {
+  const hand = phoneHandLineOf(capture);
   return hand === null ? CONSTRAINTS : `${CONSTRAINTS} ${hand}`;
+}
+
+/** Who took the photo: the slot's capture, or (a slot stored before captures, an own scene) the one its stored shot says. */
+function captureOfRunSlot(slot: RunSlot): Capture {
+  return "capture" in slot && slot.capture !== undefined ? slot.capture : captureOfShot(slot.shot);
 }
 
 export interface AssembleOptions {
@@ -130,6 +157,13 @@ export interface AssembleOptions {
   cameraRealism?: boolean;
   /** The place of a slot as the room draw reads it, or null for none (an own scene, a renamed place). Absent: no slot gets a room phrase. */
   roomPlaceOf?: (slot: RunSlot) => RoomPlace | null;
+  /**
+   * 5a.2: the marks of the slot's place and moment the look reads: a lamp place (the lamp mood at evening and night, I5.34) and a back-to-the-mirror moment
+   * (the «only her reflection» sentence). Injected like the room lookup; absent: neither applies.
+   */
+  lookOf?: (slot: RunSlot) => SlotLook | null;
+  /** 5a.2: the slot's hairstyle as it reads after «Today her hair is …» (shared/scenes/hair.ts hairstyleSequence), or null for no hair line. Absent: none. */
+  hairStyleOf?: (slot: RunSlot) => string | null;
 }
 
 export interface AssembledScene {
@@ -156,15 +190,23 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, senten
 
   const anchor = promptSubject(descriptor);
   const key = slotKeyOf(options.runId, slot.attemptIdBase);
+  const capture = captureOfRunSlot(slot);
   // An own scene has no stored time (the writer's sentence carries its light) and no place, so it gets the neutral light and no room phrase.
-  const light = lightOf(isOwnSlot(slot) ? undefined : slot.timeOfDay);
+  const timeOfDay = isOwnSlot(slot) ? undefined : slot.timeOfDay;
+  const light = lightOf(timeOfDay);
   const room = roomStateOf(key, options.roomPlaceOf?.(slot) ?? null);
-  const artefact = artefactLine({ cameraRealism: options.cameraRealism === true, light, imperfection: imperfectionOf(slot.shot, key) });
+  const look = options.lookOf?.(slot) ?? null;
+  const artefact = artefactLine({ cameraRealism: options.cameraRealism === true, light, imperfection: imperfectionOf(slot.shot, key), lampMood: isLampMood(look, timeOfDay) });
+  const hairStyle = options.hairStyleOf?.(slot) ?? null;
+  const faceless = FACELESS_CAPTURES.includes(capture);
+  const posePhrase = capture === "mirror-hidden" ? HIDDEN_FACE_POSE_PHRASE[slot.pose] : POSE_PHRASE[slot.pose];
+  const bindingAnchor = faceless ? NO_FACE_ANCHOR : BINDING_ANCHOR[slot.pose];
   const raw =
-    `${CAPTURE_LINE[slot.shot]} ${POSE_PHRASE[slot.pose]}. ${field(sentence)}. ` +
+    `${captureLineOf(capture, key)} ${look?.mirrorBack === true ? `${MIRROR_BACK_LINE} ` : ""}${posePhrase}. ${field(sentence)}. ` +
     (room === null ? "" : `${room} `) +
-    `${BINDING} ${BINDING_ANCHOR[slot.pose]}${descriptor.body !== undefined && slot.shot !== "selfie" ? BODY_BINDING : ""}; ${anchor}. ` +
-    `${artefact} ${constraintsFor(slot)}`;
+    `${BINDING} ${bindingAnchor}${descriptor.body !== undefined && BODY_BINDING_CAPTURES.includes(capture) ? BODY_BINDING : ""}; ${anchor}. ` +
+    (hairStyle === null ? "" : `${hairLine(hairStyle)} `) +
+    `${artefact} ${constraintsFor(capture)}`;
   return { slotIndex: slot.slotIndex, prompt: normalize(raw), references: [master] };
 }
 

@@ -4,7 +4,8 @@ import { join } from "node:path";
 import type { AvatarDescriptor } from "../../shared/engine";
 import { chatBody, fakeFetch, makeClient, setupMoney, asLibraryReference, JPEG, type FetchCall, type Money, type Reply } from "../openrouter/testing/fakes";
 import { assembleRun, POOLS, roomPlaceOf, type PlanSlot } from "../scenes";
-import { CAPTURE_LINE } from "../scenes/phoneLook";
+import { captureOfShot } from "../../shared/scenes/captures";
+import { captureLineOf, slotKeyOf } from "../scenes/phoneLook";
 import { plannedSlots, runWriterConfig, RunPlanSchema } from "./plan";
 import { NetworkPool } from "./pools";
 import { runWriterPhase } from "./writerPhase";
@@ -34,7 +35,7 @@ describe("a resume of the plan.json written by main 3a9cd498, on the Stage 5 cod
   test("assembles with the new look: the capture line first, the new binding, the artefact line, no old staging", () => {
     for (const slot of SLOTS) {
       const prompt = promptOf(slot.slotIndex);
-      expect(prompt.startsWith(CAPTURE_LINE[slot.shot])).toBe(true);
+      expect(prompt.startsWith(captureLineOf(captureOfShot(slot.shot), slotKeyOf(RUN.runId, slot.attemptIdBase)))).toBe(true);
       expect(prompt).toContain("the exact hair colour from the reference photo");
       expect(prompt).toContain("Ordinary phone photo");
       expect(prompt).not.toMatch(/Only she is in focus|full-frame|photographer|bokeh|studio lighting|golden hour/i);
