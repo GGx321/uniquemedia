@@ -50,7 +50,9 @@ function drawn(slot: PlanSlot): Omit<PlanSlot, "slotIndex" | "attemptIdBase"> {
   return rest;
 }
 
-describe("built-in plans are byte-identical to main 3a9cd498", () => {
+// 5a.2 (S5.6b): the built-ins are planned capture first from the banks, so their plans moved ON PURPOSE and the golden was re-pinned in its own commit. A custom
+// category still plans exactly as before (below), and the built-ins' plans for a seed stay what this golden pins.
+describe("built-in plans are pinned to the 5a.2 planner (re-pinned at S5.6b from main 3a9cd498)", () => {
   const fixture: { excludePairsFrom: { seed: number; count: number; take: number }; hashes: Record<string, string> } = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "planner-main-3a9cd498.json"), "utf8"));
   const seeds = [1, 7, 42, 2026, 123456789, 4294967295];
   const counts = [1, 7, 20, 33, 100];
