@@ -9,6 +9,7 @@ import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money
 import { NetworkPool } from "../runs/pools";
 import { withChunkGivenUp, withChunkWritten } from "./mutations";
 import type { Budget } from "../money/budget";
+import { plainSentence } from "../scenes";
 import { chunkState } from "./chunks";
 import { runSceneWrite, type SceneWriteEnd } from "./writeJob";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -143,19 +144,36 @@ describe("runSceneWrite: a compose", () => {
   });
 });
 
+/** The plain sentence of every planned scene of the set, in scene order (S5.6d: what a chunk the model could not write takes). */
+const plainTextsOf = (set: StoredSceneSet): string[] => set.scenes.flatMap((s) => (s.origin === "planned" ? [plainSentence(s.slot)] : []));
+
 describe("runSceneWrite: a chunk that cannot be written does not block the others", () => {
-  test("a chunk rejected twice is given up and the job goes on with the next chunk", async () => {
+  // 5a.2 (S5.6d, plan s5a2 I5.31): this test used to say «a chunk rejected twice is given up (written 5, unwritten 25, gaveUp rejected)»; a planned scene the
+  // model could not write now takes the plain sentence, so nothing is given up and the whole set is written.
+  test("a chunk rejected twice takes the plain sentence for its scenes and the job goes on with the next chunk", async () => {
     await seed(30);
     const { net, gaveUp, end } = run([rejected, rejected, good]);
 
-    expect(await end).toEqual({ status: "done", written: 5, unwritten: 25 });
-    expect(gaveUp).toEqual([{ chunk: 1, by: "rejected" }]);
+    expect(await end).toEqual({ status: "done", written: 30, unwritten: 0 });
+    expect(gaveUp).toEqual([]);
     expect(net.calls).toHaveLength(3);
     expect(reserveIds()).toEqual([id(1, 1), id(1, 2), id(2, 1)]);
     const set = await setNow();
-    expect(set.chunks.map((c) => c.gaveUp)).toEqual(["rejected", undefined]);
-    expect(textsOf(set).slice(0, 25).every((t) => t === null)).toBe(true);
+    expect(set.chunks.map((c) => c.gaveUp)).toEqual([undefined, undefined]);
+    expect(textsOf(set).slice(0, 25)).toEqual(plainTextsOf(set).slice(0, 25));
     expect(textsOf(set).slice(25).every((t) => t === SENTENCE)).toBe(true);
+  });
+
+  test("a scene the model got wrong on both attempts takes the plain sentence while the rest keep the model's", async () => {
+    await seed(3);
+    const revealing = "She lounges by the pool in a bikini, laughing.";
+    const slotTwoWrong: Step = (call) => ({ status: 200, body: chatBody(JSON.stringify({ scenes: slotsAskedFor(call).map((slotIndex) => ({ slotIndex, sentence: slotIndex === 2 ? revealing : SENTENCE })) }), { cost: 0.0112 }) });
+    const { net, end } = run([slotTwoWrong, slotTwoWrong]);
+
+    expect(await end).toEqual({ status: "done", written: 3, unwritten: 0 });
+    expect(slotsAskedFor(net.calls[1] as FetchCall)).toEqual([2]);
+    const set = await setNow();
+    expect(textsOf(set)).toEqual([SENTENCE, plainTextsOf(set)[1], SENTENCE]);
   });
 
   test("a provider's refusal is final for its chunk: one call, given up as refused, and the next chunk is asked", async () => {
@@ -167,7 +185,7 @@ describe("runSceneWrite: a chunk that cannot be written does not block the other
     expect(net.calls).toHaveLength(2);
   });
 
-  test("a later job does not retry a chunk a job gave up on", async () => {
+  test("a later job asks nothing about a chunk the first job wrote plain", async () => {
     await seed(30);
     await run([rejected, rejected, good]).end;
     const again = run([good]);
@@ -228,15 +246,19 @@ describe("runSceneWrite: an attempt that got no answer stops the job, resumable"
     expect(reserveIds()).toEqual([id(1, 1), id(1, 2)]);
   });
 
-  test("never a fresh pair: after one answered attempt was interrupted, the chunk gets ONE more and then is done for", async () => {
+  // 5a.2 (S5.6d): the second attempt is still the chunk's last; what changed is its end. A rejected last attempt used to give the chunk up («rejected»); the
+  // scenes now take the plain sentence.
+  test("never a fresh pair: after one answered attempt was interrupted, the chunk gets ONE more and then its scenes take the plain sentence", async () => {
     await seed(3);
     await run([offline], { jobId: "job-aaaa-0001" }).end;
     const second = run([rejected, good], { jobId: "job-aaaa-0002" });
 
-    expect(await second.end).toEqual({ status: "done", written: 0, unwritten: 3 });
+    expect(await second.end).toEqual({ status: "done", written: 3, unwritten: 0 });
     expect(second.net.calls).toHaveLength(1);
     expect(reserveIds()).toEqual([id(1, 1), id(1, 2)]);
-    expect((await setNow()).chunks[0]?.gaveUp).toBe("rejected");
+    const set = await setNow();
+    expect(set.chunks[0]?.gaveUp).toBeUndefined();
+    expect(textsOf(set)).toEqual(plainTextsOf(set));
   });
 
   test("a reconcile's estimated settle of the interrupted request counts as answered too", async () => {
@@ -245,7 +267,7 @@ describe("runSceneWrite: an attempt that got no answer stops the job, resumable"
     await money.ledger.append({ type: "settle", attemptId: id(1, 1), costMicros: 37_500, estimated: true, at: "2026-10-07T12:00:00.000Z" });
     const second = run([rejected, good], { jobId: "job-aaaa-0002" });
 
-    expect(await second.end).toEqual({ status: "done", written: 0, unwritten: 3 });
+    expect(await second.end).toEqual({ status: "done", written: 3, unwritten: 0 });
     expect(second.net.calls).toHaveLength(1);
   });
 });
@@ -517,7 +539,7 @@ describe("runSceneWrite: progress", () => {
     await seed(30);
     const { progress, end } = run([rejected, rejected, good]);
     const result = (await end) as Extract<SceneWriteEnd, { status: "done" }>;
-    expect(progress).toEqual([5]);
+    expect(progress).toEqual([25, 30]);
     expect(progress.every((done) => done <= result.written + result.unwritten)).toBe(true);
   });
 });

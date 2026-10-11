@@ -10,7 +10,7 @@ import type { PriceBook } from "../money/prices";
 import { timeoutSignal, untilAborted, type TimeoutSignal } from "../money/timeoutSignal";
 import { truncate } from "../openrouter/transport";
 import type { ImageOk, ImageResult, OpenRouterClient, OpenRouterFetch } from "../openrouter/types";
-import { assembleRun, hairLinesOf, isOwnSlot, photoCategoryOf, roomPlaceOf, slotLookOf } from "../scenes";
+import { assembleRun, hairLinesOf, isOwnSlot, photoCategoryOf, plainSentence, roomPlaceOf, slotLookOf } from "../scenes";
 import type { HairLength } from "../../shared/scenes/banks/types";
 import { localSentences } from "../scenes/localSentences";
 import { slotKeyOf } from "../scenes/phoneLook";
@@ -392,6 +392,8 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
       slots,
       // 5a.2: the code template writes every slot whose place and moment the banks find by name; the rest go to the model at the chunk's reserved ids.
       local: localSentences({ slots, keyOf: (slot) => slotKeyOf(plan.runId, slot.attemptIdBase), snapshots: plan.categories }),
+      // 5a.2 (S5.6d, I5.31): a slot the model could not write in the chunk's answered attempts takes the plain sentence, so a writer refusal never ends the run.
+      plain: plainSentence,
       chunks: plan.writerChunks,
       sentences: state.sentences,
       writerDone: state.writerDone,

@@ -14,7 +14,7 @@ import { reconcile } from "../money/reconcile";
 import { PriceBook } from "../money/prices";
 import { chatBody, fakeFetch, imageBody, JPEG, makeClient, readLedgerLines, type FetchCall, type Reply } from "../openrouter/testing/fakes";
 import type { ImageResult, OpenRouterClientOptions, OpenRouterFetch } from "../openrouter/types";
-import { plan as planScenes, planWithPools, POOLS, type PlanSlot } from "../scenes";
+import { plan as planScenes, planWithPools, plainSentence, POOLS, type PlanSlot } from "../scenes";
 import { BANKS } from "../../shared/scenes/banks";
 import { CUSTOM_POOL, CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
 import { LLM_ONLY_POOL, LLM_ONLY_REF, llmOnlySnapshot } from "../scenes/testing/llmOnlyFixture";
@@ -2121,21 +2121,26 @@ describe("the run's cap", () => {
 // ---------- failures ----------
 
 describe("failures", () => {
-  test("a writer chunk rejected on every attempt fails the run cleanly: no image request, the writer's money stays settled", async () => {
+  // 5a.2 (S5.6d, plan s5a2 I5.31): a writer refusal never ends a planned run. This test used to say «a chunk rejected on every attempt fails the run: no image
+  // request, every slot ends»; the plan reverses it: each slot takes the plain sentence and is drawn, and the writer's money stays settled as it was.
+  test("a writer chunk rejected on every attempt takes the plain sentence: every slot is drawn, the writer's money stays settled", async () => {
     const run = await newRun(3);
     const net = network({ writer: () => ({ status: 200, body: chatBody(JSON.stringify({ scenes: [] }), { cost: 0.002 }) }) });
     const { end } = start(run, { net });
 
-    expect(await end).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });
-    expect(net.imageCalls()).toHaveLength(0);
-    expect(ledgerLines().filter((l) => l.type === "settle").map((l) => [l.attemptId, l.costMicros])).toEqual([
+    expect(await end).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(net.writerCalls()).toHaveLength(2);
+    expect(net.imageCalls()).toHaveLength(3);
+    expect(ledgerLines().filter((l) => l.type === "settle" && String(l.attemptId).includes(":writer-")).map((l) => [l.attemptId, l.costMicros])).toEqual([
       [`${RUN_ID}:writer-1#1`, 2_000],
       [`${RUN_ID}:writer-1#2`, 2_000],
     ]);
     expect(ledger.openReserves()).toEqual([]);
-    expect((await journal()).some((e) => e.type === "prompts")).toBe(false);
-    // No job will ever write that chunk: its slots end, so the run is not offered for a resume that cannot help.
-    expect((await journal()).filter((e) => e.type === "slot").map((e) => (e.type === "slot" ? e.status : null))).toEqual(["failed", "failed", "failed"]);
+    const written = (await journal()).flatMap((e) => (e.type === "writer" ? e.sentences : []));
+    expect(written.map((s) => s.sentence)).toEqual(plannedSlots(run).map((slot) => plainSentence(slot)));
+    const prompts = net.imageCalls().map((c) => String(c.json().prompt));
+    for (const slot of plannedSlots(run)) expect(prompts.some((prompt) => prompt.includes(plainSentence(slot)))).toBe(true);
+    expect(scopeCommitted()).toBeLessThanOrEqual(run.capMicros);
   });
 
   test("a fatal error (401) stops the run: no new request after it", async () => {

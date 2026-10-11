@@ -6,6 +6,7 @@ import type { PriceBook } from "../money/prices";
 import { runWriterConfig } from "../runs/plan";
 import { runWriterPhase, type WriterPhase, type WriterPhaseDeps } from "../runs/writerPhase";
 import { chunkState, pendingChunks } from "./chunks";
+import { plainSentence } from "../scenes";
 import { setLocal } from "./local";
 
 // CS.4a: the scene set's writer job (a compose and a «Дописать» are the same job). It drives the run's own writer phase (`runWriterPhase`, the writer's
@@ -117,6 +118,8 @@ export async function runSceneWrite(deps: SceneWriteDeps, request: SceneWriteReq
       ...(request.stop === undefined ? {} : { stop: request.stop }),
       slots,
       local: setLocal(set),
+      // 5a.2 (S5.6d, I5.31): a scene the model could not write in the chunk's answered attempts takes the plain sentence, so no chunk is given up for being rejected.
+      plain: plainSentence,
       chunks: [{ chunk: next.chunk.chunk, slotIndexes: next.sceneIds, attemptIds: next.chunk.attemptIds }],
       sentences: new Map(),
       writerDone: new Set(),
@@ -139,10 +142,9 @@ export async function runSceneWrite(deps: SceneWriteDeps, request: SceneWriteReq
     if (result.ok) continue;
     if (result.stop === "cancelled" || result.stop === "soft-stopped") return { status: "cancelled" };
     if (result.stop === "stopped") return { status: "failed", error: result.error, stoppedBy: stoppedByOf(result.error, lastAttemptWasFree(budget, next.chunk.attemptIds)) };
-    // exhausted: the chunk will never be answered. A provider's refusal is final; two rejected answers are the chunk's verdict; a chunk whose attempts ran out
-    // some other way (its ids all spent with no answer) is read «no attempts» from the ledger and needs no record.
+    // exhausted: with the plain sentence for a scene the model could not write, only a provider's refusal of the writer's prompt is left. It is final: the same
+    // prompt would be refused again, so the chunk is recorded as such and no job asks it again.
     if (result.error.code === "MODERATION_REFUSED") await deps.giveUp(next.chunk.chunk, "refused");
-    else if (chunkState(set, next.chunk, ledger).answered >= phase.call.maxAttempts) await deps.giveUp(next.chunk.chunk, "rejected");
   }
   return { status: "done", written, unwritten: Math.max(0, target - written) };
 }
