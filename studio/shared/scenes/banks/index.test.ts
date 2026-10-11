@@ -31,8 +31,22 @@ describe("the banks load valid", () => {
 describe("who takes the photo (I5.32: the capture decks, exact cycles)", () => {
   const sorted = (deck: readonly Capture[]): Capture[] => [...deck].sort();
 
-  test("«Дом» shoots herself: 2 phone-over-face mirror frames of 6, a mirror, a close selfie from above, a prone selfie, a timer; never a friend", () => {
-    expect(sorted(BANKS.home.captureDeck)).toEqual(sorted(["mirror-hidden", "mirror-hidden", "mirror", "above", "prone", "timer"]));
+  // The owner's over-her-shoulder self POV (2026-10-11) takes 1 of 12, beside the prone selfie: together they keep the prone body's 1 in 6.
+  test("«Дом» shoots herself: 4 phone-over-face mirror frames of 12, 2 mirrors, 2 close selfies from above, a prone selfie, an over-her-shoulder POV, 2 timers; never a friend", () => {
+    expect(sorted(BANKS.home.captureDeck)).toEqual(
+      sorted(["mirror-hidden", "mirror-hidden", "mirror-hidden", "mirror-hidden", "mirror", "mirror", "above", "above", "prone", "over-shoulder", "timer", "timer"]),
+    );
+  });
+
+  test("the over-her-shoulder POV lies on the bed, feet up in platform sneakers, in leggings or lounge shorts", () => {
+    const pov = BANKS.home.places.flatMap((p) => p.moments).filter((m) => m.captures.includes("over-shoulder"));
+    expect(pov.length).toBeGreaterThanOrEqual(2);
+    for (const moment of pov) {
+      expect(BANKS.home.places.find((p) => p.moments.includes(moment))?.name).toBe("her bed");
+      expect(moment.noLegwear).toBe(true);
+      expect(moment.outfits?.length ?? 0).toBeGreaterThan(0);
+      for (const outfit of moment.outfits ?? []) expect(outfit).toMatch(/(leggings|lounge shorts).*platform sneakers/);
+    }
   });
 
   test.each<BankCategory>(["photoshoot", "travel"])("%s («Улица», «Виды»): mostly she asked someone, 3 of 6, plus a selfie, a timer and a candid", (category) => {
@@ -66,6 +80,7 @@ describe("who takes the photo (I5.32: the capture decks, exact cycles)", () => {
   test("every capture of the plan is dealt somewhere or is a legs capture (5a.2c)", () => {
     const dealt = new Set(BANK_CATEGORIES.flatMap((c) => BANKS[c].captureDeck));
     expect(CAPTURES.filter((c) => !dealt.has(c))).toEqual(["pov-legs", "low-feet"]);
+    expect(dealt.has("over-shoulder")).toBe(true);
   });
 });
 

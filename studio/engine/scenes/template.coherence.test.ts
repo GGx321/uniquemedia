@@ -59,7 +59,7 @@ const CASES = drawableCases();
 describe("every drawable built-in combination is coherent", () => {
   test("the sweep is not vacuous: every capture of the decks and every pose appear", () => {
     expect(CASES.length).toBeGreaterThan(20_000);
-    expect(new Set(CASES.map((c) => c.capture)).size).toBe(8);
+    expect(new Set(CASES.map((c) => c.capture)).size).toBe(9);
     expect(new Set(CASES.map((c) => c.pose)).size).toBe(4);
   });
 

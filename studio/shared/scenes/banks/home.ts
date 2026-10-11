@@ -11,6 +11,8 @@ import type { CategoryBank } from "./types";
 const PRONE_OUTFIT = "grey lounge shorts and a fitted tee";
 const LEGGINGS = "grey leggings and a cropped tee";
 const PRONE = [PRONE_OUTFIT, LEGGINGS];
+/** The over-her-shoulder POV's outfits: her feet raised in platform sneakers, in leggings or lounge shorts (the owner, 2026-10-11). */
+const SNEAKERS = ["grey leggings and platform sneakers", "lounge shorts and platform sneakers"];
 /** The bathroom counter mirror selfie's outfit, as the owner approved it. */
 const OPEN_BACK = "an open-back top and grey jeans";
 
@@ -56,6 +58,9 @@ export const HOME: CategoryBank = {
         { text: "lies on her stomach on the bed", motion: "she lifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
         { text: "lies on her stomach, on her elbows", motion: "she shifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
         { text: "lies prone, her cheek on her hand", motion: "she slowly blinks and smiles", captures: ["prone"], twoHanded: false, outfits: PRONE },
+        { text: "lies prone, sneakers raised behind", motion: "her raised sneakers swing slowly behind her", captures: ["over-shoulder"], twoHanded: false, outfits: SNEAKERS, noLegwear: true },
+        { text: "lies prone, feet up in sneakers", motion: "she crosses her raised ankles slowly", captures: ["over-shoulder"], twoHanded: false, outfits: SNEAKERS, noLegwear: true },
+        { text: "lies prone, glancing back", motion: "she turns her head a little further", captures: ["over-shoulder"], twoHanded: false, gaze: "own", outfits: SNEAKERS, noLegwear: true },
         { text: "sits cross-legged on the bed", motion: "she rocks a little side to side", captures: ["timer"], twoHanded: false },
         { text: "rests her cheek on the pillow", motion: "she slowly closes her eyes", captures: ["above"], twoHanded: false },
         { text: "lies curled under the blanket", motion: "she pulls the blanket up a little", captures: ["above", "timer"], twoHanded: false, messyOk: true },
@@ -133,7 +138,10 @@ export const HOME: CategoryBank = {
     { text: PRONE_OUTFIT, showsLegs: true },
     { text: LEGGINGS },
     { text: OPEN_BACK },
+    { text: "grey leggings and platform sneakers" },
+    { text: "lounge shorts and platform sneakers", showsLegs: true },
   ],
   legwear: { items: ["white knee-high socks", "black knee-high socks", "thigh-high socks", "sheer black tights"], share: 0.4 },
-  captureDeck: ["mirror-hidden", "mirror", "above", "mirror-hidden", "prone", "timer"],
+  // ⅓ phone-over-face mirror frames (I5.32), never a friend; the prone selfie and the over-her-shoulder POV share the prone body's 1 in 6.
+  captureDeck: ["mirror-hidden", "mirror", "above", "mirror-hidden", "prone", "timer", "mirror-hidden", "mirror", "above", "mirror-hidden", "over-shoulder", "timer"],
 };

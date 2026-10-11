@@ -3,9 +3,11 @@ import type { PoolShot, ScenePose } from "../engine";
 // 5a.2 r1.2 (I5.32, plan s5a2 §5.1, §5.4): who takes the photo, as a first-class `capture` on the slot. The owner's references (2026-10-11): at home
 // she shoots herself (in the mirror, often with the phone over her face; at arm's length from above; lying on her stomach; on a timer); outside she
 // mostly asks someone. The stored `shot` keeps its 5 values (`shot = shotOf(capture)`), so stored plans and sets stay readable; a slot stored before
-// captures reads its capture from its shot (`captureOfShot`).
+// captures reads its capture from its shot (`captureOfShot`). `over-shoulder` is the owner's addition (2026-10-11): a photo she takes over her own
+// shoulder, looking back along her body as she lies on her stomach (her hair in the foreground, her hips, her feet raised; her face may show). Its
+// capture line comes with the others in engine/scenes/phoneLook.ts (S5.6b).
 
-export const CAPTURES = ["mirror-hidden", "mirror", "above", "prone", "selfie", "timer", "friend", "candid", "pov-legs", "low-feet"] as const;
+export const CAPTURES = ["mirror-hidden", "mirror", "above", "prone", "over-shoulder", "selfie", "timer", "friend", "candid", "pov-legs", "low-feet"] as const;
 export type Capture = (typeof CAPTURES)[number];
 
 /** «Ножки»'s own captures (5a.2c): drawn only on legs slots. */
@@ -16,6 +18,7 @@ const SHOT_OF: Readonly<Record<Capture, PoolShot>> = {
   mirror: "mirror",
   above: "selfie",
   prone: "selfie",
+  "over-shoulder": "selfie",
   selfie: "selfie",
   "pov-legs": "selfie",
   timer: "friend",

@@ -12,6 +12,7 @@ describe("shotOf: the stored shot a capture rides on", () => {
     ["above", "selfie"],
     ["prone", "selfie"],
     ["selfie", "selfie"],
+    ["over-shoulder", "selfie"],
     ["pov-legs", "selfie"],
     ["timer", "friend"],
     ["friend", "friend"],
@@ -21,8 +22,8 @@ describe("shotOf: the stored shot a capture rides on", () => {
     expect(shotOf(capture)).toBe(shot);
   });
 
-  test("covers every capture, and only the ten of the plan", () => {
-    expect([...CAPTURES].sort()).toEqual(["above", "candid", "friend", "low-feet", "mirror", "mirror-hidden", "pov-legs", "prone", "selfie", "timer"]);
+  test("covers every capture: the ten of the plan and the owner's over-her-shoulder POV", () => {
+    expect([...CAPTURES].sort()).toEqual(["above", "candid", "friend", "low-feet", "mirror", "mirror-hidden", "over-shoulder", "pov-legs", "prone", "selfie", "timer"]);
   });
 });
 
@@ -43,6 +44,7 @@ describe("hand-held captures (one hand holds the phone)", () => {
     ["selfie", true],
     ["above", true],
     ["prone", true],
+    ["over-shoulder", true],
     ["mirror", true],
     ["mirror-hidden", true],
     ["pov-legs", true],
@@ -75,6 +77,7 @@ describe("faceVisibleOf (I5.32)", () => {
     ["mirror", "three-quarter", undefined, "yes"],
     ["friend", "profile", undefined, "yes"],
     ["prone", "front", undefined, "yes"],
+    ["over-shoulder", "three-quarter", undefined, "yes"],
     ["above", "three-quarter", undefined, "yes"],
     ["candid", "front", undefined, "yes"],
   ])("%s, %s, framing %p: %s", (capture, pose, framing, visible) => {
