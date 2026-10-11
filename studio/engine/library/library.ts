@@ -43,6 +43,7 @@ import {
 import { extensionFor, sniffImageMediaType, type ImageMediaType, type LibraryReference } from "./media";
 import { Quarantine, type QuarantineEntry } from "./quarantine";
 import { looksLikeRunPhoto } from "./photoRecords";
+import { byLikenessThenId, isPickablePortrait, isPortraitPhoto } from "./portraits";
 import { renameWithRetry } from "./renameRetry";
 import {
   AvatarManifestSchema,
@@ -94,6 +95,11 @@ export interface LibraryDeps {
    */
   downscaleReference?: (bytes: Uint8Array, signal?: AbortSignal) => Promise<Uint8Array>;
   /**
+   * Stage 5, S5.3a: told when `switchMaster`'s best-effort cleanup could not remove a portrait photo, with the error's code only (`EPERM`, `EBUSY`, or `UNKNOWN`) — never a
+   * path, an id or a name. The switch itself has already been committed; the leftover is a pending candidate.
+   */
+  onPortraitCleanupFailure?: (code: string) => void;
+  /**
    * The photos of `avatarId` that queued or running renders hold (S16), asked
    * afresh on every use. The real render queue provides it in task 3a.6; until
    * then, and in a library opened without one, nothing is reserved.
@@ -124,6 +130,15 @@ export interface OpenReport {
 export interface ReferencePhoto {
   photo: PhotoSidecar;
   path: string;
+}
+
+/** Which of an avatar's photos a face reference is read from (Stage 5, S5.3a): its master, or its imported source photo (the master itself for an avatar that has none). */
+export type ReferenceOf = "master" | "source";
+
+/** A thrown value's error code (`EPERM`, `EBUSY`, ...) and nothing else: it is what a failed cleanup is reported by, never a path or a name. */
+function errorCodeOf(error: unknown): string {
+  const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]{1,31}$/.test(code) ? code : "UNKNOWN";
 }
 
 export type NewAvatar = Pick<AvatarManifest, "name" | "age" | "traits" | "descriptor">;
@@ -242,6 +257,7 @@ export class Library {
   readonly #now: () => Date;
   readonly #newId: () => string;
   readonly #beforeRename: ((finalPath: string) => void | Promise<void>) | undefined;
+  readonly #onPortraitCleanupFailure: ((code: string) => void) | undefined;
   readonly #downscaleReference: (bytes: Uint8Array, signal?: AbortSignal) => Promise<Uint8Array>;
   readonly #avatars = new Map<string, AvatarManifest>();
   readonly #photos = new Map<string, PhotoSidecar>();
@@ -270,6 +286,7 @@ export class Library {
     this.#now = deps.now ?? (() => new Date());
     this.#newId = deps.newId ?? randomUUID;
     this.#beforeRename = deps.testHooks?.beforeRename;
+    this.#onPortraitCleanupFailure = deps.onPortraitCleanupFailure;
     this.#beforeReadVideoRecord = deps.testHooks?.beforeReadVideoRecord;
     this.#reservedPhotos = deps.reservedPhotos ?? (() => new Set<string>());
     this.#downscaleReference = deps.downscaleReference ?? ((bytes, signal) => downscaleToJpeg(bytes, { maxSide: REFERENCE_MAX_SIDE, signal }));
@@ -733,9 +750,29 @@ export class Library {
    * `LibraryError("reference-corrupt", ...)` for a master that fails its own
    * sidecar's check, before ever reaching the downscale step.
    */
-  async loadReference(avatarId: string, signal?: AbortSignal): Promise<LibraryReference | null> {
-    const ref = this.referencePhoto(avatarId);
+  async loadReference(avatarId: string, signal?: AbortSignal, of: ReferenceOf = "master"): Promise<LibraryReference | null> {
+    const ref = this.#referenceOf(avatarId, of);
     if (ref === null) return null;
+    const raw = await this.#readVerified(ref);
+    const jpeg = await this.#downscaleReference(new Uint8Array(raw), signal);
+    return jpeg as LibraryReference;
+  }
+
+  /**
+   * Stage 5, S5.3a: which of the avatar's photos a face reference is read from. `"master"` is `referencePhoto()`. `"source"` is the imported photo (`sourcePhoto()`), the one the
+   * reference portrait is drawn FROM and compared with; for an avatar that has none (a wizard avatar) it is the master, so a caller that always asks for the source needs no branch.
+   * Null in exactly the cases `referencePhoto()` is. An imported avatar whose source photo is gone also answers the master, which may be a portrait: a caller that must not
+   * fall back (the batch, the descriptor check) asks `sourcePhoto()` first.
+   */
+  #referenceOf(avatarId: string, of: ReferenceOf): ReferencePhoto | null {
+    const master = this.referencePhoto(avatarId);
+    if (master === null || of === "master") return master;
+    const source = this.sourcePhoto(avatarId);
+    return source === null ? master : { photo: source, path: join(this.#photosDir(avatarId), source.file) };
+  }
+
+  /** The photo's file bytes, checked against its own sidecar (size, then sha256), as `loadReference` and `loadOriginal` need them. */
+  async #readVerified(ref: ReferencePhoto): Promise<Buffer> {
     const raw = await readFile(ref.path);
     if (raw.length !== ref.photo.bytes) {
       throw new LibraryError("reference-corrupt", `${ref.photo.file} has ${raw.length} bytes, the sidecar recorded ${ref.photo.bytes}`);
@@ -744,8 +781,7 @@ export class Library {
     if (sha256 !== ref.photo.sha256) {
       throw new LibraryError("reference-corrupt", `${ref.photo.file} does not match the sha256 in its sidecar`);
     }
-    const jpeg = await this.#downscaleReference(new Uint8Array(raw), signal);
-    return jpeg as LibraryReference;
+    return raw;
   }
 
   /**
@@ -765,17 +801,89 @@ export class Library {
    * own sidecar's check, exactly like `loadReference()`.
    */
   async loadMasterOriginal(avatarId: string): Promise<Uint8Array | null> {
-    const ref = this.referencePhoto(avatarId);
+    return this.loadOriginal(avatarId, "master");
+  }
+
+  /**
+   * Stage 5, S5.3a: `loadMasterOriginal`'s read for either of the avatar's reference photos (`of`, see `#referenceOf`): the raw file bytes, checked against the sidecar, never
+   * branded. The face gate's embedding of the imported photo is computed from THESE bytes, for the reason `loadMasterOriginal` gives.
+   */
+  async loadOriginal(avatarId: string, of: ReferenceOf = "master"): Promise<Uint8Array | null> {
+    const ref = this.#referenceOf(avatarId, of);
     if (ref === null) return null;
-    const raw = await readFile(ref.path);
-    if (raw.length !== ref.photo.bytes) {
-      throw new LibraryError("reference-corrupt", `${ref.photo.file} has ${raw.length} bytes, the sidecar recorded ${ref.photo.bytes}`);
-    }
-    const sha256 = createHash("sha256").update(raw).digest("hex");
-    if (sha256 !== ref.photo.sha256) {
-      throw new LibraryError("reference-corrupt", `${ref.photo.file} does not match the sha256 in its sidecar`);
-    }
-    return new Uint8Array(raw);
+    return new Uint8Array(await this.#readVerified(ref));
+  }
+
+  /**
+   * Stage 5, S5.3a: the avatar's imported photo, the «source» a reference portrait is drawn from and compared with; null for an avatar that has none (a wizard avatar) and for an
+   * unknown one. It is derived, never stored: the photo whose source kind is `imported`. The engine writes exactly one such photo per avatar (a test pins the single writer); if
+   * two ever exist, the oldest wins.
+   */
+  sourcePhoto(avatarId: string): PhotoSidecar | null {
+    return this.photosByAvatar(avatarId).find((photo) => photo.source.kind === "imported") ?? null;
+  }
+
+  /**
+   * Stage 5, S5.3a: the avatar's pending reference portraits: every portrait photo (`isPortraitPhoto`) that is not the master, best likeness first. Whether the pick would accept
+   * one (`isPickablePortrait`) is not decided here, so a portrait the pick refuses is still counted against the limit and removed by a discard.
+   */
+  portraitCandidates(avatarId: string): PhotoSidecar[] {
+    const masterPhotoId = this.#avatars.get(avatarId)?.masterPhotoId;
+    return this.photosByAvatar(avatarId)
+      .filter((photo) => photo.id !== masterPhotoId && isPortraitPhoto(photo))
+      .sort(byLikenessThenId);
+  }
+
+  /**
+   * Stage 5, S5.3a: moves an active avatar's master to `photoId`, which is the avatar's source photo or one of its pending portraits that `isPickablePortrait` accepts
+   * (`not-a-candidate` for anything else, an unknown photo, another avatar's photo and a run photo included; also for an avatar that is not active). The current master is
+   * answered as it is and nothing is written. Under the manifest's lock:
+   *  1. the new manifest is written atomically: that write is the COMMIT (I5.18), and the in-memory manifest follows at once;
+   *  2. only then every portrait photo that is not the new master is removed, best effort: a removal that fails (EPERM or EBUSY on Windows) is reported by its code and the
+   *     call still answers, the leftover being a pending candidate that a discard removes. The imported photo and run photos are never portraits, so they are never removed.
+   * The order is the reverse of `promoteDraft`'s: the old master is a referenced photo, and removing it before the commit could leave a manifest naming a missing master. A
+   * crash after the commit leaves extra pending candidates and nothing worse.
+   */
+  async switchMaster(avatarId: string, photoId: string): Promise<AvatarManifest> {
+    const path = join(this.#avatarDir(avatarId), MANIFEST_FILE);
+    return runExclusive(`manifest:${path}`, async () => {
+      const current = this.#avatars.get(avatarId);
+      if (!current) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);
+      if (current.status !== "active") throw new LibraryError("not-a-candidate", `avatar ${avatarId} is ${current.status}, not active`);
+      if (current.masterPhotoId === photoId) return current;
+      const photo = this.#photos.get(photoId);
+      const isSource = photo !== undefined && photo.avatarId === avatarId && this.sourcePhoto(avatarId)?.id === photoId;
+      const isPending = photo !== undefined && photo.avatarId === avatarId && isPickablePortrait(photo);
+      if (!isSource && !isPending) throw new LibraryError("not-a-candidate", `photo ${photoId} cannot be the master of avatar ${avatarId}`);
+      const next = this.#validManifest({ ...current, masterPhotoId: photoId });
+      await writeJsonAtomic(path, next, { beforeRename: this.#beforeRename });
+      this.#avatars.set(avatarId, next);
+      for (const leftover of this.photosByAvatar(avatarId).filter((p) => p.id !== photoId && isPortraitPhoto(p))) {
+        try {
+          await this.#removePhoto(leftover);
+        } catch (error) {
+          this.#onPortraitCleanupFailure?.(errorCodeOf(error));
+        }
+      }
+      return next;
+    });
+  }
+
+  /**
+   * Stage 5, S5.3a: removes every pending portrait of the avatar (all but the master) and answers how many went («Оставить как есть»). A removal that fails rejects the call: the
+   * owner asked for exactly this, so it is not hidden, and the portraits not yet removed stay for a retry. `avatar-not-found` for an unknown avatar.
+   */
+  async discardPortraitCandidates(avatarId: string): Promise<number> {
+    const path = join(this.#avatarDir(avatarId), MANIFEST_FILE);
+    return runExclusive(`manifest:${path}`, async () => {
+      if (!this.#avatars.has(avatarId)) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);
+      let removed = 0;
+      for (const photo of this.portraitCandidates(avatarId)) {
+        await this.#removePhoto(photo);
+        removed++;
+      }
+      return removed;
+    });
   }
 
   /**

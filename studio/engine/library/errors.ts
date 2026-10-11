@@ -9,6 +9,7 @@ export type LibraryErrorCode =
   | "photo-is-master"
   | "photo-not-eligible"
   | "not-a-draft"
+  | "not-a-candidate"
   | "media-type-mismatch"
   | "run-exists"
   | "run-not-found"
