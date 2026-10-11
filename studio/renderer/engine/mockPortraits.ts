@@ -38,7 +38,13 @@ export type MockPortraitSlot =
   | { kind: "no-face" }
   | { kind: "multiple-faces" }
   | { kind: "refused" }
-  | { kind: "age-rejected" };
+  | { kind: "age-rejected" }
+  /**
+   * S5.3d review L6, DEMO and tests only (never in `MOCK_PORTRAIT_SLOTS`, which the parity rig plays): the slot could not finish, with `error`, and its
+   * money as the engine would settle it — `open` (a timeout or a lost connection: the reserve waits for a reconcile at the worst), `paid` (the image
+   * was billed), `free` (nothing sent, or a non-2xx settled at 0).
+   */
+  | { kind: "failed"; error: EngineError; settle: "open" | "paid" | "free" };
 
 /**
  * The deterministic outcome of the five slots of a mock batch, in slot order. Exported for the parity rig: its scripted face gate and its fake OpenRouter tell the real engine the same
@@ -50,6 +56,18 @@ export const MOCK_PORTRAIT_SLOTS: readonly MockPortraitSlot[] = [
   { kind: "pass", likeness: 0.61 },
   { kind: "unlike", likeness: 0.48 },
   { kind: "refused" },
+];
+
+/**
+ * DEMO only (review L6): the dev build's Ava plays this, so 16e (a batch that ended with paid failures) can be seen in the mock: three portraits, and two
+ * slots OpenRouter did not answer in time, their reserves left open until a reconcile. The parity rig never plays it.
+ */
+export const MOCK_PORTRAIT_SLOTS_SOME_FAILED: readonly MockPortraitSlot[] = [
+  { kind: "pass", likeness: 0.76 },
+  { kind: "pass", likeness: 0.72 },
+  { kind: "pass", likeness: 0.61 },
+  { kind: "failed", error: { code: "TIMEOUT", detail: "the image request timed out after 180 s" }, settle: "open" },
+  { kind: "failed", error: { code: "TIMEOUT", detail: "the image request timed out after 180 s" }, settle: "open" },
 ];
 
 /** What the mock's model says when it refuses an image: a moderation refusal carries the provider's own message (the parity rig's fake OpenRouter says the same words). */
@@ -109,5 +127,7 @@ export function failedSlotOf(slot: number, outcome: MockPortraitSlot): FailedPor
       return { slot, reason: "age-rejected" };
     case "refused":
       return { slot, reason: "failed", error: { ...MOCK_PORTRAIT_REFUSAL }, reserveLeftOpen: false };
+    case "failed":
+      return { slot, reason: "failed", error: { ...outcome.error }, reserveLeftOpen: outcome.settle === "open" };
   }
 }

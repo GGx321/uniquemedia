@@ -6,7 +6,7 @@ import { createEngineClient, type EngineBridge } from "../engine/client";
 import { MockEngine } from "../engine/mockEngine";
 import { MIA } from "../engine/mockEngine.testkit";
 import { ManualScheduler } from "../engine/scheduler";
-import type { MockPortraitSeed } from "../engine/mockPortraits";
+import { MOCK_PORTRAIT_SLOTS_SOME_FAILED, type MockPortraitSeed } from "../engine/mockPortraits";
 import { callsOf, flush, focusedLabel, describeElement, runAll, setup, tick } from "../testing";
 import { CHECK_HELD_REASON } from "./look/lookModel";
 
@@ -269,6 +269,20 @@ describe("16 · the batch is ready", () => {
     await openLook(NINI, { portraits: [{ ...NINI_SEED, candidates: twelve }, AVA_SEED] });
     expect(isDisabled(within(panel()).getByRole("button", { name: /^Ещё 5 вариантов/ }))).toBe(true);
     expect(text(panel())).toContain("Уже 12 вариантов — ещё 5 не поместятся в предел 15.");
+  });
+});
+
+describe("16e · some slots failed at a cost", () => {
+  test("two timeouts: «Не получилось · стоимость учтена», and the line says the worst price until a reconcile", async () => {
+    const { engine, scheduler } = await openLook(NINI);
+    engine.scriptNextPortraits({ slots: MOCK_PORTRAIT_SLOTS_SOME_FAILED });
+    await start();
+    runAll(scheduler);
+    await flush();
+    expect(radios()).toHaveLength(3);
+    expect(goneTiles()).toEqual([["Не получилось · стоимость учтена"], ["Не получилось · стоимость учтена"]]);
+    // The mockup's 16e line, word for word.
+    expect(text(panel())).toContain("2 варианта не удалось получить: OpenRouter не ответил вовремя. До сверки попытка считается по худшей цене. Стоимость попытки учтена.");
   });
 });
 

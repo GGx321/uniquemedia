@@ -107,6 +107,7 @@ import {
   MOCK_PORTRAIT_AGE_MICROS,
   MOCK_PORTRAIT_IMAGE_MICROS,
   MOCK_PORTRAIT_SLOTS,
+  MOCK_PORTRAIT_SLOTS_SOME_FAILED,
   mockPortraitsEstimate,
   portraitsView,
   portraitStateOf,
@@ -758,6 +759,8 @@ export class MockEngine implements EngineBridge {
   private readonly portraitStates = new Map<string, MockPortraitState>();
   /** S5.3c: the next batch plays this instead of the table, or is refused (`scriptNextPortraits`). Used once. */
   private nextPortraits: { slots?: readonly MockPortraitSlot[]; refuse?: EngineError } | null = null;
+  /** S5.3d review L6, the dev build's demo only: an avatar whose batches play another table than `MOCK_PORTRAIT_SLOTS` (Ava: 16e). Never in a parity story. */
+  private readonly demoPortraitSlots = new Map<string, readonly MockPortraitSlot[]>();
   private spentMicros: number;
   private spentSinceReconcile = 0;
   private readonly reserves = new Map<string, number>();
@@ -1084,6 +1087,8 @@ export class MockEngine implements EngineBridge {
     const ava = this.avatars.find((a) => a.name === "Ava");
     this.portraitStates.set(nini.avatarId, portraitStateOf({ avatarId: nini.avatarId, sourcePhotoId: "photo-demo-nini-source" }));
     if (ava !== undefined) {
+      // Review L6: her batches end with two slots OpenRouter did not answer in time, so 16e can be seen in the dev build.
+      this.demoPortraitSlots.set(ava.avatarId, MOCK_PORTRAIT_SLOTS_SOME_FAILED);
       this.portraitStates.set(
         ava.avatarId,
         portraitStateOf({
@@ -4765,7 +4770,7 @@ export class MockEngine implements EngineBridge {
     if (priced) return this.fail(c, priced);
     this.nextPortraits = null;
     if (script?.refuse !== undefined) return this.fail(c, script.refuse);
-    return this.ok(c, { jobId: this.startPortraitJob(avatarId, script?.slots ?? MOCK_PORTRAIT_SLOTS) });
+    return this.ok(c, { jobId: this.startPortraitJob(avatarId, script?.slots ?? this.demoPortraitSlots.get(avatarId) ?? MOCK_PORTRAIT_SLOTS) });
   }
 
   private portraitsPrice(): Estimate {
@@ -4831,9 +4836,12 @@ export class MockEngine implements EngineBridge {
           const outcome = outcomes[step - 1] ?? { kind: "refused" as const };
           const reserveKey = this.slotReserveKey(job.jobId, step);
           const aged = outcome.kind === "pass" || outcome.kind === "age-rejected";
-          if (outcome.kind === "refused") {
-            // A moderation refusal is settled at its known cost of zero.
+          if (outcome.kind === "refused" || (outcome.kind === "failed" && outcome.settle === "free")) {
+            // A moderation refusal (or, demo only, a slot that sent nothing) is settled at its known cost of zero.
             this.reserves.delete(reserveKey);
+            this.emitMoney();
+          } else if (outcome.kind === "failed" && outcome.settle === "open") {
+            // Demo only (review L6): a timeout or a lost connection: unknown whether it was billed, so the reserve stays open until a reconcile.
             this.emitMoney();
           } else {
             this.reserves.delete(reserveKey);
