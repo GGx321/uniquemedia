@@ -69,8 +69,8 @@ export const HELD_OBJECT_WORDS =
 /** An `above` frame's line says «as she lies there»: its moment lies down. */
 export const LYING_START = /^(lies|rests her (?:cheek|head))\b/;
 
-/** The owner (2026-10-11): no denim shorts and no denim skirts, anywhere: a denim mini, cut-offs, jean shorts and jorts included. */
-const DENIM_SHORTS_WORDS = /\b(?:denim|jeans?)\s+(?:mini|shorts|skirts?)\b|\bcut-?offs?\b|\bjorts\b/i;
+/** The owner (2026-10-11): no denim shorts and no denim skirts, anywhere: a denim mini or miniskirt, a skort, hot pants, cut-offs and jorts included. */
+const DENIM_SHORTS_WORDS = /\b(?:denim|jeans?)\s+(?:mini(?:-?skirts?)?|shorts|skirts?|skorts?|hot\s+pants)\b|\bcut-?offs?\b|\bjorts\b/i;
 
 /** I5.35: a motion is small or slow. */
 export const MOTION_SMALL = /\b(slowly|a little|a bit|slightly|gently|small)\b/i;

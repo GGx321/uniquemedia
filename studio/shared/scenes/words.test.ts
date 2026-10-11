@@ -5,7 +5,10 @@ import { isOwnerBannedOutfit, LEGWEAR_CLASH_WORDS } from "./words";
 // outfits too; and a moment with one heel in it clashes with legwear as one with heels does.
 
 describe("isOwnerBannedOutfit (the owner: no denim shorts, no denim skirts, anywhere)", () => {
-  test.each(["a tee and denim shorts", "a crop top and a denim mini skirt", "a denim mini and a tee", "a tank top and cut-offs", "a tank top and cutoffs", "a tank top and jean shorts", "a tee and jorts", "a denim skirt"])(
+  test.each([
+    "a tee and denim shorts", "a crop top and a denim mini skirt", "a denim mini and a tee", "a tank top and cut-offs", "a tank top and cutoffs", "a tank top and jean shorts",
+    "a tee and jorts", "a denim skirt", "a denim miniskirt", "a jean miniskirt", "a denim mini-skirt", "a denim skort", "denim hot pants", "a tee and jean hot pants",
+  ])(
     "refuses «%s»",
     (outfit) => {
       expect(isOwnerBannedOutfit(outfit)).toBe(true);
