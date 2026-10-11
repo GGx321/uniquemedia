@@ -1,15 +1,15 @@
 {
-  "source": "main 3a9cd498: sha256 of JSON.stringify(...) of what the writer sent for a built-in 30-slot run (plan seed 3, all five categories, profile and back allowed, run-00000001) RE-PINNED at S5.1b (2026-10-10) and again at S5.1c and S5.R1 (mirror-free place names, texts within POOL_TEXT_MAX; the selfie phone rule, never-describe-mess and candid-gaze lines, ranges in slot lists; new plan from the pool rewrite; pose labels speak of the viewer) and at S5.4 (2026-10-11, owner canary C1: the photoshoot park path and the glamour and photoshoot outfit changes re-plan chunk 1, and the selfie shot label reads «her own arm's-length photo» instead of «her own front-camera selfie», and both one-hand rules in the system prompt say «an arm's-length photo» in place of «a front-camera selfie», same byte length): the writer's system prompt, SHOT_LABEL, the light field and the compact slots JSON changed on purpose; the reserves are unchanged. RE-PINNED at S5.5 (2026-10-11, owner canary C1': glamour is an evening out, its seven new places re-plan chunk 1 only: chunk1, chunk1-empty and the first two bodies moved; chunk 2, the third body and the reserves are unchanged).",
+  "source": "main 3a9cd498: sha256 of JSON.stringify(...) of what the writer sent for a built-in 30-slot run (plan seed 3, all five categories, profile and back allowed, run-00000001) RE-PINNED at S5.1b (2026-10-10) and again at S5.1c and S5.R1 (mirror-free place names, texts within POOL_TEXT_MAX; the selfie phone rule, never-describe-mess and candid-gaze lines, ranges in slot lists; new plan from the pool rewrite; pose labels speak of the viewer) and at S5.4 (2026-10-11, owner canary C1: the photoshoot park path and the glamour and photoshoot outfit changes re-plan chunk 1, and the selfie shot label reads «her own arm's-length photo» instead of «her own front-camera selfie», and both one-hand rules in the system prompt say «an arm's-length photo» in place of «a front-camera selfie», same byte length): the writer's system prompt, SHOT_LABEL, the light field and the compact slots JSON changed on purpose; the reserves are unchanged. RE-PINNED at S5.5 (2026-10-11, owner canary C1': glamour is an evening out, its seven new places re-plan chunk 1 only: chunk1, chunk1-empty and the first two bodies moved; chunk 2, the third body and the reserves are unchanged). RE-PINNED at S5.6b (2026-10-11, 5a.2): the planner draws capture first from the scene banks (new places, moments, outfits), and the built-in writer labels are Street and Views; the reserves did not move.",
   "messages": {
-    "chunk1": "b0d42b075faf6e09e69d9369e1c5e600d446f98166c6d0ea3cfdd2a89fa91028",
-    "chunk1-empty": "0e04ebfa1ce4bf536d65bcd04724c29e7551962006700441efbf554aae0d420f",
-    "chunk2": "652e68d28fb5b6c82ca0e249f06e868b08615bdbd20bc4b40a311edba12995b0",
-    "chunk2-empty": "5f77c1e17164e9b0efaa90af3540955205d314848b29b82e2d7e7fb5da08b732"
+    "chunk1": "672c425758f0a44e92705c5121620ba6abddd1672ebc576a85186f9b9e8546e8",
+    "chunk1-empty": "86332217bad0d177f4e47b6d468bc7d8d8c0f72d2b407fd8c334516fbc644dae",
+    "chunk2": "52f8618744c056abd62efec6b422abc23c4d9ae777d2e9971d24c727ab48a77f",
+    "chunk2-empty": "a916e15bbfe2023ce05e922e2c5939a1537e4ea76d33bcd465aa4d8ed812e425"
   },
   "bodies": [
-    "79178b30360dd515038315e1c21e2464913278f17ed00b28306ae1df4aa02519",
-    "b936ff995e6e5c63380a976032536cda1994b22f05294c7d6909177e618dd1eb",
-    "71580388f087d315e356a94acc3c90b38adb3a246ef2364370593f71cdd4c228"
+    "4b96b802ba4eb166a77fcf68e53fef393a6c0baf7d2fad6cf36d3fe31a4d9158",
+    "10a7f77eee679f6375d93b4a11f6d13f5fcac70975073b0150e084eb06bc4305",
+    "f683af9edba02bb0fc08c05a7fcf4ad1f05475c68fcb9ebf4326a9b16fb895f4"
   ],
   "reserves": [
     { "attemptId": "run-00000001:writer-1#1", "worstMicros": 37500, "model": "x-ai/grok-4.3" },
