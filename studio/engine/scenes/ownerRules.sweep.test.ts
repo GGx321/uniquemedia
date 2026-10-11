@@ -155,4 +155,11 @@ describe("the text reads naturally (S5.6R, LOW)", () => {
   test("a sentence never names the park path twice", () => {
     expect(offenders(ALL, (f) => (f.sentence.match(/\bpath\b/g) ?? []).length > 1 || (f.sentence.match(/\bpark\b/g) ?? []).length > 1)).toEqual(NONE);
   });
+
+  test("a friend's photo of a moment about her feet shows her whole body, never «from her knees up»", () => {
+    const FEET = /\b(foot|feet|heels?|sneakers|shoes|toes|ankles?)\b/;
+    const feet = ALL.filter((f) => (f.capture === "friend" || f.capture === "candid") && FEET.test(f.slot.activity));
+    expect(feet.length).toBeGreaterThan(0);
+    expect(offenders(feet, (f) => f.prompt().includes("from her knees up"))).toEqual(NONE);
+  });
 });

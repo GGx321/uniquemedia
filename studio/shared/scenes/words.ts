@@ -62,6 +62,9 @@ export const LEGWEAR_CLASH_WORDS = /\b(socks?|socked|tights|stockings?|bare|bare
 /** A moment whose feet or legs are up carries the `noLegwear` tag (plan r1.4), so it takes no legwear either. */
 export const FEET_UP_WORDS = /\b(?:feet|legs|foot)\s+(?:up|raised|in the air)\b|\b(?:feet|foot)\s+on\s+the\b|\blegs\s+bent\s+up\b/i;
 
+/** S5.6R: a moment about her feet («slips on her heels», «rests one foot against the wall»): a friend's photo of it shows her whole body, never her knees up. */
+export const FEET_MOMENT_WORDS = /\b(?:foot|feet|heels?|sneakers?|shoes?|toes|ankles?)\b/i;
+
 /** A `timer` frame's line says «both of her hands are empty and nobody holds a phone» (I5.32): its moment holds nothing. */
 export const HELD_OBJECT_WORDS =
   /^(holds|sips|drinks|eats|carries|grabs|picks|slips|laces|ties|stirs|lifts|pours|scrolls|sprays|twirls|fastens|packs|unpacks|wipes|dries|rolls|applies|puts|slices)\b|\b(cups?|coffee|mugs?|glass|bottles?|keys|clutch|bags?|gelato|croissant|towel|phone)\b/i;

@@ -2,6 +2,7 @@ import { youthWords, type AvatarDescriptor } from "../../shared/engine";
 import { promptSubject } from "../avatars/prompts";
 import type { LibraryReference } from "../library/media";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
+import { FEET_MOMENT_WORDS } from "../../shared/scenes/words";
 import { artefactLine, captureLineOf, CONSTRAINTS, hairLine, imperfectionOf, isLampMood, lightOf, MIRROR_BACK_LINE, phoneHandLineOf, roomStateOf, slotKeyOf, type RoomPlace } from "./phoneLook";
 import type { SlotLook } from "./roomPlace";
 import { revealingWordsIn } from "./words";
@@ -207,8 +208,10 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, senten
   const faceless = FACELESS_CAPTURES.includes(capture);
   const posePhrase = capture === "mirror-hidden" ? (look?.mirrorBack === true ? MIRROR_BACK_POSE_PHRASE : HIDDEN_FACE_POSE_PHRASE[slot.pose]) : POSE_PHRASE[slot.pose];
   const bindingAnchor = faceless ? NO_FACE_ANCHOR : BINDING_ANCHOR[slot.pose];
+  // S5.6R: a friend's photo of a moment about her feet shows her whole body (an own scene has no stored moment: the line its key draws).
+  const wholeBody = !isOwnSlot(slot) && FEET_MOMENT_WORDS.test(slot.activity);
   const raw =
-    `${captureLineOf(capture, key)} ${look?.mirrorBack === true ? `${MIRROR_BACK_LINE} ` : ""}${posePhrase}. ${field(sentence)}. ` +
+    `${captureLineOf(capture, key, { wholeBody })} ${look?.mirrorBack === true ? `${MIRROR_BACK_LINE} ` : ""}${posePhrase}. ${field(sentence)}. ` +
     (room === null ? "" : `${room} `) +
     `${BINDING} ${bindingAnchor}${descriptor.body !== undefined && BODY_BINDING_CAPTURES.includes(capture) ? BODY_BINDING : ""}; ${anchor}. ` +
     (hairStyle === null ? "" : `${hairLine(hairStyle)} `) +
