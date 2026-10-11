@@ -122,6 +122,13 @@ describe("ideaMessages: a slot whose angle the model picks", () => {
     expect(items(ideaMessages([FIXED]))).toEqual([{ slotIndex: 8, idea: "лежит на животе, вид сзади", shot: "a friend's snap while she is busy", pose: "from behind, her face not visible" }]);
   });
 
+  test("C1: the one-hand rule names the selfie slot the way its shot label does, and does not say front-camera", () => {
+    const prompt = ideaSystemPrompt();
+    expect(SHOT_LABEL.selfie).toContain("arm's-length photo");
+    expect(prompt).toContain("In an arm's-length photo or a mirror selfie, only one hand is free");
+    expect(prompt).not.toMatch(/front[ -]camera/i);
+  });
+
   test("the system prompt explains «choose»: from the idea, in the schema's words, back for a view from behind, null for what is given", () => {
     const prompt = ideaSystemPrompt();
     for (const needle of ['"choose"', "friend, selfie or candid", "front, three-quarter, profile or back", '"back"', "kept as given"]) expect(prompt).toContain(needle);

@@ -1,15 +1,15 @@
 {
-  "source": "main 3a9cd498: sha256 of JSON.stringify(...) of what the writer sent for a built-in 30-slot run (plan seed 3, all five categories, profile and back allowed, run-00000001) RE-PINNED at S5.1b (2026-10-10) and again at S5.1c and S5.R1 (mirror-free place names, texts within POOL_TEXT_MAX; the selfie phone rule, never-describe-mess and candid-gaze lines, ranges in slot lists; new plan from the pool rewrite; pose labels speak of the viewer) and at S5.4 (2026-10-11, owner canary C1: the photoshoot park path and the glamour and photoshoot outfit changes re-plan chunk 1, and the selfie shot label reads «her own arm's-length photo» instead of «her own front-camera selfie»): the writer's system prompt, SHOT_LABEL, the light field and the compact slots JSON changed on purpose; the reserves are unchanged.",
+  "source": "main 3a9cd498: sha256 of JSON.stringify(...) of what the writer sent for a built-in 30-slot run (plan seed 3, all five categories, profile and back allowed, run-00000001) RE-PINNED at S5.1b (2026-10-10) and again at S5.1c and S5.R1 (mirror-free place names, texts within POOL_TEXT_MAX; the selfie phone rule, never-describe-mess and candid-gaze lines, ranges in slot lists; new plan from the pool rewrite; pose labels speak of the viewer) and at S5.4 (2026-10-11, owner canary C1: the photoshoot park path and the glamour and photoshoot outfit changes re-plan chunk 1, and the selfie shot label reads «her own arm's-length photo» instead of «her own front-camera selfie», and both one-hand rules in the system prompt say «an arm's-length photo» in place of «a front-camera selfie», same byte length): the writer's system prompt, SHOT_LABEL, the light field and the compact slots JSON changed on purpose; the reserves are unchanged.",
   "messages": {
-    "chunk1": "3c20d433609b242e6ae521906a54dcf00326d324c0d231f7178a43ad50a5ed32",
-    "chunk1-empty": "a53eb894dafdf9656b4435eed38469ecf979c745d49eee846dd6e910fb956d4f",
-    "chunk2": "a43048904560b543a6ed6df13924961fce38317d0d86831d723223203af2b518",
-    "chunk2-empty": "5dc2a4013452cc1e2afd20e4efd7e2a62bdd8e5adad1b8919e7e885a0a6f4b52"
+    "chunk1": "dfff34a4ea24683e8000a83a93cbb786c8649e8ab60c3014cee61b2ae12cebd1",
+    "chunk1-empty": "e3ff26dafa5b2588e084276eb8e051a1bc3ef5b859d93a3a109a0ce5e2d5ffc4",
+    "chunk2": "652e68d28fb5b6c82ca0e249f06e868b08615bdbd20bc4b40a311edba12995b0",
+    "chunk2-empty": "5f77c1e17164e9b0efaa90af3540955205d314848b29b82e2d7e7fb5da08b732"
   },
   "bodies": [
-    "751216a4029c517f1746ce031ba3430a033893ed69df12f3c2988313c76d3a91",
-    "a88e39acbb91223a3ef7318e1eb7c9872b8e72b102c90e9ee4e6f4dcda0d6cbc",
-    "ea0123ff41bdf13c9e2636975c37c91927c1c8b98bc7f4d8730a2954dabdde4b"
+    "d8b69751dc4580a64002807bdd66cb0b35468640779b1379e49ac3516fac4750",
+    "d4b4d32afdb9993dc5d645f246d2813e24b36ada572359fa3c6fd7e06933b43e",
+    "71580388f087d315e356a94acc3c90b38adb3a246ef2364370593f71cdd4c228"
   ],
   "reserves": [
     { "attemptId": "run-00000001:writer-1#1", "worstMicros": 37500, "model": "x-ai/grok-4.3" },

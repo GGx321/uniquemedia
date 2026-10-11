@@ -113,7 +113,7 @@ function writerSystemPrompt(): string {
     "",
     "Rules:",
     "- One full sentence per slot, about 25 to 45 words, plain present tense.",
-    '- In a front-camera selfie or a mirror selfie, only one hand is free: describe only what that hand does, or say nothing about her hands. Never describe an action that needs both hands in these shots.',
+    "- In an arm's-length photo or a mirror selfie, only one hand is free: describe only what that hand does, or say nothing about her hands. Never describe an action that needs both hands in these shots.",
     '- Match each slot\'s pose: for pose "from behind, her face not visible" write the scene from behind — she never looks at, toward or into the viewer, and her face is never described; for pose "in profile, her face turned fully to the side" write her in profile — her face turned to the side, never looking at or toward the viewer. For any other pose she may face or glance toward the viewer as the shot allows.',
     "- In a friend's snap while she is busy, she never looks at the viewer.",
     "- She is a grown adult woman; no children or minors anywhere in the scene, and never a word that suggests she or anyone else is not an adult.",

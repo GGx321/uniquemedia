@@ -728,6 +728,12 @@ describe("S5.1b: the writer is told to write what an ordinary phone photo shows,
     expect(system()).not.toContain("glance toward the camera");
   });
 
+  test("C1: the one-hand rule names the selfie slot the way its shot label does, and does not say front-camera", () => {
+    expect(SHOT_LABEL.selfie).toContain("arm's-length photo");
+    expect(system()).toContain("In an arm's-length photo or a mirror selfie, only one hand is free");
+    expect(system()).not.toMatch(/front[ -]camera/i);
+  });
+
   test("forbids camera talk, paper, books, laptops and tablets", () => {
     expect(system()).toContain("Never write about the camera, the lens, the photo, the shot or the framing.");
     expect(system()).toContain("No paper, books, magazines, documents, notebooks, menus, maps, desks or studying; no laptops or tablets: her phone is the only screen.");
