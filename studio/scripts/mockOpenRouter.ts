@@ -119,31 +119,10 @@ function buildDistinctPool(size: number): Uint8Array[] {
  * Real JPEG now (L9), not PNG — production's own image model returns JPEG,
  * so this is what actually exercises the engine's WASM JPEG decode path.
  *
- * `mismatchAt`: pool index `mismatchAt` is `facePoolNoFacePng` instead
- * (L9) — a real, deterministic "no face detected" on exactly one served
- * image (never a composited different-person's face landed in the
- * gross-drift range by luck: measured, the fixture impostor composited here
- * scores 0.647, still a "match" under the hybrid policy). A run whose slots
- * are all front/three-quarter (RUN_POSES) sees exactly one attempt hit this
- * and retry — smoke-engine.ts's own run scenario proves the slot then still
- * passes on a later attempt.
- *
- * `mismatchAt` is an explicit index, not always 0: `imageCount` (below) is
- * ONE counter shared by every `/images` call this mock answers, including
- * an avatar's own candidate-portrait generation BEFORE any run starts (both
- * draw from the exact same `distinctPool`). A first version of this feature
- * hard-coded index 0 and broke a real E2E run: the smoke scenario's own
- * `avatars.pick` always picks `candidates[0]` — the FIRST generated
- * candidate — as the master, so a no-face image at index 0 became the RUN'S
- * OWN MASTER, not a run slot's attempt; `prepare()` (H1) correctly failed
- * the whole job as `MASTER_FACE_UNUSABLE` before a single slot ran, and the
- * scenario's own `waitFor` for run progress timed out with nothing to find.
- * The caller must pass an index past every image request it expects BEFORE
- * the run's own first slot attempt (smoke-engine.ts passes 4, the fixed
- * candidate count `avatars.generateCandidates` always produces).
+ * A deliberate "no face detected" image is not part of the pool: `armFaceMismatch` serves one by prompt, so it lands on a chosen slot.
  */
-function buildFacePool(size: number, mismatchAt: number | null): Uint8Array[] {
-  return Array.from({ length: size }, (_, i) => (i === mismatchAt ? facePoolNoFacePng(i, "jpeg") : facePoolImagePng(i, FACE_FIXTURE_PATH, "jpeg")));
+function buildFacePool(size: number): Uint8Array[] {
+  return Array.from({ length: size }, (_, i) => facePoolImagePng(i, FACE_FIXTURE_PATH, "jpeg"));
 }
 
 // ---------- the scene writer (schema "scene_sentences") ----------
@@ -478,21 +457,6 @@ export interface MockOpenRouterOptions {
    * mandelbrot/pattern stays cheaper to render.
    */
   faceFixture?: boolean;
-  /**
-   * L9: only with `faceFixture` and `distinctImages` both on — pool index
-   * `faceMismatchAt` serves a genuine "no face detected" image instead of
-   * the matching face (`facePool.ts`'s `facePoolNoFacePng`), so exactly one
-   * served image is a real, provable clear-failure: whichever slot's
-   * attempt draws it must retry, and a later attempt (a different pool
-   * index, the matching face again) must pass. The index is shared with
-   * EVERY `/images` call this mock answers, including an avatar's own
-   * candidate-portrait generation before any run starts (`buildFacePool`'s
-   * own comment has the full "why" — a first version hard-coded index 0 and
-   * broke a real E2E run by making the run's own MASTER faceless instead).
-   * `undefined` (the default) — most scenarios want every attempt to pass
-   * first try.
-   */
-  faceMismatchAt?: number;
 }
 
 export interface ImageHold {
@@ -570,7 +534,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
   // Built once, up front: rendering must never add latency inside a request a
   // caller is timing the arrival of (see the module doc above).
   const poolSize = opts.poolSize ?? DEFAULT_POOL_SIZE;
-  const distinctPool = opts.distinctImages ? (opts.faceFixture ? buildFacePool(poolSize, opts.faceMismatchAt ?? null) : buildDistinctPool(poolSize)) : [];
+  const distinctPool = opts.distinctImages ? (opts.faceFixture ? buildFacePool(poolSize) : buildDistinctPool(poolSize)) : [];
   // S4.E2E: while a hold is set, an image request is recorded on arrival and answered only when the hold is released.
   let armedMismatch: { prompt: string; bytes: Uint8Array } | null = null;
   let imageHold: { promise: Promise<void>; release: () => void; arrived: number } | null = null;
