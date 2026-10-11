@@ -6,7 +6,9 @@ import type { Shot } from "./types";
 // only places them. Keyed by author (today's five shots) for the `photo` medium; 5b.1 adds `video`, 5a.2 adds `propped` and `pov`.
 //
 // What the text must never do (the owner's blind rating and spike A, `.omc/stage5/spike-a-results.md`):
-// - show a phone outside the mirror (the «second phone» defect): the selfie line says the phone itself is not in the picture (I5.2);
+// - show a phone outside the mirror (the «second phone» defect, I5.2): the selfie lines say her near arm leaves the frame so nothing in her hand can be
+//   seen, and never say «selfie» or «front camera» at all (owner canary C1, 2026-10-11: the word itself made Grok draw a phone, even with a clean master
+//   photo; a paid spike with this wording drew no phone in 4 of 4 frames). Only the mirror line says «selfie», because it must show the phone;
 // - stage a camera or a studio, or name golden light (I5.3);
 // - negate a look term («no retouching», «no bokeh»): a negation puts the term into the prompt (I5.10). It says what the photo IS instead.
 //
@@ -20,7 +22,7 @@ const FRIEND_SNAP =
 /** The first sentence of every prompt: how the photo was taken. */
 export const CAPTURE_LINE: Readonly<Record<Shot, string>> = {
   selfie:
-    "A casual selfie she took herself on her phone's front camera at arm's length, held a little above eye level, her arm running out of the frame at one edge, the frame slightly tilted; the phone itself is not in the picture.",
+    "A photo she took of herself at arm's length, seen from the camera's own point of view, held a little above eye level, the frame slightly tilted; her near arm stretches toward the viewer and leaves the frame at the bottom edge, so nothing in her near hand can be seen.",
   mirror:
     "A mirror selfie she took herself: her phone in her hand at chest height, visible in the mirror and held low enough to leave her face clear, the room behind her in the reflection.",
   friend: FRIEND_SNAP,
@@ -28,10 +30,10 @@ export const CAPTURE_LINE: Readonly<Record<Shot, string>> = {
   candid: `${FRIEND_SNAP} She is busy with something and not looking toward the camera.`,
 };
 
-/** The constraint about her hands: only the mirror author holds a phone in view, and a selfie's phone arm is out of the frame. Null for the rest. */
+/** The constraint about her hands: only the mirror author holds a phone in view, and a selfie's near arm is out of the frame. Null for the rest. */
 export function phoneHandLine(shot: Shot): string | null {
   if (shot === "mirror") return "One hand holds the phone; only her other hand acts.";
-  if (shot === "selfie") return "Her phone arm runs out of the frame; only her other hand acts.";
+  if (shot === "selfie") return "Her near arm is out of the frame; only her other hand acts.";
   return null;
 }
 
@@ -65,7 +67,7 @@ const FRIEND_IMPERFECTIONS: readonly string[] = [
 
 /** One imperfection is drawn per photo from its author's list: what that kind of phone photo really gets wrong. A list never repeats its capture line (the tilt is already there). */
 export const IMPERFECTIONS: Readonly<Record<Shot, readonly string[]>> = {
-  selfie: ["a slight front-camera wide-angle look", "a slight wide-angle stretch at the edges"],
+  selfie: ["a slight close-up wide-angle look", "a slight wide-angle stretch at the edges"],
   mirror: ["a few smudges on the mirror", "a little glare from the ceiling light on the mirror"],
   friend: FRIEND_IMPERFECTIONS,
   candid: FRIEND_IMPERFECTIONS,

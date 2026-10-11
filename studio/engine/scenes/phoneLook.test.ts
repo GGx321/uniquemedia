@@ -27,13 +27,11 @@ describe("CAPTURE_LINE", () => {
     expect(CAPTURE_LINE[shot].length).toBeGreaterThan(40);
   });
 
-  test("the selfie line says she took it on the front camera and that the phone itself is not in the picture", () => {
-    expect(CAPTURE_LINE.selfie).toContain("front camera");
-    expect(CAPTURE_LINE.selfie).toContain("the phone itself is not in the picture");
-  });
-
-  test("the selfie line lets her arm run out of the frame", () => {
-    expect(CAPTURE_LINE.selfie).toContain("her arm running out of the frame");
+  test("the selfie line is the arm's-length wording that never says selfie or front camera (C1: the word drew a phone)", () => {
+    expect(CAPTURE_LINE.selfie).toBe(
+      "A photo she took of herself at arm's length, seen from the camera's own point of view, held a little above eye level, the frame slightly tilted; her near arm stretches toward the viewer and leaves the frame at the bottom edge, so nothing in her near hand can be seen.",
+    );
+    expect(CAPTURE_LINE.selfie).not.toMatch(/selfie|front[ -]camera/i);
   });
 
   test("the mirror line is the one that shows the phone, held low enough to leave her face clear", () => {
@@ -71,8 +69,8 @@ describe("phoneHandLine", () => {
     expect(phoneHandLine("mirror")).toBe("One hand holds the phone; only her other hand acts.");
   });
 
-  test("the selfie author's phone arm runs out of the frame, so no phone is held in view", () => {
-    expect(phoneHandLine("selfie")).toBe("Her phone arm runs out of the frame; only her other hand acts.");
+  test("the selfie author's near arm is out of the frame, so no phone is held in view and none is named", () => {
+    expect(phoneHandLine("selfie")).toBe("Her near arm is out of the frame; only her other hand acts.");
   });
 
   test.each(["friend", "candid", "photographer"] as const)("the %s author has no phone-hand line", (shot) => {
@@ -134,8 +132,8 @@ describe("lightOf", () => {
 });
 
 describe("IMPERFECTIONS and imperfectionOf", () => {
-  test("the selfie author's list is a front-camera wide-angle look and a wide-angle stretch (the tilt is in the capture line)", () => {
-    expect(IMPERFECTIONS.selfie).toEqual(["a slight front-camera wide-angle look", "a slight wide-angle stretch at the edges"]);
+  test("the selfie author's list is a close-up wide-angle look and a wide-angle stretch (the tilt is in the capture line)", () => {
+    expect(IMPERFECTIONS.selfie).toEqual(["a slight close-up wide-angle look", "a slight wide-angle stretch at the edges"]);
   });
 
   test("the mirror author's list is smudges and glare on the mirror", () => {

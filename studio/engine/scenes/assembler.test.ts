@@ -82,9 +82,9 @@ describe("assembleSlot", () => {
     expect(prompt).toContain("One hand holds the phone; only her other hand acts.");
   });
 
-  test("a selfie slot's constraints say her phone arm runs out of the frame, and never that a hand holds the phone", () => {
+  test("a selfie slot's constraints say her near arm is out of the frame, and never that a hand holds the phone", () => {
     const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "selfie" }), SENTENCE, MASTER);
-    expect(prompt).toContain("Her phone arm runs out of the frame; only her other hand acts.");
+    expect(prompt).toContain("Her near arm is out of the frame; only her other hand acts.");
     expect(prompt.toLowerCase()).not.toContain("holds the phone");
   });
 
@@ -449,7 +449,6 @@ describe("what no new prompt may say", () => {
   const HELD_PHONE = [/holds? (the|her) phone/i, /phone in (her|one) hand/i, /phone (is )?visible/i];
   const STAGING = [/only she is in focus/i, /full-frame/i, /editorial/i, /shot on a camera/i, /photographer/i, /bokeh/i, /studio lighting/i, /golden hour/i, /softly lit/i];
   const NEGATED_LOOK = [/\bno (retouching|airbrushing|beauty filter|bokeh|blur|makeup filter)\b/i, /not retouched/i, /without retouching/i];
-  const PHONE_NOT_IN_PICTURE = /phone itself is not in the picture/;
 
   function everyPrompt(): { label: string; shot: PlanSlot["shot"]; prompt: string }[] {
     const out: { label: string; shot: PlanSlot["shot"]; prompt: string }[] = [];
@@ -488,14 +487,15 @@ describe("what no new prompt may say", () => {
     }
   });
 
-  test("a selfie's prompt says the phone itself is not in the picture; no other author's does", () => {
-    for (const { label, shot, prompt } of everyPrompt()) expect({ label, says: PHONE_NOT_IN_PICTURE.test(prompt) }).toEqual({ label, says: shot === "selfie" });
+  test("C1: a selfie's prompt never says selfie or front camera (the word draws a phone); the mirror's says mirror selfie", () => {
+    for (const { label, shot, prompt } of everyPrompt()) {
+      expect({ label, says: /selfie|front[ -]camera/i.test(prompt) }).toEqual({ label, says: shot === "mirror" });
+    }
   });
 
-  // The look text may say «phone» only as the kind of photo («Ordinary phone photo», «A quick phone snap», «her phone's front camera»), in the selfie
-  // line's «the phone itself is not in the picture» and in the selfie phone-hand line. Activities are S5.1c's concern: the sentence here has none.
+  // The look text may say «phone» only as the kind of photo («Ordinary phone photo», «A quick phone snap»). Activities are S5.1c's concern: the sentence here has none.
   test("I5.2: outside those places, no non-mirror prompt names a phone", () => {
-    const allowed = /Ordinary phone photo|A quick phone snap|her phone's front camera|the phone itself is not in the picture|Her phone arm runs out of the frame/g;
+    const allowed = /Ordinary phone photo|A quick phone snap/g;
     for (const { label, shot, prompt } of everyPrompt()) {
       if (shot === "mirror") continue;
       expect({ label, left: prompt.replace(allowed, "").match(/\bphones?\b/i)?.[0] ?? null }).toEqual({ label, left: null });

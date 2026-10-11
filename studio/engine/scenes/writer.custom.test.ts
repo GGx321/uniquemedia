@@ -165,7 +165,8 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
   const snapshot: CategorySnapshot = { ref: CUSTOM, name: "я".repeat(40), label, style: "editorial" };
   /** What the reserve keeps clear of the ceiling: room for a field a later change adds to a slot or to a refusal. */
   const MARGIN = 250;
-  const MARGIN_PRINTED = 268;
+  // 268 -> 253 at S5.4 (C1): the phone-in-selfie refusal reason grew by 15 bytes (" or said selfie"); still above MARGIN.
+  const MARGIN_PRINTED = 253;
   /** A 100-photo run's last chunk is slots 76..100: the widest indices a chunk can carry. */
   const FIRST_INDEX = 100 - WRITER_CALL.slotsPerCall + 1;
 
@@ -290,7 +291,8 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
     expect(builtInFloor()).toBeLessThanOrEqual(floorOf(worstSlots(POOL_TEXT_MAX)));
   });
 
-  const BUILT_IN_MARGIN_PRINTED = 468;
+  // 468 -> 453 at S5.4 (C1): the same 15-byte refusal reason. The worst built-in chunk itself did not move (the park path is no longer than the field it replaces).
+  const BUILT_IN_MARGIN_PRINTED = 453;
   test("the built-in margin printed here is the measured one: re-measure it when the writer's prompt or a built-in text changes", () => {
     expect(CEILING - builtInFloor()).toBe(BUILT_IN_MARGIN_PRINTED);
   });

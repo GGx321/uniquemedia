@@ -91,7 +91,8 @@ describe("the writer prompt floor pin, for a scene set", () => {
     const floor = promptTokenFloor({ messages, jsonSchema: WRITER_JSON_SCHEMA, images: 0 });
     expect(floor).toBeLessThanOrEqual(CEILING - MARGIN);
     // The measured margin of the honest worst (numbers 76..100 told in the longest list slotList can make): re-measure it when the writer prompt or a refusal text changes.
-    expect(CEILING - floor).toBe(268);
+    // 268 -> 253 at S5.4 (C1): the phone-in-selfie refusal reason grew by 15 bytes (" or said selfie"); still above the 200 floor.
+    expect(CEILING - floor).toBe(253);
   });
 
   test("a set file does not hold a custom scene's text past the bound the pin was measured at", () => {

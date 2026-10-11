@@ -470,7 +470,8 @@ describe("the idea prompt's floor", () => {
     const { floor } = worstFloor("中".repeat(500));
     expect(floor).toBeLessThanOrEqual(CEILING - MARGIN);
     // The measured margin of the honest worst (five non-adjacent five-digit numbers in every list): re-measure it when the idea prompt or a refusal text changes.
-    expect(CEILING - floor).toBe(223);
+    // 223 -> 208 at S5.4 (C1): the phone-in-selfie refusal reason grew by 15 bytes (" or said selfie"); still above MARGIN (200).
+    expect(CEILING - floor).toBe(208);
   });
 
   test("an idea of control characters, which would JSON-escape to six bytes each and break the pin, never reaches the prompt: the contract refuses it", () => {

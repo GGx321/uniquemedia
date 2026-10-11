@@ -246,7 +246,7 @@ const REASON: Partial<Record<WriterProblem, (r: WriterRefusal) => string>> = {
   "revealing-word": (r) => `slot(s) ${slotList(r.wordSlots)} used a revealing word we do not allow: ${quotedList(r.words)}`,
   "pose-contradiction": (r) => `slot(s) ${slotList(r.poseSlots)} contradicted their pose or shot by looking toward the camera; match each slot's given pose`,
   // No slot list: the re-ask rewrites the whole chunk, and the floor pins hold the reason to one fixed sentence (`phoneSlots` is for the logs and the tests).
-  "phone-in-selfie": () => "a selfie sentence named a phone; name none, describe only her free hand",
+  "phone-in-selfie": () => "a selfie sentence named a phone or said selfie; name none, describe only her free hand",
   "bad-angle": (r) => `slot(s) ${slotList(r.angleSlots ?? [])} gave a shot or a pose that is missing, outside the lists the rules give, or a selfie or mirror shot not facing the camera (front or three-quarter only)`,
 };
 
@@ -335,9 +335,15 @@ function phoneInHand(slot: ReadableSlot): boolean {
   return slot.shot === "selfie" || slot.shot === "mirror";
 }
 
-/** M3: a front-camera selfie's sentence names a phone. The phone is the camera, so a phone in the sentence is the second one, whatever the slot's activity. A mirror shot may name it: the phone is in the mirror. */
+// C1 (owner canary, 2026-10-11): the image model draws a phone for the word «selfie» or «front camera» even with a clean master photo.
+const SELFIE_WORDS = /\bselfies?\b|\bfront[ -]camera\b/i;
+
+/**
+ * M3: a selfie's sentence names a phone. The phone is the camera, so a phone in the sentence is the second one, whatever the slot's activity. C1: the same
+ * for the words «selfie» and «front camera», which draw a phone on their own. A mirror shot may name it: the phone is in the mirror.
+ */
 function phoneNamedInSelfie(slot: ReadableSlot, sentence: string): boolean {
-  return slot.shot === "selfie" && PHONE_WORDS.test(sentence);
+  return slot.shot === "selfie" && (PHONE_WORDS.test(sentence) || SELFIE_WORDS.test(sentence));
 }
 
 /**

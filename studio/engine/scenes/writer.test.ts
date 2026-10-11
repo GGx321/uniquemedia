@@ -147,7 +147,7 @@ describe("readWriterAnswer", () => {
   });
 
   test("a two-handed action in a selfie slot is refused, naming the slot", () => {
-    const twoHanded = "She raises her arm for a selfie, holding a cup of coffee with both hands, glancing warmly at the camera.";
+    const twoHanded = "She raises her arm high, holding a cup of coffee with both hands, glancing warmly at the camera.";
     const answer = readWriterAnswer(output([{ slotIndex: 1, sentence: twoHanded }, { slotIndex: 2, sentence: GOOD_FRIEND }]), SLOTS);
     expect(answer).toMatchObject({ ok: false, problems: ["two-handed"], twoHandedSlots: [1] });
   });
@@ -163,6 +163,31 @@ describe("readWriterAnswer", () => {
 
     test.each(["She is texting someone with her free hand.", "She checks her smartphone, one hand free.", "Her iPhone is in her left hand.", "She is on a FaceTime call."])("a selfie sentence saying %j is refused", (sentence) => {
       expect(readWriterAnswer(output([{ slotIndex: 1, sentence }, { slotIndex: 2, sentence: GOOD_FRIEND }]), SLOTS)).toMatchObject({ ok: false, problems: ["phone-in-selfie"] });
+    });
+
+    // C1: the word «selfie» (and «front camera») makes the image model draw a phone, so a selfie slot's sentence is repaired when it uses either word.
+    test.each(["She takes a selfie on the balcony, her free hand in her hair.", "She smiles into the front camera, one hand tucked in her hair.", "A Selfie on the stairs with her free hand on the railing.", "She poses for a front-camera shot, her other hand on the railing."])(
+      "a selfie sentence saying %j is refused, naming the slot",
+      (sentence) => {
+        expect(readWriterAnswer(output([{ slotIndex: 1, sentence }, { slotIndex: 2, sentence: GOOD_FRIEND }]), SLOTS)).toMatchObject({ ok: false, problems: ["phone-in-selfie"], phoneSlots: [1] });
+      },
+    );
+
+    test("a mirror slot may say selfie: it is a mirror selfie, and the phone is in the mirror", () => {
+      const slots = [slot({ slotIndex: 1, shot: "mirror" }), slot({ slotIndex: 2, shot: "friend" })];
+      const sentence = "She takes a mirror selfie in the hallway, her other hand in her hair.";
+      expect(readWriterAnswer(output([{ slotIndex: 1, sentence }, { slotIndex: 2, sentence: GOOD_FRIEND }]), slots)).toMatchObject({ ok: true });
+    });
+
+    test("a friend's snap may say selfie", () => {
+      const slots = [slot({ slotIndex: 1, shot: "friend" })];
+      expect(readWriterAnswer(output([{ slotIndex: 1, sentence: "She laughs, a friend teasing her about her last selfie." }]), slots)).toMatchObject({ ok: true });
+    });
+
+    test("the refusal for a selfie word asks for the word to go, in the same fixed reason", () => {
+      const text = writerRefusalText({ problems: ["phone-in-selfie"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [], phoneSlots: [7] });
+      // Kept this short on purpose: the refusal text is part of the pinned worst-case prompt floors (margins in writer.custom.test.ts and ideaWriter.test.ts).
+      expect(text).toContain("a selfie sentence named a phone or said selfie; name none");
     });
 
     test("a mirror slot may name the phone: it is in the mirror", () => {
@@ -233,7 +258,7 @@ describe("readWriterAnswer", () => {
   test("several problems across slots are all reported at once, deduplicated", () => {
     const answer = readWriterAnswer(
       output([
-        { slotIndex: 1, sentence: "She raises her arm for a selfie, holding a mug with both hands." },
+        { slotIndex: 1, sentence: "She raises her arm high, holding a mug with both hands." },
         { slotIndex: 2, sentence: "A young girl in a bikini laughs in the kitchen." },
       ]),
       SLOTS,

@@ -197,10 +197,8 @@ describe("the body axis (S5.2c)", () => {
 });
 
 describe("I5.2: only the mirror shows a phone", () => {
-  // The look text may say «phone» only as the kind of photo, in the selfie line's «the phone itself is not in the picture», in the selfie phone-hand line
-  // and, for the mirror, in the mirror line and its phone-hand line. The sentence is not part of the look text.
-  const KIND_OF_PHOTO = /Ordinary phone photo|A quick phone snap|her phone's front camera/g;
-  const SELFIE_ONLY = /the phone itself is not in the picture|Her phone arm runs out of the frame/g;
+  // The look text may say «phone» only as the kind of photo and, for the mirror, in the mirror line and its phone-hand line. The sentence is not part of the look text.
+  const KIND_OF_PHOTO = /Ordinary phone photo|A quick phone snap/g;
   const MIRROR_ONLY = /her phone in her hand at chest height|One hand holds the phone/g;
 
   test("no non-mirror look text matches a held-phone pattern", () => {
@@ -210,7 +208,7 @@ describe("I5.2: only the mirror shows a phone", () => {
   test("no look text names a phone beyond the places each author's lines allow", () => {
     expect(
       hits((s) => {
-        const allowed = s.slot.shot === "selfie" ? SELFIE_ONLY : s.slot.shot === "mirror" ? MIRROR_ONLY : /(?!)/g;
+        const allowed = s.slot.shot === "mirror" ? MIRROR_ONLY : /(?!)/g;
         return s.look.replace(KIND_OF_PHOTO, "").replace(allowed, "").match(/\bphones?\b/i)?.[0] ?? null;
       }),
     ).toEqual([]);
@@ -241,10 +239,33 @@ describe("I5.2: only the mirror shows a phone", () => {
     ).toEqual([]);
   });
 
-  test("the selfie author's phone-hand line and the mirror's are the only ones, and every prompt ends with its own", () => {
+  test("the selfie author's near-arm line and the mirror's phone-hand line are the only ones, and every prompt ends with its own", () => {
     expect(hits((s) => (s.slot.shot === "mirror" && !s.prompt.endsWith("One hand holds the phone; only her other hand acts.") ? "mirror" : null))).toEqual([]);
-    expect(hits((s) => (s.slot.shot === "selfie" && !s.prompt.endsWith("Her phone arm runs out of the frame; only her other hand acts.") ? "selfie" : null))).toEqual([]);
+    expect(hits((s) => (s.slot.shot === "selfie" && !s.prompt.endsWith("Her near arm is out of the frame; only her other hand acts.") ? "selfie" : null))).toEqual([]);
     expect(hits((s) => (s.slot.shot !== "selfie" && s.slot.shot !== "mirror" && /only her other hand acts/.test(s.prompt) ? "other" : null))).toEqual([]);
+  });
+});
+
+describe("C1: the word «selfie» draws a phone, so no selfie slot's image prompt says it", () => {
+  const SELFIE_SLOTS = EVERYTHING.filter((s) => s.slot.shot === "selfie");
+
+  test("the sweep reaches selfie slots of every category, built-in and custom (sanity)", () => {
+    expect(SELFIE_SLOTS.length).toBeGreaterThan(300);
+    expect(new Set(SELFIE_SLOTS.map((s) => s.slot.category)).size).toBeGreaterThanOrEqual(CATEGORIES.length + 2);
+  });
+
+  test("no selfie prompt says selfie or front camera, whichever of the fixed texts we own is drawn", () => {
+    expect(hits((s) => (s.slot.shot === "selfie" ? (s.prompt.match(/selfie|front[ -]camera/i)?.[0] ?? null) : null))).toEqual([]);
+  });
+
+  test("a selfie prompt names a phone nowhere but in the kind of photo (the mirror alone shows one)", () => {
+    expect(hits((s) => (s.slot.shot === "selfie" ? (s.prompt.replace(/Ordinary phone photo/g, "").match(/\bphones?\b/i)?.[0] ?? null) : null))).toEqual([]);
+  });
+
+  test("the mirror prompt keeps saying selfie, because it must show the phone", () => {
+    const mirror = EVERYTHING.filter((s) => s.slot.shot === "mirror");
+    expect(mirror.length).toBeGreaterThan(0);
+    expect(mirror.every((s) => /mirror selfie/.test(s.prompt))).toBe(true);
   });
 });
 
