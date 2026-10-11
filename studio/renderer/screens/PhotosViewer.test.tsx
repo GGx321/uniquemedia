@@ -275,7 +275,7 @@ describe("closing", () => {
 });
 
 describe("stepping through the gallery", () => {
-  // Newest first: place 1 is «Фитнес», place 2 «Путешествия», place 3 «Дом».
+  // Newest first: place 1 is «Фитнес», place 2 «Виды», place 3 «Дом».
   const three = photos(3, (i) => ({ category: (["home", "travel", "fit"] as const)[i - 1] ?? "home" }));
   const shownCategory = (): string => within(viewer()).getByRole("img").getAttribute("aria-label") ?? "";
 
@@ -290,7 +290,7 @@ describe("stepping through the gallery", () => {
 
     press("ArrowRight");
     expect(viewerTitle()).toBe("Фото 2 из 3");
-    expect(shownCategory()).toBe("Фото 2 из 3: Путешествия");
+    expect(shownCategory()).toBe("Фото 2 из 3: Виды");
     fireEvent.click(next());
     expect(viewerTitle()).toBe("Фото 3 из 3");
     expect(shownCategory()).toBe("Фото 3 из 3: Дом");
@@ -308,7 +308,7 @@ describe("stepping through the gallery", () => {
 
   test("an arrow that reaches the end hands the focus to the other one: the keyboard is never left on a dead button", async () => {
     await openMia({ photos: three });
-    fireEvent.click(openButton(2, "Путешествия"));
+    fireEvent.click(openButton(2, "Виды"));
     next().focus();
     fireEvent.click(next());
     expect(next().hasAttribute("disabled")).toBe(true);
@@ -338,7 +338,7 @@ describe("stepping through the gallery", () => {
     expect(within(viewer()).getByRole("heading", { level: 2 }).hasAttribute("aria-live")).toBe(false);
     expect(announced()).toBe("");
     press("ArrowRight");
-    expect(announced()).toBe("Фото 2 из 3: Путешествия");
+    expect(announced()).toBe("Фото 2 из 3: Виды");
     fireEvent.click(prev());
     expect(announced()).toBe("Фото 1 из 3: Фитнес");
     // Said, then cleared: the same words after another step are announced again.
@@ -491,7 +491,7 @@ describe("a gallery that changes under the viewer", () => {
 
   test("a run's new photo lands in front: the same photo stays on screen, its number one further on", async () => {
     const h = await openMia({ photos: [early(1, { category: "travel" }), early(2)] });
-    fireEvent.click(openButton(2, "Путешествия"));
+    fireEvent.click(openButton(2, "Виды"));
     expect(viewerTitle()).toBe("Фото 2 из 2");
 
     const run = await act(async () => h.client.request("runs.start", { ...request, acceptedWorstMicros: 3_075_000 }));
@@ -500,7 +500,7 @@ describe("a gallery that changes under the viewer", () => {
     await flush();
 
     await waitFor(() => expect(viewerTitle()).toBe("Фото 3 из 3"));
-    expect(within(viewer()).getByText("Путешествия")).toBeDefined();
+    expect(within(viewer()).getByText("Виды")).toBeDefined();
     // The number moved without the owner: nothing is announced.
     expect(announced()).toBe("");
   });

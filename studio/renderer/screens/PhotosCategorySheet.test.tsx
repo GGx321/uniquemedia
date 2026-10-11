@@ -52,7 +52,7 @@ describe("the panel", () => {
     expect(within(sheet()).getByText("Наряды · 4")).toBeDefined();
     expect(within(sheet()).getAllByText("утро").length).toBeGreaterThan(0);
     expect(within(sheet()).getByText("Стиль «телефон», как у Дома.")).toBeDefined();
-    expect(within(sheet()).getByText("Встроенные пять — Дом, Путешествия, Фотосессия на телефон, Гламур, Фитнес — здесь не показываются и не меняются.")).toBeDefined();
+    expect(within(sheet()).getByText("Встроенные пять — Дом, Улица, Виды, Гламур, Фитнес — здесь не показываются и не меняются.")).toBeDefined();
     fireEvent.click(row("Горы зимой"));
     await flush();
     expect(within(sheet()).getByRole("heading", { level: 3, name: "Горы зимой" })).toBeDefined();

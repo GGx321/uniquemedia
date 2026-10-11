@@ -32,8 +32,8 @@ export const DEFAULT_RUN_FORM: RunForm = {
 /** The mockup's own labels for the five built-ins; the scene tags and the gallery use them too. */
 export const CATEGORY_LABEL: Record<SceneCategory, string> = {
   home: "Дом",
-  travel: "Путешествия",
-  shoot: "Фотосессия на телефон",
+  travel: "Виды",
+  shoot: "Улица",
   glam: "Гламур",
   fit: "Фитнес",
 };

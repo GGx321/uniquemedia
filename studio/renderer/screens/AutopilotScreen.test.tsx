@@ -329,7 +329,7 @@ describe("what blocks the launch", () => {
     fireEvent.click(screen.getByRole("switch", { name: "Догенерировать недостающие" }));
     expect(descriptionOf(goButton())).toBe(GO_WHY.nothingEnabled);
     fireEvent.click(screen.getByRole("switch", { name: "Сначала свободные фото из библиотеки" }));
-    for (const label of ["Дом", "Путешествия", "Фотосессия на телефон", "Фитнес"]) fireEvent.click(screen.getByRole("button", { name: label }));
+    for (const label of ["Дом", "Виды", "Улица", "Фитнес"]) fireEvent.click(screen.getByRole("button", { name: label }));
     expect(descriptionOf(goButton())).toBe(GO_WHY.noCategory);
     expect(callsOf(engine, "autopilot.start")).toHaveLength(0);
   });
@@ -447,7 +447,7 @@ describe("«Запустить»", () => {
     expect(avatarButton("Sofia").getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByText("3", { selector: "output" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Профиль" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Путешествия" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: "Виды" }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.getByRole("switch", { name: "GIF-стикеры" }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("heading", { level: 2, name: "Идёт запуск" })).toBeDefined();
   });

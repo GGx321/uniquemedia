@@ -139,7 +139,7 @@ describe("the «Фото» tab: eligible photos, the chips, one photo → one vi
     // The numbers stay those of the whole bin: the used «Фото 3» and the reserved «Фото 2» are out.
     expect(names().map((n) => n.split(" · ")[0])).toEqual(["Фото 1", "Фото 4", "Фото 5", "Фото 6", "Фото 7"]);
     const category = within(media()).getByRole("combobox", { name: "Категория" });
-    expect(within(category).getAllByRole("option").map((o) => o.textContent)).toEqual(["Все категории", "Дом · 4", "Путешествия · 1"]);
+    expect(within(category).getAllByRole("option").map((o) => o.textContent)).toEqual(["Все категории", "Дом · 4", "Виды · 1"]);
     fireEvent.change(category, { target: { value: "travel" } });
     expect(names()).toEqual(["Фото 1 · не использовано"]);
     fireEvent.click(unused);

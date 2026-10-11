@@ -133,7 +133,7 @@ test("every change of the request is priced again; the chips show the planner's 
   // 25 over four categories: the remainder goes to the earliest (the planner's own rule).
   fireEvent.click(screen.getByRole("button", { name: "Фитнес: 5 фото" }));
   expect(screen.getByRole("button", { name: "Дом: 7 фото" })).toBeDefined();
-  expect(screen.getByRole("button", { name: "Путешествия: 6 фото" })).toBeDefined();
+  expect(screen.getByRole("button", { name: "Виды: 6 фото" })).toBeDefined();
   expect(screen.getByRole("button", { name: "Фитнес" }).getAttribute("aria-pressed")).toBe("false");
 
   expect(callsOf(engine, "runs.estimate").at(-1)?.payload).toEqual({ ...DEFAULT_REQUEST, count: 25, categories: ["home", "travel", "shoot", "glam"] });
@@ -231,7 +231,7 @@ test("the Glamour chip says it is an evening out while Glamour is chosen (S5.5)"
 test("with no category chosen there is nothing to price and nothing to start", async () => {
   const { engine } = await openPhotos();
   await priced();
-  for (const name of [/^Дом/, /^Путешествия/, /^Фотосессия/, /^Гламур/, /^Фитнес/]) fireEvent.click(screen.getByRole("button", { name }));
+  for (const name of [/^Дом/, /^Виды/, /^Улица/, /^Гламур/, /^Фитнес/]) fireEvent.click(screen.getByRole("button", { name }));
   await flush();
 
   expect(isDisabled(goButton())).toBe(true);
@@ -246,8 +246,8 @@ test("turning off every category clears a stale estimate error, not just the pri
   const { engine } = await openPhotos();
   await priced();
   fireEvent.click(screen.getByRole("button", { name: /^Дом/ }));
-  fireEvent.click(screen.getByRole("button", { name: /^Путешествия/ }));
-  fireEvent.click(screen.getByRole("button", { name: /^Фотосессия/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Виды/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Улица/ }));
   await flush();
 
   // Two categories left; the next estimate (for one category left) fails.
@@ -1044,12 +1044,12 @@ test("the gallery shows each photo's face similarity, and says when the face was
   // Stored under the gate's 0.55 retry line (its attempts ran out): flagged for the owner's eye.
   expect(screen.getByText("лицо 0.41").className).toContain("photo-face-low");
   expect(screen.getAllByText("лицо не проверялось")).toHaveLength(1);
-  expect(screen.getByRole("img", { name: "Фото 2: Путешествия" })).toBeDefined();
+  expect(screen.getByRole("img", { name: "Фото 2: Виды" })).toBeDefined();
   // Every pick button is told apart by its position, not only its category.
-  expect(screen.getByRole("button", { name: "Выбрать для монтажа: фото 2, Путешествия" })).toBeDefined();
+  expect(screen.getByRole("button", { name: "Выбрать для монтажа: фото 2, Виды" })).toBeDefined();
   // Newest first, as photos.list answers.
   const labels = Array.from(document.querySelectorAll(".photo-label")).map((l) => l.textContent);
-  expect(labels).toEqual(["Фитнес", "Путешествия", "Дом"]);
+  expect(labels).toEqual(["Фитнес", "Виды", "Дом"]);
   expect(galleryTiles()).toHaveLength(3);
 });
 

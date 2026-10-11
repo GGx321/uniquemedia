@@ -193,7 +193,7 @@ describe("setCategoryTags", () => {
     );
     expect(setCategoryTags(set)).toEqual([
       { ref: "home", label: "Дом", count: 2 },
-      { ref: "travel", label: "Путешествия", count: 0 },
+      { ref: "travel", label: "Виды", count: 0 },
       { ref: "cat-seeded-0001", label: "Кофейни Парижа", count: 1 },
     ]);
   });
