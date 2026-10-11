@@ -125,6 +125,22 @@ export const TEMPLATE_SCENE_SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    name: "template launch (running): paused and stopped after its photos were paid for, the launch reads that it spent something, though its compose cost nothing",
+    rig: { launch: true },
+    async run(t, w) {
+      t.note("no track is stored: the photos are bought and drawn, and the videos wait for music while the launch runs");
+      const { launch } = await begin(t, w);
+      await t.untilLaunch(launch, "the videos wait for music", (l) => Number(l.waitingMusic) === 2);
+      t.note("paused with nothing in flight: it reads spent, the photos having been paid for");
+      await t.callLaunch("autopilot.pause", { launchId: launch });
+      await t.callLaunch("autopilot.get", { launchId: launch });
+      t.note("stopped from the pause: still spent");
+      await t.callLaunch("autopilot.stop", { launchId: launch });
+      await t.callLaunch("autopilot.get", { launchId: launch });
+      await t.callLaunch("autopilot.list", {});
+    },
+  },
+  {
     name: "scene sets, old pool: a set whose places no bank has still waits for the writer — «Дописать» and a rewrite of its scene are priced, so a worst case of nothing is refused",
     rig: { sceneSets: true },
     async run(t, w) {
