@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { FfmpegError } from "../../node/runFfmpeg";
 import { timeoutSignal, untilAborted } from "../money/timeoutSignal";
-import { PORTRAIT_MIN_LIKENESS, PORTRAITS_PER_BATCH, type AvatarDescriptor, type EngineError, type FailedCandidateSlot, type ImageAgeCheck, type ImageQuality } from "../../shared/engine";
+import { PORTRAIT_MIN_LIKENESS, PORTRAITS_PER_BATCH, type AvatarDescriptor, type EngineError, type FailedCandidateSlot, type FailedPortraitSlot, type ImageAgeCheck, type ImageQuality } from "../../shared/engine";
 import type { FaceVerdict } from "../face/verdict";
-import type { CandidatesJobEnd, FailedPortraitSlot, PortraitsJobEnd } from "../jobs";
+import type { CandidatesJobEnd, PortraitsJobEnd } from "../jobs";
 import type { LibraryReference, NewPhotoMeta } from "../library";
 import { imageSize, isAnimatedImage } from "../library/media";
 import type { Budget } from "../money/budget";

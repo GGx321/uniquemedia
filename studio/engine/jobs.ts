@@ -1,5 +1,4 @@
-import type { z } from "zod";
-import type { EngineError, FailedCandidateSlot, FailedPortraitSlot as FailedPortraitSlotSchema, ImportPrepare, ImportResult, JobProgress, JobState, MediaFileName, MediaKind, RenderResult } from "../shared/engine";
+import type { EngineError, FailedCandidateSlot, FailedPortraitSlot, ImportPrepare, ImportResult, JobProgress, JobState, MediaFileName, MediaKind, RenderResult } from "../shared/engine";
 import type { RunJobEnd } from "./runs/runJob";
 
 // The engine's jobs as `Snapshot.jobs` lists them. In memory only: avatar
@@ -11,9 +10,6 @@ export type CandidatesJobEnd =
   | { status: "done"; photoIds: string[]; failedSlots: FailedCandidateSlot[] }
   | { status: "failed"; error: EngineError }
   | { status: "cancelled" };
-
-/** A slot of a finished portrait batch that gave no candidate (the contract's `FailedPortraitSlot`; S5.3a exports the schema only). */
-export type FailedPortraitSlot = z.infer<typeof FailedPortraitSlotSchema>;
 
 /** How a reference-portrait job ends (Stage 5, S5.3b): the candidates are the images that passed the ranking, best first. */
 export type PortraitsJobEnd =
