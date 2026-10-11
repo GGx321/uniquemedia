@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { POOL_TEXT_MAX } from "../../shared/engine";
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { momentAllowed } from "../../shared/scenes/render";
-import { legwearFits } from "../../shared/scenes/template";
+import { legwearFits, templateSentence } from "../../shared/scenes/template";
 import { fittingMoments, fittingPlaces } from "./fit";
 import { plan, planWithPools, poseSeed } from "./planner";
 import { drawPose } from "./poses";
@@ -302,6 +302,31 @@ describe("the fallback chain, on `clean:` only (a custom pool or an impossible c
     const pool = without((c) => c === "prone");
     const draw = (): PlanSlot[] => planWithPools({ seed: 9, count: 24, categories: ["home"], poses: ALL_POSES }, { ...POOLS, home: pool }).slots;
     expect(draw()).toEqual(draw());
+  });
+});
+
+// I5.22, I5.24: whatever the planner draws, the code template renders (no slot of a built-in plan falls to the LLM writer), and a long plan's sentences are mostly distinct.
+describe("what the planner draws, the template renders", () => {
+  test.each([...CATEGORIES])("%s: every slot of 40 seeded plans renders a sentence, with every pose allowed", (category) => {
+    for (let seed = 1; seed <= 40; seed++) {
+      const seen = new Set<string>();
+      for (const slot of plan({ seed, count: 30, categories: [category], poses: ALL_POSES }).slots) {
+        const sentence = templateSentence(slot, { key: `run-${seed}:${slot.attemptIdBase}`, seen });
+        expect(sentence, `${slot.location} / ${slot.activity} / ${captureOf(slot)} / ${slot.pose}`).not.toBeNull();
+        if (sentence !== null) seen.add(sentence);
+      }
+    }
+  });
+
+  test.each([...CATEGORIES])("%s: at least 80 %% of a 100-slot plan's sentences are distinct (I5.24)", (category) => {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const seen = new Set<string>();
+      for (const slot of plan({ seed, count: 100, categories: [category], poses: ALL_POSES }).slots) {
+        const sentence = templateSentence(slot, { key: `run-${seed}:${slot.attemptIdBase}`, seen });
+        if (sentence !== null) seen.add(sentence);
+      }
+      expect(seen.size, `${category} seed ${seed}`).toBeGreaterThanOrEqual(80);
+    }
   });
 });
 
