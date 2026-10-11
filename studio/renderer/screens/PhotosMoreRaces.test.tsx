@@ -62,7 +62,7 @@ describe("under load (MEDIUM-1)", () => {
     expect(tiles().slice(25)).toEqual(library(1050).map((p) => p.photoId).reverse());
     expect(new Set(tiles()).size).toBe(1075);
     expect(screen.getByText("Конец галереи · 1 075 фото")).toBeDefined();
-  }, 30_000); // no timer is waited for any more; the time left is React drawing ~1 075 tiles on each of the 25 landings
+  }, 90_000); // 1 075 tiles drawn on each of 25 landings; the macOS CI runner is ~4x slower than local and timed out at 30 s on 2026-10-11
 
   test("a mark that comes while a read is in flight is read only once the wait after it has passed on the clock", async () => {
     const { engine, client, scheduler, pagesScheduler } = await openOnManualClock(library(10));
