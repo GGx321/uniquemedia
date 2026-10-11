@@ -63,12 +63,13 @@ describe("the chip hint line", () => {
 });
 
 describe("the chips kept for «Смелая»", () => {
-  test("lists «Ночнушки и бельё» and «Пляж и бассейн» as dimmed chips that are not buttons", async () => {
+  // Round-1 review of S5.6d: `aria-disabled` belongs on a control, not on a bare span, so a kept chip is a real disabled button (it cannot be pressed or focused).
+  test("lists «Ночнушки и бельё» and «Пляж и бассейн» as dimmed chips: real disabled buttons, no aria-disabled span", async () => {
     await openPhotos();
     for (const name of ["Ночнушки и бельё", "Пляж и бассейн"]) {
-      const reserved = within(chipsGroup()).getByText(name);
-      expect(reserved.getAttribute("aria-disabled")).toBe("true");
-      expect(reserved.closest("button") === null).toBe(true);
+      const reserved = within(chipsGroup()).getByRole("button", { name });
+      expect((reserved as HTMLButtonElement).disabled).toBe(true);
+      expect(within(chipsGroup()).getByText(name).getAttribute("aria-disabled")).toBeNull();
     }
   });
 

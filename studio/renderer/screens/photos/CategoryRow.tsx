@@ -178,9 +178,9 @@ export function CategoryRow({
           Своя
         </button>
         {RESERVED_CHIPS.map((name) => (
-          <span key={name} className="chip chip-reserved" aria-disabled="true">
+          <button key={name} type="button" className="chip chip-reserved" disabled>
             {name}
-          </span>
+          </button>
         ))}
       </div>
       <span className="faint photos-note">Со «Смелой» — появятся позже.</span>
