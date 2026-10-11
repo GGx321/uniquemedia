@@ -2,7 +2,7 @@ import { useState } from "react";
 import { bodyPhrase, type AvatarBody, type AvatarSummary } from "../../../shared/engine";
 import type { EngineView } from "../../engine/store";
 import { proposedBody } from "../../lib/body";
-import { errorSettingsFocus, errorText, settingsLinkLabel } from "../../lib/errors";
+import { errorSettingsFocus, settingsLinkLabel } from "../../lib/errors";
 import { formatUsdTiered } from "../../lib/money";
 import { useNavigate, type LookLanding } from "../../navigation";
 import { Notice } from "../../ui/Notice";
@@ -12,7 +12,7 @@ import { CheckCard, proposalOpen } from "./CheckCard";
 import { DescriptionCard } from "./DescriptionCard";
 import { avatarHeld, landingText, paidSettingsFocus, runDrawing } from "./lookModel";
 import { MasterCard } from "./MasterCard";
-import { PORTRAIT_TEXT, refusalLine } from "./portraitModel";
+import { PORTRAIT_TEXT, startRefusalText } from "./portraitModel";
 import { PortraitsPanel } from "./PortraitsPanel";
 import type { LookCheck } from "./useLookCheck";
 import type { Portraits } from "./usePortraits";
@@ -28,6 +28,8 @@ import type { Portraits } from "./usePortraits";
  */
 function StartRefusal({ portraits: p }: { portraits: Portraits }) {
   const navigate = useNavigate();
+  // M1: no answer is no refusal — the app's «Команда могла выполниться…», and nothing about money; the batch's own events take over.
+  if (p.start.kind === "unknown") return <Notice tone="warn">{startRefusalText(p.start.error)}</Notice>;
   if (p.start.kind !== "refused") return null;
   const { error } = p.start;
   if (error.code === "MASTER_FACE_UNUSABLE" || error.code === "IN_FLIGHT") return null;
@@ -51,7 +53,7 @@ function StartRefusal({ portraits: p }: { portraits: Portraits }) {
         )
       }
     >
-      {refusalLine(errorText(error))}
+      {startRefusalText(error)}
     </Notice>
   );
 }

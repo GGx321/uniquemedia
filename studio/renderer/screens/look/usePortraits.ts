@@ -5,7 +5,7 @@ import { isActiveJob, type EngineView, type JobView } from "../../engine/store";
 import type { LookLanding } from "../../navigation";
 import { useMounted } from "../photos/shared";
 import { avatarHeld, type LandingPortraits } from "./lookModel";
-import type { MasterKind } from "./portraitModel";
+import { answerLost, type MasterKind } from "./portraitModel";
 
 // S5.3d: an imported avatar's reference portrait on «Внешность» (.omc/stage5/design 15–23), held by the avatar's screen like the check (useLookCheck),
 // so a look at «Фото» and back keeps the batch, the choice and what was said. The list of portraits is the engine's (`avatars.portraits`), read again on
@@ -19,7 +19,12 @@ export type StartPhase =
   | { readonly kind: "idle" }
   | { readonly kind: "sending"; readonly from: StartFrom }
   /** Refused before anything was paid (18b): the window says why, and that nothing was started. */
-  | { readonly kind: "refused"; readonly error: EngineError; readonly from: StartFrom };
+  | { readonly kind: "refused"; readonly error: EngineError; readonly from: StartFrom }
+  /**
+   * M1: the answer never came (main's deadline): the batch may have started. Said as the app says it, never as «nothing spent»; a batch of hers the
+   * window did not know when it sent (`known`) is that start, and its events take the panel over.
+   */
+  | { readonly kind: "unknown"; readonly error: EngineError; readonly from: StartFrom; readonly known: ReadonlySet<string> };
 
 /** A free write (the pick, the reset, the way back): idle, being saved, or refused. */
 export type WritePhase = { readonly kind: "idle" } | { readonly kind: "saving" } | { readonly kind: "refused"; readonly error: EngineError };
@@ -181,11 +186,17 @@ export function usePortraits(
     // The window-wide paid lock: every other paid button of hers waits for the answer (the batch will hold her from then on).
     store.setPaidInFlight(avatarId, true);
     setStart({ kind: "sending", from });
+    // Her batches the window knows now: one that shows up after a lost answer is the batch that answer started.
+    const known = new Set(store.getView().jobs.filter((j) => j.kind === "avatar.portraits" && j.avatarId === avatarId).map((j) => j.jobId));
     try {
       const reply = await client.request("avatars.generatePortraits", { avatarId, acceptedWorstMicros });
       // Recorded even when the screen is gone: the job is the window's.
       if (reply.ok) store.trackPortraitsJob(reply.result.jobId, avatarId);
       if (!mounted.current) return;
+      if (!reply.ok && answerLost(reply.error)) {
+        setStart({ kind: "unknown", error: reply.error, from, known });
+        return;
+      }
       if (reply.ok) {
         setStart({ kind: "idle" });
         setPreviousWorst(null);
@@ -227,6 +238,12 @@ export function usePortraits(
     }
     void send(landing.portraitsWorstMicros, "landing");
   }, [landing, ready, paidBlocked]);
+
+  // M1: a batch of hers the window did not know when an answer was lost is the batch that start began: its events take over from the notice.
+  const startedUnseen = start.kind === "unknown" && job !== null && !start.known.has(job.jobId);
+  useEffect(() => {
+    if (startedUnseen) setStart({ kind: "idle" });
+  }, [startedUnseen]);
 
   const pending = list?.candidates ?? [];
   const best = pending[0]?.photoId ?? null;

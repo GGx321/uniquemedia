@@ -1,6 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { ERROR_MESSAGES_RU, type ErrorCode, type FailedPortraitSlot } from "../../../shared/engine";
-import { ageRejectedLine, batchFits, capReason, freeFailureLine, goneTiles, likenessText, NONE_PASSED, paidFailureLine, refusalLine, slotCharge, variantLabel } from "./portraitModel";
+import { ERROR_MESSAGES_RU, NO_ANSWER_DETAIL_PREFIX, type ErrorCode, type FailedPortraitSlot } from "../../../shared/engine";
+import { errorText } from "../../lib/errors";
+import {
+  ageRejectedLine,
+  answerLost,
+  batchFits,
+  capReason,
+  freeFailureLine,
+  goneTiles,
+  likenessText,
+  NONE_PASSED,
+  paidFailureLine,
+  slotCharge,
+  startRefusalText,
+  variantLabel,
+} from "./portraitModel";
 
 // S5.3d: what the reference portrait says (.omc/stage5/design 16–17, README «Для S5.3d»): a slot's own words by its outcome, the paid failures only
 // in the summary (a moderation refusal is free), the age check's line agreed in number, and the limit.
@@ -131,7 +145,16 @@ describe("words around the numbers", () => {
   });
 
   test("a refusal adds that nothing was started, unless its own text already says nothing was spent", () => {
-    expect(refusalLine(ERROR_MESSAGES_RU.BUDGET_EXCEEDED)).toBe(`${ERROR_MESSAGES_RU.BUDGET_EXCEEDED} Варианты не запускались — ничего не потрачено.`);
-    expect(refusalLine(ERROR_MESSAGES_RU.FACE_GATE_UNAVAILABLE)).toBe(ERROR_MESSAGES_RU.FACE_GATE_UNAVAILABLE);
+    expect(startRefusalText({ code: "BUDGET_EXCEEDED" })).toBe(`${ERROR_MESSAGES_RU.BUDGET_EXCEEDED} Варианты не запускались — ничего не потрачено.`);
+    expect(startRefusalText({ code: "FACE_GATE_UNAVAILABLE" })).toBe(ERROR_MESSAGES_RU.FACE_GATE_UNAVAILABLE);
+  });
+
+  test("an answer that never came is no refusal: the batch may be drawing, so nothing is said of what was spent (M1)", () => {
+    const lost = { code: "INTERNAL" as const, detail: `${NO_ANSWER_DETAIL_PREFIX}30 s` };
+    expect(answerLost(lost)).toBe(true);
+    expect(answerLost({ code: "INTERNAL" })).toBe(false);
+    expect(startRefusalText(lost)).toBe(errorText(lost));
+    expect(startRefusalText(lost)).not.toContain("ничего не потрачено");
+    expect(startRefusalText(lost)).not.toContain("не запускались");
   });
 });

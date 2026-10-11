@@ -1,4 +1,14 @@
-import { ERROR_MESSAGES_RU, PORTRAIT_CANDIDATES_MAX, PORTRAIT_MIN_LIKENESS, PORTRAITS_PER_BATCH, type ErrorCode, type FailedPortraitSlot } from "../../../shared/engine";
+import {
+  ERROR_MESSAGES_RU,
+  NO_ANSWER_DETAIL_PREFIX,
+  PORTRAIT_CANDIDATES_MAX,
+  PORTRAIT_MIN_LIKENESS,
+  PORTRAITS_PER_BATCH,
+  type EngineError,
+  type ErrorCode,
+  type FailedPortraitSlot,
+} from "../../../shared/engine";
+import { errorText } from "../../lib/errors";
 import { afterColon, countOf } from "../../lib/format";
 import type { IconName } from "../../ui/Icon";
 
@@ -195,7 +205,20 @@ export function variantLabel(letter: string, likeness: number | undefined, best:
   return parts.join(" · ");
 }
 
-/** A refusal's line under the landing (18b): the app's text for the code and, unless that text says so already, that nothing was started or paid. */
-export function refusalLine(text: string): string {
-  return /ничего не потрачено\.?$/i.test(text) ? text : `${text} ${PORTRAIT_TEXT.notStarted}`;
+/**
+ * An answer that never came (main's deadline, `main/engineHost.ts`): no refusal at all — the engine may have started the batch, as
+ * `renderJobs.ts` `classifyAnswer` reads the same answer of a render. Its job, if there is one, shows up by its own events.
+ */
+export function answerLost(error: EngineError): boolean {
+  return error.code === "INTERNAL" && error.detail?.startsWith(NO_ANSWER_DETAIL_PREFIX) === true;
+}
+
+/**
+ * What a start that did not go says (18b): the app's text for the code and, unless that text says so already, that nothing was started or paid. An
+ * answer that never came says only the app's «Команда могла выполниться…»: the batch may be drawing, and its money is the engine's to tell.
+ */
+export function startRefusalText(error: EngineError): string {
+  const text = errorText(error);
+  if (answerLost(error) || /ничего не потрачено\.?$/i.test(text)) return text;
+  return `${text} ${PORTRAIT_TEXT.notStarted}`;
 }

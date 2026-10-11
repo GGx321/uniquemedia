@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { ERROR_MESSAGES_RU, type AvatarSummary, type RunRequest } from "../../shared/engine";
+import { ERROR_MESSAGES_RU, NO_ANSWER_DETAIL_PREFIX, type AvatarSummary, type RunRequest } from "../../shared/engine";
 import { App } from "../App";
 import { createEngineClient, type EngineBridge } from "../engine/client";
 import { MockEngine } from "../engine/mockEngine";
@@ -360,6 +360,26 @@ describe("18b · the start refused before anything was paid", () => {
     await start();
     expect(text(masterCard())).toContain("Варианты можно сделать, когда закончатся съёмка и другие задачи этого аватара");
     expect(isDisabled(startButton())).toBe(false);
+  });
+});
+
+describe("a start whose answer never came (main's deadline, M1)", () => {
+  test("says the command may have run, never that nothing was spent; the batch, once its events come, takes over", async () => {
+    const { engine, client, scheduler } = await openLook(NINI);
+    engine.failNext("avatars.generatePortraits", { code: "INTERNAL", detail: `${NO_ANSWER_DETAIL_PREFIX}30 s` });
+    await start();
+    const notice = screen.getByText(/^Движок не ответил вовремя/).closest(".notice");
+    expect(text(notice ?? document.body)).not.toContain("ничего не потрачено");
+    expect(text(notice ?? document.body)).not.toContain("Варианты не запускались");
+
+    // The batch the lost answer did start announces itself by its events (here sent past the window, as main's deadline leaves it).
+    await act(async () => {
+      await client.request("avatars.generatePortraits", { avatarId: NINI.avatarId, acceptedWorstMicros: BATCH_WORST });
+    });
+    tick(scheduler);
+    await flush();
+    expect(screen.queryByText(/^Движок не ответил вовремя/) === null).toBe(true);
+    expect(text(panel())).toContain("Рисуем портреты: 1 из 5");
   });
 });
 
