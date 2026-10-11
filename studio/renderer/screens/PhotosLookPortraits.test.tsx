@@ -47,6 +47,13 @@ const checkCard = (): HTMLElement => screen.getByRole("region", { name: "Све�
 const startButton = (): HTMLElement => within(masterCard()).getByRole("button", { name: /^(Получить 5 вариантов|Подтвердить новую цену|Запускаем)/ });
 const radios = (): HTMLElement[] => within(panel()).queryAllByRole("radio");
 const pill = (): string => text(masterCard().querySelector(".look-master-pill") ?? masterCard());
+/** What an element's aria-describedby points at, as one string. */
+const describedText = (el: HTMLElement): string =>
+  (el.getAttribute("aria-describedby") ?? "")
+    .split(" ")
+    .filter(Boolean)
+    .map((id) => document.getElementById(id)?.textContent ?? `(#${id} missing)`)
+    .join(" | ");
 /** The tiles of the grid without a portrait: their title and the line under it. */
 const goneTiles = (): string[][] =>
   Array.from(panel().querySelectorAll(".cand-slot-failed, .cand-slot-hidden")).map((tile) =>
@@ -432,6 +439,37 @@ describe("19a / 19 · a portrait becomes the master", () => {
     expect(isDisabled(within(panel()).getByRole("button", { name: /^Ещё 5 вариантов/ }))).toBe(true);
     expect(isDisabled(within(panel()).getByRole("button", { name: "Оставить текущий мастер-портрет" }))).toBe(true);
     expect(text(panel())).toContain("Варианты можно сделать, когда закончатся съёмка и другие задачи этого аватара");
+  });
+
+  test("22b: under the disabled reset its own wait, not «Варианты удалятся.», and the button points at it (review L2)", async () => {
+    const { client } = await openLook(AVA, { portraits: [NINI_SEED, { ...AVA_SEED, candidates: [{ photoId: "photo-ava-c1", likeness: 0.79 }] }] });
+    const started = await act(async () => client.request("runs.start", { ...RUN, avatarId: AVA.avatarId, acceptedWorstMicros: 3_075_000 }));
+    if (!started.ok) throw new Error(`runs.start: ${started.error.code}`);
+    await flush();
+    const reset = within(panel()).getByRole("button", { name: "Оставить текущий мастер-портрет" });
+    expect(isDisabled(reset)).toBe(true);
+    expect(describedText(reset)).toBe("Удалить варианты можно, когда закончатся съёмка и другие задачи этого аватара.");
+    expect(text(panel())).not.toContain("Варианты удалятся.");
+  });
+
+  test("a reset refused IN_FLIGHT with its question open says the wait under the question (review L2)", async () => {
+    const { engine } = await openLook(AVA, { portraits: [NINI_SEED, { ...AVA_SEED, candidates: [{ photoId: "photo-ava-c1", likeness: 0.79 }] }] });
+    fireEvent.click(within(panel()).getByRole("button", { name: "Оставить текущий мастер-портрет" }));
+    await flush();
+    engine.setAvatarBusy(AVA.avatarId, true);
+    fireEvent.click(within(within(panel()).getByRole("alert")).getByRole("button", { name: "Удалить" }));
+    await flush();
+    expect(within(panel()).getByRole("alert")).toBeDefined();
+    expect(text(panel())).toContain("Удалить варианты можно, когда закончатся съёмка и другие задачи этого аватара.");
+  });
+
+  test("«Ещё 5» refused IN_FLIGHT for work the window cannot see says why under it (review L1)", async () => {
+    const { engine } = await openLook(AVA, { portraits: [NINI_SEED, { ...AVA_SEED, candidates: [{ photoId: "photo-ava-c1", likeness: 0.79 }] }] });
+    engine.setAvatarBusy(AVA.avatarId, true);
+    fireEvent.click(within(panel()).getByRole("button", { name: /^Ещё 5 вариантов/ }));
+    await flush();
+    expect(callsOf(engine, "avatars.generatePortraits")).toHaveLength(1);
+    expect(describedText(within(panel()).getByRole("button", { name: /^Ещё 5 вариантов/ }))).toBe("Варианты можно сделать, когда закончатся съёмка и другие задачи этого аватара");
   });
 
   test("a pick refused IN_FLIGHT for work the window cannot see says the same wait, and the portraits stay", async () => {

@@ -82,23 +82,30 @@ function Rail({ portraits: p, blockedReason }: { portraits: Portraits; blockedRe
   const pickRefused = p.pickPhase.kind === "refused" ? p.pickPhase.error : null;
   const discardRefused = p.discardPhase.kind === "refused" ? p.discardPhase.error : null;
   const fits = batchFits(p.pending.length);
-  // Why «Ещё 5» waits: the engine's own stop first, then the limit, then a price that could not be had.
-  const againWhy: string | null =
-    blockedReason ??
-    (p.start.kind === "refused" && p.start.error.code === "MASTER_FACE_UNUSABLE"
-      ? PORTRAIT_TEXT.noFace
-      : !fits
-        ? capReason(p.pending.length)
-        : p.estimate === null && !p.estimating && p.estimateError !== null
-          ? PORTRAIT_TEXT.priceUnknown
-          : null);
-  const againReason = againWhy !== null && !p.held ? (
-    <p id={againId} className="field-hint">
-      {againWhy}
-    </p>
-  ) : null;
-  const heldLine = p.held ? <HeldLine id={againId}>{PORTRAIT_TEXT.held}</HeldLine> : null;
-  const again = <AgainButton portraits={p} blockedReason={blockedReason} describedBy={againReason !== null || heldLine !== null ? againId : undefined} />;
+  // Why «Ещё 5» waits: the engine's own stop first, then a face the imported photo lacks, then a hold (known, or met as IN_FLIGHT: review L1), then the
+  // limit, then a price that could not be had. A wait is said in the held style.
+  const startRefused = p.start.kind === "refused" ? p.start.error : null;
+  const againWhy: { readonly text: string; readonly held: boolean } | null =
+    blockedReason !== null
+      ? { text: blockedReason, held: false }
+      : startRefused?.code === "MASTER_FACE_UNUSABLE"
+        ? { text: PORTRAIT_TEXT.noFace, held: true }
+        : p.held || startRefused?.code === "IN_FLIGHT"
+          ? { text: PORTRAIT_TEXT.held, held: true }
+          : !fits
+            ? { text: capReason(p.pending.length), held: false }
+            : p.estimate === null && !p.estimating && p.estimateError !== null
+              ? { text: PORTRAIT_TEXT.priceUnknown, held: false }
+              : null;
+  const againReason =
+    againWhy === null ? null : againWhy.held ? (
+      <HeldLine id={againId}>{againWhy.text}</HeldLine>
+    ) : (
+      <p id={againId} className="field-hint">
+        {againWhy.text}
+      </p>
+    );
+  const again = <AgainButton portraits={p} blockedReason={blockedReason} describedBy={againReason !== null ? againId : undefined} />;
 
   if (p.pending.length === 0) {
     // 17, and a batch that failed or was cancelled before it drew anything: no portrait waits, so the reset only closes the panel.
@@ -109,13 +116,14 @@ function Rail({ portraits: p, blockedReason }: { portraits: Portraits; blockedRe
         <button type="button" className="btn" disabled={p.start.kind === "sending"} onClick={() => p.closePanel()}>
           {RESET_LABEL[p.masterKind]}
         </button>
-        {heldLine}
       </div>
     );
   }
 
   const pickHeld = p.held || pickRefused?.code === "IN_FLIGHT";
-  const discardHeld = discardRefused?.code === "IN_FLIGHT";
+  // Review L2: a reset the avatar's other work holds says so under it (and in its open question), not what it would delete.
+  const discardHeld = p.held || discardRefused?.code === "IN_FLIGHT";
+  const discardWait = <HeldLine id={resetId}>{PORTRAIT_TEXT.discardHeld}</HeldLine>;
   // 16c: at the limit the reset is the way on, and says what it does.
   const resetLabel = fits ? RESET_LABEL[p.masterKind] : "Удалить варианты";
   return (
@@ -149,7 +157,10 @@ function Rail({ portraits: p, blockedReason }: { portraits: Portraits; blockedRe
       {againReason}
       <div className="rail-reset">
         {ask.open ? (
-          <InlineAskBox ask={ask} question={DISCARD_ASK[p.masterKind]} confirm="Удалить" busyLabel="Удаляем…" busy={discarding} onConfirm={() => p.discard()} />
+          <>
+            <InlineAskBox ask={ask} question={DISCARD_ASK[p.masterKind]} confirm="Удалить" busyLabel="Удаляем…" busy={discarding} onConfirm={() => p.discard()} />
+            {discardHeld && discardWait}
+          </>
         ) : (
           <>
             <button
@@ -163,7 +174,7 @@ function Rail({ portraits: p, blockedReason }: { portraits: Portraits; blockedRe
               {resetLabel}
             </button>
             {discardHeld ? (
-              <HeldLine id={resetId}>{PORTRAIT_TEXT.discardHeld}</HeldLine>
+              discardWait
             ) : (
               <p id={resetId} className="field-hint">
                 {PORTRAIT_TEXT.discardHint}
@@ -172,7 +183,6 @@ function Rail({ portraits: p, blockedReason }: { portraits: Portraits; blockedRe
           </>
         )}
       </div>
-      {heldLine}
     </div>
   );
 }
