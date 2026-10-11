@@ -124,6 +124,35 @@ test("a probe of a readable still returns its info and reports nothing", async (
   expect(reported).toEqual([]);
 });
 
+test("a probe of a video longer than 10 minutes reports a refusal and returns null", async () => {
+  const clip = join(dir, "long.mp4");
+  makeTestClip(clip);
+  const reported: string[] = [];
+  const backends: Backends = {
+    video: new StubBackend({ ...videoInfo, durationSec: 601 }),
+    photo: new StubBackend(photoInfo),
+  };
+
+  const info = await probeForHost(clip, backends, (m) => reported.push(m));
+
+  expect(info).toBeNull();
+  expect(reported.length).toBe(1);
+  expect(reported[0]).toMatch(/longer than 10 minutes/);
+});
+
+test("a probe of a video of exactly 10 minutes is accepted", async () => {
+  const clip = join(dir, "ten.mp4");
+  makeTestClip(clip);
+  const backends: Backends = {
+    video: new StubBackend({ ...videoInfo, durationSec: 600 }),
+    photo: new StubBackend(photoInfo),
+  };
+
+  const info = await probeForHost(clip, backends, () => {});
+
+  expect(info?.durationSec).toBe(600);
+});
+
 // ── the batch handler, with a fake `send` ───────────────────────────────────
 
 /** More set bytes => larger PDQ distance from an all-zero frame. */

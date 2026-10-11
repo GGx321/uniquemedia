@@ -8,6 +8,7 @@ import {
   type MediaRoute,
 } from "../src/node/mediaRoute";
 import { assertStillCover } from "../src/node/mediaRoute";
+import { assertDurationAllowed } from "../src/core/util";
 import type { MediaInfo, StartOptions } from "../src/core/types";
 import { CH, type CoverPick } from "./ipc";
 
@@ -87,7 +88,9 @@ export async function probeForHost(
 ): Promise<MediaInfo | null> {
   try {
     const route = await routeForInput(input, backends);
-    return await route.executor.probe(input);
+    const info = await route.executor.probe(input);
+    assertDurationAllowed(info);
+    return info;
   } catch (err) {
     report(err instanceof Error ? err.message : String(err));
     return null;

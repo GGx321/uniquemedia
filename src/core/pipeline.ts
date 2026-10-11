@@ -2,6 +2,7 @@ import { sampleDeviceProfile } from "./deviceProfile";
 import { computePdqHash } from "./pdq/pdq";
 import { verifyCopy } from "./verification";
 import { hammingDistance } from "./pdq/hamming";
+import { assertDurationAllowed } from "./util";
 import type { RenderExecutor } from "./executor";
 import type { UniquifyOptions, VerifyResult } from "./types";
 
@@ -125,6 +126,7 @@ export async function uniquify<R, O extends UniquifyOptions>(
   const staging = stagingOf(executor);
 
   const info = await executor.probe(input);
+  assertDurationAllowed(info);
   const originalHashes = hashFrames(await executor.extractGrayFrames(input, framesPerCopy));
 
   /**
