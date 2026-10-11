@@ -222,7 +222,8 @@ export function descriptorReasonRu(reason: DescriptorReason, words: readonly str
 /** Why a portrait command was refused, for VALIDATION's `portraitReason`: each text names the cause and the way out, and says when nothing was spent. */
 export const PORTRAIT_REASONS_RU = {
   "not-imported": "Мастер-портрет делают из импортированного фото, а у этого аватара его нет. Ничего не потрачено.",
-  "too-many-candidates": "Невыбранных вариантов уже 15 — это предел. Выберите один или нажмите «Оставить как есть», потом повторите. Ничего не потрачено.",
+  "too-many-candidates":
+    "Невыбранных вариантов слишком много: ещё 5 превысят предел в 15 (считаются и скрытые проверкой возраста). Выберите один или нажмите «Удалить варианты», потом повторите. Ничего не потрачено.",
   "not-a-candidate": "Этого варианта уже нет среди доступных — возможно, его убрали. Обновите список.",
   "source-unavailable": "Исходное фото недоступно — проверьте папку библиотеки.",
 } as const satisfies Record<PortraitReason, string>;

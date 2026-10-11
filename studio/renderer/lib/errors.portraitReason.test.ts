@@ -4,14 +4,15 @@ import { errorText } from "./errors";
 
 // S5.3d: a reference-portrait command the engine refused says why (`portraitReason`): the window shows the reason's own text, never the general one.
 
-test.each(PORTRAIT_REASONS.filter((reason) => reason !== "source-unavailable" && reason !== "too-many-candidates"))("the VALIDATION reason %s shows its own text", (portraitReason) => {
+test.each(PORTRAIT_REASONS.filter((reason) => reason !== "source-unavailable"))("the VALIDATION reason %s shows its own text", (portraitReason) => {
   const text = errorText({ code: "VALIDATION", portraitReason });
   expect(text).toBe(PORTRAIT_REASONS_RU[portraitReason]);
   expect(text).not.toBe(ERROR_MESSAGES_RU.VALIDATION);
 });
 
-test("too many waiting names the window's own button, not the contract's «Оставить как есть» (review L4)", () => {
+test("too many waiting is the contract's own text, and it names the window's real button, not «Оставить как есть» (review L4)", () => {
   const text = errorText({ code: "VALIDATION", portraitReason: "too-many-candidates" });
+  expect(text).toBe(PORTRAIT_REASONS_RU["too-many-candidates"]);
   expect(text).toBe(
     "Невыбранных вариантов слишком много: ещё 5 превысят предел в 15 (считаются и скрытые проверкой возраста). Выберите один или нажмите «Удалить варианты», потом повторите. Ничего не потрачено.",
   );
