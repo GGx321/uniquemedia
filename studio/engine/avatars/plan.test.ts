@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
-import { AGE_CHECK_FALLBACK_PRICE, Estimate, IMPORT_FALLBACK_PRICE } from "../../shared/engine";
+import { AGE_CHECK_FALLBACK_PRICE, Estimate, IMPORT_FALLBACK_PRICE, PORTRAITS_PER_BATCH } from "../../shared/engine";
+import { MoneyError } from "../money/errors";
 import { REQUEST_TIMEOUT_MS } from "../money/budget";
 import { MAX_ATTEMPT_MS } from "../openrouter/transport";
 import { PriceBook, type ChatPrice, type ImagePrice, type PriceEntry } from "../money/prices";
@@ -21,6 +22,9 @@ import {
   IMPORT_DESCRIBE_MAX_ATTEMPTS,
   importJobEstimate,
   importPriceModels,
+  portraitImage,
+  portraitsEstimate,
+  portraitsPriceModels,
   type AvatarModels,
 } from "./plan";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -354,5 +358,63 @@ describe("the descriptor-vs-master check (Stage 5, S5.0c)", () => {
       prices: "live",
       pricesAsOf: "2026-10-01",
     });
+  });
+});
+
+// Stage 5, S5.3b: the reference portrait batch. 5 images, each with the imported photo as its one reference, at the settings' image model and quality.
+describe("the reference portrait batch (Stage 5, S5.3b)", () => {
+  const GROK_QUALITY: AvatarModels = { imageModel: "x-ai/grok-imagine-image-quality", imageQuality: "low", textModel: "x-ai/grok-4.3" };
+  // The fallback table: grok-imagine-image-quality 1K = $0.05, plus $0.01 for the reference image.
+  const IMAGE_WITH_REFERENCE = 60_000;
+
+  test("a portrait is an image with exactly one reference, at the settings' model and quality", () => {
+    expect(portraitImage("x-ai/grok-imagine-image-quality", "medium")).toEqual({ model: "x-ai/grok-imagine-image-quality", quality: "medium", refs: 1 });
+    expect(portraitImage("black-forest-labs/flux-3-image", null)).toEqual({ model: "black-forest-labs/flux-3-image", quality: null, refs: 1 });
+    expect(PORTRAITS_PER_BATCH).toBe(5);
+  });
+
+  test("age check off: five images with a reference, $0.30 worst and expected alike", () => {
+    expect(portraitsEstimate(FALLBACK, GROK_QUALITY, "off")).toEqual({
+      expectedMicros: 5 * IMAGE_WITH_REFERENCE,
+      worstMicros: 5 * IMAGE_WITH_REFERENCE,
+      prices: "fallback",
+      pricesAsOf: "2026-09-24",
+    });
+    expect(portraitsEstimate(FALLBACK, GROK_QUALITY, "off").worstMicros).toBe(300_000);
+  });
+
+  test("age check on: each image also pays an age check, 326 250 worst", () => {
+    const on = portraitsEstimate(FALLBACK, GROK_QUALITY, "on");
+    expect(on.worstMicros).toBe(5 * (IMAGE_WITH_REFERENCE + AGE_CHECK.worst));
+    expect(on.expectedMicros).toBe(5 * (IMAGE_WITH_REFERENCE + AGE_CHECK.expected));
+    expect(on.worstMicros).toBe(326_250);
+  });
+
+  test("the reference is priced: five images at 40 000 + 10 000, against four candidates at 40 000 with none", () => {
+    const withReference = portraitsEstimate(FALLBACK, { ...DEFAULTS, imageQuality: "low" }, "off").worstMicros;
+    const candidates = avatarJobEstimate(FALLBACK, { ...DEFAULTS, imageQuality: "low" }, "next-batch", "off").worstMicros;
+    expect(withReference).toBe(250_000);
+    expect(candidates).toBe(160_000);
+  });
+
+  test("a model that lists no input_image price is PRICE_UNAVAILABLE: the batch cannot be reserved, so it is never offered", () => {
+    const price: ImagePrice = { outputs: [{ variant: null, micros: 30_000 }], inputImageMicros: null };
+    const book = { book: new PriceBook(new Map([["acme/img", { price, source: "live" as const }]]), new Map()), asOf: "2026-10-11" };
+    let code: string | null = null;
+    try {
+      portraitsEstimate(book, { imageModel: "acme/img", textModel: "x-ai/grok-4.3" }, "off");
+    } catch (error) {
+      code = error instanceof MoneyError ? error.code : null;
+    }
+    expect(code).toBe("PRICE_UNAVAILABLE");
+  });
+
+  test("prices only what is sent: the image model, plus the age check's model when the check is on; no text model", () => {
+    expect(portraitsPriceModels(GROK_QUALITY, "off")).toEqual({ imageModels: ["x-ai/grok-imagine-image-quality"], chatModels: [] });
+    expect(portraitsPriceModels(GROK_QUALITY, "on")).toEqual({ imageModels: ["x-ai/grok-imagine-image-quality"], chatModels: ["x-ai/grok-4.3"] });
+  });
+
+  test("the estimate is deterministic and avatar-independent: the same models and toggle give the same numbers", () => {
+    expect(portraitsEstimate(FALLBACK, GROK_QUALITY, "on")).toEqual(portraitsEstimate(FALLBACK, GROK_QUALITY, "on"));
   });
 });

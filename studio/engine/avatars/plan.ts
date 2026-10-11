@@ -1,4 +1,4 @@
-import type { Estimate, ImageAgeCheck, ImageQuality } from "../../shared/engine";
+import { PORTRAITS_PER_BATCH, type Estimate, type ImageAgeCheck, type ImageQuality } from "../../shared/engine";
 import { AGE_CHECK_CALL, DESCRIPTOR_CHECK_CALL, estimateAvatarJob, type AvatarJobInput, type ChatCall, type ImageChoice } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import { REQUEST_TIMEOUT_MS } from "../money/budget";
@@ -192,3 +192,32 @@ export function descriptorCheckEstimate(priced: PricedBook, models: AvatarModels
   };
 }
 
+
+// ---------- Stage 5, S5.3b: the reference portrait batch ----------
+
+// Five images of an imported avatar's face, each drawn with the imported photo as its one reference (candidateJob.ts's portrait spec). The same money path as
+// the candidates: nothing is retried, a refusal is free, the ranking (a local face check) costs nothing, and the age check is paid only when it is on.
+
+/** An image with exactly one reference (the imported photo), at the settings' model and quality (low when none is said, as `candidateImage`). */
+export function portraitImage(imageModel: string, quality: ImageQuality | null = "low"): ImageChoice {
+  return { model: imageModel, quality, refs: 1 };
+}
+
+/** The models a portrait batch prices: the image model, and the age check's model when the check is on. No text model: the prompt is built locally. */
+export function portraitsPriceModels(models: AvatarModels, imageAgeCheck: ImageAgeCheck): PriceModels {
+  return { imageModels: [models.imageModel], chatModels: imageAgeCheck === "on" ? [AGE_CHECK_CALL.model] : [] };
+}
+
+/**
+ * The batch's expected and worst cost: 5 × (an image with one reference + the age check when on). It is the cap of the batch's own scope. Throws `PRICE_UNAVAILABLE`
+ * when the image model lists no input_image price (the reference cannot be reserved).
+ */
+export function portraitsEstimate(priced: PricedBook, models: AvatarModels, imageAgeCheck: ImageAgeCheck): Estimate {
+  const estimate = estimateAvatarJob(priced.book, {
+    candidates: PORTRAITS_PER_BATCH,
+    image: portraitImage(models.imageModel, models.imageQuality),
+    descriptor: null,
+    ageChecks: imageAgeCheck === "off" ? null : AGE_CHECK_CALL,
+  });
+  return { expectedMicros: estimate.expectedMicros, worstMicros: estimate.worstMicros, prices: estimate.priceSource, pricesAsOf: priced.asOf };
+}
