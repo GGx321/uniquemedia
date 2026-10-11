@@ -138,6 +138,8 @@ import { FACE_FIXTURE_PATH } from "./facePool";
 import { portraitBatchProblems, portraitSmokeProblems } from "./portraitSmoke";
 import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type ImageHold, type MockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { acceptedRemainingProblems, launchIsActive, ledgerProblems, midRenderProblems, oneSetOneRunProblems, photoAttemptProblems, postsByModel, quietRestartProblems, readLedger, restartNoticeProblems, restartPauseProblems, reviewRowOf, videosOnDiskProblems } from "./autopilotSmoke";
+import { ideaWriteProblems, templateComposeProblems, type WriteFacts } from "./templateSmoke";
+import { LLM_ONLY_CATEGORY_POOL } from "../engine/scenes/testing/llmOnlyFixture";
 import { electronBinary } from "./electronBinary";
 import { failureDetail } from "./failureDetail";
 import { textAssetPackageProblems, textRasteriserOutputProblems } from "./textSmoke";
@@ -2643,7 +2645,14 @@ const CATEGORY_PHOTOS = 5;
  * settled, and the run's plan keeps a snapshot of the category.
  */
 async function runCategoryScenario(target: Target): Promise<void> {
-  const mock = await startMockOpenRouter({ descriptorText: AVATAR_DESCRIPTOR, distinctImages: true, faceFixture: true, poolAnswer: { label: CATEGORY_LABEL } });
+  // 5a.2 (S5.6e): the pool the mock answers is the engine's fixture's (one definition: `cat-llm-only-fixture`), whose activities the code template cannot write, so the writer is still asked for this
+  // category's scenes and this scenario still proves what the writer is told. The mock's own default pool reads after «she is» and is written by the template, with no request at all.
+  const mock = await startMockOpenRouter({
+    descriptorText: AVATAR_DESCRIPTOR,
+    distinctImages: true,
+    faceFixture: true,
+    poolAnswer: { label: CATEGORY_LABEL, locations: LLM_ONLY_CATEGORY_POOL.locations, outfits: LLM_ONLY_CATEGORY_POOL.outfits, shotDeck: LLM_ONLY_CATEGORY_POOL.shotDeck },
+  });
   const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-category-"));
   const userData = join(tmp, "userData");
   const libraryRoot = join(tmp, "category-library");
@@ -2757,15 +2766,18 @@ async function runSceneSetRunScenario(target: Target): Promise<void> {
     check("scene-set run scenario: settings.setLibraryPath adopts the temp library", field(libSet, "ok") === true && field(libSet, "result", "libraryPath") === libraryRoot, libSet);
     const avatarId = String(await createActiveAvatarForRun(cdp, "Nora"));
 
-    // 1. Compose five scenes: the writer's one paid job.
+    // 1. Compose five scenes of «home». 5a.2 (S5.6e): the code template writes them, so the compose is priced at nothing, sends no writer request and spends nothing.
+    const factsBeforeCompose: WriteFacts = { writerRequests: mock.sceneWriterRequests().length, spentMicros: Number(field(await req(cdp, "money.status"), "result", "spentMicros")) };
     const composeEstimate = await req(cdp, "scenes.estimateCompose", { avatarId, count: SCENE_SET_SCENES, categories: ["home"], poses: RUN_POSES });
+    check("scene-set run scenario: scenes.estimateCompose prices five scenes of «home» at nothing (the template writes them)", field(composeEstimate, "ok") === true && field(composeEstimate, "result", "estimate", "worstMicros") === 0, composeEstimate);
     const composed = await req(cdp, "scenes.compose", { avatarId, count: SCENE_SET_SCENES, categories: ["home"], poses: RUN_POSES, acceptedWorstMicros: field(composeEstimate, "result", "estimate", "worstMicros") });
-    check("scene-set run scenario: scenes.compose plans five scenes and launches the writer", field(composed, "ok") === true, composed);
+    check("scene-set run scenario: scenes.compose plans five scenes and writes them with the code template", field(composed, "ok") === true, composed);
     const sceneSetId = String(field(composed, "result", "sceneSetId"));
     const composeEnd = await waitFor("the compose job to end", () => endEventOf(cdp, field(composed, "result", "jobId")), 60_000);
     check("scene-set run scenario: the compose finished as job.done with five written scenes", field(composeEnd, "type") === "job.done" && field(composeEnd, "payload", "result", "written") === SCENE_SET_SCENES, composeEnd);
     const writerRequestsAfterCompose = mock.sceneWriterRequests().length;
-    check("scene-set run scenario: the writer was asked for the five scenes", writerRequestsAfterCompose >= 1, writerRequestsAfterCompose);
+    const composeProblems = templateComposeProblems(factsBeforeCompose, { writerRequests: writerRequestsAfterCompose, spentMicros: Number(field(await req(cdp, "money.status"), "result", "spentMicros")) }, { wanted: SCENE_SET_SCENES, written: Number(field(composeEnd, "payload", "result", "written")) });
+    check("scene-set run scenario: a compose on «home» sends no writer request and spends $0", composeProblems.length === 0, composeProblems);
 
     // 2. Review: edit one scene's text, remove another, both free.
     const got = await req(cdp, "scenes.get", { avatarId });
@@ -2778,6 +2790,7 @@ async function runSceneSetRunScenario(target: Target): Promise<void> {
     revision = Number(field(removed, "result", "sceneSet", "revision"));
 
     // 2b. «+ Своя сцена»: one own scene written from the owner's idea, one more paid writer request, under the ids of its own write.
+    const factsBeforeIdea = Number(field(await req(cdp, "money.status"), "result", "spentMicros"));
     const ideaTarget = { kind: "idea", idea: SCENE_OWN_IDEA, count: 1, shot: null };
     const ideaEstimate = await req(cdp, "scenes.estimateWrite", { sceneSetId, target: ideaTarget });
     check("scene-set run scenario: scenes.estimateWrite prices an idea write", field(ideaEstimate, "ok") === true && Number(field(ideaEstimate, "result", "estimate", "worstMicros")) > 0, ideaEstimate);
@@ -2786,7 +2799,8 @@ async function runSceneSetRunScenario(target: Target): Promise<void> {
     const ideaEnd = await waitFor("the idea write's job to end", () => endEventOf(cdp, field(ideaWritten, "result", "jobId")), 60_000);
     check("scene-set run scenario: the idea write finished as job.done with one scene written", field(ideaEnd, "type") === "job.done" && field(ideaEnd, "payload", "result", "written") === 1, ideaEnd);
     const writerRequestsAfterIdea = mock.sceneWriterRequests().length;
-    check("scene-set run scenario: the idea write was exactly one more writer request", writerRequestsAfterIdea === writerRequestsAfterCompose + 1, writerRequestsAfterIdea - writerRequestsAfterCompose);
+    const ideaProblems = ideaWriteProblems({ writerRequests: writerRequestsAfterCompose, spentMicros: factsBeforeIdea }, { writerRequests: writerRequestsAfterIdea, spentMicros: Number(field(await req(cdp, "money.status"), "result", "spentMicros")) });
+    check("scene-set run scenario: the idea write still reached the writer, as exactly one more request, and was paid", ideaProblems.length === 0, ideaProblems);
     const withOwn = await req(cdp, "scenes.get", { avatarId });
     revision = Number(field(withOwn, "result", "sceneSet", "revision"));
     const ownScene = (field(withOwn, "result", "sceneSet", "scenes") as unknown[])[SCENE_SET_SCENES];
@@ -2841,8 +2855,8 @@ async function runSceneSetRunScenario(target: Target): Promise<void> {
     const worst = Number(field(estimate, "result", "estimate", "worstMicros"));
     const whole = await req(cdp, "runs.estimate", { avatarId, count: SCENE_SET_ACTIVE, categories: ["home"], poses: RUN_POSES });
     check(
-      "scene-set run scenario: runs.estimateFromScenes prices five photos with no writer term (below the whole run's estimate for five)",
-      field(estimate, "ok") === true && worst > 0 && worst < Number(field(whole, "result", "estimate", "worstMicros")),
+      "scene-set run scenario: runs.estimateFromScenes prices five photos with no writer term (the whole run's estimate for five «home» photos has none either now: the template writes them)",
+      field(estimate, "ok") === true && worst > 0 && worst === Number(field(whole, "result", "estimate", "worstMicros")),
       { estimate, whole },
     );
     const stale = await req(cdp, "runs.startFromScenes", { sceneSetId, revision: revision - 1, acceptedWorstMicros: worst });
@@ -3649,12 +3663,14 @@ async function runAutopilotHappyPath(target: Target): Promise<void> {
     // 2. A smaller launch with the review on: it waits for the review, spends no image before the owner continues, and then ends.
     const imagesBefore = world.mock.imageRequests().length;
     const writersBefore = world.mock.sceneWriterRequests().length;
+    const usageBefore = world.mock.totalUsageUsd();
     const reviewStartedAt = Date.now();
     const second = await startAutopilotLaunch(cdp, "1 x 1 with review", autopilotDraft(ids.slice(0, 1), 1, true));
     const waiting = await waitLaunch(cdp, second, "the scenes to wait for the review", (got) => reviewRowOf(got.launch) !== null, AUTOPILOT_REVIEW_MS);
     const row = reviewRowOf(waiting.launch);
     if (row === null) throw new Error("the review row vanished");
-    check(`${AUTOPILOT}: review: the writer was paid for the scenes and no picture was drawn yet`, world.mock.sceneWriterRequests().length > writersBefore && world.mock.imageRequests().length === imagesBefore, { writers: world.mock.sceneWriterRequests().length - writersBefore, images: world.mock.imageRequests().length - imagesBefore });
+    // 5a.2 (S5.6e): «home» is composed by the code template, so the scenes wait for the review with no writer request and nothing spent.
+    check(`${AUTOPILOT}: review: the scenes were written by the code template (no writer request, nothing spent) and no picture was drawn yet`, world.mock.sceneWriterRequests().length === writersBefore && world.mock.totalUsageUsd() === usageBefore && world.mock.imageRequests().length === imagesBefore, { writers: world.mock.sceneWriterRequests().length - writersBefore, images: world.mock.imageRequests().length - imagesBefore });
     await Bun.sleep(1_500); // a grace period watching for growth, as the cancel check does: waiting must be quiet
     const stillWaiting = await getLaunch(cdp, second);
     check(`${AUTOPILOT}: review: after a quiet spell the launch still waits and still has drawn nothing`, reviewRowOf(stillWaiting.launch) !== null && stillWaiting.launch.status === "running" && world.mock.imageRequests().length === imagesBefore, describeLaunch(stillWaiting));
