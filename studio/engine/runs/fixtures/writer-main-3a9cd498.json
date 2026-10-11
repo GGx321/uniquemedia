@@ -1,14 +1,14 @@
 {
   "source": "main 3a9cd498: sha256 of JSON.stringify(...) of what the writer sent for a built-in 30-slot run (plan seed 3, all five categories, profile and back allowed, run-00000001) RE-PINNED at S5.1b (2026-10-10) and again at S5.1c and S5.R1 (mirror-free place names, texts within POOL_TEXT_MAX; the selfie phone rule, never-describe-mess and candid-gaze lines, ranges in slot lists; new plan from the pool rewrite; pose labels speak of the viewer): the writer's system prompt, SHOT_LABEL, the light field and the compact slots JSON changed on purpose; the reserves are unchanged.",
   "messages": {
-    "chunk1": "4638f3112e8bd88dfe55f46342f3c06359e286a8e709374ebac8658e57b92bb7",
-    "chunk1-empty": "9d0239dbe76d93ffe27d432a63187e819adc27dd7f91aa8a5db4272403d002ca",
+    "chunk1": "70814da3c7ba27485559d9664cf5b2d27478c93445cee3cf75b9ad652db180c7",
+    "chunk1-empty": "e030d99f37fa6e9fe1e685870a73abb16ed66545d03d47feb1b1c6182970a2c8",
     "chunk2": "a43048904560b543a6ed6df13924961fce38317d0d86831d723223203af2b518",
     "chunk2-empty": "5dc2a4013452cc1e2afd20e4efd7e2a62bdd8e5adad1b8919e7e885a0a6f4b52"
   },
   "bodies": [
-    "eb46d8624d0274ad3a3f4c0f45dbcf8d563255a7c2a99fb7e05c51e11f6af5be",
-    "bfc329a927ba65dfa5a38941bb75380974c6aee8e5821b863699d0ad4fc7c46c",
+    "ee08fc4ab16f34c8f1cf023fdded345dec04a3326c7ac472b63995506d76fa1a",
+    "9366423a357a78a0474d5642da70d07750cb3199f5e424556409c9bbb2ac3f4f",
     "ea0123ff41bdf13c9e2636975c37c91927c1c8b98bc7f4d8730a2954dabdde4b"
   ],
   "reserves": [

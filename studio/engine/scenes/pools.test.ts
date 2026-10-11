@@ -66,6 +66,25 @@ describe("the shipped pools", () => {
   });
 });
 
+// C1 (owner canary, 2026-10-11): an ordinary girl's Instagram, not a staged shoot in a wheat field, and a glamour that is not always the black dress.
+describe("C1 pool text", () => {
+  test("photoshoot has a park path in place of the wheat field", () => {
+    const names = POOLS.photoshoot.locations.map((l) => l.name);
+    expect(names).not.toContain("a field by the road");
+    expect(names).toContain("a park path");
+    const path = POOLS.photoshoot.locations.find((l) => l.name === "a park path");
+    expect(path).toMatchObject({ at: "on a park path", times: ["golden hour", "midday"] });
+    expect(path?.activities.map((a) => a.text)).toEqual(["walking along the path", "sitting on a bench", "looking over her shoulder"]);
+  });
+
+  test("no photoshoot place or activity mentions wheat", () => {
+    const text = JSON.stringify(POOLS.photoshoot.locations);
+    expect(text).not.toMatch(/wheat|field/i);
+  });
+
+  // The photoshoot cardigan outfit and the 8 new glamour outfits are NOT here: they break POOL_TEXT_MAX (35) and, for satin and velvet, the soft list. Reported.
+});
+
 describe("the pool schema catches a malformed pool", () => {
   const goodPlace = { name: "x", times: ["morning"], activities: [{ text: "a", twoHanded: false }] };
   const goodPool = { locations: [goodPlace], outfits: ["a plain dress"], shotDeck: ["friend"] as const };

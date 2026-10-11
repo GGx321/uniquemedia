@@ -236,10 +236,10 @@ export const POOLS: Record<Category, Pool> = {
         activities: [one("walking down the street"), one("leaning against a wall"), one("looking over her shoulder")],
       },
       {
-        name: "a field by the road",
-        at: "in a field by the road",
-        times: ["golden hour"],
-        activities: [one("walking through the wheat"), one("running her hand over the wheat"), one("looking over her shoulder")],
+        name: "a park path",
+        at: "on a park path",
+        times: ["golden hour", "midday"],
+        activities: [one("walking along the path"), one("sitting on a bench"), one("looking over her shoulder")],
       },
       {
         name: "the stairs outside her building",
