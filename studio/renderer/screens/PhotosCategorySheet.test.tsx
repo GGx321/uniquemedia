@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { CATEGORY_REASONS_RU, ERROR_MESSAGES_RU } from "../../shared/engine";
 import { callsOf, describeElement, flush, inAct, runAll, withText } from "../testing";
-import { chipsGroup, interruptedCreate, interruptedRegenerate, MIA, MONO, openPhotos, PARIS, WINTER } from "./photos/categoryScreenKit";
+import { BED_POOL, category, chipsGroup, interruptedCreate, interruptedRegenerate, MIA, MONO, openPhotos, PARIS, WINTER } from "./photos/categoryScreenKit";
+import { REVEALING_NOTE, REVEALING_NOTE_DONE } from "./photos/revealingNote";
 import { card, goButton, nb, openReview } from "./photos/sceneScreenKit";
 
 // CS.3: «Мои категории» (CatSheet, CatSheetRename, CatSheetRegen, CatSheetRegenBusy, CatSheetRegenFailed, CatSheetRegenDone,
@@ -84,6 +85,35 @@ describe("the panel", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     await flush();
     expect(describeElement(document.activeElement)).toBe(describeElement(myCategories()));
+  });
+});
+
+// S5.5: a created category whose description asked for what the pool generator will not draw says so on its card (it came out in everyday clothes).
+describe("the note on what is not drawn", () => {
+  const LINGERIE = category(5, "Реклама белья", BED_POOL, { description: "В нижнем брендовом белье на кровати для рекламы" });
+
+  test("a category whose description asks for lingerie carries the note on its card, and an ordinary one does not", async () => {
+    await openPhotos({ categories: [PARIS, LINGERIE] });
+    await openSheet();
+    expect(within(sheet()).queryByText(REVEALING_NOTE) === null).toBe(true);
+    fireEvent.click(row("Реклама белья"));
+    await flush();
+    expect(within(sheet()).getByText(REVEALING_NOTE_DONE)).toBeDefined();
+    expect(within(sheet()).queryByText(REVEALING_NOTE) === null).toBe(true);
+    fireEvent.click(row("Кофейни Парижа"));
+    await flush();
+    expect(within(sheet()).queryByText(REVEALING_NOTE_DONE) === null).toBe(true);
+  });
+
+  test("the regenerate box shows it for the text being typed, before the paid click", async () => {
+    await openPhotos({ categories: [PARIS] });
+    await openSheet();
+    fireEvent.click(within(sheet()).getByRole("button", { name: "Пересоздать…" }));
+    await flush();
+    expect(within(sheet()).queryByText(REVEALING_NOTE) === null).toBe(true);
+    fireEvent.change(within(sheet()).getByLabelText(/^Новое описание/), { target: { value: "кофейни, девушка в купальнике" } });
+    await flush();
+    expect(within(sheet()).getByText(REVEALING_NOTE)).toBeDefined();
   });
 });
 

@@ -45,6 +45,7 @@ import {
   styleNote,
   unreadableNote,
 } from "./categoryText";
+import { RevealingLine } from "./RevealingLine";
 import { InterruptedNotice } from "./CategoryNotices";
 import type { CreateDialogStart } from "./CategoryCreateDialog";
 import { paidBlockedReason } from "./runForm";
@@ -654,6 +655,7 @@ function CategoryDetail({
           )}
         </div>
         {!regenOpen && <p className="muted cat-desc">{category.description}</p>}
+        {!regenOpen && <RevealingLine description={category.description} created />}
         {regenDone !== null && !regenOpen && (
           <div className="notice notice-ok cat-regen-done" role="status">
             <span className="notice-icon">
@@ -689,6 +691,7 @@ function CategoryDetail({
               onChange={(e) => setRegenText(e.target.value)}
             />
             {descProblem !== null && !busy && <p className="field-error">{descProblem}</p>}
+            <RevealingLine description={regenerating?.description ?? regenText} />
             {busy && (
               <div className="job-progress cat-progress cat-progress-s" role="status">
                 <span className="spin cat-progress-spin" aria-hidden="true" />

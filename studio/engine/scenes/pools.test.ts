@@ -102,6 +102,64 @@ describe("C1 pool text", () => {
     ]);
   });
 
+  // S5.5 (owner canary C1', 2026-10-11): glamour is an evening out, not a girl on her bed in a going-out dress.
+  const glamourPlaces = (): Array<{ name: string; at?: string; room?: true; mirror?: true; times: readonly string[]; activities: string[]; twoHanded: string[] }> =>
+    POOLS.glamour.locations.map((l) => ({
+      name: l.name,
+      at: l.at,
+      room: l.room,
+      mirror: l.mirror,
+      times: l.times,
+      activities: l.activities.map((a) => a.text),
+      twoHanded: l.activities.filter((a) => a.twoHanded).map((a) => a.text),
+    }));
+
+  test("glamour has exactly seven places of an evening out, in this order", () => {
+    expect(glamourPlaces().map((l) => [l.name, l.at])).toEqual([
+      ["a cocktail bar", "at a cocktail bar"],
+      ["a restaurant table", "at a restaurant table"],
+      ["the back seat of a taxi", "in the back seat of a taxi"],
+      ["a street outside a bar", "on a street outside a bar"],
+      ["her bathroom while getting ready", "at her bathroom sink"],
+      ["an elevator", "in an elevator"],
+      ["her front door", "by her front door"],
+    ]);
+  });
+
+  test("glamour places are lit by the evening or the night as written", () => {
+    expect(glamourPlaces().map((l) => l.times)).toEqual([["evening", "night"], ["evening"], ["night"], ["night"], ["evening"], ["evening", "night"], ["evening"]]);
+  });
+
+  test("glamour activities are the ones written, and only the hair curling and the heels need both hands", () => {
+    expect(glamourPlaces().map((l) => l.activities)).toEqual([
+      ["leaning on the bar counter", "holding a cocktail glass", "laughing at something nearby"],
+      ["reaching for her glass", "resting her chin on her hand", "smiling across the table"],
+      ["adjusting an earring", "looking out of the window", "leaning back in the seat"],
+      ["walking with a small clutch", "waiting by the door", "looking over her shoulder"],
+      ["applying lipstick", "putting on mascara", "curling her hair"],
+      ["checking her outfit", "fixing her hair", "resting a hand on the handrail"],
+      ["slipping on her heels", "grabbing her keys", "checking her outfit"],
+    ]);
+    // Slipping on heels is awkward with the phone in the other hand, so a selfie or a mirror never draws it; the front door keeps two one-handed activities.
+    expect(glamourPlaces().flatMap((l) => l.twoHanded)).toEqual(["curling her hair", "slipping on her heels"]);
+  });
+
+  test("the bathroom, the elevator and the front door carry a mirror, and only the bathroom and the front door are rooms", () => {
+    expect(glamourPlaces().filter((l) => l.mirror === true).map((l) => l.name)).toEqual(["her bathroom while getting ready", "an elevator", "her front door"]);
+    expect(glamourPlaces().filter((l) => l.room === true).map((l) => l.name)).toEqual(["her bathroom while getting ready", "her front door"]);
+  });
+
+  test("the bathroom and the front door carry the written details", () => {
+    const details = (name: string): readonly string[] | undefined => POOLS.glamour.locations.find((l) => l.name === name)?.details;
+    expect(details("her bathroom while getting ready")).toEqual(["makeup on the counter", "a hair dryer by the sink"]);
+    expect(details("her front door")).toEqual(["a coat rack", "shoes by the door"]);
+  });
+
+  test("nothing in glamour is on a bed, in a hotel or at a wardrobe, and no glamour activity is messyOk", () => {
+    expect(JSON.stringify(POOLS.glamour.locations)).not.toMatch(/\b(bed|beds|bedroom|hotel|wardrobe|nightstand)\b/i);
+    expect(POOLS.glamour.locations.flatMap((l) => l.activities).some((a) => a.messyOk === true)).toBe(false);
+  });
+
   test("the glamour outfits are distinct", () => {
     expect(new Set(POOLS.glamour.outfits).size).toBe(POOLS.glamour.outfits.length);
   });

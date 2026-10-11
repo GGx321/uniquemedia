@@ -96,9 +96,10 @@ describe("the built-in pools are ordinary places", () => {
     expect([...POOLS.photoshoot.shotDeck].sort()).toEqual(["candid", "candid", "photographer", "photographer", "photographer"]);
   });
 
-  test("the rooms the owner pictured are there: a kitchen, a bed, a couch, a bathroom, a bedroom and a hallway wall", () => {
+  test("the rooms the owner pictured are there: a kitchen, a bed, a couch, a bathroom, a front door and a hallway wall", () => {
     const names = allPlaces.map(([, p]) => p.name);
-    for (const expected of ["her small kitchen", "her bed in the morning", "the couch under a blanket", "her bathroom", "her bedroom", "a plain wall in her hallway"]) expect(names).toContain(expected);
+    // S5.5: the glamour bedroom went with the other glamour places at home («вечер выхода»); the front door, where she gets ready, took its place.
+    for (const expected of ["her small kitchen", "her bed in the morning", "the couch under a blanket", "her bathroom", "her front door", "a plain wall in her hallway"]) expect(names).toContain(expected);
   });
 });
 
