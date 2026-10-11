@@ -174,6 +174,10 @@ describe("16 · the batch is ready", () => {
     // The refusal cost nothing: no «стоимость попытки учтена» line for it.
     expect(text(panel())).not.toContain("не удалось получить");
     expect(text(panel().querySelector(".candidates-head") ?? panel())).toContain("3 варианта · выберите один");
+    // Review L7: the panel names itself by a generated id, never a fixed one a second panel would share.
+    const heading = within(panel()).getByRole("heading", { name: "Варианты мастер-портрета" });
+    expect(panel().getAttribute("aria-labelledby")).toBe(heading.id);
+    expect(heading.id).not.toBe("portraits-title");
     expect(text(panel())).toContain("сходство — с исходным фото · порог 0.55");
     const rail = panel().querySelector(".portraits-rail");
     expect(within(rail instanceof HTMLElement ? rail : panel()).getAllByRole("button").map(text)).toEqual(["Сделать мастером", "Ещё 5 вариантов · до $0.30", "Оставить исходное фото"]);
@@ -268,7 +272,7 @@ describe("16 · the batch is ready", () => {
     const twelve = Array.from({ length: 12 }, (_, i) => ({ photoId: `photo-nini-c${String(i + 10)}`, likeness: 0.6 + i / 100 }));
     await openLook(NINI, { portraits: [{ ...NINI_SEED, candidates: twelve }, AVA_SEED] });
     expect(isDisabled(within(panel()).getByRole("button", { name: /^Ещё 5 вариантов/ }))).toBe(true);
-    expect(text(panel())).toContain("Уже 12 вариантов — ещё 5 не поместятся в предел 15.");
+    expect(text(panel())).toContain("Уже 12 вариантов — ещё 5 превысят предел в 15.");
   });
 });
 

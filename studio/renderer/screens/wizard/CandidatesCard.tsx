@@ -126,6 +126,8 @@ function PortraitBadges({ likeness, best }: { likeness: number | undefined; best
 /** Step 2 «Кандидаты»: progress while the job runs, then the portraits to choose from. S5.3d: also «Варианты мастер-портрета» (`portrait`). */
 export function CandidatesCard({ candidates, job, picked, onPick, onCancel, cancelling, headingRef, hiddenBelowThreshold, slots = SLOTS, portrait }: CandidatesCardProps) {
   const groupName = useId();
+  // S5.3d review L7: the portrait panel names itself by a generated id (the wizard keeps its own, unchanged).
+  const portraitsTitleId = useId();
   const running = job !== null && isActiveJob(job);
   const total = job?.total || slots;
   const result = job?.result?.kind === "avatar.candidates" ? job.result : null;
@@ -208,11 +210,11 @@ export function CandidatesCard({ candidates, job, picked, onPick, onCancel, canc
     return (
       <section
         className={running ? "card candidates-card portraits-panel portraits-panel-running" : "card candidates-card portraits-panel"}
-        aria-labelledby="portraits-title"
+        aria-labelledby={portraitsTitleId}
         aria-busy={portrait.busy || undefined}
       >
         <div className="candidates-head portraits-head">
-          <h2 id="portraits-title" ref={headingRef} className="card-title" tabIndex={-1}>
+          <h2 id={portraitsTitleId} ref={headingRef} className="card-title" tabIndex={-1}>
             Варианты мастер-портрета
           </h2>
           {portrait.meta !== null && <span className="mono">{portrait.meta}</span>}

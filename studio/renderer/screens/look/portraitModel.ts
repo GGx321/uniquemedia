@@ -194,7 +194,7 @@ export function batchFits(pending: number): boolean {
  */
 export function capReason(pending: number): string {
   if (pending >= PORTRAIT_CANDIDATES_MAX) return "Уже 15 вариантов — выберите один или удалите все.";
-  return `Уже ${countOf(pending, VARIANT_FORMS)} — ещё ${PORTRAITS_PER_BATCH} не поместятся в предел ${PORTRAIT_CANDIDATES_MAX}. Выберите один или удалите все.`;
+  return `Уже ${countOf(pending, VARIANT_FORMS)} — ещё ${PORTRAITS_PER_BATCH} превысят предел в ${PORTRAIT_CANDIDATES_MAX}. Выберите один или удалите все.`;
 }
 
 /** The radio's name: its letter, its likeness, and «лучший» for the best (a screen reader hears what the badges show). */

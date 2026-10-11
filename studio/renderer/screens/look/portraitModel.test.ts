@@ -125,7 +125,7 @@ describe("the limit of 15 waiting (16c)", () => {
 
   test("at 15 the mockup's words; below it, how many wait", () => {
     expect(capReason(15)).toBe("Уже 15 вариантов — выберите один или удалите все.");
-    expect(capReason(12)).toBe("Уже 12 вариантов — ещё 5 не поместятся в предел 15. Выберите один или удалите все.");
+    expect(capReason(12)).toBe("Уже 12 вариантов — ещё 5 превысят предел в 15. Выберите один или удалите все.");
   });
 });
 
