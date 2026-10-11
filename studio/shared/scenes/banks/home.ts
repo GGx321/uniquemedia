@@ -15,6 +15,9 @@ const PRONE = [PRONE_OUTFIT, LEGGINGS];
 const SNEAKERS = ["grey leggings and platform sneakers", "lounge shorts and platform sneakers"];
 /** The bathroom counter mirror selfie's outfit, as the owner approved it. */
 const OPEN_BACK = "an open-back top and grey jeans";
+/** S5.6R: what she wears on her way out (the hallway's going-out moments pin these): never pajamas, lounge shorts or leggings. */
+const GOING_OUT_DRESS = "a knit midi dress and ankle boots";
+const GOING_OUT = [OPEN_BACK, "a pleated mini and a fitted top", GOING_OUT_DRESS];
 
 export const HOME: CategoryBank = {
   places: [
@@ -108,10 +111,10 @@ export const HOME: CategoryBank = {
       details: ["a coat rack", "a row of shoes"],
       times: ["morning", "evening"],
       moments: [
-        { text: "checks her outfit before going out", motion: "she turns a little to each side", captures: ["mirror-hidden", "mirror"], twoHanded: false },
-        { text: "grabs her keys from the hook", motion: "she jingles her keys a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
+        { text: "checks her outfit before going out", motion: "she turns a little to each side", captures: ["mirror-hidden", "mirror"], twoHanded: false, outfits: GOING_OUT },
+        { text: "grabs her keys from the hook", motion: "she jingles her keys a little", captures: ["mirror-hidden", "mirror"], twoHanded: false, outfits: GOING_OUT },
         { text: "leans on the wall by the door", motion: "she shifts her shoulder slowly", captures: ["mirror", "timer"], twoHanded: false },
-        { text: "waits by the door, ready to go", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
+        { text: "waits by the door, ready to go", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false, outfits: GOING_OUT },
       ],
     },
     {
@@ -142,6 +145,7 @@ export const HOME: CategoryBank = {
     { text: OPEN_BACK },
     { text: "grey leggings and platform sneakers", pinOnly: true },
     { text: "lounge shorts and platform sneakers", showsLegs: true, pinOnly: true },
+    { text: GOING_OUT_DRESS, pinOnly: true },
   ],
   legwear: { items: ["white knee-high socks", "black knee-high socks", "thigh-high socks", "sheer black tights"], share: 0.4 },
   // ⅓ phone-over-face mirror frames (I5.32), never a friend; 2 prone selfies and 1 over-her-shoulder POV of 12 (plan r1.5 §5.1: prone selfies are a typical owner subject), 2 close selfies from above, 2 mirrors, 1 timer.

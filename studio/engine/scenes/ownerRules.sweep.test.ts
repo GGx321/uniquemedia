@@ -133,3 +133,16 @@ describe("«Гламур»: the photo fits the place it is taken in", () => {
     expect([...new Set(elevator.map((f) => shotOf(f.capture)))].sort()).toEqual(["mirror", "selfie"]);
   });
 });
+
+describe("«Дом»: a moment of going out wears going-out clothes", () => {
+  const GOING_OUT = /going out|ready to go|\bkeys\b/;
+  const SLEEP_OR_LOUNGE = /pajama|lounge|leggings|oversized|off one shoulder/;
+
+  test("the sweep holds going-out frames", () => {
+    expect(FRAMES.home.filter((f) => GOING_OUT.test(f.slot.activity)).length).toBeGreaterThan(PLANS);
+  });
+
+  test("no going-out frame wears pajamas, lounge shorts, leggings or an oversized tee or sweater", () => {
+    expect(offenders(FRAMES.home, (f) => GOING_OUT.test(f.slot.activity) && SLEEP_OR_LOUNGE.test(f.slot.outfit))).toEqual(NONE);
+  });
+});
