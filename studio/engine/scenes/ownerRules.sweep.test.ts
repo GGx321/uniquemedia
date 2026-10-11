@@ -151,4 +151,8 @@ describe("the text reads naturally (S5.6R, LOW)", () => {
   test("a photo over her own shoulder names her sneakers once: the outfit says them", () => {
     expect(offenders(ALL, (f) => f.capture === "over-shoulder" && (f.sentence.match(/\bsneakers\b/g) ?? []).length > 1)).toEqual(NONE);
   });
+
+  test("a sentence never names the park path twice", () => {
+    expect(offenders(ALL, (f) => (f.sentence.match(/\bpath\b/g) ?? []).length > 1 || (f.sentence.match(/\bpark\b/g) ?? []).length > 1)).toEqual(NONE);
+  });
 });

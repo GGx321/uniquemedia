@@ -21,7 +21,7 @@ export const PHOTOSHOOT: CategoryBank = {
     {
       name: "a cafe table on the pavement",
       at: "at a cafe table on the pavement",
-      details: ["a cup and saucer", "a small vase on the table", "a croissant on a plate"],
+      details: ["a cup and saucer", "a small vase of flowers", "a croissant on a plate"],
       times: ["morning", "midday"],
       moments: [
         { text: "sits with her legs crossed", motion: "she swings her crossed foot slowly", captures: ["timer", "friend"], twoHanded: false },

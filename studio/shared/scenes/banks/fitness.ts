@@ -39,7 +39,7 @@ export const FITNESS: CategoryBank = {
     {
       name: "a park running path",
       at: "on a park running path",
-      details: ["a park bench by the path", "a row of trees along the path"],
+      details: ["a wooden bench", "a row of tall trees"],
       times: ["morning"],
       moments: [
         { text: "jogs at an easy pace", motion: "she keeps jogging slowly", captures: ["friend", "candid"], twoHanded: true, hair: "tied", outdoor: true },

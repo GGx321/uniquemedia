@@ -67,6 +67,7 @@ export const BANK_RULE = {
   mirrorBack: "mirror-back",
   details: "details",
   detailGrammar: "detail-grammar",
+  detailRepeat: "detail-repeat",
   at: "at",
   moments: "moments",
   messyOk: "messy-ok",
@@ -153,6 +154,11 @@ function singular(word: string): string {
 function contentWords(text: string, skipVerb: boolean): Set<string> {
   const words = text.toLowerCase().match(/[a-z]+(?:-[a-z]+)*/g) ?? [];
   return new Set((skipVerb ? words.slice(1) : words).filter((w) => w.length >= 3 && !SHARED_WORDS.has(w)).map(singular));
+}
+
+/** The words of a text as it spells them (no singular): «lockers» beside «locker room» is a different word, «path» beside «path» is not. */
+function plainWords(text: string): string[] {
+  return (text.toLowerCase().match(/[a-z]+(?:-[a-z]+)*/g) ?? []).filter((w) => w.length >= 3 && !SHARED_WORDS.has(w));
 }
 
 function checkMotion(add: Add, where: string, moment: Moment): void {
@@ -276,10 +282,14 @@ function categoryBankSchema(category: BankCategory) {
         if (!AT_START.test(place.at)) add(BANK_RULE.at, `${where}.at`, "opens with a preposition");
         if (place.times.length === 0 || place.times.includes("studio lighting")) add(BANK_RULE.times, `${where}.times`, "one or more times of day, never the stored «studio lighting»");
         if (place.details.length < 2 || place.details.length > 3) add(BANK_RULE.details, `${where}.details`, "2 or 3 details");
+        // S5.6R: a place that is not a room says its detail in the same sentence as its own phrase, so a detail never names that phrase's words again.
+        const ownWords = new Set(plainWords(place.at));
         for (const detail of place.details) {
           checkText(add, `${where}.details`, detail);
           if (!DETAIL_START.test(detail)) add(BANK_RULE.detailGrammar, `${where}.details`, `«${detail}» opens with a|an|the|her|some|two`);
           if (MIRROR.test(detail)) add(BANK_RULE.mirrorWord, `${where}.details`, "a detail must not name a mirror");
+          const again = plainWords(detail).filter((w) => ownWords.has(w));
+          if (place.room !== true && again.length > 0) add(BANK_RULE.detailRepeat, `${where}.details`, `«${detail}» names «${again.join("», «")}» again: the place's own phrase says it in the same sentence`);
         }
         if (place.moments.length < 4) add(BANK_RULE.moments, `${where}.moments`, "at least 4 moments");
         const texts = place.moments.map((m) => m.text);
