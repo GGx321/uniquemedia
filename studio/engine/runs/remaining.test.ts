@@ -204,6 +204,17 @@ describe("remainingPlan's minToProgressMicros", () => {
     });
   });
 
+  test("a model chunk that is already journaled drops the estimate by its two attempts at the writer's ceiling", () => {
+    const run = runPlan(52, "off", ["home", LLM_ONLY_REF]);
+    const model = run.writerChunks[2];
+    expect(model).toBeDefined();
+    const events: RunEvent[] = [{ type: "writer", chunk: 3, sentences: (model?.slotIndexes ?? []).map((slotIndex) => ({ slotIndex, sentence: "She reads by the window." })), at: AT }];
+    const before = planFor(run).estimate.worstMicros;
+    const after = planFor(run, { events }).estimate.worstMicros;
+    expect(before - after).toBe(2 * WRITER_WORST);
+    expect(after).toBe(52 * 3 * IMAGE_WORST + 1 * 2 * WRITER_WORST);
+  });
+
   test("the estimate is the one remainingEstimate answers", () => {
     const run = runPlan(4);
     expect(planFor(run, {}, 60_000).estimate).toEqual(estimateFor(run, {}, 60_000));

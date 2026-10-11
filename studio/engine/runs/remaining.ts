@@ -147,15 +147,14 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
   }
 
   const capRoom = Math.max(0, plan.capMicros - committedMicros);
-  // When the FIRST unwritten chunk is out of writer attempts nothing is asked at all: a resume only closes the slots,
-  // for free, so `worst` is 0 (the owner is not asked to accept the open slots' worst case, and no month budget can
-  // refuse it). A blocked chunk further on leaves the chunks before it to be paid for, and no image after them.
+  // A chunk out of writer attempts adds no writer term (nothing more can be asked of it) but does not block the resume (S5.6d, I5.30/I5.31): its slots take
+  // the plain sentence and are DRAWN, so their images stay in `worst`, and a month with no room for them refuses the resume before anything is sent.
   const worstMicros = Math.min(capRoom, worst);
   const needed = (writerPending ? writerCeiling : 0) + (cheapestSlotAttempt ?? 0);
   return {
     estimate: { expectedMicros: Math.min(expected, worstMicros), worstMicros, prices: book.source, pricesAsOf: priced.asOf },
-    // A first chunk out of writer attempts can never be answered, so its slots are not held back by the cap: nothing the
-    // cap could fund gets them going, and a resume can only close them (after a crash, say). Not «cap exhausted».
+    // A chunk out of writer attempts needs no writer room: its slots take the plain sentence, so only the cheapest next image attempt must fit under the cap
+    // (`needed` above). A run with nothing left to send is not «cap exhausted».
     minToProgressMicros: needed === 0 ? null : needed,
   };
 }
