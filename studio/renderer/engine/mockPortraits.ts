@@ -53,7 +53,7 @@ export const MOCK_PORTRAIT_SLOTS: readonly MockPortraitSlot[] = [
 ];
 
 /** What the mock's model says when it refuses an image: a moderation refusal carries the provider's own message (the parity rig's fake OpenRouter says the same words). */
-export const MOCK_PORTRAIT_REFUSAL: EngineError = { code: "MODERATION_REFUSED", detail: "xAI blocked this request through content moderation." };
+export const MOCK_PORTRAIT_REFUSAL: EngineError = { code: "MODERATION_REFUSED", detail: "HTTP 400: xAI blocked this request through content moderation." };
 
 /** What a test or a story seeds for one avatar: its imported photo, the likeness of a portrait master, and the pending portraits. */
 export interface MockPortraitSeed {

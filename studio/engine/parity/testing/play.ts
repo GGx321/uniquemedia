@@ -13,6 +13,8 @@ export async function play(rig: ParityRig, scenario: Scenario): Promise<string[]
   norm.register("avatar", world.avatarId);
   norm.register("avatar", world.otherAvatarId);
   norm.register("avatar", world.archivedAvatarId);
+  // Stage 5 (S5.3c): a rig with `portraits` seeds three imported avatars, named after the three above.
+  if (world.portraitAvatars !== undefined) for (const id of [world.portraitAvatars.imported, world.portraitAvatars.pending, world.portraitAvatars.crowded]) norm.register("avatar", id);
   for (const id of [...world.photoIds, ...world.otherPhotoIds]) norm.register("photo", id);
   const transcript = new Transcript(rig, norm);
   try {

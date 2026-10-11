@@ -10,6 +10,7 @@ import { createApngEncoder } from "../../../shared/stickers/apngWriter";
 import { EngineReply } from "../../control";
 import { FfmpegError, type RunFfmpegArgvOptions } from "../../../node/runFfmpeg";
 import { MockEngine, type MockExportPick, type MockMediaPick } from "../../../renderer/engine/mockEngine";
+import { MOCK_PORTRAIT_SLOTS, type MockPortraitSeed } from "../../../renderer/engine/mockPortraits";
 import { MIA, NORA, scenePhoto, SOFIA } from "../../../renderer/engine/mockEngine.testkit";
 import { ManualScheduler } from "../../../renderer/engine/scheduler";
 import { IDLE_STEPS } from "../../autopilot/steps";
@@ -26,9 +27,10 @@ import { createTextRasteriser, RASTER_WASM } from "../../text/rasteriser";
 import type { CaptionCallOptions, GateCaption } from "../../text/worker/textGate";
 import type { PreviewGate } from "../../text/preview";
 import { parityDecodedMs, parityListTracks, parityMockSeeds, parityPeaks } from "./tracks";
-import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/helpers";
+import { PNG_1X1, SAMPLE_IMPORTED_SOURCE, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/helpers";
 import { RenderFailure } from "../../renderQueue/queue";
-import { command, engineSettings, GOOD, NOW, portraitPng, startEngine, TRAITS, until } from "../../testing/engineHarness";
+import { command, engineSettings, GOOD, MODERATION, NOW, network as portraitNetwork, portraitPng, portraitReply, startEngine, TRAITS, until } from "../../testing/engineHarness";
+import { fakeGate, match } from "../../testing/portraitKit";
 import type { Reply } from "../../openrouter/testing/fakes";
 import { imageReply, network as launchNetwork, writerReply } from "../../testing/wiringKit";
 import { within } from "../../testing/within";
@@ -60,7 +62,23 @@ export interface World {
   readonly archivedAvatarId: string;
   /** The photos whose face was scored: the resolver judges them (the odd ones, counting from 1). */
   readonly scored: ReadonlySet<string>;
+  /** Stage 5 (S5.3c), a rig with `portraits`: the imported avatars it seeds. */
+  readonly portraitAvatars?: PortraitAvatars;
 }
+
+/**
+ * The imported avatars of a rig with `portraits` (their master is the imported photo): `imported` holds no portrait yet (a batch is drawn for it), `pending` holds three
+ * (`PARITY_PENDING_LIKENESS`), `crowded` holds eleven, so a batch of five would pass the limit of fifteen.
+ */
+export interface PortraitAvatars {
+  readonly imported: string;
+  readonly pending: string;
+  readonly crowded: string;
+}
+
+/** The likeness of the three pending portraits of the `pending` avatar of a rig with `portraits`, and how many the `crowded` one holds. */
+export const PARITY_PENDING_LIKENESS: readonly number[] = [0.8, 0.7, 0.6];
+export const PARITY_CROWDED_COUNT = 11;
 
 /** What only a rig can do to the outside world. */
 export interface Control {
@@ -338,6 +356,12 @@ export interface RigOptions {
    * the library; the mock is seeded with the same. No older story asks for it, so their lines are unchanged.
    */
   readonly bodyProposal?: boolean;
+  /**
+   * Stage 5 (S5.3c): three IMPORTED avatars (`World.portraitAvatars`): Nini with none of the reference portraits, Ava with three pending, Lena with eleven. The real rig writes them through the
+   * library's own store before the engine opens it, scripts the face gate and the fake OpenRouter by the mock's outcome table (`MOCK_PORTRAIT_SLOTS`) and runs one slot at a time, so the
+   * n-th image is the n-th slot; the mock is seeded with the same. No older story asks for it, so their lines are unchanged.
+   */
+  readonly portraits?: boolean;
 }
 
 /** The body proposal of a rig with `bodyProposal`: what a photo import read (a bust and a height it could not see), kept on Mia until the owner saves or dismisses it. */
@@ -466,16 +490,34 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     ...Array.from({ length: OTHER_PHOTOS }, (_, i) => scenePhoto(i + 1, {}, SOFIA)),
   ];
   const proposed = options.bodyProposal === true ? { bodyProposal: { values: { ...PARITY_BODY_PROPOSAL.values }, seen: { ...PARITY_BODY_PROPOSAL.seen }, at: PARITY_BODY_PROPOSAL.at } } : {};
+  const portraitAvatars: AvatarSummary[] =
+    options.portraits === true
+      ? [
+          { ...MIA, avatarId: "avatar-nini-0004", name: "Nini", masterPhotoId: "photo-nini-source" },
+          { ...MIA, avatarId: "avatar-ava-0005", name: "Ava", masterPhotoId: "photo-ava-source" },
+          { ...MIA, avatarId: "avatar-lena-0006", name: "Lena", masterPhotoId: "photo-lena-source" },
+        ]
+      : [];
+  const portraitSeeds: MockPortraitSeed[] =
+    options.portraits === true
+      ? [
+          { avatarId: "avatar-nini-0004", sourcePhotoId: "photo-nini-source" },
+          { avatarId: "avatar-ava-0005", sourcePhotoId: "photo-ava-source", candidates: PARITY_PENDING_LIKENESS.map((likeness, i) => ({ photoId: `photo-ava-pending-${i + 1}`, likeness })) },
+          { avatarId: "avatar-lena-0006", sourcePhotoId: "photo-lena-source", candidates: Array.from({ length: PARITY_CROWDED_COUNT }, (_, i) => ({ photoId: `photo-lena-pending-${i + 1}`, likeness: 0.7 })) },
+        ]
+      : [];
   const avatars: AvatarSummary[] = [
     options.usage === undefined
       ? { ...MIA, photoCount: MAIN_PHOTOS, eligibleUnusedCount: MAIN_PHOTOS, ...proposed }
       : { ...MIA, photoCount: MAIN_PHOTOS, eligibleUnusedCount: 0, usage: { state: "unknown", reasons: [options.usage] }, ...proposed },
     { ...SOFIA, photoCount: OTHER_PHOTOS, eligibleUnusedCount: OTHER_PHOTOS },
     { ...NORA, photoCount: 0, eligibleUnusedCount: 0 },
+    ...portraitAvatars,
   ];
   const engine = new MockEngine({
     scheduler,
     avatars,
+    portraits: portraitSeeds,
     photos,
     renderConcurrency: options.renderConcurrency ?? 1,
     // The S4.1 stories are bound to the mock's canned launch; a rig that asks for a running launch gets the mock that runs one.
@@ -521,6 +563,7 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     otherPhotoIds: photos.filter((p) => p.avatarId === SOFIA.avatarId).map((p) => p.photoId),
     archivedAvatarId: NORA.avatarId,
     scored: scored(photoIds),
+    ...(options.portraits === true ? { portraitAvatars: { imported: "avatar-nini-0004", pending: "avatar-ava-0005", crowded: "avatar-lena-0006" } } : {}),
   };
   /** Runs the mock's clock until an event of `wanted` came after `from`. */
   const runUntil = (from: number, wanted: (e: EventMessage) => boolean): void => {
@@ -678,6 +721,23 @@ interface SeedMaster {
 /** The master of a rig that never draws: nothing downscales it. */
 const TINY_MASTER: SeedMaster = { bytes: PNG_1X1, width: 1, height: 1 };
 
+/** An IMPORTED avatar (Stage 5, S5.3c): its master is the imported photo, a real picture; `pending` makes one portrait per likeness. Returns the avatar's id. */
+async function seedImportedAvatar(library: Awaited<ReturnType<typeof openLibrary>>["library"], name: string, pending: readonly number[]): Promise<string> {
+  const { avatar } = await library.createImportedAvatar({
+    name,
+    age: 25,
+    traits: manifestTraits(TRAITS),
+    descriptor: GOOD,
+    photoBytes: portraitPng(1),
+    photoMeta: samplePhotoMeta({ width: 60, height: 80, source: SAMPLE_IMPORTED_SOURCE }),
+  });
+  if (FIXTURE_BASE.kind !== "generated") throw new Error("expected a generated sample source");
+  for (const [i, faceCos] of pending.entries()) {
+    await library.addPhoto(avatar.id, portraitPng((i % 4) + 2), samplePhotoMeta({ width: 60, height: 80, source: { ...FIXTURE_BASE, slot: `portrait-${(i % 5) + 1}` }, qa: { faceCos, headRatio: 0.3 } }));
+  }
+  return avatar.id;
+}
+
 async function seedAvatar(library: Awaited<ReturnType<typeof openLibrary>>["library"], name: string, seed: SeedMaster = TINY_MASTER): Promise<string> {
   const avatar = await library.createAvatar({ name, age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
   const master = await library.addPhoto(avatar.id, seed.bytes, samplePhotoMeta({ width: seed.width, height: seed.height, qa: { age: { adult: true, confidence: 0.95 } } }));
@@ -778,6 +838,14 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   const otherAvatarId = await seedAvatar(library, "Sofia", master);
   const otherPhotoIds = await seedPhotos(library, otherAvatarId, OTHER_PHOTOS, 2);
   const archivedAvatarId = await seedAvatar(library, "Nora", master);
+  const portraitAvatars: PortraitAvatars | undefined =
+    options.portraits === true
+      ? {
+          imported: await seedImportedAvatar(library, "Nini", []),
+          pending: await seedImportedAvatar(library, "Ava", PARITY_PENDING_LIKENESS),
+          crowded: await seedImportedAvatar(library, "Lena", Array.from({ length: PARITY_CROWDED_COUNT }, () => 0.7)),
+        }
+      : undefined;
   if (options.usage !== undefined) await breakUsage(join(dir, "library", "avatars", avatarId), avatarId, options.usage);
   if (options.bodyProposal === true) {
     // Written into the file before the engine opens the library (the rig's own `library` is only the seeder), as a photo import's single atomic write leaves it.
@@ -856,7 +924,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     await writeFile(join(dir, "library", "avatars", avatarId, "scenes", "set-parity-broken.json"), "{not json");
   }
 
-  const world: World = { avatarId, photoIds, otherAvatarId, otherPhotoIds, archivedAvatarId, scored: scored(photoIds) };
+  const world: World = { avatarId, photoIds, otherAvatarId, otherPhotoIds, archivedAvatarId, scored: scored(photoIds), ...(portraitAvatars === undefined ? {} : { portraitAvatars }) };
   const gate = new Gate();
   /** Renders standing at the gate now: their ffmpeg held, or their commit held at its claim. */
   let parked = 0;
@@ -985,6 +1053,31 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
         image: (_call, n) => meetFault() ?? imageReply(n),
       })
     : undefined;
+  // Stage 5 (S5.3c): a rig with `portraits` tells the batch by the mock's outcome table. One slot at a time, so the n-th image the fake OpenRouter is asked for is slot n: the model refuses the
+  // slots the table says it refuses, and the face gate (a scripted one: no face models in a test) ranks the picture it is shown as the slot it was drawn for. The images are real, different pictures.
+  const portraitScript = options.portraits === true && !launching;
+  const portraitNet = portraitScript ? portraitNetwork({ image: (_call, n) => (MOCK_PORTRAIT_SLOTS[n - 1]?.kind === "refused" ? MODERATION : portraitReply(n)) }) : undefined;
+  const portraitGate = portraitScript
+    ? fakeGate({
+        check: async (bytes) => {
+          const slot = [1, 2, 3, 4, 5].find((n) => Buffer.from(portraitPng(n)).equals(Buffer.from(bytes)));
+          const outcome = slot === undefined ? undefined : MOCK_PORTRAIT_SLOTS[slot - 1];
+          if (outcome === undefined) throw new Error("the face gate was shown a picture the rig did not draw");
+          switch (outcome.kind) {
+            case "pass":
+              return match(outcome.likeness);
+            case "unlike":
+              return { kind: "mismatch", similarity: outcome.likeness, faces: 1, headRatio: 0.3 };
+            case "no-face":
+              return { kind: "no-face", faces: 0 };
+            case "multiple-faces":
+              return { kind: "multiple-faces", faces: 2 };
+            default:
+              throw new Error("the face gate was shown a picture the model refused");
+          }
+        },
+      })
+    : undefined;
   // Every message every engine of this rig posts, in order (the rig may start a second engine over the same folders: the app was quit and opened again).
   const posted: unknown[] = [];
   const events = (): EventMessage[] => posted.filter((m) => typeof m === "object" && m !== null && "kind" in m && m.kind === "event").map((m) => EventMessage.parse(m));
@@ -992,13 +1085,14 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   const boot = async (): Promise<Awaited<ReturnType<typeof startEngine>>["engine"]> => {
     boots += 1;
     const started = await startEngine(dir, {
-    ...(launchNet === undefined ? {} : { net: launchNet }),
+    ...(launchNet === undefined ? (portraitNet === undefined ? {} : { net: portraitNet }) : { net: launchNet }),
     bootId: `boot-0000-${String.fromCharCode(96 + boots).repeat(4)}`,
-    init: { renderTmpDir: join(dir, "userData", "render-tmp"), settings: settings(launching ? { imageAgeCheck: "off" } : {}), musicDir },
+    init: { renderTmpDir: join(dir, "userData", "render-tmp"), settings: settings(launching ? { imageAgeCheck: "off" } : portraitScript ? { imageAgeCheck: "off", concurrency: { network: 1 } } : {}), musicDir },
     deps: {
       post: (message) => posted.push(message),
       // A launch's reconcile is allowed once the ledger has been quiet for a while: the rig moves the clock when the owner is away (`quit`).
       ...(launching ? { clock: () => NOW + shifted, monotonic: () => shifted } : {}),
+      ...(portraitGate === undefined ? {} : { portraitFaceGate: portraitGate.gate }),
       musicSink: store,
       musicTracks: store,
       ...(launching
@@ -1058,7 +1152,16 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     await engine.renders.idle();
     await engine.settled();
     await engine.mediaSettled();
+    // Stage 5 (S5.3c): a batch of reference portraits runs on its own clock, not the render queue's: wait for its end.
+    if (portraitScript) {
+      for (let i = 0; i < 6_000 && (await portraitJobRunning()); i++) await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      if (await portraitJobRunning()) throw new Error("timed out waiting for the portrait batch to end");
+    }
     if (!launching) gate.reset();
+  };
+  const portraitJobRunning = async (): Promise<boolean> => {
+    const snapshot = ResponseMessage.parse(await engine.handle(command("engine.snapshot", {})));
+    return snapshot.ok && snapshot.type === "engine.snapshot" && snapshot.result.jobs.some((j) => j.kind === "avatar.portraits" && j.status === "running");
   };
 
   // The app quit and opened again (S4.8): the first engine shuts down (a request in flight dies with it; its reserve stays open in the ledger), a second one opens the same folders.
@@ -1155,7 +1258,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
         await Promise.all(told.splice(0));
         return answerOf(ResponseMessage.parse(response));
       }
-      if (type === "settings.setModels" || type === "settings.setCameraRealism") {
+      if (type === "settings.setModels" || type === "settings.setCameraRealism" || type === "settings.setImageAgeCheck") {
         const asked = CommandMessage.safeParse({ v: 5, id: `msg-${String(++hostCalls).padStart(6, "0")}`, kind: "command", type, payload });
         if (!asked.success || !isSettingsCommand(asked.data)) return { ok: false, error: { code: "VALIDATION", detail: `${type}: the payload breaks the contract` } };
         const response = await handleSettingsCommand(asked.data, settingsDeps);
