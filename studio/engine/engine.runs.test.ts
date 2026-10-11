@@ -154,6 +154,14 @@ function startRun(avatarId: string, acceptedWorstMicros = FOUR_WORST, count = 4)
   return command("runs.start", { ...request(avatarId, count), acceptedWorstMicros });
 }
 
+/**
+ * A one-photo run of a built-in category, accepted at its exact worst case (3 attempts, no writer: the template writes a built-in whole, I5.30). For the tests whose subject is
+ * not the writer (the real face gate): they need no `cat-llm-only-fixture` in their library and no chat answer from the network.
+ */
+function startBuiltIn(avatarId: string): unknown {
+  return command("runs.start", { avatarId, count: 1, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: 3 * 50_000 });
+}
+
 /** What runs.estimateResume says a resume could still spend. */
 async function remainingWorst(engine: Engine, runId: string): Promise<Estimate> {
   const answer = ok(await engine.handle(command("runs.estimateResume", { runId })));
@@ -1705,7 +1713,7 @@ describe.skipIf(!RR_MODELS_PRESENT)("re-review N1/normalization: the real face g
       try {
         const net = runNetwork({ image: () => ({ status: 200, body: imageBody(portraitPngFace(), { cost: 0.04 }) }) });
         const { engine, events } = await engineOver(net, { qaGates: [createPdqGate(), createFaceQaGate({ faceGate: real })] });
-        const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
+        const { jobId } = started(await engine.handle(startBuiltIn(avatarId)));
         const end = await jobEnd(events, jobId);
         expect(end.type).toBe("job.done");
         if (end.type !== "job.done") throw new Error("unreachable");
@@ -1732,7 +1740,7 @@ describe.skipIf(!RR_MODELS_PRESENT)("re-review N1/normalization: the real face g
     try {
       const net = runNetwork({ image: () => ({ status: 200, body: imageBody(portraitPngFace(), { cost: 0.04 }) }) });
       const { engine, events } = await engineOver(net, { qaGates: [createFaceQaGate({ faceGate: observing })] });
-      const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
+      const { jobId } = started(await engine.handle(startBuiltIn(avatarId)));
       await jobEnd(events, jobId);
       expect(seenMasterBytes.some((b) => Buffer.from(b).equals(Buffer.from(bytes)))).toBe(true);
     } finally {
@@ -1753,7 +1761,7 @@ describe.skipIf(!RR_MODELS_PRESENT)("re-review N1/normalization: the real face g
     try {
       const net = runNetwork({ image: () => ({ status: 200, body: imageBody(portraitPngFace(), { cost: 0.04 }) }) });
       const { engine, events } = await engineOver(net, { qaGates: [createFaceQaGate({ faceGate: real })] });
-      const { jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST, 1)));
+      const { jobId } = started(await engine.handle(startBuiltIn(avatarId)));
       const end = await jobEnd(events, jobId);
       expect(end.type).toBe("job.done");
       if (end.type !== "job.done") throw new Error("unreachable");
