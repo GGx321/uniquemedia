@@ -139,8 +139,8 @@ function importedText(check: DescriptorCheck | null, name: string, bodyWaits: bo
 /** S5.2d: `avatars.setBody` (or «Не нужно») refused IN_FLIGHT, or waiting for this window's own check: the same claim as an edit. */
 export const BODY_HELD_REASON = "Тело можно сохранить, когда закончится сверка или другая задача этого аватара";
 
-/** The jobs that hold an avatar while they run: a photo run, a candidates batch and (S5.3d) a reference-portrait batch, which claims her like a run. */
-const HOLDING_KINDS: ReadonlySet<JobView["kind"]> = new Set(["run", "avatar.candidates", "avatar.portraits"]);
+/** The jobs that hold an avatar while they run: a photo run, a candidates batch, a scenes job and (S5.3d) a reference-portrait batch, which claims her like a run. */
+const HOLDING_KINDS: ReadonlySet<JobView["kind"]> = new Set(["run", "avatar.candidates", "avatar.portraits", "scenes"]);
 
 /**
  * Whether this window knows of work that holds the avatar, so the paid check would be refused IN_FLIGHT: a photo run, a candidates batch or a portrait

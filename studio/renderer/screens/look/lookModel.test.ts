@@ -179,6 +179,13 @@ describe("whether the avatar is held", () => {
     expect(avatarHeld(view([], ["a1"]), "a1")).toBe(true);
   });
 
+  test("a scenes job of hers holds her too (the engine claims the avatar for it), while it runs and only then", () => {
+    const view = (jobs: JobView[]) => ({ jobs, paidInFlightAvatars: new Set<string>() });
+    expect(avatarHeld(view([job({ kind: "scenes", runId: null })]), "a1")).toBe(true);
+    expect(avatarHeld(view([job({ kind: "scenes", runId: null, status: "done" })]), "a1")).toBe(false);
+    expect(avatarHeld(view([job({ kind: "scenes", runId: null, avatarId: "a2" })]), "a1")).toBe(false);
+  });
+
   test("S5.3d: a reference-portrait batch of hers holds her too, while it runs and only then", () => {
     const view = (jobs: JobView[]) => ({ jobs, paidInFlightAvatars: new Set<string>() });
     expect(avatarHeld(view([job({ kind: "avatar.portraits", runId: null })]), "a1")).toBe(true);
