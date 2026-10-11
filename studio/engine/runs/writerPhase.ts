@@ -66,6 +66,13 @@ export interface WriterPhase<S extends ReadableSlot = PlanSlot> {
   jsonSchema?: { name: string; schema: Record<string, unknown> };
   /** CS.8a: how an answer is read; the writer's own reader (sentences only) when absent. An idea write's reader also settles the angle of each scene it was asked to pick. */
   read?: (content: string, slots: readonly S[]) => PhaseRead;
+  /**
+   * 5a.2 (S5.6c1, plan s5a2 §5.5): the code template's side of the seam. A slot's sentence from the template, or null when the template cannot write it
+   * (the place or the moment is not found by name in today's banks): a null slot goes to the model at its chunk's reserved ids. It never throws. A chunk
+   * whose slots are all local is journaled with no call and no reserve, before any chunk that needs the model (M4); a mixed chunk sends only its null
+   * slots. Absent: every slot goes to the model, as before.
+   */
+  local?: (slot: S) => string | null;
   /** The run job's cancel. */
   signal: AbortSignal;
   /**
@@ -206,26 +213,48 @@ async function writeChunk<S extends ReadableSlot>(
 }
 
 /**
- * Every chunk not yet in the journal, in order, one at a time. The first
- * chunk that cannot be written ends the phase: a later chunk is never asked.
+ * Every chunk not yet in the journal. The chunks the template writes whole go first, in order, with no call and no reserve (M4: a cap stop during a
+ * model chunk never strands template sentences); then the chunks that hold a slot for the model, in order, one at a time. The first chunk that cannot
+ * be written ends the phase: a later chunk is never asked.
  */
 export async function runWriterPhase<S extends ReadableSlot = PlanSlot>(deps: WriterPhaseDeps, phase: WriterPhase<S>): Promise<WriterPhaseResult> {
   const sentences = new Map(phase.sentences);
   const angles = new Map<number, PhaseAngle>();
   const bySlot = new Map(phase.slots.map((slot) => [slot.slotIndex, slot]));
-  for (const chunk of phase.chunks) {
-    if (phase.writerDone.has(chunk.chunk)) continue;
-    if (phase.stop?.aborted === true) return softStopped();
-    const slots = chunk.slotIndexes.map((slotIndex) => {
-      const slot = bySlot.get(slotIndex);
-      if (slot === undefined) throw new Error(`the writer's chunk ${chunk.chunk} names slot ${slotIndex}, which the plan does not have`);
-      return slot;
+  const todo = phase.chunks
+    .filter((chunk) => !phase.writerDone.has(chunk.chunk))
+    .map((chunk) => {
+      const slots = chunk.slotIndexes.map((slotIndex) => {
+        const slot = bySlot.get(slotIndex);
+        if (slot === undefined) throw new Error(`the writer's chunk ${chunk.chunk} names slot ${slotIndex}, which the plan does not have`);
+        return slot;
+      });
+      const local = new Map<number, string>();
+      const open: S[] = [];
+      for (const slot of slots) {
+        const text = phase.local?.(slot) ?? null;
+        if (text === null) open.push(slot);
+        else local.set(slot.slotIndex, text);
+      }
+      return { chunk, local, open };
     });
-    const written = await writeChunk(deps, phase, chunk, slots);
-    if (!written.ok) return written;
-    await deps.onChunk(chunk.chunk, written.sentences);
-    for (const [slotIndex, sentence] of written.sentences) sentences.set(slotIndex, sentence);
-    for (const [slotIndex, angle] of written.angles ?? []) angles.set(slotIndex, angle);
+  for (const { chunk, local, open } of [...todo.filter((t) => t.open.length === 0), ...todo.filter((t) => t.open.length > 0)]) {
+    if (phase.stop?.aborted === true) return softStopped();
+    let written: Map<number, string> = new Map();
+    if (open.length > 0) {
+      const asked = await writeChunk(deps, phase, chunk, open);
+      if (!asked.ok) return asked;
+      written = asked.sentences;
+      for (const [slotIndex, angle] of asked.angles ?? []) angles.set(slotIndex, angle);
+    }
+    // Journal order within a chunk is slot order, whoever wrote the sentence.
+    const whole = new Map<number, string>();
+    for (const slotIndex of chunk.slotIndexes) {
+      const text = local.get(slotIndex) ?? written.get(slotIndex);
+      if (text !== undefined) whole.set(slotIndex, text);
+    }
+    await deps.onChunk(chunk.chunk, whole);
+    for (const [slotIndex, sentence] of whole) sentences.set(slotIndex, sentence);
   }
   return { ok: true, sentences, ...(angles.size === 0 ? {} : { angles }) };
 }
