@@ -12,5 +12,5 @@
     "noUncheckedSideEffectImports": true
   },
   "include": ["engine/**/*", "montage/**/*", "text/**/*", "music/**/*", "autopilot/**/*", "scenes/**/*"],
-  "exclude": ["engine/**/*.test.ts", "engine/**/*.test.tsx", "montage/**/*.test.ts", "montage/**/*.testkit.ts", "text/**/*.test.ts", "music/**/*.test.ts", "autopilot/**/*.test.ts", "scenes/**/*.test.ts"]
+  "exclude": ["engine/**/*.test.ts", "engine/**/*.test.tsx", "montage/**/*.test.ts", "montage/**/*.testkit.ts", "text/**/*.test.ts", "music/**/*.test.ts", "autopilot/**/*.test.ts", "scenes/**/*.test.ts", "scenes/**/*.testkit.ts"]
 }

@@ -50,6 +50,7 @@ export const HOME: CategoryBank = {
         { text: "pulls the blanket over her knees", twoHanded: true },
         { text: "curls up with a cup of tea", twoHanded: false },
         { text: "stretches her arms over her head", twoHanded: true },
+        { text: "rests her head on a cushion", twoHanded: false, posture: "lying" },
       ],
     },
     {
@@ -65,6 +66,25 @@ export const HOME: CategoryBank = {
         { text: "ties her hair up", twoHanded: true, hair: "own" },
         { text: "pats moisturiser into her cheeks", twoHanded: false, gaze: "focus" },
         { text: "dries her face with a towel", twoHanded: true },
+        { text: "puts on her earrings", twoHanded: false, gaze: "focus" },
+        { text: "rubs in some hand cream", twoHanded: true, gaze: "focus" },
+        { text: "leans on the edge of the sink", twoHanded: false, posture: "leaning" },
+      ],
+    },
+    // The references' full-length mirror at home (2026-10-11): a second mirror place, so the deck's mirror shots do not all pile into the bathroom.
+    {
+      name: "her hallway by the front door",
+      at: "in her hallway by the front door",
+      room: true,
+      details: ["a coat rack by the door", "her sneakers by the door"],
+      times: ["morning", "evening"],
+      mirror: true,
+      moments: [
+        { text: "checks her outfit before going out", twoHanded: false },
+        { text: "grabs her keys from the hook", twoHanded: false },
+        { text: "leans on the wall by the door", twoHanded: false, posture: "leaning" },
+        { text: "tucks in the front of her top", twoHanded: false },
+        { text: "slips on her sneakers", twoHanded: true },
         { text: "sits on the floor by the mirror", twoHanded: false, captures: ["mirror-face-hidden"], posture: "sitting" },
       ],
     },

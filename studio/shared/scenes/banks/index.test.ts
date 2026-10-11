@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { BANKS, CUES, GAZE, HAIRSTYLES, validateBanks } from "./index";
 import { CAPTURES, isDrawnCapture } from "./captures";
 import { LIGHTS } from "./lights";
+import { momentAllowed } from "../template";
 import { fitsEveryShot } from "./schema";
 import { BANK_CATEGORIES, CAPTURE_KINDS, type BankCategory } from "./types";
 
@@ -38,6 +39,15 @@ describe("what any content must keep", () => {
       expect(place.details.length).toBeLessThanOrEqual(3);
       expect(place.moments.length).toBeGreaterThanOrEqual(4);
       expect(place.moments.some(fitsEveryShot)).toBe(true);
+    }
+  });
+
+  // I5.24: a selfie or a mirror shot takes only a place's one-handed, phone-free moments, and the planner swaps every mirror shot onto a mirror place,
+  // so a place with few of them repeats them (the variety sweep, templateVariety.test.ts, found 6 repeats in 100 slots with 3).
+  test.each([...BANK_CATEGORIES])("%s: every place has 3 moments a hand-held shot may take, a mirror place 4", (category) => {
+    for (const place of places(category)) {
+      const forHand = place.moments.filter((m) => momentAllowed(m, "selfie", "front") || momentAllowed(m, "selfie", "three-quarter")).length;
+      expect({ place: place.name, forHand: Math.min(forHand, place.mirror === true ? 4 : 3) }).toEqual({ place: place.name, forHand: place.mirror === true ? 4 : 3 });
     }
   });
 

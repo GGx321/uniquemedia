@@ -32,6 +32,8 @@ export const FITNESS: CategoryBank = {
         { text: "sits cross-legged on the mat", twoHanded: false, hair: "tied", posture: "sitting" },
         { text: "rolls out her yoga mat", twoHanded: true, gaze: "focus", hair: "tied" },
         { text: "drinks from a water bottle", twoHanded: false, hair: "tied" },
+        { text: "sits back on her heels", twoHanded: false, hair: "tied", posture: "kneeling" },
+        { text: "rests on the mat after a stretch", twoHanded: false, hair: "tied", posture: "lying" },
       ],
     },
     {
@@ -59,6 +61,8 @@ export const FITNESS: CategoryBank = {
         { text: "adjusts her ponytail", twoHanded: false, hair: "own" },
         { text: "packs her gym bag", twoHanded: true, gaze: "focus", hair: "tied" },
         { text: "dries off with a towel", twoHanded: true, hair: "tied" },
+        { text: "checks her outfit after the gym", twoHanded: false, hair: "tied" },
+        { text: "wipes her face with a towel", twoHanded: false, hair: "tied" },
       ],
     },
     {
