@@ -86,6 +86,7 @@ export const BANK_RULE = {
   hairGrammar: "hair-grammar",
   hairCap: "hair-cap",
   hairLengths: "hair-lengths",
+  hairSport: "hair-sport",
 } as const;
 type Rule = (typeof BANK_RULE)[keyof typeof BANK_RULE];
 
@@ -109,7 +110,7 @@ const AT_START = /^(in|on|at|by|against|inside|outside|under|near|beside|along|b
 const GAZE_START = /^(looking|glancing|giving|her eyes|eyes|checking)\b/;
 const CUE_START = /^(?:(?:a|an|one|her)\s|mid-)/;
 const CUE_GAZE = /\b(look\w*|glanc\w*|gaz\w*|star(?:e|es|ing)|eyes?|viewer|camera|lens|phone)\b/i;
-const HAIR_START = /^(in|half|tucked|pinned|blow-dried|a little|twisted|loose|worn|swept|down|braided|clipped)\b/;
+const HAIR_START = /^(in|half|tucked|pinned|blow-dried|a little|twisted|loose|worn|swept|down|braided|clipped|tied)\b/;
 const MOTION_START = /^(she|her)\s/;
 const MIRROR = /mirror/i;
 const VIEWER = /\bviewer\b/i;
@@ -217,7 +218,7 @@ const MomentSchema = z.strictObject({
   level: z.literal("flirty").optional(),
   angle: z.enum(["three-quarter", "profile", "back"]).optional(),
   gaze: z.enum(["own", "viewer", "focus"]).optional(),
-  hair: z.enum(["tied", "loose", "own"]).optional(),
+  hair: z.enum(["tied", "sport", "loose", "own"]).optional(),
   expression: z.literal(true).optional(),
   handAtFace: z.literal(true).optional(),
   outdoor: z.literal(true).optional(),
@@ -344,7 +345,7 @@ const CueBankSchema = z
   });
 
 const HairBankSchema = z
-  .array(z.strictObject({ text: z.string(), lengths: z.array(HairLength), tied: z.boolean(), cap: z.literal(true).optional() }))
+  .array(z.strictObject({ text: z.string(), lengths: z.array(HairLength), tied: z.boolean(), cap: z.literal(true).optional(), sport: z.literal(true).optional() }))
   .min(1)
   .superRefine((styles, ctx) => {
     const add = adder(ctx);
@@ -356,6 +357,7 @@ const HairBankSchema = z
       if (!HAIR_START.test(style.text)) add(BANK_RULE.hairGrammar, where, "reads after «Today her hair is …»");
       if (COLOUR_WORDS.test(style.text)) add(BANK_RULE.hairColour, where, "a style names no colour at all (I5.25)");
       if (style.cap === true && style.tied) add(BANK_RULE.hairCap, where, "a cap style is worn loose");
+      if (style.sport === true && !style.tied) add(BANK_RULE.hairSport, where, "a sporty style is tied: a ponytail, a bun, a braid, tied or pinned back");
       if (style.lengths.length === 0 || new Set(style.lengths).size !== style.lengths.length) add(BANK_RULE.hairLengths, where, "fits one or more hair lengths, each once");
     }
   });

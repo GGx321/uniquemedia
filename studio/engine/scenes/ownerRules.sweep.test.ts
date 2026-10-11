@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarDescriptor } from "../../shared/engine";
-import { BANKS, CUES, GAZE } from "../../shared/scenes/banks";
+import { BANKS, CUES, GAZE, HAIRSTYLES } from "../../shared/scenes/banks";
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { plainSentence } from "../../shared/scenes/plain";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { assembleSlot } from "./assembler";
+import { hairLinesOf } from "./hairLines";
 import { localSentences } from "./localSentences";
 import { slotKeyOf } from "./phoneLook";
 import { plan } from "./planner";
@@ -28,22 +29,27 @@ interface Frame {
   slot: PlanSlot;
   capture: Capture;
   sentence: string;
+  /** The slot's hairstyle (the run's hair line, «Today her hair is …»), or null for none. The avatar's hair length rotates with the seed. */
+  hair: string | null;
   /** The slot's final image prompt, assembled on first use (the assembler is the sweep's dear step, so only the frames a rule reads are assembled). */
   prompt: () => string;
 }
+
+const LENGTHS = ["bob", "shoulder", "long"] as const;
 
 function framesOf(category: Category, seed: number): Frame[] {
   const p = plan({ seed: seed * 7919 + COUNT, count: COUNT, categories: [category], poses: seed % 2 === 0 ? { profile: true, back: true } : { profile: false, back: false } });
   const runId = `run-${category}-${seed}`;
   const local = localSentences({ slots: p.slots, keyOf: (s) => slotKeyOf(runId, s.attemptIdBase) });
+  const hair = hairLinesOf(p.slots, LENGTHS[seed % LENGTHS.length] ?? "shoulder", runId);
   return p.slots.map((slot) => {
     const sentence = local(slot) ?? plainSentence(slot);
     let prompt: string | undefined;
     const assemble = (): string => {
-      prompt ??= assembleSlot(DESCRIPTOR, slot, sentence, MASTER, { runId, cameraRealism: seed % 4 !== 0, roomPlaceOf, lookOf: slotLookOf }).prompt;
+      prompt ??= assembleSlot(DESCRIPTOR, slot, sentence, MASTER, { runId, cameraRealism: seed % 4 !== 0, roomPlaceOf, lookOf: slotLookOf, hairStyleOf: (s) => hair.get(s.slotIndex) ?? null }).prompt;
       return prompt;
     };
-    return { slot, capture: slot.capture ?? captureOfShot(slot.shot), sentence, prompt: assemble };
+    return { slot, capture: slot.capture ?? captureOfShot(slot.shot), sentence, hair: hair.get(slot.slotIndex) ?? null, prompt: assemble };
   });
 }
 
@@ -150,6 +156,30 @@ describe("«Гламур»: the photo fits the place it is taken in", () => {
     expect(home.size).toBeGreaterThan(0);
     expect(FRAMES.glamour.filter((f) => home.has(f.slot.location)).length).toBeGreaterThan(PLANS);
     expect(offenders(FRAMES.glamour, (f) => home.has(f.slot.location) && !isSelfShot(f.capture))).toEqual(NONE);
+  });
+});
+
+// S5.6R (round C): «blow-dried smooth» or «… straight and worn loose» on about 30 % of «Фитнес» frames, a loose style on 70 %, a sporty one on 11 %. A workout
+// moment is a sport moment now: a sporty style on 3 in 4 of a run's, the rest loose. The hair colour is the reference photo's whatever the style (hairLines).
+describe("«Фитнес»: she trains in a sporty hairstyle", () => {
+  const SPORTY = new Set(HAIRSTYLES.filter((s) => s.sport === true).map((s) => s.text));
+  const lines = FRAMES.fitness.flatMap((f) => (f.hair === null ? [] : [f.hair]));
+  const share = (test: (style: string) => boolean): number => lines.filter(test).length / lines.length;
+
+  test("the sweep holds «Фитнес» hair lines", () => {
+    expect(lines.length).toBeGreaterThan(PLANS * (COUNT / 2));
+  });
+
+  test("a sporty style (a ponytail, a sleek bun, a braid, tied or pinned back) on 3 in 4 of them at least", () => {
+    expect(share((style) => SPORTY.has(style))).toBeGreaterThanOrEqual(0.75);
+  });
+
+  test("a blow-dried style on 15 % of them at most", () => {
+    expect(share((style) => /blow-dried/.test(style))).toBeLessThanOrEqual(0.15);
+  });
+
+  test("the hair line keeps her hair colour from the reference photo", () => {
+    expect(offenders(FRAMES.fitness.filter((f, i) => f.hair !== null && i % 50 === 0), (f) => !f.prompt().includes("the same hair colour as in the reference photo"))).toEqual(NONE);
   });
 });
 

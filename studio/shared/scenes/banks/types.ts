@@ -25,8 +25,11 @@ export type Angle = Exclude<ScenePose, "front">;
 /** How a moment holds her gaze: `own` carries it in the moment itself, `viewer` looks at the viewer, `focus` keeps her eyes on what her hands do. */
 export type MomentGaze = "own" | "viewer" | "focus";
 
-/** Hair a moment needs: `tied` may take a tied style (at most 1 in 4 of a run, probe P-5a2), `loose` never does, `own` names her hair itself (no hair line). */
-export type MomentHair = "tied" | "loose" | "own";
+/**
+ * Hair a moment needs: `tied` may take a tied style (at most 1 in 4 of a run, probe P-5a2), `loose` never does, `own` names her hair itself (no hair line).
+ * `sport` is a workout moment (S5.6R): a sporty style (`Hairstyle.sport`) on 3 in 4 of the run's sport moments, outside the tied cap; the rest a loose style.
+ */
+export type MomentHair = "tied" | "sport" | "loose" | "own";
 
 /** What she is doing, caught mid-moment: a finite present-tense verb phrase without its subject, «waits for the kettle». */
 export interface Moment {
@@ -137,4 +140,6 @@ export interface Hairstyle {
   tied: boolean;
   /** A cap: outdoor moments only, at most 1 in 8 of a run. */
   cap?: true;
+  /** A training style (a ponytail, a sleek bun, a braid, tied or pinned back): what a `sport` moment wears. Always tied. */
+  sport?: true;
 }

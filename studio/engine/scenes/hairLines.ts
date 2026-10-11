@@ -7,7 +7,8 @@ import { CATEGORIES } from "./types";
 
 // 5a.2 (S5.6b, plan s5a2 §5.3): the hair line of a run's prompts. Hair varies from photo to photo (a ponytail, a claw clip, a loose braid) while its colour never
 // changes; the style is drawn once for the whole run, in slot order, by the shared `hairstyleSequence` (avoid the previous 3; tied styles on `tied` moments
-// only and at most a quarter of the run; a cap outdoors only and at most an eighth). Each slot's tags come from its moment in today's pools; an own scene, a
+// only and at most a quarter of the run; a sporty style on 3 in 4 of the run's `sport` moments, «Фитнес»'s workouts (S5.6R); a cap outdoors only and at most
+// an eighth). Each slot's tags come from its moment in today's pools; an own scene, a
 // custom category and a renamed place have none and simply take a style.
 
 /** The avatar's hair length from its stored traits, or undefined when it holds none we can read (such an avatar's prompts carry no hair line). */

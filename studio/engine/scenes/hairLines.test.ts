@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { HAIRSTYLES } from "../../shared/scenes/banks";
-import { hairstyleSequence } from "../../shared/scenes/hair";
+import { hairstyleSequence, sportyOf } from "../../shared/scenes/hair";
 import { hairLinesOf } from "./hairLines";
 import { plan } from "./planner";
 import { POOLS } from "./pools";
@@ -39,7 +39,8 @@ describe("hairLinesOf", () => {
     }
   });
 
-  test("tied styles go only to tied moments, at most a quarter of the run; caps only outdoors, at most an eighth", () => {
+  // S5.6R (round C): «Фитнес»'s workout moments are `sport` moments, whose sporty styles (tied) are outside the tied cap; a `tied` moment keeps it.
+  test("tied styles go only to tied and sport moments, a tied moment's at most a quarter of the run; caps only outdoors, at most an eighth", () => {
     for (const run of ["run-a", "run-b", "run-c", "run-d"]) {
       const lines = hairLinesOf(slots, "long", run);
       let tied = 0;
@@ -47,8 +48,9 @@ describe("hairLinesOf", () => {
       for (const slot of slots) {
         const style = styleOf(lines.get(slot.slotIndex) ?? "");
         if (style?.tied === true) {
-          tied++;
-          expect(momentOf(slot)?.hair).toBe("tied");
+          expect(["tied", "sport"]).toContain(momentOf(slot)?.hair ?? "");
+          if (momentOf(slot)?.hair === "tied") tied++;
+          if (momentOf(slot)?.hair === "sport") expect(style.sport).toBe(true);
         }
         if (style?.cap === true) {
           caps++;
@@ -58,6 +60,20 @@ describe("hairLinesOf", () => {
       expect(tied).toBeLessThanOrEqual(Math.floor(slots.length / 4));
       expect(caps).toBeLessThanOrEqual(Math.floor(slots.length / 8));
     }
+  });
+
+  test("«Фитнес»'s workout moments are sport moments, and no other category has one", () => {
+    const sportOf = (category: Category) => POOLS[category].locations.flatMap((l) => l.activities).filter((a) => a.hair === "sport").length;
+    expect(ALL.filter((c) => sportOf(c) > 0)).toEqual(["fitness"]);
+    expect(POOLS.fitness.locations.flatMap((l) => l.activities).filter((a) => a.hair !== "sport" && a.hair !== "own").map((a) => a.text)).toEqual([]);
+  });
+
+  test("a «Фитнес» run wears a sporty style on 3 in 4 of its workout moments", () => {
+    const fitness = plan({ seed: 7, count: 12, categories: ["fitness"] }).slots;
+    const lines = hairLinesOf(fitness, "shoulder", "run-fit");
+    const workout = fitness.filter((s) => momentOf(s)?.hair === "sport");
+    expect(workout.length).toBeGreaterThan(0);
+    expect(workout.filter((s) => styleOf(lines.get(s.slotIndex) ?? "")?.sport === true)).toHaveLength(sportyOf(workout.length));
   });
 
   test("no style repeats within the previous three", () => {

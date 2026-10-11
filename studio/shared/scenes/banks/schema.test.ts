@@ -316,6 +316,7 @@ describe("the hairstyle bank", () => {
     ["space buns", { text: "in space buns", lengths: ["long"], tied: true }, BANK_RULE.youthProp],
     ["a tied cap", { text: "in a ponytail under a cap", lengths: ["long"], tied: true, cap: true }, BANK_RULE.hairCap],
     ["a style for no length", { text: "in a low bun", lengths: [], tied: true }, BANK_RULE.hairLengths],
+    ["a sporty style worn loose", { text: "swept back with a headband", lengths: ["long"], tied: false, sport: true }, BANK_RULE.hairSport],
   ];
 
   test.each(ROWS)("refuses %s", (_name, style, rule) => {

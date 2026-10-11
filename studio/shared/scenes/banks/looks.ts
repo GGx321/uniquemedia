@@ -63,21 +63,24 @@ const SHOULDER_UP = ["shoulder", "long"] as const;
 
 // §5.3: by hair length (a bob's styles fit longer hair too). No pigtails, two braids or space buns (I5.29). A tied style goes only to a `tied`
 // moment, at most 1 in 4 of a run (probe P-5a2; hair.ts). «half up in a tiny clip» became «half up in a small clip»: «tiny» is a youth word.
+// S5.6R (round C): a `sport` moment («Фитнес») wears a `sport` style on 3 in 4 of a run's: the ponytails, the sleek bun, the braid, the small claw clip that
+// pins a bob back, and «tied back off her face» (new, every length). Not the messy buns (P-5a2 lost likeness on one), the half-up styles or the twisted-up clip.
 export const HAIRSTYLES: readonly Hairstyle[] = [
   { text: "tucked behind her ears", lengths: ALL, tied: false },
   { text: "blow-dried smooth", lengths: ALL, tied: false },
   { text: "a little tousled", lengths: ALL, tied: false },
-  { text: "pinned back with a small claw clip", lengths: ALL, tied: true },
+  { text: "pinned back with a small claw clip", lengths: ALL, tied: true, sport: true },
   { text: "half up in a small clip", lengths: ALL, tied: true },
   { text: "blow-dried straight and worn loose", lengths: SHOULDER_UP, tied: false },
   { text: "half up, half down", lengths: SHOULDER_UP, tied: true },
-  { text: "in a low ponytail", lengths: SHOULDER_UP, tied: true },
-  { text: "in a high ponytail", lengths: SHOULDER_UP, tied: true },
+  { text: "in a low ponytail", lengths: SHOULDER_UP, tied: true, sport: true },
+  { text: "in a high ponytail", lengths: SHOULDER_UP, tied: true, sport: true },
   { text: "twisted up in a claw clip", lengths: SHOULDER_UP, tied: true },
   { text: "in a messy bun", lengths: SHOULDER_UP, tied: true },
-  { text: "in a sleek low bun", lengths: SHOULDER_UP, tied: true },
-  { text: "in a loose side braid", lengths: ["long"], tied: true },
-  { text: "in a long high ponytail", lengths: ["long"], tied: true },
+  { text: "in a sleek low bun", lengths: SHOULDER_UP, tied: true, sport: true },
+  { text: "in a loose side braid", lengths: ["long"], tied: true, sport: true },
+  { text: "in a long high ponytail", lengths: ["long"], tied: true, sport: true },
   { text: "in a messy top bun", lengths: ["long"], tied: true },
   { text: "loose under a baseball cap", lengths: ALL, tied: false, cap: true },
+  { text: "tied back off her face", lengths: ALL, tied: true, sport: true },
 ];

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { HAIRSTYLES } from "./banks";
 import type { HairLength } from "./banks/types";
-import { capCap, hairstyleSequence, tiedCap, type HairSlot } from "./hair";
+import { capCap, hairstyleSequence, sportyOf, tiedCap, type HairSlot } from "./hair";
 
 // 5a.2 (S5.6a, plan s5a2 §5.3, I5.24, I5.25) with probe P-5a2 (2026-10-11): a messy bun lost likeness (cos 0.714 under the 0.718 bar), so a tied
 // style goes only to a moment tagged `tied`, and to at most 1 in 4 photos of a run. A cap goes only to an outdoor moment, at most 1 in 8. A moment
@@ -103,7 +103,7 @@ describe("hairstyleSequence", () => {
     }
   });
 
-  test("a bob in a Fitness run (every moment tied) varies its loose styles over the cap, deterministically", () => {
+  test("a bob in a run of tied moments varies its loose styles over the cap, deterministically", () => {
     const slots: HairSlot[] = Array.from({ length: 12 }, () => ({ hair: "tied" }));
     const styles = hairstyleSequence(slots, "bob", "run-fitness");
     expect(styles.filter((t) => style(t)?.tied === true).length).toBe(3);
@@ -120,5 +120,59 @@ describe("hairstyleSequence", () => {
   test("varies: over a 25-photo run of ordinary moments, 4 styles at least", () => {
     for (const length of LENGTHS) expect(new Set(hairstyleSequence(Array.from({ length: 25 }, () => ({})), length, "run-v")).size).toBeGreaterThanOrEqual(3);
     expect(new Set(hairstyleSequence(Array.from({ length: 25 }, (_, i) => (i % 4 === 0 ? { hair: "tied" } : {})), "long", "run-v")).size).toBeGreaterThanOrEqual(4);
+  });
+});
+
+// S5.6R (round C): «blow-dried smooth» on about 70 % of «Фитнес» frames. A workout moment is a `sport` moment: a sporty style (a ponytail, a sleek bun, a
+// braid, tied or pinned back) on 3 in 4 of the run's sport moments, spread over them, the rest a loose style. The tied cap (1 in 4 of the run) stays for
+// `tied` moments; a sporty style is not counted in it. The messy buns (probe P-5a2's likeness loss), the half-up styles and the twisted-up clip are not sporty.
+describe("a sport moment's sporty styles", () => {
+  const SPORTY = HAIRSTYLES.filter((s) => s.sport === true);
+
+  test.each<[number, number]>([
+    [0, 0],
+    [1, 1],
+    [3, 3],
+    [4, 3],
+    [5, 4],
+    [12, 9],
+    [20, 15],
+  ])("%p sport moments: %p sporty", (moments, sporty) => {
+    expect(sportyOf(moments)).toBe(sporty);
+  });
+
+  test("a sporty style is a ponytail, a sleek bun, a braid, or tied or pinned back, and is tied", () => {
+    expect(SPORTY.map((s) => s.text).every((text) => /ponytail|sleek low bun|braid|tied back|pinned back/.test(text))).toBe(true);
+    expect(SPORTY.every((s) => s.tied)).toBe(true);
+    expect(SPORTY.map((s) => s.text).filter((text) => /messy|half up|twisted/.test(text))).toEqual([]);
+  });
+
+  test.each([...LENGTHS])("%s: two sporty styles at least", (length) => {
+    expect(SPORTY.filter((s) => s.lengths.includes(length)).length).toBeGreaterThanOrEqual(2);
+  });
+
+  test.each([...LENGTHS])("%s: a run of 12 sport moments wears 9 sporty styles, spread over it, and 3 loose ones", (length) => {
+    const styles = hairstyleSequence(Array.from({ length: 12 }, () => ({ hair: "sport" as const })), length, "run-fitness");
+    // The tied styles' even spread (tiedTurn): one loose style in every 4 photos.
+    expect(styles.map((t) => style(t)?.sport === true)).toEqual([false, true, true, true, false, true, true, true, false, true, true, true]);
+    expect(styles.filter((t) => style(t)?.sport !== true).every((t) => style(t)?.tied === false)).toBe(true);
+  });
+
+  test("a sporty style is not counted in the tied cap: the run's tied moments still take theirs", () => {
+    const slots: HairSlot[] = Array.from({ length: 8 }, (_, i) => (i < 4 ? { hair: "sport" } : { hair: "tied" }));
+    const styles = hairstyleSequence(slots, "long", "run-3");
+    expect(styles.slice(0, 4).filter((t) => style(t)?.sport === true)).toHaveLength(3);
+    expect(styles.slice(4).filter((t) => style(t)?.tied === true)).toHaveLength(tiedCap(8));
+  });
+
+  test("an outdoor sport moment past its sporty share may take the cap, within the run's 1 in 8", () => {
+    for (let seed = 0; seed < 40; seed++) {
+      const slots: HairSlot[] = Array.from({ length: 16 }, () => ({ hair: "sport", outdoor: true }));
+      const styles = hairstyleSequence(slots, "shoulder", `run-${seed}`);
+      expect(styles.filter((t) => style(t)?.cap === true).length).toBeLessThanOrEqual(capCap(16));
+      styles.forEach((t) => {
+        if (style(t)?.cap === true) expect(style(t)?.sport).toBeUndefined();
+      });
+    }
   });
 });

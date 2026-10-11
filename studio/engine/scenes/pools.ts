@@ -256,7 +256,7 @@ const BuiltInActivitySchema = z.strictObject({
   level: z.literal("flirty").optional(),
   angle: z.enum(["three-quarter", "profile", "back"]).optional(),
   gaze: z.enum(["own", "viewer", "focus"]).optional(),
-  hair: z.enum(["tied", "loose", "own"]).optional(),
+  hair: z.enum(["tied", "sport", "loose", "own"]).optional(),
   expression: TRUE,
   handAtFace: TRUE,
   outdoor: TRUE,
