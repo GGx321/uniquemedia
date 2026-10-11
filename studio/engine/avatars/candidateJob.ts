@@ -442,7 +442,8 @@ async function rankImage(job: CandidateJob, rank: RankSlot, slot: number, bytes:
     case "mismatch": {
       // Decided here by the likeness against the contract's floor, not by the gate's own configured threshold: a stored or reported likeness must always fit the contract.
       const likeness = clampCosine(verdict.similarity);
-      if (likeness < PORTRAIT_MIN_LIKENESS) return { kind: "ended", outcome: { slot, kind: "ranked-out", why: "unlike", likeness } };
+      // Written as a negated `>=` so a NaN (a broken embedding) is out, never a candidate; the report needs a finite number, so it is the cosine's floor.
+      if (!(likeness >= PORTRAIT_MIN_LIKENESS)) return { kind: "ended", outcome: { slot, kind: "ranked-out", why: "unlike", likeness: Number.isNaN(likeness) ? -1 : likeness } };
       return { kind: "ranked", rank: { likeness, headRatio: verdict.headRatio } };
     }
     case "no-face":

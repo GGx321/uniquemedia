@@ -334,6 +334,18 @@ describe("the free ranking after the image", () => {
     expect(results[1]).toEqual({ slot: 2, kind: "ranked-out", why: "unlike", likeness: -1 });
   });
 
+  test("a NaN similarity is ranked out as unlike with a finite likeness, never stored as a candidate", async () => {
+    const script: Record<number, FaceVerdict> = { 1: match(Number.NaN), 2: { kind: "mismatch", similarity: Number.NaN, faces: 1, headRatio: 0.3 } };
+    const { outcomes, stored } = run(network(), { batch: { rank: async (slot) => script[slot] ?? match(0.7) } });
+    const results = await outcomes;
+
+    expect(results[0]).toEqual({ slot: 1, kind: "ranked-out", why: "unlike", likeness: -1 });
+    expect(results[1]).toEqual({ slot: 2, kind: "ranked-out", why: "unlike", likeness: -1 });
+    expect(stored.map((s) => s.meta.qa?.faceCos)).toEqual([0.7, 0.7, 0.7]);
+    const end = portraitJobEnd(results, false);
+    expect(end.status === "done" && PortraitsResult.safeParse({ kind: "avatar.portraits", avatarId: "avatar-00000001", candidates: end.candidates.map((c) => ({ avatarId: "avatar-00000001", ...c })), failedSlots: end.failedSlots }).success).toBe(true);
+  });
+
   test("the verdict is decided by the likeness against the contract's 0.55, whatever the gate's own threshold said", async () => {
     // A gate configured looser than 0.55 calls 0.5 a match; one configured stricter calls 0.6 a mismatch. The stored and reported values must fit the contract either way.
     const script: Record<number, FaceVerdict> = { 1: match(0.5), 2: { kind: "mismatch", similarity: 0.6, faces: 1, headRatio: 0.3 }, 3: match(0.55) };
