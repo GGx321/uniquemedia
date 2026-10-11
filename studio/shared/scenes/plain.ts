@@ -29,13 +29,30 @@ export interface PlainSlot {
   capture?: Capture | undefined;
 }
 
+/** An activity that opens with a preposition reads after «she is» («on the phone with her sister», «at the window, smiling»). */
+const OPENS_WITH_PREPOSITION = /^(?:in|on|at|by|under|near|beside|behind|along|against|inside|outside|over|across|around|with)\s/i;
+/** An activity that opens with a third-person verb of its own («takes a short break», «waters the plants») reads after «she». */
+const OPENS_WITH_A_VERB = /^[a-z]{2,}[^s\W]s\b/i;
+/** A determiner opens a noun phrase, never a verb («a slow walk by the water»). */
+const OPENS_WITH_A_DETERMINER = /^(?:a|an|the|some|her|two|his|their)\s/i;
+
+/**
+ * What follows «she» for a custom activity (S5.6R): «is {activity}» for an «-ing» verb or a position (custom.ts `rendersActivity`) and for a preposition; the
+ * activity itself for a verb of its own; and «is enjoying {activity}» for a noun phrase, which read «she morning stretches» before.
+ */
+function customDoing(activity: string): string {
+  if (rendersActivity(activity) || OPENS_WITH_PREPOSITION.test(activity)) return `is ${activity}`;
+  if (OPENS_WITH_A_VERB.test(activity) && !OPENS_WITH_A_DETERMINER.test(activity)) return activity;
+  return `is enjoying ${activity}`;
+}
+
 export function plainSentence(slot: PlainSlot): string {
   const bank = BANK_CATEGORIES.find((c) => c === slot.category);
   const place = bank === undefined ? undefined : BANKS[bank].places.find((p) => p.name === slot.location);
   const moment = place?.moments.find((m) => m.text === slot.activity);
   const at = place === undefined ? locativeOf(field(slot.location)) : field(place.at);
   const activity = field(slot.activity);
-  const doing = moment !== undefined ? moment.text : rendersActivity(activity) ? `is ${activity}` : activity;
+  const doing = moment !== undefined ? moment.text : customDoing(activity);
   const selfShot = slot.capture !== undefined ? shotOf(slot.capture) === "selfie" : slot.shot !== undefined && shotOf(captureOfShot(slot.shot)) === "selfie";
   const names = (text: string): boolean => selfShot && (PHONE_WORDS.test(text) || SELFIE_WORDS.test(text));
   const outfit = field(slot.outfit);

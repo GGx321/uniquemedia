@@ -21,7 +21,7 @@ export const PHOTOSHOOT: CategoryBank = {
     {
       name: "a cafe table on the pavement",
       at: "at a cafe table on the pavement",
-      details: ["a cup and saucer", "a small vase on the table", "a croissant on a plate"],
+      details: ["a cup and saucer", "a small vase of flowers", "a croissant on a plate"],
       times: ["morning", "midday"],
       moments: [
         { text: "sits with her legs crossed", motion: "she swings her crossed foot slowly", captures: ["timer", "friend"], twoHanded: false },
@@ -52,7 +52,7 @@ export const PHOTOSHOOT: CategoryBank = {
       moments: [
         { text: "sits on the railing", motion: "she swings one foot a little", captures: ["friend", "timer", "selfie", "candid"], twoHanded: false, outdoor: true },
         { text: "leans her arms on the railing", motion: "she rests her chin down slowly", captures: ["friend", "timer", "candid"], twoHanded: true, outdoor: true },
-        { text: "looks out at the passing cars", motion: "she turns her head slowly", captures: ["candid", "friend"], twoHanded: false, gaze: "own", outdoor: true },
+        { text: "looks out at the passing cars", motion: "she turns her head slowly", captures: ["candid", "friend"], twoHanded: false, gaze: "own", angle: "three-quarter", outdoor: true },
         { text: "holds a takeaway coffee", motion: "she lifts the cup a little", captures: ["selfie", "friend"], twoHanded: false, outdoor: true },
       ],
     },

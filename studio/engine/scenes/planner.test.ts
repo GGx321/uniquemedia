@@ -58,9 +58,11 @@ describe("boundaries", () => {
     expect(() => plan({ seed: 1, count: 1.5, categories: ["home"] })).toThrow(RangeError);
   });
 
+  // S5.6R: «Фитнес» at home is self-shot, so its home places take only the timer and the selfie; a friend's draw never lands there. «Виды» still has a
+  // moment for every capture of its deck at every place, so it is the category whose full pass must visit each place once.
   test("max: a single category filled up to its location count repeats no location", () => {
-    const max = POOLS.fitness.locations.length;
-    const p = plan({ seed: 1, count: max, categories: ["fitness"] });
+    const max = POOLS.travel.locations.length;
+    const p = plan({ seed: 1, count: max, categories: ["travel"] });
     expect(new Set(p.slots.map((s) => s.location)).size).toBe(max);
   });
 
@@ -415,21 +417,24 @@ describe("pose (T5c)", () => {
     });
   });
 
-  describe("rng isolation: adding pose draws never perturbs the existing location/outfit/shot draws", () => {
-    test("stripping `pose` from every slot reproduces the plan from before T5c, for the same seed, with or without a pose allowance", () => {
+  // S5.6b drew the moment after the pose (a moment fits its pose: «looks back over her shoulder» is three-quarter), so a different pose may take a different
+  // moment, and the outfit and time a moment pins follow it; these two seeds only kept their moments by luck, and S5.6R's three-quarter «looks out at the view»
+  // moved one. What the pose stream must never move is who takes each photo and where: the captures and the places are drawn on the category's own streams.
+  describe("rng isolation: adding pose draws never perturbs who takes each photo or where", () => {
+    const drawnBeforeThePose = (p: ReturnType<typeof plan>) => p.slots.map(({ slotIndex, category, location, shot, capture, attemptIdBase }) => ({ slotIndex, category, location, shot, capture, attemptIdBase }));
+
+    test("with or without a pose allowance, the same seed draws the same captures at the same places", () => {
       const withoutPoses = plan({ seed: 20260924, count: 20, categories: ALL_CATEGORIES });
       const withPoses = plan({ seed: 20260924, count: 20, categories: ALL_CATEGORIES, poses: { profile: true, back: true } });
-
-      const strip = (p: typeof withoutPoses) => p.slots.map(({ pose: _pose, ...rest }) => rest);
-      expect(strip(withPoses)).toEqual(strip(withoutPoses));
+      expect(drawnBeforeThePose(withPoses)).toEqual(drawnBeforeThePose(withoutPoses));
     });
 
-    test("a different pose allowance changes only `pose`, never location/outfit/activity/timeOfDay/shot, for the same seed", () => {
-      const neither = plan({ seed: 7, count: 20, categories: ALL_CATEGORIES, poses: { profile: false, back: false } });
-      const both = plan({ seed: 7, count: 20, categories: ALL_CATEGORIES, poses: { profile: true, back: true } });
-
-      const strip = (p: typeof neither) => p.slots.map(({ pose: _pose, ...rest }) => rest);
-      expect(strip(both)).toEqual(strip(neither));
+    test("a different pose allowance never changes a slot's capture or place, over many seeds", () => {
+      for (let seed = 1; seed <= 200; seed++) {
+        const neither = plan({ seed, count: 20, categories: ALL_CATEGORIES, poses: { profile: false, back: false } });
+        const both = plan({ seed, count: 20, categories: ALL_CATEGORIES, poses: { profile: true, back: true } });
+        expect(drawnBeforeThePose(both)).toEqual(drawnBeforeThePose(neither));
+      }
     });
   });
 });

@@ -55,6 +55,36 @@ describe("the capture line opens the prompt, by who took the photo", () => {
   });
 });
 
+// S5.6R (LOW): a friend's photo of a moment about her feet («slips on her heels») shows her whole body, never «from her knees up»; any other moment keeps the
+// line its key draws.
+describe("a friend's photo of a moment about her feet", () => {
+  const KEYS = Array.from({ length: 40 }, (_, i) => `slot-${i + 1}`);
+
+  test.each(["slips on her heels", "laces up her sneakers", "rests one foot against the wall", "sits with her feet on the railing", "kicking off her shoes"])(
+    "«%s» takes a whole-body friend line, on a friend and a candid",
+    (activity) => {
+      for (const capture of ["friend", "candid"] as const) {
+        for (const attemptIdBase of KEYS) {
+          const slot = slotOf(capture, { category: "glamour", location: "her front door", activity, outfit: "a navy wrap dress", attemptIdBase });
+          const prompt = assemble(slot);
+          expect(prompt.startsWith(captureLineOf(capture, keyOf(slot), { wholeBody: true }))).toBe(true);
+          expect(prompt).not.toContain("from her knees up");
+        }
+      }
+    },
+  );
+
+  test("a moment that is not about her feet keeps the line its key draws, knees-up included", () => {
+    let kneesUp = 0;
+    for (const attemptIdBase of KEYS) {
+      const slot = slotOf("friend", { category: "glamour", location: "her front door", activity: "grabs her keys", outfit: "a navy wrap dress", attemptIdBase });
+      expect(assemble(slot).startsWith(captureLineOf("friend", keyOf(slot)))).toBe(true);
+      if (assemble(slot).includes("from her knees up")) kneesUp++;
+    }
+    expect(kneesUp).toBeGreaterThan(0);
+  });
+});
+
 describe("back or side to the mirror", () => {
   test("a moment tagged mirrorBack adds the sentence straight after the capture line", () => {
     const slot = slotOf("mirror-hidden", { location: "her bathroom", activity: "sits on the counter by the mirror", outfit: "an open-back top and grey jeans", pose: "three-quarter" });

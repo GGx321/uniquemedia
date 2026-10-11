@@ -164,6 +164,8 @@ describe("a category bank", () => {
     ["a detail that is not a noun phrase with its article", withRoom({ details: ["makeup on the counter", "a fruit bowl"] }), BANK_RULE.detailGrammar],
     ["a detail over the pool text bound", withStreet({ details: ["a bicycle leaning against the old wall", "a cat"] }), BANK_RULE.text],
     ["a detail that names a mirror", withRoom({ details: ["a full-length mirror", "a fruit bowl"] }), BANK_RULE.mirrorWord],
+    // S5.6R: a place that is not a room puts a detail in its own sentence («On a park running path, …, with a park bench by the path»).
+    ["a detail that names its place's own word again («On a narrow street, …, with a bicycle on the street»)", withStreet({ details: ["a bicycle on the street", "some flower pots on a windowsill"] }), BANK_RULE.detailRepeat],
     ["a locative phrase without its preposition", withRoom({ at: "her small kitchen" }), BANK_RULE.at],
     ["a place name that names a mirror", withRoom({ name: "her hallway mirror", at: "in her hallway" }), BANK_RULE.mirrorWord],
     ["a locative phrase that names a mirror", withRoom({ at: "at the mirror in her kitchen" }), BANK_RULE.mirrorWord],

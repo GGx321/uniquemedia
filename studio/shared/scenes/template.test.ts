@@ -78,10 +78,11 @@ describe("the shape", () => {
     for (const key of KEYS) expect(templateSentence(slotOf("home", place, moment, "mirror-hidden", "front"), { key })).toBe(`${cap(place.at)}, she ${moment.text}, wearing ${firstOutfit("home", moment)}.`);
   });
 
+  // S5.6R: the taxi's «looks out of the window» (the glamour moment this found) is a selfie now; «Виды» keeps a friend's own-gaze moment on any facing pose.
   test("a moment that carries its own gaze gets no gaze clause, and keeps its cue", () => {
-    const { place, moment } = find("glamour", () => true, (m) => m.captures.includes("friend") && m.gaze === "own" && m.angle === undefined && m.phone !== true && m.expression === undefined);
+    const { place, moment } = find("travel", () => true, (m) => m.captures.includes("friend") && m.gaze === "own" && m.angle === undefined && m.phone !== true && m.expression === undefined);
     for (const key of KEYS) {
-      const sentence = templateSentence(slotOf("glamour", place, moment, "friend", "front"), { key }) ?? "";
+      const sentence = templateSentence(slotOf("travel", place, moment, "friend", "front"), { key }) ?? "";
       expect(clauses(sentence).gaze).toBeNull();
       expect(clauses(sentence).cue).not.toBeNull();
     }

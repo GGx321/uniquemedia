@@ -36,6 +36,21 @@ describe("plainSentence", () => {
     expect(plainSentence({ category: "home", location, activity, outfit: "a white t-shirt" })).toBe(expected);
   });
 
+  // S5.6R (LOW): a custom activity that is a noun phrase read «she morning stretches» and «she a slow walk by the water». It now reads «she is enjoying …»; one
+  // that opens with a preposition reads «she is …»; one that opens with a verb of its own keeps it.
+  test.each([
+    ["morning stretches", "In her living room, she is enjoying morning stretches, wearing a sundress."],
+    ["a slow walk by the water", "In her living room, she is enjoying a slow walk by the water, wearing a sundress."],
+    ["coffee by the window", "In her living room, she is enjoying coffee by the window, wearing a sundress."],
+    ["picnic on the grass", "In her living room, she is enjoying picnic on the grass, wearing a sundress."],
+    ["the sunset from the terrace", "In her living room, she is enjoying the sunset from the terrace, wearing a sundress."],
+    ["on the phone with her sister", "In her living room, she is on the phone with her sister, wearing a sundress."],
+    ["at the window, smiling", "In her living room, she is at the window, smiling, wearing a sundress."],
+    ["waters the plants", "In her living room, she waters the plants, wearing a sundress."],
+  ])("a custom activity %j reads as a sentence: %j", (activity, expected) => {
+    expect(plainSentence({ category: "cat-summer-days", location: "her living room", activity, outfit: "a sundress" })).toBe(expected);
+  });
+
   test("a place and a moment the bank knows by name read as the template reads them: «she {moment}»", () => {
     const place = BANKS.home.places.find((p) => p.moments.length > 0);
     const moment = place?.moments[0];

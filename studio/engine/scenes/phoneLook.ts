@@ -35,7 +35,17 @@ export const FRIEND_VARIANTS: readonly string[] = [
   "from eye level, from her knees up",
 ];
 
-const friendLine = (key: string): string => `A quick phone photo someone she asked took of her, ${pick(FRIEND_VARIANTS, key, "friend")}; she is not taking the photo herself.`;
+/** The variants that show her whole body: the only ones a moment about her feet takes (S5.6R: «from her knees up» cut off «slips on her heels»). */
+const WHOLE_BODY_VARIANTS: readonly string[] = FRIEND_VARIANTS.filter((variant) => variant.includes("her whole body in the picture"));
+
+/** What the capture line reads of the moment, beyond who took the photo. */
+export interface CaptureFraming {
+  /** The moment is about her feet: a friend's or a candid photo shows her whole body. Absent or false: the line the key draws. */
+  wholeBody?: boolean;
+}
+
+const friendLine = (key: string, framing: CaptureFraming): string =>
+  `A quick phone photo someone she asked took of her, ${pick(framing.wholeBody === true ? WHOLE_BODY_VARIANTS : FRIEND_VARIANTS, key, "friend")}; she is not taking the photo herself.`;
 
 /** A candid is a friend's photo of her busy with something. */
 const CANDID_CLAUSE = "She is busy with something and not looking toward the camera.";
@@ -56,10 +66,10 @@ const FIXED_CAPTURE_LINE: Readonly<Record<Exclude<Capture, "friend" | "candid">,
   "low-feet": "A quick phone photo a friend took of her, crouching a couple of metres away, low down near her feet; both of her hands are empty; she is not taking the photo herself.",
 };
 
-/** The first sentence of every prompt: how the photo was taken. Pure in the capture and the slot's key (a resume assembles the same prompt, I5.4). */
-export function captureLineOf(capture: Capture, key: string): string {
-  if (capture === "friend") return friendLine(key);
-  if (capture === "candid") return `${friendLine(key)} ${CANDID_CLAUSE}`;
+/** The first sentence of every prompt: how the photo was taken. Pure in the capture, the slot's key and the framing (a resume assembles the same prompt, I5.4). */
+export function captureLineOf(capture: Capture, key: string, framing: CaptureFraming = {}): string {
+  if (capture === "friend") return friendLine(key, framing);
+  if (capture === "candid") return `${friendLine(key, framing)} ${CANDID_CLAUSE}`;
   return FIXED_CAPTURE_LINE[capture];
 }
 

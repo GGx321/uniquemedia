@@ -91,6 +91,31 @@ describe("the friend line (someone she asked) and its three variants", () => {
   test("a candid is the friend line plus today's candid clause", () => {
     for (const key of KEYS.slice(0, 30)) expect(captureLineOf("candid", key)).toBe(`${captureLineOf("friend", key)} She is busy with something and not looking toward the camera.`);
   });
+
+  // S5.6R (LOW): a friend shooting «from her knees up» cut off the moment she was in («slips on her heels»). A moment about her feet takes a whole-body
+  // variant, drawn on the same `${key}:friend` stream; every other slot keeps the line it always had.
+  test("a moment about her feet takes a whole-body variant, for a friend and a candid alike", () => {
+    const seen = new Set<string>();
+    for (const key of KEYS) {
+      for (const capture of ["friend", "candid"] as const) {
+        const line = captureLineOf(capture, key, { wholeBody: true });
+        expect(line).toContain("her whole body in the picture");
+        expect(line).not.toContain("from her knees up");
+        seen.add(line);
+      }
+    }
+    expect(seen.size).toBe(4);
+  });
+
+  test("without the whole-body need, the friend line is the one it always was", () => {
+    for (const key of KEYS) expect(captureLineOf("friend", key, { wholeBody: false })).toBe(captureLineOf("friend", key));
+  });
+
+  test("the whole-body need changes no other capture's line", () => {
+    for (const capture of ["mirror-hidden", "mirror", "above", "prone", "over-shoulder", "selfie", "timer", "pov-legs", "low-feet"] as const) {
+      expect(captureLineOf(capture, "k", { wholeBody: true })).toBe(captureLineOf(capture, "k"));
+    }
+  });
 });
 
 describe("only the two mirror lines say «selfie» (I5.32, owner canary C1)", () => {

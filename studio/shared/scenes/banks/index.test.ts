@@ -55,16 +55,23 @@ describe("who takes the photo (I5.32: the capture decks, exact cycles)", () => {
     for (const moment of pov) expect(moment.angle).toBe("three-quarter");
   });
 
-  // Owner rule: side or back to the mirror shows only her reflection, so such a moment is a phone-over-face frame tagged mirrorBack.
-  test("the rug moment says the composition: she lies on the rug facing the mirror", () => {
-    const rug = BANKS.home.places.flatMap((p) => p.moments).filter((m) => /on the rug/.test(m.text) && m.captures.includes("mirror-hidden") && m.text.startsWith("lies"));
-    expect(rug.map((m) => m.text)).toEqual(["lies on the rug facing the mirror"]);
+  // S5.6R (MEDIUM 4, the owner: prone only on a bed): «lies on the rug facing the mirror» wore the prone selfie's outfits and lifted her hips, a prone frame
+  // off the bed. Off the bed she never lies down facing the mirror; the rug's mirror moments sit.
+  test("off her bed no moment lies down in a mirror frame: she lies on her stomach only on the bed", () => {
+    const off = BANKS.home.places.filter((p) => p.name !== "her bed").flatMap((p) => p.moments);
+    expect(off.filter((m) => m.text.startsWith("lies") && m.captures.some((c) => c === "mirror" || c === "mirror-hidden")).map((m) => m.text)).toEqual([]);
   });
 
-  test("a moment that stands or sits sideways to the mirror is a mirrorBack phone-over-face frame", () => {
-    for (const place of BANKS.home.places) {
-      for (const moment of place.moments) {
-        if (/sideways to the mirror|counter by the mirror/.test(moment.text)) expect({ text: moment.text, back: moment.mirrorBack, captures: moment.captures }).toEqual({ text: moment.text, back: true, captures: ["mirror-hidden"] });
+  // Owner rule: side or back to the mirror shows only her reflection, so such a moment is a phone-over-face frame tagged mirrorBack.
+
+  // S5.6R (MEDIUM 3): «sits sideways, knees together» named no mirror, so it slipped past this rule and landed on a plain mirror selfie that says her face is
+  // clearly visible. Any moment that turns her side or back on, at a mirror place, is now held to it.
+  test("a moment that stands or sits sideways (or side or back to the mirror) at a mirror place is a mirrorBack phone-over-face frame", () => {
+    for (const category of BANK_CATEGORIES) {
+      for (const place of BANKS[category].places.filter((p) => p.mirror === true)) {
+        for (const moment of place.moments) {
+          if (/\bsideways\b|side to the mirror|back to the mirror|counter by the mirror/.test(moment.text)) expect({ text: moment.text, back: moment.mirrorBack, captures: moment.captures }).toEqual({ text: moment.text, back: true, captures: ["mirror-hidden"] });
+        }
       }
     }
   });
@@ -93,8 +100,13 @@ describe("who takes the photo (I5.32: the capture decks, exact cycles)", () => {
     expect(sorted(BANKS[category].captureDeck)).toEqual(sorted(["friend", "friend", "friend", "selfie", "timer", "candid"]));
   });
 
-  test.each<BankCategory>(["glamour", "fitness"])("%s: mixed, a friend twice, a selfie, a mirror, a phone-over-face mirror, a candid", (category) => {
-    expect(sorted(BANKS[category].captureDeck)).toEqual(sorted(["friend", "friend", "selfie", "mirror", "mirror-hidden", "candid"]));
+  test("glamour: mixed, a friend twice, a selfie, a mirror, a phone-over-face mirror, a candid", () => {
+    expect(sorted(BANKS.glamour.captureDeck)).toEqual(sorted(["friend", "friend", "selfie", "mirror", "mirror-hidden", "candid"]));
+  });
+
+  // S5.6R (HIGH 2): at home she shoots herself, so the home workout takes the timer the deck now deals beside the gym's and the park's friend and candid.
+  test("fitness: mixed, a friend twice, a selfie, a mirror, a phone-over-face mirror, a candid, and a timer for the home workout", () => {
+    expect(sorted(BANKS.fitness.captureDeck)).toEqual(sorted(["friend", "friend", "selfie", "mirror", "mirror-hidden", "candid", "timer"]));
   });
 
   // The plan critic (r1.3): the planner's capture fallback (timer → friend, prone → above → selfie, mirror-hidden → mirror → selfie) must never fire
