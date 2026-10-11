@@ -57,6 +57,10 @@
  *   record (canvas, a 9 frame loop, 3 slots a frame); `media.stickerBytes` answers the stored file itself through the real main, refuses a
  *   file changed since the import, and the built-in `stickers.bytes` never serves it; a one-frame GIF fails `not-animated`, a truncated
  *   one `format`; deleting the media ends the door. `--only sticker` runs it alone.
+ * - the reference portrait scenarios (Stage 5, S5.3c). In the import scenario: the photo there is a rendered mandelbrot with no face, so `avatars.generatePortraits` is refused for free with
+ *   MASTER_FACE_UNUSABLE by the real face worker (no image request reaches the mock, nothing is reserved or spent). In `runPortraitScenario`: a photo WITH a face (the repo's face fixture, the
+ *   mock's `faceFixture`) is imported and a batch is drawn from it: exactly five image requests, each 9:16 with one `input_references`, the job ends done, the ledger equals the mock's charges, and no
+ *   request reaches a route the mock does not know. The ranking itself is not asserted. `--only portraits` runs it alone.
  * - the custom-category scenario (CS.2, `runCategoryScenario`): `categories.create` makes the owner's own category with one paid pool call against the
  *   mock, a run of 5 photos names it (every photo carries the category and the owner's name, the writer is told the English label, the plan keeps a
  *   snapshot), and neither the avatar's marker vibe nor the category's name reaches the pool call. `--only category` runs it alone.
@@ -130,6 +134,8 @@ import { EXCERPTS, excerptOf } from "../engine/music/testing/storeKit";
 import { startMockCdn, withExcerptDurations, withFutureExpiry } from "./mockCdn";
 import { startMockFlashapi } from "./mockFlashapi";
 import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, productionRendererPageProblems, stickerEncodeWorkerProblems, textWorkerProblems } from "./bundleChecks";
+import { FACE_FIXTURE_PATH } from "./facePool";
+import { portraitBatchProblems, portraitSmokeProblems } from "./portraitSmoke";
 import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type ImageHold, type MockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { acceptedRemainingProblems, launchIsActive, ledgerProblems, midRenderProblems, oneSetOneRunProblems, photoAttemptProblems, postsByModel, quietRestartProblems, readLedger, restartNoticeProblems, restartPauseProblems, reviewRowOf, videosOnDiskProblems } from "./autopilotSmoke";
 import { electronBinary } from "./electronBinary";
@@ -1546,6 +1552,106 @@ async function runImportScenario(target: Target): Promise<void> {
         field(money, "result", "unsettledCount") === 0,
       { money, expectedMicros },
     );
+
+    // 8. Stage 5, S5.3c: this photo is a rendered mandelbrot with no face, so a reference portrait cannot be compared with it. The batch is priced (the mock lists a price for a reference
+    // image) and then refused FOR FREE by the real face worker: MASTER_FACE_UNUSABLE, no image request, nothing reserved or spent.
+    const portraitPrice = await req(cdp, "avatars.estimatePortraits", {});
+    check(
+      "import scenario: avatars.estimatePortraits prices the reference portraits (the mock lists a price for an input image)",
+      field(portraitPrice, "ok") === true && Number(field(portraitPrice, "result", "worstMicros")) > 0,
+      portraitPrice,
+    );
+    const before = await portraitRefusalFacts(cdp, mock);
+    const refused = await req(cdp, "avatars.generatePortraits", { avatarId, acceptedWorstMicros: field(portraitPrice, "result", "worstMicros") });
+    const after = await portraitRefusalFacts(cdp, mock);
+    const refusedProblems = portraitSmokeProblems(String(field(refused, "error", "code")), before, after);
+    check(
+      "import scenario: avatars.generatePortraits on a photo with no face is refused for free (MASTER_FACE_UNUSABLE): no image request, nothing reserved or spent",
+      field(refused, "ok") === false && refusedProblems.length === 0,
+      { refused, refusedProblems },
+    );
+    check("import scenario: the portrait commands reached no route the mock does not know", mock.unexpected.length === 0, mock.unexpected);
+  } finally {
+    await quit(running);
+    await mock.stop();
+    await removeTemp(tmp);
+  }
+}
+
+/** What a refused reference portrait batch must leave untouched: the image requests the mock saw, the reserves left open and what the ledger has spent. */
+async function portraitRefusalFacts(cdp: Cdp, mock: MockOpenRouter): Promise<{ imageRequests: number; unsettledCount: number; spentMicros: number }> {
+  const money = await req(cdp, "money.status");
+  return { imageRequests: mock.imageRequests().length, unsettledCount: Number(field(money, "result", "unsettledCount")), spentMicros: Number(field(money, "result", "spentMicros")) };
+}
+
+// ---------- reference portraits end-to-end scenario (Stage 5, S5.3c) ----------
+
+/**
+ * A photo WITH a face is imported and five reference portraits are drawn from it, end to end against the mock OpenRouter in the packaged app: its own app instance, userData, library and mock.
+ * The mock runs with `faceFixture`, so every image it serves is the repo's real face fixture, which the real face worker can embed and compare. The import photo is the same fixture, picked through
+ * main's own dialog stand-in (`--studio-pick-import-file`). Asserted: exactly five image requests, each 9:16 with exactly one `input_references`; the job ends done; the ledger equals what the mock
+ * charged and nothing is left open; no request reaches a route the mock does not know. The ranking (which of the five pass) is not asserted: it is the face model's, and the engine's own
+ * tests hold what is done with each verdict.
+ */
+async function runPortraitScenario(target: Target): Promise<void> {
+  const mock = await startMockOpenRouter({ descriptorText: AVATAR_DESCRIPTOR, faceFixture: true });
+  const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-portraits-"));
+  const userData = join(tmp, "userData");
+  const libraryRoot = join(tmp, "portrait-library");
+  const photoPath = join(tmp, "face.jpg");
+  await mkdir(userData, { recursive: true });
+  await mkdir(libraryRoot, { recursive: true });
+  await Bun.write(photoPath, new Uint8Array(await readFile(FACE_FIXTURE_PATH)));
+
+  const running = await launch(target, userData, [`--studio-openrouter-base-url=${mock.url}`, `--studio-pick-folder=${libraryRoot}`, `--studio-pick-import-file=${photoPath}`]);
+  try {
+    const { cdp } = running;
+    const keySet = await req(cdp, "settings.setApiKey", { key: SMOKE_KEY });
+    check("portraits scenario: settings.setApiKey stores the fake key", field(keySet, "ok") === true, keySet);
+    const libSet = await req(cdp, "settings.setLibraryPath", { path: libraryRoot });
+    check("portraits scenario: settings.setLibraryPath adopts the temp library (via --studio-pick-folder)", field(libSet, "ok") === true && field(libSet, "result", "libraryPath") === libraryRoot, libSet);
+    const baseline = await req(cdp, "money.reconcile");
+    check("portraits scenario: the baseline reconcile succeeds at once", field(baseline, "ok") === true && field(baseline, "result", "status") === "done", baseline);
+
+    // 1. Import the photo with a face: the describe call and the descriptor check, no image.
+    const picked = await req(cdp, "avatars.pickImportPhoto", {});
+    const stagingId = field(picked, "result", "stagingId");
+    check("portraits scenario: avatars.pickImportPhoto stages the face photo", field(picked, "ok") === true && field(picked, "result", "picked") === true && typeof stagingId === "string", picked);
+    const importEstimate = await req(cdp, "avatars.estimateImport", { stagingId });
+    const imported = await req(cdp, "avatars.importAvatar", { stagingId, name: "Nini", acceptedWorstMicros: field(importEstimate, "result", "worstMicros") });
+    const avatarId = field(imported, "result", "avatar", "avatarId");
+    check("portraits scenario: avatars.importAvatar saves an active avatar", field(imported, "ok") === true && field(imported, "result", "avatar", "status") === "active" && typeof avatarId === "string", imported);
+    check("portraits scenario: the import itself drew no image", mock.imageRequests().length === 0, mock.requests);
+
+    // 2. The batch: priced, accepted, drawn.
+    const price = await req(cdp, "avatars.estimatePortraits", {});
+    check("portraits scenario: avatars.estimatePortraits prices five images with a reference", field(price, "ok") === true && Number(field(price, "result", "worstMicros")) > 0, price);
+    const started = await req(cdp, "avatars.generatePortraits", { avatarId, acceptedWorstMicros: field(price, "result", "worstMicros") });
+    const jobId = field(started, "result", "jobId");
+    check("portraits scenario: avatars.generatePortraits starts a job", field(started, "ok") === true && typeof jobId === "string", started);
+
+    const snapshotJobs = async (): Promise<unknown[]> => {
+      const jobs = field(await req(cdp, "engine.snapshot"), "result", "jobs");
+      return Array.isArray(jobs) ? jobs : [];
+    };
+    const ended = await waitFor("the portrait job to end", async () => (await snapshotJobs()).find((job) => field(job, "jobId") === jobId && field(job, "status") !== "running") ?? null, 120_000, 200);
+    check("portraits scenario: the job ends done, as an avatar.portraits job", field(ended, "status") === "done" && field(ended, "kind") === "avatar.portraits", ended);
+
+    // 3. What the batch sent, and what it left.
+    const problems = portraitBatchProblems(mock.imageRequests());
+    check("portraits scenario: exactly five image requests, each 9:16 with exactly one input_references image", problems.length === 0, problems);
+    check("portraits scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
+    const expectedMicros = Math.round(mock.totalUsageUsd() * 1_000_000);
+    const money = await req(cdp, "money.status");
+    check(
+      "portraits scenario: money.status' ledger total equals the mock's charged costs, no open reserves",
+      field(money, "ok") === true && field(money, "result", "spentMicros") === expectedMicros && field(money, "result", "unsettledMicros") === 0 && field(money, "result", "unsettledCount") === 0,
+      { money, expectedMicros },
+    );
+    const listed = await req(cdp, "avatars.portraits", { avatarId });
+    check("portraits scenario: avatars.portraits answers, and the imported photo is still the master", field(listed, "ok") === true && field(listed, "result", "masterPhotoId") === field(listed, "result", "sourcePhotoId"), listed);
+    const candidates = field(listed, "result", "candidates");
+    fact("portraits scenario: portraits that passed the ranking", Array.isArray(candidates) ? candidates.length : -1);
   } finally {
     await quit(running);
     await mock.stop();
@@ -3825,6 +3931,13 @@ async function main(): Promise<void> {
     return;
   }
 
+  // `--only portraits` runs the reference portrait scenario alone (S5.3c), for working on it.
+  if (argValue("--only") === "portraits") {
+    await runPortraitScenario(target);
+    finish();
+    return;
+  }
+
   // `--only category` runs the custom-category scenario alone (CS.2), for working on it.
   if (argValue("--only") === "category") {
     await runCategoryScenario(target);
@@ -4268,6 +4381,7 @@ async function main(): Promise<void> {
 
   await runAvatarScenario(target);
   await runImportScenario(target);
+  await runPortraitScenario(target);
   await runPackagedMediaScenario(target);
   await runPackagedStickerScenario(target);
   await runMusicScenario(target);
