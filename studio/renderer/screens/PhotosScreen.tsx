@@ -11,6 +11,7 @@ import { Portrait } from "../ui/Portrait";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { LookTab } from "./look/LookTab";
 import { useLookCheck, useReadFromPhoto } from "./look/useLookCheck";
+import { usePortraits } from "./look/usePortraits";
 import { Gallery, type PendingSlots } from "./photos/Gallery";
 import { GenerateCard } from "./photos/GenerateCard";
 import type { MarkControl, MarkFailure } from "./photos/photoState";
@@ -93,6 +94,8 @@ function AvatarPhotos({
     bodyPhrase: avatar.body === undefined ? undefined : bodyPhrase(avatar.body),
   });
   const readFromPhoto = useReadFromPhoto(landing, avatar.descriptor.text);
+  // S5.3d: the reference portrait lives with the screen too: a look at «Фото» and back keeps the batch, the choice and what was said.
+  const portraits = usePortraits(avatar, landing, { view, shown: tab === "look", ready, paidBlocked: paidBlockedReason(view) !== null });
 
   // CS.7 L4: kept by the window, so a look at Settings and back finds it as it was (a new category still on, the count, the poses).
   const runForms = useRunForms();
@@ -450,7 +453,7 @@ function AvatarPhotos({
         <UsageNotice key={avatarId} avatar={avatar} />
 
         {tab === "look" ? (
-          <LookTab avatar={avatar} view={view} look={look} landing={landing} readFromPhoto={readFromPhoto} />
+          <LookTab avatar={avatar} view={view} look={look} portraits={portraits} landing={landing} readFromPhoto={readFromPhoto} />
         ) : tab === "photos" ? (
           <>
             <GenerateCard

@@ -118,7 +118,8 @@ export function AvatarImport() {
         name: "photos",
         avatarId: reply.result.avatar.avatarId,
         tab: "look",
-        landing: { kind: "imported", check: reply.result.descriptorCheck ?? null },
+        // S5.3d: no portraits price is shown here yet, so nothing is started on the landing.
+        landing: { kind: "imported", check: reply.result.descriptorCheck ?? null, portraitsWorstMicros: null },
       });
       return;
     }

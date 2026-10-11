@@ -13,6 +13,7 @@ import "./categories.css";
 import "./scenes.css";
 import "./autopilot.css";
 import "./look.css";
+import "./portraits.css";
 import "./body.css";
 
 const root = document.getElementById("root");

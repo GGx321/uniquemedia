@@ -202,12 +202,21 @@ describe("the line over the tab after the avatar was made (S5.2d: an import's bo
   });
 
   test("after «Импортировать»: the check's outcome, then what is left — the body while its proposal waits (05, 06)", () => {
-    const imported = (c: DescriptorCheck | null): LookLanding => ({ kind: "imported", check: c });
+    const imported = (c: DescriptorCheck | null): LookLanding => ({ kind: "imported", check: c, portraitsWorstMicros: null });
     expect(landingText(imported(null), "Lea", false)).toBe("Аватар «Lea» импортирован. Описание прочитано с фото.");
     expect(landingText(imported(null), "Lea", true)).toBe("Аватар «Lea» импортирован. Описание прочитано с фото — осталось тело.");
     expect(landingText(imported(check()), "Lea", false)).toBe("Аватар «Lea» импортирован. Описание прочитано с фото и сверено с ним.");
     expect(landingText(imported(check()), "Lea", true)).toBe("Аватар «Lea» импортирован. Описание прочитано с фото и сверено с ним — осталось тело.");
     expect(landingText(imported(hairMismatch), "Ava", false)).toBe("Аватар «Ava» импортирован. Описание прочитано с фото — проверьте сверку.");
     expect(landingText(imported(hairMismatch), "Ava", true)).toBe("Аватар «Ava» импортирован. Описание прочитано с фото — проверьте тело и сверку.");
+  });
+
+  test("S5.3d: the import's reference portraits after it — drawing (15), ready (16), or nothing to say (17, 18, 18b, 23)", () => {
+    const landing: LookLanding = { kind: "imported", check: check(), portraitsWorstMicros: 300_000 };
+    expect(landingText(landing, "Nini", true, "drawing")).toBe("Аватар «Nini» импортирован. Описание прочитано с фото и сверено с ним — осталось тело. Рисуем варианты мастер-портрета.");
+    expect(landingText(landing, "Nini", false, "ready")).toBe("Аватар «Nini» импортирован. Описание прочитано с фото и сверено с ним. Варианты готовы — выберите мастер-портрет.");
+    expect(landingText(landing, "Nini", false, null)).toBe("Аватар «Nini» импортирован. Описание прочитано с фото и сверено с ним.");
+    // A wizard avatar has no portraits to speak of.
+    expect(landingText({ kind: "created", checkWorstMicros: null }, "Mia", false, "drawing")).toBe("Аватар «Mia» сохранён. Мастер-портрет готов для фото.");
   });
 });
