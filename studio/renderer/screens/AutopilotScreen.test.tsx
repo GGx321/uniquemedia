@@ -12,6 +12,7 @@ import { formatUsdTiered } from "../lib/money";
 import { callsOf, describeElement, flush, openSection, setup, tick, withText, type SetupOptions } from "../testing";
 import { MIX_KEY } from "./autopilot/launchForm";
 import { GO_WHY } from "./autopilot/planModel";
+import { FIXTURE } from "./photos/sceneScreenKit";
 import { WORLD_DEBOUNCE_MS } from "./autopilot/useLaunchPlan";
 
 // S4.9a: the «Автопилот» screen against the mock engine (AutopilotS4.dc.html; plan §4.2–4.4, §9, §13 items 4, 8–12): the plan is the engine's, asked
@@ -226,8 +227,9 @@ describe("the mix", () => {
 });
 
 describe("the month's budget", () => {
-  // Mia, library off: 10 videos are 7 singles, 2 collages of 3 and slides of 5 = 18 new photos; worst 18 × 3 × $0.07 + one writer chunk $0.075 = $3.855,
-  // expected 18 × ≈ $0.0705 ≈ $1.27 (the mock's unit prices).
+  // Mia, library off: 10 videos are 7 singles, 2 collages of 3 and slides of 5 = 18 new photos; worst 18 × 3 × $0.07 = $3.78, expected 18 × $0.07 = $1.26 (the
+  // mock's unit prices). 5a.2 (S5.6e, m11): the launch writes the five built-ins' scenes from the app's template, so no writer chunk ($0.075 worst, ≈ $0.009
+  // expected) is added to either figure; the twin below keeps the writer's share on a category only the model writes.
   async function miaFromScratch(): Promise<void> {
     await openAutopilot();
     fireEvent.click(screen.getByRole("switch", { name: "Сначала свободные фото из библиотеки" }));
@@ -248,13 +250,27 @@ describe("the month's budget", () => {
     const { engine } = world({ money: { monthlyBudgetMicros: 1_000_000 } });
     await miaFromScratch();
     expect(screen.getByText("Бюджета не хватит").closest(".notice")?.getAttribute("role")).toBe("alert");
-    expect(screen.getByText(/^Не хватит даже на ожидаемую цену: свободно \$1\.00, нужно ≈ \$1\.27/)).toBeDefined();
+    expect(screen.getByText(/^Не хватит даже на ожидаемую цену: свободно \$1\.00, нужно ≈ \$1\.26/)).toBeDefined();
     const go = goButton();
     expect(go.getAttribute("aria-disabled")).toBe("true");
     expect(descriptionOf(go)).toBe(GO_WHY.short);
     fireEvent.click(go);
     await flush();
     expect(callsOf(engine, "autopilot.start")).toHaveLength(0);
+  });
+});
+
+describe("the month's budget when the model writes the scenes", () => {
+  test("short: a category only the model writes adds the writer chunk to the expected price (twin of the template figure above)", async () => {
+    // 5a.2 (S5.6e, m11): with the fixture as the only category the launch asks the model for its scenes: one chunk, worst $0.075, expected ≈ $0.009.
+    world({ money: { monthlyBudgetMicros: 1_000_000 }, categories: [FIXTURE] });
+    await openAutopilot();
+    fireEvent.click(screen.getByRole("switch", { name: "Сначала свободные фото из библиотеки" }));
+    for (const label of ["Дом", "Виды", "Улица", "Фитнес"]) fireEvent.click(screen.getByRole("button", { name: label }));
+    fireEvent.click(await screen.findByRole("button", { name: "Только модель" }));
+    await choose("Mia");
+    expect(screen.getByText(/^Не хватит даже на ожидаемую цену: свободно \$1\.00, нужно ≈ \$1\.27/)).toBeDefined();
+    expect(goButton().textContent).toContain("до $3.86");
   });
 });
 
