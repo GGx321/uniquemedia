@@ -617,6 +617,25 @@ describe("avatars.generatePortraits: the claim", () => {
     });
   }
 
+  // Something under the job throws (here the face gate, in the middle of the batch): the end is job.failed, and everything the dispatch took is let go.
+  test("the claim, the cap and the paid-command count are released when the job throws", async () => {
+    const { avatarId } = await seedImportedAvatar(dir());
+    const net = network({ image: (_call, n) => portraitReply(n) });
+    const { engine, events, posted } = await started({ net, gate: fakeGate({ verdicts: [match(0.7), new Error("the worker died")] }) });
+    await mkdir(join(dir(), "other"));
+
+    const jobId = jobIdOf(await engine.handle(generate(avatarId)));
+    const end = await jobEnd(events, jobId);
+
+    expect(end).toMatchObject({ type: "job.failed", payload: { kind: "avatar.portraits", jobId, avatarId } });
+    expect(net.imageCalls()).toHaveLength(2);
+    // The claim: a discard (an edit-class claim) is taken. The paid-command count: a library switch is not refused. The cap: nothing is left in the job's scope.
+    expect(ok(await engine.handle(command("avatars.discardPortraits", { avatarId }))).type).toBe("avatars.discardPortraits");
+    await engine.receive({ kind: "control", type: "library.open", callId: "call-00000001", path: join(dir(), "other") });
+    expect(posted.at(-1)).toEqual({ kind: "control", type: "reply", callId: "call-00000001" });
+    expect(await engine.budget?.tryReserve({ attemptId: "late#1", jobId, scope: { avatarJobId: jobId }, model: "x-ai/grok-4.3", worstMicros: 1 })).toMatchObject({ ok: false, reason: "RUN_CAP_EXCEEDED", limitMicros: 0 });
+  });
+
   test("a pick is counted as a small write: a library switch and a delete's prepare are refused while it commits", async () => {
     const { avatarId, portraitIds } = await seedImportedAvatar(dir(), { portraits: [0.76, 0.7] });
     let release: () => void = () => {};
