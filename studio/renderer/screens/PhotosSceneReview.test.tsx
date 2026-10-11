@@ -181,7 +181,8 @@ describe("a ready set: the strip and «Отрисовать»", () => {
     expect(set?.revision).toBeGreaterThan(1);
     expect(card().textContent).toContain("Набор сцен");
     expect(within(card()).getByRole("list", { name: "Категории набора" }).textContent).toContain("Только модель");
-    expect(card().textContent).toContain("Ракурсы: анфас, три четверти.");
+    // S5.7c (mockup 28): a set this window composed stores no «Ракурсы»: the line names its «Подача» and the angle from the scene.
+    expect(card().textContent).toContain("Подача: обычная · Ракурс — из сцены.");
     expect(card().textContent).toContain("текст grok-4.3");
     // The models line says which of it is today's Settings and which is the set's own (CS.7).
     expect(within(card()).getByText(/текст grok-4\.3/).closest("p")?.getAttribute("title")).toBe(

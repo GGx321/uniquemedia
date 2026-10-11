@@ -12,7 +12,7 @@ import { drawStepText, focusLost, useLaunchDrawPrice } from "./scenePaid";
 import { focusSceneCard } from "./SceneSetPanel";
 import { setCategoryTags } from "./sceneReview";
 import { modelSegments, setMetaText, Step } from "./SceneStrip";
-import { MODELS_LINE_TITLE, priceSourceText, SCENES_CHANGED_APPROVE, stepScenes, stripAnglesText } from "./sceneText";
+import { MODELS_LINE_TITLE, priceSourceText, SCENES_CHANGED_APPROVE, stepScenes, stripLookText } from "./sceneText";
 import { useMounted } from "./shared";
 
 // S4.9b: the strip of a launch's scene set on «Фото» (PhotosS4.dc.html: review, review-paused, overplan, drawing; README decision 10). Over it, the launch's
@@ -182,7 +182,7 @@ export function LaunchSetStrip({ avatar, view, set, link, focusGo }: LaunchSetSt
               <p className="scene-strip-lock">
                 <Icon name="lock" size={12} strokeWidth={2.4} />
                 <span>
-                  {stripAnglesText(set)}. Пока идёт запуск, набор не пересоставить и не удалить — вместо «Пересоставить…» <span className="ap-in ap-in-s">в запуске автопилота</span>
+                  {stripLookText(set)}. Пока идёт запуск, набор не пересоставить и не удалить — вместо «Пересоставить…» <span className="ap-in ap-in-s">в запуске автопилота</span>
                 </span>
               </p>
               {models.length > 0 && (

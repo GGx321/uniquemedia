@@ -105,7 +105,8 @@ describe("a launch's set on «Фото» (PhotoLaunchReview)", () => {
     expect(screen.queryByRole("switch", { name: "Сцены на проверку" }) === null).toBe(true);
     expect(screen.queryByRole("button", { name: "Пересоставить…" }) === null).toBe(true);
     expect(within(strip()).queryByRole("button", { name: /^Мои категории/ }) === null).toBe(true);
-    expect(within(strip()).getByText(/^Ракурсы: анфас, три четверти\. Пока идёт запуск, набор не пересоставить и не удалить/)).toBeDefined();
+    // S5.7c: the angle comes from the scene; a launch whose draft still carries «Ракурсы» names no «Подача».
+    expect(within(strip()).getByText(/^Ракурс — из сцены\. Пока идёт запуск, набор не пересоставить и не удалить/)).toBeDefined();
     expect(within(strip()).getByText("в пределах запуска — новых денег нет")).toBeDefined();
     expect(Array.from(strip().querySelectorAll(".photos-cost-total")).map((r) => r.textContent)).toEqual([`Пределдо ${formatUsdTiered(row.drawAllocationMicros ?? 0, "up")}`]);
     expect(within(column()).queryByRole("button", { name: /Своя сцена/ }) === null).toBe(true);

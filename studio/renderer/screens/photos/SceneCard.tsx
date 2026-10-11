@@ -1,7 +1,7 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { SCENE_TEXT_MAX, type SceneProblem, type SceneView } from "../../../shared/engine";
 import { Icon, Spin } from "../../ui/Icon";
-import { hasCyrillic, OWN_SCENE_LABEL, sceneCategoryLabel, sceneNumber, SHOT_LABEL } from "./sceneReview";
+import { hasCyrillic, LEVEL_TAG, LEVEL_TAG_TITLE, OWN_SCENE_LABEL, sceneCategoryLabel, sceneNumber, shotTagLabel } from "./sceneReview";
 import { cyrillicHint, gaveUpText, ideaLine, poseTag, problemText } from "./sceneText";
 
 // CS.6: one scene of the «Сцены» column (the design's .photos-scene card): its number, its category and shot tags, its status, its free and paid actions
@@ -79,10 +79,16 @@ export function SceneCard({ scene, number, readOnly, actionsOff, writing, fresh,
               {own && <Icon name="pencil" size={10} strokeWidth={2.4} />}
               {own ? OWN_SCENE_LABEL : label}
             </span>
-            {!(own && pending) && <span className="tag tag-o">{SHOT_LABEL[scene.shot]}</span>}
+            {!(own && pending) && <span className="tag tag-o">{shotTagLabel(scene)}</span>}
             {!(own && pending) && pose !== null && (
               <span className="tag tag-o scene-tag-pose">
                 <span className="scene-tag-pose-key">ракурс:</span> {pose}
+              </span>
+            )}
+            {/* S5.7c (mockup 28): «Подача» of a flirty scene, read with its other tags. */}
+            {!(own && pending) && scene.level === "flirty" && (
+              <span className="tag tag-o scene-tag-level" title={LEVEL_TAG_TITLE}>
+                {LEVEL_TAG}
               </span>
             )}
           </span>

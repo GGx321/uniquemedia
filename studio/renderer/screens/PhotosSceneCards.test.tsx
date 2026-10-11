@@ -194,9 +194,11 @@ describe("⟳ and its price popover", () => {
     fireEvent.click(within(sceneCard(2)).getByRole("button", { name: "Другая сцена вместо 02" }));
     await flush();
     const pop = within(sceneCard(2)).getByRole("dialog", { name: "Другая сцена" });
-    expect(pop.textContent).toContain("из «Дом» и новый текст");
+    const replace = await within(pop).findByRole("button", { name: /^Заменить.*бесплатно$/ });
+    // S5.7c (mockup 28): the words say it too — the app writes it, for nothing, at once.
+    expect(pop.textContent).toContain("ракурс из категории «Дом» и новый текст — его пишет приложение, поэтому бесплатно.");
+    expect(pop.textContent).toContain("Сцена 02 заменится сразу.");
     expect(pop.textContent).not.toContain("до $");
-    const replace = within(pop).getByRole("button", { name: /^Заменить.*бесплатно$/ });
     expect(isDisabled(replace)).toBe(false);
     fireEvent.click(replace);
     await flush();

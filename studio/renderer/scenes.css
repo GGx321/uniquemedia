@@ -506,6 +506,17 @@
   color: var(--faint);
 }
 
+/* S5.7c (mockup 28): a flirty scene's «кокетливо», outlined like the other tags, in the accent's text colour. */
+.scene-tag-level {
+  border-color: var(--accent-35);
+  color: var(--accent-text);
+}
+
+/* The strip's «Подача» bit, a little brighter than the line around it. */
+.scene-strip-level {
+  color: var(--text-2);
+}
+
 .scene-card-gap {
   flex-grow: 1;
 }
