@@ -13,6 +13,7 @@ import { ScenePlanSchema, type PlanSlot, type Pose } from "./schema";
 import { CATEGORIES, SHOTS as CANON_SHOTS } from "./types";
 import { chunkSlots, POSE_LABEL, REFUSAL_WORD_BYTES_MAX, REFUSAL_WORDS_MAX, SHOT_LABEL, writerMessages, writerRefusalText, WRITER_JSON_SCHEMA, type WriterRefusal } from "./writer";
 import { worstSlotList } from "./testing/worstSlotList";
+import { LLM_ONLY_POOL, LLM_ONLY_REF, llmOnlySnapshot } from "./testing/llmOnlyFixture";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -94,6 +95,24 @@ describe("a built-in run's writer messages are pinned to the S5.1b phone-look pr
     const empty: WriterRefusal = { problems: ["empty"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] };
     expect(sha(writerMessages(chunks[0] ?? [], empty))).toBe(fixture.messages["chunk1-empty"]);
     expect(sha(writerMessages(chunks[1] ?? [], empty))).toBe(fixture.messages["chunk2-empty"]);
+  });
+});
+
+// S5.7b (I5.28): «Кокетливая» is template-only. A custom category the template cannot write is written by the model as an ordinary slot: the plan gives it no level, so the
+// writer's request is the very one an ordinary run sends (the prompt and its money pins do not move).
+describe("a flirty run leaves the model's slots ordinary", () => {
+  test("the writer's messages for an uncovered custom category are the same whatever the request's level", () => {
+    const slotsAt = (level?: "flirty") => planWithPools({ seed: 3, count: 12, categories: [LLM_ONLY_REF], ...(level === undefined ? {} : { level }) }, { ...POOLS, [LLM_ONLY_REF]: LLM_ONLY_POOL }).slots;
+    const flirty = slotsAt("flirty");
+    expect(flirty.some((slot) => "level" in slot)).toBe(false);
+    const labelOf = categoryLabelOf([llmOnlySnapshot()]);
+    expect(sha(writerMessages(chunkSlots(flirty)[0] ?? [], undefined, labelOf))).toBe(sha(writerMessages(chunkSlots(slotsAt())[0] ?? [], undefined, labelOf)));
+  });
+
+  test("the writer's messages never name a level for a built-in slot either: the prompt knows none", () => {
+    const slots = plan({ seed: 3, count: 30, categories: [...CATEGORIES], level: "flirty" }).slots;
+    expect(slots.some((slot) => slot.level === "flirty")).toBe(true);
+    expect(JSON.stringify(writerMessages(chunkSlots(slots)[0] ?? []))).not.toMatch(/flirty|level/i);
   });
 });
 
