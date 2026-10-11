@@ -319,7 +319,7 @@ export const POOLS: Record<Category, Pool> = {
         details: ["a coat rack", "shoes by the door"],
         times: ["evening"],
         mirror: true,
-        activities: [one("slipping on her heels"), one("grabbing her keys"), one("checking her outfit")],
+        activities: [two("slipping on her heels"), one("grabbing her keys"), one("checking her outfit")],
       },
     ],
     // Non-revealing only (fixed decision, "Revealing outfits"): the mini

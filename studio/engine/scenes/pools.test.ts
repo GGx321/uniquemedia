@@ -130,7 +130,7 @@ describe("C1 pool text", () => {
     expect(glamourPlaces().map((l) => l.times)).toEqual([["evening", "night"], ["evening"], ["night"], ["night"], ["evening"], ["evening", "night"], ["evening"]]);
   });
 
-  test("glamour activities are the ones written, and only the hair curling needs both hands", () => {
+  test("glamour activities are the ones written, and only the hair curling and the heels need both hands", () => {
     expect(glamourPlaces().map((l) => l.activities)).toEqual([
       ["leaning on the bar counter", "holding a cocktail glass", "laughing at something nearby"],
       ["reaching for her glass", "resting her chin on her hand", "smiling across the table"],
@@ -140,7 +140,8 @@ describe("C1 pool text", () => {
       ["checking her outfit", "fixing her hair", "resting a hand on the handrail"],
       ["slipping on her heels", "grabbing her keys", "checking her outfit"],
     ]);
-    expect(glamourPlaces().flatMap((l) => l.twoHanded)).toEqual(["curling her hair"]);
+    // Slipping on heels is awkward with the phone in the other hand, so a selfie or a mirror never draws it; the front door keeps two one-handed activities.
+    expect(glamourPlaces().flatMap((l) => l.twoHanded)).toEqual(["curling her hair", "slipping on her heels"]);
   });
 
   test("the bathroom, the elevator and the front door carry a mirror, and only the bathroom and the front door are rooms", () => {
