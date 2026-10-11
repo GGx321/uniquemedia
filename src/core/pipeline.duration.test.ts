@@ -50,7 +50,7 @@ test("accepts a video of exactly 10 minutes", async () => {
 
 test("refuses a 10:01 video with a clear message and starts no encode", async () => {
   const exec = new CountingExecutor(videoOf(601));
-  await expect(run(exec)).rejects.toThrow(/longer than 10 minutes/);
+  await expect(run(exec)).rejects.toThrow(/Видео длиннее 10 минут/);
   expect(exec.renders).toBe(0);
   expect(exec.frameReads).toBe(0);
 });

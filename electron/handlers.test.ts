@@ -137,7 +137,7 @@ test("a probe of a video longer than 10 minutes reports a refusal and returns nu
 
   expect(info).toBeNull();
   expect(reported.length).toBe(1);
-  expect(reported[0]).toMatch(/longer than 10 minutes/);
+  expect(reported[0]).toMatch(/Видео длиннее 10 минут/);
 });
 
 test("a probe of a video of exactly 10 minutes is accepted", async () => {
