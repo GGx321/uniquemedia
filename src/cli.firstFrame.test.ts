@@ -24,13 +24,14 @@ const CLI = join(dirname(import.meta.dir), "src", "cli.ts");
 const FFMPEG = ffmpegPath as string;
 const SIDE = 64;
 
-/** Frame 0 against the cover rendered standalone through the SAME recipe is a
- *  re-encode and a colour-matrix apart: the cover is converted from JPEG
- *  BT.601 to the stream's BT.709, while the gray this test reads both files
- *  with weighs colours the BT.601 way. That moved the distance from 4 to 20 on
- *  this fixture; the picture is still unmistakably the cover (84 to the cover
- *  file as such, 130 to the footage). */
-const SAME_PICTURE_MAX = 24;
+/** Same bound as the executor's own cover test: frame 0 against the cover
+ *  rendered standalone through the SAME recipe is a re-encode apart. */
+const SAME_PICTURE_MAX = 16;
+
+/** The video is BT.709 limited range, the JPEGs are BT.601 full range. Frame 0
+ *  is taken to true colours with the stream's own matrix first, so the gray
+ *  that follows is the picture's luma and not the stream's numbers misread. */
+const AS_BT709 = "scale=in_range=tv:in_color_matrix=bt709:out_range=pc,format=rgb24,";
 
 let dir: string;
 let clip: string;
@@ -104,7 +105,7 @@ test("--first-frame photo --cover reaches the render: the copy opens on the cove
   const standalone = join(dir, "standalone.jpg");
   await stills.render(cover, await stills.probe(cover), coverRecipe, standalone);
 
-  const frame0 = gray(join(out, "copy_1.mp4"), "");
+  const frame0 = gray(join(out, "copy_1.mp4"), AS_BT709);
   const toRecipe = distance(frame0, gray(standalone, ""));
   const toCoverFile = distance(frame0, gray(cover, ""));
   const toFootage = distance(frame0, gray(clip, ""));
