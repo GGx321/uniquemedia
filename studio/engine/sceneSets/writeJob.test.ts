@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Scope } from "../money/ledger";
 import { SceneSetStore, type StoredSceneSet } from "../library/sceneSets";
 import { sceneSetOnTheBanks } from "../library/testing/bankScenes";
-import { sampleSet } from "../library/testing/sceneSetSample";
+import { llmOnlySet } from "../library/testing/sceneSetSample";
 import { useTempDir } from "../library/testing/helpers";
 import { until } from "../testing/engineHarness";
 import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
@@ -34,8 +34,10 @@ afterEach(async () => {
   await money.cleanup();
 });
 
+// 5a.2 (S5.6c2, m11): the set is scenes of `cat-llm-only-fixture`, which the code template cannot write, so every chunk is a request for the model (a built-in
+// category is written by the template with no request: its tests are the «writer seam» describe at the end, which moves scenes onto the banks).
 async function seed(count = 30, change: (set: StoredSceneSet) => StoredSceneSet = (s) => s): Promise<void> {
-  const made = await store.create(sampleSet({ count }));
+  const made = await store.create(llmOnlySet({ count }));
   if (change !== undefined) await store.update(AVATAR, made.sceneSetId, change);
 }
 
@@ -526,7 +528,7 @@ describe("runSceneWrite: the writer seam", () => {
   const range = (from: number, to: number): number[] => Array.from({ length: to - from + 1 }, (_, i) => from + i);
 
   async function seedBanks(count: number, onBanks: readonly number[]): Promise<void> {
-    await store.create(sceneSetOnTheBanks(sampleSet({ count }), onBanks));
+    await store.create(sceneSetOnTheBanks(llmOnlySet({ count }), onBanks));
   }
 
   test("a set whose scenes the banks render is written with no request and no reserve", async () => {

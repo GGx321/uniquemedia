@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { SceneSetView } from "../../shared/engine";
 import type { PlannedSceneSet, StoredSceneSet } from "../library/sceneSets";
-import { sampleSet } from "../library/testing/sceneSetSample";
+import { llmOnlySet, sampleSet } from "../library/testing/sceneSetSample";
 import { fakeLedger, WRITER_ATTEMPT_WORST } from "./testing/fakeLedger";
 import { buildSceneSetView, type ViewContext } from "./view";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -68,11 +68,20 @@ describe("status", () => {
     expect(viewOf(removed)).toMatchObject({ status: "ready", stoppedBy: null });
   });
 
+  // 5a.2 (S5.6c2, m11): a chunk of built-in scenes is written by the code template whatever its attempts, so «out of attempts» is a chunk for the model:
+  // the set is 35 scenes of `cat-llm-only-fixture`. Its built-in twin below says the template's chunks keep the set writable.
   test("a stopped set whose waiting chunks are all out of attempts has nothing to write: ready, with scenes «не составлена»", () => {
-    const set = withWrite(stored(), { ...COMPOSE, stoppedBy: "network" });
+    const set = withWrite({ ...stored(), ...llmOnlySet({ count: 35 }) } as PlannedSceneSet, { ...COMPOSE, stoppedBy: "network" });
     const spent = { close: { type: "settle", costMicros: 11_000 } } as const;
     const ledger = fakeLedger({ [id(1, 1)]: spent, [id(1, 2)]: spent, [id(2, 1)]: spent, [id(2, 2)]: spent });
     expect(viewOf(set, { ledger })).toMatchObject({ status: "ready" });
+  });
+
+  test("twin on built-in scenes: the chunks are out of attempts but the template writes them at no cost, so the stopped set can still be written", () => {
+    const set = withWrite(stored(), { ...COMPOSE, stoppedBy: "network" });
+    const spent = { close: { type: "settle", costMicros: 11_000 } } as const;
+    const ledger = fakeLedger({ [id(1, 1)]: spent, [id(1, 2)]: spent, [id(2, 1)]: spent, [id(2, 2)]: spent });
+    expect(viewOf(set, { ledger })).toMatchObject({ status: "stopped" });
   });
 
   test("a set whose run's folder exists is used, names that run, and keeps its scenes", () => {

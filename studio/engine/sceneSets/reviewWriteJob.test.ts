@@ -2,12 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { CategorySnapshot } from "../../shared/engine";
 import { SceneSetStore, type ReviewWriteRecord, type StoredSceneSet } from "../library/sceneSets";
 import { bankDraw, onTheBanks, sceneSetOnTheBanks } from "../library/testing/bankScenes";
-import { ownScene, sampleSet } from "../library/testing/sceneSetSample";
+import { llmOnlySet, ownScene } from "../library/testing/sceneSetSample";
+import { LLM_ONLY_REF, llmOnlySnapshot } from "../scenes/testing/llmOnlyFixture";
 import { useTempDir } from "../library/testing/helpers";
 import { until } from "../testing/engineHarness";
 import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
 import { NetworkPool } from "../runs/pools";
 import type { PlanSlot } from "../scenes";
+import { categoryLabelOf } from "../scenes/categories";
 import { localSentences } from "../scenes/localSentences";
 import { SHOT_LABEL, writerMessages } from "../scenes/writer";
 import { ideaSystemPrompt } from "../scenes/ideaWriter";
@@ -42,14 +44,18 @@ const CAT = "cat-paris-cafes" as const;
 const OLD_SNAPSHOT: CategorySnapshot = { ref: CAT, name: "Paris", label: "Paris cafes (old)", style: "phone" };
 const FRESH_SNAPSHOT: CategorySnapshot = { ref: CAT, name: "Paris", label: "Parisian cafes (fresh)", style: "editorial" };
 
-/** Four written planned scenes (one of them in a custom category), an own scene 5 written from an idea, and write 1 behind it. */
+/**
+ * Four written planned scenes (one of them in a custom category), an own scene 5 written from an idea, and write 1 behind it.
+ * 5a.2 (S5.6c2, m11): scenes 1, 2 and 4 are `cat-llm-only-fixture` scenes, which the code template cannot write, so these tests exercise the model (a built-in
+ * scene is written by the template at no cost: the «writer seam» describe at the end moves scenes onto the banks).
+ */
 async function seed(change: (set: StoredSceneSet) => StoredSceneSet = (s) => s): Promise<void> {
-  const base = sampleSet({ count: 4, written: 4 });
+  const base = llmOnlySet({ count: 4, written: 4 });
   // The activity does not read after «she is» (no «-ing» form): the code template cannot write it, so these tests keep exercising the model (5a.2, S5.6c1).
   const cafe = { category: CAT, location: "a corner cafe in Paris", activity: "takes a short break", outfit: "a beige trench coat", timeOfDay: "morning" };
   const planned = base.scenes.map((s) => ({ ...s, text: OLD, ...(s.sceneId === 3 ? { slot: { ...s.slot, ...cafe } } : {}) }));
   const custom = [...planned, ownScene(5, { idea: "кофе на балконе утром", text: "Typed by hand, not the idea.", edited: true, shot: "selfie", pose: "front" })];
-  const made = await store.create({ ...base, scenes: custom, categories: [OLD_SNAPSHOT], request: { ...base.request, categories: ["home", CAT] }, writes: 1 } as never);
+  const made = await store.create({ ...base, scenes: custom, categories: [OLD_SNAPSHOT, llmOnlySnapshot()], request: { ...base.request, categories: [LLM_ONLY_REF, CAT] }, writes: 1 } as never);
   await store.update(AVATAR, made.sceneSetId, change);
 }
 
@@ -163,7 +169,7 @@ describe("a rewrite of planned scenes", () => {
     await end;
 
     const set = await setNow();
-    const expected = writerMessages([slotOf(set, 2)]);
+    const expected = writerMessages([slotOf(set, 2)], undefined, categoryLabelOf([llmOnlySnapshot()]));
     expect(messagesOf(net.calls[0] as FetchCall)).toEqual(expected);
   });
 
@@ -193,12 +199,12 @@ describe("a rewrite of planned scenes", () => {
     expect(asked).not.toContain(slotOf(before, 3).location);
     const after = await setNow();
     expect(slotOf(after, 3)).toEqual(slot);
-    expect(after.categories).toEqual([FRESH_SNAPSHOT]);
+    expect(after.categories).toEqual([FRESH_SNAPSHOT, llmOnlySnapshot()]);
   });
 
   test("a resumed older redraw is asked with the label of the fresher snapshot a later write put in the set", async () => {
     const NEWER: CategorySnapshot = { ref: CAT, name: "Paris", label: "Paris cafes (newest)", style: "phone" };
-    await seed((s) => ({ ...s, categories: [NEWER], snapshotWrites: { [CAT]: 3 } }));
+    await seed((s) => ({ ...s, categories: [NEWER, llmOnlySnapshot()], snapshotWrites: { [CAT]: 3 } }));
     const before = await setNow();
     const slot: PlanSlot = { ...slotOf(before, 3), location: "a rooftop garden" };
     await recordRewrite([3], { slots: [slot], snapshots: [FRESH_SNAPSHOT] });
@@ -754,9 +760,9 @@ describe("a rewrite of planned scenes: the writer seam", () => {
     expect(reserveIds()).toEqual([]);
     expect(progress).toEqual([2]);
     const texts = (await setNow()).scenes.map((s) => s.text);
-    expect(texts[1]).toContain(bankDraw().activity);
+    expect(texts[1]).toContain(bankDraw("glamour").activity);
     expect(texts[1]).not.toBe(OLD);
-    expect(texts[3]).toContain(bankDraw().activity);
+    expect(texts[3]).toContain(bankDraw("glamour").activity);
     expect(texts[0]).toBe(OLD);
   });
 
@@ -769,12 +775,13 @@ describe("a rewrite of planned scenes: the writer seam", () => {
     expect(slotsAskedFor(net.calls[0] as FetchCall)).toEqual([4]);
     expect(reserveIds()).toEqual([id(2, 1)]);
     const texts = (await setNow()).scenes.map((s) => s.text);
-    expect(texts[1]).toContain(bankDraw().activity);
+    expect(texts[1]).toContain(bankDraw("glamour").activity);
     expect(texts[3]).toBe(`${NEW} (4)`);
   });
 
   test("a redraw onto the banks is written by the template from the NEW place and moment", async () => {
-    await seed();
+    // Scene 2 is an old-pool slot of a built-in category (a place no bank has): a redraw keeps the scene's category, so it can only land on the banks as a built-in.
+    await seed((set) => ({ ...set, scenes: set.scenes.map((sc) => (sc.origin === "planned" && sc.sceneId === 2 ? { ...sc, slot: { ...sc.slot, category: "glamour" as const, location: "a place no bank has" } } : sc)) }));
     const before = await setNow();
     const slot = onTheBanks(slotOf(before, 2));
     await recordRewrite([2], { slots: [slot] });

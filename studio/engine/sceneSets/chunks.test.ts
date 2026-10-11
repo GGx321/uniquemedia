@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { PlannedSceneRecord, SceneRecord, StoredSceneSet } from "../library/sceneSets";
 import { sceneSetOnTheBanks } from "../library/testing/bankScenes";
-import { sampleSet } from "../library/testing/sceneSetSample";
+import { llmOnlySet } from "../library/testing/sceneSetSample";
 import { chunkState, pendingChunks, requestSceneIds } from "./chunks";
 import { fakeLedger } from "./testing/fakeLedger";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -13,9 +13,11 @@ useNativeGlobals();
 const SET = "set-aaaa-0001";
 const id = (chunk: number, n: number) => `${SET}:writer-${chunk}#${n}`;
 
+// 5a.2 (S5.6c2, m11): the set is 35 scenes of `cat-llm-only-fixture`, which the code template cannot write, so every chunk is a request for the model (the
+// shape these tests had when built-ins were written by the model). The template's side has its own describe below, which moves scenes onto the banks.
 /** 35 scenes: chunk 1 holds 25 of them, chunk 2 the other 10. */
 function stored(over: Partial<StoredSceneSet> = {}): StoredSceneSet {
-  return { schemaVersion: 1, revision: 1, createdAt: "2026-10-07T10:00:00.000Z", updatedAt: "2026-10-07T10:00:00.000Z", ...sampleSet({ count: 35 }), ...over };
+  return { schemaVersion: 1, revision: 1, createdAt: "2026-10-07T10:00:00.000Z", updatedAt: "2026-10-07T10:00:00.000Z", ...llmOnlySet({ count: 35 }), ...over };
 }
 
 function withScenes(set: StoredSceneSet, change: (sceneId: number) => Partial<PlannedSceneRecord>): StoredSceneSet {
@@ -193,5 +195,27 @@ describe("pendingChunks: the code template", () => {
 
   test("a chunk of old-pool scenes is never free", () => {
     expect(pendingChunks(stored(), fakeLedger({})).map((p) => p.free)).toEqual([false, false]);
+  });
+
+  // 5a.2 (S5.6c2): the money side of the same question. `modelScenes` is what the chunk's request carries: the scenes of the request the template cannot write.
+  test("a free chunk has no scene for the model", () => {
+    const set = onBanks(stored(), 1, 25);
+    expect(pendingChunks(set, fakeLedger({})).find((p) => p.chunk.chunk === 1)?.modelScenes).toBe(0);
+  });
+
+  test("a chunk of scenes the template cannot write carries all of them to the model", () => {
+    const first = pendingChunks(stored(), fakeLedger({})).find((p) => p.chunk.chunk === 1);
+    expect(first?.modelScenes).toBe(25);
+  });
+
+  test("a mixed chunk carries only its null scenes to the model", () => {
+    const set = onBanks(stored(), 1, 20);
+    const first = pendingChunks(set, fakeLedger({})).find((p) => p.chunk.chunk === 1);
+    expect(first).toMatchObject({ free: false, modelScenes: 5 });
+  });
+
+  test("a scene that already has its sentence is not carried to the model", () => {
+    const set = withScenes(stored(), (n) => (n === 1 ? { text: "Typed." } : {}));
+    expect(pendingChunks(set, fakeLedger({})).find((p) => p.chunk.chunk === 1)?.modelScenes).toBe(24);
   });
 });
