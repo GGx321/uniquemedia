@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { ImageAgeCheck } from "../../shared/engine";
+import type { CategoryRef, ImageAgeCheck } from "../../shared/engine";
+import type { CoversOf } from "../../shared/scenes/writerBound";
 import type { ReleaseLine, ReserveLine, SettleLine } from "../money/ledger";
 import { MoneyError } from "../money/errors";
 import { PriceBook, type ImageWorstCaseRequest } from "../money/prices";
 import { setupMoney, type Money } from "../openrouter/testing/fakes";
-import { plan } from "../scenes";
+import { planWithPools, POOLS } from "../scenes";
+import { LLM_ONLY_POOL, LLM_ONLY_REF, llmOnlySnapshot } from "../scenes/testing/llmOnlyFixture";
 import { foldRun, type RunEvent } from "./journal";
-import { buildRunPlan, FALLBACK_IMAGE_MODEL, runEstimate, type RunPlan } from "./plan";
+import { buildRunPlan, FALLBACK_IMAGE_MODEL, runEstimate, sceneCategory, type RunPlan } from "./plan";
 import { remainingEstimate, remainingPlan, remainingPlanOrNull, scopeCommitted } from "./remaining";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -26,9 +28,15 @@ const SEEDREAM_WORST = 48_000;
 const WRITER_WORST = 37_500;
 const AGE_WORST = 5_250;
 
-function runPlan(count: number, imageAgeCheck: ImageAgeCheck = "off"): RunPlan {
-  const request = { avatarId: "avatar-0001", count, categories: ["home" as const], poses: { profile: false, back: false } };
-  const worst = runEstimate(PRICED, { imageModel: PRIMARY, textModel: "x-ai/grok-4.3" }, request, imageAgeCheck).worstMicros;
+// 5a.2 (S5.6c2, m11): a built-in run is written by the code template and asks the writer for nothing, so the writer-money tests below plan from
+// `cat-llm-only-fixture`, whose activities the template cannot write (every slot goes to the model). `HOME` plans are the template's side.
+const HOME: readonly CategoryRef[] = ["home"];
+const FIXTURE: readonly CategoryRef[] = [LLM_ONLY_REF];
+const NOTHING_COVERED: CoversOf = () => false;
+
+function runPlan(count: number, imageAgeCheck: ImageAgeCheck = "off", categories: readonly CategoryRef[] = FIXTURE): RunPlan {
+  const request = { avatarId: "avatar-0001", count, categories: [...categories], poses: { profile: false, back: false } };
+  const worst = runEstimate(PRICED, { imageModel: PRIMARY, textModel: "x-ai/grok-4.3" }, request, imageAgeCheck, NOTHING_COVERED).worstMicros;
   return buildRunPlan({
     runId: RUN_ID,
     avatarId: "avatar-0001",
@@ -38,7 +46,8 @@ function runPlan(count: number, imageAgeCheck: ImageAgeCheck = "off"): RunPlan {
     models: { imageModel: PRIMARY, textModel: "x-ai/grok-4.3" },
     capMicros: worst,
     plannedWorstMicros: worst,
-    scenes: plan({ seed: 3, count, categories: ["home"] }),
+    categories: categories.includes(LLM_ONLY_REF) ? [llmOnlySnapshot()] : undefined,
+    scenes: planWithPools({ seed: 3, count, categories: categories.map(sceneCategory) }, { ...POOLS, [LLM_ONLY_REF]: LLM_ONLY_POOL }),
   });
 }
 
@@ -113,51 +122,85 @@ describe("remainingPlan's minToProgressMicros", () => {
     expect(plan.minToProgressMicros).toBeNull();
   });
 
-  // After a crash a chunk can be out of writer attempts with its slots still open: the writer can never answer for
-  // them, so the cap is not what stops them, and the run must not be called cap-exhausted. A resume closes them.
-  test("a chunk with no writer attempts left and open slots needs nothing from the cap: null, not «cap exhausted»", () => {
+  // 5a.2 (S5.6c2, plan s5a2 §5.6 and I5.30 «a blocked chunk does not block»): a chunk out of writer attempts no longer ends the resume. The plain code sentence
+  // (S5.6d) takes its slots, so their image worst stays counted and the writer is priced for the chunks that can still be asked. These three tests said the
+  // opposite (a blocked chunk made the resume free, 0 worst, null minToProgress); the plan changes that rule, so they change with it.
+  test("a chunk with no writer attempts left does not hold the cap back: the resume needs one image attempt, and no writer ceiling", () => {
     const run = runPlan(2);
     const ids = run.writerChunks[0]?.attemptIds ?? [];
     const settles = ids.map((id): SettleLine => ({ type: "settle", attemptId: id, costMicros: 1_000, estimated: false, at: AT }));
     const plan = planFor(run, { reserves: ids.map((id) => reserve(id, "x-ai/grok-4.3", WRITER_WORST)), closes: settles });
-    expect(plan.minToProgressMicros).toBeNull();
+    expect(plan.minToProgressMicros).toBe(IMAGE_WORST);
   });
 
-  // The resume only closes those slots: it costs nothing, so it must not ask the owner to accept the open slots' worst case.
-  test("a blocked writer chunk makes the resume free: its estimate is 0 worst and 0 expected, whatever the cap leaves", () => {
+  test("a chunk with no writer attempts left no longer sets the writer blocked: its slots' image worst stays counted, the writer adds nothing", () => {
     const run = runPlan(4);
     const ids = run.writerChunks[0]?.attemptIds ?? [];
     const settles = ids.map((id): SettleLine => ({ type: "settle", attemptId: id, costMicros: 1_000, estimated: false, at: AT }));
     const plan = planFor(run, { reserves: ids.map((id) => reserve(id, "x-ai/grok-4.3", WRITER_WORST)), closes: settles });
-    expect(plan.estimate).toMatchObject({ worstMicros: 0, expectedMicros: 0 });
+    expect(plan.estimate.worstMicros).toBe(4 * 3 * IMAGE_WORST);
+    expect(plan.estimate.expectedMicros).toBe(4 * IMAGE_WORST);
   });
 
-  // The writer phase asks chunks in order and the first one that cannot be written ends it: a writable chunk BEFORE the
-  // blocked one is still paid for, so the resume is not free, and no image is ever asked for after that end.
   describe("with two writer chunks (26 slots: 25 + 1)", () => {
     const settledChunk = (run: RunPlan, chunkIndex: number) => {
       const ids = run.writerChunks[chunkIndex]?.attemptIds ?? [];
       return { reserves: ids.map((id) => reserve(id, "x-ai/grok-4.3", WRITER_WORST)), closes: ids.map((id): SettleLine => ({ type: "settle", attemptId: id, costMicros: 1_000, estimated: false, at: AT })) };
     };
 
-    test("a writable first chunk before a blocked second one is priced at the first chunk's writer attempts, not at 0", () => {
+    test("a writable first chunk before an out-of-attempts second one is priced at the first chunk's writer attempts plus every open slot's images", () => {
       const run = runPlan(26);
       expect(run.writerChunks.length).toBe(2);
       const plan = planFor(run, settledChunk(run, 1));
-      expect(plan.estimate.worstMicros).toBe(2 * WRITER_WORST);
-      expect(plan.estimate.expectedMicros).toBeGreaterThan(0);
+      expect(plan.estimate.worstMicros).toBe(2 * WRITER_WORST + 26 * 3 * IMAGE_WORST);
+      expect(plan.estimate.expectedMicros).toBeGreaterThan(26 * IMAGE_WORST);
     });
 
-    test("that resume needs the writer's ceiling to progress, and no image attempt (the phase ends at the blocked chunk)", () => {
+    test("that resume needs the writer's ceiling and one image attempt to progress", () => {
       const run = runPlan(26);
-      expect(planFor(run, settledChunk(run, 1)).minToProgressMicros).toBe(WRITER_WORST);
+      expect(planFor(run, settledChunk(run, 1)).minToProgressMicros).toBe(WRITER_WORST + IMAGE_WORST);
     });
 
-    test("a blocked first chunk keeps the resume free even though a later chunk is writable (it is never asked)", () => {
+    test("an out-of-attempts first chunk does not stop the later writable chunk from being priced", () => {
       const run = runPlan(26);
       const plan = planFor(run, settledChunk(run, 0));
-      expect(plan.estimate).toMatchObject({ worstMicros: 0, expectedMicros: 0 });
-      expect(plan.minToProgressMicros).toBeNull();
+      expect(plan.estimate.worstMicros).toBe(2 * WRITER_WORST + 26 * 3 * IMAGE_WORST);
+      expect(plan.minToProgressMicros).toBe(WRITER_WORST + IMAGE_WORST);
+    });
+  });
+
+  // The template side: a chunk whose every slot the code template writes is journaled with no request, so it is never priced as a writer call.
+  describe("a built-in run, written by the template", () => {
+    test("a fresh run needs one image attempt and no writer ceiling", () => {
+      expect(planFor(runPlan(4, "off", HOME)).minToProgressMicros).toBe(IMAGE_WORST);
+    });
+
+    test("a fresh run's worst case is its images alone, which is its cap", () => {
+      const run = runPlan(4, "off", HOME);
+      expect(planFor(run).estimate.worstMicros).toBe(4 * 3 * IMAGE_WORST);
+      expect(run.capMicros).toBe(4 * 3 * IMAGE_WORST);
+    });
+
+    test("its expected cost holds no writer term", () => {
+      expect(planFor(runPlan(4, "off", HOME)).estimate.expectedMicros).toBe(4 * IMAGE_WORST);
+    });
+
+    test("a mixed run prices the writer only for the chunks that hold a slot the template cannot write", () => {
+      // 52 photos over Home + the fixture: Home 26, fixture 26 → chunk 1 is all Home, chunk 2 mixes (1 Home + 24 fixture), chunk 3 is fixture.
+      const run = runPlan(52, "off", ["home", LLM_ONLY_REF]);
+      const withModel = run.writerChunks.length;
+      expect(withModel).toBe(3);
+      const plan = planFor(run);
+      expect(plan.estimate.worstMicros).toBe(52 * 3 * IMAGE_WORST + 2 * 2 * WRITER_WORST);
+      expect(plan.minToProgressMicros).toBe(WRITER_WORST + IMAGE_WORST);
+    });
+
+    test("a chunk of the template's slots that is already journaled adds nothing, and a model chunk still does", () => {
+      const run = runPlan(52, "off", ["home", LLM_ONLY_REF]);
+      const first = run.writerChunks[0];
+      expect(first).toBeDefined();
+      const events: RunEvent[] = [{ type: "writer", chunk: 1, sentences: (first?.slotIndexes ?? []).map((slotIndex) => ({ slotIndex, sentence: "She reads by the window." })), at: AT }];
+      expect(planFor(run, { events }).estimate.worstMicros).toBe(52 * 3 * IMAGE_WORST + 2 * 2 * WRITER_WORST);
     });
   });
 
@@ -170,7 +213,7 @@ describe("remainingPlan's minToProgressMicros", () => {
 describe("remainingEstimate", () => {
   test("a run nothing happened to yet: its whole estimate, which is its cap", () => {
     const run = runPlan(4);
-    const whole = runEstimate(PRICED, { imageModel: PRIMARY, textModel: "x-ai/grok-4.3" }, { count: run.scenes.slots.length }, "off");
+    const whole = runEstimate(PRICED, { imageModel: PRIMARY, textModel: "x-ai/grok-4.3" }, { count: run.scenes.slots.length, categories: [...FIXTURE] }, "off", NOTHING_COVERED);
     expect(estimateFor(run)).toEqual({ expectedMicros: whole.expectedMicros, worstMicros: run.capMicros, prices: "fallback", pricesAsOf: "2026-09-24" });
   });
 

@@ -6,7 +6,9 @@ import type { Ledger, Scope } from "../money/ledger";
 import type { PricedBook } from "../money/priceCache";
 import type { PriceBook } from "../money/prices";
 import { attemptPaid, paidAttempts, type LedgerView, type RunState } from "./journal";
-import { planRoute, RUN_ATTEMPTS_PER_SLOT, type RunPlan } from "./plan";
+import { localSentences } from "../scenes/localSentences";
+import { slotKeyOf } from "../scenes/phoneLook";
+import { plannedSlots, planRoute, RUN_ATTEMPTS_PER_SLOT, type RunPlan } from "./plan";
 
 // T6 review M3: what a resume of a run could still spend, for the owner to
 // accept before it, as before a start. Worst: every open slot's remaining
@@ -38,14 +40,13 @@ export interface RemainingPlan {
   estimate: Estimate;
   /**
    * The smallest worst case a resume has to fit under the run's cap to make
-   * progress: the writer's ceiling when a chunk is still unwritten (the
-   * writer runs first) plus the cheapest next attempt of an open slot (a
-   * slot next on the Seedream fallback costs that; every attempt carries its
-   * age check when the run has them). Null when nothing is left to send, or
-   * when the first unwritten writer chunk has no attempts left (it cannot be
-   * answered, whatever the cap): a resume then only closes slots and costs
-   * nothing. (A blocked chunk after a writable one leaves the writable ones to
-   * be paid for, and no image.) A run whose cap room is
+   * progress: the writer's ceiling when a chunk that holds a slot for the model
+   * is still unwritten and can still be asked (the writer runs first; a chunk
+   * the code template writes whole needs no request) plus the cheapest next
+   * attempt of an open slot (a slot next on the Seedream fallback costs that;
+   * every attempt carries its age check when the run has them). Null when
+   * nothing is left to send. 5a.2: a chunk out of attempts no longer blocks the
+   * resume, so its slots' images still count. A run whose cap room is
    * below it can never spend again — only be refused (RUN_CAP_EXCEEDED) — so
    * `runs.list` reports it ended rather than resumable forever.
    */
@@ -88,29 +89,37 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
   let expected = 0;
   let cheapestSlotAttempt: number | null = null;
 
-  // The writer phase runs first, chunk by chunk in order, and the first chunk out of attempts ends it: no later chunk is
-  // asked, no image is requested. So the chunks BEFORE the blocked one are still paid for (a crash left them writable).
+  // 5a.2 (S5.6c2, I5.30): the code template writes every slot it can, so only a not-yet-journaled chunk that holds a slot the template cannot write (a null
+  // slot, found with the very `local` the run's writer phase uses) is a request for the model. A chunk of template slots costs nothing here. A chunk out of
+  // attempts no longer blocks the resume: its slots take the plain code sentence (S5.6d), so their images stay counted.
   const writer = { ...WRITER_CALL, model: plan.models.text };
-  // A run with no writer chunks (made from a scene set) never asks the text model: it needs no price for it.
-  const writerCeiling = plan.writerChunks.length === 0 ? 0 : book.chatWorstCase({ model: writer.model, maxTokens: writer.maxTokens, inputTokens: writer.inputTokens, images: writer.images });
+  const local = localSentences({
+    slots: plannedSlots(plan),
+    keyOf: (slot) => slotKeyOf(plan.runId, slot.attemptIdBase),
+    snapshots: plan.categories,
+  });
+  const slotOf = new Map(plannedSlots(plan).map((slot) => [slot.slotIndex, slot] as const));
+  const modelSlotsOf = (chunk: RunPlan["writerChunks"][number]): number =>
+    chunk.slotIndexes.filter((slotIndex) => {
+      const slot = slotOf.get(slotIndex);
+      return slot === undefined || local(slot) === null;
+    }).length;
+  const asked = plan.writerChunks.filter((chunk) => !state.writerDone.has(chunk.chunk)).filter((chunk) => modelSlotsOf(chunk) > 0);
+  // A run with no chunk for the model (made from a scene set, or all template) never asks the text model: it needs no price for it.
+  const writerCeiling = asked.length === 0 ? 0 : book.chatWorstCase({ model: writer.model, maxTokens: writer.maxTokens, inputTokens: writer.inputTokens, images: writer.images });
   let unwrittenSlots = 0;
   let writerPending = false;
-  let writerBlocked = false;
-  for (const chunk of plan.writerChunks) {
-    if (state.writerDone.has(chunk.chunk)) continue;
+  for (const chunk of asked) {
     const answered = chunk.attemptIds.filter((id) => attemptPaid(ledger, id)).length;
     const unused = chunk.attemptIds.filter((id) => ledger.reserveOf(id) === undefined).length;
     const attempts = Math.min(Math.max(0, writer.maxAttempts - answered), unused);
-    if (attempts <= 0) {
-      writerBlocked = true;
-      break;
-    }
+    if (attempts <= 0) continue;
     worst += attempts * writerCeiling;
     writerPending = true;
-    unwrittenSlots += chunk.slotIndexes.length;
+    unwrittenSlots += modelSlotsOf(chunk);
   }
 
-  for (const slot of writerBlocked ? [] : state.slots) {
+  for (const slot of state.slots) {
     if (slot.end !== null || slot.fallbackUsed) continue; // a used fallback: the slot closes on resume without an attempt
     // Its paid attempts left (invariant 7), never more than its unused ids.
     const unused = slot.attemptIds.filter((id) => !slot.consumed.has(id)).length;
