@@ -199,13 +199,95 @@ describe("covers: the template renders every slot the planner can draw from the 
     expect(covers({ ...pool, shotDeck: ["selfie", "selfie", "selfie", "selfie", "friend"] })).toBe(false);
   });
 
-  test("a pool limited to the back view, where a place's only activities look at the camera, is covered through the planner's fallback", () => {
+  // S5.6R: the real planner has no pose fallback. It draws the activity without asking the pose, so a viewer-gaze activity on a back slot is a null slot
+  // (engine/runs/covers.planner.property.test.ts checks this against the planner itself); the pool is priced with a writer, not counted free.
+  test("a pool limited to the back view, where a place's only activities look at the camera, is not covered: the planner draws them on a back slot", () => {
     const pool: CustomPool = {
       locations: [{ name: "a studio corner", mirror: false, activities: [{ text: "smiling at the camera", twoHanded: false }, { text: "looking at the viewer", twoHanded: false }] }],
       outfits: ["a cozy cardigan"],
       shotDeck: ["friend", "friend", "friend", "friend", "friend"],
       poses: ["back"],
     };
+    expect(covers(pool)).toBe(false);
+  });
+
+  test("a pool limited to the back view is covered when every activity of every place reads from behind", () => {
+    const pool: CustomPool = {
+      locations: [{ name: "a studio corner", mirror: false, activities: [{ text: "holding a mug", twoHanded: false }, { text: "browsing the shelves", twoHanded: false }] }],
+      outfits: ["a cozy cardigan"],
+      shotDeck: ["friend", "friend", "friend", "friend", "friend"],
+      poses: ["back"],
+    };
     expect(covers(pool)).toBe(true);
+  });
+
+  test("one viewer-gaze activity among others uncovers a pool that can draw a profile slot", () => {
+    const pool: CustomPool = {
+      locations: [{ name: "the beach", mirror: false, activities: [{ text: "browsing the shelves", twoHanded: false }, { text: "smiling at the camera", twoHanded: false }] }],
+      outfits: ["a cozy cardigan"],
+      shotDeck: ["friend", "friend", "friend", "friend", "friend"],
+      poses: ["profile"],
+    };
+    expect(covers(pool)).toBe(false);
+  });
+
+  test("a hand-held shot with no clean place becomes a friend's snap the deck does not hold, so that activity must read on a friend", () => {
+    const pool: CustomPool = {
+      locations: [{ name: "a studio corner", mirror: false, activities: [{ text: "scrolling her phone", twoHanded: false }, { text: "smiling at the camera", twoHanded: false }] }],
+      outfits: ["a cozy cardigan"],
+      shotDeck: ["selfie", "selfie", "selfie", "selfie", "selfie"],
+      poses: ["profile"],
+    };
+    expect(covers(pool)).toBe(false);
+  });
+});
+
+// S5.6R: «Другая сцена — бесплатно» hands the template the scene's own old text as `seen`. A custom slot whose frame shows no face (from behind) has no gaze or cue to
+// redraw, so every dedup redraw used to equal the first text and the slot kept it: the «new» scene read exactly as the old one.
+describe("a redraw of a slot with nothing to vary still reads differently from the text it replaces", () => {
+  const REF = "cat-redraw-fixture";
+  const BACK: TemplateSlot = { category: REF, location: "a quiet bookshop", activity: "browsing the shelves", outfit: "a cozy cardigan", shot: "friend", pose: "back" };
+  const ctx = (key: string, seen?: ReadonlySet<string>, distinct = true) => ({ key, snapshots: [{ ref: REF }], distinct, ...(seen === undefined ? {} : { seen }) });
+
+  test("the text of a slot seen from behind is the same on every draw key: nothing in it varies", () => {
+    const texts = new Set(Array.from({ length: 12 }, (_, i) => templateSentence(BACK, ctx(`set-1:3:${i}`))));
+    expect(texts.size).toBe(1);
+  });
+
+  test("with its own old text held, the slot is rewritten into another sentence, not into the same one", () => {
+    const old = templateSentence(BACK, ctx("set-1:3:1"));
+    expect(old).not.toBeNull();
+    const again = templateSentence(BACK, ctx("set-1:3:2", new Set([old ?? ""])));
+    expect(again).not.toBeNull();
+    expect(again).not.toBe(old);
+  });
+
+  test("the other sentence still says the same place, activity and outfit", () => {
+    const old = templateSentence(BACK, ctx("set-1:3:1")) ?? "";
+    const again = templateSentence(BACK, ctx("set-1:3:2", new Set([old]))) ?? "";
+    expect(again).toContain("quiet bookshop");
+    expect(again).toContain("browsing the shelves");
+    expect(again).toContain("a cozy cardigan");
+  });
+
+  test("a run's own dedup, which does not ask for a distinct text, still keeps the first text of a slot with nothing left to redraw", () => {
+    const old = templateSentence(BACK, ctx("set-1:3:1", undefined, false));
+    expect(templateSentence(BACK, ctx("set-1:3:1", new Set([old ?? ""]), false))).toBe(old);
+  });
+
+  test("a held text that is not this slot's leaves the first draw as it was", () => {
+    const first = templateSentence(BACK, ctx("set-1:3:1"));
+    expect(templateSentence(BACK, ctx("set-1:3:1", new Set(["Another scene entirely."])))).toBe(first);
+  });
+
+  test("the slot can be redrawn again and again: each rewrite differs from the text held before it", () => {
+    const held = new Set<string>();
+    let last = "";
+    for (let k = 1; k <= 3; k++) {
+      const text = templateSentence(BACK, ctx(`set-1:3:${k}`, held)) ?? "";
+      expect(text).not.toBe(last);
+      held.add(text);
+      last = text;
+    }
   });
 });

@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { PoolShot, ScenePose } from "../engine";
-import { captureOfShot } from "./captures";
-import { covers, customActivityAllowed, type CustomActivity, type CustomPool } from "./custom";
+import { captureOfShot, posesFor } from "./captures";
+import { covers, type CustomActivity, type CustomPool } from "./custom";
 import { fnv1a } from "./hash";
 import { templateSentence } from "./template";
+import { PHONE_WORDS, SELFIE_WORDS } from "./words";
 
 // 5a.2 (S5.6a, I5.22): `covers(pool)` is true exactly when the template renders every (place, activity, shot, pose) the planner can draw from the
-// pool. An equivalence property over random pools: the slots are drawn here the way the 5a.2 planner draws them (the pose first, then an activity the
-// slot allows, the planner's fallback when none does), independently of `covers`' own loop. Soundness is the money side: a covered pool reserves no
+// pool. An equivalence property over random pools: the slots are drawn here the way the planner draws them (a shot with its fallbacks, a pose, then
+// ANY activity the shot allows), independently of `covers`' own loop; engine/runs/covers.planner.property.test.ts holds `covers` to the real planner. Soundness is the money side: a covered pool reserves no
 // writer, so none of its slots may come out null.
 
 const ACTIVITIES: readonly CustomActivity[] = [
@@ -48,28 +49,38 @@ function randomPool(seed: number): CustomPool {
   };
 }
 
-/** Every slot the 5a.2 planner can draw from the pool (written apart from `covers`). */
-function drawableSlots(pool: CustomPool): Array<{ location: string; activity: string; outfit: string; shot: PoolShot; pose: ScenePose }> {
-  const out: Array<{ location: string; activity: string; outfit: string; shot: PoolShot; pose: ScenePose }> = [];
+type DrawnSlot = { location: string; activity: string; outfit: string; shot: PoolShot; pose: ScenePose };
+
+/**
+ * Every slot the planner can draw from the pool, written from the planner's stages (engine/scenes/planner.ts, poses.ts), apart from `covers`: a shot of the deck
+ * (a mirror on a mirror place only), a hand-held shot moved off a place with no clean activity or with «selfie» in its name (settleHandShots: onto a clean place, a mirror
+ * that finds no clean mirror place becoming a selfie, a pool with no clean place a friend's snap), a pose from the pool's angles (a back or a profile angle takes a
+ * non-phone shot of the deck, drawFromPoses), then ANY activity the shot allows: the planner never asks the pose which one. The REAL planner is checked against `covers`
+ * in engine/runs/covers.planner.property.test.ts; this model is what lets the other direction (uncovered ⇒ a null slot) be exact.
+ */
+function drawableSlots(pool: CustomPool): DrawnSlot[] {
+  const out: DrawnSlot[] = [];
   const hand = (shot: PoolShot): boolean => shot === "selfie" || shot === "mirror";
+  const clean = (a: CustomActivity): boolean => !a.twoHanded && !PHONE_WORDS.test(a.text) && !SELFIE_WORDS.test(a.text);
+  const cleanPlace = (place: CustomPool["locations"][number]): boolean => !SELFIE_WORDS.test(place.name) && place.activities.some(clean);
+  const deck = new Set(pool.shotDeck);
+  const plain = [...deck].filter((shot) => !hand(shot));
+  const anyCleanPlace = pool.locations.some(cleanPlace);
+  const angles = pool.poses ?? POSES;
   for (const place of pool.locations) {
-    for (const shot of pool.shotDeck) {
-      if (shot === "mirror" && place.mirror !== true) continue;
-      // The planner moves a hand-held shot off a place with no clean activity or with «selfie» in its name (settleHandShots).
-      // A custom category's capture is derived from its stored shot (plan r1.2): a photographer is a friend.
+    const shots = new Set<PoolShot>(plain);
+    if (cleanPlace(place)) {
+      if (deck.has("selfie") || deck.has("mirror")) shots.add("selfie");
+      if (deck.has("mirror") && place.mirror === true) shots.add("mirror");
+    }
+    if ((deck.has("selfie") || deck.has("mirror")) && !anyCleanPlace) shots.add("friend");
+    if (angles.some((p) => p === "back" || p === "profile") && plain.length === 0 && (deck.has("selfie") || deck.has("mirror"))) shots.add("friend");
+    for (const shot of shots) {
       const capture = captureOfShot(shot);
-      if (hand(shot) && (/selfie/i.test(place.name) || !place.activities.some((a) => customActivityAllowed(a, capture, "front")))) continue;
-      for (const pose of pool.poses ?? POSES) {
-        if (hand(shot) && pose !== "front" && pose !== "three-quarter") continue;
-        let slotShot = shot;
-        let slotPose = pose;
-        let allowed = place.activities.filter((a) => customActivityAllowed(a, capture, slotPose));
-        if (allowed.length === 0) {
-          slotShot = shot === "candid" ? "friend" : shot;
-          slotPose = "three-quarter";
-          allowed = place.activities.filter((a) => customActivityAllowed(a, captureOfShot(slotShot), slotPose));
+      for (const pose of angles.filter((p) => posesFor(capture).includes(p))) {
+        for (const activity of hand(shot) ? place.activities.filter(clean) : place.activities) {
+          for (const outfit of pool.outfits) out.push({ location: place.name, activity: activity.text, outfit, shot, pose });
         }
-        for (const activity of allowed) for (const outfit of pool.outfits) out.push({ location: place.name, activity: activity.text, outfit, shot: slotShot, pose: slotPose });
       }
     }
   }

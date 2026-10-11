@@ -17,13 +17,15 @@ export interface LocalSentencesInput<S extends TemplateSlot & { slotIndex: numbe
   snapshots?: readonly { ref: string }[] | undefined;
   /** Sentences the run or the set already holds (a review write's other scenes): a slot is redrawn off an equal one. */
   seen?: Iterable<string> | undefined;
+  /** A rewrite: the sentence must differ from every `seen` one even when nothing in the slot varies (the review write's redraw); a run's own dedup leaves it off. */
+  distinct?: boolean | undefined;
 }
 
 export function localSentences<S extends TemplateSlot & { slotIndex: number }>(input: LocalSentencesInput<S>): (slot: S) => string | null {
   const rendered = new Map<number, string>();
   const seen = new Set<string>(input.seen);
   for (const slot of input.slots) {
-    const text = templateSentence(slot, { key: input.keyOf(slot), snapshots: input.snapshots, seen });
+    const text = templateSentence(slot, { key: input.keyOf(slot), snapshots: input.snapshots, seen, ...(input.distinct === true ? { distinct: true } : {}) });
     if (text === null) continue;
     rendered.set(slot.slotIndex, text);
     seen.add(text);

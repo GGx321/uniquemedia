@@ -894,6 +894,21 @@ describe("a rewrite of planned scenes: the writer seam", () => {
     expect(text).not.toBe(same);
   });
 
+  // S5.6R: seen from behind a custom scene has no gaze or cue, so every redraw of it read as the first text and the rewrite kept the old sentence.
+  test("a rewrite of a custom scene seen from behind, which has nothing to vary, still returns another sentence than the one it has", async () => {
+    await seed((set) => ({ ...set, scenes: set.scenes.map((sc) => (sc.origin === "planned" && sc.sceneId === 3 ? { ...sc, slot: { ...sc.slot, activity: "reading a menu", pose: "back" as const } } : sc)) }));
+    const slot = { ...slotOf(await setNow(), 3) };
+    const same = localSentences({ slots: [slot], keyOf: () => `${SET}:3:2`, snapshots: [OLD_SNAPSHOT] })(slot);
+    expect(same).not.toBeNull();
+    await store.update(AVATAR, SET, (s) => ({ ...s, scenes: s.scenes.map((sc) => (sc.sceneId === 3 ? { ...sc, text: same } : sc)) }) as StoredSceneSet);
+    await recordRewrite([3]);
+    await run([]).end;
+
+    const text = (await setNow()).scenes[2]?.text;
+    expect(text).toContain("reading a menu");
+    expect(text).not.toBe(same);
+  });
+
   test("an idea write is never written by the template: it asks the model", async () => {
     await seed(onBanks);
     await recordIdea("кофе на балконе утром", 2);

@@ -260,7 +260,7 @@ export function RunOutcome({ job, fromSet, photos }: { job: JobView; fromSet: bo
       <Notice tone={failedSlots > 0 ? "warn" : "ok"} title="Запуск завершён">
         {fromSet ? runDoneText(photoIds.length) : `В галерее ${countOf(photoIds.length, PHOTO_FORMS)} этого запуска.`}
         {unchecked > 0 && ` ${faceMarksText(unchecked)}.`}
-        {failedSlots > 0 && ` Не получилось: ${failedSlots} — стоимость попыток учтена.`}
+        {failedSlots > 0 && ` Не получилось: ${failedSlots}. Если за попытки платили, это уже учтено в расходах.`}
       </Notice>
     );
   }

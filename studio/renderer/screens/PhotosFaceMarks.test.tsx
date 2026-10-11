@@ -74,6 +74,14 @@ describe("the end of a run", () => {
     expect(screen.getByText(/1 кадр без проверки лица\. Не получилось: 2/)).toBeDefined();
   });
 
+  // S5.6R: a slot can end free (`slot-text-problem` ends it with no attempt paid), and the job end carries only the count, so the line must not claim that every failed
+  // slot cost something. The reason itself is not on the wire (a contract change, S5.7a).
+  test("does not claim that the failed slots were paid for: some close for free", () => {
+    render(<RunOutcome job={doneRun(["p1"], 2)} fromSet={false} photos={[photo("p1", 0.81)]} />);
+    expect(screen.getByText(/Не получилось: 2\. Если за попытки платили, это уже учтено в расходах\./)).toBeDefined();
+    expect(screen.queryByText(/стоимость попыток учтена/) === null).toBe(true);
+  });
+
   test("counts them on a run made from a set too", () => {
     render(<RunOutcome job={doneRun(["p1"])} fromSet={true} photos={[photo("p1")]} />);
     expect(screen.getByText(/1 кадр без проверки лица\./)).toBeDefined();

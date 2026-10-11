@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { AvatarSummary, EventMessage, RunRequest } from "../../shared/engine";
+import type { AvatarSummary, CategorySummary, EventMessage, RunRequest } from "../../shared/engine";
+import { LLM_ONLY_CATEGORY_RECORD, LLM_ONLY_REF } from "../../engine/scenes/testing/llmOnlyFixture";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
@@ -38,19 +39,19 @@ async function unwrap<T>(reply: Promise<{ ok: true; result: T } | { ok: false; e
   return r.result;
 }
 
-test("runs.estimate prices a run like the Photos mockup: 20 photos is ≈ $1.01, до $3.08", async () => {
+test("runs.estimate prices a run like the Photos mockup: 20 photos is ≈ $1.00, до $3.00", async () => {
   const { client } = makeMock();
   const { estimate } = await unwrap(client.request("runs.estimate", REQUEST));
-  expect(estimate).toMatchObject({ expectedMicros: 1_009_160, worstMicros: 3_075_000 });
+  expect(estimate).toMatchObject({ expectedMicros: 1_000_000, worstMicros: 3_000_000 });
 });
 
-test("runs.estimate prices the chosen quality like the engine: medium is $0.06 + $0.01 an attempt, so 20 photos cap at $4.275 (low: $3.075)", async () => {
+test("runs.estimate prices the chosen quality like the engine: medium is $0.06 + $0.01 an attempt, so 20 photos cap at $4.20 (low: $3.00)", async () => {
   const { client } = makeMock();
-  expect((await unwrap(client.request("runs.estimate", REQUEST))).estimate.worstMicros).toBe(3_075_000);
+  expect((await unwrap(client.request("runs.estimate", REQUEST))).estimate.worstMicros).toBe(3_000_000);
 
   await unwrap(client.request("settings.setModels", { imageModel: "x-ai/grok-imagine-image-2.0", imageQuality: "medium", textModel: "x-ai/grok-4.3" }));
 
-  expect((await unwrap(client.request("runs.estimate", REQUEST))).estimate.worstMicros).toBe(4_275_000);
+  expect((await unwrap(client.request("runs.estimate", REQUEST))).estimate.worstMicros).toBe(4_200_000);
 });
 
 test("runs.estimate prices the chosen model like the engine: seedream-5-0-pro, with no quality knob, is its own $0.048 an attempt", async () => {
@@ -58,26 +59,26 @@ test("runs.estimate prices the chosen model like the engine: seedream-5-0-pro, w
 
   await unwrap(client.request("settings.setModels", { imageModel: "bytedance-seed/seedream-5-0-pro", textModel: "x-ai/grok-4.3" }));
 
-  expect((await unwrap(client.request("runs.estimate", REQUEST))).estimate.worstMicros).toBe(60 * 48_000 + 75_000);
+  expect((await unwrap(client.request("runs.estimate", REQUEST))).estimate.worstMicros).toBe(60 * 48_000);
 });
 
 test("runs.start caps the run at the chosen quality's worst case, so a price accepted at the low quality is PRICE_CHANGED once medium is chosen", async () => {
   const { client } = makeMock();
   await unwrap(client.request("settings.setModels", { imageModel: "x-ai/grok-imagine-image-2.0", imageQuality: "medium", textModel: "x-ai/grok-4.3" }));
 
-  expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 })).toMatchObject({ ok: false, error: { code: "PRICE_CHANGED" } });
-  expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 4_275_000 })).toMatchObject({ ok: true });
+  expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_000_000 })).toMatchObject({ ok: false, error: { code: "PRICE_CHANGED" } });
+  expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 4_200_000 })).toMatchObject({ ok: true });
 });
 
 test("the age check, when on, is priced into every attempt", async () => {
   const { client } = makeMock({ imageAgeCheck: "on" });
   const { estimate } = await unwrap(client.request("runs.estimate", REQUEST));
-  expect(estimate.worstMicros).toBe(3_075_000 + 60 * 2_000);
+  expect(estimate.worstMicros).toBe(3_000_000 + 60 * 2_000);
 });
 
 test("a whole run goes through the validating client: progress per slot, job.done, and its photos listed newest first", async () => {
   const { scheduler, client, events } = makeMock();
-  const { runId, jobId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 }));
+  const { runId, jobId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_000_000 }));
 
   scheduler.runAll();
   const progress = events.flatMap((e) => (e.type === "job.progress" ? [e.payload.done] : []));
@@ -98,7 +99,7 @@ test("a whole run goes through the validating client: progress per slot, job.don
 
   const { runs } = await unwrap(client.request("runs.list", {}));
   expect(runs).toEqual([
-    expect.objectContaining({ runId, total: 20, done: 20, failed: 0, open: 0, running: false, resumable: false, capMicros: 3_075_000, committedMicros: 1_000_000 }),
+    expect.objectContaining({ runId, total: 20, done: 20, failed: 0, open: 0, running: false, resumable: false, capMicros: 3_000_000, committedMicros: 1_000_000 }),
   ]);
 
   const money = await unwrap(client.request("money.status", {}));
@@ -107,7 +108,7 @@ test("a whole run goes through the validating client: progress per slot, job.don
 
 test("a stored run photo bumps its avatar's photoCount and announces avatar.changed, like the real engine does per photo (MEDIUM-3)", async () => {
   const { scheduler, client, events } = makeMock();
-  await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 }));
+  await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_000_000 }));
 
   scheduler.next(); // one slot lands
   const firstChanged = events.filter((e) => e.type === "avatar.changed");
@@ -127,14 +128,14 @@ test("a stored run photo bumps its avatar's photoCount and announces avatar.chan
 
 test("runs.start refuses a price the user did not accept, and a second run of a busy avatar", async () => {
   const { client, engine } = makeMock();
-  expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_069_999 })).toMatchObject({ ok: false, error: { code: "PRICE_CHANGED" } });
+  expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 2_999_999 })).toMatchObject({ ok: false, error: { code: "PRICE_CHANGED" } });
   expect(await unwrap(client.request("runs.list", {}))).toEqual({ runs: [] });
 
-  await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 }));
-  expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 })).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
+  await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_000_000 }));
+  expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_000_000 })).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
 
   engine.setRunImagePrice(60_000);
-  expect((await unwrap(client.request("runs.estimate", REQUEST))).estimate.worstMicros).toBe(3_675_000);
+  expect((await unwrap(client.request("runs.estimate", REQUEST))).estimate.worstMicros).toBe(3_600_000);
 });
 
 test("runs.estimate and runs.start answer NOT_FOUND for an avatar that is not saved and active", async () => {
@@ -148,7 +149,7 @@ test("runs.estimate and runs.start answer NOT_FOUND for an avatar that is not sa
 
 test("a cancel keeps only the in-flight slots' reserves open (MEDIUM-2); reconciling frees the rest for the resume to price again", async () => {
   const { scheduler, client, events } = makeMock(); // default concurrency: 6
-  const { runId, jobId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 }));
+  const { runId, jobId } = await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_000_000 }));
   scheduler.next(); // one slot lands
 
   expect(await unwrap(client.request("runs.cancel", { runId }))).toEqual({ runId });
@@ -160,11 +161,11 @@ test("a cancel keeps only the in-flight slots' reserves open (MEDIUM-2); reconci
   // 19 open slots, but only 6 (the network's own concurrency) were ever
   // actually in flight: their reserves ($0.90) stay open, the other 13's
   // ($1.95, never sent) are released for free. Committed so far: $0.05
-  // settled + $0.90 reserved = $0.95; the cap ($3.08) leaves $2.12.
+  // settled + $0.90 reserved = $0.95; the cap ($3.00) leaves $2.05.
   const [run] = (await unwrap(client.request("runs.list", {}))).runs;
-  expect(run).toMatchObject({ runId, done: 1, open: 19, running: false, resumable: true, committedMicros: 950_000, remainingWorstMicros: 2_125_000 });
+  expect(run).toMatchObject({ runId, done: 1, open: 19, running: false, resumable: true, committedMicros: 950_000, remainingWorstMicros: 2_050_000 });
   const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
-  expect(estimate).toMatchObject({ expectedMicros: 950_000, worstMicros: 2_125_000 });
+  expect(estimate).toMatchObject({ expectedMicros: 950_000, worstMicros: 2_050_000 });
 
   // The 6 in-flight slots' reserves stay open at their worst case (M3): any
   // paid call, a resume included, is refused until a reconcile — mirrors the
@@ -191,16 +192,16 @@ test("a cancel keeps only the in-flight slots' reserves open (MEDIUM-2); reconci
   const done = events.find((e) => e.type === "job.done");
   if (done?.type !== "job.done" || done.payload.result.kind !== "run") throw new Error("expected the resumed run's job.done");
   expect(done.payload.result.photoIds).toHaveLength(20);
-  expect(await client.request("runs.resume", { runId, acceptedWorstMicros: 3_075_000 })).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+  expect(await client.request("runs.resume", { runId, acceptedWorstMicros: 3_000_000 })).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
 });
 
 test("a resume never offers more than the run's cap leaves", async () => {
   const { client, engine } = makeMock();
   const runId = engine.seedRun({ ...REQUEST, count: 12 }, 8);
   engine.setRunImagePrice(1_000_000);
-  // 4 open slots × 3 × $1 would be $12; the cap ($1.87) less its $0.40 settled leaves $1.47.
+  // 4 open slots × 3 × $1 would be $12; the cap ($1.80) less its $0.40 settled leaves $1.40.
   const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
-  expect(estimate.worstMicros).toBe(1_875_000 - 400_000);
+  expect(estimate.worstMicros).toBe(1_800_000 - 400_000);
   expect(estimate.expectedMicros).toBeLessThanOrEqual(estimate.worstMicros);
 });
 
@@ -241,7 +242,7 @@ test("runs.list orders runs by createdAt, newest first, regardless of seed order
 
 test("a run keeps the age-check mode it started with: its resume price and reserves include the checks", async () => {
   const { scheduler, client, engine } = makeMock({ imageAgeCheck: "on" });
-  const { runId } = await unwrap(client.request("runs.start", { ...REQUEST, count: 5, acceptedWorstMicros: 15 * 52_000 + 75_000 }));
+  const { runId } = await unwrap(client.request("runs.start", { ...REQUEST, count: 5, acceptedWorstMicros: 15 * 52_000 }));
   scheduler.next();
   const during = await unwrap(client.request("money.status", {}));
   expect(during).toMatchObject({ ledger: "open", unsettledMicros: 4 * 3 * 52_000 });
@@ -252,17 +253,17 @@ test("a run keeps the age-check mode it started with: its resume price and reser
   // it on. All 4 open slots stayed in flight at cancel (the network's own
   // concurrency, 6, covers them): their reserve (4 × 3 × $0.052 = $0.624)
   // is still open (MEDIUM-2) and already accounts for nearly the whole cap
-  // ($0.85), leaving only $0.1746 more before a reconcile.
+  // ($0.78), leaving only $0.1046 more before a reconcile.
   await unwrap(client.request("settings.setImageAgeCheck", { imageAgeCheck: "off" }));
   const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
-  expect(estimate).toMatchObject({ expectedMicros: 179_600, worstMicros: 179_600 });
+  expect(estimate).toMatchObject({ expectedMicros: 104_600, worstMicros: 104_600 });
   expect(engine.calls.at(-1)?.type).toBe("runs.estimateResume");
 });
 
 test("failed slots end without a photo and are counted in the run's result", async () => {
   const { scheduler, client, events, engine } = makeMock();
   engine.failNextRunSlots(3);
-  await unwrap(client.request("runs.start", { ...REQUEST, count: 5, acceptedWorstMicros: 5 * 3 * 50_000 + 75_000 }));
+  await unwrap(client.request("runs.start", { ...REQUEST, count: 5, acceptedWorstMicros: 5 * 3 * 50_000 }));
   scheduler.runAll();
   const done = events.find((e) => e.type === "job.done");
   if (done?.type !== "job.done" || done.payload.result.kind !== "run") throw new Error("expected a run's job.done");
@@ -387,20 +388,31 @@ test("runs.estimateResume and runs.resume refuse a cap-exhausted run with RUN_CA
 });
 
 // ---------- parity with the real engine: the refusals a mock run never used to produce ----------
-
-const WORST_20 = 20 * 3 * 50_000 + 75_000;
+// S5.6R (I5.30): the writer is priced for the model's scenes alone. A built-in run (WORST_20) has no writer term, like the engine's `runEstimate`; the same run on
+// `cat-llm-only-fixture`, whose sentences only the model writes, keeps the writer's chunks (75,000 micro-dollars each: 2 attempts × $0.0375).
+const WORST_20 = 20 * 3 * 50_000;
 const START = { ...REQUEST, acceptedWorstMicros: WORST_20 };
+const LLM_ONLY_FIXTURE: CategorySummary = { ...LLM_ONLY_CATEGORY_RECORD, createdAt: "2026-10-05T10:00:00.000Z", updatedAt: "2026-10-05T10:00:00.000Z" };
 
 async function runCount(client: ReturnType<typeof makeMock>["client"]): Promise<number> {
   return (await unwrap(client.request("runs.list", {}))).runs.length;
 }
 
-test("the writer's worst case is the real engine's 75,000 micro-dollars per chunk: 20 photos are «до $3.08» exactly", async () => {
+test("a built-in run prices no writer, as the engine does (the template writes it whole): 20 photos are «до $3.00» exactly", async () => {
   const { client } = makeMock();
   const { estimate } = await unwrap(client.request("runs.estimate", REQUEST));
   expect(estimate.worstMicros).toBe(WORST_20);
-  // 100 photos are four writer chunks, like the real engine's ceil(100 / 25).
   const { estimate: hundred } = await unwrap(client.request("runs.estimate", { ...REQUEST, count: 100 }));
+  expect(hundred.worstMicros).toBe(100 * 3 * 50_000);
+});
+
+test("the writer's worst case on a category only the model writes is the real engine's 75,000 micro-dollars per chunk: 20 photos are «до $3.08» exactly", async () => {
+  const { client } = makeMock({ categories: [LLM_ONLY_FIXTURE] });
+  const request = { ...REQUEST, categories: [LLM_ONLY_REF] };
+  const { estimate } = await unwrap(client.request("runs.estimate", request));
+  expect(estimate.worstMicros).toBe(20 * 3 * 50_000 + 75_000);
+  // 100 photos are four writer chunks, like the real engine's ceil(100 / 25).
+  const { estimate: hundred } = await unwrap(client.request("runs.estimate", { ...request, count: 100 }));
   expect(hundred.worstMicros).toBe(100 * 3 * 50_000 + 4 * 75_000);
 });
 
@@ -590,11 +602,19 @@ describe("runs.resume and runs.estimateResume, in the real engine's order", () =
 
 describe("resumePrice carries the writer term when the writer has not finished", () => {
   test("a run stopped before its writer answered: every open slot's attempts plus the writer chunk's own ceiling", async () => {
-    const { engine, client } = makeMock();
-    const runId = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 0, undefined, { writerDone: false });
+    const { engine, client } = makeMock({ categories: [LLM_ONLY_FIXTURE] });
+    const runId = engine.seedRun({ ...REQUEST, count: 12, categories: [LLM_ONLY_REF] }, 0, undefined, { writerDone: false });
     const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
     expect(estimate.worstMicros).toBe(12 * 3 * 50_000 + 75_000);
     expect(estimate.expectedMicros).toBe(12 * 50_000 + 12 * 458);
+  });
+
+  test("a built-in run stopped before its writer answered has no writer term: the template writes it whole", async () => {
+    const { engine, client } = makeMock();
+    const runId = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 0, undefined, { writerDone: false });
+    const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
+    expect(estimate.worstMicros).toBe(12 * 3 * 50_000);
+    expect(estimate.expectedMicros).toBe(12 * 50_000);
   });
 
   test("a run whose writer is done has no writer term", async () => {
@@ -607,10 +627,19 @@ describe("resumePrice carries the writer term when the writer has not finished",
 
   // The engine's minToProgressMicros adds ONE writer call's ceiling (37,500), not the chunk's two attempts (75,000).
   test("the writer's ceiling counts in whether the cap funds a resume: room for one image attempt and one writer call is enough, a micro-dollar less ends the run", async () => {
-    const { engine, client } = makeMock();
+    const { engine, client } = makeMock({ categories: [LLM_ONLY_FIXTURE] });
     // Nothing committed yet (no slot done): the cap is all the room there is.
-    const funded = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 0, 50_000 + 37_500, { writerDone: false });
-    const ended = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 0, 50_000 + 37_500 - 1, { writerDone: false });
+    const funded = engine.seedRun({ ...REQUEST, count: 12, categories: [LLM_ONLY_REF] }, 0, 50_000 + 37_500, { writerDone: false });
+    const ended = engine.seedRun({ ...REQUEST, count: 12, categories: [LLM_ONLY_REF] }, 0, 50_000 + 37_500 - 1, { writerDone: false });
+    const runs = (await unwrap(client.request("runs.list", {}))).runs;
+    expect(runs.find((r) => r.runId === funded)).toMatchObject({ resumable: true, capExhausted: false });
+    expect(runs.find((r) => r.runId === ended)).toMatchObject({ resumable: false, capExhausted: true });
+  });
+
+  test("a built-in run needs no room for a writer call: one image attempt funds its resume, a micro-dollar less ends it", async () => {
+    const { engine, client } = makeMock();
+    const funded = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 0, 50_000, { writerDone: false });
+    const ended = engine.seedRun({ ...REQUEST, count: 12, categories: ["home"] }, 0, 50_000 - 1, { writerDone: false });
     const runs = (await unwrap(client.request("runs.list", {}))).runs;
     expect(runs.find((r) => r.runId === funded)).toMatchObject({ resumable: true, capExhausted: false });
     expect(runs.find((r) => r.runId === ended)).toMatchObject({ resumable: false, capExhausted: true });

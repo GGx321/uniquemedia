@@ -69,7 +69,7 @@ const DEFAULT_REQUEST: RunRequest = {
   poses: { profile: false, back: false },
 };
 
-/** Opens the Photos screen from the sidebar and waits for its first price: 20 photos is ≈ $1.01, до $3.08 in the mock. */
+/** Opens the Photos screen from the sidebar and waits for its first price: 20 photos is ≈ $1.00, до $3.00 in the mock. */
 async function openPhotos(options: Parameters<typeof setup>[0] = {}) {
   const harness = setup({ avatars: [MIA], ...options });
   await screen.findByRole("heading", { level: 2, name: "Mia" });
@@ -110,8 +110,8 @@ function isDisabled(el: HTMLElement): boolean {
 
 test("the screen prices the run before anything is spent: expected «≈» and worst «до»", async () => {
   const { engine } = await openPhotos();
-  expect((await priced()).textContent).toBe("Сгенерировать 20 фото · до $3.08");
-  expect(expectedText()).toBe("Ожидаемая≈ $1.01");
+  expect((await priced()).textContent).toBe("Сгенерировать 20 фото · до $3.00");
+  expect(expectedText()).toBe("Ожидаемая≈ $1.00");
   expect(callsOf(engine, "runs.estimate").map((c) => c.payload)).toEqual([DEFAULT_REQUEST]);
   expect(callsOf(engine, "runs.start")).toHaveLength(0);
   // The age check is off by default (owner's decision), and the price says where it came from.
@@ -126,9 +126,9 @@ test("every change of the request is priced again; the chips show the planner's 
 
   fireEvent.click(screen.getByRole("button", { name: "Больше" }));
   expect(screen.getByText("25")).toBeDefined();
-  // 25 × 3 attempts × $0.05 + one writer chunk $0.075 = $3.83; ≈ 25 × ($0.05 + $0.000458) = $1.26.
-  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 25 фото · до $3.83"));
-  expect(expectedText()).toBe("Ожидаемая≈ $1.26");
+  // 25 × 3 attempts × $0.05 = $3.75, no writer (the template writes a built-in whole); ≈ 25 × $0.05 = $1.25.
+  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 25 фото · до $3.75"));
+  expect(expectedText()).toBe("Ожидаемая≈ $1.25");
 
   // 25 over four categories: the remainder goes to the earliest (the planner's own rule).
   fireEvent.click(screen.getByRole("button", { name: "Фитнес: 5 фото" }));
@@ -151,16 +151,16 @@ test("the generate card offers no resolution choice", async () => {
 
 test("the worst case rounds up on the button, and the raw micros are what is sent", async () => {
   const harness = setup({ avatars: [MIA] });
-  // 60 attempts × $0.0501 + $0.075 = $3.081000: never shown as $3.08, which would understate the limit.
+  // 60 attempts × $0.0501 = $3.006000: never shown as $3.00, which would understate the limit.
   harness.engine.setRunImagePrice(50_100);
   await openSection("Фото");
   const button = await priced();
-  expect(button.textContent).toBe("Сгенерировать 20 фото · до $3.09");
-  expect(expectedText()).toBe("Ожидаемая≈ $1.01");
+  expect(button.textContent).toBe("Сгенерировать 20 фото · до $3.01");
+  expect(expectedText()).toBe("Ожидаемая≈ $1.00");
 
   fireEvent.click(button);
   await screen.findByText(/Рисуем фото/);
-  expect(callsOf(harness.engine, "runs.start").map((c) => c.payload.acceptedWorstMicros)).toEqual([3_081_000]);
+  expect(callsOf(harness.engine, "runs.start").map((c) => c.payload.acceptedWorstMicros)).toEqual([3_006_000]);
 });
 
 test("an estimate answer for a request that is gone by then is dropped", async () => {
@@ -170,12 +170,12 @@ test("an estimate answer for a request that is gone by then is dropped", async (
   const more = screen.getByRole("button", { name: "Больше" });
   fireEvent.click(more); // 25 photos: its price is held back
   fireEvent.click(more); // 30 photos: answered at once
-  // 90 attempts × $0.05 + two writer chunks × $0.075.
-  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 30 фото · до $4.65"));
+  // 90 attempts × $0.05.
+  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 30 фото · до $4.50"));
 
   tick(scheduler, 1); // the 25-photo price arrives late
   await flush();
-  expect(goButton().textContent).toBe("Сгенерировать 30 фото · до $4.65");
+  expect(goButton().textContent).toBe("Сгенерировать 30 фото · до $4.50");
 });
 
 test("a settings change that moves the price (the age check) prices the run again", async () => {
@@ -188,7 +188,7 @@ test("a settings change that moves the price (the age check) prices the run agai
     await client.request("settings.setImageAgeCheck", { imageAgeCheck: "on" });
   });
   // Every attempt gains an age check: 60 × $0.002 more.
-  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.20"));
+  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.12"));
   expect(screen.getByText("вкл.")).toBeDefined();
 });
 
@@ -199,8 +199,8 @@ test("the stepper stays within 5–100 photos", async () => {
   for (let i = 0; i < 5; i++) fireEvent.click(fewer);
   expect(screen.getByText("5")).toBeDefined();
   expect(isDisabled(fewer)).toBe(true);
-  // 15 attempts × $0.05 + $0.075.
-  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 5 фото · до $0.83"));
+  // 15 attempts × $0.05.
+  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 5 фото · до $0.75"));
 });
 
 test("the stepper stays within 5–100 photos at the top too, and stays put past 100 (M4)", async () => {
@@ -217,8 +217,8 @@ test("the stepper stays within 5–100 photos at the top too, and stays put past
 
   fireEvent.click(more); // one more click must not push past the contract's own max
   expect(screen.getByText("100")).toBeDefined();
-  // 300 attempts × $0.05 + 4 writer chunks (25 photos each) × $0.075.
-  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 100 фото · до $15.30"));
+  // 300 attempts × $0.05.
+  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 100 фото · до $15.00"));
 });
 
 test("the Glamour chip says it is an evening out while Glamour is chosen (S5.5)", async () => {
@@ -268,7 +268,7 @@ test("start sends exactly the request and the worst case the button showed", asy
   fireEvent.click(await priced());
 
   await screen.findByText("Рисуем фото: 0 из 20");
-  expect(callsOf(engine, "runs.start").map((c) => c.payload)).toEqual([{ ...DEFAULT_REQUEST, acceptedWorstMicros: 3_075_000 }]);
+  expect(callsOf(engine, "runs.start").map((c) => c.payload)).toEqual([{ ...DEFAULT_REQUEST, acceptedWorstMicros: 3_000_000 }]);
   // The engine refuses a second run of this avatar while one runs: the button waits and says why.
   expect(isDisabled(goButton())).toBe(true);
   expect(within(generateCard()).getByText("Дождитесь конца текущего запуска.")).toBeDefined();
@@ -305,7 +305,7 @@ test("the button and the form are locked while runs.start is in flight, and a se
 
   fireEvent.click(button);
   fireEvent.click(button);
-  expect(button.textContent).toBe("Отправляем… · до $3.08");
+  expect(button.textContent).toBe("Отправляем… · до $3.00");
   expect(isDisabled(button)).toBe(true);
   expect(button.getAttribute("aria-busy")).toBe("true");
   // The whole form sits in a disabled fieldset (the browser disables every control in it; happy-dom
@@ -358,14 +358,14 @@ test("PRICE_CHANGED keeps the button busy until the fresh price replaces it, the
 
   tick(scheduler, 1);
   await screen.findByText("Цена выросла");
-  // 60 attempts × $0.06 + $0.075.
-  expect(screen.getByText(withText(/Было не больше \$3\.08, теперь не больше \$3\.68/))).toBeDefined();
-  expect(goButton().textContent).toBe("Подтвердить новую цену · до $3.68");
+  // 60 attempts × $0.06.
+  expect(screen.getByText(withText(/Было не больше \$3\.00, теперь не больше \$3\.60/))).toBeDefined();
+  expect(goButton().textContent).toBe("Подтвердить новую цену · до $3.60");
   expect(callsOf(engine, "runs.start")).toHaveLength(1);
 
   fireEvent.click(goButton());
   await screen.findByText(/Рисуем фото/);
-  expect(callsOf(engine, "runs.start").map((c) => c.payload.acceptedWorstMicros)).toEqual([3_075_000, 3_675_000]);
+  expect(callsOf(engine, "runs.start").map((c) => c.payload.acceptedWorstMicros)).toEqual([3_000_000, 3_600_000]);
   expect(screen.queryByText("Цена выросла") === null).toBe(true);
 });
 
@@ -378,22 +378,22 @@ test("a failed re-price after PRICE_CHANGED drops the refused price: the button 
   fireEvent.click(button);
   await screen.findByText(ERROR_MESSAGES_RU.NETWORK);
   expect(goButton().textContent).toBe("Повторить оценку");
-  expect(goButton().textContent).not.toContain("$3.08");
+  expect(goButton().textContent).not.toContain("$3.00");
   expect(expectedText()).toBe("Ожидаемая—");
   expect(callsOf(engine, "runs.start")).toHaveLength(1);
 
   fireEvent.click(goButton());
-  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.68"));
+  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.60"));
   expect(callsOf(engine, "runs.start")).toHaveLength(1);
 });
 
 test("PRICE_CHANGED reads «Цена изменилась», not «выросла», when the fresh price is not actually higher (L4)", async () => {
   const { engine, scheduler } = await openPhotos();
-  const button = await priced(); // $3.08
-  engine.setRunImagePrice(60_000); // server-side price now higher; the client still shows $3.08
+  const button = await priced(); // $3.00
+  engine.setRunImagePrice(60_000); // server-side price now higher; the client still shows $3.00
   engine.delayNext("runs.estimate", 50); // delays the reprice inside start(), not the mount-time one already resolved
 
-  fireEvent.click(button); // accepts $3.08 — refused PRICE_CHANGED against the now-higher price
+  fireEvent.click(button); // accepts $3.00 — refused PRICE_CHANGED against the now-higher price
   await waitFor(() => expect(callsOf(engine, "runs.estimate")).toHaveLength(2));
 
   // The price drops back to exactly what was accepted before the reprice answers.
@@ -402,17 +402,17 @@ test("PRICE_CHANGED reads «Цена изменилась», not «выросл�
 
   await screen.findByText("Цена изменилась");
   expect(screen.queryByText("Цена выросла") === null).toBe(true);
-  expect(goButton().textContent).toBe("Подтвердить новую цену · до $3.08");
+  expect(goButton().textContent).toBe("Подтвердить новую цену · до $3.00");
 });
 
 test("PRICE_CHANGED for a stale key must not clobber a fresher price the key's own re-estimate already landed", async () => {
-  // K1: age check off, до $3.08. Clicking accepts K1's price; while runs.start
+  // K1: age check off, до $3.00. Clicking accepts K1's price; while runs.start
   // is in flight, another window turns the age check on — a genuinely new key
-  // (K2) whose own estimate effect fires and lands ($3.20) before runs.start
+  // (K2) whose own estimate effect fires and lands ($3.12) before runs.start
   // answers PRICE_CHANGED for the (now stale) K1 request it was sent with.
   const { engine, scheduler, client } = await openPhotos();
   const button = await priced();
-  expect(button.textContent).toBe("Сгенерировать 20 фото · до $3.08");
+  expect(button.textContent).toBe("Сгенерировать 20 фото · до $3.00");
 
   engine.delayNext("runs.start", 50);
   fireEvent.click(button);
@@ -424,7 +424,7 @@ test("PRICE_CHANGED for a stale key must not clobber a fresher price the key's o
   // background — but while sending, the button shows K1's own accepted worst
   // (LOW-4), the price actually in flight, not K2's fresher one.
   await flush();
-  expect(goButton().textContent).toBe("Отправляем… · до $3.08");
+  expect(goButton().textContent).toBe("Отправляем… · до $3.00");
 
   tick(scheduler, 1); // runs.start (sent for K1) is handled now: PRICE_CHANGED
   await flush();
@@ -432,15 +432,15 @@ test("PRICE_CHANGED for a stale key must not clobber a fresher price the key's o
   // K2's price must still be the one shown — not clobbered by the stale
   // re-price the PRICE_CHANGED path asks for K1 — and the button must be
   // clickable, not stuck disabled with nothing to accept.
-  expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.20");
+  expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.12");
   expect(isDisabled(goButton())).toBe(false);
   expect(screen.queryByText("Цена выросла") === null).toBe(true);
 
   fireEvent.click(goButton());
   await screen.findByText(/Рисуем фото/);
   expect(callsOf(engine, "runs.start").map((c) => c.payload)).toEqual([
-    { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_075_000 },
-    { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_195_000 },
+    { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_000_000 },
+    { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_120_000 },
   ]);
 });
 
@@ -448,7 +448,7 @@ test("a refusal other than PRICE_CHANGED is shown and the price stays for anothe
   const { engine } = await openPhotos({ money: { monthlyBudgetMicros: 1_000_000 } });
   fireEvent.click(await priced());
   await screen.findByText(ERROR_MESSAGES_RU.BUDGET_EXCEEDED);
-  expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.08");
+  expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.00");
   expect(isDisabled(goButton())).toBe(false);
   expect(callsOf(engine, "runs.start")).toHaveLength(1);
 });
@@ -552,7 +552,7 @@ test("a second run started by another window after this one saw the first finish
   // Both runs start straight through the engine, like another window's own
   // GenerateCard would: this screen never calls store.trackRunJob for
   // either, so each is known only through its own events.
-  const r1 = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_075_000 }));
+  const r1 = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_000_000 }));
   if (!r1.ok) throw new Error(`r1 ${r1.error.code}`);
   tick(scheduler, 1); // an intermediate render while running, so this screen actually watches it (and can then notice it end)
   await screen.findByText("Рисуем фото: 1 из 20");
@@ -560,7 +560,7 @@ test("a second run started by another window after this one saw the first finish
   await flush();
   await screen.findByText("Запуск завершён");
 
-  const r2 = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_075_000 }));
+  const r2 = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_000_000 }));
   if (!r2.ok) throw new Error(`r2 ${r2.error.code}`);
   tick(scheduler, 1);
   await flush();
@@ -576,7 +576,7 @@ test("a second run started by another window after this one saw the first finish
 async function twoRunsSecondRunning() {
   const harness = await openPhotos();
   await priced();
-  const r1 = await act(async () => harness.client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_075_000 }));
+  const r1 = await act(async () => harness.client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_000_000 }));
   if (!r1.ok) throw new Error(`r1 ${r1.error.code}`);
   tick(harness.scheduler, 1);
   await screen.findByText("Рисуем фото: 1 из 20");
@@ -584,7 +584,7 @@ async function twoRunsSecondRunning() {
   await flush();
   await screen.findByText("Запуск завершён");
 
-  const r2 = await act(async () => harness.client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_075_000 }));
+  const r2 = await act(async () => harness.client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_000_000 }));
   if (!r2.ok) throw new Error(`r2 ${r2.error.code}`);
   tick(harness.scheduler, 1);
   await screen.findByText("Рисуем фото: 1 из 20");
@@ -639,11 +639,11 @@ test("cancel shows «Отменяем…» until the job really ends; the cancel
   // 6 of them (the network's own default concurrency) were ever actually in
   // flight (MEDIUM-2): no paid start or resume until a reconcile, and the
   // price meanwhile is capped by what the cap has left on top of that (до
-  // $2.13), not the open slots' own raw worst case (до $2.85).
+  // $2.05), not the open slots' own raw worst case (до $2.85).
   expect(screen.getAllByText("Платные запросы остановлены до сверки расходов.").length).toBeGreaterThan(0);
   expect(isDisabled(goButton())).toBe(true);
   // The row still shows its price — runs.estimateResume is free — but cannot be clicked while blocked.
-  const resume = await screen.findByRole("button", { name: "Продолжить · до $2.13" });
+  const resume = await screen.findByRole("button", { name: "Продолжить · до $2.05" });
   expect(isDisabled(resume)).toBe(true);
 
   await act(async () => {
@@ -660,7 +660,7 @@ test("cancel shows «Отменяем…» until the job really ends; the cancel
   await screen.findByText("Рисуем фото: 1 из 20");
   expect(callsOf(engine, "runs.resume").map((c) => c.payload.runId)).toEqual([started]);
   // L4: exactly the button's own re-asked price (до $2.85) — the higher,
-  // uncapped one from MEDIUM-1's own re-ask, not the stale до $2.13.
+  // uncapped one from MEDIUM-1's own re-ask, not the stale до $2.05.
   expect(callsOf(engine, "runs.resume").at(-1)?.payload.acceptedWorstMicros).toBe(2_850_000);
 });
 
@@ -698,7 +698,7 @@ test("a run job seen only through another window's progress can be cancelled at 
   // Simulated another window: the run starts straight through the engine,
   // never through this window's own GenerateCard (so store.trackRunJob,
   // which would otherwise record its runId right away, is never called).
-  const reply = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_075_000 }));
+  const reply = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_000_000 }));
   if (!reply.ok) throw new Error(`expected ok, got ${reply.error.code}`);
   tick(scheduler, 1);
   await flush();
@@ -719,7 +719,7 @@ test("a run job seen only through another window's progress can be cancelled at 
 test("another window's run is visible and cancellable from its launch announcement alone, before any slot ends", async () => {
   const { engine, client } = await openPhotos();
   await priced();
-  const started = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_075_000 }));
+  const started = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_000_000 }));
   if (!started.ok) throw new Error(`expected ok, got ${started.error.code}`);
   await flush();
 
@@ -735,7 +735,7 @@ test("another window's run is visible and cancellable from its launch announceme
 test("another window's run that fails before its first progress shows its own error here", async () => {
   const { engine, client } = await openPhotos();
   await priced();
-  const started = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_075_000 }));
+  const started = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_000_000 }));
   if (!started.ok) throw new Error(`expected ok, got ${started.error.code}`);
   act(() => engine.rejectKey()); // no tick: not one job.progress was ever sent
   await flush();
@@ -747,7 +747,7 @@ test("another window's run that fails before its first progress shows its own er
 test("a finished run this window only finds in the store when the screen opens is not announced again", async () => {
   const { scheduler, client } = await openPhotos();
   await priced();
-  const started = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_075_000 }));
+  const started = await act(async () => client.request("runs.start", { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_000_000 }));
   if (!started.ok) throw new Error(`expected ok, got ${started.error.code}`);
   runAll(scheduler);
   await flush();
@@ -844,7 +844,7 @@ test("a resume in flight locks the generate card too, until it answers (L5)", as
   harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8);
   await openSection("Фото");
   const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
-  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.08"));
+  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.00"));
 
   harness.engine.delayNext("runs.resume", 50);
   fireEvent.click(resume);
@@ -866,7 +866,7 @@ test("the generate card in flight locks every resume row too, until it answers (
   harness.engine.seedRun({ ...DEFAULT_REQUEST, count: 12, categories: ["home"] }, 8);
   await openSection("Фото");
   const resume = await screen.findByRole("button", { name: "Продолжить · до $0.60" });
-  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.08"));
+  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.00"));
 
   harness.engine.delayNext("runs.start", 50);
   fireEvent.click(goButton());

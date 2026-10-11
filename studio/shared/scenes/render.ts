@@ -34,6 +34,12 @@ export interface TemplateContext {
   level?: Level | undefined;
   /** The sentences already rendered in this run: an equal one is redrawn. */
   seen?: ReadonlySet<string> | undefined;
+  /**
+   * A rewrite of a scene (the review's «Другая сцена», free for a scene the template writes): the held texts include the scene's own old one, and the new text must not
+   * be any of them. A slot with nothing left to vary (from behind, a custom place) then takes another opening of its outfit clause instead of keeping its first text, which
+   * is what a run's own dedup still does (the moment-repeat metric flags that).
+   */
+  distinct?: boolean | undefined;
 }
 
 /** The redraws an equal sentence gets before the slot keeps it (I5.24). */
@@ -136,8 +142,14 @@ interface Frame {
   level: Level;
 }
 
-function draw(parts: SentenceParts, frame: Frame, key: string): string {
-  const clauses = [capitalise(parts.at), `she ${parts.doing}`, `wearing ${parts.wearing}`];
+/**
+ * How the outfit clause opens. The first draw always says «wearing»; only a rewrite's redraw (`ctx.distinct`) whose text came out equal to the first (a frame with no gaze, cue or detail
+ * to vary: from behind, or a custom place) takes another opening, so the scene is not rewritten into the text it already has.
+ */
+const OUTFIT_OPENINGS = ["wearing", "dressed in", "in", "clad in"] as const;
+
+function draw(parts: SentenceParts, frame: Frame, key: string, opening: number = 0): string {
+  const clauses = [capitalise(parts.at), `she ${parts.doing}`, `${OUTFIT_OPENINGS[opening % OUTFIT_OPENINGS.length]} ${parts.wearing}`];
   if (faceVisibleOf(frame) !== "no") {
     const gazes = gazeOptions(frame.capture, frame.pose, parts.gaze, frame.level, frame.framing);
     if (gazes.length > 0) clauses.push(pick(gazes, key, "gaze").text);
@@ -150,7 +162,8 @@ function draw(parts: SentenceParts, frame: Frame, key: string): string {
 
 /**
  * The sentence for the parts, deduplicated against the run's sentences: an equal one is redrawn on `${key}:dedup:${i}`, i = 1..8, and if every
- * redraw is taken too the slot keeps its first text. Null when a self-shot sentence (selfie, above, prone) would name a phone or say selfie (C1, S5.4).
+ * redraw is taken too the slot keeps its first text. With `ctx.distinct` (a rewrite), a redraw that comes out equal to the first (nothing in the frame varies) opens its outfit clause another way
+ * («dressed in», «in», «clad in»), so a free redraw of such a slot is a different sentence. Null when a self-shot sentence (selfie, above, prone) would name a phone or say selfie (C1, S5.4).
  */
 export function renderSentence(parts: SentenceParts, slot: { capture: Capture; pose: ScenePose; framing?: "legs" | undefined }, ctx: TemplateContext): string | null {
   const frame: Frame = { capture: slot.capture, pose: slot.pose, framing: slot.framing, level: ctx.level ?? "ordinary" };
@@ -158,7 +171,9 @@ export function renderSentence(parts: SentenceParts, slot: { capture: Capture; p
   if (shotOf(slot.capture) === "selfie" && (PHONE_WORDS.test(first) || SELFIE_WORDS.test(first))) return null;
   if (ctx.seen === undefined || !ctx.seen.has(first)) return first;
   for (let i = 1; i <= DEDUP_TRIES; i++) {
-    const again = draw(parts, frame, `${ctx.key}:dedup:${i}`);
+    const redrawn = draw(parts, frame, `${ctx.key}:dedup:${i}`);
+    // Nothing else to vary: the same text again. Another opening of the outfit clause is the one change that keeps place, activity and outfit as they were.
+    const again = ctx.distinct === true && redrawn === first ? draw(parts, frame, `${ctx.key}:dedup:${i}`, i) : redrawn;
     if (!ctx.seen.has(again)) return again;
   }
   return first;

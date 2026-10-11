@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { LaunchView, type LaunchDraftInput, type ResponseMessage } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
 import { createPaidSteps } from "./autopilot/paidSteps";
+import { createFaceQaGate } from "./runs/faceGate";
 import { IDLE_STEPS } from "./autopilot/steps";
 import type { LaunchFile } from "./autopilot/launchFile";
 import type { EngineDeps } from "./engine";
@@ -260,6 +261,49 @@ describe("review OFF: compose, approve at once, draw", () => {
     expect(ledgerLines(dir())).toEqual([]);
     expect(fileOf(launch.launchId).avatars[0]?.generation).toBeNull();
     expect((await viewOf(started, launch.launchId)).spentMicros).toBe(0);
+  });
+});
+
+// ---------- the face gate on a launch's frames (S5.6f, I5.30) ----------
+
+// S5.6R: the parity story proves a hidden-face frame is marked and not retried against the MOCK; this is the engine's own, with the engine's `createFaceQaGate` over a scripted worker (no
+// face models in a test). The scripted worker answers every frame at the same likeness below the 0.55 line: as `marked` (the face is hidden, the frame is kept at that likeness) or as
+// `mismatch` (a face that is not hers, the frame is sent back for another paid attempt). Only the verdict differs, so the image requests tell the two apart.
+const LOW_LIKENESS = 0.48;
+function scriptedFace(kind: "marked" | "mismatch") {
+  return createFaceQaGate({
+    faceGate: { embed: async () => Float32Array.of(1, 0, 0, 0), check: async () => ({ kind, similarity: LOW_LIKENESS, faces: 1, headRatio: 0.2 }), isBroken: () => false },
+  });
+}
+
+async function faceCosOf(started: Started, avatarId: string): Promise<(number | undefined)[]> {
+  const answer = ok(await call(started, "photos.list", { avatarId }));
+  if (answer.type !== "photos.list") throw new Error("not a photo list");
+  return answer.result.photos.filter((photo) => photo.category !== undefined).map((photo) => photo.qa?.faceCos);
+}
+
+describe("a frame whose face is hidden, in a launch", () => {
+  test("is marked and kept at its likeness, with one image request for each slot: it is never sent back for another paid attempt", async () => {
+    const avatarId = await seedAvatar();
+    const net = network();
+    const started = await boot(net, { deps: { qaGates: [scriptedFace("marked")] } });
+    const launch = await startLaunch(started, draftOf([avatarId], { categories: ["home"] }));
+    await reachPhase(launch.launchId, "montage");
+
+    expect(net.imageCalls()).toHaveLength(3);
+    expect(fileOf(launch.launchId).avatars[0]?.photosDone).toBe(3);
+    expect(await faceCosOf(started, avatarId)).toEqual([LOW_LIKENESS, LOW_LIKENESS, LOW_LIKENESS]);
+    expect((await viewOf(started, launch.launchId)).spentMicros).toBeLessThanOrEqual(launch.plannedWorstMicros);
+  });
+
+  test("control: the same likeness as a mismatch is sent back, so the request count above is the mark's doing", async () => {
+    const avatarId = await seedAvatar();
+    const net = network();
+    const started = await boot(net, { deps: { qaGates: [scriptedFace("mismatch")] } });
+    const launch = await startLaunch(started, draftOf([avatarId], { categories: ["home"] }));
+    await until(() => net.imageCalls().length > 3, "a retried slot", 30_000);
+    expect(net.imageCalls().length).toBeGreaterThan(3);
+    expect(launch.plannedWorstMicros).toBe(3 * 3 * 50_000);
   });
 });
 
