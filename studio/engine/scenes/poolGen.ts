@@ -125,7 +125,8 @@ export const POOL_EXAMPLE_ANSWER = JSON.stringify({
     },
   ],
   outfits: ["an oversized sweater and leggings", "a linen shirt and shorts", "a cotton tee and joggers"],
-  shotDeck: ["friend", "friend", "selfie", "mirror", "candid"],
+  // S5.6R (the owner): at home she shoots herself, so a home theme's deck is selfies and mirrors.
+  shotDeck: ["selfie", "mirror", "selfie", "mirror", "selfie"],
   poses: [],
 });
 

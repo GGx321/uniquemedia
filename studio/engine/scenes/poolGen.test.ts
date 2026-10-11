@@ -596,6 +596,14 @@ describe("poolMessages", () => {
     expect(example.locations.find((l) => l.name === "a bedroom")?.mirror).toBe(true);
   });
 
+  // S5.6R (LOW, the owner: at home she shoots herself): the example is a home theme, and its deck taught two friends and a candid for it.
+  test("the example is a home theme, so its deck is self-shot: selfies and mirrors, never a friend or a candid", () => {
+    const example: { label: string; shotDeck: string[] } = JSON.parse(POOL_EXAMPLE_ANSWER);
+    expect(example.label).toBe("Cozy home");
+    expect(example.shotDeck.filter((shot) => shot !== "selfie" && shot !== "mirror")).toEqual([]);
+    expect(new Set(example.shotDeck)).toEqual(new Set(["selfie", "mirror"]));
+  });
+
   test("the example's body-position activity fits the 35 characters", () => {
     const example: { locations: { activities: { text: string }[] }[] } = JSON.parse(POOL_EXAMPLE_ANSWER);
     for (const place of example.locations) for (const activity of place.activities) expect(activity.text.length).toBeLessThanOrEqual(POOL_TEXT_MAX);
