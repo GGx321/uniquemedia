@@ -5,7 +5,7 @@ import type { MediaInfo, Recipe } from "./types";
 
 const info: MediaInfo = { kind: "video", durationSec: 5, width: 1280, height: 720, hasAudio: true };
 
-const frame = { background: "/pack/lake.jpg", w: 864, h: 1536, x: 100, y: 200 };
+const frame = { background: "/pack/lake.jpg", w: 864, h: 1536, x: 100, y: 200, fit: false };
 
 const recipe: Recipe = {
   seed: 1,
@@ -74,4 +74,24 @@ test("frame with a black first frame: the black frame goes on the composed pictu
   const fc = complexOf(buildArgs({ ...recipe, firstFrame: { mode: "black" } }, info));
   expect(fc.indexOf("overlay=")).toBeLessThan(fc.indexOf("drawbox"));
   expect(fc).toMatch(/drawbox[^;]*\[outv\]/);
+});
+
+const fitted: Recipe = { ...recipe, frame: { ...frame, fit: true } };
+const videoPart = (fc: string): string => fc.split(";")[0];
+
+test("frame fit: the footage is not cropped to the canvas before it is scaled into the box", () => {
+  const fc = complexOf(buildArgs(fitted, info));
+  expect(videoPart(fc)).not.toContain("crop=1080:1920");
+  expect(videoPart(fc)).not.toContain("force_original_aspect_ratio=increase");
+});
+
+test("frame fit: the footage is scaled to fit inside the box and centred in it", () => {
+  const fc = complexOf(buildArgs(fitted, info));
+  expect(fc).toContain("scale=864:1536:force_original_aspect_ratio=decrease:force_divisible_by=2");
+  expect(fc).toContain("overlay=x=100+floor((864-w)/4)*2:y=200+floor((1536-h)/4)*2:shortest=1[outv]");
+});
+
+test("frame crop: a fixed export format still crops the footage to the canvas first", () => {
+  const fc = complexOf(buildArgs(recipe, info));
+  expect(videoPart(fc)).toContain("crop=1080:1920");
 });

@@ -106,7 +106,7 @@ function drawFrame(
   const h = evenRound(H * scale);
   const x = middleHalfOffset(rng, W - w);
   const y = middleHalfOffset(rng, H - h);
-  return { background: pick(rng, backgrounds), w, h, x, y };
+  return { background: pick(rng, backgrounds), w, h, x, y, fit: opts.exportFormat === "original" };
 }
 
 export function sampleRecipe(opts: ResolvedCopyOptions, seed: number, intensity = 1): Recipe {

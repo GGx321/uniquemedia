@@ -108,9 +108,18 @@ test("frame on: every other draw is what it is with the frame off", () => {
   }
 });
 
-test("frame on with the original format puts the video on a reels canvas", () => {
-  const f = sampleRecipe({ ...on, exportFormat: "original" }, 5, 1);
-  expect(f.exportFormat).toBe("reels");
+test("frame on with the original format puts the video on a reels canvas and fits it, uncropped", () => {
+  const r = sampleRecipe({ ...on, exportFormat: "original" }, 5, 1);
+  expect(r.exportFormat).toBe("reels");
+  expect(r.frame!.fit).toBe(true);
+});
+
+test("frame on with a fixed export format keeps that format's crop", () => {
+  for (const exportFormat of ["reels", "feed", "square"] as const) {
+    const r = sampleRecipe({ ...on, exportFormat }, 5, 1);
+    expect(r.exportFormat).toBe(exportFormat);
+    expect(r.frame!.fit).toBe(false);
+  }
 });
 
 test("frame on with an empty pack is refused rather than drawing from nothing", () => {

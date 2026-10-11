@@ -154,6 +154,10 @@ export interface FrameSpec {
   h: number;
   x: number;
   y: number;
+  /** True when the footage is fitted inside the box with no crop (the `original`
+   *  format, whose picture has no 9:16 shape to be cropped to); false when it
+   *  was already cropped to the canvas and just fills the box. */
+  fit: boolean;
 }
 
 /**

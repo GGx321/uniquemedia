@@ -11,7 +11,8 @@ function spatialChain(recipe: Recipe, info: MediaInfo): string {
     const frag = FRAGMENTS[op.id]?.(op.params, info);
     if (frag) parts.push(frag);
   }
-  if (recipe.exportFormat !== "original") {
+  // Frame mode over `original` fits the footage into its box later instead.
+  if (recipe.exportFormat !== "original" && !recipe.frame?.fit) {
     const { w, h } = EXPORT_DIMS[recipe.exportFormat];
     parts.push(`scale=${w}:${h}:force_original_aspect_ratio=increase`);
     parts.push(`crop=${w}:${h}`);
@@ -125,10 +126,18 @@ function videoComplex(recipe: Recipe, info: MediaInfo, fps: number): string {
     const { w: W, h: H } = EXPORT_DIMS[recipe.exportFormat === "original" ? "reels" : recipe.exportFormat];
     const bg = ff.mode === "photo" ? 2 : 1;
     const composed = ff.mode === "off" ? "outv" : ff.mode === "black" ? "vfr" : "vc";
+    // Fitted footage is smaller than its box on one axis; centre it in the box
+    // on even coordinates (the overlay's own w/h are the scaled footage's).
+    const scaleTo = fr.fit
+      ? `scale=${fr.w}:${fr.h}:force_original_aspect_ratio=decrease:force_divisible_by=2`
+      : `scale=${fr.w}:${fr.h}`;
+    const at = fr.fit
+      ? `x=${fr.x}+floor((${fr.w}-w)/4)*2:y=${fr.y}+floor((${fr.h}-h)/4)*2`
+      : `x=${fr.x}:y=${fr.y}`;
     lines.push(
-      `${concat},fps=${fps},scale=${fr.w}:${fr.h},setsar=1[vsm]`,
+      `${concat},fps=${fps},${scaleTo},setsar=1[vsm]`,
       `[${bg}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1[bg]`,
-      `[bg][vsm]overlay=x=${fr.x}:y=${fr.y}:shortest=1[${composed}]`
+      `[bg][vsm]overlay=${at}:shortest=1[${composed}]`
     );
     if (ff.mode === "black") lines.push(`[vfr]${blackFirstFrame(fps).slice(1)}[outv]`);
     if (ff.mode === "photo") lines.push(...coverFirstFrame(ff, fps).lines);

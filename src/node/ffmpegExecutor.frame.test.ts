@@ -107,3 +107,34 @@ test("the middle of the canvas is the footage, inside the frame the recipe drew"
   const distance = px.reduce((acc, v, i) => acc + Math.abs(v - BG_RGB[i]), 0);
   expect(distance).toBeGreaterThan(30);
 });
+
+// ── a 16:9 clip in the original format ──────────────────────────────────────
+
+test("a 16:9 clip in the original format keeps its full width and never touches an edge", async () => {
+  const wide = join(dir, "wide.mp4");
+  const made = spawnSync(FFMPEG, [
+    "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=3:size=640x360:rate=15",
+    "-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+    "-c:a", "aac", "-shortest", wide,
+  ]);
+  expect(made.status).toBe(0);
+  const info = await exec.probe(wide);
+  const recipe = sampleRecipe({ ...opts(join(dir, "bg.jpg")), exportFormat: "original" }, 11, 1);
+  const box = recipe.frame!;
+  expect(box.fit).toBe(true);
+  const out = join(dir, "wide_out.mp4");
+  await exec.render(wide, info, recipe, out);
+
+  const farFromBg = (px: number[]) => px.reduce((acc, v, i) => acc + Math.abs(v - BG_RGB[i]), 0) > 30;
+  const midY = box.y + Math.floor(box.h / 2);
+  // Full width: the footage reaches both sides of its box on the middle row.
+  expect(farFromBg(pixelAt(out, box.x + 3, midY))).toBe(true);
+  expect(farFromBg(pixelAt(out, box.x + box.w - 4, midY))).toBe(true);
+  // Fitted, not cropped: the box's top rows are background, the letterbox.
+  expect(farFromBg(pixelAt(out, box.x + Math.floor(box.w / 2), box.y + 2))).toBe(false);
+  // And the box itself clears every edge of the canvas.
+  expect(box.x).toBeGreaterThan(0);
+  expect(box.y).toBeGreaterThan(0);
+  expect(box.x + box.w).toBeLessThan(W);
+  expect(box.y + box.h).toBeLessThan(H);
+});
