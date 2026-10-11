@@ -13,6 +13,7 @@ import {
   LAUNCH_REASONS_RU,
   SCENE_REASONS_RU,
   PHOTO_UNAVAILABLE_REASONS_RU,
+  PORTRAIT_REASONS_RU,
   RENDER_NO_SPACE_DETAIL_PREFIX,
   RENDER_TIMEOUT_DETAIL_PREFIX,
   RENDER_NOT_QUEUED_DETAIL,
@@ -91,6 +92,8 @@ function baseText(error: EngineError): string {
   if (error.code === "VALIDATION" && error.launchReason !== undefined) return LAUNCH_REASONS_RU[error.launchReason];
   // A scene-set command the engine refused says which rule it broke; the window names the scene itself from `sceneId`.
   if (error.code === "VALIDATION" && error.sceneReason !== undefined) return namedScene(error.sceneReason, error.sceneId) ?? SCENE_REASONS_RU[error.sceneReason];
+  // S5.3d: a reference-portrait command says which rule it broke (VALIDATION), or that the imported photo is gone (the one INTERNAL with a reason).
+  if ((error.code === "VALIDATION" || error.code === "INTERNAL") && error.portraitReason !== undefined) return PORTRAIT_REASONS_RU[error.portraitReason];
   if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_CHANGING_DETAIL) return DRAFT_CHANGING_RU;
   if (error.code === "INTERNAL" && error.detail === HOST_ASLEEP_DETAIL) return HOST_ASLEEP_RU;
