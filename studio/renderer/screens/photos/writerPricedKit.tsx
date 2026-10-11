@@ -16,9 +16,10 @@ export class WriterPricedEngine extends MockEngine {
 
   override async request(command: CommandMessage): Promise<ResponseMessage> {
     const response = await super.request(command);
-    if ((command.type !== "scenes.estimateCompose" && command.type !== "scenes.estimateWrite") || !response.ok) return response;
+    if (!response.ok || (response.type !== "scenes.estimateCompose" && response.type !== "scenes.estimateWrite")) return response;
     const worst = this.writerWorstMicros;
-    return { ...response, result: { estimate: { expectedMicros: Math.round(worst / 8), worstMicros: worst, prices: "fallback", pricesAsOf: "2026-10-11" } } };
+    const result = { estimate: { expectedMicros: Math.round(worst / 8), worstMicros: worst, prices: "fallback" as const, pricesAsOf: "2026-10-11" } };
+    return { ...response, result };
   }
 }
 
