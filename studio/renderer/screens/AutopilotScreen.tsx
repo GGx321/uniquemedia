@@ -28,6 +28,7 @@ import { PlanCard, PlanColumn, PlanMini, type GoButtonState } from "./autopilot/
 import { aboutUsd, figuresOf, goTitle, goWhy, isUnfinished, limitText, musicLine, planNotes } from "./autopilot/planModel";
 import { SettingsColumn } from "./autopilot/SettingsColumn";
 import { probeWorldKey, useLaunchPlan, worldKey } from "./autopilot/useLaunchPlan";
+import { launchFlirtyCaption } from "./photos/level";
 import { readSceneReview, viewerStorage } from "./photos/sceneReview";
 import { arrangeCategories } from "./photos/runForm";
 
@@ -53,7 +54,8 @@ function formOfLaunch(launch: LaunchView): LaunchForm {
     videosPerAvatar: draft.videosPerAvatar,
     mix: draft.mix,
     categories: draft.categories,
-    poses: draft.poses ?? { profile: false, back: false },
+    // S5.7c: a launch from before «Подача» carries «Ракурсы» and no level: it reads «Обычная».
+    level: draft.level ?? "ordinary",
     library: draft.library,
     generate: draft.generate,
     sceneReview: draft.sceneReview,
@@ -300,7 +302,8 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
             focusHandle();
           }}
           onCategory={toggleCategory}
-          onPose={(pose) => edit({ ...form, poses: { ...form.poses, [pose]: !form.poses[pose] } })}
+          onLevel={(level) => edit({ ...form, level })}
+          levelCaption={shownForm.level === "flirty" ? launchFlirtyCaption(running ? null : plan.shown, settings?.categories ?? shownForm.categories) : null}
           onSwitch={(which) => edit({ ...form, [which]: !form[which] })}
           musicOpen={musicWindow !== null}
           musicChipRef={musicChip}

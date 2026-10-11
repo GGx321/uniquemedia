@@ -39,6 +39,26 @@ export function flirtyCaption(flirty: number, count: number): string {
   return `${flirty} из ${countOf(count, ["кадра", "кадров", "кадров"])} — кокетливые: взгляд, улыбка, поза. Одежда — из категорий.`;
 }
 
+/** «Автопилот» before its plan has new photos to count: the share itself (owner: «Кокетливая» is 6 of 10 frames). */
+const FLIRTY_SHARE = "6 из 10 новых кадров — кокетливые: взгляд, улыбка, поза. Одежда — из категорий.";
+
+/** What `launchFlirtyCaption` reads of a launch's plan (`LaunchPreview`). */
+interface LaunchPlanCounts {
+  readonly avatars: readonly { readonly toGenerate: number; readonly blocked: unknown }[];
+  readonly totals: { readonly toGenerate: number };
+}
+
+/**
+ * «Автопилот»'s «Подача» caption (mockup 30): «≈ {F} из {M} новых кадров — …». Each avatar composes its own new photos, so F sums `flirtyFrames` per
+ * avatar that is not blocked (the plan's totals leave those out); «≈», since the engine splits an avatar's photos by video. With no plan yet, or nothing new
+ * to draw, the share itself.
+ */
+export function launchFlirtyCaption(plan: LaunchPlanCounts | null, categories: readonly CategoryRef[]): string {
+  if (plan === null || plan.totals.toGenerate === 0) return FLIRTY_SHARE;
+  const flirty = plan.avatars.reduce((sum, avatar) => sum + (avatar.blocked === null ? flirtyFrames(avatar.toGenerate, categories) : 0), 0);
+  return `≈ ${flirty} из ${countOf(plan.totals.toGenerate, ["нового кадра", "новых кадров", "новых кадров"])} — кокетливые: взгляд, улыбка, поза. Одежда — из категорий.`;
+}
+
 // ---------- remembered per avatar ----------
 
 /** «Подача» of each avatar in the viewer's localStorage: `studio.photos.level.<avatarId>` holds «flirty»; «Обычная», the default, is not stored. */

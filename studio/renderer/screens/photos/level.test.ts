@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { SceneCategory } from "../../../shared/engine";
-import { flirtyCaption, flirtyFrames, LEVEL_KEY_PREFIX, readLevel, writeLevel } from "./level";
+import { flirtyCaption, flirtyFrames, launchFlirtyCaption, LEVEL_KEY_PREFIX, readLevel, writeLevel } from "./level";
 
 // S5.7c (plan s5a2 §6.3, I5.28; mockups 25 and 30): «Подача» on the window's side — how many frames «Кокетливая» makes flirty, the caption that says so, and
 // the choice remembered per avatar (owner: «Обычная» by default, remembered per avatar).
@@ -46,6 +46,33 @@ describe("the caption", () => {
 
   test("says «из 21 кадра» after «из»", () => {
     expect(flirtyCaption(13, 21)).toBe("13 из 21 кадра — кокетливые: взгляд, улыбка, поза. Одежда — из категорий.");
+  });
+});
+
+// S5.7c (mockup 30): «Автопилот» composes per avatar, so the count is summed over the plan's avatars, of their new photos only — «≈», the plan's split by
+// video being the engine's.
+describe("the launch's caption", () => {
+  const avatar = (toGenerate: number, blocked: "open-set" | null = null) => ({ toGenerate, blocked });
+
+  test("sums each avatar's flirty frames over its new photos: ≈ 13 of 22 for 9, 6 and 7 over «Дом», «Улица», «Гламур»", () => {
+    const preview = { avatars: [avatar(9), avatar(6), avatar(7)], totals: { toGenerate: 22 } };
+    expect(launchFlirtyCaption(preview, ["home", "shoot", "glam"])).toBe("≈ 13 из 22 новых кадров — кокетливые: взгляд, улыбка, поза. Одежда — из категорий.");
+  });
+
+  test("leaves out a blocked avatar, as the plan's totals do", () => {
+    const preview = { avatars: [avatar(9), avatar(6, "open-set")], totals: { toGenerate: 9 } };
+    expect(launchFlirtyCaption(preview, ["home", "shoot", "glam"])).toBe("≈ 6 из 9 новых кадров — кокетливые: взгляд, улыбка, поза. Одежда — из категорий.");
+  });
+
+  test("says «из 21 нового кадра»", () => {
+    const preview = { avatars: [avatar(21)], totals: { toGenerate: 21 } };
+    expect(launchFlirtyCaption(preview, ["home"])).toBe("≈ 13 из 21 нового кадра — кокетливые: взгляд, улыбка, поза. Одежда — из категорий.");
+  });
+
+  test("with no plan yet, or nothing new to draw, says the share itself", () => {
+    const share = "6 из 10 новых кадров — кокетливые: взгляд, улыбка, поза. Одежда — из категорий.";
+    expect(launchFlirtyCaption(null, ["home"])).toBe(share);
+    expect(launchFlirtyCaption({ avatars: [avatar(0)], totals: { toGenerate: 0 } }, ["home"])).toBe(share);
   });
 });
 
