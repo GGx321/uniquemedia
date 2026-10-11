@@ -1,6 +1,7 @@
-import type { CategoryRef } from "../../../shared/engine";
+import type { CategoryRef, CategorySnapshot } from "../../../shared/engine";
 import { writerAttemptIds } from "../../runs/plan";
-import { plan, plannerCategoryOf } from "../../scenes";
+import { planWithPools, plannerCategoryOf, POOLS, type Pool } from "../../scenes";
+import { LLM_ONLY_POOL, LLM_ONLY_REF, llmOnlySnapshot } from "../../scenes/testing/llmOnlyFixture";
 import { chunkSlots } from "../../scenes/writer";
 import type { PlannedNewSceneSet } from "../sceneSets";
 
@@ -16,17 +17,31 @@ export interface SampleSetOptions {
   seed?: number;
   /** Give the first N scenes a sentence, as a written chunk would. */
   written?: number;
+  /** Custom pools the planner may draw from, by category id (a built-in-only set needs none). */
+  pools?: Readonly<Record<string, Pool>>;
+  /** The set's snapshots of the custom categories it uses. */
+  snapshots?: readonly CategorySnapshot[];
+}
+
+/**
+ * 5a.2 (S5.6c2, m11): a set of `cat-llm-only-fixture` scenes. The code template cannot write any of them, so every chunk is a request for the model — the
+ * shape the writer-money tests of a compose, a «Дописать» and a rewrite had before built-ins moved to the template.
+ */
+export function llmOnlySet(options: Omit<SampleSetOptions, "categories" | "pools" | "snapshots"> = {}): PlannedNewSceneSet {
+  return sampleSet({ ...options, categories: [LLM_ONLY_REF], pools: { [LLM_ONLY_REF]: LLM_ONLY_POOL }, snapshots: [llmOnlySnapshot()] });
 }
 
 export function sampleSet(options: SampleSetOptions = {}): PlannedNewSceneSet {
   const sceneSetId = options.sceneSetId ?? "set-aaaa-0001";
   const categories = options.categories ?? ["home"];
-  const slots = plan({ seed: options.seed ?? 7, count: options.count ?? 4, categories: categories.map(plannerCategoryOf) }).slots;
+  const pools = { ...POOLS, ...options.pools };
+  const slots = planWithPools({ seed: options.seed ?? 7, count: options.count ?? 4, categories: categories.map(plannerCategoryOf) }, pools).slots;
   return {
     sceneSetId,
     avatarId: options.avatarId ?? "avatar-aaaa-0001",
     runId: options.runId ?? "run-aaaa-0001",
     request: { count: slots.length, categories: [...categories], poses: { profile: false, back: false } },
+    ...(options.snapshots === undefined ? {} : { categories: [...options.snapshots] }),
     models: { text: "x-ai/grok-4.3" },
     scenes: slots.map((slot, i) => ({
       sceneId: slot.slotIndex,

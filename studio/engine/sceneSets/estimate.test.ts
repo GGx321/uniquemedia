@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { StoredSceneSet } from "../library/sceneSets";
-import { sampleSet } from "../library/testing/sceneSetSample";
+import { llmOnlySet, sampleSet } from "../library/testing/sceneSetSample";
+import { LLM_ONLY_POOL, LLM_ONLY_REF, llmOnlySnapshot } from "../scenes/testing/llmOnlyFixture";
+import type { CoversOf, SplitEntry } from "../../shared/scenes/writerBound";
 import { WRITER_CALL, writerWorstMicros } from "../money/estimate";
 import { PriceBook } from "../money/prices";
 import { composeEstimate, sceneSetPriceModels, writeEstimate } from "./estimate";
@@ -18,9 +20,20 @@ const CEILING = 37_500;
 const SET = "set-aaaa-0001";
 const id = (chunk: number, n: number) => `${SET}:writer-${chunk}#${n}`;
 
+// 5a.2 (S5.6c2, m11): a built-in scene is written by the code template, so a built-in set asks the writer for nothing. The writer-money tests below keep
+// their figures on `cat-llm-only-fixture`, whose scenes the template cannot write (`stored`), and each has its built-in twin (`storedHome`).
 function stored(count: number): StoredSceneSet {
+  return { schemaVersion: 1, revision: 1, createdAt: "2026-10-07T10:00:00.000Z", updatedAt: "2026-10-07T10:00:00.000Z", ...llmOnlySet({ count }) };
+}
+
+function storedHome(count: number): StoredSceneSet {
   return { schemaVersion: 1, revision: 1, createdAt: "2026-10-07T10:00:00.000Z", updatedAt: "2026-10-07T10:00:00.000Z", ...sampleSet({ count }) };
 }
+
+const fixtureSplit = (count: number): SplitEntry[] => [{ ref: LLM_ONLY_REF, count }];
+const homeSplit = (count: number): SplitEntry[] => [{ ref: "home", count }];
+const NOTHING_COVERED: CoversOf = () => false;
+const EVERYTHING_COVERED: CoversOf = () => true;
 
 const without = (set: StoredSceneSet, from: number): StoredSceneSet => ({ ...set, scenes: set.scenes.map((s) => (s.sceneId > from ? { ...s, removed: true } : s)) });
 
@@ -31,34 +44,63 @@ describe("sceneSetPriceModels", () => {
 });
 
 describe("composeEstimate", () => {
-  test("is the writer's worst case for the scenes: chunks of 25, two attempts each at the ceiling", () => {
+  test("is the writer's worst case for the scenes of an uncovered custom category: chunks of 25, two attempts each at the ceiling", () => {
     const writer = { ...WRITER_CALL, model: MODEL };
     for (const count of [1, 20, 25, 26, 60, 100]) {
-      expect(composeEstimate(PRICED, MODEL, count).worstMicros).toBe(writerWorstMicros(PRICED.book, writer, count));
+      expect(composeEstimate(PRICED, MODEL, fixtureSplit(count), NOTHING_COVERED).worstMicros).toBe(writerWorstMicros(PRICED.book, writer, count));
     }
   });
 
   test("20 scenes are one chunk: $0.075, and 100 are four: $0.30", () => {
-    expect(composeEstimate(PRICED, MODEL, 20).worstMicros).toBe(2 * CEILING);
-    expect(composeEstimate(PRICED, MODEL, 100).worstMicros).toBe(4 * 2 * CEILING);
+    expect(composeEstimate(PRICED, MODEL, fixtureSplit(20), NOTHING_COVERED).worstMicros).toBe(2 * CEILING);
+    expect(composeEstimate(PRICED, MODEL, fixtureSplit(100), NOTHING_COVERED).worstMicros).toBe(4 * 2 * CEILING);
   });
 
   test("26 scenes are two chunks: the second one's attempts are priced too", () => {
-    expect(composeEstimate(PRICED, MODEL, 26).worstMicros).toBe(2 * 2 * CEILING);
+    expect(composeEstimate(PRICED, MODEL, fixtureSplit(26), NOTHING_COVERED).worstMicros).toBe(2 * 2 * CEILING);
   });
 
   test("expects the writer's typical tokens, never above the worst", () => {
-    const estimate = composeEstimate(PRICED, MODEL, 20);
+    const estimate = composeEstimate(PRICED, MODEL, fixtureSplit(20), NOTHING_COVERED);
     expect(estimate.expectedMicros).toBeGreaterThan(0);
     expect(estimate.expectedMicros).toBeLessThan(estimate.worstMicros);
   });
 
   test("an empty set costs nothing", () => {
-    expect(composeEstimate(PRICED, MODEL, 0)).toMatchObject({ expectedMicros: 0, worstMicros: 0 });
+    expect(composeEstimate(PRICED, MODEL, fixtureSplit(0), NOTHING_COVERED)).toMatchObject({ expectedMicros: 0, worstMicros: 0 });
+    expect(composeEstimate(PRICED, MODEL, [], NOTHING_COVERED)).toMatchObject({ expectedMicros: 0, worstMicros: 0 });
   });
 
   test("says where its prices come from", () => {
-    expect(composeEstimate(PRICED, MODEL, 20)).toMatchObject({ prices: "fallback", pricesAsOf: "2026-09-24" });
+    expect(composeEstimate(PRICED, MODEL, fixtureSplit(20), NOTHING_COVERED)).toMatchObject({ prices: "fallback", pricesAsOf: "2026-09-24" });
+  });
+
+  // The template side of the same questions.
+  test("a built-in set costs nothing to compose: the code template writes every scene", () => {
+    for (const count of [1, 20, 26, 100]) {
+      expect(composeEstimate(PRICED, MODEL, homeSplit(count), NOTHING_COVERED)).toMatchObject({ expectedMicros: 0, worstMicros: 0 });
+    }
+  });
+
+  test("a custom category the template covers costs nothing either", () => {
+    expect(composeEstimate(PRICED, MODEL, fixtureSplit(40), EVERYTHING_COVERED)).toMatchObject({ expectedMicros: 0, worstMicros: 0 });
+  });
+
+  test("Home 50 plus an uncovered custom 50: 3 chunks at 2 attempts, $0.225", () => {
+    const split: SplitEntry[] = [{ ref: "home", count: 50 }, { ref: LLM_ONLY_REF, count: 50 }];
+    expect(composeEstimate(PRICED, MODEL, split, NOTHING_COVERED).worstMicros).toBe(3 * 2 * CEILING);
+  });
+
+  test("a mixed set expects the typical tokens of the model's scenes only", () => {
+    const mixed = composeEstimate(PRICED, MODEL, [{ ref: "home", count: 20 }, { ref: LLM_ONLY_REF, count: 20 }], NOTHING_COVERED);
+    const allModel = composeEstimate(PRICED, MODEL, fixtureSplit(40), NOTHING_COVERED);
+    const half = composeEstimate(PRICED, MODEL, fixtureSplit(20), NOTHING_COVERED);
+    expect(mixed.expectedMicros).toBe(half.expectedMicros);
+    expect(mixed.expectedMicros).toBeLessThan(allModel.expectedMicros);
+  });
+
+  test("a set with no scene for the model never prices the writer's model", () => {
+    expect(composeEstimate(PRICED, "vendor/unlisted-model", homeSplit(20), NOTHING_COVERED)).toMatchObject({ expectedMicros: 0, worstMicros: 0 });
   });
 });
 
@@ -119,5 +161,50 @@ describe("writeEstimate: «Дописать»", () => {
 
   test("with the ledger unreadable it prices every chunk as untouched", () => {
     expect(writeEstimate(PRICED, stored(35), null).worstMicros).toBe(4 * CEILING);
+  });
+
+  // 5a.2 (S5.6c2): a chunk whose every scene the code template writes is `free`: it is written with no request, so it adds nothing, whatever its attempts.
+  describe("the template's chunks", () => {
+    const POOLS = { [LLM_ONLY_REF]: LLM_ONLY_POOL };
+    /** 52 scenes over Home + the fixture: chunk 1 is all Home (free), chunk 2 mixes 1 Home with 24 fixture scenes, chunk 3 is 2 fixture scenes. */
+    const mixed = (): StoredSceneSet => ({
+      schemaVersion: 1,
+      revision: 1,
+      createdAt: "2026-10-07T10:00:00.000Z",
+      updatedAt: "2026-10-07T10:00:00.000Z",
+      ...sampleSet({ count: 52, categories: ["home", LLM_ONLY_REF], pools: POOLS, snapshots: [llmOnlySnapshot()] }),
+    });
+
+    test("a built-in set costs nothing to write: every chunk is free", () => {
+      expect(writeEstimate(PRICED, storedHome(35), fakeLedger({}))).toMatchObject({ expectedMicros: 0, worstMicros: 0 });
+    });
+
+    test("a free chunk next to chunks for the model adds nothing: only the model's chunks are priced", () => {
+      expect(mixed().chunks.length).toBe(3);
+      expect(writeEstimate(PRICED, mixed(), fakeLedger({})).worstMicros).toBe(2 * 2 * CEILING);
+    });
+
+    test("a free chunk with every attempt used stays free, and the model's chunks keep their own attempts", () => {
+      const ledger = fakeLedger({ [id(1, 1)]: {}, [id(1, 2)]: { close: { type: "settle", costMicros: 11_000 } } });
+      expect(writeEstimate(PRICED, mixed(), ledger).worstMicros).toBe(2 * 2 * CEILING);
+    });
+
+    test("a free chunk a job gave up on is offered again at no cost", () => {
+      const set = mixed();
+      const gaveUp = { ...set, chunks: set.chunks.map((c) => (c.chunk === 1 ? { ...c, gaveUp: "refused" as const } : c)) };
+      expect(writeEstimate(PRICED, gaveUp, fakeLedger({})).worstMicros).toBe(2 * 2 * CEILING);
+    });
+
+    test("the expected cost follows the scenes the model must write, not the scenes of the chunks it is asked about", () => {
+      const estimate = writeEstimate(PRICED, mixed(), fakeLedger({}));
+      const modelScenes = 24 + 2;
+      expect(estimate.expectedMicros).toBe(composeEstimate(PRICED, MODEL, fixtureSplit(modelScenes), NOTHING_COVERED).expectedMicros);
+    });
+
+    test("a set whose only pending chunk is free and given up prices at 0", () => {
+      const set = storedHome(10);
+      const gaveUp = { ...set, chunks: set.chunks.map((c) => ({ ...c, gaveUp: "refused" as const })) };
+      expect(writeEstimate(PRICED, gaveUp, fakeLedger({}))).toMatchObject({ expectedMicros: 0, worstMicros: 0 });
+    });
   });
 });

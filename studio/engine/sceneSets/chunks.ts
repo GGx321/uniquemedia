@@ -49,6 +49,8 @@ export interface PendingChunk {
   sceneIds: number[];
   /** 5a.2: the code template writes every scene of the request, so the chunk is written with no request and costs nothing. */
   free: boolean;
+  /** 5a.2 (S5.6c2): how many of the request's scenes the template cannot write, so the model must: what the chunk's request carries and what its estimate prices. 0 exactly when `free`. */
+  modelScenes: number;
 }
 
 /**
@@ -65,11 +67,12 @@ export function pendingChunks(set: StoredSceneSet, ledger: LedgerView | null): P
     const sceneIds = requestSceneIds(set, chunk);
     if (sceneIds.length === 0) continue;
     local ??= setLocal(set);
-    const free = sceneIds.every((sceneId) => {
+    const modelScenes = sceneIds.filter((sceneId) => {
       const scene = set.scenes.find((s) => s.sceneId === sceneId);
-      return scene?.origin === "planned" && local?.(scene.slot) != null;
-    });
-    if (free || state.attemptsLeft > 0) pending.push({ chunk, state, sceneIds, free });
+      return !(scene?.origin === "planned" && local?.(scene.slot) != null);
+    }).length;
+    const free = modelScenes === 0;
+    if (free || state.attemptsLeft > 0) pending.push({ chunk, state, sceneIds, free, modelScenes });
   }
   return pending;
 }

@@ -90,6 +90,28 @@ function askedOf(set: StoredSceneSet, record: ReviewWriteRecord): Asked {
   return { kind: "ideas", slots: own, mirrorAllowed: false };
 }
 
+/** The sentences the write is drawn off: every other scene's text, and a target's own old one (a rewrite never hands back the sentence the scene already has). */
+function heldOf(set: StoredSceneSet): string[] {
+  return set.scenes.flatMap((scene) => (!scene.removed && scene.text !== null ? [scene.text] : []));
+}
+
+/** The template's side for a write's planned slots, on the write's own key: what the job hands the writer phase, and what the estimate counts. */
+function localOf(set: StoredSceneSet, record: ReviewWriteRecord, slots: readonly PlanSlot[]): (slot: PlanSlot) => string | null {
+  return localSentences({ slots, keyOf: (slot) => `${set.sceneSetId}:${slot.slotIndex}:${record.k}`, snapshots: snapshotsFor(set, record), seen: heldOf(set) });
+}
+
+/**
+ * 5a.2 (S5.6c2, plan s5a2 §5.6): how many scenes of the write the model must write, decided exactly as the job decides it (`askedOf` and the very `local` it
+ * hands the writer phase). 0 for a write whose every planned slot the code template renders ($0); every scene of an idea write or of a rewrite of own
+ * scenes (the template has no sentence for an idea); the null slots of a planned rewrite, an old-pool slot of an interrupted one among them.
+ */
+export function modelScenesOf(set: StoredSceneSet, record: ReviewWriteRecord): number {
+  const asked = askedOf(set, record);
+  if (asked.kind === "ideas") return asked.slots.length;
+  const local = localOf(set, record, asked.slots);
+  return asked.slots.filter((slot) => local(slot) === null).length;
+}
+
 export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWriteRequest): Promise<ReviewWriteEnd> {
   const { budget } = deps;
   const ledger = budget.ledger;
@@ -130,8 +152,7 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
     // 5a.2: the code template writes every scene it can, at $0; the model is asked only about the rest. The draw key is the write's own (`…:k`), and a
     // sentence another scene of the set already holds is redrawn.
     // A target's own old text counts too: a rewrite never hands back the sentence the scene already has.
-    const held = set.scenes.flatMap((scene) => (!scene.removed && scene.text !== null ? [scene.text] : []));
-    const local = localSentences({ slots: asked.slots, keyOf: (slot) => `${set.sceneSetId}:${slot.slotIndex}:${record.k}`, snapshots: snapshotsFor(set, record), seen: held });
+    const local = localOf(set, record, asked.slots);
     const phase: WriterPhase<PlanSlot> = { ...base, call, slots: asked.slots, local, messages: (slots, feedback) => writerMessages(slots, feedback, asked.labelOf) };
     result = await runWriterPhase(phaseDeps, phase);
   } else {

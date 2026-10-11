@@ -49,7 +49,7 @@ export interface PaidPort {
   /** A compose under the launch's ids and exact split (`Engine.composeLaunchSet`). Made again after a crash it creates nothing and sends nothing (`jobId` null). */
   composeLaunchSet(payload: LaunchComposePayload, launch: LaunchComposeOptions): Promise<{ sceneSetId: string; jobId: string | null }>;
   /** What composing `count` scenes could cost now (free). */
-  composeEstimate(request: { avatarId: string; count: number; categories: readonly CategoryRef[] }): Promise<Estimate>;
+  composeEstimate(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; split?: readonly { ref: CategoryRef; count: number }[] }): Promise<Estimate>;
   /** The launch's own «Дописать» of the set (internal): the scenes still waiting, within `acceptedWorstMicros` (PRICE_CHANGED above it). */
   writeLaunchScenes(input: { sceneSetId: string; launchId: string; revision: number; acceptedWorstMicros: number }): Promise<{ jobId: string }>;
   /** What the «Дописать» of the set could cost now (free). */

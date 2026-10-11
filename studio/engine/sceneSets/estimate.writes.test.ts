@@ -49,6 +49,30 @@ describe("reviewWriteEstimate", () => {
     expect(reviewWriteEstimate(PRICED, MODEL, 1, 2)).toMatchObject({ prices: PRICED.book.source, pricesAsOf: PRICED.asOf });
   });
 
+  // 5a.2 (S5.6c2): priced from the write's actual slots. The code template writes every scene it can at $0, so a write whose scenes all render costs nothing and
+  // asks no price; one scene the template cannot write puts the whole request (the model's scenes alone) back at its attempts × the ceiling.
+  test("a write whose every scene the template writes costs nothing and prices nothing", () => {
+    expect(reviewWriteEstimate(PRICED, "vendor/unlisted-model", 3, 2, 0)).toEqual({ expectedMicros: 0, worstMicros: 0, prices: PRICED.book.source, pricesAsOf: PRICED.asOf });
+  });
+
+  test("one scene for the model keeps the request at its attempts × the ceiling, whatever the template writes beside it", () => {
+    expect(reviewWriteEstimate(PRICED, MODEL, 5, 2, 1).worstMicros).toBe(2 * CEILING);
+    expect(reviewWriteEstimate(PRICED, MODEL, 5, 1, 1).worstMicros).toBe(CEILING);
+  });
+
+  test("expects the typical tokens of the model's scenes only", () => {
+    expect(reviewWriteEstimate(PRICED, MODEL, 5, 2, 2).expectedMicros).toBe(reviewWriteEstimate(PRICED, MODEL, 2, 2).expectedMicros);
+  });
+
+  test("with no model count given every scene is the model's, as before", () => {
+    expect(reviewWriteEstimate(PRICED, MODEL, 3, 2)).toEqual(reviewWriteEstimate(PRICED, MODEL, 3, 2, 3));
+  });
+
+  test("refuses more scenes for the model than the write covers", () => {
+    expect(() => reviewWriteEstimate(PRICED, MODEL, 2, 2, 3)).toThrow();
+    expect(() => reviewWriteEstimate(PRICED, MODEL, 2, 2, -1)).toThrow();
+  });
+
   test("refuses a count that is not one to five scenes, or attempts that are not 0..2", () => {
     expect(() => reviewWriteEstimate(PRICED, MODEL, 0, 2)).toThrow();
     expect(() => reviewWriteEstimate(PRICED, MODEL, 6, 2)).toThrow();

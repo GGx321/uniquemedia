@@ -1,6 +1,7 @@
 import { MAX_SCENES_PER_WRITE, type Estimate } from "../../shared/engine";
 import type { StoredSceneSet } from "../library/sceneSets";
-import { WRITER_CALL, writerWorstMicros, type WriterCall } from "../money/estimate";
+import { WRITER_CALL, writerChunksMicros, type WriterCall } from "../money/estimate";
+import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import type { PriceBook } from "../money/prices";
 import type { LedgerView } from "../runs/journal";
@@ -42,11 +43,16 @@ function typicalOf(book: PriceBook, call: WriterCall, scenes: number): number {
  * Composing `count` scenes: the writer's worst case for them (`writerWorstMicros`: chunks of 25, each retried up to twice at the ceiling, the very
  * figure a run's estimate carries for its writer), expected at the writer's typical tokens. An empty set (0) costs nothing and prices nothing.
  */
-export function composeEstimate(priced: PricedBook, textModel: string, count: number): Estimate {
-  if (count === 0) return { expectedMicros: 0, worstMicros: 0, prices: priced.book.source, pricesAsOf: priced.asOf };
+export function composeEstimate(priced: PricedBook, textModel: string, split: readonly SplitEntry[], covers: CoversOf): Estimate {
+  const free: Estimate = { expectedMicros: 0, worstMicros: 0, prices: priced.book.source, pricesAsOf: priced.asOf };
+  // 5a.2 (S5.6c2, I5.30): the code template writes every scene of a built-in category and of a covered custom one; the writer is priced for the uncovered
+  // custom categories' scenes alone (`writerChunksWorst`), and a compose with none of them prices no writer, so its model needs no price.
+  const chunks = writerChunksWorst(split, covers);
+  const scenes = llmPossibleSlots(split, covers);
+  if (chunks === 0 || scenes === 0) return free;
   const call = writerCall(textModel);
-  const worstMicros = writerWorstMicros(priced.book, call, count);
-  return { expectedMicros: Math.min(typicalOf(priced.book, call, count), worstMicros), worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
+  const worstMicros = writerChunksMicros(priced.book, call, chunks);
+  return { expectedMicros: Math.min(typicalOf(priced.book, call, scenes), worstMicros), worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
 }
 
 /**
@@ -54,13 +60,17 @@ export function composeEstimate(priced: PricedBook, textModel: string, count: nu
  * reconciled reserve one, after a free 429/5xx two again), each at the writer's ceiling, so the worst case is exactly what the job's cap is set to. Expected
  * at the writer's typical tokens for the scenes. A write with none left costs nothing.
  */
-export function reviewWriteEstimate(priced: PricedBook, textModel: string, scenes: number, attemptsLeft: number): Estimate {
+export function reviewWriteEstimate(priced: PricedBook, textModel: string, scenes: number, attemptsLeft: number, modelScenes: number = scenes): Estimate {
   if (!Number.isInteger(scenes) || scenes < 1 || scenes > MAX_SCENES_PER_WRITE) throw new RangeError(`a write covers 1..${MAX_SCENES_PER_WRITE} scenes, got ${scenes}`);
   if (!Number.isInteger(attemptsLeft) || attemptsLeft < 0 || attemptsLeft > WRITER_CALL.maxAttempts) throw new RangeError(`a write has 0..${WRITER_CALL.maxAttempts} attempts left, got ${attemptsLeft}`);
-  if (attemptsLeft === 0) return { expectedMicros: 0, worstMicros: 0, prices: priced.book.source, pricesAsOf: priced.asOf };
+  if (!Number.isInteger(modelScenes) || modelScenes < 0 || modelScenes > scenes) throw new RangeError(`a write of ${scenes} scenes has 0..${scenes} for the model, got ${modelScenes}`);
+  // 5a.2 (S5.6c2): from the write's actual slots. The code template writes what it can at $0, so a write whose every scene renders costs nothing; the
+  // request that remains carries the model's scenes alone. A write with a scene the template cannot write (an idea, an own scene, an old-pool slot of an
+  // interrupted rewrite) is priced as before: its attempts left at the writer's ceiling.
+  if (attemptsLeft === 0 || modelScenes === 0) return { expectedMicros: 0, worstMicros: 0, prices: priced.book.source, pricesAsOf: priced.asOf };
   const call = writerCall(textModel);
   const worstMicros = attemptsLeft * ceilingOf(priced.book, call);
-  return { expectedMicros: Math.min(typicalOf(priced.book, call, scenes), worstMicros), worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
+  return { expectedMicros: Math.min(typicalOf(priced.book, call, modelScenes), worstMicros), worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
 }
 
 /**
@@ -69,13 +79,17 @@ export function reviewWriteEstimate(priced: PricedBook, textModel: string, scene
  * given up, or with nothing left to ask (every scene removed or typed) cost nothing.
  */
 export function writeEstimate(priced: PricedBook, set: StoredSceneSet, ledger: LedgerView | null): Estimate {
+  // 5a.2 (S5.6c2): only a pending chunk that holds a scene the template cannot write is a request; a `free` chunk (every scene renders) is written with no
+  // request, whatever its attempts or its verdict, and adds nothing. A mixed chunk's request carries its model scenes alone.
+  const asked = pendingChunks(set, ledger).filter((pending) => !pending.free);
+  if (asked.length === 0) return { expectedMicros: 0, worstMicros: 0, prices: priced.book.source, pricesAsOf: priced.asOf };
   const call = writerCall(set.models.text);
   const ceiling = ceilingOf(priced.book, call);
   let worstMicros = 0;
   let scenes = 0;
-  for (const pending of pendingChunks(set, ledger)) {
+  for (const pending of asked) {
     worstMicros += pending.state.attemptsLeft * ceiling;
-    scenes += pending.sceneIds.length;
+    scenes += pending.modelScenes;
   }
   const expectedMicros = scenes === 0 ? 0 : Math.min(typicalOf(priced.book, call, scenes), worstMicros);
   return { expectedMicros, worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };

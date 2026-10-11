@@ -1,5 +1,6 @@
 import {
   PROTOCOL_VERSION,
+  splitCount,
   type CategoryRef,
   type EngineError,
   type Estimate,
@@ -29,6 +30,7 @@ import { planSceneSet } from "./compose";
 import { findSceneSet } from "./approve";
 import { applyEdit, type EditOutcome } from "./edit";
 import { explicitSplit } from "../scenes/planner";
+import { coversOfStored } from "../scenes/coverage";
 import { unlinkLaunchSet, type UnlinkPhase } from "./launchDraw";
 import type { LaunchRegistry } from "./launchRegistry";
 import { composeEstimate, reviewWriteEstimate, sceneSetPriceModels, writeEstimate } from "./estimate";
@@ -243,12 +245,14 @@ export class SceneSetService {
   }
 
   /** What composing `count` scenes could cost; NOT_FOUND for an avatar that cannot get photos or a custom category the library lacks, before any price is fetched. */
-  async estimateCompose(request: { avatarId: string; count: number; categories: readonly CategoryRef[] }): Promise<Estimate> {
+  async estimateCompose(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; split?: readonly { ref: CategoryRef; count: number }[] }): Promise<Estimate> {
     const library = this.#deps.currentLibrary();
     this.#deps.runnableAvatar(library, request.avatarId);
-    await this.#deps.customCategories(library, request.categories);
+    const custom = await this.#deps.customCategories(library, request.categories);
     const textModel = this.#deps.textModel();
-    return composeEstimate(await this.#deps.prices(sceneSetPriceModels(textModel)), textModel, request.count);
+    // 5a.2 (S5.6c2): the split the compose will draw (a launch's own, or the even one) and the coverage of the custom pools as the library holds them NOW.
+    const split = request.split ?? splitCount(request.count, request.categories);
+    return composeEstimate(await this.#deps.prices(sceneSetPriceModels(textModel)), textModel, split, coversOfStored(custom));
   }
 
   /**
@@ -260,7 +264,7 @@ export class SceneSetService {
     const { set } = await this.#find(library, sceneSetId);
     if (target.kind === "unwritten") return writeEstimate(await this.#deps.prices(sceneSetPriceModels(set.models.text)), set, this.#deps.ledger());
     const plan = await this.#planReview(library, set, target);
-    return reviewWriteEstimate(await this.#deps.prices(sceneSetPriceModels(set.models.text)), set.models.text, plan.count, plan.attemptsLeft);
+    return reviewWriteEstimate(await this.#deps.prices(sceneSetPriceModels(set.models.text)), set.models.text, plan.count, plan.attemptsLeft, plan.modelScenes);
   }
 
   #planReview(library: Library | null, set: StoredSceneSet, target: Exclude<SceneWriteTarget, { kind: "unwritten" }>): Promise<ReviewPlan> {
@@ -451,7 +455,9 @@ export class SceneSetService {
       let worstMicros = 0;
       if (!free && budget !== null) {
         priced = await deps.prices(sceneSetPriceModels(textModel));
-        worstMicros = composeEstimate(priced, textModel, count).worstMicros;
+        // The same split the plan below draws and the coverage of the pools read just above: a category regenerated since the owner accepted a figure that turned
+        // uncovered raises this worst case, and `checkAccepted` refuses the compose (a launch holds on the price).
+        worstMicros = composeEstimate(priced, textModel, launch?.split ?? splitCount(count, categories), coversOfStored(custom)).worstMicros;
         deps.checkAccepted(worstMicros, payload.acceptedWorstMicros);
         deps.checkMonthlyRoom(budget, worstMicros);
       }
@@ -562,7 +568,7 @@ export class SceneSetService {
         if (plan.sceneIds !== undefined) mine.sceneIds = plan.sceneIds;
       }
       const priced = await deps.prices(sceneSetPriceModels(set.models.text));
-      const estimate = plan === null ? writeEstimate(priced, set, ledger) : reviewWriteEstimate(priced, set.models.text, plan.count, plan.attemptsLeft);
+      const estimate = plan === null ? writeEstimate(priced, set, ledger) : reviewWriteEstimate(priced, set.models.text, plan.count, plan.attemptsLeft, plan.modelScenes);
       deps.checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
       deps.checkMonthlyRoom(budget, estimate.worstMicros);
       // A cancel that came while the prices loaded ends the job before the file is touched: no write number, no marker, no reserve held.

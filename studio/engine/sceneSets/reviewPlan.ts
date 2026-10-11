@@ -10,6 +10,7 @@ import { templateSentence } from "../../shared/scenes/template";
 import { seedOfSet } from "./compose";
 import { beginIdea, beginRewrite, resumeReviewWrite } from "./reviewMutations";
 import { sceneRefusal } from "./refusal";
+import { modelScenesOf } from "./reviewWriteJob";
 import { nextSceneId, reservedIdeaScenes, reviewWriteState, reviewWritesOf } from "./reviewWrites";
 
 // CS.4b: what a rewrite, an idea write or the resume of one is, decided from the set as it is NOW and nothing else: every refusal (all free, all before a
@@ -28,6 +29,8 @@ export interface ReviewPlan {
   sceneIds?: number[];
   /** The attempts the write may still use: two for a new write, what the ledger leaves a resumed one. */
   attemptsLeft: number;
+  /** 5a.2 (S5.6c2): how many of the write's scenes the model must write; the code template writes the rest at $0, so 0 prices the write at nothing. */
+  modelScenes: number;
   /** The set with this write recorded (or resumed under `jobId`): applied under the set's lock. */
   begin: (current: StoredSceneSet, jobId: string) => StoredSceneSet;
 }
@@ -52,7 +55,10 @@ function redrawsOf(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "r
   return scenes.every((scene) => scene.origin === "planned" && !isCustomCategory(scene.slot.category) && templateSentence(scene.slot, { key: `${set.sceneSetId}:${scene.sceneId}:probe` }) !== null);
 }
 
-function planRewrite(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "rewrite" }>, pools: PoolsOf): ReviewPlan {
+/** A write as the planners below decide it, before its model scenes are counted from the record it would leave (`planReviewWrite`). */
+type PlannedWrite = Omit<ReviewPlan, "modelScenes">;
+
+function planRewrite(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "rewrite" }>, pools: PoolsOf): PlannedWrite {
   const scenes = targetsOf(set, target.sceneIds);
   const planned = scenes.flatMap((s) => (s.origin === "planned" ? [s] : []));
   if (planned.length !== 0 && planned.length !== scenes.length) throw sceneRefusal("a rewrite covers planned scenes or own scenes, not both: they are written from different prompts", "mixed-kinds");
@@ -86,7 +92,7 @@ function planRewrite(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: 
   };
 }
 
-function planIdea(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "idea" }>, ledger: LedgerView | null): ReviewPlan {
+function planIdea(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "idea" }>, ledger: LedgerView | null): PlannedWrite {
   const reserved = reservedIdeaScenes(set, ledger);
   if (set.scenes.length + reserved + target.count > MAX_SCENES_PER_SET) {
     throw sceneRefusal(
@@ -107,7 +113,7 @@ function planIdea(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "id
   };
 }
 
-function planResume(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "resume" }>, ledger: LedgerView | null): ReviewPlan {
+function planResume(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "resume" }>, ledger: LedgerView | null): PlannedWrite {
   const record = reviewWritesOf(set).find((r) => r.k === target.write && !r.closed);
   if (record === undefined) throw sceneRefusal(`scene set ${set.sceneSetId} has no unresolved write ${target.write}`, "no-open-write");
   const { attemptsLeft } = reviewWriteState(record, ledger);
@@ -133,13 +139,24 @@ interface PoolsOf {
  * Plans a review write from the set, or refuses it free: VALIDATION for a scene the set lacks or has removed, mixed kinds, an own scene redrawn, no room for
  * the scenes, no such unresolved write or none of its attempts left; NOT_FOUND for a redraw of a scene whose custom category was deleted.
  */
-export async function planReviewWrite(input: {
+export async function planReviewWrite(input: ReviewPlanInput): Promise<ReviewPlan> {
+  const planned = await planWrite(input);
+  // 5a.2 (S5.6c2): the model scenes are counted off the very record the write would leave, with the job's own `askedOf` and `local`, so the price and the
+  // job agree on which scenes the template writes. (`begin` is pure: it returns the set with the write recorded; nothing is stored here.)
+  const after = planned.begin(input.set, "estimate");
+  const recorded = reviewWritesOf(after).find((r) => r.k === planned.k);
+  return { ...planned, modelScenes: recorded === undefined ? planned.count : modelScenesOf(after, recorded) };
+}
+
+interface ReviewPlanInput {
   set: StoredSceneSet;
   target: ReviewTarget;
   ledger: LedgerView | null;
   /** The stored custom categories the refs name; throws NOT_FOUND for one the library lacks. */
   customCategories: (refs: readonly CategoryRef[]) => Promise<StoredCategory[]>;
-}): Promise<ReviewPlan> {
+}
+
+async function planWrite(input: ReviewPlanInput): Promise<PlannedWrite> {
   const { set, target } = input;
   if (target.kind === "resume") return planResume(set, target, input.ledger);
   if (reviewWritesOf(set).length >= MAX_REVIEW_WRITES) throw sceneRefusal(`a set records at most ${MAX_REVIEW_WRITES} writes of this kind`, "write-record-cap");
