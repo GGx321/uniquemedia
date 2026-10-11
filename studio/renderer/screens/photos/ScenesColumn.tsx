@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { AvatarSummary, EngineError, Estimate, RunSummary, SceneSetView } from "../../../shared/engine";
+import type { AvatarSummary, EngineError, Estimate, PhotoSummary, RunSummary, SceneSetView } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import type { SceneSetSliceView } from "../../engine/sceneSetSlice";
 import { isActiveJob, type EngineView, type JobView } from "../../engine/store";
@@ -12,6 +12,7 @@ import { modelName } from "./runForm";
 import { EMPTY_IDEA, type IdeaStart } from "./SceneIdeaForm";
 import { about, focusLost } from "./scenePaid";
 import { focusSceneCard, SceneSetPanel } from "./SceneSetPanel";
+import { faceMarksText, framesWithoutFaceCheck } from "./faceMarks";
 import { headerCounts, OFF_NOTE, offNoteSet, runDoneText } from "./sceneText";
 import { PHOTO_FORMS, useMounted } from "./shared";
 
@@ -242,7 +243,7 @@ function EndedRunRow({ run }: { run: RunSummary }) {
 
 
 /** How the run this screen watched ended: the gallery shows its photos, this says what else happened. A run made from a set says so (ReviewStates F). */
-function RunOutcome({ job, fromSet }: { job: JobView; fromSet: boolean }) {
+export function RunOutcome({ job, fromSet, photos }: { job: JobView; fromSet: boolean; photos: readonly PhotoSummary[] }) {
   if (job.status === "failed" && job.error) return <ErrorNotice error={job.error} />;
   if (job.status === "cancelled") {
     return (
@@ -253,9 +254,12 @@ function RunOutcome({ job, fromSet }: { job: JobView; fromSet: boolean }) {
   }
   if (job.status === "done" && job.result?.kind === "run") {
     const { photoIds, failedSlots } = job.result;
+    // S5.6f: a face-hidden or back frame is marked, not retried; the run says how many frames no face check judged.
+    const unchecked = framesWithoutFaceCheck(photos, photoIds);
     return (
       <Notice tone={failedSlots > 0 ? "warn" : "ok"} title="Запуск завершён">
         {fromSet ? runDoneText(photoIds.length) : `В галерее ${countOf(photoIds.length, PHOTO_FORMS)} этого запуска.`}
+        {unchecked > 0 && ` ${faceMarksText(unchecked)}.`}
         {failedSlots > 0 && ` Не получилось: ${failedSlots} — стоимость попыток учтена.`}
       </Notice>
     );
@@ -297,6 +301,8 @@ interface ScenesColumnProps {
   composePrice: Estimate | null;
   /** S4.9b: the set is an unfinished launch's: shown whatever «Сцены на проверку» says, without «+ Своя сцена», read only once the launch took it. */
   launchLink: LaunchLink | null;
+  /** The gallery's photos as read so far: the end of a run counts the frames of the run that no face check judged. */
+  photos: readonly PhotoSummary[];
 }
 
 /**
@@ -357,6 +363,7 @@ export function ScenesColumn({
   scenesJob,
   composePrice,
   launchLink,
+  photos,
 }: ScenesColumnProps) {
   const { client, store, sceneSets } = useEngine();
   const mounted = useMounted();
@@ -522,7 +529,7 @@ export function ScenesColumn({
         </div>
       )}
       {cancelError && <ErrorNotice error={cancelError} />}
-      {!running && watched && runJob && <RunOutcome job={runJob} fromSet={fromSet} />}
+      {!running && watched && runJob && <RunOutcome job={runJob} fromSet={fromSet} photos={photos} />}
       {review && sceneReadError !== null && (
         <ErrorNotice
           error={sceneReadError}

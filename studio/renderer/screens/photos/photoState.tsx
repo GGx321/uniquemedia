@@ -1,5 +1,5 @@
 import type { EngineError, PhotoSummary } from "../../../shared/engine";
-import { FACE_GATE_THRESHOLD } from "./shared";
+import { underFaceLine } from "./faceMarks";
 
 // What a gallery photo shows of its state, wherever it is shown (its tile, the photo viewer): the face score, how a video or
 // a render holds it, the owner's reject mark, whether a montage may take it, and what its reject button does.
@@ -53,7 +53,7 @@ export function PhotoBadges({ photo }: { photo: PhotoSummary }) {
   // Compared on the same rounded value the badge displays (L2): a raw score
   // just under the line that rounds up to the line itself (0.549 shows
   // «0.55») must read the same as the line, never as low.
-  const low = faceCos !== undefined && Number(faceCos.toFixed(2)) < FACE_GATE_THRESHOLD;
+  const low = faceCos !== undefined && underFaceLine(faceCos);
   const held = heldLabel(photo);
   return (
     <>

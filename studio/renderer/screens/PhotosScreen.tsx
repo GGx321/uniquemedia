@@ -497,6 +497,7 @@ function AvatarPhotos({
                 sliceView={sliceView}
                 scenesJob={scenesJob}
                 composePrice={composePrice}
+                photos={gallery.pages?.photos ?? []}
                 view={view}
                 count={form.count}
                 runJob={runJob}
