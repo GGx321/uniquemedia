@@ -61,8 +61,9 @@ export const HOME: CategoryBank = {
         { text: "lies on her stomach, hips behind", motion: "she lifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
         { text: "lies on her stomach, on her elbows", motion: "she shifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
         { text: "lies prone, her cheek on her hand", motion: "she slowly blinks and smiles", captures: ["prone"], twoHanded: false, outfits: PRONE, handAtFace: true },
-        { text: "lies prone, sneakers raised behind", motion: "her raised sneakers swing slowly behind her", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", outfits: SNEAKERS, noLegwear: true },
-        { text: "lies prone, feet up in sneakers", motion: "she crosses her raised ankles slowly", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", outfits: SNEAKERS, noLegwear: true },
+        // S5.6R: the pinned outfit already names the platform sneakers, so the moment names her feet, never the sneakers a second time.
+        { text: "lies prone, feet raised behind", motion: "her raised feet swing slowly behind her", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", outfits: SNEAKERS, noLegwear: true },
+        { text: "lies prone, ankles crossed behind", motion: "she crosses her raised ankles slowly", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", outfits: SNEAKERS, noLegwear: true },
         { text: "lies prone, glancing back", motion: "she turns her head a little further", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", gaze: "own", outfits: SNEAKERS, noLegwear: true },
         { text: "sits cross-legged", motion: "she rocks a little side to side", captures: ["timer"], twoHanded: false },
         { text: "rests her cheek on the pillow", motion: "she slowly closes her eyes", captures: ["above"], twoHanded: false },

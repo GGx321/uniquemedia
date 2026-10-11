@@ -146,3 +146,9 @@ describe("«Дом»: a moment of going out wears going-out clothes", () => {
     expect(offenders(FRAMES.home, (f) => GOING_OUT.test(f.slot.activity) && SLEEP_OR_LOUNGE.test(f.slot.outfit))).toEqual(NONE);
   });
 });
+
+describe("the text reads naturally (S5.6R, LOW)", () => {
+  test("a photo over her own shoulder names her sneakers once: the outfit says them", () => {
+    expect(offenders(ALL, (f) => f.capture === "over-shoulder" && (f.sentence.match(/\bsneakers\b/g) ?? []).length > 1)).toEqual(NONE);
+  });
+});
