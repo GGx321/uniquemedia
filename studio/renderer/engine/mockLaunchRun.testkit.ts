@@ -1,4 +1,5 @@
 import type { AvatarSummary, EngineError, LaunchDraftInput, LaunchView, PhotoSummary } from "../../shared/engine";
+import { LLM_ONLY_CATEGORY_RECORD, LLM_ONLY_REF } from "../../engine/scenes/testing/llmOnlyFixture";
 import type { MockTrackSeed } from "./mockMusicStore";
 import type { MockEngineOptions } from "./mockEngine";
 import { freePhotos, makeMock, MIA, NORA, SOFIA, unwrap, type Mock } from "./mockEngine.testkit";
@@ -7,6 +8,14 @@ import { freePhotos, makeMock, MIA, NORA, SOFIA, unwrap, type Mock } from "./moc
 // helpers every test of the run shares. Test-only.
 
 export const IMAGE = 50_000;
+
+/**
+ * 5a.2 (S5.6e, m11): a launch on a built-in category is composed by the code template, with no writer request. A test about the compose's WRITER (its live job, its reserve, its money, a fault or a hang at
+ * it) plans from `cat-llm-only-fixture`, the category whose scenes only the model writes; `runWorld` has it in the library.
+ */
+export { LLM_ONLY_REF };
+export const ON_THE_WRITER: Pick<LaunchDraftInput, "categories"> = { categories: [LLM_ONLY_REF] };
+const FIXTURE = { ...LLM_ONLY_CATEGORY_RECORD, createdAt: "2026-10-05T10:00:00.000Z", updatedAt: "2026-10-05T10:00:00.000Z" };
 
 /** A stored track long enough for any video the mock's launch makes (6.5 s). */
 export function track(n: number, over: Partial<MockTrackSeed> = {}): MockTrackSeed {
@@ -18,7 +27,7 @@ export function runWorld(over: MockEngineOptions = {}, tracks: readonly MockTrac
   const photos: PhotoSummary[] = [...freePhotos(6, MIA), ...freePhotos(12, SOFIA)];
   const countOf = (a: AvatarSummary): number => photos.filter((p) => p.avatarId === a.avatarId).length;
   const avatars = [MIA, SOFIA, NORA].map((a) => ({ ...a, photoCount: countOf(a), eligibleUnusedCount: countOf(a) }));
-  const mock = makeMock({ avatars, photos, ...over });
+  const mock = makeMock({ avatars, photos, categories: [FIXTURE], ...over });
   mock.engine.setRunImagePrice(IMAGE);
   if (tracks !== null) mock.engine.seedMusicTracks(tracks);
   return mock;

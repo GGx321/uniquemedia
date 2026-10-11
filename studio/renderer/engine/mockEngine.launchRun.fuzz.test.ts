@@ -12,7 +12,7 @@ import {
 } from "../../shared/engine";
 import type { MockTrackSeed } from "./mockMusicStore";
 import { PAID_FAULTS } from "./mockLaunchRun";
-import { draftOf, MIA, runWorld, SOFIA, track, unwrap, type Mock } from "./mockLaunchRun.testkit";
+import { draftOf, LLM_ONLY_REF, MIA, runWorld, SOFIA, track, unwrap, type Mock } from "./mockLaunchRun.testkit";
 
 // Stage 4, S4.8: the mock's view must pass the SAME contract refines as the engine's, in every state it can reach. The S4.6v review fuzzed the engine's view; this does the same to the
 // mock's: a seeded random world and a seeded random sequence of the owner's clicks and the world's changes (the testkit's switches), and after EVERY step the view the window would read
@@ -160,6 +160,8 @@ async function fuzzOne(seed: number, steps: number): Promise<void> {
   async function start(): Promise<void> {
     const draft: LaunchDraftInput = draftOf({
       avatarIds: pick([[MIA.avatarId], [SOFIA.avatarId], [MIA.avatarId, SOFIA.avatarId]]),
+      // 5a.2: a launch on «Дом» is composed by the code template with no request; one on the fixture still has the writer's live request, where a stop meets «stopping».
+      categories: pick([[LLM_ONLY_REF], [LLM_ONLY_REF], ["home"]]),
       videosPerAvatar: 1 + Math.floor(next() * 5),
       mix: pick(CATEGORIES),
       library: next() < 0.5,

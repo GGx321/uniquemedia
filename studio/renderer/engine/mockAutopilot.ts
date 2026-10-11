@@ -73,6 +73,8 @@ export interface MockAutopilotWorld {
   /** The library can say which of the avatar's photos are free (its usage and drafts are known). */
   libraryKnown(avatarId: string): boolean;
   unit(): MockAutopilotUnit;
+  /** The writer's bound for `count` new photos over `categories` (the engine's `writerChunksWorst` and `llmPossibleSlots`): the requests the compose can need and the photos that can go to the model. */
+  writerBound(count: number, categories: readonly CategoryRef[]): { chunks: number; modelSlots: number };
   prices(): { prices: Estimate["prices"]; pricesAsOf: string };
   /** The month's budget, and what is committed in it: spent, open, and (A21) the unspent rest of every running job's cap. */
   month(): { budgetMicros: number; committedMicros: number };
@@ -131,7 +133,7 @@ export interface MockAutopilotWorld {
   /** The slice ended: `done` (its photos are in, or its cap ended it), `cancelled` (a stop or a pause), `gone` (the process died with it: nothing is announced). */
   endSlice(runId: string, how: "done" | "cancelled" | "gone"): void;
   /** `n` photos the launch's draw made for the avatar (new library photos), in order, as the photos of the slice run `runId`. */
-  drawPhotos(avatarId: string, n: number, category: CategoryRef, runId: string | null): string[];
+  drawPhotos(avatarId: string, n: number, category: CategoryRef, runId: string | null, from?: { sceneSetId: string; firstNo: number }): string[];
   newVideoId(): string;
   /** A render landed: the record of the video, its photos taken, its file in the export folder. */
   storeVideo(video: { launchId: string; avatarId: string; videoId: string; photoIds: readonly string[]; durationMs: number; bytes: number; track: NonNullable<LaunchVideo["track"]>; n: number }): void;
@@ -298,8 +300,10 @@ export class MockAutopilot {
     let worst = 0;
     let expected = 0;
     for (const { row } of counted) {
-      worst += Math.ceil(row.toGenerate / LAUNCH_SLICE_MAX_PHOTOS) * unit.writerChunkWorstMicros + row.toGenerate * unit.photoWorstMicros;
-      expected += row.toGenerate * unit.writerExpectedPerPhotoMicros + row.toGenerate * unit.photoExpectedMicros;
+      // 5a.2: the code template writes a built-in category and a covered custom one, so only an uncovered custom category's photos are priced for the writer (plan §5.6).
+      const bound = this.#world.writerBound(row.toGenerate, draft.categories);
+      worst += bound.chunks * unit.writerChunkWorstMicros + row.toGenerate * unit.photoWorstMicros;
+      expected += bound.modelSlots * unit.writerExpectedPerPhotoMicros + row.toGenerate * unit.photoExpectedMicros;
     }
     const prices = this.#world.prices();
 

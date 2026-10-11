@@ -91,6 +91,7 @@ import {
   type LogLine,
   type VideoShape,
 } from "../../shared/engine";
+import { faceVisibleOf } from "../../shared/scenes/captures";
 import { MAX_LISTED_VIDEOS } from "../../shared/engine/video";
 import { MAX_CLIPS, MAX_LISTED_MONTAGES, MAX_MONTAGE_ISSUES, Montage, montageIssues, type Focus, type MontageDraft, type MontageIssue, type TextLayer } from "../../shared/engine/montage";
 import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, ownPhotoCells, ownPhotoIssues, ownStickerCells, ownStickerIssues, ownTrackIssues, ownVideoClips, ownVideoIssues, totalFrames, trackIssues, trendingTrackIssues } from "../../shared/montage";
@@ -355,6 +356,11 @@ export interface MockEngineOptions {
    * that moves only by the owner's clicks. It is kept for the fixtures and the parity stories that are bound to it; nothing else should ask for it.
    */
   launchRun?: "timers" | "canned";
+  /**
+   * 5a.2 (S5.6e): the photos a launch draws carry a likeness, as the engine's face gate stores one: `marked` for a frame whose face is hidden (the scene's capture says so), `match` for the rest.
+   * Off, a drawn photo is the avatar's template photo with nothing of its own (every older story).
+   */
+  launchFaceMarks?: { marked: number; match: number };
 }
 
 /** A photo run's slot: its category (the plan's), and how it ended — null while it is still open. */
@@ -739,6 +745,8 @@ export class MockEngine implements EngineBridge {
   private readonly latencyMs: number;
   private readonly stepMs: number;
   private readonly capacity: number;
+  /** 5a.2 (S5.6e): the likeness a launch's drawn photo carries (`MockEngineOptions.launchFaceMarks`); undefined: none. */
+  private readonly launchFaceMarks: { marked: number; match: number } | undefined;
   private readonly listeners = new Set<(event: unknown) => void>();
   private log: EventLog;
   private boot = 1;
@@ -949,6 +957,7 @@ export class MockEngine implements EngineBridge {
         avatarActive: (avatarId) => this.avatars.some((a) => a.avatarId === avatarId && a.status === "active"),
         libraryKnown: (avatarId) => !this.launchLibraryLost && this.availabilityOf(avatarId).state === "known",
         unit: () => this.autopilotUnit(),
+        writerBound: (count, categories) => this.sceneSets.writerBound(count, categories),
         prices: () => ({ prices: this.price.prices, pricesAsOf: this.price.pricesAsOf }),
         month: () => this.launchMonthRoom(),
         paidGate: () => this.launchGate(),
@@ -998,7 +1007,7 @@ export class MockEngine implements EngineBridge {
         startSlice: (slice) => this.startLaunchSlice(slice),
         sliceProgress: (runId, photoIds, settledMicros) => this.launchSliceProgress(runId, photoIds, settledMicros),
         endSlice: (runId, how) => this.endLaunchSlice(runId, how),
-        drawPhotos: (avatarId, n, category, runId) => this.drawLaunchPhotos(avatarId, n, category, runId),
+        drawPhotos: (avatarId, n, category, runId, from) => this.drawLaunchPhotos(avatarId, n, category, runId, from),
         newVideoId: () => this.nextId("video"),
         storeVideo: (video) => this.storeLaunchVideo(video),
       },
@@ -1006,6 +1015,7 @@ export class MockEngine implements EngineBridge {
       { launchRun: options.launchRun ?? "timers" },
     );
     this.capacity = options.eventCapacity ?? 256;
+    this.launchFaceMarks = options.launchFaceMarks;
     this.log = new EventLog(this.capacity, this.bootId());
     const apiKey = options.apiKey ?? { stored: true, last4: "3f2a", encryptionAvailable: true, rejected: false };
     this.encryptionAvailable = apiKey.encryptionAvailable;
@@ -2179,12 +2189,16 @@ export class MockEngine implements EngineBridge {
   }
 
   /** S4.8: `n` new free photos of the avatar, as a launch's draw makes them (copies of its first photo, of this category). */
-  private drawLaunchPhotos(avatarId: string, n: number, category: CategoryRef, runId: string | null): string[] {
+  private drawLaunchPhotos(avatarId: string, n: number, category: CategoryRef, runId: string | null, from?: { sceneSetId: string; firstNo: number }): string[] {
     const template = this.photos.find((p) => p.avatarId === avatarId);
     if (template === undefined || n < 1) return [];
     const ids: string[] = [];
     for (let k = 0; k < n; k++) {
-      const photo: PhotoSummary = { ...template, photoId: this.nextId("photo-launch"), runId: runId ?? template.runId, category, createdAt: this.nowIso(), used: false, usedIn: [], rejected: false, reserved: false, eligible: true };
+      // 5a.2: the photo of the launch's `firstNo + k`th scene carries the likeness the face gate would store for that scene (a hidden face is marked, never judged).
+      const marks = this.launchFaceMarks;
+      const scene = marks === undefined || from === undefined ? undefined : this.sceneSets.drawnScene(from.sceneSetId, from.firstNo + k);
+      const qa = marks === undefined || scene === undefined ? {} : { qa: { faceCos: faceVisibleOf(scene) === "yes" ? marks.match : marks.marked } };
+      const photo: PhotoSummary = { ...template, ...(marks === undefined ? {} : { qa: undefined }), photoId: this.nextId("photo-launch"), runId: runId ?? template.runId, category, createdAt: this.nowIso(), used: false, usedIn: [], rejected: false, reserved: false, eligible: true, ...qa };
       this.photos.push(photo);
       ids.push(photo.photoId);
     }
@@ -2835,7 +2849,7 @@ export class MockEngine implements EngineBridge {
       case "scenes.estimateCompose": {
         const refusal = this.libraryOpen ? (this.runnableRefusal(c.payload.avatarId) ?? this.categoryRefusal(c.payload.categories)) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
         if (refusal) return this.fail(c, refusal);
-        return this.ok(c, { estimate: this.sceneEstimate(this.sceneSets.composePrice(c.payload.count)) });
+        return this.ok(c, { estimate: this.sceneEstimate(this.sceneSets.composePrice(c.payload.count, c.payload.categories)) });
       }
       case "scenes.compose": {
         const { acceptedWorstMicros, ...request } = c.payload;
@@ -2848,7 +2862,7 @@ export class MockEngine implements EngineBridge {
           this.runnableRefusal(request.avatarId) ??
           this.categoryRefusal(request.categories) ??
           (this.sceneSets.hasOpenSet(request.avatarId) ? { code: "VALIDATION" as const, sceneReason: "open-set" as const, detail: `avatar ${request.avatarId} already has an open scene set; discard it first` } : null) ??
-          (free ? null : this.priceGate(acceptedWorstMicros, this.sceneSets.composePrice(request.count).worst));
+          (free ? null : this.priceGate(acceptedWorstMicros, this.sceneSets.composePrice(request.count, request.categories).worst));
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, this.sceneSets.compose(request));
       }
@@ -2905,7 +2919,7 @@ export class MockEngine implements EngineBridge {
           return this.ok(c, { jobId: this.sceneSets.writeReview(set, planned.plan) });
         }
         const refusal =
-          (this.sceneSets.writePrice(set).worst === 0 ? { code: "VALIDATION" as const, sceneReason: "nothing-waiting" as const, detail: "no scene of the set is waiting to be written" } : null) ??
+          (!this.sceneSets.waiting(set) ? { code: "VALIDATION" as const, sceneReason: "nothing-waiting" as const, detail: "no scene of the set is waiting to be written" } : null) ??
           this.priceGate(c.payload.acceptedWorstMicros, this.sceneSets.writePrice(set).worst);
         if (refusal) return this.fail(c, refusal);
         if (this.takeCancelBeforeAnswer()) return this.ok(c, { jobId: this.sceneSets.cancelUnstarted(set, "unwritten") });

@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarSummary, EventMessage, SceneSetView } from "../../shared/engine";
+import { LLM_ONLY_CATEGORY_RECORD, LLM_ONLY_REF } from "../../engine/scenes/testing/llmOnlyFixture";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
 
+// 5a.2 (S5.6e, m11): a built-in scene is written by the code template, at once and for nothing, so these tests of the model's write (its attempt, its ids, its money, its markers) plan their set from
+// `cat-llm-only-fixture`, whose scenes only the model writes. The built-in side («Другая сцена» at $0) is in mockEngine.templateScenes.test.ts.
 // CS.4b: the mock's review-time writes, driven through the same validating client the renderer uses. The mock keeps what the engine pins with a real
 // ledger: a write is ONE request under ids of its own (`${set}:write-${k}#n`), recorded with its draw before the call; a scene changes only when its
 // sentence is accepted; answered attempts per write are at most two across all jobs (an open reserve counts as answered); a marker belongs to its scene and
@@ -25,10 +28,11 @@ const MIA: AvatarSummary = {
 /** One writer attempt at its ceilings at the fallback prices. */
 const ATTEMPT = 37_500;
 const POSES = { profile: false, back: false };
+const FIXTURE = { ...LLM_ONLY_CATEGORY_RECORD, createdAt: "2026-10-05T10:00:00.000Z", updatedAt: "2026-10-05T10:00:00.000Z" };
 
 function makeMock(options: ConstructorParameters<typeof MockEngine>[0] = {}) {
   const scheduler = new ManualScheduler();
-  const engine = new MockEngine({ scheduler, avatars: [MIA], ...options });
+  const engine = new MockEngine({ scheduler, avatars: [MIA], categories: [FIXTURE], ...options });
   const client = mockEngineClient(engine);
   const events: EventMessage[] = [];
   client.subscribe((e) => events.push(e));
@@ -53,7 +57,7 @@ const rewrite = (sceneIds: number[], redraw = false): Target => ({ kind: "rewrit
 const idea = (text: string, count = 1, shot: string | null = null): Target => ({ kind: "idea", idea: text, count, shot });
 
 /** A ready set of `count` written scenes, composed and finished. */
-async function readySet(m: Mock, count = 4, categories: string[] = ["home"]): Promise<SceneSetView> {
+async function readySet(m: Mock, count = 4, categories: string[] = [LLM_ONLY_REF]): Promise<SceneSetView> {
   await unwrap(m.client.request("scenes.compose", { avatarId: MIA.avatarId, count, categories, poses: POSES, acceptedWorstMicros: Math.ceil(count / 25) * 2 * ATTEMPT } as never));
   m.scheduler.runAll();
   return setOf(m);
@@ -484,7 +488,7 @@ describe("a crashed «Дописать» does not leave a stale «Готово»
   test("beginning a write forgets the last job's outcome: the set reads its scenes as they are", async () => {
     const m = makeMock();
     m.engine.failNextSceneAttempt("rate-limited");
-    await unwrap(m.client.request("scenes.compose", { avatarId: MIA.avatarId, count: 5, categories: ["home"], poses: POSES, acceptedWorstMicros: 2 * ATTEMPT } as never));
+    await unwrap(m.client.request("scenes.compose", { avatarId: MIA.avatarId, count: 5, categories: [LLM_ONLY_REF], poses: POSES, acceptedWorstMicros: 2 * ATTEMPT } as never));
     m.scheduler.runAll();
     const stopped = await setOf(m);
     expect(stopped.lastCompose).toEqual({ total: 5, written: 0, gaveUp: 0 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { LaunchView, type LaunchDraftInput } from "../../shared/engine";
-import { errorOf, resumeRun, runUntil, runWorld, SOFIA, startRun, toDone, unwrap, viewOf } from "./mockLaunchRun.testkit";
+import { errorOf, ON_THE_WRITER, resumeRun, runUntil, runWorld, SOFIA, startRun, toDone, unwrap, viewOf } from "./mockLaunchRun.testkit";
 
 // Stage 4, S4.6r (plan §4.6, §32): the mock mirrors the engine's three mid-launch behaviours: a render that fails gets ONE free retry and then the video is dropped; an export folder that
 // vanishes while a render runs is a hold on the folder, not a failed render; a paid job that ends in a way the table has no row for holds the launch as `internal { job-failed }` and
@@ -113,10 +113,11 @@ describe("a paid job that ends in a way the table has no row for (internal, job-
 
 describe("the job-failed fault waits for a draw step without blocking or leaking (S4.6r fix round 1)", () => {
   test("a fault armed behind it is met by the compose that cannot meet it, and the job-failed fault is met by the draw that follows", async () => {
+    // 5a.2 (S5.6e, m11): the compose that cannot meet the job-failed fault but meets the 402 is the WRITER's, so the launch plans from the fixture.
     const mock = runWorld();
     mock.engine.failLaunchPaidStep("job-failed");
     mock.engine.failLaunchPaidStep("credits");
-    const started = await startRun(mock);
+    const started = await startRun(mock, ON_THE_WRITER);
     await runUntil(mock, started.launchId, "the credits hold at the compose", (v) => v.paidHold?.reason === "credits");
     await resumeRun(mock, started.launchId);
     const held = await runUntil(mock, started.launchId, "the failed job's hold at the draw", (v) => v.paidHold?.reason === "internal");

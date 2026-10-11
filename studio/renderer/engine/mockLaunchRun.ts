@@ -431,7 +431,7 @@ export class MockRun {
       if (work === undefined) continue;
       moved = true;
       if (reserve.kind === "writer") {
-        this.#close(key, work.toGenerate * this.#w.unit().writerExpectedPerPhotoMicros);
+        this.#close(key, this.#w.writerBound(work.toGenerate, this.#categories).modelSlots * this.#w.unit().writerExpectedPerPhotoMicros);
         if (work.phase === "composing") {
           this.#openSet(work);
           work.written = true;
@@ -449,7 +449,7 @@ export class MockRun {
       // One photo at a time, so a batch that crosses a slice's end lands in the right slice run: the first slice ends at its 25th photo and the next begins.
       for (let i = 0; i < count; i++) {
         const runId = this.#ensureSlice(work, work.drawn + 1);
-        const ids = this.#w.drawPhotos(work.avatarId, 1, this.#categories[0] ?? "home", runId);
+        const ids = this.#w.drawPhotos(work.avatarId, 1, this.#categories[0] ?? "home", runId, work.setId === null ? undefined : { sceneSetId: work.setId, firstNo: work.drawn + 1 });
         work.drawnIds.push(...ids);
         work.drawn += 1;
         if (runId !== null) this.#w.sliceProgress(runId, ids, this.#w.unit().photoExpectedMicros);
@@ -517,7 +517,9 @@ export class MockRun {
     const unit = this.#w.unit();
     const left = work.toGenerate - work.drawn;
     const batch = Math.min(DRAW_BATCH, left);
-    const chunks = Math.ceil(work.toGenerate / LAUNCH_SLICE_MAX_PHOTOS);
+    // 5a.2: the code template writes a built-in category and a covered custom one, so the compose asks the model for the uncovered custom categories' scenes alone (`writerBound`).
+    const chunks = this.#writerChunks(work);
+    const free = step === "compose" && chunks === 0;
     const need = step === "compose" ? chunks * unit.writerChunkWorstMicros : unit.photoWorstMicros;
     // The launch's group cap is W′: a request that would commit more than it is not sent (the engine's `RUN_CAP_EXCEEDED`). The slice is over with what it has.
     const send = step === "compose" ? chunks * unit.writerChunkWorstMicros : batch * unit.attemptWorstMicros;
@@ -525,9 +527,13 @@ export class MockRun {
       this.#capEnd(work);
       return "moved";
     }
-    const hold = this.#gate(work, step, need, left);
+    const hold = this.#gate(work, step, need, left, free);
     if (hold !== "clear") return hold;
     this.#priceRetries = 0;
+    if (free) {
+      this.#composeFree(work);
+      return "moved";
+    }
     if (step === "compose") {
       work.phase = "composing";
       this.#openSet(work);
@@ -551,6 +557,23 @@ export class MockRun {
     }
     for (let i = 0; i < batch; i++) this.#reserve("image", work.avatarId, unit.attemptWorstMicros, true);
     return "moved";
+  }
+
+  /** The most writer requests the avatar's compose can need: the engine's `writerChunksWorst` over the launch's categories (0 when the template writes every scene). */
+  #writerChunks(work: Work): number {
+    return this.#w.writerBound(work.toGenerate, this.#categories).chunks;
+  }
+
+  /** A compose the code template writes whole (5a.2): no request, no reserve, no money. The set exists and holds every sentence at once, as the engine's does. */
+  #composeFree(work: Work): void {
+    work.phase = "composing";
+    this.#openSet(work);
+    this.#log({ at: this.#at(), kind: "scenes-writing", avatarId: work.avatarId, scenes: work.toGenerate });
+    work.written = true;
+    if (work.setId !== null) this.#w.writeLaunchSet(work.setId);
+    this.#log({ at: this.#at(), kind: "scenes-ready", avatarId: work.avatarId, scenes: work.toGenerate, withoutText: 0 });
+    if (this.#review) work.phase = "awaiting-review";
+    else this.#startDraw(work);
   }
 
   /** The avatar's scene set exists from the compose's first request on, with none of its scenes written yet. */
@@ -645,10 +668,11 @@ export class MockRun {
    * What stands between a paid step and its call: a fault the testkit armed, the key, the ledger, the month. A cause raises the hold the plan's table gives it and the step ends ("held");
    * otherwise the step may go on ("clear").
    */
-  #gate(work: Work, step: "compose" | "draw", needMicros: number, left: number): "clear" | "held" {
+  #gate(work: Work, step: "compose" | "draw", needMicros: number, left: number, free = false): "clear" | "held" {
     // A job that ends INTERNAL is a slice's run (its master photo cannot be prepared before the first image request): the compose, which does not read the master, never meets that fault.
     // It does not block the faults armed behind it: the first fault this step can meet is the one taken.
-    const at0 = this.#host.faults.findIndex((f) => !(f === "job-failed" && step === "compose"));
+    // A compose the template writes sends no request, so a refusal OpenRouter would give the next paid request waits for the first photo.
+    const at0 = free ? -1 : this.#host.faults.findIndex((f) => !(f === "job-failed" && step === "compose"));
     const fault = at0 < 0 ? undefined : this.#host.faults.splice(at0, 1)[0];
     const at = this.#at();
     const job = step === "compose" ? `${work.avatarId}:scenes` : `${work.avatarId}:slice-${Math.floor(work.drawn / LAUNCH_SLICE_MAX_PHOTOS) + 1}`;
@@ -657,9 +681,11 @@ export class MockRun {
         // OpenRouter's refusals come in answer to the request: the compose's set is already made, with nothing written.
         case "credits":
           if (step === "compose") this.#openSet(work);
+          else this.#restOfBatchLands(work, left);
           return this.#raise(work, { reason: "credits", at, detail: {} });
         case "key":
           if (step === "compose") this.#openSet(work);
+          else this.#restOfBatchLands(work, left);
           this.#w.rejectKey();
           return this.#raise(work, { reason: "key", at, detail: {} });
         case "halt":
@@ -699,6 +725,15 @@ export class MockRun {
     return "clear";
   }
 
+  /**
+   * A refusal OpenRouter gives ONE request of a draw batch (a 402, a 401): the batch's other requests are out at the same moment and are answered, so they are paid. The mock books them
+   * at their expected cost, as the engine's ledger settles them. Since 5a.2 the first paid request of a template launch is a photo, so the refusal lands in the middle of a batch.
+   */
+  #restOfBatchLands(work: Work, left: number): void {
+    const others = Math.min(DRAW_BATCH, left) - 1;
+    for (let i = 0; i < others; i++) this.#close(this.#reserve("image", work.avatarId, this.#w.unit().attemptWorstMicros, false), this.#w.unit().photoExpectedMicros);
+  }
+
   #room(): number {
     const month = this.#w.month();
     return Math.max(0, month.budgetMicros - month.committedMicros);
@@ -732,7 +767,7 @@ export class MockRun {
   /** No answer: the request's reserve stays open at its worst case; the job continues by itself after the first and the second drop, and holds for a person at the third. */
   #networkDrop(work: Work, step: "compose" | "draw", job: string, reconcile = false): "held" {
     const unit = this.#w.unit();
-    const chunks = Math.ceil(work.toGenerate / LAUNCH_SLICE_MAX_PHOTOS);
+    const chunks = this.#writerChunks(work);
     if (!reconcile) {
       if (step === "compose") this.#openSet(work);
       // The requests left and got no answer: their reserves stay open at the worst case until a reconcile.

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { IMAGE, MIA, runUntil, runWorld, startRun, toDone, unwrap } from "./mockLaunchRun.testkit";
+import { IMAGE, MIA, ON_THE_WRITER, runUntil, runWorld, startRun, toDone, unwrap } from "./mockLaunchRun.testkit";
 
 // S4.6p: the mock answers `runs.estimateImages` as the real engine does: the figure the draw of that many photos is priced at (the same one `runs.estimateFromScenes` answers
 // for a set of that many scenes), and for a launch the photos it still has to draw, held at its draw allocation. The parity suite pins the shape against the real engine.
@@ -67,9 +67,10 @@ describe("runs.estimateImages { launchId, avatarId }", () => {
   });
 
   test("an avatar the launch has parked at a paid hold before it has a set has no photo to draw, as the engine answers", async () => {
+    // 5a.2 (S5.6e, m11): the first paid step of a template launch is a photo, so the refusal that parks the avatar before it has a drawn set is the compose WRITER's: the fixture's.
     const mock = runWorld();
     mock.engine.failLaunchPaidStep("credits");
-    const started = await startRun(mock);
+    const started = await startRun(mock, ON_THE_WRITER);
     const held = await runUntil(mock, started.launchId, "the credits hold", (v) => v.paidHold?.reason === "credits");
     expect(held.avatars[0]).toMatchObject({ phase: "waiting", waiting: { reason: "paid-hold" } });
     const answer = await unwrap(mock.client.request("runs.estimateImages", { launchId: started.launchId, avatarId: MIA.avatarId }));

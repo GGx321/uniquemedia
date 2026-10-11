@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarSummary, CommandMessage, CommandType, SceneSetView } from "../../shared/engine";
+import { LLM_ONLY_CATEGORY_RECORD, LLM_ONLY_REF } from "../../engine/scenes/testing/llmOnlyFixture";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
@@ -27,6 +28,8 @@ const LEA: AvatarSummary = { ...MIA, avatarId: "avatar-lea-0002", name: "Lea" };
 
 const ATTEMPT = 37_500;
 const POSES = { profile: false, back: false };
+
+const FIXTURE = { ...LLM_ONLY_CATEGORY_RECORD, createdAt: "2026-10-05T10:00:00.000Z", updatedAt: "2026-10-05T10:00:00.000Z" };
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 30; i++) await Promise.resolve();
@@ -214,8 +217,9 @@ describe("what only this window knows", () => {
     expect([...(h.slice.getView().fresh.get("set-seed-0001") ?? [])]).toEqual([2]);
   });
 
+  // 5a.2 (S5.6e, m11): a rewrite of a built-in scene is the code template's, written at once for nothing, so a rewrite that can fail is the model's: the set is the fixture's.
   test("a rewrite that fails marks nothing new", async () => {
-    const h = await started({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 3, written: 3 }] });
+    const h = await started({ categories: [FIXTURE], sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 3, written: 3, categories: [LLM_ONLY_REF] }] });
     h.slice.retain(MIA.avatarId);
     await settle();
     h.engine.failNextSceneAttempt("refused");

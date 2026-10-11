@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { LaunchView } from "../../shared/engine";
 import { MockEngine, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
-import { draftOf, IMAGE, MIA, resumeRun, runUntil, runWorld, SOFIA, startRun, tick, toDone, unwrap, viewOf } from "./mockLaunchRun.testkit";
+import { draftOf, IMAGE, MIA, ON_THE_WRITER, resumeRun, runUntil, runWorld, SOFIA, startRun, tick, toDone, unwrap, viewOf } from "./mockLaunchRun.testkit";
 
 // Stage 4, S4.8: the mock RUNS a launch on its scheduler. These tests move its clock one task at a time (`ManualScheduler`) and read what the window reads: the view, the log, the
 // results, the library. The holds and the waiting reasons are in mockEngine.launchRun.holds.test.ts, restart and reconcile in mockEngine.launchRun.restart.test.ts.
@@ -17,9 +17,11 @@ describe("a launch that runs", () => {
     expect(launch.remainingMicros).toBe(launch.plannedWorstMicros);
   });
 
+  // 5a.2 (S5.6e, m11): a launch on «Дом» is composed by the code template at once, with no request, so the writer's «composing» phase is the fixture's (`cat-llm-only-fixture`); the template's launch
+  // goes from «planned» to «drawing» in one step (the next test).
   test("with the review off it composes, draws, renders and ends done; the videos are real records of the library and the spend is inside the planned worst case", async () => {
     const mock = runWorld();
-    const started = await startRun(mock);
+    const started = await startRun(mock, ON_THE_WRITER);
     const phases = new Set<string>();
     let view = started;
     for (let i = 0; i < 600 && view.status !== "done"; i++) {
@@ -42,6 +44,28 @@ describe("a launch that runs", () => {
     expect(listed).toHaveLength(4);
     expect(listed.every((v) => v.origin === "autopilot" && v.launchId === started.launchId)).toBe(true);
     expect((await unwrap(mock.client.request("autopilot.list", {}))).launches[0]).toMatchObject({ status: "done", videosDone: 4, videosPlanned: 4 });
+  });
+
+  test("a launch the code template composes is never seen composing: it goes from planned to drawing with the scenes written and nothing spent, and ends done", async () => {
+    const mock = runWorld();
+    const started = await startRun(mock);
+    const phases = new Set<string>();
+    let spentAtDrawing: number | null = null;
+    let view = started;
+    for (let i = 0; i < 600 && view.status !== "done"; i++) {
+      tick(mock);
+      view = await viewOf(mock, started.launchId);
+      for (const a of view.avatars) phases.add(a.phase);
+      if (spentAtDrawing === null && view.avatars.some((a) => a.phase === "drawing")) spentAtDrawing = view.spentMicros;
+    }
+    expect(view.status).toBe("done");
+    expect(phases.has("composing")).toBe(false);
+    expect(phases.has("drawing")).toBe(true);
+    expect(spentAtDrawing).toBe(0);
+    expect(view.spentMicros).toBeGreaterThan(0);
+    expect(view.spentMicros).toBeLessThanOrEqual(view.plannedWorstMicros);
+    const got = await unwrap(mock.client.request("autopilot.get", { launchId: started.launchId }));
+    expect(got.log.map((l) => l.kind)).toEqual(expect.arrayContaining(["scenes-writing", "scenes-ready"]));
   });
 
   test("the money it books is the mock's ledger: the month's spend moves, and nothing is left open at the end", async () => {

@@ -25,6 +25,10 @@ import {
   type SceneView,
   type UnsequencedEvent,
 } from "../../shared/engine";
+import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
+import { covers } from "../../shared/scenes/custom";
+import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
+import { bankDraw, localTexts, type LocalScene } from "./mockBankScenes";
 import { mockAnglesOf } from "./mockCategories";
 import type { Scheduler } from "./scheduler";
 
@@ -111,6 +115,8 @@ interface Scene {
   /** An own scene (written from an idea) has no category and no place. */
   category: CategoryRef | "own";
   shot: SceneView["shot"];
+  /** 5a.2: who takes the photo, when the mock dealt it from a bank's deck (a built-in scene); a stored shot says it otherwise. */
+  capture?: Capture;
   pose: SceneView["pose"];
   place: ScenePlace | null;
   /** The idea an own scene was written from; null for a planned one. */
@@ -118,6 +124,14 @@ interface Scene {
   text: string | null;
   edited: boolean;
   removed: boolean;
+}
+
+/** What a redraw drew for one scene; `capture` is the bank's deal for a built-in scene (a custom category's shot rides on the stored deck). */
+interface Draw {
+  place: ScenePlace;
+  shot: SceneView["shot"];
+  pose: SceneView["pose"];
+  capture?: Capture;
 }
 
 /** A rewrite or an idea write of the review (CS.4b): one request under ids of its own, kept for the money it spent and the ids it burnt. */
@@ -129,7 +143,7 @@ interface Review {
   sceneIds: number[];
   redraw: boolean;
   /** What a redraw drew for each target, kept until its sentence is accepted. */
-  draws: Map<number, { place: ScenePlace; shot: SceneView["shot"]; pose: SceneView["pose"] }>;
+  draws: Map<number, Draw>;
   idea?: string;
   shot?: SceneView["shot"] | null;
   /** The shot and pose drawn for each scene an idea write will add. */
@@ -148,6 +162,8 @@ export interface MockReviewPlan {
   count: number;
   sceneIds?: number[];
   attemptsLeft: number;
+  /** 5a.2: how many of the write's scenes the model must write; the code template writes the rest at $0, so 0 prices the write at nothing. */
+  modelScenes: number;
   begin: (set: MockSet) => Review;
 }
 
@@ -250,39 +266,16 @@ interface PlaceTable {
   mirror: boolean;
 }
 
-const BUILT_IN_PLACES: Record<string, readonly PlaceTable[]> = {
-  home: [
-    { place: "a sunny kitchen", time: "morning", activity: "pouring coffee", outfit: "a linen shirt and shorts", mirror: false },
-    { place: "a cosy living room", time: "evening", activity: "reading on the sofa", outfit: "an oversized knit sweater", mirror: false },
-    { place: "a bedroom mirror", time: "morning", activity: "fixing her hair", outfit: "a silk robe and slacks", mirror: true },
-  ],
-  travel: [
-    { place: "an old town square", time: "midday", activity: "studying a map", outfit: "a denim jacket and a skirt", mirror: false },
-    { place: "a seaside promenade", time: "golden hour", activity: "walking with a coffee", outfit: "a light summer dress", mirror: false },
-    { place: "a hotel room mirror", time: "evening", activity: "adjusting a scarf", outfit: "a black midi dress", mirror: true },
-  ],
-  shoot: [
-    { place: "a white studio", time: "studio lighting", activity: "turning to the light", outfit: "a tailored blazer and trousers", mirror: false },
-    { place: "a brick loft", time: "midday", activity: "leaning on a wall", outfit: "a long camel coat", mirror: false },
-  ],
-  glam: [
-    { place: "a rooftop bar", time: "night", activity: "holding a glass", outfit: "a satin evening dress", mirror: false },
-    { place: "a hotel lobby mirror", time: "evening", activity: "checking her lipstick", outfit: "a velvet gown", mirror: true },
-  ],
-  fit: [
-    { place: "a city park", time: "morning", activity: "stretching on the grass", outfit: "leggings and a fitted tee", mirror: false },
-    { place: "a gym mirror", time: "midday", activity: "tying her shoes", outfit: "a training set", mirror: true },
-  ],
-};
+/** What a custom ref the library does not hold is planned from (a seed names one; the engine never meets that state): two plain rows. */
+const MISSING_CATEGORY_ROWS: readonly PlaceTable[] = [
+  { place: "a sunny kitchen", time: "morning", activity: "pouring coffee", outfit: "a linen shirt and shorts", mirror: false },
+  { place: "a bedroom mirror", time: "morning", activity: "fixing her hair", outfit: "a silk robe and slacks", mirror: true },
+];
 
-const SHOTS: SceneView["shot"][] = ["friend", "selfie", "mirror", "candid"];
-const SHOOT_SHOTS: SceneView["shot"][] = ["photographer", "candid", "photographer"];
-
-/** The places a category draws from: a built-in's own, or the custom category's pool as the library holds it. */
-function tablesOf(ref: CategoryRef, custom: CategorySummary | undefined): readonly PlaceTable[] {
-  return custom !== undefined
-    ? custom.pool.locations.map((l, i): PlaceTable => ({ place: l.name, time: l.times[0] ?? "midday", activity: l.activities[0]?.text ?? "standing", outfit: custom.pool.outfits[i % custom.pool.outfits.length] ?? "a plain dress", mirror: l.mirror }))
-    : (BUILT_IN_PLACES[ref] ?? BUILT_IN_PLACES.home ?? []);
+/** The places a custom category draws from: its pool as the library holds it. A built-in draws bank pairs (`bankDraw`), never rows of its own. */
+function tablesOf(custom: CategorySummary | undefined): readonly PlaceTable[] {
+  if (custom === undefined) return MISSING_CATEGORY_ROWS;
+  return custom.pool.locations.map((l, i): PlaceTable => ({ place: l.name, time: l.times[0] ?? "midday", activity: l.activities[0]?.text ?? "standing", outfit: custom.pool.outfits[i % custom.pool.outfits.length] ?? "a plain dress", mirror: l.mirror }));
 }
 
 function planScenes(
@@ -295,8 +288,17 @@ function planScenes(
   let index = 0;
   for (const { ref, count: n } of splitCount(count, refs)) {
     const custom = isCustomCategory(ref) ? category(ref) : undefined;
-    const tables = tablesOf(ref, custom);
-    const deck: SceneView["shot"][] = custom !== undefined ? [...custom.pool.shotDeck] : ref === "shoot" ? SHOOT_SHOTS : SHOTS;
+    // 5a.2 (S5.6e): a built-in scene is a pair of its category's bank dealt a capture from the deck, so the shared template can write it.
+    if (!isCustomCategory(ref)) {
+      for (let k = 0; k < n; k++) {
+        index += 1;
+        const draw = bankDraw(ref, k, poses);
+        scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, place: draw.place, idea: null, text: null, edited: false, removed: false });
+      }
+      continue;
+    }
+    const tables = tablesOf(custom);
+    const deck: SceneView["shot"][] = custom !== undefined ? [...custom.pool.shotDeck] : ["friend", "selfie", "mirror", "candid"];
     // CS.8a: a custom category with `poses` draws every pose from them (the run's toggles are not asked); a phone-in-hand shot that turns away takes another shot.
     const angles = custom?.pool.poses;
     for (let k = 0; k < n; k++) {
@@ -512,8 +514,14 @@ export class MockSceneSets {
   writeLaunchSet(sceneSetId: string): void {
     const set = this.find(sceneSetId);
     if (set === undefined) return;
-    for (const scene of set.scenes) if (scene.text === null) scene.text = sentenceOf(scene);
-    for (const chunk of set.chunks) chunk.attempts.push({ key: `${set.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`, paid: true, cost: Math.round(chunk.sceneIds.length * TYPICAL_PER_SCENE), open: false });
+    // 5a.2: the template's scenes are written at once and cost nothing; a chunk is asked (and paid) for the scenes only the model could write.
+    const local = this.#local(set);
+    const asked = set.chunks.map((chunk) => chunk.sceneIds.filter((id) => set.scenes.find((s) => s.sceneId === id)?.text === null && local(id) === null).length);
+    for (const scene of set.scenes) if (scene.text === null) scene.text = local(scene.sceneId) ?? sentenceOf(scene);
+    set.chunks.forEach((chunk, i) => {
+      const model = asked[i] ?? 0;
+      if (model > 0) chunk.attempts.push({ key: `${set.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`, paid: true, cost: Math.round(model * TYPICAL_PER_SCENE), open: false });
+    });
     const job = this.#liveJob(sceneSetId);
     if (job === undefined) {
       this.#announce(set);
@@ -629,11 +637,47 @@ export class MockSceneSets {
     return set.scenes.filter((s) => chunk.sceneIds.includes(s.sceneId) && !s.removed && s.text === null).map((s) => s.sceneId);
   }
 
-  #pending(set: MockSet): { chunk: Chunk; ids: number[] }[] {
+  /** The engine's `setLocal`: the code template's sentence for each planned scene it can write (`k` is 0 for the set's own writes, the write's number for a review write). */
+  #local(set: MockSet, k = 0, scenes: readonly LocalScene[] = set.scenes): (sceneId: number) => string | null {
+    return localTexts({ sceneSetId: set.sceneSetId, k, scenes, snapshots: set.categories.filter((c) => isCustomCategory(c.ref)) });
+  }
+
+  /**
+   * The engine's `pendingChunks`: the chunks with a scene still to write. A chunk whose every scene the template writes is `free` (offered whatever its attempts, written with no
+   * request); a chunk that holds a scene the template cannot write is a chunk for the model only while it has an attempt left, and asks for `modelScenes` alone.
+   */
+  #pending(set: MockSet): { chunk: Chunk; ids: number[]; free: boolean; modelScenes: number }[] {
+    const local = this.#local(set);
     return set.chunks.flatMap((chunk) => {
       const ids = this.#request(set, chunk);
-      return ids.length > 0 && this.#attemptsLeft(chunk) > 0 ? [{ chunk, ids }] : [];
+      if (ids.length === 0) return [];
+      const modelScenes = ids.filter((id) => local(id) === null).length;
+      const free = modelScenes === 0;
+      return free || this.#attemptsLeft(chunk) > 0 ? [{ chunk, ids, free, modelScenes }] : [];
     });
+  }
+
+  /** The `no`th scene (1-based) the set's draw takes, in scene order, among the planned scenes that are not removed: what the face gate would see in the `no`th photo. */
+  drawnScene(sceneSetId: string, no: number): { capture?: Capture; shot: SceneView["shot"]; pose: SceneView["pose"] } | undefined {
+    const scene = this.find(sceneSetId)?.scenes.filter((s) => s.place !== null && !s.removed)[no - 1];
+    return scene === undefined ? undefined : { ...(scene.capture === undefined ? {} : { capture: scene.capture }), shot: scene.shot, pose: scene.pose };
+  }
+
+  /** Whether a «Дописать» has anything to do: a pending chunk, a free one included (the engine's `nothing-waiting` is only for a set with none). */
+  waiting(set: MockSet): boolean {
+    return this.#pending(set).length > 0;
+  }
+
+  /** Whether the code template covers a custom category's pool as the library holds it now; a ref the library lacks is not covered (the price never assumes a free writer it cannot see). */
+  readonly coversOf: CoversOf = (ref) => {
+    const category = this.#deps.category(ref);
+    return category !== undefined && covers(category.pool);
+  };
+
+  /** The writer's bound for a plan of `count` scenes over `categories`: the requests it can need and the scenes that can go to the model (`writerChunksWorst`, `llmPossibleSlots`). */
+  writerBound(count: number, categories: readonly CategoryRef[]): { chunks: number; modelSlots: number } {
+    const split: SplitEntry[] = splitCount(count, categories);
+    return { chunks: writerChunksWorst(split, this.coversOf), modelSlots: llmPossibleSlots(split, this.coversOf) };
   }
 
   #chunkGaveUpBy(set: MockSet, chunk: Chunk): SceneGaveUpBy | null {
@@ -646,18 +690,24 @@ export class MockSceneSets {
   writePrice(set: MockSet): { expected: number; worst: number } {
     let worst = 0;
     let scenes = 0;
-    for (const { chunk, ids } of this.#pending(set)) {
+    // 5a.2: only a chunk that holds a scene the template cannot write is a request; a free chunk adds nothing, and a mixed chunk's request carries its model scenes alone.
+    for (const { chunk, free, modelScenes } of this.#pending(set)) {
+      if (free) continue;
       worst += this.#attemptsLeft(chunk) * MOCK_SCENE_ATTEMPT_WORST;
-      scenes += ids.length;
+      scenes += modelScenes;
     }
     return { expected: Math.min(Math.round(scenes * TYPICAL_PER_SCENE), worst), worst };
   }
 
-  /** The price of composing `count` scenes: chunks of 25, two attempts each. */
-  composePrice(count: number): { expected: number; worst: number } {
-    if (count === 0) return { expected: 0, worst: 0 };
-    const worst = Math.ceil(count / SCENE_CHUNK_SIZE) * SCENE_CHUNK_ATTEMPTS * MOCK_SCENE_ATTEMPT_WORST;
-    return { expected: Math.min(Math.round(count * TYPICAL_PER_SCENE), worst), worst };
+  /**
+   * The price of composing `count` scenes over `categories`: the writer's bound (`writerChunksWorst` requests of two attempts each), expected at the typical share of the scenes
+   * only the model can write. The code template writes a built-in category and a covered custom one, so those cost nothing (plan s5a2 §5.6, I5.30).
+   */
+  composePrice(count: number, categories: readonly CategoryRef[]): { expected: number; worst: number } {
+    const { chunks, modelSlots } = this.writerBound(count, categories);
+    if (count === 0 || chunks === 0 || modelSlots === 0) return { expected: 0, worst: 0 };
+    const worst = chunks * SCENE_CHUNK_ATTEMPTS * MOCK_SCENE_ATTEMPT_WORST;
+    return { expected: Math.min(Math.round(modelSlots * TYPICAL_PER_SCENE), worst), worst };
   }
 
   // ---------- the view ----------
@@ -988,6 +1038,7 @@ export class MockSceneSets {
           count: review.kind === "rewrite" ? active.length : review.own.length,
           ...(review.kind === "rewrite" ? { sceneIds: [...active] } : {}),
           attemptsLeft,
+          modelScenes: review.kind === "rewrite" ? this.#modelScenes(set, review.k, active, review.draws) : review.own.length,
           begin: () => {
             if (dropped.size > 0) {
               for (const id of dropped) review.draws.delete(id);
@@ -1023,6 +1074,7 @@ export class MockSceneSets {
           k,
           count: target.count,
           attemptsLeft: SCENE_CHUNK_ATTEMPTS,
+          modelScenes: target.count,
           begin: (current) => {
             const review: Review = { k, kind: "idea", closed: false, sceneIds: own.map((o) => o.sceneId), redraw: false, draws: new Map(), idea: target.idea.trim(), shot: target.shot, own, snapshots: [], attempts: [] };
             current.reviews.push(review);
@@ -1044,7 +1096,11 @@ export class MockSceneSets {
     const planned = scenes.filter((s) => s.place !== null);
     if (planned.length !== 0 && planned.length !== scenes.length) return invalid("a rewrite covers planned scenes or own scenes, not both: they are written from different prompts", "mixed-kinds");
     if (target.redraw && planned.length !== scenes.length) return invalid("only a planned scene has a place to redraw; an own scene is written again from its idea", "own-redraw");
-    const draws = new Map<number, { place: ScenePlace; shot: SceneView["shot"]; pose: SceneView["pose"] }>();
+    const draws = new Map<number, Draw>();
+    // 5a.2 (m1): a rewrite WITHOUT a redraw of built-in planned scenes the code template writes is a redraw: the scene is drawn anew and the template writes it, at $0, so the
+    // owner gets a new scene, not the same place in new words. A scene of a custom category keeps the plain rewrite.
+    const probe = this.#local(set, k);
+    const redraw = target.redraw || (planned.length > 0 && planned.every((sc) => sc.category !== "own" && !isCustomCategory(sc.category) && probe(sc.sceneId) !== null));
     // A redraw takes its snapshot of each custom category now, when the write is planned: a rename between this and the answer does not change it.
     const snapshots: Review["snapshots"] = [];
     if (target.redraw) {
@@ -1053,13 +1109,21 @@ export class MockSceneSets {
         if (fresh !== undefined) snapshots.push({ ref, name: fresh.name, ...(fresh.pool.poses === undefined ? {} : { poses: [...fresh.pool.poses] }) });
       }
     }
-    if (target.redraw) {
+    if (redraw) {
       const shown = new Set(set.scenes.flatMap((s) => (s.place !== null && !s.removed ? [s.place.location] : [])));
       const shownOutfits = new Set(set.scenes.flatMap((s) => (s.place !== null && !s.removed ? [s.place.outfit] : [])));
       for (const scene of planned) {
         const ref = scene.category === "own" ? "home" : scene.category;
-        const custom = isCustomCategory(ref) ? this.#deps.category(ref) : undefined;
-        let tables = tablesOf(ref, custom);
+        if (!isCustomCategory(ref)) {
+          // A built-in scene is drawn anew among the bank's pairs for the capture it keeps (who takes the photo), away from the places and outfits the set already shows.
+          const draw = bankDraw(ref, k + scene.sceneId, set.poses, { avoid: { locations: shown, outfits: shownOutfits }, capture: scene.capture ?? captureOfShot(scene.shot), ...(scene.place === null ? {} : { leaving: scene.place.location }) });
+          shown.add(draw.place.location);
+          shownOutfits.add(draw.place.outfit);
+          draws.set(scene.sceneId, { place: draw.place, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose });
+          continue;
+        }
+        const custom = this.#deps.category(ref);
+        let tables = tablesOf(custom);
         // CS.8a: a category with `poses` redraws its pose from them, and a phone that would turn away gives way to another shot of the deck.
         const angled = custom?.pool.poses === undefined ? undefined : anglePick(custom.pool.poses, k + scene.sceneId, scene.shot, custom.pool.shotDeck);
         let shot = angled?.shot ?? scene.shot;
@@ -1091,9 +1155,10 @@ export class MockSceneSets {
         count: scenes.length,
         sceneIds: [...target.sceneIds],
         attemptsLeft: SCENE_CHUNK_ATTEMPTS,
+        modelScenes: this.#modelScenes(set, k, target.sceneIds, draws),
         begin: (current) => {
           this.#takeOver(current, new Set(target.sceneIds));
-          const review: Review = { k, kind: "rewrite", closed: false, sceneIds: [...target.sceneIds], redraw: target.redraw, draws, own: [], snapshots, attempts: [] };
+          const review: Review = { k, kind: "rewrite", closed: false, sceneIds: [...target.sceneIds], redraw, draws, own: [], snapshots, attempts: [] };
           current.reviews.push(review);
           current.writes = k;
           return review;
@@ -1104,8 +1169,23 @@ export class MockSceneSets {
 
   /** What a review write could cost: one request at the writer's typical tokens, asked at most as many times as it has attempts left. */
   reviewPrice(plan: MockReviewPlan): { expected: number; worst: number } {
+    // 5a.2: a write whose every scene the code template renders costs nothing; the request that remains carries the model's scenes alone.
+    if (plan.modelScenes === 0) return { expected: 0, worst: 0 };
     const worst = plan.attemptsLeft * MOCK_SCENE_ATTEMPT_WORST;
-    return { expected: Math.min(Math.round(plan.count * TYPICAL_PER_SCENE), worst), worst };
+    return { expected: Math.min(Math.round(plan.modelScenes * TYPICAL_PER_SCENE), worst), worst };
+  }
+
+  /**
+   * How many of a rewrite's scenes the model must write: those the template cannot render once the write's draws are applied (an own scene is the model's always).
+   * Counted off the very state the write would leave, with the write's own key, so the price and the job agree on which scenes the template writes.
+   */
+  #modelScenes(set: MockSet, k: number, sceneIds: readonly number[], draws: ReadonlyMap<number, Draw>): number {
+    const applied = set.scenes.map((scene) => {
+      const drawn = draws.get(scene.sceneId);
+      return drawn === undefined ? scene : { ...scene, place: drawn.place, shot: drawn.shot, pose: drawn.pose, ...(drawn.capture === undefined ? {} : { capture: drawn.capture }) };
+    });
+    const local = this.#local(set, k, applied);
+    return sceneIds.filter((id) => local(id) === null).length;
   }
 
   /**
@@ -1154,6 +1234,18 @@ export class MockSceneSets {
   /** The write's one request, asked again under the next id while it is rejected and attempts are left; an attempt that got no answer stops the job. */
   #runReview(job: Job, set: MockSet, review: Review): void {
     if (job.status !== "running") return;
+    const modelScenes = review.kind === "idea" ? review.own.length : this.#modelScenes(set, review.k, review.sceneIds, review.draws);
+    // 5a.2: every scene of the write is one the code template renders: written at once, with no request, no attempt and no cost.
+    if (modelScenes === 0) {
+      this.#accept(set, review);
+      job.done += job.total;
+      job.written += job.total;
+      set.revision += 1;
+      this.#announce(set);
+      this.#progress(job);
+      this.#end(job, set, { status: "done" });
+      return;
+    }
     for (;;) {
       if (reviewLeft(review) === 0) {
         review.closed = true;
@@ -1166,7 +1258,7 @@ export class MockSceneSets {
       switch (outcome) {
         case "ok": {
           attempt.paid = true;
-          attempt.cost = Math.round(job.total * TYPICAL_PER_SCENE);
+          attempt.cost = Math.round(modelScenes * TYPICAL_PER_SCENE);
           this.#deps.spend(attempt.cost);
           this.#accept(set, review);
           job.done += job.total;
@@ -1215,14 +1307,20 @@ export class MockSceneSets {
     } else {
       for (const sceneId of review.sceneIds) {
         const scene = set.scenes.find((s) => s.sceneId === sceneId);
-        if (scene === undefined) continue;
         const drawn = review.draws.get(sceneId);
-        if (review.redraw && drawn !== undefined) {
-          scene.place = { ...drawn.place };
-          scene.shot = drawn.shot;
-          scene.pose = drawn.pose;
-        }
-        scene.text = sentenceOf(scene, review.k);
+        if (scene === undefined || !review.redraw || drawn === undefined) continue;
+        scene.place = { ...drawn.place };
+        scene.shot = drawn.shot;
+        scene.pose = drawn.pose;
+        if (drawn.capture === undefined) delete scene.capture;
+        else scene.capture = drawn.capture;
+      }
+      // 5a.2: the template writes the scenes it renders (on the write's own key, after the draws); the model's answer is the rest.
+      const local = this.#local(set, review.k);
+      for (const sceneId of review.sceneIds) {
+        const scene = set.scenes.find((s) => s.sceneId === sceneId);
+        if (scene === undefined) continue;
+        scene.text = local(sceneId) ?? sentenceOf(scene, review.k);
         scene.edited = false;
       }
     }
@@ -1280,6 +1378,17 @@ export class MockSceneSets {
     if (job.status !== "running") return;
     const chunk = set.chunks.find((c) => c.chunk === chunkNumber);
     if (chunk === undefined) return;
+    // 5a.2: the code template writes what it can first: no request, no attempt, no cost. What it cannot write goes to the model below.
+    const local = this.#local(set);
+    const free = this.#request(set, chunk).filter((id) => local(id) !== null);
+    if (free.length > 0) {
+      for (const scene of set.scenes) if (free.includes(scene.sceneId) && scene.text === null) scene.text = local(scene.sceneId);
+      job.done += free.length;
+      job.written += free.length;
+      set.revision += 1;
+      this.#announce(set);
+      this.#progress(job);
+    }
     for (;;) {
       const ids = this.#request(set, chunk);
       if (ids.length === 0 || this.#attemptsLeft(chunk) === 0) return;
@@ -1400,7 +1509,7 @@ export class MockSceneSets {
       job.timers.push(this.#deps.scheduler.schedule(CANCEL_CONFIRM_MS, () => this.#end(job, set, { status: "cancelled" })));
       return;
     }
-    const next = this.#pending(set)[0]?.chunk;
+    const next = this.#pending(set).find((p) => !p.free)?.chunk;
     if (next !== undefined && this.#attemptsLeft(next) > 0 && this.#deps.cancelHasRequestOut()) {
       const attempt: Attempt = { key: `${set.sceneSetId}:writer-${next.chunk}#${next.attempts.length + 1}`, paid: true, cost: 0, open: true };
       next.attempts.push(attempt);

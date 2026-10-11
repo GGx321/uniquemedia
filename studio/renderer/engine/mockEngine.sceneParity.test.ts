@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarSummary, EngineError, EventMessage, SceneSetView } from "../../shared/engine";
+import { LLM_ONLY_CATEGORY_RECORD, LLM_ONLY_REF } from "../../engine/scenes/testing/llmOnlyFixture";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
@@ -22,12 +23,15 @@ const MIA: AvatarSummary = {
 };
 const SOFIA: AvatarSummary = { ...MIA, avatarId: "avatar-sofia-0002", name: "Sofia", masterPhotoId: "photo-sofia-0002" };
 
+// 5a.2 (S5.6e, m11): the writes these tests refuse and price are the MODEL's, so their sets are `cat-llm-only-fixture` scenes (the code template writes a built-in scene for nothing).
 const ATTEMPT = 37_500;
+const FIXTURE = { ...LLM_ONLY_CATEGORY_RECORD, createdAt: "2026-10-05T10:00:00.000Z", updatedAt: "2026-10-05T10:00:00.000Z" };
+
 const POSES = { profile: false, back: false };
 
 function makeMock(options: ConstructorParameters<typeof MockEngine>[0] = {}) {
   const scheduler = new ManualScheduler();
-  const engine = new MockEngine({ scheduler, avatars: [MIA], ...options });
+  const engine = new MockEngine({ scheduler, avatars: [MIA], categories: [FIXTURE], ...options });
   const client = mockEngineClient(engine);
   const events: EventMessage[] = [];
   client.subscribe((e) => events.push(e));
@@ -52,9 +56,9 @@ async function setOf(m: Mock, avatarId = MIA.avatarId): Promise<SceneSetView> {
   if (sceneSet === null) throw new Error("no set");
   return sceneSet;
 }
-const compose = (m: Mock, count = 4, avatarId = MIA.avatarId, categories: string[] = ["home"]) =>
+const compose = (m: Mock, count = 4, avatarId = MIA.avatarId, categories: string[] = [LLM_ONLY_REF]) =>
   m.client.request("scenes.compose", { avatarId, count, categories, poses: POSES, acceptedWorstMicros: Math.ceil(count / 25) * 2 * ATTEMPT } as never);
-async function ready(m: Mock, count = 4, avatarId = MIA.avatarId, categories: string[] = ["home"]): Promise<SceneSetView> {
+async function ready(m: Mock, count = 4, avatarId = MIA.avatarId, categories: string[] = [LLM_ONLY_REF]): Promise<SceneSetView> {
   await unwrap(compose(m, count, avatarId, categories));
   m.scheduler.runAll();
   return setOf(m, avatarId);
@@ -99,7 +103,7 @@ describe("while a library switch is surveyed, every scene-set and category write
   test("reads and estimates still answer", async () => {
     const { m, view } = await fixture();
     expect((await unwrap(m.client.request("scenes.get", { avatarId: MIA.avatarId }))).sceneSet?.sceneSetId).toBe(view.sceneSetId);
-    expect(await unwrap(m.client.request("categories.list", {}))).toMatchObject({ categories: [{ name: "Кофейни Парижа" }] });
+    expect(await unwrap(m.client.request("categories.list", {}))).toMatchObject({ categories: [{ name: "Только модель" }, { name: "Кофейни Парижа" }] });
     expect(await unwrap(m.client.request("categories.estimate", {}))).toMatchObject({ worstMicros: 45_000 });
     expect(await unwrap(m.client.request("scenes.estimateWrite", { sceneSetId: view.sceneSetId, target: { kind: "rewrite", sceneIds: [1], redraw: false } } as never))).toMatchObject({ estimate: { worstMicros: 2 * ATTEMPT } });
   });
@@ -211,9 +215,11 @@ describe("scene set files the library could not read", () => {
 // ---------- the snapshot a redraw takes ----------
 
 describe("a redraw refreshes the set's snapshot of its category with the name the library had when the write was PLANNED", () => {
+  // 5a.2 (S5.6e, m11): the category is the fixture's, whose scenes only the model writes: a category the mock makes itself is one the code template covers, so a redraw of its scene is written for
+  // nothing and there is no request for the scripted failure to meet.
   async function withCategory() {
     const m = makeMock();
-    const category = (await unwrap(m.client.request("categories.create", { name: "Кофейни Парижа", description: "кофейни и булочные Парижа", acceptedWorstMicros: 45_000 }))).category;
+    const category = { categoryId: LLM_ONLY_REF };
     const view = await ready(m, 4, MIA.avatarId, [category.categoryId]);
     return { m, category, view };
   }
@@ -230,7 +236,7 @@ describe("a redraw refreshes the set's snapshot of its category with the name th
     await unwrap(write(m, await setOf(m), { kind: "resume", write: 2 }));
     m.scheduler.runAll();
 
-    expect(await nameOf(m, category.categoryId)).toBe("Кофейни Парижа");
+    expect(await nameOf(m, category.categoryId)).toBe("Только модель");
   });
 
   test("a write planned after the rename records the new name", async () => {

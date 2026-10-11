@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarSummary, EngineError, EventMessage, LaunchDraftInput, PhotoSummary } from "../../shared/engine";
+import { LLM_ONLY_CATEGORY_RECORD, LLM_ONLY_REF } from "../../engine/scenes/testing/llmOnlyFixture";
 import type { MockEngineOptions } from "./mockEngine";
 import { demoTracks } from "./mockMusicStore";
 import { draftOf, freePhotos, makeMock, MIA, NORA, PHOTO_IDS, renderDraft, SOFIA, unwrap, type Mock } from "./mockEngine.testkit";
@@ -12,13 +13,16 @@ import { draftOf, freePhotos, makeMock, MIA, NORA, PHOTO_IDS, renderDraft, SOFIA
 const IMAGE = 50_000;
 const WRITER_CHUNK = 75_000;
 const WRITER_PER_PHOTO = 458;
+// 5a.2 (S5.6e, m11): the code template writes a built-in category («home» below) for nothing, so a plan on it prices no writer; the writer's money is the fixture's (`cat-llm-only-fixture`), the category
+// whose scenes only the model writes.
+const FIXTURE = { ...LLM_ONLY_CATEGORY_RECORD, createdAt: "2026-10-05T10:00:00.000Z", updatedAt: "2026-10-05T10:00:00.000Z" };
 
 /** Mia has 6 free scene photos (category home), Sofia 12; Nora is archived. The image attempt is fixed at $0.05. */
 function world(over: MockEngineOptions = {}): Mock {
   const photos: PhotoSummary[] = [...freePhotos(6, MIA), ...freePhotos(12, SOFIA)];
   const countOf = (a: AvatarSummary) => photos.filter((p) => p.avatarId === a.avatarId).length;
   const avatars = [MIA, SOFIA, NORA].map((a) => ({ ...a, photoCount: countOf(a), eligibleUnusedCount: countOf(a) }));
-  const mock = makeMock({ avatars, photos, launchRun: "canned", ...over });
+  const mock = makeMock({ avatars, photos, launchRun: "canned", categories: [FIXTURE], ...over });
   mock.engine.setRunImagePrice(IMAGE);
   return mock;
 }
@@ -63,10 +67,20 @@ describe("autopilot.estimate", () => {
     expect(mia).toMatchObject({ avatarId: MIA.avatarId, videos: 4, shapes: { single: 2, collage: 1, slides: 1 }, free: 6, fromLibrary: 6, toGenerate: 4, busy: false, blocked: null, usage: { state: "ok" } });
     expect(sofia).toMatchObject({ avatarId: SOFIA.avatarId, videos: 4, shapes: { single: 2, collage: 1, slides: 1 }, free: 12, fromLibrary: 10, toGenerate: 0, blocked: null });
     expect(preview.totals).toEqual({ videos: 8, photosNeeded: 20, fromLibrary: 16, toGenerate: 4 });
-    expect(preview.estimate.worstMicros).toBe(WRITER_CHUNK + 4 * 3 * IMAGE);
-    expect(preview.estimate.expectedMicros).toBe(4 * WRITER_PER_PHOTO + 4 * IMAGE);
+    expect(preview.estimate.worstMicros).toBe(4 * 3 * IMAGE);
+    expect(preview.estimate.expectedMicros).toBe(4 * IMAGE);
     expect(preview.perShapeExpectedMicros).toEqual({ single: IMAGE, collage: 3 * IMAGE, slides: 5 * IMAGE });
     expect(preview.blockers).toEqual([]);
+  });
+
+  test("prices the writer for the photos only the model writes: one chunk for the fixture's ten, none for a built-in category", async () => {
+    const onFixture = await estimate(world(), { avatarIds: [MIA.avatarId], videosPerAvatar: 2, mix: { single: 0, collage: 0, slides: 100 }, categories: [LLM_ONLY_REF], library: false });
+    expect(onFixture.totals.toGenerate).toBe(10);
+    expect(onFixture.estimate.worstMicros).toBe(WRITER_CHUNK + 10 * 3 * IMAGE);
+    expect(onFixture.estimate.expectedMicros).toBe(10 * WRITER_PER_PHOTO + 10 * IMAGE);
+    const onBuiltIn = await estimate(world(), { avatarIds: [MIA.avatarId], videosPerAvatar: 2, mix: { single: 0, collage: 0, slides: 100 }, categories: ["home"], library: false });
+    expect(onBuiltIn.estimate.worstMicros).toBe(10 * 3 * IMAGE);
+    expect(onBuiltIn.estimate.expectedMicros).toBe(10 * IMAGE);
   });
 
   test("draws a plan seed when the draft has none, and keeps the one it is given", async () => {
@@ -159,7 +173,7 @@ describe("autopilot.estimate", () => {
     expect(withoutLibrary.avatars[1]?.blocked).toBeNull();
   });
 
-  // The worst case here is one writer chunk and 4 photos at 3 attempts: $0.675. A raise names the budget that covers it, in whole dollars: $1.
+  // The worst case here is 4 photos at 3 attempts: $0.60 (the template writes «Дом», so no writer chunk is in it). A raise names the budget that covers it, in whole dollars: $1.
   test.each([
     [10_000_000, "fits", null],
     [300_000, "fits-expected", 1_000_000],
@@ -168,7 +182,7 @@ describe("autopilot.estimate", () => {
     const mock = world();
     await unwrap(mock.client.request("settings.setBudget", { monthlyBudgetMicros: budget }));
     const preview = await estimate(mock);
-    expect(preview.estimate.worstMicros).toBe(WRITER_CHUNK + 4 * 3 * IMAGE);
+    expect(preview.estimate.worstMicros).toBe(4 * 3 * IMAGE);
     expect(preview.month).toEqual({ budgetMicros: budget, committedMicros: 0, freeMicros: budget, fit, raiseToMicros });
   });
 

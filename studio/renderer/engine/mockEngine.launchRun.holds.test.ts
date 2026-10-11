@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { LaunchView, PAID_HOLD_REASONS } from "../../shared/engine";
-import { errorOf, MIA, resumeRun, runUntil, runWorld, SOFIA, startRun, tick, toDone, unwrap, viewOf, type Mock } from "./mockLaunchRun.testkit";
+import { errorOf, LLM_ONLY_REF, MIA, ON_THE_WRITER, resumeRun, runUntil, runWorld, SOFIA, startRun, tick, toDone, unwrap, viewOf, type Mock } from "./mockLaunchRun.testkit";
 
 // Stage 4, S4.8: every hold of the plan's §4.6 and its release, on the launch the mock RUNS. A hold is raised by a fault the testkit armed (`failLaunchPaidStep`) or by the world (the key,
 // the ledger, the month); free work goes on through every one; «Продолжить · до $R» is the way out, and `resumeBlockedBy` says when it is closed. The table at the bottom of this file
 // is the reason → switch table the S4.8 report states.
 
+// 5a.2 (S5.6e, m11): a launch on «Дом» is composed by the code template with no request, so a refusal at the compose WRITER (a 402, the price rising) is the fixture's: `cat-llm-only-fixture` is the
+// category whose scenes only the model writes. A launch on «Дом» meets the same refusal at its first photo (the test after the 402 table).
 const KEY = "sk-or-v1-abcdef0123456789-test";
 
 /** A launch with one video from the library and one to generate, so free work (the library video) has something to do while the paid work is held. */
@@ -21,7 +23,7 @@ describe("credits (402)", () => {
   test("holds the paid work for a person: the avatar is parked, the library video is still made, «Продолжить» is open and clears the hold", async () => {
     const mock = runWorld();
     mock.engine.failLaunchPaidStep("credits");
-    const started = await startRun(mock, MIXED);
+    const started = await startRun(mock, { ...MIXED, categories: ["home", LLM_ONLY_REF] });
     const held = await heldBy(mock, started.launchId, "credits");
     expect(held).toMatchObject({ status: "running", paidHold: { reason: "credits", detail: {} }, resumeBlockedBy: null });
     expect(held.avatars[0]).toMatchObject({ phase: "waiting", waiting: { reason: "paid-hold" } });
@@ -82,11 +84,26 @@ describe("key (401)", () => {
   });
 });
 
+describe("credits (402) on a launch the code template composes", () => {
+  test("meets the refusal at its first photo: the scenes are written and unpaid, the rest of the batch was paid, and «Продолжить» clears the hold", async () => {
+    const mock = runWorld();
+    mock.engine.failLaunchPaidStep("credits");
+    const started = await startRun(mock);
+    const held = await heldBy(mock, started.launchId, "credits");
+    expect(held.avatars[0]).toMatchObject({ phase: "waiting", waiting: { reason: "paid-hold" }, photos: { done: 0, total: 10 } });
+    expect(held.logTail.map((l) => l.kind)).toEqual(expect.arrayContaining(["scenes-ready", "hold-credits"]));
+    // The refusal landed on one request of a batch of six: the other five were answered, so they are paid.
+    expect(held.spentMicros).toBeGreaterThan(0);
+    await continueAt(mock, started.launchId);
+    expect((await toDone(mock, started.launchId)).status).toBe("done");
+  });
+});
+
 describe("price", () => {
   test("at the compose the price rose past what the allocation leaves: a price hold at the compose stage, cleared by «Продолжить»", async () => {
     const mock = runWorld();
     mock.engine.failLaunchPaidStep("price");
-    const started = await startRun(mock);
+    const started = await startRun(mock, ON_THE_WRITER);
     const held = await heldBy(mock, started.launchId, "price");
     expect(held.paidHold).toMatchObject({ reason: "price", detail: { stage: "compose" } });
     if (held.paidHold?.reason !== "price" || held.paidHold.detail.stage === "slice") throw new Error("expected a compose price hold");

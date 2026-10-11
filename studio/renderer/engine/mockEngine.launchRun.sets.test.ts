@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { LaunchView, SceneSetView } from "../../shared/engine";
-import { draftOf, errorOf, MIA, runUntil, runWorld, startRun, toDone, unwrap, viewOf, type Mock } from "./mockLaunchRun.testkit";
+import type { LaunchDraftInput, LaunchView, SceneSetView } from "../../shared/engine";
+import { draftOf, errorOf, MIA, ON_THE_WRITER, runUntil, runWorld, startRun, toDone, unwrap, viewOf, type Mock } from "./mockLaunchRun.testkit";
 
+// 5a.2 (S5.6e, m11): the tests about the compose's WRITER (its live job, its progress and done) plan from `cat-llm-only-fixture`; a launch on «Дом» is composed by the code template at once.
 // S4.10 fix D: the mock's launch makes a real scene set, real slice runs and their job events, and refuses the owner's commands on them as the engine does (plan §4.7, A16). The
 // parity stories (scenarios.autopilotRun.ts) hold the refusals line for line; these hold the rest of what the window reads.
 
@@ -13,8 +14,8 @@ const setOf = async (mock: Mock): Promise<SceneSetView | null> => (await unwrap(
 
 const awaiting = (v: LaunchView): boolean => v.avatars.some((a) => a.phase === "awaiting-review");
 
-async function reviewed(mock: Mock): Promise<{ started: LaunchView; view: LaunchView; set: SceneSetView }> {
-  const started = await startRun(mock, REVIEW);
+async function reviewed(mock: Mock, over: Partial<LaunchDraftInput> = {}): Promise<{ started: LaunchView; view: LaunchView; set: SceneSetView }> {
+  const started = await startRun(mock, { ...REVIEW, ...over });
   const view = await runUntil(mock, started.launchId, "the review", awaiting);
   const set = await setOf(mock);
   if (set === null) throw new Error("the launch's set is not there");
@@ -24,14 +25,14 @@ async function reviewed(mock: Mock): Promise<{ started: LaunchView; view: Launch
 describe("the scene set of a launch that runs", () => {
   test("exists from the compose's first request, held by the launch, and is the avatar's set to read", async () => {
     const mock = runWorld();
-    const started = await startRun(mock, REVIEW);
+    const started = await startRun(mock, { ...REVIEW, ...ON_THE_WRITER });
     await runUntil(mock, started.launchId, "composing", (v) => v.avatars.some((a) => a.phase === "composing"));
     expect(await setOf(mock)).toMatchObject({ launchId: started.launchId, status: "writing", write: { kind: "compose", count: 10 } });
   });
 
   test("while the launch composes the writer's job is live, as the engine's: the set reads writing, the avatar is claimed, and the owner's commands meet IN_FLIGHT first", async () => {
     const mock = runWorld();
-    const started = await startRun(mock, REVIEW);
+    const started = await startRun(mock, { ...REVIEW, ...ON_THE_WRITER });
     await runUntil(mock, started.launchId, "composing", (v) => v.avatars.some((a) => a.phase === "composing"));
     const set = await setOf(mock);
     if (set === null) throw new Error("the launch's set is not there");
@@ -46,11 +47,19 @@ describe("the scene set of a launch that runs", () => {
 
   test("the compose is announced as a scenes job: progress when it begins, done when the writer has answered, and the set reads ready again", async () => {
     const mock = runWorld();
-    const { set } = await reviewed(mock);
+    const { set } = await reviewed(mock, ON_THE_WRITER);
     const kinds = mock.events.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "scenes" ? ["progress"] : e.type === "job.done" && e.payload.result.kind === "scenes" ? ["done"] : []));
     expect(kinds[0]).toBe("progress");
     expect(kinds.at(-1)).toBe("done");
     expect(set).toMatchObject({ status: "ready", write: null });
+  });
+
+  test("a compose the code template writes sends no request: the set is ready with its ten sentences when the review waits, and the launch has spent nothing", async () => {
+    const mock = runWorld();
+    const { started, set } = await reviewed(mock);
+    expect(set).toMatchObject({ status: "ready", write: null, spentMicros: 0 });
+    expect(set.scenes.every((s) => s.text !== null)).toBe(true);
+    expect((await viewOf(mock, started.launchId)).spentMicros).toBe(0);
   });
 
   test("once composed it has its ten sentences and the row names it with its revision", async () => {

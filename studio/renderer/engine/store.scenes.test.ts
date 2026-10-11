@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { PROTOCOL_VERSION, type AvatarSummary, type CommandMessage, type UnsequencedEvent } from "../../shared/engine";
+import { LLM_ONLY_CATEGORY_RECORD, LLM_ONLY_REF } from "../../engine/scenes/testing/llmOnlyFixture";
 import { createEngineClient } from "./client";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { sidebarCounts } from "./renderJobs";
@@ -23,13 +24,16 @@ const MIA: AvatarSummary = {
   usage: { state: "ok" },
 };
 
+// 5a.2 (S5.6e, m11): a built-in scene is written by the code template, at once and for nothing, so the scenes job these tests follow (its progress, its failure) is a compose of the fixture's scenes.
+const FIXTURE = { ...LLM_ONLY_CATEGORY_RECORD, createdAt: "2026-10-05T10:00:00.000Z", updatedAt: "2026-10-05T10:00:00.000Z" };
+
 async function settle(): Promise<void> {
   for (let i = 0; i < 30; i++) await Promise.resolve();
 }
 
 async function started() {
   const scheduler = new ManualScheduler();
-  const engine = new MockEngine({ scheduler, avatars: [MIA] });
+  const engine = new MockEngine({ scheduler, avatars: [MIA], categories: [FIXTURE] });
   const client = mockEngineClient(engine);
   const store = new EngineStore(client);
   store.start();
@@ -75,7 +79,7 @@ async function rawHost() {
 }
 
 const compose = (h: Awaited<ReturnType<typeof started>>, count: number) =>
-  h.client.request("scenes.compose", { avatarId: MIA.avatarId, count, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: Math.ceil(count / 25) * 75_000 });
+  h.client.request("scenes.compose", { avatarId: MIA.avatarId, count, categories: [LLM_ONLY_REF], poses: { profile: false, back: false }, acceptedWorstMicros: Math.ceil(count / 25) * 75_000 });
 
 describe("a scenes job in the store", () => {
   test("tracked at its launch with the scenes it writes as the total, before any event is heard, and counted in the sidebar's queue on a row of its own", async () => {

@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarSummary, SceneSetView } from "../../shared/engine";
+import { LLM_ONLY_CATEGORY_RECORD, LLM_ONLY_REF } from "../../engine/scenes/testing/llmOnlyFixture";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
 
+// 5a.2 (S5.6e, m11): a built-in scene is written by the code template, so a set whose scenes wait for the WRITER (a cut-off request, a chunk given up on) is a set of `cat-llm-only-fixture` scenes.
 // CS.6: what the review UI's screen tests and shots need the mock to stand in for. A Studio that closed mid-request leaves that request's reserve open
 // (it counts as an answered attempt and waits for the reconcile) and no outcome (the set reads `closed`): a seed says which request it cut off. And an
 // explicitly good answer can be scripted, so a test can give up on a LATER chunk than the first.
@@ -23,10 +25,12 @@ const MIA: AvatarSummary = {
 
 /** One writer attempt at its ceilings at the fallback prices. */
 const ATTEMPT = 37_500;
+const FIXTURE = { ...LLM_ONLY_CATEGORY_RECORD, createdAt: "2026-10-05T10:00:00.000Z", updatedAt: "2026-10-05T10:00:00.000Z" };
+
 
 function makeMock(options: ConstructorParameters<typeof MockEngine>[0] = {}) {
   const scheduler = new ManualScheduler();
-  const engine = new MockEngine({ scheduler, avatars: [MIA], ...options });
+  const engine = new MockEngine({ scheduler, avatars: [MIA], categories: [FIXTURE], ...options });
   const client = mockEngineClient(engine);
   return { scheduler, engine, client };
 }
@@ -46,7 +50,7 @@ async function reconcileNeeded(m: Mock): Promise<boolean> {
 
 describe("a seeded set whose request the closed Studio cut off", () => {
   test("reads stopped and closed, holds that request's reserve open at its worst, and leaves that chunk one attempt (the written first chunk answered once)", async () => {
-    const m = makeMock({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-cut-0001", count: 60, written: 25, stopped: "closed", cutOff: { chunk: 2 } }] });
+    const m = makeMock({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-cut-0001", count: 60, written: 25, stopped: "closed", cutOff: { chunk: 2 }, categories: [LLM_ONLY_REF] }] });
     const set = await setOf(m);
     expect(set.status).toBe("stopped");
     expect(set.stoppedBy).toBe("closed");
@@ -60,7 +64,7 @@ describe("a seeded set whose request the closed Studio cut off", () => {
   });
 
   test("after the reconcile the reserve is closed at its worst: still spent, no longer open, still an answered attempt", async () => {
-    const m = makeMock({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-cut-0001", count: 60, written: 25, stopped: "closed", cutOff: { chunk: 2 } }] });
+    const m = makeMock({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-cut-0001", count: 60, written: 25, stopped: "closed", cutOff: { chunk: 2 }, categories: [LLM_ONLY_REF] }] });
     const before = await setOf(m);
     const done = await m.client.request("money.reconcile", {});
     expect(done.ok).toBe(true);
@@ -73,7 +77,7 @@ describe("a seeded set whose request the closed Studio cut off", () => {
 
   test("a cut-off rewrite marks its scene, and carrying it on is priced at the one attempt it has left", async () => {
     const m = makeMock({
-      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-cut-0002", count: 6, written: 6, writes: 1, reviewWrites: [{ kind: "rewrite", k: 2, sceneIds: [2], redraw: true, cutOff: true }] }],
+      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-cut-0002", count: 6, written: 6, writes: 1, categories: [LLM_ONLY_REF], reviewWrites: [{ kind: "rewrite", k: 2, sceneIds: [2], redraw: true, cutOff: true }] }],
     });
     const set = await setOf(m);
     expect(set.status).toBe("ready");
@@ -110,7 +114,7 @@ describe("a scripted good answer", () => {
     m.engine.failNextSceneAttempt("ok");
     m.engine.failNextSceneAttempt("rejected");
     m.engine.failNextSceneAttempt("rejected");
-    const reply = await m.client.request("scenes.compose", { avatarId: MIA.avatarId, count: 60, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: 6 * ATTEMPT });
+    const reply = await m.client.request("scenes.compose", { avatarId: MIA.avatarId, count: 60, categories: [LLM_ONLY_REF], poses: { profile: false, back: false }, acceptedWorstMicros: 6 * ATTEMPT });
     expect(reply.ok).toBe(true);
     m.scheduler.runAll();
     const set = await setOf(m);
