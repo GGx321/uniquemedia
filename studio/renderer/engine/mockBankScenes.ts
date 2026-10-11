@@ -107,7 +107,7 @@ export function slotOf(scene: Pick<LocalScene, "category" | "shot" | "capture" |
 /** The plain sentence of a planned scene (5a.2, S5.6d): what the model's last attempt leaves a scene with, built by the very function the engine uses. Null for an own scene. */
 export function plainTextOf(scene: Pick<LocalScene, "category" | "shot" | "capture" | "pose" | "place">): string | null {
   const slot = slotOf(scene);
-  return slot === null || slot.location === undefined || slot.activity === undefined || slot.outfit === undefined ? null : plainSentence({ category: slot.category, location: slot.location, activity: slot.activity, outfit: slot.outfit });
+  return slot === null || slot.location === undefined || slot.activity === undefined || slot.outfit === undefined ? null : plainSentence({ category: slot.category, location: slot.location, activity: slot.activity, outfit: slot.outfit, shot: slot.shot, capture: slot.capture });
 }
 
 /**
