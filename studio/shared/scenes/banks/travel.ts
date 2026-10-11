@@ -11,7 +11,7 @@ export const TRAVEL: CategoryBank = {
       times: ["morning", "golden hour", "evening"],
       moments: [
         { text: "leans on the iron railing", motion: "her hair lifts a little in the wind", captures: ["friend", "timer", "selfie"], twoHanded: false },
-        { text: "looks out at the view", motion: "she turns her head slowly", captures: ["friend", "candid"], twoHanded: false, gaze: "own" },
+        { text: "looks out at the view", motion: "she turns her head slowly", captures: ["friend", "candid"], twoHanded: false, gaze: "own", angle: "three-quarter" },
         { text: "sips a coffee by the railing", motion: "she lowers the cup a little", captures: ["selfie", "friend", "candid"], twoHanded: false },
         { text: "sits with her feet on the railing", motion: "she stretches her toes a little", captures: ["timer", "friend"], twoHanded: false, noLegwear: true },
       ],
@@ -38,7 +38,7 @@ export const TRAVEL: CategoryBank = {
         { text: "shades her eyes with one hand", motion: "she lowers her hand slowly", captures: ["friend", "selfie", "timer"], twoHanded: false, gaze: "own", outdoor: true },
         { text: "walks uphill", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, outdoor: true },
         { text: "sits on a wooden fence", motion: "she swings one foot a little", captures: ["friend", "timer"], twoHanded: false, outdoor: true },
-        { text: "takes in the view", motion: "she breathes in slowly and smiles", captures: ["friend", "candid", "selfie", "timer"], twoHanded: false, gaze: "own", outdoor: true },
+        { text: "takes in the view", motion: "she breathes in slowly and smiles", captures: ["friend", "candid", "selfie", "timer"], twoHanded: false, gaze: "own", angle: "three-quarter", outdoor: true },
       ],
     },
     {
@@ -49,7 +49,7 @@ export const TRAVEL: CategoryBank = {
       moments: [
         { text: "rests her hands on the railing", motion: "she rises on her toes a little", captures: ["timer", "friend"], twoHanded: true, outdoor: true },
         { text: "leans over the railing", motion: "she leans out a little and back", captures: ["friend", "candid", "timer"], twoHanded: false, outdoor: true },
-        { text: "looks out over the water", motion: "she turns her head slowly", captures: ["friend", "candid", "selfie"], twoHanded: false, gaze: "own", outdoor: true },
+        { text: "looks out over the water", motion: "she turns her head slowly", captures: ["friend", "candid", "selfie"], twoHanded: false, gaze: "own", angle: "three-quarter", outdoor: true },
         { text: "holds a takeaway coffee", motion: "she lifts the cup a little", captures: ["selfie", "friend"], twoHanded: false, outdoor: true },
       ],
     },

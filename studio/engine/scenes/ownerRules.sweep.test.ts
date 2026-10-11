@@ -168,4 +168,10 @@ describe("the text reads naturally (S5.6R, LOW)", () => {
     expect(prone.length).toBeGreaterThan(0);
     expect(offenders(prone, (f) => f.slot.legwear !== undefined)).toEqual(NONE);
   });
+
+  test("a moment that looks out at the view is never on a front pose, which says her face and body are turned toward the camera", () => {
+    const LOOKS_OUT = /^(looks out|takes in the view)\b/;
+    expect(ALL.some((f) => LOOKS_OUT.test(f.slot.activity))).toBe(true);
+    expect(offenders(ALL, (f) => LOOKS_OUT.test(f.slot.activity) && f.slot.pose === "front")).toEqual(NONE);
+  });
 });

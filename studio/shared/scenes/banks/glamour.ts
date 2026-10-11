@@ -39,7 +39,7 @@ export const GLAMOUR: CategoryBank = {
       // S5.6R: nobody stands a few steps away in the back seat of a taxi, so a friend's whole-body photo never lands here: she takes it at arm's length.
       moments: [
         { text: "adjusts an earring", motion: "she turns the earring slowly", captures: ["selfie"], twoHanded: false, gaze: "focus" },
-        { text: "looks out of the window", motion: "she turns toward the window slowly", captures: ["selfie"], twoHanded: false, gaze: "own" },
+        { text: "looks out of the window", motion: "she turns toward the window slowly", captures: ["selfie"], twoHanded: false, gaze: "own", angle: "three-quarter" },
         { text: "leans back, relaxed", motion: "she sinks back a little", captures: ["selfie"], twoHanded: false },
         { text: "rests her head on the window", motion: "she closes her eyes slowly", captures: ["selfie"], twoHanded: false },
         { text: "pulls her coat a little closer", motion: "she tugs the coat closer slowly", captures: ["selfie"], twoHanded: false },
