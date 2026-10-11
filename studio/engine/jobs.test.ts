@@ -150,6 +150,21 @@ describe("JobRegistry: photo run jobs", () => {
     valid([state]);
   });
 
+  // S5.7a (I5.31): the reasons of the slots a run ended with a scene reason ride on the result, and only when there are some.
+  test("a done run job carries the reasons its slots ended with, and no key when there are none", () => {
+    const jobs = new JobRegistry();
+    jobs.startRun("job-00000001", { runId: RUN, avatarId: AVATAR, total: 3, done: 0 });
+    jobs.startRun("job-00000002", { runId: "run-00000002", avatarId: AVATAR, total: 3, done: 0 });
+
+    const reasoned = jobs.finishRun("job-00000001", { status: "done", photoIds: ["photo-00000001", "photo-00000002"], failedSlots: 1, failedReasons: [{ slotIndex: 3, reason: "slot-text-problem" }] });
+    const plain = jobs.finishRun("job-00000002", { status: "done", photoIds: ["photo-00000001", "photo-00000002"], failedSlots: 1 });
+
+    expect(reasoned).toMatchObject({ result: { failedSlots: 1, failedReasons: [{ slotIndex: 3, reason: "slot-text-problem" }] } });
+    expect(plain).toMatchObject({ status: "done", result: { failedSlots: 1 } });
+    expect(JSON.stringify(plain)).not.toContain("failedReasons");
+    valid([reasoned, plain]);
+  });
+
   test("a failed run job carries its error; a cancelled one neither error nor result", () => {
     const jobs = new JobRegistry();
     jobs.startRun("job-00000001", { runId: RUN, avatarId: AVATAR, total: 3, done: 1 });

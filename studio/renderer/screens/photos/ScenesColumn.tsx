@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { AvatarSummary, EngineError, Estimate, PhotoSummary, RunSummary, SceneSetView } from "../../../shared/engine";
+import { SCENE_REASONS_RU, type AvatarSummary, type EngineError, type Estimate, type PhotoSummary, type RunSummary, type SceneReason, type SceneSetView } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import type { SceneSetSliceView } from "../../engine/sceneSetSlice";
 import { isActiveJob, type EngineView, type JobView } from "../../engine/store";
@@ -242,6 +242,15 @@ function EndedRunRow({ run }: { run: RunSummary }) {
 }
 
 
+/**
+ * S5.7a (I5.31): what follows «Не получилось: N» — the reason of the slots that ended with one (a sentence that broke the word rules ends alone and free), then the
+ * paid-attempts line unless every failed slot was one of those. A result with no reasons reads as it always did.
+ */
+function failedText(failed: number, reasons: readonly { reason: SceneReason }[] | undefined): string {
+  const named = [...new Set((reasons ?? []).map((r) => r.reason))].map((reason) => ` ${SCENE_REASONS_RU[reason]}`).join("");
+  return `${named}${(reasons?.length ?? 0) < failed ? " Если за попытки платили, это уже учтено в расходах." : ""}`;
+}
+
 /** How the run this screen watched ended: the gallery shows its photos, this says what else happened. A run made from a set says so (ReviewStates F). */
 export function RunOutcome({ job, fromSet, photos }: { job: JobView; fromSet: boolean; photos: readonly PhotoSummary[] }) {
   if (job.status === "failed" && job.error) return <ErrorNotice error={job.error} />;
@@ -253,14 +262,14 @@ export function RunOutcome({ job, fromSet, photos }: { job: JobView; fromSet: bo
     );
   }
   if (job.status === "done" && job.result?.kind === "run") {
-    const { photoIds, failedSlots } = job.result;
+    const { photoIds, failedSlots, failedReasons } = job.result;
     // S5.6f: a face-hidden or back frame is marked, not retried; the run says how many frames no face check judged.
     const unchecked = framesWithoutFaceCheck(photos, photoIds);
     return (
       <Notice tone={failedSlots > 0 ? "warn" : "ok"} title="Запуск завершён">
         {fromSet ? runDoneText(photoIds.length) : `В галерее ${countOf(photoIds.length, PHOTO_FORMS)} этого запуска.`}
         {unchecked > 0 && ` ${faceMarksText(unchecked)}.`}
-        {failedSlots > 0 && ` Не получилось: ${failedSlots}. Если за попытки платили, это уже учтено в расходах.`}
+        {failedSlots > 0 && ` Не получилось: ${failedSlots}.${failedText(failedSlots, failedReasons)}`}
       </Notice>
     );
   }

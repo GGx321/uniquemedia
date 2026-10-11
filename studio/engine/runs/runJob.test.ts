@@ -2302,6 +2302,27 @@ describe("crash and resume", () => {
     expect(ended[0]).toMatchObject({ slotIndex: 1, status: "failed", error: { code: "VALIDATION", sceneReason: "slot-text-problem" } });
   });
 
+  // S5.7a (I5.31): the job's end names the scene reason of a slot that ended alone, so the window can say it was free.
+  test("the job's end carries the scene reason of a slot whose sentence broke today's rules, and nothing for a slot that failed otherwise", async () => {
+    const run = await newRun(1);
+    await cancelledAfterPrompts(run);
+    await library.appendJournal(RUN_ID, { type: "writer", chunk: 1, sentences: [{ slotIndex: 1, sentence: "A teenage girl laughs at the kitchen counter." }], at: new Date(NOW).toISOString() }, RunEventSchema);
+
+    const end = await start(run, { jobId: "job-00000002" }).end;
+
+    expect(end).toMatchObject({ status: "done", failedSlots: 1, failedReasons: [{ slotIndex: 1, reason: "slot-text-problem" }] });
+  });
+
+  test("the job's end has no failed reasons when every slot has its photo", async () => {
+    const run = await newRun(1);
+    await cancelledAfterPrompts(run);
+
+    const end = await start(run, { jobId: "job-00000002" }).end;
+
+    expect(end).toMatchObject({ status: "done", failedSlots: 0 });
+    expect("failedReasons" in end).toBe(false);
+  });
+
   test("review L15: a crash between a refusal's settle and its journal line never resends that prompt to the primary", async () => {
     const run = await newRun(1);
     const clientA = makeClient(network({ image: () => MODERATION }).fetch).client;

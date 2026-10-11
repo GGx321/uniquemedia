@@ -2,11 +2,11 @@ import { z } from "zod";
 import { AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
 import { AvatarBody, BodyProposal } from "./body";
 import { CategoryName, CategoryRef, MAX_RUN_CATEGORIES, PhotoCategory, SceneCategory, SceneLevel } from "./categories";
-import { EngineError, ExportUnavailableReason } from "./errors";
+import { EngineError, ExportUnavailableReason, SceneReason } from "./errors";
 import { ImageQuality } from "./imageModels";
 import { MediaFileName, MediaKind, MediaSummary } from "./media";
 import { AbsolutePath, Count, Id, LaunchId, Micros, ModelId, SafeText } from "./primitives";
-import { ScenesResult } from "./scenes";
+import { MAX_SCENES_PER_SET, ScenesResult } from "./scenes";
 import { RenderResult } from "./video";
 
 const IsoDateTime = z.iso.datetime();
@@ -718,13 +718,21 @@ export const AvatarPortraits = z
  * run's slots that have no photo. `avatarId` is the run's own avatar, like
  * `JobProgress.avatarId`, so the renderer never has to guess it.
  */
-export const RunResult = z.strictObject({
-  kind: z.literal("run"),
-  runId: Id,
-  avatarId: Id,
-  photoIds: z.array(Id),
-  failedSlots: Count,
-});
+export const RunResult = z
+  .strictObject({
+    kind: z.literal("run"),
+    runId: Id,
+    avatarId: Id,
+    photoIds: z.array(Id),
+    failedSlots: Count,
+    /**
+     * S5.7a (I5.31): why some of the failed slots ended, for the slots that ended with a scene reason (a sentence that broke the word rules ends alone and free:
+     * `slot-text-problem`). Absent when no failed slot has one, and on a result from before it; a failed slot it does not name ended for another reason.
+     */
+    failedReasons: z.array(z.strictObject({ slotIndex: z.number().int().min(1), reason: SceneReason })).max(MAX_SCENES_PER_SET).optional(),
+  })
+  .refine((r) => r.failedReasons === undefined || r.failedReasons.length <= r.failedSlots, { message: "a reason belongs to a failed slot", path: ["failedReasons"] })
+  .refine((r) => r.failedReasons === undefined || unique(r.failedReasons.map((f) => f.slotIndex)), { message: "a slot must not repeat", path: ["failedReasons"] });
 
 /** An import's outcome (3f.1b): the record that was stored, whole, so the window shows the new tile without a listing. */
 export const ImportResult = z

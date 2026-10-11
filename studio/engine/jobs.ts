@@ -335,7 +335,7 @@ export class JobRegistry {
     const common = { kind, jobId, runId, avatarId, done, total };
     switch (end.status) {
       case "done":
-        entry.state = { ...common, status: "done", result: { kind, runId, avatarId, photoIds: end.photoIds, failedSlots: end.failedSlots } };
+        entry.state = { ...common, status: "done", result: { kind, runId, avatarId, photoIds: end.photoIds, failedSlots: end.failedSlots, ...(end.failedReasons === undefined ? {} : { failedReasons: end.failedReasons }) } };
         break;
       case "failed":
         entry.state = { ...common, status: "failed", error: end.error };

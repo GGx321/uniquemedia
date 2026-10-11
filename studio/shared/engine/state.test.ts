@@ -10,6 +10,7 @@ import {
   JobCancelled,
   JobFailed,
   JobProgress,
+  JobResult,
   JobState,
   MoneyStatus,
   MusicKeyStatus,
@@ -859,6 +860,28 @@ describe("JobState", () => {
 
   test("accepts a done photo run job with its result, both naming the run's avatar", () => {
     expect(JobState.safeParse({ ...runJob, status: "done", done: 20, result: runResult }).success).toBe(true);
+  });
+
+  // S5.7a (I5.31): a slot a run ended with a scene reason (a sentence that broke the word rules ends alone, free) says so on the result, so the window can say why it is free.
+  test("accepts a run result that names the reason of some of its failed slots", () => {
+    const result = { ...runResult, failedSlots: 3, failedReasons: [{ slotIndex: 2, reason: "slot-text-problem" }, { slotIndex: 7, reason: "slot-text-problem" }] };
+    expect(JobState.safeParse({ ...runJob, status: "done", done: 20, result }).success).toBe(true);
+  });
+
+  test("a run result with no failed reasons parses to the very same document", () => {
+    expect<unknown>(JobResult.parse(runResult)).toEqual(runResult);
+  });
+
+  test("rejects a failed reason the contract does not know", () => {
+    const result = { ...runResult, failedReasons: [{ slotIndex: 2, reason: "bold" }] };
+    expect(JobState.safeParse({ ...runJob, status: "done", done: 20, result }).success).toBe(false);
+  });
+
+  test("rejects more failed reasons than failed slots, and one slot named twice", () => {
+    const more = { ...runResult, failedSlots: 1, failedReasons: [{ slotIndex: 2, reason: "slot-text-problem" }, { slotIndex: 3, reason: "slot-text-problem" }] };
+    const twice = { ...runResult, failedSlots: 2, failedReasons: [{ slotIndex: 2, reason: "slot-text-problem" }, { slotIndex: 2, reason: "slot-text-problem" }] };
+    expect(JobState.safeParse({ ...runJob, status: "done", done: 20, result: more }).success).toBe(false);
+    expect(JobState.safeParse({ ...runJob, status: "done", done: 20, result: twice }).success).toBe(false);
   });
 
   test("rejects a run result for another run", () => {

@@ -1,6 +1,6 @@
 import { REFERENCE_TIMEOUT_MS } from "./timeouts";
 import { createHash } from "node:crypto";
-import type { AvatarDescriptor, EngineError } from "../../shared/engine";
+import type { AvatarDescriptor, EngineError, SceneReason } from "../../shared/engine";
 import { NoFaceInReferenceError } from "../face/noFaceError";
 import type { Library, NewPhotoMeta, PhotoQa } from "../library";
 import { imageSize, isAnimatedImage, type LibraryReference } from "../library/media";
@@ -132,7 +132,10 @@ export interface RunJob {
  * - cancelled: the user stopped it with slots left (a hard cancel, or the soft stop of S4.5b).
  * Photos stored before a failure or a cancel stay in the library.
  */
-export type RunJobEnd = { status: "done"; photoIds: string[]; failedSlots: number } | { status: "failed"; error: EngineError } | { status: "cancelled" };
+export type RunJobEnd = { status: "done"; photoIds: string[]; failedSlots: number; failedReasons?: FailedReason[] } | { status: "failed"; error: EngineError } | { status: "cancelled" };
+
+/** S5.7a (I5.31): why a failed slot ended, when it ended with a scene reason. */
+export type FailedReason = { slotIndex: number; reason: SceneReason };
 
 /** The engine's fetch, reporting every response's status to the network pool so a 429 backs every run off at once. */
 export function reportingTo(pool: NetworkPool, fetch: OpenRouterFetch): OpenRouterFetch {
@@ -874,7 +877,8 @@ function endOf(ctx: Context, slots: readonly SlotState[]): RunJobEnd {
   if (softStopped(ctx) && open) return { status: "cancelled" };
   if (open) return { status: "failed", error: ctx.limited ?? { code: "INTERNAL", detail: `run ${ctx.plan.runId} stopped with slots left` } };
   const photoIds = slots.flatMap((s) => (s.end?.status === "done" ? [s.end.photoId] : []));
-  return { status: "done", photoIds, failedSlots: slots.length - photoIds.length };
+  const failedReasons = slots.flatMap((s): FailedReason[] => (s.end?.status === "failed" && s.end.error.sceneReason !== undefined ? [{ slotIndex: s.slot.slotIndex, reason: s.end.error.sceneReason }] : []));
+  return { status: "done", photoIds, failedSlots: slots.length - photoIds.length, ...(failedReasons.length === 0 ? {} : { failedReasons }) };
 }
 
 async function work(ctx: Context): Promise<RunJobEnd> {

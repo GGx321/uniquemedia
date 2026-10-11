@@ -4566,7 +4566,15 @@ export class MockEngine implements EngineBridge {
   }
 
   private runResult(run: MockRun): Extract<JobResult, { kind: "run" }> {
-    return { kind: "run", runId: run.runId, avatarId: run.avatarId, photoIds: [...run.photoIds], failedSlots: run.slots.filter((s) => s.end === "failed").length };
+    const failedReasons = run.slots.flatMap((s, i) => (s.end === "failed" && s.error?.sceneReason !== undefined ? [{ slotIndex: i + 1, reason: s.error.sceneReason }] : []));
+    return {
+      kind: "run",
+      runId: run.runId,
+      avatarId: run.avatarId,
+      photoIds: [...run.photoIds],
+      failedSlots: run.slots.filter((s) => s.end === "failed").length,
+      ...(failedReasons.length === 0 ? {} : { failedReasons }),
+    };
   }
 
   /**

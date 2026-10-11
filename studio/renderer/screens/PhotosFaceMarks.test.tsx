@@ -57,6 +57,33 @@ describe("the badge of a frame the gate marked", () => {
   });
 });
 
+// S5.7a (I5.31): a slot a run ended alone, free, because its sentence broke the word rules says so where the failed slots are counted.
+describe("the end of a run with slots that ended with a reason", () => {
+  const REASON = "Текст сцены не прошёл проверку слов — кадр пропущен, бесплатно.";
+  const withReasons = (photoIds: string[], failedSlots: number, slots: number[]): JobView => {
+    const job = doneRun(photoIds, failedSlots);
+    if (job.result?.kind !== "run") throw new Error("expected a run result");
+    return { ...job, result: { ...job.result, failedReasons: slots.map((slotIndex) => ({ slotIndex, reason: "slot-text-problem" as const })) } };
+  };
+
+  test("says why a slot was skipped, and no longer says that paid attempts are in the spend when every failed slot was free", () => {
+    render(<RunOutcome job={withReasons(["p1"], 1, [2])} fromSet={false} photos={[photo("p1", 0.81)]} />);
+    expect(screen.getByText(new RegExp(`Не получилось: 1\\. ${REASON}`))).toBeDefined();
+    expect(screen.queryByText(/за попытки платили/) === null).toBe(true);
+  });
+
+  test("keeps the paid-attempts line when only some of the failed slots were free", () => {
+    render(<RunOutcome job={withReasons(["p1"], 3, [2])} fromSet={false} photos={[photo("p1", 0.81)]} />);
+    expect(screen.getByText(new RegExp(`Не получилось: 3\\. ${REASON}.*Если за попытки платили, это уже учтено в расходах\\.`))).toBeDefined();
+  });
+
+  test("says what it always said when no failed slot has a reason", () => {
+    render(<RunOutcome job={doneRun(["p1"], 2)} fromSet={false} photos={[photo("p1", 0.81)]} />);
+    expect(screen.getByText(/Не получилось: 2\. Если за попытки платили, это уже учтено в расходах\./)).toBeDefined();
+    expect(screen.queryByText(/проверку слов/) === null).toBe(true);
+  });
+});
+
 describe("the end of a run", () => {
   test("counts the frames without a face check beside the gallery line", () => {
     const photos = [photo("p1"), photo("p2", 0.48), photo("p3"), photo("p4", 0.81)];
