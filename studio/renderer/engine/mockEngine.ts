@@ -205,6 +205,14 @@ export const MOCK_RUN_ATTEMPTS_PER_SLOT = 3;
 /** The writer's worst case per chunk is the real engine's (money/estimate.ts: 2 attempts × $0.0375, T5c's raised ceiling), so mock and engine prices agree to the micro-dollar. */
 export const MOCK_RUN_WRITER = { expectedPerPhoto: 458, worstPerCall: 37_500, worstPerChunk: 75_000, photosPerChunk: 25 } as const;
 
+/** The model's share of a run's slots (the real `WriterLoad`): requests at worst, and the scenes they can carry. */
+interface MockWriterLoad {
+  chunks: number;
+  scenes: number;
+}
+/** A run whose every sentence is written already, or that the template writes whole: it never asks the model. */
+const NO_WRITER_LOAD: MockWriterLoad = { chunks: 0, scenes: 0 };
+
 /** The mock gate's similarity scores, cycled over a run's slots; every fifth slot carries none (a profile or back shot, or a photo from before the gate). */
 const MOCK_FACE_COS = [0.86, 0.81, 0.71, 0.78] as const;
 const MOCK_UNCHECKED_EVERY = 5;
@@ -490,6 +498,11 @@ interface MockRun {
    * writer phase of its own: a job marks it done as it starts.
    */
   writerDone: boolean;
+  /**
+   * The model's share of the run's slots, fixed at its start like the real plan's `writerLoad` (I5.30): the writer requests it can need at worst and the scenes
+   * they can carry. A built-in or covered run holds none, so a resume prices no writer for it.
+   */
+  writerLoad: MockWriterLoad;
   /** Stage 4 (S4.9b): the launch this run is a batch of (`RunSummary.launchId`); a seed's, absent for the owner's own. */
   launchId?: string;
 }
@@ -1789,6 +1802,7 @@ export class MockEngine implements EngineBridge {
       photoIds: [],
       categoryNames: this.categoryNamesOf(request.categories),
       writerDone: opts.writerDone ?? done > 0,
+      writerLoad: this.writerLoadOf(request),
       ...(opts.launchId === undefined ? {} : { launchId: opts.launchId }),
     };
     const { expected } = this.slotPrice(run);
@@ -2258,6 +2272,7 @@ export class MockEngine implements EngineBridge {
       categoryNames: {},
       // The launch's compose wrote every sentence before it drew anything.
       writerDone: true,
+      writerLoad: NO_WRITER_LOAD,
       launchId: slice.launchId,
     };
     this.runs = [...this.runs, run];
@@ -2988,6 +3003,7 @@ export class MockEngine implements EngineBridge {
           photoIds: [],
           categoryNames: this.categoryNamesOf(request.categories),
           writerDone: false,
+          writerLoad: this.writerLoadOf(request),
         };
         this.runs = [...this.runs, run];
         return this.ok(c, { runId: run.runId, jobId: this.startRunJob(run) });
@@ -3051,6 +3067,7 @@ export class MockEngine implements EngineBridge {
           categoryNames: Object.fromEntries(set.categories.flatMap((entry) => (entry.name === null ? [] : [[entry.ref, entry.name]]))),
           // Every sentence exists: no writer phase, and so none in what a resume could still spend.
           writerDone: true,
+          writerLoad: NO_WRITER_LOAD,
         };
         this.runs = [...this.runs, run];
         // The set is used from here, and every window hears it before the run's job is announced.
@@ -4280,15 +4297,22 @@ export class MockEngine implements EngineBridge {
     return null;
   }
 
+  /** The writer's bound for a run's request over the library as it is now (`writerChunksWorst`, `llmPossibleSlots`): the share of its slots that can go to the model. */
+  private writerLoadOf(request: Pick<RunRequest, "count" | "categories">): MockWriterLoad {
+    const { chunks, modelSlots } = this.sceneSets.writerBound(request.count, request.categories);
+    return { chunks, scenes: modelSlots };
+  }
+
   /** A whole run at today's mock prices: every slot's every attempt, the writer chunked, and the age checks when they are on. */
-  private runPrice(request: Pick<RunRequest, "count">): Estimate {
+  private runPrice(request: Pick<RunRequest, "count" | "categories">): Estimate {
     const { count } = request;
     const image = this.runImagePrice;
     const attempts = count * MOCK_RUN_ATTEMPTS_PER_SLOT;
     const ageOn = this.settings.imageAgeCheck === "on";
-    const chunks = Math.ceil(count / MOCK_RUN_WRITER.photosPerChunk);
+    // I5.30: the template writes a built-in and a covered category whole; only an uncovered custom category's slots can go to the model (the engine's `runEstimate`).
+    const { chunks, scenes } = this.writerLoadOf(request);
     return {
-      expectedMicros: count * image + count * MOCK_RUN_WRITER.expectedPerPhoto + (ageOn ? count * MOCK_AGE_CHECK_PER_SLOT.expected : 0),
+      expectedMicros: count * image + scenes * MOCK_RUN_WRITER.expectedPerPhoto + (ageOn ? count * MOCK_AGE_CHECK_PER_SLOT.expected : 0),
       worstMicros: attempts * image + chunks * MOCK_RUN_WRITER.worstPerChunk + (ageOn ? attempts * MOCK_AGE_CHECK_PER_SLOT.worst : 0),
       prices: this.price.prices,
       pricesAsOf: this.price.pricesAsOf,
@@ -4378,9 +4402,9 @@ export class MockEngine implements EngineBridge {
     const open = this.openSlots(run);
     const slot = this.slotPrice(run);
     const capLeft = Math.max(0, run.capMicros - this.runCommitted(run));
-    // The real engine's remainingEstimate: an unwritten chunk adds the writer's ceiling (the mock has one chunk per 25 photos of the run), and its typical share per scene.
-    const writerWorst = run.writerDone ? 0 : Math.ceil(run.slots.length / MOCK_RUN_WRITER.photosPerChunk) * MOCK_RUN_WRITER.worstPerChunk;
-    const writerExpected = run.writerDone ? 0 : run.slots.length * MOCK_RUN_WRITER.expectedPerPhoto;
+    // The real engine's remainingEstimate: an unwritten chunk adds the writer's ceiling (the run's `writerLoad`, fixed at its start: none for a built-in or covered run), and its typical share per scene.
+    const writerWorst = run.writerDone ? 0 : run.writerLoad.chunks * MOCK_RUN_WRITER.worstPerChunk;
+    const writerExpected = run.writerDone ? 0 : run.writerLoad.scenes * MOCK_RUN_WRITER.expectedPerPhoto;
     const worstMicros = Math.min(open * MOCK_RUN_ATTEMPTS_PER_SLOT * slot.attemptWorst + writerWorst, capLeft);
     return { expectedMicros: Math.min(open * slot.expected + writerExpected, worstMicros), worstMicros, prices: this.price.prices, pricesAsOf: this.price.pricesAsOf };
   }
@@ -4398,7 +4422,7 @@ export class MockEngine implements EngineBridge {
     const own = this.latestRunJobOf(run.runId);
     if (own !== null && own.reserveKeys.some((key) => this.reserves.has(key))) return false;
     // The real engine's minToProgress: ONE writer call's ceiling for an unwritten chunk (the writer runs first) plus one image attempt.
-    const writer = run.writerDone ? 0 : MOCK_RUN_WRITER.worstPerCall;
+    const writer = run.writerDone || run.writerLoad.chunks === 0 ? 0 : MOCK_RUN_WRITER.worstPerCall;
     return run.capMicros - this.runCommitted(run) < writer + this.slotPrice(run).attemptWorst;
   }
 

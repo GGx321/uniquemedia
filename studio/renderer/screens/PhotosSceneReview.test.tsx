@@ -277,7 +277,7 @@ describe("review off with a set open", () => {
     await waitFor(() => expect(goButton().textContent).toBe(nb("Отрисовать 20 фото · до $3.00")));
     fireEvent.click(reviewSwitch());
     await flush();
-    await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.08"));
+    await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.00"));
     expect(within(column()).getByText("проверка выключена")).toBeDefined();
     expect(within(column()).getByText(/^Открытый набор — 20.сцен — сохранён/)).toBeDefined();
     fireEvent.click(reviewSwitch());

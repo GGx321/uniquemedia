@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarSummary, EventMessage, SceneSetView } from "../../shared/engine";
+import { LLM_ONLY_CATEGORY_RECORD, LLM_ONLY_REF } from "../../engine/scenes/testing/llmOnlyFixture";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, MOCK_RUN_WRITER, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
@@ -67,11 +68,20 @@ const estimateOf = (m: Mock, set: SceneSetView) => m.client.request("runs.estima
 const start = (m: Mock, set: SceneSetView, acceptedWorstMicros: number) => m.client.request("runs.startFromScenes", { sceneSetId: set.sceneSetId, revision: set.revision, acceptedWorstMicros });
 
 describe("runs.estimateFromScenes", () => {
-  test("is the whole run's estimate for M photos less its writer: the same images, no writer term", async () => {
+  test("is the whole run's estimate for M photos: a built-in run has no writer term to leave out, so the images alone are the same figure", async () => {
     const m = makeMock();
     const set = await readySet(m, 5);
     const scenes = (await unwrap(estimateOf(m, set))).estimate;
     const whole = (await unwrap(m.client.request("runs.estimate", { avatarId: MIA.avatarId, count: 5, categories: ["home"], poses: POSES }))).estimate;
+    expect(whole.worstMicros).toBe(scenes.worstMicros);
+    expect(whole.expectedMicros).toBe(scenes.expectedMicros);
+  });
+
+  test("is the whole run's estimate less its writer when the run's category is one only the model writes", async () => {
+    const m = makeMock({ categories: [{ ...LLM_ONLY_CATEGORY_RECORD, createdAt: "2026-10-05T10:00:00.000Z", updatedAt: "2026-10-05T10:00:00.000Z" }] });
+    const set = await readySet(m, 5);
+    const scenes = (await unwrap(estimateOf(m, set))).estimate;
+    const whole = (await unwrap(m.client.request("runs.estimate", { avatarId: MIA.avatarId, count: 5, categories: [LLM_ONLY_REF], poses: POSES }))).estimate;
     expect(whole.worstMicros - scenes.worstMicros).toBe(MOCK_RUN_WRITER.worstPerChunk);
     expect(whole.expectedMicros - scenes.expectedMicros).toBe(5 * MOCK_RUN_WRITER.expectedPerPhoto);
   });
