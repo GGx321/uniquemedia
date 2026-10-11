@@ -476,4 +476,18 @@ describe("a picked portrait is the avatar's master for everything that reads it"
     expect(Buffer.from(after ?? []).equals(Buffer.from(before ?? []))).toBe(false);
     expect(engine.library?.getPhoto(sourceId)).toBeDefined();
   });
+
+  test("the original a run's face gate compares with is the portrait too, and the imported photo again after a switch back", async () => {
+    const { avatarId, sourceId, portraitIds } = await seedImportedAvatar(dir(), { portraits: [0.76] });
+    const { engine } = await started();
+    const sourceBytes = await engine.library?.loadMasterOriginal(avatarId);
+
+    ok(await engine.handle(pick(avatarId, portraitIds[0] ?? "")));
+    const portraitBytes = await engine.library?.loadMasterOriginal(avatarId);
+
+    expect(Buffer.from(portraitBytes ?? []).equals(Buffer.from(portraitPng(2)))).toBe(true);
+    expect(Buffer.from(portraitBytes ?? []).equals(Buffer.from(sourceBytes ?? []))).toBe(false);
+    ok(await engine.handle(pick(avatarId, sourceId)));
+    expect(Buffer.from((await engine.library?.loadMasterOriginal(avatarId)) ?? []).equals(Buffer.from(sourceBytes ?? []))).toBe(true);
+  });
 });
