@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { StrictMode } from "react";
+import { StrictMode, useState, type ReactNode } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ERROR_MESSAGES_RU, type AvatarSummary } from "../../shared/engine";
 import { App } from "../App";
@@ -191,32 +191,67 @@ describe("18b · the landing's start refused before anything was paid", () => {
 
 // The import itself needs a working key and no halt, so these land on the card directly, with the landing the import's navigation hands over: the
 // screen's own hook and card, as «Внешность» holds them.
-describe("18b · never without a key or under a reconcile", () => {
-  const NINI: AvatarSummary = { ...MIA, avatarId: "avatar-nini-0004", name: "Nini", masterPhotoId: "photo-nini-source" };
+const NINI: AvatarSummary = { ...MIA, avatarId: "avatar-nini-0004", name: "Nini", masterPhotoId: "photo-nini-source" };
+type UsePortraits = typeof usePortraits;
 
-  function Card({ avatar, view, landing }: { avatar: AvatarSummary; view: EngineView; landing: LookLanding }) {
-    const blockedReason = paidBlockedReason(view);
-    const portraits = usePortraits(avatar, landing, { view, shown: true, ready: true, paidBlocked: blockedReason !== null });
-    return <MasterCard avatar={avatar} portraits={portraits} blockedReason={blockedReason} settingsFocus={paidSettingsFocus(view)} />;
-  }
+function Card({ avatar, view, landing, use }: { avatar: AvatarSummary; view: EngineView; landing: LookLanding; use: UsePortraits }) {
+  const blockedReason = paidBlockedReason(view);
+  const portraits = use(avatar, landing, { view, shown: true, ready: true, paidBlocked: blockedReason !== null });
+  return <MasterCard avatar={avatar} portraits={portraits} blockedReason={blockedReason} settingsFocus={paidSettingsFocus(view)} />;
+}
 
-  function Landed({ landing }: { landing: LookLanding }) {
-    const view = useEngineView();
-    const avatar = view.avatars.find((a) => a.avatarId === NINI.avatarId);
-    return view.phase !== "ready" || avatar === undefined ? null : <Card avatar={avatar} view={view} landing={landing} />;
-  }
+function Landed({ landing, use = usePortraits }: { landing: LookLanding; use?: UsePortraits }) {
+  const view = useEngineView();
+  const avatar = view.avatars.find((a) => a.avatarId === NINI.avatarId);
+  return view.phase !== "ready" || avatar === undefined ? null : <Card avatar={avatar} view={view} landing={landing} use={use} />;
+}
 
-  function land(engine: MockEngine): void {
+function Providers({ engine, children }: { engine: MockEngine; children: ReactNode }) {
+  const [client] = useState(() => mockEngineClient(engine));
+  return (
+    <EngineProvider client={client}>
+      <NavigationProvider value={{ navigate: () => undefined, guard: () => () => undefined }}>{children}</NavigationProvider>
+    </EngineProvider>
+  );
+}
+
+function land(engine: MockEngine): void {
+  const landing: LookLanding = { kind: "imported", check: null, portraitsWorstMicros: 300_000 };
+  render(
+    <Providers engine={engine}>
+      <Landed landing={landing} />
+    </Providers>,
+  );
+}
+
+describe("the landing's latch (review L5)", () => {
+  test("survives a reload of its own module (HMR): the window's store remembers the landing, so a new instance starts nothing again", async () => {
+    const engine = new MockEngine({ scheduler: new ManualScheduler(), latencyMs: 0, avatars: [NINI], portraits: [{ avatarId: NINI.avatarId, sourcePhotoId: NINI.masterPhotoId }] });
     const landing: LookLanding = { kind: "imported", check: null, portraitsWorstMicros: 300_000 };
-    render(
-      <EngineProvider client={mockEngineClient(engine)}>
-        <NavigationProvider value={{ navigate: () => undefined, guard: () => () => undefined }}>
-          <Landed landing={landing} />
-        </NavigationProvider>
-      </EngineProvider>,
+    const view = render(
+      <Providers engine={engine}>
+        <Landed key="first" landing={landing} />
+      </Providers>,
     );
-  }
+    await screen.findByRole("region", { name: "Мастер-портрет" });
+    await flush();
+    expect(callsOf(engine, "avatars.generatePortraits")).toHaveLength(1);
 
+    // A fresh instance of the hook's module, as a hot reload makes one: its module-level state starts empty.
+    const specifier = `./look/usePortraits.ts?reload=${String(Date.now())}`;
+    const reloaded: typeof import("./look/usePortraits") = await import(specifier);
+    expect(reloaded.usePortraits === usePortraits).toBe(false);
+    view.rerender(
+      <Providers engine={engine}>
+        <Landed key="second" landing={landing} use={reloaded.usePortraits} />
+      </Providers>,
+    );
+    await flush();
+    expect(callsOf(engine, "avatars.generatePortraits")).toHaveLength(1);
+  });
+});
+
+describe("18b · never without a key or under a reconcile", () => {
   test("no key: nothing is sent, and the card says why and that nothing was started", async () => {
     const engine = new MockEngine({
       scheduler: new ManualScheduler(),

@@ -360,6 +360,8 @@ export class EngineStore {
    * and a snapshot or a tab opened later must still read it as the owner's own cancel. Taken back when the engine refuses. Insertion-ordered, capped.
    */
   private readonly cancelAsked = new Set<string>();
+  /** What `claimOnce` has handed out, by purpose (S5.3d review L5). */
+  private readonly claimed = new Map<string, WeakSet<object>>();
   private held: EventMessage[] = [];
   private syncing = false;
   private queuedSnapshot = false;
@@ -551,6 +553,18 @@ export class EngineStore {
   /** Records a job this window just started; merges with any events that beat the reply. */
   trackCandidatesJob(jobId: string, avatarId: string): void {
     this.patchJob({ kind: "avatar.candidates", jobId, avatarId }, (job) => job);
+  }
+
+  /**
+   * True the first time `key` (an object the window keeps, a route's landing say) is claimed for `purpose`, false ever after in this window. Kept by the
+   * store, not by a module of a screen: a hot reload of that module (or a screen mounted again) must not act on the same landing twice (S5.3d review L5).
+   */
+  claimOnce(purpose: string, key: object): boolean {
+    const claimed = this.claimed.get(purpose) ?? new WeakSet<object>();
+    this.claimed.set(purpose, claimed);
+    if (claimed.has(key)) return false;
+    claimed.add(key);
+    return true;
   }
 
   /**

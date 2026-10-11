@@ -113,6 +113,15 @@ test("a candidates batch first heard of at its job.done is still a candidates ba
   expect(store.getView().jobs.find((j) => j.jobId === "job-00000098")?.kind).toBe("avatar.candidates");
 });
 
+test("claimOnce hands a key out once per purpose, for the window's life (review L5: the landing's latch lives here, not in a screen's module)", async () => {
+  const { store } = await started();
+  const landing = { kind: "imported" };
+  expect(store.claimOnce("portraits-landing", landing)).toBe(true);
+  expect(store.claimOnce("portraits-landing", landing)).toBe(false);
+  expect(store.claimOnce("portraits-landing", { kind: "imported" })).toBe(true);
+  expect(store.claimOnce("another-purpose", landing)).toBe(true);
+});
+
 test("a portrait batch with no total yet counts its 5 slots in «Генерация», beside a candidates batch's 4", () => {
   const base = { avatarId: "avatar-mia-0001", runId: null, montageId: null, videoId: null, status: "running" as const, saving: false, done: 0, total: 0, result: null, error: null };
   const counts = sidebarCounts(

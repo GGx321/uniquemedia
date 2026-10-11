@@ -97,8 +97,11 @@ export interface Portraits {
   reprice(): void;
 }
 
-/** Landings already acted on: a screen mounted again for the same route (React's development double mount, say) never starts a second paid batch. */
-const consumed = new WeakSet<LookLanding>();
+/**
+ * What the window's store remembers of the landings this hook acted on (`EngineStore.claimOnce`): a screen mounted again for the same route (React's
+ * development double mount, say), or this module reloaded by HMR, never starts a second paid batch (review L5).
+ */
+const LANDING_PURPOSE = "portraits-landing";
 
 /**
  * `shown`: the tab is on screen (the price is asked for then); `ready`: the engine answers; `paidBlocked`: a paid command would be refused before any
@@ -237,8 +240,7 @@ export function usePortraits(
   // After «Импортировать»: the batch the import screen priced under its button, started once, at the worst case it showed. Never without a key or under a
   // reconcile (or another halt): it is then not sent at all, and the card says so.
   useEffect(() => {
-    if (landing?.kind !== "imported" || !ready || consumed.has(landing)) return;
-    consumed.add(landing);
+    if (landing?.kind !== "imported" || !ready || !store.claimOnce(LANDING_PURPOSE, landing)) return;
     if (landing.portraitsWorstMicros === null) return;
     if (paidBlocked) {
       setLandingSkipped(true);
