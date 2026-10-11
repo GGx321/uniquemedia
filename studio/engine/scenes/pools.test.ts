@@ -82,7 +82,29 @@ describe("C1 pool text", () => {
     expect(text).not.toMatch(/wheat|field/i);
   });
 
-  // The photoshoot cardigan outfit and the 8 new glamour outfits are NOT here: they break POOL_TEXT_MAX (35) and, for satin and velvet, the soft list. Reported.
+  test("photoshoot swaps the trench coat for a cropped cardigan and jeans", () => {
+    expect(POOLS.photoshoot.outfits).toEqual(["a loose blazer over a tee and jeans", "a black going-out dress", "a denim jacket and jeans", "a monochrome knit set", "a cropped cardigan and jeans"]);
+  });
+
+  test("glamour draws from eleven outfits, in this order", () => {
+    expect(POOLS.glamour.outfits).toEqual([
+      "a fitted black bodycon dress",
+      "a mini skirt with a cropped top",
+      "a corset top and high-rise trousers",
+      "a long-sleeved red mini dress",
+      "a white top and leather mini skirt",
+      "a silver sequin top and trousers",
+      "an emerald blouse and leather skirt",
+      "a fitted beige knit midi dress",
+      "a halter top and a midi skirt",
+      "a navy wrap dress",
+      "an off-shoulder top and jeans",
+    ]);
+  });
+
+  test("the glamour outfits are distinct", () => {
+    expect(new Set(POOLS.glamour.outfits).size).toBe(POOLS.glamour.outfits.length);
+  });
 });
 
 describe("the pool schema catches a malformed pool", () => {

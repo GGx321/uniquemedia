@@ -254,7 +254,7 @@ export const POOLS: Record<Category, Pool> = {
         activities: [one("sitting at a small table with a cup"), one("resting her chin on her hand"), one("looking out of the window")],
       },
     ],
-    outfits: ["a loose blazer over a tee and jeans", "a black going-out dress", "a denim jacket and jeans", "a monochrome knit set", "a trench coat"],
+    outfits: ["a loose blazer over a tee and jeans", "a black going-out dress", "a denim jacket and jeans", "a monochrome knit set", "a cropped cardigan and jeans"],
     shotDeck: PHOTOSHOOT_SHOT_DECK,
   },
   glamour: {
@@ -309,8 +309,24 @@ export const POOLS: Record<Category, Pool> = {
     // checks on every model in the spike. The bodycon dress is untested
     // there; per the same decision it relies on the one-attempt Seedream
     // fallback if Grok refuses it. Bikinis, lingerie and slip dresses are
-    // dropped entirely, not merely gated.
-    outfits: ["a fitted black bodycon dress", "a mini skirt with a cropped top", "a corset top and high-rise trousers"],
+    // dropped entirely, not merely gated. The 8 outfits after the first
+    // three (C1, owner canary: «glamour is always the black dress») passed
+    // a refusal probe on the owner's quality model on 2026-10-11, one draw
+    // each, in longer wordings of the same garments; the shortened names
+    // here fit POOL_TEXT_MAX.
+    outfits: [
+      "a fitted black bodycon dress",
+      "a mini skirt with a cropped top",
+      "a corset top and high-rise trousers",
+      "a long-sleeved red mini dress",
+      "a white top and leather mini skirt",
+      "a silver sequin top and trousers",
+      "an emerald blouse and leather skirt",
+      "a fitted beige knit midi dress",
+      "a halter top and a midi skirt",
+      "a navy wrap dress",
+      "an off-shoulder top and jeans",
+    ],
     shotDeck: DEFAULT_SHOT_DECK,
   },
   fitness: {
