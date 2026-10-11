@@ -260,6 +260,23 @@ test.each(["hlg", "pq"])("an %s source keeps its white, skin and green within dE
   bands.forEach((rgb, k) => expect(deltaE2000(TRUTH[k], rgb)).toBeLessThan(2));
 });
 
+test("an HLG source that states only its transfer is read as BT.2020 and rendered", async () => {
+  // Tagged with the transfer alone: the matrix and primaries are guessed, and
+  // the guess has to reach every zscale of the chain — one that took its
+  // primaries from the frame failed with "no path between colorspaces".
+  const bare = join(dir, "hlg_bare.mp4");
+  makeClip(bare, `${HDR_IN("arib-std-b67")},setparams=color_primaries=unknown:colorspace=unknown`, [
+    "-color_trc", "arib-std-b67", "-color_range", "tv",
+  ]);
+  const tags = streamTags(bare);
+  expect(tags).toContain("color_transfer=arib-std-b67");
+  expect(tags).not.toContain("color_primaries=bt2020");
+  expect(tags).not.toContain("color_space=bt2020nc");
+  const copy = join(dir, "hlg_bare_out.mp4");
+  await exec.render(bare, await exec.probe(bare), sampleRecipe(opts, 5, 1), copy);
+  bandsOf(copy).forEach((rgb, k) => expect(deltaE2000(TRUTH[k], rgb)).toBeLessThan(2));
+});
+
 test.each(["hlg", "pq"])("an %s source's white is neutral, not grey-green", (name) => {
   const [r, g, b] = bandsOf(out[name])[WHITE];
   expect(Math.abs(r - g)).toBeLessThanOrEqual(1);

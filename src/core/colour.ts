@@ -92,11 +92,16 @@ export function sourceToBt709(info: MediaInfo, zscale: boolean): string | null {
   if (!color) return null;
   const hdr = HDR_TRANSFERS.has(color.transfer);
   const r = readingOf(color, info.height, hdr);
-  const input = `min=${r.matrix}:rin=${r.range}:tin=${r.transfer}:pin=${r.primaries}`;
+  // The reading goes onto the frames rather than into one filter's input
+  // options: every zscale and the colorspace filter after it take what they
+  // are not told from the frame, and a first zscale told its input primaries
+  // but not its output ones read the output from an untagged frame and failed
+  // ("no path between colorspaces").
+  const tags = `setparams=colorspace=${r.matrix}:color_primaries=${r.primaries}:color_trc=${r.transfer}:range=${r.range}`;
 
   if (hdr) {
     if (!zscale) throw new Error(HDR_WITHOUT_ZSCALE);
-    return `zscale=${input}:t=linear:npl=203,${TONEMAP}`;
+    return `${tags},zscale=t=linear:npl=203,${TONEMAP}`;
   }
 
   const already =
@@ -108,11 +113,6 @@ export function sourceToBt709(info: MediaInfo, zscale: boolean): string | null {
     !isRgb(color.pixFmt);
   if (already) return null;
 
-  if (!zscale) {
-    return (
-      `colorspace=ispace=${r.matrix}:itrc=${r.transfer}:iprimaries=${r.primaries}:irange=${r.range}:` +
-      "all=bt709:range=tv:format=yuv420p"
-    );
-  }
-  return `zscale=${input}:m=709:t=709:p=709:r=tv:dither=ordered,format=yuv420p`;
+  if (!zscale) return `${tags},colorspace=all=bt709:range=tv:format=yuv420p`;
+  return `${tags},zscale=m=709:t=709:p=709:r=tv:dither=ordered,format=yuv420p`;
 }

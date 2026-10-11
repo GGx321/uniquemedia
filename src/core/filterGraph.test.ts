@@ -230,5 +230,6 @@ test("a BT.709 limited-range 8-bit source keeps the graph it had", () => {
 test("without zscale the conversion is the colorspace filter's", () => {
   const fc = complexOf(buildArgs(recipe, SD601, false));
   expect(fc.startsWith(`[0:v]${sourceToBt709(SD601, false)},`)).toBe(true);
-  expect(fc).toContain("[0:v]colorspace=");
+  expect(fc).toContain(",colorspace=all=bt709:range=tv:format=yuv420p,");
+  expect(fc).not.toContain("zscale");
 });
