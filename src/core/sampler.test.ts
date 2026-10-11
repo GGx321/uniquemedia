@@ -61,23 +61,23 @@ test("crf varies around neutral and is not pinned to the clamp ceiling", () => {
   for (let seed = 0; seed < 60; seed++) {
     const recipe = sampleRecipe(opts, seed, 1);
     const crf = Number(recipe.video.find((o) => o.id === "encode")!.params.crf);
-    expect(crf).toBeGreaterThanOrEqual(18);
-    expect(crf).toBeLessThanOrEqual(22);
+    expect(crf).toBeGreaterThanOrEqual(17);
+    expect(crf).toBeLessThanOrEqual(20);
     values.add(crf);
   }
-  // must not be a single pinned value, and the average should sit near 20, not 22
+  // must not be a single pinned value, and the average should sit near 18.5, not 20
   expect(values.size).toBeGreaterThan(1);
 });
 
-test("never draws a crf outside 18–22, whatever the seed or intensity", () => {
+test("never draws a crf outside 17–20, whatever the seed or intensity", () => {
   // Auto-strengthen raises intensity on a failed PDQ attempt, which widens every
   // draw; the crf band has to hold there too, or the escalated copy is the one
   // that ships at a quality the band was chosen to rule out.
   for (const intensity of [1, 1.5, 2, 3]) {
     for (let seed = 0; seed < 300; seed++) {
       const crf = Number(sampleRecipe(opts, seed, intensity).video.find((o) => o.id === "encode")!.params.crf);
-      expect(crf).toBeGreaterThanOrEqual(18);
-      expect(crf).toBeLessThanOrEqual(22);
+      expect(crf).toBeGreaterThanOrEqual(17);
+      expect(crf).toBeLessThanOrEqual(20);
     }
   }
 });

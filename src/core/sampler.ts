@@ -104,7 +104,7 @@ export function sampleRecipe(opts: ResolvedCopyOptions, seed: number, intensity 
     fraction: w / weightSum,
     speed: round(clamp(dev(rng, "speed", s), 0.9, 1.1)),
   }));
-  const crf = Math.round(clamp(dev(rng, "crf", s), 18, 22));
+  const crf = Math.round(clamp(dev(rng, "crf", s), 17, 20));
 
   // Container/bitstream signature spread. Drawn here (before the conditional
   // audio draw) so they stay independent of `keepTrendAudio`, and they ignore

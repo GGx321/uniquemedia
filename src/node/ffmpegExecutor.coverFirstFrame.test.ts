@@ -35,7 +35,7 @@ const SOURCE_FPS = 15;
 const SIDE = 64;
 
 /** A re-encode alone moves PDQ by 0-2 on texture (design notes); frame 0 is
- *  the fitted cover through x264 at crf 18-22, so a few bits more. Well under
+ *  the fitted cover through x264 at crf 17-20, so a few bits more. Well under
  *  the 38 the pipeline calls "different". */
 const SAME_PICTURE_MAX = 16;
 
