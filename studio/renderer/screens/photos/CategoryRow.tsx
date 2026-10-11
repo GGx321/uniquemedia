@@ -172,7 +172,7 @@ export function CategoryRow({
           </button>
         </span>
       )}
-      {on.has("glam") && <span className="faint photos-note photos-cats-note">Гламур — только неоткровенные наряды: мини, корсет, облегающее платье.</span>}
+      {on.has("glam") && <span className="faint photos-note photos-cats-note">Гламур — наряды на выход: платья, юбки, топы.</span>}
     </div>
   );
 }

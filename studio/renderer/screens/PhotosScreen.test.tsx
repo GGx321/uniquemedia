@@ -224,7 +224,7 @@ test("the stepper stays within 5–100 photos at the top too, and stays put past
 test("with no category chosen there is nothing to price and nothing to start", async () => {
   const { engine } = await openPhotos();
   await priced();
-  for (const name of [/^Дом/, /^Путешествия/, /^Фотосессия/, /^Гламур 18\+/, /^Фитнес/]) fireEvent.click(screen.getByRole("button", { name }));
+  for (const name of [/^Дом/, /^Путешествия/, /^Фотосессия/, /^Гламур/, /^Фитнес/]) fireEvent.click(screen.getByRole("button", { name }));
   await flush();
 
   expect(isDisabled(goButton())).toBe(true);
@@ -232,7 +232,7 @@ test("with no category chosen there is nothing to price and nothing to start", a
   expect(screen.getByText("Выберите хотя бы одну категорию.")).toBeDefined();
   // Priced at every step down to one category, never with none (the contract requires at least one).
   expect(callsOf(engine, "runs.estimate").map((c) => c.payload.categories.length)).toEqual([5, 4, 3, 2, 1]);
-  expect(screen.queryByText(/Гламур — только неоткровенные наряды/) === null).toBe(true);
+  expect(screen.queryByText(/Гламур — наряды на выход/) === null).toBe(true);
 });
 
 test("turning off every category clears a stale estimate error, not just the price (L12)", async () => {
@@ -245,7 +245,7 @@ test("turning off every category clears a stale estimate error, not just the pri
 
   // Two categories left; the next estimate (for one category left) fails.
   engine.failNext("runs.estimate", { code: "NETWORK" });
-  fireEvent.click(screen.getByRole("button", { name: /^Гламур 18\+/ })); // one left: Фитнес
+  fireEvent.click(screen.getByRole("button", { name: /^Гламур/ })); // one left: Фитнес
   await screen.findByText(ERROR_MESSAGES_RU.NETWORK);
 
   fireEvent.click(screen.getByRole("button", { name: /^Фитнес/ })); // the last one off: nothing left to price
