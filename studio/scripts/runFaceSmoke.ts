@@ -20,11 +20,26 @@ export interface MismatchTarget {
   prompt: string;
 }
 
-/** The first face-judged slot (in slot order) that has a prompt: a faceless image on any other slot is only marked, so it would never retry. Null when there is none. */
-export function pickMismatchTarget(slots: readonly RunSlot[], prompts: ReadonlyMap<number, string>): MismatchTarget | null {
+/** The latest prompt the journal holds for each slot (a later `prompts` event replaces an earlier one). */
+export function latestPrompts(events: readonly RunEvent[]): Map<number, string> {
+  const latest = new Map<number, string>();
+  for (const e of events) if (e.type === "prompts") for (const p of e.prompts) latest.set(p.slotIndex, p.prompt);
+  return latest;
+}
+
+/** The slots the journal has already ended (done or failed): nothing more is requested for them. */
+export function endedSlots(events: readonly RunEvent[]): Set<number> {
+  return new Set(events.flatMap((e) => (e.type === "slot" ? [e.slotIndex] : [])));
+}
+
+/**
+ * The first face-judged slot (in slot order) that has a prompt and is not yet ended: a faceless image on any other slot is only marked, so it would never
+ * retry, and an ended slot is never asked for again. Null when there is none.
+ */
+export function pickMismatchTarget(slots: readonly RunSlot[], prompts: ReadonlyMap<number, string>, ended: ReadonlySet<number> = new Set()): MismatchTarget | null {
   for (const slot of slots) {
     const prompt = prompts.get(slot.slotIndex);
-    if (prompt !== undefined && isFaceJudged(slot)) return { slotIndex: slot.slotIndex, prompt };
+    if (prompt !== undefined && isFaceJudged(slot) && !ended.has(slot.slotIndex)) return { slotIndex: slot.slotIndex, prompt };
   }
   return null;
 }

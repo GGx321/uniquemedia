@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { RunEvent } from "../engine/runs/journal";
 import type { PlanSlot } from "../engine/scenes";
-import { faceRetryProblems, faceScoreProblems, isFaceJudged, pickMismatchTarget, slotIndexByPhoto } from "./runFaceSmoke";
+import { endedSlots, faceRetryProblems, faceScoreProblems, isFaceJudged, latestPrompts, pickMismatchTarget, slotIndexByPhoto } from "./runFaceSmoke";
 
 const BASE = {
   category: "home",
@@ -45,9 +45,31 @@ describe("pickMismatchTarget", () => {
     expect(pickMismatchTarget(SLOTS, new Map([[5, "prompt 5"]]))).toEqual({ slotIndex: 5, prompt: "prompt 5" });
   });
 
+  test("skips a face-visible slot the journal has already ended", () => {
+    expect(pickMismatchTarget(SLOTS, prompts, new Set([4]))).toEqual({ slotIndex: 5, prompt: "prompt 5" });
+    expect(pickMismatchTarget(SLOTS, prompts, new Set([4, 5]))).toBeNull();
+  });
+
   test("is null when no slot is face-visible or none has a prompt", () => {
     expect(pickMismatchTarget(SLOTS.slice(0, 3), prompts)).toBeNull();
     expect(pickMismatchTarget(SLOTS, new Map())).toBeNull();
+  });
+});
+
+describe("latestPrompts and endedSlots", () => {
+  const events: RunEvent[] = [
+    { type: "prompts", prompts: [{ slotIndex: 4, prompt: "old" }, { slotIndex: 5, prompt: "five" }], at: AT },
+    { type: "slot", slotIndex: 5, status: "done", photoId: "p5", at: AT },
+    { type: "slot", slotIndex: 1, status: "failed", error: { code: "INTERNAL", detail: "x" }, at: AT },
+    { type: "prompts", prompts: [{ slotIndex: 4, prompt: "new" }], at: AT },
+  ];
+
+  test("a later prompts event replaces the earlier prompt of a slot, and keeps the others", () => {
+    expect([...latestPrompts(events)].sort()).toEqual([[4, "new"], [5, "five"]]);
+  });
+
+  test("done and failed slots are both ended", () => {
+    expect([...endedSlots(events)].sort()).toEqual([1, 5]);
   });
 });
 

@@ -126,7 +126,7 @@ import { RunEventSchema, type RunEvent } from "../engine/runs/journal";
 import { RunPlanSchema } from "../engine/runs/plan";
 import type { RunSlot } from "../engine/scenes";
 import { JOURNAL_FILE, PLAN_FILE, RUNS_DIR } from "../engine/library/layout";
-import { faceRetryProblems, faceScoreProblems, isFaceJudged, pickMismatchTarget, slotIndexByPhoto, type MismatchTarget } from "./runFaceSmoke";
+import { endedSlots, faceRetryProblems, faceScoreProblems, isFaceJudged, latestPrompts, pickMismatchTarget, slotIndexByPhoto, type MismatchTarget } from "./runFaceSmoke";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
 import { APP_PAGE_URL, APP_SCHEME, isAppPage } from "../main/appProtocol";
 import { AutopilotGetResult, PROTOCOL_VERSION } from "../shared/engine";
@@ -2170,18 +2170,18 @@ function findRunSummary(listResult: unknown, runId: unknown): unknown {
 
 /** Whichever of job.done/job.failed/job.cancelled came in for `jobId`, or null until one has. */
 /**
- * The photo run's face-mismatch aim: reads the run's own plan.json and its journal's prompts (plain files, like every other direct library read here), arms
- * the mock's faceless image for the first slot whose face shows, then lets the held image requests through. Always releases the hold, whatever it finds.
+ * The photo run's face-mismatch aim: reads the run's own plan.json and journal (plain files, like every other direct library read here), arms the mock's
+ * faceless image for the first slot that is still open and whose face shows, then lets the held image requests through. Always releases the hold.
  */
 async function aimFaceMismatch(mock: MockOpenRouter, hold: ImageHold, libraryRoot: string, runId: string): Promise<{ slots: RunSlot[]; target: MismatchTarget | null }> {
   try {
     const runDir = join(libraryRoot, RUNS_DIR, runId);
     const plan = RunPlanSchema.parse(JSON.parse(await readFile(join(runDir, PLAN_FILE), "utf8")));
-    const prompts = await waitFor(
+    const events = await waitFor(
       "the run's prompts in its journal",
       async () => {
         const lines = (await readFile(join(runDir, JOURNAL_FILE), "utf8").catch(() => "")).split("\n");
-        const latest = new Map<number, string>();
+        const read: RunEvent[] = [];
         for (const line of lines) {
           if (line.trim() === "") continue;
           let parsed: ReturnType<typeof RunEventSchema.safeParse>;
@@ -2190,14 +2190,14 @@ async function aimFaceMismatch(mock: MockOpenRouter, hold: ImageHold, libraryRoo
           } catch {
             continue; // a line the engine is still appending
           }
-          if (parsed.success && parsed.data.type === "prompts") for (const p of parsed.data.prompts) latest.set(p.slotIndex, p.prompt);
+          if (parsed.success) read.push(parsed.data);
         }
-        return latest.size > 0 ? latest : null;
+        return latestPrompts(read).size > 0 ? read : null;
       },
       60_000,
     );
     const slots = plan.scenes.slots;
-    const target = pickMismatchTarget(slots, prompts);
+    const target = pickMismatchTarget(slots, latestPrompts(events), endedSlots(events));
     if (target !== null) mock.armFaceMismatch(target.prompt);
     return { slots, target };
   } finally {
@@ -2306,8 +2306,8 @@ async function createActiveAvatarForRun(cdp: Cdp, name: string, scenario = "run 
  * mandelbrot portrait and pattern, so every face-visible slot can actually
  * pass instead of retrying forever (face-hidden and body frames are only
  * marked). L9: `armFaceMismatch` additionally makes exactly one served
- * image — the one for the prompt of the first face-visible slot of the
- * run's own plan, read at start — a genuine "no face detected" instead: this
+ * image — the one for the prompt of the first still-open face-visible slot
+ * of the run's own plan after the restart — a genuine "no face detected" instead: this
  * scenario's own step 8c proves that slot's first attempt retries and a
  * later attempt passes, not only that the always-matches path works.
  *
@@ -2317,9 +2317,9 @@ async function createActiveAvatarForRun(cdp: Cdp, name: string, scenario = "run 
  * requests, and no `qa.age` verdict on any photo.
  */
 async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
-  // The induced "no face detected" image is aimed by PROMPT, after the run's own plan is read (`aimFaceMismatch` below): the plan is seeded per run and
-  // holds face-hidden and body frames the gate only marks and never retries, so a mismatch by arrival index would land on one of them by chance. It
-  // is armed after the avatar's candidates and master are made, so it can never corrupt the master (MASTER_FACE_UNUSABLE).
+  // The induced "no face detected" image is aimed by PROMPT, after the restart (`aimFaceMismatch`): the plan is seeded per run and holds face-hidden and
+  // body frames the gate only marks and never retries, so an arrival index would land on one of them by chance; and armed only for the RESUMED job, so the
+  // killed engine can never consume it. It also can never corrupt the master (MASTER_FACE_UNUSABLE).
   const mock = await startMockOpenRouter({
     descriptorText: AVATAR_DESCRIPTOR,
     imageDelayMs: RUN_REQUEST_DELAY_MS,
@@ -2358,18 +2358,10 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
     const usageBeforeRun = mock.totalUsageUsd();
     const imagesBeforeRun = mock.imageRequests().length;
     const writersBeforeRun = mock.sceneWriterRequests().length;
-    // Every image request of the run waits until the mismatch is aimed at a slot whose face shows (read from the run's own plan).
-    const imageHold = mock.holdImages();
     const started = await req(cdp, "runs.start", { ...runRequest, acceptedWorstMicros: startAcceptedWorstMicros });
     check("run scenario: runs.start plans and launches the run", field(started, "ok") === true, started);
     const runId = String(field(started, "result", "runId"));
     const firstJobId = field(started, "result", "jobId");
-    const aimed = await aimFaceMismatch(mock, imageHold, libraryRoot, runId);
-    check(
-      "run scenario: the plan has a face-visible slot, and the induced face mismatch is aimed at it by its prompt",
-      aimed.target !== null,
-      { slots: aimed.slots.map((s) => ({ slotIndex: s.slotIndex, faceJudged: isFaceJudged(s) })) },
-    );
 
     // 2. Kill on an observed state — some slots done, some still in flight — never a fixed sleep.
     const midFlight = await waitFor(
@@ -2457,8 +2449,17 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
       resumeEstimate,
     );
     const resumeAcceptedWorstMicros = Number(field(resumeEstimate, "result", "estimate", "worstMicros"));
+    // The induced face mismatch belongs to the RESUMED job: the killed engine can never consume it. Its image requests wait until the mismatch is armed
+    // at a still-open slot whose face shows (read from the persisted plan and journal).
+    const imageHold = mock.holdImages();
     const resumed = await req(cdp, "runs.resume", { runId, acceptedWorstMicros: resumeAcceptedWorstMicros });
     check("run scenario: runs.resume continues the run from its persisted state", field(resumed, "ok") === true, resumed);
+    const aimed = await aimFaceMismatch(mock, imageHold, libraryRoot, runId);
+    check(
+      "run scenario: an open slot with a visible face exists after the restart, and the induced face mismatch is aimed at it by its prompt",
+      aimed.target !== null,
+      { slots: aimed.slots.map((s) => ({ slotIndex: s.slotIndex, faceJudged: isFaceJudged(s) })) },
+    );
     const secondJobId = field(resumed, "result", "jobId");
 
     // 7. Wait for the resumed run to finish, then check its final state.
