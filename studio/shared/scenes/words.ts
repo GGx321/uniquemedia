@@ -46,6 +46,10 @@ export const OWN_GAZE_WORDS =
 /** A moment that shows her expression itself (laughs, smiles) carries it: the template adds no cue (review M3). */
 export const EXPRESSION_WORDS = /\b(?:laugh\w*|smil\w*|grin\w*|pout\w*|frown\w*|smirk\w*|giggl\w*)\b/i;
 
+/** Her hips named high or above her head: the prone composition the owner rejected three times (a too-long torso). Checked with HIPS_WORDS. */
+export const HIGH_WORDS = /\bhigh(?:er)?\b|\babove her head\b/i;
+export const HIPS_WORDS = /\bhips?\b/i;
+
 /** A moment that opens on a look carries its own gaze. */
 export const GAZE_VERBS = /^(looks|glances|gazes|stares|peers|watches|smiles)\b/i;
 

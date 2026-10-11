@@ -108,6 +108,9 @@ describe("a category bank", () => {
     ["a moment that laughs without the expression tag (a cue would contradict it)", { ...plain, text: "laughs on her way inside" }, BANK_RULE.momentExpression],
     ["a moment that smiles without the expression tag", { ...plain, text: "smiles across the table", gaze: "own" }, BANK_RULE.momentExpression],
     ["an expression tag on a moment that shows none", { ...plain, expression: true }, BANK_RULE.momentExpression],
+    ["hips high in a moment (the owner rejected it three times: it reads as a too-long torso)", { ...plain, text: "lies prone, hips high in the air" }, BANK_RULE.hipsHigh],
+    ["hips higher in a motion", { ...plain, motion: "she lifts her hips a little higher" }, BANK_RULE.hipsHigh],
+    ["hips above her head in a start pose", { ...plain, startPose: "hips above her head" }, BANK_RULE.hipsHigh],
     ["a feet-up moment without the no-legwear tag (plan r1.4: Grok refused legs up in tights)", { ...plain, text: "lies on her stomach, feet raised" }, BANK_RULE.noLegwear],
     ["feet on a railing without the no-legwear tag", { ...plain, text: "sits with her feet on the railing" }, BANK_RULE.noLegwear],
   ];

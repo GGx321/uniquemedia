@@ -125,8 +125,13 @@ describe("what any content must keep", () => {
   test("«Дом» has none of the compositions the owner did not approve: kneeling at the mirror, hips high above her head", () => {
     for (const moment of moments("home")) {
       expect(moment.text).not.toMatch(/kneel/);
-      expect(moment.text).not.toMatch(/above her head/);
+      for (const text of [moment.text, moment.motion, moment.startPose ?? ""]) expect(text).not.toMatch(/\bhigh(?:er)?\b|above her head/);
     }
+  });
+
+  // Review M4: the approved prone wording keeps her hips behind her, to one side, in natural proportions.
+  test("«Дом» carries the approved «hips behind» prone wording", () => {
+    expect(moments("home").some((m) => m.captures.includes("prone") && /hips behind/.test(m.text))).toBe(true);
   });
 
   test("no denim shorts and no denim skirts anywhere (the owner)", () => {

@@ -13,6 +13,8 @@ import {
   HAIR_COLOUR_WORDS,
   HAIR_WORDS,
   HELD_OBJECT_WORDS,
+  HIGH_WORDS,
+  HIPS_WORDS,
   LYING_START,
   MOTION_SMALL,
   MOTION_STAGING,
@@ -53,6 +55,7 @@ export const BANK_RULE = {
   legsCapture: "legs-capture",
   timerHands: "timer-hands",
   aboveLying: "above-lying",
+  hipsHigh: "hips-high",
   pinnedOutfit: "pinned-outfit",
   motionGrammar: "motion-grammar",
   motionStaging: "motion-staging",
@@ -157,6 +160,9 @@ function checkMoment(add: Add, where: string, moment: Moment, place: { room?: tr
   if (moment.legs === undefined && captures.some((c) => LEGS_CAPTURES.includes(c))) add(BANK_RULE.legsCapture, where, "only a legs moment fits a legs capture («Ножки», 5a.2c)");
   if (captures.includes("timer") && HELD_OBJECT_WORDS.test(text)) add(BANK_RULE.timerHands, where, "a timer frame shows both of her hands empty: its moment holds nothing");
   if (captures.includes("above") && !LYING_START.test(text)) add(BANK_RULE.aboveLying, where, "a close selfie from above is taken as she lies there: its moment lies down");
+  for (const said of [text, moment.motion, moment.startPose ?? ""]) {
+    if (HIPS_WORDS.test(said) && HIGH_WORDS.test(said)) add(BANK_RULE.hipsHigh, where, "her hips stay behind her in natural proportions, never high or above her head (the owner)");
+  }
   if (MIRROR.test(text) && !captures.every(isMirrorCapture)) add(BANK_RULE.mirrorWord, where, "a moment that names a mirror fits mirror captures only");
   if (captures.some(isMirrorCapture) && place.mirror !== true) add(BANK_RULE.mirrorPlace, where, "a mirror capture needs a mirror place");
   for (const outfit of moment.outfits ?? []) if (!outfits.has(outfit)) add(BANK_RULE.pinnedOutfit, where, `pins «${outfit}», which is not one of the category's outfits`);

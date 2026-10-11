@@ -59,7 +59,7 @@ export const HOME: CategoryBank = {
         { text: "sits cross-legged on the bed", motion: "she rocks a little side to side", captures: ["timer"], twoHanded: false },
         { text: "rests her cheek on the pillow", motion: "she slowly closes her eyes", captures: ["above"], twoHanded: false },
         { text: "lies curled under the blanket", motion: "she pulls the blanket up a little", captures: ["above", "timer"], twoHanded: false, messyOk: true },
-        { text: "lies on her stomach, hips raised", motion: "she lifts her hips a little higher", captures: ["prone"], twoHanded: false, outfits: PRONE },
+        { text: "lies prone, hips behind to one side", motion: "she shifts her hips a little", captures: ["prone"], twoHanded: false, outfits: PRONE },
         { text: "lies on her stomach, head tilted", motion: "she tilts her head a little", captures: ["prone"], twoHanded: false, outfits: PRONE },
       ],
     },
