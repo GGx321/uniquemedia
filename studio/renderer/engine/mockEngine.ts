@@ -13,6 +13,7 @@ import {
   type ApiKeyStatus,
   type AutoRefresh,
   type MusicKeyStatus,
+  type AvatarPortraits,
   type AvatarStatus,
   type AvatarSummary,
   type AvatarTraits,
@@ -29,6 +30,7 @@ import {
   EventLog,
   type EventMessage,
   type FailedCandidateSlot,
+  type FailedPortraitSlot,
   type FileState,
   type ImageAgeCheck,
   type ImageQuality,
@@ -41,6 +43,8 @@ import {
   type LedgerUnavailable,
   MAX_LISTED_PHOTOS,
   MAX_LISTED_RUNS,
+  PORTRAIT_CANDIDATES_MAX,
+  PORTRAITS_PER_BATCH,
   type CategoryInterrupted,
   type CategorySummary,
   type CustomCategoryId,
@@ -97,6 +101,19 @@ import { demoTracks, listedTracks, mockTrack, peaksOfTrack, storedTrack, type Mo
 import { mockOwnStickerBytes, mockStickerBytes, mockStickerUrl } from "./mockStickers";
 import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, videoKindOf } from "./mockRender";
 import { MOCK_IMAGE_CATALOGUE } from "./mockImageModels";
+import {
+  byLikeness,
+  failedSlotOf,
+  MOCK_PORTRAIT_AGE_MICROS,
+  MOCK_PORTRAIT_IMAGE_MICROS,
+  MOCK_PORTRAIT_SLOTS,
+  mockPortraitsEstimate,
+  portraitsView,
+  portraitStateOf,
+  type MockPortraitSeed,
+  type MockPortraitSlot,
+  type MockPortraitState,
+} from "./mockPortraits";
 import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
 import { bodyCompositeRefusal, descriptorEditOutcome } from "./mockAvatarEdit";
@@ -276,6 +293,13 @@ export interface MockEngineOptions {
    * with an import's body proposal waiting (a photo to the waist); off unless asked. A face-only import (05) is the landing of an import itself.
    */
   demoBody?: boolean;
+  /**
+   * S5.3c: with the `demo` preset, the dev build's «Внешность» shows the reference portrait states of .omc/stage5/design: an imported Nini whose master is the imported photo, and Ava
+   * with a portrait master, its source and three pending candidates; off unless asked.
+   */
+  demoPortraits?: boolean;
+  /** S5.3c: the avatars that are IMPORTED (they have a source photo), with the portraits they hold; an avatar not listed is a wizard avatar. */
+  portraits?: readonly MockPortraitSeed[];
   scheduler?: Scheduler;
   /** Delay before each response; 0 answers on the next microtask. */
   latencyMs?: number;
@@ -517,6 +541,21 @@ interface MockJob {
   cancelTimers: (() => void)[];
 }
 
+/** S5.3c: a reference portrait batch while it is in the mock, as `MockJob` is for a candidates batch. */
+interface MockPortraitJob {
+  jobId: string;
+  avatarId: string;
+  status: JobState["status"];
+  done: number;
+  total: number;
+  /** The portraits made so far, in slot order (the result lists them best first). */
+  candidates: { avatarId: string; photoId: string; likeness: number }[];
+  /** Every slot that gave no candidate, in slot order. */
+  failedSlots: FailedPortraitSlot[];
+  error: EngineError | null;
+  cancelTimers: (() => void)[];
+}
+
 /** S4.9c: one video of a seeded launch (`MockEngine.seedLaunch`): its shape, its state, and for a finished one its length, size, track and «Опубликовано». */
 export interface MockLaunchVideoSeed {
   readonly avatarId: string;
@@ -714,6 +753,11 @@ export class MockEngine implements EngineBridge {
   /** What a seeded `descriptor-invalid` entry recovers to, by avatarId; entries seeded without one (or for any other reason) cannot be rewritten. */
   private readonly rewritable = new Map<string, RewriteTarget>();
   private jobs: MockJob[] = [];
+  /** S5.3c: the reference portrait batches, and the imported avatars' portraits: their source photo, the master's likeness and the pending candidates. */
+  private portraitJobs: MockPortraitJob[] = [];
+  private readonly portraitStates = new Map<string, MockPortraitState>();
+  /** S5.3c: the next batch plays this instead of the table, or is refused (`scriptNextPortraits`). Used once. */
+  private nextPortraits: { slots?: readonly MockPortraitSlot[]; refuse?: EngineError } | null = null;
   private spentMicros: number;
   private spentSinceReconcile = 0;
   private readonly reserves = new Map<string, number>();
@@ -996,6 +1040,8 @@ export class MockEngine implements EngineBridge {
     if (options.preset === "demo" && options.seedOwnSticker === true) this.seedDemoOwnSticker();
     if (options.preset === "demo" && options.demoOwnVideo === true && options.photos === undefined) this.seedDemoOwnVideoClip();
     if (options.preset === "demo" && options.demoBody === true && options.avatars === undefined) this.seedDemoBody();
+    for (const seed of options.portraits ?? []) this.portraitStates.set(seed.avatarId, portraitStateOf(seed));
+    if (options.preset === "demo" && options.demoPortraits === true && options.avatars === undefined) this.seedDemoPortraits();
   }
 
   /**
@@ -1014,6 +1060,44 @@ export class MockEngine implements EngineBridge {
       Ava: { bodyProposal: { values: { bust: "medium", figure: "hourglass" }, seen: { ...hidden, bust: "photo", figure: "photo" }, at } },
     };
     this.avatars = this.avatars.map((a) => ({ ...a, ...patch[a.name] }));
+  }
+
+  /**
+   * S5.3c: the dev build's reference portraits. Nini is an import whose master is still the imported photo («Сделать мастер-портрет» is the action); Ava's master is a portrait drawn from
+   * her source photo, with three portraits waiting. Nothing is announced; built in a method, never at module load: the mock's demo data must not reach a release bundle.
+   */
+  private seedDemoPortraits(): void {
+    const nini: AvatarSummary = {
+      avatarId: "avatar-demo-nini",
+      name: "Nini",
+      descriptor: mockDescriptor({ ...DEMO_TRAITS, age: 24, hairColor: "chestnut", hairLength: "long", hairTexture: "wavy", eyeColor: "hazel" }),
+      masterPhotoId: "photo-demo-nini-source",
+      createdAt: new Date(START_OF_TIME - 3_600_000).toISOString(),
+      status: "active",
+      photoCount: 0,
+      videoCount: 0,
+      eligibleUnusedCount: 0,
+      usage: { state: "ok" },
+    };
+    this.avatars = this.avatars.map((a) => (a.name === "Ava" ? { ...a, masterPhotoId: "photo-demo-ava-portrait" } : a));
+    this.avatars = [...this.avatars, nini];
+    const ava = this.avatars.find((a) => a.name === "Ava");
+    this.portraitStates.set(nini.avatarId, portraitStateOf({ avatarId: nini.avatarId, sourcePhotoId: "photo-demo-nini-source" }));
+    if (ava !== undefined) {
+      this.portraitStates.set(
+        ava.avatarId,
+        portraitStateOf({
+          avatarId: ava.avatarId,
+          sourcePhotoId: "photo-demo-ava-source",
+          masterLikeness: 0.78,
+          candidates: [
+            { photoId: "photo-demo-ava-c1", likeness: 0.74 },
+            { photoId: "photo-demo-ava-c2", likeness: 0.69 },
+            { photoId: "photo-demo-ava-c3", likeness: 0.62 },
+          ],
+        }),
+      );
+    }
   }
 
   /**
@@ -1318,6 +1402,9 @@ export class MockEngine implements EngineBridge {
     this.settings = { ...this.settings, apiKey: { ...this.settings.apiKey, rejected: true } };
     for (const job of this.jobs.filter((j) => j.status === "queued" || j.status === "running")) {
       this.failJob(job, { code: "AUTH_INVALID" });
+    }
+    for (const job of this.portraitJobs.filter((j) => j.status === "queued" || j.status === "running")) {
+      this.failPortraitJob(job, { code: "AUTH_INVALID" });
     }
     for (const job of this.runJobs.filter((j) => j.status === "queued" || j.status === "running")) {
       this.failRunJob(job, { code: "AUTH_INVALID" });
@@ -1739,7 +1826,7 @@ export class MockEngine implements EngineBridge {
 
   /** The engine process restarts: a new bootId, seq from 1, running jobs are gone, open reserves need a reconcile. */
   restart(): void {
-    for (const job of [...this.jobs, ...this.runJobs]) {
+    for (const job of [...this.jobs, ...this.portraitJobs, ...this.runJobs]) {
       for (const cancel of job.cancelTimers) cancel();
       if (job.status === "queued" || job.status === "running") job.status = "cancelled";
     }
@@ -2444,7 +2531,8 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { jobId: this.startJob(draft.avatarId) });
       }
       case "avatars.cancel": {
-        const job = this.jobs.find((j) => j.jobId === c.payload.jobId);
+        const portraitJob = this.portraitJobs.find((j) => j.jobId === c.payload.jobId);
+        const job = portraitJob ?? this.jobs.find((j) => j.jobId === c.payload.jobId);
         if (!job) return this.fail(c, { code: "NOT_FOUND" });
         if (job.status === "queued" || job.status === "running") {
           // No more slots are drawn from here on, but the job itself is not
@@ -2457,7 +2545,13 @@ export class MockEngine implements EngineBridge {
               // An aborted attempt counts at its worst case until reconciled: the reserve stays open.
               job.status = "cancelled";
               job.cancelTimers = [];
-              this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.cancelled", payload: { kind: "avatar.candidates", jobId: job.jobId, avatarId: job.avatarId } });
+              this.emit({
+                v: PROTOCOL_VERSION,
+                id: this.nextId("evt"),
+                kind: "event",
+                type: "job.cancelled",
+                payload: portraitJob === undefined ? { kind: "avatar.candidates", jobId: job.jobId, avatarId: job.avatarId } : { kind: "avatar.portraits", jobId: job.jobId, avatarId: job.avatarId },
+              });
             }),
           ];
         }
@@ -2563,13 +2657,23 @@ export class MockEngine implements EngineBridge {
         this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: rest } });
         return this.ok(c, { avatar: rest });
       }
-      // Stage 5, S5.3a: compile-only stub. The portrait commands are in the contract; their mock (S5.3c) refuses them like the engine's `default` does until then.
+      // Stage 5, S5.3c: the reference portrait of an imported avatar, in the engine's order and words (see the section below).
       case "avatars.estimatePortraits":
+        // Free and avatar-independent: no key, no library, no avatar.
+        return this.ok(c, this.portraitsPrice());
+      case "avatars.portraits": {
+        const gone = this.libraryGate();
+        if (gone) return this.fail(c, gone);
+        const avatar = this.avatars.find((a) => a.avatarId === c.payload.avatarId);
+        if (avatar === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no saved avatar ${c.payload.avatarId} in the open library` });
+        return this.ok(c, portraitsView(avatar, this.portraitStates.get(avatar.avatarId)));
+      }
       case "avatars.generatePortraits":
-      case "avatars.portraits":
+        return this.generatePortraits(c, c.payload);
       case "avatars.pickPortrait":
+        return this.pickPortrait(c, c.payload);
       case "avatars.discardPortraits":
-        return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });
+        return this.discardPortraits(c, c.payload.avatarId);
       case "avatars.estimateCheckDescriptor": {
         // The engine's order: the library, then the avatar (a draft is priced too: the wizard shows the price before «Сохранить»).
         const gone = this.libraryGate() ?? this.checkTargetRefusal(c.payload.avatarId, { draftsToo: true });
@@ -2695,6 +2799,8 @@ export class MockEngine implements EngineBridge {
         };
         this.nextImportBody = null;
         this.avatars = [...this.avatars, avatar];
+        // An imported avatar's master is its imported photo: the source its reference portraits are drawn from (S5.3c).
+        this.portraitStates.set(avatar.avatarId, portraitStateOf({ avatarId: avatar.avatarId, sourcePhotoId: avatar.masterPhotoId }));
         this.spend(this.importPrice().expectedMicros);
         this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar } });
         // The avatar is saved first; its check runs after, and a refused one gives null without undoing the import (the price above already holds the check).
@@ -3112,7 +3218,7 @@ export class MockEngine implements EngineBridge {
     const active = (j: { avatarId: string; status: JobState["status"] }): boolean => j.avatarId === avatarId && (j.status === "queued" || j.status === "running");
     // `exceptLaunch`: the question is the launch's own ("does ANOTHER job hold the avatar?"), so a slice job of a launch is not counted.
     const runs = opts.exceptLaunch === true ? this.runJobs.filter((j) => this.runs.find((r) => r.runId === j.runId)?.launchId === undefined) : this.runJobs;
-    return this.jobs.some(active) || runs.some(active) || this.sceneSets.liveFor(avatarId, { exceptLaunch: opts.exceptLaunch === true }) || this.busyAvatars.has(avatarId);
+    return this.jobs.some(active) || this.portraitJobs.some(active) || runs.some(active) || this.sceneSets.liveFor(avatarId, { exceptLaunch: opts.exceptLaunch === true }) || this.busyAvatars.has(avatarId);
   }
 
   // ---------- «Удалить аватар» ----------
@@ -3172,6 +3278,8 @@ export class MockEngine implements EngineBridge {
     this.montages = new Map([...this.montages].filter(([, m]) => m.spec.avatarId !== avatarId));
     this.renderJobs = this.renderJobs.filter((j) => j.avatarId !== avatarId);
     this.jobs = this.jobs.filter((j) => j.avatarId !== avatarId);
+    this.portraitJobs = this.portraitJobs.filter((j) => j.avatarId !== avatarId);
+    this.portraitStates.delete(avatarId);
     this.runJobs = this.runJobs.filter((j) => j.avatarId !== avatarId);
     this.sceneSets.removeAvatar(avatarId);
     for (const photoId of mine) this.pendingVideoPhotos.delete(photoId);
@@ -4597,7 +4705,7 @@ export class MockEngine implements EngineBridge {
       drafts: this.drafts,
       unreadableAvatars: this.unreadable,
       unreadableTotal: this.unreadableCount(),
-      jobs: [...this.jobs.map((j) => this.jobState(j)), ...this.runJobs.map((j) => this.runJobState(j)), ...this.renderJobs.map((j) => this.renderJobState(j)), ...this.ownMedia.jobStates(), ...this.sceneSets.jobStates()],
+      jobs: [...this.jobs.map((j) => this.jobState(j)), ...this.portraitJobs.map((j) => this.portraitJobState(j)), ...this.runJobs.map((j) => this.runJobState(j)), ...this.renderJobs.map((j) => this.renderJobState(j)), ...this.ownMedia.jobStates(), ...this.sceneSets.jobStates()],
       librarySwitchGeneration: this.librarySwitchGeneration,
       exportStatus: this.exportReported,
       notices: [],
@@ -4621,6 +4729,171 @@ export class MockEngine implements EngineBridge {
     }
     if (j.status === "failed" && j.error) return { ...base, error: j.error };
     return base;
+  }
+
+  // ---------- reference portraits (Stage 5, S5.3c) ----------
+  //
+  // The engine's `#generatePortraits`, `#pickPortrait`, `#discardPortraits` and `#portraitsOf` without a photo to look at: an imported avatar has a SOURCE photo and a list of pending
+  // portraits, a batch plays the outcome table of mockPortraits.ts (or one a test scripts), and a pick moves the master. The refusals come in the engine's order and in its words.
+
+  /** The claim the engine takes before anything else: a job, a command or a photo run holds the avatar. */
+  private portraitHeld(avatarId: string): boolean {
+    return this.editingAvatars.has(avatarId) || this.jobRunningFor(avatarId);
+  }
+
+  private generatePortraits(c: CommandMessage, payload: { avatarId: string; acceptedWorstMicros: number }): ResponseMessage {
+    const { avatarId, acceptedWorstMicros } = payload;
+    if (this.portraitHeld(avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar; wait for it to finish" });
+    const early = this.keyAndLedgerGate() ?? this.writeLibraryGate();
+    if (early) return this.fail(c, early);
+    const avatar = this.avatars.find((a) => a.avatarId === avatarId);
+    if (avatar === undefined || avatar.status !== "active") return this.fail(c, { code: "NOT_FOUND", detail: `no active avatar ${avatarId} in the open library` });
+    const state = this.portraitStates.get(avatarId);
+    if (state === undefined) return this.fail(c, { code: "VALIDATION", portraitReason: "not-imported", detail: `avatar ${avatarId} has no imported photo to draw a portrait from` });
+    if (state.pending.length + PORTRAITS_PER_BATCH > PORTRAIT_CANDIDATES_MAX) {
+      return this.fail(c, { code: "VALIDATION", portraitReason: "too-many-candidates", detail: `avatar ${avatarId} already has ${PORTRAIT_CANDIDATES_MAX} unpicked portraits at most; pick one or discard them first` });
+    }
+    const priced = this.priceGate(acceptedWorstMicros, this.portraitsPrice().worstMicros);
+    if (priced) return this.fail(c, priced);
+    // After the price, like the engine's source checks (the face of the imported photo is looked at last).
+    const script = this.nextPortraits;
+    this.nextPortraits = null;
+    if (script?.refuse !== undefined) return this.fail(c, script.refuse);
+    return this.ok(c, { jobId: this.startPortraitJob(avatarId, script?.slots ?? MOCK_PORTRAIT_SLOTS) });
+  }
+
+  private portraitsPrice(): Estimate {
+    return mockPortraitsEstimate(this.settings.imageAgeCheck, this.price.pricesAsOf);
+  }
+
+  /** The active avatar a small portrait write is about, or the engine's refusals: no library, then NOT_FOUND (a draft, an archived avatar, an unknown id), then the claim. */
+  private portraitWriteTarget(avatarId: string, what: string): AvatarSummary | EngineError {
+    const gone = this.writeLibraryGate();
+    if (gone) return gone;
+    const avatar = this.avatars.find((a) => a.avatarId === avatarId);
+    if (avatar === undefined || avatar.status !== "active") return { code: "NOT_FOUND", detail: `no active avatar ${avatarId} in the open library` };
+    if (this.portraitHeld(avatarId)) return { code: "IN_FLIGHT", detail: `a job or command is already changing this avatar; ${what} when it ends` };
+    return avatar;
+  }
+
+  private pickPortrait(c: CommandMessage, payload: { avatarId: string; photoId: string }): ResponseMessage {
+    const { avatarId, photoId } = payload;
+    const avatar = this.portraitWriteTarget(avatarId, "pick a portrait");
+    if ("code" in avatar) return this.fail(c, avatar);
+    const state = this.portraitStates.get(avatarId);
+    if (state === undefined) return this.fail(c, { code: "VALIDATION", portraitReason: "not-imported", detail: `avatar ${avatarId} has no imported photo to draw a portrait from` });
+    // The current master is answered as it is: nothing is written and nothing is announced.
+    if (photoId === avatar.masterPhotoId) return this.ok(c, { avatar });
+    const chosen = photoId === state.sourcePhotoId ? { likeness: null } : state.pending.find((p) => p.photoId === photoId);
+    if (chosen === undefined) return this.fail(c, { code: "VALIDATION", portraitReason: "not-a-candidate", detail: `photo ${photoId} is not a portrait of avatar ${avatarId} that can become its master` });
+    // Every other portrait goes with the pick; the imported photo stays.
+    this.portraitStates.set(avatarId, { ...state, masterLikeness: chosen.likeness, pending: [] });
+    const updated: AvatarSummary = { ...avatar, masterPhotoId: photoId };
+    this.avatars = this.avatars.map((a) => (a === avatar ? updated : a));
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: updated } });
+    return this.ok(c, { avatar: updated });
+  }
+
+  private discardPortraits(c: CommandMessage, avatarId: string): ResponseMessage {
+    const avatar = this.portraitWriteTarget(avatarId, "discard its portraits");
+    if ("code" in avatar) return this.fail(c, avatar);
+    const state = this.portraitStates.get(avatarId);
+    const removed = state?.pending.length ?? 0;
+    if (state !== undefined) this.portraitStates.set(avatarId, { ...state, pending: [] });
+    return this.ok(c, { avatarId, removed });
+  }
+
+  /**
+   * A batch of reference portraits. Like `startJob`, one reserve per slot, a step per slot, and each slot's reserve settled as it lands. A slot that gives a portrait STORES it before the
+   * progress that counts it (B1: a window that re-reads the list on every progress sees it). The age check is paid only for an image that ranked as hers.
+   */
+  private startPortraitJob(avatarId: string, outcomes: readonly MockPortraitSlot[]): string {
+    const total = PORTRAITS_PER_BATCH;
+    // Captured at the job's start: a later settings.setImageAgeCheck must not change what a running slot owes.
+    const ageOn = this.settings.imageAgeCheck === "on";
+    const slotWorst = MOCK_PORTRAIT_IMAGE_MICROS + (ageOn ? MOCK_PORTRAIT_AGE_MICROS.worst : 0);
+    // Running from the start, as the engine registers the job: the batch's first request is already out when the answer comes.
+    const job: MockPortraitJob = { jobId: this.nextId("job"), avatarId, status: "running", done: 0, total, candidates: [], failedSlots: [], error: null, cancelTimers: [] };
+    this.portraitJobs = [...this.portraitJobs, job];
+    for (let slot = 1; slot <= total; slot++) this.reserves.set(this.slotReserveKey(job.jobId, slot), slotWorst);
+    this.emitMoney();
+    for (let step = 1; step <= total; step++) {
+      job.cancelTimers.push(
+        this.scheduler.schedule(this.stepMs * step, () => {
+          job.status = "running";
+          job.done = step;
+          const outcome = outcomes[step - 1] ?? { kind: "refused" as const };
+          const reserveKey = this.slotReserveKey(job.jobId, step);
+          const aged = outcome.kind === "pass" || outcome.kind === "age-rejected";
+          if (outcome.kind === "refused") {
+            // A moderation refusal is settled at its known cost of zero.
+            this.reserves.delete(reserveKey);
+            this.emitMoney();
+          } else {
+            this.reserves.delete(reserveKey);
+            this.spend(MOCK_PORTRAIT_IMAGE_MICROS + (ageOn && aged ? MOCK_PORTRAIT_AGE_MICROS.expected : 0));
+          }
+          if (outcome.kind === "pass") {
+            const photoId = this.nextId("photo");
+            job.candidates = [...job.candidates, { avatarId, photoId, likeness: outcome.likeness }];
+            const state = this.portraitStates.get(avatarId);
+            if (state !== undefined) this.portraitStates.set(avatarId, { ...state, pending: [...state.pending, { photoId, likeness: outcome.likeness }] });
+          } else {
+            const failed = failedSlotOf(step, outcome);
+            if (failed !== null) job.failedSlots = [...job.failedSlots, failed];
+          }
+          this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.progress", payload: { kind: "avatar.portraits", jobId: job.jobId, avatarId, done: job.done, total: job.total } });
+        }),
+      );
+    }
+    job.cancelTimers.push(this.scheduler.schedule(this.stepMs * (total + 1), () => this.finishPortraitJob(job)));
+    return job.jobId;
+  }
+
+  private portraitResult(job: MockPortraitJob): Extract<JobResult, { kind: "avatar.portraits" }> {
+    const candidates = [...job.candidates].sort(byLikeness);
+    return { kind: "avatar.portraits", avatarId: job.avatarId, candidates, failedSlots: job.failedSlots };
+  }
+
+  /** The engine's `portraitJobEnd`: done, unless every slot ended before any verdict (all of them refused), which fails with the first slot's error. */
+  private finishPortraitJob(job: MockPortraitJob): void {
+    job.done = job.total;
+    const first = job.failedSlots[0];
+    if (job.candidates.length === 0 && job.failedSlots.every((f) => f.reason === "failed") && first?.reason === "failed") {
+      this.failPortraitJob(job, first.error);
+      return;
+    }
+    job.status = "done";
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.done", payload: { jobId: job.jobId, result: this.portraitResult(job) } });
+  }
+
+  private failPortraitJob(job: MockPortraitJob, error: EngineError): void {
+    for (const cancel of job.cancelTimers) cancel();
+    job.cancelTimers = [];
+    job.status = "failed";
+    job.error = error;
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.failed", payload: { kind: "avatar.portraits", jobId: job.jobId, avatarId: job.avatarId, error } });
+  }
+
+  private portraitJobState(j: MockPortraitJob): JobState {
+    const base = { kind: "avatar.portraits" as const, jobId: j.jobId, avatarId: j.avatarId, status: j.status, done: j.done, total: j.total };
+    if (j.status === "done") return { ...base, result: this.portraitResult(j) };
+    if (j.status === "failed" && j.error) return { ...base, error: j.error };
+    return base;
+  }
+
+  /** A synchronous look at `avatars.portraits`' answer, for a test that must read the list at the very moment an event is emitted (B1: a portrait is stored before the progress that counts it). */
+  peekPortraits(avatarId: string): AvatarPortraits | null {
+    const avatar = this.avatars.find((a) => a.avatarId === avatarId);
+    return avatar === undefined ? null : portraitsView(avatar, this.portraitStates.get(avatarId));
+  }
+
+  /**
+   * The NEXT batch of portraits plays `slots` instead of the table (every slot not hers, say), or is refused with `refuse` before any job is made, after the price (the engine's
+   * source-photo checks: MASTER_FACE_UNUSABLE, FACE_GATE_UNAVAILABLE). Used once.
+   */
+  scriptNextPortraits(script: { slots?: readonly MockPortraitSlot[]; refuse?: EngineError }): void {
+    this.nextPortraits = { ...script };
   }
 
   /** Another batch for an existing draft: the price without the descriptor call. */
@@ -4754,7 +5027,7 @@ export class MockEngine implements EngineBridge {
 
   /** Every job still queued or running, candidate batches and photo runs alike: a library switch or a reconcile waits for them. */
   private running(): { status: JobState["status"] }[] {
-    return [...[...this.jobs, ...this.runJobs].filter((j) => j.status === "queued" || j.status === "running"), ...this.sceneSets.running()];
+    return [...[...this.jobs, ...this.portraitJobs, ...this.runJobs].filter((j) => j.status === "queued" || j.status === "running"), ...this.sceneSets.running()];
   }
 
   private spend(micros: number): void {
