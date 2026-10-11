@@ -45,9 +45,17 @@ describe("localSentences", () => {
     expect(localSentences({ slots: [slot], keyOf })(slot)).toBeNull();
   });
 
+  const CUSTOM = "cat-paris-cafes";
+  const customSlot = (): Slot => ({ slotIndex: 1, category: CUSTOM, location: "a corner cafe in Paris", activity: "reading a menu", outfit: "a beige trench coat", shot: "friend", pose: "front" });
+
   test("returns null for a custom category with no snapshot in the plan", () => {
-    const slot = bankSlot(1, { category: "custom:cat-0001" });
+    const slot = customSlot();
     expect(localSentences({ slots: [slot], keyOf })(slot)).toBeNull();
+  });
+
+  test("renders a custom slot whose category the plan holds a snapshot of", () => {
+    const slot = customSlot();
+    expect(localSentences({ slots: [slot], keyOf, snapshots: [{ ref: CUSTOM }] })(slot)).toContain("she is reading a menu");
   });
 
   test("returns null for a slot it was not given", () => {
