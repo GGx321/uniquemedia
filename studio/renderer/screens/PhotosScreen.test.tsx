@@ -221,6 +221,13 @@ test("the stepper stays within 5–100 photos at the top too, and stays put past
   await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 100 фото · до $15.30"));
 });
 
+test("the Glamour chip says it is an evening out while Glamour is chosen (S5.5)", async () => {
+  await openPhotos();
+  await priced();
+  expect(screen.getByText("Гламур — вечер выхода: бар, ресторан, такси и сборы дома.")).toBeDefined();
+  expect(screen.queryByText(/наряды на выход/) === null).toBe(true);
+});
+
 test("with no category chosen there is nothing to price and nothing to start", async () => {
   const { engine } = await openPhotos();
   await priced();
@@ -232,7 +239,7 @@ test("with no category chosen there is nothing to price and nothing to start", a
   expect(screen.getByText("Выберите хотя бы одну категорию.")).toBeDefined();
   // Priced at every step down to one category, never with none (the contract requires at least one).
   expect(callsOf(engine, "runs.estimate").map((c) => c.payload.categories.length)).toEqual([5, 4, 3, 2, 1]);
-  expect(screen.queryByText(/Гламур — наряды на выход/) === null).toBe(true);
+  expect(screen.queryByText(/Гламур — вечер выхода/) === null).toBe(true);
 });
 
 test("turning off every category clears a stale estimate error, not just the price (L12)", async () => {
