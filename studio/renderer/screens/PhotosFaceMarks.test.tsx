@@ -7,14 +7,14 @@ import { PhotoBadges } from "./photos/photoState";
 
 // S5.6e (mockup 32): the badges of a frame the gate marked and did not retry, and the end-of-run line that counts them.
 
-function photo(id: string, faceCos?: number): PhotoSummary {
+function photo(id: string, faceCos?: number, faceMarked?: true): PhotoSummary {
   return {
     photoId: id,
     avatarId: "avatar-mia-0001",
     runId: "run-00000001",
     category: "home",
     createdAt: "2026-10-11T10:00:00.000Z",
-    ...(faceCos === undefined ? {} : { qa: { faceCos } }),
+    ...(faceCos === undefined ? {} : { qa: { faceCos, ...(faceMarked === undefined ? {} : { faceMarked }) } }),
     used: false,
     usedIn: [],
     rejected: false,
@@ -49,6 +49,17 @@ describe("the badge of a frame the gate marked", () => {
   test("reads «лицо 0.48» in the pale style for a one-face frame under the line", () => {
     render(<PhotoBadges photo={photo("p1", 0.48)} />);
     expect(screen.getByText("лицо 0.48").className).toContain("photo-face-low");
+  });
+
+  // S5.7a review: the gate marks a back or face-hidden frame on the photo (`qa.faceMarked`); its likeness was kept, never judged, whatever its value.
+  test("reads in the pale style for a frame the gate marked, even with a likeness over the line", () => {
+    render(<PhotoBadges photo={photo("p1", 0.81, true)} />);
+    expect(screen.getByText("лицо 0.81").className).toContain("photo-face-low");
+  });
+
+  test("keeps the plain style for a judged frame over the line", () => {
+    render(<PhotoBadges photo={photo("p1", 0.81)} />);
+    expect(screen.getByText("лицо 0.81").className.includes("photo-face-low")).toBe(false);
   });
 
   test("offers nothing to click on a marked frame: no retry", () => {
@@ -89,6 +100,12 @@ describe("the end of a run", () => {
     const photos = [photo("p1"), photo("p2", 0.48), photo("p3"), photo("p4", 0.81)];
     render(<RunOutcome job={doneRun(["p1", "p2", "p3", "p4"])} fromSet={false} photos={photos} />);
     expect(screen.getByText(/В галерее 4 фото этого запуска\. 3 кадра без проверки лица\./)).toBeDefined();
+  });
+
+  // §6.3: the count comes from the gate's mark on the photo (`qa.faceMarked`, S5.7a), whatever likeness it kept.
+  test("counts a frame the gate marked even with a likeness over the line", () => {
+    render(<RunOutcome job={doneRun(["p1", "p2"])} fromSet={false} photos={[photo("p1", 0.81, true), photo("p2", 0.81)]} />);
+    expect(screen.getByText(/В галерее 2 фото этого запуска\. 1 кадр без проверки лица\./)).toBeDefined();
   });
 
   test("says nothing about faces when every frame was checked", () => {

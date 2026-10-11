@@ -52,8 +52,10 @@ export function PhotoBadges({ photo }: { photo: PhotoSummary }) {
   const faceCos = photo.qa?.faceCos;
   // Compared on the same rounded value the badge displays (L2): a raw score
   // just under the line that rounds up to the line itself (0.549 shows
-  // «0.55») must read the same as the line, never as low.
-  const low = faceCos !== undefined && underFaceLine(faceCos);
+  // «0.55») must read the same as the line, never as low. A frame the gate
+  // marked (S5.7a, `qa.faceMarked`: back or face hidden) kept a likeness no
+  // check judged, so it reads pale whatever its value (mockup 32).
+  const low = faceCos !== undefined && (photo.qa?.faceMarked === true || underFaceLine(faceCos));
   const held = heldLabel(photo);
   return (
     <>
