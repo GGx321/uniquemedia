@@ -130,11 +130,14 @@ const BODIED: Swept[] = BODY_PHRASES.flatMap((body, i) => {
 });
 
 // S5.5: the only built-in activity that may happen in a messy room is the home bed's stretching (the glamour rooms are tidy now), and the messy draw is at most 5 %, so a
-// plan sweep may never reach it. This fixed slot, across 200 runs, makes the messy state a certainty of the sweep instead of a matter of the seeds.
+// plan sweep may never reach it. This fixed slot, across 200 runs per shot, makes the messy state a certainty of the sweep instead of a matter of the seeds.
 const MESSY_ROOMS: Swept[] = (() => {
-  const slot = PlanSlotSchema.parse({ slotIndex: 1, category: "home", location: "her bed in the morning", timeOfDay: "morning", activity: "stretching after waking up", outfit: POOLS.home.outfits[0], shot: "friend", pose: "front", attemptIdBase: "slot-1", repeatedPair: false });
   const all: Swept[] = [];
-  for (let run = 1; run <= 200; run++) all.push(...assembleAll([slot], `run-m${run}`, true));
+  // Friend, selfie and candid: the messy sentence sits differently around a phone in her hand (the selfie) and a snap she does not pose for (the candid).
+  for (const shot of ["friend", "selfie", "candid"] as const) {
+    const slot = PlanSlotSchema.parse({ slotIndex: 1, category: "home", location: "her bed in the morning", timeOfDay: "morning", activity: "stretching after waking up", outfit: POOLS.home.outfits[0], shot, pose: "front", attemptIdBase: "slot-1", repeatedPair: false });
+    for (let run = 1; run <= 200; run++) all.push(...assembleAll([slot], `run-m${shot}${run}`, true));
+  }
   return all;
 })();
 
