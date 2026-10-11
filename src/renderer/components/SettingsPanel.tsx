@@ -31,6 +31,7 @@ export function settingsToOptions(s: SettingsState): CopyOptions {
     firstFrame: s.advanced.firstFrame,
     // The path alone: the thumbnail is the panel's, and main reads the file.
     coverPath: s.advanced.cover?.path ?? null,
+    frame: s.advanced.frame,
   };
 }
 

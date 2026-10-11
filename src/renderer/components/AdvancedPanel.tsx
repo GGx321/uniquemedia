@@ -17,6 +17,8 @@ export interface AdvancedValue {
    *  was read from. Kept across mode changes: flicking to «Чёрный» to compare
    *  should not cost the user the file they picked. */
   cover: CoverPick | null;
+  /** «В рамке»: the video is shrunk onto a random nature background. Video only. */
+  frame: boolean;
 }
 
 /** Reading the answer back as one of the three modes rather than casting the
@@ -275,6 +277,18 @@ export function AdvancedPanel({
             onPickCover={onPickCover}
             pickDisabled={pickCoverDisabled}
           />
+        )}
+        {kind !== "photo" && (
+          <label className="adv-row">
+            В рамке
+            <input
+              className="switch"
+              aria-label="В рамке"
+              type="checkbox"
+              checked={value.frame}
+              onChange={(e) => set({ frame: e.target.checked })}
+            />
+          </label>
         )}
         {edgesApply && (
           <label className="adv-row">

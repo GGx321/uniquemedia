@@ -28,6 +28,7 @@ const initial: SettingsState = {
     edgeMode: "auto",
     firstFrame: "off",
     cover: null,
+    frame: false,
   },
 };
 

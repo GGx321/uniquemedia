@@ -103,6 +103,8 @@ export interface CopyOptions extends PhotoCopyOptions {
    * cover field can legitimately be empty until the mode asks for it.
    */
   coverPath: string | null;
+  /** Put each copy in a frame over a nature background. */
+  frame: boolean;
 }
 
 /**
@@ -129,7 +131,7 @@ export type ResolvedFirstFrame =
  * function of numbers that never opens a file, and a mode that still needs a
  * file read cannot reach it by mistake.
  */
-export interface ResolvedCopyOptions extends Omit<CopyOptions, "firstFrame" | "coverPath"> {
+export interface ResolvedCopyOptions extends Omit<CopyOptions, "firstFrame" | "coverPath" | "frame"> {
   firstFrame: ResolvedFirstFrame;
   /** Present when the copies go "in a frame": the pack the sampler draws each
    *  copy's background from. Absent means frame mode is off. */

@@ -114,6 +114,8 @@ export interface BatchHost {
   signal: AbortSignal;
   nowMs: () => number;
   concurrency: number;
+  /** Folder holding the frame-mode backgrounds; the repo's pack when absent. */
+  framePackDir?: string;
   /** Told the route as soon as it is chosen (and `null` once the batch is
    *  over), so Stop can target the executor that is actually running. */
   onRoute?: (route: MediaRoute | null) => void;
@@ -148,6 +150,7 @@ export async function runBatchForHost(req: StartRequest, host: BatchHost): Promi
       // is what dated every GUI copy to 1969; the CLI passed it from day one.
       nowMs: now,
       concurrency: host.concurrency,
+      framePackDir: host.framePackDir,
       outputPath: (i) => join(outDir, outputName(stem, i, route)),
       signal: host.signal,
       onProgress: (index, _attempt, fraction) =>

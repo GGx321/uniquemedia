@@ -1,5 +1,5 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -374,4 +374,62 @@ test("a photo first frame with no cover is reported as an error event, and no co
   const message = sent[0].payload;
   expect(typeof message === "object" && message !== null && "message" in message ? String(message.message) : "")
     .toContain("cover");
+});
+
+// ── frame mode ──────────────────────────────────────────────────────────────
+
+class RecipeRecorder extends BatchStub {
+  recipes: unknown[] = [];
+  async render(input: string, info: MediaInfo, recipe: unknown, output: string): Promise<void> {
+    this.recipes.push(recipe);
+    await super.render(input, info, recipe, output);
+  }
+}
+
+async function runFramedBatch(framePackDir: string): Promise<{ sent: Sent[]; recipes: unknown[] }> {
+  const input = join(dir, "frame-in.mp4");
+  makeTestClip(input);
+  const video = new RecipeRecorder(videoInfo, () => frameOfDistance(5));
+  const sent: Sent[] = [];
+  const host: BatchHost = {
+    backends: { video, photo: new BatchStub(photoInfo, () => frameOfDistance(5)) },
+    send: (channel, payload) => sent.push({ channel, payload }),
+    signal: new AbortController().signal,
+    nowMs: () => 1_780_000_000_000,
+    concurrency: 1,
+    framePackDir,
+  };
+  await runBatchForHost(
+    { input, opts: { ...startOpts, frame: true }, count: 1, outDir: join(dir, "frame-out") },
+    host
+  );
+  return { sent, recipes: video.recipes };
+}
+
+test("a framed batch draws its backgrounds from the pack folder the host names", async () => {
+  const pack = join(dir, "pack");
+  mkdirSync(pack, { recursive: true });
+  writeFileSync(join(pack, "one.jpg"), "x");
+  writeFileSync(join(pack, "two.jpg"), "x");
+
+  const { recipes } = await runFramedBatch(pack);
+
+  expect(recipes.length).toBeGreaterThan(0);
+  const first = recipes[0];
+  const background =
+    typeof first === "object" && first !== null && "frame" in first &&
+    typeof first.frame === "object" && first.frame !== null && "background" in first.frame
+      ? first.frame.background
+      : undefined;
+  expect([join(pack, "one.jpg"), join(pack, "two.jpg")]).toContain(background as string);
+});
+
+test("a framed batch with no pack reports the folder instead of rendering", async () => {
+  const missing = join(dir, "no-such-pack");
+
+  const { sent, recipes } = await runFramedBatch(missing);
+
+  expect(recipes).toEqual([]);
+  const error = sent.find((s) => s.channel === CH.evtError);
+  expect(JSON.stringify(error?.payload)).toContain(missing);
 });

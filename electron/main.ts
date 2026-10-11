@@ -11,6 +11,7 @@ import {
   type StartRequest,
 } from "./handlers";
 import { CH } from "./ipc";
+import { extractFramePack } from "./framePack";
 
 const backends = createBackends();
 let abortController: AbortController | null = null;
@@ -73,9 +74,32 @@ ipcMain.handle(CH.openFile, (_e, path: string) => shell.openPath(path));
 ipcMain.handle(CH.reveal, (_e, path: string) => shell.showItemInFolder(path));
 ipcMain.handle(CH.cancel, () => { abortController?.abort(); activeRoute?.executor.cancel(); });
 
+/**
+ * Where frame mode reads its backgrounds. Unpackaged, the repo's own pack
+ * (undefined = the default). Packaged, the pack travels inside the archive as
+ * part of the renderer build and is extracted once to a real folder.
+ */
+async function framePackDir(): Promise<string | undefined> {
+  if (!app.isPackaged) return undefined;
+  return extractFramePack(
+    join(app.getAppPath(), "out", "renderer", "frame-backgrounds"),
+    join(app.getPath("userData"), "frame-backgrounds")
+  );
+}
+
 ipcMain.handle(CH.start, async (_e, req: StartRequest) => {
+  let packDir: string | undefined;
+  if (req.opts.frame) {
+    try {
+      packDir = await framePackDir();
+    } catch (err) {
+      send(CH.evtError, { message: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+  }
   abortController = new AbortController();
   await runBatchForHost(req, {
+    framePackDir: packDir,
     backends,
     send,
     signal: abortController.signal,
