@@ -382,6 +382,54 @@ describe("withReviewWriteAccepted: an idea write", () => {
   });
 });
 
+// 5a.2 (S5.6d, plan s5a2 §5.5): an idea write keeps the scenes it accepted when the last attempt refused the others. This is a separate, explicit way to accept
+// (`partial: true`); the default above stays all-or-none.
+describe("withReviewWriteAccepted: a partial answer (S5.6d)", () => {
+  const ideating = () => ({ ...stored({ writes: 2 }), reviewWrites: [idea({ k: 2 })] }) as StoredSceneSet;
+  const rewriting = () => ({ ...stored({ writes: 2 }), reviewWrites: [rewrite({ k: 2, sceneIds: [2, 3] })] }) as StoredSceneSet;
+  const partial = { partial: true } as const;
+
+  test("an idea write adds only the scenes the answer has a sentence for, with the angle each settled on", () => {
+    const next = withReviewWriteAccepted(ideating(), 2, new Map([[6, "Second."]]), new Map([[6, { shot: "candid" as const, pose: "back" as const }]]), partial);
+    expect(next.scenes.slice(4)).toEqual([{ sceneId: 6, origin: "own", idea: "кофе на балконе утром", shot: "candid", pose: "back", text: "Second.", edited: false, removed: false }]);
+  });
+
+  test("an idea write's record is closed, so the scenes it did not get are not asked again, and its ids stay burnt", () => {
+    const next = withReviewWriteAccepted(ideating(), 2, new Map([[5, "First."]]), new Map(), partial);
+    expect(recordsOf(next)[0]).toMatchObject({ closed: true });
+    expect(recordsOf(next)[0]?.attemptIds).toEqual(writeIdsOf(SET, 2));
+  });
+
+  test("a rewrite changes only the targets the answer has a sentence for; the other keeps its old text", () => {
+    const before = rewriting();
+    const next = withReviewWriteAccepted(before, 2, new Map([[2, "New two."]]), new Map(), partial);
+    expect(next.scenes.find((s) => s.sceneId === 2)?.text).toBe("New two.");
+    expect(next.scenes.find((s) => s.sceneId === 3)).toEqual(before.scenes.find((s) => s.sceneId === 3));
+    expect(recordsOf(next)[0]).toMatchObject({ closed: true });
+  });
+
+  test("the same partial answer twice is one acceptance", () => {
+    const once = withReviewWriteAccepted(ideating(), 2, new Map([[5, "First."]]), new Map(), partial);
+    expect(withReviewWriteAccepted(once, 2, new Map([[5, "First."]]), new Map(), partial)).toBe(once);
+    expect(once.scenes.filter((s) => s.origin === "own")).toHaveLength(1);
+  });
+
+  test("an answer with no sentence for any scene of the write is refused: a partial answer is not an empty one", () => {
+    expect(() => withReviewWriteAccepted(ideating(), 2, new Map(), new Map(), partial)).toThrow();
+    expect(() => withReviewWriteAccepted(rewriting(), 2, new Map([[9, "Outside."]]), new Map(), partial)).toThrow();
+  });
+
+  test("without the flag the same answer is still refused: all or none stays the rule", () => {
+    expect(() => withReviewWriteAccepted(ideating(), 2, new Map([[5, "First."]]))).toThrow();
+    expect(() => withReviewWriteAccepted(rewriting(), 2, new Map([[2, "New two."]]))).toThrow();
+  });
+
+  test("a result the schema accepts", () => {
+    const next = withReviewWriteAccepted(ideating(), 2, new Map([[6, "Second."]]), new Map(), partial);
+    expect(SceneSetFile.safeParse({ ...next, revision: 4 }).success).toBe(true);
+  });
+});
+
 describe("withReviewWriteStopped", () => {
   const open = (over: Record<string, unknown> = {}) => ({ ...stored({ writes: 3 }), reviewWrites: [rewrite({ k: 2, ...over }), idea({ k: 3 })] }) as StoredSceneSet;
 

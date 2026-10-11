@@ -704,12 +704,13 @@ export class SceneSetService {
               if (current === null) throw new Error(`scene set ${sceneSetId} is gone`);
               return current;
             },
-            accept: async (_k, sentences, angles) => {
+            accept: async (_k, sentences, angles, partial) => {
               // An answer already accepted (the retry of a write whose flush failed after the rename) changes nothing: no second revision, no second file.
+              // S5.6d: an idea write that keeps the scenes it accepted (and leaves the others unwritten) is accepted as a partial answer.
               await this.#announce(
                 library,
                 await store((current) => {
-                  const next = withReviewWriteAccepted(current, k, sentences, angles);
+                  const next = withReviewWriteAccepted(current, k, sentences, angles, { partial: partial === true });
                   return next === current ? null : next;
                 }),
               );

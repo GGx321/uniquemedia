@@ -8,7 +8,7 @@ import { useTempDir } from "../library/testing/helpers";
 import { until } from "../testing/engineHarness";
 import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
 import { NetworkPool } from "../runs/pools";
-import type { PlanSlot } from "../scenes";
+import { plainSentence, type PlanSlot } from "../scenes";
 import { categoryLabelOf } from "../scenes/categories";
 import { localSentences } from "../scenes/localSentences";
 import { SHOT_LABEL, writerMessages } from "../scenes/writer";
@@ -130,8 +130,8 @@ function run(steps: Step[], opts: { k?: number; jobId?: string; signal?: AbortSi
       priceBook: money.priceBook,
       acquire: (signal) => pool.acquire(signal),
       load: async () => setNow(),
-      accept: async (_k, sentences, angles) => {
-        await store.update(AVATAR, SET, (s) => withReviewWriteAccepted(s, k, sentences, angles));
+      accept: async (_k, sentences, angles, partial) => {
+        await store.update(AVATAR, SET, (s) => withReviewWriteAccepted(s, k, sentences, angles, { partial: partial === true }));
       },
       giveUp: async (given) => {
         closed.push(given);
@@ -419,19 +419,104 @@ describe("an idea write", () => {
   });
 });
 
+// 5a.2 (S5.6d, plan s5a2 §5.5): an idea write has no place or moment to build a plain sentence from, so a scene the last attempt refused stays unwritten; the
+// scenes it accepted are kept. The write is resolved either way.
+describe("an idea write keeps the scenes it accepted", () => {
+  const REVEALING = "She lounges by the pool in a bikini, laughing.";
+  /** An answer to whatever was asked: the scenes in `bad` get a refused sentence; a pick the slot left to the model is a safe one. */
+  const answering = (bad: readonly number[]): Step => (call) => ({
+    status: 200,
+    body: chatBody(
+      JSON.stringify({
+        scenes: listAsked(call).map((s) => ({
+          slotIndex: s.slotIndex,
+          sentence: bad.includes(s.slotIndex) ? REVEALING : `${NEW} (${s.slotIndex})`,
+          ...(s.shot === "choose" ? { shot: "friend" } : {}),
+          ...(s.pose === "choose" ? { pose: "front" } : {}),
+        })),
+      }),
+      { cost: 0.0042 },
+    ),
+  });
+
+  test("a scene refused on both attempts is not added; the one accepted is, and the second attempt asked only about the refused one", async () => {
+    await seed();
+    await recordIdea("кофе на балконе", 2, "friend");
+    const { net, end, closed, progress } = run([answering([6]), answering([6])]);
+
+    expect(await end).toEqual({ status: "done", written: 1, unwritten: 1 });
+    expect(slotsAskedFor(net.calls[0] as FetchCall)).toEqual([6, 7]);
+    expect(slotsAskedFor(net.calls[1] as FetchCall)).toEqual([6]);
+    expect(reserveIds()).toEqual([id(2, 1), id(2, 2)]);
+    expect(closed).toEqual([]);
+    expect(progress).toEqual([1]);
+    const own = (await setNow()).scenes.filter((s) => s.sceneId > 5);
+    expect(own.map((s) => [s.sceneId, s.text])).toEqual([[7, `${NEW} (7)`]]);
+    expect((await recordOf(2)).closed).toBe(true);
+  });
+
+  test("a scene fixed on the second attempt is added with the first one's accepted scene: nothing is left unwritten", async () => {
+    await seed();
+    await recordIdea("кофе на балконе", 2, "friend");
+    const { end } = run([answering([6]), answering([])]);
+
+    expect(await end).toEqual({ status: "done", written: 2, unwritten: 0 });
+    expect((await setNow()).scenes.filter((s) => s.sceneId > 5).map((s) => s.sceneId)).toEqual([6, 7]);
+  });
+
+  test("a rewrite of two own scenes keeps the one accepted and leaves the other with the text it had", async () => {
+    await seed((set) => ({ ...set, scenes: [...set.scenes, ownScene(6, { text: OLD, idea: "ужин на террасе" }) as never] }));
+    const before = await setNow();
+    await recordRewrite([5, 6]);
+    const { end } = run([answering([6]), answering([6])]);
+
+    expect(await end).toEqual({ status: "done", written: 1, unwritten: 1 });
+    const after = await setNow();
+    expect(after.scenes.find((s) => s.sceneId === 5)?.text).toBe(`${NEW} (5)`);
+    expect(after.scenes.find((s) => s.sceneId === 6)).toEqual(before.scenes.find((s) => s.sceneId === 6));
+  });
+
+  test("nothing accepted (both attempts refused whole) ends as before: failed, resolved, nothing added", async () => {
+    await seed();
+    const before = await setNow();
+    await recordIdea("кофе на балконе", 2, "friend");
+    const { end, closed } = run([rejected, rejected]);
+
+    expect(await end).toMatchObject({ status: "failed", resolved: true, error: { code: "INTERNAL" } });
+    expect(closed).toEqual([2]);
+    expect((await setNow()).scenes).toEqual(before.scenes);
+  });
+});
+
 describe("a write that cannot be answered", () => {
-  test("two rejected answers resolve it: two calls under its first two ids, nothing changed, nothing left to resume", async () => {
+  // 5a.2 (S5.6d, plan s5a2 I5.31): this test used to say «two rejected answers resolve it, nothing changed». A planned scene the model could not write now takes
+  // the plain sentence, so the rewrite is accepted; an idea write (below) still ends unchanged, as before.
+  test("two rejected answers: a planned scene takes the plain sentence, after two calls under its first two ids, and nothing is left to resume", async () => {
     await seed();
     const before = await setNow();
     await recordRewrite([2]);
     const { net, end, closed } = run([rejected, rejected, good]);
 
-    expect(await end).toMatchObject({ status: "failed", resolved: true, stoppedBy: "failed", error: { code: "INTERNAL" } });
+    expect(await end).toEqual({ status: "done", written: 1, unwritten: 0 });
     expect(net.calls).toHaveLength(2);
     expect(reserveIds()).toEqual([id(2, 1), id(2, 2)]);
-    expect(closed).toEqual([2]);
-    expect((await setNow()).scenes).toEqual(before.scenes);
+    expect(closed).toEqual([]);
+    expect((await setNow()).scenes.find((s) => s.sceneId === 2)?.text).toBe(plainSentence(slotOf(before, 2)));
+    expect((await recordOf(2)).closed).toBe(true);
     expect(JSON.stringify(net.calls[1]?.json())).toContain("An earlier answer was rejected");
+  });
+
+  test("the plain sentence of a redrawn scene is built from the new place it drew", async () => {
+    await seed();
+    const before = await setNow();
+    const slot: PlanSlot = { ...slotOf(before, 3), location: "a rooftop garden" };
+    await recordRewrite([3], { slots: [slot], snapshots: [FRESH_SNAPSHOT] });
+    await run([rejected, rejected]).end;
+
+    const after = await setNow();
+    const text = after.scenes.find((s) => s.sceneId === 3)?.text;
+    expect(text).toBe(plainSentence(slot));
+    expect(text).toContain("rooftop garden");
   });
 
   test("a rejected answer is asked again under the next id, and the second answer is accepted", async () => {
@@ -460,7 +545,7 @@ describe("a write that cannot be answered", () => {
     const before = await setNow();
     const slot: PlanSlot = { ...slotOf(before, 3), location: "a rooftop garden" };
     await recordRewrite([3], { slots: [slot], snapshots: [FRESH_SNAPSHOT] });
-    await run([rejected, rejected]).end;
+    await run([refusal]).end;
     const after = await setNow();
     expect(after.scenes).toEqual(before.scenes);
     expect(after.categories).toEqual(before.categories);
@@ -514,16 +599,18 @@ describe("a write that got no answer stops, resumable", () => {
     expect(messagesOf(first.net.calls[0] as FetchCall)).toEqual(messagesOf(second.net.calls[0] as FetchCall).map((m) => (m.role === "user" ? { ...m } : m)));
   });
 
-  test("never a fresh pair: after one interrupted attempt the write gets ONE more, and if that is rejected it is resolved", async () => {
+  test("never a fresh pair: after one interrupted attempt the write gets ONE more, and if that is rejected the planned scene takes the plain sentence", async () => {
     await seed();
+    const before = await setNow();
     await recordRewrite([2]);
     await run([offline], { jobId: "job-aaaa-0002" }).end;
     const second = run([rejected, good], { jobId: "job-aaaa-0003" });
 
-    expect(await second.end).toMatchObject({ status: "failed", resolved: true });
+    expect(await second.end).toEqual({ status: "done", written: 1, unwritten: 0 });
     expect(second.net.calls).toHaveLength(1);
     expect(reserveIds()).toEqual([id(2, 1), id(2, 2)]);
-    expect(second.closed).toEqual([2]);
+    expect(second.closed).toEqual([]);
+    expect((await setNow()).scenes.find((s) => s.sceneId === 2)?.text).toBe(plainSentence(slotOf(before, 2)));
   });
 
   test("a stop that leaves no attempt (a rejected answer, then a dropped connection) resolves the write: nothing could be resumed", async () => {
@@ -541,7 +628,7 @@ describe("a write that got no answer stops, resumable", () => {
     await run([offline], { jobId: "job-aaaa-0002" }).end;
     await money.ledger.append({ type: "settle", attemptId: id(2, 1), costMicros: 37_500, estimated: true, at: "2026-10-07T12:00:00.000Z" });
     const second = run([rejected, good], { jobId: "job-aaaa-0003" });
-    expect(await second.end).toMatchObject({ status: "failed", resolved: true });
+    expect(await second.end).toEqual({ status: "done", written: 1, unwritten: 0 });
     expect(second.net.calls).toHaveLength(1);
   });
 });

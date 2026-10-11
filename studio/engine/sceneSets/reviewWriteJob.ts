@@ -6,7 +6,7 @@ import type { PriceBook } from "../money/prices";
 import { runWriterConfig } from "../runs/plan";
 import { localSentences } from "../scenes/localSentences";
 import { runWriterPhase, type WriterPhase, type WriterPhaseDeps, type WriterPhaseResult } from "../runs/writerPhase";
-import type { PlanSlot } from "../scenes";
+import { plainSentence, type PlanSlot } from "../scenes";
 import { ideaAsksOf, ideaJsonSchema, ideaMessages, readIdeaAnswer, toIdeaSlot, type IdeaAngle, type IdeaAsk } from "../scenes/ideaWriter";
 import { writerMessages } from "../scenes/writer";
 import { categoryLabelOf } from "../scenes/categories";
@@ -34,7 +34,7 @@ export interface ReviewWriteDeps {
   /** The set as it is now. */
   load: () => Promise<StoredSceneSet>;
   /** Stores the accepted answer in the set (under its lock); awaited before the job ends. */
-  accept: (k: number, sentences: ReadonlyMap<number, string>, angles?: ReadonlyMap<number, IdeaAngle>) => Promise<void>;
+  accept: (k: number, sentences: ReadonlyMap<number, string>, angles?: ReadonlyMap<number, IdeaAngle>, partial?: boolean) => Promise<void>;
   /** Resolves a write nobody can answer any more. */
   giveUp: (k: number) => Promise<void>;
   /** The scenes this job has written so far. */
@@ -153,13 +153,17 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
     // sentence another scene of the set already holds is redrawn.
     // A target's own old text counts too: a rewrite never hands back the sentence the scene already has.
     const local = localOf(set, record, asked.slots);
-    const phase: WriterPhase<PlanSlot> = { ...base, call, slots: asked.slots, local, messages: (slots, feedback) => writerMessages(slots, feedback, asked.labelOf) };
+    // S5.6d: a planned scene the model could not write in the write's two attempts takes the plain sentence of its (possibly redrawn) place.
+    const phase: WriterPhase<PlanSlot> = { ...base, call, slots: asked.slots, local, plain: plainSentence, messages: (slots, feedback) => writerMessages(slots, feedback, asked.labelOf) };
     result = await runWriterPhase(phaseDeps, phase);
   } else {
     const phase: WriterPhase<IdeaAsk> = {
       ...base,
       call,
       slots: asked.slots,
+      // S5.6d: an idea (and an own scene) has no place or moment to build a plain sentence from: what the last attempt refused stays unwritten, and the scenes
+      // the write accepted are kept.
+      keepAccepted: true,
       jsonSchema: ideaJsonSchema(asked.mirrorAllowed, ideaAsksOf(asked.slots)),
       read: (content, slots) => readIdeaAnswer(content, slots.map(toIdeaSlot), asked.mirrorAllowed),
       messages: (slots, feedback) => ideaMessages(slots.map(toIdeaSlot), feedback, asked.mirrorAllowed),
@@ -168,9 +172,11 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
   }
 
   if (result.ok) {
-    await deps.accept(record.k, result.sentences, result.angles);
-    deps.progress(asked.slots.length);
-    return { status: "done", written: asked.slots.length, unwritten: 0 };
+    const unwritten = result.unwritten?.length ?? 0;
+    await deps.accept(record.k, result.sentences, result.angles, unwritten > 0);
+    const written = asked.slots.length - unwritten;
+    deps.progress(written);
+    return { status: "done", written, unwritten };
   }
   if (result.stop === "cancelled" || result.stop === "soft-stopped") return cancelled();
   if (result.stop === "stopped") {

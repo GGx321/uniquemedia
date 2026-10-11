@@ -115,10 +115,14 @@ function sentenceFor(sentences: ReadonlyMap<number, string>, sceneId: number, k:
   return sentence;
 }
 
-/** Whether this closed write's scenes already carry exactly these sentences: its answer was accepted before. A record closed by a dismissal does not qualify. */
-function isAccepted(set: StoredSceneSet, record: ReviewWriteRecord, sentences: ReadonlyMap<number, string>): boolean {
+/**
+ * Whether this closed write's scenes already carry exactly these sentences: its answer was accepted before. A record closed by a dismissal does not qualify.
+ * A partial answer (S5.6d) is judged by the scenes it has a sentence for, and needs at least one.
+ */
+function isAccepted(set: StoredSceneSet, record: ReviewWriteRecord, sentences: ReadonlyMap<number, string>, partial: boolean): boolean {
   if (!record.closed) return false;
-  const ids = record.kind === "idea" ? record.scenes.map((s) => s.sceneId) : record.sceneIds;
+  const all = record.kind === "idea" ? record.scenes.map((s) => s.sceneId) : record.sceneIds;
+  const ids = partial ? all.filter((id) => sentences.has(id)) : all;
   return ids.length > 0 && ids.every((id) => sentences.has(id) && set.scenes.find((scene) => scene.sceneId === id)?.text === sentences.get(id));
 }
 
@@ -127,23 +131,36 @@ function isAccepted(set: StoredSceneSet, record: ReviewWriteRecord, sentences: R
  * category's snapshot is refreshed), an idea write adds its scenes under the ids it reserved. A sentence for a scene outside the write is ignored. The
  * record is resolved. Accepting the same answer again changes nothing. Throws when the write is not there, is resolved without this answer, or the answer lacks a sentence the write needs.
  */
-export function withReviewWriteAccepted(set: StoredSceneSet, k: number, sentences: ReadonlyMap<number, string>, angles: ReadonlyMap<number, { shot: Shot; pose: Pose }> = new Map()): StoredSceneSet {
+export function withReviewWriteAccepted(
+  set: StoredSceneSet,
+  k: number,
+  sentences: ReadonlyMap<number, string>,
+  angles: ReadonlyMap<number, { shot: Shot; pose: Pose }> = new Map(),
+  options: { partial?: boolean } = {},
+): StoredSceneSet {
+  const partial = options.partial === true;
   // The same answer applied twice is one acceptance: a flush that failed AFTER the rename left the new texts and the closed record on disk while the writer saw
   // an error, and its retry arrives here. The set is returned as it is (the same object), which the service reads as «nothing to write».
-  if (isAccepted(set, recordOf(set, k), sentences)) return set;
+  if (isAccepted(set, recordOf(set, k), sentences, partial)) return set;
   const record = openRecordOf(set, k);
   if (record.kind === "idea") {
     // CS.8a: the angle the model settled on (the owner's idea, read by `readIdeaAnswer`) wins over the draw the write was recorded with, which is only what a scene
     // holds when a caller passes no angles. The write job always passes them: `askedOf` asks the pose (and, on «Авто», the shot) for EVERY idea record, so a write
     // recorded before CS.8a and resumed after it is decided by the model's pick too, not by the draw it was recorded with.
-    const added: SceneRecord[] = record.scenes.map((s) => {
+    // S5.6d: a partial answer adds only the scenes it has a sentence for; the ids of the others stay reserved by the (closed) record and are never reused.
+    const named = partial ? record.scenes.filter((s) => sentences.has(s.sceneId)) : record.scenes;
+    if (named.length === 0) throw new Error(`review write ${k}: the accepted answer has no sentence for any scene of the write`);
+    const added: SceneRecord[] = named.map((s) => {
       const angle = angles.get(s.sceneId);
       return { sceneId: s.sceneId, origin: "own", idea: record.idea, shot: angle?.shot ?? s.shot, pose: angle?.pose ?? s.pose, text: sentenceFor(sentences, s.sceneId, k), edited: false, removed: false };
     });
     return replaceRecord({ ...set, scenes: [...set.scenes, ...added] }, k, (r) => ({ ...withoutStop(r), closed: true }));
   }
-  const targets = new Set(record.sceneIds);
-  const texts = new Map(record.sceneIds.map((id) => [id, sentenceFor(sentences, id, k)] as const));
+  const written = partial ? record.sceneIds.filter((id) => sentences.has(id)) : record.sceneIds;
+  if (written.length === 0) throw new Error(`review write ${k}: the accepted answer has no sentence for any scene of the write`);
+  // S5.6d: a partial answer changes only the targets it has a sentence for; the others keep the text and the place they have.
+  const targets = new Set(written);
+  const texts = new Map(written.map((id) => [id, sentenceFor(sentences, id, k)] as const));
   const slots = new Map(record.slots.map((slot) => [slot.slotIndex, slot] as const));
   const scenes = set.scenes.map((scene): SceneRecord => {
     if (!targets.has(scene.sceneId)) return scene;
