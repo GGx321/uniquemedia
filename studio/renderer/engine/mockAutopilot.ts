@@ -6,6 +6,7 @@ import {
   LaunchPreview,
   LaunchPreviewAvatar,
   LaunchView,
+  orderCategories,
   PROTOCOL_VERSION,
   shapeSizeFits,
   type AutoRefresh,
@@ -31,6 +32,7 @@ import {
   type UnsequencedEvent,
   type VideoShape,
 } from "../../shared/engine";
+import type { SplitEntry } from "../../shared/scenes/writerBound";
 import { MockRun, PAID_FAULTS, type PaidFault } from "./mockLaunchRun";
 
 export { PAID_FAULTS, type PaidFault };
@@ -73,8 +75,8 @@ export interface MockAutopilotWorld {
   /** The library can say which of the avatar's photos are free (its usage and drafts are known). */
   libraryKnown(avatarId: string): boolean;
   unit(): MockAutopilotUnit;
-  /** The writer's bound for `count` new photos over `categories` (the engine's `writerChunksWorst` and `llmPossibleSlots`): the requests the compose can need and the photos that can go to the model. */
-  writerBound(count: number, categories: readonly CategoryRef[]): { chunks: number; modelSlots: number };
+  /** The writer's bound for a split of new photos (the engine's `writerChunksWorst` and `llmPossibleSlots`): the requests the compose can need and the photos that can go to the model. */
+  writerBound(split: readonly SplitEntry[]): { chunks: number; modelSlots: number };
   prices(): { prices: Estimate["prices"]; pricesAsOf: string };
   /** The month's budget, and what is committed in it: spent, open, and (A21) the unspent rest of every running job's cap. */
   month(): { budgetMicros: number; committedMicros: number };
@@ -178,6 +180,23 @@ interface PlannedAvatar {
   readonly row: LaunchPreviewAvatar;
   /** The made videos in key order: slides first, then collages, then singles. */
   readonly shapes: readonly VideoShape[];
+  /** The new photos per category, as the engine's plan hands them out (`generateSplit`): what the writer's bound is read from. */
+  readonly generate: readonly SplitEntry[];
+}
+
+/**
+ * The generated videos' photos per category, as the engine's planner deals them (planner.ts, `generate`): the videos that the library could not fill go round the
+ * launch's categories one video at a time, slides first, and every photo of a video comes from its category. The engine starts the round at a seeded rotation of the
+ * categories; the mock starts it at the first, so its split is the engine's up to which category gets the extra video.
+ */
+function generateSplit(generated: readonly VideoShape[], categories: readonly CategoryRef[]): SplitEntry[] {
+  const ordered = orderCategories(categories);
+  const counts = new Map<CategoryRef, number>(ordered.map((ref) => [ref, 0]));
+  generated.forEach((shape, turn) => {
+    const ref = ordered[turn % ordered.length];
+    if (ref !== undefined) counts.set(ref, (counts.get(ref) ?? 0) + SIZE[shape]);
+  });
+  return ordered.map((ref) => ({ ref, count: counts.get(ref) ?? 0 }));
 }
 
 export interface MockLaunch {
@@ -255,6 +274,7 @@ export class MockAutopilot {
     const made = { single: 0, collage: 0, slides: 0 };
     let fromLibrary = 0;
     let toGenerate = 0;
+    const generated: VideoShape[] = [];
     for (const shape of ["slides", "collage", "single"] as const) {
       for (let n = 0; n < wanted[shape]; n++) {
         if (pool >= SIZE[shape]) {
@@ -264,6 +284,7 @@ export class MockAutopilot {
         } else if (draft.generate) {
           toGenerate += SIZE[shape];
           made[shape] += 1;
+          generated.push(shape);
         }
       }
     }
@@ -281,7 +302,7 @@ export class MockAutopilot {
       blocked,
       usage,
     });
-    return { row, shapes };
+    return { row, shapes, generate: generateSplit(generated, draft.categories) };
   }
 
   /** The unfinished launch, if any. */
@@ -299,9 +320,9 @@ export class MockAutopilot {
     const unit = this.#world.unit();
     let worst = 0;
     let expected = 0;
-    for (const { row } of counted) {
+    for (const { row, generate } of counted) {
       // 5a.2: the code template writes a built-in category and a covered custom one, so only an uncovered custom category's photos are priced for the writer (plan §5.6).
-      const bound = this.#world.writerBound(row.toGenerate, draft.categories);
+      const bound = this.#world.writerBound(generate);
       worst += bound.chunks * unit.writerChunkWorstMicros + row.toGenerate * unit.photoWorstMicros;
       expected += bound.modelSlots * unit.writerExpectedPerPhotoMicros + row.toGenerate * unit.photoExpectedMicros;
     }
@@ -796,7 +817,7 @@ export class MockAutopilot {
         faults: this.#faults,
         renderFaults: this.#renderFaults,
       },
-      { avatars: planned.map((p) => ({ avatarId: p.row.avatarId, shapes: p.shapes, fromLibrary: p.row.fromLibrary, toGenerate: p.row.toGenerate })), categories: draft.categories, review: draft.sceneReview, number },
+      { avatars: planned.map((p) => ({ avatarId: p.row.avatarId, shapes: p.shapes, fromLibrary: p.row.fromLibrary, toGenerate: p.row.toGenerate, generate: p.generate })), categories: draft.categories, review: draft.sceneReview, number },
     );
     return launch;
   }

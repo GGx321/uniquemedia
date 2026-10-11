@@ -701,7 +701,11 @@ export class MockSceneSets {
 
   /** The writer's bound for a plan of `count` scenes over `categories`: the requests it can need and the scenes that can go to the model (`writerChunksWorst`, `llmPossibleSlots`). */
   writerBound(count: number, categories: readonly CategoryRef[]): { chunks: number; modelSlots: number } {
-    const split: SplitEntry[] = splitCount(count, categories);
+    return this.writerBoundOf(splitCount(count, categories));
+  }
+
+  /** The same bound for an explicit split (the autopilot's: the engine's plan hands each category the photos of the videos it drew, not an even share). */
+  writerBoundOf(split: readonly SplitEntry[]): { chunks: number; modelSlots: number } {
     return { chunks: writerChunksWorst(split, this.coversOf), modelSlots: llmPossibleSlots(split, this.coversOf) };
   }
 

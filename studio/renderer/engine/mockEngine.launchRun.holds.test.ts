@@ -10,6 +10,7 @@ import { errorOf, LLM_ONLY_REF, MIA, ON_THE_WRITER, resumeRun, runUntil, runWorl
 // category whose scenes only the model writes. A launch on «Дом» meets the same refusal at its first photo (the test after the 402 table).
 const KEY = "sk-or-v1-abcdef0123456789-test";
 
+// S5.6R: the plan deals the generated videos round the categories one video at a time (the engine's `generate`), so a launch reaches the fixture's writer only when two videos are generated: the first goes to «Дом», the second to the fixture.
 /** A launch with one video from the library and one to generate, so free work (the library video) has something to do while the paid work is held. */
 const MIXED = { library: true, mix: { single: 0, collage: 0, slides: 100 }, videosPerAvatar: 2 } as const;
 
@@ -23,7 +24,7 @@ describe("credits (402)", () => {
   test("holds the paid work for a person: the avatar is parked, the library video is still made, «Продолжить» is open and clears the hold", async () => {
     const mock = runWorld();
     mock.engine.failLaunchPaidStep("credits");
-    const started = await startRun(mock, { ...MIXED, categories: ["home", LLM_ONLY_REF] });
+    const started = await startRun(mock, { ...MIXED, videosPerAvatar: 3, categories: ["home", LLM_ONLY_REF] });
     const held = await heldBy(mock, started.launchId, "credits");
     expect(held).toMatchObject({ status: "running", paidHold: { reason: "credits", detail: {} }, resumeBlockedBy: null });
     expect(held.avatars[0]).toMatchObject({ phase: "waiting", waiting: { reason: "paid-hold" } });
@@ -39,7 +40,7 @@ describe("credits (402)", () => {
     const resumed = await continueAt(mock, started.launchId);
     expect(resumed).toMatchObject({ status: "running", paidHold: null });
     expect(resumed.logTail.at(-1)).toMatchObject({ kind: "resumed" });
-    expect((await toDone(mock, started.launchId)).avatars[0]).toMatchObject({ phase: "done", videos: { done: 2, total: 2 } });
+    expect((await toDone(mock, started.launchId)).avatars[0]).toMatchObject({ phase: "done", videos: { done: 3, total: 3 } });
   });
 
   test("«Продолжить» on a launch that runs with no hold is refused; a launch whose hold the click cleared is not held again unless the cause is still there", async () => {

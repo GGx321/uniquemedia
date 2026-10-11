@@ -973,7 +973,7 @@ export class MockEngine implements EngineBridge {
         avatarActive: (avatarId) => this.avatars.some((a) => a.avatarId === avatarId && a.status === "active"),
         libraryKnown: (avatarId) => !this.launchLibraryLost && this.availabilityOf(avatarId).state === "known",
         unit: () => this.autopilotUnit(),
-        writerBound: (count, categories) => this.sceneSets.writerBound(count, categories),
+        writerBound: (split) => this.sceneSets.writerBoundOf(split),
         prices: () => ({ prices: this.price.prices, pricesAsOf: this.price.pricesAsOf }),
         month: () => this.launchMonthRoom(),
         paidGate: () => this.launchGate(),

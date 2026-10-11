@@ -83,6 +83,21 @@ describe("autopilot.estimate", () => {
     expect(onBuiltIn.estimate.expectedMicros).toBe(10 * IMAGE);
   });
 
+  // S5.6R: the engine splits an avatar's new photos by VIDEO, round-robin over the launch's categories (planner.ts, `generate`): every photo of one video comes from one category.
+  // The mock priced them on an even split of the photos, so it spread one slides video over two categories and charged the writer for a share of it.
+  test("splits the new photos by video over the categories, as the engine's plan does: one slides video of two categories sits in one", async () => {
+    const mixed = { avatarIds: [MIA.avatarId], mix: { single: 0, collage: 0, slides: 100 }, categories: ["home" as const, LLM_ONLY_REF], library: false };
+    // One video (5 photos), all in the first category (the built-in one): no photo for the model.
+    const one = await estimate(world(), { ...mixed, videosPerAvatar: 1 });
+    expect(one.totals.toGenerate).toBe(5);
+    expect(one.estimate.worstMicros).toBe(5 * 3 * IMAGE);
+    expect(one.estimate.expectedMicros).toBe(5 * IMAGE);
+    // Two videos: one in each category, so the fixture holds 5 of the 10 photos: one chunk and 5 scenes for the model.
+    const two = await estimate(world(), { ...mixed, videosPerAvatar: 2 });
+    expect(two.estimate.worstMicros).toBe(WRITER_CHUNK + 10 * 3 * IMAGE);
+    expect(two.estimate.expectedMicros).toBe(5 * WRITER_PER_PHOTO + 10 * IMAGE);
+  });
+
   test("draws a plan seed when the draft has none, and keeps the one it is given", async () => {
     const mock = world();
     const drawn = await estimate(mock);

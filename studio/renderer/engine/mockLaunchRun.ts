@@ -12,6 +12,7 @@ import {
   type VideoShape,
   type WaitingReason,
 } from "../../shared/engine";
+import type { SplitEntry } from "../../shared/scenes/writerBound";
 import type { MockAutopilotWorld, MockLaunch } from "./mockAutopilot";
 
 // The mock's launch, run on its scheduler (Stage 4, S4.8). The engine's orchestrator and steps advance a launch in the background; this advances the mock's the same way, one pass per
@@ -82,6 +83,8 @@ interface Work {
   readonly avatarId: string;
   readonly index: number;
   readonly toGenerate: number;
+  /** The new photos per category, as the plan dealt them: the writer's bound is read from it. */
+  readonly generate: readonly SplitEntry[];
   readonly slots: Slot[];
   /** The paid path's own phase; the row shows `waiting` while `waiting` is set. */
   phase: AvatarPhase;
@@ -129,7 +132,7 @@ export interface RunHost {
 }
 
 export interface RunStart {
-  readonly avatars: readonly { avatarId: string; shapes: readonly VideoShape[]; fromLibrary: number; toGenerate: number }[];
+  readonly avatars: readonly { avatarId: string; shapes: readonly VideoShape[]; fromLibrary: number; toGenerate: number; generate: readonly SplitEntry[] }[];
   readonly categories: readonly CategoryRef[];
   readonly review: boolean;
   readonly number: string;
@@ -187,6 +190,7 @@ export class MockRun {
         avatarId: a.avatarId,
         index,
         toGenerate: a.toGenerate,
+        generate: a.generate,
         slots: sized,
         phase: "planned",
         waiting: null,
@@ -431,7 +435,7 @@ export class MockRun {
       if (work === undefined) continue;
       moved = true;
       if (reserve.kind === "writer") {
-        this.#close(key, this.#w.writerBound(work.toGenerate, this.#categories).modelSlots * this.#w.unit().writerExpectedPerPhotoMicros);
+        this.#close(key, this.#w.writerBound(work.generate).modelSlots * this.#w.unit().writerExpectedPerPhotoMicros);
         if (work.phase === "composing") {
           this.#openSet(work);
           work.written = true;
@@ -561,7 +565,7 @@ export class MockRun {
 
   /** The most writer requests the avatar's compose can need: the engine's `writerChunksWorst` over the launch's categories (0 when the template writes every scene). */
   #writerChunks(work: Work): number {
-    return this.#w.writerBound(work.toGenerate, this.#categories).chunks;
+    return this.#w.writerBound(work.generate).chunks;
   }
 
   /** A compose the code template writes whole (5a.2): no request, no reserve, no money. The set exists and holds every sentence at once, as the engine's does. */
