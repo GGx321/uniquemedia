@@ -2085,3 +2085,114 @@ describe("runs.start refusals and the shared network pool", () => {
 
   });
 });
+
+// ---------- S5.6R (I5.30): cap = plannedWorst = the estimate, through the engine's own commands ----------
+
+// runJob.test.ts checks the cap against a figure the test computes with the same function the code uses. Here the figure is spelled out from the plan's own arithmetic (images at three
+// attempts of the dearest model, the writer's chunks at two attempts of $0.0375), and the cap is read back from the plan.json and from `runs.list` after a real start.
+describe("a run's cap is the estimate it was started at (I5.30)", () => {
+  const IMAGES = (photos: number): number => photos * 3 * 50_000;
+  const CHUNK = 2 * 37_500;
+
+  /** A custom category whose every activity reads after «she is» and whose deck holds no hand-held shot: the code template covers it. */
+  async function seedCoveredCategory(): Promise<`cat-${string}`> {
+    const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds(`seedcovered${++seededCategories}`) });
+    const categoryId = `cat-covered-${String(++seededCategories).padStart(6, "0")}` as const;
+    await library.categories.create({
+      categoryId,
+      name: `Covered ${seededCategories}`,
+      description: "кофейни",
+      label: "Covered cafes",
+      style: "phone",
+      pool: {
+        locations: ["a quiet bookshop", "a flower stall", "a corner cafe", "a bridge over the river", "a sunny terrace"].map((name) => ({
+          name,
+          times: ["midday"],
+          activities: [{ text: "holding a mug", twoHanded: false }, { text: "browsing the shelves", twoHanded: false }],
+          mirror: false,
+        })),
+        outfits: ["a cozy cardigan", "jeans and a tee", "a linen dress"],
+        shotDeck: ["friend", "friend", "friend", "friend", "friend"],
+      },
+      model: "x-ai/grok-4.3",
+      spentMicros: 0,
+    });
+    return categoryId;
+  }
+
+  async function worstOf(engine: Engine, req: unknown): Promise<number> {
+    const answer = ok(await engine.handle(command("runs.estimate", req)));
+    if (answer.type !== "runs.estimate") throw new Error("expected an estimate");
+    return answer.result.estimate.worstMicros;
+  }
+
+  async function capsAfterStart(engine: Engine, events: Parameters<typeof jobEnd>[0], req: object, worst: number): Promise<{ plan: RunPlan; listedCap: number; committed: number }> {
+    const { runId, jobId } = started(await engine.handle(command("runs.start", { ...req, acceptedWorstMicros: worst })));
+    await jobEnd(events, jobId);
+    const listed = ok(await engine.handle(command("runs.list", {})));
+    if (listed.type !== "runs.list") throw new Error("expected the run list");
+    const run = listed.result.runs.find((r) => r.runId === runId);
+    if (run === undefined) throw new Error("the run is not listed");
+    return { plan: planOf(runId), listedCap: run.capMicros, committed: run.committedMicros };
+  }
+
+  test("a built-in run: the estimate is its images alone, and the plan and runs.list carry that figure as the cap and as plannedWorst", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork();
+    const { engine, events } = await engineOver(net);
+    const req = { avatarId, count: 12, categories: ["home"], poses: { profile: false, back: false } };
+
+    const worst = await worstOf(engine, req);
+    expect(worst).toBe(IMAGES(12));
+    const { plan, listedCap, committed } = await capsAfterStart(engine, events, req, worst);
+    expect(plan.capMicros).toBe(worst);
+    expect(plan.plannedWorstMicros).toBe(worst);
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(listedCap).toBe(worst);
+    expect(committed).toBeLessThanOrEqual(worst);
+  });
+
+  test("a mixed run (built-in, a covered custom and an uncovered custom category): only the uncovered one's chunks are on top of the images", async () => {
+    const avatarId = await seedAvatar();
+    const covered = await seedCoveredCategory();
+    const uncovered = await seedCustomCategory();
+    const { engine, events } = await engineOver(runNetwork());
+    // 50 photos split 17 / 17 / 16: the uncovered block of 16 touches ⌈16/25⌉ + 1 = 2 chunks, and the plan has ⌈50/25⌉ = 2.
+    const req = { avatarId, count: 50, categories: ["home", covered, uncovered], poses: { profile: false, back: false } };
+
+    const worst = await worstOf(engine, req);
+    expect(worst).toBe(IMAGES(50) + 2 * CHUNK);
+    const { plan, listedCap, committed } = await capsAfterStart(engine, events, req, worst);
+    expect(plan.capMicros).toBe(worst);
+    expect(plan.plannedWorstMicros).toBe(worst);
+    expect(listedCap).toBe(worst);
+    expect(committed).toBeLessThanOrEqual(worst);
+  });
+
+  test("a run of the covered custom category alone prices and caps no writer", async () => {
+    const avatarId = await seedAvatar();
+    const covered = await seedCoveredCategory();
+    const net = runNetwork();
+    const { engine, events } = await engineOver(net);
+    const req = { avatarId, count: 8, categories: [covered], poses: { profile: false, back: false } };
+
+    const worst = await worstOf(engine, req);
+    expect(worst).toBe(IMAGES(8));
+    const { plan } = await capsAfterStart(engine, events, req, worst);
+    expect(plan.capMicros).toBe(IMAGES(8));
+    expect(net.writerCalls()).toHaveLength(0);
+  });
+
+  // The frames whose face is hidden (a back or a profile angle) are marked and not retried: they lower the EXPECTED retries, never the worst case the cap is made of.
+  test("allowing the angles that hide a face does not change the worst case or the cap", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(runNetwork());
+    const front = { avatarId, count: 12, categories: ["home"], poses: { profile: false, back: false } };
+    const hidden = { ...front, poses: { profile: true, back: true } };
+
+    expect(await worstOf(engine, hidden)).toBe(await worstOf(engine, front));
+    const { plan } = await capsAfterStart(engine, events, hidden, IMAGES(12));
+    expect(plan.capMicros).toBe(IMAGES(12));
+    expect(plan.plannedWorstMicros).toBe(IMAGES(12));
+  });
+});
