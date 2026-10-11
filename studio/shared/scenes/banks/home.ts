@@ -6,8 +6,13 @@ import type { CategoryBank } from "./types";
 // in the mirror. Lamp light at evening and night. Legwear is its own slot. Never a friend (I5.32): no moment here fits one. Satin nightdresses, legs-up
 // in tights and boots, and bikinis were refused by Grok and wait for «Смелая» (5a.3).
 
-/** The prone selfie's outfit: Grok drew it in grey lounge shorts and refused it in cotton shorts (the probe), so its moments pin this one. */
+/** The prone selfie's outfits: Grok drew it in grey lounge shorts and in grey leggings and refused it in cotton shorts (the probes), so every
+ *  moment that lies on her stomach pins these. */
 const PRONE_OUTFIT = "grey lounge shorts and a fitted tee";
+const LEGGINGS = "grey leggings and a cropped tee";
+const PRONE = [PRONE_OUTFIT, LEGGINGS];
+/** The bathroom counter mirror selfie's outfit, as the owner approved it. */
+const OPEN_BACK = "an open-back top and grey jeans";
 
 export const HOME: CategoryBank = {
   places: [
@@ -32,6 +37,7 @@ export const HOME: CategoryBank = {
       at: "on her bed",
       room: true,
       lamp: true,
+      mirror: true,
       details: ["a pillow", "a bedside lamp", "a soft blanket"],
       times: ["morning", "evening", "night"],
       moments: [
@@ -43,15 +49,18 @@ export const HOME: CategoryBank = {
           startPose: "flat on her stomach, hips down",
           captures: ["prone"],
           twoHanded: false,
-          outfits: [PRONE_OUTFIT],
+          outfits: PRONE,
         },
-        { text: "lies on her stomach, feet raised", motion: "her raised feet swing slowly", captures: ["prone"], twoHanded: false, outfits: [PRONE_OUTFIT], noLegwear: true },
-        { text: "lies on her stomach, legs bent up", motion: "she kicks her feet slowly", captures: ["timer"], twoHanded: false, angle: "back", noLegwear: true },
+        { text: "lies on her stomach, feet raised", motion: "her raised feet swing slowly", captures: ["prone"], twoHanded: false, outfits: PRONE, noLegwear: true },
+        { text: "lies on her stomach, legs bent up", motion: "she kicks her feet slowly", captures: ["timer"], twoHanded: false, angle: "back", outfits: PRONE, noLegwear: true },
+        { text: "lies on her stomach on the bed", motion: "she lifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
+        { text: "lies on her stomach, on her elbows", motion: "she shifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
+        { text: "lies prone, her cheek on her hand", motion: "she slowly blinks and smiles", captures: ["prone"], twoHanded: false, outfits: PRONE },
         { text: "sits cross-legged on the bed", motion: "she rocks a little side to side", captures: ["timer", "above"], twoHanded: false },
         { text: "rests her cheek on the pillow", motion: "she slowly closes her eyes", captures: ["above"], twoHanded: false },
         { text: "lies curled under the blanket", motion: "she pulls the blanket up a little", captures: ["above", "timer"], twoHanded: false, messyOk: true },
-        { text: "lies on her stomach, hips raised", motion: "she lifts her hips a little higher", captures: ["prone"], twoHanded: false, outfits: [PRONE_OUTFIT] },
-        { text: "lies on her stomach, head tilted", motion: "she tilts her head a little", captures: ["prone"], twoHanded: false, outfits: [PRONE_OUTFIT] },
+        { text: "lies on her stomach, hips raised", motion: "she lifts her hips a little higher", captures: ["prone"], twoHanded: false, outfits: PRONE },
+        { text: "lies on her stomach, head tilted", motion: "she tilts her head a little", captures: ["prone"], twoHanded: false, outfits: PRONE },
       ],
     },
     {
@@ -63,12 +72,27 @@ export const HOME: CategoryBank = {
       details: ["a fluffy rug", "a floor lamp in the corner"],
       times: ["evening", "night"],
       moments: [
-        { text: "kneels on the rug facing the mirror", motion: "she shifts from knee to knee slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false },
+        { text: "sits on the rug facing the mirror", motion: "she leans back a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "sits on the floor, legs to one side", motion: "she leans back a little", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
         { text: "sits on the floor hugging her knees", motion: "she rocks a little on the floor", captures: ["timer"], twoHanded: true },
         { text: "leans back on her hands on the rug", motion: "she tilts her head a little", captures: ["timer"], twoHanded: true },
-        { text: "lies on her stomach on the rug", motion: "she lifts her hips a little", captures: ["prone"], twoHanded: false, outfits: [PRONE_OUTFIT] },
+        { text: "lies on her stomach on the rug", motion: "she lifts her hips a little", captures: ["prone"], twoHanded: false, outfits: PRONE },
         { text: "lies back on the rug", motion: "she slowly turns her head", captures: ["above", "timer"], twoHanded: false },
+      ],
+    },
+    {
+      name: "her bathroom",
+      at: "in her bathroom",
+      room: true,
+      mirror: true,
+      details: ["a towel on the hook", "a hair dryer by the sink"],
+      times: ["morning", "evening"],
+      moments: [
+        { text: "sits on the bathroom counter", motion: "she swings one foot a little", captures: ["mirror-hidden"], twoHanded: false, angle: "three-quarter", outfits: [OPEN_BACK] },
+        { text: "leans on the edge of the sink", motion: "she leans in a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
+        { text: "brushes her hair", motion: "she brushes slowly", captures: ["mirror"], twoHanded: false, hair: "own" },
+        { text: "applies lip balm", motion: "she presses her lips a bit", captures: ["mirror"], twoHanded: false, gaze: "focus" },
+        { text: "sits on the edge of the bathtub", motion: "she swings one foot a little", captures: ["mirror-hidden", "timer"], twoHanded: false },
       ],
     },
     {
@@ -107,6 +131,8 @@ export const HOME: CategoryBank = {
     { text: "a pleated mini and a fitted top", showsLegs: true },
     { text: "silk pajamas" },
     { text: PRONE_OUTFIT, showsLegs: true },
+    { text: LEGGINGS },
+    { text: OPEN_BACK },
   ],
   legwear: { items: ["white knee-high socks", "black knee-high socks", "thigh-high socks", "sheer black tights"], share: 0.4 },
   captureDeck: ["mirror-hidden", "mirror", "above", "mirror-hidden", "prone", "timer"],

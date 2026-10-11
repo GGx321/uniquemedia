@@ -6,6 +6,7 @@ import {
   CAMERA_WORDS,
   COLOUR_WORDS,
   CUE_BANNED_WORDS,
+  DENIM_SHORTS_WORDS,
   FEET_UP_WORDS,
   GAZE_VERBS,
   HAIR_COLOUR_WORDS,
@@ -61,6 +62,7 @@ export const BANK_RULE = {
   deck: "deck",
   deckCoverage: "deck-coverage",
   legwear: "legwear",
+  denim: "denim",
   glamourBed: "glamour-bed",
   gazeGrammar: "gaze-grammar",
   gazePhone: "gaze-phone",
@@ -198,7 +200,10 @@ function categoryBankSchema(category: BankCategory) {
       if (new Set(names).size !== names.length) add(BANK_RULE.duplicate, "places", "two places share a name");
       const outfitTexts = bank.outfits.map((o) => o.text);
       if (new Set(outfitTexts).size !== outfitTexts.length) add(BANK_RULE.duplicate, "outfits", "an outfit is given twice");
-      bank.outfits.forEach((outfit, i) => checkText(add, `outfits[${i}]`, outfit.text));
+      bank.outfits.forEach((outfit, i) => {
+        checkText(add, `outfits[${i}]`, outfit.text);
+        if (DENIM_SHORTS_WORDS.test(outfit.text)) add(BANK_RULE.denim, `outfits[${i}]`, "no denim shorts and no denim skirts (the owner)");
+      });
       if (bank.legwear !== undefined) {
         bank.legwear.items.forEach((item, i) => checkText(add, `legwear[${i}]`, item));
         if (bank.legwear.items.length === 0) add(BANK_RULE.legwear, "legwear", "names one item at least");

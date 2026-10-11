@@ -96,13 +96,41 @@ describe("what any content must keep", () => {
     for (const moment of shoulders) expect({ angle: moment.angle, gaze: moment.gaze }).toEqual({ angle: "three-quarter", gaze: "own" });
   });
 
-  test("the prone selfie is drawn only in the outfits its probe drew (grey lounge shorts; cotton shorts were refused)", () => {
+  test("the prone selfie is drawn only in the outfits its probes drew (grey lounge shorts, grey leggings; cotton shorts were refused)", () => {
     const prone = moments("home").filter((m) => m.captures.includes("prone"));
     expect(prone.length).toBeGreaterThan(0);
     for (const moment of prone) {
       expect(moment.outfits?.length ?? 0).toBeGreaterThan(0);
-      for (const outfit of moment.outfits ?? []) expect(outfit).toMatch(/grey lounge shorts/);
+      for (const outfit of moment.outfits ?? []) expect(outfit).toMatch(/grey lounge shorts|grey leggings/);
     }
+  });
+
+  // The owner's approved «Дом» compositions (2026-10-11, prone probes P57-P62 and T42): a mirror selfie lying prone on the bed with the phone over
+  // her face; the same propped on her elbows; an arm's-length prone selfie with her cheek on her hand; seated on the bathroom counter in the mirror
+  // (three-quarter: a mirror capture faces the phone) in an open-back top and grey jeans; the prone selfies in leggings too.
+  test("«Дом» carries the approved compositions", () => {
+    const at = (name: string) => places("home").find((p) => p.name === name);
+    const bed = at("her bed");
+    expect(bed?.mirror).toBe(true);
+    const hiddenProne = (bed?.moments ?? []).filter((m) => /lies on her stomach/.test(m.text) && m.captures.includes("mirror-hidden"));
+    expect(hiddenProne.length).toBeGreaterThanOrEqual(2);
+    expect(hiddenProne.some((m) => /elbows/.test(m.text))).toBe(true);
+    expect((bed?.moments ?? []).some((m) => /cheek on her hand/.test(m.text) && m.captures.includes("prone"))).toBe(true);
+    const counter = places("home").flatMap((p) => p.moments).find((m) => /bathroom counter/.test(m.text));
+    expect(counter).toMatchObject({ captures: ["mirror-hidden"], angle: "three-quarter", outfits: ["an open-back top and grey jeans"] });
+    for (const moment of moments("home").filter((m) => /lies on her stomach/.test(m.text))) expect(moment.outfits ?? []).toContain("grey leggings and a cropped tee");
+    expect(CUES.find((c) => c.text === "her tongue out a little")?.captures).toEqual(["above", "prone"]);
+  });
+
+  test("«Дом» has none of the compositions the owner did not approve: kneeling at the mirror, hips high above her head", () => {
+    for (const moment of moments("home")) {
+      expect(moment.text).not.toMatch(/kneel/);
+      expect(moment.text).not.toMatch(/above her head/);
+    }
+  });
+
+  test("no denim shorts and no denim skirts anywhere (the owner)", () => {
+    for (const category of BANK_CATEGORIES) for (const outfit of BANKS[category].outfits) expect(outfit.text).not.toMatch(/\b(denim|jean)s?\s+(mini\s+)?(shorts|skirt)/);
   });
 
   test("«Дом» carries legwear (K-17: knee-high socks, thigh-high socks, sheer tights) on about 40 % of the outfits that show her legs", () => {

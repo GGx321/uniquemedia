@@ -51,6 +51,9 @@ export const LEGWEAR_CLASH_WORDS = /\b(socks?|socked|tights|stockings?|bare|bare
 /** A moment whose feet or legs are up carries the `noLegwear` tag (plan r1.4), so it takes no legwear either. */
 export const FEET_UP_WORDS = /\b(?:feet|legs|foot)\s+(?:up|raised|in the air)\b|\b(?:feet|foot)\s+on\s+the\b|\blegs\s+bent\s+up\b/i;
 
+/** The owner (2026-10-11): no denim shorts and no denim skirts, anywhere. */
+export const DENIM_SHORTS_WORDS = /\b(?:denim|jeans?)\s+(?:mini\s+)?(?:shorts|skirts?)\b/i;
+
 /** I5.35: a motion is small or slow. */
 export const MOTION_SMALL = /\b(slowly|a little|a bit|slightly|gently|small)\b/i;
 

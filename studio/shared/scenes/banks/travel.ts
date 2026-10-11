@@ -58,7 +58,7 @@ export const TRAVEL: CategoryBank = {
     { text: "a sundress", showsLegs: true },
     { text: "a strapless mini dress", showsLegs: true },
     { text: "a tank top, pleated skirt, boots", showsLegs: true },
-    { text: "a linen shirt and denim shorts", showsLegs: true },
+    { text: "a linen shirt dress", showsLegs: true },
     { text: "a cotton top and linen trousers" },
   ],
   captureDeck: ["friend", "selfie", "friend", "timer", "friend", "candid"],

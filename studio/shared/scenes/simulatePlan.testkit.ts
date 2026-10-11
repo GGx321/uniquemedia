@@ -135,8 +135,10 @@ export function simulatePlan(category: BankCategory, n: number, seed: number, le
     order.set(place.name, [...(order.get(place.name) ?? []).filter((m) => m !== moment), moment]);
 
     const pinned = moment.outfits;
-    const outfit: Outfit =
-      pinned === undefined ? nextOutfit() : (bank.outfits.find((o) => o.text === pinned[Math.floor(next() * pinned.length)]) ?? nextOutfit());
+    const pinnedText = pinned === undefined ? undefined : pinned[Math.floor(next() * pinned.length)];
+    const pinnedOutfit = bank.outfits.find((o) => o.text === pinnedText);
+    if (pinned !== undefined && pinnedOutfit === undefined) throw new Error(`${category}: «${moment.text}» pins an outfit the bank does not have`);
+    const outfit: Outfit = pinnedOutfit ?? nextOutfit();
     const legwearItems = bank.legwear?.items ?? [];
     const legwear = legwearItems.length > 0 && legwearFits(moment, outfit) && next() < (bank.legwear?.share ?? 0) ? legwearItems[Math.floor(next() * legwearItems.length)] : undefined;
     return {

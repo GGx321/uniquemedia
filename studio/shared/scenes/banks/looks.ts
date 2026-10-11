@@ -39,6 +39,7 @@ export const CUES: readonly Cue[] = [
   { text: "a slight pout", captures: ["above", "prone"] },
   { text: "a finger near her lips", captures: ["above", "prone"] },
   { text: "her hand at her cheek", captures: ["above", "prone"] },
+  { text: "her tongue out a little", captures: ["above", "prone"] },
   { text: "a slow smile", level: "flirty" },
   { text: "a small smirk", level: "flirty" },
   { text: "one eyebrow raised", level: "flirty" },
