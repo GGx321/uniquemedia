@@ -373,3 +373,33 @@ test("refuses to stamp a file that has no moov box", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a header of an unknown version refuses the whole file and leaves it byte for byte as it was", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "uniq-stamp-"));
+  try {
+    const path = join(dir, "a.mp4");
+    const good = timedBox("tkhd", 0, 84);
+    const bad = timedBox("mdhd", 2, 24); // version 2 does not exist
+    const tr = box("trak", good, box("mdia", bad));
+    const bytes = Buffer.concat([ftyp("isom", 0), box("moov", timedBox("mvhd", 0, 100), tr), mdat()]);
+    writeFileSync(path, bytes);
+    await expect(stampMovCreationTimes(path, WHEN)).rejects.toThrow(/version 2/);
+    expect(readFileSync(path).equals(bytes)).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a header too short for its times refuses the whole file and leaves it untouched", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "uniq-stamp-"));
+  try {
+    const path = join(dir, "a.mp4");
+    const short = box("tkhd", Buffer.from([0, 0, 0, 0, 1, 2]));
+    const bytes = Buffer.concat([ftyp("isom", 0), box("moov", timedBox("mvhd", 0, 100), box("trak", short)), mdat()]);
+    writeFileSync(path, bytes);
+    await expect(stampMovCreationTimes(path, WHEN)).rejects.toThrow(/too short/);
+    expect(readFileSync(path).equals(bytes)).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -238,27 +238,31 @@ export async function stampMovCreationTimes(path: string, when: Date = new Date(
   }
 
   const seconds = BigInt(Math.floor(when.getTime() / 1000) + MAC_EPOCH_OFFSET);
+  // Every header is checked and its write planned BEFORE any byte is written,
+  // so a refusal never leaves a half-stamped file.
+  const writes = headers.map((h) => {
+    const version = bytes[h.body];
+    if (version !== 0 && version !== 1) {
+      throw new Error(`MOV '${h.type}' at byte ${h.start} has unknown version ${version}; refusing to patch it`);
+    }
+    const width = version === 1 ? 8 : 4;
+    if (h.body + 4 + 2 * width > h.end) {
+      throw new Error(`MOV '${h.type}' at byte ${h.start} is too short to hold its times`);
+    }
+    const times = Buffer.alloc(2 * width);
+    if (width === 8) {
+      times.writeBigUInt64BE(seconds, 0);
+      times.writeBigUInt64BE(seconds, 8);
+    } else {
+      times.writeUInt32BE(Number(seconds), 0);
+      times.writeUInt32BE(Number(seconds), 4);
+    }
+    return { at: h.body + 4, times };
+  });
+
   const handle = await open(path, "r+");
   try {
-    for (const h of headers) {
-      const version = bytes[h.body];
-      if (version !== 0 && version !== 1) {
-        throw new Error(`MOV '${h.type}' at byte ${h.start} has unknown version ${version}; refusing to patch it`);
-      }
-      const width = version === 1 ? 8 : 4;
-      if (h.body + 4 + 2 * width > h.end) {
-        throw new Error(`MOV '${h.type}' at byte ${h.start} is too short to hold its times`);
-      }
-      const times = Buffer.alloc(2 * width);
-      if (width === 8) {
-        times.writeBigUInt64BE(seconds, 0);
-        times.writeBigUInt64BE(seconds, 8);
-      } else {
-        times.writeUInt32BE(Number(seconds), 0);
-        times.writeUInt32BE(Number(seconds), 4);
-      }
-      await handle.write(times, 0, times.length, h.body + 4);
-    }
+    for (const w of writes) await handle.write(w.times, 0, w.times.length, w.at);
   } finally {
     await handle.close();
   }
