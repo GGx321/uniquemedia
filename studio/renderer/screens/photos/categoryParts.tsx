@@ -5,7 +5,7 @@ import type { EngineView } from "../../engine/store";
 import { formatUsdTiered } from "../../lib/money";
 import { Icon } from "../../ui/Icon";
 import { POSE_CHIP, sortPoses } from "./angles";
-import { anglesNote, placeRemoval, shotShares, timeLabel } from "./categoryText";
+import { ANGLES_DEFAULT, anglesNote, placeRemoval, shotShares, timeLabel } from "./categoryText";
 import { modelName } from "./runForm";
 
 // CS.3: the pieces the create dialog and the «Мои категории» sheet share: the pool call's price as a button may show it, the seconds a
@@ -115,7 +115,7 @@ function PlaceRow({ place, aside }: { place: CategoryPool["locations"][number]; 
 
 /**
  * CS.8 (CatCreateDone, CatCreateDoneAngles; CategoryStates F): the pool's angles after «Кадры», display only — the tags sorted front → back with where they
- * came from and what they mean, or «как в карточке генерации» when the description named none (the footer says where to change them).
+ * came from and what they mean, or «анфас и три четверти» (S5.7c) when the description named none (the footer says where to change them).
  */
 function AnglesPreview({ pool }: { pool: CategoryPool }) {
   const labelId = useId();
@@ -135,7 +135,7 @@ function AnglesPreview({ pool }: { pool: CategoryPool }) {
             ))}
           </span>
         ) : (
-          <span className="cat-angles-none">как в карточке генерации</span>
+          <span className="cat-angles-none">{ANGLES_DEFAULT}</span>
         )}
         <span className="mono faint cat-block-note cat-angles-src">{poses !== undefined ? "из описания" : "в описании не названы"}</span>
       </div>

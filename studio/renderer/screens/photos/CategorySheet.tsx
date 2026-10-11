@@ -24,6 +24,7 @@ import { useBackdropClose, useModalDialog } from "../../ui/useModalDialog";
 import { CARD_POSES, nextPoses, POSE_CHIP } from "./angles";
 import { busyElsewhere, categoryPrice, EditablePlace, ShotShares, useSeconds, worstOf } from "./categoryParts";
 import {
+  ANGLES_CLEAR_LABEL,
   ANGLES_CLEAR_TITLE,
   anglesHint,
   anglesLockedTitle,
@@ -841,7 +842,7 @@ function CategoryDetail({
                   }}
                 >
                   <Icon name="close" size={12} strokeWidth={2.4} />
-                  Как в карточке
+                  {ANGLES_CLEAR_LABEL}
                 </button>
               )
             )}

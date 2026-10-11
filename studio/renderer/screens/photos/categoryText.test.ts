@@ -324,8 +324,9 @@ describe("CS.8: a category's angles", () => {
   const BED_DECK = ["friend", "friend", "candid", "candid", "selfie"] as const;
   const PHONES = ["friend", "selfie", "mirror", "candid", "candid"] as const;
   const NO_PHONE = ["friend", "candid", "photographer", "photographer", "photographer"] as const;
-  const WHAT_MANY = "Её сцены — поровну в этих ракурсах; «Ракурсы» карточки их не касаются.";
-  const WHAT_ONE = "Все её сцены — в этом ракурсе; «Ракурсы» карточки их не касаются.";
+  // S5.7c (mockup 35): no «Ракурсы» on the card to measure against any more.
+  const WHAT_MANY = "Её сцены — поровну в этих ракурсах.";
+  const WHAT_ONE = "Все её сцены — в этом ракурсе.";
 
   test("the description hint names the pose and the angle (CatCreate)", () => {
     expect(DESCRIPTION_HINT).toBe(
@@ -356,8 +357,8 @@ describe("CS.8: a category's angles", () => {
     expect(anglesNote(["profile", "back"], NO_PHONE)).toBe(`${WHAT_MANY} В профиль и со спины — без проверки сходства.`);
   });
 
-  test("the sheet's hint: the same lines with own angles, what the card gives without; an open set holding the category's scenes adds that ⟳ there follows an edit", () => {
-    expect(ANGLES_NONE_HINT).toBe("Как в карточке генерации: анфас и три четверти всегда, профиль и со спины — если они включены там.");
+  test("the sheet's hint: the same lines with own angles, front and three-quarter without; an open set holding the category's scenes adds that ⟳ there follows an edit", () => {
+    expect(ANGLES_NONE_HINT).toBe("Без своих ракурсов: анфас и три четверти. Профиль и со спины — только если отметить их здесь.");
     expect(anglesHint(undefined, PHONES, 0)).toBe(ANGLES_NONE_HINT);
     expect(anglesHint(["back", "three-quarter"], BED_DECK, 0)).toBe(anglesNote(["three-quarter", "back"], BED_DECK));
     const opened = "Правка меняет и «Другую сцену» в открытом наборе; уже составленные сцены остаются как были.";
@@ -366,9 +367,9 @@ describe("CS.8: a category's angles", () => {
   });
 
   test("the sheet's chips and buttons say what they do", () => {
-    expect(impliedChipTitle("front")).toBe("Как в карточке: анфас и три четверти всегда. Нажмите — свои ракурсы без анфаса");
-    expect(impliedChipTitle("three-quarter")).toBe("Как в карточке: анфас и три четверти всегда. Нажмите — свои ракурсы без трёх четвертей");
-    expect(ANGLES_CLEAR_TITLE).toBe("Убрать свои ракурсы — сцены этой категории возьмут их из «Ракурсов» карточки генерации");
+    expect(impliedChipTitle("front")).toBe("Сейчас — анфас и три четверти. Нажмите — свои ракурсы без анфаса");
+    expect(impliedChipTitle("three-quarter")).toBe("Сейчас — анфас и три четверти. Нажмите — свои ракурсы без трёх четвертей");
+    expect(ANGLES_CLEAR_TITLE).toBe("Сцены этой категории будут в анфас и три четверти");
     expect(anglesLockedTitle("regenerate")).toBe("Пока идёт пересоздание, эту категорию не изменить");
     expect(anglesLockedTitle("delete")).toBe("Пока идёт удаление, эту категорию не изменить");
   });

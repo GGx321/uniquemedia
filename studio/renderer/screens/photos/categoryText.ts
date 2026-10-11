@@ -265,7 +265,8 @@ export function createdLine(setOpen: boolean): string {
 
 // ---------- CS.8b: a category's angles ----------
 // README «CS.8 — angles from descriptions», «Copy»: a category whose description names an angle keeps the list (`pool.poses`); its scenes draw from it
-// evenly, whatever the card's «Ракурсы» say, and a selfie or a mirror shot that would turn away becomes another shot of its deck.
+// evenly, and a selfie or a mirror shot that would turn away becomes another shot of its deck. S5.7c (mockup 35): the card has no angle toggles any more
+// (the angle comes from the scene), so a category without its own takes front and three-quarter, and the copy no longer points at the card.
 
 /** The create form's hint under «Описание»: it names the pose and the angle, so the owner learns they can be set in words. */
 export const DESCRIPTION_HINT =
@@ -279,11 +280,15 @@ export const REGEN_HINT =
 export const REGEN_DONE_TEXT =
   "Ниже — новые места, наряды, кадры и ракурсы. Они идут в следующие наборы и запуски. Уже составленные сцены остались как были; «Другая сцена» в открытом наборе возьмёт новые. Идущий запуск — со старым, у него своя копия.";
 
-/** The sheet's hint for a category with no angles of its own: what the card gives it. */
-export const ANGLES_NONE_HINT = "Как в карточке генерации: анфас и три четверти всегда, профиль и со спины — если они включены там.";
+/** The sheet's hint for a category with no angles of its own (mockup 35#home). */
+export const ANGLES_NONE_HINT = "Без своих ракурсов: анфас и три четверти. Профиль и со спины — только если отметить их здесь.";
 
-/** «× Как в карточке»'s title. */
-export const ANGLES_CLEAR_TITLE = "Убрать свои ракурсы — сцены этой категории возьмут их из «Ракурсов» карточки генерации";
+/** «× Убрать свои ракурсы» and its title (mockup 35). */
+export const ANGLES_CLEAR_LABEL = "Убрать свои ракурсы";
+export const ANGLES_CLEAR_TITLE = "Сцены этой категории будут в анфас и три четверти";
+
+/** What the create dialog's «готово» row says of a category whose description named no angle. */
+export const ANGLES_DEFAULT = "анфас и три четверти";
 
 /** The design re-check (LOW 2): ⟳ in an open set draws from the category as it is now (README contract note 4), so an angle edit moves it too. */
 const ANGLES_OPEN_SET = "Правка меняет и «Другую сцену» в открытом наборе; уже составленные сцены остаются как были.";
@@ -315,7 +320,7 @@ function anglesConsequences(poses: readonly ScenePose[], deck: readonly PoolShot
 
 /** The line under a category's angles (the «готово» dialog's note, the sheet's hint): how its scenes draw them, and — only with profile or back — what that costs. */
 export function anglesNote(poses: readonly ScenePose[], deck: readonly PoolShot[]): string {
-  const what = `${poses.length === 1 ? "Все её сцены — в этом ракурсе" : "Её сцены — поровну в этих ракурсах"}; «Ракурсы» карточки их не касаются.`;
+  const what = poses.length === 1 ? "Все её сцены — в этом ракурсе." : "Её сцены — поровну в этих ракурсах.";
   const consequences = anglesConsequences(poses, deck);
   return consequences === "" ? what : `${what} ${consequences}`;
 }
@@ -326,9 +331,9 @@ export function anglesHint(poses: readonly ScenePose[] | undefined, deck: readon
   return openSetScenes > 0 ? `${hint} ${ANGLES_OPEN_SET}` : hint;
 }
 
-/** The title of a dimmed-on chip (no angles of its own): what the card gives, and what a press does. */
+/** The title of a dimmed-on chip (no angles of its own): what the category takes now, and what a press does (mockup 35#home). */
 export function impliedChipTitle(pose: "front" | "three-quarter"): string {
-  return `Как в карточке: анфас и три четверти всегда. Нажмите — свои ракурсы ${pose === "front" ? "без анфаса" : "без трёх четвертей"}`;
+  return `Сейчас — анфас и три четверти. Нажмите — свои ракурсы ${pose === "front" ? "без анфаса" : "без трёх четвертей"}`;
 }
 
 /** A save that did not go through: the chip flipped back, and why («Не сохранилось: {причина} — ракурсы остались прежними.»). */
