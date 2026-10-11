@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { CAPTURES, isHandCapture, posesFor, type Capture } from "../captures";
 import { momentAllowed } from "../render";
+import { isOwnerBannedOutfit } from "../words";
 import { BANKS, CUES, GAZE, HAIRSTYLES, validateBanks } from "./index";
 import { BANK_CATEGORIES, type BankCategory } from "./types";
 
@@ -150,7 +151,7 @@ describe("what any content must keep", () => {
   });
 
   test("no denim shorts and no denim skirts anywhere (the owner)", () => {
-    for (const category of BANK_CATEGORIES) for (const outfit of BANKS[category].outfits) expect(outfit.text).not.toMatch(/\b(denim|jean)s?\s+(mini\s+)?(shorts|skirt)/);
+    for (const category of BANK_CATEGORIES) for (const outfit of BANKS[category].outfits) expect(isOwnerBannedOutfit(outfit.text)).toBe(false);
   });
 
   test("«Дом» carries legwear (K-17: knee-high socks, thigh-high socks, sheer tights) on about 40 % of the outfits that show her legs", () => {

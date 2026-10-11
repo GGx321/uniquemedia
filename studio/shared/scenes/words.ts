@@ -57,7 +57,7 @@ export const GAZE_VERBS = /^(looks|glances|gazes|stares|peers|watches|smiles)\b/
  * Plan r1.4: a moment that itself names legwear or bare skin takes no legwear slot (never «bare feet … with knee-high socks»). Legs alone do not
  * («legs crossed», «stretches her legs» take legwear: the legs slots need it).
  */
-export const LEGWEAR_CLASH_WORDS = /\b(socks?|socked|tights|stockings?|bare|barefoot|soles?|heels)\b/i;
+export const LEGWEAR_CLASH_WORDS = /\b(socks?|socked|tights|stockings?|bare|barefoot|soles?|heels?)\b/i;
 
 /** A moment whose feet or legs are up carries the `noLegwear` tag (plan r1.4), so it takes no legwear either. */
 export const FEET_UP_WORDS = /\b(?:feet|legs|foot)\s+(?:up|raised|in the air)\b|\b(?:feet|foot)\s+on\s+the\b|\blegs\s+bent\s+up\b/i;
@@ -69,8 +69,8 @@ export const HELD_OBJECT_WORDS =
 /** An `above` frame's line says «as she lies there»: its moment lies down. */
 export const LYING_START = /^(lies|rests her (?:cheek|head))\b/;
 
-/** The owner (2026-10-11): no denim shorts and no denim skirts, anywhere. */
-export const DENIM_SHORTS_WORDS = /\b(?:denim|jeans?)\s+(?:mini\s+)?(?:shorts|skirts?)\b/i;
+/** The owner (2026-10-11): no denim shorts and no denim skirts, anywhere: a denim mini, cut-offs, jean shorts and jorts included. */
+const DENIM_SHORTS_WORDS = /\b(?:denim|jeans?)\s+(?:mini|shorts|skirts?)\b|\bcut-?offs?\b|\bjorts\b/i;
 
 /** I5.35: a motion is small or slow. */
 export const MOTION_SMALL = /\b(slowly|a little|a bit|slightly|gently|small)\b/i;
@@ -84,4 +84,8 @@ const EXEMPT_LOOK_PHRASES = /\bsilk pajamas\b/gi;
 /** The text with its exempt phrases taken out, for a check against the luxury words. */
 export function withoutExemptLookPhrases(text: string): string {
   return text.replace(EXEMPT_LOOK_PHRASES, "");
+}
+/** Whether an outfit breaks the owner's «no denim shorts, no denim skirts» (the banks refuse it at load; S5.6b filters a custom pool's outfits with it). */
+export function isOwnerBannedOutfit(text: string): boolean {
+  return DENIM_SHORTS_WORDS.test(text);
 }

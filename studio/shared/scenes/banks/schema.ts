@@ -7,7 +7,6 @@ import {
   COLOUR_WORDS,
   CUE_BANNED_WORDS,
   EXPRESSION_WORDS,
-  DENIM_SHORTS_WORDS,
   FEET_UP_WORDS,
   GAZE_VERBS,
   HAIR_COLOUR_WORDS,
@@ -15,6 +14,7 @@ import {
   HELD_OBJECT_WORDS,
   HIGH_WORDS,
   HIPS_WORDS,
+  isOwnerBannedOutfit,
   LYING_START,
   MOTION_SMALL,
   MOTION_STAGING,
@@ -244,7 +244,7 @@ function categoryBankSchema(category: BankCategory) {
       if (new Set(outfitTexts).size !== outfitTexts.length) add(BANK_RULE.duplicate, "outfits", "an outfit is given twice");
       bank.outfits.forEach((outfit, i) => {
         checkText(add, `outfits[${i}]`, outfit.text);
-        if (DENIM_SHORTS_WORDS.test(outfit.text)) add(BANK_RULE.denim, `outfits[${i}]`, "no denim shorts and no denim skirts (the owner)");
+        if (isOwnerBannedOutfit(outfit.text)) add(BANK_RULE.denim, `outfits[${i}]`, "no denim shorts and no denim skirts (the owner)");
       });
       if (bank.legwear !== undefined) {
         bank.legwear.items.forEach((item, i) => checkText(add, `legwear[${i}]`, item));
