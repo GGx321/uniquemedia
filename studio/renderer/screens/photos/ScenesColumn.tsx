@@ -418,6 +418,8 @@ export function ScenesColumn({
   const fromSet = used && runJob !== null && runJob.runId === shownSet.runId;
   const live = shownSet !== null && shownSet.write !== null;
   const textModel = shownSet !== null ? modelName(shownSet.textModel) : view.settings ? modelName(view.settings.textModel) : null;
+  // The card's writer price is zero: the app's template writes the scenes, no model is named beside the count.
+  const writerFree = shownSet === null && count > 0 && composePrice !== null && composePrice.worstMicros === 0;
   const counts = shownSet === null ? null : headerCounts(shownSet, used ? (running && fromSet ? "active" : "ended") : null);
   const runCreatedAt = used ? (runs.find((r) => r.runId === shownSet.runId)?.createdAt ?? null) : null;
   // «+ Своя сцена» only for an open set; it waits while a write of the set runs or the form is open. An empty set opens with the form (ReviewEmpty).
@@ -438,7 +440,7 @@ export function ScenesColumn({
           </h2>
           <span className="mono muted scene-col-model">
             {shownSet === null && `${count} · `}
-            {textModel}
+            {writerFree ? "пишет приложение" : textModel}
           </span>
           {canAdd && (
             <button

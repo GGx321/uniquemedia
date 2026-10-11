@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AvatarSummary, CategoryInterrupted, EngineError, Estimate, RunRequest, SceneSetView } from "../../../shared/engine";
 import { useCategoryLibrary, useEngine } from "../../engine/react";
 import type { SceneSetSliceView } from "../../engine/sceneSetSlice";
@@ -60,6 +60,9 @@ const SHOT_TYPES = [
   { label: "Кэндид", tone: "candid" },
   { label: "Фотограф", tone: "photographer" },
 ] as const;
+
+/** Under a free «Сцены» price: the template writes them, no model is asked. */
+const WRITTEN_BY_APP = "их пишет приложение";
 
 /** «OpenRouter · 24 сент.», «резервные · …»: the strip's own words (B5's year only when it is not this one — CS.7 V1, so the line fits). */
 function priceSource(estimate: Estimate): string {
@@ -274,9 +277,11 @@ export function GenerateCard({
   // An empty set draws from no category (ReviewEmpty: «без категорий — только свои сцены»).
   const composeRequest = { avatarId: avatar.avatarId, count: form.count, categories: form.count === 0 ? [] : request.categories, poses: request.poses };
   // Composed only once the slice says the avatar has no open set (a second one would be refused), at the request and the model it is priced for.
-  const canCompose = review && ready && sceneSet !== undefined && openSet === null && avatar.status === "active" && (form.count === 0 || request.categories.length > 0);
+  // The writer's price is asked (free) with review off too: it is what tells «Сцены · бесплатно» (the app writes them) from a model's price. Only a
+  // review-on card ever sends it.
+  const canPriceScenes = ready && sceneSet !== undefined && openSet === null && avatar.status === "active" && (form.count === 0 || request.categories.length > 0);
   const compose = usePaidAction({
-    key: canCompose ? `${requestKey(composeRequest)}|${settings?.textModel ?? ""}|${view.money?.reconcileNeeded === true ? "r" : ""}` : null,
+    key: canPriceScenes ?`${requestKey(composeRequest)}|${settings?.textModel ?? ""}|${view.money?.reconcileNeeded === true ? "r" : ""}` : null,
     price: () => client.request("scenes.estimateCompose", composeRequest),
     send: (acceptedWorstMicros) => client.request("scenes.compose", { ...composeRequest, acceptedWorstMicros }),
     onSent: (result, accepted) => {
@@ -291,7 +296,9 @@ export function GenerateCard({
     },
     onPaidInFlightChange,
   });
-  useEffect(() => onComposePrice(review ? compose.estimate : null), [review, compose.estimate, onComposePrice]);
+  useEffect(() => onComposePrice(compose.estimate), [compose.estimate, onComposePrice]);
+  // The scenes cost nothing to write: a plan of built-in (template) categories, which the app writes itself.
+  const writerFree = form.count > 0 && compose.estimate !== null && compose.estimate.worstMicros === 0;
   // S4.6p: the compose mode's photos, priced by the engine (images alone); the window subtracts nothing.
   const images = useImagesPrice(avatar.avatarId, review ? form.count : 0, view);
 
@@ -458,7 +465,7 @@ export function GenerateCard({
       n: "1",
       state: "current" as const,
       label: "Сцены",
-      value: form.count === 0 ? "бесплатно" : compose.estimate !== null ? about(compose.estimate.expectedMicros) : "≈ …",
+      value: form.count === 0 || writerFree ? "бесплатно" : compose.estimate !== null ? about(compose.estimate.expectedMicros) : "≈ …",
     },
     {
       n: "2",
@@ -600,7 +607,21 @@ export function GenerateCard({
               {current ? priceSource(current.estimate) : review && compose.estimate ? priceSource(compose.estimate) : "—"}
             </span>
           </div>
-          {review && composeSteps.map((row) => <Step key={row.n} row={row} />)}
+          {review && composeSteps.map((row, i) => (
+            <Fragment key={row.n}>
+              <Step row={row} />
+              {i === 0 && writerFree && <div className="mono faint scene-total-sub">{WRITTEN_BY_APP}</div>}
+            </Fragment>
+          ))}
+          {!review && writerFree && (
+            <>
+              <div className="mono photos-cost-row">
+                <span>Сцены</span>
+                <span>бесплатно</span>
+              </div>
+              <div className="mono faint scene-total-sub">{WRITTEN_BY_APP}</div>
+            </>
+          )}
           <div className="mono photos-cost-row">
             <span>Проверка возраста</span>
             <span className={view.settings?.imageAgeCheck === "on" ? undefined : "faint"}>{view.settings?.imageAgeCheck === "on" ? "вкл." : "выкл."}</span>
