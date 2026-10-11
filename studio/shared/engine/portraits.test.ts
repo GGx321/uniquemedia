@@ -259,6 +259,23 @@ describe("EngineError.portraitReason", () => {
     expect(EngineError.safeParse({ code: "MASTER_FACE_UNUSABLE", portraitReason: "not-imported" }).success).toBe(false);
   });
 
+  // S5.3c: the source photo that is missing is an INTERNAL failure the window must be able to word; it is the one reason that is not a VALIDATION.
+  test("source-unavailable is carried by INTERNAL, and only by INTERNAL", () => {
+    expect(EngineError.safeParse({ code: "INTERNAL", portraitReason: "source-unavailable" }).success).toBe(true);
+    expect(EngineError.safeParse({ code: "VALIDATION", portraitReason: "source-unavailable" }).success).toBe(false);
+    expect(EngineError.safeParse({ code: "NOT_FOUND", portraitReason: "source-unavailable" }).success).toBe(false);
+  });
+
+  test("the other reasons are refused on INTERNAL", () => {
+    for (const portraitReason of ["not-imported", "too-many-candidates", "not-a-candidate"]) {
+      expect(EngineError.safeParse({ code: "INTERNAL", portraitReason }).success).toBe(false);
+    }
+  });
+
+  test("source-unavailable beside another reason is refused", () => {
+    expect(EngineError.safeParse({ code: "INTERNAL", portraitReason: "source-unavailable", descriptorReason: "stale" }).success).toBe(false);
+  });
+
   test("a refusal has one reason: a portrait reason beside any other reason is refused", () => {
     const portraitReason = "not-imported";
     expect(EngineError.safeParse({ code: "VALIDATION", portraitReason, descriptorReason: "stale" }).success).toBe(false);
@@ -275,13 +292,17 @@ describe("EngineError.portraitReason", () => {
 describe("the Russian texts of the portrait reasons", () => {
   test("each reason has a text of its own, and none is the general VALIDATION text", () => {
     const table = errorTexts.PORTRAIT_REASONS_RU;
-    const reasons = ["not-imported", "too-many-candidates", "not-a-candidate"] as const;
+    const reasons = ["not-imported", "too-many-candidates", "not-a-candidate", "source-unavailable"] as const;
     const texts = reasons.map((reason) => table[reason]);
     expect(new Set(texts).size).toBe(reasons.length);
     for (const text of texts) {
       expect(text.length).toBeGreaterThan(10);
       expect(text).not.toBe(errorTexts.ERROR_MESSAGES_RU.VALIDATION);
     }
+  });
+
+  test("the source-unavailable text is the owner's way to the library folder", () => {
+    expect(errorTexts.PORTRAIT_REASONS_RU["source-unavailable"]).toBe("Исходное фото недоступно — проверьте папку библиотеки.");
   });
 
   test("the too-many-candidates text says the limit is 15 and that nothing was spent", () => {

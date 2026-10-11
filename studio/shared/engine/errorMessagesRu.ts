@@ -224,6 +224,7 @@ export const PORTRAIT_REASONS_RU = {
   "not-imported": "Мастер-портрет делают из импортированного фото, а у этого аватара его нет. Ничего не потрачено.",
   "too-many-candidates": "Невыбранных вариантов уже 15 — это предел. Выберите один или нажмите «Оставить как есть», потом повторите. Ничего не потрачено.",
   "not-a-candidate": "Этого варианта уже нет среди доступных — возможно, его убрали. Обновите список.",
+  "source-unavailable": "Исходное фото недоступно — проверьте папку библиотеки.",
 } as const satisfies Record<PortraitReason, string>;
 
 /** Why a scene-set command was refused, for VALIDATION's `sceneReason`: each text names the cause and the way out; the window names the scene itself from `sceneId`. */

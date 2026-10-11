@@ -444,6 +444,7 @@ describe("avatars.generatePortraits: checked before anything is spent", () => {
     const { refused, rig } = await refusedWith("INTERNAL", async () => seeded.avatarId);
 
     expect(refused.error.detail).toContain("source photo");
+    expect(refused.error.portraitReason).toBe("source-unavailable");
     expect(rig?.embedded).toEqual([]);
   });
 

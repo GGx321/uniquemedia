@@ -4381,7 +4381,7 @@ export class Engine {
     } catch (error) {
       if (error instanceof EngineFailure) throw error;
       if (error instanceof LibraryError && error.code === "source-unavailable") {
-        throw new EngineFailure({ code: "INTERNAL", detail: `the source photo of avatar ${avatarId} is unavailable: it is missing or was quarantined` });
+        throw new EngineFailure({ code: "INTERNAL", portraitReason: "source-unavailable", detail: `the source photo of avatar ${avatarId} is unavailable: it is missing or was quarantined` });
       }
       throw new EngineFailure({ code: "INTERNAL", detail: detailOf(`avatar ${avatarId}'s photo to check against could not be read (${messageOf(error, "unknown error")})`) });
     } finally {
@@ -4667,7 +4667,7 @@ export class Engine {
       [reference, original] = await untilAborted(Promise.all([library.loadReference(avatarId, load.signal, "source"), library.loadOriginal(avatarId, "source")]), load.signal);
     } catch (error) {
       if (error instanceof LibraryError && error.code === "source-unavailable") {
-        throw new EngineFailure({ code: "INTERNAL", detail: `the source photo of avatar ${avatarId} is unavailable: it is missing or was quarantined` });
+        throw new EngineFailure({ code: "INTERNAL", portraitReason: "source-unavailable", detail: `the source photo of avatar ${avatarId} is unavailable: it is missing or was quarantined` });
       }
       throw new EngineFailure({ code: "INTERNAL", detail: detailOf(`the source photo of avatar ${avatarId} could not be read (${messageOf(error, "unknown error")})`) });
     } finally {

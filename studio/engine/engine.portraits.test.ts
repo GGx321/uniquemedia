@@ -438,6 +438,7 @@ describe("avatars.checkDescriptor of an imported avatar (I5.20)", () => {
     const refused = failed(await engine.handle(check(avatarId)));
 
     expect(refused.error.code).toBe("INTERNAL");
+    expect(refused.error.portraitReason).toBe("source-unavailable");
     expect(refused.error.detail).toContain("source photo");
     expect(net.calls.filter((c) => c.method === "POST")).toHaveLength(0);
     expect(ledgerLines(dir())).toEqual([]);
