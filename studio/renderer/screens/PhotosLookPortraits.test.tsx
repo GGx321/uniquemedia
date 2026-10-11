@@ -351,7 +351,9 @@ describe("17 · none passed", () => {
     runAll(scheduler);
     await flush();
 
-    expect(text(panel())).toContain("Ни один вариант не похож на исходное фото (порог 0.55). Платные попытки учтены.");
+    // Not every verdict is «не похожа» here (a no-face and a several-faces slot): the gate's threshold is not blamed.
+    expect(text(panel())).toContain("Подходящих вариантов нет.");
+    expect(text(panel())).not.toContain("Ни один вариант не похож");
     expect(text(panel().querySelector(".candidates-head") ?? panel())).toContain("ни один не подошёл");
     expect(radios()).toHaveLength(0);
     expect(goneTiles().map(([title]) => title)).toEqual(["Не похожа · 0.52", "Не похожа · 0.49", "Не похожа · 0.41", "Лицо не найдено", "Несколько лиц"]);
@@ -360,6 +362,16 @@ describe("17 · none passed", () => {
     await flush();
     expect(callsOf(engine, "avatars.discardPortraits")).toHaveLength(0);
     expect(noPanel()).toBe(true);
+  });
+
+  test("every slot «не похожа»: the line names the gate's threshold", async () => {
+    const { engine, scheduler } = await openLook(NINI);
+    engine.scriptNextPortraits({ slots: [0.52, 0.49, 0.41, 0.4, 0.3].map((likeness) => ({ kind: "unlike", likeness })) });
+    await start();
+    runAll(scheduler);
+    await flush();
+
+    expect(text(panel())).toContain("Ни один вариант не похож на исходное фото (порог 0.55). Платные попытки учтены.");
   });
 });
 

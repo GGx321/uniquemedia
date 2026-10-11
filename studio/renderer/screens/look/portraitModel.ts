@@ -164,6 +164,14 @@ export function ageRejectedLine(count: number): string | null {
 /** 17: a batch that ended with no portrait to offer, every paid image below the gate. */
 export const NONE_PASSED = `Ни один вариант не похож на исходное фото (порог ${THRESHOLD_TEXT}). Платные попытки учтены.`;
 
+/** 17, any other end with no portrait to offer (a mix of verdicts, a failure, an age-check drop): the gate's threshold is not to blame, so it is not named. */
+export const NONE_NEUTRAL = "Подходящих вариантов нет.";
+
+/** The line over a finished batch that gave nothing to pick: the threshold only when every slot's verdict is «не похожа», the neutral one otherwise. */
+export function noneCameLine(failedSlots: readonly FailedPortraitSlot[]): string {
+  return failedSlots.length > 0 && failedSlots.every((f) => f.reason === "unlike") ? NONE_PASSED : NONE_NEUTRAL;
+}
+
 /** Whether another batch fits under the limit: the engine refuses one that would take the waiting variants past 15 (`too-many-candidates`). */
 export function batchFits(pending: number): boolean {
   return pending + PORTRAITS_PER_BATCH <= PORTRAIT_CANDIDATES_MAX;

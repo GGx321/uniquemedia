@@ -15,7 +15,7 @@ import {
   DISCARD_ASK,
   freeFailureLine,
   goneTiles,
-  NONE_PASSED,
+  noneCameLine,
   paidFailureLine,
   PICK_HINT,
   PORTRAIT_TEXT,
@@ -220,7 +220,7 @@ export function PortraitsPanel({ portraits: p, blockedReason }: { portraits: Por
   if (paid !== null) lines.push(<Notice key="paid" tone="warn">{paid}</Notice>);
   const free = freeFailureLine(failedSlots);
   if (free !== null) lines.push(<Notice key="free" tone="info">{free}</Notice>);
-  if (noneCame) lines.push(<Notice key="none" tone="warn">{NONE_PASSED}</Notice>);
+  if (noneCame) lines.push(<Notice key="none" tone="warn">{noneCameLine(failedSlots)}</Notice>);
   if (p.pickPhase.kind === "refused" && p.pickPhase.error.code !== "IN_FLIGHT") lines.push(<ErrorNotice key="pick" error={p.pickPhase.error} />);
   if (p.discardPhase.kind === "refused" && p.discardPhase.error.code !== "IN_FLIGHT") lines.push(<ErrorNotice key="discard" error={p.discardPhase.error} />);
   if (p.cancelError !== null) lines.push(<ErrorNotice key="cancel" error={p.cancelError} />);

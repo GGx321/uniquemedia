@@ -9,7 +9,9 @@ import {
   freeFailureLine,
   goneTiles,
   likenessText,
+  NONE_NEUTRAL,
   NONE_PASSED,
+  noneCameLine,
   paidFailureLine,
   startRefusalText,
   variantLabel,
@@ -153,6 +155,21 @@ describe("words around the numbers", () => {
 
   test("17's line names the gate", () => {
     expect(NONE_PASSED).toBe("Ни один вариант не похож на исходное фото (порог 0.55). Платные попытки учтены.");
+  });
+
+  test("the gate is blamed only when every slot's verdict is «не похожа»", () => {
+    const unlike = (slot: number): FailedPortraitSlot => ({ slot, reason: "unlike", likeness: 0.4 });
+    expect(noneCameLine([1, 2, 3, 4, 5].map(unlike))).toBe(NONE_PASSED);
+  });
+
+  test("any other mix of verdicts gets the neutral line, never the gate's threshold", () => {
+    const unlike: FailedPortraitSlot = { slot: 1, reason: "unlike", likeness: 0.4 };
+    expect(noneCameLine([unlike, { slot: 2, reason: "no-face" }])).toBe(NONE_NEUTRAL);
+    expect(noneCameLine([unlike, { slot: 2, reason: "age-rejected" }])).toBe(NONE_NEUTRAL);
+    expect(noneCameLine([unlike, failedWith(2, "TIMEOUT", "worst-until-reconcile")])).toBe(NONE_NEUTRAL);
+    expect(noneCameLine([refused])).toBe(NONE_NEUTRAL);
+    expect(noneCameLine([])).toBe(NONE_NEUTRAL);
+    expect(NONE_NEUTRAL).toBe("Подходящих вариантов нет.");
   });
   test("a refusal adds that nothing was started, unless its own text already says nothing was spent", () => {
     expect(startRefusalText({ code: "BUDGET_EXCEEDED" })).toBe(`${ERROR_MESSAGES_RU.BUDGET_EXCEEDED} Варианты не запускались — ничего не потрачено.`);
