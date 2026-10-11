@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PoolShot, ScenePose } from "../engine";
+import { captureOfShot } from "./captures";
 import { covers, customActivityAllowed, type CustomActivity, type CustomPool } from "./custom";
 import { fnv1a } from "./hash";
 import { templateSentence } from "./template";
@@ -55,16 +56,18 @@ function drawableSlots(pool: CustomPool): Array<{ location: string; activity: st
     for (const shot of pool.shotDeck) {
       if (shot === "mirror" && place.mirror !== true) continue;
       // The planner moves a hand-held shot off a place with no clean activity or with «selfie» in its name (settleHandShots).
-      if (hand(shot) && (/selfie/i.test(place.name) || !place.activities.some((a) => customActivityAllowed(a, shot, "front")))) continue;
+      // A custom category's capture is derived from its stored shot (plan r1.2): a photographer is a friend.
+      const capture = captureOfShot(shot);
+      if (hand(shot) && (/selfie/i.test(place.name) || !place.activities.some((a) => customActivityAllowed(a, capture, "front")))) continue;
       for (const pose of pool.poses ?? POSES) {
         if (hand(shot) && pose !== "front" && pose !== "three-quarter") continue;
         let slotShot = shot;
         let slotPose = pose;
-        let allowed = place.activities.filter((a) => customActivityAllowed(a, slotShot, slotPose));
+        let allowed = place.activities.filter((a) => customActivityAllowed(a, capture, slotPose));
         if (allowed.length === 0) {
           slotShot = shot === "candid" ? "friend" : shot;
           slotPose = "three-quarter";
-          allowed = place.activities.filter((a) => customActivityAllowed(a, slotShot, slotPose));
+          allowed = place.activities.filter((a) => customActivityAllowed(a, captureOfShot(slotShot), slotPose));
         }
         for (const activity of allowed) for (const outfit of pool.outfits) out.push({ location: place.name, activity: activity.text, outfit, shot: slotShot, pose: slotPose });
       }

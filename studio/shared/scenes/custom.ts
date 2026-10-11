@@ -1,6 +1,6 @@
 import type { PoolShot, ScenePose } from "../engine";
-import type { Moment } from "./banks/types";
-import { isHandShot, momentAllowed, renderSentence, type SentenceParts, type TemplateContext, type TemplateSlot } from "./render";
+import { captureOfShot, isHandCapture, posesFor, type Capture } from "./captures";
+import { captureOfSlot, momentAllowed, renderSentence, type MomentTags, type SentenceParts, type TemplateContext, type TemplateSlot } from "./render";
 import { HAIR_WORDS, PHONE_WORDS, SELFIE_WORDS, VIEWER_GAZE } from "./words";
 
 // 5a.2 (S5.6a, plan s5a2 §5.2 step 2, K-7): the custom-category adapter. Today's custom pools store short activity phrases, mostly gerunds («holding a
@@ -73,7 +73,7 @@ export function locativeOf(name: string): string {
  * custom gaze regex) is a viewer moment (no gaze clause, never on a candid, a profile or a back); one that names her phone carries its own gaze; one
  * that names her hair carries its own hair.
  */
-export function customMomentOf(activity: CustomActivity): Moment {
+export function customMomentOf(activity: CustomActivity): MomentTags & { text: string; hair?: "own" } {
   const viewer = VIEWER_GAZE.test(activity.text);
   const phone = PHONE_WORDS.test(activity.text);
   return {
@@ -85,49 +85,52 @@ export function customMomentOf(activity: CustomActivity): Moment {
   };
 }
 
-/** Whether a custom slot of this shot and pose may take the activity: `momentAllowed` on its tags, and never a selfie word on a hand-held shot (C1). */
-export function customActivityAllowed(activity: CustomActivity, shot: PoolShot, pose: ScenePose): boolean {
-  if (isHandShot(shot) && SELFIE_WORDS.test(activity.text)) return false;
-  return momentAllowed(customMomentOf(activity), shot, pose);
+/** Whether a custom slot of this capture and pose may take the activity: `momentAllowed` on its tags (any capture fits), and never a selfie word on a hand-held capture (C1). */
+export function customActivityAllowed(activity: CustomActivity, capture: Capture, pose: ScenePose): boolean {
+  if (isHandCapture(capture) && SELFIE_WORDS.test(activity.text)) return false;
+  return momentAllowed(customMomentOf(activity), capture, pose);
 }
 
 /** A stored text without the trailing punctuation a pool reader may have kept, so the template's separators are the only ones. */
 const field = (text: string): string => text.trim().replace(/[\s.,;:!]+$/, "");
 
-/** The sentence of a custom slot whose category the plan holds a snapshot of (template.ts checks that), or null. */
+/** The sentence of a custom slot whose category the plan holds a snapshot of (template.ts checks that), or null. A custom pool has no legwear slot. */
 export function customSentence(slot: TemplateSlot, ctx: TemplateContext): string | null {
-  if (slot.location === undefined || slot.activity === undefined || slot.outfit === undefined) return null;
+  const capture = captureOfSlot(slot);
+  if (capture === null || slot.location === undefined || slot.activity === undefined || slot.outfit === undefined || slot.legwear !== undefined) return null;
   const activity = field(slot.activity);
   if (!rendersActivity(activity)) return null;
-  // The slot carries no `twoHanded` (a snapshot has no pool): the planner keeps two-handed activities off hand-held shots; the words are checked here.
-  if (!customActivityAllowed({ text: activity, twoHanded: false }, slot.shot, slot.pose)) return null;
-  const parts: SentenceParts = { at: locativeOf(field(slot.location)), doing: `is ${activity}`, outfit: field(slot.outfit), gaze: customMomentOf({ text: activity, twoHanded: false }).gaze, details: [] };
-  return renderSentence(parts, slot, ctx);
+  // The slot carries no `twoHanded` (a snapshot has no pool): the planner keeps two-handed activities off hand-held captures; the words are checked here.
+  if (!customActivityAllowed({ text: activity, twoHanded: false }, capture, slot.pose)) return null;
+  const parts: SentenceParts = { at: locativeOf(field(slot.location)), doing: `is ${activity}`, wearing: field(slot.outfit), gaze: customMomentOf({ text: activity, twoHanded: false }).gaze, details: [] };
+  return renderSentence(parts, { capture, pose: slot.pose, framing: slot.framing }, ctx);
 }
 
-const POSES: readonly ScenePose[] = ["front", "three-quarter", "profile", "back"];
-
 /**
- * Whether the template renders every slot the planner can draw from the pool (I5.22; defined through the template itself, plan s5a2 M5). A slot is a
- * place, a shot of the deck (a mirror only on a mirror place, a hand-held shot only where an activity allows it and the name says no selfie), a pose
- * (the pool's own angles, or any), an activity the slot allows, and an outfit. A slot with no activity takes the planner's fallback: a three-quarter
- * pose, and a friend's snap for a candid. A covered pool needs no LLM writer, so its slots cost nothing to write.
+ * Whether the template renders every slot the planner can draw from the pool (I5.22; defined through the template itself, plan s5a2 M5). A custom
+ * category keeps its stored deck of shots, and its captures are derived from them (plan r1.2 §5.1). A slot is a place, a capture of the deck (a
+ * mirror only on a mirror place, a hand-held capture only where an activity allows it and the name says no selfie), a pose (the pool's own angles,
+ * or any the capture can take), an activity the slot allows, and an outfit. A slot with no activity takes the planner's fallback: a three-quarter
+ * pose, and a friend's photo for a candid. A covered pool needs no LLM writer, so its slots cost nothing to write.
  */
 export function covers(pool: CustomPool): boolean {
   const ref = "cat-coveragecheck";
   const ctx: TemplateContext = { key: "covers", snapshots: [{ ref }] };
-  const poses = pool.poses ?? POSES;
+  const poses = pool.poses ?? posesFor("friend");
   for (const place of pool.locations) {
     for (const shot of new Set(pool.shotDeck)) {
+      const capture = captureOfShot(shot);
       if (shot === "mirror" && place.mirror !== true) continue;
-      if (isHandShot(shot) && (SELFIE_WORDS.test(place.name) || !place.activities.some((a) => customActivityAllowed(a, shot, "front")))) continue;
-      for (const drawnPose of poses.filter((p) => !isHandShot(shot) || p === "front" || p === "three-quarter")) {
-        const direct = place.activities.filter((a) => customActivityAllowed(a, shot, drawnPose));
-        const fallbackShot: PoolShot = shot === "candid" ? "friend" : shot;
-        const [slotShot, slotPose, activities] = direct.length > 0 ? [shot, drawnPose, direct] : ([fallbackShot, "three-quarter", place.activities.filter((a) => customActivityAllowed(a, fallbackShot, "three-quarter"))] as const);
+      if (isHandCapture(capture) && (SELFIE_WORDS.test(place.name) || !place.activities.some((a) => customActivityAllowed(a, capture, "front")))) continue;
+      for (const drawnPose of poses.filter((p) => posesFor(capture).includes(p))) {
+        const direct = place.activities.filter((a) => customActivityAllowed(a, capture, drawnPose));
+        const fallback: Capture = capture === "candid" ? "friend" : capture;
+        const [slotCapture, slotPose, activities] =
+          direct.length > 0 ? [capture, drawnPose, direct] : ([fallback, "three-quarter", place.activities.filter((a) => customActivityAllowed(a, fallback, "three-quarter"))] as const);
+        const slotShot: PoolShot = slotCapture === capture ? shot : "friend";
         for (const activity of activities) {
           for (const outfit of pool.outfits) {
-            if (customSentence({ category: ref, location: place.name, activity: activity.text, outfit, shot: slotShot, pose: slotPose }, ctx) === null) return false;
+            if (customSentence({ category: ref, location: place.name, activity: activity.text, outfit, shot: slotShot, capture: slotCapture, pose: slotPose }, ctx) === null) return false;
           }
         }
       }

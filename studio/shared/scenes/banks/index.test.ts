@@ -1,13 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { CAPTURES, isHandCapture, posesFor, type Capture } from "../captures";
+import { momentAllowed } from "../render";
 import { BANKS, CUES, GAZE, HAIRSTYLES, validateBanks } from "./index";
-import { CAPTURES, isDrawnCapture } from "./captures";
-import { LIGHTS } from "./lights";
-import { momentAllowed } from "../template";
-import { fitsEveryShot } from "./schema";
-import { BANK_CATEGORIES, CAPTURE_KINDS, type BankCategory } from "./types";
+import { BANK_CATEGORIES, type BankCategory } from "./types";
 
-// 5a.2 (S5.6a): the built-in banks as data, validated when the module loads (I5.21). The bank CONTENT is provisional (the owner's style references
-// of 2026-10-11 will replace it); these tests pin the structure any content must keep, not the words.
+// 5a.2 (S5.6a, plan s5a2 r1.2): the built-in banks as data, validated when the module loads (I5.21). The CONTENT is the owner's references as the
+// plan seeds them and will be refined; these tests pin the structure any content must keep.
 
 describe("the banks load valid", () => {
   test("has a bank for each of the five built-in categories", () => {
@@ -19,7 +17,7 @@ describe("the banks load valid", () => {
   });
 
   test("validateBanks throws on a malformed bank, naming every problem with its category", () => {
-    const broken = { ...BANKS, glamour: { ...BANKS.glamour, outfits: ["a schoolgirl skirt"] }, home: { ...BANKS.home, places: [] } };
+    const broken = { ...BANKS, glamour: { ...BANKS.glamour, outfits: [{ text: "a schoolgirl skirt" }] }, home: { ...BANKS.home, places: [] } };
     expect(() => validateBanks({ banks: broken })).toThrow(/glamour: \[youth\][\s\S]*home: \[shape\]|home: \[shape\][\s\S]*glamour: \[youth\]/);
   });
 
@@ -30,35 +28,87 @@ describe("the banks load valid", () => {
   });
 });
 
+describe("who takes the photo (I5.32: the capture decks, exact cycles)", () => {
+  const sorted = (deck: readonly Capture[]): Capture[] => [...deck].sort();
+
+  test("«Дом» shoots herself: 2 phone-over-face mirror frames of 6, a mirror, a close selfie from above, a prone selfie, a timer; never a friend", () => {
+    expect(sorted(BANKS.home.captureDeck)).toEqual(sorted(["mirror-hidden", "mirror-hidden", "mirror", "above", "prone", "timer"]));
+  });
+
+  test.each<BankCategory>(["photoshoot", "travel"])("%s («Улица», «Виды»): mostly she asked someone, 3 of 6, plus a selfie, a timer and a candid", (category) => {
+    expect(sorted(BANKS[category].captureDeck)).toEqual(sorted(["friend", "friend", "friend", "selfie", "timer", "candid"]));
+  });
+
+  test.each<BankCategory>(["glamour", "fitness"])("%s: mixed, a friend twice, a selfie, a mirror, a phone-over-face mirror, a candid", (category) => {
+    expect(sorted(BANKS[category].captureDeck)).toEqual(sorted(["friend", "friend", "selfie", "mirror", "mirror-hidden", "candid"]));
+  });
+
+  // The plan critic (r1.3): the planner's capture fallback (timer → friend, prone → above → selfie, mirror-hidden → mirror → selfie) must never fire
+  // for a built-in plan, or «Дом» would get a friend's photo. So every capture a category deals has, at every pose that capture can take, a moment at
+  // a place it can land on (a mirror capture on a mirror place).
+  test.each([...BANK_CATEGORIES])("%s: every deck capture has a moment at every pose it can take", (category) => {
+    const missing: string[] = [];
+    for (const capture of new Set(BANKS[category].captureDeck)) {
+      for (const pose of posesFor(capture)) {
+        const found = BANKS[category].places.some(
+          (place) => (!capture.startsWith("mirror") || place.mirror === true) && place.moments.some((m) => momentAllowed(m, capture, pose)),
+        );
+        if (!found) missing.push(`${capture}/${pose}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  test("«Дом» has no moment a friend could take, so a friend's photo has nothing to render there", () => {
+    expect(BANKS.home.places.flatMap((p) => p.moments).filter((m) => m.captures.includes("friend") || m.captures.includes("candid"))).toEqual([]);
+  });
+
+  test("every capture of the plan is dealt somewhere or is a legs capture (5a.2c)", () => {
+    const dealt = new Set(BANK_CATEGORIES.flatMap((c) => BANKS[c].captureDeck));
+    expect(CAPTURES.filter((c) => !dealt.has(c))).toEqual(["pov-legs", "low-feet"]);
+  });
+});
+
 describe("what any content must keep", () => {
   const places = (c: BankCategory) => BANKS[c].places;
+  const moments = (c: BankCategory) => places(c).flatMap((p) => p.moments);
 
-  test.each([...BANK_CATEGORIES])("%s: every place has 2-3 details, at least 4 moments, and a moment for every shot and pose", (category) => {
+  test.each([...BANK_CATEGORIES])("%s: every place has 2-3 details and at least 4 moments", (category) => {
     for (const place of places(category)) {
       expect(place.details.length).toBeGreaterThanOrEqual(2);
       expect(place.details.length).toBeLessThanOrEqual(3);
       expect(place.moments.length).toBeGreaterThanOrEqual(4);
-      expect(place.moments.some(fitsEveryShot)).toBe(true);
     }
   });
 
-  // I5.24: a selfie or a mirror shot takes only a place's one-handed, phone-free moments, and the planner swaps every mirror shot onto a mirror place,
-  // so a place with few of them repeats them (the variety sweep, templateVariety.test.ts, found 6 repeats in 100 slots with 3).
-  test.each([...BANK_CATEGORIES])("%s: every place has 3 moments a hand-held shot may take, a mirror place 4", (category) => {
-    for (const place of places(category)) {
-      const forHand = place.moments.filter((m) => momentAllowed(m, "selfie", "front") || momentAllowed(m, "selfie", "three-quarter")).length;
-      expect({ place: place.name, forHand: Math.min(forHand, place.mirror === true ? 4 : 3) }).toEqual({ place: place.name, forHand: place.mirror === true ? 4 : 3 });
-    }
-  });
-
-  test("Glamour is an evening out: no place is on a bed", () => {
+  test("Glamour is an evening out: no place or moment is on a bed", () => {
     for (const place of places("glamour")) expect(`${place.name} ${place.at} ${place.moments.map((m) => m.text).join(" ")}`).not.toMatch(/\bbed/i);
   });
 
-  test("S5.5's «looking over her shoulder» is a three-quarter moment that carries its own gaze", () => {
-    const shoulders = BANK_CATEGORIES.flatMap((c) => places(c).flatMap((p) => p.moments)).filter((m) => /over her shoulder/.test(m.text));
+  test("the lamp mood is «Дом»'s only (I5.34)", () => {
+    for (const category of BANK_CATEGORIES) if (category !== "home") expect(places(category).filter((p) => p.lamp === true)).toEqual([]);
+    expect(places("home").some((p) => p.lamp === true)).toBe(true);
+  });
+
+  test("«looks back over her shoulder» is a three-quarter moment that carries its own gaze", () => {
+    const shoulders = BANK_CATEGORIES.flatMap(moments).filter((m) => /over her shoulder/.test(m.text));
     expect(shoulders.length).toBeGreaterThan(0);
     for (const moment of shoulders) expect({ angle: moment.angle, gaze: moment.gaze }).toEqual({ angle: "three-quarter", gaze: "own" });
+  });
+
+  test("the prone selfie is drawn only in the outfits its probe drew (grey lounge shorts; cotton shorts were refused)", () => {
+    const prone = moments("home").filter((m) => m.captures.includes("prone"));
+    expect(prone.length).toBeGreaterThan(0);
+    for (const moment of prone) {
+      expect(moment.outfits?.length ?? 0).toBeGreaterThan(0);
+      for (const outfit of moment.outfits ?? []) expect(outfit).toMatch(/grey lounge shorts/);
+    }
+  });
+
+  test("«Дом» carries legwear (K-17: knee-high socks, thigh-high socks, sheer tights) on about 40 % of the outfits that show her legs", () => {
+    expect(BANKS.home.legwear?.share).toBe(0.4);
+    expect([...(BANKS.home.legwear?.items ?? [])].sort()).toEqual(["black knee-high socks", "sheer black tights", "thigh-high socks", "white knee-high socks"]);
+    expect(BANKS.home.outfits.some((o) => o.showsLegs === true)).toBe(true);
   });
 
   test("every gaze kind a slot can draw has an ordinary item, and the mirror kind names her phone in the mirror once at least", () => {
@@ -66,8 +116,9 @@ describe("what any content must keep", () => {
     expect(GAZE.some((g) => g.kind === "mirror" && g.phone === true)).toBe(true);
   });
 
-  test("the cues have an unsmiling one (C1: one unsmiling expression)", () => {
-    expect(CUES.some((c) => c.level === undefined && !/smil|laugh|grin/i.test(c.text))).toBe(true);
+  test("the cues have an unsmiling one (C1), and «Дом»'s close selfies have their own: a slight pout, a finger near her lips, her hand at her cheek", () => {
+    expect(CUES.some((c) => c.level === undefined && c.captures === undefined && !/smil|laugh|grin/i.test(c.text))).toBe(true);
+    for (const text of ["a slight pout", "a finger near her lips", "her hand at her cheek"]) expect(CUES.find((c) => c.text === text)?.captures).toEqual(["above", "prone"]);
   });
 
   test("every hair length has three loose styles at least, and a tied one; the one cap style is loose", () => {
@@ -79,19 +130,9 @@ describe("what any content must keep", () => {
     expect(HAIRSTYLES.filter((s) => s.cap === true).every((s) => !s.tied)).toBe(true);
   });
 
-  test("a hook a moment names is never drawn (placeholders for the references stay out of every slot)", () => {
-    const hooked = BANK_CATEGORIES.flatMap((c) => places(c).flatMap((p) => p.moments)).filter((m) => m.captures !== undefined);
-    for (const moment of hooked) expect(moment.captures?.every((c) => c !== "friend" && c !== "selfie" && c !== "mirror" && c !== "candid" && c !== "photographer")).toBe(true);
-  });
-
-  test("only the five stored shots are drawn: every new capture kind is a hook until its capture line exists", () => {
-    expect(CAPTURE_KINDS.filter(isDrawnCapture)).toEqual(["friend", "selfie", "mirror", "candid", "photographer"]);
-    expect(CAPTURES["mirror-face-hidden"].faceVisible).toBe(false);
-    expect(CAPTURES["pov-legs"].faceVisible).toBe(false);
-  });
-
-  test("a place's lights are in the light bank", () => {
-    const ids = new Set(LIGHTS.map((l) => l.id));
-    for (const category of BANK_CATEGORIES) for (const place of places(category)) for (const id of place.lights ?? []) expect(ids.has(id)).toBe(true);
+  test("a hand-held capture is never listed on a two-handed or phone moment", () => {
+    for (const category of BANK_CATEGORIES) {
+      for (const moment of moments(category)) if (moment.twoHanded || moment.phone === true) expect(moment.captures.filter(isHandCapture)).toEqual([]);
+    }
   });
 });

@@ -1,9 +1,8 @@
-import { DEFAULT_SHOT_DECK } from "./decks";
 import type { CategoryBank } from "./types";
 
 // «Гламур» = «вечер выхода» (S5.5, owner canary C1′, 2026-10-11): a bar, a restaurant, a taxi, a street at night, an elevator; at home ONLY getting
 // ready (the bathroom sink, the front door). Never on a bed (validated). Every place now carries details: the five non-room places use them in the
-// template's `with {detail}`. PROVISIONAL wording (plan s5a2 r1.2).
+// template's `with {detail}`. Captures (plan r1.2): mixed, out at night and getting ready in the mirror.
 export const GLAMOUR: CategoryBank = {
   places: [
     {
@@ -12,11 +11,11 @@ export const GLAMOUR: CategoryBank = {
       details: ["a coaster on the counter", "a row of bottles behind the bar", "a small candle on the counter"],
       times: ["evening", "night"],
       moments: [
-        { text: "leans on the bar counter", twoHanded: false, posture: "leaning" },
-        { text: "holds a cocktail glass", twoHanded: false },
-        { text: "laughs at something nearby", twoHanded: false, gaze: "own" },
-        { text: "sips her drink through a straw", twoHanded: false },
-        { text: "sits on a high bar stool", twoHanded: false, posture: "sitting" },
+        { text: "leans on the bar counter", motion: "she leans in a little", captures: ["friend", "selfie", "candid"], twoHanded: false },
+        { text: "holds a cocktail glass", motion: "she turns her glass slowly", captures: ["friend", "selfie", "candid"], twoHanded: false },
+        { text: "laughs at something nearby", motion: "she laughs a little and looks away", captures: ["friend", "candid"], twoHanded: false, gaze: "own" },
+        { text: "sips her drink through a straw", motion: "she sips slowly", captures: ["friend", "selfie"], twoHanded: false },
+        { text: "sits on a high bar stool", motion: "she swings one foot a little", captures: ["friend", "candid"], twoHanded: false },
       ],
     },
     {
@@ -25,11 +24,11 @@ export const GLAMOUR: CategoryBank = {
       details: ["a glass of water by her plate", "a small candle on the table", "a basket of bread"],
       times: ["evening"],
       moments: [
-        { text: "reaches for her glass", twoHanded: false },
-        { text: "rests her chin on her hand", twoHanded: false },
-        { text: "smiles across the table", twoHanded: false, gaze: "own" },
-        { text: "lifts her glass for a toast", twoHanded: false },
-        { text: "twirls pasta onto her fork", twoHanded: false, gaze: "focus" },
+        { text: "reaches for her glass", motion: "she lifts her glass a little", captures: ["friend", "candid"], twoHanded: false },
+        { text: "rests her chin on her hand", motion: "she tilts her head a little", captures: ["friend", "selfie"], twoHanded: false },
+        { text: "smiles across the table", motion: "she laughs a little", captures: ["friend", "candid"], twoHanded: false, gaze: "own" },
+        { text: "lifts her glass for a toast", motion: "she raises her glass a bit higher", captures: ["friend", "selfie"], twoHanded: false },
+        { text: "twirls pasta onto her fork", motion: "she twirls the fork slowly", captures: ["candid", "friend"], twoHanded: false, gaze: "focus" },
       ],
     },
     {
@@ -38,11 +37,11 @@ export const GLAMOUR: CategoryBank = {
       details: ["the city lights through the window", "a small clutch on the seat"],
       times: ["night"],
       moments: [
-        { text: "adjusts an earring", twoHanded: false, gaze: "focus" },
-        { text: "looks out of the window", twoHanded: false, gaze: "own" },
-        { text: "leans back in the seat", twoHanded: false },
-        { text: "scrolls through her phone", twoHanded: false, phone: true, gaze: "own" },
-        { text: "fastens her seat belt", twoHanded: true, gaze: "focus" },
+        { text: "adjusts an earring", motion: "she turns the earring slowly", captures: ["friend", "selfie", "candid"], twoHanded: false, gaze: "focus" },
+        { text: "looks out of the window", motion: "she turns toward the window slowly", captures: ["friend", "candid"], twoHanded: false, gaze: "own" },
+        { text: "leans back in the seat", motion: "she sinks back a little", captures: ["friend", "selfie"], twoHanded: false },
+        { text: "scrolls through her phone", motion: "she scrolls her phone slowly", captures: ["candid", "friend"], twoHanded: false, phone: true, gaze: "own" },
+        { text: "fastens her seat belt", motion: "she pulls the belt across slowly", captures: ["candid", "friend"], twoHanded: true, gaze: "focus" },
       ],
     },
     {
@@ -51,11 +50,11 @@ export const GLAMOUR: CategoryBank = {
       details: ["the warm light from the doorway", "a row of parked scooters"],
       times: ["night"],
       moments: [
-        { text: "walks with a small clutch", twoHanded: false, posture: "walking" },
-        { text: "waits by the door", twoHanded: false },
-        { text: "looks back over her shoulder", twoHanded: false, angle: "three-quarter", gaze: "own" },
-        { text: "laughs on her way inside", twoHanded: false },
-        { text: "stops under a street lamp", twoHanded: false },
+        { text: "walks with a small clutch", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false },
+        { text: "waits by the door", motion: "she shifts her weight a little", captures: ["friend", "selfie", "candid"], twoHanded: false },
+        { text: "looks back over her shoulder", motion: "she turns her head a little more", captures: ["friend"], twoHanded: false, angle: "three-quarter", gaze: "own" },
+        { text: "laughs on her way inside", motion: "she laughs a little and turns away", captures: ["friend", "candid"], twoHanded: false },
+        { text: "stops under a street lamp", motion: "she tilts her head a little", captures: ["friend", "selfie"], twoHanded: false },
       ],
     },
     {
@@ -66,11 +65,12 @@ export const GLAMOUR: CategoryBank = {
       times: ["evening"],
       mirror: true,
       moments: [
-        { text: "applies lipstick", twoHanded: false, gaze: "focus" },
-        { text: "puts on mascara", twoHanded: false, gaze: "focus" },
-        { text: "curls her hair", twoHanded: true, hair: "own" },
-        { text: "puts on her earrings", twoHanded: false, gaze: "focus" },
-        { text: "sprays on some perfume", twoHanded: false },
+        { text: "applies lipstick", motion: "she presses her lips together a bit", captures: ["mirror", "candid", "friend"], twoHanded: false, gaze: "focus" },
+        { text: "puts on mascara", motion: "she blinks slowly", captures: ["mirror", "candid"], twoHanded: false, gaze: "focus" },
+        { text: "curls her hair", motion: "she turns the curler slowly", captures: ["candid", "friend"], twoHanded: true, hair: "own" },
+        { text: "puts on her earrings", motion: "she turns her head a little", captures: ["mirror", "mirror-hidden", "friend"], twoHanded: false, gaze: "focus" },
+        { text: "sprays on some perfume", motion: "she tilts her neck a little", captures: ["mirror", "mirror-hidden", "selfie"], twoHanded: false },
+        { text: "turns to check her outfit", motion: "she turns a little to each side", captures: ["mirror-hidden", "mirror"], twoHanded: false },
       ],
     },
     {
@@ -80,11 +80,11 @@ export const GLAMOUR: CategoryBank = {
       times: ["evening", "night"],
       mirror: true,
       moments: [
-        { text: "checks her outfit", twoHanded: false },
-        { text: "fixes her hair", twoHanded: false, hair: "own" },
-        { text: "rests a hand on the handrail", twoHanded: false },
-        { text: "waits for her floor", twoHanded: false },
-        { text: "leans against the elevator wall", twoHanded: false, posture: "leaning" },
+        { text: "checks her outfit", motion: "she turns a little to each side", captures: ["mirror-hidden", "mirror", "selfie"], twoHanded: false },
+        { text: "fixes her hair", motion: "she smooths her hair down slowly", captures: ["mirror", "selfie"], twoHanded: false, hair: "own" },
+        { text: "rests a hand on the handrail", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror", "friend"], twoHanded: false },
+        { text: "waits for her floor", motion: "she taps her foot a little", captures: ["mirror-hidden", "selfie", "candid"], twoHanded: false },
+        { text: "leans against the elevator wall", motion: "she tilts her head back a little", captures: ["mirror", "friend", "candid"], twoHanded: false },
       ],
     },
     {
@@ -95,27 +95,27 @@ export const GLAMOUR: CategoryBank = {
       times: ["evening"],
       mirror: true,
       moments: [
-        { text: "slips on her heels", twoHanded: true },
-        { text: "grabs her keys", twoHanded: false },
-        { text: "checks her outfit", twoHanded: false },
-        { text: "picks up a small clutch", twoHanded: false },
-        { text: "takes her coat from the rack", twoHanded: false },
+        { text: "slips on her heels", motion: "she wiggles her heel in slowly", captures: ["friend", "candid"], twoHanded: true },
+        { text: "grabs her keys", motion: "she jingles her keys a little", captures: ["mirror-hidden", "mirror", "friend"], twoHanded: false },
+        { text: "checks her outfit", motion: "she turns a little to each side", captures: ["mirror-hidden", "mirror"], twoHanded: false },
+        { text: "picks up a small clutch", motion: "she tucks the clutch away slowly", captures: ["mirror", "mirror-hidden", "friend", "selfie"], twoHanded: false },
+        { text: "takes her coat from the rack", motion: "she slides one arm in slowly", captures: ["friend", "candid", "selfie"], twoHanded: false },
       ],
     },
   ],
-  // Non-revealing only (engine/scenes/pools.ts keeps the reasons): today's list, untouched (K-10).
+  // Non-revealing only (engine/scenes/pools.ts keeps the reasons): S5.4's eleven, untouched.
   outfits: [
-    "a fitted black bodycon dress",
-    "a mini skirt with a cropped top",
-    "a corset top and high-rise trousers",
-    "a long-sleeved red mini dress",
-    "a white top and leather mini skirt",
-    "a silver sequin top and trousers",
-    "an emerald blouse and leather skirt",
-    "a fitted beige knit midi dress",
-    "a halter top and a midi skirt",
-    "a navy wrap dress",
-    "an off-shoulder top and jeans",
+    { text: "a fitted black bodycon dress", showsLegs: true },
+    { text: "a mini skirt with a cropped top", showsLegs: true },
+    { text: "a corset top and high-rise trousers" },
+    { text: "a long-sleeved red mini dress", showsLegs: true },
+    { text: "a white top and leather mini skirt", showsLegs: true },
+    { text: "a silver sequin top and trousers" },
+    { text: "an emerald blouse and leather skirt", showsLegs: true },
+    { text: "a fitted beige knit midi dress" },
+    { text: "a halter top and a midi skirt" },
+    { text: "a navy wrap dress", showsLegs: true },
+    { text: "an off-shoulder top and jeans" },
   ],
-  shotDeck: DEFAULT_SHOT_DECK,
+  captureDeck: ["friend", "selfie", "mirror", "friend", "mirror-hidden", "candid"],
 };

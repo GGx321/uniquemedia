@@ -1,27 +1,29 @@
 import { z } from "zod";
-import { HairLength, POOL_TEXT_MAX, PoolShot, PoolTime, youthWords } from "../../engine";
+import { HairLength, POOL_TEXT_MAX, PoolTime, youthWords } from "../../engine";
+import { CAPTURES, isHandCapture, LEGS_CAPTURES, shotOf, type Capture } from "../captures";
 import {
-  BARE_FEET_WORDS,
   BED_WORDS,
   CAMERA_WORDS,
   COLOUR_WORDS,
   CUE_BANNED_WORDS,
-  FOOTWEAR_WORDS,
+  FEET_UP_WORDS,
   GAZE_VERBS,
   HAIR_COLOUR_WORDS,
   HAIR_WORDS,
+  MOTION_SMALL,
+  MOTION_STAGING,
   PHONE_WORDS,
   SELFIE_WORDS,
   VIEWER_GAZE,
   YOUTH_PROPS,
 } from "../words";
-import { CAPTURES } from "./captures";
-import { LIGHTS } from "./lights";
-import { CAPTURE_KINDS, POSTURES, type BankCategory, type Moment } from "./types";
+import type { BankCategory, Moment } from "./types";
 
-// 5a.2 (S5.6a, I5.21): the banks' zod schemas. The shape is zod; every rule the plan names runs in a superRefine and reports `[rule] where: what`, so a
-// test can name the rule a bad item breaks (banks/schema.test.ts) and a malformed bank fails loudly at load (banks/index.ts). The engine-only lists
-// (the revealing words, the paper, screen and staging lists) are swept by engine/scenes/banks.sweep.test.ts.
+// 5a.2 (S5.6a, I5.21, I5.35; plan s5a2 r1.2): the banks' zod schemas. The shape is zod; every rule the plan names runs in a superRefine and reports
+// `[rule] where: what`, so a test can name the rule a bad item breaks (banks/schema.test.ts) and a malformed bank fails loudly at load
+// (banks/index.ts). The engine-only lists (the revealing words, the paper, screen and staging lists, the «silk pajamas» exemption) are swept by
+// engine/scenes/banks.sweep.test.ts. Every bank text is at most POOL_TEXT_MAX characters, motions and start poses included; only the locative `at`
+// is not bound (it is never sent to the writer).
 
 /** The rule ids a problem names. */
 export const BANK_RULE = {
@@ -41,20 +43,25 @@ export const BANK_RULE = {
   momentViewer: "moment-viewer",
   momentGaze: "moment-gaze",
   backViewer: "back-viewer",
-  legsFootwear: "legs-footwear",
-  legsShots: "legs-shots",
+  feetUp: "feet-up",
   captures: "captures",
+  legsCapture: "legs-capture",
+  pinnedOutfit: "pinned-outfit",
+  motionGrammar: "motion-grammar",
+  motionStaging: "motion-staging",
+  motionPhone: "motion-phone",
   mirrorWord: "mirror-word",
+  mirrorPlace: "mirror-place",
   details: "details",
   detailGrammar: "detail-grammar",
   at: "at",
   moments: "moments",
-  anyShot: "any-shot",
   messyOk: "messy-ok",
   times: "times",
-  mirrorPlace: "mirror-place",
+  deck: "deck",
+  deckCoverage: "deck-coverage",
+  legwear: "legwear",
   glamourBed: "glamour-bed",
-  lightRef: "light-ref",
   gazeGrammar: "gaze-grammar",
   gazePhone: "gaze-phone",
   gazeViewer: "gaze-viewer",
@@ -72,10 +79,10 @@ type Rule = (typeof BANK_RULE)[keyof typeof BANK_RULE];
  * grammar test is a pinned list, plan s5a2 §5.1).
  */
 export const MOMENT_VERBS: readonly string[] = [
-  "adjusts", "applies", "breaks", "brushes", "carries", "catches", "checks", "crosses", "curls", "dries", "drinks", "eats", "fastens", "fixes",
-  "grabs", "holds", "jogs", "kneels", "laces", "laughs", "leans", "lets", "lies", "lifts", "looks", "packs", "pats", "picks", "pours", "pulls",
-  "puts", "reaches", "rests", "rolls", "rubs", "scrolls", "settles", "shades", "sips", "sits", "slices", "slips", "smiles", "sprays", "stands", "steps",
-  "stirs", "stops", "stretches", "takes", "ties", "tucks", "turns", "twirls", "unpacks", "waits", "walks", "waters", "wipes", "wraps",
+  "adjusts", "applies", "breaks", "brushes", "carries", "catches", "checks", "crosses", "crouches", "curls", "dries", "drinks", "eats", "fastens",
+  "fixes", "grabs", "holds", "jogs", "kneels", "laces", "laughs", "leans", "lets", "lies", "lifts", "looks", "packs", "pats", "picks", "pours", "pulls",
+  "puts", "reaches", "rests", "rolls", "rubs", "scrolls", "settles", "shades", "sips", "sits", "slices", "slips", "smiles", "sprays", "stands",
+  "steps", "stirs", "stops", "stretches", "takes", "ties", "tucks", "turns", "twirls", "unpacks", "waits", "walks", "waters", "wipes", "wraps",
 ];
 
 const PRINTABLE = /^[\x20-\x7e]+$/;
@@ -85,6 +92,7 @@ const GAZE_START = /^(looking|glancing|giving|her eyes|eyes|checking)\b/;
 const CUE_START = /^(?:(?:a|an|one|her)\s|mid-)/;
 const CUE_GAZE = /\b(look\w*|glanc\w*|gaz\w*|star(?:e|es|ing)|eyes?|viewer|camera|lens|phone)\b/i;
 const HAIR_START = /^(in|half|tucked|pinned|blow-dried|a little|twisted|loose|worn|swept|down|braided|clipped)\b/;
+const MOTION_START = /^(she|her)\s/;
 const MIRROR = /mirror/i;
 const VIEWER = /\bviewer\b/i;
 
@@ -94,10 +102,10 @@ function adder(ctx: z.RefinementCtx): Add {
   return (rule, where, what) => ctx.addIssue({ code: "custom", message: `[${rule}] ${where}: ${what}`, path: [] });
 }
 
-/** The checks every bank text takes: printable, no youth word, no youth prop, no hair colour, no selfie word, no camera or lens. */
-function checkText(add: Add, where: string, text: string, max?: number): void {
+/** The checks every bank text takes: printable, at most POOL_TEXT_MAX (unless unbound), no youth word or prop, no hair colour, no selfie word, no camera. */
+function checkText(add: Add, where: string, text: string, bound = true): void {
   if (text.trim() !== text || text.length === 0 || !PRINTABLE.test(text)) add(BANK_RULE.text, where, "must be plain printable ASCII with no edge space");
-  if (max !== undefined && text.length > max) add(BANK_RULE.text, where, `must be at most ${max} characters`);
+  if (bound && text.length > POOL_TEXT_MAX) add(BANK_RULE.text, where, `must be at most ${POOL_TEXT_MAX} characters`);
   const youth = youthWords(text, "descriptor");
   if (youth.length > 0) add(BANK_RULE.youth, where, `names a youth word (${youth.join(", ")})`);
   if (YOUTH_PROPS.test(text)) add(BANK_RULE.youthProp, where, "names a youth prop");
@@ -106,14 +114,22 @@ function checkText(add: Add, where: string, text: string, max?: number): void {
   if (CAMERA_WORDS.test(text)) add(BANK_RULE.camera, where, "names a camera or a lens");
 }
 
-/** A moment that fits every stored shot and every pose: one free hand, no phone, no angle, no look at the viewer, no capture limit, no level. */
-export function fitsEveryShot(moment: Moment): boolean {
-  return !moment.twoHanded && moment.phone !== true && moment.angle === undefined && moment.gaze !== "viewer" && moment.captures === undefined && moment.level === undefined && moment.legs === undefined;
+const isMirrorCapture = (capture: Capture): boolean => shotOf(capture) === "mirror";
+
+function checkMotion(add: Add, where: string, moment: Moment): void {
+  const motion = moment.motion;
+  checkText(add, `${where} (motion)`, motion);
+  if (!MOTION_START.test(motion)) add(BANK_RULE.motionGrammar, `${where} (motion)`, "opens with «she» or «her»");
+  if (!MOTION_SMALL.test(motion)) add(BANK_RULE.motionGrammar, `${where} (motion)`, "is small or slow: «slowly», «a little», «a bit», «slightly», «gently» or «small»");
+  if (/\bthen\b|;/.test(motion) || (motion.match(/\band\b/g) ?? []).length > 1) add(BANK_RULE.motionGrammar, `${where} (motion)`, "is one movement (at most a there-and-back with one «and»)");
+  if (MOTION_STAGING.test(motion)) add(BANK_RULE.motionStaging, `${where} (motion)`, "moves her, never the camera or the edit");
+  if (PHONE_WORDS.test(motion) && moment.phone !== true) add(BANK_RULE.motionPhone, `${where} (motion)`, "brings in a phone the moment does not use (a second phone)");
+  if (moment.startPose !== undefined) checkText(add, `${where} (start pose)`, moment.startPose);
 }
 
-function checkMoment(add: Add, where: string, moment: Moment, room: boolean): void {
+function checkMoment(add: Add, where: string, moment: Moment, place: { room?: true | undefined; mirror?: true | undefined }, outfits: ReadonlySet<string>): void {
   const text = moment.text;
-  checkText(add, where, text, POOL_TEXT_MAX);
+  checkText(add, where, text);
   const verb = /^[a-z]+/.exec(text)?.[0] ?? "";
   if (!MOMENT_VERBS.includes(verb)) add(BANK_RULE.momentVerb, where, `must open with a pinned third-person verb, not «${verb}»`);
   if (/\bshe\b/i.test(text)) add(BANK_RULE.momentShe, where, "must not name «she»: the template does");
@@ -123,23 +139,26 @@ function checkMoment(add: Add, where: string, moment: Moment, room: boolean): vo
   if ((moment.gaze === "viewer") !== (VIEWER.test(text) || VIEWER_GAZE.test(text))) add(BANK_RULE.momentViewer, where, "carries the viewer gaze exactly when it looks at the viewer");
   if (GAZE_VERBS.test(text) && moment.gaze !== "own" && moment.gaze !== "viewer") add(BANK_RULE.momentGaze, where, "a moment that opens on a look carries its own gaze");
   if (moment.angle === "back" && moment.gaze === "viewer") add(BANK_RULE.backViewer, where, "a moment seen from behind cannot look at the viewer");
-  if (moment.messyOk === true && !room) add(BANK_RULE.messyOk, where, "only a room's moment may be messy");
-  if (moment.legs !== undefined) {
-    if (moment.legs.shots.length === 0) add(BANK_RULE.legsShots, where, "a legs moment names the shots it fits");
-    if (!FOOTWEAR_WORDS.test(text) || BARE_FEET_WORDS.test(text)) add(BANK_RULE.legsFootwear, where, "a legs moment names her footwear and never bare feet (probe P-5a2)");
-  }
+  if (moment.messyOk === true && place.room !== true) add(BANK_RULE.messyOk, where, "only a room's moment may be messy");
+  if ((moment.feetUp === true) !== FEET_UP_WORDS.test(text)) add(BANK_RULE.feetUp, where, "carries the feet-up tag exactly when her feet or legs are up");
+
   const captures = moment.captures;
-  if (captures !== undefined) {
-    if (captures.length === 0 || new Set(captures).size !== captures.length) add(BANK_RULE.captures, where, "names one or more captures, each once");
-    if ((moment.twoHanded || moment.phone === true) && captures.some((c) => CAPTURES[c].handHeld)) add(BANK_RULE.captures, where, "a two-handed or phone moment fits no hand-held capture");
-  }
-  if (MIRROR.test(text) && (captures === undefined || captures.length === 0 || captures.some((c) => CAPTURES[c].shot !== "mirror"))) {
-    add(BANK_RULE.mirrorWord, where, "a moment that names a mirror fits mirror captures only");
-  }
+  if (captures.length === 0 || new Set(captures).size !== captures.length) add(BANK_RULE.captures, where, "names one or more captures, each once");
+  if ((moment.twoHanded || moment.phone === true) && captures.some(isHandCapture)) add(BANK_RULE.captures, where, "a two-handed or phone moment fits no hand-held capture");
+  if (moment.legs === undefined && captures.some((c) => LEGS_CAPTURES.includes(c))) add(BANK_RULE.legsCapture, where, "only a legs moment fits a legs capture («Ножки», 5a.2c)");
+  if (MIRROR.test(text) && !captures.every(isMirrorCapture)) add(BANK_RULE.mirrorWord, where, "a moment that names a mirror fits mirror captures only");
+  if (captures.some(isMirrorCapture) && place.mirror !== true) add(BANK_RULE.mirrorPlace, where, "a mirror capture needs a mirror place");
+  for (const outfit of moment.outfits ?? []) if (!outfits.has(outfit)) add(BANK_RULE.pinnedOutfit, where, `pins «${outfit}», which is not one of the category's outfits`);
+  checkMotion(add, where, moment);
 }
+
+const CaptureSchema = z.enum(CAPTURES);
 
 const MomentSchema = z.strictObject({
   text: z.string(),
+  motion: z.string(),
+  startPose: z.string().optional(),
+  captures: z.array(CaptureSchema),
   twoHanded: z.boolean(),
   phone: z.literal(true).optional(),
   messyOk: z.literal(true).optional(),
@@ -148,9 +167,10 @@ const MomentSchema = z.strictObject({
   gaze: z.enum(["own", "viewer", "focus"]).optional(),
   hair: z.enum(["tied", "loose", "own"]).optional(),
   outdoor: z.literal(true).optional(),
-  legs: z.strictObject({ framing: z.literal("legs").optional(), shots: z.array(PoolShot) }).optional(),
-  captures: z.array(z.enum(CAPTURE_KINDS)).optional(),
-  posture: z.enum(POSTURES).optional(),
+  object: z.literal(true).optional(),
+  outfits: z.array(z.string()).optional(),
+  legs: z.strictObject({ framing: z.literal("legs").optional() }).optional(),
+  feetUp: z.literal(true).optional(),
 });
 
 const PlaceSchema = z.strictObject({
@@ -159,52 +179,59 @@ const PlaceSchema = z.strictObject({
   times: z.array(PoolTime),
   mirror: z.literal(true).optional(),
   room: z.literal(true).optional(),
+  lamp: z.literal(true).optional(),
   details: z.array(z.string()),
   moments: z.array(MomentSchema),
-  lights: z.array(z.string()).optional(),
 });
-
-const LIGHT_IDS = new Set(LIGHTS.map((l) => l.id));
 
 function categoryBankSchema(category: BankCategory) {
   return z
     .strictObject({
       places: z.array(PlaceSchema).min(1),
-      outfits: z.array(z.string()).min(1),
-      shotDeck: z.array(PoolShot).min(1),
-      legwear: z.array(z.strictObject({ text: z.string(), status: z.enum(["probe", "passed"]) })).optional(),
+      outfits: z.array(z.strictObject({ text: z.string(), showsLegs: z.literal(true).optional() })).min(1),
+      legwear: z.strictObject({ items: z.array(z.string()), share: z.number() }).optional(),
+      captureDeck: z.array(CaptureSchema).min(1),
     })
     .superRefine((bank, ctx) => {
       const add = adder(ctx);
       const names = bank.places.map((p) => p.name);
       if (new Set(names).size !== names.length) add(BANK_RULE.duplicate, "places", "two places share a name");
-      if (bank.shotDeck.includes("mirror") && !bank.places.some((p) => p.mirror === true)) add(BANK_RULE.mirrorPlace, "places", "a deck with a mirror shot needs a mirror place");
-      bank.outfits.forEach((outfit, i) => checkText(add, `outfits[${i}]`, outfit, POOL_TEXT_MAX));
-      (bank.legwear ?? []).forEach((item, i) => checkText(add, `legwear[${i}]`, item.text, POOL_TEXT_MAX));
+      const outfitTexts = bank.outfits.map((o) => o.text);
+      if (new Set(outfitTexts).size !== outfitTexts.length) add(BANK_RULE.duplicate, "outfits", "an outfit is given twice");
+      bank.outfits.forEach((outfit, i) => checkText(add, `outfits[${i}]`, outfit.text));
+      if (bank.legwear !== undefined) {
+        bank.legwear.items.forEach((item, i) => checkText(add, `legwear[${i}]`, item));
+        if (bank.legwear.items.length === 0) add(BANK_RULE.legwear, "legwear", "names one item at least");
+        if (!(bank.legwear.share > 0 && bank.legwear.share <= 1)) add(BANK_RULE.legwear, "legwear", "goes on a share of the slots above 0 and at most 1");
+        if (!bank.outfits.some((o) => o.showsLegs === true)) add(BANK_RULE.legwear, "legwear", "needs an outfit that shows her legs");
+      }
+      for (const capture of bank.captureDeck) if (LEGS_CAPTURES.includes(capture)) add(BANK_RULE.deck, "captureDeck", `«${capture}» is a legs capture: «Ножки» deals it apart (5a.2c)`);
+      for (const capture of new Set(bank.captureDeck)) {
+        const taken = bank.places.some((place) => (!isMirrorCapture(capture) || place.mirror === true) && place.moments.some((m) => m.captures.includes(capture) && m.legs === undefined && m.level === undefined));
+        if (!taken) add(BANK_RULE.deckCoverage, "captureDeck", `no ordinary moment at a place it can land on takes «${capture}»`);
+      }
 
+      const outfits = new Set(outfitTexts);
       for (const place of bank.places) {
         const where = place.name;
-        const room = place.room === true;
-        checkText(add, `${where}.name`, place.name, POOL_TEXT_MAX);
-        checkText(add, `${where}.at`, place.at);
-        if (MIRROR.test(place.name) || MIRROR.test(place.at)) add(BANK_RULE.mirrorWord, where, "a place must not name a mirror: only the mirror shot's own line does");
+        checkText(add, `${where}.name`, place.name);
+        checkText(add, `${where}.at`, place.at, false);
+        if (MIRROR.test(place.name) || MIRROR.test(place.at)) add(BANK_RULE.mirrorWord, where, "a place must not name a mirror: only the mirror capture's own line does");
         if (!AT_START.test(place.at)) add(BANK_RULE.at, `${where}.at`, "opens with a preposition");
         if (place.times.length === 0 || place.times.includes("studio lighting")) add(BANK_RULE.times, `${where}.times`, "one or more times of day, never the stored «studio lighting»");
         if (place.details.length < 2 || place.details.length > 3) add(BANK_RULE.details, `${where}.details`, "2 or 3 details");
         for (const detail of place.details) {
-          checkText(add, `${where}.details`, detail, POOL_TEXT_MAX);
+          checkText(add, `${where}.details`, detail);
           if (!DETAIL_START.test(detail)) add(BANK_RULE.detailGrammar, `${where}.details`, `«${detail}» opens with a|an|the|her|some|two`);
           if (MIRROR.test(detail)) add(BANK_RULE.mirrorWord, `${where}.details`, "a detail must not name a mirror");
         }
         if (place.moments.length < 4) add(BANK_RULE.moments, `${where}.moments`, "at least 4 moments");
-        if (!place.moments.some(fitsEveryShot)) add(BANK_RULE.anyShot, `${where}.moments`, "one moment fits every shot and pose: one free hand, no phone, no angle, no viewer, no capture limit");
         const texts = place.moments.map((m) => m.text);
         if (new Set(texts).size !== texts.length) add(BANK_RULE.duplicate, `${where}.moments`, "a moment is given twice");
-        place.moments.forEach((moment) => checkMoment(add, `${where}: ${moment.text}`, moment, room));
-        for (const id of place.lights ?? []) if (!LIGHT_IDS.has(id)) add(BANK_RULE.lightRef, `${where}.lights`, `no light «${id}» in the light bank`);
+        place.moments.forEach((moment) => checkMoment(add, `${where}: ${moment.text}`, moment, place, outfits));
         if (category === "glamour") {
-          const texts = [place.name, place.at, ...place.details, ...place.moments.map((m) => m.text)];
-          if (texts.some((t) => BED_WORDS.test(t))) add(BANK_RULE.glamourBed, where, "Glamour is an evening out: never on a bed");
+          const all = [place.name, place.at, ...place.details, ...place.moments.map((m) => m.text)];
+          if (all.some((t) => BED_WORDS.test(t))) add(BANK_RULE.glamourBed, where, "Glamour is an evening out: never on a bed");
         }
       }
     });
@@ -221,15 +248,14 @@ const GazeBankSchema = z
       const where = `gaze «${gaze.text}»`;
       checkText(add, where, gaze.text);
       if (!GAZE_START.test(gaze.text)) add(BANK_RULE.gazeGrammar, where, "opens with looking|glancing|giving|her eyes|eyes|checking");
-      const namesPhone = PHONE_WORDS.test(gaze.text);
-      if ((gaze.phone === true) !== namesPhone) add(BANK_RULE.gazePhone, where, "carries the phone flag exactly when it names her phone");
+      if ((gaze.phone === true) !== PHONE_WORDS.test(gaze.text)) add(BANK_RULE.gazePhone, where, "carries the phone flag exactly when it names her phone");
       if (gaze.phone === true && (gaze.kind !== "mirror" || !/\bin the mirror\b/i.test(gaze.text))) add(BANK_RULE.gazePhone, where, "only a mirror gaze names her phone, and as her phone in the mirror");
       if ((gaze.kind === "viewer") !== VIEWER.test(gaze.text)) add(BANK_RULE.gazeViewer, where, "names the viewer exactly when it is a viewer gaze");
     }
   });
 
 const CueBankSchema = z
-  .array(z.strictObject({ text: z.string(), level: z.literal("flirty").optional() }))
+  .array(z.strictObject({ text: z.string(), level: z.literal("flirty").optional(), captures: z.array(CaptureSchema).optional() }))
   .min(1)
   .superRefine((cues, ctx) => {
     const add = adder(ctx);
@@ -241,6 +267,7 @@ const CueBankSchema = z
       if (!CUE_START.test(cue.text)) add(BANK_RULE.cueGrammar, where, "a noun phrase (a|an|one|her …) or «mid-…»");
       if (CUE_BANNED_WORDS.test(cue.text)) add(BANK_RULE.cueWord, where, "never sexy, seductive, sultry or sensual");
       if (CUE_GAZE.test(cue.text)) add(BANK_RULE.cueGaze, where, "an expression only: the gaze is its own clause");
+      if (cue.captures !== undefined && (cue.captures.length === 0 || new Set(cue.captures).size !== cue.captures.length)) add(BANK_RULE.captures, where, "names one or more captures, each once");
     }
   });
 

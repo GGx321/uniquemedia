@@ -20,9 +20,12 @@ export const HAIR_COLOUR_WORDS =
 /** A hairstyle names no colour at all (a «black claw clip» would still pull the hair toward black). */
 export const COLOUR_WORDS = /\b(black|brown|red|blonde?|dark|light|fair|grey|gray|silver|golden|copper|chestnut|honey|caramel|ash|blue|pink|purple|green|white|auburn)\b/i;
 
-/** I5.29: the youth props (plan s5a2 §4). None may enter a bank, at any level. */
+/**
+ * The youth props none may enter a bank, at any level (I5.29). K-17 (the owner's references, plan r1.2): knee-high socks, thigh-high socks and pleated
+ * mini skirts came back; striped thigh-highs, plush toys, gaming props, «swinging her legs», pigtails, two braids and space buns stay out.
+ */
 export const YOUTH_PROPS =
-  /\b(knee[- ]?socks?|striped thigh[- ]?highs?|pleated mini[- ]?skirts?|plush\w*|stuffed (?:animals?|toys?)|teddy(?: bears?)?|game ?pads?|game controllers?|gaming\w*|(?:game|gaming|video[- ]game) consoles?|swing(?:s|ing)? her legs|pig-?tails?|two braids|space buns?)\b/i;
+  /\b(striped thigh[- ]?highs?|plush\w*|stuffed (?:animals?|toys?)|teddy(?: bears?)?|game ?pads?|game controllers?|gaming\w*|(?:game|gaming|video[- ]game) consoles?|swing(?:s|ing)? her legs|pig-?tails?|two braids|space buns?)\b/i;
 
 /** The owner: Glamour is an evening out, never on a bed. */
 export const BED_WORDS = /\bbed\w*/i;
@@ -39,8 +42,25 @@ export const VIEWER_GAZE = /\b(look|gaz|glanc|star|smil)\w*\s+(at|toward|into)\s
 /** A moment that opens on a look carries its own gaze. */
 export const GAZE_VERBS = /^(looks|glances|gazes|stares|peers|watches|smiles)\b/i;
 
-/** «Ножки» (probe P-5a2): a legs moment names its footwear. */
-export const FOOTWEAR_WORDS = /\b(sneakers?|trainers?|heels|boots?|shoes?|loafers?|flats)\b/i;
+/**
+ * Plan r1.4: a moment that itself names legwear or bare skin takes no legwear slot (never «bare feet … with knee-high socks»). Legs alone do not
+ * («legs crossed», «stretches her legs» take legwear: the legs slots need it).
+ */
+export const LEGWEAR_CLASH_WORDS = /\b(socks?|socked|tights|stockings?|bare|barefoot|soles?|heels)\b/i;
 
-/** Probe P-5a2 and the video spike: toes go wrong, so no legs moment shows bare feet or open shoes. */
-export const BARE_FEET_WORDS = /\b(barefoot\w*|bare[- ]?feet|bare foot|toes?|sandals?|flip[- ]?flops?|slippers?)\b/i;
+/** A moment whose feet or legs are up carries the `feetUp` tag (plan r1.4), so it takes no legwear either. */
+export const FEET_UP_WORDS = /\b(?:feet|legs|foot)\s+(?:up|raised|in the air)\b|\b(?:feet|foot)\s+on\s+the\b|\blegs\s+bent\s+up\b/i;
+
+/** I5.35: a motion is small or slow. */
+export const MOTION_SMALL = /\b(slowly|a little|a bit|slightly|gently|small)\b/i;
+
+/** I5.35: a motion is the body's, never the camera's or the edit's. */
+export const MOTION_STAGING = /\b(zoom\w*|cuts?|pans?|frames?|shots?|close-?ups?|slow[- ]motion)\b/i;
+
+/** K-22: phrases exempt from the luxury words (the writer's soft list, the pools' banned words): the owner's references wear «silk pajamas». «Satin» stays banned. */
+const EXEMPT_LOOK_PHRASES = /\bsilk pajamas\b/gi;
+
+/** The text with its exempt phrases taken out, for a check against the luxury words. */
+export function withoutExemptLookPhrases(text: string): string {
+  return text.replace(EXEMPT_LOOK_PHRASES, "");
+}

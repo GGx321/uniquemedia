@@ -1,8 +1,7 @@
-import { DEFAULT_SHOT_DECK } from "./decks";
 import type { CategoryBank } from "./types";
 
-// «Фитнес». PROVISIONAL content, seeded from today's pool (plan s5a2 r1.2 replaces it). A workout moment is `tied`: the only kind of moment a tied
-// hairstyle may go to (probe P-5a2: a messy bun lost likeness, so tied styles stay rare, hair.ts).
+// «Фитнес» (plan s5a2 r1.2 §5.1): today's places and outfits, today's activities as moments with motions, and a gym mirror selfie with the phone over
+// her face. A workout moment is `tied`: the only kind of moment a tied hairstyle may go to (probe P-5a2; hair.ts).
 export const FITNESS: CategoryBank = {
   places: [
     {
@@ -12,12 +11,12 @@ export const FITNESS: CategoryBank = {
       times: ["morning", "evening"],
       mirror: true,
       moments: [
-        { text: "rests between sets", twoHanded: false, hair: "tied" },
-        { text: "holds a water bottle", twoHanded: false, hair: "tied" },
-        { text: "adjusts her ponytail", twoHanded: false, hair: "own" },
-        { text: "wipes her face with a towel", twoHanded: false, hair: "tied" },
-        { text: "sits on a bench catching her breath", twoHanded: false, hair: "tied", posture: "sitting" },
-        { text: "laces up her sneakers", twoHanded: true, gaze: "focus", hair: "tied" },
+        { text: "rests between sets", motion: "she breathes out slowly", captures: ["friend", "candid", "selfie", "mirror-hidden"], twoHanded: false, hair: "tied" },
+        { text: "holds a water bottle", motion: "she takes a small sip", captures: ["friend", "selfie", "mirror", "mirror-hidden"], twoHanded: false, hair: "tied" },
+        { text: "adjusts her ponytail", motion: "she tightens her ponytail a bit", captures: ["mirror", "mirror-hidden", "friend", "candid"], twoHanded: false, hair: "own" },
+        { text: "wipes her face with a towel", motion: "she pats her face slowly", captures: ["friend", "candid"], twoHanded: false, hair: "tied" },
+        { text: "stands at the gym mirror", motion: "she shifts slowly to one hip", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "tied" },
+        { text: "laces up her sneakers", motion: "she pulls the laces tight slowly", captures: ["friend", "candid"], twoHanded: true, gaze: "focus", hair: "tied" },
       ],
     },
     {
@@ -27,13 +26,12 @@ export const FITNESS: CategoryBank = {
       details: ["a rolled-up towel", "a water bottle on the floor"],
       times: ["morning"],
       moments: [
-        { text: "holds a yoga pose", twoHanded: true, hair: "tied" },
-        { text: "stretches her arms overhead", twoHanded: true, hair: "tied" },
-        { text: "sits cross-legged on the mat", twoHanded: false, hair: "tied", posture: "sitting" },
-        { text: "rolls out her yoga mat", twoHanded: true, gaze: "focus", hair: "tied" },
-        { text: "drinks from a water bottle", twoHanded: false, hair: "tied" },
-        { text: "sits back on her heels", twoHanded: false, hair: "tied", posture: "kneeling" },
-        { text: "rests on the mat after a stretch", twoHanded: false, hair: "tied", posture: "lying" },
+        { text: "holds a yoga pose", motion: "she breathes slowly in the pose", captures: ["friend", "candid"], twoHanded: true, hair: "tied" },
+        { text: "stretches her arms overhead", motion: "she reaches a little higher", captures: ["friend", "candid"], twoHanded: true, hair: "tied" },
+        { text: "sits cross-legged on the mat", motion: "she rolls her shoulders slowly", captures: ["friend", "selfie", "candid"], twoHanded: false, hair: "tied" },
+        { text: "rolls out her yoga mat", motion: "she smooths the mat out slowly", captures: ["candid", "friend"], twoHanded: true, gaze: "focus", hair: "tied" },
+        { text: "drinks from a water bottle", motion: "she takes a small sip", captures: ["selfie", "friend"], twoHanded: false, hair: "tied" },
+        { text: "kneels on the mat", motion: "she sinks back a little", captures: ["friend", "selfie", "candid"], twoHanded: false, hair: "tied" },
       ],
     },
     {
@@ -42,11 +40,11 @@ export const FITNESS: CategoryBank = {
       details: ["a park bench by the path", "a row of trees along the path"],
       times: ["morning"],
       moments: [
-        { text: "jogs along the path", twoHanded: true, hair: "tied", outdoor: true },
-        { text: "stretches her legs", twoHanded: false, hair: "tied", outdoor: true },
-        { text: "holds a water bottle", twoHanded: false, hair: "tied", outdoor: true },
-        { text: "catches her breath after a run", twoHanded: false, hair: "tied", outdoor: true },
-        { text: "checks her run on her phone", twoHanded: false, phone: true, gaze: "own", hair: "tied", outdoor: true },
+        { text: "jogs along the path", motion: "she keeps jogging slowly", captures: ["friend", "candid"], twoHanded: true, hair: "tied", outdoor: true },
+        { text: "stretches her legs", motion: "she leans into the stretch a bit", captures: ["friend", "candid", "selfie"], twoHanded: false, hair: "tied", outdoor: true },
+        { text: "holds a water bottle", motion: "she takes a small sip", captures: ["selfie", "friend"], twoHanded: false, hair: "tied", outdoor: true },
+        { text: "catches her breath after a run", motion: "she breathes out slowly", captures: ["friend", "selfie", "candid"], twoHanded: false, hair: "tied", outdoor: true },
+        { text: "checks her run on her phone", motion: "she scrolls her phone slowly", captures: ["candid", "friend"], twoHanded: false, phone: true, gaze: "own", hair: "tied", outdoor: true },
       ],
     },
     {
@@ -56,13 +54,11 @@ export const FITNESS: CategoryBank = {
       times: ["morning", "evening"],
       mirror: true,
       moments: [
-        { text: "rests on the bench", twoHanded: false, hair: "tied", posture: "sitting" },
-        { text: "holds a water bottle", twoHanded: false, hair: "tied" },
-        { text: "adjusts her ponytail", twoHanded: false, hair: "own" },
-        { text: "packs her gym bag", twoHanded: true, gaze: "focus", hair: "tied" },
-        { text: "dries off with a towel", twoHanded: true, hair: "tied" },
-        { text: "checks her outfit after the gym", twoHanded: false, hair: "tied" },
-        { text: "wipes her face with a towel", twoHanded: false, hair: "tied" },
+        { text: "rests on the bench", motion: "she leans back a little", captures: ["friend", "candid", "selfie"], twoHanded: false, hair: "tied" },
+        { text: "holds a water bottle", motion: "she takes a small sip", captures: ["mirror", "mirror-hidden", "selfie", "friend"], twoHanded: false, hair: "tied" },
+        { text: "adjusts her ponytail", motion: "she tightens her ponytail a bit", captures: ["mirror", "mirror-hidden", "candid"], twoHanded: false, hair: "own" },
+        { text: "packs her gym bag", motion: "she zips the bag slowly", captures: ["candid", "friend"], twoHanded: true, gaze: "focus", hair: "tied" },
+        { text: "checks her outfit after the gym", motion: "she turns a little to each side", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "tied" },
       ],
     },
     {
@@ -72,14 +68,19 @@ export const FITNESS: CategoryBank = {
       details: ["a yoga mat against the wall", "a pair of dumbbells by the door"],
       times: ["morning", "evening"],
       moments: [
-        { text: "stretches after a workout", twoHanded: false, hair: "tied" },
-        { text: "holds a water bottle", twoHanded: false, hair: "tied" },
-        { text: "ties her sneakers", twoHanded: true, gaze: "focus", hair: "tied" },
-        { text: "lifts a light dumbbell", twoHanded: false, hair: "tied" },
-        { text: "sits on the mat for a breather", twoHanded: false, hair: "tied", posture: "sitting" },
+        { text: "stretches after a workout", motion: "she reaches a little further", captures: ["friend", "candid", "selfie"], twoHanded: false, hair: "tied" },
+        { text: "holds a water bottle", motion: "she takes a small sip", captures: ["selfie", "friend"], twoHanded: false, hair: "tied" },
+        { text: "ties her sneakers", motion: "she pulls the laces tight slowly", captures: ["friend", "candid"], twoHanded: true, gaze: "focus", hair: "tied" },
+        { text: "lifts a light dumbbell", motion: "she lifts the weight slowly", captures: ["friend", "selfie", "candid"], twoHanded: false, hair: "tied" },
+        { text: "sits on the mat for a breather", motion: "she breathes out slowly", captures: ["friend", "selfie", "candid"], twoHanded: false, hair: "tied" },
       ],
     },
   ],
-  outfits: ["biker shorts and a crop top", "leggings and a fitted tank top", "a loose hoodie over leggings", "running shorts and a tank top"],
-  shotDeck: DEFAULT_SHOT_DECK,
+  outfits: [
+    { text: "biker shorts and a crop top", showsLegs: true },
+    { text: "leggings and a fitted tank top" },
+    { text: "a loose hoodie over leggings" },
+    { text: "running shorts and a tank top", showsLegs: true },
+  ],
+  captureDeck: ["friend", "selfie", "mirror", "friend", "mirror-hidden", "candid"],
 };

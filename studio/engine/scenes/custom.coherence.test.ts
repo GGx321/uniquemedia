@@ -1,18 +1,19 @@
 import { describe, expect, test } from "bun:test";
+import { captureOfShot, posesFor } from "../../shared/scenes/captures";
 import { covers, customActivityAllowed } from "../../shared/scenes/custom";
 import { templateSentence } from "../../shared/scenes/template";
 import { sentenceProblems } from "./assembler";
 import type { Pool } from "./pools";
-import { PoseSchema } from "./schema";
 import { OWNER_LIKE_POOL } from "./testing/ownerLikePool";
 import { SWEEP_CUSTOM_POOL } from "./testing/lookRules";
 import { readWriterScenes } from "./writer";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
-// 5a.2 (S5.6a, I5.23 for custom categories): today's stored custom pools render through the adapter, and every slot the planner can draw from them
-// passes the gates an LLM sentence passes (readWriterScenes) and the assembler's last gate. The fixtures stand in for the owner's library: the
-// engine's shared custom pool (with its youth word renamed, as the look sweeps use it) and the owner-like pool of real descriptions.
+// 5a.2 (S5.6a, I5.23 for custom categories): today's stored custom pools render through the adapter, their captures derived from their stored decks
+// (plan r1.2), and every slot the planner can draw from them passes the gates an LLM sentence passes (readWriterScenes) and the assembler's last gate.
+// The fixtures stand in for the owner's library: the engine's shared custom pool (its youth word renamed, as the look sweeps use it) and the
+// owner-like pool of real descriptions.
 
 const REF = "cat-paris-cafes";
 const POOLS: Array<[string, Pool]> = [
@@ -31,9 +32,9 @@ describe.each(POOLS)("%s", (_name, pool) => {
     for (const place of pool.locations) {
       for (const shot of new Set(pool.shotDeck)) {
         if (shot === "mirror" && place.mirror !== true) continue;
-        for (const pose of PoseSchema.options) {
-          if ((shot === "selfie" || shot === "mirror") && pose !== "front" && pose !== "three-quarter") continue;
-          for (const activity of place.activities.filter((a) => customActivityAllowed(a, shot, pose))) {
+        const capture = captureOfShot(shot);
+        for (const pose of posesFor(capture)) {
+          for (const activity of place.activities.filter((a) => customActivityAllowed(a, capture, pose))) {
             for (const outfit of pool.outfits) {
               const sentence = templateSentence({ category: REF, location: place.name, activity: activity.text, outfit, shot, pose }, { key: `${place.name}:${shot}:${pose}`, snapshots: [{ ref: REF }] });
               checked++;

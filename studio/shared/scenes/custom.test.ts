@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ScenePose } from "../engine";
 import { CUES, GAZE } from "./banks";
+import type { Capture } from "./captures";
 import { covers, customActivityAllowed, customMomentOf, locativeOf, rendersActivity, type CustomPool } from "./custom";
 import { templateSentence, type TemplateSlot } from "./template";
 
@@ -71,14 +72,14 @@ describe("customMomentOf: the tags an old activity is read with", () => {
 
 describe("customActivityAllowed (I5.23 for custom: by the regex)", () => {
   const plain = { text: "holding a mug", twoHanded: false };
-  test.each<[string, { text: string; twoHanded: boolean }, "friend" | "selfie" | "mirror" | "candid" | "photographer", ScenePose, boolean]>([
+  test.each<[string, { text: string; twoHanded: boolean }, Capture, ScenePose, boolean]>([
     ["a plain activity on a selfie", plain, "selfie", "front", true],
     ["a plain activity from behind", plain, "friend", "back", true],
     ["a two-handed activity on a selfie", { text: "holding a mug", twoHanded: true }, "selfie", "front", false],
     ["a phone activity on a mirror shot", { text: "texting on her phone", twoHanded: false }, "mirror", "front", false],
     ["a selfie activity on a selfie", { text: "taking a selfie", twoHanded: false }, "selfie", "three-quarter", false],
     ["«smiling at the camera» from behind", { text: "smiling at the camera", twoHanded: false }, "friend", "back", false],
-    ["«smiling at the camera» in profile", { text: "smiling at the camera", twoHanded: false }, "photographer", "profile", false],
+    ["«smiling at the camera» in profile", { text: "smiling at the camera", twoHanded: false }, "friend", "profile", false],
     ["«looking at the viewer» on a candid", { text: "looking at the viewer", twoHanded: false }, "candid", "front", false],
     ["«smiling at the camera» on a friend's front snap", { text: "smiling at the camera", twoHanded: false }, "friend", "front", true],
   ])("%s: %p", (_name, activity, shot, pose, allowed) => {
