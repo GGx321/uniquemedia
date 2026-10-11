@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { findMovSignatureFields, scrubMovSignature } from "./movSignature";
+import { findMovSignatureFields, scrubMovSignature, stampMovCreationTimes } from "./movSignature";
 
 /**
  * ffmpeg's MOV/MP4 muxer hardcodes three things no flag reaches: `minor_version`
@@ -292,6 +292,83 @@ test("scrubMovSignature is idempotent: a second pass finds nothing to patch", as
     const once = readFileSync(path);
     expect(await scrubMovSignature(path)).toEqual([]);
     expect(readFileSync(path).equals(once)).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── creation times ──────────────────────────────────────────────────────────
+
+/** Seconds between the MOV epoch (1904-01-01) and the Unix epoch. */
+const MAC_EPOCH_OFFSET = 2_082_844_800;
+const WHEN = new Date("2026-10-11T09:30:15Z");
+const WHEN_MAC = Math.floor(WHEN.getTime() / 1000) + MAC_EPOCH_OFFSET;
+
+/** A full box (version + flags) whose creation/modification times are zero, as
+ *  ffmpeg writes them under bitexact. `size` is the whole payload length. */
+function timedBox(type: string, version: number, payloadLength: number): Buffer {
+  const payload = Buffer.alloc(payloadLength, 0x11);
+  payload[0] = version;
+  const timeBytes = version === 1 ? 16 : 8;
+  payload.fill(0, 4, 4 + timeBytes);
+  return box(type, payload);
+}
+
+function movWithTimes(version: number): Buffer {
+  const tr = box("trak", timedBox("tkhd", version, 84), box("mdia", timedBox("mdhd", version, 24)));
+  return Buffer.concat([ftyp("isom", 0), box("moov", timedBox("mvhd", version, 100), tr, tr), mdat()]);
+}
+
+function timesAt(bytes: Buffer, type: string, nth = 0): { created: bigint; modified: bigint } {
+  let at = -1;
+  for (let i = 0; i <= nth; i++) at = bytes.indexOf(type, at + 1, "latin1");
+  const body = at + 4; // after the fourcc
+  const v1 = bytes[body] === 1;
+  return v1
+    ? { created: bytes.readBigUInt64BE(body + 4), modified: bytes.readBigUInt64BE(body + 12) }
+    : { created: BigInt(bytes.readUInt32BE(body + 4)), modified: BigInt(bytes.readUInt32BE(body + 8)) };
+}
+
+test.each([0, 1])("stamps mvhd, tkhd and mdhd with the export time (box version %i)", async (version) => {
+  const dir = mkdtempSync(join(tmpdir(), "uniq-stamp-"));
+  try {
+    const path = join(dir, "a.mp4");
+    writeFileSync(path, movWithTimes(version));
+    await stampMovCreationTimes(path, WHEN);
+    const after = readFileSync(path);
+    for (const [type, nth] of [["mvhd", 0], ["tkhd", 0], ["tkhd", 1], ["mdhd", 0], ["mdhd", 1]] as const) {
+      expect(timesAt(after, type, nth)).toEqual({ created: BigInt(WHEN_MAC), modified: BigInt(WHEN_MAC) });
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("stamping the times changes nothing else in the file", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "uniq-stamp-"));
+  try {
+    const path = join(dir, "a.mp4");
+    const before = movWithTimes(0);
+    writeFileSync(path, before);
+    await stampMovCreationTimes(path, WHEN);
+    const after = readFileSync(path);
+    expect(after.length).toBe(before.length);
+    let differing = 0;
+    for (let i = 0; i < before.length; i++) if (before[i] !== after[i]) differing++;
+    // Only the nonzero bytes of 5 boxes x (creation + modification) can differ.
+    expect(differing).toBeGreaterThan(0);
+    expect(differing).toBeLessThanOrEqual(5 * 8);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("refuses to stamp a file that has no moov box", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "uniq-stamp-"));
+  try {
+    const path = join(dir, "a.mp4");
+    writeFileSync(path, Buffer.concat([ftyp("isom", 0), mdat()]));
+    await expect(stampMovCreationTimes(path, WHEN)).rejects.toThrow(/moov/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

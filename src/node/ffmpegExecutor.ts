@@ -10,7 +10,7 @@ import type { RenderExecutor } from "../core/executor";
 import type { IdentityMode, MediaInfo, Recipe } from "../core/types";
 import type { DeviceProfile } from "../core/deviceProfile";
 import { parseProgressFraction } from "./ffmpegProgress";
-import { scrubMovSignature } from "./movSignature";
+import { scrubMovSignature, stampMovCreationTimes } from "./movSignature";
 
 const FFMPEG = (ffmpegPath as string).replace("app.asar", "app.asar.unpacked");
 const FFPROBE = ffprobeStatic.path.replace("app.asar", "app.asar.unpacked");
@@ -170,13 +170,17 @@ export class FfmpegExecutor implements RenderExecutor {
    *  - `engine`: nothing. The container is ffmpeg's honest MP4.
    *  - `iphone`: the QuickTime keys of the profile's handset, then the MOV
    *    fields the muxer hardcodes, in `applyDeviceMetadata`.
-   *  - `clean`: only those hardcoded fields — in MP4 mode the `avc1` vendor is
+   *  - `clean`: the real export time as creation time, and only those hardcoded fields — in MP4 mode the `avc1` vendor is
    *    already zeros, so that is the `ftyp` minor version and the compressor
    *    name `Lavc libx264`, which no encode-time flag reaches.
    */
   async applyIdentity(output: string, identity: IdentityMode, profile: DeviceProfile): Promise<void> {
     if (identity === "iphone") await this.applyDeviceMetadata(output, profile);
-    else if (identity === "clean") await scrubMovSignature(output);
+    else if (identity === "clean") {
+      await scrubMovSignature(output);
+      // The export time, UTC, in mvhd/tkhd/mdhd: bitexact leaves them at zero.
+      await stampMovCreationTimes(output);
+    }
   }
 
   async applyDeviceMetadata(output: string, profile: DeviceProfile): Promise<void> {
