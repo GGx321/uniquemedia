@@ -4341,7 +4341,7 @@ export class Engine {
     const job = descriptorCheckEstimate(priced, models);
     Engine.#checkAccepted(job.worstMicros, payload.acceptedWorstMicros);
     Engine.#checkMonthlyRoom(budget, job.worstMicros);
-    const image = await this.#masterForCheck(library, avatarId);
+    const image = await this.#checkPhotoOf(library, avatarId);
 
     const jobId = this.#deps.newId();
     const scope: Scope = { avatarJobId: jobId };
@@ -4366,16 +4366,24 @@ export class Engine {
     return { check: result.check };
   }
 
-  /** The avatar's master as the downscaled JPEG a check attaches (`Library.loadReference`), bounded; INTERNAL, and free, when it cannot be read. */
-  async #masterForCheck(library: Library, avatarId: string): Promise<Uint8Array> {
+  /**
+   * The photo a check compares with the descriptor, as the downscaled JPEG it attaches (`Library.loadReference`), bounded; INTERNAL, and free, when it cannot be read (I5.20).
+   * It is the avatar's SOURCE photo: for an imported avatar the imported photo, which the descriptor was written from, whoever the master is now (a portrait drawn from the same
+   * text would make the check circular, and a close-up of a face cannot show a body); for any other avatar the master. A portrait master whose source is missing or quarantined is
+   * refused, never answered with the portrait.
+   */
+  async #checkPhotoOf(library: Library, avatarId: string): Promise<Uint8Array> {
     const timeout = timeoutSignal(REFERENCE_TIMEOUT_MS);
     try {
-      const master = await untilAborted(library.loadReference(avatarId, timeout.signal), timeout.signal);
-      if (master === null) throw new EngineFailure({ code: "INTERNAL", detail: `avatar ${avatarId}'s master photo could not be found on disk` });
-      return master;
+      const photo = await untilAborted(library.loadReference(avatarId, timeout.signal, "source"), timeout.signal);
+      if (photo === null) throw new EngineFailure({ code: "INTERNAL", detail: `avatar ${avatarId}'s photo to check against could not be found on disk` });
+      return photo;
     } catch (error) {
       if (error instanceof EngineFailure) throw error;
-      throw new EngineFailure({ code: "INTERNAL", detail: detailOf(`avatar ${avatarId}'s master photo could not be read (${messageOf(error, "unknown error")})`) });
+      if (error instanceof LibraryError && error.code === "source-unavailable") {
+        throw new EngineFailure({ code: "INTERNAL", detail: `the source photo of avatar ${avatarId} is unavailable: it is missing or was quarantined` });
+      }
+      throw new EngineFailure({ code: "INTERNAL", detail: detailOf(`avatar ${avatarId}'s photo to check against could not be read (${messageOf(error, "unknown error")})`) });
     } finally {
       timeout.clear();
     }

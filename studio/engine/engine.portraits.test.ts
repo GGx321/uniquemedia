@@ -373,3 +373,107 @@ describe("avatars.discardPortraits", () => {
     expect(failed(await engine.handle(discard("avatar-00000001"))).error.code).toBe("LIBRARY_UNAVAILABLE");
   });
 });
+
+// ---------- the descriptor check reads the SOURCE photo (I5.20) ----------
+
+describe("avatars.checkDescriptor of an imported avatar (I5.20)", () => {
+  const CHECK_WORST = 25_000;
+  const check = (avatarId: string) => command("avatars.checkDescriptor", { avatarId, acceptedWorstMicros: CHECK_WORST });
+
+  /** The base64 of every JPEG the check calls attached. */
+  function attachedImage(net: ReturnType<typeof network>): string[] {
+    return net.calls
+      .filter((c) => c.url.endsWith("/chat/completions"))
+      .flatMap((c) => Array.from((c.body ?? "").matchAll(/data:image\/jpeg;base64,([A-Za-z0-9+/=]+)/g), (m) => m[1] ?? ""));
+  }
+
+  async function referenceB64(engine: Awaited<ReturnType<typeof started>>["engine"], avatarId: string, of: "master" | "source"): Promise<string> {
+    const reference = await engine.library?.loadReference(avatarId, undefined, of);
+    if (reference === null || reference === undefined) throw new Error("no reference");
+    return Buffer.from(reference).toString("base64");
+  }
+
+  test("before any switch it sends the imported photo, which is the master", async () => {
+    const { avatarId } = await seedImportedAvatar(dir(), { portraits: [0.7] });
+    const net = network();
+    const { engine } = await started({ net });
+
+    ok(await engine.handle(check(avatarId)));
+
+    expect(attachedImage(net)).toEqual([await referenceB64(engine, avatarId, "source")]);
+  });
+
+  test("after a switch to a portrait it still sends the imported photo, never the portrait", async () => {
+    const { avatarId } = await seedImportedAvatar(dir(), { portraits: [0.76], master: 0 });
+    const net = network();
+    const { engine } = await started({ net });
+
+    ok(await engine.handle(check(avatarId)));
+
+    const source = await referenceB64(engine, avatarId, "source");
+    const portrait = await referenceB64(engine, avatarId, "master");
+    expect(source).not.toBe(portrait);
+    expect(attachedImage(net)).toEqual([source]);
+  });
+
+  test("for a wizard avatar it sends the master", async () => {
+    const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds("wiz") });
+    const mia = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
+    const master = await library.addPhoto(mia.id, portraitPng(3), samplePhotoMeta({ width: 60, height: 80 }));
+    await library.updateAvatar(mia.id, { status: "active", masterPhotoId: master.id });
+    const net = network();
+    const { engine } = await started({ net });
+
+    ok(await engine.handle(check(mia.id)));
+
+    expect(attachedImage(net)).toEqual([await referenceB64(engine, mia.id, "master")]);
+  });
+
+  test("a portrait master whose source photo is gone is a free INTERNAL «source photo unavailable», never a check against the portrait", async () => {
+    const { avatarId, sourceId } = await seedImportedAvatar(dir(), { portraits: [0.76], master: 0 });
+    await rm(join(dir(), "library", "avatars", avatarId, "photos", `${sourceId}.json`));
+    const net = network();
+    const { engine } = await started({ net });
+
+    const refused = failed(await engine.handle(check(avatarId)));
+
+    expect(refused.error.code).toBe("INTERNAL");
+    expect(refused.error.detail).toContain("source photo");
+    expect(net.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    expect(ledgerLines(dir())).toEqual([]);
+  });
+
+  test("a switch back and forth changes nothing about what is sent", async () => {
+    const { avatarId, sourceId, portraitIds } = await seedImportedAvatar(dir(), { portraits: [0.76] });
+    const net = network();
+    const { engine } = await started({ net });
+
+    ok(await engine.handle(check(avatarId)));
+    ok(await engine.handle(pick(avatarId, portraitIds[0] ?? "")));
+    ok(await engine.handle(check(avatarId)));
+    ok(await engine.handle(pick(avatarId, sourceId)));
+    ok(await engine.handle(check(avatarId)));
+
+    const sent = attachedImage(net);
+    expect(sent).toHaveLength(3);
+    expect(new Set(sent).size).toBe(1);
+  });
+});
+
+// ---------- after a pick the references follow the master ----------
+
+describe("a picked portrait is the avatar's master for everything that reads it", () => {
+  test("the reference the runs and the autopilot use is the portrait, not the imported photo", async () => {
+    const { avatarId, sourceId, portraitIds } = await seedImportedAvatar(dir(), { portraits: [0.76] });
+    const { engine } = await started();
+    const before = await engine.library?.loadReference(avatarId);
+
+    ok(await engine.handle(pick(avatarId, portraitIds[0] ?? "")));
+
+    expect(engine.library?.referencePhoto(avatarId)?.photo.id).toBe(portraitIds[0]);
+    const after = await engine.library?.loadReference(avatarId);
+    expect(after).not.toBeNull();
+    expect(Buffer.from(after ?? []).equals(Buffer.from(before ?? []))).toBe(false);
+    expect(engine.library?.getPhoto(sourceId)).toBeDefined();
+  });
+});
