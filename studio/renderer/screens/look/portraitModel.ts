@@ -1,4 +1,4 @@
-import { ERROR_MESSAGES_RU, PORTRAIT_CANDIDATES_MAX, PORTRAIT_MIN_LIKENESS, PORTRAITS_PER_BATCH, type EngineError, type FailedPortraitSlot } from "../../../shared/engine";
+import { ERROR_MESSAGES_RU, PORTRAIT_CANDIDATES_MAX, PORTRAIT_MIN_LIKENESS, PORTRAITS_PER_BATCH, type ErrorCode, type FailedPortraitSlot } from "../../../shared/engine";
 import { afterColon, countOf } from "../../lib/format";
 import type { IconName } from "../../ui/Icon";
 
@@ -65,9 +65,33 @@ export function likenessText(likeness: number): string {
 /** «порог 0.55»: the face gate's fixed threshold, the same figure the engine stores and picks by. */
 export const THRESHOLD_TEXT = likenessText(PORTRAIT_MIN_LIKENESS);
 
-/** A refusal the provider does not bill: the model's moderation refusal is settled at zero (plan §2.5). Every other failed slot is said as paid. */
-export function isFreeFailure(error: EngineError): boolean {
-  return error.code === "MODERATION_REFUSED";
+/**
+ * What a failed slot cost, as the engine's money rules settle it (`studio/engine/money/settleRule.ts`, and the slot's own hold in `candidateJob.ts`
+ * `runSlot`):
+ * - `free`: nothing was sent (the budget refused the slot's hold: BUDGET_EXCEEDED, RUN_CAP_EXCEEDED, RECONCILE_REQUIRED), or a final non-2xx answer
+ *   settled it at 0 (MODERATION_REFUSED 400, AUTH_INVALID 401, INSUFFICIENT_CREDITS 402, RATE_LIMITED 429, and NETWORK when it is a 5xx that outlasted
+ *   the transport retries, i.e. its reserve was NOT left open);
+ * - `open`: a timeout, a lost connection or an abort may have been billed, so its reserve stays open at the worst case until a reconcile
+ *   (`reserveLeftOpen`);
+ * - `paid`: everything else, said as paid because it may have bought its image (a 2xx it could not use, a bill above the worst case, a slot that
+ *   broke after its image came). An ambiguous code is never said to be free.
+ * The window reads this from the code and `reserveLeftOpen`; a per-slot «charged» flag in the contract would be the robust answer (backlog).
+ */
+export type SlotCharge = "free" | "open" | "paid";
+
+const NEVER_SENT: ReadonlySet<ErrorCode> = new Set(["BUDGET_EXCEEDED", "RUN_CAP_EXCEEDED", "RECONCILE_REQUIRED"]);
+const SETTLED_AT_ZERO: ReadonlySet<ErrorCode> = new Set(["MODERATION_REFUSED", "AUTH_INVALID", "INSUFFICIENT_CREDITS", "RATE_LIMITED", "NETWORK"]);
+
+export function slotCharge(slot: Extract<FailedPortraitSlot, { reason: "failed" }>): SlotCharge {
+  if (slot.reserveLeftOpen) return "open";
+  if (NEVER_SENT.has(slot.error.code) || SETTLED_AT_ZERO.has(slot.error.code)) return "free";
+  return "paid";
+}
+
+type FailedSlot = Extract<FailedPortraitSlot, { reason: "failed" }>;
+
+function failedOnly(failedSlots: readonly FailedPortraitSlot[]): FailedSlot[] {
+  return failedSlots.filter((f): f is FailedSlot => f.reason === "failed");
 }
 
 /** A slot of a finished batch that gave no portrait: never selectable, and it says why (design decision 3). */
@@ -99,26 +123,42 @@ export function goneTiles(failedSlots: readonly FailedPortraitSlot[]): GoneTile[
         case "age-rejected":
           return { key, look: "dropped", icon: "eyeOff", tone: "muted", title: "Скрыт проверкой возраста", sub: PAID };
         case "failed":
-          return isFreeFailure(f.error)
+          if (slotCharge(f) !== "free") return { key, look: "failed", icon: "alert", tone: "danger-text", title: "Не получилось · стоимость учтена", sub: null };
+          return f.error.code === "MODERATION_REFUSED"
             ? { key, look: "failed", icon: "close", tone: "muted", title: "Модель отказалась · бесплатно", sub: null }
-            : { key, look: "failed", icon: "alert", tone: "danger-text", title: "Не получилось · стоимость учтена", sub: null };
+            : { key, look: "failed", icon: "alert", tone: "muted", title: "Не получилось · бесплатно", sub: null };
       }
     });
 }
 
 const FAILED_FORMS = ["вариант не удалось получить", "варианта не удалось получить", "вариантов не удалось получить"] as const;
+const WORST_UNTIL_RECONCILE = "До сверки попытка считается по худшей цене.";
 
-/**
- * 16e: the batch's PAID failures in one line, their shared reason when they agree — «2 варианта не удалось получить: OpenRouter не ответил вовремя. До
- * сверки попытка считается по худшей цене. Стоимость попытки учтена.» A free refusal is not counted (its tile says «бесплатно»); null when none was paid.
- */
-export function paidFailureLine(failedSlots: readonly FailedPortraitSlot[]): string | null {
-  const paid = failedSlots.flatMap((f) => (f.reason === "failed" && !isFreeFailure(f.error) ? [f.error.code] : []));
-  if (paid.length === 0) return null;
-  const codes = new Set(paid);
+/** «N вариантов не удалось получить: <their shared reason>» — the app's text for the code when they agree. */
+function failureHead(slots: readonly FailedSlot[]): string {
+  const codes = new Set(slots.map((f) => f.error.code));
   const [only] = codes;
   const reason = codes.size === 1 && only !== undefined ? ERROR_MESSAGES_RU[only] : "Причины разные — подробности в журнале.";
-  return `${countOf(paid.length, FAILED_FORMS)}: ${afterColon(reason)} Стоимость попытки учтена.`;
+  return `${countOf(slots.length, FAILED_FORMS)}: ${afterColon(reason)}`;
+}
+
+/**
+ * 16e: the failures that may have cost (`open` and `paid`) in one line, their shared reason when they agree — «2 варианта не удалось получить: OpenRouter
+ * не ответил вовремя. До сверки попытка считается по худшей цене. Стоимость попытки учтена.» A reserve left open says the worst-price rule when the
+ * code's own text does not. What cost nothing is not counted (its tile says «бесплатно»); null when nothing failed at a cost.
+ */
+export function paidFailureLine(failedSlots: readonly FailedPortraitSlot[]): string | null {
+  const counted = failedOnly(failedSlots).filter((f) => slotCharge(f) !== "free");
+  if (counted.length === 0) return null;
+  const head = failureHead(counted);
+  const worst = counted.some((f) => slotCharge(f) === "open") && !head.includes("худшей цене") ? ` ${WORST_UNTIL_RECONCILE}` : "";
+  return `${head}${worst} Стоимость попытки учтена.`;
+}
+
+/** The free failures other than a model's refusal (whose tile says it all): why, and that they cost nothing; null when there are none. */
+export function freeFailureLine(failedSlots: readonly FailedPortraitSlot[]): string | null {
+  const free = failedOnly(failedSlots).filter((f) => slotCharge(f) === "free" && f.error.code !== "MODERATION_REFUSED");
+  return free.length === 0 ? null : `${failureHead(free)} Эти попытки ничего не стоили.`;
 }
 
 /** 16b: the slots the age check dropped, agreed in number — «1 вариант отклонён … и не показан. Его стоимость учтена.» (the README's mismatch, fixed). */
