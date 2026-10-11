@@ -1,0 +1,99 @@
+import { describe, expect, test } from "bun:test";
+import { ERROR_MESSAGES_RU, type FailedPortraitSlot } from "../../../shared/engine";
+import { ageRejectedLine, batchFits, capReason, goneTiles, isFreeFailure, likenessText, NONE_PASSED, paidFailureLine, refusalLine, variantLabel } from "./portraitModel";
+
+// S5.3d: what the reference portrait says (.omc/stage5/design 16–17, README «Для S5.3d»): a slot's own words by its outcome, the paid failures only
+// in the summary (a moderation refusal is free), the age check's line agreed in number, and the limit.
+
+const refused: FailedPortraitSlot = { slot: 5, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false };
+const timedOut = (slot: number): FailedPortraitSlot => ({ slot, reason: "failed", error: { code: "TIMEOUT" }, reserveLeftOpen: true });
+
+describe("a finished batch's slots without a portrait", () => {
+  test("each says why, in slot order: the face check's drops and the age check's are paid, a refusal is free, a failure paid", () => {
+    const tiles = goneTiles([
+      refused,
+      { slot: 4, reason: "unlike", likeness: 0.4812 },
+      { slot: 1, reason: "no-face" },
+      { slot: 2, reason: "multiple-faces" },
+      { slot: 3, reason: "age-rejected" },
+    ]);
+    expect(tiles.map((t) => [t.title, t.sub])).toEqual([
+      ["Лицо не найдено", "стоимость учтена"],
+      ["Несколько лиц", "стоимость учтена"],
+      ["Скрыт проверкой возраста", "стоимость учтена"],
+      ["Не похожа · 0.48", "стоимость учтена"],
+      ["Модель отказалась · бесплатно", null],
+    ]);
+    // Dropped after it was drawn: the dark tile; nothing to show: the dashed one.
+    expect(tiles.map((t) => t.look)).toEqual(["dropped", "dropped", "dropped", "dropped", "failed"]);
+  });
+
+  test("a failure that is not a refusal is said as paid (16e), never as free", () => {
+    expect(goneTiles([timedOut(1)]).map((t) => [t.title, t.sub, t.look])).toEqual([["Не получилось · стоимость учтена", null, "failed"]]);
+    expect(isFreeFailure({ code: "MODERATION_REFUSED" })).toBe(true);
+    expect(isFreeFailure({ code: "TIMEOUT" })).toBe(false);
+    expect(isFreeFailure({ code: "BUDGET_EXCEEDED" })).toBe(false);
+  });
+});
+
+describe("the summary of failed slots (16e)", () => {
+  test("counts only the paid ones, with their shared reason", () => {
+    expect(paidFailureLine([timedOut(1), timedOut(2), refused])).toBe(
+      `2 варианта не удалось получить: ${ERROR_MESSAGES_RU.TIMEOUT} Стоимость попытки учтена.`,
+    );
+  });
+
+  test("says nothing when the only failure was a free refusal (16)", () => {
+    expect(paidFailureLine([refused, { slot: 4, reason: "unlike", likeness: 0.48 }])).toBeNull();
+  });
+
+  test("names no reason when the paid failures disagree", () => {
+    expect(paidFailureLine([timedOut(1), { slot: 2, reason: "failed", error: { code: "NETWORK" }, reserveLeftOpen: true }])).toBe(
+      "2 варианта не удалось получить: причины разные — подробности в журнале. Стоимость попытки учтена.",
+    );
+  });
+});
+
+describe("the age check's line (16b)", () => {
+  test("agrees in number: one is «отклонён … не показан», several «отклонены … не показаны»", () => {
+    expect(ageRejectedLine(0)).toBeNull();
+    expect(ageRejectedLine(1)).toBe("1 вариант отклонён проверкой возраста и не показан. Его стоимость учтена.");
+    expect(ageRejectedLine(2)).toBe("2 варианта отклонены проверкой возраста и не показаны. Их стоимость учтена.");
+    expect(ageRejectedLine(5)).toBe("5 вариантов отклонены проверкой возраста и не показаны. Их стоимость учтена.");
+  });
+});
+
+describe("the limit of 15 waiting (16c)", () => {
+  test("another batch fits up to 10 waiting; from 11 on five more would pass the limit", () => {
+    expect(batchFits(0)).toBe(true);
+    expect(batchFits(10)).toBe(true);
+    expect(batchFits(11)).toBe(false);
+    expect(batchFits(15)).toBe(false);
+  });
+
+  test("at 15 the mockup's words; below it, how many wait", () => {
+    expect(capReason(15)).toBe("Уже 15 вариантов — выберите один или удалите все.");
+    expect(capReason(12)).toBe("Уже 12 вариантов — ещё 5 не поместятся в предел 15. Выберите один или удалите все.");
+  });
+});
+
+describe("words around the numbers", () => {
+  test("a likeness is two decimals, as the gallery's badge", () => {
+    expect(likenessText(0.7649)).toBe("0.76");
+    expect(likenessText(1)).toBe("1.00");
+  });
+
+  test("a radio names its letter, its likeness and «лучший»", () => {
+    expect(variantLabel("A", 0.76, true)).toBe("Вариант A · сходство 0.76 · лучший");
+    expect(variantLabel("C", 0.61, false)).toBe("Вариант C · сходство 0.61");
+  });
+
+  test("17's line names the gate", () => {
+    expect(NONE_PASSED).toBe("Ни один вариант не похож на исходное фото (порог 0.55). Платные попытки учтены.");
+  });
+
+  test("a refusal adds that nothing was started, unless its own text already says nothing was spent", () => {
+    expect(refusalLine(ERROR_MESSAGES_RU.BUDGET_EXCEEDED)).toBe(`${ERROR_MESSAGES_RU.BUDGET_EXCEEDED} Варианты не запускались — ничего не потрачено.`);
+    expect(refusalLine(ERROR_MESSAGES_RU.FACE_GATE_UNAVAILABLE)).toBe(ERROR_MESSAGES_RU.FACE_GATE_UNAVAILABLE);
+  });
+});
