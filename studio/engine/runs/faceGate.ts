@@ -276,7 +276,7 @@ export function createFaceQaGate(deps: FaceQaGateDeps): QaGate {
           return { verdict: "retry", reason: "no face was detected in the photo" };
         case "multiple-faces":
           return { verdict: "retry", reason: `${verdict.faces} prominent faces were detected` };
-        case "unexpected-face":
+        case "unexpected-face": // kept for compatibility: only the `back` pose yields it, and a run checks back slots under `body` (S5.6f)
           return { verdict: "retry", reason: `a face was detected on a shot posed from behind (headRatio ${verdict.headRatio})` };
       }
     },

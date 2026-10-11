@@ -21,12 +21,10 @@ export const PlannerCategorySchema = z.union([CategorySchema, CustomCategoryId])
 export const ShotSchema = z.enum(SHOTS);
 
 /**
- * T5c: the same pose vocabulary the face gate's policy already takes
- * (studio/engine/face/config.ts's `FacePoseSchema` — front/three-quarter get
- * a full identity check, profile is skipped, back is skipped unless a
- * confident face turns up). Re-exported here rather than redeclared, so the
- * planner's own `pose` value and the face gate's `pose` input can never
- * drift into two different enums.
+ * T5c: the planner's four poses. The face gate's `FacePoseSchema`
+ * (studio/engine/face/config.ts) is these plus its own `body` (S5.6f), so this
+ * enum is declared anew; `satisfies` keeps every planner pose a valid gate
+ * pose, and face/worker/protocol.marked.test.ts pins both lists.
  */
 export const PoseSchema = z.enum(["front", "three-quarter", "profile", "back"]) satisfies z.ZodType<FacePose>;
 export type Pose = z.infer<typeof PoseSchema>;

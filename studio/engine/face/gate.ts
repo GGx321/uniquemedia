@@ -78,7 +78,7 @@ export type DetectFn = (detector: Detector, bgr: BgrImage) => Promise<Float32Arr
  * gate.test.ts. `createFaceGate` below wires the real ones in.
  *
  * Detection always runs (any pose can hit "multiple-faces"). The identity
- * embedding+cosine only runs for front/three-quarter with exactly one
+ * embedding+cosine only runs for front/three-quarter/body with exactly one
  * prominent face, matching `decideFaceVerdict`'s own rule — every other path
  * (no face, profile, back, multiple faces) never touches the recognizer.
  */

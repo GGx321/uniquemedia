@@ -59,6 +59,8 @@ export const FaceGateConfigSchema = z.strictObject({
    * Pose "back": a detected face only becomes "unexpected-face" at or above
    * this YuNet score (plan: "a face IS detected with good confidence"). Below
    * it, a stray low-confidence detection is treated the same as no face.
+   * Kept for compatibility: a run checks back slots under `body` (S5.6f), so
+   * nothing in a run reaches this branch any more.
    */
   unexpectedFace: z.strictObject({ minScore: z.number().min(0).max(1) }),
   wasm: z.strictObject({ numThreads: z.number().int().positive() }),

@@ -14,8 +14,8 @@ export interface FaceGatePolicyInput {
   pose: FacePose;
   faces: readonly DetectedFaceBox[];
   /**
-   * Required, and only meaningful, for front/three-quarter with exactly one
-   * prominent face: the identity similarity the caller already computed
+   * Required, and only meaningful, for front/three-quarter/body with exactly
+   * one prominent face (under body it is only marked, never judged): the identity similarity the caller already computed
    * (cosine to the master, or the strategy's max/mean aggregate over a
    * gallery — the policy only ever compares one final number to the
    * configured threshold, whatever produced it).
@@ -72,6 +72,8 @@ export function decideFaceVerdict(input: FaceGatePolicyInput, config: FaceGateCo
     return { kind: "marked", similarity, faces: faces.length, headRatio };
   }
 
+  // Kept for compatibility, unreachable from a run: runs/faceGate.ts's `facePoseOf` checks every back slot under `body` (S5.6f), so the gate never
+  // asks for `back`. The branch stays for direct callers and old tests.
   if (pose === "back") {
     const face = prominent[0];
     // `face.score` is a plain number, but it originated in a Float32Array

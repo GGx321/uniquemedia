@@ -62,7 +62,7 @@ export const FaceVerdictSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("skipped-by-pose"), faces }),
   z.strictObject({ kind: z.literal("unexpected-face"), faces, headRatio: finite }),
   z.strictObject({ kind: z.literal("marked"), similarity: finite, faces, headRatio: finite }),
-])satisfies z.ZodType<FaceVerdict>;
+]) satisfies z.ZodType<FaceVerdict>;
 
 /** A face box in SOURCE-image pixels (the worker scales it back from the normalised image it detected on). It may reach past the image edge a little: YuNet boxes do. */
 const FaceBoxSchema = z.strictObject({ x: finite, y: finite, width: finite.positive(), height: finite.positive() });
