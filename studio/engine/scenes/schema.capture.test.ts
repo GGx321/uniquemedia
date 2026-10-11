@@ -1,0 +1,57 @@
+import { describe, expect, test } from "bun:test";
+import { PlanSlotSchema } from "./schema";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
+
+// 5a.2 (S5.6b, I5.27): a plan slot gains two optional fields, `capture` (who took the photo) and `legwear` (its own outfit slot). A slot stored before
+// them has neither and parses to the same document; the stored `shot` keeps its five values, and a capture must ride on the shot it is stored with.
+
+function baseSlot(): Record<string, unknown> {
+  return { slotIndex: 1, category: "home", location: "her bed", timeOfDay: "evening", activity: "sits cross-legged", outfit: "silk pajamas", shot: "friend", pose: "front", attemptIdBase: "slot-1", repeatedPair: false };
+}
+
+describe("a plan slot's capture and legwear (additive, I5.27)", () => {
+  test("a slot stored before captures parses to the very same document", () => {
+    const raw = baseSlot();
+    expect<unknown>(PlanSlotSchema.parse(raw)).toEqual(raw);
+  });
+
+  test("a timer capture rides on the friend shot", () => {
+    expect(PlanSlotSchema.parse({ ...baseSlot(), capture: "timer" }).capture).toBe("timer");
+  });
+
+  test.each([
+    ["mirror-hidden", "mirror"],
+    ["above", "selfie"],
+    ["prone", "selfie"],
+    ["over-shoulder", "selfie"],
+  ])("the %s capture rides on the %s shot", (capture, shot) => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), capture, shot }).success).toBe(true);
+  });
+
+  test("a capture that disagrees with the stored shot is refused", () => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), capture: "prone", shot: "friend" }).success).toBe(false);
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), capture: "timer", shot: "selfie" }).success).toBe(false);
+  });
+
+  test("an unknown capture is refused", () => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), capture: "drone" }).success).toBe(false);
+  });
+
+  test("a legwear item is kept as written", () => {
+    expect(PlanSlotSchema.parse({ ...baseSlot(), legwear: "white knee-high socks" }).legwear).toBe("white knee-high socks");
+  });
+
+  test("an empty legwear item is refused", () => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), legwear: "" }).success).toBe(false);
+  });
+
+  test("a legwear item past the pool text bound is refused", () => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), legwear: "x".repeat(36) }).success).toBe(false);
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), legwear: "x".repeat(35) }).success).toBe(true);
+  });
+
+  test("a hand capture still faces the phone: over-shoulder with a back pose is refused", () => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), capture: "over-shoulder", shot: "selfie", pose: "back" }).success).toBe(false);
+  });
+});
