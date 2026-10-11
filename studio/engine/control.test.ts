@@ -5,6 +5,7 @@ import { AVATAR_DELETE_PREPARE_DEADLINE_MS, EXPORT_CHECK_TIMEOUT_MS, LIST_BUDGET
 import { DESCRIPTOR_CHECK_MAX_ATTEMPT_MS, DESCRIPTOR_CHECK_MAX_ATTEMPTS, IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
+import { PREFLIGHT_TIMEOUT_MS } from "./engine";
 import { EMBEDDING_COMPUTE_TIMEOUT_MS } from "./runs/faceGate";
 import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
 import { POOL_MAX_ATTEMPTS } from "./scenes/poolGen";
@@ -324,8 +325,10 @@ describe("COMMAND_DEADLINE_MS for the reference portrait commands (S5.3c)", () =
   });
 
   test("it is above the real worst path, with the slack left over", () => {
-    const worstPath = PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + REFERENCE_TIMEOUT_MS + EMBEDDING_COMPUTE_TIMEOUT_MS;
+    // The age check's downscale preflight (PREFLIGHT_TIMEOUT_MS) is awaited too, before the prices; the slack must still cover it.
+    const worstPath = PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + PREFLIGHT_TIMEOUT_MS + REFERENCE_TIMEOUT_MS + EMBEDDING_COMPUTE_TIMEOUT_MS;
     expect(COMMAND_DEADLINE_MS["avatars.generatePortraits"]).toBeGreaterThan(worstPath);
+    expect(COMMAND_DEADLINE_MS["avatars.generatePortraits"] ?? 0).toBeGreaterThanOrEqual(worstPath + 20_000);
   });
 
   test("avatars.estimatePortraits waits for a price load that times out, so the fallback estimate still arrives", () => {
