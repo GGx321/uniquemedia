@@ -47,6 +47,19 @@ describe("avatarDeleteCounts", () => {
     expect(await avatarDeleteCounts(library, avatar.id)).toEqual({ photos: 0, candidates: 0, drafts: 0, videos: 0 });
   });
 
+  // S5.3c: after a master switch the imported photo is neither the master, nor a gallery photo, nor an unpicked candidate: it is the kept «исходное фото».
+  test("the kept imported photo of an avatar whose master is a portrait is not a candidate; a pending portrait is", async () => {
+    const library = await open();
+    const { avatar } = await library.createImportedAvatar({ ...SAMPLE_AVATAR, photoBytes: PNG_1X1, photoMeta: samplePhotoMeta({ source: SAMPLE_IMPORTED_SOURCE }) });
+    const portrait = (slot: number, faceCos: number) => samplePhotoMeta({ source: { ...SAMPLE_SOURCE, slot: `portrait-${slot}` }, qa: { faceCos } });
+    const picked = await library.addPhoto(avatar.id, PNG_1X1, portrait(1, 0.8));
+    await library.addPhoto(avatar.id, PNG_1X1, portrait(2, 0.7));
+    await library.switchMaster(avatar.id, picked.id);
+    await library.addPhoto(avatar.id, PNG_1X1, portrait(3, 0.6));
+
+    expect(await avatarDeleteCounts(library, avatar.id)).toEqual({ photos: 0, candidates: 1, drafts: 0, videos: 0 });
+  });
+
   test("counts the montage drafts and the video records", async () => {
     const library = await open();
     const avatar = await library.createAvatar(SAMPLE_AVATAR);

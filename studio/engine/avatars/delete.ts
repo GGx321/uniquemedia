@@ -6,7 +6,7 @@ import { looksLikeRunPhoto } from "../library/photoRecords";
 export interface AvatarDeleteCounts {
   /** Gallery photos: the run photos `photos.list` shows. */
   photos: number;
-  /** Stored photos that are neither a gallery photo nor the master: the unpicked candidates of a draft. */
+  /** Stored photos that are neither a gallery photo, nor the master, nor the kept imported photo: the unpicked candidates of a draft, or an imported avatar's pending portraits. */
   candidates: number;
   /** Montage drafts in the avatar's folder. */
   drafts: number;
@@ -18,6 +18,6 @@ export async function avatarDeleteCounts(library: Pick<Library, "photosByAvatar"
   const masterPhotoId = library.getAvatar(avatarId)?.masterPhotoId ?? null;
   const stored = library.photosByAvatar(avatarId);
   const photos = stored.filter(looksLikeRunPhoto).length;
-  const candidates = stored.filter((photo) => !looksLikeRunPhoto(photo) && photo.id !== masterPhotoId).length;
+  const candidates = stored.filter((photo) => !looksLikeRunPhoto(photo) && photo.id !== masterPhotoId && photo.source.kind !== "imported").length;
   return { photos, candidates, drafts: await library.montageCount(avatarId), videos: library.videoCount(avatarId) };
 }
