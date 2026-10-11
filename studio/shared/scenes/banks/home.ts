@@ -81,7 +81,8 @@ export const HOME: CategoryBank = {
         { text: "sits with her legs to one side", motion: "she leans back a little", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
         { text: "sits hugging her knees", motion: "she rocks a little on the floor", captures: ["timer"], twoHanded: true },
         { text: "leans back on her hands on the rug", motion: "she tilts her head a little", captures: ["timer"], twoHanded: true },
-        { text: "lies on the rug facing the mirror", motion: "she lifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
+        // S5.6R (the owner: prone only on a bed): it was «lies on the rug facing the mirror» in the prone outfits, lifting her hips, a prone frame off the bed.
+        { text: "sits with her legs stretched out", motion: "she flexes her feet a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "lies back on the rug", motion: "she slowly turns her head", captures: ["above", "timer"], twoHanded: false },
       ],
     },

@@ -101,3 +101,18 @@ describe("side or back to the mirror, only her reflection is in the picture", ()
   });
 });
 
+
+describe("she lies on her stomach only on her bed", () => {
+  test("off the bed, no «Дом» mirror frame has her lying down facing the mirror", () => {
+    expect(offenders(FRAMES.home, (f) => f.slot.location !== "her bed" && /^lies\b/.test(f.slot.activity) && shotOf(f.capture) === "mirror")).toEqual(NONE);
+  });
+
+  test("off the bed, no «Дом» moment pins the prone selfie's outfits or lifts her hips", () => {
+    const off = BANKS.home.places.filter((p) => p.name !== "her bed").flatMap((p) => p.moments);
+    const prone = new Set(BANKS.home.places.find((p) => p.name === "her bed")?.moments.filter((m) => m.captures.includes("prone")).flatMap((m) => m.outfits ?? []));
+    expect(prone.size).toBeGreaterThan(0);
+    // Lifting her hips is the prone selfie's motion; turning them as she stands is not.
+    expect(off.filter((m) => (m.outfits ?? []).some((o) => prone.has(o)) || /\blifts? her hips\b/.test(m.motion)).map((m) => m.text)).toEqual([]);
+  });
+});
+

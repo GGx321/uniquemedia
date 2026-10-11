@@ -55,11 +55,14 @@ describe("who takes the photo (I5.32: the capture decks, exact cycles)", () => {
     for (const moment of pov) expect(moment.angle).toBe("three-quarter");
   });
 
-  // Owner rule: side or back to the mirror shows only her reflection, so such a moment is a phone-over-face frame tagged mirrorBack.
-  test("the rug moment says the composition: she lies on the rug facing the mirror", () => {
-    const rug = BANKS.home.places.flatMap((p) => p.moments).filter((m) => /on the rug/.test(m.text) && m.captures.includes("mirror-hidden") && m.text.startsWith("lies"));
-    expect(rug.map((m) => m.text)).toEqual(["lies on the rug facing the mirror"]);
+  // S5.6R (MEDIUM 4, the owner: prone only on a bed): «lies on the rug facing the mirror» wore the prone selfie's outfits and lifted her hips, a prone frame
+  // off the bed. Off the bed she never lies down facing the mirror; the rug's mirror moments sit.
+  test("off her bed no moment lies down in a mirror frame: she lies on her stomach only on the bed", () => {
+    const off = BANKS.home.places.filter((p) => p.name !== "her bed").flatMap((p) => p.moments);
+    expect(off.filter((m) => m.text.startsWith("lies") && m.captures.some((c) => c === "mirror" || c === "mirror-hidden")).map((m) => m.text)).toEqual([]);
   });
+
+  // Owner rule: side or back to the mirror shows only her reflection, so such a moment is a phone-over-face frame tagged mirrorBack.
 
   // S5.6R (MEDIUM 3): «sits sideways, knees together» named no mirror, so it slipped past this rule and landed on a plain mirror selfie that says her face is
   // clearly visible. Any moment that turns her side or back on, at a mirror place, is now held to it.
