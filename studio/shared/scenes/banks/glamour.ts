@@ -36,12 +36,13 @@ export const GLAMOUR: CategoryBank = {
       at: "in the back seat of a taxi",
       details: ["the city lights outside", "a small clutch beside her"],
       times: ["night"],
+      // S5.6R: nobody stands a few steps away in the back seat of a taxi, so a friend's whole-body photo never lands here: she takes it at arm's length.
       moments: [
-        { text: "adjusts an earring", motion: "she turns the earring slowly", captures: ["friend", "selfie", "candid"], twoHanded: false, gaze: "focus" },
-        { text: "looks out of the window", motion: "she turns toward the window slowly", captures: ["friend", "candid"], twoHanded: false, gaze: "own" },
-        { text: "leans back, relaxed", motion: "she sinks back a little", captures: ["friend", "selfie"], twoHanded: false },
-        { text: "scrolls through her phone", motion: "she scrolls her phone slowly", captures: ["candid", "friend"], twoHanded: false, phone: true, gaze: "own" },
-        { text: "fastens her safety belt", motion: "she pulls the belt across slowly", captures: ["candid", "friend"], twoHanded: true, gaze: "focus" },
+        { text: "adjusts an earring", motion: "she turns the earring slowly", captures: ["selfie"], twoHanded: false, gaze: "focus" },
+        { text: "looks out of the window", motion: "she turns toward the window slowly", captures: ["selfie"], twoHanded: false, gaze: "own" },
+        { text: "leans back, relaxed", motion: "she sinks back a little", captures: ["selfie"], twoHanded: false },
+        { text: "rests her head on the window", motion: "she closes her eyes slowly", captures: ["selfie"], twoHanded: false },
+        { text: "pulls her coat a little closer", motion: "she tugs the coat closer slowly", captures: ["selfie"], twoHanded: false },
       ],
     },
     {
@@ -55,6 +56,8 @@ export const GLAMOUR: CategoryBank = {
         { text: "looks back over her shoulder", motion: "she turns her head a little more", captures: ["friend"], twoHanded: false, angle: "three-quarter", gaze: "own" },
         { text: "laughs on her way inside", motion: "she laughs a little and turns away", captures: ["friend", "candid"], twoHanded: false, expression: true },
         { text: "stops under a lamp", motion: "she tilts her head a little", captures: ["friend", "selfie"], twoHanded: false },
+        // S5.6R: the taxi's phone moment left with its friend's photo; on the street she checks her phone for the ride home, caught by a friend.
+        { text: "checks her phone for her ride", motion: "she scrolls her phone slowly", captures: ["candid", "friend"], twoHanded: false, phone: true, gaze: "own" },
       ],
     },
     {
@@ -79,12 +82,13 @@ export const GLAMOUR: CategoryBank = {
       details: ["a row of buttons", "a brushed metal door"],
       times: ["evening", "night"],
       mirror: true,
+      // S5.6R: in an elevator she takes it in the mirror or at arm's length; nobody stands a few steps away.
       moments: [
         { text: "checks her outfit", motion: "she turns a little to each side", captures: ["mirror-hidden", "mirror", "selfie"], twoHanded: false },
         { text: "fixes her hair", motion: "she smooths her hair down slowly", captures: ["mirror", "selfie"], twoHanded: false, hair: "own" },
-        { text: "rests a hand on the handrail", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror", "friend"], twoHanded: false },
-        { text: "waits for her floor", motion: "she taps her foot a little", captures: ["mirror-hidden", "selfie", "candid"], twoHanded: false },
-        { text: "leans against the wall", motion: "she tilts her head back a little", captures: ["mirror", "friend", "candid"], twoHanded: false },
+        { text: "rests a hand on the handrail", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror", "selfie"], twoHanded: false },
+        { text: "waits for her floor", motion: "she taps her foot a little", captures: ["mirror-hidden", "mirror", "selfie"], twoHanded: false },
+        { text: "leans against the wall", motion: "she tilts her head back a little", captures: ["mirror", "mirror-hidden", "selfie"], twoHanded: false },
       ],
     },
     {

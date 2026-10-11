@@ -116,3 +116,20 @@ describe("she lies on her stomach only on her bed", () => {
   });
 });
 
+
+describe("«Гламур»: the photo fits the place it is taken in", () => {
+  const FAR = /a few steps away|her whole body in the picture/;
+
+  test("in the back seat of a taxi nobody stands a few steps away: no taxi frame is a whole-body photo from a distance", () => {
+    const taxi = FRAMES.glamour.filter((f) => f.slot.location === "the back seat of a taxi");
+    expect(taxi.length).toBeGreaterThan(0);
+    expect(offenders(taxi, (f) => FAR.test(f.prompt()))).toEqual(NONE);
+  });
+
+  test("in an elevator she takes it in the mirror or at arm's length: no elevator frame is a whole-body photo from a distance", () => {
+    const elevator = FRAMES.glamour.filter((f) => f.slot.location === "an elevator");
+    expect(elevator.length).toBeGreaterThan(0);
+    expect(offenders(elevator, (f) => FAR.test(f.prompt()))).toEqual(NONE);
+    expect([...new Set(elevator.map((f) => shotOf(f.capture)))].sort()).toEqual(["mirror", "selfie"]);
+  });
+});
