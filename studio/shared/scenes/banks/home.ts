@@ -1,9 +1,9 @@
 import type { CategoryBank } from "./types";
 
 // «Дом» (plan s5a2 r1.2 §5.1, the owner's references of 2026-10-11): she shoots herself. About a third of the frames are mirror selfies with the
-// phone over her face; close selfies from above as she lies on the bed; the prone selfie (lying on her stomach, arms out toward the phone, the curve
-// of her back and hips behind her head) in the one outfit its probe drew; on the bed from behind; sitting or kneeling at the mirror; the side profile
-// in the mirror. Lamp light at evening and night. Legwear is its own slot. Never a friend (I5.32): no moment here fits one. Satin nightdresses, legs-up
+// phone over her face; close selfies from above as she lies on the bed; the prone selfie (lying on her stomach on the bed, one arm out toward the phone,
+// the other hand free, the curve of her back and hips behind her) in the outfits its probe drew; the over-her-shoulder look back along her prone body;
+// sitting at the mirror; and, side to the mirror, only her reflection (`mirrorBack`). Lamp light at evening and night. Legwear is its own slot. Never a friend (I5.32): no moment here fits one. Satin nightdresses, legs-up
 // in tights and boots, and bikinis were refused by Grok and wait for «Смелая» (5a.3).
 
 /** The prone selfie's outfits: Grok drew it in grey lounge shorts and in grey leggings and refused it in cotton shorts (the probes), so every
@@ -81,7 +81,7 @@ export const HOME: CategoryBank = {
         { text: "sits with her legs to one side", motion: "she leans back a little", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
         { text: "sits hugging her knees", motion: "she rocks a little on the floor", captures: ["timer"], twoHanded: true },
         { text: "leans back on her hands on the rug", motion: "she tilts her head a little", captures: ["timer"], twoHanded: true },
-        { text: "lies on her stomach on the rug", motion: "she lifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
+        { text: "lies on the rug facing the mirror", motion: "she lifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
         { text: "lies back on the rug", motion: "she slowly turns her head", captures: ["above", "timer"], twoHanded: false },
       ],
     },
@@ -142,6 +142,6 @@ export const HOME: CategoryBank = {
     { text: "lounge shorts and platform sneakers", showsLegs: true, pinOnly: true },
   ],
   legwear: { items: ["white knee-high socks", "black knee-high socks", "thigh-high socks", "sheer black tights"], share: 0.4 },
-  // ⅓ phone-over-face mirror frames (I5.32), never a friend; the prone selfie and the over-her-shoulder POV share the prone body's 1 in 6.
+  // ⅓ phone-over-face mirror frames (I5.32), never a friend; 2 prone selfies and 1 over-her-shoulder POV of 12 (plan r1.5 §5.1: prone selfies are a typical owner subject), 2 close selfies from above, 2 mirrors, 1 timer.
   captureDeck: ["mirror-hidden", "mirror", "above", "mirror-hidden", "prone", "timer", "mirror-hidden", "mirror", "above", "mirror-hidden", "over-shoulder", "prone"],
 };

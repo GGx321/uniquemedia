@@ -79,8 +79,11 @@ export const HIDDEN_FACE_POSE_PHRASE: Record<Pose, string> = {
   back: "Photographed from behind, her face not visible",
 };
 
-/** Back or side to the mirror (the approved T42 composition): she stands or sits in profile to the mirror, only her reflection in the picture, her face behind her phone. */
-export const MIRROR_BACK_POSE_PHRASE = "Her body is in profile to the mirror and only her reflection is in the picture, her face behind her phone";
+/**
+ * Back or side to the mirror (the approved T42 composition): she stands or sits in profile to the mirror. The capture line already says the phone hides her face and
+ * MIRROR_BACK_LINE that only her reflection is in the picture, so the pose phrase says only which way her body is turned.
+ */
+export const MIRROR_BACK_POSE_PHRASE = "Her body is in profile to the mirror";
 
 const BINDING = "The same woman as in the reference photo,";
 

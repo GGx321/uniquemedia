@@ -116,6 +116,8 @@ describe("a category bank", () => {
     ["a feet-up moment without the no-legwear tag (plan r1.4: Grok refused legs up in tights)", { ...plain, text: "lies on her stomach, feet raised" }, BANK_RULE.noLegwear],
     ["feet on a railing without the no-legwear tag", { ...plain, text: "sits with her feet on the railing" }, BANK_RULE.noLegwear],
     ["a back-to-the-mirror moment on a capture that is no mirror one (r1.5: only her reflection is in the picture)", { ...plain, mirrorBack: true }, BANK_RULE.mirrorBack],
+    ["a back-to-the-mirror moment on a plain mirror capture (its face is clear: only a phone-over-face frame shows just the reflection)", { ...plain, captures: ["mirror"], mirrorBack: true }, BANK_RULE.mirrorBack],
+    ["a back-to-the-mirror moment on a mirror capture beside a phone-over-face one", { ...plain, captures: ["mirror", "mirror-hidden"], mirrorBack: true }, BANK_RULE.mirrorBack],
   ];
 
   test.each(MOMENT_ROWS)("refuses %s", (_name, moment, rule) => {

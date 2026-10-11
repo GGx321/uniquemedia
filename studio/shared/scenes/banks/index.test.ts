@@ -56,6 +56,11 @@ describe("who takes the photo (I5.32: the capture decks, exact cycles)", () => {
   });
 
   // Owner rule: side or back to the mirror shows only her reflection, so such a moment is a phone-over-face frame tagged mirrorBack.
+  test("the rug moment says the composition: she lies on the rug facing the mirror", () => {
+    const rug = BANKS.home.places.flatMap((p) => p.moments).filter((m) => /on the rug/.test(m.text) && m.captures.includes("mirror-hidden") && m.text.startsWith("lies"));
+    expect(rug.map((m) => m.text)).toEqual(["lies on the rug facing the mirror"]);
+  });
+
   test("a moment that stands or sits sideways to the mirror is a mirrorBack phone-over-face frame", () => {
     for (const place of BANKS.home.places) {
       for (const moment of place.moments) {
