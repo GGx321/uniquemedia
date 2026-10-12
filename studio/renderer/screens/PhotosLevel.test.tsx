@@ -153,6 +153,30 @@ describe("«Подача» remembered per avatar (owner: «Обычная» by d
   });
 });
 
+describe("«Подача» of two avatars", () => {
+  const SOFIA = { ...MIA, avatarId: "avatar-sofia-0002", name: "Sofia", masterPhotoId: "photo-sofia-0001" };
+
+  /** Through the sidebar's «Аватары» to another avatar's Photos screen. */
+  async function openAvatarPhotos(name: string): Promise<void> {
+    fireEvent.click(screen.getByRole("button", { name: "Аватары" }));
+    fireEvent.click(await screen.findByRole("button", { name }));
+    await screen.findByRole("heading", { level: 1, name });
+    await openSection("Фото");
+    await screen.findByRole("heading", { level: 1, name });
+  }
+
+  test("one avatar's «Кокетливая» leaves the other's «Обычная», on screen and in storage", async () => {
+    await openPhotos({ avatars: [MIA, SOFIA] });
+    fireEvent.click(level("Кокетливая"));
+    await flush();
+    await openAvatarPhotos("Sofia");
+    expect(level("Обычная").checked).toBe(true);
+    expect(localStorage.getItem(`${LEVEL_KEY_PREFIX}${SOFIA.avatarId}`) === null).toBe(true);
+    await openAvatarPhotos("Mia");
+    expect(level("Кокетливая").checked).toBe(true);
+  });
+});
+
 describe("a category with angles of its own (mockup 27)", () => {
   test("one: «У «{имя}» свои ракурсы: {список}.» under the angle note, while it is in the run", async () => {
     await openPhotos({ categories: [PARIS, BED] });
