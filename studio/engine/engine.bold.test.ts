@@ -173,6 +173,19 @@ describe("a stored run with Seedream slots", () => {
   });
 });
 
+describe("a «Смелая» category below «Смелая» (I5.42)", () => {
+  const priceReads = (net: { calls: readonly FetchCall[] }): FetchCall[] => net.calls.filter((c) => c.url.endsWith("/endpoints") || c.url.endsWith("/models"));
+
+  test.each(["ordinary", "flirty"])("is refused for free at level %s before any price is fetched, by the estimate and by the start", async (level) => {
+    const avatarId = await seedAvatar();
+    const { engine, net } = await boot();
+    const asked = { ...request(avatarId, ["nightwear"], 4), level };
+    expect(failed(await engine.handle(command("runs.estimate", asked))).error).toMatchObject({ code: "VALIDATION", sceneReason: "bold-level-needed" });
+    expect(failed(await engine.handle(command("runs.start", { ...asked, acceptedWorstMicros: 10_000_000 }))).error).toMatchObject({ code: "VALIDATION", sceneReason: "bold-level-needed" });
+    expect(priceReads(net)).toEqual([]);
+  });
+});
+
 describe("runs.start when the 2K price rose", () => {
   test("is PRICE_CHANGED: the worst case the owner accepted (at 93 000 µ$ an attempt) is below the new one", async () => {
     const avatarId = await seedAvatar();
