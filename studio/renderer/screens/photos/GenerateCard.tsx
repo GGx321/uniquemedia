@@ -16,7 +16,7 @@ import { CategoryCardNotices } from "./CategoryNotices";
 import { CategoryRow } from "./CategoryRow";
 import { CategorySheet } from "./CategorySheet";
 import type { LaunchLink } from "./launchSet";
-import { ANGLE_FROM_SCENE, BOLD_LABEL, BOLD_LATER, flirtyCaption, flirtyFrames, LEVEL_OPTIONS } from "./level";
+import { ANGLE_FROM_SCENE, BOLD_LABEL, BOLD_LATER, FLIRTY_BUILTIN_ONLY, flirtyCaption, flirtyFrames, LEVEL_OPTIONS } from "./level";
 import { LaunchSetStrip } from "./LaunchSetStrip";
 import { RecomposeDialog } from "./RecomposeDialog";
 import {
@@ -463,7 +463,9 @@ export function GenerateCard({
   const levelCaption = `${ids}-level-cap`;
   const boldCaption = `${ids}-bold`;
   // S5.7c (mockup 25): «Кокетливая» says how many of the frames it makes flirty; with nothing to draw (an empty set) it says nothing.
-  const flirty = form.level === "flirty" && form.count > 0 ? flirtyCaption(flirtyFrames(form.count, request.categories), form.count) : null;
+  // With only custom categories on, no frame can be flirty: it says where «Подача» works rather than «0 из N».
+  const flirtyFrameCount = form.level === "flirty" && form.count > 0 ? flirtyFrames(form.count, request.categories) : null;
+  const flirty = flirtyFrameCount === null ? null : flirtyFrameCount === 0 && request.categories.length > 0 ? FLIRTY_BUILTIN_ONLY : flirtyCaption(flirtyFrameCount, form.count);
   // CS.8, S5.7c (mockup 27): the run's custom categories whose pool keeps angles of its own — the angle note above does not speak for them.
   const ownAngles = ownAnglesLine((customs ?? []).flatMap((c) => (categories.includes(c.categoryId) && c.pool.poses !== undefined ? [{ name: c.name, poses: c.pool.poses }] : [])));
   const countLabel = `${ids}-count`;

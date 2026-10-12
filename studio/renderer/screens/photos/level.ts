@@ -31,6 +31,9 @@ export function flirtyFrames(count: number, categories: readonly CategoryRef[]):
   return splitCount(count, categories).reduce((sum, { ref, count: n }) => sum + (isCustomCategory(ref) ? 0 : flirtyCountOf(n, "flirty")), 0);
 }
 
+/** What «Кокетливая» says when the run has only custom categories: no frame can be flirty, and «0 из N» would read as a fault. */
+export const FLIRTY_BUILTIN_ONLY = "Подача — только во встроенных категориях";
+
 /** «12 из 20 кадров — кокетливые: взгляд, улыбка, поза. Одежда — из категорий.» (mockup 25). */
 export function flirtyCaption(flirty: number, count: number): string {
   return `${flirty} из ${countOf(count, ["кадра", "кадров", "кадров"])} — кокетливые: взгляд, улыбка, поза. Одежда — из категорий.`;

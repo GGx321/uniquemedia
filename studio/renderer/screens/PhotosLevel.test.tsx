@@ -76,6 +76,19 @@ describe("«Кокетливая» (mockup 25)", () => {
     expect(within(card()).getByText(withText(/^15 из 25\s?кадров — кокетливые/))).toBeDefined();
   });
 
+  test("with only a custom category on, says the level works in the built-in ones instead of «0 из N»", async () => {
+    await openPhotos({ categories: [PARIS] });
+    for (const name of ["Дом", "Виды", "Улица", "Гламур", "Фитнес"]) await toggleChip(name);
+    await toggleChip("Кофейни Парижа");
+    fireEvent.click(level("Кокетливая"));
+    await flush();
+    expect(within(card()).getByText("Подача — только во встроенных категориях")).toBeDefined();
+    expect(within(card()).queryByText(/из \d+\s?кадров — кокетливые/) === null).toBe(true);
+    await toggleChip("Дом");
+    expect(within(card()).queryByText("Подача — только во встроенных категориях") === null).toBe(true);
+    expect(within(card()).getByText(withText(/^\d+ из \d+\s?кадров? — кокетливые/))).toBeDefined();
+  });
+
   test("goes into the price and the run as `level`, never with poses", async () => {
     const { engine } = await openPhotos();
     fireEvent.click(level("Кокетливая"));
