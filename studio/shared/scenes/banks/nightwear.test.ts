@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Capture } from "../captures";
 import { boldWordsIn, lingerieWordsIn } from "./boldRules";
-import { AWAY_ACTION, unfabricBottomsOf } from "./boldDesign.testkit";
+import { AWAY_ACTION_WORDS, unfabricBottomsIn, WALKS_AWAY_WORDS } from "../words";
 import { NIGHTWEAR } from "./nightwear";
 import { boldBankProblems, categoryBankProblems } from "./schema";
 import type { Moment, Outfit } from "./types";
@@ -278,17 +278,17 @@ test("the stockings go with Seedream outfits only, never cotton; on a legs momen
 });
 
 // Review round 2 (C3′, the owner: «просто стоит спиной без какой-либо позы»): a moment seen from behind or in profile names what she is doing.
-test("every moment seen from behind or in profile names a readable action (C3′)", () => {
+test("every moment seen from behind or in profile names a readable action and never walks away (C3′, main's rule)", () => {
   const away = moments.filter((m) => m.moment.angle === "back" || m.moment.angle === "profile");
   expect(away.length).toBeGreaterThan(0);
-  expect(away.filter((m) => !AWAY_ACTION.test(m.moment.text)).map((m) => m.moment.text)).toEqual([]);
+  expect(away.filter((m) => (!AWAY_ACTION_WORDS.test(m.moment.text) || WALKS_AWAY_WORDS.test(m.moment.text))).map((m) => m.moment.text)).toEqual([]);
 });
 
 // Review round 2 (C3′, the owner's verdict): Grok draws a skirt or shorts named without its fabric as denim. The prone lounge shorts are jersey (as «Дом»'s on
 // fix/c3-prompts), the satin set's shorts are satin.
-test("every skirt or shorts of the bank names its fabric (C3′)", () => {
+test("every skirt or shorts of the bank names its fabric (C3′, main's detector)", () => {
   const texts = [...NIGHTWEAR.outfits.map((o) => o.text), ...moments.flatMap((m) => m.moment.outfits ?? [])];
-  expect(texts.filter((t) => unfabricBottomsOf(t).length > 0)).toEqual([]);
+  expect(texts.filter((t) => unfabricBottomsIn(t).length > 0)).toEqual([]);
 });
 
 describe("the legwear: socks and tights at ordinary and flirty, stockings on a bold slot (Q-A)", () => {

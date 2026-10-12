@@ -1,30 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AWAY_ACTION, explicitActsIn, exposureWordsIn, unfabricBottomsOf } from "./boldDesign.testkit";
-
-describe("C3′ by hand until the rebase: a skirt or shorts names its fabric", () => {
-  test.each([
-    ["a satin cami and sleep shorts", ["shorts"]],
-    ["grey lounge shorts and a fitted tee", ["shorts"]],
-    ["a pleated mini and a top", ["mini"]],
-    ["a tee and a skirt", ["skirt"]],
-    ["cotton pajama shorts and a tee", []],
-    ["grey jersey lounge shorts and a tee", []],
-    ["a satin cami and satin shorts", []],
-    ["a tank top and a long linen skirt", []],
-  ])("«%s» names %j without a fabric", (text, bottoms) => {
-    expect(unfabricBottomsOf(text)).toEqual(bottoms);
-  });
-});
-
-describe("C3′ by hand until the rebase: a moment from behind or in profile names an action", () => {
-  test.each(["stretches her arms up, facing away", "sits hugging her knees", "tucks her hair back in the breeze", "leans on the railing"])("«%s» does", (text) => {
-    expect(AWAY_ACTION.test(text)).toBe(true);
-  });
-
-  test.each(["looks out at the street", "sits facing the sunset", "looks out over the water", "walks away down the pavement"])("«%s» does not", (text) => {
-    expect(AWAY_ACTION.test(text)).toBe(false);
-  });
-});
+import { explicitActsIn, exposureWordsIn } from "./boldDesign.testkit";
 
 // 5a.3 (S5.9b2, plan s5a3 §5.2, I5.37, K-36): what the «Смелая» banks are designed never to say, as test-only lists (answer (c): no runtime exposure rule on the
 // owner's own text). Exposure: nipples, areolae, genitals; naked, topless, bottomless; «nude» of her (never the colour before a colourable noun); sheer,

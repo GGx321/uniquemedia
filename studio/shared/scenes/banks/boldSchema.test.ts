@@ -187,6 +187,11 @@ describe("a «Смелая» bank", () => {
     ["a bank that is not marked «Смелая»", { ...BOLD, bold: undefined }, BANK_RULE.shape],
     ["a route other than Seedream", replacing("a lace bodysuit", { text: "a lace bodysuit", showsLegs: true, level: "bold", route: "grok" as "seedream", coverage: "Her bodysuit is opaque." }), BANK_RULE.shape],
     ["a level past bold", withMoment({ ...plain, level: "explicit" as "bold", route: "seedream" }), BANK_RULE.shape],
+    // main's C3′ load rules hold the «Смелая» banks too (the rebase onto fix/c3-prompts: bottom-fabric, away-action with the walk-away ban, back-glance)
+    ["shorts named without their fabric", withOutfits([...OUTFITS, { text: "a satin cami and shorts", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her cami and shorts are opaque satin." }]), BANK_RULE.bottomFabric],
+    ["a moment from behind that names no action", withMoment({ ...plain, text: "sits facing the window", angle: "back" }), BANK_RULE.awayAction],
+    ["a moment from behind that walks away", withMoment({ ...plain, text: "walks away, hands in her pockets", angle: "back" }), BANK_RULE.awayAction],
+    ["a glance back over her shoulder seen from behind", withMoment({ ...plain, text: "looks back over her shoulder", angle: "back", gaze: "own" }), BANK_RULE.backGlance],
     // the common rules hold here too
     ["a youth word in an outfit", withOutfits([...OUTFITS, { text: "a schoolgirl set", level: "bold", route: "seedream", coverage: "It covers her." }]), BANK_RULE.youth],
     ["«baby» next to the exempt garment", withOutfits([...OUTFITS, { text: "a baby blue babydoll", level: "bold", route: "seedream", coverage: "Her babydoll is opaque." }]), BANK_RULE.youth],
