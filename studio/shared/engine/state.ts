@@ -224,7 +224,7 @@ export const Estimate = z
      * Additive (5a.3, S5.9a, gap C): the price of one attempt on the Seedream route (list, 2K), present only when the plan has Seedream slots, so the card can say
      * «до $X за попытку» without a price of its own. Nothing writes it before S5.9d.
      */
-    boldAttemptMicros: Micros.optional(),
+    boldAttemptMicros: Micros.positive().optional(),
   })
   .refine((e) => e.expectedMicros <= e.worstMicros, {
     message: "expected cost must not exceed the worst case",

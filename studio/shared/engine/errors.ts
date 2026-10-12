@@ -486,8 +486,9 @@ export const EngineError = z
     message: "categoryReason may only be present on VALIDATION",
     path: ["categoryReason"],
   })
-  .refine((e) => e.sceneReason === undefined || e.code === "VALIDATION", {
-    message: "sceneReason may only be present on VALIDATION",
+  // The ends of a Seedream slot (I5.39) travel as the slot's EngineError in the run journal: a refusal as MODERATION_REFUSED, an unusable paid response as INTERNAL (engineError.ts maps it).
+  .refine((e) => e.sceneReason === undefined || e.code === (e.sceneReason === "model-refused" ? "MODERATION_REFUSED" : e.sceneReason === "model-empty" ? "INTERNAL" : "VALIDATION"), {
+    message: "sceneReason may only be present on VALIDATION, except model-refused (MODERATION_REFUSED) and model-empty (INTERNAL)",
     path: ["sceneReason"],
   })
   .refine((e) => e.sceneReason === undefined || e.categoryReason === undefined, {

@@ -6,7 +6,7 @@ import { ERROR_MESSAGES_RU, SCENE_REASONS_RU } from "./errorMessagesRu";
 // never as a phrase of the engine's English `detail`.
 
 describe("EngineError.sceneReason", () => {
-  test.each(SCENE_REASONS.filter((r) => r !== "scene-text-problem" && r !== "scene-without-text"))("VALIDATION carries the reason %s", (sceneReason) => {
+  test.each(SCENE_REASONS.filter((r) => r !== "scene-text-problem" && r !== "scene-without-text" && r !== "model-refused" && r !== "model-empty"))("VALIDATION carries the reason %s", (sceneReason) => {
     expect(EngineError.safeParse({ code: "VALIDATION", sceneReason }).success).toBe(true);
   });
 

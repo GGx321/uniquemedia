@@ -1,4 +1,4 @@
-import type { CaptionIssue, CategoryReason, DescriptorReason, ErrorCode, ExportUnavailableReason, LaunchReason, MusicUnavailableReason, PhotoUnavailableReason, PortraitReason, SceneReason } from "./errors";
+import type { CaptionIssue, CategoryReason, DescriptorReason, EngineError, ErrorCode, ExportUnavailableReason, LaunchReason, MusicUnavailableReason, PhotoUnavailableReason, PortraitReason, SceneReason } from "./errors";
 import { MAX_PICKED_FILES, type MediaKind, type MediaUnsupportedReason } from "./media";
 import { MIN_CLIP_MS, type MontageIssueCode } from "./montage";
 import type { UsageUnknownReason } from "./state";
@@ -271,6 +271,11 @@ export const LAUNCH_REASONS_RU = {
   "legs-built-in-only": "«Ножки» рисуются только во встроенных категориях (Дом, Улица, Виды, Гламур, Фитнес). Добавьте хотя бы одну или выключите «Ножки». Ничего не потрачено.",
   "bold-level-needed": "«Ночнушки и бельё» и «Пляж и бассейн» рисуются только с подачей «Смелая» — ничего не списано.",
 } as const satisfies Record<LaunchReason, string>;
+
+/** Which price a PRICE_UNAVAILABLE could not find, for `EngineError.priceScope` (5a.3, state 55): the window shows this instead of the general text. */
+export const PRICE_SCOPES_RU = {
+  bold: "Цена Seedream 2K сейчас недоступна — «Смелую» не запустить. Остальное работает как обычно.",
+} as const satisfies Record<NonNullable<EngineError["priceScope"]>, string>;
 
 /** Russian text for each structural problem of a montage (the `issues` of MONTAGE_INVALID). */
 export const MONTAGE_ISSUE_MESSAGES_RU = {

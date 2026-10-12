@@ -198,7 +198,7 @@ interface MockSet {
   runId: string;
   /** Absent when the request sent none (S5.7a); the mock then draws with neither extra pose. */
   poses?: { profile: boolean; back: boolean };
-  /** «Подача» (S5.7a), as sent; echoed only when flirty. The scenes' own levels are drawn from it (S5.7b). */
+  /** «Подача» (S5.7a), as sent; echoed when flirty or bold. The scenes' own levels are drawn from it (S5.7b). */
   level?: SceneLevel;
   categories: { ref: CategoryRef; name: string | null; poses?: ScenePose[] }[];
   scenes: Scene[];

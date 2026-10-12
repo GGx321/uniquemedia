@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ERROR_MESSAGES_RU, LAUNCH_REASONS_RU, SCENE_REASONS_RU } from "./errorMessagesRu";
+import { ERROR_MESSAGES_RU, LAUNCH_REASONS_RU, PRICE_SCOPES_RU, SCENE_REASONS_RU } from "./errorMessagesRu";
 import { EngineError, LAUNCH_REASONS, SCENE_REASONS } from "./errors";
 import { PROTOCOL_VERSION } from "./envelope";
 import { SceneSetView, SceneView } from "./scenes";
@@ -106,8 +106,9 @@ describe("Estimate.boldAttemptMicros", () => {
     expect<unknown>(Estimate.parse(bold)).toEqual(bold);
   });
 
-  test("the attempt price is a whole number of micro-dollars, never negative", () => {
-    expect(Estimate.safeParse({ ...estimate, boldAttemptMicros: 0 }).success).toBe(true);
+  test("the attempt price is a positive whole number of micro-dollars", () => {
+    expect(Estimate.safeParse({ ...estimate, boldAttemptMicros: 1 }).success).toBe(true);
+    expect(Estimate.safeParse({ ...estimate, boldAttemptMicros: 0 }).success).toBe(false);
     expect(Estimate.safeParse({ ...estimate, boldAttemptMicros: -1 }).success).toBe(false);
     expect(Estimate.safeParse({ ...estimate, boldAttemptMicros: 93_000.5 }).success).toBe(false);
   });
@@ -129,6 +130,34 @@ describe("EngineError.priceScope", () => {
   test("a scope on any other code is refused", () => {
     expect(EngineError.safeParse({ code: "PRICE_CHANGED", priceScope: "bold" }).success).toBe(false);
     expect(EngineError.safeParse({ code: "VALIDATION", priceScope: "bold" }).success).toBe(false);
+  });
+});
+
+describe("the slot ends of a Seedream slot (I5.39) travel as an EngineError", () => {
+  test("a model refusal rides on MODERATION_REFUSED", () => {
+    expect(EngineError.safeParse({ code: "MODERATION_REFUSED", sceneReason: "model-refused" }).success).toBe(true);
+  });
+
+  test("an empty answer rides on INTERNAL, where an unusable paid response maps", () => {
+    expect(EngineError.safeParse({ code: "INTERNAL", sceneReason: "model-empty" }).success).toBe(true);
+  });
+
+  test("a refusal or an empty answer on any other code is refused", () => {
+    expect(EngineError.safeParse({ code: "VALIDATION", sceneReason: "model-refused" }).success).toBe(false);
+    expect(EngineError.safeParse({ code: "MODERATION_REFUSED", sceneReason: "model-empty" }).success).toBe(false);
+    expect(EngineError.safeParse({ code: "INTERNAL", sceneReason: "model-refused" }).success).toBe(false);
+    expect(EngineError.safeParse({ code: "VALIDATION", sceneReason: "model-empty" }).success).toBe(false);
+  });
+
+  test("every other scene reason still rides on VALIDATION only", () => {
+    expect(EngineError.safeParse({ code: "MODERATION_REFUSED", sceneReason: "bold-level-needed" }).success).toBe(false);
+    expect(EngineError.safeParse({ code: "INTERNAL", sceneReason: "set-used" }).success).toBe(false);
+  });
+});
+
+describe("PRICE_SCOPES_RU", () => {
+  test("the missing 2K price has a text of its own", () => {
+    expect(PRICE_SCOPES_RU.bold).toBe("Цена Seedream 2K сейчас недоступна — «Смелую» не запустить. Остальное работает как обычно.");
   });
 });
 
