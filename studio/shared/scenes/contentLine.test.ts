@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BOLD_EXEMPT_YOUTH } from "./banks/boldRules";
-import { boldContentLevel, CONTENT_LEVELS, contentProblems, type ContentLevel, type ContentProblem } from "./contentLine";
+import { boldContentLevel, CONTENT_LEVELS, contentLevelOf, contentProblems, type ContentLevel, type ContentProblem } from "./contentLine";
 
 // S5.9b1 (plan s5a3 §5.1, §5.2): the content line is one pure function with the level as a parameter. "ordinary" and "flirty" are today's word gate
 // (a youth word, then a revealing word); "bold" is the owner's «Смелая»: youth words only, with the garment name «babydoll» exempt. Rows are literal.
@@ -146,5 +146,26 @@ describe("the levels", () => {
 
   test("an empty text has no problem at any level", () => {
     for (const level of CONTENT_LEVELS) expect(contentProblems("", level)).toEqual([]);
+  });
+});
+
+// S5.9c (plan s5a3 §5.1): the level a slot or a scene is held to follows its CATEGORY, never its mix level.
+describe("contentLevelOf", () => {
+  test.each(["nightwear", "beach"])("a %s slot is held to the bold line, whatever its own mix level", (category) => {
+    expect(contentLevelOf({ category })).toBe(boldContentLevel());
+    expect(contentLevelOf({ category, level: "ordinary" } as { category: string })).toBe(boldContentLevel());
+  });
+
+  test.each(["home", "travel", "photoshoot", "glamour", "fitness", "shoot", "glam", "fit", "cat-paris-cafes", "own"])("%s is held to the ordinary line", (category) => {
+    expect(contentLevelOf({ category })).toBe("ordinary");
+  });
+
+  test("a flirty or bold slot of the five is still ordinary: «Смелая» lifts the gate only in a «Смелая» category", () => {
+    expect(contentLevelOf({ category: "home", level: "flirty" } as { category: string })).toBe("ordinary");
+  });
+
+  test("the level it gives reads the texts as the bold line does", () => {
+    expect(contentProblems("a white string bikini, topless", contentLevelOf({ category: "beach" }))).toEqual([]);
+    expect(contentProblems("a white string bikini", contentLevelOf({ category: "home" })).map((p) => p.reason)).toEqual(["revealing-word"]);
   });
 });

@@ -4,9 +4,10 @@
 // "ordinary" and "flirty" are today's gate, byte for byte: the youth words (descriptor scope), then the revealing words. "bold" is the owner's «Смелая»:
 // youth words only, with the garment name «babydoll» exempt (banks/boldRules.ts); no revealing-word rule, no covering clause, so his own edits may say
 // «topless» or «naked». The exposure and explicit-act lists are bank design, swept by tests over the banks; they are never applied to a text here.
-// Which level a slot or a scene is at (`contentLevelOf`) needs the «Смелая» category ids and lands with S5.9c; the sites call "ordinary" until then.
+// Which level a slot or a scene is at is `contentLevelOf` (S5.9c): the sites call it with the slot or the scene they check, so the gate follows the CATEGORY, not the mix level.
 
 import { youthWords } from "../engine/ageText";
+import { isBoldCategory } from "../engine/categories";
 import { BOLD_EXEMPT_YOUTH } from "./banks/boldRules";
 import { revealingWordsIn } from "./words";
 
@@ -31,6 +32,14 @@ export type ContentLevel = "ordinary" | "flirty" | BoldContentLevel;
 /** The one way to a bold content level. */
 export function boldContentLevel(): BoldContentLevel {
   return BOLD;
+}
+
+/**
+ * 5a.3 (S5.9c, plan s5a3 §5.1): the level a slot's or a scene's text is held to. A «Смелая» category is bold whatever the slot's own level in the mix (a beach frame at ordinary level is
+ * still a swimwear frame, answer (a)); everything else, the five, a custom category and an own scene (it has no category), is "ordinary", which the flirty reading equals.
+ */
+export function contentLevelOf(item: { category: string }): ContentLevel {
+  return isBoldCategory(item.category) ? BOLD : "ordinary";
 }
 
 /** Every level, in the order of the mix (ordinary, flirty, bold). */
