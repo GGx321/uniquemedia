@@ -153,3 +153,50 @@ describe("the refusal «legs-built-in-only»", () => {
     expect(SCENE_REASONS_RU["legs-built-in-only"]).toContain("Ничего не потрачено");
   });
 });
+
+// Owner decision (wave 5e): «Ножки» is remembered per avatar on this machine like «Подача»; «Нет», the default, is not stored.
+const LEGS_KEY = (avatarId: string): string => `studio.photos.legs.${avatarId}`;
+
+describe("«Ножки» remembered per avatar", () => {
+  const SOFIA = { ...MIA, avatarId: "avatar-sofia-0002", name: "Sofia", masterPhotoId: "photo-sofia-0001" };
+
+  /** Through the sidebar's «Аватары» to another avatar's Photos screen. */
+  async function openAvatarPhotos(name: string): Promise<void> {
+    fireEvent.click(screen.getByRole("button", { name: "Аватары" }));
+    fireEvent.click(await screen.findByRole("button", { name }));
+    await screen.findByRole("heading", { level: 1, name });
+    await openSection("Фото");
+    await screen.findByRole("heading", { level: 1, name });
+  }
+
+  test("comes back as picked in a new window, and «Нет» forgets it", async () => {
+    const first = await openPhotos();
+    await pick("Много");
+    expect(localStorage.getItem(LEGS_KEY(MIA.avatarId))).toBe("30");
+    first.unmount();
+    const second = await openPhotos({ keepLevels: true });
+    expect(legs("Много").checked).toBe(true);
+    await pick("Нет");
+    expect(localStorage.getItem(LEGS_KEY(MIA.avatarId)) === null).toBe(true);
+    second.unmount();
+  });
+
+  test("one avatar's pick leaves the other at «Нет», on screen and in storage", async () => {
+    await openPhotos({ avatars: [MIA, SOFIA] });
+    await pick("Немного");
+    expect(localStorage.getItem(LEGS_KEY(MIA.avatarId))).toBe("15");
+    await openAvatarPhotos("Sofia");
+    expect(legs("Нет").checked).toBe(true);
+    expect(localStorage.getItem(LEGS_KEY(SOFIA.avatarId)) === null).toBe(true);
+    await openAvatarPhotos("Mia");
+    expect(legs("Немного").checked).toBe(true);
+  });
+
+  test("keeps the pick while no built-in category is on: the owner's pick is not lost with the chips off", async () => {
+    const { engine } = await openPhotos({ categories: [PARIS] });
+    await pick("Немного");
+    for (const name of ["Дом", "Виды", "Улица", "Гламур", "Фитнес"]) await toggleChip(name);
+    expect(localStorage.getItem(LEGS_KEY(MIA.avatarId))).toBe("15");
+    expect(callsOf(engine, "runs.estimate").length).toBeGreaterThan(0);
+  });
+});

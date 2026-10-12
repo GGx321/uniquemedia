@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { legsCountOf } from "../../../shared/scenes/level";
 import { NBSP } from "../../lib/format";
-import { cardLegsLine, hasBuiltIn, launchLegsRow, legsCaption, legsFrames, LEGS_OPTIONS } from "./legs";
+import { cardLegsLine, hasBuiltIn, launchLegsRow, legsCaption, legsFrames, LEGS_KEY_PREFIX, LEGS_OPTIONS, readLegs, writeLegs } from "./legs";
 
 // S5.8b (plan s5a2 §7, I5.29; mockups 33 and 34 of .omc/stage5/design): «Ножки» on the window's side — the chips, the count of legs frames the caption
 // quotes (the planner's own rule over the planner's own split), and why the chips are off with no built-in category on.
@@ -117,5 +117,64 @@ describe("«Автопилот»'s row (mockups 34, 34#few)", () => {
     expect(launchLegsRow(15, plan(avatar(20)), [PARIS])).toEqual({ shown: 0, off: true, caption: why });
     expect(launchLegsRow(30, null, [PARIS, BAKERIES])).toEqual({ shown: 0, off: true, caption: why });
     expect(launchLegsRow(15, plan(avatar(1)), [])).toEqual({ shown: 0, off: true, caption: why });
+  });
+});
+
+// ---------- remembered per avatar (wave 5e, owner decision) ----------
+
+function memory(): Pick<Storage, "getItem" | "setItem" | "removeItem"> & { items: Map<string, string> } {
+  const items = new Map<string, string>();
+  return {
+    items,
+    getItem: (key) => items.get(key) ?? null,
+    setItem: (key, value) => void items.set(key, value),
+    removeItem: (key) => void items.delete(key),
+  };
+}
+const blocked: Pick<Storage, "getItem" | "setItem" | "removeItem"> = {
+  getItem: () => {
+    throw new Error("blocked");
+  },
+  setItem: () => {
+    throw new Error("blocked");
+  },
+  removeItem: () => {
+    throw new Error("blocked");
+  },
+};
+
+describe("«Ножки» remembered per avatar", () => {
+  test("is «Нет» for an avatar it was never chosen for", () => {
+    expect(readLegs(memory(), "avatar-mia-0001")).toBe(0);
+  });
+
+  test("keeps the share for that avatar only", () => {
+    const storage = memory();
+    writeLegs(storage, "avatar-mia-0001", 30);
+    expect(readLegs(storage, "avatar-mia-0001")).toBe(30);
+    expect(readLegs(storage, "avatar-ava-0002")).toBe(0);
+    expect(storage.items.get(`${LEGS_KEY_PREFIX}avatar-mia-0001`)).toBe("30");
+  });
+
+  test("forgets the key when it goes back to «Нет»: the default is not stored", () => {
+    const storage = memory();
+    writeLegs(storage, "avatar-mia-0001", 15);
+    writeLegs(storage, "avatar-mia-0001", 0);
+    expect(storage.items.size).toBe(0);
+  });
+
+  test("reads «Нет» for a stored value that is not a share the contract takes", () => {
+    const storage = memory();
+    for (const bad of ["20", "0", "", "15%", "NaN", "30.5"]) {
+      storage.items.set(`${LEGS_KEY_PREFIX}avatar-mia-0001`, bad);
+      expect(readLegs(storage, "avatar-mia-0001")).toBe(0);
+    }
+  });
+
+  test("reads «Нет» and does not throw where the storage is blocked or absent", () => {
+    expect(readLegs(blocked, "avatar-mia-0001")).toBe(0);
+    expect(() => writeLegs(blocked, "avatar-mia-0001", 15)).not.toThrow();
+    expect(readLegs(null, "avatar-mia-0001")).toBe(0);
+    expect(() => writeLegs(null, "avatar-mia-0001", 15)).not.toThrow();
   });
 });

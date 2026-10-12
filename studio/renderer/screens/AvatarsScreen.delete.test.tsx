@@ -183,6 +183,20 @@ describe("deleting", () => {
     localStorage.removeItem(`${LEVEL_KEY_PREFIX}${SOFIA.avatarId}`);
   });
 
+  test("forgets the deleted avatar's remembered «Ножки» and keeps the others'", async () => {
+    await withMia();
+    localStorage.setItem(`studio.photos.legs.${MIA.avatarId}`, "30");
+    localStorage.setItem(`studio.photos.legs.${SOFIA.avatarId}`, "15");
+    await ask();
+
+    fireEvent.click(within(panel()).getByRole("button", { name: "Удалить" }));
+
+    await waitFor(() => expect(cardNames()).not.toContain("Mia"));
+    expect(localStorage.getItem(`studio.photos.legs.${MIA.avatarId}`) === null).toBe(true);
+    expect(localStorage.getItem(`studio.photos.legs.${SOFIA.avatarId}`)).toBe("15");
+    localStorage.removeItem(`studio.photos.legs.${SOFIA.avatarId}`);
+  });
+
   test("the focus lands on the screen's title, not on the body", async () => {
     await withMia();
     await ask();

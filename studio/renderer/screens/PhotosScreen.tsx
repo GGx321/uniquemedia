@@ -18,6 +18,7 @@ import { GenerateCard } from "./photos/GenerateCard";
 import type { MarkControl, MarkFailure } from "./photos/photoState";
 import { listedPicks, usablePicks, useMontagePicks } from "./photos/picks";
 import { arrangeCategories, DEFAULT_RUN_FORM, paidBlockedReason, sceneWriters, type RunForm } from "./photos/runForm";
+import { readLegs, writeLegs } from "./photos/legs";
 import { readLevel, writeLevel } from "./photos/level";
 import { useRunForms } from "./photos/runForms";
 import { ScenesColumn } from "./photos/ScenesColumn";
@@ -102,10 +103,13 @@ function AvatarPhotos({
   // CS.7 L4: kept by the window, so a look at Settings and back finds it as it was (a new category still on, the count, «Подача»). S5.7c: «Подача» is
   // remembered per avatar on this machine too (owner), so a new window starts from it; «Обычная» unless «Кокетливая» was chosen for her.
   const runForms = useRunForms();
-  const [form, setForm] = useState<RunForm>(() => runForms.get(avatarId) ?? { ...DEFAULT_RUN_FORM, level: readLevel(viewerStorage(), avatarId) });
+  const [form, setForm] = useState<RunForm>(() => runForms.get(avatarId) ?? { ...DEFAULT_RUN_FORM, level: readLevel(viewerStorage(), avatarId), legs: readLegs(viewerStorage(), avatarId) });
   useEffect(() => runForms.set(avatarId, form), [runForms, avatarId, form]);
   const level = form.level;
   useEffect(() => writeLevel(viewerStorage(), avatarId, level), [avatarId, level]);
+  // Wave 5e (owner): «Ножки» is remembered per avatar the same way.
+  const legsShare = form.legs;
+  useEffect(() => writeLegs(viewerStorage(), avatarId, legsShare), [avatarId, legsShare]);
   // CS.3 (owner decision 4): a category this window made comes into the run at once, its dialog shown or hidden; in creation order.
   const { categories: categoryLibrary } = useEngine();
   useEffect(

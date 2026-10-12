@@ -4,6 +4,7 @@ import type { CommandMessage, CommandType } from "../shared/engine";
 import { App } from "./App";
 import { MockEngine, type MockEngineOptions, mockEngineClient } from "./engine/mockEngine";
 import { ManualScheduler } from "./engine/scheduler";
+import { LEGS_KEY_PREFIX } from "./screens/photos/legs";
 import { LEVEL_KEY_PREFIX } from "./screens/photos/level";
 import { SCENE_REVIEW_KEY } from "./screens/photos/sceneReview";
 
@@ -24,7 +25,7 @@ export function setup({ sceneReview, pagesScheduler, keepLevels = false, ...opti
     if (sceneReview === undefined) localStorage.removeItem(SCENE_REVIEW_KEY);
     else localStorage.setItem(SCENE_REVIEW_KEY, sceneReview);
     if (!keepLevels) {
-      const levels = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)).filter((key): key is string => key?.startsWith(LEVEL_KEY_PREFIX) === true);
+      const levels = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)).filter((key): key is string => key?.startsWith(LEVEL_KEY_PREFIX) === true || key?.startsWith(LEGS_KEY_PREFIX) === true);
       for (const key of levels) localStorage.removeItem(key);
     }
   } catch {

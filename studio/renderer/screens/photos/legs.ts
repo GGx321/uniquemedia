@@ -101,3 +101,32 @@ export function launchLegsRow(share: LegsShare, plan: LaunchPlanCounts | null, c
     caption: { text: `≈ ${legs} из ${countOf(plan.totals.toGenerate, ["нового кадра", "новых кадров", "новых кадров"])} — ${LEGS_WHAT}`, why: false },
   };
 }
+
+// ---------- remembered per avatar ----------
+
+/** «Ножки» of each avatar in the viewer's localStorage: `studio.photos.legs.<avatarId>` holds «15» or «30»; «Нет», the default, is not stored. */
+export const LEGS_KEY_PREFIX = "studio.photos.legs.";
+
+type LegsStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+/** The avatar's «Ножки»: a share only when 15 or 30 was chosen on this machine; anything else, or a storage that cannot be read, reads «Нет». */
+export function readLegs(storage: LegsStorage | null, avatarId: string): LegsShare {
+  if (storage === null) return 0;
+  try {
+    const stored = storage.getItem(`${LEGS_KEY_PREFIX}${avatarId}`);
+    return stored === "15" ? 15 : stored === "30" ? 30 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Keeps the avatar's «Ножки». A storage that throws keeps nothing, silently: the choice holds for this window anyway. */
+export function writeLegs(storage: LegsStorage | null, avatarId: string, share: LegsShare): void {
+  if (storage === null) return;
+  try {
+    if (share === 0) storage.removeItem(`${LEGS_KEY_PREFIX}${avatarId}`);
+    else storage.setItem(`${LEGS_KEY_PREFIX}${avatarId}`, String(share));
+  } catch {
+    // Blocked, full or gone: the choice holds for this window only.
+  }
+}
