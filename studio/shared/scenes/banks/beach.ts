@@ -120,6 +120,8 @@ export const BEACH: CategoryBank = {
       moments: [
         { text: "leans on the glass railing", motion: "her hair lifts a little in the wind", captures: ["friend", "selfie", "candid"], twoHanded: false, level: "flirty", outdoor: true },
         { text: "adjusts the strap on her shoulder", motion: "she slides the strap up a little", captures: ["friend", "candid"], twoHanded: false, angle: "profile", outfits: STRAPPED, outdoor: true },
+        // S5.R4 round 3: with one legs moment left here the rooftop draws more of a plan's frames, and its one moment in profile took 6 of 20 away frames; a second shares them.
+        { text: "stretches her arms overhead", motion: "she reaches a little higher", captures: ["friend", "candid"], twoHanded: true, angle: "profile", outdoor: true },
         // The beach probe: looking back over her shoulder at the rooftop pool.
         { text: "looks back over her shoulder", motion: "she turns her head a little further", captures: ["friend", "timer"], twoHanded: false, angle: "three-quarter", gaze: "own", level: "bold", route: "seedream", outdoor: true },
         { text: "sips a cold drink by the water", motion: "she lowers the glass a little", captures: ["friend", "selfie", "candid"], twoHanded: false, outdoor: true },

@@ -47,6 +47,8 @@ describe("who takes the photo: mostly someone she asked (I5.32)", () => {
       "stretches her arms out, knee-deep",
       "stretches one arm along the edge",
       "adjusts the strap on her shoulder",
+      // S5.R4 round 3: a second moment in profile at the rooftop pool, which draws more frames with one legs moment left there.
+      "stretches her arms overhead",
       "sits hugging her knees",
       "tucks her hair back in the breeze",
       "sits with her hands clasped",
