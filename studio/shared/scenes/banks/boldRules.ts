@@ -31,11 +31,20 @@ export const OPENS_WITH_ARMS_UP = new RegExp(`${OPEN_SHIRT.source}|\\bcrop(?:ped
 /** An outfit with no shoulder straps: strapless or bandeau, or a bikini whose top is a shirt, a sweatshirt or a tee (or missing). A strap action never meets one (rule strap). */
 export const NO_STRAPS = /\bstrap-?less\b|\bbandeau\b|\bbottoms\b|\bsweatshirts?\b|\bshirts?\b|\btee\b|\btube\b|\boff-shoulder\b|\bhoodies?\b/i;
 
+/** What covers her when she is under it, in it or pulls it up (the sheet she holds to her chest is the bedsheet moment's outfit, so «sheet» counts only as «the sheets» she lies under). */
+const COVER = String.raw`(?:duvet|blankets?|covers|quilts?|comforters?|throws?|plaids?)`;
+
 /**
- * S5.R4: a moment under a cover (rule bold-covered; a bold slot never takes one, engine/scenes/fit.ts), in its text or its motion («lies curled up under the duvet», «curls up with a blanket»): what she wears does not show. On a duvet is no cover, and
- * the sheet she holds to her chest is the outfit itself (pinned), not a cover over one.
+ * S5.R4: a moment under a cover (rule bold-covered; a bold slot never takes one, engine/scenes/fit.ts), in its text or its motion: under, beneath or into a cover («lies curled up
+ * under the duvet», «snuggles into the duvet», «dozes under the sheets»), with a blanket or wrapped in one («curls up with a blanket»), or pulling one up or closer («she pulls the
+ * covers up»): what she wears does not show. On a blanket or a duvet is no cover (round 2: «sits on a picnic blanket»), and the sheet she holds to her chest is the outfit itself.
  */
-export const COVERS_HER = /\b(?:under|beneath)\s+(?:the|a|her)\s+(?:duvet|blankets?|covers|sheets?|quilt|comforter|throw|plaid)\b|\b(?:blankets?|plaids?|quilts?|comforters?)\b/i;
+export const COVERS_HER = new RegExp(
+  String.raw`\b(?:under|beneath|into|in)\s+(?:the|a|her)\s+(?:[a-z]+\s+)?(?:${COVER}|sheets)\b` +
+    String.raw`|\b(?:with|wrapped in)\s+(?:a|the|her)\s+(?:[a-z]+\s+)?${COVER}` +
+    String.raw`|\bpull(?:s|ing)?\s+(?:the|a|her)\s+${COVER}(?:\s+[a-z]+){0,2}?\s+(?:up|over|closer|around|higher)\b`,
+  "i",
+);
 
 // S5.9b2 (plan s5a3 §6.4, I5.37): the «Смелая» vocabulary, word by word. It may appear only in a «Смелая» bank (rule bold-only-here), any item that names it is
 // drawn on Seedream (bold-route), a water moment pins swimwear (water), stockings ride only on the bold legwear (legwear), and no legs moment pins lingerie

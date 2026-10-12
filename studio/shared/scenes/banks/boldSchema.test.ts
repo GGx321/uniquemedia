@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { boldWordsIn, lingerieWordsIn, stockingWordsIn, swimwearWordsIn, withoutBoldExemptLook } from "./boldRules";
+import { boldWordsIn, COVERS_HER, lingerieWordsIn, stockingWordsIn, swimwearWordsIn, withoutBoldExemptLook } from "./boldRules";
 import { BANKS, validateBanks } from "./index";
 import { BANK_RULE, boldBankProblems, boldOnlyHereProblems, categoryBankProblems } from "./schema";
 import type { BankPlace, CategoryBank, Moment, Outfit } from "./types";
@@ -105,6 +105,34 @@ const SARONG: Outfit = { text: "a bikini and a sarong", showsLegs: true, route: 
 
 /** The rule ids a bank breaks (each problem is `[rule] text`). */
 const rulesOf = (problems: readonly string[]): string[] => [...new Set(problems.map((p) => /^\[([a-z-]+)\]/.exec(p)?.[1] ?? p))];
+
+// S5.R4 round 2 (re-review, LOW): what reads as a cover over her, both ways. A blanket she lies or sits on covers nothing; pulling the covers up or snuggling into the duvet does.
+// The sheet she holds to her chest is the bedsheet moment's outfit, never a cover over one.
+describe("COVERS_HER: a moment under a cover", () => {
+  test.each([
+    "lies curled up under the duvet",
+    "curls up with a blanket",
+    "she pulls the blanket a little closer",
+    "she pulls the duvet up a little",
+    "she pulls the covers up",
+    "snuggles into the duvet",
+    "sits wrapped in a blanket",
+    "dozes under the sheets",
+  ])("«%s» is under a cover", (text) => {
+    expect(COVERS_HER.test(text)).toBe(true);
+  });
+
+  test.each([
+    "sits on a picnic blanket",
+    "lies on the blanket",
+    "stretches out on the duvet",
+    "lies holding the sheet to her chest",
+    "she pulls the sheet a little higher",
+    "sits with her legs tucked under her",
+  ])("«%s» is not", (text) => {
+    expect(COVERS_HER.test(text)).toBe(false);
+  });
+});
 
 describe("the «Смелая» vocabulary (banks/boldRules.ts)", () => {
   test("names lingerie, swimwear, stockings, satin and the babydoll, by whole word", () => {
