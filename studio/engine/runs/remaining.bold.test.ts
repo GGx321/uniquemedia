@@ -97,6 +97,23 @@ describe("a fresh run with Seedream slots", () => {
   });
 });
 
+describe("the resume estimate's boldAttemptMicros (gap C)", () => {
+  test("is the 2K attempt while a Seedream slot is still open", () => {
+    expect(remaining(runPlan(2, [0])).estimate.boldAttemptMicros).toBe(BOLD_ATTEMPT);
+  });
+
+  test("is absent when the plan has no Seedream slot", () => {
+    expect("boldAttemptMicros" in remaining(runPlan(2, [])).estimate).toBe(false);
+  });
+
+  test("is absent once every Seedream slot has ended", () => {
+    const run = runPlan(2, [0]);
+    const [a1] = idsOf(run, 1);
+    const ended = remaining(run, { events: [attempt(1, a1!, "refused", BOLD_IMAGE_MODEL, { code: "MODERATION_REFUSED", sceneReason: "model-refused" })], reserves: [reserve(a1!)], closes: [settle(a1!, 0)] });
+    expect("boldAttemptMicros" in ended.estimate).toBe(false);
+  });
+});
+
 describe("resume after a paid mismatch", () => {
   test("prices the slot at the two attempts it has left, 2 × (93 000 + age)", () => {
     const run = runPlan(1, [0], "on");
