@@ -53,7 +53,16 @@ export const NIGHTWEAR: CategoryBank = {
         // P58 and P-5a3 #4: Seedream drew it, with no phone in her hands.
         { text: "lies on her stomach, hips behind", motion: "she lifts her hips a little", captures: ["prone"], twoHanded: false, level: "bold", route: "seedream", outfits: ["a black bra and briefs"], noLegwear: true },
         { text: "lies on her stomach, feet up", motion: "her raised feet swing slowly", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", level: "bold", route: "seedream", outfits: ["a black lace bra and panties"], noLegwear: true },
-        { text: "lies back with her arms up", motion: "she stretches slowly and smiles", captures: ["above"], twoHanded: false, level: "bold", route: "seedream" },
+        // Review round 2: arms up, the open shirt would not stay closed over her chest, so this moment wears the lingerie that stays in place.
+        {
+          text: "lies back with her arms up",
+          motion: "she stretches slowly and smiles",
+          captures: ["above"],
+          twoHanded: false,
+          level: "bold",
+          route: "seedream",
+          outfits: ["a black lace bra and panties", "a white lace bra and panties", "a lace bodysuit", "a sheer babydoll over a lace set", "a cropped tee and cotton panties"],
+        },
         // P-5a3 #2 (3/3): the sheet held to her chest is all she wears; the moment carries what covers her.
         {
           text: "lies holding the sheet to her chest",

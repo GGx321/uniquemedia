@@ -134,6 +134,11 @@ describe("the moments and their levels (plan §6.2)", () => {
     for (const { moment } of moments) expect({ text: moment.text, route: moment.route }).toEqual({ text: moment.text, route: moment.level === "bold" ? "seedream" : undefined });
   });
 
+  // Review round 2: arms up, the open shirt would not stay closed over her chest.
+  test("her arms up, she wears lingerie that stays in place, never the open shirt", () => {
+    expect(momentNamed("lies back with her arms up")?.moment.outfits).toEqual(["a black lace bra and panties", "a white lace bra and panties", "a lace bodysuit", "a sheer babydoll over a lace set", "a cropped tee and cotton panties"]);
+  });
+
   test("the strap moment wears only an outfit with straps: the satin nightwear, the lace sets, the bodysuit, the babydoll", () => {
     expect(momentNamed("adjusts the strap on her shoulder")?.moment.outfits).toEqual(["a satin slip nightdress", "a satin midi nightdress", "a satin cami and satin shorts", "a black lace bra and panties", "a white lace bra and panties", "a lace bodysuit", "a sheer babydoll over a lace set"]);
   });
