@@ -128,6 +128,14 @@ describe("a 20-photo run with «Ножки» 30 % never pays for the same scene 
 
 // Item 4 (MEDIUM, plan s5a3 §6.2 r3.1): «a bold legs slot wears satin nightwear with stockings (the stockings make it bold)». The stockings were drawn at the bold share (0.5), so about
 // half of the bold legs frames said «…wearing a satin cami and satin shorts.» and read as flirty ones. Every bold «Ночнушки» legs frame now says them; nothing else moves.
+// Item 6 of round 2 (LOW): a legs frame by the mirror on the phone-over-face capture said «she holds her phone right in front of her face» and «Her legs fill most of the frame;
+// her face may be out of frame.» in one prompt («stands on tiptoe by the mirror», «lifts one foot to the mirror»).
+test("no legs frame pairs the phone over her face with the legs line", () => {
+  const legs = FRAMES.filter((f) => f.slot.framing === "legs");
+  expect(legs.filter((f) => f.prompt.includes("Her legs fill most of the frame")).length).toBe(legs.length);
+  expect(offenders(legs, (f) => f.prompt.includes("right in front of her face"))).toEqual(NONE);
+});
+
 describe("a bold «Ночнушки» legs frame wears the stockings", () => {
   const STOCKINGS = /\bstockings\b/;
   const nightwear = FRAMES.filter((f) => f.slot.category === "nightwear");

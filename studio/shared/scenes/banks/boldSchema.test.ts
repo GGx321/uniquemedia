@@ -240,6 +240,8 @@ describe("a «Смелая» bank", () => {
     ["a legs moment that pins no ordinary outfit (an ordinary legs slot has nothing to wear)", withLegs({ ...LEGS, outfits: ["a satin cami and satin shorts", "a satin midi nightdress", "a black lace bra and panties", "a white lace bra and panties"] }), BANK_RULE.boldLegs],
     ["a legs moment that pins lingerie (P-5a3 #6: refused; a bold legs slot is satin and stockings)", withLegs({ ...LEGS, outfits: [...(LEGS.outfits ?? []), "a black lace bra and panties"] }), BANK_RULE.boldLegs],
     ["a low-feet moment (no friend crouches at her feet in a «Смелая» bank)", withLegs({ ...LEGS, captures: ["pov-legs", "low-feet"] }), BANK_RULE.boldLegs],
+    // S5.R4 round 2: the phone-over-face mirror line («she holds her phone right in front of her face») beside the legs line («her face may be out of frame») says two frames at once.
+    ["a legs moment on the phone-over-face mirror frame", withLegs({ ...LEGS, captures: ["mirror-hidden"] }), BANK_RULE.boldLegs],
     // bold-arms-up (review of S5.9b2)
     ["an arms-up moment that pins no outfit, so it can draw the open shirt", withArmsUp(ARMS_UP), BANK_RULE.boldArmsUp],
     ["an arms-up moment that pins the open shirt", withArmsUp({ ...ARMS_UP, outfits: ["cotton pajama shorts and a tee", OPEN_SHIRT.text] }), BANK_RULE.boldArmsUp],

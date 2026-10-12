@@ -506,6 +506,11 @@ function boldBankRules(bank: CategoryBank, add: Add): void {
     }
     // bold-legs (M5, P-5a3 #6).
     if (moment.captures.includes("low-feet")) add(BANK_RULE.boldLegs, where, "no low-feet frame in a «Смелая» bank: her feet are her own look down (pov-legs) or the mirror's");
+    // S5.R4 round 2: the phone-over-face mirror line («she holds her phone right in front of her face») and the legs line («her face may be out of frame») say two frames at once, so a
+    // legs moment by the mirror takes the plain mirror selfie (the phone at chest height, her face clear), whose line agrees with a legs frame. The five keep their own (frozen).
+    if (moment.legs !== undefined && moment.captures.includes("mirror-hidden")) {
+      add(BANK_RULE.boldLegs, where, "a legs moment by the mirror is a plain mirror selfie (mirror), never the phone over her face (mirror-hidden): the legs line says her face may be out of frame");
+    }
     if (moment.legs !== undefined) {
       const pins = moment.outfits ?? [];
       if (pins.length < 4) add(BANK_RULE.boldLegs, where, "a legs moment pins at least 4 outfits");
