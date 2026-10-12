@@ -347,8 +347,31 @@ describe("what the look text must keep, whatever the draw (I5.13)", () => {
     expect(hits((s) => (s.prompt.includes("She is an adult woman.") ? null : "missing"))).toEqual([]);
   });
 
-  test("the look text carries no youth word and no revealing word", () => {
-    expect(hits((s) => youthWords(s.look, "descriptor")[0] ?? revealingWordsIn(s.look)[0] ?? null)).toEqual([]);
+  // `youthWords` is the heavy call (about 0.5 ms a text) and the check reads the look alone, so a distinct look is read once; and the sweeps are checked one test each, so a loaded shard
+  // is not asked to read all ~9.6k prompts (~5k distinct looks, 5 s alone) inside one test's bound (S5.R3). Every prompt of every sweep is still read.
+  const verdicts = new Map<string, string | null>();
+  const youthOrRevealing = (s: Swept): string | null => {
+    if (!verdicts.has(s.look)) verdicts.set(s.look, youthWords(s.look, "descriptor")[0] ?? revealingWordsIn(s.look)[0] ?? null);
+    return verdicts.get(s.look) ?? null;
+  };
+  const SWEEPS: Array<[string, readonly Swept[]]> = [
+    ["the plans", SWEPT],
+    ["the redraws", REDRAWN],
+    ["the body phrases", BODIED],
+    ["the messy rooms", MESSY_ROOMS],
+    ["the old photographer shots", OLD_PHOTOGRAPHER],
+  ];
+
+  test("the sweeps listed here are the whole of EVERYTHING, so none is left unread", () => {
+    expect(SWEEPS.reduce((sum, [, swept]) => sum + swept.length, 0)).toBe(EVERYTHING.length);
+  });
+
+  test.each(SWEEPS)("the look text carries no youth word and no revealing word: %s", (_name, swept) => {
+    const offenders = swept.flatMap((s) => {
+      const hit = youthOrRevealing(s);
+      return hit === null ? [] : [{ label: s.label, hit }];
+    });
+    expect(offenders).toEqual([]);
   });
 
   test("the artefact line is positive in both switch states: the sharp background is there, «Реализм камеры» adds the camera-roll artefacts", () => {
