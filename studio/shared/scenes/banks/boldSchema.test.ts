@@ -224,6 +224,23 @@ describe("a «Смелая» bank", () => {
     ["a moment under the duvet that pins no outfit, so a bold slot draws lingerie under it", withMoment({ ...plain, text: "lies curled up under the duvet" }), BANK_RULE.boldCovered],
     ["a moment with a blanket that pins a bold outfit", withMoment({ ...plain, text: "curls up with a blanket", outfits: ["a long cotton nightshirt", "a black lace bra and panties"] }), BANK_RULE.boldCovered],
     ["a moment whose motion pulls a blanket over her, pinning nothing", withMoment({ ...plain, motion: "she pulls the blanket a little closer" }), BANK_RULE.boldCovered],
+    // S5.R4 round 2: a bold slot takes no moment under a cover (engine/scenes/fit.ts), so a capture whose only moment at «Смелая» is one has nothing for a bold slot.
+    [
+      "a timer frame whose only moment is under a cover (a bold slot takes none)",
+      {
+        ...BOLD,
+        places: [
+          {
+            ...ROOM,
+            moments: [
+              ...MOMENTS.map((m) => ({ ...m, captures: m.captures.filter((c) => c !== "timer") })),
+              { ...plain, text: "curls up with a blanket", outfits: ["cotton pajama shorts and a tee", "a satin cami and satin shorts"] },
+            ],
+          },
+        ],
+      },
+      BANK_RULE.boldLevels,
+    ],
     // water
     ["a water moment that pins no outfit", withWater({ ...WADES, outfits: undefined }), BANK_RULE.water],
     ["a water moment that pins an outfit that is not swimwear", withWater({ ...WADES, outfits: ["a black bikini", "a long cotton nightshirt"] }), BANK_RULE.water],

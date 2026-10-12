@@ -31,6 +31,12 @@ export const OPENS_WITH_ARMS_UP = new RegExp(`${OPEN_SHIRT.source}|\\bcrop(?:ped
 /** An outfit with no shoulder straps: strapless or bandeau, or a bikini whose top is a shirt, a sweatshirt or a tee (or missing). A strap action never meets one (rule strap). */
 export const NO_STRAPS = /\bstrap-?less\b|\bbandeau\b|\bbottoms\b|\bsweatshirts?\b|\bshirts?\b|\btee\b|\btube\b|\boff-shoulder\b|\bhoodies?\b/i;
 
+/**
+ * S5.R4: a moment under a cover (rule bold-covered; a bold slot never takes one, engine/scenes/fit.ts), in its text or its motion («lies curled up under the duvet», «curls up with a blanket»): what she wears does not show. On a duvet is no cover, and
+ * the sheet she holds to her chest is the outfit itself (pinned), not a cover over one.
+ */
+export const COVERS_HER = /\b(?:under|beneath)\s+(?:the|a|her)\s+(?:duvet|blankets?|covers|sheets?|quilt|comforter|throw|plaid)\b|\b(?:blankets?|plaids?|quilts?|comforters?)\b/i;
+
 // S5.9b2 (plan s5a3 §6.4, I5.37): the «Смелая» vocabulary, word by word. It may appear only in a «Смелая» bank (rule bold-only-here), any item that names it is
 // drawn on Seedream (bold-route), a water moment pins swimwear (water), stockings ride only on the bold legwear (legwear), and no legs moment pins lingerie
 // (bold-legs; P-5a3 #6). These lists decide where a word may stand in OUR banks; they are never a gate on a text the owner writes.

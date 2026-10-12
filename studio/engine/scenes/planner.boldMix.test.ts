@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { BANKS } from "../../shared/scenes/banks";
+import { COVERS_HER } from "../../shared/scenes/banks/boldRules";
 import type { BankCategory, BankPlace, Level, Moment, Outfit } from "../../shared/scenes/banks/types";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
 import { atOrBelow, atSlotLevel, levelCountsOf } from "../../shared/scenes/level";
 import { plan } from "./planner";
+import { POOLS } from "./pools";
+import { redrawSlot } from "./redraw";
 import type { PlanSlot } from "./schema";
 import { ORDINARY_BUILT_INS } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -131,6 +134,20 @@ describe("no slot takes an item above its level (I5.37)", () => {
       expect({ category, above }).toEqual({ category, above: 0 });
     }
   }, 60_000);
+
+  // S5.R4 round 2 (re-review, LOW): under the duvet or a blanket the outfit does not show, so a bold slot there paid a Seedream 2K frame for hidden satin («lies curled up under the
+  // duvet, wearing a short tied satin robe», 74 of 16 200). A bold slot never takes such a moment, in the plan or in «Другая сцена»; the other levels still do.
+  test("a bold slot never takes a moment under a cover, and the other slots still do", () => {
+    const frames = SEEDS.flatMap((seed) => SHARES.flatMap((legsShare) => [12, 30, 100].flatMap((count) => boldPlan("nightwear", seed, count, legsShare))));
+    const covers = (d: Drawn): boolean => COVERS_HER.test(d.moment.text) || COVERS_HER.test(d.moment.motion);
+    const covered = frames.filter(covers);
+    expect(covered.filter((d) => levelOf(d.slot) === "bold").map((d) => `${d.slot.activity} | ${d.slot.outfit}`)).toEqual([]);
+    expect(covered.filter((d) => levelOf(d.slot) !== "bold").length).toBeGreaterThan(20);
+    const avoid = { locations: new Set<string>(), outfits: new Set<string>() };
+    const redrawn = frames.filter((d) => levelOf(d.slot) === "bold" && d.slot.framing !== "legs").flatMap((d) => [1, 2, 3].map((k) => drawnOf("nightwear", redrawSlot({ seed: 5, k, slot: d.slot, pool: POOLS.nightwear, avoid }))));
+    expect(redrawn.length).toBeGreaterThan(1000);
+    expect(redrawn.filter(covers).map((d) => `${d.slot.activity} | ${d.slot.outfit}`)).toEqual([]);
+  });
 
   test("a bold slot wears a bold outfit wherever the moment lets it", () => {
     const bold = SEEDS.flatMap((seed) => boldPlan("nightwear", seed, 30)).filter((d) => levelOf(d.slot) === "bold" && d.moment.outfits === undefined);

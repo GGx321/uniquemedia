@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { GAZE } from "../../shared/scenes/banks";
-import { OPENS_WITH_ARMS_UP } from "../../shared/scenes/banks/boldRules";
-import { ARMS_UP, COVERS_HER, LOOKS_ELSEWHERE } from "../../shared/scenes/banks/schema";
+import { COVERS_HER, OPENS_WITH_ARMS_UP } from "../../shared/scenes/banks/boldRules";
+import { ARMS_UP, LOOKS_ELSEWHERE } from "../../shared/scenes/banks/schema";
 import { poseFamilyOf } from "../../shared/scenes/banks/boldDesign.testkit";
 import { HELD_OBJECT_WORDS } from "../../shared/scenes/words";
 import { boldPromptMatrix, boldRunPrompts, type PromptFrame } from "./testing/boldRunPrompts";
@@ -133,15 +133,16 @@ describe("a bold «Ночнушки» legs frame wears the stockings", () => {
 });
 
 // Item 5 (LOW): under the duvet or a blanket a bold outfit does not show, and the 2K frame was paid for nothing («curls up with a blanket, wearing a white lace bra and panties»).
-describe("no bold outfit goes under a cover", () => {
+// Round 2: nor does the satin a bold slot then wore there («lies curled up under the duvet, wearing a short tied satin robe», 74 of 16 200): a bold slot takes no such moment.
+describe("nothing bold goes under a cover", () => {
   const covered = FRAMES.filter((f) => COVERS_HER.test(f.moment.text) || COVERS_HER.test(f.moment.motion));
 
-  test("the sweep reads frames under a cover on bold slots", () => {
-    expect(covered.filter((f) => f.slot.level === "bold").length).toBeGreaterThan(20);
+  test("the sweep reads frames under a cover, on the slots below bold", () => {
+    expect(covered.length).toBeGreaterThan(20);
   });
 
-  test("none of them wears a bold outfit", () => {
-    expect(offenders(covered, (f) => f.outfit.level === "bold")).toEqual(NONE);
+  test("none of them is a bold slot or wears a bold outfit", () => {
+    expect(offenders(covered, (f) => f.slot.level === "bold" || f.outfit.level === "bold")).toEqual(NONE);
   });
 });
 

@@ -34,7 +34,7 @@ import {
   WALKS_AWAY_WORDS,
   YOUTH_PROPS,
 } from "../words";
-import { boldWordsIn, lingerieWordsIn, NO_STRAPS, OPENS_WITH_ARMS_UP, stockingWordsIn, swimwearWordsIn } from "./boldRules";
+import { boldWordsIn, COVERS_HER, lingerieWordsIn, NO_STRAPS, OPENS_WITH_ARMS_UP, stockingWordsIn, swimwearWordsIn } from "./boldRules";
 import { MOMENT_HAIRS, type BankCategory, type CategoryBank, type Level, type Moment } from "./types";
 
 // 5a.2 (S5.6a, I5.21, I5.35; plan s5a2 r1.2): the banks' zod schemas. The shape is zod; every rule the plan names runs in a superRefine and reports
@@ -127,12 +127,6 @@ type Rule = (typeof BANK_RULE)[keyof typeof BANK_RULE];
  */
 export const LOOKS_ELSEWHERE =
   /\b(?:watch(?:es|ing)?|gaz(?:es|ing)|star(?:es|ing)|peer(?:s|ing)?|(?:looks?|looking|glances?|glancing)\s+(?!at\s+(?:the\s+)?(?:viewer|camera|lens)\b)(?:out|at|across|over|down|up|along|into|toward|towards|through|back|around|past)\b)/i;
-
-/**
- * S5.R4: a moment under a cover, in its text or its motion («lies curled up under the duvet», «curls up with a blanket»): what she wears does not show. On a duvet is no cover, and
- * the sheet she holds to her chest is the outfit itself (pinned), not a cover over one.
- */
-export const COVERS_HER = /\b(?:under|beneath)\s+(?:the|a|her)\s+(?:duvet|blankets?|covers|sheets?|quilt|comforter|throw|plaid)\b|\b(?:blankets?|plaids?|quilts?|comforters?)\b/i;
 
 /** Raised or stretched arms, in a moment's text or its motion (the open-shirt rule below). A stretch of her legs, feet or toes is not one: her arms stay down. */
 export const ARMS_UP = /\barms?\b[^.]*\bup\b|\bstretch\w*\b(?![^.]*\b(?:legs?|feet|foot|toes?|ankles?)\b)/i;
@@ -514,7 +508,9 @@ function boldBankRules(bank: CategoryBank, add: Add): void {
   for (const capture of new Set(bank.captureDeck)) {
     for (const pose of posesFor(capture)) {
       for (const level of LEVELS) {
-        const found = bank.places.some((place) => (!isMirrorCapture(capture) || place.mirror === true) && place.moments.some((m) => m.legs === undefined && momentAllowed(m, capture, pose, level) && wearable(m, level)));
+        // S5.R4 round 2: a bold slot takes no moment under a cover (engine/scenes/fit.ts momentFits), so such a moment is no answer for one.
+        const takes = (m: Moment): boolean => momentAllowed(m, capture, pose, level) && !(level === "bold" && (COVERS_HER.test(m.text) || COVERS_HER.test(m.motion)));
+        const found = bank.places.some((place) => (!isMirrorCapture(capture) || place.mirror === true) && place.moments.some((m) => m.legs === undefined && takes(m) && wearable(m, level)));
         if (!found) add(BANK_RULE.boldLevels, "captureDeck", `«${capture}» at ${pose} has no moment and outfit a ${level} slot can draw`);
       }
     }

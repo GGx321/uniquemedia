@@ -2,6 +2,7 @@ import type { ScenePose } from "../../shared/engine";
 import { posesFor, shotOf, type Capture } from "../../shared/scenes/captures";
 import { momentAllowed } from "../../shared/scenes/render";
 import { isOwnerBannedOutfit } from "../../shared/scenes/words";
+import { COVERS_HER } from "../../shared/scenes/banks/boldRules";
 import type { LegwearSlot, Level, Outfit } from "../../shared/scenes/banks/types";
 import { atSlotLevel, legwearAt } from "../../shared/scenes/level";
 import { legwearFits } from "../../shared/scenes/template";
@@ -19,7 +20,15 @@ import { EVERYDAY_OUTFITS, type Activity, type Place, type Pool } from "./pools"
  * `angle` sets the slot's pose itself, so it is asked at its own angle, and a hand-held capture, which cannot take a profile or a back pose, refuses it.
  */
 export function momentFits(moment: Activity, capture: Capture, drawnPose: ScenePose, level: Level = "ordinary"): boolean {
-  return momentAllowed(moment, capture, moment.angle ?? drawnPose, level);
+  return momentAllowed(moment, capture, moment.angle ?? drawnPose, level) && !(level === "bold" && coversHer(moment));
+}
+
+/**
+ * S5.R4 round 2: a moment under a cover (banks/boldRules.ts COVERS_HER, the bold-covered rule's own words). A bold slot never takes one: what she wears does not show, so its Seedream 2K
+ * frame would be paid for a hidden outfit. Only a «Смелая» bank planned at «Смелая» has bold slots, so no other plan reads it.
+ */
+function coversHer(moment: Pick<Activity, "text" | "motion">): boolean {
+  return COVERS_HER.test(moment.text) || COVERS_HER.test(moment.motion ?? "");
 }
 
 /** The moments of a place a slot of this capture, drawn pose and level may take: a flirty slot takes the flirty moments and the ordinary ones, an ordinary slot only the ordinary. */
