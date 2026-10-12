@@ -30,6 +30,25 @@ export function flirtyCountOf(slots: number, level: Level = "ordinary"): number 
   return level === "flirty" ? Math.floor((FLIRTY_TENTHS * slots + 5) / 10) : 0;
 }
 
+/** How a «Смелая» category's slots divide over the three levels. */
+export interface LevelCounts {
+  ordinary: number;
+  flirty: number;
+  bold: number;
+}
+
+/**
+ * 5a.3 (S5.9c, plan s5a3 I5.36): the mix inside a «Смелая» category, 20 / 40 / 40 (ordinary / flirty / bold) of its `slots` slots. Bold is ⌊(4n + 5) / 10⌋ and the non-ordinary
+ * slots ⌊(8n + 5) / 10⌋, so each share is rounded half up in integers (no float to drift) and the three counts always add up to n. The one rule, for the planner, the mock and the
+ * card's caption.
+ */
+export function levelCountsOf(slots: number): LevelCounts {
+  if (!Number.isInteger(slots) || slots < 0) throw new RangeError(`a slot count is a non-negative integer, got ${slots}`);
+  const bold = Math.floor((4 * slots + 5) / 10);
+  const notOrdinary = Math.floor((8 * slots + 5) / 10);
+  return { ordinary: slots - notOrdinary, flirty: notOrdinary - bold, bold };
+}
+
 // 5a.2c (S5.8a, plan s5a2 I5.29): «Ножки». The legs slots of a run are min(round-half-up(share × B), ⌊0.3 × count⌋): B is the run's built-in slots (a custom category draws no
 // legs), count all its slots, share the chip in whole percent. Integers only, so the rounding is (share × B + 50) div 100 and the cap (3 × count) div 10. The one rule, for
 // the planner and for the card's «{L} из {N} кадров» line.
