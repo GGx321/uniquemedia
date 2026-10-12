@@ -66,6 +66,8 @@ export function photoSummaryFrom(sidecar: PhotoSidecar, state: PhotoState, markR
     ...(named ? { categoryName } : {}),
     createdAt: sidecar.createdAt,
     qa: qaSummaryOf(sidecar.qa, markRestored),
+    // 5a.3 (S5.9d, gap A): the Seedream route, from the sidecar alone. Absent on every older photo and on a 1K moderation fallback's, so the viewer shows no tag for either.
+    ...(sidecar.source.route === undefined ? {} : { route: sidecar.source.route }),
     used: state.usedIn.length > 0,
     usedIn: state.usedIn.slice(0, MAX_PHOTO_USED_IN),
     rejected: state.rejected,
