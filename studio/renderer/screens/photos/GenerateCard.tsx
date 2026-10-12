@@ -18,7 +18,8 @@ import { CategorySheet } from "./CategorySheet";
 import type { LaunchLink } from "./launchSet";
 import { cardLegsLine, hasBuiltIn } from "./legs";
 import { LegsChips } from "./LegsChips";
-import { ANGLE_FROM_SCENE, BOLD_LABEL, BOLD_LATER, FLIRTY_BUILTIN_ONLY, flirtyCaption, flirtyFrames, LEVEL_OPTIONS } from "./level";
+import { ANGLE_FROM_SCENE, BOLD_SLOW, cardLevelCaption, drawsBoldFrames, LEVEL_OPTIONS } from "./level";
+import { BoldAttemptLine, BoldPriceNotice, isBoldPriceMissing } from "./boldPrice";
 import { LaunchSetStrip } from "./LaunchSetStrip";
 import { RecomposeDialog } from "./RecomposeDialog";
 import {
@@ -347,9 +348,10 @@ export function GenerateCard({
   const locked = busy || lockedByOther;
   // S5.3d review M3: her reference-portrait batch claims her like a run: a run or a compose now would be refused IN_FLIGHT.
   const portraitsBusy = portraitsDrawing(view, avatar.avatarId);
-  const perCategory = photosPerCategory(form.count, categories);
+  // S5.9g: the split of what the run asks for — a «Смелая» category kept under another «Подача» (mockup 48#kept) takes no photo and writes no scene.
+  const perCategory = photosPerCategory(form.count, request.categories);
   // S5.7c (mockup 26): who writes the scenes, under their price — the app, or the model for the categories its template does not cover.
-  const writers = sceneWriters(form.count, categories, customs ?? []);
+  const writers = sceneWriters(form.count, request.categories, customs ?? []);
   const scenesSub =
     form.count === 0 || compose.estimate === null
       ? null
@@ -467,14 +469,19 @@ export function GenerateCard({
 
   const hintId = `${ids}-why`;
   const priceFailedId = `${ids}-price`;
+  const boldPriceId = `${ids}-bold-price`;
   const levelLabel = `${ids}-level`;
   const levelName = `${ids}-level-radio`;
   const levelCaption = `${ids}-level-cap`;
-  const boldCaption = `${ids}-bold`;
-  // S5.7c (mockup 25): «Кокетливая» says how many of the frames it makes flirty; with nothing to draw (an empty set) it says nothing.
-  // With only custom categories on, no frame can be flirty: it says where «Подача» works rather than «0 из N».
-  const flirtyFrameCount = form.level === "flirty" && form.count > 0 ? flirtyFrames(form.count, request.categories) : null;
-  const flirty = flirtyFrameCount === null ? null : flirtyFrameCount === 0 && request.categories.length > 0 ? FLIRTY_BUILTIN_ONLY : flirtyCaption(flirtyFrameCount, form.count);
+  const slowCaption = `${ids}-level-slow`;
+  // S5.7c (mockup 25): «Кокетливая» says how many of the frames it makes flirty; with nothing to draw (an empty set) it says nothing. With only custom
+  // categories on, no frame can be flirty: it says where «Подача» works rather than «0 из N». S5.9g (mockups 47, 47a, 47b): «Смелая» counts its bold and
+  // flirty frames from the shared rules, or says what the others draw without a «Смелая» category; under it, that Seedream frames take longer.
+  const caption = cardLevelCaption(form.level, form.count, request.categories);
+  const slow = drawsBoldFrames(form.level, form.count, request.categories);
+  const levelDescribedBy = [caption !== null && levelCaption, slow && slowCaption].filter(Boolean).join(" ") || undefined;
+  // State 55 (gap D): the 2K tier's price is missing — said in place of today's general price failure, and the retry is described by it.
+  const boldPriceMissing = isBoldPriceMissing(error);
   // S5.8b (mockups 33, 34#card): «Ножки» draw from the built-in categories only. With none on the chips are off on «Нет» and say why; the pick stays in the
   // form, and a built-in back brings it back. A pick says how many of the frames are legs; with nothing to draw (an empty set) it says nothing.
   const legsLabel = `${ids}-legs`;
@@ -565,6 +572,7 @@ export function GenerateCard({
               rootRef={chipsRef}
               categories={categories}
               perCategory={perCategory}
+              boldOn={form.level === "bold"}
               list={categorySlice.list}
               creating={ownCreate}
               outcome={categorySlice.outcomes.create}
@@ -605,7 +613,7 @@ export function GenerateCard({
             <span id={levelLabel} className="lbl">
               Подача
             </span>
-            <div className="seg choice-options gen-seg" role="radiogroup" aria-labelledby={levelLabel} aria-describedby={flirty !== null ? levelCaption : undefined}>
+            <div className="seg choice-options gen-seg" role="radiogroup" aria-labelledby={levelLabel} aria-describedby={levelDescribedBy}>
               {LEVEL_OPTIONS.map((option) => {
                 const on = form.level === option.value;
                 return (
@@ -615,20 +623,18 @@ export function GenerateCard({
                   </label>
                 );
               })}
-              <label className="choice-option gen-option-later" title={BOLD_LATER}>
-                <input type="radio" className="choice-input" name={levelName} value="bold" disabled aria-describedby={boldCaption} />
-                <span className="choice-face">{BOLD_LABEL}</span>
-              </label>
             </div>
             <div className="gen-row-hint">
-              {flirty !== null && (
+              {caption !== null && (
                 <p id={levelCaption} className="gen-cap">
-                  {flirty}
+                  {caption}
                 </p>
               )}
-              <p id={boldCaption} className="gen-cap gen-cap-quiet">
-                {BOLD_LATER}
-              </p>
+              {slow && (
+                <p id={slowCaption} className="gen-cap gen-cap-quiet">
+                  {BOLD_SLOW}
+                </p>
+              )}
             </div>
           </div>
           {/* S5.8b (mockups 33, 34#card): «Ножки» under «Подача», chips that are native radios. */}
@@ -694,6 +700,8 @@ export function GenerateCard({
             <span aria-live="polite">{current ? (review ? about(current.estimate.expectedMicros) : `≈ ${formatUsd(current.estimate.expectedMicros)}`) : "—"}</span>
           </div>
           {review && form.count > 0 && current && <div className="mono faint scene-total-sub">{`${ceiling(current.estimate.worstMicros)} без правок`}</div>}
+          {/* S5.9g (mockup 47, gap C): the engine's price of one Seedream attempt, under the sum it explains; only when the run has Seedream frames. */}
+          <BoldAttemptLine estimate={current?.estimate} />
           <ReviewSwitch on={review} onToggle={toggleReview} labelId={`${ids}-sw`} waits={switchWaits} />
           {review ? (
             <StackButton
@@ -708,7 +716,7 @@ export function GenerateCard({
               className={primary ? "btn btn-p btn-stack photos-go" : "btn btn-stack photos-go"}
               disabled={onClick === null || buttonBusy}
               aria-busy={buttonBusy}
-              aria-describedby={blockedReason && !buttonBusy ? hintId : undefined}
+              aria-describedby={describedBy(blockedReason !== null && !buttonBusy && hintId, boldPriceMissing && !buttonBusy && boldPriceId)}
               onClick={onClick ?? undefined}
             >
               <span className="btn-stack-line">
@@ -791,7 +799,8 @@ export function GenerateCard({
           подтверждения ничего не отправляется.
         </Notice>
       )}
-      {error && (
+      {error && boldPriceMissing && <BoldPriceNotice id={boldPriceId} />}
+      {error && !boldPriceMissing && (
         <ErrorNotice
           error={error}
           actions={

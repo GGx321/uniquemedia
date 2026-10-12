@@ -53,7 +53,9 @@ function planCalls(engine: MockEngine) {
 }
 
 describe("«Подача» in «Настройки запуска» (mockup 30)", () => {
-  test("is a row «Подача · ракурс берётся из сцены» with «Обычная» checked and «Смелая» disabled; no «Ракурсы» any more", async () => {
+  // 2026-10-12, S5.9g (plan s5a3 §13.1; mockup 52): «Смелая» ships, so the row «…«Смелая» disabled» («…появится позже.») now pins the live radio; «Смелая»
+  // itself is covered in AutopilotBold.test.tsx.
+  test("is a row «Подача · ракурс берётся из сцены» with «Обычная» checked and all three live; no «Ракурсы» any more", async () => {
     world();
     await openAutopilot();
     expect(within(settings()).queryByText("Ракурсы") === null).toBe(true);
@@ -61,9 +63,9 @@ describe("«Подача» in «Настройки запуска» (mockup 30)"
     expect(within(settings()).queryByRole("button", { name: "Со спины" }) === null).toBe(true);
     expect(within(levelGroup()).getAllByRole("radio").map((r) => r.getAttribute("value"))).toEqual(["ordinary", "flirty", "bold"]);
     expect(level("Обычная").checked).toBe(true);
-    expect(level("Смелая").disabled).toBe(true);
+    expect(level("Смелая").disabled).toBe(false);
     expect(within(settings()).getByText("ракурс берётся из сцены")).toBeDefined();
-    expect(within(settings()).getByText(BOLD_LATER)).toBeDefined();
+    expect(within(settings()).queryByText(BOLD_LATER) === null).toBe(true);
     expect(within(settings()).queryByText(/кокетливые: взгляд, улыбка, поза/) === null).toBe(true);
   });
 

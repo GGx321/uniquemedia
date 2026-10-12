@@ -29,9 +29,9 @@ import { aboutUsd, figuresOf, goTitle, goWhy, isUnfinished, limitText, musicLine
 import { SettingsColumn } from "./autopilot/SettingsColumn";
 import { probeWorldKey, useLaunchPlan, worldKey } from "./autopilot/useLaunchPlan";
 import { launchLegsRow } from "./photos/legs";
-import { launchFlirtyCaption } from "./photos/level";
+import { launchLevelCaption } from "./photos/level";
 import { readSceneReview, viewerStorage } from "./photos/sceneReview";
-import { arrangeCategories } from "./photos/runForm";
+import { arrangeCategories, categoriesAt } from "./photos/runForm";
 
 // S4.9a: the «Автопилот» screen (AutopilotS4.dc.html, states plan … from-main; the owner's mockup Autopilot.dc.html): three columns — the avatars, «Настройки
 // запуска», and the plan with «Запустить: N видео · до $W». The plan is the engine's (`autopilot.estimate`), asked again as the form changes; the click
@@ -190,7 +190,7 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
     client,
     settings: ready ? settings : null,
     activeIds,
-    categories: settings?.categories ?? arrangeCategories(form.categories, customOrder),
+    categories: settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder)),
     // An own track marked or unmarked in the music window moves the plan's tracks: the plan is asked again.
     world: `${worldKey(view, customOrder)}:${musicMarks}`,
     probeWorld: probeWorldKey(view, customOrder),
@@ -306,8 +306,8 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
           }}
           onCategory={toggleCategory}
           onLevel={(level) => edit({ ...form, level })}
-          levelCaption={shownForm.level === "flirty" ? launchFlirtyCaption(running ? null : plan.shown, settings?.categories ?? shownForm.categories) : null}
-          legs={launchLegsRow(shownForm.legs, running ? null : plan.shown, running ? shownForm.categories : (settings?.categories ?? arrangeCategories(form.categories, customOrder)), shownForm.generate)}
+          levelCaption={launchLevelCaption(shownForm.level, running ? null : plan.shown, settings?.categories ?? categoriesAt(shownForm.level, shownForm.categories))}
+          legs={launchLegsRow(shownForm.legs, running ? null : plan.shown, running ? shownForm.categories : (settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder))), shownForm.generate)}
           onLegs={(legs) => edit({ ...form, legs })}
           onSwitch={(which) => edit({ ...form, [which]: !form[which] })}
           musicOpen={musicWindow !== null}

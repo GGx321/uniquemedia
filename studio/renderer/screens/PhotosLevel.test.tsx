@@ -32,14 +32,17 @@ async function toggleChip(name: string): Promise<void> {
 }
 
 describe("«Подача» on the card (mockup 24)", () => {
-  test("is a radio group «Обычная · Кокетливая · Смелая», «Обычная» checked, «Смелая» disabled with its caption", async () => {
+  // 2026-10-12, S5.9g (plan s5a3 §13.1; mockup 47): «Смелая» ships, so the row «…«Смелая» disabled with its caption» («…появится позже.») now pins the live
+  // radio and the caption's absence; «Смелая» itself is covered in PhotosBold.test.tsx.
+  test("is a radio group «Обычная · Кокетливая · Смелая», «Обычная» checked, all three live, no caption", async () => {
     await openPhotos();
     expect(within(levelGroup()).getAllByRole("radio").map((r) => r.getAttribute("value"))).toEqual(["ordinary", "flirty", "bold"]);
     expect(level("Обычная").checked).toBe(true);
     expect(level("Кокетливая").checked).toBe(false);
-    expect(level("Смелая").disabled).toBe(true);
-    expect(within(card()).getByText(BOLD_LATER)).toBeDefined();
-    expect(described(level("Смелая"))).toEqual([BOLD_LATER]);
+    expect(level("Смелая").checked).toBe(false);
+    expect(level("Смелая").disabled).toBe(false);
+    expect(within(card()).queryByText(BOLD_LATER) === null).toBe(true);
+    expect(level("Смелая").getAttribute("aria-describedby")).toBeNull();
     // No flirty count while «Обычная» is on.
     expect(within(card()).queryByText(/кокетливые: взгляд, улыбка, поза/) === null).toBe(true);
   });
@@ -117,12 +120,14 @@ describe("«Кокетливая» (mockup 25)", () => {
     expect(sent !== undefined && "poses" in sent).toBe(false);
   });
 
-  test("moves by the keyboard as any radio group does: «Смелая» is skipped, being disabled", async () => {
+  // 2026-10-12, S5.9g: «Смелая» is no longer skipped (it was disabled); the three radios are one native group the keyboard moves through.
+  test("moves by the keyboard as any radio group does: the three radios are one group", async () => {
     await openPhotos();
     level("Обычная").focus();
     expect(describeElement(document.activeElement)).toBe(describeElement(level("Обычная")));
-    expect(level("Смелая").disabled).toBe(true);
+    expect(level("Смелая").disabled).toBe(false);
     expect(level("Обычная").name).toBe(level("Кокетливая").name);
+    expect(level("Обычная").name).toBe(level("Смелая").name);
   });
 });
 

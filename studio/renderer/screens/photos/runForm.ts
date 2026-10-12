@@ -1,4 +1,5 @@
 import {
+  isBoldCategory,
   isCustomCategory,
   orderCategories,
   ORDINARY_SCENE_CATEGORIES,
@@ -121,8 +122,18 @@ export function sceneWriters(count: number, categories: readonly RunCategory[], 
  */
 export function arrangeCategories(on: readonly RunCategory[], customOrder: readonly CustomCategoryId[]): RunCategory[] {
   const wanted = new Set<string>(on);
-  // 5a.3 (S5.9b2): the five only; the «Смелая» two are offered with their chips and their gating (S5.9g).
-  return [...ORDINARY_SCENE_CATEGORIES.filter((c) => wanted.has(c)), ...customOrder.filter((id) => wanted.has(id))];
+  // 5a.3 (S5.9g): the seven built-ins in SceneCategory's order, the «Смелая» two after the five. A «Смелая» one stays in the form whatever «Подача» says;
+  // the request asks for it only with «Смелая» (`categoriesAt`).
+  return [...SceneCategory.options.filter((c) => wanted.has(c)), ...customOrder.filter((id) => wanted.has(id))];
+}
+
+/**
+ * 5a.3 (S5.9g, I5.42): the form's categories a request at `level` asks for. «Ночнушки и бельё» and «Пляж и бассейн» are drawn only with «Смелая»: under another
+ * «Подача» a pick of theirs is kept in the form (it comes back with «Смелая», mockup 48#kept) and left out here, so the window never asks for a «Смелая»
+ * category without `level: "bold"`.
+ */
+export function categoriesAt<T extends RunCategory>(level: SceneLevel, categories: readonly T[]): T[] {
+  return level === "bold" ? [...categories] : categories.filter((ref) => !isBoldCategory(ref));
 }
 
 /** A chip clicked: `ref` on or off, the rest arranged as `arrangeCategories` does. */
@@ -139,15 +150,16 @@ export function sameCategories(a: readonly RunCategory[], b: readonly RunCategor
  * The exact request a price is asked for and a run is started with; categories in the contract's order, so equal forms give equal requests. S5.7c: no
  * poses (the angle comes from the scene), and `level` only when it is not the default — a stored request then carries it only when it differs (I5.27).
  * S5.8b: `legsShare` likewise, and only with a built-in category on: legs are drawn from those alone, and a run of the owner's own categories that asked
- * for them would be refused (`legs-built-in-only`).
+ * for them would be refused (`legs-built-in-only`). S5.9g: `level: "bold"` for «Смелая», and a «Смелая» category only then (`categoriesAt`).
  */
 export function runRequest(avatarId: string, form: RunForm): RunRequest {
+  const categories = categoriesAt(form.level, form.categories);
   return {
     avatarId,
     count: form.count,
-    categories: orderCategories(form.categories),
-    ...(form.level === "flirty" ? { level: "flirty" as const } : {}),
-    ...(form.legs !== 0 && hasBuiltIn(form.categories) ? { legsShare: form.legs } : {}),
+    categories: orderCategories(categories),
+    ...(form.level === "ordinary" ? {} : { level: form.level }),
+    ...(form.legs !== 0 && hasBuiltIn(categories) ? { legsShare: form.legs } : {}),
   };
 }
 
