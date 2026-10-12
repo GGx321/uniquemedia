@@ -196,6 +196,23 @@ describe("a running «Смелая» launch's caption", () => {
   });
 });
 
+// Round 2 (e): a start refused for the 2K tier alone says state 55's sentence too, not the general price text.
+describe("«Запустить» refused for the 2K tier", () => {
+  test("shows state 55's warning, never the general price text", async () => {
+    const { engine } = world();
+    await openAutopilot();
+    await choose("Mia");
+    await click(level("Смелая"));
+    await click(categoryChip("Ночнушки и бельё"));
+    engine.failNext("autopilot.start", { code: "PRICE_UNAVAILABLE", priceScope: "bold", detail: "the price list has no 2K tier" });
+    fireEvent.click(goButton());
+    await flush();
+    const notice = await screen.findByText(PRICE_SCOPES_RU.bold);
+    expect(notice.closest(".notice")?.classList.contains("notice-warn")).toBe(true);
+    expect(screen.queryByText(errorText({ code: "PRICE_UNAVAILABLE" })) === null).toBe(true);
+  });
+});
+
 describe("the plan when the 2K price is missing (gap D)", () => {
   test("says state 55's sentence as a warning, never the general price text; without a «Смелая» category it plans as before", async () => {
     const { engine } = world();

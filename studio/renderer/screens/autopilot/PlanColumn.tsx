@@ -107,7 +107,7 @@ export function PlanCard({ preview, videosPerAvatar, notes, priceChanged, estima
       )}
       {/* S5.9g (gap D): the 2K tier alone has no price — state 55's warning (the rest works); any other failure as today. */}
       {estimateError !== null && (isBoldPriceMissing(estimateError) ? <BoldPriceNotice /> : <ErrorNotice error={estimateError} />)}
-      {startError !== null && <ErrorNotice error={startError} />}
+      {startError !== null && (isBoldPriceMissing(startError) ? <BoldPriceNotice /> : <ErrorNotice error={startError} />)}
       <button
         ref={goRef}
         type="button"

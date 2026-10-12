@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { LaunchView, type AvatarSummary, type LaunchAvatarView, type LaunchDraftInput, type PhotoSummary } from "../../shared/engine";
+import { LaunchView, PRICE_SCOPES_RU, type AvatarSummary, type LaunchAvatarView, type LaunchDraftInput, type PhotoSummary } from "../../shared/engine";
 import type { EngineClient } from "../engine/client";
 import type { MockEngine } from "../engine/mockEngine";
 import { freePhotos, MIA, SOFIA } from "../engine/mockEngine.testkit";
+import { errorText } from "../lib/errors";
 import { formatUsdTiered } from "../lib/money";
 import { callsOf, describeElement, flush, openSection, setup } from "../testing";
 
@@ -154,6 +155,18 @@ describe("a launch's set on «Фото» (PhotoLaunchReview)", () => {
     fireEvent.click(goButton());
     await flush();
     expect(callsOf(engine, "autopilot.continueAfterReview")).toHaveLength(1);
+  });
+
+  // S5.9g round 2 (plan s5a3 gap D): «Продолжить запуск» refused for the 2K tier alone says state 55's sentence, not the general price text.
+  test("refused for a missing 2K tier (priceScope «bold»): state 55's warning, never the general price text", async () => {
+    const { engine } = await launchWithSet();
+    await openFromAutopilot();
+    engine.failNext("autopilot.continueAfterReview", { code: "PRICE_UNAVAILABLE", priceScope: "bold", detail: "the price list has no 2K tier" });
+    fireEvent.click(goButton());
+    await flush();
+    const notice = await screen.findByText(PRICE_SCOPES_RU.bold);
+    expect(notice.closest(".notice")?.classList.contains("notice-warn")).toBe(true);
+    expect(screen.queryByText(errorText({ code: "PRICE_UNAVAILABLE" })) === null).toBe(true);
   });
 
   test("the set moved (SCENES_CHANGED): told, nothing drawn, the focus stays on the button", async () => {
