@@ -11,9 +11,9 @@ export type HairLength = (typeof HairLengthEnum)["options"][number];
 // optional `startPose` is the start still of a reveal motion (data only). Every bank text is at most POOL_TEXT_MAX (35) characters, a motion and a
 // start pose at most 60: a long wording (the prone selfie's) lives in its capture line and its pinned outfits, never in a moment.
 
-/** The five built-in categories, by the engine's own names (engine/scenes/types.ts CATEGORIES; pinned equal in engine/scenes/banks.sweep.test.ts).
- *  Labels are computed from the id at render (I5.33): `photoshoot` is «Улица», `travel` is «Виды». */
-export const BANK_CATEGORIES = ["home", "travel", "photoshoot", "glamour", "fitness"] as const;
+/** The built-in categories, by the engine's own names (engine/scenes/types.ts CATEGORIES; pinned equal in engine/scenes/banks.sweep.test.ts): the five, then
+ *  (5a.3) the two «Смелая» ones. Labels are computed from the id at render (I5.33): `photoshoot` is «Улица», `travel` is «Виды». */
+export const BANK_CATEGORIES = ["home", "travel", "photoshoot", "glamour", "fitness", "nightwear", "beach"] as const;
 export type BankCategory = (typeof BANK_CATEGORIES)[number];
 
 /** 5a.3 (S5.9b2): the five ordinary banks, beside `BANK_CATEGORIES`, which the two «Смелая» banks join (the engine's `ORDINARY_BUILT_INS`; pinned equal). */

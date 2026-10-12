@@ -1,5 +1,5 @@
 import { type RefObject, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { MAX_CUSTOM_CATEGORIES, SceneCategory, type CategorySummary } from "../../../shared/engine";
+import { MAX_CUSTOM_CATEGORIES, ORDINARY_SCENE_CATEGORIES, type CategorySummary } from "../../../shared/engine";
 import type { CategoryCall, CategoryList, CategoryOutcome } from "../../engine/categoryLibrary";
 import { errorText } from "../../lib/errors";
 import { Icon } from "../../ui/Icon";
@@ -151,7 +151,7 @@ export function CategoryRow({
         </button>
       </div>
       <div ref={groupRef} className="photos-chips" role="group" aria-labelledby={labelId}>
-        {SceneCategory.options.map((c) => chip(c, CATEGORY_LABEL[c]))}
+        {ORDINARY_SCENE_CATEGORIES.map((c) => chip(c, CATEGORY_LABEL[c]))}
         {visible.map((c) => chip(c.categoryId, c.name))}
         {creating !== null && <WaitingChip name={creating.name} onOpen={onReopen} onGone={() => (handOff.current = true)} />}
         {(hidden > 0 || expanded) && customs.length > CUSTOM_SHOWN && (

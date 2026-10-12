@@ -655,3 +655,13 @@ describe("the engine's world moves", () => {
     expect(probes()).toBe(probesBefore + 1);
   });
 });
+
+// 5a.3 (S5.9b2, plan s5a3 §11): the two «Смелая» categories are on the contract, but their chips and their gating arrive with S5.9g, so the launch offers the five.
+describe("the launch's scene categories", () => {
+  test("offer the five ordinary built-ins and no «Смелая» category until its chips ship", async () => {
+    world();
+    await openAutopilot();
+    const group = screen.getByRole("group", { name: "Категории сцен" });
+    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Дом", "Виды", "Улица", "Гламур", "Фитнес"]);
+  });
+});

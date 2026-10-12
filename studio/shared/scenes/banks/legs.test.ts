@@ -41,6 +41,15 @@ const TABLE: Row[] = [
   { category: "fitness", place: "a home workout corner", text: "stretches her legs on the mat", motion: "she flexes her feet slowly", captures: ["pov-legs"] },
   { category: "fitness", place: "a yoga mat on her living-room floor", text: "sits with her legs stretched out", motion: "she reaches toward her toes slowly", captures: ["pov-legs"] },
   { category: "fitness", place: "a park running path", text: "stretches her calves", motion: "she presses her heel down a little", captures: ["low-feet"] },
+  // 5a.3 (S5.9b2, plan s5a3 §6.2-§6.3, M5): the «Смелая» banks' eight. Her own look down along her legs, or her feet to the mirror at home; never a low-feet frame.
+  { category: "nightwear", place: "her bed", text: "lies with her legs crossed", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"] },
+  { category: "nightwear", place: "an armchair in her bedroom", text: "sits with her legs stretched out", motion: "she points her toes slowly", captures: ["pov-legs"] },
+  { category: "nightwear", place: "her bedroom", text: "lifts one foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"] },
+  { category: "nightwear", place: "her bedroom", text: "sits with her feet to the mirror", motion: "she taps her feet together a little", captures: ["mirror-hidden"] },
+  { category: "beach", place: "a hotel pool", text: "stretches her legs on the lounger", motion: "she points and flexes her toes slowly", captures: ["pov-legs"] },
+  { category: "beach", place: "the beach", text: "sits on the sand, legs out", motion: "she slowly buries her toes in the sand", captures: ["pov-legs"] },
+  { category: "beach", place: "the beach", text: "crosses her ankles on the towel", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"] },
+  { category: "beach", place: "a rooftop pool", text: "dangles her feet in the water", motion: "she swirls her feet slowly", captures: ["pov-legs"] },
 ];
 
 const legsMoments = (category: BankCategory): { place: string; moment: Moment }[] =>

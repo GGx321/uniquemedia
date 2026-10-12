@@ -144,9 +144,10 @@ describe("stepDownOf (the fallback chain's capture step)", () => {
 });
 
 describe("kindOfDeck", () => {
-  test.each([...CATEGORIES])("%s: the kind its deck says (self-shot at home, asked outside, mixed for glamour and fitness)", (category) => {
+  // 5a.3 (S5.9b2): «Ночнушки и бельё» is at home, self-shot; «Пляж и бассейн» is outside, asked.
+  test.each([...CATEGORIES])("%s: the kind its deck says (self-shot at home and in her bedroom's nightwear, asked outside and at the beach, mixed for glamour and fitness)", (category) => {
     const kind = kindOfDeck(POOLS[category].captureDeck ?? []);
-    expect(kind).toBe(category === "home" ? "self" : category === "glamour" || category === "fitness" ? "mixed" : "asked");
+    expect(kind).toBe(category === "home" || category === "nightwear" ? "self" : category === "glamour" || category === "fitness" ? "mixed" : "asked");
   });
 });
 

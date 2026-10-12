@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SceneCategory } from "../../../shared/engine";
+import { ORDINARY_SCENE_CATEGORIES } from "../../../shared/engine";
 import { flirtyCaption, flirtyFrames, launchFlirtyCaption, LEVEL_KEY_PREFIX, readLevel, writeLevel } from "./level";
 
 // S5.7c (plan s5a2 §6.3, I5.28; mockups 25 and 30): «Подача» on the window's side — how many frames «Кокетливая» makes flirty, the caption that says so, and
@@ -11,7 +11,8 @@ describe("flirtyFrames (I5.28): round-half-up(0.6 × n) of each built-in categor
   });
 
   test("is 10 of 20 over the five built-ins (4 each, 2.4 → 2)", () => {
-    expect(flirtyFrames(20, SceneCategory.options)).toBe(10);
+    // 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): the five ordinary built-ins by name (the «Смелая» two join SceneCategory); the assertion is kept.
+    expect(flirtyFrames(20, ORDINARY_SCENE_CATEGORIES)).toBe(10);
   });
 
   test.each([

@@ -8,9 +8,25 @@ import { Count, Id, Micros, ModelId } from "./primitives";
 // planner, the writer's label resolver and the renderer's chips all read the
 // same ordering and split rules from here, so they cannot drift apart.
 
-/** Scene categories from the Photos mockup; revealing outfits are out of Stage 2. */
-export const SceneCategory = z.enum(["home", "travel", "shoot", "glam", "fit"]);
+/**
+ * Scene categories: the five built-ins of the Photos mockup, then (5a.3, S5.9b2, plan s5a3 §6.1) the two «Смелая» ones, «Ночнушки и бельё» (`nightwear`) and
+ * «Пляж и бассейн» (`beach`), whose id is the engine's name too. A stored id never changes (I5.33).
+ */
+export const SceneCategory = z.enum(["home", "travel", "shoot", "glam", "fit", "nightwear", "beach"]);
 export type SceneCategory = z.infer<typeof SceneCategory>;
+
+/** The two «Смелая» categories (5a.3): drawn only under «Подача: Смелая» (the engine refuses them below it, S5.9c), from banks of their own. */
+export const BOLD_CATEGORIES = ["nightwear", "beach"] as const satisfies readonly SceneCategory[];
+export type BoldCategory = (typeof BOLD_CATEGORIES)[number];
+
+/** The five ordinary built-ins: what the card's and the autopilot's chips and the form's defaults offer until the «Смелая» chips ship (S5.9g). */
+export const ORDINARY_SCENE_CATEGORIES = ["home", "travel", "shoot", "glam", "fit"] as const satisfies readonly SceneCategory[];
+export type OrdinarySceneCategory = (typeof ORDINARY_SCENE_CATEGORIES)[number];
+
+/** Whether a ref (a contract id, an engine name or any text) is one of the two «Смелая» categories. */
+export function isBoldCategory(ref: string): ref is BoldCategory {
+  return BOLD_CATEGORIES.some((bold) => bold === ref);
+}
 
 const CUSTOM_CATEGORY_ID = /^cat-[a-z0-9-]{8,59}$/;
 

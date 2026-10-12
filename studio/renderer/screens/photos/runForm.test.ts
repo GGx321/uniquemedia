@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { plan } from "../../../engine/scenes/planner";
 import { contractCategory } from "../../../engine/runs/plan";
 import { plannerCategoryOf } from "../../../engine/scenes";
-import { RunRequest, SceneCategory, splitCount } from "../../../shared/engine";
+import { ORDINARY_SCENE_CATEGORIES, RunRequest, SceneCategory, splitCount } from "../../../shared/engine";
 import { covers } from "../../../shared/scenes/custom";
 import { BED_POOL, category, PARIS_POOL } from "./categoryScreenKit";
 import {
@@ -57,8 +57,19 @@ function engineSplit(count: number, categories: readonly RunCategory[]): Map<Run
 }
 
 test("runForm's per-category split matches the engine planner's own for every count 5..100", () => {
-  const categories: readonly RunCategory[] = SceneCategory.options;
+  // 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): the five the form offers (ORDINARY_SCENE_CATEGORIES); every assertion kept. The seven are split in the test below.
+  const categories: readonly RunCategory[] = ORDINARY_SCENE_CATEGORIES;
   for (let count = COUNT_MIN; count <= COUNT_MAX; count += COUNT_STEP) {
+    const rendererSplit = photosPerCategory(count, categories);
+    const engine = engineSplit(count, categories);
+    expect([...rendererSplit.entries()]).toEqual([...engine.entries()]);
+  }
+});
+
+// 5a.3 (S5.9b2): with the two «Смелая» categories too, from 10 photos up (below seven a category gets none, and a plan has no slot to count it by).
+test("runForm's split matches the engine planner's own over all seven built-ins too", () => {
+  const categories: readonly RunCategory[] = SceneCategory.options;
+  for (let count = 10; count <= COUNT_MAX; count += COUNT_STEP) {
     const rendererSplit = photosPerCategory(count, categories);
     const engine = engineSplit(count, categories);
     expect([...rendererSplit.entries()]).toEqual([...engine.entries()]);
@@ -250,4 +261,21 @@ test("a custom category whose photo kept no label still has a name", () => {
 test("an own scene is «Своя сцена» unless its photo kept another label", () => {
   expect(photoCategoryLabel({ category: "own" })).toBe("Своя сцена");
   expect(photoCategoryLabel({ category: "own", categoryName: "Идея" })).toBe("Идея");
+});
+
+// ---------- 5a.3 (S5.9b2, plan s5a3 §6.1, §11): the two «Смелая» categories ----------
+
+test("the two «Смелая» categories have their Russian labels, for their photos and their chips to come", () => {
+  expect([CATEGORY_LABEL.nightwear, CATEGORY_LABEL.beach]).toEqual(["Ночнушки и бельё", "Пляж и бассейн"]);
+  expect(photoCategoryLabel({ category: "nightwear" })).toBe("Ночнушки и бельё");
+  expect(photoCategoryLabel({ category: "beach" })).toBe("Пляж и бассейн");
+});
+
+test("the form's default categories are the five ordinary built-ins: the «Смелая» two are never on by default", () => {
+  expect([...DEFAULT_RUN_FORM.categories]).toEqual(["home", "travel", "shoot", "glam", "fit"]);
+});
+
+test("until their chips ship (S5.9g) the form never asks for a «Смелая» category: arranging drops one", () => {
+  expect(arrangeCategories(["beach", "home", CUSTOM_A, "nightwear"], [CUSTOM_A])).toEqual(["home", CUSTOM_A]);
+  expect(toggleCategory(["home"], "nightwear", [])).toEqual(["home"]);
 });

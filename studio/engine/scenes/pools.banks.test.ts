@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { isBoldCategory } from "../../shared/engine";
 import { BANKS } from "../../shared/scenes/banks";
 import { shotOf } from "../../shared/scenes/captures";
-import { BuiltInPoolSchema, POOLS } from "./pools";
+import { BoldPoolSchema, BuiltInPoolSchema, POOLS, validatePools } from "./pools";
 import { CATEGORIES } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -45,13 +46,18 @@ describe.each([...CATEGORIES])("POOLS.%s is the %s bank", (category) => {
         expect(activity.noLegwear).toBe(moment?.noLegwear);
         expect(activity.mirrorBack).toBe(moment?.mirrorBack);
         expect(activity.outfits).toEqual(moment?.outfits);
+        // 5a.3 (S5.9b2): the «Смелая» tags ride too.
+        expect(activity.level).toBe(moment?.level);
+        expect(activity.route).toBe(moment?.route);
+        expect(activity.coverage).toBe(moment?.coverage);
+        expect(activity.water).toBe(moment?.water);
       }
     }
   });
 
-  test("its outfits are the bank's outfit texts, with the leg and pin-only marks beside them", () => {
+  test("its outfits are the bank's outfit texts, with the leg, pin-only and «Смелая» marks beside them", () => {
     expect([...pool.outfits]).toEqual(bank.outfits.map((o) => o.text));
-    expect(pool.outfitInfo?.map((o) => [o.text, o.showsLegs === true, o.pinOnly === true])).toEqual(bank.outfits.map((o) => [o.text, o.showsLegs === true, o.pinOnly === true]));
+    expect(pool.outfitInfo?.map((o) => [o.text, o.showsLegs === true, o.pinOnly === true, o.level, o.route, o.coverage])).toEqual(bank.outfits.map((o) => [o.text, o.showsLegs === true, o.pinOnly === true, o.level, o.route, o.coverage]));
   });
 
   test("its deck of captures is the bank's, its stored shot deck the shots they ride on, and its legwear the bank's", () => {
@@ -60,8 +66,26 @@ describe.each([...CATEGORIES])("POOLS.%s is the %s bank", (category) => {
     expect(pool.legwear).toEqual(bank.legwear);
   });
 
-  test("it validates as a built-in pool", () => {
-    expect(BuiltInPoolSchema.safeParse(pool).success).toBe(true);
+  // 5a.3 (S5.9b2, plan s5a3 §6.4, H2): the schema is chosen by category; a «Смелая» pool is refused by the five's.
+  test("it validates as its category's pool: a built-in one, or a «Смелая» one that the built-in schema refuses", () => {
+    if (isBoldCategory(category)) {
+      expect(BoldPoolSchema.safeParse(pool).success).toBe(true);
+      expect(BuiltInPoolSchema.safeParse(pool).success).toBe(false);
+    } else expect(BuiltInPoolSchema.safeParse(pool).success).toBe(true);
+  });
+});
+
+describe("validatePools holds each pool to its category's schema", () => {
+  test("the shipped pools pass: the two «Смелая» ones only because they are held to their own schema", () => {
+    expect(() => validatePools()).not.toThrow();
+  });
+
+  test("a «Смелая» pool under an ordinary category's name is refused", () => {
+    expect(() => validatePools({ ...POOLS, home: POOLS.nightwear })).toThrow(/home:/);
+  });
+
+  test("a broken «Смелая» pool is refused by name", () => {
+    expect(() => validatePools({ ...POOLS, nightwear: { ...POOLS.nightwear, outfits: [...POOLS.nightwear.outfits, "a schoolgirl set"] } })).toThrow(/nightwear:/);
   });
 });
 

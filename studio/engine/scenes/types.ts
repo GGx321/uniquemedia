@@ -5,9 +5,9 @@
 import type { CustomCategoryId } from "../../shared/engine";
 
 /** Product decision, fixed: Home, Travel, Photoshoot, Glamour (the going-out
- *  outfits category, non-revealing in Stage 2), Fitness. Order here is canonical: a plan always emits its
- *  slots grouped by category in this order (planner.ts, "plan order"). */
-export const CATEGORIES = ["home", "travel", "photoshoot", "glamour", "fitness"] as const;
+ *  outfits category, non-revealing in Stage 2), Fitness; then (5a.3, S5.9b2) the two «Смелая» categories, «Ночнушки и бельё» and «Пляж и бассейн», named as
+ *  their contract ids. Order here is canonical: a plan always emits its slots grouped by category in this order (planner.ts, "plan order"). */
+export const CATEGORIES = ["home", "travel", "photoshoot", "glamour", "fitness", "nightwear", "beach"] as const;
 export type Category = (typeof CATEGORIES)[number];
 
 /**

@@ -1,6 +1,7 @@
 import {
   isCustomCategory,
   orderCategories,
+  ORDINARY_SCENE_CATEGORIES,
   SceneCategory,
   splitCount,
   type CategorySummary,
@@ -40,7 +41,7 @@ export function clampCount(count: number, delta: number): number {
 /** The mockup's opening state: 20 photos in every category, «Подача» «Обычная» (the owner's default), «Ножки» «Нет» (mockups 35, 36). */
 export const DEFAULT_RUN_FORM: RunForm = {
   count: 20,
-  categories: SceneCategory.options,
+  categories: ORDINARY_SCENE_CATEGORIES,
   level: "ordinary",
   legs: 0,
 };
@@ -52,6 +53,8 @@ export const CATEGORY_LABEL: Record<SceneCategory, string> = {
   shoot: "Улица",
   glam: "Гламур",
   fit: "Фитнес",
+  nightwear: "Ночнушки и бельё",
+  beach: "Пляж и бассейн",
 };
 
 /** What a custom category's photo is called when its sidecar kept no name, and an own scene's default name. */
@@ -118,7 +121,8 @@ export function sceneWriters(count: number, categories: readonly RunCategory[], 
  */
 export function arrangeCategories(on: readonly RunCategory[], customOrder: readonly CustomCategoryId[]): RunCategory[] {
   const wanted = new Set<string>(on);
-  return [...SceneCategory.options.filter((c) => wanted.has(c)), ...customOrder.filter((id) => wanted.has(id))];
+  // 5a.3 (S5.9b2): the five only; the «Смелая» two are offered with their chips and their gating (S5.9g).
+  return [...ORDINARY_SCENE_CATEGORIES.filter((c) => wanted.has(c)), ...customOrder.filter((id) => wanted.has(id))];
 }
 
 /** A chip clicked: `ref` on or off, the rest arranged as `arrangeCategories` does. */

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CategoryPoses, POOL_TEXT_MAX, youthWords } from "../../shared/engine";
+import { CategoryPoses, isBoldCategory, POOL_TEXT_MAX, youthWords } from "../../shared/engine";
 import { BANKS } from "../../shared/scenes/banks";
 import { withoutBoldExemptLook } from "../../shared/scenes/banks/boldRules";
 import { MOMENT_HAIRS, type CategoryBank, type LegwearSlot, type Moment, type Outfit } from "../../shared/scenes/banks/types";
@@ -162,6 +162,8 @@ export const POOLS: Record<Category, Pool> = {
   photoshoot: poolOfBank(BANKS.photoshoot),
   glamour: poolOfBank(BANKS.glamour),
   fitness: poolOfBank(BANKS.fitness),
+  nightwear: poolOfBank(BANKS.nightwear),
+  beach: poolOfBank(BANKS.beach),
 };
 
 // ---------- validation ----------
@@ -372,10 +374,11 @@ export const BoldPoolSchema = z
 /** Validates every category's pool; throws with every problem found (not
  *  just the first) so a malformed pool fails loudly and completely. Called
  *  eagerly below, so importing this module at all already checks the data. */
-export function validatePools(): void {
+export function validatePools(pools: Readonly<Record<Category, unknown>> = POOLS): void {
   const problems: string[] = [];
   for (const category of CATEGORIES) {
-    const result = BuiltInPoolSchema.safeParse(POOLS[category]);
+    // 5a.3 (S5.9b2, H2): a «Смелая» category's pool is held to its own schema; the five keep the built-in one.
+    const result = (isBoldCategory(category) ? BoldPoolSchema : BuiltInPoolSchema).safeParse(pools[category]);
     if (!result.success) problems.push(`${category}: ${z.prettifyError(result.error)}`);
   }
   if (problems.length > 0) throw new Error(`Studio scene pools are invalid:\n${problems.join("\n")}`);

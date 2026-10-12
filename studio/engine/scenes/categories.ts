@@ -14,6 +14,8 @@ const PLANNER_OF_REF = {
   shoot: "photoshoot",
   glam: "glamour",
   fit: "fitness",
+  nightwear: "nightwear",
+  beach: "beach",
 } as const satisfies Record<SceneCategory, Category>;
 
 /** The inverse of PLANNER_OF_REF; plan.test.ts pins that the two round-trip. */
@@ -23,6 +25,8 @@ const REF_OF_PLANNER = {
   photoshoot: "shoot",
   glamour: "glam",
   fitness: "fit",
+  nightwear: "nightwear",
+  beach: "beach",
 } as const satisfies Record<Category, SceneCategory>;
 
 /** The planner's name for a contract category; a custom id stays what it is. */
@@ -43,7 +47,8 @@ export function photoCategoryOf(category: PlannerCategory | "own"): PhotoCategor
 /**
  * The English name the writer is told each built-in category is. The ids stay (I5.33); the names follow the built-in set of 5a.2: «Дом», «Улица» (`photoshoot`),
  * «Виды» (`travel`), «Гламур», «Фитнес». The writer is never told «photoshoot» (its soft list), and a shorter name keeps the built-in writer pin's margin
- * (writer.custom.test.ts) where it was or higher.
+ * (writer.custom.test.ts) where it was or higher. 5a.3 (S5.9b2, plan s5a3 §6.1): «Ночнушки и бельё» is «Bedroom», «Пляж и бассейн» «Beach», no longer than the five's
+ * longest, so the pin holds (their slots are template-only and never reach the writer; the label is told only to a model that writes them).
  */
 export const BUILT_IN_LABEL: Record<Category, string> = {
   home: "Home",
@@ -51,6 +56,8 @@ export const BUILT_IN_LABEL: Record<Category, string> = {
   photoshoot: "Street",
   glamour: "Glamour",
   fitness: "Fitness",
+  nightwear: "Bedroom",
+  beach: "Beach",
 };
 
 /** What the writer is told a slot's category is. */

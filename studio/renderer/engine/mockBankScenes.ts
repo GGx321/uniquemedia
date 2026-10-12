@@ -11,7 +11,7 @@ import { GazeCueTally, momentAllowed, templateSentence, type TemplateSlot } from
 // own deterministic dealing (the engine's planner is not the mock's business; the parity suite compares counts, never picks), but every phrase is the bank's.
 
 /** The planner's (and the banks') names for the contract's short built-in refs. */
-export const BANK_OF: Readonly<Record<SceneCategory, BankCategory>> = { home: "home", travel: "travel", shoot: "photoshoot", glam: "glamour", fit: "fitness" };
+export const BANK_OF: Readonly<Record<SceneCategory, BankCategory>> = { home: "home", travel: "travel", shoot: "photoshoot", glam: "glamour", fit: "fitness", nightwear: "nightwear", beach: "beach" };
 
 /** What the mock draws for one built-in scene. */
 export interface BankDraw {

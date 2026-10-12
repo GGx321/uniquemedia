@@ -1,5 +1,5 @@
 import { type ReactNode, type RefObject, useId, useRef } from "react";
-import { MAX_VIDEOS_PER_AVATAR, SceneCategory, type CategoryRef, type CategorySummary, type LaunchMix, type LegsShare, type SceneLevel } from "../../../shared/engine";
+import { MAX_VIDEOS_PER_AVATAR, ORDINARY_SCENE_CATEGORIES, type CategoryRef, type CategorySummary, type LaunchMix, type LegsShare, type SceneLevel } from "../../../shared/engine";
 import { Icon } from "../../ui/Icon";
 import { OwnAnglesNote } from "../photos/AnglesLines";
 import { ownAnglesLine } from "../photos/categoryText";
@@ -57,7 +57,7 @@ export function SettingsColumn(props: SettingsColumnProps) {
   const shapes = wantedShapes(form.videosPerAvatar, form.mix);
   const mixNote = `На аватар ${shapes.single} · ${shapes.collage} · ${shapes.slides} · ${wide ? "цена — за видео из новых фото" : "цена — если фото новые"}`;
   const chips: { ref: CategoryRef; label: string }[] = [
-    ...SceneCategory.options.map((ref) => ({ ref, label: CATEGORY_LABEL[ref] })),
+    ...ORDINARY_SCENE_CATEGORIES.map((ref) => ({ ref, label: CATEGORY_LABEL[ref] })),
     ...(customs ?? []).map((c) => ({ ref: c.categoryId, label: c.name })),
   ];
   const chosen = chips.filter((c) => form.categories.includes(c.ref)).length;
