@@ -34,7 +34,7 @@ import { RenderFailure } from "../../renderQueue/queue";
 import { command, engineSettings, GOOD, MODERATION, NOW, network as portraitNetwork, portraitPng, portraitReply, startEngine, TRAITS, until } from "../../testing/engineHarness";
 import { fakeGate, match } from "../../testing/portraitKit";
 import { chatBody, type Reply } from "../../openrouter/testing/fakes";
-import { imageReply, network as launchNetwork, writerReply } from "../../testing/wiringKit";
+import { imageReplyFor, isSeedream, network as launchNetwork, writerReply, type SeedreamFault } from "../../testing/wiringKit";
 import { within } from "../../testing/within";
 import { acceptingVerify } from "../../videos/testing/kit";
 import { reportVideoClipFrames, writingRun } from "../../videos/testing/serviceKit";
@@ -147,6 +147,16 @@ export interface LaunchControl {
    * cannot write in its two answers takes the plain sentence, so the story reads the set the launch composed.
    */
   rejectWriter(times: number): void;
+  /**
+   * 5a.3 (S5.9f): the next `times` requests for a Seedream slot (a frame of the «Смелая» route) are refused by the model: the fake OpenRouter answers the 400 P-5a3 measured, the mock arms
+   * `refuseBoldNext`. A request for any other model is answered as before. Free and final: the slot ends `model-refused`.
+   */
+  refuseSeedream(times: number): void;
+  /**
+   * 5a.3 (S5.9f): the next `times` requests for a Seedream slot get a 2xx that holds no image and a bill (the fake answers `data: []` with a cost; the mock arms `emptyBoldNext`): the slot ends
+   * `model-empty`, settled. A refusal armed with `refuseSeedream` is met first.
+   */
+  emptySeedream(times: number): void;
   /** The owner quits the app and starts it again: a request in flight died with the process, and the engine reads the running launch as paused by the quit. */
   quit(): Promise<void>;
 }
@@ -644,6 +654,8 @@ export function mockRig(options: RigOptions = {}): ParityRig {
         rejectWriter: (times) => {
           for (let i = 0; i < times; i++) engine.failNextSceneAttempt("rejected");
         },
+        refuseSeedream: (times) => engine.refuseBoldNext(times),
+        emptySeedream: (times) => engine.emptyBoldNext(times),
         quit: async () => engine.quitLaunch(),
       },
       failNextRender: (at = "encode") =>
@@ -1085,6 +1097,22 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   let writerHung = false;
   /** S5.6d: how many writer requests are still to be answered with nothing usable (`LaunchControl.rejectWriter`). */
   let writerRejects = 0;
+  /** 5a.3 (S5.9f): how many requests for a Seedream slot are still to be refused, and then answered without an image (`LaunchControl.refuseSeedream`, `emptySeedream`). */
+  let seedreamRefusals = 0;
+  let seedreamEmpties = 0;
+  /** The fault the next request meets, if it is a request for Seedream: a refusal is met before an empty answer, and a request for any other model meets none and spends none. */
+  const seedreamFaultFor = (call: Parameters<typeof isSeedream>[0]): SeedreamFault | null => {
+    if (!isSeedream(call)) return null;
+    if (seedreamRefusals > 0) {
+      seedreamRefusals -= 1;
+      return "refuse";
+    }
+    if (seedreamEmpties > 0) {
+      seedreamEmpties -= 1;
+      return "empty";
+    }
+    return null;
+  };
   /** How far the launching engines' clock has moved on (ms): the owner was away. */
   let shifted = 0;
   const failureOf = (cause: "credits" | "key"): Reply => (cause === "credits" ? { status: 402, body: { error: { message: "Insufficient credits" } } } : { status: 401, body: { error: { message: "No auth credentials found" } } });
@@ -1101,7 +1129,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   const launchNet = launching
     ? launchNetwork({
         writer: (call) => meetFault() ?? (writerHung ? new Promise<Reply>(() => undefined) : writerRejects > 0 ? rejectedWriterReply() : writerReply(call)),
-        image: (_call, n) => meetFault() ?? imageReply(n),
+        image: (call, n) => meetFault() ?? imageReplyFor(call, n, seedreamFaultFor(call)),
       })
     : undefined;
   // Stage 5 (S5.3c): a rig with `portraits` tells the batch by the mock's outcome table. One slot at a time, so the n-th image the fake OpenRouter is asked for is slot n: the model refuses the
@@ -1398,6 +1426,12 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
         },
         rejectWriter: (times) => {
           writerRejects += times;
+        },
+        refuseSeedream: (times) => {
+          seedreamRefusals += times;
+        },
+        emptySeedream: (times) => {
+          seedreamEmpties += times;
         },
         quit: quitAndReopen,
       },
