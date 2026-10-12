@@ -44,19 +44,37 @@ test("seedream at the default resolution is still 1K", () => {
   expect(imageWorstCase(SEEDREAM_PRICE, { quality: null, refs: 1 })).toBe(48_000);
 });
 
-test("a quality-named 2K tier wins over a plain 2k and high_resolution", () => {
+test("the dearest of the matching 2K tiers is the price: the reserve is never below the bill of any of them", () => {
   const price: ImagePrice = {
     outputs: [{ variant: "high_resolution", micros: 90_000 }, { variant: "2k", micros: 80_000 }, { variant: "low_2k", micros: 70_000 }, { variant: "low_1k", micros: 40_000 }],
     inputImageMicros: 0,
   };
 
-  expect(imageWorstCase(price, { quality: "low", refs: 0, resolution: "2K" })).toBe(70_000);
+  expect(imageWorstCase(price, { quality: "low", refs: 0, resolution: "2K" })).toBe(90_000);
 });
 
-test("a plain 2k tier wins over high_resolution when no quality tier matches", () => {
+test("a plain 2k and a high_resolution tier: the dearer one", () => {
   const price: ImagePrice = { outputs: [{ variant: "high_resolution", micros: 90_000 }, { variant: "2k", micros: 80_000 }, { variant: "1k", micros: 50_000 }], inputImageMicros: 0 };
 
+  expect(imageWorstCase(price, { quality: null, refs: 0, resolution: "2K" })).toBe(90_000);
+});
+
+test("a 2k tier that is dearer than high_resolution is the price", () => {
+  const price: ImagePrice = { outputs: [{ variant: "high_resolution", micros: 70_000 }, { variant: "2k", micros: 80_000 }], inputImageMicros: 0 };
+
   expect(imageWorstCase(price, { quality: null, refs: 0, resolution: "2K" })).toBe(80_000);
+});
+
+test("2K tiers that differ only in case: the dearest", () => {
+  const price: ImagePrice = { outputs: [{ variant: "2K", micros: 95_000 }, { variant: "2k", micros: 80_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: null, refs: 0, resolution: "2K" })).toBe(95_000);
+});
+
+test("a quality tier of another quality is not a 2K price for this one's request, but a plain 2k still is", () => {
+  const price: ImagePrice = { outputs: [{ variant: "medium_2k", micros: 120_000 }, { variant: "2k", micros: 80_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: "low", refs: 0, resolution: "2K" })).toBe(80_000);
 });
 
 test("the 2K price is never the 1K base: a price list with no 2K tier is PRICE_UNAVAILABLE", () => {
@@ -127,12 +145,14 @@ test("a bold load refuses a Seedream endpoint that lists no 2K: PRICE_UNAVAILABL
   expect({ code: (error as MoneyError).code, scope: (error as MoneyError).scope }).toEqual({ code: "PRICE_UNAVAILABLE", scope: "bold" });
 });
 
-test("a bold load refuses a Seedream endpoint that takes no reference image", async () => {
-  const body = seedreamWith((p) => ({ ...p, input_references: { type: "range", min: 0, max: 0 } }));
+test("a Seedream endpoint that lost the reference image or 9:16 breaks the 1K fallback too: PRICE_UNAVAILABLE without the bold scope", async () => {
+  const noReference = seedreamWith((p) => ({ ...p, input_references: { type: "range", min: 0, max: 0 } }));
+  const no916 = seedreamWith((p) => ({ ...p, aspect_ratio: { type: "enum", values: ["1:1", "3:4"] } }));
 
-  const error = await load({ [SEEDREAM_URL]: body }, true).catch((e: unknown) => e);
-
-  expect((error as MoneyError).scope).toBe("bold");
+  for (const body of [noReference, no916]) {
+    const error = await load({ [SEEDREAM_URL]: body }, true).catch((e: unknown) => e);
+    expect([(error as MoneyError).code, (error as MoneyError).scope]).toEqual(["PRICE_UNAVAILABLE", undefined]);
+  }
 });
 
 test("a bold load prices the Seedream endpoint that lists 2K", async () => {

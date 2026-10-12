@@ -305,8 +305,9 @@ function isLargerThan1k(variant: string | null): boolean {
  * Never the 1K base and never a 1K tier or a 4K one: a price list that does not say what 2K costs is PRICE_UNAVAILABLE for the bold scope, before anything is reserved.
  */
 function image2kMicros(price: ImagePrice, quality: ImageQuality | null): number {
-  const find = (variant: string): number | undefined => price.outputs.find((o) => o.variant?.toLowerCase() === variant)?.micros;
-  const named = (quality === null ? undefined : find(`${quality}_2k`)) ?? find("2k") ?? find("high_resolution");
+  // The DEAREST of every line that names 2K (this quality's `<quality>_2k`, a plain `2k`, `high_resolution`; case ignored): the reserve is never below the bill of any of them.
+  const names = new Set([...(quality === null ? [] : [`${quality}_2k`]), "2k", "high_resolution"]);
+  const named = price.outputs.reduce<number | undefined>((max, o) => (o.variant !== null && names.has(o.variant.toLowerCase()) ? Math.max(max ?? 0, o.micros) : max), undefined);
   if (named === undefined) throw new MoneyError("PRICE_UNAVAILABLE", "the endpoints list no 2K output price (no <quality>_2k, 2k or high_resolution line): a 2K image cannot be reserved", { scope: "bold" });
   return named;
 }
@@ -572,12 +573,13 @@ export async function loadPriceBook(opts: {
       const entry = await liveOrFallback(model, FALLBACK_IMAGE, async () => {
         const body = await getJson(opts.fetch, `${base}/images/models/${model}/endpoints`, timeoutMs);
         const price = parseImageEndpoints(body, model);
-        // The bold check first: a Seedream endpoint that lost 2K, 9:16 or the reference fails both, and the scoped answer is the one that says what still works.
-        if (opts.boldShape === true && model === BOLD_IMAGE_MODEL && !endpointsAcceptPhotoRequest(body, "2K")) {
-          throw new MoneyError("PRICE_UNAVAILABLE", `${model}'s endpoints no longer accept the «Смелая» request (2K, 9:16 and one reference)`, { scope: "bold" });
-        }
+        // The 1K check first: a Seedream endpoint that lost 9:16 or the reference breaks the 1K moderation fallback of every run too, and that is not a bold-only failure
+        // (the card's state 55 says the rest still works). Only an endpoint whose 1K request is intact and whose 2K one is not is scoped to the bold route.
         if (opts.checkRequestShape === true && !endpointsAcceptPhotoRequest(body)) {
           throw new MoneyError("PRICE_UNAVAILABLE", `${model}'s endpoints no longer accept a photo run's request (1K, 9:16 and one reference)`);
+        }
+        if (opts.boldShape === true && model === BOLD_IMAGE_MODEL && !endpointsAcceptPhotoRequest(body, "2K")) {
+          throw new MoneyError("PRICE_UNAVAILABLE", `${model}'s endpoints no longer accept the «Смелая» request (2K, 9:16 and one reference)`, { scope: "bold" });
         }
         return price;
       });
