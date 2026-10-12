@@ -23,7 +23,7 @@ describe("the «Смелая» line of the «Фото» model row (mockup 56)", 
   test("stands under the row, in it, and describes the select after the row's own hint", async () => {
     await openSettings();
     const line = screen.getByText(LINE);
-    expect(line.closest(".row")).toBe(modelSelect().closest(".row"));
+    expect(line.closest(".row") === modelSelect().closest(".row")).toBe(true);
     expect(line.closest(".settings-bold-note")).not.toBeNull();
     const described = (modelSelect().getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean);
     expect(described.at(-1)).toBe(line.closest(".settings-bold-note")?.id);
