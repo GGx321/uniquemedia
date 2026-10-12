@@ -57,6 +57,14 @@ describe("the badge of a frame the gate marked", () => {
     expect(screen.getByText("лицо 0.81").className).toContain("photo-face-low");
   });
 
+  test("explains the pale badge of a marked frame in its title, and only that one", () => {
+    const { unmount } = render(<PhotoBadges photo={photo("p1", 0.81, true)} />);
+    expect(screen.getByText("лицо 0.81").getAttribute("title")).toBe("лицо закрыто или не видно — сходство не проверялось");
+    unmount();
+    render(<PhotoBadges photo={photo("p2", 0.81)} />);
+    expect(screen.getByText("лицо 0.81").hasAttribute("title")).toBe(false);
+  });
+
   test("keeps the plain style for a judged frame over the line", () => {
     render(<PhotoBadges photo={photo("p1", 0.81)} />);
     expect(screen.getByText("лицо 0.81").className.includes("photo-face-low")).toBe(false);

@@ -60,7 +60,12 @@ export function PhotoBadges({ photo }: { photo: PhotoSummary }) {
   return (
     <>
       {faceCos !== undefined ? (
-        <span className={low ? "pill mono photo-badge photo-face photo-face-low" : "pill mono photo-badge photo-face"}>{faceLabel(faceCos)}</span>
+        <span
+          className={low ? "pill mono photo-badge photo-face photo-face-low" : "pill mono photo-badge photo-face"}
+          title={photo.qa?.faceMarked === true ? "лицо закрыто или не видно — сходство не проверялось" : undefined}
+        >
+          {faceLabel(faceCos)}
+        </span>
       ) : (
         <span className="pill mono photo-badge photo-face-none">лицо не проверялось</span>
       )}
