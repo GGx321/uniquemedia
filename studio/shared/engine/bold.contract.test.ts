@@ -193,8 +193,9 @@ describe("the new scene reasons", () => {
     expect(JobResult.safeParse(result).success).toBe(true);
   });
 
+  // 2026-10-12, S5.9g round 2: worded as the owner-approved mockup 48#refused and every other launch reason («. Ничего не потрачено.»), not «— ничего не списано.».
   test("the refusal for a missing «Смелая» is free and names both categories", () => {
-    expect(SCENE_REASONS_RU["bold-level-needed"]).toBe("«Ночнушки и бельё» и «Пляж и бассейн» рисуются только с подачей «Смелая» — ничего не списано.");
+    expect(SCENE_REASONS_RU["bold-level-needed"]).toBe("«Ночнушки и бельё» и «Пляж и бассейн» рисуются только с подачей «Смелая». Ничего не потрачено.");
     expect(LAUNCH_REASONS_RU["bold-level-needed"]).toBe(SCENE_REASONS_RU["bold-level-needed"]);
   });
 

@@ -121,7 +121,8 @@ describe("the end of a run with «Смелая» frames that ended (gap B: count
 // The window never sends a «Смелая» category without «Смелая» (PhotosBold, AutopilotBold), so the engine says this only when another window raced it (mockup
 // 48#refused): the card's ErrorNotice shows `errorText`, which must be the contract's sentence.
 describe("`bold-level-needed` is the contract's text, wherever it shows (§13.2, exact)", () => {
-  const TEXT = "«Ночнушки и бельё» и «Пляж и бассейн» рисуются только с подачей «Смелая» — ничего не списано.";
+  // 2026-10-12, S5.9g round 2: the owner-approved mockup 48#refused's words («. Ничего не потрачено.», as every LAUNCH_REASONS_RU ends), not «— ничего не списано.».
+  const TEXT = "«Ночнушки и бельё» и «Пляж и бассейн» рисуются только с подачей «Смелая». Ничего не потрачено.";
 
   test("a refused run or compose says it as a scene reason", () => {
     expect(errorText({ code: "VALIDATION", sceneReason: "bold-level-needed" })).toBe(TEXT);
