@@ -25,7 +25,7 @@ export const SCENE_REVIEW_KEY = "studio.photos.sceneReview";
 export type SwitchStorage = Pick<Storage, "getItem" | "setItem">;
 
 /** The viewer's storage, or null where reading it throws (a blocked profile). */
-export function viewerStorage(): SwitchStorage | null {
+export function viewerStorage(): (SwitchStorage & Pick<Storage, "removeItem">) | null {
   try {
     return window.localStorage;
   } catch {

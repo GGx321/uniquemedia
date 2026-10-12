@@ -66,15 +66,6 @@ export const LEVEL_KEY_PREFIX = "studio.photos.level.";
 
 type LevelStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
-/** The viewer's storage, or null where reading it throws (a blocked profile). */
-export function levelStorage(): LevelStorage | null {
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-}
-
 /** The avatar's «Подача»: «Кокетливая» only when it was chosen on this machine; anything else, or a storage that cannot be read, reads «Обычная». */
 export function readLevel(storage: LevelStorage | null, avatarId: string): SceneLevel {
   if (storage === null) return "ordinary";
