@@ -75,6 +75,24 @@ describe("the word gate has one home (static)", () => {
     expect(mock?.code).not.toMatch(/REVEALING_WORDS|youthWords|swimsuit/);
   });
 
+  // Review: a renamed list (/\b(thong|bikini|lingerie)\b/) slipped past the name checks above. The mock files hold no revealing or youth vocabulary at all,
+  // under any name; the one known hit is a sample vibe in the mock engine's seed data, which no word gate reads.
+  const VOCABULARY =
+    /\b(?:bikinis?|swimsuits?|swimwear|lingerie|thongs?|bras?|bralettes?|panties|panty|underwear|briefs|topless|naked|stockings?|slip dress(?:es)?|babydolls?|girls?|girlish|teens?|teenage\w*|schoolgirls?|schools?|child\w*|kids?|petite|young\w*|baby|babies|minors?|uniforms?)\b/gi;
+  const vocabularyIn = (files: readonly { path: string; code: string }[]): string[] =>
+    files.flatMap((f) => [...new Set(Array.from(f.code.matchAll(VOCABULARY), (m) => m[0].toLowerCase()))].map((word) => `${f.path}: ${word}`)).sort();
+
+  test("the vocabulary scan catches a renamed list (negative control)", () => {
+    expect(vocabularyIn([{ path: "x.ts", code: "const OUT = /\\b(thong|bikini|lingerie)\\b/i;" }])).toEqual(["x.ts: bikini", "x.ts: lingerie", "x.ts: thong"]);
+    expect(vocabularyIn([{ path: "x.ts", code: "const OK = /\\b(zebra|bramble)\\b/i;" }])).toEqual([]);
+  });
+
+  test("the renderer's mock files name no revealing or youth word", () => {
+    const mocks = PRODUCTION.filter((f) => /^renderer\/engine\/mock[^/]*\.tsx?$/.test(f.path));
+    expect(mocks.length).toBeGreaterThan(3);
+    expect(vocabularyIn(mocks)).toEqual(["renderer/engine/mockEngine.ts: girl"]);
+  });
+
   test("the bold exemption is named only in boldRules.ts and read only by the content line", () => {
     expect(filesWith(/\bBOLD_EXEMPT_YOUTH\b/)).toEqual(["shared/scenes/banks/boldRules.ts", "shared/scenes/contentLine.ts"]);
     expect(filesWith(/babydoll/i)).toEqual(["shared/scenes/banks/boldRules.ts", "shared/scenes/contentLine.ts"]);
