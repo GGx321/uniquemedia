@@ -111,6 +111,96 @@ const DENIM_BOTTOM_WORDS = new RegExp(
   "i",
 );
 
+/** A skirt, shorts or a skort, by our name for it. */
+export type Bottom = "skirt" | "shorts" | "skort";
+
+// C3′ (the owner's verdict, 2026-10-12): Grok draws an unnamed «mini skirt» or «shorts» as DENIM (R3#03, R4#04). The wording probe (c3fix 3a/3b) drew none once the
+// outfit named a fabric, or said «her skirt is not denim». So every bank skirt or shorts names its fabric (banks/schema.ts), and an outfit that does not (a custom
+// pool's, the writer's, an idea's) gets the clause in the assembled prompt (engine/scenes/assembler.ts).
+
+/** What a skirt or shorts may be made of: the fabric words. Never denim or jean (the owner's ban), nor twill or chambray, which draw as denim. */
+const FABRIC_WORDS = new Set([
+  "cotton", "linen", "jersey", "knit", "knitted", "wool", "woollen", "woolen", "leather", "suede", "corduroy", "tweed", "lycra", "spandex", "nylon", "fleece", "terry",
+  "waffle", "sequin", "sequins", "sequined", "sequinned", "chiffon", "tulle", "lace", "mesh", "satin", "silk", "velvet", "crepe", "polyester", "modal", "seersucker",
+  "poplin", "ribbed",
+]);
+const DENIM_WORDS = new Set(["denim", "jean", "jeans"]);
+/** Where a garment's own words end, reading back from its noun: a word that joins two garments, an article, another garment, or the clause around it. */
+const GARMENT_STOPS = new Set([
+  "and", "or", "with", "over", "under", "beneath", "plus", "into", "tucked", "paired", "worn", "layered", "a", "an", "the", "her", "his", "some", "wearing", "in", "on",
+  "at", "by", "while", "she", "is", "are", "jacket", "jackets", "shirt", "shirts", "t-shirt", "t-shirts", "tee", "tees", "top", "tops", "blouse", "blouses", "vest",
+  "vests", "coat", "coats", "dress", "dresses", "hoodie", "hoodies", "sweater", "sweaters", "cardigan", "cardigans", "jumpsuit", "jumpsuits", "tank", "cami",
+]);
+/** «a skirt in light linen», «shorts made of soft cotton»: the fabric may follow the garment. */
+const MADE_OF = new Set(["in", "of", "from", "made"]);
+/** How far a garment's own words reach on either side of its noun. */
+const GARMENT_WORDS_MAX = 4;
+
+/** The bottom a token names, or null. «mini» alone is a skirt («a pleated mini»), never the «mini» of «a mini dress» or «a mini skirt» (the next token names it). */
+function bottomOf(token: string, next: string | undefined): Bottom | null {
+  if (/^(?:(?:mini-?)?skirts?|miniskirts?)$/.test(token)) return "skirt";
+  if (/^minis?$/.test(token)) return next !== undefined && /^(?:dress(?:es)?|skirts?)$/.test(next) ? null : "skirt";
+  if (/^skorts?$/.test(token)) return "skort";
+  if (token === "shorts" || /^bermudas?$/.test(token)) return "shorts";
+  return null;
+}
+
+const isWord = (token: string | undefined): token is string => token !== undefined && /^[a-z0-9]/.test(token);
+/** A word and its hyphenated parts («cotton-blend»). */
+const partsOf = (token: string): string[] => [token, ...token.split("-")];
+
+/**
+ * C3′: the bottoms a text names without their fabric, by our name, each once and in the order first named; empty when every skirt, shorts or skort it names says
+ * what it is made of. A denim one is the owner's ban (`isOwnerBannedOutfit`), not an unnamed one, and one the text already says is not denim is named.
+ */
+export function unfabricBottomsIn(text: string): Bottom[] {
+  const tokens = text.toLowerCase().match(/[a-z0-9]+(?:[-'][a-z0-9]+)*|[^\sa-z0-9]/g) ?? [];
+  const found: Bottom[] = [];
+  const saidNotDenim = new Set<Bottom>();
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i] ?? "";
+    let kind = bottomOf(token, tokens[i + 1]);
+    let end = i;
+    // «hot pants» are shorts.
+    if (kind === null && token === "hot" && tokens[i + 1] === "pants") {
+      kind = "shorts";
+      end = i + 1;
+    }
+    if (kind === null) continue;
+    const own: string[] = [];
+    for (let j = i - 1; j >= 0 && own.length < GARMENT_WORDS_MAX; j--) {
+      const word = tokens[j];
+      if (!isWord(word) || GARMENT_STOPS.has(word)) break;
+      own.push(word);
+    }
+    let k = end + 1;
+    if (tokens[k] === "made") k++;
+    if (MADE_OF.has(tokens[k] ?? "")) {
+      for (let j = k + 1; j < tokens.length && j <= k + GARMENT_WORDS_MAX; j++) {
+        const word = tokens[j];
+        if (!isWord(word)) break;
+        own.push(word);
+      }
+    }
+    // «her shorts are not denim» (the clause itself): every one of that kind is named.
+    if (/^(?:is|are)$/.test(tokens[end + 1] ?? "") && tokens[end + 2] === "not" && tokens[end + 3] === "denim") {
+      saidNotDenim.add(kind);
+      continue;
+    }
+    const parts = own.flatMap(partsOf);
+    if (parts.some((w) => DENIM_WORDS.has(w) || FABRIC_WORDS.has(w))) continue;
+    if (!found.includes(kind)) found.push(kind);
+    i = end;
+  }
+  return found.filter((kind) => !saidNotDenim.has(kind));
+}
+
+/** C3′: what the assembled prompt says of the bottoms an outfit names without their fabric (the probe's wording, c3fix 3a): «her skirt is not denim». */
+export function notDenimClause(bottoms: readonly Bottom[]): string {
+  const plural = bottoms.length > 1 || bottoms[0] === "shorts";
+  return `her ${bottoms.join(" and ")} ${plural ? "are" : "is"} not denim`;
+}
+
 /** I5.35: a motion is small or slow. */
 export const MOTION_SMALL = /\b(slowly|a little|a bit|slightly|gently|small)\b/i;
 

@@ -1,5 +1,76 @@
 import { describe, expect, test } from "bun:test";
-import { isOwnerBannedOutfit, LEGS_UNSUITED_OUTFITS, LEGWEAR_CLASH_WORDS } from "./words";
+import { isOwnerBannedOutfit, LEGS_UNSUITED_OUTFITS, LEGWEAR_CLASH_WORDS, notDenimClause, unfabricBottomsIn, type Bottom } from "./words";
+
+// C3′ (the owner's verdict, 2026-10-12): Grok draws an unnamed «mini skirt» or «shorts» as DENIM (R3#03 «a hoodie, a mini skirt and sneakers», R4#04 «a tank top and
+// shorts»); the wording probe drew no denim once the outfit named a fabric, or said «her skirt is not denim». The detector finds the bottoms a text leaves unnamed.
+describe("unfabricBottomsIn: a skirt, shorts or a skort named without its fabric", () => {
+  test.each<[string, Bottom[]]>([
+    ["a hoodie, a mini skirt and sneakers", ["skirt"]],
+    ["a tank top and shorts", ["shorts"]],
+    ["a pleated mini and a fitted top", ["skirt"]],
+    ["a miniskirt and a tee", ["skirt"]],
+    ["a mini-skirt and a tee", ["skirt"]],
+    ["a tee and a skort", ["skort"]],
+    ["a crop top and pajama shorts", ["shorts"]],
+    ["a cropped hoodie and bike shorts", ["shorts"]],
+    ["a black pleated mini skirt", ["skirt"]],
+    ["a tee and hot pants", ["shorts"]],
+    ["a tee and bermudas", ["shorts"]],
+    ["a halter top and a midi skirt, and lounge shorts", ["skirt", "shorts"]],
+    ["On a terrace, she is reading, wearing a linen shirt and shorts, smiling.", ["shorts"]],
+  ])("«%s» leaves %p unnamed", (text, bottoms) => {
+    expect(unfabricBottomsIn(text)).toEqual(bottoms);
+  });
+
+  test.each([
+    "a tank top and cotton sleep shorts",
+    "a crop top and lycra bike shorts",
+    "grey jersey lounge shorts and a tee",
+    "a hoodie, a knit mini and sneakers",
+    "a white top and leather mini skirt",
+    "a sequin mini skirt and a crop top",
+    "a tank top, linen skirt and boots",
+    "a skirt in light linen and a tee",
+    "shorts made of soft cotton",
+    "a cotton-blend skirt",
+    "a fitted mini dress",
+    "a red mini dress and heels",
+    "a white tee and jeans",
+    "a denim jacket and a linen skirt",
+    "nothing to wear here",
+  ])("«%s» names every bottom's fabric, or none at all", (text) => {
+    expect(unfabricBottomsIn(text)).toEqual([]);
+  });
+
+  test.each(["a tee and denim shorts", "a denim mini skirt", "a skirt in light denim", "jean shorts and a tee"])("denim «%s» is the owner's ban, not an unnamed bottom", (text) => {
+    expect(unfabricBottomsIn(text)).toEqual([]);
+    expect(isOwnerBannedOutfit(text)).toBe(true);
+  });
+
+  test("a bottom the text already says is not denim is named", () => {
+    expect(unfabricBottomsIn("a tank top and shorts, her shorts are not denim, smiling")).toEqual([]);
+    expect(unfabricBottomsIn("a mini skirt and a tee, her skirt is not denim")).toEqual([]);
+  });
+
+  test("each bottom is told once, in the order the text names them", () => {
+    expect(unfabricBottomsIn("a skort, shorts, a skirt and more shorts")).toEqual(["skort", "shorts", "skirt"]);
+  });
+});
+
+describe("notDenimClause: the probe's wording (c3fix 3a), by the bottoms", () => {
+  test.each<[Bottom[], string]>([
+    [["skirt"], "her skirt is not denim"],
+    [["shorts"], "her shorts are not denim"],
+    [["skort"], "her skort is not denim"],
+    [["skirt", "shorts"], "her skirt and shorts are not denim"],
+  ])("%p: «%s»", (bottoms, clause) => {
+    expect(notDenimClause(bottoms)).toBe(clause);
+  });
+
+  test("the clause is no denim garment itself, by the owner's ban", () => {
+    for (const bottoms of [["skirt"], ["shorts"], ["skort"], ["skirt", "shorts"]] as Bottom[][]) expect(isOwnerBannedOutfit(notDenimClause(bottoms))).toBe(false);
+  });
+});
 
 // Review L2 of S5.6a: the owner's «no denim shorts and no denim skirts» holds nowhere, so the check is exported for S5.6b to filter a custom pool's
 // outfits too; and a moment with one heel in it clashes with legwear as one with heels does.
