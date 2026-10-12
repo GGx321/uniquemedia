@@ -173,23 +173,39 @@ describe("a launch's page", () => {
     expect(launchMeta(view, undefined)).toContain(` · 10 из 20${NBSP}видео · `);
   });
 
+  // S5.7c (plan s5a2 §6.1, mockup 31): the history drops the angles phrase; a launch made with «Подача» says it after its categories (a brighter bit), one
+  // from before says none.
   test("the settings line says what the launch ran with", () => {
-    const draft = { ...LAUNCH_DRAFT, videosPerAvatar: 10, mix: { single: 70, collage: 20, slides: 10 }, categories: ["home", "travel"] as const, poses: { profile: true, back: false }, library: true, generate: true, sceneReview: true, stickers: false };
-    expect(settingsBits({ ...draft, categories: [...draft.categories] }, () => null)).toEqual([
+    const { poses: _toggles, ...fresh } = LAUNCH_DRAFT;
+    const draft = { ...fresh, videosPerAvatar: 10, mix: { single: 70, collage: 20, slides: 10 }, categories: ["home", "travel"] as const, level: "flirty" as const, library: true, generate: true, sceneReview: true, stickers: false };
+    const bits = settingsBits({ ...draft, categories: [...draft.categories] }, () => null);
+    expect(bits.map((bit) => bit.text)).toEqual([
       "10 на аватар",
       "одно фото / коллаж / слайды · 70 / 20 / 10",
       "Дом, Виды",
-      "анфас и три четверти, профиль",
+      "Подача: кокетливая",
       "сначала библиотека, недостающее — новыми",
       "сцены на проверку",
       "музыка: тренды + мои",
       "без стикеров",
     ]);
-    const custom = settingsBits({ ...draft, categories: ["cat-0a1b2c3d4e5f", "cat-ffffffffffff"], library: false, generate: true, sceneReview: false, stickers: true }, (id) => (id === "cat-0a1b2c3d4e5f" ? "Кофейни Парижа" : null));
+    expect(bits.filter((bit) => bit.strong === true).map((bit) => bit.text)).toEqual(["Подача: кокетливая"]);
+    const custom = settingsBits({ ...draft, categories: ["cat-0a1b2c3d4e5f", "cat-ffffffffffff"], library: false, generate: true, sceneReview: false, stickers: true }, (id) => (id === "cat-0a1b2c3d4e5f" ? "Кофейни Парижа" : null)).map((bit) => bit.text);
     expect(custom).toContain("Кофейни Парижа, своя категория");
     expect(custom).toContain("только новые фото");
     expect(custom).toContain("сцены без проверки");
     expect(custom).toContain("со стикерами");
+  });
+
+  test("«Подача: обычная» for a launch made with «Подача» left at its default", () => {
+    const { poses: _toggles, ...fresh } = LAUNCH_DRAFT;
+    expect(settingsBits(fresh, () => null).map((bit) => bit.text)).toContain("Подача: обычная");
+  });
+
+  test("a launch from before «Подача» (it carries «Ракурсы») names neither its angles nor a «Подача»", () => {
+    const old = settingsBits({ ...LAUNCH_DRAFT, poses: { profile: true, back: true } }, () => null).map((bit) => bit.text);
+    expect(old.some((text) => text.startsWith("Подача"))).toBe(false);
+    expect(old.some((text) => /анфас|профиль|со спины|ракурс/i.test(text))).toBe(false);
   });
 
   test("the log's count says when the engine cut it", () => {

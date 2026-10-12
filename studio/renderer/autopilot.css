@@ -365,13 +365,19 @@
   line-height: 1.35;
 }
 
-/* The CS.8b line under «Ракурсы» (AnglesLines.tsx), here the full width of the column and allowed to wrap. */
-.ap-angles .photos-angles-own {
-  margin: -2px 0 2px;
+/* S5.7c (mockup 30): «Подача», its segments at the row's end like the other controls; «Кокетливая»'s count reads a little brighter than the notes. */
+.ap-level .gen-seg {
+  margin-left: auto;
 }
 
-.ap-angles .photos-angles-own-text {
-  white-space: normal;
+.ap-row-note.gen-cap {
+  margin-top: -2px;
+  color: var(--text-2);
+}
+
+/* The own-angles line under it (AnglesLines.tsx), the full width of the column. */
+.ap-level .gen-angle-owners {
+  margin: -2px 0 2px;
 }
 
 .ap-stepper {
@@ -1721,6 +1727,11 @@
 
 .ap-launch-bits > span {
   white-space: nowrap;
+}
+
+/* S5.7c (mockup 31): «Подача», the launch page's new bit, a little brighter than the muted line. */
+.ap-launch-bits > .ap-bit-new {
+  color: var(--text-2);
 }
 
 /* «История запусков»: one card of rows, each a button to its launch. */

@@ -26,10 +26,12 @@ describe("the price column when the app writes the scenes", () => {
     expect(within(card()).queryByText("их пишет приложение") === null).toBe(true);
   });
 
-  test("shows no scenes row when the model writes and the review is off", async () => {
+  // S5.7c (mockup 26, changed on purpose): with the review off the scenes row now shows the model's price too, and says the model writes them (which
+  // category, when the library names one: PhotosModelCategory.test.tsx).
+  test("shows the model's price when the model writes and the review is off", async () => {
     await openWriterPriced(75_000, "off");
-    await within(card()).findByRole("button", { name: /^Сгенерировать 20 фото · до \$/ });
-    expect(() => priceRow("Сцены")).toThrow();
+    await waitFor(() => expect(priceRow("Сцены")).toBe("Сцены ≈ $0.009 · до $0.075"));
+    expect(within(card()).getByText("текст пишет модель")).toBeDefined();
     expect(within(card()).queryByText("их пишет приложение") === null).toBe(true);
   });
 });
@@ -52,8 +54,10 @@ describe("the scenes column when the app writes the scenes", () => {
     await waitFor(() => expect(column().querySelector(".scene-col-model")?.textContent).toBe("20 · пишет приложение"));
   });
 
+  // S5.7c (mockup 26, changed on purpose): the run here holds the built-ins, which the app writes, so with a model's price the column names both writers
+  // (the model alone: PhotosModelCategory.test.tsx).
   test("names the model beside the count when the model writes", async () => {
     await openWriterPriced(75_000, "off");
-    await waitFor(() => expect(column().querySelector(".scene-col-model")?.textContent).toMatch(/^20 · \S*grok/));
+    await waitFor(() => expect(column().querySelector(".scene-col-model")?.textContent).toMatch(/^20 · пишет приложение и \S*grok/));
   });
 });

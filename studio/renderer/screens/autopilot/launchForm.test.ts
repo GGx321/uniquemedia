@@ -11,6 +11,7 @@ import {
   moveHandle,
   readMix,
   selectAll,
+  settingsKey,
   stepVideos,
   toggleAvatar,
   wantedShapes,
@@ -115,18 +116,29 @@ describe("the remembered mix", () => {
 describe("the form", () => {
   const order = ["a", "b", "c"];
 
-  test("a fresh form chooses nobody, ten videos, the everyday categories, the library and generation on, no stickers", () => {
+  // S5.7c (plan s5a2 §6.1): the form holds «Подача», «Обычная» by default, and no «Ракурсы».
+  test("a fresh form chooses nobody, ten videos, the everyday categories, «Подача» «Обычная», the library and generation on, no stickers", () => {
     expect(defaultForm(false)).toEqual({
       avatarIds: [],
       videosPerAvatar: 10,
       mix: DEFAULT_MIX,
       categories: ["home", "travel", "shoot", "fit"],
-      poses: { profile: false, back: false },
+      level: "ordinary",
       library: true,
       generate: true,
       sceneReview: false,
       stickers: false,
     });
+  });
+
+  test("the settings to plan carry no poses, and «Подача» only when it is «Кокетливая»", () => {
+    const chosen = { ...defaultForm(true), avatarIds: ["a"] };
+    const ordinary = launchSettings(chosen, []);
+    expect(ordinary === null ? [] : Object.keys(ordinary).sort()).toEqual(["avatarIds", "categories", "generate", "library", "mix", "sceneReview", "stickers", "videosPerAvatar"]);
+    const flirty = launchSettings({ ...chosen, level: "flirty" }, []);
+    expect(flirty?.level).toBe("flirty");
+    // A plan belongs to one «Подача»: the two are asked apart.
+    expect(flirty !== null && ordinary !== null && settingsKey(flirty) !== settingsKey(ordinary)).toBe(true);
   });
 
   test("avatars keep the list's order however they were clicked; «Все» takes every one", () => {

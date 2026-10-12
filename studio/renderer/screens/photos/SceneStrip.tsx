@@ -11,7 +11,7 @@ import { PORTRAITS_DRAWING_REASON, portraitsDrawing } from "../look/lookModel";
 import { modelName, paidBlockedReason } from "./runForm";
 import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, setPriceKey, StackButton, useImagesPrice, Why } from "./scenePaid";
 import { setAction, setCategoryTags, tallyScenes } from "./sceneReview";
-import { approveReason, approveTitle, continueTitle, MODELS_LINE_TITLE, priceSourceText, SCENES_CHANGED_APPROVE, stepScenes, stripAngles } from "./sceneText";
+import { approveReason, approveTitle, continueTitle, MODELS_LINE_TITLE, priceSourceText, SCENES_CHANGED_APPROVE, stepScenes, STRIP_ANGLE, stripLook } from "./sceneText";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL } from "./shared";
 import { usePaidAction } from "./usePaidAction";
 
@@ -252,8 +252,9 @@ export function SceneStrip({
   const shownTags = expanded ? tags : tags.slice(0, fit);
   const hidden = tags.length - shownTags.length;
   const meta = setMetaText(set);
-  // CS.8 (README contract note 9): the set's own angles, and who does not follow them — categories with angles of their own, own scenes.
-  const angles = stripAngles(set);
+  // CS.8 (README contract note 9), S5.7c (mockup 28): the set's «Подача», the angle from the scene, and who keeps their own — categories with angles of
+  // their own, own scenes.
+  const angles = stripLook(set);
   const owners = useOwnersDisclosure();
   const models = modelSegments(view, set.textModel);
   const switchLabel = `${ids}-sw`;
@@ -300,7 +301,13 @@ export function SceneStrip({
             <p className="scene-strip-lock">
               <Icon name="lock" size={12} strokeWidth={2.4} />
               <span>
-                {angles.lead}
+                {angles.level !== null && (
+                  <>
+                    <span className="scene-strip-level">{angles.level}</span>
+                    {" · "}
+                  </>
+                )}
+                {STRIP_ANGLE}
                 {angles.first !== null && (
                   <>
                     ; у «{angles.first}»

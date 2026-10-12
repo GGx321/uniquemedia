@@ -23,15 +23,25 @@ export class WriterPricedEngine extends MockEngine {
   }
 }
 
-/** Mia's Photos screen on a `WriterPricedEngine` whose writer costs `writerWorstMicros`, with «Сцены на проверку» as asked. */
-export async function openWriterPriced(writerWorstMicros: number, review: "on" | "off", options: MockEngineOptions = {}) {
+/** The options every engine of these tests starts from: Mia, a manual clock, no latency; the test's own after them. */
+export function writerPricedOptions(options: MockEngineOptions = {}): MockEngineOptions {
+  return { scheduler: new ManualScheduler(), latencyMs: 0, avatars: [MIA], ...options };
+}
+
+/** Mia's Photos screen on `engine`, with «Сцены на проверку» as asked. */
+export async function showPhotos(engine: MockEngine, review: "on" | "off"): Promise<void> {
   localStorage.setItem(SCENE_REVIEW_KEY, review);
-  const engine = new WriterPricedEngine({ scheduler: new ManualScheduler(), latencyMs: 0, avatars: [MIA], ...options });
-  engine.writerWorstMicros = writerWorstMicros;
   render(<App client={mockEngineClient(engine)} />);
   await screen.findByRole("heading", { level: 2, name: "Mia" });
   await openSection("Фото");
   await screen.findByRole("heading", { level: 1, name: "Mia" });
   await flush();
+}
+
+/** Mia's Photos screen on a `WriterPricedEngine` whose writer costs `writerWorstMicros`, with «Сцены на проверку» as asked. */
+export async function openWriterPriced(writerWorstMicros: number, review: "on" | "off", options: MockEngineOptions = {}) {
+  const engine = new WriterPricedEngine(writerPricedOptions(options));
+  engine.writerWorstMicros = writerWorstMicros;
+  await showPhotos(engine, review);
   return engine;
 }

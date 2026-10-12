@@ -1,8 +1,10 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { plan } from "../../../engine/scenes/planner";
 import { contractCategory } from "../../../engine/runs/plan";
 import { plannerCategoryOf } from "../../../engine/scenes";
 import { RunRequest, SceneCategory, splitCount } from "../../../shared/engine";
+import { covers } from "../../../shared/scenes/custom";
+import { BED_POOL, category, PARIS_POOL } from "./categoryScreenKit";
 import {
   arrangeCategories,
   CATEGORY_LABEL,
@@ -16,6 +18,7 @@ import {
   requestKey,
   runRequest,
   sameCategories,
+  sceneWriters,
   toggleCategory,
   type RunCategory,
 } from "./runForm";
@@ -73,8 +76,26 @@ test("runForm's split matches the engine's for a subset of categories too, order
 
 // ---------- 2K removed (owner decision 2026-09-29) ----------
 
-test("runRequest asks for nothing about resolution: only the avatar, the count, the categories and the poses", () => {
-  expect(Object.keys(runRequest("avatar-0001", DEFAULT_RUN_FORM)).sort()).toEqual(["avatarId", "categories", "count", "poses"]);
+// S5.7c (plan s5a2 §6.1, changed on purpose): the window no longer sends «Ракурсы» — the angle comes from the scene — and sends «Подача» only when it is not
+// the default, so a stored request carries `level` only when it differs (I5.27).
+test("runRequest asks for nothing about resolution or poses: only the avatar, the count and the categories", () => {
+  expect(DEFAULT_RUN_FORM.level).toBe("ordinary");
+  expect(Object.keys(runRequest("avatar-0001", DEFAULT_RUN_FORM)).sort()).toEqual(["avatarId", "categories", "count"]);
+});
+
+test("runRequest adds «Подача» when it is «Кокетливая»", () => {
+  const request = runRequest("avatar-0001", { ...DEFAULT_RUN_FORM, level: "flirty" });
+  expect(Object.keys(request).sort()).toEqual(["avatarId", "categories", "count", "level"]);
+  expect(request.level).toBe("flirty");
+  expect(RunRequest.safeParse(request).success).toBe(true);
+});
+
+test("an ordinary and a flirty request are priced apart: their keys differ", () => {
+  const ordinary = runRequest("avatar-0001", DEFAULT_RUN_FORM);
+  const flirty = runRequest("avatar-0001", { ...DEFAULT_RUN_FORM, level: "flirty" });
+  expect(requestKey(ordinary)).not.toBe(requestKey(flirty));
+  // An old request that still names «Ракурсы» keys like the same request without them: poses change no plan (I5.26).
+  expect(requestKey({ ...ordinary, poses: { profile: true, back: true } })).toBe(requestKey(ordinary));
 });
 
 // ---------- CS.1: custom categories on the form (chips for them come with CS.3) ----------
@@ -155,6 +176,31 @@ test("sameCategories compares two lists element by element", () => {
   expect(sameCategories(["home", FIRST], [FIRST, "home"])).toBe(false);
   expect(sameCategories(["home"], ["home", FIRST])).toBe(false);
   expect(sameCategories([], [])).toBe(true);
+});
+
+// ---------- S5.7c (mockup 26): who writes a run's scenes ----------
+
+describe("sceneWriters: the app's template writes the built-ins and the custom categories it covers; the model the others", () => {
+  const covered = category(1, "Домашнее у кровати", BED_POOL);
+  const uncovered = category(2, "Кофейни Парижа", PARIS_POOL);
+
+  test("the built-ins alone: the app", () => {
+    expect(sceneWriters(20, ["home", "glam"], [])).toEqual({ app: true, model: [] });
+  });
+
+  test("a covered custom category is the app's too, an uncovered one the model's by name", () => {
+    expect(covers(covered.pool)).toBe(true);
+    expect(covers(uncovered.pool)).toBe(false);
+    expect(sceneWriters(20, ["home", covered.categoryId, uncovered.categoryId], [covered, uncovered])).toEqual({ app: true, model: ["Кофейни Парижа"] });
+    expect(sceneWriters(20, [uncovered.categoryId], [covered, uncovered])).toEqual({ app: false, model: ["Кофейни Парижа"] });
+  });
+
+  test("a category with no photo of the run writes nothing; one the library does not hold is nobody's", () => {
+    // 1 photo over two categories: the custom one gets none.
+    expect(sceneWriters(1, ["home", uncovered.categoryId], [uncovered])).toEqual({ app: true, model: [] });
+    expect(sceneWriters(20, ["cat-gone-for-good"], [])).toEqual({ app: false, model: [] });
+    expect(sceneWriters(0, ["home"], [])).toEqual({ app: false, model: [] });
+  });
 });
 
 // ---------- a photo's category label (gallery, viewer, montage bin) ----------

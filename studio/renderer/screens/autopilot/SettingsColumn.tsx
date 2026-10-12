@@ -1,8 +1,9 @@
 import { type ReactNode, type RefObject, useId, useRef } from "react";
-import { MAX_VIDEOS_PER_AVATAR, SceneCategory, type CategoryRef, type CategorySummary, type LaunchMix } from "../../../shared/engine";
+import { MAX_VIDEOS_PER_AVATAR, SceneCategory, type CategoryRef, type CategorySummary, type LaunchMix, type SceneLevel } from "../../../shared/engine";
 import { Icon } from "../../ui/Icon";
-import { CardAnglesLine } from "../photos/AnglesLines";
+import { OwnAnglesNote } from "../photos/AnglesLines";
 import { ownAnglesLine } from "../photos/categoryText";
+import { ANGLE_FROM_SCENE_SHORT, BOLD_LABEL, BOLD_LATER, LEVEL_OPTIONS } from "../photos/level";
 import { CATEGORY_LABEL } from "../photos/runForm";
 import { MIN_VIDEOS_PER_AVATAR, wantedShapes, type LaunchForm } from "./launchForm";
 import { useOverflows } from "./layout";
@@ -10,8 +11,9 @@ import { MixControl } from "./MixControl";
 import type { MusicLine } from "./planModel";
 
 // S4.9a: column 2 of «Автопилот», «Настройки запуска» (AutopilotS4.dc.html): videos per avatar, the shape mix, the scene categories (built-in and the
-// owner's own), «Ракурсы», the library and generation switches, «Сцены на проверку», «Музыка», «GIF-стикеры» and «Предел запуска». No «Текст на видео»
-// (owner decision 8). While a launch runs these are its settings, read only, under a line that says so.
+// owner's own), «Подача» (S5.7c, mockup 30: it replaced «Ракурсы» — the angle comes from the scene), the library and generation switches, «Сцены на
+// проверку», «Музыка», «GIF-стикеры» and «Предел запуска». No «Текст на видео» (owner decision 8). While a launch runs these are its settings, read only,
+// under a line that says so.
 
 export interface SettingsColumnProps {
   readonly form: LaunchForm;
@@ -29,7 +31,9 @@ export interface SettingsColumnProps {
   readonly onMix: (mix: LaunchMix) => void;
   readonly onMixReset: () => void;
   readonly onCategory: (ref: CategoryRef) => void;
-  readonly onPose: (pose: "profile" | "back") => void;
+  readonly onLevel: (level: SceneLevel) => void;
+  /** «Кокетливая»'s count of flirty new frames (mockup 30), or null while «Обычная» is on. */
+  readonly levelCaption: string | null;
   readonly onSwitch: (which: "library" | "generate" | "sceneReview" | "stickers") => void;
   /** S4.9c: the music chip's window is open, and the chip that opens and closes it. */
   readonly musicOpen: boolean;
@@ -133,23 +137,51 @@ export function SettingsColumn(props: SettingsColumnProps) {
               </div>
             </div>
 
-            <div className="ap-row ap-row-wrap ap-angles">
+            {/* S5.7c (mockup 30): «Подача» where «Ракурсы» was; read only, a launch's own stays checked whatever is clicked. */}
+            <div className="ap-row ap-row-wrap ap-level">
               <div className="rl">
-                <b id={id("ang")}>Ракурсы</b>
-                <span id={id("ang-hint")}>анфас и три четверти — всегда</span>
+                <b id={id("lvl")}>Подача</b>
+                <span id={id("lvl-hint")}>{ANGLE_FROM_SCENE_SHORT}</span>
               </div>
-              <div className="ap-chips" role="group" aria-labelledby={id("ang")} aria-describedby={ownAngles !== null ? `${id("ang-hint")} ${id("ang-own")}` : id("ang-hint")}>
-                {(["profile", "back"] as const).map((pose) => {
-                  const on = form.poses[pose];
+              <div
+                className="seg choice-options gen-seg"
+                role="radiogroup"
+                aria-labelledby={id("lvl")}
+                aria-describedby={props.levelCaption !== null ? `${id("lvl-hint")} ${id("lvl-cap")}` : id("lvl-hint")}
+              >
+                {LEVEL_OPTIONS.map((option) => {
+                  const on = form.level === option.value;
                   return (
-                    <button key={pose} type="button" className={on ? "chip chip-on" : "chip"} aria-pressed={on} aria-disabled={off} onClick={readOnly ? undefined : () => props.onPose(pose)}>
-                      {pose === "profile" ? "Профиль" : "Со спины"}
-                    </button>
+                    <label key={option.value} className="choice-option">
+                      <input
+                        type="radio"
+                        className="choice-input"
+                        name={id("lvl-radio")}
+                        value={option.value}
+                        checked={on}
+                        aria-disabled={off}
+                        onChange={() => {
+                          if (!readOnly) props.onLevel(option.value);
+                        }}
+                      />
+                      <span className={on ? "choice-face on" : "choice-face"}>{option.label}</span>
+                    </label>
                   );
                 })}
+                <label className="choice-option gen-option-later" title={BOLD_LATER}>
+                  <input type="radio" className="choice-input" name={id("lvl-radio")} value="bold" disabled aria-describedby={id("bold")} />
+                  <span className="choice-face">{BOLD_LABEL}</span>
+                </label>
               </div>
-              <span className="faint ap-row-note">профиль и со спины — без проверки сходства</span>
-              {ownAngles !== null && <CardAnglesLine line={ownAngles} describedId={id("ang-own")} />}
+              {props.levelCaption !== null && (
+                <span id={id("lvl-cap")} className="ap-row-note gen-cap">
+                  {props.levelCaption}
+                </span>
+              )}
+              <span id={id("bold")} className="faint ap-row-note">
+                {BOLD_LATER}
+              </span>
+              {ownAngles !== null && <OwnAnglesNote line={ownAngles} className="ap-row-note" />}
             </div>
 
             <SwitchRow

@@ -9,13 +9,14 @@ import { useNavigate } from "../../navigation";
 import { PORTRAITS_DRAWING_REASON, portraitsDrawing } from "../look/lookModel";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
-import { CardAnglesLine } from "./AnglesLines";
+import { OwnAnglesNote } from "./AnglesLines";
 import { CategoryCreateDialog, type CreateDialogClose, type CreateDialogStart } from "./CategoryCreateDialog";
 import { ownAnglesLine } from "./categoryText";
 import { CategoryCardNotices } from "./CategoryNotices";
 import { CategoryRow } from "./CategoryRow";
 import { CategorySheet } from "./CategorySheet";
 import type { LaunchLink } from "./launchSet";
+import { ANGLE_FROM_SCENE, BOLD_LABEL, BOLD_LATER, flirtyCaption, flirtyFrames, LEVEL_OPTIONS } from "./level";
 import { LaunchSetStrip } from "./LaunchSetStrip";
 import { RecomposeDialog } from "./RecomposeDialog";
 import {
@@ -31,6 +32,7 @@ import {
   type RunForm,
   runRequest,
   sameCategories,
+  sceneWriters,
   toggleCategory,
 } from "./runForm";
 import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, StackButton, useImagesPrice, Why } from "./scenePaid";
@@ -99,7 +101,7 @@ interface GenerateCardProps {
 
 /**
  * The generation card: how many photos, in which
- * categories and poses, and the price before anything is spent. The free
+ * categories and with which «Подача», and the price before anything is spent. The free
  * `runs.estimate` is asked for on every change of the request; the button
  * carries its worst case («до $X») and sends exactly that as
  * `acceptedWorstMicros`, for exactly the request it was priced for.
@@ -274,7 +276,8 @@ export function GenerateCard({
   // The open set (writing, stopped, ready) collapses the card to the set's strip; a used one leaves the card composing again.
   const openSet = sceneSet !== undefined && sceneSet !== null && sceneSet.status !== "used" ? sceneSet : null;
   // An empty set draws from no category (ReviewEmpty: «без категорий — только свои сцены»).
-  const composeRequest = { avatarId: avatar.avatarId, count: form.count, categories: form.count === 0 ? [] : request.categories, poses: request.poses };
+  // S5.7c: no poses (the angle comes from the scene); «Подача» only when it is not the default, as the run's request.
+  const composeRequest = { avatarId: avatar.avatarId, count: form.count, categories: form.count === 0 ? [] : request.categories, ...(request.level === undefined ? {} : { level: request.level }) };
   // Composed only once the slice says the avatar has no open set (a second one would be refused), at the request and the model it is priced for.
   // The writer's price is asked (free) with review off too: it is what tells «Сцены · бесплатно» (the app writes them) from a model's price. Only a
   // review-on card ever sends it.
@@ -336,6 +339,16 @@ export function GenerateCard({
   // S5.3d review M3: her reference-portrait batch claims her like a run: a run or a compose now would be refused IN_FLIGHT.
   const portraitsBusy = portraitsDrawing(view, avatar.avatarId);
   const perCategory = photosPerCategory(form.count, categories);
+  // S5.7c (mockup 26): who writes the scenes, under their price — the app, or the model for the categories its template does not cover.
+  const writers = sceneWriters(form.count, categories, customs ?? []);
+  const scenesSub =
+    form.count === 0 || compose.estimate === null
+      ? null
+      : writerFree
+        ? WRITTEN_BY_APP
+        : writers.model.length > 0
+          ? `для ${writers.model.map((name) => `«${name}»`).join(" и ")} текст пишет модель`
+          : "текст пишет модель";
   const blockedReason =
     paidBlockedReason(view) ??
     (avatar.status !== "active"
@@ -445,10 +458,13 @@ export function GenerateCard({
 
   const hintId = `${ids}-why`;
   const priceFailedId = `${ids}-price`;
-  const anglesLabel = `${ids}-angles`;
-  const anglesHint = `${ids}-angles-hint`;
-  const anglesOwn = `${ids}-angles-own`;
-  // CS.8 (CatChipsAngles; README contract note 10): the run's custom categories whose pool keeps angles of its own — the toggles above do not govern them.
+  const levelLabel = `${ids}-level`;
+  const levelName = `${ids}-level-radio`;
+  const levelCaption = `${ids}-level-cap`;
+  const boldCaption = `${ids}-bold`;
+  // S5.7c (mockup 25): «Кокетливая» says how many of the frames it makes flirty; with nothing to draw (an empty set) it says nothing.
+  const flirty = form.level === "flirty" && form.count > 0 ? flirtyCaption(flirtyFrames(form.count, request.categories), form.count) : null;
+  // CS.8, S5.7c (mockup 27): the run's custom categories whose pool keeps angles of its own — the angle note above does not speak for them.
   const ownAngles = ownAnglesLine((customs ?? []).flatMap((c) => (categories.includes(c.categoryId) && c.pool.poses !== undefined ? [{ name: c.name, poses: c.pool.poses }] : [])));
   const countLabel = `${ids}-count`;
   const imageModel = view.settings ? modelName(view.settings.imageModel) : null;
@@ -565,36 +581,43 @@ export function GenerateCard({
             </div>
           </div>
 
-          <div className="photos-angles">
-            <span id={anglesLabel} className="lbl">
-              Ракурсы
+          {/* S5.7c (mockups 24–27): «Подача» where «Ракурсы» was; the angle comes from the scene, said once under it. */}
+          <div className="gen-row">
+            <span id={levelLabel} className="lbl">
+              Подача
             </span>
-            <div className="photos-chips-row" role="group" aria-labelledby={anglesLabel} aria-describedby={ownAngles !== null ? `${anglesHint} ${anglesOwn}` : anglesHint}>
-              {["Анфас", "Три четверти"].map((label) => (
-                <button key={label} type="button" className="chip chip-on photos-chip-fixed" aria-pressed="true" aria-disabled="true">
-                  <Icon name="lock" size={11} strokeWidth={2.4} />
-                  {label}
-                </button>
-              ))}
-              {(["profile", "back"] as const).map((pose) => {
-                const on = form.poses[pose];
+            <div className="seg choice-options gen-seg" role="radiogroup" aria-labelledby={levelLabel} aria-describedby={flirty !== null ? levelCaption : undefined}>
+              {LEVEL_OPTIONS.map((option) => {
+                const on = form.level === option.value;
                 return (
-                  <button
-                    key={pose}
-                    type="button"
-                    className={on ? "chip chip-on" : "chip"}
-                    aria-pressed={on}
-                    onClick={() => onFormChange({ ...form, poses: { ...form.poses, [pose]: !on } })}
-                  >
-                    {pose === "profile" ? "Профиль" : "Со спины"}
-                  </button>
+                  <label key={option.value} className="choice-option">
+                    <input type="radio" className="choice-input" name={levelName} value={option.value} checked={on} onChange={() => onFormChange({ ...form, level: option.value })} />
+                    <span className={on ? "choice-face on" : "choice-face"}>{option.label}</span>
+                  </label>
                 );
               })}
+              <label className="choice-option gen-option-later" title={BOLD_LATER}>
+                <input type="radio" className="choice-input" name={levelName} value="bold" disabled aria-describedby={boldCaption} />
+                <span className="choice-face">{BOLD_LABEL}</span>
+              </label>
             </div>
-            <span id={anglesHint} className="faint photos-note photos-angles-hint">
-              профиль и со спины — только если разрешите, без проверки сходства
-            </span>
-            {ownAngles !== null && <CardAnglesLine line={ownAngles} describedId={anglesOwn} />}
+            <div className="gen-row-hint">
+              {flirty !== null && (
+                <p id={levelCaption} className="gen-cap">
+                  {flirty}
+                </p>
+              )}
+              <p id={boldCaption} className="gen-cap gen-cap-quiet">
+                {BOLD_LATER}
+              </p>
+            </div>
+          </div>
+          <div className="gen-angle">
+            <p className="gen-angle-note">
+              <Icon name="info" size={12} strokeWidth={2.2} />
+              <span>{ANGLE_FROM_SCENE}</span>
+            </p>
+            {ownAngles !== null && <OwnAnglesNote line={ownAngles} />}
           </div>
         </fieldset>
 
@@ -609,16 +632,17 @@ export function GenerateCard({
           {review && composeSteps.map((row, i) => (
             <Fragment key={row.n}>
               <Step row={row} />
-              {i === 0 && writerFree && <div className="mono faint scene-total-sub">{WRITTEN_BY_APP}</div>}
+              {i === 0 && scenesSub !== null && <p className="gen-scenes-sub">{scenesSub}</p>}
             </Fragment>
           ))}
-          {!review && writerFree && (
+          {/* S5.7c (mockup 26): with the review off too, what the scenes cost — nothing when the app writes them, the model's price when it writes some. */}
+          {!review && form.count > 0 && compose.estimate !== null && (
             <>
               <div className="mono photos-cost-row">
                 <span>Сцены</span>
-                <span>бесплатно</span>
+                <span>{writerFree ? "бесплатно" : `${about(compose.estimate.expectedMicros)} · ${ceiling(compose.estimate.worstMicros)}`}</span>
               </div>
-              <div className="mono faint scene-total-sub">{WRITTEN_BY_APP}</div>
+              {scenesSub !== null && <p className="gen-scenes-sub">{scenesSub}</p>}
             </>
           )}
           <div className="mono photos-cost-row">

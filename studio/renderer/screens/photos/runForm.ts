@@ -1,4 +1,15 @@
-import { isCustomCategory, orderCategories, SceneCategory, splitCount, type CustomCategoryId, type PhotoSummary, type RunRequest } from "../../../shared/engine";
+import {
+  isCustomCategory,
+  orderCategories,
+  SceneCategory,
+  splitCount,
+  type CategorySummary,
+  type CustomCategoryId,
+  type PhotoSummary,
+  type RunRequest,
+  type SceneLevel,
+} from "../../../shared/engine";
+import { covers } from "../../../shared/scenes/custom";
 import type { EngineView } from "../../engine/store";
 import { paidStop, restartStopText } from "../../lib/paidStop";
 
@@ -8,8 +19,8 @@ export type RunCategory = RunRequest["categories"][number];
 export interface RunForm {
   count: number;
   categories: readonly RunCategory[];
-  /** Beyond front and three-quarter, which are always on (T5c, owner decision). */
-  poses: NonNullable<RunRequest["poses"]>;
+  /** «Подача» (S5.7c): the angle comes from the scene, so the form holds no poses. */
+  level: SceneLevel;
 }
 
 /** The mockup's stepper: 5 to 100 photos in steps of 5 (the contract allows 1–100). */
@@ -22,11 +33,11 @@ export function clampCount(count: number, delta: number): number {
   return Math.min(COUNT_MAX, Math.max(COUNT_MIN, count + delta));
 }
 
-/** The mockup's opening state: 20 photos in every category, profile and back not allowed. */
+/** The mockup's opening state: 20 photos in every category, «Подача» «Обычная» (the owner's default). */
 export const DEFAULT_RUN_FORM: RunForm = {
   count: 20,
   categories: SceneCategory.options,
-  poses: { profile: false, back: false },
+  level: "ordinary",
 };
 
 /** The mockup's own labels for the five built-ins; the scene tags and the gallery use them too. */
@@ -64,6 +75,35 @@ export function photosPerCategory(count: number, categories: readonly RunCategor
   return new Map(splitCount(count, categories).map(({ ref, count: n }) => [ref, n]));
 }
 
+/** Who writes a run's scenes (S5.7c, mockup 26): the app's template for some of them, and the model for the named categories. */
+export interface SceneWriters {
+  readonly app: boolean;
+  /** The custom categories the template does not cover, by name, in the run's order. */
+  readonly model: readonly string[];
+}
+
+/**
+ * Who writes the scenes of `count` photos over `categories` (S5.7c, mockup 26): the app's template writes a built-in category and a custom one whose pool
+ * it covers (`covers`, the engine's own test, I5.30); the model writes the others. A category with no photo in the split writes nothing; one the library
+ * does not hold is nobody's (the run would not ask for it).
+ */
+export function sceneWriters(count: number, categories: readonly RunCategory[], customs: readonly CategorySummary[]): SceneWriters {
+  let app = false;
+  const model: string[] = [];
+  for (const [ref, n] of photosPerCategory(count, categories)) {
+    if (n === 0) continue;
+    if (!isCustomCategory(ref)) {
+      app = true;
+      continue;
+    }
+    const custom = customs.find((c) => c.categoryId === ref);
+    if (custom === undefined) continue;
+    if (covers(custom.pool)) app = true;
+    else model.push(custom.name);
+  }
+  return { app, model };
+}
+
 /**
  * The form's categories as a run asks for them (CS.3): the built-ins that are on, in their canonical order, then the custom
  * ones that are on, in the library's creation order (`customOrder`, as `categories.list` answers it). `runRequest` keeps the
@@ -86,19 +126,22 @@ export function sameCategories(a: readonly RunCategory[], b: readonly RunCategor
   return a.length === b.length && a.every((c, i) => c === b[i]);
 }
 
-/** The exact request a price is asked for and a run is started with; categories in the contract's order, so equal forms give equal requests. */
+/**
+ * The exact request a price is asked for and a run is started with; categories in the contract's order, so equal forms give equal requests. S5.7c: no
+ * poses (the angle comes from the scene), and `level` only when it is not the default — a stored request then carries it only when it differs (I5.27).
+ */
 export function runRequest(avatarId: string, form: RunForm): RunRequest {
   return {
     avatarId,
     count: form.count,
     categories: orderCategories(form.categories),
-    poses: { profile: form.poses.profile, back: form.poses.back },
+    ...(form.level === "flirty" ? { level: "flirty" as const } : {}),
   };
 }
 
-/** A stable identity for a request: an estimate belongs to exactly one. */
+/** A stable identity for a request: an estimate belongs to exactly one. Poses are not in it: they change no plan (I5.26). */
 export function requestKey(request: RunRequest): string {
-  return JSON.stringify([request.avatarId, request.count, request.categories, request.poses?.profile ?? false, request.poses?.back ?? false]);
+  return JSON.stringify([request.avatarId, request.count, request.categories, request.level ?? "ordinary"]);
 }
 
 /** Why a paid photo command cannot be sent right now (the wizard's own order and wording), or null. */

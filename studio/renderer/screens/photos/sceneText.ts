@@ -215,22 +215,39 @@ export function cyrillicHint(origin: SceneOrigin): string {
 
 // ---------- the ⟳ price popover ----------
 
-/** ⟳ «Другая сцена» on a planned scene redraws all of it (owner decision 3): the copy names every part that changes. */
-export function redrawText(category: string, sceneId: number, angles?: { readonly poses: readonly ScenePose[]; readonly shot: PoolShot }): string {
-  const tail = `Сцена ${sceneNumber(sceneId)} заменится, когда новая будет готова; если не выйдет — останется как есть.`;
-  if (angles === undefined) return `Новое место, наряд, действие и время дня из «${category}» и новый текст. ${tail}`;
-  // CS.8 (README contract note 4): the angle is drawn again too, from the category's list as it is now; a selfie or a mirror scene that draws an angle away
-  // from the camera takes another shot of the deck.
-  const away = (["back", "profile"] as const).find((pose) => angles.poses.includes(pose));
-  const phone = angles.shot === "selfie" ? "селфи" : angles.shot === "mirror" ? "в зеркале" : null;
-  const clause = away !== undefined && phone !== null ? `; ${away === "back" ? "со спины" : "в профиль"} ${phone} не снять — тогда кадр сменится` : "";
-  return `Новое место, наряд, действие, время дня и ракурс из «${category}» и новый текст${clause}. ${tail}`;
+/** How ⟳ «Другая сцена» will be written: by the app's template (free, at once), and whether the scene it replaces is flirty («Подача» is kept). */
+export interface RedrawLook {
+  readonly free: boolean;
+  readonly flirty: boolean;
 }
 
-/** The strip's «Ракурсы» line, in parts: the set's own angles, the categories that keep their own, and whether own scenes take theirs from the idea. */
-export interface StripAngles {
-  /** «Ракурсы: анфас, три четверти». */
-  readonly lead: string;
+/**
+ * ⟳ «Другая сцена» on a planned scene redraws all of it (owner decision 3): the copy names every part that changes. S5.7c (mockup 28): a scene the app's
+ * template writes is redrawn free and at once — its words say so, and the angle comes from the category; a flirty scene says its «Подача» stays.
+ */
+export function redrawText(category: string, sceneId: number, angles?: { readonly poses: readonly ScenePose[]; readonly shot: PoolShot }, look: RedrawLook = { free: false, flirty: false }): string {
+  // CS.8 (README contract note 4): the angle is drawn again too, from the category's list as it is now; a selfie or a mirror scene that draws an angle away
+  // from the camera takes another shot of the deck.
+  const away = angles === undefined ? undefined : (["back", "profile"] as const).find((pose) => angles.poses.includes(pose));
+  const phone = angles?.shot === "selfie" ? "селфи" : angles?.shot === "mirror" ? "в зеркале" : null;
+  const turn = away !== undefined && phone !== null ? `${away === "back" ? "со спины" : "в профиль"} ${phone} не снять — тогда кадр сменится` : null;
+  const kept = look.flirty ? " Подача та же — кокетливая." : "";
+  if (look.free) {
+    const cannot = turn === null ? "" : ` ${turn.charAt(0).toUpperCase()}${turn.slice(1)}.`;
+    return `Новое место, наряд, действие, время дня и ракурс из категории «${category}» и новый текст — его пишет приложение, поэтому бесплатно.${cannot}${kept} Сцена ${sceneNumber(sceneId)} заменится сразу.`;
+  }
+  const tail = `Сцена ${sceneNumber(sceneId)} заменится, когда новая будет готова; если не выйдет — останется как есть.`;
+  if (angles === undefined) return `Новое место, наряд, действие и время дня из «${category}» и новый текст.${kept} ${tail}`;
+  return `Новое место, наряд, действие, время дня и ракурс из «${category}» и новый текст${turn === null ? "" : `; ${turn}`}.${kept} ${tail}`;
+}
+
+/**
+ * The strip's line, in parts (S5.7c, mockup 28): the set's «Подача», then — the angle coming from the scene — who keeps angles of their own, and whether own
+ * scenes take theirs from the idea.
+ */
+export interface StripLook {
+  /** «Подача: кокетливая» / «Подача: обычная»; null for a set made before «Подача» (it stored «Ракурсы» toggles instead, which change nothing now). */
+  readonly level: string | null;
   /** The first category of the set's snapshot with angles of its own, null with none. */
   readonly first: string | null;
   /** How many more such categories. */
@@ -241,15 +258,18 @@ export interface StripAngles {
   readonly own: boolean;
 }
 
+/** The angle's words in the strip's line. */
+export const STRIP_ANGLE = "Ракурс — из сцены";
+
 /**
- * README contract note 9 (required for CS.8b): the set's own angles, then who does not follow them — the categories of the set's snapshot with angles of their
- * own (named, their lists not repeated: they are in «Мои категории») and own scenes, whose angle the model takes from the idea (an idea write running counts).
+ * README contract note 9 (CS.8b), S5.7c: the set's «Подача», then who does not take the angle from the scene alone — the categories of the set's snapshot with
+ * angles of their own (named, their lists not repeated: they are in «Мои категории») and own scenes, whose angle the model takes from the idea (an idea write
+ * running counts).
  */
-export function stripAngles(set: SceneSetView): StripAngles {
-  const poses: ScenePose[] = ["front", "three-quarter", ...(set.poses?.profile === true ? (["profile"] as const) : []), ...(set.poses?.back === true ? (["back"] as const) : [])];
+export function stripLook(set: SceneSetView): StripLook {
   const rows = set.categories.flatMap((c) => (c.poses === undefined ? [] : [{ name: c.name ?? CUSTOM_FALLBACK, list: posesText(c.poses) }]));
   return {
-    lead: `Ракурсы: ${posesText(poses)}`,
+    level: set.level === "flirty" ? "Подача: кокетливая" : set.poses === undefined ? "Подача: обычная" : null,
     first: rows[0]?.name ?? null,
     more: Math.max(0, rows.length - 1),
     rows,
@@ -258,10 +278,10 @@ export function stripAngles(set: SceneSetView): StripAngles {
 }
 
 /** The strip's line as one sentence, without «Настройки набора не меняются…» after it. */
-export function stripAnglesText(set: SceneSetView): string {
-  const parts = stripAngles(set);
+export function stripLookText(set: SceneSetView): string {
+  const parts = stripLook(set);
   const categories = parts.first === null ? "" : `; у «${parts.first}»${parts.more > 0 ? ` и ещё ${parts.more}` : ""} — свои`;
-  return `${parts.lead}${categories}${parts.own ? "; у своих сцен — по описанию" : ""}`;
+  return `${parts.level === null ? "" : `${parts.level} · `}${STRIP_ANGLE}${categories}${parts.own ? "; у своих сцен — по описанию" : ""}`;
 }
 
 /** The idea form's hint under «Сколько · Кадр», by the shot chosen (null: «Авто»; README «Copy», «Idea hint by shot»; contract notes 6-7). */
@@ -529,7 +549,7 @@ export function recomposeLosses(set: SceneSetView, replaced: number): string[] {
   const edited = set.scenes.filter((s) => s.edited).length;
   const lines: string[] = [];
   if (tally.own > 0) lines.push(`${countOf(tally.own, ["своя сцена", "свои сцены", "своих сцен"])} — ${tally.own === 1 ? "написана" : "написаны"} по описанию, за ${tally.own === 1 ? "неё" : "них"} заплачено;`);
-  if (replaced > 0) lines.push(`${countOf(replaced, ["сцена, заменённая", "сцены, заменённые", "сцен, заменённых"])} моделью («Другая сцена»);`);
+  if (replaced > 0) lines.push(`${countOf(replaced, ["сцена, заменённая", "сцены, заменённые", "сцен, заменённых"])} («Другая сцена»);`);
   const touched = [edited > 0 ? countOf(edited, ["правка текста", "правки текста", "правок текста"]) : null, tally.removed > 0 ? countOf(tally.removed, ["убранная сцена", "убранные сцены", "убранных сцен"]) : null].filter((t): t is string => t !== null);
   if (touched.length > 0) lines.push(`${touched.join(" и ")};`);
   const last = lines.at(-1);

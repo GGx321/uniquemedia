@@ -6,6 +6,7 @@ import {
   type CategoryRef,
   type CustomCategoryId,
   type LaunchMix,
+  type SceneLevel,
   type VideoShape,
 } from "../../../shared/engine";
 import { arrangeCategories } from "../photos/runForm";
@@ -19,7 +20,8 @@ export interface LaunchForm {
   readonly videosPerAvatar: number;
   readonly mix: LaunchMix;
   readonly categories: readonly CategoryRef[];
-  readonly poses: { readonly profile: boolean; readonly back: boolean };
+  /** «Подача» (S5.7c): the angle comes from the scene, so the form holds no «Ракурсы». */
+  readonly level: SceneLevel;
   /** «Сначала свободные фото из библиотеки». */
   readonly library: boolean;
   /** «Догенерировать недостающие». */
@@ -50,7 +52,7 @@ export function defaultForm(sceneReview: boolean, mix: LaunchMix = DEFAULT_MIX):
     videosPerAvatar: DEFAULT_VIDEOS_PER_AVATAR,
     mix,
     categories: DEFAULT_CATEGORIES,
-    poses: { profile: false, back: false },
+    level: "ordinary",
     library: true,
     generate: true,
     sceneReview,
@@ -206,7 +208,8 @@ export interface LaunchSettingsInput {
   videosPerAvatar: number;
   mix: LaunchMix;
   categories: CategoryRef[];
-  poses: { profile: boolean; back: boolean };
+  /** «Подача», only when it is not the default (I5.27: a launch file then carries it only when it differs). */
+  level?: "flirty";
   library: boolean;
   generate: boolean;
   sceneReview: boolean;
@@ -225,7 +228,7 @@ export function launchSettings(form: LaunchForm, customOrder: readonly CustomCat
     videosPerAvatar: form.videosPerAvatar,
     mix: { ...form.mix },
     categories,
-    poses: { profile: form.poses.profile, back: form.poses.back },
+    ...(form.level === "flirty" ? { level: "flirty" as const } : {}),
     library: form.library,
     generate: form.generate,
     sceneReview: form.sceneReview,

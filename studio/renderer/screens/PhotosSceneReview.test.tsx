@@ -88,7 +88,7 @@ describe("compose", () => {
     await flush();
     const sent = callsOf(engine, "scenes.compose");
     expect(sent).toHaveLength(1);
-    expect(sent[0]?.payload).toEqual({ avatarId: MIA.avatarId, count: 20, categories: [LLM_ONLY_REF], poses: { profile: false, back: false }, acceptedWorstMicros: 2 * ATTEMPT });
+    expect(sent[0]?.payload).toEqual({ avatarId: MIA.avatarId, count: 20, categories: [LLM_ONLY_REF], acceptedWorstMicros: 2 * ATTEMPT });
     await flush();
     expect(card().getAttribute("aria-label")).toBe("Генерация фото · набор сцен");
     expect(goButton().textContent).toBe("Составляем… · до $0.075");
@@ -113,7 +113,7 @@ describe("compose", () => {
     await flush();
     const sent = callsOf(engine, "scenes.compose");
     expect(sent).toHaveLength(1);
-    expect(sent[0]?.payload).toEqual({ avatarId: MIA.avatarId, count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], poses: { profile: false, back: false }, acceptedWorstMicros: 0 });
+    expect(sent[0]?.payload).toEqual({ avatarId: MIA.avatarId, count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], acceptedWorstMicros: 0 });
     runAll(scheduler);
     await flush();
     await waitFor(() => expect(goButton().textContent).toBe(nb("Отрисовать 20 фото · до $3.00")));
@@ -181,7 +181,8 @@ describe("a ready set: the strip and «Отрисовать»", () => {
     expect(set?.revision).toBeGreaterThan(1);
     expect(card().textContent).toContain("Набор сцен");
     expect(within(card()).getByRole("list", { name: "Категории набора" }).textContent).toContain("Только модель");
-    expect(card().textContent).toContain("Ракурсы: анфас, три четверти.");
+    // S5.7c (mockup 28): a set this window composed stores no «Ракурсы»: the line names its «Подача» and the angle from the scene.
+    expect(card().textContent).toContain("Подача: обычная · Ракурс — из сцены.");
     expect(card().textContent).toContain("текст grok-4.3");
     // The models line says which of it is today's Settings and which is the set's own (CS.7).
     expect(within(card()).getByText(/текст grok-4\.3/).closest("p")?.getAttribute("title")).toBe(

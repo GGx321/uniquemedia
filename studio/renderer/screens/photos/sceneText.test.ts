@@ -16,8 +16,8 @@ import {
   ideaNotice,
   ideaTitle,
   poseTag,
-  stripAngles,
-  stripAnglesText,
+  stripLook,
+  stripLookText,
   offNoteSet,
   otherScenesButton,
   ownRewriteText,
@@ -202,18 +202,40 @@ describe("the ⟳ price popover", () => {
     expect(redrawText("Домашнее у кровати", 2, { poses: ["three-quarter", "back"], shot: "friend" })).toBe(`${lead}. ${tail}`);
     expect(redrawText("Домашнее у кровати", 2, { poses: ["front", "three-quarter"], shot: "selfie" })).toBe(`${lead}. ${tail}`);
   });
+
+  // S5.7c (mockup 28): a scene the app's template writes is redrawn at once and for nothing; a flirty one stays flirty.
+  test("the app writes the new scene: free and at once, the angle from the category; «Подача» named when it is kept", () => {
+    const free = "Новое место, наряд, действие, время дня и ракурс из категории «Улица» и новый текст — его пишет приложение, поэтому бесплатно.";
+    expect(redrawText("Улица", 2, undefined, { free: true, flirty: false })).toBe(`${free} Сцена 02 заменится сразу.`);
+    expect(redrawText("Улица", 2, undefined, { free: true, flirty: true })).toBe(`${free} Подача та же — кокетливая. Сцена 02 заменится сразу.`);
+    // A covered category with its own angles: a selfie that cannot turn away still says so.
+    expect(redrawText("Домашнее у кровати", 4, { poses: ["back"], shot: "selfie" }, { free: true, flirty: false })).toBe(
+      "Новое место, наряд, действие, время дня и ракурс из категории «Домашнее у кровати» и новый текст — его пишет приложение, поэтому бесплатно. Со спины селфи не снять — тогда кадр сменится. Сцена 04 заменится сразу.",
+    );
+    // Paid: as before, with «Подача» kept when the scene was flirty.
+    expect(redrawText("Кофейни Парижа", 2, undefined, { free: false, flirty: true })).toBe(
+      "Новое место, наряд, действие и время дня из «Кофейни Парижа» и новый текст. Подача та же — кокетливая. Сцена 02 заменится, когда новая будет готова; если не выйдет — останется как есть.",
+    );
+  });
 });
 
-describe("CS.8: angles on the review screen", () => {
+describe("CS.8, S5.7c: «Подача» and angles on the review screen", () => {
   const BED = { ref: "cat-bed-0001", name: "Домашнее у кровати", poses: ["back", "three-quarter"] } as const;
+  /** A set composed by a build with «Подача»: it stores no «Ракурсы» toggles (S5.7a). */
+  const fresh = (set: SceneSetView): SceneSetView => {
+    const { poses: _toggles, ...rest } = set;
+    return rest;
+  };
 
-  test("the strip's line names who does not follow the set's toggles: categories with their own angles (not their lists) and own scenes", () => {
-    const both = sceneSet([scene(1), scene(2, { origin: "own" })], { categories: [{ ref: "home", name: null }, { ref: BED.ref, name: BED.name, poses: [...BED.poses] }] });
-    expect(stripAnglesText(both)).toBe("Ракурсы: анфас, три четверти; у «Домашнее у кровати» — свои; у своих сцен — по описанию");
-    expect(stripAngles(both)).toEqual({ lead: "Ракурсы: анфас, три четверти", first: "Домашнее у кровати", more: 0, rows: [{ name: "Домашнее у кровати", list: "три четверти, со спины" }], own: true });
+  // S5.7c (mockup 28): the angle comes from the scene, so the line says so instead of «Ракурсы: …», with the set's «Подача» first — none for a set made
+  // before «Подача» (it stored toggles, which change nothing now).
+  test("the strip's line: the set's «Подача», the angle from the scene, then who keeps angles of their own (not their lists) and own scenes", () => {
+    const both = fresh(sceneSet([scene(1), scene(2, { origin: "own" })], { categories: [{ ref: "home", name: null }, { ref: BED.ref, name: BED.name, poses: [...BED.poses] }] }));
+    expect(stripLookText(both)).toBe("Подача: обычная · Ракурс — из сцены; у «Домашнее у кровати» — свои; у своих сцен — по описанию");
+    expect(stripLook(both)).toEqual({ level: "Подача: обычная", first: "Домашнее у кровати", more: 0, rows: [{ name: "Домашнее у кровати", list: "три четверти, со спины" }], own: true });
 
     const several = sceneSet(written(3), {
-      poses: { profile: false, back: true },
+      level: "flirty",
       categories: [
         { ref: BED.ref, name: BED.name, poses: [...BED.poses] },
         { ref: "cat-yoga-0002", name: "Йога дома", poses: ["profile"] },
@@ -222,16 +244,21 @@ describe("CS.8: angles on the review screen", () => {
         { ref: "cat-cafe-0004", name: "Кофейни Парижа" },
       ],
     });
-    expect(stripAnglesText(several)).toBe("Ракурсы: анфас, три четверти, со спины; у «Домашнее у кровати» и ещё 2 — свои");
-    expect(stripAngles(several).rows.map((r) => r.name)).toEqual(["Домашнее у кровати", "Йога дома", "Ночной город"]);
+    expect(stripLookText(several)).toBe("Подача: кокетливая · Ракурс — из сцены; у «Домашнее у кровати» и ещё 2 — свои");
+    expect(stripLook(several).rows.map((r) => r.name)).toEqual(["Домашнее у кровати", "Йога дома", "Ночной город"]);
 
-    expect(stripAnglesText(sceneSet([scene(1), scene(21, { origin: "own" })]))).toBe("Ракурсы: анфас, три четверти; у своих сцен — по описанию");
-    expect(stripAnglesText(sceneSet(written(2)))).toBe("Ракурсы: анфас, три четверти");
-    expect(stripAnglesText(sceneSet(written(2), { poses: { profile: true, back: true } }))).toBe("Ракурсы: анфас, три четверти, профиль, со спины");
+    expect(stripLookText(fresh(sceneSet([scene(1), scene(21, { origin: "own" })])))).toBe("Подача: обычная · Ракурс — из сцены; у своих сцен — по описанию");
+    expect(stripLookText(fresh(sceneSet(written(2))))).toBe("Подача: обычная · Ракурс — из сцены");
+    expect(stripLookText(fresh(sceneSet(written(2), { level: "flirty" })))).toBe("Подача: кокетливая · Ракурс — из сцены");
+  });
+
+  test("a set made before «Подача» names none, nor its old toggles", () => {
+    expect(stripLookText(sceneSet(written(2)))).toBe("Ракурс — из сцены");
+    expect(stripLookText(sceneSet(written(2), { poses: { profile: true, back: true } }))).toBe("Ракурс — из сцены");
   });
 
   test("own scenes being written from an idea count as own scenes already", () => {
-    expect(stripAnglesText(sceneSet(written(2), { write: { kind: "idea", count: 2 } }))).toBe("Ракурсы: анфас, три четверти; у своих сцен — по описанию");
+    expect(stripLookText(fresh(sceneSet(written(2), { write: { kind: "idea", count: 2 } })))).toBe("Подача: обычная · Ракурс — из сцены; у своих сцен — по описанию");
   });
 
   test("the idea form's hint follows the shot: «Авто» picks shot and angle (the mirror only when the idea names one), a selfie or mirror faces the camera", () => {
@@ -374,7 +401,8 @@ describe("«Пересоставить сцены?»", () => {
     const set = sceneSet([scene(1), scene(2, { edited: true }), scene(3, { removed: true }), scene(21, { origin: "own" }), scene(22, { origin: "own" })], { spentMicros: 15_000 });
     expect(recomposeLosses(set, 2)).toEqual([
       nb("2 свои сцены — написаны по описанию, за них заплачено;"),
-      nb("2 сцены, заменённые моделью («Другая сцена»);"),
+      // S5.7c (mockup 28): the app writes most new scenes now, so the line no longer says who replaced them.
+      nb("2 сцены, заменённые («Другая сцена»);"),
       nb("1 правка текста и 1 убранная сцена."),
     ]);
     expect(recomposeLosses(sceneSet(written(3)), 0)).toEqual([]);

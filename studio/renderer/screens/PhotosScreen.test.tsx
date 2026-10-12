@@ -61,12 +61,11 @@ function manyPhotos(n: number, avatarId: string, idPrefix: string, withFace: boo
   }));
 }
 
-/** The default request the screen opens with: 20 photos, every category, no profile or back. */
+/** The default request the screen opens with: 20 photos, every category; S5.7c: no poses (the angle comes from the scene), «Подача» «Обычная» not sent. */
 const DEFAULT_REQUEST: RunRequest = {
   avatarId: MIA.avatarId,
   count: 20,
   categories: ["home", "travel", "shoot", "glam", "fit"],
-  poses: { profile: false, back: false },
 };
 
 /** Opens the Photos screen from the sidebar and waits for its first price: 20 photos is ≈ $1.00, до $3.00 in the mock. */
@@ -276,26 +275,20 @@ test("start sends exactly the request and the worst case the button showed", asy
   expect(within(screen.getByRole("region", { name: "Очередь" })).getByText("0 / 20")).toBeDefined();
 });
 
-test("the poses toggles map to RunRequest.poses; front and three-quarter are always on", async () => {
+// S5.7c (plan s5a2 §6.1): «Ракурсы» gave way to «Подача» (PhotosLevel.test.tsx has its states): the request maps «Кокетливая» to `level`, never sends poses.
+test("«Подача» maps to RunRequest.level; the request carries no poses", async () => {
   const { engine } = await openPhotos();
   await priced();
+  expect(screen.queryByRole("button", { name: "Анфас" }) === null).toBe(true);
+  expect(screen.queryByRole("button", { name: "Профиль" }) === null).toBe(true);
 
-  const front = screen.getByRole("button", { name: "Анфас" });
-  expect(front.getAttribute("aria-pressed")).toBe("true");
-  expect(front.getAttribute("aria-disabled")).toBe("true");
-  expect(screen.getByRole("button", { name: "Три четверти" }).getAttribute("aria-disabled")).toBe("true");
-  expect(screen.getByText("профиль и со спины — только если разрешите, без проверки сходства")).toBeDefined();
-
-  const profile = screen.getByRole("button", { name: "Профиль" });
-  expect(profile.getAttribute("aria-pressed")).toBe("false");
-  fireEvent.click(profile);
-  expect(profile.getAttribute("aria-pressed")).toBe("true");
-  await waitFor(() => expect(callsOf(engine, "runs.estimate").at(-1)?.payload.poses).toEqual({ profile: true, back: false }));
+  fireEvent.click(screen.getByRole("radio", { name: "Кокетливая" }));
+  await waitFor(() => expect(callsOf(engine, "runs.estimate").at(-1)?.payload).toEqual({ ...DEFAULT_REQUEST, level: "flirty" }));
   await waitFor(() => expect(isDisabled(goButton())).toBe(false));
 
   fireEvent.click(goButton());
   await screen.findByText(/Рисуем фото/);
-  expect(callsOf(engine, "runs.start")[0]?.payload.poses).toEqual({ profile: true, back: false });
+  expect(callsOf(engine, "runs.start")[0]?.payload).toEqual({ ...DEFAULT_REQUEST, level: "flirty", acceptedWorstMicros: 3_000_000 });
 });
 
 test("the button and the form are locked while runs.start is in flight, and a second click sends nothing", async () => {

@@ -171,7 +171,11 @@ export function ScenePopover({ set, scene, view, blocked, onPaidInFlightChange, 
         </b>
         {!offline && replace.estimate !== null && <span className="mono muted">{replaceFree ? "бесплатно" : about(replace.estimate.expectedMicros)}</span>}
       </div>
-      <p className="scene-pop-text">{own ? ownRewriteText(scene.idea ?? "") : redrawText(label, scene.sceneId, poses === undefined ? undefined : { poses, shot: scene.shot })}</p>
+      <p className="scene-pop-text">
+        {own
+          ? ownRewriteText(scene.idea ?? "")
+          : redrawText(label, scene.sceneId, poses === undefined ? undefined : { poses, shot: scene.shot }, { free: replaceFree, flirty: scene.level === "flirty" })}
+      </p>
       {marker !== undefined && <p className="scene-pop-text scene-pop-marker">{interruptedChoiceText(scene.origin)}</p>}
       {!offline && replace.estimate !== null && !replaceFree && <p className="mono faint scene-pop-cap">{writeCapLine(replace.estimate.worstMicros)}</p>}
       {replace.previousWorst !== null && <p className="scene-pop-warn">Цена выросла — подтвердите новую.</p>}

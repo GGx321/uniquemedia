@@ -259,7 +259,9 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
         <>
           <p className="mono muted ap-launch-bits">
             {settingsBits(launch.draft, customName).map((bit) => (
-              <span key={bit}>{bit}</span>
+              <span key={bit.text} className={bit.strong === true ? "ap-bit-new" : undefined}>
+                {bit.text}
+              </span>
             ))}
           </p>
           {isUnfinished(launch) && (

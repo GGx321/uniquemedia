@@ -462,7 +462,10 @@ describe("«Запустить»", () => {
     expect(screen.getByText(/^Это настройки идущего запуска/)).toBeDefined();
     expect(avatarButton("Sofia").getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByText("3", { selector: "output" })).toBeDefined();
-    expect(screen.getByRole("button", { name: "Профиль" }).getAttribute("aria-pressed")).toBe("true");
+    // S5.7c: the launch's «Ракурсы» are not shown any more (the angle comes from the scene); a launch from before «Подача» reads «Обычная».
+    const ordinary = screen.getByRole("radio", { name: "Обычная" });
+    expect(ordinary instanceof HTMLInputElement && ordinary.checked).toBe(true);
+    expect(screen.queryByRole("button", { name: "Профиль" }) === null).toBe(true);
     expect(screen.getByRole("button", { name: "Виды" }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.getByRole("switch", { name: "GIF-стикеры" }).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByRole("heading", { level: 2, name: "Идёт запуск" })).toBeDefined();

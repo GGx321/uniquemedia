@@ -324,8 +324,9 @@ describe("CS.8: a category's angles", () => {
   const BED_DECK = ["friend", "friend", "candid", "candid", "selfie"] as const;
   const PHONES = ["friend", "selfie", "mirror", "candid", "candid"] as const;
   const NO_PHONE = ["friend", "candid", "photographer", "photographer", "photographer"] as const;
-  const WHAT_MANY = "Её сцены — поровну в этих ракурсах; «Ракурсы» карточки их не касаются.";
-  const WHAT_ONE = "Все её сцены — в этом ракурсе; «Ракурсы» карточки их не касаются.";
+  // S5.7c (mockup 35): no «Ракурсы» on the card to measure against any more.
+  const WHAT_MANY = "Её сцены — поровну в этих ракурсах.";
+  const WHAT_ONE = "Все её сцены — в этом ракурсе.";
 
   test("the description hint names the pose and the angle (CatCreate)", () => {
     expect(DESCRIPTION_HINT).toBe(
@@ -356,8 +357,8 @@ describe("CS.8: a category's angles", () => {
     expect(anglesNote(["profile", "back"], NO_PHONE)).toBe(`${WHAT_MANY} В профиль и со спины — без проверки сходства.`);
   });
 
-  test("the sheet's hint: the same lines with own angles, what the card gives without; an open set holding the category's scenes adds that ⟳ there follows an edit", () => {
-    expect(ANGLES_NONE_HINT).toBe("Как в карточке генерации: анфас и три четверти всегда, профиль и со спины — если они включены там.");
+  test("the sheet's hint: the same lines with own angles, front and three-quarter without; an open set holding the category's scenes adds that ⟳ there follows an edit", () => {
+    expect(ANGLES_NONE_HINT).toBe("Без своих ракурсов: анфас и три четверти. Профиль и со спины — только если отметить их здесь.");
     expect(anglesHint(undefined, PHONES, 0)).toBe(ANGLES_NONE_HINT);
     expect(anglesHint(["back", "three-quarter"], BED_DECK, 0)).toBe(anglesNote(["three-quarter", "back"], BED_DECK));
     const opened = "Правка меняет и «Другую сцену» в открытом наборе; уже составленные сцены остаются как были.";
@@ -366,9 +367,9 @@ describe("CS.8: a category's angles", () => {
   });
 
   test("the sheet's chips and buttons say what they do", () => {
-    expect(impliedChipTitle("front")).toBe("Как в карточке: анфас и три четверти всегда. Нажмите — свои ракурсы без анфаса");
-    expect(impliedChipTitle("three-quarter")).toBe("Как в карточке: анфас и три четверти всегда. Нажмите — свои ракурсы без трёх четвертей");
-    expect(ANGLES_CLEAR_TITLE).toBe("Убрать свои ракурсы — сцены этой категории возьмут их из «Ракурсов» карточки генерации");
+    expect(impliedChipTitle("front")).toBe("Сейчас — анфас и три четверти. Нажмите — свои ракурсы без анфаса");
+    expect(impliedChipTitle("three-quarter")).toBe("Сейчас — анфас и три четверти. Нажмите — свои ракурсы без трёх четвертей");
+    expect(ANGLES_CLEAR_TITLE).toBe("Сцены этой категории будут в анфас и три четверти");
     expect(anglesLockedTitle("regenerate")).toBe("Пока идёт пересоздание, эту категорию не изменить");
     expect(anglesLockedTitle("delete")).toBe("Пока идёт удаление, эту категорию не изменить");
   });
@@ -382,37 +383,36 @@ describe("CS.8: a category's angles", () => {
     expect(ownAnglesLine([])).toBe(null);
   });
 
-  test("the card's line, one category: the message first, then the name, then its angles sorted", () => {
+  // S5.7c (mockup 27): the toggles are gone, so the line no longer says what they do not touch — it names the category and its angles.
+  test("the card's line, one category: «У «{имя}» свои ракурсы: {список}.», its angles sorted", () => {
     const line = ownAnglesLine([{ name: "Домашнее у кровати", poses: ["back", "three-quarter"] }]);
     expect(line).toEqual({
       name: "Домашнее у кровати",
       list: "три четверти, со спины",
       more: 0,
       moreLabel: "",
-      visible: "Эти переключатели не касаются «Домашнее у кровати» — у неё свои ракурсы: три четверти, со спины.",
+      visible: "У «Домашнее у кровати» свои ракурсы: три четверти, со спины.",
       rows: [{ name: "Домашнее у кровати", list: "три четверти, со спины" }],
-      full: "Эти переключатели не касаются категорий со своими ракурсами: «Домашнее у кровати» — три четверти, со спины.",
       title: "Свои ракурсы — Домашнее у кровати: три четверти, со спины",
     });
   });
 
-  test("the card's line, several: «и ещё N категорий» behind a button, every category with its angles in the list it opens and for a screen reader", () => {
+  test("the card's line, several: «У «{имя}» и ещё N — свои ракурсы.», «ещё N» opening every category with its angles", () => {
     const line = ownAnglesLine([
       { name: "Домашнее у кровати", poses: ["three-quarter", "back"] },
       { name: "Йога дома", poses: ["profile"] },
       { name: "Ночной город", poses: ["back"] },
     ]);
-    expect(line?.visible).toBe(nb("Эти переключатели не касаются «Домашнее у кровати» и ещё 2 категорий — у них свои ракурсы."));
+    expect(line?.visible).toBe("У «Домашнее у кровати» и ещё 2 — свои ракурсы.");
     expect(line?.list).toBe(null);
     expect(line?.more).toBe(2);
-    expect(line?.moreLabel).toBe(nb("ещё 2 категорий"));
+    expect(line?.moreLabel).toBe("ещё 2");
     expect(line?.rows).toEqual([
       { name: "Домашнее у кровати", list: "три четверти, со спины" },
       { name: "Йога дома", list: "профиль" },
       { name: "Ночной город", list: "со спины" },
     ]);
-    expect(line?.full).toBe("Эти переключатели не касаются категорий со своими ракурсами: «Домашнее у кровати» — три четверти, со спины; «Йога дома» — профиль; «Ночной город» — со спины.");
     expect(line?.title).toBe("Свои ракурсы — Домашнее у кровати: три четверти, со спины; Йога дома: профиль; Ночной город: со спины");
-    expect(ownAnglesLine([{ name: "А", poses: ["back"] }, { name: "Б", poses: ["back"] }])?.moreLabel).toBe(nb("ещё 1 категории"));
+    expect(ownAnglesLine([{ name: "А", poses: ["back"] }, { name: "Б", poses: ["back"] }])?.moreLabel).toBe("ещё 1");
   });
 });

@@ -2,6 +2,7 @@ import {
   isCustomCategory,
   MAX_COMPOSE_SCENES,
   POOL_SHOTS,
+  type Capture,
   type CategoryRef,
   type EngineError,
   type PoolShot,
@@ -65,6 +66,33 @@ export const SHOT_LABEL: Record<PoolShot, string> = {
   candid: "Кэндид",
   photographer: "Попросила снять",
 };
+
+/**
+ * S5.7c (plan s5a2 §6.3; mockup 28): who took the photo, as a scene's tag reads it once the scene names its capture — the deck's own words. A scene stored
+ * before captures reads its shot (`SHOT_LABEL`).
+ */
+export const CAPTURE_LABEL: Record<Capture, string> = {
+  "mirror-hidden": "Зеркало, лицо за телефоном",
+  mirror: "Зеркало",
+  above: "Селфи сверху",
+  prone: "Селфи лёжа",
+  "over-shoulder": "Через плечо",
+  selfie: "Селфи",
+  timer: "Телефон на таймере",
+  friend: "Попросила снять",
+  candid: "Кэндид",
+  "pov-legs": "Ножки сверху",
+  "low-feet": "Снизу, к стопам",
+};
+
+/** A scene's «who took it» tag: its capture's label, else its shot's. */
+export function shotTagLabel(scene: Pick<SceneView, "shot" | "capture">): string {
+  return scene.capture !== undefined ? CAPTURE_LABEL[scene.capture] : SHOT_LABEL[scene.shot];
+}
+
+/** A flirty scene's badge (mockup 28), and what it means. */
+export const LEVEL_TAG = "кокетливо";
+export const LEVEL_TAG_TITLE = "Подача «Кокетливая»: взгляд, улыбка, поза";
 
 /** The shots an own scene's form offers: the decks' four. An old scene may carry the photographer; a new one never asks for it. */
 export const IDEA_SHOTS: readonly PoolShot[] = POOL_SHOTS.filter((shot) => shot !== "photographer");
