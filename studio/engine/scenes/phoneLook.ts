@@ -64,7 +64,9 @@ const FIXED_CAPTURE_LINE: Readonly<Record<Exclude<Capture, "friend" | "candid">,
   "over-shoulder":
     "A photo she took of herself from above her own shoulder while lying on her stomach on the bed, looking back along her own body: her hair in the foreground, her hips, and her feet raised up at the far end.",
   selfie: SELFIE_LINE,
-  timer: "A photo from her phone propped on a ledge a few metres away on a timer; both of her hands are empty and nobody holds a phone; her whole body is in the picture.",
+  // C3′: the probe's timer frame (c3fix 4a) drew the propped phone itself in the foreground, so the line says it is out of the picture.
+  timer:
+    "A photo from her phone propped on a ledge a few metres away on a timer; the phone itself is out of the picture; both of her hands are empty and nobody holds a phone; her whole body is in the picture.",
   // C3′: «looking down along her own legs … held at her eye level» came out as a photo from far away (R5#09). The probe's variant (c3fix 2b) drew a clean first-person
   // view, verbatim but for its «socked feet»: the probe's moment wore socks, and the feet here are the moment's (barefoot, socked or in shoes).
   "pov-legs":

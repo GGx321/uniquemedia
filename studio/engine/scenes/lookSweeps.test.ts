@@ -234,8 +234,9 @@ describe("I5.2: only the mirror shows a phone", () => {
   // The look text may say «phone» only as the kind of photo and, for the mirror, in the mirror line and its phone-hand line. The sentence is not part of the look text.
   const KIND_OF_PHOTO = /Ordinary phone photo|A quick phone photo/g;
   const MIRROR_ONLY = /her phone in her hand at chest height|One hand holds the phone|she holds her phone right in front of her face, the phone covering her face|the phone covers her face|her face behind her phone/g;
-  // The lines of the 5a.2 self-shots name her phone to say where it is NOT: out of the frame, propped on a ledge on a timer with nobody holding one.
-  const SELF_SHOT_ONLY = /Her phone arm is out of the frame|A photo from her phone propped on a ledge|nobody holds a phone/g;
+  // The lines of the 5a.2 self-shots name her phone to say where it is NOT: out of the frame, propped on a ledge on a timer with nobody holding one, and (C3′) the
+  // propped phone itself out of the picture.
+  const SELF_SHOT_ONLY = /Her phone arm is out of the frame|A photo from her phone propped on a ledge|the phone itself is out of the picture|nobody holds a phone/g;
 
   test("no non-mirror look text matches a held-phone pattern", () => {
     expect(hits((s) => (s.slot.shot === "mirror" ? null : firstHit(s.look, HELD_PHONE)))).toEqual([]);

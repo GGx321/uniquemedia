@@ -56,8 +56,11 @@ describe("captureLineOf: the plan's wording, verbatim", () => {
     );
   });
 
-  test("timer carries «both of her hands are empty and nobody holds a phone; her whole body is in the picture» (I5.32)", () => {
-    expect(captureLineOf("timer", "k")).toBe("A photo from her phone propped on a ledge a few metres away on a timer; both of her hands are empty and nobody holds a phone; her whole body is in the picture.");
+  // C3′: the probe's timer frame (c3fix 4a) drew the propped phone itself in the foreground, so the line says it is out of the picture.
+  test("timer carries «the phone itself is out of the picture», «both of her hands are empty and nobody holds a phone; her whole body is in the picture» (I5.32)", () => {
+    expect(captureLineOf("timer", "k")).toBe(
+      "A photo from her phone propped on a ledge a few metres away on a timer; the phone itself is out of the picture; both of her hands are empty and nobody holds a phone; her whole body is in the picture.",
+    );
   });
 
   // C3′: «looking down along her own legs … held at her eye level» came out as a photo from far away (R5#09). The wording probe's variant (b) drew a clean first-person

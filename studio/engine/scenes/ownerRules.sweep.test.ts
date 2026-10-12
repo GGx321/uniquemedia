@@ -528,3 +528,18 @@ describe("C3′: a look down her own legs is a first-person photo from her eyes"
     expect(offenders(pov, (f) => /\bbare\b/.test(f.slot.activity) && /\bsock/.test(f.prompt()))).toEqual(NONE);
   });
 });
+
+describe("C3′: a timer frame keeps the phone that takes it out of the picture", () => {
+  // The probe's timer frame (c3fix 4a) drew the propped phone itself in the foreground.
+  const timer = C3_ALL.filter((f) => f.capture === "timer");
+
+  test("the sweep holds timer frames of «Дом», «Улица», «Виды» and «Фитнес»", () => {
+    expect([...new Set(timer.map((f) => f.slot.category))].sort()).toEqual(["fitness", "home", "photoshoot", "travel"]);
+  });
+
+  test("every timer prompt says the phone itself is out of the picture, her hands empty and nobody holding a phone", () => {
+    const sample = timer.filter((_, i) => i % 5 === 0);
+    expect(sample.length).toBeGreaterThan(1000);
+    expect(offenders(sample, (f) => !f.prompt().includes("on a timer; the phone itself is out of the picture; both of her hands are empty and nobody holds a phone;"))).toEqual(NONE);
+  });
+});
