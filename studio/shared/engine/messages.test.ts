@@ -1361,6 +1361,12 @@ describe("estimate before spend", () => {
       expect(parseMessage(command("runs.estimateImages", { avatarId: AVATAR, count })).ok).toBe(true);
     });
 
+    test("takes the level and categories of a count (additive, S5.R4-fix) and refuses them on a launch's form", () => {
+      expect(parseMessage(command("runs.estimateImages", { avatarId: AVATAR, count: 20, level: "bold", categories: ["nightwear", "beach"] })).ok).toBe(true);
+      expect(reasonOf(command("runs.estimateImages", { launchId: LAUNCH, avatarId: AVATAR, level: "bold" }))).not.toBe("");
+      expect(reasonOf(command("runs.estimateImages", { avatarId: AVATAR, count: 3, level: "loud" }))).not.toBe("");
+    });
+
     test("refuses a count together with a launch: the launch decides how many photos are left", () => {
       expect(reasonOf(command("runs.estimateImages", { launchId: LAUNCH, avatarId: AVATAR, count: 5 }))).not.toBe("");
     });

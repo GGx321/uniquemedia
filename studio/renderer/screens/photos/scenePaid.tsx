@@ -1,5 +1,5 @@
 import { type ReactNode, type Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { PRICE_SCOPES_RU, type EngineError, type Estimate, type SceneSetView } from "../../../shared/engine";
+import { PRICE_SCOPES_RU, type CategoryRef, type EngineError, type Estimate, type SceneLevel, type SceneSetView } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import type { EngineView } from "../../engine/store";
 import { errorText } from "../../lib/errors";
@@ -135,22 +135,34 @@ export function PriceChangedNotice({ previousWorst, estimate }: { previousWorst:
  * running, a stop) and for the generate card's compose mode: `runs.estimateFromScenes` refuses those, so the engine answers the price of drawing that many photos
  * itself (`runs.estimateImages`: free, priced by the code the real draw is priced by). It is shown, never sent; the window works out no money (S4.6p).
  */
-export function useImagesPrice(avatarId: string, photos: number, view: EngineView): Estimate | null {
+export function useImagesPrice(avatarId: string, photos: number, view: EngineView, look: ImagesLook = {}): Estimate | null {
   const { client } = useEngine();
   const settings = view.settings;
-  const key = photos >= 1 && photos <= 100 && settings !== null ? `${avatarId}|${photos}|${settings.imageModel}|${settings.imageQuality ?? ""}|${settings.imageAgeCheck}` : null;
+  // S5.R4-fix: the «Подача» and the categories the photos are drawn for; the engine prices the «Смелая» share at the 2K unit, the window passes them on and works nothing out.
+  const lookKey = JSON.stringify([look.level ?? null, look.categories ?? null]);
+  const key = photos >= 1 && photos <= 100 && settings !== null ? `${avatarId}|${photos}|${lookKey}|${settings.imageModel}|${settings.imageQuality ?? ""}|${settings.imageAgeCheck}` : null;
   const [shown, setShown] = useState<{ key: string; estimate: Estimate } | null>(null);
   useEffect(() => {
     if (key === null) return;
     let alive = true;
-    void client.request("runs.estimateImages", { avatarId, count: photos }).then((reply) => {
-      if (alive && reply.ok) setShown({ key, estimate: reply.result.estimate });
-    });
+    // `lookKey` stands for `look` in the dependencies: the effect asks again exactly when the look's content changes, not when its object does.
+    const { level, categories } = look;
+    void client
+      .request("runs.estimateImages", { avatarId, count: photos, ...(level === undefined ? {} : { level }), ...(categories === undefined ? {} : { categories: [...categories] }) })
+      .then((reply) => {
+        if (alive && reply.ok) setShown({ key, estimate: reply.result.estimate });
+      });
     return () => {
       alive = false;
     };
-  }, [client, key, avatarId, photos]);
+  }, [client, key, avatarId, photos, lookKey]);
   return shown !== null && shown.key === key ? shown.estimate : null;
+}
+
+/** The «Подача» and categories a count of photos is drawn for (`runs.estimateImages`): both absent is the plain count. */
+export interface ImagesLook {
+  readonly level?: SceneLevel | undefined;
+  readonly categories?: readonly CategoryRef[] | undefined;
 }
 
 /** The engine's answer for a launch's draw: the price, and the photos it was made for (those the money buys, which may be fewer than «Продолжить запуск» names). */

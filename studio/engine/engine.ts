@@ -3143,9 +3143,13 @@ export class Engine {
     const models = this.#avatarModels();
     const imageAgeCheck = this.#settings.imageAgeCheck;
     if ("count" in payload) {
+      // S5.R4-fix: a «Смелая» category below «Смелая» is refused free, as `runs.estimate` refuses it; the «Смелая» share is the one the run estimate prices at the 2K unit (same split).
+      const categories = payload.categories ?? [];
+      assertBoldFit({ categories, level: payload.level });
       this.#runnableAvatar(library, payload.avatarId);
-      const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck));
-      return { estimate: runEstimateFromScenes(priced, models, { count: payload.count }, imageAgeCheck), photos: payload.count };
+      const bold = requestBoldPhotos({ count: payload.count, categories });
+      const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck, bold));
+      return { estimate: runEstimateFromScenes(priced, models, { count: payload.count, boldPhotos: bold }, imageAgeCheck), photos: payload.count };
     }
     const { launchId, avatarId } = payload;
     const view = this.#orchestrator.snapshotView();

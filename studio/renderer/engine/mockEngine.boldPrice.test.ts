@@ -41,7 +41,8 @@ describe("a run of a «Смелая» category is priced on the 2K route", () =>
     mock.engine.setRunImagePrice(120_000);
     const estimate = await estimateOf(mock, request(10, ["nightwear"], "bold"));
     expect(estimate.worstMicros).toBe(10 * ATTEMPTS * 120_000);
-    expect(estimate.expectedMicros).toBe(10 * MOCK_BOLD_IMAGE);
+    // The expected figure never falls below the owner's model either (S5.R4-fix, the engine's `boldExpected`).
+    expect(estimate.expectedMicros).toBe(10 * 120_000);
     expect(estimate.boldAttemptMicros).toBe(MOCK_BOLD_IMAGE);
   });
 

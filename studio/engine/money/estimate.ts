@@ -271,7 +271,8 @@ export function estimateRun(book: PriceBook, plan: RunPlanInput): Estimate {
   const ageCeiling = ceilingMicros(book, plan.ageChecks);
   // A bold photo is never priced below the dearest model of the route (the settings' model may cost more than Seedream 2K), and has no fallback attempt.
   const boldWorst = boldAttempt === null ? 0 : boldPhotos * plan.attemptsPerSlot * (Math.max(boldAttempt, dearestAttempt) + ageCeiling);
-  const boldExpected = boldAttempt === null ? 0 : boldPhotos * (boldAttempt + ageTypical);
+  // The expected figure never falls below the owner's model either: an ordinary frame of a «Смелая» category is drawn on it, one attempt.
+  const boldExpected = boldAttempt === null ? 0 : boldPhotos * (Math.max(boldAttempt, imageMicros(book, primary)) + ageTypical);
   return {
     expectedMicros: safe(plainPhotos * (imageMicros(book, primary) + ageTypical) + boldExpected + writerTypical),
     worstMicros: safe(plainPhotos * plan.attemptsPerSlot * (dearestAttempt + ageCeiling) + boldWorst + (writer === null || load === null ? 0 : writerChunksMicros(book, writer, load.chunks))),
