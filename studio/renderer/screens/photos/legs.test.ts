@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { hasLegs } from "../../../engine/scenes/legs";
+import { POOLS } from "../../../engine/scenes/pools";
+import { plannerCategoryOf } from "../../../engine/scenes/categories";
+import { SceneCategory } from "../../../shared/engine";
 import { legsCountOf } from "../../../shared/scenes/level";
 import { NBSP } from "../../lib/format";
 import { cardLegsLine, hasBuiltIn, launchLegsRow, legsCaption, legsFrames, LEGS_KEY_PREFIX, LEGS_OPTIONS, readLegs, writeLegs } from "./legs";
@@ -48,6 +52,14 @@ describe("how many frames are legs (I5.29)", () => {
     expect(hasBuiltIn([PARIS, BAKERIES])).toBe(false);
     expect(hasBuiltIn([])).toBe(false);
   });
+
+  // The window lets «Ножки» run on any built-in (`hasBuiltIn`), and the engine deals a legs slot from a pool only if `hasLegs` says so: the two must agree for all five.
+  test("every built-in category's pool can deal a legs slot, so the window never offers «Ножки» the engine cannot draw", () => {
+    for (const ref of SceneCategory.options) {
+      expect(hasBuiltIn([ref]), ref).toBe(true);
+      expect(hasLegs(POOLS[plannerCategoryOf(ref)]), ref).toBe(true);
+    }
+  });
 });
 
 describe("the card's caption (mockups 33, 34#card)", () => {
@@ -63,6 +75,16 @@ describe("the card's caption (mockups 33, 34#card)", () => {
   test("«Нет», or an empty set, says nothing", () => {
     expect(cardLegsLine(0, 20, ["home"])).toBeNull();
     expect(cardLegsLine(15, 0, ["home"])).toBeNull();
+  });
+
+  test("a pick that rounds to no legs frame says so in words, never «0 из 5 кадров»", () => {
+    const FEW = { text: "Ножки — слишком мало кадров во встроенных категориях", why: true };
+    // 5 photos over «Дом» and two own categories: 2 built-in photos, round-half-up(0.3) = 0.
+    expect(legsFrames(15, 5, ["home", PARIS, BAKERIES])).toBe(0);
+    expect(cardLegsLine(15, 5, ["home", PARIS, BAKERIES])).toEqual(FEW);
+    // One off the limit: 4 built-in photos hold one frame at 15 %.
+    expect(legsFrames(15, 4, ["home"])).toBe(1);
+    expect(cardLegsLine(15, 4, ["home"])?.why).toBe(false);
   });
 
   test("with no built-in category on, says why the chips are off, whatever the pick", () => {
@@ -110,6 +132,23 @@ describe("«Автопилот»'s row (mockups 34, 34#few)", () => {
     expect(launchLegsRow(30, plan(avatar(10, { kind: "open-set" }), avatar(3)), THREE)).toEqual({ shown: 30, off: true, caption: few });
     // One off the limit: 4 new photos hold a legs frame.
     expect(launchLegsRow(15, plan(avatar(4), avatar(1)), ["home"])).toEqual({ shown: 15, off: false, caption: { text: `≈ 1 из 5${NBSP}новых кадров — ${WHAT}`, why: false } });
+  });
+
+  test("a plan whose new photos round to no legs frame says so in words, never «≈ 0 из N»", () => {
+    const FEW = { text: "Ножки — слишком мало кадров во встроенных категориях", why: true };
+    expect(legsFrames(15, 4, ["home", PARIS, BAKERIES])).toBe(0);
+    expect(launchLegsRow(15, plan(avatar(4)), ["home", PARIS, BAKERIES])).toEqual({ shown: 15, off: false, caption: FEW });
+  });
+
+  test("«Догенерировать недостающие» off: no new frame is drawn, so the chips are off on the kept pick, saying why", () => {
+    const only = { text: "Ножки — только для новых кадров", why: true };
+    expect(launchLegsRow(15, plan(avatar(0)), THREE, false)).toEqual({ shown: 15, off: true, caption: only });
+    expect(launchLegsRow(30, null, THREE, false)).toEqual({ shown: 30, off: true, caption: only });
+    expect(launchLegsRow(0, plan(avatar(0)), THREE, false)).toEqual({ shown: 0, off: true, caption: only });
+    // With no built-in category on, that reason comes first.
+    expect(launchLegsRow(15, null, [PARIS], false).caption?.text).toBe("Ножки — только во встроенных категориях");
+    // On again, the row is as it was.
+    expect(launchLegsRow(15, plan(avatar(20)), ["home"], true).off).toBe(false);
   });
 
   test("no built-in category on: the chips are off on «Нет», saying why, with a plan or without", () => {

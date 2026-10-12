@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { SCENE_REASONS_RU } from "../../shared/engine";
 import { callsOf, flush, openSection, setup, withText } from "../testing";
-import { chipsGroup, MIA, openPhotos, PARIS } from "./photos/categoryScreenKit";
+import { BED_POOL, category, chipsGroup, MIA, openPhotos, PARIS } from "./photos/categoryScreenKit";
 
 // S5.8b (plan s5a2 §7, I5.29; mockups 33 and 34#card of .omc/stage5/design): the generate card gains «Ножки» — «Нет · Немного 15 % · Много 30 %» under
 // «Подача», «Нет» by default, a pick saying how many of the frames are legs and feet filling the frame. The pick goes into the request as `legsShare`. Legs
@@ -144,12 +144,34 @@ describe("«Ножки» with only custom categories on (mockup 34#card)", () =>
   });
 });
 
+// Wave 5e (S5.8b review): at «Немного» a run whose built-in photos are few rounds to no legs frame; «0 из 5 кадров — …» would read as a fault, so the card says where it works.
+describe("«Ножки» that round to no frame", () => {
+  const FEW = "Ножки — слишком мало кадров во встроенных категориях";
+
+  test("5 photos over «Дом» and two own categories at «Немного»: a hint in place of «0 из 5 кадров»", async () => {
+    const yoga = category(5, "Йога дома", BED_POOL);
+    await openPhotos({ categories: [PARIS, yoga] });
+    for (const name of ["Виды", "Улица", "Гламур", "Фитнес"]) await toggleChip(name);
+    await toggleChip("Кофейни Парижа");
+    await toggleChip("Йога дома");
+    for (let i = 0; i < 3; i++) fireEvent.click(within(card()).getByRole("button", { name: "Меньше" }));
+    await flush();
+    await pick("Немного");
+    const hint = within(card()).getByText(FEW);
+    expect(hint.classList.contains("gen-cap-why")).toBe(true);
+    expect(within(card()).queryByText(/^0 из/) === null).toBe(true);
+    expect(legs("Немного").checked).toBe(true);
+    expect(legs("Немного").disabled).toBe(false);
+  });
+});
+
 describe("the refusal «legs-built-in-only»", () => {
   test("shows its Russian text under the card", async () => {
     const { engine } = await openPhotos();
     engine.failNext("runs.estimate", { code: "VALIDATION", sceneReason: "legs-built-in-only" });
     await pick("Немного");
-    await waitFor(() => expect(screen.getAllByText(SCENE_REASONS_RU["legs-built-in-only"]).length).toBeGreaterThan(0));
+    // In the notice under the card (an alert), not anywhere on the screen: a stray copy elsewhere must not pass.
+    await waitFor(() => expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes(SCENE_REASONS_RU["legs-built-in-only"]) === true)).toBe(true));
     expect(SCENE_REASONS_RU["legs-built-in-only"]).toContain("Ничего не потрачено");
   });
 });

@@ -1,6 +1,7 @@
 import { isCustomCategory, splitCount, type CategoryRef, type SceneLevel } from "../../../shared/engine";
 import { flirtyCountOf } from "../../../shared/scenes/level";
 import { countOf } from "../../lib/format";
+import type { LaunchPlanCounts } from "./launchPlanCounts";
 
 // S5.7c (plan s5a2 §6.3, I5.28; mockups 24–25, 30): «Подача» on the window's side. The angle no longer has a control: it comes from the scene, and «Ракурсы»
 // gave way to this row. The card and «Автопилот» share the words below; the card remembers the choice per avatar (owner: «Обычная» by default, remembered per
@@ -41,12 +42,6 @@ export function flirtyCaption(flirty: number, count: number): string {
 
 /** «Автопилот» before its plan has new photos to count: the share itself (owner: «Кокетливая» is 6 of 10 frames). */
 const FLIRTY_SHARE = "6 из 10 новых кадров — кокетливые: взгляд, улыбка, поза. Одежда — из категорий.";
-
-/** What `launchFlirtyCaption` reads of a launch's plan (`LaunchPreview`). */
-interface LaunchPlanCounts {
-  readonly avatars: readonly { readonly toGenerate: number; readonly blocked: unknown }[];
-  readonly totals: { readonly toGenerate: number };
-}
 
 /**
  * «Автопилот»'s «Подача» caption (mockup 30): «≈ {F} из {M} новых кадров — …». Each avatar composes its own new photos, so F sums `flirtyFrames` per

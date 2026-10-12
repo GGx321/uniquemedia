@@ -307,7 +307,7 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
           onCategory={toggleCategory}
           onLevel={(level) => edit({ ...form, level })}
           levelCaption={shownForm.level === "flirty" ? launchFlirtyCaption(running ? null : plan.shown, settings?.categories ?? shownForm.categories) : null}
-          legs={launchLegsRow(shownForm.legs, running ? null : plan.shown, running ? shownForm.categories : (settings?.categories ?? arrangeCategories(form.categories, customOrder)))}
+          legs={launchLegsRow(shownForm.legs, running ? null : plan.shown, running ? shownForm.categories : (settings?.categories ?? arrangeCategories(form.categories, customOrder)), shownForm.generate)}
           onLegs={(legs) => edit({ ...form, legs })}
           onSwitch={(which) => edit({ ...form, [which]: !form[which] })}
           musicOpen={musicWindow !== null}

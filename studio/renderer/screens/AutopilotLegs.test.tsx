@@ -162,6 +162,29 @@ describe("«Ножки» off (mockup 34, its variants)", () => {
   });
 });
 
+describe("«Ножки» with «Догенерировать недостающие» off (wave 5e)", () => {
+  test("no new frame is drawn: the chips are off on the kept pick, saying «Ножки — только для новых кадров»; on again, they work", async () => {
+    const { engine } = world();
+    await openAutopilot();
+    await choose("Mia");
+    await pick("Немного");
+    fireEvent.click(within(settings()).getByRole("switch", { name: "Догенерировать недостающие" }));
+    await settle();
+    const why = await within(settings()).findByText("Ножки — только для новых кадров");
+    expect(why.classList.contains("gen-cap-why")).toBe(true);
+    expect(described(legsGroup())).toEqual(["Ножки — только для новых кадров"]);
+    expect([legs("Нет"), legs("Немного"), legs("Много")].every((r) => r.disabled)).toBe(true);
+    expect(legs("Немного").checked).toBe(true);
+    expect(within(settings()).queryByText(/стопы крупно/) === null).toBe(true);
+    // The pick stays in the launch, as at «Ножки — от 4 фото»: it draws nothing this time.
+    expect(planCalls(engine).at(-1)?.payload.draft.legsShare).toBe(15);
+    fireEvent.click(within(settings()).getByRole("switch", { name: "Догенерировать недостающие" }));
+    await settle();
+    expect(within(settings()).queryByText("Ножки — только для новых кадров") === null).toBe(true);
+    expect(legs("Немного").disabled).toBe(false);
+  });
+});
+
 describe("a running launch's «Ножки», read only", () => {
   async function startLaunch(over: Partial<LaunchDraftInput>): Promise<void> {
     const { client } = world();
@@ -246,6 +269,8 @@ describe("the refusal «legs-built-in-only»", () => {
     engine.failNext("autopilot.estimate", { code: "VALIDATION", launchReason: "legs-built-in-only" });
     fireEvent.click(legs("Немного"));
     await flush();
-    await waitFor(() => expect(screen.getAllByText(LAUNCH_REASONS_RU["legs-built-in-only"]).length).toBeGreaterThan(0));
+    // In the plan's own region, not anywhere on the screen (a stray copy elsewhere must not pass).
+    const plan = await screen.findByRole("region", { name: "План" });
+    await waitFor(() => expect(within(plan).getAllByText(LAUNCH_REASONS_RU["legs-built-in-only"]).length).toBeGreaterThan(0));
   });
 });

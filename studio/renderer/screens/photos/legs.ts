@@ -1,6 +1,7 @@
 import { isCustomCategory, splitCount, type CategoryRef, type LegsShare } from "../../../shared/engine";
 import { LEGS_CAP_TENTHS, legsCountOf } from "../../../shared/scenes/level";
 import { countOf, NBSP } from "../../lib/format";
+import type { LaunchPlanCounts } from "./launchPlanCounts";
 
 // S5.8b (plan s5a2 §7, I5.29; mockups 33 and 34): «Ножки» on the window's side — legs and feet filling the frame, drawn from the five built-in categories only.
 // The card and «Автопилот» share the words below. The share is the owner's pick and stays in the form while a category list without a built-in shows
@@ -15,6 +16,9 @@ export const LEGS_OPTIONS = [
 
 /** Why the chips are off with no built-in category on (mockup 34#card, 34). */
 export const LEGS_BUILT_IN_ONLY = "Ножки — только во встроенных категориях";
+
+/** What a pick says when its share of the built-in photos rounds to no legs frame: «0 из 5 кадров» would read as a fault, as it does for «Подача» (wave 5e). */
+export const LEGS_TOO_FEW = "Ножки — слишком мало кадров во встроенных категориях";
 
 /** The custom category's sheet, under its angles (mockup 35). */
 export const LEGS_CUSTOM_NOTE = "«Ножки» в своих категориях не рисуются.";
@@ -55,7 +59,8 @@ export interface LegsLine {
 export function cardLegsLine(share: LegsShare, count: number, categories: readonly CategoryRef[]): LegsLine | null {
   if (!hasBuiltIn(categories)) return { text: LEGS_BUILT_IN_ONLY, why: true };
   if (share === 0 || count === 0) return null;
-  return { text: legsCaption(legsFrames(share, count, categories), count), why: false };
+  const legs = legsFrames(share, count, categories);
+  return legs === 0 ? { text: LEGS_TOO_FEW, why: true } : { text: legsCaption(legs, count), why: false };
 }
 
 // ---------- «Автопилот» ----------
@@ -69,11 +74,8 @@ export const LEGS_FEW = `Ножки — от ${LEGS_MIN_PHOTOS} фото`;
 /** «Автопилот»'s row caption, lower-case like every caption of that column (mockup 34). */
 export const LEGS_ROW_HINT = "только во встроенных категориях";
 
-/** What `launchLegsRow` reads of a launch's plan (`LaunchPreview`). */
-interface LaunchPlanCounts {
-  readonly avatars: readonly { readonly toGenerate: number; readonly blocked: unknown }[];
-  readonly totals: { readonly toGenerate: number };
-}
+/** Why the chips are off when «Догенерировать недостающие» is off: «Ножки» are new frames, and nothing new is drawn (wave 5e). */
+export const LEGS_NEW_ONLY = "Ножки — только для новых кадров";
 
 /** «Автопилот»'s «Ножки» row: the chip that reads on, whether the chips are off, and the caption. */
 export interface LegsRow {
@@ -84,17 +86,20 @@ export interface LegsRow {
 
 /**
  * «Автопилот»'s «Ножки» row (mockups 34, 34#few). With no built-in category on, the chips are off on «Нет» and say why. When no avatar of the plan draws
- * `LEGS_MIN_PHOTOS` new photos, they are off on the pick, which is kept: it just draws nothing this time. Else a pick says «≈ {L} из {M} новых кадров — …»:
- * each avatar composes its own new photos, so L sums `legsFrames` per avatar that is not blocked (the plan's totals leave those out); «≈», as the engine splits
- * an avatar's photos by its own seeded order. With no plan yet, or nothing new to draw, what the frames are, without a count.
+ * `LEGS_MIN_PHOTOS` new photos, they are off on the pick, which is kept: it just draws nothing this time. The same with «Догенерировать недостающие» off (`generate`):
+ * «Ножки» are new frames, and none is drawn. Else a pick says «≈ {L} из {M} новых кадров — …»: each avatar composes its own new photos, so L sums `legsFrames` per
+ * avatar that is not blocked (the plan's totals leave those out); «≈», as the engine splits an avatar's photos by its own seeded order. When L is 0 it says
+ * `LEGS_TOO_FEW` instead. With no plan yet, or nothing new to draw, what the frames are, without a count.
  */
-export function launchLegsRow(share: LegsShare, plan: LaunchPlanCounts | null, categories: readonly CategoryRef[]): LegsRow {
+export function launchLegsRow(share: LegsShare, plan: LaunchPlanCounts | null, categories: readonly CategoryRef[], generate = true): LegsRow {
   if (!hasBuiltIn(categories)) return { shown: 0, off: true, caption: { text: LEGS_BUILT_IN_ONLY, why: true } };
+  if (!generate) return { shown: share, off: true, caption: { text: LEGS_NEW_ONLY, why: true } };
   const drawing = plan === null ? [] : plan.avatars.filter((avatar) => avatar.blocked === null && avatar.toGenerate > 0);
   if (plan !== null && plan.totals.toGenerate > 0 && drawing.every((avatar) => avatar.toGenerate < LEGS_MIN_PHOTOS)) return { shown: share, off: true, caption: { text: LEGS_FEW, why: true } };
   if (share === 0) return { shown: 0, off: false, caption: null };
   if (plan === null || plan.totals.toGenerate === 0) return { shown: share, off: false, caption: { text: `${LEGS_WHAT.charAt(0).toUpperCase()}${LEGS_WHAT.slice(1)}`, why: false } };
   const legs = drawing.reduce((sum, avatar) => sum + legsFrames(share, avatar.toGenerate, categories), 0);
+  if (legs === 0) return { shown: share, off: false, caption: { text: LEGS_TOO_FEW, why: true } };
   return {
     shown: share,
     off: false,
