@@ -154,6 +154,7 @@ describe("swimwear on every frame (answer (a), M6)", () => {
         "sits on the edge, feet in the water",
         "leans on the edge in the water",
         "dangles her feet in the water",
+        "lets the waves wash over her feet",
         "stretches her arms out, knee-deep",
         "stretches one arm along the edge",
       ]),
@@ -228,6 +229,10 @@ describe("the legs moments (plan §6.3, M5): her own look down along her legs, n
     ["the beach", "sits on the sand, legs out", false, "she slowly buries her toes in the sand"],
     ["the beach", "crosses her ankles on the towel", false, "she crosses and uncrosses her ankles slowly"],
     ["a rooftop pool", "dangles her feet in the water", true, "she dips her toes in the water slowly"],
+    // S5.R4: three more, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one.
+    ["the water's edge", "lets the waves wash over her feet", true, "she wiggles her toes in the foam slowly"],
+    ["a rooftop pool", "lies back, ankles crossed", false, "she rocks her crossed feet a little"],
+    ["the rocks by the sea", "sits with her legs stretched out", false, "she flexes her feet slowly"],
   ])("%s · «%s»", (place, text, water, motion) => {
     const found = momentNamed(text);
     expect(found?.place).toBe(place);

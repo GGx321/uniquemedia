@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { GAZE } from "../../shared/scenes/banks";
 import { LOOKS_ELSEWHERE } from "../../shared/scenes/banks/schema";
 import { HELD_OBJECT_WORDS } from "../../shared/scenes/words";
-import { boldPromptMatrix, type PromptFrame } from "./boldRunPrompts.testkit";
+import { boldPromptMatrix, boldRunPrompts, type PromptFrame } from "./boldRunPrompts.testkit";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -80,5 +80,20 @@ describe("a place detail never dangles as a prop in her hands", () => {
     const empty = FRAMES.filter((f) => f.prompt.includes("holds nothing"));
     expect(empty.length).toBeGreaterThan(500);
     expect(offenders(empty, (f) => danglingIn(f.prompt).length > 0)).toEqual(NONE);
+  });
+});
+
+// Item 3 (MEDIUM): at 20 photos and «Ножки» 30 % a run holds 6 legs slots. With 4 legs moments a bank, two of them came twice in every run, and the same scene (place, moment and
+// outfit: «her bed | lies with her legs crossed | a satin cami and satin shorts») was paid for twice in 16 of 40 «Ночнушки» runs and 14 of 40 beach runs.
+describe("a 20-photo run with «Ножки» 30 % never pays for the same scene twice", () => {
+  const RUN_SEEDS = Array.from({ length: 60 }, (_, i) => i + 1);
+  const runsOf = (category: "nightwear" | "beach"): PromptFrame[][] => RUN_SEEDS.map((seed) => boldRunPrompts({ category, seed, count: 20, legsShare: 30, cameraRealism: false }));
+  const repeated = (keys: readonly string[]): string[] => keys.filter((key, i) => keys.indexOf(key) !== i);
+
+  test.each(["nightwear", "beach"] as const)("%s: 6 legs slots a run, and no legs moment twice", (category) => {
+    const runs = runsOf(category);
+    for (const frames of runs) expect(frames.filter((f) => f.slot.framing === "legs")).toHaveLength(6);
+    const twice = runs.flatMap((frames, i) => repeated(frames.filter((f) => f.slot.framing === "legs").map((f) => `${f.slot.location} | ${f.slot.activity}`)).map((key) => `seed ${RUN_SEEDS[i]}: ${key}`));
+    expect(twice.slice(0, 5)).toEqual([]);
   });
 });

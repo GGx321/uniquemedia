@@ -85,6 +85,8 @@ export const BEACH: CategoryBank = {
         { text: "stretches her arms out, knee-deep", motion: "she breathes in slowly and smiles", captures: ["friend", "candid"], twoHanded: true, angle: "profile", water: true, outfits: IN_THE_WATER, outdoor: true },
         { text: "laughs as a wave reaches her", motion: "she laughs and steps back a little", captures: ["friend", "candid"], twoHanded: false, expression: true, water: true, outfits: IN_THE_WATER, outdoor: true },
         { text: "steps out of the water", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, water: true, outfits: IN_THE_WATER, outdoor: true },
+        // S5.R4: seven legs moments, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one (with four, two came twice in every run).
+        { text: "lets the waves wash over her feet", motion: "she wiggles her toes in the foam slowly", captures: ["pov-legs"], twoHanded: false, water: true, outfits: LEGS_IN_THE_WATER, legs: { framing: "legs" } },
       ],
     },
     {
@@ -113,6 +115,7 @@ export const BEACH: CategoryBank = {
         { text: "looks back over her shoulder", motion: "she turns her head a little further", captures: ["friend", "timer"], twoHanded: false, angle: "three-quarter", gaze: "own", level: "bold", route: "seedream", outdoor: true },
         { text: "sips a cold drink by the water", motion: "she lowers the glass a little", captures: ["friend", "selfie", "candid"], twoHanded: false, outdoor: true },
         { text: "dangles her feet in the water", motion: "she dips her toes in the water slowly", captures: ["pov-legs"], twoHanded: false, water: true, outfits: LEGS_IN_THE_WATER, legs: { framing: "legs" } },
+        { text: "lies back, ankles crossed", motion: "she rocks her crossed feet a little", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
     {
@@ -129,6 +132,7 @@ export const BEACH: CategoryBank = {
         { text: "leans back on her hands", motion: "she leans her head back a little", captures: ["friend", "timer", "candid"], twoHanded: true, outdoor: true },
         { text: "tucks her hair back in the breeze", motion: "she tucks a strand back slowly", captures: ["friend", "candid"], twoHanded: false, hair: "own", angle: "profile", outdoor: true },
         { text: "sits with her hands clasped", motion: "she rolls her shoulders back a little", captures: ["friend", "timer", "candid"], twoHanded: true, angle: "profile", outdoor: true },
+        { text: "sits with her legs stretched out", motion: "she flexes her feet slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
   ],

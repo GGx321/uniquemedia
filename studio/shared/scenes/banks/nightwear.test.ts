@@ -200,7 +200,8 @@ describe("the P-5a3 decisions", () => {
 
   test("a legs frame wears no lingerie (#6: stockings with lingerie on a legs frame was refused): cotton, or satin with the bold stockings", () => {
     const legs = moments.filter((m) => m.moment.legs !== undefined);
-    expect(legs.length).toBe(4);
+    // S5.R4: 4 -> 7, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one.
+    expect(legs.length).toBe(7);
     for (const { moment } of legs) {
       expect(moment.outfits, moment.text).toEqual(["cotton pajama shorts and a tee", "a long cotton nightshirt", "a satin cami and satin shorts", "a satin midi nightdress"]);
       for (const outfit of moment.outfits ?? []) expect(lingerieWordsIn(outfit), outfit).toEqual([]);
@@ -215,6 +216,10 @@ describe("the legs moments (plan §6.2, S5.8a rules, M5)", () => {
     ["her bedroom", "lifts one foot to the mirror", ["mirror-hidden"], "she lifts her foot a little and lowers it"],
     // Review round 2, HIGH 3 (C3′ R1#08, «странное фото»): the owner's own idea, on the chair in front of the mirror, legs crossed, one foot dangling.
     ["an armchair in her bedroom", "sits, legs crossed, a foot dangling", ["mirror-hidden"], "she swings her dangling foot slowly"],
+    // S5.R4: three more, so a 20-photo run at «Ножки» 30 % never repeats one.
+    ["her bed", "stretches her legs on the duvet", ["pov-legs"], "she flexes her feet a little"],
+    ["her bedroom", "stands on tiptoe by the mirror", ["mirror-hidden"], "she rises a little higher on her toes"],
+    ["her bedroom", "sits on the rug, legs out", ["pov-legs"], "she slowly wiggles her toes"],
   ])("%s · «%s»", (place, text, captures, motion) => {
     const found = momentNamed(text);
     expect(found?.place).toBe(place);

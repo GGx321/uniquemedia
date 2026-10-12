@@ -41,15 +41,22 @@ const TABLE: Row[] = [
   { category: "fitness", place: "a home workout corner", text: "stretches her legs on the mat", motion: "she flexes her feet slowly", captures: ["pov-legs"] },
   { category: "fitness", place: "a yoga mat on her living-room floor", text: "sits with her legs stretched out", motion: "she reaches toward her toes slowly", captures: ["pov-legs"] },
   { category: "fitness", place: "a park running path", text: "stretches her calves", motion: "she presses her heel down a little", captures: ["low-feet"] },
-  // 5a.3 (S5.9b2, plan s5a3 §6.2-§6.3, M5): the «Смелая» banks' eight. Her own look down along her legs, or her feet to the mirror at home; never a low-feet frame.
+  // 5a.3 (S5.9b2, plan s5a3 §6.2-§6.3, M5): the «Смелая» banks' eight (fourteen from S5.R4). Her own look down along her legs, or her feet to the mirror at home; never a low-feet frame.
   { category: "nightwear", place: "her bed", text: "lies with her legs crossed", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"] },
   { category: "nightwear", place: "an armchair in her bedroom", text: "sits with her legs stretched out", motion: "she points her toes slowly", captures: ["pov-legs"] },
   { category: "nightwear", place: "her bedroom", text: "lifts one foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"] },
   { category: "nightwear", place: "an armchair in her bedroom", text: "sits, legs crossed, a foot dangling", motion: "she swings her dangling foot slowly", captures: ["mirror-hidden"] },
+  // S5.R4: three more a «Смелая» bank, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one.
+  { category: "nightwear", place: "her bed", text: "stretches her legs on the duvet", motion: "she flexes her feet a little", captures: ["pov-legs"] },
+  { category: "nightwear", place: "her bedroom", text: "stands on tiptoe by the mirror", motion: "she rises a little higher on her toes", captures: ["mirror-hidden"] },
+  { category: "nightwear", place: "her bedroom", text: "sits on the rug, legs out", motion: "she slowly wiggles her toes", captures: ["pov-legs"] },
   { category: "beach", place: "a hotel pool", text: "stretches her legs on the lounger", motion: "she points and flexes her toes slowly", captures: ["pov-legs"] },
   { category: "beach", place: "the beach", text: "sits on the sand, legs out", motion: "she slowly buries her toes in the sand", captures: ["pov-legs"] },
   { category: "beach", place: "the beach", text: "crosses her ankles on the towel", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"] },
   { category: "beach", place: "a rooftop pool", text: "dangles her feet in the water", motion: "she dips her toes in the water slowly", captures: ["pov-legs"] },
+  { category: "beach", place: "the water's edge", text: "lets the waves wash over her feet", motion: "she wiggles her toes in the foam slowly", captures: ["pov-legs"] },
+  { category: "beach", place: "a rooftop pool", text: "lies back, ankles crossed", motion: "she rocks her crossed feet a little", captures: ["pov-legs"] },
+  { category: "beach", place: "the rocks by the sea", text: "sits with her legs stretched out", motion: "she flexes her feet slowly", captures: ["pov-legs"] },
 ];
 
 const legsMoments = (category: BankCategory): { place: string; moment: Moment }[] =>

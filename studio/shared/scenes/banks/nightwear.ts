@@ -117,6 +117,8 @@ export const NIGHTWEAR: CategoryBank = {
         },
         // «Ножки» (S5.8a, M5): a look down along her own legs.
         { text: "lies with her legs crossed", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        // S5.R4: seven legs moments, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one (with four, two came twice in every run).
+        { text: "stretches her legs on the duvet", motion: "she flexes her feet a little", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
     {
@@ -160,6 +162,8 @@ export const NIGHTWEAR: CategoryBank = {
           coverage: "Her panties fully cover her bottom, and her crop top covers her chest.",
         },
         { text: "lifts one foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        { text: "stands on tiptoe by the mirror", motion: "she rises a little higher on her toes", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        { text: "sits on the rug, legs out", motion: "she slowly wiggles her toes", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
     {
