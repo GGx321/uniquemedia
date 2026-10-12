@@ -2,6 +2,7 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 import type { ResponseMessage } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
 import { openLibrary } from "./library";
@@ -30,7 +31,11 @@ const MODERATION: Reply = { status: 400, body: { error: { message: "Seedream blo
 const RATE_LIMITED: Reply = { status: 429, headers: { "retry-after": "120" }, body: { error: { message: "rate limited" } } };
 
 const faceGate = (): QaGate => ({ name: "face", paid: false, check: async () => ({ verdict: "pass" }) });
+const GROK = "x-ai/grok-imagine-image-2.0";
 const isSeedream = (call: FetchCall): boolean => call.json().model === SEEDREAM;
+const ReferencesBody = z.object({ input_references: z.array(z.object({ type: z.literal("image_url"), image_url: z.object({ url: z.string().startsWith("data:image/jpeg;base64,") }) })) });
+/** How many reference images a request carries (a body without the field has none). */
+const referencesOf = (call: FetchCall): number => ReferencesBody.parse(call.json()).input_references.length;
 
 let seeded = 0;
 async function seedAvatar(): Promise<string> {
@@ -111,9 +116,9 @@ describe("(a) runs.start in «Смелая»", () => {
     expect([bold.length, plain.length]).toEqual([routed, 10 - routed]);
     for (const call of bold) {
       const body = call.json();
-      expect({ resolution: body.resolution, aspect: body.aspect_ratio, refs: Array.isArray(body.input_references) ? body.input_references.length : null, quality: "quality" in body }).toEqual({ resolution: "2K", aspect: "9:16", refs: 1, quality: false });
+      expect({ resolution: body.resolution, aspect: body.aspect_ratio, refs: referencesOf(call), quality: "quality" in body }).toEqual({ resolution: "2K", aspect: "9:16", refs: 1, quality: false });
     }
-    for (const call of plain) expect([call.json().resolution, call.json().aspect_ratio]).toEqual(["1K", "9:16"]);
+    for (const call of plain) expect([call.json().model, call.json().resolution, call.json().aspect_ratio, referencesOf(call)]).toEqual([GROK, "1K", "9:16", 1]);
 
     const photos = await photosOf(started, avatarId);
     const ofRun = photos.filter((p) => p.runId === runId);
@@ -184,6 +189,7 @@ describe("(d) the resume of an engine-planned run", () => {
     const { runId, jobId } = startedOf(await engine.handle(command("runs.start", { ...runRequest(avatarId, 6), acceptedWorstMicros: 6 * 3 * BOLD_ATTEMPT })));
     expect((await jobEnd(events, jobId)).type).toBe("job.done");
     const routed = routedOf(planOf(runId));
+    expect(routed).toBeGreaterThan(0);
     const refused = journalOf(runId).filter((e) => e.type === "slot" && e.status === "failed" && e.error?.sceneReason === "model-refused");
     expect(refused).toHaveLength(routed);
     expect(net.imageCalls().filter(isSeedream)).toHaveLength(routed);
@@ -203,15 +209,19 @@ describe("(d) the resume of an engine-planned run", () => {
     const end = await jobEnd(events, jobId);
     expect(end.type).toBe("job.failed");
     const routed = routedOf(planOf(runId));
+    expect(routed).toBeGreaterThan(0);
     expect(journalOf(runId).filter((e) => e.type === "slot" && e.error?.sceneReason !== undefined)).toEqual([]);
 
     limited = false;
+    const seedreamBefore = net.imageCalls().filter(isSeedream).length;
     const remaining = estimateOf(await engine.handle(command("runs.estimateResume", { runId })));
     const resumed = startedOf(await engine.handle(command("runs.resume", { runId, acceptedWorstMicros: remaining.worstMicros })));
     expect((await jobEnd(events, resumed.jobId)).type).toBe("job.done");
 
-    const seedreamCalls = net.imageCalls().filter(isSeedream);
-    expect(seedreamCalls.every((c) => c.json().resolution === "2K" && JSON.stringify(c.json().input_references).split("image_url\"").length === 3)).toBe(true);
+    // The resume sends each routed slot exactly once more, and every one of those requests is the bold request: 2K, one reference, Seedream.
+    const resumedCalls = net.imageCalls().filter(isSeedream).slice(seedreamBefore);
+    expect(resumedCalls).toHaveLength(routed);
+    expect(resumedCalls.map((c) => [c.json().resolution, referencesOf(c)])).toEqual(Array.from({ length: routed }, () => ["2K", 1]));
     const photos = (await photosOf(started, avatarId)).filter((p) => p.runId === runId);
     expect(photos).toHaveLength(6);
     expect(photos.filter((p) => p.route === "seedream")).toHaveLength(routed);
