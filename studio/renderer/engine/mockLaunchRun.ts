@@ -1,5 +1,6 @@
 import {
   LAUNCH_SLICE_MAX_PHOTOS,
+  legsNeedsBuiltIn,
   type AvatarPhase,
   type CategoryRef,
   type DropReason,
@@ -586,15 +587,19 @@ export class MockRun {
     work.setId = `set-mock-${this.#number}-${work.index + 1}`;
     // A real set of the library, as the engine's compose makes it: the avatar's open set, named by the launch, with no sentence written yet.
     // The set is composed with the draft's «Подача» and «Ножки», as the engine's launch compose carries them (S5.7a, S5.8a); neither is sent when it was not asked for (I5.27).
+    // The avatar is composed over the categories of ITS split, the empty ones dropped as the planner drops them (S5.R3), and «Ножки» ride on it only when one of them is built-in.
     const { level, legsShare } = this.#launch.draft;
+    const own = work.generate.filter((s) => s.count > 0).map((s) => s.ref);
+    const categories = own.length > 0 ? own : this.#categories;
+    const legs = legsShare !== undefined && legsShare > 0 && !legsNeedsBuiltIn({ categories, legsShare });
     this.#w.openLaunchSet({
       avatarId: work.avatarId,
       sceneSetId: work.setId,
       count: work.toGenerate,
-      categories: this.#categories,
+      categories,
       launchId: this.#launch.launchId,
       ...(level === "flirty" ? { level } : {}),
-      ...(legsShare === undefined || legsShare === 0 ? {} : { legsShare }),
+      ...(legs ? { legsShare } : {}),
     });
   }
 

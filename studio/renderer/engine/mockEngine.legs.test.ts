@@ -6,7 +6,7 @@ import { apportionLegs, flirtyCountOf, legsCountOf } from "../../shared/scenes/l
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { BANK_OF } from "./mockBankScenes";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
-import { runUntil, runWorld, startRun, unwrap } from "./mockLaunchRun.testkit";
+import { draftOf, LLM_ONLY_REF, runUntil, runWorld, startRun, unwrap } from "./mockLaunchRun.testkit";
 import { ManualScheduler } from "./scheduler";
 
 // 5a.2c (S5.8a, I5.29): the mock mirrors the engine's «Ножки» on a composed set, a refused request and a launch: facts only. The legs scenes are
@@ -197,5 +197,24 @@ describe("a launch carries «Ножки» into its set", () => {
   test("a launch with no legs, or a share of 0, reviews a set without any", async () => {
     expect(legsOf(await launchSet({}))).toHaveLength(0);
     expect(legsOf(await launchSet({ legsShare: 0 }))).toHaveLength(0);
+  });
+});
+
+describe("a mixed launch composes over the avatar's own split (S5.R3)", () => {
+  // The engine composes an avatar over the categories of ITS split (the planner drops the empty ones), not over the launch's: with one video only one category is drawn.
+  async function categoriesOfOneVideoLaunch(over: Partial<LaunchDraftInput>): Promise<string[]> {
+    const mock = runWorld();
+    const started = await startRun(mock, { categories: ["home", LLM_ONLY_REF], videosPerAvatar: 1, mix: { single: 0, collage: 0, slides: 100 }, sceneReview: true, ...over });
+    await runUntil(mock, started.launchId, "the review", (v) => v.avatars.some((a) => a.phase === "awaiting-review"));
+    const got = await unwrap(mock.client.request("scenes.get", { avatarId: MIA.avatarId }));
+    return [...new Set((got.sceneSet?.scenes ?? []).map((s) => s.category))];
+  }
+
+  test("a one-video avatar's set holds the category of its split only, not every category of the launch", async () => {
+    expect(await categoriesOfOneVideoLaunch({})).toEqual(["home"]);
+  });
+
+  test("the same holds for a launch asked for legs", async () => {
+    expect(await categoriesOfOneVideoLaunch({ legsShare: 30 })).toEqual(["home"]);
   });
 });
