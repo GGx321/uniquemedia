@@ -72,7 +72,7 @@ describe("the places (plan §6.3)", () => {
   test("five places by the sea and the pool, with their times and details", () => {
     expect(BEACH.places.map((p) => ({ name: p.name, at: p.at, times: p.times, details: p.details, room: p.room, mirror: p.mirror }))).toEqual([
       { name: "the beach", at: "on a sandy beach", times: ["morning", "midday", "golden hour"], details: ["a canvas tote bag beside her", "a striped umbrella planted nearby", "some small waves behind her"], room: undefined, mirror: undefined },
-      { name: "the water's edge", at: "at the edge of the sea", times: ["morning", "midday", "golden hour"], details: ["a sailboat on the horizon", "the beach behind her"], room: undefined, mirror: undefined },
+      { name: "the water's edge", at: "at the edge of the sea", times: ["morning", "midday", "golden hour"], details: ["a sailboat on the horizon", "the open horizon behind her"], room: undefined, mirror: undefined },
       { name: "a hotel pool", at: "by a hotel pool", times: ["morning", "midday"], details: ["a folded towel on a deck chair", "two palm trees", "a glass of iced tea on a side table"], room: undefined, mirror: undefined },
       { name: "a rooftop pool", at: "by a rooftop pool", times: ["midday", "golden hour"], details: ["the city skyline behind her", "a low white daybed"], room: undefined, mirror: undefined },
       { name: "the rocks by the sea", at: "on the rocks by the sea", times: ["golden hour", "evening"], details: ["the warm evening sky", "a few gulls overhead"], room: undefined, mirror: undefined },
@@ -247,6 +247,14 @@ describe("the legs moments (plan §6.3, M5): her own look down along her legs, n
       outfits: water ? LEGS_IN_THE_WATER : LEGS,
     });
   });
+});
+
+// S5.R4 round 3 (re-review, LOW): a look down at her feet sees what is at her feet, so every legs moment says details of its own, and none of them is far off.
+test("every legs moment says details of its own: what is at her feet or under her", () => {
+  for (const { moment } of moments.filter((m) => m.moment.legs !== undefined)) {
+    expect(moment.details?.length ?? 0, moment.text).toBeGreaterThanOrEqual(2);
+    for (const detail of moment.details ?? []) expect(detail, moment.text).toMatch(/\b(?:feet|toes|ankles|legs|under her|ahead of her)\b|\b(?:sand|foam)\b/);
+  }
 });
 
 // Review of S5.9b2: two moments said the very same motion, so a clip of one read as a clip of the other.

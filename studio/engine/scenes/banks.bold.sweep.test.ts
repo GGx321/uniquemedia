@@ -45,6 +45,8 @@ function textsOf(category: string, bank: CategoryBank): BankText[] {
       add(`/${place.name}.motion`, moment.motion);
       if (moment.startPose !== undefined) add(`/${place.name}.startPose`, moment.startPose);
       if (moment.coverage !== undefined) add(`/${place.name}.coverage`, moment.coverage, true);
+      // S5.R4 round 3: a moment's own details.
+      for (const detail of moment.details ?? []) add(`/${place.name}: ${moment.text}.details`, detail);
     }
   }
   return out;
@@ -163,7 +165,7 @@ describe("a «Смелая» sentence with its coverage fits the scene text boun
       ", ".length +
       longest(CUES.map((c) => c.text)) +
       ", with ".length +
-      longest(bank.places.flatMap((p) => p.details)) +
+      longest(bank.places.flatMap((p) => [...p.details, ...p.moments.flatMap((m) => m.details ?? [])])) +
       ".".length +
       " ".length +
       longest(coverage)

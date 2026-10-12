@@ -90,11 +90,36 @@ describe("a place detail never dangles as a prop in her hands", () => {
   test("a frame in the water names no sand, shells or pebbles as its detail", () => {
     const IN_THE_WATER = /\b(?:waist|knee|thigh|chest)-deep\b|\bin the (?:water|sea|pool)\b|\bswim\w*\b/i;
     const GROUND = /\b(?:sand|seashells?|shells?|pebbles?)\b/i;
-    const wet = FRAMES.filter((f) => f.moment.water === true && IN_THE_WATER.test(f.moment.text));
+    const wet = FRAMES.filter((f) => f.moment.water === true && IN_THE_WATER.test(f.moment.text) && f.capture !== "pov-legs");
     expect(wet.length).toBeGreaterThan(300);
-    expect(offenders(wet, (f) => f.place.room !== true && f.place.details.some((d) => GROUND.test(d) && f.sentence.includes(`, with ${d}.`)))).toEqual(NONE);
+    expect(offenders(wet, (f) => GROUND.test(sceneDetailOf(f) ?? ""))).toEqual(NONE);
+  });
+
+  // S5.R4 round 3 (re-review, LOW): the detail has to agree with where she faces and who takes the photo. A look down at her feet sees what is at her feet, not «a sailboat on the
+  // horizon» or «the beach behind her» (the old «some wet sand» fitted); and seen from the shore in the sea («steps out of the water, … looking up at the viewer») the beach is behind
+  // the camera, not behind her.
+  test("a look down at her feet names what is at her feet or under her, and nothing far off", () => {
+    const pov = FRAMES.filter((f) => f.capture === "pov-legs" && f.place.room !== true);
+    expect(pov.length).toBeGreaterThan(300);
+    expect(offenders(pov, (f) => !AT_HER_FEET.test(sceneDetailOf(f) ?? "") || FAR_OFF.test(sceneDetailOf(f) ?? ""))).toEqual(NONE);
+  });
+
+  test("a photo of her at the sea, taken from the shore, never puts the beach behind her", () => {
+    const fromShore = FRAMES.filter((f) => f.slot.category === "beach" && f.capture !== "pov-legs" && (f.moment.water === true || /\bedge of the sea\b/.test(f.place.at)));
+    expect(fromShore.length).toBeGreaterThan(300);
+    expect(offenders(fromShore, (f) => /\b(?:beach|shore|sand)\b[^,.]*\bbehind her\b/i.test(sceneDetailOf(f) ?? ""))).toEqual(NONE);
   });
 });
+
+/** What is at her feet or under her: the only details a look down at her feet can see. */
+const AT_HER_FEET = /\b(?:feet|toes|ankles|legs|under her|beside her|around her)\b|\b(?:sand|foam|ripples|footprints)\b/i;
+/** Far scenery: out of a look down at her feet. */
+const FAR_OFF = /\b(?:horizon|skyline|sky|overhead|palm trees|sailboat|city)\b|\bbehind her\b/i;
+/** The place detail a frame's sentence says («…, with {detail}.»), or undefined when it says none (a room, a custom place). */
+function sceneDetailOf(f: PromptFrame): string | undefined {
+  const details = f.moment.details ?? f.place.details;
+  return details.find((d) => f.sentence.includes(`, with ${d}.`));
+}
 
 // Item 3 (MEDIUM): at 20 photos and «Ножки» 30 % a run holds 6 legs slots. With 4 legs moments a bank, two of them came twice in every run, and the same scene (place, moment and
 // outfit: «her bed | lies with her legs crossed | a satin cami and satin shorts») was paid for twice in 16 of 40 «Ночнушки» runs and 14 of 40 beach runs.

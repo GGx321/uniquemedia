@@ -58,6 +58,11 @@ export interface Moment {
   coverage?: string;
   /** 5a.3: in the water or at its edge: such a moment pins swimwear only («Пляж и бассейн»). */
   water?: true;
+  /**
+   * S5.R4 round 3 («Смелая» banks only): the details this moment says instead of its place's, when where she faces or who takes the photo sees other things (a look down at her
+   * feet sees what is at her feet, never the horizon). 2 or 3, held to the place details' rules.
+   */
+  details?: readonly string[];
   angle?: Angle;
   gaze?: MomentGaze;
   hair?: MomentHair;

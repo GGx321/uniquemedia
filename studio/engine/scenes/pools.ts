@@ -345,7 +345,7 @@ const Coverage = z.string().min(1).regex(/^[\x20-\x7e]+$/, "a coverage sentence 
 const BOLD_LEVEL = z.enum(["flirty", "bold"]).optional();
 const ROUTE = z.literal("seedream").optional();
 
-const BoldActivitySchema = BuiltInActivitySchema.extend({ text: BoldText, level: BOLD_LEVEL, route: ROUTE, coverage: Coverage.optional(), water: TRUE });
+const BoldActivitySchema = BuiltInActivitySchema.extend({ text: BoldText, level: BOLD_LEVEL, route: ROUTE, coverage: Coverage.optional(), water: TRUE, details: z.array(BoldText).min(2).max(3).optional() });
 
 const BoldPlaceSchema = z.strictObject(builtInPlaceShape(BoldActivitySchema)).superRefine(builtInPlaceRules);
 

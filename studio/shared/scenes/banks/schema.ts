@@ -325,7 +325,7 @@ const LEGWEAR_SHAPE = { items: z.array(z.string()), share: z.number() };
 // 5a.3 (S5.9b2): what a «Смелая» bank may carry beyond the five's shapes: a level up to bold, the Seedream route, a coverage sentence, the water tag, the bold legwear.
 const BOLD_LEVEL = z.enum(["flirty", "bold"]).optional();
 const ROUTE = z.literal("seedream").optional();
-const BoldMomentSchema = z.strictObject({ ...MOMENT_SHAPE, level: BOLD_LEVEL, route: ROUTE, coverage: z.string().optional(), water: z.literal(true).optional() });
+const BoldMomentSchema = z.strictObject({ ...MOMENT_SHAPE, level: BOLD_LEVEL, route: ROUTE, coverage: z.string().optional(), water: z.literal(true).optional(), details: z.array(z.string()).optional() });
 const BoldPlaceSchema = z.strictObject({ ...PLACE_SHAPE, moments: z.array(BoldMomentSchema) });
 
 /** The rules every bank is held to, the five's and the «Смелая» ones (`bold`: the exempt garment name is spared, and stockings belong on the bold legwear). */
@@ -370,22 +370,33 @@ function bankRules(bank: CategoryBank, add: Add, category: BankCategory | null, 
     if (!AT_START.test(place.at)) add(BANK_RULE.at, `${where}.at`, "opens with a preposition");
     if (place.times.length === 0 || place.times.includes("studio lighting")) add(BANK_RULE.times, `${where}.times`, "one or more times of day, never the stored «studio lighting»");
     if (place.details.length < 2 || place.details.length > 3) add(BANK_RULE.details, `${where}.details`, "2 or 3 details");
-    // S5.6R: a place that is not a room says its detail in the same sentence as its own phrase, so a detail never names that phrase's words again.
+    // S5.6R: a place that is not a room says its detail in the same sentence as its own phrase, so a detail never names that phrase's words again. S5.R4 round 3: a moment's own
+    // details (a «Смелая» bank's) are held to the same rules.
     const ownWords = new Set(plainWords(place.at));
-    for (const detail of place.details) {
-      checkText(add, `${where}.details`, detail, POOL_TEXT_MAX, bold);
-      if (!DETAIL_START.test(detail)) add(BANK_RULE.detailGrammar, `${where}.details`, `«${detail}» opens with a|an|the|her|some|two`);
-      if (MIRROR.test(detail)) add(BANK_RULE.mirrorWord, `${where}.details`, "a detail must not name a mirror");
-      const again = plainWords(detail).filter((w) => ownWords.has(w));
-      if (place.room !== true && again.length > 0) add(BANK_RULE.detailRepeat, `${where}.details`, `«${detail}» names «${again.join("», «")}» again: the place's own phrase says it in the same sentence`);
+    const checkDetails = (at: string, details: readonly string[]): void => {
+      for (const detail of details) {
+        checkText(add, at, detail, POOL_TEXT_MAX, bold);
+        if (!DETAIL_START.test(detail)) add(BANK_RULE.detailGrammar, at, `«${detail}» opens with a|an|the|her|some|two`);
+        if (MIRROR.test(detail)) add(BANK_RULE.mirrorWord, at, "a detail must not name a mirror");
+        const again = plainWords(detail).filter((w) => ownWords.has(w));
+        if (place.room !== true && again.length > 0) add(BANK_RULE.detailRepeat, at, `«${detail}» names «${again.join("», «")}» again: the place's own phrase says it in the same sentence`);
+      }
+    };
+    checkDetails(`${where}.details`, place.details);
+    for (const moment of place.moments) {
+      if (moment.details === undefined) continue;
+      if (place.room === true) add(BANK_RULE.details, `${where}: ${moment.text}`, "a room says its details in its room phrase: a moment of a room has none of its own");
+      if (moment.details.length < 2 || moment.details.length > 3) add(BANK_RULE.details, `${where}: ${moment.text}`, "2 or 3 details of its own");
+      checkDetails(`${where}: ${moment.text}.details`, moment.details);
     }
     if (place.moments.length < 4) add(BANK_RULE.moments, `${where}.moments`, "at least 4 moments");
     const texts = place.moments.map((m) => m.text);
     if (new Set(texts).size !== texts.length) add(BANK_RULE.duplicate, `${where}.moments`, "a moment is given twice");
     place.moments.forEach((moment) => checkMoment(add, `${where}: ${moment.text}`, moment, place, outfits, bold));
     // Review L1: a sentence says the place («On her bed») and draws a detail; a moment that names either again reads «On her bed, she sits on the bed».
-    const placeWords = new Set([...contentWords(place.at, false), ...place.details.flatMap((d) => [...contentWords(d, false)])]);
     for (const moment of place.moments) {
+      // The moment's sentence says the place and one of the details it says: its own (S5.R4 round 3) or its place's.
+      const placeWords = new Set([...contentWords(place.at, false), ...(moment.details ?? place.details).flatMap((d) => [...contentWords(d, false)])]);
       const again = [...contentWords(moment.text, true)].filter((w) => placeWords.has(w));
       if (again.length > 0) add(BANK_RULE.repeat, `${where}: ${moment.text}`, `names «${again.join("», «")}» again: the place or its details already say it`);
     }

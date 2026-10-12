@@ -207,6 +207,13 @@ describe("a «Смелая» bank", () => {
     expect(boldBankProblems(withMoment(ARMS_UP))).toEqual([]);
   });
 
+  // S5.R4 round 3: a «Смелая» moment may say details of its own; the five's schema has no such field.
+  test("a moment outside a room may say 2 or 3 details of its own; the five's schema refuses the field", () => {
+    const own: Moment = { ...WADES, text: "stands in the shallows, smiling", motion: "she smiles a little", gaze: undefined, angle: undefined, expression: true, details: ["some wet sand", "a little white foam"] };
+    expect(boldBankProblems(withEdge(own))).toEqual([]);
+    expect(categoryBankProblems({ ...BANKS.home, places: BANKS.home.places.map((p, i) => (i === 0 ? { ...p, moments: p.moments.map((m, j) => (j === 0 ? { ...m, details: ["a kettle", "a mug"] } : m)) } : p)) }, "home").join("\n")).toMatch(/\[shape\].*Unrecognized key: "details"/);
+  });
+
   test("holds the babydoll garment name, which the youth rule refuses everywhere else (answer (b))", () => {
     expect(rulesOf(categoryBankProblems({ ...BANKS.home, outfits: [...BANKS.home.outfits, { text: "a sheer babydoll over a lace set" }] }, "home"))).toContain(BANK_RULE.youth);
     expect(boldBankProblems(BOLD)).toEqual([]);
@@ -274,6 +281,11 @@ describe("a «Смелая» bank", () => {
       },
       BANK_RULE.boldLevels,
     ],
+    // S5.R4 round 3: a moment's own details are held to the place details' rules.
+    ["a moment of a room with details of its own (a room says them in its room phrase)", withMoment({ ...plain, details: ["a bedside lamp", "a plain wall behind her"] }), BANK_RULE.details],
+    ["a moment with one detail of its own", withEdge({ ...WADES, text: "stands in the shallows, smiling", motion: "she smiles a little", gaze: undefined, angle: undefined, expression: true, details: ["some wet sand"] }), BANK_RULE.details],
+    ["a moment's own detail that names its place's phrase again", withEdge({ ...WADES, text: "stands in the shallows, smiling", motion: "she smiles a little", gaze: undefined, angle: undefined, expression: true, details: ["some wet sand", "the sea behind her"] }), BANK_RULE.detailRepeat],
+    ["a moment's own detail that does not open with an article", withEdge({ ...WADES, text: "stands in the shallows, smiling", motion: "she smiles a little", gaze: undefined, angle: undefined, expression: true, details: ["wet sand", "a little white foam"] }), BANK_RULE.detailGrammar],
     // water
     ["a water moment that pins no outfit", withWater({ ...WADES, outfits: undefined }), BANK_RULE.water],
     ["a water moment that pins an outfit that is not swimwear", withWater({ ...WADES, outfits: ["a black bikini", "a long cotton nightshirt"] }), BANK_RULE.water],

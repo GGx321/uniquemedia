@@ -60,19 +60,20 @@ export const BEACH: CategoryBank = {
         { text: "ties her hair in a loose knot", motion: "she gathers her hair up slowly", captures: ["friend", "candid"], twoHanded: true, hair: "own", angle: "profile", outdoor: true },
         { text: "lowers her sunglasses a little", motion: "she slowly peeks over her sunglasses", captures: ["selfie", "friend"], twoHanded: false, level: "flirty", outdoor: true },
         { text: "wrings out her wet hair", motion: "she squeezes her hair slowly", captures: ["friend", "timer", "candid"], twoHanded: true, hair: "own", water: true, outfits: IN_THE_WATER, outdoor: true },
-        // «Ножки» (S5.8a, M5): her own look down along her legs.
-        { text: "sits on the sand, legs out", motion: "she slowly buries her toes in the sand", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        // «Ножки» (S5.8a, M5): her own look down along her legs. S5.R4 round 3: a look down at her feet sees what is at her feet, so each says details of its own.
+        { text: "sits on the sand, legs out", motion: "she slowly buries her toes in the sand", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" }, details: ["a few seashells by her toes", "her flip-flops beside her feet"] },
         // S5.R4 round 3: its motion was «Дом»'s and «Ночнушки»'s word for word.
         // S5.R4 round 3: in place of the rooftop's «steps down into the water», the third «feet in the water» picture beside «dangles her feet in the water» and the waves.
-        { text: "walks on tiptoe across the sand", motion: "she takes a small careful step", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
-        { text: "crosses her ankles on the towel", motion: "she taps her crossed feet together slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        { text: "walks on tiptoe across the sand", motion: "she takes a small careful step", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" }, details: ["a few seashells near her toes", "some footprints ahead of her"] },
+        { text: "crosses her ankles on the towel", motion: "she taps her crossed feet together slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" }, details: ["a few seashells by her toes", "her sunglasses beside her feet"] },
       ],
     },
     {
       name: "the water's edge",
       at: "at the edge of the sea",
-      // S5.R4 round 2: every moment here is in the water or at its edge (waist- and knee-deep among them), so the details are what she sees from the water, not the sand under her.
-      details: ["a sailboat on the horizon", "the beach behind her"],
+      // S5.R4 rounds 2 and 3: every moment here is in the water or at its edge, seen from the shore (the look down at her feet says its own details), so the details are the sea's
+      // side of her: never the sand under her feet, never the beach, which is behind the camera.
+      details: ["a sailboat on the horizon", "the open horizon behind her"],
       times: ["morning", "midday", "golden hour"],
       moments: [
         { text: "walks along the shore", motion: "she walks on slowly, the water at her feet", captures: ["friend", "candid"], twoHanded: false, water: true, outfits: IN_THE_WATER, outdoor: true },
@@ -94,7 +95,7 @@ export const BEACH: CategoryBank = {
         { text: "steps out of the water", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, water: true, outfits: IN_THE_WATER, outdoor: true },
         // S5.R4: seven legs moments of seven poses, so the six legs slots of a 20-photo run at «Ножки» 30 % never show one pose twice (round 2: «legs stretched out» three times
         // over in other words was the same photo).
-        { text: "lets the waves wash over her feet", motion: "she wiggles her toes in the foam slowly", captures: ["pov-legs"], twoHanded: false, water: true, outfits: LEGS_IN_THE_WATER, legs: { framing: "legs" } },
+        { text: "lets the waves wash over her feet", motion: "she wiggles her toes in the foam slowly", captures: ["pov-legs"], twoHanded: false, water: true, outfits: LEGS_IN_THE_WATER, legs: { framing: "legs" }, details: ["some wet sand", "a little white foam"] },
       ],
     },
     {
@@ -108,7 +109,7 @@ export const BEACH: CategoryBank = {
         { text: "sits on the edge, feet in the water", motion: "she swirls her feet slowly", captures: ["friend", "selfie", "timer", "candid"], twoHanded: false, water: true, outfits: IN_THE_WATER, outdoor: true },
         { text: "stretches one arm along the edge", motion: "she slides her hand along the tiles slowly", captures: ["friend", "candid"], twoHanded: false, angle: "profile", water: true, outfits: IN_THE_WATER, outdoor: true },
         { text: "leans on the edge in the water", motion: "she kicks her feet slowly behind her", captures: ["friend", "timer", "candid"], twoHanded: true, water: true, outfits: IN_THE_WATER, outdoor: true },
-        { text: "lies on the lounger, one knee bent", motion: "she sways her bent knee slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        { text: "lies on the lounger, one knee bent", motion: "she sways her bent knee slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" }, details: ["a folded towel under her legs", "the blue water past her toes"] },
       ],
     },
     {
@@ -122,7 +123,7 @@ export const BEACH: CategoryBank = {
         // The beach probe: looking back over her shoulder at the rooftop pool.
         { text: "looks back over her shoulder", motion: "she turns her head a little further", captures: ["friend", "timer"], twoHanded: false, angle: "three-quarter", gaze: "own", level: "bold", route: "seedream", outdoor: true },
         { text: "sips a cold drink by the water", motion: "she lowers the glass a little", captures: ["friend", "selfie", "candid"], twoHanded: false, outdoor: true },
-        { text: "dangles her feet in the water", motion: "she dips her toes in the water slowly", captures: ["pov-legs"], twoHanded: false, water: true, outfits: LEGS_IN_THE_WATER, legs: { framing: "legs" } },
+        { text: "dangles her feet in the water", motion: "she dips her toes in the water slowly", captures: ["pov-legs"], twoHanded: false, water: true, outfits: LEGS_IN_THE_WATER, legs: { framing: "legs" }, details: ["some ripples around her ankles", "the tiled edge under her legs"] },
       ],
     },
     {
@@ -139,7 +140,7 @@ export const BEACH: CategoryBank = {
         { text: "leans back on her hands", motion: "she leans her head back a little", captures: ["friend", "timer", "candid"], twoHanded: true, outdoor: true },
         { text: "tucks her hair back in the breeze", motion: "she tucks a strand back slowly", captures: ["friend", "candid"], twoHanded: false, hair: "own", angle: "profile", outdoor: true },
         { text: "sits with her hands clasped", motion: "she rolls her shoulders back a little", captures: ["friend", "timer", "candid"], twoHanded: true, angle: "profile", outdoor: true },
-        { text: "lifts one leg, toes pointed", motion: "she lowers her lifted leg slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        { text: "lifts one leg, toes pointed", motion: "she lowers her lifted leg slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" }, details: ["a beach towel under her", "her sandals beside her feet"] },
       ],
     },
   ],

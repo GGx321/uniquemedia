@@ -67,7 +67,8 @@ function builtInSentence(category: BankCategory, slot: TemplateSlot, ctx: Templa
     gaze: moment.gaze,
     expression: moment.expression === true,
     handAtFace: moment.handAtFace === true,
-    details: place.room === true ? [] : place.details,
+    // S5.R4 round 3: a «Смелая» moment may say details of its own (what a look down at her feet sees); every other moment says its place's.
+    details: place.room === true ? [] : (moment.details ?? place.details),
     ...(coverage === undefined ? {} : { coverage }),
   };
   return renderSentence(parts, { capture, pose: slot.pose, framing: slot.framing }, ctx);
