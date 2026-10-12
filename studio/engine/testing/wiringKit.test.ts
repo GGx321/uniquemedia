@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { FetchCall } from "../openrouter/testing/fakes";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { imageReply, imageReplyFor, isSeedream } from "./wiringKit";
+useNativeGlobals();
 
 // 5a.3 (S5.9f, plan s5a3 §12): the wiring kit's fake image endpoint answers by the model a request names, so a parity story can refuse or empty ONLY the Seedream requests of a «Смелая» run
 // and leave the owner's model alone. Without a fault it is `imageReply`, byte for byte, so every older story keeps the answers it was bound to.
