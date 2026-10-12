@@ -122,12 +122,18 @@ type Rule = (typeof BANK_RULE)[keyof typeof BANK_RULE];
 
 /** The viewer, the camera or the lens: a look at one of them is the viewer gaze's own rule, never a look elsewhere. */
 const AT_THE_VIEWER = /\b(?:viewer|camera|lens)\b/i;
-/** Eyes on something by the verb alone: she watches, gazes, stares or peers at it, admires it, takes in the view, checks her reflection. */
-const EYES_ON = /\b(?:watch(?:es|ing)?|gaz(?:e|es|ing)|star(?:e|es|ing)|peer(?:s|ing)?|admir(?:e|es|ing))\b|\btak(?:es|ing) in the view\b|\bcheck(?:s|ing)? her reflection\b/i;
+/**
+ * S5.R4 round 3: the mirror, in a mirror selfie, is where her phone is, the viewer's own place: looking into it or facing it is no look elsewhere. Her reflection is herself: a look
+ * at it («smiles at her reflection», «checks her reflection in the mirror») is one.
+ */
+const AT_THE_MIRROR = /\bmirror\b/i;
+const AT_HER_REFLECTION = /\b(?:at|on|to)\s+her\s+reflection\b|\bcheck(?:s|ing)?\s+her\s+reflection\b/i;
+/** Eyes on something by the verb alone: she watches, gazes, stares or peers at it, admires it, takes in the view, eyes it. */
+const EYES_ON = /\b(?:watch(?:es|ing)?|gaz(?:e|es|ing)|star(?:e|es|ing)|peer(?:s|ing)?|admir(?:e|es|ing))\b|\btak(?:es|ing) in the view\b|\beyes\s+(?:the|a)\b/i;
 /** A look or a glance with a direction or a target («looks out at», «looking down the street»); a bare «looks up», «glancing back» or «over her shoulder» names none. */
 const LOOK_TOWARD = /\b(?:look(?:s|ing)?|glanc(?:e|es|ing))\s+(?:(?:up|back)\s+)?(?:out|at|across|over(?!\s+her\s+shoulder\b)|down|along|into|toward|towards|through|around|past)\b/i;
-/** Facing something she looks at («faces the sunset», «sits facing the sea»); facing the mirror is the mirror selfie itself, and facing away names nothing. */
-const FACING = /\bfac(?:es|ing)\s+(?:the|a)\s+(?!mirror\b)[a-z]+/i;
+/** Facing something she looks at («faces the sunset», «sits facing the sea»); facing away names nothing, and facing the mirror is the viewer's place (AT_THE_MIRROR). */
+const FACING = /\bfac(?:es|ing)\s+(?:the|a)\s+[a-z]+/i;
 
 /**
  * S5.R4: a look at something other than the viewer, anywhere in a moment's text or motion («sits on a ledge, watching dusk fall», «she looks out at the street»): the moment
@@ -138,7 +144,7 @@ const FACING = /\bfac(?:es|ing)\s+(?:the|a)\s+(?!mirror\b)[a-z]+/i;
 export function looksElsewhere(text: string): boolean {
   return text
     .split(/[,.;]|\band\b/i)
-    .some((clause) => !AT_THE_VIEWER.test(clause) && (EYES_ON.test(clause) || LOOK_TOWARD.test(clause) || FACING.test(clause)));
+    .some((clause) => AT_HER_REFLECTION.test(clause) || (!AT_THE_VIEWER.test(clause) && !AT_THE_MIRROR.test(clause) && (EYES_ON.test(clause) || LOOK_TOWARD.test(clause) || FACING.test(clause))));
 }
 
 /** Raised or stretched arms, in a moment's text or its motion (the open-shirt rule below). A stretch of her legs, feet or toes is not one: her arms stay down. */

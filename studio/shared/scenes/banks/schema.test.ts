@@ -164,6 +164,10 @@ describe("a category bank", () => {
     "sits facing the sea",
     "checks her reflection",
     "takes in the view",
+    // S5.R4 round 3: her own reflection is herself, not the phone; and a look by the verb «eyes».
+    "smiles at her reflection",
+    "checks her reflection in the mirror",
+    "eyes the horizon",
   ])("«%s» looks at something other than the viewer", (text) => {
     expect(looksElsewhere(text)).toBe(true);
   });
@@ -179,6 +183,10 @@ describe("a category bank", () => {
     "stretches her arms up, facing away",
     "checks her outfit before going out",
     "she turns her head a little toward the mirror",
+    // S5.R4 round 3: in a mirror selfie the mirror is where the phone is, the viewer's place: looking into it or facing it is no look elsewhere.
+    "looks into the mirror",
+    "glances at the mirror",
+    "faces the mirror",
   ])("«%s» does not", (text) => {
     expect(looksElsewhere(text)).toBe(false);
   });
