@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import * as shared from "../../shared/scenes/words";
 import { hasRevealingWord, revealingWordsIn, REVEALING_WORDS } from "./words";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -48,5 +49,17 @@ describe("revealingWordsIn", () => {
     expect(revealingWordsIn("a bikini")).toEqual(["bikini"]);
     expect(revealingWordsIn("a plain dress")).toEqual([]);
     expect(revealingWordsIn("a bikini and stockings")).toEqual(["bikini", "stockings"]);
+  });
+});
+
+// S5.9b1: the list lives in shared/scenes/words.ts; this module only re-exports it, so the two sides can never disagree.
+describe("the engine's words module re-exports the shared revealing words", () => {
+  test("REVEALING_WORDS is the shared object", () => {
+    expect(REVEALING_WORDS).toBe(shared.REVEALING_WORDS);
+  });
+
+  test("hasRevealingWord and revealingWordsIn are the shared functions", () => {
+    expect(hasRevealingWord).toBe(shared.hasRevealingWord);
+    expect(revealingWordsIn).toBe(shared.revealingWordsIn);
   });
 });

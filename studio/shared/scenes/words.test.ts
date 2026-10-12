@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isOwnerBannedOutfit, LEGS_UNSUITED_OUTFITS, LEGWEAR_CLASH_WORDS, notDenimClause, unfabricBottomsIn, type Bottom } from "./words";
+import * as words from "./words";
 
 // C3′ (the owner's verdict, 2026-10-12): Grok draws an unnamed «mini skirt» or «shorts» as DENIM (R3#03 «a hoodie, a mini skirt and sneakers», R4#04 «a tank top and
 // shorts»); the wording probe drew no denim once the outfit named a fabric, or said «her skirt is not denim». The detector finds the bottoms a text leaves unnamed.
@@ -202,5 +203,27 @@ describe("LEGWEAR_CLASH_WORDS", () => {
 
   test.each(["sits with one leg crossed", "stretches her legs"])("does not clash: «%s» (plan r1.4)", (text) => {
     expect(LEGWEAR_CLASH_WORDS.test(text)).toBe(false);
+  });
+});
+
+// S5.9b1: the revealing words moved here from engine/scenes/words.ts, so the one content-line module (contentLine.ts) and the mock read the same list.
+describe("the revealing words (moved from the engine, S5.9b1)", () => {
+  test("REVEALING_WORDS is the same case-insensitive list the engine had, without the global flag", () => {
+    expect(words.REVEALING_WORDS.source).toBe("\\b(bikini|swimsuit|swimwear|lingerie|sports bra|thong|stockings?|slip dress|robe over lingerie)\\b");
+    expect(words.REVEALING_WORDS.flags).toBe("i");
+  });
+
+  test("hasRevealingWord answers true for a revealing word and false for a plain outfit", () => {
+    expect(words.hasRevealingWord("a white bikini")).toBe(true);
+    expect(words.hasRevealingWord("a linen dress")).toBe(false);
+  });
+
+  test("revealingWordsIn names each revealing word as the text wrote it, in order", () => {
+    expect(words.revealingWordsIn("A Bikini, then stockings and a thong")).toEqual(["Bikini", "stockings", "thong"]);
+  });
+
+  test("revealingWordsIn gives the same answer on every call (no shared lastIndex)", () => {
+    expect(words.revealingWordsIn("a bikini")).toEqual(["bikini"]);
+    expect(words.revealingWordsIn("a bikini")).toEqual(["bikini"]);
   });
 });

@@ -254,3 +254,23 @@ export function ownerBannedOutfitWords(text: string): string[] {
   for (const match of text.matchAll(new RegExp(DENIM_BOTTOM_WORDS.source, "gi"))) told.add(/shorts|hot\s+pants|cut-?offs?|jorts/i.test(match[0]) ? "denim shorts" : "denim skirt");
   return [...told];
 }
+
+/**
+ * Spec words plus plural/adjective forms for the outfits Stage 2 disables: swimwear, sports bras, lingerie, stockings, slip dresses and robes. S5.9b1: moved
+ * here from engine/scenes/words.ts, so the content-line module (contentLine.ts) and the renderer's mock read the one list.
+ */
+export const REVEALING_WORDS = /\b(bikini|swimsuit|swimwear|lingerie|sports bra|thong|stockings?|slip dress|robe over lingerie)\b/i;
+
+/** Whether the text uses any revealing word (a plain boolean guard, e.g. the pools' outfit schema). */
+export function hasRevealingWord(text: string): boolean {
+  return REVEALING_WORDS.test(text);
+}
+
+/**
+ * The revealing words a text uses, exactly as it wrote them. Builds its own global-flagged regex instance per call (never reuses one across calls):
+ * `RegExp.prototype.test`/`exec` on a shared global regex carries a mutable `lastIndex`, which would silently skip matches on alternating calls —
+ * `REVEALING_WORDS` above stays flag-`i`-only for exactly that reason.
+ */
+export function revealingWordsIn(text: string): string[] {
+  return Array.from(text.matchAll(new RegExp(REVEALING_WORDS, "gi")), (m) => m[0]);
+}
