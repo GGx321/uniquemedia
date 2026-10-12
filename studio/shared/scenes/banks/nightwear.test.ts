@@ -255,6 +255,18 @@ describe("the outfits: cotton, satin, lingerie (plan §6.2)", () => {
   });
 });
 
+// Review round 2, MEDIUM 4 (P-5a3 #6): a bold legs frame is satin with stockings. The stockings never go with the cotton nightwear on the owner's model, and on a
+// legs moment the outfits they go with are the satin ones.
+test("the stockings go with Seedream outfits only, never cotton; on a legs moment, with the satin nightwear only", () => {
+  const goWith = NIGHTWEAR.legwear?.bold?.outfits ?? [];
+  for (const text of goWith) expect({ text, route: outfitNamed(text)?.route }).toEqual({ text, route: "seedream" });
+  expect(goWith.filter((t) => /cotton/.test(t))).toEqual([]);
+  for (const { moment } of moments.filter((m) => m.moment.legs !== undefined)) {
+    const pinned = (moment.outfits ?? []).filter((o) => goWith.includes(o));
+    expect({ text: moment.text, pinned }).toEqual({ text: moment.text, pinned: ["a satin cami and satin shorts", "a satin midi nightdress"] });
+  }
+});
+
 // Review round 2 (C3′, the owner: «просто стоит спиной без какой-либо позы»): a moment seen from behind or in profile names what she is doing.
 test("every moment seen from behind or in profile names a readable action (C3′)", () => {
   const away = moments.filter((m) => m.moment.angle === "back" || m.moment.angle === "profile");
@@ -274,7 +286,22 @@ describe("the legwear: socks and tights at ordinary and flirty, stockings on a b
     expect(NIGHTWEAR.legwear).toEqual({
       items: ["thigh-high socks", "sheer black tights"],
       share: 0.3,
-      bold: { items: ["black thigh-high stockings", "sheer black stockings", "white lace-top stockings"], share: 0.5, route: "seedream" },
+      bold: {
+        items: ["black thigh-high stockings", "sheer black stockings", "white lace-top stockings"],
+        share: 0.5,
+        route: "seedream",
+        outfits: [
+          "a satin slip nightdress",
+          "a satin midi nightdress",
+          "a satin cami and satin shorts",
+          "a short tied satin robe",
+          "a black lace bra and panties",
+          "a white lace bra and panties",
+          "a lace bodysuit",
+          "a sheer babydoll over a lace set",
+          "an open white shirt and panties",
+        ],
+      },
     });
   });
 });

@@ -130,7 +130,7 @@ function activityOf(moment: Moment): Activity {
 /** A bank's legwear slot as the pool keeps it, with the «Смелая» stockings when the bank has them (M4, plan s5a3 r3 #7: without them no bold slot would wear any). */
 function legwearOf(legwear: LegwearSlot): LegwearSlot {
   const { bold } = legwear;
-  return { items: [...legwear.items], share: legwear.share, ...(bold === undefined ? {} : { bold: { items: [...bold.items], share: bold.share, route: bold.route } }) };
+  return { items: [...legwear.items], share: legwear.share, ...(bold === undefined ? {} : { bold: { items: [...bold.items], share: bold.share, route: bold.route, outfits: [...bold.outfits] } }) };
 }
 
 /** A category's pool, from its bank (the planner's `shotDeck` is the five shots the captures ride on; I5.27). */
@@ -365,7 +365,7 @@ export const BoldPoolSchema = z
       .strictObject({
         items: z.array(BoldOutfitText).min(1),
         share: z.number().min(0).max(1),
-        bold: z.strictObject({ items: z.array(BoldOutfitText).min(1), share: z.number().min(0).max(1), route: z.literal("seedream") }).optional(),
+        bold: z.strictObject({ items: z.array(BoldOutfitText).min(1), share: z.number().min(0).max(1), route: z.literal("seedream"), outfits: z.array(BoldOutfitText).min(1) }).optional(),
       })
       .optional(),
   })

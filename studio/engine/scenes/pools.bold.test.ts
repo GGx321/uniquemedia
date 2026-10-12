@@ -39,7 +39,7 @@ const BOLD_POOL: Pool = {
     { text: "a black bikini", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her." },
     { text: "a sheer babydoll over a lace set", showsLegs: true, level: "bold", route: "seedream", coverage: "Under her sheer babydoll, her lace bra and panties are lined and opaque and fully cover her." },
   ],
-  legwear: { items: ["thigh-high socks", "sheer black tights"], share: 0.3, bold: { items: ["black thigh-high stockings", "sheer black stockings"], share: 0.5, route: "seedream" } },
+  legwear: { items: ["thigh-high socks", "sheer black tights"], share: 0.3, bold: { items: ["black thigh-high stockings", "sheer black stockings"], share: 0.5, route: "seedream", outfits: ["a satin cami and satin shorts", "a sheer babydoll over a lace set"] } },
 };
 
 const withOutfit = (text: string, info: Record<string, unknown> = {}): unknown => ({ ...BOLD_POOL, outfits: [...BOLD_POOL.outfits, text], outfitInfo: [...(BOLD_POOL.outfitInfo ?? []), { text, ...info }] });
@@ -71,7 +71,8 @@ describe("BoldPoolSchema", () => {
     ["an activity with a youth word", withActivity({ text: "sits on the rug like a teen", twoHanded: false })],
     ["an activity with a luxury word", withActivity({ text: "sits on the marble floor", twoHanded: false })],
     ["bold legwear on another route", { ...BOLD_POOL, legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["sheer black stockings"], share: 0.5, route: "grok" } } }],
-    ["bold legwear with a youth word", { ...BOLD_POOL, legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["schoolgirl stockings"], share: 0.5, route: "seedream" } } }],
+    ["bold legwear with a youth word", { ...BOLD_POOL, legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["schoolgirl stockings"], share: 0.5, route: "seedream", outfits: ["a satin cami and satin shorts"] } } }],
+    ["bold legwear that names no outfit the stockings go with", { ...BOLD_POOL, legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream", outfits: [] } } }],
     // The built-in place rules hold here too.
     ["a place with one detail", { ...BOLD_POOL, locations: [{ ...firstPlace, details: ["a plant"] }, ...home.locations.slice(1)] }],
     ["a place whose every activity needs both hands", { ...BOLD_POOL, locations: [{ ...firstPlace, activities: [{ text: "stretches with both arms", twoHanded: true }] }, ...home.locations.slice(1)] }],
@@ -121,13 +122,13 @@ describe("poolOfBank keeps the «Смелая» fields of its bank", () => {
       },
     ],
     outfits: [LINGERIE, { text: "a black bikini", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her." }],
-    legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["black thigh-high stockings", "sheer black stockings"], share: 0.5, route: "seedream" } },
+    legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["black thigh-high stockings", "sheer black stockings"], share: 0.5, route: "seedream", outfits: ["a black lace bra and panties"] } },
     captureDeck: ["mirror-hidden", "friend"],
   };
   const pool = poolOfBank(BANK);
 
-  test("the bold legwear, its items, share and route", () => {
-    expect(pool.legwear).toEqual({ items: ["thigh-high socks"], share: 0.3, bold: { items: ["black thigh-high stockings", "sheer black stockings"], share: 0.5, route: "seedream" } });
+  test("the bold legwear, its items, share, route and the outfits the stockings go with", () => {
+    expect(pool.legwear).toEqual({ items: ["thigh-high socks"], share: 0.3, bold: { items: ["black thigh-high stockings", "sheer black stockings"], share: 0.5, route: "seedream", outfits: ["a black lace bra and panties"] } });
   });
 
   test("each outfit's level, route and coverage", () => {

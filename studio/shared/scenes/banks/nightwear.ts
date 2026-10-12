@@ -188,7 +188,23 @@ export const NIGHTWEAR: CategoryBank = {
   legwear: {
     items: ["thigh-high socks", "sheer black tights"],
     share: 0.3,
-    bold: { items: ["black thigh-high stockings", "sheer black stockings", "white lace-top stockings"], share: 0.5, route: "seedream" },
+    // Review round 2, MEDIUM 4: the stockings go with the satin nightwear and the lingerie, never the cotton; on a legs frame that leaves the satin (P-5a3 #6).
+    bold: {
+      items: ["black thigh-high stockings", "sheer black stockings", "white lace-top stockings"],
+      share: 0.5,
+      route: "seedream",
+      outfits: [
+        "a satin slip nightdress",
+        SATIN_MIDI,
+        SATIN_CAMI,
+        "a short tied satin robe",
+        "a black lace bra and panties",
+        "a white lace bra and panties",
+        "a lace bodysuit",
+        "a sheer babydoll over a lace set",
+        "an open white shirt and panties",
+      ],
+    },
   },
   // ⅓ phone-over-face mirror frames (I5.32), never a friend: 4 of 12 with the phone over her face, 3 mirrors, 2 from above, 1 prone, 1 over her shoulder, 1 timer.
   captureDeck: ["mirror-hidden", "mirror", "above", "mirror-hidden", "prone", "timer", "mirror-hidden", "mirror", "above", "mirror-hidden", "over-shoulder", "mirror"],

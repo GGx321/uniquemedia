@@ -54,7 +54,7 @@ const BOLD: CategoryBank = {
   bold: true,
   places: [ROOM],
   outfits: OUTFITS,
-  legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream" } },
+  legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream", outfits: ["a satin cami and satin shorts", "a black lace bra and panties"] } },
   captureDeck: ["mirror-hidden", "mirror", "timer"],
 };
 
@@ -163,10 +163,17 @@ describe("a «Смелая» bank", () => {
     ["a moment in the water without the water tag", withWater({ ...WADES, water: undefined }), BANK_RULE.water],
     ["a moment of feet in the water without the water tag", withMoment({ ...plain, text: "sits with her feet in the water" }), BANK_RULE.water],
     // legwear
-    ["stockings among the ordinary legwear", { ...BOLD, legwear: { items: ["thigh-high socks", "sheer black stockings"], share: 0.3, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream" } } }, BANK_RULE.legwear],
-    ["socks among the bold legwear (it holds the stockings)", { ...BOLD, legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["white knee-high socks"], share: 0.5, route: "seedream" } } }, BANK_RULE.legwear],
-    ["bold legwear on no slot", { ...BOLD, legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["sheer black stockings"], share: 0, route: "seedream" } } }, BANK_RULE.legwear],
-    ["bold legwear with no item", { ...BOLD, legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: [], share: 0.5, route: "seedream" } } }, BANK_RULE.legwear],
+    ["stockings among the ordinary legwear", { ...BOLD, legwear: { items: ["thigh-high socks", "sheer black stockings"], share: 0.3, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream", outfits: ["a satin cami and satin shorts", "a black lace bra and panties"] } } }, BANK_RULE.legwear],
+    ["socks among the bold legwear (it holds the stockings)", { ...BOLD, legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["white knee-high socks"], share: 0.5, route: "seedream", outfits: ["a satin cami and satin shorts", "a black lace bra and panties"] } } }, BANK_RULE.legwear],
+    ["bold legwear on no slot", { ...BOLD, legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["sheer black stockings"], share: 0, route: "seedream", outfits: ["a satin cami and satin shorts", "a black lace bra and panties"] } } }, BANK_RULE.legwear],
+    ["bold legwear with no item", { ...BOLD, legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: [], share: 0.5, route: "seedream", outfits: ["a satin cami and satin shorts", "a black lace bra and panties"] } } }, BANK_RULE.legwear],
+    // Review round 2, MEDIUM 4: the stockings go with the outfits the bold legwear names, and those are Seedream outfits that show her legs, never the cotton nightwear.
+    ["stockings that go with the cotton nightwear", { ...BOLD, legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream", outfits: ["cotton pajama shorts and a tee"] } } }, BANK_RULE.legwear],
+    ["stockings that go with an outfit the bank does not have", { ...BOLD, legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream", outfits: ["a satin slip nightdress"] } } }, BANK_RULE.legwear],
+    ["stockings that go with no outfit", { ...BOLD, legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream", outfits: [] } } }, BANK_RULE.legwear],
+    // A bank written before the field: malformed on purpose, so its type is widened here.
+    ["bold legwear that names no outfit at all", { ...BOLD, legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream" } } } as unknown as CategoryBank, BANK_RULE.shape],
+    ["a legs moment that pins no outfit the stockings go with (a bold legs slot would wear none)", { ...withLegs(LEGS), legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream", outfits: ["a black lace bra and panties"] } } }, BANK_RULE.boldLegs],
     ["stockings in an outfit (they are the bold legwear's only)", withOutfits([...OUTFITS, { text: "a slip and black stockings", showsLegs: true, level: "bold", route: "seedream", coverage: "Her slip is opaque." }]), BANK_RULE.legwear],
     // the shape
     ["a bank that is not marked «Смелая»", { ...BOLD, bold: undefined }, BANK_RULE.shape],
@@ -209,7 +216,7 @@ describe("the five built-ins keep their own schema, which refuses every «Сме
     ["an outfit's route", withHomeOutfit({ route: "seedream" })],
     ["an outfit's coverage", withHomeOutfit({ coverage: "It covers her." })],
     ["the «Смелая» mark", { ...home, bold: true }],
-    ["bold legwear", { ...home, legwear: { items: ["thigh-high socks"], share: 0.4, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream" } } }],
+    ["bold legwear", { ...home, legwear: { items: ["thigh-high socks"], share: 0.4, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream", outfits: ["a crop top and pajama shorts"] } } }],
   ])("refuses %s", (_name, bank) => {
     expect(rulesOf(categoryBankProblems(bank, "home"))).toContain(BANK_RULE.shape);
   });

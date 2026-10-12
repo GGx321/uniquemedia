@@ -474,6 +474,19 @@ function boldBankRules(bank: CategoryBank, add: Add): void {
     });
     if (boldLegwear.items.length === 0) add(BANK_RULE.legwear, "legwear.bold", "names one item at least");
     if (!(boldLegwear.share > 0 && boldLegwear.share <= 1)) add(BANK_RULE.legwear, "legwear.bold", "goes on a share of the bold slots above 0 and at most 1");
+    // Review round 2, MEDIUM 4: the stockings go with the outfits named here, Seedream outfits that show her legs, never the cotton nightwear on the owner's model.
+    if (boldLegwear.outfits.length === 0) add(BANK_RULE.legwear, "legwear.bold.outfits", "names the outfits the stockings go with");
+    for (const text of boldLegwear.outfits) {
+      const outfit = bank.outfits.find((o) => o.text === text);
+      if (outfit === undefined) add(BANK_RULE.legwear, "legwear.bold.outfits", `«${text}» is not one of the bank's outfits`);
+      else if (outfit.route !== "seedream" || outfit.showsLegs !== true) add(BANK_RULE.legwear, "legwear.bold.outfits", `«${text}»: the stockings go only with a Seedream outfit that shows her legs, never with the nightwear on the owner's model`);
+    }
+    // A bold legs slot wears the stockings (P-5a3 #6: satin with stockings), so every legs moment pins an outfit they go with.
+    for (const { moment, where } of moments) {
+      if (moment.legs !== undefined && !(moment.outfits ?? []).some((o) => boldLegwear.outfits.includes(o))) {
+        add(BANK_RULE.boldLegs, where, "a legs moment pins an outfit the bold stockings go with, so a bold legs slot wears them");
+      }
+    }
   }
 }
 
@@ -482,7 +495,9 @@ const boldBankSchema = z
     bold: z.literal(true),
     places: z.array(BoldPlaceSchema).min(1),
     outfits: z.array(z.strictObject({ ...OUTFIT_SHAPE, level: BOLD_LEVEL, route: ROUTE, coverage: z.string().optional() })).min(1),
-    legwear: z.strictObject({ ...LEGWEAR_SHAPE, bold: z.strictObject({ items: z.array(z.string()), share: z.number(), route: z.literal("seedream") }).optional() }).optional(),
+    legwear: z
+      .strictObject({ ...LEGWEAR_SHAPE, bold: z.strictObject({ items: z.array(z.string()), share: z.number(), route: z.literal("seedream"), outfits: z.array(z.string()) }).optional() })
+      .optional(),
     captureDeck: z.array(CaptureSchema).min(1),
   })
   .superRefine((bank, ctx) => {
