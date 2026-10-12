@@ -1,4 +1,5 @@
 import { isCustomCategory, splitCount, type CategoryRef, type SceneLevel } from "../../../shared/engine";
+import { flirtyCountOf } from "../../../shared/scenes/level";
 import { countOf } from "../../lib/format";
 
 // S5.7c (plan s5a2 §6.3, I5.28; mockups 24–25, 30): «Подача» on the window's side. The angle no longer has a control: it comes from the scene, and «Ракурсы»
@@ -21,17 +22,13 @@ export const ANGLE_FROM_SCENE = "Ракурс берётся из сцены: «
 /** «Автопилот»'s row caption, lower-case like every caption of that column (README «S5.2», not literal 5). */
 export const ANGLE_FROM_SCENE_SHORT = "ракурс берётся из сцены";
 
-/** The share of a built-in category's photos «Кокетливая» makes flirty, in tenths (I5.28). */
-const FLIRTY_TENTHS = 6;
-
 /**
  * How many of `count` photos over `categories` «Кокетливая» makes flirty: round-half-up(0.6 × n) of each built-in category's n (I5.28), split as the planner
- * splits (`splitCount`). A custom category stays ordinary. 0.6 × n is 6n / 10, which never ends in .5: integers only, no half-way case.
- * S5.7b puts the same rule in `shared/scenes/level.ts` (`flirtyCountOf`) for the planner; once it lands, this sums that instead.
+ * splits (`splitCount`). A custom category stays ordinary. The per-category rule is the planner's own, `flirtyCountOf` (`shared/scenes/level.ts`).
  */
 export function flirtyFrames(count: number, categories: readonly CategoryRef[]): number {
   if (categories.length === 0) return 0;
-  return splitCount(count, categories).reduce((sum, { ref, count: n }) => sum + (isCustomCategory(ref) ? 0 : Math.floor((FLIRTY_TENTHS * n + 5) / 10)), 0);
+  return splitCount(count, categories).reduce((sum, { ref, count: n }) => sum + (isCustomCategory(ref) ? 0 : flirtyCountOf(n, "flirty")), 0);
 }
 
 /** «12 из 20 кадров — кокетливые: взгляд, улыбка, поза. Одежда — из категорий.» (mockup 25). */
