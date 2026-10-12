@@ -34,7 +34,7 @@ const STREET: BankPlace = {
     { text: "holds a takeaway coffee", motion: "she lifts the cup a little", captures: ["friend", "selfie", "candid"], twoHanded: false, outdoor: true },
     { text: "walks past old stone houses", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, outdoor: true },
     { text: "eats a gelato from a cone", motion: "she takes a small bite", captures: ["friend", "selfie"], twoHanded: false, outdoor: true },
-    { text: "walks away toward the square", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, angle: "back", outdoor: true },
+    { text: "walks away, a hand in her hair", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, angle: "back", outdoor: true, hair: "own" },
   ],
 };
 
@@ -118,7 +118,24 @@ describe("a category bank", () => {
     ["a back-to-the-mirror moment on a capture that is no mirror one (r1.5: only her reflection is in the picture)", { ...plain, mirrorBack: true }, BANK_RULE.mirrorBack],
     ["a back-to-the-mirror moment on a plain mirror capture (its face is clear: only a phone-over-face frame shows just the reflection)", { ...plain, captures: ["mirror"], mirrorBack: true }, BANK_RULE.mirrorBack],
     ["a back-to-the-mirror moment on a mirror capture beside a phone-over-face one", { ...plain, captures: ["mirror", "mirror-hidden"], mirrorBack: true }, BANK_RULE.mirrorBack],
+    // C3′ (the owner: «просто стоит спиной без какой-либо позы»): a frame from behind or in profile shows what she is doing.
+    ["a moment seen from behind that only sits there (R5#08)", { ...plain, text: "sits facing the window", captures: ["timer"], angle: "back" }, BANK_RULE.awayAction],
+    ["a moment seen from behind that only walks away (R2#01)", { ...plain, text: "walks away down the pavement", captures: ["friend"], angle: "back" }, BANK_RULE.awayAction],
+    ["a moment in profile that only stands there", { ...plain, text: "stands in profile by the door", captures: ["friend"], angle: "profile" }, BANK_RULE.awayAction],
+    // Her face turns back toward the camera: never a frame from behind, whose pose phrase says her face is not visible.
+    ["a moment that glances back over her shoulder, seen from behind", { ...plain, text: "walks off, a hand in her hair, glancing back", captures: ["friend"], angle: "back", hair: "own" }, BANK_RULE.backGlance],
+    ["a moment that looks over her shoulder, in profile", { ...plain, text: "stretches, looking over her shoulder", captures: ["friend"], angle: "profile" }, BANK_RULE.backGlance],
   ];
+
+  test("C3′: a moment from behind or in profile that names what her hands, arms or hair do is valid, and so is a glance back at three-quarter", () => {
+    const away: Moment[] = [
+      { ...plain, text: "stretches her arms up at the window", captures: ["timer"], angle: "back" },
+      { ...plain, text: "leans on the railing, side-on", captures: ["friend"], angle: "profile" },
+      { ...plain, text: "walks away, fixing her earring", captures: ["friend"], angle: "back" },
+      { ...plain, text: "walks off, glancing back", captures: ["friend"], angle: "three-quarter" },
+    ];
+    expect(categoryBankProblems({ ...BANK, places: [{ ...ROOM, moments: [...MOMENTS, ...away] }, STREET] }, "home")).toEqual([]);
+  });
 
   test.each(MOMENT_ROWS)("refuses %s", (_name, moment, rule) => {
     expect(rulesOf(categoryBankProblems(withMoment(moment), "home"))).toContain(rule);

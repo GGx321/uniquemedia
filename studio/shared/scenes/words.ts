@@ -77,6 +77,16 @@ export const LEGWEAR_CLASH_WORDS = /\b(socks?|socked|tights|stockings?|bare|bare
 /** A moment whose feet or legs are up carries the `noLegwear` tag (plan r1.4), so it takes no legwear either. */
 export const FEET_UP_WORDS = /\b(?:feet|legs|foot)\s+(?:up|raised|in the air)\b|\b(?:feet|foot)\s+on\s+the\b|\blegs\s+bent\s+up\b/i;
 
+/**
+ * C3′ (the owner: «просто стоит спиной без какой-либо позы», R2#01 «walks away down the pavement», R5#08 «sits facing the window»): a moment seen from behind or in
+ * profile names what she is doing, so the frame reads: her hands, arms or hair, a strap or an earring, a stretch, the railing she leans on, her knees hugged or her
+ * legs bent, or a turn to look.
+ */
+export const AWAY_ACTION_WORDS = /\b(?:hands?|arms?|hair|earrings?|straps?|railing|stretch\w*|hugging|bent|turns to look)\b/i;
+
+/** C3′: a moment that glances or looks back over her shoulder: her face turns back toward the camera, so it is never a frame seen from behind. */
+export const GLANCE_BACK_WORDS = /\b(?:look(?:s|ing)?|glanc(?:e|es|ing)|peek(?:s|ing)?)\s+(?:back\b|over\s+her\s+shoulder\b)/i;
+
 /** S5.6R: a moment about her feet («slips on her heels», «rests one foot against the wall»): a friend's photo of it shows her whole body, never her knees up. */
 export const FEET_MOMENT_WORDS = /\b(?:foot|feet|heels?|sneakers?|shoes?|toes|ankles?)\b/i;
 

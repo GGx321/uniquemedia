@@ -2,7 +2,7 @@ import { youthWords, type AvatarDescriptor } from "../../shared/engine";
 import { promptSubject } from "../avatars/prompts";
 import type { LibraryReference } from "../library/media";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
-import { FEET_MOMENT_WORDS, notDenimClause, unfabricBottomsIn } from "../../shared/scenes/words";
+import { FEET_MOMENT_WORDS, GLANCE_BACK_WORDS, notDenimClause, unfabricBottomsIn } from "../../shared/scenes/words";
 import { artefactLine, captureLineOf, CONSTRAINTS, hairLine, imperfectionOf, isLampMood, lightOf, MIRROR_BACK_LINE, phoneHandLineOf, roomStateOf, slotKeyOf, type RoomPlace } from "./phoneLook";
 import type { SlotLook } from "./roomPlace";
 import { revealingWordsIn } from "./words";
@@ -85,6 +85,16 @@ export const HIDDEN_FACE_POSE_PHRASE: Record<Pose, string> = {
  * MIRROR_BACK_LINE that only her reflection is in the picture, so the pose phrase says only which way her body is turned.
  */
 export const MIRROR_BACK_POSE_PHRASE = "Her body is in profile to the mirror";
+
+/**
+ * C3′ (the Grok probe c3fix 4b): glancing back over her shoulder, her face turns to the camera at three-quarter, even under «Photographed from behind, her face not
+ * visible». A photo taken from a distance (someone she asked, a candid, the timer) of such a moment says so: half from behind at three-quarter (the banks hold a glance
+ * back to three-quarter, so the face gate judges it like any three-quarter frame), and from behind with her head turned back on a custom back slot (`faceVisibleOf`
+ * says no for a back pose, so the gate marks it). A self-shot keeps its own capture line.
+ */
+export const THREE_QUARTER_BACK_POSE_PHRASE = "Seen half from behind, her face turned back to a three-quarter angle, clearly visible";
+export const BACK_GLANCE_POSE_PHRASE = "Photographed from behind, her head turned back over her shoulder, her face in profile";
+const DISTANT_CAPTURES: readonly Capture[] = ["friend", "candid", "timer"];
 
 /**
  * «Ножки» (S5.8a, plan s5a2 §7.2): a legs frame says what fills it, not which way she is turned. Her legs and feet fill most of the frame and her face may be out of it, so the
@@ -234,7 +244,9 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, senten
   const artefact = artefactLine({ cameraRealism: options.cameraRealism === true, light, imperfection: imperfectionOf(slot.shot, key, legs), lampMood: isLampMood(look, timeOfDay) });
   const hairStyle = legs ? null : (options.hairStyleOf?.(slot) ?? null);
   const faceless = FACELESS_CAPTURES.includes(capture);
-  const posePhrase = legs ? LEGS_POSE_PHRASE : capture === "mirror-hidden" ? (look?.mirrorBack === true ? MIRROR_BACK_POSE_PHRASE : HIDDEN_FACE_POSE_PHRASE[slot.pose]) : POSE_PHRASE[slot.pose];
+  const glancesBack = !isOwnSlot(slot) && DISTANT_CAPTURES.includes(capture) && GLANCE_BACK_WORDS.test(slot.activity);
+  const glancePhrase = !glancesBack ? null : slot.pose === "three-quarter" ? THREE_QUARTER_BACK_POSE_PHRASE : slot.pose === "back" ? BACK_GLANCE_POSE_PHRASE : null;
+  const posePhrase = legs ? LEGS_POSE_PHRASE : capture === "mirror-hidden" ? (look?.mirrorBack === true ? MIRROR_BACK_POSE_PHRASE : HIDDEN_FACE_POSE_PHRASE[slot.pose]) : (glancePhrase ?? POSE_PHRASE[slot.pose]);
   const bindingAnchor = faceless ? NO_FACE_ANCHOR : BINDING_ANCHOR[slot.pose];
   // S5.6R: a friend's photo of a moment about her feet shows her whole body (an own scene has no stored moment: the line its key draws).
   const wholeBody = !isOwnSlot(slot) && FEET_MOMENT_WORDS.test(slot.activity);

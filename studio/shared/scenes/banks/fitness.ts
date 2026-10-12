@@ -23,8 +23,8 @@ export const FITNESS: CategoryBank = {
         { text: "wipes her face with a towel", motion: "she pats her face slowly", captures: ["friend", "candid"], twoHanded: false, hair: "sport" },
         { text: "stands at the mirror", motion: "she shifts slowly to one hip", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "sport" },
         { text: "laces up her sneakers", motion: "she pulls the laces tight slowly", captures: ["friend", "candid"], twoHanded: true, gaze: "focus", hair: "sport" },
-        // S5.7b: the angle comes from the moment; someone catches her walking off between sets.
-        { text: "walks off toward the weights", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, angle: "back", hair: "sport" },
+        // S5.7b: the angle comes from the moment; someone catches her from behind between sets (C3′: stretching, so the frame reads).
+        { text: "stretches her arms above her head", motion: "she reaches up a little higher", captures: ["friend", "candid"], twoHanded: true, angle: "back", hair: "sport" },
       ],
     },
     {
@@ -55,7 +55,7 @@ export const FITNESS: CategoryBank = {
         { text: "catches her breath after a run", motion: "she breathes out slowly", captures: ["friend", "selfie", "candid"], twoHanded: false, hair: "sport", outdoor: true },
         { text: "checks her run on her phone", motion: "she scrolls her phone slowly", captures: ["candid", "friend"], twoHanded: false, phone: true, gaze: "own", hair: "sport", outdoor: true },
         { text: "walks to cool down", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, hair: "sport", outdoor: true },
-        { text: "jogs away along the track", motion: "she keeps jogging slowly", captures: ["friend", "candid"], twoHanded: true, angle: "back", hair: "sport", outdoor: true },
+        { text: "stretches an arm across her chest", motion: "she pulls her arm in a little", captures: ["friend", "candid"], twoHanded: true, angle: "back", hair: "sport", outdoor: true },
         { text: "stretches her calves", motion: "she presses her heel down a little", captures: ["low-feet"], twoHanded: false, hair: "sport", outdoor: true, outfits: LEGS_TRAINING, legs: { framing: "legs" } },
       ],
     },

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { HairLength, POOL_TEXT_MAX, PoolTime, youthWords } from "../../engine";
 import { CAPTURES, isHandCapture, LEGS_CAPTURES, shotOf, type Capture } from "../captures";
 import {
+  AWAY_ACTION_WORDS,
   BED_WORDS,
   CAMERA_WORDS,
   COLOUR_WORDS,
@@ -11,6 +12,7 @@ import {
   EXPRESSION_WORDS,
   FEET_UP_WORDS,
   GAZE_VERBS,
+  GLANCE_BACK_WORDS,
   HAIR_COLOUR_WORDS,
   HAIR_WORDS,
   HELD_OBJECT_WORDS,
@@ -55,6 +57,8 @@ export const BANK_RULE = {
   momentGaze: "moment-gaze",
   momentExpression: "moment-expression",
   backViewer: "back-viewer",
+  awayAction: "away-action",
+  backGlance: "back-glance",
   noLegwear: "no-legwear",
   captures: "captures",
   legsCapture: "legs-capture",
@@ -193,6 +197,11 @@ function checkMoment(add: Add, where: string, moment: Moment, place: { room?: tr
   if (GAZE_VERBS.test(text) && moment.gaze !== "own" && moment.gaze !== "viewer") add(BANK_RULE.momentGaze, where, "a moment that opens on a look carries its own gaze");
   if ((moment.expression === true) !== EXPRESSION_WORDS.test(text)) add(BANK_RULE.momentExpression, where, "carries the expression tag exactly when it shows her expression (it then takes no cue)");
   if (moment.angle === "back" && moment.gaze === "viewer") add(BANK_RULE.backViewer, where, "a moment seen from behind cannot look at the viewer");
+  // C3′ (the owner: «просто стоит спиной без какой-либо позы»): a frame from behind or in profile shows what she is doing.
+  if ((moment.angle === "back" || moment.angle === "profile") && !AWAY_ACTION_WORDS.test(text)) {
+    add(BANK_RULE.awayAction, where, "a moment seen from behind or in profile names what she is doing: her hands, arms or hair, a strap or an earring, a stretch, a railing, her knees or legs, a turn to look");
+  }
+  if (GLANCE_BACK_WORDS.test(text) && moment.angle !== "three-quarter") add(BANK_RULE.backGlance, where, "a glance back over her shoulder turns her face to the camera: a three-quarter moment, never from behind or in profile");
   if (moment.messyOk === true && place.room !== true) add(BANK_RULE.messyOk, where, "only a room's moment may be messy");
   if (FEET_UP_WORDS.test(text) && moment.noLegwear !== true) add(BANK_RULE.noLegwear, where, "a moment with her feet or legs up is tagged noLegwear (Grok refused legs up in tights)");
 

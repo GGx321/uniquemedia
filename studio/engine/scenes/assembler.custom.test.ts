@@ -156,6 +156,35 @@ describe("camera realism on a custom category", () => {
   });
 });
 
+// C3′ (the Grok probe c3fix 4b): glancing back over her shoulder, her face shows at three-quarter, even under «Photographed from behind, her face not visible». A
+// frame someone else takes of her glancing back says so, whatever its pose; a self-shot keeps its own capture line.
+describe("C3′: a frame that glances back over her shoulder never says her face is not visible", () => {
+  const promptOf = (overrides: Partial<PlanSlot>): string => assembleSlot(DESCRIPTOR, slot(overrides), "On a bridge, she is looking back over her shoulder, wearing a beige trench coat and jeans.", MASTER).prompt;
+
+  test("at three-quarter, a friend's photo of it is half from behind, her face visible", () => {
+    const prompt = promptOf({ pose: "three-quarter", activity: "looking back over her shoulder" });
+    expect(prompt).toContain("Seen half from behind, her face turned back to a three-quarter angle, clearly visible.");
+    expect(prompt).not.toContain("Her face and body turned to a three-quarter angle");
+  });
+
+  test("a custom back frame of it is from behind with her head turned back, never «her face not visible»", () => {
+    for (const activity of ["looking back over her shoulder", "glancing back at the river", "peeking over her shoulder"]) {
+      const prompt = promptOf({ pose: "back", activity });
+      expect(prompt, activity).toContain("Photographed from behind, her head turned back over her shoulder, her face in profile.");
+      expect(prompt, activity).not.toContain("her face not visible");
+    }
+  });
+
+  test("a back frame that does not glance back keeps «Photographed from behind, her face not visible»", () => {
+    expect(promptOf({ pose: "back", activity: "leaning on the railing" })).toContain("Photographed from behind, her face not visible.");
+    expect(promptOf({ pose: "back", activity: "carrying her bag over her shoulder" })).toContain("Photographed from behind, her face not visible.");
+  });
+
+  test("a selfie of it keeps the three-quarter phrase: she takes it herself", () => {
+    expect(promptOf({ shot: "selfie", pose: "three-quarter", activity: "looking back over her shoulder" })).toContain("Her face and body turned to a three-quarter angle, face clearly visible.");
+  });
+});
+
 // C3′ (the owner's verdict, 2026-10-12): Grok drew the owner's «В домашнем» «a tank top and shorts» (R4#04) and «Улица»'s «a hoodie, a mini skirt and sneakers» (R3#03) as
 // DENIM. The banks now name every fabric; a custom pool's outfit, the writer's and an idea's may still not, so the assembled prompt says the probe's «her shorts are not
 // denim» (c3fix 3a, drawn without denim) right after the outfit, or as a sentence of its own when the outfit is not there word for word. The stored sentence is untouched.

@@ -42,8 +42,9 @@ export const HOME: CategoryBank = {
         { text: "adjusts the hem of her top", motion: "she smooths the hem down slowly", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false, gaze: "focus" },
         { text: "tucks her hair behind one ear", motion: "she tucks her hair back slowly", captures: ["mirror", "timer"], twoHanded: false, hair: "own" },
         { text: "sits on the edge of the bed", motion: "she swings one foot a little", captures: ["mirror-hidden", "timer"], twoHanded: false },
-        // S5.7b: the angle comes from the moment. On a timer the phone stands across the room, so she can face the window with her back to it.
-        { text: "sits facing the window", motion: "she leans her head back slowly", captures: ["timer"], twoHanded: false, angle: "back" },
+        // S5.7b: the angle comes from the moment. On a timer the phone stands across the room, so she can face the window with her back to it. C3′ (the owner:
+        // «просто стоит спиной без какой-либо позы»): from behind she does something the frame can read, here a stretch at the window.
+        { text: "stretches her arms up at the window", motion: "she stretches a little further", captures: ["timer"], twoHanded: true, angle: "back" },
         // S5.8a («Ножки», plan s5a2 §7.2): legs moments, drawn only on a legs slot. The POV looks down along her own legs; in the mirror frame the phone hides her face and her feet face the glass.
         { text: "stretches her legs along the bed", motion: "she points and flexes her toes slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS_BEDROOM, legs: { framing: "legs" } },
         { text: "sits, soles toward the mirror", motion: "she taps her feet together a little", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS_BEDROOM, legs: { framing: "legs" } },

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { youthWords, type AvatarDescriptor } from "../../shared/engine";
-import { DRESS_LENGTH, DRESS_OR_SKIRT, isOwnerBannedOutfit, LEGS_UNSUITED_OUTFITS, unfabricBottomsIn, YOUTH_PROPS } from "../../shared/scenes/words";
+import { AWAY_ACTION_WORDS, DRESS_LENGTH, DRESS_OR_SKIRT, GLANCE_BACK_WORDS, isOwnerBannedOutfit, LEGS_UNSUITED_OUTFITS, unfabricBottomsIn, YOUTH_PROPS } from "../../shared/scenes/words";
 import { BANKS, CUES, GAZE, HAIRSTYLES } from "../../shared/scenes/banks";
-import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
+import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "../../shared/scenes/captures";
 import { plainSentence } from "../../shared/scenes/plain";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { assembleSlot } from "./assembler";
@@ -546,6 +546,32 @@ describe("C3′: no built-in skirt or shorts is left for Grok to draw as denim",
     const sample = wearing.filter((_, i) => i % 9 === 0);
     expect(sample.length).toBeGreaterThan(2000);
     expect(offenders(sample, (f) => /\bdenim\b/i.test(f.prompt()))).toEqual(NONE);
+  });
+});
+
+describe("C3′: a frame from behind or in profile shows what she is doing", () => {
+  // The owner on R2#01 «walks away down the pavement» and R5#08 «sits facing the window»: «просто стоит спиной без какой-либо позы».
+  const away = C3_ALL.filter((f) => f.slot.pose === "back" || f.slot.pose === "profile");
+  const glance = C3_ALL.filter((f) => GLANCE_BACK_WORDS.test(f.slot.activity) && (f.capture === "friend" || f.capture === "candid" || f.capture === "timer"));
+
+  test("the sweep holds away frames of every category, from behind and in profile", () => {
+    expect([...new Set(away.map((f) => f.slot.category))].sort()).toEqual([...CATEGORIES].sort());
+    expect(away.some((f) => f.slot.pose === "back") && away.some((f) => f.slot.pose === "profile")).toBe(true);
+  });
+
+  test("every away frame's moment names what she is doing: her hands, arms or hair, a strap or an earring, a stretch, a railing, her knees or legs, a turn to look", () => {
+    expect(offenders(away, (f) => !AWAY_ACTION_WORDS.test(f.slot.activity))).toEqual(NONE);
+  });
+
+  // The probe (c3fix 4b): glancing back over her shoulder, her face shows at three-quarter even under «Photographed from behind, her face not visible».
+  test("a frame that glances back over her shoulder is half from behind with her face visible, never «her face not visible»", () => {
+    expect(glance.length).toBeGreaterThan(PLANS);
+    const sample = glance.filter((_, i) => i % 3 === 0);
+    expect(offenders(sample, (f) => /her face not visible/.test(f.prompt()) || !f.prompt().includes("Seen half from behind, her face turned back to a three-quarter angle, clearly visible."))).toEqual(NONE);
+  });
+
+  test("and the face gate judges it like any three-quarter frame", () => {
+    expect(offenders(glance, (f) => f.slot.pose !== "three-quarter" || faceVisibleOf(f.slot) !== "yes")).toEqual(NONE);
   });
 });
 
