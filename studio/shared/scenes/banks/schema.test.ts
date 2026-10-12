@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BANK_RULE, categoryBankProblems, cueBankProblems, gazeBankProblems, hairBankProblems, MOMENT_VERBS } from "./schema";
+import { BANK_RULE, categoryBankProblems, cueBankProblems, gazeBankProblems, hairBankProblems, looksElsewhere, MOMENT_VERBS } from "./schema";
 import type { BankPlace, CategoryBank, Cue, Gaze, Hairstyle, Moment } from "./types";
 
 // 5a.2 (S5.6a, I5.21, I5.35; plan s5a2 r1.2): the banks are validated with zod when they load, so a malformed bank is a test failure, never a
@@ -142,14 +142,45 @@ describe("a category bank", () => {
       { ...plain, text: "stretches her arms up at the window", captures: ["timer"], angle: "back" },
       { ...plain, text: "leans on the railing, side-on", captures: ["friend"], angle: "profile" },
       { ...plain, text: "stands, one hand on her hip", captures: ["friend"], angle: "back" },
-      // S5.R4: a glance back carries its own gaze, as every glance back of the banks does (the template's gaze would contradict it).
-      { ...plain, text: "walks off, glancing back", captures: ["friend"], angle: "three-quarter", gaze: "own" },
+      { ...plain, text: "walks off, glancing back", captures: ["friend"], angle: "three-quarter" },
     ];
     expect(categoryBankProblems({ ...BANK, places: [{ ...ROOM, moments: [...MOMENTS, ...away] }, STREET] }, "home")).toEqual([]);
   });
 
   test.each(MOMENT_ROWS)("refuses %s", (_name, moment, rule) => {
     expect(rulesOf(categoryBankProblems(withMoment(moment), "home"))).toContain(rule);
+  });
+
+  // S5.R4 round 2 (re-review, LOW): the reading in both directions. A look at the viewer or the camera, or a bare «looks up» or «glances back», is no look elsewhere; admiring
+  // the view, facing the sunset and checking her reflection are.
+  test.each([
+    "sits on a ledge, watching dusk fall",
+    "she looks out at the street slowly",
+    "laughs, looking down the street",
+    "turns to look across the road",
+    "looks up at the stars",
+    "admires the view from the top",
+    "faces the sunset",
+    "sits facing the sea",
+    "checks her reflection",
+    "takes in the view",
+  ])("«%s» looks at something other than the viewer", (text) => {
+    expect(looksElsewhere(text)).toBe(true);
+  });
+
+  test.each([
+    "looks up at the viewer",
+    "glances back at the camera",
+    "she looks up and smiles",
+    "walks off, glancing back",
+    "looks back over her shoulder",
+    "she smiles a little and looks away",
+    "sits on the rug facing the mirror",
+    "stretches her arms up, facing away",
+    "checks her outfit before going out",
+    "she turns her head a little toward the mirror",
+  ])("«%s» does not", (text) => {
+    expect(looksElsewhere(text)).toBe(false);
   });
 
   // S5.R4: the negative control of the rule above. A look elsewhere carried by the moment's own gaze is valid; a clip that ends looking away («and looks away») starts

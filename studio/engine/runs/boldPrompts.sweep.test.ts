@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { GAZE } from "../../shared/scenes/banks";
 import { COVERS_HER, OPENS_WITH_ARMS_UP } from "../../shared/scenes/banks/boldRules";
-import { ARMS_UP, LOOKS_ELSEWHERE } from "../../shared/scenes/banks/schema";
+import { ARMS_UP, looksElsewhere } from "../../shared/scenes/banks/schema";
 import { poseFamilyOf } from "../../shared/scenes/banks/boldDesign.testkit";
 import { HELD_OBJECT_WORDS } from "../../shared/scenes/words";
 import { boldPromptMatrix, boldRunPrompts, type PromptFrame } from "./testing/boldRunPrompts";
@@ -29,10 +29,11 @@ test("the matrix is the review's: both banks, every size, legs share and realism
 
 // Item 1 (MEDIUM): «sits on a ledge, watching dusk fall» lost its own gaze and drew «…watching dusk fall, …, looking up at the viewer» in most of its frames.
 describe("a moment that looks at something other than the viewer takes no gaze of the template's", () => {
-  const elsewhere = FRAMES.filter((f) => LOOKS_ELSEWHERE.test(f.moment.text) || LOOKS_ELSEWHERE.test(f.moment.motion));
+  const elsewhere = FRAMES.filter((f) => looksElsewhere(f.moment.text) || looksElsewhere(f.moment.motion));
 
-  test("the sweep reads such frames in both banks", () => {
-    expect(new Set(elsewhere.map((f) => f.slot.category))).toEqual(new Set(["nightwear", "beach"]));
+  // Round 2: «lies prone, glancing back» is no longer read as a look elsewhere (a glance back names no target), so only the beach has such moments today; the check runs over both.
+  test("the sweep reads such frames", () => {
+    expect(elsewhere.length).toBeGreaterThan(100);
   });
 
   test("none of them says a gaze clause next to its own look", () => {

@@ -120,13 +120,26 @@ export const BANK_RULE = {
 } as const;
 type Rule = (typeof BANK_RULE)[keyof typeof BANK_RULE];
 
+/** The viewer, the camera or the lens: a look at one of them is the viewer gaze's own rule, never a look elsewhere. */
+const AT_THE_VIEWER = /\b(?:viewer|camera|lens)\b/i;
+/** Eyes on something by the verb alone: she watches, gazes, stares or peers at it, admires it, takes in the view, checks her reflection. */
+const EYES_ON = /\b(?:watch(?:es|ing)?|gaz(?:e|es|ing)|star(?:e|es|ing)|peer(?:s|ing)?|admir(?:e|es|ing))\b|\btak(?:es|ing) in the view\b|\bcheck(?:s|ing)? her reflection\b/i;
+/** A look or a glance with a direction or a target («looks out at», «looking down the street»); a bare «looks up», «glancing back» or «over her shoulder» names none. */
+const LOOK_TOWARD = /\b(?:look(?:s|ing)?|glanc(?:e|es|ing))\s+(?:(?:up|back)\s+)?(?:out|at|across|over(?!\s+her\s+shoulder\b)|down|along|into|toward|towards|through|around|past)\b/i;
+/** Facing something she looks at («faces the sunset», «sits facing the sea»); facing the mirror is the mirror selfie itself, and facing away names nothing. */
+const FACING = /\bfac(?:es|ing)\s+(?:the|a)\s+(?!mirror\b)[a-z]+/i;
+
 /**
  * S5.R4: a look at something other than the viewer, anywhere in a moment's text or motion («sits on a ledge, watching dusk fall», «she looks out at the street»): the moment
- * carries its own gaze, or the template adds one that contradicts it («…watching dusk fall, looking up at the viewer»). A look at the viewer or the camera is the viewer
- * gaze's own rule, and a clip that ends looking away («she smiles and looks away») starts from a photo that may look at the viewer, so neither is one.
+ * carries its own gaze, or the template adds one that contradicts it («…watching dusk fall, looking up at the viewer»). Read clause by clause (a comma, a «;» or an «and» ends one):
+ * a clause that looks at the viewer or the camera is the viewer gaze's own rule, a bare «looks up» or «glances back» names no target, and a clip that ends looking away («she smiles
+ * and looks away») starts from a photo that may look at the viewer, so none of these is one (round 2 of the re-review read them both ways).
  */
-export const LOOKS_ELSEWHERE =
-  /\b(?:watch(?:es|ing)?|gaz(?:es|ing)|star(?:es|ing)|peer(?:s|ing)?|(?:looks?|looking|glances?|glancing)\s+(?!at\s+(?:the\s+)?(?:viewer|camera|lens)\b)(?:out|at|across|over|down|up|along|into|toward|towards|through|back|around|past)\b)/i;
+export function looksElsewhere(text: string): boolean {
+  return text
+    .split(/[,.;]|\band\b/i)
+    .some((clause) => !AT_THE_VIEWER.test(clause) && (EYES_ON.test(clause) || LOOK_TOWARD.test(clause) || FACING.test(clause)));
+}
 
 /** Raised or stretched arms, in a moment's text or its motion (the open-shirt rule below). A stretch of her legs, feet or toes is not one: her arms stay down. */
 export const ARMS_UP = /\barms?\b[^.]*\bup\b|\bstretch\w*\b(?![^.]*\b(?:legs?|feet|foot|toes?|ankles?)\b)/i;
@@ -231,7 +244,7 @@ function checkMoment(add: Add, where: string, moment: Moment, place: { room?: tr
   if ((moment.hair === "own") !== HAIR_WORDS.test(text)) add(BANK_RULE.momentHair, where, "carries the own-hair tag exactly when it names her hair");
   if ((moment.gaze === "viewer") !== (VIEWER.test(text) || VIEWER_GAZE.test(text))) add(BANK_RULE.momentViewer, where, "carries the viewer gaze exactly when it looks at the viewer");
   if (GAZE_VERBS.test(text) && moment.gaze !== "own" && moment.gaze !== "viewer") add(BANK_RULE.momentGaze, where, "a moment that opens on a look carries its own gaze");
-  else if ((LOOKS_ELSEWHERE.test(text) || LOOKS_ELSEWHERE.test(moment.motion)) && moment.gaze !== "own") {
+  else if ((looksElsewhere(text) || looksElsewhere(moment.motion)) && moment.gaze !== "own") {
     add(BANK_RULE.momentGaze, where, "a moment whose text or motion looks at something other than the viewer carries its own gaze (the template would add one that contradicts it)");
   }
   if ((moment.expression === true) !== EXPRESSION_WORDS.test(text)) add(BANK_RULE.momentExpression, where, "carries the expression tag exactly when it shows her expression (it then takes no cue)");
