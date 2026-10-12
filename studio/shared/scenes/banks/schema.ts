@@ -34,7 +34,7 @@ import {
   WALKS_AWAY_WORDS,
   YOUTH_PROPS,
 } from "../words";
-import { boldWordsIn, lingerieWordsIn, NO_STRAPS, OPEN_SHIRT, stockingWordsIn, swimwearWordsIn } from "./boldRules";
+import { boldWordsIn, lingerieWordsIn, NO_STRAPS, OPENS_WITH_ARMS_UP, stockingWordsIn, swimwearWordsIn } from "./boldRules";
 import { MOMENT_HAIRS, type BankCategory, type CategoryBank, type Level, type Moment } from "./types";
 
 // 5a.2 (S5.6a, I5.21, I5.35; plan s5a2 r1.2): the banks' zod schemas. The shape is zod; every rule the plan names runs in a superRefine and reports
@@ -135,7 +135,7 @@ export const LOOKS_ELSEWHERE =
 export const COVERS_HER = /\b(?:under|beneath)\s+(?:the|a|her)\s+(?:duvet|blankets?|covers|sheets?|quilt|comforter|throw|plaid)\b|\b(?:blankets?|plaids?|quilts?|comforters?)\b/i;
 
 /** Raised or stretched arms, in a moment's text or its motion (the open-shirt rule below). A stretch of her legs, feet or toes is not one: her arms stay down. */
-const ARMS_UP = /\barms?\b[^.]*\bup\b|\bstretch\w*\b(?![^.]*\b(?:legs?|feet|foot|toes?|ankles?)\b)/i;
+export const ARMS_UP = /\barms?\b[^.]*\bup\b|\bstretch\w*\b(?![^.]*\b(?:legs?|feet|foot|toes?|ankles?)\b)/i;
 
 /** A motion's and a start pose's bound (plan I5.21, 5b.1 QV-5): the approved Kling wording, «she slowly lifts her hips behind her and lowers them», fits. */
 export const MOTION_TEXT_MAX = 60;
@@ -479,12 +479,15 @@ function boldBankRules(bank: CategoryBank, add: Add): void {
       if (moment.outfits === undefined) add(BANK_RULE.strap, where, "an action on a strap pins its outfits: the general draw has outfits with no shoulder straps");
       for (const outfit of moment.outfits ?? []) if (NO_STRAPS.test(outfit)) add(BANK_RULE.strap, where, `«${outfit}» has no shoulder straps: a strap action never meets it`);
     }
-    // bold-arms-up (review of S5.9b2): with her arms up an open shirt does not stay closed over her chest, so an arms-up moment pins its outfits and none of them is the open shirt.
-    // The text and the motion are read apart: a stretch in one is not cancelled by her toes in the other.
+    // bold-arms-up (review of S5.9b2): with her arms up an open shirt does not stay closed over her chest, and (S5.R4) a crop top or a cropped tee rides up, so an arms-up moment pins its
+    // outfits and none of them is one of these. The text and the motion are read apart: a stretch in one is not cancelled by her toes in the other. A pin-only outfit is never drawn
+    // by a moment that does not pin it, so only the general draw's count for a moment that pins nothing.
     if (ARMS_UP.test(moment.text) || ARMS_UP.test(moment.motion)) {
-      const open = bank.outfits.filter((o) => OPEN_SHIRT.test(o.text)).map((o) => o.text);
-      if (open.length > 0 && moment.outfits === undefined) add(BANK_RULE.boldArmsUp, where, `an arms-up moment pins its outfits, so it never draws «${open.join("», «")}» (raised arms open the shirt)`);
-      for (const outfit of moment.outfits ?? []) if (OPEN_SHIRT.test(outfit)) add(BANK_RULE.boldArmsUp, where, `«${outfit}» is an open shirt: with her arms up it does not stay closed over her chest`);
+      const open = bank.outfits.filter((o) => o.pinOnly !== true && OPENS_WITH_ARMS_UP.test(o.text)).map((o) => o.text);
+      if (open.length > 0 && moment.outfits === undefined) add(BANK_RULE.boldArmsUp, where, `an arms-up moment pins its outfits, so it never draws «${open.join("», «")}» (raised arms open a shirt and lift a crop top)`);
+      for (const outfit of moment.outfits ?? []) {
+        if (OPENS_WITH_ARMS_UP.test(outfit)) add(BANK_RULE.boldArmsUp, where, `«${outfit}» is an open shirt or a crop top: with her arms up it does not stay over her chest`);
+      }
     }
     // bold-covered (S5.R4): under a duvet or a blanket the outfit does not show, so a bold one would be a 2K frame paid for nothing (review: «curls up with a blanket, wearing a white
     // lace bra and panties»). A covering moment pins its outfits, and none of them is bold.

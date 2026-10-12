@@ -1,5 +1,5 @@
 import { isOwnerBannedOutfit } from "../words";
-import { OPEN_SHIRT } from "./boldRules";
+import { OPENS_WITH_ARMS_UP } from "./boldRules";
 import type { CategoryBank, Outfit } from "./types";
 
 // «Ночнушки и бельё» (`nightwear`, 5a.3, plan s5a3 §6.2 r3.1), a «Смелая» bank: drawn only under «Подача: Смелая». At home she shoots herself (I5.32): in the
@@ -56,10 +56,10 @@ const OUTFITS: readonly Outfit[] = [
 ];
 
 /**
- * Every outfit of the general draw but the open shirt: a moment with her arms up pins these (the open shirt does not stay closed over her chest; review of S5.9b2).
- * Derived from the bank's outfits, so an outfit added to the bank reaches the arms-up moments by itself and never slips in unchecked.
+ * Every outfit of the general draw but the open shirt and the cropped tee: a moment with her arms up pins these (the open shirt does not stay closed over her chest, review of
+ * S5.9b2; the cropped tee rides up, S5.R4). Derived from the bank's outfits, so an outfit added to the bank reaches the arms-up moments by itself and never slips in unchecked.
  */
-const ARMS_UP_OUTFITS: readonly string[] = OUTFITS.filter((o) => o.pinOnly !== true && !isOwnerBannedOutfit(o.text) && !OPEN_SHIRT.test(o.text)).map((o) => o.text);
+const ARMS_UP_OUTFITS: readonly string[] = OUTFITS.filter((o) => o.pinOnly !== true && !isOwnerBannedOutfit(o.text) && !OPENS_WITH_ARMS_UP.test(o.text)).map((o) => o.text);
 
 /**
  * S5.R4: every outfit of the general draw that is not bold: a moment under the duvet or a blanket pins these (rule bold-covered), so a bold slot never pays a 2K frame for lingerie
@@ -108,7 +108,8 @@ export const NIGHTWEAR: CategoryBank = {
           twoHanded: false,
           level: "bold",
           route: "seedream",
-          outfits: ["a black lace bra and panties", "a white lace bra and panties", "a lace bodysuit", "a sheer babydoll over a lace set", "a cropped tee and cotton panties"],
+          // S5.R4: not the cropped tee either: with her arms up it rides up.
+          outfits: ["a black lace bra and panties", "a white lace bra and panties", "a lace bodysuit", "a sheer babydoll over a lace set"],
         },
         // P-5a3 #2 (3/3): the sheet held to her chest is all she wears; the moment carries what covers her.
         {

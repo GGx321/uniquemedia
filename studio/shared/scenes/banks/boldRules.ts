@@ -19,8 +19,14 @@ export function withoutBoldExemptLook(text: string): string {
   return BOLD_EXEMPT_LOOK.reduce((out, phrase) => out.replace(new RegExp(`\\b${phrase.replace(/ /g, "\\s+")}\\b`, "gi"), ""), text);
 }
 
-/** An outfit whose shirt is worn open: with her arms up it does not stay closed over her chest (bold-arms-up; the nightwear bank derives its arms-up pins from it). */
+/** An outfit whose shirt is worn open: with her arms up it does not stay closed over her chest. */
 export const OPEN_SHIRT = /\bopen\b[^,]*\bshirt\b/i;
+
+/**
+ * An outfit whose top does not stay over her chest with her arms up: an open shirt falls open, and (S5.R4) a crop top or a cropped tee rides up (bold-arms-up; the nightwear bank
+ * derives its arms-up pins from it).
+ */
+export const OPENS_WITH_ARMS_UP = new RegExp(`${OPEN_SHIRT.source}|\\bcrop(?:ped)?\\b`, "i");
 
 /** An outfit with no shoulder straps: strapless or bandeau, or a bikini whose top is a shirt, a sweatshirt or a tee (or missing). A strap action never meets one (rule strap). */
 export const NO_STRAPS = /\bstrap-?less\b|\bbandeau\b|\bbottoms\b|\bsweatshirts?\b|\bshirts?\b|\btee\b|\btube\b|\boff-shoulder\b|\bhoodies?\b/i;

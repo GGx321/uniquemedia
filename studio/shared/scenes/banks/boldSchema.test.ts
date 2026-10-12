@@ -89,6 +89,9 @@ const OPEN_SHIRT: Outfit = {
 };
 const ARMS_UP: Moment = { ...plain, text: "stretches after waking up", motion: "she stretches her arms up slowly", captures: ["timer"] };
 const withArmsUp = (moment: Moment): CategoryBank => ({ ...withMoment(moment), outfits: [...OUTFITS, OPEN_SHIRT] });
+/** S5.R4: a cropped tee rides up with her arms raised, as the open shirt falls open. */
+const CROPPED_TEE: Outfit = { text: "a cropped tee and cotton panties", showsLegs: true, level: "bold", route: "seedream", coverage: "Her tee covers her chest, and her panties fully cover her." };
+const withCroppedTee = (moment: Moment): CategoryBank => ({ ...withMoment(moment), outfits: [...OUTFITS, CROPPED_TEE] });
 /** S5.9c round 3: a place at the edge of the sea, whose every moment is wet; and a strap action with the outfits that do and do not have straps. */
 const EDGE: BankPlace = { name: "the water's edge", at: "at the edge of the sea", times: ["midday"], details: ["a driftwood log", "a few seashells"], moments: [] };
 const WET = (text: string, motion: string): Moment => ({ ...WADES, text, motion, angle: undefined, gaze: undefined });
@@ -213,6 +216,10 @@ describe("a «Смелая» bank", () => {
     ["an arms-up moment that pins no outfit, so it can draw the open shirt", withArmsUp(ARMS_UP), BANK_RULE.boldArmsUp],
     ["an arms-up moment that pins the open shirt", withArmsUp({ ...ARMS_UP, outfits: ["cotton pajama shorts and a tee", OPEN_SHIRT.text] }), BANK_RULE.boldArmsUp],
     ["a moment whose motion stretches her arms up, pinning nothing", withArmsUp({ ...plain, text: "stands by the bed", motion: "she stretches slowly and smiles" }), BANK_RULE.boldArmsUp],
+    // S5.R4: a cropped tee or a crop top rides up with her arms raised (the review: «lies back with her arms up» in «a cropped tee and cotton panties», 24 frames).
+    ["an arms-up moment that pins no outfit, in a bank whose general draw has a cropped tee", withCroppedTee(ARMS_UP), BANK_RULE.boldArmsUp],
+    ["an arms-up moment that pins a cropped tee", withCroppedTee({ ...ARMS_UP, outfits: ["cotton pajama shorts and a tee", CROPPED_TEE.text] }), BANK_RULE.boldArmsUp],
+    ["an arms-up moment that pins a crop top", withMoment({ ...ARMS_UP, outfits: ["cotton pajama shorts and a tee", "a crop top and jeans"] }), BANK_RULE.boldArmsUp],
     // bold-covered (S5.R4): under a duvet or a blanket a bold outfit is hidden, and the 2K frame is paid for nothing.
     ["a moment under the duvet that pins no outfit, so a bold slot draws lingerie under it", withMoment({ ...plain, text: "lies curled up under the duvet" }), BANK_RULE.boldCovered],
     ["a moment with a blanket that pins a bold outfit", withMoment({ ...plain, text: "curls up with a blanket", outfits: ["a long cotton nightshirt", "a black lace bra and panties"] }), BANK_RULE.boldCovered],

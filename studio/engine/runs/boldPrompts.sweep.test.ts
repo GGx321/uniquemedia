@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { GAZE } from "../../shared/scenes/banks";
-import { COVERS_HER, LOOKS_ELSEWHERE } from "../../shared/scenes/banks/schema";
+import { OPENS_WITH_ARMS_UP } from "../../shared/scenes/banks/boldRules";
+import { ARMS_UP, COVERS_HER, LOOKS_ELSEWHERE } from "../../shared/scenes/banks/schema";
 import { HELD_OBJECT_WORDS } from "../../shared/scenes/words";
 import { boldPromptMatrix, boldRunPrompts, type PromptFrame } from "./boldRunPrompts.testkit";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -132,5 +133,18 @@ describe("no bold outfit goes under a cover", () => {
 
   test("none of them wears a bold outfit", () => {
     expect(offenders(covered, (f) => f.outfit.level === "bold")).toEqual(NONE);
+  });
+});
+
+// Item 5 (LOW): with her arms up an open shirt falls open and a cropped tee rides up («lies back with her arms up» in «a cropped tee and cotton panties», 24 frames).
+describe("no frame with her arms up wears an open shirt or a crop top", () => {
+  const armsUp = FRAMES.filter((f) => ARMS_UP.test(f.moment.text) || ARMS_UP.test(f.moment.motion));
+
+  test("the sweep reads frames with her arms up on bold slots", () => {
+    expect(armsUp.filter((f) => f.slot.level === "bold").length).toBeGreaterThan(50);
+  });
+
+  test("none of them wears one", () => {
+    expect(offenders(armsUp, (f) => OPENS_WITH_ARMS_UP.test(f.outfit.text))).toEqual(NONE);
   });
 });
