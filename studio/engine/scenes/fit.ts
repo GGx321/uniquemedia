@@ -2,7 +2,10 @@ import type { ScenePose } from "../../shared/engine";
 import { posesFor, shotOf, type Capture } from "../../shared/scenes/captures";
 import { momentAllowed } from "../../shared/scenes/render";
 import { isOwnerBannedOutfit } from "../../shared/scenes/words";
-import type { Level, Outfit } from "../../shared/scenes/banks/types";
+import type { LegwearSlot, Level, Outfit } from "../../shared/scenes/banks/types";
+import { atSlotLevel, legwearAt } from "../../shared/scenes/level";
+import { legwearFits } from "../../shared/scenes/template";
+import { rngPick, type Rng } from "./rngUtil";
 import { EVERYDAY_OUTFITS, type Activity, type Place, type Pool } from "./pools";
 
 // 5a.2 (S5.6b, I5.23, plan s5a2 §5.2): the pure core of the built-in draw. The planner picks a slot's capture from the category's deck, then its pose, then
@@ -111,4 +114,30 @@ export function generalOutfits(pool: Pick<Pool, "outfits" | "outfitInfo" | "loca
 /** The outfits a moment pins, after the owner's denim rule; empty when it pins none (or none are left). */
 export function pinnedOutfitsOf(moment: Pick<Activity, "outfits">): readonly string[] {
   return (moment.outfits ?? []).filter((outfit) => !isOwnerBannedOutfit(outfit));
+}
+
+/** What a slot's legwear draw came to: the item (if it wears one), whether it is one of the bold stockings, and their route. */
+export interface LegwearDraw {
+  legwear: string | undefined;
+  stockings: boolean;
+  route: "seedream" | undefined;
+}
+
+/**
+ * The legwear draw of a slot (I5.29, 5a.3): always two draws on `rng`, so the stream does not depend on who may wear it. A slot reads the list of its level (`legwearAt`): a bold slot the
+ * bank's bold stockings, which only the outfits they name wear; every other slot the bank's own list. The five have no bold list, so their draws are what they always were.
+ */
+export function legwearOfSlot(legwear: LegwearSlot | undefined, level: Level, rng: Rng, moment: Pick<Activity, "text" | "noLegwear">, meta: Outfit | undefined, outfit: string): LegwearDraw {
+  const list = legwearAt(legwear, level);
+  const roll = rng();
+  const item = list === undefined ? undefined : rngPick(rng, list.items);
+  const wears = list !== undefined && meta !== undefined && legwearFits(moment, meta) && (list.outfits?.includes(outfit) ?? true) && roll < list.share;
+  return { legwear: wears ? item : undefined, stockings: wears && list?.outfits !== undefined, route: wears ? list?.route : undefined };
+}
+
+/** The outfits a moment pins that a slot of this level may wear, its own level preferred. A moment that pins only outfits above the slot's level is a defect of the bank (the bold-levels rule), never a slot. */
+export function pinnedAt(pinned: readonly string[], levelOf: (text: string) => Level | undefined, level: Level, moment: string): readonly string[] {
+  const list = atSlotLevel(pinned, levelOf, level);
+  if (list.length === 0) throw new RangeError(`«${moment}» pins no outfit a ${level} slot may wear`);
+  return list;
 }
