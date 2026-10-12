@@ -20,14 +20,14 @@
     30
   ],
   "hashes": {
-    "nightwear@ordinary": "683ff0fac8f3d8b9ee02f2112bfa72315d12170da9a1d80041ddb2b2bab3ff8a",
-    "nightwear@flirty": "1bdcf25a7b96210d746bf01de0807c01bbe035d97c4c2f5af6559369af93fed6",
-    "nightwear@bold": "3534c8e26d715c46394080199940982f960b8c20be0d94cf349b7fb32050e1e4",
-    "beach@ordinary": "e8bcf3e0725fa0900145f6116eacb38fe10f125f4a3e04f135630481a1eb7833",
-    "beach@flirty": "290053880c0cc3c30b6a8836186e3fe1638d68f0fa6b41fbe95acb6d6007a224",
-    "beach@bold": "ee267e63b13dc8b21f20fd073f0547b50a2aaa123f61535fe90ae1e076438200",
-    "nightwear,beach@ordinary": "e672d68c60f91b535f56f68bfa63282f854bfa13e69c9a50306d39f5eca44379",
-    "nightwear,beach@flirty": "9ee01f56f0a96e1639eff5ebc10b11c2f9e339919db19e0d71e4fffab0ce342b",
-    "nightwear,beach@bold": "f9e83c28ec177ed6d7d2020ccc2d74059b469bc7428779afd42a4c664dd121b1"
+    "nightwear@ordinary": "db7992826d76ce094b0c8c24ef433b4ee390739514426cbac80c5bbdce1e2909",
+    "nightwear@flirty": "17c44dfcc59ddf260d04d63540178a0e95cd04909bf56ef5193aedba5348dec2",
+    "nightwear@bold": "4c7030ec82a964603378460efe91aee6216206c7d4e9844ca3fb0f6358c90307",
+    "beach@ordinary": "bdeeca1672aa59f5d74d3201d850c1664fe2494e44b0141579607e17619dd523",
+    "beach@flirty": "deb33f2bc61bb892553097b1a46967fdf245320e006ced1cbbdb7bf54811c9dc",
+    "beach@bold": "09e331c5af49489b4004ff2ee74d5c4fa35c967e6811d1a861b712b64e82e8e7",
+    "nightwear,beach@ordinary": "95c43d240f85dfdd61cc5e49e611bf44cb6ebc984bd9e304919ddd3d16fe3372",
+    "nightwear,beach@flirty": "845f97566ecd5217239d1cea919efdcc38c56dc00308ec9b452b0bf0ff43c2a2",
+    "nightwear,beach@bold": "be8b5717505f65f7ef12361d3898fa5b113438bedd43628ea709bd23ef3cdc6b"
   }
 }
