@@ -16,8 +16,8 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
 // 5a.3 (S5.9c, plan s5a3 §6.4 r3, §7.3, I5.24, I5.32, I5.37): the two «Смелая» banks' sweeps on the REAL planner, which replaces the planner stand-in the same sweeps ran on in
-// S5.9b2 (shared/scenes/boldBanks.sweep.test.ts, retired with this file: every assertion is here). A plan is drawn at the planner's three levels: «Обычная» and «Кокетливая»
-// (every slot at that level) and «Смелая» (the 20 / 40 / 40 mix), at three legs shares. The owner's rules: at home she shoots herself and a third of the frames hide her face
+// S5.9b2 (shared/scenes/boldBanks.sweep.test.ts, retired with this file: every assertion is here). A plan is drawn at the planner's three levels: «Обычная»
+// (every slot ordinary), «Кокетливая» (the 40 / 60 mix of ordinary and flirty slots) and «Смелая» (the 20 / 40 / 40 mix), at three legs shares. The owner's rules: at home she shoots herself and a third of the frames hide her face
 // behind the phone; at the beach she mostly asks someone and wears swimwear on every frame; she lies on her stomach only on her bed; side or back to the mirror, only her reflection;
 // nothing above the slot's level; no youth word (the exempt garment name spared), no exposure word and no explicit act in any sentence; every plan renders, with no slot left to the
 // LLM writer (0 null slots), the coverage once, within the scene bound.
@@ -27,6 +27,8 @@ const PLANNER_LEVELS: readonly PlannerLevel[] = ["ordinary", "flirty", "bold"];
 const SHARES = [0, 15, 30] as const;
 const SEEDS = Array.from({ length: 50 }, (_, i) => i + 1);
 const N = 100;
+/** The slack on a moment's fair share within its place (see the repetition test below): the measured worst excess over the fair share is 1 in «Ночнушки и бельё» and 2 on the beach, at every level. */
+const FAIR_SLACK = 2;
 
 interface Frame {
   slot: PlanSlot;
@@ -158,25 +160,38 @@ describe.each([...BOLD_CATEGORIES])("%s: the real planner's plans (I5.24, I5.37)
     expect(worst).toBeGreaterThanOrEqual(0.8);
   });
 
-  // The planner balances place first, then moment (I5.24), so a place with few moments repeats each one more than the category's average does: the bound is twice the fair share of the
-  // frames that are not legs frames, plus one. The legs frames go round the legs moments, so their bound is the fair share, plus one.
-  // Only the mix is checked: a plan of one lower level is refused by the engine (bold-level-needed) and exists here as the 20 and 40 per cent of the mix, where a category's few ordinary
-  // frames lean on the few ordinary moments that fit their captures.
-  test.each(["bold"] as const)("at %s: no moment is drawn more than twice its fair share + 1, and the legs moments go round", (level) => {
-    const drawable = drawableMoments(category, level);
-    const legsMoments = drawable.filter(({ moment }) => moment.legs !== undefined).length;
-    const otherMoments = drawable.length - legsMoments;
-    const tally = (frames: readonly Frame[]): number => {
-      const counts = new Map<string, number>();
-      for (const f of frames) counts.set(`${f.slot.location}|${f.slot.activity}`, (counts.get(`${f.slot.location}|${f.slot.activity}`) ?? 0) + 1);
-      return Math.max(0, ...counts.values());
-    };
-    for (const slots of plansOf(category, level)) {
-      const legs = slots.filter((f) => f.slot.framing === "legs");
-      const others = slots.filter((f) => f.slot.framing !== "legs");
-      expect(tally(others)).toBeLessThanOrEqual(2 * Math.ceil(others.length / otherMoments) + 1);
-      if (legs.length > 0) expect(tally(legs)).toBeLessThanOrEqual(Math.ceil(legs.length / legsMoments) + 1);
+  // The planner balances place first, then moment (I5.24), and it picks the moment among those that fit the frame, so a place's frames divide among the moments of their own kind:
+  // the plain ones (front or three-quarter), the away ones (profile or back: the plan wants ⌈n/10⌉ of them, spread over the places) and the legs ones (S5.8a: they go round).
+  // The bound, per place and kind: ⌈frames of that kind on the place / moments of that kind the place offers a slot of the level⌉ + FAIR_SLACK, written out in `fairShareOf`.
+  // The slack covers what the balancing leaves uneven by design: a moment only some captures fit takes the frames those captures deal, and a slot prefers the moments of its own
+  // level. It holds at every level of both banks, no level left out. (The old bound was fitted to the measurement and hid the cause: the one profile moment of a place took
+  // the whole away quota, because the bank gave a flirty or bold slot, which never turns its back, no other away moment.)
+  type Kind = "plain" | "away" | "legs";
+  const kindOfMoment = (m: Moment): Kind => (m.legs !== undefined ? "legs" : m.angle === "profile" || m.angle === "back" ? "away" : "plain");
+  test.each([...PLANNER_LEVELS])("at %s: no moment is drawn more than its place's fair share + the slack, per kind of moment", (level) => {
+    // A flirty or bold slot never turns its back to the camera while the place has another moment that fits (planner `fits`), so a moment seen from behind is not on offer to it.
+    const offered = drawableMoments(category, level).filter((d) => level === "ordinary" || d.moment.angle !== "back");
+    const offeredAt = (place: string, kind: Kind): number => offered.filter((d) => d.place === place && kindOfMoment(d.moment) === kind).length;
+    /** ⌈frames of the kind on the place / moments of the kind it offers⌉ + FAIR_SLACK. */
+    const fairShareOf = (framesOfKind: number, place: string, kind: Kind): number => Math.ceil(framesOfKind / Math.max(offeredAt(place, kind), 1)) + FAIR_SLACK;
+    const overdrawn: string[] = [];
+    for (const share of SHARES) {
+      for (const slots of plansOf(category, level, share)) {
+        const frames = new Map<string, number>();
+        const drawn = new Map<string, number>();
+        for (const f of slots) {
+          const kind = kindOfMoment(f.moment);
+          frames.set(`${f.slot.location}|${kind}`, (frames.get(`${f.slot.location}|${kind}`) ?? 0) + 1);
+          drawn.set(`${f.slot.location}|${kind}|${f.slot.activity}`, (drawn.get(`${f.slot.location}|${kind}|${f.slot.activity}`) ?? 0) + 1);
+        }
+        for (const [key, count] of drawn) {
+          const [place, kind, activity] = key.split("|") as [string, Kind, string];
+          const bound = fairShareOf(frames.get(`${place}|${kind}`) ?? 0, place, kind);
+          if (count > bound) overdrawn.push(`${category} ${level} share ${share}: ${place}, ${kind} «${activity}» ${count} > ${bound}`);
+        }
+      }
     }
+    expect(overdrawn.slice(0, 5)).toEqual([]);
   });
 
   test.each([...PLANNER_LEVELS])("at %s: no slot takes a moment or an outfit above its own level", (level) => {
@@ -248,7 +263,8 @@ describe("«Ночнушки и бельё»: the owner's rules on the real plan
     const lingerie = (f: Frame): boolean => f.outfit.level === "bold";
     expect(offenders(allFrames("nightwear", "ordinary"), (f) => f.outfit.route !== undefined || f.slot.route !== undefined)).toEqual(NONE);
     expect(offenders(allFrames("nightwear", "flirty"), lingerie)).toEqual(NONE);
-    expect(allFrames("nightwear", "bold").filter(lingerie).length).toBeGreaterThan(SEEDS.length * N * 0.3);
+    const boldSlots = allFrames("nightwear", "bold").filter((f) => levelOf(f) === "bold");
+    expect(boldSlots.filter(lingerie).length / boldSlots.length).toBeGreaterThanOrEqual(0.3);
   });
 
   test("the open shirt never rides on a moment with her arms up (review of S5.9b2)", () => {
@@ -283,7 +299,8 @@ describe("«Пляж и бассейн»: the owner's rules on the real planner'
     const boldCut = (f: Frame): boolean => f.outfit.level === "bold";
     expect(offenders(allFrames("beach", "ordinary"), boldCut)).toEqual(NONE);
     expect(offenders(allFrames("beach", "flirty"), boldCut)).toEqual(NONE);
-    expect(allFrames("beach", "bold").filter(boldCut).length).toBeGreaterThan(SEEDS.length * N * 0.2);
+    const boldSlots = allFrames("beach", "bold").filter((f) => levelOf(f) === "bold");
+    expect(boldSlots.filter(boldCut).length / boldSlots.length).toBeGreaterThanOrEqual(0.2);
   });
 
   test("the frames that face away are the moments that face away, and every slot is drawn on Seedream", () => {
@@ -299,5 +316,28 @@ describe("the mix keeps its shares in a 100-slot plan of each bank (I5.36)", () 
       const got = { bold: slots.filter((f) => levelOf(f) === "bold").length, flirty: slots.filter((f) => levelOf(f) === "flirty").length, ordinary: slots.filter((f) => levelOf(f) === "ordinary").length };
       expect(got).toEqual(expected);
     }
+  });
+
+  // S5.9c round 2 (the assertion the move to the real planner lost): the level never steps a capture or a pose down, so for a seed the frames of a bold plan are the frames of the
+  // ordinary plan (the same captures, the same poses), only the moment, the outfit and the level differ. Legs slots are the legs moments' own and left out.
+  test.each([...BOLD_CATEGORIES])("%s: a bold plan keeps the captures and poses of the ordinary plan of its seed, slot by slot", (category) => {
+    const differing: string[] = [];
+    let compared = 0;
+    for (const share of SHARES) {
+      SEEDS.forEach((seed, i) => {
+        const ordinary = plansOf(category, "ordinary", share)[i] as Frame[];
+        const bold = plansOf(category, "bold", share)[i] as Frame[];
+        bold.forEach((f, at) => {
+          const base = ordinary[at] as Frame;
+          if (f.slot.framing === "legs" || base.slot.framing === "legs") return;
+          compared++;
+          // A slot's stored pose is the moment's own angle when it has one, so the pose is the dealt one only where neither moment sets an angle.
+          const poseKept = f.moment.angle !== undefined || base.moment.angle !== undefined || f.slot.pose === base.slot.pose;
+          if (f.capture !== base.capture || !poseKept) differing.push(`seed ${seed} slot ${at}: ${base.capture}/${base.slot.pose} -> ${f.capture}/${f.slot.pose}`);
+        });
+      });
+    }
+    expect(compared).toBeGreaterThan(10_000);
+    expect(differing.slice(0, 5)).toEqual([]);
   });
 });
