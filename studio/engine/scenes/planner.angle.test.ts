@@ -149,7 +149,10 @@ describe("a custom category's own poses stay uncapped", () => {
   });
 });
 
-describe("the away share of a built-in category stays between 5 % and 20 % (I5.26)", () => {
+// The owner's rule is a MAXIMUM (back and profile at most one frame in five). The 5 % floor is ours, and only the four outside categories keep it: «Дом» has one non-hand
+// capture in twelve, the timer, which turns away one time in three, and the floor must not starve the timer's other moments (planner.reachability.test.ts).
+
+describe("the away share of a built-in category stays under 20 % (I5.26), and over 5 % outside «Дом»", () => {
   const share = (category: Category, count: number): number => {
     let away = 0;
     let all = 0;
@@ -164,7 +167,7 @@ describe("the away share of a built-in category stays between 5 % and 20 % (I5.2
   for (const category of CATEGORIES) {
     test.each([10, 20, 30])(`${category}: n = %i`, (count) => {
       const s = share(category, count);
-      expect(s, `${category} n=${count}: ${(s * 100).toFixed(1)} %`).toBeGreaterThanOrEqual(0.05);
+      expect(s, `${category} n=${count}: ${(s * 100).toFixed(1)} %`).toBeGreaterThanOrEqual(category === "home" ? 0.01 : 0.05);
       expect(s, `${category} n=${count}: ${(s * 100).toFixed(1)} %`).toBeLessThanOrEqual(0.2);
     });
   }
@@ -178,7 +181,7 @@ describe("the away share of a built-in category stays between 5 % and 20 % (I5.2
         away += slots.filter(isAway).length;
         all += slots.length;
       }
-      expect(away / all, category).toBeGreaterThanOrEqual(0.05);
+      expect(away / all, category).toBeGreaterThanOrEqual(category === "home" ? 0.01 : 0.05);
       expect(away / all, category).toBeLessThanOrEqual(0.2);
     }
   });

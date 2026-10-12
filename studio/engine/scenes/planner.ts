@@ -238,6 +238,9 @@ interface BuiltInStreams {
   awayRng: Rng;
 }
 
+/** «Дом»'s timer frame turns away on this share of the rolls on `away:${category}`. */
+const AWAY_ONE_IN_THREE = 1 / 3;
+
 const isAwayAngle = (angle: Pose | undefined): boolean => angle === "profile" || angle === "back";
 
 const momentKey = (location: string, activity: string): string => `${location}\u0000${activity}`;
@@ -291,6 +294,7 @@ function planBuiltIn(
   // slots that could still be away run out, so the wanted ones land anywhere in the run and are met whenever the deck allows.
   const awayWanted = Math.min(Math.ceil(n / 10), awayCap);
   const canFaceAway = (capture: Capture): boolean => pool.locations.some((p) => fittingMoments(p, capture, "front", "flirty").some((m) => isAwayAngle(m.angle)));
+  const selfShot = kind === "self";
   const awayShareOfDeck = pool.captureDeck.filter(canFaceAway).length / pool.captureDeck.length;
 
   const slots: PlanSlot[] = [];
@@ -310,7 +314,11 @@ function planBuiltIn(
     const awayPlaces = settled.places.filter((p) => fittingMoments(p, capture, pose, slotLevel).some(isAway));
     const awayRoll = streams.awayRng();
     const awayNeeded = awayWanted - awayCount;
-    const wantsAway = awayNeeded > 0 && awayPlaces.length > 0 && awayRoll < Math.min(1, awayNeeded / Math.max(awayShareOfDeck * (n - i), 1e-9));
+    // «Дом» (a self-shot deck) has no lower bound: its one non-hand capture, the timer, turns away on one roll in three and every other timer frame faces the camera, so
+    // the owner's rule stays a maximum and no timer moment is starved. The outside categories want ⌈n/10⌉ away slots.
+    const wantsAway = selfShot
+      ? awayCount < awayCap && awayPlaces.length > 0 && awayRoll < AWAY_ONE_IN_THREE
+      : awayNeeded > 0 && awayPlaces.length > 0 && awayRoll < Math.min(1, awayNeeded / Math.max(awayShareOfDeck * (n - i), 1e-9));
     const placeUsage = (p: Place): number => placeUses.get(p.name) ?? 0;
     // A wanted away slot goes, among the least-used places, to one with an away moment; when none of them has one it goes to the least-used place that does.
     const hasAwayMoment = (p: Place): boolean => awayPlaces.includes(p);
@@ -318,7 +326,12 @@ function planBuiltIn(
     let place = leastUsed(settled.places, placeUsage, placePreferences, tieRng);
     if (wantsAway && !hasAwayMoment(place)) place = leastUsed(awayPlaces, placeUsage, [hasFreshMoment], tieRng);
     const momentPreferences = (at: Place): ((m: Activity) => boolean)[] => [(m) => !recent.has(momentKey(at.name, m.text)), ...(slotLevel === "flirty" ? [isFlirty] : [])];
-    const momentsAt = (at: Place): readonly Activity[] => fittingMoments(at, capture, pose, slotLevel).filter((m) => !wantsAway || isAway(m));
+    const momentsAt = (at: Place): readonly Activity[] => {
+      const fitting = fittingMoments(at, capture, pose, slotLevel);
+      if (wantsAway) return fitting.filter(isAway);
+      const facing = fitting.filter((m) => !isAway(m));
+      return selfShot && facing.length > 0 ? facing : fitting;
+    };
     let moment = leastUsed(momentsAt(place), (m) => momentUses.get(momentKey(place.name, m.text)) ?? 0, momentPreferences(place), tieRng);
     if (isAwayAngle(moment.angle) && awayCount >= awayCap) {
       // The category already holds its ⌊n/5⌋ away slots: this one redraws among the non-away moments, at this place or (when it has none for the slot) another, on `angle:`.
