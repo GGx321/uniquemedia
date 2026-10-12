@@ -1,12 +1,15 @@
-// S5.5: the pool generator draws no lingerie, swimwear or nudity until the «Смелая» level ships (engine/scenes/poolGen.ts), so a custom category whose description asks for
-// them comes out in everyday clothes. The swap used to be silent; the sheet now says so, before «Создать» and on the category's card. Renderer-only: the engine's own word
-// list (scenes/words.ts) is not imported here, this one also reads Russian and the description rather than an outfit.
+// S5.5: the pool generator draws no lingerie, swimwear or nudity in the owner's own categories (engine/scenes/poolGen.ts; «Смелая» stays out of custom categories in
+// 5a.3, answer (f)), so a custom category whose description asks for them comes out in everyday clothes. The swap used to be silent; the sheet now says so, before
+// «Создать» and on the category's card. Renderer-only: the engine's own word list (scenes/words.ts) is not imported here, this one also reads Russian and the
+// description rather than an outfit. S5.9g (mockup 54): «Смелая» shipped, so the note says where those frames are drawn instead of promising them.
 
-/** What the owner is told when his description asks for what is not drawn. Neutral: a fact and a date of sorts, not a reproach. */
-export const REVEALING_NOTE = "Бельё, купальники и обнажёнку пока не рисуем — категория выйдет в обычной одежде. Это появится с уровнем «Смелая».";
+/** What the owner is told when his description asks for what is not drawn. Neutral: a fact and where to find it, not a reproach. */
+export const REVEALING_NOTE =
+  "Бельё и купальники в своих категориях не рисуем — категория выйдет в обычной одежде. Бельё, ночнушки и пляж — во встроенных «Ночнушки и бельё» и «Пляж и бассейн» с подачей «Смелая».";
 
 /** The same note on the card of a category that is already created: it did come out in everyday clothes. */
-export const REVEALING_NOTE_DONE = "Бельё, купальники и обнажёнку пока не рисуем — категория вышла в обычной одежде. Это появится с уровнем «Смелая».";
+export const REVEALING_NOTE_DONE =
+  "Бельё и купальники в своих категориях не рисуем — категория вышла в обычной одежде. Бельё, ночнушки и пляж — во встроенных «Ночнушки и бельё» и «Пляж и бассейн» с подачей «Смелая».";
 
 // A word is a run of letters: `\b` knows only ASCII, so the edges are lookarounds over Unicode letters and digits. Text is lowercased and ё is read as е before matching,
 // so every pattern below is written in lowercase with е. A Russian stem is followed by the endings it really takes (not by «any letters»), so «белый» and «бельгийский»

@@ -215,7 +215,7 @@ export function CategorySheet({
                 })}
               </div>
               <LibraryNotes unreadable={list.unreadable} overLimit={list.overLimit} />
-              <p className="faint cat-sheet-builtins">Встроенные пять — Дом, Улица, Виды, Гламур, Фитнес — здесь не показываются и не меняются.</p>
+              <p className="faint cat-sheet-builtins">Встроенные семь — Дом, Улица, Виды, Гламур, Фитнес, Ночнушки и бельё, Пляж и бассейн — здесь не показываются и не меняются.</p>
             </nav>
             {current !== null && (
               <CategoryDetail
