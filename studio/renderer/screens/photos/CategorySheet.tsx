@@ -49,6 +49,7 @@ import {
 import { RevealingLine } from "./RevealingLine";
 import { InterruptedNotice } from "./CategoryNotices";
 import type { CreateDialogStart } from "./CategoryCreateDialog";
+import { LEGS_CUSTOM_NOTE } from "./legs";
 import { paidBlockedReason } from "./runForm";
 import { useMounted } from "./shared";
 
@@ -876,6 +877,11 @@ function CategoryDetail({
             aria-live={anglesError !== null ? "assertive" : "polite"}
           >
             {anglesError !== null ? anglesSaveFailure(anglesError) : anglesHint(shownPoses, category.pool.shotDeck, openSetScenes)}
+          </p>
+          {/* S5.8b (mockup 35): legs are drawn from the built-in categories only (I5.29). */}
+          <p className="cat-legs-note">
+            <Icon name="info" size={12} strokeWidth={2.2} />
+            <span>{LEGS_CUSTOM_NOTE}</span>
           </p>
         </div>
 

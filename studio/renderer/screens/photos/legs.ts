@@ -16,6 +16,9 @@ export const LEGS_OPTIONS = [
 /** Why the chips are off with no built-in category on (mockup 34#card, 34). */
 export const LEGS_BUILT_IN_ONLY = "Ножки — только во встроенных категориях";
 
+/** The custom category's sheet, under its angles (mockup 35). */
+export const LEGS_CUSTOM_NOTE = "«Ножки» в своих категориях не рисуются.";
+
 /** What «Ножки» means, after the count of such frames (mockup 33). */
 const LEGS_WHAT = "ножки и стопы крупно; лицо может не попасть в кадр, сходство на таких кадрах только отмечается.";
 

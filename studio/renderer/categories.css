@@ -918,6 +918,23 @@
   color: var(--danger);
 }
 
+/* S5.8b (mockup 35): «Ножки» are built-in only — an info line under the angles hint, as the card's own-angles line. */
+.cat-legs-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.cat-legs-note > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--info);
+}
+
 /* Under 1440 the panel is narrower (the design's 680 px at 1200) and its list too. */
 @media (max-width: 1439px) {
   .cat-sheet {
