@@ -76,7 +76,7 @@ describe("the places (plan §6.2)", () => {
 describe("the moments and their levels (plan §6.2)", () => {
   test.each<[string, string, readonly Capture[], "flirty" | "bold" | undefined, string]>([
     ["her bed", "lies back against the pillows", ["above"], undefined, "she slowly blinks and smiles"],
-    ["her bed", "sits cross-legged with her coffee", ["mirror"], undefined, "she sips and smiles a little"],
+    ["her bed", "sits cross-legged with her coffee", ["mirror-hidden", "mirror"], undefined, "she sips and smiles a little"],
     ["her bed", "lies on her stomach, one arm out", ["prone"], undefined, "she swings her feet a little"],
     ["her bed", "lies prone, glancing back", ["over-shoulder"], undefined, "she turns her head a little further"],
     ["her bed", "lies prone, chin on her hand", ["prone"], "flirty", "she kicks her feet slowly behind her"],

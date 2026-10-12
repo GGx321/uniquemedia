@@ -55,7 +55,7 @@ export const NIGHTWEAR: CategoryBank = {
         { text: "lies curled up under the duvet", motion: "she pulls the duvet up a little", captures: ["above", "timer"], twoHanded: false, messyOk: true },
         { text: "lies back, hair across the pillow", motion: "she slowly turns her head", captures: ["above"], twoHanded: false, hair: "own" },
         { text: "lies back, one knee up", motion: "she sways her knee a little", captures: ["above"], twoHanded: false, level: "flirty" },
-        { text: "sits cross-legged with her coffee", motion: "she sips and smiles a little", captures: ["mirror"], twoHanded: false },
+        { text: "sits cross-legged with her coffee", motion: "she sips and smiles a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "sits up against the headboard", motion: "she leans her head back a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "sits with her legs tucked under her", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "stretches out on the duvet", motion: "she stretches her arms slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, outfits: ARMS_UP_OUTFITS },
