@@ -128,12 +128,23 @@ describe("a 20-photo run with «Ножки» 30 % never pays for the same scene 
 
 // Item 4 (MEDIUM, plan s5a3 §6.2 r3.1): «a bold legs slot wears satin nightwear with stockings (the stockings make it bold)». The stockings were drawn at the bold share (0.5), so about
 // half of the bold legs frames said «…wearing a satin cami and satin shorts.» and read as flirty ones. Every bold «Ночнушки» legs frame now says them; nothing else moves.
-// Item 6 of round 2 (LOW): a legs frame by the mirror on the phone-over-face capture said «she holds her phone right in front of her face» and «Her legs fill most of the frame;
-// her face may be out of frame.» in one prompt («stands on tiptoe by the mirror», «lifts one foot to the mirror»).
-test("no legs frame pairs the phone over her face with the legs line", () => {
-  const legs = FRAMES.filter((f) => f.slot.framing === "legs");
-  expect(legs.filter((f) => f.prompt.includes("Her legs fill most of the frame")).length).toBe(legs.length);
-  expect(offenders(legs, (f) => f.prompt.includes("right in front of her face"))).toEqual(NONE);
+// Round 2 (LOW) and round 3 (HIGH): a legs frame by the mirror on the phone-over-face capture said «she holds her phone right in front of her face» and «her face may be out of
+// frame» in one prompt; round 2 moved it to the plain mirror selfie, which showed her face («held low enough to leave her face clear») on a frame the face gate only marks. Round 3:
+// back behind the phone (plan s5a3 §6.2), with a pose phrase that says nothing of her face.
+describe("a «Смелая» frame with the phone over her face says nothing of her face", () => {
+  const FACE_CLEAR = /\bface\b[^.;]*\b(?:clear|visible|may be out of frame)\b|\bexact face\b|\bher face clear\b/i;
+
+  test("no prompt says both", () => {
+    const hidden = FRAMES.filter((f) => f.prompt.includes("right in front of her face"));
+    expect(hidden.filter((f) => f.slot.framing === "legs").length).toBeGreaterThan(100);
+    expect(offenders(hidden, (f) => FACE_CLEAR.test(f.prompt))).toEqual(NONE);
+  });
+
+  test("every legs frame by the mirror is the phone-over-face one, and every legs frame says what fills it", () => {
+    const legs = FRAMES.filter((f) => f.slot.framing === "legs");
+    expect(offenders(legs, (f) => f.capture === "mirror")).toEqual(NONE);
+    expect(offenders(legs, (f) => !f.prompt.includes("Her legs fill most of the frame"))).toEqual(NONE);
+  });
 });
 
 describe("a bold «Ночнушки» legs frame wears the stockings", () => {

@@ -1,4 +1,4 @@
-import type { AvatarDescriptor } from "../../shared/engine";
+import { isBoldCategory, type AvatarDescriptor } from "../../shared/engine";
 import { promptSubject } from "../avatars/prompts";
 import type { LibraryReference } from "../library/media";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
@@ -91,6 +91,12 @@ const DISTANT_CAPTURES: readonly Capture[] = ["friend", "candid", "timer"];
  * phrase claims no face and no orientation, whatever the capture or the pose.
  */
 export const LEGS_POSE_PHRASE = "Her legs fill most of the frame; her face may be out of frame.";
+
+/**
+ * S5.R4 round 3: a «Смелая» legs frame by the mirror hides her face behind the phone (plan s5a3 §6.2), and its capture line says so («she holds her phone right in front of her
+ * face»), so its pose phrase says what fills the frame and nothing of her face. Only the two «Смелая» categories read it: the five keep LEGS_POSE_PHRASE word for word.
+ */
+export const BOLD_MIRROR_LEGS_POSE_PHRASE = "Her legs fill most of the frame.";
 
 const BINDING = "The same woman as in the reference photo,";
 
@@ -237,7 +243,8 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, senten
   const faceless = FACELESS_CAPTURES.includes(capture);
   const glancesBack = !isOwnSlot(slot) && DISTANT_CAPTURES.includes(capture) && GLANCE_BACK_WORDS.test(slot.activity);
   const glancePhrase = !glancesBack ? null : slot.pose === "three-quarter" ? THREE_QUARTER_BACK_POSE_PHRASE : slot.pose === "back" ? BACK_GLANCE_POSE_PHRASE : null;
-  const posePhrase = legs ? LEGS_POSE_PHRASE : capture === "mirror-hidden" ? (look?.mirrorBack === true ? MIRROR_BACK_POSE_PHRASE : HIDDEN_FACE_POSE_PHRASE[slot.pose]) : (glancePhrase ?? POSE_PHRASE[slot.pose]);
+  const legsPhrase = capture === "mirror-hidden" && isBoldCategory(slot.category) ? BOLD_MIRROR_LEGS_POSE_PHRASE : LEGS_POSE_PHRASE;
+  const posePhrase = legs ? legsPhrase : capture === "mirror-hidden" ? (look?.mirrorBack === true ? MIRROR_BACK_POSE_PHRASE : HIDDEN_FACE_POSE_PHRASE[slot.pose]) : (glancePhrase ?? POSE_PHRASE[slot.pose]);
   const bindingAnchor = faceless ? NO_FACE_ANCHOR : BINDING_ANCHOR[slot.pose];
   // S5.6R: a friend's photo of a moment about her feet shows her whole body (an own scene has no stored moment: the line its key draws).
   const wholeBody = !isOwnSlot(slot) && FEET_MOMENT_WORDS.test(slot.activity);

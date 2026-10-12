@@ -169,9 +169,9 @@ export const NIGHTWEAR: CategoryBank = {
           outfits: ["a crop top and jeans"],
           coverage: "Her panties fully cover her bottom, and her crop top covers her chest.",
         },
-        { text: "lifts one foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
-        { text: "stands on tiptoe by the mirror", motion: "she rises a little higher on her toes", captures: ["mirror"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
-        { text: "kneels in front of the mirror", motion: "she sinks back slowly onto her heels", captures: ["mirror"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        { text: "lifts one foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        { text: "stands on tiptoe by the mirror", motion: "she rises a little higher on her toes", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        { text: "kneels in front of the mirror", motion: "she sinks back slowly onto her heels", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
     {
@@ -207,9 +207,8 @@ export const NIGHTWEAR: CategoryBank = {
         // S5.R4 round 2: worded apart from «Фитнес»'s and «Дом»'s «sits with her legs stretched out»; the pose is the same.
         { text: "stretches out her legs", motion: "she points her toes slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
         // C3′ R1#08 («странное фото»: her feet to the mirror): the owner's own idea, as «Дом» has it on fix/c3-prompts: on the chair in front of the mirror, legs crossed,
-        // one foot dangling, the phone over her face. S5.R4 round 2: worded apart from «Дом»'s «sits, legs crossed, a foot dangling», and a plain mirror selfie, the phone at chest
-        // height (the phone-over-face line beside the legs line said two frames at once; bold-legs).
-        { text: "crosses her legs, a foot dangling", motion: "she swings her dangling foot slowly", captures: ["mirror"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        // one foot dangling, the phone over her face. S5.R4 round 2: worded apart from «Дом»'s «sits, legs crossed, a foot dangling». Round 3: the phone over her face again.
+        { text: "crosses her legs, a foot dangling", motion: "she swings her dangling foot slowly", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
     {

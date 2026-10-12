@@ -174,6 +174,8 @@ describe("a «Смелая» bank", () => {
 
   test("a legs moment over the levels and a water moment in swimwear are valid too (the positive controls of bold-legs and water)", () => {
     expect(boldBankProblems(withLegs(LEGS))).toEqual([]);
+    // S5.R4 round 3: by the mirror, the phone over her face.
+    expect(boldBankProblems(withLegs({ ...LEGS, captures: ["mirror-hidden"] }))).toEqual([]);
     expect(boldBankProblems(withWater(WADES))).toEqual([]);
   });
 
@@ -240,8 +242,9 @@ describe("a «Смелая» bank", () => {
     ["a legs moment that pins no ordinary outfit (an ordinary legs slot has nothing to wear)", withLegs({ ...LEGS, outfits: ["a satin cami and satin shorts", "a satin midi nightdress", "a black lace bra and panties", "a white lace bra and panties"] }), BANK_RULE.boldLegs],
     ["a legs moment that pins lingerie (P-5a3 #6: refused; a bold legs slot is satin and stockings)", withLegs({ ...LEGS, outfits: [...(LEGS.outfits ?? []), "a black lace bra and panties"] }), BANK_RULE.boldLegs],
     ["a low-feet moment (no friend crouches at her feet in a «Смелая» bank)", withLegs({ ...LEGS, captures: ["pov-legs", "low-feet"] }), BANK_RULE.boldLegs],
-    // S5.R4 round 2: the phone-over-face mirror line («she holds her phone right in front of her face») beside the legs line («her face may be out of frame») says two frames at once.
-    ["a legs moment on the phone-over-face mirror frame", withLegs({ ...LEGS, captures: ["mirror-hidden"] }), BANK_RULE.boldLegs],
+    // S5.R4 round 3 (re-review, HIGH): a «Смелая» legs frame by the mirror hides her face (plan s5a3 §6.2): the plain mirror selfie showed it, and the face gate only marks a legs
+    // frame, never judges it. (Round 2 had it the other way round; the assembler now gives the phone-over-face legs frame a pose phrase that says nothing of her face.)
+    ["a legs moment on the plain mirror selfie, her face clear", withLegs({ ...LEGS, captures: ["mirror"] }), BANK_RULE.boldLegs],
     // bold-arms-up (review of S5.9b2)
     ["an arms-up moment that pins no outfit, so it can draw the open shirt", withArmsUp(ARMS_UP), BANK_RULE.boldArmsUp],
     ["an arms-up moment that pins the open shirt", withArmsUp({ ...ARMS_UP, outfits: ["cotton pajama shorts and a tee", OPEN_SHIRT.text] }), BANK_RULE.boldArmsUp],

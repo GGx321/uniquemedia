@@ -68,6 +68,27 @@ describe("the legs lines (plan s5a2 §7.2)", () => {
   });
 });
 
+// S5.R4 round 3 (re-review, HIGH): a «Смелая» legs frame by the mirror hides her face behind the phone (plan s5a3 §6.2), and the capture line says so («she holds her phone right
+// in front of her face»), so its pose phrase says what fills the frame and nothing of her face. The five keep their phrase word for word.
+describe("a «Смелая» legs frame on the phone-over-face mirror", () => {
+  const boldMirrorLegs = (["nightwear"] as const).flatMap((c) => [1, 2, 3, 4, 5, 6, 7, 8].flatMap((seed) => plan({ seed: seed * 31, count: 20, categories: [c], level: "bold", legsShare: 30 }).slots)).filter((s) => s.framing === "legs" && captureOf(s) === "mirror-hidden");
+
+  test("says «Her legs fill most of the frame.» and nothing of her face beside the phone over it", () => {
+    expect(boldMirrorLegs.length).toBeGreaterThan(5);
+    for (const slot of boldMirrorLegs) {
+      const prompt = assemble(slot);
+      expect(prompt).toContain(" Her legs fill most of the frame. ");
+      expect(prompt).not.toContain(LEGS_POSE_PHRASE);
+    }
+  });
+
+  test("the five's mirror legs frames keep «Her legs fill most of the frame; her face may be out of frame.»", () => {
+    const fiveMirrorLegs = SLOTS.filter((s) => captureOf(s) === "mirror-hidden");
+    expect(fiveMirrorLegs.length).toBeGreaterThan(3);
+    for (const slot of fiveMirrorLegs) expect(assemble(slot)).toContain(` ${LEGS_POSE_PHRASE} `);
+  });
+});
+
 describe("the legs frame's pose phrase", () => {
   test("every legs prompt carries the pose phrase «Her legs fill most of the frame; her face may be out of frame.»", () => {
     expect(SLOTS.length).toBeGreaterThan(30);

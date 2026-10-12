@@ -46,12 +46,12 @@ const TABLE: Row[] = [
   { category: "nightwear", place: "her bed", text: "lies with her legs crossed", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"] },
   // S5.R4 round 2: worded apart from «Фитнес»'s «sits with her legs stretched out» and «Дом»'s chair frame; the poses are the same.
   { category: "nightwear", place: "an armchair in her bedroom", text: "stretches out her legs", motion: "she points her toes slowly", captures: ["pov-legs"] },
-  { category: "nightwear", place: "her bedroom", text: "lifts one foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror"] },
-  { category: "nightwear", place: "an armchair in her bedroom", text: "crosses her legs, a foot dangling", motion: "she swings her dangling foot slowly", captures: ["mirror"] },
+  { category: "nightwear", place: "her bedroom", text: "lifts one foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"] },
+  { category: "nightwear", place: "an armchair in her bedroom", text: "crosses her legs, a foot dangling", motion: "she swings her dangling foot slowly", captures: ["mirror-hidden"] },
   // S5.R4: three more a «Смелая» bank, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one; round 2: each a pose of its own.
   { category: "nightwear", place: "her bed", text: "lies on her side, one knee bent", motion: "she slides her top knee forward a little", captures: ["pov-legs"] },
-  { category: "nightwear", place: "her bedroom", text: "stands on tiptoe by the mirror", motion: "she rises a little higher on her toes", captures: ["mirror"] },
-  { category: "nightwear", place: "her bedroom", text: "kneels in front of the mirror", motion: "she sinks back slowly onto her heels", captures: ["mirror"] },
+  { category: "nightwear", place: "her bedroom", text: "stands on tiptoe by the mirror", motion: "she rises a little higher on her toes", captures: ["mirror-hidden"] },
+  { category: "nightwear", place: "her bedroom", text: "kneels in front of the mirror", motion: "she sinks back slowly onto her heels", captures: ["mirror-hidden"] },
   // S5.R4 round 2: «stretches her legs on the lounger» was «sits on the sand, legs out» again; one knee bent on the lounger is a pose of its own.
   { category: "beach", place: "a hotel pool", text: "lies on the lounger, one knee bent", motion: "she sways her bent knee slowly", captures: ["pov-legs"] },
   { category: "beach", place: "the beach", text: "sits on the sand, legs out", motion: "she slowly buries her toes in the sand", captures: ["pov-legs"] },
