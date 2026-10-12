@@ -310,6 +310,37 @@ describe("a 2xx without an image on a Seedream slot", () => {
     expect((await journal()).some((e) => e.type === "slot")).toBe(false);
   });
 
+  test("a resume counts the empty answers of the run's earlier jobs: one more in the resume is the second and stops sending", async () => {
+    const run = await newRun(3, [0, 1, 2]);
+    const softStop = new AbortController();
+    // The first job's only request comes back empty and stops the job right after, so slot 1 ends model-empty and slots 2 and 3 are left open.
+    const firstNet = network(() => {
+      softStop.abort();
+      return EMPTY_PAID;
+    });
+    expect(await start(run, firstNet, { max: 1, softStop: softStop.signal }).end).toEqual({ status: "cancelled" });
+
+    const net = network(() => EMPTY_PAID);
+    const resumed = await start(run, net, { max: 1, jobId: "job-00000002" }).end;
+    expect(resumed.status).toBe("failed");
+    expect(net.imageCalls()).toHaveLength(1);
+  });
+
+  test("an empty slot whose end was lost is counted on resume too", async () => {
+    const run = await newRun(2, [0, 1]);
+    const softStop = new AbortController();
+    const firstNet = network(() => {
+      softStop.abort();
+      return EMPTY_PAID;
+    });
+    await start(run, firstNet, { max: 1, softStop: softStop.signal, library: forgettingSlotEnds() }).end;
+
+    const net = network(() => EMPTY_PAID);
+    const resumed = await start(run, net, { max: 1, jobId: "job-00000002" }).end;
+    expect(resumed.status).toBe("failed");
+    expect(net.imageCalls()).toHaveLength(1);
+  });
+
   test("a refusal between two empty answers does not count toward the guard", async () => {
     const run = await newRun(3, [0, 1, 2]);
     const net = network((_call, n) => (n === 2 ? MODERATION : n === 1 ? EMPTY_PAID : drawn()));

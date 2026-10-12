@@ -156,7 +156,7 @@ interface Context {
   fallback: ReturnType<typeof planRoute>[0] | null;
   /** 5a.3 (S5.9d): the model a Seedream-route slot is sent to (the plan's `models.bold`; a plan that names a route slot but not the model gets the one Seedream model there is). */
   boldModel: string;
-  /** 5a.3 (S5.9d, §8.3): how many Seedream slots of THIS job ended on a 2xx without an image. A second one stops sending: two empty paid answers with no moderation behind them are systemic. */
+  /** 5a.3 (S5.9d, §8.3): how many Seedream slots of THIS RUN (earlier jobs included, seeded from the fold) ended on a 2xx without an image. A second one stops sending: two empty paid answers with no moderation behind them are systemic. */
   boldEmpty: number;
   /** The first reason no attempt may start any more: a fatal error, or an attempt that got no answer. */
   halt: EngineError | null;
@@ -882,7 +882,7 @@ async function runSlot(ctx: Context, slot: SlotState, prompt: string, master: Li
           // Seedream's moderation answers with a 400, so this is not a content refusal. A second one in the job is systemic and stops sending (before anything awaits).
           const empty: EngineError = { code: "INTERNAL", sceneReason: "model-empty", detail: truncate(result.message) };
           ctx.boldEmpty++;
-          if (ctx.boldEmpty >= 2) stopSending(ctx, { code: "INTERNAL", detail: "two Seedream answers in a row came back without an image; nothing more is sent" });
+          if (ctx.boldEmpty >= 2) stopSending(ctx, { code: "INTERNAL", detail: "two Seedream answers in this run came back without an image; nothing more is sent" });
           await attemptEvent(ctx, slot, attemptId, choice.model, "failed", { error: empty });
           return endSlot(ctx, slot, { status: "failed", error: empty });
         }
@@ -927,6 +927,8 @@ async function work(ctx: Context): Promise<RunJobEnd> {
     closeOf: (attemptId) => deps.budget.ledger.closeOf(attemptId),
     photos: deps.library.photosByAvatar(plan.avatarId),
   });
+  // The empty-answer guard counts the whole run, not this job: a resume starts from the Seedream slots the run already ended empty (their slot line, or their last attempt when the line was lost).
+  ctx.boldEmpty = state.slots.filter((s) => s.boldEnded === "empty" || (s.end?.status === "failed" && s.end.error.sceneReason === "model-empty")).length;
   ctx.total = state.slots.length;
   ctx.done = state.slots.filter((s) => s.end !== null).length;
   if (job.signal.aborted || softStopped(ctx)) return { status: "cancelled" };
