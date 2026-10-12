@@ -285,16 +285,16 @@ describe("«Пляж и бассейн»: the owner's rules on the real planner'
   // S5.9c round 3: the per-place fair share cannot see a place that has ONE moment of a kind (⌈f / 1⌉ + slack ≥ f always), which is how the away quota fell on the rocks' one profile
   // moment (10 of 100 frames) unnoticed. The check is category-wide: the away frames of a plan go round the bank's places, each place has a profile moment, so no away moment draws
   // more than ⌈away frames / places⌉ + 1. Removing the profile moments of four places makes it fail (measured on a scratch copy of the bank).
-  test.each(["flirty", "bold"] as const)("at %s: no away moment draws more than ⌈away frames / places⌉ + 1, so the away frames go round the places, not one moment", (level) => {
-    const places = BANKS.beach.places.length;
+  test.each(["flirty", "bold"] as const)("at %s: no away moment draws more than ⌈away frames / places⌉ + 1 in either bank, so the away frames go round the places, not one moment", (level) => {
     const overdrawn: string[] = [];
-    for (const share of SHARES) {
-      for (const slots of plansOf("beach", level, share)) {
+    for (const category of BOLD_CATEGORIES) for (const share of SHARES) {
+      const places = BANKS[category].places.length;
+      for (const slots of plansOf(category, level, share)) {
         const away = slots.filter((f) => f.moment.angle === "profile" || f.moment.angle === "back");
         const bound = Math.ceil(away.length / places) + 1;
         const drawn = new Map<string, number>();
         for (const f of away) drawn.set(`${f.slot.location}|${f.slot.activity}`, (drawn.get(`${f.slot.location}|${f.slot.activity}`) ?? 0) + 1);
-        for (const [key, count] of drawn) if (count > bound) overdrawn.push(`${level} share ${share}: «${key}» ${count} > ${bound} of ${away.length} away frames`);
+        for (const [key, count] of drawn) if (count > bound) overdrawn.push(`${category} ${level} share ${share}: «${key}» ${count} > ${bound} of ${away.length} away frames`);
       }
     }
     expect(overdrawn.slice(0, 5)).toEqual([]);
