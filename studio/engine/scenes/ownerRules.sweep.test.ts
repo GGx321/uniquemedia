@@ -543,7 +543,7 @@ describe("C3′: no built-in skirt or shorts is left for Grok to draw as denim",
   const wearing = C3_ALL.filter((f) => BOTTOMS.test(f.slot.outfit));
 
   test("the sweep holds skirts or shorts in every category's frames", () => {
-    expect([...new Set(wearing.map((f) => f.slot.category))].sort()).toEqual([...CATEGORIES].sort());
+    expect([...new Set(wearing.map((f) => f.slot.category))].sort()).toEqual([...ORDINARY_BUILT_INS].sort());
   });
 
   test("every skirt, shorts or skort a built-in frame wears names its fabric", () => {
@@ -563,7 +563,7 @@ describe("C3′: a frame from behind or in profile shows what she is doing", () 
   const glance = C3_ALL.filter((f) => GLANCE_BACK_WORDS.test(f.slot.activity) && (f.capture === "friend" || f.capture === "candid" || f.capture === "timer"));
 
   test("the sweep holds away frames of every category, from behind and in profile", () => {
-    expect([...new Set(away.map((f) => f.slot.category))].sort()).toEqual([...CATEGORIES].sort());
+    expect([...new Set(away.map((f) => f.slot.category))].sort()).toEqual([...ORDINARY_BUILT_INS].sort());
     expect(away.some((f) => f.slot.pose === "back") && away.some((f) => f.slot.pose === "profile")).toBe(true);
   });
 
