@@ -72,7 +72,7 @@ export const TRAVEL: CategoryBank = {
     { text: "a linen shirt dress", showsLegs: true },
     { text: "a long cotton sundress", showsLegs: true, pinOnly: true },
     { text: "a linen shirt midi dress", showsLegs: true, pinOnly: true },
-    { text: "wide linen trousers and a tank top", showsLegs: true, pinOnly: true },
+    { text: "wide linen trousers and a tank top", pinOnly: true },
     { text: "a tank top and a long linen skirt", showsLegs: true, pinOnly: true },
     { text: "a cotton top and linen trousers" },
   ],

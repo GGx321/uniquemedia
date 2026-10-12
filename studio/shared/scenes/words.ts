@@ -36,6 +36,9 @@ export const LEGS_UNSUITED_OUTFITS = /\b(?:mini(?:s|-?(?:dress(?:es)?|skirts?))?
 /** A dress or a skirt of any make and number («dress», «dresses», «sundress», «slipdress», «skirt», «skirts», «miniskirt»): the garments a legs moment must give a length. */
 export const DRESS_OR_SKIRT = /\b\w*(?:dress(?:es)?|skirts?)\b/i;
 
+/** An outfit that covers her legs (trousers, jeans, joggers, leggings, pants): it is not `showsLegs`, so no legwear (socks, tights) is drawn over it (S5.R3, the joggers bug). */
+export const LEG_COVERING_OUTFIT = /\b(?:trousers?|jeans|joggers|leggings|pants)\b/i;
+
 /** The length a dress or a skirt of a legs moment must name: «midi», «maxi» or «long». «long-sleeve(d)» is a sleeve, not a length (S5.R3). */
 export const DRESS_LENGTH = /\b(?:midi|maxi)\b|\blong\b(?![- ]sleeve)/i;
 

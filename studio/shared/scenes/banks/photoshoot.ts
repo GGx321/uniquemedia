@@ -90,10 +90,10 @@ export const PHOTOSHOOT: CategoryBank = {
     { text: "a hoodie, a mini skirt and sneakers", showsLegs: true },
     { text: "a denim jacket and jeans" },
     { text: "a red mini dress", showsLegs: true },
-    { text: "cropped trousers and a fitted top", showsLegs: true, pinOnly: true },
+    { text: "cropped trousers and a fitted top", pinOnly: true },
     { text: "a linen midi dress", showsLegs: true, pinOnly: true },
-    { text: "wide jeans and a knit top", showsLegs: true, pinOnly: true },
-    { text: "a striped top and cropped jeans", showsLegs: true, pinOnly: true },
+    { text: "wide jeans and a knit top", pinOnly: true },
+    { text: "a striped top and cropped jeans", pinOnly: true },
   ],
   captureDeck: ["friend", "selfie", "friend", "timer", "friend", "candid"],
 };

@@ -99,7 +99,7 @@ export const FITNESS: CategoryBank = {
     { text: "running shorts and a tank top", showsLegs: true },
     { text: "yoga shorts and a fitted tank top", showsLegs: true, pinOnly: true },
     { text: "cycling shorts and a loose tee", showsLegs: true, pinOnly: true },
-    { text: "leggings and a cropped tank top", showsLegs: true, pinOnly: true },
+    { text: "leggings and a cropped tank top", pinOnly: true },
   ],
   // S5.6R: the timer is the home workout's (only the home places take it); the gym and the park keep a friend twice and a candid.
   captureDeck: ["friend", "selfie", "mirror", "friend", "mirror-hidden", "candid", "timer"],

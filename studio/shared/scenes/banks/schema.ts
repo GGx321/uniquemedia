@@ -17,6 +17,7 @@ import {
   HIGH_WORDS,
   HIPS_WORDS,
   isOwnerBannedOutfit,
+  LEG_COVERING_OUTFIT,
   LEGS_UNSUITED_OUTFITS,
   LYING_START,
   MOTION_SMALL,
@@ -270,6 +271,7 @@ function categoryBankSchema(category: BankCategory) {
       bank.outfits.forEach((outfit, i) => {
         checkText(add, `outfits[${i}]`, outfit.text);
         if (isOwnerBannedOutfit(outfit.text)) add(BANK_RULE.denim, `outfits[${i}]`, "no denim shorts and no denim skirts (the owner)");
+        if (outfit.showsLegs === true && LEG_COVERING_OUTFIT.test(outfit.text)) add(BANK_RULE.legwear, `outfits[${i}]`, `«${outfit.text}» covers her legs, so it does not show them: no socks or tights go over trousers, jeans, joggers or leggings`);
       });
       if (bank.legwear !== undefined) {
         bank.legwear.items.forEach((item, i) => {
