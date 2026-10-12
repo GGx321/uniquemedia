@@ -169,7 +169,7 @@ export const HOME: CategoryBank = {
     { text: "grey leggings and platform sneakers", pinOnly: true },
     { text: "lounge shorts and platform sneakers", showsLegs: true, pinOnly: true },
     { text: "linen shorts and a fitted tee", showsLegs: true, pinOnly: true },
-    { text: "soft joggers and a cropped tee", showsLegs: true, pinOnly: true },
+    { text: "soft joggers and a cropped tee", pinOnly: true },
     { text: "a tank top and cotton sleep shorts", showsLegs: true, pinOnly: true },
     { text: "a cropped hoodie and bike shorts", showsLegs: true, pinOnly: true },
     { text: "a ribbed tank and lounge shorts", showsLegs: true, pinOnly: true },

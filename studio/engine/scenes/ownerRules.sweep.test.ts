@@ -416,6 +416,10 @@ describe("«Ножки» plans keep the owner's rules (S5.8a)", () => {
     expect(offenders(LEGS_ALL, (f) => /stocking/i.test(f.sentence) || /stocking/i.test(f.slot.legwear ?? ""))).toEqual(NONE);
   });
 
+  test("legwear never rides under joggers, trousers or leggings: tights and thigh-high socks on trousers read as a fault (wave 5e)", () => {
+    expect(offenders(LEGS_FRAMES, (f) => f.slot.legwear !== undefined && /\b(joggers|sweatpants|trousers|pants|jeans|leggings)\b/i.test(f.slot.outfit))).toEqual(NONE);
+  });
+
   test("no sentence or motion of a legs plan carries a youth prop, a youth word or a revealing word, and no sentence says sexy, seductive or sultry", () => {
     const distinct = [...new Map(LEGS_FRAMES.map((f) => [f.sentence, f] as const)).values()];
     expect(distinct.length).toBeGreaterThan(300);
