@@ -3107,8 +3107,15 @@ export class MockEngine implements EngineBridge {
         if (gone) return this.fail(c, gone);
         const payload = c.payload;
         if ("count" in payload) {
+          // The engine's order: a «Смелая» category below «Смелая», the avatar, then the 2K tier; the bold share is the run estimate's own split.
+          const categories = payload.categories ?? [];
+          if (boldLevelNeeded({ categories, level: payload.level })) return this.fail(c, BOLD_REFUSAL);
           const refusal = this.runnableRefusal(payload.avatarId);
-          return refusal ? this.fail(c, refusal) : this.ok(c, { estimate: this.runPriceFromScenes(payload.count), photos: payload.count });
+          if (refusal) return this.fail(c, refusal);
+          const bold = requestBoldPhotos({ count: payload.count, categories });
+          const noTier = this.boldPriceGate(bold > 0);
+          if (noTier) return this.fail(c, noTier);
+          return this.ok(c, { estimate: this.runPriceFromScenes(payload.count, bold), photos: payload.count });
         }
         const left = this.autopilot.imagesLeft(payload.launchId, payload.avatarId);
         if (!left.ok) return this.fail(c, left.error);
@@ -4080,11 +4087,11 @@ export class MockEngine implements EngineBridge {
   private autopilotUnit(bold: boolean): MockAutopilotUnit {
     const image = this.runImagePrice;
     const ageOn = this.settings.imageAgeCheck === "on";
-    // 5a.3 (S5.9f, option B): a «Смелая» launch with a «Смелая» category prices EVERY photo at the 2K unit: expected at the 2K attempt, the worst case never below the owner's model.
+    // 5a.3 (S5.9f, option B): a «Смелая» launch with a «Смелая» category prices EVERY photo at the 2K unit: expected and worst never below the owner's model (the engine's `boldExpected`).
     const worstImage = bold ? boldAttemptWorst(image) : image;
     return {
       attemptWorstMicros: worstImage + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.worst : 0),
-      photoExpectedMicros: (bold ? MOCK_BOLD_IMAGE : image) + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.expected : 0),
+      photoExpectedMicros: (bold ? boldAttemptWorst(image) : image) + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.expected : 0),
       photoWorstMicros: MOCK_RUN_ATTEMPTS_PER_SLOT * (worstImage + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.worst : 0)),
       writerChunkWorstMicros: MOCK_RUN_WRITER.worstPerChunk,
       writerExpectedPerPhotoMicros: MOCK_RUN_WRITER.expectedPerPhoto,
@@ -4420,7 +4427,7 @@ export class MockEngine implements EngineBridge {
     // 5a.3 (S5.9f, §10.2): every photo of a «Смелая» category is priced on the 2K route, the upper bound of the plan's need (the engine's `runEstimate`).
     const bold = requestBoldPhotos(request);
     return {
-      expectedMicros: (count - bold) * image + bold * MOCK_BOLD_IMAGE + scenes * MOCK_RUN_WRITER.expectedPerPhoto + (ageOn ? count * MOCK_AGE_CHECK_PER_SLOT.expected : 0),
+      expectedMicros: (count - bold) * image + bold * boldAttemptWorst(image) + scenes * MOCK_RUN_WRITER.expectedPerPhoto + (ageOn ? count * MOCK_AGE_CHECK_PER_SLOT.expected : 0),
       worstMicros: (attempts - bold * MOCK_RUN_ATTEMPTS_PER_SLOT) * image + bold * MOCK_RUN_ATTEMPTS_PER_SLOT * boldAttemptWorst(image) + chunks * MOCK_RUN_WRITER.worstPerChunk + (ageOn ? attempts * MOCK_AGE_CHECK_PER_SLOT.worst : 0),
       prices: this.price.prices,
       pricesAsOf: this.price.pricesAsOf,
@@ -4435,7 +4442,7 @@ export class MockEngine implements EngineBridge {
     const ageOn = this.settings.imageAgeCheck === "on";
     // 5a.3 (S5.9f, §10.2): `bold` of the `count` photos are on the 2K route (a set's scenes with a route, exactly; a «Смелая» launch's every photo, option B).
     return {
-      expectedMicros: (count - bold) * image + bold * MOCK_BOLD_IMAGE + (ageOn ? count * MOCK_AGE_CHECK_PER_SLOT.expected : 0),
+      expectedMicros: (count - bold) * image + bold * boldAttemptWorst(image) + (ageOn ? count * MOCK_AGE_CHECK_PER_SLOT.expected : 0),
       worstMicros: (attempts - bold * MOCK_RUN_ATTEMPTS_PER_SLOT) * image + bold * MOCK_RUN_ATTEMPTS_PER_SLOT * boldAttemptWorst(image) + (ageOn ? attempts * MOCK_AGE_CHECK_PER_SLOT.worst : 0),
       prices: this.price.prices,
       pricesAsOf: this.price.pricesAsOf,

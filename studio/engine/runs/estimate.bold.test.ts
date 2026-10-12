@@ -63,6 +63,13 @@ describe("estimateRun with bold photos", () => {
     expect(estimate.worstMicros).toBe(4 * 3 * 130_000);
   });
 
+  test("never shows an expected figure for a bold photo below the owner's model either", () => {
+    const dear: ImagePrice = { outputs: [{ variant: "1k", micros: 120_000 }], inputImageMicros: 10_000 };
+    const book = new PriceBook(new Map([...fallbackImages(), ["x-ai/grok-imagine-image-quality", { price: dear, source: "live" as const }]]), new Map());
+    const estimate = estimateRun(book, { ...base, photos: 4, bold: { photos: 4, image: bold } });
+    expect(estimate.expectedMicros).toBe(4 * 130_000);
+  });
+
   test("adds the age check to every bold attempt, at its ceiling for the worst and its typical cost for the expected", () => {
     const estimate = estimateRun(PRICED.book, { ...base, photos: 10, ageChecks: AGE_CHECK_CALL, bold: { photos: 10, image: bold } });
     expect(estimate).toMatchObject({ expectedMicros: 10 * (BOLD_ATTEMPT + AGE_TYPICAL), worstMicros: 10 * 3 * (BOLD_ATTEMPT + AGE_CEILING) });

@@ -196,3 +196,57 @@ describe("runs.start when the 2K price rose", () => {
     expect(net.paidCalls()).toHaveLength(0);
   });
 });
+
+// S5.R4-fix: the free image price of a count (`runs.estimateImages { avatarId, count }`) prices the «Смелая» share at the 2K unit when the caller names the level and the categories,
+// by the same split the run estimate uses; without them it is the figure it always was.
+describe("runs.estimateImages { avatarId, count, level, categories } for «Смелая»", () => {
+  async function imagesFor(engine: Awaited<ReturnType<typeof boot>>["engine"], payload: Record<string, unknown>) {
+    const answer = ok(await engine.handle(command("runs.estimateImages", payload)));
+    if (answer.type !== "runs.estimateImages") throw new Error(`expected an images estimate, got ${answer.type}`);
+    return answer.result.estimate;
+  }
+
+  test("«Ночнушки и бельё» 10 + «Пляж и бассейн» 10 are priced at the 2K unit, as the run estimate prices them", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await boot();
+    const images = await imagesFor(engine, { avatarId, count: 20, level: "bold", categories: ["nightwear", "beach"] });
+    expect(images).toMatchObject({ worstMicros: 5_580_000, expectedMicros: 1_860_000, boldAttemptMicros: 93_000 });
+    expect(images).toEqual(await estimateOf(engine, avatarId, ["nightwear", "beach"], 20));
+  });
+
+  test("only the «Смелая» share is priced at the 2K unit: «Дом» 10 + «Ночнушки и бельё» 10", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await boot();
+    expect(await imagesFor(engine, { avatarId, count: 20, level: "bold", categories: ["home", "nightwear"] })).toMatchObject({ worstMicros: 4_590_000, expectedMicros: 1_530_000 });
+  });
+
+  test("a «Смелая» level with only ordinary categories keeps the owner's model price", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await boot();
+    const images = await imagesFor(engine, { avatarId, count: 10, level: "bold", categories: ["home", "travel"] });
+    expect(images.worstMicros).toBe(10 * 3 * 60_000);
+    expect("boldAttemptMicros" in images).toBe(false);
+  });
+
+  test("a count with no level and no categories is the figure it always was", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await boot();
+    const images = await imagesFor(engine, { avatarId, count: 10 });
+    expect(images.worstMicros).toBe(10 * 3 * 60_000);
+    expect("boldAttemptMicros" in images).toBe(false);
+  });
+
+  test("a «Смелая» category below «Смелая» is refused for free, as the run estimate refuses it", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await boot();
+    const refusal = failed(await engine.handle(command("runs.estimateImages", { avatarId, count: 4, level: "flirty", categories: ["nightwear"] })));
+    expect(refusal.error).toMatchObject({ code: "VALIDATION", sceneReason: "bold-level-needed" });
+  });
+
+  test("a Seedream list without the 2K tier is PRICE_UNAVAILABLE for the bold scope", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await boot(livePrices(seedreamBody({ pricing: (rows) => rows.filter((row) => row.variant !== "high_resolution") })));
+    const refusal = failed(await engine.handle(command("runs.estimateImages", { avatarId, count: 4, level: "bold", categories: ["nightwear"] })));
+    expect(refusal.error).toMatchObject({ code: "PRICE_UNAVAILABLE", priceScope: "bold" });
+  });
+});

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { MOCK_BOLD_IMAGE } from "./mockEngine";
 import { IMAGE, MIA, ON_THE_WRITER, runUntil, runWorld, startRun, toDone, unwrap } from "./mockLaunchRun.testkit";
 
 // S4.6p: the mock answers `runs.estimateImages` as the real engine does: the figure the draw of that many photos is priced at (the same one `runs.estimateFromScenes` answers
@@ -29,6 +30,39 @@ describe("runs.estimateImages { avatarId, count }", () => {
     const mock = runWorld();
     const reply = await mock.client.request("runs.estimateImages", { avatarId: "avatar-nobody-0404", count: 3 });
     expect(reply).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+  });
+});
+
+describe("runs.estimateImages { avatarId, count, level, categories } (S5.R4-fix)", () => {
+  const NO_POSES = { profile: false, back: false };
+  const estimateOfRun = async (mock: ReturnType<typeof runWorld>, categories: ("home" | "nightwear" | "beach")[], count: number) =>
+    (await unwrap(mock.client.request("runs.estimate", { avatarId: MIA.avatarId, count, categories, level: "bold", poses: NO_POSES }))).estimate;
+
+  test("prices «Ночнушки и бельё» 10 + «Пляж и бассейн» 10 at the 2K unit, the run estimate's figure", async () => {
+    const mock = runWorld();
+    const answer = await unwrap(mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: 20, level: "bold", categories: ["nightwear", "beach"] }));
+    expect(answer.photos).toBe(20);
+    expect(answer.estimate).toEqual(await estimateOfRun(mock, ["nightwear", "beach"], 20));
+    expect(answer.estimate.worstMicros).toBe(20 * ATTEMPTS * MOCK_BOLD_IMAGE);
+  });
+
+  test("prices only the bold share at the 2K unit: «Дом» 10 + «Ночнушки и бельё» 10", async () => {
+    const mock = runWorld();
+    const answer = await unwrap(mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: 20, level: "bold", categories: ["home", "nightwear"] }));
+    expect(answer.estimate).toEqual(await estimateOfRun(mock, ["home", "nightwear"], 20));
+  });
+
+  test("a count with no level and no categories keeps the figure it always had", async () => {
+    const mock = runWorld();
+    const answer = await unwrap(mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: 10 }));
+    expect(answer.estimate.worstMicros).toBe(10 * ATTEMPTS * IMAGE);
+    expect("boldAttemptMicros" in answer.estimate).toBe(false);
+  });
+
+  test("a «Смелая» category below «Смелая» is refused, as the engine refuses it", async () => {
+    const mock = runWorld();
+    const reply = await mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: 4, level: "flirty", categories: ["nightwear"] });
+    expect(reply).toMatchObject({ ok: false, error: { code: "VALIDATION", sceneReason: "bold-level-needed" } });
   });
 });
 

@@ -157,7 +157,7 @@ export function SceneStrip({
 
   // The images for the scenes the set would draw, when «Отрисовать» cannot be priced itself (a stop, a write, a scene with no text).
   const photos = action.kind === "approve" ? action.photos : tally.active;
-  const images = useImagesPrice(avatar.avatarId, approvable ? 0 : photos, view);
+  const images = useImagesPrice(avatar.avatarId, approvable ? 0 : photos, view, { level: set.level, categories: set.categories.map((entry) => entry.ref) });
   const imagesShown = approvable ? approve.estimate : images;
 
   const lockedByOther = paidInFlight && !approve.sending && !more.sending;
