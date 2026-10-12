@@ -141,6 +141,11 @@ describe("a «Смелая» bank", () => {
     expect(boldBankProblems(withArmsUp({ ...ARMS_UP, outfits: ["cotton pajama shorts and a tee", "a satin cami and satin shorts", "a black lace bra and panties"] }))).toEqual([]);
   });
 
+  test("a moment that stretches her legs is no arms-up moment: it may draw the open shirt, in a bank that has it (the arms-up pattern is about arms)", () => {
+    expect(boldBankProblems(withArmsUp({ ...plain, text: "stretches her legs on the rug", motion: "she points and flexes her toes slowly" }))).toEqual([]);
+    expect(boldBankProblems(withArmsUp({ ...plain, text: "stretches her feet out", motion: "she wiggles her toes a little" }))).toEqual([]);
+  });
+
   test("an arms-up moment is valid in a bank with no open shirt, pinned or not", () => {
     expect(boldBankProblems(withMoment(ARMS_UP))).toEqual([]);
   });

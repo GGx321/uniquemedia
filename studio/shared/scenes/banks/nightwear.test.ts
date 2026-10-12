@@ -134,6 +134,13 @@ describe("the moments and their levels (plan §6.2)", () => {
     for (const { moment } of moments) expect({ text: moment.text, route: moment.route }).toEqual({ text: moment.text, route: moment.level === "bold" ? "seedream" : undefined });
   });
 
+  // S5.9c round 2: the arms-up pin is the bank's own general outfits but the open shirt, so an outfit added to the bank reaches the arms-up moments by itself.
+  test("a stretch with her arms up pins every general outfit of the bank but the open shirt, in the bank's order", () => {
+    const general = NIGHTWEAR.outfits.filter((o) => o.pinOnly !== true && !/\bopen\b[^,]*\bshirt\b/i.test(o.text)).map((o) => o.text);
+    expect(general).toHaveLength(13);
+    for (const text of ["stretches out on the duvet", "stretches after waking up", "stretches her arms up, facing away"]) expect(momentNamed(text)?.moment.outfits, text).toEqual(general);
+  });
+
   // Review round 2: arms up, the open shirt would not stay closed over her chest.
   test("her arms up, she wears lingerie that stays in place, never the open shirt", () => {
     expect(momentNamed("lies back with her arms up")?.moment.outfits).toEqual(["a black lace bra and panties", "a white lace bra and panties", "a lace bodysuit", "a sheer babydoll over a lace set", "a cropped tee and cotton panties"]);

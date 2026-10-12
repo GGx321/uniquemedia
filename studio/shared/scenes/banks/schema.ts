@@ -34,7 +34,7 @@ import {
   WALKS_AWAY_WORDS,
   YOUTH_PROPS,
 } from "../words";
-import { boldWordsIn, lingerieWordsIn, stockingWordsIn, swimwearWordsIn } from "./boldRules";
+import { boldWordsIn, lingerieWordsIn, OPEN_SHIRT, stockingWordsIn, swimwearWordsIn } from "./boldRules";
 import { MOMENT_HAIRS, type BankCategory, type CategoryBank, type Level, type Moment } from "./types";
 
 // 5a.2 (S5.6a, I5.21, I5.35; plan s5a2 r1.2): the banks' zod schemas. The shape is zod; every rule the plan names runs in a superRefine and reports
@@ -118,10 +118,8 @@ export const BANK_RULE = {
 } as const;
 type Rule = (typeof BANK_RULE)[keyof typeof BANK_RULE];
 
-/** Raised or stretched arms, in a moment's text or its motion (the open-shirt rule below). */
-const ARMS_UP = /\barms?\b[^.]*\bup\b|\bstretch\w*\b/i;
-/** An outfit whose shirt is worn open. */
-const OPEN_SHIRT = /\bopen\b[^,]*\bshirt\b/i;
+/** Raised or stretched arms, in a moment's text or its motion (the open-shirt rule below). A stretch of her legs, feet or toes is not one: her arms stay down. */
+const ARMS_UP = /\barms?\b[^.]*\bup\b|\bstretch\w*\b(?![^.]*\b(?:legs?|feet|foot|toes?|ankles?)\b)/i;
 
 /** A motion's and a start pose's bound (plan I5.21, 5b.1 QV-5): the approved Kling wording, «she slowly lifts her hips behind her and lowers them», fits. */
 export const MOTION_TEXT_MAX = 60;

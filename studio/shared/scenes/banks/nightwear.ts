@@ -1,4 +1,6 @@
-import type { CategoryBank } from "./types";
+import { isOwnerBannedOutfit } from "../words";
+import { OPEN_SHIRT } from "./boldRules";
+import type { CategoryBank, Outfit } from "./types";
 
 // «Ночнушки и бельё» (`nightwear`, 5a.3, plan s5a3 §6.2 r3.1), a «Смелая» bank: drawn only under «Подача: Смелая». At home she shoots herself (I5.32): in the
 // mirror, a third of the frames with the phone over her face; at arm's length from above as she lies there; lying on her stomach on her bed; over her own
@@ -17,25 +19,47 @@ const SATIN_MIDI = "a satin midi nightdress";
 /** A legs frame (M5): two cotton, two satin, none a mini, none lingerie. A bold legs slot is the satin with the bold stockings (P-5a3 #6). */
 const LEGS = [PAJAMAS, NIGHTSHIRT, SATIN_CAMI, SATIN_MIDI];
 
-/** Every outfit of the general draw but the open shirt: a moment with her arms up pins these (the open shirt does not stay closed over her chest; review of S5.9b2). */
-const ARMS_UP_OUTFITS = [
-  "an oversized sleep tee",
-  PAJAMAS,
-  NIGHTSHIRT,
-  "silk pajamas",
-  "a satin slip nightdress",
-  SATIN_MIDI,
-  SATIN_CAMI,
-  "a short tied satin robe",
-  "a black lace bra and panties",
-  "a white lace bra and panties",
-  "a lace bodysuit",
-  "a sheer babydoll over a lace set",
-  "a cropped tee and cotton panties",
-];
-
 const LACE = "The lace is lined and opaque: her bra fully covers her breasts and her panties fully cover her.";
 const SATIN_DRESS = "Her nightdress is opaque satin.";
+
+/** The bank's outfits, general and pin-only: ordinary is cotton, flirty satin, bold lingerie. */
+const OUTFITS: readonly Outfit[] = [
+  { text: "an oversized sleep tee", showsLegs: true },
+  { text: PAJAMAS, showsLegs: true },
+  { text: NIGHTSHIRT, showsLegs: true },
+  // Grok drew silk pajamas (style probe 2); K-22 exempts the phrase from the luxury words.
+  { text: "silk pajamas" },
+  { text: PRONE_GREY, showsLegs: true, pinOnly: true },
+  { text: "a satin slip nightdress", showsLegs: true, level: "flirty", route: "seedream", coverage: SATIN_DRESS },
+  { text: SATIN_MIDI, showsLegs: true, level: "flirty", route: "seedream", coverage: SATIN_DRESS },
+  { text: SATIN_CAMI, showsLegs: true, level: "flirty", route: "seedream", coverage: "Her cami and shorts are opaque satin." },
+  { text: "a short tied satin robe", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her robe is tied and closed over her chest." },
+  // Spike A drew the lace set 3/3 with this coverage.
+  { text: "a black lace bra and panties", showsLegs: true, level: "bold", route: "seedream", coverage: LACE },
+  { text: "a white lace bra and panties", showsLegs: true, level: "bold", route: "seedream", coverage: LACE },
+  { text: "a lace bodysuit", showsLegs: true, level: "bold", route: "seedream", coverage: "Her bodysuit is lined and opaque over her chest and fully covers her hips." },
+  // Answer (b): the garment name is allowed in the «Смелая» banks only.
+  { text: "a sheer babydoll over a lace set", showsLegs: true, level: "bold", route: "seedream", coverage: "Under her sheer babydoll, her lace bra and panties are lined and opaque and fully cover her." },
+  // The owner's «a top with panties at home».
+  { text: "a cropped tee and cotton panties", showsLegs: true, level: "bold", route: "seedream", coverage: "Her tee covers her chest, and her panties fully cover her." },
+  // The owner's «an unbuttoned shirt with the nipple not visible», as Spike A drew it.
+  {
+    text: "an open white shirt and panties",
+    showsLegs: true,
+    level: "bold",
+    route: "seedream",
+    coverage: "The shirt's two edges fall over her chest and fully cover both breasts, leaving only a narrow gap of skin down the middle; her panties fully cover her.",
+  },
+  { text: "a black bra and briefs", showsLegs: true, pinOnly: true, level: "bold", route: "seedream", coverage: "Her bra fully covers her breasts and her briefs fully cover her." },
+  { text: "a crop top and jeans", pinOnly: true, level: "bold", route: "seedream" },
+  { text: "only the white bedsheet", pinOnly: true, level: "bold", route: "seedream" },
+];
+
+/**
+ * Every outfit of the general draw but the open shirt: a moment with her arms up pins these (the open shirt does not stay closed over her chest; review of S5.9b2).
+ * Derived from the bank's outfits, so an outfit added to the bank reaches the arms-up moments by itself and never slips in unchecked.
+ */
+const ARMS_UP_OUTFITS: readonly string[] = OUTFITS.filter((o) => o.pinOnly !== true && !isOwnerBannedOutfit(o.text) && !OPEN_SHIRT.test(o.text)).map((o) => o.text);
 
 export const NIGHTWEAR: CategoryBank = {
   bold: true,
@@ -189,37 +213,7 @@ export const NIGHTWEAR: CategoryBank = {
       ],
     },
   ],
-  outfits: [
-    { text: "an oversized sleep tee", showsLegs: true },
-    { text: PAJAMAS, showsLegs: true },
-    { text: NIGHTSHIRT, showsLegs: true },
-    // Grok drew silk pajamas (style probe 2); K-22 exempts the phrase from the luxury words.
-    { text: "silk pajamas" },
-    { text: PRONE_GREY, showsLegs: true, pinOnly: true },
-    { text: "a satin slip nightdress", showsLegs: true, level: "flirty", route: "seedream", coverage: SATIN_DRESS },
-    { text: SATIN_MIDI, showsLegs: true, level: "flirty", route: "seedream", coverage: SATIN_DRESS },
-    { text: SATIN_CAMI, showsLegs: true, level: "flirty", route: "seedream", coverage: "Her cami and shorts are opaque satin." },
-    { text: "a short tied satin robe", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her robe is tied and closed over her chest." },
-    // Spike A drew the lace set 3/3 with this coverage.
-    { text: "a black lace bra and panties", showsLegs: true, level: "bold", route: "seedream", coverage: LACE },
-    { text: "a white lace bra and panties", showsLegs: true, level: "bold", route: "seedream", coverage: LACE },
-    { text: "a lace bodysuit", showsLegs: true, level: "bold", route: "seedream", coverage: "Her bodysuit is lined and opaque over her chest and fully covers her hips." },
-    // Answer (b): the garment name is allowed in the «Смелая» banks only.
-    { text: "a sheer babydoll over a lace set", showsLegs: true, level: "bold", route: "seedream", coverage: "Under her sheer babydoll, her lace bra and panties are lined and opaque and fully cover her." },
-    // The owner's «a top with panties at home».
-    { text: "a cropped tee and cotton panties", showsLegs: true, level: "bold", route: "seedream", coverage: "Her tee covers her chest, and her panties fully cover her." },
-    // The owner's «an unbuttoned shirt with the nipple not visible», as Spike A drew it.
-    {
-      text: "an open white shirt and panties",
-      showsLegs: true,
-      level: "bold",
-      route: "seedream",
-      coverage: "The shirt's two edges fall over her chest and fully cover both breasts, leaving only a narrow gap of skin down the middle; her panties fully cover her.",
-    },
-    { text: "a black bra and briefs", showsLegs: true, pinOnly: true, level: "bold", route: "seedream", coverage: "Her bra fully covers her breasts and her briefs fully cover her." },
-    { text: "a crop top and jeans", pinOnly: true, level: "bold", route: "seedream" },
-    { text: "only the white bedsheet", pinOnly: true, level: "bold", route: "seedream" },
-  ],
+  outfits: OUTFITS,
   legwear: {
     items: ["thigh-high socks", "sheer black tights"],
     share: 0.3,
