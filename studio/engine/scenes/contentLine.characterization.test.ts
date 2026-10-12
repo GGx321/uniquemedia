@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import type { AvatarDescriptor } from "../../shared/engine";
 import { BANKS, CUES, GAZE, HAIRSTYLES } from "../../shared/scenes/banks";
+import { contentProblems } from "../../shared/scenes/contentLine";
 import type { BankCategory, CategoryBank } from "../../shared/scenes/banks/types";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { assembleSlot, sentenceProblems } from "./assembler";
@@ -117,6 +118,9 @@ const PINNED = {
   promptsDigest: "bdab74557c4381dee85ae876a5455860b214b6d20d5c428f86aa50122115d0d1",
 };
 
+const LEVELS_SHARED: Array<"ordinary" | "flirty"> = ["ordinary", "flirty"];
+const ALL = [...TEXTS, ...PROMPTS, ...DIRTY_PROMPTS];
+
 describe("the word gate, characterized", () => {
   test("the corpus is not vacuous", () => {
     expect(CLEAN.length).toBeGreaterThan(900);
@@ -134,5 +138,29 @@ describe("the word gate, characterized", () => {
       promptsDigest: digestOf([...PROMPTS, ...DIRTY_PROMPTS], sentenceProblems),
     };
     expect(now).toEqual(PINNED);
+  });
+
+  test.each(LEVELS_SHARED)("contentProblems at %s keeps the same digests as sentenceProblems did", (level) => {
+    const now = {
+      texts: TEXTS.length,
+      textsHit: TEXTS.filter((t) => contentProblems(t, level).length > 0).length,
+      textsDigest: digestOf(TEXTS, (t) => contentProblems(t, level)),
+      prompts: PROMPTS.length + DIRTY_PROMPTS.length,
+      promptsHit: [...PROMPTS, ...DIRTY_PROMPTS].filter((t) => contentProblems(t, level).length > 0).length,
+      promptsDigest: digestOf([...PROMPTS, ...DIRTY_PROMPTS], (t) => contentProblems(t, level)),
+    };
+    expect(now).toEqual(PINNED);
+  });
+
+  test.each(LEVELS_SHARED)("contentProblems at %s equals sentenceProblems on every text", (level) => {
+    expect(ALL.filter((t) => JSON.stringify(contentProblems(t, level)) !== JSON.stringify(sentenceProblems(t)))).toEqual([]);
+  });
+
+  test("at bold the same corpus never reports a revealing word, and reports the youth words the other levels do except the exempt garment", () => {
+    const strays = ALL.filter((t) => contentProblems(t, "bold").some((p) => p.reason === "revealing-word"));
+    expect(strays).toEqual([]);
+    const youthOf = (t: string, level: "ordinary" | "bold") => contentProblems(t, level).find((p) => p.reason === "youth-word")?.words ?? [];
+    const drifted = ALL.filter((t) => JSON.stringify(youthOf(t, "bold")) !== JSON.stringify(youthOf(t, "ordinary").filter((w) => !/^babydolls?$/i.test(w))));
+    expect(drifted).toEqual([]);
   });
 });
