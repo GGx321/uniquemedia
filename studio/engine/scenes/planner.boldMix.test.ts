@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { BANKS } from "../../shared/scenes/banks";
 import type { BankCategory, BankPlace, Level, Moment, Outfit } from "../../shared/scenes/banks/types";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
-import { atOrBelow, levelCountsOf } from "../../shared/scenes/level";
+import { atOrBelow, atSlotLevel, levelCountsOf } from "../../shared/scenes/level";
 import { plan } from "./planner";
 import type { PlanSlot } from "./schema";
 import { ORDINARY_BUILT_INS } from "./types";
@@ -199,6 +199,52 @@ describe("stockings (the bold legwear): bold slots only, and only with the outfi
   test("the beach bank has none: no beach slot wears legwear", () => {
     expect(SEEDS.flatMap((seed) => boldPlan("beach", seed, 30)).filter((d) => d.slot.legwear !== undefined)).toEqual([]);
   });
+});
+
+// S5.R4 (the whole-slice review, MEDIUM 3): a «Смелая» run never pays twice for one scene (place, moment and outfit). A slot whose place and moment already went with the outfit it
+// would draw takes another one it may wear; a scene comes twice only when every outfit the slot may wear there is taken. Before, a 20-photo beach run drew one twice in about 2 % of
+// runs even with its legs moments apart. The five ordinary banks keep their draws (their goldens are frozen).
+describe("a «Смелая» run never draws one scene twice while the slot has another outfit to wear", () => {
+  const sceneOf = (d: Drawn): string => `${d.slot.location} | ${d.slot.activity} | ${d.slot.outfit}`;
+  /** The outfits the slot may wear at its moment: the moment's pins, or the general draw, at the slot's level (its own level preferred, never above). */
+  const wearable = (category: BankCategory, d: Drawn): readonly string[] => {
+    const levelOfText = (text: string): Level | undefined => BANKS[category].outfits.find((o) => o.text === text)?.level;
+    const list = d.moment.outfits ?? BANKS[category].outfits.filter((o) => o.pinOnly !== true).map((o) => o.text);
+    return atSlotLevel(list, levelOfText, levelOf(d.slot));
+  };
+
+  for (const category of BOLD_BANKS) {
+    test(`${category}: no scene twice in a run of 10 or 20, at every legs share, over 300 seeds`, () => {
+      const twice: string[] = [];
+      for (let seed = 1; seed <= 300; seed++) {
+        for (const count of [10, 20]) {
+          for (const legsShare of SHARES) {
+            const scenes = boldPlan(category, seed, count, legsShare).map(sceneOf);
+            for (const [i, scene] of scenes.entries()) if (scenes.indexOf(scene) !== i) twice.push(`seed ${seed}, ${count} at ${legsShare} %: ${scene}`);
+          }
+        }
+      }
+      expect(twice.slice(0, 5)).toEqual([]);
+    });
+
+    test(`${category}: in a run of 30 or 100 a scene comes twice only when every outfit the slot may wear there is taken`, () => {
+      const avoidable: string[] = [];
+      for (const seed of SEEDS) {
+        for (const count of [30, 100]) {
+          for (const legsShare of SHARES) {
+            const drawn = boldPlan(category, seed, count, legsShare);
+            drawn.forEach((d, i) => {
+              const before = new Set(drawn.slice(0, i).map(sceneOf));
+              if (!before.has(sceneOf(d))) return;
+              const free = wearable(category, d).filter((o) => !before.has(`${d.slot.location} | ${d.slot.activity} | ${o}`));
+              if (free.length > 0) avoidable.push(`seed ${seed}, ${count} at ${legsShare} %: ${sceneOf(d)} (free: ${free.join(", ")})`);
+            });
+          }
+        }
+      }
+      expect(avoidable.slice(0, 5)).toEqual([]);
+    });
+  }
 });
 
 describe("a slot is on the Seedream route exactly when it drew a Seedream item (I5.38)", () => {

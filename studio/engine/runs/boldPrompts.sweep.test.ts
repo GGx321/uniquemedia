@@ -96,4 +96,11 @@ describe("a 20-photo run with «Ножки» 30 % never pays for the same scene 
     const twice = runs.flatMap((frames, i) => repeated(frames.filter((f) => f.slot.framing === "legs").map((f) => `${f.slot.location} | ${f.slot.activity}`)).map((key) => `seed ${RUN_SEEDS[i]}: ${key}`));
     expect(twice.slice(0, 5)).toEqual([]);
   });
+
+  // With the legs moments apart, a beach run still drew one scene twice in about 2 % of runs (a moment its level's slots share, an outfit list of two to four): «a rooftop pool |
+  // looks back over her shoulder | a high-leg black swimsuit» at seed 33, «the water's edge | stretches her arms out, knee-deep | a black bikini» at seed 37.
+  test.each(["nightwear", "beach"] as const)("%s: no place, moment and outfit twice in any of the runs", (category) => {
+    const twice = runsOf(category).flatMap((frames, i) => repeated(frames.map((f) => `${f.slot.location} | ${f.slot.activity} | ${f.slot.outfit}`)).map((key) => `seed ${RUN_SEEDS[i]}: ${key}`));
+    expect(twice.slice(0, 5)).toEqual([]);
+  });
 });

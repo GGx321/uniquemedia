@@ -334,6 +334,23 @@ function planBuiltIn(
   // legs slots go round the legs moments instead of repeating one.
   const legsPlaceUses = new Map<string, number>();
   const legsMomentUses = new Map<string, number>();
+  // S5.R4 (the whole-slice review): a «Смелая» run never pays twice for one scene. A slot whose place and moment already went with the outfit it drew takes another outfit it may
+  // wear when there is one: among the moment's pins on the same single draw, or from the general bag by drawing on, as the history's excluded pairs do. Only a category drawn at
+  // «Смелая» reads it (a «Смелая» bank under «Подача: Смелая», the only level it is planned at for a run): the five keep their draws exactly (their plans are frozen goldens), and so do
+  // the ordinary plan a bold plan takes its captures from and the «Смелая» banks' plans at the lower levels the sweeps draw.
+  const scenesOnce = level === "bold";
+  const drawnScenes = new Set<string>();
+  const sceneKey = (place: string, moment: string, outfit: string): string => `${place}\u0000${moment}\u0000${outfit}`;
+  const unseenScenes = (place: string, moment: string, outfits: readonly string[]): readonly string[] => {
+    if (!scenesOnce) return outfits;
+    const unseen = outfits.filter((o) => !drawnScenes.has(sceneKey(place, moment, o)));
+    return unseen.length > 0 ? unseen : outfits;
+  };
+  /** Whether the bag's draw is one to draw past: a pair the history excludes, or (a plan drawn at «Смелая») a scene the run already holds. */
+  const drawPast = (place: string, moment: string, outfit: string): boolean =>
+    (excluded.size > 0 && excluded.has(pairKey(place, outfit))) || (scenesOnce && drawnScenes.has(sceneKey(place, moment, outfit)));
+  /** How many more bag draws a slot may make past one to avoid: the history's size − 1 as before; a plan drawn at «Смелая» draws until it has seen every outfit of the bag (any 2·size − 1 draws of a bag hold one whole shuffle). */
+  const pastDraws = (size: number): number => (scenesOnce ? 2 * size - 2 : size - 1);
   // «Кокетливая» deals the very captures the ordinary plan deals (`ordinaryCaptures`), so the flirty slots are chosen by the frames before any moment is drawn.
   const dealt = level === "flirty" || level === "bold" ? streams.ordinaryCaptures() : null;
   const dealtAt = new Map<number, Capture>();
@@ -394,12 +411,13 @@ function planBuiltIn(
       if (pinnedAll.length > 0) {
         const pinned = pinnedAt(pinnedAll, levelOfOutfit, slotLevel, moment.text);
         const unseen = pinned.filter((o) => !excluded.has(pairKey(place.name, o)));
-        outfit = rngPick(bold ? streams.boldOutfitRng : legsRng, unseen.length > 0 ? unseen : pinned);
+        outfit = rngPick(bold ? streams.boldOutfitRng : legsRng, unseenScenes(place.name, moment.text, unseen.length > 0 ? unseen : pinned));
       } else {
         const { bag, size } = (bold ? boldLegsBags : legsBags)(slotLevel);
         outfit = bag.next();
-        for (let attempt = 0; excluded.size > 0 && excluded.has(pairKey(place.name, outfit)) && attempt < size - 1; attempt++) outfit = bag.next();
+        for (let attempt = 0; drawPast(place.name, moment.text, outfit) && attempt < pastDraws(size); attempt++) outfit = bag.next();
       }
+      if (scenesOnce) drawnScenes.add(sceneKey(place.name, moment.text, outfit));
       const repeatedPair = excluded.size > 0 && excluded.has(pairKey(place.name, outfit));
       const wear = legwearOfSlot(pool.legwear, slotLevel, bold ? streams.boldLegRng : legsRng, moment, info.find((o) => o.text === outfit), outfit);
       const route = seedreamRoute(moment, info.find((o) => o.text === outfit), wear.stockings ? wear.route : undefined);
@@ -486,12 +504,13 @@ function planBuiltIn(
     if (pinnedAll.length > 0) {
       const pinned = pinnedAt(pinnedAll, levelOfOutfit, slotLevel, moment.text);
       const fresh = pinned.filter((o) => !excluded.has(pairKey(place.name, o)));
-      outfit = rngPick(outfitRng, fresh.length > 0 ? fresh : pinned);
+      outfit = rngPick(outfitRng, unseenScenes(place.name, moment.text, fresh.length > 0 ? fresh : pinned));
     } else {
       const { bag, size } = (bold ? boldOutfitBags : outfitBags)(slotLevel);
       outfit = bag.next();
-      for (let attempt = 0; excluded.size > 0 && excluded.has(pairKey(place.name, outfit)) && attempt < size - 1; attempt++) outfit = bag.next();
+      for (let attempt = 0; drawPast(place.name, moment.text, outfit) && attempt < pastDraws(size); attempt++) outfit = bag.next();
     }
+    if (scenesOnce) drawnScenes.add(sceneKey(place.name, moment.text, outfit));
     const repeatedPair = excluded.size > 0 && excluded.has(pairKey(place.name, outfit));
 
     // The legwear slot: always two draws, so the stream does not depend on who may wear it.
