@@ -51,7 +51,7 @@ export const BEACH: CategoryBank = {
       moments: [
         { text: "brushes sand off her legs", motion: "she brushes the sand off slowly", captures: ["friend", "selfie", "timer", "candid"], twoHanded: false, outdoor: true },
         { text: "lies back on her elbows", motion: "she tilts her head back a little", captures: ["friend", "timer", "candid"], twoHanded: true, level: "bold", route: "seedream", outdoor: true },
-        { text: "shades her eyes with one hand", motion: "she lowers her hand slowly and smiles", captures: ["friend", "timer", "candid"], twoHanded: false, gaze: "own", outdoor: true },
+        { text: "shades her eyes with one hand", motion: "she lowers her hand slowly and smiles", captures: ["friend", "selfie", "timer", "candid"], twoHanded: false, gaze: "own", outdoor: true },
         // S5.9c round 2: every place holds a moment in profile, so the plan's away frames (a flirty or bold slot never turns its back) go round the places instead of falling on one.
         { text: "ties her hair in a loose knot", motion: "she gathers her hair up slowly", captures: ["friend", "candid"], twoHanded: true, hair: "own", angle: "profile", outdoor: true },
         { text: "lowers her sunglasses a little", motion: "she slowly peeks over her sunglasses", captures: ["selfie", "friend"], twoHanded: false, level: "flirty", outdoor: true },
@@ -106,7 +106,7 @@ export const BEACH: CategoryBank = {
       details: ["the city skyline behind her", "a low white daybed"],
       times: ["midday", "golden hour"],
       moments: [
-        { text: "leans on the glass railing", motion: "her hair lifts a little in the wind", captures: ["friend", "selfie"], twoHanded: false, level: "flirty", outdoor: true },
+        { text: "leans on the glass railing", motion: "her hair lifts a little in the wind", captures: ["friend", "selfie", "candid"], twoHanded: false, level: "flirty", outdoor: true },
         { text: "adjusts the strap on her shoulder", motion: "she slides the strap up a little", captures: ["friend", "candid"], twoHanded: false, angle: "profile", outfits: STRAPPED, outdoor: true },
         // The beach probe: looking back over her shoulder at the rooftop pool.
         { text: "looks back over her shoulder", motion: "she turns her head a little further", captures: ["friend", "timer"], twoHanded: false, angle: "three-quarter", gaze: "own", level: "bold", route: "seedream", outdoor: true },
@@ -123,7 +123,7 @@ export const BEACH: CategoryBank = {
         // The beach probe: from behind on the rocks. C3′ (the owner: «просто стоит спиной без какой-либо позы»): she hugs her knees, an action the frame can read.
         { text: "sits hugging her knees", motion: "her hair stirs in the wind a little", captures: ["friend", "timer"], twoHanded: true, angle: "back", outdoor: true },
         { text: "sits cross-legged on a towel", motion: "she leans back a little", captures: ["friend", "selfie", "candid"], twoHanded: false, outdoor: true },
-        { text: "looks out at the sunset", motion: "she watches the light fade slowly", captures: ["friend", "selfie", "candid"], twoHanded: false, gaze: "own", outdoor: true },
+        { text: "sits on a ledge, watching dusk fall", motion: "she watches the light fade slowly", captures: ["friend", "selfie", "timer", "candid"], twoHanded: false, outdoor: true },
         { text: "leans back on her hands", motion: "she leans her head back a little", captures: ["friend", "timer", "candid"], twoHanded: true, outdoor: true },
         { text: "tucks her hair back in the breeze", motion: "she tucks a strand back slowly", captures: ["friend", "candid"], twoHanded: false, hair: "own", angle: "profile", outdoor: true },
         { text: "sits with her hands clasped", motion: "she rolls her shoulders back a little", captures: ["friend", "timer", "candid"], twoHanded: true, angle: "profile", outdoor: true },

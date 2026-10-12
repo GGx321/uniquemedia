@@ -27,8 +27,8 @@ const PLANNER_LEVELS: readonly PlannerLevel[] = ["ordinary", "flirty", "bold"];
 const SHARES = [0, 15, 30] as const;
 const SEEDS = Array.from({ length: 50 }, (_, i) => i + 1);
 const N = 100;
-/** The slack on a moment's fair share within its place (see the repetition test below): the measured worst excess over the fair share is 1 in «Ночнушки и бельё» at every level and, on the beach, 3 at «Кокетливая» and 2 at the other levels. */
-const FAIR_SLACK = 3;
+/** The slack on a moment's fair share within its place (see the repetition test below): the measured worst excess over the fair share is 1 in «Ночнушки и бельё» and 1 to 2 on the beach, at every level. */
+const FAIR_SLACK = 2;
 
 interface Frame {
   slot: PlanSlot;

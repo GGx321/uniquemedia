@@ -86,7 +86,7 @@ describe("the moments and their levels (plan §6.3)", () => {
     // Review round 2: the bold moments stand at three places, and a timer or a candid takes them too.
     ["the beach", "lies back on her elbows", ["friend", "timer", "candid"], "bold", "she tilts her head back a little"],
     ["a hotel pool", "sits on the lounger, legs crossed", ["friend", "selfie", "timer", "candid"], "bold", "she sways her crossed foot slowly"],
-    ["the beach", "shades her eyes with one hand", ["friend", "timer", "candid"], undefined, "she lowers her hand slowly and smiles"],
+    ["the beach", "shades her eyes with one hand", ["friend", "selfie", "timer", "candid"], undefined, "she lowers her hand slowly and smiles"],
     ["the beach", "lowers her sunglasses a little", ["selfie", "friend"], "flirty", "she slowly peeks over her sunglasses"],
     ["the beach", "wrings out her wet hair", ["friend", "timer", "candid"], undefined, "she squeezes her hair slowly"],
     ["the water's edge", "walks along the shore", ["friend", "candid"], undefined, "she walks on slowly, the water at her feet"],
@@ -96,7 +96,7 @@ describe("the moments and their levels (plan §6.3)", () => {
     ["a hotel pool", "lies back on a sun lounger", ["friend", "selfie", "timer", "candid"], undefined, "she tilts her face to the sun a little"],
     ["a hotel pool", "sits on the edge, feet in the water", ["friend", "selfie", "timer", "candid"], undefined, "she swirls her feet slowly"],
     ["a hotel pool", "leans on the edge in the water", ["friend", "timer", "candid"], undefined, "she kicks her feet slowly behind her"],
-    ["a rooftop pool", "leans on the glass railing", ["friend", "selfie"], "flirty", "her hair lifts a little in the wind"],
+    ["a rooftop pool", "leans on the glass railing", ["friend", "selfie", "candid"], "flirty", "her hair lifts a little in the wind"],
     ["a rooftop pool", "looks back over her shoulder", ["friend", "timer"], "bold", "she turns her head a little further"],
     ["a rooftop pool", "sips a cold drink by the water", ["friend", "selfie", "candid"], undefined, "she lowers the glass a little"],
     ["the rocks by the sea", "sits hugging her knees", ["friend", "timer"], undefined, "her hair stirs in the wind a little"],
