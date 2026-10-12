@@ -52,7 +52,7 @@ const TABLE: Row[] = [
   // S5.R4: three more a «Смелая» bank, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one; round 2: each a pose of its own.
   { category: "nightwear", place: "her bed", text: "lies on her side, one knee bent", motion: "she slides her top knee forward a little", captures: ["pov-legs"] },
   { category: "nightwear", place: "her bedroom", text: "stands on tiptoe by the mirror", motion: "she rises a little higher on her toes", captures: ["mirror-hidden"] },
-  { category: "nightwear", place: "her bedroom", text: "kneels in front of the mirror", motion: "she sinks back slowly onto her heels", captures: ["mirror-hidden"] },
+  { category: "nightwear", place: "her bedroom", text: "steps toward the mirror", motion: "she takes a small step closer", captures: ["mirror-hidden"] },
   // S5.R4 round 2: «stretches her legs on the lounger» was «sits on the sand, legs out» again; one knee bent on the lounger is a pose of its own.
   { category: "beach", place: "a hotel pool", text: "lies on the lounger, one knee bent", motion: "she sways her bent knee slowly", captures: ["pov-legs"] },
   { category: "beach", place: "the beach", text: "sits on the sand, legs out", motion: "she slowly buries her toes in the sand", captures: ["pov-legs"] },
@@ -236,6 +236,12 @@ describe("a «Смелая» bank's legs moments are different poses (S5.R4 roun
 
   test.each(["nightwear", "beach"] as const)("%s: every legs moment names exactly one pose family", (category) => {
     expect(legsMoments(category).map(({ moment }) => ({ text: moment.text, families: poseFamiliesOf(moment.text) })).filter((m) => m.families.length !== 1)).toEqual([]);
+  });
+
+  // S5.R4 round 3 (re-review, LOW): «kneels in front of the mirror» folds her legs under her, so they cannot fill most of the frame, which is what a legs frame says.
+  test.each(["nightwear", "beach"] as const)("%s: no legs moment folds her legs under her", (category) => {
+    const FOLDED = /\bkneel\w*\b|\b(?:legs?|feet)\s+(?:tucked\s+)?under\s+her\b|\bon her heels\b|\bcurled up\b/i;
+    expect(legsMoments(category).map(({ moment }) => moment.text).filter((text) => FOLDED.test(text))).toEqual([]);
   });
 
   test("a moment's family is the one family its words name; none, or two, is no family", () => {

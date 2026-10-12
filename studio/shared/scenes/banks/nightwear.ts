@@ -171,7 +171,8 @@ export const NIGHTWEAR: CategoryBank = {
           coverage: "Her panties fully cover her bottom, and her crop top covers her chest.",
         },
         { text: "stands on tiptoe by the mirror", motion: "she rises a little higher on her toes", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
-        { text: "kneels in front of the mirror", motion: "she sinks back slowly onto her heels", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        // S5.R4 round 3: a step toward the mirror, her legs mid-stride, in place of «kneels in front of the mirror» (kneeling folds her legs under her: they cannot fill the frame).
+        { text: "steps toward the mirror", motion: "she takes a small step closer", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
     {

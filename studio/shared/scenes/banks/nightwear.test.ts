@@ -231,7 +231,8 @@ describe("the legs moments (plan §6.2, S5.8a rules, M5)", () => {
     // S5.R4: three more, so a 20-photo run at «Ножки» 30 % never repeats one; round 2: each a pose of its own.
     ["her bed", "lies on her side, one knee bent", ["pov-legs"], "she slides her top knee forward a little"],
     ["her bedroom", "stands on tiptoe by the mirror", ["mirror-hidden"], "she rises a little higher on her toes"],
-    ["her bedroom", "kneels in front of the mirror", ["mirror-hidden"], "she sinks back slowly onto her heels"],
+    // S5.R4 round 3: in place of «kneels in front of the mirror» (her legs folded under her cannot fill the frame).
+    ["her bedroom", "steps toward the mirror", ["mirror-hidden"], "she takes a small step closer"],
   ])("%s · «%s»", (place, text, captures, motion) => {
     const found = momentNamed(text);
     expect(found?.place).toBe(place);
