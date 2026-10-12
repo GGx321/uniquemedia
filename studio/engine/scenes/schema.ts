@@ -79,6 +79,8 @@ export const PlanSlotSchema = z
     legwear: PoolText.optional(),
     // Additive (S5.7a): «Подача» of the slot. Absent reads as ordinary. The planner does not set it until S5.7b draws the mix.
     level: SceneLevel.optional(),
+    // Additive (S5.8a): «Ножки», a slot whose legs and feet fill most of the frame. Absent reads as an ordinary framing. It rides with a capture the legs banks deal.
+    framing: z.literal("legs").optional(),
   })
   .refine((slot) => slot.capture === undefined || shotOf(slot.capture) === shotOf(captureOfShot(slot.shot)), {
     message: "a capture rides on the shot the slot is stored with",

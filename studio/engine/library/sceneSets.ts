@@ -10,6 +10,7 @@ import {
   isCustomCategory,
   LAUNCH_SLICE_MAX_PHOTOS,
   LaunchId,
+  LegsShare,
   SceneLevel,
   MAX_COMPOSE_SCENES,
   MAX_RUN_CATEGORIES,
@@ -216,6 +217,8 @@ export const SceneSetFile = z
       poses: z.strictObject({ profile: z.boolean(), back: z.boolean() }).optional(),
       /** «Подача» (S5.7a); absent = ordinary. The mix is S5.7b's. */
       level: SceneLevel.optional(),
+      /** «Ножки» (S5.8a); absent = 0. */
+      legsShare: LegsShare.optional(),
     }),
     /** A snapshot of every custom category the set uses, so a later rename, regeneration or delete changes nothing in it. */
     categories: z.array(CategorySnapshot).optional(),

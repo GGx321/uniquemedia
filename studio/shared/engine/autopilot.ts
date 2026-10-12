@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CategoryRef, MAX_RUN_CATEGORIES, SceneLevel } from "./categories";
+import { CategoryRef, LegsShare, MAX_RUN_CATEGORIES, SceneLevel } from "./categories";
 import { ExportUnavailableReason } from "./errors";
 import { Count, Id, LaunchId, LaunchVideoKey, Micros } from "./primitives";
 import { SceneId } from "./scenes";
@@ -67,6 +67,8 @@ export const LaunchSettings = z.strictObject({
   poses: RunPoses.optional(),
   /** «Подача» (S5.7a); absent = ordinary. Optional with no launch-file bump: a stored launch file parses as it is. */
   level: SceneLevel.optional(),
+  /** «Ножки» (S5.8a); absent = 0. Optional with no launch-file bump: a stored launch file parses as it is. */
+  legsShare: LegsShare.optional(),
   /** «Сначала свободные фото из библиотеки». */
   library: z.boolean(),
   /** «Догенерировать недостающие». */

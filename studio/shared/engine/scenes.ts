@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CAPTURES, CategoryPoses, CategoryRef, PhotoCategory, PoolShot, SceneLevel, ScenePose, MAX_RUN_CATEGORIES } from "./categories";
+import { CAPTURES, CategoryPoses, CategoryRef, LegsShare, PhotoCategory, PoolShot, SceneLevel, ScenePose, MAX_RUN_CATEGORIES } from "./categories";
 import { EngineError } from "./errors";
 import { Count, Id, LaunchId, Micros, ModelId } from "./primitives";
 
@@ -123,6 +123,8 @@ export const SceneView = z
     level: z.literal("flirty").optional(),
     /** S5.7a: who took the photo, when it is not just what the shot says. Absent = the shot's default capture. */
     capture: z.enum(CAPTURES).optional(),
+    /** S5.8a: «Ножки», a scene whose legs and feet fill most of the frame. Absent = an ordinary framing (never stored as a value). */
+    framing: z.literal("legs").optional(),
     /** Null for an own scene, which has no place. */
     place: ScenePlace.nullable(),
     idea: SceneIdea.nullable(),
@@ -240,6 +242,8 @@ export const COMPOSE_REQUEST_FIELDS = {
   poses: z.strictObject({ profile: z.boolean(), back: z.boolean() }).optional(),
   /** «Подача» (S5.7a); absent = ordinary. */
   level: SceneLevel.optional(),
+  /** «Ножки» (S5.8a); absent = 0. */
+  legsShare: LegsShare.optional(),
 };
 
 /** Scenes need a category to be drawn from; an empty set needs none. */

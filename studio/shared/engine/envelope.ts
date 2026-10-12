@@ -114,6 +114,10 @@ import { z } from "zod";
 //    only when it is flirty; `PhotoQaSummary.faceMarked`; `RunResult.failedReasons` (the scene reasons of the slots that ended with one).
 //  - Rollback: an older build cannot read a plan.json, a scene-set file or a launch file that carries `level` or lacks `poses` (its schemas are strict), so a library used by this build
 //    is not opened again by an older one once S5.7c ships the window that stops sending `poses`.
+// Stage 5, S5.8a (additive, no bump): «Ножки».
+//  - `RunRequest.legsShare`, `COMPOSE_REQUEST_FIELDS.legsShare` and `LaunchSettings.legsShare` (`LegsShare`: 0, 15 or 30; absent = 0), and the stored set request's `legsShare`; `SceneView.framing`
+//    (only `legs`) beside the scene's `capture`. The same rollback limit as S5.7a: an older build's strict schemas cannot read a plan.json, a scene-set file or a launch file that carries them.
+//  - A request that asks for legs with no built-in category is refused for free (`sceneReason` / `launchReason` `legs-built-in-only`, Russian texts in `SCENE_REASONS_RU` / `LAUNCH_REASONS_RU`).
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 

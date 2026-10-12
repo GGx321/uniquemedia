@@ -84,6 +84,7 @@ function sceneViews(set: StoredSceneSet, states: ReadonlyMap<number, ChunkState>
       pose: slot.pose,
       ...(slot.level === "flirty" ? { level: "flirty" as const } : {}),
       ...(slot.capture === undefined ? {} : { capture: slot.capture }),
+      ...(slot.framing === "legs" ? { framing: "legs" as const } : {}),
       place: { location: slot.location, timeOfDay: slot.timeOfDay, activity: slot.activity, outfit: slot.outfit },
       idea: null,
       text: scene.text,

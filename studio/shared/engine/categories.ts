@@ -48,6 +48,13 @@ export type Capture = (typeof CAPTURES)[number];
 export const SceneLevel = z.enum(["ordinary", "flirty"]);
 export type SceneLevel = z.infer<typeof SceneLevel>;
 
+/**
+ * «Ножки» (S5.8a): the share of a run's built-in photos shot as legs and feet filling most of the frame, in percent: «Нет» (0), «Немного» (15) or «Много» (30).
+ * Absent means 0. The planner turns it into a count (`legsCountOf`, shared/scenes/level.ts); it is never a price input.
+ */
+export const LegsShare = z.union([z.literal(0), z.literal(15), z.literal(30)]);
+export type LegsShare = z.infer<typeof LegsShare>;
+
 /** A category's angles: one to four distinct poses of the shared vocabulary. Absent on a pool or a snapshot means «no preference» (what the run's toggles say). */
 export const CategoryPoses = z
   .array(ScenePose)

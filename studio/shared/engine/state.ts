@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
 import { AvatarBody, BodyProposal } from "./body";
-import { CategoryName, CategoryRef, MAX_RUN_CATEGORIES, PhotoCategory, SceneCategory, SceneLevel } from "./categories";
+import { CategoryName, CategoryRef, LegsShare, MAX_RUN_CATEGORIES, PhotoCategory, SceneCategory, SceneLevel } from "./categories";
 import { EngineError, ExportUnavailableReason, SceneReason } from "./errors";
 import { ImageQuality } from "./imageModels";
 import { MediaFileName, MediaKind, MediaSummary } from "./media";
@@ -851,6 +851,8 @@ export const RunRequest = z.strictObject({
   poses: RunPoses.optional(),
   /** «Подача» (S5.7a); absent = ordinary. */
   level: SceneLevel.optional(),
+  /** «Ножки» (S5.8a); absent = 0. */
+  legsShare: LegsShare.optional(),
 });
 
 /**
