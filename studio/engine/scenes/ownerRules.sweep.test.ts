@@ -502,3 +502,29 @@ describe("C3′: a face-hidden mirror frame covers her face from her eyebrows to
     expect(offenders(hidden, (f) => FACE_CLAUSE.test(f.sentence))).toEqual(NONE);
   });
 });
+
+describe("C3′: a look down her own legs is a first-person photo from her eyes", () => {
+  // «looking down along her own legs … held at her eye level» came out as a photo from far away (R5#09); the probe's variant (b) drew a clean first-person view.
+  const POV_LINE = "A first-person point-of-view photo: the camera is exactly where her eyes are, looking straight down her own body;";
+  const pov = C3_ALL.filter((f) => f.capture === "pov-legs");
+
+  test("the sweep holds pov-legs frames of «Дом», «Виды», «Гламур» and «Фитнес», barefoot and socked among them", () => {
+    expect([...new Set(pov.map((f) => f.slot.category))].sort()).toEqual(["fitness", "glamour", "home", "travel"]);
+    expect(pov.some((f) => /\bbare\b/.test(f.slot.activity)) && pov.some((f) => /\bsocked\b/.test(f.slot.activity))).toBe(true);
+  });
+
+  test("every pov-legs prompt opens with the first-person line: no face, no mirror and no hand in the picture, and her hands hold nothing", () => {
+    const sample = pov.filter((_, i) => i % 3 === 0);
+    expect(sample.length).toBeGreaterThan(500);
+    expect(
+      offenders(sample, (f) => {
+        const prompt = f.prompt();
+        return !prompt.startsWith(POV_LINE) || !prompt.includes("only her own legs are in the picture, with no face, no mirror and no hand.") || !prompt.endsWith("her other hand is free and holds nothing.") || prompt.includes("held at her eye level");
+      }),
+    ).toEqual(NONE);
+  });
+
+  test("the line leaves her feet to the moment: no pov-legs prompt puts socks on a barefoot moment", () => {
+    expect(offenders(pov, (f) => /\bbare\b/.test(f.slot.activity) && /\bsock/.test(f.prompt()))).toEqual(NONE);
+  });
+});

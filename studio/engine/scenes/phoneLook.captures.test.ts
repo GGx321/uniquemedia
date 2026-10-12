@@ -60,8 +60,15 @@ describe("captureLineOf: the plan's wording, verbatim", () => {
     expect(captureLineOf("timer", "k")).toBe("A photo from her phone propped on a ledge a few metres away on a timer; both of her hands are empty and nobody holds a phone; her whole body is in the picture.");
   });
 
-  test("pov-legs and low-feet carry the 5a.2c lines (plan §7.2)", () => {
-    expect(captureLineOf("pov-legs", "k")).toBe("A photo she took looking down along her own legs from where she lies or sits, held at her eye level; nothing in her hand can be seen.");
+  // C3′: «looking down along her own legs … held at her eye level» came out as a photo from far away (R5#09). The wording probe's variant (b) drew a clean first-person
+  // view (no face, no hair, no hand), verbatim but for «socked feet»: the probe's moment wore socks, and a pov-legs moment may be barefoot or in shoes.
+  test("pov-legs carries the probe's first-person line (c3fix 2b)", () => {
+    expect(captureLineOf("pov-legs", "k")).toBe(
+      "A first-person point-of-view photo: the camera is exactly where her eyes are, looking straight down her own body; her thighs and knees are close to the lens in the foreground and her feet are at the far end, only her own legs are in the picture, with no face, no mirror and no hand.",
+    );
+  });
+
+  test("low-feet carries the 5a.2c line (plan §7.2)", () => {
     expect(captureLineOf("low-feet", "k")).toBe(
       "A quick phone photo a friend took of her, crouching a couple of metres away, low down near her feet; both of her hands are empty; she is not taking the photo herself.",
     );

@@ -28,7 +28,9 @@ const RUN_ID = "run-legs-1";
 const BODY_BINDING = ", and her exact body proportions as described";
 const LEGS_POSE_PHRASE = "Her legs fill most of the frame; her face may be out of frame.";
 
-const POV_LEGS_LINE = "A photo she took looking down along her own legs from where she lies or sits, held at her eye level; nothing in her hand can be seen.";
+// C3′: the probe's first-person line (c3fix 2b), which replaced «looking down along her own legs … held at her eye level» (drawn as a far photo).
+const POV_LEGS_LINE =
+  "A first-person point-of-view photo: the camera is exactly where her eyes are, looking straight down her own body; her thighs and knees are close to the lens in the foreground and her feet are at the far end, only her own legs are in the picture, with no face, no mirror and no hand.";
 const LOW_FEET_LINE = "A quick phone photo a friend took of her, crouching a couple of metres away, low down near her feet; both of her hands are empty; she is not taking the photo herself.";
 
 const legsSlots = (category: Category, seed: number, count = 20): PlanSlot[] => plan({ seed, count, categories: [category], legsShare: 30 }).slots.filter((s) => s.framing === "legs");
