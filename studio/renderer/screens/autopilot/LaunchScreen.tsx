@@ -218,18 +218,13 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
             <Icon name="back" size={14} strokeWidth={2.4} />
             {from === "history" ? "История запусков" : "Автопилот"}
           </button>
-          {launch === null ? (
-            <ScreenTitle>Запуск</ScreenTitle>
-          ) : (
-            <>
-              <div className="ap-launch-title">
-                <ScreenTitle>{launchHeading(launch.createdAt)}</ScreenTitle>
-                <span className={`tag ap-st ap-st-${statusTag(launch.status).tone}`}>{statusTag(launch.status).text}</span>
-              </div>
-              {/* S4.6g L9: an ended launch counts what the results count (the engine's word on each video); one that runs, what it has made so far. */}
-              <p className="mono muted ap-launch-meta">{launchMeta(launch, isUnfinished(launch) ? undefined : counts.done)}</p>
-            </>
-          )}
+          {/* The title stays one element while the launch is read: ScreenTitle focuses itself on mount, so a remount when the launch arrives would drop that focus. */}
+          <div className="ap-launch-title">
+            <ScreenTitle>{launch === null ? "Запуск" : launchHeading(launch.createdAt)}</ScreenTitle>
+            {launch !== null && <span className={`tag ap-st ap-st-${statusTag(launch.status).tone}`}>{statusTag(launch.status).text}</span>}
+          </div>
+          {/* S4.6g L9: an ended launch counts what the results count (the engine's word on each video); one that runs, what it has made so far. */}
+          {launch !== null && <p className="mono muted ap-launch-meta">{launchMeta(launch, isUnfinished(launch) ? undefined : counts.done)}</p>}
         </div>
         {launch !== null && folderAvatar !== null && (
           <button type="button" className="btn btn-s" disabled={opening} onClick={() => void openFolder(folderAvatar)}>
