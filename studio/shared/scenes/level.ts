@@ -1,5 +1,5 @@
 import type { SceneLevel } from "../engine";
-import type { Level } from "./banks/types";
+import type { LegwearSlot, Level } from "./banks/types";
 
 /**
  * The level a request draws at (5a.3, S5.9a). «Смелая» is accepted everywhere a level is, but only the two «Смелая» categories (S5.9b2) have anything bolder than «Кокетливая»: the five
@@ -15,6 +15,25 @@ const LEVEL_RANK: Readonly<Record<Level, number>> = { ordinary: 0, flirty: 1, bo
 /** Whether an item at `item` (absent: ordinary) may be drawn on a slot at `slot`. */
 export function atOrBelow(item: Level | undefined, slot: Level): boolean {
   return LEVEL_RANK[item ?? "ordinary"] <= LEVEL_RANK[slot];
+}
+
+/** The legwear a slot of one level draws from: the items, the share of the slots that wear any, and (the «Смелая» stockings) the outfits they go with and their route. */
+export interface LegwearAt {
+  items: readonly string[];
+  share: number;
+  /** Absent: any outfit that shows her legs. Present (the bold stockings): only these. */
+  outfits?: readonly string[];
+  route?: "seedream";
+}
+
+/**
+ * 5a.3 (S5.9c, plan s5a3 §7.3, M3): the legwear list of a slot's level. A bold slot of a bank that has bold stockings reads that list (its outfits, its share, its route); every
+ * other slot reads the bank's own list, so stockings are drawn on bold slots only, and a bank without bold stockings reads as it always did.
+ */
+export function legwearAt(legwear: LegwearSlot | undefined, level: Level): LegwearAt | undefined {
+  if (legwear === undefined) return undefined;
+  if (level === "bold" && legwear.bold !== undefined) return { items: legwear.bold.items, share: legwear.bold.share, outfits: legwear.bold.outfits, route: legwear.bold.route };
+  return { items: legwear.items, share: legwear.share };
 }
 
 // 5a.2b (S5.7b, plan s5a2 I5.28): «Подача». Under «Кокетливая» exactly round(0.6 × n) of a built-in category's n slots are flirty; under «Обычная» none is. The one

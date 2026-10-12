@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { flirtyCountOf, levelCountsOf } from "./level";
+import type { LegwearSlot } from "./banks/types";
+import { flirtyCountOf, legwearAt, levelCountsOf } from "./level";
 
 describe("flirtyCountOf (I5.28)", () => {
   test.each([
@@ -58,5 +59,26 @@ describe("levelCountsOf (I5.36)", () => {
 
   test.each([-1, 1.5, Number.NaN])("a slot count of %p is refused", (slots) => {
     expect(() => levelCountsOf(slots)).toThrow(RangeError);
+  });
+});
+
+describe("legwearAt (M3)", () => {
+  const plain: LegwearSlot = { items: ["thigh-high socks"], share: 0.3 };
+  const withBold: LegwearSlot = { ...plain, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream", outfits: ["a satin slip nightdress"] } };
+
+  test("a bold slot of a bank with bold stockings reads that list, with its outfits, share and route", () => {
+    expect(legwearAt(withBold, "bold")).toEqual({ items: ["sheer black stockings"], share: 0.5, outfits: ["a satin slip nightdress"], route: "seedream" });
+  });
+
+  test("an ordinary or flirty slot of the same bank reads the bank's own list and never the stockings", () => {
+    for (const level of ["ordinary", "flirty"] as const) expect(legwearAt(withBold, level)).toEqual({ items: ["thigh-high socks"], share: 0.3 });
+  });
+
+  test("a bank without bold stockings reads its own list at every level", () => {
+    for (const level of ["ordinary", "flirty", "bold"] as const) expect(legwearAt(plain, level)).toEqual({ items: ["thigh-high socks"], share: 0.3 });
+  });
+
+  test("a bank without legwear has none", () => {
+    expect(legwearAt(undefined, "bold")).toBeUndefined();
   });
 });

@@ -146,13 +146,24 @@ export interface SentenceParts {
   handAtFace?: boolean | undefined;
   /** The place's details for `with {detail}`; none for a room or a custom place. */
   details: readonly string[];
+  /** 5a.3: the positive coverage sentence of what the moment or the outfit shows, appended after the scene sentence («Смелая» banks only). */
+  coverage?: string | undefined;
 }
 
-function byLevel<T extends { level?: "flirty" | undefined }>(items: readonly T[], level: Level): readonly T[] {
-  const ordinary = items.filter((item) => item.level === undefined);
-  if (level !== "flirty") return ordinary;
-  const flirty = items.filter((item) => item.level === "flirty");
-  return flirty.length > 0 ? flirty : ordinary;
+/**
+ * The entries a slot of this level draws from (5a.3: ranked ordinary < flirty < bold). An ordinary slot takes the ordinary entries; a flirty slot the flirty ones when there are
+ * any, else the ordinary ones; a bold slot the bold ones, then the flirty ones, then the ordinary ones (the gaze and cue lists have no bold entry, so a bold slot reads their flirty
+ * list, as plan s5a3 §7.3 has it).
+ */
+function byLevel<T extends { level?: "flirty" | "bold" | undefined }>(items: readonly T[], level: Level): readonly T[] {
+  const at = (wanted: "flirty" | "bold" | undefined): readonly T[] => items.filter((item) => item.level === wanted);
+  if (level === "ordinary") return at(undefined);
+  if (level === "bold") {
+    const bold = at("bold");
+    if (bold.length > 0) return bold;
+  }
+  const flirty = at("flirty");
+  return flirty.length > 0 ? flirty : at(undefined);
 }
 
 function gazeOptions(capture: Capture, pose: ScenePose, gaze: MomentGaze | undefined, level: Level, framing: "legs" | undefined): readonly Gaze[] {
@@ -202,7 +213,7 @@ function draw(parts: SentenceParts, frame: Frame, key: string, tally: GazeCueTal
   }
   clauses.push(...said);
   if (parts.details.length > 0) clauses.push(`with ${pick(parts.details, key, "detail")}`);
-  return { text: `${clauses.join(", ")}.`, said };
+  return { text: parts.coverage === undefined ? `${clauses.join(", ")}.` : `${clauses.join(", ")}. ${parts.coverage}`, said };
 }
 
 /**
