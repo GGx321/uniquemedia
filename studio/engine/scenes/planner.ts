@@ -3,7 +3,7 @@ import { categoryRefOf, plannerCategoryOf } from "./categories";
 import type { PlannerCategory, Shot } from "./types";
 import type { Level, Outfit } from "../../shared/scenes/banks/types";
 import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "../../shared/scenes/captures";
-import { apportionLegs, flirtyCountOf, legsCountOf } from "../../shared/scenes/level";
+import { apportionLegs, drawLevelOf, flirtyCountOf, legsCountOf } from "../../shared/scenes/level";
 import { legwearFits } from "../../shared/scenes/template";
 import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
 import { hasLegs, legsCapturesAt, legsMomentsAt, legsOutfitsOf, legsPlacesOf } from "./legs";
@@ -45,7 +45,7 @@ export interface PlanInput {
   excludePairs?: readonly ExcludedPair[];
   /**
    * «Подача» (S5.7b, I5.28): under "flirty", exactly round(0.6 × n) of each built-in category's n slots are flirty (which ones is drawn on `level:${category}`); absent or
-   * "ordinary", none is. A custom category stays ordinary.
+   * "ordinary", none is. A custom category stays ordinary. "bold" (5a.3, S5.9a) draws the five ordinary built-ins exactly as "flirty" (`drawLevelOf`); only the «Смелая» banks (S5.9b2) draw more.
    */
   level?: SceneLevel;
   /**
@@ -288,7 +288,7 @@ function planBuiltIn(
   startIndex: number,
   excluded: ReadonlySet<string>,
   recent: ReadonlySet<string>,
-  level: SceneLevel,
+  level: Level,
   legsCount: number,
 ): PlanSlot[] {
   const deck = new Bag(pool.captureDeck, streams.rng);
@@ -501,7 +501,8 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
   const excluded = new Set((input.excludePairs ?? []).map((p) => pairKey(p.location, p.outfit)));
   // 5a.2: the moments the avatar used recently, by (place, moment); a history line written before it names none.
   const recent = new Set((input.excludePairs ?? []).flatMap((p) => (p.activity === undefined ? [] : [momentKey(p.location, p.activity)])));
-  const level = input.level ?? "ordinary";
+  // 5a.3 (S5.9a): «Смелая» draws the five ordinary built-ins as «Кокетливая» until S5.9b2 adds the banks that are bolder.
+  const level = drawLevelOf(input.level);
   const legsShare = input.legsShare ?? 0;
 
   // «Ножки» (I5.29): the legs slots of the run, shared over the built-in categories that can deal them in proportion to their slots. The categories whose remainders tie are served in

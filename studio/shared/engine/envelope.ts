@@ -118,6 +118,15 @@ import { z } from "zod";
 //  - `RunRequest.legsShare`, `COMPOSE_REQUEST_FIELDS.legsShare` and `LaunchSettings.legsShare` (`LegsShare`: 0, 15 or 30; absent = 0), and the stored set request's `legsShare`; `SceneView.framing`
 //    (only `legs`) beside the scene's `capture`. The same rollback limit as S5.7a: an older build's strict schemas cannot read a plan.json, a scene-set file or a launch file that carries them.
 //  - A request that asks for legs with no built-in category is refused for free (`sceneReason` / `launchReason` `legs-built-in-only`, Russian texts in `SCENE_REASONS_RU` / `LAUNCH_REASONS_RU`).
+// Stage 5, 5a.3, S5.9a (additive, no bump; no new command, no new error code): «Смелая».
+//  - `SceneLevel` gains `bold` (`RunRequest.level`, `COMPOSE_REQUEST_FIELDS.level`, `LaunchSettings.level`, a plan slot's and a stored set's level); `SceneView.level` and `SceneSetView.level` echo
+//    `flirty` or `bold`. Until the two «Смелая» categories exist (S5.9b2) `bold` over the five ordinary built-ins draws exactly as `flirty`, the set and the plan keeping the level asked for.
+//  - `SceneRoute` (`seedream`): `SceneView.route` and a plan slot's `route`; `PhotoSummary.route`, read from the sidecar's new optional `source.route` (a photo of the 1K fallback or made before
+//    5a.3 carries none); `RunPlan.models.bold` (the bold image model, written only when the plan has a Seedream slot).
+//  - `Estimate.boldAttemptMicros` (the price of one Seedream attempt, only when the plan has Seedream slots); `EngineError.priceScope` (`bold`, only on PRICE_UNAVAILABLE).
+//  - `SCENE_REASONS` gain `bold-level-needed`, `model-refused` and `model-empty`; `LAUNCH_REASONS` gain `bold-level-needed` (Russian texts in `SCENE_REASONS_RU` / `LAUNCH_REASONS_RU`).
+//  - Rollback: an older build cannot read a plan.json, a scene-set file or a launch file that carries `level: "bold"`, a slot `route` or `models.bold` (its schemas are strict), nor the ids of the
+//    two «Смелая» categories S5.9b2 adds; a photo sidecar's `source.route` is stripped harmlessly (its source schema is not strict). Roll back only before the first «Смелая» run.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 

@@ -231,7 +231,8 @@ export const RunPlanSchema = z
     // Additive: «Реализм камеры» as it was when the run started. A plan.json without it is a run without the clause.
     cameraRealism: z.boolean().optional(),
     // `imageQuality` is additive too: a plan.json written before the image-model choice has none, and is a `low` run (planRoute).
-    models: z.strictObject({ image: ModelId, imageQuality: ImageQuality.nullable().optional(), fallback: ModelId.nullable(), text: ModelId }),
+    // `bold` is additive too (5a.3, S5.9a): the model a Seedream-route slot is drawn on, written only when the plan has such a slot. A plan.json without it has none.
+    models: z.strictObject({ image: ModelId, imageQuality: ImageQuality.nullable().optional(), fallback: ModelId.nullable(), text: ModelId, bold: ModelId.optional() }),
     capMicros: Micros,
     plannedWorstMicros: Micros,
     scenes: RunScenesSchema,

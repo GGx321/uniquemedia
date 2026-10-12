@@ -29,7 +29,7 @@ import {
 } from "../../shared/engine";
 import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "../../shared/scenes/captures";
 import { covers } from "../../shared/scenes/custom";
-import { apportionLegs, flirtyCountOf, legsCountOf } from "../../shared/scenes/level";
+import { apportionLegs, drawLevelOf, flirtyCountOf, legsCountOf } from "../../shared/scenes/level";
 import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
 import { bankDraw, legsDraw, localTexts, plainTextOf, type LocalScene } from "./mockBankScenes";
 import { mockAnglesOf } from "./mockCategories";
@@ -313,7 +313,8 @@ function planScenes(count: number, refs: readonly CategoryRef[], level: SceneLev
     if (!isCustomCategory(ref)) {
       // «Подача» (I5.28): exactly round(0.6 × n) of the category's scenes are flirty. The angle comes from the scene (I5.26): the category wants ⌈n/10⌉ scenes facing away,
       // within its ⌊n/5⌋ cap, and a hand-held capture is never one of them.
-      const flirty = flirtyCountOf(n, level);
+      // 5a.3 (S5.9a): «Смелая» draws the five ordinary built-ins as «Кокетливая» until the bold banks exist, as the engine's planner does.
+      const flirty = flirtyCountOf(n, drawLevelOf(level));
       const legs = legsParts[entry] ?? 0;
       // The legs scenes are spread over the category; the deck is dealt over the others. «Подача» goes to the other scenes first, and only what they cannot take to a legs scene.
       const legsAt = Array.from({ length: n }, (_, k) => spread(k, n, legs));
@@ -854,7 +855,7 @@ export class MockSceneSets {
       stoppedError: stoppedBy === "failed" ? (set.write?.stoppedError ?? { code: "INTERNAL" }) : null,
       runId: set.used ? set.runId : null,
       ...(set.poses === undefined ? {} : { poses: { ...set.poses } }),
-      ...(set.level === "flirty" ? { level: "flirty" as const } : {}),
+      ...(set.level === "flirty" || set.level === "bold" ? { level: set.level } : {}),
       categories: set.categories.map((c) => ({ ...c })),
       textModel: set.textModel,
       // The engine reads the spend off the ledger: with a ledger that cannot be read it is unknown, and so is the open part of it.

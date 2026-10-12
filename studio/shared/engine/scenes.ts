@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CAPTURES, CategoryPoses, CategoryRef, LegsShare, PhotoCategory, PoolShot, SceneLevel, ScenePose, MAX_RUN_CATEGORIES } from "./categories";
+import { CAPTURES, CategoryPoses, CategoryRef, LegsShare, PhotoCategory, PoolShot, SceneLevel, SceneRoute, ScenePose, MAX_RUN_CATEGORIES } from "./categories";
 import { EngineError } from "./errors";
 import { Count, Id, LaunchId, Micros, ModelId } from "./primitives";
 
@@ -119,8 +119,10 @@ export const SceneView = z
     categoryName: z.string().min(1).max(40).nullable(),
     shot: PoolShot,
     pose: ScenePose,
-    /** S5.7a: «Подача» of a flirty scene. Absent = ordinary (never stored as a value). */
-    level: z.literal("flirty").optional(),
+    /** S5.7a, 5a.3: «Подача» of a flirty or bold scene. Absent = ordinary (never stored as a value). */
+    level: z.enum(["flirty", "bold"]).optional(),
+    /** 5a.3 (S5.9a): the scene is drawn on the Seedream route. Absent = the owner's image model. */
+    route: SceneRoute.optional(),
     /** S5.7a: who took the photo, when it is not just what the shot says. Absent = the shot's default capture. */
     capture: z.enum(CAPTURES).optional(),
     /** S5.8a: «Ножки», a scene whose legs and feet fill most of the frame. Absent = an ordinary framing (never stored as a value). */
@@ -202,8 +204,8 @@ export const SceneSetView = z
     runId: Id.nullable(),
     /** Echoed only when the set stored them (S5.7a: a new set stores none). */
     poses: z.strictObject({ profile: z.boolean(), back: z.boolean() }).optional(),
-    /** S5.7a: only when the set was composed flirty; absent = ordinary. */
-    level: z.literal("flirty").optional(),
+    /** S5.7a, 5a.3: only when the set was composed flirty or bold; absent = ordinary. */
+    level: z.enum(["flirty", "bold"]).optional(),
     categories: z.array(SceneSetCategory).max(MAX_RUN_CATEGORIES),
     textModel: ModelId,
     /**

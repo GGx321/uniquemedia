@@ -185,6 +185,19 @@ describe("PhotoSidecarSchema", () => {
     expect(PhotoSidecarSchema.safeParse(validSidecar({ source: sourceWith({ category: "home" }) })).success).toBe(true);
   });
 
+  // 5a.3 (S5.9a, gap A): a photo drawn on the Seedream route says so in its sidecar, since the model id alone cannot tell it from the 1K moderation fallback.
+  test("keeps the Seedream route of a bold photo, and a sidecar without one parses unchanged and gains none", () => {
+    const bold = validSidecar({ source: sourceWith({ category: "home", route: "seedream" }) });
+    expect<unknown>(PhotoSidecarSchema.parse(bold)).toEqual(bold);
+    const plain = validSidecar({ source: sourceWith({ category: "home" }) });
+    expect<unknown>(PhotoSidecarSchema.parse(plain)).toEqual(plain);
+    expect("route" in (PhotoSidecarSchema.parse(plain).source as object)).toBe(false);
+  });
+
+  test("rejects a route other than seedream", () => {
+    expect(PhotoSidecarSchema.safeParse(validSidecar({ source: sourceWith({ route: "fallback" }) })).success).toBe(false);
+  });
+
   test("rejects an empty categoryName", () => {
     expect(PhotoSidecarSchema.safeParse(validSidecar({ source: sourceWith({ category: "cat-paris-cafes", categoryName: "" }) })).success).toBe(false);
   });

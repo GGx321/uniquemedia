@@ -349,6 +349,10 @@ const SceneIdNumber = z.number().int().min(1).max(10_000);
  *   Refused for free, before anything is priced, reserved or written (`runs.estimate`, `runs.start`, `scenes.estimateCompose`, `scenes.compose`).
  * - slot-text-problem (Stage 5, S5.6d): not a refusal of a command. The run ended ONE slot, free, because its sentence broke today's youth or revealing word rules at the
  *   assembler (the last gate before an image is paid for); it travels as that slot's end error. It names no scene (a run's slot is not a scene of a set).
+ * - bold-level-needed (5a.3, S5.9a; asked for by S5.9c): «Ночнушки и бельё» or «Пляж и бассейн» was asked for at a level other than «Смелая». Refused for free, before anything is
+ *   priced, reserved or written (`runs.estimate`, `runs.start`, `scenes.estimateCompose`, `scenes.compose`).
+ * - model-refused, model-empty (5a.3, S5.9a; ended by S5.9d): not refusals of a command. They end ONE «Смелая» slot, like slot-text-problem, and travel in `RunResult.failedReasons`.
+ *   The model refused the frame (a refusal is free; the attempts paid before it are in the spend), or answered without an image (a paid attempt, settled).
  */
 export const SCENE_REASONS = [
   "set-used",
@@ -373,6 +377,9 @@ export const SCENE_REASONS = [
   "not-awaiting",
   "slot-text-problem",
   "legs-built-in-only",
+  "bold-level-needed",
+  "model-refused",
+  "model-empty",
 ] as const;
 export const SceneReason = z.enum(SCENE_REASONS);
 export type SceneReason = z.infer<typeof SceneReason>;
@@ -391,8 +398,9 @@ export const SCENE_REASONS_NAMING_A_SCENE = ["scene-text-problem", "scene-withou
  * - launch-unreadable: a launch file cannot be read and may describe an active launch; the owner removes the entry first (`autopilot.removeUnreadable`).
  * - nothing-enabled: both «Сначала свободные фото» and «Догенерировать» are off, so there is nothing to make.
  * - legs-built-in-only (Stage 5, S5.8a): «Ножки» was asked for with no built-in category among the launch's categories (`autopilot.estimate`, `autopilot.start`).
+ * - bold-level-needed (5a.3, S5.9a; asked for by S5.9c): «Ночнушки и бельё» or «Пляж и бассейн» is among the launch's categories at a level other than «Смелая» (`autopilot.estimate`, `autopilot.start`).
  */
-export const LAUNCH_REASONS = ["open-set", "too-many-photos", "usage-unknown", "launch-unreadable", "nothing-enabled", "legs-built-in-only"] as const;
+export const LAUNCH_REASONS = ["open-set", "too-many-photos", "usage-unknown", "launch-unreadable", "nothing-enabled", "legs-built-in-only", "bold-level-needed"] as const;
 export const LaunchReason = z.enum(LAUNCH_REASONS);
 export type LaunchReason = z.infer<typeof LaunchReason>;
 
@@ -452,6 +460,15 @@ export const EngineError = z
      * «потрачено $X» reads it.
      */
     spentMicros: Count.optional(),
+    /**
+     * Additive (5a.3, S5.9a, gap D): which price a PRICE_UNAVAILABLE could not find: `bold`, the Seedream 2K tier of a «Смелая» estimate. Only on PRICE_UNAVAILABLE; a refusal
+     * for any other price carries none, and the window shows its general text.
+     */
+    priceScope: z.literal("bold").optional(),
+  })
+  .refine((e) => e.priceScope === undefined || e.code === "PRICE_UNAVAILABLE", {
+    message: "priceScope may only be present on PRICE_UNAVAILABLE",
+    path: ["priceScope"],
   })
   .refine((e) => (e.code === "MONTAGE_INVALID" || e.code === "PHOTO_UNAVAILABLE") === (e.issues !== undefined), {
     message: "issues must be present exactly on MONTAGE_INVALID and PHOTO_UNAVAILABLE",

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CustomCategoryId, isCustomCategory, PoolText, SceneLevel, SceneText, TimeOfDay } from "../../shared/engine";
+import { CustomCategoryId, isCustomCategory, PoolText, SceneLevel, SceneRoute, SceneText, TimeOfDay } from "../../shared/engine";
 import { CAPTURES, captureOfShot, shotOf } from "../../shared/scenes/captures";
 import type { FacePose } from "../face/config";
 import { CATEGORIES, SHOTS } from "./types";
@@ -85,9 +85,13 @@ export const PlanSlotSchema = z
     capture: z.enum(CAPTURES).optional(),
     legwear: PoolText.optional(),
     // Additive (S5.7a): «Подача» of the slot. Absent reads as ordinary. The planner does not set it until S5.7b draws the mix.
-    level: SceneLevel.optional(),
+    // 5a.3 (S5.9a): a slot is ordinary or flirty until S5.9c teaches the template, the render and the planner a bold slot (`SceneLevel` has `bold` for requests and sets; the five ordinary
+    // built-ins under `bold` plan as flirty, so no slot is ever bold here). A stored slot that says `bold` is refused rather than drawn as an ordinary one.
+    level: SceneLevel.exclude(["bold"]).optional(),
     // Additive (S5.8a): «Ножки», a slot whose legs and feet fill most of the frame. Absent reads as an ordinary framing. It rides with a capture the legs banks deal.
     framing: z.literal("legs").optional(),
+    // Additive (5a.3, S5.9a): the slot is drawn on the Seedream route. Absent reads as the owner's image model. Nothing sets it until S5.9b2 adds the «Смелая» banks.
+    route: SceneRoute.optional(),
   })
   .refine((slot) => slot.capture === undefined || shotOf(slot.capture) === shotOf(captureOfShot(slot.shot)), {
     message: "a capture rides on the shot the slot is stored with",

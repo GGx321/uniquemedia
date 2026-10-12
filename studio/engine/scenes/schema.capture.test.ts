@@ -61,6 +61,17 @@ describe("a plan slot's capture and legwear (additive, I5.27)", () => {
     expect(PlanSlotSchema.safeParse({ ...baseSlot(), level: "bold" }).success).toBe(false);
   });
 
+  // 5a.3 (S5.9a): the route rides on the slot as an optional `route`; nothing draws a Seedream slot until S5.9b2.
+  test("a slot's Seedream route is kept as written, and a slot without one gains none", () => {
+    expect(PlanSlotSchema.parse({ ...baseSlot(), route: "seedream" }).route).toBe("seedream");
+    expect("route" in PlanSlotSchema.parse(baseSlot())).toBe(false);
+  });
+
+  test("a route other than seedream is refused", () => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), route: "grok" }).success).toBe(false);
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), route: "" }).success).toBe(false);
+  });
+
   test("a hand capture still faces the phone: over-shoulder with a back pose is refused", () => {
     expect(PlanSlotSchema.safeParse({ ...baseSlot(), capture: "over-shoulder", shot: "selfie", pose: "back" }).success).toBe(false);
   });

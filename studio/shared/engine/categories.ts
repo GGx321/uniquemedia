@@ -42,11 +42,19 @@ export const CAPTURES = ["mirror-hidden", "mirror", "above", "prone", "over-shou
 export type Capture = (typeof CAPTURES)[number];
 
 /**
- * «Подача» (S5.7a): how a scene is presented. Absent means ordinary. `bold` does not exist yet and is refused, so a request cannot ask for what no
- * engine draws. The level picks moments; it is never a price input.
+ * «Подача» (S5.7a, 5a.3): how a scene is presented. Absent means ordinary. `bold` («Смелая», 5a.3 S5.9a) is accepted wherever a level is; until the two «Смелая»
+ * categories exist (S5.9b2) the five ordinary built-ins draw it exactly as `flirty`. The level picks moments; for a «Смелая» category it also picks the route
+ * (`SceneRoute`) and so the price, which the estimate reads off the plan, never off the level.
  */
-export const SceneLevel = z.enum(["ordinary", "flirty"]);
+export const SceneLevel = z.enum(["ordinary", "flirty", "bold"]);
 export type SceneLevel = z.infer<typeof SceneLevel>;
+
+/**
+ * Where a scene or a photo was drawn, when it is not on the owner's image model (5a.3, S5.9a): `seedream` is the bold route (Seedream 5 Pro at 2K). Absent means the owner's
+ * model, and a photo of the 1K moderation fallback carries none either: the model id alone cannot tell the two Seedream uses apart.
+ */
+export const SceneRoute = z.literal("seedream");
+export type SceneRoute = z.infer<typeof SceneRoute>;
 
 /**
  * «Ножки» (S5.8a): the share of a run's built-in photos shot as legs and feet filling most of the frame, in percent: «Нет» (0), «Немного» (15) or «Много» (30).

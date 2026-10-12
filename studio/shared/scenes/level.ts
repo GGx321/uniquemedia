@@ -1,4 +1,13 @@
+import type { SceneLevel } from "../engine";
 import type { Level } from "./banks/types";
+
+/**
+ * The level a request draws at (5a.3, S5.9a). «Смелая» is accepted everywhere a level is, but only the two «Смелая» categories (S5.9b2) have anything bolder than «Кокетливая»: the five
+ * ordinary built-ins under `bold` draw exactly as `flirty`, byte for byte, so the contract never yields a half-built plan. The planner and the mock both draw at this level.
+ */
+export function drawLevelOf(level: SceneLevel | undefined): Level {
+  return level === "flirty" || level === "bold" ? "flirty" : "ordinary";
+}
 
 // 5a.2b (S5.7b, plan s5a2 I5.28): «Подача». Under «Кокетливая» exactly round(0.6 × n) of a built-in category's n slots are flirty; under «Обычная» none is. The one
 // rule, for the planner and for the card's «{F} из {N} кадров» line (the mock reads it too). Integers only: 0.6 × n is 6n / 10, which never ends in .5, so there is no
