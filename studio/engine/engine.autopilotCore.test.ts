@@ -258,6 +258,28 @@ describe("autopilot.start", () => {
     expect(failed(await started.engine.handle(command("autopilot.start", { draft, acceptedWorstMicros: 10_000_000 }))).error).toMatchObject({ code: "VALIDATION", launchReason: "nothing-enabled" });
   });
 
+  // S5.8a (I5.29): «Ножки» is drawn from the built-in banks only. A launch that asks for legs and names no built-in category is refused for free, with its own reason, at the
+  // estimate and at the start; a launch that names one is planned as it was (legs change no figure of the plan).
+  test("a draft that asks for legs and names only custom categories is VALIDATION legs-built-in-only at the estimate and at the start, and nothing is written", async () => {
+    const avatarId = await seedAvatar("Mia");
+    const started = await startOver();
+    const asked = settingsOf([avatarId], { categories: ["cat-paris-cafes"], legsShare: 15 });
+
+    expect(failed(await started.engine.handle(command("autopilot.estimate", { draft: asked }))).error).toMatchObject({ code: "VALIDATION", launchReason: "legs-built-in-only" });
+    expect(failed(await started.engine.handle(command("autopilot.start", { draft: { ...asked, planSeed: 5 }, acceptedWorstMicros: 10_000_000 }))).error).toMatchObject({ code: "VALIDATION", launchReason: "legs-built-in-only" });
+    expect(launchFiles()).toEqual([]);
+    expect(ledgerLines(dir())).toEqual([]);
+  });
+
+  test("a draft that asks for no legs, or names a built-in category beside a custom one, is not refused for them", async () => {
+    const avatarId = await seedAvatar("Mia");
+    const started = await startOver();
+    const base = settingsOf([avatarId], { categories: ["home"] });
+    const plain = (await previewOf(started, base)).estimate;
+    expect((await previewOf(started, { ...base, legsShare: 0 })).estimate).toEqual(plain);
+    expect((await previewOf(started, { ...base, legsShare: 30 })).estimate).toEqual(plain);
+  });
+
   test("an avatar with an open scene set is VALIDATION open-set", async () => {
     const avatarId = await seedAvatar("Mia");
     const { library } = await openLibrary(libraryDir(), { now: steppingClock("2026-09-01T10:00:00.000Z"), newId: sequentialIds(`seedset${++seeded}`) });

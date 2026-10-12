@@ -78,9 +78,9 @@ const isNotPayable = (error: unknown): boolean => isFailure(error, "VALIDATION")
 const plannedOf = (set: MirrorSource) => set.scenes.filter((s) => s.origin === "planned" && !s.removed);
 const FINAL_PHASES: readonly string[] = ["montage", "done", "skipped"];
 
-/** What of the draft's look a compose carries: «Подача» only when it was chosen. The draft's old angle toggles (a launch paused by an older build) are not sent: the angle comes from the scene (S5.7b). */
-function composeLookOf(draft: LaunchFile["draft"]): Pick<LaunchComposePayload, "level"> {
-  return draft.level === undefined ? {} : { level: draft.level };
+/** What of the draft's look a compose carries: «Подача» and «Ножки» only when they were chosen. The draft's old angle toggles (a launch paused by an older build) are not sent: the angle comes from the scene (S5.7b). */
+function composeLookOf(draft: LaunchFile["draft"]): Pick<LaunchComposePayload, "level" | "legsShare"> {
+  return { ...(draft.level === undefined ? {} : { level: draft.level }), ...(draft.legsShare === undefined || draft.legsShare === 0 ? {} : { legsShare: draft.legsShare }) };
 }
 /** The price request of a slice's sizing, in the same counters. */
 const PRICES_JOB = "prices";

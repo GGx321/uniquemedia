@@ -100,6 +100,15 @@ describe("the launch file schema", () => {
     expect(LaunchFile.safeParse({ ...file, draft: { ...bare, level: "bold" } }).success).toBe(false);
   });
 
+  // S5.8a: `legsShare` joins the draft as an optional field WITHOUT a version bump, like `level`: a file written before it parses as it is.
+  test("a file whose draft carries a legs share parses, and one with a share that is not a chip does not", () => {
+    const file = stamped();
+    expect("legsShare" in file.draft).toBe(false);
+    for (const legsShare of [0, 15, 30]) expect(LaunchFile.safeParse({ ...file, draft: { ...file.draft, legsShare } }).success).toBe(true);
+    expect(LaunchFile.safeParse({ ...file, draft: { ...file.draft, legsShare: 20 } }).success).toBe(false);
+    expect(LaunchFile.parse({ ...file, draft: { ...file.draft, legsShare: 30 } }).draft.legsShare).toBe(30);
+  });
+
   test("is strict: an unknown field is refused, so a newer build's file is never half-read", () => {
     expect(LaunchFile.safeParse({ ...stamped(), extra: 1 }).success).toBe(false);
     const file = stamped();

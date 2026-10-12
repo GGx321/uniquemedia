@@ -139,6 +139,14 @@ export function isCustomCategory(ref: string): ref is CustomCategoryId {
 }
 
 /**
+ * «Ножки» (S5.8a, I5.29): legs are drawn from the built-in banks only, so a request that asks for a share above 0 and names no built-in category cannot be served. The engine
+ * refuses it for free (`legs-built-in-only`) before it prices, reserves or writes anything.
+ */
+export function legsNeedsBuiltIn(request: { categories: readonly string[]; legsShare?: number | undefined }): boolean {
+  return (request.legsShare ?? 0) > 0 && request.categories.every((ref) => isCustomCategory(ref));
+}
+
+/**
  * The order a run draws its categories in: the five built-ins in their
  * canonical order, then the custom ones in the order given (creation order),
  * each once.

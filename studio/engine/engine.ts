@@ -139,7 +139,7 @@ import { rawFileName, saveRawBody } from "./rawStore";
 import { foldRun, RunEventSchema, type LedgerView, type RunState } from "./runs/journal";
 import { buildRunPlan, buildSceneRunPlan, RunPlanSchema, runEstimate, runEstimateFromScenes, runPriceModels, sceneCategory, sceneRunPriceModels, type RunPlan } from "./runs/plan";
 import { commitApproval, findSceneSet, loadApprovable } from "./sceneSets/approve";
-import { sceneRefusal } from "./sceneSets/refusal";
+import { assertLegsFit, sceneRefusal } from "./sceneSets/refusal";
 import type { StoredSceneSet } from "./library/sceneSets";
 import { runSnapshots, runSources } from "./sceneSets/toRun";
 import { CpuPool, NetworkPool } from "./runs/pools";
@@ -2385,6 +2385,8 @@ export class Engine {
         await this.#sceneSets.discard(command.payload.sceneSetId);
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { sceneSetId: command.payload.sceneSetId } };
       case "runs.estimate": {
+        // S5.8a: «Ножки» with no built-in category is refused first, for free.
+        assertLegsFit(command.payload);
         // Free: NOT_FOUND for an avatar that cannot get photos, DESCRIPTOR_INVALID before any price is fetched for it.
         this.#runnableAvatar(this.library, command.payload.avatarId);
         // NOT_FOUND for a custom category the library does not hold (never one the owner deleted), before any price is fetched.
@@ -2396,6 +2398,7 @@ export class Engine {
       }
       case "runs.start": {
         const { avatarId } = command.payload;
+        assertLegsFit(command.payload);
         // Claimed before the first await, like generateCandidates: the library switch's race check relies on it.
         this.#claimAvatar(avatarId, "a photo run or another job is already changing this avatar; wait for it to finish");
         this.#paidCommands++;
@@ -3028,6 +3031,8 @@ export class Engine {
     const budget = this.#paidBudget();
     const library = await this.#liveLibrary();
     const { avatarId, count, categories, poses, level } = payload;
+    // I5.27: a share is written only when it asks for legs.
+    const legsShare = payload.legsShare === undefined || payload.legsShare === 0 ? undefined : payload.legsShare;
     const manifest = this.#runnableAvatar(library, avatarId);
     await this.#assertAvatarOnDisk(library, avatarId);
     // The custom categories the run names, read once: the pool the planner draws from and the snapshot the plan keeps come from this one read.
@@ -3070,6 +3075,8 @@ export class Engine {
         excludePairs: recent.map(({ location, outfit, activity }) => ({ location, outfit, activity })),
         // «Подача» (S5.7b); the angle comes from the scene, so the request's `poses` (kept for an old window) is not asked.
         ...(level === undefined ? {} : { level }),
+        // «Ножки» (S5.8a, I5.29).
+        ...(legsShare === undefined ? {} : { legsShare }),
       },
       { ...POOLS, ...Object.fromEntries(custom.map((c) => [c.categoryId, poolOf(c.pool)])) },
     );
@@ -3077,7 +3084,7 @@ export class Engine {
       runId,
       avatarId,
       createdAt: new Date(this.#deps.clock()).toISOString(),
-      request: { avatarId, count, categories, ...(poses === undefined ? {} : { poses }), ...(level === undefined ? {} : { level }) },
+      request: { avatarId, count, categories, ...(poses === undefined ? {} : { poses }), ...(level === undefined ? {} : { level }), ...(legsShare === undefined ? {} : { legsShare }) },
       imageAgeCheck,
       models,
       capMicros: estimate.worstMicros,

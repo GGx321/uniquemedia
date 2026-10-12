@@ -2213,3 +2213,124 @@ describe("a run's cap is the estimate it was started at (I5.30)", () => {
     expect(plan.plannedWorstMicros).toBe(IMAGES(12));
   });
 });
+
+
+// 5a.2c (S5.8a, plan s5a2 §7.2, I5.29): «Ножки» through a real engine. `legsShare` is stored on the plan's request only when it is above 0 (I5.27), the planner draws the
+// legs slots, a request for legs with no built-in category is refused for free with its reason, and a resume sends the legs slots as the plan holds them.
+describe("«Ножки» (S5.8a)", () => {
+  const twenty = 20 * 3 * 50_000;
+  const legsOf = (plan: RunPlan) => plan.scenes.slots.filter((s) => "framing" in s);
+
+  test("a run asked for legs stores the share and holds the planner's legs slots", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(runNetwork({ image: () => ({ hang: true }) }));
+
+    const { runId, jobId } = started(await engine.handle(command("runs.start", { avatarId, count: 20, categories: ["home", "travel"], legsShare: 15, acceptedWorstMicros: twenty })));
+    const stored = planOf(runId);
+
+    expect(stored.request?.legsShare).toBe(15);
+    expect(stored.scenes).toEqual(planScenes({ seed: stored.scenes.seed, count: 20, categories: ["home", "travel"], legsShare: 15 }));
+    expect(legsOf(stored)).toHaveLength(3);
+
+    ok(await engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(events, jobId);
+  });
+
+  test("a share of 0 is the absence of one: the request stores none and the plan is the one without legs", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(runNetwork({ image: () => ({ hang: true }) }));
+
+    const { runId, jobId } = started(await engine.handle(command("runs.start", { avatarId, count: 20, categories: ["home", "travel"], legsShare: 0, acceptedWorstMicros: twenty })));
+    const stored = planOf(runId);
+
+    expect(stored.request && "legsShare" in stored.request).toBe(false);
+    expect(stored.scenes).toEqual(planScenes({ seed: stored.scenes.seed, count: 20, categories: ["home", "travel"] }));
+    expect(legsOf(stored)).toHaveLength(0);
+
+    ok(await engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(events, jobId);
+  });
+
+  test("legs cost nothing more: the estimate and the cap of a run with legs are the run's without", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(runNetwork({ image: () => ({ hang: true }) }));
+    const plain = { avatarId, count: 20, categories: ["home", "travel"] };
+
+    const without = ok(await engine.handle(command("runs.estimate", plain)));
+    const withLegs = ok(await engine.handle(command("runs.estimate", { ...plain, legsShare: 30 })));
+    expect(withLegs).toMatchObject({ result: without.result });
+
+    const { runId, jobId } = started(await engine.handle(command("runs.start", { ...plain, legsShare: 30, acceptedWorstMicros: twenty })));
+    expect(planOf(runId).capMicros).toBe(twenty);
+    ok(await engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(events, jobId);
+  });
+
+  test("legs with only a custom category are refused for free, with the reason: nothing is priced, reserved, sent or written", async () => {
+    const avatarId = await seedAvatar();
+    const custom = await seedCustomCategory();
+    const net = runNetwork();
+    const { engine } = await engineOver(net);
+    const asked = { avatarId, count: 8, categories: [custom], legsShare: 15 };
+
+    expect(failed(await engine.handle(command("runs.estimate", asked))).error).toMatchObject({ code: "VALIDATION", sceneReason: "legs-built-in-only" });
+    expect(failed(await engine.handle(command("runs.start", { ...asked, acceptedWorstMicros: 10_000_000 }))).error).toMatchObject({ code: "VALIDATION", sceneReason: "legs-built-in-only" });
+
+    expect(net.calls).toEqual([]);
+    expect(readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve")).toEqual([]);
+    const runs = join(dir(), "library", "runs");
+    expect(existsSync(runs) ? readdirSync(runs) : []).toEqual([]);
+  });
+
+  test("a share of 0 beside only a custom category is no request for legs: it is accepted as before", async () => {
+    const avatarId = await seedAvatar();
+    const custom = await seedCustomCategory();
+    const { engine } = await engineOver(runNetwork());
+    ok(await engine.handle(command("runs.estimate", { avatarId, count: 8, categories: [custom], legsShare: 0 })));
+  });
+
+  test("a built-in category beside a custom one is enough: the request is accepted and the custom slots draw no legs", async () => {
+    const avatarId = await seedAvatar();
+    const custom = await seedCustomCategory();
+    const { engine, events } = await engineOver(runNetwork({ image: () => ({ hang: true }) }));
+    const asked = { avatarId, count: 20, categories: ["home", custom], legsShare: 30 };
+
+    const priced = ok(await engine.handle(command("runs.estimate", asked)));
+    if (priced.type !== "runs.estimate") throw new Error(`expected an estimate, got ${priced.type}`);
+    const { runId, jobId } = started(await engine.handle(command("runs.start", { ...asked, acceptedWorstMicros: priced.result.estimate.worstMicros })));
+    const slots = planOf(runId).scenes.slots;
+    expect(slots.filter((s) => s.category === custom && "framing" in s)).toHaveLength(0);
+    expect(slots.filter((s) => "framing" in s).length).toBeGreaterThan(0);
+
+    ok(await engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(events, jobId);
+  });
+
+  test("a resume sends the legs slots as the plan holds them: the legs pose phrase, once for each, and the run ends done", async () => {
+    const LEGS_POSE = "Her legs fill most of the frame; her face may be out of frame.";
+    const avatarId = await seedAvatar();
+    const received: string[] = [];
+    const firstNet = runNetwork({ received, image: () => ({ hang: true }) });
+    const first = await engineOver(firstNet, { network: 10 });
+    const { runId, jobId } = started(await first.engine.handle(command("runs.start", { avatarId, count: 10, categories: ["home"], legsShare: 30, acceptedWorstMicros: 10 * 3 * 50_000 })));
+    await until(() => firstNet.imageCalls().length === 10, "every slot's first request");
+    ok(await first.engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(first.events, jobId);
+    const legs = legsOf(planOf(runId));
+    expect(legs).toHaveLength(3);
+    expect(firstNet.imageCalls().filter((c) => String(c.json().prompt).includes(LEGS_POSE))).toHaveLength(3);
+
+    let mono = 0;
+    const net = runNetwork({ received });
+    const second = await engineOver(net, { bootId: "boot-0000-bbbb", clock: () => NOW + 10 * 60_000, monotonic: () => mono, network: 10 });
+    mono += 10 * 60_000;
+    ok(await second.engine.handle(command("money.reconcile")));
+    const { jobId: resumeJob } = started(await resume(second.engine, runId));
+    const end = await jobEnd(second.events, resumeJob);
+
+    expect(end).toMatchObject({ type: "job.done", payload: { result: { kind: "run", runId, avatarId, failedSlots: 0 } } });
+    expect(legsOf(planOf(runId))).toEqual(legs);
+    expect(net.imageCalls().filter((c) => String(c.json().prompt).includes(LEGS_POSE))).toHaveLength(3);
+    expect(new Set(received).size).toBe(received.length);
+  });
+});

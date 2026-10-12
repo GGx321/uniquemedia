@@ -1,4 +1,4 @@
-import type { CategoryRef, CategorySnapshot } from "../../../shared/engine";
+import type { CategoryRef, CategorySnapshot, LegsShare } from "../../../shared/engine";
 import { writerAttemptIds } from "../../runs/plan";
 import { planWithPools, plannerCategoryOf, POOLS, type Pool } from "../../scenes";
 import { LLM_ONLY_POOL, LLM_ONLY_REF, llmOnlySnapshot } from "../../scenes/testing/llmOnlyFixture";
@@ -21,6 +21,8 @@ export interface SampleSetOptions {
   pools?: Readonly<Record<string, Pool>>;
   /** The set's snapshots of the custom categories it uses. */
   snapshots?: readonly CategorySnapshot[];
+  /** «Ножки» (S5.8a): the planner draws this share of the built-in scenes as legs scenes, and the request stores it. */
+  legsShare?: LegsShare;
 }
 
 /**
@@ -35,12 +37,12 @@ export function sampleSet(options: SampleSetOptions = {}): PlannedNewSceneSet {
   const sceneSetId = options.sceneSetId ?? "set-aaaa-0001";
   const categories = options.categories ?? ["home"];
   const pools = { ...POOLS, ...options.pools };
-  const slots = planWithPools({ seed: options.seed ?? 7, count: options.count ?? 4, categories: categories.map(plannerCategoryOf) }, pools).slots;
+  const slots = planWithPools({ seed: options.seed ?? 7, count: options.count ?? 4, categories: categories.map(plannerCategoryOf), ...(options.legsShare === undefined ? {} : { legsShare: options.legsShare }) }, pools).slots;
   return {
     sceneSetId,
     avatarId: options.avatarId ?? "avatar-aaaa-0001",
     runId: options.runId ?? "run-aaaa-0001",
-    request: { count: slots.length, categories: [...categories], poses: { profile: false, back: false } },
+    request: { count: slots.length, categories: [...categories], poses: { profile: false, back: false }, ...(options.legsShare === undefined || options.legsShare === 0 ? {} : { legsShare: options.legsShare }) },
     ...(options.snapshots === undefined ? {} : { categories: [...options.snapshots] }),
     models: { text: "x-ai/grok-4.3" },
     scenes: slots.map((slot, i) => ({

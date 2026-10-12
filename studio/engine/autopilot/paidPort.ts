@@ -1,6 +1,6 @@
 import type { BudgetHoldDetail, MonthRoom } from "../../shared/autopilot/money";
 import type { Estimate } from "../../shared/engine";
-import type { CategoryRef, SceneLevel } from "../../shared/engine/categories";
+import type { CategoryRef, LegsShare, SceneLevel } from "../../shared/engine/categories";
 import type { StoredSceneSet } from "../library/sceneSets";
 import type { Budget } from "../money/budget";
 import type { RunJobEnd } from "../runs/runJob";
@@ -23,6 +23,8 @@ export interface LaunchComposePayload {
   poses?: { profile: boolean; back: boolean };
   /** «Подача» of the draft; absent = ordinary (S5.7a). */
   level?: SceneLevel;
+  /** «Ножки» of the draft; absent = none (S5.8a). */
+  legsShare?: LegsShare;
   acceptedWorstMicros: number;
 }
 

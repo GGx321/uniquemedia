@@ -536,6 +536,77 @@ describe("scenes.compose", () => {
 
 // ---------- one open set, concurrency ----------
 
+// 5a.2c (S5.8a): «Ножки» through a real engine's scene sets: the plan holds the legs scenes, the request stores the share only when it asks for legs, the template writes every
+// scene with no request, a restart reads the same scenes back, and a request for legs with no built-in category is refused for free.
+describe("«Ножки» in a scene set (S5.8a)", () => {
+  const legsCompose = (avatarId: string, over: Record<string, unknown> = {}): unknown => composeCommand(avatarId, { count: 20, categories: ["home"], legsShare: 30, acceptedWorstMicros: 0, ...over });
+  const legsScenes = (view: SceneSetView) => view.scenes.filter((s) => s.framing === "legs");
+
+  test("a compose with legs plans the legs scenes, stores the share, and writes every scene by the template with no request", async () => {
+    const avatarId = await seedAvatar();
+    const net = sceneNetwork();
+    const { engine, events } = await engineOver(net);
+
+    const { sceneSetId, jobId } = composed(await engine.handle(legsCompose(avatarId)));
+    await jobEnd(events, jobId ?? "none");
+
+    const view = await setOf(engine, avatarId);
+    expect(legsScenes(view)).toHaveLength(6);
+    for (const scene of legsScenes(view)) {
+      expect(scene.capture, scene.place?.activity).toBeDefined();
+      expect(scene.text, scene.place?.activity).not.toBeNull();
+    }
+    expect(view.scenes.every((s) => s.text !== null)).toBe(true);
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(JSON.parse(readFileSync(setFile(avatarId, sceneSetId), "utf8")).request.legsShare).toBe(30);
+  });
+
+  test("framing and capture survive a restart: a new engine over the same library shows the same legs scenes", async () => {
+    const avatarId = await seedAvatar();
+    const first = await engineOver(sceneNetwork());
+    const { jobId } = composed(await first.engine.handle(legsCompose(avatarId)));
+    await jobEnd(first.events, jobId ?? "none");
+    const shown = (view: SceneSetView) => legsScenes(view).map((s) => [s.sceneId, s.framing, s.capture, s.place?.activity]);
+    const before = shown(await setOf(first.engine, avatarId));
+    expect(before).toHaveLength(6);
+
+    const second = await engineOver(sceneNetwork());
+    expect(shown(await setOf(second.engine, avatarId))).toEqual(before);
+  });
+
+  test("a share of 0 is the absence of one: the set stores none and holds no legs scene", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(sceneNetwork());
+
+    const { sceneSetId, jobId } = composed(await engine.handle(legsCompose(avatarId, { legsShare: 0 })));
+    await jobEnd(events, jobId ?? "none");
+
+    expect("legsShare" in JSON.parse(readFileSync(setFile(avatarId, sceneSetId), "utf8")).request).toBe(false);
+    expect(legsScenes(await setOf(engine, avatarId))).toHaveLength(0);
+  });
+
+  test("legs with only a custom category are refused for free, with the reason: nothing is priced, claimed or written", async () => {
+    const avatarId = await seedAvatar();
+    const net = sceneNetwork();
+    const { engine } = await engineOver(net);
+    const asked = { avatarId, count: 10, categories: [LLM_ONLY_REF], legsShare: 15 };
+
+    expect(refused(await engine.handle(command("scenes.estimateCompose", asked)))).toMatchObject({ code: "VALIDATION", sceneReason: "legs-built-in-only" });
+    expect(refused(await engine.handle(composeCommand(avatarId, asked)))).toMatchObject({ code: "VALIDATION", sceneReason: "legs-built-in-only" });
+
+    expect(net.calls).toEqual([]);
+    expect(setFiles(avatarId)).toEqual([]);
+    expect(readLedger()).toEqual([]);
+    await noSet(engine, avatarId);
+  });
+
+  test("a built-in category beside the custom one is enough", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await engineOver(sceneNetwork());
+    expect(estimateOf(await engine.handle(command("scenes.estimateCompose", { avatarId, count: 10, categories: ["home", LLM_ONLY_REF], legsShare: 15 }))).worstMicros).toBeGreaterThan(0);
+  });
+});
+
 describe("one open set per avatar, and one paid job per avatar", () => {
   test("a second compose while the avatar has an open set is VALIDATION, and nothing is reserved or written; after a discard it goes through", async () => {
     const avatarId = await seedAvatar();

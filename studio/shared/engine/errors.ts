@@ -345,6 +345,8 @@ const SceneIdNumber = z.number().int().min(1).max(10_000);
  * - launch-set (Stage 4): the set, or the run, belongs to a batch launch that is not finished; the launch moves it («управляйте им в «Автопилоте»»). Also the answer of `runs.resume` / `runs.cancel` on a launch's slice run.
  * - over-plan (Stage 4): at `autopilot.continueAfterReview`, the set has more active scenes than the launch planned for the avatar; adding scenes cannot raise the launch's spend.
  * - not-awaiting (Stage 4): at `autopilot.continueAfterReview`, the avatar of the launch is not waiting for the owner's review of this set.
+ * - legs-built-in-only (Stage 5, S5.8a): «Ножки» was asked for (`legsShare` above 0) with no built-in category among the request's categories; legs are drawn from the five built-ins only.
+ *   Refused for free, before anything is priced, reserved or written (`runs.estimate`, `runs.start`, `scenes.estimateCompose`, `scenes.compose`).
  * - slot-text-problem (Stage 5, S5.6d): not a refusal of a command. The run ended ONE slot, free, because its sentence broke today's youth or revealing word rules at the
  *   assembler (the last gate before an image is paid for); it travels as that slot's end error. It names no scene (a run's slot is not a scene of a set).
  */
@@ -370,6 +372,7 @@ export const SCENE_REASONS = [
   "over-plan",
   "not-awaiting",
   "slot-text-problem",
+  "legs-built-in-only",
 ] as const;
 export const SceneReason = z.enum(SCENE_REASONS);
 export type SceneReason = z.infer<typeof SceneReason>;
@@ -387,8 +390,9 @@ export const SCENE_REASONS_NAMING_A_SCENE = ["scene-text-problem", "scene-withou
  * - usage-unknown: which photos of an avatar are in a video cannot be trusted right now, so nothing can be taken from its library.
  * - launch-unreadable: a launch file cannot be read and may describe an active launch; the owner removes the entry first (`autopilot.removeUnreadable`).
  * - nothing-enabled: both «Сначала свободные фото» and «Догенерировать» are off, so there is nothing to make.
+ * - legs-built-in-only (Stage 5, S5.8a): «Ножки» was asked for with no built-in category among the launch's categories (`autopilot.estimate`, `autopilot.start`).
  */
-export const LAUNCH_REASONS = ["open-set", "too-many-photos", "usage-unknown", "launch-unreadable", "nothing-enabled"] as const;
+export const LAUNCH_REASONS = ["open-set", "too-many-photos", "usage-unknown", "launch-unreadable", "nothing-enabled", "legs-built-in-only"] as const;
 export const LaunchReason = z.enum(LAUNCH_REASONS);
 export type LaunchReason = z.infer<typeof LaunchReason>;
 

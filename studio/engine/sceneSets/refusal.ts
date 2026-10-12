@@ -1,4 +1,4 @@
-import type { SceneReason } from "../../shared/engine";
+import { legsNeedsBuiltIn, type SceneReason } from "../../shared/engine";
 import { EngineFailure } from "../engineFailure";
 
 // CS.7: a scene-set command's own VALIDATION always says why, as a closed code (`EngineError.sceneReason`) and, when the refusal is about one scene, which
@@ -7,6 +7,14 @@ import { EngineFailure } from "../engineFailure";
 /** The `sceneReason` (and `sceneId`, when there is one) of a refusal, ready to spread into an EngineError. */
 export function reasonFields(sceneReason: SceneReason, sceneId?: number): { sceneReason: SceneReason; sceneId?: number } {
   return sceneId === undefined ? { sceneReason } : { sceneReason, sceneId };
+}
+
+/**
+ * «Ножки» (S5.8a, I5.29): legs are drawn from the built-in banks only. A request that asks for a share above 0 and names no built-in category is refused, for free and
+ * before anything is priced, reserved or written, with `legs-built-in-only`.
+ */
+export function assertLegsFit(request: { categories: readonly string[]; legsShare?: number | undefined }): void {
+  if (legsNeedsBuiltIn(request)) throw sceneRefusal("«Ножки» are drawn from the built-in categories only; the request names none", "legs-built-in-only");
 }
 
 /** A VALIDATION that names its reason. */

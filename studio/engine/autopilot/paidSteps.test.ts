@@ -924,4 +924,19 @@ describe("the compose a launch sends (S5.7a, S5.7b)", () => {
   test("a draft without poses sends none", async () => {
     expect("poses" in (await composeSentFor({ poses: undefined }))).toBe(false);
   });
+
+  // S5.8a: the draft's «Ножки» rides on the compose like its «Подача», and only when it asks for legs.
+  test.each([15, 30] as const)("a draft with a legs share of %i composes with it", async (legsShare) => {
+    expect((await composeSentFor({ legsShare })).legsShare).toBe(legsShare);
+  });
+
+  test("a draft with no legs share, or a share of 0, composes with none", async () => {
+    expect("legsShare" in (await composeSentFor({}))).toBe(false);
+    expect("legsShare" in (await composeSentFor({ legsShare: 0 }))).toBe(false);
+  });
+
+  test("a flirty draft with legs sends both", async () => {
+    const sent = await composeSentFor({ level: "flirty", legsShare: 15 });
+    expect([sent.level, sent.legsShare]).toEqual(["flirty", 15]);
+  });
 });

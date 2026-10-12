@@ -94,13 +94,15 @@ interface SeedOptions {
   records?: Record<string, unknown>[];
   poses?: { profile: boolean; back: boolean };
   count?: number;
+  /** «Ножки» (S5.8a): the share the set was planned with (built-in scenes only). */
+  legsShare?: 15 | 30;
   extra?: Record<string, unknown>;
 }
 
 /** A set as earlier writes left it: four written planned scenes, maybe an own one, and the records of the writes that are not resolved. */
 async function seedReview(avatarId: string, options: SeedOptions = {}): Promise<string> {
   const { library } = await openLibrary(libraryDir(), { now: steppingClock("2026-09-01T10:00:00.000Z"), newId: sequentialIds(`seedset${++seeded}`) });
-  const seedOptions = { sceneSetId: SET, avatarId, runId: RUN, count: options.count ?? 4, written: options.count ?? 4 };
+  const seedOptions = { sceneSetId: SET, avatarId, runId: RUN, count: options.count ?? 4, written: options.count ?? 4, ...(options.legsShare === undefined ? {} : { legsShare: options.legsShare }) };
   const base = options.builtIn === true ? sampleSet(seedOptions) : llmOnlySet(seedOptions);
   const planned = base.scenes.map((s) => ({ ...s, text: OLD, ...(options.custom === true && s.sceneId <= 2 ? { slot: { ...s.slot, ...CAFE } } : {}) }));
   const scenes = options.own === true ? [...planned, ownScene(5, { idea: "кофе на балконе утром", text: "Typed by hand, not the idea.", edited: true, shot: "selfie", pose: "front" })] : planned;
@@ -1445,6 +1447,35 @@ describe("m1 on a built-in category (wave 5b)", () => {
     expect(scene.text).toContain(scene.slot.activity);
     expect(after.scenes.filter((s) => s.sceneId !== 2)).toEqual(before.filter((s) => s.sceneId !== 2));
     expect(await setOf(engine, avatarId)).toMatchObject({ status: "ready", write: null, spentMicros: 0 });
+  });
+});
+
+// 5a.2c (S5.8a): a legs scene is redrawn for free by the template and stays a legs scene.
+describe("a redraw of a legs scene (S5.8a)", () => {
+  test("a free redraw of a legs scene gives another legs scene: the framing stays, the capture comes with the new moment, and no request is sent", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId, { builtIn: true, count: 10, legsShare: 30 });
+    const net = sceneNetwork();
+    const { engine, events } = await engineOver(net);
+    const before = fileOf(avatarId).scenes as { sceneId: number; slot: PlanSlot }[];
+    const legs = before.filter((s) => s.slot.framing === "legs");
+    expect(legs.length).toBe(3);
+    const target = legs[0];
+    if (target === undefined) throw new Error("the sample plans legs scenes");
+
+    const end = await writeAndWait(engine, events, avatarId, rewrite([target.sceneId]));
+
+    expect(end).toMatchObject({ type: "job.done" });
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(readLedger()).toEqual([]);
+    const after = fileOf(avatarId).scenes as { sceneId: number; slot: PlanSlot; text: string }[];
+    const scene = after.find((s) => s.sceneId === target.sceneId);
+    expect(scene?.slot.framing).toBe("legs");
+    expect(scene?.slot.capture).toBeDefined();
+    expect(scene?.text).toContain(scene?.slot.activity ?? "never");
+    expect(after.filter((s) => s.sceneId !== target.sceneId)).toEqual(before.filter((s) => s.sceneId !== target.sceneId).map((s) => ({ ...s, text: OLD })));
+    const view = await setOf(engine, avatarId);
+    expect(view.scenes.find((s) => s.sceneId === target.sceneId)?.framing).toBe("legs");
   });
 });
 

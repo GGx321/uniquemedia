@@ -9,7 +9,7 @@ import {
   type LaunchPreview,
   type LaunchView,
 } from "../../shared/engine/autopilot";
-import { isCustomCategory, type CategoryPoses, type CategoryRef } from "../../shared/engine/categories";
+import { isCustomCategory, legsNeedsBuiltIn, type CategoryPoses, type CategoryRef } from "../../shared/engine/categories";
 import type { CoversOf } from "../../shared/scenes/writerBound";
 import { EngineFailure } from "../engineFailure";
 import type { Library } from "../library";
@@ -87,6 +87,7 @@ export class AutopilotCommands {
   }
 
   async estimate(input: LaunchDraftInput): Promise<LaunchPreview> {
+    this.#assertLegsFit(input);
     const library = await this.#d.liveLibrary();
     const planned = await this.#plan(library, this.#withSeed(input));
     const blockers = await this.#launchBlockers(planned);
@@ -115,7 +116,13 @@ export class AutopilotCommands {
     });
   }
 
+  /** «Ножки» (S5.8a, I5.29) with no built-in category among the launch's categories: refused for free, before the library is read or anything is planned. */
+  #assertLegsFit(draft: { categories: readonly string[]; legsShare?: number | undefined }): void {
+    if (legsNeedsBuiltIn(draft)) throw new EngineFailure({ code: "VALIDATION", launchReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the launch names none" });
+  }
+
   async start(input: { draft: LaunchDraft; acceptedWorstMicros: number }): Promise<LaunchView> {
+    this.#assertLegsFit(input.draft);
     const library = await this.#d.liveLibrary();
     const planned = await this.#plan(library, input.draft);
     const { plan, estimate } = planned;

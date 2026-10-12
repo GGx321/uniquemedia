@@ -3,6 +3,7 @@ import {
   splitCount,
   type CategoryRef,
   type EngineError,
+  type LegsShare,
   type SceneLevel,
   type Estimate,
   type SceneSetView,
@@ -37,7 +38,7 @@ import type { LaunchRegistry } from "./launchRegistry";
 import { composeEstimate, reviewWriteEstimate, sceneSetPriceModels, writeEstimate } from "./estimate";
 import { beginWrite, withChunkGivenUp, withChunkWritten, withOutcome, withWriteFinished, withWriteStopped } from "./mutations";
 import { planReviewWrite, type ReviewPlan } from "./reviewPlan";
-import { sceneRefusal } from "./refusal";
+import { assertLegsFit, sceneRefusal } from "./refusal";
 import { withReviewWriteAccepted, withReviewWriteClosed, withReviewWriteStopped } from "./reviewMutations";
 import { runReviewWrite, type ReviewWriteEnd } from "./reviewWriteJob";
 import { reviewWritesOf } from "./reviewWrites";
@@ -246,7 +247,9 @@ export class SceneSetService {
   }
 
   /** What composing `count` scenes could cost; NOT_FOUND for an avatar that cannot get photos or a custom category the library lacks, before any price is fetched. */
-  async estimateCompose(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; split?: readonly { ref: CategoryRef; count: number }[] }): Promise<Estimate> {
+  async estimateCompose(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; legsShare?: LegsShare; split?: readonly { ref: CategoryRef; count: number }[] }): Promise<Estimate> {
+    // S5.8a: «Ножки» with no built-in category is refused first, for free.
+    assertLegsFit(request);
     const library = this.#deps.currentLibrary();
     this.#deps.runnableAvatar(library, request.avatarId);
     const custom = await this.#deps.customCategories(library, request.categories);
@@ -393,10 +396,12 @@ export class SceneSetService {
    * start minus the image side (no master, no gates: nothing visual is paid yet). Count 0 is an empty set and costs nothing: no key, no job.
    */
   async compose(
-    payload: { avatarId: string; count: number; categories: readonly CategoryRef[]; poses?: { profile: boolean; back: boolean }; level?: SceneLevel; acceptedWorstMicros: number },
+    payload: { avatarId: string; count: number; categories: readonly CategoryRef[]; poses?: { profile: boolean; back: boolean }; level?: SceneLevel; legsShare?: LegsShare; acceptedWorstMicros: number },
     launch?: LaunchComposeOptions,
   ): Promise<{ sceneSetId: string; jobId: string | null }> {
-    const { avatarId, count, categories, poses, level } = payload;
+    // S5.8a: «Ножки» with no built-in category is refused first, for free, before the avatar is claimed.
+    assertLegsFit(payload);
+    const { avatarId, count, categories, poses, level, legsShare } = payload;
     const free = count === 0;
     const deps = this.#deps;
     if (launch !== undefined) {
@@ -474,6 +479,7 @@ export class SceneSetService {
         categories,
         ...(poses === undefined ? {} : { poses }),
         ...(level === undefined ? {} : { level }),
+        ...(legsShare === undefined ? {} : { legsShare }),
         pools: { ...POOLS, ...Object.fromEntries(custom.map((c): [string, Pool] => [c.categoryId, poolOf(c.pool)])) },
         snapshots: custom.map(snapshotOf),
         recentPairs: recent,

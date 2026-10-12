@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { CategoryRef, CategorySnapshot, SceneLevel } from "../../shared/engine";
+import type { CategoryRef, CategorySnapshot, LegsShare, SceneLevel } from "../../shared/engine";
 import type { PlannedNewSceneSet } from "../library/sceneSets";
 import { writerAttemptIds } from "../runs/plan";
 import { planWithPools, plannerCategoryOf, type Pool } from "../scenes";
@@ -21,6 +21,8 @@ export interface ComposeInput {
   poses?: { profile: boolean; back: boolean };
   /** «Подача» (S5.7a), stored on the request; the planner draws its mix (S5.7b). */
   level?: SceneLevel;
+  /** «Ножки» (S5.8a), stored on the request only when it asks for legs (I5.27); the planner draws the legs slots. */
+  legsShare?: LegsShare;
   /** Every pool the categories name, by planner name or custom id. */
   pools: Record<string, Pool>;
   /** A snapshot of every custom category the set uses (none for a built-in-only set). */
@@ -41,6 +43,7 @@ export function seedOfSet(sceneSetId: string): number {
 
 /** The set a compose writes before its first call. Count 0 is an empty set: no scene, no chunk, no write, nothing to pay. */
 export function planSceneSet(input: ComposeInput): PlannedNewSceneSet {
+  const legsAsked = input.legsShare !== undefined && input.legsShare > 0;
   const slots =
     input.count === 0
       ? []
@@ -51,6 +54,7 @@ export function planSceneSet(input: ComposeInput): PlannedNewSceneSet {
             categories: input.categories.map(plannerCategoryOf),
             excludePairs: input.recentPairs.map(({ location, outfit, activity }) => ({ location, outfit, activity })),
             ...(input.level === undefined ? {} : { level: input.level }),
+            ...(legsAsked ? { legsShare: input.legsShare } : {}),
             ...(input.split === undefined ? {} : { split: input.split }),
           },
           input.pools,
@@ -59,7 +63,7 @@ export function planSceneSet(input: ComposeInput): PlannedNewSceneSet {
     sceneSetId: input.sceneSetId,
     avatarId: input.avatarId,
     runId: input.runId,
-    request: { count: input.count, categories: [...input.categories], ...(input.poses === undefined ? {} : { poses: { ...input.poses } }), ...(input.level === undefined ? {} : { level: input.level }) },
+    request: { count: input.count, categories: [...input.categories], ...(input.poses === undefined ? {} : { poses: { ...input.poses } }), ...(input.level === undefined ? {} : { level: input.level }), ...(legsAsked ? { legsShare: input.legsShare } : {}) },
     // Omitted, not empty, for a built-in-only set: the same rule as a built-in run's plan.json.
     ...(input.snapshots.length === 0 ? {} : { categories: [...input.snapshots] }),
     models: { text: input.textModel },
