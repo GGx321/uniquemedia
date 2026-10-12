@@ -17,6 +17,19 @@ export function atOrBelow(item: Level | undefined, slot: Level): boolean {
   return LEVEL_RANK[item ?? "ordinary"] <= LEVEL_RANK[slot];
 }
 
+/**
+ * 5a.3 (S5.9c, plan s5a3 §7.2): the items a slot at `slot` draws from. Never one above its level (a hard filter); among the rest the slot's own level is preferred, so it takes the
+ * items of the highest level at or below its own that has any. A list with no level on any item (the five ordinary banks') comes back whole and in its order, which is what keeps
+ * their plans byte for byte what they were.
+ */
+export function atSlotLevel<T>(items: readonly T[], levelOf: (item: T) => Level | undefined, slot: Level): readonly T[] {
+  for (let rank = LEVEL_RANK[slot]; rank >= 0; rank--) {
+    const here = items.filter((item) => LEVEL_RANK[levelOf(item) ?? "ordinary"] === rank);
+    if (here.length > 0) return here;
+  }
+  return [];
+}
+
 /** The legwear a slot of one level draws from: the items, the share of the slots that wear any, and (the «Смелая» stockings) the outfits they go with and their route. */
 export interface LegwearAt {
   items: readonly string[];
@@ -104,4 +117,12 @@ export function apportionLegs(total: number, counts: readonly number[], tieOrder
     left--;
   }
   return parts;
+}
+
+/**
+ * 5a.3 (S5.9c, I5.38): whether a slot is drawn on Seedream. It is exactly when one of the items it drew is: the moment, the outfit or the bold stockings (their route is passed in only
+ * when the slot wears them). Absent: the owner's image model.
+ */
+export function seedreamRoute(moment: { route?: "seedream" | undefined }, outfit: { route?: "seedream" | undefined } | undefined, stockings?: "seedream" | undefined): "seedream" | undefined {
+  return moment.route === "seedream" || outfit?.route === "seedream" || stockings === "seedream" ? "seedream" : undefined;
 }

@@ -1,9 +1,9 @@
-import { orderCategories, splitCount, type CategoryRef, type LegsShare, type SceneLevel } from "../../shared/engine";
+import { isBoldCategory, orderCategories, splitCount, type CategoryRef, type LegsShare, type SceneLevel } from "../../shared/engine";
 import { categoryRefOf, plannerCategoryOf } from "./categories";
 import type { PlannerCategory, Shot } from "./types";
-import type { Level, Outfit } from "../../shared/scenes/banks/types";
+import type { LegwearSlot, Level, Outfit } from "../../shared/scenes/banks/types";
 import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "../../shared/scenes/captures";
-import { apportionLegs, drawLevelOf, flirtyCountOf, legsCountOf } from "../../shared/scenes/level";
+import { apportionLegs, atSlotLevel, drawLevelOf, flirtyCountOf, legsCountOf, legwearAt, levelCountsOf, seedreamRoute } from "../../shared/scenes/level";
 import { legwearFits } from "../../shared/scenes/template";
 import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
 import { hasLegs, legsCapturesAt, legsMomentsAt, legsOutfitsOf, legsPlacesOf } from "./legs";
@@ -243,6 +243,12 @@ interface BuiltInStreams {
   angleRng: Rng;
   /** `away:${category}`: whether a slot that could face away is one of the plan's wanted away slots. One draw per slot. */
   awayRng: Rng;
+  /** `bold:${category}` (5a.3): which slots of a «Смелая» category are bold. Never read by a plan that is not «Смелая». */
+  boldRng: Rng;
+  /** `boldOutfit:${category}` (5a.3): a bold slot's outfit, from its pinned ones or its own bag. */
+  boldOutfitRng: Rng;
+  /** `boldLegwear:${category}` (5a.3): whether a bold slot wears stockings, and which. Two draws per bold slot, as `legRng` makes two per slot. */
+  boldLegRng: Rng;
   /** `legs:${category}` (S5.8a): which slots are legs slots, then every draw of a legs slot (its place, moment, capture, outfit, time and legwear). Never read by a plan without legs. */
   legsRng: Rng;
   /**
@@ -274,6 +280,32 @@ function leastUsed<T>(items: readonly T[], usage: (item: T) => number, preferenc
   return rngPick(rng, candidates);
 }
 
+/** What a slot's legwear draw came to: the item (if it wears one), whether it is one of the bold stockings, and their route. */
+interface LegwearDraw {
+  legwear: string | undefined;
+  stockings: boolean;
+  route: "seedream" | undefined;
+}
+
+/**
+ * The legwear draw of a slot (I5.29, 5a.3): always two draws on `rng`, so the stream does not depend on who may wear it. A slot reads the list of its level (`legwearAt`): a bold slot the
+ * bank's bold stockings, which only the outfits they name wear; every other slot the bank's own list. The five have no bold list, so their draws are what they always were.
+ */
+function legwearOfSlot(legwear: LegwearSlot | undefined, level: Level, rng: Rng, moment: Pick<Activity, "text" | "noLegwear">, meta: Outfit | undefined, outfit: string): LegwearDraw {
+  const list = legwearAt(legwear, level);
+  const roll = rng();
+  const item = list === undefined ? undefined : rngPick(rng, list.items);
+  const wears = list !== undefined && meta !== undefined && legwearFits(moment, meta) && (list.outfits?.includes(outfit) ?? true) && roll < list.share;
+  return { legwear: wears ? item : undefined, stockings: wears && list?.outfits !== undefined, route: wears ? list?.route : undefined };
+}
+
+/** The outfits a moment pins that a slot of this level may wear, its own level preferred. A moment that pins only outfits above the slot's level is a defect of the bank (the bold-levels rule), never a slot. */
+function pinnedAt(pinned: readonly string[], levelOf: (text: string) => Level | undefined, level: Level, moment: string): readonly string[] {
+  const list = atSlotLevel(pinned, levelOf, level);
+  if (list.length === 0) throw new RangeError(`«${moment}» pins no outfit a ${level} slot may wear`);
+  return list;
+}
+
 /**
  * Plans one built-in category's `n` slots (plan r1.5 §5.2). Per slot: the capture, from the category's deck (exact Bag cycles, I5.32); the pose; a place that has
  * a fitting moment, the least-used of them; the least-used fitting moment at that place; the outfit, the moment's pinned outfits first (after the owner's denim rule),
@@ -295,7 +327,25 @@ function planBuiltIn(
   const kind = kindOfDeck(pool.captureDeck);
   const info: readonly Outfit[] = outfitInfoOf(pool);
   const general = generalOutfits(pool);
-  const outfitBag = new Bag(general, streams.rng);
+  const levelOfOutfit = (text: string): Level | undefined => info.find((o) => o.text === text)?.level;
+  // 5a.3: the general outfits a slot of each level draws from (never above its level, its own level preferred). A list is shuffled in a bag of its own on the stream the slot draws on;
+  // the levels that read the same list share one bag, so a bank with no outfit level (the five) keeps its one bag and its plans do not move.
+  const bagsOn = (rng: Rng, list: (level: Level) => readonly string[]): ((level: Level) => { bag: Bag<string>; size: number }) => {
+    const bags = new Map<string, Bag<string>>();
+    return (level) => {
+      const items = list(level);
+      const key = items.join("\u0000");
+      let bag = bags.get(key);
+      if (bag === undefined) {
+        bag = new Bag(items, rng);
+        bags.set(key, bag);
+      }
+      return { bag, size: items.length };
+    };
+  };
+  const generalFor = (level: Level): readonly string[] => atSlotLevel(general, levelOfOutfit, level);
+  const outfitBags = bagsOn(streams.rng, generalFor);
+  const boldOutfitBags = bagsOn(streams.boldOutfitRng, generalFor);
   const placeUses = new Map<string, number>();
   const momentUses = new Map<string, number>();
 
@@ -303,13 +353,15 @@ function planBuiltIn(
   // the deck, the pose, the away and the legwear streams run over the other slots as if the legs slots were not there.
   const legsAt = new Set(legsCount === 0 ? [] : shuffle(streams.legsRng, Array.from({ length: n }, (_, i) => i)).slice(0, legsCount));
   const legsOutfitList = legsOutfitsOf(pool);
-  const legsOutfitBag = legsCount === 0 ? null : new Bag(legsOutfitList, streams.legsRng);
+  const legsFor = (level: Level): readonly string[] => atSlotLevel(legsOutfitList, levelOfOutfit, level);
+  const legsBags = bagsOn(streams.legsRng, legsFor);
+  const boldLegsBags = bagsOn(streams.boldOutfitRng, legsFor);
   // The legs slots balance among themselves (S5.8a review): the places and moments the other slots used say nothing about which legs moment a legs slot has not shown yet, so a plan's
   // legs slots go round the legs moments instead of repeating one.
   const legsPlaceUses = new Map<string, number>();
   const legsMomentUses = new Map<string, number>();
   // «Кокетливая» deals the very captures the ordinary plan deals (`ordinaryCaptures`), so the flirty slots are chosen by the frames before any moment is drawn.
-  const dealt = level === "flirty" ? streams.ordinaryCaptures() : null;
+  const dealt = level === "flirty" || level === "bold" ? streams.ordinaryCaptures() : null;
   const dealtAt = new Map<number, Capture>();
   dealt?.forEach((capture, i) => {
     if (capture !== null) dealtAt.set(i, capture);
@@ -319,13 +371,17 @@ function planBuiltIn(
   // that show her face first (S5.8a, the S5.7R carry-over): a frame whose face is hidden (the phone over it, her legs) gets no flirty gaze, cue or moment, so it takes a flirty slot
   // only when the frames that show her face are not enough. Within each group the order is the stream's own shuffle.
   const flirtyAt = new Set<number>();
-  if (level === "flirty") {
-    const order = shuffle(streams.levelRng, Array.from({ length: n }, (_, i) => i));
+  const boldAt = new Set<number>();
+  if (level === "flirty" || level === "bold") {
     const shows = (i: number): boolean => {
       const capture = dealtAt.get(i);
       return capture !== undefined && faceVisibleOf({ capture, pose: "front" }) === "yes";
     };
-    for (const i of [...order.filter(shows), ...order.filter((i) => !shows(i))].slice(0, flirtyCountOf(n, level))) flirtyAt.add(i);
+    // «Смелая» (5a.3, I5.36): the bold slots come first, drawn uniformly over the category on `bold:` (legs and face-hidden frames included); the flirty ones are then chosen from the rest as above.
+    const counts = level === "bold" ? levelCountsOf(n) : { bold: 0, flirty: flirtyCountOf(n, level), ordinary: 0 };
+    if (level === "bold") for (const i of shuffle(streams.boldRng, Array.from({ length: n }, (_, k) => k)).slice(0, counts.bold)) boldAt.add(i);
+    const order = shuffle(streams.levelRng, Array.from({ length: n }, (_, i) => i)).filter((i) => !boldAt.has(i));
+    for (const i of [...order.filter(shows), ...order.filter((i) => !shows(i))].slice(0, counts.flirty)) flirtyAt.add(i);
   }
 
   // The angle comes from the scene (I5.26): at most ⌊n/5⌋ away (profile or back) slots in a built-in category.
@@ -335,14 +391,19 @@ function planBuiltIn(
   // WANTS ⌈n/10⌉ away slots (within the cap), and a slot whose capture can face away rolls on `away:${category}` whether it is one of them. The roll's odds rise as the
   // slots that could still be away run out, so the wanted ones land anywhere in the run and are met whenever the deck allows.
   const awayWanted = Math.min(Math.ceil(n / 10), awayCap);
-  const canFaceAway = (capture: Capture): boolean => pool.locations.some((p) => fittingMoments(p, capture, "front", "flirty").some((m) => isAwayAngle(m.angle)));
+  // The deck can face away at the boldest level the plan draws at.
+  const awayLevel: Level = level === "bold" ? "bold" : "flirty";
+  const canFaceAway = (capture: Capture): boolean => pool.locations.some((p) => fittingMoments(p, capture, "front", awayLevel).some((m) => isAwayAngle(m.angle)));
   const selfShot = kind === "self";
   const awayShareOfDeck = pool.captureDeck.filter(canFaceAway).length / pool.captureDeck.length;
 
   const slots: PlanSlot[] = [];
   for (let i = 0; i < n; i++) {
-    const slotLevel: Level = flirtyAt.has(i) ? "flirty" : "ordinary";
-    if (legsAt.has(i) && legsOutfitBag !== null) {
+    const slotLevel: Level = boldAt.has(i) ? "bold" : flirtyAt.has(i) ? "flirty" : "ordinary";
+    // A bold slot draws its outfit and its stockings on streams of its own (5a.3); every other slot on the category's, as it always did.
+    const bold = slotLevel === "bold";
+    const outfitRng = bold ? streams.boldOutfitRng : streams.rng;
+    if (legsAt.has(i)) {
       // A legs slot: the least-used legs moment among the legs moments of the places that have one (a place with more of them is drawn more often, and a plan's legs slots go round them
       // before any repeats), its capture, then the outfit (the moment's pins first), the time and the legwear.
       const legsRng = streams.legsRng;
@@ -354,20 +415,20 @@ function planBuiltIn(
       momentUses.set(momentKey(place.name, moment.text), (momentUses.get(momentKey(place.name, moment.text)) ?? 0) + 1);
       legsPlaceUses.set(place.name, (legsPlaceUses.get(place.name) ?? 0) + 1);
       legsMomentUses.set(momentKey(place.name, moment.text), (legsMomentUses.get(momentKey(place.name, moment.text)) ?? 0) + 1);
-      const pinned = pinnedOutfitsOf(moment);
+      const pinnedAll = pinnedOutfitsOf(moment);
       let outfit: string;
-      if (pinned.length > 0) {
+      if (pinnedAll.length > 0) {
+        const pinned = pinnedAt(pinnedAll, levelOfOutfit, slotLevel, moment.text);
         const unseen = pinned.filter((o) => !excluded.has(pairKey(place.name, o)));
-        outfit = rngPick(legsRng, unseen.length > 0 ? unseen : pinned);
+        outfit = rngPick(bold ? streams.boldOutfitRng : legsRng, unseen.length > 0 ? unseen : pinned);
       } else {
-        outfit = legsOutfitBag.next();
-        for (let attempt = 0; excluded.size > 0 && excluded.has(pairKey(place.name, outfit)) && attempt < legsOutfitList.length - 1; attempt++) outfit = legsOutfitBag.next();
+        const { bag, size } = (bold ? boldLegsBags : legsBags)(slotLevel);
+        outfit = bag.next();
+        for (let attempt = 0; excluded.size > 0 && excluded.has(pairKey(place.name, outfit)) && attempt < size - 1; attempt++) outfit = bag.next();
       }
       const repeatedPair = excluded.size > 0 && excluded.has(pairKey(place.name, outfit));
-      const roll = legsRng();
-      const item = pool.legwear === undefined ? undefined : rngPick(legsRng, pool.legwear.items);
-      const meta = info.find((o) => o.text === outfit);
-      const legwear = pool.legwear !== undefined && meta !== undefined && legwearFits(moment, meta) && roll < pool.legwear.share ? item : undefined;
+      const wear = legwearOfSlot(pool.legwear, slotLevel, bold ? streams.boldLegRng : legsRng, moment, info.find((o) => o.text === outfit), outfit);
+      const route = seedreamRoute(moment, info.find((o) => o.text === outfit), wear.stockings ? wear.route : undefined);
       const slotIndex = startIndex + i;
       slots.push({
         slotIndex,
@@ -381,9 +442,10 @@ function planBuiltIn(
         attemptIdBase: `slot-${slotIndex}`,
         repeatedPair,
         ...(capture === captureOfShot(shotOf(capture)) ? {} : { capture }),
-        ...(legwear === undefined ? {} : { legwear }),
+        ...(wear.legwear === undefined ? {} : { legwear: wear.legwear }),
         framing: "legs" as const,
-        ...(slotLevel === "flirty" ? { level: slotLevel } : {}),
+        ...(slotLevel === "ordinary" ? {} : { level: slotLevel }),
+        ...(route === undefined ? {} : { route }),
       });
       continue;
     }
@@ -395,17 +457,18 @@ function planBuiltIn(
     const { capture, pose } = settled;
     const stepped = capture !== drawnCapture || pose !== drawnPose;
     const tieRng = stepped ? streams.fixRng : streams.fitRng;
-    const isFlirty = (m: Activity): boolean => m.level === "flirty";
+    // The slot's own level among equals (5a.3): a flirty slot goes where a flirty moment fits and takes one, a bold slot a bold one.
+    const isOwnLevel = (m: Activity): boolean => m.level === slotLevel;
     // A flirty slot where her face shows never turns its back to the camera (a back view has no face for a flirty gaze or cue), unless the place has no other moment that fits.
     const fits = (at: Place): readonly Activity[] => {
       const all = fittingMoments(at, capture, pose, slotLevel);
-      if (slotLevel !== "flirty") return all;
+      if (slotLevel === "ordinary") return all;
       const facing = all.filter((m) => m.angle !== "back");
       return facing.length > 0 ? facing : all;
     };
     const hasFreshMoment = (place: Place): boolean => fits(place).some((m) => !recent.has(momentKey(place.name, m.text)));
     // A flirty slot, among equals, goes where a flirty moment fits and takes one.
-    const hasFlirtyMoment = (place: Place): boolean => fits(place).some(isFlirty);
+    const hasOwnLevelMoment = (place: Place): boolean => fits(place).some(isOwnLevel);
     const isAway = (m: Activity): boolean => isAwayAngle(m.angle);
     const awayPlaces = settled.places.filter((p) => fits(p).some(isAway));
     const awayRoll = streams.awayRng();
@@ -418,10 +481,10 @@ function planBuiltIn(
     const placeUsage = (p: Place): number => placeUses.get(p.name) ?? 0;
     // A wanted away slot goes, among the least-used places, to one with an away moment; when none of them has one it goes to the least-used place that does.
     const hasAwayMoment = (p: Place): boolean => awayPlaces.includes(p);
-    const placePreferences = [...(wantsAway ? [hasAwayMoment] : []), hasFreshMoment, ...(slotLevel === "flirty" ? [hasFlirtyMoment] : [])];
+    const placePreferences = [...(wantsAway ? [hasAwayMoment] : []), hasFreshMoment, ...(slotLevel !== "ordinary" ? [hasOwnLevelMoment] : [])];
     let place = leastUsed(settled.places, placeUsage, placePreferences, tieRng);
     if (wantsAway && !hasAwayMoment(place)) place = leastUsed(awayPlaces, placeUsage, [hasFreshMoment], tieRng);
-    const momentPreferences = (at: Place): ((m: Activity) => boolean)[] => [(m) => !recent.has(momentKey(at.name, m.text)), ...(slotLevel === "flirty" ? [isFlirty] : [])];
+    const momentPreferences = (at: Place): ((m: Activity) => boolean)[] => [(m) => !recent.has(momentKey(at.name, m.text)), ...(slotLevel !== "ordinary" ? [isOwnLevel] : [])];
     const momentsAt = (at: Place): readonly Activity[] => {
       const fitting = fits(at);
       if (wantsAway) return fitting.filter(isAway);
@@ -444,22 +507,23 @@ function planBuiltIn(
     placeUses.set(place.name, (placeUses.get(place.name) ?? 0) + 1);
     momentUses.set(momentKey(place.name, moment.text), (momentUses.get(momentKey(place.name, moment.text)) ?? 0) + 1);
 
-    const pinned = pinnedOutfitsOf(moment);
+    const pinnedAll = pinnedOutfitsOf(moment);
     let outfit: string;
-    if (pinned.length > 0) {
+    if (pinnedAll.length > 0) {
+      const pinned = pinnedAt(pinnedAll, levelOfOutfit, slotLevel, moment.text);
       const fresh = pinned.filter((o) => !excluded.has(pairKey(place.name, o)));
-      outfit = rngPick(streams.rng, fresh.length > 0 ? fresh : pinned);
+      outfit = rngPick(outfitRng, fresh.length > 0 ? fresh : pinned);
     } else {
-      outfit = outfitBag.next();
-      for (let attempt = 0; excluded.size > 0 && excluded.has(pairKey(place.name, outfit)) && attempt < general.length - 1; attempt++) outfit = outfitBag.next();
+      const { bag, size } = (bold ? boldOutfitBags : outfitBags)(slotLevel);
+      outfit = bag.next();
+      for (let attempt = 0; excluded.size > 0 && excluded.has(pairKey(place.name, outfit)) && attempt < size - 1; attempt++) outfit = bag.next();
     }
     const repeatedPair = excluded.size > 0 && excluded.has(pairKey(place.name, outfit));
 
     // The legwear slot: always two draws, so the stream does not depend on who may wear it.
-    const roll = streams.legRng();
-    const item = pool.legwear === undefined ? undefined : rngPick(streams.legRng, pool.legwear.items);
     const meta = info.find((o) => o.text === outfit);
-    const legwear = pool.legwear !== undefined && meta !== undefined && legwearFits(moment, meta) && roll < pool.legwear.share ? item : undefined;
+    const wear = legwearOfSlot(pool.legwear, slotLevel, bold ? streams.boldLegRng : streams.legRng, moment, meta, outfit);
+    const route = seedreamRoute(moment, meta, wear.stockings ? wear.route : undefined);
 
     const slotIndex = startIndex + i;
     slots.push({
@@ -475,9 +539,11 @@ function planBuiltIn(
       repeatedPair,
       // I5.27: a capture is written only when it says more than the stored shot does.
       ...(capture === captureOfShot(shotOf(capture)) ? {} : { capture }),
-      ...(legwear === undefined ? {} : { legwear }),
+      ...(wear.legwear === undefined ? {} : { legwear: wear.legwear }),
       // I5.27: a level is written only when it differs from the default.
-      ...(slotLevel === "flirty" ? { level: slotLevel } : {}),
+      ...(slotLevel === "ordinary" ? {} : { level: slotLevel }),
+      // 5a.3 (I5.38): the Seedream route, exactly when the slot drew a Seedream item.
+      ...(route === undefined ? {} : { route }),
     });
   }
   return slots;
@@ -531,6 +597,8 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
     if (pool.captureDeck !== undefined) {
       const builtInPool = { ...pool, captureDeck: pool.captureDeck };
       const legs = legsParts[entry] ?? 0;
+      // 5a.3 (S5.9c): under «Смелая» a «Смелая» category draws the mix; every other category draws as drawLevelOf says (the five as «Кокетливая»).
+      const categoryLevel: Level = input.level === "bold" && isBoldCategory(category) ? "bold" : level;
       const first = nextIndex;
       const streamsFor = (): BuiltInStreams => ({
         rng: makeRng(categorySeed(seed, category)),
@@ -538,13 +606,16 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
         fixRng: makeRng(subSeed(seed, `clean:${category}`)),
         fitRng: makeRng(subSeed(seed, `fit:${category}`)),
         legRng: makeRng(subSeed(seed, `legwear:${category}`)),
+        boldRng: makeRng(subSeed(seed, `bold:${category}`)),
+        boldOutfitRng: makeRng(subSeed(seed, `boldOutfit:${category}`)),
+        boldLegRng: makeRng(subSeed(seed, `boldLegwear:${category}`)),
         levelRng: makeRng(subSeed(seed, `level:${category}`)),
         angleRng: makeRng(subSeed(seed, `angle:${category}`)),
         awayRng: makeRng(subSeed(seed, `away:${category}`)),
         legsRng: makeRng(subSeed(seed, `legs:${category}`)),
         ordinaryCaptures: () => planBuiltIn(streamsFor(), builtInPool, category, n, first, excluded, recent, "ordinary", legs).map((slot) => (slot.framing === "legs" ? null : (slot.capture ?? captureOfShot(slot.shot)))),
       });
-      slots.push(...planBuiltIn(streamsFor(), builtInPool, category, n, nextIndex, excluded, recent, level, legs));
+      slots.push(...planBuiltIn(streamsFor(), builtInPool, category, n, nextIndex, excluded, recent, categoryLevel, legs));
     } else slots.push(...planCategory(rng, poseRng, fixRng, pool, category, n, nextIndex, excluded));
     nextIndex += n;
   }

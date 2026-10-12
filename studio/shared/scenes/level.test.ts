@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { LegwearSlot } from "./banks/types";
-import { flirtyCountOf, legwearAt, levelCountsOf } from "./level";
+import { atSlotLevel, flirtyCountOf, legwearAt, levelCountsOf, seedreamRoute } from "./level";
 
 describe("flirtyCountOf (I5.28)", () => {
   test.each([
@@ -80,5 +80,42 @@ describe("legwearAt (M3)", () => {
 
   test("a bank without legwear has none", () => {
     expect(legwearAt(undefined, "bold")).toBeUndefined();
+  });
+});
+
+describe("atSlotLevel (I5.37)", () => {
+  const items = [{ n: "a" }, { n: "b", level: "flirty" as const }, { n: "c", level: "bold" as const }, { n: "d", level: "bold" as const }];
+  const names = (list: readonly { n: string }[]): string[] => list.map((i) => i.n);
+
+  test.each([
+    ["ordinary", ["a"]],
+    ["flirty", ["b"]],
+    ["bold", ["c", "d"]],
+  ] as const)("a %s slot takes the items of its own level", (slot, expected) => {
+    expect(names(atSlotLevel(items, (i) => i.level, slot))).toEqual([...expected]);
+  });
+
+  test("a slot whose own level has no item takes the highest level below it that has some, never one above", () => {
+    expect(names(atSlotLevel([{ n: "a" }, { n: "c", level: "bold" as const }], (i) => i.level, "flirty"))).toEqual(["a"]);
+    expect(names(atSlotLevel([{ n: "b", level: "flirty" as const }], (i) => i.level, "bold"))).toEqual(["b"]);
+  });
+
+  test("nothing at or below the slot's level is an empty list", () => {
+    expect(atSlotLevel([{ n: "c", level: "bold" as const }], (i) => i.level, "flirty")).toEqual([]);
+  });
+
+  test("a list with no level on any item comes back whole and in its order, at every slot level", () => {
+    const plain = ["x", "y", "z"];
+    for (const slot of ["ordinary", "flirty", "bold"] as const) expect(atSlotLevel(plain, () => undefined, slot)).toEqual(plain);
+  });
+});
+
+describe("seedreamRoute (I5.38)", () => {
+  test("a slot is on Seedream exactly when its moment, its outfit or its stockings is", () => {
+    expect(seedreamRoute({}, undefined)).toBeUndefined();
+    expect(seedreamRoute({}, {})).toBeUndefined();
+    expect(seedreamRoute({ route: "seedream" }, {})).toBe("seedream");
+    expect(seedreamRoute({}, { route: "seedream" })).toBe("seedream");
+    expect(seedreamRoute({}, {}, "seedream")).toBe("seedream");
   });
 });
