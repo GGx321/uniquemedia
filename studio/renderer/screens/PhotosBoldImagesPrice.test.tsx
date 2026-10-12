@@ -87,6 +87,6 @@ describe("the owner's strip under «Смелая»", () => {
     engine.failNext("runs.estimateImages", { code: "PRICE_UNAVAILABLE", detail: "no price" });
     await showStrip();
     await flush();
-    expect(screen.queryByText(PRICE_SCOPES_RU.bold)).toBeNull();
+    expect(screen.queryByText(PRICE_SCOPES_RU.bold) === null).toBe(true);
   });
 });
