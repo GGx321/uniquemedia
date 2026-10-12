@@ -636,6 +636,27 @@ describe("«Ножки» in a scene set (S5.8a)", () => {
     await noSet(engine, avatarId);
   });
 
+  // 5a.3 (S5.9c, I5.42): the two «Смелая» categories need «Смелая»; below it a compose and its estimate are refused for free.
+  test.each([
+    [["nightwear"], undefined],
+    [["nightwear"], "ordinary"],
+    [["beach"], "flirty"],
+    [["home", "nightwear"], "flirty"],
+  ] as const)("a «Смелая» category (%j) at level %s is refused for free with bold-level-needed: nothing is priced, claimed or written", async (categories, level) => {
+    const avatarId = await seedAvatar();
+    const net = sceneNetwork();
+    const { engine } = await engineOver(net);
+    const asked = { avatarId, count: 10, categories: [...categories], ...(level === undefined ? {} : { level }) };
+
+    expect(refused(await engine.handle(command("scenes.estimateCompose", asked)))).toMatchObject({ code: "VALIDATION", sceneReason: "bold-level-needed" });
+    expect(refused(await engine.handle(composeCommand(avatarId, asked)))).toMatchObject({ code: "VALIDATION", sceneReason: "bold-level-needed" });
+
+    expect(net.calls).toEqual([]);
+    expect(setFiles(avatarId)).toEqual([]);
+    expect(readLedger()).toEqual([]);
+    await noSet(engine, avatarId);
+  });
+
   test("a built-in category beside the custom one is enough", async () => {
     const avatarId = await seedAvatar();
     const { engine } = await engineOver(sceneNetwork());

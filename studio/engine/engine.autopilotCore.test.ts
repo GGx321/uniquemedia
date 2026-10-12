@@ -271,6 +271,31 @@ describe("autopilot.start", () => {
     expect(ledgerLines(dir())).toEqual([]);
   });
 
+  // 5a.3 (S5.9c, I5.42): a launch whose categories name «Ночнушки и бельё» or «Пляж и бассейн» needs «Смелая»; below it the estimate and the start are refused for free.
+  test.each([
+    [["nightwear"], undefined],
+    [["beach"], "ordinary"],
+    [["home", "nightwear"], "flirty"],
+  ] as const)("a draft of %j at level %s is VALIDATION bold-level-needed at the estimate and at the start, and nothing is written", async (categories, level) => {
+    const avatarId = await seedAvatar("Mia");
+    const started = await startOver();
+    const asked = settingsOf([avatarId], { categories: [...categories], ...(level === undefined ? {} : { level }) });
+
+    expect(failed(await started.engine.handle(command("autopilot.estimate", { draft: asked }))).error).toMatchObject({ code: "VALIDATION", launchReason: "bold-level-needed" });
+    expect(failed(await started.engine.handle(command("autopilot.start", { draft: { ...asked, planSeed: 5 }, acceptedWorstMicros: 10_000_000 }))).error).toMatchObject({ code: "VALIDATION", launchReason: "bold-level-needed" });
+    expect(launchFiles()).toEqual([]);
+    expect(ledgerLines(dir())).toEqual([]);
+  });
+
+  test("a draft at «Смелая» is not refused for its level, with a «Смелая» category or without one", async () => {
+    const avatarId = await seedAvatar("Mia");
+    const started = await startOver();
+    for (const categories of [["home"], ["nightwear"], ["home", "beach"]] as const) {
+      const reply = await started.engine.handle(command("autopilot.estimate", { draft: settingsOf([avatarId], { categories: [...categories], level: "bold" }) }));
+      expect(reply).not.toMatchObject({ error: { launchReason: "bold-level-needed" } });
+    }
+  });
+
   test("a draft that asks for no legs, or names a built-in category beside a custom one, is not refused for them", async () => {
     const avatarId = await seedAvatar("Mia");
     const started = await startOver();

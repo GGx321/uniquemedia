@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   BOLD_CATEGORIES,
+  boldLevelNeeded,
   CATEGORY_LABEL_MAX,
   CATEGORY_NAME_MAX,
   CategoryLabel,
@@ -285,5 +286,25 @@ describe("the two «Смелая» categories", () => {
 
   test("a run request may name them", () => {
     expect(RunRequest.safeParse({ avatarId: "avatar-0001", count: 20, poses: { profile: false, back: false }, categories: ["nightwear", "beach"] }).success).toBe(true);
+  });
+});
+
+// 5a.3 (S5.9c, I5.42): a «Смелая» category needs the «Смелая» level.
+describe("boldLevelNeeded", () => {
+  test.each([undefined, "ordinary", "flirty"] as const)("a «Смелая» category at level %s needs «Смелая»", (level) => {
+    expect(boldLevelNeeded({ categories: ["nightwear"], level })).toBe(true);
+    expect(boldLevelNeeded({ categories: ["home", "beach"], level })).toBe(true);
+  });
+
+  test("at «Смелая» nothing is needed, with a «Смелая» category or without one", () => {
+    expect(boldLevelNeeded({ categories: ["nightwear", "beach"], level: "bold" })).toBe(false);
+    expect(boldLevelNeeded({ categories: ["home"], level: "bold" })).toBe(false);
+  });
+
+  test("the five and the custom categories need nothing at any level, and an empty list needs nothing", () => {
+    for (const level of [undefined, "ordinary", "flirty", "bold"] as const) {
+      expect(boldLevelNeeded({ categories: ["home", "travel", "shoot", "glam", "fit", "cat-paris-cafes"], level })).toBe(false);
+      expect(boldLevelNeeded({ categories: [], level })).toBe(false);
+    }
   });
 });

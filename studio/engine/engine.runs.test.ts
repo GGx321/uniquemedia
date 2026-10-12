@@ -2316,6 +2316,37 @@ describe("«Ножки» (S5.8a)", () => {
     expect(existsSync(runs) ? readdirSync(runs) : []).toEqual([]);
   });
 
+  // 5a.3 (S5.9c, I5.42): «Ночнушки и бельё» and «Пляж и бассейн» are drawn only under «Смелая». Asked below it, a run is refused for free with its own reason.
+  test.each([
+    ["nightwear", undefined],
+    ["nightwear", "ordinary"],
+    ["nightwear", "flirty"],
+    ["beach", "flirty"],
+    ["home,beach", "flirty"],
+  ] as const)("a «Смелая» category (%s) at level %s is refused for free with bold-level-needed: nothing is priced, reserved, sent or written", async (categories, level) => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork();
+    const { engine } = await engineOver(net);
+    const asked = { avatarId, count: 8, categories: categories.split(","), ...(level === undefined ? {} : { level }) };
+
+    expect(failed(await engine.handle(command("runs.estimate", asked))).error).toMatchObject({ code: "VALIDATION", sceneReason: "bold-level-needed" });
+    expect(failed(await engine.handle(command("runs.start", { ...asked, acceptedWorstMicros: 10_000_000 }))).error).toMatchObject({ code: "VALIDATION", sceneReason: "bold-level-needed" });
+
+    expect(net.calls).toEqual([]);
+    expect(readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve")).toEqual([]);
+    const runs = join(dir(), "library", "runs");
+    expect(existsSync(runs) ? readdirSync(runs) : []).toEqual([]);
+  });
+
+  test("«Смелая» with no «Смелая» category is not refused for it, nor is «Смелая» with one, nor are the five at any level", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await engineOver(runNetwork());
+    for (const [categories, level] of [[["home"], "bold"], [["nightwear"], "bold"], [["home", "beach"], "bold"], [["home"], "flirty"], [["home"], undefined]] as const) {
+      const reply = await engine.handle(command("runs.estimate", { avatarId, count: 4, categories: [...categories], ...(level === undefined ? {} : { level }) }));
+      expect(reply).not.toMatchObject({ error: { sceneReason: "bold-level-needed" } });
+    }
+  });
+
   test("a share of 0 beside only a custom category is no request for legs: it is accepted as before", async () => {
     const avatarId = await seedAvatar();
     const custom = await seedCustomCategory();

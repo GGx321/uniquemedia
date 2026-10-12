@@ -171,6 +171,15 @@ export function legsNeedsBuiltIn(request: { categories: readonly string[]; legsS
 }
 
 /**
+ * «Смелая» categories need «Смелая» (5a.3, S5.9c, I5.42): «Ночнушки и бельё» and «Пляж и бассейн» are drawn only at the bold level, so a request that names one at any other level (or
+ * at none) cannot be served. The engine refuses it for free (`bold-level-needed`) before it prices, reserves or writes anything, and the mock does the same. A request at `bold` with no
+ * «Смелая» category is fine: the five draw as «Кокетливая».
+ */
+export function boldLevelNeeded(request: { categories: readonly string[]; level?: SceneLevel | undefined }): boolean {
+  return request.level !== "bold" && request.categories.some((ref) => isBoldCategory(ref));
+}
+
+/**
  * The order a run draws its categories in: the five built-ins in their
  * canonical order, then the custom ones in the order given (creation order),
  * each once.

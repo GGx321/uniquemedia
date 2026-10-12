@@ -38,7 +38,7 @@ import type { LaunchRegistry } from "./launchRegistry";
 import { composeEstimate, reviewWriteEstimate, sceneSetPriceModels, writeEstimate } from "./estimate";
 import { beginWrite, withChunkGivenUp, withChunkWritten, withOutcome, withWriteFinished, withWriteStopped } from "./mutations";
 import { planReviewWrite, type ReviewPlan } from "./reviewPlan";
-import { assertLegsFit, sceneRefusal } from "./refusal";
+import { assertBoldFit, assertLegsFit, sceneRefusal } from "./refusal";
 import { withReviewWriteAccepted, withReviewWriteClosed, withReviewWriteStopped } from "./reviewMutations";
 import { runReviewWrite, type ReviewWriteEnd } from "./reviewWriteJob";
 import { reviewWritesOf } from "./reviewWrites";
@@ -247,9 +247,10 @@ export class SceneSetService {
   }
 
   /** What composing `count` scenes could cost; NOT_FOUND for an avatar that cannot get photos or a custom category the library lacks, before any price is fetched. */
-  async estimateCompose(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; legsShare?: LegsShare; split?: readonly { ref: CategoryRef; count: number }[] }): Promise<Estimate> {
+  async estimateCompose(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; level?: SceneLevel; legsShare?: LegsShare; split?: readonly { ref: CategoryRef; count: number }[] }): Promise<Estimate> {
     // S5.8a: «Ножки» with no built-in category is refused first, for free.
     assertLegsFit(request);
+    assertBoldFit(request);
     const library = this.#deps.currentLibrary();
     this.#deps.runnableAvatar(library, request.avatarId);
     const custom = await this.#deps.customCategories(library, request.categories);
@@ -401,6 +402,7 @@ export class SceneSetService {
   ): Promise<{ sceneSetId: string; jobId: string | null }> {
     // S5.8a: «Ножки» with no built-in category is refused first, for free, before the avatar is claimed.
     assertLegsFit(payload);
+    assertBoldFit(payload);
     const { avatarId, count, categories, poses, level, legsShare } = payload;
     const free = count === 0;
     const deps = this.#deps;

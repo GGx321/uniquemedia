@@ -140,7 +140,7 @@ import { rawFileName, saveRawBody } from "./rawStore";
 import { foldRun, RunEventSchema, type LedgerView, type RunState } from "./runs/journal";
 import { buildRunPlan, buildSceneRunPlan, RunPlanSchema, runEstimate, runEstimateFromScenes, runPriceModels, sceneCategory, sceneRunPriceModels, type RunPlan } from "./runs/plan";
 import { commitApproval, findSceneSet, loadApprovable } from "./sceneSets/approve";
-import { assertLegsFit, sceneRefusal } from "./sceneSets/refusal";
+import { assertBoldFit, assertLegsFit, sceneRefusal } from "./sceneSets/refusal";
 import type { StoredSceneSet } from "./library/sceneSets";
 import { runSnapshots, runSources } from "./sceneSets/toRun";
 import { CpuPool, NetworkPool } from "./runs/pools";
@@ -2388,6 +2388,7 @@ export class Engine {
       case "runs.estimate": {
         // S5.8a: «Ножки» with no built-in category is refused first, for free.
         assertLegsFit(command.payload);
+        assertBoldFit(command.payload);
         // Free: NOT_FOUND for an avatar that cannot get photos, DESCRIPTOR_INVALID before any price is fetched for it.
         this.#runnableAvatar(this.library, command.payload.avatarId);
         // NOT_FOUND for a custom category the library does not hold (never one the owner deleted), before any price is fetched.
@@ -2400,6 +2401,7 @@ export class Engine {
       case "runs.start": {
         const { avatarId } = command.payload;
         assertLegsFit(command.payload);
+        assertBoldFit(command.payload);
         // Claimed before the first await, like generateCandidates: the library switch's race check relies on it.
         this.#claimAvatar(avatarId, "a photo run or another job is already changing this avatar; wait for it to finish");
         this.#paidCommands++;
