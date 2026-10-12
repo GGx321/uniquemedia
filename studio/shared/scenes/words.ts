@@ -31,7 +31,10 @@ export const YOUTH_PROPS =
  * «Ножки» (S5.8a review): a low angle under a mini reads as an upskirt shot, so a legs frame takes no mini or short dress or skirt, and no sweater or tee worn as a dress
  * ("bodycon" is short too). The legs moments pin outfits that are shorts, trousers, leggings, joggers or midi and long dresses; the banks refuse a legs moment that pins one of these.
  */
-export const LEGS_UNSUITED_OUTFITS = /\b(mini|bodycon)\b|\bshort (?:dress|skirt)\b|\bas a dress\b|\boversized\b/i;
+export const LEGS_UNSUITED_OUTFITS = /\b(?:mini(?:s|-?(?:dress(?:es)?|skirts?))?|bodycon)\b|\bshort[- ](?:dress(?:es)?|skirts?)\b|\bas a dress\b|\boversized\b/i;
+
+/** A dress or a skirt of any make and number («dress», «dresses», «sundress», «slipdress», «skirt», «skirts», «miniskirt»): the garments a legs moment must give a length. */
+export const DRESS_OR_SKIRT = /\b\w*(?:dress(?:es)?|skirts?)\b/i;
 
 /** The owner: Glamour is an evening out, never on a bed. */
 export const BED_WORDS = /\bbed\w*/i;

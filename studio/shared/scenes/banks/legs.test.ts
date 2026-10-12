@@ -221,6 +221,20 @@ describe("a low angle under a mini reads as an upskirt shot", () => {
     expect(categoryBankProblems({ ...home, outfits: [...home.outfits, { text: "a fitted beige knit dress", showsLegs: true as const, pinOnly: true as const }] }, "home").join("\n")).toMatch(/\[legs-outfit\]/);
   });
 
+  // Wave 5e: the whitelist read the bare words «dress» and «skirt» only, so «a sundress», «a miniskirt» and «linen skirts» walked past it.
+  const withPinned = (outfit: string) => {
+    const home = { ...BANKS.home, places: BANKS.home.places.map((p) => ({ ...p, moments: p.moments.map((m) => (m.text === "lies with her bare feet forward" ? { ...m, outfits: [outfit] } : m)) })) };
+    return categoryBankProblems({ ...home, outfits: [...home.outfits, { text: outfit, showsLegs: true as const, pinOnly: true as const }] }, "home").join("\n");
+  };
+
+  test.each(["a beige sundress", "a floral slipdress", "a linen skirts set", "a tee and wrap skirts", "a satin minidress", "a pleated miniskirt"])("a bank whose legs moment pins «%s» is refused at load", (outfit) => {
+    expect(withPinned(outfit)).toMatch(/\[legs-outfit\]/);
+  });
+
+  test.each(["a navy midi sundress", "a long linen skirts set"])("a bank whose legs moment pins «%s», a length named, is not refused for its outfit", (outfit) => {
+    expect(withPinned(outfit)).not.toMatch(/\[legs-outfit\]/);
+  });
+
   test("every legs moment pins at least four outfits, so a plan's legs frames do not all wear one", () => {
     for (const category of BANK_CATEGORIES) for (const { moment } of legsMoments(category)) expect(moment.outfits?.length ?? 0, `${category}: ${moment.text}`).toBeGreaterThanOrEqual(4);
   });

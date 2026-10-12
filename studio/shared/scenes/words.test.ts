@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isOwnerBannedOutfit, LEGWEAR_CLASH_WORDS } from "./words";
+import { isOwnerBannedOutfit, LEGS_UNSUITED_OUTFITS, LEGWEAR_CLASH_WORDS } from "./words";
 
 // Review L2 of S5.6a: the owner's «no denim shorts and no denim skirts» holds nowhere, so the check is exported for S5.6b to filter a custom pool's
 // outfits too; and a moment with one heel in it clashes with legwear as one with heels does.
@@ -94,6 +94,24 @@ describe("isOwnerBannedOutfit: the words between, and the garment first (S5.6R)"
   ])("allows «%s»: the denim is another garment", (outfit) => {
     expect(isOwnerBannedOutfit(outfit)).toBe(false);
   });
+});
+
+// Wave 5e (S5.8a follow-up): the legs blacklist saw «mini» and «short dress» as separate words only, so a compound («minidress», «miniskirt») or a plural
+// («short skirts») slipped through it.
+describe("LEGS_UNSUITED_OUTFITS", () => {
+  test.each([
+    "a pleated mini and a fitted top", "a satin minidress", "a pleated miniskirt", "a plaid mini-skirt and a tee", "two minis", "a black mini dress", "a mini skirt and a top",
+    "a short dress", "short dresses", "a short skirt", "short skirts and a tee", "a short-skirt set", "a bodycon dress", "an oversized sweater as a dress", "an oversized tee",
+  ])("refuses «%s»", (outfit) => {
+    expect(LEGS_UNSUITED_OUTFITS.test(outfit)).toBe(true);
+  });
+
+  test.each(["a navy midi dress", "a long linen skirt", "a maxi dress", "soft joggers and a cropped tee", "grey leggings and a cropped tee", "linen shorts and a fitted tee", "a minimal knit top and trousers"])(
+    "allows «%s»",
+    (outfit) => {
+      expect(LEGS_UNSUITED_OUTFITS.test(outfit)).toBe(false);
+    },
+  );
 });
 
 describe("LEGWEAR_CLASH_WORDS", () => {
