@@ -6,6 +6,7 @@ import {
   CAMERA_WORDS,
   COLOUR_WORDS,
   CUE_BANNED_WORDS,
+  DRESS_LENGTH,
   DRESS_OR_SKIRT,
   EXPRESSION_WORDS,
   FEET_UP_WORDS,
@@ -202,7 +203,7 @@ function checkMoment(add: Add, where: string, moment: Moment, place: { room?: tr
     for (const outfit of moment.outfits ?? []) {
       if (LEGS_UNSUITED_OUTFITS.test(outfit)) add(BANK_RULE.legsOutfit, where, `«${outfit}» is a mini or short dress or skirt, or worn as a dress: a low angle under it reads as an upskirt shot`);
       // A whitelist as well: a dress or a skirt names its length, because a blacklist cannot see «a wrap dress» of no length.
-      else if (DRESS_OR_SKIRT.test(outfit) && !/\b(midi|long|maxi)\b/i.test(outfit)) add(BANK_RULE.legsOutfit, where, `«${outfit}» is a dress or skirt of no stated length: a legs moment names midi, long or maxi`);
+      else if (DRESS_OR_SKIRT.test(outfit) && !DRESS_LENGTH.test(outfit)) add(BANK_RULE.legsOutfit, where, `«${outfit}» is a dress or skirt of no stated length: a legs moment names midi, long or maxi`);
     }
   }
   if (captures.includes("timer") && HELD_OBJECT_WORDS.test(text)) add(BANK_RULE.timerHands, where, "a timer frame shows both of her hands empty: its moment holds nothing");

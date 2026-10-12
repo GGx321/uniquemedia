@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { isHandCapture, LEGS_CAPTURES, shotOf, type Capture } from "../captures";
 import { momentAllowed } from "../render";
 import { legwearFits } from "../template";
-import { LEGS_UNSUITED_OUTFITS, YOUTH_PROPS, isOwnerBannedOutfit } from "../words";
+import { DRESS_LENGTH, DRESS_OR_SKIRT, LEGS_UNSUITED_OUTFITS, YOUTH_PROPS, isOwnerBannedOutfit } from "../words";
 import { BANKS } from "./index";
 import { categoryBankProblems, MOTION_TEXT_MAX } from "./schema";
 import { BANK_CATEGORIES, type BankCategory, type Moment } from "./types";
@@ -211,7 +211,7 @@ describe("a low angle under a mini reads as an upskirt shot", () => {
   test("a dress or a skirt a legs moment pins names midi, long or maxi", () => {
     for (const category of BANK_CATEGORIES) {
       for (const { moment } of legsMoments(category)) {
-        for (const outfit of moment.outfits ?? []) if (/\b(dress|skirt)\b/i.test(outfit)) expect(outfit, `${moment.text}: ${outfit}`).toMatch(/\b(midi|long|maxi)\b/i);
+        for (const outfit of moment.outfits ?? []) if (DRESS_OR_SKIRT.test(outfit)) expect(DRESS_LENGTH.test(outfit), `${moment.text}: ${outfit}`).toBe(true);
       }
     }
   });
@@ -232,6 +232,15 @@ describe("a low angle under a mini reads as an upskirt shot", () => {
   });
 
   test.each(["a navy midi sundress", "a long linen skirts set"])("a bank whose legs moment pins «%s», a length named, is not refused for its outfit", (outfit) => {
+    expect(withPinned(outfit)).not.toMatch(/\[legs-outfit\]/);
+  });
+
+  // S5.R3: «long-sleeve» is a sleeve, not a length: the word `long` in it must not satisfy the whitelist.
+  test.each(["a long-sleeve wrap dress", "a long sleeve knit dress", "a long-sleeved skirt set"])("a bank whose legs moment pins «%s», a sleeve and no length, is refused at load", (outfit) => {
+    expect(withPinned(outfit)).toMatch(/\[legs-outfit\]/);
+  });
+
+  test.each(["a long-sleeve long dress", "a long-sleeve midi dress", "a long-sleeved maxi dress"])("a bank whose legs moment pins «%s», a sleeve and a length, is not refused for its outfit", (outfit) => {
     expect(withPinned(outfit)).not.toMatch(/\[legs-outfit\]/);
   });
 
