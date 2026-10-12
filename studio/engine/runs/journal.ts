@@ -102,8 +102,20 @@ export interface SlotState {
   fallbackEnd: AttemptOutcome | "unknown" | null;
   /** The fallback attempt's journaled error, if it had one. */
   fallbackError: EngineError | null;
+  /**
+   * 5a.3 (S5.9d, I5.39): only for a slot drawn on the Seedream route. Why its last attempt that left ended it: "refused" (a free moderation refusal, final) or "empty" (a 2xx without
+   * an image); null while it may still send. A 429, a 5xx, a network error, a timeout or an abort never set it.
+   */
+  boldEnded: "refused" | "empty" | null;
+  /** The journaled error of the attempt that set `boldEnded`, if the journal kept one. */
+  boldEndError: EngineError | null;
   /** Null while the slot may still get a photo. */
   end: SlotEnd | null;
+}
+
+/** Whether the slot is drawn on the «Смелая» route: its attempts are bold attempts (2K, no fallback), never uses of the 1K fallback that shares their model id. */
+export function isBoldSlot(slot: RunSlot): boolean {
+  return "route" in slot && slot.route === "seedream";
 }
 
 export interface RunState {
@@ -155,7 +167,7 @@ export function foldRun(plan: RunPlan, sources: FoldSources): RunState {
   const slots = plan.scenes.slots.map((slot, i): SlotState => {
     const attemptIds = plan.slotAttempts[i]?.attemptIds ?? [];
     const consumed = new Set(attemptIds.filter((id) => sources.reserveOf(id) !== undefined));
-    return { slot, attemptIds, consumed, fallbackUsed: false, useFallbackNext: false, fallbackEnd: null, fallbackError: null, end: null };
+    return { slot, attemptIds, consumed, fallbackUsed: false, useFallbackNext: false, fallbackEnd: null, fallbackError: null, boldEnded: null, boldEndError: null, end: null };
   });
   /** How each attempt the journal saw ended. */
   const journaled = new Map<string, Extract<RunEvent, { type: "attempt" }>>();
@@ -238,9 +250,11 @@ const NO_ANSWER: ReadonlySet<ErrorCode> = new Set(["RATE_LIMITED", "NETWORK"]);
  *   refusal: the prompt never goes to the primary again (review L15).
  */
 function routeOf(state: SlotState, fallbackModel: string | null, journaled: ReadonlyMap<string, Extract<RunEvent, { type: "attempt" }>>, ledger: LedgerView): void {
-  if (fallbackModel === null) return;
   // Only an attempt that left counts for the route (review round 3, N1): one released unsent never reached a model.
   const attempts = state.attemptIds.filter((id) => state.consumed.has(id) && ledger.closeOf(id)?.type !== "release");
+  // 5a.3 (S5.9d, H1): a Seedream slot has no fallback and its attempts on Seedream are bold attempts, whatever the plan's fallback model is.
+  if (isBoldSlot(state.slot)) return boldStateOf(state, attempts, journaled, ledger);
+  if (fallbackModel === null) return;
   const modelOf = (id: string): string | undefined => journaled.get(id)?.model ?? ledger.reserveOf(id)?.model;
   const noAnswer = (id: string): boolean => {
     const event = journaled.get(id);
@@ -271,6 +285,33 @@ function routeOf(state: SlotState, fallbackModel: string | null, journaled: Read
   }
   const close = ledger.closeOf(last);
   state.useFallbackNext = close?.type === "settle" && close.costMicros === 0 && !close.estimated;
+}
+
+/**
+ * 5a.3 (S5.9d, plan s5a3 §8.2): where a Seedream slot stands, from its LAST attempt that left (the journal first, then the ledger).
+ * - The journal has a line for it: "refused" ends the slot as refused (free and final: never re-sent, no spare id); a failure the engine tagged `model-empty` (a 2xx without an
+ *   image, paid by `settleRule`) ends it as empty; EVERYTHING ELSE leaves it open: a 429, a 5xx, a network error, a timeout, an abort between transport retries (even one whose
+ *   reserve a free settle closed at zero), a QA miss. Those got no answer from the model, or an answer the next attempt may improve.
+ * - The journal has no line (a crash between the settle and the journal): a free close (a settle of zero that is not an estimate) reads as refused: the safe side, a refusal is
+ *   never re-sent. A paid close or an open reserve is a paid attempt (`attemptPaid`) and leaves the slot open.
+ * Nothing here ever sets `fallbackUsed` or `useFallbackNext`.
+ */
+function boldStateOf(state: SlotState, attempts: readonly string[], journaled: ReadonlyMap<string, Extract<RunEvent, { type: "attempt" }>>, ledger: LedgerView): void {
+  const last = attempts.at(-1);
+  if (last === undefined) return;
+  const event = journaled.get(last);
+  if (event !== undefined) {
+    if (event.outcome === "refused") {
+      state.boldEnded = "refused";
+      state.boldEndError = event.error ?? null;
+    } else if (event.outcome === "failed" && event.error?.sceneReason === "model-empty") {
+      state.boldEnded = "empty";
+      state.boldEndError = event.error;
+    }
+    return;
+  }
+  const close = ledger.closeOf(last);
+  if (close?.type === "settle" && close.costMicros === 0 && !close.estimated) state.boldEnded = "refused";
 }
 
 /**
