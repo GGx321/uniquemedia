@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CustomCategoryId, isCustomCategory, PoolText, SceneLevel, SceneRoute, SceneText, TimeOfDay } from "../../shared/engine";
+import { CustomCategoryId, isBoldCategory, isCustomCategory, PoolText, SceneLevel, SceneRoute, SceneText, TimeOfDay } from "../../shared/engine";
 import { CAPTURES, captureOfShot, shotOf } from "../../shared/scenes/captures";
 import type { FacePose } from "../face/config";
 import { CATEGORIES, SHOTS } from "./types";
@@ -90,8 +90,15 @@ export const PlanSlotSchema = z
     level: SceneLevel.exclude(["bold"]).optional(),
     // Additive (S5.8a): «Ножки», a slot whose legs and feet fill most of the frame. Absent reads as an ordinary framing. It rides with a capture the legs banks deal.
     framing: z.literal("legs").optional(),
-    // Additive (5a.3, S5.9a): the slot is drawn on the Seedream route. Absent reads as the owner's image model. Nothing sets it until S5.9b2 adds the «Смелая» banks.
+    // Additive (5a.3, S5.9a): the slot is drawn on the Seedream route. Absent reads as the owner's image model. Only a «Смелая» category's slot carries it (S5.9b2,
+    // the refine below); the planner sets it with the bold draw (S5.9c).
     route: SceneRoute.optional(),
+  })
+  // 5a.3 (S5.9b2, plan s5a3 §11, I5.38): the bold route draws a «Смелая» category's items only, so a route on a slot of the five or of a custom category is a hand-edited
+  // or a broken plan, refused rather than sent to Seedream at 2K.
+  .refine((slot) => slot.route === undefined || isBoldCategory(slot.category), {
+    message: "only a «Смелая» category's slot is drawn on the Seedream route",
+    path: ["route"],
   })
   .refine((slot) => slot.capture === undefined || shotOf(slot.capture) === shotOf(captureOfShot(slot.shot)), {
     message: "a capture rides on the shot the slot is stored with",
