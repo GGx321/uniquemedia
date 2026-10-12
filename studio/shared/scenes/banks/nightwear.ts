@@ -124,8 +124,9 @@ export const NIGHTWEAR: CategoryBank = {
         },
         // «Ножки» (S5.8a, M5): a look down along her own legs.
         { text: "lies with her legs crossed", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
-        // S5.R4: seven legs moments, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one (with four, two came twice in every run).
-        { text: "stretches her legs on the duvet", motion: "she flexes her feet a little", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        // S5.R4: seven legs moments of seven poses, so the six legs slots of a 20-photo run at «Ножки» 30 % never show one pose twice (round 2: «legs stretched out» three times
+        // over in other words was the same photo).
+        { text: "lies on her side, one knee bent", motion: "she slides her top knee forward a little", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
     {
@@ -170,7 +171,7 @@ export const NIGHTWEAR: CategoryBank = {
         },
         { text: "lifts one foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
         { text: "stands on tiptoe by the mirror", motion: "she rises a little higher on her toes", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
-        { text: "sits on the rug, legs out", motion: "she slowly wiggles her toes", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        { text: "kneels in front of the mirror", motion: "she sinks back slowly onto her heels", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
     {
@@ -203,10 +204,11 @@ export const NIGHTWEAR: CategoryBank = {
         { text: "curls up with a blanket", motion: "she pulls the blanket a little closer", captures: ["mirror-hidden", "mirror"], twoHanded: false, outfits: COVERED_OUTFITS },
         { text: "tucks one leg under her", motion: "she settles a little deeper", captures: ["mirror-hidden", "mirror"], twoHanded: false, level: "flirty" },
         { text: "sits back, knees together", motion: "she rocks a little in place", captures: ["mirror-hidden", "mirror"], twoHanded: false, level: "bold", route: "seedream" },
-        { text: "sits with her legs stretched out", motion: "she points her toes slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        // S5.R4 round 2: worded apart from «Фитнес»'s and «Дом»'s «sits with her legs stretched out»; the pose is the same.
+        { text: "stretches out her legs", motion: "she points her toes slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
         // C3′ R1#08 («странное фото»: her feet to the mirror): the owner's own idea, as «Дом» has it on fix/c3-prompts: on the chair in front of the mirror, legs crossed,
-        // one foot dangling, the phone over her face.
-        { text: "sits, legs crossed, a foot dangling", motion: "she swings her dangling foot slowly", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        // one foot dangling, the phone over her face. S5.R4 round 2: worded apart from «Дом»'s «sits, legs crossed, a foot dangling»; the composition is the same.
+        { text: "crosses her legs, a foot dangling", motion: "she swings her dangling foot slowly", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
     {

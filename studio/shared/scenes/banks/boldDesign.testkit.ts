@@ -39,3 +39,21 @@ export function exposureWordsIn(text: string): string[] {
 export function explicitActsIn(text: string): string[] {
   return Array.from(text.matchAll(new RegExp(EXPLICIT)), (m) => m[0]);
 }
+
+/**
+ * S5.R4 round 2: a legs moment's pose family, read from its words, the most telling first (a foot dangling is that, whether or not her legs are also crossed). The «Смелая» banks
+ * hold their legs moments to one moment a family (banks/legs.test.ts), and the prompt sweep counts a run's legs frames by family.
+ */
+export const POSE_FAMILIES: readonly (readonly [string, RegExp])[] = [
+  ["on tiptoe", /\btiptoe\b/i],
+  ["kneeling", /\bkneel\w*\b/i],
+  ["a foot dangling", /\bdangl\w*\b/i],
+  ["stepping", /\bsteps?\b/i],
+  ["in the waves", /\bwaves?\b/i],
+  ["one knee bent", /\b(?:one|a) knee\b|\bknees?\s+(?:bent|up|drawn up)\b/i],
+  ["a foot lifted", /\b(?:lifts?|raises?)\s+(?:one|a|her)\s+(?:bare\s+)?(?:foot|leg)\b/i],
+  ["legs crossed", /\bcross\w*\b/i],
+  ["legs stretched out", /\bstretch\w*\b|\blegs?\s+(?:out|forward)\b|\bout straight\b/i],
+];
+/** A legs moment's pose family, the first that its words name; undefined for a pose the list does not know. */
+export const poseFamilyOf = (text: string): string | undefined => POSE_FAMILIES.find(([, words]) => words.test(text))?.[0];

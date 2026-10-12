@@ -3,6 +3,7 @@ import { isHandCapture, LEGS_CAPTURES, shotOf, type Capture } from "../captures"
 import { momentAllowed } from "../render";
 import { legwearFits } from "../template";
 import { DRESS_LENGTH, DRESS_OR_SKIRT, LEGS_UNSUITED_OUTFITS, YOUTH_PROPS, isOwnerBannedOutfit } from "../words";
+import { poseFamilyOf } from "./boldDesign.testkit";
 import { BANKS } from "./index";
 import { categoryBankProblems, MOTION_TEXT_MAX } from "./schema";
 import { BANK_CATEGORIES, type BankCategory, type Moment } from "./types";
@@ -43,20 +44,22 @@ const TABLE: Row[] = [
   { category: "fitness", place: "a park running path", text: "stretches her calves", motion: "she presses her heel down a little", captures: ["low-feet"] },
   // 5a.3 (S5.9b2, plan s5a3 §6.2-§6.3, M5): the «Смелая» banks' eight (fourteen from S5.R4). Her own look down along her legs, or her feet to the mirror at home; never a low-feet frame.
   { category: "nightwear", place: "her bed", text: "lies with her legs crossed", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"] },
-  { category: "nightwear", place: "an armchair in her bedroom", text: "sits with her legs stretched out", motion: "she points her toes slowly", captures: ["pov-legs"] },
+  // S5.R4 round 2: worded apart from «Фитнес»'s «sits with her legs stretched out» and «Дом»'s chair frame; the poses are the same.
+  { category: "nightwear", place: "an armchair in her bedroom", text: "stretches out her legs", motion: "she points her toes slowly", captures: ["pov-legs"] },
   { category: "nightwear", place: "her bedroom", text: "lifts one foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"] },
-  { category: "nightwear", place: "an armchair in her bedroom", text: "sits, legs crossed, a foot dangling", motion: "she swings her dangling foot slowly", captures: ["mirror-hidden"] },
-  // S5.R4: three more a «Смелая» bank, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one.
-  { category: "nightwear", place: "her bed", text: "stretches her legs on the duvet", motion: "she flexes her feet a little", captures: ["pov-legs"] },
+  { category: "nightwear", place: "an armchair in her bedroom", text: "crosses her legs, a foot dangling", motion: "she swings her dangling foot slowly", captures: ["mirror-hidden"] },
+  // S5.R4: three more a «Смелая» bank, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one; round 2: each a pose of its own.
+  { category: "nightwear", place: "her bed", text: "lies on her side, one knee bent", motion: "she slides her top knee forward a little", captures: ["pov-legs"] },
   { category: "nightwear", place: "her bedroom", text: "stands on tiptoe by the mirror", motion: "she rises a little higher on her toes", captures: ["mirror-hidden"] },
-  { category: "nightwear", place: "her bedroom", text: "sits on the rug, legs out", motion: "she slowly wiggles her toes", captures: ["pov-legs"] },
-  { category: "beach", place: "a hotel pool", text: "stretches her legs on the lounger", motion: "she points and flexes her toes slowly", captures: ["pov-legs"] },
+  { category: "nightwear", place: "her bedroom", text: "kneels in front of the mirror", motion: "she sinks back slowly onto her heels", captures: ["mirror-hidden"] },
+  // S5.R4 round 2: «stretches her legs on the lounger» was «sits on the sand, legs out» again; one knee bent on the lounger is a pose of its own.
+  { category: "beach", place: "a hotel pool", text: "lies on the lounger, one knee bent", motion: "she sways her bent knee slowly", captures: ["pov-legs"] },
   { category: "beach", place: "the beach", text: "sits on the sand, legs out", motion: "she slowly buries her toes in the sand", captures: ["pov-legs"] },
   { category: "beach", place: "the beach", text: "crosses her ankles on the towel", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"] },
   { category: "beach", place: "a rooftop pool", text: "dangles her feet in the water", motion: "she dips her toes in the water slowly", captures: ["pov-legs"] },
   { category: "beach", place: "the water's edge", text: "lets the waves wash over her feet", motion: "she wiggles her toes in the foam slowly", captures: ["pov-legs"] },
-  { category: "beach", place: "a rooftop pool", text: "lies back, ankles crossed", motion: "she rocks her crossed feet a little", captures: ["pov-legs"] },
-  { category: "beach", place: "the rocks by the sea", text: "sits with her legs stretched out", motion: "she flexes her feet slowly", captures: ["pov-legs"] },
+  { category: "beach", place: "a rooftop pool", text: "steps down into the water", motion: "she lowers her other foot slowly", captures: ["pov-legs"] },
+  { category: "beach", place: "the rocks by the sea", text: "lifts one leg, toes pointed", motion: "she lowers her lifted leg slowly", captures: ["pov-legs"] },
 ];
 
 const legsMoments = (category: BankCategory): { place: string; moment: Moment }[] =>
@@ -205,6 +208,35 @@ describe("every category has legs moments to vary (I5.24)", () => {
 
   test("«Фитнес» has at least two more outfits that show her legs than the two it had", () => {
     expect(BANKS.fitness.outfits.filter((o) => o.showsLegs === true).length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+// S5.R4 round 2 (the re-review, MEDIUM): the six legs slots of a 20-photo run at «Ножки» 30 % go round a bank's legs moments, so moments that are the same pose in other words are
+// the same photo three times («sits with her legs stretched out», «sits on the sand, legs out», «stretches her legs on the lounger»: 3 of 6 legs frames in 29 of 45 beach runs).
+// A legs moment's pose family is read from its words, the most telling first: a foot dangling is that, whether or not her legs are also crossed. Every legs moment of a «Смелая»
+// bank has a family and no two share one; the five keep theirs (their plans are frozen), so the rule is held where the review found the repeat.
+describe("a «Смелая» bank's legs moments are different poses (S5.R4 round 2)", () => {
+  test("the families read the words: the most telling first, and a pose the list does not know has none", () => {
+    expect(poseFamilyOf("sits, legs crossed, a foot dangling")).toBe("a foot dangling");
+    expect(poseFamilyOf("lies with her legs crossed")).toBe("legs crossed");
+    expect(poseFamilyOf("sits on the sand, legs out")).toBe("legs stretched out");
+    expect(poseFamilyOf("stretches her legs on the lounger")).toBe("legs stretched out");
+    expect(poseFamilyOf("sits with her legs stretched out")).toBe("legs stretched out");
+    expect(poseFamilyOf("crosses her ankles on the towel")).toBe("legs crossed");
+    expect(poseFamilyOf("lies back, ankles crossed")).toBe("legs crossed");
+    expect(poseFamilyOf("sits on the floor")).toBeUndefined();
+  });
+
+  test.each(["nightwear", "beach"] as const)("%s: every legs moment has a pose family, and no two share one", (category) => {
+    const families = legsMoments(category).map(({ moment }) => ({ text: moment.text, family: poseFamilyOf(moment.text) ?? "none" }));
+    expect(families.filter((f) => f.family === "none").map((f) => f.text)).toEqual([]);
+    const shared = families.filter((f, i) => families.findIndex((g) => g.family === f.family) !== i).map((f) => `${f.family}: «${f.text}»`);
+    expect(shared).toEqual([]);
+  });
+
+  test.each(["nightwear", "beach"] as const)("%s: no legs moment says what a moment of another bank says", (category) => {
+    const elsewhere = new Set(BANK_CATEGORIES.filter((c) => c !== category).flatMap((c) => BANKS[c].places.flatMap((p) => p.moments.map((m) => m.text))));
+    expect(legsMoments(category).map(({ moment }) => moment.text).filter((text) => elsewhere.has(text))).toEqual([]);
   });
 });
 

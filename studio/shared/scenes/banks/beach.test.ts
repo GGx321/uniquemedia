@@ -155,6 +155,7 @@ describe("swimwear on every frame (answer (a), M6)", () => {
         "leans on the edge in the water",
         "dangles her feet in the water",
         "lets the waves wash over her feet",
+        "steps down into the water",
         "stretches her arms out, knee-deep",
         "stretches one arm along the edge",
       ]),
@@ -225,14 +226,15 @@ test("every skirt or shorts of the bank names its fabric (C3′, main's detector
 
 describe("the legs moments (plan §6.3, M5): her own look down along her legs, never a low-feet frame", () => {
   test.each<[string, string, boolean, string]>([
-    ["a hotel pool", "stretches her legs on the lounger", false, "she points and flexes her toes slowly"],
+    // S5.R4 round 2: «stretches her legs on the lounger» was «sits on the sand, legs out» again.
+    ["a hotel pool", "lies on the lounger, one knee bent", false, "she sways her bent knee slowly"],
     ["the beach", "sits on the sand, legs out", false, "she slowly buries her toes in the sand"],
     ["the beach", "crosses her ankles on the towel", false, "she crosses and uncrosses her ankles slowly"],
     ["a rooftop pool", "dangles her feet in the water", true, "she dips her toes in the water slowly"],
-    // S5.R4: three more, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one.
+    // S5.R4: three more, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one; round 2: each a pose of its own.
     ["the water's edge", "lets the waves wash over her feet", true, "she wiggles her toes in the foam slowly"],
-    ["a rooftop pool", "lies back, ankles crossed", false, "she rocks her crossed feet a little"],
-    ["the rocks by the sea", "sits with her legs stretched out", false, "she flexes her feet slowly"],
+    ["a rooftop pool", "steps down into the water", true, "she lowers her other foot slowly"],
+    ["the rocks by the sea", "lifts one leg, toes pointed", false, "she lowers her lifted leg slowly"],
   ])("%s · «%s»", (place, text, water, motion) => {
     const found = momentNamed(text);
     expect(found?.place).toBe(place);

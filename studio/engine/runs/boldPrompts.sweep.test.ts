@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { GAZE } from "../../shared/scenes/banks";
 import { OPENS_WITH_ARMS_UP } from "../../shared/scenes/banks/boldRules";
 import { ARMS_UP, COVERS_HER, LOOKS_ELSEWHERE } from "../../shared/scenes/banks/schema";
+import { poseFamilyOf } from "../../shared/scenes/banks/boldDesign.testkit";
 import { HELD_OBJECT_WORDS } from "../../shared/scenes/words";
 import { boldPromptMatrix, boldRunPrompts, type PromptFrame } from "./testing/boldRunPrompts";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -95,6 +96,14 @@ describe("a 20-photo run with «Ножки» 30 % never pays for the same scene 
     const runs = runsOf(category);
     for (const frames of runs) expect(frames.filter((f) => f.slot.framing === "legs")).toHaveLength(6);
     const twice = runs.flatMap((frames, i) => repeated(frames.filter((f) => f.slot.framing === "legs").map((f) => `${f.slot.location} | ${f.slot.activity}`)).map((key) => `seed ${RUN_SEEDS[i]}: ${key}`));
+    expect(twice.slice(0, 5)).toEqual([]);
+  });
+
+  // S5.R4 round 2: the legs moments differed in words, not in pose: «legs stretched out» was 3 of 6 legs frames in 30 of 45 «Ночнушки» and 29 of 45 beach runs.
+  test.each(["nightwear", "beach"] as const)("%s: no pose family twice among a run's legs frames", (category) => {
+    const twice = runsOf(category).flatMap((frames, i) =>
+      repeated(frames.filter((f) => f.slot.framing === "legs").map((f) => poseFamilyOf(f.slot.activity ?? "") ?? `none: ${f.slot.activity}`)).map((family) => `seed ${RUN_SEEDS[i]}: ${family}`),
+    );
     expect(twice.slice(0, 5)).toEqual([]);
   });
 
