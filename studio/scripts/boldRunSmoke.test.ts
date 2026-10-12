@@ -11,7 +11,7 @@ import type { QaGate } from "../engine/runs/qa";
 import { command, engineSettings, GOOD, jobEnd, ok, portraitPng, startEngine, TRAITS } from "../engine/testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { nativeFetch, useNativeHttp } from "../testing/nativeHttp";
-import { BOLD_MODEL, boldRequestProblems, failedReasonsOf, ownerRequestProblems, type SentImageRequest } from "./boldSmoke";
+import { BOLD_MODEL, boldRequestProblems, expectedBilledMicros, failedReasonsOf, ownerRequestProblems, type SentImageRequest } from "./boldSmoke";
 import { startMockOpenRouter, type MockOpenRouter, type MockRequest } from "./mockOpenRouter";
 useNativeGlobals();
 useNativeHttp();
@@ -100,6 +100,8 @@ describe("the mock OpenRouter serves a real engine's «Смелая» run", () =
     if (money.type !== "money.status" || money.result.ledger !== "open") throw new Error("the ledger is not open");
     expect(money.result.unsettledMicros).toBe(0);
     expect(Math.abs(money.result.spentMicros - Math.round(world.mock.totalUsageUsd() * 1_000_000))).toBeLessThanOrEqual(1);
+    // The smoke's own sum: every request the run sent but the refused one is billed (the empty answer included), to the micro-dollar.
+    expect(expectedBilledMicros(world.mock.imageRequests().map(sentOf), 1)).toBe(Math.round(world.mock.totalUsageUsd() * 1_000_000));
     expect(world.mock.unexpected).toEqual([]);
   });
 

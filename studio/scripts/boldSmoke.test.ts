@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { BoldImageParams } from "../engine/openrouter/types";
 import { asLibraryReference, fakeFetch, imageBody, imageParams, JPEG, makeClient, PNG, setupMoney, type Money } from "../engine/openrouter/testing/fakes";
 import { useNativeGlobals } from "../testing/nativeGlobals";
-import { BOLD_MODEL, boldRequestProblems, failedReasonsOf, ownerRequestProblems, type SentImageRequest } from "./boldSmoke";
+import { BOLD_MODEL, boldRequestProblems, expectedBilledMicros, failedReasonsOf, ownerRequestProblems, type SentImageRequest } from "./boldSmoke";
 useNativeGlobals();
 
 // 5a.3 (S5.9f, plan s5a3 §12): what the packaged smoke asserts of the image requests a «Смелая» run sends, as pure functions the Electron smoke calls. They are held here against the bodies the
@@ -93,5 +93,21 @@ describe("failedReasonsOf", () => {
 
   test("lists none when the result names no reason", () => {
     expect(failedReasonsOf({ type: "job.done", payload: { result: { failedSlots: 0 } } })).toEqual([]);
+  });
+});
+
+describe("expectedBilledMicros", () => {
+  const request = (resolution: string): SentImageRequest => ({ model: resolution === "2K" ? BOLD_MODEL : GROK, resolution, body: {} });
+
+  test("bills a 2K image at the Seedream bill and a 1K one at the mock's image cost, in whole micro-dollars", () => {
+    expect(expectedBilledMicros([request("2K"), request("1K"), request("2K")], 0)).toBe(45_000 + 40_000 + 45_000);
+  });
+
+  test("a refused request is free: the refusal takes one 2K request off the bill", () => {
+    expect(expectedBilledMicros([request("2K"), request("2K"), request("1K")], 1)).toBe(45_000 + 40_000);
+  });
+
+  test("an empty answer is billed like any other request, so it is in the sum", () => {
+    expect(expectedBilledMicros([request("2K")], 0)).toBe(45_000);
   });
 });

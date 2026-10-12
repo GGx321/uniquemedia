@@ -144,7 +144,7 @@ import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, reques
 import { acceptedRemainingProblems, launchIsActive, ledgerProblems, midRenderProblems, oneSetOneRunProblems, photoAttemptProblems, postsByModel, quietRestartProblems, readLedger, restartNoticeProblems, restartPauseProblems, reviewRowOf, videosOnDiskProblems } from "./autopilotSmoke";
 import { ideaWriteProblems, templateComposeProblems, type WriteFacts } from "./templateSmoke";
 import { LLM_ONLY_CATEGORY_POOL } from "../engine/scenes/testing/llmOnlyFixture";
-import { BOLD_MODEL, boldRequestProblems, failedReasonsOf, ownerRequestProblems, type SentImageRequest } from "./boldSmoke";
+import { BOLD_MODEL, boldRequestProblems, expectedBilledMicros, failedReasonsOf, ownerRequestProblems, type SentImageRequest } from "./boldSmoke";
 import { electronBinary } from "./electronBinary";
 import { failureDetail } from "./failureDetail";
 import { textAssetPackageProblems, textRasteriserOutputProblems } from "./textSmoke";
@@ -4058,8 +4058,9 @@ async function runBoldRouteScenario(target: Target): Promise<void> {
     check("bold scenario: Seedream was asked for the second run's slots (the two ends included)", mock.imageRequests().slice(beforeSecond).filter((r) => r.model === BOLD_MODEL).length >= (await routedSlotsOf(libraryRoot, secondId)), secondId);
     const secondRun = findRunSummary(await req(cdp, "runs.list"), secondId);
     check("bold scenario: the run has nothing left to resume", field(secondRun, "open") === 0 && field(secondRun, "resumable") === false, secondRun);
-    const billed = mock.totalUsageUsd() - usageBefore;
-    check("bold scenario: the refusal was free and the empty answer was billed: the second run cost the mock its drawn frames and one empty answer", billed > 0, billed);
+    const billedMicros = Math.round((mock.totalUsageUsd() - usageBefore) * 1_000_000);
+    const expectedMicros = expectedBilledMicros(mock.imageRequests().slice(beforeSecond).map(sentImageOf), 1);
+    check("bold scenario: the refusal was free and the empty answer was billed: the second run cost every request it sent but the refused one, to the micro-dollar", billedMicros === expectedMicros, { billedMicros, expectedMicros });
 
     // 4. The money: nothing open, and the ledger ends where the mock's bill does.
     const money = await req(cdp, "money.status");

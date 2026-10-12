@@ -53,3 +53,13 @@ export function failedReasonsOf(end: unknown): string[] {
     .sort((a, b) => a.slotIndex - b.slotIndex)
     .map((entry) => entry.reason);
 }
+
+/**
+ * What the mock OpenRouter bills for these image requests, in whole micro-dollars: a 2K image $0.045 (the Seedream bill P-5a3 measured), any other $0.04; `refused` of them were refused and are
+ * free. An answer with no image is billed like a drawn one, so it needs no term of its own. The smoke compares this with what /credits grew by.
+ */
+export function expectedBilledMicros(sent: readonly SentImageRequest[], refused: number): number {
+  const bill = sent.reduce((sum, request) => sum + (request.resolution === "2K" ? 45_000 : 40_000), 0);
+  // The refusals are Seedream's: each takes one 2K request off the bill.
+  return bill - refused * 45_000;
+}
