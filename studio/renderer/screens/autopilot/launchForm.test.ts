@@ -116,14 +116,15 @@ describe("the remembered mix", () => {
 describe("the form", () => {
   const order = ["a", "b", "c"];
 
-  // S5.7c (plan s5a2 §6.1): the form holds «Подача», «Обычная» by default, and no «Ракурсы».
-  test("a fresh form chooses nobody, ten videos, the everyday categories, «Подача» «Обычная», the library and generation on, no stickers", () => {
+  // S5.7c (plan s5a2 §6.1): the form holds «Подача», «Обычная» by default, and no «Ракурсы». S5.8b: and «Ножки», «Нет» by default.
+  test("a fresh form chooses nobody, ten videos, the everyday categories, «Подача» «Обычная», «Ножки» «Нет», the library and generation on, no stickers", () => {
     expect(defaultForm(false)).toEqual({
       avatarIds: [],
       videosPerAvatar: 10,
       mix: DEFAULT_MIX,
       categories: ["home", "travel", "shoot", "fit"],
       level: "ordinary",
+      legs: 0,
       library: true,
       generate: true,
       sceneReview: false,
@@ -139,6 +140,30 @@ describe("the form", () => {
     expect(flirty?.level).toBe("flirty");
     // A plan belongs to one «Подача»: the two are asked apart.
     expect(flirty !== null && ordinary !== null && settingsKey(flirty) !== settingsKey(ordinary)).toBe(true);
+  });
+
+  // S5.8b (plan s5a2 §7; mockup 34; the S5.8a review): the engine stores whatever share the draft names, a 0 included, so the window names one only when
+  // it is 15 or 30 (I5.27, as `level` only when flirty), and only with a built-in category on: a launch of the owner's own categories that named one would be
+  // refused (`legs-built-in-only`).
+  test("the settings to plan carry «Ножки» as `legsShare` only at 15 or 30, never 0", () => {
+    const chosen = { ...defaultForm(true), avatarIds: ["a"] };
+    const none = launchSettings(chosen, []);
+    expect(none !== null && "legsShare" in none).toBe(false);
+    const some = launchSettings({ ...chosen, legs: 15 }, []);
+    const many = launchSettings({ ...chosen, legs: 30 }, []);
+    expect(some?.legsShare).toBe(15);
+    expect(many?.legsShare).toBe(30);
+    expect(some === null ? [] : Object.keys(some).sort()).toEqual(["avatarIds", "categories", "generate", "legsShare", "library", "mix", "sceneReview", "stickers", "videosPerAvatar"]);
+    // A plan belongs to one share: the three are asked apart.
+    expect(new Set([none, some, many].map((s) => (s === null ? "" : settingsKey(s)))).size).toBe(3);
+  });
+
+  test("the settings name no legs for the owner's own categories only, whatever the pick; a built-in beside them keeps it", () => {
+    const chosen = { ...defaultForm(true), avatarIds: ["a"], legs: 30 as const };
+    const custom = launchSettings({ ...chosen, categories: ["cat-paris-0000000"] }, ["cat-paris-0000000"]);
+    expect(custom !== null && "legsShare" in custom).toBe(false);
+    // A built-in beside a custom one the library dropped: the built-in decides.
+    expect(launchSettings({ ...chosen, categories: ["cat-gone-00000000", "fit"] }, [])?.legsShare).toBe(30);
   });
 
   test("avatars keep the list's order however they were clicked; «Все» takes every one", () => {

@@ -365,9 +365,16 @@
   line-height: 1.35;
 }
 
-/* S5.7c (mockup 30): «Подача», its segments at the row's end like the other controls; «Кокетливая»'s count reads a little brighter than the notes. */
-.ap-level .gen-seg {
+/* S5.7c (mockup 30): «Подача», its segments at the row's end like the other controls; «Кокетливая»'s count reads a little brighter than the notes.
+   S5.8b (mockup 34): «Ножки», its chips likewise. */
+.ap-level .gen-seg,
+.ap-legs .gen-legs {
   margin-left: auto;
+}
+
+/* Why «Ножки» are off: no brighter than the notes. */
+.ap-row-note.gen-cap.gen-cap-why {
+  color: var(--muted);
 }
 
 .ap-row-note.gen-cap {

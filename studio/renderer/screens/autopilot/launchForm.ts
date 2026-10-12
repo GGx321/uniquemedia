@@ -6,9 +6,11 @@ import {
   type CategoryRef,
   type CustomCategoryId,
   type LaunchMix,
+  type LegsShare,
   type SceneLevel,
   type VideoShape,
 } from "../../../shared/engine";
+import { hasBuiltIn } from "../photos/legs";
 import { arrangeCategories } from "../photos/runForm";
 
 // S4.9a: the «Автопилот» launch form (AutopilotS4.dc.html, columns 1 and 2) as plain data: what the owner chose before «Запустить», the two-handle mix
@@ -22,6 +24,8 @@ export interface LaunchForm {
   readonly categories: readonly CategoryRef[];
   /** «Подача» (S5.7c): the angle comes from the scene, so the form holds no «Ракурсы». */
   readonly level: SceneLevel;
+  /** «Ножки» (S5.8b): the owner's pick, kept while no built-in category is on (the settings then name none). */
+  readonly legs: LegsShare;
   /** «Сначала свободные фото из библиотеки». */
   readonly library: boolean;
   /** «Догенерировать недостающие». */
@@ -53,6 +57,7 @@ export function defaultForm(sceneReview: boolean, mix: LaunchMix = DEFAULT_MIX):
     mix,
     categories: DEFAULT_CATEGORIES,
     level: "ordinary",
+    legs: 0,
     library: true,
     generate: true,
     sceneReview,
@@ -210,6 +215,8 @@ export interface LaunchSettingsInput {
   categories: CategoryRef[];
   /** «Подача», only when it is not the default (I5.27: a launch file then carries it only when it differs). */
   level?: "flirty";
+  /** «Ножки» (S5.8b), only at 15 or 30 and with a built-in category: the engine stores whatever share the draft names, a 0 included. */
+  legsShare?: 15 | 30;
   library: boolean;
   generate: boolean;
   sceneReview: boolean;
@@ -229,6 +236,8 @@ export function launchSettings(form: LaunchForm, customOrder: readonly CustomCat
     mix: { ...form.mix },
     categories,
     ...(form.level === "flirty" ? { level: "flirty" as const } : {}),
+    // Too few new photos for a legs frame (mockup 34#few) still names the pick: it draws nothing this time, and the launch keeps what the owner chose.
+    ...(form.legs !== 0 && hasBuiltIn(categories) ? { legsShare: form.legs } : {}),
     library: form.library,
     generate: form.generate,
     sceneReview: form.sceneReview,

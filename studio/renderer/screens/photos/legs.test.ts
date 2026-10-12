@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { legsCountOf } from "../../../shared/scenes/level";
 import { NBSP } from "../../lib/format";
-import { cardLegsLine, hasBuiltIn, legsCaption, legsFrames, LEGS_OPTIONS } from "./legs";
+import { cardLegsLine, hasBuiltIn, launchLegsRow, legsCaption, legsFrames, LEGS_OPTIONS } from "./legs";
 
 // S5.8b (plan s5a2 §7, I5.29; mockups 33 and 34 of .omc/stage5/design): «Ножки» on the window's side — the chips, the count of legs frames the caption
 // quotes (the planner's own rule over the planner's own split), and why the chips are off with no built-in category on.
@@ -70,5 +70,52 @@ describe("the card's caption (mockups 33, 34#card)", () => {
     expect(cardLegsLine(15, 20, [PARIS])).toEqual(why);
     expect(cardLegsLine(0, 20, [PARIS, BAKERIES])).toEqual(why);
     expect(cardLegsLine(30, 20, [])).toEqual(why);
+  });
+});
+
+describe("«Автопилот»'s row (mockups 34, 34#few)", () => {
+  const avatar = (toGenerate: number, blocked: unknown = null) => ({ toGenerate, blocked });
+  const plan = (...avatars: { toGenerate: number; blocked: unknown }[]) => ({
+    avatars,
+    totals: { toGenerate: avatars.reduce((sum, a) => sum + (a.blocked === null ? a.toGenerate : 0), 0) },
+  });
+  const THREE = ["home", "shoot", "glam"] as const;
+
+  test("sums each avatar's own legs frames: ≈ 3 of 22 at «Немного», ≈ 5 at «Много» (the mockup's plan)", () => {
+    const three = plan(avatar(9), avatar(7), avatar(6));
+    expect(launchLegsRow(15, three, THREE)).toEqual({ shown: 15, off: false, caption: { text: `≈ 3 из 22${NBSP}новых кадров — ${WHAT}`, why: false } });
+    expect(launchLegsRow(30, three, THREE).caption?.text).toBe(`≈ 5 из 22${NBSP}новых кадров — ${WHAT}`);
+    expect(launchLegsRow(30, plan(avatar(21)), THREE).caption?.text).toBe(`≈ 6 из 21${NBSP}нового кадра — ${WHAT}`);
+  });
+
+  test("a blocked avatar's photos are not counted", () => {
+    expect(launchLegsRow(15, plan(avatar(20, { kind: "open-set" }), avatar(20)), ["home"]).caption?.text).toBe(`≈ 3 из 20${NBSP}новых кадров — ${WHAT}`);
+  });
+
+  test("«Нет» on: no caption", () => {
+    expect(launchLegsRow(0, plan(avatar(20)), THREE)).toEqual({ shown: 0, off: false, caption: null });
+  });
+
+  test("no plan yet, or nothing new to draw: what the frames are, without a count", () => {
+    const words = { text: "Ножки и стопы крупно; лицо может не попасть в кадр, сходство на таких кадрах только отмечается.", why: false };
+    expect(launchLegsRow(15, null, THREE)).toEqual({ shown: 15, off: false, caption: words });
+    expect(launchLegsRow(30, plan(avatar(0), avatar(0)), THREE)).toEqual({ shown: 30, off: false, caption: words });
+  });
+
+  test("no avatar draws 4 new photos: the chips are off on the pick, which is kept, saying «Ножки — от 4 фото»", () => {
+    const few = { text: "Ножки — от 4 фото", why: true };
+    expect(launchLegsRow(15, plan(avatar(1), avatar(1), avatar(1)), THREE)).toEqual({ shown: 15, off: true, caption: few });
+    expect(launchLegsRow(0, plan(avatar(3)), THREE)).toEqual({ shown: 0, off: true, caption: few });
+    // A blocked avatar's 10 do not count; the one that draws has 3.
+    expect(launchLegsRow(30, plan(avatar(10, { kind: "open-set" }), avatar(3)), THREE)).toEqual({ shown: 30, off: true, caption: few });
+    // One off the limit: 4 new photos hold a legs frame.
+    expect(launchLegsRow(15, plan(avatar(4), avatar(1)), ["home"])).toEqual({ shown: 15, off: false, caption: { text: `≈ 1 из 5${NBSP}новых кадров — ${WHAT}`, why: false } });
+  });
+
+  test("no built-in category on: the chips are off on «Нет», saying why, with a plan or without", () => {
+    const why = { text: "Ножки — только во встроенных категориях", why: true };
+    expect(launchLegsRow(15, plan(avatar(20)), [PARIS])).toEqual({ shown: 0, off: true, caption: why });
+    expect(launchLegsRow(30, null, [PARIS, BAKERIES])).toEqual({ shown: 0, off: true, caption: why });
+    expect(launchLegsRow(15, plan(avatar(1)), [])).toEqual({ shown: 0, off: true, caption: why });
   });
 });

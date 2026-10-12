@@ -28,6 +28,7 @@ import { PlanCard, PlanColumn, PlanMini, type GoButtonState } from "./autopilot/
 import { aboutUsd, figuresOf, goTitle, goWhy, isUnfinished, limitText, musicLine, planNotes } from "./autopilot/planModel";
 import { SettingsColumn } from "./autopilot/SettingsColumn";
 import { probeWorldKey, useLaunchPlan, worldKey } from "./autopilot/useLaunchPlan";
+import { launchLegsRow } from "./photos/legs";
 import { launchFlirtyCaption } from "./photos/level";
 import { readSceneReview, viewerStorage } from "./photos/sceneReview";
 import { arrangeCategories } from "./photos/runForm";
@@ -56,6 +57,8 @@ function formOfLaunch(launch: LaunchView): LaunchForm {
     categories: draft.categories,
     // S5.7c: a launch from before «Подача» carries «Ракурсы» and no level: it reads «Обычная».
     level: draft.level ?? "ordinary",
+    // S5.8b: a launch from before «Ножки» names no share: it reads «Нет».
+    legs: draft.legsShare ?? 0,
     library: draft.library,
     generate: draft.generate,
     sceneReview: draft.sceneReview,
@@ -304,6 +307,8 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
           onCategory={toggleCategory}
           onLevel={(level) => edit({ ...form, level })}
           levelCaption={shownForm.level === "flirty" ? launchFlirtyCaption(running ? null : plan.shown, settings?.categories ?? shownForm.categories) : null}
+          legs={launchLegsRow(shownForm.legs, running ? null : plan.shown, running ? shownForm.categories : (settings?.categories ?? arrangeCategories(form.categories, customOrder)))}
+          onLegs={(legs) => edit({ ...form, legs })}
           onSwitch={(which) => edit({ ...form, [which]: !form[which] })}
           musicOpen={musicWindow !== null}
           musicChipRef={musicChip}

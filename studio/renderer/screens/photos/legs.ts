@@ -1,5 +1,5 @@
 import { isCustomCategory, splitCount, type CategoryRef, type LegsShare } from "../../../shared/engine";
-import { legsCountOf } from "../../../shared/scenes/level";
+import { LEGS_CAP_TENTHS, legsCountOf } from "../../../shared/scenes/level";
 import { countOf, NBSP } from "../../lib/format";
 
 // S5.8b (plan s5a2 §7, I5.29; mockups 33 and 34): «Ножки» on the window's side — legs and feet filling the frame, drawn from the five built-in categories only.
@@ -53,4 +53,48 @@ export function cardLegsLine(share: LegsShare, count: number, categories: readon
   if (!hasBuiltIn(categories)) return { text: LEGS_BUILT_IN_ONLY, why: true };
   if (share === 0 || count === 0) return null;
   return { text: legsCaption(legsFrames(share, count, categories), count), why: false };
+}
+
+// ---------- «Автопилот» ----------
+
+/** The fewest new photos of an avatar that can hold a legs frame: the cap ⌊0.3 × count⌋ is 0 below it (I5.29). */
+export const LEGS_MIN_PHOTOS = Math.ceil(10 / LEGS_CAP_TENTHS);
+
+/** Why the chips are off when no avatar of the plan draws enough new photos (mockup 34#few). */
+export const LEGS_FEW = `Ножки — от ${LEGS_MIN_PHOTOS} фото`;
+
+/** «Автопилот»'s row caption, lower-case like every caption of that column (mockup 34). */
+export const LEGS_ROW_HINT = "только во встроенных категориях";
+
+/** What `launchLegsRow` reads of a launch's plan (`LaunchPreview`). */
+interface LaunchPlanCounts {
+  readonly avatars: readonly { readonly toGenerate: number; readonly blocked: unknown }[];
+  readonly totals: { readonly toGenerate: number };
+}
+
+/** «Автопилот»'s «Ножки» row: the chip that reads on, whether the chips are off, and the caption. */
+export interface LegsRow {
+  readonly shown: LegsShare;
+  readonly off: boolean;
+  readonly caption: LegsLine | null;
+}
+
+/**
+ * «Автопилот»'s «Ножки» row (mockups 34, 34#few). With no built-in category on, the chips are off on «Нет» and say why. When no avatar of the plan draws
+ * `LEGS_MIN_PHOTOS` new photos, they are off on the pick, which is kept: it just draws nothing this time. Else a pick says «≈ {L} из {M} новых кадров — …»:
+ * each avatar composes its own new photos, so L sums `legsFrames` per avatar that is not blocked (the plan's totals leave those out); «≈», as the engine splits
+ * an avatar's photos by its own seeded order. With no plan yet, or nothing new to draw, what the frames are, without a count.
+ */
+export function launchLegsRow(share: LegsShare, plan: LaunchPlanCounts | null, categories: readonly CategoryRef[]): LegsRow {
+  if (!hasBuiltIn(categories)) return { shown: 0, off: true, caption: { text: LEGS_BUILT_IN_ONLY, why: true } };
+  const drawing = plan === null ? [] : plan.avatars.filter((avatar) => avatar.blocked === null && avatar.toGenerate > 0);
+  if (plan !== null && plan.totals.toGenerate > 0 && drawing.every((avatar) => avatar.toGenerate < LEGS_MIN_PHOTOS)) return { shown: share, off: true, caption: { text: LEGS_FEW, why: true } };
+  if (share === 0) return { shown: 0, off: false, caption: null };
+  if (plan === null || plan.totals.toGenerate === 0) return { shown: share, off: false, caption: { text: `${LEGS_WHAT.charAt(0).toUpperCase()}${LEGS_WHAT.slice(1)}`, why: false } };
+  const legs = drawing.reduce((sum, avatar) => sum + legsFrames(share, avatar.toGenerate, categories), 0);
+  return {
+    shown: share,
+    off: false,
+    caption: { text: `≈ ${legs} из ${countOf(plan.totals.toGenerate, ["нового кадра", "новых кадров", "новых кадров"])} — ${LEGS_WHAT}`, why: false },
+  };
 }

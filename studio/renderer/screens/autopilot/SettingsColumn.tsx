@@ -1,8 +1,10 @@
 import { type ReactNode, type RefObject, useId, useRef } from "react";
-import { MAX_VIDEOS_PER_AVATAR, SceneCategory, type CategoryRef, type CategorySummary, type LaunchMix, type SceneLevel } from "../../../shared/engine";
+import { MAX_VIDEOS_PER_AVATAR, SceneCategory, type CategoryRef, type CategorySummary, type LaunchMix, type LegsShare, type SceneLevel } from "../../../shared/engine";
 import { Icon } from "../../ui/Icon";
 import { OwnAnglesNote } from "../photos/AnglesLines";
 import { ownAnglesLine } from "../photos/categoryText";
+import { LEGS_ROW_HINT, type LegsRow } from "../photos/legs";
+import { LegsChips } from "../photos/LegsChips";
 import { ANGLE_FROM_SCENE_SHORT, BOLD_LABEL, BOLD_LATER, LEVEL_OPTIONS } from "../photos/level";
 import { CATEGORY_LABEL } from "../photos/runForm";
 import { MIN_VIDEOS_PER_AVATAR, wantedShapes, type LaunchForm } from "./launchForm";
@@ -11,9 +13,9 @@ import { MixControl } from "./MixControl";
 import type { MusicLine } from "./planModel";
 
 // S4.9a: column 2 of «Автопилот», «Настройки запуска» (AutopilotS4.dc.html): videos per avatar, the shape mix, the scene categories (built-in and the
-// owner's own), «Подача» (S5.7c, mockup 30: it replaced «Ракурсы» — the angle comes from the scene), the library and generation switches, «Сцены на
-// проверку», «Музыка», «GIF-стикеры» and «Предел запуска». No «Текст на видео» (owner decision 8). While a launch runs these are its settings, read only,
-// under a line that says so.
+// owner's own), «Подача» (S5.7c, mockup 30: it replaced «Ракурсы» — the angle comes from the scene), «Ножки» (S5.8b, mockup 34), the library and
+// generation switches, «Сцены на проверку», «Музыка», «GIF-стикеры» and «Предел запуска». No «Текст на видео» (owner decision 8). While a launch runs
+// these are its settings, read only, under a line that says so.
 
 export interface SettingsColumnProps {
   readonly form: LaunchForm;
@@ -34,6 +36,9 @@ export interface SettingsColumnProps {
   readonly onLevel: (level: SceneLevel) => void;
   /** «Кокетливая»'s count of flirty new frames (mockup 30), or null while «Обычная» is on. */
   readonly levelCaption: string | null;
+  /** S5.8b: the «Ножки» row as the form and the plan make it (mockups 34, 34#few). */
+  readonly legs: LegsRow;
+  readonly onLegs: (legs: LegsShare) => void;
   readonly onSwitch: (which: "library" | "generate" | "sceneReview" | "stickers") => void;
   /** S4.9c: the music chip's window is open, and the chip that opens and closes it. */
   readonly musicOpen: boolean;
@@ -182,6 +187,28 @@ export function SettingsColumn(props: SettingsColumnProps) {
                 {BOLD_LATER}
               </span>
               {ownAngles !== null && <OwnAnglesNote line={ownAngles} className="ap-row-note" />}
+            </div>
+
+            {/* S5.8b (mockups 34, 34#few): «Ножки» under «Подача»; read only, a launch's own stays checked whatever is clicked. */}
+            <div className="ap-row ap-row-wrap ap-legs">
+              <div className="rl">
+                <b id={id("legs")}>Ножки</b>
+                <span>{LEGS_ROW_HINT}</span>
+              </div>
+              <LegsChips
+                name={id("legs-radio")}
+                labelledBy={id("legs")}
+                describedBy={props.legs.caption !== null ? id("legs-cap") : undefined}
+                shown={props.legs.shown}
+                off={props.legs.off}
+                readOnly={readOnly}
+                onPick={props.onLegs}
+              />
+              {props.legs.caption !== null && (
+                <span id={id("legs-cap")} className={props.legs.caption.why ? "ap-row-note gen-cap gen-cap-why" : "ap-row-note gen-cap"}>
+                  {props.legs.caption.text}
+                </span>
+              )}
             </div>
 
             <SwitchRow
