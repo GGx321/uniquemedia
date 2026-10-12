@@ -494,8 +494,8 @@ describe("C3′: a face-hidden mirror frame covers her face from her eyebrows to
     expect(offenders(sample, (f) => !f.prompt().includes(FACE_COVER) || OLD_COVER.test(f.prompt()))).toEqual(NONE);
   });
 
-  test("side to the mirror, the reflection-only sentence says the phone covers her face the same way", () => {
-    expect(offenders(sideOn, (f) => !f.prompt().includes("Only her reflection is in the picture; the phone covers her face from her eyebrows to her chin."))).toEqual(NONE);
+  test("side to the mirror, the reflection-only sentence follows the face-cover line, which is said once", () => {
+    expect(offenders(sideOn, (f) => !f.prompt().includes(`${FACE_COVER} Only her reflection is in the picture.`) || f.prompt().split("from her eyebrows to her chin").length !== 2)).toEqual(NONE);
   });
 
   test("no gaze, eyes or expression contradicts it: a face-hidden sentence names none", () => {

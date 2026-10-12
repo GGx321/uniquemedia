@@ -65,7 +65,7 @@ export interface Moment {
   legs?: { framing?: "legs" };
   /**
    * Back or side to the mirror (plan r1.5, the owner's note): only her reflection is in the picture, so the capture line adds «Only her reflection is in
-   * the picture; the phone covers her face from her eyebrows to her chin.» (engine/scenes/phoneLook.ts, C3′). Phone-over-face mirror frames (`mirror-hidden`) only; front-facing mirror selfies may show or hide her face.
+   * the picture.» (engine/scenes/phoneLook.ts) after the face-hidden capture line. Phone-over-face mirror frames (`mirror-hidden`) only; front-facing mirror selfies may show or hide her face.
    */
   mirrorBack?: true;
   /** No legwear slot on this moment (plan r1.4): her feet or legs are up (Grok refused legs up in tights), or another reason the bank names. */

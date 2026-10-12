@@ -81,8 +81,11 @@ export function captureLineOf(capture: Capture, key: string, framing: CaptureFra
   return FIXED_CAPTURE_LINE[capture];
 }
 
-/** Back or side to the mirror (owner note, r1.5): added after the capture line of a moment tagged `mirrorBack`, with the face-hidden line's own phone clause (C3′). */
-export const MIRROR_BACK_LINE = "Only her reflection is in the picture; the phone covers her face from her eyebrows to her chin.";
+/**
+ * Back or side to the mirror (owner note, r1.5): added after the capture line of a moment tagged `mirrorBack`. Such a moment is a face-hidden frame only (the banks
+ * refuse it on any other capture), so the capture line already covers her face from her eyebrows to her chin (C3′) and this sentence does not say it again.
+ */
+export const MIRROR_BACK_LINE = "Only her reflection is in the picture.";
 
 /**
  * The constraint about her hands. A mirror shot holds the phone in view in one hand; a selfie's near arm is out of the frame; the close self-shots (above,

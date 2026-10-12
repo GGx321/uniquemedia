@@ -164,9 +164,10 @@ describe("the hand line", () => {
 });
 
 describe("back or side to the mirror (owner note, r1.5)", () => {
-  // C3′: the same phone clause as the face-hidden line, never the weaker «it hides her face» the frames ignored.
-  test("the sentence says only her reflection shows and the phone covers her face as the face-hidden line does", () => {
-    expect(MIRROR_BACK_LINE).toBe("Only her reflection is in the picture; the phone covers her face from her eyebrows to her chin.");
+  // C3′: never the weaker «it hides her face» the frames ignored; and (review) not the face-cover clause a second time, since a side-on frame is always a
+  // face-hidden one, whose capture line already says it.
+  test("the sentence says only her reflection shows, and leaves the face cover to the capture line", () => {
+    expect(MIRROR_BACK_LINE).toBe("Only her reflection is in the picture.");
   });
 });
 
