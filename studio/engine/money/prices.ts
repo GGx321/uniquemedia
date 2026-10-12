@@ -9,6 +9,12 @@ export const FALLBACK_PRICES_DATE = "2026-09-24";
 /** Each price GET gives up after this long; its model then falls back to the dated table. */
 export const PRICE_FETCH_TIMEOUT_MS = 15_000;
 
+/**
+ * 5a.3 (S5.9d): the model of the «Смелая» route, drawn at 2K with one reference. It is the moderation fallback's model too (`FALLBACK_IMAGE_MODEL`, runs/plan.ts, pinned
+ * equal by plan.bold.test.ts), which is why a model id alone cannot tell the two routes apart.
+ */
+export const BOLD_IMAGE_MODEL = "bytedance-seed/seedream-5-0-pro";
+
 export type ImageQuality = "low" | "medium";
 export type PriceSource = "live" | "fallback";
 
@@ -40,10 +46,15 @@ export interface ChatPrice extends ChatRates {
   overrides: ({ minPromptTokens: number } & ChatRates)[];
 }
 
+/** The size an image request asks for: every request but the «Смелая» route's is 1K (openrouter/image.ts). */
+export type ImageResolution = "1K" | "2K";
+
 export interface ImageWorstCaseRequest {
   model: string;
   quality: ImageQuality | null;
   refs: number;
+  /** 5a.3 (S5.9d): absent = 1K, every row that existed before the «Смелая» route. */
+  resolution?: ImageResolution;
 }
 
 export interface ChatWorstCaseRequest {
@@ -64,7 +75,7 @@ export type FetchLike = (
 // ---------- /api/v1/images/models/<id>/endpoints ----------
 
 /** The requests Studio sends an image model (openrouter/image.ts): a photo run's 1K, 9:16 and one reference; an avatar portrait's 3:4 and none. */
-export const WANTED_RESOLUTION = "1K";
+export const WANTED_RESOLUTION: ImageResolution = "1K";
 export const PHOTO_ASPECT_RATIO = "9:16";
 export const PORTRAIT_ASPECT_RATIO = "3:4";
 /** A photo run's master portrait is the one reference; a candidate portrait sends none. */
@@ -115,22 +126,23 @@ const ParamsOf = z.object({ supported_parameters: z.record(z.string(), z.unknown
  * OpenRouter incident must not stop a paid run that already holds a priced
  * reserve (a wrong guess costs one free 400, a false refusal blocks the run).
  */
-export function endpointsAcceptPhotoRequest(body: unknown): boolean {
+export function endpointsAcceptPhotoRequest(body: unknown, resolution: ImageResolution = WANTED_RESOLUTION): boolean {
   const listed = Endpoints.safeParse(body);
   if (!listed.success) return true;
   return listed.data.endpoints.every((endpoint) => {
     const params = ParamsOf.safeParse(endpoint);
-    return !params.success || acceptsPhotoRequest(params.data.supported_parameters);
+    return !params.success || acceptsPhotoRequest(params.data.supported_parameters, resolution);
   });
 }
 
-export function acceptsPhotoRequest(p: Record<string, unknown>): boolean {
+/** `resolution` is the size the request asks for: 1K for every run, 2K for the «Смелая» route's Seedream request (5a.3, S5.9d). */
+export function acceptsPhotoRequest(p: Record<string, unknown>, resolution: ImageResolution = WANTED_RESOLUTION): boolean {
   const lacks = (field: unknown, needed: string): boolean => {
     const read = ReadableValues.safeParse(field);
     return read.success && !read.data.values.includes(needed);
   };
   const refs = ReadableMax.safeParse(p.input_references);
-  return !lacks(p.resolution, WANTED_RESOLUTION) && !lacks(p.aspect_ratio, PHOTO_ASPECT_RATIO) && !(refs.success && refs.data.max < PHOTO_REFERENCES);
+  return !lacks(p.resolution, resolution) && !lacks(p.aspect_ratio, PHOTO_ASPECT_RATIO) && !(refs.success && refs.data.max < PHOTO_REFERENCES);
 }
 
 const PricingEntry = z.object({
@@ -289,10 +301,21 @@ function isLargerThan1k(variant: string | null): boolean {
 }
 
 /**
+ * 5a.3 (S5.9d, I5.40): the output price of a 2K image, read from the tier that NAMES 2K: `<quality>_2k`, else `2k`, else `high_resolution` (Seedream's only 2K line).
+ * Never the 1K base and never a 1K tier or a 4K one: a price list that does not say what 2K costs is PRICE_UNAVAILABLE for the bold scope, before anything is reserved.
+ */
+function image2kMicros(price: ImagePrice, quality: ImageQuality | null): number {
+  const find = (variant: string): number | undefined => price.outputs.find((o) => o.variant?.toLowerCase() === variant)?.micros;
+  const named = (quality === null ? undefined : find(`${quality}_2k`)) ?? find("2k") ?? find("high_resolution");
+  if (named === undefined) throw new MoneyError("PRICE_UNAVAILABLE", "the endpoints list no 2K output price (no <quality>_2k, 2k or high_resolution line): a 2K image cannot be reserved", { scope: "bold" });
+  return named;
+}
+
+/**
  * Output price of a 1K image at a quality, never an underestimate: Studio
- * only ever asks for 1K (owner decision 2026-09-29: 2K removed), so a live
- * price list's 2K, 4K and `high_resolution` tiers are parsed but never
- * priced. Variant names are compared in lower case. Any unrecognised
+ * asks for 1K everywhere but the «Смелая» route (owner decision 2026-09-29: 2K
+ * removed; 5a.3 brought it back for that route alone, `resolution` "2K" above), so a
+ * live price list's 2K, 4K and `high_resolution` tiers are parsed but not priced here. Variant names are compared in lower case. Any unrecognised
  * variant: the dearest price (nothing can be mapped safely). Otherwise, in
  * order:
  * - `<quality>_1k` variants exist: the exact `<quality>_1k` price; with no
@@ -306,7 +329,8 @@ function isLargerThan1k(variant: string | null): boolean {
  *   2K);
  * - otherwise the dearest price.
  */
-export function imageOutputMicros(price: ImagePrice, quality: ImageQuality | null): number {
+export function imageOutputMicros(price: ImagePrice, quality: ImageQuality | null, resolution: ImageResolution = "1K"): number {
+  if (resolution === "2K") return image2kMicros(price, quality);
   const outputs = price.outputs.map((o) => ({ variant: o.variant === null ? null : o.variant.toLowerCase(), micros: o.micros }));
   const dearest = (list: ImagePrice["outputs"]): number => list.reduce((max, o) => Math.max(max, o.micros), 0);
   if (outputs.some((o) => o.variant !== null && !RECOGNISED_VARIANT.test(o.variant))) return dearest(outputs);
@@ -333,7 +357,7 @@ export function imageWorstCase(price: ImagePrice, req: Omit<ImageWorstCaseReques
   if (req.refs > 0 && price.inputImageMicros === null) {
     throw new MoneyError("PRICE_UNAVAILABLE", "the endpoints list no input_image price: the price of a reference image is unknown, so a request with one cannot be reserved");
   }
-  return imageOutputMicros(price, req.quality) + req.refs * (price.inputImageMicros ?? 0);
+  return imageOutputMicros(price, req.quality, req.resolution) + req.refs * (price.inputImageMicros ?? 0);
 }
 
 /** Cost of one chat call with these token and image counts, rounded up to a whole micro-dollar. */
@@ -389,7 +413,11 @@ export const FALLBACK_IMAGE: ReadonlyMap<string, ImagePrice> = new Map([
   [
     "bytedance-seed/seedream-5-0-pro",
     {
-      outputs: [{ variant: null, micros: 45_000 }],
+      // The 1K base was read on 2026-09-24; the 2K line (`high_resolution`, $0.09 at list; the bill was $0.045, probe P-5a3) on 2026-10-12 (5a.3). The reserve stays at list.
+      outputs: [
+        { variant: null, micros: 45_000 },
+        { variant: "high_resolution", micros: 90_000 },
+      ],
       inputImageMicros: 3_000,
     },
   ],
@@ -529,6 +557,11 @@ export async function loadPriceBook(opts: {
    * run on a model that dropped 9:16 would get its own free 400, slot by slot.
    */
   checkRequestShape?: boolean;
+  /**
+   * 5a.3 (S5.9d): the plan has «Смелая» slots, so the bold model's LIVE endpoints must also still accept the 2K request (`endpointsAcceptPhotoRequest(body, "2K")`), else
+   * PRICE_UNAVAILABLE for the bold scope. Only that model is held to 2K: the settings' model stays a 1K model. Without it nothing looks for 2K.
+   */
+  boldShape?: boolean;
   /** Per GET; PRICE_FETCH_TIMEOUT_MS unless a test shortens it. */
   timeoutMs?: number;
 }): Promise<PriceBook> {
@@ -539,6 +572,10 @@ export async function loadPriceBook(opts: {
       const entry = await liveOrFallback(model, FALLBACK_IMAGE, async () => {
         const body = await getJson(opts.fetch, `${base}/images/models/${model}/endpoints`, timeoutMs);
         const price = parseImageEndpoints(body, model);
+        // The bold check first: a Seedream endpoint that lost 2K, 9:16 or the reference fails both, and the scoped answer is the one that says what still works.
+        if (opts.boldShape === true && model === BOLD_IMAGE_MODEL && !endpointsAcceptPhotoRequest(body, "2K")) {
+          throw new MoneyError("PRICE_UNAVAILABLE", `${model}'s endpoints no longer accept the «Смелая» request (2K, 9:16 and one reference)`, { scope: "bold" });
+        }
         if (opts.checkRequestShape === true && !endpointsAcceptPhotoRequest(body)) {
           throw new MoneyError("PRICE_UNAVAILABLE", `${model}'s endpoints no longer accept a photo run's request (1K, 9:16 and one reference)`);
         }

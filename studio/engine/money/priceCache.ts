@@ -7,6 +7,18 @@ export interface PriceModels {
   chatModels: readonly string[];
   /** A run's models: the image endpoints are rechecked against Studio's requests (`loadPriceBook`'s `checkRequestShape`). */
   checkRequestShape?: boolean;
+  /** 5a.3 (S5.9d): the run has «Смелая» slots, so the Seedream endpoint is also checked for the 2K request. Part of the cache key: a plain load never answers for a bold one. */
+  boldShape?: true;
+}
+
+/** The models in the one canonical shape the cache keys by (sorted, flags only when set). */
+function wantedOf(models: PriceModels): PriceModels {
+  return {
+    imageModels: unique(models.imageModels),
+    chatModels: unique(models.chatModels),
+    ...(models.checkRequestShape === true ? { checkRequestShape: true } : {}),
+    ...(models.boldShape === true ? { boldShape: true as const } : {}),
+  };
 }
 
 /** A price book and the day its prices are from: the load's UTC day, or the fallback table's date. */
@@ -51,7 +63,7 @@ export class PriceCache {
   }
 
   get(models: PriceModels): Promise<PricedBook> {
-    const wanted: PriceModels = { imageModels: unique(models.imageModels), chatModels: unique(models.chatModels), ...(models.checkRequestShape === true ? { checkRequestShape: true } : {}) };
+    const wanted = wantedOf(models);
     const key = JSON.stringify(wanted);
     const entry = this.#entries.get(key);
     if (entry !== undefined && this.#monotonic() - entry.loadedAtMono < this.#ttl(entry.priced)) return Promise.resolve(entry.priced);
@@ -71,7 +83,7 @@ export class PriceCache {
 
   /** The last prices loaded for these models, due for a refresh or not; never loads. */
   peek(models: PriceModels): PricedBook | null {
-    const key = JSON.stringify({ imageModels: unique(models.imageModels), chatModels: unique(models.chatModels), ...(models.checkRequestShape === true ? { checkRequestShape: true } : {}) });
+    const key = JSON.stringify(wantedOf(models));
     return this.#entries.get(key)?.priced ?? null;
   }
 

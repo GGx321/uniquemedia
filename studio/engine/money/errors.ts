@@ -21,11 +21,14 @@ export class MoneyError extends Error {
   readonly code: MoneyErrorCode;
   /** True when every paid call in this process must stop. */
   readonly fatal: boolean;
+  /** 5a.3 (S5.9d, gap D): "bold" on a PRICE_UNAVAILABLE for the «Смелая» route's 2K tier alone, so the card can say the rest still works. Absent for every other price failure. */
+  readonly scope?: "bold";
 
-  constructor(code: MoneyErrorCode, message: string, options: { fatal?: boolean } = {}) {
+  constructor(code: MoneyErrorCode, message: string, options: { fatal?: boolean; scope?: "bold" } = {}) {
     super(message);
     this.name = "MoneyError";
     this.code = code;
     this.fatal = options.fatal ?? false;
+    if (options.scope !== undefined) this.scope = options.scope;
   }
 }
