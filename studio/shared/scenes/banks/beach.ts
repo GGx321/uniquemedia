@@ -123,7 +123,8 @@ export const BEACH: CategoryBank = {
         // The beach probe: from behind on the rocks. C3′ (the owner: «просто стоит спиной без какой-либо позы»): she hugs her knees, an action the frame can read.
         { text: "sits hugging her knees", motion: "her hair stirs in the wind a little", captures: ["friend", "timer"], twoHanded: true, angle: "back", outdoor: true },
         { text: "sits cross-legged on a towel", motion: "she leans back a little", captures: ["friend", "selfie", "candid"], twoHanded: false, outdoor: true },
-        { text: "sits on a ledge, watching dusk fall", motion: "she watches the light fade slowly", captures: ["friend", "selfie", "timer", "candid"], twoHanded: false, outdoor: true },
+        // S5.R4: she watches the dusk, so the moment carries its own gaze (without it the template added «looking up at the viewer» to «watching dusk fall»).
+        { text: "sits on a ledge, watching dusk fall", motion: "she watches the light fade slowly", captures: ["friend", "selfie", "timer", "candid"], twoHanded: false, gaze: "own", outdoor: true },
         { text: "leans back on her hands", motion: "she leans her head back a little", captures: ["friend", "timer", "candid"], twoHanded: true, outdoor: true },
         { text: "tucks her hair back in the breeze", motion: "she tucks a strand back slowly", captures: ["friend", "candid"], twoHanded: false, hair: "own", angle: "profile", outdoor: true },
         { text: "sits with her hands clasped", motion: "she rolls her shoulders back a little", captures: ["friend", "timer", "candid"], twoHanded: true, angle: "profile", outdoor: true },

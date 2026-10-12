@@ -119,6 +119,14 @@ export const BANK_RULE = {
 } as const;
 type Rule = (typeof BANK_RULE)[keyof typeof BANK_RULE];
 
+/**
+ * S5.R4: a look at something other than the viewer, anywhere in a moment's text or motion («sits on a ledge, watching dusk fall», «she looks out at the street»): the moment
+ * carries its own gaze, or the template adds one that contradicts it («…watching dusk fall, looking up at the viewer»). A look at the viewer or the camera is the viewer
+ * gaze's own rule, and a clip that ends looking away («she smiles and looks away») starts from a photo that may look at the viewer, so neither is one.
+ */
+export const LOOKS_ELSEWHERE =
+  /\b(?:watch(?:es|ing)?|gaz(?:es|ing)|star(?:es|ing)|peer(?:s|ing)?|(?:looks?|looking|glances?|glancing)\s+(?!at\s+(?:the\s+)?(?:viewer|camera|lens)\b)(?:out|at|across|over|down|up|along|into|toward|towards|through|back|around|past)\b)/i;
+
 /** Raised or stretched arms, in a moment's text or its motion (the open-shirt rule below). A stretch of her legs, feet or toes is not one: her arms stay down. */
 const ARMS_UP = /\barms?\b[^.]*\bup\b|\bstretch\w*\b(?![^.]*\b(?:legs?|feet|foot|toes?|ankles?)\b)/i;
 
@@ -222,6 +230,9 @@ function checkMoment(add: Add, where: string, moment: Moment, place: { room?: tr
   if ((moment.hair === "own") !== HAIR_WORDS.test(text)) add(BANK_RULE.momentHair, where, "carries the own-hair tag exactly when it names her hair");
   if ((moment.gaze === "viewer") !== (VIEWER.test(text) || VIEWER_GAZE.test(text))) add(BANK_RULE.momentViewer, where, "carries the viewer gaze exactly when it looks at the viewer");
   if (GAZE_VERBS.test(text) && moment.gaze !== "own" && moment.gaze !== "viewer") add(BANK_RULE.momentGaze, where, "a moment that opens on a look carries its own gaze");
+  else if ((LOOKS_ELSEWHERE.test(text) || LOOKS_ELSEWHERE.test(moment.motion)) && moment.gaze !== "own") {
+    add(BANK_RULE.momentGaze, where, "a moment whose text or motion looks at something other than the viewer carries its own gaze (the template would add one that contradicts it)");
+  }
   if ((moment.expression === true) !== EXPRESSION_WORDS.test(text)) add(BANK_RULE.momentExpression, where, "carries the expression tag exactly when it shows her expression (it then takes no cue)");
   if (moment.angle === "back" && moment.gaze === "viewer") add(BANK_RULE.backViewer, where, "a moment seen from behind cannot look at the viewer");
   // C3′ (the owner: «просто стоит спиной без какой-либо позы»): a frame from behind or in profile shows what she is doing.

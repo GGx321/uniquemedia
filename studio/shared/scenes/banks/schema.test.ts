@@ -82,6 +82,12 @@ describe("a category bank", () => {
     ["a moment that looks at the viewer without the viewer tag", { ...plain, text: "smiles at the viewer" }, BANK_RULE.momentViewer],
     ["a viewer tag on a moment that names no viewer", { ...plain, gaze: "viewer" }, BANK_RULE.momentViewer],
     ["a moment that looks somewhere without carrying its gaze", { ...plain, text: "looks out of the window" }, BANK_RULE.momentGaze],
+    // S5.R4: «sits on a ledge, watching dusk fall» lost its gaze and drew «…watching dusk fall, …, looking up at the viewer» (the look is mid-text, not its opening verb).
+    ["a moment that watches something mid-text without carrying its gaze", { ...plain, text: "sits on a ledge, watching dusk fall" }, BANK_RULE.momentGaze],
+    ["a moment that gazes out mid-text without carrying its gaze", { ...plain, text: "leans on the sill, gazing out" }, BANK_RULE.momentGaze],
+    ["a moment whose motion watches something, without carrying its gaze", { ...plain, motion: "she watches the light fade slowly" }, BANK_RULE.momentGaze],
+    ["a moment whose motion looks out, without carrying its gaze", { ...plain, motion: "she looks out at the street slowly" }, BANK_RULE.momentGaze],
+    ["a moment that looks out mid-text with the viewer's gaze (it looks elsewhere)", { ...plain, text: "sits by the viewer, looking out", gaze: "viewer" }, BANK_RULE.momentGaze],
     ["a back moment that looks at the viewer", { ...plain, text: "turns to the viewer", gaze: "viewer", angle: "back" }, BANK_RULE.backViewer],
     ["a moment that names a mirror and fits a friend's photo", { ...plain, text: "sits on the floor by the mirror", captures: ["mirror", "friend"] }, BANK_RULE.mirrorWord],
     ["a moment with no capture", { ...plain, captures: [] }, BANK_RULE.captures],
@@ -136,13 +142,25 @@ describe("a category bank", () => {
       { ...plain, text: "stretches her arms up at the window", captures: ["timer"], angle: "back" },
       { ...plain, text: "leans on the railing, side-on", captures: ["friend"], angle: "profile" },
       { ...plain, text: "stands, one hand on her hip", captures: ["friend"], angle: "back" },
-      { ...plain, text: "walks off, glancing back", captures: ["friend"], angle: "three-quarter" },
+      // S5.R4: a glance back carries its own gaze, as every glance back of the banks does (the template's gaze would contradict it).
+      { ...plain, text: "walks off, glancing back", captures: ["friend"], angle: "three-quarter", gaze: "own" },
     ];
     expect(categoryBankProblems({ ...BANK, places: [{ ...ROOM, moments: [...MOMENTS, ...away] }, STREET] }, "home")).toEqual([]);
   });
 
   test.each(MOMENT_ROWS)("refuses %s", (_name, moment, rule) => {
     expect(rulesOf(categoryBankProblems(withMoment(moment), "home"))).toContain(rule);
+  });
+
+  // S5.R4: the negative control of the rule above. A look elsewhere carried by the moment's own gaze is valid; a clip that ends looking away («and looks away») starts
+  // from a photo that may look at the viewer, so it is no look elsewhere; and a moment that names no look takes the template's gaze as before.
+  test.each<[string, Moment]>([
+    ["a moment that watches something, carrying its own gaze", { ...plain, text: "sits on a ledge, watching dusk fall", motion: "she watches the light fade slowly", gaze: "own" }],
+    ["a motion that ends looking away", { ...plain, motion: "she smiles a little and looks away" }],
+    ["a motion that turns toward something without a look", { ...plain, motion: "she turns her head a little toward the door" }],
+    ["a moment that names no look", plain],
+  ])("accepts %s (the look-elsewhere rule's negative control)", (_name, moment) => {
+    expect(rulesOf(categoryBankProblems(withMoment(moment), "home"))).not.toContain(BANK_RULE.momentGaze);
   });
 
   test("a back-to-the-mirror moment on mirror captures only is valid (r1.5)", () => {
