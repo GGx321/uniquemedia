@@ -23,7 +23,8 @@ const TABLE: Row[] = [
   { category: "home", place: "her bedroom", text: "stretches her legs along the bed", motion: "she points and flexes her toes slowly", captures: ["pov-legs"] },
   { category: "home", place: "her bed", text: "lies with her bare feet forward", motion: "she wiggles her toes a little", captures: ["pov-legs"] },
   { category: "home", place: "her bed", text: "sits with her socked feet forward", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"] },
-  { category: "home", place: "her bedroom", text: "sits, soles toward the mirror", motion: "she taps her feet together a little", captures: ["mirror-hidden"] },
+  // C3′: the owner's chair frame replaced «sits, soles toward the mirror» (R1#08, «странное фото»).
+  { category: "home", place: "a chair in her bedroom", text: "sits, legs crossed, a foot dangling", motion: "she swings her dangling foot slowly", captures: ["mirror-hidden"] },
   { category: "home", place: "her bedroom", text: "lifts one bare foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"] },
   { category: "home", place: "her bedroom", text: "sits on the rug, legs stretched out", motion: "she flexes her feet a little", captures: ["pov-legs"] },
   { category: "home", place: "her bed", text: "lies with her ankles crossed", motion: "she crosses her ankles the other way slowly", captures: ["pov-legs"] },
@@ -153,7 +154,13 @@ describe("legwear on the legs moments (the §5.1 rule)", () => {
     if (along !== undefined) expect(legwearFits(along, outfit)).toBe(true);
   });
 
-  test.each(["lies with her bare feet forward", "sits with her socked feet forward", "sits, soles toward the mirror", "lifts one bare foot to the mirror"])("«%s» names her feet or soles itself, so it takes none", (text) => {
+  test("C3′: the chair frame at the mirror (legs crossed, a foot dangling) names no feet of its own, so it takes legwear too", () => {
+    const chair = legsMoments("home").find((l) => l.moment.text === "sits, legs crossed, a foot dangling")?.moment;
+    expect(chair).toBeDefined();
+    if (chair !== undefined) expect(legwearFits(chair, outfit)).toBe(true);
+  });
+
+  test.each(["lies with her bare feet forward", "sits with her socked feet forward", "lifts one bare foot to the mirror"])("«%s» names her feet or soles itself, so it takes none", (text) => {
     const moment = legsMoments("home").find((l) => l.moment.text === text)?.moment;
     expect(moment).toBeDefined();
     if (moment !== undefined) expect(legwearFits(moment, outfit)).toBe(false);

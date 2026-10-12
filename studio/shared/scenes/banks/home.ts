@@ -47,7 +47,6 @@ export const HOME: CategoryBank = {
         { text: "stretches her arms up at the window", motion: "she stretches a little further", captures: ["timer"], twoHanded: true, angle: "back" },
         // S5.8a («Ножки», plan s5a2 §7.2): legs moments, drawn only on a legs slot. The POV looks down along her own legs; in the mirror frame the phone hides her face and her feet face the glass.
         { text: "stretches her legs along the bed", motion: "she points and flexes her toes slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS_BEDROOM, legs: { framing: "legs" } },
-        { text: "sits, soles toward the mirror", motion: "she taps her feet together a little", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS_BEDROOM, legs: { framing: "legs" } },
         { text: "lifts one bare foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS_BEDROOM, legs: { framing: "legs" } },
         { text: "sits on the rug, legs stretched out", motion: "she flexes her feet a little", captures: ["pov-legs"], twoHanded: false, outfits: LEGS_BEDROOM, legs: { framing: "legs" } },
       ],
@@ -156,6 +155,9 @@ export const HOME: CategoryBank = {
         { text: "sits with her knees together", motion: "she rocks a little in place", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "pulls one knee up to her chest", motion: "she rests her cheek a little lower", captures: ["mirror-hidden", "timer"], twoHanded: false },
         { text: "sits back with her arms crossed", motion: "she taps her fingers a little", captures: ["timer"], twoHanded: true },
+        // C3′ («Ножки»): the owner's own legs-at-the-mirror idea, in place of «sits, soles toward the mirror» (R1#08, «странное фото»): on the chair in front of
+        // the mirror, her legs crossed and one foot dangling, the phone over her face (the probe c3fix 5 drew it naturally).
+        { text: "sits, legs crossed, a foot dangling", motion: "she swings her dangling foot slowly", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS_BEDROOM, legs: { framing: "legs" } },
       ],
     },
   ],

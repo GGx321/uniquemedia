@@ -575,6 +575,31 @@ describe("C3′: a frame from behind or in profile shows what she is doing", () 
   });
 });
 
+describe("C3′: legs at the mirror are the owner's chair frame, legs crossed and one foot dangling, her face behind the phone", () => {
+  // R1#08 «sits, soles toward the mirror»: «странное фото». The owner's own idea (the probe c3fix 5 drew it naturally, its face showing only under the old phone line).
+  const CHAIR = "sits, legs crossed, a foot dangling";
+  const chair = LEGS_FRAMES.filter((f) => f.slot.activity === CHAIR);
+  const moment = BANKS.home.places.find((p) => p.name === "a chair in her bedroom")?.moments.find((m) => m.text === CHAIR);
+
+  test("no frame sits with her soles toward the mirror any more", () => {
+    expect(offenders(LEGS_ALL, (f) => /\bsoles toward the mirror\b/.test(f.slot.activity))).toEqual(NONE);
+  });
+
+  test("the sweep holds the chair frame, on the chair in her bedroom, in the face-hidden mirror frame with the face-cover line", () => {
+    expect(chair.length).toBeGreaterThan(LEGS_PLANS / 10);
+    expect(offenders(chair, (f) => f.capture !== "mirror-hidden" || f.slot.location !== "a chair in her bedroom" || !f.prompt().includes("the phone covering her face from her eyebrows to her chin"))).toEqual(NONE);
+  });
+
+  test("its motion is the owner's: she swings her dangling foot slowly", () => {
+    expect(moment?.motion).toBe("she swings her dangling foot slowly");
+  });
+
+  test("it keeps the legs rules: a pinned outfit of shorts, pajamas or joggers, never a mini or a dress of no length", () => {
+    expect(moment?.outfits?.length ?? 0).toBeGreaterThan(3);
+    expect(offenders(chair, (f) => !(moment?.outfits ?? []).includes(f.slot.outfit) || LEGS_UNSUITED_OUTFITS.test(f.slot.outfit) || (DRESS_OR_SKIRT.test(f.slot.outfit) && !DRESS_LENGTH.test(f.slot.outfit)))).toEqual(NONE);
+  });
+});
+
 describe("C3′: a timer frame keeps the phone that takes it out of the picture", () => {
   // The probe's timer frame (c3fix 4a) drew the propped phone itself in the foreground.
   const timer = C3_ALL.filter((f) => f.capture === "timer");
