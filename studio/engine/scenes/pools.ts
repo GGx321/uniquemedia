@@ -2,7 +2,7 @@ import { z } from "zod";
 import { CategoryPoses, POOL_TEXT_MAX, youthWords } from "../../shared/engine";
 import { BANKS } from "../../shared/scenes/banks";
 import { withoutBoldExemptLook } from "../../shared/scenes/banks/boldRules";
-import { MOMENT_HAIRS, type LegwearSlot, type Moment, type Outfit } from "../../shared/scenes/banks/types";
+import { MOMENT_HAIRS, type CategoryBank, type LegwearSlot, type Moment, type Outfit } from "../../shared/scenes/banks/types";
 import { CAPTURES, shotOf, type Capture } from "../../shared/scenes/captures";
 import { boldContentLevel, contentProblems } from "../../shared/scenes/contentLine";
 import { PHONE_WORDS, SELFIE_WORDS, isOwnerBannedOutfit, withoutExemptLookPhrases } from "../../shared/scenes/words";
@@ -127,9 +127,14 @@ function activityOf(moment: Moment): Activity {
   return { ...moment };
 }
 
+/** A bank's legwear slot as the pool keeps it, with the «Смелая» stockings when the bank has them (M4, plan s5a3 r3 #7: without them no bold slot would wear any). */
+function legwearOf(legwear: LegwearSlot): LegwearSlot {
+  const { bold } = legwear;
+  return { items: [...legwear.items], share: legwear.share, ...(bold === undefined ? {} : { bold: { items: [...bold.items], share: bold.share, route: bold.route } }) };
+}
+
 /** A category's pool, from its bank (the planner's `shotDeck` is the five shots the captures ride on; I5.27). */
-function poolOfBank(category: Category): Pool {
-  const bank = BANKS[category];
+export function poolOfBank(bank: CategoryBank): Pool {
   return {
     locations: bank.places.map((place) => ({
       name: place.name,
@@ -145,18 +150,18 @@ function poolOfBank(category: Category): Pool {
     shotDeck: bank.captureDeck.map(shotOf),
     captureDeck: [...bank.captureDeck],
     outfitInfo: bank.outfits.map((outfit) => ({ ...outfit })),
-    ...(bank.legwear === undefined ? {} : { legwear: { items: [...bank.legwear.items], share: bank.legwear.share } }),
+    ...(bank.legwear === undefined ? {} : { legwear: legwearOf(bank.legwear) }),
   };
 }
 
 // planner.ts gives each category its own rng sub-stream (categorySeed), so editing one category's bank only ever changes THAT category's plans for a given seed
 // — never another category's. Order within a category's own arrays still matters for existing seeds (the shuffles depend on it).
 export const POOLS: Record<Category, Pool> = {
-  home: poolOfBank("home"),
-  travel: poolOfBank("travel"),
-  photoshoot: poolOfBank("photoshoot"),
-  glamour: poolOfBank("glamour"),
-  fitness: poolOfBank("fitness"),
+  home: poolOfBank(BANKS.home),
+  travel: poolOfBank(BANKS.travel),
+  photoshoot: poolOfBank(BANKS.photoshoot),
+  glamour: poolOfBank(BANKS.glamour),
+  fitness: poolOfBank(BANKS.fitness),
 };
 
 // ---------- validation ----------

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { BoldPoolSchema, BuiltInPoolSchema, POOLS, type Activity, type Pool } from "./pools";
+import type { CategoryBank } from "../../shared/scenes/banks/types";
+import { BoldPoolSchema, BuiltInPoolSchema, POOLS, poolOfBank, type Activity, type Pool } from "./pools";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -99,5 +100,50 @@ describe("BuiltInPoolSchema keeps refusing all of it (the five, byte for byte)",
     ["bold legwear", { ...home, legwear: { items: ["thigh-high socks"], share: 0.4, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream" } } }],
   ])("refuses %s", (_name, pool) => {
     expect(BuiltInPoolSchema.safeParse(pool).success).toBe(false);
+  });
+});
+
+// M4 (plan s5a3 r3 #7): a pool is built from its bank, and a «Смелая» bank's pool must keep what the bank says beyond the five's shapes: the bold legwear (the stockings a
+// bold slot wears), each outfit's level, route and coverage, each moment's level, route, coverage and water tag. Dropping the bold legwear would leave every bold slot
+// without stockings.
+describe("poolOfBank keeps the «Смелая» fields of its bank", () => {
+  const BANK: CategoryBank = {
+    bold: true,
+    places: [
+      {
+        name: "her bed",
+        at: "on her bed",
+        times: ["evening", "night"],
+        room: true,
+        mirror: true,
+        details: ["a bedside lamp", "a glass of water on the nightstand"],
+        moments: [BOLD_MOMENT as CategoryBank["places"][number]["moments"][number], { ...WATER_MOMENT, captures: ["friend"], motion: "she turns her head a little" }],
+      },
+    ],
+    outfits: [LINGERIE, { text: "a black bikini", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her." }],
+    legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["black thigh-high stockings", "sheer black stockings"], share: 0.5, route: "seedream" } },
+    captureDeck: ["mirror-hidden", "friend"],
+  };
+  const pool = poolOfBank(BANK);
+
+  test("the bold legwear, its items, share and route", () => {
+    expect(pool.legwear).toEqual({ items: ["thigh-high socks"], share: 0.3, bold: { items: ["black thigh-high stockings", "sheer black stockings"], share: 0.5, route: "seedream" } });
+  });
+
+  test("each outfit's level, route and coverage", () => {
+    expect(pool.outfitInfo).toEqual(BANK.outfits);
+  });
+
+  test("each moment's level, route, coverage and water tag", () => {
+    const activities = pool.locations[0]?.activities ?? [];
+    expect(activities.map((a) => [a.level, a.route, a.coverage, a.water])).toEqual([
+      ["bold", "seedream", BOLD_MOMENT.coverage, undefined],
+      ["flirty", undefined, undefined, true],
+    ]);
+  });
+
+  test("a bank with no bold legwear keeps none (the five's pools do not move)", () => {
+    expect(poolOfBank({ ...BANK, legwear: { items: ["thigh-high socks"], share: 0.3 } }).legwear).toEqual({ items: ["thigh-high socks"], share: 0.3 });
+    expect(POOLS.home.legwear).toEqual({ items: ["white knee-high socks", "black knee-high socks", "thigh-high socks", "sheer black tights"], share: 0.4 });
   });
 });
