@@ -301,6 +301,15 @@ describe("a 2xx without an image on a Seedream slot", () => {
     expect(events.some((e) => e.type === "attempt" && e.slotIndex === 3)).toBe(false);
   });
 
+  test("on a slot that is NOT on the route it is still fatal, as before: the run stops with the slot open and no scene reason", async () => {
+    const run = await newRun(2, []);
+    const net = network(() => EMPTY_PAID);
+    const end = await start(run, net, { max: 1 }).end;
+    expect(end).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });
+    expect(net.imageCalls()).toHaveLength(1);
+    expect((await journal()).some((e) => e.type === "slot")).toBe(false);
+  });
+
   test("a refusal between two empty answers does not count toward the guard", async () => {
     const run = await newRun(3, [0, 1, 2]);
     const net = network((_call, n) => (n === 2 ? MODERATION : n === 1 ? EMPTY_PAID : drawn()));
