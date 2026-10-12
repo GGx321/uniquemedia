@@ -4,6 +4,7 @@ import {
   ERROR_MESSAGES_RU,
   LAUNCH_REASONS_RU,
   LaunchView,
+  PRICE_SCOPES_RU,
   SCENE_REASONS_RU,
   type AvatarSummary,
   type EngineError,
@@ -587,6 +588,17 @@ describe("the review hand-off", () => {
     expect(sent?.payload.sceneSetId).toMatch(/^set-mock-/);
     await waitFor(() => expect(within(card()).queryAllByText("Сцены Sofia ждут проверки")).toHaveLength(0));
     expect(sofia?.querySelector(".ap-row-phase")?.textContent ?? "").toMatch(/^рисуем фото/);
+  });
+
+  // S5.9g round 3 (plan s5a3 gap D): «Продолжить запуск» refused for the 2K tier alone says state 55's sentence on the card, not the general price text.
+  test("refused for a missing 2K tier (priceScope «bold»): state 55's warning, never the general price text", async () => {
+    const { engine } = await started({ review: true });
+    engine.failNext("autopilot.continueAfterReview", { code: "PRICE_UNAVAILABLE", priceScope: "bold", detail: "the price list has no 2K tier" });
+    fireEvent.click(within(noteTitled("Сцены Sofia ждут проверки")).getByRole("button", { name: /^Продолжить запуск: \d+\sфото$/ }));
+    await flush();
+    const notice = within(card()).getByText(PRICE_SCOPES_RU.bold);
+    expect(notice.closest(".notice")?.classList.contains("notice-warn")).toBe(true);
+    expect(within(card()).queryByText(ERROR_MESSAGES_RU.PRICE_UNAVAILABLE) === null).toBe(true);
   });
 
   test("scenes without text: the notice says what «Продолжить» removes and how many photos stay", async () => {
