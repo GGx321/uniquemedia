@@ -271,7 +271,11 @@ export function styleOfDeck(_deck: readonly string[]): CategoryStyle {
 }
 
 /** Our own list of revealing words: what a refusal may name, spelled the one way we spell it. */
-const REVEALING_TOLD = ["bikini", "swimsuit", "swimwear", "lingerie", "sports bra", "thong", "stocking", "stockings", "slip dress", "robe over lingerie"];
+const REVEALING_TOLD = [
+  ...["bikini", "swimsuit", "swimwear", "lingerie", "sports bra", "thong", "stocking", "stockings", "slip dress", "robe over lingerie"],
+  // S5.9b1 review: the plurals, and the underwear and nudity words the shared list now refuses.
+  ...["bikinis", "swimsuits", "sports bras", "thongs", "slip dresses", "robes over lingerie", "panties", "panty", "bra", "bras", "bralette", "bralettes", "underwear", "briefs", "topless", "naked"],
+];
 
 interface Collector {
   /** Items dropped for breaking a rule (a dropped place counts once, not its parts). */

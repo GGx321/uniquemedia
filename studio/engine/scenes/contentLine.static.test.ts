@@ -32,12 +32,12 @@ describe("the word gate has one home (static)", () => {
   });
 
   test("the patterns catch what they are for (negative control)", () => {
-    expect(/bikini\|swimsuit/.test("const X = /\\b(bikini|swimsuit|swimwear)\\b/i;")).toBe(true);
-    expect(/bikini\|swimsuit/.test("never name bikini, swimsuit, swimwear")).toBe(false);
+    expect(/bikinis\?\|swimsuits\?/.test("const X = /\\b(bikinis?|swimsuits?|swimwear)\\b/i;")).toBe(true);
+    expect(/bikinis\?\|swimsuits\?/.test("never name bikini, swimsuit, swimwear")).toBe(false);
   });
 
   test("the revealing-word alternation is written once, in shared/scenes/words.ts", () => {
-    expect(filesWith(/bikini\|swimsuit/)).toEqual(["shared/scenes/words.ts"]);
+    expect(filesWith(/bikinis\?\|swimsuits\?/)).toEqual(["shared/scenes/words.ts"]);
   });
 
   test("only the content line, the re-export and the unchanged LLM-path sites name the revealing-word list or its helpers", () => {

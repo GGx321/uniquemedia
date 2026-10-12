@@ -317,6 +317,12 @@ describe("readPoolAnswer: what is left is too little", () => {
     expect(refusal.words).toEqual(["bikini", "lingerie"]);
   });
 
+  test("underwear, nudity words and plurals cost an outfit its place, named in our spelling (S5.9b1 review)", () => {
+    const refusal = refusalOf(answer({ outfits: ["a lace bra", "white briefs", "two bikinis", "a beret"] }));
+    expect(refusal.problems).toEqual(["too-few-outfits"]);
+    expect(refusal.words).toEqual(["bra", "briefs", "bikinis"]);
+  });
+
   test("a refusal's words are ours: the model's rejected text is never among them", () => {
     const hostile = "a corner SECRET-MARKER-123 with a quote \" and a very very very long tail past the bound";
     const refusal = refusalOf(answer({ outfits: [hostile, "b", hostile.toUpperCase()] }));

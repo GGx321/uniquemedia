@@ -42,10 +42,6 @@ describe("contentProblems at ordinary and flirty (today's gate, unchanged)", () 
   test.each(SHARED_LEVELS)("%s: «nude lipstick» is legal", (level) => {
     expect(contentProblems("nude lipstick and a linen dress", level)).toEqual([]);
   });
-
-  test.each(SHARED_LEVELS)("%s: the exposure words are no word of the gate (they are bank-design sweeps)", (level) => {
-    expect(contentProblems("topless, naked under the sheet", level)).toEqual([]);
-  });
 });
 
 describe("contentProblems at bold (the owner's «Смелая»: youth words only)", () => {
@@ -96,6 +92,38 @@ describe("contentProblems at bold (the owner's «Смелая»: youth words onl
 
   test("bold: the Russian youth words are refused too", () => {
     expect(reasons("школьница в белье", bold)).toEqual(["youth-word"]);
+  });
+});
+
+// S5.9b1 review: lingerie and swimwear are «Смелая» only, so the underwear and nudity words, their plurals and their obfuscations are refused at ordinary
+// and flirty, and stay legal at bold.
+describe("the underwear and nudity words by level (S5.9b1 review)", () => {
+  const ROWS: Array<[string, string]> = [
+    ["a black lace bra and panties", "bra"],
+    ["her underwear on the floor", "underwear"],
+    ["white cotton briefs", "briefs"],
+    ["a pink bralette", "bralette"],
+    ["topless on the bed", "topless"],
+    ["naked under the sheet", "naked"],
+    ["three bikinis", "bikinis"],
+    ["two thongs", "thongs"],
+    ["red swimsuits", "swimsuits"],
+    ["Ｂｉｋｉｎｉ", "Bikini"],
+    ["bi​kini", "bikini"],
+    ["b i k i n i", "bikini"],
+  ];
+
+  test.each(SHARED_LEVELS.flatMap((level) => ROWS.map(([text, word]) => [level, text, word] as const)))("%s: «%s» is refused as revealing (%s)", (level, text, word) => {
+    const revealing = contentProblems(text, level).filter((p) => p.reason === "revealing-word");
+    expect(revealing.flatMap((p) => p.words)).toContain(word);
+  });
+
+  test.each(ROWS)("bold: «%s» is legal", (text) => {
+    expect(contentProblems(text, bold)).toEqual([]);
+  });
+
+  test.each(SHARED_LEVELS)("%s: «nude lipstick», a briefcase and a bracelet are legal", (level) => {
+    expect(contentProblems("nude lipstick, a briefcase and a bracelet", level)).toEqual([]);
   });
 });
 
