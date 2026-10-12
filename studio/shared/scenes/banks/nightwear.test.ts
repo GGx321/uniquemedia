@@ -196,12 +196,17 @@ describe("the legs moments (plan §6.2, S5.8a rules, M5)", () => {
     ["her bed", "lies with her legs crossed", ["pov-legs"], "she crosses and uncrosses her ankles slowly"],
     ["an armchair in her bedroom", "sits with her legs stretched out", ["pov-legs"], "she points her toes slowly"],
     ["her bedroom", "lifts one foot to the mirror", ["mirror-hidden"], "she lifts her foot a little and lowers it"],
-    ["her bedroom", "sits with her feet to the mirror", ["mirror-hidden"], "she taps her feet together a little"],
+    // Review round 2, HIGH 3 (C3′ R1#08, «странное фото»): the owner's own idea, on the chair in front of the mirror, legs crossed, one foot dangling.
+    ["an armchair in her bedroom", "sits, legs crossed, a foot dangling", ["mirror-hidden"], "she swings her dangling foot slowly"],
   ])("%s · «%s»", (place, text, captures, motion) => {
     const found = momentNamed(text);
     expect(found?.place).toBe(place);
     expect({ captures: found?.moment.captures, motion: found?.moment.motion, legs: found?.moment.legs, level: found?.moment.level }).toEqual({ captures, motion, legs: { framing: "legs" }, level: undefined });
   });
+});
+
+test("no legs frame puts her feet or soles to the mirror: the composition the owner called a strange photo (C3′ R1#08)", () => {
+  expect(moments.filter((m) => /\b(?:feet|soles)\b[^,]*\bmirror\b/.test(m.moment.text)).map((m) => m.moment.text)).toEqual([]);
 });
 
 describe("the outfits: cotton, satin, lingerie (plan §6.2)", () => {

@@ -101,7 +101,6 @@ export const NIGHTWEAR: CategoryBank = {
           coverage: "Her panties fully cover her bottom, and her crop top covers her chest.",
         },
         { text: "lifts one foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
-        { text: "sits with her feet to the mirror", motion: "she taps her feet together a little", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
     {
@@ -135,6 +134,9 @@ export const NIGHTWEAR: CategoryBank = {
         { text: "tucks one leg under her", motion: "she settles a little deeper", captures: ["mirror-hidden", "mirror"], twoHanded: false, level: "flirty" },
         { text: "sits back, knees together", motion: "she rocks a little in place", captures: ["mirror-hidden", "mirror"], twoHanded: false, level: "bold", route: "seedream" },
         { text: "sits with her legs stretched out", motion: "she points her toes slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        // C3′ R1#08 («странное фото»: her feet to the mirror): the owner's own idea, as «Дом» has it on fix/c3-prompts: on the chair in front of the mirror, legs crossed,
+        // one foot dangling, the phone over her face.
+        { text: "sits, legs crossed, a foot dangling", motion: "she swings her dangling foot slowly", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
     {
