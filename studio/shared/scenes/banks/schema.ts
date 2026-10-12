@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { HairLength, POOL_TEXT_MAX, PoolTime, youthWords } from "../../engine";
-import { CAPTURES, isHandCapture, LEGS_CAPTURES, shotOf, type Capture } from "../captures";
+import { CAPTURES, isHandCapture, LEGS_CAPTURES, posesFor, shotOf, type Capture } from "../captures";
+import { boldContentLevel, contentProblems } from "../contentLine";
+import { atOrBelow } from "../level";
+import { momentAllowed } from "../render";
 import {
   AWAY_ACTION_WORDS,
   BED_WORDS,
@@ -31,13 +34,18 @@ import {
   WALKS_AWAY_WORDS,
   YOUTH_PROPS,
 } from "../words";
-import { MOMENT_HAIRS, type BankCategory, type Moment } from "./types";
+import { boldWordsIn, lingerieWordsIn, stockingWordsIn, swimwearWordsIn } from "./boldRules";
+import { MOMENT_HAIRS, type BankCategory, type CategoryBank, type Level, type Moment } from "./types";
 
 // 5a.2 (S5.6a, I5.21, I5.35; plan s5a2 r1.2): the banks' zod schemas. The shape is zod; every rule the plan names runs in a superRefine and reports
 // `[rule] where: what`, so a test can name the rule a bad item breaks (banks/schema.test.ts) and a malformed bank fails loudly at load
 // (banks/index.ts). The engine-only lists (the revealing words, the paper, screen and staging lists, the «silk pajamas» exemption) are swept by
 // engine/scenes/banks.sweep.test.ts. Every bank text is at most POOL_TEXT_MAX characters; a motion and a start pose at most MOTION_TEXT_MAX (they
 // never reach the writer or a photo prompt); the locative `at` is not bound (it is never sent to the writer).
+//
+// 5a.3 (S5.9b2, plan s5a3 §6.4): two schemas, chosen by category. The five built-ins keep `categoryBankSchema` as it was, which refuses every «Смелая»-only
+// field; the two «Смелая» banks validate against `boldBankSchema`: the same rules (the youth rule spares the exempt garment name of banks/boldRules.ts there, answer (b)) plus
+// the «Смелая» rules below. The «Смелая» vocabulary (banks/boldRules.ts) is held out of the five by `boldOnlyHereProblems`.
 
 /** The rule ids a problem names. */
 export const BANK_RULE = {
@@ -99,6 +107,13 @@ export const BANK_RULE = {
   hairCap: "hair-cap",
   hairLengths: "hair-lengths",
   hairSport: "hair-sport",
+  // 5a.3 (S5.9b2): the «Смелая» rules.
+  boldOnlyHere: "bold-only-here",
+  boldRoute: "bold-route",
+  boldCoverage: "bold-coverage",
+  boldLevels: "bold-levels",
+  boldLegs: "bold-legs",
+  water: "water",
 } as const;
 type Rule = (typeof BANK_RULE)[keyof typeof BANK_RULE];
 
@@ -133,11 +148,17 @@ function adder(ctx: z.RefinementCtx): Add {
   return (rule, where, what) => ctx.addIssue({ code: "custom", message: `[${rule}] ${where}: ${what}`, path: [] });
 }
 
+/** The youth words of a bank text: the descriptor scope; in a «Смелая» bank the bold content line's, which spares the exempt garment name of banks/boldRules.ts (answer (b)). */
+function youthOf(text: string, bold: boolean): string[] {
+  if (!bold) return youthWords(text, "descriptor");
+  return contentProblems(text, boldContentLevel()).find((problem) => problem.reason === "youth-word")?.words ?? [];
+}
+
 /** The checks every bank text takes: printable, at most `max` characters (POOL_TEXT_MAX unless said; null: unbound), no youth word or prop, no hair colour, no selfie word, no camera. */
-function checkText(add: Add, where: string, text: string, max: number | null = POOL_TEXT_MAX): void {
+function checkText(add: Add, where: string, text: string, max: number | null = POOL_TEXT_MAX, bold = false): void {
   if (text.trim() !== text || text.length === 0 || !PRINTABLE.test(text)) add(BANK_RULE.text, where, "must be plain printable ASCII with no edge space");
   if (max !== null && text.length > max) add(BANK_RULE.text, where, `must be at most ${max} characters`);
-  const youth = youthWords(text, "descriptor");
+  const youth = youthOf(text, bold);
   if (youth.length > 0) add(BANK_RULE.youth, where, `names a youth word (${youth.join(", ")})`);
   if (YOUTH_PROPS.test(text)) add(BANK_RULE.youthProp, where, "names a youth prop");
   if (HAIR_COLOUR_WORDS.test(text)) add(BANK_RULE.hairColour, where, "names a hair colour or a dye");
@@ -174,20 +195,20 @@ function plainWords(text: string): string[] {
   return (text.toLowerCase().match(/[a-z]+(?:-[a-z]+)*/g) ?? []).filter((w) => w.length >= 3 && !SHARED_WORDS.has(w));
 }
 
-function checkMotion(add: Add, where: string, moment: Moment): void {
+function checkMotion(add: Add, where: string, moment: Moment, bold: boolean): void {
   const motion = moment.motion;
-  checkText(add, `${where} (motion)`, motion, MOTION_TEXT_MAX);
+  checkText(add, `${where} (motion)`, motion, MOTION_TEXT_MAX, bold);
   if (!MOTION_START.test(motion)) add(BANK_RULE.motionGrammar, `${where} (motion)`, "opens with «she» or «her»");
   if (!MOTION_SMALL.test(motion)) add(BANK_RULE.motionGrammar, `${where} (motion)`, "is small or slow: «slowly», «a little», «a bit», «slightly», «gently» or «small»");
   if (/\bthen\b|;/.test(motion) || (motion.match(/\band\b/g) ?? []).length > 1) add(BANK_RULE.motionGrammar, `${where} (motion)`, "is one movement (at most a there-and-back with one «and»)");
   if (MOTION_STAGING.test(motion)) add(BANK_RULE.motionStaging, `${where} (motion)`, "moves her, never the camera or the edit");
   if (PHONE_WORDS.test(motion) && moment.phone !== true) add(BANK_RULE.motionPhone, `${where} (motion)`, "brings in a phone the moment does not use (a second phone)");
-  if (moment.startPose !== undefined) checkText(add, `${where} (start pose)`, moment.startPose, MOTION_TEXT_MAX);
+  if (moment.startPose !== undefined) checkText(add, `${where} (start pose)`, moment.startPose, MOTION_TEXT_MAX, bold);
 }
 
-function checkMoment(add: Add, where: string, moment: Moment, place: { room?: true | undefined; mirror?: true | undefined }, outfits: ReadonlySet<string>): void {
+function checkMoment(add: Add, where: string, moment: Moment, place: { room?: true | undefined; mirror?: true | undefined }, outfits: ReadonlySet<string>, bold: boolean): void {
   const text = moment.text;
-  checkText(add, where, text);
+  checkText(add, where, text, POOL_TEXT_MAX, bold);
   const verb = /^[a-z]+/.exec(text)?.[0] ?? "";
   if (!MOMENT_VERBS.includes(verb)) add(BANK_RULE.momentVerb, where, `must open with a pinned third-person verb, not «${verb}»`);
   if (/\bshe\b/i.test(text)) add(BANK_RULE.momentShe, where, "must not name «she»: the template does");
@@ -229,12 +250,12 @@ function checkMoment(add: Add, where: string, moment: Moment, place: { room?: tr
   if (moment.mirrorBack === true && !captures.every((c) => c === "mirror-hidden")) add(BANK_RULE.mirrorBack, where, "back or side to the mirror fits the phone-over-face mirror frame only (only her reflection shows; a plain mirror selfie keeps her face clear)");
   if (captures.some(isMirrorCapture) && place.mirror !== true) add(BANK_RULE.mirrorPlace, where, "a mirror capture needs a mirror place");
   for (const outfit of moment.outfits ?? []) if (!outfits.has(outfit)) add(BANK_RULE.pinnedOutfit, where, `pins «${outfit}», which is not one of the category's outfits`);
-  checkMotion(add, where, moment);
+  checkMotion(add, where, moment, bold);
 }
 
 const CaptureSchema = z.enum(CAPTURES);
 
-const MomentSchema = z.strictObject({
+const MOMENT_SHAPE = {
   text: z.string(),
   motion: z.string(),
   startPose: z.string().optional(),
@@ -254,9 +275,10 @@ const MomentSchema = z.strictObject({
   legs: z.strictObject({ framing: z.literal("legs").optional() }).optional(),
   noLegwear: z.literal(true).optional(),
   mirrorBack: z.literal(true).optional(),
-});
+};
+const MomentSchema = z.strictObject(MOMENT_SHAPE);
 
-const PlaceSchema = z.strictObject({
+const PLACE_SHAPE = {
   name: z.string(),
   at: z.string(),
   times: z.array(PoolTime),
@@ -264,85 +286,210 @@ const PlaceSchema = z.strictObject({
   room: z.literal(true).optional(),
   lamp: z.literal(true).optional(),
   details: z.array(z.string()),
-  moments: z.array(MomentSchema),
-});
+};
+const PlaceSchema = z.strictObject({ ...PLACE_SHAPE, moments: z.array(MomentSchema) });
+
+const OUTFIT_SHAPE = { text: z.string(), showsLegs: z.literal(true).optional(), pinOnly: z.literal(true).optional() };
+const LEGWEAR_SHAPE = { items: z.array(z.string()), share: z.number() };
+
+// 5a.3 (S5.9b2): what a «Смелая» bank may carry beyond the five's shapes: a level up to bold, the Seedream route, a coverage sentence, the water tag, the bold legwear.
+const BOLD_LEVEL = z.enum(["flirty", "bold"]).optional();
+const ROUTE = z.literal("seedream").optional();
+const BoldMomentSchema = z.strictObject({ ...MOMENT_SHAPE, level: BOLD_LEVEL, route: ROUTE, coverage: z.string().optional(), water: z.literal(true).optional() });
+const BoldPlaceSchema = z.strictObject({ ...PLACE_SHAPE, moments: z.array(BoldMomentSchema) });
+
+/** The rules every bank is held to, the five's and the «Смелая» ones (`bold`: the exempt garment name is spared, and stockings belong on the bold legwear). */
+function bankRules(bank: CategoryBank, add: Add, category: BankCategory | null, bold: boolean): void {
+  const names = bank.places.map((p) => p.name);
+  if (new Set(names).size !== names.length) add(BANK_RULE.duplicate, "places", "two places share a name");
+  const outfitTexts = bank.outfits.map((o) => o.text);
+  if (new Set(outfitTexts).size !== outfitTexts.length) add(BANK_RULE.duplicate, "outfits", "an outfit is given twice");
+  bank.outfits.forEach((outfit, i) => {
+    checkText(add, `outfits[${i}]`, outfit.text, POOL_TEXT_MAX, bold);
+    if (isOwnerBannedOutfit(outfit.text)) add(BANK_RULE.denim, `outfits[${i}]`, "no denim shorts and no denim skirts (the owner)");
+    // C3′: Grok draws a skirt or shorts named without its fabric as denim (R3#03, R4#04); the probe drew none once the outfit named one.
+    if (unfabricBottomsIn(outfit.text).length > 0) add(BANK_RULE.bottomFabric, `outfits[${i}]`, `«${outfit.text}» names a skirt, shorts or skort without its fabric, which Grok draws as denim: name it («a knit mini», «cotton sleep shorts»)`);
+    if (outfit.showsLegs === true && LEG_COVERING_OUTFIT.test(outfit.text)) add(BANK_RULE.legwear, `outfits[${i}]`, `«${outfit.text}» covers her legs, so it does not show them: no socks or tights go over trousers, jeans, joggers or leggings`);
+  });
+  if (bank.legwear !== undefined) {
+    bank.legwear.items.forEach((item, i) => {
+      checkText(add, `legwear[${i}]`, item, POOL_TEXT_MAX, bold);
+      // I5.29: knee-high socks, thigh-high socks and sheer tights; stockings come with «Смелая» (5a.3), on the bold legwear only.
+      if (/\bstockings?\b/i.test(item)) add(BANK_RULE.legwear, `legwear[${i}]`, bold ? "stockings ride on the bold legwear only (legwear.bold.items)" : "stockings wait for «Смелая» (5a.3): legwear is socks or sheer tights");
+    });
+    if (bank.legwear.items.length === 0) add(BANK_RULE.legwear, "legwear", "names one item at least");
+    if (!(bank.legwear.share > 0 && bank.legwear.share <= 1)) add(BANK_RULE.legwear, "legwear", "goes on a share of the slots above 0 and at most 1");
+    if (!bank.outfits.some((o) => o.showsLegs === true)) add(BANK_RULE.legwear, "legwear", "needs an outfit that shows her legs");
+  }
+  const pinned = new Set(bank.places.flatMap((p) => p.moments.flatMap((m) => m.outfits ?? [])));
+  for (const outfit of bank.outfits) {
+    if (outfit.pinOnly === true && !pinned.has(outfit.text)) add(BANK_RULE.pinOnly, "outfits", `«${outfit.text}» is pin-only, but no moment pins it`);
+  }
+  for (const capture of bank.captureDeck) if (LEGS_CAPTURES.includes(capture)) add(BANK_RULE.deck, "captureDeck", `«${capture}» is a legs capture: «Ножки» deals it apart (5a.2c)`);
+  for (const capture of new Set(bank.captureDeck)) {
+    const taken = bank.places.some((place) => (!isMirrorCapture(capture) || place.mirror === true) && place.moments.some((m) => m.captures.includes(capture) && m.legs === undefined && m.level === undefined));
+    if (!taken) add(BANK_RULE.deckCoverage, "captureDeck", `no ordinary moment at a place it can land on takes «${capture}»`);
+  }
+
+  const outfits = new Set(outfitTexts);
+  for (const place of bank.places) {
+    const where = place.name;
+    checkText(add, `${where}.name`, place.name, POOL_TEXT_MAX, bold);
+    checkText(add, `${where}.at`, place.at, null, bold);
+    if (MIRROR.test(place.name) || MIRROR.test(place.at)) add(BANK_RULE.mirrorWord, where, "a place must not name a mirror: only the mirror capture's own line does");
+    if (!AT_START.test(place.at)) add(BANK_RULE.at, `${where}.at`, "opens with a preposition");
+    if (place.times.length === 0 || place.times.includes("studio lighting")) add(BANK_RULE.times, `${where}.times`, "one or more times of day, never the stored «studio lighting»");
+    if (place.details.length < 2 || place.details.length > 3) add(BANK_RULE.details, `${where}.details`, "2 or 3 details");
+    // S5.6R: a place that is not a room says its detail in the same sentence as its own phrase, so a detail never names that phrase's words again.
+    const ownWords = new Set(plainWords(place.at));
+    for (const detail of place.details) {
+      checkText(add, `${where}.details`, detail, POOL_TEXT_MAX, bold);
+      if (!DETAIL_START.test(detail)) add(BANK_RULE.detailGrammar, `${where}.details`, `«${detail}» opens with a|an|the|her|some|two`);
+      if (MIRROR.test(detail)) add(BANK_RULE.mirrorWord, `${where}.details`, "a detail must not name a mirror");
+      const again = plainWords(detail).filter((w) => ownWords.has(w));
+      if (place.room !== true && again.length > 0) add(BANK_RULE.detailRepeat, `${where}.details`, `«${detail}» names «${again.join("», «")}» again: the place's own phrase says it in the same sentence`);
+    }
+    if (place.moments.length < 4) add(BANK_RULE.moments, `${where}.moments`, "at least 4 moments");
+    const texts = place.moments.map((m) => m.text);
+    if (new Set(texts).size !== texts.length) add(BANK_RULE.duplicate, `${where}.moments`, "a moment is given twice");
+    place.moments.forEach((moment) => checkMoment(add, `${where}: ${moment.text}`, moment, place, outfits, bold));
+    // Review L1: a sentence says the place («On her bed») and draws a detail; a moment that names either again reads «On her bed, she sits on the bed».
+    const placeWords = new Set([...contentWords(place.at, false), ...place.details.flatMap((d) => [...contentWords(d, false)])]);
+    for (const moment of place.moments) {
+      const again = [...contentWords(moment.text, true)].filter((w) => placeWords.has(w));
+      if (again.length > 0) add(BANK_RULE.repeat, `${where}: ${moment.text}`, `names «${again.join("», «")}» again: the place or its details already say it`);
+    }
+    if (category === "glamour") {
+      const all = [place.name, place.at, ...place.details, ...place.moments.map((m) => m.text)];
+      if (all.some((t) => BED_WORDS.test(t))) add(BANK_RULE.glamourBed, where, "Glamour is an evening out: never on a bed");
+    }
+  }
+}
 
 function categoryBankSchema(category: BankCategory) {
   return z
     .strictObject({
       places: z.array(PlaceSchema).min(1),
-      outfits: z.array(z.strictObject({ text: z.string(), showsLegs: z.literal(true).optional(), pinOnly: z.literal(true).optional() })).min(1),
-      legwear: z.strictObject({ items: z.array(z.string()), share: z.number() }).optional(),
+      outfits: z.array(z.strictObject(OUTFIT_SHAPE)).min(1),
+      legwear: z.strictObject(LEGWEAR_SHAPE).optional(),
       captureDeck: z.array(CaptureSchema).min(1),
     })
-    .superRefine((bank, ctx) => {
-      const add = adder(ctx);
-      const names = bank.places.map((p) => p.name);
-      if (new Set(names).size !== names.length) add(BANK_RULE.duplicate, "places", "two places share a name");
-      const outfitTexts = bank.outfits.map((o) => o.text);
-      if (new Set(outfitTexts).size !== outfitTexts.length) add(BANK_RULE.duplicate, "outfits", "an outfit is given twice");
-      bank.outfits.forEach((outfit, i) => {
-        checkText(add, `outfits[${i}]`, outfit.text);
-        if (isOwnerBannedOutfit(outfit.text)) add(BANK_RULE.denim, `outfits[${i}]`, "no denim shorts and no denim skirts (the owner)");
-        // C3′: Grok draws a skirt or shorts named without its fabric as denim (R3#03, R4#04); the probe drew none once the outfit named one.
-        if (unfabricBottomsIn(outfit.text).length > 0) add(BANK_RULE.bottomFabric, `outfits[${i}]`, `«${outfit.text}» names a skirt, shorts or skort without its fabric, which Grok draws as denim: name it («a knit mini», «cotton sleep shorts»)`);
-        if (outfit.showsLegs === true && LEG_COVERING_OUTFIT.test(outfit.text)) add(BANK_RULE.legwear, `outfits[${i}]`, `«${outfit.text}» covers her legs, so it does not show them: no socks or tights go over trousers, jeans, joggers or leggings`);
-      });
-      if (bank.legwear !== undefined) {
-        bank.legwear.items.forEach((item, i) => {
-          checkText(add, `legwear[${i}]`, item);
-          // I5.29: knee-high socks, thigh-high socks and sheer tights; stockings wait for «Смелая» (5a.3).
-          if (/\bstockings?\b/i.test(item)) add(BANK_RULE.legwear, `legwear[${i}]`, "stockings wait for «Смелая» (5a.3): legwear is socks or sheer tights");
-        });
-        if (bank.legwear.items.length === 0) add(BANK_RULE.legwear, "legwear", "names one item at least");
-        if (!(bank.legwear.share > 0 && bank.legwear.share <= 1)) add(BANK_RULE.legwear, "legwear", "goes on a share of the slots above 0 and at most 1");
-        if (!bank.outfits.some((o) => o.showsLegs === true)) add(BANK_RULE.legwear, "legwear", "needs an outfit that shows her legs");
-      }
-      const pinned = new Set(bank.places.flatMap((p) => p.moments.flatMap((m) => m.outfits ?? [])));
-      for (const outfit of bank.outfits) {
-        if (outfit.pinOnly === true && !pinned.has(outfit.text)) add(BANK_RULE.pinOnly, "outfits", `«${outfit.text}» is pin-only, but no moment pins it`);
-      }
-      for (const capture of bank.captureDeck) if (LEGS_CAPTURES.includes(capture)) add(BANK_RULE.deck, "captureDeck", `«${capture}» is a legs capture: «Ножки» deals it apart (5a.2c)`);
-      for (const capture of new Set(bank.captureDeck)) {
-        const taken = bank.places.some((place) => (!isMirrorCapture(capture) || place.mirror === true) && place.moments.some((m) => m.captures.includes(capture) && m.legs === undefined && m.level === undefined));
-        if (!taken) add(BANK_RULE.deckCoverage, "captureDeck", `no ordinary moment at a place it can land on takes «${capture}»`);
-      }
-
-      const outfits = new Set(outfitTexts);
-      for (const place of bank.places) {
-        const where = place.name;
-        checkText(add, `${where}.name`, place.name);
-        checkText(add, `${where}.at`, place.at, null);
-        if (MIRROR.test(place.name) || MIRROR.test(place.at)) add(BANK_RULE.mirrorWord, where, "a place must not name a mirror: only the mirror capture's own line does");
-        if (!AT_START.test(place.at)) add(BANK_RULE.at, `${where}.at`, "opens with a preposition");
-        if (place.times.length === 0 || place.times.includes("studio lighting")) add(BANK_RULE.times, `${where}.times`, "one or more times of day, never the stored «studio lighting»");
-        if (place.details.length < 2 || place.details.length > 3) add(BANK_RULE.details, `${where}.details`, "2 or 3 details");
-        // S5.6R: a place that is not a room says its detail in the same sentence as its own phrase, so a detail never names that phrase's words again.
-        const ownWords = new Set(plainWords(place.at));
-        for (const detail of place.details) {
-          checkText(add, `${where}.details`, detail);
-          if (!DETAIL_START.test(detail)) add(BANK_RULE.detailGrammar, `${where}.details`, `«${detail}» opens with a|an|the|her|some|two`);
-          if (MIRROR.test(detail)) add(BANK_RULE.mirrorWord, `${where}.details`, "a detail must not name a mirror");
-          const again = plainWords(detail).filter((w) => ownWords.has(w));
-          if (place.room !== true && again.length > 0) add(BANK_RULE.detailRepeat, `${where}.details`, `«${detail}» names «${again.join("», «")}» again: the place's own phrase says it in the same sentence`);
-        }
-        if (place.moments.length < 4) add(BANK_RULE.moments, `${where}.moments`, "at least 4 moments");
-        const texts = place.moments.map((m) => m.text);
-        if (new Set(texts).size !== texts.length) add(BANK_RULE.duplicate, `${where}.moments`, "a moment is given twice");
-        place.moments.forEach((moment) => checkMoment(add, `${where}: ${moment.text}`, moment, place, outfits));
-        // Review L1: a sentence says the place («On her bed») and draws a detail; a moment that names either again reads «On her bed, she sits on the bed».
-        const placeWords = new Set([...contentWords(place.at, false), ...place.details.flatMap((d) => [...contentWords(d, false)])]);
-        for (const moment of place.moments) {
-          const again = [...contentWords(moment.text, true)].filter((w) => placeWords.has(w));
-          if (again.length > 0) add(BANK_RULE.repeat, `${where}: ${moment.text}`, `names «${again.join("», «")}» again: the place or its details already say it`);
-        }
-        if (category === "glamour") {
-          const all = [place.name, place.at, ...place.details, ...place.moments.map((m) => m.text)];
-          if (all.some((t) => BED_WORDS.test(t))) add(BANK_RULE.glamourBed, where, "Glamour is an evening out: never on a bed");
-        }
-      }
-    });
+    .superRefine((bank, ctx) => bankRules(bank, adder(ctx), category, false));
 }
+
+// ---------- 5a.3 (S5.9b2, plan s5a3 §6.4): the «Смелая» rules ----------
+
+/** A coverage sentence's bound: one sentence, appended to the scene sentence within SCENE_TEXT_MAX (600). */
+export const COVERAGE_MAX = 200;
+const ONE_SENTENCE = /^[A-Z][^.!?]*\.$/;
+/** I5.10 extended: a negation puts what it negates into the prompt, so a coverage sentence says what covers her, never what does not show. */
+const NEGATION = /\b(?:not|no|never|without|nothing|none|nor)\b|n't\b/i;
+/** A moment in the water or at its edge (M6): it carries the `water` tag and pins swimwear. */
+const WATER_WORDS = /\b(?:in|into|out of) the (?:water|sea|pool)\b|\bwaist-deep\b|\bwaves?\b|\bshore\b|\bshallows\b|\bwet\b|\bswim\w*/i;
+const LEVELS: readonly Level[] = ["ordinary", "flirty", "bold"];
+/** The fewest bold outfits a «Смелая» bank's general draw holds (I5.24: a bold plan is not one outfit). */
+const BOLD_OUTFITS_MIN = 4;
+
+function checkCoverage(add: Add, where: string, coverage: string): void {
+  const at = `${where} (coverage)`;
+  if (coverage.trim() !== coverage || !PRINTABLE.test(coverage)) add(BANK_RULE.boldCoverage, at, "plain printable ASCII with no edge space");
+  if (coverage.length > COVERAGE_MAX) add(BANK_RULE.boldCoverage, at, `at most ${COVERAGE_MAX} characters`);
+  if (!ONE_SENTENCE.test(coverage)) add(BANK_RULE.boldCoverage, at, "one sentence that opens with a capital and ends with «.»");
+  if (NEGATION.test(coverage)) add(BANK_RULE.boldCoverage, at, "says what covers her, never what does not show (no not, no, never, without)");
+  const youth = youthOf(coverage, true);
+  if (youth.length > 0) add(BANK_RULE.youth, at, `names a youth word (${youth.join(", ")})`);
+  if (SELFIE_WORDS.test(coverage) || CAMERA_WORDS.test(coverage)) add(BANK_RULE.camera, at, "names no camera, lens or selfie");
+}
+
+/** An item that names the «Смелая» vocabulary or is bold is drawn on Seedream, and only such an item is (I5.38: a slot is Seedream exactly when it drew one). */
+function checkRoute(add: Add, where: string, item: { text: string; level?: "flirty" | "bold" | undefined; route?: "seedream" | undefined }): void {
+  const words = boldWordsIn(item.text);
+  const needs = words.length > 0 || item.level === "bold";
+  if (needs && item.route !== "seedream") add(BANK_RULE.boldRoute, where, words.length > 0 ? `names «${words.join("», «")}»: it is drawn on Seedream (route seedream)` : "a bold item is drawn on Seedream (route seedream)");
+  if (!needs && item.route !== undefined) add(BANK_RULE.boldRoute, where, "only an item that names lingerie, swimwear, stockings or satin, or is bold, is drawn on Seedream");
+}
+
+function boldBankRules(bank: CategoryBank, add: Add): void {
+  const moments = bank.places.flatMap((place) => place.moments.map((moment) => ({ moment, where: `${place.name}: ${moment.text}` })));
+
+  // bold-route and bold-coverage, outfits.
+  bank.outfits.forEach((outfit, i) => {
+    const where = `outfits[${i}] «${outfit.text}»`;
+    checkRoute(add, where, outfit);
+    if (outfit.coverage !== undefined) {
+      if (outfit.route === undefined) add(BANK_RULE.boldCoverage, where, "a coverage sentence goes only on an item drawn on Seedream");
+      checkCoverage(add, where, outfit.coverage);
+    } else if (outfit.route === "seedream") {
+      const pins = moments.filter(({ moment }) => moment.outfits?.includes(outfit.text) === true);
+      if (outfit.pinOnly !== true || pins.length === 0 || pins.some(({ moment }) => moment.coverage === undefined)) {
+        add(BANK_RULE.boldCoverage, where, "a Seedream outfit carries its coverage sentence, or is pin-only and every moment that pins it carries one");
+      }
+    }
+    if (stockingWordsIn(outfit.text).length > 0) add(BANK_RULE.legwear, where, "stockings ride on the bold legwear only (legwear.bold.items)");
+  });
+
+  for (const { moment, where } of moments) {
+    // bold-route and bold-coverage, moments.
+    checkRoute(add, where, moment);
+    if (moment.coverage !== undefined) {
+      if (moment.route === undefined) add(BANK_RULE.boldCoverage, where, "a coverage sentence goes only on an item drawn on Seedream");
+      checkCoverage(add, where, moment.coverage);
+    }
+    for (const said of [moment.text, moment.motion, moment.startPose ?? ""]) if (stockingWordsIn(said).length > 0) add(BANK_RULE.legwear, where, "stockings ride on the bold legwear only (legwear.bold.items)");
+    // water (M6): a moment in the water pins swimwear, and only swimwear.
+    if (moment.water === true) {
+      if ((moment.outfits?.length ?? 0) === 0) add(BANK_RULE.water, where, "a water moment pins its swimwear");
+      for (const outfit of moment.outfits ?? []) if (swimwearWordsIn(outfit).length === 0) add(BANK_RULE.water, where, `«${outfit}» is not swimwear: in the water she wears a swimsuit or a bikini`);
+    } else if (WATER_WORDS.test(moment.text)) add(BANK_RULE.water, where, "a moment in the water carries the water tag, and pins swimwear");
+    // bold-legs (M5, P-5a3 #6).
+    if (moment.captures.includes("low-feet")) add(BANK_RULE.boldLegs, where, "no low-feet frame in a «Смелая» bank: her feet are her own look down (pov-legs) or the mirror's");
+    if (moment.legs !== undefined) {
+      const pins = moment.outfits ?? [];
+      if (pins.length < 4) add(BANK_RULE.boldLegs, where, "a legs moment pins at least 4 outfits");
+      if (!bank.outfits.some((o) => pins.includes(o.text) && o.level === undefined)) add(BANK_RULE.boldLegs, where, "a legs moment pins an ordinary outfit, so a legs slot of every level has one to wear");
+      for (const outfit of pins) if (lingerieWordsIn(outfit).length > 0) add(BANK_RULE.boldLegs, where, `«${outfit}» is lingerie: a bold legs frame wears satin nightwear with stockings (P-5a3 #6)`);
+    }
+  }
+
+  // bold-levels: every deck capture, at every pose it can take and at every level, has a moment and an outfit a slot can draw (the 0-null rule's data side).
+  const general = bank.outfits.filter((o) => o.pinOnly !== true && !isOwnerBannedOutfit(o.text));
+  const wearable = (moment: Moment, level: Level): boolean =>
+    moment.outfits !== undefined ? bank.outfits.some((o) => moment.outfits?.includes(o.text) === true && atOrBelow(o.level, level)) : general.some((o) => atOrBelow(o.level, level));
+  for (const capture of new Set(bank.captureDeck)) {
+    for (const pose of posesFor(capture)) {
+      for (const level of LEVELS) {
+        const found = bank.places.some((place) => (!isMirrorCapture(capture) || place.mirror === true) && place.moments.some((m) => m.legs === undefined && momentAllowed(m, capture, pose, level) && wearable(m, level)));
+        if (!found) add(BANK_RULE.boldLevels, "captureDeck", `«${capture}» at ${pose} has no moment and outfit a ${level} slot can draw`);
+      }
+    }
+  }
+  if (general.filter((o) => o.level === "bold").length < BOLD_OUTFITS_MIN) add(BANK_RULE.boldLevels, "outfits", `at least ${BOLD_OUTFITS_MIN} bold outfits in the general draw`);
+
+  // legwear: the stockings, on the bold legwear only.
+  const boldLegwear = bank.legwear?.bold;
+  if (boldLegwear !== undefined) {
+    boldLegwear.items.forEach((item, i) => {
+      checkText(add, `legwear.bold[${i}]`, item, POOL_TEXT_MAX, true);
+      if (stockingWordsIn(item).length === 0) add(BANK_RULE.legwear, `legwear.bold[${i}]`, "the bold legwear is stockings");
+    });
+    if (boldLegwear.items.length === 0) add(BANK_RULE.legwear, "legwear.bold", "names one item at least");
+    if (!(boldLegwear.share > 0 && boldLegwear.share <= 1)) add(BANK_RULE.legwear, "legwear.bold", "goes on a share of the bold slots above 0 and at most 1");
+  }
+}
+
+const boldBankSchema = z
+  .strictObject({
+    bold: z.literal(true),
+    places: z.array(BoldPlaceSchema).min(1),
+    outfits: z.array(z.strictObject({ ...OUTFIT_SHAPE, level: BOLD_LEVEL, route: ROUTE, coverage: z.string().optional() })).min(1),
+    legwear: z.strictObject({ ...LEGWEAR_SHAPE, bold: z.strictObject({ items: z.array(z.string()), share: z.number(), route: z.literal("seedream") }).optional() }).optional(),
+    captureDeck: z.array(CaptureSchema).min(1),
+  })
+  .superRefine((bank, ctx) => {
+    const add = adder(ctx);
+    bankRules(bank, add, null, true);
+    boldBankRules(bank, add);
+  });
 
 const GazeBankSchema = z
   .array(z.strictObject({ text: z.string(), kind: z.enum(["viewer", "away", "down", "hands", "mirror"]), phone: z.literal(true).optional(), level: z.literal("flirty").optional() }))
@@ -404,6 +551,39 @@ function problemsOf(result: { success: true } | { success: false; error: z.ZodEr
 /** Every problem of a category's bank, as `[rule] where: what`; empty when it is valid. Never throws. */
 export function categoryBankProblems(bank: unknown, category: BankCategory): string[] {
   return problemsOf(categoryBankSchema(category).safeParse(bank));
+}
+
+/** Every problem of a «Смелая» bank (`nightwear`, `beach`), as `[rule] where: what`; empty when it is valid. Never throws. */
+export function boldBankProblems(bank: unknown): string[] {
+  return problemsOf(boldBankSchema.safeParse(bank));
+}
+
+/** The texts of a bank as far as they can be read (a malformed bank is its schema's business). */
+const BankTexts = z.object({
+  outfits: z.array(z.object({ text: z.string() })).optional(),
+  legwear: z.object({ items: z.array(z.string()) }).optional(),
+  places: z.array(z.object({ name: z.string(), at: z.string(), details: z.array(z.string()), moments: z.array(z.object({ text: z.string(), motion: z.string(), startPose: z.string().optional() })) })).optional(),
+});
+
+/** bold-only-here (I5.37): an ordinary bank names none of the «Смелая» vocabulary, in any text. Never throws. */
+export function boldOnlyHereProblems(bank: unknown): string[] {
+  const parsed = BankTexts.safeParse(bank);
+  if (!parsed.success) return [];
+  const { outfits = [], legwear, places = [] } = parsed.data;
+  const texts = [
+    ...outfits.map((o, i) => ({ where: `outfits[${i}]`, text: o.text })),
+    ...(legwear?.items ?? []).map((item, i) => ({ where: `legwear[${i}]`, text: item })),
+    ...places.flatMap((place) => [
+      { where: `${place.name}.name`, text: place.name },
+      { where: `${place.name}.at`, text: place.at },
+      ...place.details.map((detail) => ({ where: `${place.name}.details`, text: detail })),
+      ...place.moments.flatMap((m) => [m.text, m.motion, m.startPose ?? ""].map((text) => ({ where: `${place.name}: ${m.text}`, text }))),
+    ]),
+  ];
+  return texts.flatMap(({ where, text }) => {
+    const words = boldWordsIn(text);
+    return words.length === 0 ? [] : [`[${BANK_RULE.boldOnlyHere}] ${where}: names «${words.join("», «")}», the «Смелая» vocabulary, which only the two «Смелая» banks hold`];
+  });
 }
 
 export function gazeBankProblems(bank: unknown): string[] {

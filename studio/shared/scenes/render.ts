@@ -1,5 +1,6 @@
 import type { PoolShot, ScenePose } from "../engine";
-import { CUES, GAZE } from "./banks";
+// S5.9b2: the gaze and cue lists straight from their module, so the bank schema (banks/schema.ts) can read `momentAllowed` without an import cycle through banks/index.ts.
+import { CUES, GAZE } from "./banks/looks";
 import type { Angle, Cue, Gaze, GazeKind, Level, MomentGaze } from "./banks/types";
 import { captureOfShot, faceVisibleOf, isHandCapture, LEGS_CAPTURES, posesFor, shotOf, type Capture } from "./captures";
 import { pick } from "./hash";

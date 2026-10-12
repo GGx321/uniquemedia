@@ -23,8 +23,8 @@ const BOLD: BoldContentLevel = Object.freeze<BoldContentLevel>({ kind: "bold", [
 
 /**
  * The level a text is held to. "ordinary" and "flirty" are plain literals; bold is the branded value above, because it drops the revealing-word gate and
- * a mix level (`SceneLevel`, which may say "bold" for the five built-ins) must never reach it by accident. S5.9c's `contentLevelOf` is the one caller
- * of `boldContentLevel()`: a «Смелая» category is bold whatever its mix level.
+ * a mix level (`SceneLevel`, which may say "bold" for the five built-ins) must never reach it by accident. `boldContentLevel()` is called by the two
+ * «Смелая» bank schemas (S5.9b2, at load) and S5.9c's `contentLevelOf`: a «Смелая» category is bold whatever its mix level.
  */
 export type ContentLevel = "ordinary" | "flirty" | BoldContentLevel;
 

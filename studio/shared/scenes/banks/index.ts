@@ -3,7 +3,7 @@ import { GLAMOUR } from "./glamour";
 import { HOME } from "./home";
 import { CUES, GAZE, HAIRSTYLES } from "./looks";
 import { PHOTOSHOOT } from "./photoshoot";
-import { categoryBankProblems, cueBankProblems, gazeBankProblems, hairBankProblems } from "./schema";
+import { boldOnlyHereProblems, categoryBankProblems, cueBankProblems, gazeBankProblems, hairBankProblems } from "./schema";
 import { TRAVEL } from "./travel";
 import { BANK_CATEGORIES, type BankCategory, type CategoryBank } from "./types";
 
@@ -30,7 +30,8 @@ function categoryOf(banks: unknown, category: BankCategory): unknown {
 export function validateBanks(input: BankInput = {}): void {
   const banks = input.banks ?? BANKS;
   const problems = [
-    ...BANK_CATEGORIES.flatMap((category) => categoryBankProblems(categoryOf(banks, category), category).map((p) => `${category}: ${p}`)),
+    // S5.9b2 (I5.37): an ordinary bank holds none of the «Смелая» vocabulary (bold-only-here).
+    ...BANK_CATEGORIES.flatMap((category) => [...categoryBankProblems(categoryOf(banks, category), category), ...boldOnlyHereProblems(categoryOf(banks, category))].map((p) => `${category}: ${p}`)),
     ...gazeBankProblems(input.gaze ?? GAZE).map((p) => `gaze: ${p}`),
     ...cueBankProblems(input.cues ?? CUES).map((p) => `cues: ${p}`),
     ...hairBankProblems(input.hair ?? HAIRSTYLES).map((p) => `hair: ${p}`),
