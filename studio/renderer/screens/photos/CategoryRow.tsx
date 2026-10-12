@@ -114,7 +114,8 @@ export function CategoryRow({
   const chip = (ref: RunCategory, label: string) => {
     const isOn = on.has(ref);
     const n = perCategory.get(ref);
-    // A «Смелая» category under another «Подача»: it waits, and a pick of it is kept (mockup 48#kept), drawn on but not part of this run.
+    // A «Смелая» category under another «Подача»: it waits, and a pick of it is kept (mockup 48#kept), drawn on but not part of this run — so never announced
+    // as pressed; the note it is described by says it comes back with «Смелая».
     const gated = !boldOn && isBoldCategory(ref);
     const classes = ["chip", isOn && "chip-on", "cat-chip", gated && "gen-chip-gated", gated && isOn && "gen-chip-kept"].filter(Boolean).join(" ");
     return (
@@ -123,7 +124,7 @@ export function CategoryRow({
         type="button"
         className={classes}
         data-category={ref}
-        aria-pressed={isOn}
+        aria-pressed={isOn && !gated}
         aria-disabled={gated || undefined}
         aria-describedby={gated ? gatedId : undefined}
         aria-label={isOn && n !== undefined ? `${label}: ${n} фото` : label}

@@ -161,7 +161,7 @@ export function SettingsColumn(props: SettingsColumnProps) {
                       key={ref}
                       type="button"
                       className={classes}
-                      aria-pressed={on}
+                      aria-pressed={on && !gated}
                       aria-disabled={off ?? (gated || undefined)}
                       aria-describedby={gated ? id("gated") : undefined}
                       onClick={readOnly || gated ? undefined : () => props.onCategory(ref)}

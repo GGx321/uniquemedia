@@ -200,10 +200,12 @@ describe("the two chips under another «Подача» (mockup 48)", () => {
 
     await pickLevel("Кокетливая");
     const kept = chip("Ночнушки и бельё");
-    expect(kept.getAttribute("aria-pressed")).toBe("true");
+    // Round 2 (L4): kept, but not in this run — never announced as pressed; its description says it comes back with «Смелая».
+    expect(kept.getAttribute("aria-pressed")).toBe("false");
     expect(kept.getAttribute("aria-disabled")).toBe("true");
     expect(kept.classList.contains("gen-chip-kept")).toBe(true);
     expect(kept.getAttribute("aria-label")).toBe("Ночнушки и бельё");
+    expect(described(kept)).toEqual(["Только со «Смелой»: выбранная «Ночнушки и бельё» вернётся вместе с ней."]);
     expect(within(card()).getByText("Только со «Смелой»: выбранная «Ночнушки и бельё» вернётся вместе с ней.")).toBeDefined();
     expect(chip("Дом").getAttribute("aria-label")).toBe("Дом: 10 фото");
     expect(lastEstimate(engine)).toEqual({ avatarId: MIA.avatarId, count: 20, categories: ["home", "travel"], level: "flirty" });

@@ -129,7 +129,7 @@ describe("«Категории сцен» with the two «Смелая» chips (m
     expect(started?.categories).toEqual(["nightwear", "beach"]);
   });
 
-  test("a pick kept under «Кокетливая»: pressed but dashed and dimmed, left out of the draft and the count, the option B line gone", async () => {
+  test("a pick kept under «Кокетливая»: dashed and dimmed, not pressed, left out of the draft and the count, the option B line gone", async () => {
     const { engine } = world();
     await openAutopilot();
     await choose("Mia");
@@ -138,9 +138,11 @@ describe("«Категории сцен» with the two «Смелая» chips (m
     expect(limitSub()).toBe(LIMIT_BOLD);
     await click(level("Кокетливая"));
     const kept = categoryChip("Ночнушки и бельё");
-    expect(kept.getAttribute("aria-pressed")).toBe("true");
+    // Round 2 (L4): kept, but not in this launch — never announced as pressed; its description says it comes back with «Смелая».
+    expect(kept.getAttribute("aria-pressed")).toBe("false");
     expect(kept.getAttribute("aria-disabled")).toBe("true");
     expect(kept.classList.contains("gen-chip-kept")).toBe(true);
+    expect(described(kept)).toEqual(["Только со «Смелой»: выбранная «Ночнушки и бельё» вернётся вместе с ней."]);
     expect(within(settings()).getByText("Только со «Смелой»: выбранная «Ночнушки и бельё» вернётся вместе с ней.")).toBeDefined();
     expect(within(settings()).getByText("4 из 7")).toBeDefined();
     expect(limitSub()).toBe(LIMIT_PLAIN);
