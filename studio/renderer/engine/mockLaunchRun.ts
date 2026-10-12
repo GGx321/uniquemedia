@@ -15,6 +15,7 @@ import {
 } from "../../shared/engine";
 import type { SplitEntry } from "../../shared/scenes/writerBound";
 import type { MockAutopilotWorld, MockLaunch } from "./mockAutopilot";
+import { isBoldLook } from "./mockBoldRoute";
 
 // The mock's launch, run on its scheduler (Stage 4, S4.8). The engine's orchestrator and steps advance a launch in the background; this advances the mock's the same way, one pass per
 // tick of the mock's clock, so the window can be developed and tested against it end to end:
@@ -148,6 +149,8 @@ export class MockRun {
   readonly #review: boolean;
   readonly #categories: readonly CategoryRef[];
   readonly #number: string;
+  /** 5a.3 (S5.9f, option B): the launch is «Смелая» with a «Смелая» category, so every photo is priced at the bold unit. */
+  readonly #bold: boolean;
   readonly #work: Work[];
   readonly #open = new Map<string, Reserve>();
   #settled = 0;
@@ -171,6 +174,7 @@ export class MockRun {
     this.#review = start.review;
     this.#categories = start.categories;
     this.#number = start.number;
+    this.#bold = isBoldLook(launch.draft);
     this.#work = start.avatars.map((a, index): Work => {
       let cumulative = 0;
       const slots = a.shapes.map((shape, n): Slot => {
@@ -296,7 +300,7 @@ export class MockRun {
         // Disjoint, as the engine's mirror has them (plan §3.7): the scenes no slice has taken yet, and the open slots of the slices already begun.
         undrawnScenes: drawing || (work.phase === "approved-waiting" && this.#unfinished()) ? Math.max(0, work.toGenerate - Math.min(work.toGenerate, work.slices * LAUNCH_SLICE_MAX_PHOTOS)) : 0,
         resumableSlots: drawing ? this.#openSlots(work) : 0,
-        drawAllocationMicros: generating ? work.toGenerate * this.#w.unit().photoWorstMicros : null,
+        drawAllocationMicros: generating ? work.toGenerate * this.#w.unit(this.#bold).photoWorstMicros : null,
       };
     });
     this.#launch.videos = videos;
@@ -436,7 +440,7 @@ export class MockRun {
       if (work === undefined) continue;
       moved = true;
       if (reserve.kind === "writer") {
-        this.#close(key, this.#w.writerBound(work.generate).modelSlots * this.#w.unit().writerExpectedPerPhotoMicros);
+        this.#close(key, this.#w.writerBound(work.generate).modelSlots * this.#w.unit(this.#bold).writerExpectedPerPhotoMicros);
         if (work.phase === "composing") {
           this.#openSet(work);
           work.written = true;
@@ -446,7 +450,7 @@ export class MockRun {
           else this.#startDraw(work);
         }
       } else {
-        this.#close(key, this.#w.unit().photoExpectedMicros);
+        this.#close(key, this.#w.unit(this.#bold).photoExpectedMicros);
         arrived.set(work, (arrived.get(work) ?? 0) + 1);
       }
     }
@@ -457,7 +461,7 @@ export class MockRun {
         const ids = this.#w.drawPhotos(work.avatarId, 1, this.#categories[0] ?? "home", runId, work.setId === null ? undefined : { sceneSetId: work.setId, firstNo: work.drawn + 1 });
         work.drawnIds.push(...ids);
         work.drawn += 1;
-        if (runId !== null) this.#w.sliceProgress(runId, ids, this.#w.unit().photoExpectedMicros);
+        if (runId !== null) this.#w.sliceProgress(runId, ids, this.#w.unit(this.#bold).photoExpectedMicros);
         this.#log({ at: this.#at(), kind: "photo", avatarId: work.avatarId, done: work.drawn, total: work.toGenerate });
         if (work.drawn % LAUNCH_SLICE_MAX_PHOTOS === 0 || work.drawn >= work.toGenerate) this.#closeSlice(work, "done");
       }
@@ -519,7 +523,7 @@ export class MockRun {
     }
     work.openSetLogged = false;
     work.waiting = null;
-    const unit = this.#w.unit();
+    const unit = this.#w.unit(this.#bold);
     const left = work.toGenerate - work.drawn;
     const batch = Math.min(DRAW_BATCH, left);
     // 5a.2: the code template writes a built-in category and a covered custom one, so the compose asks the model for the uncovered custom categories' scenes alone (`writerBound`).
@@ -632,7 +636,7 @@ export class MockRun {
     if (work.sliceRun !== null && work.slices === index && work.sliceOpen) return work.sliceRun;
     if (work.sliceOpen) this.#closeSlice(work, "done");
     const photos = Math.min(LAUNCH_SLICE_MAX_PHOTOS, work.toGenerate - (index - 1) * LAUNCH_SLICE_MAX_PHOTOS);
-    const unit = this.#w.unit();
+    const unit = this.#w.unit(this.#bold);
     // A slice taken up again is the same run under a new job; a new one is a run of its own.
     const runId = this.#w.startSlice({
       launchId: this.#launch.launchId,
@@ -750,7 +754,7 @@ export class MockRun {
    */
   #restOfBatchLands(work: Work, left: number): void {
     const others = Math.min(DRAW_BATCH, left) - 1;
-    for (let i = 0; i < others; i++) this.#close(this.#reserve("image", work.avatarId, this.#w.unit().attemptWorstMicros, false), this.#w.unit().photoExpectedMicros);
+    for (let i = 0; i < others; i++) this.#close(this.#reserve("image", work.avatarId, this.#w.unit(this.#bold).attemptWorstMicros, false), this.#w.unit(this.#bold).photoExpectedMicros);
   }
 
   #room(): number {
@@ -785,7 +789,7 @@ export class MockRun {
 
   /** No answer: the request's reserve stays open at its worst case; the job continues by itself after the first and the second drop, and holds for a person at the third. */
   #networkDrop(work: Work, step: "compose" | "draw", job: string, reconcile = false): "held" {
-    const unit = this.#w.unit();
+    const unit = this.#w.unit(this.#bold);
     const chunks = this.#writerChunks(work);
     if (!reconcile) {
       if (step === "compose") this.#openSet(work);

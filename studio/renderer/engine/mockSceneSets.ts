@@ -746,9 +746,9 @@ export class MockSceneSets {
   }
 
   /** The `no`th scene (1-based) the set's draw takes, in scene order, among the planned scenes that are not removed: what the face gate would see in the `no`th photo. */
-  drawnScene(sceneSetId: string, no: number): { capture?: Capture; shot: SceneView["shot"]; pose: SceneView["pose"] } | undefined {
+  drawnScene(sceneSetId: string, no: number): { capture?: Capture; shot: SceneView["shot"]; pose: SceneView["pose"]; route?: "seedream" } | undefined {
     const scene = this.find(sceneSetId)?.scenes.filter((s) => s.place !== null && !s.removed)[no - 1];
-    return scene === undefined ? undefined : { ...(scene.capture === undefined ? {} : { capture: scene.capture }), shot: scene.shot, pose: scene.pose };
+    return scene === undefined ? undefined : { ...(scene.capture === undefined ? {} : { capture: scene.capture }), shot: scene.shot, pose: scene.pose, ...(scene.route === undefined ? {} : { route: scene.route }) };
   }
 
   /** Whether a «Дописать» has anything to do: a pending chunk, a free one included (the engine's `nothing-waiting` is only for a set with none). */
@@ -1038,6 +1038,15 @@ export class MockSceneSets {
   #categoryEntry(ref: CategoryRef): { ref: CategoryRef; name: string | null; poses?: ScenePose[] } {
     const custom = isCustomCategory(ref) ? this.#deps.category(ref) : undefined;
     return { ref, name: custom?.name ?? null, ...(custom?.pool.poses === undefined ? {} : { poses: [...custom.pool.poses] }) };
+  }
+
+  /**
+   * 5a.3 (S5.9f): the slots of a run request that is «Смелая» with a «Смелая» category, as the planner deals them: the very scenes `compose` would plan for the same request, each with its
+   * category and the route it is drawn on. A run and a set of one request therefore agree on which slots are on Seedream.
+   */
+  plannedSlots(request: { count: number; categories: readonly CategoryRef[]; level?: SceneLevel; legsShare?: LegsShare }): { category: Scene["category"]; route?: "seedream" }[] {
+    const refs = orderCategories(request.categories);
+    return planScenes(request.count, refs, request.level ?? "ordinary", request.legsShare ?? 0, this.#deps.category).map((scene) => ({ category: scene.category, ...(scene.route === undefined ? {} : { route: scene.route }) }));
   }
 
   /** A compose that passed the engine's gates: plans and stores the set, launches its job (none for an empty set). */
