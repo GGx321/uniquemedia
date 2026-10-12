@@ -214,6 +214,16 @@ describe("what any content must keep", () => {
     expect(moments("home").some((m) => m.captures.includes("prone") && /hips behind/.test(m.text))).toBe(true);
   });
 
+  // Review (C3′ round 2): the fabric renames came out telegraphic («a hoodie, knit mini skirt, sneakers»). An outfit is English: each garment after a comma has its
+  // article, and a list joins its last two with «and».
+  test("every outfit reads as English: a garment after a comma has its article, and a list ends with «and»", () => {
+    const telegraphic = BANK_CATEGORIES.flatMap((c) => BANKS[c].outfits.map((o) => o.text)).filter((text) => {
+      const [, ...rest] = text.split(/,\s*/);
+      return rest.length > 0 && (rest.some((item) => !/^(?:a|an)\s/.test(item)) || !/\sand\s/.test(rest[rest.length - 1] ?? ""));
+    });
+    expect(telegraphic).toEqual([]);
+  });
+
   test("no denim shorts and no denim skirts anywhere (the owner)", () => {
     for (const category of BANK_CATEGORIES) for (const outfit of BANKS[category].outfits) expect(isOwnerBannedOutfit(outfit.text)).toBe(false);
   });

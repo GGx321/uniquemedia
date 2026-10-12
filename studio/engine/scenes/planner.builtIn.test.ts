@@ -299,7 +299,7 @@ describe("recent (place, moment) pairs are avoided softly (I5.24)", () => {
   });
 
   test("a history line with no moment (written before 5a.2) reads as it always did", () => {
-    const slots = plan({ seed: 2, count: 6, categories: ["photoshoot"], excludePairs: [{ location: "a busy road", outfit: "a hoodie, knit mini skirt, sneakers" }] }).slots;
+    const slots = plan({ seed: 2, count: 6, categories: ["photoshoot"], excludePairs: [{ location: "a busy road", outfit: "a hoodie and a knit mini skirt" }] }).slots;
     expect(slots).toHaveLength(6);
   });
 });

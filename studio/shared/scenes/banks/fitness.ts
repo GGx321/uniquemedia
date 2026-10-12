@@ -6,7 +6,7 @@ import type { CategoryBank } from "./types";
 // herself): the home workout (the yoga mat, the workout corner) is on a timer or at arm's length, never a friend's or a candid; those stay at the gym and in
 // the park. A timer moment holds nothing (the timer line says both hands are empty), so the yoga pose is «stands in a tree pose».
 /** S5.8a review: legs frames wear shorts or leggings (a low angle under a skirt would read wrong), and «Фитнес» has four outfits that show her legs, not two. */
-const LEGS_TRAINING = ["lycra biker shorts and a crop top", "nylon running shorts and a tank top", "lycra yoga shorts and a fitted tank", "lycra cycling shorts, a loose tee", "leggings and a fitted tank top", "leggings and a cropped tank top"];
+const LEGS_TRAINING = ["lycra biker shorts and a crop top", "nylon running shorts and a tank top", "lycra yoga shorts and a fitted tank", "lycra cycling shorts and a tee", "leggings and a fitted tank top", "leggings and a cropped tank top"];
 
 export const FITNESS: CategoryBank = {
   places: [
@@ -98,7 +98,7 @@ export const FITNESS: CategoryBank = {
     { text: "a loose hoodie over leggings" },
     { text: "nylon running shorts and a tank top", showsLegs: true },
     { text: "lycra yoga shorts and a fitted tank", showsLegs: true, pinOnly: true },
-    { text: "lycra cycling shorts, a loose tee", showsLegs: true, pinOnly: true },
+    { text: "lycra cycling shorts and a tee", showsLegs: true, pinOnly: true },
     { text: "leggings and a cropped tank top", pinOnly: true },
   ],
   // S5.6R: the timer is the home workout's (only the home places take it); the gym and the park keep a friend twice and a candid.

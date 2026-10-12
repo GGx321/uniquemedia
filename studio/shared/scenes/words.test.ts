@@ -30,7 +30,7 @@ describe("unfabricBottomsIn: a skirt, shorts or a skort named without its fabric
     "a hoodie, a knit mini and sneakers",
     "a white top and leather mini skirt",
     "a sequin mini skirt and a crop top",
-    "a tank top, linen skirt and boots",
+    "a tank top, a linen skirt and boots",
     "a skirt in light linen and a tee",
     "shorts made of soft cotton",
     "a cotton-blend skirt",
