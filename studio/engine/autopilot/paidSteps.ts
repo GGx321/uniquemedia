@@ -1,5 +1,6 @@
 import { budgetHoldDetail, drawAllocationLeft, sliceSize, SLICE_MAX_PHOTOS, type BudgetHoldDetail, type LaunchScopeMoney } from "../../shared/autopilot/money";
 import { ErrorCode } from "../../shared/engine";
+import { isCustomCategory } from "../../shared/engine/categories";
 import { INTERNAL_HOLD_MESSAGE_MAX, type PaidHold, type SkipReason } from "../../shared/engine/autopilot";
 import { EngineFailure } from "../engineFailure";
 import type { StoredSceneSet } from "../library/sceneSets";
@@ -78,9 +79,15 @@ const isNotPayable = (error: unknown): boolean => isFailure(error, "VALIDATION")
 const plannedOf = (set: MirrorSource) => set.scenes.filter((s) => s.origin === "planned" && !s.removed);
 const FINAL_PHASES: readonly string[] = ["montage", "done", "skipped"];
 
-/** What of the draft's look a compose carries: «Подача» and «Ножки» only when they were chosen. The draft's old angle toggles (a launch paused by an older build) are not sent: the angle comes from the scene (S5.7b). */
-function composeLookOf(draft: LaunchFile["draft"]): Pick<LaunchComposePayload, "level" | "legsShare"> {
-  return { ...(draft.level === undefined ? {} : { level: draft.level }), ...(draft.legsShare === undefined || draft.legsShare === 0 ? {} : { legsShare: draft.legsShare }) };
+/**
+ * What of the draft's look a compose carries: «Подача» and «Ножки» only when they were chosen. The draft's old angle toggles (a launch paused by an older build) are not sent: the angle comes from
+ * the scene (S5.7b). «Ножки» are drawn from the built-in categories only (S5.R3): an avatar's split can drop every built-in category of a mixed launch, and the engine refuses legs on such a
+ * compose, so the share rides on the avatar's compose only when its own split names a built-in one.
+ */
+function composeLookOf(draft: LaunchFile["draft"], split: readonly { ref: string }[]): Pick<LaunchComposePayload, "level" | "legsShare"> {
+  const legsShare = draft.legsShare ?? 0;
+  const legs = legsShare > 0 && split.some((s) => !isCustomCategory(s.ref));
+  return { ...(draft.level === undefined ? {} : { level: draft.level }), ...(legs ? { legsShare } : {}) };
 }
 /** The price request of a slice's sizing, in the same counters. */
 const PRICES_JOB = "prices";
@@ -467,7 +474,7 @@ export class PaidSteps implements LaunchSteps {
       let started: { jobId: string | null };
       try {
         started = await port.composeLaunchSet(
-          { avatarId: row.avatarId, count, categories: split.map((s) => s.ref), ...composeLookOf(ctx.file().draft), acceptedWorstMicros: row.allocation.composeMicros },
+          { avatarId: row.avatarId, count, categories: split.map((s) => s.ref), ...composeLookOf(ctx.file().draft, split), acceptedWorstMicros: row.allocation.composeMicros },
           { ids: { sceneSetId: generation.sceneSetId, runId: generation.setRunId }, split, launchId: ctx.launchId },
         );
       } catch (error) {

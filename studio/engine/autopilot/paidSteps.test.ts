@@ -935,6 +935,57 @@ describe("the compose a launch sends (S5.7a, S5.7b)", () => {
     expect("legsShare" in (await composeSentFor({ legsShare: 0 }))).toBe(false);
   });
 
+  // S5.R3: the split round-robins videos over the launch's categories and drops the empty ones, so an avatar of a mixed launch can compose over custom categories only. «Ножки» are drawn from the
+  // built-in categories only, so the engine refuses such a compose: the legs share rides on it only when the avatar's own split names a built-in category.
+  const CUSTOM = "cat-legs-custom-01";
+  async function composeAndSplitFor(draft: Parameters<Rig["start"]>[0]): Promise<{ sent: LaunchComposePayload; splitRefs: string[] }> {
+    const r = await rig();
+    const sent: LaunchComposePayload[] = [];
+    const compose = composes(r.port, LAUNCH);
+    r.port.compose = async (payload, ids) => {
+      sent.push(payload);
+      return compose(payload, ids);
+    };
+    const launch = await r.start(draft);
+    await until(() => sent.length > 0, "the compose call");
+    await r.orchestrator.stop(launch.launchId);
+    const [payload] = sent;
+    if (payload === undefined) throw new Error("the launch composed nothing");
+    return { sent: payload, splitRefs: (r.fileOf(launch.launchId).avatars[0]?.generation?.split ?? []).map((s) => s.ref) };
+  }
+
+  test("an avatar whose split holds custom categories only composes with no legs share, though the launch asked for one", async () => {
+    const { sent, splitRefs } = await composeAndSplitFor({ categories: ["home", CUSTOM], videosPerAvatar: 1, planSeed: 5, legsShare: 30 });
+    expect(splitRefs).toEqual([CUSTOM]);
+    expect("legsShare" in sent).toBe(false);
+  });
+
+  test("an avatar whose split holds a built-in category keeps the legs share", async () => {
+    const { sent, splitRefs } = await composeAndSplitFor({ categories: ["home", CUSTOM], videosPerAvatar: 1, planSeed: 1, legsShare: 30 });
+    expect(splitRefs).toEqual(["home"]);
+    expect(sent.legsShare).toBe(30);
+  });
+
+  test("an avatar whose split mixes built-in and custom categories keeps the legs share", async () => {
+    const { sent, splitRefs } = await composeAndSplitFor({ categories: ["home", CUSTOM], videosPerAvatar: 4, planSeed: 5, legsShare: 15 });
+    expect(splitRefs).toContain(CUSTOM);
+    expect(splitRefs).toContain("home");
+    expect(sent.legsShare).toBe(15);
+  });
+
+  test("a custom-only split composes through an engine that refuses legs there, with no hold on the launch", async () => {
+    const r = await rig();
+    const compose = composes(r.port, LAUNCH);
+    r.port.compose = async (payload, ids) => {
+      if ((payload.legsShare ?? 0) > 0 && payload.categories.every((ref) => ref.startsWith("cat-"))) throw new EngineFailure({ code: "VALIDATION", launchReason: "legs-built-in-only", detail: "legs need a built-in category" });
+      return compose(payload, ids);
+    };
+    const launch = await r.start({ categories: ["home", CUSTOM], videosPerAvatar: 1, planSeed: 5, legsShare: 30 });
+    await until(() => r.port.calls.includes("composeLaunchSet:returned"), "the compose to return");
+    await r.orchestrator.stop(launch.launchId);
+    expect(r.fileOf(launch.launchId).paidHold).toBeNull();
+  });
+
   test("a flirty draft with legs sends both", async () => {
     const sent = await composeSentFor({ level: "flirty", legsShare: 15 });
     expect([sent.level, sent.legsShare]).toEqual(["flirty", 15]);
