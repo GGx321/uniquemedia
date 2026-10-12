@@ -3,7 +3,7 @@ import { isHandCapture, LEGS_CAPTURES, shotOf, type Capture } from "../captures"
 import { momentAllowed } from "../render";
 import { legwearFits } from "../template";
 import { DRESS_LENGTH, DRESS_OR_SKIRT, LEGS_UNSUITED_OUTFITS, YOUTH_PROPS, isOwnerBannedOutfit } from "../words";
-import { FEET_IN_THE_WATER, FEET_IN_THE_WATER_MAX, poseFamilyOf, poseWordsOf } from "./boldDesign.testkit";
+import { FEET_IN_THE_WATER, FEET_IN_THE_WATER_MAX, poseFamiliesOf, poseFamilyOf, poseWordsOf } from "./boldDesign.testkit";
 import { BANKS } from "./index";
 import { categoryBankProblems, MOTION_TEXT_MAX } from "./schema";
 import { BANK_CATEGORIES, type BankCategory, type Moment } from "./types";
@@ -218,8 +218,28 @@ describe("every category has legs moments to vary (I5.24)", () => {
 // A legs moment's pose family is read from its words, the most telling first: a foot dangling is that, whether or not her legs are also crossed. Every legs moment of a «Смелая»
 // bank has a family and no two share one; the five keep theirs (their plans are frozen), so the rule is held where the review found the repeat.
 describe("a «Смелая» bank's legs moments are different poses (S5.R4 round 2)", () => {
-  test("the families read the words: the most telling first, and a pose the list does not know has none", () => {
-    expect(poseFamilyOf("sits, legs crossed, a foot dangling")).toBe("a foot dangling");
+  // S5.R4 round 3 (re-review, LOW): the first family a moment's words name was its family, so «sits on the pool steps, legs out» read as «stepping» and «stretches her legs out, ankles
+  // crossed» as «legs crossed». Every family the words name is read, and a legs moment of a «Смелая» bank names exactly one.
+  test.each<[string, string[]]>([
+    ["sits on the pool steps, legs out", ["legs stretched out"]],
+    ["stretches her legs out, ankles crossed", ["legs crossed", "legs stretched out"]],
+    ["sits, legs crossed, a foot dangling", ["a foot dangling", "legs crossed"]],
+    ["steps down into the water", ["feet in the water", "stepping"]],
+    ["dangles her feet in the water", ["feet in the water"]],
+    ["lets the waves wash over her feet", ["feet in the water"]],
+    ["walks on tiptoe across the sand", ["on tiptoe"]],
+    ["sits, legs over the armrest", ["legs over the armrest"]],
+    ["sits on the floor", []],
+  ])("«%s» names %p", (text, families) => {
+    expect(poseFamiliesOf(text).sort()).toEqual(families);
+  });
+
+  test.each(["nightwear", "beach"] as const)("%s: every legs moment names exactly one pose family", (category) => {
+    expect(legsMoments(category).map(({ moment }) => ({ text: moment.text, families: poseFamiliesOf(moment.text) })).filter((m) => m.families.length !== 1)).toEqual([]);
+  });
+
+  test("a moment's family is the one family its words name; none, or two, is no family", () => {
+    expect(poseFamilyOf("sits, legs crossed, a foot dangling")).toBeUndefined();
     expect(poseFamilyOf("lies with her legs crossed")).toBe("legs crossed");
     expect(poseFamilyOf("sits on the sand, legs out")).toBe("legs stretched out");
     expect(poseFamilyOf("stretches her legs on the lounger")).toBe("legs stretched out");

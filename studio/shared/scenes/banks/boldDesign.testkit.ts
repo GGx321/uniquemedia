@@ -41,16 +41,19 @@ export function explicitActsIn(text: string): string[] {
 }
 
 /**
- * S5.R4 round 2: a legs moment's pose family, read from its words, the most telling first (a foot dangling is that, whether or not her legs are also crossed). The «Смелая» banks
- * hold their legs moments to one moment a family (banks/legs.test.ts), and the prompt sweep counts a run's legs frames by family.
+ * S5.R4 round 2: a legs moment's pose family, read from its words. Round 3: every family its words name is read (the first one hid «sits on the pool steps, legs out» in «stepping»),
+ * and a legs moment of a «Смелая» bank names exactly one; the banks hold their legs moments to one moment a family (banks/legs.test.ts), and the prompt sweep counts a run's legs
+ * frames by family.
  */
 export const POSE_FAMILIES: readonly (readonly [string, RegExp])[] = [
   // S5.R4 round 3: her feet in the water is one picture, whether she dangles them, steps down into it or lets the waves wash over them.
   ["feet in the water", /\b(?:in|into)\s+the\s+(?:water|sea|pool)\b|\bwaves?\b/i],
   ["on tiptoe", /\btiptoe\b/i],
   ["kneeling", /\bkneel\w*\b/i],
-  ["a foot dangling", /\bdangl\w*\b/i],
-  ["stepping", /\bsteps?\b/i],
+  // A foot dangling in the water is her feet in the water.
+  ["a foot dangling", /\bdangl\w*\b(?![^,]*\b(?:in|into)\s+the\s+(?:water|sea|pool)\b)/i],
+  // A step she takes, not the pool's steps she sits on.
+  ["stepping", /\bsteps?\s+(?:down|up|into|out|onto|off|over|toward|towards|forward|across|back|closer)\b/i],
   ["one knee bent", /\b(?:one|a) knee\b|\bknees?\s+(?:bent|up|drawn up)\b/i],
   ["a foot lifted", /\b(?:lifts?|raises?)\s+(?:one|a|her)\s+(?:bare\s+)?(?:foot|leg)\b/i],
   ["her weight on one leg", /\bweight on one leg\b/i],
@@ -62,8 +65,14 @@ export const POSE_FAMILIES: readonly (readonly [string, RegExp])[] = [
 export const FEET_IN_THE_WATER = "feet in the water";
 export const FEET_IN_THE_WATER_MAX = 2;
 
-/** A legs moment's pose family, the first that its words name; undefined for a pose the list does not know. */
-export const poseFamilyOf = (text: string): string | undefined => POSE_FAMILIES.find(([, words]) => words.test(text))?.[0];
+/** Every pose family a text's words name, in the list's order. */
+export const poseFamiliesOf = (text: string): string[] => POSE_FAMILIES.filter(([, words]) => words.test(text)).map(([family]) => family);
+
+/** A legs moment's pose family: the one family its words name; undefined when they name none, or more than one (the moment is then worded apart). */
+export const poseFamilyOf = (text: string): string | undefined => {
+  const families = poseFamiliesOf(text);
+  return families.length === 1 ? families[0] : undefined;
+};
 
 /** S5.R4 round 3: the words that do not change a pose: articles, her, numbers, the adjectives of her feet, and the motion's pace words. */
 const SAME_POSE_WORDS = new Set(["a", "an", "the", "her", "his", "she", "one", "two", "bare", "socked", "little", "bit", "slowly", "slightly", "gently", "small"]);
