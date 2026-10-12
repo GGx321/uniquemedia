@@ -68,7 +68,8 @@ export const BEACH: CategoryBank = {
     {
       name: "the water's edge",
       at: "at the edge of the sea",
-      details: ["some wet sand", "a few seashells in the sand"],
+      // S5.R4 round 2: every moment here is in the water or at its edge (waist- and knee-deep among them), so the details are what she sees from the water, not the sand under her.
+      details: ["a sailboat on the horizon", "the beach behind her"],
       times: ["morning", "midday", "golden hour"],
       moments: [
         { text: "walks along the shore", motion: "she walks on slowly, the water at her feet", captures: ["friend", "candid"], twoHanded: false, water: true, outfits: IN_THE_WATER, outdoor: true },

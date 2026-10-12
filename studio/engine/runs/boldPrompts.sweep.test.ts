@@ -84,6 +84,16 @@ describe("a place detail never dangles as a prop in her hands", () => {
     expect(empty.length).toBeGreaterThan(500);
     expect(offenders(empty, (f) => danglingIn(f.prompt).length > 0)).toEqual(NONE);
   });
+
+  // S5.R4 round 2 (re-review, LOW): a place detail is said on every frame of its place, the frames in the water among them: «she stands waist-deep, …, with a few seashells in the
+  // sand» put the dry shore under a frame in the sea. A frame in the water (waist- or knee-deep, in the water, swimming) names no ground under her as its detail.
+  test("a frame in the water names no sand, shells or pebbles as its detail", () => {
+    const IN_THE_WATER = /\b(?:waist|knee|thigh|chest)-deep\b|\bin the (?:water|sea|pool)\b|\bswim\w*\b/i;
+    const GROUND = /\b(?:sand|seashells?|shells?|pebbles?)\b/i;
+    const wet = FRAMES.filter((f) => f.moment.water === true && IN_THE_WATER.test(f.moment.text));
+    expect(wet.length).toBeGreaterThan(300);
+    expect(offenders(wet, (f) => f.place.room !== true && f.place.details.some((d) => GROUND.test(d) && f.sentence.includes(`, with ${d}.`)))).toEqual(NONE);
+  });
 });
 
 // Item 3 (MEDIUM): at 20 photos and «Ножки» 30 % a run holds 6 legs slots. With 4 legs moments a bank, two of them came twice in every run, and the same scene (place, moment and
