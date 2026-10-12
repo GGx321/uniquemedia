@@ -93,8 +93,9 @@ describe("the word gate has one home (static)", () => {
     expect(vocabularyIn(mocks)).toEqual(["renderer/engine/mockEngine.ts: girl"]);
   });
 
-  test("the bold exemption is named only in boldRules.ts and read only by the content line", () => {
+  // S5.9b2 (plan s5a3 §6.4, answer (b)): the garment itself is worn in the «Ночнушки и бельё» bank, the one production text that names it beside the rule's own home.
+  test("the bold exemption is named only in boldRules.ts and read only by the content line, and the garment is worn only in the «Смелая» nightwear bank", () => {
     expect(filesWith(/\bBOLD_EXEMPT_YOUTH\b/)).toEqual(["shared/scenes/banks/boldRules.ts", "shared/scenes/contentLine.ts"]);
-    expect(filesWith(/babydoll/i)).toEqual(["shared/scenes/banks/boldRules.ts", "shared/scenes/contentLine.ts"]);
+    expect(filesWith(/babydoll/i)).toEqual(["shared/scenes/banks/boldRules.ts", "shared/scenes/banks/nightwear.ts", "shared/scenes/contentLine.ts"]);
   });
 });
