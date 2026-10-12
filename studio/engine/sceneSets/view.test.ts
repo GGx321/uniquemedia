@@ -55,6 +55,11 @@ describe("poses, level and capture", () => {
     expect(viewOf({ ...set, request: { ...set.request, level: "flirty" } } as PlannedSceneSet).level).toBe("flirty");
   });
 
+  test("a bold set shows its level", () => {
+    const set = bare();
+    expect(viewOf({ ...set, request: { ...set.request, level: "bold" } } as PlannedSceneSet).level).toBe("bold");
+  });
+
   test("an ordinary set, stored with the level or without, shows none", () => {
     const set = bare();
     expect("level" in viewOf(set)).toBe(false);
@@ -69,6 +74,15 @@ describe("poses, level and capture", () => {
     const view = viewOf({ ...set, scenes: [{ ...first, slot: { ...first.slot, capture: "timer" } }, { ...second, slot: plain }, ...rest] } as PlannedSceneSet);
     expect(view.scenes[0]?.capture).toBe("timer");
     expect("capture" in (view.scenes[1] ?? {})).toBe(false);
+  });
+
+  test("a scene shows its Seedream route when its slot has one, and none when it has not", () => {
+    const set = stored();
+    const [first, second, ...rest] = set.scenes;
+    if (first?.origin !== "planned" || second?.origin !== "planned") throw new Error("the sample plans scenes");
+    const view = viewOf({ ...set, scenes: [{ ...first, slot: { ...first.slot, route: "seedream" } }, second, ...rest] } as PlannedSceneSet);
+    expect(view.scenes[0]?.route).toBe("seedream");
+    expect("route" in (view.scenes[1] ?? {})).toBe(false);
   });
 
   test("a scene shows level flirty only when its slot is flirty", () => {

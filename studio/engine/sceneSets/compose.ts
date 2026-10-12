@@ -63,7 +63,7 @@ export function planSceneSet(input: ComposeInput): PlannedNewSceneSet {
     sceneSetId: input.sceneSetId,
     avatarId: input.avatarId,
     runId: input.runId,
-    request: { count: input.count, categories: [...input.categories], ...(input.poses === undefined ? {} : { poses: { ...input.poses } }), ...(input.level === "flirty" ? { level: input.level } : {}), ...(legsAsked ? { legsShare: input.legsShare } : {}) },
+    request: { count: input.count, categories: [...input.categories], ...(input.poses === undefined ? {} : { poses: { ...input.poses } }), ...(input.level === "flirty" || input.level === "bold" ? { level: input.level } : {}), ...(legsAsked ? { legsShare: input.legsShare } : {}) },
     // Omitted, not empty, for a built-in-only set: the same rule as a built-in run's plan.json.
     ...(input.snapshots.length === 0 ? {} : { categories: [...input.snapshots] }),
     models: { text: input.textModel },

@@ -577,6 +577,26 @@ describe("«Ножки» in a scene set (S5.8a)", () => {
     expect(JSON.parse(readFileSync(setFile(avatarId, flirty.sceneSetId), "utf8")).request.level).toBe("flirty");
   });
 
+  // 5a.3 (S5.9a): a set composed bold over the five built-ins stores and shows its level, and holds the flirty mix of a «Кокетливая» set.
+  test("a set composed bold over the five built-ins stores and shows the bold level and holds the flirty mix", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(sceneNetwork());
+
+    const bold = composed(await engine.handle(legsCompose(avatarId, { legsShare: 0, level: "bold" })));
+    await jobEnd(events, bold.jobId ?? "none");
+    expect(JSON.parse(readFileSync(setFile(avatarId, bold.sceneSetId), "utf8")).request.level).toBe("bold");
+    const view = await setOf(engine, avatarId);
+    expect(view.level).toBe("bold");
+    ok(await engine.handle(command("scenes.discard", { sceneSetId: bold.sceneSetId })));
+
+    const flirty = composed(await engine.handle(legsCompose(avatarId, { legsShare: 0, level: "flirty" })));
+    await jobEnd(events, flirty.jobId ?? "none");
+    const flirtyView = await setOf(engine, avatarId);
+    expect(view.scenes.filter((s) => s.level === "flirty")).toHaveLength(flirtyView.scenes.filter((s) => s.level === "flirty").length);
+    expect(view.scenes.some((s) => s.level === "flirty")).toBe(true);
+    expect(view.scenes.some((s) => s.level === "bold")).toBe(false);
+  });
+
   test("framing and capture survive a restart: a new engine over the same library shows the same legs scenes", async () => {
     const avatarId = await seedAvatar();
     const first = await engineOver(sceneNetwork());

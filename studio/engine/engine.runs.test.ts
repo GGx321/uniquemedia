@@ -667,6 +667,23 @@ describe("runs.start", () => {
     await jobEnd(events, jobId);
   });
 
+  // 5a.3 (S5.9a): «Смелая» is accepted; with no «Смелая» category (none exists yet) the run draws the flirty mix, and plan.json keeps the level it was asked at.
+  test("a run asked bold over the five built-ins stores the bold level and holds the planner's flirty mix", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(runNetwork({ image: () => ({ hang: true }) }));
+    const twenty = 20 * 3 * 50_000 + 2 * 37_500;
+
+    const { runId, jobId } = started(await engine.handle(command("runs.start", { avatarId, count: 20, categories: ["home", "travel"], level: "bold", acceptedWorstMicros: twenty })));
+    const stored = planOf(runId);
+
+    expect(stored.request?.level).toBe("bold");
+    expect(stored.scenes).toEqual(planScenes({ seed: stored.scenes.seed, count: 20, categories: ["home", "travel"], level: "flirty" }));
+    expect(stored.scenes.slots.filter((s) => "level" in s)).toHaveLength(12);
+
+    ok(await engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(events, jobId);
+  });
+
   // S5.7R carry-over (I5.27): a new field is written only when it differs from its default. «Обычная» asked for by name is the absence of a level, so plan.json stores none.
   test("a run asked ordinary by name stores no level: plan.json is the one a run that asked nothing leaves", async () => {
     const avatarId = await seedAvatar();

@@ -598,7 +598,7 @@ export class MockRun {
       count: work.toGenerate,
       categories,
       launchId: this.#launch.launchId,
-      ...(level === "flirty" ? { level } : {}),
+      ...(level === "flirty" || level === "bold" ? { level } : {}),
       ...(legs ? { legsShare } : {}),
     });
   }

@@ -52,6 +52,17 @@ describe("a set composed on the mock", () => {
     expect((await composedSet({ level: "flirty" })).level).toBe("flirty");
   });
 
+  // 5a.3 (S5.9a): «Смелая» over the five ordinary built-ins draws the «Кокетливая» mix, and the set shows the level it was asked at.
+  test("shows the bold level of a set composed bold, and draws the flirty mix over the five built-ins", async () => {
+    const bold = await composedSet({ level: "bold" });
+    const flirty = await composedSet({ level: "flirty" });
+    expect(bold.level).toBe("bold");
+    expect(bold.scenes.map((scene) => scene.level)).toEqual(flirty.scenes.map((scene) => scene.level));
+    expect(bold.scenes.map((scene) => scene.capture)).toEqual(flirty.scenes.map((scene) => scene.capture));
+    expect(bold.scenes.some((scene) => scene.level === "flirty")).toBe(true);
+    expect(bold.scenes.some((scene) => scene.level === "bold" || scene.route !== undefined)).toBe(false);
+  });
+
   test("shows no level when it was composed ordinary, asked or not", async () => {
     expect("level" in (await composedSet({}))).toBe(false);
     expect("level" in (await composedSet({ level: "ordinary" }))).toBe(false);
@@ -81,6 +92,7 @@ describe("the other commands that take the new shapes", () => {
     ["the old poses", { poses: POSES }],
     ["no poses", {}],
     ["a flirty level", { level: "flirty" }],
+    ["a bold level", { level: "bold" }],
   ])("runs.estimate answers a request with %s", async (_name, over) => {
     const reply = await makeMock().request("runs.estimate", request(over) as never);
     expect(reply.ok).toBe(true);
@@ -97,6 +109,7 @@ describe("the other commands that take the new shapes", () => {
     ["with its poses", { poses: { profile: false, back: false } }],
     ["without poses", {}],
     ["flirty", { level: "flirty" }],
+    ["bold", { level: "bold" }],
   ];
   test.each(drafts)("autopilot.estimate previews a draft %s", async (_name, over) => {
     const draft: LaunchDraftInput = {

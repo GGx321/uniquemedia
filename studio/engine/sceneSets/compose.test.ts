@@ -114,6 +114,13 @@ describe("planSceneSet", () => {
     expect(flirty.scenes.map((s) => s.slot)).toEqual(planWithPools({ seed: seedOfSet("set-aaaa-0001"), count: 40, categories: ["home", "travel"], level: "flirty" }, POOLS).slots);
   });
 
+  // 5a.3 (S5.9a): «Смелая» is stored as asked (the set is a «Смелая» set), and for the built-in categories that are not «Смелая» ones it draws the flirty mix.
+  test("a bold level is stored on the request, and the five ordinary built-ins draw the flirty mix", () => {
+    const bold = planSceneSet(input({ count: 40, level: "bold" }));
+    expect(bold.request.level).toBe("bold");
+    expect(bold.scenes.map((s) => s.slot)).toEqual(planSceneSet(input({ count: 40, level: "flirty" })).scenes.map((s) => s.slot));
+  });
+
   test("an ordinary compose plans no flirty scene", () => {
     expect(planSceneSet(input({ count: 40 })).scenes.some((s) => s.slot.level !== undefined)).toBe(false);
   });
