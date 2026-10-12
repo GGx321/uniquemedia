@@ -211,7 +211,7 @@ describe("(d) the resume of an engine-planned run", () => {
     expect((await jobEnd(events, resumed.jobId)).type).toBe("job.done");
 
     const seedreamCalls = net.imageCalls().filter(isSeedream);
-    expect(seedreamCalls.every((c) => c.json().resolution === "2K" && Array.isArray(c.json().input_references) && c.json().input_references.length === 1)).toBe(true);
+    expect(seedreamCalls.every((c) => c.json().resolution === "2K" && JSON.stringify(c.json().input_references).split("image_url\"").length === 3)).toBe(true);
     const photos = (await photosOf(started, avatarId)).filter((p) => p.runId === runId);
     expect(photos).toHaveLength(6);
     expect(photos.filter((p) => p.route === "seedream")).toHaveLength(routed);
