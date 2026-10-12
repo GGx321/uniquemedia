@@ -2,7 +2,7 @@ import { orderCategories, splitCount, type CategoryRef, type LegsShare, type Sce
 import { categoryRefOf, plannerCategoryOf } from "./categories";
 import type { PlannerCategory, Shot } from "./types";
 import type { Level, Outfit } from "../../shared/scenes/banks/types";
-import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
+import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "../../shared/scenes/captures";
 import { apportionLegs, flirtyCountOf, legsCountOf } from "../../shared/scenes/level";
 import { legwearFits } from "../../shared/scenes/template";
 import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
@@ -245,6 +245,12 @@ interface BuiltInStreams {
   awayRng: Rng;
   /** `legs:${category}` (S5.8a): which slots are legs slots, then every draw of a legs slot (its place, moment, capture, outfit, time and legwear). Never read by a plan without legs. */
   legsRng: Rng;
+  /**
+   * The captures the category's ORDINARY plan deals, slot by slot (null for a legs slot): the plan under «Кокетливая» reads them to put its flirty slots on the frames that show her
+   * face, and deals the very same captures, so «Кокетливая» changes the moments and never the captures (the deck rides on the category's own stream, and the moments it draws
+   * past the first cycle move the real stream). Planned on fresh streams, once, only for a flirty plan.
+   */
+  ordinaryCaptures: () => readonly (Capture | null)[];
 }
 
 /** «Дом»'s timer frame turns away on this share of the rolls on `away:${category}`. */
@@ -293,8 +299,29 @@ function planBuiltIn(
   const placeUses = new Map<string, number>();
   const momentUses = new Map<string, number>();
 
-  // «Подача» (I5.28): exactly flirtyCountOf(n) of the n slots are flirty, drawn on the category's `level:` stream (never touched under «Обычная»).
-  const flirtyAt = new Set(level === "flirty" ? shuffle(streams.levelRng, Array.from({ length: n }, (_, i) => i)).slice(0, flirtyCountOf(n, level)) : []);
+  // «Ножки» (I5.29): which of the n slots are legs slots, on the category's `legs:` stream (never touched by a plan without legs). A legs slot is not dealt from the capture deck, so
+  // the deck, the pose, the away and the legwear streams run over the other slots as if the legs slots were not there.
+  const legsAt = new Set(legsCount === 0 ? [] : shuffle(streams.legsRng, Array.from({ length: n }, (_, i) => i)).slice(0, legsCount));
+  const legsOutfitBag = legsCount === 0 ? null : new Bag(legsOutfitsOf(pool), streams.legsRng);
+  // «Кокетливая» deals the very captures the ordinary plan deals (`ordinaryCaptures`), so the flirty slots are chosen by the frames before any moment is drawn.
+  const dealt = level === "flirty" ? streams.ordinaryCaptures() : null;
+  const dealtAt = new Map<number, Capture>();
+  dealt?.forEach((capture, i) => {
+    if (capture !== null) dealtAt.set(i, capture);
+  });
+
+  // «Подача» (I5.28): exactly flirtyCountOf(n) of the n slots are flirty, drawn on the category's `level:` stream (never touched under «Обычная»). The flirty slots go to the frames
+  // that show her face first (S5.8a, the S5.7R carry-over): a frame whose face is hidden (the phone over it, her legs) gets no flirty gaze, cue or moment, so it takes a flirty slot
+  // only when the frames that show her face are not enough. Within each group the order is the stream's own shuffle.
+  const flirtyAt = new Set<number>();
+  if (level === "flirty") {
+    const order = shuffle(streams.levelRng, Array.from({ length: n }, (_, i) => i));
+    const shows = (i: number): boolean => {
+      const capture = dealtAt.get(i);
+      return capture !== undefined && faceVisibleOf({ capture, pose: "front" }) === "yes";
+    };
+    for (const i of [...order.filter(shows), ...order.filter((i) => !shows(i))].slice(0, flirtyCountOf(n, level))) flirtyAt.add(i);
+  }
 
   // The angle comes from the scene (I5.26): at most ⌊n/5⌋ away (profile or back) slots in a built-in category.
   const awayCap = Math.floor(n / 5);
@@ -306,11 +333,6 @@ function planBuiltIn(
   const canFaceAway = (capture: Capture): boolean => pool.locations.some((p) => fittingMoments(p, capture, "front", "flirty").some((m) => isAwayAngle(m.angle)));
   const selfShot = kind === "self";
   const awayShareOfDeck = pool.captureDeck.filter(canFaceAway).length / pool.captureDeck.length;
-
-  // «Ножки» (I5.29): which of the n slots are legs slots, on the category's `legs:` stream (never touched by a plan without legs). A legs slot is not dealt from the capture deck, so
-  // the deck, the pose, the away and the legwear streams run over the other slots as if the legs slots were not there.
-  const legsAt = new Set(legsCount === 0 ? [] : shuffle(streams.legsRng, Array.from({ length: n }, (_, i) => i)).slice(0, legsCount));
-  const legsOutfitBag = legsCount === 0 ? null : new Bag(legsOutfitsOf(pool), streams.legsRng);
 
   const slots: PlanSlot[] = [];
   for (let i = 0; i < n; i++) {
@@ -358,18 +380,27 @@ function planBuiltIn(
       });
       continue;
     }
-    const drawnCapture = deck.next();
+    // Under «Кокетливая» the capture is the ordinary plan's; the deck is still drawn, so every other draw of the stream goes on as it does in an ordinary plan.
+    const burned = deck.next();
+    const drawnCapture = dealtAt.get(i) ?? burned;
     const drawnPose = poseForCapture(drawnCapture, drawPose(streams.poseRng, shotOf(drawnCapture), NO_EXTRA_POSES));
     const settled = settleFit(pool, kind, drawnCapture, drawnPose, slotLevel);
     const { capture, pose } = settled;
     const stepped = capture !== drawnCapture || pose !== drawnPose;
     const tieRng = stepped ? streams.fixRng : streams.fitRng;
     const isFlirty = (m: Activity): boolean => m.level === "flirty";
-    const hasFreshMoment = (place: Place): boolean => fittingMoments(place, capture, pose, slotLevel).some((m) => !recent.has(momentKey(place.name, m.text)));
+    // A flirty slot where her face shows never turns its back to the camera (a back view has no face for a flirty gaze or cue), unless the place has no other moment that fits.
+    const fits = (at: Place): readonly Activity[] => {
+      const all = fittingMoments(at, capture, pose, slotLevel);
+      if (slotLevel !== "flirty") return all;
+      const facing = all.filter((m) => m.angle !== "back");
+      return facing.length > 0 ? facing : all;
+    };
+    const hasFreshMoment = (place: Place): boolean => fits(place).some((m) => !recent.has(momentKey(place.name, m.text)));
     // A flirty slot, among equals, goes where a flirty moment fits and takes one.
-    const hasFlirtyMoment = (place: Place): boolean => fittingMoments(place, capture, pose, slotLevel).some(isFlirty);
+    const hasFlirtyMoment = (place: Place): boolean => fits(place).some(isFlirty);
     const isAway = (m: Activity): boolean => isAwayAngle(m.angle);
-    const awayPlaces = settled.places.filter((p) => fittingMoments(p, capture, pose, slotLevel).some(isAway));
+    const awayPlaces = settled.places.filter((p) => fits(p).some(isAway));
     const awayRoll = streams.awayRng();
     const awayNeeded = awayWanted - awayCount;
     // «Дом» (a self-shot deck) has no lower bound: its one non-hand capture, the timer, turns away on one roll in three and every other timer frame faces the camera, so
@@ -385,7 +416,7 @@ function planBuiltIn(
     if (wantsAway && !hasAwayMoment(place)) place = leastUsed(awayPlaces, placeUsage, [hasFreshMoment], tieRng);
     const momentPreferences = (at: Place): ((m: Activity) => boolean)[] => [(m) => !recent.has(momentKey(at.name, m.text)), ...(slotLevel === "flirty" ? [isFlirty] : [])];
     const momentsAt = (at: Place): readonly Activity[] => {
-      const fitting = fittingMoments(at, capture, pose, slotLevel);
+      const fitting = fits(at);
       if (wantsAway) return fitting.filter(isAway);
       const facing = fitting.filter((m) => !isAway(m));
       return selfShot && facing.length > 0 ? facing : fitting;
@@ -394,11 +425,11 @@ function planBuiltIn(
     if (isAwayAngle(moment.angle) && awayCount >= awayCap) {
       // The category already holds its ⌊n/5⌋ away slots: this one redraws among the non-away moments, at this place or (when it has none for the slot) another, on `angle:`.
       const nonAway = (m: Activity): boolean => !isAwayAngle(m.angle);
-      const where = fittingMoments(place, capture, pose, slotLevel).some(nonAway) ? [place] : settled.places.filter((p) => fittingMoments(p, capture, pose, slotLevel).some(nonAway));
+      const where = fits(place).some(nonAway) ? [place] : settled.places.filter((p) => fits(p).some(nonAway));
       if (where.length > 0) {
         place = leastUsed(where, (p) => placeUses.get(p.name) ?? 0, [], streams.angleRng);
         const at = place;
-        moment = leastUsed(fittingMoments(at, capture, pose, slotLevel).filter(nonAway), (m) => momentUses.get(momentKey(at.name, m.text)) ?? 0, momentPreferences(at), streams.angleRng);
+        moment = leastUsed(fits(at).filter(nonAway), (m) => momentUses.get(momentKey(at.name, m.text)) ?? 0, momentPreferences(at), streams.angleRng);
       }
     }
     const finalPose: Pose = moment.angle ?? pose;
@@ -490,8 +521,22 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
     const fixRng = makeRng(subSeed(seed, `clean:${category}`));
     // A built-in pool carries its deck of captures and is drawn capture-first (planBuiltIn); a custom pool keeps the planner it always had.
     if (pool.captureDeck !== undefined) {
-      const streams: BuiltInStreams = { rng, poseRng, fixRng, fitRng: makeRng(subSeed(seed, `fit:${category}`)), legRng: makeRng(subSeed(seed, `legwear:${category}`)), levelRng: makeRng(subSeed(seed, `level:${category}`)), angleRng: makeRng(subSeed(seed, `angle:${category}`)), awayRng: makeRng(subSeed(seed, `away:${category}`)), legsRng: makeRng(subSeed(seed, `legs:${category}`)) };
-      slots.push(...planBuiltIn(streams, { ...pool, captureDeck: pool.captureDeck }, category, n, nextIndex, excluded, recent, level, legsParts[entry] ?? 0));
+      const builtInPool = { ...pool, captureDeck: pool.captureDeck };
+      const legs = legsParts[entry] ?? 0;
+      const first = nextIndex;
+      const streamsFor = (): BuiltInStreams => ({
+        rng: makeRng(categorySeed(seed, category)),
+        poseRng: makeRng(poseSeed(seed, category)),
+        fixRng: makeRng(subSeed(seed, `clean:${category}`)),
+        fitRng: makeRng(subSeed(seed, `fit:${category}`)),
+        legRng: makeRng(subSeed(seed, `legwear:${category}`)),
+        levelRng: makeRng(subSeed(seed, `level:${category}`)),
+        angleRng: makeRng(subSeed(seed, `angle:${category}`)),
+        awayRng: makeRng(subSeed(seed, `away:${category}`)),
+        legsRng: makeRng(subSeed(seed, `legs:${category}`)),
+        ordinaryCaptures: () => planBuiltIn(streamsFor(), builtInPool, category, n, first, excluded, recent, "ordinary", legs).map((slot) => (slot.framing === "legs" ? null : (slot.capture ?? captureOfShot(slot.shot)))),
+      });
+      slots.push(...planBuiltIn(streamsFor(), builtInPool, category, n, nextIndex, excluded, recent, level, legs));
     } else slots.push(...planCategory(rng, poseRng, fixRng, pool, category, n, nextIndex, excluded));
     nextIndex += n;
   }
