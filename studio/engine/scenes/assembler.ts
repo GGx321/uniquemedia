@@ -86,6 +86,12 @@ export const HIDDEN_FACE_POSE_PHRASE: Record<Pose, string> = {
  */
 export const MIRROR_BACK_POSE_PHRASE = "Her body is in profile to the mirror";
 
+/**
+ * «Ножки» (S5.8a, plan s5a2 §7.2): a legs frame says what fills it, not which way she is turned. Her legs and feet fill most of the frame and her face may be out of it, so the
+ * phrase claims no face and no orientation, whatever the capture or the pose.
+ */
+export const LEGS_POSE_PHRASE = "Her legs fill most of the frame; her face may be out of frame.";
+
 const BINDING = "The same woman as in the reference photo,";
 
 /** Binding for a frame without her face (plan r1.5 §5.4): the face binding is dropped; her hair, build and skin tone carry the likeness. */
@@ -204,16 +210,18 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, senten
   const room = roomStateOf(key, options.roomPlaceOf?.(slot) ?? null);
   const look = options.lookOf?.(slot) ?? null;
   const artefact = artefactLine({ cameraRealism: options.cameraRealism === true, light, imperfection: imperfectionOf(slot.shot, key), lampMood: isLampMood(look, timeOfDay) });
-  const hairStyle = options.hairStyleOf?.(slot) ?? null;
+  // «Ножки» (S5.8a): a legs slot has its own pose phrase, the body binding whatever the shot, and no hair line (her legs fill the frame, not her hair).
+  const legs = !isOwnSlot(slot) && slot.framing === "legs";
+  const hairStyle = legs ? null : (options.hairStyleOf?.(slot) ?? null);
   const faceless = FACELESS_CAPTURES.includes(capture);
-  const posePhrase = capture === "mirror-hidden" ? (look?.mirrorBack === true ? MIRROR_BACK_POSE_PHRASE : HIDDEN_FACE_POSE_PHRASE[slot.pose]) : POSE_PHRASE[slot.pose];
+  const posePhrase = legs ? LEGS_POSE_PHRASE : capture === "mirror-hidden" ? (look?.mirrorBack === true ? MIRROR_BACK_POSE_PHRASE : HIDDEN_FACE_POSE_PHRASE[slot.pose]) : POSE_PHRASE[slot.pose];
   const bindingAnchor = faceless ? NO_FACE_ANCHOR : BINDING_ANCHOR[slot.pose];
   // S5.6R: a friend's photo of a moment about her feet shows her whole body (an own scene has no stored moment: the line its key draws).
   const wholeBody = !isOwnSlot(slot) && FEET_MOMENT_WORDS.test(slot.activity);
   const raw =
     `${captureLineOf(capture, key, { wholeBody })} ${look?.mirrorBack === true ? `${MIRROR_BACK_LINE} ` : ""}${posePhrase}. ${field(sentence)}. ` +
     (room === null ? "" : `${room} `) +
-    `${BINDING} ${bindingAnchor}${descriptor.body !== undefined && BODY_BINDING_CAPTURES.includes(capture) ? BODY_BINDING : ""}; ${anchor}. ` +
+    `${BINDING} ${bindingAnchor}${descriptor.body !== undefined && (legs || BODY_BINDING_CAPTURES.includes(capture)) ? BODY_BINDING : ""}; ${anchor}. ` +
     (hairStyle === null ? "" : `${hairLine(hairStyle)} `) +
     `${artefact} ${constraintsFor(capture)}`;
   return { slotIndex: slot.slotIndex, prompt: normalize(raw), references: [master] };

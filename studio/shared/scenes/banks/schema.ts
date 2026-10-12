@@ -259,7 +259,11 @@ function categoryBankSchema(category: BankCategory) {
         if (isOwnerBannedOutfit(outfit.text)) add(BANK_RULE.denim, `outfits[${i}]`, "no denim shorts and no denim skirts (the owner)");
       });
       if (bank.legwear !== undefined) {
-        bank.legwear.items.forEach((item, i) => checkText(add, `legwear[${i}]`, item));
+        bank.legwear.items.forEach((item, i) => {
+          checkText(add, `legwear[${i}]`, item);
+          // I5.29: knee-high socks, thigh-high socks and sheer tights; stockings wait for «Смелая» (5a.3).
+          if (/\bstockings?\b/i.test(item)) add(BANK_RULE.legwear, `legwear[${i}]`, "stockings wait for «Смелая» (5a.3): legwear is socks or sheer tights");
+        });
         if (bank.legwear.items.length === 0) add(BANK_RULE.legwear, "legwear", "names one item at least");
         if (!(bank.legwear.share > 0 && bank.legwear.share <= 1)) add(BANK_RULE.legwear, "legwear", "goes on a share of the slots above 0 and at most 1");
         if (!bank.outfits.some((o) => o.showsLegs === true)) add(BANK_RULE.legwear, "legwear", "needs an outfit that shows her legs");

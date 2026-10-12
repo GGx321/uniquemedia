@@ -21,7 +21,7 @@ function tagsOf(slot: RunSlot): HairSlot {
   if (isOwnSlot(slot)) return {};
   const category = CATEGORIES.find((c) => c === slot.category);
   const moment = category === undefined ? undefined : POOLS[category].locations.find((l) => l.name === slot.location)?.activities.find((a) => a.text === slot.activity);
-  return { hair: moment?.hair, outdoor: moment?.outdoor === true, framing: undefined };
+  return { hair: moment?.hair, outdoor: moment?.outdoor === true, framing: slot.framing };
 }
 
 /** Each slot's hairstyle (as it reads after «Today her hair is …»), by slot number; a slot with no line is absent. */

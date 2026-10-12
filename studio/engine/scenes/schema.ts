@@ -34,7 +34,14 @@ export type Pose = z.infer<typeof PoseSchema>;
  *  always toward the camera: profile and back are never valid poses there
  *  (owner decision, 2026-09-27). Shared by PlanSlotSchema's own refine below
  *  and by the planner/writer/assembler, so the rule lives in exactly one
- *  place. */
+ *  place.
+ *
+ *  One exception, by the owner's answer to Q15 (2026-10-11, «Ножки», S5.8a): the
+ *  «селфи вниз», a selfie looking down along her own legs (`pov-legs`). Her face
+ *  is then turned to her legs, not to the lens, yet the stored pose stays front
+ *  or three-quarter (the rule above still holds for the data), and it is the face
+ *  gate that reads the frame as one that shows no face (`faceVisibleOf` is "no":
+ *  the identity check is marked, never retried). */
 export function isPhoneInHandShot(shot: (typeof SHOTS)[number]): boolean {
   return shot === "selfie" || shot === "mirror";
 }
