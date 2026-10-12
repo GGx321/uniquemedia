@@ -14,6 +14,10 @@ import { setAction, setCategoryTags, tallyScenes } from "./sceneReview";
 import { approveReason, approveTitle, continueTitle, MODELS_LINE_TITLE, priceSourceText, SCENES_CHANGED_APPROVE, stepScenes, STRIP_ANGLE, stripLook } from "./sceneText";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL } from "./shared";
 import { usePaidAction } from "./usePaidAction";
+import { BoldAttemptLine } from "./boldPrice";
+
+/** S5.9g (mockup 49; README «5a.3», item 13): the models line's last segment while the set has scenes on the Seedream route. */
+const BOLD_MODELS_SEGMENT = "смелые кадры — Seedream 5 Pro · 2K";
 
 // CS.6: the generate card collapsed to a strip while a scene set is open (owner decision 3, 2026-10-05; the CS.0 artboards' compact card). Left: the set's
 // own settings — its categories as tags (two lines at most, then «ещё N»), «Мои категории», the poses with «Пересоставить…», and the models the run will
@@ -256,7 +260,8 @@ export function SceneStrip({
   // their own, own scenes.
   const angles = stripLook(set);
   const owners = useOwnersDisclosure();
-  const models = modelSegments(view, set.textModel);
+  // S5.9g (mockup 49): a set with scenes on the Seedream route names their model last; the owner's image model draws the rest.
+  const models = [...modelSegments(view, set.textModel), ...(set.scenes.some((s) => s.route === "seedream" && !s.removed) ? [BOLD_MODELS_SEGMENT] : [])];
   const switchLabel = `${ids}-sw`;
   const reasonShown = reason !== null && !button.busy;
   // M2: the button's own free price could not be had («Дописать», or «Отрисовать» when it can be priced): why, and «Повторить».
@@ -377,6 +382,8 @@ export function SceneStrip({
             <span aria-live="polite">{total.value}</span>
           </div>
           {total.sub !== null && <div className="mono faint scene-total-sub">{total.sub}</div>}
+          {/* S5.9g (mockup 49, gap C): the engine's price of one Seedream attempt, when the price it answered has Seedream frames. */}
+          <BoldAttemptLine estimate={source} />
         </div>
 
         <div className="photos-gen-side scene-strip-go">

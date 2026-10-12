@@ -1,5 +1,5 @@
 import { type ReactNode, type Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { EngineError, Estimate, SceneSetView } from "../../../shared/engine";
+import { PRICE_SCOPES_RU, type EngineError, type Estimate, type SceneSetView } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import type { EngineView } from "../../engine/store";
 import { errorText } from "../../lib/errors";
@@ -7,6 +7,7 @@ import { afterColon } from "../../lib/format";
 import { formatUsdTiered } from "../../lib/money";
 import { Spin } from "../../ui/Icon";
 import { Notice } from "../../ui/Notice";
+import { isBoldPriceMissing } from "./boldPrice";
 import type { PaidAction, Reply } from "./usePaidAction";
 
 // CS.6: the review's paid buttons drawn alike — the card's stacked one («Отрисовать 19 фото / до $2.85») and the small inline ones of the popover, the
@@ -265,7 +266,10 @@ export function PriceFailed({ id, error, onRetry, after }: { id: string; error: 
   );
   return (
     <p id={id} className="price-failed">
-      <span className={asking ? "faint" : "danger-text"}>{asking ? "Узнаём цену…" : `Цену не узнать: ${afterColon(errorText(error))}`}</span>
+      {/* S5.9g (gap D): the 2K tier alone has no price — state 55's own sentence, a warning (the rest works), not today's general failure. */}
+      <span className={asking ? "faint" : isBoldPriceMissing(error) ? "warn-text" : "danger-text"}>
+        {asking ? "Узнаём цену…" : isBoldPriceMissing(error) ? PRICE_SCOPES_RU.bold : `Цену не узнать: ${afterColon(errorText(error))}`}
+      </span>
       <button
         type="button"
         className="link-btn"

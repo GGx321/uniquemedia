@@ -1,7 +1,7 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { SCENE_TEXT_MAX, type SceneProblem, type SceneView } from "../../../shared/engine";
 import { Icon, Spin } from "../../ui/Icon";
-import { hasCyrillic, LEVEL_TAG, LEVEL_TAG_TITLE, OWN_SCENE_LABEL, sceneCategoryLabel, sceneNumber, shotTagLabel } from "./sceneReview";
+import { BOLD_TAG, BOLD_TAG_TITLE, hasCyrillic, LEVEL_TAG, LEVEL_TAG_TITLE, OWN_SCENE_LABEL, ROUTE_TAG, ROUTE_TAG_TITLE, sceneCategoryLabel, sceneNumber, shotTagLabel } from "./sceneReview";
 import { cyrillicHint, gaveUpText, ideaLine, poseTag, problemText } from "./sceneText";
 
 // CS.6: one scene of the «Сцены» column (the design's .photos-scene card): its number, its category and shot tags, its status, its free and paid actions
@@ -85,10 +85,21 @@ export function SceneCard({ scene, number, readOnly, actionsOff, writing, fresh,
                 <span className="scene-tag-pose-key">ракурс:</span> {pose}
               </span>
             )}
-            {/* S5.7c (mockup 28): «Подача» of a flirty scene, read with its other tags. */}
+            {/* S5.7c (mockup 28): «Подача» of a flirty scene, read with its other tags. S5.9g (mockup 49): a bold one's, filled. */}
             {!(own && pending) && scene.level === "flirty" && (
               <span className="tag tag-o scene-tag-level" title={LEVEL_TAG_TITLE}>
                 {LEVEL_TAG}
+              </span>
+            )}
+            {!(own && pending) && scene.level === "bold" && (
+              <span className="tag tag-o scene-tag-level scene-tag-bold" title={BOLD_TAG_TITLE}>
+                {BOLD_TAG}
+              </span>
+            )}
+            {/* S5.9g (mockup 49): the scene is drawn on the Seedream route — the engine's `route`, never guessed from the words. */}
+            {!(own && pending) && scene.route === "seedream" && (
+              <span className="tag tag-o scene-tag-route" title={ROUTE_TAG_TITLE}>
+                {ROUTE_TAG}
               </span>
             )}
           </span>

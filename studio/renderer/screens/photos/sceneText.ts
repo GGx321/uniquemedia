@@ -215,10 +215,12 @@ export function cyrillicHint(origin: SceneOrigin): string {
 
 // ---------- the ⟳ price popover ----------
 
-/** How ⟳ «Другая сцена» will be written: by the app's template (free, at once), and whether the scene it replaces is flirty («Подача» is kept). */
+/** How ⟳ «Другая сцена» will be written: by the app's template (free, at once), and whether the scene it replaces is flirty or bold («Подача» is kept). */
 export interface RedrawLook {
   readonly free: boolean;
   readonly flirty: boolean;
+  /** S5.9g (mockup 49): a bold scene keeps «Смелая». */
+  readonly bold?: boolean;
 }
 
 /**
@@ -231,7 +233,7 @@ export function redrawText(category: string, sceneId: number, angles?: { readonl
   const away = angles === undefined ? undefined : (["back", "profile"] as const).find((pose) => angles.poses.includes(pose));
   const phone = angles?.shot === "selfie" ? "селфи" : angles?.shot === "mirror" ? "в зеркале" : null;
   const turn = away !== undefined && phone !== null ? `${away === "back" ? "со спины" : "в профиль"} ${phone} не снять — тогда кадр сменится` : null;
-  const kept = look.flirty ? " Подача та же — кокетливая." : "";
+  const kept = look.bold === true ? " Подача та же — смелая." : look.flirty ? " Подача та же — кокетливая." : "";
   if (look.free) {
     const cannot = turn === null ? "" : ` ${turn.charAt(0).toUpperCase()}${turn.slice(1)}.`;
     return `Новое место, наряд, действие, время дня и ракурс из категории «${category}» и новый текст — его пишет приложение, поэтому бесплатно.${cannot}${kept} Сцена ${sceneNumber(sceneId)} заменится сразу.`;
@@ -246,7 +248,7 @@ export function redrawText(category: string, sceneId: number, angles?: { readonl
  * scenes take theirs from the idea.
  */
 export interface StripLook {
-  /** «Подача: кокетливая» / «Подача: обычная»; null for a set made before «Подача» (it stored «Ракурсы» toggles instead, which change nothing now). */
+  /** «Подача: смелая» / «Подача: кокетливая» / «Подача: обычная»; null for a set made before «Подача» (it stored «Ракурсы» toggles instead, which change nothing now). */
   readonly level: string | null;
   /**
    * S5.8b (mockup 28): «Ножки: 3 кадра», the set's legs frames still in it; null with none. A count, not the mockup's «немного, 15 %»: the set's view names
@@ -275,7 +277,7 @@ export function stripLook(set: SceneSetView): StripLook {
   const rows = set.categories.flatMap((c) => (c.poses === undefined ? [] : [{ name: c.name ?? CUSTOM_FALLBACK, list: posesText(c.poses) }]));
   const legs = set.scenes.filter((s) => s.framing === "legs" && !s.removed).length;
   return {
-    level: set.level === "flirty" ? "Подача: кокетливая" : set.poses === undefined ? "Подача: обычная" : null,
+    level: set.level === "bold" ? "Подача: смелая" : set.level === "flirty" ? "Подача: кокетливая" : set.poses === undefined ? "Подача: обычная" : null,
     legs: legs === 0 ? null : `Ножки: ${countOf(legs, ["кадр", "кадра", "кадров"])}`,
     first: rows[0]?.name ?? null,
     more: Math.max(0, rows.length - 1),
