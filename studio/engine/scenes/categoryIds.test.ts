@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { CategoryRef, SceneCategory } from "../../shared/engine";
 import { BANKS } from "../../shared/scenes/banks";
-import { categoryRefOf, plannerCategoryOf } from ".";
+import { ORDINARY_BANK_CATEGORIES } from "../../shared/scenes/banks/types";
+import { categoryRefOf, ORDINARY_BUILT_INS, plannerCategoryOf } from ".";
 import { POOLS } from "./pools";
 import { CATEGORIES } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -24,6 +25,14 @@ describe("the built-in category ids stay (I5.33)", () => {
     expect([...CATEGORIES]).toEqual([...ENGINE_NAMES]);
     expect(CATEGORIES.map((name) => categoryRefOf(name))).toEqual([...IDS]);
     expect(IDS.map((id) => plannerCategoryOf(id))).toEqual([...ENGINE_NAMES]);
+  });
+
+  // 5a.3 (S5.9b2, plan s5a3 §6.4 r3): the five ordinary built-ins by name, beside the category list the two «Смелая» categories join. The sweeps that hold a
+  // plan to the ordinary and flirty rules run over these five; the engine's and the banks' copies are the same list.
+  test("ORDINARY_BUILT_INS names the five ordinary built-ins in the canonical order, and the banks' list is the same", () => {
+    expect([...ORDINARY_BUILT_INS]).toEqual([...ENGINE_NAMES]);
+    expect([...ORDINARY_BANK_CATEGORIES]).toEqual([...ORDINARY_BUILT_INS]);
+    expect(ORDINARY_BUILT_INS.every((name) => CATEGORIES.includes(name))).toBe(true);
   });
 
   test("the pools and the banks hold those five and no other category", () => {

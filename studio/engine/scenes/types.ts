@@ -10,6 +10,13 @@ import type { CustomCategoryId } from "../../shared/engine";
 export const CATEGORIES = ["home", "travel", "photoshoot", "glamour", "fitness"] as const;
 export type Category = (typeof CATEGORIES)[number];
 
+/**
+ * 5a.3 (S5.9b2, plan s5a3 §6.4 r3): the five ordinary built-ins, by name, beside `CATEGORIES`, which the two «Смелая» categories join. The sweeps that hold a
+ * plan to the ordinary and flirty word lists and the owner's rules run over these five; the «Смелая» banks have sweeps of their own.
+ */
+export const ORDINARY_BUILT_INS = ["home", "travel", "photoshoot", "glamour", "fitness"] as const satisfies readonly Category[];
+export type OrdinaryBuiltIn = (typeof ORDINARY_BUILT_INS)[number];
+
 /** What a plan slot names as its category: one of the five built-ins (by the engine's own names), or a custom category's id. */
 export type PlannerCategory = Category | CustomCategoryId;
 

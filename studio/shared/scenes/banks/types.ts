@@ -16,6 +16,10 @@ export type HairLength = (typeof HairLengthEnum)["options"][number];
 export const BANK_CATEGORIES = ["home", "travel", "photoshoot", "glamour", "fitness"] as const;
 export type BankCategory = (typeof BANK_CATEGORIES)[number];
 
+/** 5a.3 (S5.9b2): the five ordinary banks, beside `BANK_CATEGORIES`, which the two «Смелая» banks join (the engine's `ORDINARY_BUILT_INS`; pinned equal). */
+export const ORDINARY_BANK_CATEGORIES = ["home", "travel", "photoshoot", "glamour", "fitness"] as const satisfies readonly BankCategory[];
+export type OrdinaryBankCategory = (typeof ORDINARY_BANK_CATEGORIES)[number];
+
 /** A slot's level («Подача»). 5a.3 adds "bold". Absent means ordinary. */
 export type Level = "ordinary" | "flirty";
 
