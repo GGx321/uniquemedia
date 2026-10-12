@@ -10,10 +10,31 @@ import { youthWords } from "../engine/ageText";
 import { BOLD_EXEMPT_YOUTH } from "./banks/boldRules";
 import { revealingWordsIn } from "./words";
 
-export type ContentLevel = "ordinary" | "flirty" | "bold";
+/** Private: nothing outside this module can name the key, so nothing outside it can write a value of `BoldContentLevel`. */
+const BOLD_BRAND: unique symbol = Symbol("bold content level");
+
+/** The bold level: one frozen value, made here and nowhere else. A string, a mix level or a widened literal is not one. */
+export interface BoldContentLevel {
+  readonly kind: "bold";
+  readonly [BOLD_BRAND]: true;
+}
+
+const BOLD: BoldContentLevel = Object.freeze<BoldContentLevel>({ kind: "bold", [BOLD_BRAND]: true });
+
+/**
+ * The level a text is held to. "ordinary" and "flirty" are plain literals; bold is the branded value above, because it drops the revealing-word gate and
+ * a mix level (`SceneLevel`, which may say "bold" for the five built-ins) must never reach it by accident. S5.9c's `contentLevelOf` is the one caller
+ * of `boldContentLevel()`: a «Смелая» category is bold whatever its mix level.
+ */
+export type ContentLevel = "ordinary" | "flirty" | BoldContentLevel;
+
+/** The one way to a bold content level. */
+export function boldContentLevel(): BoldContentLevel {
+  return BOLD;
+}
 
 /** Every level, in the order of the mix (ordinary, flirty, bold). */
-export const CONTENT_LEVELS: readonly ContentLevel[] = ["ordinary", "flirty", "bold"];
+export const CONTENT_LEVELS: readonly ContentLevel[] = ["ordinary", "flirty", BOLD];
 
 export interface ContentProblem {
   reason: "youth-word" | "revealing-word";
@@ -33,9 +54,10 @@ function isExemptGarment(word: string): boolean {
 export function contentProblems(text: string, level: ContentLevel): ContentProblem[] {
   const problems: ContentProblem[] = [];
   const found = youthWords(text, "descriptor");
-  const youth = level === "bold" ? found.filter((word) => !isExemptGarment(word)) : found;
+  const bold = level === BOLD;
+  const youth = bold ? found.filter((word) => !isExemptGarment(word)) : found;
   if (youth.length > 0) problems.push({ reason: "youth-word", words: youth });
-  if (level !== "bold") {
+  if (!bold) {
     const revealing = revealingWordsIn(text);
     if (revealing.length > 0) problems.push({ reason: "revealing-word", words: revealing });
   }

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import type { AvatarDescriptor } from "../../shared/engine";
 import { BANKS, CUES, GAZE, HAIRSTYLES } from "../../shared/scenes/banks";
-import { contentProblems } from "../../shared/scenes/contentLine";
+import { boldContentLevel, contentProblems, type ContentLevel } from "../../shared/scenes/contentLine";
 import type { BankCategory, CategoryBank } from "../../shared/scenes/banks/types";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { assembleSlot, sentenceProblems } from "./assembler";
@@ -152,15 +152,15 @@ describe("the word gate, characterized", () => {
     expect(now).toEqual(PINNED);
   });
 
-  test.each(LEVELS_SHARED)("contentProblems at %s equals sentenceProblems on every text", (level) => {
+  test.each(LEVELS_SHARED)("sentenceProblems is only the alias of contentProblems at ordinary, and %s agrees with it (the pinned digests above are the real guard)", (level) => {
     expect(ALL.filter((t) => JSON.stringify(contentProblems(t, level)) !== JSON.stringify(sentenceProblems(t)))).toEqual([]);
   });
 
   test("at bold the same corpus never reports a revealing word, and reports the youth words the other levels do except the exempt garment", () => {
-    const strays = ALL.filter((t) => contentProblems(t, "bold").some((p) => p.reason === "revealing-word"));
+    const strays = ALL.filter((t) => contentProblems(t, boldContentLevel()).some((p) => p.reason === "revealing-word"));
     expect(strays).toEqual([]);
-    const youthOf = (t: string, level: "ordinary" | "bold") => contentProblems(t, level).find((p) => p.reason === "youth-word")?.words ?? [];
-    const drifted = ALL.filter((t) => JSON.stringify(youthOf(t, "bold")) !== JSON.stringify(youthOf(t, "ordinary").filter((w) => !/^babydolls?$/i.test(w))));
+    const youthOf = (t: string, level: ContentLevel) => contentProblems(t, level).find((p) => p.reason === "youth-word")?.words ?? [];
+    const drifted = ALL.filter((t) => JSON.stringify(youthOf(t, boldContentLevel())) !== JSON.stringify(youthOf(t, "ordinary").filter((w) => !/^babydolls?$/i.test(w))));
     expect(drifted).toEqual([]);
   });
 });

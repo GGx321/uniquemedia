@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { BOLD_EXEMPT_YOUTH } from "./banks/boldRules";
-import { CONTENT_LEVELS, contentProblems, type ContentLevel, type ContentProblem } from "./contentLine";
+import { boldContentLevel, CONTENT_LEVELS, contentProblems, type ContentLevel, type ContentProblem } from "./contentLine";
 
 // S5.9b1 (plan s5a3 §5.1, §5.2): the content line is one pure function with the level as a parameter. "ordinary" and "flirty" are today's word gate
 // (a youth word, then a revealing word); "bold" is the owner's «Смелая»: youth words only, with the garment name «babydoll» exempt. Rows are literal.
 
 const reasons = (text: string, level: ContentLevel): ContentProblem["reason"][] => contentProblems(text, level).map((p) => p.reason);
 
+const bold = boldContentLevel();
 const SHARED_LEVELS: ContentLevel[] = ["ordinary", "flirty"];
 
 describe("contentProblems at ordinary and flirty (today's gate, unchanged)", () => {
@@ -60,41 +61,41 @@ describe("contentProblems at bold (the owner's «Смелая»: youth words onl
     "a swimsuit, a sports bra and a slip dress",
     "Stockings and a Bikini",
   ])("bold: «%s» is legal", (text) => {
-    expect(contentProblems(text, "bold")).toEqual([]);
+    expect(contentProblems(text, bold)).toEqual([]);
   });
 
   test("bold: a youth word is still refused, named with the words the rule found", () => {
-    expect(contentProblems("a petite schoolgirl in a skirt", "bold")).toEqual([{ reason: "youth-word", words: ["schoolgirl", "schoolgirl", "petite"] }]);
+    expect(contentProblems("a petite schoolgirl in a skirt", bold)).toEqual([{ reason: "youth-word", words: ["schoolgirl", "schoolgirl", "petite"] }]);
   });
 
   test("bold: a youth word is refused next to revealing words, and only the youth word is named", () => {
-    expect(contentProblems("the girl in a bikini and stockings", "bold")).toEqual([{ reason: "youth-word", words: ["girl"] }]);
+    expect(contentProblems("the girl in a bikini and stockings", bold)).toEqual([{ reason: "youth-word", words: ["girl"] }]);
   });
 
   test("bold: a revealing-word problem is never reported", () => {
     for (const text of ["bikini", "lingerie", "thong", "stockings", "slip dress", "robe over lingerie", "sports bra", "swimwear", "swimsuit"]) {
-      expect(reasons(text, "bold")).toEqual([]);
+      expect(reasons(text, bold)).toEqual([]);
     }
   });
 
   test("bold: «babydolls», in the plural, is the same exempt garment", () => {
-    expect(contentProblems("two sheer babydolls on the chair", "bold")).toEqual([]);
+    expect(contentProblems("two sheer babydolls on the chair", bold)).toEqual([]);
   });
 
   test("bold: «baby doll» in two words is not the exempt garment name", () => {
-    expect(contentProblems("a baby doll nightdress", "bold")).toEqual([{ reason: "youth-word", words: ["baby"] }]);
+    expect(contentProblems("a baby doll nightdress", bold)).toEqual([{ reason: "youth-word", words: ["baby"] }]);
   });
 
   test("bold: «baby blue» next to a babydoll is still refused, the garment alone is exempt", () => {
-    expect(contentProblems("a baby blue babydoll", "bold")).toEqual([{ reason: "youth-word", words: ["baby"] }]);
+    expect(contentProblems("a baby blue babydoll", bold)).toEqual([{ reason: "youth-word", words: ["baby"] }]);
   });
 
   test("bold: the exemption is the garment name only: «baby» alone is refused", () => {
-    expect(contentProblems("her baby sister", "bold")).toEqual([{ reason: "youth-word", words: ["baby"] }]);
+    expect(contentProblems("her baby sister", bold)).toEqual([{ reason: "youth-word", words: ["baby"] }]);
   });
 
   test("bold: the Russian youth words are refused too", () => {
-    expect(reasons("школьница в белье", "bold")).toEqual(["youth-word"]);
+    expect(reasons("школьница в белье", bold)).toEqual(["youth-word"]);
   });
 });
 
@@ -106,7 +107,7 @@ describe("the bold exemption list (banks/boldRules.ts)", () => {
 
 describe("the levels", () => {
   test("they are ordinary, flirty and bold, in that order", () => {
-    expect([...CONTENT_LEVELS]).toEqual(["ordinary", "flirty", "bold"]);
+    expect([...CONTENT_LEVELS]).toEqual(["ordinary", "flirty", bold]);
   });
 
   test("ordinary and flirty answer the same on every row of this file", () => {
