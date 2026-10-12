@@ -3,12 +3,12 @@ import { GAZE } from "../../shared/scenes/banks";
 import { OPENS_WITH_ARMS_UP } from "../../shared/scenes/banks/boldRules";
 import { ARMS_UP, COVERS_HER, LOOKS_ELSEWHERE } from "../../shared/scenes/banks/schema";
 import { HELD_OBJECT_WORDS } from "../../shared/scenes/words";
-import { boldPromptMatrix, boldRunPrompts, type PromptFrame } from "./boldRunPrompts.testkit";
+import { boldPromptMatrix, boldRunPrompts, type PromptFrame } from "./testing/boldRunPrompts";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
 // S5.R4-fix B (the whole-slice review of 5a.3, plan s5a3 §6.2-§6.4): the bank text is the product, and the owner reads it as photo prompts. These sweeps scan the prompts a
-// «Смелая» run really sends (boldRunPrompts.testkit.ts: planner → template → assembleRun → boldPrompt, as runJob's `promptsOf`), over the review's matrix: both banks, 10 and 20
+// «Смелая» run really sends (testing/boldRunPrompts.ts: planner → template → assembleRun → boldPrompt, as runJob's `promptsOf`), over the review's matrix: both banks, 10 and 20
 // photos, «Ножки» 0 / 15 / 30 %, «Реализм камеры» on and off, 40 seeds each.
 
 const SEEDS = 40;

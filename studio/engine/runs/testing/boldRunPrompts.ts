@@ -1,13 +1,13 @@
-import type { AvatarDescriptor, BoldCategory } from "../../shared/engine";
-import { BANKS } from "../../shared/scenes/banks";
-import type { BankPlace, Moment, Outfit } from "../../shared/scenes/banks/types";
-import { captureOfShot, type Capture } from "../../shared/scenes/captures";
-import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
-import { assembleRun, hairLinesOf, plan, roomPlaceOf, slotLookOf, type PlanSlot } from "../scenes";
-import { localSentences } from "../scenes/localSentences";
-import { slotKeyOf } from "../scenes/phoneLook";
-import { boldPrompt } from "./boldPrompt";
-import { isBoldSlot } from "./journal";
+import type { AvatarDescriptor, BoldCategory } from "../../../shared/engine";
+import { BANKS } from "../../../shared/scenes/banks";
+import type { BankPlace, Moment, Outfit } from "../../../shared/scenes/banks/types";
+import { captureOfShot, type Capture } from "../../../shared/scenes/captures";
+import { asLibraryReference, JPEG } from "../../openrouter/testing/fakes";
+import { assembleRun, hairLinesOf, plan, roomPlaceOf, slotLookOf, type PlanSlot } from "../../scenes";
+import { localSentences } from "../../scenes/localSentences";
+import { slotKeyOf } from "../../scenes/phoneLook";
+import { boldPrompt } from "../boldPrompt";
+import { isBoldSlot } from "../journal";
 
 // Test-only (S5.R4-fix B): the «Смелая» prompts a run really sends, made by the very chain `promptsOf` in runJob.ts runs: the planner draws the slots, the code template writes
 // each sentence (the writer phase's `local`, in slot order, one dedup set and one gaze-and-cue tally for the run), `assembleRun` puts the prompt together with the room, look and
