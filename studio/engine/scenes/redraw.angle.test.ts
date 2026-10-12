@@ -5,9 +5,10 @@ import { plan } from "./planner";
 import { POOLS, type Activity } from "./pools";
 import { redrawSlot } from "./redraw";
 import type { PlanSlot } from "./schema";
-import { CATEGORIES, type Category } from "./types";
+import { ORDINARY_BUILT_INS, type Category } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // 5a.2b (S5.7b, I5.26): the angle comes from the scene in «Другая сцена» too. The redrawn scene's pose is its moment's `angle`, or front / three-quarter, and a
 // redraw never adds an away scene: a scene that faces the camera never redraws into one that faces away, so the set keeps its ⌊n/5⌋ cap whatever the replacements.
@@ -19,7 +20,7 @@ const momentOf = (slot: PlanSlot): Activity | undefined => POOLS[slot.category a
 const isAway = (slot: PlanSlot): boolean => slot.pose === "profile" || slot.pose === "back";
 const slotsOf = (category: Category): PlanSlot[] => [3, 4, 5, 6].flatMap((seed) => plan({ seed, count: 30, categories: [category] }).slots);
 
-describe.each([...CATEGORIES])("redrawing a %s scene follows the angle of the moment", (category) => {
+describe.each([...ORDINARY_BUILT_INS])("redrawing a %s scene follows the angle of the moment", (category) => {
   test("the pose is the moment's angle, else front or three-quarter, and the moment fits the capture and that pose", () => {
     for (const slot of slotsOf(category)) {
       for (let k = 1; k <= 4; k++) {
@@ -50,7 +51,7 @@ describe.each([...CATEGORIES])("redrawing a %s scene follows the angle of the mo
 
 describe("a scene facing away", () => {
   test("may redraw into another away scene, and may redraw into one facing the camera", () => {
-    const away = CATEGORIES.flatMap((category) => slotsOf(category).filter(isAway));
+    const away = ORDINARY_BUILT_INS.flatMap((category) => slotsOf(category).filter(isAway));
     expect(away.length).toBeGreaterThan(20);
     const outs = away.flatMap((slot) => [1, 2, 3, 4, 5, 6].map((k) => draw(slot, k)));
     expect(outs.some(isAway)).toBe(true);

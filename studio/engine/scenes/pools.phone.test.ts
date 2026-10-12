@@ -2,14 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { BuiltInPoolSchema, isPhoneActivity, PHONE_WORDS, POOLS, validatePools, type Activity, type Place, type Pool } from "./pools";
 import { POOL_TEXT_MAX } from "../../shared/engine";
 import { withoutExemptLookPhrases } from "../../shared/scenes/words";
-import { CATEGORIES } from "./types";
+import { ORDINARY_BUILT_INS } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // S5.1c (T11): the built-in pools are ordinary places of her own life: no paper, no screens but her phone, no studio, no luxury. The `phone` flag marks the
 // activities with the phone in use; a room carries 2-3 ordinary details for the room draw (phoneLook.ts roomStateOf).
 
-const allPlaces: Array<[string, Place]> = CATEGORIES.flatMap((c) => POOLS[c].locations.map((p): [string, Place] => [c, p]));
+const allPlaces: Array<[string, Place]> = ORDINARY_BUILT_INS.flatMap((c) => POOLS[c].locations.map((p): [string, Place] => [c, p]));
 
 // The paper, screen, luxury and soft-list words that must never enter a pool (the writer's 37-word list, plus paper and screens).
 const BANNED =
@@ -22,7 +23,7 @@ describe("the built-in pools are ordinary places", () => {
     expect(validatePools).not.toThrow();
   });
 
-  for (const category of CATEGORIES) {
+  for (const category of ORDINARY_BUILT_INS) {
     test(`${category}: no place, activity, detail or outfit uses a paper, screen, luxury or soft-list word`, () => {
       const pool = POOLS[category];
       for (const place of pool.locations) {
@@ -81,7 +82,7 @@ describe("the built-in pools are ordinary places", () => {
   });
 
   test("every place name is unique within its category", () => {
-    for (const category of CATEGORIES) {
+    for (const category of ORDINARY_BUILT_INS) {
       const names = POOLS[category].locations.map((l) => l.name);
       expect(new Set(names).size).toBe(names.length);
     }

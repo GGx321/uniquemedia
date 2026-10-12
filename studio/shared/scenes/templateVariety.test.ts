@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { BANKS } from "./banks";
-import { BANK_CATEGORIES, type BankCategory, type Level } from "./banks/types";
+import { ORDINARY_BANK_CATEGORIES, type BankCategory, type Level } from "./banks/types";
 import { isHandCapture, posesFor, shotOf } from "./captures";
 import { momentAllowed } from "./render";
 import { simulatePlan, type SimulatedSlot } from "./simulatePlan.testkit";
 import { templateSentence } from "./template";
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary banks (ORDINARY_BANK_CATEGORIES), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // 5a.2 (S5.6a, I5.24, I5.32, plan s5a2 r1.2 §5.2): template sentences must not read mechanical at scale. Over 100-slot plans of each built-in
 // category, at each level, for 50 seeds: distinct sentences ÷ slots ≥ 0.8; no moment more than ⌈n_c / (moments the category can draw)⌉ + 1 times;
@@ -61,7 +62,7 @@ function worstMomentRepeat(slots: readonly SimulatedSlot[]): number {
   return Math.max(...counts.values());
 }
 
-describe.each([...BANK_CATEGORIES])("%s: a 100-slot plan", (category) => {
+describe.each([...ORDINARY_BANK_CATEGORIES])("%s: a 100-slot plan", (category) => {
   test.each([...LEVELS])("at %s: every slot renders, ≥ 0.8 of the sentences are distinct without the dedup, and with it a sentence repeats only when every redraw is taken", (level) => {
     let worstRatio = 1;
     for (const seed of SEEDS) {
@@ -118,7 +119,7 @@ describe("the stand-in planner itself", () => {
   });
 
   test("puts a mirror capture only on a mirror place and never a two-handed or phone moment on a hand-held capture", () => {
-    for (const category of BANK_CATEGORIES) {
+    for (const category of ORDINARY_BANK_CATEGORIES) {
       for (const slot of simulatePlan(category, N, 3)) {
         if (shotOf(slot.capture) === "mirror") expect(slot.place.mirror).toBe(true);
         if (isHandCapture(slot.capture)) expect(slot.moment.twoHanded || slot.moment.phone === true).toBe(false);
@@ -127,7 +128,7 @@ describe("the stand-in planner itself", () => {
   });
 
   test("never draws a pin-only outfit for a moment that does not pin it", () => {
-    for (const category of BANK_CATEGORIES) {
+    for (const category of ORDINARY_BANK_CATEGORIES) {
       const pinOnly = new Set(BANKS[category].outfits.filter((o) => o.pinOnly === true).map((o) => o.text));
       for (const slot of SEEDS.slice(0, 10).flatMap((seed) => simulatePlan(category, N, seed))) {
         if (pinOnly.has(slot.outfit ?? "")) expect(slot.moment.outfits).toContain(slot.outfit ?? "");

@@ -14,9 +14,10 @@ import { plan } from "./planner";
 import { slotLookOf } from "./roomPlace";
 import type { PlanSlot } from "./schema";
 import { revealingWordsIn } from "./words";
-import { CATEGORIES, type Category } from "./types";
+import { ORDINARY_BUILT_INS, type Category } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // 5a.2c (S5.8a, plan s5a2 §7.2): the legs lines, the legs frame's pose phrase, the body binding on whatever the shot, no hair line on a legs slot, feet that render
 // and stockings that are refused. The lines are the plan's, word for word.
@@ -34,7 +35,7 @@ const POV_LEGS_LINE =
 const LOW_FEET_LINE = "A quick phone photo a friend took of her, crouching a couple of metres away, low down near her feet; both of her hands are empty; she is not taking the photo herself.";
 
 const legsSlots = (category: Category, seed: number, count = 20): PlanSlot[] => plan({ seed, count, categories: [category], legsShare: 30 }).slots.filter((s) => s.framing === "legs");
-const SLOTS: PlanSlot[] = CATEGORIES.flatMap((c) => [1, 2, 3, 4, 5].flatMap((seed) => legsSlots(c, seed * 31)));
+const SLOTS: PlanSlot[] = ORDINARY_BUILT_INS.flatMap((c) => [1, 2, 3, 4, 5].flatMap((seed) => legsSlots(c, seed * 31)));
 const sentenceOf = (slot: PlanSlot): string => templateSentence(slot, { key: slotKeyOf(RUN_ID, slot.attemptIdBase) }) ?? "It is a plain sentence.";
 const assemble = (slot: PlanSlot, descriptor: AvatarDescriptor = DESCRIPTOR, hair?: string): string =>
   assembleSlot(descriptor, slot, sentenceOf(slot), MASTER, { runId: RUN_ID, lookOf: slotLookOf, ...(hair === undefined ? {} : { hairStyleOf: () => hair }) }).prompt;
@@ -82,7 +83,7 @@ describe("the legs frame's pose phrase", () => {
   });
 
   test("an ordinary slot keeps its own pose phrase and never the legs one", () => {
-    const ordinary = plan({ seed: 9, count: 30, categories: [...CATEGORIES], legsShare: 30 }).slots.filter((s) => s.framing === undefined);
+    const ordinary = plan({ seed: 9, count: 30, categories: [...ORDINARY_BUILT_INS], legsShare: 30 }).slots.filter((s) => s.framing === undefined);
     for (const slot of ordinary.slice(0, 40)) expect(assemble(slot)).not.toContain(LEGS_POSE_PHRASE);
   });
 });
@@ -136,7 +137,7 @@ describe("no hand artefact on a legs frame", () => {
 describe("no hair line on a legs slot", () => {
   test("hairLinesOf leaves a legs slot out and gives the other slots their styles", () => {
     for (const seed of [3, 7, 11]) {
-      const slots = plan({ seed, count: 30, categories: [...CATEGORIES], legsShare: 30 }).slots;
+      const slots = plan({ seed, count: 30, categories: [...ORDINARY_BUILT_INS], legsShare: 30 }).slots;
       const lines = hairLinesOf(slots, "long", `run-${seed}`);
       const legs = slots.filter((s) => s.framing === "legs");
       expect(legs.length).toBeGreaterThan(5);
@@ -158,7 +159,7 @@ describe("no hair line on a legs slot", () => {
 
 describe("feet render and stockings are refused", () => {
   test("every legs moment of every bank renders a sentence at some outfit that shows her legs", () => {
-    for (const category of CATEGORIES) {
+    for (const category of ORDINARY_BUILT_INS) {
       for (const place of BANKS[category].places) {
         for (const moment of place.moments.filter((m) => m.legs !== undefined)) {
           const outfit = (moment.outfits ?? BANKS[category].outfits.filter((o) => o.showsLegs === true && o.pinOnly !== true).map((o) => o.text))[0];
@@ -205,7 +206,7 @@ describe("feet render and stockings are refused", () => {
 describe("the template writes every legs slot: no writer, $0", () => {
   test("over many plans of every built-in category, every slot of a legs plan has its local sentence", () => {
     let legs = 0;
-    for (const category of CATEGORIES) {
+    for (const category of ORDINARY_BUILT_INS) {
       for (let seed = 1; seed <= 150; seed++) {
         const slots = plan({ seed, count: 20, categories: [category], legsShare: 30, ...(seed % 2 === 0 ? { level: "flirty" as const } : {}) }).slots;
         const local = localSentences({ slots, keyOf: (s) => slotKeyOf(RUN_ID, s.attemptIdBase) });

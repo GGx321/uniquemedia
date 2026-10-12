@@ -7,9 +7,10 @@ import { plan, planWithPools } from "./planner";
 import { POOLS, type Activity } from "./pools";
 import { makeRng, shuffle, subSeed } from "./rngUtil";
 import { ScenePlanSchema, type PlanSlot } from "./schema";
-import { CATEGORIES, type Category } from "./types";
+import { ORDINARY_BUILT_INS, type Category } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // 5a.2c (S5.8a, plan s5a2 §7.2, I5.29): «Ножки» in the planner. A run's legs slots are min(round-half-up(share × B), ⌊0.3 × count⌋); they are shared over the built-in
 // categories in proportion to their slots; which slots of a category is drawn on `legs:${category}`; a legs slot draws a legs moment of its place, or redraws among the
@@ -27,7 +28,7 @@ const momentOf = (slot: PlanSlot): Activity | undefined => poolOf(slot)?.activit
 describe("«Ножки»: none asked, nothing changes", () => {
   test("legsShare 0 is byte-identical to no legsShare, for every category set, level and size", () => {
     for (const seed of SEEDS) {
-      for (const categories of [[...CATEGORIES], ["home"], ["travel", "glamour"]] as const) {
+      for (const categories of [[...ORDINARY_BUILT_INS], ["home"], ["travel", "glamour"]] as const) {
         for (const count of [1, 5, 12, 20, 37]) {
           for (const level of [undefined, "flirty" as const]) {
             const base = { seed, count, categories: [...categories], ...(level === undefined ? {} : { level }) };
@@ -40,7 +41,7 @@ describe("«Ножки»: none asked, nothing changes", () => {
 
   test("a plan without legs holds no legs slot, no pov-legs and no low-feet", () => {
     for (const seed of SEEDS) {
-      const slots = plan({ seed, count: 30, categories: [...CATEGORIES] }).slots;
+      const slots = plan({ seed, count: 30, categories: [...ORDINARY_BUILT_INS] }).slots;
       expect(legsOf(slots)).toHaveLength(0);
       expect(slots.filter((s) => LEGS_CAPTURES.includes(captureOf(s)))).toHaveLength(0);
       for (const slot of slots) expect("framing" in slot).toBe(false);
@@ -52,7 +53,7 @@ describe("«Ножки»: the allocation (I5.29)", () => {
   for (const share of SHARES) {
     test.each([1, 3, 4, 5, 6, 10, 12, 13, 20, 25, 50, 100])(`share ${share} %: %i built-in slots hold exactly min(round-half-up, ⌊0.3 × count⌋) legs slots`, (count) => {
       for (const seed of SEEDS) {
-        const slots = plan({ seed, count, categories: [...CATEGORIES], legsShare: share }).slots;
+        const slots = plan({ seed, count, categories: [...ORDINARY_BUILT_INS], legsShare: share }).slots;
         expect(legsOf(slots)).toHaveLength(legsCountOf(share, count, count));
       }
     });
@@ -63,7 +64,7 @@ describe("«Ножки»: the allocation (I5.29)", () => {
   });
 
   test("a run too small for one legs slot holds none (15 % of 3)", () => {
-    for (const seed of SEEDS) expect(legsOf(plan({ seed, count: 3, categories: [...CATEGORIES], legsShare: 15 }).slots)).toHaveLength(0);
+    for (const seed of SEEDS) expect(legsOf(plan({ seed, count: 3, categories: [...ORDINARY_BUILT_INS], legsShare: 15 }).slots)).toHaveLength(0);
   });
 
   const custom = "cat-paris-cafes";
@@ -96,10 +97,10 @@ describe("«Ножки»: the allocation (I5.29)", () => {
     for (const share of SHARES) {
       for (const seed of SEEDS) {
         const count = 40;
-        const slots = plan({ seed, count, categories: [...CATEGORIES], legsShare: share }).slots;
-        const sizes = CATEGORIES.map((c) => slots.filter((s) => s.category === c).length);
+        const slots = plan({ seed, count, categories: [...ORDINARY_BUILT_INS], legsShare: share }).slots;
+        const sizes = ORDINARY_BUILT_INS.map((c) => slots.filter((s) => s.category === c).length);
         const total = legsCountOf(share, count, count);
-        CATEGORIES.forEach((c, i) => {
+        ORDINARY_BUILT_INS.forEach((c, i) => {
           const quota = (total * (sizes[i] ?? 0)) / count;
           const held = legsOf(slots.filter((s) => s.category === c)).length;
           expect(held, `${c} of ${sizes.join("/")}`).toBeGreaterThanOrEqual(Math.floor(quota));
@@ -112,7 +113,7 @@ describe("«Ножки»: the allocation (I5.29)", () => {
 
   test("which slots of a category are legs slots is drawn on the stream `legs:${category}`", () => {
     const n = 20;
-    for (const category of CATEGORIES) {
+    for (const category of ORDINARY_BUILT_INS) {
       const slots = plan({ seed: 41, count: n, categories: [category], legsShare: 30 }).slots;
       const held = legsOf(slots).length;
       expect(held).toBeGreaterThan(0);
@@ -129,7 +130,7 @@ describe("«Ножки»: the allocation (I5.29)", () => {
 
   test("the same input plans the same document, and the plan parses back unchanged (a resume reads it as it is)", () => {
     for (const seed of SEEDS.slice(0, 20)) {
-      const input = { seed, count: 24, categories: [...CATEGORIES], legsShare: 30 as const, level: "flirty" as const };
+      const input = { seed, count: 24, categories: [...ORDINARY_BUILT_INS], legsShare: 30 as const, level: "flirty" as const };
       const first = plan(input);
       expect(JSON.stringify(plan(input))).toBe(JSON.stringify(first));
       expect<unknown>(ScenePlanSchema.parse(JSON.parse(JSON.stringify(first)))).toEqual(first);
@@ -138,10 +139,10 @@ describe("«Ножки»: the allocation (I5.29)", () => {
 });
 
 describe("«Ножки»: a legs slot", () => {
-  const ALL_LEGS = SHARES.flatMap((share) => SEEDS.flatMap((seed) => legsOf(plan({ seed, count: 30, categories: [...CATEGORIES], legsShare: share }).slots)));
+  const ALL_LEGS = SHARES.flatMap((share) => SEEDS.flatMap((seed) => legsOf(plan({ seed, count: 30, categories: [...ORDINARY_BUILT_INS], legsShare: share }).slots)));
 
   test("the sweep holds legs slots of every category", () => {
-    expect([...new Set(ALL_LEGS.map((s) => s.category))].sort()).toEqual([...CATEGORIES].sort());
+    expect([...new Set(ALL_LEGS.map((s) => s.category))].sort()).toEqual([...ORDINARY_BUILT_INS].sort());
   });
 
   test("draws a legs moment of its place, with a capture that moment lists", () => {
@@ -166,7 +167,7 @@ describe("«Ножки»: a legs slot", () => {
 
   test("pov-legs and low-feet appear only on legs slots", () => {
     for (const seed of SEEDS) {
-      for (const slot of plan({ seed, count: 30, categories: [...CATEGORIES], legsShare: 30 }).slots) {
+      for (const slot of plan({ seed, count: 30, categories: [...ORDINARY_BUILT_INS], legsShare: 30 }).slots) {
         if (LEGS_CAPTURES.includes(captureOf(slot))) expect(isLegs(slot)).toBe(true);
         if (!isLegs(slot)) expect(momentOf(slot)?.legs).toBeUndefined();
       }
@@ -230,7 +231,7 @@ describe("«Ножки»: a legs slot", () => {
 
   test("it is ordinary unless «Кокетливая» made it a flirty slot, and a legs moment is never a flirty one", () => {
     for (const seed of SEEDS) {
-      for (const slot of legsOf(plan({ seed, count: 30, categories: [...CATEGORIES], legsShare: 30, level: "flirty" }).slots)) expect(momentOf(slot)?.level).toBeUndefined();
+      for (const slot of legsOf(plan({ seed, count: 30, categories: [...ORDINARY_BUILT_INS], legsShare: 30, level: "flirty" }).slots)) expect(momentOf(slot)?.level).toBeUndefined();
     }
   });
 });
@@ -249,8 +250,8 @@ describe("«Ножки»: the other slots keep their deals", () => {
 
   test("«Кокетливая» still holds exactly round(0.6 × n) flirty slots per category, with legs slots among them", () => {
     for (const seed of SEEDS) {
-      const slots = plan({ seed, count: 40, categories: [...CATEGORIES], legsShare: 30, level: "flirty" }).slots;
-      for (const category of CATEGORIES) {
+      const slots = plan({ seed, count: 40, categories: [...ORDINARY_BUILT_INS], legsShare: 30, level: "flirty" }).slots;
+      for (const category of ORDINARY_BUILT_INS) {
         const own = slots.filter((s) => s.category === category);
         expect(own.filter((s) => s.level === "flirty")).toHaveLength(flirtyCountOf(own.length, "flirty"));
       }
@@ -259,8 +260,8 @@ describe("«Ножки»: the other slots keep their deals", () => {
 
   test("the away cap holds beside legs slots: at most ⌊n/5⌋ profile or back slots per category", () => {
     for (const seed of SEEDS) {
-      const slots = plan({ seed, count: 40, categories: [...CATEGORIES], legsShare: 30 }).slots;
-      for (const category of CATEGORIES) {
+      const slots = plan({ seed, count: 40, categories: [...ORDINARY_BUILT_INS], legsShare: 30 }).slots;
+      for (const category of ORDINARY_BUILT_INS) {
         const own = slots.filter((s) => s.category === category);
         expect(own.filter((s) => s.pose === "profile" || s.pose === "back").length).toBeLessThanOrEqual(Math.floor(own.length / 5));
       }

@@ -3,9 +3,10 @@ import { allowedActivities, hasCleanActivity, isPhoneActivity, POOLS, type Activ
 import { planWithPools } from "./planner";
 import { redrawSlot } from "./redraw";
 import { PlanSlotSchema, type PlanSlot } from "./schema";
-import { CATEGORIES, SHOTS, type Shot } from "./types";
+import { ORDINARY_BUILT_INS, SHOTS, type Shot } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // S5.1c (T11, M3, N1): one shared filter decides which activities a shot may draw. A selfie or mirror has one hand on the phone, so it never gets a two-handed
 // activity, and it never gets a phone activity either (the «second phone» defect: I5.2). The planner and «Другая сцена» (redraw.ts) both call it.
@@ -115,7 +116,7 @@ describe("the planner never plans a phone or two-handed activity on a selfie or 
   const pools: Record<string, Pool> = { ...POOLS, [CUSTOM_ID]: MIXED_CUSTOM };
   test("over 1000 seeds, every built-in category", () => {
     for (const seed of SEEDS) {
-      for (const slot of planWithPools({ seed, count: 12, categories: [...CATEGORIES] }, pools).slots) expectCleanActivity(POOLS[slot.category as keyof typeof POOLS], slot);
+      for (const slot of planWithPools({ seed, count: 12, categories: [...ORDINARY_BUILT_INS] }, pools).slots) expectCleanActivity(POOLS[slot.category as keyof typeof POOLS], slot);
     }
   });
 
@@ -142,7 +143,7 @@ describe("«Другая сцена» (redrawSlot) never redraws a phone or two-
       repeatedPair: false,
     });
 
-  const cases: Array<[string, Pool]> = [...CATEGORIES.map((c): [string, Pool] => [c, POOLS[c]]), [CUSTOM_ID, MIXED_CUSTOM]];
+  const cases: Array<[string, Pool]> = [...ORDINARY_BUILT_INS.map((c): [string, Pool] => [c, POOLS[c]]), [CUSTOM_ID, MIXED_CUSTOM]];
   for (const [category, pool] of cases) {
     for (const shot of ["selfie", "mirror"] as const) {
       test(`${category} ${shot}: 1000 seeds`, () => {

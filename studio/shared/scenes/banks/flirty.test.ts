@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { BANKS, CUES, GAZE } from "./index";
-import { BANK_CATEGORIES } from "./types";
+import { ORDINARY_BANK_CATEGORIES } from "./types";
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary banks (ORDINARY_BANK_CATEGORIES), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // 5a.2b (S5.7b, plan s5a2 §6.2): the flirty items. «Дом»: a prone frame with her feet up (on her bed only) and a knees-hugged timer frame; «Гламур»: chin on her
 // hand at the bar. No tier 2 (no lingerie, no «Смелая»), and no cue says sexy, seductive or sultry.
 
-const flirtyMoments = BANK_CATEGORIES.flatMap((category) =>
+const flirtyMoments = ORDINARY_BANK_CATEGORIES.flatMap((category) =>
   BANKS[category].places.flatMap((place) => place.moments.filter((m) => m.level === "flirty").map((moment) => ({ category, place, moment }))),
 );
 

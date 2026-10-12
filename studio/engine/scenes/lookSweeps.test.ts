@@ -14,10 +14,11 @@ import { roomPlaceOf, slotLookOf } from "./roomPlace";
 import { PlanSlotSchema, PoseSchema, type PlanSlot } from "./schema";
 import { CUSTOM_REF } from "./testing/customPool";
 import { firstHit, HELD_PHONE, NEGATED_LOOK, SOFT_LIST, STAGING, SWEEP_CUSTOM_POOL } from "./testing/lookRules";
-import { CATEGORIES, SHOTS } from "./types";
+import { ORDINARY_BUILT_INS, SHOTS } from "./types";
 import { revealingWordsIn } from "./words";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // S5.1d: the end-to-end look sweeps. Real plans (the planner, with the poses and every category, built-in and custom) go through a writer stand-in (a
 // sentence made of the slot's own place, activity and outfit, the way the writer is told to write it) and the real assembler, across every shot × pose ×
@@ -86,7 +87,7 @@ function assembleAll(slots: readonly PlanSlot[], runId: string, rooms: boolean, 
 // The sweep set, built once: 25 seeded built-in plans (20 slots, every category, every pose) and 12 seeded plans over the custom categories.
 const SWEPT: Swept[] = (() => {
   const all: Swept[] = [];
-  for (let seed = 1; seed <= 25; seed++) all.push(...assembleAll(plan({ seed: seed * 7919, count: 20, categories: [...CATEGORIES] }).slots, `run-${seed}`, true));
+  for (let seed = 1; seed <= 25; seed++) all.push(...assembleAll(plan({ seed: seed * 7919, count: 20, categories: [...ORDINARY_BUILT_INS] }).slots, `run-${seed}`, true));
   for (let seed = 1; seed <= 12; seed++) {
     const scenes = planWithPools({ seed: seed * 104729, count: 15, categories: [CUSTOM_REF, PHONEFUL_REF, "home"] }, POOLS_ALL);
     all.push(...assembleAll(scenes.slots, `run-c${seed}`, true));
@@ -98,7 +99,7 @@ const SWEPT: Swept[] = (() => {
 const REDRAWN: Swept[] = (() => {
   const avoid = { locations: new Set<string>(), outfits: new Set<string>() };
   const all: Swept[] = [];
-  const cases: Array<[string, Pool]> = [...CATEGORIES.map((c): [string, Pool] => [c, POOLS[c]]), [PHONEFUL_REF, PHONEFUL], [CUSTOM_REF, SWEEP_CUSTOM_POOL]];
+  const cases: Array<[string, Pool]> = [...ORDINARY_BUILT_INS.map((c): [string, Pool] => [c, POOLS[c]]), [PHONEFUL_REF, PHONEFUL], [CUSTOM_REF, SWEEP_CUSTOM_POOL]];
   for (const [category, pool] of cases) {
     for (const shot of ["selfie", "mirror"] as const) {
       const place = pool.locations[0] as Place;
@@ -135,7 +136,7 @@ const BODY_PHRASES: string[] = BODIES.map((b) => bodyPhrase(b) ?? "");
 const BODIED: Swept[] = BODY_PHRASES.flatMap((body, i) => {
   const descriptor: AvatarDescriptor = { ...DESCRIPTOR, body };
   const all: Swept[] = [];
-  for (let seed = 1; seed <= 3; seed++) all.push(...assembleAll(plan({ seed: seed * 7919, count: 60, categories: [...CATEGORIES] }).slots, `run-b${i}-${seed}`, true, descriptor)); // 60 slots: a category faces away from 5 slots on (S5.7b)
+  for (let seed = 1; seed <= 3; seed++) all.push(...assembleAll(plan({ seed: seed * 7919, count: 60, categories: [...ORDINARY_BUILT_INS] }).slots, `run-b${i}-${seed}`, true, descriptor)); // 60 slots: a category faces away from 5 slots on (S5.7b)
   return all;
 });
 
@@ -156,7 +157,7 @@ const MESSY_ROOMS: Swept[] = (() => {
 const OLD_PHOTOGRAPHER: Swept[] = (() => {
   const all: Swept[] = [];
   for (let seed = 1; seed <= 6; seed++) {
-    const friends = plan({ seed: seed * 7919, count: 30, categories: [...CATEGORIES] }).slots.filter((s) => s.shot === "friend" && s.capture === undefined);
+    const friends = plan({ seed: seed * 7919, count: 30, categories: [...ORDINARY_BUILT_INS] }).slots.filter((s) => s.shot === "friend" && s.capture === undefined);
     all.push(...assembleAll(friends.map((s) => ({ ...s, shot: "photographer" as const })), `run-p${seed}`, true));
   }
   return all;
@@ -182,7 +183,7 @@ describe("the sweep covers what it claims (it is not vacuous)", () => {
   });
 
   test("every built-in and both custom categories", () => {
-    for (const category of [...CATEGORIES, CUSTOM_REF, PHONEFUL_REF]) expect(EVERYTHING.some((s) => s.slot.category === category)).toBe(true);
+    for (const category of [...ORDINARY_BUILT_INS, CUSTOM_REF, PHONEFUL_REF]) expect(EVERYTHING.some((s) => s.slot.category === category)).toBe(true);
   });
 
   test("all three room states are drawn (tidy, lived-in, messy), and some prompts have no room phrase", () => {
@@ -292,7 +293,7 @@ describe("C1: the word «selfie» draws a phone, so no selfie slot's image promp
 
   test("the sweep reaches selfie slots of every category, built-in and custom (sanity)", () => {
     expect(SELFIE_SLOTS.length).toBeGreaterThan(300);
-    expect(new Set(SELFIE_SLOTS.map((s) => s.slot.category)).size).toBeGreaterThanOrEqual(CATEGORIES.length + 2);
+    expect(new Set(SELFIE_SLOTS.map((s) => s.slot.category)).size).toBeGreaterThanOrEqual(ORDINARY_BUILT_INS.length + 2);
   });
 
   test("no selfie prompt says selfie or front camera, whichever of the fixed texts we own is drawn", () => {
@@ -322,7 +323,7 @@ describe("S5.R1 H1: a place never names a mirror the shot does not use", () => {
   });
 
   test("the built-in sweep does draw non-mirror shots at places that may carry a mirror (the sweep is not vacuous)", () => {
-    const mirrorPlaces = new Set(CATEGORIES.flatMap((c) => POOLS[c].locations.filter((l) => l.mirror === true).map((l) => l.name)));
+    const mirrorPlaces = new Set(ORDINARY_BUILT_INS.flatMap((c) => POOLS[c].locations.filter((l) => l.mirror === true).map((l) => l.name)));
     expect(EVERYTHING.some((s) => s.slot.shot !== "mirror" && mirrorPlaces.has(s.slot.location))).toBe(true);
   });
 });

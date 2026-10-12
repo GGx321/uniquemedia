@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { BANK_CATEGORIES, type Level } from "./banks/types";
+import { ORDINARY_BANK_CATEGORIES, type Level } from "./banks/types";
 import { simulatePlan } from "./simulatePlan.testkit";
 import { templateSentence } from "./template";
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary banks (ORDINARY_BANK_CATEGORIES), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // S5.6R (round D): «looking back at the viewer» landed on front frames and contradicted «face and body oriented toward the camera»; an image model reads
 // «looking back» as an over-the-shoulder turn. A gaze that says «back» belongs to no front frame, and the gaze bank must not add «back … back» repeats.
@@ -14,7 +15,7 @@ const BACK_REPEATS_BASELINE = 339;
 
 function sentences(): { text: string; pose: string }[] {
   const out: { text: string; pose: string }[] = [];
-  for (const category of BANK_CATEGORIES)
+  for (const category of ORDINARY_BANK_CATEGORIES)
     for (const level of LEVELS)
       for (const seed of SEEDS)
         for (const slot of simulatePlan(category, 100, seed, level)) {

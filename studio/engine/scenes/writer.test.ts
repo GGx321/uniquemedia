@@ -5,7 +5,7 @@ import { PriceBook } from "../money/prices";
 import { promptTokenFloor } from "../openrouter/chat";
 import { POOL_TIMES } from "../../shared/engine";
 import { lightOf } from "./phoneLook";
-import { CATEGORIES } from "./types";
+import { ORDINARY_BUILT_INS } from "./types";
 import { plan } from "./planner";
 import type { PlanSlot } from "./schema";
 import {
@@ -28,6 +28,7 @@ import {
 import { worstSlotList } from "./testing/worstSlotList";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // T5b: the scene writer's pure logic (prompts, the model's output schema, the
 // re-ask detectors and the writer's own pricing). No I/O, no money, no
@@ -785,7 +786,7 @@ describe("WRITER_CALL's per-call ceilings cover one full chunk", () => {
   }
 
   test("a full chunk's worst refusal message stays under WRITER_CALL.inputTokens", () => {
-    const scenePlan = plan({ seed: 20260924, count: WRITER_CALL.slotsPerCall, categories: [...CATEGORIES] });
+    const scenePlan = plan({ seed: 20260924, count: WRITER_CALL.slotsPerCall, categories: [...ORDINARY_BUILT_INS] });
     const messages = writerMessages(scenePlan.slots, worstRefusal(scenePlan.slots));
     const floor = promptTokenFloor({ messages, jsonSchema: WRITER_JSON_SCHEMA, images: 0 });
 
@@ -803,7 +804,7 @@ describe("WRITER_CALL's per-call ceilings cover one full chunk", () => {
   });
 
   test("a smaller chunk (the run's documented default of 20 photos, all in one chunk) leaves even more headroom", () => {
-    const scenePlan = plan({ seed: 20260924, count: 20, categories: [...CATEGORIES] });
+    const scenePlan = plan({ seed: 20260924, count: 20, categories: [...ORDINARY_BUILT_INS] });
     const messages = writerMessages(scenePlan.slots, worstRefusal(scenePlan.slots));
     const floor = promptTokenFloor({ messages, jsonSchema: WRITER_JSON_SCHEMA, images: 0 });
 
