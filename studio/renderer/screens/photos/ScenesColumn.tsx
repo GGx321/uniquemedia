@@ -7,6 +7,7 @@ import { countOf } from "../../lib/format";
 import { formatUsd } from "../../lib/money";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
+import { BoldPriceNotice, isBoldPriceMissing } from "./boldPrice";
 import { batchNote, emptySetToFill, frozenNote, isLaunchBatch, isLaunchRun, launchPaused, launchRowOf, type LaunchLink } from "./launchSet";
 import { modelName } from "./runForm";
 import { EMPTY_IDEA, type IdeaStart } from "./SceneIdeaForm";
@@ -206,7 +207,7 @@ function ResumeRow({ run, blockedReason, reconcileNeeded, paidInFlight, onPaidIn
           <span className="mono">{formatUsd(estimate.worstMicros, 2, "up")}</span>. Подтвердите снова — без подтверждения ничего не отправляется.
         </Notice>
       )}
-      {error && <ErrorNotice error={error} />}
+      {error && (isBoldPriceMissing(error) ? <BoldPriceNotice /> : <ErrorNotice error={error} />)}
     </article>
   );
 }
