@@ -390,7 +390,7 @@ const ONE_SENTENCE = /^[A-Z][^.!?]*\.$/;
 /** I5.10 extended: a negation puts what it negates into the prompt, so a coverage sentence says what covers her, never what does not show. */
 const NEGATION = /\b(?:not|no|never|without|nothing|none|nor)\b|n't\b/i;
 /** A moment in the water or at its edge (M6): it carries the `water` tag and pins swimwear. */
-const WATER_WORDS = /\b(?:in|into|out of) the (?:water|sea|pool)\b|\bwaist-deep\b|\bwaves?\b|\bshore\b|\bshallows\b|\bwet\b|\bswim\w*|\balong the edge\b/i;
+const WATER_WORDS = /\b(?:in|into|out of) the (?:water|sea|pool)\b|\b(?:ankle|knee|thigh|waist|chest)-deep\b|\bwades?\b|\bwaves?\b|\bshore\b|\bshallows\b|\bwet\b|\bswim\w*|\balong the edge\b/i;
 /** S5.9c round 3: a place at the edge of the sea is wet whatever its moment says: every moment there is a water moment (the prompt says «at the edge of the sea», so no sweatshirt). */
 const WET_PLACE = /\bedge of the (?:sea|water)\b|\bwater's edge\b|\bshoreline\b/i;
 /** An action on a strap, in a moment's text. */
@@ -454,10 +454,10 @@ function boldBankRules(bank: CategoryBank, add: Add): void {
         if (swimwearWordsIn(outfit).length === 0) add(BANK_RULE.water, where, `«${outfit}» is not swimwear: in the water she wears a swimsuit or a bikini`);
         else if (OVER_SWIMWEAR.test(outfit)) add(BANK_RULE.water, where, `«${outfit}» wears something over the swimwear: in the water she wears only the swimsuit or the bikini`);
       }
-    } else if (WATER_WORDS.test(moment.text)) add(BANK_RULE.water, where, "a moment in the water carries the water tag, and pins swimwear");
+    } else if (WATER_WORDS.test(moment.text) || WATER_WORDS.test(moment.motion) || WATER_WORDS.test(place.at)) add(BANK_RULE.water, where, "a moment in the water carries the water tag, and pins swimwear");
     else if (WET_PLACE.test(`${place.name} ${place.at}`)) add(BANK_RULE.water, where, "a moment at the edge of the sea carries the water tag, and pins swimwear (the place says she is at the sea)");
     // strap (S5.9c round 3): an action on a strap meets only outfits that have shoulder straps, so it pins its outfits, none of them strapless or without a top.
-    if (STRAP_ACTION.test(moment.text)) {
+    if (STRAP_ACTION.test(moment.text) || STRAP_ACTION.test(moment.motion)) {
       if (moment.outfits === undefined) add(BANK_RULE.strap, where, "an action on a strap pins its outfits: the general draw has outfits with no shoulder straps");
       for (const outfit of moment.outfits ?? []) if (NO_STRAPS.test(outfit)) add(BANK_RULE.strap, where, `«${outfit}» has no shoulder straps: a strap action never meets it`);
     }

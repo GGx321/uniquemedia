@@ -98,7 +98,7 @@ const STRAPLESS: Outfit = { text: "a strapless bandeau bikini", showsLegs: true,
 const SWEATSHIRT: Outfit = { text: "bikini bottoms and a sweatshirt", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her sweatshirt covers her chest, and her bikini bottoms fully cover her." };
 const STRAP: Moment = { ...plain, text: "adjusts the strap on her shoulder", motion: "she slides the strap up a little", level: "flirty", outfits: ["a satin cami and satin shorts", "a black lace bra and panties"] };
 const withStraps = (moment: Moment, outfits: readonly Outfit[] = [...OUTFITS, STRAPLESS]): CategoryBank => ({ ...withMoment(moment), outfits });
-const SARONG: Outfit ={ text: "a bikini and a sarong", showsLegs: true, route: "seedream", coverage: "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her." };
+const SARONG: Outfit = { text: "a bikini and a sarong", showsLegs: true, route: "seedream", coverage: "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her." };
 
 /** The rule ids a bank breaks (each problem is `[rule] text`). */
 const rulesOf = (problems: readonly string[]): string[] => [...new Set(problems.map((p) => /^\[([a-z-]+)\]/.exec(p)?.[1] ?? p))];
@@ -225,6 +225,16 @@ describe("a «Смелая» bank", () => {
     // strap: an action on a strap never meets an outfit without shoulder straps.
     ["a strap action that pins no outfit (the general draw has strapless ones)", withStraps({ ...STRAP, outfits: undefined }), BANK_RULE.strap],
     ["a strap action that pins a strapless outfit", withStraps({ ...STRAP, outfits: ["a satin cami and satin shorts", STRAPLESS.text] }), BANK_RULE.strap],
+    ["a strap action in the motion only, pinning nothing", withStraps({ ...STRAP, text: "adjusts her top", outfits: undefined }), BANK_RULE.strap],
+    ["a strap action in the motion only, pinning a strapless outfit", withStraps({ ...STRAP, text: "adjusts her top", outfits: ["a satin cami and satin shorts", STRAPLESS.text] }), BANK_RULE.strap],
+    ["a strap action that pins a tube top", withStraps({ ...STRAP, outfits: ["a satin cami and satin shorts", "a white tube top and a sarong"] }, [...OUTFITS, { ...SWEATSHIRT, text: "a white tube top and a sarong" }]), BANK_RULE.strap],
+    ["a strap action that pins an off-shoulder top", withStraps({ ...STRAP, outfits: ["a satin cami and satin shorts", "an off-shoulder top and a sarong"] }, [...OUTFITS, { ...SWEATSHIRT, text: "an off-shoulder top and a sarong" }]), BANK_RULE.strap],
+    ["a strap action that pins a hoodie", withStraps({ ...STRAP, outfits: ["a satin cami and satin shorts", "a hoodie and a sarong"] }, [...OUTFITS, { ...SWEATSHIRT, text: "a hoodie and a sarong" }]), BANK_RULE.strap],
+    // water, class closers: the place's own words, a depth other than waist-deep, and a wade said only in the motion.
+    ["a dry moment at a place that is in the shallows", { ...BOLD, places: [ROOM, { ...EDGE, name: "a sandbar", at: "in the shallows", moments: [["sits on a log", "she leans back a little"], ["stands by a post", "she shifts her weight a little"], ["leans on a post", "she rocks a little in place"], ["sits on a bench", "she swings one foot slowly"]].map(([text = "", motion = ""]) => ({ ...plain, text, motion })) }] }, BANK_RULE.water],
+    ["a moment knee-deep without the water tag", withMoment({ ...plain, text: "stands knee-deep" }), BANK_RULE.water],
+    ["a moment ankle-deep without the water tag", withMoment({ ...plain, text: "stands ankle-deep" }), BANK_RULE.water],
+    ["a moment that wades into the water only in its motion", withMoment({ ...plain, text: "stands facing the horizon", motion: "she wades into the water slowly" }), BANK_RULE.water],
     ["a strap action that pins a bikini with a sweatshirt and no top", withStraps({ ...STRAP, outfits: ["a satin cami and satin shorts", "bikini bottoms and a sweatshirt"] }, [...OUTFITS, STRAPLESS, SWEATSHIRT]), BANK_RULE.strap],
     // legwear
     ["stockings among the ordinary legwear", { ...BOLD, legwear: { items: ["thigh-high socks", "sheer black stockings"], share: 0.3, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream", outfits: ["a satin cami and satin shorts", "a black lace bra and panties"] } } }, BANK_RULE.legwear],
