@@ -2,7 +2,7 @@ import { isCustomCategory, MAX_COMPOSE_SCENES, type CategorySnapshot, type Engin
 import { reasonFields } from "./refusal";
 import type { SceneRecord, StoredSceneSet } from "../library/sceneSets";
 import type { SceneRunSource } from "../runs/plan";
-import { sentenceProblems } from "../scenes";
+import { contentProblems } from "../../shared/scenes/contentLine";
 
 // CS.5: what a reviewed scene set must be before it may become a run, and what it hands the run. Pure: the engine owns the money and the library.
 // A run draws every ACTIVE scene (not removed), so `M` is the active scenes, each of which must have its text.
@@ -44,7 +44,7 @@ export function approvalRefusal(set: StoredSceneSet, ctx: ApprovalContext): Appr
   if (firstEmpty !== undefined) return { code: "VALIDATION", detail: `scene(s) ${namedScenes(empty)} of set ${set.sceneSetId} have no text: write, type or remove them first`, ...reasonFields("scene-without-text", firstEmpty) };
   if (active.length === 0) return { code: "VALIDATION", detail: `scene set ${set.sceneSetId} has no scene to draw: every scene is removed`, ...reasonFields("no-active-scenes") };
   if (active.length > MAX_COMPOSE_SCENES) return { code: "VALIDATION", detail: `scene set ${set.sceneSetId} has ${active.length} active scenes; a run draws at most ${MAX_COMPOSE_SCENES}`, ...reasonFields("too-many-active") };
-  const unfit = active.find((scene) => scene.text !== null && sentenceProblems(scene.text).length > 0);
+  const unfit = active.find((scene) => scene.text !== null && contentProblems(scene.text, "ordinary").length > 0);
   if (unfit !== undefined) return { code: "VALIDATION", detail: `the text of scene ${unfit.sceneId} of set ${set.sceneSetId} breaks today's word rules: edit or remove it first`, ...reasonFields("scene-text-problem", unfit.sceneId) };
   if (ctx.live) return { code: "IN_FLIGHT", detail: `scene set ${set.sceneSetId} is being written; wait for that to end (or cancel it)` };
   if (ctx.used) return { code: "VALIDATION", detail: `scene set ${set.sceneSetId} is already used by run ${set.runId}`, ...reasonFields("set-used") };

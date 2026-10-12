@@ -4,7 +4,7 @@ import { LibraryError, type Library } from "../library";
 import { SceneSetError, withSceneSetLock, type StoredSceneSet } from "../library/sceneSets";
 import type { RunPlan } from "../runs/plan";
 import { RunPlanSchema } from "../runs/plan";
-import { sentenceProblems } from "../scenes";
+import { contentProblems } from "../../shared/scenes/contentLine";
 import { findSceneSet } from "./approve";
 import type { LaunchRegistry } from "./launchRegistry";
 import { sceneRefusal } from "./refusal";
@@ -82,7 +82,7 @@ export async function approveLaunchSet(deps: LaunchSetDeps, input: { sceneSetId:
           throw sceneRefusal(`scene set ${sceneSetId} has ${drawn.length} scenes to draw; the launch planned ${input.plannedCount}`, "over-plan");
         }
         if (drawn.length > MAX_COMPOSE_SCENES) throw sceneRefusal(`scene set ${sceneSetId} has ${drawn.length} active scenes; a launch draws at most ${MAX_COMPOSE_SCENES}`, "too-many-active");
-        const unfit = drawn.find((s) => s.text !== null && sentenceProblems(s.text).length > 0);
+        const unfit = drawn.find((s) => s.text !== null && contentProblems(s.text, "ordinary").length > 0);
         if (unfit !== undefined) throw sceneRefusal(`the text of scene ${unfit.sceneId} of set ${sceneSetId} breaks today's word rules: edit or remove it first`, "scene-text-problem", unfit.sceneId);
         return { ...current, scenes, launchDraw: { launchId, sceneIds: drawn.map((s) => s.sceneId), slices: [] } };
       },

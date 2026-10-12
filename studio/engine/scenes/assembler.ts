@@ -1,11 +1,11 @@
-import { youthWords, type AvatarDescriptor } from "../../shared/engine";
+import type { AvatarDescriptor } from "../../shared/engine";
 import { promptSubject } from "../avatars/prompts";
 import type { LibraryReference } from "../library/media";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
+import { contentProblems, type ContentProblem } from "../../shared/scenes/contentLine";
 import { FEET_MOMENT_WORDS, GLANCE_BACK_WORDS, notDenimClause, unfabricBottomsIn } from "../../shared/scenes/words";
 import { artefactLine, captureLineOf, CONSTRAINTS, hairLine, imperfectionOf, isLampMood, lightOf, MIRROR_BACK_LINE, phoneHandLineOf, roomStateOf, slotKeyOf, type RoomPlace } from "./phoneLook";
 import type { SlotLook } from "./roomPlace";
-import { revealingWordsIn } from "./words";
 import { isOwnSlot, type Pose, type RunSlot, type ScenePlan } from "./schema";
 import type { Shot } from "./types";
 
@@ -22,24 +22,14 @@ import type { Shot } from "./types";
 export class AssemblerRefusalError extends TypeError {}
 
 /** One rule a sentence breaks, with the words that broke it (ours to name: the rules' own vocabulary, never the model's other text). */
-export interface SentenceProblem {
-  reason: "youth-word" | "revealing-word";
-  words: string[];
-}
+export type SentenceProblem = ContentProblem;
 
 /**
- * Every rule a sentence breaks before it may go into an image prompt: a youth
- * word, a revealing word (the youth words first). The one check the assembler's
- * last gate runs and the owner's edit-time check can show at once. Not a new
- * rule: the same two the writer's answer reader applies.
+ * Every rule a sentence breaks before it may go into an image prompt: a youth word, a revealing word (the youth words first). S5.9b1: the check is the
+ * shared content line (`contentProblems`); this is its "ordinary" reading, the one the LLM-path callers and the tests keep naming.
  */
 export function sentenceProblems(sentence: string): SentenceProblem[] {
-  const problems: SentenceProblem[] = [];
-  const youth = youthWords(sentence, "descriptor");
-  if (youth.length > 0) problems.push({ reason: "youth-word", words: youth });
-  const revealing = revealingWordsIn(sentence);
-  if (revealing.length > 0) problems.push({ reason: "revealing-word", words: revealing });
-  return problems;
+  return contentProblems(sentence, "ordinary");
 }
 
 // T5c, S5.1a: how the photo was taken (the capture line, first in the prompt) now lives in phoneLook.ts with every other look phrase (I5.1). This
@@ -226,7 +216,7 @@ export interface AssembledScene {
  * since this is the last engine code to see the text before an image is paid for.
  */
 export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, sentence: string, master: LibraryReference, options: AssembleOptions): AssembledScene {
-  const [problem] = sentenceProblems(sentence);
+  const [problem] = contentProblems(sentence, "ordinary");
   if (problem !== undefined) {
     const kind = problem.reason === "youth-word" ? "a youth word" : "a revealing word";
     throw new AssemblerRefusalError(`the sentence for slot ${slot.slotIndex} still carries ${kind}: ${problem.words.join(", ")}`);
@@ -280,7 +270,7 @@ export function assembleRun(descriptor: AvatarDescriptor, scenePlan: { readonly 
   return scenePlan.slots.map((slot): AssembledSlot => {
     const sentence = sentences.get(slot.slotIndex);
     if (sentence === undefined) throw new RangeError(`no writer sentence for slot ${slot.slotIndex}`);
-    const problems = sentenceProblems(sentence);
+    const problems = contentProblems(sentence, "ordinary");
     if (problems.length > 0) return { ok: false, slotIndex: slot.slotIndex, reason: "slot-text-problem", problems };
     return { ok: true, ...assembleSlot(descriptor, slot, sentence, master, options) };
   });

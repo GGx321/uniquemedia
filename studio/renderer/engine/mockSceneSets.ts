@@ -8,7 +8,6 @@ import {
   SCENE_CHUNK_SIZE,
   SCENE_TEXT_MAX,
   splitCount,
-  youthWords,
   type CategoryRef,
   type LegsShare,
   type CategorySummary,
@@ -28,6 +27,7 @@ import {
   type UnsequencedEvent,
 } from "../../shared/engine";
 import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "../../shared/scenes/captures";
+import { contentProblems } from "../../shared/scenes/contentLine";
 import { covers } from "../../shared/scenes/custom";
 import { apportionLegs, drawLevelOf, flirtyCountOf, legsCountOf } from "../../shared/scenes/level";
 import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
@@ -428,13 +428,11 @@ function refuse(detail: string, sceneReason: SceneReason, sceneId?: number): Eng
 
 // ---------- the text rules (the engine's `textProblem`) ----------
 
-/** The assembler's revealing words (studio/engine/scenes/words.ts), exactly: the parity suite plays a text with one through both engines. */
-const REVEALING_WORDS = /\b(bikini|swimsuit|swimwear|lingerie|sports bra|thong|stockings?|slip dress|robe over lingerie)\b/i;
 const LINE_BREAK = new RegExp(`[\\n\\r${String.fromCharCode(0x2028)}${String.fromCharCode(0x2029)}]`);
 
-/** Whether a stored text breaks the assembler's word rules now (a youth word, a revealing word): the engine's `sentenceProblems`, checked at an approval. */
+/** Whether a stored text breaks the assembler's word rules now (a youth word, a revealing word): the shared content line the engine calls, checked at an approval. */
 function breaksWordRules(text: string): boolean {
-  return youthWords(text, "descriptor").length > 0 || new RegExp(REVEALING_WORDS, "i").test(text);
+  return contentProblems(text, "ordinary").length > 0;
 }
 
 function textProblem(text: string): SceneProblem | null {
@@ -443,11 +441,8 @@ function textProblem(text: string): SceneProblem | null {
   if (trimmed.length > SCENE_TEXT_MAX) return { reason: "too-long", words: [] };
   if (LINE_BREAK.test(trimmed)) return { reason: "not-one-line", words: [] };
   if (/\p{Cc}/u.test(trimmed)) return { reason: "control-char", words: [] };
-  const youth = youthWords(trimmed, "descriptor");
-  if (youth.length > 0) return { reason: "youth-word", words: youth.slice(0, 12).map((w) => w.slice(0, 64)) };
-  const revealing = Array.from(trimmed.matchAll(new RegExp(REVEALING_WORDS, "gi")), (m) => m[0]);
-  if (revealing.length > 0) return { reason: "revealing-word", words: revealing.slice(0, 12).map((w) => w.slice(0, 64)) };
-  return null;
+  const [first] = contentProblems(trimmed, "ordinary");
+  return first === undefined ? null : { reason: first.reason, words: first.words.slice(0, 12).map((w) => w.slice(0, 64)) };
 }
 
 // ---------- the library of sets ----------

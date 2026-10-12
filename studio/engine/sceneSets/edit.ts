@@ -1,6 +1,6 @@
 import { SCENE_TEXT_MAX, type SceneEditOp, type SceneProblem, type SceneReason } from "../../shared/engine";
 import type { RewriteWriteRecord, StoredSceneSet } from "../library/sceneSets";
-import { sentenceProblems } from "../scenes";
+import { contentProblems } from "../../shared/scenes/contentLine";
 import { withReviewWriteClosed, withoutScenes } from "./reviewMutations";
 import { reviewWritesOf } from "./reviewWrites";
 
@@ -20,7 +20,7 @@ const LINE_BREAK = new RegExp(`[\n\r${String.fromCharCode(0x2028)}${String.fromC
 const CONTROL = /\p{Cc}/u;
 
 /**
- * Why a text does not go through, or null. The assembler's own last gate (`sentenceProblems`: a youth word, a revealing word) shown at once, for
+ * Why a text does not go through, or null. The assembler's own last gate (`contentProblems` at "ordinary": a youth word, a revealing word) shown at once, for
  * free, plus technical bounds: 1..600 chars on one line without control characters. The first rule broken is the one named. Not a new rule, and not
  * a content gate of ours: a text in another script is the owner's call, and the providers apply their own policies.
  */
@@ -30,7 +30,7 @@ export function textProblem(text: string): SceneProblem | null {
   if (trimmed.length > SCENE_TEXT_MAX) return { reason: "too-long", words: [] };
   if (LINE_BREAK.test(trimmed)) return { reason: "not-one-line", words: [] };
   if (CONTROL.test(trimmed)) return { reason: "control-char", words: [] };
-  const [first] = sentenceProblems(trimmed);
+  const [first] = contentProblems(trimmed, "ordinary");
   return first === undefined ? null : { reason: first.reason, words: first.words.slice(0, 12).map((word) => word.slice(0, 64)) };
 }
 
