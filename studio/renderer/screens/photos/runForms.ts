@@ -2,7 +2,7 @@ import { createContext, useContext } from "react";
 import type { RunForm } from "./runForm";
 
 // CS.7 L4: the run's form on each avatar's Photos screen — how many photos, which categories (a category made here comes «уже включена в запуск»), which
-// poses — kept by the window while it runs, as the montage picks are (picks.ts). The screen unmounts on any navigation (a look at Settings, where the
+// «Подача» (S5.7c: no poses any more, the angle comes from the scene) — kept by the window while it runs, as the montage picks are (picks.ts). The screen unmounts on any navigation (a look at Settings, where the
 // review itself sends the owner: «Перейти к сверке», the models), and the form must not go with it. One per window (App provides it), never saved: a new
 // window starts from the defaults.
 
