@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { RunEvent } from "../engine/runs/journal";
 import type { PlanSlot } from "../engine/scenes";
-import { endedSlots, faceRetryProblems, faceScoreProblems, isFaceJudged, latestPrompts, pickMismatchTarget, slotIndexByPhoto } from "./runFaceSmoke";
+import { endedSlots, faceGateRoleOf, faceRetryProblems, faceScoreProblems, isFaceJudged, latestPrompts, pickMismatchTarget, slotIndexByPhoto } from "./runFaceSmoke";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 
 useNativeGlobals();
@@ -34,6 +34,59 @@ function attempt(slotIndex: number, outcome: "qa-retry" | "passed", gate = "face
 describe("which slots the face gate judges", () => {
   test("a hidden-face capture, a legs capture and a back view are only marked; the rest are judged", () => {
     expect(SLOTS.map(isFaceJudged)).toEqual([false, false, false, true, true]);
+  });
+});
+
+// Every slot kind the gate treats differently: a face-visible profile (the gate skips it by pose: slot 7 of the failed CI run), legs framing and a low-feet
+// capture ("maybe": marked), a legs framing posed in profile (still marked: facePoseOf reads faceVisibleOf first) and a three-quarter capture (judged).
+const KINDS: PlanSlot[] = [
+  slot(6, { pose: "profile" }),
+  slot(7, { framing: "legs" }),
+  slot(8, { capture: "low-feet", shot: "friend" }),
+  slot(9, { framing: "legs", pose: "profile" }),
+  slot(10, { pose: "three-quarter", capture: "mirror" }),
+];
+
+describe("faceGateRoleOf follows the engine's facePoseOf", () => {
+  test("front and three-quarter face-visible slots are judged", () => {
+    expect([slot(1), slot(2, { pose: "three-quarter" }), KINDS[4]!].map(faceGateRoleOf)).toEqual(["judged", "judged", "judged"]);
+  });
+
+  test("hidden, back, legs and low-feet slots are marked, even when posed in profile", () => {
+    expect([SLOTS[0]!, SLOTS[1]!, SLOTS[2]!, KINDS[1]!, KINDS[2]!, KINDS[3]!].map(faceGateRoleOf)).toEqual(["marked", "marked", "marked", "marked", "marked", "marked"]);
+  });
+
+  test("a face-visible profile slot is skipped by pose, not judged", () => {
+    expect(faceGateRoleOf(KINDS[0]!)).toBe("skipped");
+    expect(isFaceJudged(KINDS[0]!)).toBe(false);
+  });
+});
+
+describe("profile and legs slots in the smoke's checks", () => {
+  const all = [...SLOTS, ...KINDS];
+  const prompts = new Map(all.map((s) => [s.slotIndex, `prompt ${s.slotIndex}`]));
+
+  test("the mismatch is never aimed at a profile, legs or low-feet slot", () => {
+    expect(pickMismatchTarget(KINDS.slice(0, 4), prompts)).toBeNull();
+    expect(pickMismatchTarget([...KINDS.slice(0, 4), KINDS[4]!], prompts)).toEqual({ slotIndex: 10, prompt: "prompt 10" });
+  });
+
+  test("a profile photo carries no faceCos and is not an error; one that does is flagged", () => {
+    const owners = new Map([["p4", 4], ["p6", 6], ["p7", 7]]);
+    expect(faceScoreProblems(all, [{ id: "p4", faceCos: 0.9 }, { id: "p6", faceCos: undefined }, { id: "p7", faceCos: 0.3 }], owners)).toEqual([]);
+    expect(faceScoreProblems(all, [{ id: "p4", faceCos: 0.9 }, { id: "p6", faceCos: 0.9 }], owners)).toHaveLength(1);
+  });
+
+  test("a legs photo must be marked (faceCos below the threshold is fine), never skipped", () => {
+    const owners = new Map([["p4", 4], ["p7", 7]]);
+    expect(faceScoreProblems(all, [{ id: "p4", faceCos: 0.9 }, { id: "p7", faceCos: undefined }], owners)).toHaveLength(1);
+  });
+
+  test("a face-gate retry on a profile or legs slot is flagged", () => {
+    const target = { slotIndex: 4, prompt: "prompt 4" };
+    expect(faceRetryProblems(all, [attempt(4, "qa-retry"), attempt(6, "qa-retry")], target)).toHaveLength(1);
+    expect(faceRetryProblems(all, [attempt(4, "qa-retry"), attempt(7, "qa-retry")], target)).toHaveLength(1);
+    expect(faceRetryProblems(all, [attempt(4, "qa-retry"), attempt(10, "qa-retry")], target)).toEqual([]);
   });
 });
 
