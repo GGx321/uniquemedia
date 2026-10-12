@@ -27,7 +27,7 @@ import {
   type SceneView,
   type UnsequencedEvent,
 } from "../../shared/engine";
-import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
+import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "../../shared/scenes/captures";
 import { covers } from "../../shared/scenes/custom";
 import { apportionLegs, flirtyCountOf, legsCountOf } from "../../shared/scenes/level";
 import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
@@ -321,6 +321,14 @@ function planScenes(count: number, refs: readonly CategoryRef[], level: SceneLev
       const flirtyOthers = Math.min(flirty, others);
       const flirtyLegs = flirty - flirtyOthers;
       const wantedAway = Math.min(Math.ceil(n / 10), Math.floor(n / 5));
+      // «Подача» goes to the frames that show her face first, as the engine's planner chooses (the S5.7R carry-over): a hidden frame gets no flirty gaze, cue or moment, so it takes a
+      // flirty scene only when the frames that show her face are not enough. A flirty scene never faces away.
+      const shows = Array.from({ length: others }, (_, j) => faceVisibleOf({ capture: bankDraw(ref, j, { level: "ordinary" }).capture, pose: "front" }) === "yes");
+      const showingAt = shows.flatMap((yes, j) => (yes ? [j] : []));
+      const hiddenAt = shows.flatMap((yes, j) => (yes ? [] : [j]));
+      const flirtyShowing = Math.min(flirtyOthers, showingAt.length);
+      const flirtyHidden = flirtyOthers - flirtyShowing;
+      const flirtyAt = new Set([...showingAt.filter((_, j) => spread(j, showingAt.length, flirtyShowing)), ...hiddenAt.filter((_, j) => spread(j, hiddenAt.length, flirtyHidden))]);
       let kOther = 0;
       let kLegs = 0;
       for (let k = 0; k < n; k++) {
@@ -331,8 +339,8 @@ function planScenes(count: number, refs: readonly CategoryRef[], level: SceneLev
           scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, framing: "legs", ...(flirtyScene ? { level: "flirty" as const } : {}), place: draw.place, idea: null, text: null, edited: false, removed: false });
           continue;
         }
-        const flirtyScene = spread(kOther, others, flirtyOthers);
-        const draw = bankDraw(ref, kOther, { level: flirtyScene ? "flirty" : "ordinary", away: spread(kOther, others, wantedAway) ? "prefer" : "never" });
+        const flirtyScene = flirtyAt.has(kOther);
+        const draw = bankDraw(ref, kOther, { level: flirtyScene ? "flirty" : "ordinary", away: !flirtyScene && spread(kOther, others, wantedAway) ? "prefer" : "never" });
         kOther++;
         scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(flirtyScene ? { level: "flirty" as const } : {}), place: draw.place, idea: null, text: null, edited: false, removed: false });
       }

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarSummary, EventMessage, SceneSetView, SceneView } from "../../shared/engine";
+import { captureOfShot, faceVisibleOf } from "../../shared/scenes/captures";
 import { flirtyCountOf } from "../../shared/scenes/level";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
@@ -60,6 +61,22 @@ describe("«Кокетливая» on a composed set", () => {
       const own = ofCategory(view, category);
       expect(own.filter((s) => s.level === "flirty")).toHaveLength(flirtyCountOf(own.length, "flirty"));
     }
+  });
+
+  // S5.7R carry-over: the engine draws the flirty slots from the frames that show her face first (a hidden frame gets no flirty gaze, cue or moment); the mock does the same.
+  test.each([4, 6, 12, 20, 30, 60])("%i scenes: flirty scenes on frames whose face is hidden are exactly what the frames that show her face cannot take", async (count) => {
+    const { view } = await composed({ level: "flirty" }, count);
+    for (const category of CATEGORIES) {
+      const own = ofCategory(view, category);
+      const flirty = own.filter((s) => s.level === "flirty");
+      const showing = own.filter((s) => faceVisibleOf({ capture: s.capture ?? captureOfShot(s.shot), pose: "front" }) === "yes").length;
+      expect(flirty.filter((s) => faceVisibleOf({ capture: s.capture ?? captureOfShot(s.shot), pose: s.pose }) !== "yes")).toHaveLength(Math.max(0, flirty.length - showing));
+    }
+  });
+
+  test("a flirty scene where her face shows never turns its back to the camera", async () => {
+    const { view } = await composed({ level: "flirty" }, 100);
+    for (const scene of view.scenes) if (scene.level === "flirty" && faceVisibleOf({ capture: scene.capture ?? captureOfShot(scene.shot), pose: "front" }) === "yes") expect(scene.pose).not.toBe("back");
   });
 
   test("an ordinary set, asked or not, holds no flirty scene", async () => {
