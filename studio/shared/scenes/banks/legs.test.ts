@@ -3,7 +3,7 @@ import { isHandCapture, LEGS_CAPTURES, shotOf, type Capture } from "../captures"
 import { momentAllowed } from "../render";
 import { legwearFits } from "../template";
 import { DRESS_LENGTH, DRESS_OR_SKIRT, LEGS_UNSUITED_OUTFITS, YOUTH_PROPS, isOwnerBannedOutfit } from "../words";
-import { poseFamilyOf, poseWordsOf } from "./boldDesign.testkit";
+import { FEET_IN_THE_WATER, FEET_IN_THE_WATER_MAX, poseFamilyOf, poseWordsOf } from "./boldDesign.testkit";
 import { BANKS } from "./index";
 import { categoryBankProblems, MOTION_TEXT_MAX } from "./schema";
 import { BANK_CATEGORIES, type BankCategory, type Moment } from "./types";
@@ -59,7 +59,8 @@ const TABLE: Row[] = [
   { category: "beach", place: "the beach", text: "crosses her ankles on the towel", motion: "she taps her crossed feet together slowly", captures: ["pov-legs"] },
   { category: "beach", place: "a rooftop pool", text: "dangles her feet in the water", motion: "she dips her toes in the water slowly", captures: ["pov-legs"] },
   { category: "beach", place: "the water's edge", text: "lets the waves wash over her feet", motion: "she wiggles her toes in the foam slowly", captures: ["pov-legs"] },
-  { category: "beach", place: "a rooftop pool", text: "steps down into the water", motion: "she lowers her other foot slowly", captures: ["pov-legs"] },
+  // S5.R4 round 3: «steps down into the water» (a rooftop pool) was the third «feet in the water» picture.
+  { category: "beach", place: "the beach", text: "walks on tiptoe across the sand", motion: "she takes a small careful step", captures: ["pov-legs"] },
   { category: "beach", place: "the rocks by the sea", text: "lifts one leg, toes pointed", motion: "she lowers her lifted leg slowly", captures: ["pov-legs"] },
 ];
 
@@ -228,11 +229,15 @@ describe("a «Смелая» bank's legs moments are different poses (S5.R4 roun
     expect(poseFamilyOf("sits on the floor")).toBeUndefined();
   });
 
-  test.each(["nightwear", "beach"] as const)("%s: every legs moment has a pose family, and no two share one", (category) => {
-    const families = legsMoments(category).map(({ moment }) => ({ text: moment.text, family: poseFamilyOf(moment.text) ?? "none" }));
+  // S5.R4 round 3: «dangles her feet in the water», «steps down into the water» and «lets the waves wash over her feet» were three families and one picture; her feet in the water is
+  // one family, which a bank may hold twice on two places, never three times and never twice on one place.
+  test.each(["nightwear", "beach"] as const)("%s: every legs moment has a pose family, and no two share one (her feet in the water: at most two, on two places)", (category) => {
+    const families = legsMoments(category).map(({ place, moment }) => ({ place, text: moment.text, family: poseFamilyOf(moment.text) ?? "none" }));
     expect(families.filter((f) => f.family === "none").map((f) => f.text)).toEqual([]);
-    const shared = families.filter((f, i) => families.findIndex((g) => g.family === f.family) !== i).map((f) => `${f.family}: «${f.text}»`);
+    const shared = families.filter((f, i) => f.family !== FEET_IN_THE_WATER && families.findIndex((g) => g.family === f.family) !== i).map((f) => `${f.family}: «${f.text}»`);
     expect(shared).toEqual([]);
+    const wet = families.filter((f) => f.family === FEET_IN_THE_WATER);
+    expect({ wet: wet.length <= FEET_IN_THE_WATER_MAX, places: new Set(wet.map((f) => f.place)).size === wet.length, texts: wet.map((f) => f.text) }).toMatchObject({ wet: true, places: true });
   });
 
   // S5.R4 round 3 (re-review, LOW): exact strings were not enough: «crosses her legs, a foot dangling» was «Дом»'s pose with «Дом»'s motion, and «lifts one foot to the mirror» was

@@ -45,11 +45,12 @@ export function explicitActsIn(text: string): string[] {
  * hold their legs moments to one moment a family (banks/legs.test.ts), and the prompt sweep counts a run's legs frames by family.
  */
 export const POSE_FAMILIES: readonly (readonly [string, RegExp])[] = [
+  // S5.R4 round 3: her feet in the water is one picture, whether she dangles them, steps down into it or lets the waves wash over them.
+  ["feet in the water", /\b(?:in|into)\s+the\s+(?:water|sea|pool)\b|\bwaves?\b/i],
   ["on tiptoe", /\btiptoe\b/i],
   ["kneeling", /\bkneel\w*\b/i],
   ["a foot dangling", /\bdangl\w*\b/i],
   ["stepping", /\bsteps?\b/i],
-  ["in the waves", /\bwaves?\b/i],
   ["one knee bent", /\b(?:one|a) knee\b|\bknees?\s+(?:bent|up|drawn up)\b/i],
   ["a foot lifted", /\b(?:lifts?|raises?)\s+(?:one|a|her)\s+(?:bare\s+)?(?:foot|leg)\b/i],
   ["her weight on one leg", /\bweight on one leg\b/i],
@@ -57,6 +58,10 @@ export const POSE_FAMILIES: readonly (readonly [string, RegExp])[] = [
   ["legs crossed", /\bcross\w*\b/i],
   ["legs stretched out", /\bstretch\w*\b|\blegs?\s+(?:out|forward)\b|\bout straight\b/i],
 ];
+/** S5.R4 round 3: the one family a «Смелая» bank may hold twice, on two places (a pool and the sea are two settings); never three times. */
+export const FEET_IN_THE_WATER = "feet in the water";
+export const FEET_IN_THE_WATER_MAX = 2;
+
 /** A legs moment's pose family, the first that its words name; undefined for a pose the list does not know. */
 export const poseFamilyOf = (text: string): string | undefined => POSE_FAMILIES.find(([, words]) => words.test(text))?.[0];
 

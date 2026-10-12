@@ -155,7 +155,6 @@ describe("swimwear on every frame (answer (a), M6)", () => {
         "leans on the edge in the water",
         "dangles her feet in the water",
         "lets the waves wash over her feet",
-        "steps down into the water",
         "stretches her arms out, knee-deep",
         "stretches one arm along the edge",
       ]),
@@ -234,7 +233,8 @@ describe("the legs moments (plan §6.3, M5): her own look down along her legs, n
     ["a rooftop pool", "dangles her feet in the water", true, "she dips her toes in the water slowly"],
     // S5.R4: three more, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one; round 2: each a pose of its own.
     ["the water's edge", "lets the waves wash over her feet", true, "she wiggles her toes in the foam slowly"],
-    ["a rooftop pool", "steps down into the water", true, "she lowers her other foot slowly"],
+    // S5.R4 round 3: «steps down into the water» was the third «feet in the water» picture; a dry step on the sand instead.
+    ["the beach", "walks on tiptoe across the sand", false, "she takes a small careful step"],
     ["the rocks by the sea", "lifts one leg, toes pointed", false, "she lowers her lifted leg slowly"],
   ])("%s · «%s»", (place, text, water, motion) => {
     const found = momentNamed(text);

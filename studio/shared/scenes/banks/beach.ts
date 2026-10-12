@@ -63,6 +63,8 @@ export const BEACH: CategoryBank = {
         // «Ножки» (S5.8a, M5): her own look down along her legs.
         { text: "sits on the sand, legs out", motion: "she slowly buries her toes in the sand", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
         // S5.R4 round 3: its motion was «Дом»'s and «Ночнушки»'s word for word.
+        // S5.R4 round 3: in place of the rooftop's «steps down into the water», the third «feet in the water» picture beside «dangles her feet in the water» and the waves.
+        { text: "walks on tiptoe across the sand", motion: "she takes a small careful step", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
         { text: "crosses her ankles on the towel", motion: "she taps her crossed feet together slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
@@ -121,7 +123,6 @@ export const BEACH: CategoryBank = {
         { text: "looks back over her shoulder", motion: "she turns her head a little further", captures: ["friend", "timer"], twoHanded: false, angle: "three-quarter", gaze: "own", level: "bold", route: "seedream", outdoor: true },
         { text: "sips a cold drink by the water", motion: "she lowers the glass a little", captures: ["friend", "selfie", "candid"], twoHanded: false, outdoor: true },
         { text: "dangles her feet in the water", motion: "she dips her toes in the water slowly", captures: ["pov-legs"], twoHanded: false, water: true, outfits: LEGS_IN_THE_WATER, legs: { framing: "legs" } },
-        { text: "steps down into the water", motion: "she lowers her other foot slowly", captures: ["pov-legs"], twoHanded: false, water: true, outfits: LEGS_IN_THE_WATER, legs: { framing: "legs" } },
       ],
     },
     {
