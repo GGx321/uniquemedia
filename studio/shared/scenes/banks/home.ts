@@ -23,8 +23,8 @@ const GOING_OUT = [OPEN_BACK, "a pleated wool mini skirt and a top", GOING_OUT_D
  * S5.8a review: a low angle under a mini reads as an upskirt shot, so the legs moments wear shorts, trousers, leggings or joggers, never the mini or the tee or sweater worn as a dress.
  * The bedroom's (toward the mirror, along the bed) are pajamas and shorts; the bed's may also wear the lounge shorts and leggings that only the bed pins.
  */
-const LEGS_BEDROOM = ["a crop top and cotton pajama shorts", "silk pajamas", "linen shorts and a fitted tee", "soft joggers and a cropped tee", "a tank top and cotton sleep shorts", "a crop hoodie and lycra bike shorts", "a ribbed tank, knit lounge shorts", "a loose tee and cotton gym shorts"];
-const LEGS_BED = ["a crop top and cotton pajama shorts", PRONE_OUTFIT, LEGGINGS, "soft joggers and a cropped tee", "a tank top and cotton sleep shorts", "a crop hoodie and lycra bike shorts", "a ribbed tank, knit lounge shorts", "a loose tee and cotton gym shorts"];
+const LEGS_BEDROOM = ["a crop top and cotton pajama shorts", "silk pajamas", "linen shorts and a fitted tee", "soft joggers and a cropped tee", "a tank top and cotton sleep shorts", "a crop hoodie and lycra bike shorts", "a rib tank and knit lounge shorts", "a loose tee and cotton gym shorts"];
+const LEGS_BED = ["a crop top and cotton pajama shorts", PRONE_OUTFIT, LEGGINGS, "soft joggers and a cropped tee", "a tank top and cotton sleep shorts", "a crop hoodie and lycra bike shorts", "a rib tank and knit lounge shorts", "a loose tee and cotton gym shorts"];
 
 export const HOME: CategoryBank = {
   places: [
@@ -176,7 +176,7 @@ export const HOME: CategoryBank = {
     { text: "soft joggers and a cropped tee", pinOnly: true },
     { text: "a tank top and cotton sleep shorts", showsLegs: true, pinOnly: true },
     { text: "a crop hoodie and lycra bike shorts", showsLegs: true, pinOnly: true },
-    { text: "a ribbed tank, knit lounge shorts", showsLegs: true, pinOnly: true },
+    { text: "a rib tank and knit lounge shorts", showsLegs: true, pinOnly: true },
     { text: "a loose tee and cotton gym shorts", showsLegs: true, pinOnly: true },
     { text: GOING_OUT_DRESS, pinOnly: true },
   ],
