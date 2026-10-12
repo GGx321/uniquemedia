@@ -125,7 +125,6 @@ import { matchingCheck, MOCK_CHECK_ESTIMATE } from "./mockDescriptorCheck";
 import { MockCategories } from "./mockCategories";
 import { MockSceneSets, MOCK_SCENE_ATTEMPT_WORST, type MockSceneAttempt, type MockSceneSetSeed } from "./mockSceneSets";
 import { MockAutopilot, type MockAutopilotUnit, type PaidFault } from "./mockAutopilot";
-import { LAUNCH_SLICE_MAX_PHOTOS } from "../../shared/engine";
 import { boldAttemptWorst, isBoldLook, MOCK_BOLD_IMAGE, requestBoldPhotos } from "./mockBoldRoute";
 import { demoOwnMedia, MockOwnMedia, type MockMediaAccept, type MockOwnSeed } from "./mockMedia";
 import { realScheduler, type Scheduler } from "./scheduler";
@@ -528,6 +527,8 @@ interface MockRunJob {
   /** The reserve keys this job still holds open, one per slot it has not ended yet. */
   reserveKeys: string[];
   cancelTimers: (() => void)[];
+  /** 5a.3 (S5.9f, round 3): a slot did not fit the run's cap and stayed open: the job ends failed RUN_CAP_EXCEEDED, as the engine's does. */
+  limited?: boolean;
 }
 
 /** The planner's split: the contract's shared `splitCount` (the engine's planner calls the very same function). */
@@ -1831,7 +1832,7 @@ export class MockEngine implements EngineBridge {
     const n = String(this.seedCounter).padStart(4, "0");
     const runId = `run-seed-${n}`;
     const createdAt = new Date(START_OF_TIME - this.seedCounter * 3_600_000).toISOString();
-    const slots = mockRunSlots(request.count, request.categories);
+    const slots = this.runSlotsOf(request);
     const run: MockRun = {
       runId,
       avatarId: request.avatarId,
@@ -1847,9 +1848,9 @@ export class MockEngine implements EngineBridge {
       writerLoad: this.writerLoadOf(request),
       ...(opts.launchId === undefined ? {} : { launchId: opts.launchId }),
     };
-    const { expected } = this.slotPrice(run);
     slots.slice(0, Math.min(done, slots.length)).forEach((slot, i) => {
       slot.end = "done";
+      const { expected } = this.slotPrice(run, slot.route);
       const photoId = `photo-seed-${n}-${String(i + 1).padStart(3, "0")}`;
       run.photoIds.push(photoId);
       run.settledMicros += expected;
@@ -2295,7 +2296,7 @@ export class MockEngine implements EngineBridge {
    * A slice of a launch's draw begins: a run of its own (the first one under the set's pre-issued run id, so the set is used from here) with a job that holds the avatar, announced as a run
    * job is. Answers the run's id.
    */
-  private startLaunchSlice(slice: { launchId: string; avatarId: string; sceneSetId: string; index: number; photos: number; capMicros: number; category: CategoryRef; resume?: string }): string {
+  private startLaunchSlice(slice: { launchId: string; avatarId: string; sceneSetId: string; index: number; firstNo: number; photos: number; capMicros: number; category: CategoryRef; resume?: string }): string {
     const resumed = slice.resume === undefined ? undefined : this.runs.find((r) => r.runId === slice.resume);
     if (slice.resume !== undefined && resumed === undefined) throw new Error(`startLaunchSlice: the run ${slice.resume} to take up again is not there`);
     if (resumed !== undefined) {
@@ -2315,9 +2316,9 @@ export class MockEngine implements EngineBridge {
       settledMicros: 0,
       ageCheck: this.settings.imageAgeCheck === "on",
       // 5a.3 (S5.9f, round 2): a slot is on the Seedream route when its scene is (the engine's slice plan takes the route from the scenes), so a resume prices it at the 2K attempt and the
-      // photos drawn for it carry the tag. The slice's k-th slot is the set's ((index - 1) × slice size + k + 1)-th scene.
+      // photos drawn for it carry the tag. The slice's k-th slot is the set's (`firstNo` + k)-th scene.
       slots: Array.from({ length: slice.photos }, (_, k): MockRunSlot => {
-        const scene = this.sceneSets.drawnScene(slice.sceneSetId, (slice.index - 1) * LAUNCH_SLICE_MAX_PHOTOS + k + 1);
+        const scene = this.sceneSets.drawnScene(slice.sceneSetId, slice.firstNo + k);
         return { category: slice.category, end: null, ...(scene?.route === undefined ? {} : { route: scene.route }) };
       }),
       photoIds: [],
@@ -3113,7 +3114,9 @@ export class MockEngine implements EngineBridge {
         if (!left.ok) return this.fail(c, left.error);
         // Only the photos the draw allocation still buys are priced (the engine's rule when a price has risen since the plan), so the figure is the count form's for the photos it names.
         // 5a.3 (S5.9f, option B): a «Смелая» launch's photos are all priced at the bold unit.
-        const boldLaunch = this.autopilot.isBold(payload.launchId);
+        // The engine decides from the avatar's scene SET (`set !== null && isBoldLook(set.request)`): the file exists once the launch's compose has made it, not at the start.
+        const set = left.result.sceneSetId === null ? undefined : this.sceneSets.find(left.result.sceneSetId);
+        const boldLaunch = set !== undefined && isBoldLook({ level: set.level, categories: set.categories.map((entry) => entry.ref) });
         const photoWorst = this.runPriceFromScenes(1, boldLaunch ? 1 : 0).worstMicros;
         const photos = photoWorst > 0 ? Math.min(left.result.photos, Math.floor(left.result.allocationMicros / photoWorst)) : left.result.photos;
         // The engine prices a launch with nothing left to draw for one photo and zeroes the sums, so a «Смелая» launch still names the 2K attempt.
@@ -3182,10 +3185,10 @@ export class MockEngine implements EngineBridge {
         if (stopped) return this.fail(c, stopped);
         // L7: matches the real engine's own #remaining, which runs.resume already shares with this command.
         if (run.slots.every((s) => s.end !== null)) return this.fail(c, { code: "VALIDATION", detail: `run ${run.runId} has nothing left to resume: every slot already ended` });
-        if (this.capExhausted(run)) return this.fail(c, this.capEndedError(run));
-        // 5a.3 (S5.9f, round 2, gap D): a Seedream slot still open needs the 2K tier to be priced.
-        const noTier = this.boldPriceGate(run.slots.some((s) => s.end === null && s.route === "seedream"));
+        // 5a.3 (S5.9f, gap D): the engine prices first, so a Seedream slot still open without the 2K tier answers PRICE_UNAVAILABLE even when the cap has ended the run.
+        const noTier = this.boldPriceGate(this.openSeedream(run));
         if (noTier) return this.fail(c, noTier);
+        if (this.capExhausted(run)) return this.fail(c, this.capEndedError(run));
         return this.ok(c, { estimate: this.resumePrice(run) });
       }
       case "runs.resume": {
@@ -3204,8 +3207,8 @@ export class MockEngine implements EngineBridge {
           this.runnableRefusal(run.avatarId) ??
           this.gateRefusal(run.ageCheck) ??
           (run.slots.every((s) => s.end !== null) ? { code: "VALIDATION" as const, detail: "every slot of this run already ended" } : null) ??
+          this.boldPriceGate(this.openSeedream(run)) ??
           (this.capExhausted(run) ? this.capEndedError(run) : null) ??
-          this.boldPriceGate(run.slots.some((s) => s.end === null && s.route === "seedream")) ??
           // A free resume (worst 0) spends nothing: the accepted price still counts, a month already over budget does not.
           this.priceGate(c.payload.acceptedWorstMicros, this.resumePrice(run).worstMicros, { freeIsAlwaysFine: true });
         if (refusal) return this.fail(c, refusal);
@@ -4440,6 +4443,11 @@ export class MockEngine implements EngineBridge {
     };
   }
 
+  /** Whether a slot of the run is still open on the Seedream route. */
+  private openSeedream(run: MockRun): boolean {
+    return run.slots.some((s) => s.end === null && s.route === "seedream");
+  }
+
   private openSlots(run: MockRun): number {
     return run.slots.filter((s) => s.end === null).length;
   }
@@ -4472,6 +4480,11 @@ export class MockEngine implements EngineBridge {
    * (one image, and its age check when the run has them) and the worst case
    * of one attempt. The age-check mode is the run's own, captured at start.
    */
+  /** One request's own reserve: the 2K attempt on Seedream, the owner's model's price otherwise, and the age check's ceiling when it is on (the engine's `imageWorst` + `ageWorst`). */
+  private attemptPrice(run: MockRun, route?: "seedream"): number {
+    return (route === "seedream" ? MOCK_BOLD_IMAGE : this.runImagePrice) + (run.ageCheck ? MOCK_AGE_CHECK_PER_SLOT.worst : 0);
+  }
+
   private slotPrice(run: MockRun, route?: "seedream"): { expected: number; attemptWorst: number } {
     const image = this.runImagePrice;
     // 5a.3 (S5.9f): a Seedream slot expects the 2K attempt, and reserves never below the owner's model (the engine's `remainingPlan`).
@@ -4536,7 +4549,7 @@ export class MockEngine implements EngineBridge {
     // The real engine's minToProgress: ONE writer call's ceiling for an unwritten chunk (the writer runs first) plus one image attempt.
     const writer = run.writerDone || run.writerLoad.chunks === 0 ? 0 : MOCK_RUN_WRITER.worstPerCall;
     // The cheapest next attempt of any open slot (the engine's `minToProgress`).
-    const cheapest = Math.min(...run.slots.filter((s) => s.end === null).map((s) => this.slotPrice(run, s.route).attemptWorst));
+    const cheapest = Math.min(...run.slots.filter((s) => s.end === null).map((s) => this.attemptPrice(run, s.route)));
     return run.capMicros - this.runCommitted(run) < writer + cheapest;
   }
 
@@ -4560,7 +4573,9 @@ export class MockEngine implements EngineBridge {
     const failed = run.slots.filter((s) => s.end === "failed").length;
     const open = this.openSlots(run);
     const running = this.activeRunJob(run.runId) !== null;
-    const capExhausted = this.capExhausted(run);
+    // 5a.3 (S5.9f, round 3): without the 2K tier the engine cannot price a run that still has Seedream slots: no remainder, and it cannot tell that the cap has ended it.
+    const unpriced = this.boldPriceMissing && this.openSeedream(run);
+    const capExhausted = !unpriced && this.capExhausted(run);
     return {
       runId: run.runId,
       avatarId: run.avatarId,
@@ -4574,7 +4589,7 @@ export class MockEngine implements EngineBridge {
       running,
       resumable: !running && open > 0 && !capExhausted,
       capExhausted,
-      remainingWorstMicros: this.resumePrice(run).worstMicros,
+      remainingWorstMicros: unpriced ? null : this.resumePrice(run).worstMicros,
       // The contract's rule: a launch's batch names it only while the launch is unfinished; after, it is an ordinary run.
       ...(run.launchId === undefined || !this.autopilot.isUnfinished(run.launchId) ? {} : { launchId: run.launchId }),
     };
@@ -4615,10 +4630,8 @@ export class MockEngine implements EngineBridge {
     // it (a capped resume, whose runs.estimateResume already capped this
     // same sum). Matches resumePrice's own min(rawRemaining, capLeft).
     let capLeft = Math.max(0, run.capMicros - run.settledMicros);
-    const reserved: number[] = [];
     job.reserveKeys.forEach((key, step) => {
       const reserve = Math.min(MOCK_RUN_ATTEMPTS_PER_SLOT * (slotPrices[step]?.attemptWorst ?? 0), capLeft);
-      reserved.push(reserve);
       this.reserves.set(key, reserve);
       capLeft -= reserve;
     });
@@ -4645,8 +4658,12 @@ export class MockEngine implements EngineBridge {
           this.reserves.delete(key);
           job.reserveKeys = job.reserveKeys.filter((k) => k !== key);
           const seedream = planned.route === "seedream";
-          // 5a.3 (S5.9f, round 2): a reserve cut below one attempt by the cap lets no request out (the engine's budget refuses it): an armed end is not met, nothing is billed, the slot stays open.
-          if (seedream && (this.boldRefusalsNext > 0 || this.boldEmptiesNext > 0) && step < openIndexes.length - failing && (reserved[step] ?? 0) < (slotPrices[step]?.attemptWorst ?? 0)) return;
+          // 5a.3 (S5.9f, round 3): the engine reserves per ATTEMPT (93 000 µ$ on Seedream 2K, the owner's model's price otherwise) and lets a request out only while the run's settled money leaves
+          // room for it (budget.ts: committed + worst > cap is RUN_CAP_EXCEEDED). A slot that does not fit is not sent and stays open; the job then ends failed with that code.
+          if (step < openIndexes.length - failing && run.settledMicros + this.attemptPrice(run, planned.route) > run.capMicros) {
+            job.limited = true;
+            return;
+          }
           // 5a.3 (S5.9f, §8.3): a Seedream slot meets the armed refusal first, then the armed empty answer; any other slot meets neither.
           const refused = step < openIndexes.length - failing && seedream && this.boldRefusalsNext > 0;
           const empty = step < openIndexes.length - failing && seedream && !refused && this.boldEmptiesNext > 0;
@@ -4692,6 +4709,10 @@ export class MockEngine implements EngineBridge {
   }
 
   private finishRunJob(job: MockRunJob, run: MockRun): void {
+    if (job.limited === true) {
+      this.failRunJob(job, { code: "RUN_CAP_EXCEEDED", detail: `run ${run.runId}'s cap leaves too little for the next attempt` });
+      return;
+    }
     job.status = "done";
     job.cancelTimers = [];
     this.emit({

@@ -4,9 +4,9 @@ import { MOCK_BOLD_IMAGE } from "./mockEngine";
 import { MIA, freePhotos, makeMock, unwrap } from "./mockEngine.testkit";
 import { draftOf, errorOf, runUntil, runWorld, startRun, tick } from "./mockLaunchRun.testkit";
 
-// 5a.3 (S5.9f, round 2): the mock agrees with the engine where the first round left it apart: a launch's slice run knows which of its slots are on the Seedream route (so a resume prices them
-// at the 2K attempt and a finished slice bills it), a resume and a launch start meet a missing 2K tier as the engine does, the zero-photo launch estimate names the 2K attempt, the knobs add up,
-// and an empty answer is not billed for a request the cap would not have let out.
+// 5a.3 (S5.9f, rounds 2 and 3): the mock agrees with the engine where the first round left it apart: a launch's slice run knows which of its slots are on the Seedream route (so a resume prices
+// them at the 2K attempt and a finished slice bills it), a resume and a launch start meet a missing 2K tier as the engine does (before the cap, and in the run list), the zero-photo launch
+// estimate follows the launch's set, the knobs add up, and the run's cap lets a request out only while one attempt fits.
 
 const ATTEMPTS = 3;
 const ENOUGH = 100_000_000;
@@ -85,34 +85,89 @@ describe("a launch start and a resume meet a missing 2K tier as the engine does"
 
   test("a resume whose open slots are on the owner's model is not refused", async () => {
     const mock = makeMock();
-    mock.engine.failNextRunSlots(0);
-    const { runId } = await unwrap(mock.client.request("runs.start", { avatarId: MIA.avatarId, count: 3, categories: ["home"], poses: NO_POSES, acceptedWorstMicros: ENOUGH }));
-    mock.scheduler.next();
-    await unwrap(mock.client.request("runs.cancel", { runId }));
-    mock.scheduler.runAll();
+    const runId = mock.engine.seedRun({ avatarId: MIA.avatarId, count: 3, categories: ["home"], poses: NO_POSES }, 1);
     mock.engine.lackBoldPrice();
     expect((await mock.client.request("runs.estimateResume", { runId })).ok).toBe(true);
   });
 });
 
+describe("a missing 2K tier is met before the cap is", () => {
+  // 50 000 µ$ remain on a run whose open slot is on Seedream: below the 93 000 µ$ attempt, so the run has ended on its cap.
+  function exhausted() {
+    const mock = makeMock();
+    const runId = mock.engine.seedRun(boldRun(3, ["beach"]), 2, 2 * MOCK_BOLD_IMAGE + 50_000);
+    return { mock, runId };
+  }
+
+  test("with the tier there, the run has ended on its cap: a resume is RUN_CAP_EXCEEDED", async () => {
+    const { mock, runId } = exhausted();
+    expect(await errorOf(mock.client.request("runs.estimateResume", { runId }))).toMatchObject({ code: "RUN_CAP_EXCEEDED" });
+  });
+
+  test("with the tier missing, estimating a resume answers PRICE_UNAVAILABLE with the bold scope", async () => {
+    const { mock, runId } = exhausted();
+    mock.engine.lackBoldPrice();
+    expect(await errorOf(mock.client.request("runs.estimateResume", { runId }))).toMatchObject({ code: "PRICE_UNAVAILABLE", priceScope: "bold" });
+  });
+
+  test("with the tier missing, a resume answers PRICE_UNAVAILABLE with the bold scope", async () => {
+    const { mock, runId } = exhausted();
+    mock.engine.lackBoldPrice();
+    expect(await errorOf(mock.client.request("runs.resume", { runId, acceptedWorstMicros: ENOUGH }))).toMatchObject({ code: "PRICE_UNAVAILABLE", priceScope: "bold" });
+  });
+
+  test("the run list cannot price the remainder nor tell the cap has ended it: remainingWorstMicros null, capExhausted false, still resumable", async () => {
+    const { mock, runId } = exhausted();
+    mock.engine.lackBoldPrice();
+    const run = (await unwrap(mock.client.request("runs.list", {}))).runs.find((r) => r.runId === runId);
+    expect(run).toMatchObject({ remainingWorstMicros: null, capExhausted: false, resumable: true });
+  });
+
+  test("the run list prices the remainder again when the tier is back", async () => {
+    const { mock, runId } = exhausted();
+    mock.engine.lackBoldPrice();
+    mock.engine.lackBoldPrice(false);
+    const run = (await unwrap(mock.client.request("runs.list", {}))).runs.find((r) => r.runId === runId);
+    expect(run?.remainingWorstMicros).not.toBeNull();
+    expect(run?.capExhausted).toBe(true);
+  });
+});
+
 describe("the price of a «Смелая» launch's photos still to draw, with none left", () => {
-  test("is zero and still names the 2K attempt, as the engine's estimate does", async () => {
+  // The engine decides «bold» from the avatar's scene SET (`set !== null && isBoldLook(set.request)`, engine.ts), and the set FILE exists only once the launch's compose has made it: the
+  // set's id is allocated at the start, the file is not. Before that the answer is the ordinary zero estimate; once the set is there it names the 2K attempt even with nothing left to draw.
+  test("before the launch's set exists, it is a zero estimate that names no 2K attempt", async () => {
     const mock = runWorld();
     const started = await startRun(mock, { categories: ["nightwear"], level: "bold" });
     const row = started.avatars[0];
     if (row === undefined) throw new Error("no row");
     const { estimate, photos } = await unwrap(mock.client.request("runs.estimateImages", { launchId: started.launchId, avatarId: row.avatarId }));
     expect(photos).toBe(0);
-    expect(estimate).toMatchObject({ expectedMicros: 0, worstMicros: 0, boldAttemptMicros: MOCK_BOLD_IMAGE });
+    expect(estimate).toMatchObject({ expectedMicros: 0, worstMicros: 0 });
+    expect("boldAttemptMicros" in estimate).toBe(false);
+  });
+
+  test("once the set is there and the avatar has nothing left to draw, it is zero and names the 2K attempt", async () => {
+    const mock = runWorld();
+    const started = await startRun(mock, { categories: ["nightwear"], level: "bold" });
+    const finished = await runUntil(mock, started.launchId, "the montage", (v) => v.avatars.some((a) => a.phase === "montage" || a.phase === "done"));
+    const row = finished.avatars[0];
+    if (row === undefined) throw new Error("no row");
+    const answer = await mock.client.request("runs.estimateImages", { launchId: started.launchId, avatarId: row.avatarId });
+    if (!answer.ok) throw new Error(`refused: ${answer.error.code}`);
+    expect(answer.result.photos).toBe(0);
+    expect(answer.result.estimate).toMatchObject({ expectedMicros: 0, worstMicros: 0, boldAttemptMicros: MOCK_BOLD_IMAGE });
   });
 
   test("names no 2K attempt for an ordinary launch", async () => {
     const mock = runWorld();
     const started = await startRun(mock, { categories: ["home"] });
-    const row = started.avatars[0];
+    const finished = await runUntil(mock, started.launchId, "the montage", (v) => v.avatars.some((a) => a.phase === "montage" || a.phase === "done"));
+    const row = finished.avatars[0];
     if (row === undefined) throw new Error("no row");
-    const { estimate } = await unwrap(mock.client.request("runs.estimateImages", { launchId: started.launchId, avatarId: row.avatarId }));
-    expect("boldAttemptMicros" in estimate).toBe(false);
+    const answer = await mock.client.request("runs.estimateImages", { launchId: started.launchId, avatarId: row.avatarId });
+    if (!answer.ok) throw new Error(`refused: ${answer.error.code}`);
+    expect("boldAttemptMicros" in answer.result.estimate).toBe(false);
   });
 });
 
@@ -139,20 +194,55 @@ describe("the knobs add up", () => {
   });
 });
 
-describe("an empty answer needs a request the cap lets out", () => {
-  test("a slot whose reserve was cut below one attempt is not sent: no empty answer, nothing billed, the slot stays open", async () => {
+// The engine reserves per ATTEMPT (93 000 µ$ for a Seedream 2K one, the owner's model's price otherwise) and sends a slot only while the run's settled money and open reserves leave room for it
+// (budget.ts: scopeCommitted + worst > cap is RUN_CAP_EXCEEDED). A slot that does not fit stays open, and the job ends failed with that code.
+describe("a run's cap lets a request out only while one attempt fits", () => {
+  const failedOf = (events: readonly EventMessage[]) => events.find((e) => e.type === "job.failed");
+
+  test("a Seedream slot is sent, billed and ended empty while an attempt still fits, whatever the reserve for the whole slot was cut to", async () => {
     const mock = makeMock();
+    const events: EventMessage[] = [];
+    mock.client.subscribe((e) => events.push(e));
     mock.engine.emptyBoldNext(2);
     const { runId } = await unwrap(mock.client.request("runs.start", { ...boldRun(4, ["beach"]), acceptedWorstMicros: ENOUGH }));
     mock.scheduler.runAll();
-    // The model got dearer while the run stood: the cap that funded all four slots at 93 000 µ$ leaves 930 000 µ$, which funds the first open slot's attempt at 400 000 µ$ and no more.
     mock.engine.setRunImagePrice(400_000);
     mock.engine.refuseBoldNext(1);
     mock.engine.emptyBoldNext(1);
+    events.length = 0;
     await unwrap(mock.client.request("runs.resume", { runId, acceptedWorstMicros: ENOUGH }));
     mock.scheduler.runAll();
-    const run = (await unwrap(mock.client.request("runs.list", {}))).runs[0];
-    // The first open slot met the refusal (free). The second had no room for an attempt: never sent, so the empty answer was never given or billed.
-    expect(run).toMatchObject({ committedMicros: 2 * MOCK_BOLD_IMAGE, failed: 3, open: 1 });
+    // The refusal is free; the next slot is sent (930 000 µ$ remain, an attempt is 93 000), comes back empty and is billed; it is the run's third empty answer, so the job stops.
+    expect((await unwrap(mock.client.request("runs.list", {}))).runs[0]).toMatchObject({ committedMicros: 3 * MOCK_BOLD_IMAGE, failed: 4, open: 0 });
+    expect(failedOf(events)?.type).toBe("job.failed");
+  });
+
+  test("a Seedream slot with less than one attempt left is not sent, stays open, and the job ends RUN_CAP_EXCEEDED", async () => {
+    const mock = makeMock();
+    const events: EventMessage[] = [];
+    mock.client.subscribe((e) => events.push(e));
+    // Four Seedream slots, one drawn, a cap that funds one more attempt and 50 000 µ$ over: 143 000 µ$ remain, the first open slot fits, the next does not.
+    const cap = 2 * MOCK_BOLD_IMAGE + 50_000;
+    const runId = mock.engine.seedRun(boldRun(4, ["beach"]), 1, cap);
+    await unwrap(mock.client.request("runs.resume", { runId, acceptedWorstMicros: ENOUGH }));
+    mock.scheduler.runAll();
+    const failed = failedOf(events);
+    expect(failed?.type === "job.failed" && failed.payload.error.code).toBe("RUN_CAP_EXCEEDED");
+    const run = (await unwrap(mock.client.request("runs.list", {}))).runs.find((r) => r.runId === runId);
+    expect(run).toMatchObject({ done: 2, open: 2 });
+    expect(run?.committedMicros).toBeLessThanOrEqual(cap);
+  });
+
+  test("a slot of the owner's model is held to the same rule at the owner's model's price", async () => {
+    const mock = makeMock();
+    const events: EventMessage[] = [];
+    mock.client.subscribe((e) => events.push(e));
+    // Four ordinary slots at 50 000 µ$, two drawn, a cap of 160 000 µ$: 60 000 µ$ remain, one more attempt fits, a second does not.
+    const runId = mock.engine.seedRun({ avatarId: MIA.avatarId, count: 4, categories: ["home"], poses: NO_POSES }, 2, 160_000);
+    await unwrap(mock.client.request("runs.resume", { runId, acceptedWorstMicros: ENOUGH }));
+    mock.scheduler.runAll();
+    const failed = failedOf(events);
+    expect(failed?.type === "job.failed" && failed.payload.error.code).toBe("RUN_CAP_EXCEEDED");
+    expect((await unwrap(mock.client.request("runs.list", {}))).runs.find((r) => r.runId === runId)).toMatchObject({ done: 3, open: 1 });
   });
 });

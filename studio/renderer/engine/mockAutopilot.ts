@@ -133,7 +133,7 @@ export interface MockAutopilotWorld {
    * A slice of the draw begins: its run and the job that holds the avatar. Answers the run's id (the first slice's is the set's pre-issued one, which uses the set). With `resume` it is the
    * run of a slice that was stopped (a hold, a pause): the same run under a new job.
    */
-  startSlice(slice: { launchId: string; avatarId: string; sceneSetId: string; index: number; photos: number; capMicros: number; category: CategoryRef; resume?: string }): string;
+  startSlice(slice: { launchId: string; avatarId: string; sceneSetId: string; index: number; firstNo: number; photos: number; capMicros: number; category: CategoryRef; resume?: string }): string;
   /** Photos of the slice arrived (their ids, the money they settled). */
   sliceProgress(runId: string, photoIds: readonly string[], settledMicros: number): void;
   /** The slice ended: `done` (its photos are in, or its cap ended it), `cancelled` (a stop or a pause), `gone` (the process died with it: nothing is announced). */
@@ -535,13 +535,7 @@ export class MockAutopilot {
    * (before the draw: the ones «Продолжить запуск» would draw; while it draws: those not drawn yet; afterwards none) and the avatar's draw allocation. NOT_FOUND for a launch that is
    * not the unfinished one and for an avatar it does not hold, as the engine answers. The price is the engine's to put on them (`MockEngine`).
    */
-  /** 5a.3 (S5.9f): whether the launch's draft is «Смелая» with a «Смелая» category: its photos are priced at the bold unit (option B). */
-  isBold(launchId: string): boolean {
-    const found = this.#find(launchId);
-    return found.ok && isBoldLook(found.result.draft);
-  }
-
-  imagesLeft(launchId: string, avatarId: string): Outcome<{ photos: number; allocationMicros: number }> {
+  imagesLeft(launchId: string, avatarId: string): Outcome<{ photos: number; allocationMicros: number; sceneSetId: string | null }> {
     const found = this.#find(launchId);
     if (!found.ok) return found;
     if (!isUnfinished(found.result.status)) return refuse({ code: "NOT_FOUND", detail: `no unfinished launch ${launchId}` });
@@ -551,7 +545,7 @@ export class MockAutopilot {
     // As the engine counts: an avatar the launch has finished with (done, montage, skipped) has none; one parked by a paid hold keeps the photos it has not drawn (none while its scenes are not written).
     const parked = row.phase === "waiting" && row.waiting?.reason === "paid-hold";
     const photos = beforeDraw ? (row.continuePhotos ?? 0) : row.phase === "drawing" || parked ? ((row.continuePhotos ?? 0) === 0 ? 0 : Math.max(0, row.photos.total - row.photos.done)) : 0;
-    return done({ photos, allocationMicros: row.drawAllocationMicros ?? 0 });
+    return done({ photos, allocationMicros: row.drawAllocationMicros ?? 0, sceneSetId: row.sceneSetId });
   }
 
   /** The records the launch's videos of one avatar still have. */

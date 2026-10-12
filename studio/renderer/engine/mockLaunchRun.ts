@@ -643,6 +643,7 @@ export class MockRun {
       avatarId: work.avatarId,
       sceneSetId: work.setId,
       index,
+      firstNo: (index - 1) * LAUNCH_SLICE_MAX_PHOTOS + 1,
       photos,
       capMicros: photos * unit.photoWorstMicros,
       category: this.#categories[0] ?? "home",

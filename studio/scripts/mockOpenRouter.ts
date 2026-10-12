@@ -543,10 +543,15 @@ function promptOf(body: unknown): string | null {
   return typeof prompt === "string" ? prompt : null;
 }
 
+/**
+ * What each call bills, in USD, unless a scenario says otherwise. `boldImage` is what a 2K Seedream image bills: P-5a3 measured $0.045 against a list price of $0.09 (plan s5a3 §«P-5a3 results»).
+ * The smoke's own bill sum (`boldSmoke.ts`) reads the two image figures from here.
+ */
+export const DEFAULT_COSTS_USD = { descriptor: 0.0021, image: 0.04, age: 0.0014, importDescribe: 0.0021, descriptorCheck: 0.0023, writer: 0.011, pool: 0.0051, boldImage: 0.045 };
+
 export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<MockOpenRouter> {
   const imageModel = opts.imageModel ?? DEFAULT_IMAGE_MODEL;
-  // `boldImage` is what a 2K Seedream image bills: P-5a3 measured $0.045 against a list price of $0.09 (plan s5a3 §«P-5a3 results»).
-  const costs = { descriptor: 0.0021, image: 0.04, age: 0.0014, importDescribe: 0.0021, descriptorCheck: 0.0023, writer: 0.011, pool: 0.0051, boldImage: 0.045, ...opts.costsUsd };
+  const costs = { ...DEFAULT_COSTS_USD, ...opts.costsUsd };
   const rejectAt = opts.rejectAgeCheckNumber ?? 1;
   const imageDelayMs = opts.imageDelayMs ?? 0;
   const writerDelayMs = opts.writerDelayMs ?? 0;

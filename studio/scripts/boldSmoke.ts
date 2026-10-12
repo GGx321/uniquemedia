@@ -1,3 +1,5 @@
+import { DEFAULT_COSTS_USD } from "./mockOpenRouter";
+
 // 5a.3 (S5.9f, plan s5a3 §12): what the packaged smoke (smoke-engine.ts, CI only) asserts of the image requests a «Смелая» run sends, as pure functions. The smoke needs Electron; these do not, so
 // boldSmoke.test.ts holds them against the bodies the engine's own client builds.
 
@@ -59,7 +61,9 @@ export function failedReasonsOf(end: unknown): string[] {
  * free. An answer with no image is billed like a drawn one, so it needs no term of its own. The smoke compares this with what /credits grew by.
  */
 export function expectedBilledMicros(sent: readonly SentImageRequest[], refused: number): number {
-  const bill = sent.reduce((sum, request) => sum + (request.resolution === "2K" ? 45_000 : 40_000), 0);
+  const bold = Math.round(DEFAULT_COSTS_USD.boldImage * 1_000_000);
+  const plain = Math.round(DEFAULT_COSTS_USD.image * 1_000_000);
+  const bill = sent.reduce((sum, request) => sum + (request.resolution === "2K" ? bold : plain), 0);
   // The refusals are Seedream's: each takes one 2K request off the bill.
-  return bill - refused * 45_000;
+  return bill - refused * bold;
 }
