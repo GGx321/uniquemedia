@@ -15,6 +15,7 @@ import {
 } from "../../../shared/engine";
 import { countOf, NBSP, plural } from "../../lib/format";
 import { isFree, limitUsd } from "../../lib/money";
+import { LEGS_OPTIONS } from "../photos/legs";
 import { CATEGORY_LABEL } from "../photos/runForm";
 import { clockSeconds, logText, spentUsd } from "./liveModel";
 import { clockLabel, videosOf } from "./planModel";
@@ -200,7 +201,17 @@ function levelBit(draft: LaunchDraft): SettingsBit[] {
   return draft.poses === undefined ? [{ text: "Подача: обычная", strong: true }] : [];
 }
 
-/** The launch's settings as one wrapping mono line of bits (ApLaunch): what it was run with, read only. S5.7c: no angles phrase, «Подача» instead. */
+/**
+ * The launch's «Ножки» (S5.8b, mockup 31): «немного, 15 %» or «много, 30 %» when it asked for them; «нет» for one that asked for none (a launch made
+ * before «Ножки» asked for none); none for a launch from before «Подача», as its «Подача» (31#old).
+ */
+function legsBit(draft: LaunchDraft): SettingsBit[] {
+  const option = LEGS_OPTIONS.find((o) => o.value === (draft.legsShare ?? 0));
+  if (option !== undefined && option.share !== null) return [{ text: `Ножки: ${option.label.toLowerCase()}, ${option.share}`, strong: true }];
+  return levelBit(draft).length === 0 ? [] : [{ text: "Ножки: нет", strong: true }];
+}
+
+/** The launch's settings as one wrapping mono line of bits (ApLaunch): what it was run with, read only. S5.7c: no angles phrase, «Подача» instead. S5.8b: and «Ножки». */
 export function settingsBits(draft: LaunchDraft, customName: (categoryId: string) => string | null): SettingsBit[] {
   const { mix } = draft;
   const source = draft.library && draft.generate ? "сначала библиотека, недостающее — новыми" : draft.library ? "только фото из библиотеки" : "только новые фото";
@@ -209,6 +220,7 @@ export function settingsBits(draft: LaunchDraft, customName: (categoryId: string
     { text: `одно фото / коллаж / слайды · ${mix.single} / ${mix.collage} / ${mix.slides}` },
     { text: draft.categories.map((ref) => categoryName(ref, customName)).join(", ") },
     ...levelBit(draft),
+    ...legsBit(draft),
     { text: source },
     ...(draft.generate ? [{ text: draft.sceneReview ? "сцены на проверку" : "сцены без проверки" }] : []),
     { text: "музыка: тренды + мои" },

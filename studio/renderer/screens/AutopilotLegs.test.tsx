@@ -4,6 +4,7 @@ import { LAUNCH_REASONS_RU, type AvatarSummary, type LaunchDraftInput, type Phot
 import { freePhotos, MIA, SOFIA } from "../engine/mockEngine.testkit";
 import type { MockEngine } from "../engine/mockEngine";
 import { callsOf, flush, openSection, setup } from "../testing";
+import { historyLibrary, octAt } from "./autopilot/historyTestkit";
 import { PARIS } from "./photos/categoryScreenKit";
 import { legsFrames } from "./photos/legs";
 
@@ -197,6 +198,43 @@ describe("a running launch's «Ножки», read only", () => {
   test("shows «Нет» for a launch from before «Ножки»", async () => {
     await startLaunch({});
     expect(legs("Нет").checked).toBe(true);
+  });
+});
+
+describe("a launch's page (mockup 31)", () => {
+  /** One ended launch of Mia's, as the history keeps it, its page open: the settings line's bits, a brighter one marked. */
+  async function openLaunch(draft: Partial<LaunchDraftInput>): Promise<string[]> {
+    const h = setup(historyLibrary());
+    h.engine.seedLaunch({
+      createdAt: octAt(11, 14, 2),
+      endedAt: octAt(11, 14, 31),
+      draft: { avatarIds: [MIA.avatarId], videosPerAvatar: 1, categories: ["home", "shoot", "glam"], ...draft },
+      videos: [{ avatarId: MIA.avatarId, shape: "single", size: 1, state: "done", durationMs: 8_000, bytes: 2_000_000 }],
+    });
+    await openAutopilot();
+    fireEvent.click(screen.getByRole("button", { name: /^История запусков/ }));
+    await screen.findByRole("heading", { level: 1, name: "История запусков" });
+    await flush();
+    fireEvent.click(within(screen.getByRole("region", { name: "Запуски" })).getAllByRole("button", { name: /^Запуск / })[0] ?? document.body);
+    await screen.findByRole("heading", { level: 1, name: "Запуск 11 окт., 14:02" });
+    await flush();
+    return Array.from(document.querySelectorAll(".ap-launch-bits > span")).map((s) => `${(s.textContent ?? "").replace(/\s+/g, " ")}${s.classList.contains("ap-bit-new") ? " [new]" : ""}`);
+  }
+
+  // The mock seeds an old launch's «Ракурсы» unless told otherwise: a launch this build makes stores none.
+  test("«Подача: кокетливая · Ножки: немного, 15 %» after the categories, two brighter bits", async () => {
+    const bits = await openLaunch({ poses: undefined, level: "flirty", legsShare: 15 });
+    expect(bits.slice(2, 5)).toEqual(["Дом, Улица, Гламур", "Подача: кокетливая [new]", "Ножки: немного, 15 % [new]"]);
+  });
+
+  test("31#ordinary: «Подача: обычная · Ножки: нет»", async () => {
+    const bits = await openLaunch({ poses: undefined });
+    expect(bits.slice(2, 5)).toEqual(["Дом, Улица, Гламур", "Подача: обычная [new]", "Ножки: нет [new]"]);
+  });
+
+  test("31#old: a launch from before «Подача» names no «Ножки» either", async () => {
+    const bits = await openLaunch({ poses: { profile: true, back: false } });
+    expect(bits.some((bit) => bit.startsWith("Подача") || bit.startsWith("Ножки"))).toBe(false);
   });
 });
 

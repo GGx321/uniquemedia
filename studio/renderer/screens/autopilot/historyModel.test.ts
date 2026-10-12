@@ -184,12 +184,13 @@ describe("a launch's page", () => {
       "одно фото / коллаж / слайды · 70 / 20 / 10",
       "Дом, Виды",
       "Подача: кокетливая",
+      "Ножки: нет",
       "сначала библиотека, недостающее — новыми",
       "сцены на проверку",
       "музыка: тренды + мои",
       "без стикеров",
     ]);
-    expect(bits.filter((bit) => bit.strong === true).map((bit) => bit.text)).toEqual(["Подача: кокетливая"]);
+    expect(bits.filter((bit) => bit.strong === true).map((bit) => bit.text)).toEqual(["Подача: кокетливая", "Ножки: нет"]);
     const custom = settingsBits({ ...draft, categories: ["cat-0a1b2c3d4e5f", "cat-ffffffffffff"], library: false, generate: true, sceneReview: false, stickers: true }, (id) => (id === "cat-0a1b2c3d4e5f" ? "Кофейни Парижа" : null)).map((bit) => bit.text);
     expect(custom).toContain("Кофейни Парижа, своя категория");
     expect(custom).toContain("только новые фото");
@@ -206,6 +207,28 @@ describe("a launch's page", () => {
     const old = settingsBits({ ...LAUNCH_DRAFT, poses: { profile: true, back: true } }, () => null).map((bit) => bit.text);
     expect(old.some((text) => text.startsWith("Подача"))).toBe(false);
     expect(old.some((text) => /анфас|профиль|со спины|ракурс/i.test(text))).toBe(false);
+  });
+
+  // S5.8b (plan s5a2 §7; mockup 31 and 31#ordinary): «Ножки» after «Подача», a brighter bit too: «немного, 15 %», «много, 30 %», or «нет» for a launch that asked
+  // for none (a launch made before «Ножки» asked for none). A launch from before «Подача» names neither, as the mockup's #old.
+  test("«Ножки: немного, 15 %» and «Ножки: много, 30 %» right after «Подача»", () => {
+    const { poses: _toggles, ...fresh } = LAUNCH_DRAFT;
+    const some = settingsBits({ ...fresh, level: "flirty", legsShare: 15 }, () => null);
+    const at = some.findIndex((bit) => bit.text === "Подача: кокетливая");
+    expect(some[at + 1]).toEqual({ text: `Ножки: немного, 15${NBSP}%`, strong: true });
+    expect(settingsBits({ ...fresh, legsShare: 30 }, () => null).map((bit) => bit.text)).toContain(`Ножки: много, 30${NBSP}%`);
+  });
+
+  test("«Ножки: нет» for a launch that asked for none, a 0 or nothing (31#ordinary)", () => {
+    const { poses: _toggles, ...fresh } = LAUNCH_DRAFT;
+    const texts = (draft: typeof fresh) => settingsBits(draft, () => null).map((bit) => bit.text);
+    expect(texts(fresh).slice(texts(fresh).indexOf("Подача: обычная"), texts(fresh).indexOf("Подача: обычная") + 2)).toEqual(["Подача: обычная", "Ножки: нет"]);
+    expect(texts({ ...fresh, legsShare: 0 })).toContain("Ножки: нет");
+  });
+
+  test("a launch from before «Подача» names no «Ножки» either (31#old)", () => {
+    const old = settingsBits({ ...LAUNCH_DRAFT, poses: { profile: true, back: true } }, () => null).map((bit) => bit.text);
+    expect(old.some((text) => text.startsWith("Ножки"))).toBe(false);
   });
 
   test("the log's count says when the engine cut it", () => {
