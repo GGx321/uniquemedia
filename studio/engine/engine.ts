@@ -3084,7 +3084,7 @@ export class Engine {
       runId,
       avatarId,
       createdAt: new Date(this.#deps.clock()).toISOString(),
-      request: { avatarId, count, categories, ...(poses === undefined ? {} : { poses }), ...(level === undefined ? {} : { level }), ...(legsShare === undefined ? {} : { legsShare }) },
+      request: { avatarId, count, categories, ...(poses === undefined ? {} : { poses }), ...(level === "flirty" ? { level } : {}), ...(legsShare === undefined ? {} : { legsShare }) },
       imageAgeCheck,
       models,
       capMicros: estimate.worstMicros,

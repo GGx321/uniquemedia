@@ -561,6 +561,22 @@ describe("«Ножки» in a scene set (S5.8a)", () => {
     expect(JSON.parse(readFileSync(setFile(avatarId, sceneSetId), "utf8")).request.legsShare).toBe(30);
   });
 
+  // S5.7R carry-over (I5.27): «Обычная» asked for by name is the absence of a level, so the set stores none; «Кокетливая» is stored.
+  test("a set composed ordinary by name stores no level, and a flirty one stores it", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(sceneNetwork());
+
+    const ordinary = composed(await engine.handle(legsCompose(avatarId, { legsShare: 0, level: "ordinary" })));
+    await jobEnd(events, ordinary.jobId ?? "none");
+    expect("level" in JSON.parse(readFileSync(setFile(avatarId, ordinary.sceneSetId), "utf8")).request).toBe(false);
+    expect("level" in (await setOf(engine, avatarId))).toBe(false);
+    ok(await engine.handle(command("scenes.discard", { sceneSetId: ordinary.sceneSetId })));
+
+    const flirty = composed(await engine.handle(legsCompose(avatarId, { legsShare: 0, level: "flirty" })));
+    await jobEnd(events, flirty.jobId ?? "none");
+    expect(JSON.parse(readFileSync(setFile(avatarId, flirty.sceneSetId), "utf8")).request.level).toBe("flirty");
+  });
+
   test("framing and capture survive a restart: a new engine over the same library shows the same legs scenes", async () => {
     const avatarId = await seedAvatar();
     const first = await engineOver(sceneNetwork());
