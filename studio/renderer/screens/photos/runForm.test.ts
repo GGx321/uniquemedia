@@ -98,6 +98,36 @@ test("an ordinary and a flirty request are priced apart: their keys differ", () 
   expect(requestKey({ ...ordinary, poses: { profile: true, back: true } })).toBe(requestKey(ordinary));
 });
 
+// S5.8b (plan s5a2 §7, I5.29; mockups 33, 34#card): «Ножки» go into the request as `legsShare`, only when a share is picked and a built-in category is on.
+// «Нет» sends none (a stored request then carries it only when it differs, I5.27), and nor does a run of the owner's own categories only: the engine
+// would refuse it (`legs-built-in-only`).
+test("runRequest asks for no legs by default: «Нет»", () => {
+  expect(DEFAULT_RUN_FORM.legs).toBe(0);
+  expect("legsShare" in runRequest("avatar-0001", DEFAULT_RUN_FORM)).toBe(false);
+});
+
+test("runRequest adds «Ножки» as `legsShare` when a share is picked and a built-in is on", () => {
+  const some = runRequest("avatar-0001", { ...DEFAULT_RUN_FORM, legs: 15 });
+  expect(Object.keys(some).sort()).toEqual(["avatarId", "categories", "count", "legsShare"]);
+  expect(some.legsShare).toBe(15);
+  expect(RunRequest.safeParse(some).success).toBe(true);
+  expect(runRequest("avatar-0001", { ...DEFAULT_RUN_FORM, categories: ["fit", CUSTOM_A], legs: 30 }).legsShare).toBe(30);
+});
+
+test("runRequest sends no legs for the owner's own categories only, whatever the pick", () => {
+  const custom = runRequest("avatar-0001", { ...DEFAULT_RUN_FORM, categories: [CUSTOM_A, CUSTOM_B], legs: 30 });
+  expect("legsShare" in custom).toBe(false);
+});
+
+test("requests with other legs are priced apart: their keys differ", () => {
+  const none = runRequest("avatar-0001", DEFAULT_RUN_FORM);
+  const some = runRequest("avatar-0001", { ...DEFAULT_RUN_FORM, legs: 15 });
+  const many = runRequest("avatar-0001", { ...DEFAULT_RUN_FORM, legs: 30 });
+  expect(new Set([requestKey(none), requestKey(some), requestKey(many)]).size).toBe(3);
+  // A request that names «Нет» keys like one that names nothing: absent is 0.
+  expect(requestKey({ ...none, legsShare: 0 })).toBe(requestKey(none));
+});
+
 // ---------- CS.1: custom categories on the form (chips for them come with CS.3) ----------
 
 const CUSTOM_A = "cat-paris-cafes";

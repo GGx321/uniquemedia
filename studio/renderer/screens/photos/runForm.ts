@@ -5,6 +5,7 @@ import {
   splitCount,
   type CategorySummary,
   type CustomCategoryId,
+  type LegsShare,
   type PhotoSummary,
   type RunRequest,
   type SceneLevel,
@@ -12,6 +13,7 @@ import {
 import { covers } from "../../../shared/scenes/custom";
 import type { EngineView } from "../../engine/store";
 import { paidStop, restartStopText } from "../../lib/paidStop";
+import { hasBuiltIn } from "./legs";
 
 export type RunCategory = RunRequest["categories"][number];
 
@@ -21,6 +23,8 @@ export interface RunForm {
   categories: readonly RunCategory[];
   /** «Подача» (S5.7c): the angle comes from the scene, so the form holds no poses. */
   level: SceneLevel;
+  /** «Ножки» (S5.8b): the owner's pick, kept while no built-in category is on (the request then asks for none). */
+  legs: LegsShare;
 }
 
 /** The mockup's stepper: 5 to 100 photos in steps of 5 (the contract allows 1–100). */
@@ -33,11 +37,12 @@ export function clampCount(count: number, delta: number): number {
   return Math.min(COUNT_MAX, Math.max(COUNT_MIN, count + delta));
 }
 
-/** The mockup's opening state: 20 photos in every category, «Подача» «Обычная» (the owner's default). */
+/** The mockup's opening state: 20 photos in every category, «Подача» «Обычная» (the owner's default), «Ножки» «Нет» (mockups 35, 36). */
 export const DEFAULT_RUN_FORM: RunForm = {
   count: 20,
   categories: SceneCategory.options,
   level: "ordinary",
+  legs: 0,
 };
 
 /** The mockup's own labels for the five built-ins; the scene tags and the gallery use them too. */
@@ -129,6 +134,8 @@ export function sameCategories(a: readonly RunCategory[], b: readonly RunCategor
 /**
  * The exact request a price is asked for and a run is started with; categories in the contract's order, so equal forms give equal requests. S5.7c: no
  * poses (the angle comes from the scene), and `level` only when it is not the default — a stored request then carries it only when it differs (I5.27).
+ * S5.8b: `legsShare` likewise, and only with a built-in category on: legs are drawn from those alone, and a run of the owner's own categories that asked
+ * for them would be refused (`legs-built-in-only`).
  */
 export function runRequest(avatarId: string, form: RunForm): RunRequest {
   return {
@@ -136,12 +143,13 @@ export function runRequest(avatarId: string, form: RunForm): RunRequest {
     count: form.count,
     categories: orderCategories(form.categories),
     ...(form.level === "flirty" ? { level: "flirty" as const } : {}),
+    ...(form.legs !== 0 && hasBuiltIn(form.categories) ? { legsShare: form.legs } : {}),
   };
 }
 
 /** A stable identity for a request: an estimate belongs to exactly one. Poses are not in it: they change no plan (I5.26). */
 export function requestKey(request: RunRequest): string {
-  return JSON.stringify([request.avatarId, request.count, request.categories, request.level ?? "ordinary"]);
+  return JSON.stringify([request.avatarId, request.count, request.categories, request.level ?? "ordinary", request.legsShare ?? 0]);
 }
 
 /** Why a paid photo command cannot be sent right now (the wizard's own order and wording), or null. */

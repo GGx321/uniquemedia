@@ -16,6 +16,8 @@ import { CategoryCardNotices } from "./CategoryNotices";
 import { CategoryRow } from "./CategoryRow";
 import { CategorySheet } from "./CategorySheet";
 import type { LaunchLink } from "./launchSet";
+import { cardLegsLine, hasBuiltIn } from "./legs";
+import { LegsChips } from "./LegsChips";
 import { ANGLE_FROM_SCENE, BOLD_LABEL, BOLD_LATER, FLIRTY_BUILTIN_ONLY, flirtyCaption, flirtyFrames, LEVEL_OPTIONS } from "./level";
 import { LaunchSetStrip } from "./LaunchSetStrip";
 import { RecomposeDialog } from "./RecomposeDialog";
@@ -276,8 +278,15 @@ export function GenerateCard({
   // The open set (writing, stopped, ready) collapses the card to the set's strip; a used one leaves the card composing again.
   const openSet = sceneSet !== undefined && sceneSet !== null && sceneSet.status !== "used" ? sceneSet : null;
   // An empty set draws from no category (ReviewEmpty: «без категорий — только свои сцены»).
-  // S5.7c: no poses (the angle comes from the scene); «Подача» only when it is not the default, as the run's request.
-  const composeRequest = { avatarId: avatar.avatarId, count: form.count, categories: form.count === 0 ? [] : request.categories, ...(request.level === undefined ? {} : { level: request.level }) };
+  // S5.7c: no poses (the angle comes from the scene); «Подача» only when it is not the default, as the run's request. S5.8b: «Ножки» likewise, and never
+  // for an empty set — it names no category, so a share would be refused (`legs-built-in-only`).
+  const composeRequest = {
+    avatarId: avatar.avatarId,
+    count: form.count,
+    categories: form.count === 0 ? [] : request.categories,
+    ...(request.level === undefined ? {} : { level: request.level }),
+    ...(request.legsShare === undefined || form.count === 0 ? {} : { legsShare: request.legsShare }),
+  };
   // Composed only once the slice says the avatar has no open set (a second one would be refused), at the request and the model it is priced for.
   // The writer's price is asked (free) with review off too: it is what tells «Сцены · бесплатно» (the app writes them) from a model's price. Only a
   // review-on card ever sends it.
@@ -466,6 +475,14 @@ export function GenerateCard({
   // With only custom categories on, no frame can be flirty: it says where «Подача» works rather than «0 из N».
   const flirtyFrameCount = form.level === "flirty" && form.count > 0 ? flirtyFrames(form.count, request.categories) : null;
   const flirty = flirtyFrameCount === null ? null : flirtyFrameCount === 0 && request.categories.length > 0 ? FLIRTY_BUILTIN_ONLY : flirtyCaption(flirtyFrameCount, form.count);
+  // S5.8b (mockups 33, 34#card): «Ножки» draw from the built-in categories only. With none on the chips are off on «Нет» and say why; the pick stays in the
+  // form, and a built-in back brings it back. A pick says how many of the frames are legs; with nothing to draw (an empty set) it says nothing.
+  const legsLabel = `${ids}-legs`;
+  const legsName = `${ids}-legs-radio`;
+  const legsCaptionId = `${ids}-legs-cap`;
+  const legsOff = !hasBuiltIn(request.categories);
+  const shownLegs = legsOff ? 0 : form.legs;
+  const legsLine = cardLegsLine(form.legs, form.count, request.categories);
   // CS.8, S5.7c (mockup 27): the run's custom categories whose pool keeps angles of its own — the angle note above does not speak for them.
   const ownAngles = ownAnglesLine((customs ?? []).flatMap((c) => (categories.includes(c.categoryId) && c.pool.poses !== undefined ? [{ name: c.name, poses: c.pool.poses }] : [])));
   const countLabel = `${ids}-count`;
@@ -612,6 +629,27 @@ export function GenerateCard({
               <p id={boldCaption} className="gen-cap gen-cap-quiet">
                 {BOLD_LATER}
               </p>
+            </div>
+          </div>
+          {/* S5.8b (mockups 33, 34#card): «Ножки» under «Подача», chips that are native radios. */}
+          <div className="gen-row">
+            <span id={legsLabel} className="lbl">
+              Ножки
+            </span>
+            <LegsChips
+              name={legsName}
+              labelledBy={legsLabel}
+              describedBy={legsLine !== null ? legsCaptionId : undefined}
+              shown={shownLegs}
+              off={legsOff}
+              onPick={(legs) => onFormChange({ ...form, legs })}
+            />
+            <div className="gen-row-hint">
+              {legsLine !== null && (
+                <p id={legsCaptionId} className={legsLine.why ? "gen-cap gen-cap-why" : "gen-cap"}>
+                  {legsLine.text}
+                </p>
+              )}
             </div>
           </div>
           <div className="gen-angle">
