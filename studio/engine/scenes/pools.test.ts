@@ -97,14 +97,14 @@ describe("C1 pool text", () => {
   test("glamour draws from eleven outfits, in this order", () => {
     expect(POOLS.glamour.outfits.filter((o) => !(POOLS.glamour.outfitInfo ?? []).some((i) => i.text === o && i.pinOnly === true))).toEqual([
       "a fitted black bodycon dress",
-      "a mini skirt with a cropped top",
+      "a sequin mini skirt and a crop top",
       "a corset top and high-rise trousers",
       "a long-sleeved red mini dress",
       "a white top and leather mini skirt",
       "a silver sequin top and trousers",
       "an emerald blouse and leather skirt",
       "a fitted beige knit midi dress",
-      "a halter top and a midi skirt",
+      "a halter top and a knit midi skirt",
       "a navy wrap dress",
       "an off-shoulder top and jeans",
     ]);

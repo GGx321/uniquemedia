@@ -84,14 +84,15 @@ describe("who takes the photo (I5.32: the capture decks, exact cycles)", () => {
     for (const moment of moments.filter((m) => /cheek on her hand|head on her hand/.test(m.text))) expect(moment.handAtFace, moment.text).toBe(true);
   });
 
-  test("the over-her-shoulder POV lies on the bed, feet up in platform sneakers, in leggings or lounge shorts", () => {
+  // C3′: the lounge shorts name their fabric (jersey), as every bank skirt and shorts does (an unnamed one is drawn as denim).
+  test("the over-her-shoulder POV lies on the bed, feet up in platform sneakers, in leggings or jersey lounge shorts", () => {
     const pov = BANKS.home.places.flatMap((p) => p.moments).filter((m) => m.captures.includes("over-shoulder"));
     expect(pov.length).toBeGreaterThanOrEqual(2);
     for (const moment of pov) {
       expect(BANKS.home.places.find((p) => p.moments.includes(moment))?.name).toBe("her bed");
       expect(moment.noLegwear).toBe(true);
       expect(moment.outfits?.length ?? 0).toBeGreaterThan(0);
-      for (const outfit of moment.outfits ?? []) expect(outfit).toMatch(/(leggings|lounge shorts).*platform sneakers/);
+      for (const outfit of moment.outfits ?? []) expect(outfit).toMatch(/(leggings|jersey shorts).*platform sneakers/);
     }
     for (const outfit of BANKS.home.outfits.filter((o) => /platform sneakers/.test(o.text))) expect(outfit.pinOnly).toBe(true);
   });
@@ -163,12 +164,16 @@ describe("what any content must keep", () => {
     for (const moment of shoulders) expect({ angle: moment.angle, gaze: moment.gaze }).toEqual({ angle: "three-quarter", gaze: "own" });
   });
 
+  // C3′: the grey lounge shorts name their fabric (jersey, an unnamed one is drawn as denim), never the refused «cotton».
   test("the prone selfie is drawn only in the outfits its probes drew (grey lounge shorts, grey leggings; cotton shorts were refused)", () => {
     const prone = moments("home").filter((m) => m.captures.includes("prone"));
     expect(prone.length).toBeGreaterThan(0);
     for (const moment of prone) {
       expect(moment.outfits?.length ?? 0).toBeGreaterThan(0);
-      for (const outfit of moment.outfits ?? []) expect(outfit).toMatch(/grey lounge shorts|grey leggings/);
+      for (const outfit of moment.outfits ?? []) {
+        expect(outfit).toMatch(/grey jersey lounge shorts|grey leggings/);
+        expect(outfit).not.toMatch(/cotton/);
+      }
     }
   });
 

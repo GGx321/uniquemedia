@@ -40,7 +40,7 @@ const STREET: BankPlace = {
 
 const BANK: CategoryBank = {
   places: [ROOM, STREET],
-  outfits: [{ text: "a grey lounge set" }, { text: "a cozy hoodie" }, { text: "grey lounge shorts and a fitted tee", showsLegs: true }],
+  outfits: [{ text: "a grey lounge set" }, { text: "a cozy hoodie" }, { text: "grey jersey lounge shorts and a tee", showsLegs: true }],
   legwear: { items: ["white knee-high socks", "sheer black tights"], share: 0.4 },
   captureDeck: ["mirror-hidden", "mirror", "timer", "friend", "selfie", "candid"],
 };
@@ -147,9 +147,9 @@ describe("a category bank", () => {
 
   test("a moment may pin outfits of its category, name a start pose, stand by an object and be a legs moment with a legs capture", () => {
     const rich: Moment[] = [
-      { ...plain, outfits: ["grey lounge shorts and a fitted tee"], startPose: "lying flat on her stomach" },
+      { ...plain, outfits: ["grey jersey lounge shorts and a tee"], startPose: "lying flat on her stomach" },
       { ...plain, text: "leans on the lamppost", object: true },
-      { ...plain, text: "stretches her legs out on the bed", captures: ["pov-legs", "mirror-hidden"], outfits: ["grey lounge shorts and a fitted tee"], legs: { framing: "legs" } },
+      { ...plain, text: "stretches her legs out on the bed", captures: ["pov-legs", "mirror-hidden"], outfits: ["grey jersey lounge shorts and a tee"], legs: { framing: "legs" } },
       { ...plain, text: "lies on her back, legs up", noLegwear: true },
       { ...plain, text: "sits on the rug in her slippers", noLegwear: true },
       { ...plain, text: "lies on her back, knees up", outfits: ["a tee and platform sneakers"] },
@@ -201,6 +201,12 @@ describe("a category bank", () => {
     ["legwear on more than every slot", { ...BANK, legwear: { items: ["sheer black tights"], share: 1.5 } }, BANK_RULE.legwear],
     ["legwear with no outfit that shows her legs", { ...BANK, outfits: [{ text: "a grey lounge set" }] }, BANK_RULE.legwear],
     ["a pin-only outfit no moment pins (it could never be drawn)", { ...BANK, outfits: [...BANK.outfits, { text: "a tee and platform sneakers", pinOnly: true }] }, BANK_RULE.pinOnly],
+    // C3′: Grok draws a skirt or shorts named without its fabric as denim (R3#03 «a hoodie, a mini skirt and sneakers», R4#04 «a tank top and shorts»).
+    ["a mini skirt named without its fabric (C3′: drawn as denim)", { ...BANK, outfits: [...BANK.outfits, { text: "a hoodie, a mini skirt and sneakers", showsLegs: true }] }, BANK_RULE.bottomFabric],
+    ["shorts named without their fabric", { ...BANK, outfits: [...BANK.outfits, { text: "a tank top and shorts", showsLegs: true }] }, BANK_RULE.bottomFabric],
+    ["a pleated mini of no fabric", { ...BANK, outfits: [...BANK.outfits, { text: "a pleated mini and a fitted top", showsLegs: true }] }, BANK_RULE.bottomFabric],
+    ["lounge shorts of no fabric", { ...BANK, outfits: [...BANK.outfits, { text: "a ribbed tank and lounge shorts", showsLegs: true }] }, BANK_RULE.bottomFabric],
+    ["a skort of no fabric", { ...BANK, outfits: [...BANK.outfits, { text: "a tee and a skort", showsLegs: true }] }, BANK_RULE.bottomFabric],
   ];
 
   test.each(PLACE_ROWS)("refuses %s", (_name, bank, rule) => {
@@ -214,10 +220,15 @@ describe("a category bank", () => {
 
   // K-17 (the owner's references reverse the old curation): these pass now; striped thigh-highs, plush toys, gaming props, pigtails, two braids and
   // space buns stay out (the rows above and the hairstyle rows below).
+  test("C3′: a skirt, shorts or skort that names its fabric is valid, before or after the garment", () => {
+    const named = ["a hoodie, a knit mini and sneakers", "a tank top and cotton sleep shorts", "a crop hoodie and lycra bike shorts", "a tee and a skirt in light linen", "a sequin mini skirt and a crop top"];
+    expect(categoryBankProblems({ ...BANK, outfits: [...BANK.outfits, ...named.map((text) => ({ text, showsLegs: true as const }))] }, "home")).toEqual([]);
+  });
+
   test("K-17: knee-high socks, thigh-high socks and a pleated mini skirt are allowed", () => {
     const bank: CategoryBank = {
       ...BANK,
-      outfits: [...BANK.outfits, { text: "a pleated mini skirt and fitted top", showsLegs: true }],
+      outfits: [...BANK.outfits, { text: "a pleated wool mini skirt and a top", showsLegs: true }],
       legwear: { items: ["white knee-high socks", "black knee-high socks", "thigh-high socks", "sheer black tights"], share: 0.4 },
     };
     expect(categoryBankProblems(bank, "home")).toEqual([]);

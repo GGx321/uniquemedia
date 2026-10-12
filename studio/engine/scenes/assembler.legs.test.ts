@@ -180,7 +180,7 @@ describe("feet render and stockings are refused", () => {
     expect(found).toBeDefined();
     if (found === undefined) return;
     // On an outfit that shows her legs (the moment also pins pajamas that do not, and those take no legwear).
-    const slot = { ...found, outfit: "a crop top and pajama shorts" };
+    const slot = { ...found, outfit: "a crop top and cotton pajama shorts" };
     expect(templateSentence({ ...slot, legwear: "black stockings" }, { key: "k" })).toBeNull();
     expect(templateSentence({ ...slot, legwear: "sheer black tights" }, { key: "k" })).not.toBeNull();
   });

@@ -413,7 +413,7 @@ describe("a hand at her face takes no hand cue", () => {
 
   test("a prone moment tagged handAtFace never draws one, over 200 keys", () => {
     const { place, moment } = find("home", (p) => p.name === "her bed", (m) => m.handAtFace === true && m.captures.includes("prone"));
-    const slot: TemplateSlot = { category: "home", location: place.name, activity: moment.text, outfit: "grey lounge shorts and a fitted tee", shot: "selfie", capture: "prone", pose: "front" };
+    const slot: TemplateSlot = { category: "home", location: place.name, activity: moment.text, outfit: "grey jersey lounge shorts and a tee", shot: "selfie", capture: "prone", pose: "front" };
     const sentences = Array.from({ length: 200 }, (_, i) => templateSentence(slot, { key: `run-${i}:slot-1` }) ?? "");
     expect(sentences.every((sentence) => sentence !== "")).toBe(true);
     for (const sentence of sentences) for (const cue of HAND_CUES) expect(sentence).not.toContain(cue);
@@ -421,7 +421,7 @@ describe("a hand at her face takes no hand cue", () => {
 
   test("an untagged prone moment does draw them (the exclusion is the tag's, not a blanket)", () => {
     const { place, moment } = find("home", (p) => p.name === "her bed", (m) => m.handAtFace !== true && m.captures.includes("prone"));
-    const slot: TemplateSlot = { category: "home", location: place.name, activity: moment.text, outfit: "grey lounge shorts and a fitted tee", shot: "selfie", capture: "prone", pose: "front" };
+    const slot: TemplateSlot = { category: "home", location: place.name, activity: moment.text, outfit: "grey jersey lounge shorts and a tee", shot: "selfie", capture: "prone", pose: "front" };
     const all = Array.from({ length: 200 }, (_, i) => templateSentence(slot, { key: `run-${i}:slot-1` }) ?? "").join(" ");
     expect(HAND_CUES.some((cue) => all.includes(cue))).toBe(true);
   });

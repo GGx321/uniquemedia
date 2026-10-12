@@ -7,23 +7,24 @@ import type { CategoryBank } from "./types";
 // in tights and boots, and bikinis were refused by Grok and wait for «Смелая» (5a.3).
 
 /** The prone selfie's outfits: Grok drew it in grey lounge shorts and in grey leggings and refused it in cotton shorts (the probes), so every
- *  moment that lies on her stomach pins these. S5.6R: and wears no legwear (`noLegwear`): the approved prone frames had bare legs. */
-const PRONE_OUTFIT = "grey lounge shorts and a fitted tee";
+ *  moment that lies on her stomach pins these. S5.6R: and wears no legwear (`noLegwear`): the approved prone frames had bare legs. C3′: every skirt and
+ *  shorts names its fabric (an unnamed one is drawn as denim), so the lounge shorts are jersey, never «cotton» (the refused wording); C4 checks the prone frames again. */
+const PRONE_OUTFIT = "grey jersey lounge shorts and a tee";
 const LEGGINGS = "grey leggings and a cropped tee";
 const PRONE = [PRONE_OUTFIT, LEGGINGS];
 /** The over-her-shoulder POV's outfits: her feet raised in platform sneakers, in leggings or lounge shorts (the owner, 2026-10-11). */
-const SNEAKERS = ["grey leggings and platform sneakers", "lounge shorts and platform sneakers"];
+const SNEAKERS = ["grey leggings and platform sneakers", "jersey shorts and platform sneakers"];
 /** The bathroom counter mirror selfie's outfit, as the owner approved it. */
 const OPEN_BACK = "an open-back top and grey jeans";
 /** S5.6R: what she wears on her way out (the hallway's going-out moments pin these): never pajamas, lounge shorts or leggings. */
 const GOING_OUT_DRESS = "a knit midi dress and ankle boots";
-const GOING_OUT = [OPEN_BACK, "a pleated mini and a fitted top", GOING_OUT_DRESS];
+const GOING_OUT = [OPEN_BACK, "a pleated wool mini skirt and a top", GOING_OUT_DRESS];
 /**
  * S5.8a review: a low angle under a mini reads as an upskirt shot, so the legs moments wear shorts, trousers, leggings or joggers, never the mini or the tee or sweater worn as a dress.
  * The bedroom's (toward the mirror, along the bed) are pajamas and shorts; the bed's may also wear the lounge shorts and leggings that only the bed pins.
  */
-const LEGS_BEDROOM = ["a crop top and pajama shorts", "silk pajamas", "linen shorts and a fitted tee", "soft joggers and a cropped tee", "a tank top and cotton sleep shorts", "a cropped hoodie and bike shorts", "a ribbed tank and lounge shorts", "a loose tee and cycling shorts"];
-const LEGS_BED = ["a crop top and pajama shorts", PRONE_OUTFIT, LEGGINGS, "soft joggers and a cropped tee", "a tank top and cotton sleep shorts", "a cropped hoodie and bike shorts", "a ribbed tank and lounge shorts", "a loose tee and cycling shorts"];
+const LEGS_BEDROOM = ["a crop top and cotton pajama shorts", "silk pajamas", "linen shorts and a fitted tee", "soft joggers and a cropped tee", "a tank top and cotton sleep shorts", "a crop hoodie and lycra bike shorts", "a ribbed tank, knit lounge shorts", "a loose tee and cotton gym shorts"];
+const LEGS_BED = ["a crop top and cotton pajama shorts", PRONE_OUTFIT, LEGGINGS, "soft joggers and a cropped tee", "a tank top and cotton sleep shorts", "a crop hoodie and lycra bike shorts", "a ribbed tank, knit lounge shorts", "a loose tee and cotton gym shorts"];
 
 export const HOME: CategoryBank = {
   places: [
@@ -160,20 +161,20 @@ export const HOME: CategoryBank = {
   outfits: [
     { text: "an oversized tee off one shoulder", showsLegs: true },
     { text: "an oversized sweater as a dress", showsLegs: true },
-    { text: "a crop top and pajama shorts", showsLegs: true },
-    { text: "a pleated mini and a fitted top", showsLegs: true },
+    { text: "a crop top and cotton pajama shorts", showsLegs: true },
+    { text: "a pleated wool mini skirt and a top", showsLegs: true },
     { text: "silk pajamas" },
     { text: PRONE_OUTFIT, showsLegs: true },
     { text: LEGGINGS },
     { text: OPEN_BACK },
     { text: "grey leggings and platform sneakers", pinOnly: true },
-    { text: "lounge shorts and platform sneakers", showsLegs: true, pinOnly: true },
+    { text: "jersey shorts and platform sneakers", showsLegs: true, pinOnly: true },
     { text: "linen shorts and a fitted tee", showsLegs: true, pinOnly: true },
     { text: "soft joggers and a cropped tee", pinOnly: true },
     { text: "a tank top and cotton sleep shorts", showsLegs: true, pinOnly: true },
-    { text: "a cropped hoodie and bike shorts", showsLegs: true, pinOnly: true },
-    { text: "a ribbed tank and lounge shorts", showsLegs: true, pinOnly: true },
-    { text: "a loose tee and cycling shorts", showsLegs: true, pinOnly: true },
+    { text: "a crop hoodie and lycra bike shorts", showsLegs: true, pinOnly: true },
+    { text: "a ribbed tank, knit lounge shorts", showsLegs: true, pinOnly: true },
+    { text: "a loose tee and cotton gym shorts", showsLegs: true, pinOnly: true },
     { text: GOING_OUT_DRESS, pinOnly: true },
   ],
   legwear: { items: ["white knee-high socks", "black knee-high socks", "thigh-high socks", "sheer black tights"], share: 0.4 },

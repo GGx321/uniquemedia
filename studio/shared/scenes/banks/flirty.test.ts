@@ -21,7 +21,7 @@ describe("the flirty moments", () => {
     expect(found?.moment.captures).toEqual(["prone"]);
     expect(found?.moment.motion).toBe("her raised feet swing slowly behind her");
     expect(found?.moment.noLegwear).toBe(true);
-    expect(found?.moment.outfits).toEqual(["grey lounge shorts and a fitted tee", "grey leggings and a cropped tee"]);
+    expect(found?.moment.outfits).toEqual(["grey jersey lounge shorts and a tee", "grey leggings and a cropped tee"]);
   });
 
   test("hugging her knees is a timer frame on her bed, with both hands busy", () => {

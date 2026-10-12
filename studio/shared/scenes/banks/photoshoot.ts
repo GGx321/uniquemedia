@@ -87,7 +87,7 @@ export const PHOTOSHOOT: CategoryBank = {
   outfits: [
     { text: "a fitted mini dress", showsLegs: true },
     { text: "a mini dress with thin straps", showsLegs: true },
-    { text: "a hoodie, a mini skirt and sneakers", showsLegs: true },
+    { text: "a hoodie, knit mini skirt, sneakers", showsLegs: true },
     { text: "a denim jacket and jeans" },
     { text: "a red mini dress", showsLegs: true },
     { text: "cropped trousers and a fitted top", pinOnly: true },

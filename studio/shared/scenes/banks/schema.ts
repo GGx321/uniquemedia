@@ -24,6 +24,7 @@ import {
   MOTION_STAGING,
   PHONE_WORDS,
   SELFIE_WORDS,
+  unfabricBottomsIn,
   VIEWER_GAZE,
   YOUTH_PROPS,
 } from "../words";
@@ -81,6 +82,7 @@ export const BANK_RULE = {
   deckCoverage: "deck-coverage",
   legwear: "legwear",
   denim: "denim",
+  bottomFabric: "bottom-fabric",
   glamourBed: "glamour-bed",
   gazeGrammar: "gaze-grammar",
   gazePhone: "gaze-phone",
@@ -271,6 +273,8 @@ function categoryBankSchema(category: BankCategory) {
       bank.outfits.forEach((outfit, i) => {
         checkText(add, `outfits[${i}]`, outfit.text);
         if (isOwnerBannedOutfit(outfit.text)) add(BANK_RULE.denim, `outfits[${i}]`, "no denim shorts and no denim skirts (the owner)");
+        // C3′: Grok draws a skirt or shorts named without its fabric as denim (R3#03, R4#04); the probe drew none once the outfit named one.
+        if (unfabricBottomsIn(outfit.text).length > 0) add(BANK_RULE.bottomFabric, `outfits[${i}]`, `«${outfit.text}» names a skirt, shorts or skort without its fabric, which Grok draws as denim: name it («a knit mini», «cotton sleep shorts»)`);
         if (outfit.showsLegs === true && LEG_COVERING_OUTFIT.test(outfit.text)) add(BANK_RULE.legwear, `outfits[${i}]`, `«${outfit.text}» covers her legs, so it does not show them: no socks or tights go over trousers, jeans, joggers or leggings`);
       });
       if (bank.legwear !== undefined) {

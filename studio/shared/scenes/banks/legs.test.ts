@@ -249,7 +249,7 @@ describe("a low angle under a mini reads as an upskirt shot", () => {
   });
 
   test("a bank whose legs moment pins a mini dress is refused at load", () => {
-    const home = { ...BANKS.home, places: BANKS.home.places.map((p) => ({ ...p, moments: p.moments.map((m) => (m.text === "lies with her bare feet forward" ? { ...m, outfits: ["a pleated mini and a fitted top"] } : m)) })) };
+    const home = { ...BANKS.home, places: BANKS.home.places.map((p) => ({ ...p, moments: p.moments.map((m) => (m.text === "lies with her bare feet forward" ? { ...m, outfits: ["a pleated wool mini skirt and a top"] } : m)) })) };
     expect(categoryBankProblems(home, "home").join("\n")).toMatch(/\[legs-outfit\]/);
   });
 

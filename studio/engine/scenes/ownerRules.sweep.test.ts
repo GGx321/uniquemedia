@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { youthWords, type AvatarDescriptor } from "../../shared/engine";
-import { DRESS_LENGTH, DRESS_OR_SKIRT, isOwnerBannedOutfit, LEGS_UNSUITED_OUTFITS, YOUTH_PROPS } from "../../shared/scenes/words";
+import { DRESS_LENGTH, DRESS_OR_SKIRT, isOwnerBannedOutfit, LEGS_UNSUITED_OUTFITS, unfabricBottomsIn, YOUTH_PROPS } from "../../shared/scenes/words";
 import { BANKS, CUES, GAZE, HAIRSTYLES } from "../../shared/scenes/banks";
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { plainSentence } from "../../shared/scenes/plain";
@@ -290,7 +290,7 @@ describe("«Кокетливая» plans keep the owner's rules (S5.7b)", () => 
     expect(offenders(FLIRTY.home, (f) => f.slot.location !== "her bed" && /^lies\b/.test(f.slot.activity) && shotOf(f.capture) === "mirror")).toEqual(NONE);
     const prone = FLIRTY.home.filter((f) => onFlirtyMoment(f) && /\bstomach\b/.test(f.slot.activity));
     expect(prone.length).toBeGreaterThan(FLIRTY_PLANS / 10);
-    expect(offenders(prone, (f) => f.slot.location !== "her bed" || f.slot.legwear !== undefined || !["grey lounge shorts and a fitted tee", "grey leggings and a cropped tee"].includes(f.slot.outfit))).toEqual(NONE);
+    expect(offenders(prone, (f) => f.slot.location !== "her bed" || f.slot.legwear !== undefined || !["grey jersey lounge shorts and a tee", "grey leggings and a cropped tee"].includes(f.slot.outfit))).toEqual(NONE);
   });
 
   test("at home she shoots herself: no flirty «Дом» frame is a friend's, nor a flirty home workout or getting-ready frame", () => {
@@ -526,6 +526,26 @@ describe("C3′: a look down her own legs is a first-person photo from her eyes"
 
   test("the line leaves her feet to the moment: no pov-legs prompt puts socks on a barefoot moment", () => {
     expect(offenders(pov, (f) => /\bbare\b/.test(f.slot.activity) && /\bsock/.test(f.prompt()))).toEqual(NONE);
+  });
+});
+
+describe("C3′: no built-in skirt or shorts is left for Grok to draw as denim", () => {
+  // An unnamed «a mini skirt» (R3#03) or «shorts» came out as DENIM; the probe drew none once the outfit named a fabric.
+  const BOTTOMS = /\b(?:skirts?|shorts|skorts?|minis?)\b(?![- ]dress)/;
+  const wearing = C3_ALL.filter((f) => BOTTOMS.test(f.slot.outfit));
+
+  test("the sweep holds skirts or shorts in every category's frames", () => {
+    expect([...new Set(wearing.map((f) => f.slot.category))].sort()).toEqual([...CATEGORIES].sort());
+  });
+
+  test("every skirt, shorts or skort a built-in frame wears names its fabric", () => {
+    expect(offenders(wearing, (f) => unfabricBottomsIn(f.slot.outfit).length > 0)).toEqual(NONE);
+  });
+
+  test("so no built-in prompt needs the not-denim clause, and none names denim at all", () => {
+    const sample = wearing.filter((_, i) => i % 9 === 0);
+    expect(sample.length).toBeGreaterThan(2000);
+    expect(offenders(sample, (f) => /\bdenim\b/i.test(f.prompt()))).toEqual(NONE);
   });
 });
 

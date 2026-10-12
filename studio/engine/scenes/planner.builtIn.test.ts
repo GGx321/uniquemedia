@@ -197,7 +197,7 @@ describe("outfits: pinned and pin-only (plan r1.5, 22.3)", () => {
   test("the prone selfie draws only its pinned outfits", () => {
     const prone = plan({ seed: 8, count: 48, categories: ["home"] }).slots.filter((s) => captureOf(s) === "prone");
     expect(prone.length).toBeGreaterThan(0);
-    for (const slot of prone) expect(["grey lounge shorts and a fitted tee", "grey leggings and a cropped tee"]).toContain(slot.outfit);
+    for (const slot of prone) expect(["grey jersey lounge shorts and a tee", "grey leggings and a cropped tee"]).toContain(slot.outfit);
   });
 
   // Plan 22.3: only pin-only outfits leave the general draw; an outfit some moment pins (the prone lounge shorts) is still a general outfit for the others.
@@ -299,7 +299,7 @@ describe("recent (place, moment) pairs are avoided softly (I5.24)", () => {
   });
 
   test("a history line with no moment (written before 5a.2) reads as it always did", () => {
-    const slots = plan({ seed: 2, count: 6, categories: ["photoshoot"], excludePairs: [{ location: "a busy road", outfit: "a hoodie, a mini skirt and sneakers" }] }).slots;
+    const slots = plan({ seed: 2, count: 6, categories: ["photoshoot"], excludePairs: [{ location: "a busy road", outfit: "a hoodie, knit mini skirt, sneakers" }] }).slots;
     expect(slots).toHaveLength(6);
   });
 });
