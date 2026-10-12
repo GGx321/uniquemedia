@@ -155,3 +155,49 @@ describe("camera realism on a custom category", () => {
     for (const field of [bounds.location, bounds.activity, bounds.outfit, bounds.timeOfDay]) expect(prompt).not.toContain(field);
   });
 });
+
+// C3′ (the owner's verdict, 2026-10-12): Grok drew the owner's «В домашнем» «a tank top and shorts» (R4#04) and «Улица»'s «a hoodie, a mini skirt and sneakers» (R3#03) as
+// DENIM. The banks now name every fabric; a custom pool's outfit, the writer's and an idea's may still not, so the assembled prompt says the probe's «her shorts are not
+// denim» (c3fix 3a, drawn without denim) right after the outfit, or as a sentence of its own when the outfit is not there word for word. The stored sentence is untouched.
+describe("C3′: an outfit that names a skirt or shorts without its fabric is said not to be denim", () => {
+  const promptOf = (sentence: string, overrides: Partial<PlanSlot> = {}): string => assembleSlot(DESCRIPTOR, slot(overrides), sentence, MASTER).prompt;
+
+  test("the owner's custom «a tank top and shorts» (R4#04): the clause follows the outfit in the template's sentence", () => {
+    const sentence = "In her bedroom by the window, she is holding her coffee, wearing a tank top and shorts, her eyes lowered, a wide, easy grin.";
+    expect(promptOf(sentence, { outfit: "a tank top and shorts" })).toContain("wearing a tank top and shorts, her shorts are not denim, her eyes lowered, a wide, easy grin.");
+  });
+
+  test("an outfit with commas of its own (R3#03): the clause follows the whole outfit, as the probe sent it", () => {
+    const sentence = "On a colourful side street, she looks back over her shoulder, wearing a hoodie, a mini skirt and sneakers, a small, easy smile, with a bicycle by the curb.";
+    expect(promptOf(sentence, { outfit: "a hoodie, a mini skirt and sneakers" })).toContain("wearing a hoodie, a mini skirt and sneakers, her skirt is not denim, a small, easy smile,");
+  });
+
+  test("an outfit that runs on with legwear takes the clause after the legwear", () => {
+    expect(promptOf("In her room, she is stretching, wearing a tee and shorts with white socks, smiling.", { outfit: "a tee and shorts" })).toContain(
+      "wearing a tee and shorts with white socks, her shorts are not denim, smiling.",
+    );
+  });
+
+  test("the writer's own wording of the outfit: the clause is a sentence of its own after the scene's", () => {
+    const prompt = promptOf("She stands by the window in a tank top and soft shorts, laughing.", { outfit: "a tank top and shorts" });
+    expect(prompt).toContain("She stands by the window in a tank top and soft shorts, laughing. Her shorts are not denim. ");
+  });
+
+  test("an idea's own scene (no stored outfit) names a mini skirt: the clause is a sentence of its own", () => {
+    const own: OwnPlanSlot = { kind: "own", slotIndex: 2, category: "own", shot: "friend", pose: "front", attemptIdBase: "slot-2", sentence: "She sits on the pier in a striped tee and a mini skirt." };
+    expect(assembleSlot(DESCRIPTOR, own, own.sentence, MASTER).prompt).toContain("She sits on the pier in a striped tee and a mini skirt. Her skirt is not denim. ");
+  });
+
+  test("an outfit that names its fabric, or no skirt or shorts at all, gets no clause", () => {
+    expect(promptOf("On a bridge, she is leaning on the railing, wearing a tank top and cotton shorts, smiling.", { outfit: "a tank top and cotton shorts" })).not.toContain("denim");
+    expect(promptOf(SENTENCE)).not.toContain("not denim");
+    expect(promptOf("On a bridge, she is leaning on the railing, wearing a beige trench coat and jeans.")).not.toContain("not denim");
+  });
+
+  test("the sentence the writer or the template stored is the one the scene keeps: only the prompt says it", () => {
+    const sentence = "In her bedroom by the window, she is holding her coffee, wearing a tank top and shorts, smiling.";
+    const [result] = assembleRun(DESCRIPTOR, { slots: [slot({ outfit: "a tank top and shorts" })] }, new Map([[1, sentence]]), MASTER, OPTIONS);
+    expect(result?.ok === true ? result.prompt : "").toContain("her shorts are not denim");
+    expect(sentence).not.toContain("denim");
+  });
+});

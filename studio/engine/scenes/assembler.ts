@@ -2,7 +2,7 @@ import { youthWords, type AvatarDescriptor } from "../../shared/engine";
 import { promptSubject } from "../avatars/prompts";
 import type { LibraryReference } from "../library/media";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
-import { FEET_MOMENT_WORDS } from "../../shared/scenes/words";
+import { FEET_MOMENT_WORDS, notDenimClause, unfabricBottomsIn } from "../../shared/scenes/words";
 import { artefactLine, captureLineOf, CONSTRAINTS, hairLine, imperfectionOf, isLampMood, lightOf, MIRROR_BACK_LINE, phoneHandLineOf, roomStateOf, slotKeyOf, type RoomPlace } from "./phoneLook";
 import type { SlotLook } from "./roomPlace";
 import { revealingWordsIn } from "./words";
@@ -142,6 +142,26 @@ function field(text: string): string {
   return text.trim().replace(/[\s.,;:!]+$/, "");
 }
 
+const capitalise = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+
+/**
+ * C3′ (the owner's verdict, 2026-10-12): Grok draws a skirt or shorts named without its fabric as denim. The banks name every fabric (banks/schema.ts); a custom
+ * pool's outfit, the writer's and an idea's may not, so the prompt says the probe's «her shorts are not denim» (c3fix 3a): right after the slot's outfit and
+ * whatever runs on with it (« with {legwear}») when the sentence carries it word for word, else as a sentence of its own after the scene's. The stored sentence
+ * is untouched; only the prompt says it.
+ */
+function withNotDenim(sentence: string, outfit: string | undefined): string {
+  const bottoms = unfabricBottomsIn(sentence);
+  if (bottoms.length === 0) return sentence;
+  const clause = notDenimClause(bottoms);
+  const at = outfit === undefined || unfabricBottomsIn(outfit).length === 0 ? -1 : sentence.indexOf(outfit);
+  if (outfit === undefined || at < 0) return `${sentence}. ${capitalise(clause)}`;
+  const rest = sentence.slice(at + outfit.length);
+  const runOn = rest.search(/[,.;]/);
+  const end = at + outfit.length + (runOn < 0 ? rest.length : runOn);
+  return `${sentence.slice(0, end)}, ${clause}${sentence.slice(end)}`;
+}
+
 function normalize(text: string): string {
   return text
     .replace(STOP_WORDS, "")
@@ -218,8 +238,9 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, senten
   const bindingAnchor = faceless ? NO_FACE_ANCHOR : BINDING_ANCHOR[slot.pose];
   // S5.6R: a friend's photo of a moment about her feet shows her whole body (an own scene has no stored moment: the line its key draws).
   const wholeBody = !isOwnSlot(slot) && FEET_MOMENT_WORDS.test(slot.activity);
+  const scene = withNotDenim(field(sentence), isOwnSlot(slot) ? undefined : slot.outfit);
   const raw =
-    `${captureLineOf(capture, key, { wholeBody })} ${look?.mirrorBack === true ? `${MIRROR_BACK_LINE} ` : ""}${posePhrase}. ${field(sentence)}. ` +
+    `${captureLineOf(capture, key, { wholeBody })} ${look?.mirrorBack === true ? `${MIRROR_BACK_LINE} ` : ""}${posePhrase}. ${scene}. ` +
     (room === null ? "" : `${room} `) +
     `${BINDING} ${bindingAnchor}${descriptor.body !== undefined && (legs || BODY_BINDING_CAPTURES.includes(capture)) ? BODY_BINDING : ""}; ${anchor}. ` +
     (hairStyle === null ? "" : `${hairLine(hairStyle)} `) +
