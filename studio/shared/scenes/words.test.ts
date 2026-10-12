@@ -15,7 +15,8 @@ describe("unfabricBottomsIn: a skirt, shorts or a skort named without its fabric
     ["a cropped hoodie and bike shorts", ["shorts"]],
     ["a black pleated mini skirt", ["skirt"]],
     ["a tee and hot pants", ["shorts"]],
-    ["a tee and bermudas", ["shorts"]],
+    ["a tee and bermuda shorts", ["shorts"]],
+    ["a knit top and a mini, a tee", ["skirt"]],
     ["a halter top and a midi skirt, and lounge shorts", ["skirt", "shorts"]],
     ["On a terrace, she is reading, wearing a linen shirt and shorts, smiling.", ["shorts"]],
   ])("«%s» leaves %p unnamed", (text, bottoms) => {
@@ -45,6 +46,15 @@ describe("unfabricBottomsIn: a skirt, shorts or a skort named without its fabric
   test.each(["a tee and denim shorts", "a denim mini skirt", "a skirt in light denim", "jean shorts and a tee"])("denim «%s» is the owner's ban, not an unnamed bottom", (text) => {
     expect(unfabricBottomsIn(text)).toEqual([]);
     expect(isOwnerBannedOutfit(text)).toBe(true);
+  });
+
+  // Review (C3′ round 2): «mini» before a noun of its own is no skirt, and «Bermuda» alone no shorts, so a sentence about mini golf never says her skirt is not denim.
+  test.each(["playing mini golf", "a tee and a mini bag", "carrying a mini backpack", "holding a mini cup", "on a beach in Bermuda", "a tee and bermudas"])("«%s» names no bottom", (text) => {
+    expect(unfabricBottomsIn(text)).toEqual([]);
+  });
+
+  test.each(["a mini skirt (not denim) and a tee", "a tank top and shorts, not denim", "a mini skirt, not denim, and a tee"])("«%s» already says it is not denim: named", (text) => {
+    expect(unfabricBottomsIn(text)).toEqual([]);
   });
 
   test("a bottom the text already says is not denim is named", () => {

@@ -223,6 +223,30 @@ describe("C3′: an outfit that names a skirt or shorts without its fabric is sa
     expect(promptOf("On a bridge, she is leaning on the railing, wearing a beige trench coat and jeans.")).not.toContain("not denim");
   });
 
+  // Review (C3′ round 2): the clause read the whole scene sentence, so «mini golf» or «a mini backpack» made her skirt not denim.
+  test("a slot with a stored outfit is judged by its outfit alone: mini golf in trousers gets no clause", () => {
+    expect(promptOf("On a sunny green, she is playing mini golf, wearing a tee and trousers.", { outfit: "a tee and trousers" })).not.toContain("denim");
+    expect(promptOf("By the lake, she is carrying a mini backpack, wearing a striped tee and chinos.", { outfit: "a striped tee and chinos" })).not.toContain("denim");
+  });
+
+  test("a stored outfit with bare shorts takes the clause once, whatever else the sentence names", () => {
+    const prompt = promptOf("By the lake, she is carrying a mini backpack, wearing a tee and shorts, smiling.", { outfit: "a tee and shorts" });
+    expect(prompt).toContain("wearing a tee and shorts, her shorts are not denim, smiling.");
+    expect(prompt.split("not denim").length - 1).toBe(1);
+  });
+
+  test("an idea's own scene about mini golf in Bermuda names no bottom: no clause", () => {
+    const own: OwnPlanSlot = { kind: "own", slotIndex: 2, category: "own", shot: "friend", pose: "front", attemptIdBase: "slot-2", sentence: "She is playing mini golf in Bermuda in a tee and trousers." };
+    expect(assembleSlot(DESCRIPTOR, own, own.sentence, MASTER).prompt).not.toContain("denim");
+  });
+
+  test("an outfit that already says it is not denim is not told twice", () => {
+    for (const outfit of ["a mini skirt (not denim) and a tee", "a tank top and shorts, not denim"]) {
+      const prompt = promptOf(`On a bridge, she is leaning on the railing, wearing ${outfit}, smiling.`, { outfit });
+      expect(prompt.split("not denim").length - 1, outfit).toBe(1);
+    }
+  });
+
   test("the sentence the writer or the template stored is the one the scene keeps: only the prompt says it", () => {
     const sentence = "In her bedroom by the window, she is holding her coffee, wearing a tank top and shorts, smiling.";
     const [result] = assembleRun(DESCRIPTOR, { slots: [slot({ outfit: "a tank top and shorts" })] }, new Map([[1, sentence]]), MASTER, OPTIONS);

@@ -146,13 +146,26 @@ const MADE_OF = new Set(["in", "of", "from", "made"]);
 /** How far a garment's own words reach on either side of its noun. */
 const GARMENT_WORDS_MAX = 4;
 
-/** The bottom a token names, or null. «mini» alone is a skirt («a pleated mini»), never the «mini» of «a mini dress» or «a mini skirt» (the next token names it). */
+/** What may follow a «mini» that is itself the garment: the end, a mark, or a word that joins it to the next one («a pleated mini and a top»). */
+const AFTER_A_GARMENT = new Set(["and", "or", "with", "over", "under", "plus", "in", "on", "at", "by", "for", "from", "while", "worn", "paired", "tucked", "layered"]);
+
+/**
+ * The bottom a token names, or null. «mini» alone is a skirt only when no noun of its own follows («a pleated mini and a top»): «mini skirt» counts once, at «skirt»,
+ * and «mini dress», «mini golf», «mini bag» are none. Shorts are «shorts» (so «bermuda shorts», never «Bermuda» alone, the place).
+ */
 function bottomOf(token: string, next: string | undefined): Bottom | null {
   if (/^(?:(?:mini-?)?skirts?|miniskirts?)$/.test(token)) return "skirt";
-  if (/^minis?$/.test(token)) return next !== undefined && /^(?:dress(?:es)?|skirts?)$/.test(next) ? null : "skirt";
+  if (/^minis?$/.test(token)) return next === undefined || !/^[a-z0-9]/.test(next) || AFTER_A_GARMENT.has(next) ? "skirt" : null;
   if (/^skorts?$/.test(token)) return "skort";
-  if (token === "shorts" || /^bermudas?$/.test(token)) return "shorts";
+  if (token === "shorts") return "shorts";
   return null;
+}
+
+/** «not denim» right after a bottom, or after a comma or a bracket: «shorts, not denim», «a mini skirt (not denim)», «her shorts are not denim». */
+function saysNotDenim(tokens: readonly string[], after: number): boolean {
+  let k = after;
+  if (tokens[k] === "," || tokens[k] === "(" || tokens[k] === "is" || tokens[k] === "are") k++;
+  return tokens[k] === "not" && tokens[k + 1] === "denim";
 }
 
 const isWord = (token: string | undefined): token is string => token !== undefined && /^[a-z0-9]/.test(token);
@@ -192,8 +205,8 @@ export function unfabricBottomsIn(text: string): Bottom[] {
         own.push(word);
       }
     }
-    // «her shorts are not denim» (the clause itself): every one of that kind is named.
-    if (/^(?:is|are)$/.test(tokens[end + 1] ?? "") && tokens[end + 2] === "not" && tokens[end + 3] === "denim") {
+    // «her shorts are not denim» (the clause itself), «shorts, not denim», «a mini skirt (not denim)»: every one of that kind is named.
+    if (saysNotDenim(tokens, end + 1)) {
       saidNotDenim.add(kind);
       continue;
     }

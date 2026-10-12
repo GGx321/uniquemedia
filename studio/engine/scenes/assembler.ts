@@ -157,14 +157,15 @@ const capitalise = (text: string): string => text.charAt(0).toUpperCase() + text
 /**
  * C3′ (the owner's verdict, 2026-10-12): Grok draws a skirt or shorts named without its fabric as denim. The banks name every fabric (banks/schema.ts); a custom
  * pool's outfit, the writer's and an idea's may not, so the prompt says the probe's «her shorts are not denim» (c3fix 3a): right after the slot's outfit and
- * whatever runs on with it (« with {legwear}») when the sentence carries it word for word, else as a sentence of its own after the scene's. The stored sentence
- * is untouched; only the prompt says it.
+ * whatever runs on with it (« with {legwear}») when the sentence carries it word for word, else as a sentence of its own after the scene's. A slot with a stored
+ * outfit is judged by that outfit alone (review: «playing mini golf» elsewhere in the sentence is no skirt); an own scene, which stores none, by its sentence.
+ * The stored sentence is untouched; only the prompt says it.
  */
 function withNotDenim(sentence: string, outfit: string | undefined): string {
-  const bottoms = unfabricBottomsIn(sentence);
+  const bottoms = unfabricBottomsIn(outfit ?? sentence);
   if (bottoms.length === 0) return sentence;
   const clause = notDenimClause(bottoms);
-  const at = outfit === undefined || unfabricBottomsIn(outfit).length === 0 ? -1 : sentence.indexOf(outfit);
+  const at = outfit === undefined ? -1 : sentence.indexOf(outfit);
   if (outfit === undefined || at < 0) return `${sentence}. ${capitalise(clause)}`;
   const rest = sentence.slice(at + outfit.length);
   const runOn = rest.search(/[,.;]/);
