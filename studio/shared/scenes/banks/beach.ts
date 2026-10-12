@@ -62,7 +62,8 @@ export const BEACH: CategoryBank = {
         { text: "wrings out her wet hair", motion: "she squeezes her hair slowly", captures: ["friend", "timer", "candid"], twoHanded: true, hair: "own", water: true, outfits: IN_THE_WATER, outdoor: true },
         // «Ножки» (S5.8a, M5): her own look down along her legs.
         { text: "sits on the sand, legs out", motion: "she slowly buries her toes in the sand", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
-        { text: "crosses her ankles on the towel", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        // S5.R4 round 3: its motion was «Дом»'s and «Ночнушки»'s word for word.
+        { text: "crosses her ankles on the towel", motion: "she taps her crossed feet together slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
     {

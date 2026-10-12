@@ -52,8 +52,24 @@ export const POSE_FAMILIES: readonly (readonly [string, RegExp])[] = [
   ["in the waves", /\bwaves?\b/i],
   ["one knee bent", /\b(?:one|a) knee\b|\bknees?\s+(?:bent|up|drawn up)\b/i],
   ["a foot lifted", /\b(?:lifts?|raises?)\s+(?:one|a|her)\s+(?:bare\s+)?(?:foot|leg)\b/i],
+  ["her weight on one leg", /\bweight on one leg\b/i],
+  ["legs over the armrest", /\blegs? over the\b/i],
   ["legs crossed", /\bcross\w*\b/i],
   ["legs stretched out", /\bstretch\w*\b|\blegs?\s+(?:out|forward)\b|\bout straight\b/i],
 ];
 /** A legs moment's pose family, the first that its words name; undefined for a pose the list does not know. */
 export const poseFamilyOf = (text: string): string | undefined => POSE_FAMILIES.find(([, words]) => words.test(text))?.[0];
+
+/** S5.R4 round 3: the words that do not change a pose: articles, her, numbers, the adjectives of her feet, and the motion's pace words. */
+const SAME_POSE_WORDS = new Set(["a", "an", "the", "her", "his", "she", "one", "two", "bare", "socked", "little", "bit", "slowly", "slightly", "gently", "small"]);
+/** A word's stem, roughly: «crosses», «crossed» and «crossing» are one word, and «feet» is «foot». */
+const stemOf = (word: string): string => (word === "feet" ? "foot" : word.replace(/(?:es|ed|ing|s)$/, ""));
+
+/**
+ * S5.R4 round 3: a text as a pose, for comparing moments across banks: its words, lower-cased, stemmed and sorted, without the words that do not change the pose. «lifts one foot to
+ * the mirror» and «lifts one bare foot to the mirror» read the same; «sits on the sand, legs out» and «sits on the grass, legs out» do not (another place is another photo).
+ */
+export function poseWordsOf(text: string): string {
+  const words = (text.toLowerCase().match(/[a-z]+/g) ?? []).filter((w) => !SAME_POSE_WORDS.has(w)).map(stemOf);
+  return [...new Set(words)].sort().join(" ");
+}

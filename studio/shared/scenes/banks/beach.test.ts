@@ -229,7 +229,8 @@ describe("the legs moments (plan §6.3, M5): her own look down along her legs, n
     // S5.R4 round 2: «stretches her legs on the lounger» was «sits on the sand, legs out» again.
     ["a hotel pool", "lies on the lounger, one knee bent", false, "she sways her bent knee slowly"],
     ["the beach", "sits on the sand, legs out", false, "she slowly buries her toes in the sand"],
-    ["the beach", "crosses her ankles on the towel", false, "she crosses and uncrosses her ankles slowly"],
+    // S5.R4 round 3: its motion was «Дом»'s and «Ночнушки»'s word for word.
+    ["the beach", "crosses her ankles on the towel", false, "she taps her crossed feet together slowly"],
     ["a rooftop pool", "dangles her feet in the water", true, "she dips her toes in the water slowly"],
     // S5.R4: three more, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one; round 2: each a pose of its own.
     ["the water's edge", "lets the waves wash over her feet", true, "she wiggles her toes in the foam slowly"],

@@ -123,7 +123,8 @@ export const NIGHTWEAR: CategoryBank = {
           coverage: "The white sheet is held up to her chest and fully covers her breasts and her hips.",
         },
         // «Ножки» (S5.8a, M5): a look down along her own legs.
-        { text: "lies with her legs crossed", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        // S5.R4 round 3: its motion was «Дом»'s and the beach's word for word.
+        { text: "lies with her legs crossed", motion: "she slides one ankle over the other slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
         // S5.R4: seven legs moments of seven poses, so the six legs slots of a 20-photo run at «Ножки» 30 % never show one pose twice (round 2: «legs stretched out» three times
         // over in other words was the same photo).
         { text: "lies on her side, one knee bent", motion: "she slides her top knee forward a little", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
@@ -169,7 +170,6 @@ export const NIGHTWEAR: CategoryBank = {
           outfits: ["a crop top and jeans"],
           coverage: "Her panties fully cover her bottom, and her crop top covers her chest.",
         },
-        { text: "lifts one foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
         { text: "stands on tiptoe by the mirror", motion: "she rises a little higher on her toes", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
         { text: "kneels in front of the mirror", motion: "she sinks back slowly onto her heels", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
@@ -185,6 +185,8 @@ export const NIGHTWEAR: CategoryBank = {
         { text: "brushes her hair", motion: "she draws the brush down slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "own" },
         { text: "leans on the edge of the tub", motion: "she leans back a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "fixes her hair in a clip", motion: "she pins her hair up slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "own" },
+        // S5.R4 round 3: in place of «lifts one foot to the mirror», which was «Дом»'s «lifts one bare foot to the mirror» with «Дом»'s motion.
+        { text: "stands with her weight on one leg", motion: "she shifts her weight to the other leg slowly", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
         { text: "pats on some face cream", motion: "she pats her cheek gently", captures: ["mirror"], twoHanded: false, gaze: "focus" },
         { text: "leans toward the mirror", motion: "she leans in a little closer", captures: ["mirror"], twoHanded: false, level: "flirty" },
         { text: "sits on the counter", motion: "she turns her head a little toward the mirror", captures: ["mirror-hidden"], twoHanded: false, angle: "three-quarter", mirrorBack: true, level: "bold", route: "seedream" },
@@ -206,9 +208,9 @@ export const NIGHTWEAR: CategoryBank = {
         { text: "sits back, knees together", motion: "she rocks a little in place", captures: ["mirror-hidden", "mirror"], twoHanded: false, level: "bold", route: "seedream" },
         // S5.R4 round 2: worded apart from «Фитнес»'s and «Дом»'s «sits with her legs stretched out»; the pose is the same.
         { text: "stretches out her legs", motion: "she points her toes slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
-        // C3′ R1#08 («странное фото»: her feet to the mirror): the owner's own idea, as «Дом» has it on fix/c3-prompts: on the chair in front of the mirror, legs crossed,
-        // one foot dangling, the phone over her face. S5.R4 round 2: worded apart from «Дом»'s «sits, legs crossed, a foot dangling». Round 3: the phone over her face again.
-        { text: "crosses her legs, a foot dangling", motion: "she swings her dangling foot slowly", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        // S5.R4 round 3: in the chair before the mirror, her legs over the armrest, the phone over her face. It replaces «crosses her legs, a foot dangling», which was «Дом»'s pose with
+        // «Дом»'s motion (the owner's C3′ chair frame stays in «Дом»).
+        { text: "sits, legs over the armrest", motion: "she bounces her feet a little", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
     {

@@ -221,12 +221,13 @@ describe("the P-5a3 decisions", () => {
 
 describe("the legs moments (plan §6.2, S5.8a rules, M5)", () => {
   test.each<[string, string, readonly Capture[], string]>([
-    ["her bed", "lies with her legs crossed", ["pov-legs"], "she crosses and uncrosses her ankles slowly"],
+    // S5.R4 round 3: its motion was «Дом»'s and the beach's word for word.
+    ["her bed", "lies with her legs crossed", ["pov-legs"], "she slides one ankle over the other slowly"],
     // S5.R4 round 2: worded apart from «Фитнес»'s and «Дом»'s moments of the same text; the poses are the same.
     ["an armchair in her bedroom", "stretches out her legs", ["pov-legs"], "she points her toes slowly"],
-    ["her bedroom", "lifts one foot to the mirror", ["mirror-hidden"], "she lifts her foot a little and lowers it"],
-    // Review round 2, HIGH 3 (C3′ R1#08, «странное фото»): the owner's own idea, on the chair in front of the mirror, legs crossed, one foot dangling.
-    ["an armchair in her bedroom", "crosses her legs, a foot dangling", ["mirror-hidden"], "she swings her dangling foot slowly"],
+    // S5.R4 round 3: in place of «lifts one foot to the mirror» and «crosses her legs, a foot dangling» (C3′'s chair frame), which were «Дом»'s poses with «Дом»'s motions.
+    ["her bathroom", "stands with her weight on one leg", ["mirror-hidden"], "she shifts her weight to the other leg slowly"],
+    ["an armchair in her bedroom", "sits, legs over the armrest", ["mirror-hidden"], "she bounces her feet a little"],
     // S5.R4: three more, so a 20-photo run at «Ножки» 30 % never repeats one; round 2: each a pose of its own.
     ["her bed", "lies on her side, one knee bent", ["pov-legs"], "she slides her top knee forward a little"],
     ["her bedroom", "stands on tiptoe by the mirror", ["mirror-hidden"], "she rises a little higher on her toes"],

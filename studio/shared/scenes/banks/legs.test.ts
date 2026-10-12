@@ -3,7 +3,7 @@ import { isHandCapture, LEGS_CAPTURES, shotOf, type Capture } from "../captures"
 import { momentAllowed } from "../render";
 import { legwearFits } from "../template";
 import { DRESS_LENGTH, DRESS_OR_SKIRT, LEGS_UNSUITED_OUTFITS, YOUTH_PROPS, isOwnerBannedOutfit } from "../words";
-import { poseFamilyOf } from "./boldDesign.testkit";
+import { poseFamilyOf, poseWordsOf } from "./boldDesign.testkit";
 import { BANKS } from "./index";
 import { categoryBankProblems, MOTION_TEXT_MAX } from "./schema";
 import { BANK_CATEGORIES, type BankCategory, type Moment } from "./types";
@@ -43,11 +43,12 @@ const TABLE: Row[] = [
   { category: "fitness", place: "a yoga mat on her living-room floor", text: "sits with her legs stretched out", motion: "she reaches toward her toes slowly", captures: ["pov-legs"] },
   { category: "fitness", place: "a park running path", text: "stretches her calves", motion: "she presses her heel down a little", captures: ["low-feet"] },
   // 5a.3 (S5.9b2, plan s5a3 §6.2-§6.3, M5): the «Смелая» banks' eight (fourteen from S5.R4). Her own look down along her legs, or her feet to the mirror at home; never a low-feet frame.
-  { category: "nightwear", place: "her bed", text: "lies with her legs crossed", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"] },
+  { category: "nightwear", place: "her bed", text: "lies with her legs crossed", motion: "she slides one ankle over the other slowly", captures: ["pov-legs"] },
   // S5.R4 round 2: worded apart from «Фитнес»'s «sits with her legs stretched out» and «Дом»'s chair frame; the poses are the same.
   { category: "nightwear", place: "an armchair in her bedroom", text: "stretches out her legs", motion: "she points her toes slowly", captures: ["pov-legs"] },
-  { category: "nightwear", place: "her bedroom", text: "lifts one foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"] },
-  { category: "nightwear", place: "an armchair in her bedroom", text: "crosses her legs, a foot dangling", motion: "she swings her dangling foot slowly", captures: ["mirror-hidden"] },
+  // S5.R4 round 3: in place of «lifts one foot to the mirror» and «crosses her legs, a foot dangling», «Дом»'s poses and motions in other words.
+  { category: "nightwear", place: "her bathroom", text: "stands with her weight on one leg", motion: "she shifts her weight to the other leg slowly", captures: ["mirror-hidden"] },
+  { category: "nightwear", place: "an armchair in her bedroom", text: "sits, legs over the armrest", motion: "she bounces her feet a little", captures: ["mirror-hidden"] },
   // S5.R4: three more a «Смелая» bank, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one; round 2: each a pose of its own.
   { category: "nightwear", place: "her bed", text: "lies on her side, one knee bent", motion: "she slides her top knee forward a little", captures: ["pov-legs"] },
   { category: "nightwear", place: "her bedroom", text: "stands on tiptoe by the mirror", motion: "she rises a little higher on her toes", captures: ["mirror-hidden"] },
@@ -55,7 +56,7 @@ const TABLE: Row[] = [
   // S5.R4 round 2: «stretches her legs on the lounger» was «sits on the sand, legs out» again; one knee bent on the lounger is a pose of its own.
   { category: "beach", place: "a hotel pool", text: "lies on the lounger, one knee bent", motion: "she sways her bent knee slowly", captures: ["pov-legs"] },
   { category: "beach", place: "the beach", text: "sits on the sand, legs out", motion: "she slowly buries her toes in the sand", captures: ["pov-legs"] },
-  { category: "beach", place: "the beach", text: "crosses her ankles on the towel", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"] },
+  { category: "beach", place: "the beach", text: "crosses her ankles on the towel", motion: "she taps her crossed feet together slowly", captures: ["pov-legs"] },
   { category: "beach", place: "a rooftop pool", text: "dangles her feet in the water", motion: "she dips her toes in the water slowly", captures: ["pov-legs"] },
   { category: "beach", place: "the water's edge", text: "lets the waves wash over her feet", motion: "she wiggles her toes in the foam slowly", captures: ["pov-legs"] },
   { category: "beach", place: "a rooftop pool", text: "steps down into the water", motion: "she lowers her other foot slowly", captures: ["pov-legs"] },
@@ -234,9 +235,24 @@ describe("a «Смелая» bank's legs moments are different poses (S5.R4 roun
     expect(shared).toEqual([]);
   });
 
-  test.each(["nightwear", "beach"] as const)("%s: no legs moment says what a moment of another bank says", (category) => {
-    const elsewhere = new Set(BANK_CATEGORIES.filter((c) => c !== category).flatMap((c) => BANKS[c].places.flatMap((p) => p.moments.map((m) => m.text))));
-    expect(legsMoments(category).map(({ moment }) => moment.text).filter((text) => elsewhere.has(text))).toEqual([]);
+  // S5.R4 round 3 (re-review, LOW): exact strings were not enough: «crosses her legs, a foot dangling» was «Дом»'s pose with «Дом»'s motion, and «lifts one foot to the mirror» was
+  // «lifts one bare foot to the mirror». Texts are compared as poses (poseWordsOf: no articles, «her», numbers or «bare», stemmed), and so are motions.
+  test("the comparison reads a pose, not a string", () => {
+    expect(poseWordsOf("lifts one foot to the mirror")).toBe(poseWordsOf("lifts one bare foot to the mirror"));
+    expect(poseWordsOf("crosses her legs, a foot dangling")).not.toBe(poseWordsOf("sits, legs crossed, a foot dangling"));
+    expect(poseWordsOf("she swings her dangling foot slowly")).toBe(poseWordsOf("she swings her dangling foot a little"));
+    expect(poseWordsOf("sits on the sand, legs out")).not.toBe(poseWordsOf("sits on the grass, legs out"));
+  });
+
+  test.each(["nightwear", "beach"] as const)("%s: no legs moment says what a moment of another bank says, in its text or its motion", (category) => {
+    const others = BANK_CATEGORIES.filter((c) => c !== category).flatMap((c) => BANKS[c].places.flatMap((p) => p.moments.map((m) => ({ bank: c, moment: m }))));
+    const texts = new Map(others.map((o) => [poseWordsOf(o.moment.text), `${o.bank}: «${o.moment.text}»`]));
+    const motions = new Map(others.map((o) => [poseWordsOf(o.moment.motion), `${o.bank}: «${o.moment.motion}»`]));
+    const same = legsMoments(category).flatMap(({ moment }) => [
+      ...(texts.has(poseWordsOf(moment.text)) ? [`«${moment.text}» = ${texts.get(poseWordsOf(moment.text))}`] : []),
+      ...(motions.has(poseWordsOf(moment.motion)) ? [`«${moment.motion}» = ${motions.get(poseWordsOf(moment.motion))}`] : []),
+    ]);
+    expect(same).toEqual([]);
   });
 });
 
