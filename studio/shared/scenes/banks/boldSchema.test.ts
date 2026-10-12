@@ -79,6 +79,16 @@ const withLegs = (legs: Moment): CategoryBank => ({ ...withMoment(legs), outfits
 const BIKINI: Outfit = { text: "a black bikini", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her." };
 const WADES: Moment = { text: "stands waist-deep, looking back", motion: "she turns her head a little further", captures: ["timer"], twoHanded: false, angle: "three-quarter", gaze: "own", water: true, level: "flirty", outfits: ["a black bikini"] };
 const withWater = (moment: Moment, outfits: readonly Outfit[] = [...OUTFITS, BIKINI]): CategoryBank => ({ ...withMoment(moment), outfits });
+/** Review of S5.9b2: with her arms up the open shirt does not stay closed over her chest, so an arms-up moment never wears it. */
+const OPEN_SHIRT: Outfit = {
+  text: "an open white shirt and panties",
+  showsLegs: true,
+  level: "bold",
+  route: "seedream",
+  coverage: "The shirt's two edges fall over her chest and fully cover both breasts, leaving only a narrow gap of skin down the middle; her panties fully cover her.",
+};
+const ARMS_UP: Moment = { ...plain, text: "stretches after waking up", motion: "she stretches her arms up slowly", captures: ["timer"] };
+const withArmsUp = (moment: Moment): CategoryBank => ({ ...withMoment(moment), outfits: [...OUTFITS, OPEN_SHIRT] });
 const SARONG: Outfit = { text: "a bikini and a sarong", showsLegs: true, route: "seedream", coverage: "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her." };
 
 /** The rule ids a bank breaks (each problem is `[rule] text`). */
@@ -127,6 +137,14 @@ describe("a «Смелая» bank", () => {
     expect(boldBankProblems(withWater(WADES))).toEqual([]);
   });
 
+  test("an arms-up moment that pins outfits other than the open shirt is valid, in a bank that has the shirt (the positive control of bold-arms-up)", () => {
+    expect(boldBankProblems(withArmsUp({ ...ARMS_UP, outfits: ["cotton pajama shorts and a tee", "a satin cami and satin shorts", "a black lace bra and panties"] }))).toEqual([]);
+  });
+
+  test("an arms-up moment is valid in a bank with no open shirt, pinned or not", () => {
+    expect(boldBankProblems(withMoment(ARMS_UP))).toEqual([]);
+  });
+
   test("holds the babydoll garment name, which the youth rule refuses everywhere else (answer (b))", () => {
     expect(rulesOf(categoryBankProblems({ ...BANKS.home, outfits: [...BANKS.home.outfits, { text: "a sheer babydoll over a lace set" }] }, "home"))).toContain(BANK_RULE.youth);
     expect(boldBankProblems(BOLD)).toEqual([]);
@@ -158,6 +176,10 @@ describe("a «Смелая» bank", () => {
     ["a legs moment that pins no ordinary outfit (an ordinary legs slot has nothing to wear)", withLegs({ ...LEGS, outfits: ["a satin cami and satin shorts", "a satin midi nightdress", "a black lace bra and panties", "a white lace bra and panties"] }), BANK_RULE.boldLegs],
     ["a legs moment that pins lingerie (P-5a3 #6: refused; a bold legs slot is satin and stockings)", withLegs({ ...LEGS, outfits: [...(LEGS.outfits ?? []), "a black lace bra and panties"] }), BANK_RULE.boldLegs],
     ["a low-feet moment (no friend crouches at her feet in a «Смелая» bank)", withLegs({ ...LEGS, captures: ["pov-legs", "low-feet"] }), BANK_RULE.boldLegs],
+    // bold-arms-up (review of S5.9b2)
+    ["an arms-up moment that pins no outfit, so it can draw the open shirt", withArmsUp(ARMS_UP), BANK_RULE.boldArmsUp],
+    ["an arms-up moment that pins the open shirt", withArmsUp({ ...ARMS_UP, outfits: ["cotton pajama shorts and a tee", OPEN_SHIRT.text] }), BANK_RULE.boldArmsUp],
+    ["a moment whose motion stretches her arms up, pinning nothing", withArmsUp({ ...plain, text: "stands by the bed", motion: "she stretches slowly and smiles" }), BANK_RULE.boldArmsUp],
     // water
     ["a water moment that pins no outfit", withWater({ ...WADES, outfits: undefined }), BANK_RULE.water],
     ["a water moment that pins an outfit that is not swimwear", withWater({ ...WADES, outfits: ["a black bikini", "a long cotton nightshirt"] }), BANK_RULE.water],

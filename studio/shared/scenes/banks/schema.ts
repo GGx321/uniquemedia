@@ -113,9 +113,15 @@ export const BANK_RULE = {
   boldCoverage: "bold-coverage",
   boldLevels: "bold-levels",
   boldLegs: "bold-legs",
+  boldArmsUp: "bold-arms-up",
   water: "water",
 } as const;
 type Rule = (typeof BANK_RULE)[keyof typeof BANK_RULE];
+
+/** Raised or stretched arms, in a moment's text or its motion (the open-shirt rule below). */
+const ARMS_UP = /\barms?\b[^.]*\bup\b|\bstretch\w*\b/i;
+/** An outfit whose shirt is worn open. */
+const OPEN_SHIRT = /\bopen\b[^,]*\bshirt\b/i;
 
 /** A motion's and a start pose's bound (plan I5.21, 5b.1 QV-5): the approved Kling wording, «she slowly lifts her hips behind her and lowers them», fits. */
 export const MOTION_TEXT_MAX = 60;
@@ -446,6 +452,12 @@ function boldBankRules(bank: CategoryBank, add: Add): void {
         else if (OVER_SWIMWEAR.test(outfit)) add(BANK_RULE.water, where, `«${outfit}» wears something over the swimwear: in the water she wears only the swimsuit or the bikini`);
       }
     } else if (WATER_WORDS.test(moment.text)) add(BANK_RULE.water, where, "a moment in the water carries the water tag, and pins swimwear");
+    // bold-arms-up (review of S5.9b2): with her arms up an open shirt does not stay closed over her chest, so an arms-up moment pins its outfits and none of them is the open shirt.
+    if (ARMS_UP.test(`${moment.text} ${moment.motion}`)) {
+      const open = bank.outfits.filter((o) => OPEN_SHIRT.test(o.text)).map((o) => o.text);
+      if (open.length > 0 && moment.outfits === undefined) add(BANK_RULE.boldArmsUp, where, `an arms-up moment pins its outfits, so it never draws «${open.join("», «")}» (raised arms open the shirt)`);
+      for (const outfit of moment.outfits ?? []) if (OPEN_SHIRT.test(outfit)) add(BANK_RULE.boldArmsUp, where, `«${outfit}» is an open shirt: with her arms up it does not stay closed over her chest`);
+    }
     // bold-legs (M5, P-5a3 #6).
     if (moment.captures.includes("low-feet")) add(BANK_RULE.boldLegs, where, "no low-feet frame in a «Смелая» bank: her feet are her own look down (pov-legs) or the mirror's");
     if (moment.legs !== undefined) {

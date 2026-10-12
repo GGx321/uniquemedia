@@ -17,6 +17,23 @@ const SATIN_MIDI = "a satin midi nightdress";
 /** A legs frame (M5): two cotton, two satin, none a mini, none lingerie. A bold legs slot is the satin with the bold stockings (P-5a3 #6). */
 const LEGS = [PAJAMAS, NIGHTSHIRT, SATIN_CAMI, SATIN_MIDI];
 
+/** Every outfit of the general draw but the open shirt: a moment with her arms up pins these (the open shirt does not stay closed over her chest; review of S5.9b2). */
+const ARMS_UP_OUTFITS = [
+  "an oversized sleep tee",
+  PAJAMAS,
+  NIGHTSHIRT,
+  "silk pajamas",
+  "a satin slip nightdress",
+  SATIN_MIDI,
+  SATIN_CAMI,
+  "a short tied satin robe",
+  "a black lace bra and panties",
+  "a white lace bra and panties",
+  "a lace bodysuit",
+  "a sheer babydoll over a lace set",
+  "a cropped tee and cotton panties",
+];
+
 const LACE = "The lace is lined and opaque: her bra fully covers her breasts and her panties fully cover her.";
 const SATIN_DRESS = "Her nightdress is opaque satin.";
 
@@ -41,7 +58,7 @@ export const NIGHTWEAR: CategoryBank = {
         { text: "sits cross-legged with her coffee", motion: "she sips and smiles a little", captures: ["mirror"], twoHanded: false },
         { text: "sits up against the headboard", motion: "she leans her head back a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "sits with her legs tucked under her", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
-        { text: "stretches out on the duvet", motion: "she stretches her arms slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false },
+        { text: "stretches out on the duvet", motion: "she stretches her arms slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, outfits: ARMS_UP_OUTFITS },
         // The prone selfie on the owner's model wears what «Дом»'s probes drew; it keeps her bare legs.
         { text: "lies on her stomach, one arm out", motion: "she swings her feet a little", captures: ["prone"], twoHanded: false, outfits: [PRONE_GREY], noLegwear: true },
         { text: "lies prone, her cheek on her hand", motion: "she slowly blinks and smiles", captures: ["prone"], twoHanded: false, outfits: [PRONE_GREY], handAtFace: true, noLegwear: true },
@@ -87,7 +104,7 @@ export const NIGHTWEAR: CategoryBank = {
       details: ["a string of fairy lights", "a plain wall behind her"],
       times: ["morning", "evening", "night"],
       moments: [
-        { text: "stretches after waking up", motion: "she stretches her arms up slowly", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
+        { text: "stretches after waking up", motion: "she stretches her arms up slowly", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false, outfits: ARMS_UP_OUTFITS },
         { text: "tucks her hair behind one ear", motion: "she tucks her hair back slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "own" },
         // The cotton nightwear has no straps (review round 2): the strap moment is flirty and wears the satin and the lingerie that have them.
         {
@@ -165,7 +182,7 @@ export const NIGHTWEAR: CategoryBank = {
       times: ["morning", "evening"],
       moments: [
         // C3′ (the owner: «просто стоит спиной без какой-либо позы»): from behind she does something the frame can read.
-        { text: "stretches her arms up, facing away", motion: "she stretches a little further", captures: ["timer"], twoHanded: true, angle: "back" },
+        { text: "stretches her arms up, facing away", motion: "she stretches a little further", captures: ["timer"], twoHanded: true, angle: "back", outfits: ARMS_UP_OUTFITS },
         { text: "opens the curtains", motion: "she pulls the curtain a little wider", captures: ["timer"], twoHanded: true, gaze: "focus" },
         { text: "leans against the wall", motion: "she shifts her weight a little", captures: ["timer"], twoHanded: false },
         { text: "sits on the windowsill", motion: "she swings one foot a little", captures: ["timer"], twoHanded: false, level: "flirty" },
