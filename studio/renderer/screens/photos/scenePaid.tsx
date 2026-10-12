@@ -136,33 +136,47 @@ export function PriceChangedNotice({ previousWorst, estimate }: { previousWorst:
  * itself (`runs.estimateImages`: free, priced by the code the real draw is priced by). It is shown, never sent; the window works out no money (S4.6p).
  */
 export function useImagesPrice(avatarId: string, photos: number, view: EngineView, look: ImagesLook = {}): Estimate | null {
+  return useImagesPriceState(avatarId, photos, view, look).estimate;
+}
+
+/** `useImagesPrice` with the engine's refusal too: a price list with no 2K tier (state 55) is the one the window must say; any other refusal leaves the figure unknown, as before. */
+export function useImagesPriceState(avatarId: string, photos: number, view: EngineView, look: ImagesLook = {}): { estimate: Estimate | null; error: EngineError | null } {
   const { client } = useEngine();
   const settings = view.settings;
-  // S5.R4-fix: the «Подача» and the categories the photos are drawn for; the engine prices the «Смелая» share at the 2K unit, the window passes them on and works nothing out.
-  const lookKey = JSON.stringify([look.level ?? null, look.categories ?? null]);
+  // The «Подача» and categories (the card, no set yet) or the stored set and its revision (the strip) the photos belong to: the engine prices the «Смелая» share at the 2K unit,
+  // the window passes them on and works nothing out. A stored set is priced by its active scenes' own routes, so a new revision asks again.
+  const lookKey = JSON.stringify([look.level ?? null, look.categories ?? null, look.sceneSetId ?? null, look.revision ?? null]);
   const key = photos >= 1 && photos <= 100 && settings !== null ? `${avatarId}|${photos}|${lookKey}|${settings.imageModel}|${settings.imageQuality ?? ""}|${settings.imageAgeCheck}` : null;
-  const [shown, setShown] = useState<{ key: string; estimate: Estimate } | null>(null);
+  const [shown, setShown] = useState<{ key: string; estimate: Estimate | null; error: EngineError | null } | null>(null);
   useEffect(() => {
     if (key === null) return;
     let alive = true;
     // `lookKey` stands for `look` in the dependencies: the effect asks again exactly when the look's content changes, not when its object does.
-    const { level, categories } = look;
+    const { level, categories, sceneSetId } = look;
     void client
-      .request("runs.estimateImages", { avatarId, count: photos, ...(level === undefined ? {} : { level }), ...(categories === undefined ? {} : { categories: [...categories] }) })
+      .request("runs.estimateImages", {
+        avatarId,
+        count: photos,
+        ...(level === undefined ? {} : { level }),
+        ...(categories === undefined ? {} : { categories: [...categories] }),
+        ...(sceneSetId === undefined ? {} : { sceneSetId }),
+      })
       .then((reply) => {
-        if (alive && reply.ok) setShown({ key, estimate: reply.result.estimate });
+        if (alive) setShown({ key, estimate: reply.ok ? reply.result.estimate : null, error: reply.ok ? null : reply.error });
       });
     return () => {
       alive = false;
     };
   }, [client, key, avatarId, photos, lookKey]);
-  return shown !== null && shown.key === key ? shown.estimate : null;
+  return shown !== null && shown.key === key ? { estimate: shown.estimate, error: shown.error } : { estimate: null, error: null };
 }
 
-/** The «Подача» and categories a count of photos is drawn for (`runs.estimateImages`): both absent is the plain count. */
+/** What a count of photos is drawn for (`runs.estimateImages`): the «Подача» and categories of a form, or the stored set (and its revision); all absent is the plain count. */
 export interface ImagesLook {
   readonly level?: SceneLevel | undefined;
   readonly categories?: readonly CategoryRef[] | undefined;
+  readonly sceneSetId?: string | undefined;
+  readonly revision?: number | undefined;
 }
 
 /** The engine's answer for a launch's draw: the price, and the photos it was made for (those the money buys, which may be fewer than «Продолжить запуск» names). */

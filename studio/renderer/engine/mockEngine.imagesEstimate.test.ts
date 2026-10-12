@@ -66,6 +66,70 @@ describe("runs.estimateImages { avatarId, count, level, categories } (S5.R4-fix)
   });
 });
 
+describe("runs.estimateImages { avatarId, count, sceneSetId } (S5.R4-fix round 2)", () => {
+  const NO_POSES = { profile: false, back: false };
+
+  async function boldSet(mock: ReturnType<typeof runWorld>) {
+    await unwrap(mock.client.request("scenes.compose", { avatarId: MIA.avatarId, count: 12, categories: ["nightwear", "home"], level: "bold", poses: NO_POSES, acceptedWorstMicros: 1_000_000 }));
+    mock.scheduler.runAll();
+    const { sceneSet } = await unwrap(mock.client.request("scenes.get", { avatarId: MIA.avatarId }));
+    if (sceneSet === null) throw new Error("no set");
+    return sceneSet;
+  }
+
+  /** The figure «Отрисовать» shows for the set as it stands now. */
+  async function drawn(mock: ReturnType<typeof runWorld>, sceneSetId: string) {
+    const { sceneSet } = await unwrap(mock.client.request("scenes.get", { avatarId: MIA.avatarId }));
+    if (sceneSet === null) throw new Error("no set");
+    return (await unwrap(mock.client.request("runs.estimateFromScenes", { sceneSetId, revision: sceneSet.revision }))).estimate;
+  }
+
+  test("is the figure of «Отрисовать»: the active scenes on the Seedream route at the 2K unit, the rest at the mock's image", async () => {
+    const mock = runWorld();
+    const set = await boldSet(mock);
+    const routed = set.scenes.filter((scene) => scene.route === "seedream").length;
+    expect(routed).toBeGreaterThan(0);
+    expect(routed).toBeLessThan(set.scenes.length);
+    const answer = await unwrap(mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: set.scenes.length, sceneSetId: set.sceneSetId }));
+    expect(answer.estimate).toEqual(await drawn(mock, set.sceneSetId));
+  });
+
+  test("follows what the owner removes: a scene on the owner's model and a Seedream one", async () => {
+    const mock = runWorld();
+    const set = await boldSet(mock);
+    const plain = set.scenes.find((scene) => scene.route !== "seedream");
+    const routedScene = set.scenes.find((scene) => scene.route === "seedream");
+    if (plain === undefined || routedScene === undefined) throw new Error("the set needs both kinds");
+    const edit = await unwrap(mock.client.request("scenes.edit", { sceneSetId: set.sceneSetId, revision: set.revision, op: { op: "remove", sceneIds: [plain.sceneId, routedScene.sceneId] } }));
+    if (!("sceneSet" in edit)) throw new Error("the remove was refused");
+    const answer = await unwrap(mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: set.scenes.length - 2, sceneSetId: set.sceneSetId }));
+    expect(answer.estimate).toEqual(await drawn(mock, set.sceneSetId));
+  });
+
+  test("a price list with no 2K tier refuses a count with a «Смелая» share as PRICE_UNAVAILABLE for the bold scope, and a stored set the same", async () => {
+    const mock = runWorld();
+    const set = await boldSet(mock);
+    mock.engine.lackBoldPrice();
+    const byCategories = await mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: 12, level: "bold", categories: ["nightwear"] });
+    expect(byCategories).toMatchObject({ ok: false, error: { code: "PRICE_UNAVAILABLE", priceScope: "bold" } });
+    const bySet = await mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: set.scenes.length, sceneSetId: set.sceneSetId });
+    expect(bySet).toMatchObject({ ok: false, error: { code: "PRICE_UNAVAILABLE", priceScope: "bold" } });
+  });
+
+  test("a price list with no 2K tier still prices a count with no «Смелая» photo", async () => {
+    const mock = runWorld();
+    mock.engine.lackBoldPrice();
+    const reply = await mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: 5, level: "bold", categories: ["home"] });
+    expect(reply.ok).toBe(true);
+  });
+
+  test("a set the avatar does not have is NOT_FOUND", async () => {
+    const mock = runWorld();
+    const reply = await mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: 3, sceneSetId: "set-nobody-0404" });
+    expect(reply).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+  });
+});
+
 describe("runs.estimateImages { launchId, avatarId }", () => {
   test("in the review it prices the photos «Продолжить запуск» would draw and stays inside the draw allocation", async () => {
     const mock = runWorld();

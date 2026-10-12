@@ -38,7 +38,7 @@ import {
   sceneWriters,
   toggleCategory,
 } from "./runForm";
-import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, StackButton, useImagesPrice, Why } from "./scenePaid";
+import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, StackButton, useImagesPriceState, Why } from "./scenePaid";
 import { categorySceneCount } from "./sceneReview";
 import { ReviewSwitch, SceneStrip, Step } from "./SceneStrip";
 import { composeTitle, priceSourceText, SWITCH_WAITS } from "./sceneText";
@@ -312,7 +312,7 @@ export function GenerateCard({
   // The scenes cost nothing to write: a plan of built-in (template) categories, which the app writes itself.
   const writerFree = form.count > 0 && compose.estimate !== null && compose.estimate.worstMicros === 0;
   // S4.6p: the compose mode's photos, priced by the engine (images alone); the window subtracts nothing.
-  const images = useImagesPrice(avatar.avatarId, review ? form.count : 0, view, { level: request.level, categories: request.categories });
+  const { estimate: images, error: imagesError } = useImagesPriceState(avatar.avatarId, review ? form.count : 0, view, { level: request.level, categories: request.categories });
 
   // CS.7 M3: off while a write of the set runs (sent, tracked or announced) would hide the job and its «Отменить» — the column shows the set only with
   // review on — so the switch waits for its end, saying why. Turning review on is never held.
@@ -739,6 +739,7 @@ export function GenerateCard({
                   {blockedReason}
                 </p>
               )}
+          {review && isBoldPriceMissing(imagesError) && <BoldPriceNotice />}
           {review && compose.priceError !== null && <PriceFailed id={priceFailedId} error={compose.priceError} onRetry={compose.retryPrice} after={() => goRef.current} />}
         </div>
       </section>

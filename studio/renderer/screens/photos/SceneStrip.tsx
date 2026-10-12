@@ -9,7 +9,8 @@ import { ErrorNotice, Notice } from "../../ui/Notice";
 import { MoreButton, OwnersList, useOwnersDisclosure } from "./AnglesLines";
 import { PORTRAITS_DRAWING_REASON, portraitsDrawing } from "../look/lookModel";
 import { modelName, paidBlockedReason } from "./runForm";
-import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, setPriceKey, StackButton, useImagesPrice, Why } from "./scenePaid";
+import { BoldPriceNotice, isBoldPriceMissing } from "./boldPrice";
+import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, setPriceKey, StackButton, useImagesPriceState, Why } from "./scenePaid";
 import { setAction, setCategoryTags, tallyScenes } from "./sceneReview";
 import { approveReason, approveTitle, continueTitle, MODELS_LINE_TITLE, priceSourceText, SCENES_CHANGED_APPROVE, stepScenes, STRIP_ANGLE, stripLook } from "./sceneText";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL } from "./shared";
@@ -157,7 +158,8 @@ export function SceneStrip({
 
   // The images for the scenes the set would draw, when «Отрисовать» cannot be priced itself (a stop, a write, a scene with no text).
   const photos = action.kind === "approve" ? action.photos : tally.active;
-  const images = useImagesPrice(avatar.avatarId, approvable ? 0 : photos, view, { level: set.level, categories: set.categories.map((entry) => entry.ref) });
+  // The stored set, not its categories: the engine reads the bold share from the active scenes' own routes, the path «Отрисовать» is priced by (a removed scene or one that gave up moves nothing).
+  const { estimate: images, error: imagesError } = useImagesPriceState(avatar.avatarId, approvable ? 0 : photos, view, { sceneSetId: set.sceneSetId, revision: set.revision });
   const imagesShown = approvable ? approve.estimate : images;
 
   const lockedByOther = paidInFlight && !approve.sending && !more.sending;
@@ -390,6 +392,7 @@ export function SceneStrip({
           <ReviewSwitch on onToggle={onToggleReview} labelId={switchLabel} waits={switchWaits} />
           <StackButton buttonRef={goRef} state={button} describedBy={describedBy(reasonShown && why, priceFailed !== null && priceFailedId)} onClick={onClick} />
           {reasonShown && <Why id={why}>{reason}</Why>}
+          {isBoldPriceMissing(imagesError) && <BoldPriceNotice />}
           {priceFailed !== null && priced !== null && <PriceFailed id={priceFailedId} error={priceFailed} onRetry={priced.retryPrice} after={() => goRef.current} />}
         </div>
       </section>

@@ -453,6 +453,9 @@ const ENGINE_SPECS = [
         // bold unit, by the split the run estimate uses; a «Смелая» category at another level is refused (VALIDATION `bold-level-needed`). Absent: the figure it always was.
         level: SceneLevel.optional(),
         categories: z.array(CategoryRef).max(MAX_RUN_CATEGORIES).optional(),
+        // S5.R4-fix round 2 (additive): the owner's stored set the photos belong to. The bold share is then the set's ACTIVE scenes drawn on the Seedream route (exact, the
+        // path `runs.estimateFromScenes` prices by), not a split of `count` over `categories`. NOT_FOUND for a set the avatar does not have.
+        sceneSetId: Id.optional(),
       }),
       z.strictObject({ launchId: LaunchId, avatarId: Id }),
     ]),
