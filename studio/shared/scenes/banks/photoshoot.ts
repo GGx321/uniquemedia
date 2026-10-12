@@ -4,7 +4,7 @@ import type { CategoryBank } from "./types";
 // at natural angles; some selfies, the phone on a timer on a ledge, a candid. Posing by an object (a lamppost, a shop window) is a moment
 // (`object`), and «from behind, looking back» is a three-quarter moment that carries its own gaze.
 /** S5.8a review: a friend's photo from below wears trousers, jeans or a midi dress, never a mini (a low angle under a mini reads as an upskirt shot). */
-const LEGS_STREET = ["a denim jacket and jeans", "cropped trousers and a fitted top", "a linen midi dress"];
+const LEGS_STREET = ["a denim jacket and jeans", "cropped trousers and a fitted top", "a linen midi dress", "wide jeans and a knit top", "a striped top and cropped jeans"];
 
 export const PHOTOSHOOT: CategoryBank = {
   places: [
@@ -92,6 +92,8 @@ export const PHOTOSHOOT: CategoryBank = {
     { text: "a red mini dress", showsLegs: true },
     { text: "cropped trousers and a fitted top", showsLegs: true, pinOnly: true },
     { text: "a linen midi dress", showsLegs: true, pinOnly: true },
+    { text: "wide jeans and a knit top", showsLegs: true, pinOnly: true },
+    { text: "a striped top and cropped jeans", showsLegs: true, pinOnly: true },
   ],
   captureDeck: ["friend", "selfie", "friend", "timer", "friend", "candid"],
 };

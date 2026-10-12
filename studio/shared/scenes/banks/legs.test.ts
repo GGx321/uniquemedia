@@ -25,6 +25,8 @@ const TABLE: Row[] = [
   { category: "home", place: "her bed", text: "sits with her socked feet forward", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"] },
   { category: "home", place: "her bedroom", text: "sits, soles toward the mirror", motion: "she taps her feet together a little", captures: ["mirror-hidden"] },
   { category: "home", place: "her bedroom", text: "lifts one bare foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"] },
+  { category: "home", place: "her bedroom", text: "sits on the rug, legs stretched out", motion: "she flexes her feet a little", captures: ["pov-legs"] },
+  { category: "home", place: "her bed", text: "lies with her ankles crossed", motion: "she crosses her ankles the other way slowly", captures: ["pov-legs"] },
   { category: "photoshoot", place: "a cafe table on the pavement", text: "sits with her ankles crossed", motion: "she shifts her crossed ankles slowly", captures: ["low-feet"] },
   { category: "photoshoot", place: "a cafe table on the pavement", text: "sits with one knee over the other", motion: "she tilts her raised foot slowly", captures: ["low-feet"] },
   { category: "photoshoot", place: "a quiet street corner", text: "sits on the steps, legs out", motion: "she flexes her feet a little", captures: ["low-feet"] },
@@ -203,6 +205,24 @@ describe("a low angle under a mini reads as an upskirt shot", () => {
         for (const outfit of moment.outfits ?? []) expect(LEGS_UNSUITED_OUTFITS.test(outfit), `${moment.text}: ${outfit}`).toBe(false);
       }
     }
+  });
+
+  // Round 2 (decision 4 as a whitelist): a dress or skirt on a legs moment names its length (midi, long or maxi); a blacklist cannot see «a navy wrap dress» of no length.
+  test("a dress or a skirt a legs moment pins names midi, long or maxi", () => {
+    for (const category of BANK_CATEGORIES) {
+      for (const { moment } of legsMoments(category)) {
+        for (const outfit of moment.outfits ?? []) if (/\b(dress|skirt)\b/i.test(outfit)) expect(outfit, `${moment.text}: ${outfit}`).toMatch(/\b(midi|long|maxi)\b/i);
+      }
+    }
+  });
+
+  test("a bank whose legs moment pins a dress of no length is refused at load", () => {
+    const home = { ...BANKS.home, places: BANKS.home.places.map((p) => ({ ...p, moments: p.moments.map((m) => (m.text === "lies with her bare feet forward" ? { ...m, outfits: ["a fitted beige knit dress"] } : m)) })) };
+    expect(categoryBankProblems({ ...home, outfits: [...home.outfits, { text: "a fitted beige knit dress", showsLegs: true as const, pinOnly: true as const }] }, "home").join("\n")).toMatch(/\[legs-outfit\]/);
+  });
+
+  test("every legs moment pins at least four outfits, so a plan's legs frames do not all wear one", () => {
+    for (const category of BANK_CATEGORIES) for (const { moment } of legsMoments(category)) expect(moment.outfits?.length ?? 0, `${category}: ${moment.text}`).toBeGreaterThanOrEqual(4);
   });
 
   test("a bank whose legs moment pins a mini dress is refused at load", () => {

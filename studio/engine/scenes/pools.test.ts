@@ -93,8 +93,9 @@ describe("C1 pool text", () => {
     expect(POOLS.photoshoot.outfits).toContain("a denim jacket and jeans");
   });
 
+  // The eleven of S5.4, untouched; the legs moments pin one of their own that only they wear (pin-only, S5.8a review), listed after them.
   test("glamour draws from eleven outfits, in this order", () => {
-    expect(POOLS.glamour.outfits).toEqual([
+    expect(POOLS.glamour.outfits.filter((o) => !(POOLS.glamour.outfitInfo ?? []).some((i) => i.text === o && i.pinOnly === true))).toEqual([
       "a fitted black bodycon dress",
       "a mini skirt with a cropped top",
       "a corset top and high-rise trousers",

@@ -198,7 +198,11 @@ function checkMoment(add: Add, where: string, moment: Moment, place: { room?: tr
   if (moment.legs !== undefined) {
     // S5.8a review: a low angle under a mini reads as an upskirt shot, so a legs moment pins its outfits (shorts, trousers, leggings, joggers, midi and long dresses) and none is a mini.
     if ((moment.outfits?.length ?? 0) === 0) add(BANK_RULE.legsOutfit, where, "a legs moment pins the outfits it wears: shorts, trousers, leggings, joggers or a midi or long dress");
-    for (const outfit of moment.outfits ?? []) if (LEGS_UNSUITED_OUTFITS.test(outfit)) add(BANK_RULE.legsOutfit, where, `«${outfit}» is a mini or short dress or skirt, or worn as a dress: a low angle under it reads as an upskirt shot`);
+    for (const outfit of moment.outfits ?? []) {
+      if (LEGS_UNSUITED_OUTFITS.test(outfit)) add(BANK_RULE.legsOutfit, where, `«${outfit}» is a mini or short dress or skirt, or worn as a dress: a low angle under it reads as an upskirt shot`);
+      // A whitelist as well: a dress or a skirt names its length, because a blacklist cannot see «a wrap dress» of no length.
+      else if (/\b(dress|skirt)\b/i.test(outfit) && !/\b(midi|long|maxi)\b/i.test(outfit)) add(BANK_RULE.legsOutfit, where, `«${outfit}» is a dress or skirt of no stated length: a legs moment names midi, long or maxi`);
+    }
   }
   if (captures.includes("timer") && HELD_OBJECT_WORDS.test(text)) add(BANK_RULE.timerHands, where, "a timer frame shows both of her hands empty: its moment holds nothing");
   if (captures.includes("above") && !LYING_START.test(text)) add(BANK_RULE.aboveLying, where, "a close selfie from above is taken as she lies there: its moment lies down");

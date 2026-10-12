@@ -3,7 +3,7 @@ import type { CategoryBank } from "./types";
 // «Виды» (the stored id `travel` stays, I5.33; plan s5a2 r1.2 §5.1): a balcony over a city, a garden pond, a path above green hills, a river railing.
 // As on the street, she mostly asks someone; some selfies, a timer, a candid. The beach leaves for «Пляж и бассейн» (5a.3, «Смелая»).
 /** S5.8a review: a look down her own legs wears a shirt dress, linen trousers or a long sundress; no boots (her toes are in the frame) and no mini. */
-const LEGS_VIEWS = ["a linen shirt dress", "a cotton top and linen trousers", "a long cotton sundress"];
+const LEGS_VIEWS = ["a linen shirt midi dress", "a cotton top and linen trousers", "a long cotton sundress", "wide linen trousers and a tank top", "a tank top and a long linen skirt"];
 
 export const TRAVEL: CategoryBank = {
   places: [
@@ -71,6 +71,9 @@ export const TRAVEL: CategoryBank = {
     { text: "a tank top, pleated skirt, boots", showsLegs: true },
     { text: "a linen shirt dress", showsLegs: true },
     { text: "a long cotton sundress", showsLegs: true, pinOnly: true },
+    { text: "a linen shirt midi dress", showsLegs: true, pinOnly: true },
+    { text: "wide linen trousers and a tank top", showsLegs: true, pinOnly: true },
+    { text: "a tank top and a long linen skirt", showsLegs: true, pinOnly: true },
     { text: "a cotton top and linen trousers" },
   ],
   captureDeck: ["friend", "selfie", "friend", "timer", "friend", "candid"],

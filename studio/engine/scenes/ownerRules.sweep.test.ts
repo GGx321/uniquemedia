@@ -387,6 +387,8 @@ describe("«Ножки» plans keep the owner's rules (S5.8a)", () => {
     expect(low.length).toBeGreaterThan(LEGS_PLANS);
     expect(offenders(low, (f) => UNSUITED.test(f.slot.outfit) || UNSUITED.test(f.sentence))).toEqual(NONE);
     expect(offenders(LEGS_FRAMES, (f) => UNSUITED.test(f.slot.outfit))).toEqual(NONE);
+    // A whitelist as well (round 2): a dress or skirt on a legs frame names midi, long or maxi; «a navy wrap dress» of no length is not one.
+    expect(offenders(LEGS_FRAMES, (f) => /\b(dress|skirt)\b/i.test(f.slot.outfit) && !/\b(midi|long|maxi)\b/i.test(f.slot.outfit))).toEqual(NONE);
   });
 
   test("the poses are natural: a legs frame faces the camera, front or three-quarter, never in profile or from behind", () => {
@@ -409,7 +411,7 @@ describe("«Ножки» plans keep the owner's rules (S5.8a)", () => {
   test("legwear goes only where the moment allows it: never on a moment that names socks, soles, bare skin or heels", () => {
     const clash = /\b(socks?|socked|tights|stockings?|bare|barefoot|soles?|heels?)\b/;
     expect(offenders(LEGS_FRAMES, (f) => f.slot.legwear !== undefined && clash.test(f.slot.activity))).toEqual(NONE);
-    // Only «Дом» has legwear, and its legs moments pin shorts, pajamas and leggings (S5.8a review), so tights ride on about one legs frame in ten.
+    // Only «Дом» has legwear, and its legs moments pin shorts, pajamas and leggings (S5.8a review), so tights ride on about 3 % of the legs frames of all five categories (measured 214 of 7 500).
     expect(LEGS_FRAMES.filter((f) => f.slot.legwear !== undefined).length).toBeGreaterThan(LEGS_PLANS / 8);
     expect(offenders(LEGS_ALL, (f) => /stocking/i.test(f.sentence) || /stocking/i.test(f.slot.legwear ?? ""))).toEqual(NONE);
   });

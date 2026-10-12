@@ -213,7 +213,8 @@ describe("«Ножки»: a legs slot", () => {
         if (slot.legwear !== undefined) withLegwear++;
       }
     }
-    expect(along).toBeGreaterThan(20);
+    // «Дом» has seven legs moments now (S5.8a review), so this one is a seventh of its legs slots: the sample holds ~19, enough to see the tights.
+    expect(along).toBeGreaterThan(10);
     expect(withLegwear).toBeGreaterThan(0);
   });
 

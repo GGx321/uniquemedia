@@ -4,7 +4,7 @@ import type { CategoryBank } from "./types";
 // ready (the bathroom sink, the front door). Never on a bed (validated). Every place now carries details: the five non-room places use them in the
 // template's `with {detail}`. Captures (plan r1.2): mixed, out at night and getting ready in the mirror.
 /** S5.8a review: a frame from below or down her own legs wears a wrap or midi dress, a midi skirt or trousers, never the bodycon or a mini. */
-const LEGS_EVENING = ["a navy wrap dress", "a halter top and a midi skirt", "a fitted beige knit midi dress", "a corset top and high-rise trousers"];
+const LEGS_EVENING = ["a navy wrap midi dress", "a halter top and a midi skirt", "a fitted beige knit midi dress", "a corset top and high-rise trousers", "a long black knit dress"];
 
 export const GLAMOUR: CategoryBank = {
   places: [
@@ -136,6 +136,8 @@ export const GLAMOUR: CategoryBank = {
     { text: "a fitted beige knit midi dress" },
     { text: "a halter top and a midi skirt" },
     { text: "a navy wrap dress", showsLegs: true },
+    { text: "a navy wrap midi dress", showsLegs: true, pinOnly: true },
+    { text: "a long black knit dress", showsLegs: true, pinOnly: true },
     { text: "an off-shoulder top and jeans" },
   ],
   captureDeck: ["friend", "selfie", "mirror", "friend", "mirror-hidden", "candid"],

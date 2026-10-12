@@ -288,7 +288,7 @@ describe("outfits and locations never repeat within one category before every op
   // «Фитнес»'s general bag is its outfits that are not pin-only (the legs moments pin two of their own, S5.8a review; an outfit a moment pins still stays in the bag, S5.6b).
   test("a full pass (count = the general outfits) uses every general outfit exactly once", () => {
     const n = (POOLS.fitness.outfitInfo ?? []).filter((o) => o.pinOnly !== true).length;
-    expect(n).toBe(POOLS.fitness.outfits.length - 2);
+    expect(n).toBe(4);
     const p = plan({ seed: 1, count: n, categories: ["fitness"] });
     expect(new Set(p.slots.map((s) => s.outfit)).size).toBe(n);
   });

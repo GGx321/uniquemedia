@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { templateSentence } from "../../shared/scenes/template";
+import { localSentences } from "./localSentences";
 import { slotKeyOf } from "./phoneLook";
 import { plan } from "./planner";
 import { CATEGORIES } from "./types";
@@ -12,17 +13,26 @@ const RUN = "run-review-1";
 const keyOf = (slot: { attemptIdBase: string }): string => slotKeyOf(RUN, slot.attemptIdBase);
 
 describe("variety at 30 % legs (I5.24)", () => {
-  test.each([...CATEGORIES])("%s: 100-slot plans average at least 0.8 distinct sentences per slot, each slot rendered alone", (category) => {
-    let sum = 0;
-    const plans = 50;
-    for (let seed = 1; seed <= plans; seed++) {
-      const slots = plan({ seed, count: 100, categories: [category], legsShare: 30 }).slots;
-      const sentences = slots.map((slot) => templateSentence(slot, { key: keyOf(slot) }));
-      expect(sentences.every((s) => s !== null)).toBe(true);
-      sum += new Set(sentences).size / slots.length;
-    }
-    expect(sum / plans).toBeGreaterThanOrEqual(0.8);
-  });
+  // I5.24 is a bound on EVERY plan, as templateVariety and planner.builtIn hold it: at least 0.8 distinct sentences per slot over a 100-slot plan of each category and level, with no
+  // dedup (each slot alone, the strict reading) and with the run's own dedup (an equal sentence is redrawn).
+  for (const level of ["ordinary", "flirty"] as const) {
+    test.each([...CATEGORIES])(`${level}, %s: every 100-slot plan keeps at least 0.8 distinct sentences per slot, alone and with the run's dedup`, (category) => {
+      let worstAlone = 1;
+      let worstDedup = 1;
+      for (let seed = 1; seed <= 50; seed++) {
+        const slots = plan({ seed, count: 100, categories: [category], legsShare: 30, ...(level === "flirty" ? { level } : {}) }).slots;
+        const alone = slots.map((slot) => templateSentence(slot, { key: keyOf(slot) }));
+        expect(alone.every((s) => s !== null)).toBe(true);
+        worstAlone = Math.min(worstAlone, new Set(alone).size / slots.length);
+        const local = localSentences({ slots, keyOf });
+        const deduped = slots.map((slot) => local(slot));
+        expect(deduped.every((s) => s !== null)).toBe(true);
+        worstDedup = Math.min(worstDedup, new Set(deduped).size / slots.length);
+      }
+      expect(worstAlone).toBeGreaterThanOrEqual(0.8);
+      expect(worstDedup).toBeGreaterThanOrEqual(0.8);
+    });
+  }
 
   test.each([...CATEGORIES])("%s: the legs slots of a 12-slot plan go round the legs moments before any repeats", (category) => {
     let repeating = 0;

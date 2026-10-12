@@ -163,6 +163,17 @@ describe("the level changes the moments, not the rest of the plan", () => {
     }
   });
 
+  // Since the legs slots balance among themselves (S5.8a review) the level cannot move them: a legs slot is the same scene in an ordinary and in a flirty plan.
+  test("the legs slots are the same scenes in an ordinary and a flirty plan: place, moment, capture, outfit and legwear", () => {
+    for (const seed of SEEDS) {
+      for (const category of CATEGORIES) {
+        const base = { seed, count: 40, categories: [category], legsShare: 30 as const };
+        const legs = (level?: "flirty") => plan({ ...base, ...(level === undefined ? {} : { level }) }).slots.filter((s) => s.framing === "legs").map(({ level: _level, ...rest }) => rest);
+        expect(legs("flirty")).toEqual(legs());
+      }
+    }
+  });
+
   test("a category's flirty choice does not depend on which other categories are in the plan", () => {
     const alone = flirtyOf(plan({ seed: 77, count: 12, categories: ["home"], level: "flirty" }).slots).map((s) => s.slotIndex);
     const withOthers = plan({ seed: 77, count: 60, categories: [...CATEGORIES], level: "flirty" }).slots.filter((s) => s.category === "home");
