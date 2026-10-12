@@ -52,6 +52,28 @@ export function imageReply(n: number): Reply {
   return { status: 200, body: imageBody(portraitPng(((n - 1) % 4) + 1), { cost: 0.04 }) };
 }
 
+/** The model of the «Смелая» route (Seedream 5 Pro, 2K); the owner's model never has this id in a parity rig. */
+const SEEDREAM_MODEL = "bytedance-seed/seedream-5-0-pro";
+
+/** What a Seedream request meets when a story arms a fault: the model's moderation 400 (free, final), or a 2xx with no image that is still billed. */
+export type SeedreamFault = "refuse" | "empty";
+
+/** Whether an image request names the Seedream model: the «Смелая» route, or the 1K moderation fallback (a story that tells them apart reads the body's `resolution`). */
+export function isSeedream(call: FetchCall): boolean {
+  return call.json().model === SEEDREAM_MODEL;
+}
+
+/**
+ * The fake image endpoint's answer for its `n`th request, by the model the request names (5a.3, S5.9f). With no fault it is `imageReply(n)`; with one, a Seedream request is refused
+ * (the 400 P-5a3 measured: «Seedream blocked this request through content moderation.») or answered with a 2xx that holds no image and a bill of $0.045, and a request for any other
+ * model is answered as before, so a story can break only the «Смелая» route.
+ */
+export function imageReplyFor(call: FetchCall, n: number, fault: SeedreamFault | null = null): Reply {
+  if (fault === null || !isSeedream(call)) return imageReply(n);
+  if (fault === "refuse") return { status: 400, body: { error: { message: "Seedream blocked this request through content moderation." } } };
+  return { status: 200, body: { created: 1790208293, data: [], usage: { cost: 0.045 } } };
+}
+
 /**
  * A fake OpenRouter: the writer, the images and the credits answer; prices are offline (the dated fallback table). Any other request throws.
  * `writer` and `image` replace the default answer of those two kinds (S4.6d: a request that never returns is how a test kills the engine mid-request); `writerGate` holds the default writer answer until it resolves.
