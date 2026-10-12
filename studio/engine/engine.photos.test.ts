@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MAX_LISTED_PHOTOS, type PhotoSummary } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
@@ -120,6 +120,31 @@ describe("photos.list", () => {
     const { engine } = await startEngine(dir());
     const photos = listed(await engine.handle(command("photos.list", { avatarId })));
     expect(photos.map((p) => p.photoId)).toEqual([...photoIds].reverse());
+  });
+
+  // S5.7R carry-over (LOW): the gallery restores the mark of a photo stored before `qa.faceMarked`, from its slot in the run's plan.json, as the autopilot does (legacyMarks.ts).
+  describe("the marks of photos from before the face gate wrote them", () => {
+    async function planWith(slots: Record<string, unknown>[], runId = "run-00000001"): Promise<void> {
+      const folder = join(dir(), "library", "runs", runId);
+      await mkdir(folder, { recursive: true });
+      await writeFile(join(folder, "plan.json"), JSON.stringify({ scenes: { slots } }));
+    }
+    const slot = (n: number, over: Record<string, unknown>) => ({ attemptIdBase: `slot-${n}`, shot: "friend", pose: "front", ...over });
+
+    test("a photo of a face-hidden or legs frame is listed marked, one of a frame that shows her face is not", async () => {
+      const { avatarId, photoIds } = await seedAvatar({ count: 4 });
+      await planWith([slot(1, { shot: "mirror", capture: "mirror-hidden" }), slot(2, {}), slot(3, { shot: "selfie", capture: "pov-legs", framing: "legs" }), slot(4, { pose: "back" })]);
+      const { engine } = await startEngine(dir());
+      const photos = listed(await engine.handle(command("photos.list", { avatarId })));
+      const marked = (id: string | undefined) => photos.find((p) => p.photoId === id)?.qa?.faceMarked === true;
+      expect([photoIds[0], photoIds[1], photoIds[2], photoIds[3]].map(marked)).toEqual([true, false, true, true]);
+    });
+
+    test("a photo whose plan is gone is listed as it was", async () => {
+      const { avatarId } = await seedAvatar({ count: 2 });
+      const { engine } = await startEngine(dir());
+      for (const photo of listed(await engine.handle(command("photos.list", { avatarId })))) expect(photo.qa?.faceMarked).toBeUndefined();
+    });
   });
 
   // AvatarSummary.photoCount is the gallery's own count: the master, candidates and imports are not gallery photos.

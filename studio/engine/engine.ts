@@ -100,6 +100,7 @@ import { CategoryError, LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibra
 import type { ImageMediaType, LibraryReference } from "./library/media";
 import { isPickablePortrait, isPortraitPhoto } from "./library/portraits";
 import { looksLikeRunPhoto, pagePhotoList, photoSummaryFrom, type PhotoPage } from "./library/photoRecords";
+import { legacyMarksOf } from "./autopilot/legacyMarks";
 import { STUDIO_E2E } from "./buildFlags";
 import { budgetHoldDetail, type BudgetHoldDetail, type MonthRoom } from "../shared/autopilot/money";
 import { AutopilotCommands } from "./autopilot/commands";
@@ -2829,9 +2830,12 @@ export class Engine {
     const states = library.photoStates(avatarId);
     const photos: PhotoSummary[] = [];
     let skippedTotal = 0;
-    for (const sidecar of library.photosByAvatar(avatarId)) {
+    const sidecars = library.photosByAvatar(avatarId);
+    // S5.7R: a photo stored before the face gate wrote its mark is marked again from the slot it was made for, as the autopilot reads it.
+    const restored = legacyMarksOf(library, avatarId, sidecars);
+    for (const sidecar of sidecars) {
       const state = states.get(sidecar.id);
-      const summary = state === undefined ? null : photoSummaryFrom(sidecar, state);
+      const summary = state === undefined ? null : photoSummaryFrom(sidecar, state, restored.has(sidecar.id));
       if (summary !== null) photos.push(summary);
       else if (looksLikeRunPhoto(sidecar)) {
         skippedTotal++;

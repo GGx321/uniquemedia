@@ -74,6 +74,31 @@ describe("looksLikeRunPhoto", () => {
 /** The state of a photo nobody has touched: eligible, unused, unmarked, unreserved. */
 const FRESH: PhotoState = { eligible: true, rejected: false, reserved: false, usedIn: [] };
 
+// S5.7R carry-over (LOW): a photo stored before the face gate wrote `qa.faceMarked` has its mark restored from the slot it was made for (autopilot/legacyMarks.ts); the gallery
+// shows the same mark the autopilot reads, so a face-hidden frame of an older run reads «лицо не проверялось» too.
+describe("photoSummaryFrom with a restored mark", () => {
+  test("a photo whose mark was restored shows faceMarked, beside the likeness it kept", () => {
+    const sidecar = runPhotoSidecar({ qa: { faceCos: 0.82 } });
+    expect(photoSummaryFrom(sidecar, FRESH, true)?.qa).toEqual({ faceCos: 0.82, faceMarked: true });
+  });
+
+  test("a photo with no likeness at all still shows the restored mark", () => {
+    expect(photoSummaryFrom(runPhotoSidecar(), FRESH, true)?.qa).toEqual({ faceMarked: true });
+  });
+
+  test("without a restored mark, the summary is the one it was: none is invented", () => {
+    expect(photoSummaryFrom(runPhotoSidecar({ qa: { faceCos: 0.82 } }), FRESH)?.qa).toEqual({ faceCos: 0.82 });
+    expect(photoSummaryFrom(runPhotoSidecar({ qa: { faceCos: 0.82 } }), FRESH, false)?.qa).toEqual({ faceCos: 0.82 });
+    expect(photoSummaryFrom(runPhotoSidecar(), FRESH)?.qa).toBeUndefined();
+  });
+
+  test("a photo that carries its own mark shows it once, restored or not", () => {
+    const sidecar = runPhotoSidecar({ qa: { faceCos: 0.4, faceMarked: true } });
+    expect(photoSummaryFrom(sidecar, FRESH)?.qa).toEqual({ faceCos: 0.4, faceMarked: true });
+    expect(photoSummaryFrom(sidecar, FRESH, true)?.qa).toEqual({ faceCos: 0.4, faceMarked: true });
+  });
+});
+
 describe("photoSummaryFrom", () => {
   test("maps a run photo to the contract's shape", () => {
     expect(photoSummaryFrom(runPhotoSidecar(), FRESH)).toEqual({

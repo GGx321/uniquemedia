@@ -16,10 +16,10 @@ import type { PhotoQa, PhotoSidecar } from "./schemas";
 // apart to decide whether it is worth logging.
 
 /** The gallery badge fields worth showing from a photo's own QA verdicts; undefined when neither applies, so `PhotoSummary.qa` can stay unset instead of an always-present empty object. */
-function qaSummaryOf(qa: PhotoQa): PhotoQaSummary | undefined {
+function qaSummaryOf(qa: PhotoQa, markRestored: boolean): PhotoQaSummary | undefined {
   const summary: PhotoQaSummary = {};
   if (qa.faceCos !== undefined) summary.faceCos = qa.faceCos;
-  if (qa.faceMarked === true) summary.faceMarked = true;
+  if (qa.faceMarked === true || markRestored) summary.faceMarked = true;
   if (qa.age !== undefined) summary.age = qa.age;
   return Object.keys(summary).length > 0 ? summary : undefined;
 }
@@ -36,6 +36,8 @@ export function looksLikeRunPhoto(sidecar: PhotoSidecar): boolean {
  * reserved set): nothing here decides any of it, so a caller cannot show
  * something the rule refuses. `usedIn` is cut at the contract's bound with
  * `used` still true, since a derived list must never make a photo vanish.
+ * `markRestored` (S5.7R): the photo was stored before the face gate wrote `qa.faceMarked`, and its mark was restored from the slot it was made for
+ * (autopilot/legacyMarks.ts), the very mark the autopilot reads; the summary shows it as the photo's own.
  * `runId` is not itself stored on the sidecar: it is the prefix of the
  * photo's own `attemptId`, `${runId}:slot-N#k` (runs/plan.ts's
  * `slotAttemptIds`/`writerAttemptIds`) — the run's own attempt-id format is
@@ -45,7 +47,7 @@ export function looksLikeRunPhoto(sidecar: PhotoSidecar): boolean {
  * does not fit the id pattern) — defensive; this should never happen for
  * anything this engine itself wrote.
  */
-export function photoSummaryFrom(sidecar: PhotoSidecar, state: PhotoState): PhotoSummary | null {
+export function photoSummaryFrom(sidecar: PhotoSidecar, state: PhotoState, markRestored = false): PhotoSummary | null {
   if (!looksLikeRunPhoto(sidecar) || sidecar.source.kind !== "generated") return null;
   // split(":")[0] is always a string (never undefined) — String.split always
   // returns at least one element — so an attemptId with no ":" at all (or
@@ -63,7 +65,7 @@ export function photoSummaryFrom(sidecar: PhotoSidecar, state: PhotoState): Phot
     category,
     ...(named ? { categoryName } : {}),
     createdAt: sidecar.createdAt,
-    qa: qaSummaryOf(sidecar.qa),
+    qa: qaSummaryOf(sidecar.qa, markRestored),
     used: state.usedIn.length > 0,
     usedIn: state.usedIn.slice(0, MAX_PHOTO_USED_IN),
     rejected: state.rejected,
