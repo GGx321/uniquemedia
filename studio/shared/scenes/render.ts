@@ -102,6 +102,8 @@ export function captureOfSlot(slot: Pick<TemplateSlot, "shot" | "capture">): Cap
  */
 export function gazeKindsFor(capture: Capture, pose: ScenePose, gaze?: MomentGaze, framing?: "legs"): readonly GazeKind[] {
   if (faceVisibleOf({ capture, pose, framing }) === "no" || gaze === "own" || gaze === "viewer") return [];
+  // «Ножки» (S5.8a review): her legs fill the frame and her face may be out of it, so a look at the viewer, away or at her hands would pull the frame to her face and read as staged: only a look down.
+  if (framing === "legs") return ["down"];
   const shot = shotOf(capture);
   const kinds: GazeKind[] = shot === "mirror" ? ["mirror", "down"] : shot === "selfie" ? ["viewer", "down"] : capture === "candid" || pose === "profile" ? ["away", "down"] : ["viewer", "away", "down"];
   if (gaze === "focus" && !isHandCapture(capture)) kinds.push("hands");
@@ -192,7 +194,8 @@ function draw(parts: SentenceParts, frame: Frame, key: string, tally: GazeCueTal
   if (faceVisibleOf(frame) !== "no") {
     const gazes = gazeOptions(frame.capture, frame.pose, parts.gaze, frame.level, frame.framing);
     if (gazes.length > 0) said.push(pick(tally?.open(gazes) ?? gazes, key, "gaze").text);
-    const cues = parts.expression === true ? [] : cueOptions(frame.capture, frame.level, parts.handAtFace === true);
+    // A legs frame carries no expression either (no smile for the viewer), only what she does.
+    const cues = parts.expression === true || frame.framing === "legs" ? [] : cueOptions(frame.capture, frame.level, parts.handAtFace === true);
     if (cues.length > 0) said.push(pick(tally?.open(cues) ?? cues, key, "cue").text);
   }
   clauses.push(...said);
