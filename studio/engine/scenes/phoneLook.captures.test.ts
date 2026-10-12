@@ -14,9 +14,11 @@ useNativeGlobals();
 const KEYS = Array.from({ length: 300 }, (_, i) => `run-${i}:slot-${(i % 12) + 1}`);
 
 describe("captureLineOf: the plan's wording, verbatim", () => {
-  test("mirror-hidden", () => {
+  // C3′ (the owner's verdict, 2026-10-12): «the phone hides most of her face» drew her face BESIDE the phone in 5 of 5 face-hidden frames; the wording probe's
+  // winner (1a) covers it from her eyebrows to her chin, and Grok drew no face.
+  test("mirror-hidden: the probe's face-cover wording (1a)", () => {
     expect(captureLineOf("mirror-hidden", "k")).toBe(
-      "A mirror selfie she took herself: she holds her phone up in front of her face, so the phone hides most of her face, and the room behind her is in the reflection.",
+      "A mirror selfie she took herself: she holds her phone right in front of her face, the phone covering her face from her eyebrows to her chin; only her hair and body show in the mirror.",
     );
   });
 
@@ -152,8 +154,9 @@ describe("the hand line", () => {
 });
 
 describe("back or side to the mirror (owner note, r1.5)", () => {
-  test("the sentence is the plan's, verbatim", () => {
-    expect(MIRROR_BACK_LINE).toBe("Only her reflection is in the picture; she holds the phone up and it hides her face.");
+  // C3′: the same phone clause as the face-hidden line, never the weaker «it hides her face» the frames ignored.
+  test("the sentence says only her reflection shows and the phone covers her face as the face-hidden line does", () => {
+    expect(MIRROR_BACK_LINE).toBe("Only her reflection is in the picture; the phone covers her face from her eyebrows to her chin.");
   });
 });
 

@@ -44,8 +44,8 @@ describe("captureLineOf", () => {
     expect(lineOf("mirror")).toContain("leave her face clear");
   });
 
-  test("the phone-over-face mirror line says the phone hides most of her face", () => {
-    expect(lineOf("mirror-hidden")).toContain("so the phone hides most of her face");
+  test("the phone-over-face mirror line says the phone covers her face from her eyebrows to her chin (C3′)", () => {
+    expect(lineOf("mirror-hidden")).toContain("the phone covering her face from her eyebrows to her chin");
   });
 
   test("the friend line is someone she asked, with her not taking the photo herself and her body in the picture", () => {

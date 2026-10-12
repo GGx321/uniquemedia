@@ -469,3 +469,36 @@ describe("the text reads naturally (S5.6R, LOW)", () => {
     expect(offenders(ALL, (f) => LOOKS_OUT.test(f.slot.activity) && f.slot.pose === "front")).toEqual(NONE);
   });
 });
+
+// C3′ (the owner's verdict on the C3′ run, 2026-10-12, and the Grok wording probe c3fix): each fix is asked of the same sweep, ordinary, flirty and «Ножки» plans alike.
+const C3_ALL: Frame[] = [...ALL, ...FLIRTY_ALL, ...LEGS_ALL];
+
+describe("C3′: a face-hidden mirror frame covers her face from her eyebrows to her chin", () => {
+  // «the phone hides most of her face» drew her face BESIDE the phone in 5 of 5 C3′ frames; the probe's winner (1a) drew no face.
+  const FACE_COVER = "she holds her phone right in front of her face, the phone covering her face from her eyebrows to her chin; only her hair and body show in the mirror.";
+  const OLD_COVER = /hides most of her face|it hides her face/;
+  // A look, her eyes or an expression would pull her face back out from behind the phone.
+  const FACE_CLAUSE = /\b(?:look\w*|glanc\w*|gaz\w*|eyes?|star(?:e|es|ing)|smil\w*|grin\w*|smirk\w*|laugh\w*|pout\w*|wink\w*|lips?)\b/i;
+  const hidden = C3_ALL.filter((f) => f.capture === "mirror-hidden");
+  const sideOn = hidden.filter((f) => slotLookOf(f.slot)?.mirrorBack === true);
+
+  test("the sweep holds face-hidden frames of «Дом», «Гламур» and «Фитнес», side to the mirror and legs frames among them", () => {
+    expect([...new Set(hidden.map((f) => f.slot.category))].sort()).toEqual(["fitness", "glamour", "home"]);
+    expect(sideOn.length).toBeGreaterThan(PLANS / 2);
+    expect(hidden.filter((f) => f.slot.framing === "legs").length).toBeGreaterThan(LEGS_PLANS / 2);
+  });
+
+  test("every face-hidden prompt carries the face-cover line, and none the old «hides most of her face»", () => {
+    const sample = hidden.filter((_, i) => i % 7 === 0);
+    expect(sample.length).toBeGreaterThan(1000);
+    expect(offenders(sample, (f) => !f.prompt().includes(FACE_COVER) || OLD_COVER.test(f.prompt()))).toEqual(NONE);
+  });
+
+  test("side to the mirror, the reflection-only sentence says the phone covers her face the same way", () => {
+    expect(offenders(sideOn, (f) => !f.prompt().includes("Only her reflection is in the picture; the phone covers her face from her eyebrows to her chin."))).toEqual(NONE);
+  });
+
+  test("no gaze, eyes or expression contradicts it: a face-hidden sentence names none", () => {
+    expect(offenders(hidden, (f) => FACE_CLAUSE.test(f.sentence))).toEqual(NONE);
+  });
+});

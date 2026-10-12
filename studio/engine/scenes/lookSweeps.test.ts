@@ -233,7 +233,7 @@ describe("the body axis (S5.2c)", () => {
 describe("I5.2: only the mirror shows a phone", () => {
   // The look text may say «phone» only as the kind of photo and, for the mirror, in the mirror line and its phone-hand line. The sentence is not part of the look text.
   const KIND_OF_PHOTO = /Ordinary phone photo|A quick phone photo/g;
-  const MIRROR_ONLY = /her phone in her hand at chest height|One hand holds the phone|she holds her phone up in front of her face, so the phone hides most of her face|she holds the phone up and it hides her face|her face behind her phone/g;
+  const MIRROR_ONLY = /her phone in her hand at chest height|One hand holds the phone|she holds her phone right in front of her face, the phone covering her face|the phone covers her face|her face behind her phone/g;
   // The lines of the 5a.2 self-shots name her phone to say where it is NOT: out of the frame, propped on a ledge on a timer with nobody holding one.
   const SELF_SHOT_ONLY = /Her phone arm is out of the frame|A photo from her phone propped on a ledge|nobody holds a phone/g;
 

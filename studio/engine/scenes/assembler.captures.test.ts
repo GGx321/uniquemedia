@@ -123,12 +123,13 @@ describe("the pose phrase of a frame seen in profile to the mirror", () => {
     expect(assemble(counter)).toContain(HIDDEN_FACE_POSE_PHRASE["three-quarter"]);
   });
 
-  test("the phrase is only «Her body is in profile to the mirror»: the capture line and MIRROR_BACK_LINE already say the phone hides her face and only her reflection shows", () => {
+  test("the phrase is only «Her body is in profile to the mirror»: the capture line and MIRROR_BACK_LINE already say the phone covers her face and only her reflection shows", () => {
     expect(MIRROR_BACK_POSE_PHRASE).toBe("Her body is in profile to the mirror");
     expect(youthWords(MIRROR_BACK_POSE_PHRASE, "descriptor")).toEqual([]);
     const prompt = assemble(counter, { lookOf: slotLookOf });
     expect(prompt.toLowerCase().split("only her reflection").length - 1).toBe(1);
-    expect(prompt.split("hides").length - 1).toBe(2);
+    // C3′: both say it with the same clause, from her eyebrows to her chin.
+    expect(prompt.split("her face from her eyebrows to her chin").length - 1).toBe(2);
   });
 });
 

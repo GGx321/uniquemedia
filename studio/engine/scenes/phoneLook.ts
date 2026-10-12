@@ -51,9 +51,12 @@ const friendLine = (key: string, framing: CaptureFraming): string =>
 const CANDID_CLAUSE = "She is busy with something and not looking toward the camera.";
 
 /** The fixed capture lines; `friend` and `candid` take a variant from the slot's key (`captureLineOf`). */
+// C3′ (the owner's verdict, 2026-10-12): «the phone hides most of her face» drew her face beside the phone in 5 of 5 frames; the wording probe's winner (c3fix 1a)
+// covers it from her eyebrows to her chin, and the side-to-the-mirror sentence (MIRROR_BACK_LINE) says the same.
+const FACE_COVER = "the phone covering her face from her eyebrows to her chin";
+
 const FIXED_CAPTURE_LINE: Readonly<Record<Exclude<Capture, "friend" | "candid">, string>> = {
-  "mirror-hidden":
-    "A mirror selfie she took herself: she holds her phone up in front of her face, so the phone hides most of her face, and the room behind her is in the reflection.",
+  "mirror-hidden": `A mirror selfie she took herself: she holds her phone right in front of her face, ${FACE_COVER}; only her hair and body show in the mirror.`,
   mirror: MIRROR_LINE,
   above: "A close photo she took of herself from slightly above as she lies there, at arm's length; her near arm leaves the frame, so nothing in her near hand can be seen.",
   prone:
@@ -73,8 +76,8 @@ export function captureLineOf(capture: Capture, key: string, framing: CaptureFra
   return FIXED_CAPTURE_LINE[capture];
 }
 
-/** Back or side to the mirror (owner note, r1.5): added after the capture line of a moment tagged `mirrorBack`. */
-export const MIRROR_BACK_LINE = "Only her reflection is in the picture; she holds the phone up and it hides her face.";
+/** Back or side to the mirror (owner note, r1.5): added after the capture line of a moment tagged `mirrorBack`, with the face-hidden line's own phone clause (C3′). */
+export const MIRROR_BACK_LINE = "Only her reflection is in the picture; the phone covers her face from her eyebrows to her chin.";
 
 /**
  * The constraint about her hands. A mirror shot holds the phone in view in one hand; a selfie's near arm is out of the frame; the close self-shots (above,
