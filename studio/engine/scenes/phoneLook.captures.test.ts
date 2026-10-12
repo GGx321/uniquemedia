@@ -64,10 +64,11 @@ describe("captureLineOf: the plan's wording, verbatim", () => {
   });
 
   // C3′: «looking down along her own legs … held at her eye level» came out as a photo from far away (R5#09). The wording probe's variant (b) drew a clean first-person
-  // view (no face, no hair, no hand), verbatim but for «socked feet»: the probe's moment wore socks, and a pov-legs moment may be barefoot or in shoes.
+  // view (no face, no hair, no hand), verbatim but for «socked feet» (a pov-legs moment may be barefoot or in shoes) and «thighs and knees» (review: a long
+  // or midi dress covers them).
   test("pov-legs carries the probe's first-person line (c3fix 2b)", () => {
     expect(captureLineOf("pov-legs", "k")).toBe(
-      "A first-person point-of-view photo: the camera is exactly where her eyes are, looking straight down her own body; her thighs and knees are close to the lens in the foreground and her feet are at the far end, only her own legs are in the picture, with no face, no mirror and no hand.",
+      "A first-person point-of-view photo: the camera is exactly where her eyes are, looking straight down her own body; her legs are close to the lens in the foreground and her feet are at the far end, only her own legs are in the picture, with no face, no mirror and no hand.",
     );
   });
 

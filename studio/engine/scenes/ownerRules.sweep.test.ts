@@ -8,7 +8,7 @@ import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { assembleSlot } from "./assembler";
 import { hairLinesOf } from "./hairLines";
 import { localSentences } from "./localSentences";
-import { CONSTRAINTS, slotKeyOf } from "./phoneLook";
+import { captureLineOf, CONSTRAINTS, slotKeyOf } from "./phoneLook";
 import { plan } from "./planner";
 import { roomPlaceOf, slotLookOf } from "./roomPlace";
 import type { PlanSlot } from "./schema";
@@ -522,6 +522,13 @@ describe("C3′: a look down her own legs is a first-person photo from her eyes"
         return !prompt.startsWith(POV_LINE) || !prompt.includes("only her own legs are in the picture, with no face, no mirror and no hand.") || !prompt.endsWith("her other hand is free and holds nothing.") || prompt.includes("held at her eye level");
       }),
     ).toEqual(NONE);
+  });
+
+  // Review (C3′ round 2): «her thighs and knees close to the lens» contradicts the long and midi dresses «Виды» and «Гламур» pin on these moments.
+  test("the line names no thighs or knees: a pov-legs frame in a long or midi dress or skirt reads as it is worn", () => {
+    const dressed = pov.filter((f) => /\b(?:long|midi|maxi)\b/.test(f.slot.outfit));
+    expect(dressed.length).toBeGreaterThan(100);
+    expect(offenders(pov, (f) => /\b(?:thighs?|knees?)\b/.test(captureLineOf("pov-legs", "k")) || /\bthighs\b/.test(f.prompt()))).toEqual(NONE);
   });
 
   test("the line leaves her feet to the moment: no pov-legs prompt puts socks on a barefoot moment", () => {

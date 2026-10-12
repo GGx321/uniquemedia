@@ -68,9 +68,10 @@ const FIXED_CAPTURE_LINE: Readonly<Record<Exclude<Capture, "friend" | "candid">,
   timer:
     "A photo from her phone propped on a ledge a few metres away on a timer; the phone itself is out of the picture; both of her hands are empty and nobody holds a phone; her whole body is in the picture.",
   // C3′: «looking down along her own legs … held at her eye level» came out as a photo from far away (R5#09). The probe's variant (c3fix 2b) drew a clean first-person
-  // view, verbatim but for its «socked feet»: the probe's moment wore socks, and the feet here are the moment's (barefoot, socked or in shoes).
+  // view, verbatim but for its «socked feet» (the probe's moment wore socks; the feet here are the moment's, barefoot, socked or in shoes) and its «thighs and knees»
+  // (review: a long or midi dress covers them; «her legs» reads in any outfit).
   "pov-legs":
-    "A first-person point-of-view photo: the camera is exactly where her eyes are, looking straight down her own body; her thighs and knees are close to the lens in the foreground and her feet are at the far end, only her own legs are in the picture, with no face, no mirror and no hand.",
+    "A first-person point-of-view photo: the camera is exactly where her eyes are, looking straight down her own body; her legs are close to the lens in the foreground and her feet are at the far end, only her own legs are in the picture, with no face, no mirror and no hand.",
   "low-feet": "A quick phone photo a friend took of her, crouching a couple of metres away, low down near her feet; both of her hands are empty; she is not taking the photo herself.",
 };
 
