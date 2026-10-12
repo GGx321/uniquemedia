@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
 // S5.7c (plan s5a2 §6.4: «no «Ракурсы» left (static test)»): the run's «Ракурсы» are gone — the angle comes from the scene (I5.26). A static guard over the
-// renderer's sources (tests and the mock engine left out): no «Ракурсы» control, line or reference anywhere a run is set up or shown — the generate card, the
+// renderer's sources (tests and the mock engine's files left out): no «Ракурсы» control, line or reference anywhere a run is set up or shown — the generate card, the
 // scene set's strip, «Автопилот» and its history — no poses sent from a form, and none of their CSS. What stays, and is allowed by name below, is a custom
 // category's OWN angles in «Мои категории» (owner, Q-H; mockup 35): its section is still labelled «Ракурсы». The screen tests check the same on the DOM
 // (PhotosLevel, PhotosSceneLevel, AutopilotLevel). Comments are taken out first: they may tell the history.
@@ -40,7 +40,7 @@ async function sources(): Promise<{ file: string; text: string }[]> {
   // The glob answers with the platform's separator; the lists name files with "/", so a Windows path is normalised first.
   const files = Array.from(new Bun.Glob("**/*.{ts,tsx,css}").scanSync({ cwd: RENDERER }))
     .map((f) => f.replaceAll("\\", "/"))
-    .filter((f) => !/\.test\.tsx?$/.test(f) && !/(^|\/)engine\//.test(f) && !/[Kk]it\.tsx?$/.test(f) && !f.endsWith("testing.tsx"));
+    .filter((f) => !/\.test\.tsx?$/.test(f) && !/(^|\/)engine\/mock[^/]*$/.test(f) && !/[Kk]it\.tsx?$/.test(f) && !f.endsWith("testing.tsx"));
   return Promise.all(files.sort().map(async (file) => ({ file, text: await Bun.file(join(RENDERER, file)).text() })));
 }
 
