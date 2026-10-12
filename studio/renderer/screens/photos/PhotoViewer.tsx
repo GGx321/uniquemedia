@@ -12,7 +12,12 @@ import { useMediaRetry } from "../../ui/useMediaRetry";
 import { useBackdropClose, useModalDialog } from "../../ui/useModalDialog";
 import { montagePickRefusal, PhotoBadges, type MarkControl } from "./photoState";
 import { photoCategoryLabel } from "./runForm";
+import { ROUTE_TAG_TITLE } from "./sceneReview";
 import { viewerStep, type ViewerPlace } from "./viewerModel";
+
+/** S5.9g (mockup 51): a frame drawn on the «Смелая» route, named in full where the scene's tag says «Seedream · 2K». */
+const VIEWER_ROUTE = "Seedream 5 Pro · 2K";
+const VIEWER_ROUTE_TITLE = ROUTE_TAG_TITLE;
 
 // The «Фото» tab's photo viewer (no artboard draws one; built in the language of the video player, AvatarVideos.dc.html's
 // cards and the Photos sheet's tile). A click on a tile's photo opens it full size: the file through main's
@@ -168,6 +173,12 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
               <div className="viewer-meta">
                 <span className="tag viewer-category">{category}</span>
                 <PhotoBadges photo={photo} />
+                {/* S5.9g (mockup 51, gap A): the frame was drawn on the «Смелая» route — the engine's `route`; the model id alone cannot tell 2K from the 1K fallback. */}
+                {photo.route === "seedream" && (
+                  <span className="tag tag-o viewer-route" title={VIEWER_ROUTE_TITLE}>
+                    {VIEWER_ROUTE}
+                  </span>
+                )}
                 {refused && <span className="pill photo-badge viewer-refused">недоступно</span>}
               </div>
               <p className="sr-only" aria-live="polite">

@@ -669,6 +669,14 @@
   gap: 6px;
 }
 
+/* S5.9g (mockup 51): the frame's route — a technical fact: mono, quiet, never the accent (as a scene's «Seedream · 2K», scenes.css). */
+.viewer-route {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.01em;
+  color: var(--muted);
+}
+
 /* The tile wraps «лицо не проверялось» in a 92 px box to clear its pick; the column has the room for one line. */
 .viewer-meta .photo-face-none {
   max-width: none;
