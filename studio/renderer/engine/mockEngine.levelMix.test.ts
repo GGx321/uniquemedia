@@ -79,6 +79,17 @@ describe("«Кокетливая» on a composed set", () => {
     for (const scene of view.scenes) if (scene.level === "flirty" && faceVisibleOf({ capture: scene.capture ?? captureOfShot(scene.shot), pose: "front" }) === "yes") expect(scene.pose).not.toBe("back");
   });
 
+  // S5.7R carry-over (LOW, I5.27): the engine's slot stores a capture only when it says more than the stored shot (a timer on `friend`, a prone selfie on `selfie`), and the view echoes
+  // only that; the mock echoed the shot's own capture too.
+  test("a scene echoes its capture only when it says more than its shot does", async () => {
+    const { view } = await composed({}, 100);
+    const echoed = view.scenes.filter((s) => s.capture !== undefined);
+    expect(echoed.length).toBeGreaterThan(10);
+    for (const scene of view.scenes) if (scene.capture !== undefined) expect(scene.capture, `${scene.category} ${scene.shot}`).not.toBe(captureOfShot(scene.shot));
+    expect(new Set(echoed.map((s) => s.capture))).toContain("timer");
+    expect(view.scenes.some((s) => s.capture === undefined && s.shot === "friend")).toBe(true);
+  });
+
   test("an ordinary set, asked or not, holds no flirty scene", async () => {
     for (const over of [{}, { level: "ordinary" }]) expect((await composed(over, 30)).view.scenes.some((s) => s.level !== undefined)).toBe(false);
   });

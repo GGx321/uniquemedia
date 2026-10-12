@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarSummary, LaunchDraftInput, RunRequest, SceneSetView } from "../../shared/engine";
+import { captureOfShot } from "../../shared/scenes/captures";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
@@ -64,9 +65,12 @@ describe("a set composed on the mock", () => {
     expect(flirty.scenes.map((scene) => scene.capture)).toEqual(ordinary.scenes.map((scene) => scene.capture));
   });
 
-  test("shows each scene's capture, the way the engine does", async () => {
+  // S5.7R carry-over (I5.27): the engine's slot stores a capture only when it says more than the stored shot, and the view echoes only that; the mock does the same.
+  test("shows a scene's capture the way the engine does: only when it says more than the scene's shot", async () => {
     const set = await composedSet({});
-    expect(set.scenes.every((scene) => scene.capture !== undefined)).toBe(true);
+    expect(set.scenes.some((scene) => scene.capture !== undefined)).toBe(true);
+    expect(set.scenes.some((scene) => scene.capture === undefined)).toBe(true);
+    for (const scene of set.scenes) if (scene.capture !== undefined) expect(scene.capture).not.toBe(captureOfShot(scene.shot));
   });
 });
 

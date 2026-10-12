@@ -828,7 +828,8 @@ export class MockSceneSets {
         categoryName: isCustomCategory(scene.category) ? (set.categories.find((c) => c.ref === scene.category)?.name ?? null) : null,
         shot: scene.shot,
         pose: scene.pose,
-        ...(scene.capture === undefined ? {} : { capture: scene.capture }),
+        // The engine's slot stores a capture only when it says more than the stored shot (I5.27), and the view echoes only that.
+        ...(scene.capture === undefined || scene.capture === captureOfShot(scene.shot) ? {} : { capture: scene.capture }),
         ...(scene.framing === "legs" ? { framing: "legs" as const } : {}),
         ...(scene.level === "flirty" ? { level: "flirty" as const } : {}),
         place: { ...scene.place },

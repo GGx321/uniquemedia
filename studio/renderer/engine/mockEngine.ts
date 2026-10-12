@@ -2267,7 +2267,8 @@ export class MockEngine implements EngineBridge {
       runId,
       avatarId: slice.avatarId,
       createdAt: this.nowIso(),
-      request: { avatarId: slice.avatarId, count: slice.photos, categories: [slice.category], poses: { profile: false, back: false } },
+      // The angle comes from the scene (S5.7b): a launch's slice run is requested with no `poses`, as the engine's is.
+      request: { avatarId: slice.avatarId, count: slice.photos, categories: [slice.category] },
       capMicros: slice.capMicros,
       settledMicros: 0,
       ageCheck: this.settings.imageAgeCheck === "on",
