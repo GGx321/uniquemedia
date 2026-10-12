@@ -6,9 +6,10 @@ import { RAW_KEEP_BYTES_IMAGE, runPaidAttempt, type ClientContext, type Interpre
 import type { ImageParams, ImageResult } from "./types";
 
 /**
- * The size every image request asks for. Studio only ever makes 1K images
- * (owner decision 2026-09-29: 2K removed), so it is a constant of the wire
- * format, not a parameter; prices (money/prices.ts) assume the same 1K.
+ * The size an image request asks for unless it names another. Studio makes 1K images
+ * (owner decision 2026-09-29: 2K removed); 5a.3 (S5.9d) brought 2K back for the
+ * «Смелая» route alone, per call (`ImageParams.resolution`). Prices
+ * (money/prices.ts) are read at the size the call asks for.
  */
 export const IMAGE_RESOLUTION = "1K";
 
@@ -49,10 +50,13 @@ function interpretImage(body: unknown): Interpretation<{ bytes: Uint8Array; medi
 /** One image attempt via OpenRouter's Image API (`POST /images`). */
 export async function generateImage(ctx: ClientContext, params: ImageParams): Promise<ImageResult> {
   const quality = params.quality ?? null;
+  // 5a.3 (S5.9d): the «Смелая» route asks for 2K on its own call; the size priced is the size sent, from this one value.
+  const resolution = params.resolution ?? IMAGE_RESOLUTION;
   const worstMicros = params.priceBook.imageWorstCase({
     model: params.model,
     quality,
     refs: params.references.length,
+    resolution,
   });
   const result = await runPaidAttempt(ctx, {
     attemptId: params.attemptId,
@@ -67,7 +71,7 @@ export async function generateImage(ctx: ClientContext, params: ImageParams): Pr
     buildBody: () => ({
       model: params.model,
       prompt: params.prompt,
-      resolution: IMAGE_RESOLUTION,
+      resolution,
       aspect_ratio: params.aspectRatio,
       ...(quality === null ? {} : { quality }),
       ...(params.references.length > 0

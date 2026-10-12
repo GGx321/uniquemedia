@@ -1,7 +1,7 @@
 import type { ImageMediaType, LibraryReference } from "../library/media";
 import type { Budget, ReserveRefusal } from "../money/budget";
 import type { Scope } from "../money/ledger";
-import type { ImageQuality, PriceBook } from "../money/prices";
+import type { ImageQuality, ImageResolution, PriceBook } from "../money/prices";
 
 /** The part of a response body stream the client reads, byte-counted against a cap. */
 export interface BodyReader {
@@ -188,6 +188,18 @@ export interface ImageParams extends AttemptParams {
   quality?: ImageQuality | null;
   /** Already-downscaled JPEGs, sourced only through `Library.loadReference()` (invariant 9). */
   references: readonly LibraryReference[];
+  /** 5a.3 (S5.9d): the size this one call asks for and is priced at; absent = `IMAGE_RESOLUTION` (1K), the body every request had before the «Смелая» route. */
+  resolution?: ImageResolution;
+}
+
+/**
+ * 5a.3 (S5.9d, I5.38): the «Смелая» request: Seedream at 2K with no quality knob and EXACTLY ONE reference, the portrait master (four references refused everything on Seedream;
+ * two were not adopted). The tuple makes a second reference a compile error, the way a portrait batch's `PortraitBatch.references` does.
+ */
+export interface BoldImageParams extends ImageParams {
+  resolution: "2K";
+  quality?: null;
+  references: readonly [LibraryReference];
 }
 
 export interface ChatMessage {
