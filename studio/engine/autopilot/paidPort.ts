@@ -45,6 +45,12 @@ export interface SliceOutcome {
   checkFailures: number;
 }
 
+/** What of a launch's draft decides how a photo is priced (5a.3, S5.9d, option B): its «Подача» and its categories. */
+export interface PhotoLook {
+  level?: SceneLevel | undefined;
+  categories: readonly CategoryRef[];
+}
+
 export interface PaidPort {
   /** The open library, or null. */
   readonly library: PaidLibrary | null;
@@ -67,8 +73,11 @@ export interface PaidPort {
   startLaunchSlice(runId: string): Promise<LaunchSliceStart>;
   /** Which of the set's slices have a run, and whether each is finished (every slot closed) with what it committed. */
   sliceStatuses(set: StoredSceneSet): Promise<Map<string, SliceStatus>>;
-  /** One photo's worst case at today's prices, for the avatars' models (not the text model's price: a library-only launch never reads it). */
-  photoWorstMicros(): Promise<number>;
+  /**
+   * One photo's worst case at today's prices, for the avatars' models (not the text model's price: a library-only launch never reads it). `look` is the launch's draft (its «Подача»
+   * and categories): 5a.3 (S5.9d, option B) prices every photo of a «Смелая» launch with a «Смелая» category at the Seedream 2K unit.
+   */
+  photoWorstMicros(look?: PhotoLook): Promise<number>;
   /** The month's room with live caps; `extraLive` the launch's resumable slices. Null when the ledger cannot be read. */
   monthRoom(extraLive?: readonly LiveScope[]): MonthRoom | null;
   /** The `resume-slice` budget hold of a slice run. */

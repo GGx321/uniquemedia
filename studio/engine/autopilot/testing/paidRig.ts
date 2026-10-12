@@ -16,7 +16,7 @@ import type { LaunchFile } from "../launchFile";
 import { AUTOPILOT_DIR } from "../launchStore";
 import { LaunchStores } from "../lookup";
 import { Orchestrator } from "../orchestrator";
-import type { LaunchComposePayload, LaunchSliceStart, PaidPort, SliceOutcome } from "../paidPort";
+import type { LaunchComposePayload, LaunchSliceStart, PaidPort, PhotoLook, SliceOutcome } from "../paidPort";
 import { createPaidSteps, type PaidStepsDeps } from "../paidSteps";
 import type { LaunchStepsContext, StepTimers, TimerHandle } from "../steps";
 import { A, B, startInput } from "./launchFixtures";
@@ -207,7 +207,7 @@ export class FakePort implements PaidPort {
     return new Map(this.statuses);
   }
 
-  async photoWorstMicros(): Promise<number> {
+  async photoWorstMicros(_look?: PhotoLook): Promise<number> {
     this.calls.push("photoWorstMicros");
     if (this.photoGate !== null) await this.photoGate;
     return this.photoWorst;

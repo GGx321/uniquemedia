@@ -169,6 +169,29 @@ export function runEstimate(priced: PricedBook, models: RunModels, request: Pick
   return estimateOf(estimate, priced);
 }
 
+/**
+ * 5a.3 (S5.9d, §10.2, option B): whether a request, a set or a launch draft is «Смелая» AND names a «Смелая» category. Only then are the photos priced at the Seedream
+ * unit (a launch prices EVERY photo so: the launch math reads one unit). «Смелая» with only the five draws as «Кокетливая» on the owner's model, priced as it always was.
+ */
+export function isBoldLook(look: { level?: string | undefined; categories: readonly string[] }): boolean {
+  return look.level === "bold" && look.categories.some(isBoldCategory);
+}
+
+/** The photos of a run request that belong to a «Смелая» category (the figure `runEstimate` prices at the 2K route, and the one a start loads the 2K shape for). */
+export function requestBoldPhotos(request: Pick<RunRequest, "count" | "categories">): number {
+  return boldPhotosOf(splitCount(request.count, request.categories));
+}
+
+/** The slots of a plan that are drawn on the Seedream route (exact: from each slot's own `route`). */
+export function routedSlots(slots: readonly object[]): number {
+  return slots.filter((slot) => "route" in slot && slot.route === "seedream").length;
+}
+
+/** The scenes of a set's run that are drawn on the Seedream route (exact: from each scene's own slot). */
+export function routedScenes(scenes: readonly Pick<SceneRunSource, "slot">[]): number {
+  return routedSlots(scenes.map(({ slot }) => slot));
+}
+
 /** The photos of a request's split that belong to a «Смелая» category. */
 export function boldPhotosOf(split: readonly { ref: CategoryRef; count: number }[]): number {
   return split.reduce((sum, entry) => (isBoldCategory(entry.ref) ? sum + entry.count : sum), 0);
@@ -369,7 +392,7 @@ function planModels(route: readonly [ImageChoice, ...ImageChoice[]], textModel: 
     fallback: second?.model ?? null,
     text: textModel,
     // 5a.3 (S5.9d): the «Смелая» model, written only when a slot is drawn on that route, so a plan without one is the document it always was.
-    ...(slots.some((slot) => "route" in slot && slot.route === "seedream") ? { bold: BOLD_IMAGE_MODEL } : {}),
+    ...(routedSlots(slots) > 0 ? { bold: BOLD_IMAGE_MODEL } : {}),
   };
 }
 

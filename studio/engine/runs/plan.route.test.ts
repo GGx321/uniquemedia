@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { plan, type PlanSlot } from "../scenes";
-import { BOLD_IMAGE_MODEL, buildRunPlan, buildSceneRunPlan, type NewRunPlan, type NewSceneRunPlan } from "./plan";
+import { BOLD_IMAGE_MODEL, buildRunPlan, buildSceneRunPlan, requestBoldPhotos, routedScenes, routedSlots, type NewRunPlan, type NewSceneRunPlan } from "./plan";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -79,5 +79,27 @@ describe("buildSceneRunPlan", () => {
   test("carries each scene's route into its slot", () => {
     const built = buildSceneRunPlan(setInput([1, 3]));
     expect(built.scenes.slots.map((slot) => ("route" in slot ? slot.route : undefined))).toEqual([undefined, "seedream", undefined, "seedream"]);
+  });
+});
+
+describe("routedSlots, routedScenes and requestBoldPhotos", () => {
+  test("count the slots drawn on the Seedream route and no other", () => {
+    expect(routedSlots(slots(4, [0, 3]))).toBe(2);
+  });
+
+  test("count none for a plan whose slots carry no route", () => {
+    expect(routedSlots(slots(4, []))).toBe(0);
+  });
+
+  test("count the scenes whose slot is on the route; an own scene never is", () => {
+    const drawn = slots(3, [1]);
+    const own = { kind: "own" as const, shot: "friend" as const, pose: "front" as const };
+    expect(routedScenes([...drawn.map((slot) => ({ slot })), { slot: own }])).toBe(1);
+  });
+
+  test("a request's bold photos are its split's photos in «Смелая» categories", () => {
+    expect(requestBoldPhotos({ count: 7, categories: ["home", "nightwear"] })).toBe(3);
+    expect(requestBoldPhotos({ count: 10, categories: ["nightwear", "beach"] })).toBe(10);
+    expect(requestBoldPhotos({ count: 10, categories: ["home", "travel"] })).toBe(0);
   });
 });

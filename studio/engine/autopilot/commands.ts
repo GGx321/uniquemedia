@@ -16,7 +16,7 @@ import type { Library } from "../library";
 import type { StoredCategory } from "../library/categories";
 import { coversOfStored } from "../scenes/coverage";
 import type { PriceModels, PricedBook } from "../money/priceCache";
-import type { RunModels } from "../runs/plan";
+import { isBoldLook, type RunModels } from "../runs/plan";
 import { launchPriceModels, unitPricesOf } from "./prices";
 import { buildLaunchPreview } from "./preview";
 import { readDraftHolds, type DraftHoldsReader } from "./draftHolds";
@@ -189,7 +189,7 @@ export class AutopilotCommands {
     // A plan that generates nothing (Σn = 0, a library-only launch) needs no price and asks for none (§19): `unitPricesOf` wants the text model's price, which such a launch has
     // no use for, and a price list that cannot be read must not refuse a launch that spends nothing. Its estimate is zero.
     let unit: LaunchUnitPrices | null = null;
-    if (generates) unit = await this.#unitPrices(await this.#coversOf(library, draft.categories));
+    if (generates) unit = await this.#unitPrices(await this.#coversOf(library, draft.categories), isBoldLook(draft));
     const estimate = unit === null ? { avatars: [], worstMicros: 0, expectedMicros: 0, prices: "fallback" as const, pricesAsOf: new Date(this.#d.clock()).toISOString().slice(0, 10) } : launchEstimate(needs, unit);
     return { draft, plan, unit, estimate };
   }
@@ -204,10 +204,11 @@ export class AutopilotCommands {
     }
   }
 
-  async #unitPrices(covers: CoversOf): Promise<LaunchUnitPrices> {
+  /** 5a.3 (S5.9d, option B): `bold` is a draft that is «Смелая» with a «Смелая» category: every photo of the launch is priced at the Seedream 2K unit. */
+  async #unitPrices(covers: CoversOf, bold: boolean): Promise<LaunchUnitPrices> {
     const models = this.#d.models();
     const check = this.#d.imageAgeCheck();
-    return unitPricesOf(await this.#d.prices(launchPriceModels(models, check)), models, check, covers);
+    return unitPricesOf(await this.#d.prices(launchPriceModels(models, check, bold)), models, check, covers, bold);
   }
 
   /** Which of the draft's custom categories the code template covers, from their stored pools as the library holds them now (a built-in is always covered). */
