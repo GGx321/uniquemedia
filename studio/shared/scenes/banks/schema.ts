@@ -480,6 +480,13 @@ function boldBankRules(bank: CategoryBank, add: Add): void {
       }
     }
   }
+  // Every moment, at every level that may draw it (its own and above), has an outfit that level may wear: a moment that pins only outfits above its own level would pass the capture
+  // check above and then throw at compose (`pinnedAt` in engine/scenes/fit.ts), so it fails here, at load.
+  for (const { moment, where } of moments) {
+    for (const level of LEVELS.filter((l) => atOrBelow(moment.level, l))) {
+      if (!wearable(moment, level)) add(BANK_RULE.boldLevels, where, `has no outfit a ${level} slot can wear: it pins only outfits above ${level}`);
+    }
+  }
   if (general.filter((o) => o.level === "bold").length < BOLD_OUTFITS_MIN) add(BANK_RULE.boldLevels, "outfits", `at least ${BOLD_OUTFITS_MIN} bold outfits in the general draw`);
 
   // legwear: the stockings, on the bold legwear only.

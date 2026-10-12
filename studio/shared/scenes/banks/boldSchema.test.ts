@@ -171,6 +171,10 @@ describe("a «Смелая» bank", () => {
     // bold-levels
     ["fewer than four bold outfits", withOutfits(OUTFITS.filter((o) => o.text !== "a lace bodysuit" && o.text !== "a sheer babydoll over a lace set")), BANK_RULE.boldLevels],
     ["no ordinary outfit, so an ordinary slot has nothing to wear", withOutfits(OUTFITS.filter((o) => o.level !== undefined)), BANK_RULE.boldLevels],
+    // S5.9c round 2: a moment of a level pins an outfit a slot of that level may wear, or the planner throws at compose (fit.ts `pinnedAt`).
+    ["an ordinary moment that pins only a bold outfit (an ordinary slot has nothing to wear in it)", withMoment({ ...plain, text: "sits on the floor", outfits: ["a black lace bra and panties"] }), BANK_RULE.boldLevels],
+    ["a flirty moment that pins only bold outfits", withMoment({ ...plain, text: "sits on the floor", level: "flirty", outfits: ["a black lace bra and panties", "a lace bodysuit"] }), BANK_RULE.boldLevels],
+    ["a legs moment that pins only flirty and bold outfits (an ordinary legs slot has nothing to wear)", withLegs({ ...LEGS, outfits: ["a satin cami and satin shorts", "a satin midi nightdress", "a lace bodysuit", "a black lace bra and panties"] }), BANK_RULE.boldLevels],
     // bold-legs
     ["a legs moment that pins three outfits", withLegs({ ...LEGS, outfits: LEGS.outfits?.slice(0, 3) ?? [] }), BANK_RULE.boldLegs],
     ["a legs moment that pins no ordinary outfit (an ordinary legs slot has nothing to wear)", withLegs({ ...LEGS, outfits: ["a satin cami and satin shorts", "a satin midi nightdress", "a black lace bra and panties", "a white lace bra and panties"] }), BANK_RULE.boldLegs],
