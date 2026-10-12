@@ -326,4 +326,27 @@ describe("«Смелая» remembered per avatar, like «Кокетливая»"
     expect(localStorage.getItem(`${LEVEL_KEY_PREFIX}${MIA.avatarId}`) === null).toBe(true);
     second.unmount();
   });
+
+  // Round 2 (L5): «for this avatar only» — a second avatar keeps her own «Подача», on screen and in storage, and Mia keeps hers.
+  test("a second avatar keeps her own «Подача»: Mia «Смелая», Sofia «Кокетливая», each back as it was", async () => {
+    const SOFIA = { ...MIA, avatarId: "avatar-sofia-0002", name: "Sofia", masterPhotoId: "photo-sofia-0001" };
+    async function openAvatarPhotos(name: string): Promise<void> {
+      fireEvent.click(screen.getByRole("button", { name: "Аватары" }));
+      fireEvent.click(await screen.findByRole("button", { name }));
+      await screen.findByRole("heading", { level: 1, name });
+      await openSection("Фото");
+      await screen.findByRole("heading", { level: 1, name });
+    }
+    await openPhotos({ avatars: [MIA, SOFIA] });
+    await pickLevel("Смелая");
+    await openAvatarPhotos("Sofia");
+    expect(level("Обычная").checked).toBe(true);
+    await pickLevel("Кокетливая");
+    await openAvatarPhotos("Mia");
+    expect(level("Смелая").checked).toBe(true);
+    await openAvatarPhotos("Sofia");
+    expect(level("Кокетливая").checked).toBe(true);
+    expect(localStorage.getItem(`${LEVEL_KEY_PREFIX}${MIA.avatarId}`)).toBe("bold");
+    expect(localStorage.getItem(`${LEVEL_KEY_PREFIX}${SOFIA.avatarId}`)).toBe("flirty");
+  });
 });
