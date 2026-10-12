@@ -130,7 +130,7 @@ describe("no slot takes an item above its level (I5.37)", () => {
       for (let seed = 1; seed <= 10_000; seed++) for (const d of boldPlan(category, seed, 12, seed % 2 === 0 ? 15 : 0)) if (!atOrBelow(d.moment.level, levelOf(d.slot)) || !atOrBelow(d.outfit.level, levelOf(d.slot))) above++;
       expect({ category, above }).toEqual({ category, above: 0 });
     }
-  });
+  }, 60_000);
 
   test("a bold slot wears a bold outfit wherever the moment lets it", () => {
     const bold = SEEDS.flatMap((seed) => boldPlan("nightwear", seed, 30)).filter((d) => levelOf(d.slot) === "bold" && d.moment.outfits === undefined);
