@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { hasLegs } from "../../../engine/scenes/legs";
 import { POOLS } from "../../../engine/scenes/pools";
-import { plannerCategoryOf } from "../../../engine/scenes/categories";
 import { SceneCategory } from "../../../shared/engine";
 import { legsCountOf } from "../../../shared/scenes/level";
 import { NBSP } from "../../lib/format";
@@ -55,9 +54,10 @@ describe("how many frames are legs (I5.29)", () => {
 
   // The window lets «Ножки» run on any built-in (`hasBuiltIn`), and the engine deals a legs slot from a pool only if `hasLegs` says so: the two must agree for all five.
   test("every built-in category's pool can deal a legs slot, so the window never offers «Ножки» the engine cannot draw", () => {
+    const POOL_OF = { home: "home", travel: "travel", shoot: "photoshoot", glam: "glamour", fit: "fitness" } as const satisfies Record<SceneCategory, keyof typeof POOLS>;
     for (const ref of SceneCategory.options) {
       expect(hasBuiltIn([ref]), ref).toBe(true);
-      expect(hasLegs(POOLS[plannerCategoryOf(ref)]), ref).toBe(true);
+      expect(hasLegs(POOLS[POOL_OF[ref]]), ref).toBe(true);
     }
   });
 });
