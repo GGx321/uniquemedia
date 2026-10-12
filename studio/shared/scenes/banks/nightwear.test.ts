@@ -141,6 +141,14 @@ describe("the moments and their levels (plan §6.2)", () => {
     for (const text of ["stretches out on the duvet", "stretches after waking up", "stretches her arms up, facing away"]) expect(momentNamed(text)?.moment.outfits, text).toEqual(general);
   });
 
+  // S5.R4 (the whole-slice review, LOW): under the duvet or a blanket a bold outfit does not show, and the 2K frame was paid for nothing («curls up with a blanket, wearing a white lace
+  // bra and panties»). The covering moments pin every general outfit of the bank that is not bold, in the bank's order.
+  test("a moment under the duvet or a blanket pins every general outfit but the bold ones", () => {
+    const notBold = NIGHTWEAR.outfits.filter((o) => o.pinOnly !== true && o.level !== "bold").map((o) => o.text);
+    expect(notBold).toEqual(["an oversized sleep tee", "cotton pajama shorts and a tee", "a long cotton nightshirt", "silk pajamas", "a satin slip nightdress", "a satin midi nightdress", "a satin cami and satin shorts", "a short tied satin robe"]);
+    for (const text of ["lies curled up under the duvet", "curls up with a blanket"]) expect(momentNamed(text)?.moment.outfits, text).toEqual(notBold);
+  });
+
   // Review round 2: arms up, the open shirt would not stay closed over her chest.
   test("her arms up, she wears lingerie that stays in place, never the open shirt", () => {
     expect(momentNamed("lies back with her arms up")?.moment.outfits).toEqual(["a black lace bra and panties", "a white lace bra and panties", "a lace bodysuit", "a sheer babydoll over a lace set", "a cropped tee and cotton panties"]);

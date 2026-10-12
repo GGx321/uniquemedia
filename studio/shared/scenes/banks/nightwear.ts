@@ -61,6 +61,12 @@ const OUTFITS: readonly Outfit[] = [
  */
 const ARMS_UP_OUTFITS: readonly string[] = OUTFITS.filter((o) => o.pinOnly !== true && !isOwnerBannedOutfit(o.text) && !OPEN_SHIRT.test(o.text)).map((o) => o.text);
 
+/**
+ * S5.R4: every outfit of the general draw that is not bold: a moment under the duvet or a blanket pins these (rule bold-covered), so a bold slot never pays a 2K frame for lingerie
+ * the cover hides. Derived from the bank's outfits, as the arms-up pins are.
+ */
+const COVERED_OUTFITS: readonly string[] = OUTFITS.filter((o) => o.pinOnly !== true && !isOwnerBannedOutfit(o.text) && o.level !== "bold").map((o) => o.text);
+
 export const NIGHTWEAR: CategoryBank = {
   bold: true,
   places: [
@@ -76,7 +82,7 @@ export const NIGHTWEAR: CategoryBank = {
         { text: "lies back against the pillows", motion: "she slowly blinks and smiles", captures: ["above"], twoHanded: false, messyOk: true },
         { text: "lies on her side, head on her hand", motion: "she smiles a little and looks away", captures: ["above", "timer"], twoHanded: false, handAtFace: true },
         { text: "rests her cheek on the pillow", motion: "she slowly closes her eyes", captures: ["above"], twoHanded: false },
-        { text: "lies curled up under the duvet", motion: "she pulls the duvet up a little", captures: ["above", "timer"], twoHanded: false, messyOk: true },
+        { text: "lies curled up under the duvet", motion: "she pulls the duvet up a little", captures: ["above", "timer"], twoHanded: false, messyOk: true, outfits: COVERED_OUTFITS },
         { text: "lies back, hair across the pillow", motion: "she slowly turns her head", captures: ["above"], twoHanded: false, hair: "own" },
         { text: "lies back, one knee up", motion: "she sways her knee a little", captures: ["above"], twoHanded: false, level: "flirty" },
         { text: "sits cross-legged with her coffee", motion: "she sips and smiles a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
@@ -193,7 +199,7 @@ export const NIGHTWEAR: CategoryBank = {
       moments: [
         { text: "sits with one leg crossed", motion: "she wiggles her crossed foot a bit", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
         { text: "pulls one knee up to her chest", motion: "she rests her cheek a little lower", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
-        { text: "curls up with a blanket", motion: "she pulls the blanket a little closer", captures: ["mirror-hidden", "mirror"], twoHanded: false },
+        { text: "curls up with a blanket", motion: "she pulls the blanket a little closer", captures: ["mirror-hidden", "mirror"], twoHanded: false, outfits: COVERED_OUTFITS },
         { text: "tucks one leg under her", motion: "she settles a little deeper", captures: ["mirror-hidden", "mirror"], twoHanded: false, level: "flirty" },
         { text: "sits back, knees together", motion: "she rocks a little in place", captures: ["mirror-hidden", "mirror"], twoHanded: false, level: "bold", route: "seedream" },
         { text: "sits with her legs stretched out", motion: "she points her toes slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },

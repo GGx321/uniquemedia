@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { GAZE } from "../../shared/scenes/banks";
-import { LOOKS_ELSEWHERE } from "../../shared/scenes/banks/schema";
+import { COVERS_HER, LOOKS_ELSEWHERE } from "../../shared/scenes/banks/schema";
 import { HELD_OBJECT_WORDS } from "../../shared/scenes/words";
 import { boldPromptMatrix, boldRunPrompts, type PromptFrame } from "./boldRunPrompts.testkit";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -119,5 +119,18 @@ describe("a bold «Ночнушки» legs frame wears the stockings", () => {
 
   test("no frame that is not bold says stockings, and no beach frame does", () => {
     expect(offenders(FRAMES, (f) => STOCKINGS.test(f.prompt) && (f.slot.level !== "bold" || f.slot.category !== "nightwear"))).toEqual(NONE);
+  });
+});
+
+// Item 5 (LOW): under the duvet or a blanket a bold outfit does not show, and the 2K frame was paid for nothing («curls up with a blanket, wearing a white lace bra and panties»).
+describe("no bold outfit goes under a cover", () => {
+  const covered = FRAMES.filter((f) => COVERS_HER.test(f.moment.text) || COVERS_HER.test(f.moment.motion));
+
+  test("the sweep reads frames under a cover on bold slots", () => {
+    expect(covered.filter((f) => f.slot.level === "bold").length).toBeGreaterThan(20);
+  });
+
+  test("none of them wears a bold outfit", () => {
+    expect(offenders(covered, (f) => f.outfit.level === "bold")).toEqual(NONE);
   });
 });

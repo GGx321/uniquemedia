@@ -114,6 +114,7 @@ export const BANK_RULE = {
   boldLevels: "bold-levels",
   boldLegs: "bold-legs",
   boldArmsUp: "bold-arms-up",
+  boldCovered: "bold-covered",
   water: "water",
   strap: "strap",
 } as const;
@@ -126,6 +127,12 @@ type Rule = (typeof BANK_RULE)[keyof typeof BANK_RULE];
  */
 export const LOOKS_ELSEWHERE =
   /\b(?:watch(?:es|ing)?|gaz(?:es|ing)|star(?:es|ing)|peer(?:s|ing)?|(?:looks?|looking|glances?|glancing)\s+(?!at\s+(?:the\s+)?(?:viewer|camera|lens)\b)(?:out|at|across|over|down|up|along|into|toward|towards|through|back|around|past)\b)/i;
+
+/**
+ * S5.R4: a moment under a cover, in its text or its motion («lies curled up under the duvet», «curls up with a blanket»): what she wears does not show. On a duvet is no cover, and
+ * the sheet she holds to her chest is the outfit itself (pinned), not a cover over one.
+ */
+export const COVERS_HER = /\b(?:under|beneath)\s+(?:the|a|her)\s+(?:duvet|blankets?|covers|sheets?|quilt|comforter|throw|plaid)\b|\b(?:blankets?|plaids?|quilts?|comforters?)\b/i;
 
 /** Raised or stretched arms, in a moment's text or its motion (the open-shirt rule below). A stretch of her legs, feet or toes is not one: her arms stay down. */
 const ARMS_UP = /\barms?\b[^.]*\bup\b|\bstretch\w*\b(?![^.]*\b(?:legs?|feet|foot|toes?|ankles?)\b)/i;
@@ -478,6 +485,14 @@ function boldBankRules(bank: CategoryBank, add: Add): void {
       const open = bank.outfits.filter((o) => OPEN_SHIRT.test(o.text)).map((o) => o.text);
       if (open.length > 0 && moment.outfits === undefined) add(BANK_RULE.boldArmsUp, where, `an arms-up moment pins its outfits, so it never draws «${open.join("», «")}» (raised arms open the shirt)`);
       for (const outfit of moment.outfits ?? []) if (OPEN_SHIRT.test(outfit)) add(BANK_RULE.boldArmsUp, where, `«${outfit}» is an open shirt: with her arms up it does not stay closed over her chest`);
+    }
+    // bold-covered (S5.R4): under a duvet or a blanket the outfit does not show, so a bold one would be a 2K frame paid for nothing (review: «curls up with a blanket, wearing a white
+    // lace bra and panties»). A covering moment pins its outfits, and none of them is bold.
+    if (COVERS_HER.test(moment.text) || COVERS_HER.test(moment.motion)) {
+      if (moment.outfits === undefined) add(BANK_RULE.boldCovered, where, "a moment under a duvet or a blanket pins its outfits: the general draw would put a bold one under the cover");
+      for (const outfit of moment.outfits ?? []) {
+        if (bank.outfits.find((o) => o.text === outfit)?.level === "bold") add(BANK_RULE.boldCovered, where, `«${outfit}» is bold: under the cover it does not show, and the 2K frame is paid for nothing`);
+      }
     }
     // bold-legs (M5, P-5a3 #6).
     if (moment.captures.includes("low-feet")) add(BANK_RULE.boldLegs, where, "no low-feet frame in a «Смелая» bank: her feet are her own look down (pov-legs) or the mirror's");

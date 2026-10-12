@@ -164,6 +164,12 @@ describe("a «Смелая» bank", () => {
     expect(boldBankProblems(withEdge({ ...WADES, text: "stretches her arms out, knee-deep", gaze: undefined, angle: "profile", outfits: ["a black bikini"] }))).toEqual([]);
   });
 
+  // S5.R4: the negative control of bold-covered. A covering moment that pins only what is not bold is valid; a moment on the duvet, not under it, covers nothing.
+  test("a moment under a cover that pins only ordinary and flirty outfits is valid, and a moment on the duvet is no covering one", () => {
+    expect(boldBankProblems(withMoment({ ...plain, text: "lies curled up under the duvet", outfits: ["cotton pajama shorts and a tee", "a satin cami and satin shorts"] }))).toEqual([]);
+    expect(boldBankProblems(withMoment({ ...plain, text: "sits on the duvet" }))).toEqual([]);
+  });
+
   test("an arms-up moment is valid in a bank with no open shirt, pinned or not", () => {
     expect(boldBankProblems(withMoment(ARMS_UP))).toEqual([]);
   });
@@ -207,6 +213,10 @@ describe("a «Смелая» bank", () => {
     ["an arms-up moment that pins no outfit, so it can draw the open shirt", withArmsUp(ARMS_UP), BANK_RULE.boldArmsUp],
     ["an arms-up moment that pins the open shirt", withArmsUp({ ...ARMS_UP, outfits: ["cotton pajama shorts and a tee", OPEN_SHIRT.text] }), BANK_RULE.boldArmsUp],
     ["a moment whose motion stretches her arms up, pinning nothing", withArmsUp({ ...plain, text: "stands by the bed", motion: "she stretches slowly and smiles" }), BANK_RULE.boldArmsUp],
+    // bold-covered (S5.R4): under a duvet or a blanket a bold outfit is hidden, and the 2K frame is paid for nothing.
+    ["a moment under the duvet that pins no outfit, so a bold slot draws lingerie under it", withMoment({ ...plain, text: "lies curled up under the duvet" }), BANK_RULE.boldCovered],
+    ["a moment with a blanket that pins a bold outfit", withMoment({ ...plain, text: "curls up with a blanket", outfits: ["a long cotton nightshirt", "a black lace bra and panties"] }), BANK_RULE.boldCovered],
+    ["a moment whose motion pulls a blanket over her, pinning nothing", withMoment({ ...plain, motion: "she pulls the blanket a little closer" }), BANK_RULE.boldCovered],
     // water
     ["a water moment that pins no outfit", withWater({ ...WADES, outfits: undefined }), BANK_RULE.water],
     ["a water moment that pins an outfit that is not swimwear", withWater({ ...WADES, outfits: ["a black bikini", "a long cotton nightshirt"] }), BANK_RULE.water],
