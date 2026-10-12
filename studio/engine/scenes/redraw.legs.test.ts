@@ -49,12 +49,12 @@ describe.each([...CATEGORIES])("redrawing a %s legs scene", (category) => {
     }
   });
 
-  test("its face is hidden or may be out of frame, and it wears an outfit that shows her legs", () => {
+  test("its face is hidden or may be out of frame, and it wears an outfit its moment pins", () => {
     for (const slot of legsSlotsOf(category)) {
       for (let k = 1; k <= 4; k++) {
         const out = draw(slot, k, pool);
         expect(["no", "maybe"]).toContain(faceVisibleOf({ capture: captureOf(out), pose: out.pose, framing: "legs" }));
-        expect(BANKS[category].outfits.find((o) => o.text === out.outfit)?.showsLegs).toBe(true);
+        expect(momentOf(category, out)?.outfits).toContain(out.outfit);
         const moment = momentOf(category, out);
         const outfit = BANKS[category].outfits.find((o) => o.text === out.outfit);
         if (out.legwear !== undefined && moment !== undefined && outfit !== undefined) expect(legwearFits(moment, outfit)).toBe(true);

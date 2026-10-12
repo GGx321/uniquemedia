@@ -3,6 +3,9 @@ import type { CategoryBank } from "./types";
 // «Гламур» = «вечер выхода» (S5.5, owner canary C1′, 2026-10-11): a bar, a restaurant, a taxi, a street at night, an elevator; at home ONLY getting
 // ready (the bathroom sink, the front door). Never on a bed (validated). Every place now carries details: the five non-room places use them in the
 // template's `with {detail}`. Captures (plan r1.2): mixed, out at night and getting ready in the mirror.
+/** S5.8a review: a frame from below or down her own legs wears a wrap or midi dress, a midi skirt or trousers, never the bodycon or a mini. */
+const LEGS_EVENING = ["a navy wrap dress", "a halter top and a midi skirt", "a fitted beige knit midi dress", "a corset top and high-rise trousers"];
+
 export const GLAMOUR: CategoryBank = {
   places: [
     {
@@ -20,6 +23,8 @@ export const GLAMOUR: CategoryBank = {
         { text: "turns to look across the room", motion: "she laughs a little and turns back", captures: ["friend", "candid"], twoHanded: false, gaze: "own", angle: "profile" },
         // S5.7b («Кокетливая», probe P-5a2: flirty Glamour drew 4 of 4, the owner: «кокетливо пойдёт»).
         { text: "leans in, chin on her hand", motion: "she tilts her head slowly", captures: ["friend", "selfie"], twoHanded: false, level: "flirty", handAtFace: true },
+        // S5.8a review: a second place for «Ножки» outside, so the evening's legs frames are not two sentences.
+        { text: "sits on a stool, ankles crossed", motion: "she rocks her crossed ankles slowly", captures: ["low-feet"], twoHanded: false, outfits: LEGS_EVENING, legs: { framing: "legs" } },
       ],
     },
     {
@@ -48,7 +53,8 @@ export const GLAMOUR: CategoryBank = {
         { text: "rests her head on the window", motion: "she closes her eyes slowly", captures: ["selfie"], twoHanded: false },
         { text: "pulls her coat a little closer", motion: "she tugs the coat closer slowly", captures: ["selfie"], twoHanded: false },
         // S5.8a («Ножки»): nobody crouches in the back seat of a taxi, so its legs frame is a look down along her own legs.
-        { text: "sits with her legs crossed", motion: "she crosses and uncrosses her legs slowly", captures: ["pov-legs"], twoHanded: false, legs: { framing: "legs" } },
+        { text: "sits with her legs crossed", motion: "she taps her foot slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS_EVENING, legs: { framing: "legs" } },
+        { text: "sits with her knees together", motion: "she shifts her feet a little", captures: ["pov-legs"], twoHanded: false, outfits: LEGS_EVENING, legs: { framing: "legs" } },
       ],
     },
     {
@@ -66,7 +72,7 @@ export const GLAMOUR: CategoryBank = {
         // S5.6R: the taxi's phone moment left with its friend's photo; on the street she checks her phone for the ride home, caught by a friend.
         { text: "checks her phone for her ride", motion: "she scrolls her phone slowly", captures: ["candid", "friend"], twoHanded: false, phone: true, gaze: "own" },
         // S5.8a («Ножки»): outside, a friend crouches low down near her feet as she steps into her heels.
-        { text: "slips on her heels by the door", motion: "she settles her foot into the heel slowly", captures: ["low-feet"], twoHanded: true, legs: { framing: "legs" } },
+        { text: "steps into her heels by the door", motion: "she rises onto her toes a little", captures: ["low-feet"], twoHanded: false, outfits: LEGS_EVENING, legs: { framing: "legs" } },
       ],
     },
     {

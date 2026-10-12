@@ -2,6 +2,9 @@ import type { CategoryBank } from "./types";
 
 // «Виды» (the stored id `travel` stays, I5.33; plan s5a2 r1.2 §5.1): a balcony over a city, a garden pond, a path above green hills, a river railing.
 // As on the street, she mostly asks someone; some selfies, a timer, a candid. The beach leaves for «Пляж и бассейн» (5a.3, «Смелая»).
+/** S5.8a review: a look down her own legs wears a shirt dress, linen trousers or a long sundress; no boots (her toes are in the frame) and no mini. */
+const LEGS_VIEWS = ["a linen shirt dress", "a cotton top and linen trousers", "a long cotton sundress"];
+
 export const TRAVEL: CategoryBank = {
   places: [
     {
@@ -17,7 +20,7 @@ export const TRAVEL: CategoryBank = {
         // S5.7b: the angle comes from the moment; seen from behind, she faces the view.
         { text: "stands facing the skyline", motion: "her hair lifts a little in the wind", captures: ["friend", "timer", "candid"], twoHanded: false, angle: "back" },
         // S5.8a («Ножки»): a POV along her own legs, stretched toward the railing.
-        { text: "stretches her legs on the chair", motion: "she stretches her toes toward the railing a little", captures: ["pov-legs"], twoHanded: false, legs: { framing: "legs" } },
+        { text: "stretches her legs on the chair", motion: "she stretches her toes toward the railing a little", captures: ["pov-legs"], twoHanded: false, outfits: LEGS_VIEWS, legs: { framing: "legs" } },
       ],
     },
     {
@@ -30,6 +33,7 @@ export const TRAVEL: CategoryBank = {
         { text: "crouches at the water's edge", motion: "she leans a little toward the water", captures: ["friend", "candid", "timer"], twoHanded: false, outdoor: true },
         { text: "sits on the wooden bench", motion: "she leans back a little", captures: ["friend", "timer", "selfie"], twoHanded: false, outdoor: true },
         { text: "walks along the path", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, outdoor: true },
+        { text: "sits on the grass, legs out", motion: "she wiggles her toes a little", captures: ["pov-legs"], twoHanded: false, outfits: LEGS_VIEWS, legs: { framing: "legs" } },
         { text: "sits on the grass", motion: "she leans back a little", captures: ["friend", "timer", "selfie", "candid"], twoHanded: false, outdoor: true },
       ],
     },
@@ -44,6 +48,7 @@ export const TRAVEL: CategoryBank = {
         { text: "sits on a wooden fence", motion: "she swings one foot a little", captures: ["friend", "timer"], twoHanded: false, outdoor: true },
         { text: "takes in the view", motion: "she breathes in slowly and smiles", captures: ["friend", "candid", "selfie", "timer"], twoHanded: false, gaze: "own", angle: "three-quarter", outdoor: true },
         { text: "walks away toward the ridge", motion: "she keeps walking slowly", captures: ["friend", "candid", "timer"], twoHanded: false, angle: "back", outdoor: true },
+        { text: "rests on a flat rock, legs forward", motion: "she flexes her feet slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS_VIEWS, legs: { framing: "legs" } },
       ],
     },
     {
@@ -65,6 +70,7 @@ export const TRAVEL: CategoryBank = {
     { text: "a strapless mini dress", showsLegs: true },
     { text: "a tank top, pleated skirt, boots", showsLegs: true },
     { text: "a linen shirt dress", showsLegs: true },
+    { text: "a long cotton sundress", showsLegs: true, pinOnly: true },
     { text: "a cotton top and linen trousers" },
   ],
   captureDeck: ["friend", "selfie", "friend", "timer", "friend", "candid"],

@@ -149,7 +149,7 @@ describe("a category bank", () => {
     const rich: Moment[] = [
       { ...plain, outfits: ["grey lounge shorts and a fitted tee"], startPose: "lying flat on her stomach" },
       { ...plain, text: "leans on the lamppost", object: true },
-      { ...plain, text: "stretches her legs out on the bed", captures: ["pov-legs", "mirror-hidden"], legs: { framing: "legs" } },
+      { ...plain, text: "stretches her legs out on the bed", captures: ["pov-legs", "mirror-hidden"], outfits: ["grey lounge shorts and a fitted tee"], legs: { framing: "legs" } },
       { ...plain, text: "lies on her back, legs up", noLegwear: true },
       { ...plain, text: "sits on the rug in her slippers", noLegwear: true },
       { ...plain, text: "lies on her back, knees up", outfits: ["a tee and platform sneakers"] },

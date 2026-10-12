@@ -5,6 +5,9 @@ import type { CategoryBank } from "./types";
 // a run's, outside the tied cap (hair.ts). S5.6R (the owner: at home she shoots
 // herself): the home workout (the yoga mat, the workout corner) is on a timer or at arm's length, never a friend's or a candid; those stay at the gym and in
 // the park. A timer moment holds nothing (the timer line says both hands are empty), so the yoga pose is «stands in a tree pose».
+/** S5.8a review: legs frames wear shorts or leggings (a low angle under a skirt would read wrong), and «Фитнес» has four outfits that show her legs, not two. */
+const LEGS_TRAINING = ["biker shorts and a crop top", "running shorts and a tank top", "yoga shorts and a fitted tank top", "cycling shorts and a loose tee", "leggings and a fitted tank top"];
+
 export const FITNESS: CategoryBank = {
   places: [
     {
@@ -37,6 +40,7 @@ export const FITNESS: CategoryBank = {
         { text: "rolls her shoulders back", motion: "she rolls her shoulders slowly", captures: ["selfie"], twoHanded: false, hair: "sport" },
         { text: "drinks from a water bottle", motion: "she takes a small sip", captures: ["selfie"], twoHanded: false, hair: "sport" },
         { text: "kneels with her back straight", motion: "she sinks back a little", captures: ["timer", "selfie"], twoHanded: false, hair: "sport" },
+        { text: "sits with her legs stretched out", motion: "she reaches toward her toes slowly", captures: ["pov-legs"], twoHanded: false, hair: "sport", outfits: LEGS_TRAINING, legs: { framing: "legs" } },
       ],
     },
     {
@@ -52,6 +56,7 @@ export const FITNESS: CategoryBank = {
         { text: "checks her run on her phone", motion: "she scrolls her phone slowly", captures: ["candid", "friend"], twoHanded: false, phone: true, gaze: "own", hair: "sport", outdoor: true },
         { text: "walks to cool down", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, hair: "sport", outdoor: true },
         { text: "jogs away along the track", motion: "she keeps jogging slowly", captures: ["friend", "candid"], twoHanded: true, angle: "back", hair: "sport", outdoor: true },
+        { text: "stretches her calves", motion: "she presses her heel down a little", captures: ["low-feet"], twoHanded: false, hair: "sport", outdoor: true, outfits: LEGS_TRAINING, legs: { framing: "legs" } },
       ],
     },
     {
@@ -83,7 +88,7 @@ export const FITNESS: CategoryBank = {
         { text: "sits on the mat for a breather", motion: "she breathes out slowly", captures: ["timer", "selfie"], twoHanded: false, hair: "sport" },
         { text: "stretches to one side, in profile", motion: "she reaches a little further", captures: ["timer"], twoHanded: true, angle: "profile", hair: "sport" },
         // S5.8a («Ножки»): a POV along her own legs on the mat.
-        { text: "stretches her legs on the mat", motion: "she flexes her feet slowly", captures: ["pov-legs"], twoHanded: false, hair: "sport", legs: { framing: "legs" } },
+        { text: "stretches her legs on the mat", motion: "she flexes her feet slowly", captures: ["pov-legs"], twoHanded: false, hair: "sport", outfits: LEGS_TRAINING, legs: { framing: "legs" } },
       ],
     },
   ],
@@ -92,6 +97,8 @@ export const FITNESS: CategoryBank = {
     { text: "leggings and a fitted tank top" },
     { text: "a loose hoodie over leggings" },
     { text: "running shorts and a tank top", showsLegs: true },
+    { text: "yoga shorts and a fitted tank top", showsLegs: true, pinOnly: true },
+    { text: "cycling shorts and a loose tee", showsLegs: true, pinOnly: true },
   ],
   // S5.6R: the timer is the home workout's (only the home places take it); the gym and the park keep a friend twice and a candid.
   captureDeck: ["friend", "selfie", "mirror", "friend", "mirror-hidden", "candid", "timer"],

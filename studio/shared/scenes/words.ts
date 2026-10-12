@@ -27,6 +27,12 @@ export const COLOUR_WORDS = /\b(black|brown|red|blonde?|dark|light|fair|grey|gra
 export const YOUTH_PROPS =
   /\b(striped thigh[- ]?highs?|plush\w*|stuffed (?:animals?|toys?)|teddy(?: bears?)?|game ?pads?|game controllers?|gaming\w*|(?:game|gaming|video[- ]game) consoles?|swing(?:s|ing)? her legs|pig-?tails?|two braids|space buns?)\b/i;
 
+/**
+ * «Ножки» (S5.8a review): a low angle under a mini reads as an upskirt shot, so a legs frame takes no mini or short dress or skirt, and no sweater or tee worn as a dress
+ * ("bodycon" is short too). The legs moments pin outfits that are shorts, trousers, leggings, joggers or midi and long dresses; the banks refuse a legs moment that pins one of these.
+ */
+export const LEGS_UNSUITED_OUTFITS = /\b(mini|bodycon)\b|\bshort (?:dress|skirt)\b|\bas a dress\b|\boversized\b/i;
+
 /** The owner: Glamour is an evening out, never on a bed. */
 export const BED_WORDS = /\bbed\w*/i;
 

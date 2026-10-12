@@ -302,7 +302,12 @@ function planBuiltIn(
   // «Ножки» (I5.29): which of the n slots are legs slots, on the category's `legs:` stream (never touched by a plan without legs). A legs slot is not dealt from the capture deck, so
   // the deck, the pose, the away and the legwear streams run over the other slots as if the legs slots were not there.
   const legsAt = new Set(legsCount === 0 ? [] : shuffle(streams.legsRng, Array.from({ length: n }, (_, i) => i)).slice(0, legsCount));
-  const legsOutfitBag = legsCount === 0 ? null : new Bag(legsOutfitsOf(pool), streams.legsRng);
+  const legsOutfitList = legsOutfitsOf(pool);
+  const legsOutfitBag = legsCount === 0 ? null : new Bag(legsOutfitList, streams.legsRng);
+  // The legs slots balance among themselves (S5.8a review): the places and moments the other slots used say nothing about which legs moment a legs slot has not shown yet, so a plan's
+  // legs slots go round the legs moments instead of repeating one.
+  const legsPlaceUses = new Map<string, number>();
+  const legsMomentUses = new Map<string, number>();
   // «Кокетливая» deals the very captures the ordinary plan deals (`ordinaryCaptures`), so the flirty slots are chosen by the frames before any moment is drawn.
   const dealt = level === "flirty" ? streams.ordinaryCaptures() : null;
   const dealtAt = new Map<number, Capture>();
@@ -338,15 +343,17 @@ function planBuiltIn(
   for (let i = 0; i < n; i++) {
     const slotLevel: Level = flirtyAt.has(i) ? "flirty" : "ordinary";
     if (legsAt.has(i) && legsOutfitBag !== null) {
-      // A legs slot: a place that has a legs moment (the least-used of them), the least-used legs moment there, its capture, then the outfit (the moment's pins first), the time and the legwear.
+      // A legs slot: the least-used legs moment among the legs moments of the places that have one (a place with more of them is drawn more often, and a plan's legs slots go round them
+      // before any repeats), its capture, then the outfit (the moment's pins first), the time and the legwear.
       const legsRng = streams.legsRng;
-      const places = legsPlacesOf(pool);
-      const fresh = (place: Place): boolean => legsMomentsAt(place).some((m) => !recent.has(momentKey(place.name, m.text)));
-      const place = leastUsed(places, (p) => placeUses.get(p.name) ?? 0, [fresh], legsRng);
-      const moment = leastUsed(legsMomentsAt(place), (m) => momentUses.get(momentKey(place.name, m.text)) ?? 0, [(m) => !recent.has(momentKey(place.name, m.text))], legsRng);
+      const pairs = legsPlacesOf(pool).flatMap((at) => legsMomentsAt(at).map((m) => ({ place: at, moment: m })));
+      const pair = leastUsed(pairs, (p) => legsMomentUses.get(momentKey(p.place.name, p.moment.text)) ?? 0, [(p) => !recent.has(momentKey(p.place.name, p.moment.text)), (p) => (legsPlaceUses.get(p.place.name) ?? 0) === Math.min(...pairs.map((q) => legsPlaceUses.get(q.place.name) ?? 0))], legsRng);
+      const { place, moment } = pair;
       const capture = rngPick(legsRng, legsCapturesAt(place, moment));
       placeUses.set(place.name, (placeUses.get(place.name) ?? 0) + 1);
       momentUses.set(momentKey(place.name, moment.text), (momentUses.get(momentKey(place.name, moment.text)) ?? 0) + 1);
+      legsPlaceUses.set(place.name, (legsPlaceUses.get(place.name) ?? 0) + 1);
+      legsMomentUses.set(momentKey(place.name, moment.text), (legsMomentUses.get(momentKey(place.name, moment.text)) ?? 0) + 1);
       const pinned = pinnedOutfitsOf(moment);
       let outfit: string;
       if (pinned.length > 0) {
@@ -354,7 +361,7 @@ function planBuiltIn(
         outfit = rngPick(legsRng, unseen.length > 0 ? unseen : pinned);
       } else {
         outfit = legsOutfitBag.next();
-        for (let attempt = 0; excluded.size > 0 && excluded.has(pairKey(place.name, outfit)) && attempt < general.length - 1; attempt++) outfit = legsOutfitBag.next();
+        for (let attempt = 0; excluded.size > 0 && excluded.has(pairKey(place.name, outfit)) && attempt < legsOutfitList.length - 1; attempt++) outfit = legsOutfitBag.next();
       }
       const repeatedPair = excluded.size > 0 && excluded.has(pairKey(place.name, outfit));
       const roll = legsRng();

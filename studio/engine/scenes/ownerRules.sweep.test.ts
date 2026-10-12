@@ -379,6 +379,16 @@ describe("«Ножки» plans keep the owner's rules (S5.8a)", () => {
     expect(offenders(LEGS_ALL, (f) => isOwnerBannedOutfit(f.slot.outfit) || isOwnerBannedOutfit(f.sentence))).toEqual(NONE);
   });
 
+  // S5.8a review: a low angle under a mini reads as an upskirt shot. A frame from below or toward the mirror (`low-feet`, a mirror legs frame) wears shorts, trousers, leggings,
+  // joggers or a midi or long dress, never a mini or short dress or skirt, a bodycon or a sweater or tee worn as a dress; the legs moments pin the same for a look down her own legs.
+  test("no mini or short dress or skirt, bodycon, or sweater or tee as a dress on a legs frame, least of all from below or toward the mirror", () => {
+    const UNSUITED = /\b(mini|bodycon)\b|\bshort (?:dress|skirt)\b|\bas a dress\b|\boversized\b/i;
+    const low = LEGS_FRAMES.filter((f) => f.capture === "low-feet" || shotOf(f.capture) === "mirror");
+    expect(low.length).toBeGreaterThan(LEGS_PLANS);
+    expect(offenders(low, (f) => UNSUITED.test(f.slot.outfit) || UNSUITED.test(f.sentence))).toEqual(NONE);
+    expect(offenders(LEGS_FRAMES, (f) => UNSUITED.test(f.slot.outfit))).toEqual(NONE);
+  });
+
   test("the poses are natural: a legs frame faces the camera, front or three-quarter, never in profile or from behind", () => {
     expect(offenders(LEGS_FRAMES, (f) => f.slot.pose !== "front" && f.slot.pose !== "three-quarter")).toEqual(NONE);
   });
@@ -399,7 +409,8 @@ describe("«Ножки» plans keep the owner's rules (S5.8a)", () => {
   test("legwear goes only where the moment allows it: never on a moment that names socks, soles, bare skin or heels", () => {
     const clash = /\b(socks?|socked|tights|stockings?|bare|barefoot|soles?|heels?)\b/;
     expect(offenders(LEGS_FRAMES, (f) => f.slot.legwear !== undefined && clash.test(f.slot.activity))).toEqual(NONE);
-    expect(LEGS_FRAMES.filter((f) => f.slot.legwear !== undefined).length).toBeGreaterThan(LEGS_PLANS / 4);
+    // Only «Дом» has legwear, and its legs moments pin shorts, pajamas and leggings (S5.8a review), so tights ride on about one legs frame in ten.
+    expect(LEGS_FRAMES.filter((f) => f.slot.legwear !== undefined).length).toBeGreaterThan(LEGS_PLANS / 8);
     expect(offenders(LEGS_ALL, (f) => /stocking/i.test(f.sentence) || /stocking/i.test(f.slot.legwear ?? ""))).toEqual(NONE);
   });
 

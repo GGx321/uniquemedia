@@ -15,6 +15,7 @@ import {
   HIGH_WORDS,
   HIPS_WORDS,
   isOwnerBannedOutfit,
+  LEGS_UNSUITED_OUTFITS,
   LYING_START,
   MOTION_SMALL,
   MOTION_STAGING,
@@ -53,6 +54,7 @@ export const BANK_RULE = {
   noLegwear: "no-legwear",
   captures: "captures",
   legsCapture: "legs-capture",
+  legsOutfit: "legs-outfit",
   timerHands: "timer-hands",
   aboveLying: "above-lying",
   hipsHigh: "hips-high",
@@ -193,6 +195,11 @@ function checkMoment(add: Add, where: string, moment: Moment, place: { room?: tr
   if (captures.length === 0 || new Set(captures).size !== captures.length) add(BANK_RULE.captures, where, "names one or more captures, each once");
   if ((moment.twoHanded || moment.phone === true) && captures.some(isHandCapture)) add(BANK_RULE.captures, where, "a two-handed or phone moment fits no hand-held capture");
   if (moment.legs === undefined && captures.some((c) => LEGS_CAPTURES.includes(c))) add(BANK_RULE.legsCapture, where, "only a legs moment fits a legs capture («Ножки», 5a.2c)");
+  if (moment.legs !== undefined) {
+    // S5.8a review: a low angle under a mini reads as an upskirt shot, so a legs moment pins its outfits (shorts, trousers, leggings, joggers, midi and long dresses) and none is a mini.
+    if ((moment.outfits?.length ?? 0) === 0) add(BANK_RULE.legsOutfit, where, "a legs moment pins the outfits it wears: shorts, trousers, leggings, joggers or a midi or long dress");
+    for (const outfit of moment.outfits ?? []) if (LEGS_UNSUITED_OUTFITS.test(outfit)) add(BANK_RULE.legsOutfit, where, `«${outfit}» is a mini or short dress or skirt, or worn as a dress: a low angle under it reads as an upskirt shot`);
+  }
   if (captures.includes("timer") && HELD_OBJECT_WORDS.test(text)) add(BANK_RULE.timerHands, where, "a timer frame shows both of her hands empty: its moment holds nothing");
   if (captures.includes("above") && !LYING_START.test(text)) add(BANK_RULE.aboveLying, where, "a close selfie from above is taken as she lies there: its moment lies down");
   for (const said of [text, moment.motion, moment.startPose ?? ""]) {

@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { isHandCapture, LEGS_CAPTURES, shotOf, type Capture } from "../captures";
 import { momentAllowed } from "../render";
 import { legwearFits } from "../template";
-import { YOUTH_PROPS, isOwnerBannedOutfit } from "../words";
+import { LEGS_UNSUITED_OUTFITS, YOUTH_PROPS, isOwnerBannedOutfit } from "../words";
 import { BANKS } from "./index";
-import { MOTION_TEXT_MAX } from "./schema";
+import { categoryBankProblems, MOTION_TEXT_MAX } from "./schema";
 import { BANK_CATEGORIES, type BankCategory, type Moment } from "./types";
 
 // 5a.2c (S5.8a, plan s5a2 §7.2): the «Ножки» banks. A legs moment carries `legs: { framing: "legs" }` and is drawn only on a legs slot. The table below is the plan's,
@@ -25,11 +25,19 @@ const TABLE: Row[] = [
   { category: "home", place: "her bed", text: "sits with her socked feet forward", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"] },
   { category: "home", place: "her bedroom", text: "sits, soles toward the mirror", motion: "she taps her feet together a little", captures: ["mirror-hidden"] },
   { category: "home", place: "her bedroom", text: "lifts one bare foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"] },
-  { category: "photoshoot", place: "a cafe table on the pavement", text: "sits with her ankles crossed", motion: "she swings her crossed foot slowly", captures: ["low-feet"] },
+  { category: "photoshoot", place: "a cafe table on the pavement", text: "sits with her ankles crossed", motion: "she shifts her crossed ankles slowly", captures: ["low-feet"] },
+  { category: "photoshoot", place: "a cafe table on the pavement", text: "sits with one knee over the other", motion: "she tilts her raised foot slowly", captures: ["low-feet"] },
+  { category: "photoshoot", place: "a quiet street corner", text: "sits on the steps, legs out", motion: "she flexes her feet a little", captures: ["low-feet"] },
   { category: "travel", place: "a balcony over city rooftops", text: "stretches her legs on the chair", motion: "she stretches her toes toward the railing a little", captures: ["pov-legs"] },
-  { category: "glamour", place: "a street outside a bar", text: "slips on her heels by the door", motion: "she settles her foot into the heel slowly", captures: ["low-feet"] },
-  { category: "glamour", place: "the back seat of a taxi", text: "sits with her legs crossed", motion: "she crosses and uncrosses her legs slowly", captures: ["pov-legs"] },
+  { category: "travel", place: "a garden pond", text: "sits on the grass, legs out", motion: "she wiggles her toes a little", captures: ["pov-legs"] },
+  { category: "travel", place: "a dirt path above green hills", text: "rests on a flat rock, legs forward", motion: "she flexes her feet slowly", captures: ["pov-legs"] },
+  { category: "glamour", place: "a street outside a bar", text: "steps into her heels by the door", motion: "she rises onto her toes a little", captures: ["low-feet"] },
+  { category: "glamour", place: "the back seat of a taxi", text: "sits with her legs crossed", motion: "she taps her foot slowly", captures: ["pov-legs"] },
+  { category: "glamour", place: "the back seat of a taxi", text: "sits with her knees together", motion: "she shifts her feet a little", captures: ["pov-legs"] },
+  { category: "glamour", place: "a cocktail bar", text: "sits on a stool, ankles crossed", motion: "she rocks her crossed ankles slowly", captures: ["low-feet"] },
   { category: "fitness", place: "a home workout corner", text: "stretches her legs on the mat", motion: "she flexes her feet slowly", captures: ["pov-legs"] },
+  { category: "fitness", place: "a yoga mat on her living-room floor", text: "sits with her legs stretched out", motion: "she reaches toward her toes slowly", captures: ["pov-legs"] },
+  { category: "fitness", place: "a park running path", text: "stretches her calves", motion: "she presses her heel down a little", captures: ["low-feet"] },
 ];
 
 const legsMoments = (category: BankCategory): { place: string; moment: Moment }[] =>
@@ -149,8 +157,8 @@ describe("legwear on the legs moments (the §5.1 rule)", () => {
     if (moment !== undefined) expect(legwearFits(moment, outfit)).toBe(false);
   });
 
-  test("«slips on her heels by the door» takes none: the heels are the footwear", () => {
-    const moment = legsMoments("glamour").find((l) => l.moment.text === "slips on her heels by the door")?.moment;
+  test("«steps into her heels by the door» takes none: the heels are the footwear", () => {
+    const moment = legsMoments("glamour").find((l) => l.moment.text === "steps into her heels by the door")?.moment;
     expect(moment).toBeDefined();
     if (moment !== undefined) expect(legwearFits(moment, { text: "a fitted black bodycon dress", showsLegs: true })).toBe(false);
   });
@@ -159,5 +167,51 @@ describe("legwear on the legs moments (the §5.1 rule)", () => {
     for (const category of BANK_CATEGORIES) {
       for (const item of BANKS[category].legwear?.items ?? []) expect(item).not.toMatch(/stocking/i);
     }
+  });
+});
+
+// S5.8a review: variety, a frame that does not stage the face, no hands in a frame whose hands are empty, and a low angle that is not an upskirt.
+describe("every category has legs moments to vary (I5.24)", () => {
+  test.each([...BANK_CATEGORIES])("%s: at least 3 legs moments across at least 2 places", (category) => {
+    const found = legsMoments(category);
+    expect(found.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(found.map((l) => l.place)).size).toBeGreaterThanOrEqual(2);
+  });
+
+  test("«Фитнес» has at least two more outfits that show her legs than the two it had", () => {
+    expect(BANKS.fitness.outfits.filter((o) => o.showsLegs === true).length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("a legs frame whose hands are empty holds nothing in them", () => {
+  test("a low-feet moment (a friend's photo with both of her hands empty) and a pov-legs one are not two-handed and name no phone", () => {
+    for (const category of BANK_CATEGORIES) {
+      for (const { moment } of legsMoments(category)) {
+        if (!moment.captures.some((c) => c === "low-feet" || c === "pov-legs")) continue;
+        expect(moment.twoHanded, moment.text).toBe(false);
+        expect(moment.phone, moment.text).toBeUndefined();
+      }
+    }
+  });
+});
+
+describe("a low angle under a mini reads as an upskirt shot", () => {
+  test("every legs moment pins its outfits, and none is a mini or short dress or skirt, a bodycon, or a sweater or tee worn as a dress", () => {
+    for (const category of BANK_CATEGORIES) {
+      for (const { moment } of legsMoments(category)) {
+        expect(moment.outfits?.length ?? 0, moment.text).toBeGreaterThan(0);
+        for (const outfit of moment.outfits ?? []) expect(LEGS_UNSUITED_OUTFITS.test(outfit), `${moment.text}: ${outfit}`).toBe(false);
+      }
+    }
+  });
+
+  test("a bank whose legs moment pins a mini dress is refused at load", () => {
+    const home = { ...BANKS.home, places: BANKS.home.places.map((p) => ({ ...p, moments: p.moments.map((m) => (m.text === "lies with her bare feet forward" ? { ...m, outfits: ["a pleated mini and a fitted top"] } : m)) })) };
+    expect(categoryBankProblems(home, "home").join("\n")).toMatch(/\[legs-outfit\]/);
+  });
+
+  test("a bank whose legs moment pins nothing is refused at load", () => {
+    const home = { ...BANKS.home, places: BANKS.home.places.map((p) => ({ ...p, moments: p.moments.map((m) => (m.text === "lies with her bare feet forward" ? { ...m, outfits: undefined } : m)) })) };
+    expect(categoryBankProblems(home, "home").join("\n")).toMatch(/\[legs-outfit\]/);
   });
 });

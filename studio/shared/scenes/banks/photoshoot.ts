@@ -3,6 +3,9 @@ import type { CategoryBank } from "./types";
 // «Улица» (the stored id `photoshoot`/`shoot` stays, I5.33; plan s5a2 r1.2 §5.1): on the street she mostly asks someone, a friend or a passer-by,
 // at natural angles; some selfies, the phone on a timer on a ledge, a candid. Posing by an object (a lamppost, a shop window) is a moment
 // (`object`), and «from behind, looking back» is a three-quarter moment that carries its own gaze.
+/** S5.8a review: a friend's photo from below wears trousers, jeans or a midi dress, never a mini (a low angle under a mini reads as an upskirt shot). */
+const LEGS_STREET = ["a denim jacket and jeans", "cropped trousers and a fitted top", "a linen midi dress"];
+
 export const PHOTOSHOOT: CategoryBank = {
   places: [
     {
@@ -33,7 +36,8 @@ export const PHOTOSHOOT: CategoryBank = {
         { text: "sips her coffee", motion: "she lowers the cup a little", captures: ["selfie", "friend", "candid"], twoHanded: false },
         { text: "turns to look across the road", motion: "she turns her head slowly", captures: ["friend", "candid", "timer"], twoHanded: false, gaze: "own", angle: "profile" },
         // S5.8a («Ножки»): outside, a friend crouches a couple of metres away, low down near her feet.
-        { text: "sits with her ankles crossed", motion: "she swings her crossed foot slowly", captures: ["low-feet"], twoHanded: false, legs: { framing: "legs" } },
+        { text: "sits with her ankles crossed", motion: "she shifts her crossed ankles slowly", captures: ["low-feet"], twoHanded: false, outfits: LEGS_STREET, legs: { framing: "legs" } },
+        { text: "sits with one knee over the other", motion: "she tilts her raised foot slowly", captures: ["low-feet"], twoHanded: false, outfits: LEGS_STREET, legs: { framing: "legs" } },
       ],
     },
     {
@@ -48,6 +52,8 @@ export const PHOTOSHOOT: CategoryBank = {
         { text: "waits at the crossing", motion: "she shifts her weight a little", captures: ["candid", "friend", "selfie"], twoHanded: false },
         { text: "looks back over her shoulder", motion: "she turns her head a little more", captures: ["friend"], twoHanded: false, angle: "three-quarter", gaze: "own" },
         { text: "waits with her back turned", motion: "she shifts her weight a little", captures: ["friend", "candid"], twoHanded: false, angle: "back" },
+        // S5.8a review: a second place for «Ножки», so the legs frames of «Улица» are not one sentence.
+        { text: "sits on the steps, legs out", motion: "she flexes her feet a little", captures: ["low-feet"], twoHanded: false, outfits: LEGS_STREET, legs: { framing: "legs" } },
       ],
     },
     {
@@ -84,6 +90,8 @@ export const PHOTOSHOOT: CategoryBank = {
     { text: "a hoodie, a mini skirt and sneakers", showsLegs: true },
     { text: "a denim jacket and jeans" },
     { text: "a red mini dress", showsLegs: true },
+    { text: "cropped trousers and a fitted top", showsLegs: true, pinOnly: true },
+    { text: "a linen midi dress", showsLegs: true, pinOnly: true },
   ],
   captureDeck: ["friend", "selfie", "friend", "timer", "friend", "candid"],
 };

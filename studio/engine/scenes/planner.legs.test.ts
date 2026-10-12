@@ -188,12 +188,12 @@ describe("«Ножки»: a legs slot", () => {
     for (const slot of taxi) expect(captureOf(slot)).toBe("pov-legs");
   });
 
-  test("it wears an outfit that shows her legs, and the outfit its moment pins, if it pins any", () => {
+  test("it wears one of the outfits its moment pins (shorts, trousers, leggings, joggers, midi and long dresses), never a mini", () => {
     for (const slot of ALL_LEGS) {
-      const info = BANKS[slot.category as Category].outfits.find((o) => o.text === slot.outfit);
-      expect(info?.showsLegs, slot.outfit).toBe(true);
       const pinned = momentOf(slot)?.outfits;
-      if (pinned !== undefined) expect(pinned).toContain(slot.outfit);
+      expect(pinned, slot.activity).toBeDefined();
+      expect(pinned).toContain(slot.outfit);
+      expect(slot.outfit).not.toMatch(/\b(mini|bodycon)\b|as a dress/);
     }
   });
 

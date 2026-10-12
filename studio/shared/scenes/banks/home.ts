@@ -18,6 +18,12 @@ const OPEN_BACK = "an open-back top and grey jeans";
 /** S5.6R: what she wears on her way out (the hallway's going-out moments pin these): never pajamas, lounge shorts or leggings. */
 const GOING_OUT_DRESS = "a knit midi dress and ankle boots";
 const GOING_OUT = [OPEN_BACK, "a pleated mini and a fitted top", GOING_OUT_DRESS];
+/**
+ * S5.8a review: a low angle under a mini reads as an upskirt shot, so the legs moments wear shorts, trousers, leggings or joggers, never the mini or the tee or sweater worn as a dress.
+ * The bedroom's (toward the mirror, along the bed) are pajamas and shorts; the bed's may also wear the lounge shorts and leggings that only the bed pins.
+ */
+const LEGS_BEDROOM = ["a crop top and pajama shorts", "silk pajamas", "linen shorts and a fitted tee"];
+const LEGS_BED = ["a crop top and pajama shorts", PRONE_OUTFIT, LEGGINGS];
 
 export const HOME: CategoryBank = {
   places: [
@@ -38,9 +44,9 @@ export const HOME: CategoryBank = {
         // S5.7b: the angle comes from the moment. On a timer the phone stands across the room, so she can face the window with her back to it.
         { text: "sits facing the window", motion: "she leans her head back slowly", captures: ["timer"], twoHanded: false, angle: "back" },
         // S5.8a («Ножки», plan s5a2 §7.2): legs moments, drawn only on a legs slot. The POV looks down along her own legs; in the mirror frame the phone hides her face and her feet face the glass.
-        { text: "stretches her legs along the bed", motion: "she points and flexes her toes slowly", captures: ["pov-legs"], twoHanded: false, legs: { framing: "legs" } },
-        { text: "sits, soles toward the mirror", motion: "she taps her feet together a little", captures: ["mirror-hidden"], twoHanded: false, legs: { framing: "legs" } },
-        { text: "lifts one bare foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"], twoHanded: false, legs: { framing: "legs" } },
+        { text: "stretches her legs along the bed", motion: "she points and flexes her toes slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS_BEDROOM, legs: { framing: "legs" } },
+        { text: "sits, soles toward the mirror", motion: "she taps her feet together a little", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS_BEDROOM, legs: { framing: "legs" } },
+        { text: "lifts one bare foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS_BEDROOM, legs: { framing: "legs" } },
       ],
     },
     {
@@ -81,8 +87,8 @@ export const HOME: CategoryBank = {
         { text: "lies prone, hips behind to one side", motion: "she shifts her hips a little", captures: ["prone"], twoHanded: false, outfits: PRONE, noLegwear: true },
         { text: "lies on her stomach, head tilted", motion: "she tilts her head a little", captures: ["prone"], twoHanded: false, outfits: PRONE, noLegwear: true },
         // S5.8a: the bare and socked feet toward the viewer are a POV from where she lies or sits (the owner: at home she shoots herself, so not the friend's `low-feet`); the compositions are the approved ones.
-        { text: "lies with her bare feet forward", motion: "she wiggles her toes a little", captures: ["pov-legs"], twoHanded: false, legs: { framing: "legs" } },
-        { text: "sits with her socked feet forward", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"], twoHanded: false, legs: { framing: "legs" } },
+        { text: "lies with her bare feet forward", motion: "she wiggles her toes a little", captures: ["pov-legs"], twoHanded: false, outfits: LEGS_BED, legs: { framing: "legs" } },
+        { text: "sits with her socked feet forward", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS_BED, legs: { framing: "legs" } },
       ],
     },
     {
@@ -160,6 +166,7 @@ export const HOME: CategoryBank = {
     { text: OPEN_BACK },
     { text: "grey leggings and platform sneakers", pinOnly: true },
     { text: "lounge shorts and platform sneakers", showsLegs: true, pinOnly: true },
+    { text: "linen shorts and a fitted tee", showsLegs: true, pinOnly: true },
     { text: GOING_OUT_DRESS, pinOnly: true },
   ],
   legwear: { items: ["white knee-high socks", "black knee-high socks", "thigh-high socks", "sheer black tights"], share: 0.4 },
