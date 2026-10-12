@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { youthWords, type AvatarDescriptor } from "../../shared/engine";
-import { isOwnerBannedOutfit, YOUTH_PROPS } from "../../shared/scenes/words";
+import { DRESS_LENGTH, DRESS_OR_SKIRT, isOwnerBannedOutfit, LEGS_UNSUITED_OUTFITS, YOUTH_PROPS } from "../../shared/scenes/words";
 import { BANKS, CUES, GAZE, HAIRSTYLES } from "../../shared/scenes/banks";
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { plainSentence } from "../../shared/scenes/plain";
@@ -382,13 +382,13 @@ describe("«Ножки» plans keep the owner's rules (S5.8a)", () => {
   // S5.8a review: a low angle under a mini reads as an upskirt shot. A frame from below or toward the mirror (`low-feet`, a mirror legs frame) wears shorts, trousers, leggings,
   // joggers or a midi or long dress, never a mini or short dress or skirt, a bodycon or a sweater or tee worn as a dress; the legs moments pin the same for a look down her own legs.
   test("no mini or short dress or skirt, bodycon, or sweater or tee as a dress on a legs frame, least of all from below or toward the mirror", () => {
-    const UNSUITED = /\b(mini|bodycon)\b|\bshort (?:dress|skirt)\b|\bas a dress\b|\boversized\b/i;
+    const UNSUITED = LEGS_UNSUITED_OUTFITS;
     const low = LEGS_FRAMES.filter((f) => f.capture === "low-feet" || shotOf(f.capture) === "mirror");
     expect(low.length).toBeGreaterThan(LEGS_PLANS);
     expect(offenders(low, (f) => UNSUITED.test(f.slot.outfit) || UNSUITED.test(f.sentence))).toEqual(NONE);
     expect(offenders(LEGS_FRAMES, (f) => UNSUITED.test(f.slot.outfit))).toEqual(NONE);
     // A whitelist as well (round 2): a dress or skirt on a legs frame names midi, long or maxi; «a navy wrap dress» of no length is not one.
-    expect(offenders(LEGS_FRAMES, (f) => /\b(dress|skirt)\b/i.test(f.slot.outfit) && !/\b(midi|long|maxi)\b/i.test(f.slot.outfit))).toEqual(NONE);
+    expect(offenders(LEGS_FRAMES, (f) => DRESS_OR_SKIRT.test(f.slot.outfit) && !DRESS_LENGTH.test(f.slot.outfit))).toEqual(NONE);
   });
 
   test("the poses are natural: a legs frame faces the camera, front or three-quarter, never in profile or from behind", () => {
