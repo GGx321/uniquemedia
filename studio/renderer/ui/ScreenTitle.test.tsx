@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { render, screen } from "@testing-library/react";
 import { useLayoutEffect } from "react";
+import { describeElement, focusedLabel } from "../testing";
 import { ScreenTitle } from "./ScreenTitle";
 
 // A screen that shows a title while it loads and another when it has loaded (EditorScreen's «Монтаж» and the draft's name, PhotosScreen's «Фото» and the avatar's
@@ -35,19 +36,19 @@ function Screen({ loaded, seen }: { loaded: boolean; seen: (Element | null)[] })
 describe("ScreenTitle", () => {
   test("takes the focus when the screen opens", () => {
     render(<Screen loaded={false} seen={[]} />);
-    expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1, name: "Монтаж" }));
+    expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 1, name: "Монтаж" })));
   });
 
   test("the loaded title has the focus in the commit that swaps it for the loading one, never leaving it on the body", () => {
     const seen: (Element | null)[] = [];
     const view = render(<Screen loaded={false} seen={seen} />);
-    expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1, name: "Монтаж" }));
+    expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 1, name: "Монтаж" })));
 
     view.rerender(<Screen loaded seen={seen} />);
 
-    const loaded = screen.getByRole("heading", { level: 1, name: "Монтаж: Mia" });
+    const loaded = describeElement(screen.getByRole("heading", { level: 1, name: "Монтаж: Mia" }));
     // What the commit's layout effects saw of the focus, not what is left once the effects have run.
-    expect(seen.at(-1)).toBe(loaded);
-    expect(document.activeElement).toBe(loaded);
+    expect(describeElement(seen.at(-1) ?? null)).toBe(loaded);
+    expect(focusedLabel()).toBe(loaded);
   });
 });

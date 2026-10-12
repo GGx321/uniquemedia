@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { SCENE_REASONS_RU } from "../../shared/engine";
-import { callsOf, flush, openSection, setup, withText } from "../testing";
+import { callsOf, describeElement, flush, focusedLabel, openSection, setup, withText } from "../testing";
 import { BED_POOL, category, chipsGroup, MIA, openPhotos, PARIS } from "./photos/categoryScreenKit";
 
 // S5.8b (plan s5a2 §7, I5.29; mockups 33 and 34#card of .omc/stage5/design): the generate card gains «Ножки» — «Нет · Немного 15 % · Много 30 %» under
@@ -113,7 +113,7 @@ describe("«Ножки» on the card (mockup 33)", () => {
     expect(new Set(radios.map((r) => r.name)).size).toBe(1);
     expect(radios.every((r) => r.type === "radio" && !r.disabled)).toBe(true);
     legs("Нет").focus();
-    expect(document.activeElement).toBe(legs("Нет"));
+    expect(focusedLabel()).toBe(describeElement(legs("Нет")));
   });
 });
 
