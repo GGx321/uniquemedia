@@ -247,7 +247,8 @@ const FREE_SLOT_REASON: SceneReason = "slot-text-problem";
 
 /**
  * 5a.3 (S5.9g, gap B, I5.39): the ends of a «Смелая» slot whose own text says where its money went — `model-refused` (the refusal free, the attempts before it
- * in the spend), `model-empty` (the attempt in the spend). Counted one by one («Из них 2 — …»), and never followed by the general money line for themselves.
+ * in the spend), `model-empty` (the attempt in the spend). Said as they are when every failed frame ended so, counted («Из них 2 — …») beside other reasons, and
+ * never followed by the general money line for themselves.
  */
 const MONEY_SAID_REASONS: ReadonlySet<SceneReason> = new Set<SceneReason>(["model-refused", "model-empty"]);
 
@@ -263,8 +264,9 @@ function afterDash(text: string): string {
  * S5.7a (I5.31): what follows «Не получилось: N» — the reason of the slots that ended with one, then the paid-attempts line unless every failed slot ended free.
  * Only `slot-text-problem` is free (S5.7a review): another reason is named, but its slot may have paid. One free slot of one failed reads as the reason itself;
  * otherwise the free ones are counted («Из них 2 — …»). A result with no reasons reads as it always did.
- * S5.9g (gap B; mockup 50): counted by FRAMES. `model-refused` and `model-empty` are counted like the free ones, in the order the run met them; and the
- * paid-attempts line follows only while failed frames remain whose own text does not speak of money — a slot that failed with no reason, or with another
+ * S5.9g (gap B; mockup 50): counted by FRAMES. When every failed frame ended with `model-refused` (or every one with `model-empty`), the contract's sentence
+ * follows «Не получилось: N.» as it is (mockup 50, 50#empty); beside other reasons each is counted, «Из них K — …», in the order the run met them (50#mixed).
+ * The paid-attempts line follows only while failed frames remain whose own text does not speak of money — a slot that failed with no reason, or with another
  * one — so a run whose every failed frame said its money already says it once.
  */
 function failedText(failed: number, reasons: readonly { reason: SceneReason }[] | undefined): string {
@@ -283,7 +285,8 @@ function failedText(failed: number, reasons: readonly { reason: SceneReason }[] 
     .map((reason) => {
       if (!MONEY_SAID_REASONS.has(reason)) return ` ${SCENE_REASONS_RU[reason]}`;
       const frames = all.filter((r) => r.reason === reason).length;
-      return frames === 1 && failed === 1 ? ` ${SCENE_REASONS_RU[reason]}` : ` Из них ${frames} — ${afterDash(SCENE_REASONS_RU[reason])}`;
+      // Every failed frame ended so: the contract's sentence as it is (mockup 50, 50#empty); counted only beside other reasons (50#mixed).
+      return frames === failed ? ` ${SCENE_REASONS_RU[reason]}` : ` Из них ${frames} — ${afterDash(SCENE_REASONS_RU[reason])}`;
     })
     .join("");
   const moneySaid = all.filter((r) => r.reason === FREE_SLOT_REASON || MONEY_SAID_REASONS.has(r.reason)).length;

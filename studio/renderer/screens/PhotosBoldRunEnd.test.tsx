@@ -8,7 +8,8 @@ import { RunOutcome } from "./photos/ScenesColumn";
 // S5.9g (plan s5a3 gap B, §13.1 «Run end», §13.2; mockup 50 of .omc/stage5/design): the end of a run counts its failed frames, says why each ended, and adds
 // «Если за попытки платили, это уже учтено в расходах.» only while failed FRAMES remain whose own text does not speak of money. `model-refused` and
 // `model-empty` speak of it themselves (the contract's texts), `slot-text-problem` says «бесплатно»: so a run whose every failed frame ended with one of
-// them says the money once, never twice. The reasons' texts are the contract's (`SCENE_REASONS_RU`), word for word.
+// them says the money once, never twice. The reasons' texts are the contract's (`SCENE_REASONS_RU`), word for word. One reason for every failed frame reads
+// as its sentence alone (mockup 50, 50#empty); mixed reasons are counted, «Из них K — …» (50#mixed).
 
 const GENERAL = "Если за попытки платили, это уже учтено в расходах.";
 const REFUSED = SCENE_REASONS_RU["model-refused"];
@@ -73,10 +74,23 @@ describe("the end of a run with «Смелая» frames that ended (gap B: count
     expect(occurrences(failedLine(), GENERAL)).toBe(1);
   });
 
-  test("three `model-refused` → «Из них 3 — …», and no general sentence", () => {
-    render(<RunOutcome job={ended(17, 3, ["model-refused", "model-refused", "model-refused"])} fromSet={false} photos={[photo("p1")]} />);
-    expect(failedLine()).toBe(`Не получилось: 3. Из них 3 — ${lower(REFUSED)}`);
+  // 2026-10-12, S5.9g round 2 (the owner-approved mockup 50 overrides the plan's gap-B row «3 refused → Из них 3»): when every failed frame shares one reason,
+  // «Не получилось: N.» and the contract's sentence as it is — «Из них K — …» only when the reasons are mixed (50#mixed), which keeps the number agreement.
+  test("50: two `model-refused`, every failed frame — «Не получилось: 2.» and the bare sentence, no «Из них», no general sentence", () => {
+    render(<RunOutcome job={ended(18, 2, ["model-refused", "model-refused"])} fromSet={false} photos={[photo("p1")]} />);
+    expect(failedLine()).toBe("Не получилось: 2. Модель не нарисовала кадр «Смелой»; сам отказ бесплатный, оплаченные до него попытки — в расходах.");
+    expect(failedLine().includes("Из них")).toBe(false);
     expect(failedLine().includes(GENERAL)).toBe(false);
+  });
+
+  test("three `model-refused`, every failed frame — the bare sentence too", () => {
+    render(<RunOutcome job={ended(17, 3, ["model-refused", "model-refused", "model-refused"])} fromSet={false} photos={[photo("p1")]} />);
+    expect(failedLine()).toBe(`Не получилось: 3. ${REFUSED}`);
+  });
+
+  test("50#empty: two `model-empty`, every failed frame — mockup 50's line word for word", () => {
+    render(<RunOutcome job={ended(18, 2, ["model-empty", "model-empty"])} fromSet={false} photos={[photo("p1")]} />);
+    expect(failedLine()).toBe("Не получилось: 2. Модель вернула пустой ответ на кадр «Смелой»; попытка учтена в расходах.");
   });
 
   test("50#mixed: two refused and one empty → each counted, in the order they came, no general sentence", () => {
