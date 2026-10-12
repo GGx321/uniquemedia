@@ -54,6 +54,8 @@ interface LaunchPlanCounts {
  * to draw, the share itself.
  */
 export function launchFlirtyCaption(plan: LaunchPlanCounts | null, categories: readonly CategoryRef[]): string {
+  // Only custom categories on (S5.7R, LOW): no frame can be flirty, and «≈ 0 из N» (or a share of 6 in 10) would read as a fault; it says where «Подача» works, as the card does.
+  if (categories.length > 0 && categories.every(isCustomCategory)) return FLIRTY_BUILTIN_ONLY;
   if (plan === null || plan.totals.toGenerate === 0) return FLIRTY_SHARE;
   const flirty = plan.avatars.reduce((sum, avatar) => sum + (avatar.blocked === null ? flirtyFrames(avatar.toGenerate, categories) : 0), 0);
   return `≈ ${flirty} из ${countOf(plan.totals.toGenerate, ["нового кадра", "новых кадров", "новых кадров"])} — кокетливые: взгляд, улыбка, поза. Одежда — из категорий.`;

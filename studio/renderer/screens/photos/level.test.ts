@@ -69,6 +69,20 @@ describe("the launch's caption", () => {
     expect(launchFlirtyCaption(preview, ["home"])).toBe("≈ 13 из 21 нового кадра — кокетливые: взгляд, улыбка, поза. Одежда — из категорий.");
   });
 
+  // S5.7R carry-over (LOW): with only custom categories on «Кокетливая» works for none of the frames, and «≈ 0 из N» read as a fault; it says where «Подача» works, as the card does.
+  test("with only custom categories on, says where «Подача» works, with a plan, with none and with nothing new", () => {
+    const only = "Подача — только во встроенных категориях";
+    const preview = { avatars: [avatar(9)], totals: { toGenerate: 9 } };
+    expect(launchFlirtyCaption(preview, ["cat-paris-cafes"])).toBe(only);
+    expect(launchFlirtyCaption(null, ["cat-paris-cafes", "cat-bakeries"])).toBe(only);
+    expect(launchFlirtyCaption({ avatars: [avatar(0)], totals: { toGenerate: 0 } }, ["cat-paris-cafes"])).toBe(only);
+  });
+
+  test("a built-in category beside a custom one still counts its own frames", () => {
+    const preview = { avatars: [avatar(10)], totals: { toGenerate: 10 } };
+    expect(launchFlirtyCaption(preview, ["home", "cat-paris-cafes"])).toMatch(/^≈ 3 из\s10\sновых кадров — кокетливые/);
+  });
+
   test("with no plan yet, or nothing new to draw, says the share itself", () => {
     const share = "6 из 10 новых кадров — кокетливые: взгляд, улыбка, поза. Одежда — из категорий.";
     expect(launchFlirtyCaption(null, ["home"])).toBe(share);
