@@ -18,6 +18,8 @@ export interface BankDraw {
   capture: Capture;
   pose: ScenePose;
   place: ScenePlace;
+  /** «Ножки» (S5.8a): a legs scene. */
+  framing?: "legs";
 }
 
 /** What a redraw steers away from: the places and outfits the set already shows. */
@@ -88,6 +90,38 @@ function drawFor(bank: (typeof BANKS)[BankCategory], capture: Capture, k: number
   return null;
 }
 
+/**
+ * «Ножки» (S5.8a): the k-th legs scene of a built-in category. A legs scene is a legs moment of a place that has one, its capture comes with the moment (a pov-legs, a low-feet
+ * or a mirror frame with her feet to the glass), and it wears an outfit that shows her legs (the moment's pinned ones first). A redraw passes `avoid`, `leaving` and `activity`
+ * (the scene's own moment) so the new scene is another place or moment when the bank has one. Deterministic in `k`.
+ */
+export function legsDraw(ref: SceneCategory, k: number, opts: { avoid?: Avoid; leaving?: string; activity?: string } = {}): BankDraw {
+  const bank = BANKS[BANK_OF[ref]];
+  const rows = bank.places.flatMap((place) => {
+    const moments = place.moments.filter((moment) => moment.legs !== undefined && moment.captures.some((capture) => (shotOf(capture) !== "mirror" || place.mirror === true) && momentAllowed(moment, capture, moment.angle ?? "front", "ordinary", "legs")));
+    return moments.length === 0 ? [] : [{ place, moments }];
+  });
+  if (rows.length === 0) throw new Error(`the mock found no legs scene for ${ref}`);
+  const elsewhere = rows.filter(({ place }) => place.name !== opts.leaving);
+  const fresh = elsewhere.filter(({ place }) => !(opts.avoid?.locations.has(place.name) ?? false));
+  const pool = fresh.length > 0 ? fresh : elsewhere.length > 0 ? elsewhere : rows;
+  const chosen = pool[k % pool.length] ?? rows[0];
+  if (chosen === undefined) throw new Error(`the mock found no legs scene for ${ref}`);
+  const others = chosen.moments.filter((moment) => moment.text !== opts.activity);
+  const moments = others.length > 0 ? others : chosen.moments;
+  const moment = moments[Math.floor(k / pool.length) % moments.length];
+  if (moment === undefined) throw new Error(`the mock found no legs moment for ${ref}`);
+  const captures = moment.captures.filter((capture) => shotOf(capture) !== "mirror" || chosen.place.mirror === true);
+  const capture = captures[k % captures.length] ?? "pov-legs";
+  const worn = moment.outfits !== undefined ? bank.outfits.filter((o) => moment.outfits?.includes(o.text)) : bank.outfits.filter((o) => o.showsLegs === true && o.pinOnly !== true);
+  const fresher = worn.filter((o) => !(opts.avoid?.outfits.has(o.text) ?? false));
+  const outfits = fresher.length > 0 ? fresher : worn;
+  const outfit = outfits[k % Math.max(1, outfits.length)];
+  if (outfit === undefined) throw new Error(`the mock found no outfit for a legs scene of ${ref}`);
+  const time = chosen.place.times[k % chosen.place.times.length] ?? "midday";
+  return { capture, pose: moment.angle ?? "front", framing: "legs", place: { location: chosen.place.name, timeOfDay: time, activity: moment.text, outfit: outfit.text } };
+}
+
 /** What the template needs of a scene to write it. */
 export interface LocalScene {
   sceneId: number;
@@ -99,10 +133,12 @@ export interface LocalScene {
   removed: boolean;
   /** «Подача» of the scene (S5.7b); absent = ordinary. */
   level?: "flirty" | undefined;
+  /** «Ножки» (S5.8a); absent = an ordinary framing. */
+  framing?: "legs" | undefined;
 }
 
 /** The template's slot of a planned scene (a built-in by its bank's name, a custom category by its id). */
-export function slotOf(scene: Pick<LocalScene, "category" | "shot" | "capture" | "pose" | "place" | "level">): TemplateSlot | null {
+export function slotOf(scene: Pick<LocalScene, "category" | "shot" | "capture" | "pose" | "place" | "level" | "framing">): TemplateSlot | null {
   if (scene.place === null || scene.category === "own") return null;
   const category = isCustomCategory(scene.category) ? scene.category : BANK_OF[scene.category];
   return {
@@ -114,11 +150,12 @@ export function slotOf(scene: Pick<LocalScene, "category" | "shot" | "capture" |
     pose: scene.pose,
     ...(scene.capture !== undefined && shotOf(scene.capture) === shotOf(captureOfShot(scene.shot)) ? { capture: scene.capture } : {}),
     ...(scene.level === "flirty" ? { level: "flirty" as const } : {}),
+    ...(scene.framing === "legs" ? { framing: "legs" as const } : {}),
   };
 }
 
 /** The plain sentence of a planned scene (5a.2, S5.6d): what the model's last attempt leaves a scene with, built by the very function the engine uses. Null for an own scene. */
-export function plainTextOf(scene: Pick<LocalScene, "category" | "shot" | "capture" | "pose" | "place" | "level">): string | null {
+export function plainTextOf(scene: Pick<LocalScene, "category" | "shot" | "capture" | "pose" | "place" | "level" | "framing">): string | null {
   const slot = slotOf(scene);
   return slot === null || slot.location === undefined || slot.activity === undefined || slot.outfit === undefined ? null : plainSentence({ category: slot.category, location: slot.location, activity: slot.activity, outfit: slot.outfit, shot: slot.shot, capture: slot.capture, pose: slot.pose, level: slot.level });
 }

@@ -9,6 +9,7 @@ import {
   checkImageChoice,
   LaunchView,
   decodePhotoCursor,
+  legsNeedsBuiltIn,
   pagePhotoList,
   type ApiKeyStatus,
   type AutoRefresh,
@@ -134,6 +135,8 @@ import { realScheduler, type Scheduler } from "./scheduler";
 // UI shows neutral placeholders for its photo ids.
 
 const CANDIDATES_PER_JOB = 4;
+/** «Ножки» with no built-in category (S5.8a, I5.29): the engine's free refusal, which the mock answers the same way. */
+const LEGS_REFUSAL = { code: "VALIDATION", sceneReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the request names none" } as const;
 
 /**
  * How long after avatars.cancel is accepted the job actually ends
@@ -1013,7 +1016,8 @@ export class MockEngine implements EngineBridge {
             else this.launchHeldPhotos.delete(id);
           }
         },
-        openLaunchSet: (set) => this.sceneSets.add({ avatarId: set.avatarId, sceneSetId: set.sceneSetId, count: set.count, categories: set.categories, launchId: set.launchId }),
+        openLaunchSet: (set) =>
+          this.sceneSets.add({ avatarId: set.avatarId, sceneSetId: set.sceneSetId, count: set.count, categories: set.categories, launchId: set.launchId, ...(set.legsShare === undefined ? {} : { legsShare: set.legsShare }) }),
         startLaunchCompose: (sceneSetId) => this.sceneSets.startLaunchCompose(sceneSetId),
         writeLaunchSet: (sceneSetId) => this.sceneSets.writeLaunchSet(sceneSetId),
         endLaunchCompose: (sceneSetId, how) => this.sceneSets.endLaunchCompose(sceneSetId, how),
@@ -2477,8 +2481,11 @@ export class MockEngine implements EngineBridge {
         if (!this.ownMedia.cancel(c.payload.jobId)) return this.fail(c, { code: "NOT_FOUND", detail: `no import job ${c.payload.jobId} in this engine` });
         return this.ok(c, { jobId: c.payload.jobId });
       case "autopilot.estimate":
+        // S5.8a: «Ножки» with no built-in category is refused first, for free.
+        if (legsNeedsBuiltIn(c.payload.draft)) return this.fail(c, { code: "VALIDATION", launchReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the launch names none" });
         return this.autopilotCommand(c, c.payload.draft.avatarIds, () => this.ok(c, { preview: this.autopilot.estimate(c.payload.draft) }));
       case "autopilot.start":
+        if (legsNeedsBuiltIn(c.payload.draft)) return this.fail(c, { code: "VALIDATION", launchReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the launch names none" });
         return this.autopilotCommand(c, c.payload.draft.avatarIds, () => this.answer(c, this.autopilot.start(c.payload.draft, c.payload.acceptedWorstMicros)));
       case "autopilot.pause":
         return this.autopilotGated(c, () => this.answer(c, this.autopilot.pause(c.payload.launchId)));
@@ -2874,12 +2881,15 @@ export class MockEngine implements EngineBridge {
         if (this.unavailable !== null || !this.libraryOpen) return this.ok(c, { runs: [] });
         return this.ok(c, { runs: this.sortedRuns().slice(0, MAX_LISTED_RUNS).map((r) => this.runSummary(r)) });
       case "scenes.estimateCompose": {
+        if (legsNeedsBuiltIn(c.payload)) return this.fail(c, LEGS_REFUSAL);
         const refusal = this.libraryOpen ? (this.runnableRefusal(c.payload.avatarId) ?? this.categoryRefusal(c.payload.categories)) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, { estimate: this.sceneEstimate(this.sceneSets.composePrice(c.payload.count, c.payload.categories)) });
       }
       case "scenes.compose": {
         const { acceptedWorstMicros, ...request } = c.payload;
+        // S5.8a: «Ножки» with no built-in category is refused first, for free, before the avatar is claimed.
+        if (legsNeedsBuiltIn(request)) return this.fail(c, LEGS_REFUSAL);
         const free = request.count === 0;
         // The engine's order: the avatar is claimed first, then (a paid compose) the key and the ledger, the library, the avatar, the categories, the one open set, the price.
         if (this.jobRunningFor(request.avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar" });
@@ -2971,6 +2981,7 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { sceneSetId: c.payload.sceneSetId });
       }
       case "runs.estimate": {
+        if (legsNeedsBuiltIn(c.payload)) return this.fail(c, LEGS_REFUSAL);
         // No library open: the engine cannot find the avatar either.
         const refusal = this.libraryOpen ? (this.runnableRefusal(c.payload.avatarId) ?? this.categoryRefusal(c.payload.categories)) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
         if (refusal) return this.fail(c, refusal);
@@ -2978,6 +2989,7 @@ export class MockEngine implements EngineBridge {
       }
       case "runs.start": {
         const { acceptedWorstMicros, ...request } = c.payload;
+        if (legsNeedsBuiltIn(request)) return this.fail(c, LEGS_REFUSAL);
         // The engine's order: the avatar is claimed first, then the key and the ledger, the avatar itself, and the price.
         if (this.jobRunningFor(request.avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar" });
         // Then, in the engine's own order: the library, the avatar, its master, the age gate (only when the check is on), the face gate, the price.

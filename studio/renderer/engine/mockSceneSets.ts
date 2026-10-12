@@ -10,6 +10,7 @@ import {
   splitCount,
   youthWords,
   type CategoryRef,
+  type LegsShare,
   type CategorySummary,
   type EngineError,
   type JobState,
@@ -28,9 +29,9 @@ import {
 } from "../../shared/engine";
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { covers } from "../../shared/scenes/custom";
-import { flirtyCountOf } from "../../shared/scenes/level";
+import { apportionLegs, flirtyCountOf, legsCountOf } from "../../shared/scenes/level";
 import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
-import { bankDraw, localTexts, plainTextOf, type LocalScene } from "./mockBankScenes";
+import { bankDraw, legsDraw, localTexts, plainTextOf, type LocalScene } from "./mockBankScenes";
 import { mockAnglesOf } from "./mockCategories";
 import type { Scheduler } from "./scheduler";
 
@@ -75,6 +76,8 @@ export interface MockSceneSetSeed {
    */
   cutOff?: { chunk: number };
   categories?: readonly CategoryRef[];
+  /** «Ножки» of the set's request (a launch's compose carries its draft's, S5.8a); absent = no legs. */
+  legsShare?: LegsShare;
   /** The text model the set was made with; the mock's default when absent. */
   textModel?: string;
   /**
@@ -126,6 +129,8 @@ interface Scene {
   pose: SceneView["pose"];
   /** «Подача» of the scene (S5.7b): only a built-in scene of a flirty set can be flirty. */
   level?: "flirty";
+  /** «Ножки» (S5.8a): a legs scene. */
+  framing?: "legs";
   place: ScenePlace | null;
   /** The idea an own scene was written from; null for a planned one. */
   idea: string | null;
@@ -294,21 +299,40 @@ function spread(k: number, n: number, f: number): boolean {
   return Math.floor(((k + 1) * f) / n) - Math.floor((k * f) / n) === 1;
 }
 
-function planScenes(count: number, refs: readonly CategoryRef[], level: SceneLevel, category: (ref: string) => CategorySummary | undefined): Scene[] {
+function planScenes(count: number, refs: readonly CategoryRef[], level: SceneLevel, legsShare: LegsShare, category: (ref: string) => CategorySummary | undefined): Scene[] {
   const scenes: Scene[] = [];
   let index = 0;
-  for (const { ref, count: n } of splitCount(count, refs)) {
+  const split = splitCount(count, refs);
+  // «Ножки» (I5.29): the run's legs scenes are min(round-half-up(share × B), ⌊0.3 × count⌋), B the built-in scenes, shared over the built-in categories by largest remainder.
+  const builtIn = split.map(({ ref, count: n }) => (isCustomCategory(ref) ? 0 : n));
+  const legsParts = legsShare === 0 ? builtIn.map(() => 0) : apportionLegs(legsCountOf(legsShare, builtIn.reduce((a, b) => a + b, 0), count), builtIn);
+  for (const [entry, { ref, count: n }] of split.entries()) {
     const custom = isCustomCategory(ref) ? category(ref) : undefined;
     // 5a.2 (S5.6e): a built-in scene is a pair of its category's bank dealt a capture from the deck, so the shared template can write it.
     if (!isCustomCategory(ref)) {
       // «Подача» (I5.28): exactly round(0.6 × n) of the category's scenes are flirty. The angle comes from the scene (I5.26): the category wants ⌈n/10⌉ scenes facing away,
       // within its ⌊n/5⌋ cap, and a hand-held capture is never one of them.
       const flirty = flirtyCountOf(n, level);
+      const legs = legsParts[entry] ?? 0;
+      // The legs scenes are spread over the category; the deck is dealt over the others. «Подача» goes to the other scenes first, and only what they cannot take to a legs scene.
+      const legsAt = Array.from({ length: n }, (_, k) => spread(k, n, legs));
+      const others = n - legs;
+      const flirtyOthers = Math.min(flirty, others);
+      const flirtyLegs = flirty - flirtyOthers;
       const wantedAway = Math.min(Math.ceil(n / 10), Math.floor(n / 5));
+      let kOther = 0;
+      let kLegs = 0;
       for (let k = 0; k < n; k++) {
         index += 1;
-        const flirtyScene = spread(k, n, flirty);
-        const draw = bankDraw(ref, k, { level: flirtyScene ? "flirty" : "ordinary", away: spread(k, n, wantedAway) ? "prefer" : "never" });
+        if (legsAt[k] === true) {
+          const flirtyScene = kLegs < flirtyLegs;
+          const draw = legsDraw(ref, kLegs++);
+          scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, framing: "legs", ...(flirtyScene ? { level: "flirty" as const } : {}), place: draw.place, idea: null, text: null, edited: false, removed: false });
+          continue;
+        }
+        const flirtyScene = spread(kOther, others, flirtyOthers);
+        const draw = bankDraw(ref, kOther, { level: flirtyScene ? "flirty" : "ordinary", away: spread(kOther, others, wantedAway) ? "prefer" : "never" });
+        kOther++;
         scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(flirtyScene ? { level: "flirty" as const } : {}), place: draw.place, idea: null, text: null, edited: false, removed: false });
       }
       continue;
@@ -436,7 +460,7 @@ export class MockSceneSets {
     const refs = seed.categories ?? ["home"];
     const scenes: Scene[] =
       seed.scenes === undefined
-        ? planScenes(seed.count, refs, "ordinary", this.#deps.category)
+        ? planScenes(seed.count, refs, "ordinary", seed.legsShare ?? 0, this.#deps.category)
         : seed.scenes.map(
             (s, i): Scene =>
               "idea" in s
@@ -795,6 +819,7 @@ export class MockSceneSets {
         shot: scene.shot,
         pose: scene.pose,
         ...(scene.capture === undefined ? {} : { capture: scene.capture }),
+        ...(scene.framing === "legs" ? { framing: "legs" as const } : {}),
         ...(scene.level === "flirty" ? { level: "flirty" as const } : {}),
         place: { ...scene.place },
         idea: null,
@@ -973,10 +998,10 @@ export class MockSceneSets {
   }
 
   /** A compose that passed the engine's gates: plans and stores the set, launches its job (none for an empty set). */
-  compose(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; poses?: { profile: boolean; back: boolean }; level?: SceneLevel }): { sceneSetId: string; jobId: string | null } {
+  compose(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; poses?: { profile: boolean; back: boolean }; level?: SceneLevel; legsShare?: LegsShare }): { sceneSetId: string; jobId: string | null } {
     const sceneSetId = this.#deps.nextId("set");
     const refs = orderCategories(request.categories);
-    const scenes = request.count === 0 ? [] : planScenes(request.count, refs, request.level ?? "ordinary", this.#deps.category);
+    const scenes = request.count === 0 ? [] : planScenes(request.count, refs, request.level ?? "ordinary", request.legsShare ?? 0, this.#deps.category);
     const set: MockSet = {
       sceneSetId,
       avatarId: request.avatarId,
@@ -1145,6 +1170,14 @@ export class MockSceneSets {
       const shownOutfits = new Set(set.scenes.flatMap((s) => (s.place !== null && !s.removed ? [s.place.outfit] : [])));
       for (const scene of planned) {
         const ref = scene.category === "own" ? "home" : scene.category;
+        if (!isCustomCategory(ref) && scene.framing === "legs") {
+          // S5.8a: a legs scene is drawn anew among the bank's legs moments, away from the places and outfits the set already shows; the framing stays.
+          const draw = legsDraw(ref, k + scene.sceneId, { avoid: { locations: shown, outfits: shownOutfits }, ...(scene.place === null ? {} : { leaving: scene.place.location, activity: scene.place.activity }) });
+          shown.add(draw.place.location);
+          shownOutfits.add(draw.place.outfit);
+          draws.set(scene.sceneId, { place: draw.place, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose });
+          continue;
+        }
         if (!isCustomCategory(ref)) {
           // A built-in scene is drawn anew among the bank's pairs for the capture it keeps (who takes the photo), away from the places and outfits the set already shows.
           // The scene keeps its level; a scene facing the camera never turns away (the set keeps its cap), one that faces away may stay so.
