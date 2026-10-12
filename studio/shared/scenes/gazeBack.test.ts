@@ -9,8 +9,8 @@ import { templateSentence } from "./template";
 const SEEDS = Array.from({ length: 50 }, (_, i) => i + 1);
 const LEVELS: readonly Level[] = ["ordinary", "flirty"];
 
-/** Measured on this sample with no «back» in the gaze bank (its level before round C added «looking back at the viewer»; the rest come from moments and outfits). Re-measured 339 → 344 when S5.7b added three flirty moments: the seeded sample reshuffles, and none of the new texts says «back». */
-const BACK_REPEATS_BASELINE = 344;
+/** Measured on this sample with no «back» in the gaze bank (its level before round C added «looking back at the viewer»;  the rest come from moments and outfits). */
+const BACK_REPEATS_BASELINE = 339;
 
 function sentences(): { text: string; pose: string }[] {
   const out: { text: string; pose: string }[] = [];

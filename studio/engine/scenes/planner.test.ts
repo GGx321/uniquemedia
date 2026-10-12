@@ -394,7 +394,7 @@ describe("pose (T5c; the angle comes from the scene since S5.7b)", () => {
   describe("rng isolation: adding pose draws never perturbs who takes each photo or where", () => {
     const drawnBeforeThePose = (p: ReturnType<typeof plan>) => p.slots.map(({ slotIndex, category, location, shot, capture, attemptIdBase }) => ({ slotIndex, category, location, shot, capture, attemptIdBase }));
 
-    test("with or without «Кокетливая», the same seed draws the same captures at the same places", () => {
+    test("with or without «Кокетливая», the same seed draws the same captures in the same order (the place is not compared: a flirty slot prefers a flirty moment)", () => {
       const ordinary = plan({ seed: 20260924, count: 20, categories: ALL_CATEGORIES });
       const flirty = plan({ seed: 20260924, count: 20, categories: ALL_CATEGORIES, level: "flirty" });
       expect(drawnBeforeThePose(flirty).map(({ location: _l, ...rest }) => rest)).toEqual(drawnBeforeThePose(ordinary).map(({ location: _l, ...rest }) => rest));

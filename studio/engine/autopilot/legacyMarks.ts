@@ -57,20 +57,22 @@ export function legacyMarkedIds(photos: readonly PhotoSidecar[], slotsOf: (runId
   return marked;
 }
 
-const cache = new WeakMap<object, Map<string, { photos: number; marks: ReadonlySet<string> }>>();
+const cache = new WeakMap<object, Map<string, { photos: string; marks: ReadonlySet<string> }>>();
 
 /**
- * The restored marks of one avatar's photos, read once per library object and again only when the avatar's photo count changed (a new photo is read against its run; an old
+ * The restored marks of one avatar's photos, read once per library object and again only when the avatar's set of photos changed (a new photo is read against its run; an old
  * one cannot appear). Empty for a library that does not say where it lives.
  */
 export function legacyMarksOf(library: { readonly root?: string }, avatarId: string, photos: readonly PhotoSidecar[]): ReadonlySet<string> {
   if (library.root === undefined) return new Set();
   const root = library.root;
-  const perLibrary = cache.get(library) ?? new Map<string, { photos: number; marks: ReadonlySet<string> }>();
+  const perLibrary = cache.get(library) ?? new Map<string, { photos: string; marks: ReadonlySet<string> }>();
   cache.set(library, perLibrary);
+  // Keyed by the photo-id set, not its size: a photo swapped for another is read again.
+  const key = photos.map((photo) => photo.id).sort().join(",");
   const known = perLibrary.get(avatarId);
-  if (known !== undefined && known.photos === photos.length) return known.marks;
+  if (known !== undefined && known.photos === key) return known.marks;
   const marks = legacyMarkedIds(photos, (runId) => slotsOfRun(root, runId));
-  perLibrary.set(avatarId, { photos: photos.length, marks });
+  perLibrary.set(avatarId, { photos: key, marks });
   return marks;
 }

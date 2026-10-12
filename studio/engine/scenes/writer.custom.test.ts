@@ -109,6 +109,15 @@ describe("a flirty run leaves the model's slots ordinary", () => {
     expect(sha(writerMessages(chunkSlots(flirty)[0] ?? [], undefined, labelOf))).toBe(sha(writerMessages(chunkSlots(slotsAt())[0] ?? [], undefined, labelOf)));
   });
 
+  // Guards the frozen writer-golden input: the model's request reads none of the fields the planner added (level, capture, legwear), so a live plan and the same plan without
+  // them ask the model exactly the same, and the golden does not depend on the planner's own re-pins.
+  test.each(["ordinary", "flirty"] as const)("the writer's messages of a live %s plan equal those of the same plan with level, capture and legwear stripped", (level) => {
+    const slots = plan({ seed: 3, count: 30, categories: [...CATEGORIES], ...(level === "flirty" ? { level } : {}) }).slots;
+    expect(slots.some((slot) => slot.capture !== undefined || slot.legwear !== undefined)).toBe(true);
+    const stripped = slots.map(({ level: _level, capture: _capture, legwear: _legwear, ...rest }) => rest);
+    for (const chunk of [0, 1]) expect(sha(writerMessages(chunkSlots(slots)[chunk] ?? []))).toBe(sha(writerMessages(chunkSlots(stripped)[chunk] ?? [])));
+  });
+
   test("the writer's messages never name a level for a built-in slot either: the prompt knows none", () => {
     const slots = plan({ seed: 3, count: 30, categories: [...CATEGORIES], level: "flirty" }).slots;
     expect(slots.some((slot) => slot.level === "flirty")).toBe(true);

@@ -134,7 +134,7 @@ export const PRESENTATION_SCENARIOS: readonly Scenario[] = [
         const away = scenes.filter((s) => s.pose === "profile" || s.pose === "back");
         t.note(`the set holds ${scenes.length} scenes, ${scenes.filter((s) => s.level === "flirty").length} of them flirty`);
         t.note(`at most a fifth of the scenes face away: ${String(away.length <= Math.floor(scenes.length / 5))}`);
-        t.note(`no scene on a hand-held capture faces away: ${String(away.every((s) => !HAND.has(String(s.capture))))}`);
+        t.note(`no scene on a hand-held capture faces away: ${String(away.every((s) => !HAND.has(String(s.capture ?? s.shot))))}`);
       };
       t.note("a flirty compose of 10 scenes of «Дом», with the poses a window of the last build sends (the angle comes from the scene, so they are ignored)");
       await t.callLaunch("scenes.compose", { avatarId: w.avatarId, count: 10, categories: ["home"], level: "flirty", poses: { profile: true, back: true }, acceptedWorstMicros: ENOUGH });
