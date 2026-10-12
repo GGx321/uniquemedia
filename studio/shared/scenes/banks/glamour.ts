@@ -67,7 +67,7 @@ export const GLAMOUR: CategoryBank = {
         { text: "waits by the door", motion: "she shifts her weight a little", captures: ["friend", "selfie", "candid"], twoHanded: false },
         { text: "looks back over her shoulder", motion: "she turns her head a little more", captures: ["friend"], twoHanded: false, angle: "three-quarter", gaze: "own" },
         { text: "laughs on her way inside", motion: "she laughs a little and turns away", captures: ["friend", "candid"], twoHanded: false, expression: true },
-        { text: "pulls her hair over one shoulder", motion: "she sweeps her hair over slowly", captures: ["friend", "candid"], twoHanded: false, angle: "back", hair: "own" },
+        { text: "sweeps her hair back with one hand", motion: "she sweeps her hair back slowly", captures: ["friend", "candid"], twoHanded: false, angle: "back", hair: "own" },
         { text: "stops under a lamp", motion: "she tilts her head a little", captures: ["friend", "selfie"], twoHanded: false },
         // S5.6R: the taxi's phone moment left with its friend's photo; on the street she checks her phone for the ride home, caught by a friend.
         { text: "checks her phone for her ride", motion: "she scrolls her phone slowly", captures: ["candid", "friend"], twoHanded: false, phone: true, gaze: "own" },

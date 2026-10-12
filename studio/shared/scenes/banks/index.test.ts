@@ -224,6 +224,24 @@ describe("what any content must keep", () => {
     expect(telegraphic).toEqual([]);
   });
 
+  // Review (C3′ round 3): a third of the avatars wear a bob, and a frame from behind binds only her hair colour, so a moment that needs long hair lengthens hers.
+  test("no moment needs long hair: none puts her hair over a shoulder", () => {
+    const long = BANK_CATEGORIES.flatMap((c) => BANKS[c].places.flatMap((p) => p.moments.map((m) => m.text))).filter((text) => /\bhair over\b|\bover (?:one|her) shoulder\b.*\bhair\b/.test(text));
+    expect(long).toEqual([]);
+  });
+
+  // Review (C3′ round 3): a candid is «busy with something», so a pose with nothing to do is never one.
+  test("a pose with nothing to do, a hand on her hip, is never a candid", () => {
+    const poses = BANK_CATEGORIES.flatMap((c) => BANKS[c].places.flatMap((p) => p.moments)).filter((m) => /\bhand on her hip\b/.test(m.text));
+    expect(poses.length).toBeGreaterThan(0);
+    for (const moment of poses) expect(moment.captures, moment.text).not.toContain("candid");
+  });
+
+  // Review (C3′ round 3): the fabric rename dropped «Улица»'s sneakers; «a knit mini» names the skirt and its fabric in 34 characters.
+  test("«Улица»'s hoodie look keeps its sneakers and a knit mini", () => {
+    expect(BANKS.photoshoot.outfits.map((o) => o.text)).toContain("a hoodie, a knit mini and sneakers");
+  });
+
   test("no denim shorts and no denim skirts anywhere (the owner)", () => {
     for (const category of BANK_CATEGORIES) for (const outfit of BANKS[category].outfits) expect(isOwnerBannedOutfit(outfit.text)).toBe(false);
   });

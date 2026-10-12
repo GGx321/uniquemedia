@@ -113,7 +113,7 @@ export const MOMENT_VERBS: readonly string[] = [
   "adjusts", "applies", "breaks", "brushes", "carries", "catches", "checks", "crosses", "crouches", "curls", "dries", "drinks", "eats", "fastens",
   "fixes", "grabs", "holds", "jogs", "kneels", "laces", "laughs", "leans", "lets", "lies", "lifts", "looks", "packs", "pats", "picks", "pours", "pulls",
   "puts", "reaches", "rests", "rolls", "rubs", "scrolls", "settles", "shades", "sips", "sits", "slices", "slips", "smiles", "sprays", "stands",
-  "steps", "stirs", "stops", "stretches", "takes", "ties", "tucks", "turns", "twirls", "unpacks", "waits", "walks", "waters", "wipes", "wraps",
+  "steps", "stirs", "stops", "stretches", "sweeps", "takes", "ties", "tucks", "turns", "twirls", "unpacks", "waits", "walks", "waters", "wipes", "wraps",
 ];
 
 const PRINTABLE = /^[\x20-\x7e]+$/;
