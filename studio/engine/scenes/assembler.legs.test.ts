@@ -8,6 +8,7 @@ import { YOUTH_PROPS } from "../../shared/scenes/words";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { assembleRun, assembleSlot, AssemblerRefusalError, BINDING_ANCHOR, NO_FACE_ANCHOR, POSE_PHRASE } from "./assembler";
 import { hairLinesOf } from "./hairLines";
+import { localSentences } from "./localSentences";
 import { captureLineOf, CONSTRAINTS, hairLine, phoneHandLineOf, slotKeyOf } from "./phoneLook";
 import { plan } from "./planner";
 import { slotLookOf } from "./roomPlace";
@@ -176,6 +177,24 @@ describe("feet render and stockings are refused", () => {
     const home = { ...BANKS.home, legwear: { items: ["white knee-high socks", "black stockings"], share: 0.4 } };
     expect(categoryBankProblems(home, "home").join("\n")).toMatch(/\[legwear\][^\n]*stocking/i);
     expect(categoryBankProblems({ ...BANKS.home, legwear: { items: ["thigh-high stockings"], share: 0.4 } }, "home").length).toBeGreaterThan(0);
+  });
+});
+
+// Legs change no money (I5.30): the template writes every legs slot, so a run with legs asks the writer for nothing a run without legs did not.
+describe("the template writes every legs slot: no writer, $0", () => {
+  test("over many plans of every built-in category, every slot of a legs plan has its local sentence", () => {
+    let legs = 0;
+    for (const category of CATEGORIES) {
+      for (let seed = 1; seed <= 150; seed++) {
+        const slots = plan({ seed, count: 20, categories: [category], legsShare: 30, ...(seed % 2 === 0 ? { level: "flirty" as const } : {}) }).slots;
+        const local = localSentences({ slots, keyOf: (s) => slotKeyOf(RUN_ID, s.attemptIdBase) });
+        for (const slot of slots) {
+          expect(local(slot), `${slot.category} | ${slot.location} | ${slot.activity}`).not.toBeNull();
+          if (slot.framing === "legs") legs++;
+        }
+      }
+    }
+    expect(legs).toBeGreaterThan(2000);
   });
 });
 
