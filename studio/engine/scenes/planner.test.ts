@@ -285,7 +285,7 @@ describe("exclusion of the avatar's recent (location, outfit) pairs", () => {
 });
 
 describe("outfits and locations never repeat within one category before every option is used once", () => {
-  // «Фитнес»'s general bag is its outfits that are not pin-only (the legs moments pin two of their own, S5.8a review; an outfit a moment pins still stays in the bag, S5.6b).
+  // «Фитнес»'s general bag is its outfits that are not pin-only (the legs moments pin three of their own, S5.8a review; an outfit a moment pins still stays in the bag, S5.6b).
   test("a full pass (count = the general outfits) uses every general outfit exactly once", () => {
     const n = (POOLS.fitness.outfitInfo ?? []).filter((o) => o.pinOnly !== true).length;
     expect(n).toBe(4);
