@@ -143,16 +143,18 @@ const SHARE_PHOTOS = 10;
 
 /**
  * «Автопилот»'s «Подача» caption (mockups 30, 52): «Кокетливая» as before; at «Смелая» «≈ {B} из {M} новых кадров — смелые: …; {F} — кокетливые. …», B and F
- * summed per avatar that is not blocked over its new photos; with no plan yet, or nothing new to draw, the share of a «Смелая» category's ten frames.
+ * summed per avatar that is not blocked over its new photos; with no plan yet, «≈» the share of a «Смелая» category's ten frames; with no new frame to draw,
+ * nothing (no bold frame to speak of).
  */
 export function launchLevelCaption(level: SceneLevel, plan: LaunchPlanCounts | null, categories: readonly CategoryRef[]): string | null {
   if (level === "ordinary") return null;
   if (level === "flirty") return launchFlirtyCaption(plan, categories);
   const bolds = categories.filter((ref): ref is BoldCategory => isBoldCategory(ref));
   if (bolds.length === 0) return boldWithout(categories);
-  if (plan === null || plan.totals.toGenerate === 0) {
+  if (plan !== null && plan.totals.toGenerate === 0) return null;
+  if (plan === null) {
     const share = levelCountsOf(SHARE_PHOTOS);
-    return boldCaption({ bold: share.bold, flirty: share.flirty, boldCategories: bolds }, countOf(SHARE_PHOTOS, ["нового кадра", "новых кадров", "новых кадров"]));
+    return `≈ ${boldCaption({ bold: share.bold, flirty: share.flirty, boldCategories: bolds }, countOf(SHARE_PHOTOS, ["нового кадра", "новых кадров", "новых кадров"]))}`;
   }
   let bold = 0;
   let flirty = 0;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { PRICE_SCOPES_RU, type AvatarSummary, type LaunchDraftInput, type PhotoSummary } from "../../shared/engine";
 import type { MockEngine } from "../engine/mockEngine";
 import { freePhotos, MIA, SOFIA } from "../engine/mockEngine.testkit";
@@ -161,6 +161,36 @@ describe("«Категории сцен» with the two «Смелая» chips (m
     const drafts = planCalls(engine).map((c) => c.payload.draft);
     expect(drafts.length).toBeGreaterThan(3);
     for (const draft of drafts) if (draft.categories.some((ref) => ref === "nightwear" || ref === "beach")) expect(draft.level).toBe("bold");
+  });
+});
+
+// Round 2 (L1): a running launch's caption reads the launch's own categories, never the window's form (another window, a restart: the form says otherwise).
+describe("a running «Смелая» launch's caption", () => {
+  test("names the launch's «Смелая» categories though this window's form holds others", async () => {
+    const { client } = world();
+    await openAutopilot();
+    await choose("Mia");
+    const draft: LaunchDraftInput = {
+      avatarIds: [SOFIA.avatarId],
+      videosPerAvatar: 1,
+      mix: { single: 100, collage: 0, slides: 0 },
+      categories: ["nightwear", "beach"],
+      level: "bold",
+      library: true,
+      generate: true,
+      sceneReview: false,
+      stickers: false,
+    };
+    await act(async () => {
+      const estimate = await client.request("autopilot.estimate", { draft });
+      if (!estimate.ok) throw new Error("estimate refused");
+      const started = await client.request("autopilot.start", { draft: { ...draft, planSeed: estimate.result.preview.planSeed }, acceptedWorstMicros: estimate.result.preview.estimate.worstMicros });
+      if (!started.ok) throw new Error("start refused");
+    });
+    await flush();
+    expect(level("Смелая").checked).toBe(true);
+    expect(within(settings()).getByText(`≈ 4 из 10${NB}новых кадров — смелые: бельё, купальники; 4 — кокетливые. Смелые кадры рисует Seedream 5 Pro · 2K.`)).toBeDefined();
+    expect(within(settings()).queryByText(/^Смелые кадры — только в/) === null).toBe(true);
   });
 });
 

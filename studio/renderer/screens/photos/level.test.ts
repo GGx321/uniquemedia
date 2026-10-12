@@ -290,10 +290,13 @@ describe("the launch's «Подача» caption at «Смелая» (mockup 52)"
     expect(launchLevelCaption("bold", plan, ["cat-paris-cafes"])).toBe("Подача — только во встроенных категориях");
   });
 
-  test("with no plan yet, or nothing new to draw, says the share of a «Смелая» category's ten frames, as «Кокетливая» says its 6 of 10", () => {
-    const share = `4 из 10${NB}новых кадров — смелые: бельё; 4 — кокетливые. ${SEEDREAM_TAIL}`;
-    expect(launchLevelCaption("bold", null, ["home", "nightwear"])).toBe(share);
-    expect(launchLevelCaption("bold", { avatars: [avatar(0)], totals: { toGenerate: 0 } }, ["home", "nightwear"])).toBe(share);
+  // 2026-10-12, S5.9g round 2: «≈» like mockup 52's caption, and nothing at all when the plan draws no new frame (no bold frame to speak of).
+  test("with no plan yet, says the share of a «Смелая» category's ten frames with «≈», as mockup 52 words its caption", () => {
+    expect(launchLevelCaption("bold", null, ["home", "nightwear"])).toBe(`≈ 4 из 10${NB}новых кадров — смелые: бельё; 4 — кокетливые. ${SEEDREAM_TAIL}`);
+  });
+
+  test("with nothing new to draw, says nothing", () => {
+    expect(launchLevelCaption("bold", { avatars: [avatar(0)], totals: { toGenerate: 0 } }, ["home", "nightwear"])).toBe(null);
   });
 
   test("«Кокетливая» says what it always said, «Обычная» nothing", () => {

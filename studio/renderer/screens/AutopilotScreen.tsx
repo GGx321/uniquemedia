@@ -306,7 +306,7 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
           }}
           onCategory={toggleCategory}
           onLevel={(level) => edit({ ...form, level })}
-          levelCaption={launchLevelCaption(shownForm.level, running ? null : plan.shown, settings?.categories ?? categoriesAt(shownForm.level, shownForm.categories))}
+          levelCaption={launchLevelCaption(shownForm.level, running ? null : plan.shown, running ? categoriesAt(shownForm.level, shownForm.categories) : (settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder))))}
           legs={launchLegsRow(shownForm.legs, running ? null : plan.shown, running ? shownForm.categories : (settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder))), shownForm.generate)}
           onLegs={(legs) => edit({ ...form, legs })}
           onSwitch={(which) => edit({ ...form, [which]: !form[which] })}
