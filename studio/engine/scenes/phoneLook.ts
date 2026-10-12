@@ -51,7 +51,7 @@ const friendLine = (key: string, framing: CaptureFraming): string =>
 const CANDID_CLAUSE = "She is busy with something and not looking toward the camera.";
 
 // C3′ (the owner's verdict, 2026-10-12): «the phone hides most of her face» drew her face beside the phone in 5 of 5 frames; the wording probe's winner (c3fix 1a)
-// covers it from her eyebrows to her chin, and the side-to-the-mirror sentence (MIRROR_BACK_LINE) says the same.
+// covers it from her eyebrows to her chin. A side-to-the-mirror frame is a face-hidden one, so MIRROR_BACK_LINE leaves the face cover to this line.
 const FACE_COVER = "the phone covering her face from her eyebrows to her chin";
 
 /** The fixed capture lines; `friend` and `candid` take a variant from the slot's key (`captureLineOf`). */
