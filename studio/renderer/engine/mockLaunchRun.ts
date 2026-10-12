@@ -585,14 +585,15 @@ export class MockRun {
     if (work.setId !== null) return;
     work.setId = `set-mock-${this.#number}-${work.index + 1}`;
     // A real set of the library, as the engine's compose makes it: the avatar's open set, named by the launch, with no sentence written yet.
-    // The set is composed with the draft's «Ножки», as the engine's launch compose carries it (S5.8a); it is not sent when it was not asked for (I5.27).
-    const { legsShare } = this.#launch.draft;
+    // The set is composed with the draft's «Подача» and «Ножки», as the engine's launch compose carries them (S5.7a, S5.8a); neither is sent when it was not asked for (I5.27).
+    const { level, legsShare } = this.#launch.draft;
     this.#w.openLaunchSet({
       avatarId: work.avatarId,
       sceneSetId: work.setId,
       count: work.toGenerate,
       categories: this.#categories,
       launchId: this.#launch.launchId,
+      ...(level === "flirty" ? { level } : {}),
       ...(legsShare === undefined || legsShare === 0 ? {} : { legsShare }),
     });
   }

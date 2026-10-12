@@ -1017,7 +1017,7 @@ export class MockEngine implements EngineBridge {
           }
         },
         openLaunchSet: (set) =>
-          this.sceneSets.add({ avatarId: set.avatarId, sceneSetId: set.sceneSetId, count: set.count, categories: set.categories, launchId: set.launchId, ...(set.legsShare === undefined ? {} : { legsShare: set.legsShare }) }),
+          this.sceneSets.add({ avatarId: set.avatarId, sceneSetId: set.sceneSetId, count: set.count, categories: set.categories, launchId: set.launchId, ...(set.level === undefined ? {} : { level: set.level }), ...(set.legsShare === undefined ? {} : { legsShare: set.legsShare }) }),
         startLaunchCompose: (sceneSetId) => this.sceneSets.startLaunchCompose(sceneSetId),
         writeLaunchSet: (sceneSetId) => this.sceneSets.writeLaunchSet(sceneSetId),
         endLaunchCompose: (sceneSetId, how) => this.sceneSets.endLaunchCompose(sceneSetId, how),

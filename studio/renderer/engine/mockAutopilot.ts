@@ -29,6 +29,7 @@ import {
   type MonthFit,
   type PaidHold,
   type ResumeBlockedBy,
+  type SceneLevel,
   type UnreadableLaunch,
   type UnsequencedEvent,
   type VideoShape,
@@ -117,7 +118,7 @@ export interface MockAutopilotWorld {
    * The launch's scene set (S4.10 fix D), the way the engine's compose makes one: it exists from the compose's first request (`openLaunchSet`), the writer's answer gives it its sentences
    * (`writeLaunchSet`), the draw's start freezes its scenes (`freezeLaunchSet`), and the end of the launch lets it go (`releaseLaunchSet`: announced, no launch on it).
    */
-  openLaunchSet(set: { avatarId: string; sceneSetId: string; count: number; categories: readonly CategoryRef[]; launchId: string; legsShare?: LegsShare }): void;
+  openLaunchSet(set: { avatarId: string; sceneSetId: string; count: number; categories: readonly CategoryRef[]; launchId: string; level?: SceneLevel; legsShare?: LegsShare }): void;
   /** The compose request goes out: the set's writer job is live (the set reads `writing`, the avatar is claimed) until `writeLaunchSet` or `endLaunchCompose`. */
   startLaunchCompose(sceneSetId: string): void;
   writeLaunchSet(sceneSetId: string): void;

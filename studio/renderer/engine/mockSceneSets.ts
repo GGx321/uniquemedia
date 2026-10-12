@@ -76,7 +76,8 @@ export interface MockSceneSetSeed {
    */
   cutOff?: { chunk: number };
   categories?: readonly CategoryRef[];
-  /** «Ножки» of the set's request (a launch's compose carries its draft's, S5.8a); absent = no legs. */
+  /** «Подача» and «Ножки» of the set's request (a launch's compose carries its draft's, S5.8a); absent = ordinary, no legs. */
+  level?: SceneLevel;
   legsShare?: LegsShare;
   /** The text model the set was made with; the mock's default when absent. */
   textModel?: string;
@@ -460,7 +461,7 @@ export class MockSceneSets {
     const refs = seed.categories ?? ["home"];
     const scenes: Scene[] =
       seed.scenes === undefined
-        ? planScenes(seed.count, refs, "ordinary", seed.legsShare ?? 0, this.#deps.category)
+        ? planScenes(seed.count, refs, seed.level ?? "ordinary", seed.legsShare ?? 0, this.#deps.category)
         : seed.scenes.map(
             (s, i): Scene =>
               "idea" in s
@@ -493,6 +494,7 @@ export class MockSceneSets {
       revision: 1,
       runId: this.#deps.nextId("run"),
       poses: { profile: false, back: false },
+      ...(seed.level === undefined ? {} : { level: seed.level }),
       categories: refs.map((ref) => this.#categoryEntry(ref)),
       scenes,
       chunks,
