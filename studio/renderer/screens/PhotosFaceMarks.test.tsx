@@ -146,9 +146,15 @@ describe("the end of a run", () => {
     expect(screen.queryByText(/без проверки лица/) === null).toBe(true);
   });
 
+  // 2026-10-12, S5.9g (mockup 50): the failed slots moved to a line of their own under the gallery's (`.run-end-line`); the row still pins that they come
+  // after the frames without a face check, in the same notice.
   test("keeps the failed slots after it", () => {
     render(<RunOutcome job={doneRun(["p1"], 2)} fromSet={false} photos={[photo("p1")]} />);
-    expect(screen.getByText(/1 кадр без проверки лица\. Не получилось: 2/)).toBeDefined();
+    const faces = screen.getByText(/1 кадр без проверки лица\./);
+    const failed = screen.getByText(/^Не получилось: 2\./);
+    expect(failed.classList.contains("run-end-line")).toBe(true);
+    expect(faces.contains(failed)).toBe(true);
+    expect((faces.textContent ?? "").indexOf("без проверки лица")).toBeLessThan((faces.textContent ?? "").indexOf("Не получилось"));
   });
 
   // S5.6R: a slot can end free (`slot-text-problem` ends it with no attempt paid), and the job end carries only the count, so the line must not claim that every failed

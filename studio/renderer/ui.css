@@ -796,6 +796,12 @@ input[type="range"]::-webkit-slider-thumb {
   margin: 0;
 }
 
+/* S5.9g (mockup 50): the run's end — what did not come out, and why, on a line of its own under the gallery's. */
+.run-end-line {
+  display: block;
+  margin-top: 3px;
+}
+
 .notice-actions {
   display: flex;
   flex-wrap: wrap;
