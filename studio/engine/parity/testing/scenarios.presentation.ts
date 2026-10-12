@@ -150,4 +150,57 @@ export const PRESENTATION_SCENARIOS: readonly Scenario[] = [
       facts(ordinary);
     },
   },
+  {
+    name: "scene sets, «Ножки» (S5.8a): a compose holds exactly min(round-half-up(share × B), ⌊0.3 × count⌋) legs scenes of the built-in banks, an ordinary compose none, and a request for legs with no built-in category is refused for free",
+    rig: { launch: true },
+    async run(t, w, control) {
+      await control.musicTracks();
+      /** The avatar's set once its write has settled, read quietly: the transcript tells the facts below as notes (which scene is which is each engine's own deal). */
+      const settled = async (): Promise<Record<string, unknown>[]> => {
+        const scenes: Record<string, unknown>[] = [];
+        await t.quiet(async () => {
+          for (let i = 0; i < 2_000; i++) {
+            const answer = await t.call("scenes.get", { avatarId: w.avatarId });
+            const set = answer.ok ? record(answer.result.sceneSet) : null;
+            if (set !== null && set.status === "ready") {
+              const listed: unknown[] = Array.isArray(set.scenes) ? set.scenes : [];
+              for (const scene of listed) {
+                const row = record(scene);
+                if (row !== null) scenes.push(row);
+              }
+              return;
+            }
+            await t.settle();
+            await t.quiesce();
+          }
+          throw new Error("the scene set never finished its write");
+        });
+        return scenes;
+      };
+      const LEGS_CAPTURES = new Set(["pov-legs", "low-feet"]);
+      const facts = (scenes: readonly Record<string, unknown>[]): void => {
+        const legs = scenes.filter((s) => s.framing === "legs");
+        t.note(`the set holds ${scenes.length} scenes, ${legs.length} of them legs scenes`);
+        t.note(`every legs scene names its capture: ${String(legs.every((s) => typeof s.capture === "string"))}`);
+        t.note(`at home she shoots herself: no legs scene is a friend's low photo: ${String(legs.every((s) => s.category !== "home" || s.capture !== "low-feet"))}`);
+        t.note(`only a legs scene is shot as legs: ${String(scenes.every((s) => s.framing === "legs" || !LEGS_CAPTURES.has(String(s.capture))))}`);
+      };
+      t.note("a compose of 10 scenes of «Дом» with 30 % legs: 3 of the 10, the cap of 30 % of the run being 3");
+      await t.callLaunch("scenes.compose", { avatarId: w.avatarId, count: 10, categories: ["home"], legsShare: 30, acceptedWorstMicros: ENOUGH });
+      facts(await settled());
+      const found = await t.callLaunch("scenes.get", { avatarId: w.avatarId });
+      const sceneSetId = found.ok ? record(found.result.sceneSet)?.sceneSetId : undefined;
+      if (typeof sceneSetId !== "string") throw new Error("the avatar has no scene set to discard");
+      await t.callLaunch("scenes.discard", { sceneSetId });
+      t.note("the same compose with no legs: none of its scenes is a legs scene");
+      await t.callLaunch("scenes.compose", { avatarId: w.avatarId, count: 10, categories: ["home"], acceptedWorstMicros: ENOUGH });
+      facts(await settled());
+      t.note("legs asked for with only a custom category are refused for free, whatever the command: nothing is composed, priced or started");
+      const custom = { avatarId: w.avatarId, count: 10, categories: ["cat-paris-cafes"], legsShare: 15 };
+      await t.call("scenes.estimateCompose", custom);
+      await t.call("scenes.compose", { ...custom, acceptedWorstMicros: NOTHING });
+      await t.call("runs.estimate", { ...custom, count: 5 });
+      await t.call("autopilot.estimate", { draft: { avatarIds: [w.avatarId], videosPerAvatar: 2, mix: { single: 0, collage: 0, slides: 100 }, categories: ["cat-paris-cafes"], legsShare: 15, library: false, generate: true, sceneReview: false, stickers: false } });
+    },
+  },
 ];
