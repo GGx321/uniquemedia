@@ -33,9 +33,22 @@ export const NIGHTWEAR: CategoryBank = {
       times: ["morning", "evening", "night"],
       moments: [
         { text: "lies back against the pillows", motion: "she slowly blinks and smiles", captures: ["above"], twoHanded: false, messyOk: true },
+        { text: "lies on her side, head on her hand", motion: "she smiles a little and looks away", captures: ["above", "timer"], twoHanded: false, handAtFace: true },
+        { text: "rests her cheek on the pillow", motion: "she slowly closes her eyes", captures: ["above"], twoHanded: false },
+        { text: "lies curled up under the duvet", motion: "she pulls the duvet up a little", captures: ["above", "timer"], twoHanded: false, messyOk: true },
+        { text: "lies back, hair across the pillow", motion: "she slowly turns her head", captures: ["above"], twoHanded: false, hair: "own" },
+        { text: "lies back, one knee up", motion: "she sways her knee a little", captures: ["above"], twoHanded: false, level: "flirty" },
         { text: "sits cross-legged with her coffee", motion: "she sips and smiles a little", captures: ["mirror"], twoHanded: false },
+        { text: "sits up against the headboard", motion: "she leans her head back a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
+        { text: "sits with her legs tucked under her", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
+        { text: "stretches out on the duvet", motion: "she stretches her arms slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false },
+        // The prone selfie on the owner's model wears what «Дом»'s probes drew; it keeps her bare legs.
         { text: "lies on her stomach, one arm out", motion: "she swings her feet a little", captures: ["prone"], twoHanded: false, outfits: [PRONE_GREY], noLegwear: true },
+        { text: "lies prone, her cheek on her hand", motion: "she slowly blinks and smiles", captures: ["prone"], twoHanded: false, outfits: [PRONE_GREY], handAtFace: true, noLegwear: true },
+        { text: "lies on her stomach, head tilted", motion: "she tilts her head a little", captures: ["prone"], twoHanded: false, outfits: [PRONE_GREY], noLegwear: true },
         { text: "lies prone, glancing back", motion: "she turns her head a little further", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", gaze: "own", outfits: [PRONE_GREY], noLegwear: true },
+        { text: "lies prone, ankles crossed behind", motion: "she crosses her raised ankles slowly", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", outfits: [PRONE_GREY], noLegwear: true },
+        { text: "lies prone, feet raised behind", motion: "her raised feet swing slowly behind her", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", outfits: [PRONE_GREY], noLegwear: true },
         { text: "lies prone, chin on her hand", motion: "she kicks her feet slowly behind her", captures: ["prone"], twoHanded: false, level: "flirty", outfits: [PRONE_GREY, SATIN_CAMI], handAtFace: true, noLegwear: true },
         // P58 and P-5a3 #4: Seedream drew it, with no phone in her hands.
         { text: "lies on her stomach, hips behind", motion: "she lifts her hips a little", captures: ["prone"], twoHanded: false, level: "bold", route: "seedream", outfits: ["a black bra and briefs"], noLegwear: true },
@@ -66,6 +79,10 @@ export const NIGHTWEAR: CategoryBank = {
       times: ["morning", "evening", "night"],
       moments: [
         { text: "stretches after waking up", motion: "she stretches her arms up slowly", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
+        { text: "tucks her hair behind one ear", motion: "she tucks her hair back slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "own" },
+        { text: "adjusts the strap on her shoulder", motion: "she slides the strap up slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, gaze: "focus" },
+        { text: "stands by the wardrobe", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
+        { text: "holds a mug of tea", motion: "she lifts the mug a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "sits on the edge of the bed", motion: "she swings one foot slowly", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false, level: "flirty" },
         { text: "leans on the doorframe", motion: "she shifts her shoulder slowly", captures: ["mirror", "timer"], twoHanded: false, level: "flirty" },
         { text: "stands with one hand on her hip", motion: "she turns her hips a little", captures: ["mirror-hidden", "mirror"], twoHanded: false, level: "bold", route: "seedream" },
@@ -97,6 +114,8 @@ export const NIGHTWEAR: CategoryBank = {
       moments: [
         { text: "brushes her hair", motion: "she draws the brush down slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "own" },
         { text: "leans on the edge of the tub", motion: "she leans back a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
+        { text: "fixes her hair in a clip", motion: "she pins her hair up slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "own" },
+        { text: "pats on some face cream", motion: "she pats her cheek gently", captures: ["mirror"], twoHanded: false, gaze: "focus" },
         { text: "leans toward the mirror", motion: "she leans in a little closer", captures: ["mirror"], twoHanded: false, level: "flirty" },
         { text: "sits on the counter", motion: "she turns her head a little toward the mirror", captures: ["mirror-hidden"], twoHanded: false, angle: "three-quarter", mirrorBack: true, level: "bold", route: "seedream" },
       ],
@@ -111,6 +130,8 @@ export const NIGHTWEAR: CategoryBank = {
       times: ["evening", "night"],
       moments: [
         { text: "sits with one leg crossed", motion: "she wiggles her crossed foot a bit", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
+        { text: "pulls one knee up to her chest", motion: "she rests her cheek a little lower", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
+        { text: "curls up with a blanket", motion: "she pulls the blanket a little closer", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "tucks one leg under her", motion: "she settles a little deeper", captures: ["mirror-hidden", "mirror"], twoHanded: false, level: "flirty" },
         { text: "sits back, knees together", motion: "she rocks a little in place", captures: ["mirror-hidden", "mirror"], twoHanded: false, level: "bold", route: "seedream" },
         { text: "sits with her legs stretched out", motion: "she points her toes slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },

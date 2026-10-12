@@ -83,6 +83,28 @@ describe("the moments and their levels (plan §6.2)", () => {
     ["her bed", "lies on her stomach, feet up", ["over-shoulder"], "bold", "her raised feet swing slowly"],
     ["her bed", "lies back with her arms up", ["above"], "bold", "she stretches slowly and smiles"],
     ["her bed", "lies holding the sheet to her chest", ["above"], "bold", "she pulls the sheet a little higher"],
+    // The stand-in's variety sweep (boldBanks.sweep.test.ts): an ordinary or flirty plan needs more than one moment for each frame from above, prone and over her shoulder.
+    ["her bed", "lies on her side, head on her hand", ["above", "timer"], undefined, "she smiles a little and looks away"],
+    ["her bed", "rests her cheek on the pillow", ["above"], undefined, "she slowly closes her eyes"],
+    ["her bed", "lies curled up under the duvet", ["above", "timer"], undefined, "she pulls the duvet up a little"],
+    ["her bed", "lies back, one knee up", ["above"], "flirty", "she sways her knee a little"],
+    ["her bed", "lies prone, her cheek on her hand", ["prone"], undefined, "she slowly blinks and smiles"],
+    ["her bed", "lies on her stomach, head tilted", ["prone"], undefined, "she tilts her head a little"],
+    ["her bed", "lies prone, ankles crossed behind", ["over-shoulder"], undefined, "she crosses her raised ankles slowly"],
+    ["her bed", "lies prone, feet raised behind", ["over-shoulder"], undefined, "her raised feet swing slowly behind her"],
+    ["her bed", "lies back, hair across the pillow", ["above"], undefined, "she slowly turns her head"],
+    ["her bed", "sits up against the headboard", ["mirror-hidden", "mirror"], undefined, "she leans her head back a little"],
+    ["her bed", "sits with her legs tucked under her", ["mirror-hidden", "mirror"], undefined, "she shifts her weight a little"],
+    ["her bedroom", "tucks her hair behind one ear", ["mirror-hidden", "mirror"], undefined, "she tucks her hair back slowly"],
+    ["her bedroom", "adjusts the strap on her shoulder", ["mirror-hidden", "mirror"], undefined, "she slides the strap up slowly"],
+    // The mirror frames are more than half of a plan: an ordinary plan needs some sixteen moments in front of the mirror.
+    ["her bed", "stretches out on the duvet", ["mirror-hidden", "mirror"], undefined, "she stretches her arms slowly"],
+    ["her bedroom", "stands by the wardrobe", ["mirror-hidden", "mirror"], undefined, "she shifts her weight a little"],
+    ["her bedroom", "holds a mug of tea", ["mirror-hidden", "mirror"], undefined, "she lifts the mug a little"],
+    ["her bathroom", "pats on some face cream", ["mirror"], undefined, "she pats her cheek gently"],
+    ["an armchair in her bedroom", "curls up with a blanket", ["mirror-hidden", "mirror"], undefined, "she pulls the blanket a little closer"],
+    ["her bathroom", "fixes her hair in a clip", ["mirror-hidden", "mirror"], undefined, "she pins her hair up slowly"],
+    ["an armchair in her bedroom", "pulls one knee up to her chest", ["mirror-hidden", "mirror", "timer"], undefined, "she rests her cheek a little lower"],
     ["her bedroom", "stretches after waking up", ["mirror-hidden", "mirror", "timer"], undefined, "she stretches her arms up slowly"],
     ["her bedroom", "sits on the edge of the bed", ["mirror-hidden", "mirror", "timer"], "flirty", "she swings one foot slowly"],
     ["her bedroom", "leans on the doorframe", ["mirror", "timer"], "flirty", "she shifts her shoulder slowly"],
@@ -120,8 +142,11 @@ describe("the moments and their levels (plan §6.2)", () => {
   });
 
   test("the prone selfies wear what drew: grey lounge shorts on the owner's model, satin or lingerie on Seedream", () => {
-    expect(momentNamed("lies on her stomach, one arm out")?.moment.outfits).toEqual(["grey lounge shorts and a fitted tee"]);
-    expect(momentNamed("lies prone, glancing back")?.moment.outfits).toEqual(["grey lounge shorts and a fitted tee"]);
+    for (const text of ["lies on her stomach, one arm out", "lies prone, glancing back", "lies prone, her cheek on her hand", "lies on her stomach, head tilted", "lies prone, ankles crossed behind", "lies prone, feet raised behind"]) {
+      expect(momentNamed(text)?.moment.outfits, text).toEqual(["grey lounge shorts and a fitted tee"]);
+    }
+    expect(momentNamed("lies prone, her cheek on her hand")?.moment.handAtFace).toBe(true);
+    expect(momentNamed("lies on her side, head on her hand")?.moment.handAtFace).toBe(true);
     expect(momentNamed("lies prone, chin on her hand")?.moment).toMatchObject({ outfits: ["grey lounge shorts and a fitted tee", "a satin cami and sleep shorts"], handAtFace: true });
     // P-5a3 #4: Seedream drew it, and no phone in her hands.
     expect(momentNamed("lies on her stomach, hips behind")?.moment.outfits).toEqual(["a black bra and briefs"]);
