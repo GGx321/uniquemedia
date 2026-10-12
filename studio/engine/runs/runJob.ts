@@ -879,7 +879,7 @@ async function runSlot(ctx: Context, slot: SlotState, prompt: string, master: Li
       case "error": {
         if (bold && result.kind === "UNUSABLE_PAID_RESPONSE") {
           // A 2xx without a usable image on the Seedream route (settled by the money core at its bill, else the 2K list price, estimated). It ends THIS slot, never the run:
-          // Seedream's moderation answers with a 400, so this is not a content refusal. A second one in the job is systemic and stops sending (before anything awaits).
+          // Seedream's moderation answers with a 400, so this is not a content refusal. A second one in the run is systemic and stops sending (before anything awaits).
           const empty: EngineError = { code: "INTERNAL", sceneReason: "model-empty", detail: truncate(result.message) };
           ctx.boldEmpty++;
           if (ctx.boldEmpty >= 2) stopSending(ctx, { code: "INTERNAL", detail: "two Seedream answers in this run came back without an image; nothing more is sent" });

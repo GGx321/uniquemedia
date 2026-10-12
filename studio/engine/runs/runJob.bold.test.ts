@@ -326,6 +326,30 @@ describe("a 2xx without an image on a Seedream slot", () => {
     expect(net.imageCalls()).toHaveLength(1);
   });
 
+  test("an empty slot known only by its slot row (the attempt line was lost) is counted on resume too", async () => {
+    const run = await newRun(2, [0, 1]);
+    const softStop = new AbortController();
+    const firstNet = network(() => {
+      softStop.abort();
+      return EMPTY_PAID;
+    });
+    const noAttemptLines: RunJobDeps["library"] = {
+      ...forgettingSlotEnds(),
+      appendJournal: async <T>(runId: string, event: T, schema: z.ZodType<T>): Promise<void> => {
+        if (typeof event === "object" && event !== null && "type" in event && event.type === "attempt") return;
+        await library.appendJournal(runId, event, schema);
+      },
+    };
+    await start(run, firstNet, { max: 1, softStop: softStop.signal, library: noAttemptLines }).end;
+    const events = await journal();
+    expect([events.some((e) => e.type === "attempt"), events.some((e) => e.type === "slot" && e.status === "failed")]).toEqual([false, true]);
+
+    const net = network(() => EMPTY_PAID);
+    const resumed = await start(run, net, { max: 1, jobId: "job-00000002" }).end;
+    expect(resumed.status).toBe("failed");
+    expect(net.imageCalls()).toHaveLength(1);
+  });
+
   test("an empty slot whose end was lost is counted on resume too", async () => {
     const run = await newRun(2, [0, 1]);
     const softStop = new AbortController();

@@ -59,14 +59,14 @@ test("a plain 2k and a high_resolution tier: the dearer one", () => {
   expect(imageWorstCase(price, { quality: null, refs: 0, resolution: "2K" })).toBe(90_000);
 });
 
-test("a 2k tier that is dearer than high_resolution is the price", () => {
-  const price: ImagePrice = { outputs: [{ variant: "high_resolution", micros: 70_000 }, { variant: "2k", micros: 80_000 }], inputImageMicros: 0 };
+test("a quality tier and a plain 2k that are both cheaper than high_resolution: high_resolution is the price", () => {
+  const price: ImagePrice = { outputs: [{ variant: "low_2k", micros: 60_000 }, { variant: "2k", micros: 70_000 }, { variant: "high_resolution", micros: 80_000 }], inputImageMicros: 0 };
 
-  expect(imageWorstCase(price, { quality: null, refs: 0, resolution: "2K" })).toBe(80_000);
+  expect(imageWorstCase(price, { quality: "low", refs: 0, resolution: "2K" })).toBe(80_000);
 });
 
 test("2K tiers that differ only in case: the dearest", () => {
-  const price: ImagePrice = { outputs: [{ variant: "2K", micros: 95_000 }, { variant: "2k", micros: 80_000 }], inputImageMicros: 0 };
+  const price: ImagePrice = { outputs: [{ variant: "2k", micros: 80_000 }, { variant: "2K", micros: 95_000 }], inputImageMicros: 0 };
 
   expect(imageWorstCase(price, { quality: null, refs: 0, resolution: "2K" })).toBe(95_000);
 });

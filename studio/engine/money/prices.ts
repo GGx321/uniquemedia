@@ -301,7 +301,8 @@ function isLargerThan1k(variant: string | null): boolean {
 }
 
 /**
- * 5a.3 (S5.9d, I5.40): the output price of a 2K image, read from the tier that NAMES 2K: `<quality>_2k`, else `2k`, else `high_resolution` (Seedream's only 2K line).
+ * 5a.3 (S5.9d, I5.40): the output price of a 2K image: the DEAREST of the tiers that NAME 2K (`<quality>_2k`, `2k`, `high_resolution`, Seedream's only 2K line), so the reserve is
+ * never below the bill of any of them.
  * Never the 1K base and never a 1K tier or a 4K one: a price list that does not say what 2K costs is PRICE_UNAVAILABLE for the bold scope, before anything is reserved.
  */
 function image2kMicros(price: ImagePrice, quality: ImageQuality | null): number {
