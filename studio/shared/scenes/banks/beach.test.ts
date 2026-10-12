@@ -20,6 +20,8 @@ const SWIMSUIT = "Her swimsuit fully covers her chest and her hips.";
 /** The swimwear a moment in the water pins: the swimsuits and bikinis of every level, no shirt, no sweatshirt, no sarong, no hat. */
 const IN_THE_WATER = ["a one-piece swimsuit", "a sporty bikini", "a black bikini", "a white bikini", "a white string bikini", "a red triangle bikini", "a strapless bandeau bikini", "a high-leg black swimsuit"];
 const LEGS = ["a one-piece swimsuit", "a bikini and a sarong", "a black bikini", "a white bikini", "a white string bikini", "a red triangle bikini"];
+/** Review round 2: her feet in the water wear swimwear only, no sarong. */
+const LEGS_IN_THE_WATER = ["a one-piece swimsuit", "a sporty bikini", "a black bikini", "a white bikini", "a white string bikini", "a red triangle bikini"];
 
 describe("«Пляж и бассейн» validates as a «Смелая» bank", () => {
   test("it passes the «Смелая» schema", () => {
@@ -121,6 +123,8 @@ describe("swimwear on every frame (answer (a), M6)", () => {
     for (const { moment } of moments.filter((m) => m.moment.water === true)) {
       expect(moment.outfits?.length ?? 0, moment.text).toBeGreaterThan(0);
       for (const outfit of moment.outfits ?? []) expect(swimwearWordsIn(outfit).length, `${moment.text}: ${outfit}`).toBeGreaterThan(0);
+      // Review round 2: nothing worn over the swimwear in the water, her feet in it included.
+      expect((moment.outfits ?? []).filter((o) => /\b(?:shirt|sweatshirt|sarong)\b/.test(o)), moment.text).toEqual([]);
     }
   });
 
@@ -183,7 +187,7 @@ describe("the legs moments (plan §6.3, M5): her own look down along her legs, n
       motion,
       legs: { framing: "legs" },
       water: water ? true : undefined,
-      outfits: LEGS,
+      outfits: water ? LEGS_IN_THE_WATER : LEGS,
     });
   });
 });

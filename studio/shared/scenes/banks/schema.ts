@@ -386,6 +386,8 @@ const ONE_SENTENCE = /^[A-Z][^.!?]*\.$/;
 const NEGATION = /\b(?:not|no|never|without|nothing|none|nor)\b|n't\b/i;
 /** A moment in the water or at its edge (M6): it carries the `water` tag and pins swimwear. */
 const WATER_WORDS = /\b(?:in|into|out of) the (?:water|sea|pool)\b|\bwaist-deep\b|\bwaves?\b|\bshore\b|\bshallows\b|\bwet\b|\bswim\w*/i;
+/** Review round 2: what is worn over swimwear, never in the water (a hat is no garment over it). */
+const OVER_SWIMWEAR = /\b(?:shirts?|sweatshirts?|sarongs?|cover-ups?|kaftans?|pareos?|skirts?|shorts|dress(?:es)?|robes?|tees?|t-shirts?|hoodies?)\b/i;
 const LEVELS: readonly Level[] = ["ordinary", "flirty", "bold"];
 /** The fewest bold outfits a «Смелая» bank's general draw holds (I5.24: a bold plan is not one outfit). */
 const BOLD_OUTFITS_MIN = 4;
@@ -439,7 +441,10 @@ function boldBankRules(bank: CategoryBank, add: Add): void {
     // water (M6): a moment in the water pins swimwear, and only swimwear.
     if (moment.water === true) {
       if ((moment.outfits?.length ?? 0) === 0) add(BANK_RULE.water, where, "a water moment pins its swimwear");
-      for (const outfit of moment.outfits ?? []) if (swimwearWordsIn(outfit).length === 0) add(BANK_RULE.water, where, `«${outfit}» is not swimwear: in the water she wears a swimsuit or a bikini`);
+      for (const outfit of moment.outfits ?? []) {
+        if (swimwearWordsIn(outfit).length === 0) add(BANK_RULE.water, where, `«${outfit}» is not swimwear: in the water she wears a swimsuit or a bikini`);
+        else if (OVER_SWIMWEAR.test(outfit)) add(BANK_RULE.water, where, `«${outfit}» wears something over the swimwear: in the water she wears only the swimsuit or the bikini`);
+      }
     } else if (WATER_WORDS.test(moment.text)) add(BANK_RULE.water, where, "a moment in the water carries the water tag, and pins swimwear");
     // bold-legs (M5, P-5a3 #6).
     if (moment.captures.includes("low-feet")) add(BANK_RULE.boldLegs, where, "no low-feet frame in a «Смелая» bank: her feet are her own look down (pov-legs) or the mirror's");

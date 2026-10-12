@@ -14,6 +14,8 @@ const SWIMSUIT = "Her swimsuit fully covers her chest and her hips.";
 const IN_THE_WATER = ["a one-piece swimsuit", "a sporty bikini", "a black bikini", "a white bikini", "a white string bikini", "a red triangle bikini", "a strapless bandeau bikini", "a high-leg black swimsuit"];
 /** A legs frame (M5): six cuts over the three levels, none a mini or a dress. */
 const LEGS = ["a one-piece swimsuit", "a bikini and a sarong", "a black bikini", "a white bikini", "a white string bikini", "a red triangle bikini"];
+/** Her feet in the water (review round 2): swimwear only, no sarong. */
+const LEGS_IN_THE_WATER = ["a one-piece swimsuit", "a sporty bikini", "a black bikini", "a white bikini", "a white string bikini", "a red triangle bikini"];
 
 export const BEACH: CategoryBank = {
   bold: true,
@@ -79,7 +81,7 @@ export const BEACH: CategoryBank = {
         // The beach probe: looking back over her shoulder at the rooftop pool.
         { text: "looks back over her shoulder", motion: "she turns her head a little further", captures: ["friend"], twoHanded: false, angle: "three-quarter", gaze: "own", level: "bold", route: "seedream", outdoor: true },
         { text: "sips a cold drink by the water", motion: "she lowers the glass a little", captures: ["friend", "selfie", "candid"], twoHanded: false, outdoor: true },
-        { text: "dangles her feet in the water", motion: "she swirls her feet slowly", captures: ["pov-legs"], twoHanded: false, water: true, outfits: LEGS, legs: { framing: "legs" } },
+        { text: "dangles her feet in the water", motion: "she swirls her feet slowly", captures: ["pov-legs"], twoHanded: false, water: true, outfits: LEGS_IN_THE_WATER, legs: { framing: "legs" } },
       ],
     },
     {

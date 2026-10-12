@@ -79,6 +79,7 @@ const withLegs = (legs: Moment): CategoryBank => ({ ...withMoment(legs), outfits
 const BIKINI: Outfit = { text: "a black bikini", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her." };
 const WADES: Moment = { text: "stands waist-deep, looking back", motion: "she turns her head a little further", captures: ["timer"], twoHanded: false, angle: "three-quarter", gaze: "own", water: true, level: "flirty", outfits: ["a black bikini"] };
 const withWater = (moment: Moment, outfits: readonly Outfit[] = [...OUTFITS, BIKINI]): CategoryBank => ({ ...withMoment(moment), outfits });
+const SARONG: Outfit = { text: "a bikini and a sarong", showsLegs: true, route: "seedream", coverage: "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her." };
 
 /** The rule ids a bank breaks (each problem is `[rule] text`). */
 const rulesOf = (problems: readonly string[]): string[] => [...new Set(problems.map((p) => /^\[([a-z-]+)\]/.exec(p)?.[1] ?? p))];
@@ -160,6 +161,13 @@ describe("a «Смелая» bank", () => {
     // water
     ["a water moment that pins no outfit", withWater({ ...WADES, outfits: undefined }), BANK_RULE.water],
     ["a water moment that pins an outfit that is not swimwear", withWater({ ...WADES, outfits: ["a black bikini", "a long cotton nightshirt"] }), BANK_RULE.water],
+    // Review round 2: in the water nothing is worn over the swimwear, a legs moment's feet in the water included.
+    ["a water moment that pins a bikini under a sarong", withWater({ ...WADES, outfits: ["a black bikini", SARONG.text] }, [...OUTFITS, BIKINI, SARONG]), BANK_RULE.water],
+    [
+      "a legs moment in the water that pins a bikini under a sarong",
+      withWater({ ...LEGS, text: "dangles her feet in the water", water: true, outfits: [BIKINI.text, SARONG.text] }, [...OUTFITS, BIKINI, SARONG, MIDI]),
+      BANK_RULE.water,
+    ],
     ["a moment in the water without the water tag", withWater({ ...WADES, water: undefined }), BANK_RULE.water],
     ["a moment of feet in the water without the water tag", withMoment({ ...plain, text: "sits with her feet in the water" }), BANK_RULE.water],
     // legwear
