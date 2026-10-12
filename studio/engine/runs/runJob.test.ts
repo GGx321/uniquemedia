@@ -2158,7 +2158,9 @@ describe("failures", () => {
     const written = (await journal()).flatMap((e) => (e.type === "writer" ? e.sentences : []));
     expect(written.map((s) => s.sentence)).toEqual(plannedSlots(run).map((slot) => plainSentence(slot)));
     const prompts = net.imageCalls().map((c) => String(c.json().prompt));
-    for (const slot of plannedSlots(run)) expect(prompts.some((prompt) => prompt.includes(plainSentence(slot)))).toBe(true);
+    // C3′: an outfit that names a skirt without its fabric («a midi skirt» of the fixture) is said not to be denim right after it, so the plain sentence is in the
+    // prompt up to its full stop.
+    for (const slot of plannedSlots(run)) expect(prompts.some((prompt) => prompt.includes(plainSentence(slot).replace(/\.$/, "")))).toBe(true);
     expect(scopeCommitted()).toBeLessThanOrEqual(run.capMicros);
   });
 

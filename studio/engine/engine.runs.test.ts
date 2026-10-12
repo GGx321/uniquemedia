@@ -1109,7 +1109,8 @@ describe("runs.resume", () => {
     expect(newReserves).toHaveLength(2);
     expect(newReserves.every((id) => id.includes(":slot-"))).toBe(true);
     const prompts = net2.imageCalls().map((call) => String(call.json().prompt));
-    for (const slot of plannedSlots(plan)) expect(prompts.some((prompt) => prompt.includes(plainSentence(slot)))).toBe(true);
+    // C3′: an outfit that names a skirt without its fabric is said not to be denim right after it, so the plain sentence is in the prompt up to its full stop.
+    for (const slot of plannedSlots(plan)) expect(prompts.some((prompt) => prompt.includes(plainSentence(slot).replace(/\.$/, "")))).toBe(true);
     const list = ok(await second.engine.handle(command("runs.list")));
     expect(list.type === "runs.list" ? list.result.runs.find((r) => r.runId === runId) : "not a list").toMatchObject({ open: 0, failed: 0, resumable: false, capExhausted: false });
     // The estimate the owner accepted is never below what the resume spent: its images' settled costs.
