@@ -5,6 +5,8 @@ import { countOf } from "../lib/format";
 import { errorText } from "../lib/errors";
 import { useNavigate } from "../navigation";
 import { isUnfinished } from "./autopilot/planModel";
+import { writeLevel } from "./photos/level";
+import { viewerStorage } from "./photos/sceneReview";
 import { useMounted } from "./photos/shared";
 import { Icon, Spin } from "../ui/Icon";
 import { cancelOnEscape, useConfirmFocus } from "../ui/useConfirmFocus";
@@ -187,6 +189,8 @@ export function useAvatarDelete({ avatarId, label, draft, onDeleted }: { avatarI
     // The buttons are off while it runs and would drop the focus to the body: the question itself holds it.
     focus.moveTo(() => confirmRef.current);
     const reply = await client.request("avatars.delete", { avatarId });
+    // The avatar's remembered «Подача» goes with it: its key would otherwise stay in the viewer's storage for good.
+    if (reply.ok) writeLevel(viewerStorage(), avatarId, "ordinary");
     if (!mounted.current) {
       // The card is already gone (the event came first): the screen still hears the answer.
       if (reply.ok) onDeleted(who, reply.result);

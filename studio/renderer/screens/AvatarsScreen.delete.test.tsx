@@ -6,6 +6,7 @@ import { DEFAULT_TRAITS } from "../lib/traits";
 import { mockDescriptor, type MockEngine } from "../engine/mockEngine";
 import { freePhotos, NORA, PHOTO_IDS, SOFIA } from "../engine/mockEngine.testkit";
 import { callsOf, describeElement, flush, focusedLabel, runAll, setup } from "../testing";
+import { LEVEL_KEY_PREFIX } from "./photos/level";
 import { asAnotherWindow, makeDraft, MIA, studio, withCounts } from "./montage/screenKit";
 
 // «Удалить аватар» on the Avatars screen: a trash button on the card of an active, an archived and a draft avatar; its confirmation (inline, like a draft's:
@@ -166,6 +167,20 @@ describe("deleting", () => {
     await waitFor(() => expect(cardNames()).not.toContain("Mia"));
     expect(callsOf(engine, "avatars.delete").map((c) => c.payload)).toEqual([{ avatarId: MIA.avatarId }]);
     expect(cardNames()).toContain("Sofia");
+  });
+
+  test("forgets the deleted avatar's remembered «Подача» and keeps the others'", async () => {
+    await withMia();
+    localStorage.setItem(`${LEVEL_KEY_PREFIX}${MIA.avatarId}`, "flirty");
+    localStorage.setItem(`${LEVEL_KEY_PREFIX}${SOFIA.avatarId}`, "flirty");
+    await ask();
+
+    fireEvent.click(within(panel()).getByRole("button", { name: "Удалить" }));
+
+    await waitFor(() => expect(cardNames()).not.toContain("Mia"));
+    expect(localStorage.getItem(`${LEVEL_KEY_PREFIX}${MIA.avatarId}`) === null).toBe(true);
+    expect(localStorage.getItem(`${LEVEL_KEY_PREFIX}${SOFIA.avatarId}`)).toBe("flirty");
+    localStorage.removeItem(`${LEVEL_KEY_PREFIX}${SOFIA.avatarId}`);
   });
 
   test("the focus lands on the screen's title, not on the body", async () => {
