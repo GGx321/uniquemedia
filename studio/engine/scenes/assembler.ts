@@ -209,9 +209,9 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, senten
   const light = lightOf(timeOfDay);
   const room = roomStateOf(key, options.roomPlaceOf?.(slot) ?? null);
   const look = options.lookOf?.(slot) ?? null;
-  const artefact = artefactLine({ cameraRealism: options.cameraRealism === true, light, imperfection: imperfectionOf(slot.shot, key, !isOwnSlot(slot) && slot.framing === "legs"), lampMood: isLampMood(look, timeOfDay) });
   // «Ножки» (S5.8a): a legs slot has its own pose phrase, the body binding whatever the shot, and no hair line (her legs fill the frame, not her hair).
   const legs = !isOwnSlot(slot) && slot.framing === "legs";
+  const artefact = artefactLine({ cameraRealism: options.cameraRealism === true, light, imperfection: imperfectionOf(slot.shot, key, legs), lampMood: isLampMood(look, timeOfDay) });
   const hairStyle = legs ? null : (options.hairStyleOf?.(slot) ?? null);
   const faceless = FACELESS_CAPTURES.includes(capture);
   const posePhrase = legs ? LEGS_POSE_PHRASE : capture === "mirror-hidden" ? (look?.mirrorBack === true ? MIRROR_BACK_POSE_PHRASE : HIDDEN_FACE_POSE_PHRASE[slot.pose]) : POSE_PHRASE[slot.pose];
