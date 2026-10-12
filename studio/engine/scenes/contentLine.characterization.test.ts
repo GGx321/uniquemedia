@@ -108,15 +108,26 @@ const digestOf = (texts: readonly string[], check: (text: string) => unknown): s
     .update(JSON.stringify(texts.map((text) => check(text))))
     .digest("hex");
 
-// Pinned from the pre-change `sentenceProblems`:
+// Pinned from the pre-change `sentenceProblems`, then re-pinned once, on purpose, by the S5.9b1 review (the revealing vocabulary grew: panties, bras, topless,
+// naked, plurals, and the text is folded before it is read). Of the 2062 inputs below, exactly 100 changed, all in `texts`: the probes «panties», «topless»,
+// «naked» and «a black lace bra and panties» (old result: none) alone, and each joined to the first twelve clean texts (2 x 12 x 4 = 96). Their new results
+// are listed literally in the test after this table. Every bank text, pool text and real prompt kept its result; the prompts digest below is the pre-change one.
 const PINNED = {
   texts: 1702,
-  textsHit: 550,
-  textsDigest: "8d8018642ca0aa3650457c864b0ccf05fe1ba03655ab0a468e6514f6c2037406",
+  textsHit: 650,
+  textsDigest: "acf0149931704b372a949fc1455c90ffd10489901c57bd47b5978ec4e5598275",
   prompts: 360,
   promptsHit: 240,
   promptsDigest: "bdab74557c4381dee85ae876a5455860b214b6d20d5c428f86aa50122115d0d1",
 };
+
+/** Newly refused words, plurals and tricks (S5.9b1 review), and three look-alikes that must stay legal. */
+const NEW_PROBES = [
+  "bikinis", "thongs", "swimsuits", "slip dresses", "bra", "a lace bra", "bras", "bralette", "underwear", "briefs", "panty",
+  "Ｂｉｋｉｎｉ", "bi\u200bkini", "b i k i n i", "t.h.o.n.g", "nude lipstick", "a briefcase and a bracelet", "a zebra print scarf",
+];
+const NEW_PROBES_REFUSED = 15;
+const NEW_PROBES_DIGEST = "ca12fc0a5dede1199a06605c446ff1a2bbe13e94c379d17de1c3f1cf43641af3";
 
 const LEVELS_SHARED: Array<"ordinary" | "flirty"> = ["ordinary", "flirty"];
 const ALL = [...TEXTS, ...PROMPTS, ...DIRTY_PROMPTS];
@@ -162,5 +173,24 @@ describe("the word gate, characterized", () => {
     const youthOf = (t: string, level: ContentLevel) => contentProblems(t, level).find((p) => p.reason === "youth-word")?.words ?? [];
     const drifted = ALL.filter((t) => JSON.stringify(youthOf(t, boldContentLevel())) !== JSON.stringify(youthOf(t, "ordinary").filter((w) => !/^babydolls?$/i.test(w))));
     expect(drifted).toEqual([]);
+  });
+
+  test("four of the old probes changed their result (22 were refused before, 26 are now), and these are the new results", () => {
+    expect(contentProblems("panties", "ordinary")).toEqual([{ reason: "revealing-word", words: ["panties"] }]);
+    expect(contentProblems("topless", "ordinary")).toEqual([{ reason: "revealing-word", words: ["topless"] }]);
+    expect(contentProblems("naked", "ordinary")).toEqual([{ reason: "revealing-word", words: ["naked"] }]);
+    expect(contentProblems("a black lace bra and panties", "ordinary")).toEqual([{ reason: "revealing-word", words: ["bra", "panties"] }]);
+    expect(PROBES.filter((probe) => contentProblems(probe, "ordinary").length > 0)).toHaveLength(26);
+  });
+
+  test.each(LEVELS_SHARED)("the new vocabulary probes keep their pinned results at %s", (level) => {
+    const refused = NEW_PROBES.filter((probe) => contentProblems(probe, level).some((p) => p.reason === "revealing-word"));
+    expect(refused).toHaveLength(NEW_PROBES_REFUSED);
+    expect(NEW_PROBES.filter((probe) => !refused.includes(probe))).toEqual(["nude lipstick", "a briefcase and a bracelet", "a zebra print scarf"]);
+    expect(digestOf(NEW_PROBES, (t) => contentProblems(t, level))).toBe(NEW_PROBES_DIGEST);
+  });
+
+  test("the new vocabulary probes are legal at bold", () => {
+    expect(NEW_PROBES.filter((probe) => contentProblems(probe, boldContentLevel()).length > 0)).toEqual([]);
   });
 });
