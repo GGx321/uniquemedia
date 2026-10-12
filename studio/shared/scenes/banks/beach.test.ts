@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Capture } from "../captures";
 import { swimwearWordsIn } from "./boldRules";
-import { unfabricBottomsOf } from "./boldDesign.testkit";
+import { AWAY_ACTION, unfabricBottomsOf } from "./boldDesign.testkit";
 import { BEACH } from "./beach";
 import { boldBankProblems } from "./schema";
 import type { Moment, Outfit } from "./types";
@@ -40,7 +40,7 @@ describe("who takes the photo: mostly someone she asked (I5.32)", () => {
 
   test("her face is hidden only by a moment seen from behind, and the moments that turn away are few", () => {
     const away = moments.filter((m) => m.moment.angle === "back" || m.moment.angle === "profile").map((m) => m.moment.text);
-    expect(away).toEqual(["sits facing the sunset", "looks out over the water"]);
+    expect(away).toEqual(["sits hugging her knees", "tucks her hair back in the breeze"]);
   });
 
   test("every moment that is not a legs moment is outdoors (a cap goes only to one of them)", () => {
@@ -76,20 +76,21 @@ describe("the moments and their levels (plan §6.3)", () => {
     ["a rooftop pool", "leans on the glass railing", ["friend", "selfie"], "flirty", "her hair lifts a little in the wind"],
     ["a rooftop pool", "looks back over her shoulder", ["friend"], "bold", "she turns her head a little further"],
     ["a rooftop pool", "sips a cold drink by the water", ["friend", "selfie", "candid"], undefined, "she lowers the glass a little"],
-    ["the rocks by the sea", "sits facing the sunset", ["friend", "timer"], undefined, "her hair lifts a little in the wind"],
+    ["the rocks by the sea", "sits hugging her knees", ["friend", "timer"], undefined, "her hair lifts a little in the wind"],
     ["the rocks by the sea", "sits with her knees drawn up", ["friend", "selfie"], undefined, "she slowly rests her cheek on her knees"],
     ["the rocks by the sea", "leans back on her hands", ["friend", "timer", "candid"], undefined, "she tilts her head back a little"],
-    ["the rocks by the sea", "looks out over the water", ["friend", "candid"], undefined, "she turns her head slowly"],
+    ["the rocks by the sea", "tucks her hair back in the breeze", ["friend", "candid"], undefined, "she tucks a strand back slowly"],
   ])("%s · «%s»", (place, text, captures, level, motion) => {
     const found = momentNamed(text);
     expect(found?.place).toBe(place);
     expect({ captures: found?.moment.captures, level: found?.moment.level, motion: found?.moment.motion, legs: found?.moment.legs }).toEqual({ captures, level, motion, legs: undefined });
   });
 
-  test("the beach probe's compositions: waist-deep looking back, three-quarter with her own gaze; looking back on the rooftop pool, bold; from behind on the rocks", () => {
+  test("the beach probe's compositions: waist-deep looking back, three-quarter with her own gaze; looking back on the rooftop pool, bold; from behind on the rocks, hugging her knees", () => {
     expect(momentNamed("stands waist-deep, looking back")?.moment).toMatchObject({ angle: "three-quarter", gaze: "own", water: true });
     expect(momentNamed("looks back over her shoulder")?.moment).toMatchObject({ angle: "three-quarter", gaze: "own", level: "bold", route: "seedream" });
-    expect(momentNamed("sits facing the sunset")?.moment.angle).toBe("back");
+    expect(momentNamed("sits hugging her knees")?.moment).toMatchObject({ angle: "back", twoHanded: true });
+    expect(momentNamed("tucks her hair back in the breeze")?.moment).toMatchObject({ angle: "profile", hair: "own" });
   });
 
   test("the bold moment is drawn on Seedream, and only it carries a route: every outfit is Seedream anyway", () => {
@@ -153,6 +154,13 @@ describe("swimwear on every frame (answer (a), M6)", () => {
     expect(BEACH.outfits).toHaveLength(12);
     expect(BEACH.legwear).toBeUndefined();
   });
+});
+
+// Review round 2 (C3′, the owner: «просто стоит спиной без какой-либо позы»): a moment seen from behind or in profile names what she is doing.
+test("every moment seen from behind or in profile names a readable action (C3′)", () => {
+  const away = moments.filter((m) => m.moment.angle === "back" || m.moment.angle === "profile");
+  expect(away.length).toBeGreaterThan(0);
+  expect(away.filter((m) => !AWAY_ACTION.test(m.moment.text)).map((m) => m.moment.text)).toEqual([]);
 });
 
 // Review round 2 (C3′): a skirt or shorts names its fabric; the beach has none, and bikini bottoms are swimwear.

@@ -88,11 +88,11 @@ export const BEACH: CategoryBank = {
       details: ["the warm evening sky", "a few gulls overhead"],
       times: ["golden hour", "evening"],
       moments: [
-        // The beach probe: from behind on the rocks.
-        { text: "sits facing the sunset", motion: "her hair lifts a little in the wind", captures: ["friend", "timer"], twoHanded: false, angle: "back", outdoor: true },
+        // The beach probe: from behind on the rocks. C3′ (the owner: «просто стоит спиной без какой-либо позы»): she hugs her knees, an action the frame can read.
+        { text: "sits hugging her knees", motion: "her hair lifts a little in the wind", captures: ["friend", "timer"], twoHanded: true, angle: "back", outdoor: true },
         { text: "sits with her knees drawn up", motion: "she slowly rests her cheek on her knees", captures: ["friend", "selfie"], twoHanded: false, outdoor: true },
         { text: "leans back on her hands", motion: "she tilts her head back a little", captures: ["friend", "timer", "candid"], twoHanded: true, outdoor: true },
-        { text: "looks out over the water", motion: "she turns her head slowly", captures: ["friend", "candid"], twoHanded: false, gaze: "own", angle: "profile", outdoor: true },
+        { text: "tucks her hair back in the breeze", motion: "she tucks a strand back slowly", captures: ["friend", "candid"], twoHanded: false, hair: "own", angle: "profile", outdoor: true },
       ],
     },
   ],

@@ -144,7 +144,8 @@ export const NIGHTWEAR: CategoryBank = {
       details: ["a potted plant in the corner", "a soft rug on the floor"],
       times: ["morning", "evening"],
       moments: [
-        { text: "looks out at the street", motion: "she leans her head a little to one side", captures: ["timer"], twoHanded: false, angle: "back", gaze: "own" },
+        // C3′ (the owner: «просто стоит спиной без какой-либо позы»): from behind she does something the frame can read.
+        { text: "stretches her arms up, facing away", motion: "she stretches a little further", captures: ["timer"], twoHanded: true, angle: "back" },
         { text: "opens the curtains", motion: "she pulls the curtain a little wider", captures: ["timer"], twoHanded: true, gaze: "focus" },
         { text: "leans against the wall", motion: "she shifts her weight a little", captures: ["timer"], twoHanded: false },
         { text: "sits on the windowsill", motion: "she swings one foot a little", captures: ["timer"], twoHanded: false, level: "flirty" },

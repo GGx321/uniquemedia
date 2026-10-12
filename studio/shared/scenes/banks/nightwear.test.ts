@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Capture } from "../captures";
 import { boldWordsIn, lingerieWordsIn } from "./boldRules";
-import { unfabricBottomsOf } from "./boldDesign.testkit";
+import { AWAY_ACTION, unfabricBottomsOf } from "./boldDesign.testkit";
 import { NIGHTWEAR } from "./nightwear";
 import { boldBankProblems, categoryBankProblems } from "./schema";
 import type { Moment, Outfit } from "./types";
@@ -119,7 +119,7 @@ describe("the moments and their levels (plan §6.2)", () => {
     ["an armchair in her bedroom", "sits with one leg crossed", ["mirror-hidden", "mirror", "timer"], undefined, "she wiggles her crossed foot a bit"],
     ["an armchair in her bedroom", "tucks one leg under her", ["mirror-hidden", "mirror"], "flirty", "she settles a little deeper"],
     ["an armchair in her bedroom", "sits back, knees together", ["mirror-hidden", "mirror"], "bold", "she rocks a little in place"],
-    ["her bedroom window", "looks out at the street", ["timer"], undefined, "she leans her head a little to one side"],
+    ["her bedroom window", "stretches her arms up, facing away", ["timer"], undefined, "she stretches a little further"],
     ["her bedroom window", "opens the curtains", ["timer"], undefined, "she pulls the curtain a little wider"],
     ["her bedroom window", "leans against the wall", ["timer"], undefined, "she shifts her weight a little"],
     ["her bedroom window", "sits on the windowsill", ["timer"], "flirty", "she swings one foot a little"],
@@ -137,8 +137,8 @@ describe("the moments and their levels (plan §6.2)", () => {
     for (const { moment } of moments.filter((m) => m.moment.captures.includes("over-shoulder"))) expect(moment.angle, moment.text).toBe("three-quarter");
   });
 
-  test("seen from behind at the window, she carries her own gaze", () => {
-    expect(momentNamed("looks out at the street")?.moment).toMatchObject({ angle: "back", gaze: "own" });
+  test("seen from behind at the window, she stretches (review round 2: a frame from behind shows what she does)", () => {
+    expect(momentNamed("stretches her arms up, facing away")?.moment).toMatchObject({ angle: "back", twoHanded: true });
     expect(momentNamed("opens the curtains")?.moment).toMatchObject({ twoHanded: true, gaze: "focus" });
   });
 
@@ -248,6 +248,13 @@ describe("the outfits: cotton, satin, lingerie (plan §6.2)", () => {
   test("every Seedream outfit names the «Смелая» vocabulary or is bold, and the cotton ones name none of it", () => {
     for (const outfit of NIGHTWEAR.outfits) expect({ text: outfit.text, seedream: outfit.route === "seedream" }).toEqual({ text: outfit.text, seedream: boldWordsIn(outfit.text).length > 0 || outfit.level === "bold" });
   });
+});
+
+// Review round 2 (C3′, the owner: «просто стоит спиной без какой-либо позы»): a moment seen from behind or in profile names what she is doing.
+test("every moment seen from behind or in profile names a readable action (C3′)", () => {
+  const away = moments.filter((m) => m.moment.angle === "back" || m.moment.angle === "profile");
+  expect(away.length).toBeGreaterThan(0);
+  expect(away.filter((m) => !AWAY_ACTION.test(m.moment.text)).map((m) => m.moment.text)).toEqual([]);
 });
 
 // Review round 2 (C3′, the owner's verdict): Grok draws a skirt or shorts named without its fabric as denim. The prone lounge shorts are jersey (as «Дом»'s on
