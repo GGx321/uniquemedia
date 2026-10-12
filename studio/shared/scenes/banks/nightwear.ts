@@ -80,7 +80,16 @@ export const NIGHTWEAR: CategoryBank = {
       moments: [
         { text: "stretches after waking up", motion: "she stretches her arms up slowly", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
         { text: "tucks her hair behind one ear", motion: "she tucks her hair back slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "own" },
-        { text: "adjusts the strap on her shoulder", motion: "she slides the strap up slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, gaze: "focus" },
+        // The cotton nightwear has no straps (review round 2): the strap moment is flirty and wears the satin and the lingerie that have them.
+        {
+          text: "adjusts the strap on her shoulder",
+          motion: "she slides the strap up slowly",
+          captures: ["mirror-hidden", "mirror"],
+          twoHanded: false,
+          gaze: "focus",
+          level: "flirty",
+          outfits: ["a satin slip nightdress", SATIN_MIDI, SATIN_CAMI, "a black lace bra and panties", "a white lace bra and panties", "a lace bodysuit", "a sheer babydoll over a lace set"],
+        },
         { text: "stands by the wardrobe", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "holds a mug of tea", motion: "she lifts the mug a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "sits on the edge of the bed", motion: "she swings one foot slowly", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false, level: "flirty" },

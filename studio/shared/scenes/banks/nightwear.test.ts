@@ -97,7 +97,8 @@ describe("the moments and their levels (plan §6.2)", () => {
     ["her bed", "sits up against the headboard", ["mirror-hidden", "mirror"], undefined, "she leans her head back a little"],
     ["her bed", "sits with her legs tucked under her", ["mirror-hidden", "mirror"], undefined, "she shifts her weight a little"],
     ["her bedroom", "tucks her hair behind one ear", ["mirror-hidden", "mirror"], undefined, "she tucks her hair back slowly"],
-    ["her bedroom", "adjusts the strap on her shoulder", ["mirror-hidden", "mirror"], undefined, "she slides the strap up slowly"],
+    // Review round 2, MEDIUM 5: the cotton nightwear has no straps, so the strap moment is flirty and pins the outfits that have them.
+    ["her bedroom", "adjusts the strap on her shoulder", ["mirror-hidden", "mirror"], "flirty", "she slides the strap up slowly"],
     // The mirror frames are more than half of a plan: an ordinary plan needs some sixteen moments in front of the mirror.
     ["her bed", "stretches out on the duvet", ["mirror-hidden", "mirror"], undefined, "she stretches her arms slowly"],
     ["her bedroom", "stands by the wardrobe", ["mirror-hidden", "mirror"], undefined, "she shifts her weight a little"],
@@ -131,6 +132,10 @@ describe("the moments and their levels (plan §6.2)", () => {
 
   test("every bold moment is drawn on Seedream, and no other moment is", () => {
     for (const { moment } of moments) expect({ text: moment.text, route: moment.route }).toEqual({ text: moment.text, route: moment.level === "bold" ? "seedream" : undefined });
+  });
+
+  test("the strap moment wears only an outfit with straps: the satin nightwear, the lace sets, the bodysuit, the babydoll", () => {
+    expect(momentNamed("adjusts the strap on her shoulder")?.moment.outfits).toEqual(["a satin slip nightdress", "a satin midi nightdress", "a satin cami and satin shorts", "a black lace bra and panties", "a white lace bra and panties", "a lace bodysuit", "a sheer babydoll over a lace set"]);
   });
 
   test("the over-her-shoulder frames are three-quarter: she looks back along her body", () => {
