@@ -751,7 +751,7 @@ describe("S5.1b: the pool writer's text is about ordinary places and an ordinary
 
   test("the outfit rule allows everyday cuts and names what is still refused", () => {
     expect(system()).toContain(
-      "everyday outfits that suit the theme, each at most 35 characters: shorts, tank tops, crop tops, mini skirts and fitted dresses are fine; never swimwear, lingerie, sports bras, thongs, stockings, slip dresses or robes.",
+      "everyday outfits that suit the theme, each at most 35 characters: shorts, tank tops, crop tops, mini skirts and fitted dresses are fine; never swimwear, lingerie, sports bras, bras, panties, underwear, briefs, thongs, stockings, topless or naked, slip dresses or robes.",
     );
   });
 
