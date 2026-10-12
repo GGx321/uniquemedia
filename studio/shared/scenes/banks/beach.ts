@@ -85,7 +85,7 @@ export const BEACH: CategoryBank = {
         // The beach probe: looking back over her shoulder at the rooftop pool.
         { text: "looks back over her shoulder", motion: "she turns her head a little further", captures: ["friend", "timer"], twoHanded: false, angle: "three-quarter", gaze: "own", level: "bold", route: "seedream", outdoor: true },
         { text: "sips a cold drink by the water", motion: "she lowers the glass a little", captures: ["friend", "selfie", "candid"], twoHanded: false, outdoor: true },
-        { text: "dangles her feet in the water", motion: "she swirls her feet slowly", captures: ["pov-legs"], twoHanded: false, water: true, outfits: LEGS_IN_THE_WATER, legs: { framing: "legs" } },
+        { text: "dangles her feet in the water", motion: "she dips her toes in the water slowly", captures: ["pov-legs"], twoHanded: false, water: true, outfits: LEGS_IN_THE_WATER, legs: { framing: "legs" } },
       ],
     },
     {
@@ -95,9 +95,9 @@ export const BEACH: CategoryBank = {
       times: ["golden hour", "evening"],
       moments: [
         // The beach probe: from behind on the rocks. C3′ (the owner: «просто стоит спиной без какой-либо позы»): she hugs her knees, an action the frame can read.
-        { text: "sits hugging her knees", motion: "her hair lifts a little in the wind", captures: ["friend", "timer"], twoHanded: true, angle: "back", outdoor: true },
+        { text: "sits hugging her knees", motion: "her hair stirs in the wind a little", captures: ["friend", "timer"], twoHanded: true, angle: "back", outdoor: true },
         { text: "sits cross-legged on a towel", motion: "she leans back a little", captures: ["friend", "selfie"], twoHanded: false, outdoor: true },
-        { text: "leans back on her hands", motion: "she tilts her head back a little", captures: ["friend", "timer", "candid"], twoHanded: true, outdoor: true },
+        { text: "leans back on her hands", motion: "she leans her head back a little", captures: ["friend", "timer", "candid"], twoHanded: true, outdoor: true },
         { text: "tucks her hair back in the breeze", motion: "she tucks a strand back slowly", captures: ["friend", "candid"], twoHanded: false, hair: "own", angle: "profile", outdoor: true },
       ],
     },

@@ -82,9 +82,9 @@ describe("the moments and their levels (plan §6.3)", () => {
     ["a rooftop pool", "leans on the glass railing", ["friend", "selfie"], "flirty", "her hair lifts a little in the wind"],
     ["a rooftop pool", "looks back over her shoulder", ["friend", "timer"], "bold", "she turns her head a little further"],
     ["a rooftop pool", "sips a cold drink by the water", ["friend", "selfie", "candid"], undefined, "she lowers the glass a little"],
-    ["the rocks by the sea", "sits hugging her knees", ["friend", "timer"], undefined, "her hair lifts a little in the wind"],
+    ["the rocks by the sea", "sits hugging her knees", ["friend", "timer"], undefined, "her hair stirs in the wind a little"],
     ["the rocks by the sea", "sits cross-legged on a towel", ["friend", "selfie"], undefined, "she leans back a little"],
-    ["the rocks by the sea", "leans back on her hands", ["friend", "timer", "candid"], undefined, "she tilts her head back a little"],
+    ["the rocks by the sea", "leans back on her hands", ["friend", "timer", "candid"], undefined, "she leans her head back a little"],
     ["the rocks by the sea", "tucks her hair back in the breeze", ["friend", "candid"], undefined, "she tucks a strand back slowly"],
   ])("%s · «%s»", (place, text, captures, level, motion) => {
     const found = momentNamed(text);
@@ -197,7 +197,7 @@ describe("the legs moments (plan §6.3, M5): her own look down along her legs, n
     ["a hotel pool", "stretches her legs on the lounger", false, "she points and flexes her toes slowly"],
     ["the beach", "sits on the sand, legs out", false, "she slowly buries her toes in the sand"],
     ["the beach", "crosses her ankles on the towel", false, "she crosses and uncrosses her ankles slowly"],
-    ["a rooftop pool", "dangles her feet in the water", true, "she swirls her feet slowly"],
+    ["a rooftop pool", "dangles her feet in the water", true, "she dips her toes in the water slowly"],
   ])("%s · «%s»", (place, text, water, motion) => {
     const found = momentNamed(text);
     expect(found?.place).toBe(place);
@@ -208,5 +208,13 @@ describe("the legs moments (plan §6.3, M5): her own look down along her legs, n
       water: water ? true : undefined,
       outfits: water ? LEGS_IN_THE_WATER : LEGS,
     });
+  });
+});
+
+// Review of S5.9b2: two moments said the very same motion, so a clip of one read as a clip of the other.
+describe("the motions", () => {
+  test("no two moments of the bank say the same motion", () => {
+    const motions = BEACH.places.flatMap((place) => place.moments.map((m) => m.motion));
+    expect(motions.filter((motion, i) => motions.indexOf(motion) !== i)).toEqual([]);
   });
 });

@@ -49,7 +49,7 @@ const TABLE: Row[] = [
   { category: "beach", place: "a hotel pool", text: "stretches her legs on the lounger", motion: "she points and flexes her toes slowly", captures: ["pov-legs"] },
   { category: "beach", place: "the beach", text: "sits on the sand, legs out", motion: "she slowly buries her toes in the sand", captures: ["pov-legs"] },
   { category: "beach", place: "the beach", text: "crosses her ankles on the towel", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"] },
-  { category: "beach", place: "a rooftop pool", text: "dangles her feet in the water", motion: "she swirls her feet slowly", captures: ["pov-legs"] },
+  { category: "beach", place: "a rooftop pool", text: "dangles her feet in the water", motion: "she dips her toes in the water slowly", captures: ["pov-legs"] },
 ];
 
 const legsMoments = (category: BankCategory): { place: string; moment: Moment }[] =>
