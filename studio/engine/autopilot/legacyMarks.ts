@@ -12,7 +12,7 @@ import type { PhotoSidecar } from "../library/schemas";
 // Read once per (library, avatar) and cached: the answer cannot change (a photo made after S5.7a carries its own mark), the callers are synchronous (the free steps' snapshot), and a
 // plan.json is small. Never a throw: a plan that is missing, unreadable or in another shape marks nothing, and the photo stays as it was.
 
-const SlotShape = z.looseObject({ attemptIdBase: z.string(), shot: z.string(), pose: z.string(), capture: z.string().optional() });
+const SlotShape = z.looseObject({ attemptIdBase: z.string(), shot: z.string(), pose: z.string(), capture: z.string().optional(), framing: z.string().optional() });
 const PlanShape = z.looseObject({ scenes: z.looseObject({ slots: z.array(SlotShape) }) });
 type SlotFacts = z.infer<typeof SlotShape>;
 
@@ -29,7 +29,7 @@ function faceFactsOf(slot: SlotFacts): Parameters<typeof faceVisibleOf>[0] | nul
   const pose = poses.find((p) => p === slot.pose);
   if (shot === undefined || pose === undefined) return null;
   const parsed = slot.capture === undefined ? undefined : z.enum(["mirror-hidden", "mirror", "above", "prone", "over-shoulder", "selfie", "timer", "friend", "candid", "pov-legs", "low-feet"]).safeParse(slot.capture);
-  return { shot, pose, ...(parsed?.success === true ? { capture: parsed.data } : {}) };
+  return { shot, pose, ...(parsed?.success === true ? { capture: parsed.data } : {}), ...(slot.framing === "legs" ? { framing: "legs" as const } : {}) };
 }
 
 function slotsOfRun(root: string, runId: string): ReadonlyMap<string, SlotFacts> | null {

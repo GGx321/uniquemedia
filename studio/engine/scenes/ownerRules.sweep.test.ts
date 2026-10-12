@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { youthWords, type AvatarDescriptor } from "../../shared/engine";
+import { isOwnerBannedOutfit, YOUTH_PROPS } from "../../shared/scenes/words";
 import { BANKS, CUES, GAZE, HAIRSTYLES } from "../../shared/scenes/banks";
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { plainSentence } from "../../shared/scenes/plain";
@@ -38,8 +39,8 @@ interface Frame {
 
 const LENGTHS = ["bob", "shoulder", "long"] as const;
 
-function framesOf(category: Category, seed: number, level: "ordinary" | "flirty" = "ordinary"): Frame[] {
-  const p = plan({ seed: seed * 7919 + COUNT, count: COUNT, categories: [category], ...(level === "flirty" ? { level } : {}) });
+function framesOf(category: Category, seed: number, level: "ordinary" | "flirty" = "ordinary", legsShare?: 15 | 30): Frame[] {
+  const p = plan({ seed: seed * 7919 + COUNT, count: COUNT, categories: [category], ...(level === "flirty" ? { level } : {}), ...(legsShare === undefined ? {} : { legsShare }) });
   const runId = `run-${category}-${seed}`;
   const local = localSentences({ slots: p.slots, keyOf: (s) => slotKeyOf(runId, s.attemptIdBase) });
   const hair = hairLinesOf(p.slots, LENGTHS[seed % LENGTHS.length] ?? "shoulder", runId);
@@ -314,6 +315,112 @@ describe("«Кокетливая» plans keep the owner's rules (S5.7b)", () => 
     const bar = FLIRTY.glamour.filter(onFlirtyMoment);
     expect(bar.length).toBeGreaterThan(0);
     expect(offenders(bar, (f) => f.slot.location !== "a cocktail bar" || !["friend", "selfie"].includes(f.capture))).toEqual(NONE);
+  });
+});
+
+// S5.8a («Ножки», I5.29): the same sweep over the real path, with legs asked for. 12-slot plans at 30 % hold 3 legs slots (the cap of the run: ⌊0.3 × 12⌋), at 15 % 2 (round-half-up of
+// 1.8). The owner's rules are asked again of the legs frames, ordinary and flirty: at home she shoots herself (the friend's `low-feet` is for places outside), the taxi is a selfie
+// place, side or back to the mirror shows only her reflection, prone is only on a bed, no denim shorts or skirts, natural poses, and nothing a youth prop or a revealing word.
+const LEGS_PLANS = 600;
+const LEGS: Record<Category, Frame[]> = Object.fromEntries(
+  CATEGORIES.map((category) => [category, Array.from({ length: LEGS_PLANS }, (_, i) => framesOf(category, i + 100_001, "ordinary", i % 2 === 0 ? 30 : 15)).flat()]),
+) as Record<Category, Frame[]>;
+const LEGS_FLIRTY: Record<Category, Frame[]> = Object.fromEntries(
+  CATEGORIES.map((category) => [category, Array.from({ length: LEGS_PLANS / 2 }, (_, i) => framesOf(category, i + 150_001, "flirty", 30)).flat()]),
+) as Record<Category, Frame[]>;
+const LEGS_ALL: Frame[] = CATEGORIES.flatMap((c) => [...LEGS[c], ...LEGS_FLIRTY[c]]);
+const LEGS_FRAMES: Frame[] = LEGS_ALL.filter((f) => f.slot.framing === "legs");
+const WITH_BODY: AvatarDescriptor = { ...DESCRIPTOR, body: "a slim build with narrow hips" };
+
+describe("«Ножки» plans keep the owner's rules (S5.8a)", () => {
+  test("every 12-slot plan holds the legs slots the formula gives: 3 at 30 %, 2 at 15 %", () => {
+    for (const category of CATEGORIES) {
+      for (let i = 0; i < LEGS_PLANS; i++) {
+        const plan12 = LEGS[category].slice(i * COUNT, (i + 1) * COUNT);
+        expect(plan12.filter((f) => f.slot.framing === "legs")).toHaveLength(i % 2 === 0 ? 3 : 2);
+      }
+    }
+  });
+
+  test("the sweep holds legs frames of every category, every legs capture, and feet in every one of them", () => {
+    expect([...new Set(LEGS_FRAMES.map((f) => f.slot.category))].sort()).toEqual([...CATEGORIES].sort());
+    expect([...new Set(LEGS_FRAMES.map((f) => f.capture))].sort()).toEqual(["low-feet", "mirror-hidden", "pov-legs"]);
+    expect(LEGS_FRAMES.length).toBeGreaterThan(LEGS_PLANS * CATEGORIES.length * 2);
+  });
+
+  test("at home she shoots herself: no legs frame in a room is a photo someone else took, and `low-feet` is outside only", () => {
+    const rooms = new Set(CATEGORIES.flatMap((c) => [...roomsOf(c)]));
+    expect(offenders(LEGS_FRAMES, (f) => rooms.has(f.slot.location) && !isSelfShot(f.capture))).toEqual(NONE);
+    expect(offenders(LEGS_FRAMES, (f) => f.capture === "low-feet" && (f.slot.category === "home" || rooms.has(f.slot.location)))).toEqual(NONE);
+    expect(LEGS_FRAMES.filter((f) => f.capture === "low-feet").length).toBeGreaterThan(LEGS_PLANS);
+  });
+
+  test("the taxi is a selfie place: its legs frame looks down along her own legs, and no taxi frame is a whole-body photo from a distance", () => {
+    const FAR = /a few steps away|her whole body in the picture|crouching/;
+    const taxi = LEGS_FRAMES.filter((f) => f.slot.location === "the back seat of a taxi");
+    expect(taxi.length).toBeGreaterThan(50);
+    expect(offenders(taxi, (f) => f.capture !== "pov-legs" || FAR.test(f.prompt()))).toEqual(NONE);
+  });
+
+  test("side or back to the mirror shows only her reflection: a legs mirror frame faces the mirror and never claims her face is clearly visible", () => {
+    const SIDE_TO_MIRROR = /\bsideways\b|\bside to the mirror\b|\bback to the mirror\b|\bturns to check\b/;
+    const mirror = LEGS_FRAMES.filter((f) => shotOf(f.capture) === "mirror");
+    expect(mirror.length).toBeGreaterThan(LEGS_PLANS);
+    expect(offenders(mirror, (f) => SIDE_TO_MIRROR.test(f.slot.activity) || f.capture === "mirror" || /face clearly visible/.test(f.prompt()))).toEqual(NONE);
+    expect(offenders(LEGS_ALL, (f) => SIDE_TO_MIRROR.test(f.slot.activity) && f.capture === "mirror")).toEqual(NONE);
+  });
+
+  test("she lies on her stomach only on her bed: no legs frame lies prone", () => {
+    expect(offenders(LEGS_FRAMES, (f) => /stomach|prone/.test(f.slot.activity))).toEqual(NONE);
+    expect(offenders(LEGS_ALL, (f) => f.slot.location !== "her bed" && /^lies\b/.test(f.slot.activity) && shotOf(f.capture) === "mirror")).toEqual(NONE);
+  });
+
+  test("no denim shorts or skirts, in any outfit, sentence or prompt of a legs plan", () => {
+    expect(offenders(LEGS_ALL, (f) => isOwnerBannedOutfit(f.slot.outfit) || isOwnerBannedOutfit(f.sentence))).toEqual(NONE);
+  });
+
+  test("the poses are natural: a legs frame faces the camera, front or three-quarter, never in profile or from behind", () => {
+    expect(offenders(LEGS_FRAMES, (f) => f.slot.pose !== "front" && f.slot.pose !== "three-quarter")).toEqual(NONE);
+  });
+
+  test("the legs lines open the prompt, with the legs pose phrase and no phone, no selfie word and no hair line", () => {
+    const sample = LEGS_FRAMES.filter((_, i) => i % 20 === 0);
+    expect(sample.length).toBeGreaterThan(300);
+    expect(offenders(sample, (f) => !f.prompt().includes("Her legs fill most of the frame; her face may be out of frame."))).toEqual(NONE);
+    expect(offenders(sample, (f) => f.prompt().includes("Today her hair is"))).toEqual(NONE);
+    expect(offenders(sample.filter((f) => f.capture !== "mirror-hidden"), (f) => /\b(phone|selfie)\b/i.test(f.sentence))).toEqual(NONE);
+  });
+
+  test("the body binding rides on every legs prompt when the avatar has a body", () => {
+    const sample = LEGS_FRAMES.filter((_, i) => i % 40 === 0);
+    expect(offenders(sample, (f) => !assembleSlot(WITH_BODY, f.slot, f.sentence, MASTER, { runId: "run-legs", roomPlaceOf, lookOf: slotLookOf }).prompt.includes("her exact body proportions as described"))).toEqual(NONE);
+  });
+
+  test("legwear goes only where the moment allows it: never on a moment that names socks, soles, bare skin or heels", () => {
+    const clash = /\b(socks?|socked|tights|stockings?|bare|barefoot|soles?|heels?)\b/;
+    expect(offenders(LEGS_FRAMES, (f) => f.slot.legwear !== undefined && clash.test(f.slot.activity))).toEqual(NONE);
+    expect(LEGS_FRAMES.filter((f) => f.slot.legwear !== undefined).length).toBeGreaterThan(LEGS_PLANS / 4);
+    expect(offenders(LEGS_ALL, (f) => /stocking/i.test(f.sentence) || /stocking/i.test(f.slot.legwear ?? ""))).toEqual(NONE);
+  });
+
+  test("no sentence or motion of a legs plan carries a youth prop, a youth word or a revealing word, and no sentence says sexy, seductive or sultry", () => {
+    const distinct = [...new Map(LEGS_FRAMES.map((f) => [f.sentence, f] as const)).values()];
+    expect(distinct.length).toBeGreaterThan(300);
+    expect(offenders(distinct, (f) => YOUTH_PROPS.test(f.sentence) || youthWords(f.sentence, "descriptor").length > 0 || revealingWordsIn(f.sentence).length > 0 || /\b(sexy|seductive|sultry)\b/i.test(f.sentence))).toEqual(NONE);
+  });
+
+  test("a flirty plan with legs holds exactly 7 flirty slots of 12, a legs moment is never a flirty one, and an ordinary slot says nothing flirty", () => {
+    const FLIRTY_VOICES = [...CUES.filter((c) => c.level === "flirty").map((c) => c.text), ...GAZE.filter((g) => g.level === "flirty").map((g) => g.text)];
+    for (const category of CATEGORIES) {
+      for (let i = 0; i < LEGS_PLANS / 2; i++) {
+        const plan12 = LEGS_FLIRTY[category].slice(i * COUNT, (i + 1) * COUNT);
+        expect(plan12.filter((f) => f.slot.level === "flirty")).toHaveLength(7);
+        expect(plan12.filter((f) => f.slot.framing === "legs")).toHaveLength(3);
+      }
+    }
+    const flirtyMoments = new Set(CATEGORIES.flatMap((c) => BANKS[c].places.flatMap((p) => p.moments.filter((m) => m.level === "flirty").map((m) => `${c}\u0000${p.name}\u0000${m.text}`))));
+    expect(offenders(LEGS_FRAMES, (f) => flirtyMoments.has(`${f.slot.category}\u0000${f.slot.location}\u0000${f.slot.activity}`))).toEqual(NONE);
+    expect(offenders(LEGS_ALL.filter((f) => f.slot.level !== "flirty"), (f) => FLIRTY_VOICES.some((voice) => f.sentence.includes(voice)))).toEqual(NONE);
   });
 });
 

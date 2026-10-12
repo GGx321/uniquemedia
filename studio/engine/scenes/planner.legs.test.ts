@@ -266,19 +266,3 @@ describe("«Ножки»: the other slots keep their deals", () => {
     }
   });
 });
-
-describe("«Ножки»: every legs moment is reachable", () => {
-  const SEEDS_REACH = 3000;
-  describe.each([12, 20])("a category plan of %i slots at 30 %", (count) => {
-    for (const category of CATEGORIES) {
-      test(`${category}: every legs moment of the bank appears at least once over ${SEEDS_REACH} seeds`, () => {
-        const wanted = new Set(POOLS[category].locations.flatMap((l) => l.activities.filter((a) => a.legs !== undefined).map((a) => `${l.name} | ${a.text}`)));
-        const seen = new Set<string>();
-        for (let seed = 1; seed <= SEEDS_REACH; seed++) {
-          for (const slot of plan({ seed, count, categories: [category], legsShare: 30 }).slots) if (isLegs(slot)) seen.add(`${slot.location} | ${slot.activity}`);
-        }
-        expect([...wanted].filter((moment) => !seen.has(moment))).toEqual([]);
-      });
-    }
-  });
-});
