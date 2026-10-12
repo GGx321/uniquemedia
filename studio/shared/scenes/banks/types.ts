@@ -20,8 +20,8 @@ export type BankCategory = (typeof BANK_CATEGORIES)[number];
 export const ORDINARY_BANK_CATEGORIES = ["home", "travel", "photoshoot", "glamour", "fitness"] as const satisfies readonly BankCategory[];
 export type OrdinaryBankCategory = (typeof ORDINARY_BANK_CATEGORIES)[number];
 
-/** A slot's level («Подача»). 5a.3 adds "bold". Absent means ordinary. */
-export type Level = "ordinary" | "flirty";
+/** A slot's level («Подача»), ranked ordinary < flirty < bold (5a.3, `atOrBelow` in level.ts). Absent means ordinary. */
+export type Level = "ordinary" | "flirty" | "bold";
 
 /** The angle a moment implies. Absent: front or three-quarter. A filter from 5a.2a on (I5.23), the pose source from 5a.2b on. */
 export type Angle = Exclude<ScenePose, "front">;
@@ -50,8 +50,14 @@ export interface Moment {
   phone?: true;
   /** May happen in the rare messy room (a room's moments only). */
   messyOk?: true;
-  /** «Кокетливая» only (5a.2b); never drawn on an ordinary slot. */
-  level?: "flirty";
+  /** «Кокетливая» (5a.2b) or «Смелая» (5a.3): drawn on a slot of this level or above, never below. */
+  level?: "flirty" | "bold";
+  /** 5a.3: the moment is drawn on Seedream at 2K («Смелая» banks only). */
+  route?: "seedream";
+  /** 5a.3: the positive sentence the template appends for what the moment shows («The white sheet is held up to her chest …»); it wins over the outfit's. */
+  coverage?: string;
+  /** 5a.3: in the water or at its edge: such a moment pins swimwear only («Пляж и бассейн»). */
+  water?: true;
   angle?: Angle;
   gaze?: MomentGaze;
   hair?: MomentHair;
@@ -102,15 +108,25 @@ export interface Outfit {
    * outfit draw, and the template renders it on no other moment.
    */
   pinOnly?: true;
+  /** 5a.3: «Кокетливая» or «Смелая»: worn on a slot of this level or above, never below. Absent: ordinary. */
+  level?: "flirty" | "bold";
+  /** 5a.3: drawn on Seedream at 2K (lingerie, swimwear, satin; «Смелая» banks only). */
+  route?: "seedream";
+  /** 5a.3: the positive sentence the template appends for what the outfit covers («Her nightdress is opaque satin.»). */
+  coverage?: string;
 }
 
-/** Legwear, its own outfit slot (I5.29, K-17): drawn on about `share` of the slots whose outfit shows her legs. Stockings stay in 5a.3. */
+/** Legwear, its own outfit slot (I5.29, K-17): drawn on about `share` of the slots whose outfit shows her legs. */
 export interface LegwearSlot {
   items: readonly string[];
   share: number;
+  /** 5a.3 («Смелая» banks only): the stockings a bold slot wears instead, on about `share` of its slots whose outfit shows her legs, on Seedream. */
+  bold?: { items: readonly string[]; share: number; route: "seedream" };
 }
 
 export interface CategoryBank {
+  /** 5a.3: a «Смелая» bank (`nightwear`, `beach`), validated by its own schema; its vocabulary lives nowhere else. */
+  bold?: true;
   places: readonly BankPlace[];
   outfits: readonly Outfit[];
   legwear?: LegwearSlot;

@@ -1,6 +1,6 @@
 import type { PoolShot, ScenePose } from "../engine";
 import { BANKS, CUES } from "./banks";
-import { BANK_CATEGORIES } from "./banks/types";
+import { BANK_CATEGORIES, type Level } from "./banks/types";
 import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "./captures";
 import { pick } from "./hash";
 import { locativeOf, rendersActivity } from "./custom";
@@ -29,7 +29,7 @@ export interface PlainSlot {
   shot?: PoolShot | undefined;
   capture?: Capture | undefined;
   /** «Подача» (S5.7b): a flirty slot ends with one flirty cue, where her face shows. Absent: ordinary. */
-  level?: "ordinary" | "flirty" | undefined;
+  level?: Level | undefined;
   /** Whether her face shows reads the pose; absent: front. */
   pose?: ScenePose | undefined;
 }

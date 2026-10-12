@@ -9,6 +9,14 @@ export function drawLevelOf(level: SceneLevel | undefined): Level {
   return level === "flirty" || level === "bold" ? "flirty" : "ordinary";
 }
 
+/** 5a.3 (S5.9b2, I5.37): the order of the levels. An item of the banks is drawn on a slot of its own level or above, never below. */
+const LEVEL_RANK: Readonly<Record<Level, number>> = { ordinary: 0, flirty: 1, bold: 2 };
+
+/** Whether an item at `item` (absent: ordinary) may be drawn on a slot at `slot`. */
+export function atOrBelow(item: Level | undefined, slot: Level): boolean {
+  return LEVEL_RANK[item ?? "ordinary"] <= LEVEL_RANK[slot];
+}
+
 // 5a.2b (S5.7b, plan s5a2 I5.28): «Подача». Under «Кокетливая» exactly round(0.6 × n) of a built-in category's n slots are flirty; under «Обычная» none is. The one
 // rule, for the planner and for the card's «{F} из {N} кадров» line (the mock reads it too). Integers only: 0.6 × n is 6n / 10, which never ends in .5, so there is no
 // half-way case to round and no float to drift.
