@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CATEGORIES } from "./types";
+import { CATEGORIES, ORDINARY_BUILT_INS } from "./types";
 import { isOwnerBannedOutfit } from "../../shared/scenes/words";
 import { POOLS, PoolSchema, validatePools } from "./pools";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -30,15 +30,19 @@ describe("the shipped pools", () => {
       }
     });
 
-    test(`${category}: no outfit uses revealing wording`, () => {
-      for (const outfit of POOLS[category].outfits) expect(outfit).not.toMatch(REVEALING);
-    });
-
     test(`${category}: outfits are English, non-empty text`, () => {
       for (const outfit of POOLS[category].outfits) {
         expect(outfit.length).toBeGreaterThan(0);
         expect(outfit).toMatch(/^[\x20-\x7e]+$/);
       }
+    });
+  }
+
+  // 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): the five ordinary built-ins (ORDINARY_BUILT_INS), the assertion kept; a «Смелая» pool is swimwear and lingerie by design
+  // and is swept through the bold content line (pools.bold.test.ts and the «Смелая» banks' own sweeps).
+  for (const category of ORDINARY_BUILT_INS) {
+    test(`${category}: no outfit uses revealing wording`, () => {
+      for (const outfit of POOLS[category].outfits) expect(outfit).not.toMatch(REVEALING);
     });
   }
 
