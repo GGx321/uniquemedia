@@ -24,6 +24,6 @@ describe("a stopped run's resume row (state 55)", () => {
     engine.failNext("runs.estimateResume", { code: "PRICE_UNAVAILABLE", detail: "no price" });
     await openSection("Фото");
     await screen.findByText(errorText({ code: "PRICE_UNAVAILABLE" }));
-    expect(screen.queryByText(PRICE_SCOPES_RU.bold)).toBeNull();
+    expect(screen.queryByText(PRICE_SCOPES_RU.bold) === null).toBe(true);
   });
 });
