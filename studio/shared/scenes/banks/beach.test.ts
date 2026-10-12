@@ -68,11 +68,12 @@ describe("who takes the photo: mostly someone she asked (I5.32)", () => {
 });
 
 describe("the places (plan §6.3)", () => {
+  // S5.R4: an object she could hold sits in the place («… beside her», «… on a side table»): said «…, with {detail}.», a bare one read as a prop in her hands.
   test("five places by the sea and the pool, with their times and details", () => {
     expect(BEACH.places.map((p) => ({ name: p.name, at: p.at, times: p.times, details: p.details, room: p.room, mirror: p.mirror }))).toEqual([
-      { name: "the beach", at: "on a sandy beach", times: ["morning", "midday", "golden hour"], details: ["a canvas tote bag", "a striped umbrella", "some small waves behind her"], room: undefined, mirror: undefined },
-      { name: "the water's edge", at: "at the edge of the sea", times: ["morning", "midday", "golden hour"], details: ["some wet sand", "a few seashells"], room: undefined, mirror: undefined },
-      { name: "a hotel pool", at: "by a hotel pool", times: ["morning", "midday"], details: ["a folded towel", "two palm trees", "a glass of iced tea"], room: undefined, mirror: undefined },
+      { name: "the beach", at: "on a sandy beach", times: ["morning", "midday", "golden hour"], details: ["a canvas tote bag beside her", "a striped umbrella planted nearby", "some small waves behind her"], room: undefined, mirror: undefined },
+      { name: "the water's edge", at: "at the edge of the sea", times: ["morning", "midday", "golden hour"], details: ["some wet sand", "a few seashells in the sand"], room: undefined, mirror: undefined },
+      { name: "a hotel pool", at: "by a hotel pool", times: ["morning", "midday"], details: ["a folded towel on a deck chair", "two palm trees", "a glass of iced tea on a side table"], room: undefined, mirror: undefined },
       { name: "a rooftop pool", at: "by a rooftop pool", times: ["midday", "golden hour"], details: ["the city skyline behind her", "a low white daybed"], room: undefined, mirror: undefined },
       { name: "the rocks by the sea", at: "on the rocks by the sea", times: ["golden hour", "evening"], details: ["the warm evening sky", "a few gulls overhead"], room: undefined, mirror: undefined },
     ]);

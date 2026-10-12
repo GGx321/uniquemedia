@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { GAZE } from "../../shared/scenes/banks";
 import { LOOKS_ELSEWHERE } from "../../shared/scenes/banks/schema";
+import { HELD_OBJECT_WORDS } from "../../shared/scenes/words";
 import { boldPromptMatrix, type PromptFrame } from "./boldRunPrompts.testkit";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -34,5 +35,50 @@ describe("a moment that looks at something other than the viewer takes no gaze o
 
   test("none of them says a gaze clause next to its own look", () => {
     expect(offenders(elsewhere, (f) => GAZE.some((g) => f.sentence.includes(g.text)))).toEqual(NONE);
+  });
+});
+
+// Item 2 (MEDIUM): a place detail is said as «…, with {detail}.» at the end of the scene sentence, and the room phrase says its details the same way. A detail that is an object
+// she could hold («a glass of iced tea», «a canvas tote bag») reads as a prop in her hands: the owner asked «зачем?» of a glass of water and a bag, and a frame whose phone line says
+// «her other hand is free and holds nothing» contradicted it. Such a detail sits in the place («… on a side table», «… beside her»), or the place says scenery instead.
+
+/** The objects she could hold: the timer rule's held objects (shared/scenes/words.ts), and what a beach or a pool adds. */
+const EXTRA_HOLDABLE = /\b(?:totes?|baskets?|purses?|drinks?|tea|juice|cocktails?|wine|books?|magazines?|umbrellas?|parasols?|hats?|sunglasses|fans?|(?:sea)?shells?|flowers?|bouquets?|balls?|towels?)\b/i;
+const holdable = (item: string): boolean => HELD_OBJECT_WORDS.test(item) || EXTRA_HOLDABLE.test(item);
+/** A phrase that puts the object somewhere in the place, never in her hands, on her arm or over her shoulder. */
+const SITED = /\b(?:on|in|by|beside|behind|under|beneath|against|along|near|next to|across|over|inside|atop)\s+(?!(?:her|one)\s+(?:hands?|arms?|shoulders?|lap|wrists?|fingers?)\b)\S|\b(?:overhead|nearby)\b/i;
+
+/** The items of every «, with …» clause of a prompt (the scene sentence's detail, the room phrase), one by one. */
+function withItems(prompt: string): string[] {
+  return Array.from(prompt.matchAll(/,\s+with\s+([^,.;]+)(?=[.,;])/g), (m) => m[1] ?? "").flatMap((clause) => clause.split(/\s+and\s+/));
+}
+/** The held objects a prompt leaves dangling: a «with» item that names one and does not put it anywhere. */
+const danglingIn = (prompt: string): string[] => withItems(prompt).filter((item) => holdable(item) && !SITED.test(item));
+
+describe("a place detail never dangles as a prop in her hands", () => {
+  test("the detector: a held object said with no place dangles; one that sits in the place, or scenery, does not", () => {
+    expect(danglingIn("On a sandy beach, she sits, wearing a black bikini, a slow smile, with a glass of iced tea.")).toEqual(["a glass of iced tea"]);
+    expect(danglingIn("By a hotel pool, she sits, wearing a black bikini, with a canvas tote bag.")).toEqual(["a canvas tote bag"]);
+    expect(danglingIn("By a hotel pool, she sits, wearing a black bikini, with a tote bag over her shoulder.")).toEqual(["a tote bag over her shoulder"]);
+    expect(danglingIn("By a hotel pool, she sits, wearing a black bikini, with a glass of iced tea on a side table.")).toEqual([]);
+    expect(danglingIn("The room looks lived-in, with a bedside lamp and a glass of water on the nightstand.")).toEqual([]);
+    expect(danglingIn("On the rocks by the sea, she sits, wearing a black bikini, with the warm evening sky.")).toEqual([]);
+  });
+
+  test("the sweep reads «with» details and held objects that sit in the place, in both banks", () => {
+    for (const category of ["nightwear", "beach"] as const) {
+      const items = FRAMES.filter((f) => f.slot.category === category).flatMap((f) => withItems(f.prompt));
+      expect(items.filter(holdable).length, category).toBeGreaterThan(100);
+    }
+  });
+
+  test("no prompt carries a held object as a place detail with no place of its own", () => {
+    expect(offenders(FRAMES, (f) => danglingIn(f.prompt).length > 0)).toEqual(NONE);
+  });
+
+  test("no prompt says her other hand holds nothing while a place detail puts an object in it", () => {
+    const empty = FRAMES.filter((f) => f.prompt.includes("holds nothing"));
+    expect(empty.length).toBeGreaterThan(500);
+    expect(offenders(empty, (f) => danglingIn(f.prompt).length > 0)).toEqual(NONE);
   });
 });

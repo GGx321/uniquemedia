@@ -46,7 +46,8 @@ export const BEACH: CategoryBank = {
     {
       name: "the beach",
       at: "on a sandy beach",
-      details: ["a canvas tote bag", "a striped umbrella", "some small waves behind her"],
+      // S5.R4: a detail is said «…, with {detail}.», so an object she could hold sits in the place, never in her hands (the owner's «зачем?» of a bag).
+      details: ["a canvas tote bag beside her", "a striped umbrella planted nearby", "some small waves behind her"],
       times: ["morning", "midday", "golden hour"],
       moments: [
         { text: "brushes sand off her legs", motion: "she brushes the sand off slowly", captures: ["friend", "selfie", "timer", "candid"], twoHanded: false, outdoor: true },
@@ -64,7 +65,7 @@ export const BEACH: CategoryBank = {
     {
       name: "the water's edge",
       at: "at the edge of the sea",
-      details: ["some wet sand", "a few seashells"],
+      details: ["some wet sand", "a few seashells in the sand"],
       times: ["morning", "midday", "golden hour"],
       moments: [
         { text: "walks along the shore", motion: "she walks on slowly, the water at her feet", captures: ["friend", "candid"], twoHanded: false, water: true, outfits: IN_THE_WATER, outdoor: true },
@@ -89,7 +90,7 @@ export const BEACH: CategoryBank = {
     {
       name: "a hotel pool",
       at: "by a hotel pool",
-      details: ["a folded towel", "two palm trees", "a glass of iced tea"],
+      details: ["a folded towel on a deck chair", "two palm trees", "a glass of iced tea on a side table"],
       times: ["morning", "midday"],
       moments: [
         { text: "lies back on a sun lounger", motion: "she tilts her face to the sun a little", captures: ["friend", "selfie", "timer", "candid"], twoHanded: false, outdoor: true },

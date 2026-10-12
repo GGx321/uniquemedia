@@ -172,7 +172,8 @@ describe("a «Смелая» sentence with its coverage fits the scene text boun
 
   test.each<[BoldCategory, number]>([
     ["nightwear", 406],
-    ["beach", 318],
+    // S5.R4: 318 -> 326, the pool's «a glass of iced tea on a side table» (35) is now the longest detail.
+    ["beach", 326],
   ])("%s: the longest combination is %i characters, under 600", (category, worst) => {
     expect(worstOf(category)).toBe(worst);
     expect(worstOf(category)).toBeLessThanOrEqual(SCENE_TEXT_MAX);
