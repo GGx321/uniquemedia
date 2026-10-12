@@ -1,6 +1,7 @@
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { legwearFits } from "../../shared/scenes/template";
 import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
+import { legsCapturesAt, legsMomentsAt, legsOutfitsOf, legsPlacesOf } from "./legs";
 import { allowedActivities, hasCleanActivity, usableOutfits, type Activity, type Place, type Pool } from "./pools";
 import { drawFromPoses, drawPose, NO_EXTRA_POSES } from "./poses";
 import { makeRng, rngPick, subSeed } from "./rngUtil";
@@ -41,7 +42,8 @@ function preferred<T>(items: readonly T[], nameOf: (item: T) => string, avoid: R
  */
 export function redrawSlot(input: RedrawInput): PlanSlot {
   // 5a.2 (S5.6b): a built-in pool deals captures, and its scene is redrawn the way the planner draws it.
-  if (input.pool.captureDeck !== undefined) return redrawBuiltIn(input, input.pool.captureDeck);
+  // 5a.2c (S5.8a): a legs scene stays a legs scene, redrawn the way the planner draws a legs slot; any other scene never draws a legs moment (a legs moment fits a legs framing only).
+  if (input.pool.captureDeck !== undefined) return input.slot.framing === "legs" && legsPlacesOf(input.pool).length > 0 ? redrawLegs(input) : redrawBuiltIn(input, input.pool.captureDeck);
   const { seed, k, slot, pool, avoid } = input;
   const rng = makeRng(subSeed(seed, `redraw:${slot.slotIndex}:${k}`));
   const poseRng = makeRng(subSeed(seed, `redraw-pose:${slot.slotIndex}:${k}`));
@@ -136,6 +138,43 @@ function redrawBuiltIn(input: RedrawInput, deck: readonly Capture[]): PlanSlot {
     repeatedPair: false,
     ...(settled.capture === captureOfShot(shotOf(settled.capture)) ? {} : { capture: settled.capture }),
     ...(legwear === undefined ? {} : { legwear }),
+    ...(level === "flirty" ? { level } : {}),
+  };
+}
+
+/**
+ * A legs scene's redraw (S5.8a): a place that has a legs moment (tiered against the set as the other redraws are), one of its legs moments other than the scene's own when
+ * there is another, the capture that moment lists, the moment's pinned outfits first, else an outfit that shows her legs, and the legwear. The framing stays.
+ */
+function redrawLegs(input: RedrawInput): PlanSlot {
+  const { seed, k, slot, pool, avoid } = input;
+  const rng = makeRng(subSeed(seed, `redraw:${slot.slotIndex}:${k}`));
+  const place = rngPick(rng, preferred(legsPlacesOf(pool), (p) => p.name, avoid.locations, slot.location));
+  const moments = legsMomentsAt(place);
+  const others = moments.filter((m) => m.text !== slot.activity);
+  const moment = rngPick(rng, others.length > 0 ? others : moments);
+  const capture = rngPick(rng, legsCapturesAt(place, moment));
+  const pinned = pinnedOutfitsOf(moment);
+  const outfit = rngPick(rng, preferred(pinned.length > 0 ? pinned : legsOutfitsOf(pool), (o) => o, avoid.outfits, slot.outfit));
+  const roll = rng();
+  const item = pool.legwear === undefined ? undefined : rngPick(rng, pool.legwear.items);
+  const meta = outfitInfoOf(pool).find((o) => o.text === outfit);
+  const legwear = pool.legwear !== undefined && meta !== undefined && legwearFits(moment, meta) && roll < pool.legwear.share ? item : undefined;
+  const level = slot.level ?? "ordinary";
+  return {
+    slotIndex: slot.slotIndex,
+    category: slot.category,
+    location: place.name,
+    timeOfDay: rngPick(rng, place.times),
+    activity: moment.text,
+    outfit,
+    shot: shotOf(capture),
+    pose: moment.angle ?? "front",
+    attemptIdBase: slot.attemptIdBase,
+    repeatedPair: false,
+    ...(capture === captureOfShot(shotOf(capture)) ? {} : { capture }),
+    ...(legwear === undefined ? {} : { legwear }),
+    framing: "legs" as const,
     ...(level === "flirty" ? { level } : {}),
   };
 }
