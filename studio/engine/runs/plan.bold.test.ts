@@ -43,11 +43,20 @@ describe("a plan.json with the 5a.3 fields", () => {
     expect<unknown>(parsed).toEqual(plan);
   });
 
-  test("refuses a slot whose level is bold: no slot is drawn bold before S5.9c", () => {
-    const plan = withRoute(raw());
+  // 5a.3 (S5.9c, plan s5a3 «Changes in r3»): the planner draws bold slots now, in a «Смелая» category and nowhere else; the slot stored with the level reads back as written.
+  const withLevel = (plan: Record<string, unknown>): Record<string, unknown> => {
     const scenes = plan.scenes as { slots: Record<string, unknown>[] };
-    const bold = { ...plan, scenes: { ...scenes, slots: scenes.slots.map((slot, i) => (i === 0 ? { ...slot, level: "bold" } : slot)) } };
-    expect(RunPlanSchema.safeParse(bold).success).toBe(false);
+    return { ...plan, scenes: { ...scenes, slots: scenes.slots.map((slot, i) => (i === 0 ? { ...slot, level: "bold" } : slot)) } };
+  };
+
+  test("keeps the bold level of a slot of a «Смелая» category", () => {
+    const plan = withLevel(withRoute(raw()));
+    expect(RunPlanSchema.parse(plan).scenes.slots[0]).toMatchObject({ category: "nightwear", level: "bold", route: "seedream" });
+    expect<unknown>(RunPlanSchema.parse(plan)).toEqual(plan);
+  });
+
+  test("refuses a bold level on a slot of the five: «Смелая» draws them as «Кокетливая», so none of their slots is bold", () => {
+    expect(RunPlanSchema.safeParse(withLevel(raw())).success).toBe(false);
   });
 
   test("refuses a route on a slot of the five (only a «Смелая» category's slot is drawn on Seedream)", () => {
