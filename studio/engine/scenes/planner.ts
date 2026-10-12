@@ -1,11 +1,12 @@
-import { orderCategories, splitCount, type CategoryRef, type SceneLevel } from "../../shared/engine";
+import { orderCategories, splitCount, type CategoryRef, type LegsShare, type SceneLevel } from "../../shared/engine";
 import { categoryRefOf, plannerCategoryOf } from "./categories";
 import type { PlannerCategory, Shot } from "./types";
 import type { Level, Outfit } from "../../shared/scenes/banks/types";
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
-import { flirtyCountOf } from "../../shared/scenes/level";
+import { apportionLegs, flirtyCountOf, legsCountOf } from "../../shared/scenes/level";
 import { legwearFits } from "../../shared/scenes/template";
 import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
+import { hasLegs, legsCapturesAt, legsMomentsAt, legsOutfitsOf, legsPlacesOf } from "./legs";
 import { allowedActivities, hasCleanActivity, POOLS, usableOutfits, type Activity, type Place, type Pool } from "./pools";
 import { drawFromPoses, drawPose, NO_EXTRA_POSES } from "./poses";
 import { Bag, makeRng, rngPick, shuffle, subSeed, type Rng } from "./rngUtil";
@@ -47,6 +48,12 @@ export interface PlanInput {
    * "ordinary", none is. A custom category stays ordinary.
    */
   level?: SceneLevel;
+  /**
+   * «Ножки» (S5.8a, I5.29): the share of the run's built-in slots shot as legs and feet filling the frame, in percent. The legs slots are min(round-half-up(share × B), ⌊0.3 × count⌋),
+   * B the built-in slots; they are shared over the built-in categories in proportion to their slots and drawn on `legs:${category}`. Absent or 0: no legs slot, and the plan is the one
+   * it always was. A custom category draws none.
+   */
+  legsShare?: LegsShare;
   /**
    * S4.5a, internal (a batch launch's compose): the exact number of scenes for each category instead of the even split. The counts add up to `count`, each
    * category once, every one of them among `categories`; a count of 0 is allowed. The slots keep the canonical category order whatever order this lists.
@@ -236,6 +243,8 @@ interface BuiltInStreams {
   angleRng: Rng;
   /** `away:${category}`: whether a slot that could face away is one of the plan's wanted away slots. One draw per slot. */
   awayRng: Rng;
+  /** `legs:${category}` (S5.8a): which slots are legs slots, then every draw of a legs slot (its place, moment, capture, outfit, time and legwear). Never read by a plan without legs. */
+  legsRng: Rng;
 }
 
 /** «Дом»'s timer frame turns away on this share of the rolls on `away:${category}`. */
@@ -274,6 +283,7 @@ function planBuiltIn(
   excluded: ReadonlySet<string>,
   recent: ReadonlySet<string>,
   level: SceneLevel,
+  legsCount: number,
 ): PlanSlot[] {
   const deck = new Bag(pool.captureDeck, streams.rng);
   const kind = kindOfDeck(pool.captureDeck);
@@ -297,9 +307,57 @@ function planBuiltIn(
   const selfShot = kind === "self";
   const awayShareOfDeck = pool.captureDeck.filter(canFaceAway).length / pool.captureDeck.length;
 
+  // «Ножки» (I5.29): which of the n slots are legs slots, on the category's `legs:` stream (never touched by a plan without legs). A legs slot is not dealt from the capture deck, so
+  // the deck, the pose, the away and the legwear streams run over the other slots as if the legs slots were not there.
+  const legsAt = new Set(legsCount === 0 ? [] : shuffle(streams.legsRng, Array.from({ length: n }, (_, i) => i)).slice(0, legsCount));
+  const legsOutfitBag = legsCount === 0 ? null : new Bag(legsOutfitsOf(pool), streams.legsRng);
+
   const slots: PlanSlot[] = [];
   for (let i = 0; i < n; i++) {
     const slotLevel: Level = flirtyAt.has(i) ? "flirty" : "ordinary";
+    if (legsAt.has(i) && legsOutfitBag !== null) {
+      // A legs slot: a place that has a legs moment (the least-used of them), the least-used legs moment there, its capture, then the outfit (the moment's pins first), the time and the legwear.
+      const legsRng = streams.legsRng;
+      const places = legsPlacesOf(pool);
+      const fresh = (place: Place): boolean => legsMomentsAt(place).some((m) => !recent.has(momentKey(place.name, m.text)));
+      const place = leastUsed(places, (p) => placeUses.get(p.name) ?? 0, [fresh], legsRng);
+      const moment = leastUsed(legsMomentsAt(place), (m) => momentUses.get(momentKey(place.name, m.text)) ?? 0, [(m) => !recent.has(momentKey(place.name, m.text))], legsRng);
+      const capture = rngPick(legsRng, legsCapturesAt(place, moment));
+      placeUses.set(place.name, (placeUses.get(place.name) ?? 0) + 1);
+      momentUses.set(momentKey(place.name, moment.text), (momentUses.get(momentKey(place.name, moment.text)) ?? 0) + 1);
+      const pinned = pinnedOutfitsOf(moment);
+      let outfit: string;
+      if (pinned.length > 0) {
+        const unseen = pinned.filter((o) => !excluded.has(pairKey(place.name, o)));
+        outfit = rngPick(legsRng, unseen.length > 0 ? unseen : pinned);
+      } else {
+        outfit = legsOutfitBag.next();
+        for (let attempt = 0; excluded.size > 0 && excluded.has(pairKey(place.name, outfit)) && attempt < general.length - 1; attempt++) outfit = legsOutfitBag.next();
+      }
+      const repeatedPair = excluded.size > 0 && excluded.has(pairKey(place.name, outfit));
+      const roll = legsRng();
+      const item = pool.legwear === undefined ? undefined : rngPick(legsRng, pool.legwear.items);
+      const meta = info.find((o) => o.text === outfit);
+      const legwear = pool.legwear !== undefined && meta !== undefined && legwearFits(moment, meta) && roll < pool.legwear.share ? item : undefined;
+      const slotIndex = startIndex + i;
+      slots.push({
+        slotIndex,
+        category,
+        location: place.name,
+        timeOfDay: rngPick(legsRng, place.times),
+        activity: moment.text,
+        outfit,
+        shot: shotOf(capture),
+        pose: moment.angle ?? "front",
+        attemptIdBase: `slot-${slotIndex}`,
+        repeatedPair,
+        ...(capture === captureOfShot(shotOf(capture)) ? {} : { capture }),
+        ...(legwear === undefined ? {} : { legwear }),
+        framing: "legs" as const,
+        ...(slotLevel === "flirty" ? { level: slotLevel } : {}),
+      });
+      continue;
+    }
     const drawnCapture = deck.next();
     const drawnPose = poseForCapture(drawnCapture, drawPose(streams.poseRng, shotOf(drawnCapture), NO_EXTRA_POSES));
     const settled = settleFit(pool, kind, drawnCapture, drawnPose, slotLevel);
@@ -406,10 +464,22 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
   // 5a.2: the moments the avatar used recently, by (place, moment); a history line written before it names none.
   const recent = new Set((input.excludePairs ?? []).flatMap((p) => (p.activity === undefined ? [] : [momentKey(p.location, p.activity)])));
   const level = input.level ?? "ordinary";
+  const legsShare = input.legsShare ?? 0;
+
+  // «Ножки» (I5.29): the legs slots of the run, shared over the built-in categories that can deal them in proportion to their slots. The categories whose remainders tie are served in
+  // an order drawn on `legs` (the run's own stream, never a category's).
+  const legsEligible = split.map(({ ref, count: n }) => {
+    const pool = pools[plannerCategoryOf(ref)];
+    return pool !== undefined && hasLegs(pool) ? n : 0;
+  });
+  const legsParts =
+    legsShare === 0
+      ? split.map(() => 0)
+      : apportionLegs(legsCountOf(legsShare, legsEligible.reduce((sum, n) => sum + n, 0), count), legsEligible, shuffle(makeRng(subSeed(seed, "legs")), split.map((_, i) => i)));
 
   const slots: PlanSlot[] = [];
   let nextIndex = 1;
-  for (const { ref, count: n } of split) {
+  for (const [entry, { ref, count: n }] of split.entries()) {
     const category = plannerCategoryOf(ref);
     const pool = pools[category];
     if (pool === undefined) throw new RangeError(`no pool for category ${category}`);
@@ -420,8 +490,8 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
     const fixRng = makeRng(subSeed(seed, `clean:${category}`));
     // A built-in pool carries its deck of captures and is drawn capture-first (planBuiltIn); a custom pool keeps the planner it always had.
     if (pool.captureDeck !== undefined) {
-      const streams: BuiltInStreams = { rng, poseRng, fixRng, fitRng: makeRng(subSeed(seed, `fit:${category}`)), legRng: makeRng(subSeed(seed, `legwear:${category}`)), levelRng: makeRng(subSeed(seed, `level:${category}`)), angleRng: makeRng(subSeed(seed, `angle:${category}`)), awayRng: makeRng(subSeed(seed, `away:${category}`)) };
-      slots.push(...planBuiltIn(streams, { ...pool, captureDeck: pool.captureDeck }, category, n, nextIndex, excluded, recent, level));
+      const streams: BuiltInStreams = { rng, poseRng, fixRng, fitRng: makeRng(subSeed(seed, `fit:${category}`)), legRng: makeRng(subSeed(seed, `legwear:${category}`)), levelRng: makeRng(subSeed(seed, `level:${category}`)), angleRng: makeRng(subSeed(seed, `angle:${category}`)), awayRng: makeRng(subSeed(seed, `away:${category}`)), legsRng: makeRng(subSeed(seed, `legs:${category}`)) };
+      slots.push(...planBuiltIn(streams, { ...pool, captureDeck: pool.captureDeck }, category, n, nextIndex, excluded, recent, level, legsParts[entry] ?? 0));
     } else slots.push(...planCategory(rng, poseRng, fixRng, pool, category, n, nextIndex, excluded));
     nextIndex += n;
   }

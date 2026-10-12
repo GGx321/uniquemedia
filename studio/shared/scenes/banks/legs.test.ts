@@ -19,7 +19,7 @@ interface Row {
   captures: readonly Capture[];
 }
 
-const TABLE: readonly Row[] = [
+const TABLE: Row[] = [
   { category: "home", place: "her bedroom", text: "stretches her legs along the bed", motion: "she points and flexes her toes slowly", captures: ["pov-legs"] },
   { category: "home", place: "her bed", text: "lies with her bare feet forward", motion: "she wiggles her toes a little", captures: ["pov-legs"] },
   { category: "home", place: "her bed", text: "sits with her socked feet forward", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"] },
