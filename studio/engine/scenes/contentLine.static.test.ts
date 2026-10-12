@@ -61,11 +61,15 @@ describe("the word gate has one home (static)", () => {
     expect(filesWith(/\bsentenceProblems\(/)).toEqual(["engine/scenes/assembler.ts"]);
   });
 
-  test("the sites that gate a text name their level (all four at ordinary until S5.9c)", () => {
+  // S5.9c: the sites read the level of the slot or the scene they check (`contentLevelOf`: a «Смелая» category is bold, whatever its mix level). The one literal "ordinary" left in the
+  // assembler is `sentenceProblems`, the reading the LLM-path callers keep.
+  test("the sites that gate a text read the content level of what they check (S5.9c)", () => {
     for (const site of ["engine/scenes/assembler.ts", "engine/sceneSets/edit.ts", "engine/sceneSets/launchDraw.ts", "engine/sceneSets/toRun.ts", "renderer/engine/mockSceneSets.ts"]) {
       const code = PRODUCTION.find((f) => f.path === site)?.code ?? "";
       const calls = [...code.matchAll(/\bcontentProblems\(([^;\n]*)/g)].map((m) => m[1] ?? "");
-      expect({ site, calls: calls.length > 0, allOrdinary: calls.every((c) => /"ordinary"\)/.test(c)) }).toEqual({ site, calls: true, allOrdinary: true });
+      expect({ site, calls: calls.length > 0, reads: /\bcontentLevelOf\(/.test(code) }).toEqual({ site, calls: true, reads: true });
+      const literal = calls.filter((c) => /"ordinary"\)/.test(c));
+      expect({ site, literal: site === "engine/scenes/assembler.ts" ? literal.length : 0 }).toEqual({ site, literal: site === "engine/scenes/assembler.ts" ? 1 : 0 });
     }
   });
 

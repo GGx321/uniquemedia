@@ -9,6 +9,7 @@ import {
   checkImageChoice,
   LaunchView,
   decodePhotoCursor,
+  boldLevelNeeded,
   legsNeedsBuiltIn,
   pagePhotoList,
   type ApiKeyStatus,
@@ -137,6 +138,7 @@ import { realScheduler, type Scheduler } from "./scheduler";
 const CANDIDATES_PER_JOB = 4;
 /** «Ножки» with no built-in category (S5.8a, I5.29): the engine's free refusal, which the mock answers the same way. */
 const LEGS_REFUSAL = { code: "VALIDATION", sceneReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the request names none" } as const;
+const BOLD_REFUSAL = { code: "VALIDATION", sceneReason: "bold-level-needed", detail: "«Ночнушки и бельё» and «Пляж и бассейн» are drawn at the «Смелая» level only; the request names one at another level" } as const;
 
 /**
  * How long after avatars.cancel is accepted the job actually ends
@@ -2484,9 +2486,11 @@ export class MockEngine implements EngineBridge {
       case "autopilot.estimate":
         // S5.8a: «Ножки» with no built-in category is refused first, for free.
         if (legsNeedsBuiltIn(c.payload.draft)) return this.fail(c, { code: "VALIDATION", launchReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the launch names none" });
+        if (boldLevelNeeded(c.payload.draft)) return this.fail(c, { code: "VALIDATION", launchReason: "bold-level-needed", detail: "«Ночнушки и бельё» and «Пляж и бассейн» are drawn at the «Смелая» level only; the launch names one at another level" });
         return this.autopilotCommand(c, c.payload.draft.avatarIds, () => this.ok(c, { preview: this.autopilot.estimate(c.payload.draft) }));
       case "autopilot.start":
         if (legsNeedsBuiltIn(c.payload.draft)) return this.fail(c, { code: "VALIDATION", launchReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the launch names none" });
+        if (boldLevelNeeded(c.payload.draft)) return this.fail(c, { code: "VALIDATION", launchReason: "bold-level-needed", detail: "«Ночнушки и бельё» and «Пляж и бассейн» are drawn at the «Смелая» level only; the launch names one at another level" });
         return this.autopilotCommand(c, c.payload.draft.avatarIds, () => this.answer(c, this.autopilot.start(c.payload.draft, c.payload.acceptedWorstMicros)));
       case "autopilot.pause":
         return this.autopilotGated(c, () => this.answer(c, this.autopilot.pause(c.payload.launchId)));
@@ -2883,6 +2887,7 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { runs: this.sortedRuns().slice(0, MAX_LISTED_RUNS).map((r) => this.runSummary(r)) });
       case "scenes.estimateCompose": {
         if (legsNeedsBuiltIn(c.payload)) return this.fail(c, LEGS_REFUSAL);
+        if (boldLevelNeeded(c.payload)) return this.fail(c, BOLD_REFUSAL);
         const refusal = this.libraryOpen ? (this.runnableRefusal(c.payload.avatarId) ?? this.categoryRefusal(c.payload.categories)) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, { estimate: this.sceneEstimate(this.sceneSets.composePrice(c.payload.count, c.payload.categories)) });
@@ -2891,6 +2896,7 @@ export class MockEngine implements EngineBridge {
         const { acceptedWorstMicros, ...request } = c.payload;
         // S5.8a: «Ножки» with no built-in category is refused first, for free, before the avatar is claimed.
         if (legsNeedsBuiltIn(request)) return this.fail(c, LEGS_REFUSAL);
+        if (boldLevelNeeded(request)) return this.fail(c, BOLD_REFUSAL);
         const free = request.count === 0;
         // The engine's order: the avatar is claimed first, then (a paid compose) the key and the ledger, the library, the avatar, the categories, the one open set, the price.
         if (this.jobRunningFor(request.avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar" });
@@ -2983,6 +2989,7 @@ export class MockEngine implements EngineBridge {
       }
       case "runs.estimate": {
         if (legsNeedsBuiltIn(c.payload)) return this.fail(c, LEGS_REFUSAL);
+        if (boldLevelNeeded(c.payload)) return this.fail(c, BOLD_REFUSAL);
         // No library open: the engine cannot find the avatar either.
         const refusal = this.libraryOpen ? (this.runnableRefusal(c.payload.avatarId) ?? this.categoryRefusal(c.payload.categories)) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
         if (refusal) return this.fail(c, refusal);
@@ -2991,6 +2998,7 @@ export class MockEngine implements EngineBridge {
       case "runs.start": {
         const { acceptedWorstMicros, ...request } = c.payload;
         if (legsNeedsBuiltIn(request)) return this.fail(c, LEGS_REFUSAL);
+        if (boldLevelNeeded(request)) return this.fail(c, BOLD_REFUSAL);
         // The engine's order: the avatar is claimed first, then the key and the ledger, the avatar itself, and the price.
         if (this.jobRunningFor(request.avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar" });
         // Then, in the engine's own order: the library, the avatar, its master, the age gate (only when the check is on), the face gate, the price.

@@ -3,6 +3,7 @@ import { isCustomCategory } from "../../shared/engine";
 import { BANKS } from "../../shared/scenes/banks";
 import type { BankCategory, Level } from "../../shared/scenes/banks/types";
 import { captureOfShot, posesFor, shotOf, type Capture } from "../../shared/scenes/captures";
+import { atSlotLevel } from "../../shared/scenes/level";
 import { plainSentence } from "../../shared/scenes/plain";
 import { GazeCueTally, momentAllowed, templateSentence, type TemplateSlot } from "../../shared/scenes/template";
 
@@ -20,6 +21,8 @@ export interface BankDraw {
   place: ScenePlace;
   /** «Ножки» (S5.8a): a legs scene. */
   framing?: "legs";
+  /** 5a.3 (S5.9c): the scene is drawn on Seedream, exactly when its moment or its outfit is (the engine's planner adds the bold legwear, which the mock does not deal). */
+  route?: "seedream";
 }
 
 /** What a redraw steers away from: the places and outfits the set already shows. */
@@ -74,18 +77,22 @@ function drawFor(bank: (typeof BANKS)[BankCategory], capture: Capture, k: number
     const pool = fresh.length > 0 ? fresh : elsewhere.length > 0 ? elsewhere : places;
     const chosen = pool[k % pool.length];
     if (chosen === undefined) continue;
-    const flirtyMoments = level === "flirty" ? chosen.moments.filter((moment) => moment.level === "flirty") : [];
-    const choices = flirtyMoments.length > 0 ? flirtyMoments : chosen.moments;
+    // The scene's own level among equals (5a.3): a flirty scene takes a flirty moment, a bold one a bold moment, when the place has one.
+    const ownMoments = level === "ordinary" ? [] : chosen.moments.filter((moment) => moment.level === level);
+    const choices = ownMoments.length > 0 ? ownMoments : chosen.moments;
     const moment = choices[Math.floor(k / pool.length) % choices.length];
     if (moment === undefined) continue;
     // A pinning moment wears only its outfits; a pin-only outfit goes only to a moment that pins it.
-    const worn = moment.outfits !== undefined ? bank.outfits.filter((o) => moment.outfits?.includes(o.text)) : bank.outfits.filter((o) => o.pinOnly !== true);
+    // Never an outfit above the scene's level, its own level preferred (a bank with no outfit level keeps its list whole).
+    const available = moment.outfits !== undefined ? bank.outfits.filter((o) => moment.outfits?.includes(o.text)) : bank.outfits.filter((o) => o.pinOnly !== true);
+    const worn = atSlotLevel(available, (o) => o.level, level);
     const fresher = worn.filter((o) => !(opts.avoid?.outfits.has(o.text) ?? false));
     const outfits = fresher.length > 0 ? fresher : worn;
     const outfit = outfits[k % Math.max(1, outfits.length)];
     if (outfit === undefined) continue;
     const time = chosen.place.times[k % chosen.place.times.length] ?? "midday";
-    return { capture, pose: moment.angle ?? pose, place: { location: chosen.place.name, timeOfDay: time, activity: moment.text, outfit: outfit.text } };
+    const route = moment.route === "seedream" || outfit.route === "seedream" ? ("seedream" as const) : undefined;
+    return { capture, pose: moment.angle ?? pose, place: { location: chosen.place.name, timeOfDay: time, activity: moment.text, outfit: outfit.text }, ...(route === undefined ? {} : { route }) };
   }
   return null;
 }
@@ -95,7 +102,7 @@ function drawFor(bank: (typeof BANKS)[BankCategory], capture: Capture, k: number
  * or a mirror frame with her feet to the glass), and it wears an outfit that shows her legs (the moment's pinned ones first). A redraw passes `avoid`, `leaving` and `activity`
  * (the scene's own moment) so the new scene is another place or moment when the bank has one. Deterministic in `k`.
  */
-export function legsDraw(ref: SceneCategory, k: number, opts: { avoid?: Avoid; leaving?: string; activity?: string } = {}): BankDraw {
+export function legsDraw(ref: SceneCategory, k: number, opts: { avoid?: Avoid; leaving?: string; activity?: string; level?: Level } = {}): BankDraw {
   const bank = BANKS[BANK_OF[ref]];
   const rows = bank.places.flatMap((place) => {
     const moments = place.moments.filter((moment) => moment.legs !== undefined && moment.captures.some((capture) => (shotOf(capture) !== "mirror" || place.mirror === true) && momentAllowed(moment, capture, moment.angle ?? "front", "ordinary", "legs")));
@@ -113,13 +120,15 @@ export function legsDraw(ref: SceneCategory, k: number, opts: { avoid?: Avoid; l
   if (moment === undefined) throw new Error(`the mock found no legs moment for ${ref}`);
   const captures = moment.captures.filter((capture) => shotOf(capture) !== "mirror" || chosen.place.mirror === true);
   const capture = captures[k % captures.length] ?? "pov-legs";
-  const worn = moment.outfits !== undefined ? bank.outfits.filter((o) => moment.outfits?.includes(o.text)) : bank.outfits.filter((o) => o.showsLegs === true && o.pinOnly !== true);
+  const available = moment.outfits !== undefined ? bank.outfits.filter((o) => moment.outfits?.includes(o.text)) : bank.outfits.filter((o) => o.showsLegs === true && o.pinOnly !== true);
+  const worn = atSlotLevel(available, (o) => o.level, opts.level ?? "ordinary");
   const fresher = worn.filter((o) => !(opts.avoid?.outfits.has(o.text) ?? false));
   const outfits = fresher.length > 0 ? fresher : worn;
   const outfit = outfits[k % Math.max(1, outfits.length)];
   if (outfit === undefined) throw new Error(`the mock found no outfit for a legs scene of ${ref}`);
   const time = chosen.place.times[k % chosen.place.times.length] ?? "midday";
-  return { capture, pose: moment.angle ?? "front", framing: "legs", place: { location: chosen.place.name, timeOfDay: time, activity: moment.text, outfit: outfit.text } };
+  const route = moment.route === "seedream" || outfit.route === "seedream" ? ("seedream" as const) : undefined;
+  return { capture, pose: moment.angle ?? "front", framing: "legs", place: { location: chosen.place.name, timeOfDay: time, activity: moment.text, outfit: outfit.text }, ...(route === undefined ? {} : { route }) };
 }
 
 /** What the template needs of a scene to write it. */
@@ -131,8 +140,8 @@ export interface LocalScene {
   pose: ScenePose;
   place: ScenePlace | null;
   removed: boolean;
-  /** «Подача» of the scene (S5.7b); absent = ordinary. */
-  level?: "flirty" | undefined;
+  /** «Подача» of the scene (S5.7b); absent = ordinary. 5a.3: a «Смелая» category's scene may be bold. */
+  level?: "flirty" | "bold" | undefined;
   /** «Ножки» (S5.8a); absent = an ordinary framing. */
   framing?: "legs" | undefined;
 }
@@ -149,7 +158,7 @@ export function slotOf(scene: Pick<LocalScene, "category" | "shot" | "capture" |
     shot: scene.shot,
     pose: scene.pose,
     ...(scene.capture !== undefined && shotOf(scene.capture) === shotOf(captureOfShot(scene.shot)) ? { capture: scene.capture } : {}),
-    ...(scene.level === "flirty" ? { level: "flirty" as const } : {}),
+    ...(scene.level === undefined ? {} : { level: scene.level }),
     ...(scene.framing === "legs" ? { framing: "legs" as const } : {}),
   };
 }
