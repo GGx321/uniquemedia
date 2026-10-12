@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { CategoryPoses, POOL_TEXT_MAX, youthWords } from "../../shared/engine";
 import { BANKS } from "../../shared/scenes/banks";
+import { withoutBoldExemptLook } from "../../shared/scenes/banks/boldRules";
 import { MOMENT_HAIRS, type LegwearSlot, type Moment, type Outfit } from "../../shared/scenes/banks/types";
 import { CAPTURES, shotOf, type Capture } from "../../shared/scenes/captures";
+import { boldContentLevel, contentProblems } from "../../shared/scenes/contentLine";
 import { PHONE_WORDS, SELFIE_WORDS, isOwnerBannedOutfit, withoutExemptLookPhrases } from "../../shared/scenes/words";
 import { isPhoneInHandShot, type Pose } from "./schema";
 import { CATEGORIES, SHOTS, type Category, type Shot } from "./types";
@@ -267,26 +269,32 @@ const BuiltInActivitySchema = z.strictObject({
   mirrorBack: TRUE,
 });
 
-const BuiltInPlaceSchema = z
-  .strictObject({
+/** The rules of a built-in place, the five's and (5a.3) the «Смелая» banks'. */
+function builtInPlaceRules(place: { activities: readonly { text: string; twoHanded: boolean; phone?: true | undefined; messyOk?: true | undefined }[]; details?: readonly string[] | undefined; room?: true | undefined }, ctx: z.RefinementCtx): void {
+  const problem = (message: string, path: string): void => ctx.addIssue({ code: "custom", message, path: [path] });
+  // The shared PoolSchema only needs a free hand; a built-in place needs a free hand that is not on a phone, so a selfie or mirror always has an activity (M3).
+  if (!place.activities.some((a) => !a.twoHanded && !isPhoneActivity(a))) problem("every built-in location needs at least one one-handed activity that is not a phone one", "activities");
+  if (place.activities.some((a) => (a.phone === true) !== PHONE_WORDS.test(a.text))) problem("an activity carries the phone flag exactly when its text names her phone", "activities");
+  // K-3 (5a.2): every built-in place carries 2 or 3 ordinary details; a room's go into its room phrase, the others into the sentence's `with {detail}`.
+  if (place.details === undefined || place.details.length < 2 || place.details.length > 3) problem("a place carries 2 or 3 details", "details");
+  if (place.room !== true && place.activities.some((a) => a.messyOk === true)) problem("only an activity in a room can be messyOk", "activities");
+}
+
+/** A built-in place's shape around the schema of its activities (the five's, or the «Смелая» banks'). */
+function builtInPlaceShape<A extends z.ZodType>(activity: A) {
+  return {
     name: PlaceName,
     times: z.array(NonEmpty).min(1),
-    activities: z.array(BuiltInActivitySchema).min(1),
+    activities: z.array(activity).min(1),
     mirror: TRUE,
     room: TRUE,
     lamp: TRUE,
     details: z.array(BuiltInText).optional(),
     at: PlaceAt,
-  })
-  .superRefine((place, ctx) => {
-    const problem = (message: string, path: string): void => ctx.addIssue({ code: "custom", message, path: [path] });
-    // The shared PoolSchema only needs a free hand; a built-in place needs a free hand that is not on a phone, so a selfie or mirror always has an activity (M3).
-    if (!place.activities.some((a) => !a.twoHanded && !isPhoneActivity(a))) problem("every built-in location needs at least one one-handed activity that is not a phone one", "activities");
-    if (place.activities.some((a) => (a.phone === true) !== PHONE_WORDS.test(a.text))) problem("an activity carries the phone flag exactly when its text names her phone", "activities");
-    // K-3 (5a.2): every built-in place carries 2 or 3 ordinary details; a room's go into its room phrase, the others into the sentence's `with {detail}`.
-    if (place.details === undefined || place.details.length < 2 || place.details.length > 3) problem("a place carries 2 or 3 details", "details");
-    if (place.room !== true && place.activities.some((a) => a.messyOk === true)) problem("only an activity in a room can be messyOk", "activities");
-  });
+  };
+}
+
+const BuiltInPlaceSchema = z.strictObject(builtInPlaceShape(BuiltInActivitySchema)).superRefine(builtInPlaceRules);
 
 const BuiltInOutfitText = OutfitSchema.refine((outfit) => !hasBannedWord(outfit), { message: "outfit text must not use a paper, screen, staging or luxury word" })
   .refine((outfit) => outfit.length <= POOL_TEXT_MAX, { message: `outfit text must be at most ${POOL_TEXT_MAX} characters` })
@@ -302,6 +310,57 @@ export const BuiltInPoolSchema = z
     captureDeck: z.array(z.enum(CAPTURES)).min(1).optional(),
     outfitInfo: z.array(z.strictObject({ text: BuiltInOutfitText, showsLegs: TRUE, pinOnly: TRUE })).min(1).optional(),
     legwear: z.strictObject({ items: z.array(BuiltInOutfitText).min(1), share: z.number().min(0).max(1) }).optional(),
+  })
+  .refine((pool) => !pool.shotDeck.includes("mirror") || pool.locations.some((l) => l.mirror === true), MIRROR_NEEDS_A_PLACE);
+
+// ---------- the «Смелая» pools (5a.3, S5.9b2, plan s5a3 §6.4, H2) ----------
+
+/** A text a «Смелая» bank may hold: the bold content line refuses only youth words, and spares the exempt garment name (answer (b)). */
+const holdsNoYouthWord = (text: string): boolean => contentProblems(text, boldContentLevel()).length === 0;
+const NO_YOUTH_WORD = { message: "pool text must not suggest a minor (the bold content line: youth words, the exempt garment name spared)" };
+
+/** The soft look list with the «Смелая» satin nightwear taken out first (banks/boldRules.ts); «satin» anywhere else stays refused, as K-22 keeps it. */
+const hasBoldBannedWord = (text: string): boolean => hasBannedWord(withoutBoldExemptLook(text));
+
+const BoldText = z
+  .string()
+  .min(1)
+  .refine(holdsNoYouthWord, NO_YOUTH_WORD)
+  .refine((text) => !hasBoldBannedWord(text), { message: "pool text must be an ordinary place of her own life: no paper, screens, staging or luxury words" })
+  .refine((text) => text.length <= POOL_TEXT_MAX, { message: `pool text must be at most ${POOL_TEXT_MAX} characters` });
+
+/** A «Смелая» outfit: plain ASCII, at most the pool bound, no denim shorts or skirts, the soft list minus the satin nightwear, the bold content line in place of the revealing words. */
+const BoldOutfitText = BoldText.regex(/^[\x20-\x7e]+$/, "outfit text must be plain ASCII").refine((outfit) => !isOwnerBannedOutfit(outfit), { message: "no denim shorts and no denim skirts, anywhere (the owner)" });
+
+/** The sentence the template appends for what an item covers: plain ASCII, the bold content line (its full rules are the bank schema's, banks/schema.ts). */
+const Coverage = z.string().min(1).regex(/^[\x20-\x7e]+$/, "a coverage sentence is plain ASCII").refine(holdsNoYouthWord, NO_YOUTH_WORD);
+
+const BOLD_LEVEL = z.enum(["flirty", "bold"]).optional();
+const ROUTE = z.literal("seedream").optional();
+
+const BoldActivitySchema = BuiltInActivitySchema.extend({ text: BoldText, level: BOLD_LEVEL, route: ROUTE, coverage: Coverage.optional(), water: TRUE });
+
+const BoldPlaceSchema = z.strictObject(builtInPlaceShape(BoldActivitySchema)).superRefine(builtInPlaceRules);
+
+/**
+ * A «Смелая» category's pool (`nightwear`, `beach`): the built-in pool with the «Смелая» shapes and the bold word rules above. The five keep BuiltInPoolSchema
+ * byte for byte; `validatePools` picks by category.
+ */
+export const BoldPoolSchema = z
+  .strictObject({
+    locations: z.array(BoldPlaceSchema).min(1),
+    outfits: z.array(BoldOutfitText).min(1),
+    shotDeck: z.array(z.enum(SHOTS)).min(1),
+    poses: CategoryPoses.optional(),
+    captureDeck: z.array(z.enum(CAPTURES)).min(1).optional(),
+    outfitInfo: z.array(z.strictObject({ text: BoldOutfitText, showsLegs: TRUE, pinOnly: TRUE, level: BOLD_LEVEL, route: ROUTE, coverage: Coverage.optional() })).min(1).optional(),
+    legwear: z
+      .strictObject({
+        items: z.array(BoldOutfitText).min(1),
+        share: z.number().min(0).max(1),
+        bold: z.strictObject({ items: z.array(BoldOutfitText).min(1), share: z.number().min(0).max(1), route: z.literal("seedream") }).optional(),
+      })
+      .optional(),
   })
   .refine((pool) => !pool.shotDeck.includes("mirror") || pool.locations.some((l) => l.mirror === true), MIRROR_NEEDS_A_PLACE);
 
