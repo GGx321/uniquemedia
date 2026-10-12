@@ -87,7 +87,7 @@ export class AutopilotCommands {
   }
 
   async estimate(input: LaunchDraftInput): Promise<LaunchPreview> {
-    this.#assertLegsFit(input);
+    this.#assertLegsAndBoldFit(input);
     const library = await this.#d.liveLibrary();
     const planned = await this.#plan(library, this.#withSeed(input));
     const blockers = await this.#launchBlockers(planned);
@@ -120,13 +120,13 @@ export class AutopilotCommands {
    * «Ножки» (S5.8a, I5.29) with no built-in category among the launch's categories, and a «Смелая» category (5a.3, S5.9c, I5.42) at a level other than «Смелая»: refused for free,
    * before the library is read or anything is planned.
    */
-  #assertLegsFit(draft: { categories: readonly string[]; legsShare?: number | undefined; level?: SceneLevel | undefined }): void {
+  #assertLegsAndBoldFit(draft: { categories: readonly string[]; legsShare?: number | undefined; level?: SceneLevel | undefined }): void {
     if (legsNeedsBuiltIn(draft)) throw new EngineFailure({ code: "VALIDATION", launchReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the launch names none" });
     if (boldLevelNeeded(draft)) throw new EngineFailure({ code: "VALIDATION", launchReason: "bold-level-needed", detail: "«Ночнушки и бельё» and «Пляж и бассейн» are drawn at the «Смелая» level only; the launch names one at another level" });
   }
 
   async start(input: { draft: LaunchDraft; acceptedWorstMicros: number }): Promise<LaunchView> {
-    this.#assertLegsFit(input.draft);
+    this.#assertLegsAndBoldFit(input.draft);
     const library = await this.#d.liveLibrary();
     const planned = await this.#plan(library, input.draft);
     const { plan, estimate } = planned;
