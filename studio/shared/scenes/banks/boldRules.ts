@@ -31,18 +31,23 @@ export const OPENS_WITH_ARMS_UP = new RegExp(`${OPEN_SHIRT.source}|\\bcrop(?:ped
 /** An outfit with no shoulder straps: strapless or bandeau, or a bikini whose top is a shirt, a sweatshirt or a tee (or missing). A strap action never meets one (rule strap). */
 export const NO_STRAPS = /\bstrap-?less\b|\bbandeau\b|\bbottoms\b|\bsweatshirts?\b|\bshirts?\b|\btee\b|\btube\b|\boff-shoulder\b|\bhoodies?\b/i;
 
-/** What covers her when she is under it, in it or pulls it up (the sheet she holds to her chest is the bedsheet moment's outfit, so «sheet» counts only as «the sheets» she lies under). */
-const COVER = String.raw`(?:duvet|blankets?|covers|quilts?|comforters?|throws?|plaids?)`;
+/**
+ * What covers her when she is under it, in it or pulls it up (the sheet she holds to her chest is the bedsheet moment's outfit, so «sheet» counts only as «the sheets» she lies
+ * under). Round 3: the cover word is the head of its phrase: a whole word, and not one that another noun follows («a throw pillow», «a quilted jacket», «her plaid shirt»).
+ */
+const COVER = String.raw`(?:duvet|blankets?|covers|quilts?|comforters?|throws?|plaids?)\b(?!\s+(?!(?:up|over|around|closer|higher|across|on|in|to|and|as|while|with|from|a|the|her)\b)[a-z]+)`;
 
 /**
  * S5.R4: a moment under a cover (rule bold-covered; a bold slot never takes one, engine/scenes/fit.ts), in its text or its motion: under, beneath or into a cover («lies curled up
- * under the duvet», «snuggles into the duvet», «dozes under the sheets»), with a blanket or wrapped in one («curls up with a blanket»), or pulling one up or closer («she pulls the
- * covers up»): what she wears does not show. On a blanket or a duvet is no cover (round 2: «sits on a picnic blanket»), and the sheet she holds to her chest is the outfit itself.
+ * under the duvet», «snuggles into the duvet», «dozes under the sheets»), with a blanket or wrapped in one («curls up with a blanket»), pulling one up or closer («she pulls the
+ * covers up»), or (round 3) one laid over her («the blanket over her legs»): what she wears does not show. On a blanket or a duvet is no cover (round 2: «sits on a picnic blanket»),
+ * and the sheet she holds to her chest is the outfit itself.
  */
 export const COVERS_HER = new RegExp(
-  String.raw`\b(?:under|beneath|into|in)\s+(?:the|a|her)\s+(?:[a-z]+\s+)?(?:${COVER}|sheets)\b` +
+  String.raw`\b(?:under|beneath|into|in)\s+(?:the|a|her)\s+(?:[a-z]+\s+)?(?:${COVER}|sheets\b)` +
     String.raw`|\b(?:with|wrapped in)\s+(?:a|the|her)\s+(?:[a-z]+\s+)?${COVER}` +
-    String.raw`|\bpull(?:s|ing)?\s+(?:the|a|her)\s+${COVER}(?:\s+[a-z]+){0,2}?\s+(?:up|over|closer|around|higher)\b`,
+    String.raw`|\bpull(?:s|ing)?\s+(?:the|a|her)\s+${COVER}(?:\s+[a-z]+){0,2}?\s+(?:up|over|closer|around|higher)\b` +
+    String.raw`|\b(?:the|a|her)\s+(?:[a-z]+\s+)?${COVER}\s+(?:over|across|around)\s+her\b`,
   "i",
 );
 

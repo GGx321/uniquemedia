@@ -118,6 +118,8 @@ describe("COVERS_HER: a moment under a cover", () => {
     "snuggles into the duvet",
     "sits wrapped in a blanket",
     "dozes under the sheets",
+    // S5.R4 round 3: a cover laid over her.
+    "sits back, the blanket over her legs",
   ])("«%s» is under a cover", (text) => {
     expect(COVERS_HER.test(text)).toBe(true);
   });
@@ -129,6 +131,10 @@ describe("COVERS_HER: a moment under a cover", () => {
     "lies holding the sheet to her chest",
     "she pulls the sheet a little higher",
     "sits with her legs tucked under her",
+    // S5.R4 round 3: a cover word that is not the head of its phrase covers nothing.
+    "sits with a throw pillow",
+    "poses with a quilted jacket",
+    "stands in her plaid shirt",
   ])("«%s» is not", (text) => {
     expect(COVERS_HER.test(text)).toBe(false);
   });
