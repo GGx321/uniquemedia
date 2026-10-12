@@ -82,7 +82,7 @@ function sceneViews(set: StoredSceneSet, states: ReadonlyMap<number, ChunkState>
       categoryName: isCustomCategory(slot.category) ? (names.get(slot.category) ?? null) : null,
       shot: slot.shot,
       pose: slot.pose,
-      ...(slot.level === "flirty" ? { level: "flirty" as const } : {}),
+      ...(slot.level === "flirty" || slot.level === "bold" ? { level: slot.level } : {}),
       ...(slot.route === undefined ? {} : { route: slot.route }),
       ...(slot.capture === undefined ? {} : { capture: slot.capture }),
       ...(slot.framing === "legs" ? { framing: "legs" as const } : {}),

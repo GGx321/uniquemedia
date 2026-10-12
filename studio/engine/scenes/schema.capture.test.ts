@@ -57,8 +57,19 @@ describe("a plan slot's capture and legwear (additive, I5.27)", () => {
     expect(PlanSlotSchema.parse({ ...baseSlot(), level: "ordinary" }).level).toBe("ordinary");
   });
 
-  test("a slot level of bold is refused", () => {
-    expect(PlanSlotSchema.safeParse({ ...baseSlot(), level: "bold" }).success).toBe(false);
+  // 5a.3 (S5.9c, plan s5a3 «Changes in r3»: widen `PlanSlot.level` to include bold): the bold draw gives a «Смелая» category's slots the bold level, and only those.
+  test.each(["nightwear", "beach"])("a bold slot of «%s» is kept as written", (category) => {
+    expect(PlanSlotSchema.parse({ ...baseSlot(), category, level: "bold" }).level).toBe("bold");
+  });
+
+  test.each(["home", "travel", "photoshoot", "glamour", "fitness", "cat-paris-cafes"])("a slot level of bold on «%s» is refused: the five draw «Смелая» as «Кокетливая»", (category) => {
+    const result = PlanSlotSchema.safeParse({ ...baseSlot(), category, level: "bold" });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((i) => i.path.join("."))).toContain("level");
+  });
+
+  test("a slot level other than ordinary, flirty or bold is refused", () => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), category: "nightwear", level: "daring" }).success).toBe(false);
   });
 
   // 5a.3 (S5.9a): the route rides on the slot as an optional `route`. S5.9b2 (plan s5a3 §11): only on a «Смелая» category's slot, the one kind the bold route draws.

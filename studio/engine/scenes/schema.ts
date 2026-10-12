@@ -85,9 +85,8 @@ export const PlanSlotSchema = z
     capture: z.enum(CAPTURES).optional(),
     legwear: PoolText.optional(),
     // Additive (S5.7a): «Подача» of the slot. Absent reads as ordinary. The planner does not set it until S5.7b draws the mix.
-    // 5a.3 (S5.9a): a slot is ordinary or flirty until S5.9c teaches the template, the render and the planner a bold slot (`SceneLevel` has `bold` for requests and sets; the five ordinary
-    // built-ins under `bold` plan as flirty, so no slot is ever bold here). A stored slot that says `bold` is refused rather than drawn as an ordinary one.
-    level: SceneLevel.exclude(["bold"]).optional(),
+    // 5a.3 (S5.9c): a slot may be bold, and only a «Смелая» category's slot is (the refine below): the five ordinary built-ins under `bold` plan as flirty, so none of their slots is bold.
+    level: SceneLevel.optional(),
     // Additive (S5.8a): «Ножки», a slot whose legs and feet fill most of the frame. Absent reads as an ordinary framing. It rides with a capture the legs banks deal.
     framing: z.literal("legs").optional(),
     // Additive (5a.3, S5.9a): the slot is drawn on the Seedream route. Absent reads as the owner's image model. Only a «Смелая» category's slot carries it (S5.9b2,
@@ -99,6 +98,12 @@ export const PlanSlotSchema = z
   .refine((slot) => slot.route === undefined || isBoldCategory(slot.category), {
     message: "only a «Смелая» category's slot is drawn on the Seedream route",
     path: ["route"],
+  })
+  // 5a.3 (S5.9c, I5.36): a bold slot is a «Смелая» category's; the five and the custom categories under «Смелая» draw as «Кокетливая» or stay ordinary, so a bold level on their slot is a hand-edited or
+  // a broken plan, refused rather than drawn.
+  .refine((slot) => slot.level !== "bold" || isBoldCategory(slot.category), {
+    message: "only a «Смелая» category's slot is bold",
+    path: ["level"],
   })
   .refine((slot) => slot.capture === undefined || shotOf(slot.capture) === shotOf(captureOfShot(slot.shot)), {
     message: "a capture rides on the shot the slot is stored with",

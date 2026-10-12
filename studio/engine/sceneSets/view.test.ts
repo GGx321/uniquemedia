@@ -93,6 +93,16 @@ describe("poses, level and capture", () => {
     expect(view.scenes[0]?.level).toBe("flirty");
     expect("level" in (view.scenes[1] ?? {})).toBe(false);
   });
+
+  // 5a.3 (S5.9c): the scene card's «смело» badge reads the scene's own level.
+  test("a scene shows level bold when its slot is bold, and a flirty one still shows flirty", () => {
+    const set = stored();
+    const [first, second, ...rest] = set.scenes;
+    if (first?.origin !== "planned" || second?.origin !== "planned") throw new Error("the sample plans scenes");
+    const view = viewOf({ ...set, scenes: [{ ...first, slot: { ...first.slot, category: "nightwear", level: "bold" } }, { ...second, slot: { ...second.slot, level: "flirty" } }, ...rest] } as PlannedSceneSet);
+    expect(view.scenes[0]?.level).toBe("bold");
+    expect(view.scenes[1]?.level).toBe("flirty");
+  });
 });
 
 describe("status", () => {
