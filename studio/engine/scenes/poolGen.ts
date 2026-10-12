@@ -81,7 +81,7 @@ export const POOL_EXAMPLE_ANSWER = JSON.stringify({
       times: ["morning", "midday"],
       activities: [
         { text: "cooking pancakes", twoHanded: true },
-        { text: "holding a ceramic coffee mug", twoHanded: false },
+        { text: "sipping coffee from a mug", twoHanded: false },
         { text: "slicing fruit on a board", twoHanded: true },
       ],
       mirror: false,
@@ -149,6 +149,7 @@ function systemPrompt(): string {
     "- No person's name, no brand and no readable sign. She is a grown adult woman: never a word that suggests she or anyone else is young.",
     "- Places are ordinary places she would really be in; no paper, books or screens other than her phone; never a photographer or a studio.",
     "- Every place needs at least one free-hand activity that does not use her phone.",
+    '- An activity is something she does, never only holding a thing ("holding a water glass"); what she holds is hers and in use ("holding her coffee").',
     "- Never name a mirror in a place's name; mark it with \"mirror\": true instead.",
     "- Outfits are everyday: no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings, slip dress or robe.",
     "- No two places, outfits or activities of one place alike.",
@@ -205,7 +206,7 @@ const REASON: Record<PoolProblem, string> = {
   "not-json": "it was not the JSON object asked for",
   empty: "it was empty",
   "bad-label": 'its "label" was not 1 to 24 plain ASCII characters without a quote or a backslash, or it suggested a young person',
-  "too-few-places": `fewer than ${POOL_PLACES_MIN} of its places were usable (a place needs a plain name that does not say mirror, 1 to ${PLACE_TIMES_MAX} times, 2 to ${PLACE_ACTIVITIES_MAX} activities and one free-hand activity that does not use her phone) ${LENGTH_NOTE}`,
+  "too-few-places": `fewer than ${POOL_PLACES_MIN} of its places were usable (a place needs a plain name that does not say mirror, 1 to ${PLACE_TIMES_MAX} times, 2 to ${PLACE_ACTIVITIES_MAX} activities, none only holding a thing, and one free-hand activity that does not use her phone) ${LENGTH_NOTE}`,
   "too-few-outfits": `fewer than ${POOL_OUTFITS_MIN} of its outfits were usable ${LENGTH_NOTE}`,
   "bad-shot-deck": `its "shotDeck" was not exactly five shots from ${POOL_SHOTS.join(", ")}`,
   "mirror-without-place": 'its "shotDeck" had a mirror shot but no place had "mirror": true',
@@ -279,6 +280,23 @@ interface Collector {
   words: string[];
 }
 
+/** An activity that holds or carries something, after an optional body position: what it holds. */
+const HOLDS = /^(?:(?:on her (?:stomach|back|side)|sitting|standing|lying(?: down)?),\s+)?(?:holding|carrying|clutching|gripping|cradling)\s+(.+)$/i;
+/** What makes holding a thing purposeful: it is hers (in use), or the activity says what for. */
+const OWN_OR_FOR = /^(?:her|his)\b|\b(?:she|she's|while|to|for|as|against|so|that|which|up|open|over her|in the rain)\b/i;
+/** Holding a position is an exercise, not a thing in her hand («holding a plank»). */
+const HELD_POSITION = /\b(?:plank|pose|stretch|squat|position|balance|breath)\b/i;
+
+/**
+ * C3′ (the owner on his own «В домашнем»: «holding a water glass», «holding a book bag» — «зачем?»): an activity is something she does. One that only holds or
+ * carries a thing and says nothing more is dropped; one that holds her own thing in use («holding her coffee») or says what for («holding a book she's reading»)
+ * stays, and so does holding a position («holding a plank»).
+ */
+export function isPropOnlyActivity(text: string): boolean {
+  const held = HOLDS.exec(text.trim())?.[1];
+  return held !== undefined && !OWN_OR_FOR.test(held) && !HELD_POSITION.test(held);
+}
+
 /** Whether `text` is a usable pool text; a refusal because of a word is noted under our own name for it. */
 function usableText(text: unknown, collector: Collector, revealing: boolean): text is string {
   if (!PoolText.safeParse(text).success) return false;
@@ -331,7 +349,7 @@ function readPlace(raw: unknown, collector: Collector): { place: ReadPlace; drop
   const activities = Array.isArray(raw.activities) ? raw.activities : [];
   const goodActivities: { text: string; twoHanded: boolean }[] = [];
   for (const activity of activities) {
-    if (!isRecord(activity) || typeof activity.twoHanded !== "boolean" || !usableText(activity.text, collector, false)) {
+    if (!isRecord(activity) || typeof activity.twoHanded !== "boolean" || !usableText(activity.text, collector, false) || isPropOnlyActivity(activity.text)) {
       inner.dropped += 1;
       continue;
     }

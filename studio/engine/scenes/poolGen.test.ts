@@ -12,6 +12,7 @@ import {
   poolCall,
   poolMessages,
   poolOf,
+  isPropOnlyActivity,
   readPoolAnswer,
   styleOfDeck,
   type PoolProblem,
@@ -260,6 +261,34 @@ describe("readPoolAnswer: salvage drops the items that break the pool rules and 
     const again = okOf(answer({ locations: [...(answer().locations as Json[]), twice] }));
     expect(again.pool.locations[5]?.times).toEqual(["morning"]);
     expect(again.pool.locations[5]?.activities.map((a) => a.text)).toEqual(["reading", "waving"]);
+  });
+
+  // C3′ (the owner on his own «В домашнем»: «holding a water glass», «holding a book bag» — «зачем?»): an activity is something she does, never a thing in her hand
+  // for no reason. One that only holds or carries a thing is dropped from its place; one that holds her own thing in use, or says what for, stays.
+  test.each(["holding a water glass", "holding a book bag", "carrying a tote bag", "holding a ceramic coffee mug", "clutching a small purse", "on her stomach, holding a pillow", "sitting, holding a cushion", "carrying shopping bags"])(
+    "an activity that only holds a thing, «%s», is dropped from its place; the place stays",
+    (text) => {
+      const locations = (answer().locations as Json[]).map((l, i) => (i === 0 ? { ...l, activities: [...(l.activities as Json[]), { text, twoHanded: false }] } : l));
+      const result = okOf(answer({ locations }));
+      expect(result.pool.locations[0]?.activities.map((a) => a.text)).toEqual(["reading a menu", "stirring a cappuccino"]);
+      expect(result.dropped).toBe(1);
+    },
+  );
+
+  test.each(["holding her coffee", "holding a book she's reading", "holding an umbrella in the rain", "carrying her shopping bags", "holding a plank", "sipping coffee from a mug", "holding the door open"])(
+    "a purposeful one, «%s», stays",
+    (text) => {
+      const locations = (answer().locations as Json[]).map((l, i) => (i === 0 ? { ...l, activities: [...(l.activities as Json[]), { text, twoHanded: false }] } : l));
+      const result = okOf(answer({ locations }));
+      expect(result.pool.locations[0]?.activities.map((a) => a.text)).toContain(text);
+      expect(result.dropped).toBe(0);
+    },
+  );
+
+  test("a place left with one activity once its props are dropped is dropped, as any place with too few", () => {
+    const props = place("a sixth place", { activities: [{ text: "reading a menu", twoHanded: false }, { text: "holding a water glass", twoHanded: false }] });
+    const result = okOf(answer({ locations: [...(answer().locations as Json[]), props] }));
+    expect(result.pool.locations.map((l) => l.name)).toEqual(PLACES);
   });
 
   test("items past the pool's largest size are ignored", () => {
@@ -573,6 +602,17 @@ describe("poolMessages", () => {
   test("S5.R1 M1: the prompt asks for a free-hand activity that does not use her phone in every place, and the retry reason says so", () => {
     expect(poolMessages("x")[0]?.content).toContain("Every place needs at least one free-hand activity that does not use her phone.");
     expect(poolMessages("x", { problems: ["too-few-places"], words: [] })[1]?.content).toContain("one free-hand activity that does not use her phone");
+  });
+
+  test("C3′: the prompt asks for activities she does, never only holding or carrying a thing, and the too-few-places retry reason says so", () => {
+    const system = poolMessages("x")[0]?.content ?? "";
+    expect(system).toContain('- An activity is something she does, never only holding a thing ("holding a water glass"); what she holds is hers and in use ("holding her coffee").');
+    expect(poolMessages("x", { problems: ["too-few-places"], words: [] })[1]?.content).toContain("none only holding a thing");
+  });
+
+  test("C3′: the example teaches no activity that only holds a thing", () => {
+    const example: { locations: { activities: { text: string }[] }[] } = JSON.parse(POOL_EXAMPLE_ANSWER);
+    for (const place of example.locations) for (const activity of place.activities) expect(isPropOnlyActivity(activity.text), activity.text).toBe(false);
   });
 
   test("S5.R1: the too-few-places retry reason tells that a place name must not say mirror, so the retry can fix the places that were dropped for it", () => {

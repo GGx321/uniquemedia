@@ -21,7 +21,8 @@ const book = PriceBook.fallback();
  * and the real prompt measured on the owner's canary was about 1,250 tokens, so a margin of 2,000 over the byte count is still far from the edge.
  * As built (CS.8a fix round 1) the worst floor (500 CJK chars, the worst feedback) is 7,226 tokens against the 10,000 ceiling: 2,774 of headroom
  * (the angles and the position rule took 551 tokens in CS.8a, the short forms and the length note in the retry another 233). A further line needs the
- * prompt trimmed or the ceiling re-priced once the headroom nears this pin.
+ * prompt trimmed or the ceiling re-priced once the headroom nears this pin. C3′: the rule against an activity that only holds a thing brings the worst floor
+ * to 7,927, 73 under this pin: the next line needs the prompt trimmed first.
  */
 const MARGIN_TOKENS = 2_000;
 
