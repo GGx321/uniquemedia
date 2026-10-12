@@ -27,8 +27,8 @@ const PLANNER_LEVELS: readonly PlannerLevel[] = ["ordinary", "flirty", "bold"];
 const SHARES = [0, 15, 30] as const;
 const SEEDS = Array.from({ length: 50 }, (_, i) => i + 1);
 const N = 100;
-/** The slack on a moment's fair share within its place (see the repetition test below): the measured worst excess over the fair share is 1 in «Ночнушки и бельё» and 2 on the beach, at every level. */
-const FAIR_SLACK = 2;
+/** The slack on a moment's fair share within its place (see the repetition test below): the measured worst excess over the fair share is 1 in «Ночнушки и бельё» at every level and, on the beach, 3 at «Кокетливая» and 2 at the other levels. */
+const FAIR_SLACK = 3;
 
 interface Frame {
   slot: PlanSlot;
@@ -169,28 +169,33 @@ describe.each([...BOLD_CATEGORIES])("%s: the real planner's plans (I5.24, I5.37)
   type Kind = "plain" | "away" | "legs";
   const kindOfMoment = (m: Moment): Kind => (m.legs !== undefined ? "legs" : m.angle === "profile" || m.angle === "back" ? "away" : "plain");
   test.each([...PLANNER_LEVELS])("at %s: no moment is drawn more than its place's fair share + the slack, per kind of moment", (level) => {
-    // A flirty or bold slot never turns its back to the camera while the place has another moment that fits (planner `fits`), so a moment seen from behind is not on offer to it.
-    const offered = drawableMoments(category, level).filter((d) => level === "ordinary" || d.moment.angle !== "back");
+    // What the plan's slots can really take: the moments of the plan's level, a moment seen from behind included, because the ordinary slots of the mix (40 % of «Кокетливая», 20 % of
+    // «Смелая») take it, even though a flirty or bold slot never turns its back while the place has another moment that fits (planner `fits`). The frames of all the slots are counted
+    // together; the slack below covers the raised slots' missing one.
+    const offered = drawableMoments(category, level);
     const offeredAt = (place: string, kind: Kind): number => offered.filter((d) => d.place === place && kindOfMoment(d.moment) === kind).length;
     /** ⌈frames of the kind on the place / moments of the kind it offers⌉ + FAIR_SLACK. */
     const fairShareOf = (framesOfKind: number, place: string, kind: Kind): number => Math.ceil(framesOfKind / Math.max(offeredAt(place, kind), 1)) + FAIR_SLACK;
     const overdrawn: string[] = [];
+    let worstExcess = 0;
     for (const share of SHARES) {
       for (const slots of plansOf(category, level, share)) {
         const frames = new Map<string, number>();
         const drawn = new Map<string, number>();
         for (const f of slots) {
-          const kind = kindOfMoment(f.moment);
-          frames.set(`${f.slot.location}|${kind}`, (frames.get(`${f.slot.location}|${kind}`) ?? 0) + 1);
-          drawn.set(`${f.slot.location}|${kind}|${f.slot.activity}`, (drawn.get(`${f.slot.location}|${kind}|${f.slot.activity}`) ?? 0) + 1);
+          const group = `${f.slot.location}|${kindOfMoment(f.moment)}`;
+          frames.set(group, (frames.get(group) ?? 0) + 1);
+          drawn.set(`${group}|${f.slot.activity}`, (drawn.get(`${group}|${f.slot.activity}`) ?? 0) + 1);
         }
         for (const [key, count] of drawn) {
           const [place, kind, activity] = key.split("|") as [string, Kind, string];
           const bound = fairShareOf(frames.get(`${place}|${kind}`) ?? 0, place, kind);
+          worstExcess = Math.max(worstExcess, count - (bound - FAIR_SLACK));
           if (count > bound) overdrawn.push(`${category} ${level} share ${share}: ${place}, ${kind} «${activity}» ${count} > ${bound}`);
         }
       }
     }
+    if (process.env.SWEEP_REPORT === "1") console.log(`worst excess ${category} ${level}: ${worstExcess}`);
     expect(overdrawn.slice(0, 5)).toEqual([]);
   });
 
@@ -276,6 +281,24 @@ describe("«Ночнушки и бельё»: the owner's rules on the real plan
 
 describe("«Пляж и бассейн»: the owner's rules on the real planner's plans", () => {
   const all = PLANNER_LEVELS.flatMap((level) => allFrames("beach", level));
+
+  // S5.9c round 3: the per-place fair share cannot see a place that has ONE moment of a kind (⌈f / 1⌉ + slack ≥ f always), which is how the away quota fell on the rocks' one profile
+  // moment (10 of 100 frames) unnoticed. The check is category-wide: the away frames of a plan go round the bank's places, each place has a profile moment, so no away moment draws
+  // more than ⌈away frames / places⌉ + 1. Removing the profile moments of four places makes it fail (measured on a scratch copy of the bank).
+  test.each(["flirty", "bold"] as const)("at %s: no away moment draws more than ⌈away frames / places⌉ + 1, so the away frames go round the places, not one moment", (level) => {
+    const places = BANKS.beach.places.length;
+    const overdrawn: string[] = [];
+    for (const share of SHARES) {
+      for (const slots of plansOf("beach", level, share)) {
+        const away = slots.filter((f) => f.moment.angle === "profile" || f.moment.angle === "back");
+        const bound = Math.ceil(away.length / places) + 1;
+        const drawn = new Map<string, number>();
+        for (const f of away) drawn.set(`${f.slot.location}|${f.slot.activity}`, (drawn.get(`${f.slot.location}|${f.slot.activity}`) ?? 0) + 1);
+        for (const [key, count] of drawn) if (count > bound) overdrawn.push(`${level} share ${share}: «${key}» ${count} > ${bound} of ${away.length} away frames`);
+      }
+    }
+    expect(overdrawn.slice(0, 5)).toEqual([]);
+  });
 
   test("she mostly asks someone: half the frames are a friend's, and none is a mirror, prone or over-the-shoulder frame", () => {
     for (const level of PLANNER_LEVELS) {
