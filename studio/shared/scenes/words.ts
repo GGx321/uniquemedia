@@ -84,6 +84,9 @@ export const FEET_UP_WORDS = /\b(?:feet|legs|foot)\s+(?:up|raised|in the air)\b|
  */
 export const AWAY_ACTION_WORDS = /\b(?:hands?|arms?|hair|earrings?|straps?|railing|stretch\w*|hugging|bent|turns to look)\b/i;
 
+/** Review (C3′ round 2): walking or jogging away from the camera is the R2#01 frame again, whatever her hand holds on the way: no away moment opens with it. */
+export const WALKS_AWAY_WORDS = /^(?:walks|jogs|runs|strolls|wanders|heads)\s+(?:away|off)\b/i;
+
 /** C3′: a moment that glances or looks back over her shoulder: her face turns back toward the camera, so it is never a frame seen from behind. */
 export const GLANCE_BACK_WORDS = /\b(?:look(?:s|ing)?|glanc(?:e|es|ing)|peek(?:s|ing)?)\s+(?:back\b|over\s+her\s+shoulder\b)/i;
 

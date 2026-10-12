@@ -80,7 +80,7 @@ export const PHOTOSHOOT: CategoryBank = {
         { text: "looks back over her shoulder", motion: "she turns her head a little more", captures: ["friend"], twoHanded: false, angle: "three-quarter", gaze: "own" },
         { text: "waits at the crossing", motion: "she shifts her weight a little", captures: ["candid", "friend", "selfie"], twoHanded: false },
         { text: "leans against a shop window", motion: "she shifts against the glass a bit", captures: ["friend", "timer"], twoHanded: false, object: true },
-        { text: "walks away, adjusting her strap", motion: "she tugs the strap a little", captures: ["friend", "candid"], twoHanded: false, angle: "back" },
+        { text: "stands, one hand on her hip", motion: "she shifts her weight a little", captures: ["friend", "candid"], twoHanded: false, angle: "back" },
       ],
     },
   ],

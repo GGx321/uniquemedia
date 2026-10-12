@@ -28,6 +28,7 @@ import {
   SELFIE_WORDS,
   unfabricBottomsIn,
   VIEWER_GAZE,
+  WALKS_AWAY_WORDS,
   YOUTH_PROPS,
 } from "../words";
 import { MOMENT_HAIRS, type BankCategory, type Moment } from "./types";
@@ -198,8 +199,9 @@ function checkMoment(add: Add, where: string, moment: Moment, place: { room?: tr
   if ((moment.expression === true) !== EXPRESSION_WORDS.test(text)) add(BANK_RULE.momentExpression, where, "carries the expression tag exactly when it shows her expression (it then takes no cue)");
   if (moment.angle === "back" && moment.gaze === "viewer") add(BANK_RULE.backViewer, where, "a moment seen from behind cannot look at the viewer");
   // C3′ (the owner: «просто стоит спиной без какой-либо позы»): a frame from behind or in profile shows what she is doing.
-  if ((moment.angle === "back" || moment.angle === "profile") && !AWAY_ACTION_WORDS.test(text)) {
-    add(BANK_RULE.awayAction, where, "a moment seen from behind or in profile names what she is doing: her hands, arms or hair, a strap or an earring, a stretch, a railing, her knees or legs, a turn to look");
+  // Review (C3′ round 2): and never walks away from the camera, which is the R2#01 frame again whatever her hand holds on the way.
+  if ((moment.angle === "back" || moment.angle === "profile") && (!AWAY_ACTION_WORDS.test(text) || WALKS_AWAY_WORDS.test(text))) {
+    add(BANK_RULE.awayAction, where, "a moment seen from behind or in profile names what she is doing (her hands, arms or hair, a strap or an earring, a stretch, a railing, her knees or legs, a turn to look), never walking away");
   }
   if (GLANCE_BACK_WORDS.test(text) && moment.angle !== "three-quarter") add(BANK_RULE.backGlance, where, "a glance back over her shoulder turns her face to the camera: a three-quarter moment, never from behind or in profile");
   if (moment.messyOk === true && place.room !== true) add(BANK_RULE.messyOk, where, "only a room's moment may be messy");

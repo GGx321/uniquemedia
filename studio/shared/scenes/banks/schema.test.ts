@@ -34,7 +34,7 @@ const STREET: BankPlace = {
     { text: "holds a takeaway coffee", motion: "she lifts the cup a little", captures: ["friend", "selfie", "candid"], twoHanded: false, outdoor: true },
     { text: "walks past old stone houses", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, outdoor: true },
     { text: "eats a gelato from a cone", motion: "she takes a small bite", captures: ["friend", "selfie"], twoHanded: false, outdoor: true },
-    { text: "walks away, a hand in her hair", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, angle: "back", outdoor: true, hair: "own" },
+    { text: "waits, a hand in her hair", motion: "she runs a hand through her hair slowly", captures: ["friend", "candid"], twoHanded: false, angle: "back", outdoor: true, hair: "own" },
   ],
 };
 
@@ -122,6 +122,10 @@ describe("a category bank", () => {
     ["a moment seen from behind that only sits there (R5#08)", { ...plain, text: "sits facing the window", captures: ["timer"], angle: "back" }, BANK_RULE.awayAction],
     ["a moment seen from behind that only walks away (R2#01)", { ...plain, text: "walks away down the pavement", captures: ["friend"], angle: "back" }, BANK_RULE.awayAction],
     ["a moment in profile that only stands there", { ...plain, text: "stands in profile by the door", captures: ["friend"], angle: "profile" }, BANK_RULE.awayAction],
+    // Review (C3′ round 2): walking away from the camera is still «просто спиной», whatever her hand holds on the way.
+    ["a moment from behind that walks away with a clutch in her hand", { ...plain, text: "walks away, clutch in one hand", captures: ["friend"], angle: "back" }, BANK_RULE.awayAction],
+    ["a moment from behind that walks away adjusting a strap", { ...plain, text: "walks away, adjusting her strap", captures: ["friend"], angle: "back" }, BANK_RULE.awayAction],
+    ["a moment from behind that jogs off, a hand in her hair", { ...plain, text: "jogs off, a hand in her hair", captures: ["friend"], angle: "back", hair: "own" }, BANK_RULE.awayAction],
     // Her face turns back toward the camera: never a frame from behind, whose pose phrase says her face is not visible.
     ["a moment that glances back over her shoulder, seen from behind", { ...plain, text: "walks off, a hand in her hair, glancing back", captures: ["friend"], angle: "back", hair: "own" }, BANK_RULE.backGlance],
     ["a moment that looks over her shoulder, in profile", { ...plain, text: "stretches, looking over her shoulder", captures: ["friend"], angle: "profile" }, BANK_RULE.backGlance],
@@ -131,7 +135,7 @@ describe("a category bank", () => {
     const away: Moment[] = [
       { ...plain, text: "stretches her arms up at the window", captures: ["timer"], angle: "back" },
       { ...plain, text: "leans on the railing, side-on", captures: ["friend"], angle: "profile" },
-      { ...plain, text: "walks away, fixing her earring", captures: ["friend"], angle: "back" },
+      { ...plain, text: "stands, one hand on her hip", captures: ["friend"], angle: "back" },
       { ...plain, text: "walks off, glancing back", captures: ["friend"], angle: "three-quarter" },
     ];
     expect(categoryBankProblems({ ...BANK, places: [{ ...ROOM, moments: [...MOMENTS, ...away] }, STREET] }, "home")).toEqual([]);

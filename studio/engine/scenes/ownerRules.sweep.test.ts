@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { youthWords, type AvatarDescriptor } from "../../shared/engine";
-import { AWAY_ACTION_WORDS, DRESS_LENGTH, DRESS_OR_SKIRT, GLANCE_BACK_WORDS, isOwnerBannedOutfit, LEGS_UNSUITED_OUTFITS, unfabricBottomsIn, YOUTH_PROPS } from "../../shared/scenes/words";
+import { AWAY_ACTION_WORDS, DRESS_LENGTH, DRESS_OR_SKIRT, GLANCE_BACK_WORDS, isOwnerBannedOutfit, LEGS_UNSUITED_OUTFITS, unfabricBottomsIn, WALKS_AWAY_WORDS, YOUTH_PROPS } from "../../shared/scenes/words";
 import { BANKS, CUES, GAZE, HAIRSTYLES } from "../../shared/scenes/banks";
 import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "../../shared/scenes/captures";
 import { plainSentence } from "../../shared/scenes/plain";
@@ -561,6 +561,11 @@ describe("C3′: a frame from behind or in profile shows what she is doing", () 
 
   test("every away frame's moment names what she is doing: her hands, arms or hair, a strap or an earring, a stretch, a railing, her knees or legs, a turn to look", () => {
     expect(offenders(away, (f) => !AWAY_ACTION_WORDS.test(f.slot.activity))).toEqual(NONE);
+  });
+
+  // Review (C3′ round 2): «walks away, clutch in one hand» passed on «hand» alone, yet walking away from the camera is the R2#01 frame again.
+  test("no away frame walks away from the camera, whatever her hand holds on the way", () => {
+    expect(offenders(away, (f) => WALKS_AWAY_WORDS.test(f.slot.activity))).toEqual(NONE);
   });
 
   // The probe (c3fix 4b): glancing back over her shoulder, her face shows at three-quarter even under «Photographed from behind, her face not visible».
