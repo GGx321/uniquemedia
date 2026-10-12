@@ -144,6 +144,7 @@ import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, reques
 import { acceptedRemainingProblems, launchIsActive, ledgerProblems, midRenderProblems, oneSetOneRunProblems, photoAttemptProblems, postsByModel, quietRestartProblems, readLedger, restartNoticeProblems, restartPauseProblems, reviewRowOf, videosOnDiskProblems } from "./autopilotSmoke";
 import { ideaWriteProblems, templateComposeProblems, type WriteFacts } from "./templateSmoke";
 import { LLM_ONLY_CATEGORY_POOL } from "../engine/scenes/testing/llmOnlyFixture";
+import { BOLD_MODEL, boldRequestProblems, failedReasonsOf, ownerRequestProblems, type SentImageRequest } from "./boldSmoke";
 import { electronBinary } from "./electronBinary";
 import { failureDetail } from "./failureDetail";
 import { textAssetPackageProblems, textRasteriserOutputProblems } from "./textSmoke";
@@ -3950,6 +3951,127 @@ async function runAutopilotScenario(target: Target): Promise<void> {
   }
 }
 
+// ---------- the «Смелая» route scenario (5a.3, S5.9f) ----------
+
+const BOLD_PHOTOS = 10;
+const BOLD_ATTEMPT_MICROS = 93_000;
+
+/** A recorded image request as `boldSmoke.ts` reads it. */
+function sentImageOf(request: MockRequest): SentImageRequest {
+  const body = typeof request.body === "object" && request.body !== null && !Array.isArray(request.body) ? Object.fromEntries(Object.entries(request.body)) : {};
+  return { model: request.model, resolution: request.resolution, body };
+}
+
+/** How many slots of a run's plan.json are drawn on the Seedream route. */
+async function routedSlotsOf(libraryRoot: string, runId: string): Promise<number> {
+  const plan: unknown = JSON.parse(await readFile(join(libraryRoot, RUNS_DIR, runId, PLAN_FILE), "utf8"));
+  const slots = field(plan, "scenes", "slots");
+  return Array.isArray(slots) ? slots.filter((slot) => field(slot, "route") === "seedream").length : -1;
+}
+
+/** The slots of a run that ended `model-refused` or `model-empty`, each with the attempts its journal holds: the refusal is final and the empty answer ends the slot, so one each. */
+async function attemptsOfEndedSlots(libraryRoot: string, runId: string): Promise<{ slotIndex: number; reason: string; attempts: number }[]> {
+  const lines = (await readFile(join(libraryRoot, RUNS_DIR, runId, JOURNAL_FILE), "utf8")).split("\n").filter((line) => line.trim() !== "");
+  const events: unknown[] = [];
+  for (const line of lines) {
+    try {
+      events.push(JSON.parse(line));
+    } catch {
+      // a line the engine is still appending
+    }
+  }
+  return events.flatMap((event) => {
+    const reason = field(event, "error", "sceneReason");
+    const slotIndex = field(event, "slotIndex");
+    if (field(event, "type") !== "slot" || field(event, "status") !== "failed" || typeof slotIndex !== "number" || (reason !== "model-refused" && reason !== "model-empty")) return [];
+    return [{ slotIndex, reason, attempts: events.filter((e) => field(e, "type") === "attempt" && field(e, "slotIndex") === slotIndex).length }];
+  });
+}
+
+/**
+ * 5a.3 (S5.9f, plan s5a3 §12): the «Смелая» route in the packaged app. A run of ten «Ночнушки и бельё» photos at the «Смелая» level: the estimate names the 2K attempt (93 000 µ$), every
+ * Seedream request carries "2K", "9:16", exactly one reference and no quality, every request for the owner's model stays at "1K", the photos of the Seedream slots say so and the others do not.
+ * A second run with one refusal and one empty answer armed at the Seedream model: the refused slot ends `model-refused`, the empty one `model-empty`, nothing is sent twice for them, the run goes
+ * on to done with the other eight, the refusal costs nothing and the empty answer is billed, and the ledger ends where the mock's bill does.
+ *
+ * Its own app instance, temp userData and library, and mock server, kept apart from every other scenario's money and events. Needs Electron: CI only, never run locally.
+ */
+async function runBoldRouteScenario(target: Target): Promise<void> {
+  const mock = await startMockOpenRouter({ descriptorText: AVATAR_DESCRIPTOR, distinctImages: true, faceFixture: true });
+  const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-bold-"));
+  const userData = join(tmp, "userData");
+  const libraryRoot = join(tmp, "bold-library");
+  await mkdir(userData, { recursive: true });
+  await mkdir(libraryRoot, { recursive: true });
+
+  const running = await launch(target, userData, [`--studio-openrouter-base-url=${mock.url}`, `--studio-pick-folder=${libraryRoot}`]);
+  try {
+    const { cdp } = running;
+    const keySet = await req(cdp, "settings.setApiKey", { key: SMOKE_KEY });
+    check("bold scenario: settings.setApiKey stores the fake key", field(keySet, "ok") === true, keySet);
+    const libSet = await req(cdp, "settings.setLibraryPath", { path: libraryRoot });
+    check("bold scenario: settings.setLibraryPath adopts the temp library (via --studio-pick-folder)", field(libSet, "ok") === true && field(libSet, "result", "libraryPath") === libraryRoot, libSet);
+    const avatarId = await createActiveAvatarForRun(cdp, "Bea", "bold scenario");
+
+    // 1. The estimate names the 2K attempt, and its worst case prices every photo at no less than that.
+    const request = { avatarId, count: BOLD_PHOTOS, categories: ["nightwear"], level: "bold", poses: RUN_POSES };
+    const estimate = await req(cdp, "runs.estimate", request);
+    const worst = Number(field(estimate, "result", "estimate", "worstMicros"));
+    check("bold scenario: runs.estimate names the 2K attempt at 93 000 µ$ (the Seedream endpoint's 2K tier and one reference)", field(estimate, "ok") === true && field(estimate, "result", "estimate", "boldAttemptMicros") === BOLD_ATTEMPT_MICROS, estimate);
+    check("bold scenario: the worst case prices every photo's three attempts at no less than the 2K attempt", worst >= BOLD_PHOTOS * 3 * BOLD_ATTEMPT_MICROS, estimate);
+
+    // 2. The first run: nothing armed.
+    const before = mock.imageRequests().length;
+    const started = await req(cdp, "runs.start", { ...request, acceptedWorstMicros: worst });
+    check("bold scenario: runs.start plans and launches the run", field(started, "ok") === true, started);
+    const runId = String(field(started, "result", "runId"));
+    const end = await waitFor("the bold run's job to end", () => endEventOf(cdp, field(started, "result", "jobId")), 120_000);
+    const photoIds = field(end, "payload", "result", "photoIds");
+    check("bold scenario: the run finished as job.done with all ten photos", field(end, "type") === "job.done" && Array.isArray(photoIds) && photoIds.length === BOLD_PHOTOS && Number(field(end, "payload", "result", "failedSlots")) === 0, end);
+    const sent = mock.imageRequests().slice(before);
+    const seedream = sent.filter((r) => r.model === BOLD_MODEL);
+    const owner = sent.filter((r) => r.model !== BOLD_MODEL);
+    const routed = await routedSlotsOf(libraryRoot, runId);
+    check("bold scenario: the plan puts some slots on the Seedream route and not all", routed > 0 && routed < BOLD_PHOTOS, routed);
+    check("bold scenario: Seedream was asked for those slots, each at least once", seedream.length >= routed, { seedream: seedream.length, routed });
+    check("bold scenario: every Seedream request carries 2K, 9:16, exactly one reference and no quality", seedream.length > 0 && seedream.every((r) => boldRequestProblems(sentImageOf(r)).length === 0), seedream.flatMap((r) => boldRequestProblems(sentImageOf(r))));
+    check("bold scenario: every request for the owner's model stays at 1K, 9:16, and never names Seedream", owner.length > 0 && owner.every((r) => ownerRequestProblems(sentImageOf(r)).length === 0), owner.flatMap((r) => ownerRequestProblems(sentImageOf(r))));
+    const photos = await req(cdp, "photos.list", { avatarId });
+    const nightwear = (field(photos, "result", "photos") as unknown[]).filter((p) => field(p, "category") === "nightwear");
+    check("bold scenario: photos.list shows the Seedream tag on exactly the photos of the Seedream slots", nightwear.length === BOLD_PHOTOS && nightwear.filter((p) => field(p, "route") === "seedream").length === routed, { photos: nightwear.length, tagged: nightwear.filter((p) => field(p, "route") === "seedream").length, routed });
+
+    // 3. The second run: the model refuses one Seedream request and answers another with no image.
+    mock.armRefusal(BOLD_MODEL);
+    mock.armEmptyAnswer(BOLD_MODEL);
+    const usageBefore = mock.totalUsageUsd();
+    const beforeSecond = mock.imageRequests().length;
+    const secondEstimate = await req(cdp, "runs.estimate", request);
+    const secondStarted = await req(cdp, "runs.start", { ...request, acceptedWorstMicros: field(secondEstimate, "result", "estimate", "worstMicros") });
+    check("bold scenario: the second run starts", field(secondStarted, "ok") === true, secondStarted);
+    const secondId = String(field(secondStarted, "result", "runId"));
+    const secondEnd = await waitFor("the second bold run's job to end", () => endEventOf(cdp, field(secondStarted, "result", "jobId")), 120_000);
+    const secondPhotos = field(secondEnd, "payload", "result", "photoIds");
+    check("bold scenario: the run goes on past both: job.done with eight photos and two slots without one", field(secondEnd, "type") === "job.done" && Array.isArray(secondPhotos) && secondPhotos.length === BOLD_PHOTOS - 2 && Number(field(secondEnd, "payload", "result", "failedSlots")) === 2, secondEnd);
+    check("bold scenario: the refused slot ended model-refused and the empty one model-empty", JSON.stringify([...failedReasonsOf(secondEnd)].sort()) === JSON.stringify(["model-empty", "model-refused"]), failedReasonsOf(secondEnd));
+    const ended = await attemptsOfEndedSlots(libraryRoot, secondId);
+    check("bold scenario: neither end was sent again: each of the two slots has exactly one attempt in the journal", ended.length === 2 && ended.every((e) => e.attempts === 1), ended);
+    check("bold scenario: Seedream was asked for the second run's slots (the two ends included)", mock.imageRequests().slice(beforeSecond).filter((r) => r.model === BOLD_MODEL).length >= (await routedSlotsOf(libraryRoot, secondId)), secondId);
+    const secondRun = findRunSummary(await req(cdp, "runs.list"), secondId);
+    check("bold scenario: the run has nothing left to resume", field(secondRun, "open") === 0 && field(secondRun, "resumable") === false, secondRun);
+    const billed = mock.totalUsageUsd() - usageBefore;
+    check("bold scenario: the refusal was free and the empty answer was billed: the second run cost the mock its drawn frames and one empty answer", billed > 0, billed);
+
+    // 4. The money: nothing open, and the ledger ends where the mock's bill does.
+    const money = await req(cdp, "money.status");
+    check("bold scenario: money.status has no open reserve, and the ledger's total is what the mock billed", field(money, "result", "unsettledMicros") === 0 && Math.abs(Number(field(money, "result", "spentMicros")) - Math.round(mock.totalUsageUsd() * 1_000_000)) <= 1, money);
+    check("bold scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
+  } finally {
+    await quit(running);
+    await mock.stop();
+    await removeTemp(tmp);
+  }
+}
+
 function finish(): void {
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
@@ -4004,6 +4126,13 @@ async function main(): Promise<void> {
   // `--only scene-set-run` runs the scene-set run scenario alone (CS.5), for working on it.
   if (argValue("--only") === "scene-set-run") {
     await runSceneSetRunScenario(target);
+    finish();
+    return;
+  }
+
+  // `--only bold` runs the «Смелая» route scenario alone (5a.3, S5.9f), for working on it.
+  if (argValue("--only") === "bold") {
+    await runBoldRouteScenario(target);
     finish();
     return;
   }
@@ -4444,6 +4573,7 @@ async function main(): Promise<void> {
   await runPhotoRunKillResumeScenario(target);
   await runCategoryScenario(target);
   await runSceneSetRunScenario(target);
+  await runBoldRouteScenario(target);
   await runPackagedRenderScenario(target);
   await runAutopilotScenario(target);
   finish();
