@@ -29,6 +29,7 @@ import { aboutUsd, figuresOf, goTitle, goWhy, isUnfinished, limitText, musicLine
 import { SettingsColumn } from "./autopilot/SettingsColumn";
 import { probeWorldKey, useLaunchPlan, worldKey } from "./autopilot/useLaunchPlan";
 import { launchLegsRow } from "./photos/legs";
+import type { LaunchPlanCounts } from "./photos/launchPlanCounts";
 import { launchLevelCaption } from "./photos/level";
 import { readSceneReview, viewerStorage } from "./photos/sceneReview";
 import { arrangeCategories, categoriesAt } from "./photos/runForm";
@@ -95,6 +96,17 @@ function LastLaunchCard({ summary, nameOf }: { summary: LaunchSummary; nameOf: (
       </button>
     </section>
   );
+}
+
+/** A launch that draws no new photo, as the «Подача» caption reads a plan: nothing new to count. */
+const NOTHING_NEW: LaunchPlanCounts = { avatars: [], totals: { toGenerate: 0 } };
+
+/**
+ * S5.9g round 3: what a running launch tells the «Подача» caption. It has no plan to count new frames from, but its rows say whether any avatar draws a new photo
+ * (`photos.total`, 0 being «только библиотека»): with none, the caption says nothing (`NOTHING_NEW`); otherwise the share (`null`), as before.
+ */
+function runningCounts(launch: LaunchView | null): LaunchPlanCounts | null {
+  return launch !== null && launch.avatars.every((row) => row.photos.total === 0) ? NOTHING_NEW : null;
 }
 
 /**
@@ -306,7 +318,7 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
           }}
           onCategory={toggleCategory}
           onLevel={(level) => edit({ ...form, level })}
-          levelCaption={launchLevelCaption(shownForm.level, running ? null : plan.shown, running ? categoriesAt(shownForm.level, shownForm.categories) : (settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder))))}
+          levelCaption={launchLevelCaption(shownForm.level, running ? runningCounts(launch) : plan.shown, running ? categoriesAt(shownForm.level, shownForm.categories) : (settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder))))}
           legs={launchLegsRow(shownForm.legs, running ? null : plan.shown, running ? shownForm.categories : (settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder))), shownForm.generate)}
           onLegs={(legs) => edit({ ...form, legs })}
           onSwitch={(which) => edit({ ...form, [which]: !form[which] })}

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { PRICE_SCOPES_RU, type AvatarSummary, type LaunchDraftInput, type PhotoSummary } from "../../shared/engine";
+import { LaunchView, PRICE_SCOPES_RU, type AvatarSummary, type LaunchDraftInput, type PhotoSummary } from "../../shared/engine";
 import type { MockEngine } from "../engine/mockEngine";
 import { freePhotos, MIA, SOFIA } from "../engine/mockEngine.testkit";
 import { errorText } from "../lib/errors";
@@ -193,6 +193,39 @@ describe("a running «Смелая» launch's caption", () => {
     expect(level("Смелая").checked).toBe(true);
     expect(within(settings()).getByText(`≈ 4 из 10${NB}новых кадров — смелые: бельё, купальники; 4 — кокетливые. Смелые кадры рисует Seedream 5 Pro · 2K.`)).toBeDefined();
     expect(within(settings()).queryByText(/^Смелые кадры — только в/) === null).toBe(true);
+  });
+
+  // Round 3 (LOW): the launch says how many new photos each avatar draws (`photos.total`; 0 is «только библиотека»): with none at all, there is no bold frame to speak of.
+  test("says nothing about bold frames once the running launch draws no new photo", async () => {
+    const { engine, client } = world();
+    await openAutopilot();
+    const draft: LaunchDraftInput = {
+      avatarIds: [SOFIA.avatarId],
+      videosPerAvatar: 1,
+      mix: { single: 100, collage: 0, slides: 0 },
+      categories: ["nightwear", "beach"],
+      level: "bold",
+      library: true,
+      generate: true,
+      sceneReview: false,
+      stickers: false,
+    };
+    const got: { launch: LaunchView | null } = { launch: null };
+    await act(async () => {
+      const estimate = await client.request("autopilot.estimate", { draft });
+      if (!estimate.ok) throw new Error("estimate refused");
+      const started = await client.request("autopilot.start", { draft: { ...draft, planSeed: estimate.result.preview.planSeed }, acceptedWorstMicros: estimate.result.preview.estimate.worstMicros });
+      if (!started.ok) throw new Error("start refused");
+      got.launch = started.result.launch;
+    });
+    await flush();
+    const base = got.launch;
+    if (base === null) throw new Error("no launch");
+    expect(within(settings()).getByText(/^≈ 4 из 10\sновых кадров — смелые/)).toBeDefined();
+    const libraryOnly = LaunchView.parse({ ...base, avatars: base.avatars.map((row) => ({ ...row, photos: { done: 0, total: 0 } })) });
+    act(() => engine.announceLaunch(libraryOnly));
+    await flush();
+    expect(within(settings()).queryByText(/новых кадров — смелые/) === null).toBe(true);
   });
 });
 
