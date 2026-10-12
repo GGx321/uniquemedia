@@ -114,6 +114,23 @@ describe("the binding of a legs frame", () => {
   });
 });
 
+// Round 2: «a little motion blur on her moving hand» is a friend's-photo artefact; on a low-feet frame her hands are empty and out of the frame, so a legs frame draws none of it.
+describe("no hand artefact on a legs frame", () => {
+  const ARTEFACT = "motion blur on her moving hand";
+  const prompts = (slots: readonly PlanSlot[]): string[] =>
+    slots.flatMap((slot) => Array.from({ length: 6 }, (_, k) => assembleSlot(DESCRIPTOR, slot, sentenceOf(slot), MASTER, { runId: `run-art-${k}`, cameraRealism: true, lookOf: slotLookOf }).prompt));
+
+  test("no legs prompt, low-feet or other, names the moving hand", () => {
+    expect(SLOTS.filter((s) => captureOf(s) === "low-feet").length).toBeGreaterThan(10);
+    expect(prompts(SLOTS).filter((p) => p.includes(ARTEFACT))).toEqual([]);
+  });
+
+  test("a friend's ordinary photo still can (the artefact is not gone from the list)", () => {
+    const friend = plan({ seed: 3, count: 60, categories: ["photoshoot"] }).slots.filter((s) => s.shot === "friend" && s.framing === undefined);
+    expect(prompts(friend).some((p) => p.includes(ARTEFACT))).toBe(true);
+  });
+});
+
 describe("no hair line on a legs slot", () => {
   test("hairLinesOf leaves a legs slot out and gives the other slots their styles", () => {
     for (const seed of [3, 7, 11]) {
@@ -157,9 +174,11 @@ describe("feet render and stockings are refused", () => {
   });
 
   test("a legs slot with a legwear item the bank does not hold renders nothing: stockings are not in the bank", () => {
-    const slot = SLOTS.find((s) => s.category === "home" && s.activity === "stretches her legs along the bed");
-    expect(slot).toBeDefined();
-    if (slot === undefined) return;
+    const found = SLOTS.find((s) => s.category === "home" && s.activity === "stretches her legs along the bed");
+    expect(found).toBeDefined();
+    if (found === undefined) return;
+    // On an outfit that shows her legs (the moment also pins pajamas that do not, and those take no legwear).
+    const slot = { ...found, outfit: "a crop top and pajama shorts" };
     expect(templateSentence({ ...slot, legwear: "black stockings" }, { key: "k" })).toBeNull();
     expect(templateSentence({ ...slot, legwear: "sheer black tights" }, { key: "k" })).not.toBeNull();
   });

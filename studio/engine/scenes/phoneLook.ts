@@ -141,8 +141,10 @@ export function slotKeyOf(runId: string, attemptIdBase: string): string {
 }
 
 /** The slot's imperfection: a pure function of the key, on a stream of its own. */
-export function imperfectionOf(shot: Shot, key: string): string {
-  return rngPick(makeRng(fnv1a(`${key}:imperfection`)), IMPERFECTIONS[shot]);
+export function imperfectionOf(shot: Shot, key: string, legs = false): string {
+  // «Ножки»: her hands are empty and out of the frame, so a legs frame draws no artefact of a moving hand (the list is the same length elsewhere, so no other draw moves).
+  const list = legs ? IMPERFECTIONS[shot].filter((text) => !/\bhand\b/.test(text)) : IMPERFECTIONS[shot];
+  return rngPick(makeRng(fnv1a(`${key}:imperfection`)), list);
 }
 
 /**
