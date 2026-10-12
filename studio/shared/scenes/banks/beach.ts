@@ -9,6 +9,8 @@ import type { CategoryBank } from "./types";
 
 const BIKINI = "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her.";
 const SWIMSUIT = "Her swimsuit fully covers her chest and her hips.";
+/** Review round 2: a high-leg cut shows her hips, so its sentence says what it does cover. */
+const HIGH_LEG = "Her swimsuit fully covers her chest and her bottom.";
 
 /** In the water she wears a swimsuit or a bikini of every level: no shirt, sweatshirt, sarong or hat in the sea. */
 const IN_THE_WATER = ["a one-piece swimsuit", "a sporty bikini", "a black bikini", "a white bikini", "a white string bikini", "a red triangle bikini", "a strapless bandeau bikini", "a high-leg black swimsuit"];
@@ -26,7 +28,8 @@ export const BEACH: CategoryBank = {
       details: ["a canvas tote bag", "a striped umbrella", "some small waves behind her"],
       times: ["morning", "midday", "golden hour"],
       moments: [
-        { text: "sits on the sand, knees up", motion: "she slowly rests her chin on her knees", captures: ["friend", "selfie", "timer"], twoHanded: false, outdoor: true },
+        { text: "brushes sand off her legs", motion: "she brushes the sand off slowly", captures: ["friend", "selfie", "timer"], twoHanded: false, outdoor: true },
+        { text: "lies back on her elbows", motion: "she tilts her head back a little", captures: ["friend", "timer", "candid"], twoHanded: true, level: "bold", route: "seedream", outdoor: true },
         { text: "shades her eyes with one hand", motion: "she lowers her hand slowly and smiles", captures: ["friend"], twoHanded: false, gaze: "own", outdoor: true },
         { text: "lowers her sunglasses a little", motion: "she slowly peeks over her sunglasses", captures: ["selfie", "friend"], twoHanded: false, level: "flirty", outdoor: true },
         { text: "wrings out her wet hair", motion: "she squeezes her hair slowly", captures: ["friend", "candid"], twoHanded: true, hair: "own", water: true, outfits: IN_THE_WATER, outdoor: true },
@@ -66,6 +69,7 @@ export const BEACH: CategoryBank = {
       times: ["morning", "midday"],
       moments: [
         { text: "lies back on a sun lounger", motion: "she tilts her face to the sun a little", captures: ["friend", "timer"], twoHanded: false, outdoor: true },
+        { text: "sits on the lounger, legs crossed", motion: "she sways her crossed foot slowly", captures: ["friend", "selfie", "timer", "candid"], twoHanded: false, level: "bold", route: "seedream", outdoor: true },
         { text: "sits on the edge, feet in the water", motion: "she swirls her feet slowly", captures: ["friend", "selfie", "candid"], twoHanded: false, water: true, outfits: IN_THE_WATER, outdoor: true },
         { text: "leans on the edge in the water", motion: "she kicks her feet slowly behind her", captures: ["friend", "timer"], twoHanded: true, water: true, outfits: IN_THE_WATER, outdoor: true },
         { text: "stretches her legs on the lounger", motion: "she points and flexes her toes slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
@@ -79,7 +83,7 @@ export const BEACH: CategoryBank = {
       moments: [
         { text: "leans on the glass railing", motion: "her hair lifts a little in the wind", captures: ["friend", "selfie"], twoHanded: false, level: "flirty", outdoor: true },
         // The beach probe: looking back over her shoulder at the rooftop pool.
-        { text: "looks back over her shoulder", motion: "she turns her head a little further", captures: ["friend"], twoHanded: false, angle: "three-quarter", gaze: "own", level: "bold", route: "seedream", outdoor: true },
+        { text: "looks back over her shoulder", motion: "she turns her head a little further", captures: ["friend", "timer"], twoHanded: false, angle: "three-quarter", gaze: "own", level: "bold", route: "seedream", outdoor: true },
         { text: "sips a cold drink by the water", motion: "she lowers the glass a little", captures: ["friend", "selfie", "candid"], twoHanded: false, outdoor: true },
         { text: "dangles her feet in the water", motion: "she swirls her feet slowly", captures: ["pov-legs"], twoHanded: false, water: true, outfits: LEGS_IN_THE_WATER, legs: { framing: "legs" } },
       ],
@@ -92,7 +96,7 @@ export const BEACH: CategoryBank = {
       moments: [
         // The beach probe: from behind on the rocks. C3′ (the owner: «просто стоит спиной без какой-либо позы»): she hugs her knees, an action the frame can read.
         { text: "sits hugging her knees", motion: "her hair lifts a little in the wind", captures: ["friend", "timer"], twoHanded: true, angle: "back", outdoor: true },
-        { text: "sits with her knees drawn up", motion: "she slowly rests her cheek on her knees", captures: ["friend", "selfie"], twoHanded: false, outdoor: true },
+        { text: "sits cross-legged on a towel", motion: "she leans back a little", captures: ["friend", "selfie"], twoHanded: false, outdoor: true },
         { text: "leans back on her hands", motion: "she tilts her head back a little", captures: ["friend", "timer", "candid"], twoHanded: true, outdoor: true },
         { text: "tucks her hair back in the breeze", motion: "she tucks a strand back slowly", captures: ["friend", "candid"], twoHanded: false, hair: "own", angle: "profile", outdoor: true },
       ],
@@ -111,7 +115,7 @@ export const BEACH: CategoryBank = {
     { text: "a white string bikini", showsLegs: true, level: "bold", route: "seedream", coverage: BIKINI },
     { text: "a red triangle bikini", showsLegs: true, level: "bold", route: "seedream", coverage: BIKINI },
     { text: "a strapless bandeau bikini", showsLegs: true, level: "bold", route: "seedream", coverage: BIKINI },
-    { text: "a high-leg black swimsuit", showsLegs: true, level: "bold", route: "seedream", coverage: SWIMSUIT },
+    { text: "a high-leg black swimsuit", showsLegs: true, level: "bold", route: "seedream", coverage: HIGH_LEG },
   ],
   // She mostly asks someone (I5.32): a friend three times in six, a selfie, a timer, a candid.
   captureDeck: ["friend", "selfie", "friend", "timer", "friend", "candid"],

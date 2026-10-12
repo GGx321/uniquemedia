@@ -64,7 +64,11 @@ describe("the places (plan §6.3)", () => {
 
 describe("the moments and their levels (plan §6.3)", () => {
   test.each<[string, string, readonly Capture[], "flirty" | "bold" | undefined, string]>([
-    ["the beach", "sits on the sand, knees up", ["friend", "selfie", "timer"], undefined, "she slowly rests her chin on her knees"],
+    // Review round 2: one «sits on the sand» at the beach (the legs one), and one rest on her knees in the bank (the rocks' hugged knees).
+    ["the beach", "brushes sand off her legs", ["friend", "selfie", "timer"], undefined, "she brushes the sand off slowly"],
+    // Review round 2: the bold moments stand at three places, and a timer or a candid takes them too.
+    ["the beach", "lies back on her elbows", ["friend", "timer", "candid"], "bold", "she tilts her head back a little"],
+    ["a hotel pool", "sits on the lounger, legs crossed", ["friend", "selfie", "timer", "candid"], "bold", "she sways her crossed foot slowly"],
     ["the beach", "shades her eyes with one hand", ["friend"], undefined, "she lowers her hand slowly and smiles"],
     ["the beach", "lowers her sunglasses a little", ["selfie", "friend"], "flirty", "she slowly peeks over her sunglasses"],
     ["the beach", "wrings out her wet hair", ["friend", "candid"], undefined, "she squeezes her hair slowly"],
@@ -76,10 +80,10 @@ describe("the moments and their levels (plan §6.3)", () => {
     ["a hotel pool", "sits on the edge, feet in the water", ["friend", "selfie", "candid"], undefined, "she swirls her feet slowly"],
     ["a hotel pool", "leans on the edge in the water", ["friend", "timer"], undefined, "she kicks her feet slowly behind her"],
     ["a rooftop pool", "leans on the glass railing", ["friend", "selfie"], "flirty", "her hair lifts a little in the wind"],
-    ["a rooftop pool", "looks back over her shoulder", ["friend"], "bold", "she turns her head a little further"],
+    ["a rooftop pool", "looks back over her shoulder", ["friend", "timer"], "bold", "she turns her head a little further"],
     ["a rooftop pool", "sips a cold drink by the water", ["friend", "selfie", "candid"], undefined, "she lowers the glass a little"],
     ["the rocks by the sea", "sits hugging her knees", ["friend", "timer"], undefined, "her hair lifts a little in the wind"],
-    ["the rocks by the sea", "sits with her knees drawn up", ["friend", "selfie"], undefined, "she slowly rests her cheek on her knees"],
+    ["the rocks by the sea", "sits cross-legged on a towel", ["friend", "selfie"], undefined, "she leans back a little"],
     ["the rocks by the sea", "leans back on her hands", ["friend", "timer", "candid"], undefined, "she tilts her head back a little"],
     ["the rocks by the sea", "tucks her hair back in the breeze", ["friend", "candid"], undefined, "she tucks a strand back slowly"],
   ])("%s · «%s»", (place, text, captures, level, motion) => {
@@ -95,8 +99,22 @@ describe("the moments and their levels (plan §6.3)", () => {
     expect(momentNamed("tucks her hair back in the breeze")?.moment).toMatchObject({ angle: "profile", hair: "own" });
   });
 
-  test("the bold moment is drawn on Seedream, and only it carries a route: every outfit is Seedream anyway", () => {
-    expect(moments.filter((m) => m.moment.route !== undefined).map((m) => m.moment.text)).toEqual(["looks back over her shoulder"]);
+  test("the bold moments are drawn on Seedream, and only they carry a route: every outfit is Seedream anyway", () => {
+    expect(moments.filter((m) => m.moment.route !== undefined).map((m) => m.moment.text)).toEqual(["lies back on her elbows", "sits on the lounger, legs crossed", "looks back over her shoulder"]);
+  });
+
+  test("the bold moments stand at three places and not only a friend takes them (review round 2)", () => {
+    const bold = moments.filter((m) => m.moment.level === "bold");
+    expect(new Set(bold.map((m) => m.place)).size).toBe(3);
+    expect(bold.every((m) => m.moment.captures.some((c) => c !== "friend"))).toBe(true);
+  });
+
+  test("no place holds two moments that open alike, and only one moment rests on her knees (review round 2)", () => {
+    for (const place of BEACH.places) {
+      const openings = place.moments.map((m) => m.text.split(/[ ,]+/).slice(0, 4).join(" "));
+      expect({ place: place.name, repeats: openings.filter((o, i) => openings.indexOf(o) !== i) }).toEqual({ place: place.name, repeats: [] });
+    }
+    expect(moments.filter((m) => /\bknees\b/.test(`${m.moment.text} ${m.moment.motion}`)).map((m) => m.moment.text)).toEqual(["sits hugging her knees"]);
   });
 
   test("a laugh and her hair are the moment's own: the laugh takes no cue, the hair no hair line", () => {
@@ -149,7 +167,8 @@ describe("swimwear on every frame (answer (a), M6)", () => {
     ["a white string bikini", "bold", BIKINI],
     ["a red triangle bikini", "bold", BIKINI],
     ["a strapless bandeau bikini", "bold", BIKINI],
-    ["a high-leg black swimsuit", "bold", SWIMSUIT],
+    // Review round 2: a high-leg cut shows her hips; it covers her bottom.
+    ["a high-leg black swimsuit", "bold", "Her swimsuit fully covers her chest and her bottom."],
   ])("«%s» at %s", (text, level, coverage) => {
     expect(outfitNamed(text)).toEqual({ text, showsLegs: true, ...(level === undefined ? {} : { level }), route: "seedream", coverage });
   });
