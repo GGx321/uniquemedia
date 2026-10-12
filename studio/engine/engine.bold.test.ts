@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { manifestTraits } from "./avatars/records";
 import { openLibrary } from "./library";
 import { samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
+import { sampleSet } from "./library/testing/sceneSetSample";
 import type { FetchCall, Reply } from "./openrouter/testing/fakes";
 import { plan as planScenes } from "./scenes";
 import { buildRunPlan, RunPlanSchema } from "./runs/plan";
@@ -133,6 +134,72 @@ describe("a Seedream price list without the 2K tier", () => {
     const refusal = failed(await engine.handle(command("runs.estimate", { avatarId, count: 4, categories: ["home"], poses: { profile: false, back: false } })));
     expect(refusal.error.code).toBe("PRICE_UNAVAILABLE");
     expect("priceScope" in refusal.error).toBe(false);
+  });
+});
+
+// S5.R4-fix round 2: a count priced for a stored set (`sceneSetId`) takes the bold share from the set's ACTIVE scenes by their own routes, the very `routedScenes` path of
+// `runs.estimateFromScenes`, so the strip never prices a frame on the wrong route (a split of the count over the categories cannot know which scenes were removed or gave up).
+describe("runs.estimateImages { avatarId, count, sceneSetId } for a «Смелая» set", () => {
+  /** A set of 10 written scenes over «Ночнушки и бельё» and «Дом»: every «Ночнушки и бельё» scene on the Seedream route. Returns the indexes of the routed ones and of the others. */
+  async function seedBoldSet(avatarId: string, sceneSetId: string, removed: number[] = []): Promise<{ routed: number[]; plain: number[] }> {
+    const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds(`seedset${++seeded}`) });
+    const set = sampleSet({ sceneSetId, avatarId, runId: `run-${sceneSetId}`, count: 10, written: 10, categories: ["nightwear", "home"] });
+    const bold = (i: number): boolean => set.scenes[i]?.origin === "planned" && set.scenes[i]?.slot.category === "nightwear";
+    await library.sceneSets.create({
+      ...set,
+      request: { ...set.request, level: "bold" },
+      scenes: set.scenes.map((scene, i) => ({ ...scene, removed: removed.includes(i), ...(scene.origin === "planned" && bold(i) ? { slot: { ...scene.slot, route: "seedream" as const } } : {}) })),
+    });
+    const all = set.scenes.map((_, i) => i);
+    return { routed: all.filter(bold), plain: all.filter((i) => !bold(i)) };
+  }
+
+  async function imagesFor(engine: Awaited<ReturnType<typeof boot>>["engine"], payload: Record<string, unknown>) {
+    const answer = ok(await engine.handle(command("runs.estimateImages", payload)));
+    if (answer.type !== "runs.estimateImages") throw new Error(`expected an images estimate, got ${answer.type}`);
+    return answer.result.estimate;
+  }
+
+  test("prices the routed scenes at the 2K unit and the rest at the owner's model: the figure of «Отрисовать»", async () => {
+    const avatarId = await seedAvatar();
+    const { routed } = await seedBoldSet(avatarId, "set-bold-0001");
+    expect(routed.length).toBeGreaterThan(0);
+    const { engine } = await boot();
+    const images = await imagesFor(engine, { avatarId, count: 10, sceneSetId: "set-bold-0001" });
+    expect(images.worstMicros).toBe(routed.length * 3 * 93_000 + (10 - routed.length) * 3 * 60_000);
+    const set = await engine.library?.sceneSets.get(avatarId, "set-bold-0001");
+    const drawn = ok(await engine.handle(command("runs.estimateFromScenes", { sceneSetId: "set-bold-0001", revision: set?.revision })));
+    if (drawn.type !== "runs.estimateFromScenes") throw new Error("expected an estimate");
+    expect(images).toEqual(drawn.result.estimate);
+  });
+
+  test("a removed scene on the owner's model leaves the Seedream scenes as they are (a split of the count would move one)", async () => {
+    const avatarId = await seedAvatar();
+    const probe = await seedBoldSet(avatarId, "set-bold-0002a");
+    const dropped = probe.plain.slice(0, 2);
+    expect(dropped).toHaveLength(2);
+    await seedBoldSet(avatarId, "set-bold-0002", dropped);
+    const { engine } = await boot();
+    const images = await imagesFor(engine, { avatarId, count: 10 - dropped.length, sceneSetId: "set-bold-0002" });
+    expect(images.worstMicros).toBe(probe.routed.length * 3 * 93_000 + (10 - dropped.length - probe.routed.length) * 3 * 60_000);
+  });
+
+  test("a removed Seedream scene lowers the bold share by one", async () => {
+    const avatarId = await seedAvatar();
+    const probe = await seedBoldSet(avatarId, "set-bold-0003a");
+    const first = probe.routed[0];
+    if (first === undefined) throw new Error("no routed scene");
+    await seedBoldSet(avatarId, "set-bold-0003", [first]);
+    const { engine } = await boot();
+    const images = await imagesFor(engine, { avatarId, count: 9, sceneSetId: "set-bold-0003" });
+    expect(images.worstMicros).toBe((probe.routed.length - 1) * 3 * 93_000 + (9 - probe.routed.length + 1) * 3 * 60_000);
+  });
+
+  test("a set the avatar does not have is NOT_FOUND", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await boot();
+    const refusal = failed(await engine.handle(command("runs.estimateImages", { avatarId, count: 3, sceneSetId: "set-nobody-0404" })));
+    expect(refusal.error.code).toBe("NOT_FOUND");
   });
 });
 

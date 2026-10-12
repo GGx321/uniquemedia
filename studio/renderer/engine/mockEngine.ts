@@ -3112,7 +3112,13 @@ export class MockEngine implements EngineBridge {
           if (boldLevelNeeded({ categories, level: payload.level })) return this.fail(c, BOLD_REFUSAL);
           const refusal = this.runnableRefusal(payload.avatarId);
           if (refusal) return this.fail(c, refusal);
-          const bold = requestBoldPhotos({ count: payload.count, categories });
+          // Round 2: for a stored set the bold share is its ACTIVE scenes drawn on the Seedream route (the engine's `routedSlots` over the set), not a split of the count.
+          let bold = requestBoldPhotos({ count: payload.count, categories });
+          if (payload.sceneSetId !== undefined) {
+            const set = this.sceneSets.find(payload.sceneSetId);
+            if (set === undefined || set.avatarId !== payload.avatarId) return this.fail(c, { code: "NOT_FOUND", detail: `no scene set ${payload.sceneSetId} for avatar ${payload.avatarId}` });
+            bold = Math.min(payload.count, set.scenes.filter((s) => !s.removed && s.route === "seedream").length);
+          }
           const noTier = this.boldPriceGate(bold > 0);
           if (noTier) return this.fail(c, noTier);
           return this.ok(c, { estimate: this.runPriceFromScenes(payload.count, bold), photos: payload.count });

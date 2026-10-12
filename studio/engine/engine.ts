@@ -3147,7 +3147,14 @@ export class Engine {
       const categories = payload.categories ?? [];
       assertBoldFit({ categories, level: payload.level });
       this.#runnableAvatar(library, payload.avatarId);
-      const bold = requestBoldPhotos({ count: payload.count, categories });
+      // Round 2: for a stored set the bold share is read from its ACTIVE scenes' own routes (the path `runs.estimateFromScenes` prices by), never split from the count: the scenes
+      // that were removed or gave up decide which frames are left, and a split would put a Seedream frame on the wrong scene.
+      let bold = requestBoldPhotos({ count: payload.count, categories });
+      if (payload.sceneSetId !== undefined) {
+        const set = await library.sceneSets.get(payload.avatarId, payload.sceneSetId);
+        if (set === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no scene set ${payload.sceneSetId} for avatar ${payload.avatarId}` });
+        bold = Math.min(payload.count, routedSlots(set.scenes.flatMap((scene) => (!scene.removed && scene.origin === "planned" ? [scene.slot] : []))));
+      }
       const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck, bold));
       return { estimate: runEstimateFromScenes(priced, models, { count: payload.count, boldPhotos: bold }, imageAgeCheck), photos: payload.count };
     }

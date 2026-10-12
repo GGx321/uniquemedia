@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { PRICE_SCOPES_RU } from "../../shared/engine";
 import { callsOf, flush, openSection, setup } from "../testing";
 import { chipsGroup, MIA } from "./photos/categoryScreenKit";
 import { about } from "./photos/scenePaid";
@@ -46,20 +47,46 @@ describe("the generate card's step 2 under «Смелая»", () => {
   });
 });
 
+function openStrip() {
+  const harness = setup({
+    avatars: [MIA],
+    sceneReview: "on",
+    sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-cut-0002", count: 60, written: 25, stopped: "closed", cutOff: { chunk: 2 }, categories: ["nightwear", "beach"], level: "bold" }],
+  });
+  return harness;
+}
+
+async function showStrip(): Promise<void> {
+  await screen.findByRole("heading", { level: 2, name: "Mia" });
+  await openSection("Фото");
+  await screen.findByRole("region", { name: /^Генерация фото/ });
+  await flush();
+}
+
 describe("the owner's strip under «Смелая»", () => {
-  test("asks the engine for the set's level and categories and shows its price for the photos", async () => {
-    const { engine, client } = setup({
-      avatars: [MIA],
-      sceneReview: "on",
-      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-cut-0002", count: 60, written: 25, stopped: "closed", cutOff: { chunk: 2 }, categories: ["nightwear", "beach"], level: "bold" }],
-    });
-    await screen.findByRole("heading", { level: 2, name: "Mia" });
-    await openSection("Фото");
-    await screen.findByRole("region", { name: /^Генерация фото/ });
-    await flush();
-    const asked = await client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: 60, level: "bold", categories: ["nightwear", "beach"] });
+  test("asks the engine for the stored set, and shows the engine's price for exactly its active scenes", async () => {
+    const { engine, client } = openStrip();
+    await showStrip();
+    const asked = await client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: 60, sceneSetId: "set-cut-0002" });
     if (!asked.ok) throw new Error("the engine refused the price");
     await waitFor(() => expect(priceRow(/фото$/)).toContain(about(asked.result.estimate.expectedMicros)));
-    expect(callsOf(engine, "runs.estimateImages").some((c) => "count" in c.payload && c.payload.count === 60 && c.payload.level === "bold")).toBe(true);
+    expect(callsOf(engine, "runs.estimateImages").some((c) => "count" in c.payload && c.payload.count === 60 && c.payload.sceneSetId === "set-cut-0002")).toBe(true);
+  });
+
+  test("a price list with no 2K tier says state 55, not «≈ …» for ever; any other refusal stays silent as before", async () => {
+    const { engine } = openStrip();
+    // The strip asks again whenever the set's revision moves while it loads; the list lacks the tier for every ask.
+    for (let i = 0; i < 4; i++) engine.failNext("runs.estimateImages", { code: "PRICE_UNAVAILABLE", priceScope: "bold", detail: "the price list has no 2K tier" });
+    await showStrip();
+    const notice = await screen.findByText(PRICE_SCOPES_RU.bold);
+    expect(notice.closest(".notice")?.classList.contains("notice-warn")).toBe(true);
+  });
+
+  test("a refusal that is not about the 2K tier shows no state 55", async () => {
+    const { engine } = openStrip();
+    engine.failNext("runs.estimateImages", { code: "PRICE_UNAVAILABLE", detail: "no price" });
+    await showStrip();
+    await flush();
+    expect(screen.queryByText(PRICE_SCOPES_RU.bold)).toBeNull();
   });
 });
