@@ -419,7 +419,7 @@ function planBuiltIn(
       }
       if (scenesOnce) drawnScenes.add(sceneKey(place.name, moment.text, outfit));
       const repeatedPair = excluded.size > 0 && excluded.has(pairKey(place.name, outfit));
-      const wear = legwearOfSlot(pool.legwear, slotLevel, bold ? streams.boldLegRng : legsRng, moment, info.find((o) => o.text === outfit), outfit);
+      const wear = legwearOfSlot(pool.legwear, slotLevel, bold ? streams.boldLegRng : legsRng, moment, info.find((o) => o.text === outfit), outfit, "legs");
       const route = seedreamRoute(moment, info.find((o) => o.text === outfit), wear.stockings ? wear.route : undefined);
       const slotIndex = startIndex + i;
       slots.push({

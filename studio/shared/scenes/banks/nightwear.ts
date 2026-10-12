@@ -221,7 +221,8 @@ export const NIGHTWEAR: CategoryBank = {
   legwear: {
     items: ["thigh-high socks", "sheer black tights"],
     share: 0.3,
-    // Review round 2, MEDIUM 4: the stockings go with the satin nightwear and the lingerie, never the cotton; on a legs frame that leaves the satin (P-5a3 #6).
+    // Review round 2, MEDIUM 4: the stockings go with the satin nightwear and the lingerie, never the cotton; on a legs frame that leaves the satin (P-5a3 #6), and a bold legs
+    // slot wears them always, not at the share (S5.R4: the stockings make it bold).
     bold: {
       items: ["black thigh-high stockings", "sheer black stockings", "white lace-top stockings"],
       share: 0.5,

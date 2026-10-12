@@ -181,19 +181,30 @@ describe("stockings (the bold legwear): bold slots only, and only with the outfi
     }
   });
 
-  test("bold slots whose outfit may wear them do, at about the bank's share, and every 100-slot plan has some", () => {
+  // S5.R4 (the whole-slice review, MEDIUM 4): split by framing. Plan §6.2 r3.1: «a bold legs slot wears satin nightwear with stockings (the stockings make it bold)», so a bold legs slot
+  // always wears them; every other bold slot that may wear them does at the bank's share, as before. The test this replaces ran without legs slots, so it neither saw nor guarded a
+  // bold legs frame drawn at the share (the review measured 90 of 233 with stockings: the rest read as flirty).
+  test("bold slots that are not legs frames and may wear them do, at about the bank's share, and every 100-slot plan has some", () => {
     let eligible = 0;
     let wearing = 0;
     for (const seed of SEEDS) {
-      const frames = boldPlan("nightwear", seed, 100);
-      const candidates = frames.filter((d) => levelOf(d.slot) === "bold" && d.outfit.showsLegs === true && (stockingsOf?.outfits ?? []).includes(d.outfit.text) && d.moment.noLegwear !== true);
-      const worn = candidates.filter((d) => d.slot.legwear !== undefined);
-      expect(worn.length).toBeGreaterThan(0);
-      eligible += candidates.length;
-      wearing += worn.length;
+      for (const legsShare of [0, 30] as const) {
+        const frames = boldPlan("nightwear", seed, 100, legsShare).filter((d) => d.slot.framing !== "legs");
+        const candidates = frames.filter((d) => levelOf(d.slot) === "bold" && d.outfit.showsLegs === true && (stockingsOf?.outfits ?? []).includes(d.outfit.text) && d.moment.noLegwear !== true);
+        const worn = candidates.filter((d) => d.slot.legwear !== undefined);
+        expect(worn.length).toBeGreaterThan(0);
+        eligible += candidates.length;
+        wearing += worn.length;
+      }
     }
     expect(wearing / eligible).toBeGreaterThan((stockingsOf?.share ?? 0) - 0.12);
     expect(wearing / eligible).toBeLessThan((stockingsOf?.share ?? 0) + 0.12);
+  });
+
+  test("every bold legs slot wears them, with its satin, at every legs share and size", () => {
+    const boldLegs = SEEDS.flatMap((seed) => ([15, 30] as const).flatMap((legsShare) => [10, 20, 30, 100].flatMap((count) => boldPlan("nightwear", seed, count, legsShare)))).filter((d) => d.slot.framing === "legs" && levelOf(d.slot) === "bold");
+    expect(boldLegs.length).toBeGreaterThan(200);
+    expect(boldLegs.filter((d) => d.slot.legwear === undefined || !(stockingsOf?.items ?? []).includes(d.slot.legwear) || !/\bsatin\b/.test(d.outfit.text)).map((d) => `${d.slot.activity} | ${d.slot.outfit}`)).toEqual([]);
   });
 
   test("the beach bank has none: no beach slot wears legwear", () => {

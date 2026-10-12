@@ -166,7 +166,8 @@ function redrawLegs(input: RedrawInput): PlanSlot {
   const wearable = pinned.length > 0 ? pinnedAt(pinned, levelOfOutfit, level, moment.text) : atSlotLevel(legsOutfitsOf(pool), levelOfOutfit, level);
   const outfit = rngPick(rng, preferred(wearable, (o) => o, avoid.outfits, slot.outfit));
   const meta = info.find((o) => o.text === outfit);
-  const wear = legwearOfSlot(pool.legwear, level, rng, moment, meta, outfit);
+  // S5.R4: a bold legs scene wears the stockings, as the planner's bold legs slot does (plan s5a3 §6.2 r3.1).
+  const wear = legwearOfSlot(pool.legwear, level, rng, moment, meta, outfit, "legs");
   const route = seedreamRoute(moment, meta, wear.stockings ? wear.route : undefined);
   return {
     slotIndex: slot.slotIndex,

@@ -87,6 +87,14 @@ describe("redrawing a bold nightwear scene", () => {
     expect(redrawn.filter((s) => s.legwear !== undefined && stockings.has(s.legwear)).length).toBeGreaterThan(5);
   });
 
+  // S5.R4 (the whole-slice review, MEDIUM 4; plan §6.2 r3.1): «a bold legs slot wears satin nightwear with stockings (the stockings make it bold)», in the plan and in «Другая сцена» alike.
+  test("a bold legs scene redraws to satin with the stockings, every time", () => {
+    const stockings = new Set(BANKS.nightwear.legwear?.bold?.items ?? []);
+    const redrawn = slotsOf("nightwear", 30).filter((s) => s.level === "bold" && s.framing === "legs").flatMap((slot) => [1, 2, 3, 4].map((k) => draw("nightwear", slot, k)));
+    expect(redrawn.length).toBeGreaterThan(20);
+    expect(redrawn.filter((s) => s.legwear === undefined || !stockings.has(s.legwear) || !/\bsatin\b/.test(s.outfit)).map((s) => `${s.activity} | ${s.outfit}`)).toEqual([]);
+  });
+
   test("an ordinary scene redraws ordinary: cotton nightwear on the owner's model, no level, no route", () => {
     const ordinary = slotsOf("nightwear", 0).filter((s) => s.level === undefined);
     expect(ordinary.length).toBeGreaterThan(20);

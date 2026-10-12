@@ -123,7 +123,7 @@ export interface LegwearSlot {
   /**
    * 5a.3 («Смелая» banks only): the stockings a bold slot wears instead, on about `share` of its slots whose outfit is one of `outfits`, on Seedream. `outfits` are
    * the outfits the stockings go with: Seedream outfits that show her legs, never the cotton nightwear on the owner's model (review round 2: on a legs frame the
-   * stockings go with the satin nightwear, P-5a3 #6).
+   * stockings go with the satin nightwear, P-5a3 #6). S5.R4: a bold legs slot wears them always, not at `share` (plan s5a3 §6.2: the stockings make it bold).
    */
   bold?: { items: readonly string[]; share: number; route: "seedream"; outfits: readonly string[] };
 }

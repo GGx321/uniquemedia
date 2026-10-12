@@ -104,3 +104,20 @@ describe("a 20-photo run with «Ножки» 30 % never pays for the same scene 
     expect(twice.slice(0, 5)).toEqual([]);
   });
 });
+
+// Item 4 (MEDIUM, plan s5a3 §6.2 r3.1): «a bold legs slot wears satin nightwear with stockings (the stockings make it bold)». The stockings were drawn at the bold share (0.5), so about
+// half of the bold legs frames said «…wearing a satin cami and satin shorts.» and read as flirty ones. Every bold «Ночнушки» legs frame now says them; nothing else moves.
+describe("a bold «Ночнушки» legs frame wears the stockings", () => {
+  const STOCKINGS = /\bstockings\b/;
+  const nightwear = FRAMES.filter((f) => f.slot.category === "nightwear");
+  const boldLegs = nightwear.filter((f) => f.slot.framing === "legs" && f.slot.level === "bold");
+
+  test("every one of them says its satin and the stockings", () => {
+    expect(boldLegs.length).toBeGreaterThan(300);
+    expect(offenders(boldLegs, (f) => !STOCKINGS.test(f.sentence) || !/\bsatin\b/.test(f.slot.outfit ?? ""))).toEqual(NONE);
+  });
+
+  test("no frame that is not bold says stockings, and no beach frame does", () => {
+    expect(offenders(FRAMES, (f) => STOCKINGS.test(f.prompt) && (f.slot.level !== "bold" || f.slot.category !== "nightwear"))).toEqual(NONE);
+  });
+});

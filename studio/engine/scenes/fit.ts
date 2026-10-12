@@ -126,12 +126,23 @@ export interface LegwearDraw {
 /**
  * The legwear draw of a slot (I5.29, 5a.3): always two draws on `rng`, so the stream does not depend on who may wear it. A slot reads the list of its level (`legwearAt`): a bold slot the
  * bank's bold stockings, which only the outfits they name wear; every other slot the bank's own list. The five have no bold list, so their draws are what they always were.
+ * S5.R4 (plan s5a3 §6.2 r3.1): a bold legs slot («Ножки», `framing` legs) is satin nightwear with stockings, the stockings make it bold, so it wears them whatever its roll; every
+ * other slot wears its list at the list's share.
  */
-export function legwearOfSlot(legwear: LegwearSlot | undefined, level: Level, rng: Rng, moment: Pick<Activity, "text" | "noLegwear">, meta: Outfit | undefined, outfit: string): LegwearDraw {
+export function legwearOfSlot(
+  legwear: LegwearSlot | undefined,
+  level: Level,
+  rng: Rng,
+  moment: Pick<Activity, "text" | "noLegwear">,
+  meta: Outfit | undefined,
+  outfit: string,
+  framing?: "legs",
+): LegwearDraw {
   const list = legwearAt(legwear, level);
   const roll = rng();
   const item = list === undefined ? undefined : rngPick(rng, list.items);
-  const wears = list !== undefined && meta !== undefined && legwearFits(moment, meta) && (list.outfits?.includes(outfit) ?? true) && roll < list.share;
+  const always = framing === "legs" && level === "bold" && legwear?.bold !== undefined;
+  const wears = list !== undefined && meta !== undefined && legwearFits(moment, meta) && (list.outfits?.includes(outfit) ?? true) && (always || roll < list.share);
   return { legwear: wears ? item : undefined, stockings: wears && list?.outfits !== undefined, route: wears ? list?.route : undefined };
 }
 
