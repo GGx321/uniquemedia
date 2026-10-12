@@ -47,6 +47,8 @@ export const GLAMOUR: CategoryBank = {
         { text: "leans back, relaxed", motion: "she sinks back a little", captures: ["selfie"], twoHanded: false },
         { text: "rests her head on the window", motion: "she closes her eyes slowly", captures: ["selfie"], twoHanded: false },
         { text: "pulls her coat a little closer", motion: "she tugs the coat closer slowly", captures: ["selfie"], twoHanded: false },
+        // S5.8a («Ножки»): nobody crouches in the back seat of a taxi, so its legs frame is a look down along her own legs.
+        { text: "sits with her legs crossed", motion: "she crosses and uncrosses her legs slowly", captures: ["pov-legs"], twoHanded: false, legs: { framing: "legs" } },
       ],
     },
     {
@@ -63,6 +65,8 @@ export const GLAMOUR: CategoryBank = {
         { text: "stops under a lamp", motion: "she tilts her head a little", captures: ["friend", "selfie"], twoHanded: false },
         // S5.6R: the taxi's phone moment left with its friend's photo; on the street she checks her phone for the ride home, caught by a friend.
         { text: "checks her phone for her ride", motion: "she scrolls her phone slowly", captures: ["candid", "friend"], twoHanded: false, phone: true, gaze: "own" },
+        // S5.8a («Ножки»): outside, a friend crouches low down near her feet as she steps into her heels.
+        { text: "slips on her heels by the door", motion: "she settles her foot into the heel slowly", captures: ["low-feet"], twoHanded: true, legs: { framing: "legs" } },
       ],
     },
     {

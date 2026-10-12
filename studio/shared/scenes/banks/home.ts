@@ -37,6 +37,10 @@ export const HOME: CategoryBank = {
         { text: "sits on the edge of the bed", motion: "she swings one foot a little", captures: ["mirror-hidden", "timer"], twoHanded: false },
         // S5.7b: the angle comes from the moment. On a timer the phone stands across the room, so she can face the window with her back to it.
         { text: "sits facing the window", motion: "she leans her head back slowly", captures: ["timer"], twoHanded: false, angle: "back" },
+        // S5.8a («Ножки», plan s5a2 §7.2): legs moments, drawn only on a legs slot. The POV looks down along her own legs; in the mirror frame the phone hides her face and her feet face the glass.
+        { text: "stretches her legs along the bed", motion: "she points and flexes her toes slowly", captures: ["pov-legs"], twoHanded: false, legs: { framing: "legs" } },
+        { text: "sits, soles toward the mirror", motion: "she taps her feet together a little", captures: ["mirror-hidden"], twoHanded: false, legs: { framing: "legs" } },
+        { text: "lifts one bare foot to the mirror", motion: "she lifts her foot a little and lowers it", captures: ["mirror-hidden"], twoHanded: false, legs: { framing: "legs" } },
       ],
     },
     {
@@ -76,6 +80,9 @@ export const HOME: CategoryBank = {
         { text: "lies curled under the blanket", motion: "she pulls the blanket up a little", captures: ["above", "timer"], twoHanded: false, messyOk: true },
         { text: "lies prone, hips behind to one side", motion: "she shifts her hips a little", captures: ["prone"], twoHanded: false, outfits: PRONE, noLegwear: true },
         { text: "lies on her stomach, head tilted", motion: "she tilts her head a little", captures: ["prone"], twoHanded: false, outfits: PRONE, noLegwear: true },
+        // S5.8a: the bare and socked feet toward the viewer are a POV from where she lies or sits (the owner: at home she shoots herself, so not the friend's `low-feet`); the compositions are the approved ones.
+        { text: "lies with her bare feet forward", motion: "she wiggles her toes a little", captures: ["pov-legs"], twoHanded: false, legs: { framing: "legs" } },
+        { text: "sits with her socked feet forward", motion: "she crosses and uncrosses her ankles slowly", captures: ["pov-legs"], twoHanded: false, legs: { framing: "legs" } },
       ],
     },
     {

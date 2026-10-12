@@ -32,6 +32,8 @@ export const PHOTOSHOOT: CategoryBank = {
         { text: "laughs, looking down the street", motion: "she laughs a little and looks away", captures: ["candid", "friend"], twoHanded: false, gaze: "own", expression: true },
         { text: "sips her coffee", motion: "she lowers the cup a little", captures: ["selfie", "friend", "candid"], twoHanded: false },
         { text: "turns to look across the road", motion: "she turns her head slowly", captures: ["friend", "candid", "timer"], twoHanded: false, gaze: "own", angle: "profile" },
+        // S5.8a («Ножки»): outside, a friend crouches a couple of metres away, low down near her feet.
+        { text: "sits with her ankles crossed", motion: "she swings her crossed foot slowly", captures: ["low-feet"], twoHanded: false, legs: { framing: "legs" } },
       ],
     },
     {

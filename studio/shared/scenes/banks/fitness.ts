@@ -82,6 +82,8 @@ export const FITNESS: CategoryBank = {
         { text: "lifts a light dumbbell", motion: "she lifts the weight slowly", captures: ["selfie"], twoHanded: false, hair: "sport" },
         { text: "sits on the mat for a breather", motion: "she breathes out slowly", captures: ["timer", "selfie"], twoHanded: false, hair: "sport" },
         { text: "stretches to one side, in profile", motion: "she reaches a little further", captures: ["timer"], twoHanded: true, angle: "profile", hair: "sport" },
+        // S5.8a («Ножки»): a POV along her own legs on the mat.
+        { text: "stretches her legs on the mat", motion: "she flexes her feet slowly", captures: ["pov-legs"], twoHanded: false, hair: "sport", legs: { framing: "legs" } },
       ],
     },
   ],

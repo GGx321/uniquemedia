@@ -14,7 +14,7 @@ describe.each([12, 20])("a category plan of %i slots", (count) => {
   for (const category of CATEGORIES) {
     for (const level of ["ordinary", "flirty"] as const) {
       test(`${category}, ${level}: every moment of the bank appears at least once over ${SEEDS} seeds`, () => {
-        const wanted = new Set(POOLS[category].locations.flatMap((l) => l.activities.filter((a) => level === "flirty" || a.level !== "flirty").map((a) => `${l.name} | ${a.text}`)));
+        const wanted = new Set(POOLS[category].locations.flatMap((l) => l.activities.filter((a) => a.legs === undefined && (level === "flirty" || a.level !== "flirty")).map((a) => `${l.name} | ${a.text}`)));
         const seen = new Set<string>();
         for (let seed = 1; seed <= SEEDS; seed++) {
           for (const slot of plan({ seed, count, categories: [category], ...(level === "flirty" ? { level } : {}) }).slots) seen.add(`${slot.location} | ${slot.activity}`);

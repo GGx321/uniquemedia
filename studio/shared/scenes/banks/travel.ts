@@ -16,6 +16,8 @@ export const TRAVEL: CategoryBank = {
         { text: "sits with her feet on the railing", motion: "she stretches her toes a little", captures: ["timer", "friend"], twoHanded: false, noLegwear: true },
         // S5.7b: the angle comes from the moment; seen from behind, she faces the view.
         { text: "stands facing the skyline", motion: "her hair lifts a little in the wind", captures: ["friend", "timer", "candid"], twoHanded: false, angle: "back" },
+        // S5.8a («Ножки»): a POV along her own legs, stretched toward the railing.
+        { text: "stretches her legs on the chair", motion: "she stretches her toes toward the railing a little", captures: ["pov-legs"], twoHanded: false, legs: { framing: "legs" } },
       ],
     },
     {
