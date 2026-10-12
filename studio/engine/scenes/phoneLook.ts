@@ -50,11 +50,11 @@ const friendLine = (key: string, framing: CaptureFraming): string =>
 /** A candid is a friend's photo of her busy with something. */
 const CANDID_CLAUSE = "She is busy with something and not looking toward the camera.";
 
-/** The fixed capture lines; `friend` and `candid` take a variant from the slot's key (`captureLineOf`). */
 // C3′ (the owner's verdict, 2026-10-12): «the phone hides most of her face» drew her face beside the phone in 5 of 5 frames; the wording probe's winner (c3fix 1a)
 // covers it from her eyebrows to her chin, and the side-to-the-mirror sentence (MIRROR_BACK_LINE) says the same.
 const FACE_COVER = "the phone covering her face from her eyebrows to her chin";
 
+/** The fixed capture lines; `friend` and `candid` take a variant from the slot's key (`captureLineOf`). */
 const FIXED_CAPTURE_LINE: Readonly<Record<Exclude<Capture, "friend" | "candid">, string>> = {
   "mirror-hidden": `A mirror selfie she took herself: she holds her phone right in front of her face, ${FACE_COVER}; only her hair and body show in the mirror.`,
   mirror: MIRROR_LINE,
