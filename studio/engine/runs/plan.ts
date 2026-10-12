@@ -1,8 +1,9 @@
 import { z } from "zod";
-import { AttemptId, CategorySnapshot, Id, ImageAgeCheck, ImageQuality, isCustomCategory, Micros, ModelId, RunRequest, SceneId, splitCount, type CategoryRef, type Estimate } from "../../shared/engine";
+import { AttemptId, CategorySnapshot, Id, ImageAgeCheck, ImageQuality, isBoldCategory, isCustomCategory, Micros, ModelId, RunRequest, SceneId, splitCount, type CategoryRef, type Estimate } from "../../shared/engine";
 import { llmPossibleSlots, writerChunksWorst, type CoversOf } from "../../shared/scenes/writerBound";
 import { AGE_CHECK_CALL, estimateRun, MAX_ATTEMPTS_PER_SLOT, WRITER_CALL, type ImageChoice } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
+import { BOLD_IMAGE_MODEL } from "../money/prices";
 import { categoryLabelOf, categoryRefOf, OwnPlanSlotSchema, plannerCategoryOf, PlanSlotSchema, writerMessages, type PlannerCategory, type PlanSlot, type ScenePlan } from "../scenes";
 import { chunkSlots } from "../scenes/writer";
 import type { WriterPhase } from "./writerPhase";
@@ -17,6 +18,25 @@ export type RunCategory = RunRequest["categories"][number];
 
 /** The one-attempt fallback on a moderation refusal (fixed decision, "Refusal fallback"). */
 export const FALLBACK_IMAGE_MODEL = "bytedance-seed/seedream-5-0-pro";
+
+/**
+ * 5a.3 (S5.9d, I5.38): the model of a «Смелая» slot is the Seedream model the moderation fallback also uses, so the model id alone never says which route drew a frame
+ * (a photo's `source.route` and a slot's `route` do). It is the price book's `BOLD_IMAGE_MODEL` (money/prices.ts), pinned equal to the fallback's id.
+ */
+export { BOLD_IMAGE_MODEL };
+/** The size of the «Смелая» route's request. */
+export const BOLD_RESOLUTION = "2K";
+
+/** The «Смелая» route's one choice: Seedream at 2K with no quality knob and the master as its ONE reference. */
+export interface BoldChoice extends ImageChoice {
+  quality: null;
+  refs: 1;
+  resolution: typeof BOLD_RESOLUTION;
+}
+
+export function boldRoute(model: string = BOLD_IMAGE_MODEL): BoldChoice {
+  return { model, quality: null, refs: 1, resolution: BOLD_RESOLUTION };
+}
 
 /** Invariant 7: every slot may use at most this many paid attempts, across QA retries and the fallback. */
 export const RUN_ATTEMPTS_PER_SLOT = MAX_ATTEMPTS_PER_SLOT;
@@ -102,20 +122,24 @@ function writerCall(textModel: string): typeof WRITER_CALL {
   return { ...WRITER_CALL, model: textModel };
 }
 
-/** The models a run's estimate needs priced: the route's image models, the writer's text model and, when on, the age check's. */
-export function runPriceModels(models: RunModels, imageAgeCheck: ImageAgeCheck): PriceModels {
-  const imageModels = [...new Set(runRoute(models.imageModel, models.imageQuality).map((c) => c.model))];
+/**
+ * The models a run's estimate needs priced: the route's image models, the writer's text model and, when on, the age check's. `boldPhotos` (5a.3, S5.9d): when a photo is
+ * on the «Смелая» route the Seedream model is priced too (it may not be on the route) and its endpoint is also checked for the 2K request (`boldShape`, part of the cache key).
+ */
+export function runPriceModels(models: RunModels, imageAgeCheck: ImageAgeCheck, boldPhotos = 0): PriceModels {
+  const bold = boldPhotos > 0;
+  const imageModels = [...new Set([...runRoute(models.imageModel, models.imageQuality).map((c) => c.model), ...(bold ? [BOLD_IMAGE_MODEL] : [])])];
   const chatModels = imageAgeCheck === "on" ? [models.textModel, AGE_CHECK_CALL.model] : [models.textModel];
   // A run sends photo requests: its image models' endpoints are rechecked when the price loads.
-  return { imageModels, chatModels: [...new Set(chatModels)], checkRequestShape: true };
+  return { imageModels, chatModels: [...new Set(chatModels)], checkRequestShape: true, ...(bold ? { boldShape: true as const } : {}) };
 }
 
 /**
  * The models a run made from a reviewed scene set needs priced (CS.5): its image models and, when the check is on, the age check's. No text model: every
  * sentence exists, so nothing is asked of the writer, and a text price that cannot be loaded must not block (or mark as «fallback») an images-only run.
  */
-export function sceneRunPriceModels(models: RunModels, imageAgeCheck: ImageAgeCheck): PriceModels {
-  return { ...runPriceModels(models, imageAgeCheck), chatModels: imageAgeCheck === "on" ? [AGE_CHECK_CALL.model] : [] };
+export function sceneRunPriceModels(models: RunModels, imageAgeCheck: ImageAgeCheck, boldPhotos = 0): PriceModels {
+  return { ...runPriceModels(models, imageAgeCheck, boldPhotos), chatModels: imageAgeCheck === "on" ? [AGE_CHECK_CALL.model] : [] };
 }
 
 /**
@@ -130,6 +154,9 @@ export function runEstimate(priced: PricedBook, models: RunModels, request: Pick
   // 5a.2 (S5.6c2, I5.30): the code template writes every slot of a built-in category and of a covered custom one, so the writer is priced for the
   // uncovered custom categories' slots alone (`writerChunksWorst`); the cap is this very figure.
   const split = splitCount(request.count, request.categories);
+  // 5a.3 (S5.9d, §10.2): every photo of a «Смелая» category is priced on the Seedream 2K route, which is the upper bound of the plan's actual need (a slot of those categories
+  // that the planner draws on the settings' model costs less); the cap is this very figure, so the plan's need never exceeds the estimate.
+  const boldPhotos = boldPhotosOf(split);
   const estimate = estimateRun(priced.book, {
     photos: request.count,
     attemptsPerSlot: RUN_ATTEMPTS_PER_SLOT,
@@ -137,23 +164,42 @@ export function runEstimate(priced: PricedBook, models: RunModels, request: Pick
     writer: writerCall(models.textModel),
     writerLoad: { chunks: writerChunksWorst(split, covers), scenes: llmPossibleSlots(split, covers) },
     ageChecks: imageAgeCheck === "on" ? AGE_CHECK_CALL : null,
+    bold: { photos: boldPhotos, image: boldRoute() },
   });
-  return { expectedMicros: estimate.expectedMicros, worstMicros: estimate.worstMicros, prices: estimate.priceSource, pricesAsOf: priced.asOf };
+  return estimateOf(estimate, priced);
+}
+
+/** The photos of a request's split that belong to a «Смелая» category. */
+export function boldPhotosOf(split: readonly { ref: CategoryRef; count: number }[]): number {
+  return split.reduce((sum, entry) => (isBoldCategory(entry.ref) ? sum + entry.count : sum), 0);
+}
+
+/** The contract's estimate from the money core's: `boldAttemptMicros` only when a photo is on the «Смелая» route (gap C). */
+function estimateOf(estimate: ReturnType<typeof estimateRun>, priced: PricedBook): Estimate {
+  return {
+    expectedMicros: estimate.expectedMicros,
+    worstMicros: estimate.worstMicros,
+    prices: estimate.priceSource,
+    pricesAsOf: priced.asOf,
+    ...(estimate.boldAttemptMicros === undefined ? {} : { boldAttemptMicros: estimate.boldAttemptMicros }),
+  };
 }
 
 /**
  * A run made from a reviewed scene set (CS.5): `runEstimate` with no writer, because every sentence already exists. `count` is the active scenes with text.
  * The route, the attempts per slot and the age checks are the whole run's own, so removing a scene lowers the worst case by exactly its attempts.
  */
-export function runEstimateFromScenes(priced: PricedBook, models: RunModels, request: Pick<RunRequest, "count">, imageAgeCheck: ImageAgeCheck): Estimate {
+export function runEstimateFromScenes(priced: PricedBook, models: RunModels, request: Pick<RunRequest, "count"> & { boldPhotos?: number }, imageAgeCheck: ImageAgeCheck): Estimate {
   const estimate = estimateRun(priced.book, {
     photos: request.count,
     attemptsPerSlot: RUN_ATTEMPTS_PER_SLOT,
     route: runRoute(models.imageModel, models.imageQuality),
     writer: null,
     ageChecks: imageAgeCheck === "on" ? AGE_CHECK_CALL : null,
+    // 5a.3 (S5.9d): the scenes on the Seedream route (exact, from the scenes' `route`), or every photo of a «Смелая» launch (option B, §10.2: the caller's count).
+    bold: { photos: request.boldPhotos ?? 0, image: boldRoute() },
   });
-  return { expectedMicros: estimate.expectedMicros, worstMicros: estimate.worstMicros, prices: estimate.priceSource, pricesAsOf: priced.asOf };
+  return estimateOf(estimate, priced);
 }
 
 /** A slot's pre-allocated attempt ids: `${runId}:${attemptIdBase}#N`, N = 1..ids (its three paid attempts plus the spares by default). */
@@ -315,9 +361,16 @@ export interface NewRunPlan {
  * The `models` a plan persists. `imageQuality` is written only when it differs from what a plan without the key means (`low`, or none for Seedream), so
  * a default run's plan.json is byte-for-byte the one written before the image-model choice existed.
  */
-function planModels(route: readonly [ImageChoice, ...ImageChoice[]], textModel: string) {
+function planModels(route: readonly [ImageChoice, ...ImageChoice[]], textModel: string, slots: readonly object[]) {
   const [first, second] = route;
-  return { image: first.model, ...(first.quality === "low" || first.model === FALLBACK_IMAGE_MODEL ? {} : { imageQuality: first.quality }), fallback: second?.model ?? null, text: textModel };
+  return {
+    image: first.model,
+    ...(first.quality === "low" || first.model === FALLBACK_IMAGE_MODEL ? {} : { imageQuality: first.quality }),
+    fallback: second?.model ?? null,
+    text: textModel,
+    // 5a.3 (S5.9d): the «Смелая» model, written only when a slot is drawn on that route, so a plan without one is the document it always was.
+    ...(slots.some((slot) => "route" in slot && slot.route === "seedream") ? { bold: BOLD_IMAGE_MODEL } : {}),
+  };
 }
 
 /** The plan to persist: the planner's slots with every attempt id pre-allocated, and the writer's chunks with theirs. */
@@ -335,7 +388,7 @@ export function buildRunPlan(input: NewRunPlan): RunPlan {
     // Written only when it differs from what a plan without the key means (no clause; `low`, or none for Seedream), so a default run's
     // plan.json is byte-for-byte the one written before the image-model choice existed.
     ...(input.cameraRealism === true ? { cameraRealism: true } : {}),
-    models: planModels(route, input.models.textModel),
+    models: planModels(route, input.models.textModel, input.scenes.slots),
     capMicros: input.capMicros,
     plannedWorstMicros: input.plannedWorstMicros,
     scenes: input.scenes,
@@ -391,7 +444,7 @@ export function buildSceneRunPlan(input: NewSceneRunPlan): RunPlan {
     ...(input.categories === undefined || input.categories.length === 0 ? {} : { categories: input.categories }),
     imageAgeCheck: input.imageAgeCheck,
     ...(input.cameraRealism === true ? { cameraRealism: true } : {}),
-    models: planModels(route, input.models.textModel),
+    models: planModels(route, input.models.textModel, slots),
     capMicros: input.capMicros,
     plannedWorstMicros: input.plannedWorstMicros,
     scenes: { version: 1, seed: 0, slots },

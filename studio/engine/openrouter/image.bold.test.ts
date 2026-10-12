@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 function boldParams(overrides: Partial<BoldImageParams> = {}): BoldImageParams {
-  return { ...imageParams(money, { model: SEEDREAM, prompt: PROMPT, aspectRatio: "9:16", quality: null }), resolution: "2K", references: [asLibraryReference(JPEG)], ...overrides };
+  return { ...imageParams(money, { model: SEEDREAM, prompt: PROMPT, aspectRatio: "9:16" }), quality: null, resolution: "2K", references: [asLibraryReference(JPEG)], ...overrides };
 }
 
 test("posts the bold body: 2K, 9:16, one reference, and no quality", async () => {
