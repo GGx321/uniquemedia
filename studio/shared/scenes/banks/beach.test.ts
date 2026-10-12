@@ -42,7 +42,24 @@ describe("who takes the photo: mostly someone she asked (I5.32)", () => {
 
   test("her face is hidden only by a moment seen from behind, and the moments that turn away are few", () => {
     const away = moments.filter((m) => m.moment.angle === "back" || m.moment.angle === "profile").map((m) => m.moment.text);
-    expect(away).toEqual(["sits hugging her knees", "tucks her hair back in the breeze"]);
+    expect(away).toEqual([
+      "ties her hair in a loose knot",
+      "fixes her hair with one hand",
+      "stretches one arm along the edge",
+      "adjusts the strap on her shoulder",
+      "sits hugging her knees",
+      "tucks her hair back in the breeze",
+      "sits with her hands clasped",
+    ]);
+  });
+
+  // S5.9c round 2: a flirty or bold slot never turns its back, so the plan's away frames fall on the moments in profile; with one of them in every place they go round the places
+  // instead of repeating the rocks' one (beach at «Смелая», seed 26: «tucks her hair back in the breeze» in 10 of 100 frames).
+  test("every place holds a moment in profile that a friend or a candid takes, so the away frames spread over the places", () => {
+    for (const place of BEACH.places) {
+      const profile = place.moments.filter((m) => m.angle === "profile" && m.level === undefined && (m.captures.includes("friend") || m.captures.includes("candid")));
+      expect(profile.length, place.name).toBeGreaterThanOrEqual(1);
+    }
   });
 
   test("every moment that is not a legs moment is outdoors (a cap goes only to one of them)", () => {
@@ -65,25 +82,25 @@ describe("the places (plan §6.3)", () => {
 describe("the moments and their levels (plan §6.3)", () => {
   test.each<[string, string, readonly Capture[], "flirty" | "bold" | undefined, string]>([
     // Review round 2: one «sits on the sand» at the beach (the legs one), and one rest on her knees in the bank (the rocks' hugged knees).
-    ["the beach", "brushes sand off her legs", ["friend", "selfie", "timer"], undefined, "she brushes the sand off slowly"],
+    ["the beach", "brushes sand off her legs", ["friend", "selfie", "timer", "candid"], undefined, "she brushes the sand off slowly"],
     // Review round 2: the bold moments stand at three places, and a timer or a candid takes them too.
     ["the beach", "lies back on her elbows", ["friend", "timer", "candid"], "bold", "she tilts her head back a little"],
     ["a hotel pool", "sits on the lounger, legs crossed", ["friend", "selfie", "timer", "candid"], "bold", "she sways her crossed foot slowly"],
-    ["the beach", "shades her eyes with one hand", ["friend"], undefined, "she lowers her hand slowly and smiles"],
+    ["the beach", "shades her eyes with one hand", ["friend", "timer", "candid"], undefined, "she lowers her hand slowly and smiles"],
     ["the beach", "lowers her sunglasses a little", ["selfie", "friend"], "flirty", "she slowly peeks over her sunglasses"],
-    ["the beach", "wrings out her wet hair", ["friend", "candid"], undefined, "she squeezes her hair slowly"],
+    ["the beach", "wrings out her wet hair", ["friend", "timer", "candid"], undefined, "she squeezes her hair slowly"],
     ["the water's edge", "walks along the shore", ["friend", "candid"], undefined, "she walks on slowly, the water at her feet"],
     ["the water's edge", "stands waist-deep, looking back", ["friend"], "flirty", "she turns her head a little further and smiles"],
     ["the water's edge", "laughs as a wave reaches her", ["friend", "candid"], undefined, "she laughs and steps back a little"],
     ["the water's edge", "steps out of the water", ["friend", "candid"], undefined, "she keeps walking slowly"],
-    ["a hotel pool", "lies back on a sun lounger", ["friend", "timer"], undefined, "she tilts her face to the sun a little"],
-    ["a hotel pool", "sits on the edge, feet in the water", ["friend", "selfie", "candid"], undefined, "she swirls her feet slowly"],
-    ["a hotel pool", "leans on the edge in the water", ["friend", "timer"], undefined, "she kicks her feet slowly behind her"],
+    ["a hotel pool", "lies back on a sun lounger", ["friend", "selfie", "timer", "candid"], undefined, "she tilts her face to the sun a little"],
+    ["a hotel pool", "sits on the edge, feet in the water", ["friend", "selfie", "timer", "candid"], undefined, "she swirls her feet slowly"],
+    ["a hotel pool", "leans on the edge in the water", ["friend", "timer", "candid"], undefined, "she kicks her feet slowly behind her"],
     ["a rooftop pool", "leans on the glass railing", ["friend", "selfie"], "flirty", "her hair lifts a little in the wind"],
     ["a rooftop pool", "looks back over her shoulder", ["friend", "timer"], "bold", "she turns her head a little further"],
     ["a rooftop pool", "sips a cold drink by the water", ["friend", "selfie", "candid"], undefined, "she lowers the glass a little"],
     ["the rocks by the sea", "sits hugging her knees", ["friend", "timer"], undefined, "her hair stirs in the wind a little"],
-    ["the rocks by the sea", "sits cross-legged on a towel", ["friend", "selfie"], undefined, "she leans back a little"],
+    ["the rocks by the sea", "sits cross-legged on a towel", ["friend", "selfie", "candid"], undefined, "she leans back a little"],
     ["the rocks by the sea", "leans back on her hands", ["friend", "timer", "candid"], undefined, "she leans her head back a little"],
     ["the rocks by the sea", "tucks her hair back in the breeze", ["friend", "candid"], undefined, "she tucks a strand back slowly"],
   ])("%s · «%s»", (place, text, captures, level, motion) => {
