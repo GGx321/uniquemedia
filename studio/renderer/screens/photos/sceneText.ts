@@ -248,6 +248,11 @@ export function redrawText(category: string, sceneId: number, angles?: { readonl
 export interface StripLook {
   /** «Подача: кокетливая» / «Подача: обычная»; null for a set made before «Подача» (it stored «Ракурсы» toggles instead, which change nothing now). */
   readonly level: string | null;
+  /**
+   * S5.8b (mockup 28): «Ножки: 3 кадра», the set's legs frames still in it; null with none. A count, not the mockup's «немного, 15 %»: the set's view names
+   * no share.
+   */
+  readonly legs: string | null;
   /** The first category of the set's snapshot with angles of its own, null with none. */
   readonly first: string | null;
   /** How many more such categories. */
@@ -262,14 +267,16 @@ export interface StripLook {
 export const STRIP_ANGLE = "Ракурс — из сцены";
 
 /**
- * README contract note 9 (CS.8b), S5.7c: the set's «Подача», then who does not take the angle from the scene alone — the categories of the set's snapshot with
- * angles of their own (named, their lists not repeated: they are in «Мои категории») and own scenes, whose angle the model takes from the idea (an idea write
- * running counts).
+ * README contract note 9 (CS.8b), S5.7c: the set's «Подача» (S5.8b: and its legs frames), then who does not take the angle from the scene alone — the
+ * categories of the set's snapshot with angles of their own (named, their lists not repeated: they are in «Мои категории») and own scenes, whose angle the
+ * model takes from the idea (an idea write running counts).
  */
 export function stripLook(set: SceneSetView): StripLook {
   const rows = set.categories.flatMap((c) => (c.poses === undefined ? [] : [{ name: c.name ?? CUSTOM_FALLBACK, list: posesText(c.poses) }]));
+  const legs = set.scenes.filter((s) => s.framing === "legs" && !s.removed).length;
   return {
     level: set.level === "flirty" ? "Подача: кокетливая" : set.poses === undefined ? "Подача: обычная" : null,
+    legs: legs === 0 ? null : `Ножки: ${countOf(legs, ["кадр", "кадра", "кадров"])}`,
     first: rows[0]?.name ?? null,
     more: Math.max(0, rows.length - 1),
     rows,
@@ -281,7 +288,7 @@ export function stripLook(set: SceneSetView): StripLook {
 export function stripLookText(set: SceneSetView): string {
   const parts = stripLook(set);
   const categories = parts.first === null ? "" : `; у «${parts.first}»${parts.more > 0 ? ` и ещё ${parts.more}` : ""} — свои`;
-  return `${parts.level === null ? "" : `${parts.level} · `}${STRIP_ANGLE}${categories}${parts.own ? "; у своих сцен — по описанию" : ""}`;
+  return `${parts.level === null ? "" : `${parts.level} · `}${parts.legs === null ? "" : `${parts.legs} · `}${STRIP_ANGLE}${categories}${parts.own ? "; у своих сцен — по описанию" : ""}`;
 }
 
 /** The idea form's hint under «Сколько · Кадр», by the shot chosen (null: «Авто»; README «Copy», «Idea hint by shot»; contract notes 6-7). */

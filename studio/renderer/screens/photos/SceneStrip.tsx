@@ -307,6 +307,12 @@ export function SceneStrip({
                     {" · "}
                   </>
                 )}
+                {angles.legs !== null && (
+                  <>
+                    <span className="scene-strip-level">{angles.legs}</span>
+                    {" · "}
+                  </>
+                )}
                 {STRIP_ANGLE}
                 {angles.first !== null && (
                   <>

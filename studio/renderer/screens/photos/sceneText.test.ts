@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SceneSetView } from "../../../shared/engine";
+import { NBSP } from "../../lib/format";
 import { gaveUp, pending, scene, sceneSet, written } from "./sceneFixtures";
 import {
   approveReason,
@@ -232,7 +233,7 @@ describe("CS.8, S5.7c: «Подача» and angles on the review screen", () => 
   test("the strip's line: the set's «Подача», the angle from the scene, then who keeps angles of their own (not their lists) and own scenes", () => {
     const both = fresh(sceneSet([scene(1), scene(2, { origin: "own" })], { categories: [{ ref: "home", name: null }, { ref: BED.ref, name: BED.name, poses: [...BED.poses] }] }));
     expect(stripLookText(both)).toBe("Подача: обычная · Ракурс — из сцены; у «Домашнее у кровати» — свои; у своих сцен — по описанию");
-    expect(stripLook(both)).toEqual({ level: "Подача: обычная", first: "Домашнее у кровати", more: 0, rows: [{ name: "Домашнее у кровати", list: "три четверти, со спины" }], own: true });
+    expect(stripLook(both)).toEqual({ level: "Подача: обычная", legs: null, first: "Домашнее у кровати", more: 0, rows: [{ name: "Домашнее у кровати", list: "три четверти, со спины" }], own: true });
 
     const several = sceneSet(written(3), {
       level: "flirty",
@@ -250,6 +251,24 @@ describe("CS.8, S5.7c: «Подача» and angles on the review screen", () => 
     expect(stripLookText(fresh(sceneSet([scene(1), scene(21, { origin: "own" })])))).toBe("Подача: обычная · Ракурс — из сцены; у своих сцен — по описанию");
     expect(stripLookText(fresh(sceneSet(written(2))))).toBe("Подача: обычная · Ракурс — из сцены");
     expect(stripLookText(fresh(sceneSet(written(2), { level: "flirty" })))).toBe("Подача: кокетливая · Ракурс — из сцены");
+  });
+
+  // S5.8b (mockup 28, a deviation): «Ножки» after «Подача». The set's view names no share (the engine echoes `level`, not `legsShare`), so the line counts
+  // the set's legs frames instead of «немного, 15 %»: the ones still in the set, a removed one not. A set with none says nothing of them.
+  test("the strip's line counts the set's legs frames after «Подача»; a removed one is not counted", () => {
+    const legs = fresh(
+      sceneSet([scene(1, { framing: "legs", capture: "pov-legs" }), scene(2), scene(3, { framing: "legs", capture: "low-feet" }), scene(4, { framing: "legs", removed: true })], { level: "flirty" }),
+    );
+    expect(stripLook(legs).legs).toBe(`Ножки: 2${NBSP}кадра`);
+    expect(stripLookText(legs)).toBe(`Подача: кокетливая · Ножки: 2${NBSP}кадра · Ракурс — из сцены`);
+    expect(stripLook(fresh(sceneSet([scene(1, { framing: "legs" })]))).legs).toBe(`Ножки: 1${NBSP}кадр`);
+    expect(stripLook(fresh(sceneSet(Array.from({ length: 5 }, (_, i) => scene(i + 1, { framing: "legs" }))))).legs).toBe(`Ножки: 5${NBSP}кадров`);
+  });
+
+  test("a set with no legs frame, or only removed ones, says nothing of «Ножки»", () => {
+    expect(stripLook(fresh(sceneSet(written(2)))).legs).toBeNull();
+    expect(stripLook(fresh(sceneSet([scene(1, { framing: "legs", removed: true }), scene(2)]))).legs).toBeNull();
+    expect(stripLookText(fresh(sceneSet(written(2))))).toBe("Подача: обычная · Ракурс — из сцены");
   });
 
   test("a set made before «Подача» names none, nor its old toggles", () => {
