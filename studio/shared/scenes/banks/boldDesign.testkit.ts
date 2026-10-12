@@ -30,6 +30,31 @@ const EXPLICIT = new RegExp(
   "gi",
 );
 
+/**
+ * C3′ (the owner's verdict, 2026-10-12; the load rule `bottom-fabric` and `unfabricBottomsIn` arrive with fix/c3-prompts): Grok draws a skirt or shorts named
+ * without its fabric as denim, so every one names it. Until the rebase brings the shared detector, the «Смелая» banks are held to it here, in its simple form: the
+ * garment's own words, read back from its noun to the word that joins it to another garment, name a fabric.
+ */
+const FABRICS = /\b(?:cotton|linen|jersey|knit|knitted|wool|woollen|woolen|leather|suede|corduroy|tweed|lycra|spandex|nylon|fleece|terry|waffle|sequin\w*|chiffon|tulle|lace|mesh|satin|silk|velvet|crepe|polyester|modal|seersucker|poplin|ribbed)\b/i;
+const BOTTOM = /\b(?:mini(?:-?skirts?)?|skirts?|skorts?|shorts|bermudas?)\b/gi;
+const JOINS = /\b(?:and|or|with|over|under|a|an|the|her)\b|,/gi;
+
+/** The skirts and shorts a text names without their fabric, as it names them. */
+export function unfabricBottomsOf(text: string): string[] {
+  return Array.from(text.matchAll(new RegExp(BOTTOM)), (m) => {
+    const before = text.slice(0, m.index);
+    const joins = Array.from(before.matchAll(new RegExp(JOINS)), (j) => (j.index ?? 0) + j[0].length);
+    const own = before.slice(joins.length === 0 ? 0 : (joins[joins.length - 1] ?? 0));
+    return FABRICS.test(own) ? null : m[0];
+  }).filter((bottom): bottom is string => bottom !== null);
+}
+
+/**
+ * C3′ (the owner: «просто стоит спиной без какой-либо позы»; the load rule `away-action` arrives with fix/c3-prompts): a moment seen from behind or in profile
+ * names what she is doing, so the frame reads. The rule's own words, held here until the rebase.
+ */
+export const AWAY_ACTION = /\b(?:hands?|arms?|hair|earrings?|straps?|railing|stretch\w*|hugging|bent|turns to look)\b/i;
+
 /** The exposure words of a text, as it writes them, in order. */
 export function exposureWordsIn(text: string): string[] {
   return Array.from(text.matchAll(new RegExp(EXPOSURE)), (m) => m[0]);

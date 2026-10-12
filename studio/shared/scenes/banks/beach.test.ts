@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Capture } from "../captures";
 import { swimwearWordsIn } from "./boldRules";
+import { unfabricBottomsOf } from "./boldDesign.testkit";
 import { BEACH } from "./beach";
 import { boldBankProblems } from "./schema";
 import type { Moment, Outfit } from "./types";
@@ -152,6 +153,12 @@ describe("swimwear on every frame (answer (a), M6)", () => {
     expect(BEACH.outfits).toHaveLength(12);
     expect(BEACH.legwear).toBeUndefined();
   });
+});
+
+// Review round 2 (C3′): a skirt or shorts names its fabric; the beach has none, and bikini bottoms are swimwear.
+test("every skirt or shorts of the bank names its fabric (C3′)", () => {
+  const texts = [...BEACH.outfits.map((o) => o.text), ...moments.flatMap((m) => m.moment.outfits ?? [])];
+  expect(texts.filter((t) => unfabricBottomsOf(t).length > 0)).toEqual([]);
 });
 
 describe("the legs moments (plan §6.3, M5): her own look down along her legs, never a low-feet frame", () => {

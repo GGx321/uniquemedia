@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Capture } from "../captures";
 import { boldWordsIn, lingerieWordsIn } from "./boldRules";
+import { unfabricBottomsOf } from "./boldDesign.testkit";
 import { NIGHTWEAR } from "./nightwear";
 import { boldBankProblems, categoryBankProblems } from "./schema";
 import type { Moment, Outfit } from "./types";
@@ -143,11 +144,11 @@ describe("the moments and their levels (plan §6.2)", () => {
 
   test("the prone selfies wear what drew: grey lounge shorts on the owner's model, satin or lingerie on Seedream", () => {
     for (const text of ["lies on her stomach, one arm out", "lies prone, glancing back", "lies prone, her cheek on her hand", "lies on her stomach, head tilted", "lies prone, ankles crossed behind", "lies prone, feet raised behind"]) {
-      expect(momentNamed(text)?.moment.outfits, text).toEqual(["grey lounge shorts and a fitted tee"]);
+      expect(momentNamed(text)?.moment.outfits, text).toEqual(["grey jersey lounge shorts and a tee"]);
     }
     expect(momentNamed("lies prone, her cheek on her hand")?.moment.handAtFace).toBe(true);
     expect(momentNamed("lies on her side, head on her hand")?.moment.handAtFace).toBe(true);
-    expect(momentNamed("lies prone, chin on her hand")?.moment).toMatchObject({ outfits: ["grey lounge shorts and a fitted tee", "a satin cami and sleep shorts"], handAtFace: true });
+    expect(momentNamed("lies prone, chin on her hand")?.moment).toMatchObject({ outfits: ["grey jersey lounge shorts and a tee", "a satin cami and satin shorts"], handAtFace: true });
     // P-5a3 #4: Seedream drew it, and no phone in her hands.
     expect(momentNamed("lies on her stomach, hips behind")?.moment.outfits).toEqual(["a black bra and briefs"]);
     expect(momentNamed("lies on her stomach, feet up")?.moment.outfits).toEqual(["a black lace bra and panties"]);
@@ -184,7 +185,7 @@ describe("the P-5a3 decisions", () => {
     const legs = moments.filter((m) => m.moment.legs !== undefined);
     expect(legs.length).toBe(4);
     for (const { moment } of legs) {
-      expect(moment.outfits, moment.text).toEqual(["cotton pajama shorts and a tee", "a long cotton nightshirt", "a satin cami and sleep shorts", "a satin midi nightdress"]);
+      expect(moment.outfits, moment.text).toEqual(["cotton pajama shorts and a tee", "a long cotton nightshirt", "a satin cami and satin shorts", "a satin midi nightdress"]);
       for (const outfit of moment.outfits ?? []) expect(lingerieWordsIn(outfit), outfit).toEqual([]);
     }
   });
@@ -209,7 +210,7 @@ describe("the outfits: cotton, satin, lingerie (plan §6.2)", () => {
     ["cotton pajama shorts and a tee", true, false],
     ["a long cotton nightshirt", true, false],
     ["silk pajamas", false, false],
-    ["grey lounge shorts and a fitted tee", true, true],
+    ["grey jersey lounge shorts and a tee", true, true],
   ])("ordinary, on the owner's model: «%s»", (text, showsLegs, pinOnly) => {
     const outfit = outfitNamed(text);
     expect(outfit).toEqual({ text, ...(showsLegs ? { showsLegs: true } : {}), ...(pinOnly ? { pinOnly: true } : {}) });
@@ -218,7 +219,7 @@ describe("the outfits: cotton, satin, lingerie (plan §6.2)", () => {
   test.each<[string, string]>([
     ["a satin slip nightdress", SATIN_DRESS],
     ["a satin midi nightdress", SATIN_DRESS],
-    ["a satin cami and sleep shorts", "Her cami and shorts are opaque satin."],
+    ["a satin cami and satin shorts", "Her cami and shorts are opaque satin."],
     ["a short tied satin robe", "Her robe is tied and closed over her chest."],
   ])("flirty, on Seedream (Grok refused satin 2/2): «%s»", (text, coverage) => {
     expect(outfitNamed(text)).toEqual({ text, showsLegs: true, level: "flirty", route: "seedream", coverage });
@@ -247,6 +248,13 @@ describe("the outfits: cotton, satin, lingerie (plan §6.2)", () => {
   test("every Seedream outfit names the «Смелая» vocabulary or is bold, and the cotton ones name none of it", () => {
     for (const outfit of NIGHTWEAR.outfits) expect({ text: outfit.text, seedream: outfit.route === "seedream" }).toEqual({ text: outfit.text, seedream: boldWordsIn(outfit.text).length > 0 || outfit.level === "bold" });
   });
+});
+
+// Review round 2 (C3′, the owner's verdict): Grok draws a skirt or shorts named without its fabric as denim. The prone lounge shorts are jersey (as «Дом»'s on
+// fix/c3-prompts), the satin set's shorts are satin.
+test("every skirt or shorts of the bank names its fabric (C3′)", () => {
+  const texts = [...NIGHTWEAR.outfits.map((o) => o.text), ...moments.flatMap((m) => m.moment.outfits ?? [])];
+  expect(texts.filter((t) => unfabricBottomsOf(t).length > 0)).toEqual([]);
 });
 
 describe("the legwear: socks and tights at ordinary and flirty, stockings on a bold slot (Q-A)", () => {

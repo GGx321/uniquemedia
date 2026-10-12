@@ -12,7 +12,7 @@ export const BOLD_EXEMPT_YOUTH: readonly string[] = ["babydoll"];
  * S5.9b2 (plan s5a3 §6.4): the satin nightwear of «Ночнушки и бельё», which the soft look list refuses («satin», K-22). Exempt only in a «Смелая» bank's
  * soft-list check: the list itself, the writer's prompt and every ordinary bank keep refusing «satin» (and «satin pajamas», «a satin dress»).
  */
-export const BOLD_EXEMPT_LOOK: readonly string[] = ["satin slip nightdress", "satin midi nightdress", "satin cami", "satin robe"];
+export const BOLD_EXEMPT_LOOK: readonly string[] = ["satin slip nightdress", "satin midi nightdress", "satin cami", "satin shorts", "satin robe"];
 
 /** The text with the exempt «Смелая» look phrases taken out (whole words, any case), for a «Смелая» bank's check against the soft look list. */
 export function withoutBoldExemptLook(text: string): string {

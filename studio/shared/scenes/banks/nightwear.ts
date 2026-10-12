@@ -8,11 +8,11 @@ import type { CategoryBank } from "./types";
 // stockings and the prone bra and briefs were drawn and stay; stockings with lingerie on a legs frame were refused, so a legs frame wears cotton or satin,
 // and a bold one the satin with the bold stockings. The owner confirms each of these on the review sheet.
 
-/** The prone selfie's outfit on the owner's model: «Дом»'s probes drew it in grey lounge shorts and refused cotton shorts, so the ordinary prone frames pin it. */
-const PRONE_GREY = "grey lounge shorts and a fitted tee";
+/** The prone selfie's outfit on the owner's model: «Дом»'s probes drew grey lounge shorts and refused cotton shorts; C3′: a skirt or shorts names its fabric (an unnamed one draws as denim), so jersey, as «Дом» words it. */
+const PRONE_GREY = "grey jersey lounge shorts and a tee";
 const PAJAMAS = "cotton pajama shorts and a tee";
 const NIGHTSHIRT = "a long cotton nightshirt";
-const SATIN_CAMI = "a satin cami and sleep shorts";
+const SATIN_CAMI = "a satin cami and satin shorts";
 const SATIN_MIDI = "a satin midi nightdress";
 /** A legs frame (M5): two cotton, two satin, none a mini, none lingerie. A bold legs slot is the satin with the bold stockings (P-5a3 #6). */
 const LEGS = [PAJAMAS, NIGHTSHIRT, SATIN_CAMI, SATIN_MIDI];

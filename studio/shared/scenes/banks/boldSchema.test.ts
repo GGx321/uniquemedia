@@ -42,7 +42,7 @@ const ROOM: BankPlace = {
 const OUTFITS: readonly Outfit[] = [
   { text: "cotton pajama shorts and a tee", showsLegs: true },
   { text: "a long cotton nightshirt", showsLegs: true },
-  { text: "a satin cami and sleep shorts", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her cami and shorts are opaque satin." },
+  { text: "a satin cami and satin shorts", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her cami and shorts are opaque satin." },
   { text: "a black lace bra and panties", showsLegs: true, level: "bold", route: "seedream", coverage: LINGERIE_COVER },
   { text: "a white lace bra and panties", showsLegs: true, level: "bold", route: "seedream", coverage: LINGERIE_COVER },
   { text: "a lace bodysuit", showsLegs: true, level: "bold", route: "seedream", coverage: "Her bodysuit is lined and opaque over her chest and fully covers her hips." },
@@ -70,7 +70,7 @@ const LEGS: Moment = {
   captures: ["pov-legs"],
   twoHanded: false,
   legs: { framing: "legs" },
-  outfits: ["cotton pajama shorts and a tee", "a long cotton nightshirt", "a satin cami and sleep shorts", "a satin midi nightdress"],
+  outfits: ["cotton pajama shorts and a tee", "a long cotton nightshirt", "a satin cami and satin shorts", "a satin midi nightdress"],
 };
 const MIDI: Outfit = { text: "a satin midi nightdress", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her nightdress is opaque satin." };
 const withLegs = (legs: Moment): CategoryBank => ({ ...withMoment(legs), outfits: [...OUTFITS, MIDI] });
@@ -88,7 +88,7 @@ describe("the «Смелая» vocabulary (banks/boldRules.ts)", () => {
     expect(boldWordsIn("a black lace bra and panties")).toEqual(["bra", "panties"]);
     expect(boldWordsIn("a white string bikini")).toEqual(["bikini"]);
     expect(boldWordsIn("sheer black stockings")).toEqual(["stockings"]);
-    expect(boldWordsIn("a satin cami and sleep shorts")).toEqual(["satin"]);
+    expect(boldWordsIn("a satin cami and satin shorts")).toEqual(["satin", "satin"]);
     expect(boldWordsIn("a sheer babydoll over a lace set")).toEqual(["babydoll"]);
     expect(boldWordsIn("a one-piece swimsuit")).toEqual(["swimsuit"]);
     expect(boldWordsIn("a lace bodysuit")).toEqual(["bodysuit"]);
@@ -109,7 +109,7 @@ describe("the «Смелая» vocabulary (banks/boldRules.ts)", () => {
   test("the satin nightwear phrases are taken out for the soft look list, and only they: «satin» alone stays", () => {
     expect(withoutBoldExemptLook("a satin slip nightdress")).not.toMatch(/satin/);
     expect(withoutBoldExemptLook("a satin midi nightdress")).not.toMatch(/satin/);
-    expect(withoutBoldExemptLook("a satin cami and sleep shorts")).not.toMatch(/satin/);
+    expect(withoutBoldExemptLook("a satin cami and satin shorts")).not.toMatch(/satin/);
     expect(withoutBoldExemptLook("a short tied satin robe")).not.toMatch(/satin/);
     expect(withoutBoldExemptLook("satin pajamas")).toMatch(/satin/);
     expect(withoutBoldExemptLook("a satin dress")).toMatch(/satin/);
@@ -134,7 +134,7 @@ describe("a «Смелая» bank", () => {
   const ROWS: Array<[string, CategoryBank, string]> = [
     // bold-route
     ["a lingerie outfit with no route", replacing("a lace bodysuit", { text: "a lace bodysuit", showsLegs: true, level: "bold", coverage: "Her bodysuit is lined and opaque over her chest and fully covers her hips." }), BANK_RULE.boldRoute],
-    ["a satin outfit with no route", replacing("a satin cami and sleep shorts", { text: "a satin cami and sleep shorts", showsLegs: true, level: "flirty", coverage: "Her cami and shorts are opaque satin." }), BANK_RULE.boldRoute],
+    ["a satin outfit with no route", replacing("a satin cami and satin shorts", { text: "a satin cami and satin shorts", showsLegs: true, level: "flirty", coverage: "Her cami and shorts are opaque satin." }), BANK_RULE.boldRoute],
     ["a bold outfit with no «Смелая» word and no route", withOutfits([...OUTFITS, { text: "an open white shirt", showsLegs: true, level: "bold", coverage: "Her shirt covers her chest." }]), BANK_RULE.boldRoute],
     ["a route on an ordinary cotton outfit", replacing("a long cotton nightshirt", { text: "a long cotton nightshirt", showsLegs: true, route: "seedream", coverage: "Her nightshirt covers her." }), BANK_RULE.boldRoute],
     ["a bold moment with no route", withMoment({ ...plain, level: "bold" }), BANK_RULE.boldRoute],
@@ -154,7 +154,7 @@ describe("a «Смелая» bank", () => {
     ["no ordinary outfit, so an ordinary slot has nothing to wear", withOutfits(OUTFITS.filter((o) => o.level !== undefined)), BANK_RULE.boldLevels],
     // bold-legs
     ["a legs moment that pins three outfits", withLegs({ ...LEGS, outfits: LEGS.outfits?.slice(0, 3) ?? [] }), BANK_RULE.boldLegs],
-    ["a legs moment that pins no ordinary outfit (an ordinary legs slot has nothing to wear)", withLegs({ ...LEGS, outfits: ["a satin cami and sleep shorts", "a satin midi nightdress", "a black lace bra and panties", "a white lace bra and panties"] }), BANK_RULE.boldLegs],
+    ["a legs moment that pins no ordinary outfit (an ordinary legs slot has nothing to wear)", withLegs({ ...LEGS, outfits: ["a satin cami and satin shorts", "a satin midi nightdress", "a black lace bra and panties", "a white lace bra and panties"] }), BANK_RULE.boldLegs],
     ["a legs moment that pins lingerie (P-5a3 #6: refused; a bold legs slot is satin and stockings)", withLegs({ ...LEGS, outfits: [...(LEGS.outfits ?? []), "a black lace bra and panties"] }), BANK_RULE.boldLegs],
     ["a low-feet moment (no friend crouches at her feet in a «Смелая» bank)", withLegs({ ...LEGS, captures: ["pov-legs", "low-feet"] }), BANK_RULE.boldLegs],
     // water
@@ -224,7 +224,7 @@ describe("bold-only-here: the «Смелая» vocabulary appears in no ordinary
   });
 
   test.each<[string, CategoryBank]>([
-    ["a satin outfit", { ...home, outfits: [...home.outfits, { text: "a satin cami and sleep shorts" }] }],
+    ["a satin outfit", { ...home, outfits: [...home.outfits, { text: "a satin cami and satin shorts" }] }],
     ["a bikini in a moment", { ...home, places: [{ ...firstPlace, moments: [...firstPlace.moments, { text: "packs her bikini", motion: "she folds it slowly", captures: ["timer"], twoHanded: false }] }, ...home.places.slice(1)] }],
     ["stockings in a motion", { ...home, places: [{ ...firstPlace, moments: [...firstPlace.moments, { text: "sits on the rug", motion: "she smooths her stockings slowly", captures: ["timer"], twoHanded: false }] }, ...home.places.slice(1)] }],
     ["panties in a detail", { ...home, places: [{ ...firstPlace, details: ["a pair of panties on the chair", "a bedside lamp"] }, ...home.places.slice(1)] }],
