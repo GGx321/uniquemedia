@@ -13,7 +13,10 @@ const SWIMSUIT = "Her swimsuit fully covers her chest and her hips.";
 /** Review round 2: a high-leg cut shows her hips, so its sentence says what it does cover. */
 const HIGH_LEG = "Her swimsuit fully covers her chest and her bottom.";
 
-/** In the water she wears a swimsuit or a bikini of every level: no shirt, sweatshirt, sarong or hat in the sea. */
+/**
+ * In the water she wears a swimsuit or a bikini of every level: no shirt, sweatshirt or sarong in the sea. A hat is no garment over the swimwear, and the waist-deep moment adds the
+ * bikini and straw hat P-5a3 #5 drew her in.
+ */
 const IN_THE_WATER = ["a one-piece swimsuit", "a sporty bikini", "a black bikini", "a white bikini", "a white string bikini", "a red triangle bikini", "a strapless bandeau bikini", "a high-leg black swimsuit"];
 /** A legs frame (M5): six cuts over the three levels, none a mini or a dress. */
 const LEGS = ["a one-piece swimsuit", "a bikini and a sarong", "a black bikini", "a white bikini", "a white string bikini", "a red triangle bikini"];
