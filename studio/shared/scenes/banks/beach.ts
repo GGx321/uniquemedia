@@ -1,4 +1,5 @@
-import type { CategoryBank } from "./types";
+import { NO_STRAPS } from "./boldRules";
+import type { CategoryBank, Outfit } from "./types";
 
 // «Пляж и бассейн» (`beach`, 5a.3, plan s5a3 §6.3, answer (a) of the owner), a «Смелая» bank: drawn only under «Подача: Смелая». At the beach and the pool she
 // mostly asks someone (a friend three times in six, a candid), sometimes a selfie or the phone on a timer (I5.32); she lies on her stomach only on her bed, so
@@ -18,6 +19,26 @@ const IN_THE_WATER = ["a one-piece swimsuit", "a sporty bikini", "a black bikini
 const LEGS = ["a one-piece swimsuit", "a bikini and a sarong", "a black bikini", "a white bikini", "a white string bikini", "a red triangle bikini"];
 /** Her feet in the water (review round 2): swimwear only, no sarong. */
 const LEGS_IN_THE_WATER = ["a one-piece swimsuit", "a sporty bikini", "a black bikini", "a white bikini", "a white string bikini", "a red triangle bikini"];
+
+/** The bank's outfits: swimwear on every frame, the level picks the cut. */
+const OUTFITS: readonly Outfit[] = [
+  { text: "a one-piece swimsuit", showsLegs: true, route: "seedream", coverage: SWIMSUIT },
+  { text: "a sporty bikini", showsLegs: true, route: "seedream", coverage: BIKINI },
+  { text: "a bikini and a sarong", showsLegs: true, route: "seedream", coverage: "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her; the sarong is tied at her hips." },
+  { text: "a bikini under a linen shirt", showsLegs: true, route: "seedream", coverage: "Her linen shirt hangs open over her bikini, which fully covers her breasts and her hips." },
+  { text: "a black bikini", showsLegs: true, level: "flirty", route: "seedream", coverage: BIKINI },
+  { text: "a white bikini", showsLegs: true, level: "flirty", route: "seedream", coverage: BIKINI },
+  // The beach probe: good.
+  { text: "a bikini and a straw hat", showsLegs: true, level: "flirty", route: "seedream", coverage: BIKINI },
+  { text: "bikini bottoms and a sweatshirt", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her sweatshirt covers her chest, and her bikini bottoms fully cover her." },
+  { text: "a white string bikini", showsLegs: true, level: "bold", route: "seedream", coverage: BIKINI },
+  { text: "a red triangle bikini", showsLegs: true, level: "bold", route: "seedream", coverage: BIKINI },
+  { text: "a strapless bandeau bikini", showsLegs: true, level: "bold", route: "seedream", coverage: BIKINI },
+  { text: "a high-leg black swimsuit", showsLegs: true, level: "bold", route: "seedream", coverage: HIGH_LEG },
+];
+
+/** Outfits with shoulder straps: the only ones an action on a strap meets (derived, so a strapless cut added to the bank never reaches it). */
+const STRAPPED: readonly string[] = OUTFITS.filter((o) => !NO_STRAPS.test(o.text)).map((o) => o.text);
 
 export const BEACH: CategoryBank = {
   bold: true,
@@ -60,7 +81,7 @@ export const BEACH: CategoryBank = {
           outfits: [...IN_THE_WATER, "a bikini and a straw hat"],
           outdoor: true,
         },
-        { text: "fixes her hair with one hand", motion: "she smooths it down slowly", captures: ["friend", "candid"], twoHanded: false, hair: "own", angle: "profile", outdoor: true },
+        { text: "stretches her arms out, knee-deep", motion: "she breathes in slowly and smiles", captures: ["friend", "candid"], twoHanded: true, angle: "profile", water: true, outfits: IN_THE_WATER, outdoor: true },
         { text: "laughs as a wave reaches her", motion: "she laughs and steps back a little", captures: ["friend", "candid"], twoHanded: false, expression: true, water: true, outfits: IN_THE_WATER, outdoor: true },
         { text: "steps out of the water", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, water: true, outfits: IN_THE_WATER, outdoor: true },
       ],
@@ -74,7 +95,7 @@ export const BEACH: CategoryBank = {
         { text: "lies back on a sun lounger", motion: "she tilts her face to the sun a little", captures: ["friend", "selfie", "timer", "candid"], twoHanded: false, outdoor: true },
         { text: "sits on the lounger, legs crossed", motion: "she sways her crossed foot slowly", captures: ["friend", "selfie", "timer", "candid"], twoHanded: false, level: "bold", route: "seedream", outdoor: true },
         { text: "sits on the edge, feet in the water", motion: "she swirls her feet slowly", captures: ["friend", "selfie", "timer", "candid"], twoHanded: false, water: true, outfits: IN_THE_WATER, outdoor: true },
-        { text: "stretches one arm along the edge", motion: "she slides her hand along the tiles slowly", captures: ["friend", "candid"], twoHanded: false, angle: "profile", outdoor: true },
+        { text: "stretches one arm along the edge", motion: "she slides her hand along the tiles slowly", captures: ["friend", "candid"], twoHanded: false, angle: "profile", water: true, outfits: IN_THE_WATER, outdoor: true },
         { text: "leans on the edge in the water", motion: "she kicks her feet slowly behind her", captures: ["friend", "timer", "candid"], twoHanded: true, water: true, outfits: IN_THE_WATER, outdoor: true },
         { text: "stretches her legs on the lounger", motion: "she points and flexes her toes slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
@@ -86,7 +107,7 @@ export const BEACH: CategoryBank = {
       times: ["midday", "golden hour"],
       moments: [
         { text: "leans on the glass railing", motion: "her hair lifts a little in the wind", captures: ["friend", "selfie"], twoHanded: false, level: "flirty", outdoor: true },
-        { text: "adjusts the strap on her shoulder", motion: "she slides the strap up a little", captures: ["friend", "candid"], twoHanded: false, angle: "profile", outdoor: true },
+        { text: "adjusts the strap on her shoulder", motion: "she slides the strap up a little", captures: ["friend", "candid"], twoHanded: false, angle: "profile", outfits: STRAPPED, outdoor: true },
         // The beach probe: looking back over her shoulder at the rooftop pool.
         { text: "looks back over her shoulder", motion: "she turns her head a little further", captures: ["friend", "timer"], twoHanded: false, angle: "three-quarter", gaze: "own", level: "bold", route: "seedream", outdoor: true },
         { text: "sips a cold drink by the water", motion: "she lowers the glass a little", captures: ["friend", "selfie", "candid"], twoHanded: false, outdoor: true },
@@ -102,27 +123,14 @@ export const BEACH: CategoryBank = {
         // The beach probe: from behind on the rocks. C3′ (the owner: «просто стоит спиной без какой-либо позы»): she hugs her knees, an action the frame can read.
         { text: "sits hugging her knees", motion: "her hair stirs in the wind a little", captures: ["friend", "timer"], twoHanded: true, angle: "back", outdoor: true },
         { text: "sits cross-legged on a towel", motion: "she leans back a little", captures: ["friend", "selfie", "candid"], twoHanded: false, outdoor: true },
+        { text: "looks out at the sunset", motion: "she watches the light fade slowly", captures: ["friend", "selfie", "candid"], twoHanded: false, gaze: "own", outdoor: true },
         { text: "leans back on her hands", motion: "she leans her head back a little", captures: ["friend", "timer", "candid"], twoHanded: true, outdoor: true },
         { text: "tucks her hair back in the breeze", motion: "she tucks a strand back slowly", captures: ["friend", "candid"], twoHanded: false, hair: "own", angle: "profile", outdoor: true },
         { text: "sits with her hands clasped", motion: "she rolls her shoulders back a little", captures: ["friend", "timer", "candid"], twoHanded: true, angle: "profile", outdoor: true },
       ],
     },
   ],
-  outfits: [
-    { text: "a one-piece swimsuit", showsLegs: true, route: "seedream", coverage: SWIMSUIT },
-    { text: "a sporty bikini", showsLegs: true, route: "seedream", coverage: BIKINI },
-    { text: "a bikini and a sarong", showsLegs: true, route: "seedream", coverage: "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her; the sarong is tied at her hips." },
-    { text: "a bikini under a linen shirt", showsLegs: true, route: "seedream", coverage: "Her linen shirt hangs open over her bikini, which fully covers her breasts and her hips." },
-    { text: "a black bikini", showsLegs: true, level: "flirty", route: "seedream", coverage: BIKINI },
-    { text: "a white bikini", showsLegs: true, level: "flirty", route: "seedream", coverage: BIKINI },
-    // The beach probe: good.
-    { text: "a bikini and a straw hat", showsLegs: true, level: "flirty", route: "seedream", coverage: BIKINI },
-    { text: "bikini bottoms and a sweatshirt", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her sweatshirt covers her chest, and her bikini bottoms fully cover her." },
-    { text: "a white string bikini", showsLegs: true, level: "bold", route: "seedream", coverage: BIKINI },
-    { text: "a red triangle bikini", showsLegs: true, level: "bold", route: "seedream", coverage: BIKINI },
-    { text: "a strapless bandeau bikini", showsLegs: true, level: "bold", route: "seedream", coverage: BIKINI },
-    { text: "a high-leg black swimsuit", showsLegs: true, level: "bold", route: "seedream", coverage: HIGH_LEG },
-  ],
+  outfits: OUTFITS,
   // She mostly asks someone (I5.32): a friend three times in six, a selfie, a timer, a candid.
   captureDeck: ["friend", "selfie", "friend", "timer", "friend", "candid"],
 };

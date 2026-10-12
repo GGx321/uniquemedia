@@ -34,7 +34,7 @@ import {
   WALKS_AWAY_WORDS,
   YOUTH_PROPS,
 } from "../words";
-import { boldWordsIn, lingerieWordsIn, OPEN_SHIRT, stockingWordsIn, swimwearWordsIn } from "./boldRules";
+import { boldWordsIn, lingerieWordsIn, NO_STRAPS, OPEN_SHIRT, stockingWordsIn, swimwearWordsIn } from "./boldRules";
 import { MOMENT_HAIRS, type BankCategory, type CategoryBank, type Level, type Moment } from "./types";
 
 // 5a.2 (S5.6a, I5.21, I5.35; plan s5a2 r1.2): the banks' zod schemas. The shape is zod; every rule the plan names runs in a superRefine and reports
@@ -115,6 +115,7 @@ export const BANK_RULE = {
   boldLegs: "bold-legs",
   boldArmsUp: "bold-arms-up",
   water: "water",
+  strap: "strap",
 } as const;
 type Rule = (typeof BANK_RULE)[keyof typeof BANK_RULE];
 
@@ -389,7 +390,11 @@ const ONE_SENTENCE = /^[A-Z][^.!?]*\.$/;
 /** I5.10 extended: a negation puts what it negates into the prompt, so a coverage sentence says what covers her, never what does not show. */
 const NEGATION = /\b(?:not|no|never|without|nothing|none|nor)\b|n't\b/i;
 /** A moment in the water or at its edge (M6): it carries the `water` tag and pins swimwear. */
-const WATER_WORDS = /\b(?:in|into|out of) the (?:water|sea|pool)\b|\bwaist-deep\b|\bwaves?\b|\bshore\b|\bshallows\b|\bwet\b|\bswim\w*/i;
+const WATER_WORDS = /\b(?:in|into|out of) the (?:water|sea|pool)\b|\bwaist-deep\b|\bwaves?\b|\bshore\b|\bshallows\b|\bwet\b|\bswim\w*|\balong the edge\b/i;
+/** S5.9c round 3: a place at the edge of the sea is wet whatever its moment says: every moment there is a water moment (the prompt says «at the edge of the sea», so no sweatshirt). */
+const WET_PLACE = /\bedge of the (?:sea|water)\b|\bwater's edge\b|\bshoreline\b/i;
+/** An action on a strap, in a moment's text. */
+const STRAP_ACTION = /\bstraps?\b/i;
 /** Review round 2: what is worn over swimwear, never in the water (a hat is no garment over it). */
 const OVER_SWIMWEAR = /\b(?:shirts?|sweatshirts?|sarongs?|cover-ups?|kaftans?|pareos?|skirts?|shorts|dress(?:es)?|robes?|tees?|t-shirts?|hoodies?)\b/i;
 const LEVELS: readonly Level[] = ["ordinary", "flirty", "bold"];
@@ -416,7 +421,7 @@ function checkRoute(add: Add, where: string, item: { text: string; level?: "flir
 }
 
 function boldBankRules(bank: CategoryBank, add: Add): void {
-  const moments = bank.places.flatMap((place) => place.moments.map((moment) => ({ moment, where: `${place.name}: ${moment.text}` })));
+  const moments = bank.places.flatMap((place) => place.moments.map((moment) => ({ moment, where: `${place.name}: ${moment.text}`, place })));
 
   // bold-route and bold-coverage, outfits.
   bank.outfits.forEach((outfit, i) => {
@@ -434,7 +439,7 @@ function boldBankRules(bank: CategoryBank, add: Add): void {
     if (stockingWordsIn(outfit.text).length > 0) add(BANK_RULE.legwear, where, "stockings ride on the bold legwear only (legwear.bold.items)");
   });
 
-  for (const { moment, where } of moments) {
+  for (const { moment, where, place } of moments) {
     // bold-route and bold-coverage, moments.
     checkRoute(add, where, moment);
     if (moment.coverage !== undefined) {
@@ -450,8 +455,15 @@ function boldBankRules(bank: CategoryBank, add: Add): void {
         else if (OVER_SWIMWEAR.test(outfit)) add(BANK_RULE.water, where, `«${outfit}» wears something over the swimwear: in the water she wears only the swimsuit or the bikini`);
       }
     } else if (WATER_WORDS.test(moment.text)) add(BANK_RULE.water, where, "a moment in the water carries the water tag, and pins swimwear");
+    else if (WET_PLACE.test(`${place.name} ${place.at}`)) add(BANK_RULE.water, where, "a moment at the edge of the sea carries the water tag, and pins swimwear (the place says she is at the sea)");
+    // strap (S5.9c round 3): an action on a strap meets only outfits that have shoulder straps, so it pins its outfits, none of them strapless or without a top.
+    if (STRAP_ACTION.test(moment.text)) {
+      if (moment.outfits === undefined) add(BANK_RULE.strap, where, "an action on a strap pins its outfits: the general draw has outfits with no shoulder straps");
+      for (const outfit of moment.outfits ?? []) if (NO_STRAPS.test(outfit)) add(BANK_RULE.strap, where, `«${outfit}» has no shoulder straps: a strap action never meets it`);
+    }
     // bold-arms-up (review of S5.9b2): with her arms up an open shirt does not stay closed over her chest, so an arms-up moment pins its outfits and none of them is the open shirt.
-    if (ARMS_UP.test(`${moment.text} ${moment.motion}`)) {
+    // The text and the motion are read apart: a stretch in one is not cancelled by her toes in the other.
+    if (ARMS_UP.test(moment.text) || ARMS_UP.test(moment.motion)) {
       const open = bank.outfits.filter((o) => OPEN_SHIRT.test(o.text)).map((o) => o.text);
       if (open.length > 0 && moment.outfits === undefined) add(BANK_RULE.boldArmsUp, where, `an arms-up moment pins its outfits, so it never draws «${open.join("», «")}» (raised arms open the shirt)`);
       for (const outfit of moment.outfits ?? []) if (OPEN_SHIRT.test(outfit)) add(BANK_RULE.boldArmsUp, where, `«${outfit}» is an open shirt: with her arms up it does not stay closed over her chest`);

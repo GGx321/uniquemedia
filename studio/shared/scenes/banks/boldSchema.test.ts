@@ -89,7 +89,16 @@ const OPEN_SHIRT: Outfit = {
 };
 const ARMS_UP: Moment = { ...plain, text: "stretches after waking up", motion: "she stretches her arms up slowly", captures: ["timer"] };
 const withArmsUp = (moment: Moment): CategoryBank => ({ ...withMoment(moment), outfits: [...OUTFITS, OPEN_SHIRT] });
-const SARONG: Outfit = { text: "a bikini and a sarong", showsLegs: true, route: "seedream", coverage: "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her." };
+/** S5.9c round 3: a place at the edge of the sea, whose every moment is wet; and a strap action with the outfits that do and do not have straps. */
+const EDGE: BankPlace = { name: "the water's edge", at: "at the edge of the sea", times: ["midday"], details: ["a driftwood log", "a few seashells"], moments: [] };
+const WET = (text: string, motion: string): Moment => ({ ...WADES, text, motion, angle: undefined, gaze: undefined });
+const EDGE_FILLERS: readonly Moment[] = [WET("steps into the water", "she steps in slowly"), WET("stands in the shallows", "she shifts her weight a little"), WET("stands waist-deep", "she rocks a little in place")];
+const withEdge = (moment: Moment, outfits: readonly Outfit[] = [...OUTFITS, BIKINI]): CategoryBank => ({ ...BOLD, outfits, places: [ROOM, { ...EDGE, moments: [moment, ...EDGE_FILLERS] }] });
+const STRAPLESS: Outfit = { text: "a strapless bandeau bikini", showsLegs: true, level: "bold", route: "seedream", coverage: "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her." };
+const SWEATSHIRT: Outfit = { text: "bikini bottoms and a sweatshirt", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her sweatshirt covers her chest, and her bikini bottoms fully cover her." };
+const STRAP: Moment = { ...plain, text: "adjusts the strap on her shoulder", motion: "she slides the strap up a little", level: "flirty", outfits: ["a satin cami and satin shorts", "a black lace bra and panties"] };
+const withStraps = (moment: Moment, outfits: readonly Outfit[] = [...OUTFITS, STRAPLESS]): CategoryBank => ({ ...withMoment(moment), outfits });
+const SARONG: Outfit ={ text: "a bikini and a sarong", showsLegs: true, route: "seedream", coverage: "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her." };
 
 /** The rule ids a bank breaks (each problem is `[rule] text`). */
 const rulesOf = (problems: readonly string[]): string[] => [...new Set(problems.map((p) => /^\[([a-z-]+)\]/.exec(p)?.[1] ?? p))];
@@ -144,6 +153,15 @@ describe("a «Смелая» bank", () => {
   test("a moment that stretches her legs is no arms-up moment: it may draw the open shirt, in a bank that has it (the arms-up pattern is about arms)", () => {
     expect(boldBankProblems(withArmsUp({ ...plain, text: "stretches her legs on the rug", motion: "she points and flexes her toes slowly" }))).toEqual([]);
     expect(boldBankProblems(withArmsUp({ ...plain, text: "stretches her feet out", motion: "she wiggles her toes a little" }))).toEqual([]);
+  });
+
+  test("the text and the motion are read apart for arms up: a stretch in the text is not cancelled by the toes in the motion", () => {
+    expect(rulesOf(boldBankProblems(withArmsUp({ ...plain, text: "stretches out on the bed", motion: "she points her toes slowly" })))).toContain(BANK_RULE.boldArmsUp);
+  });
+
+  test("a strap action that pins only outfits with straps is valid, and so is a wet moment at the edge of the sea (the positive controls of strap and water)", () => {
+    expect(boldBankProblems(withStraps(STRAP))).toEqual([]);
+    expect(boldBankProblems(withEdge({ ...WADES, text: "stretches her arms out, knee-deep", gaze: undefined, angle: "profile", outfits: ["a black bikini"] }))).toEqual([]);
   });
 
   test("an arms-up moment is valid in a bank with no open shirt, pinned or not", () => {
@@ -201,6 +219,13 @@ describe("a «Смелая» bank", () => {
     ],
     ["a moment in the water without the water tag", withWater({ ...WADES, water: undefined }), BANK_RULE.water],
     ["a moment of feet in the water without the water tag", withMoment({ ...plain, text: "sits with her feet in the water" }), BANK_RULE.water],
+    // S5.9c round 3: «along the edge» of a pool reads as in it, and a place at the edge of the sea is wet whatever its moment says.
+    ["a moment along the edge of a pool without the water tag", withMoment({ ...plain, text: "stretches one arm along the edge" }), BANK_RULE.water],
+    ["a dry moment at the edge of the sea (the prompt would say «at the edge of the sea … in a sweatshirt»)", withEdge({ ...plain, text: "fixes her hair with one hand", hair: "own" }), BANK_RULE.water],
+    // strap: an action on a strap never meets an outfit without shoulder straps.
+    ["a strap action that pins no outfit (the general draw has strapless ones)", withStraps({ ...STRAP, outfits: undefined }), BANK_RULE.strap],
+    ["a strap action that pins a strapless outfit", withStraps({ ...STRAP, outfits: ["a satin cami and satin shorts", STRAPLESS.text] }), BANK_RULE.strap],
+    ["a strap action that pins a bikini with a sweatshirt and no top", withStraps({ ...STRAP, outfits: ["a satin cami and satin shorts", "bikini bottoms and a sweatshirt"] }, [...OUTFITS, STRAPLESS, SWEATSHIRT]), BANK_RULE.strap],
     // legwear
     ["stockings among the ordinary legwear", { ...BOLD, legwear: { items: ["thigh-high socks", "sheer black stockings"], share: 0.3, bold: { items: ["sheer black stockings"], share: 0.5, route: "seedream", outfits: ["a satin cami and satin shorts", "a black lace bra and panties"] } } }, BANK_RULE.legwear],
     ["socks among the bold legwear (it holds the stockings)", { ...BOLD, legwear: { items: ["thigh-high socks"], share: 0.3, bold: { items: ["white knee-high socks"], share: 0.5, route: "seedream", outfits: ["a satin cami and satin shorts", "a black lace bra and panties"] } } }, BANK_RULE.legwear],

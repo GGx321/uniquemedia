@@ -44,7 +44,7 @@ describe("who takes the photo: mostly someone she asked (I5.32)", () => {
     const away = moments.filter((m) => m.moment.angle === "back" || m.moment.angle === "profile").map((m) => m.moment.text);
     expect(away).toEqual([
       "ties her hair in a loose knot",
-      "fixes her hair with one hand",
+      "stretches her arms out, knee-deep",
       "stretches one arm along the edge",
       "adjusts the strap on her shoulder",
       "sits hugging her knees",
@@ -153,6 +153,8 @@ describe("swimwear on every frame (answer (a), M6)", () => {
         "sits on the edge, feet in the water",
         "leans on the edge in the water",
         "dangles her feet in the water",
+        "stretches her arms out, knee-deep",
+        "stretches one arm along the edge",
       ]),
     );
     for (const { moment } of moments.filter((m) => m.moment.water === true)) {
@@ -161,6 +163,16 @@ describe("swimwear on every frame (answer (a), M6)", () => {
       // Review round 2: nothing worn over the swimwear in the water, her feet in it included.
       expect((moment.outfits ?? []).filter((o) => /\b(?:shirt|sweatshirt|sarong)\b/.test(o)), moment.text).toEqual([]);
     }
+  });
+
+  // S5.9c round 3: the strap action met «a strapless bandeau bikini» (43 of 489 bold frames) and «bikini bottoms and a sweatshirt» (71).
+  test("the action on a strap pins the outfits that have shoulder straps, and none of the strapless, shirt or sweatshirt ones", () => {
+    const pinned = momentNamed("adjusts the strap on her shoulder")?.moment.outfits ?? [];
+    expect(pinned.length).toBeGreaterThanOrEqual(4);
+    expect(pinned).not.toContain("a strapless bandeau bikini");
+    expect(pinned).not.toContain("bikini bottoms and a sweatshirt");
+    expect(pinned).not.toContain("a bikini under a linen shirt");
+    expect(pinned).toContain("a one-piece swimsuit");
   });
 
   test("in the water she wears a swimsuit or a bikini of every level; waist-deep also the bikini and straw hat she was drawn in (P-5a3 #5)", () => {

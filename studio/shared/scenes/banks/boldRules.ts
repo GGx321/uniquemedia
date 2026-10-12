@@ -22,6 +22,9 @@ export function withoutBoldExemptLook(text: string): string {
 /** An outfit whose shirt is worn open: with her arms up it does not stay closed over her chest (bold-arms-up; the nightwear bank derives its arms-up pins from it). */
 export const OPEN_SHIRT = /\bopen\b[^,]*\bshirt\b/i;
 
+/** An outfit with no shoulder straps: strapless or bandeau, or a bikini whose top is a shirt, a sweatshirt or a tee (or missing). A strap action never meets one (rule strap). */
+export const NO_STRAPS = /\bstrap-?less\b|\bbandeau\b|\bbottoms\b|\bsweatshirts?\b|\bshirts?\b|\btee\b/i;
+
 // S5.9b2 (plan s5a3 §6.4, I5.37): the «Смелая» vocabulary, word by word. It may appear only in a «Смелая» bank (rule bold-only-here), any item that names it is
 // drawn on Seedream (bold-route), a water moment pins swimwear (water), stockings ride only on the bold legwear (legwear), and no legs moment pins lingerie
 // (bold-legs; P-5a3 #6). These lists decide where a word may stand in OUR banks; they are never a gate on a text the owner writes.
