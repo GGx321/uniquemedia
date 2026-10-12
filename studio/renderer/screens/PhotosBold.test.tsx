@@ -7,6 +7,7 @@ import { formatUsd } from "../lib/money";
 import { callsOf, flush, openSection, setup } from "../testing";
 import { chipsGroup, MIA, openPhotos, PARIS } from "./photos/categoryScreenKit";
 import { LEVEL_KEY_PREFIX } from "./photos/level";
+import { column, FIXTURE } from "./photos/sceneScreenKit";
 
 // S5.9g (plan s5a3 §13.1, §13.2, §14 «S5.9g», gaps C and D; mockups 47, 47a, 47b, 48, 48a and 55 of .omc/stage5/design): «Смелая» on the generate card. All three
 // faces of «Подача» are live; «Ночнушки и бельё» and «Пляж и бассейн» are real chips that work only under «Смелая» (dimmed, «Только со «Смелой»», otherwise); a pick
@@ -242,6 +243,18 @@ describe("the two chips under another «Подача» (mockup 48)", () => {
     const sent = callsOf(engine, "scenes.compose").at(-1)?.payload;
     expect(sent?.level).toBe("bold");
     expect(sent?.categories).toEqual(["home", "beach"]);
+  });
+});
+
+describe("the scenes column's writers with a kept «Смелая» pick", () => {
+  test("a kept «Ночнушки и бельё» writes nothing: with only the model's category asked for, the column names the model alone", async () => {
+    await openPhotos({ categories: [FIXTURE] });
+    await pickLevel("Смелая");
+    await only("Ночнушки и бельё");
+    await click(chip("Только модель"));
+    await waitFor(() => expect(column().querySelector(".scene-col-model")?.textContent).toMatch(/^20 · пишет приложение и \S*grok\S*$/));
+    await pickLevel("Кокетливая");
+    await waitFor(() => expect(column().querySelector(".scene-col-model")?.textContent).toMatch(/^20 · \S*grok\S*$/));
   });
 });
 
