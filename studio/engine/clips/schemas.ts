@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AttemptId, ClipAttemptModel, ClipExportLine, ClipFace, ClipFailReason, ClipModelUsed, ClipMotion, ClipRequest, Id, Micros, Sha256Hex } from "../../shared/engine";
+import { AttemptId, CLIP_RETRYABLE_FAILURES, ClipAttemptModel, ClipExportLine, ClipFace, ClipFailReason, ClipModelUsed, ClipMotion, ClipRequest, Id, Micros, Sha256Hex } from "../../shared/engine";
 import { CLIP_RECORD_SCHEMA_VERSION } from "../library/layout";
 
 // Stage 5, 5b.1, S5.V1 (plan s5b1 §5.3): what a clip writes to disk, as pure zod. Both are READ from disk, so both are strict: a file that does not parse is not a record.
@@ -29,9 +29,6 @@ const RecordAttempt = z.strictObject({
   costSource: ClipCostSource,
 });
 
-/** What the retry of a download is for: the three paid failures that leave the file at the provider (I5.53). */
-const RETRYABLE_FAILURES: readonly z.infer<typeof ClipFailReason>[] = ["download-failed", "invalid-file", "disk-full"];
-
 const ReadyOutcome = z.strictObject({
   status: z.literal("ready"),
   /** `<clipId>.mp4`: the provider's bytes, unmodified (I5.54). The record names its files so a hand-edited record cannot point outside the clips folder. */
@@ -54,7 +51,7 @@ const FailedOutcome = z
     /** The time a failed download can still be retried free (the submit + 60 min). */
     retryDownloadUntil: At.optional(),
   })
-  .refine((o) => o.retryDownloadUntil === undefined || RETRYABLE_FAILURES.includes(o.reason), {
+  .refine((o) => o.retryDownloadUntil === undefined || CLIP_RETRYABLE_FAILURES.includes(o.reason), {
     message: "only a failed download can be retried",
     path: ["retryDownloadUntil"],
   });
@@ -113,7 +110,8 @@ const EndedLine = z.strictObject({
   status: ClipAttemptOutcome,
   providerCostMicros: Micros.optional(),
   costSource: ClipCostSource,
-  at: At.optional(),
+  /** Required: after a restart the «terminal + 2 min» hold of a late `completed` (I5.48) is read from it. */
+  at: At,
 });
 
 const DownloadedLine = z.strictObject({

@@ -167,7 +167,7 @@ describe("ClipRecord", () => {
 describe("the journal lines", () => {
   const requested = { type: "requested", clipId: ID, photoId: "photo-0001", request, motion, acceptedWorstMicros: 850_000, at: AT };
   const submitted = { type: "submitted", attemptId: `${ID}:video#1`, model: "kling", providerJobId: "job-abc123", at: AT };
-  const ended = { type: "ended", attemptId: `${ID}:video#1`, status: "completed", providerCostMicros: 420_000, costSource: "usage" };
+  const ended = { type: "ended", attemptId: `${ID}:video#1`, status: "completed", providerCostMicros: 420_000, costSource: "usage", at: AT };
   const downloaded = { type: "downloaded", sha256: "c".repeat(64), bytes: 6_000_000 };
 
   test("requested, submitted, ended and downloaded parse", () => {
@@ -195,6 +195,12 @@ describe("the journal lines", () => {
   test("ended takes each of the seven statuses and no other", () => {
     for (const status of ["completed", "failed", "cancelled", "expired", "refused", "uncertain", "late"]) expect(ClipJournalLine.safeParse({ ...ended, status }).success).toBe(true);
     expect(ClipJournalLine.safeParse({ ...ended, status: "done" }).success).toBe(false);
+  });
+
+  test("ended carries its time: the hold of a late completed (terminal + 2 min) is read from it after a restart", () => {
+    const { at: _at, ...noAt } = ended;
+    expect(ClipJournalLine.safeParse(noAt).success).toBe(false);
+    expect(ClipJournalLine.safeParse({ ...ended, at: "later" }).success).toBe(false);
   });
 
   test("ended's provider cost is optional and its cost source is required", () => {
