@@ -388,8 +388,9 @@ export class ClipRecords {
       const providerJobId = record.provider.attempts.findLast((attempt) => attempt.outcome === "completed" && attempt.providerJobId !== undefined)?.providerJobId;
       if (providerJobId === undefined) throw new EngineFailure({ code: "VALIDATION", detail: "the record names no finished attempt to fetch" });
       const key = deps.usableKey("fetch a finished clip again");
-      // Nothing awaited from here to the job's start: an avatar delete prepared meanwhile, or a library switched away, wins (I5.50, as in create).
-      this.#dirOf(avatarId);
+      // Nothing awaited from here to the job's start: an avatar delete prepared meanwhile, or a library switched away, wins (I5.50, as in create). A switch to a copy of the library holds the
+      // same avatar, so the folder itself must still be the one the record was read from.
+      if (this.#dirOf(avatarId) !== clipsDir) throw notFound(`avatar ${avatarId} is no longer in the library its clip was read from`);
       const jobId = deps.newId();
       const stop = deps.jobs.startClip(jobId, { avatarId, clipId }, "downloading");
       return { jobId, stop, end: deps.host.begin(clipId), key, providerJobId, until, record };

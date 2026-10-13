@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, test } from "bun:test";
 import { copyFile, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { FfmpegError } from "../../node/runFfmpeg";
 import { ClipSummary, type ClipFace } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -365,6 +366,24 @@ describe("clips.retryDownload: races with a delete and a stop", () => {
     await rig.put(failedRecord("download-failed", UNTIL));
     await expect(retry()).rejects.toMatchObject(refusal("NOT_FOUND"));
     expect(rig.jobs.hasLiveJobFor(AVATAR)).toBe(false);
+  });
+
+  test("starts no job when another library with the same avatar became the live one while the key was being read", async () => {
+    let moved = false;
+    await open({
+      deps: {
+        // A copy of the library folder holds the same avatar ids: only its clips folder tells the two apart.
+        library: () => ({ hasAvatar: () => true, clipsDirOf: (id) => join(rig.dir, moved ? "copy" : "", "avatars", id, "clips") }),
+        usableKey: () => {
+          moved = true;
+          return "sk-test";
+        },
+      },
+    });
+    await rig.put(failedRecord("download-failed", UNTIL));
+    await expect(retry()).rejects.toMatchObject(refusal("NOT_FOUND"));
+    expect(rig.jobs.hasLiveJobFor(AVATAR)).toBe(false);
+    expect(await recordOf()).toEqual(failedRecord("download-failed", UNTIL));
   });
 
   test("does not end ready when the engine stops while the poster is drawn", async () => {
