@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ClipSummary, MAX_LISTED_CLIPS, type FileState } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -403,6 +403,53 @@ describe("clips.delete", () => {
     await expect(rig.records.delete({ avatarId: "avatar-zzzz-0009", clipId: CLIP })).rejects.toMatchObject(refusal("NOT_FOUND"));
     rig.state.open = false;
     await expect(rig.records.delete({ avatarId: AVATAR, clipId: CLIP })).rejects.toMatchObject(refusal("LIBRARY_UNAVAILABLE"));
+  });
+});
+
+describe("clips.delete: the order that lets nothing come back", () => {
+  // A stale journal beside a record is a normal state. A journal with NO record is recovered by the restart as a running clip, so the journal must go first, and the record after it.
+  const failing = (suffix: string): Partial<ClipRecordsDeps> => ({
+    remove: async (path) => {
+      if (path.endsWith(suffix)) throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+      await rm(path, { force: true });
+    },
+  });
+  async function lay(): Promise<void> {
+    await rig.put(readyRecord());
+    await writeFile(rig.file(`${CLIP}.mp4`), "mp4");
+    await writeFile(rig.file(`${CLIP}.poster.jpg`), "jpg");
+    await writeFile(rig.file(`${CLIP}.journal.jsonl`), "");
+  }
+
+  test("a record that cannot be removed leaves the media and the clip whole, and no orphan journal", async () => {
+    await open(failing(`${CLIP}.json`));
+    await lay();
+    await expect(rig.records.delete({ avatarId: AVATAR, clipId: CLIP })).rejects.toThrow("EPERM");
+    expect(await rig.names()).toContain(`${CLIP}.mp4`);
+    expect(await rig.names()).toContain(`${CLIP}.poster.jpg`);
+    expect(await rig.names()).toContain(`${CLIP}.json`);
+    expect(await rig.names()).not.toContain(`${CLIP}.journal.jsonl`);
+    expect((await rig.records.get({ avatarId: AVATAR, clipId: CLIP })).clip.status).toBe("ready");
+  });
+
+  test("a journal that cannot be removed fails the delete with the record still in place, so nothing is resurrected", async () => {
+    await open(failing(".journal.jsonl"));
+    await lay();
+    await expect(rig.records.delete({ avatarId: AVATAR, clipId: CLIP })).rejects.toThrow("EPERM");
+    expect(await rig.names()).toEqual([`${CLIP}.journal.jsonl`, `${CLIP}.json`, `${CLIP}.mp4`, `${CLIP}.poster.jpg`].sort());
+  });
+
+  test("removes the journal, then the record, then the media", async () => {
+    const order: string[] = [];
+    await open({
+      remove: async (path) => {
+        order.push(path.slice(path.lastIndexOf(CLIP) + CLIP.length));
+        await rm(path, { force: true });
+      },
+    });
+    await lay();
+    await rig.records.delete({ avatarId: AVATAR, clipId: CLIP });
+    expect(order).toEqual([".journal.jsonl", ".json", ".mp4", ".poster.jpg"]);
   });
 });
 

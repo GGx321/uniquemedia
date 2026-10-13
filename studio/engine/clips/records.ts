@@ -21,7 +21,6 @@ import type { ExportRootRef } from "../videos/recovery";
 import type { ClipJobEnd, ClipPhaseUpdate, JobRegistry } from "../jobs";
 import { fsyncDir, fsyncFile, readFolderNames } from "../library/durableFs";
 import { renameWithRetry } from "../library/renameRetry";
-import { jobOpenReserveMicros, jobSpentMicros } from "../money/jobSpend";
 import type { Ledger } from "../money/ledger";
 import type { OpenRouterClient } from "../openrouter/types";
 import { downloadClip, type ClipDownload, type DownloadClipOptions } from "./download";
@@ -39,15 +38,32 @@ export type ClipRewrite = "seen" | "export" | "retried" | "expired";
  * was settled at a figure the money did not prove (the worst, in process or by the reconcile). `billed`: every attempt settled exact. `free`: nothing is owed.
  */
 export function clipCostOf(ledger: Pick<Ledger, "lines" | "closeOf">, clipId: string): ClipCost {
-  const micros = jobSpentMicros(ledger, clipId);
-  if (jobOpenReserveMicros(ledger, clipId) > 0) return { micros, kind: "open" };
-  if (micros === 0) return { micros: 0, kind: "free" };
+  return clipCostsOf(ledger).get(clipId) ?? FREE;
+}
+
+const FREE: ClipCost = { micros: 0, kind: "free" };
+
+/** The cost of every job that reserved anything, in ONE pass over the ledger's lines (a list of hundreds of clips reads the ledger once). A job with no reserve is absent: it cost nothing. */
+export function clipCostsOf(ledger: Pick<Ledger, "lines" | "closeOf">): Map<string, ClipCost> {
+  const sums = new Map<string, { total: number; open: number; estimated: boolean }>();
   for (const line of ledger.lines) {
-    if (line.type !== "reserve" || line.jobId !== clipId) continue;
+    if (line.type !== "reserve") continue;
+    const sum = sums.get(line.jobId) ?? { total: 0, open: 0, estimated: false };
+    sums.set(line.jobId, sum);
     const close = ledger.closeOf(line.attemptId);
-    if (close?.type === "settle" && close.estimated && close.costMicros > 0) return { micros, kind: "estimated" };
+    if (close === undefined) {
+      sum.total += line.worstMicros;
+      sum.open += line.worstMicros;
+    } else if (close.type === "settle") {
+      sum.total += close.costMicros;
+      if (close.estimated && close.costMicros > 0) sum.estimated = true;
+    }
   }
-  return { micros, kind: "billed" };
+  const costs = new Map<string, ClipCost>();
+  for (const [jobId, sum] of sums) {
+    costs.set(jobId, sum.open > 0 ? { micros: sum.total, kind: "open" } : sum.total === 0 ? FREE : { micros: sum.total, kind: sum.estimated ? "estimated" : "billed" });
+  }
+  return costs;
 }
 
 /** Whether the Grok attempt (the second in the clip's ledger ids) is among the record's: Grok ran behind a Kling that did not deliver. */
@@ -138,6 +154,8 @@ export interface ClipRecordsDeps {
   faceOf: (input: Pick<CheckClipFaceOptions, "clipPath" | "colour" | "durationMs" | "scratchDir" | "signal"> & { record: ClipRecord }) => Promise<ClipFace>;
   media?: Partial<ClipRecordsMedia>;
   log: (line: string) => void;
+  /** Test seam: removes a file, and not finding it is fine (`rm` with `force` by default). Only the delete's files go through it. */
+  remove?: (path: string) => Promise<void>;
 }
 
 type Payload<T extends "clips.list" | "clips.get" | "clips.markSeen" | "clips.delete" | "clips.retryDownload"> = CommandPayload<T>;
@@ -223,7 +241,8 @@ export class ClipRecords {
     }
     records.sort((a, b) => (a.createdAt === b.createdAt ? (a.id < b.id ? 1 : -1) : a.createdAt < b.createdAt ? 1 : -1));
     const ledger = records.length === 0 ? null : this.#ledger();
-    const clips = ledger === null ? [] : records.map((record) => clipSummaryOf(record, clipCostOf(ledger, record.id)));
+    const costs = ledger === null ? new Map<string, ClipCost>() : clipCostsOf(ledger);
+    const clips = records.map((record) => clipSummaryOf(record, costs.get(record.id) ?? FREE));
     // A journal beside a committed record is a leftover of a clip that finished: removed unless a job still works on that clip.
     for (const record of records) {
       if (!journals.has(record.id) || this.#deps.host.busy(record.id)) continue;
@@ -306,9 +325,10 @@ export class ClipRecords {
   // ---------- clips.delete ----------
 
   /**
-   * Removes the record first, then flushes the folder, then the files (I5.53): a crash between leaves files with no record and no journal, which the next recovery pass sweeps. The mp4 of a failed
-   * record goes too (a `download-failed` record may have left one). An exported copy is not the clip's to remove, and the record that listed it goes with the clip. A file that will not go is
-   * logged and left to that sweep, since the clip is already gone.
+   * The journal first (beside a live record it is stale by definition), a flush, then the record (the commit, I5.53), a flush, then the media. A journal with no record is recovered by the
+   * restart as a running clip, so it must never outlive the record: if either removal fails the delete fails with the record still in place and nothing resurrected. Media that will not go is
+   * logged and left to the recovery sweep (no record and no journal), since the clip is already gone. The mp4 of a failed record goes too (a `download-failed` record may have left one).
+   * An exported copy is not the clip's to remove.
    */
   async delete(payload: Payload<"clips.delete">): Promise<{ clipId: string }> {
     const { clipId } = payload;
@@ -316,10 +336,13 @@ export class ClipRecords {
     await this.withClipLock(clipId, async () => {
       if (this.#deps.host.busy(clipId)) throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "job-running", detail: `a job is working on clip ${clipId}` });
       await this.#recordOf(clipsDir, clipId);
-      await rm(clipRecordPath(clipsDir, clipId));
+      const remove = this.#deps.remove ?? ((path: string) => rm(path, { force: true }));
+      await remove(clipJournalPath(clipsDir, clipId));
       await fsyncDir(clipsDir);
-      for (const path of [clipFilePath(clipsDir, clipId), posterPath(clipsDir, clipId), clipJournalPath(clipsDir, clipId)]) {
-        await rm(path, { force: true }).catch((error: unknown) => this.#deps.log(`[clip] ${clipId}: ${basename(path)} could not be removed (${errorName(error)}); the next sweep will`));
+      await remove(clipRecordPath(clipsDir, clipId));
+      await fsyncDir(clipsDir);
+      for (const path of [clipFilePath(clipsDir, clipId), posterPath(clipsDir, clipId)]) {
+        await remove(path).catch((error: unknown) => this.#deps.log(`[clip] ${clipId}: ${basename(path)} could not be removed (${errorName(error)}); the next sweep will`));
       }
       await fsyncDir(clipsDir).catch(() => undefined);
     });
@@ -344,7 +367,8 @@ export class ClipRecords {
       if (outcome.status !== "failed") throw new EngineFailure({ code: "VALIDATION", detail: "only a clip whose download failed can be fetched again" });
       if (outcome.reason === "download-expired") throw new EngineFailure({ code: "VALIDATION", clipReason: "download-expired", detail: "the file is no longer at the provider" });
       if (!CLIP_RETRYABLE_FAILURES.includes(outcome.reason)) throw new EngineFailure({ code: "VALIDATION", detail: `a clip that ended ${outcome.reason} has no file to fetch again` });
-      const until = outcome.retryDownloadUntil === undefined ? Number.NaN : Date.parse(outcome.retryDownloadUntil);
+      // I5.53 turns a failed download into `download-expired` when the window PASSED or /content says gone: a record with no window has not passed one.
+      const until = outcome.retryDownloadUntil === undefined ? Number.POSITIVE_INFINITY : Date.parse(outcome.retryDownloadUntil);
       if (!(deps.clock() <= until)) {
         await this.#rewriteLocked(clipsDir, clipId, expiredBy);
         throw new EngineFailure({ code: "VALIDATION", clipReason: "download-expired", detail: "the file is no longer at the provider" });
@@ -352,6 +376,8 @@ export class ClipRecords {
       const providerJobId = record.provider.attempts.findLast((attempt) => attempt.outcome === "completed" && attempt.providerJobId !== undefined)?.providerJobId;
       if (providerJobId === undefined) throw new EngineFailure({ code: "VALIDATION", detail: "the record names no finished attempt to fetch" });
       const key = deps.usableKey("fetch a finished clip again");
+      // Nothing awaited from here to the job's start: an avatar delete prepared meanwhile, or a library switched away, wins (I5.50, as in create).
+      this.#dirOf(avatarId);
       const jobId = deps.newId();
       const stop = deps.jobs.startClip(jobId, { avatarId, clipId }, "downloading");
       return { jobId, stop, end: deps.host.begin(clipId), key, providerJobId, until, record };
@@ -414,6 +440,8 @@ export class ClipRecords {
 
     phase({ phase: "checking", model, done: 2 });
     const poster = await this.#poster(media, download, clipsDir, clipId, signal);
+    // A stop during the poster (it may be what killed ffmpeg) never ends `ready`, and never judges the file (job.ts does the same).
+    if (signal.aborted) return { status: "cancelled" };
     if (poster === "undecodable") {
       await rm(download.path, { force: true });
       return { status: "failed", error: { code: "VALIDATION", detail: "the file cannot be decoded" } };

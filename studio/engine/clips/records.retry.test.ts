@@ -313,11 +313,96 @@ describe("clips.retryDownload: when the file is gone", () => {
     expect(downloads).toEqual([]);
   });
 
-  test("treats a retryable failure with no window as expired", async () => {
-    await open();
+  test("retries a retryable failure that has no window: I5.53 expires it only when the window passed or /content says gone", async () => {
+    const { downloads } = await open();
     await rig.put(failedRecord("download-failed", undefined));
-    await expect(retry()).rejects.toMatchObject(refusal("VALIDATION", { clipReason: "download-expired" }));
+    await rig.settled((await retry()).jobId);
+    expect(downloads.length).toBe(1);
+    expect((await recordOf()).outcome.status).toBe("ready");
+  });
+
+  test("expires a retryable failure with no window when /content answers 404", async () => {
+    await open({ answer: async () => ({ kind: "gone", httpStatus: 404 }) });
+    await rig.put(failedRecord("download-failed", undefined));
+    await rig.settled((await retry()).jobId);
     expect((await recordOf()).outcome).toEqual({ status: "failed", reason: "download-expired" });
+  });
+
+  test("keeps a retryable failure with no window as it was when the retry fails again", async () => {
+    await open({ answer: async () => ({ kind: "failed", cause: "network", httpStatus: null, detail: "x" }) });
+    const before = failedRecord("download-failed", undefined);
+    await rig.put(before);
+    expect((await rig.settled((await retry()).jobId))?.status).toBe("failed");
+    expect(await recordOf()).toEqual(before);
+  });
+});
+
+describe("clips.retryDownload: races with a delete and a stop", () => {
+  test("starts no job when the avatar's delete was prepared while the key was being read", async () => {
+    await open({
+      deps: {
+        usableKey: () => {
+          rig.state.pendingDelete.add(AVATAR);
+          return "sk-test";
+        },
+      },
+    });
+    await rig.put(failedRecord("download-failed", UNTIL));
+    await expect(retry()).rejects.toMatchObject(refusal("NOT_FOUND"));
+    expect(rig.state.busy.size).toBe(0);
+    expect(rig.jobs.hasLiveJobFor(AVATAR)).toBe(false);
+  });
+
+  test("starts no job when the avatar left the library while the key was being read", async () => {
+    await open({
+      deps: {
+        usableKey: () => {
+          rig.state.avatars.delete(AVATAR);
+          return "sk-test";
+        },
+      },
+    });
+    await rig.put(failedRecord("download-failed", UNTIL));
+    await expect(retry()).rejects.toMatchObject(refusal("NOT_FOUND"));
+    expect(rig.jobs.hasLiveJobFor(AVATAR)).toBe(false);
+  });
+
+  test("does not end ready when the engine stops while the poster is drawn", async () => {
+    const stop = new AbortController();
+    await open({
+      deps: {
+        host: { busy: () => false, begin: () => () => undefined, stop: stop.signal },
+        media: {
+          makePoster: async (options) => {
+            await writeFile(options.outPath, "poster");
+            stop.abort();
+          },
+        },
+      },
+    });
+    const before = failedRecord("download-failed", UNTIL);
+    await rig.put(before);
+    expect((await rig.settled((await retry()).jobId))?.status).toBe("cancelled");
+    expect(await recordOf()).toEqual(before);
+  });
+
+  test("does not end ready when the poster fails because the engine stopped", async () => {
+    const stop = new AbortController();
+    await open({
+      deps: {
+        host: { busy: () => false, begin: () => () => undefined, stop: stop.signal },
+        media: {
+          makePoster: async () => {
+            stop.abort();
+            throw new Error("killed");
+          },
+        },
+      },
+    });
+    const before = failedRecord("download-failed", UNTIL);
+    await rig.put(before);
+    expect((await rig.settled((await retry()).jobId))?.status).toBe("cancelled");
+    expect(await recordOf()).toEqual(before);
   });
 });
 

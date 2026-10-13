@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ClipCost, ClipSummary } from "../../shared/engine";
 import { Ledger, type LedgerLine } from "../money/ledger";
 import { clipAttemptId } from "./journal";
-import { clipCostOf, clipRewriteOf, clipSummaryOf } from "./records";
+import { clipCostOf, clipCostsOf, clipRewriteOf, clipSummaryOf } from "./records";
 import type { ClipRecord } from "./schemas";
 import { CLIP, exportLine, failedRecord, readyRecord, release, reserve, settle } from "./testing/recordsRig";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -98,6 +98,29 @@ describe("clipCostOf", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("clipCostsOf (the list's one pass over the ledger)", () => {
+  test("gives every clip the cost clipCostOf gives it, reading the ledger's lines once", () => {
+    const ids = ["clip-0000001", "clip-0000002", "clip-0000003"];
+    const lines: LedgerLine[] = [
+      reserve(clipAttemptId(ids[0] ?? "", 1), ids[0] ?? "", 504_000),
+      settle(clipAttemptId(ids[0] ?? "", 1), 420_000, false),
+      reserve(clipAttemptId(ids[1] ?? "", 1), ids[1] ?? "", 504_000),
+    ];
+    let reads = 0;
+    const base = ledgerOf(lines);
+    const counting: Pick<Ledger, "lines" | "closeOf"> = {
+      get lines() {
+        reads++;
+        return base.lines;
+      },
+      closeOf: base.closeOf,
+    };
+    const costs = clipCostsOf(counting);
+    expect(reads).toBe(1);
+    for (const id of ids) expect(costs.get(id) ?? { micros: 0, kind: "free" }).toEqual(clipCostOf(base, id));
   });
 });
 
