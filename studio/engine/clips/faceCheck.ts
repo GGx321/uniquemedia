@@ -1,5 +1,6 @@
 import type { ClipFace } from "../../shared/engine";
 import type { WorkerFaceGate } from "../face/worker/workerGate";
+import type { ClipFaceRole } from "./faceRole";
 import { sampleFrames as takeFrames } from "./frames";
 
 // Stage 5, 5b.1, S5.V4b (plan s5b1 §5.11, I5.52): the clip's face check. It is free, and it only MARKS: it never deletes a clip, never re-rolls, never costs and never fails the job.
@@ -17,8 +18,6 @@ export const CLIP_FACE_LINE = 0.55;
 export const MIN_FACE_FRAMES = 3;
 const P75 = 0.75;
 
-/** Whether the clip is judged, and if not why. `judged` only when the photo was. */
-export type ClipFaceRole = { readonly kind: "judged" } | { readonly kind: "skipped"; readonly why: "hidden" | "profile" };
 
 export interface CheckClipFaceOptions {
   readonly role: ClipFaceRole;
@@ -34,8 +33,8 @@ export interface CheckClipFaceOptions {
   readonly signal: AbortSignal;
   /** Test seam: the frame sampler. */
   readonly sampleFrames?: typeof takeFrames;
-  /** One line when the check could not run. It never carries the failure's message, only its kind. */
-  readonly log?: (line: string) => void;
+  /** One line when the check could not run. It never carries the failure's message, only its kind. Required: a check that could not run must be seen. */
+  readonly log: (line: string) => void;
 }
 
 const skipped = (why: NonNullable<ClipFace["why"]>, frames = 0): ClipFace => ({ verdict: "skipped", frames, why });
@@ -61,8 +60,8 @@ function failedKind(error: unknown): string {
 export async function checkClipFace(options: CheckClipFaceOptions): Promise<ClipFace> {
   const { role, signal } = options;
   if (signal.aborted) throw signal.reason;
-  if (role.kind === "skipped") return skipped(role.why);
-  const log = options.log ?? (() => {});
+  if (role !== "judged") return skipped(role);
+  const { log } = options;
   const similarities: number[] = [];
   try {
     const frames = await (options.sampleFrames ?? takeFrames)({ clipPath: options.clipPath, durationMs: options.durationMs, scratchDir: options.scratchDir, signal });

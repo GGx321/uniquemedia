@@ -63,12 +63,13 @@ const base = {
   scratchDir: "/clips",
   masterEmbedding: MASTER,
   signal: new AbortController().signal,
+  log: (_line: string): void => {},
 } as const;
 
 function run(answers: readonly Answer[], more: Partial<CheckClipFaceOptions> = {}, frameCount = answers.length) {
   const world = scriptedGate(answers);
   const lines: string[] = [];
-  const result = checkClipFace({ ...base, role: { kind: "judged" }, gate: world.gate, sampleFrames: framesOf(frameCount), log: (line) => lines.push(line), ...more });
+  const result = checkClipFace({ ...base, role: "judged", gate: world.gate, sampleFrames: framesOf(frameCount), log: (line) => lines.push(line), ...more });
   return { result, lines, ...world };
 }
 
@@ -192,7 +193,7 @@ describe("checkClipFace asks the worker", () => {
         return match(0.9);
       },
     };
-    const face = await checkClipFace({ ...base, role: { kind: "judged" }, clipPath: path, scratchDir: tmpdir(), gate });
+    const face = await checkClipFace({ ...base, role: "judged", clipPath: path, scratchDir: tmpdir(), gate });
     expect(seen.length).toBeGreaterThanOrEqual(10);
     expect(seen.every((bytes) => bytes[0] === 0xff && bytes[1] === 0xd8)).toBe(true);
     expect(face).toEqual({ verdict: "match", p75: 0.9, frames: seen.length });
@@ -202,7 +203,7 @@ describe("checkClipFace asks the worker", () => {
 describe("checkClipFace and the role", () => {
   test("makes no worker call and takes no frame for a profile photo, and says why", async () => {
     let sampled = 0;
-    const world = run(times(8, match(0.9)), { role: { kind: "skipped", why: "profile" }, sampleFrames: async () => (sampled++, []) });
+    const world = run(times(8, match(0.9)), { role: "profile", sampleFrames: async () => (sampled++, []) });
     expect(await world.result).toEqual({ verdict: "skipped", frames: 0, why: "profile" });
     expect(world.seen).toHaveLength(0);
     expect(sampled).toBe(0);
@@ -210,14 +211,14 @@ describe("checkClipFace and the role", () => {
 
   test("makes no worker call and takes no frame for a hidden-face photo, and says why", async () => {
     let sampled = 0;
-    const world = run(times(8, match(0.9)), { role: { kind: "skipped", why: "hidden" }, sampleFrames: async () => (sampled++, []) });
+    const world = run(times(8, match(0.9)), { role: "hidden", sampleFrames: async () => (sampled++, []) });
     expect(await world.result).toEqual({ verdict: "skipped", frames: 0, why: "hidden" });
     expect(world.seen).toHaveLength(0);
     expect(sampled).toBe(0);
   });
 
   test("gives a skipped role no p75", async () => {
-    const face = await run(times(8, match(0.9)), { role: { kind: "skipped", why: "hidden" } }).result;
+    const face = await run(times(8, match(0.9)), { role: "hidden" }).result;
     expect(face.p75).toBeUndefined();
     expect(ClipFace.safeParse(face).success).toBe(true);
   });
@@ -243,7 +244,7 @@ describe("checkClipFace when the machinery breaks", () => {
         throw new Error("secret-token-12345 in the message");
       },
     };
-    await checkClipFace({ ...base, role: { kind: "judged" }, gate, sampleFrames: framesOf(3), log: (line) => lines.push(line) });
+    await checkClipFace({ ...base, role: "judged", gate, sampleFrames: framesOf(3), log: (line) => lines.push(line) });
     expect(lines.join("\n")).not.toContain("secret-token-12345");
   });
 
@@ -252,7 +253,7 @@ describe("checkClipFace when the machinery breaks", () => {
     const world = scriptedGate([]);
     const face = await checkClipFace({
       ...base,
-      role: { kind: "judged" },
+      role: "judged",
       gate: world.gate,
       sampleFrames: async () => {
         throw new Error("ffmpeg exited 1");
@@ -272,7 +273,7 @@ describe("checkClipFace when the machinery breaks", () => {
         throw controller.signal.reason;
       },
     };
-    const run = checkClipFace({ ...base, signal: controller.signal, role: { kind: "judged" }, gate, sampleFrames: framesOf(5) });
+    const run = checkClipFace({ ...base, signal: controller.signal, role: "judged", gate, sampleFrames: framesOf(5) });
     await expect(run).rejects.toThrow("owner cancelled");
   });
 
@@ -281,7 +282,7 @@ describe("checkClipFace when the machinery breaks", () => {
     controller.abort(new Error("owner cancelled"));
     let sampled = 0;
     const world = scriptedGate(times(5, match(0.9)));
-    const run = checkClipFace({ ...base, signal: controller.signal, role: { kind: "judged" }, gate: world.gate, sampleFrames: async () => (sampled++, []) });
+    const run = checkClipFace({ ...base, signal: controller.signal, role: "judged", gate: world.gate, sampleFrames: async () => (sampled++, []) });
     await expect(run).rejects.toThrow("owner cancelled");
     expect(sampled).toBe(0);
     expect(world.seen).toHaveLength(0);
