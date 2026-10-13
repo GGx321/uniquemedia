@@ -1,12 +1,15 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ResponseMessage, type ClipSummary } from "../shared/engine";
 import { clipAttemptId } from "./clips/journal";
 import { journalOf, readClipRecord, writeClipRecord } from "./clips/store";
 import { SHORT_CLIP_TIMINGS, type ClipTimings } from "./clips/timings";
-import { clipNetwork, clipsDir, command, create, jobEnd, jobIdOf, seedClipAvatar, startClipEngine, until, type ClipEngine } from "./clips/testing/engineClipKit";
+import { clipMp4, clipNetwork, clipsDir, command, create, jobEnd, jobIdOf, seedClipAvatar, startClipEngine, until, type ClipEngine } from "./clips/testing/engineClipKit";
+import { EngineReply } from "./control";
+import { openLibrary } from "./library";
+import { sequentialIds, steppingClock } from "./library/testing/helpers";
 import { NOW, useEngineDir, writeLedger } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
@@ -137,6 +140,79 @@ describe("a delete of a clip that a recovery works on", () => {
     engine.net.release("kling");
     await until(() => engine.events().some((e) => e.type === "job.done" && e.payload.result.kind === "clip"), "the recovery's end");
     expect(resultOf<{ clipId: string }>(await answer(engine, "clips.delete", { avatarId, clipId }), "clips.delete")).toEqual({ clipId });
+    expect((await readdir(folder)).filter((name) => name.startsWith(clipId))).toEqual([]);
+    await engine.engine.shutdown();
+  });
+});
+
+describe("a delete and a library open on the same clip: one lock, the records'", () => {
+  test("a library opened while a delete waits in its removal starts no recovery job for that clip and brings nothing back", async () => {
+    const { avatarId, photoId } = await seedClipAvatar(libraryDir());
+    const other = join(dir(), "other");
+    await mkdir(other, { recursive: true });
+    await openLibrary(other, { now: steppingClock(), newId: sequentialIds("other") });
+    const clipId = "clip-00000088";
+    let reached = false;
+    let release: () => void = () => undefined;
+    const stalled = new Promise<void>((resolve) => (release = resolve));
+    const engine = await startClipEngine(dir(), {
+      deps: {
+        clipRecords: {
+          // The delete is held in the middle: its journal is gone, its record not yet.
+          remove: async (path) => {
+            if (path.endsWith(`${clipId}.json`)) {
+              reached = true;
+              await stalled;
+            }
+            await rm(path, { force: true });
+          },
+        },
+      },
+    });
+
+    // A ready clip whose poster was never drawn (a poster that timed out keeps the clip): a library open draws it again. A temp file shows when the open's sweep has run.
+    const folder = clipsDir(libraryDir(), avatarId);
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, `${clipId}.mp4`), await clipMp4());
+    await writeClipRecord(folder, {
+      schemaVersion: 1,
+      id: clipId,
+      avatarId,
+      sourcePhotoId: photoId,
+      createdAt: new Date(NOW).toISOString(),
+      seen: false,
+      motion: { source: "code", label: "Моргает и улыбается", text: "she slowly blinks and gives a small smile" },
+      request: { model: "kling", quality: "std", seconds: 5, fallback: "auto" },
+      provider: { model: "kling-std", attempts: [{ attemptId: clipAttemptId(clipId, 1), providerJobId: "job-kling-1", outcome: "completed", providerCostMicros: 420_000, costSource: "usage" }] },
+      recovered: false,
+      exports: [],
+      outcome: { status: "ready", file: `${clipId}.mp4`, posterFile: `${clipId}.poster.jpg`, width: 720, height: 1280, durationMs: 5_000, fps: 24, bytes: 1, sha256: "a".repeat(64), face: { verdict: "skipped", frames: 0, why: "worker" } },
+    });
+    const sweptTemp = join(folder, ".0a1b2c3d4e5f.in.tmp");
+    await writeFile(sweptTemp, "x");
+
+    const deleting = answer(engine, "clips.delete", { avatarId, clipId });
+    await until(() => reached, "the delete's removal of the record");
+
+    // Away to another library and back: the clip's library becomes the live one again, and its recovery runs while the delete waits.
+    const reply = async (call: object): Promise<EngineReply> => {
+      await engine.engine.receive(call);
+      return EngineReply.parse(engine.posted.at(-1));
+    };
+    for (const [n, path] of [[1, other], [3, libraryDir()]] as const) {
+      expect((await reply({ kind: "control", type: "library.open", callId: `call-0000000${n}`, path })).error).toBeUndefined();
+      expect((await reply({ kind: "control", type: "library.confirm", callId: `call-0000000${n + 1}`, path })).error).toBeUndefined();
+    }
+    await until(() => !existsSync(sweptTemp), "the open's sweep");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    release();
+    expect(resultOf<{ clipId: string }>(await deleting, "clips.delete")).toEqual({ clipId });
+    // Through the same lock, after whatever the recovery queued on it.
+    expect(errorOf(await answer(engine, "clips.markSeen", { avatarId, clipId }))).toMatchObject({ code: "NOT_FOUND" });
+    const ofClip = engine.events().filter((e) => (e.type === "job.progress" || e.type === "job.failed" || e.type === "job.cancelled") && e.payload.kind === "clip" && e.payload.clipId === clipId);
+    const done = engine.events().filter((e) => e.type === "job.done" && e.payload.result.kind === "clip" && e.payload.result.clipId === clipId);
+    expect([...ofClip, ...done]).toEqual([]);
     expect((await readdir(folder)).filter((name) => name.startsWith(clipId))).toEqual([]);
     await engine.engine.shutdown();
   });

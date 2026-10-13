@@ -85,7 +85,10 @@ export interface ClipRecoveryHost {
   readonly ledger: () => RecoveryLedger | null;
   readonly jobs: Pick<JobRegistry, "startClip" | "clipPhase" | "finishClip">;
   readonly emit: (event: UnsequencedEvent) => void;
-  /** The clip service's counters: `enter` is the per-clip guard plus `#clipWork` (null: a job already works on that clip). */
+  /**
+   * The clip service's per-clip guard, ONE set with the create job's and the records' (`begin`), so a delete or a retry of a clip a recovery works on is `job-running`. `enter` does not count as
+   * library work: a switch stops a recovery instead of waiting for it. Null: a job already works on that clip.
+   */
   readonly work: { enter(clipId: string): (() => void) | null; anyActive(): boolean; isActive(clipId: string): boolean };
   readonly usableKey: (purpose: string) => string;
   readonly openRouter: (key: string) => RecoveryClient;
@@ -398,9 +401,28 @@ export async function recoverClips(host: ClipRecoveryHost, library: RecoveryLibr
   }
   for (const repaint of repaints) {
     if (!host.isCurrent()) break;
-    const leave = host.work.enter(repaint.clipId);
-    if (leave === null) continue;
-    jobs.push(startRecoveryJob(host, repaint.avatarId, repaint.clipId, leave, (job) => repaintPoster(host, repaint.clipsDir, repaint.clipId, job)));
+    // As a job above: under the clip's lock the record is read again and the job is registered before the lock goes, so a delete that ran since the scan (or runs now) is not met by a
+    // poster drawn for a clip that is gone.
+    let started: { running: Promise<void> } | null = null;
+    try {
+      started = await host.withClipLock(repaint.clipId, async () => {
+        const leave = host.work.enter(repaint.clipId);
+        if (leave === null) return null;
+        let handedOver = false;
+        try {
+          const read = await readClipRecord(repaint.clipsDir, repaint.clipId);
+          if (read.kind !== "record" || read.record.outcome.status !== "ready") return null;
+          handedOver = true;
+          return { running: startRecoveryJob(host, repaint.avatarId, repaint.clipId, leave, (job) => repaintPoster(host, repaint.clipsDir, repaint.clipId, job)) };
+        } finally {
+          if (!handedOver) leave();
+        }
+      });
+    } catch (error) {
+      host.log(`[clip] the record of clip ${repaint.clipId} could not be read again (${error instanceof Error ? error.name : typeof error}); its poster is not drawn this time`);
+      continue;
+    }
+    if (started !== null) jobs.push(started.running);
   }
   return { jobs };
 }

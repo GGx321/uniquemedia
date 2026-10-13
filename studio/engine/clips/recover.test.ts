@@ -801,6 +801,28 @@ describe("a ready clip whose poster is missing", () => {
     expect(r.calls.posters).toEqual([]);
   });
 
+  test("takes the clip's lock to draw it again", async () => {
+    await readyRecord();
+    const r = rig();
+    await recover(r);
+    expect(r.calls.locked).toEqual([CLIP]);
+  });
+
+  test("is not drawn again when the clip is deleted between the scan and the act: no job, no poster", async () => {
+    await readyRecord();
+    const r = rig({
+      beforeLocked: async () => {
+        await rm(clipRecordPath(clipsDir(), CLIP));
+        await rm(join(clipsDir(), `${CLIP}.mp4`));
+      },
+    });
+    const { jobs } = await recoverClips(r.host, library);
+    await Promise.all(jobs);
+    expect(jobs).toHaveLength(0);
+    expect(r.calls.posters).toEqual([]);
+    expect(await names()).toEqual([]);
+  });
+
   test("is left alone when its mp4 is gone too: there is nothing to draw it from", async () => {
     await readyRecord();
     await writeFile(join(clipsDir(), "gone.txt"), "x");

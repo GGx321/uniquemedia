@@ -136,6 +136,8 @@ export interface ClipServiceDeps {
   boldClips?: BoldClipsMode;
   /** Test seam: the hold registry's timers. */
   holdTimers?: HoldTimers;
+  /** Test seam: the records' removal of a file (the delete's), so a test can hold a delete in its middle. */
+  records?: Pick<ClipRecordsDeps, "remove">;
   log: (line: string) => void;
   // ----- S5.V4c's members (the export commits like a render): declared and wired here, read by the export job -----
   /** The export folder, checked now (as a render's save checks it). */
@@ -211,6 +213,7 @@ export class ClipService {
       },
       faceOf: (input) => this.#faceOf(input),
       log: deps.log,
+      ...(deps.records?.remove === undefined ? {} : { remove: deps.records.remove }),
     });
   }
 
@@ -363,8 +366,8 @@ export class ClipService {
       newId: deps.newId,
       timings: deps.timings,
       holds: this.holds,
-      // The clip records' lock (V4a2's `withClipLock`) is not on this branch: until the two meet, the lock is a pass-through here. The integration follow-up passes the records' lock in its place.
-      withClipLock: (_clipId, work) => work(),
+      // The records' own lock, the one a delete, a retry and every rewrite take: a recovery decides about a clip only between them, never in the middle of one.
+      withClipLock: (clipId, work) => this.#records.withClipLock(clipId, work),
       isCurrent: () => deps.currentLibrary() === library,
       isOwn: (attemptId) => this.#ownAttempts.has(attemptId),
       signal: eitherSignal(this.#stop.signal, this.#recoveryStop.signal),

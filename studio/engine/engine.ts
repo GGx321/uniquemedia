@@ -163,6 +163,7 @@ import { renderPoolSize } from "./renderQueue/pool";
 import { maskHome } from "./renderQueue/scrubber";
 import { createFocusResolver, type FocusFaceGate, type FocusResolver } from "./focus/focusResolver";
 import type { WorkerFaceGate } from "./face/worker/workerGate";
+import type { ClipRecordsDeps } from "./clips/records";
 import { ClipService } from "./clips/service";
 import { clipTimings, type ClipTimings } from "./clips/timings";
 import type { BoldClipsMode } from "../shared/engine/clips";
@@ -380,6 +381,8 @@ export interface EngineDeps {
   clipTimings?: ClipTimings;
   /** Test knobs of 5b.1: the fallback mode (`GROK_FALLBACK`) and `BOLD_CLIPS`, so every value can be played against the real engine. The constants rule otherwise. */
   clipSwitches?: { mode?: "auto" | "offer"; boldClips?: BoldClipsMode };
+  /** Test seam of the clip records (S5.V4a2): the delete's removal of a file, so a test can hold a delete in its middle. */
+  clipRecords?: Pick<ClipRecordsDeps, "remove">;
 }
 
 /** How long one `videos.render` may spend filling the focus of its photos. Under main's 30 s command deadline, so the answer (or the refusal) always arrives before main gives up. */
@@ -1193,6 +1196,7 @@ export class Engine {
       timings: deps.clipTimings ?? clipTimings(),
       ...(deps.clipSwitches?.mode === undefined ? {} : { mode: deps.clipSwitches.mode }),
       ...(deps.clipSwitches?.boldClips === undefined ? {} : { boldClips: deps.clipSwitches.boldClips }),
+      ...(deps.clipRecords === undefined ? {} : { records: deps.clipRecords }),
       log: (line) => console.warn(`studio engine: ${line}`),
       exportStatus: (requiredBytes) => this.#refreshExportStatus(requiredBytes),
       liveCommits: this.#commits,
