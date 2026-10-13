@@ -107,6 +107,7 @@ describe("random outcome sequences", () => {
   for (const mode of ["auto", "offer"] as const) {
     test(`(${mode}) what the provider bills never exceeds the accepted worst, no attempt POSTs twice, and Grok runs only behind a free Kling`, async () => {
       const problems: string[] = [];
+      let cancelled = 0;
       const rng = mulberry32(mode === "auto" ? 20261013 : 13102026);
       for (let i = 0; i < 400; i++) {
         const quality: ClipQuality = rng() < 0.5 ? "std" : "pro";
@@ -119,11 +120,13 @@ describe("random outcome sequences", () => {
         const grokReserve = clipReserveMicros(PRICES.grok, seconds);
         const first = draw(rng, firstReserve);
         const second = draw(rng, grokReserve);
-        const creditsBroken = rng() < 0.3;
+        // A stop BEFORE the POST: during the baseline's retry pauses (the read keeps failing), or by the read itself (it answers, but the clip was stopped while it ran).
+        const earlyStop = rng() < 0.15 ? (rng() < 0.5 ? "pause" : "read") : null;
+        const creditsBroken = rng() < 0.3 || earlyStop === "pause";
         const foreignRunAt = rng() < 0.3 ? T0 + Math.floor(rng() * 400) * SECOND : null;
         const journalFails = rng() < 0.1;
         const stopAt = rng() < 0.1 ? T0 + Math.floor(rng() * 600) * SECOND : null;
-        const label = `#${i} ${mode} ${model}/${quality}/${seconds}s fallback=${fallback} bold=${bold} first=${first.name} second=${second.name} creditsBroken=${creditsBroken} foreign=${foreignRunAt !== null} journalFails=${journalFails} stop=${stopAt !== null}`;
+        const label = `#${i} ${mode} ${model}/${quality}/${seconds}s fallback=${fallback} bold=${bold} first=${first.name} second=${second.name} creditsBroken=${creditsBroken} foreign=${foreignRunAt !== null} journalFails=${journalFails} stop=${stopAt !== null} earlyStop=${earlyStop}`;
         const check = (ok: boolean, what: string): void => void (ok || problems.push(`${label}: ${what}`));
 
         const drawnOf = { kling: grokClip ? undefined : first, grok: grokClip ? first : second } as const;
@@ -145,6 +148,14 @@ describe("random outcome sequences", () => {
           },
         });
         try {
+          if (earlyStop === "pause") rig.at(T0 + 2 * SECOND, () => rig.abort());
+          if (earlyStop === "read") {
+            const answering = rig.deps.client.fetchCredits;
+            rig.deps.client.fetchCredits = async () => {
+              rig.abort();
+              return answering();
+            };
+          }
           if (journalFails) rig.failJournalOn.add("submitted");
           if (foreignRunAt !== null) {
             foreignCost = 90_000;
@@ -156,8 +167,8 @@ describe("random outcome sequences", () => {
           const result = await rig.run({ request: input.request, bold, acceptedWorstMicros: input.acceptedWorstMicros });
 
           check(result.kind !== "not-reserved", "the cap refused a reserve of the clip's own");
-          check(stopAt !== null || (result.kind !== "interrupted" && result.kind !== "cancelled"), "nobody stopped this clip, yet it was interrupted");
-          check(stopAt !== null || rig.posts().length >= 1, "the clip never sent its first request");
+          check(stopAt !== null || earlyStop !== null || (result.kind !== "interrupted" && result.kind !== "cancelled"), "nobody stopped this clip, yet it was interrupted");
+          check(stopAt !== null || earlyStop !== null || rig.posts().length >= 1, "the clip never sent its first request");
 
           // What the provider billed for the clip: every attempt whose POST left, at its drawn charge. The hidden bills are in it.
           // Every POST has a reserve of its own before it, and a clip that was cancelled left nothing: no POST, every reserve released, nothing open.
@@ -171,6 +182,7 @@ describe("random outcome sequences", () => {
             }
           }
           if (result.kind === "cancelled") {
+            cancelled++;
             check(posted === 0, "a cancelled clip POSTed");
             check(rig.ledger.openReserves().filter((r) => r.attemptId.startsWith("clip-")).length === 0, "a cancelled clip left a reserve open");
             check(rig.trace.filter((e) => e.startsWith("ledger:release:")).length === reserved, "a cancelled clip did not release every reserve");
@@ -206,6 +218,8 @@ describe("random outcome sequences", () => {
         }
       }
       expect(problems).toEqual([]);
+      // The branch must stay alive: a generator that never stops a clip before its POST would leave the cancelled invariants checking nothing.
+      expect(cancelled).toBeGreaterThanOrEqual(15);
     });
   }
 });
