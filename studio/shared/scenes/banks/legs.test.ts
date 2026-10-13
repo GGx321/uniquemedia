@@ -297,49 +297,53 @@ describe("a «Смелая» bank's legs moments are different poses (S5.R4 roun
     expect(same).toEqual([]);
   });
 
-  // Polish after C4: not only the legs moments. A mixed beach + fitness run showed «stretches her arms overhead / she reaches a little higher» twice. Every moment of a «Смелая» bank
-  // (not only its legs ones) is held against every other bank: the same text AND the same motion, read as poses, is one moment drawn twice. A shared text or a shared motion alone
-  // (the sibling banks share a head turn) is not: the photos differ in their place, their outfit and their other half.
-  // «Ночнушки» was written beside «Дом» and still repeats twelve of its bed, chair and hair moments word for word (eleven of «Дом», one of «Гламур»); both are among the five frozen banks (its plan is pinned), so
-  // these twelve are known, listed by the «Ночнушки» text, and they only shrink: the test fails on any other twin, and on a listed text that is no twin any more.
   test("a weight shift is one pose, whether it is on a leg or a hip", () => {
     expect(poseWordsOf("stands with her weight on one leg")).toBe(poseWordsOf("stands with her weight on one hip"));
     expect(poseWordsOf("she shifts her weight to the other leg slowly")).toBe(poseWordsOf("she shifts her weight slowly"));
     expect(poseWordsOf("stands with her weight on one leg")).not.toBe(poseWordsOf("stands with her hand on one leg"));
   });
 
-  const NIGHTWEAR_HOME_TWINS: readonly string[] = [
-    "lies on her side, head on her hand",
-    "rests her cheek on the pillow",
-    "lies prone, her cheek on her hand",
-    "lies on her stomach, head tilted",
-    "lies prone, glancing back",
-    "lies prone, ankles crossed behind",
-    "lies prone, feet raised behind",
-    "lies on her stomach, hips behind",
-    "tucks her hair behind one ear",
-    "sits on the edge of the bed",
-    "sits with one leg crossed",
-    "pulls one knee up to her chest",
-  ];
-  const SIBLINGS: readonly BankCategory[] = ["home", "glamour"];
-  const twinsOf = (category: BankCategory): { moment: Moment; twin: string; bank: BankCategory }[] => {
-    const others = BANK_CATEGORIES.filter((c) => c !== category).flatMap((c) => BANKS[c].places.flatMap((p) => p.moments.map((m) => ({ bank: c, moment: m }))));
-    const byPose = new Map(others.map((o) => [`${poseWordsOf(o.moment.text)}|${poseWordsOf(o.moment.motion)}`, o]));
-    return BANKS[category].places.flatMap((p) => p.moments).flatMap((moment) => {
-      const twin = byPose.get(`${poseWordsOf(moment.text)}|${poseWordsOf(moment.motion)}`);
-      return twin === undefined ? [] : [{ moment, twin: `${twin.bank}: «${twin.moment.text}» / «${twin.moment.motion}»`, bank: twin.bank }];
-    });
+  // Polish after C4: not only the legs moments. Only a moment's TEXT reaches the photo prompt, so a «Смелая» bank's moment with the text of a moment of another bank is that bank's photo
+  // in other clothes. Every moment of both banks is held against every other bank, on the text alone. The twins below are known and only shrink: they are harmless in one run, because
+  // the planner (planner.boldMix.sameMoment.test.ts) never lets a «Смелая» slot take a text another category holds in the same run. The test fails on any other twin, and on a listed
+  // text that is no twin any more.
+  const TEXT_TWINS: Record<"nightwear" | "beach", readonly string[]> = {
+    // «Ночнушки» was written beside «Дом»: eleven of its bed, mirror and chair moments are «Дом»'s, one is «Гламур»'s, one «Фотосессия»'s, one «Гламур»'s wall.
+    nightwear: [
+      "lies on her side, head on her hand",
+      "rests her cheek on the pillow",
+      "lies on her stomach, one arm out",
+      "lies prone, her cheek on her hand",
+      "lies on her stomach, head tilted",
+      "lies prone, glancing back",
+      "lies prone, ankles crossed behind",
+      "lies prone, feet raised behind",
+      "lies on her stomach, hips behind",
+      "lies on her stomach, feet up",
+      "tucks her hair behind one ear",
+      "adjusts the strap on her shoulder",
+      "sits on the edge of the bed",
+      "stands sideways to the mirror",
+      "brushes her hair",
+      "sits with one leg crossed",
+      "pulls one knee up to her chest",
+      "stretches her arms up, facing away",
+      "leans against the wall",
+    ],
+    beach: ["shades her eyes with one hand", "adjusts the strap on her shoulder", "looks back over her shoulder", "sits hugging her knees", "tucks her hair back in the breeze"],
   };
-  const allowed = (category: BankCategory, t: { moment: Moment; bank: BankCategory }): boolean => category === "nightwear" && SIBLINGS.includes(t.bank) && NIGHTWEAR_HOME_TWINS.includes(t.moment.text);
+  const textTwinsOf = (category: BankCategory): string[] => {
+    const others = new Set(BANK_CATEGORIES.filter((c) => c !== category).flatMap((c) => BANKS[c].places.flatMap((p) => p.moments.map((m) => m.text.toLowerCase().trim()))));
+    return BANKS[category].places.flatMap((p) => p.moments).map((m) => m.text).filter((text) => others.has(text.toLowerCase().trim()));
+  };
 
-  test.each(["nightwear", "beach"] as const)("%s: no moment is a moment of another bank, text and motion together", (category) => {
-    expect(twinsOf(category).filter((t) => !allowed(category, t)).map((t) => `«${t.moment.text}» / «${t.moment.motion}» = ${t.twin}`)).toEqual([]);
+  test.each(["nightwear", "beach"] as const)("%s: no moment has the text of a moment of another bank, but the listed twins", (category) => {
+    expect(textTwinsOf(category).filter((text) => !TEXT_TWINS[category].includes(text))).toEqual([]);
   });
 
-  test("every listed «Ночнушки» twin of «Дом» or «Гламур» still is one", () => {
-    const found = twinsOf("nightwear").filter((t) => SIBLINGS.includes(t.bank)).map((t) => t.moment.text);
-    expect(NIGHTWEAR_HOME_TWINS.filter((text) => !found.includes(text))).toEqual([]);
+  test.each(["nightwear", "beach"] as const)("%s: every listed twin still is one", (category) => {
+    const found = textTwinsOf(category);
+    expect(TEXT_TWINS[category].filter((text) => !found.includes(text))).toEqual([]);
   });
 });
 
