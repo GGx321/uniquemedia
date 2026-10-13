@@ -290,6 +290,23 @@ export type VideoPollResult =
   | { kind: "status"; status: VideoStatus; rawStatus: string; usageCostMicros: number | null; error: string | null; contentFailure: boolean }
   | ({ kind: "unreadable" } & FreeCallFault);
 
+/**
+ * `GET /videos/<id>/content?index=0` streamed to a file (free once the job completed).
+ * - `saved`: the whole body is in the file and flushed to disk. Nothing is checked about the bytes here (V4b validates them).
+ * - `too-large`: the body is over the cap (by its `Content-Length` or by the bytes that arrived); the file is removed.
+ * - `gone`: 404 or 410, the file has left OpenRouter for good.
+ * - `redirect-refused`: the answer was a redirect. None is followed, whatever its target, so the bearer key never goes to another host;
+ *   `host` is the target's host when it could be read (never its path or query, which may be a signed URL).
+ * - `failed`: anything else; the file is removed. `disk` is a local write error, `empty` a 200 without a body.
+ * On every result but `saved`, no file is left at the path.
+ */
+export type VideoDownloadResult =
+  | { kind: "saved"; bytes: number }
+  | { kind: "too-large"; capBytes: number }
+  | { kind: "gone"; httpStatus: 404 | 410 }
+  | { kind: "redirect-refused"; httpStatus: number | null; host: string | null }
+  | { kind: "failed"; cause: FreeCallCause | "disk" | "empty"; httpStatus: number | null; detail: string };
+
 export interface OpenRouterClient {
   generateImage(params: ImageParams): Promise<ImageResult>;
   chat(params: ChatParams): Promise<ChatResult>;
@@ -301,4 +318,6 @@ export interface OpenRouterClient {
   submitVideo(request: VideoRequest, signal: AbortSignal): Promise<VideoSubmitResult>;
   /** `GET /videos/<id>`: the job's status. */
   pollVideo(id: string, signal?: AbortSignal): Promise<VideoPollResult>;
+  /** Streams the finished clip to `toPath` (a temp name the caller owns), refusing a body over `capBytes` and every redirect. */
+  downloadVideo(id: string, toPath: string, capBytes: number, signal: AbortSignal): Promise<VideoDownloadResult>;
 }

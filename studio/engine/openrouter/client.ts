@@ -7,7 +7,7 @@ import { fetchCredits } from "./credits";
 import { fetchGeneration } from "./generation";
 import { generateImage } from "./image";
 import { makeHeadRedactor, makeRedactor } from "./redact";
-import { pollVideo, submitVideo } from "./video";
+import { downloadVideo, pollVideo, submitVideo } from "./video";
 import { MAX_BODY_BYTES, type ClientContext } from "./transport";
 import type { OpenRouterClient, OpenRouterClientOptions } from "./types";
 
@@ -81,6 +81,7 @@ export function createOpenRouterClient(options: OpenRouterClientOptions): OpenRo
     fetchGeneration: (id, signal) => fetchGeneration(ctx, id, signal),
     submitVideo: (request, signal) => submitVideo(ctx, request, signal),
     pollVideo: (id, signal) => pollVideo(ctx, id, signal),
+    downloadVideo: (id, toPath, capBytes, signal) => downloadVideo(ctx, id, toPath, capBytes, signal),
   };
 }
 

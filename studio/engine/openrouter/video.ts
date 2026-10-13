@@ -1,8 +1,10 @@
+import { Buffer } from "node:buffer";
+import { open, rm, type FileHandle } from "node:fs/promises";
 import { z } from "zod";
 import { costToMicros } from "../money/settleRule";
 import { faultOf, freeGet, httpFault, SAFE_ID } from "./freeCall";
-import { clean, errorDetail, finalKind, isModerationRefusal, safeJson, sendOnce, type ClientContext } from "./transport";
-import type { VideoPollResult, VideoRequest, VideoStatus, VideoSubmitResult } from "./types";
+import { clean, describe, errorDetail, finalKind, isModerationRefusal, safeJson, sendOnce, type ClientContext } from "./transport";
+import type { BodyReader, OpenRouterResponse, VideoDownloadResult, VideoPollResult, VideoRequest, VideoStatus, VideoSubmitResult } from "./types";
 
 // The async video transport: HTTP only. No reserve, no settle, no journal, no retry. The state machine that owns the money is S5.V3b.
 
@@ -66,6 +68,188 @@ export async function submitVideo(ctx: ClientContext, request: VideoRequest, sig
 function uncertain(ctx: ClientContext, cause: Extract<VideoSubmitResult, { kind: "uncertain" }>["cause"], httpStatus: number | null, detail: string): VideoSubmitResult {
   ctx.log(clean(ctx, `[video] POST /videos uncertain (${cause}${httpStatus === null ? "" : `, HTTP ${httpStatus}`}); it will not be resent`));
   return { kind: "uncertain", cause, httpStatus, detail: clean(ctx, detail) };
+}
+
+// ---------- GET /videos/<id>/content ----------
+
+/** The whole body, from request to the last byte. A clip is up to 100 MiB, so this is far above the 20 s of a free JSON GET. */
+export const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1_000;
+/** How much of a non-2xx body is read for its message. */
+const ERROR_BODY_BYTES = 4 * 1024;
+
+type Stopped = "timeout" | "abort" | null;
+
+function redirectRelated(err: unknown): boolean {
+  for (let e: unknown = err, depth = 0; e instanceof Error && depth < 4; e = e.cause, depth++) {
+    if (/redirect/i.test(e.message)) return true;
+  }
+  return false;
+}
+
+/** The host of a redirect's target; never its path or query, which may be a signed URL. */
+function hostOf(location: string | null): string | null {
+  if (location === null) return null;
+  try {
+    return new URL(location, "http://invalid.invalid").host;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Streams the finished clip into `toPath`, flushed to disk, byte for byte. The caller owns `toPath` (a temp name) and renames it after
+ * V4b's checks. No redirect is followed, whatever its target: the bearer key must never be sent to another host. A body over `capBytes`
+ * is refused as soon as it is known (by `Content-Length`, or by the bytes that arrive, whichever comes first). On every result but
+ * `saved`, no file is left at `toPath`.
+ */
+export async function downloadVideo(ctx: ClientContext, id: string, toPath: string, capBytes: number, signal: AbortSignal): Promise<VideoDownloadResult> {
+  if (!Number.isSafeInteger(capBytes) || capBytes < 1) throw new RangeError(`capBytes must be a positive integer, got ${capBytes}`);
+  const label = "GET /videos/<id>/content";
+  const failed = (cause: Extract<VideoDownloadResult, { kind: "failed" }>["cause"], httpStatus: number | null, detail: string): VideoDownloadResult => {
+    const result: VideoDownloadResult = { kind: "failed", cause, httpStatus, detail: clean(ctx, detail) };
+    ctx.log(clean(ctx, `[video] ${label} failed (${cause}${httpStatus === null ? "" : `, HTTP ${httpStatus}`})`));
+    return result;
+  };
+  if (!SAFE_ID.test(id)) return failed("malformed", null, `${label}: the id is not a job id; nothing was sent`);
+
+  const controller = new AbortController();
+  let stoppedBy: Stopped = null;
+  const stop = (why: Exclude<Stopped, null>): void => {
+    stoppedBy ??= why;
+    controller.abort();
+  };
+  const onAbort = (): void => stop("abort");
+  const stopped = new Promise<never>((_, reject) => controller.signal.addEventListener("abort", () => reject(new Error("stopped")), { once: true }));
+  stopped.catch(() => {});
+  if (signal.aborted) onAbort();
+  else signal.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => stop("timeout"), DOWNLOAD_TIMEOUT_MS);
+  const race = <T>(work: Promise<T>): Promise<T> => {
+    work.catch(() => {});
+    return Promise.race([work, stopped]);
+  };
+  const interrupted = (): VideoDownloadResult =>
+    stoppedBy === "timeout" ? failed("timeout", null, `${label}: not finished within ${DOWNLOAD_TIMEOUT_MS} ms`) : failed("aborted", null, `${label}: aborted`);
+
+  let reader: BodyReader | null = null;
+  let handle: FileHandle | null = null;
+  let opened = false;
+  let keepFile = false;
+  try {
+    let res: OpenRouterResponse;
+    try {
+      res = await race(
+        ctx.fetch(`${ctx.base}/videos/${encodeURIComponent(id)}/content?index=0`, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${ctx.key}` },
+          redirect: "error",
+          signal: controller.signal,
+        }),
+      );
+    } catch (err) {
+      if (stoppedBy !== null) return interrupted();
+      if (redirectRelated(err)) return { kind: "redirect-refused", httpStatus: null, host: null };
+      return failed("network", null, `${label}: ${describe(err)}`);
+    }
+    const { status } = res;
+    reader = res.body === null ? null : res.body.getReader();
+    const giveUpOnBody = (): void => void reader?.cancel().catch(() => {});
+
+    if (status >= 300 && status < 400) {
+      giveUpOnBody();
+      return { kind: "redirect-refused", httpStatus: status, host: hostOf(res.headers.get("location")) };
+    }
+    if (status === 404 || status === 410) {
+      giveUpOnBody();
+      return { kind: "gone", httpStatus: status };
+    }
+    if (status < 200 || status > 299) {
+      const text = await smallText(reader, race);
+      giveUpOnBody();
+      if (stoppedBy !== null) return interrupted();
+      const fault = httpFault(ctx, label, status, text);
+      return failed(fault.cause, status, fault.detail);
+    }
+    if (status !== 200) {
+      giveUpOnBody();
+      return failed("http", status, `${label}: HTTP ${status}, expected a 200 with the clip`);
+    }
+    const declared = Number(res.headers.get("content-length"));
+    if (res.headers.get("content-length") !== null && Number.isFinite(declared) && declared > capBytes) {
+      giveUpOnBody();
+      return { kind: "too-large", capBytes };
+    }
+    if (reader === null) return failed("empty", status, `${label}: HTTP ${status}, no body`);
+
+    try {
+      handle = await open(toPath, "w");
+      opened = true;
+    } catch (err) {
+      giveUpOnBody();
+      return failed("disk", status, `${label}: the file could not be opened: ${describe(err)}`);
+    }
+    let total = 0;
+    for (;;) {
+      let chunk: { done: boolean; value?: Uint8Array };
+      try {
+        chunk = await race(reader.read());
+      } catch (err) {
+        giveUpOnBody();
+        if (stoppedBy !== null) return interrupted();
+        return failed("network", status, `${label}: the body broke after ${total} bytes: ${describe(err)}`);
+      }
+      if (chunk.done) break;
+      if (chunk.value === undefined || chunk.value.byteLength === 0) continue;
+      total += chunk.value.byteLength;
+      if (total > capBytes) {
+        giveUpOnBody();
+        return { kind: "too-large", capBytes };
+      }
+      try {
+        await handle.write(chunk.value);
+      } catch (err) {
+        giveUpOnBody();
+        return failed("disk", status, `${label}: the file could not be written: ${describe(err)}`);
+      }
+    }
+    if (total === 0) return failed("empty", status, `${label}: HTTP ${status}, the body is empty`);
+    try {
+      await handle.sync();
+      await handle.close();
+      handle = null;
+    } catch (err) {
+      return failed("disk", status, `${label}: the file could not be flushed: ${describe(err)}`);
+    }
+    keepFile = true;
+    return { kind: "saved", bytes: total };
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort);
+    if (handle !== null) await handle.close().catch(() => {});
+    if (opened && !keepFile) await rm(toPath, { force: true }).catch(() => {});
+  }
+}
+
+/** At most `ERROR_BODY_BYTES` of a non-2xx body as text, for its message; a failure to read it is an empty text. */
+async function smallText(
+  reader: BodyReader | null,
+  race: <T>(work: Promise<T>) => Promise<T>,
+): Promise<string> {
+  if (reader === null) return "";
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (total < ERROR_BODY_BYTES) {
+      const { done, value } = await race(reader.read());
+      if (done) break;
+      if (value === undefined) continue;
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } catch {
+    // The status is what matters; a body that cannot be read is no text.
+  }
+  return Buffer.concat(chunks).subarray(0, ERROR_BODY_BYTES).toString("utf8");
 }
 
 // ---------- GET /videos/<id> ----------
