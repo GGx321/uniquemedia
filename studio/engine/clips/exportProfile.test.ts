@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { COLOUR_TAG_ARGS } from "../render/profile";
 import { clipExportArgv, EXPORT_PROFILE_OF, EXPORT_RATE_OF, expectedExportBytes, expectedExportFrames, type ClipExportArgvInput, type ExportFpsMode } from "./exportProfile";
+useNativeGlobals();
 
 // Stage 5, 5b.1, S5.V4c (plan s5b1 §5.13, I5.55, I5.58; owner Q-C): the ffmpeg argv of «Сохранить в папку». It re-encodes the library's mp4 (never touched) into H.264 High 1080 x 1920,
 // 30 fps (or 24), faststart, BT.709 tags, no audio, with every tag stripped except the real `creation_time`. These tests pin the argv itself; the file it makes is judged by
