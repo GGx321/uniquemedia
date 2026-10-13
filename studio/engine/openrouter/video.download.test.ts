@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeClient, LOCAL_BASE, TEST_KEY } from "./testing/fakes";
 import { FIXTURE_ID } from "./testing/videoFixtures";
+import { DOWNLOAD_TIMEOUT_MS } from "./video";
 import type { OpenRouterClientOptions, OpenRouterFetch, OpenRouterRequestInit } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -336,6 +337,19 @@ test("returns timeout within the bound when the file never opens", async () => {
   expect(result).toMatchObject({ kind: "failed", cause: "timeout" });
   expect(elapsedMs).toBeLessThan(BOUND_MS);
 }, 10_000);
+
+test("returns timeout within the bound when the flush succeeds but closing the file hangs", async () => {
+  const { result, elapsedMs } = await timedOut({ openFile: async () => ({ write: async () => {}, sync: async () => {}, close: () => NEVER }) });
+
+  expect(result).toMatchObject({ kind: "failed", cause: "timeout" });
+  expect(elapsedMs).toBeLessThan(BOUND_MS);
+}, 10_000);
+
+test("refuses a download timeout above the production bound", () => {
+  const { fetch } = byteFetch({});
+
+  expect(() => makeClient(fetch, { downloadTimeoutMs: DOWNLOAD_TIMEOUT_MS + 1 })).toThrow(RangeError);
+});
 
 test("returns timeout within the bound when the flush to disk hangs", async () => {
   const { result, elapsedMs } = await timedOut({ openFile: async () => ({ write: async () => {}, sync: () => NEVER, close: () => NEVER }) });

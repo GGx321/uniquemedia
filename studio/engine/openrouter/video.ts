@@ -217,7 +217,7 @@ export async function downloadVideo(ctx: ClientContext, id: string, toPath: stri
         const late = await within(opening.catch(() => null), POST_STOP_WAIT_MS);
         const cleanUp = async (file: OpenedFile): Promise<void> => {
           await within(file.close().catch(() => {}), POST_STOP_WAIT_MS);
-          await rm(toPath, { force: true }).catch(() => {});
+          await within(rm(toPath, { force: true }).catch(() => {}), POST_STOP_WAIT_MS);
         };
         if (late === TIMED_OUT) void opening.then(cleanUp, () => {});
         else if (late !== null) await cleanUp(late);
@@ -254,7 +254,7 @@ export async function downloadVideo(ctx: ClientContext, id: string, toPath: stri
     if (total === 0) return failed("empty", status, `${label}: HTTP ${status}, the body is empty`);
     try {
       await race(handle.sync());
-      await handle.close();
+      await race(handle.close());
       handle = null;
     } catch (err) {
       if (stoppedBy !== null) return interrupted();
@@ -266,7 +266,7 @@ export async function downloadVideo(ctx: ClientContext, id: string, toPath: stri
     clearTimeout(timer);
     signal.removeEventListener("abort", onAbort);
     if (handle !== null) await within(handle.close().catch(() => {}), POST_STOP_WAIT_MS);
-    if (opened && !keepFile) await rm(toPath, { force: true }).catch(() => {});
+    if (opened && !keepFile) await within(rm(toPath, { force: true }).catch(() => {}), POST_STOP_WAIT_MS);
   }
 }
 
