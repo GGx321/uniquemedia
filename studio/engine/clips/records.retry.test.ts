@@ -386,6 +386,23 @@ describe("clips.retryDownload: races with a delete and a stop", () => {
     expect(await recordOf()).toEqual(before);
   });
 
+  test("does not end ready when the engine stops while the face is read", async () => {
+    const stop = new AbortController();
+    await open({
+      deps: {
+        host: { busy: () => false, begin: () => () => undefined, stop: stop.signal },
+        faceOf: async () => {
+          stop.abort();
+          return { verdict: "match", p75: 0.8, frames: 10 };
+        },
+      },
+    });
+    const before = failedRecord("download-failed", UNTIL);
+    await rig.put(before);
+    expect((await rig.settled((await retry()).jobId))?.status).toBe("cancelled");
+    expect(await recordOf()).toEqual(before);
+  });
+
   test("does not end ready when the poster fails because the engine stopped", async () => {
     const stop = new AbortController();
     await open({

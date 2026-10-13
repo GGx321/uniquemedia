@@ -466,6 +466,8 @@ export class ClipRecords {
       deps.log(`[clip] ${clipId}: the face check could not run (${errorName(error)}); the clip is kept unchecked`);
       face = { verdict: "skipped", frames: 0, why: "worker" };
     }
+    // A stop while the face was read (the check may answer after it) never ends `ready` either.
+    if (signal.aborted) return { status: "cancelled" };
 
     phase({ phase: "saving", model, done: 3 });
     const ready: ClipRecord["outcome"] = {
