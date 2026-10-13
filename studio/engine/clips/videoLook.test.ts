@@ -26,6 +26,8 @@ import {
   wordCount,
   type ClipCapture,
 } from "./videoLook";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // Stage 5, 5b.1, S5.V5 (plan s5b1 §5.5, I5.51): the video lines, one module per medium (I5.1). Each camera line is adapted from a probe prompt that worked or echoes the
 // photo's own capture line (engine/scenes/phoneLook.ts); the pacing, the look and the adult line are the probes' words, verbatim. The prompt is the product: these pins are
