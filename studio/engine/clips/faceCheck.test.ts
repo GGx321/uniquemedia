@@ -59,6 +59,7 @@ const framesOf =
 
 const base = {
   clipPath: "/clips/a.mp4",
+  colour: { matrix: 1, fullRange: false, dynamicRange: "sdr" },
   durationMs: 5_000,
   scratchDir: "/clips",
   masterEmbedding: MASTER,
@@ -176,6 +177,19 @@ describe("checkClipFace asks the worker", () => {
     expect(world.seen.every((s) => s.pose === "front")).toBe(true);
     expect(world.seen.every((s) => s.masterEmbedding === MASTER)).toBe(true);
     expect(world.seen.map((s) => s.bytes[0])).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  test("with the clip's own colour handed to the frame sampler", async () => {
+    const colour = { matrix: 6, fullRange: true, dynamicRange: "sdr" } as const;
+    let got: unknown;
+    await run(times(3, match(0.9)), {
+      colour,
+      sampleFrames: async (options) => {
+        got = options.colour;
+        return [];
+      },
+    }).result;
+    expect(got).toEqual(colour);
   });
 
   test("one frame at a time", async () => {

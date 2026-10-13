@@ -44,7 +44,18 @@ export function judgeClipFacts(facts: ClipFacts, requestedSeconds: number): Clip
   return { ok: true };
 }
 
+/**
+ * What the clip's own boxes say about its colour, as the walker resolved it (untagged HD is BT.709): the H.273 matrix code, whether the range is full, and the dynamic range. The poster
+ * and the face-check frames are converted from this, never from an assumption (frames.ts).
+ */
+export interface ClipColour {
+  readonly matrix: number;
+  readonly fullRange: boolean;
+  readonly dynamicRange: "sdr" | "pq" | "hlg";
+}
+
 export interface ValidClip {
+  readonly colour: ClipColour;
   /** The real size: the clip is badged by it («1080p» only when it is 1080 x 1920). */
   readonly width: number;
   readonly height: number;
@@ -97,7 +108,15 @@ export async function validateClipFile(path: string, requestedSeconds: number): 
     if (!judged.ok) return invalid(judged.reason, `${facts.codec} ${facts.width} x ${facts.height}, ${facts.durationMs} ms for ${requestedSeconds} s asked`);
     return {
       ok: true,
-      clip: { width: facts.width, height: facts.height, durationMs: facts.durationMs, fps: video.sourceFps, hasAudio: probe.info.audioTracks > 0, bytes: size },
+      clip: {
+        colour: { matrix: video.colour.matrix, fullRange: video.colour.fullRange, dynamicRange: video.dynamicRange },
+        width: facts.width,
+        height: facts.height,
+        durationMs: facts.durationMs,
+        fps: video.sourceFps,
+        hasAudio: probe.info.audioTracks > 0,
+        bytes: size,
+      },
     };
   } finally {
     await handle.close();

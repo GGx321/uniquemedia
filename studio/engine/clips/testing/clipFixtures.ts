@@ -7,6 +7,19 @@ import { ffmpegPath } from "../../../node/ffmpegBinary";
 // Test-only (S5.V4b): small clips made by the bundled ffmpeg from lavfi sources, so no binary is committed. A clip is black until 0.25 s and white after it, which
 // lets a test tell the frame at 0 from the frame at 0.5 s. At the sizes used here a 10 s clip is a few tens of KB.
 
+const TAGS_709 = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"];
+
+/** The matrix and range the pixels are really converted with, and the tags the file carries about them (they agree, except where a name says `untagged`). */
+const ENCODINGS = {
+  "709tv": { matrix: "bt709", range: "tv", tags: [...TAGS_709, "-color_range", "tv"] },
+  /** An HD file that says nothing: its pixels are BT.709, and readers must assume so. */
+  "709untagged": { matrix: "bt709", range: "tv", tags: [] },
+  "601tv": { matrix: "bt601", range: "tv", tags: ["-colorspace", "smpte170m", "-color_primaries", "smpte170m", "-color_trc", "smpte170m", "-color_range", "tv"] },
+  "709pc": { matrix: "bt709", range: "pc", tags: [...TAGS_709, "-color_range", "pc"] },
+  /** PQ HDR tags over BT.2020 pixels. */
+  pq: { matrix: "bt2020", range: "tv", tags: ["-colorspace", "bt2020nc", "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-color_range", "tv"] },
+} as const;
+
 export interface ClipSpec {
   readonly width: number;
   readonly height: number;
@@ -21,6 +34,8 @@ export interface ClipSpec {
   readonly faststart?: boolean;
   /** A flat colour (`0xRRGGBB`) tagged BT.709 limited range, as the providers' files are. */
   readonly patch?: string;
+  /** How the patch is encoded and what the file says about it. Default `709tv`. */
+  readonly encoding?: keyof typeof ENCODINGS;
   /** The picture is stored turned and shown upright by a rotation in the track header (the width and height are the SHOWN ones). */
   readonly rotate?: 90;
 }
@@ -61,7 +76,10 @@ function lavfiVideo(spec: ClipSpec): string {
   const { seconds, fps = 24 } = spec;
   const [width, height] = spec.rotate === undefined ? [spec.width, spec.height] : [spec.height, spec.width];
   // A flat colour from the first frame, converted with the BT.709 matrix and tagged so: a grey fixture cannot show a wrong matrix, a coloured one does.
-  if (spec.patch !== undefined) return `color=c=${spec.patch}:s=${width}x${height}:r=${fps}:d=${seconds},format=rgb24,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p`;
+  if (spec.patch !== undefined) {
+    const { matrix, range } = ENCODINGS[spec.encoding ?? "709tv"];
+    return `color=c=${spec.patch}:s=${width}x${height}:r=${fps}:d=${seconds},format=rgb24,scale=out_color_matrix=${matrix}:out_range=${range},format=yuv420p`;
+  }
   return `color=c=black:s=${width}x${height}:r=${fps}:d=${seconds},drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='gte(t,0.25)'`;
 }
 
@@ -76,7 +94,7 @@ export async function writeClip(path: string, spec: ClipSpec): Promise<void> {
   if (spec.audio === true) args.push("-map", spec.secondVideo === true ? "2:a" : "1:a", "-c:a", "aac", "-b:a", "32k");
   if (codec === "h264") args.push("-c:v", "libx264", "-preset", "ultrafast", "-crf", spec.patch === undefined ? "35" : "12", "-pix_fmt", "yuv420p");
   else args.push("-c:v", "libx265", "-preset", "ultrafast", "-crf", "35", "-pix_fmt", "yuv420p", "-tag:v", "hvc1", "-x265-params", "log-level=error");
-  if (spec.patch !== undefined) args.push("-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv");
+  if (spec.patch !== undefined) args.push(...ENCODINGS[spec.encoding ?? "709tv"].tags);
   if (spec.faststart !== false) args.push("-movflags", "+faststart");
   if (spec.rotate === undefined) {
     args.push(path);

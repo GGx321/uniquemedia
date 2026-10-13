@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
+import type { ClipColour } from "./validate";
 
 // Stage 5, 5b.1, S5.V4b (plan s5b1 §5.10 and §5.11): the two things the engine takes out of a stored clip with ffmpeg. The frames the face check looks at (one every half second, at
 // t = 0, 0.5, 1, ..., each a 720 x 1280 JPEG) and the poster (the frame at 0.5 s, 720 x 1280). Both read the library's own file, which the app's walker has already judged
@@ -49,8 +50,25 @@ function inputHead(clipPath: string, extra: readonly string[] = []): string[] {
 }
 
 const JPEG_OUTPUT = ["-pix_fmt", "yuvj420p", "-q:v", "3"];
-// The providers' files are BT.709 limited range and a JPEG is read as BT.601 full range. `yuvj420p` alone changes only the range, which tints every frame, so the matrix is converted here.
-const SCALE = `scale=${FRAME_WIDTH}:${FRAME_HEIGHT}:in_color_matrix=bt709:in_range=tv:out_color_matrix=bt601:out_range=pc`;
+// A JPEG is read as BT.601 full range. `yuvj420p` alone changes only the range, which tints every frame, so the matrix is converted here, from what the CLIP says it is (its boxes, read by
+// the walker and reported by validate.ts: untagged HD is BT.709). A guess in either direction tints: BT.601 read as 709 is 20 off in green, full range read as limited 10.
+/** The walker's matrix codes (H.273) as swscale names them. The walker lets only these through. */
+const SCALE_MATRICES: Readonly<Record<number, string>> = { 1: "bt709", 5: "bt601", 6: "smpte170m", 9: "bt2020" };
+
+function scaleFor(colour: ClipColour): string {
+  const matrix = SCALE_MATRICES[colour.matrix];
+  // A code outside the table is a bug here, never a reason to write a guess into a graph.
+  if (matrix === undefined) throw new Error(`no scaler name for colour matrix ${colour.matrix}`);
+  return `scale=${FRAME_WIDTH}:${FRAME_HEIGHT}:in_color_matrix=${matrix}:in_range=${colour.fullRange ? "pc" : "tv"}:out_color_matrix=bt601:out_range=pc`;
+}
+
+/**
+ * PQ and HLG clips are accepted (a paid clip is never refused for its colour) and are NOT tone-mapped: the providers deliver SDR, so their poster and frames are kept as the scaler gives
+ * them (washed out for HDR) and the fact is logged. A real tone-map is a later step if a provider ever delivers HDR.
+ */
+function noteHdr(colour: ClipColour, log: (line: string) => void): void {
+  if (colour.dynamicRange !== "sdr") log(`[clip] the clip is ${colour.dynamicRange}; its poster and frames are not tone-mapped`);
+}
 
 function supervision(options: FfmpegRunOptions, timeoutMs: number): { timeoutMs: number; signal?: AbortSignal; spawner?: FfmpegSpawner } {
   return {
@@ -62,6 +80,10 @@ function supervision(options: FfmpegRunOptions, timeoutMs: number): { timeoutMs:
 
 export interface SampleFramesOptions extends FfmpegRunOptions {
   readonly clipPath: string;
+  /** The clip's own colour, from `validateClipFile`. */
+  readonly colour: ClipColour;
+  /** Required: a clip that is not SDR is noted here. */
+  readonly log: (line: string) => void;
   /** The probed length: the decode is cut a second after it. */
   readonly durationMs: number;
   /** A folder that exists (the clips folder). A temp folder is made in it and removed whatever happens. */
@@ -73,6 +95,7 @@ export interface SampleFramesOptions extends FfmpegRunOptions {
  * (`FfmpegTimeoutError`) or is aborted (the signal's reason); the temp folder is gone in every case.
  */
 export async function sampleFrames(options: SampleFramesOptions): Promise<Uint8Array[]> {
+  noteHdr(options.colour, options.log);
   // The library's temp convention (a dot, `.tmp` at the end), so a sweep after a crash finds what a killed job left.
   const folder = join(options.scratchDir, `.frames-${randomBytes(6).toString("hex")}.tmp`);
   await mkdir(folder);
@@ -81,7 +104,7 @@ export async function sampleFrames(options: SampleFramesOptions): Promise<Uint8A
     await runFfmpegArgv({
       argv: [
         ...inputHead(options.clipPath, ["-t", String(options.durationMs / 1000 + 1)]),
-        "-vf", `fps=${1000 / FRAME_STEP_MS},${SCALE}`,
+        "-vf", `fps=${1000 / FRAME_STEP_MS},${scaleFor(options.colour)}`,
         "-frames:v", String(MAX_FRAMES),
         ...JPEG_OUTPUT,
         pattern,
@@ -98,18 +121,23 @@ export async function sampleFrames(options: SampleFramesOptions): Promise<Uint8A
 
 export interface MakePosterOptions extends FfmpegRunOptions {
   readonly clipPath: string;
+  /** The clip's own colour, from `validateClipFile`. */
+  readonly colour: ClipColour;
+  /** Required: a clip that is not SDR is noted here. */
+  readonly log: (line: string) => void;
   /** Where the JPEG is written; the caller names it (a temp name, renamed once the clip's file is durable) and owns it. */
   readonly outPath: string;
 }
 
 /** The poster: the frame at 0.5 s as a 720 x 1280 JPEG (a 1080p clip is scaled down). On any failure no file is left at `outPath`. */
 export async function makePoster(options: MakePosterOptions): Promise<void> {
+  noteHdr(options.colour, options.log);
   try {
     await runFfmpegArgv({
       argv: [
         ...inputHead(options.clipPath, ["-ss", String(POSTER_AT_SECONDS)]),
         "-frames:v", "1",
-        "-vf", SCALE,
+        "-vf", scaleFor(options.colour),
         ...JPEG_OUTPUT,
         "-f", "mjpeg",
         options.outPath,

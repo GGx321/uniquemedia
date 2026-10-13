@@ -2,6 +2,7 @@ import type { ClipFace } from "../../shared/engine";
 import type { WorkerFaceGate } from "../face/worker/workerGate";
 import type { ClipFaceRole } from "./faceRole";
 import { sampleFrames as takeFrames } from "./frames";
+import type { ClipColour } from "./validate";
 
 // Stage 5, 5b.1, S5.V4b (plan s5b1 §5.11, I5.52): the clip's face check. It is free, and it only MARKS: it never deletes a clip, never re-rolls, never costs and never fails the job.
 // The p75 (nearest rank: the ceil(0.75 n)-th smallest) of SFace's similarity over one frame every half second, against the master embedding taken when the job started, so a master
@@ -22,6 +23,8 @@ const P75 = 0.75;
 export interface CheckClipFaceOptions {
   readonly role: ClipFaceRole;
   readonly clipPath: string;
+  /** The clip's own colour, from `validateClipFile`: the frames are converted from it. */
+  readonly colour: ClipColour;
   readonly durationMs: number;
   /** A folder that exists, for the frames' temp folder (the clips folder). */
   readonly scratchDir: string;
@@ -64,7 +67,7 @@ export async function checkClipFace(options: CheckClipFaceOptions): Promise<Clip
   const { log } = options;
   const similarities: number[] = [];
   try {
-    const frames = await (options.sampleFrames ?? takeFrames)({ clipPath: options.clipPath, durationMs: options.durationMs, scratchDir: options.scratchDir, signal });
+    const frames = await (options.sampleFrames ?? takeFrames)({ clipPath: options.clipPath, colour: options.colour, log, durationMs: options.durationMs, scratchDir: options.scratchDir, signal });
     for (const bytes of frames) {
       if (signal.aborted) throw signal.reason;
       const similarity = similarityOf(await options.gate.check({ pose: "front", bytes, masterEmbedding: options.masterEmbedding }, signal));
