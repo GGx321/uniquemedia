@@ -2,7 +2,11 @@ import type { ScenePose } from "../../shared/engine";
 import { posesFor, shotOf, type Capture } from "../../shared/scenes/captures";
 import { momentAllowed } from "../../shared/scenes/render";
 import { isOwnerBannedOutfit } from "../../shared/scenes/words";
-import type { Level, Outfit } from "../../shared/scenes/banks/types";
+import { COVERS_HER } from "../../shared/scenes/banks/boldRules";
+import type { LegwearSlot, Level, Outfit } from "../../shared/scenes/banks/types";
+import { atSlotLevel, legwearAt } from "../../shared/scenes/level";
+import { legwearFits } from "../../shared/scenes/template";
+import { rngPick, type Rng } from "./rngUtil";
 import { EVERYDAY_OUTFITS, type Activity, type Place, type Pool } from "./pools";
 
 // 5a.2 (S5.6b, I5.23, plan s5a2 §5.2): the pure core of the built-in draw. The planner picks a slot's capture from the category's deck, then its pose, then
@@ -16,7 +20,15 @@ import { EVERYDAY_OUTFITS, type Activity, type Place, type Pool } from "./pools"
  * `angle` sets the slot's pose itself, so it is asked at its own angle, and a hand-held capture, which cannot take a profile or a back pose, refuses it.
  */
 export function momentFits(moment: Activity, capture: Capture, drawnPose: ScenePose, level: Level = "ordinary"): boolean {
-  return momentAllowed(moment, capture, moment.angle ?? drawnPose, level);
+  return momentAllowed(moment, capture, moment.angle ?? drawnPose, level) && !(level === "bold" && coversHer(moment));
+}
+
+/**
+ * S5.R4 round 2: a moment under a cover (banks/boldRules.ts COVERS_HER, the bold-covered rule's own words). A bold slot never takes one: what she wears does not show, so its Seedream 2K
+ * frame would be paid for a hidden outfit. Only a «Смелая» bank planned at «Смелая» has bold slots, so no other plan reads it.
+ */
+function coversHer(moment: Pick<Activity, "text" | "motion">): boolean {
+  return COVERS_HER.test(moment.text) || COVERS_HER.test(moment.motion ?? "");
 }
 
 /** The moments of a place a slot of this capture, drawn pose and level may take: a flirty slot takes the flirty moments and the ordinary ones, an ordinary slot only the ordinary. */
@@ -111,4 +123,41 @@ export function generalOutfits(pool: Pick<Pool, "outfits" | "outfitInfo" | "loca
 /** The outfits a moment pins, after the owner's denim rule; empty when it pins none (or none are left). */
 export function pinnedOutfitsOf(moment: Pick<Activity, "outfits">): readonly string[] {
   return (moment.outfits ?? []).filter((outfit) => !isOwnerBannedOutfit(outfit));
+}
+
+/** What a slot's legwear draw came to: the item (if it wears one), whether it is one of the bold stockings, and their route. */
+export interface LegwearDraw {
+  legwear: string | undefined;
+  stockings: boolean;
+  route: "seedream" | undefined;
+}
+
+/**
+ * The legwear draw of a slot (I5.29, 5a.3): always two draws on `rng`, so the stream does not depend on who may wear it. A slot reads the list of its level (`legwearAt`): a bold slot the
+ * bank's bold stockings, which only the outfits they name wear; every other slot the bank's own list. The five have no bold list, so their draws are what they always were.
+ * S5.R4 (plan s5a3 §6.2 r3.1): a bold legs slot («Ножки», `framing` legs) is satin nightwear with stockings, the stockings make it bold, so it wears them whatever its roll; every
+ * other slot wears its list at the list's share.
+ */
+export function legwearOfSlot(
+  legwear: LegwearSlot | undefined,
+  level: Level,
+  rng: Rng,
+  moment: Pick<Activity, "text" | "noLegwear">,
+  meta: Outfit | undefined,
+  outfit: string,
+  framing?: "legs",
+): LegwearDraw {
+  const list = legwearAt(legwear, level);
+  const roll = rng();
+  const item = list === undefined ? undefined : rngPick(rng, list.items);
+  const always = framing === "legs" && level === "bold" && legwear?.bold !== undefined;
+  const wears = list !== undefined && meta !== undefined && legwearFits(moment, meta) && (list.outfits?.includes(outfit) ?? true) && (always || roll < list.share);
+  return { legwear: wears ? item : undefined, stockings: wears && list?.outfits !== undefined, route: wears ? list?.route : undefined };
+}
+
+/** The outfits a moment pins that a slot of this level may wear, its own level preferred. A moment that pins only outfits above the slot's level is a defect of the bank (the bold-levels rule), never a slot. */
+export function pinnedAt(pinned: readonly string[], levelOf: (text: string) => Level | undefined, level: Level, moment: string): readonly string[] {
+  const list = atSlotLevel(pinned, levelOf, level);
+  if (list.length === 0) throw new RangeError(`«${moment}» pins no outfit a ${level} slot may wear`);
+  return list;
 }

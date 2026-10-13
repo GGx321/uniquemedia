@@ -1,0 +1,33 @@
+{
+  "seeds": [
+    1,
+    7,
+    42,
+    2026,
+    123456789,
+    4294967295
+  ],
+  "counts": [
+    1,
+    7,
+    20,
+    33,
+    100
+  ],
+  "legsShares": [
+    0,
+    15,
+    30
+  ],
+  "hashes": {
+    "nightwear@ordinary": "f108fa053b6e5e096d579aee746daec403439034894896a29b1148cae24b7da6",
+    "nightwear@flirty": "84b295d8927653dc1ca058f9b06bbb65afa8a189273c49bd5bbcdcba3a990fe7",
+    "nightwear@bold": "f2e0762f724524411aa03def910e1c1cb0faab7ce1329a06b1f3794a3225905d",
+    "beach@ordinary": "f9b39f6e5c8afa6ab195f5cfa7ca4b76cf74bf9faa3d4ee3ae243dcb7c5cdbdb",
+    "beach@flirty": "04cb3f8fb3339705b3109147e102d2608f40a2e8bc3a3037a4a2e223289c4a13",
+    "beach@bold": "5c12b492d1f7b3b8aa42e2bc569d0ba066ff0d8fa476845e3aa84526703b14a2",
+    "nightwear,beach@ordinary": "a743813822068f6372273889f98e1900997c3d3fdc7e0780aa27093b95a272e5",
+    "nightwear,beach@flirty": "8c79ed0bb98d6ebbe2b349dbe4ee6e450015156a4c2548998dc6006b8e82bc60",
+    "nightwear,beach@bold": "b6119f67f766cf06ce0f3df8a5f9eebc788e42cd865d1283c419a2043a9f49a6"
+  }
+}

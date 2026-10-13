@@ -220,7 +220,7 @@ describe("the reasons of a refusal", () => {
 
   // Stage 4's five, then «Ножки»'s (S5.8a): legs asked for with no built-in category among the launch's categories.
   test("the launch reasons are the VALIDATION refusals of the start", () => {
-    expect([...LAUNCH_REASONS]).toEqual(["open-set", "too-many-photos", "usage-unknown", "launch-unreadable", "nothing-enabled", "legs-built-in-only"]);
+    expect([...LAUNCH_REASONS]).toEqual(["open-set", "too-many-photos", "usage-unknown", "launch-unreadable", "nothing-enabled", "legs-built-in-only", "bold-level-needed"]);
     for (const launchReason of LAUNCH_REASONS) expect(EngineError.safeParse({ code: "VALIDATION", launchReason }).success).toBe(true);
   });
 

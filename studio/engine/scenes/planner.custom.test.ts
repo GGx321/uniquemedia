@@ -6,7 +6,7 @@ import { orderCategories, splitCount, type CategoryRef } from "../../shared/engi
 import { categorySeed, plan, planWithPools, poseSeed, type PlanInput } from "./planner";
 import { POOLS, type Pool } from "./pools";
 import { PlanSlotSchema, type PlanSlot } from "./schema";
-import { CATEGORIES, type Category } from "./types";
+import { CATEGORIES, ORDINARY_BUILT_INS, type Category } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -52,12 +52,14 @@ function drawn(slot: PlanSlot): Omit<PlanSlot, "slotIndex" | "attemptIdBase"> {
 
 // 5a.2 (S5.6b): the built-ins are planned capture first from the banks, so their plans moved ON PURPOSE and the golden was re-pinned in its own commit. A custom
 // category still plans exactly as before (below), and the built-ins' plans for a seed stay what this golden pins.
+// 2026-10-12, S5.9b2 (plan s5a3 §15.4): frozen to the five ordinary built-ins (ORDINARY_BUILT_INS), no hash changed: the two «Смелая» categories joined CATEGORIES,
+// and the golden pins the five's plans; the «Смелая» banks get a golden of their own with their draw (S5.9c).
 describe("built-in plans are pinned to the 5a.2 planner (re-pinned at S5.6b from main 3a9cd498)", () => {
   const fixture: { excludePairsFrom: { seed: number; count: number; take: number }; hashes: Record<string, string> } = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "planner-main-3a9cd498.json"), "utf8"));
   const seeds = [1, 7, 42, 2026, 123456789, 4294967295];
   const counts = [1, 7, 20, 33, 100];
   const { seed, count, take } = fixture.excludePairsFrom;
-  const excludePairs = plan({ seed, count, categories: [...CATEGORIES] })
+  const excludePairs = plan({ seed, count, categories: [...ORDINARY_BUILT_INS] })
     .slots.slice(0, take)
     .map((s) => ({ location: s.location, outfit: s.outfit }));
 
@@ -66,7 +68,7 @@ describe("built-in plans are pinned to the 5a.2 planner (re-pinned at S5.6b from
   });
 
   for (let mask = 1; mask < 32; mask++) {
-    const categories = CATEGORIES.filter((_, i) => mask & (1 << i));
+    const categories = ORDINARY_BUILT_INS.filter((_, i) => mask & (1 << i));
     test(`${categories.join(", ")}: every seed and count, with and without poses and recent pairs`, () => {
       const all: unknown[] = [];
       for (const s of seeds) {
@@ -81,11 +83,11 @@ describe("built-in plans are pinned to the 5a.2 planner (re-pinned at S5.6b from
   }
 
   test("a reversed category list plans as the canonical one", () => {
-    expect(sha(plan({ seed: 9, count: 20, categories: [...CATEGORIES].reverse() }))).toBe(fixture.hashes["rev-order"]);
+    expect(sha(plan({ seed: 9, count: 20, categories: [...ORDINARY_BUILT_INS].reverse() }))).toBe(fixture.hashes["rev-order"]);
   });
 
   test("planWithPools with extra pools in the table plans a built-in-only request the same as plan()", () => {
-    const input: PlanInput = { seed: 2026, count: 20, categories: [...CATEGORIES] };
+    const input: PlanInput = { seed: 2026, count: 20, categories: [...ORDINARY_BUILT_INS] };
     expect(planWithPools(input, POOLS_WITH_CUSTOM)).toEqual(plan(input));
   });
 });

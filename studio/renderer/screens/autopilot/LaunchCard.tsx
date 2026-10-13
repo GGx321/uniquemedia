@@ -4,6 +4,7 @@ import { useEngine, useEngineView } from "../../engine/react";
 import { useNavigate } from "../../navigation";
 import { Icon } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
+import { BoldPriceNotice, isBoldPriceMissing } from "../photos/boldPrice";
 import { useMounted } from "../photos/shared";
 import { useOverflows } from "./layout";
 import {
@@ -423,7 +424,8 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMus
             Пока экран был открыт, часть запросов закрылась дешевле. Было до {ceilingUsd(recount.from)}, теперь до {ceilingUsd(recount.to)} — нажмите ещё раз.
           </Notice>
         )}
-        {error !== null && <ErrorNotice error={error} />}
+        {/* S5.9g (gap D): «Продолжить запуск» refused for the 2K tier alone — state 55's warning; any other refusal as today. */}
+        {error !== null && (isBoldPriceMissing(error) ? <BoldPriceNotice /> : <ErrorNotice error={error} />)}
         {movedOn && <Notice tone="warn">{LAUNCH_MOVED_TEXT}</Notice>}
       </div>
 

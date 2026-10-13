@@ -134,7 +134,7 @@ describe("scenes.compose, since the code template writes the scenes", () => {
     const bankOf = { home: "home", travel: "travel", shoot: "photoshoot", glam: "glamour", fit: "fitness" } as const;
     for (const scene of view.scenes) {
       if (scene.place === null || scene.category === "own" || !(scene.category in bankOf)) throw new Error(`scene ${scene.sceneId} is not a built-in planned scene`);
-      const place = BANKS[bankOf[scene.category as SceneCategory]].places.find((p) => p.name === scene.place?.location);
+      const place = BANKS[bankOf[scene.category as keyof typeof bankOf]].places.find((p) => p.name === scene.place?.location);
       expect(place).toBeDefined();
       expect(place?.moments.map((mo) => mo.text)).toContain(scene.place.activity);
     }

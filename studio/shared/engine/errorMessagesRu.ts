@@ -1,4 +1,4 @@
-import type { CaptionIssue, CategoryReason, DescriptorReason, ErrorCode, ExportUnavailableReason, LaunchReason, MusicUnavailableReason, PhotoUnavailableReason, PortraitReason, SceneReason } from "./errors";
+import type { CaptionIssue, CategoryReason, DescriptorReason, EngineError, ErrorCode, ExportUnavailableReason, LaunchReason, MusicUnavailableReason, PhotoUnavailableReason, PortraitReason, SceneReason } from "./errors";
 import { MAX_PICKED_FILES, type MediaKind, type MediaUnsupportedReason } from "./media";
 import { MIN_CLIP_MS, type MontageIssueCode } from "./montage";
 import type { UsageUnknownReason } from "./state";
@@ -252,6 +252,9 @@ export const SCENE_REASONS_RU = {
   "not-awaiting": "Этот набор сейчас не ждёт проверки в запуске: возможно, запуск уже продолжен, остановлен или на паузе. Обновите экран.",
   "slot-text-problem": "Текст сцены не прошёл проверку слов — кадр пропущен, бесплатно.",
   "legs-built-in-only": "«Ножки» рисуются только во встроенных категориях (Дом, Улица, Виды, Гламур, Фитнес). Добавьте хотя бы одну или выключите «Ножки». Ничего не потрачено.",
+  "bold-level-needed": "«Ночнушки и бельё» и «Пляж и бассейн» рисуются только с подачей «Смелая». Ничего не потрачено.",
+  "model-refused": "Модель не нарисовала кадр «Смелой»; сам отказ бесплатный, оплаченные до него попытки — в расходах.",
+  "model-empty": "Модель вернула пустой ответ на кадр «Смелой»; попытка учтена в расходах.",
 } as const satisfies Record<SceneReason, string>;
 
 /**
@@ -266,7 +269,13 @@ export const LAUNCH_REASONS_RU = {
   "launch-unreadable": "Одна запись прошлого запуска не читается и может описывать идущий запуск. Уберите её в «Истории запусков» и повторите. Ничего не потрачено.",
   "nothing-enabled": "Включите хотя бы одно: свободные фото из библиотеки или догенерацию. Ничего не потрачено.",
   "legs-built-in-only": "«Ножки» рисуются только во встроенных категориях (Дом, Улица, Виды, Гламур, Фитнес). Добавьте хотя бы одну или выключите «Ножки». Ничего не потрачено.",
+  "bold-level-needed": "«Ночнушки и бельё» и «Пляж и бассейн» рисуются только с подачей «Смелая». Ничего не потрачено.",
 } as const satisfies Record<LaunchReason, string>;
+
+/** Which price a PRICE_UNAVAILABLE could not find, for `EngineError.priceScope` (5a.3, state 55): the window shows this instead of the general text. */
+export const PRICE_SCOPES_RU = {
+  bold: "Цена Seedream 2K сейчас недоступна — «Смелую» не запустить. Остальное работает как обычно.",
+} as const satisfies Record<NonNullable<EngineError["priceScope"]>, string>;
 
 /** Russian text for each structural problem of a montage (the `issues` of MONTAGE_INVALID). */
 export const MONTAGE_ISSUE_MESSAGES_RU = {

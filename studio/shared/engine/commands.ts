@@ -3,7 +3,7 @@ import { AvatarName, AvatarTraits, DescriptorCheck } from "./avatar";
 import { AutopilotContinueResult, AutopilotEstimateResult, AutopilotGetResult, AutopilotLaunchResult, AutopilotListResult, LaunchDraft, LaunchDraftInput, LaunchEntryId, LaunchMicros, LaunchView } from "./autopilot";
 import { AvatarDeletePreview, AvatarDeleteResult } from "./avatarDelete";
 import { AvatarBody } from "./body";
-import { CategoriesListResult, CategoryDescription, CategoryName, CategoryPoses, CategorySummary, CustomCategoryId, POOL_OUTFITS_MAX, POOL_PLACES_MAX, PoolText } from "./categories";
+import { CategoriesListResult, CategoryDescription, CategoryName, CategoryPoses, CategoryRef, CategorySummary, CustomCategoryId, MAX_RUN_CATEGORIES, SceneLevel, POOL_OUTFITS_MAX, POOL_PLACES_MAX, PoolText } from "./categories";
 import { nonEmpty, ProtocolVersion } from "./envelope";
 import { EngineError } from "./errors";
 import { EventMessage } from "./events";
@@ -445,7 +445,20 @@ const ENGINE_SPECS = [
   //    or skipped): 0 photos and zero figures. Reading the slices judges and latches nothing.
   defineCommand(
     "runs.estimateImages",
-    z.union([z.strictObject({ avatarId: Id, count: z.number().int().min(1).max(MAX_COMPOSE_SCENES) }), z.strictObject({ launchId: LaunchId, avatarId: Id })]),
+    z.union([
+      z.strictObject({
+        avatarId: Id,
+        count: z.number().int().min(1).max(MAX_COMPOSE_SCENES),
+        // S5.R4-fix (additive, no bump): the «Подача» and the categories the photos are drawn for. With «Смелая» and a «Смелая» category the share of those categories is priced at the
+        // bold unit, by the split the run estimate uses; a «Смелая» category at another level is refused (VALIDATION `bold-level-needed`). Absent: the figure it always was.
+        level: SceneLevel.optional(),
+        categories: z.array(CategoryRef).max(MAX_RUN_CATEGORIES).optional(),
+        // S5.R4-fix round 2 (additive): the owner's stored set the photos belong to. The bold share is then the set's ACTIVE scenes drawn on the Seedream route (exact, the
+        // path `runs.estimateFromScenes` prices by), not a split of `count` over `categories`. NOT_FOUND for a set the avatar does not have.
+        sceneSetId: Id.optional(),
+      }),
+      z.strictObject({ launchId: LaunchId, avatarId: Id }),
+    ]),
     z.strictObject({ estimate: Estimate, photos: Count }),
   ),
   // Aborts the run's requests in flight (their reserves stay at their worst case until reconciled); ok for a run

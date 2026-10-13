@@ -174,7 +174,7 @@ export function ScenePopover({ set, scene, view, blocked, onPaidInFlightChange, 
       <p className="scene-pop-text">
         {own
           ? ownRewriteText(scene.idea ?? "")
-          : redrawText(label, scene.sceneId, poses === undefined ? undefined : { poses, shot: scene.shot }, { free: replaceFree, flirty: scene.level === "flirty" })}
+          : redrawText(label, scene.sceneId, poses === undefined ? undefined : { poses, shot: scene.shot }, { free: replaceFree, flirty: scene.level === "flirty", bold: scene.level === "bold" })}
       </p>
       {marker !== undefined && <p className="scene-pop-text scene-pop-marker">{interruptedChoiceText(scene.origin)}</p>}
       {!offline && replace.estimate !== null && !replaceFree && <p className="mono faint scene-pop-cap">{writeCapLine(replace.estimate.worstMicros)}</p>}

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { CAPTURES, posesFor, type Capture } from "../../shared/scenes/captures";
-import { fittingMoments, fittingPlaces, kindOfDeck, momentFits, settleFit, stepDownOf, type PoolKind } from "./fit";
+import type { LegwearSlot, Outfit } from "../../shared/scenes/banks/types";
+import { fittingMoments, fittingPlaces, kindOfDeck, legwearOfSlot, momentFits, settleFit, stepDownOf, type PoolKind } from "./fit";
 import { POOLS, type Place, type Pool } from "./pools";
+import type { Rng } from "./rngUtil";
 import { CATEGORIES } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -144,9 +146,10 @@ describe("stepDownOf (the fallback chain's capture step)", () => {
 });
 
 describe("kindOfDeck", () => {
-  test.each([...CATEGORIES])("%s: the kind its deck says (self-shot at home, asked outside, mixed for glamour and fitness)", (category) => {
+  // 5a.3 (S5.9b2): «Ночнушки и бельё» is at home, self-shot; «Пляж и бассейн» is outside, asked.
+  test.each([...CATEGORIES])("%s: the kind its deck says (self-shot at home and in her bedroom's nightwear, asked outside and at the beach, mixed for glamour and fitness)", (category) => {
     const kind = kindOfDeck(POOLS[category].captureDeck ?? []);
-    expect(kind).toBe(category === "home" ? "self" : category === "glamour" || category === "fitness" ? "mixed" : "asked");
+    expect(kind).toBe(category === "home" || category === "nightwear" ? "self" : category === "glamour" || category === "fitness" ? "mixed" : "asked");
   });
 });
 
@@ -184,5 +187,53 @@ describe("settleFit (the fallback chain, read on `clean:` only)", () => {
 
   test("an empty pool throws a RangeError instead of looping", () => {
     expect(() => settleFit({ locations: [] }, "asked", "friend", "front")).toThrow(RangeError);
+  });
+});
+
+// S5.R4 (the whole-slice review, MEDIUM 4; plan s5a3 §6.2 r3.1): «a bold legs slot wears satin nightwear with stockings (the stockings make it bold)». A bold legs slot wears the bold
+// stockings whatever its roll, with an outfit they go with; every other slot rolls against its list's share, as before. Always two draws, so no stream moves.
+describe("legwearOfSlot", () => {
+  const LEGWEAR: LegwearSlot = {
+    items: ["thigh-high socks", "sheer black tights"],
+    share: 0.3,
+    bold: { items: ["black thigh-high stockings", "sheer black stockings"], share: 0.5, route: "seedream", outfits: ["a satin cami and satin shorts"] },
+  };
+  const SATIN: Outfit = { text: "a satin cami and satin shorts", showsLegs: true, level: "flirty", route: "seedream" };
+  const COTTON: Outfit = { text: "cotton pajama shorts and a tee", showsLegs: true };
+  const MOMENT = { text: "lies with her legs crossed" };
+  /** A stream that answers the given numbers in turn and counts how many it was asked for. */
+  const queued = (...values: number[]): Rng & { asked: () => number } => {
+    let i = 0;
+    return Object.assign(() => values[i++] ?? 0, { asked: () => i });
+  };
+
+  test("a bold legs slot wears the stockings even on a roll above the share, with two draws", () => {
+    const rng = queued(0.99, 0.6);
+    expect(legwearOfSlot(LEGWEAR, "bold", rng, MOMENT, SATIN, SATIN.text, "legs")).toEqual({ legwear: "sheer black stockings", stockings: true, route: "seedream" });
+    expect(rng.asked()).toBe(2);
+  });
+
+  test("a bold slot that is not a legs frame rolls against the share: above it, none", () => {
+    const rng = queued(0.99, 0.6);
+    expect(legwearOfSlot(LEGWEAR, "bold", rng, MOMENT, SATIN, SATIN.text)).toEqual({ legwear: undefined, stockings: false, route: undefined });
+    expect(rng.asked()).toBe(2);
+  });
+
+  test("a bold legs slot in an outfit the stockings do not go with wears none (the cotton on the owner's model)", () => {
+    expect(legwearOfSlot(LEGWEAR, "bold", queued(0.1, 0.1), MOMENT, COTTON, COTTON.text, "legs")).toEqual({ legwear: undefined, stockings: false, route: undefined });
+  });
+
+  test("a bold legs slot whose moment takes no legwear wears none (her feet up)", () => {
+    expect(legwearOfSlot(LEGWEAR, "bold", queued(0.1, 0.1), { ...MOMENT, noLegwear: true }, SATIN, SATIN.text, "legs")).toEqual({ legwear: undefined, stockings: false, route: undefined });
+  });
+
+  test.each(["ordinary", "flirty"] as const)("a %s legs slot rolls against the bank's own share and never wears the stockings", (level) => {
+    expect(legwearOfSlot(LEGWEAR, level, queued(0.99, 0.6), MOMENT, COTTON, COTTON.text, "legs").legwear).toBeUndefined();
+    expect(legwearOfSlot(LEGWEAR, level, queued(0.1, 0.6), MOMENT, COTTON, COTTON.text, "legs")).toEqual({ legwear: "sheer black tights", stockings: false, route: undefined });
+  });
+
+  test("a bank without bold stockings (the five) rolls a bold legs slot against its own share", () => {
+    const five: LegwearSlot = { items: LEGWEAR.items, share: LEGWEAR.share };
+    expect(legwearOfSlot(five, "bold", queued(0.99, 0.6), MOMENT, COTTON, COTTON.text, "legs").legwear).toBeUndefined();
   });
 });

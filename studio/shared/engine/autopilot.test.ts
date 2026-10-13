@@ -119,7 +119,8 @@ describe("LaunchDraft", () => {
     ["no category", { categories: [] }],
     ["21 categories", { categories: [...["home", "travel", "shoot", "glam", "fit"], ...Array.from({ length: 16 }, (_, i) => `cat-custom${String(i).padStart(3, "0")}`)] }],
     ["a category twice", { categories: ["home", "home"] }],
-    ["an unknown category", { categories: ["beach"] }],
+    // 5a.3 (S5.9b2): «beach» became a category id («Пляж и бассейн»), so the unknown one is another word.
+    ["an unknown category", { categories: ["pool"] }],
     ["a negative plan seed", { planSeed: -1 }],
     ["a plan seed past 32 bits", { planSeed: 4_294_967_296 }],
     ["a fractional plan seed", { planSeed: 1.5 }],

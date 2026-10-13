@@ -9,12 +9,21 @@ import { BANK_CATEGORIES, type BankCategory } from "./types";
 // plan seeds them and will be refined; these tests pin the structure any content must keep.
 
 describe("the banks load valid", () => {
-  test("has a bank for each of the five built-in categories", () => {
+  test("has a bank for each of the seven built-in categories (the five and, from 5a.3, the two «Смелая» ones)", () => {
     expect(Object.keys(BANKS).sort()).toEqual([...BANK_CATEGORIES].sort());
   });
 
   test("validateBanks passes the shipped banks", () => {
     expect(() => validateBanks()).not.toThrow();
+  });
+
+  // 5a.3 (S5.9b2, plan s5a3 §6.4, H2): the schema is chosen by category. The five keep theirs, which refuses every «Смелая» field; the two «Смелая» banks
+  // validate against their own, which needs the «Смелая» mark.
+  test("validateBanks holds each bank to its category's schema", () => {
+    expect(() => validateBanks()).not.toThrow();
+    expect(() => validateBanks({ banks: { ...BANKS, home: BANKS.nightwear } })).toThrow(/home: \[shape\]/);
+    expect(() => validateBanks({ banks: { ...BANKS, beach: BANKS.travel } })).toThrow(/beach: \[shape\]/);
+    expect(() => validateBanks({ banks: { ...BANKS, nightwear: { ...BANKS.nightwear, outfits: [...BANKS.nightwear.outfits, { text: "a lace thong", level: "bold" }] } } })).toThrow(/nightwear: \[bold-route\]/);
   });
 
   test("validateBanks throws on a malformed bank, naming every problem with its category", () => {
@@ -153,9 +162,11 @@ describe("what any content must keep", () => {
     for (const place of places("glamour")) expect(`${place.name} ${place.at} ${place.moments.map((m) => m.text).join(" ")}`).not.toMatch(/\bbed/i);
   });
 
-  test("the lamp mood is «Дом»'s only (I5.34)", () => {
-    for (const category of BANK_CATEGORIES) if (category !== "home") expect(places(category).filter((p) => p.lamp === true)).toEqual([]);
+  // 5a.3 (S5.9b2, plan s5a3 §6.2): I5.34 extended to «Ночнушки и бельё», the other bank of her bedroom.
+  test("the lamp mood is «Дом»'s and «Ночнушки и бельё»'s only (I5.34)", () => {
+    for (const category of BANK_CATEGORIES) if (category !== "home" && category !== "nightwear") expect(places(category).filter((p) => p.lamp === true)).toEqual([]);
     expect(places("home").some((p) => p.lamp === true)).toBe(true);
+    expect(places("nightwear").some((p) => p.lamp === true)).toBe(true);
   });
 
   test("«looks back over her shoulder» is a three-quarter moment that carries its own gaze", () => {
@@ -197,6 +208,10 @@ describe("what any content must keep", () => {
       "home: stands sideways to the mirror",
       "home: sits on the counter by the mirror",
       "glamour: turns to check her outfit",
+      // 5a.3 (S5.9b2, plan s5a3 §6.2): «Ночнушки и бельё»'s three, side to the mirror.
+      "nightwear: stands sideways to the mirror",
+      "nightwear: pulls her jeans up over her panties",
+      "nightwear: sits on the counter",
     ]);
     for (const moment of moments("home").filter((m) => /lies on her stomach/.test(m.text))) expect(moment.outfits ?? []).toContain("grey leggings and a cropped tee");
     expect(CUES.find((c) => c.text === "her tongue out a little")?.captures).toEqual(["above", "prone"]);

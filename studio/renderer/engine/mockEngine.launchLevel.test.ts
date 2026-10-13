@@ -25,6 +25,15 @@ describe("a launch's set takes the draft's «Подача»", () => {
     expect(set.scenes.filter((s) => s.level === "flirty")).toHaveLength(flirtyCountOf(10, "flirty"));
   });
 
+  // 5a.3 (S5.9a): a bold launch over the five built-ins reviews a set that shows the bold level and holds the flirty mix.
+  test("a bold launch reviews a bold set with the flirty mix of the five built-ins", async () => {
+    const set = await launchSet({ level: "bold" });
+    expect(set.level).toBe("bold");
+    expect(set.scenes).toHaveLength(10);
+    expect(set.scenes.filter((s) => s.level === "flirty")).toHaveLength(flirtyCountOf(10, "flirty"));
+    expect(set.scenes.some((s) => s.level === "bold")).toBe(false);
+  });
+
   test("an ordinary launch, with a level asked for by name or none, reviews an ordinary set", async () => {
     for (const over of [{}, { level: "ordinary" as const }]) {
       const set = await launchSet(over);

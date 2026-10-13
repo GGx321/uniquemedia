@@ -6,9 +6,10 @@ import { plan } from "./planner";
 import { POOLS, type Activity, type Pool } from "./pools";
 import { redrawSlot } from "./redraw";
 import { PlanSlotSchema, type PlanSlot } from "./schema";
-import { CATEGORIES, type Category } from "./types";
+import { ORDINARY_BUILT_INS, type Category } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // 5a.2c (S5.8a): «Другая сцена» on a legs scene gives another legs scene of the same category: it keeps its framing, its id and its attempt id base, draws a legs moment
 // of a place that has one (the planner's rule), and its capture comes with the moment. A scene that is not a legs scene never redraws into one.
@@ -19,7 +20,7 @@ const draw = (slot: PlanSlot, k: number, pool: Pool): PlanSlot => redrawSlot({ s
 const legsSlotsOf = (category: Category): PlanSlot[] => plan({ seed: 5, count: 36, categories: [category], legsShare: 30 }).slots.filter((s) => s.framing === "legs");
 const momentOf = (category: Category, slot: PlanSlot): Activity | undefined => POOLS[category].locations.find((l) => l.name === slot.location)?.activities.find((a) => a.text === slot.activity);
 
-describe.each([...CATEGORIES])("redrawing a %s legs scene", (category) => {
+describe.each([...ORDINARY_BUILT_INS])("redrawing a %s legs scene", (category) => {
   const pool = POOLS[category];
 
   test("the plan holds legs scenes of the category to redraw", () => {
@@ -88,7 +89,7 @@ describe.each([...CATEGORIES])("redrawing a %s legs scene", (category) => {
 });
 
 describe("a scene that is not a legs scene never redraws into one", () => {
-  test.each([...CATEGORIES])("%s", (category) => {
+  test.each([...ORDINARY_BUILT_INS])("%s", (category) => {
     const slots = plan({ seed: 5, count: 36, categories: [category], legsShare: 30 }).slots.filter((s) => s.framing === undefined);
     expect(slots.length).toBeGreaterThan(10);
     for (const slot of slots) {

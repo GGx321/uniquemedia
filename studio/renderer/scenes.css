@@ -524,6 +524,21 @@
   color: var(--accent-text);
 }
 
+/* S5.9g (mockup 49): «смело», the strongest «Подача», filled where «кокетливо» is outlined. */
+.scene-tag-bold {
+  border-color: var(--accent-ring);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/* S5.9g (mockup 49): the route of a scene — a technical fact: mono, quiet, never the accent (the viewer's tag reads alike, videos.css). */
+.scene-tag-route {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.01em;
+  color: var(--muted);
+}
+
 /* The strip's «Подача» bit, a little brighter than the line around it. */
 .scene-strip-level {
   color: var(--text-2);

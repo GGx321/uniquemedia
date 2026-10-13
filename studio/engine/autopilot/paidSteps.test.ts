@@ -904,6 +904,11 @@ describe("the compose a launch sends (S5.7a, S5.7b)", () => {
     expect((await composeSentFor({ level: "flirty" })).level).toBe("flirty");
   });
 
+  // 5a.3 (S5.9c): a «Смелая» launch composes «Смелая», so the engine draws the mix and its categories pass the level check.
+  test("a bold draft composes bold", async () => {
+    expect((await composeSentFor({ level: "bold" })).level).toBe("bold");
+  });
+
   test("a draft with no level composes with none", async () => {
     expect("level" in (await composeSentFor({}))).toBe(false);
   });

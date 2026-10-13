@@ -1,5 +1,5 @@
 import { type ReactNode, type Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { EngineError, Estimate, SceneSetView } from "../../../shared/engine";
+import { PRICE_SCOPES_RU, type CategoryRef, type EngineError, type Estimate, type SceneLevel, type SceneSetView } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import type { EngineView } from "../../engine/store";
 import { errorText } from "../../lib/errors";
@@ -7,6 +7,7 @@ import { afterColon } from "../../lib/format";
 import { formatUsdTiered } from "../../lib/money";
 import { Spin } from "../../ui/Icon";
 import { Notice } from "../../ui/Notice";
+import { isBoldPriceMissing } from "./boldPrice";
 import type { PaidAction, Reply } from "./usePaidAction";
 
 // CS.6: the review's paid buttons drawn alike — the card's stacked one («Отрисовать 19 фото / до $2.85») and the small inline ones of the popover, the
@@ -134,22 +135,48 @@ export function PriceChangedNotice({ previousWorst, estimate }: { previousWorst:
  * running, a stop) and for the generate card's compose mode: `runs.estimateFromScenes` refuses those, so the engine answers the price of drawing that many photos
  * itself (`runs.estimateImages`: free, priced by the code the real draw is priced by). It is shown, never sent; the window works out no money (S4.6p).
  */
-export function useImagesPrice(avatarId: string, photos: number, view: EngineView): Estimate | null {
+export function useImagesPrice(avatarId: string, photos: number, view: EngineView, look: ImagesLook = {}): Estimate | null {
+  return useImagesPriceState(avatarId, photos, view, look).estimate;
+}
+
+/** `useImagesPrice` with the engine's refusal too: a price list with no 2K tier (state 55) is the one the window must say; any other refusal leaves the figure unknown, as before. */
+export function useImagesPriceState(avatarId: string, photos: number, view: EngineView, look: ImagesLook = {}): { estimate: Estimate | null; error: EngineError | null } {
   const { client } = useEngine();
   const settings = view.settings;
-  const key = photos >= 1 && photos <= 100 && settings !== null ? `${avatarId}|${photos}|${settings.imageModel}|${settings.imageQuality ?? ""}|${settings.imageAgeCheck}` : null;
-  const [shown, setShown] = useState<{ key: string; estimate: Estimate } | null>(null);
+  // The «Подача» and categories (the card, no set yet) or the stored set and its revision (the strip) the photos belong to: the engine prices the «Смелая» share at the 2K unit,
+  // the window passes them on and works nothing out. A stored set is priced by its active scenes' own routes, so a new revision asks again.
+  const lookKey = JSON.stringify([look.level ?? null, look.categories ?? null, look.sceneSetId ?? null, look.revision ?? null]);
+  const key = photos >= 1 && photos <= 100 && settings !== null ? `${avatarId}|${photos}|${lookKey}|${settings.imageModel}|${settings.imageQuality ?? ""}|${settings.imageAgeCheck}` : null;
+  const [shown, setShown] = useState<{ key: string; estimate: Estimate | null; error: EngineError | null } | null>(null);
   useEffect(() => {
     if (key === null) return;
     let alive = true;
-    void client.request("runs.estimateImages", { avatarId, count: photos }).then((reply) => {
-      if (alive && reply.ok) setShown({ key, estimate: reply.result.estimate });
-    });
+    // `lookKey` stands for `look` in the dependencies: the effect asks again exactly when the look's content changes, not when its object does.
+    const { level, categories, sceneSetId } = look;
+    void client
+      .request("runs.estimateImages", {
+        avatarId,
+        count: photos,
+        ...(level === undefined ? {} : { level }),
+        ...(categories === undefined ? {} : { categories: [...categories] }),
+        ...(sceneSetId === undefined ? {} : { sceneSetId }),
+      })
+      .then((reply) => {
+        if (alive) setShown({ key, estimate: reply.ok ? reply.result.estimate : null, error: reply.ok ? null : reply.error });
+      });
     return () => {
       alive = false;
     };
-  }, [client, key, avatarId, photos]);
-  return shown !== null && shown.key === key ? shown.estimate : null;
+  }, [client, key, avatarId, photos, lookKey]);
+  return shown !== null && shown.key === key ? { estimate: shown.estimate, error: shown.error } : { estimate: null, error: null };
+}
+
+/** What a count of photos is drawn for (`runs.estimateImages`): the «Подача» and categories of a form, or the stored set (and its revision); all absent is the plain count. */
+export interface ImagesLook {
+  readonly level?: SceneLevel | undefined;
+  readonly categories?: readonly CategoryRef[] | undefined;
+  readonly sceneSetId?: string | undefined;
+  readonly revision?: number | undefined;
 }
 
 /** The engine's answer for a launch's draw: the price, and the photos it was made for (those the money buys, which may be fewer than «Продолжить запуск» names). */
@@ -265,7 +292,10 @@ export function PriceFailed({ id, error, onRetry, after }: { id: string; error: 
   );
   return (
     <p id={id} className="price-failed">
-      <span className={asking ? "faint" : "danger-text"}>{asking ? "Узнаём цену…" : `Цену не узнать: ${afterColon(errorText(error))}`}</span>
+      {/* S5.9g (gap D): the 2K tier alone has no price — state 55's own sentence, a warning (the rest works), not today's general failure. */}
+      <span className={asking ? "faint" : isBoldPriceMissing(error) ? "warn-text" : "danger-text"}>
+        {asking ? "Узнаём цену…" : isBoldPriceMissing(error) ? PRICE_SCOPES_RU.bold : `Цену не узнать: ${afterColon(errorText(error))}`}
+      </span>
       <button
         type="button"
         className="link-btn"

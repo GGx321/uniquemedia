@@ -57,8 +57,41 @@ describe("a plan slot's capture and legwear (additive, I5.27)", () => {
     expect(PlanSlotSchema.parse({ ...baseSlot(), level: "ordinary" }).level).toBe("ordinary");
   });
 
-  test("a slot level of bold is refused", () => {
-    expect(PlanSlotSchema.safeParse({ ...baseSlot(), level: "bold" }).success).toBe(false);
+  // 5a.3 (S5.9c, plan s5a3 «Changes in r3»: widen `PlanSlot.level` to include bold): the bold draw gives a «Смелая» category's slots the bold level, and only those.
+  test.each(["nightwear", "beach"])("a bold slot of «%s» is kept as written", (category) => {
+    expect(PlanSlotSchema.parse({ ...baseSlot(), category, level: "bold" }).level).toBe("bold");
+  });
+
+  test.each(["home", "travel", "photoshoot", "glamour", "fitness", "cat-paris-cafes"])("a slot level of bold on «%s» is refused: the five draw «Смелая» as «Кокетливая»", (category) => {
+    const result = PlanSlotSchema.safeParse({ ...baseSlot(), category, level: "bold" });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((i) => i.path.join("."))).toContain("level");
+  });
+
+  test("a slot level other than ordinary, flirty or bold is refused", () => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), category: "nightwear", level: "daring" }).success).toBe(false);
+  });
+
+  // 5a.3 (S5.9a): the route rides on the slot as an optional `route`. S5.9b2 (plan s5a3 §11): only on a «Смелая» category's slot, the one kind the bold route draws.
+  test("a «Смелая» slot's Seedream route is kept as written, and a slot without one gains none", () => {
+    expect(PlanSlotSchema.parse({ ...baseSlot(), category: "nightwear", route: "seedream" }).route).toBe("seedream");
+    expect(PlanSlotSchema.parse({ ...baseSlot(), category: "beach", location: "the beach", route: "seedream" }).route).toBe("seedream");
+    expect("route" in PlanSlotSchema.parse(baseSlot())).toBe(false);
+  });
+
+  test("a «Смелая» slot without a route parses: its ordinary frames stay on the owner's model", () => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), category: "nightwear" }).success).toBe(true);
+  });
+
+  test.each(["home", "travel", "photoshoot", "glamour", "fitness", "cat-paris-cafes"])("a route on a slot of «%s» is refused: only a «Смелая» category's slot is drawn on Seedream", (category) => {
+    const result = PlanSlotSchema.safeParse({ ...baseSlot(), category, route: "seedream" });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((i) => i.path.join("."))).toContain("route");
+  });
+
+  test("a route other than seedream is refused", () => {
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), route: "grok" }).success).toBe(false);
+    expect(PlanSlotSchema.safeParse({ ...baseSlot(), route: "" }).success).toBe(false);
   });
 
   test("a hand capture still faces the phone: over-shoulder with a back pose is refused", () => {

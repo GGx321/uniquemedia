@@ -4,9 +4,10 @@ import { plan } from "./planner";
 import { POOLS, type Activity } from "./pools";
 import { redrawSlot } from "./redraw";
 import type { PlanSlot } from "./schema";
-import { CATEGORIES, type Category } from "./types";
+import { ORDINARY_BUILT_INS, type Category } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // 5a.2b (S5.7b): «Другая сцена» keeps the scene's «Подача». A flirty scene redraws flirty (and among equals on a flirty moment); an ordinary one never takes a
 // flirty moment.
@@ -17,7 +18,7 @@ const draw = (slot: PlanSlot, k: number): PlanSlot => redrawSlot({ seed: 99, k, 
 const momentOf = (slot: PlanSlot): Activity | undefined => POOLS[slot.category as Category].locations.find((l) => l.name === slot.location)?.activities.find((a) => a.text === slot.activity);
 const slotsOf = (category: Category, level: "flirty" | "ordinary"): PlanSlot[] => [3, 4, 5].flatMap((seed) => plan({ seed, count: 24, categories: [category], level }).slots);
 
-describe.each([...CATEGORIES])("redrawing a %s scene keeps its level", (category) => {
+describe.each([...ORDINARY_BUILT_INS])("redrawing a %s scene keeps its level", (category) => {
   test("a flirty scene redraws flirty, every time", () => {
     const flirty = slotsOf(category, "flirty").filter((s) => s.level === "flirty");
     expect(flirty.length).toBeGreaterThan(30);

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  BOLD_CATEGORIES,
+  boldLevelNeeded,
   CATEGORY_LABEL_MAX,
   CATEGORY_NAME_MAX,
   CategoryLabel,
@@ -11,8 +13,10 @@ import {
   TIME_OF_DAY_MAX,
   TimeOfDay,
   CustomCategoryId,
+  isBoldCategory,
   isCustomCategory,
   MAX_RUN_CATEGORIES,
+  ORDINARY_SCENE_CATEGORIES,
   orderCategories,
   PhotoCategory,
   SceneCategory,
@@ -256,5 +260,51 @@ describe("PhotoSummary.category (widened)", () => {
   test("refuses an empty or over-long label", () => {
     expect(PhotoSummary.safeParse({ ...photo, category: CUSTOM_A, categoryName: "" }).success).toBe(false);
     expect(PhotoSummary.safeParse({ ...photo, category: CUSTOM_A, categoryName: "я".repeat(41) }).success).toBe(false);
+  });
+});
+
+// 5a.3 (S5.9b2, plan s5a3 §6.1): «Ночнушки и бельё» (`nightwear`) and «Пляж и бассейн» (`beach`) are built-ins of the contract, after the five. Their ids are the
+// engine's names too. The engine refuses them below «Подача: Смелая» (S5.9c, `bold-level-needed`); the contract itself names them like any built-in.
+describe("the two «Смелая» categories", () => {
+  test("are built-in refs, never custom ids, and «Смелая» ones", () => {
+    for (const ref of ["nightwear", "beach"] as const) {
+      expect(CategoryRef.safeParse(ref).success).toBe(true);
+      expect(isCustomCategory(ref)).toBe(false);
+      expect(isBoldCategory(ref)).toBe(true);
+    }
+    for (const ref of ORDINARY_SCENE_CATEGORIES) expect(isBoldCategory(ref)).toBe(false);
+    expect([...BOLD_CATEGORIES, ...ORDINARY_SCENE_CATEGORIES].sort()).toEqual([...SceneCategory.options].sort());
+  });
+
+  test("run after the five in the canonical order, before the custom ones", () => {
+    expect(orderCategories(["beach", CUSTOM_A, "nightwear", "home"])).toEqual(["home", "nightwear", "beach", CUSTOM_A]);
+  });
+
+  test("take their share of a split as any built-in does, the remainder to the earliest", () => {
+    expect(splitCount(10, ["beach", "home", "nightwear"]).map((e) => [e.ref, e.count])).toEqual([["home", 4], ["nightwear", 3], ["beach", 3]]);
+  });
+
+  test("a run request may name them", () => {
+    expect(RunRequest.safeParse({ avatarId: "avatar-0001", count: 20, poses: { profile: false, back: false }, categories: ["nightwear", "beach"] }).success).toBe(true);
+  });
+});
+
+// 5a.3 (S5.9c, I5.42): a «Смелая» category needs the «Смелая» level.
+describe("boldLevelNeeded", () => {
+  test.each([undefined, "ordinary", "flirty"] as const)("a «Смелая» category at level %s needs «Смелая»", (level) => {
+    expect(boldLevelNeeded({ categories: ["nightwear"], level })).toBe(true);
+    expect(boldLevelNeeded({ categories: ["home", "beach"], level })).toBe(true);
+  });
+
+  test("at «Смелая» nothing is needed, with a «Смелая» category or without one", () => {
+    expect(boldLevelNeeded({ categories: ["nightwear", "beach"], level: "bold" })).toBe(false);
+    expect(boldLevelNeeded({ categories: ["home"], level: "bold" })).toBe(false);
+  });
+
+  test("the five and the custom categories need nothing at any level, and an empty list needs nothing", () => {
+    for (const level of [undefined, "ordinary", "flirty", "bold"] as const) {
+      expect(boldLevelNeeded({ categories: ["home", "travel", "shoot", "glam", "fit", "cat-paris-cafes"], level })).toBe(false);
+      expect(boldLevelNeeded({ categories: [], level })).toBe(false);
+    }
   });
 });

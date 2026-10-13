@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isOwnerBannedOutfit, LEGS_UNSUITED_OUTFITS, LEGWEAR_CLASH_WORDS, notDenimClause, unfabricBottomsIn, type Bottom } from "./words";
+import * as words from "./words";
 
 // C3′ (the owner's verdict, 2026-10-12): Grok draws an unnamed «mini skirt» or «shorts» as DENIM (R3#03 «a hoodie, a mini skirt and sneakers», R4#04 «a tank top and
 // shorts»); the wording probe drew no denim once the outfit named a fabric, or said «her skirt is not denim». The detector finds the bottoms a text leaves unnamed.
@@ -202,5 +203,97 @@ describe("LEGWEAR_CLASH_WORDS", () => {
 
   test.each(["sits with one leg crossed", "stretches her legs"])("does not clash: «%s» (plan r1.4)", (text) => {
     expect(LEGWEAR_CLASH_WORDS.test(text)).toBe(false);
+  });
+});
+
+// S5.9b1: the revealing words moved here from engine/scenes/words.ts, so the one content-line module (contentLine.ts) and the mock read the same list.
+describe("the revealing words (moved from the engine, S5.9b1)", () => {
+  test("REVEALING_WORDS is a case-insensitive list without the global flag (S5.9b1 review: with the underwear words and the plurals)", () => {
+    expect(words.REVEALING_WORDS.source).toBe(
+      "\\b(bikinis?|swimsuits?|swimwear|lingerie|sports bras?|thongs?|stockings?|slip dress(?:es)?|robes? over lingerie|panties|panty|bras?|bralettes?|underwear|briefs|topless|naked)\\b",
+    );
+    expect(words.REVEALING_WORDS.flags).toBe("i");
+  });
+
+  test("hasRevealingWord answers true for a revealing word and false for a plain outfit", () => {
+    expect(words.hasRevealingWord("a white bikini")).toBe(true);
+    expect(words.hasRevealingWord("a linen dress")).toBe(false);
+  });
+
+  test("revealingWordsIn names each revealing word as the text wrote it, in order", () => {
+    expect(words.revealingWordsIn("A Bikini, then stockings and a thong")).toEqual(["Bikini", "stockings", "thong"]);
+  });
+
+  test("revealingWordsIn gives the same answer on every call (no shared lastIndex)", () => {
+    expect(words.revealingWordsIn("a bikini")).toEqual(["bikini"]);
+    expect(words.revealingWordsIn("a bikini")).toEqual(["bikini"]);
+  });
+});
+
+// S5.9b1 review: the revealing rule exists so lingerie and swimwear stay in «Смелая». Underwear, bras, nudity words and plurals slipped through it, and so
+// did full-width letters, invisible characters and spaced-out letters. Text is folded the way `youthWords` folds it (NFKC, invisible format characters
+// dropped, spacing tricks joined) before the list is read.
+describe("the revealing words: more garments, plurals and obfuscation (S5.9b1 review)", () => {
+  test.each([
+    ["her panties", ["panties"]],
+    ["a black panty", ["panty"]],
+    ["a lace bra", ["bra"]],
+    ["two bras on the bed", ["bras"]],
+    ["a bralette", ["bralette"]],
+    ["pink bralettes", ["bralettes"]],
+    ["only her underwear", ["underwear"]],
+    ["white briefs", ["briefs"]],
+    ["topless", ["topless"]],
+    ["naked under the sheet", ["naked"]],
+    ["three bikinis", ["bikinis"]],
+    ["two thongs", ["thongs"]],
+    ["red swimsuits", ["swimsuits"]],
+    ["two slip dresses", ["slip dresses"]],
+    ["a sports bra", ["sports bra"]],
+    ["black sports bras", ["sports bras"]],
+    ["a robe over lingerie", ["robe over lingerie"]],
+    ["robes over lingerie", ["robes over lingerie"]],
+  ])("names the words of «%s»", (text, expected) => {
+    expect(words.revealingWordsIn(text).map((w) => w.toLowerCase())).toEqual(expected);
+  });
+
+  test.each([
+    ["full-width letters", "Ｂｉｋｉｎｉ", ["Bikini"]],
+    ["a zero-width space", "bi​kini", ["bikini"]],
+    ["a zero-width joiner", "lin‍gerie", ["lingerie"]],
+    ["a soft hyphen", "pan­ties", ["panties"]],
+    ["letters spaced apart", "b i k i n i", ["bikini"]],
+    ["letters dotted apart", "t.h.o.n.g", ["thong"]],
+    ["a leading article and spaced letters", "a b i k i n i", ["bikini"]],
+    ["full-width letters and a capital", "ＴＨＯＮＧ", ["THONG"]],
+  ])("sees through %s", (_trick, text, expected) => {
+    expect(words.revealingWordsIn(text)).toEqual(expected);
+  });
+
+  test("hasRevealingWord sees through the same tricks", () => {
+    expect(words.hasRevealingWord("Ｂｉｋｉｎｉ")).toBe(true);
+    expect(words.hasRevealingWord("bi​kini")).toBe(true);
+    expect(words.hasRevealingWord("a linen dress")).toBe(false);
+  });
+
+  test("a word seen in both forms is named once", () => {
+    expect(words.revealingWordsIn("a bra and a bra")).toEqual(["bra", "bra"]);
+  });
+
+  test.each([
+    "nude lipstick and nude heels",
+    "a brand new bracelet",
+    "a briefcase on the chair",
+    "an umbrella and a bramble",
+    "a braid and a bracket",
+    "nakedness is not a garment",
+    "a zebra print scarf",
+    "the strapless dress",
+    "a linen dress and a silk robe",
+    "a slip on her shoe",
+    "sheer black tights",
+    "a tank top and shorts",
+  ])("leaves «%s» alone", (text) => {
+    expect(words.revealingWordsIn(text)).toEqual([]);
   });
 });

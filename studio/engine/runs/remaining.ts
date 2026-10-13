@@ -5,10 +5,10 @@ import { MoneyError } from "../money/errors";
 import type { Ledger, Scope } from "../money/ledger";
 import type { PricedBook } from "../money/priceCache";
 import type { PriceBook } from "../money/prices";
-import { attemptPaid, paidAttempts, type LedgerView, type RunState } from "./journal";
+import { attemptPaid, isBoldSlot, paidAttempts, type LedgerView, type RunState } from "./journal";
 import { localSentences } from "../scenes/localSentences";
 import { slotKeyOf } from "../scenes/phoneLook";
-import { plannedSlots, planRoute, RUN_ATTEMPTS_PER_SLOT, type RunPlan } from "./plan";
+import { BOLD_IMAGE_MODEL, boldRoute, plannedSlots, planRoute, RUN_ATTEMPTS_PER_SLOT, type RunPlan } from "./plan";
 
 // T6 review M3: what a resume of a run could still spend, for the owner to
 // accept before it, as before a start. Worst: every open slot's remaining
@@ -32,7 +32,7 @@ export function scopeCommitted(ledger: Pick<Ledger, "lines" | "reserveOf" | "ope
 }
 
 function imageWorst(book: PriceBook, choice: ImageChoice): number {
-  return book.imageWorstCase({ model: choice.model, quality: choice.quality, refs: choice.refs });
+  return book.imageWorstCase({ model: choice.model, quality: choice.quality, refs: choice.refs, ...(choice.resolution === undefined ? {} : { resolution: choice.resolution }) });
 }
 
 /** What a resume could still spend, and the least it must still be able to reserve to send anything at all. */
@@ -88,6 +88,8 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
   let worst = 0;
   let expected = 0;
   let cheapestSlotAttempt: number | null = null;
+  /** 5a.3 (gap C): the 2K attempt, set while an open Seedream slot remains; it goes into the estimate for the card. */
+  let boldAttemptMicros: number | null = null;
 
   // 5a.2 (S5.6c2, I5.30): the code template writes every slot it can, so only a not-yet-journaled chunk that holds a slot the template cannot write (a null
   // slot, found with the very `local` the run's writer phase uses) is a request for the model. A chunk of template slots costs nothing here. A chunk out of
@@ -125,6 +127,17 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
     const unused = slot.attemptIds.filter((id) => !slot.consumed.has(id)).length;
     const left = Math.min(RUN_ATTEMPTS_PER_SLOT - paidAttempts(slot, ledger), unused);
     if (left <= 0) continue;
+    if (isBoldSlot(slot.slot)) {
+      // 5a.3 (S5.9d, H1, §10.2): a Seedream slot is never a fallback slot. A refused or empty slot ends on resume without an attempt (priced 0); an open one has its paid
+      // attempts left at the 2K list price, never below the route's dearest model (the figure the estimate that capped the run used), and no fallback branch.
+      if (slot.boldEnded !== null) continue;
+      const boldAttempt = imageWorst(book, boldRoute(plan.models.bold ?? BOLD_IMAGE_MODEL));
+      boldAttemptMicros = boldAttempt;
+      worst += left * (Math.max(boldAttempt, dearest) + ageWorst);
+      expected += boldAttempt + ageTypical;
+      cheapestSlotAttempt = Math.min(cheapestSlotAttempt ?? Infinity, boldAttempt + ageWorst);
+      continue;
+    }
     if (slot.useFallbackNext && fallback !== undefined) {
       // The one fallback attempt, then the slot closes.
       worst += imageWorst(book, fallback) + ageWorst;
@@ -152,7 +165,7 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
   const worstMicros = Math.min(capRoom, worst);
   const needed = (writerPending ? writerCeiling : 0) + (cheapestSlotAttempt ?? 0);
   return {
-    estimate: { expectedMicros: Math.min(expected, worstMicros), worstMicros, prices: book.source, pricesAsOf: priced.asOf },
+    estimate: { expectedMicros: Math.min(expected, worstMicros), worstMicros, prices: book.source, pricesAsOf: priced.asOf, ...(boldAttemptMicros === null ? {} : { boldAttemptMicros }) },
     // A chunk out of writer attempts needs no writer room: its slots take the plain sentence, so only the cheapest next image attempt must fit under the cap
     // (`needed` above). A run with nothing left to send is not «cap exhausted».
     minToProgressMicros: needed === 0 ? null : needed,

@@ -228,6 +228,16 @@ function descriptorForms(text: string): { text: string; joined: string } {
   return { text: forms.join("|"), joined: forms.flatMap(fragmentWords).join("|") };
 }
 
+/**
+ * For a word list that is not one of the youth rules (the revealing words, S5.9b1 review): the text folded exactly as the youth checks fold it (NFKC, invisible
+ * format characters dropped, accents stripped), and the short fragments of that text joined and apart by "|" ("b i k i n i" reads "bikini"). Unlike
+ * `descriptorForms` it does not cut repeated letters.
+ */
+export function foldedForms(text: string): { text: string; joined: string } {
+  const base = normalise(text);
+  return { text: base, joined: fragmentWords(base).join("|") };
+}
+
 function numbersFound(text: string, patterns: readonly RegExp[]): number[] {
   const normalized = normalise(text);
   const byPosition = new Map<number, number>();

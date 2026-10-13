@@ -1,8 +1,10 @@
 import type { PoolShot, ScenePose } from "../engine";
-import { CUES, GAZE } from "./banks";
+// S5.9b2: the gaze and cue lists straight from their module, so the bank schema (banks/schema.ts) can read `momentAllowed` without an import cycle through banks/index.ts.
+import { CUES, GAZE } from "./banks/looks";
 import type { Angle, Cue, Gaze, GazeKind, Level, MomentGaze } from "./banks/types";
 import { captureOfShot, faceVisibleOf, isHandCapture, LEGS_CAPTURES, posesFor, shotOf, type Capture } from "./captures";
 import { pick } from "./hash";
+import { atOrBelow } from "./level";
 import { PHONE_WORDS, SELFIE_WORDS } from "./words";
 
 // 5a.2 (S5.6a, plan s5a2 r1.2 §5.2): the template's rendering core, shared by the built-in banks (template.ts) and the custom-category adapter
@@ -82,7 +84,7 @@ export interface MomentTags {
   captures?: readonly Capture[] | undefined;
   twoHanded: boolean;
   phone?: true | undefined;
-  level?: "flirty" | undefined;
+  level?: "flirty" | "bold" | undefined;
   angle?: Angle | undefined;
   gaze?: MomentGaze | undefined;
   legs?: { framing?: "legs" | undefined } | undefined;
@@ -114,13 +116,13 @@ export function gazeKindsFor(capture: Capture, pose: ScenePose, gaze?: MomentGaz
  * Whether a slot of this capture, pose, level and framing may take the moment (I5.23; the planner draws the capture, then the pose, then a moment
  * this allows). The moment lists the capture. A hand-held capture faces the phone and has one hand on it: no profile or back, no two-handed or phone
  * moment. A moment with an angle needs that pose. A moment that looks at the viewer is never on a candid, a profile, a back or a face-hidden frame. A
- * flirty moment needs a flirty slot; a legs moment a legs slot, and a legs slot a legs moment (5a.2c).
+ * moment needs a slot of its level or above (ordinary < flirty < bold, 5a.3); a legs moment a legs slot, and a legs slot a legs moment (5a.2c).
  */
 export function momentAllowed(moment: MomentTags, capture: Capture, pose: ScenePose, level: Level = "ordinary", framing?: "legs"): boolean {
   if (moment.captures !== undefined && !moment.captures.includes(capture)) return false;
   if ((moment.legs !== undefined) !== (framing === "legs")) return false;
   if (LEGS_CAPTURES.includes(capture) && framing !== "legs") return false;
-  if (moment.level === "flirty" && level !== "flirty") return false;
+  if (!atOrBelow(moment.level, level)) return false;
   if (!posesFor(capture).includes(pose)) return false;
   if (moment.angle !== undefined && moment.angle !== pose) return false;
   if (isHandCapture(capture) && (moment.twoHanded || moment.phone === true)) return false;
@@ -144,13 +146,24 @@ export interface SentenceParts {
   handAtFace?: boolean | undefined;
   /** The place's details for `with {detail}`; none for a room or a custom place. */
   details: readonly string[];
+  /** 5a.3: the positive coverage sentence of what the moment or the outfit shows, appended after the scene sentence («Смелая» banks only). */
+  coverage?: string | undefined;
 }
 
-function byLevel<T extends { level?: "flirty" | undefined }>(items: readonly T[], level: Level): readonly T[] {
-  const ordinary = items.filter((item) => item.level === undefined);
-  if (level !== "flirty") return ordinary;
-  const flirty = items.filter((item) => item.level === "flirty");
-  return flirty.length > 0 ? flirty : ordinary;
+/**
+ * The entries a slot of this level draws from (5a.3: ranked ordinary < flirty < bold). An ordinary slot takes the ordinary entries; a flirty slot the flirty ones when there are
+ * any, else the ordinary ones; a bold slot the bold ones, then the flirty ones, then the ordinary ones (the gaze and cue lists have no bold entry, so a bold slot reads their flirty
+ * list, as plan s5a3 §7.3 has it).
+ */
+function byLevel<T extends { level?: "flirty" | "bold" | undefined }>(items: readonly T[], level: Level): readonly T[] {
+  const at = (wanted: "flirty" | "bold" | undefined): readonly T[] => items.filter((item) => item.level === wanted);
+  if (level === "ordinary") return at(undefined);
+  if (level === "bold") {
+    const bold = at("bold");
+    if (bold.length > 0) return bold;
+  }
+  const flirty = at("flirty");
+  return flirty.length > 0 ? flirty : at(undefined);
 }
 
 function gazeOptions(capture: Capture, pose: ScenePose, gaze: MomentGaze | undefined, level: Level, framing: "legs" | undefined): readonly Gaze[] {
@@ -200,7 +213,7 @@ function draw(parts: SentenceParts, frame: Frame, key: string, tally: GazeCueTal
   }
   clauses.push(...said);
   if (parts.details.length > 0) clauses.push(`with ${pick(parts.details, key, "detail")}`);
-  return { text: `${clauses.join(", ")}.`, said };
+  return { text: parts.coverage === undefined ? `${clauses.join(", ")}.` : `${clauses.join(", ")}. ${parts.coverage}`, said };
 }
 
 /**

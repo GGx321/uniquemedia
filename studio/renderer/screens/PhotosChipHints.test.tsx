@@ -62,19 +62,22 @@ describe("the chip hint line", () => {
   });
 });
 
-describe("the chips kept for «Смелая»", () => {
-  // Round-1 review of S5.6d: `aria-disabled` belongs on a control, not on a bare span, so a kept chip is a real disabled button (it cannot be pressed or focused).
-  test("lists «Ночнушки и бельё» and «Пляж и бассейн» as dimmed chips: real disabled buttons, no aria-disabled span", async () => {
+// 2026-10-12, S5.9g (plan s5a3 §13.1; mockups 47, 48): the two chips kept for «Смелая» became real chips. The rows «dimmed chips: real disabled buttons» and
+// «says they come later» pinned the placeholder; what replaces them pins the gating (the full states are in PhotosBold.test.tsx). The S5.6d review's point
+// stays: `aria-disabled` sits on the button itself, never on a bare span.
+describe("the two «Смелая» chips", () => {
+  test("are buttons in the row, dimmed under «Обычная» with `aria-disabled` on the button itself, never a span", async () => {
     await openPhotos();
     for (const name of ["Ночнушки и бельё", "Пляж и бассейн"]) {
-      const reserved = within(chipsGroup()).getByRole("button", { name });
-      expect((reserved as HTMLButtonElement).disabled).toBe(true);
-      expect(within(chipsGroup()).getByText(name).getAttribute("aria-disabled")).toBeNull();
+      const gated = within(chipsGroup()).getByRole("button", { name });
+      expect(gated.getAttribute("aria-disabled")).toBe("true");
+      expect(gated.getAttribute("title")).toBe("Только со «Смелой»");
+      expect(Array.from(chipsGroup().querySelectorAll("span[aria-disabled]"))).toHaveLength(0);
     }
   });
 
-  test("says they come later, with «Смелая»", async () => {
+  test("no longer say they come later", async () => {
     await openPhotos();
-    expect(screen.getByText("Со «Смелой» — появятся позже.")).toBeDefined();
+    expect(screen.queryByText("Со «Смелой» — появятся позже.") === null).toBe(true);
   });
 });

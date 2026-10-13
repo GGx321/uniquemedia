@@ -35,6 +35,7 @@ import {
   type VideoShape,
 } from "../../shared/engine";
 import type { SplitEntry } from "../../shared/scenes/writerBound";
+import { isBoldLook } from "./mockBoldRoute";
 import { MockRun, PAID_FAULTS, type PaidFault } from "./mockLaunchRun";
 
 export { PAID_FAULTS, type PaidFault };
@@ -76,7 +77,8 @@ export interface MockAutopilotWorld {
   avatarActive(avatarId: string): boolean;
   /** The library can say which of the avatar's photos are free (its usage and drafts are known). */
   libraryKnown(avatarId: string): boolean;
-  unit(): MockAutopilotUnit;
+  /** The unit prices; `bold` for a launch whose draft is «Смелая» with a «Смелая» category (option B: every photo is priced on the 2K route). */
+  unit(bold: boolean): MockAutopilotUnit;
   /** The writer's bound for a split of new photos (the engine's `writerChunksWorst` and `llmPossibleSlots`): the requests the compose can need and the photos that can go to the model. */
   writerBound(split: readonly SplitEntry[]): { chunks: number; modelSlots: number };
   prices(): { prices: Estimate["prices"]; pricesAsOf: string };
@@ -131,7 +133,7 @@ export interface MockAutopilotWorld {
    * A slice of the draw begins: its run and the job that holds the avatar. Answers the run's id (the first slice's is the set's pre-issued one, which uses the set). With `resume` it is the
    * run of a slice that was stopped (a hold, a pause): the same run under a new job.
    */
-  startSlice(slice: { launchId: string; avatarId: string; sceneSetId: string; index: number; photos: number; capMicros: number; category: CategoryRef; resume?: string }): string;
+  startSlice(slice: { launchId: string; avatarId: string; sceneSetId: string; index: number; firstNo: number; photos: number; capMicros: number; category: CategoryRef; resume?: string }): string;
   /** Photos of the slice arrived (their ids, the money they settled). */
   sliceProgress(runId: string, photoIds: readonly string[], settledMicros: number): void;
   /** The slice ended: `done` (its photos are in, or its cap ended it), `cancelled` (a stop or a pause), `gone` (the process died with it: nothing is announced). */
@@ -319,7 +321,7 @@ export class MockAutopilot {
     const sum = (pick: (row: LaunchPreviewAvatar) => number): number => counted.reduce((total, p) => total + pick(p.row), 0);
     const totals = { videos: sum((r) => r.videos), photosNeeded: sum((r) => r.fromLibrary + r.toGenerate), fromLibrary: sum((r) => r.fromLibrary), toGenerate: sum((r) => r.toGenerate) };
 
-    const unit = this.#world.unit();
+    const unit = this.#world.unit(isBoldLook(draft));
     let worst = 0;
     let expected = 0;
     for (const { row, generate } of counted) {
@@ -533,7 +535,7 @@ export class MockAutopilot {
    * (before the draw: the ones «Продолжить запуск» would draw; while it draws: those not drawn yet; afterwards none) and the avatar's draw allocation. NOT_FOUND for a launch that is
    * not the unfinished one and for an avatar it does not hold, as the engine answers. The price is the engine's to put on them (`MockEngine`).
    */
-  imagesLeft(launchId: string, avatarId: string): Outcome<{ photos: number; allocationMicros: number }> {
+  imagesLeft(launchId: string, avatarId: string): Outcome<{ photos: number; allocationMicros: number; sceneSetId: string | null }> {
     const found = this.#find(launchId);
     if (!found.ok) return found;
     if (!isUnfinished(found.result.status)) return refuse({ code: "NOT_FOUND", detail: `no unfinished launch ${launchId}` });
@@ -543,7 +545,7 @@ export class MockAutopilot {
     // As the engine counts: an avatar the launch has finished with (done, montage, skipped) has none; one parked by a paid hold keeps the photos it has not drawn (none while its scenes are not written).
     const parked = row.phase === "waiting" && row.waiting?.reason === "paid-hold";
     const photos = beforeDraw ? (row.continuePhotos ?? 0) : row.phase === "drawing" || parked ? ((row.continuePhotos ?? 0) === 0 ? 0 : Math.max(0, row.photos.total - row.photos.done)) : 0;
-    return done({ photos, allocationMicros: row.drawAllocationMicros ?? 0 });
+    return done({ photos, allocationMicros: row.drawAllocationMicros ?? 0, sceneSetId: row.sceneSetId });
   }
 
   /** The records the launch's videos of one avatar still have. */
@@ -682,7 +684,7 @@ export class MockAutopilot {
     if (launch.run !== null) return launch.run.inFlight();
     if (launch.status !== "running") return { requests: 0, openMicros: 0 };
     // Open reserves are part of what the launch spent (the contract checks it), so no more requests are out than that sum can hold.
-    const worst = this.#world.unit().attemptWorstMicros;
+    const worst = this.#world.unit(isBoldLook(launch.draft)).attemptWorstMicros;
     const requests = Math.min(launch.avatars.filter((a) => a.phase === "drawing").length * 2, worst > 0 ? Math.floor(launch.spentMicros / worst) : 0);
     return { requests, openMicros: requests * worst };
   }
@@ -695,7 +697,7 @@ export class MockAutopilot {
     const none = { requests: 0, openMicros: 0 };
     if (launch.run !== null) return launch.run.unsettled();
     if (launch.status !== "paused" || this.#world.paidGate()?.code !== "RECONCILE_REQUIRED") return none;
-    const worst = this.#world.unit().attemptWorstMicros;
+    const worst = this.#world.unit(isBoldLook(launch.draft)).attemptWorstMicros;
     const requests = Math.min(launch.avatars.filter((a) => a.phase === "drawing" || a.phase === "approved-waiting").length * 2, worst > 0 ? Math.floor(launch.spentMicros / worst) : 0);
     return requests > 0 ? { requests, openMicros: requests * worst } : none;
   }
@@ -868,7 +870,7 @@ export class MockAutopilot {
         waitingMusic: 0,
         undrawnScenes: phase === "drawing" ? row.toGenerate - drawn : 0,
         resumableSlots: phase === "drawing" ? row.toGenerate - drawn : 0,
-        drawAllocationMicros: generating ? row.toGenerate * this.#world.unit().photoWorstMicros : null,
+        drawAllocationMicros: generating ? row.toGenerate * this.#world.unit(isBoldLook(draft)).photoWorstMicros : null,
       };
     });
 
@@ -893,7 +895,7 @@ export class MockAutopilot {
       plannedExpectedMicros: preview.estimate.expectedMicros,
       plan: { videos: preview.totals.videos, photos: preview.totals.photosNeeded, fromLibrary: preview.totals.fromLibrary, toGenerate: preview.totals.toGenerate },
       // A fifth of the expected cost is spent, and the requests in flight (two per drawing avatar) are open reserves inside it.
-      spentMicros: Math.min(preview.estimate.worstMicros, Math.max(Math.round(preview.estimate.expectedMicros / 5), avatars.filter((a) => a.phase === "drawing").length * 2 * this.#world.unit().attemptWorstMicros)),
+      spentMicros: Math.min(preview.estimate.worstMicros, Math.max(Math.round(preview.estimate.expectedMicros / 5), avatars.filter((a) => a.phase === "drawing").length * 2 * this.#world.unit(isBoldLook(draft)).attemptWorstMicros)),
       activeMs: 60_000,
       avatars,
       videos,

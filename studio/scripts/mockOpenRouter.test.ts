@@ -432,7 +432,7 @@ describe("failureDetail", () => {
 
 // The smoke's "exactly Bearer <the fake key>" check must say what went wrong without ever printing a header value.
 describe("authorizationLabel", () => {
-  const base = { method: "POST", path: "/api/v1/images", body: null, schemaName: null, url: "", headers: {}, bodyText: "" };
+  const base = { method: "POST", path: "/api/v1/images", body: null, schemaName: null, url: "", headers: {}, bodyText: "", model: null, resolution: null };
 
   test("none, expected, or other: never the value", () => {
     expect(authorizationLabel({ ...base, authorization: null }, "sk-fake")).toBe("none");

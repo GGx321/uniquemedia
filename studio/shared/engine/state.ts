@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
 import { AvatarBody, BodyProposal } from "./body";
-import { CategoryName, CategoryRef, LegsShare, MAX_RUN_CATEGORIES, PhotoCategory, SceneCategory, SceneLevel } from "./categories";
+import { CategoryName, CategoryRef, LegsShare, MAX_RUN_CATEGORIES, PhotoCategory, SceneCategory, SceneLevel, SceneRoute } from "./categories";
 import { EngineError, ExportUnavailableReason, SceneReason } from "./errors";
 import { ImageQuality } from "./imageModels";
 import { MediaFileName, MediaKind, MediaSummary } from "./media";
@@ -220,6 +220,11 @@ export const Estimate = z
     worstMicros: Micros,
     prices: PriceSource,
     pricesAsOf: IsoDate,
+    /**
+     * Additive (5a.3, S5.9a, gap C): the price of one attempt on the Seedream route (list, 2K), present only when the plan has Seedream slots, so the card can say
+     * «до $X за попытку» without a price of its own. Nothing writes it before S5.9d.
+     */
+    boldAttemptMicros: Micros.positive().optional(),
   })
   .refine((e) => e.expectedMicros <= e.worstMicros, {
     message: "expected cost must not exceed the worst case",
@@ -935,6 +940,11 @@ export const PhotoSummary = z
     categoryName: CategoryName.optional(),
     createdAt: IsoDateTime,
     qa: PhotoQaSummary.optional(),
+    /**
+     * Additive (5a.3, S5.9a, gap A): the photo was drawn on the Seedream route (read from the sidecar's `source.route`). Absent on a photo made before 5a.3 and on one the
+     * 1K moderation fallback drew, so the viewer shows no tag for either.
+     */
+    route: SceneRoute.optional(),
     /** Some committed video record lists this photo. Derived from the records, never from whether an MP4 still exists. */
     used: z.boolean(),
     /** The videos that list it, so «Удалить запись» and a video's delete can say which photos they free. */

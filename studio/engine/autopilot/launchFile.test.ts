@@ -92,12 +92,12 @@ describe("the launch file schema", () => {
     expect(parsed).toEqual(raw as typeof parsed);
   });
 
-  test("a file whose draft has no poses, or a flirty level, parses too", () => {
+  test("a file whose draft has no poses, or a flirty or bold level, parses too", () => {
     const file = stamped();
     const { poses: _poses, ...bare } = file.draft;
     expect(LaunchFile.safeParse({ ...file, draft: bare }).success).toBe(true);
     expect(LaunchFile.safeParse({ ...file, draft: { ...bare, level: "flirty" } }).success).toBe(true);
-    expect(LaunchFile.safeParse({ ...file, draft: { ...bare, level: "bold" } }).success).toBe(false);
+    expect(LaunchFile.safeParse({ ...file, draft: { ...bare, level: "bold" } }).success).toBe(true);
   });
 
   // S5.8a: `legsShare` joins the draft as an optional field WITHOUT a version bump, like `level`: a file written before it parses as it is.

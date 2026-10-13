@@ -1,9 +1,12 @@
+import { isBoldCategory } from "../../engine";
+import { BEACH } from "./beach";
 import { FITNESS } from "./fitness";
 import { GLAMOUR } from "./glamour";
 import { HOME } from "./home";
+import { NIGHTWEAR } from "./nightwear";
 import { CUES, GAZE, HAIRSTYLES } from "./looks";
 import { PHOTOSHOOT } from "./photoshoot";
-import { categoryBankProblems, cueBankProblems, gazeBankProblems, hairBankProblems } from "./schema";
+import { boldBankProblems, boldOnlyHereProblems, categoryBankProblems, cueBankProblems, gazeBankProblems, hairBankProblems } from "./schema";
 import { TRAVEL } from "./travel";
 import { BANK_CATEGORIES, type BankCategory, type CategoryBank } from "./types";
 
@@ -12,7 +15,7 @@ import { BANK_CATEGORIES, type BankCategory, type CategoryBank } from "./types";
 
 export { CUES, GAZE, HAIRSTYLES };
 
-export const BANKS: Readonly<Record<BankCategory, CategoryBank>> = { home: HOME, travel: TRAVEL, photoshoot: PHOTOSHOOT, glamour: GLAMOUR, fitness: FITNESS };
+export const BANKS: Readonly<Record<BankCategory, CategoryBank>> = { home: HOME, travel: TRAVEL, photoshoot: PHOTOSHOOT, glamour: GLAMOUR, fitness: FITNESS, nightwear: NIGHTWEAR, beach: BEACH };
 
 /** What `validateBanks` checks; each part defaults to the shipped bank. */
 export interface BankInput {
@@ -30,7 +33,13 @@ function categoryOf(banks: unknown, category: BankCategory): unknown {
 export function validateBanks(input: BankInput = {}): void {
   const banks = input.banks ?? BANKS;
   const problems = [
-    ...BANK_CATEGORIES.flatMap((category) => categoryBankProblems(categoryOf(banks, category), category).map((p) => `${category}: ${p}`)),
+    // S5.9b2 (plan s5a3 §6.4, H2): the schema is chosen by category. A «Смелая» bank is held to its own; an ordinary one to the five's, and it holds none of the
+    // «Смелая» vocabulary (bold-only-here, I5.37).
+    ...BANK_CATEGORIES.flatMap((category) => {
+      const bank = categoryOf(banks, category);
+      const problems = isBoldCategory(category) ? boldBankProblems(bank) : [...categoryBankProblems(bank, category), ...boldOnlyHereProblems(bank)];
+      return problems.map((p) => `${category}: ${p}`);
+    }),
     ...gazeBankProblems(input.gaze ?? GAZE).map((p) => `gaze: ${p}`),
     ...cueBankProblems(input.cues ?? CUES).map((p) => `cues: ${p}`),
     ...hairBankProblems(input.hair ?? HAIRSTYLES).map((p) => `hair: ${p}`),

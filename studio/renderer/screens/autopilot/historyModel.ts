@@ -193,10 +193,11 @@ export interface SettingsBit {
 }
 
 /**
- * The launch's «Подача» (S5.7c, mockup 31): «кокетливая» when it was; «обычная» for a launch made with «Подача» left at its default (it stores no
- * «Ракурсы»); none for a launch from before «Подача», whose stored «Ракурсы» changed nothing the history needs to say.
+ * The launch's «Подача» (S5.7c, mockup 31): «кокетливая» when it was (S5.9g, mockup 53: «смелая» likewise); «обычная» for a launch made with «Подача» left
+ * at its default (it stores no «Ракурсы»); none for a launch from before «Подача», whose stored «Ракурсы» changed nothing the history needs to say.
  */
 function levelBit(draft: LaunchDraft): SettingsBit[] {
+  if (draft.level === "bold") return [{ text: "Подача: смелая", strong: true }];
   if (draft.level === "flirty") return [{ text: "Подача: кокетливая", strong: true }];
   return draft.poses === undefined ? [{ text: "Подача: обычная", strong: true }] : [];
 }

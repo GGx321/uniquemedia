@@ -655,3 +655,15 @@ describe("the engine's world moves", () => {
     expect(probes()).toBe(probesBefore + 1);
   });
 });
+
+// 5a.3 (S5.9b2, plan s5a3 §11): the two «Смелая» categories were on the contract before their chips. 2026-10-12, S5.9g (mockup 52): the chips ship, so the row
+// «…no «Смелая» category until its chips ship» now pins them after the five, waiting for «Смелая» under the default «Обычная» (AutopilotBold.test.tsx has the rest).
+describe("the launch's scene categories", () => {
+  test("offer the five ordinary built-ins, then the two «Смелая» ones, which wait for «Смелая»", async () => {
+    world();
+    await openAutopilot();
+    const group = screen.getByRole("group", { name: "Категории сцен" });
+    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Дом", "Виды", "Улица", "Гламур", "Фитнес", "Ночнушки и бельё", "Пляж и бассейн"]);
+    for (const name of ["Ночнушки и бельё", "Пляж и бассейн"]) expect(within(group).getByRole("button", { name }).getAttribute("aria-disabled")).toBe("true");
+  });
+});

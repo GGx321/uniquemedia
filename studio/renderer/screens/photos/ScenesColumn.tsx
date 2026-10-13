@@ -7,6 +7,7 @@ import { countOf } from "../../lib/format";
 import { formatUsd } from "../../lib/money";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
+import { BoldPriceNotice, isBoldPriceMissing } from "./boldPrice";
 import { batchNote, emptySetToFill, frozenNote, isLaunchBatch, isLaunchRun, launchPaused, launchRowOf, type LaunchLink } from "./launchSet";
 import { modelName } from "./runForm";
 import { EMPTY_IDEA, type IdeaStart } from "./SceneIdeaForm";
@@ -206,7 +207,7 @@ function ResumeRow({ run, blockedReason, reconcileNeeded, paidInFlight, onPaidIn
           <span className="mono">{formatUsd(estimate.worstMicros, 2, "up")}</span>. Подтвердите снова — без подтверждения ничего не отправляется.
         </Notice>
       )}
-      {error && <ErrorNotice error={error} />}
+      {error && (isBoldPriceMissing(error) ? <BoldPriceNotice /> : <ErrorNotice error={error} />)}
     </article>
   );
 }
@@ -246,12 +247,32 @@ function EndedRunRow({ run }: { run: RunSummary }) {
 const FREE_SLOT_REASON: SceneReason = "slot-text-problem";
 
 /**
+ * 5a.3 (S5.9g, gap B, I5.39): the ends of a «Смелая» slot whose own text says where its money went — `model-refused` (the refusal free, the attempts before it
+ * in the spend), `model-empty` (the attempt in the spend). Said as they are when every failed frame ended so, counted («Из них 2 — …») beside other reasons, and
+ * never followed by the general money line for themselves.
+ */
+const MONEY_SAID_REASONS: ReadonlySet<SceneReason> = new Set<SceneReason>(["model-refused", "model-empty"]);
+
+/** The general money line: what follows the reasons while a failed frame remains whose own text does not speak of money. */
+const PAID_ATTEMPTS = "Если за попытки платили, это уже учтено в расходах.";
+
+/** A reason's sentence after «Из них K —»: the contract's own, its first letter lower-case (mockup 50#mixed). */
+function afterDash(text: string): string {
+  return `${text.charAt(0).toLowerCase()}${text.slice(1)}`;
+}
+
+/**
  * S5.7a (I5.31): what follows «Не получилось: N» — the reason of the slots that ended with one, then the paid-attempts line unless every failed slot ended free.
  * Only `slot-text-problem` is free (S5.7a review): another reason is named, but its slot may have paid. One free slot of one failed reads as the reason itself;
  * otherwise the free ones are counted («Из них 2 — …»). A result with no reasons reads as it always did.
+ * S5.9g (gap B; mockup 50): counted by FRAMES. When every failed frame ended with `model-refused` (or every one with `model-empty`), the contract's sentence
+ * follows «Не получилось: N.» as it is (mockup 50, 50#empty); beside other reasons each is counted, «Из них K — …», in the order the run met them (50#mixed).
+ * The paid-attempts line follows only while failed frames remain whose own text does not speak of money — a slot that failed with no reason, or with another
+ * one — so a run whose every failed frame said its money already says it once.
  */
 function failedText(failed: number, reasons: readonly { reason: SceneReason }[] | undefined): string {
-  const free = (reasons ?? []).filter((r) => r.reason === FREE_SLOT_REASON).length;
+  const all = reasons ?? [];
+  const free = all.filter((r) => r.reason === FREE_SLOT_REASON).length;
   const freeText =
     free === 0
       ? ""
@@ -260,8 +281,17 @@ function failedText(failed: number, reasons: readonly { reason: SceneReason }[] 
         : free === 1
           ? " Из них 1 — текст сцены не прошёл проверку слов: кадр пропущен, бесплатно."
           : ` Из них ${free} — тексты сцен не прошли проверку слов: кадры пропущены, бесплатно.`;
-  const others = [...new Set((reasons ?? []).map((r) => r.reason).filter((reason) => reason !== FREE_SLOT_REASON))].map((reason) => ` ${SCENE_REASONS_RU[reason]}`).join("");
-  return `${freeText}${others}${free < failed ? " Если за попытки платили, это уже учтено в расходах." : ""}`;
+  const kinds = [...new Set(all.map((r) => r.reason).filter((reason) => reason !== FREE_SLOT_REASON))];
+  const others = kinds
+    .map((reason) => {
+      if (!MONEY_SAID_REASONS.has(reason)) return ` ${SCENE_REASONS_RU[reason]}`;
+      const frames = all.filter((r) => r.reason === reason).length;
+      // Every failed frame ended so: the contract's sentence as it is (mockup 50, 50#empty); counted only beside other reasons (50#mixed).
+      return frames === failed ? ` ${SCENE_REASONS_RU[reason]}` : ` Из них ${frames} — ${afterDash(SCENE_REASONS_RU[reason])}`;
+    })
+    .join("");
+  const moneySaid = all.filter((r) => r.reason === FREE_SLOT_REASON || MONEY_SAID_REASONS.has(r.reason)).length;
+  return `${freeText}${others}${moneySaid < failed ? ` ${PAID_ATTEMPTS}` : ""}`;
 }
 
 /** How the run this screen watched ended: the gallery shows its photos, this says what else happened. A run made from a set says so (ReviewStates F). */
@@ -282,7 +312,13 @@ export function RunOutcome({ job, fromSet, photos }: { job: JobView; fromSet: bo
       <Notice tone={failedSlots > 0 ? "warn" : "ok"} title="Запуск завершён">
         {fromSet ? runDoneText(photoIds.length) : `В галерее ${countOf(photoIds.length, PHOTO_FORMS)} этого запуска.`}
         {unchecked > 0 && ` ${faceMarksText(unchecked)}.`}
-        {failedSlots > 0 && ` Не получилось: ${failedSlots}.${failedText(failedSlots, failedReasons)}`}
+        {/* S5.9g (mockup 50): what did not come out, and why, on a line of its own under the gallery's. */}
+        {failedSlots > 0 && (
+          <>
+            {" "}
+            <span className="run-end-line">{`Не получилось: ${failedSlots}.${failedText(failedSlots, failedReasons)}`}</span>
+          </>
+        )}
       </Notice>
     );
   }

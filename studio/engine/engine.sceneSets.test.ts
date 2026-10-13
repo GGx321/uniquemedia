@@ -577,6 +577,26 @@ describe("«Ножки» in a scene set (S5.8a)", () => {
     expect(JSON.parse(readFileSync(setFile(avatarId, flirty.sceneSetId), "utf8")).request.level).toBe("flirty");
   });
 
+  // 5a.3 (S5.9a): a set composed bold over the five built-ins stores and shows its level, and holds the flirty mix of a «Кокетливая» set.
+  test("a set composed bold over the five built-ins stores and shows the bold level and holds the flirty mix", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(sceneNetwork());
+
+    const bold = composed(await engine.handle(legsCompose(avatarId, { legsShare: 0, level: "bold" })));
+    await jobEnd(events, bold.jobId ?? "none");
+    expect(JSON.parse(readFileSync(setFile(avatarId, bold.sceneSetId), "utf8")).request.level).toBe("bold");
+    const view = await setOf(engine, avatarId);
+    expect(view.level).toBe("bold");
+    ok(await engine.handle(command("scenes.discard", { sceneSetId: bold.sceneSetId })));
+
+    const flirty = composed(await engine.handle(legsCompose(avatarId, { legsShare: 0, level: "flirty" })));
+    await jobEnd(events, flirty.jobId ?? "none");
+    const flirtyView = await setOf(engine, avatarId);
+    expect(view.scenes.filter((s) => s.level === "flirty")).toHaveLength(flirtyView.scenes.filter((s) => s.level === "flirty").length);
+    expect(view.scenes.some((s) => s.level === "flirty")).toBe(true);
+    expect(view.scenes.some((s) => s.level === "bold")).toBe(false);
+  });
+
   test("framing and capture survive a restart: a new engine over the same library shows the same legs scenes", async () => {
     const avatarId = await seedAvatar();
     const first = await engineOver(sceneNetwork());
@@ -609,6 +629,27 @@ describe("«Ножки» in a scene set (S5.8a)", () => {
 
     expect(refused(await engine.handle(command("scenes.estimateCompose", asked)))).toMatchObject({ code: "VALIDATION", sceneReason: "legs-built-in-only" });
     expect(refused(await engine.handle(composeCommand(avatarId, asked)))).toMatchObject({ code: "VALIDATION", sceneReason: "legs-built-in-only" });
+
+    expect(net.calls).toEqual([]);
+    expect(setFiles(avatarId)).toEqual([]);
+    expect(readLedger()).toEqual([]);
+    await noSet(engine, avatarId);
+  });
+
+  // 5a.3 (S5.9c, I5.42): the two «Смелая» categories need «Смелая»; below it a compose and its estimate are refused for free.
+  test.each([
+    [["nightwear"], undefined],
+    [["nightwear"], "ordinary"],
+    [["beach"], "flirty"],
+    [["home", "nightwear"], "flirty"],
+  ] as const)("a «Смелая» category (%j) at level %s is refused for free with bold-level-needed: nothing is priced, claimed or written", async (categories, level) => {
+    const avatarId = await seedAvatar();
+    const net = sceneNetwork();
+    const { engine } = await engineOver(net);
+    const asked = { avatarId, count: 10, categories: [...categories], ...(level === undefined ? {} : { level }) };
+
+    expect(refused(await engine.handle(command("scenes.estimateCompose", asked)))).toMatchObject({ code: "VALIDATION", sceneReason: "bold-level-needed" });
+    expect(refused(await engine.handle(composeCommand(avatarId, asked)))).toMatchObject({ code: "VALIDATION", sceneReason: "bold-level-needed" });
 
     expect(net.calls).toEqual([]);
     expect(setFiles(avatarId)).toEqual([]);

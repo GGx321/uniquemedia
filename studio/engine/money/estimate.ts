@@ -1,4 +1,4 @@
-import type { ImageQuality, PriceBook, PriceSource } from "./prices";
+import type { ImageQuality, ImageResolution, PriceBook, PriceSource } from "./prices";
 
 /** Invariant 7: at most 3 paid attempts per slot across all QA branches and fallbacks. */
 export const MAX_ATTEMPTS_PER_SLOT = 3;
@@ -13,6 +13,8 @@ export interface ImageChoice {
   model: string;
   quality: ImageQuality | null;
   refs: number;
+  /** 5a.3 (S5.9d): absent = 1K. Only the «Смелая» route's choice says 2K. */
+  resolution?: ImageResolution;
 }
 
 /** A chat call: `maxTokens` and `inputTokens` bound the worst case; `typical` gives the expected cost. */
@@ -138,6 +140,11 @@ export interface RunPlanInput {
   writerLoad?: WriterLoad;
   /** The age check run on every returned image; null when age checks are off. */
   ageChecks: ChatCall | null;
+  /**
+   * 5a.3 (S5.9d, plan s5a3 §10.2): how many of the photos are drawn on the «Смелая» route and the choice they are sent with (2K, one reference). Such a photo is priced
+   * at that choice, never below the dearest model of the route, three attempts, with no fallback; the other photos are priced as before. Absent = none.
+   */
+  bold?: { photos: number; image: ImageChoice };
 }
 
 export interface AvatarJobInput {
@@ -159,6 +166,8 @@ export interface Estimate {
   worstMicros: number;
   /** "fallback" when any price came from the dated table; the UI must say so. */
   priceSource: PriceSource;
+  /** 5a.3 (S5.9d): the price of one attempt on the «Смелая» route (list, 2K, the master as its reference); present only when a photo is on that route. */
+  boldAttemptMicros?: number;
 }
 
 function assertCount(name: string, value: number): void {
@@ -171,7 +180,7 @@ function safe(value: number): number {
 }
 
 function imageMicros(book: PriceBook, image: ImageChoice): number {
-  return book.imageWorstCase({ model: image.model, quality: image.quality, refs: image.refs });
+  return book.imageWorstCase({ model: image.model, quality: image.quality, refs: image.refs, ...(image.resolution === undefined ? {} : { resolution: image.resolution }) });
 }
 
 function typicalMicros(book: PriceBook, call: ChatCall | null): number {
@@ -237,6 +246,12 @@ export function estimateRun(book: PriceBook, plan: RunPlanInput): Estimate {
   const [primary] = plan.route;
   if (primary === undefined) throw new RangeError("the provider route must name at least one model");
   if (plan.photos === 0) return { expectedMicros: 0, worstMicros: 0, priceSource: book.source };
+  // 5a.3 (S5.9d): the photos on the «Смелая» route, priced at their own 2K choice. None: not a price is read for it, so a price list with no 2K line still prices every other run.
+  const boldPhotos = plan.bold?.photos ?? 0;
+  assertCount("bold photos", boldPhotos);
+  if (boldPhotos > plan.photos) throw new RangeError(`bold photos (${boldPhotos}) cannot exceed photos (${plan.photos})`);
+  const boldAttempt = plan.bold === undefined || boldPhotos === 0 ? null : imageMicros(book, plan.bold.image);
+  const plainPhotos = plan.photos - boldPhotos;
 
   const dearestAttempt = Math.max(...plan.route.map((choice) => imageMicros(book, choice)));
   const { writer } = plan;
@@ -252,12 +267,17 @@ export function estimateRun(book: PriceBook, plan: RunPlanInput): Estimate {
           inputTokens: writer.typicalPerScene.inputTokens * load.scenes,
           outputTokens: writer.typicalPerScene.outputTokens * load.scenes,
         });
+  const ageTypical = typicalMicros(book, plan.ageChecks);
+  const ageCeiling = ceilingMicros(book, plan.ageChecks);
+  // A bold photo is never priced below the dearest model of the route (the settings' model may cost more than Seedream 2K), and has no fallback attempt.
+  const boldWorst = boldAttempt === null ? 0 : boldPhotos * plan.attemptsPerSlot * (Math.max(boldAttempt, dearestAttempt) + ageCeiling);
+  // The expected figure never falls below the owner's model either: an ordinary frame of a «Смелая» category is drawn on it, one attempt.
+  const boldExpected = boldAttempt === null ? 0 : boldPhotos * (Math.max(boldAttempt, imageMicros(book, primary)) + ageTypical);
   return {
-    expectedMicros: safe(plan.photos * (imageMicros(book, primary) + typicalMicros(book, plan.ageChecks)) + writerTypical),
-    worstMicros: safe(
-      plan.photos * plan.attemptsPerSlot * (dearestAttempt + ceilingMicros(book, plan.ageChecks)) + (writer === null || load === null ? 0 : writerChunksMicros(book, writer, load.chunks)),
-    ),
+    expectedMicros: safe(plainPhotos * (imageMicros(book, primary) + ageTypical) + boldExpected + writerTypical),
+    worstMicros: safe(plainPhotos * plan.attemptsPerSlot * (dearestAttempt + ageCeiling) + boldWorst + (writer === null || load === null ? 0 : writerChunksMicros(book, writer, load.chunks))),
     priceSource: book.source,
+    ...(boldAttempt === null ? {} : { boldAttemptMicros: boldAttempt }),
   };
 }
 

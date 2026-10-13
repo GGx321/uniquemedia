@@ -9,14 +9,14 @@ import {
   type LaunchPreview,
   type LaunchView,
 } from "../../shared/engine/autopilot";
-import { isCustomCategory, legsNeedsBuiltIn, type CategoryPoses, type CategoryRef } from "../../shared/engine/categories";
+import { boldLevelNeeded, isCustomCategory, legsNeedsBuiltIn, type CategoryPoses, type CategoryRef, type SceneLevel } from "../../shared/engine/categories";
 import type { CoversOf } from "../../shared/scenes/writerBound";
 import { EngineFailure } from "../engineFailure";
 import type { Library } from "../library";
 import type { StoredCategory } from "../library/categories";
 import { coversOfStored } from "../scenes/coverage";
 import type { PriceModels, PricedBook } from "../money/priceCache";
-import type { RunModels } from "../runs/plan";
+import { isBoldLook, type RunModels } from "../runs/plan";
 import { launchPriceModels, unitPricesOf } from "./prices";
 import { buildLaunchPreview } from "./preview";
 import { readDraftHolds, type DraftHoldsReader } from "./draftHolds";
@@ -87,7 +87,7 @@ export class AutopilotCommands {
   }
 
   async estimate(input: LaunchDraftInput): Promise<LaunchPreview> {
-    this.#assertLegsFit(input);
+    this.#assertLegsAndBoldFit(input);
     const library = await this.#d.liveLibrary();
     const planned = await this.#plan(library, this.#withSeed(input));
     const blockers = await this.#launchBlockers(planned);
@@ -116,13 +116,17 @@ export class AutopilotCommands {
     });
   }
 
-  /** «Ножки» (S5.8a, I5.29) with no built-in category among the launch's categories: refused for free, before the library is read or anything is planned. */
-  #assertLegsFit(draft: { categories: readonly string[]; legsShare?: number | undefined }): void {
+  /**
+   * «Ножки» (S5.8a, I5.29) with no built-in category among the launch's categories, and a «Смелая» category (5a.3, S5.9c, I5.42) at a level other than «Смелая»: refused for free,
+   * before the library is read or anything is planned.
+   */
+  #assertLegsAndBoldFit(draft: { categories: readonly string[]; legsShare?: number | undefined; level?: SceneLevel | undefined }): void {
     if (legsNeedsBuiltIn(draft)) throw new EngineFailure({ code: "VALIDATION", launchReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the launch names none" });
+    if (boldLevelNeeded(draft)) throw new EngineFailure({ code: "VALIDATION", launchReason: "bold-level-needed", detail: "«Ночнушки и бельё» and «Пляж и бассейн» are drawn at the «Смелая» level only; the launch names one at another level" });
   }
 
   async start(input: { draft: LaunchDraft; acceptedWorstMicros: number }): Promise<LaunchView> {
-    this.#assertLegsFit(input.draft);
+    this.#assertLegsAndBoldFit(input.draft);
     const library = await this.#d.liveLibrary();
     const planned = await this.#plan(library, input.draft);
     const { plan, estimate } = planned;
@@ -185,7 +189,7 @@ export class AutopilotCommands {
     // A plan that generates nothing (Σn = 0, a library-only launch) needs no price and asks for none (§19): `unitPricesOf` wants the text model's price, which such a launch has
     // no use for, and a price list that cannot be read must not refuse a launch that spends nothing. Its estimate is zero.
     let unit: LaunchUnitPrices | null = null;
-    if (generates) unit = await this.#unitPrices(await this.#coversOf(library, draft.categories));
+    if (generates) unit = await this.#unitPrices(await this.#coversOf(library, draft.categories), isBoldLook(draft));
     const estimate = unit === null ? { avatars: [], worstMicros: 0, expectedMicros: 0, prices: "fallback" as const, pricesAsOf: new Date(this.#d.clock()).toISOString().slice(0, 10) } : launchEstimate(needs, unit);
     return { draft, plan, unit, estimate };
   }
@@ -200,10 +204,11 @@ export class AutopilotCommands {
     }
   }
 
-  async #unitPrices(covers: CoversOf): Promise<LaunchUnitPrices> {
+  /** 5a.3 (S5.9d, option B): `bold` is a draft that is «Смелая» with a «Смелая» category: every photo of the launch is priced at the Seedream 2K unit. */
+  async #unitPrices(covers: CoversOf, bold: boolean): Promise<LaunchUnitPrices> {
     const models = this.#d.models();
     const check = this.#d.imageAgeCheck();
-    return unitPricesOf(await this.#d.prices(launchPriceModels(models, check)), models, check, covers);
+    return unitPricesOf(await this.#d.prices(launchPriceModels(models, check, bold)), models, check, covers, bold);
   }
 
   /** Which of the draft's custom categories the code template covers, from their stored pools as the library holds them now (a built-in is always covered). */

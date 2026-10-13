@@ -13,9 +13,10 @@ import { plan } from "./planner";
 import { roomPlaceOf, slotLookOf } from "./roomPlace";
 import type { PlanSlot } from "./schema";
 import { revealingWordsIn } from "./words";
-import { CATEGORIES, type Category } from "./types";
+import { ORDINARY_BUILT_INS, type Category, type OrdinaryBuiltIn } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // S5.6R (round A): the owner's rules for the scene text, swept over the real path a run takes: the seeded planner, the code template (localSentences) and
 // the assembler, over 2 000 seeded plans per built-in category (12 slots each, the run's «Ракурсы» on for every other seed). The rules (the owner,
@@ -56,17 +57,17 @@ function framesOf(category: Category, seed: number, level: "ordinary" | "flirty"
 }
 
 // Built once, at load: 2 000 plans per category.
-const FRAMES: Record<Category, Frame[]> = Object.fromEntries(
-  CATEGORIES.map((category) => [category, Array.from({ length: PLANS }, (_, i) => framesOf(category, i + 1)).flat()]),
-) as Record<Category, Frame[]>;
-const ALL: Frame[] = CATEGORIES.flatMap((c) => FRAMES[c]);
+const FRAMES: Record<OrdinaryBuiltIn, Frame[]> = Object.fromEntries(
+  ORDINARY_BUILT_INS.map((category) => [category, Array.from({ length: PLANS }, (_, i) => framesOf(category, i + 1)).flat()]),
+) as Record<OrdinaryBuiltIn, Frame[]>;
+const ALL: Frame[] = ORDINARY_BUILT_INS.flatMap((c) => FRAMES[c]);
 
 // S5.7b: the same sweep under «Кокетливая» (7 of 12 slots flirty), on plan ids apart from the ordinary ones.
 const FLIRTY_PLANS = 1000;
-const FLIRTY: Record<Category, Frame[]> = Object.fromEntries(
-  CATEGORIES.map((category) => [category, Array.from({ length: FLIRTY_PLANS }, (_, i) => framesOf(category, i + 50_001, "flirty")).flat()]),
-) as Record<Category, Frame[]>;
-const FLIRTY_ALL: Frame[] = CATEGORIES.flatMap((c) => FLIRTY[c]);
+const FLIRTY: Record<OrdinaryBuiltIn, Frame[]> = Object.fromEntries(
+  ORDINARY_BUILT_INS.map((category) => [category, Array.from({ length: FLIRTY_PLANS }, (_, i) => framesOf(category, i + 50_001, "flirty")).flat()]),
+) as Record<OrdinaryBuiltIn, Frame[]>;
+const FLIRTY_ALL: Frame[] = ORDINARY_BUILT_INS.flatMap((c) => FLIRTY[c]);
 
 /** What a failing sweep shows: how many frames broke the rule, and a few of them. */
 function offenders(frames: readonly Frame[], broken: (frame: Frame) => boolean): { count: number; sample: string[] } {
@@ -213,12 +214,12 @@ describe("a gaze or an expression is said at most twice in a run of 20", () => {
   const mostSaid = (sentences: readonly string[], voices: readonly string[]): number => Math.max(0, ...voices.map((voice) => sentences.filter((s) => s.includes(voice)).length));
   const RUNS: string[][] = Array.from({ length: 500 }, (_, i) => {
     const seed = (i + 1) * 104729;
-    const p = plan({ seed, count: 20, categories: [...CATEGORIES] });
+    const p = plan({ seed, count: 20, categories: [...ORDINARY_BUILT_INS] });
     const runId = `run-mix-${seed}`;
     const local = localSentences({ slots: p.slots, keyOf: (s) => slotKeyOf(runId, s.attemptIdBase) });
     return p.slots.map((slot) => local(slot) ?? plainSentence(slot));
   });
-  const PLANS_OF_ONE: string[][] = CATEGORIES.flatMap((c) => Array.from({ length: PLANS }, (_, i) => FRAMES[c].slice(i * COUNT, (i + 1) * COUNT).map((f) => f.sentence)));
+  const PLANS_OF_ONE: string[][] = ORDINARY_BUILT_INS.flatMap((c) => Array.from({ length: PLANS }, (_, i) => FRAMES[c].slice(i * COUNT, (i + 1) * COUNT).map((f) => f.sentence)));
   const over = (runs: readonly string[][], voices: readonly string[]) => runs.filter((run) => mostSaid(run, voices) > 2).length;
 
   test("the runs say gazes and expressions", () => {
@@ -243,13 +244,13 @@ describe("«Кокетливая» plans keep the owner's rules (S5.7b)", () => 
   const isFlirtyFrame = (f: Frame): boolean => f.slot.level === "flirty";
   const FLIRTY_CUES = CUES.filter((c) => c.level === "flirty").map((c) => c.text);
   const FLIRTY_GAZES = GAZE.filter((g) => g.level === "flirty").map((g) => g.text);
-  const FLIRTY_MOMENTS = new Set(CATEGORIES.flatMap((c) => BANKS[c].places.flatMap((p) => p.moments.filter((m) => m.level === "flirty").map((m) => `${c}\u0000${p.name}\u0000${m.text}`))));
+  const FLIRTY_MOMENTS = new Set(ORDINARY_BUILT_INS.flatMap((c) => BANKS[c].places.flatMap((p) => p.moments.filter((m) => m.level === "flirty").map((m) => `${c}\u0000${p.name}\u0000${m.text}`))));
   const onFlirtyMoment = (f: Frame): boolean => FLIRTY_MOMENTS.has(`${f.slot.category}\u0000${f.slot.location}\u0000${f.slot.activity}`);
   const momentOfFrame = (f: Frame) => BANKS[f.slot.category as Category].places.find((p) => p.name === f.slot.location)?.moments.find((m) => m.text === f.slot.activity);
   const SAYS_FLIRTY = [...FLIRTY_CUES, ...FLIRTY_GAZES];
 
   test("every 12-slot plan holds exactly 7 flirty slots", () => {
-    for (const category of CATEGORIES) {
+    for (const category of ORDINARY_BUILT_INS) {
       for (let i = 0; i < FLIRTY_PLANS; i++) expect(FLIRTY[category].slice(i * COUNT, (i + 1) * COUNT).filter(isFlirtyFrame)).toHaveLength(7);
     }
   });
@@ -322,19 +323,19 @@ describe("«Кокетливая» plans keep the owner's rules (S5.7b)", () => 
 // 1.8). The owner's rules are asked again of the legs frames, ordinary and flirty: at home she shoots herself (the friend's `low-feet` is for places outside), the taxi is a selfie
 // place, side or back to the mirror shows only her reflection, prone is only on a bed, no denim shorts or skirts, natural poses, and nothing a youth prop or a revealing word.
 const LEGS_PLANS = 600;
-const LEGS: Record<Category, Frame[]> = Object.fromEntries(
-  CATEGORIES.map((category) => [category, Array.from({ length: LEGS_PLANS }, (_, i) => framesOf(category, i + 100_001, "ordinary", i % 2 === 0 ? 30 : 15)).flat()]),
-) as Record<Category, Frame[]>;
-const LEGS_FLIRTY: Record<Category, Frame[]> = Object.fromEntries(
-  CATEGORIES.map((category) => [category, Array.from({ length: LEGS_PLANS / 2 }, (_, i) => framesOf(category, i + 150_001, "flirty", 30)).flat()]),
-) as Record<Category, Frame[]>;
-const LEGS_ALL: Frame[] = CATEGORIES.flatMap((c) => [...LEGS[c], ...LEGS_FLIRTY[c]]);
+const LEGS: Record<OrdinaryBuiltIn, Frame[]> = Object.fromEntries(
+  ORDINARY_BUILT_INS.map((category) => [category, Array.from({ length: LEGS_PLANS }, (_, i) => framesOf(category, i + 100_001, "ordinary", i % 2 === 0 ? 30 : 15)).flat()]),
+) as Record<OrdinaryBuiltIn, Frame[]>;
+const LEGS_FLIRTY: Record<OrdinaryBuiltIn, Frame[]> = Object.fromEntries(
+  ORDINARY_BUILT_INS.map((category) => [category, Array.from({ length: LEGS_PLANS / 2 }, (_, i) => framesOf(category, i + 150_001, "flirty", 30)).flat()]),
+) as Record<OrdinaryBuiltIn, Frame[]>;
+const LEGS_ALL: Frame[] = ORDINARY_BUILT_INS.flatMap((c) => [...LEGS[c], ...LEGS_FLIRTY[c]]);
 const LEGS_FRAMES: Frame[] = LEGS_ALL.filter((f) => f.slot.framing === "legs");
 const WITH_BODY: AvatarDescriptor = { ...DESCRIPTOR, body: "a slim build with narrow hips" };
 
 describe("«Ножки» plans keep the owner's rules (S5.8a)", () => {
   test("every 12-slot plan holds the legs slots the formula gives: 3 at 30 %, 2 at 15 %", () => {
-    for (const category of CATEGORIES) {
+    for (const category of ORDINARY_BUILT_INS) {
       for (let i = 0; i < LEGS_PLANS; i++) {
         const plan12 = LEGS[category].slice(i * COUNT, (i + 1) * COUNT);
         expect(plan12.filter((f) => f.slot.framing === "legs")).toHaveLength(i % 2 === 0 ? 3 : 2);
@@ -343,13 +344,13 @@ describe("«Ножки» plans keep the owner's rules (S5.8a)", () => {
   });
 
   test("the sweep holds legs frames of every category, every legs capture, and feet in every one of them", () => {
-    expect([...new Set(LEGS_FRAMES.map((f) => f.slot.category))].sort()).toEqual([...CATEGORIES].sort());
+    expect([...new Set(LEGS_FRAMES.map((f) => f.slot.category))].sort()).toEqual([...ORDINARY_BUILT_INS].sort());
     expect([...new Set(LEGS_FRAMES.map((f) => f.capture))].sort()).toEqual(["low-feet", "mirror-hidden", "pov-legs"]);
-    expect(LEGS_FRAMES.length).toBeGreaterThan(LEGS_PLANS * CATEGORIES.length * 2);
+    expect(LEGS_FRAMES.length).toBeGreaterThan(LEGS_PLANS * ORDINARY_BUILT_INS.length * 2);
   });
 
   test("at home she shoots herself: no legs frame in a room is a photo someone else took, and `low-feet` is outside only", () => {
-    const rooms = new Set(CATEGORIES.flatMap((c) => [...roomsOf(c)]));
+    const rooms = new Set(ORDINARY_BUILT_INS.flatMap((c) => [...roomsOf(c)]));
     expect(offenders(LEGS_FRAMES, (f) => rooms.has(f.slot.location) && !isSelfShot(f.capture))).toEqual(NONE);
     expect(offenders(LEGS_FRAMES, (f) => f.capture === "low-feet" && (f.slot.category === "home" || rooms.has(f.slot.location)))).toEqual(NONE);
     expect(LEGS_FRAMES.filter((f) => f.capture === "low-feet").length).toBeGreaterThan(LEGS_PLANS);
@@ -428,14 +429,14 @@ describe("«Ножки» plans keep the owner's rules (S5.8a)", () => {
 
   test("a flirty plan with legs holds exactly 7 flirty slots of 12, a legs moment is never a flirty one, and an ordinary slot says nothing flirty", () => {
     const FLIRTY_VOICES = [...CUES.filter((c) => c.level === "flirty").map((c) => c.text), ...GAZE.filter((g) => g.level === "flirty").map((g) => g.text)];
-    for (const category of CATEGORIES) {
+    for (const category of ORDINARY_BUILT_INS) {
       for (let i = 0; i < LEGS_PLANS / 2; i++) {
         const plan12 = LEGS_FLIRTY[category].slice(i * COUNT, (i + 1) * COUNT);
         expect(plan12.filter((f) => f.slot.level === "flirty")).toHaveLength(7);
         expect(plan12.filter((f) => f.slot.framing === "legs")).toHaveLength(3);
       }
     }
-    const flirtyMoments = new Set(CATEGORIES.flatMap((c) => BANKS[c].places.flatMap((p) => p.moments.filter((m) => m.level === "flirty").map((m) => `${c}\u0000${p.name}\u0000${m.text}`))));
+    const flirtyMoments = new Set(ORDINARY_BUILT_INS.flatMap((c) => BANKS[c].places.flatMap((p) => p.moments.filter((m) => m.level === "flirty").map((m) => `${c}\u0000${p.name}\u0000${m.text}`))));
     expect(offenders(LEGS_FRAMES, (f) => flirtyMoments.has(`${f.slot.category}\u0000${f.slot.location}\u0000${f.slot.activity}`))).toEqual(NONE);
     expect(offenders(LEGS_ALL.filter((f) => f.slot.level !== "flirty"), (f) => FLIRTY_VOICES.some((voice) => f.sentence.includes(voice)))).toEqual(NONE);
   });
@@ -542,7 +543,7 @@ describe("C3′: no built-in skirt or shorts is left for Grok to draw as denim",
   const wearing = C3_ALL.filter((f) => BOTTOMS.test(f.slot.outfit));
 
   test("the sweep holds skirts or shorts in every category's frames", () => {
-    expect([...new Set(wearing.map((f) => f.slot.category))].sort()).toEqual([...CATEGORIES].sort());
+    expect([...new Set(wearing.map((f) => f.slot.category))].sort()).toEqual([...ORDINARY_BUILT_INS].sort());
   });
 
   test("every skirt, shorts or skort a built-in frame wears names its fabric", () => {
@@ -562,7 +563,7 @@ describe("C3′: a frame from behind or in profile shows what she is doing", () 
   const glance = C3_ALL.filter((f) => GLANCE_BACK_WORDS.test(f.slot.activity) && (f.capture === "friend" || f.capture === "candid" || f.capture === "timer"));
 
   test("the sweep holds away frames of every category, from behind and in profile", () => {
-    expect([...new Set(away.map((f) => f.slot.category))].sort()).toEqual([...CATEGORIES].sort());
+    expect([...new Set(away.map((f) => f.slot.category))].sort()).toEqual([...ORDINARY_BUILT_INS].sort());
     expect(away.some((f) => f.slot.pose === "back") && away.some((f) => f.slot.pose === "profile")).toBe(true);
   });
 

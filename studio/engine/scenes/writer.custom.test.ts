@@ -10,7 +10,7 @@ import { plan, planWithPools } from "./planner";
 import { POOLS, type Pool } from "./pools";
 import { lightOf } from "./phoneLook";
 import { ScenePlanSchema, type PlanSlot, type Pose } from "./schema";
-import { CATEGORIES, SHOTS as CANON_SHOTS } from "./types";
+import { CATEGORIES, ORDINARY_BUILT_INS, SHOTS as CANON_SHOTS } from "./types";
 import { chunkSlots, POSE_LABEL, REFUSAL_WORD_BYTES_MAX, REFUSAL_WORDS_MAX, SHOT_LABEL, writerMessages, writerRefusalText, WRITER_JSON_SCHEMA, type WriterRefusal } from "./writer";
 import { worstSlotList } from "./testing/worstSlotList";
 import { LLM_ONLY_POOL, LLM_ONLY_REF, llmOnlySnapshot } from "./testing/llmOnlyFixture";
@@ -112,14 +112,15 @@ describe("a flirty run leaves the model's slots ordinary", () => {
   // Guards the frozen writer-golden input: the model's request reads none of the fields the planner added (level, capture, legwear), so a live plan and the same plan without
   // them ask the model exactly the same, and the golden does not depend on the planner's own re-pins.
   test.each(["ordinary", "flirty"] as const)("the writer's messages of a live %s plan equal those of the same plan with level, capture and legwear stripped", (level) => {
-    const slots = plan({ seed: 3, count: 30, categories: [...CATEGORIES], ...(level === "flirty" ? { level } : {}) }).slots;
+    // 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): the five ordinary built-ins (the «Смелая» banks are template-only and never reach the writer), every assertion kept.
+    const slots = plan({ seed: 3, count: 30, categories: [...ORDINARY_BUILT_INS], ...(level === "flirty" ? { level } : {}) }).slots;
     expect(slots.some((slot) => slot.capture !== undefined || slot.legwear !== undefined)).toBe(true);
     const stripped = slots.map(({ level: _level, capture: _capture, legwear: _legwear, ...rest }) => rest);
     for (const chunk of [0, 1]) expect(sha(writerMessages(chunkSlots(slots)[chunk] ?? []))).toBe(sha(writerMessages(chunkSlots(stripped)[chunk] ?? [])));
   });
 
   test("the writer's messages never name a level for a built-in slot either: the prompt knows none", () => {
-    const slots = plan({ seed: 3, count: 30, categories: [...CATEGORIES], level: "flirty" }).slots;
+    const slots = plan({ seed: 3, count: 30, categories: [...ORDINARY_BUILT_INS], level: "flirty" }).slots;
     expect(slots.some((slot) => slot.level === "flirty")).toBe(true);
     expect(JSON.stringify(writerMessages(chunkSlots(slots)[0] ?? []))).not.toMatch(/flirty|level/i);
   });
@@ -324,9 +325,17 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
   // 453 -> 678 at S5.6b (5a.2): re-measured on the same builders (the longest real place, activity and outfit of the pools, now the banks', and the longest built-in label) after the bank
   // texts and BUILT_IN_LABEL changed. It only rose: the longest label went from «Own phone photos» (16) to «Glamour» / «Fitness» (7), 9 bytes in each of the 25 slots of a chunk (+225); the
   // longest bank texts are the 35-character bound the banks are held to, as before. The custom (253), scene-set (253) and idea (208) pins did not move.
+  // 678 -> 678 at S5.9b2 (5a.3, plan s5a3 §6.1, §15.4): re-measured with the two «Смелая» banks in the tables and their labels «Bedroom» (7) and «Beach» (5). Their texts keep to the
+  // 35-character bound and the longest label is still 7, so the worst chunk and the margin did not move (their slots are template-only: the writer never sees one).
   const BUILT_IN_MARGIN_PRINTED = 678;
   test("the built-in margin printed here is the measured one: re-measure it when the writer's prompt or a built-in text changes", () => {
     expect(CEILING - builtInFloor()).toBe(BUILT_IN_MARGIN_PRINTED);
+  });
+
+  test("the margin is measured over every built-in, the two «Смелая» ones included, and their labels are no longer than the longest", () => {
+    expect([...CATEGORIES]).toEqual(expect.arrayContaining(["nightwear", "beach"]));
+    expect(WORST_BUILT_IN_LABEL.length).toBe(7);
+    expect(Math.max(...outfitsOf().map((o) => o.length), ...activitiesOf().map((a) => a.length), ...placesOf().map((p) => p.length))).toBe(POOL_TEXT_MAX);
   });
 
   test("the worst built-in chunk is built from the longest real place, activity and outfit", () => {

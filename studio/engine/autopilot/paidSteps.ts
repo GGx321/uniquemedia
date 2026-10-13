@@ -11,7 +11,7 @@ import { pendingChunks } from "../sceneSets/chunks";
 import type { LiveScope } from "./room";
 import type { FileAvatar, LaunchFile } from "./launchFile";
 import { causeOf, failureRateTripped, isWaitingHold, NETWORK_WAITS_MS, PRICE_WAITS_MS, sameHold } from "./paidFailures";
-import { NOT_PAYABLE_DETAIL, type LaunchComposePayload, type PaidPort } from "./paidPort";
+import { NOT_PAYABLE_DETAIL, type LaunchComposePayload, type PaidPort, type PhotoLook } from "./paidPort";
 import type { AvatarMirror, ContinueInput, ContinueOutcome, LaunchSteps, LaunchStepsContext, MirrorSource, StepTimers, TimerHandle } from "./steps";
 
 // Stage 4, S4.6b1 (plan §3.2, §3.4, §3.6 rows 2–5, §4.3, §4.4, §4.7, §18, §19): the launch's PAID path, plugged in behind `LaunchSteps`. Per avatar that generates:
@@ -89,6 +89,11 @@ function composeLookOf(draft: LaunchFile["draft"], split: readonly { ref: string
   const legs = legsShare > 0 && split.some((s) => !isCustomCategory(s.ref));
   return { ...(draft.level === undefined ? {} : { level: draft.level }), ...(legs ? { legsShare } : {}) };
 }
+/** What of the draft prices a photo (option B, 5a.3 S5.9d): «Подача» only when the draft chose one, and the categories it draws. */
+function photoLookOf(draft: LaunchFile["draft"]): PhotoLook {
+  return { ...(draft.level === undefined ? {} : { level: draft.level }), categories: draft.categories };
+}
+
 /** The price request of a slice's sizing, in the same counters. */
 const PRICES_JOB = "prices";
 
@@ -715,7 +720,7 @@ export class PaidSteps implements LaunchSteps {
     const port = this.#d.port();
     let photoWorst: number;
     try {
-      photoWorst = await port.photoWorstMicros();
+      photoWorst = await port.photoWorstMicros(photoLookOf(ctx.file().draft));
     } catch (error) {
       // PRICE_UNAVAILABLE retries after 5, 15 and 60 minutes; a drop of the price request is a drop like any other; anything else is told and left.
       return this.#raise(ctx, row.avatarId, PRICES_JOB, error);
@@ -934,7 +939,7 @@ export class PaidSteps implements LaunchSteps {
         // A compose or «Дописать» stopped by the month: the hold of §4.6's «BUDGET_EXCEEDED at a step start», needing the room for the step's own worst case.
         const port = this.#d.port();
         try {
-          const need = scene === undefined ? await port.photoWorstMicros() : (await port.writeEstimate(scene.sceneSetId)).worstMicros;
+          const need = scene === undefined ? await port.photoWorstMicros(photoLookOf(ctx.file().draft)) :(await port.writeEstimate(scene.sceneSetId)).worstMicros;
           const room = port.monthRoom();
           await this.#hold(ctx, avatarId, { reason: "budget", at, detail: budgetHoldDetail({ kind: "new-slice", freeMicros: room?.freeMicros ?? 0, photoWorstMicros: need }) });
           return "end";

@@ -4,6 +4,8 @@
 // PHONE_WORDS and SELFIE_WORDS are the engine's own (engine/scenes/pools.ts, S5.4 and C1): the template needs them here, where it may not import the
 // engine. engine/scenes/banks.sweep.test.ts pins the two copies equal until S5.6b points pools.ts at these.
 
+import { foldedForms } from "../engine/ageText";
+
 /** Her phone named in a text: the phone is in her hand or in use. */
 export const PHONE_WORDS = /\b(phones?|smartphones?|iphones?|cellphones?|texting|facetime)\b/i;
 
@@ -253,4 +255,37 @@ export function ownerBannedOutfitWords(text: string): string[] {
   const told = new Set<string>();
   for (const match of text.matchAll(new RegExp(DENIM_BOTTOM_WORDS.source, "gi"))) told.add(/shorts|hot\s+pants|cut-?offs?|jorts/i.test(match[0]) ? "denim shorts" : "denim skirt");
   return [...told];
+}
+
+/**
+ * Spec words plus plural/adjective forms for the outfits Stage 2 disables: swimwear, sports bras, lingerie, stockings, slip dresses and robes. S5.9b1: moved
+ * here from engine/scenes/words.ts, so the content-line module (contentLine.ts) and the renderer's mock read the one list. S5.9b1 review (a bug fix of the
+ * same rule: lingerie and swimwear stay in «Смелая», where ordinary and flirty go to a model that refuses them): underwear and nudity words (panties, bras,
+ * bralettes, underwear, briefs, topless, naked) joined the list and every garment took its plural. «nude» stays out (nude lipstick, nude heels).
+ * This is the raw list: read a text through `revealingWordsIn` / `hasRevealingWord`, which fold it first.
+ */
+export const REVEALING_WORDS =
+  /\b(bikinis?|swimsuits?|swimwear|lingerie|sports bras?|thongs?|stockings?|slip dress(?:es)?|robes? over lingerie|panties|panty|bras?|bralettes?|underwear|briefs|topless|naked)\b/i;
+
+/** The revealing words a text uses, exactly as it wrote them (after the fold), in order. */
+export function revealingWordsIn(text: string): string[] {
+  const forms = foldedForms(text);
+  // A fresh global-flagged regex per call (never reused across calls): `RegExp.prototype.test`/`exec` on a shared global regex carries a mutable
+  // `lastIndex`, which would silently skip matches on alternating calls — `REVEALING_WORDS` stays flag-`i`-only for exactly that reason.
+  const found = (form: string): string[] => Array.from(form.matchAll(new RegExp(REVEALING_WORDS, "gi")), (m) => m[0]);
+  const plain = found(forms.text);
+  // Spaced-out letters ("b i k i n i") are read from the joined form; a word the plain form already named is not named twice.
+  const unspent = plain.map((word) => word.toLowerCase());
+  const extra = found(forms.joined).filter((word) => {
+    const at = unspent.indexOf(word.toLowerCase());
+    if (at < 0) return true;
+    unspent.splice(at, 1);
+    return false;
+  });
+  return [...plain, ...extra];
+}
+
+/** Whether the text uses any revealing word, folded the same way (a plain boolean guard). */
+export function hasRevealingWord(text: string): boolean {
+  return revealingWordsIn(text).length > 0;
 }

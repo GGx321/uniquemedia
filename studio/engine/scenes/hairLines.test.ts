@@ -102,4 +102,18 @@ describe("hairLinesOf", () => {
   test("no slots, no lines", () => {
     expect(hairLinesOf([], "bob", "run-1").size).toBe(0);
   });
+
+  // 5a.3 (S5.9c): the beach's straw hat takes no cap on top of it.
+  test("a beach slot in a straw hat gets no cap, over many runs", () => {
+    let hats = 0;
+    for (let seed = 1; seed <= 60; seed++) {
+      const beach = plan({ seed, count: 40, categories: ["beach"], level: "bold" }).slots;
+      const lines = hairLinesOf(beach, "long", `run-${seed}`);
+      for (const slot of beach.filter((s) => /\bhat\b/.test(s.outfit))) {
+        hats++;
+        expect(styleOf(lines.get(slot.slotIndex) ?? "")?.cap).not.toBe(true);
+      }
+    }
+    expect(hats).toBeGreaterThan(20);
+  });
 });

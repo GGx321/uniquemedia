@@ -3,6 +3,7 @@ import { BANKS } from "./banks";
 import type { BankCategory, BankPlace, Level, Moment, Outfit } from "./banks/types";
 import { posesFor, shotOf, type Capture } from "./captures";
 import { fnv1a } from "./hash";
+import { atOrBelow } from "./level";
 import { momentAllowed, type TemplateSlot } from "./render";
 import { legwearFits } from "./template";
 
@@ -12,6 +13,9 @@ import { legwearFits } from "./template";
 // least-used one the slot allows at that place, then the outfit (a pinned one first) and the legwear. When the place has no moment for the slot, the
 // fallback chain runs and is counted: another place with one, then the capture's family (mirror-hidden → mirror → selfie, prone → above → selfie,
 // timer → friend, but timer → selfie on «Дом»), then a three-quarter pose, then a friend for a candid. The real planner must draw moments as evenly (I5.24).
+// 5a.3 (S5.9b2): every slot of a plan is at the plan's level, and the hard rule of I5.37 holds: no slot takes a moment or an outfit above it (a pinned outfit
+// included). The five's outfits carry no level, so their plans do not move. Stockings ride with the real planner's bold draw and the template's bold legwear
+// (S5.9c), so a bold slot here wears no legwear.
 
 /** A small seeded generator (mulberry32 over fnv1a): test-only, never in a production module. */
 function generator(seed: string): () => number {
@@ -65,8 +69,8 @@ export function simulatePlan(category: BankCategory, n: number, seed: number, le
   const next = generator(`${category}:${seed}:${level}`);
   const nextPlace = bag(next, bank.places);
   const nextCapture = bag(next, bank.captureDeck);
-  // A pin-only outfit stays out of the general draw: only a moment that pins it wears it.
-  const nextOutfit = bag(next, bank.outfits.filter((o) => o.pinOnly !== true));
+  // A pin-only outfit stays out of the general draw: only a moment that pins it wears it. Nor does an outfit above the plan's level.
+  const nextOutfit = bag(next, bank.outfits.filter((o) => o.pinOnly !== true && atOrBelow(o.level, level)));
   const places = Array.from({ length: n }, nextPlace);
   const captures: Capture[] = Array.from({ length: n }, nextCapture);
   // Mirror placement: a mirror capture swaps with a later slot on a mirror place that holds none; with none left it steps down to a selfie.
@@ -135,12 +139,13 @@ export function simulatePlan(category: BankCategory, n: number, seed: number, le
     used.set(moment, (used.get(moment) ?? 0) + 1);
     order.set(place.name, [...(order.get(place.name) ?? []).filter((m) => m !== moment), moment]);
 
-    const pinned = moment.outfits;
+    const pinned = moment.outfits?.filter((text) => atOrBelow(bank.outfits.find((o) => o.text === text)?.level, level));
+    if (pinned !== undefined && pinned.length === 0) throw new Error(`${category}: «${moment.text}» pins no outfit a ${level} slot may wear`);
     const pinnedText = pinned === undefined ? undefined : pinned[Math.floor(next() * pinned.length)];
     const pinnedOutfit = bank.outfits.find((o) => o.text === pinnedText);
     if (pinned !== undefined && pinnedOutfit === undefined) throw new Error(`${category}: «${moment.text}» pins an outfit the bank does not have`);
     const outfit: Outfit = pinnedOutfit ?? nextOutfit();
-    const legwearItems = bank.legwear?.items ?? [];
+    const legwearItems = level === "bold" ? [] : (bank.legwear?.items ?? []);
     const legwear = legwearItems.length > 0 && legwearFits(moment, outfit) && next() < (bank.legwear?.share ?? 0) ? legwearItems[Math.floor(next() * legwearItems.length)] : undefined;
     return {
       category,

@@ -9,14 +9,15 @@ import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import { timeoutSignal, untilAborted, type TimeoutSignal } from "../money/timeoutSignal";
 import { truncate } from "../openrouter/transport";
-import type { ImageOk, ImageResult, OpenRouterClient, OpenRouterFetch } from "../openrouter/types";
+import type { BoldImageParams, ImageOk, ImageParams, ImageResult, OpenRouterClient, OpenRouterFetch } from "../openrouter/types";
 import { assembleRun, hairLinesOf, isOwnSlot, photoCategoryOf, plainSentence, roomPlaceOf, slotLookOf, type AssembledSlot } from "../scenes";
 import type { HairLength } from "../../shared/scenes/banks/types";
 import { localSentences } from "../scenes/localSentences";
 import { slotKeyOf } from "../scenes/phoneLook";
 import { classifyFailure } from "./failures";
-import { foldRun, nextAttemptId, paidAttempts, RunEventSchema, type AttemptOutcome, type LedgerView, type RunEvent, type RunState, type SlotEnd, type SlotState } from "./journal";
-import { RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, plannedSlots, planRoute, runWriterConfig, type RunPlan } from "./plan";
+import { foldRun, isBoldSlot, nextAttemptId, paidAttempts, RunEventSchema, type AttemptOutcome, type LedgerView, type RunEvent, type RunState, type SlotEnd, type SlotState } from "./journal";
+import { BOLD_IMAGE_MODEL, boldRoute, RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, plannedSlots, planRoute, runWriterConfig, type RunPlan } from "./plan";
+import { boldPrompt } from "./boldPrompt";
 import type { CpuPool, NetworkPool, Release } from "./pools";
 import { withReferenceRetry } from "./faceBytes";
 import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaPrepareInput, type QaVerdict } from "./qa";
@@ -153,6 +154,10 @@ interface Context {
   scope: Scope;
   primary: ReturnType<typeof planRoute>[0];
   fallback: ReturnType<typeof planRoute>[0] | null;
+  /** 5a.3 (S5.9d): the model a Seedream-route slot is sent to (the plan's `models.bold`; a plan that names a route slot but not the model gets the one Seedream model there is). */
+  boldModel: string;
+  /** 5a.3 (S5.9d, §8.3): how many Seedream slots of THIS RUN (earlier jobs included, seeded from the fold) ended on a 2xx without an image. A second one stops sending: two empty paid answers with no moderation behind them are systemic. */
+  boldEmpty: number;
   /** The first reason no attempt may start any more: a fatal error, or an attempt that got no answer. */
   halt: EngineError | null;
   /** A QA gate could not run: images that arrive now cannot be judged, so they are dropped. */
@@ -433,7 +438,9 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
   const assembled = new Map<number, string>();
   for (const result of results) {
     if (result.ok) {
-      assembled.set(result.slotIndex, result.prompt);
+      // 5a.3 (S5.9d): a Seedream slot's prompt gets the route's own hair and skin cue (boldPrompt.ts) before it is journaled, so a resume sends what was written.
+      const bold = openSlots.some((s) => s.slot.slotIndex === result.slotIndex && isBoldSlot(s.slot));
+      assembled.set(result.slotIndex, bold ? boldPrompt(result.prompt) : result.prompt);
       continue;
     }
     const ended = openSlots.find((s) => s.slot.slotIndex === result.slotIndex);
@@ -660,6 +667,8 @@ function photoMeta(ctx: Context, slot: SlotState, attemptId: string, model: stri
       category: photoCategoryOf(slot.slot.category),
       ...(categoryName === undefined ? {} : { categoryName }),
       costMicros: image.costMicros,
+      // 5a.3 (S5.9d, gap A): written only for a slot planned on the Seedream route, since the model id cannot tell it from the 1K moderation fallback's.
+      ...(isBoldSlot(slot.slot) ? { route: "seedream" as const } : {}),
     },
     qa,
   };
@@ -762,6 +771,14 @@ function fallbackEndError(slot: SlotState, lastError: EngineError | null): Engin
   }
 }
 
+/** Why a Seedream slot whose last attempt already ended it ends on resume: the journaled error, else the one its ending implies. */
+function boldEndErrorOf(slot: SlotState): EngineError {
+  if (slot.boldEndError !== null) return slot.boldEndError;
+  return slot.boldEnded === "empty"
+    ? { code: "INTERNAL", sceneReason: "model-empty", detail: "the Seedream answer had no usable image" }
+    : { code: "MODERATION_REFUSED", sceneReason: "model-refused", detail: "Seedream refused this scene through content moderation" };
+}
+
 /**
  * One slot's attempts until it ends, the run stops sending, or the Budget
  * refuses its next reserve. Every decision that stops other slots is made
@@ -775,8 +792,12 @@ async function runSlot(ctx: Context, slot: SlotState, prompt: string, master: Li
   const { deps, job } = ctx;
   const ledger: LedgerView = { reserveOf: (id) => deps.budget.ledger.reserveOf(id), closeOf: (id) => deps.budget.ledger.closeOf(id) };
   let lastError: EngineError | null = null;
+  // 5a.3 (S5.9d, plan s5a3 §8): a slot drawn on the Seedream route is sent to the bold model at 2K with the master as its one reference, never to the settings' model and
+  // never to a fallback. Its refusal is final and free, a 2xx without an image ends it alone, and nothing that got no answer ever ends it.
+  const bold = isBoldSlot(slot.slot);
   for (;;) {
     if (!sending(ctx)) return;
+    if (slot.boldEnded !== null) return endSlot(ctx, slot, { status: "failed", error: boldEndErrorOf(slot) });
     if (slot.fallbackUsed) return endSlot(ctx, slot, { status: "failed", error: fallbackEndError(slot, lastError) });
     // Invariant 7: at most three PAID attempts; free failures used spare ids (review round 3).
     if (paidAttempts(slot, ledger) >= RUN_ATTEMPTS_PER_SLOT) {
@@ -786,8 +807,8 @@ async function runSlot(ctx: Context, slot: SlotState, prompt: string, master: Li
     if (attemptId === null) {
       return endSlot(ctx, slot, { status: "failed", error: lastError ?? { code: "INTERNAL", detail: `every attempt of slot ${slot.slot.slotIndex} was already used` } });
     }
-    const onFallback = slot.useFallbackNext && ctx.fallback !== null;
-    const choice = onFallback && ctx.fallback !== null ? ctx.fallback : ctx.primary;
+    const onFallback = !bold && slot.useFallbackNext && ctx.fallback !== null;
+    const choice = bold ? boldRoute(ctx.boldModel) : onFallback && ctx.fallback !== null ? ctx.fallback : ctx.primary;
 
     let release: Release;
     try {
@@ -804,7 +825,7 @@ async function runSlot(ctx: Context, slot: SlotState, prompt: string, master: Li
     if (onFallback) slot.fallbackUsed = true;
     let result: ImageResult;
     try {
-      result = await deps.generateImage({
+      const common: Omit<ImageParams, "quality" | "references" | "resolution"> = {
         attemptId,
         jobId: job.jobId,
         scope: ctx.scope,
@@ -815,9 +836,10 @@ async function runSlot(ctx: Context, slot: SlotState, prompt: string, master: Li
         beforeSend: () => sending(ctx),
         prompt,
         aspectRatio: RUN_ASPECT_RATIO,
-        quality: choice.quality,
-        references: [master],
-      });
+      };
+      // The bold request is typed to carry exactly one reference (BoldImageParams); every other request is the one it always was, at the default 1K.
+      const request: ImageParams = bold ? ({ ...common, quality: null, resolution: "2K", references: [master] } satisfies BoldImageParams) : { ...common, quality: choice.quality, references: [master] };
+      result = await deps.generateImage(request);
     } finally {
       release();
     }
@@ -840,6 +862,12 @@ async function runSlot(ctx: Context, slot: SlotState, prompt: string, master: Li
         await attemptEvent(ctx, slot, attemptId, choice.model, "aborted");
         return;
       case "refused": {
+        if (bold) {
+          // Free (settled at zero) and final: no other model, no spare id, no retry. The slot ends alone; the run goes on.
+          const refused: EngineError = { code: "MODERATION_REFUSED", sceneReason: "model-refused", detail: truncate(result.message) };
+          await attemptEvent(ctx, slot, attemptId, choice.model, "refused", { error: refused });
+          return endSlot(ctx, slot, { status: "failed", error: refused });
+        }
         const error: EngineError = { code: "MODERATION_REFUSED", detail: truncate(result.message) };
         lastError = error;
         const canFallBack = !onFallback && ctx.fallback !== null && !slot.fallbackUsed;
@@ -849,6 +877,15 @@ async function runSlot(ctx: Context, slot: SlotState, prompt: string, master: Li
         continue;
       }
       case "error": {
+        if (bold && result.kind === "UNUSABLE_PAID_RESPONSE") {
+          // A 2xx without a usable image on the Seedream route (settled by the money core at its bill, else the 2K list price, estimated). It ends THIS slot, never the run:
+          // Seedream's moderation answers with a 400, so this is not a content refusal. A second one in the run is systemic and stops sending (before anything awaits).
+          const empty: EngineError = { code: "INTERNAL", sceneReason: "model-empty", detail: truncate(result.message) };
+          ctx.boldEmpty++;
+          if (ctx.boldEmpty >= 2) stopSending(ctx, { code: "INTERNAL", detail: "two Seedream answers in this run came back without an image; nothing more is sent" });
+          await attemptEvent(ctx, slot, attemptId, choice.model, "failed", { error: empty });
+          return endSlot(ctx, slot, { status: "failed", error: empty });
+        }
         const failure = classifyFailure(result);
         if (failure.kind !== "next-attempt") stopSending(ctx, failure.error);
         lastError = failure.error;
@@ -890,6 +927,8 @@ async function work(ctx: Context): Promise<RunJobEnd> {
     closeOf: (attemptId) => deps.budget.ledger.closeOf(attemptId),
     photos: deps.library.photosByAvatar(plan.avatarId),
   });
+  // The empty-answer guard counts the whole run, not this job: a resume starts from the Seedream slots the run already ended empty (their slot line, or their last attempt when the line was lost).
+  ctx.boldEmpty = state.slots.filter((s) => s.boldEnded === "empty" || (s.end?.status === "failed" && s.end.error.sceneReason === "model-empty")).length;
   ctx.total = state.slots.length;
   ctx.done = state.slots.filter((s) => s.end !== null).length;
   if (job.signal.aborted || softStopped(ctx)) return { status: "cancelled" };
@@ -955,6 +994,8 @@ export async function runPhotoRun(deps: RunJobDeps, job: RunJob): Promise<RunJob
     scope: { runId: job.plan.runId },
     primary: route[0],
     fallback: route[1] ?? null,
+    boldModel: job.plan.models.bold ?? BOLD_IMAGE_MODEL,
+    boldEmpty: 0,
     halt: null,
     gatesBroken: false,
     limited: null,

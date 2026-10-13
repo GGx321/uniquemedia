@@ -107,6 +107,7 @@ import { AutopilotCommands } from "./autopilot/commands";
 import { LaunchGroups, launchGroupKey } from "./autopilot/groups";
 import { LaunchStores } from "./autopilot/lookup";
 import { Orchestrator, type Admission, type Prepared } from "./autopilot/orchestrator";
+import type { PhotoLook } from "./autopilot/paidPort";
 import { monthRoom, type LiveScope } from "./autopilot/room";
 import { createBalanceProbe, type Balance } from "./money/balance";
 import { exportGateOf } from "./autopilot/exportGate";
@@ -138,9 +139,9 @@ import { priceFetchFrom } from "./openrouter/priceFetch";
 import { ImageCatalogueCache, loadImageCatalogue } from "./imageModels/catalogue";
 import { rawFileName, saveRawBody } from "./rawStore";
 import { foldRun, RunEventSchema, type LedgerView, type RunState } from "./runs/journal";
-import { buildRunPlan, buildSceneRunPlan, RunPlanSchema, runEstimate, runEstimateFromScenes, runPriceModels, sceneCategory, sceneRunPriceModels, type RunPlan } from "./runs/plan";
+import { buildRunPlan, buildSceneRunPlan, isBoldLook, requestBoldPhotos, routedScenes, routedSlots, RunPlanSchema, runEstimate, runEstimateFromScenes, runPriceModels, sceneCategory, sceneRunPriceModels, type RunPlan } from "./runs/plan";
 import { commitApproval, findSceneSet, loadApprovable } from "./sceneSets/approve";
-import { assertLegsFit, sceneRefusal } from "./sceneSets/refusal";
+import { assertBoldFit, assertLegsFit, sceneRefusal } from "./sceneSets/refusal";
 import type { StoredSceneSet } from "./library/sceneSets";
 import { runSnapshots, runSources } from "./sceneSets/toRun";
 import { CpuPool, NetworkPool } from "./runs/pools";
@@ -386,7 +387,9 @@ export const RECENT_PAIRS = 40;
 /** The models a stored run needs priced now: a run made from a scene set never asks the text model, so it needs no text price. */
 function runPlanPriceModels(plan: RunPlan): PriceModels {
   const models = { imageModel: plan.models.image, textModel: plan.models.text };
-  return plan.sceneSetId === undefined ? runPriceModels(models, plan.imageAgeCheck) : sceneRunPriceModels(models, plan.imageAgeCheck);
+  // 5a.3 (S5.9d): a plan with Seedream slots also loads the 2K shape of that endpoint, so a resume is priced at the tier it will be sent at.
+  const bold = routedSlots(plan.scenes.slots);
+  return plan.sceneSetId === undefined ? runPriceModels(models, plan.imageAgeCheck, bold) : sceneRunPriceModels(models, plan.imageAgeCheck, bold);
 }
 
 /** A run's planner seed: fixed by its id, so the plan is reproducible from the run alone. */
@@ -495,8 +498,10 @@ export function engineErrorFrom(error: unknown): EngineError {
       case "LEDGER_CORRUPT":
       case "LEDGER_WRITE_FAILED":
       case "SETTLE_ABOVE_WORST":
-      case "PRICE_UNAVAILABLE":
         return { code: error.code, detail };
+      case "PRICE_UNAVAILABLE":
+        // 5a.3 (S5.9d, gap D): a price list that lacks only the «Смелая» route's 2K tier says so, so the card can tell the owner the rest still works.
+        return { code: error.code, detail, ...(error.scope === "bold" ? { priceScope: "bold" as const } : {}) };
       case "LEDGER_TORN":
         return { code: "RECONCILE_REQUIRED", detail };
       default:
@@ -1563,14 +1568,16 @@ export class Engine {
       this.#runnableAvatar(library, avatarId);
       const models = this.#avatarModels();
       const { imageAgeCheck, cameraRealism } = this.#settings;
-      const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck));
+      // 5a.3 (S5.9d, option B): a «Смелая» launch with a «Смелая» category prices EVERY photo of its slices at the Seedream unit, so the cap is the one the launch accepted.
+      const bold = isBoldLook(set.request);
+      const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck, bold ? 1 : 0));
       const statuses = await this.#sliceStatuses(library, set);
       const createdAt = new Date(this.#deps.clock()).toISOString();
       const drawn = await drawLaunchSlice(
         { library, isLive: (id) => this.#sceneSets.isLive(id), registry: this.#launches, onRun: (runId, launchId) => this.#addRunToGroup(runId, launchId) },
         {
           ...input,
-          capFor: (count) => runEstimateFromScenes(priced, models, { count }, imageAgeCheck).worstMicros,
+          capFor: (count) => runEstimateFromScenes(priced, models, { count, ...(bold ? { boldPhotos: count } : {}) }, imageAgeCheck).worstMicros,
           statusOf: (runId) => statuses.get(runId) ?? { finished: false },
           newId: () => this.#deps.newId(),
           build: (current, slice) => {
@@ -1686,11 +1693,13 @@ export class Engine {
   }
 
   /** One photo's worst case at today's prices for the avatars' models: priced as a run prices it, without the text model's price (a library-only launch never asks for it). */
-  async photoWorstMicros(): Promise<number> {
+  async photoWorstMicros(look?: PhotoLook): Promise<number> {
     const models = this.#avatarModels();
     const { imageAgeCheck } = this.#settings;
-    const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck));
-    return runEstimateFromScenes(priced, models, { count: 1 }, imageAgeCheck).worstMicros;
+    // 5a.3 (S5.9d, option B): the launch's draft says whether its photos are priced at the Seedream unit.
+    const bold = look !== undefined && isBoldLook(look);
+    const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck, bold ? 1 : 0));
+    return runEstimateFromScenes(priced, models, { count: 1, ...(bold ? { boldPhotos: 1 } : {}) }, imageAgeCheck).worstMicros;
   }
 
   /**
@@ -2388,18 +2397,20 @@ export class Engine {
       case "runs.estimate": {
         // S5.8a: «Ножки» with no built-in category is refused first, for free.
         assertLegsFit(command.payload);
+        assertBoldFit(command.payload);
         // Free: NOT_FOUND for an avatar that cannot get photos, DESCRIPTOR_INVALID before any price is fetched for it.
         this.#runnableAvatar(this.library, command.payload.avatarId);
         // NOT_FOUND for a custom category the library does not hold (never one the owner deleted), before any price is fetched.
         const custom = await this.#customCategories(this.library, command.payload.categories);
         const models = this.#avatarModels();
         const imageAgeCheck = this.#settings.imageAgeCheck;
-        const estimate = runEstimate(await this.#prices.get(runPriceModels(models, imageAgeCheck)), models, command.payload, imageAgeCheck, coversOfStored(custom));
+        const estimate = runEstimate(await this.#prices.get(runPriceModels(models, imageAgeCheck, requestBoldPhotos(command.payload))), models, command.payload, imageAgeCheck, coversOfStored(custom));
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { estimate } };
       }
       case "runs.start": {
         const { avatarId } = command.payload;
         assertLegsFit(command.payload);
+        assertBoldFit(command.payload);
         // Claimed before the first await, like generateCandidates: the library switch's race check relies on it.
         this.#claimAvatar(avatarId, "a photo run or another job is already changing this avatar; wait for it to finish");
         this.#paidCommands++;
@@ -3048,7 +3059,7 @@ export class Engine {
     this.#assertAgeGate(imageAgeCheck);
     this.#assertFaceGate();
     const models = this.#avatarModels();
-    const priced = await this.#prices.get(runPriceModels(models, imageAgeCheck));
+    const priced = await this.#prices.get(runPriceModels(models, imageAgeCheck, requestBoldPhotos(payload)));
     // 5a.2 (S5.6c2): priced from the same read of the custom categories the planner draws from, so the cap is the writer's true worst for THESE pools.
     const estimate = runEstimate(priced, models, payload, imageAgeCheck, coversOfStored(custom));
     Engine.#checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
@@ -3088,7 +3099,7 @@ export class Engine {
       runId,
       avatarId,
       createdAt: new Date(this.#deps.clock()).toISOString(),
-      request: { avatarId, count, categories, ...(poses === undefined ? {} : { poses }), ...(level === "flirty" ? { level } : {}), ...(legsShare === undefined ? {} : { legsShare }) },
+      request: { avatarId, count, categories, ...(poses === undefined ? {} : { poses }), ...(level === "flirty" || level === "bold" ? { level } : {}), ...(legsShare === undefined ? {} : { legsShare }) },
       imageAgeCheck,
       models,
       capMicros: estimate.worstMicros,
@@ -3114,7 +3125,10 @@ export class Engine {
     this.#runnableAvatar(library, avatarId);
     const models = this.#avatarModels();
     const imageAgeCheck = this.#settings.imageAgeCheck;
-    return runEstimateFromScenes(await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck)), models, { count: runSources(set).length }, imageAgeCheck);
+    // 5a.3 (S5.9d): the scenes drawn on the Seedream route are priced at 2K, exactly (each scene's own `route`).
+    const sources = runSources(set);
+    const bold = routedScenes(sources);
+    return runEstimateFromScenes(await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck, bold)), models, { count: sources.length, boldPhotos: bold }, imageAgeCheck);
   }
 
   /**
@@ -3129,9 +3143,20 @@ export class Engine {
     const models = this.#avatarModels();
     const imageAgeCheck = this.#settings.imageAgeCheck;
     if ("count" in payload) {
+      // S5.R4-fix: a «Смелая» category below «Смелая» is refused free, as `runs.estimate` refuses it; the «Смелая» share is the one the run estimate prices at the 2K unit (same split).
+      const categories = payload.categories ?? [];
+      assertBoldFit({ categories, level: payload.level });
       this.#runnableAvatar(library, payload.avatarId);
-      const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck));
-      return { estimate: runEstimateFromScenes(priced, models, { count: payload.count }, imageAgeCheck), photos: payload.count };
+      // Round 2: for a stored set the bold share is read from its ACTIVE scenes' own routes (the path `runs.estimateFromScenes` prices by), never split from the count: the scenes
+      // that were removed or gave up decide which frames are left, and a split would put a Seedream frame on the wrong scene.
+      let bold = requestBoldPhotos({ count: payload.count, categories });
+      if (payload.sceneSetId !== undefined) {
+        const set = await library.sceneSets.get(payload.avatarId, payload.sceneSetId);
+        if (set === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no scene set ${payload.sceneSetId} for avatar ${payload.avatarId}` });
+        bold = Math.min(payload.count, routedSlots(set.scenes.flatMap((scene) => (!scene.removed && scene.origin === "planned" ? [scene.slot] : []))));
+      }
+      const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck, bold));
+      return { estimate: runEstimateFromScenes(priced, models, { count: payload.count, boldPhotos: bold }, imageAgeCheck), photos: payload.count };
     }
     const { launchId, avatarId } = payload;
     const view = this.#orchestrator.snapshotView();
@@ -3140,15 +3165,17 @@ export class Engine {
     if (row === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `launch ${launchId} holds no avatar ${avatarId}` });
     const sceneSetId = this.#orchestrator.sceneSetOf(avatarId);
     const set = sceneSetId === null ? null : await library.sceneSets.get(avatarId, sceneSetId);
-    const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck));
+    // 5a.3 (S5.9d, option B): the set's own «Подача» and categories say whether the launch's photos are priced at the Seedream unit.
+    const bold = set !== null && isBoldLook(set.request);
+    const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck, bold ? 1 : 0));
     // One photo's worst case at today's price, the very figure the slice sizing uses; the figure for n photos is priced as the real draw prices n.
-    const photoWorst = runEstimateFromScenes(priced, models, { count: 1 }, imageAgeCheck).worstMicros;
+    const photoWorst = runEstimateFromScenes(priced, models, { count: 1, ...(bold ? { boldPhotos: 1 } : {}) }, imageAgeCheck).worstMicros;
     // An avatar the launch has finished with, or has left, has nothing to draw. The slices are read without judging them (a free command latches nothing and loads no price).
     const over = row.phase === "skipped" || row.phase === "done" || row.phase === "montage";
     const statuses = set === null || over ? new Map<string, SliceStatus>() : await this.#sliceStatuses(library, set, true);
     const photos = set === null || over || row.drawAllocationMicros === null ? 0 : launchDrawFit(set, statuses, row.drawAllocationMicros, photoWorst).photos;
     // Priced for at least one photo: an estimate has no zero-photo form, and the price source is told even when nothing is left to draw.
-    const estimate = runEstimateFromScenes(priced, models, { count: Math.max(1, photos) }, imageAgeCheck);
+    const estimate = runEstimateFromScenes(priced, models, { count: Math.max(1, photos), ...(bold ? { boldPhotos: Math.max(1, photos) } : {}) }, imageAgeCheck);
     return { estimate: photos === 0 ? { ...estimate, expectedMicros: 0, worstMicros: 0 } : estimate, photos };
   }
 
@@ -3190,8 +3217,11 @@ export class Engine {
     this.#assertAgeGate(imageAgeCheck);
     this.#assertFaceGate();
     const models = this.#avatarModels();
-    const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck));
-    const estimate = runEstimateFromScenes(priced, models, { count: runSources(approved.set).length }, imageAgeCheck);
+    // 5a.3 (S5.9d): the approved scenes drawn on the Seedream route are priced at 2K, exactly; the cap is this very figure.
+    const approvedSources = runSources(approved.set);
+    const bold = routedScenes(approvedSources);
+    const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck, bold));
+    const estimate = runEstimateFromScenes(priced, models, { count: approvedSources.length, boldPhotos: bold }, imageAgeCheck);
     Engine.#checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
     Engine.#checkMonthlyRoom(budget, estimate.worstMicros);
 

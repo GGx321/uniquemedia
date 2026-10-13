@@ -391,12 +391,18 @@ describe("model rows describe what photo runs use them for", () => {
     expect(row?.textContent).toContain("проверка «явно старше 21»");
   });
 
+  // 2026-10-12, S5.9g (mockup 56): the row now carries the «Смелая» line under it, which names 2K on purpose (the bold frames' fixed route). The row's own
+  // label, hint and control still offer no resolution: the «no 2K» check moves to them, and the line is the only place 2K is said.
   test("the photos row says the image model makes both portraits and photo runs' photos, with no resolution choice left", async () => {
     await openSettings();
-    const row = screen.getByRole("combobox", { name: "Фото" }).closest(".row");
+    const select = screen.getByRole("combobox", { name: "Фото" });
+    const row = select.closest(".row");
     expect(row?.textContent).not.toContain("появятся вместе с фото-ранами");
     expect(row?.textContent).toContain("портреты аватара и фото-раны");
-    expect(row?.textContent).not.toContain("2K");
+    expect(row?.querySelector(".rl")?.textContent).not.toContain("2K");
+    expect(select.textContent).not.toContain("2K");
+    expect(row?.querySelectorAll("select, input")).toHaveLength(1);
+    expect(row?.querySelector(".settings-bold-note")?.textContent).toBe("Смелые кадры всегда рисует Seedream 5 Pro · 2K — эта настройка их не меняет.");
   });
 });
 

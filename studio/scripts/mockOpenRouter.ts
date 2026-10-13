@@ -326,6 +326,10 @@ export interface MockRequest {
   headers: Record<string, string>;
   /** The body exactly as it was sent ("" for a GET), whether or not it parsed as JSON. */
   bodyText: string;
+  /** 5a.3 (S5.9f): the `model` the body names, or null when it names none. */
+  model: string | null;
+  /** 5a.3 (S5.9f): the `resolution` the body names ("1K" or "2K" for an image request), or null when it names none. */
+  resolution: string | null;
 }
 
 /**
@@ -419,7 +423,7 @@ export interface MockOpenRouterOptions {
   /** Which age-check call, counted across the whole run (1-based), answers "not an adult"; 0 rejects none. */
   rejectAgeCheckNumber?: number;
   /** USD per call; /credits' total_usage is the running sum of exactly these. */
-  costsUsd?: { descriptor?: number; image?: number; age?: number; importDescribe?: number; descriptorCheck?: number; writer?: number; pool?: number };
+  costsUsd?: { descriptor?: number; image?: number; age?: number; importDescribe?: number; descriptorCheck?: number; writer?: number; pool?: number; boldImage?: number };
   /** CS.2: fields that replace those of the default pool the mock answers for the "scene_pool" schema (a category's pool call), e.g. `{ label: "Seine bakeries" }`. */
   poolAnswer?: Record<string, unknown>;
   /**
@@ -477,6 +481,18 @@ export interface MockOpenRouter {
   /** Any request outside the six routes above — a run with one of these must fail. */
   unexpected: MockRequest[];
   imageRequests(): MockRequest[];
+  /** 5a.3 (S5.9f): the image requests whose body names `model`. */
+  imageRequestsFor(model: string): MockRequest[];
+  /**
+   * 5a.3 (S5.9f): the next `times` (default 1) image requests that name `model` are refused with the model's moderation 400 — free, so nothing is booked against /credits. A request for any
+   * other model is answered as before. The packaged smoke arms it for the Seedream model to end a «Смелая» slot `model-refused`.
+   */
+  armRefusal(model: string, times?: number): void;
+  /**
+   * 5a.3 (S5.9f): the next `times` (default 1) image requests that name `model` get a 2xx with no image and a bill (booked against /credits): the slot ends `model-empty`. An armed
+   * refusal is met first.
+   */
+  armEmptyAnswer(model: string, times?: number): void;
   ageCheckRequests(): MockRequest[];
   descriptorRequests(): MockRequest[];
   /** T6c: the vision describe call's own requests ("import_describe" schema), distinct from a plain new-avatar descriptor. */
@@ -513,6 +529,13 @@ interface SentBody {
 
 const NO_BODY: SentBody = { json: null, text: "" };
 
+/** A string field of a request body, or null when the body is not an object or the field is not a string. */
+function stringField(body: unknown, key: string): string | null {
+  if (typeof body !== "object" || body === null) return null;
+  const value: unknown = Reflect.get(body, key);
+  return typeof value === "string" ? value : null;
+}
+
 /** The `prompt` of an image request body, or null when it has none. */
 function promptOf(body: unknown): string | null {
   if (typeof body !== "object" || body === null) return null;
@@ -520,9 +543,15 @@ function promptOf(body: unknown): string | null {
   return typeof prompt === "string" ? prompt : null;
 }
 
+/**
+ * What each call bills, in USD, unless a scenario says otherwise. `boldImage` is what a 2K Seedream image bills: P-5a3 measured $0.045 against a list price of $0.09 (plan s5a3 §«P-5a3 results»).
+ * The smoke's own bill sum (`boldSmoke.ts`) reads the two image figures from here.
+ */
+export const DEFAULT_COSTS_USD = { descriptor: 0.0021, image: 0.04, age: 0.0014, importDescribe: 0.0021, descriptorCheck: 0.0023, writer: 0.011, pool: 0.0051, boldImage: 0.045 };
+
 export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<MockOpenRouter> {
   const imageModel = opts.imageModel ?? DEFAULT_IMAGE_MODEL;
-  const costs = { descriptor: 0.0021, image: 0.04, age: 0.0014, importDescribe: 0.0021, descriptorCheck: 0.0023, writer: 0.011, pool: 0.0051, ...opts.costsUsd };
+  const costs = { ...DEFAULT_COSTS_USD, ...opts.costsUsd };
   const rejectAt = opts.rejectAgeCheckNumber ?? 1;
   const imageDelayMs = opts.imageDelayMs ?? 0;
   const writerDelayMs = opts.writerDelayMs ?? 0;
@@ -545,6 +574,18 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
   // FALLBACK_CHAT), and every cost in this file matches it.
   const endpointsFixture = readFileSync(join(FIXTURES, "endpoints-grok-imagine-image-2.0.json"), "utf8");
   const modelsFixture = readFileSync(join(FIXTURES, "models-chat.json"), "utf8");
+  // 5a.3 (S5.9f): the Seedream endpoint lists the 2K tier (`high_resolution`) and the reference image, which the «Смелая» route's price and acceptance read.
+  const seedreamFixture = readFileSync(join(FIXTURES, "endpoints-seedream-5-0-pro.json"), "utf8");
+  // 5a.3 (S5.9f): requests for a model that the scenario armed to refuse, or to answer with no image, and how many each still meets.
+  const refusals = new Map<string, number>();
+  const empties = new Map<string, number>();
+  /** Spends one armed end of `model`, if it has any left. */
+  function takeArmed(armed: Map<string, number>, model: string | null): boolean {
+    const left = model === null ? 0 : (armed.get(model) ?? 0);
+    if (model === null || left === 0) return false;
+    armed.set(model, left - 1);
+    return true;
+  }
 
   function json(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -560,6 +601,8 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
       url: req.url,
       headers: Object.fromEntries(req.headers.entries()),
       bodyText: sent.text,
+      model: stringField(sent.json, "model"),
+      resolution: stringField(sent.json, "resolution"),
     };
     requests.push(entry);
     return entry;
@@ -606,11 +649,13 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
       ) {
         // T6's photo runs price both the settings' image model and the
         // one-attempt Seedream fallback up front (runs/plan.ts's
-        // `runPriceModels`), so both endpoints must answer; the same fixture
-        // stands in for either model — a run's own estimate/cap checks never
-        // depend on the two carrying different numbers.
+        // `runPriceModels`), so both endpoints must answer. The Seedream one
+        // serves its own fixture since 5a.3 (S5.9f): the «Смелая» route is priced
+        // at 2K and accepted only when the endpoint lists that tier and the
+        // reference image; the owner's model keeps the Grok fixture.
         record(req, path, NO_BODY);
-        return new Response(endpointsFixture, { status: 200, headers: { "content-type": "application/json" } });
+        const body = path === `/api/v1/images/models/${FALLBACK_IMAGE_MODEL}/endpoints` ? seedreamFixture : endpointsFixture;
+        return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
       }
       if (method === "GET" && path === "/api/v1/models") {
         record(req, path, NO_BODY);
@@ -665,7 +710,17 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
           await held.promise;
         }
         if (imageDelayMs > 0) await Bun.sleep(imageDelayMs);
-        totalUsageUsd += costs.image;
+        // 5a.3 (S5.9f): a scenario armed this model to refuse (the model's free, final 400) or to answer with no image (a 2xx, still billed).
+        if (takeArmed(refusals, imageEntry.model)) {
+          const label = imageEntry.model?.startsWith("bytedance-seed/") === true ? "Seedream" : "xAI";
+          return json({ error: { message: `${label} blocked this request through content moderation.` } }, 400);
+        }
+        const cost = imageEntry.resolution === "2K" ? costs.boldImage : costs.image;
+        if (takeArmed(empties, imageEntry.model)) {
+          totalUsageUsd += cost;
+          return json({ created: 1_790_000_000, data: [], usage: { cost } });
+        }
+        totalUsageUsd += cost;
         const fallback = opts.faceFixture ? faceFixtureBytes() : portraitPng();
         const armed = armedMismatch;
         const mismatched = armed !== null && promptOf(imageEntry.body) === armed.prompt;
@@ -676,7 +731,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
         // serves real JPEG (faceFixtureBytes()/buildFacePool(), both JPEG-encoded
         // now), every other mode the rendered PNG it always was.
         const mediaType = opts.faceFixture ? "image/jpeg" : "image/png";
-        return json({ created: 1_790_000_000, data: [{ b64_json: b64(bytes), media_type: mediaType }], usage: { cost: costs.image } });
+        return json({ created: 1_790_000_000, data: [{ b64_json: b64(bytes), media_type: mediaType }], usage: { cost } });
       }
       return loudly404(record(req, path, method === "POST" ? await bodyOf(req) : NO_BODY));
     },
@@ -687,6 +742,13 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
     requests,
     unexpected,
     imageRequests: () => requests.filter((r) => r.path === "/api/v1/images"),
+    imageRequestsFor: (model) => requests.filter((r) => r.path === "/api/v1/images" && r.model === model),
+    armRefusal: (model, times = 1) => {
+      refusals.set(model, (refusals.get(model) ?? 0) + times);
+    },
+    armEmptyAnswer: (model, times = 1) => {
+      empties.set(model, (empties.get(model) ?? 0) + times);
+    },
     ageCheckRequests: () => requests.filter((r) => r.schemaName === "age_check"),
     descriptorRequests: () => requests.filter((r) => r.schemaName === "avatar_descriptor"),
     importDescribeRequests: () => requests.filter((r) => r.schemaName === "import_describe"),

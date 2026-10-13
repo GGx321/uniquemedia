@@ -29,9 +29,10 @@ import { aboutUsd, figuresOf, goTitle, goWhy, isUnfinished, limitText, musicLine
 import { SettingsColumn } from "./autopilot/SettingsColumn";
 import { probeWorldKey, useLaunchPlan, worldKey } from "./autopilot/useLaunchPlan";
 import { launchLegsRow } from "./photos/legs";
-import { launchFlirtyCaption } from "./photos/level";
+import type { LaunchPlanCounts } from "./photos/launchPlanCounts";
+import { launchLevelCaption } from "./photos/level";
 import { readSceneReview, viewerStorage } from "./photos/sceneReview";
-import { arrangeCategories } from "./photos/runForm";
+import { arrangeCategories, categoriesAt } from "./photos/runForm";
 
 // S4.9a: the «Автопилот» screen (AutopilotS4.dc.html, states plan … from-main; the owner's mockup Autopilot.dc.html): three columns — the avatars, «Настройки
 // запуска», and the plan with «Запустить: N видео · до $W». The plan is the engine's (`autopilot.estimate`), asked again as the form changes; the click
@@ -95,6 +96,17 @@ function LastLaunchCard({ summary, nameOf }: { summary: LaunchSummary; nameOf: (
       </button>
     </section>
   );
+}
+
+/** A launch that draws no new photo, as the «Подача» caption reads a plan: nothing new to count. */
+const NOTHING_NEW: LaunchPlanCounts = { avatars: [], totals: { toGenerate: 0 } };
+
+/**
+ * S5.9g round 3: what a running launch tells the «Подача» caption. It has no plan to count new frames from, but its rows say whether any avatar draws a new photo
+ * (`photos.total`, 0 being «только библиотека»): with none, the caption says nothing (`NOTHING_NEW`); otherwise the share (`null`), as before.
+ */
+function runningCounts(launch: LaunchView | null): LaunchPlanCounts | null {
+  return launch !== null && launch.avatars.every((row) => row.photos.total === 0) ? NOTHING_NEW : null;
 }
 
 /**
@@ -190,7 +202,7 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
     client,
     settings: ready ? settings : null,
     activeIds,
-    categories: settings?.categories ?? arrangeCategories(form.categories, customOrder),
+    categories: settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder)),
     // An own track marked or unmarked in the music window moves the plan's tracks: the plan is asked again.
     world: `${worldKey(view, customOrder)}:${musicMarks}`,
     probeWorld: probeWorldKey(view, customOrder),
@@ -306,8 +318,8 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
           }}
           onCategory={toggleCategory}
           onLevel={(level) => edit({ ...form, level })}
-          levelCaption={shownForm.level === "flirty" ? launchFlirtyCaption(running ? null : plan.shown, settings?.categories ?? shownForm.categories) : null}
-          legs={launchLegsRow(shownForm.legs, running ? null : plan.shown, running ? shownForm.categories : (settings?.categories ?? arrangeCategories(form.categories, customOrder)), shownForm.generate)}
+          levelCaption={launchLevelCaption(shownForm.level, running ? runningCounts(launch) : plan.shown, running ? categoriesAt(shownForm.level, shownForm.categories) : (settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder))))}
+          legs={launchLegsRow(shownForm.legs, running ? null : plan.shown, running ? shownForm.categories : (settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder))), shownForm.generate)}
           onLegs={(legs) => edit({ ...form, legs })}
           onSwitch={(which) => edit({ ...form, [which]: !form[which] })}
           musicOpen={musicWindow !== null}

@@ -1,12 +1,22 @@
 import { type ReactNode, type RefObject, useId, useRef } from "react";
-import { MAX_VIDEOS_PER_AVATAR, SceneCategory, type CategoryRef, type CategorySummary, type LaunchMix, type LegsShare, type SceneLevel } from "../../../shared/engine";
+import {
+  BOLD_CATEGORIES,
+  isBoldCategory,
+  MAX_VIDEOS_PER_AVATAR,
+  ORDINARY_SCENE_CATEGORIES,
+  type CategoryRef,
+  type CategorySummary,
+  type LaunchMix,
+  type LegsShare,
+  type SceneLevel,
+} from "../../../shared/engine";
 import { Icon } from "../../ui/Icon";
 import { OwnAnglesNote } from "../photos/AnglesLines";
 import { ownAnglesLine } from "../photos/categoryText";
 import { LEGS_ROW_HINT, type LegsRow } from "../photos/legs";
 import { LegsChips } from "../photos/LegsChips";
-import { ANGLE_FROM_SCENE_SHORT, BOLD_LABEL, BOLD_LATER, LEVEL_OPTIONS } from "../photos/level";
-import { CATEGORY_LABEL } from "../photos/runForm";
+import { ANGLE_FROM_SCENE_SHORT, gatedNote, LEVEL_OPTIONS } from "../photos/level";
+import { categoriesAt, CATEGORY_LABEL } from "../photos/runForm";
 import { MIN_VIDEOS_PER_AVATAR, wantedShapes, type LaunchForm } from "./launchForm";
 import { useOverflows } from "./layout";
 import { MixControl } from "./MixControl";
@@ -15,7 +25,12 @@ import type { MusicLine } from "./planModel";
 // S4.9a: column 2 of «Автопилот», «Настройки запуска» (AutopilotS4.dc.html): videos per avatar, the shape mix, the scene categories (built-in and the
 // owner's own), «Подача» (S5.7c, mockup 30: it replaced «Ракурсы» — the angle comes from the scene), «Ножки» (S5.8b, mockup 34), the library and
 // generation switches, «Сцены на проверку», «Музыка», «GIF-стикеры» and «Предел запуска». No «Текст на видео» (owner decision 8). While a launch runs
-// these are its settings, read only, under a line that says so.
+// these are its settings, read only, under a line that says so. S5.9g (plan s5a3 §13.1; mockup 52): «Смелая» is live, and «Ночнушки и бельё» and «Пляж и
+// бассейн» follow the five with the card's gating; «Предел запуска» says option B while a «Смелая» category is on under «Смелая».
+
+/** «Предел запуска»'s sub-line, and its longer form while every new photo of the launch is priced at the Seedream 2K unit (plan §10.2, option B; mockup 52). */
+const LIMIT_SUB = "худшая цена: до 3 попыток на фото — дороже не выйдет";
+const LIMIT_SUB_BOLD = `${LIMIT_SUB}; со «Смелой» каждое новое фото считается по цене Seedream 2K`;
 
 export interface SettingsColumnProps {
   readonly form: LaunchForm;
@@ -34,7 +49,7 @@ export interface SettingsColumnProps {
   readonly onMixReset: () => void;
   readonly onCategory: (ref: CategoryRef) => void;
   readonly onLevel: (level: SceneLevel) => void;
-  /** «Кокетливая»'s count of flirty new frames (mockup 30), or null while «Обычная» is on. */
+  /** «Кокетливая»'s count of flirty new frames (mockup 30), «Смелая»'s of bold and flirty ones (mockup 52), or null while «Обычная» is on. */
   readonly levelCaption: string | null;
   /** S5.8b: the «Ножки» row as the form and the plan make it (mockups 34, 34#few). */
   readonly legs: LegsRow;
@@ -57,10 +72,16 @@ export function SettingsColumn(props: SettingsColumnProps) {
   const shapes = wantedShapes(form.videosPerAvatar, form.mix);
   const mixNote = `На аватар ${shapes.single} · ${shapes.collage} · ${shapes.slides} · ${wide ? "цена — за видео из новых фото" : "цена — если фото новые"}`;
   const chips: { ref: CategoryRef; label: string }[] = [
-    ...SceneCategory.options.map((ref) => ({ ref, label: CATEGORY_LABEL[ref] })),
+    ...ORDINARY_SCENE_CATEGORIES.map((ref) => ({ ref, label: CATEGORY_LABEL[ref] })),
+    ...BOLD_CATEGORIES.map((ref) => ({ ref, label: CATEGORY_LABEL[ref] })),
     ...(customs ?? []).map((c) => ({ ref: c.categoryId, label: c.name })),
   ];
-  const chosen = chips.filter((c) => form.categories.includes(c.ref)).length;
+  // S5.9g (mockup 52): under another «Подача» the «Смелая» two wait, a pick of theirs kept (drawn dashed) and left out of the launch and of the count.
+  const boldOn = form.level === "bold";
+  const asked = categoriesAt(form.level, form.categories);
+  const chosen = chips.filter((c) => asked.includes(c.ref)).length;
+  const kept = BOLD_CATEGORIES.filter((ref) => !boldOn && form.categories.includes(ref)).map((ref) => CATEGORY_LABEL[ref]);
+  const optionB = boldOn && asked.some((ref) => isBoldCategory(ref));
   const ownAngles = ownAnglesLine((customs ?? []).flatMap((c) => (form.categories.includes(c.categoryId) && c.pool.poses !== undefined ? [{ name: c.name, poses: c.pool.poses }] : [])));
   const off = readOnly || undefined;
   const reviewOff = readOnly || !form.generate || undefined;
@@ -133,13 +154,28 @@ export function SettingsColumn(props: SettingsColumnProps) {
               <div className="ap-chips" role="group" aria-labelledby={id("cats")}>
                 {chips.map(({ ref, label }) => {
                   const on = form.categories.includes(ref);
+                  const gated = !boldOn && isBoldCategory(ref);
+                  const classes = ["chip", on && "chip-on", gated && "gen-chip-gated", gated && on && "gen-chip-kept"].filter(Boolean).join(" ");
                   return (
-                    <button key={ref} type="button" className={on ? "chip chip-on" : "chip"} aria-pressed={on} aria-disabled={off} onClick={readOnly ? undefined : () => props.onCategory(ref)}>
+                    <button
+                      key={ref}
+                      type="button"
+                      className={classes}
+                      aria-pressed={on && !gated}
+                      aria-disabled={off ?? (gated || undefined)}
+                      aria-describedby={gated ? id("gated") : undefined}
+                      onClick={readOnly || gated ? undefined : () => props.onCategory(ref)}
+                    >
                       {label}
                     </button>
                   );
                 })}
               </div>
+              {!boldOn && (
+                <span id={id("gated")} className="faint ap-note gen-gated-note">
+                  {gatedNote(kept)}
+                </span>
+              )}
             </div>
 
             {/* S5.7c (mockup 30): «Подача» where «Ракурсы» was; read only, a launch's own stays checked whatever is clicked. */}
@@ -173,19 +209,12 @@ export function SettingsColumn(props: SettingsColumnProps) {
                     </label>
                   );
                 })}
-                <label className="choice-option gen-option-later" title={BOLD_LATER}>
-                  <input type="radio" className="choice-input" name={id("lvl-radio")} value="bold" disabled aria-describedby={id("bold")} />
-                  <span className="choice-face">{BOLD_LABEL}</span>
-                </label>
               </div>
               {props.levelCaption !== null && (
                 <span id={id("lvl-cap")} className="ap-row-note gen-cap">
                   {props.levelCaption}
                 </span>
               )}
-              <span id={id("bold")} className="faint ap-row-note">
-                {BOLD_LATER}
-              </span>
               {ownAngles !== null && <OwnAnglesNote line={ownAngles} className="ap-row-note" />}
             </div>
 
@@ -262,7 +291,7 @@ export function SettingsColumn(props: SettingsColumnProps) {
             <div className="ap-row">
               <div className="rl">
                 <b>Предел запуска</b>
-                <span>худшая цена: до 3 попыток на фото — дороже не выйдет</span>
+                <span>{optionB ? LIMIT_SUB_BOLD : LIMIT_SUB}</span>
               </div>
               <span className="mono ap-limit">{limit}</span>
             </div>

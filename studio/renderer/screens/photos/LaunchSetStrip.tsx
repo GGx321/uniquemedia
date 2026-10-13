@@ -7,6 +7,7 @@ import { formatUsdTiered } from "../../lib/money";
 import { useNavigate } from "../../navigation";
 import { Icon } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
+import { BoldPriceNotice, isBoldPriceMissing } from "./boldPrice";
 import { bandText, launchGo, launchSetMeta, overPlanText, type LaunchLink } from "./launchSet";
 import { drawStepText, focusLost, useLaunchDrawPrice } from "./scenePaid";
 import { focusSceneCard } from "./SceneSetPanel";
@@ -298,7 +299,8 @@ export function LaunchSetStrip({ avatar, view, set, link, focusGo }: LaunchSetSt
           {SCENES_CHANGED_APPROVE}
         </Notice>
       )}
-      {error !== null && <ErrorNotice error={error} />}
+      {/* S5.9g (gap D): «Продолжить запуск» refused for the 2K tier alone — state 55's warning; any other refusal as today. */}
+      {error !== null && (isBoldPriceMissing(error) ? <BoldPriceNotice /> : <ErrorNotice error={error} />)}
     </>
   );
 }

@@ -9,6 +9,7 @@ import {
   checkImageChoice,
   LaunchView,
   decodePhotoCursor,
+  boldLevelNeeded,
   legsNeedsBuiltIn,
   pagePhotoList,
   type ApiKeyStatus,
@@ -124,6 +125,7 @@ import { matchingCheck, MOCK_CHECK_ESTIMATE } from "./mockDescriptorCheck";
 import { MockCategories } from "./mockCategories";
 import { MockSceneSets, MOCK_SCENE_ATTEMPT_WORST, type MockSceneAttempt, type MockSceneSetSeed } from "./mockSceneSets";
 import { MockAutopilot, type MockAutopilotUnit, type PaidFault } from "./mockAutopilot";
+import { boldAttemptWorst, isBoldLook, MOCK_BOLD_IMAGE, requestBoldPhotos } from "./mockBoldRoute";
 import { demoOwnMedia, MockOwnMedia, type MockMediaAccept, type MockOwnSeed } from "./mockMedia";
 import { realScheduler, type Scheduler } from "./scheduler";
 
@@ -137,6 +139,7 @@ import { realScheduler, type Scheduler } from "./scheduler";
 const CANDIDATES_PER_JOB = 4;
 /** «Ножки» with no built-in category (S5.8a, I5.29): the engine's free refusal, which the mock answers the same way. */
 const LEGS_REFUSAL = { code: "VALIDATION", sceneReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the request names none" } as const;
+const BOLD_REFUSAL = { code: "VALIDATION", sceneReason: "bold-level-needed", detail: "«Ночнушки и бельё» and «Пляж и бассейн» are drawn at the «Смелая» level only; the request names one at another level" } as const;
 
 /**
  * How long after avatars.cancel is accepted the job actually ends
@@ -204,6 +207,7 @@ type AvatarSummaryBodySeen = NonNullable<AvatarSummary["bodyProposal"]>["seen"];
  * With the Photos mockup's own numbers: 20 photos are ≈ $1.01, up to $3.07.
  */
 export const MOCK_RUN_IMAGE = 50_000;
+export { MOCK_BOLD_IMAGE };
 export const MOCK_RUN_ATTEMPTS_PER_SLOT = 3;
 /** The writer's worst case per chunk is the real engine's (money/estimate.ts: 2 attempts × $0.0375, T5c's raised ceiling), so mock and engine prices agree to the micro-dollar. */
 export const MOCK_RUN_WRITER = { expectedPerPhoto: 458, worstPerCall: 37_500, worstPerChunk: 75_000, photosPerChunk: 25 } as const;
@@ -381,6 +385,8 @@ interface MockRunSlot {
   end: "done" | "failed" | null;
   /** Why a failed slot ended, when the test said (`failNextRunSlots`): the engine journals it per slot; a run reports only the count. */
   error?: EngineError;
+  /** 5a.3 (S5.9f): the slot is drawn on the Seedream route (2K, one reference, no fallback), as the engine's `PlanSlot.route`. Absent = the owner's model. */
+  route?: "seedream";
 }
 
 /**
@@ -521,6 +527,8 @@ interface MockRunJob {
   /** The reserve keys this job still holds open, one per slot it has not ended yet. */
   reserveKeys: string[];
   cancelTimers: (() => void)[];
+  /** 5a.3 (S5.9f, round 3): a slot did not fit the run's cap and stayed open: the job ends failed RUN_CAP_EXCEEDED, as the engine's does. */
+  limited?: boolean;
 }
 
 /** The planner's split: the contract's shared `splitCount` (the engine's planner calls the very same function). */
@@ -832,6 +840,11 @@ export class MockEngine implements EngineBridge {
   private readonly unreadableSidecars = new Set<string>();
   /** `setRunImagePrice`'s override of the image attempt's price; null = the chosen model and quality's own (`runImagePrice`). */
   private runImageOverride: number | null = null;
+  /** 5a.3 (S5.9f): `lackBoldPrice`. */
+  private boldPriceMissing = false;
+  /** 5a.3 (S5.9f): how many Seedream slots `refuseBoldNext` / `emptyBoldNext` still end. */
+  private boldRefusalsNext = 0;
+  private boldEmptiesNext = 0;
   /** The next run job's trailing `count` open slots end without a photo. */
   private failedRunSlotsNext = 0;
   private failedRunSlotsError: EngineError | null = null;
@@ -975,7 +988,7 @@ export class MockEngine implements EngineBridge {
         hasOwnersOpenSet: (avatarId, exceptSetId) => this.sceneSets.hasOpenSet(avatarId, exceptSetId),
         avatarActive: (avatarId) => this.avatars.some((a) => a.avatarId === avatarId && a.status === "active"),
         libraryKnown: (avatarId) => !this.launchLibraryLost && this.availabilityOf(avatarId).state === "known",
-        unit: () => this.autopilotUnit(),
+        unit: (bold) => this.autopilotUnit(bold),
         writerBound: (split) => this.sceneSets.writerBoundOf(split),
         prices: () => ({ prices: this.price.prices, pricesAsOf: this.price.pricesAsOf }),
         month: () => this.launchMonthRoom(),
@@ -1752,6 +1765,32 @@ export class MockEngine implements EngineBridge {
     this.mastersMissing.delete(avatarId);
   }
 
+  /**
+   * 5a.3 (S5.9f, plan s5a3 §8.3): the next `n` Seedream slots are refused by the model (a free, final 400): each ends `model-refused`, spent none for the slot, and the run goes on. A slot on the
+   * owner's model never meets it; the knob waits armed across runs until Seedream slots have used it up.
+   */
+  refuseBoldNext(n: number): void {
+    this.boldRefusalsNext += Math.max(0, n);
+  }
+
+  /**
+   * 5a.3 (S5.9f, §8.3): the next `n` Seedream slots get a 2xx without an image: each ends `model-empty`, settled at the 2K attempt (it was billed), and the run goes on, except that a second one in a
+   * run stops sending, as the engine's guard does: the job fails and the slots not yet sent stay open. A refusal armed with `refuseBoldNext` is met first.
+   */
+  emptyBoldNext(n: number): void {
+    this.boldEmptiesNext += Math.max(0, n);
+  }
+
+  /** 5a.3 (S5.9f, gap D): the price list has no 2K tier (or has it again). What needs the tier is refused PRICE_UNAVAILABLE with `priceScope: "bold"`; everything else is priced as before. */
+  lackBoldPrice(missing = true): void {
+    this.boldPriceMissing = missing;
+  }
+
+  /** The refusal of what needs the 2K tier while the price list lacks it; null when the tier is there or `needsTier` is false. */
+  private boldPriceGate(needsTier: boolean): EngineError | null {
+    return needsTier && this.boldPriceMissing ? { code: "PRICE_UNAVAILABLE", priceScope: "bold", detail: "the price list has no 2K tier for the «Смелая» route" } : null;
+  }
+
   /** T8b: changes one image attempt's price, so a run accepted at a lower worst case gets PRICE_CHANGED. */
   setRunImagePrice(micros: number): void {
     this.runImageOverride = micros;
@@ -1793,7 +1832,7 @@ export class MockEngine implements EngineBridge {
     const n = String(this.seedCounter).padStart(4, "0");
     const runId = `run-seed-${n}`;
     const createdAt = new Date(START_OF_TIME - this.seedCounter * 3_600_000).toISOString();
-    const slots = mockRunSlots(request.count, request.categories);
+    const slots = this.runSlotsOf(request);
     const run: MockRun = {
       runId,
       avatarId: request.avatarId,
@@ -1809,9 +1848,9 @@ export class MockEngine implements EngineBridge {
       writerLoad: this.writerLoadOf(request),
       ...(opts.launchId === undefined ? {} : { launchId: opts.launchId }),
     };
-    const { expected } = this.slotPrice(run);
     slots.slice(0, Math.min(done, slots.length)).forEach((slot, i) => {
       slot.end = "done";
+      const { expected } = this.slotPrice(run, slot.route);
       const photoId = `photo-seed-${n}-${String(i + 1).padStart(3, "0")}`;
       run.photoIds.push(photoId);
       run.settledMicros += expected;
@@ -2226,9 +2265,13 @@ export class MockEngine implements EngineBridge {
     for (let k = 0; k < n; k++) {
       // 5a.2: the photo of the launch's `firstNo + k`th scene carries the likeness the face gate would store for that scene (a hidden face is marked, never judged).
       const marks = this.launchFaceMarks;
-      const scene = marks === undefined || from === undefined ? undefined : this.sceneSets.drawnScene(from.sceneSetId, from.firstNo + k);
+      const scene = from === undefined ? undefined : this.sceneSets.drawnScene(from.sceneSetId, from.firstNo + k);
       const qa = marks === undefined || scene === undefined ? {} : { qa: faceVisibleOf(scene) === "yes" ? { faceCos: marks.match } : { faceCos: marks.marked, faceMarked: true as const } };
-      const photo: PhotoSummary = { ...template, ...(marks === undefined ? {} : { qa: undefined }), photoId: this.nextId("photo-launch"), runId: runId ?? template.runId, category, createdAt: this.nowIso(), used: false, usedIn: [], rejected: false, reserved: false, eligible: true, ...qa };
+      // 5a.3 (S5.9f, gap A): a frame drawn for a scene on the Seedream route says so; one drawn for any other scene carries none.
+      const route = scene?.route === "seedream" ? { route: "seedream" as const } : {};
+      // The template photo's own route is not the new frame's.
+      const { route: _templateRoute, ...plain } = template;
+      const photo: PhotoSummary = { ...plain, ...(marks === undefined ? {} : { qa: undefined }), photoId: this.nextId("photo-launch"), runId: runId ?? template.runId, category, createdAt: this.nowIso(), used: false, usedIn: [], rejected: false, reserved: false, eligible: true, ...qa, ...route };
       this.photos.push(photo);
       ids.push(photo.photoId);
     }
@@ -2253,7 +2296,7 @@ export class MockEngine implements EngineBridge {
    * A slice of a launch's draw begins: a run of its own (the first one under the set's pre-issued run id, so the set is used from here) with a job that holds the avatar, announced as a run
    * job is. Answers the run's id.
    */
-  private startLaunchSlice(slice: { launchId: string; avatarId: string; sceneSetId: string; index: number; photos: number; capMicros: number; category: CategoryRef; resume?: string }): string {
+  private startLaunchSlice(slice: { launchId: string; avatarId: string; sceneSetId: string; index: number; firstNo: number; photos: number; capMicros: number; category: CategoryRef; resume?: string }): string {
     const resumed = slice.resume === undefined ? undefined : this.runs.find((r) => r.runId === slice.resume);
     if (slice.resume !== undefined && resumed === undefined) throw new Error(`startLaunchSlice: the run ${slice.resume} to take up again is not there`);
     if (resumed !== undefined) {
@@ -2272,7 +2315,12 @@ export class MockEngine implements EngineBridge {
       capMicros: slice.capMicros,
       settledMicros: 0,
       ageCheck: this.settings.imageAgeCheck === "on",
-      slots: Array.from({ length: slice.photos }, () => ({ category: slice.category, end: null })),
+      // 5a.3 (S5.9f, round 2): a slot is on the Seedream route when its scene is (the engine's slice plan takes the route from the scenes), so a resume prices it at the 2K attempt and the
+      // photos drawn for it carry the tag. The slice's k-th slot is the set's (`firstNo` + k)-th scene.
+      slots: Array.from({ length: slice.photos }, (_, k): MockRunSlot => {
+        const scene = this.sceneSets.drawnScene(slice.sceneSetId, slice.firstNo + k);
+        return { category: slice.category, end: null, ...(scene?.route === undefined ? {} : { route: scene.route }) };
+      }),
       photoIds: [],
       categoryNames: {},
       // The launch's compose wrote every sentence before it drew anything.
@@ -2484,10 +2532,22 @@ export class MockEngine implements EngineBridge {
       case "autopilot.estimate":
         // S5.8a: «Ножки» with no built-in category is refused first, for free.
         if (legsNeedsBuiltIn(c.payload.draft)) return this.fail(c, { code: "VALIDATION", launchReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the launch names none" });
-        return this.autopilotCommand(c, c.payload.draft.avatarIds, () => this.ok(c, { preview: this.autopilot.estimate(c.payload.draft) }));
+        if (boldLevelNeeded(c.payload.draft)) return this.fail(c, { code: "VALIDATION", launchReason: "bold-level-needed", detail: "«Ночнушки и бельё» and «Пляж и бассейн» are drawn at the «Смелая» level only; the launch names one at another level" });
+        return this.autopilotCommand(c, c.payload.draft.avatarIds, () => {
+          const preview = this.autopilot.estimate(c.payload.draft);
+          // 5a.3 (S5.9f, gap D): a launch that draws on the 2K route needs the tier; one that draws nothing, or only on the owner's model, does not.
+          const noTier = this.boldPriceGate(isBoldLook(c.payload.draft) && preview.totals.toGenerate > 0);
+          return noTier ? this.fail(c, noTier) : this.ok(c, { preview });
+        });
       case "autopilot.start":
         if (legsNeedsBuiltIn(c.payload.draft)) return this.fail(c, { code: "VALIDATION", launchReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the launch names none" });
-        return this.autopilotCommand(c, c.payload.draft.avatarIds, () => this.answer(c, this.autopilot.start(c.payload.draft, c.payload.acceptedWorstMicros)));
+        if (boldLevelNeeded(c.payload.draft)) return this.fail(c, { code: "VALIDATION", launchReason: "bold-level-needed", detail: "«Ночнушки и бельё» and «Пляж и бассейн» are drawn at the «Смелая» level only; the launch names one at another level" });
+        return this.autopilotCommand(c, c.payload.draft.avatarIds, () => {
+          // The engine prices a launch only when it draws something (`toGenerate > 0`, commands.ts): one that is all from the library starts without the tier.
+          const draws = isBoldLook(c.payload.draft) && c.payload.draft.generate && this.autopilot.estimate(c.payload.draft).totals.toGenerate > 0;
+          const noTier = this.boldPriceGate(draws);
+          return noTier ? this.fail(c, noTier) : this.answer(c, this.autopilot.start(c.payload.draft, c.payload.acceptedWorstMicros));
+        });
       case "autopilot.pause":
         return this.autopilotGated(c, () => this.answer(c, this.autopilot.pause(c.payload.launchId)));
       case "autopilot.resume":
@@ -2883,6 +2943,7 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { runs: this.sortedRuns().slice(0, MAX_LISTED_RUNS).map((r) => this.runSummary(r)) });
       case "scenes.estimateCompose": {
         if (legsNeedsBuiltIn(c.payload)) return this.fail(c, LEGS_REFUSAL);
+        if (boldLevelNeeded(c.payload)) return this.fail(c, BOLD_REFUSAL);
         const refusal = this.libraryOpen ? (this.runnableRefusal(c.payload.avatarId) ?? this.categoryRefusal(c.payload.categories)) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, { estimate: this.sceneEstimate(this.sceneSets.composePrice(c.payload.count, c.payload.categories)) });
@@ -2891,6 +2952,7 @@ export class MockEngine implements EngineBridge {
         const { acceptedWorstMicros, ...request } = c.payload;
         // S5.8a: «Ножки» with no built-in category is refused first, for free, before the avatar is claimed.
         if (legsNeedsBuiltIn(request)) return this.fail(c, LEGS_REFUSAL);
+        if (boldLevelNeeded(request)) return this.fail(c, BOLD_REFUSAL);
         const free = request.count === 0;
         // The engine's order: the avatar is claimed first, then (a paid compose) the key and the ledger, the library, the avatar, the categories, the one open set, the price.
         if (this.jobRunningFor(request.avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar" });
@@ -2983,14 +3045,18 @@ export class MockEngine implements EngineBridge {
       }
       case "runs.estimate": {
         if (legsNeedsBuiltIn(c.payload)) return this.fail(c, LEGS_REFUSAL);
+        if (boldLevelNeeded(c.payload)) return this.fail(c, BOLD_REFUSAL);
         // No library open: the engine cannot find the avatar either.
         const refusal = this.libraryOpen ? (this.runnableRefusal(c.payload.avatarId) ?? this.categoryRefusal(c.payload.categories)) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
         if (refusal) return this.fail(c, refusal);
+        const noTier = this.boldPriceGate(requestBoldPhotos(c.payload) > 0);
+        if (noTier) return this.fail(c, noTier);
         return this.ok(c, { estimate: this.runPrice(c.payload) });
       }
       case "runs.start": {
         const { acceptedWorstMicros, ...request } = c.payload;
         if (legsNeedsBuiltIn(request)) return this.fail(c, LEGS_REFUSAL);
+        if (boldLevelNeeded(request)) return this.fail(c, BOLD_REFUSAL);
         // The engine's order: the avatar is claimed first, then the key and the ledger, the avatar itself, and the price.
         if (this.jobRunningFor(request.avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar" });
         // Then, in the engine's own order: the library, the avatar, its master, the age gate (only when the check is on), the face gate, the price.
@@ -3001,6 +3067,7 @@ export class MockEngine implements EngineBridge {
           this.categoryRefusal(request.categories) ??
           this.masterRefusal(request.avatarId) ??
           this.gateRefusal(this.settings.imageAgeCheck === "on") ??
+          this.boldPriceGate(requestBoldPhotos(request) > 0) ??
           this.priceGate(acceptedWorstMicros, this.runPrice(request).worstMicros) ??
           (this.masterPreflight.get(request.avatarId) ?? null);
         if (refusal) return this.fail(c, refusal);
@@ -3012,7 +3079,7 @@ export class MockEngine implements EngineBridge {
           capMicros: this.runPrice(request).worstMicros,
           settledMicros: 0,
           ageCheck: this.settings.imageAgeCheck === "on",
-          slots: mockRunSlots(request.count, request.categories),
+          slots: this.runSlotsOf(request),
           photoIds: [],
           categoryNames: this.categoryNamesOf(request.categories),
           writerDone: false,
@@ -3029,7 +3096,10 @@ export class MockEngine implements EngineBridge {
         if ("error" in approval) return this.fail(c, approval.error);
         const refusal = this.runnableRefusal(approval.set.avatarId);
         if (refusal) return this.fail(c, refusal);
-        return this.ok(c, { estimate: this.runPriceFromScenes(approval.active.length) });
+        const routed = approval.active.filter((s) => s.route === "seedream").length;
+        const noTier = this.boldPriceGate(routed > 0);
+        if (noTier) return this.fail(c, noTier);
+        return this.ok(c, { estimate: this.runPriceFromScenes(approval.active.length, routed) });
       }
       case "runs.estimateImages": {
         // The engine's order: the library, then the avatar (a count) or the launch and its avatar (a launch); the price comes last, and a launch's figure never passes its draw allocation.
@@ -3037,15 +3107,34 @@ export class MockEngine implements EngineBridge {
         if (gone) return this.fail(c, gone);
         const payload = c.payload;
         if ("count" in payload) {
+          // The engine's order: a «Смелая» category below «Смелая», the avatar, then the 2K tier; the bold share is the run estimate's own split.
+          const categories = payload.categories ?? [];
+          if (boldLevelNeeded({ categories, level: payload.level })) return this.fail(c, BOLD_REFUSAL);
           const refusal = this.runnableRefusal(payload.avatarId);
-          return refusal ? this.fail(c, refusal) : this.ok(c, { estimate: this.runPriceFromScenes(payload.count), photos: payload.count });
+          if (refusal) return this.fail(c, refusal);
+          // Round 2: for a stored set the bold share is its ACTIVE scenes drawn on the Seedream route (the engine's `routedSlots` over the set), not a split of the count.
+          let bold = requestBoldPhotos({ count: payload.count, categories });
+          if (payload.sceneSetId !== undefined) {
+            const set = this.sceneSets.find(payload.sceneSetId);
+            if (set === undefined || set.avatarId !== payload.avatarId) return this.fail(c, { code: "NOT_FOUND", detail: `no scene set ${payload.sceneSetId} for avatar ${payload.avatarId}` });
+            bold = Math.min(payload.count, set.scenes.filter((s) => !s.removed && s.route === "seedream").length);
+          }
+          const noTier = this.boldPriceGate(bold > 0);
+          if (noTier) return this.fail(c, noTier);
+          return this.ok(c, { estimate: this.runPriceFromScenes(payload.count, bold), photos: payload.count });
         }
         const left = this.autopilot.imagesLeft(payload.launchId, payload.avatarId);
         if (!left.ok) return this.fail(c, left.error);
         // Only the photos the draw allocation still buys are priced (the engine's rule when a price has risen since the plan), so the figure is the count form's for the photos it names.
-        const photoWorst = this.runPriceFromScenes(1).worstMicros;
+        // 5a.3 (S5.9f, option B): a «Смелая» launch's photos are all priced at the bold unit.
+        // The engine decides from the avatar's scene SET (`set !== null && isBoldLook(set.request)`): the file exists once the launch's compose has made it, not at the start.
+        const set = left.result.sceneSetId === null ? undefined : this.sceneSets.find(left.result.sceneSetId);
+        const boldLaunch = set !== undefined && isBoldLook({ level: set.level, categories: set.categories.map((entry) => entry.ref) });
+        const photoWorst = this.runPriceFromScenes(1, boldLaunch ? 1 : 0).worstMicros;
         const photos = photoWorst > 0 ? Math.min(left.result.photos, Math.floor(left.result.allocationMicros / photoWorst)) : left.result.photos;
-        return this.ok(c, { estimate: this.runPriceFromScenes(photos), photos });
+        // The engine prices a launch with nothing left to draw for one photo and zeroes the sums, so a «Смелая» launch still names the 2K attempt.
+        if (photos === 0) return this.ok(c, { estimate: { ...this.runPriceFromScenes(1, boldLaunch ? 1 : 0), expectedMicros: 0, worstMicros: 0 }, photos });
+        return this.ok(c, { estimate: this.runPriceFromScenes(photos, boldLaunch ? photos : 0), photos });
       }
       case "runs.startFromScenes": {
         // The engine's order: the library, the set's refusals, the avatar claimed by another job, then `runs.start`'s own checks.
@@ -3055,12 +3144,14 @@ export class MockEngine implements EngineBridge {
         if ("error" in approval) return this.fail(c, approval.error);
         const { set, active } = approval;
         if (this.jobRunningFor(set.avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar" });
-        const price = this.runPriceFromScenes(active.length);
+        const routed = active.filter((s) => s.route === "seedream").length;
+        const price = this.runPriceFromScenes(active.length, routed);
         const refusal =
           this.keyAndLedgerGate() ??
           this.runnableRefusal(set.avatarId) ??
           this.masterRefusal(set.avatarId) ??
           this.gateRefusal(this.settings.imageAgeCheck === "on") ??
+          this.boldPriceGate(routed > 0) ??
           this.priceGate(c.payload.acceptedWorstMicros, price.worstMicros) ??
           (this.masterPreflight.get(set.avatarId) ?? null);
         if (refusal) return this.fail(c, refusal);
@@ -3075,7 +3166,7 @@ export class MockEngine implements EngineBridge {
           capMicros: price.worstMicros,
           settledMicros: 0,
           ageCheck: this.settings.imageAgeCheck === "on",
-          slots: active.map((s) => ({ category: s.category, end: null })),
+          slots: active.map((s) => ({ category: s.category, end: null, ...(s.route === undefined ? {} : { route: s.route }) })),
           photoIds: [],
           categoryNames: Object.fromEntries(set.categories.flatMap((entry) => (entry.name === null ? [] : [[entry.ref, entry.name]]))),
           // Every sentence exists: no writer phase, and so none in what a resume could still spend.
@@ -3107,6 +3198,9 @@ export class MockEngine implements EngineBridge {
         if (stopped) return this.fail(c, stopped);
         // L7: matches the real engine's own #remaining, which runs.resume already shares with this command.
         if (run.slots.every((s) => s.end !== null)) return this.fail(c, { code: "VALIDATION", detail: `run ${run.runId} has nothing left to resume: every slot already ended` });
+        // 5a.3 (S5.9f, gap D): the engine prices first, so a Seedream slot still open without the 2K tier answers PRICE_UNAVAILABLE even when the cap has ended the run.
+        const noTier = this.boldPriceGate(this.openSeedream(run));
+        if (noTier) return this.fail(c, noTier);
         if (this.capExhausted(run)) return this.fail(c, this.capEndedError(run));
         return this.ok(c, { estimate: this.resumePrice(run) });
       }
@@ -3126,6 +3220,7 @@ export class MockEngine implements EngineBridge {
           this.runnableRefusal(run.avatarId) ??
           this.gateRefusal(run.ageCheck) ??
           (run.slots.every((s) => s.end !== null) ? { code: "VALIDATION" as const, detail: "every slot of this run already ended" } : null) ??
+          this.boldPriceGate(this.openSeedream(run)) ??
           (this.capExhausted(run) ? this.capEndedError(run) : null) ??
           // A free resume (worst 0) spends nothing: the accepted price still counts, a month already over budget does not.
           this.priceGate(c.payload.acceptedWorstMicros, this.resumePrice(run).worstMicros, { freeIsAlwaysFine: true });
@@ -3995,13 +4090,15 @@ export class MockEngine implements EngineBridge {
   }
 
   /** The autopilot's fixed unit prices: an attempt, a photo, the writer's chunk, as the mock prices a run. */
-  private autopilotUnit(): MockAutopilotUnit {
+  private autopilotUnit(bold: boolean): MockAutopilotUnit {
     const image = this.runImagePrice;
     const ageOn = this.settings.imageAgeCheck === "on";
+    // 5a.3 (S5.9f, option B): a «Смелая» launch with a «Смелая» category prices EVERY photo at the 2K unit: expected and worst never below the owner's model (the engine's `boldExpected`).
+    const worstImage = bold ? boldAttemptWorst(image) : image;
     return {
-      attemptWorstMicros: image + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.worst : 0),
-      photoExpectedMicros: image + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.expected : 0),
-      photoWorstMicros: MOCK_RUN_ATTEMPTS_PER_SLOT * (image + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.worst : 0)),
+      attemptWorstMicros: worstImage + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.worst : 0),
+      photoExpectedMicros: (bold ? boldAttemptWorst(image) : image) + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.expected : 0),
+      photoWorstMicros: MOCK_RUN_ATTEMPTS_PER_SLOT * (worstImage + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.worst : 0)),
       writerChunkWorstMicros: MOCK_RUN_WRITER.worstPerChunk,
       writerExpectedPerPhotoMicros: MOCK_RUN_WRITER.expectedPerPhoto,
     };
@@ -4317,6 +4414,15 @@ export class MockEngine implements EngineBridge {
   }
 
   /** A whole run at today's mock prices: every slot's every attempt, the writer chunked, and the age checks when they are on. */
+  /**
+   * The slots of a run request. A «Смелая» request with a «Смелая» category is dealt as `scenes.compose` deals it (5a.3, S5.9f), so each slot knows whether it is on the Seedream route;
+   * every other request is the planner's split, as it always was.
+   */
+  private runSlotsOf(request: RunRequest): MockRunSlot[] {
+    if (!isBoldLook(request)) return mockRunSlots(request.count, request.categories);
+    return this.sceneSets.plannedSlots(request).map((slot) => ({ category: slot.category, end: null, ...(slot.route === undefined ? {} : { route: slot.route }) }));
+  }
+
   private runPrice(request: Pick<RunRequest, "count" | "categories">): Estimate {
     const { count } = request;
     const image = this.runImagePrice;
@@ -4324,25 +4430,35 @@ export class MockEngine implements EngineBridge {
     const ageOn = this.settings.imageAgeCheck === "on";
     // I5.30: the template writes a built-in and a covered category whole; only an uncovered custom category's slots can go to the model (the engine's `runEstimate`).
     const { chunks, scenes } = this.writerLoadOf(request);
+    // 5a.3 (S5.9f, §10.2): every photo of a «Смелая» category is priced on the 2K route, the upper bound of the plan's need (the engine's `runEstimate`).
+    const bold = requestBoldPhotos(request);
     return {
-      expectedMicros: count * image + scenes * MOCK_RUN_WRITER.expectedPerPhoto + (ageOn ? count * MOCK_AGE_CHECK_PER_SLOT.expected : 0),
-      worstMicros: attempts * image + chunks * MOCK_RUN_WRITER.worstPerChunk + (ageOn ? attempts * MOCK_AGE_CHECK_PER_SLOT.worst : 0),
+      expectedMicros: (count - bold) * image + bold * boldAttemptWorst(image) + scenes * MOCK_RUN_WRITER.expectedPerPhoto + (ageOn ? count * MOCK_AGE_CHECK_PER_SLOT.expected : 0),
+      worstMicros: (attempts - bold * MOCK_RUN_ATTEMPTS_PER_SLOT) * image + bold * MOCK_RUN_ATTEMPTS_PER_SLOT * boldAttemptWorst(image) + chunks * MOCK_RUN_WRITER.worstPerChunk + (ageOn ? attempts * MOCK_AGE_CHECK_PER_SLOT.worst : 0),
       prices: this.price.prices,
       pricesAsOf: this.price.pricesAsOf,
+      ...(bold === 0 ? {} : { boldAttemptMicros: MOCK_BOLD_IMAGE }),
     };
   }
 
   /** A run made from a reviewed scene set (CS.5): `runPrice` with no writer term, every sentence being written already. */
-  private runPriceFromScenes(count: number): Estimate {
+  private runPriceFromScenes(count: number, bold = 0): Estimate {
     const image = this.runImagePrice;
     const attempts = count * MOCK_RUN_ATTEMPTS_PER_SLOT;
     const ageOn = this.settings.imageAgeCheck === "on";
+    // 5a.3 (S5.9f, §10.2): `bold` of the `count` photos are on the 2K route (a set's scenes with a route, exactly; a «Смелая» launch's every photo, option B).
     return {
-      expectedMicros: count * image + (ageOn ? count * MOCK_AGE_CHECK_PER_SLOT.expected : 0),
-      worstMicros: attempts * image + (ageOn ? attempts * MOCK_AGE_CHECK_PER_SLOT.worst : 0),
+      expectedMicros: (count - bold) * image + bold * boldAttemptWorst(image) + (ageOn ? count * MOCK_AGE_CHECK_PER_SLOT.expected : 0),
+      worstMicros: (attempts - bold * MOCK_RUN_ATTEMPTS_PER_SLOT) * image + bold * MOCK_RUN_ATTEMPTS_PER_SLOT * boldAttemptWorst(image) + (ageOn ? attempts * MOCK_AGE_CHECK_PER_SLOT.worst : 0),
       prices: this.price.prices,
       pricesAsOf: this.price.pricesAsOf,
+      ...(bold === 0 ? {} : { boldAttemptMicros: MOCK_BOLD_IMAGE }),
     };
+  }
+
+  /** Whether a slot of the run is still open on the Seedream route. */
+  private openSeedream(run: MockRun): boolean {
+    return run.slots.some((s) => s.end === null && s.route === "seedream");
   }
 
   private openSlots(run: MockRun): number {
@@ -4377,11 +4493,17 @@ export class MockEngine implements EngineBridge {
    * (one image, and its age check when the run has them) and the worst case
    * of one attempt. The age-check mode is the run's own, captured at start.
    */
-  private slotPrice(run: MockRun): { expected: number; attemptWorst: number } {
+  /** One request's own reserve: the 2K attempt on Seedream, the owner's model's price otherwise, and the age check's ceiling when it is on (the engine's `imageWorst` + `ageWorst`). */
+  private attemptPrice(run: MockRun, route?: "seedream"): number {
+    return (route === "seedream" ? MOCK_BOLD_IMAGE : this.runImagePrice) + (run.ageCheck ? MOCK_AGE_CHECK_PER_SLOT.worst : 0);
+  }
+
+  private slotPrice(run: MockRun, route?: "seedream"): { expected: number; attemptWorst: number } {
     const image = this.runImagePrice;
+    // 5a.3 (S5.9f): a Seedream slot expects the 2K attempt, and reserves never below the owner's model (the engine's `remainingPlan`).
     return {
-      expected: image + (run.ageCheck ? MOCK_AGE_CHECK_PER_SLOT.expected : 0),
-      attemptWorst: image + (run.ageCheck ? MOCK_AGE_CHECK_PER_SLOT.worst : 0),
+      expected: (route === "seedream" ? MOCK_BOLD_IMAGE : image) + (run.ageCheck ? MOCK_AGE_CHECK_PER_SLOT.expected : 0),
+      attemptWorst: (route === "seedream" ? boldAttemptWorst(image) : image) + (run.ageCheck ? MOCK_AGE_CHECK_PER_SLOT.worst : 0),
     };
   }
 
@@ -4412,14 +4534,17 @@ export class MockEngine implements EngineBridge {
 
   /** What a resume could still spend: its open slots' attempts at today's prices, never more than the cap leaves. */
   private resumePrice(run: MockRun): Estimate {
-    const open = this.openSlots(run);
-    const slot = this.slotPrice(run);
+    const openSlots = run.slots.filter((s) => s.end === null);
     const capLeft = Math.max(0, run.capMicros - this.runCommitted(run));
     // The real engine's remainingEstimate: an unwritten chunk adds the writer's ceiling (the run's `writerLoad`, fixed at its start: none for a built-in or covered run), and its typical share per scene.
     const writerWorst = run.writerDone ? 0 : run.writerLoad.chunks * MOCK_RUN_WRITER.worstPerChunk;
     const writerExpected = run.writerDone ? 0 : run.writerLoad.scenes * MOCK_RUN_WRITER.expectedPerPhoto;
-    const worstMicros = Math.min(open * MOCK_RUN_ATTEMPTS_PER_SLOT * slot.attemptWorst + writerWorst, capLeft);
-    return { expectedMicros: Math.min(open * slot.expected + writerExpected, worstMicros), worstMicros, prices: this.price.prices, pricesAsOf: this.price.pricesAsOf };
+    // 5a.3 (S5.9f): each open slot is priced on its own route; the 2K attempt is named while a Seedream slot is open.
+    const prices = openSlots.map((s) => this.slotPrice(run, s.route));
+    const sum = (pick: (p: { expected: number; attemptWorst: number }) => number): number => prices.reduce((total, p) => total + pick(p), 0);
+    const worstMicros = Math.min(MOCK_RUN_ATTEMPTS_PER_SLOT * sum((p) => p.attemptWorst) + writerWorst, capLeft);
+    const named = openSlots.some((s) => s.route === "seedream") ? { boldAttemptMicros: MOCK_BOLD_IMAGE } : {};
+    return { expectedMicros: Math.min(sum((p) => p.expected) + writerExpected, worstMicros), worstMicros, prices: this.price.prices, pricesAsOf: this.price.pricesAsOf, ...named };
   }
 
   /**
@@ -4436,7 +4561,9 @@ export class MockEngine implements EngineBridge {
     if (own !== null && own.reserveKeys.some((key) => this.reserves.has(key))) return false;
     // The real engine's minToProgress: ONE writer call's ceiling for an unwritten chunk (the writer runs first) plus one image attempt.
     const writer = run.writerDone || run.writerLoad.chunks === 0 ? 0 : MOCK_RUN_WRITER.worstPerCall;
-    return run.capMicros - this.runCommitted(run) < writer + this.slotPrice(run).attemptWorst;
+    // The cheapest next attempt of any open slot (the engine's `minToProgress`).
+    const cheapest = Math.min(...run.slots.filter((s) => s.end === null).map((s) => this.attemptPrice(run, s.route)));
+    return run.capMicros - this.runCommitted(run) < writer + cheapest;
   }
 
   private capEndedError(run: MockRun): EngineError {
@@ -4459,7 +4586,9 @@ export class MockEngine implements EngineBridge {
     const failed = run.slots.filter((s) => s.end === "failed").length;
     const open = this.openSlots(run);
     const running = this.activeRunJob(run.runId) !== null;
-    const capExhausted = this.capExhausted(run);
+    // 5a.3 (S5.9f, round 3): without the 2K tier the engine cannot price a run that still has Seedream slots: no remainder, and it cannot tell that the cap has ended it.
+    const unpriced = this.boldPriceMissing && this.openSeedream(run);
+    const capExhausted = !unpriced && this.capExhausted(run);
     return {
       runId: run.runId,
       avatarId: run.avatarId,
@@ -4473,7 +4602,7 @@ export class MockEngine implements EngineBridge {
       running,
       resumable: !running && open > 0 && !capExhausted,
       capExhausted,
-      remainingWorstMicros: this.resumePrice(run).worstMicros,
+      remainingWorstMicros: unpriced ? null : this.resumePrice(run).worstMicros,
       // The contract's rule: a launch's batch names it only while the launch is unfinished; after, it is an ordinary run.
       ...(run.launchId === undefined || !this.autopilot.isUnfinished(run.launchId) ? {} : { launchId: run.launchId }),
     };
@@ -4495,8 +4624,8 @@ export class MockEngine implements EngineBridge {
     const failedRunError = this.failedRunSlotsError;
     this.failedRunSlotsNext = 0;
     this.failedRunSlotsError = null;
-    // Fixed at job start, like the real reserve: a later setRunImagePrice must not change what a slot already owes.
-    const slot = this.slotPrice(run);
+    // Fixed at job start, like the real reserve: a later setRunImagePrice must not change what a slot already owes. Each slot is priced on its own route (5a.3, S5.9f).
+    const slotPrices = openIndexes.map((i) => this.slotPrice(run, run.slots[i]?.route));
     const job: MockRunJob = {
       jobId: this.nextId("job"),
       runId: run.runId,
@@ -4514,11 +4643,11 @@ export class MockEngine implements EngineBridge {
     // it (a capped resume, whose runs.estimateResume already capped this
     // same sum). Matches resumePrice's own min(rawRemaining, capLeft).
     let capLeft = Math.max(0, run.capMicros - run.settledMicros);
-    for (const key of job.reserveKeys) {
-      const reserve = Math.min(MOCK_RUN_ATTEMPTS_PER_SLOT * slot.attemptWorst, capLeft);
+    job.reserveKeys.forEach((key, step) => {
+      const reserve = Math.min(MOCK_RUN_ATTEMPTS_PER_SLOT * (slotPrices[step]?.attemptWorst ?? 0), capLeft);
       this.reserves.set(key, reserve);
       capLeft -= reserve;
-    }
+    });
     this.emitMoney();
 
     // Announced at launch, like the engine: a window that did not start the run sees (and can cancel) it before its first slot ends.
@@ -4541,7 +4670,32 @@ export class MockEngine implements EngineBridge {
           const key = this.slotReserveKey(run.runId, slotIndex + 1);
           this.reserves.delete(key);
           job.reserveKeys = job.reserveKeys.filter((k) => k !== key);
-          if (step >= openIndexes.length - failing) {
+          const seedream = planned.route === "seedream";
+          // 5a.3 (S5.9f, round 3): the engine reserves per ATTEMPT (93 000 µ$ on Seedream 2K, the owner's model's price otherwise) and lets a request out only while the run's settled money leaves
+          // room for it (budget.ts: committed + worst > cap is RUN_CAP_EXCEEDED). A slot that does not fit is not sent and stays open; the job then ends failed with that code.
+          if (step < openIndexes.length - failing && run.settledMicros + this.attemptPrice(run, planned.route) > run.capMicros) {
+            job.limited = true;
+            return;
+          }
+          // 5a.3 (S5.9f, §8.3): a Seedream slot meets the armed refusal first, then the armed empty answer; any other slot meets neither.
+          const refused = step < openIndexes.length - failing && seedream && this.boldRefusalsNext > 0;
+          const empty = step < openIndexes.length - failing && seedream && !refused && this.boldEmptiesNext > 0;
+          let stopped = false;
+          if (refused) {
+            // The model's 400: free and final. The slot ends alone with nothing settled; no other model, no retry.
+            this.boldRefusalsNext -= 1;
+            planned.end = "failed";
+            planned.error = { code: "MODERATION_REFUSED", sceneReason: "model-refused", detail: "Seedream refused this scene through content moderation" };
+            this.emitMoney();
+          } else if (empty) {
+            // A 2xx without an image was billed: settled at the 2K attempt (the age check never saw a picture). The slot ends alone; a second one in the run stops sending.
+            this.boldEmptiesNext -= 1;
+            planned.end = "failed";
+            planned.error = { code: "INTERNAL", sceneReason: "model-empty", detail: "the Seedream answer had no usable image" };
+            run.settledMicros += MOCK_BOLD_IMAGE;
+            this.spend(MOCK_BOLD_IMAGE);
+            stopped = run.slots.filter((s) => s.error?.sceneReason === "model-empty").length >= 2;
+          } else if (step >= openIndexes.length - failing) {
             // Every attempt was refused or failed: a definite non-2xx each time, settled at zero.
             planned.end = "failed";
             if (failedRunError !== null) planned.error = failedRunError;
@@ -4550,15 +4704,16 @@ export class MockEngine implements EngineBridge {
             planned.end = "done";
             const photoId = this.nextId("photo");
             const qa = mockFaceQa(slotIndex);
-            this.photos.push({ photoId, avatarId: run.avatarId, runId: run.runId, category: planned.category, ...this.categoryNameOf(run, planned.category), createdAt: this.nowIso(), used: false, usedIn: [], rejected: false, reserved: false, eligible: true, ...(qa ? { qa } : {}) });
+            this.photos.push({ photoId, avatarId: run.avatarId, runId: run.runId, category: planned.category, ...this.categoryNameOf(run, planned.category), createdAt: this.nowIso(), used: false, usedIn: [], rejected: false, reserved: false, eligible: true, ...(qa ? { qa } : {}), ...(seedream ? { route: "seedream" as const } : {}) });
             run.photoIds.push(photoId);
-            run.settledMicros += slot.expected;
-            this.spend(slot.expected);
+            run.settledMicros += slotPrices[step]?.expected ?? 0;
+            this.spend(slotPrices[step]?.expected ?? 0);
             this.bumpPhotoCount(run.avatarId);
           }
           job.status = "running";
           job.done += 1;
           this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.progress", payload: { kind: "run", jobId: job.jobId, runId: job.runId, avatarId: job.avatarId, done: job.done, total: job.total } });
+          if (stopped) this.failRunJob(job, { code: "INTERNAL", detail: "two Seedream answers in this run came back without an image; nothing more is sent" });
         }),
       );
     });
@@ -4567,6 +4722,10 @@ export class MockEngine implements EngineBridge {
   }
 
   private finishRunJob(job: MockRunJob, run: MockRun): void {
+    if (job.limited === true) {
+      this.failRunJob(job, { code: "RUN_CAP_EXCEEDED", detail: `run ${run.runId}'s cap leaves too little for the next attempt` });
+      return;
+    }
     job.status = "done";
     job.cancelTimers = [];
     this.emit({

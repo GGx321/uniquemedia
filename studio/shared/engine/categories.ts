@@ -8,9 +8,25 @@ import { Count, Id, Micros, ModelId } from "./primitives";
 // planner, the writer's label resolver and the renderer's chips all read the
 // same ordering and split rules from here, so they cannot drift apart.
 
-/** Scene categories from the Photos mockup; revealing outfits are out of Stage 2. */
-export const SceneCategory = z.enum(["home", "travel", "shoot", "glam", "fit"]);
+/**
+ * Scene categories: the five built-ins of the Photos mockup, then (5a.3, S5.9b2, plan s5a3 §6.1) the two «Смелая» ones, «Ночнушки и бельё» (`nightwear`) and
+ * «Пляж и бассейн» (`beach`), whose id is the engine's name too. A stored id never changes (I5.33).
+ */
+export const SceneCategory = z.enum(["home", "travel", "shoot", "glam", "fit", "nightwear", "beach"]);
 export type SceneCategory = z.infer<typeof SceneCategory>;
+
+/** The two «Смелая» categories (5a.3): drawn only under «Подача: Смелая» (the engine refuses them below it, S5.9c), from banks of their own. */
+export const BOLD_CATEGORIES = ["nightwear", "beach"] as const satisfies readonly SceneCategory[];
+export type BoldCategory = (typeof BOLD_CATEGORIES)[number];
+
+/** The five ordinary built-ins: what the card's and the autopilot's chips and the form's defaults offer until the «Смелая» chips ship (S5.9g). */
+export const ORDINARY_SCENE_CATEGORIES = ["home", "travel", "shoot", "glam", "fit"] as const satisfies readonly SceneCategory[];
+export type OrdinarySceneCategory = (typeof ORDINARY_SCENE_CATEGORIES)[number];
+
+/** Whether a ref (a contract id, an engine name or any text) is one of the two «Смелая» categories. */
+export function isBoldCategory(ref: string): ref is BoldCategory {
+  return BOLD_CATEGORIES.some((bold) => bold === ref);
+}
 
 const CUSTOM_CATEGORY_ID = /^cat-[a-z0-9-]{8,59}$/;
 
@@ -42,11 +58,19 @@ export const CAPTURES = ["mirror-hidden", "mirror", "above", "prone", "over-shou
 export type Capture = (typeof CAPTURES)[number];
 
 /**
- * «Подача» (S5.7a): how a scene is presented. Absent means ordinary. `bold` does not exist yet and is refused, so a request cannot ask for what no
- * engine draws. The level picks moments; it is never a price input.
+ * «Подача» (S5.7a, 5a.3): how a scene is presented. Absent means ordinary. `bold` («Смелая», 5a.3 S5.9a) is accepted wherever a level is; until the two «Смелая»
+ * categories exist (S5.9b2) the five ordinary built-ins draw it exactly as `flirty`. The level picks moments; for a «Смелая» category it also picks the route
+ * (`SceneRoute`) and so the price, which the estimate reads off the plan, never off the level.
  */
-export const SceneLevel = z.enum(["ordinary", "flirty"]);
+export const SceneLevel = z.enum(["ordinary", "flirty", "bold"]);
 export type SceneLevel = z.infer<typeof SceneLevel>;
+
+/**
+ * Where a scene or a photo was drawn, when it is not on the owner's image model (5a.3, S5.9a): `seedream` is the bold route (Seedream 5 Pro at 2K). Absent means the owner's
+ * model, and a photo of the 1K moderation fallback carries none either: the model id alone cannot tell the two Seedream uses apart.
+ */
+export const SceneRoute = z.literal("seedream");
+export type SceneRoute = z.infer<typeof SceneRoute>;
 
 /**
  * «Ножки» (S5.8a): the share of a run's built-in photos shot as legs and feet filling most of the frame, in percent: «Нет» (0), «Немного» (15) or «Много» (30).
@@ -144,6 +168,15 @@ export function isCustomCategory(ref: string): ref is CustomCategoryId {
  */
 export function legsNeedsBuiltIn(request: { categories: readonly string[]; legsShare?: number | undefined }): boolean {
   return (request.legsShare ?? 0) > 0 && request.categories.every((ref) => isCustomCategory(ref));
+}
+
+/**
+ * «Смелая» categories need «Смелая» (5a.3, S5.9c, I5.42): «Ночнушки и бельё» and «Пляж и бассейн» are drawn only at the bold level, so a request that names one at any other level (or
+ * at none) cannot be served. The engine refuses it for free (`bold-level-needed`) before it prices, reserves or writes anything, and the mock does the same. A request at `bold` with no
+ * «Смелая» category is fine: the five draw as «Кокетливая».
+ */
+export function boldLevelNeeded(request: { categories: readonly string[]; level?: SceneLevel | undefined }): boolean {
+  return request.level !== "bold" && request.categories.some((ref) => isBoldCategory(ref));
 }
 
 /**

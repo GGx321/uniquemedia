@@ -84,10 +84,12 @@ interface RowProps {
   hintRole?: "status" | "alert";
   hintTone?: Tone;
   children?: ReactNode;
+  /** S5.9g (mockup 56): a line of its own under the row, the whole row wide (the «Фото» model's «Смелая» line). */
+  after?: ReactNode;
 }
 
 /** The sheet's settings row: `.row` with the name and hint (`.rl`) on the left and the control on the right. */
-function Row({ label, labelFor, labelId, path, hint, hintId, hintRole, hintTone, children }: RowProps) {
+function Row({ label, labelFor, labelId, path, hint, hintId, hintRole, hintTone, children, after }: RowProps) {
   return (
     <div className="row">
       <div className="rl">
@@ -111,7 +113,21 @@ function Row({ label, labelFor, labelId, path, hint, hintId, hintRole, hintTone,
         )}
       </div>
       {children !== undefined && <div className="row-control">{children}</div>}
+      {after}
     </div>
+  );
+}
+
+/** S5.9g (plan s5a3 §13.1 «Settings»; mockup 56, README «5a.3» item 13): the owner's image model never reaches the «Смелая» frames. */
+const BOLD_MODEL_LINE = "Смелые кадры всегда рисует Seedream 5 Pro · 2K — эта настройка их не меняет.";
+
+/** The «Смелая» line under the «Фото» model row (mockup 56): an «i», then the line; `id` lets the select be described by it. */
+function BoldModelNote({ id }: { id: string }) {
+  return (
+    <p id={id} className="settings-bold-note">
+      <Icon name="info" size={12} strokeWidth={2.2} />
+      <span>{BOLD_MODEL_LINE}</span>
+    </p>
   );
 }
 
@@ -766,6 +782,7 @@ function ImageModelRows({ settings }: { settings: Settings }) {
   const modelId = useId();
   const qualityId = useId();
   const hintId = useId();
+  const boldId = useId();
   const [state, setState] = useState<CatalogueState>({ status: "loading" });
   const [asks, setAsks] = useState(0);
   const askedAt = useRef(0);
@@ -816,7 +833,7 @@ function ImageModelRows({ settings }: { settings: Settings }) {
   if (state.status !== "ready") {
     return (
       <>
-        <Row label="Фото" hint={state.status === "failed" ? `${explanation} · список моделей не загрузился, выбор недоступен` : explanation}>
+        <Row label="Фото" hint={state.status === "failed" ? `${explanation} · список моделей не загрузился, выбор недоступен` : explanation} after={<BoldModelNote id={boldId} />}>
           <span className="mono row-value">{settings.imageModel}</span>
           {state.status === "failed" && (
             <button
@@ -849,8 +866,15 @@ function ImageModelRows({ settings }: { settings: Settings }) {
 
   return (
     <>
-      <Row label="Фото" labelFor={modelId} hint={hint} hintId={hintId}>
-        <select id={modelId} className="row-select mono" value={settings.imageModel} disabled={busy} aria-describedby={hintId} onChange={(e) => void save(e.target.value)}>
+      <Row label="Фото" labelFor={modelId} hint={hint} hintId={hintId} after={<BoldModelNote id={boldId} />}>
+        <select
+          id={modelId}
+          className="row-select row-select-fit mono"
+          value={settings.imageModel}
+          disabled={busy}
+          aria-describedby={`${hintId} ${boldId}`}
+          onChange={(e) => void save(e.target.value)}
+        >
           {entry === undefined && <option value={settings.imageModel}>{`${settings.imageModel} · нет в списке`}</option>}
           {catalogue.models.map((m) => (
             <option key={m.id} value={m.id}>

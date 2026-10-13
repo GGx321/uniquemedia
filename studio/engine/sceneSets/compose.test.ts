@@ -114,6 +114,29 @@ describe("planSceneSet", () => {
     expect(flirty.scenes.map((s) => s.slot)).toEqual(planWithPools({ seed: seedOfSet("set-aaaa-0001"), count: 40, categories: ["home", "travel"], level: "flirty" }, POOLS).slots);
   });
 
+  // 5a.3 (S5.9a): «Смелая» is stored as asked (the set is a «Смелая» set), and for the built-in categories that are not «Смелая» ones it draws the flirty mix.
+  test("a bold level is stored on the request, and the five ordinary built-ins draw the flirty mix", () => {
+    const bold = planSceneSet(input({ count: 40, level: "bold" }));
+    expect(bold.request.level).toBe("bold");
+    expect(bold.scenes.map((s) => s.slot)).toEqual(planSceneSet(input({ count: 40, level: "flirty" })).scenes.map((s) => s.slot));
+  });
+
+  // 5a.3 (S5.9c): a «Смелая» compose of the two «Смелая» categories draws the 20 / 40 / 40 mix, and a set keeps every scene's level and route through the file.
+  test("a bold compose of the «Смелая» categories holds the mix of each, and the file keeps every scene's level and route", () => {
+    const set = planSceneSet(input({ count: 30, categories: ["nightwear", "beach"], level: "bold" }));
+    for (const category of ["nightwear", "beach"]) {
+      const own = set.scenes.filter((s) => s.slot.category === category);
+      expect(own).toHaveLength(15);
+      expect(own.filter((s) => s.slot.level === "bold")).toHaveLength(6);
+      expect(own.filter((s) => s.slot.level === "flirty")).toHaveLength(6);
+      expect(own.filter((s) => s.slot.level === undefined)).toHaveLength(3);
+    }
+    const parsed = SceneSetFile.parse({ schemaVersion: 1, revision: 1, createdAt: "2026-10-07T10:00:00.000Z", updatedAt: "2026-10-07T10:00:00.000Z", ...set });
+    expect(parsed.scenes.map((s) => (s.origin === "planned" ? s.slot : null))).toEqual(set.scenes.map((s) => s.slot));
+    expect(parsed.scenes.some((s) => s.origin === "planned" && s.slot.route === "seedream")).toBe(true);
+    expect(parsed.request.level).toBe("bold");
+  });
+
   test("an ordinary compose plans no flirty scene", () => {
     expect(planSceneSet(input({ count: 40 })).scenes.some((s) => s.slot.level !== undefined)).toBe(false);
   });

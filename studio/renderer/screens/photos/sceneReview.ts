@@ -94,6 +94,14 @@ export function shotTagLabel(scene: Pick<SceneView, "shot" | "capture">): string
 export const LEVEL_TAG = "кокетливо";
 export const LEVEL_TAG_TITLE = "Подача «Кокетливая»: взгляд, улыбка, поза";
 
+/** S5.9g (plan s5a3 §13.1; mockup 49): a bold scene's badge, filled where «кокетливо» is outlined, and what it means (word for word, the plan's). */
+export const BOLD_TAG = "смело";
+export const BOLD_TAG_TITLE = "Подача «Смелая»: бельё, ночнушки, купальники";
+
+/** S5.9g (mockup 49): a scene on the Seedream route — a fact of the route, not of «Подача» — and what it means. */
+export const ROUTE_TAG = "Seedream · 2K";
+export const ROUTE_TAG_TITLE = "Этот кадр рисует Seedream 5 Pro в 2K";
+
 /** The shots an own scene's form offers: the decks' four. An old scene may carry the photographer; a new one never asks for it. */
 export const IDEA_SHOTS: readonly PoolShot[] = POOL_SHOTS.filter((shot) => shot !== "photographer");
 

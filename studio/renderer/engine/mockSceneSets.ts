@@ -1,5 +1,6 @@
 import {
   ideaNamesMirror,
+  isBoldCategory,
   isCustomCategory,
   MAX_COMPOSE_SCENES,
   orderCategories,
@@ -8,7 +9,6 @@ import {
   SCENE_CHUNK_SIZE,
   SCENE_TEXT_MAX,
   splitCount,
-  youthWords,
   type CategoryRef,
   type LegsShare,
   type CategorySummary,
@@ -28,8 +28,9 @@ import {
   type UnsequencedEvent,
 } from "../../shared/engine";
 import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "../../shared/scenes/captures";
+import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared/scenes/contentLine";
 import { covers } from "../../shared/scenes/custom";
-import { apportionLegs, flirtyCountOf, legsCountOf } from "../../shared/scenes/level";
+import { apportionLegs, drawLevelOf, flirtyCountOf, legsCountOf, levelCountsOf } from "../../shared/scenes/level";
 import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
 import { bankDraw, legsDraw, localTexts, plainTextOf, type LocalScene } from "./mockBankScenes";
 import { mockAnglesOf } from "./mockCategories";
@@ -128,8 +129,10 @@ interface Scene {
   /** 5a.2: who takes the photo, when the mock dealt it from a bank's deck (a built-in scene); a stored shot says it otherwise. */
   capture?: Capture;
   pose: SceneView["pose"];
-  /** «Подача» of the scene (S5.7b): only a built-in scene of a flirty set can be flirty. */
-  level?: "flirty";
+  /** «Подача» of the scene (S5.7b): only a built-in scene of a flirty set can be flirty; 5a.3: a «Смелая» category's scene of a bold set may be bold. */
+  level?: "flirty" | "bold";
+  /** 5a.3: the scene is drawn on Seedream, exactly when its moment or its outfit is. */
+  route?: "seedream";
   /** «Ножки» (S5.8a): a legs scene. */
   framing?: "legs";
   place: ScenePlace | null;
@@ -146,6 +149,8 @@ interface Draw {
   shot: SceneView["shot"];
   pose: SceneView["pose"];
   capture?: Capture;
+  /** 5a.3: the route of the redrawn scene, recomputed from what it drew (absent: the owner's model). */
+  route?: "seedream";
 }
 
 /** A rewrite or an idea write of the review (CS.4b): one request under ids of its own, kept for the money it spent and the ids it burnt. */
@@ -198,7 +203,7 @@ interface MockSet {
   runId: string;
   /** Absent when the request sent none (S5.7a); the mock then draws with neither extra pose. */
   poses?: { profile: boolean; back: boolean };
-  /** «Подача» (S5.7a), as sent; echoed only when flirty. The scenes' own levels are drawn from it (S5.7b). */
+  /** «Подача» (S5.7a), as sent; echoed when flirty or bold. The scenes' own levels are drawn from it (S5.7b). */
   level?: SceneLevel;
   categories: { ref: CategoryRef; name: string | null; poses?: ScenePose[] }[];
   scenes: Scene[];
@@ -310,10 +315,38 @@ function planScenes(count: number, refs: readonly CategoryRef[], level: SceneLev
   for (const [entry, { ref, count: n }] of split.entries()) {
     const custom = isCustomCategory(ref) ? category(ref) : undefined;
     // 5a.2 (S5.6e): a built-in scene is a pair of its category's bank dealt a capture from the deck, so the shared template can write it.
+    if (!isCustomCategory(ref) && level === "bold" && isBoldCategory(ref)) {
+      // 5a.3 (S5.9c, I5.36): a «Смелая» category under «Смелая» draws the 20 / 40 / 40 mix, exactly (the shared `levelCountsOf`). The mock spreads the bold scenes evenly over the category, then
+      // the flirty ones over the rest; every scene is a pair of the bank at its level, written by the shared template, and is on Seedream when its moment or its outfit is.
+      const counts = levelCountsOf(n);
+      const legs = legsParts[entry] ?? 0;
+      const legsAt = Array.from({ length: n }, (_, k) => spread(k, n, legs));
+      const isBold = Array.from({ length: n }, (_, k) => spread(k, n, counts.bold));
+      const restAt = isBold.flatMap((bold, k) => (bold ? [] : [k]));
+      const isFlirty = new Set(restAt.filter((_, j) => spread(j, restAt.length, counts.flirty)));
+      const others = n - legs;
+      const wantedAway = Math.min(Math.ceil(n / 10), Math.floor(n / 5));
+      let kOther = 0;
+      let kLegs = 0;
+      for (let k = 0; k < n; k++) {
+        index += 1;
+        const sceneLevel = isBold[k] === true ? ("bold" as const) : isFlirty.has(k) ? ("flirty" as const) : undefined;
+        if (legsAt[k] === true) {
+          const draw = legsDraw(ref, kLegs++, { level: sceneLevel ?? "ordinary" });
+          scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, framing: "legs", ...(sceneLevel === undefined ? {} : { level: sceneLevel }), ...(draw.route === undefined ? {} : { route: draw.route }), place: draw.place, idea: null, text: null, edited: false, removed: false });
+          continue;
+        }
+        const draw = bankDraw(ref, kOther, { level: sceneLevel ?? "ordinary", away: sceneLevel === undefined && spread(kOther, others, wantedAway) ? "prefer" : "never" });
+        kOther++;
+        scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(sceneLevel === undefined ? {} : { level: sceneLevel }), ...(draw.route === undefined ? {} : { route: draw.route }), place: draw.place, idea: null, text: null, edited: false, removed: false });
+      }
+      continue;
+    }
     if (!isCustomCategory(ref)) {
       // «Подача» (I5.28): exactly round(0.6 × n) of the category's scenes are flirty. The angle comes from the scene (I5.26): the category wants ⌈n/10⌉ scenes facing away,
       // within its ⌊n/5⌋ cap, and a hand-held capture is never one of them.
-      const flirty = flirtyCountOf(n, level);
+      // 5a.3 (S5.9a): «Смелая» draws the five ordinary built-ins as «Кокетливая» until the bold banks exist, as the engine's planner does.
+      const flirty = flirtyCountOf(n, drawLevelOf(level));
       const legs = legsParts[entry] ?? 0;
       // The legs scenes are spread over the category; the deck is dealt over the others. «Подача» goes to the other scenes first, and only what they cannot take to a legs scene.
       const legsAt = Array.from({ length: n }, (_, k) => spread(k, n, legs));
@@ -427,26 +460,24 @@ function refuse(detail: string, sceneReason: SceneReason, sceneId?: number): Eng
 
 // ---------- the text rules (the engine's `textProblem`) ----------
 
-/** The assembler's revealing words (studio/engine/scenes/words.ts), exactly: the parity suite plays a text with one through both engines. */
-const REVEALING_WORDS = /\b(bikini|swimsuit|swimwear|lingerie|sports bra|thong|stockings?|slip dress|robe over lingerie)\b/i;
 const LINE_BREAK = new RegExp(`[\\n\\r${String.fromCharCode(0x2028)}${String.fromCharCode(0x2029)}]`);
 
-/** Whether a stored text breaks the assembler's word rules now (a youth word, a revealing word): the engine's `sentenceProblems`, checked at an approval. */
-function breaksWordRules(text: string): boolean {
-  return youthWords(text, "descriptor").length > 0 || new RegExp(REVEALING_WORDS, "i").test(text);
+/**
+ * Whether a stored text breaks the assembler's word rules now (a youth word, a revealing word): the shared content line the engine calls, checked at an approval. A scene of a «Смелая»
+ * category is held to the youth words only (5a.3, `contentLevelOf`); an own scene has no category and is ordinary.
+ */
+function breaksWordRules(text: string, scene: Pick<Scene, "category">): boolean {
+  return contentProblems(text, contentLevelOf(scene)).length > 0;
 }
 
-function textProblem(text: string): SceneProblem | null {
+function textProblem(text: string, level: ContentLevel = "ordinary"): SceneProblem | null {
   const trimmed = text.trim();
   if (trimmed.length === 0) return { reason: "empty", words: [] };
   if (trimmed.length > SCENE_TEXT_MAX) return { reason: "too-long", words: [] };
   if (LINE_BREAK.test(trimmed)) return { reason: "not-one-line", words: [] };
   if (/\p{Cc}/u.test(trimmed)) return { reason: "control-char", words: [] };
-  const youth = youthWords(trimmed, "descriptor");
-  if (youth.length > 0) return { reason: "youth-word", words: youth.slice(0, 12).map((w) => w.slice(0, 64)) };
-  const revealing = Array.from(trimmed.matchAll(new RegExp(REVEALING_WORDS, "gi")), (m) => m[0]);
-  if (revealing.length > 0) return { reason: "revealing-word", words: revealing.slice(0, 12).map((w) => w.slice(0, 64)) };
-  return null;
+  const [first] = contentProblems(trimmed, level);
+  return first === undefined ? null : { reason: first.reason, words: first.words.slice(0, 12).map((w) => w.slice(0, 64)) };
 }
 
 // ---------- the library of sets ----------
@@ -715,9 +746,9 @@ export class MockSceneSets {
   }
 
   /** The `no`th scene (1-based) the set's draw takes, in scene order, among the planned scenes that are not removed: what the face gate would see in the `no`th photo. */
-  drawnScene(sceneSetId: string, no: number): { capture?: Capture; shot: SceneView["shot"]; pose: SceneView["pose"] } | undefined {
+  drawnScene(sceneSetId: string, no: number): { capture?: Capture; shot: SceneView["shot"]; pose: SceneView["pose"]; route?: "seedream" } | undefined {
     const scene = this.find(sceneSetId)?.scenes.filter((s) => s.place !== null && !s.removed)[no - 1];
-    return scene === undefined ? undefined : { ...(scene.capture === undefined ? {} : { capture: scene.capture }), shot: scene.shot, pose: scene.pose };
+    return scene === undefined ? undefined : { ...(scene.capture === undefined ? {} : { capture: scene.capture }), shot: scene.shot, pose: scene.pose, ...(scene.route === undefined ? {} : { route: scene.route }) };
   }
 
   /** Whether a «Дописать» has anything to do: a pending chunk, a free one included (the engine's `nothing-waiting` is only for a set with none). */
@@ -831,7 +862,8 @@ export class MockSceneSets {
         // The engine's slot stores a capture only when it says more than the stored shot (I5.27), and the view echoes only that.
         ...(scene.capture === undefined || scene.capture === captureOfShot(scene.shot) ? {} : { capture: scene.capture }),
         ...(scene.framing === "legs" ? { framing: "legs" as const } : {}),
-        ...(scene.level === "flirty" ? { level: "flirty" as const } : {}),
+        ...(scene.level === undefined ? {} : { level: scene.level }),
+        ...(scene.route === undefined ? {} : { route: scene.route }),
         place: { ...scene.place },
         idea: null,
         text: scene.text,
@@ -854,7 +886,7 @@ export class MockSceneSets {
       stoppedError: stoppedBy === "failed" ? (set.write?.stoppedError ?? { code: "INTERNAL" }) : null,
       runId: set.used ? set.runId : null,
       ...(set.poses === undefined ? {} : { poses: { ...set.poses } }),
-      ...(set.level === "flirty" ? { level: "flirty" as const } : {}),
+      ...(set.level === "flirty" || set.level === "bold" ? { level: set.level } : {}),
       categories: set.categories.map((c) => ({ ...c })),
       textModel: set.textModel,
       // The engine reads the spend off the ledger: with a ledger that cannot be read it is unknown, and so is the open part of it.
@@ -899,7 +931,7 @@ export class MockSceneSets {
       const scene = set.scenes.find((s) => s.sceneId === op.sceneId);
       if (scene === undefined) return { error: refuse(`the set has no scene ${op.sceneId}`, "scene-missing", op.sceneId) };
       if (scene.removed) return { error: refuse(`scene ${op.sceneId} is removed; restore it before editing its text`, "target-removed", op.sceneId) };
-      const problem = textProblem(op.text);
+      const problem = textProblem(op.text, contentLevelOf(scene));
       if (problem !== null) return { problem };
       const text = op.text.trim();
       if (scene.text === text && scene.edited) return { view: this.view(set) };
@@ -978,7 +1010,7 @@ export class MockSceneSets {
     if (active.length === 0) return { error: refuse(`scene set ${sceneSetId} has no scene to draw: every scene is removed`, "no-active-scenes") };
     if (active.length > MAX_COMPOSE_SCENES) return { error: refuse(`scene set ${sceneSetId} has ${active.length} active scenes; a run draws at most ${MAX_COMPOSE_SCENES}`, "too-many-active") };
     // A text stored before a rule was tightened (the engine re-checks every active text at an approval, and so does the mock).
-    const unfit = active.find((s) => s.text !== null && breaksWordRules(s.text));
+    const unfit = active.find((s) => s.text !== null && breaksWordRules(s.text, s));
     if (unfit !== undefined) return { error: refuse(`the text of scene ${unfit.sceneId} of set ${sceneSetId} breaks today's word rules: edit or remove it first`, "scene-text-problem", unfit.sceneId) };
     if (this.isLive(sceneSetId)) return { error: { code: "IN_FLIGHT", detail: `scene set ${sceneSetId} is being written; wait for that to end (or cancel it)` } };
     if (set.used) return { error: refuse(`scene set ${sceneSetId} is already used by run ${set.runId}`, "set-used") };
@@ -1006,6 +1038,15 @@ export class MockSceneSets {
   #categoryEntry(ref: CategoryRef): { ref: CategoryRef; name: string | null; poses?: ScenePose[] } {
     const custom = isCustomCategory(ref) ? this.#deps.category(ref) : undefined;
     return { ref, name: custom?.name ?? null, ...(custom?.pool.poses === undefined ? {} : { poses: [...custom.pool.poses] }) };
+  }
+
+  /**
+   * 5a.3 (S5.9f): the slots of a run request that is «Смелая» with a «Смелая» category, as the planner deals them: the very scenes `compose` would plan for the same request, each with its
+   * category and the route it is drawn on. A run and a set of one request therefore agree on which slots are on Seedream.
+   */
+  plannedSlots(request: { count: number; categories: readonly CategoryRef[]; level?: SceneLevel; legsShare?: LegsShare }): { category: Scene["category"]; route?: "seedream" }[] {
+    const refs = orderCategories(request.categories);
+    return planScenes(request.count, refs, request.level ?? "ordinary", request.legsShare ?? 0, this.#deps.category).map((scene) => ({ category: scene.category, ...(scene.route === undefined ? {} : { route: scene.route }) }));
   }
 
   /** A compose that passed the engine's gates: plans and stores the set, launches its job (none for an empty set). */
@@ -1183,10 +1224,10 @@ export class MockSceneSets {
         const ref = scene.category === "own" ? "home" : scene.category;
         if (!isCustomCategory(ref) && scene.framing === "legs") {
           // S5.8a: a legs scene is drawn anew among the bank's legs moments, away from the places and outfits the set already shows; the framing stays.
-          const draw = legsDraw(ref, k + scene.sceneId, { avoid: { locations: shown, outfits: shownOutfits }, ...(scene.place === null ? {} : { leaving: scene.place.location, activity: scene.place.activity }) });
+          const draw = legsDraw(ref, k + scene.sceneId, { avoid: { locations: shown, outfits: shownOutfits }, level: scene.level ?? "ordinary", ...(scene.place === null ? {} : { leaving: scene.place.location, activity: scene.place.activity }) });
           shown.add(draw.place.location);
           shownOutfits.add(draw.place.outfit);
-          draws.set(scene.sceneId, { place: draw.place, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose });
+          draws.set(scene.sceneId, { place: draw.place, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(draw.route === undefined ? {} : { route: draw.route }) });
           continue;
         }
         if (!isCustomCategory(ref)) {
@@ -1201,7 +1242,7 @@ export class MockSceneSets {
           });
           shown.add(draw.place.location);
           shownOutfits.add(draw.place.outfit);
-          draws.set(scene.sceneId, { place: draw.place, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose });
+          draws.set(scene.sceneId, { place: draw.place, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(draw.route === undefined ? {} : { route: draw.route }) });
           continue;
         }
         const custom = this.#deps.category(ref);
@@ -1437,6 +1478,9 @@ export class MockSceneSets {
         scene.pose = drawn.pose;
         if (drawn.capture === undefined) delete scene.capture;
         else scene.capture = drawn.capture;
+        // 5a.3: the route follows what the scene drew now, never what it drew before.
+        if (drawn.route === undefined) delete scene.route;
+        else scene.route = drawn.route;
       }
       // 5a.2: the template writes the scenes it renders (on the write's own key, after the draws); the model's answer is the rest, and a scene it could not write takes the plain sentence.
       const local = this.#local(set, review.k);

@@ -203,4 +203,130 @@ export const PRESENTATION_SCENARIOS: readonly Scenario[] = [
       await t.call("autopilot.estimate", { draft: { avatarIds: [w.avatarId], videosPerAvatar: 2, mix: { single: 0, collage: 0, slides: 100 }, categories: ["cat-paris-cafes"], legsShare: 15, library: false, generate: true, sceneReview: false, stickers: false } });
     },
   },
+  // Stage 5, 5a.3, S5.9a (APPENDED; the golden is append-only, plan s5a3 §12): «Смелая» on the contract, before the two «Смелая» categories exist.
+  {
+    name: "scene sets, «Смелая» (S5.9a): a bold compose over «Дом» alone holds the flirty counts of «Кокетливая», the set echoes the level it was asked at, and a bold draft is previewed",
+    rig: { launch: true },
+    async run(t, w, control) {
+      await control.musicTracks();
+      /** The avatar's set once its write has settled, read quietly: the transcript tells the facts below as notes (which scene is which is each engine's own deal). */
+      const settled = async (): Promise<{ set: Record<string, unknown>; scenes: Record<string, unknown>[] }> => {
+        const scenes: Record<string, unknown>[] = [];
+        const sets: Record<string, unknown>[] = [];
+        await t.quiet(async () => {
+          for (let i = 0; i < 2_000; i++) {
+            const answer = await t.call("scenes.get", { avatarId: w.avatarId });
+            const set = answer.ok ? record(answer.result.sceneSet) : null;
+            if (set !== null && set.status === "ready") {
+              const listed: unknown[] = Array.isArray(set.scenes) ? set.scenes : [];
+              for (const scene of listed) {
+                const row = record(scene);
+                if (row !== null) scenes.push(row);
+              }
+              sets.push(set);
+              return;
+            }
+            await t.settle();
+            await t.quiesce();
+          }
+          throw new Error("the scene set never finished its write");
+        });
+        const [set] = sets;
+        if (set === undefined) throw new Error("the avatar has no scene set to read");
+        return { set, scenes };
+      };
+      const facts = (read: { set: Record<string, unknown>; scenes: Record<string, unknown>[] }): void => {
+        t.note(`the set holds ${read.scenes.length} scenes, ${read.scenes.filter((s) => s.level === "flirty").length} of them flirty and ${read.scenes.filter((s) => s.level === "bold").length} bold`);
+        t.note(`no scene is drawn on the Seedream route yet: ${String(read.scenes.every((s) => !("route" in s)))}`);
+        t.note(`the set echoes its level: ${String(read.set.level)}`);
+      };
+      t.note("a bold compose of 10 scenes of «Дом»: no «Смелая» category is among them, so it holds the 6 flirty scenes a flirty compose holds");
+      await t.callLaunch("scenes.compose", { avatarId: w.avatarId, count: 10, categories: ["home"], level: "bold", acceptedWorstMicros: ENOUGH });
+      facts(await settled());
+      const found = await t.callLaunch("scenes.get", { avatarId: w.avatarId });
+      const sceneSetId = found.ok ? record(found.result.sceneSet)?.sceneSetId : undefined;
+      if (typeof sceneSetId !== "string") throw new Error("the avatar has no scene set to discard");
+      await t.callLaunch("scenes.discard", { sceneSetId });
+      t.note("the same compose flirty: the same counts");
+      await t.callLaunch("scenes.compose", { avatarId: w.avatarId, count: 10, categories: ["home"], level: "flirty", acceptedWorstMicros: ENOUGH });
+      facts(await settled());
+      t.note("a bold draft is previewed like a flirty one");
+      const flirtyFound = await t.callLaunch("scenes.get", { avatarId: w.avatarId });
+      const flirtySetId = flirtyFound.ok ? record(flirtyFound.result.sceneSet)?.sceneSetId : undefined;
+      if (typeof flirtySetId !== "string") throw new Error("the avatar has no scene set to discard");
+      await t.callLaunch("scenes.discard", { sceneSetId: flirtySetId });
+      const draft = { avatarIds: [w.avatarId], videosPerAvatar: 2, mix: { single: 0, collage: 0, slides: 100 }, categories: ["home"], library: false, generate: true, sceneReview: false, stickers: false, planSeed: 4_242 };
+      await t.call("autopilot.estimate", { draft: { ...draft, level: "flirty" } });
+      await t.call("autopilot.estimate", { draft: { ...draft, level: "bold" } });
+    },
+  },
+  // Stage 5, 5a.3, S5.9c (APPENDED; the golden is append-only, plan s5a3 §12): the two «Смелая» categories under «Смелая». Counts and rules only: which scene is which, and what it wears, is each
+  // engine's own deal (the mock keeps its own dealing), but the 20 / 40 / 40 mix, the routes' rule, the level a redraw keeps and the free refusal are facts both engines tell.
+  {
+    name: "scene sets, «Смелая» categories (S5.9c): a bold compose of «Ночнушки и бельё» and «Пляж и бассейн» holds the 20 / 40 / 40 mix of each, «Другая сцена» keeps a scene's level for nothing, and a «Смелая» category below «Смелая» is refused for free",
+    rig: { launch: true },
+    async run(t, w, control) {
+      await control.musicTracks();
+      /** The avatar's set once its write has settled, read quietly: the transcript tells the facts below as notes. */
+      const settled = async (): Promise<{ set: Record<string, unknown>; scenes: Record<string, unknown>[] }> => {
+        const scenes: Record<string, unknown>[] = [];
+        const sets: Record<string, unknown>[] = [];
+        await t.quiet(async () => {
+          for (let i = 0; i < 2_000; i++) {
+            const answer = await t.call("scenes.get", { avatarId: w.avatarId });
+            const set = answer.ok ? record(answer.result.sceneSet) : null;
+            if (set !== null && set.status === "ready") {
+              const listed: unknown[] = Array.isArray(set.scenes) ? set.scenes : [];
+              for (const scene of listed) {
+                const row = record(scene);
+                if (row !== null) scenes.push(row);
+              }
+              sets.push(set);
+              return;
+            }
+            await t.settle();
+            await t.quiesce();
+          }
+          throw new Error("the scene set never finished its write");
+        });
+        const [set] = sets;
+        if (set === undefined) throw new Error("the avatar has no scene set to read");
+        return { set, scenes };
+      };
+      const levelOf = (scene: Record<string, unknown>): string => (typeof scene.level === "string" ? scene.level : "ordinary");
+      const counts = (scenes: readonly Record<string, unknown>[], category: string): string => {
+        const own = scenes.filter((s) => s.category === category);
+        return `${category}: ${own.length} scenes, ${own.filter((s) => levelOf(s) === "bold").length} bold, ${own.filter((s) => levelOf(s) === "flirty").length} flirty, ${own.filter((s) => levelOf(s) === "ordinary").length} ordinary`;
+      };
+      t.note("a bold compose of 20 scenes over «Ночнушки и бельё» and «Пляж и бассейн»: 10 each, 4 bold, 4 flirty and 2 ordinary in each");
+      await t.callLaunch("scenes.compose", { avatarId: w.avatarId, count: 20, categories: ["nightwear", "beach"], level: "bold", acceptedWorstMicros: ENOUGH });
+      const first = await settled();
+      t.note(counts(first.scenes, "nightwear"));
+      t.note(counts(first.scenes, "beach"));
+      t.note(`every scene is written: ${String(first.scenes.every((s) => typeof s.text === "string"))}`);
+      t.note(`every beach scene is drawn on the Seedream route: ${String(first.scenes.filter((s) => s.category === "beach").every((s) => s.route === "seedream"))}`);
+      t.note(`no ordinary scene of the nightwear is: ${String(first.scenes.filter((s) => s.category === "nightwear" && levelOf(s) === "ordinary").every((s) => !("route" in s)))}`);
+      t.note(`the set echoes its level: ${String(first.set.level)}`);
+      t.note("«Другая сцена» on the first five scenes, with a worst case of nothing: the code template writes them, and each keeps its level");
+      const before = first.scenes.slice(0, 5).map(levelOf);
+      const sent = { sceneSetId: first.set.sceneSetId, revision: first.set.revision, target: { kind: "rewrite", sceneIds: [1, 2, 3, 4, 5], redraw: true }, acceptedWorstMicros: NOTHING };
+      await t.callLaunch("scenes.write", sent, { written: { ...sent, revision: "<seen>" } });
+      const second = await settled();
+      t.note(`the five keep their levels: ${String(second.scenes.slice(0, 5).map(levelOf).join() === before.join())}`);
+      t.note(`the set still holds the mix: ${counts(second.scenes, "nightwear")}`);
+      const sceneSetId = second.set.sceneSetId;
+      if (typeof sceneSetId !== "string") throw new Error("the avatar has no scene set to discard");
+      await t.callLaunch("scenes.discard", { sceneSetId });
+      t.note("a «Смелая» category below «Смелая» is refused for free, whatever the command: nothing is composed, priced or started");
+      const below = { avatarId: w.avatarId, count: 10, categories: ["nightwear"], level: "flirty" };
+      await t.call("scenes.estimateCompose", below);
+      await t.call("scenes.compose", { ...below, acceptedWorstMicros: NOTHING });
+      await t.call("runs.estimate", { ...below, count: 5 });
+      await t.call("runs.start", { ...below, count: 5, acceptedWorstMicros: NOTHING });
+      const draft = { avatarIds: [w.avatarId], videosPerAvatar: 2, mix: { single: 0, collage: 0, slides: 100 }, categories: ["nightwear"], library: false, generate: true, sceneReview: false, stickers: false, planSeed: 4_242 };
+      await t.call("autopilot.estimate", { draft });
+      await t.call("autopilot.start", { draft, acceptedWorstMicros: NOTHING });
+      // No preview of a «Смелая» launch is told here: its price is S5.9d's (option B), and an appended story must not move when that lands.
+    },
+  },
 ];

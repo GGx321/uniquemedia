@@ -56,7 +56,8 @@ describe("the category row", () => {
   test("the built-ins first, then the custom ones in creation order, off by default; «+ Своя» last and «Мои категории» with their number", async () => {
     await openPhotos({ categories: [PARIS, WINTER, MONO] });
     await within(chipsGroup()).findByRole("button", { name: "Кофейни Парижа" });
-    expect(chipNames()).toEqual([...BUILT_INS.map((l) => `${l}: 4 фото`), "Кофейни Парижа", "Горы зимой", "Студия ч/б", "Своя"]);
+    // 2026-10-12, S5.9g (mockup 47): the two «Смелая» chips follow the five, off (they wait for «Смелая»), before the owner's own.
+    expect(chipNames()).toEqual([...BUILT_INS.map((l) => `${l}: 4 фото`), "Ночнушки и бельё", "Пляж и бассейн", "Кофейни Парижа", "Горы зимой", "Студия ч/б", "Своя"]);
     for (const name of ["Кофейни Парижа", "Горы зимой", "Студия ч/б"]) expect(within(chipsGroup()).getByRole("button", { name }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.getByRole("button", { name: "Мои категории · 3" }).getAttribute("aria-haspopup")).toBe("dialog");
     expect(addChip().getAttribute("aria-haspopup")).toBe("dialog");

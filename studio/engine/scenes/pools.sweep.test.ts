@@ -6,10 +6,11 @@ import { CAPTURES } from "../../shared/scenes/captures";
 import { artefactLine, captureLineOf, CONSTRAINTS, hairLine, IMPERFECTIONS, lightOf, MIRROR_BACK_LINE, phoneHandLineOf, roomStateOf } from "./phoneLook";
 import { POOLS, type Place, type Pool } from "./pools";
 import { firstHit, NEGATED_LOOK, PAPER_AND_SCREENS, SOFT_LIST, STAGING, SWEEP_CUSTOM_POOL } from "./testing/lookRules";
-import { CATEGORIES, SHOTS } from "./types";
+import { ORDINARY_BUILT_INS, SHOTS } from "./types";
 import { REVEALING_WORDS } from "./words";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // S5.1d: the pools sweep. Every built-in place, locative phrase, room detail, activity and outfit passes the hard lists (the engine's own youth-word and
 // revealing-word checks, via sentenceProblems, the same two the writer's reader and the assembler's last gate run) and the soft list, and names no paper or
@@ -32,7 +33,7 @@ function textsOf(category: string, pool: Pool): PoolText[] {
   return out;
 }
 
-const BUILT_IN = CATEGORIES.flatMap((c) => textsOf(c, POOLS[c]));
+const BUILT_IN = ORDINARY_BUILT_INS.flatMap((c) => textsOf(c, POOLS[c]));
 const CUSTOM = textsOf("custom", SWEEP_CUSTOM_POOL);
 
 const failures = (texts: readonly PoolText[], check: (text: string) => string | null): Array<{ where: string; text: string; hit: string }> =>
@@ -43,7 +44,7 @@ const failures = (texts: readonly PoolText[], check: (text: string) => string | 
 
 describe("the built-in pools: the hard lists", () => {
   test("the sweep reads every place, detail, activity and outfit (it is not vacuous)", () => {
-    const places = CATEGORIES.reduce((n, c) => n + POOLS[c].locations.length, 0);
+    const places = ORDINARY_BUILT_INS.reduce((n, c) => n + POOLS[c].locations.length, 0);
     expect(places).toBeGreaterThanOrEqual(20);
     expect(BUILT_IN.length).toBeGreaterThan(places * 3);
   });
@@ -58,7 +59,7 @@ describe("the built-in pools: the hard lists", () => {
 
   test("every text passes the assembler's last gate (sentenceProblems), alone and as the writer's stand-in sentence", () => {
     expect(failures(BUILT_IN, (t) => sentenceProblems(t)[0]?.reason ?? null)).toEqual([]);
-    for (const category of CATEGORIES) {
+    for (const category of ORDINARY_BUILT_INS) {
       for (const place of POOLS[category].locations) {
         for (const activity of place.activities) {
           for (const outfit of POOLS[category].outfits) expect(sentenceProblems(`She is ${activity.text} at ${place.name}, wearing ${outfit}`)).toEqual([]);
@@ -86,7 +87,7 @@ describe("the built-in pools: the soft list, paper and screens", () => {
   });
 
   test("no place is lit by the stored «studio lighting» time (it stays readable for old plans, I5.5, but no new plan draws it)", () => {
-    for (const category of CATEGORIES) for (const place of POOLS[category].locations as readonly Place[]) expect(place.times).not.toContain("studio lighting");
+    for (const category of ORDINARY_BUILT_INS) for (const place of POOLS[category].locations as readonly Place[]) expect(place.times).not.toContain("studio lighting");
   });
 });
 

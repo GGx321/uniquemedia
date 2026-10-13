@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { BANKS, CUES, GAZE } from "../../shared/scenes/banks";
-import { BANK_CATEGORIES, type BankCategory, type BankPlace, type Level, type Moment } from "../../shared/scenes/banks/types";
+import { ORDINARY_BANK_CATEGORIES, type BankCategory, type BankPlace, type Level, type Moment } from "../../shared/scenes/banks/types";
 import { faceVisibleOf, isHandCapture, LEGS_CAPTURES, posesFor, shotOf, type Capture } from "../../shared/scenes/captures";
 import { legwearFits, momentAllowed, templateSentence } from "../../shared/scenes/template";
 import { sentenceProblems } from "./assembler";
 import { readWriterScenes } from "./writer";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary banks (ORDINARY_BANK_CATEGORIES), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // 5a.2 (S5.6a, I5.23 «coherent by construction», plan s5a2 r1.2): every combination a built-in slot can draw (a moment, a capture it lists, a pose
 // that capture can take, a level, an outfit, with and without legwear) renders, and its sentence passes the gates the LLM writer's sentences pass
@@ -32,7 +33,7 @@ function wardrobe(category: BankCategory, moment: Moment): Array<{ outfit: strin
 
 function drawableCases(): Case[] {
   const out: Case[] = [];
-  for (const category of BANK_CATEGORIES) {
+  for (const category of ORDINARY_BANK_CATEGORIES) {
     for (const place of BANKS[category].places as readonly BankPlace[]) {
       for (const moment of place.moments) {
         for (const capture of moment.captures.filter((c) => !LEGS_CAPTURES.includes(c))) {

@@ -11,13 +11,17 @@ export type HairLength = (typeof HairLengthEnum)["options"][number];
 // optional `startPose` is the start still of a reveal motion (data only). Every bank text is at most POOL_TEXT_MAX (35) characters, a motion and a
 // start pose at most 60: a long wording (the prone selfie's) lives in its capture line and its pinned outfits, never in a moment.
 
-/** The five built-in categories, by the engine's own names (engine/scenes/types.ts CATEGORIES; pinned equal in engine/scenes/banks.sweep.test.ts).
- *  Labels are computed from the id at render (I5.33): `photoshoot` is «Улица», `travel` is «Виды». */
-export const BANK_CATEGORIES = ["home", "travel", "photoshoot", "glamour", "fitness"] as const;
+/** The built-in categories, by the engine's own names (engine/scenes/types.ts CATEGORIES; pinned equal in engine/scenes/banks.sweep.test.ts): the five, then
+ *  (5a.3) the two «Смелая» ones. Labels are computed from the id at render (I5.33): `photoshoot` is «Улица», `travel` is «Виды». */
+export const BANK_CATEGORIES = ["home", "travel", "photoshoot", "glamour", "fitness", "nightwear", "beach"] as const;
 export type BankCategory = (typeof BANK_CATEGORIES)[number];
 
-/** A slot's level («Подача»). 5a.3 adds "bold". Absent means ordinary. */
-export type Level = "ordinary" | "flirty";
+/** 5a.3 (S5.9b2): the five ordinary banks, beside `BANK_CATEGORIES`, which the two «Смелая» banks join (the engine's `ORDINARY_BUILT_INS`; pinned equal). */
+export const ORDINARY_BANK_CATEGORIES = ["home", "travel", "photoshoot", "glamour", "fitness"] as const satisfies readonly BankCategory[];
+export type OrdinaryBankCategory = (typeof ORDINARY_BANK_CATEGORIES)[number];
+
+/** A slot's level («Подача»), ranked ordinary < flirty < bold (5a.3, `atOrBelow` in level.ts). Absent means ordinary. */
+export type Level = "ordinary" | "flirty" | "bold";
 
 /** The angle a moment implies. Absent: front or three-quarter. A filter from 5a.2a on (I5.23), the pose source from 5a.2b on. */
 export type Angle = Exclude<ScenePose, "front">;
@@ -46,8 +50,19 @@ export interface Moment {
   phone?: true;
   /** May happen in the rare messy room (a room's moments only). */
   messyOk?: true;
-  /** «Кокетливая» only (5a.2b); never drawn on an ordinary slot. */
-  level?: "flirty";
+  /** «Кокетливая» (5a.2b) or «Смелая» (5a.3): drawn on a slot of this level or above, never below. */
+  level?: "flirty" | "bold";
+  /** 5a.3: the moment is drawn on Seedream at 2K («Смелая» banks only). */
+  route?: "seedream";
+  /** 5a.3: the positive sentence the template appends for what the moment shows («The white sheet is held up to her chest …»); it wins over the outfit's. */
+  coverage?: string;
+  /** 5a.3: in the water or at its edge: such a moment pins swimwear only («Пляж и бассейн»). */
+  water?: true;
+  /**
+   * S5.R4 round 3 («Смелая» banks only): the details this moment says instead of its place's, when where she faces or who takes the photo sees other things (a look down at her
+   * feet sees what is at her feet, never the horizon). 2 or 3, held to the place details' rules.
+   */
+  details?: readonly string[];
   angle?: Angle;
   gaze?: MomentGaze;
   hair?: MomentHair;
@@ -98,15 +113,29 @@ export interface Outfit {
    * outfit draw, and the template renders it on no other moment.
    */
   pinOnly?: true;
+  /** 5a.3: «Кокетливая» or «Смелая»: worn on a slot of this level or above, never below. Absent: ordinary. */
+  level?: "flirty" | "bold";
+  /** 5a.3: drawn on Seedream at 2K (lingerie, swimwear, satin; «Смелая» banks only). */
+  route?: "seedream";
+  /** 5a.3: the positive sentence the template appends for what the outfit covers («Her nightdress is opaque satin.»). */
+  coverage?: string;
 }
 
-/** Legwear, its own outfit slot (I5.29, K-17): drawn on about `share` of the slots whose outfit shows her legs. Stockings stay in 5a.3. */
+/** Legwear, its own outfit slot (I5.29, K-17): drawn on about `share` of the slots whose outfit shows her legs. */
 export interface LegwearSlot {
   items: readonly string[];
   share: number;
+  /**
+   * 5a.3 («Смелая» banks only): the stockings a bold slot wears instead, on about `share` of its slots whose outfit is one of `outfits`, on Seedream. `outfits` are
+   * the outfits the stockings go with: Seedream outfits that show her legs, never the cotton nightwear on the owner's model (review round 2: on a legs frame the
+   * stockings go with the satin nightwear, P-5a3 #6). S5.R4: a bold legs slot wears them always, not at `share` (plan s5a3 §6.2: the stockings make it bold).
+   */
+  bold?: { items: readonly string[]; share: number; route: "seedream"; outfits: readonly string[] };
 }
 
 export interface CategoryBank {
+  /** 5a.3: a «Смелая» bank (`nightwear`, `beach`), validated by its own schema; its vocabulary lives nowhere else. */
+  bold?: true;
   places: readonly BankPlace[];
   outfits: readonly Outfit[];
   legwear?: LegwearSlot;

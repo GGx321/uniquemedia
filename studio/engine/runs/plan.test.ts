@@ -181,6 +181,12 @@ describe("categories", () => {
   test("shoot, glam and fit are the planner's photoshoot, glamour and fitness", () => {
     expect([sceneCategory("shoot"), sceneCategory("glam"), sceneCategory("fit")]).toEqual(["photoshoot", "glamour", "fitness"]);
   });
+
+  // 5a.3 (S5.9b2, plan s5a3 §6.1): the two «Смелая» categories are named the same in the contract and the planner.
+  test("nightwear and beach are the planner's own names too", () => {
+    expect([sceneCategory("nightwear"), sceneCategory("beach")]).toEqual(["nightwear", "beach"]);
+    expect([contractCategory("nightwear"), contractCategory("beach")]).toEqual(["nightwear", "beach"]);
+  });
 });
 
 describe("attempt ids", () => {

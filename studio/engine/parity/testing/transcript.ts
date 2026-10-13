@@ -709,6 +709,28 @@ export class Transcript {
   }
 
   /**
+   * 5a.3 (S5.9f): lets a photo run go on until `runs.list` names it and says it is not running (or `ms` of wall time pass, which fails the scenario), and writes one note. The reads are
+   * quiet and what happens on the way is not written: the engine's slots and the mock's steps announce at their own pace, so a story reads the run at the point it ended. Needs a rig that
+   * can run (`pump`), as `untilLaunch` does.
+   */
+  async untilRunEnds(runId: string, ms = 45_000): Promise<void> {
+    const pump = this.#rig.pump;
+    if (pump === undefined) throw new Error("this rig cannot let a run go on");
+    this.#drain();
+    const deadline = Date.now() + ms;
+    for (let i = 0; ; i++) {
+      const answer = await this.#rig.send("runs.list", {});
+      const runs = answer.ok && Array.isArray(answer.result.runs) ? answer.result.runs.map((run) => objectOf(run)) : [];
+      const run = runs.find((r) => r.runId === runId);
+      if (run !== undefined && run.running === false) break;
+      if (Date.now() > deadline || i > 20_000) throw new Error(`the run never ended (it said ${JSON.stringify(run ?? null).slice(0, 400)})`);
+      await pump.call(this.#rig);
+    }
+    this.#seen = this.#rig.events().length;
+    this.#lines.push("# the run ended");
+  }
+
+  /**
    * Sends commands WITHOUT awaiting one before the next (an editor's autosave bursts): the commands in the order sent, the events
    * they caused in the order they came, each answer in the order sent, and the order the answers ARRIVED in. Between the events and
    * the answers of different commands the engine and the mock interleave differently (the engine writes a file per save; the mock
@@ -783,6 +805,23 @@ export class Transcript {
   async settle(): Promise<void> {
     this.#drain();
     await this.#rig.settle();
+    this.#lines.push("~ settle");
+    this.#drain();
+  }
+
+  /**
+   * A `settle` that lasts until `ready` accepts the answer to `type` (read quietly, never written): the rig settles as often as the job needs and the transcript says ONE `~ settle`,
+   * so a slow machine, whose job ends one settle later, tells the same story. The events that came on the way follow the line, as they follow a plain `settle`. `ms` of wall time fail the scenario.
+   */
+  async settleUntil(type: string, payload: unknown, ready: (answer: Answer) => boolean, what: string, ms = 45_000): Promise<void> {
+    this.#drain();
+    const deadline = Date.now() + ms;
+    for (;;) {
+      await this.#rig.settle();
+      await this.quiesce();
+      if (ready(await this.#rig.send(type, payload))) break;
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    }
     this.#lines.push("~ settle");
     this.#drain();
   }

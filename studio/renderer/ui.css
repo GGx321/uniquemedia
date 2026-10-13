@@ -214,10 +214,16 @@
   cursor: pointer;
 }
 
-/* A chip kept for a later feature: dimmed, no pointer. */
-.chip-reserved {
+/* S5.9g (mockup 48): a «Смелая» category's chip while another «Подача» is on — dimmed like a disabled control, not pressable. */
+.gen-chip-gated {
   opacity: 0.45;
-  cursor: default;
+  cursor: not-allowed;
+}
+
+/* One picked under «Смелая» and kept, off, under another «Подача»: still drawn as picked — dashed, so it never reads as part of this run. */
+.gen-chip-kept {
+  border-style: dashed;
+  opacity: 0.6;
 }
 
 .chip-on {
@@ -788,6 +794,12 @@ input[type="range"]::-webkit-slider-thumb {
 
 .notice-text p {
   margin: 0;
+}
+
+/* S5.9g (mockup 50): the run's end — what did not come out, and why, on a line of its own under the gallery's. */
+.run-end-line {
+  display: block;
+  margin-top: 3px;
 }
 
 .notice-actions {
@@ -1680,6 +1692,34 @@ input[type="range"]::-webkit-slider-thumb {
   cursor: default;
 }
 
+/* S5.9g (mockup 56): the image model's list gets the room of its longest option («Grok Imagine Image 2.0 · от $0.050»)… */
+.row-select-fit {
+  max-width: 340px;
+}
+
+/* …and its label keeps a column of its own: in a narrow card the list goes under it rather than squeezing it. */
+.row:has(> .row-control > .row-select-fit) > .rl {
+  min-width: 160px;
+}
+
+/* S5.9g (mockup 56): the «Смелая» line under the «Фото» model row, the whole row wide. */
+.settings-bold-note {
+  display: flex;
+  flex-basis: 100%;
+  align-items: flex-start;
+  gap: 6px;
+  margin: -6px 0 12px;
+  color: var(--text-2);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.settings-bold-note > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--info);
+}
+
 .money-figure {
   font-size: 13px;
   color: var(--text);
@@ -2038,18 +2078,18 @@ input[type="range"]::-webkit-slider-thumb {
   }
 }
 
-/* «Смелая» exists but is not on yet: dimmed like a disabled segment. Inside a locked form the whole control is dimmed once, not again here. */
-.gen-option-later,
-.gen-option-later > .choice-input {
-  cursor: not-allowed;
+/* S5.9g (mockups 48, 52): the note under the chips while «Смелая» is off — which picks wait for it; a step brighter than a hint, so it is read. */
+.gen-gated-note {
+  margin-top: 2px;
+  color: var(--muted);
 }
 
-.gen-option-later > .choice-face {
-  opacity: 0.45;
-}
-
-.lock:disabled .gen-option-later > .choice-face {
-  opacity: 1;
+/* S5.9g (mockups 47, 49): what one Seedream attempt costs at most, under the expected sum it explains. */
+.gen-bold-price {
+  margin: -5px 0 0;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 /* S5.8b «Ножки» (mockups 33, 34): chips that are radios, kept on one line; the share in the chip reads a little quieter than its word. */

@@ -2,7 +2,7 @@
 // intended consumer: it calls `plan()`, persists the result as the run's
 // plan.json (Library.createRun) and turns each slot's `attemptIdBase` into
 // real ledger attempt ids.
-export { CATEGORIES, SHOTS, type Category, type PlannerCategory, type Shot } from "./types";
+export { CATEGORIES, ORDINARY_BUILT_INS, SHOTS, type Category, type OrdinaryBuiltIn, type PlannerCategory, type Shot } from "./types";
 export { BUILT_IN_LABEL, categoryLabelOf, categoryRefOf, categoryStyleOf, photoCategoryOf, plannerCategoryOf, type CategoryLabelOf } from "./categories";
 export { allowedActivities, BuiltInPoolSchema, hasCleanActivity, isPhoneActivity, POOLS, PoolSchema, validatePools, type Activity, type Place, type Pool } from "./pools";
 export { hairLengthOf, hairLinesOf } from "./hairLines";

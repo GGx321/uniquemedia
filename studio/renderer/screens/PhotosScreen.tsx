@@ -17,7 +17,7 @@ import { Gallery, type PendingSlots } from "./photos/Gallery";
 import { GenerateCard } from "./photos/GenerateCard";
 import type { MarkControl, MarkFailure } from "./photos/photoState";
 import { listedPicks, usablePicks, useMontagePicks } from "./photos/picks";
-import { arrangeCategories, DEFAULT_RUN_FORM, paidBlockedReason, sceneWriters, type RunForm } from "./photos/runForm";
+import { arrangeCategories, categoriesAt, DEFAULT_RUN_FORM, paidBlockedReason, sceneWriters, type RunForm } from "./photos/runForm";
 import { readLegs, writeLegs } from "./photos/legs";
 import { readLevel, writeLevel } from "./photos/level";
 import { useRunForms } from "./photos/runForms";
@@ -187,9 +187,10 @@ function AvatarPhotos({
   // S4.9b: the set is an unfinished launch's (its band, «Продолжить запуск», «в запуске автопилота»), whatever this machine's «Сцены на проверку» says.
   const launchLink = launchLinkOf(view.autopilot, avatarId, sceneSet);
   const [composePrice, setComposePrice] = useState<Estimate | null>(null);
-  // S5.7c (mockup 26): the scenes column says both writers when the run mixes the app's template and the model.
+  // S5.7c (mockup 26): the scenes column says both writers when the run mixes the app's template and the model. S5.9g: over what the run asks for — a
+  // «Смелая» category kept under another «Подача» (mockup 48#kept) writes nothing.
   const { view: categoryView } = useCategoryLibrary();
-  const appWrites = sceneWriters(form.count, form.categories, categoryView.list.status === "ready" ? categoryView.list.categories : []).app;
+  const appWrites = sceneWriters(form.count, categoriesAt(form.level, form.categories), categoryView.list.status === "ready" ? categoryView.list.categories : []).app;
 
   // The gallery: on open, and again whenever this avatar's run reports a
   // slot done or ends — each photo lands in the library before its progress

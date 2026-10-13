@@ -3,10 +3,11 @@ import { POOLS, type Activity } from "./pools";
 import { plan, planWithPools } from "./planner";
 import { makeRng, shuffle, subSeed } from "./rngUtil";
 import type { PlanSlot } from "./schema";
-import { CATEGORIES, type Category } from "./types";
+import { ORDINARY_BUILT_INS, type Category } from "./types";
 import { captureOfShot, faceVisibleOf, type Capture } from "../../shared/scenes/captures";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // 5a.2b (S5.7b, plan s5a2 §6.2, I5.28): «Подача» in the planner. Under «Кокетливая» exactly round(0.6 × n) of a built-in category's n slots are flirty (the
 // choice of WHICH is drawn on `level:${category}`), under «Обычная» none is, and a custom category stays ordinary. A flirty slot prefers flirty moments.
@@ -37,24 +38,24 @@ const EXPECTED: readonly (readonly [number, number])[] = [
 ];
 
 describe("«Кокетливая»: the flirty count is exact (I5.28)", () => {
-  for (const category of CATEGORIES) {
+  for (const category of ORDINARY_BUILT_INS) {
     test.each(EXPECTED)(`${category}: %i slots hold exactly %i flirty ones`, (n, flirty) => {
       for (const seed of SEEDS) expect(flirtyOf(plan({ seed, count: n, categories: [category], level: "flirty" }).slots)).toHaveLength(flirty);
     });
   }
 
   test("each category of a mixed run holds its own exact count, from its own slot count", () => {
-    const slots = plan({ seed: 11, count: 23, categories: [...CATEGORIES], level: "flirty" }).slots;
-    for (const category of CATEGORIES) {
+    const slots = plan({ seed: 11, count: 23, categories: [...ORDINARY_BUILT_INS], level: "flirty" }).slots;
+    for (const category of ORDINARY_BUILT_INS) {
       const own = slots.filter((s) => s.category === category);
       expect(flirtyOf(own)).toHaveLength(Math.round(own.length * 0.6));
     }
   });
 
   test("a zero-slot category holds none and plans without a throw", () => {
-    const slots = plan({ seed: 5, count: 3, categories: [...CATEGORIES], level: "flirty" }).slots;
+    const slots = plan({ seed: 5, count: 3, categories: [...ORDINARY_BUILT_INS], level: "flirty" }).slots;
     expect(slots).toHaveLength(3);
-    for (const category of CATEGORIES) {
+    for (const category of ORDINARY_BUILT_INS) {
       const own = slots.filter((s) => s.category === category);
       expect(flirtyOf(own)).toHaveLength(Math.round(own.length * 0.6));
     }
@@ -75,7 +76,7 @@ describe("«Кокетливая»: the flirty slots go to the frames that show 
   const showsByCapture = (slot: PlanSlot): boolean => faceVisibleOf({ capture: captureOf(slot), pose: "front", ...(slot.framing === undefined ? {} : { framing: slot.framing }) }) === "yes";
   const hiddenNow = (slot: PlanSlot): boolean => faceVisibleOf(slot) !== "yes";
 
-  for (const category of CATEGORIES) {
+  for (const category of ORDINARY_BUILT_INS) {
     test.each([4, 6, 12, 13, 20, 30, 50])(`${category}, %i slots: flirty slots on hidden frames are exactly what the frames that show her face cannot take`, (n) => {
       for (const seed of SEEDS) {
         const slots = plan({ seed, count: n, categories: [category], level: "flirty" }).slots;
@@ -96,7 +97,7 @@ describe("«Кокетливая»: the flirty slots go to the frames that show 
 
   test("a flirty slot where her face shows never turns its back to the camera", () => {
     for (const seed of SEEDS) {
-      for (const slot of flirtyOf(plan({ seed, count: 20, categories: [...CATEGORIES], level: "flirty" }).slots)) if (showsByCapture(slot)) expect(slot.pose).not.toBe("back");
+      for (const slot of flirtyOf(plan({ seed, count: 20, categories: [...ORDINARY_BUILT_INS], level: "flirty" }).slots)) if (showsByCapture(slot)) expect(slot.pose).not.toBe("back");
     }
   });
 
@@ -104,7 +105,7 @@ describe("«Кокетливая»: the flirty slots go to the frames that show 
     // «Дом» at 20 slots: 8 of every 12 show her face, so 13 of 20 or so; round(0.6 × 20) = 12 flirty. At 6 slots, the other bank decks: shown frames are fewer than the flirty count.
     let filled = 0;
     for (const seed of SEEDS) {
-      for (const category of CATEGORIES) {
+      for (const category of ORDINARY_BUILT_INS) {
         const slots = plan({ seed, count: 6, categories: [category], level: "flirty" }).slots;
         expect(flirtyOf(slots)).toHaveLength(4);
         if (flirtyOf(slots).some(hiddenNow)) filled++;
@@ -114,27 +115,27 @@ describe("«Кокетливая»: the flirty slots go to the frames that show 
   });
 
   test("an ordinary plan is untouched by it: it holds no flirty slot and draws what it always drew", () => {
-    for (const seed of SEEDS.slice(0, 20)) expect(flirtyOf(plan({ seed, count: 20, categories: [...CATEGORIES] }).slots)).toHaveLength(0);
+    for (const seed of SEEDS.slice(0, 20)) expect(flirtyOf(plan({ seed, count: 20, categories: [...ORDINARY_BUILT_INS] }).slots)).toHaveLength(0);
   });
 });
 
 describe("«Обычная»: nothing is flirty and nothing is written (I5.27)", () => {
   test.each([undefined, "ordinary" as const])("level %p: no slot carries a level", (level) => {
     for (const seed of SEEDS.slice(0, 20)) {
-      const slots = plan({ seed, count: 20, categories: [...CATEGORIES], ...(level === undefined ? {} : { level }) }).slots;
+      const slots = plan({ seed, count: 20, categories: [...ORDINARY_BUILT_INS], ...(level === undefined ? {} : { level }) }).slots;
       for (const slot of slots) expect("level" in slot).toBe(false);
     }
   });
 
   test("an ordinary slot never takes a flirty moment", () => {
     for (const seed of SEEDS) {
-      for (const slot of plan({ seed, count: 24, categories: [...CATEGORIES] }).slots) expect(momentOf(slot)?.level).toBeUndefined();
+      for (const slot of plan({ seed, count: 24, categories: [...ORDINARY_BUILT_INS] }).slots) expect(momentOf(slot)?.level).toBeUndefined();
     }
   });
 
   test("a flirty plan's ordinary slots never take a flirty moment either", () => {
     for (const seed of SEEDS) {
-      for (const slot of plan({ seed, count: 24, categories: [...CATEGORIES], level: "flirty" }).slots) if (slot.level !== "flirty") expect(momentOf(slot)?.level).toBeUndefined();
+      for (const slot of plan({ seed, count: 24, categories: [...ORDINARY_BUILT_INS], level: "flirty" }).slots) if (slot.level !== "flirty") expect(momentOf(slot)?.level).toBeUndefined();
     }
   });
 });
@@ -142,8 +143,8 @@ describe("«Обычная»: nothing is flirty and nothing is written (I5.27)",
 describe("the level changes the moments, not the rest of the plan", () => {
   test("the captures are the same with and without «Кокетливая» (the deck is on the category's own stream)", () => {
     for (const seed of SEEDS.slice(0, 20)) {
-      const ordinary = plan({ seed, count: 18, categories: [...CATEGORIES] }).slots.map(captureOf);
-      const flirty = plan({ seed, count: 18, categories: [...CATEGORIES], level: "flirty" }).slots.map(captureOf);
+      const ordinary = plan({ seed, count: 18, categories: [...ORDINARY_BUILT_INS] }).slots.map(captureOf);
+      const flirty = plan({ seed, count: 18, categories: [...ORDINARY_BUILT_INS], level: "flirty" }).slots.map(captureOf);
       expect(flirty).toEqual(ordinary);
     }
   });
@@ -151,7 +152,7 @@ describe("the level changes the moments, not the rest of the plan", () => {
   // S5.8a: the flirty slots are chosen by the frames, so the captures are the ordinary plan's by construction, past the deck's first cycle too (a category of 70 slots deals six cycles).
   test("the deck's captures are the ordinary plan's at any size, in every category, with and without legs (a legs slot's capture comes with its moment)", () => {
     for (const seed of SEEDS.slice(0, 25)) {
-      for (const category of CATEGORIES) {
+      for (const category of ORDINARY_BUILT_INS) {
         for (const legsShare of [undefined, 30 as const]) {
           const base = { seed, count: 70, categories: [category], ...(legsShare === undefined ? {} : { legsShare }) };
           const ordinary = plan(base).slots;
@@ -166,7 +167,7 @@ describe("the level changes the moments, not the rest of the plan", () => {
   // Since the legs slots balance among themselves (S5.8a review) the level cannot move them: a legs slot is the same scene in an ordinary and in a flirty plan.
   test("the legs slots are the same scenes in an ordinary and a flirty plan: place, moment, capture, outfit and legwear", () => {
     for (const seed of SEEDS) {
-      for (const category of CATEGORIES) {
+      for (const category of ORDINARY_BUILT_INS) {
         const base = { seed, count: 40, categories: [category], legsShare: 30 as const };
         const legs = (level?: "flirty") => plan({ ...base, ...(level === undefined ? {} : { level }) }).slots.filter((s) => s.framing === "legs").map(({ level: _level, ...rest }) => rest);
         expect(legs("flirty")).toEqual(legs());
@@ -176,7 +177,7 @@ describe("the level changes the moments, not the rest of the plan", () => {
 
   test("a category's flirty choice does not depend on which other categories are in the plan", () => {
     const alone = flirtyOf(plan({ seed: 77, count: 12, categories: ["home"], level: "flirty" }).slots).map((s) => s.slotIndex);
-    const withOthers = plan({ seed: 77, count: 60, categories: [...CATEGORIES], level: "flirty" }).slots.filter((s) => s.category === "home");
+    const withOthers = plan({ seed: 77, count: 60, categories: [...ORDINARY_BUILT_INS], level: "flirty" }).slots.filter((s) => s.category === "home");
     const offset = withOthers[0]?.slotIndex ?? 1;
     expect(flirtyOf(withOthers).map((s) => s.slotIndex - offset + 1)).toEqual(alone);
   });

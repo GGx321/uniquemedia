@@ -1,6 +1,6 @@
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
-import { legwearFits } from "../../shared/scenes/template";
-import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
+import { atSlotLevel, seedreamRoute } from "../../shared/scenes/level";
+import { fittingMoments, generalOutfits, kindOfDeck, legwearOfSlot, outfitInfoOf, pinnedAt, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
 import { legsCapturesAt, legsMomentsAt, legsOutfitsOf, legsPlacesOf } from "./legs";
 import { allowedActivities, hasCleanActivity, usableOutfits, type Activity, type Place, type Pool } from "./pools";
 import { drawFromPoses, drawPose, NO_EXTRA_POSES } from "./poses";
@@ -117,14 +117,18 @@ function redrawBuiltIn(input: RedrawInput, deck: readonly Capture[]): PlanSlot {
   const moments = fittingMoments(place, settled.capture, settled.pose, level).filter(allowed);
   const others = moments.filter((m) => m.text !== slot.activity);
   const choices = others.length > 0 ? others : moments;
-  const flirtyChoices = level === "flirty" ? choices.filter((m) => m.level === "flirty") : [];
-  const moment = rngPick(rng, flirtyChoices.length > 0 ? flirtyChoices : choices);
+  // The scene's own level among equals (5a.3): a flirty scene takes a flirty moment, a bold one a bold moment, when the place has one.
+  const ownChoices = level === "ordinary" ? [] : choices.filter((m) => m.level === level);
+  const moment = rngPick(rng, ownChoices.length > 0 ? ownChoices : choices);
+  const info = outfitInfoOf(pool);
+  const levelOfOutfit = (text: string) => info.find((o) => o.text === text)?.level;
   const pinned = pinnedOutfitsOf(moment);
-  const outfit = rngPick(rng, preferred(pinned.length > 0 ? pinned : generalOutfits(pool), (o) => o, avoid.outfits, slot.outfit));
-  const roll = rng();
-  const item = pool.legwear === undefined ? undefined : rngPick(rng, pool.legwear.items);
-  const meta = outfitInfoOf(pool).find((o) => o.text === outfit);
-  const legwear = pool.legwear !== undefined && meta !== undefined && legwearFits(moment, meta) && roll < pool.legwear.share ? item : undefined;
+  // Never an outfit above the scene's level, its own level preferred; a list with no level on any outfit (the five) comes back whole.
+  const wearable = pinned.length > 0 ? pinnedAt(pinned, levelOfOutfit, level, moment.text) : atSlotLevel(generalOutfits(pool), levelOfOutfit, level);
+  const outfit = rngPick(rng, preferred(wearable, (o) => o, avoid.outfits, slot.outfit));
+  const meta = info.find((o) => o.text === outfit);
+  const wear = legwearOfSlot(pool.legwear, level, rng, moment, meta, outfit);
+  const route = seedreamRoute(moment, meta, wear.stockings ? wear.route : undefined);
   return {
     slotIndex: slot.slotIndex,
     category: slot.category,
@@ -137,8 +141,9 @@ function redrawBuiltIn(input: RedrawInput, deck: readonly Capture[]): PlanSlot {
     attemptIdBase: slot.attemptIdBase,
     repeatedPair: false,
     ...(settled.capture === captureOfShot(shotOf(settled.capture)) ? {} : { capture: settled.capture }),
-    ...(legwear === undefined ? {} : { legwear }),
-    ...(level === "flirty" ? { level } : {}),
+    ...(wear.legwear === undefined ? {} : { legwear: wear.legwear }),
+    ...(level === "ordinary" ? {} : { level }),
+    ...(route === undefined ? {} : { route }),
   };
 }
 
@@ -154,13 +159,16 @@ function redrawLegs(input: RedrawInput): PlanSlot {
   const others = moments.filter((m) => m.text !== slot.activity);
   const moment = rngPick(rng, others.length > 0 ? others : moments);
   const capture = rngPick(rng, legsCapturesAt(place, moment));
-  const pinned = pinnedOutfitsOf(moment);
-  const outfit = rngPick(rng, preferred(pinned.length > 0 ? pinned : legsOutfitsOf(pool), (o) => o, avoid.outfits, slot.outfit));
-  const roll = rng();
-  const item = pool.legwear === undefined ? undefined : rngPick(rng, pool.legwear.items);
-  const meta = outfitInfoOf(pool).find((o) => o.text === outfit);
-  const legwear = pool.legwear !== undefined && meta !== undefined && legwearFits(moment, meta) && roll < pool.legwear.share ? item : undefined;
   const level = slot.level ?? "ordinary";
+  const info = outfitInfoOf(pool);
+  const levelOfOutfit = (text: string) => info.find((o) => o.text === text)?.level;
+  const pinned = pinnedOutfitsOf(moment);
+  const wearable = pinned.length > 0 ? pinnedAt(pinned, levelOfOutfit, level, moment.text) : atSlotLevel(legsOutfitsOf(pool), levelOfOutfit, level);
+  const outfit = rngPick(rng, preferred(wearable, (o) => o, avoid.outfits, slot.outfit));
+  const meta = info.find((o) => o.text === outfit);
+  // S5.R4: a bold legs scene wears the stockings, as the planner's bold legs slot does (plan s5a3 §6.2 r3.1).
+  const wear = legwearOfSlot(pool.legwear, level, rng, moment, meta, outfit, "legs");
+  const route = seedreamRoute(moment, meta, wear.stockings ? wear.route : undefined);
   return {
     slotIndex: slot.slotIndex,
     category: slot.category,
@@ -173,9 +181,10 @@ function redrawLegs(input: RedrawInput): PlanSlot {
     attemptIdBase: slot.attemptIdBase,
     repeatedPair: false,
     ...(capture === captureOfShot(shotOf(capture)) ? {} : { capture }),
-    ...(legwear === undefined ? {} : { legwear }),
+    ...(wear.legwear === undefined ? {} : { legwear: wear.legwear }),
     framing: "legs" as const,
-    ...(level === "flirty" ? { level } : {}),
+    ...(level === "ordinary" ? {} : { level }),
+    ...(route === undefined ? {} : { route }),
   };
 }
 

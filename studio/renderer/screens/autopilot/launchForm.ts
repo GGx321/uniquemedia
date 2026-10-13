@@ -11,7 +11,7 @@ import {
   type VideoShape,
 } from "../../../shared/engine";
 import { hasBuiltIn } from "../photos/legs";
-import { arrangeCategories } from "../photos/runForm";
+import { arrangeCategories, categoriesAt } from "../photos/runForm";
 
 // S4.9a: the «Автопилот» launch form (AutopilotS4.dc.html, columns 1 and 2) as plain data: what the owner chose before «Запустить», the two-handle mix
 // control's arithmetic, and the mix the window remembers. Nothing here prices anything: the engine's `autopilot.estimate` does (plan §4.2).
@@ -214,7 +214,7 @@ export interface LaunchSettingsInput {
   mix: LaunchMix;
   categories: CategoryRef[];
   /** «Подача», only when it is not the default (I5.27: a launch file then carries it only when it differs). */
-  level?: "flirty";
+  level?: "flirty" | "bold";
   /** «Ножки» (S5.8b), only at 15 or 30 and with a built-in category: the engine stores whatever share the draft names, a 0 included. */
   legsShare?: 15 | 30;
   library: boolean;
@@ -226,16 +226,17 @@ export interface LaunchSettingsInput {
 /**
  * The settings to plan: the chosen avatars in the list's order, the categories the library holds (built-ins in their order, then the owner's in creation
  * order; one deleted since is dropped), and a fresh copy of every list. Null with no avatar or no category: the contract asks for at least one of each.
+ * S5.9g (I5.42): a «Смелая» category only with «Смелая» (`categoriesAt`): one picked and kept under another «Подача» is left out.
  */
 export function launchSettings(form: LaunchForm, customOrder: readonly CustomCategoryId[]): LaunchSettingsInput | null {
-  const categories = orderCategories(arrangeCategories(form.categories, customOrder));
+  const categories = orderCategories(categoriesAt(form.level, arrangeCategories(form.categories, customOrder)));
   if (form.avatarIds.length === 0 || categories.length === 0) return null;
   return {
     avatarIds: [...form.avatarIds],
     videosPerAvatar: form.videosPerAvatar,
     mix: { ...form.mix },
     categories,
-    ...(form.level === "flirty" ? { level: "flirty" as const } : {}),
+    ...(form.level === "ordinary" ? {} : { level: form.level }),
     // Too few new photos for a legs frame (mockup 34#few) still names the pick: it draws nothing this time, and the launch keeps what the owner chose.
     ...(form.legs !== 0 && hasBuiltIn(categories) ? { legsShare: form.legs } : {}),
     library: form.library,

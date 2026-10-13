@@ -1,26 +1,28 @@
 import { type RefObject, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { MAX_CUSTOM_CATEGORIES, SceneCategory, type CategorySummary } from "../../../shared/engine";
+import { BOLD_CATEGORIES, isBoldCategory, MAX_CUSTOM_CATEGORIES, ORDINARY_SCENE_CATEGORIES, type CategorySummary } from "../../../shared/engine";
 import type { CategoryCall, CategoryList, CategoryOutcome } from "../../engine/categoryLibrary";
 import { errorText } from "../../lib/errors";
 import { Icon } from "../../ui/Icon";
 import { libraryHeld } from "./categoryText";
+import { BOLD_ONLY, gatedNote } from "./level";
 import { CATEGORY_LABEL, type RunCategory } from "./runForm";
 
 // CS.3: the generate card's category row (CatChips, the CategoryStates sheet's row): the five built-ins in their order, then the owner's
 // own in creation order, drawn alike; «+ Своя» (dashed) always last; «Мои категории · N» a text button in the label row. More than four
 // custom ones: the first four and every one turned on stay, the rest wait behind «ещё N» and open in place (decision 1). While this
 // window composes a pool, its chip spins in the row; hidden with «Скрыть» it takes the focus, and a click opens the dialog again.
+// S5.9g (plan s5a3 §13.1; mockups 47, 48, 48a): «Ночнушки и бельё» and «Пляж и бассейн» follow the five. They work only under «Смелая»: under another
+// «Подача» they wait, dimmed and unpressable, a note under the row says so, and a pick made under «Смелая» stays drawn (dashed) and comes back with it.
 
-/** What a built-in chip says about itself (mockup 24a); Фитнес has no hint of its own. */
+/** What a built-in chip says about itself (mockups 24a, 48a); Фитнес has no hint of its own. */
 const CHIP_HINT: Partial<Record<RunCategory, string>> = {
   home: "Дом — зеркало, кровать, свет лампы; в части кадров лицо закрыто телефоном.",
   shoot: "Улица — снимает подруга или прохожий, иногда телефон на таймере; город днём и ночью.",
   travel: "Виды — балкон над городом, сад, горы, набережная.",
   glam: "Гламур — вечер выхода: бар, ресторан, такси и сборы дома.",
+  nightwear: "Ночнушки и бельё — дома у зеркала и в кровати: ночнушки, бельё, чулки; в части кадров лицо закрыто телефоном.",
+  beach: "Пляж и бассейн — пляж, море и бассейн; снимает подруга или прохожий, иногда телефон на таймере; купальники.",
 };
-
-/** The two chips kept for «Смелая»: drawn dimmed, never a button. */
-const RESERVED_CHIPS = ["Ночнушки и бельё", "Пляж и бассейн"] as const;
 
 /** Custom chips the row always shows, in creation order, besides every one turned on. */
 const CUSTOM_SHOWN = 4;
@@ -51,6 +53,7 @@ export function CategoryRow({
   rootRef,
   categories,
   perCategory,
+  boldOn,
   list,
   creating,
   outcome,
@@ -62,9 +65,12 @@ export function CategoryRow({
 }: {
   /** The row's own element: the card finds the chips in it to put the focus back after the dialog. */
   rootRef: RefObject<HTMLDivElement | null>;
-  /** The run's categories (built-ins, then custom in creation order). */
+  /** The form's categories (built-ins, then custom in creation order), a «Смелая» one kept under another «Подача» included. */
   categories: readonly RunCategory[];
+  /** The photos of each category the run asks for: a kept «Смелая» category is not among them. */
   perCategory: ReadonlyMap<RunCategory, number>;
+  /** «Подача» is «Смелая»: its two categories work. */
+  boldOn: boolean;
   list: CategoryList;
   /** This window's create on its way, if any: its chip spins in the row. */
   creating: CategoryCall | null;
@@ -79,6 +85,7 @@ export function CategoryRow({
   const ids = useId();
   const labelId = `${ids}-cats`;
   const limitId = `${ids}-limit`;
+  const gatedId = `${ids}-gated`;
   const groupRef = useRef<HTMLDivElement>(null);
   const addRef = useRef<HTMLButtonElement>(null);
   const [expanded, setExpanded] = useState(false);
@@ -107,16 +114,24 @@ export function CategoryRow({
   const chip = (ref: RunCategory, label: string) => {
     const isOn = on.has(ref);
     const n = perCategory.get(ref);
+    // A «Смелая» category under another «Подача»: it waits, and a pick of it is kept (mockup 48#kept), drawn on but not part of this run — so never announced
+    // as pressed; the note it is described by says it comes back with «Смелая».
+    const gated = !boldOn && isBoldCategory(ref);
+    const classes = ["chip", isOn && "chip-on", "cat-chip", gated && "gen-chip-gated", gated && isOn && "gen-chip-kept"].filter(Boolean).join(" ");
     return (
       <button
         key={ref}
         type="button"
-        className={isOn ? "chip chip-on cat-chip" : "chip cat-chip"}
+        className={classes}
         data-category={ref}
-        aria-pressed={isOn}
+        aria-pressed={isOn && !gated}
+        aria-disabled={gated || undefined}
+        aria-describedby={gated ? gatedId : undefined}
         aria-label={isOn && n !== undefined ? `${label}: ${n} фото` : label}
-        title={label}
-        onClick={() => onToggle(ref)}
+        title={gated ? BOLD_ONLY : label}
+        onClick={() => {
+          if (!gated) onToggle(ref);
+        }}
         onPointerEnter={() => setHinted(ref)}
         onPointerLeave={() => setHinted(null)}
         onFocus={() => setHinted(ref)}
@@ -151,7 +166,8 @@ export function CategoryRow({
         </button>
       </div>
       <div ref={groupRef} className="photos-chips" role="group" aria-labelledby={labelId}>
-        {SceneCategory.options.map((c) => chip(c, CATEGORY_LABEL[c]))}
+        {ORDINARY_SCENE_CATEGORIES.map((c) => chip(c, CATEGORY_LABEL[c]))}
+        {BOLD_CATEGORIES.map((c) => chip(c, CATEGORY_LABEL[c]))}
         {visible.map((c) => chip(c.categoryId, c.name))}
         {creating !== null && <WaitingChip name={creating.name} onOpen={onReopen} onGone={() => (handOff.current = true)} />}
         {(hidden > 0 || expanded) && customs.length > CUSTOM_SHOWN && (
@@ -177,13 +193,12 @@ export function CategoryRow({
           <Icon name="plus" size={11} strokeWidth={2.6} />
           Своя
         </button>
-        {RESERVED_CHIPS.map((name) => (
-          <button key={name} type="button" className="chip chip-reserved" disabled>
-            {name}
-          </button>
-        ))}
       </div>
-      <span className="faint photos-note">Со «Смелой» — появятся позже.</span>
+      {!boldOn && (
+        <span id={gatedId} className="faint photos-note gen-gated-note">
+          {gatedNote(BOLD_CATEGORIES.filter((c) => on.has(c)).map((c) => CATEGORY_LABEL[c]))}
+        </span>
+      )}
       {full && (
         <span id={limitId} className="faint photos-note">
           {MAX_CUSTOM_CATEGORIES} из {MAX_CUSTOM_CATEGORIES} — удалите ненужную в «Мои категории».

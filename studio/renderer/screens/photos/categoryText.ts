@@ -270,7 +270,7 @@ export function createdLine(setOpen: boolean): string {
 
 /** The create form's hint under «Описание»: it names the pose and the angle, so the owner learns they can be set in words. */
 export const DESCRIPTION_HINT =
-  "Где она бывает, что там делает и в какой позе, во что одета, с какого ракурса снимать («вид сзади», «в профиль»). Модель составит 5–7 мест, 3–6 нарядов и набор кадров. Наряды — только неоткровенные, как во всех категориях.";
+  "Где она бывает, что там делает и в какой позе, во что одета, с какого ракурса снимать («вид сзади», «в профиль»). Модель составит 5–7 мест, 3–6 нарядов и набор кадров. Наряды — только неоткровенные, как во всех своих категориях.";
 
 /** The regenerate box's hint (CatSheetRegen): the angles are re-read from the new description, and ⟳ in an open set takes the new pool. */
 export const REGEN_HINT =

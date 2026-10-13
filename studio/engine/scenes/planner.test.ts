@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { CATEGORIES } from "./types";
+import { ORDINARY_BUILT_INS } from "./types";
 import { POOLS } from "./pools";
 import { categorySeed, plan, placeMirrorShots, planWithPools, poseSeed, type ExcludedPair } from "./planner";
 import { ScenePlanSchema } from "./schema";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
-const ALL_CATEGORIES = [...CATEGORIES];
+const ALL_CATEGORIES = [...ORDINARY_BUILT_INS];
 const REVEALING = /\b(bikini|swimsuit|swimwear|lingerie|sports bra|thong|stockings?|slip dress|robe over lingerie)\b/i;
 
 function placeOf(category: string, location: string) {

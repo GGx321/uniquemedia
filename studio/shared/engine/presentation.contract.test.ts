@@ -23,13 +23,14 @@ const run = { avatarId: AVATAR, count: 5, categories: ["home"] };
 const compose = { avatarId: AVATAR, count: 5, categories: ["home"] };
 
 describe("SceneLevel", () => {
-  test("is ordinary or flirty", () => {
+  test("is ordinary, flirty or bold", () => {
     expect(SceneLevel.safeParse("ordinary").success).toBe(true);
     expect(SceneLevel.safeParse("flirty").success).toBe(true);
+    expect(SceneLevel.safeParse("bold").success).toBe(true);
   });
 
-  test("refuses bold, which does not exist yet", () => {
-    expect(SceneLevel.safeParse("bold").success).toBe(false);
+  test("refuses a level that is none of the three", () => {
+    expect(SceneLevel.safeParse("daring").success).toBe(false);
   });
 
   test("refuses an empty string and a non-string", () => {
@@ -52,8 +53,8 @@ describe("RunRequest", () => {
     expect(RunRequest.safeParse({ ...run, level: "ordinary", poses: OLD_POSES }).success).toBe(true);
   });
 
-  test("refuses bold", () => {
-    expect(RunRequest.safeParse({ ...run, level: "bold" }).success).toBe(false);
+  test("accepts bold", () => {
+    expect(RunRequest.safeParse({ ...run, level: "bold" }).success).toBe(true);
   });
 
   test("still refuses poses that are not a profile/back pair", () => {
@@ -67,7 +68,7 @@ describe("RunRequest", () => {
       expect(accepts(type, { ...run, poses: OLD_POSES, ...extra })).toBe(true);
       expect(accepts(type, { ...run, ...extra })).toBe(true);
       expect(accepts(type, { ...run, level: "flirty", ...extra })).toBe(true);
-      expect(accepts(type, { ...run, level: "bold", ...extra })).toBe(false);
+      expect(accepts(type, { ...run, level: "bold", ...extra })).toBe(true);
     }
   });
 });
@@ -82,8 +83,8 @@ describe("ComposeRequest", () => {
     expect(ComposeRequest.safeParse({ ...compose, level: "flirty" }).success).toBe(true);
   });
 
-  test("refuses bold", () => {
-    expect(ComposeRequest.safeParse({ ...compose, level: "bold" }).success).toBe(false);
+  test("accepts bold", () => {
+    expect(ComposeRequest.safeParse({ ...compose, level: "bold" }).success).toBe(true);
   });
 
   test("the scenes.compose command takes the same shapes", () => {
@@ -91,7 +92,7 @@ describe("ComposeRequest", () => {
     expect(accepts("scenes.compose", { ...compose, poses: OLD_POSES, ...worst })).toBe(true);
     expect(accepts("scenes.compose", { ...compose, ...worst })).toBe(true);
     expect(accepts("scenes.compose", { ...compose, level: "flirty", ...worst })).toBe(true);
-    expect(accepts("scenes.compose", { ...compose, level: "bold", ...worst })).toBe(false);
+    expect(accepts("scenes.compose", { ...compose, level: "bold", ...worst })).toBe(true);
   });
 });
 
@@ -108,8 +109,8 @@ describe("LaunchSettings", () => {
     expect(LaunchSettings.safeParse({ ...withoutPoses, level: "flirty" }).success).toBe(true);
   });
 
-  test("refuses bold", () => {
-    expect(LaunchSettings.safeParse({ ...settings, level: "bold" }).success).toBe(false);
+  test("accepts bold", () => {
+    expect(LaunchSettings.safeParse({ ...settings, level: "bold" }).success).toBe(true);
   });
 
   test("the draft and the estimate's draft take both shapes", () => {
@@ -118,7 +119,7 @@ describe("LaunchSettings", () => {
     expect(LaunchDraft.safeParse({ ...withoutPoses, level: "flirty", planSeed: 3 }).success).toBe(true);
     expect(LaunchDraftInput.safeParse(withoutPoses).success).toBe(true);
     expect(accepts("autopilot.estimate", { draft: withoutPoses })).toBe(true);
-    expect(accepts("autopilot.estimate", { draft: { ...withoutPoses, level: "bold" } })).toBe(false);
+    expect(accepts("autopilot.estimate", { draft: { ...withoutPoses, level: "bold" } })).toBe(true);
   });
 });
 
@@ -157,8 +158,8 @@ describe("SceneView level and capture", () => {
     expect(SceneView.safeParse(scene({ level: "ordinary" })).success).toBe(false);
   });
 
-  test("refuses bold and an unknown capture", () => {
-    expect(SceneView.safeParse(scene({ level: "bold" })).success).toBe(false);
+  test("accepts bold and refuses an unknown capture", () => {
+    expect(SceneView.safeParse(scene({ level: "bold" })).success).toBe(true);
     expect(SceneView.safeParse(scene({ capture: "drone" })).success).toBe(false);
   });
 });
@@ -189,11 +190,11 @@ describe("SceneSetView poses", () => {
     expect(SceneSetView.safeParse(view()).success).toBe(true);
   });
 
-  test("parses without poses, with a level, and refuses bold", () => {
+  test("parses without poses, with a level, and accepts bold", () => {
     const { poses: _poses, ...withoutPoses } = view();
     expect(SceneSetView.safeParse(withoutPoses).success).toBe(true);
     expect(SceneSetView.safeParse({ ...withoutPoses, level: "flirty" }).success).toBe(true);
-    expect(SceneSetView.safeParse({ ...withoutPoses, level: "bold" }).success).toBe(false);
+    expect(SceneSetView.safeParse({ ...withoutPoses, level: "bold" }).success).toBe(true);
   });
 
   test("the scenes.get answer carries a set without poses", () => {

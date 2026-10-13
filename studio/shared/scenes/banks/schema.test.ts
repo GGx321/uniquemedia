@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BANK_RULE, categoryBankProblems, cueBankProblems, gazeBankProblems, hairBankProblems, MOMENT_VERBS } from "./schema";
+import { BANK_RULE, categoryBankProblems, cueBankProblems, gazeBankProblems, hairBankProblems, looksElsewhere, MOMENT_VERBS } from "./schema";
 import type { BankPlace, CategoryBank, Cue, Gaze, Hairstyle, Moment } from "./types";
 
 // 5a.2 (S5.6a, I5.21, I5.35; plan s5a2 r1.2): the banks are validated with zod when they load, so a malformed bank is a test failure, never a
@@ -82,6 +82,12 @@ describe("a category bank", () => {
     ["a moment that looks at the viewer without the viewer tag", { ...plain, text: "smiles at the viewer" }, BANK_RULE.momentViewer],
     ["a viewer tag on a moment that names no viewer", { ...plain, gaze: "viewer" }, BANK_RULE.momentViewer],
     ["a moment that looks somewhere without carrying its gaze", { ...plain, text: "looks out of the window" }, BANK_RULE.momentGaze],
+    // S5.R4: «sits on a ledge, watching dusk fall» lost its gaze and drew «…watching dusk fall, …, looking up at the viewer» (the look is mid-text, not its opening verb).
+    ["a moment that watches something mid-text without carrying its gaze", { ...plain, text: "sits on a ledge, watching dusk fall" }, BANK_RULE.momentGaze],
+    ["a moment that gazes out mid-text without carrying its gaze", { ...plain, text: "leans on the sill, gazing out" }, BANK_RULE.momentGaze],
+    ["a moment whose motion watches something, without carrying its gaze", { ...plain, motion: "she watches the light fade slowly" }, BANK_RULE.momentGaze],
+    ["a moment whose motion looks out, without carrying its gaze", { ...plain, motion: "she looks out at the street slowly" }, BANK_RULE.momentGaze],
+    ["a moment that looks out mid-text with the viewer's gaze (it looks elsewhere)", { ...plain, text: "sits by the viewer, looking out", gaze: "viewer" }, BANK_RULE.momentGaze],
     ["a back moment that looks at the viewer", { ...plain, text: "turns to the viewer", gaze: "viewer", angle: "back" }, BANK_RULE.backViewer],
     ["a moment that names a mirror and fits a friend's photo", { ...plain, text: "sits on the floor by the mirror", captures: ["mirror", "friend"] }, BANK_RULE.mirrorWord],
     ["a moment with no capture", { ...plain, captures: [] }, BANK_RULE.captures],
@@ -143,6 +149,57 @@ describe("a category bank", () => {
 
   test.each(MOMENT_ROWS)("refuses %s", (_name, moment, rule) => {
     expect(rulesOf(categoryBankProblems(withMoment(moment), "home"))).toContain(rule);
+  });
+
+  // S5.R4 round 2 (re-review, LOW): the reading in both directions. A look at the viewer or the camera, or a bare «looks up» or «glances back», is no look elsewhere; admiring
+  // the view, facing the sunset and checking her reflection are.
+  test.each([
+    "sits on a ledge, watching dusk fall",
+    "she looks out at the street slowly",
+    "laughs, looking down the street",
+    "turns to look across the road",
+    "looks up at the stars",
+    "admires the view from the top",
+    "faces the sunset",
+    "sits facing the sea",
+    "checks her reflection",
+    "takes in the view",
+    // S5.R4 round 3: her own reflection is herself, not the phone; and a look by the verb «eyes».
+    "smiles at her reflection",
+    "checks her reflection in the mirror",
+    "eyes the horizon",
+  ])("«%s» looks at something other than the viewer", (text) => {
+    expect(looksElsewhere(text)).toBe(true);
+  });
+
+  test.each([
+    "looks up at the viewer",
+    "glances back at the camera",
+    "she looks up and smiles",
+    "walks off, glancing back",
+    "looks back over her shoulder",
+    "she smiles a little and looks away",
+    "sits on the rug facing the mirror",
+    "stretches her arms up, facing away",
+    "checks her outfit before going out",
+    "she turns her head a little toward the mirror",
+    // S5.R4 round 3: in a mirror selfie the mirror is where the phone is, the viewer's place: looking into it or facing it is no look elsewhere.
+    "looks into the mirror",
+    "glances at the mirror",
+    "faces the mirror",
+  ])("«%s» does not", (text) => {
+    expect(looksElsewhere(text)).toBe(false);
+  });
+
+  // S5.R4: the negative control of the rule above. A look elsewhere carried by the moment's own gaze is valid; a clip that ends looking away («and looks away») starts
+  // from a photo that may look at the viewer, so it is no look elsewhere; and a moment that names no look takes the template's gaze as before.
+  test.each<[string, Moment]>([
+    ["a moment that watches something, carrying its own gaze", { ...plain, text: "sits on a ledge, watching dusk fall", motion: "she watches the light fade slowly", gaze: "own" }],
+    ["a motion that ends looking away", { ...plain, motion: "she smiles a little and looks away" }],
+    ["a motion that turns toward something without a look", { ...plain, motion: "she turns her head a little toward the door" }],
+    ["a moment that names no look", plain],
+  ])("accepts %s (the look-elsewhere rule's negative control)", (_name, moment) => {
+    expect(rulesOf(categoryBankProblems(withMoment(moment), "home"))).not.toContain(BANK_RULE.momentGaze);
   });
 
   test("a back-to-the-mirror moment on mirror captures only is valid (r1.5)", () => {

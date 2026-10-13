@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { plan } from "../../../engine/scenes/planner";
 import { contractCategory } from "../../../engine/runs/plan";
 import { plannerCategoryOf } from "../../../engine/scenes";
-import { RunRequest, SceneCategory, splitCount } from "../../../shared/engine";
+import { ORDINARY_SCENE_CATEGORIES, RunRequest, SceneCategory, splitCount } from "../../../shared/engine";
 import { covers } from "../../../shared/scenes/custom";
 import { BED_POOL, category, PARIS_POOL } from "./categoryScreenKit";
 import {
@@ -57,8 +57,19 @@ function engineSplit(count: number, categories: readonly RunCategory[]): Map<Run
 }
 
 test("runForm's per-category split matches the engine planner's own for every count 5..100", () => {
-  const categories: readonly RunCategory[] = SceneCategory.options;
+  // 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): the five the form offers (ORDINARY_SCENE_CATEGORIES); every assertion kept. The seven are split in the test below.
+  const categories: readonly RunCategory[] = ORDINARY_SCENE_CATEGORIES;
   for (let count = COUNT_MIN; count <= COUNT_MAX; count += COUNT_STEP) {
+    const rendererSplit = photosPerCategory(count, categories);
+    const engine = engineSplit(count, categories);
+    expect([...rendererSplit.entries()]).toEqual([...engine.entries()]);
+  }
+});
+
+// 5a.3 (S5.9b2): with the two «Смелая» categories too, from 10 photos up (below seven a category gets none, and a plan has no slot to count it by).
+test("runForm's split matches the engine planner's own over all seven built-ins too", () => {
+  const categories: readonly RunCategory[] = SceneCategory.options;
+  for (let count = 10; count <= COUNT_MAX; count += COUNT_STEP) {
     const rendererSplit = photosPerCategory(count, categories);
     const engine = engineSplit(count, categories);
     expect([...rendererSplit.entries()]).toEqual([...engine.entries()]);
@@ -250,4 +261,69 @@ test("a custom category whose photo kept no label still has a name", () => {
 test("an own scene is «Своя сцена» unless its photo kept another label", () => {
   expect(photoCategoryLabel({ category: "own" })).toBe("Своя сцена");
   expect(photoCategoryLabel({ category: "own", categoryName: "Идея" })).toBe("Идея");
+});
+
+// ---------- 5a.3 (S5.9b2, plan s5a3 §6.1, §11): the two «Смелая» categories ----------
+
+test("the two «Смелая» categories have their Russian labels, for their photos and their chips to come", () => {
+  expect([CATEGORY_LABEL.nightwear, CATEGORY_LABEL.beach]).toEqual(["Ночнушки и бельё", "Пляж и бассейн"]);
+  expect(photoCategoryLabel({ category: "nightwear" })).toBe("Ночнушки и бельё");
+  expect(photoCategoryLabel({ category: "beach" })).toBe("Пляж и бассейн");
+});
+
+test("the form's default categories are the five ordinary built-ins: the «Смелая» two are never on by default", () => {
+  expect([...DEFAULT_RUN_FORM.categories]).toEqual(["home", "travel", "shoot", "glam", "fit"]);
+});
+
+// 2026-10-12, S5.9g (plan s5a3 §13.1; mockups 47, 48#kept): the chips ship, so the row «until their chips ship the form never asks for a «Смелая» category:
+// arranging drops one» is replaced by what the form does now. Arranging keeps them (in SceneCategory's order, after the five, before the owner's own); the
+// guard moves to the request, which asks for one only with «Смелая» (below).
+test("arranging keeps a «Смелая» category, after the five and before the owner's own", () => {
+  expect(arrangeCategories(["beach", "home", CUSTOM_A, "nightwear"], [CUSTOM_A])).toEqual(["home", "nightwear", "beach", CUSTOM_A]);
+  expect(toggleCategory(["home"], "nightwear", [])).toEqual(["home", "nightwear"]);
+  expect(toggleCategory(["home", "nightwear"], "nightwear", [])).toEqual(["home"]);
+});
+
+// ---------- 5a.3 (S5.9g, plan s5a3 I5.42, §14 «S5.9g»): the request keys ----------
+
+test("«Смелая» goes into the request as `level: \"bold\"`, with the «Смелая» categories the form holds", () => {
+  const request = runRequest("avatar-0001", { ...DEFAULT_RUN_FORM, categories: ["home", "nightwear", "beach"], level: "bold" });
+  expect(request).toEqual({ avatarId: "avatar-0001", count: 20, categories: ["home", "nightwear", "beach"], level: "bold" });
+  expect(RunRequest.safeParse(request).success).toBe(true);
+});
+
+test("«Смелая» with only the five is still `level: \"bold\"` (the engine draws them as «Кокетливая»)", () => {
+  expect(runRequest("avatar-0001", { ...DEFAULT_RUN_FORM, level: "bold" }).level).toBe("bold");
+});
+
+test("a «Смелая» category picked and kept under another «Подача» stays in the form but is never asked for", () => {
+  const form = { ...DEFAULT_RUN_FORM, categories: ["home", "nightwear"] as RunCategory[] };
+  expect(runRequest("avatar-0001", { ...form, level: "flirty" })).toEqual({ avatarId: "avatar-0001", count: 20, categories: ["home"], level: "flirty" });
+  expect(runRequest("avatar-0001", { ...form, level: "ordinary" })).toEqual({ avatarId: "avatar-0001", count: 20, categories: ["home"] });
+  // Only the kept one: the request names no category at all, so nothing is priced or sent.
+  expect(runRequest("avatar-0001", { ...form, categories: ["nightwear"], level: "flirty" }).categories).toEqual([]);
+});
+
+test("guard: no form, whatever its level and categories, asks for a «Смелая» category without «Смелая», nor for «Смелая» unless it was chosen", () => {
+  const pool: RunCategory[] = ["home", "travel", "shoot", "glam", "fit", "nightwear", "beach", CUSTOM_A];
+  for (const level of ["ordinary", "flirty", "bold"] as const) {
+    for (let mask = 0; mask < 1 << pool.length; mask++) {
+      const categories = pool.filter((_, i) => (mask & (1 << i)) !== 0);
+      const request = runRequest("avatar-0001", { ...DEFAULT_RUN_FORM, categories, level });
+      const asksBold = request.categories.some((c) => c === "nightwear" || c === "beach");
+      if (asksBold) expect(request.level).toBe("bold");
+      expect(request.level === "bold").toBe(level === "bold");
+      expect(request.level === undefined).toBe(level === "ordinary");
+    }
+  }
+});
+
+test("a bold request and a flirty one of the same form are priced apart: their keys differ", () => {
+  const form = { ...DEFAULT_RUN_FORM, categories: ["home", "nightwear"] as RunCategory[] };
+  expect(requestKey(runRequest("avatar-0001", { ...form, level: "bold" }))).not.toBe(requestKey(runRequest("avatar-0001", { ...form, level: "flirty" })));
+});
+
+test("the chips' split counts only what the request asks for: a kept «Смелая» category takes no photo", () => {
+  const flirty = runRequest("avatar-0001", { ...DEFAULT_RUN_FORM, categories: ["home", "nightwear"], level: "flirty" });
+  expect([...photosPerCategory(20, flirty.categories)]).toEqual([["home", 20]]);
 });

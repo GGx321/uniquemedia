@@ -82,7 +82,8 @@ function sceneViews(set: StoredSceneSet, states: ReadonlyMap<number, ChunkState>
       categoryName: isCustomCategory(slot.category) ? (names.get(slot.category) ?? null) : null,
       shot: slot.shot,
       pose: slot.pose,
-      ...(slot.level === "flirty" ? { level: "flirty" as const } : {}),
+      ...(slot.level === "flirty" || slot.level === "bold" ? { level: slot.level } : {}),
+      ...(slot.route === undefined ? {} : { route: slot.route }),
       ...(slot.capture === undefined ? {} : { capture: slot.capture }),
       ...(slot.framing === "legs" ? { framing: "legs" as const } : {}),
       place: { location: slot.location, timeOfDay: slot.timeOfDay, activity: slot.activity, outfit: slot.outfit },
@@ -150,7 +151,7 @@ export function buildSceneSetView(set: StoredSceneSet, ctx: ViewContext): SceneS
     runId: ctx.used ? set.runId : null,
     // S5.7a: echoed only when the set stored them, and the level only when it is not ordinary.
     ...(set.request.poses === undefined ? {} : { poses: { ...set.request.poses } }),
-    ...(set.request.level === "flirty" ? { level: "flirty" as const } : {}),
+    ...(set.request.level === "flirty" || set.request.level === "bold" ? { level: set.request.level } : {}),
     categories,
     textModel: set.models.text,
     spentMicros: spend === null ? null : spend.spent,

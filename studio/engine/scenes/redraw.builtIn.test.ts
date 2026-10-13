@@ -6,9 +6,10 @@ import { plan } from "./planner";
 import { EVERYDAY_OUTFITS, POOLS, type Activity, type Pool } from "./pools";
 import { redrawSlot } from "./redraw";
 import { PlanSlotSchema, type PlanSlot } from "./schema";
-import { CATEGORIES, type Category } from "./types";
+import { ORDINARY_BUILT_INS, type Category } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // 5a.2 (S5.6b): «Другая сцена» on a built-in scene follows the planner: the scene keeps its capture (who took the photo), draws a pose, then a place with a
 // fitting moment and one of its fitting moments, the moment's pinned outfits first, and the legwear. It never throws (an old scene whose capture its pool no
@@ -21,7 +22,7 @@ const draw = (slot: PlanSlot, k: number, pool: Pool, over: Partial<Parameters<ty
 const slotsOf = (category: Category): PlanSlot[] => plan({ seed: 5, count: 36, categories: [category] }).slots;
 const momentOf = (category: Category, slot: PlanSlot): Activity | undefined => POOLS[category].locations.find((l) => l.name === slot.location)?.activities.find((a) => a.text === slot.activity);
 
-describe.each([...CATEGORIES])("redrawing a %s scene", (category) => {
+describe.each([...ORDINARY_BUILT_INS])("redrawing a %s scene", (category) => {
   const pool = POOLS[category];
 
   test("keeps the scene's capture, id, category and attempt id base", () => {

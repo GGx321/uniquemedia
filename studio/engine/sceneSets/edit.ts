@@ -1,6 +1,6 @@
 import { SCENE_TEXT_MAX, type SceneEditOp, type SceneProblem, type SceneReason } from "../../shared/engine";
 import type { RewriteWriteRecord, StoredSceneSet } from "../library/sceneSets";
-import { sentenceProblems } from "../scenes";
+import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared/scenes/contentLine";
 import { withReviewWriteClosed, withoutScenes } from "./reviewMutations";
 import { reviewWritesOf } from "./reviewWrites";
 
@@ -20,17 +20,17 @@ const LINE_BREAK = new RegExp(`[\n\r${String.fromCharCode(0x2028)}${String.fromC
 const CONTROL = /\p{Cc}/u;
 
 /**
- * Why a text does not go through, or null. The assembler's own last gate (`sentenceProblems`: a youth word, a revealing word) shown at once, for
+ * Why a text does not go through, or null. The assembler's own last gate (`contentProblems` at the scene's content level: at "ordinary" a youth word and a revealing word, in a «Смелая» category a youth word only) shown at once, for
  * free, plus technical bounds: 1..600 chars on one line without control characters. The first rule broken is the one named. Not a new rule, and not
  * a content gate of ours: a text in another script is the owner's call, and the providers apply their own policies.
  */
-export function textProblem(text: string): SceneProblem | null {
+export function textProblem(text: string, level: ContentLevel = "ordinary"): SceneProblem | null {
   const trimmed = text.trim();
   if (trimmed.length === 0) return { reason: "empty", words: [] };
   if (trimmed.length > SCENE_TEXT_MAX) return { reason: "too-long", words: [] };
   if (LINE_BREAK.test(trimmed)) return { reason: "not-one-line", words: [] };
   if (CONTROL.test(trimmed)) return { reason: "control-char", words: [] };
-  const [first] = sentenceProblems(trimmed);
+  const [first] = contentProblems(trimmed, level);
   return first === undefined ? null : { reason: first.reason, words: first.words.slice(0, 12).map((word) => word.slice(0, 64)) };
 }
 
@@ -51,7 +51,7 @@ export function applyEdit(set: StoredSceneSet, op: SceneEditOp): EditOutcome {
       const scene = set.scenes.find((s) => s.sceneId === op.sceneId);
       if (scene === undefined) return invalid(`the set has no scene ${op.sceneId}`, "scene-missing", op.sceneId);
       if (scene.removed) return invalid(`scene ${op.sceneId} is removed; restore it before editing its text`, "target-removed", op.sceneId);
-      const problem = textProblem(op.text);
+      const problem = textProblem(op.text, scene.origin === "planned" ? contentLevelOf(scene.slot) : "ordinary");
       if (problem !== null) return { kind: "problem", problem };
       const text = op.text.trim();
       if (scene.text === text && scene.edited) return { kind: "unchanged" };

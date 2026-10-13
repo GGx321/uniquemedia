@@ -1,5 +1,6 @@
 import { isCustomCategory } from "../engine";
 import { BANKS } from "./banks";
+import { legwearAt } from "./level";
 import { BANK_CATEGORIES, type BankCategory, type Moment, type Outfit } from "./banks/types";
 import { customSentence } from "./custom";
 import { captureOfSlot, momentAllowed, renderSentence, type SentenceParts, type TemplateContext, type TemplateSlot } from "./render";
@@ -27,6 +28,11 @@ export function legwearFits(moment: Pick<Moment, "text" | "noLegwear">, outfit: 
   return outfit.showsLegs === true && moment.noLegwear !== true && !LEGWEAR_CLASH_WORDS.test(moment.text);
 }
 
+/** The positive coverage sentence a slot appends: the moment's, else the outfit's, else none. */
+export function coverageOf(moment: Pick<Moment, "coverage">, outfit: Pick<Outfit, "coverage">): string | undefined {
+  return moment.coverage ?? outfit.coverage;
+}
+
 function bankCategory(category: string): BankCategory | undefined {
   return BANK_CATEGORIES.find((c) => c === category);
 }
@@ -48,10 +54,23 @@ function builtInSentence(category: BankCategory, slot: TemplateSlot, ctx: Templa
   if (!momentAllowed(moment, capture, slot.pose, ctx.level ?? "ordinary", slot.framing)) return null;
   let wearing = outfit.text;
   if (slot.legwear !== undefined) {
-    if (!(bank.legwear?.items.includes(slot.legwear) ?? false) || !legwearFits(moment, outfit)) return null;
+    // 5a.3 (M3): the legwear lookup reads the slot's level list; a stocking on a slot that is not bold, or on an outfit the bold list does not name, renders nothing.
+    const list = legwearAt(bank.legwear, ctx.level ?? "ordinary");
+    if (list === undefined || !list.items.includes(slot.legwear) || !(list.outfits?.includes(outfit.text) ?? true) || !legwearFits(moment, outfit)) return null;
     wearing = `${outfit.text} with ${slot.legwear}`;
   }
-  const parts: SentenceParts = { at: place.at, doing: moment.text, wearing, gaze: moment.gaze, expression: moment.expression === true, handAtFace: moment.handAtFace === true, details: place.room === true ? [] : place.details };
+  const coverage = coverageOf(moment, outfit);
+  const parts: SentenceParts = {
+    at: place.at,
+    doing: moment.text,
+    wearing,
+    gaze: moment.gaze,
+    expression: moment.expression === true,
+    handAtFace: moment.handAtFace === true,
+    // S5.R4 round 3: a «Смелая» moment may say details of its own (what a look down at her feet sees); every other moment says its place's.
+    details: place.room === true ? [] : (moment.details ?? place.details),
+    ...(coverage === undefined ? {} : { coverage }),
+  };
   return renderSentence(parts, { capture, pose: slot.pose, framing: slot.framing }, ctx);
 }
 

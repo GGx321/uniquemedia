@@ -63,6 +63,26 @@ describe("hairstyleSequence", () => {
     }
   });
 
+  // 5a.3 (S5.9c, plan s5a3 §14): she does not wear a cap over a straw hat. An outdoor moment whose outfit is a hat takes no cap, however many caps the run may have.
+  test.each([...LENGTHS])("%s: a slot in a hat takes no cap, though it is outdoors and the run has caps to give", (length) => {
+    for (let seed = 0; seed < 40; seed++) {
+      const slots: HairSlot[] = Array.from({ length: 24 }, (_, i) => ({ outdoor: true, ...(i % 2 === 0 ? { hat: true } : {}) }));
+      const styles = hairstyleSequence(slots, length, `run-${seed}`);
+      styles.forEach((text, i) => {
+        if (slots[i]?.hat === true) expect(style(text)?.cap).not.toBe(true);
+      });
+    }
+  });
+
+  test("the caps a run may give still go to its outdoor slots without a hat", () => {
+    const capped = Array.from({ length: 40 }, (_, seed) => {
+      const slots: HairSlot[] = Array.from({ length: 24 }, (_, i) => ({ outdoor: true, ...(i % 2 === 0 ? { hat: true } : {}) }));
+      return hairstyleSequence(slots, "long", `run-${seed}`).filter((text) => style(text)?.cap === true).length;
+    });
+    expect(Math.max(...capped)).toBeGreaterThan(0);
+    expect(Math.max(...capped)).toBeLessThanOrEqual(capCap(24));
+  });
+
   test("a tied moment takes a tied style while the run has some left", () => {
     const styles = hairstyleSequence([{ hair: "tied" }, {}, {}, {}], "long", "run-1");
     expect(style(styles[0] ?? null)?.tied).toBe(true);

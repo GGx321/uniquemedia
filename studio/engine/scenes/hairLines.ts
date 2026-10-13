@@ -17,11 +17,14 @@ export function hairLengthOf(traits: Readonly<Record<string, unknown>>): HairLen
   return parsed.success ? parsed.data : undefined;
 }
 
+/** An outfit with a hat («a bikini and a straw hat», 5a.3): the slot takes no cap. */
+const HAT = /\bhat\b/i;
+
 function tagsOf(slot: RunSlot): HairSlot {
   if (isOwnSlot(slot)) return {};
   const category = CATEGORIES.find((c) => c === slot.category);
   const moment = category === undefined ? undefined : POOLS[category].locations.find((l) => l.name === slot.location)?.activities.find((a) => a.text === slot.activity);
-  return { hair: moment?.hair, outdoor: moment?.outdoor === true, framing: slot.framing };
+  return { hair: moment?.hair, outdoor: moment?.outdoor === true, framing: slot.framing, hat: HAT.test(slot.outfit) };
 }
 
 /** Each slot's hairstyle (as it reads after «Today her hair is …»), by slot number; a slot with no line is absent. */

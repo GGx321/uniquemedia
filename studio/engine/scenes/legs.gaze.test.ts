@@ -4,9 +4,10 @@ import { captureOfShot } from "../../shared/scenes/captures";
 import { localSentences } from "./localSentences";
 import { slotKeyOf } from "./phoneLook";
 import { plan } from "./planner";
-import { CATEGORIES } from "./types";
+import { ORDINARY_BUILT_INS } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // S5.8a review: a legs frame must not stage the face (a low-feet frame kept a gaze at the viewer and a smile on a third of its sentences).
 
@@ -18,7 +19,7 @@ describe("a legs frame does not stage the face", () => {
   const DOWN_GAZES = GAZE.filter((g) => g.kind === "down").map((g) => g.text);
   const sentencesOfLegs = (): { sentence: string; capture: string }[] => {
     const out: { sentence: string; capture: string }[] = [];
-    for (const category of CATEGORIES) {
+    for (const category of ORDINARY_BUILT_INS) {
       for (let seed = 1; seed <= 120; seed++) {
         const slots = plan({ seed, count: 20, categories: [category], legsShare: 30, ...(seed % 2 === 0 ? { level: "flirty" as const } : {}) }).slots;
         const local = localSentences({ slots, keyOf });

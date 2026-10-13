@@ -20,6 +20,8 @@ export interface HairSlot {
   hair?: MomentHair | undefined;
   outdoor?: boolean | undefined;
   framing?: "legs" | undefined;
+  /** 5a.3: the slot's outfit is a hat (the beach's straw hat): she wears no cap over it. */
+  hat?: boolean | undefined;
 }
 
 /** At most 1 in 4 photos of a run wears a tied style (probe P-5a2). */
@@ -58,7 +60,7 @@ export function hairstyleSequence(slots: readonly HairSlot[], length: HairLength
     const sporty = slot.hair === "sport" && tiedTurn(sportSeen++, sportMoments, sportyOf(sportMoments));
     const tied = slot.hair === "tied" && tiedTurn(tiedSeen++, tiedMoments, tiedAllowed);
     const base = sporty ? fits.filter((s) => s.sport === true) : fits.filter((s) => s.cap !== true && s.tied === tied);
-    const candidates: readonly Hairstyle[] = !sporty && slot.outdoor === true && caps < capsAllowed ? [...base, ...fits.filter((s) => s.cap === true)] : base;
+    const candidates: readonly Hairstyle[] = !sporty && slot.outdoor === true && slot.hat !== true && caps < capsAllowed ? [...base, ...fits.filter((s) => s.cap === true)] : base;
     const previous = (count: number): readonly string[] => drawn.slice(-count);
     const fresh = candidates.filter((s) => !previous(3).includes(s.text));
     const notLast = candidates.filter((s) => !previous(1).includes(s.text));

@@ -4,9 +4,10 @@ import { momentAllowed } from "../../shared/scenes/render";
 import { plan, planWithPools } from "./planner";
 import { POOLS, type Activity, type Pool } from "./pools";
 import type { PlanSlot } from "./schema";
-import { CATEGORIES, type Category } from "./types";
+import { ORDINARY_BUILT_INS, type Category } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
+// 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
 
 // 5a.2b (S5.7b, plan s5a2 §6.2, I5.26): the angle comes from the scene. A built-in slot's pose is its moment's `angle`, or front / three-quarter; the run's
 // «Ракурсы» never change a plan; a built-in category holds at most ⌊n/5⌋ away (profile or back) slots, and an excess one redraws among non-away moments.
@@ -25,20 +26,20 @@ describe("the request's poses never change a plan (I5.26)", () => {
     { profile: false, back: false },
   ])("poses %p plans exactly what no poses plan", (poses) => {
     for (const seed of SEEDS.slice(0, 40)) {
-      const asked = { seed, count: 20, categories: [...CATEGORIES], poses };
-      const bare = { seed, count: 20, categories: [...CATEGORIES] };
+      const asked = { seed, count: 20, categories: [...ORDINARY_BUILT_INS], poses };
+      const bare = { seed, count: 20, categories: [...ORDINARY_BUILT_INS] };
       expect(plan(asked)).toEqual(plan(bare));
     }
   });
 
   test("a flirty plan ignores poses too", () => {
-    const asked = { seed: 9, count: 20, categories: [...CATEGORIES], level: "flirty" as const, poses: { profile: true, back: true } };
-    expect(plan(asked)).toEqual(plan({ seed: 9, count: 20, categories: [...CATEGORIES], level: "flirty" }));
+    const asked = { seed: 9, count: 20, categories: [...ORDINARY_BUILT_INS], level: "flirty" as const, poses: { profile: true, back: true } };
+    expect(plan(asked)).toEqual(plan({ seed: 9, count: 20, categories: [...ORDINARY_BUILT_INS], level: "flirty" }));
   });
 });
 
 describe("the pose is the moment's angle, or front / three-quarter", () => {
-  test.each([...CATEGORIES])("%s: a moment with an angle sets the pose; any other slot is front or three-quarter", (category) => {
+  test.each([...ORDINARY_BUILT_INS])("%s: a moment with an angle sets the pose; any other slot is front or three-quarter", (category) => {
     let angled = 0;
     for (const seed of SEEDS) {
       for (const slot of plan({ seed, count: 20, categories: [category] }).slots) {
@@ -52,7 +53,7 @@ describe("the pose is the moment's angle, or front / three-quarter", () => {
     expect(angled).toBeGreaterThan(0);
   });
 
-  test.each([...CATEGORIES])("%s: the moment fits the capture and the pose it sets", (category) => {
+  test.each([...ORDINARY_BUILT_INS])("%s: the moment fits the capture and the pose it sets", (category) => {
     for (const seed of SEEDS) {
       for (const slot of plan({ seed, count: 20, categories: [category], level: "flirty" }).slots) {
         const moment = momentOf(slot);
@@ -63,7 +64,7 @@ describe("the pose is the moment's angle, or front / three-quarter", () => {
   });
 
   test("a hand-held capture never gets an away moment, and never an away pose", () => {
-    for (const category of CATEGORIES) {
+    for (const category of ORDINARY_BUILT_INS) {
       for (const seed of SEEDS) {
         for (const slot of plan({ seed, count: 25, categories: [category], level: seed % 2 === 0 ? "flirty" : "ordinary" }).slots) {
           if (!isHandCapture(captureOf(slot))) continue;
@@ -75,14 +76,14 @@ describe("the pose is the moment's angle, or front / three-quarter", () => {
   });
 
   test("the captures do not depend on the level (the deck is on the category's own stream)", () => {
-    const ordinary = plan({ seed: 31, count: 40, categories: [...CATEGORIES] }).slots.map(captureOf);
-    const flirty = plan({ seed: 31, count: 40, categories: [...CATEGORIES], level: "flirty" }).slots.map(captureOf);
+    const ordinary = plan({ seed: 31, count: 40, categories: [...ORDINARY_BUILT_INS] }).slots.map(captureOf);
+    const flirty = plan({ seed: 31, count: 40, categories: [...ORDINARY_BUILT_INS], level: "flirty" }).slots.map(captureOf);
     expect(flirty).toEqual(ordinary);
   });
 });
 
 describe("a built-in category holds at most ⌊n/5⌋ away slots", () => {
-  test.each([...CATEGORIES])("%s: for every count and seed", (category) => {
+  test.each([...ORDINARY_BUILT_INS])("%s: for every count and seed", (category) => {
     for (const count of COUNTS) {
       for (const seed of SEEDS) {
         const away = plan({ seed, count, categories: [category] }).slots.filter(isAway).length;
@@ -93,8 +94,8 @@ describe("a built-in category holds at most ⌊n/5⌋ away slots", () => {
 
   test("the cap is per category: a mixed run holds ⌊n_c/5⌋ in each", () => {
     for (const seed of SEEDS.slice(0, 60)) {
-      const slots = plan({ seed, count: 53, categories: [...CATEGORIES] }).slots;
-      for (const category of CATEGORIES) {
+      const slots = plan({ seed, count: 53, categories: [...ORDINARY_BUILT_INS] }).slots;
+      for (const category of ORDINARY_BUILT_INS) {
         const own = slots.filter((s) => s.category === category);
         expect(own.filter(isAway).length).toBeLessThanOrEqual(Math.floor(own.length / 5));
       }
@@ -102,7 +103,7 @@ describe("a built-in category holds at most ⌊n/5⌋ away slots", () => {
   });
 
   test("a plan of fewer than 5 slots in a category holds no away slot", () => {
-    for (const category of CATEGORIES) for (const seed of SEEDS) for (const count of [1, 2, 3, 4]) expect(plan({ seed, count, categories: [category] }).slots.some(isAway)).toBe(false);
+    for (const category of ORDINARY_BUILT_INS) for (const seed of SEEDS) for (const count of [1, 2, 3, 4]) expect(plan({ seed, count, categories: [category] }).slots.some(isAway)).toBe(false);
   });
 
   // A pool whose every friend moment but one faces away: the cap, not the bank, decides how many do.
@@ -164,7 +165,7 @@ describe("the away share of a built-in category stays under 20 % (I5.26), and ov
     return away / all;
   };
 
-  for (const category of CATEGORIES) {
+  for (const category of ORDINARY_BUILT_INS) {
     test.each([10, 20, 30])(`${category}: n = %i`, (count) => {
       const s = share(category, count);
       expect(s, `${category} n=${count}: ${(s * 100).toFixed(1)} %`).toBeGreaterThanOrEqual(category === "home" ? 0.01 : 0.05);
@@ -173,7 +174,7 @@ describe("the away share of a built-in category stays under 20 % (I5.26), and ov
   }
 
   test("a flirty plan keeps the same bounds", () => {
-    for (const category of CATEGORIES) {
+    for (const category of ORDINARY_BUILT_INS) {
       let away = 0;
       let all = 0;
       for (const seed of SEEDS) {

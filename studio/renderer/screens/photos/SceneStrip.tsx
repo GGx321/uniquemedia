@@ -9,11 +9,16 @@ import { ErrorNotice, Notice } from "../../ui/Notice";
 import { MoreButton, OwnersList, useOwnersDisclosure } from "./AnglesLines";
 import { PORTRAITS_DRAWING_REASON, portraitsDrawing } from "../look/lookModel";
 import { modelName, paidBlockedReason } from "./runForm";
-import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, setPriceKey, StackButton, useImagesPrice, Why } from "./scenePaid";
+import { BoldPriceNotice, isBoldPriceMissing } from "./boldPrice";
+import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, setPriceKey, StackButton, useImagesPriceState, Why } from "./scenePaid";
 import { setAction, setCategoryTags, tallyScenes } from "./sceneReview";
 import { approveReason, approveTitle, continueTitle, MODELS_LINE_TITLE, priceSourceText, SCENES_CHANGED_APPROVE, stepScenes, STRIP_ANGLE, stripLook } from "./sceneText";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL } from "./shared";
 import { usePaidAction } from "./usePaidAction";
+import { BoldAttemptLine } from "./boldPrice";
+
+/** S5.9g (mockup 49; README «5a.3», item 13): the models line's last segment while the set has scenes on the Seedream route. */
+const BOLD_MODELS_SEGMENT = "смелые кадры — Seedream 5 Pro · 2K";
 
 // CS.6: the generate card collapsed to a strip while a scene set is open (owner decision 3, 2026-10-05; the CS.0 artboards' compact card). Left: the set's
 // own settings — its categories as tags (two lines at most, then «ещё N»), «Мои категории», the poses with «Пересоставить…», and the models the run will
@@ -153,7 +158,8 @@ export function SceneStrip({
 
   // The images for the scenes the set would draw, when «Отрисовать» cannot be priced itself (a stop, a write, a scene with no text).
   const photos = action.kind === "approve" ? action.photos : tally.active;
-  const images = useImagesPrice(avatar.avatarId, approvable ? 0 : photos, view);
+  // The stored set, not its categories: the engine reads the bold share from the active scenes' own routes, the path «Отрисовать» is priced by (a removed scene or one that gave up moves nothing).
+  const { estimate: images, error: imagesError } = useImagesPriceState(avatar.avatarId, approvable ? 0 : photos, view, { sceneSetId: set.sceneSetId, revision: set.revision });
   const imagesShown = approvable ? approve.estimate : images;
 
   const lockedByOther = paidInFlight && !approve.sending && !more.sending;
@@ -256,7 +262,8 @@ export function SceneStrip({
   // their own, own scenes.
   const angles = stripLook(set);
   const owners = useOwnersDisclosure();
-  const models = modelSegments(view, set.textModel);
+  // S5.9g (mockup 49): a set with scenes on the Seedream route names their model last; the owner's image model draws the rest.
+  const models = [...modelSegments(view, set.textModel), ...(set.scenes.some((s) => s.route === "seedream" && !s.removed) ? [BOLD_MODELS_SEGMENT] : [])];
   const switchLabel = `${ids}-sw`;
   const reasonShown = reason !== null && !button.busy;
   // M2: the button's own free price could not be had («Дописать», or «Отрисовать» when it can be priced): why, and «Повторить».
@@ -377,12 +384,15 @@ export function SceneStrip({
             <span aria-live="polite">{total.value}</span>
           </div>
           {total.sub !== null && <div className="mono faint scene-total-sub">{total.sub}</div>}
+          {/* S5.9g (mockup 49, gap C): the engine's price of one Seedream attempt, when the price it answered has Seedream frames. */}
+          <BoldAttemptLine estimate={source} />
         </div>
 
         <div className="photos-gen-side scene-strip-go">
           <ReviewSwitch on onToggle={onToggleReview} labelId={switchLabel} waits={switchWaits} />
           <StackButton buttonRef={goRef} state={button} describedBy={describedBy(reasonShown && why, priceFailed !== null && priceFailedId)} onClick={onClick} />
           {reasonShown && <Why id={why}>{reason}</Why>}
+          {isBoldPriceMissing(imagesError) && <BoldPriceNotice />}
           {priceFailed !== null && priced !== null && <PriceFailed id={priceFailedId} error={priceFailed} onRetry={priced.retryPrice} after={() => goRef.current} />}
         </div>
       </section>

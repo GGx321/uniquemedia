@@ -3,6 +3,7 @@ import type { EngineError, LaunchPreview, LaunchView } from "../../../shared/eng
 import { useNavigate } from "../../navigation";
 import { Icon } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
+import { BoldPriceNotice, isBoldPriceMissing } from "../photos/boldPrice";
 import { useOverflows } from "./layout";
 import {
   ceilingUsd,
@@ -104,8 +105,9 @@ export function PlanCard({ preview, videosPerAvatar, notes, priceChanged, estima
           Было не больше {ceilingUsd(priceChanged.from)}, теперь {ceilingUsd(priceChanged.to)}.
         </Notice>
       )}
-      {estimateError !== null && <ErrorNotice error={estimateError} />}
-      {startError !== null && <ErrorNotice error={startError} />}
+      {/* S5.9g (gap D): the 2K tier alone has no price — state 55's warning (the rest works); any other failure as today. */}
+      {estimateError !== null && (isBoldPriceMissing(estimateError) ? <BoldPriceNotice /> : <ErrorNotice error={estimateError} />)}
+      {startError !== null && (isBoldPriceMissing(startError) ? <BoldPriceNotice /> : <ErrorNotice error={startError} />)}
       <button
         ref={goRef}
         type="button"

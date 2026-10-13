@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { youthWords } from "../../shared/engine";
 import { BANKS, CUES, GAZE, HAIRSTYLES } from "../../shared/scenes/banks";
-import { BANK_CATEGORIES, type CategoryBank } from "../../shared/scenes/banks/types";
+import { BANK_CATEGORIES, ORDINARY_BANK_CATEGORIES, type CategoryBank } from "../../shared/scenes/banks/types";
 import { PHONE_WORDS as SHARED_PHONE_WORDS, SELFIE_WORDS as SHARED_SELFIE_WORDS, withoutExemptLookPhrases } from "../../shared/scenes/words";
 import { sentenceProblems } from "./assembler";
 import { PHONE_WORDS, POOLS, SELFIE_WORDS } from "./pools";
@@ -36,7 +36,9 @@ function textsOf(category: string, bank: CategoryBank): BankText[] {
 }
 
 const BANK_TEXTS: BankText[] = [
-  ...BANK_CATEGORIES.flatMap((c) => textsOf(c, BANKS[c])),
+  // 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): the ordinary word lists sweep the five ordinary banks (ORDINARY_BANK_CATEGORIES), every rule and row kept; the two
+  // «Смелая» banks are swept by banks.bold.sweep.test.ts through the bold content line.
+  ...ORDINARY_BANK_CATEGORIES.flatMap((c) => textsOf(c, BANKS[c])),
   ...GAZE.map((g) => ({ where: "gaze", text: g.text })),
   ...CUES.map((c) => ({ where: "cues", text: c.text })),
   ...HAIRSTYLES.map((h) => ({ where: "hair", text: h.text })),
@@ -62,7 +64,7 @@ const rule = (name: string): ((text: string) => string | null) => ENGINE_RULES.f
 
 describe("the bank sweep: the engine's word lists", () => {
   test("reads every bank text (it is not vacuous)", () => {
-    const places = BANK_CATEGORIES.reduce((n, c) => n + BANKS[c].places.length, 0);
+    const places = ORDINARY_BANK_CATEGORIES.reduce((n, c) => n + BANKS[c].places.length, 0);
     expect(places).toBeGreaterThanOrEqual(20);
     expect(BANK_TEXTS.length).toBeGreaterThan(places * 10);
   });

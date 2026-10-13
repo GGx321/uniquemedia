@@ -184,12 +184,19 @@ describe("asksForRevealing: the boundaries", () => {
   });
 });
 
+// 2026-10-12, S5.9g (plan s5a3 §13.1 «Мои категории»; mockup 54): «Смелая» shipped, so the note no longer promises it («Это появится с уровнем «Смелая».»);
+// it says where those frames are drawn now. Both tenses stay, as before.
 describe("REVEALING_NOTE", () => {
-  test("is the neutral sentence the owner asked for", () => {
-    expect(REVEALING_NOTE).toBe("Бельё, купальники и обнажёнку пока не рисуем — категория выйдет в обычной одежде. Это появится с уровнем «Смелая».");
+  test("is the neutral sentence of mockup 54: not in the owner's own categories, but in the two built-in «Смелая» ones", () => {
+    expect(REVEALING_NOTE).toBe(
+      "Бельё и купальники в своих категориях не рисуем — категория выйдет в обычной одежде. Бельё, ночнушки и пляж — во встроенных «Ночнушки и бельё» и «Пляж и бассейн» с подачей «Смелая».",
+    );
   });
 
   test("on a created category's card it speaks in the past tense and is otherwise the same sentence", () => {
-    expect(REVEALING_NOTE_DONE).toBe("Бельё, купальники и обнажёнку пока не рисуем — категория вышла в обычной одежде. Это появится с уровнем «Смелая».");
+    expect(REVEALING_NOTE_DONE).toBe(
+      "Бельё и купальники в своих категориях не рисуем — категория вышла в обычной одежде. Бельё, ночнушки и пляж — во встроенных «Ночнушки и бельё» и «Пляж и бассейн» с подачей «Смелая».",
+    );
+    expect(REVEALING_NOTE_DONE.replace("вышла", "выйдет")).toBe(REVEALING_NOTE);
   });
 });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SceneRoute } from "../../shared/engine/categories";
 import { LIBRARY_ID_PATTERN } from "./ids";
 import { IMAGE_MEDIA_TYPES, extensionFor } from "./media";
 
@@ -94,6 +95,11 @@ const GeneratedSourceSchema = z.object({
    * older build strips it on read.
    */
   categoryName: NonEmpty.optional(),
+  /**
+   * 5a.3 (S5.9a, gap A): the photo was drawn on the Seedream route (a slot planned on it). The model id cannot tell that from the 1K moderation fallback, which uses the same model.
+   * Absent on every sidecar written before 5a.3 and on a photo of the fallback. This object is not strict, so an older build strips it on read.
+   */
+  route: SceneRoute.optional(),
   /** Integer micro-dollars. */
   costMicros: z.int().nonnegative(),
 });
