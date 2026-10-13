@@ -119,14 +119,22 @@ export const CONTINUITY_LINE = "Nothing new appears, and nothing she holds or we
 export const COMES_OFF_LINE = "Nothing new appears, and nothing she wears comes off.";
 
 /**
- * A garment, a cover or an accessory a motion moves (r2.2): strap, sheet, blanket, duvet, waistband, hem, laces, zip, coat, earring, sunglasses. A held object (a cup, a
- * glass, a mug, her keys, her phone, a fork, a weight) is not one: «nothing she holds … changes» holds it, and «shifts her weight» is her body. The window «glass» she
- * leans on is not a drink and not worn. The sweep over all 7 banks pins exactly which motions take it.
+ * What she wears that a motion moves (r2.2 and the controller's round 2): a garment or a cover (strap, sheet, blanket, duvet, waistband, hem, laces, zip, coat), an accessory
+ * (earring, sunglasses), or a sleeve she puts on («she slides one arm in slowly»: a coat or a jacket going on, matched as that phrase, never by «arm», which a stretch says
+ * too). A held object (a cup, a glass, a mug, her keys, her phone, a fork, a weight) is not one: «nothing she holds … changes» holds it, and «shifts her weight» is her body.
+ * The window «glass» she leans on is not a drink and not worn. The sweep over all 7 banks pins exactly which motions take it.
  */
-export const WORN_OR_HELD = /\b(?:straps?|sheets?|blankets?|duvets?|waistbands?|hems?|laces|zip(?:s|ped|ping|per|pers)?|coats?|earrings?|sunglasses)\b/i;
+export const WORN_OR_HELD = /\b(?:straps?|sheets?|blankets?|duvets?|waistbands?|hems?|laces|zip(?:s|ped|ping|per|pers)?|coats?|earrings?|sunglasses|slides one arm in)\b/i;
 
-/** The continuity line for a motion: «comes off» when it moves a garment, a cover or an accessory, the base line otherwise. */
-export function continuityLineOf(motion: string): string {
+/** A bag she holds (round 2): its strap or its zip moves a held object, so the base line keeps it (K09 lost its bag), whether the motion or the moment names the bag. */
+const HELD_BAG = /\b(?:bags?|handbags?|clutch(?:es)?|purses?|totes?|backpacks?)\b/i;
+
+/**
+ * The continuity line for a motion: «comes off» when it moves what she wears, the base line otherwise, and always the base line for a bag she holds. `activity` is the
+ * slot's moment as the photo carries it (null when it does not): «adjusts the strap of her bag» makes «she tugs the strap a little» a bag's strap.
+ */
+export function continuityLineOf(motion: string, activity: string | null): string {
+  if (HELD_BAG.test(motion) || (activity !== null && HELD_BAG.test(activity))) return CONTINUITY_LINE;
   return WORN_OR_HELD.test(motion) ? COMES_OFF_LINE : CONTINUITY_LINE;
 }
 

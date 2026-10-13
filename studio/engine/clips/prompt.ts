@@ -106,7 +106,7 @@ export function clipPromptOf(facts: FrameFacts, motion: string, dialect: ClipDia
     motionSentenceOf(motion),
     lyingOnHerStomach(facts) ? PRONE_ANCHOR : null,
     facts.legs ? legsLineOf(facts.capture) : null,
-    continuityLineOf(motion),
+    continuityLineOf(motion, facts.activity),
     facts.legwear === null ? null : legwearLineOf(facts.legwear),
     SLOW_LINE,
     LOOK_LINE,

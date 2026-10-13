@@ -169,29 +169,31 @@ describe("the sentences of a clip prompt", () => {
   });
 });
 
-describe("the continuity line (critic M5, r2.2)", () => {
+describe("the continuity line (critic M5, r2.2; the controller's round 2)", () => {
   test("the base line holds what she holds and wears", () => {
     expect(CONTINUITY_LINE).toBe("Nothing new appears, and nothing she holds or wears changes.");
-    expect(continuityLineOf("she turns her head slowly")).toBe(CONTINUITY_LINE);
+    expect(continuityLineOf("she turns her head slowly", null)).toBe(CONTINUITY_LINE);
   });
 
   const TRIGGERS = [
-    "she tugs the strap a little",
+    "she slides the strap up slowly",
+    "she lets the strap settle on her shoulder slowly",
     "she pulls the sheet a little higher",
     "she pulls the blanket up a little",
     "she pulls the duvet up a little",
     "she tugs the waistband up slowly",
     "she smooths the hem down slowly",
     "she pulls the laces tight slowly",
-    "she zips the bag slowly",
     "she tugs the coat closer slowly",
     "she turns the earring slowly",
     "she slowly peeks over her sunglasses",
+    // Putting a jacket or a coat ON: what she wears changes, so the base line would contradict it.
+    "she slides one arm in slowly",
   ];
   for (const motion of TRIGGERS) {
     test(`a garment, cover or accessory motion takes «comes off»: ${motion}`, () => {
       expect(WORN_OR_HELD.test(motion)).toBe(true);
-      expect(continuityLineOf(motion)).toBe(COMES_OFF_LINE);
+      expect(continuityLineOf(motion, null)).toBe(COMES_OFF_LINE);
     });
   }
 
@@ -199,35 +201,41 @@ describe("the continuity line (critic M5, r2.2)", () => {
     expect(COMES_OFF_LINE).toBe("Nothing new appears, and nothing she wears comes off.");
   });
 
-  const HELD = [
-    "she lowers the cup a little",
-    "she turns her glass slowly",
-    "she lifts the mug a little",
-    "she jingles her keys a little",
-    "she scrolls her phone slowly",
-    "she twirls the fork slowly",
-    "she lifts the weight slowly",
-    "she shifts her weight a little",
-    "she shifts against the glass a bit",
-    "she slowly turns her head toward them",
+  const HELD: readonly (readonly [string, string | null])[] = [
+    ["she lowers the cup a little", null],
+    ["she turns her glass slowly", null],
+    ["she lifts the mug a little", null],
+    ["she jingles her keys a little", null],
+    ["she scrolls her phone slowly", null],
+    ["she twirls the fork slowly", null],
+    ["she lifts the weight slowly", null],
+    ["she shifts her weight a little", null],
+    ["she shifts against the glass a bit", null],
+    ["she slowly turns her head toward them", null],
+    // A stretch of her arm is not a sleeve: only the exact «slides one arm in» puts one on.
+    ["she pulls her arm in a little", null],
+    // A bag is held, not worn (K09 lost its bag): its zip and its strap keep the base line, whether the motion or the moment names the bag.
+    ["she zips the bag slowly", null],
+    ["she tugs the strap a little", "adjusts the strap of her bag"],
+    ["she tucks the clutch away slowly", null],
   ];
-  for (const motion of HELD) {
-    test(`a held object, her weight or a window keeps the base line: ${motion}`, () => {
-      expect(WORN_OR_HELD.test(motion)).toBe(false);
-      expect(continuityLineOf(motion)).toBe(CONTINUITY_LINE);
+  for (const [motion, activity] of HELD) {
+    test(`a held object, her weight or a window keeps the base line: ${motion}${activity === null ? "" : ` (${activity})`}`, () => {
+      expect(continuityLineOf(motion, activity)).toBe(CONTINUITY_LINE);
     });
   }
 });
 
-/** What a motion names that a continuity line must be decided for: a garment, cover or accessory, or a held object, her weight, the window glass. */
-const OBJECT_WORDS = /\b(?:straps?|sheets?|blankets?|duvets?|waistbands?|hems?|laces|zip\w*|coats?|earrings?|sunglasses|cups?|glass(?:es)?|mugs?|keys|phones?|forks?|weights?)\b/i;
+/** What a motion names that a continuity line must be decided for: a garment, cover or accessory, a sleeve put on, or a held object, her weight, the window glass. */
+const OBJECT_WORDS =
+  /\b(?:straps?|sheets?|blankets?|duvets?|waistbands?|hems?|laces|zip\w*|coats?|earrings?|sunglasses|slides one arm in|cups?|glass(?:es)?|mugs?|keys|phones?|forks?|weights?|bags?|clutch(?:es)?|purses?)\b/i;
 
 /**
- * Pinned (r2.2 §5.5, by content, never by line): the 15 bank motions that take «comes off» and the motions that name an object and keep the base line, each with its count over
- * all 7 banks. A new bank motion that names one of these words fails here until it is classified on purpose.
+ * Pinned (r2.2 §5.5 and the controller's round 2, by content, never by line): the 15 bank motions that take «comes off» and the motions that name an object and keep the base line,
+ * each with its count over all 7 banks. Round 2 added the two sleeves put on (glamour «takes her coat from the rack», fitness «pulls on a light jacket») and moved the two bag
+ * motions (a bag strap, a bag zip) to the base line. A new bank motion that names one of these words fails here until it is classified on purpose.
  */
 const COMES_OFF_MOTIONS: Readonly<Record<string, number>> = {
-  "she tugs the strap a little": 1,
   "she lets the strap settle on her shoulder slowly": 1,
   "she slides the strap up slowly": 1,
   "she smooths the hem down slowly": 1,
@@ -237,12 +245,15 @@ const COMES_OFF_MOTIONS: Readonly<Record<string, number>> = {
   "she pulls the sheet a little higher": 1,
   "she tugs the waistband up slowly": 1,
   "she pulls the laces tight slowly": 1,
-  "she zips the bag slowly": 1,
   "she tugs the coat closer slowly": 1,
+  "she slides one arm in slowly": 2,
   "she turns the earring slowly": 2,
   "she slowly peeks over her sunglasses": 1,
 };
 const BASE_LINE_MOTIONS: Readonly<Record<string, number>> = {
+  "she tugs the strap a little": 1,
+  "she zips the bag slowly": 1,
+  "she tucks the clutch away slowly": 1,
   "she lowers the cup a little": 2,
   "she lifts the cup a little": 2,
   "she turns her glass slowly": 1,
@@ -259,25 +270,25 @@ const BASE_LINE_MOTIONS: Readonly<Record<string, number>> = {
   "she shifts against the glass a bit": 1,
 };
 
-describe("the continuity sweep over all 7 banks (critic M5, r2.2)", () => {
-  const motions = BANK_CATEGORIES.flatMap((category) => BANKS[category].places.flatMap((place) => place.moments.map((moment) => moment.motion)));
+describe("the continuity sweep over all 7 banks (critic M5, r2.2; round 2)", () => {
+  const moments = BANK_CATEGORIES.flatMap((category) => BANKS[category].places.flatMap((place) => place.moments));
   const counted = (texts: readonly string[]): Record<string, number> => texts.reduce<Record<string, number>>((acc, text) => ({ ...acc, [text]: (acc[text] ?? 0) + 1 }), {});
 
-  test("exactly the pinned 15 motions take «comes off»: 12 garment or cover motions and 3 accessory motions", () => {
-    const comesOff = counted(motions.filter((motion) => continuityLineOf(motion) === COMES_OFF_LINE));
+  test("exactly the pinned 15 motions take «comes off»: 12 garment, cover or sleeve motions and 3 accessory motions", () => {
+    const comesOff = counted(moments.filter((m) => continuityLineOf(m.motion, m.text) === COMES_OFF_LINE).map((m) => m.motion));
     expect(comesOff).toEqual(COMES_OFF_MOTIONS);
     expect(Object.values(comesOff).reduce((a, b) => a + b, 0)).toBe(15);
   });
 
   test("every other motion that names an object keeps the base line, exactly as pinned", () => {
-    const base = counted(motions.filter((motion) => OBJECT_WORDS.test(motion) && continuityLineOf(motion) === CONTINUITY_LINE));
+    const base = counted(moments.filter((m) => OBJECT_WORDS.test(m.motion) && continuityLineOf(m.motion, m.text) === CONTINUITY_LINE).map((m) => m.motion));
     expect(base).toEqual(BASE_LINE_MOTIONS);
   });
 
   test("the coat (glamour) never gets the base line", () => {
-    const coat = motions.filter((motion) => /\bcoat\b/.test(motion));
+    const coat = moments.filter((m) => /\bcoat\b/.test(m.motion));
     expect(coat.length).toBeGreaterThan(0);
-    for (const motion of coat) expect(continuityLineOf(motion)).toBe(COMES_OFF_LINE);
+    for (const m of coat) expect(continuityLineOf(m.motion, m.text)).toBe(COMES_OFF_LINE);
   });
 });
 
