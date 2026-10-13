@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { completed, failed, GROK_BILLED, GROK_RESERVE, KLING_BILLED, KLING_RESERVE, at as indexOf } from "./testing/attemptAsserts";
 import { createRig, genFromAfter, GROK, KLING, MINUTE, REFUSED_BY_RISK_CONTROL, SECOND, T0, type JobScript, type Rig, type RigOptions } from "./testing/attemptRig";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // 5b.1, S5.V3b (plan s5b1 I5.47, §5.7, §9.2a): the free-refusal proof. Probe P-V found that `/generation` answers 404 RIGHT AFTER `completed` on jobs that WERE billed $0.42 and 200 only from +15 s, and that
 // `/credits` shows the charge about 38 s after the POST. So one 404 proves nothing: «free» takes two reads (≥ 15 s and ≥ 2 min after the terminal status) and, where the table says so, a clean net-usage check

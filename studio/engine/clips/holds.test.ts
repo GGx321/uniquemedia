@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { createClipHolds, holdsAfterRestart, holdUntilForReserve, holdUntilForSubmitted, holdUntilForTerminal, holdUntilForUncertain, type HoldTimers } from "./holds";
 import type { ClipJournalLine } from "./schemas";
 import { REAL_CLIP_TIMINGS, SHORT_CLIP_TIMINGS } from "./timings";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // 5b.1, S5.V3b (plan s5b1 I5.48, critic M2, r2.2 #6): the hold registry `{attemptId → until}`, pure over an injected clock and injected timers, apart from every job. A clip's job may end
 // long before its hold does: an uncertain submit ends the clip at once, but that attempt may still bill for 20 min.

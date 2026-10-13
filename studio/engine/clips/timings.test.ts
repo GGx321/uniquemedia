@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { clipTimings, PROOF_READ_TRIES, REAL_CLIP_TIMINGS, SHORT_CLIP_TIMINGS, type ClipTimings } from "./timings";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // 5b.1, S5.V3b (plan s5b1 §5.15, critic M6): every duration of the clip money path lives in one object, so the engine tests, the parity rigs and the packaged smoke can run
 // «proof 2 min → Grok», `late` and the holds in milliseconds. The REAL set is the durations of I5.47, I5.48 and §5.13; the SHORT set is the same ones, a thousand times smaller.

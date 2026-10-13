@@ -4,6 +4,8 @@ import { MoneyError } from "../money/errors";
 import { runClip, settleOnce, type AttemptPlan } from "./attempt";
 import { at as indexOf, completed, expectNoGrok, failed, GROK_BILLED, GROK_RESERVE, journalOf, KLING_BILLED, KLING_RESERVE, late } from "./testing/attemptAsserts";
 import { CLIP_ID, createRig, genFromAfter, GROK, iso, KLING, MINUTE, PRICES, REFUSED_BY_RISK_CONTROL, SECOND, T0, type JobScript, type Rig, type RigOptions } from "./testing/attemptRig";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // 5b.1, S5.V3b (plan s5b1 I5.44-I5.46, I5.48, §8 V3b): what the settle table does not say by itself. The order of the journal and the ledger against the POST, a refused reserve, an attempt id that is never
 // sent twice, a settle above the reserve, an interrupted attempt, one price book per clip, the month taking Grok's room, the holds an attempt leaves behind, and the phases the job shows.

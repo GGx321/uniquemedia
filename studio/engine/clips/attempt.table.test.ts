@@ -21,6 +21,8 @@ import {
   type Rig,
   type RigOptions,
 } from "./testing/attemptRig";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // 5b.1, S5.V3b (plan s5b1 §5.7, I5.44-I5.48): THE SETTLE TABLE, «mode × outcome → settle source → next», ONE TEST PER CELL. Each cell asserts the ledger lines, the journal lines and the next step, and that no
 // Grok hold, reserve or POST exists where the cell says none. Time is the rig's: the 2-minute proof runs in no real time. Row numbers below are the table's rows, top to bottom.
@@ -114,7 +116,7 @@ describe.each(MODES)("row 3 · 4xx moderation at the submit · mode %s", (mode) 
 });
 
 describe("row 3 → next · a content refusal settled 0", () => {
-  test("[auto] Grok runs by itself, reserved only after Kling settled 0, and completes", async () => {
+  test("(auto) Grok runs by itself, reserved only after Kling settled 0, and completes", async () => {
     await make({ mode: "auto", kling: { submit: moderation4xx }, grok: { terminal: { status: "completed", usageCostMicros: GROK_BILLED } } });
     const result = completed(await rig.run());
     expect(result).toMatchObject({ model: "grok", attemptId: GROK, fallbackUsed: true, providerCostMicros: GROK_BILLED });
@@ -133,13 +135,13 @@ describe("row 3 → next · a content refusal settled 0", () => {
     expect(rig.posts("grok")).toHaveLength(1);
   });
 
-  test("[offer] no Grok: the attempt ends free and the tile offers «Снять на Grok»", async () => {
+  test("(offer) no Grok: the attempt ends free and the tile offers «Снять на Grok»", async () => {
     await make({ mode: "offer", kling: { submit: moderation4xx } });
     expect(failed(await rig.run())).toMatchObject({ reason: "refused-free", cost: "free", grokOffer: true, model: "kling" });
     expectNoGrok(rig, GROK);
   });
 
-  test("[auto × fallback none] ends refused-free with no offer and no Grok", async () => {
+  test("(auto × fallback none) ends refused-free with no offer and no Grok", async () => {
     await make({ mode: "auto", kling: { submit: moderation4xx } });
     expect(failed(await rig.run({ request: { model: "kling", quality: "std", seconds: 5, fallback: "none" } }))).toMatchObject({ reason: "refused-free", grokOffer: false });
     expectNoGrok(rig, GROK);
@@ -149,30 +151,30 @@ describe("row 3 → next · a content refusal settled 0", () => {
     ]);
   });
 
-  test("[offer × fallback none] ends refused-free with no offer", async () => {
+  test("(offer × fallback none) ends refused-free with no offer", async () => {
     await make({ mode: "offer", kling: { submit: moderation4xx } });
     expect(failed(await rig.run({ request: { model: "kling", quality: "std", seconds: 5, fallback: "none" } }))).toMatchObject({ reason: "refused-free", grokOffer: false });
     expectNoGrok(rig, GROK);
   });
 
-  test("[auto × «Смелая» kling-only] ends refused-free: never Grok", async () => {
+  test("(auto × «Смелая» kling-only) ends refused-free: never Grok", async () => {
     await make({ mode: "auto", boldClips: "kling-only", kling: { submit: moderation4xx } });
     expect(failed(await rig.run({ bold: true }))).toMatchObject({ reason: "refused-free", grokOffer: false });
     expectNoGrok(rig, GROK);
   });
 
-  test("[offer × «Смелая» kling-only] ends refused-free with no offer: never Grok", async () => {
+  test("(offer × «Смелая» kling-only) ends refused-free with no offer: never Grok", async () => {
     await make({ mode: "offer", boldClips: "kling-only", kling: { submit: moderation4xx } });
     expect(failed(await rig.run({ bold: true }))).toMatchObject({ reason: "refused-free", grokOffer: false });
     expectNoGrok(rig, GROK);
   });
 
-  test("[auto × «Смелая» with-fallback] is a frame like any other: Grok runs", async () => {
+  test("(auto × «Смелая» with-fallback) is a frame like any other: Grok runs", async () => {
     await make({ mode: "auto", boldClips: "with-fallback", kling: { submit: moderation4xx }, grok: { terminal: { status: "completed", usageCostMicros: GROK_BILLED } } });
     expect(completed(await rig.run({ bold: true })).model).toBe("grok");
   });
 
-  test("[offer × model grok] the Grok clip ends refused-free: no offer, no second Grok", async () => {
+  test("(offer × model grok) the Grok clip ends refused-free: no offer, no second Grok", async () => {
     await make({ mode: "offer", grok: { submit: moderation4xx } });
     const result = failed(await rig.run({ request: { model: "grok", quality: "std", seconds: 5, fallback: "none" } }));
     expect(result).toMatchObject({ reason: "refused-free", model: "grok", grokOffer: false });
@@ -182,7 +184,7 @@ describe("row 3 → next · a content refusal settled 0", () => {
     expect(rig.reserves()[0]?.worstMicros).toBe(GROK_RESERVE);
   });
 
-  test("[auto] Grok refuses too: refused-both, both settled 0, nothing left open", async () => {
+  test("(auto) Grok refuses too: refused-both, both settled 0, nothing left open", async () => {
     await make({ mode: "auto", kling: { submit: moderation4xx }, grok: { submit: moderation4xx } });
     expect(failed(await rig.run())).toMatchObject({ reason: "refused-both", cost: "free", grokOffer: false });
     expect(rig.clipLedger()).toEqual([
@@ -259,7 +261,7 @@ describe("row 7 · a poll-time content refusal, 404 on both reads", () => {
   const photoRunInTheWindow = (r: Rig): void => r.at(T0 + 60 * SECOND + 60 * SECOND, () => r.photoRun("run-0001", 90_000));
   const usageWith = (extraAfter: number) => (t: number) => 5_000_000 + (t >= extraAfter ? 90_000 : 0);
 
-  test("[auto · check clean] settles 0 by the proof, then Grok runs", async () => {
+  test("(auto · check clean) settles 0 by the proof, then Grok runs", async () => {
     await make({ mode: "auto", kling: refused, grok: { terminal: { status: "completed", usageCostMicros: GROK_BILLED } } });
     const result = completed(await rig.run());
     expect(result).toMatchObject({ model: "grok", fallbackUsed: true });
@@ -273,20 +275,20 @@ describe("row 7 · a poll-time content refusal, 404 on both reads", () => {
     expect(journalOf(rig)).toContain(`ended:${KLING}:refused:proof`);
   });
 
-  test("[auto · the check could not count: a photo run settled between the reads] skips the check, settles 0, Grok runs", async () => {
+  test("(auto · the check could not count: a photo run settled between the reads) skips the check, settles 0, Grok runs", async () => {
     await make({ mode: "auto", kling: refused, usage: (t) => usageWith(T0 + 100 * SECOND)(t), grok: { terminal: { status: "completed", usageCostMicros: GROK_BILLED } } });
     photoRunInTheWindow(rig);
     expect(completed(await rig.run()).model).toBe("grok");
     expect(rig.settles(KLING)).toMatchObject([{ costMicros: 0, estimated: false }]);
   });
 
-  test("[auto · /credits unreadable] the check cannot count: skipped, settles 0, Grok runs", async () => {
+  test("(auto · /credits unreadable) the check cannot count: skipped, settles 0, Grok runs", async () => {
     await make({ mode: "auto", kling: refused, usage: () => "throw", grok: { terminal: { status: "completed", usageCostMicros: GROK_BILLED } } });
     expect(completed(await rig.run()).model).toBe("grok");
     expect(rig.settles(KLING)).toMatchObject([{ costMicros: 0 }]);
   });
 
-  test("[offer · check clean] settles 0 and offers Grok as a new click", async () => {
+  test("(offer · check clean) settles 0 and offers Grok as a new click", async () => {
     await make({ mode: "offer", kling: refused });
     expect(failed(await rig.run())).toMatchObject({ reason: "refused-free", cost: "free", grokOffer: true });
     expect(rig.clipLedger()).toEqual([
@@ -296,7 +298,7 @@ describe("row 7 · a poll-time content refusal, 404 on both reads", () => {
     expectNoGrok(rig, GROK);
   });
 
-  test("[offer · the check could not count: a photo run settled between the reads] a 404 is not zero: worst, estimated, no offer", async () => {
+  test("(offer · the check could not count: a photo run settled between the reads) a 404 is not zero: worst, estimated, no offer", async () => {
     await make({ mode: "offer", kling: refused, usage: (t) => usageWith(T0 + 100 * SECOND)(t) });
     photoRunInTheWindow(rig);
     expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", cost: "worst", unknownWhy: "net-uncounted", grokOffer: false });
@@ -304,47 +306,47 @@ describe("row 7 · a poll-time content refusal, 404 on both reads", () => {
     expectNoGrok(rig, GROK);
   });
 
-  test("[offer · /credits unreadable] the check cannot count: worst, estimated, no offer", async () => {
+  test("(offer · /credits unreadable) the check cannot count: worst, estimated, no offer", async () => {
     await make({ mode: "offer", kling: refused, usage: () => "throw" });
     expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", cost: "worst", unknownWhy: "net-uncounted", grokOffer: false });
     expect(rig.settles(KLING)).toMatchObject([{ costMicros: KLING_RESERVE, estimated: true }]);
   });
 
-  test("[auto × fallback none · clean] ends refused-free: no Grok, no offer", async () => {
+  test("(auto × fallback none · clean) ends refused-free: no Grok, no offer", async () => {
     await make({ mode: "auto", kling: refused });
     expect(failed(await rig.run({ request: { model: "kling", quality: "std", seconds: 5, fallback: "none" } }))).toMatchObject({ reason: "refused-free", cost: "free", grokOffer: false });
     expectNoGrok(rig, GROK);
   });
 
-  test("[offer × fallback none · clean] ends refused-free: the strict proof counted, no offer", async () => {
+  test("(offer × fallback none · clean) ends refused-free: the strict proof counted, no offer", async () => {
     await make({ mode: "offer", kling: refused });
     expect(failed(await rig.run({ request: { model: "kling", quality: "std", seconds: 5, fallback: "none" } }))).toMatchObject({ reason: "refused-free", cost: "free", grokOffer: false });
     expect(rig.settles(KLING)).toMatchObject([{ costMicros: 0 }]);
   });
 
-  test("[offer × fallback none · could not count] takes the strict proof too: worst, estimated", async () => {
+  test("(offer × fallback none · could not count) takes the strict proof too: worst, estimated", async () => {
     await make({ mode: "offer", kling: refused, usage: () => "throw" });
     expect(failed(await rig.run({ request: { model: "kling", quality: "std", seconds: 5, fallback: "none" } }))).toMatchObject({ reason: "refused-unknown", cost: "worst" });
   });
 
-  test("[auto × «Смелая» kling-only · clean] ends refused-free: never Grok", async () => {
+  test("(auto × «Смелая» kling-only · clean) ends refused-free: never Grok", async () => {
     await make({ mode: "auto", boldClips: "kling-only", kling: refused });
     expect(failed(await rig.run({ bold: true }))).toMatchObject({ reason: "refused-free", grokOffer: false });
     expectNoGrok(rig, GROK);
   });
 
-  test("[offer × «Смелая» kling-only · clean] ends refused-free: no offer", async () => {
+  test("(offer × «Смелая» kling-only · clean) ends refused-free: no offer", async () => {
     await make({ mode: "offer", boldClips: "kling-only", kling: refused });
     expect(failed(await rig.run({ bold: true }))).toMatchObject({ reason: "refused-free", cost: "free", grokOffer: false });
   });
 
-  test("[offer × «Смелая» kling-only · could not count] takes the strict proof: worst, estimated", async () => {
+  test("(offer × «Смелая» kling-only · could not count) takes the strict proof: worst, estimated", async () => {
     await make({ mode: "offer", boldClips: "kling-only", kling: refused, usage: () => "throw" });
     expect(failed(await rig.run({ bold: true }))).toMatchObject({ reason: "refused-unknown", cost: "worst", unknownWhy: "net-uncounted" });
     expect(rig.settles(KLING)).toMatchObject([{ costMicros: KLING_RESERVE, estimated: true }]);
   });
 
-  test("[offer × model grok · clean] ends refused-free: «Grok отказал бесплатно», no offer", async () => {
+  test("(offer × model grok · clean) ends refused-free: «Grok отказал бесплатно», no offer", async () => {
     await make({ mode: "offer", grok: refused });
     const result = failed(await rig.run({ request: { model: "grok", quality: "std", seconds: 5, fallback: "none" } }));
     expect(result).toMatchObject({ reason: "refused-free", model: "grok", cost: "free", grokOffer: false });
@@ -352,14 +354,14 @@ describe("row 7 · a poll-time content refusal, 404 on both reads", () => {
     expect(rig.posts("kling")).toHaveLength(0);
   });
 
-  test("[offer × model grok · could not count] takes the strict proof: worst, estimated", async () => {
+  test("(offer × model grok · could not count) takes the strict proof: worst, estimated", async () => {
     await make({ mode: "offer", grok: refused, usage: () => "throw" });
     const result = failed(await rig.run({ request: { model: "grok", quality: "std", seconds: 5, fallback: "none" } }));
     expect(result).toMatchObject({ reason: "refused-unknown", cost: "worst", model: "grok" });
     expect(rig.settles(KLING)).toMatchObject([{ costMicros: GROK_RESERVE, estimated: true }]);
   });
 
-  test("[auto] Kling and Grok both refused at the poll: refused-both, each proven free on its own", async () => {
+  test("(auto) Kling and Grok both refused at the poll: refused-both, each proven free on its own", async () => {
     await make({ mode: "auto", kling: refused, grok: refused });
     expect(failed(await rig.run())).toMatchObject({ reason: "refused-both", cost: "free", grokOffer: false });
     expect(rig.clipLedger()).toEqual([
@@ -441,7 +443,7 @@ describe.each(MODES)("row 10 · … unreadable after 3 reads · mode %s", (mode)
 describe("row 11 · a poll-time non-content failure (`provider-error`) takes the same proof", () => {
   const providerFailed = { terminal: PROVIDER_FAILED };
 
-  test("[auto · clean] settles 0 and ends provider-error, free: never Grok, never the offer", async () => {
+  test("(auto · clean) settles 0 and ends provider-error, free: never Grok, never the offer", async () => {
     await make({ mode: "auto", kling: providerFailed });
     expect(failed(await rig.run())).toMatchObject({ reason: "provider-error", cost: "free", grokOffer: false });
     expect(rig.clipLedger()).toEqual([
@@ -451,36 +453,36 @@ describe("row 11 · a poll-time non-content failure (`provider-error`) takes the
     expectNoGrok(rig, GROK);
   });
 
-  test("[auto · /generation > 0] settles that value: «оплачено $X»", async () => {
+  test("(auto · /generation > 0) settles that value: «оплачено $X»", async () => {
     await make({ mode: "auto", kling: { ...providerFailed, generation: genFromAfter(15 * SECOND, 300_000) } });
     expect(failed(await rig.run())).toMatchObject({ reason: "provider-error", cost: "billed", grokOffer: false });
     expect(rig.settles(KLING)).toMatchObject([{ costMicros: 300_000, estimated: false }]);
   });
 
-  test("[auto · unreadable] settles the worst, estimated", async () => {
+  test("(auto · unreadable) settles the worst, estimated", async () => {
     await make({ mode: "auto", kling: { ...providerFailed, generation: genUnreadable } });
     expect(failed(await rig.run())).toMatchObject({ reason: "provider-error", cost: "worst" });
     expect(rig.settles(KLING)).toMatchObject([{ costMicros: KLING_RESERVE, estimated: true }]);
   });
 
-  test("[auto · a net increase] settles the worst, estimated", async () => {
+  test("(auto · a net increase) settles the worst, estimated", async () => {
     await make({ mode: "auto", kling: providerFailed, usage: (t, posts) => 5_000_000 + (posts.kling !== undefined && t >= posts.kling + 38 * SECOND ? KLING_BILLED : 0) });
     expect(failed(await rig.run())).toMatchObject({ reason: "provider-error", cost: "worst" });
   });
 
-  test("[offer · clean] settles 0, free: the offer never follows a provider error", async () => {
+  test("(offer · clean) settles 0, free: the offer never follows a provider error", async () => {
     await make({ mode: "offer", kling: providerFailed });
     expect(failed(await rig.run())).toMatchObject({ reason: "provider-error", cost: "free", grokOffer: false });
     expect(rig.settles(KLING)).toMatchObject([{ costMicros: 0 }]);
   });
 
-  test("[offer · the check could not count] a 404 is not zero: worst, estimated", async () => {
+  test("(offer · the check could not count) a 404 is not zero: worst, estimated", async () => {
     await make({ mode: "offer", kling: providerFailed, usage: () => "throw" });
     expect(failed(await rig.run())).toMatchObject({ reason: "provider-error", cost: "worst" });
     expect(rig.settles(KLING)).toMatchObject([{ costMicros: KLING_RESERVE, estimated: true }]);
   });
 
-  test("[offer · /generation > 0] settles that value", async () => {
+  test("(offer · /generation > 0) settles that value", async () => {
     await make({ mode: "offer", kling: { ...providerFailed, generation: genFromAfter(15 * SECOND, 300_000) } });
     expect(failed(await rig.run())).toMatchObject({ reason: "provider-error", cost: "billed" });
   });
@@ -492,7 +494,7 @@ describe("row 11 · a poll-time non-content failure (`provider-error`) takes the
     expectNoGrok(rig, GROK);
   });
 
-  test("[auto] Grok's own provider error is final too: no third attempt", async () => {
+  test("(auto) Grok's own provider error is final too: no third attempt", async () => {
     await make({ mode: "auto", kling: { submit: moderation4xx }, grok: providerFailed });
     expect(failed(await rig.run())).toMatchObject({ reason: "provider-error", model: "grok", cost: "free", grokOffer: false });
     expect(rig.posts()).toHaveLength(2);

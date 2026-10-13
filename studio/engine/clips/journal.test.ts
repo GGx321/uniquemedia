@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { isAttemptId } from "../money/budget";
 import { clipAttemptId, clipJournalPath, openClipJournal, parseClipAttemptId, summarizeJournal } from "./journal";
 import { parseClipJournalLine, type ClipJournalLine } from "./schemas";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // 5b.1, S5.V3b (plan s5b1 §5.8, I5.45): `<clipId>.journal.jsonl`, append-only, one fsynced line per event. `requested` is written once per clip and comes before the first reserve;
 // `submitted` comes after the 2xx and before the first poll. A line of a kind this build does not know is skipped, never fatal.

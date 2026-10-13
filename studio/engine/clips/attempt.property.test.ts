@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { clipReserveMicros, type ClipQuality, type ClipSeconds } from "../../shared/engine/clips";
 import type { VideoSubmitResult } from "../openrouter/types";
 import { createRig, gen404, genFound, genFromAfter, genUnreadable, GROK, KLING, PROVIDER_FAILED, PRICES, REFUSED_BY_RISK_CONTROL, SECOND, type JobScript } from "./testing/attemptRig";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // 5b.1, S5.V3b (plan s5b1 §8 V3b): properties over random outcome sequences, both modes, fallback `auto` and `none`, «Смелая» and a Grok clip. A seeded generator, so a failure replays. What must hold for
 // every sequence: the clip's settled and open money never exceeds its accepted worst; a POST leaves at most once per attempt id and at most two per clip; Grok runs only behind a Kling that settled 0, and only
@@ -64,7 +66,7 @@ function draw(rng: () => number, reserve: number): Drawn {
 
 describe("random outcome sequences", () => {
   for (const mode of ["auto", "offer"] as const) {
-    test(`[${mode}] the clip never holds more than its accepted worst, never POSTs an attempt twice, and runs Grok only behind a free Kling`, async () => {
+    test(`(${mode}) the clip never holds more than its accepted worst, never POSTs an attempt twice, and runs Grok only behind a free Kling`, async () => {
       const problems: string[] = [];
       const rng = mulberry32(mode === "auto" ? 20261013 : 13102026);
       for (let i = 0; i < 120; i++) {
