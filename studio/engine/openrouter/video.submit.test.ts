@@ -86,6 +86,12 @@ test.each([500, 502, 503, 504])("answers uncertain on a %d, because the job may 
   expect(await run()).toMatchObject({ kind: "uncertain", cause: "server-error", httpStatus: status });
 });
 
+test("answers uncertain, not refused, on a 408", async () => {
+  const { run } = submit([{ status: 408, body: { error: { message: "request timeout" } } }]);
+
+  expect(await run()).toMatchObject({ kind: "uncertain", cause: "timeout", httpStatus: 408 });
+});
+
 test("answers uncertain when fetch fails", async () => {
   const { run } = submit([{ reject: new TypeError("fetch failed") }]);
 

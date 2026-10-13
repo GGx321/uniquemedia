@@ -194,11 +194,49 @@ test("answers failed with cause auth on a 401, and leaves no file", async () => 
   expect(await filesLeft()).toEqual([]);
 });
 
-test.each([404, 410] as const)("answers gone on a %d", async (status) => {
-  const { run } = download({ status, chunks: [new TextEncoder().encode("{}")] });
+const PROVIDER_GONE = (status: number) => new TextEncoder().encode(JSON.stringify({ error: { code: status, message: "Video not found" } }));
+
+test.each([404, 410] as const)("answers gone on the provider's own %d", async (status) => {
+  const { run } = download({ status, chunks: [PROVIDER_GONE(status)] });
 
   expect(await run()).toEqual({ kind: "gone", httpStatus: status });
   expect(await filesLeft()).toEqual([]);
+});
+
+test.each([
+  ["an HTML page", "<html>404 Not Found</html>"],
+  ["an empty body", ""],
+  ["a JSON body with another code", '{"error":{"code":500,"message":"x"}}'],
+])("answers a retryable failure, not gone, on a 404 with %s", async (_name, text) => {
+  const { run } = download({ status: 404, chunks: [new TextEncoder().encode(text)] });
+
+  expect(await run()).toMatchObject({ kind: "failed", cause: "http", httpStatus: 404 });
+});
+
+test("answers exists and leaves the file alone when something already sits at the path", async () => {
+  await writeFile(target, "someone else's file");
+  const { run } = download({ chunks: [bytes(10)] });
+
+  expect(await run()).toMatchObject({ kind: "failed", cause: "exists" });
+  expect(await readFile(target, "utf8")).toBe("someone else's file");
+});
+
+test("keeps a file that was already there when the stream breaks", async () => {
+  await writeFile(target, "someone else's file");
+  const { run } = download({ chunks: [bytes(400), new Error("socket hang up")] });
+
+  await run();
+
+  expect(await readFile(target, "utf8")).toBe("someone else's file");
+});
+
+test("keeps a file that was already there when the body is too large", async () => {
+  await writeFile(target, "someone else's file");
+  const { run } = download({ chunks: [bytes(2_000)] }, 1_000);
+
+  await run();
+
+  expect(await readFile(target, "utf8")).toBe("someone else's file");
 });
 
 test("answers failed with cause http on a 503", async () => {

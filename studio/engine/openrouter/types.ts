@@ -297,7 +297,7 @@ export type VideoPollResult =
  * - `gone`: 404 or 410, the file has left OpenRouter for good.
  * - `redirect-refused`: the answer was a redirect. None is followed, whatever its target, so the bearer key never goes to another host;
  *   `host` is the target's host when it could be read (never its path or query, which may be a signed URL).
- * - `failed`: anything else; the file is removed. `disk` is a local write error, `empty` a 200 without a body.
+ * - `failed`: anything else; the file is removed. `disk` is a local write error, `empty` a 200 without a body, `exists` a file already at the path (never touched).
  * On every result but `saved`, no file is left at the path.
  */
 export type VideoDownloadResult =
@@ -305,7 +305,7 @@ export type VideoDownloadResult =
   | { kind: "too-large"; capBytes: number }
   | { kind: "gone"; httpStatus: 404 | 410 }
   | { kind: "redirect-refused"; httpStatus: number | null; host: string | null }
-  | { kind: "failed"; cause: FreeCallCause | "disk" | "empty"; httpStatus: number | null; detail: string };
+  | { kind: "failed"; cause: FreeCallCause | "disk" | "empty" | "exists"; httpStatus: number | null; detail: string };
 
 export interface OpenRouterClient {
   generateImage(params: ImageParams): Promise<ImageResult>;

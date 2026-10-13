@@ -98,6 +98,18 @@ test("reads a failed job with no error text", async () => {
   expect(await run()).toMatchObject({ status: "failed", error: null, contentFailure: false });
 });
 
+test.each(["constructor", "toString", "__proto__", "hasOwnProperty"])("reads the word %s as unknown, not as a built-in", async (word) => {
+  const { run } = poll([{ status: 200, body: { id: FIXTURE_ID, status: word } }]);
+
+  expect(await run()).toMatchObject({ kind: "status", status: "unknown", rawStatus: word });
+});
+
+test("never turns a positive sub-micro bill into zero", async () => {
+  const { run } = poll([{ status: 200, body: { id: FIXTURE_ID, status: "completed", usage: { cost: 0.0000001 } } }]);
+
+  expect(await run()).toMatchObject({ usageCostMicros: 1 });
+});
+
 test("keeps polling on a status word it does not know", async () => {
   const { run } = poll([{ status: 200, body: { id: FIXTURE_ID, status: "rendering_v2" } }]);
 

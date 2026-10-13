@@ -53,6 +53,19 @@ test("answers not-found for the API's own 404", async () => {
   expect(await client.fetchGeneration(FIXTURE_ID)).toEqual({ kind: "not-found" });
 });
 
+test.each([
+  ["a bare Not Found message", { error: { message: "Not Found" } }],
+  ["a code with no message", { error: { code: 404 } }],
+  ["a route that is not found", { error: { code: 404, message: "Route /api/v1/generation not found" } }],
+  ["another generation's id", { error: { code: 404, message: "Generation gen-vid-0000000000-FIXTUREOTHER not found" } }],
+  ["the right message with another code", { error: { code: 500, message: `Generation ${FIXTURE_ID} not found` } }],
+  ["the right message with no code", { error: { message: `Generation ${FIXTURE_ID} not found` } }],
+])("does not take %s as the API's own 404", async (_name, body) => {
+  const { client } = lookup([{ status: 404, body }]);
+
+  expect(await client.fetchGeneration(FIXTURE_ID)).toMatchObject({ kind: "unreadable", cause: "http", httpStatus: 404 });
+});
+
 test("a 404 is not an unreadable answer", async () => {
   const { client } = lookup([{ status: 404, body: fixture("generation-not-found") }]);
 
@@ -104,6 +117,33 @@ test.each([
   expect(await client.fetchGeneration(FIXTURE_ID)).toMatchObject({ kind: "unreadable", cause: "malformed" });
 });
 
+test("keeps a key inside finish_reason out of the result", async () => {
+  const { client } = lookup([{ status: 200, body: { data: { total_cost: 0.1, finish_reason: `stop ${TEST_KEY}` } } }]);
+
+  expect(JSON.stringify(await client.fetchGeneration(FIXTURE_ID))).not.toContain(TEST_KEY);
+});
+
+test("caps a huge finish_reason", async () => {
+  const { client } = lookup([{ status: 200, body: { data: { total_cost: 0.1, finish_reason: "x".repeat(100_000) } } }]);
+
+  const result = await client.fetchGeneration(FIXTURE_ID);
+
+  expect(result.kind === "found" && (result.finishReason ?? "").length).toBeLessThanOrEqual(500);
+});
+
+test("never turns a positive sub-micro cost into zero", async () => {
+  const { client } = lookup([{ status: 200, body: { data: { total_cost: 0.0000001, finish_reason: "complete" } } }]);
+
+  expect(await client.fetchGeneration(FIXTURE_ID)).toMatchObject({ kind: "found", totalCostMicros: 1 });
+});
+
+test("sends nothing for an id that is not a job id", async () => {
+  const { client, calls } = lookup([{ status: 404, body: fixture("generation-not-found") }]);
+
+  expect(await client.fetchGeneration("a&b=c")).toMatchObject({ kind: "unreadable", cause: "malformed", httpStatus: null });
+  expect(calls).toHaveLength(0);
+});
+
 test("asks once and never retries a failing lookup", async () => {
   const { client, calls } = lookup([{ status: 503, body: "x" }, { status: 200, body: fixture("generation-found-kling") }]);
 
@@ -119,12 +159,4 @@ test("answers unreadable with cause aborted when the caller's signal has fired",
   abort.abort();
 
   expect(await client.fetchGeneration(FIXTURE_ID, abort.signal)).toMatchObject({ kind: "unreadable", cause: "aborted" });
-});
-
-test("url-encodes an id that carries reserved characters", async () => {
-  const { client, calls } = lookup([{ status: 404, body: fixture("generation-not-found") }]);
-
-  await client.fetchGeneration("a&b=c");
-
-  expect(calls[0]?.url).toBe(`${LOCAL_BASE}/generation?id=a%26b%3Dc`);
 });

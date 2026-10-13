@@ -42,3 +42,11 @@ export function httpFault(ctx: ClientContext, label: string, status: number, tex
   const cause = status === 401 ? "auth" : status === 402 ? "credits" : "http";
   return { cause, httpStatus: status, detail: clean(ctx, `${label}: HTTP ${status}: ${errorDetail(text)}`) };
 }
+
+/**
+ * Dollars to integer micro-dollars for a figure that decides whether something was billed: float noise is cut off (0.045 stays 45000),
+ * then it rounds UP, so a positive cost never becomes 0 («free»).
+ */
+export function microsOf(usd: number): number {
+  return Math.ceil(Number((usd * 1e6).toFixed(6)));
+}

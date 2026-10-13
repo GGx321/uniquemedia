@@ -1,8 +1,7 @@
 import { Buffer } from "node:buffer";
 import { open, rm, type FileHandle } from "node:fs/promises";
 import { z } from "zod";
-import { costToMicros } from "../money/settleRule";
-import { faultOf, freeGet, httpFault, SAFE_ID } from "./freeCall";
+import { faultOf, freeGet, httpFault, microsOf, SAFE_ID } from "./freeCall";
 import { clean, describe, errorDetail, finalKind, isModerationRefusal, safeJson, sendOnce, type ClientContext } from "./transport";
 import type { BodyReader, OpenRouterResponse, VideoDownloadResult, VideoPollResult, VideoRequest, VideoStatus, VideoSubmitResult } from "./types";
 
@@ -160,14 +159,12 @@ export async function downloadVideo(ctx: ClientContext, id: string, toPath: stri
       const host = hostOf(res.headers.get("location"));
       return { kind: "redirect-refused", httpStatus: status, host: host === null ? null : clean(ctx, host) };
     }
-    if (status === 404 || status === 410) {
-      giveUpOnBody();
-      return { kind: "gone", httpStatus: status };
-    }
     if (status < 200 || status > 299) {
       const text = await smallText(reader, race);
       giveUpOnBody();
       if (stoppedBy !== null) return interrupted();
+      // Only the provider's own answer ends the clip for good; a proxy's 404 page is retryable.
+      if ((status === 404 || status === 410) && GoneBody(status).safeParse(safeJson(text)).success) return { kind: "gone", httpStatus: status };
       const fault = httpFault(ctx, label, status, text);
       return failed(fault.cause, status, fault.detail);
     }
@@ -182,12 +179,24 @@ export async function downloadVideo(ctx: ClientContext, id: string, toPath: stri
     }
     if (reader === null) return failed("empty", status, `${label}: HTTP ${status}, no body`);
 
+    // "wx": never truncate or later delete a file that was already there.
+    const opening = open(toPath, "wx");
     try {
-      handle = await open(toPath, "w");
+      handle = await race(opening);
       opened = true;
     } catch (err) {
       giveUpOnBody();
-      return failed("disk", status, `${label}: the file could not be opened: ${describe(err)}`);
+      if (stoppedBy !== null) {
+        // The open may land after the stop (a local open ends quickly): close and remove what it made.
+        const late = await opening.catch(() => null);
+        if (late !== null) {
+          await late.close().catch(() => {});
+          await rm(toPath, { force: true }).catch(() => {});
+        }
+        return interrupted();
+      }
+      const exists = err instanceof Error && "code" in err && err.code === "EEXIST";
+      return failed(exists ? "exists" : "disk", status, `${label}: the file could not be created: ${describe(err)}`);
     }
     let total = 0;
     for (;;) {
@@ -207,18 +216,20 @@ export async function downloadVideo(ctx: ClientContext, id: string, toPath: stri
         return { kind: "too-large", capBytes };
       }
       try {
-        await handle.write(chunk.value);
+        await race(handle.write(chunk.value));
       } catch (err) {
         giveUpOnBody();
+        if (stoppedBy !== null) return interrupted();
         return failed("disk", status, `${label}: the file could not be written: ${describe(err)}`);
       }
     }
     if (total === 0) return failed("empty", status, `${label}: HTTP ${status}, the body is empty`);
     try {
-      await handle.sync();
+      await race(handle.sync());
       await handle.close();
       handle = null;
     } catch (err) {
+      if (stoppedBy !== null) return interrupted();
       return failed("disk", status, `${label}: the file could not be flushed: ${describe(err)}`);
     }
     keepFile = true;
@@ -230,6 +241,9 @@ export async function downloadVideo(ctx: ClientContext, id: string, toPath: stri
     if (opened && !keepFile) await rm(toPath, { force: true }).catch(() => {});
   }
 }
+
+/** The provider's own 404 or 410: a JSON error object carrying that code. */
+const GoneBody = (status: 404 | 410) => z.object({ error: z.object({ code: z.literal(status) }) });
 
 /** At most `ERROR_BODY_BYTES` of a non-2xx body as text, for its message; a failure to read it is an empty text. */
 async function smallText(
@@ -262,7 +276,7 @@ const PollBody = z.object({
 });
 const UsageCost = z.object({ cost: z.number().finite().nonnegative() });
 
-const STATUS_WORDS: Readonly<Record<string, VideoStatus>> = {
+const STATUS_WORDS: ReadonlyMap<string, VideoStatus> = new Map<string, VideoStatus>(Object.entries({
   pending: "pending",
   queued: "pending",
   in_progress: "in_progress",
@@ -271,7 +285,7 @@ const STATUS_WORDS: Readonly<Record<string, VideoStatus>> = {
   failed: "failed",
   cancelled: "cancelled",
   expired: "expired",
-};
+}));
 
 /** A failed job's text: a string, or an object with a string `message`; anything else is no text. */
 function errorTextOf(error: unknown): string | null {
@@ -283,7 +297,7 @@ function errorTextOf(error: unknown): string | null {
 function billOf(usage: unknown): number | null {
   const parsed = UsageCost.safeParse(usage);
   if (!parsed.success) return null;
-  const micros = costToMicros(parsed.data.cost);
+  const micros = microsOf(parsed.data.cost);
   return Number.isSafeInteger(micros) ? micros : null;
 }
 
@@ -304,7 +318,7 @@ export async function pollVideo(ctx: ClientContext, id: string, signal?: AbortSi
   const error = rawError === null ? null : clean(ctx, rawError);
   return {
     kind: "status",
-    status: STATUS_WORDS[rawStatus] ?? "unknown",
+    status: STATUS_WORDS.get(rawStatus) ?? "unknown",
     rawStatus: clean(ctx, rawStatus),
     usageCostMicros: billOf(parsed.data.usage),
     error,

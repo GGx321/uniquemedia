@@ -72,6 +72,7 @@ const SCENARIOS: Scenario[] = [
   { name: "a download network error that mentions it", call: "download", steps: [{ reject: new TypeError(`fetch failed: ${ECHO}`) }] },
   { name: "a download body that breaks with it in the error", call: "download", steps: [], fetch: BODY_THROWS },
   { name: "a download redirect to a host that carries it", call: "download", steps: [{ status: 302, body: "", headers: { location: `https://${TEST_KEY}.evil.example/clip.mp4` } }] },
+  { name: "a generation whose finish_reason holds it", call: "generation", steps: [{ status: 200, body: { data: { total_cost: 0.1, finish_reason: ECHO } } }] },
   { name: "a generation 401 that echoes it", call: "generation", steps: [{ status: 401, body: { error: { message: ECHO } } }] },
   { name: "a generation body that is not a record and echoes it", call: "generation", steps: [{ status: 200, body: ECHO }] },
   { name: "a generation network error that mentions it", call: "generation", steps: [{ reject: new TypeError(`fetch failed: ${ECHO}`) }] },
