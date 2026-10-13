@@ -117,6 +117,45 @@ describe("one paid clip at a time (I5.50)", () => {
     await jobEnd(engine, jobIdOf(second));
   });
 
+  test("an earlier clip's end never gives back a later clip's slot", async () => {
+    const { avatarId, photoId } = await seedClipAvatar(libraryDir());
+    const net = clipNetwork({ kling: { content: "held" }, grok: { held: true } });
+    const engine = await startClipEngine(dir(), { net, deps: { clipSwitches: { mode: "offer" } } });
+    const first = jobIdOf(await create(engine, { avatarId, photoId, acceptedWorstMicros: 504_000 }));
+    await until(() => phasesOf(engine, first).includes("downloading"), "the first clip's download");
+    // The second clip (the Grok offer) holds the slot in `rendering` while the first one's file is still being fetched.
+    const second = jobIdOf(await create(engine, { avatarId, photoId, model: "grok", fallback: "none", acceptedWorstMicros: 850_000 }));
+    await until(() => phasesOf(engine, second).includes("rendering"), "the second clip's POST");
+
+    net.releaseContent("kling");
+    await jobEnd(engine, first);
+    expect(await create(engine, { avatarId, photoId, acceptedWorstMicros: 504_000 })).toMatchObject({ ok: false, error: { code: "IN_FLIGHT", clipReason: "one-at-a-time" } });
+    expect(await engine.engine.handle(command("money.reconcile"))).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
+
+    net.release("grok");
+    await jobEnd(engine, second);
+    expect(await engine.engine.handle(command("money.reconcile"))).toMatchObject({ ok: true, type: "money.reconcile" });
+  });
+
+  test("the paid count is balanced on every outcome: a refusal, a cancel and a free refusal", async () => {
+    const { avatarId, photoId, masterId } = await seedClipAvatar(libraryDir());
+    const net = clipNetwork({ kling: { terminal: { status: "failed", error: RISK_CONTROL } } });
+    const engine = await startClipEngine(dir(), { net, deps: { clipSwitches: { mode: "offer" } } });
+    const notInFlight = async (): Promise<void> => {
+      const answer = await engine.engine.handle(command("money.reconcile"));
+      expect(answer).not.toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
+    };
+    expect((await create(engine, { avatarId, photoId: masterId })).ok).toBe(false);
+    await notInFlight();
+    const cancelled = jobIdOf(await create(engine, { avatarId, photoId, acceptedWorstMicros: 504_000 }));
+    await engine.engine.handle(command("avatars.cancel", { jobId: cancelled }));
+    await jobEnd(engine, cancelled);
+    await notInFlight();
+    const refused = jobIdOf(await create(engine, { avatarId, photoId, acceptedWorstMicros: 504_000 }));
+    await jobEnd(engine, refused);
+    await notInFlight();
+  });
+
   test("a refused create gives the slot back: the next create runs", async () => {
     const { avatarId, photoId, masterId } = await seedClipAvatar(libraryDir());
     const engine = await startClipEngine(dir());

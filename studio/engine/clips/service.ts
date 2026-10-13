@@ -151,8 +151,11 @@ export class ClipService {
   readonly #boldClips: BoldClipsMode;
   /** I5.48: the attempts that may still bill. Apart from the jobs: a job may end long before its hold does. */
   readonly holds: ClipHolds;
-  /** I5.50: the one paid clip, from its dispatch until its money closes. */
-  #slot = false;
+  /**
+   * I5.50: the one paid clip, from its dispatch until its money closes. The holder is the create's own token, so only that clip can give the slot (and the paid count with it)
+   * back, once: an earlier clip ending late never frees a later clip's slot.
+   */
+  #slot: object | null = null;
   /** Clip jobs from their start until their record (or their end without one). */
   #work = 0;
   /** The clips that have a job on their journal now: no second job on one journal. */
@@ -242,20 +245,21 @@ export class ClipService {
 
   /** The slot is the FIRST check, taken before the first await: two calls with no await between them make exactly one job. */
   async create(payload: CreatePayload): Promise<{ jobId: string }> {
-    if (this.#slot) throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "one-at-a-time", detail: "another clip is being made; one paid clip runs at a time" });
-    this.#slot = true;
+    if (this.#slot !== null) throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "one-at-a-time", detail: "another clip is being made; one paid clip runs at a time" });
+    const slot = {};
+    this.#slot = slot;
     this.#deps.paidStart();
     let started = false;
     try {
-      const answer = await this.#create(payload);
+      const answer = await this.#create(payload, slot);
       started = true;
       return answer;
     } finally {
-      if (!started) this.#releaseSlot();
+      if (!started) this.#releaseSlot(slot);
     }
   }
 
-  async #create(payload: CreatePayload): Promise<{ jobId: string }> {
+  async #create(payload: CreatePayload, slot: object): Promise<{ jobId: string }> {
     const deps = this.#deps;
     const key = deps.usableKey("bring a photo to life");
     const budget = deps.paidBudget();
@@ -316,13 +320,15 @@ export class ClipService {
       prices,
       capKey,
       cancel,
+      slot,
     });
     return { jobId };
   }
 
-  #releaseSlot(): void {
-    if (!this.#slot) return;
-    this.#slot = false;
+  /** Gives the slot and the paid count back, once, and only for the clip that holds it. */
+  #releaseSlot(slot: object): void {
+    if (this.#slot !== slot) return;
+    this.#slot = null;
     this.#deps.paidEnd();
   }
 
@@ -344,10 +350,21 @@ export class ClipService {
     prices: ReturnType<typeof clipPricesOf>;
     capKey: string;
     cancel: AbortSignal;
+    /** The create's slot token: only this clip gives the slot back. */
+    slot: object;
   }): Promise<void> {
     const deps = this.#deps;
     const signal = eitherSignal(job.cancel, this.#stop.signal);
     const ref = { kind: "clip" as const, jobId: job.jobId, avatarId: job.avatarId, clipId: job.clipId };
+    let moneyClosed = false;
+    /** Every reserve of the clip is settled or abandoned (or none was made): the slot, the paid count and the cap go, once. */
+    const closeMoney = (): void => {
+      if (moneyClosed) return;
+      moneyClosed = true;
+      this.#releaseSlot(job.slot);
+      deps.clearCap(job.capKey);
+      deps.emitMoney();
+    };
     let end: ClipJobEnd;
     try {
       const client = deps.openRouter(job.key);
@@ -368,11 +385,7 @@ export class ClipService {
           const progress = deps.jobs.clipPhase(job.jobId, update);
           if (progress !== null) deps.emit({ v: PROTOCOL_VERSION, id: deps.newId(), kind: "event", type: "job.progress", payload: progress });
         },
-        onMoneyClosed: () => {
-          this.#releaseSlot();
-          deps.clearCap(job.capKey);
-          deps.emitMoney();
-        },
+        onMoneyClosed: closeMoney,
         onMoneyNotice: (refusal) => {
           deps.log(`[clip] ${job.clipId}: Grok could not be reserved behind a free Kling (${refusal.reason}); the clip ends free`);
           deps.emitMoney();
@@ -403,6 +416,8 @@ export class ClipService {
       deps.log(`[clip] ${job.clipId}: the job failed (${error instanceof Error ? error.name : typeof error})`);
       end = { status: "failed", error: this.#errorOf(error) };
     } finally {
+      // A fault before the chain ran (the client, the gate) still gives the slot and the paid count back: nothing of the clip's money can be open then.
+      closeMoney();
       this.#work--;
       this.#activeClips.delete(job.clipId);
     }
