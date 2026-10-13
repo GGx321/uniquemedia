@@ -145,6 +145,17 @@ describe("downloadClip", () => {
     expect(await readdir(clipsDir)).toEqual([]);
   });
 
+  test("answers download-failed and never removes a file that was already there when the client says `exists`", async () => {
+    let theirs = "";
+    const { client } = fakeClient(async (toPath) => {
+      theirs = toPath;
+      await writeFile(toPath, "not ours");
+      return { kind: "failed", cause: "exists", httpStatus: null, detail: "the target exists" };
+    });
+    expect(await downloadClip(options(client))).toMatchObject({ kind: "failed", reason: "download-failed" });
+    expect((await readFile(theirs)).toString()).toBe("not ours");
+  });
+
   test("answers download-failed when the client refuses a redirect", async () => {
     const { client } = fakeClient(async () => ({ kind: "redirect-refused", httpStatus: 302, host: "elsewhere.example" }));
     expect(await downloadClip(options(client))).toMatchObject({ kind: "failed", reason: "download-failed" });
