@@ -3,6 +3,7 @@ import {
   GROK_FALLBACK,
   PROTOCOL_VERSION,
   type BoldClipsMode,
+  type ClipFace,
   type ClipMonthFit,
   type ClipMotionChoice,
   type ClipOptions,
@@ -31,10 +32,12 @@ import type { CommitTracker } from "../videos/live";
 import type { RootLockOptions } from "../videos/rootLock";
 import type { ClipRunDeps } from "./attempt";
 import { firstFrameRefusalOf } from "./firstFrame";
+import { checkClipFace } from "./faceCheck";
 import { clipFallbackOf, readFrameFacts, type FrameFacts } from "./frameFacts";
 import { createClipHolds, type ClipHolds, type HoldTimers } from "./holds";
 import { runClipJob, type ClipJobDeps, type ClipJobOutcome } from "./job";
 import { motionChoicesOf } from "./motion";
+import { ClipRecords, type ClipRecordsDeps } from "./records";
 import { clipsDirOf } from "./store";
 import type { ClipTimings } from "./timings";
 
@@ -163,11 +166,95 @@ export class ClipService {
   /** Fired by `shutdown`: every clip job stops waiting (a reserve whose POST may have left stays open at worst). */
   readonly #stop = new AbortController();
 
+  /** S5.V4a2: the committed records (list, get, markSeen, delete, retryDownload); the commands below hand over to it. */
+  readonly #records: ClipRecords;
+
   constructor(deps: ClipServiceDeps) {
     this.#deps = deps;
     this.#mode = deps.mode ?? GROK_FALLBACK;
     this.#boldClips = deps.boldClips ?? BOLD_CLIPS;
     this.holds = createClipHolds({ now: deps.clock, ...(deps.holdTimers === undefined ? {} : { timers: deps.holdTimers }), onChange: () => deps.emitMoney() });
+    this.#records = new ClipRecords({
+      newId: deps.newId,
+      clock: deps.clock,
+      library: () => {
+        const library = deps.currentLibrary();
+        return library === null ? null : { hasAvatar: (avatarId) => library.getAvatar(avatarId) !== undefined, clipsDirOf: (avatarId) => clipsDirOf(library, avatarId) };
+      },
+      pendingDelete: deps.pendingDelete,
+      ledger: () => deps.budget()?.ledger ?? null,
+      jobs: deps.jobs,
+      emit: deps.emit,
+      usableKey: deps.usableKey,
+      openRouter: deps.openRouter,
+      // The folder as a file check wants it: a folder that was looked at and refused reads «elsewhere», one that did not answer reads «unchecked». The case probe is the cautious yes.
+      exportRoot: async () => {
+        const check = await deps.exportStatus();
+        if (check.ok) return { root: check.root, rootId: check.rootId, caseInsensitive: true };
+        return check.unanswered === true ? "unanswered" : null;
+      },
+      host: {
+        busy: (clipId) => this.#activeClips.has(clipId),
+        begin: (clipId) => {
+          this.#work++;
+          this.#activeClips.add(clipId);
+          return () => {
+            this.#work--;
+            this.#activeClips.delete(clipId);
+          };
+        },
+        stop: this.#stop.signal,
+      },
+      faceOf: (input) => this.#faceOf(input),
+      log: deps.log,
+    });
+  }
+
+  // ---------- the records (S5.V4a2) ----------
+
+  list(payload: CommandPayload<"clips.list">): ReturnType<ClipRecords["list"]> {
+    return this.#records.list(payload);
+  }
+
+  get(payload: CommandPayload<"clips.get">): ReturnType<ClipRecords["get"]> {
+    return this.#records.get(payload);
+  }
+
+  markSeen(payload: CommandPayload<"clips.markSeen">): ReturnType<ClipRecords["markSeen"]> {
+    return this.#records.markSeen(payload);
+  }
+
+  delete(payload: CommandPayload<"clips.delete">): ReturnType<ClipRecords["delete"]> {
+    return this.#records.delete(payload);
+  }
+
+  retryDownload(payload: CommandPayload<"clips.retryDownload">): ReturnType<ClipRecords["retryDownload"]> {
+    return this.#records.retryDownload(payload);
+  }
+
+  /** A fetched-again clip's face check (I5.52), as a created clip's: judged only when its photo was; a clip whose photo is gone, or whose gate or master cannot be had, is kept unchecked. */
+  async #faceOf(input: Parameters<ClipRecordsDeps["faceOf"]>[0]): Promise<ClipFace> {
+    const unchecked: ClipFace = { verdict: "skipped", frames: 0, why: "worker" };
+    const library = this.#deps.currentLibrary();
+    const photo = library?.getPhoto(input.record.sourcePhotoId);
+    if (library === null || photo === undefined) return unchecked;
+    const read = await readFrameFacts(photo, (runId) => readPlanWithin(() => this.#deps.readRunPlan(library, runId), CLIP_PLAN_READ_TIMEOUT_MS), this.#deps.log);
+    if (read.kind !== "gallery") return unchecked;
+    const role = read.facts.faceRole;
+    const gate = this.#deps.faceGate();
+    const masterEmbedding = role === "judged" && gate !== null && !gate.isBroken() ? await this.#masterEmbedding(library, input.record.avatarId, gate, input.signal) : null;
+    if (role === "judged" && (gate === null || gate.isBroken() || masterEmbedding === null)) return unchecked;
+    return checkClipFace({
+      role,
+      clipPath: input.clipPath,
+      colour: input.colour,
+      durationMs: input.durationMs,
+      scratchDir: input.scratchDir,
+      masterEmbedding: masterEmbedding ?? new Float32Array(0),
+      gate: gate ?? { check: () => Promise.reject(new Error("no face gate")) },
+      signal: input.signal,
+      log: this.#deps.log,
+    });
   }
 
   /** A clip job is running: the library must not change under it (`#busy()`). */
