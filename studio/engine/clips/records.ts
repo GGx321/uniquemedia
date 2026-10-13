@@ -1,22 +1,36 @@
 import { rm, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { CLIP_RETRYABLE_FAILURES, MAX_LISTED_CLIPS, type ClipCost, type ClipExport, type ClipExportLine, type ClipFace, type ClipSummary, type CommandPayload, type FileState } from "../../shared/engine";
+import {
+  CLIP_RETRYABLE_FAILURES,
+  MAX_LISTED_CLIPS,
+  PROTOCOL_VERSION,
+  type ClipCost,
+  type ClipExport,
+  type ClipExportLine,
+  type ClipFace,
+  type ClipSummary,
+  type CommandPayload,
+  type EngineError,
+  type FileState,
+} from "../../shared/engine";
 import type { UnsequencedEvent } from "../../shared/engine/events";
 import { EngineFailure } from "../engineFailure";
 import { FileStateChecker, newHashBudget, type HashBudget } from "../videos/fileState";
 import type { ExportRootRef } from "../videos/recovery";
-import type { JobRegistry } from "../jobs";
-import { fsyncDir, readFolderNames } from "../library/durableFs";
+import type { ClipJobEnd, ClipPhaseUpdate, JobRegistry } from "../jobs";
+import { fsyncDir, fsyncFile, readFolderNames } from "../library/durableFs";
+import { renameWithRetry } from "../library/renameRetry";
 import { jobOpenReserveMicros, jobSpentMicros } from "../money/jobSpend";
 import type { Ledger } from "../money/ledger";
 import type { OpenRouterClient } from "../openrouter/types";
+import { downloadClip, type ClipDownload, type DownloadClipOptions } from "./download";
 import type { CheckClipFaceOptions } from "./faceCheck";
-import type { DownloadClipOptions, ClipDownload } from "./download";
-import type { MakePosterOptions } from "./frames";
+import { makePoster, type MakePosterOptions } from "./frames";
 import { clipJournalPath, parseClipAttemptId } from "./journal";
+import { posterProvesUndecodable } from "./posterVerdict";
 import type { ClipRecord } from "./schemas";
-import { clipFilePath, clipRecordPath, posterPath, readClipRecord, removeJournal, writeClipRecord } from "./store";
+import { clipFilePath, clipRecordPath, posterPath, posterTempPath, readClipRecord, removeJournal, writeClipRecord } from "./store";
 
 export type ClipRewrite = "seen" | "export" | "retried" | "expired";
 
@@ -314,8 +328,172 @@ export class ClipRecords {
 
   // ---------- clips.retryDownload ----------
 
-  async retryDownload(_payload: Payload<"clips.retryDownload">): Promise<{ jobId: string }> {
-    throw new EngineFailure({ code: "NOT_FOUND", detail: "not built" });
+  /**
+   * A failed download of a paid clip, fetched again for free (I5.53): refused unless the record is `download-failed`, `invalid-file` or `disk-full`, and no job works on it. Past
+   * `retryDownloadUntil` (or with no window at all) the record turns `download-expired` and the call is refused. Otherwise a registered `clip` job re-runs V4b's download and validation and
+   * rewrites the record; it never writes the ledger. All of this is decided under the clip's lock, so a delete cannot slip in between the check and the job.
+   */
+  async retryDownload(payload: Payload<"clips.retryDownload">): Promise<{ jobId: string }> {
+    const { avatarId, clipId } = payload;
+    const clipsDir = this.#dirOf(avatarId);
+    const deps = this.#deps;
+    const started = await this.withClipLock(clipId, async () => {
+      if (deps.host.busy(clipId)) throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "job-running", detail: `a job is working on clip ${clipId}` });
+      const record = await this.#recordOf(clipsDir, clipId);
+      const { outcome } = record;
+      if (outcome.status !== "failed") throw new EngineFailure({ code: "VALIDATION", detail: "only a clip whose download failed can be fetched again" });
+      if (outcome.reason === "download-expired") throw new EngineFailure({ code: "VALIDATION", clipReason: "download-expired", detail: "the file is no longer at the provider" });
+      if (!CLIP_RETRYABLE_FAILURES.includes(outcome.reason)) throw new EngineFailure({ code: "VALIDATION", detail: `a clip that ended ${outcome.reason} has no file to fetch again` });
+      const until = outcome.retryDownloadUntil === undefined ? Number.NaN : Date.parse(outcome.retryDownloadUntil);
+      if (!(deps.clock() <= until)) {
+        await this.#rewriteLocked(clipsDir, clipId, expiredBy);
+        throw new EngineFailure({ code: "VALIDATION", clipReason: "download-expired", detail: "the file is no longer at the provider" });
+      }
+      const providerJobId = record.provider.attempts.findLast((attempt) => attempt.outcome === "completed" && attempt.providerJobId !== undefined)?.providerJobId;
+      if (providerJobId === undefined) throw new EngineFailure({ code: "VALIDATION", detail: "the record names no finished attempt to fetch" });
+      const key = deps.usableKey("fetch a finished clip again");
+      const jobId = deps.newId();
+      const stop = deps.jobs.startClip(jobId, { avatarId, clipId }, "downloading");
+      return { jobId, stop, end: deps.host.begin(clipId), key, providerJobId, until, record };
+    });
+    void this.#runRetry({ avatarId, clipId, clipsDir, ...started });
+    return { jobId: started.jobId };
+  }
+
+  async #runRetry(job: RetryJob): Promise<void> {
+    const deps = this.#deps;
+    const ref = { kind: "clip" as const, jobId: job.jobId, avatarId: job.avatarId, clipId: job.clipId };
+    let end: ClipJobEnd;
+    try {
+      end = await this.#retry(job, AbortSignal.any([job.stop, deps.host.stop]));
+    } catch (error) {
+      deps.log(`[clip] ${job.clipId}: the retry failed (${errorName(error)})`);
+      end = { status: "failed", error: error instanceof EngineFailure ? error.error : { code: "INTERNAL", detail: "the download could not be retried" } };
+    } finally {
+      job.end();
+    }
+    try {
+      const state = deps.jobs.finishClip(job.jobId, end);
+      const v = PROTOCOL_VERSION;
+      if (state?.status === "done" && state.result !== undefined) deps.emit({ v, id: deps.newId(), kind: "event", type: "job.done", payload: { jobId: job.jobId, result: state.result } });
+      else if (end.status === "failed") deps.emit({ v, id: deps.newId(), kind: "event", type: "job.failed", payload: { ...ref, error: end.error } });
+      else if (end.status === "cancelled") deps.emit({ v, id: deps.newId(), kind: "event", type: "job.cancelled", payload: ref });
+    } catch (error) {
+      deps.log(`[clip] the end of job ${job.jobId} could not be announced (${errorName(error)})`);
+    }
+  }
+
+  async #retry(job: RetryJob, signal: AbortSignal): Promise<ClipJobEnd> {
+    const deps = this.#deps;
+    const { clipId, clipsDir, record } = job;
+    const media = { ...REAL_MEDIA, ...deps.media };
+    const model = record.provider.model === "grok" ? "grok" : "kling";
+    const phase = (update: ClipPhaseUpdate): void => {
+      const progress = deps.jobs.clipPhase(job.jobId, update);
+      if (progress !== null) deps.emit({ v: PROTOCOL_VERSION, id: deps.newId(), kind: "event", type: "job.progress", payload: progress });
+    };
+    phase({ phase: "downloading", model, done: 1 });
+    let download: ClipDownload;
+    try {
+      download = await media.downloadClip({ client: deps.openRouter(job.key), providerJobId: job.providerJobId, clipId, clipsDir, requestedSeconds: record.request.seconds, signal });
+    } catch (error) {
+      if (signal.aborted) return { status: "cancelled" };
+      deps.log(`[clip] ${clipId}: the download could not be stored (${errorName(error)})`);
+      download = { kind: "failed", reason: "download-failed", detail: "the file could not be stored" };
+    }
+    if (signal.aborted) return { status: "cancelled" };
+    if (download.kind === "failed") {
+      deps.log(`[clip] ${clipId}: the retry's download failed (${download.reason})`);
+      // The file is gone at the provider, or the window ended while we tried: the record says so (I5.53). Anything else is a failure to try again later.
+      if (download.reason === "download-expired" || !(deps.clock() <= job.until)) {
+        await this.rewrite(job.avatarId, clipId, expiredBy);
+        return { status: "done" };
+      }
+      return { status: "failed", error: failureOf(download) };
+    }
+
+    phase({ phase: "checking", model, done: 2 });
+    const poster = await this.#poster(media, download, clipsDir, clipId, signal);
+    if (poster === "undecodable") {
+      await rm(download.path, { force: true });
+      return { status: "failed", error: { code: "VALIDATION", detail: "the file cannot be decoded" } };
+    }
+    let face: ClipFace;
+    try {
+      face = await deps.faceOf({ record, clipPath: download.path, colour: download.clip.colour, durationMs: download.clip.durationMs, scratchDir: clipsDir, signal });
+    } catch (error) {
+      if (signal.aborted) return { status: "cancelled" };
+      deps.log(`[clip] ${clipId}: the face check could not run (${errorName(error)}); the clip is kept unchecked`);
+      face = { verdict: "skipped", frames: 0, why: "worker" };
+    }
+
+    phase({ phase: "saving", model, done: 3 });
+    const ready: ClipRecord["outcome"] = {
+      status: "ready",
+      file: `${clipId}.mp4`,
+      posterFile: `${clipId}.poster.jpg`,
+      width: download.clip.width,
+      height: download.clip.height,
+      durationMs: Math.max(1, Math.round(download.clip.durationMs)),
+      fps: download.clip.fps,
+      bytes: download.clip.bytes,
+      sha256: download.sha256,
+      face,
+    };
+    await this.rewrite(job.avatarId, clipId, (current) => (current.outcome.status === "failed" && CLIP_RETRYABLE_FAILURES.includes(current.outcome.reason) ? { ...current, outcome: ready } : null));
+    return { status: "done" };
+  }
+
+  /** The poster under a fresh temp name, made durable and renamed onto its own name. `missing` keeps the clip (V6 repaints, V8 shows a placeholder); `undecodable` is ffmpeg's proof. */
+  async #poster(media: ClipRecordsMedia, download: Extract<ClipDownload, { kind: "saved" }>, clipsDir: string, clipId: string, signal: AbortSignal): Promise<"drawn" | "missing" | "undecodable"> {
+    const temp = posterTempPath(clipsDir, clipId);
+    try {
+      await media.makePoster({ clipPath: download.path, colour: download.clip.colour, log: this.#deps.log, outPath: temp, signal });
+      await fsyncFile(temp);
+      await renameWithRetry(temp, posterPath(clipsDir, clipId));
+      await fsyncDir(clipsDir);
+      return "drawn";
+    } catch (error) {
+      await rm(temp, { force: true }).catch(() => undefined);
+      const kind = posterProvesUndecodable(error) ? "undecodable" : "missing";
+      this.#deps.log(`[clip] ${clipId}: the poster could not be drawn (${errorName(error)}); ${kind === "missing" ? "the clip is kept without one" : "the file is not kept"}`);
+      return kind;
+    }
+  }
+}
+
+/** What the retry hands its job: the clip, the signal that cancels it, and the pieces decided under the lock. */
+interface RetryJob {
+  readonly jobId: string;
+  readonly avatarId: string;
+  readonly clipId: string;
+  readonly clipsDir: string;
+  readonly stop: AbortSignal;
+  /** Gives the clip back to its other commands. */
+  readonly end: () => void;
+  readonly key: string;
+  readonly providerJobId: string;
+  /** The end of the retry window, epoch ms. */
+  readonly until: number;
+  readonly record: ClipRecord;
+}
+
+const REAL_MEDIA: ClipRecordsMedia = { downloadClip, makePoster };
+
+/** A failed download becoming `download-expired` (I5.53): the retry window goes with it. */
+const expiredBy = (current: ClipRecord): ClipRecord | null =>
+  current.outcome.status === "failed" && CLIP_RETRYABLE_FAILURES.includes(current.outcome.reason) ? { ...current, outcome: { status: "failed", reason: "download-expired" } } : null;
+
+/** Why a retry's download failed, as the job's error. */
+function failureOf(download: Extract<ClipDownload, { kind: "failed" }>): EngineError {
+  switch (download.reason) {
+    case "download-failed":
+      return { code: "NETWORK", detail: download.detail };
+    case "invalid-file":
+      return { code: "VALIDATION", detail: download.detail };
+    case "disk-full":
+    case "download-expired":
+      return { code: "INTERNAL", detail: download.detail };
   }
 }
 

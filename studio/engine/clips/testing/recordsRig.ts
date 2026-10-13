@@ -70,6 +70,8 @@ export interface RecordsRig {
   names(): Promise<string[]>;
   file(name: string): string;
   ledgerWith(lines: LedgerLine[]): Promise<void>;
+  /** Resolves with the job's final state once it left `running`. */
+  settled(jobId: string): Promise<ReturnType<JobRegistry["stateOf"]>>;
   cleanup(): Promise<void>;
 }
 
@@ -126,6 +128,14 @@ export async function createRecordsRig(options: RigOptions = {}): Promise<Record
       const path = join(dir, `ledger-${nextId++}.jsonl`);
       await writeFile(path, lines.map((l) => `${JSON.stringify(l)}\n`).join(""));
       state.ledger = await Ledger.open(path);
+    },
+    async settled(jobId) {
+      for (let waited = 0; waited < 20_000; waited += 5) {
+        const job = jobs.stateOf(jobId);
+        if (job !== undefined && job.status !== "running") return job;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      throw new Error(`job ${jobId} did not settle`);
     },
     cleanup: () => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
   };
