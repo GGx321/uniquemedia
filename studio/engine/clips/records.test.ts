@@ -3,6 +3,7 @@ import { mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ClipSummary, MAX_LISTED_CLIPS, type FileState } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
+import type { Ledger } from "../money/ledger";
 import type { ExportRootRef } from "../videos/recovery";
 import { clipAttemptId } from "./journal";
 import type { ClipRecordsDeps } from "./records";
@@ -86,6 +87,34 @@ describe("clips.list", () => {
     await rig.put(readyRecord());
     rig.state.ledger = null;
     await expect(rig.records.list({ avatarId: AVATAR })).rejects.toMatchObject(refusal("LEDGER_UNREADABLE"));
+  });
+
+  test("reads the ledger once for the whole list, however many clips it holds", async () => {
+    await rig.cleanup();
+    let asked = 0;
+    let reads = 0;
+    let counting: Pick<Ledger, "lines" | "closeOf"> | null = null;
+    await open({
+      ledger: () => {
+        asked++;
+        return counting;
+      },
+    });
+    const ids = ["clip-0000001", "clip-0000002", "clip-0000003"];
+    for (const id of ids) await rig.put(readyRecord({ id }));
+    await rig.ledgerWith(ids.flatMap((id) => [reserve(clipAttemptId(id, 1), id, 504_000), settle(clipAttemptId(id, 1), 420_000, false)]));
+    const real = rig.state.ledger;
+    if (real === null) throw new Error("no ledger");
+    counting = {
+      get lines() {
+        reads++;
+        return real.lines;
+      },
+      closeOf: (attemptId) => real.closeOf(attemptId),
+    };
+    const { clips } = await rig.records.list({ avatarId: AVATAR });
+    expect(clips.map((c) => c.cost)).toEqual(ids.map(() => ({ micros: 420_000, kind: "billed" })));
+    expect({ asked, reads }).toEqual({ asked: 1, reads: 1 });
   });
 
   test("puts the Grok offers it is handed on the clips they name, and asks for them with the listed records", async () => {
