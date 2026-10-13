@@ -8,9 +8,8 @@ import type { UnsequencedEvent } from "../../shared/engine/events";
 import { EngineFailure } from "../engineFailure";
 import type { WorkerFaceGate } from "../face/worker/workerGate";
 import type { ClipJobEnd, JobRegistry } from "../jobs";
-import { fsyncDir, fsyncFile, hasErrorCode, readFolderNames, isTempName } from "../library/durableFs";
+import { hasErrorCode, readFolderNames, isTempName } from "../library/durableFs";
 import { isLibraryId } from "../library/ids";
-import { renameWithRetry } from "../library/renameRetry";
 import type { OpenRouterClient } from "../openrouter/types";
 import { downloadClip, type ClipDownload } from "./download";
 import { checkClipFace } from "./faceCheck";
@@ -18,8 +17,9 @@ import type { ClipFaceRole } from "./faceRole";
 import { makePoster } from "./frames";
 import { holdsAfterRestart, holdUntilForTerminal, type ClipHolds } from "./holds";
 import { clipAttemptId, parseClipAttemptId, summarizeJournal, type JournalAttempt, type JournalSummary } from "./journal";
+import { clipFaceOf, drawPoster, readyOutcomeOf } from "./ready";
 import type { ClipJournalLine, ClipRecord } from "./schemas";
-import { clipFilePath, clipsDirOf, journalOf, posterPath, posterTempPath, readClipRecord, removeJournal, writeClipRecord } from "./store";
+import { clipFilePath, clipsDirOf, journalOf, readClipRecord, removeJournal, writeClipRecord } from "./store";
 import type { ClipTimings } from "./timings";
 import { validateClipFile, type ClipColour } from "./validate";
 
@@ -680,59 +680,30 @@ class Recovery {
     if (job.signal.aborted) return "interrupted";
 
     job.phase({ phase: "saving", model: plan.model, done: 3 });
-    return this.commit({
-      ...this.base(plan.model, completed),
-      outcome: {
-        status: "ready",
-        file: `${candidate.clipId}.mp4`,
-        posterFile: `${candidate.clipId}.poster.jpg`,
-        width: download.clip.width,
-        height: download.clip.height,
-        durationMs: Math.max(1, Math.round(download.clip.durationMs)),
-        fps: download.clip.fps,
-        bytes: download.clip.bytes,
-        sha256: download.sha256,
-        face,
-      },
-    });
+    return this.commit({ ...this.base(plan.model, completed), outcome: readyOutcomeOf(candidate.clipId, download, face) });
   }
 
-  /** The poster under a temp name, made durable and renamed. A poster that cannot be drawn costs the paid clip nothing: it is kept without one and the next start draws it again. */
+  /** The poster (`drawPoster`). A poster that cannot be drawn costs the paid clip nothing, whatever ffmpeg said: it is kept without one and the next start draws it again. */
   private async poster(clipPath: string, colour: ClipColour): Promise<void> {
     const { host, candidate } = this;
-    const temp = posterTempPath(candidate.clipsDir, candidate.clipId);
-    try {
-      await this.media.makePoster({ clipPath, colour, log: host.log, outPath: temp, signal: this.job.signal });
-      await fsyncFile(temp);
-      await renameWithRetry(temp, posterPath(candidate.clipsDir, candidate.clipId));
-      await fsyncDir(candidate.clipsDir);
-    } catch (error) {
-      await rm(temp, { force: true }).catch(() => undefined);
-      host.log(`[clip] ${candidate.clipId}: the poster could not be drawn (${error instanceof Error ? error.name : typeof error}); the clip is kept without one`);
-    }
+    const drawn = await drawPoster({ makePoster: (options) => this.media.makePoster(options), clipPath, colour, clipsDir: candidate.clipsDir, clipId: candidate.clipId, signal: this.job.signal, log: host.log });
+    if (!drawn.drawn) host.log(`[clip] ${candidate.clipId}: the poster could not be drawn (${drawn.error instanceof Error ? drawn.error.name : typeof drawn.error}); the clip is kept without one`);
   }
 
-  /** The face check (I5.52): it marks and never fails the clip. A photo whose role is unknown, and a judged photo without a gate or a master embedding, are kept unchecked. */
+  /** The face check (`clipFaceOf`): the role of the clip's photo as it is now (null when the photo is gone), the gate unless it is broken, the master's embedding only for a judged clip. */
   private async face(download: Extract<ClipDownload, { kind: "saved" }>): Promise<ClipFace> {
     const { host, candidate, job } = this;
-    const unchecked: ClipFace = { verdict: "skipped", frames: 0, why: "worker" };
     const role = await host.faceRoleOf(this.requested.photoId);
-    if (role === null) return unchecked;
     const gate = host.faceGate();
-    let embedding: Float32Array | null = null;
-    if (role === "judged") {
-      if (gate === null || gate.isBroken()) return unchecked;
-      embedding = await host.masterEmbedding(candidate.avatarId, job.signal);
-      if (embedding === null) return unchecked;
-    }
-    return this.media.checkClipFace({
+    return clipFaceOf({
       role,
+      gate: gate === null || gate.isBroken() ? null : gate,
+      masterEmbedding: () => host.masterEmbedding(candidate.avatarId, job.signal),
+      check: (options) => this.media.checkClipFace(options),
       clipPath: download.path,
       colour: download.clip.colour,
       durationMs: download.clip.durationMs,
       scratchDir: candidate.clipsDir,
-      masterEmbedding: embedding ?? new Float32Array(0),
-      gate: gate ?? { check: () => Promise.reject(new Error("no face gate")) },
       signal: job.signal,
       log: host.log,
     });
@@ -804,21 +775,21 @@ async function repaintPoster(host: ClipRecoveryHost, clipsDir: string, clipId: s
   if (read.kind !== "record" || read.record.outcome.status !== "ready") return "recorded";
   const { record } = read;
   const clipPath = join(clipsDir, record.outcome.status === "ready" ? record.outcome.file : "");
-  const temp = posterTempPath(clipsDir, clipId);
-  try {
-    const judged = await media.validateClipFile(clipPath, record.request.seconds);
-    if (!judged.ok) {
-      host.log(`[clip] ${clipId}: the kept file is not a clip any more (${judged.reason}); its poster is not drawn again`);
-      return "recorded";
-    }
-    await media.makePoster({ clipPath, colour: judged.clip.colour, log: host.log, outPath: temp, signal: job.signal });
-    await fsyncFile(temp);
-    await renameWithRetry(temp, posterPath(clipsDir, clipId));
-    await fsyncDir(clipsDir);
-  } catch (error) {
-    await rm(temp, { force: true }).catch(() => undefined);
+  const failed = (error: unknown): JobOutcome => {
     if (job.signal.aborted) return "interrupted";
     host.log(`[clip] ${clipId}: the poster could not be drawn again (${error instanceof Error ? error.name : typeof error}); the next start tries again`);
+    return "recorded";
+  };
+  let judged: Awaited<ReturnType<RecoveryMedia["validateClipFile"]>>;
+  try {
+    judged = await media.validateClipFile(clipPath, record.request.seconds);
+  } catch (error) {
+    return failed(error);
   }
-  return "recorded";
+  if (!judged.ok) {
+    host.log(`[clip] ${clipId}: the kept file is not a clip any more (${judged.reason}); its poster is not drawn again`);
+    return "recorded";
+  }
+  const drawn = await drawPoster({ makePoster: (options) => media.makePoster(options), clipPath, colour: judged.clip.colour, clipsDir, clipId, signal: job.signal, log: host.log });
+  return drawn.drawn ? "recorded" : failed(drawn.error);
 }

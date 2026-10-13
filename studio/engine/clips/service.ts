@@ -42,6 +42,7 @@ import { runClipJob, type ClipJobDeps, type ClipJobOutcome } from "./job";
 import { parseClipAttemptId } from "./journal";
 import { motionChoicesOf } from "./motion";
 import { ClipRecords, type ClipRecordsDeps } from "./records";
+import { clipFaceOf } from "./ready";
 import { holdsFromLedger, recoverClips, type ClipRecoveryHost } from "./recover";
 import type { ClipRecord } from "./schemas";
 import { clipsDirOf } from "./store";
@@ -263,26 +264,21 @@ export class ClipService {
     return this.#records.retryDownload(payload);
   }
 
-  /** A fetched-again clip's face check (I5.52), as a created clip's: judged only when its photo was; a clip whose photo is gone, or whose gate or master cannot be had, is kept unchecked. */
+  /** A fetched-again clip's face check (`clipFaceOf`), as a recovered clip's: the role of its photo in the live library (null when the photo is gone), the gate unless it is broken. */
   async #faceOf(input: Parameters<ClipRecordsDeps["faceOf"]>[0]): Promise<ClipFace> {
-    const unchecked: ClipFace = { verdict: "skipped", frames: 0, why: "worker" };
     const library = this.#deps.currentLibrary();
-    const photo = library?.getPhoto(input.record.sourcePhotoId);
-    if (library === null || photo === undefined) return unchecked;
-    const read = await readFrameFacts(photo, (runId) => readPlanWithin(() => this.#deps.readRunPlan(library, runId), CLIP_PLAN_READ_TIMEOUT_MS), this.#deps.log);
-    if (read.kind !== "gallery") return unchecked;
-    const role = read.facts.faceRole;
+    const role = library === null ? null : await this.#faceRoleOf(library, input.record.sourcePhotoId);
     const gate = this.#deps.faceGate();
-    const masterEmbedding = role === "judged" && gate !== null && !gate.isBroken() ? await this.#masterEmbedding(library, input.record.avatarId, gate, input.signal) : null;
-    if (role === "judged" && (gate === null || gate.isBroken() || masterEmbedding === null)) return unchecked;
-    return checkClipFace({
+    const usable = gate === null || gate.isBroken() ? null : gate;
+    return clipFaceOf({
       role,
+      gate: usable,
+      masterEmbedding: async () => (library === null ? null : this.#masterEmbedding(library, input.record.avatarId, usable, input.signal)),
+      check: checkClipFace,
       clipPath: input.clipPath,
       colour: input.colour,
       durationMs: input.durationMs,
       scratchDir: input.scratchDir,
-      masterEmbedding: masterEmbedding ?? new Float32Array(0),
-      gate: gate ?? { check: () => Promise.reject(new Error("no face gate")) },
       signal: input.signal,
       log: this.#deps.log,
     });

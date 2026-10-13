@@ -12,12 +12,8 @@ import {
   type ClipRequest,
   type EngineError,
 } from "../../shared/engine";
-import { FfmpegError, FfmpegTimeoutError } from "../../node/runFfmpeg";
 import type { WorkerFaceGate } from "../face/worker/workerGate";
-import { isNoSpaceError } from "../freeBytes";
 import type { ClipPhaseUpdate } from "../jobs";
-import { fsyncDir, fsyncFile } from "../library/durableFs";
-import { renameWithRetry } from "../library/renameRetry";
 import type { ReserveRefusal } from "../money/budget";
 import { jpegDataUrl } from "../openrouter/image";
 import type { OpenRouterClient } from "../openrouter/types";
@@ -28,8 +24,9 @@ import { firstFrameSize, makeFirstFrame, type FirstFrame, type MakeFirstFrameOpt
 import type { FrameFacts } from "./frameFacts";
 import { makePoster, type MakePosterOptions } from "./frames";
 import { clipPromptOf, clipRequestBody } from "./prompt";
+import { clipFaceOf, drawPoster, readyOutcomeOf } from "./ready";
 import type { ClipRecord } from "./schemas";
-import { ensureClipsDir, journalOf, posterPath, posterTempPath, removeJournal, writeClipRecord } from "./store";
+import { ensureClipsDir, journalOf, removeJournal, writeClipRecord } from "./store";
 import type { ValidClip } from "./validate";
 
 // Stage 5, 5b.1, S5.V4a1 (plan s5b1 §5.1, §5.3, §5.10, §5.11, I5.50, I5.53): the create chain of ONE clip, after `clips.create` has said yes.
@@ -106,18 +103,6 @@ export type ClipJobOutcome =
 
 /** Thrown inside the chain when the signal fires while it waits. */
 class Stopped extends Error {}
-
-/** What ffmpeg says about the file it WRITES, not the one it reads: such an error proves nothing about the clip. Only the C library's fixed phrases are looked for. */
-const OUTPUT_SIDE_ERROR = /Input\/output error|Read-only file system|Permission denied|Operation not permitted/i;
-
-/**
- * Whether a failed poster PROVES ffmpeg cannot decode the paid file: ffmpeg ran and exited on its own with an error code (not a timeout, not a kill we did not send: `exitCode` null),
- * and the error is not about its own output (a full disk, EIO, a read-only or forbidden folder). Only then is the file removed; any other failure keeps it.
- */
-function posterProvesUndecodable(error: unknown): boolean {
-  if (!(error instanceof FfmpegError) || error instanceof FfmpegTimeoutError || error.exitCode === null) return false;
-  return !isNoSpaceError(error) && !OUTPUT_SIDE_ERROR.test(error.stderrTail);
-}
 
 const iso = (ms: number): string => new Date(ms).toISOString();
 
@@ -339,19 +324,7 @@ class ClipChain {
 
       this.done = 3;
       this.phase({ phase: "saving", model });
-      const record = this.record(model, attempts, {
-        status: "ready",
-        file: `${input.clipId}.mp4`,
-        posterFile: `${input.clipId}.poster.jpg`,
-        width: download.clip.width,
-        height: download.clip.height,
-        durationMs: Math.max(1, Math.round(download.clip.durationMs)),
-        fps: download.clip.fps,
-        bytes: download.clip.bytes,
-        sha256: download.sha256,
-        face,
-      });
-      return await this.commit(record);
+      return await this.commit(this.record(model, attempts, readyOutcomeOf(input.clipId, download, face)));
     } catch (error) {
       if (error instanceof Stopped || this.signal.aborted) return { kind: "interrupted" };
       throw error;
@@ -359,43 +332,33 @@ class ClipChain {
   }
 
   /**
-   * The poster under a fresh temp name, made durable and renamed onto its own name (ffmpeg never overwrites a file). The provider's file is paid for, validated and already stored, so a
-   * poster that cannot be drawn costs it its place only when ffmpeg PROVES it cannot decode it (`undecodable`, `posterProvesUndecodable`). Anything else (a timeout under a render's
-   * load, a kill we did not send, ffmpeg that cannot be started, a full disk, an error on the poster's own output or its flush) is `missing`: the clip is ready without its poster, and the
-   * record still names `<clipId>.poster.jpg` (the strict schema fixes the name), so a window shows a placeholder until the poster is drawn again (S5.V6 / S5.V8).
+   * The poster (`drawPoster`). The provider's file is paid for, validated and already stored, so a poster that cannot be drawn costs it its place only when ffmpeg PROVES it cannot decode it
+   * (`undecodable`). Anything else (a timeout under a render's load, a kill we did not send, ffmpeg that cannot be started, a full disk, an error on the poster's own output or its flush) is
+   * `missing`: the clip is ready without its poster, and the record still names `<clipId>.poster.jpg`, so a window shows a placeholder until the poster is drawn again (S5.V6 / S5.V8).
    */
   private async poster(download: Extract<ClipDownload, { kind: "saved" }>): Promise<"drawn" | "missing" | "undecodable"> {
     const { input, deps } = this;
-    const temp = posterTempPath(input.clipsDir, input.clipId);
-    try {
-      await this.media.makePoster({ clipPath: download.path, colour: download.clip.colour, log: deps.log, outPath: temp, signal: this.signal });
-      await fsyncFile(temp);
-      await renameWithRetry(temp, posterPath(input.clipsDir, input.clipId));
-      await fsyncDir(input.clipsDir);
-      return "drawn";
-    } catch (error) {
-      await rm(temp, { force: true }).catch(() => undefined);
-      if (this.signal.aborted) throw new Stopped();
-      const kind = posterProvesUndecodable(error) ? "undecodable" : "missing";
-      const then = kind === "missing" ? "the clip is kept without one" : "ffmpeg cannot decode the file; it is not kept";
-      deps.log(`[clip] ${input.clipId}: the poster could not be drawn (${error instanceof Error ? error.name : typeof error}); ${then}`);
-      return kind;
-    }
+    const drawn = await drawPoster({ makePoster: (options) => this.media.makePoster(options), clipPath: download.path, colour: download.clip.colour, clipsDir: input.clipsDir, clipId: input.clipId, signal: this.signal, log: deps.log });
+    if (drawn.drawn) return "drawn";
+    if (this.signal.aborted) throw new Stopped();
+    const kind = drawn.undecodable ? "undecodable" : "missing";
+    const then = kind === "missing" ? "the clip is kept without one" : "ffmpeg cannot decode the file; it is not kept";
+    deps.log(`[clip] ${input.clipId}: the poster could not be drawn (${drawn.error instanceof Error ? drawn.error.name : typeof drawn.error}); ${then}`);
+    return kind;
   }
 
-  /** The face check (I5.52): it marks and never fails the clip. A judged photo without a gate or a master embedding is kept unchecked (`worker`), never checked against nothing. */
-  private async face(download: Extract<ClipDownload, { kind: "saved" }>, embedding: Float32Array | null): Promise<ClipFace> {
+  /** The face check (`clipFaceOf`), with the master's embedding taken when the job started (a master switch during the clip does not move its verdict). */
+  private face(download: Extract<ClipDownload, { kind: "saved" }>, embedding: Float32Array | null): Promise<ClipFace> {
     const { input, deps } = this;
-    const role = input.facts.faceRole;
-    if (role === "judged" && (deps.faceGate === null || embedding === null)) return { verdict: "skipped", frames: 0, why: "worker" };
-    return this.media.checkClipFace({
-      role,
+    return clipFaceOf({
+      role: input.facts.faceRole,
+      gate: deps.faceGate,
+      masterEmbedding: async () => embedding,
+      check: (options) => this.media.checkClipFace(options),
       clipPath: download.path,
       colour: download.clip.colour,
       durationMs: download.clip.durationMs,
       scratchDir: input.clipsDir,
-      masterEmbedding: embedding ?? new Float32Array(0),
-      gate: deps.faceGate ?? { check: () => Promise.reject(new Error("no face gate")) },
       signal: this.signal,
       log: deps.log,
     });

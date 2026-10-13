@@ -20,17 +20,16 @@ import { EngineFailure } from "../engineFailure";
 import { FileStateChecker, newHashBudget, type HashBudget } from "../videos/fileState";
 import type { ExportRootRef } from "../videos/recovery";
 import type { ClipJobEnd, ClipPhaseUpdate, JobRegistry } from "../jobs";
-import { fsyncDir, fsyncFile, readFolderNames } from "../library/durableFs";
-import { renameWithRetry } from "../library/renameRetry";
+import { fsyncDir, readFolderNames } from "../library/durableFs";
 import type { Ledger } from "../money/ledger";
 import type { OpenRouterClient } from "../openrouter/types";
 import { downloadClip, type ClipDownload, type DownloadClipOptions } from "./download";
 import type { CheckClipFaceOptions } from "./faceCheck";
 import { makePoster, type MakePosterOptions } from "./frames";
 import { clipJournalPath, parseClipAttemptId } from "./journal";
-import { posterProvesUndecodable } from "./posterVerdict";
+import { drawPoster, readyOutcomeOf } from "./ready";
 import type { ClipRecord } from "./schemas";
-import { clipFilePath, clipRecordPath, posterPath, posterTempPath, readClipRecord, removeJournal, writeClipRecord } from "./store";
+import { clipFilePath, clipRecordPath, posterPath, readClipRecord, removeJournal, writeClipRecord } from "./store";
 
 export type ClipRewrite = "seen" | "export" | "retried" | "expired";
 
@@ -472,37 +471,18 @@ export class ClipRecords {
     if (signal.aborted) return { status: "cancelled" };
 
     phase({ phase: "saving", model, done: 3 });
-    const ready: ClipRecord["outcome"] = {
-      status: "ready",
-      file: `${clipId}.mp4`,
-      posterFile: `${clipId}.poster.jpg`,
-      width: download.clip.width,
-      height: download.clip.height,
-      durationMs: Math.max(1, Math.round(download.clip.durationMs)),
-      fps: download.clip.fps,
-      bytes: download.clip.bytes,
-      sha256: download.sha256,
-      face,
-    };
+    const ready = readyOutcomeOf(clipId, download, face);
     await this.rewrite(job.avatarId, clipId, (current) => (current.outcome.status === "failed" && CLIP_RETRYABLE_FAILURES.includes(current.outcome.reason) ? { ...current, outcome: ready } : null));
     return { status: "done" };
   }
 
-  /** The poster under a fresh temp name, made durable and renamed onto its own name. `missing` keeps the clip (V6 repaints, V8 shows a placeholder); `undecodable` is ffmpeg's proof. */
+  /** The poster (`drawPoster`). `missing` keeps the clip (V6 repaints, V8 shows a placeholder); `undecodable` is ffmpeg's proof. */
   async #poster(media: ClipRecordsMedia, download: Extract<ClipDownload, { kind: "saved" }>, clipsDir: string, clipId: string, signal: AbortSignal): Promise<"drawn" | "missing" | "undecodable"> {
-    const temp = posterTempPath(clipsDir, clipId);
-    try {
-      await media.makePoster({ clipPath: download.path, colour: download.clip.colour, log: this.#deps.log, outPath: temp, signal });
-      await fsyncFile(temp);
-      await renameWithRetry(temp, posterPath(clipsDir, clipId));
-      await fsyncDir(clipsDir);
-      return "drawn";
-    } catch (error) {
-      await rm(temp, { force: true }).catch(() => undefined);
-      const kind = posterProvesUndecodable(error) ? "undecodable" : "missing";
-      this.#deps.log(`[clip] ${clipId}: the poster could not be drawn (${errorName(error)}); ${kind === "missing" ? "the clip is kept without one" : "the file is not kept"}`);
-      return kind;
-    }
+    const drawn = await drawPoster({ makePoster: (options) => media.makePoster(options), clipPath: download.path, colour: download.clip.colour, clipsDir, clipId, signal, log: this.#deps.log });
+    if (drawn.drawn) return "drawn";
+    const kind = drawn.undecodable ? "undecodable" : "missing";
+    this.#deps.log(`[clip] ${clipId}: the poster could not be drawn (${errorName(drawn.error)}); ${kind === "missing" ? "the clip is kept without one" : "the file is not kept"}`);
+    return kind;
   }
 }
 
