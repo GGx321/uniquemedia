@@ -3,7 +3,7 @@ import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
 import type { EngineClient } from "../engine/client";
 import { MockEngine, mockEngineClient } from "../engine/mockEngine";
 import { ManualScheduler } from "../engine/scheduler";
-import { coverUrl, ownPhotoUrl, ownStickerUrl, ownTrackUrl, ownVideoUrl, photoUrl, posterUrl, stickerUrl, trackCoverUrl, trackUrl, videoUrl } from "./media";
+import { clipPosterUrl, clipUrl, coverUrl, ownPhotoUrl, ownStickerUrl, ownTrackUrl, ownVideoUrl, photoUrl, posterUrl, stickerUrl, trackCoverUrl, trackUrl, videoUrl } from "./media";
 
 // 3d.3b: a built-in sticker's picture is asked for by id, never by a path (invariant 12): main's `studio-media://sticker/<id>`
 // route serves the catalogue, the dev mock a stand-in of its own.
@@ -103,6 +103,27 @@ describe("media addresses by id", () => {
       expect(posterUrl("avatar-0001", bad)).toBeNull();
       expect(coverUrl(bad)).toBeNull();
     }
+  });
+});
+
+// 5b.1: a clip and its poster are addressed by the avatar's id and the clip's id, and nothing else (invariant 12): main serves them through the clip's record.
+describe("clip addresses by id", () => {
+  test("a clip and its poster each have their route", () => {
+    expect(clipUrl("avatar-0001", "clip-00000001")).toBe("studio-media://clip/avatar-0001/clip-00000001");
+    expect(clipPosterUrl("avatar-0001", "clip-00000001")).toBe("studio-media://clipposter/avatar-0001/clip-00000001");
+  });
+
+  test("an id that is not one never becomes a path: null", () => {
+    for (const bad of ["../x", "a/b", "", "C:\\x", "x y", "clip.mp4", "..", "abc", "A".repeat(8), "a".repeat(65)]) {
+      expect(clipUrl("avatar-0001", bad)).toBeNull();
+      expect(clipUrl(bad, "clip-00000001")).toBeNull();
+      expect(clipPosterUrl("avatar-0001", bad)).toBeNull();
+      expect(clipPosterUrl(bad, "clip-00000001")).toBeNull();
+    }
+  });
+
+  test("ids at the contract's 8 and 64 character limits are addressed", () => {
+    expect(clipUrl("abcdefgh", "a".repeat(64))).toBe(`studio-media://clip/abcdefgh/${"a".repeat(64)}`);
   });
 });
 

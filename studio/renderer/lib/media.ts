@@ -22,6 +22,18 @@ export function posterUrl(avatarId: string, videoId: string): string | null {
   return `studio-media://poster/${avatarId}/${videoId}`;
 }
 
+/** A ready clip (5b.1, I5.54): main serves the library's mp4 through the clip's record, as `video/mp4` with byte ranges for seeking. Null for an id that breaks the contract. */
+export function clipUrl(avatarId: string, clipId: string): string | null {
+  if (!Id.safeParse(avatarId).success || !Id.safeParse(clipId).success) return null;
+  return `studio-media://clip/${avatarId}/${clipId}`;
+}
+
+/** A ready clip's poster (the frame at 0.5 s, 5b.1): served through the clip's record. Null for an id that breaks the contract. */
+export function clipPosterUrl(avatarId: string, clipId: string): string | null {
+  if (!Id.safeParse(avatarId).success || !Id.safeParse(clipId).success) return null;
+  return `studio-media://clipposter/${avatarId}/${clipId}`;
+}
+
 /** A trending track's cover (K13), from the music store. */
 export function coverUrl(trackId: string): string | null {
   if (!Id.safeParse(trackId).success) return null;
