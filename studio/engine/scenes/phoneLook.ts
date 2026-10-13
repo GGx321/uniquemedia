@@ -52,7 +52,8 @@ const CANDID_CLAUSE = "She is busy with something and not looking toward the cam
 
 // C3′ (the owner's verdict, 2026-10-12): «the phone hides most of her face» drew her face beside the phone in 5 of 5 frames; the wording probe's winner (c3fix 1a)
 // covers it from her eyebrows to her chin. A side-to-the-mirror frame is a face-hidden one, so MIRROR_BACK_LINE leaves the face cover to this line.
-const FACE_COVER = "the phone covering her face from her eyebrows to her chin";
+// Exported (5b.1, S5.V5) so the clip's mirror-hidden camera line (engine/clips/videoLook.ts) says the same words as the photo it starts from.
+export const FACE_COVER = "the phone covering her face from her eyebrows to her chin";
 
 /** The fixed capture lines; `friend` and `candid` take a variant from the slot's key (`captureLineOf`). */
 const FIXED_CAPTURE_LINE: Readonly<Record<Exclude<Capture, "friend" | "candid">, string>> = {

@@ -1,9 +1,10 @@
 import type { PoolShot, ScenePose } from "../engine";
 import { BANKS, CUES } from "./banks";
-import { BANK_CATEGORIES, type Level } from "./banks/types";
+import type { Level } from "./banks/types";
 import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "./captures";
 import { pick } from "./hash";
 import { locativeOf, rendersActivity } from "./custom";
+import { momentOfSlot, placeOfSlot } from "./template";
 import { PHONE_WORDS, SELFIE_WORDS } from "./words";
 
 // 5a.2 (S5.6d, plan s5a2 §5.5 «After the last attempt»): the sentence a planned slot takes when the model could not write it in the two answered attempts a chunk
@@ -72,9 +73,8 @@ function customDoing(activity: string): string {
 }
 
 export function plainSentence(slot: PlainSlot): string {
-  const bank = BANK_CATEGORIES.find((c) => c === slot.category);
-  const place = bank === undefined ? undefined : BANKS[bank].places.find((p) => p.name === slot.location);
-  const moment = place?.moments.find((m) => m.text === slot.activity);
+  const place = placeOfSlot(slot);
+  const moment = momentOfSlot(slot);
   const at = place === undefined ? locativeOf(field(slot.location)) : field(place.at);
   const activity = field(slot.activity);
   const doing = moment !== undefined ? moment.text : customDoing(activity);
