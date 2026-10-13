@@ -438,6 +438,152 @@ const FALLBACK_CHAT: ReadonlyMap<string, ChatPrice> = new Map([
   ],
 ]);
 
+// ---------- video: /api/v1/videos/models (5b.1, S5.V2) ----------
+
+/** The resolutions a clip is priced at: Kling std 720p, Kling pro 1080p, Grok 720p. Grok at 1080p is never used (an output-moderation failure there billed $1.26, probe B2). */
+export type VideoResolution = "720p" | "1080p";
+/** The three prices a clip needs: Kling std, Kling pro, and Grok (the fallback, or the offer). */
+export type VideoTier = "std" | "pro" | "grok";
+
+/** The model and the resolution each tier is priced at. The listing must carry exactly this tier, or the price is PRICE_UNAVAILABLE for the video scope. */
+export const VIDEO_TIERS: Readonly<Record<VideoTier, { model: string; resolution: VideoResolution }>> = {
+  std: { model: "kwaivgi/kling-v3.0-std", resolution: "720p" },
+  pro: { model: "kwaivgi/kling-v3.0-pro", resolution: "1080p" },
+  grok: { model: "x-ai/grok-imagine-video-1.5", resolution: "720p" },
+};
+
+const VIDEO_TIER_OF_MODEL: ReadonlyMap<string, VideoTier> = new Map((Object.keys(VIDEO_TIERS) as VideoTier[]).map((tier) => [VIDEO_TIERS[tier].model, tier]));
+
+/** A model's price at one resolution, in whole micro-dollars (rounded UP once, at the parser: the clip formulas of shared/engine/clips.ts refuse anything else). */
+export interface VideoPrice {
+  model: string;
+  resolution: VideoResolution;
+  perSecondMicros: number;
+  perInputImageMicros: number;
+  source: PriceSource;
+}
+
+/**
+ * The day the video fallback table was read from OpenRouter (probe B, 2026-10-10). It has its own date because `PriceBook.fallbackDate` is one date for every map: a clip's
+ * `Estimate.pricesAsOf` must say 2026-10-10, not the image table's 2026-09-24.
+ */
+export const FALLBACK_VIDEO_DATE = "2026-10-10";
+
+/** Read from `/videos/models` on 2026-10-10 (the committed fixture, pinned equal by a test). Used only when the listing itself cannot be read. */
+export const FALLBACK_VIDEO: ReadonlyMap<string, VideoPrice> = new Map(
+  (
+    [
+      ["std", 84_000, 0],
+      ["pro", 112_000, 0],
+      ["grok", 140_000, 10_000],
+    ] as const
+  ).map(([tier, perSecondMicros, perInputImageMicros]) => [
+    VIDEO_TIERS[tier].model,
+    { model: VIDEO_TIERS[tier].model, resolution: VIDEO_TIERS[tier].resolution, perSecondMicros, perInputImageMicros, source: "fallback" as const },
+  ])
+);
+
+const VIDEO_DECIMAL = /^\d+(?:\.\d+)?$/;
+/** A SKU key that names a resolution (`..._720p`, `..._1080p`, `..._2k`, `..._4k`). A model with any such key is not priced flat. */
+const RESOLUTION_SKU = /_(?:\d{3,4}p|\dk)$/i;
+
+const VideoListing = z.object({ data: z.array(z.unknown()) });
+const ListedVideoModel = z.object({ id: z.string(), pricing_skus: z.record(z.string(), z.unknown()) });
+
+type Skus = Readonly<Record<string, unknown>>;
+
+/**
+ * Reads the listing's models by id. A body without a single `data[{id, pricing_skus}]` is UNREADABLE: it throws a plain Error, which the loader answers with the dated table.
+ * Entries that do not parse are skipped (one odd entry must not hide the others); the first entry of an id wins.
+ */
+function readVideoListing(body: unknown): Map<string, Skus> {
+  const listing = VideoListing.safeParse(body);
+  if (!listing.success) throw new Error(`Unexpected /videos/models body: ${z.prettifyError(listing.error)}`);
+  const models = new Map<string, Skus>();
+  for (const item of listing.data.data) {
+    const entry = ListedVideoModel.safeParse(item);
+    if (entry.success && !models.has(entry.data.id)) models.set(entry.data.id, entry.data.pricing_skus);
+  }
+  if (models.size === 0) throw new Error("Unexpected /videos/models body: no entry has an id and pricing_skus");
+  return models;
+}
+
+function videoUnavailable(message: string): MoneyError {
+  return new MoneyError("PRICE_UNAVAILABLE", message, { scope: "video" });
+}
+
+/** A listed price (USD, or cents when `cents`) as whole micro-dollars, rounded UP. A value that is not a plain non-negative decimal, or is out of range, is PRICE_UNAVAILABLE. */
+function videoMicros(value: unknown, where: string, cents: boolean): number {
+  const number = typeof value === "string" && VIDEO_DECIMAL.test(value) ? Number(value) : typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+  if (number === null) throw videoUnavailable(`${where} is not a plain non-negative price`);
+  const micros = costToMicrosCeil(cents ? number / 100 : number);
+  if (!Number.isSafeInteger(micros)) throw videoUnavailable(`${where} is out of range`);
+  return micros;
+}
+
+/**
+ * The per-second price of one resolution, in the order of plan §5.9, and never another resolution's: `image_to_video_duration_seconds_<res>` (USD); else
+ * `cents_per_video_output_second_<res>` (cents); else the plain `duration_seconds` (USD), but only for a model that names no resolution in any SKU (priced flat). A model that
+ * prices other resolutions and not this one has no price for it: the 2K rule of 5a.3.
+ */
+function perSecondMicros(skus: Skus, model: string, resolution: VideoResolution): number {
+  const imageToVideo = skus[`image_to_video_duration_seconds_${resolution}`];
+  if (imageToVideo !== undefined) return videoMicros(imageToVideo, `${model} image_to_video_duration_seconds_${resolution}`, false);
+  const cents = skus[`cents_per_video_output_second_${resolution}`];
+  if (cents !== undefined) return videoMicros(cents, `${model} cents_per_video_output_second_${resolution}`, true);
+  const flat = skus.duration_seconds;
+  if (flat !== undefined && !Object.keys(skus).some((key) => RESOLUTION_SKU.test(key))) return videoMicros(flat, `${model} duration_seconds`, false);
+  throw videoUnavailable(`/videos/models lists no ${resolution} price for ${model}`);
+}
+
+function videoPriceFrom(listing: ReadonlyMap<string, Skus>, model: string, resolution: VideoResolution): VideoPrice {
+  const skus = listing.get(model);
+  if (skus === undefined) throw videoUnavailable(`/videos/models does not list ${model}`);
+  const perSecond = perSecondMicros(skus, model, resolution);
+  // A zero price would reserve nothing.
+  if (perSecond === 0) throw videoUnavailable(`${model} is priced 0 at ${resolution}, which would reserve nothing`);
+  const imageInput = skus.cents_per_image_input;
+  return {
+    model,
+    resolution,
+    perSecondMicros: perSecond,
+    perInputImageMicros: imageInput === undefined ? 0 : videoMicros(imageInput, `${model} cents_per_image_input`, true),
+    source: "live",
+  };
+}
+
+/**
+ * The price of one model at one resolution from the `/videos/models` body. Throws a plain Error when the body cannot be read at all (the loader then uses the dated table), and
+ * a `MoneyError` PRICE_UNAVAILABLE with `scope: "video"` when it reads and says no: the model, the resolution's SKU or a sane value is missing. Never the table.
+ */
+export function parseVideoModels(body: unknown, model: string, resolution: VideoResolution): VideoPrice {
+  return videoPriceFrom(readVideoListing(body), model, resolution);
+}
+
+/** The prices of `models` by model id: live from one GET of the listing; the dated table only when the listing cannot be read. */
+async function loadVideoPrices(fetch: FetchLike, base: string, models: readonly string[], timeoutMs: number): Promise<Map<string, VideoPrice>> {
+  const wanted = [...new Set(models)].sort();
+  const tiers = wanted.map((model) => {
+    const tier = VIDEO_TIER_OF_MODEL.get(model);
+    if (tier === undefined) throw videoUnavailable(`no video tier is known for ${model}`);
+    return { model, resolution: VIDEO_TIERS[tier].resolution };
+  });
+  let listing: Map<string, Skus>;
+  try {
+    listing = readVideoListing(await getJson(fetch, `${base}/videos/models`, timeoutMs));
+  } catch (err) {
+    if (err instanceof MoneyError) throw err;
+    return new Map(
+      tiers.map(({ model }) => {
+        const dated = FALLBACK_VIDEO.get(model);
+        if (dated === undefined) throw videoUnavailable(`the ${FALLBACK_VIDEO_DATE} video fallback table does not list ${model} (${describe(err)})`);
+        return [model, dated];
+      })
+    );
+  }
+  return new Map(tiers.map(({ model, resolution }) => [model, videoPriceFrom(listing, model, resolution)]));
+}
+
 // ---------- the price book ----------
 
 export interface PriceEntry<T> {
@@ -456,9 +602,13 @@ export class PriceBook {
   private readonly images: ReadonlyMap<string, PriceEntry<ImagePrice>>;
   private readonly chat: ReadonlyMap<string, PriceEntry<ChatPrice>>;
 
-  constructor(images: ReadonlyMap<string, PriceEntry<ImagePrice>>, chat: ReadonlyMap<string, PriceEntry<ChatPrice>>) {
+  /** 5b.1 (S5.V2): the video prices by model id; empty for every book that was not loaded with `videoModels`. */
+  private readonly video: ReadonlyMap<string, VideoPrice>;
+
+  constructor(images: ReadonlyMap<string, PriceEntry<ImagePrice>>, chat: ReadonlyMap<string, PriceEntry<ChatPrice>>, video: ReadonlyMap<string, VideoPrice> = new Map()) {
     this.images = images;
     this.chat = chat;
+    this.video = video;
   }
 
   /** Every model of the fallback table, flagged "fallback". */
@@ -473,17 +623,39 @@ export class PriceBook {
     for (const entry of [...this.images.values(), ...this.chat.values()]) {
       if (entry.source === "fallback") return "fallback";
     }
-    return "live";
+    return this.videoSource;
   }
 
+  /** The day of the dated table(s) in use: the image and chat table's, the video table's, or the OLDER of the two when both stand in. Null when every price is live. */
   get fallbackDate(): string | null {
-    return this.source === "fallback" ? FALLBACK_PRICES_DATE : null;
+    const imageOrChat = [...this.images.values(), ...this.chat.values()].some((entry) => entry.source === "fallback");
+    const dates = [...(imageOrChat ? [FALLBACK_PRICES_DATE] : []), ...(this.videoFallbackDate === null ? [] : [this.videoFallbackDate])];
+    return dates.length === 0 ? null : dates.reduce((oldest, date) => (date < oldest ? date : oldest));
+  }
+
+  /** "fallback" when any video price came from the dated table. A book with no video prices reads "live": it has none to be stale. */
+  get videoSource(): PriceSource {
+    return [...this.video.values()].some((price) => price.source === "fallback") ? "fallback" : "live";
+  }
+
+  /** The video table's own date (`FALLBACK_VIDEO_DATE`) when a video price came from it, else null. A clip's `pricesAsOf` reads this, never `fallbackDate`. */
+  get videoFallbackDate(): string | null {
+    return this.videoSource === "fallback" ? FALLBACK_VIDEO_DATE : null;
+  }
+
+  /** The price of one video tier. A book not loaded for that tier's model has none: PRICE_UNAVAILABLE for the video scope. */
+  videoPrice(tier: VideoTier): VideoPrice {
+    const price = this.video.get(VIDEO_TIERS[tier].model);
+    if (price === undefined) throw videoUnavailable(`no video price loaded for ${VIDEO_TIERS[tier].model}`);
+    return price;
   }
 
   sourceOf(model: string): PriceSource {
     const entry = this.images.get(model) ?? this.chat.get(model);
-    if (!entry) throw unavailable(model);
-    return entry.source;
+    if (entry) return entry.source;
+    const video = this.video.get(model);
+    if (!video) throw unavailable(model);
+    return video.source;
   }
 
   imageWorstCase(req: ImageWorstCaseRequest): number {
@@ -564,6 +736,12 @@ export async function loadPriceBook(opts: {
    * PRICE_UNAVAILABLE for the bold scope. Only that model is held to 2K: the settings' model stays a 1K model. Without it nothing looks for 2K.
    */
   boldShape?: boolean;
+  /**
+   * 5b.1 (S5.V2): the video model ids to price (one GET of `/videos/models` for all of them). The dated table `FALLBACK_VIDEO` stands in ONLY when that listing cannot be read
+   * (a fetch error, a non-2xx, a body without `data[{id, pricing_skus}]`). A listing that reads but lacks a needed model, resolution SKU or sane value rejects with a
+   * `MoneyError` PRICE_UNAVAILABLE, `scope: "video"`: the 2K rule of 5a.3, because a guessed video price is ten times an image's.
+   */
+  videoModels?: readonly string[];
   /** Per GET; PRICE_FETCH_TIMEOUT_MS unless a test shortens it. */
   timeoutMs?: number;
 }): Promise<PriceBook> {
@@ -596,7 +774,11 @@ export async function loadPriceBook(opts: {
           (error: unknown) => ({ ok: false, error })
         );
 
-  const [imageEntries, listed] = await Promise.all([images, models]);
+  // The video listing is one more GET beside the others (5b.1, S5.V2), so a load still takes at most one timeout.
+  const videoPrices =
+    opts.videoModels === undefined || opts.videoModels.length === 0 ? Promise.resolve(new Map<string, VideoPrice>()) : loadVideoPrices(opts.fetch, base, opts.videoModels, timeoutMs);
+
+  const [imageEntries, listed, video] = await Promise.all([images, models, videoPrices]);
   const chat = new Map<string, PriceEntry<ChatPrice>>();
   for (const model of opts.chatModels) {
     const entry = await liveOrFallback(model, FALLBACK_CHAT, async () => {
@@ -605,5 +787,5 @@ export async function loadPriceBook(opts: {
     });
     chat.set(model, entry);
   }
-  return new PriceBook(new Map(imageEntries), chat);
+  return new PriceBook(new Map(imageEntries), chat, video);
 }

@@ -9,6 +9,8 @@ export interface PriceModels {
   checkRequestShape?: boolean;
   /** 5a.3 (S5.9d): the run has «Смелая» slots, so the Seedream endpoint is also checked for the 2K request. Part of the cache key: a plain load never answers for a bold one. */
   boldShape?: true;
+  /** 5b.1 (S5.V2): the video model ids a clip is priced for. Part of the cache key beside `boldShape`; absent or empty keeps every other caller's key byte for byte. */
+  videoModels?: readonly string[];
 }
 
 /** The models in the one canonical shape the cache keys by (sorted, flags only when set). */
@@ -18,6 +20,7 @@ function wantedOf(models: PriceModels): PriceModels {
     chatModels: unique(models.chatModels),
     ...(models.checkRequestShape === true ? { checkRequestShape: true } : {}),
     ...(models.boldShape === true ? { boldShape: true as const } : {}),
+    ...(models.videoModels !== undefined && models.videoModels.length > 0 ? { videoModels: unique(models.videoModels) } : {}),
   };
 }
 
