@@ -116,6 +116,22 @@ describe("runs.estimateImages { avatarId, count, sceneSetId } (S5.R4-fix round 2
     expect(bySet).toMatchObject({ ok: false, error: { code: "PRICE_UNAVAILABLE", priceScope: "bold" } });
   });
 
+  test("a count below the active scenes counts only the scenes with text: an empty Seedream scene is not in the bold share (the engine's rule)", async () => {
+    const mock = runWorld();
+    mock.engine.seedSceneSet({ avatarId: MIA.avatarId, sceneSetId: "set-polish-0001", count: 12, written: 6, categories: ["nightwear", "home"], level: "bold" });
+    const { sceneSet } = await unwrap(mock.client.request("scenes.get", { avatarId: MIA.avatarId }));
+    if (sceneSet === null) throw new Error("no set");
+    const empty = sceneSet.scenes.filter((scene) => scene.text === null);
+    const written = sceneSet.scenes.filter((scene) => scene.text !== null);
+    expect(empty.some((scene) => scene.route === "seedream")).toBe(true);
+    const sent = await unwrap(mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: written.length, sceneSetId: sceneSet.sceneSetId }));
+    // After «Убрать» the count is the active scenes: the very figure the strip must have shown before.
+    const removed = await unwrap(mock.client.request("scenes.edit", { sceneSetId: sceneSet.sceneSetId, revision: sceneSet.revision, op: { op: "remove", sceneIds: empty.map((scene) => scene.sceneId) } }));
+    if (!("sceneSet" in removed)) throw new Error("the remove was refused");
+    const after = await unwrap(mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: written.length, sceneSetId: sceneSet.sceneSetId }));
+    expect(sent.estimate).toEqual(after.estimate);
+  });
+
   test("a price list with no 2K tier still prices a count with no «Смелая» photo", async () => {
     const mock = runWorld();
     mock.engine.lackBoldPrice();

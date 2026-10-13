@@ -3117,7 +3117,10 @@ export class MockEngine implements EngineBridge {
           if (payload.sceneSetId !== undefined) {
             const set = this.sceneSets.find(payload.sceneSetId);
             if (set === undefined || set.avatarId !== payload.avatarId) return this.fail(c, { code: "NOT_FOUND", detail: `no scene set ${payload.sceneSetId} for avatar ${payload.avatarId}` });
-            bold = Math.min(payload.count, set.scenes.filter((s) => !s.removed && s.route === "seedream").length);
+            // The engine's rule: a count below the active scenes is the strip's «only the written ones», so a scene with no text is not one of the frames and its route is not counted.
+            const active = set.scenes.filter((s) => !s.removed);
+            const drawn = payload.count < active.length ? active.filter((s) => s.text !== null) : active;
+            bold = Math.min(payload.count, drawn.filter((s) => s.route === "seedream").length);
           }
           const noTier = this.boldPriceGate(bold > 0);
           if (noTier) return this.fail(c, noTier);

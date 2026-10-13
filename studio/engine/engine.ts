@@ -3153,7 +3153,10 @@ export class Engine {
       if (payload.sceneSetId !== undefined) {
         const set = await library.sceneSets.get(payload.avatarId, payload.sceneSetId);
         if (set === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no scene set ${payload.sceneSetId} for avatar ${payload.avatarId}` });
-        bold = Math.min(payload.count, routedSlots(set.scenes.flatMap((scene) => (!scene.removed && scene.origin === "planned" ? [scene.slot] : []))));
+        // A count below the active scenes is the strip's «only the written ones» (its «Убрать» has not run yet): a scene with no text is not one of the frames, so its route is not counted.
+        const active = set.scenes.filter((scene) => !scene.removed);
+        const drawn = payload.count < active.length ? active.filter((scene) => scene.text !== null) : active;
+        bold = Math.min(payload.count, routedSlots(drawn.flatMap((scene) => (scene.origin === "planned" ? [scene.slot] : []))));
       }
       const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck, bold));
       return { estimate: runEstimateFromScenes(priced, models, { count: payload.count, boldPhotos: bold }, imageAgeCheck), photos: payload.count };

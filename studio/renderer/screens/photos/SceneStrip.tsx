@@ -158,7 +158,9 @@ export function SceneStrip({
 
   // The images for the scenes the set would draw, when «Отрисовать» cannot be priced itself (a stop, a write, a scene with no text).
   const photos = action.kind === "approve" ? action.photos : tally.active;
-  // The stored set, not its categories: the engine reads the bold share from the active scenes' own routes, the path «Отрисовать» is priced by (a removed scene or one that gave up moves nothing).
+  // The stored set, not its categories: the engine reads the bold share from the active scenes' own routes, the path «Отрисовать» is priced by. A removed scene moves nothing; when the
+  // count is below the active scenes (a `no-text` block sends only the written ones) the engine counts only scenes with text, so one that gave up or waits does not raise the figure.
+  // The revision is a cache key only: it is not sent, it just makes the price be asked again when the set changes.
   const { estimate: images, error: imagesError } = useImagesPriceState(avatar.avatarId, approvable ? 0 : photos, view, { sceneSetId: set.sceneSetId, revision: set.revision });
   const imagesShown = approvable ? approve.estimate : images;
 

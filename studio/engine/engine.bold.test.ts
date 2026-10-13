@@ -141,14 +141,14 @@ describe("a Seedream price list without the 2K tier", () => {
 // `runs.estimateFromScenes`, so the strip never prices a frame on the wrong route (a split of the count over the categories cannot know which scenes were removed or gave up).
 describe("runs.estimateImages { avatarId, count, sceneSetId } for a «Смелая» set", () => {
   /** A set of 10 written scenes over «Ночнушки и бельё» and «Дом»: every «Ночнушки и бельё» scene on the Seedream route. Returns the indexes of the routed ones and of the others. */
-  async function seedBoldSet(avatarId: string, sceneSetId: string, removed: number[] = []): Promise<{ routed: number[]; plain: number[] }> {
+  async function seedBoldSet(avatarId: string, sceneSetId: string, removed: number[] = [], emptied: number[] = []): Promise<{ routed: number[]; plain: number[] }> {
     const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds(`seedset${++seeded}`) });
     const set = sampleSet({ sceneSetId, avatarId, runId: `run-${sceneSetId}`, count: 10, written: 10, categories: ["nightwear", "home"] });
     const bold = (i: number): boolean => set.scenes[i]?.origin === "planned" && set.scenes[i]?.slot.category === "nightwear";
     await library.sceneSets.create({
       ...set,
       request: { ...set.request, level: "bold" },
-      scenes: set.scenes.map((scene, i) => ({ ...scene, removed: removed.includes(i), ...(scene.origin === "planned" && bold(i) ? { slot: { ...scene.slot, route: "seedream" as const } } : {}) })),
+      scenes: set.scenes.map((scene, i) => ({ ...scene, removed: removed.includes(i), ...(emptied.includes(i) ? { text: null } : {}), ...(scene.origin === "planned" && bold(i) ? { slot: { ...scene.slot, route: "seedream" as const } } : {}) })),
     });
     const all = set.scenes.map((_, i) => i);
     return { routed: all.filter(bold), plain: all.filter((i) => !bold(i)) };
@@ -192,6 +192,18 @@ describe("runs.estimateImages { avatarId, count, sceneSetId } for a «Смела
     await seedBoldSet(avatarId, "set-bold-0003", [first]);
     const { engine } = await boot();
     const images = await imagesFor(engine, { avatarId, count: 9, sceneSetId: "set-bold-0003" });
+    expect(images.worstMicros).toBe((probe.routed.length - 1) * 3 * 93_000 + (9 - probe.routed.length + 1) * 3 * 60_000);
+  });
+
+  test("a count below the active scenes counts only the scenes with text: an empty Seedream scene is not in the bold share", async () => {
+    const avatarId = await seedAvatar();
+    const probe = await seedBoldSet(avatarId, "set-bold-0005a");
+    const empty = probe.routed[0];
+    if (empty === undefined) throw new Error("no routed scene");
+    await seedBoldSet(avatarId, "set-bold-0005", [], [empty]);
+    const { engine } = await boot();
+    // The strip sends the scenes WITH text (9 of 10 active); the run it prices is those 9, and the empty Seedream scene is not one of them.
+    const images = await imagesFor(engine, { avatarId, count: 9, sceneSetId: "set-bold-0005" });
     expect(images.worstMicros).toBe((probe.routed.length - 1) * 3 * 93_000 + (9 - probe.routed.length + 1) * 3 * 60_000);
   });
 
