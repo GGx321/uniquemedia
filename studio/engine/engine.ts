@@ -163,6 +163,11 @@ import { renderPoolSize } from "./renderQueue/pool";
 import { maskHome } from "./renderQueue/scrubber";
 import { createFocusResolver, type FocusFaceGate, type FocusResolver } from "./focus/focusResolver";
 import type { WorkerFaceGate } from "./face/worker/workerGate";
+import { ClipService } from "./clips/service";
+import { clipTimings, type ClipTimings } from "./clips/timings";
+import type { BoldClipsMode } from "../shared/engine/clips";
+import { NODE_COMMIT_FS } from "./videos/commitFs";
+import { withRootLock } from "./videos/rootLock";
 import { CommitTracker } from "./videos/live";
 import { FileStateChecker } from "./videos/fileState";
 import { listVideoRecordIds } from "./videos/listing";
@@ -368,6 +373,13 @@ export interface EngineDeps {
   montages?: Partial<Pick<MontageServiceDeps, "focus" | "focusBudgetMs" | "randomSeed" | "commandDeadlineMs" | "commandMarginMs">> & Partial<Pick<DraftStoreDeps, "beforeRename">>;
   /** Test seam of the library the engine opens: its crash points (`testHooks`), e.g. a write that fails after a paid call. */
   library?: Pick<LibraryDeps, "testHooks">;
+  /**
+   * Stage 5, 5b.1 (S5.V4a1, critic M6): every duration of the clip money path (polls, the proof window, the lifetime, the holds). The real set unless a test, a parity rig or the
+   * E2E smoke passes the short one (`clipTimings("short")`), which keeps every ordering of the real one.
+   */
+  clipTimings?: ClipTimings;
+  /** Test knobs of 5b.1: the fallback mode (`GROK_FALLBACK`) and `BOLD_CLIPS`, so every value can be played against the real engine. The constants rule otherwise. */
+  clipSwitches?: { mode?: "auto" | "offer"; boldClips?: BoldClipsMode };
 }
 
 /** How long one `videos.render` may spend filling the focus of its photos. Under main's 30 s command deadline, so the answer (or the refusal) always arrives before main gives up. */
@@ -500,8 +512,9 @@ export function engineErrorFrom(error: unknown): EngineError {
       case "SETTLE_ABOVE_WORST":
         return { code: error.code, detail };
       case "PRICE_UNAVAILABLE":
-        // 5a.3 (S5.9d, gap D): a price list that lacks only the «Смелая» route's 2K tier says so, so the card can tell the owner the rest still works.
-        return { code: error.code, detail, ...(error.scope === "bold" ? { priceScope: "bold" as const } : {}) };
+        // 5a.3 (S5.9d, gap D): a price list that lacks only the «Смелая» route's 2K tier says so, so the card can tell the owner the rest still works. 5b.1 (S5.V4a1): so does a
+        // video listing that reads and lacks a clip's price (the sheet says clips cannot start while photos work as usual).
+        return { code: error.code, detail, ...(error.scope === undefined ? {} : { priceScope: error.scope }) };
       case "LEDGER_TORN":
         return { code: "RECONCILE_REQUIRED", detail };
       default:
@@ -856,6 +869,8 @@ export class Engine {
   readonly #pendingRunStops = new Map<string, { depth: number; stop: boolean }>();
   /** CS.4a: the scene sets' commands and their writer job (an avatar's planned run held before its images are paid for). */
   readonly #sceneSets: SceneSetService;
+  /** Stage 5, 5b.1 (S5.V4a1): the clip commands, the one paid clip at a time, the clip jobs and the reconcile hold registry. */
+  readonly #clips: ClipService;
   /** S4.5a: the sets and the slice runs of unfinished launches (plan §3.4). Replaced when a library becomes the live one. */
   readonly #launches: LaunchRegistry;
   /** What each opened library's sets say of launches, read when it was opened so that adopting it as the live one needs no await. */
@@ -1141,6 +1156,49 @@ export class Engine {
         for (const listener of [...this.#setListeners]) listener(set);
       },
     });
+    // Stage 5, 5b.1 (S5.V4a1): the clips take the same service bag as the scene sets, plus the reconcile's month figure and, for the export (S5.V4c), the render's commit parts.
+    this.#clips = new ClipService({
+      newId: () => this.#deps.newId(),
+      clock: () => this.#deps.clock(),
+      currentLibrary: () => this.library,
+      liveLibrary: () => this.#liveLibrary(),
+      usableKey: (purpose) => this.#usableKey(purpose),
+      paidBudget: () => this.#paidBudget(),
+      budget: () => this.budget,
+      prices: (models) => this.#prices.get(models),
+      checkAccepted: (worstMicros, acceptedWorstMicros) => Engine.#checkAccepted(worstMicros, acceptedWorstMicros),
+      checkMonthlyRoom: (budget, worstMicros) => Engine.#checkMonthlyRoom(budget, worstMicros),
+      monthFits: (budget, worstMicros) => Engine.#monthFits(budget, worstMicros),
+      paidStart: () => {
+        this.#paidCommands++;
+      },
+      paidEnd: () => {
+        this.#paidCommands--;
+      },
+      setCap: (key, micros) => {
+        this.#caps.set(key, micros);
+      },
+      clearCap: (key) => {
+        this.#caps.delete(key);
+      },
+      openRouter: (key) => this.#openRouter(key),
+      jobs: this.#jobs,
+      emit: (event) => this.#emit(event),
+      emitMoney: () => this.#emitMoney(),
+      markKeyRejected: (key) => this.markKeyRejected(key),
+      pendingDelete: (avatarId) => this.#pendingDelete?.avatarId === avatarId,
+      assertAvatarOnDisk: (library, avatarId) => this.#assertAvatarOnDisk(library, avatarId),
+      readRunPlan: (library, runId) => this.#readRunPlan(library, runId),
+      faceGate: () => deps.portraitFaceGate ?? null,
+      timings: deps.clipTimings ?? clipTimings(),
+      ...(deps.clipSwitches?.mode === undefined ? {} : { mode: deps.clipSwitches.mode }),
+      ...(deps.clipSwitches?.boldClips === undefined ? {} : { boldClips: deps.clipSwitches.boldClips }),
+      log: (line) => console.warn(`studio engine: ${line}`),
+      exportStatus: (requiredBytes) => this.#refreshExportStatus(requiredBytes),
+      liveCommits: this.#commits,
+      withRootLock: (root, work, options) => withRootLock(deps.videos?.fs ?? NODE_COMMIT_FS, root, work, options),
+      exportNumbers: () => (this.#live === null ? null : { library: this.#live.library, libraryRoot: this.#live.library.root }),
+    });
     // S4.6a: the orchestrator core. It gets the registry and the Budget groups through its constructor; the engine keeps no public handle on it.
     this.#orchestrator = new Orchestrator({
       stores: launchStores,
@@ -1171,7 +1229,8 @@ export class Engine {
       prices: (models) => this.#prices.get(models),
       monthRoom: () => this.monthRoom(),
       monthlyBudgetMicros: () => this.#settings.monthlyBudgetMicros,
-      isBusy: (avatarId) => this.#busyAvatars.has(avatarId) || this.#jobs.hasLiveJobFor(avatarId),
+      // A clip never claims its avatar (5b.1, I5.50): a launch does not skip an avatar whose clip is being made.
+      isBusy: (avatarId) => this.#busyAvatars.has(avatarId) || this.#jobs.hasLiveJobFor(avatarId, { clips: false }),
       photoIdsInDrafts: (library, avatarId) => this.#drafts.photoIdsInDrafts(library, avatarId),
       paidGate: () => this.#launchPaidGate(),
       exportStatus: () => this.#exportStatus,
@@ -1445,6 +1504,8 @@ export class Engine {
     // The free steps' runs end now, whatever they still have in flight: a render that never reports its end would leave a run sleeping for ever on a timer that is not unref'd, and the process alive.
     this.#freeSteps?.dispose();
     this.#mediaAbort.abort();
+    // 5b.1 (§5.12): a clip is not waited for (its reserve stays open for the next start's reconcile), and the hold registry's timers are cleared: nothing is announced after this.
+    this.#clips.shutdown();
     if (this.#internalNoticeTimer !== null) clearTimeout(this.#internalNoticeTimer);
     this.#internalNoticeTimer = null;
     // A music request in flight is aborted (its send stays counted); the renders get their bounded wait.
@@ -2060,7 +2121,17 @@ export class Engine {
 
   /** True while a job or paid command writes into the live library, a pick/archive is running, a reject mark is being written, an own-media import is running, or a render is queued or running (invariant 25): a library switch must be refused. */
   #busy(): boolean {
-    return this.#paidCommands > 0 || this.#busyAvatars.size > 0 || this.#librarySmallWrites > 0 || this.#renders.active() > 0 || this.#jobs.activeImports() > 0 || this.#videos.preparing > 0 || (this.#money.ok && this.#money.budget.inFlightCount() > 0);
+    return (
+      this.#paidCommands > 0 ||
+      this.#busyAvatars.size > 0 ||
+      this.#librarySmallWrites > 0 ||
+      this.#renders.active() > 0 ||
+      this.#jobs.activeImports() > 0 ||
+      this.#videos.preparing > 0 ||
+      (this.#money.ok && this.#money.budget.inFlightCount() > 0) ||
+      // 5b.1 (I5.50): a clip job writes into the library until its record, long after its money closed (the download, the poster, the face check, a late clip).
+      this.#clips.busy()
+    );
   }
 
   /**
@@ -2076,7 +2147,7 @@ export class Engine {
   }
 
   #inFlightRefusal(): EngineError {
-    return { code: "IN_FLIGHT", detail: "paid requests, a pick or archive, a reject mark, an own-media import, a video render or delete are in flight; change the library folder when they end" };
+    return { code: "IN_FLIGHT", detail: "paid requests, a pick or archive, a reject mark, an own-media import, a video render or delete, or a clip are in flight; change the library folder when they end" };
   }
 
   /**
@@ -2271,6 +2342,11 @@ export class Engine {
       }
       case "avatars.cancel": {
         const { jobId } = command.payload;
+        // 5b.1 (§5.1): a clip is cancelled only before its POST; after it the clip is IN_FLIGHT `submitted` and goes on.
+        if (this.#jobs.stateOf(jobId)?.kind === "clip") {
+          this.#clips.cancel(jobId);
+          return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { jobId } };
+        }
         // A render is not an avatar's job: it is stopped through the render queue, and here it is as good as unknown.
         if (this.#jobs.stateOf(jobId)?.kind === "render" || this.#jobs.stateOf(jobId)?.kind === "import" || !this.#jobs.cancel(jobId)) throw new EngineFailure({ code: "NOT_FOUND", detail: `no job ${jobId} in this engine` });
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { jobId } };
@@ -2711,6 +2787,19 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#pickPortrait(command.payload) };
       case "avatars.discardPortraits":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#discardPortraits(command.payload) };
+      // Stage 5, 5b.1 (S5.V4a1): the sheet and the paid clip. `clips.create` takes its slot and the paid count synchronously, before its first await.
+      case "clips.options":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.options(command.payload) };
+      case "clips.create":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.create(command.payload) };
+      case "clips.list":
+      case "clips.get":
+      case "clips.markSeen":
+      case "clips.delete":
+      case "clips.retryDownload":
+      case "clips.export":
+        // S5.V4a2 (the records) and S5.V4c (the export) build these.
+        return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not built yet` });
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }
@@ -5454,12 +5543,19 @@ export class Engine {
 
   /** BUDGET_EXCEEDED when the month has no room for the job's worst case on top of what is spent, reserved and held by running jobs. */
   static #checkMonthlyRoom(budget: Budget, worstMicros: number): void {
-    const month = budget.status();
-    const committed = month.spentThisMonthMicros + month.openReserveMicros + month.heldMicros;
-    if (committed + worstMicros > month.monthlyBudgetMicros) {
+    if (!Engine.#monthFits(budget, worstMicros)) {
+      const month = budget.status();
+      const committed = month.spentThisMonthMicros + month.openReserveMicros + month.heldMicros;
       const detail = `committed ${committed} µ$ + this job's worst case ${worstMicros} µ$ > the monthly budget ${month.monthlyBudgetMicros} µ$`;
       throw new EngineFailure({ code: "BUDGET_EXCEEDED", detail });
     }
+  }
+
+  /** The one month figure (spent + open + held) as a yes or no: `#checkMonthlyRoom` refuses by it, and the clip sheet's `monthFits` reads it, so the two never disagree (5b.1, I5.47). */
+  static #monthFits(budget: Budget, worstMicros: number): boolean {
+    const month = budget.status();
+    const committed = month.spentThisMonthMicros + month.openReserveMicros + month.heldMicros;
+    return committed + worstMicros <= month.monthlyBudgetMicros;
   }
 
   /** The key for a paid or keyed call: stored, and not rejected by OpenRouter. */
@@ -5701,10 +5797,13 @@ export class Engine {
     const { budget } = money;
     const status = budget.status();
     const reasons: ReconcileReason[] = [];
-    // Open reserves other than this process's in-flight ones were left by a
-    // crash, an abort or a timeout: they wait for a user reconcile.
-    if (status.openAttempts - budget.inFlightCount() > 0) reasons.push("open-reserves");
+    // Open reserves other than this process's in-flight ones were left by a crash, an abort or a timeout: they wait for a user reconcile. A clip's own abandoned reserve is not one
+    // while the hold registry still holds it (5b.1, I5.48): the reconcile cannot run then anyway, and the window's paidStop would stop every paid action for nothing. It stays in
+    // the unsettled sums, and turns into a reason when its hold ends.
+    const waiting = budget.ledger.openReserves().filter((reserve) => !budget.isInFlight(reserve.attemptId) && !this.#clips.holdsOwnReserve(reserve.attemptId));
+    if (waiting.length > 0) reasons.push("open-reserves");
     if (status.torn) reasons.push("torn-ledger-line");
+    const availableAt = this.#clips.reconcileAvailableAt();
     return {
       ledger: "open",
       month,
@@ -5715,6 +5814,7 @@ export class Engine {
       reconcileNeeded: reasons.length > 0,
       reconcileReasons: reasons,
       halt: Engine.#haltOf(budget, status),
+      ...(availableAt === null ? {} : { reconcileAvailableAt: new Date(availableAt).toISOString() }),
     };
   }
 
@@ -5747,6 +5847,9 @@ export class Engine {
     if (this.#paidCommands > 0) {
       throw new EngineFailure({ code: "IN_FLIGHT", detail: `${this.#paidCommands} paid job(s) of this engine are running; reconcile when they end` });
     }
+    // 5b.1 (I5.48): a video bills when it completes, and a charge was seen refunded 10-25 s later; while an attempt of a clip may still bill, `/credits` cannot be trusted yet.
+    const clipWaitMs = this.#clips.reconcileWaitMs();
+    if (clipWaitMs > 0) return { status: "too-early", retryAfterMs: clipWaitMs, warnings: [] };
     let result: LedgerReconcileResult;
     try {
       const client = this.#openRouter(key);
