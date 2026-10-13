@@ -71,7 +71,9 @@ describe("a live clip", () => {
 
   test("refuses an avatar delete (`hasLiveJobFor` counts it), and lets it through once the clip ends", async () => {
     const { engine, avatarId, jobId } = await liveClip();
-    expect((await reply(engine, deletePrepare(avatarId))).error?.code).toBe("IN_FLIGHT");
+    const refused = await reply(engine, deletePrepare(avatarId));
+    expect(refused.error?.code).toBe("IN_FLIGHT");
+    expect(refused.error?.detail).toContain("a clip of this avatar");
     engine.net.release("kling");
     await jobEnd(engine, jobId);
     expect((await reply(engine, deletePrepare(avatarId))).error).toBeUndefined();

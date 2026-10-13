@@ -5195,7 +5195,9 @@ export class Engine {
    */
   #deleteBusy(library: Library, avatarId: string): string | null {
     if (this.#orchestrator.holdsAvatar(avatarId)) return "the avatar is in an unfinished autopilot launch: stop the launch first";
-    if (this.#jobs.hasLiveJobFor(avatarId) || this.#renders.reservedPhotos(avatarId).size > 0) return "a photo run, a candidate job or a video render of this avatar is running";
+    if (this.#jobs.hasLiveJobFor(avatarId, { clips: false }) || this.#renders.reservedPhotos(avatarId).size > 0) return "a photo run, a candidate job or a video render of this avatar is running";
+    // 5b.1 (I5.50): a clip job of the avatar (its money, its file, its record) is waited for too; its own words, so the existing ones stay as they were.
+    if (this.#jobs.hasLiveJobFor(avatarId)) return "a clip of this avatar is being made";
     if ((this.#focusRequests.get(avatarId) ?? 0) > 0) return "a focus request for this avatar is running";
     if (library.pendingVideoCount(avatarId) > 0) return "a video of this avatar is still being saved";
     if (this.#librarySmallWrites > 0 || this.#videos.preparing > 0) return "a draft, a mark or a video of the library is being written";
