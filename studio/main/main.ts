@@ -49,7 +49,8 @@ import { APP_PAGE_URL, APP_SCHEME, APP_SCHEME_PRIVILEGES, handleAppRequest } fro
 import { HostNotices } from "./notices";
 import { appMenuTemplate } from "./appMenu";
 import { createQuitFlow, WINDOW_FLUSH_WAIT_MS } from "./quitFlow";
-import { AutopilotHost, gateWhileAsleep, reopensWindowAfterStay, watchPower } from "./autopilotHost";
+import { AutopilotHost, gateWhileAsleep, reopensWindowAfterStay, watchPower, type QuitDialogSpec } from "./autopilotHost";
+import { ClipHost, confirmInOrder } from "./clipHost";
 import { createWindowFlush } from "./windowFlush";
 import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
 import { installSessionPermissions } from "./sessionPermissions";
@@ -302,11 +303,21 @@ async function startStudio(): Promise<void> {
   // The autopilot's host (S4.7): the power blocker, the quit question, the notifications and the sleep (autopilotHost.ts). It learns the launch from the engine's events.
   // Notifications that are being shown are kept here: one that is garbage collected never delivers its click.
   const shownNotifications = new Set<Notification>();
-  const autopilot = new AutopilotHost({
-    blocker: {
-      start: () => powerSaveBlocker.start("prevent-app-suspension"),
-      stop: (id) => powerSaveBlocker.stop(id),
+  // The power blocker and the quit question are shared by the autopilot's host and the clip's: one port each, two features (autopilotHost.ts, clipHost.ts).
+  const powerBlocker = {
+    start: () => powerSaveBlocker.start("prevent-app-suspension"),
+    stop: (id: number) => powerSaveBlocker.stop(id),
+  };
+  const quitDialog = {
+    ask: async (spec: QuitDialogSpec) => {
+      const options = { type: "question" as const, message: spec.message, detail: spec.detail, buttons: [...spec.buttons], defaultId: spec.defaultId, cancelId: spec.cancelId, noLink: true };
+      const owner = BrowserWindow.getFocusedWindow();
+      const result = owner === null ? await dialog.showMessageBox(options) : await dialog.showMessageBox(owner, options);
+      return result.response;
     },
+  };
+  const autopilot = new AutopilotHost({
+    blocker: powerBlocker,
     notifier: {
       show: (content, onClick) => {
         if (!Notification.isSupported()) return;
@@ -317,14 +328,7 @@ async function startStudio(): Promise<void> {
         notification.show();
       },
     },
-    dialog: {
-      ask: async (spec) => {
-        const options = { type: "question" as const, message: spec.message, detail: spec.detail, buttons: [...spec.buttons], defaultId: spec.defaultId, cancelId: spec.cancelId, noLink: true };
-        const owner = BrowserWindow.getFocusedWindow();
-        const result = owner === null ? await dialog.showMessageBox(options) : await dialog.showMessageBox(owner, options);
-        return result.response;
-      },
-    },
+    dialog: quitDialog,
     isWindowFocused: () => BrowserWindow.getAllWindows().some((win) => win.isFocused()),
     openWindow: () => focusOrOpenWindow(),
     avatarName: async (avatarId) => {
@@ -336,6 +340,8 @@ async function startStudio(): Promise<void> {
     now: () => performance.now(),
     platform: process.platform,
   });
+  // A clip in flight (S5.V6): the quit question after the autopilot's, and the Mac kept awake from `submitting` to `proving` (clipHost.ts). It learns the clip from the engine's events.
+  const clips = new ClipHost({ blocker: powerBlocker, dialog: quitDialog });
   watchPower(powerMonitor, autopilot);
   windowActivity = (source) => autopilot.activity(source);
   app.on("browser-window-focus", () => autopilot.activity("focus"));
@@ -383,6 +389,7 @@ async function startStudio(): Promise<void> {
     onEvent: (event) => {
       broadcast(event);
       autopilot.observe(event);
+      clips.observe(event);
       // The engine is the source of truth about the live library: a confirm
       // main gave up on (engineHost.ts's 30 s deadline) can still land after
       // that, and settings.json must not keep naming the old folder then.
@@ -395,6 +402,7 @@ async function startStudio(): Promise<void> {
     // "the engine is not running".
     onExit: (error, restarting) => {
       autopilot.engineGone();
+      clips.engineGone();
       if (restarting) notices.add("engine-restarted", error.detail);
     },
   });
@@ -419,7 +427,8 @@ async function startStudio(): Promise<void> {
   });
   const quitFlow = createQuitFlow({
     // While a launch runs the owner is asked first (S4.7); «Остаться» after the last window closed on Windows opens a window again.
-    confirmQuit: () => autopilot.confirmQuit(),
+    // The autopilot's question first, then the clip's: an owner who stayed at the first is not asked a second time.
+    confirmQuit: () => confirmInOrder([() => autopilot.confirmQuit(), () => clips.confirmQuit()]),
     stay: () => {
       if (reopensWindowAfterStay(process.platform, BrowserWindow.getAllWindows().length)) createWindow();
     },
@@ -428,6 +437,7 @@ async function startStudio(): Promise<void> {
     quit: () => app.quit(),
     stop: () => {
       autopilot.dispose();
+      clips.dispose();
       engine.stop();
     },
   });
