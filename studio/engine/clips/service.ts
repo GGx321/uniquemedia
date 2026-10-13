@@ -41,7 +41,7 @@ import { runClipJob, type ClipJobDeps, type ClipJobOutcome } from "./job";
 import { parseClipAttemptId } from "./journal";
 import { motionChoicesOf } from "./motion";
 import { ClipRecords, type ClipRecordsDeps } from "./records";
-import { recoverClips, type ClipRecoveryHost } from "./recover";
+import { holdsFromLedger, recoverClips, type ClipRecoveryHost } from "./recover";
 import { clipsDirOf } from "./store";
 import type { ClipTimings } from "./timings";
 
@@ -312,15 +312,28 @@ export class ClipService {
 
   // ---------- a library became the live one (S5.V6, §5.12) ----------
 
-  /** The clip jobs' counters, for a recovery job: the per-clip guard (no second job on one journal) and `#clipWork` (a library switch waits). Null: a job already works on that clip. */
+  /**
+   * The per-clip guard of a recovery job (no second job on one journal). It is NOT `#work`: a library switch does not wait for a recovery, it stops it (the journal and the holds stay, and
+   * the next open of that library recovers again). An avatar delete still waits, since the job is registered with its avatar. Null: a job already works on that clip.
+   */
   #enterWork(clipId: string): (() => void) | null {
     if (this.#activeClips.has(clipId)) return null;
     this.#activeClips.add(clipId);
-    this.#work++;
     return () => {
       this.#activeClips.delete(clipId);
-      this.#work--;
     };
+  }
+
+  /** The recoveries of the library that was live before the next one: stopped by `libraryOpened`. */
+  #recoveryStop = new AbortController();
+
+  /**
+   * The restart's holds when NO library is open at the start (a volume that is not mounted): the journals cannot be read, but the ledger can say which clip reserves are open, and each may be a
+   * render still going. Held 60 min from the reserve line's `at`; a library opened later only extends (`recoverClips`).
+   */
+  restartHolds(): void {
+    const reserves = (this.#deps.budget()?.ledger.openReserves() ?? []).filter((r) => parseClipAttemptId(r.attemptId) !== null);
+    for (const [attemptId, untilMs] of holdsFromLedger(reserves, this.#deps.clock(), this.#deps.timings)) this.holds.hold(attemptId, untilMs);
   }
 
   /** The role the clip's source photo had at the gate, or null when it cannot be known (the photo is gone; a plan that does not read is no plan, as `clips.create` reads it). */
@@ -334,12 +347,19 @@ export class ClipService {
   /** Recovers the clips of a library that has just become the live one: the restart's holds, the sweep, and one free job per journal with no record. In the background; never rejects. */
   libraryOpened(library: Library): void {
     const deps = this.#deps;
+    // The recoveries of the library before this one stop here: they leave their journals and holds, and that library recovers again when it is opened.
+    this.#recoveryStop.abort();
+    this.#recoveryStop = new AbortController();
     const host: ClipRecoveryHost = {
       clock: deps.clock,
       newId: deps.newId,
       timings: deps.timings,
       holds: this.holds,
-      signal: this.#stop.signal,
+      // The clip records' lock (V4a2's `withClipLock`) is not on this branch: until the two meet, the lock is a pass-through here. The integration follow-up passes the records' lock in its place.
+      withClipLock: (_clipId, work) => work(),
+      isCurrent: () => deps.currentLibrary() === library,
+      isOwn: (attemptId) => this.#ownAttempts.has(attemptId),
+      signal: eitherSignal(this.#stop.signal, this.#recoveryStop.signal),
       ledger: () => deps.budget()?.ledger ?? null,
       jobs: deps.jobs,
       emit: deps.emit,
@@ -362,6 +382,8 @@ export class ClipService {
     const state = this.#deps.jobs.stateOf(jobId);
     if (state?.kind !== "clip") throw new EngineFailure({ code: "NOT_FOUND", detail: `no clip job ${jobId} in this engine` });
     if (state.status !== "running") return;
+    // A recovery (after a restart) is not a clip that was just sent: its own words, from the existing texts.
+    if (state.phase === "recovering") throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "job-running", detail: "the clip is being recovered after a restart; it cannot be cancelled" });
     if (state.phase !== "preparing") throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "submitted", detail: "the clip has already been sent; it cannot be cancelled" });
     this.#deps.jobs.cancel(jobId);
   }

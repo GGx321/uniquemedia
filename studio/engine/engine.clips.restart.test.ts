@@ -11,7 +11,7 @@ import { SHORT_CLIP_TIMINGS, type ClipTimings } from "./clips/timings";
 import type { ClipRecord } from "./clips/schemas";
 import { clipNetwork, clipsDir, command, create, jobEnd, jobIdOf, phasesOf, seedClipAvatar, startClipEngine, until, type ClipEngine } from "./clips/testing/engineClipKit";
 import { journalOf, readClipRecord } from "./clips/store";
-import { ledgerLines, NOW, useEngineDir, writeLedger } from "./testing/engineHarness";
+import { engineInit, ledgerLines, NOW, useEngineDir, writeLedger } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -168,6 +168,55 @@ describe("a journal and a reserve of an earlier process, with nothing else", () 
   });
 });
 
+describe("the holds of a restart that read the ledger alone", () => {
+  const CLIP_ID = "clip-00000045";
+  const openReserve = () => ({ type: "reserve" as const, attemptId: clipAttemptId(CLIP_ID, 1), jobId: CLIP_ID, scope: { avatarJobId: CLIP_ID }, model: "kwaivgi/kling-video-o1", worstMicros: 504_000, at: new Date(NOW).toISOString() });
+  const held = (): string => new Date(NOW + TIMINGS.holdSubmittedMs).toISOString();
+
+  test("hold a clip's reserve 60 min from its `at` when no library is open at the start", async () => {
+    await writeLedger(dir(), [openReserve()]);
+    const settings = { ...engineInit(dir()).settings, libraryPath: join(dir(), "unmounted") };
+    const engine = await startClipEngine(dir(), { timings: TIMINGS, init: { settings } });
+    expect(engine.engine.library).toBeNull();
+    expect((await moneyStatus(engine)).reconcileAvailableAt).toBe(held());
+    expect(await reconcile(engine)).toMatchObject({ ok: true, result: { status: "too-early" } });
+    await engine.engine.shutdown();
+  });
+
+  test("hold it the same when the clip's journal is in another library than the open one", async () => {
+    await writeLedger(dir(), [openReserve()]);
+    const engine = await startClipEngine(dir(), { timings: TIMINGS });
+    expect((await moneyStatus(engine)).reconcileAvailableAt).toBe(held());
+    await engine.engine.shutdown();
+  });
+
+  test("keep the longer hold when a library switch brings in the journal that says less", async () => {
+    await writeLedger(dir(), [openReserve()]);
+    const other = join(dir(), "other");
+    await mkdir(other, { recursive: true });
+    const { avatarId, photoId } = await seedClipAvatar(other);
+    const folder = clipsDir(other, avatarId);
+    await mkdir(folder, { recursive: true });
+    const journal = journalOf(folder, CLIP_ID);
+    await journal.requested({
+      clipId: CLIP_ID,
+      photoId,
+      request: { model: "kling", quality: "std", seconds: 5, fallback: "auto" },
+      motion: { source: "code", label: "Моргает и улыбается", text: "she slowly blinks and gives a small smile" },
+      acceptedWorstMicros: 850_000,
+      at: new Date(NOW).toISOString(),
+    });
+    await journal.submitted({ attemptId: clipAttemptId(CLIP_ID, 1), model: "kling", providerJobId: "job-kling-1", at: new Date(NOW).toISOString() });
+    await journal.ended({ attemptId: clipAttemptId(CLIP_ID, 1), status: "refused", costSource: "proof", at: new Date(NOW).toISOString() });
+    const engine = await startClipEngine(dir(), { timings: TIMINGS });
+    await engine.engine.receive({ kind: "control", type: "library.open", callId: "call-00000010", path: other });
+    await engine.engine.receive({ kind: "control", type: "library.confirm", callId: "call-00000011", path: other });
+    await clipJobDone(engine);
+    expect((await moneyStatus(engine)).reconcileAvailableAt).toBe(held());
+    await engine.engine.shutdown();
+  });
+});
+
 describe("money.status after a restart, when no hold applies", () => {
   test("carries the reconcile's quiet wait (about 5 min) for a clip's reserve of an earlier process", async () => {
     await seedClipAvatar(libraryDir());
@@ -221,19 +270,46 @@ describe("a recovery job is a clip job like any other", () => {
     return EngineReply.parse(engine.posted.at(-1));
   };
 
-  test("an avatar delete waits for it, and a library switch waits for it", async () => {
+  test("an avatar delete waits for it", async () => {
     const { avatarId } = await submittedOnDisk();
+    const engine = await startClipEngine(dir(), { net: clipNetwork({ kling: { held: true } }), timings: TIMINGS });
+    await until(() => engine.events().some((e) => e.type === "job.progress" && e.payload.kind === "clip"), "the recovery job");
+
+    const deletePrepare = await reply(engine, { kind: "control", type: "avatar.deletePrepare", callId: "call-00000001", avatarId, token: "token-00000001" });
+    expect(deletePrepare.error?.code).toBe("IN_FLIGHT");
+
+    engine.net.release("kling");
+    await clipJobDone(engine);
+  });
+
+  test("a library switch does not wait for it: it stops, with its journal and its holds kept for the next open", async () => {
+    const { avatarId, clipId } = await submittedOnDisk();
     const other = join(dir(), "other");
     await mkdir(other, { recursive: true });
     await openLibrary(other, { now: steppingClock(), newId: sequentialIds("other") });
     const engine = await startClipEngine(dir(), { net: clipNetwork({ kling: { held: true } }), timings: TIMINGS });
     await until(() => engine.events().some((e) => e.type === "job.progress" && e.payload.kind === "clip"), "the recovery job");
 
-    const deletePrepare = await reply(engine, { kind: "control", type: "avatar.deletePrepare", callId: "call-00000001", avatarId, token: "token-00000001" });
-    expect(deletePrepare.error?.code).toBe("IN_FLIGHT");
-    const switched = await reply(engine, { kind: "control", type: "library.open", callId: "call-00000002", path: other });
-    expect(switched.error?.code).toBe("IN_FLIGHT");
-    expect(switched.error?.detail).toContain("clip");
+    expect((await reply(engine, { kind: "control", type: "library.open", callId: "call-00000002", path: other })).error).toBeUndefined();
+    expect((await reply(engine, { kind: "control", type: "library.confirm", callId: "call-00000005", path: other })).error).toBeUndefined();
+    await until(() => engine.events().some((e) => e.type === "job.cancelled" && e.payload.kind === "clip"), "the recovery job's stop");
+
+    expect(existsSync(join(clipsDir(libraryDir(), avatarId), `${clipId}.journal.jsonl`))).toBe(true);
+    expect(existsSync(join(clipsDir(libraryDir(), avatarId), `${clipId}.json`))).toBe(false);
+    expect((await moneyStatus(engine)).reconcileAvailableAt).toBeDefined();
+  });
+
+  test("a cancel of it says the clip is being worked on, not that it was sent", async () => {
+    await submittedOnDisk();
+    const engine = await startClipEngine(dir(), { net: clipNetwork({ kling: { held: true } }), timings: TIMINGS });
+    await until(() => engine.events().some((e) => e.type === "job.progress" && e.payload.kind === "clip"), "the recovery job");
+    const progress = engine.events().find((e) => e.type === "job.progress" && e.payload.kind === "clip");
+    const jobId = progress?.type === "job.progress" ? progress.payload.jobId : "";
+
+    const answer = await engine.engine.handle(command("avatars.cancel", { jobId }));
+    expect(answer.ok).toBe(false);
+    if (answer.ok) throw new Error("unreachable");
+    expect(answer.error).toMatchObject({ code: "IN_FLIGHT", clipReason: "job-running" });
 
     engine.net.release("kling");
     await clipJobDone(engine);

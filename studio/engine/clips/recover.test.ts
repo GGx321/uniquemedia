@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ClipFace, ClipRequest } from "../../shared/engine";
 import type { UnsequencedEvent } from "../../shared/engine/events";
@@ -84,14 +85,24 @@ interface Options {
   embedding?: Float32Array | null;
   /** The clips already running in this process. */
   active?: string[];
+  /** Runs after a clip's lock is taken and before the work: a test deletes or records the clip here, as a concurrent command would have between the scan and the act. */
+  beforeLocked?: (clipId: string) => Promise<void>;
+  /** The library is still the live one (default yes). */
+  current?: boolean;
+  /** Attempts this process reserved itself. */
+  own?: string[];
+  /** Holds the registry already has (an earlier open of a library, or the ledger-only start). */
+  held?: Record<string, number>;
+  /** Called by `isActive` (it answers `active`): lets a test change the world in the middle of step 1. */
+  onIsActive?: (clipId: string) => void;
   generation?: GenerationResult;
 }
 
 function rig(options: Options = {}) {
   const clock = { now: options.now ?? T0 + 5 * MIN };
   const events: UnsequencedEvent[] = [];
-  const held = new Map<string, number>();
-  const calls = { poll: [] as string[], download: [] as string[], generation: [] as string[], sleeps: [] as number[], keys: 0, face: [] as { role: ClipFaceRole; colour: unknown; masterEmbedding: Float32Array }[], posters: [] as { colour: unknown; outPath: string }[], embeds: 0 };
+  const held = new Map<string, number>(Object.entries(options.held ?? {}));
+  const calls = { locked: [] as string[], poll: [] as string[], download: [] as string[], generation: [] as string[], sleeps: [] as number[], keys: 0, face: [] as { role: ClipFaceRole; colour: unknown; masterEmbedding: Float32Array }[], posters: [] as { colour: unknown; outPath: string }[], embeds: 0 };
   const pollCount = new Map<string, number>();
   const active = new Set(options.active ?? []);
   const stop = new AbortController();
@@ -119,7 +130,14 @@ function rig(options: Options = {}) {
     clock: () => clock.now,
     newId: () => `job-id-${String(++ids).padStart(4, "0")}`,
     timings: REAL_CLIP_TIMINGS,
-    holds: { hold: (attemptId, until) => void held.set(attemptId, until) },
+    holds: { hold: (attemptId, until) => void held.set(attemptId, until), untilOf: (attemptId) => held.get(attemptId) },
+    withClipLock: async (clipId, work) => {
+      calls.locked.push(clipId);
+      await options.beforeLocked?.(clipId);
+      return work();
+    },
+    isCurrent: () => options.current !== false,
+    isOwn: (attemptId) => options.own?.includes(attemptId) ?? false,
     signal: stop.signal,
     ledger: () => ({ openReserves: () => options.reserves ?? [], reserveOf: (id) => (options.reserves ?? []).find((r) => r.attemptId === id) }),
     jobs,
@@ -131,7 +149,10 @@ function rig(options: Options = {}) {
         return () => void active.delete(clipId);
       },
       anyActive: () => active.size > 0,
-      isActive: (clipId) => active.has(clipId),
+      isActive: (clipId) => {
+        options.onIsActive?.(clipId);
+        return active.has(clipId);
+      },
     },
     usableKey: () => {
       options.key?.(++calls.keys);
@@ -564,15 +585,54 @@ describe("the holds of a restart", () => {
     expect(r.held.size).toBe(0);
   });
 
-  test("take an open reserve of a clip that has no journal any more (its record stands) and no `submitted` line", async () => {
+  test("hold an open reserve of a clip with no journal in view 60 min from its `at`: nothing says how far the render got", async () => {
     await mkdir(clipsDir(), { recursive: true });
     const r = rig({ reserves: [{ attemptId: `${OTHER}:video#1`, at: iso(T0) }] });
     await recoverClips(r.host, library);
-    expect(r.held.get(`${OTHER}:video#1`)).toBe(T0 + 20 * MIN);
+    expect(r.held.get(`${OTHER}:video#1`)).toBe(T0 + 60 * MIN);
+  });
+
+  test("hold a reserve of a clip whose journal is in view by the journal's rules, not the 60 min of a clip with none", async () => {
+    await writeLines(CLIP, [requested()]);
+    const r = rig({ reserves: [{ attemptId: KLING, at: iso(T0) }] });
+    await recoverClips(r.host, library);
+    expect(r.held.get(KLING)).toBe(T0 + 20 * MIN);
+  });
+
+  test("leave out a reserve this process made itself: its own hold is the registry's", async () => {
+    await mkdir(clipsDir(), { recursive: true });
+    const r = rig({ reserves: [{ attemptId: `${OTHER}:video#1`, at: iso(T0) }], own: [`${OTHER}:video#1`] });
+    await recoverClips(r.host, library);
+    expect(r.held.size).toBe(0);
+  });
+
+  test("never shorten a hold the registry already has: a later open of a library only extends", async () => {
+    await writeLines(CLIP, [requested(), submitted(KLING, T0 + 1_000), ended(KLING, T0 + 4 * MIN, "refused", "proof")]);
+    const longer = T0 + 60 * MIN;
+    const r = rig({ now: T0 + 5 * MIN, reserves: [{ attemptId: KLING, at: iso(T0) }], held: { [KLING]: longer } });
+    await recoverClips(r.host, library);
+    expect(r.held.get(KLING)).toBe(longer);
+  });
+
+  test("extend a hold the registry has when the journal asks for more", async () => {
+    await writeLines(CLIP, [requested(), submitted(KLING, T0 + 1_000)]);
+    const shorter = T0 + 10 * MIN;
+    let atFirstPoll: number | undefined;
+    const r: ReturnType<typeof rig> = rig({
+      now: T0 + 5 * MIN,
+      reserves: [{ attemptId: KLING, at: iso(T0) }],
+      held: { [KLING]: shorter },
+      poll: () => {
+        atFirstPoll = r.held.get(KLING);
+        return status("failed");
+      },
+    });
+    await recover(r);
+    expect(atFirstPoll).toBe(T0 + 1_000 + 60 * MIN);
   });
 
   test("leave an attempt out once its time has passed", async () => {
-    const r = rig({ now: T0 + 20 * MIN, reserves: [{ attemptId: KLING, at: iso(T0) }] });
+    const r = rig({ now: T0 + 60 * MIN, reserves: [{ attemptId: KLING, at: iso(T0) }] });
     await mkdir(clipsDir(), { recursive: true });
     await recoverClips(r.host, library);
     expect(r.held.size).toBe(0);
@@ -823,5 +883,167 @@ describe("the sweep of the clips folder", () => {
     const { jobs } = await recoverClips(r.host, library);
     expect(jobs).toHaveLength(0);
     expect(existsSync(clipsDir())).toBe(false);
+  });
+});
+
+describe("a clip whose file was already fetched and checked when the process stopped", () => {
+  const MP4_SHA = createHash("sha256").update("mp4").digest("hex");
+  const downloadedLine = (sha256 = MP4_SHA, bytes = 3): ClipJournalLine => ({ type: "downloaded", sha256, bytes, at: iso(T0 + 100_000) });
+  const lines = (downloaded: ClipJournalLine): ClipJournalLine[] => [requested(), submitted(KLING, T0 + 1_000), ended(KLING, T0 + 90_000, "completed", "usage"), downloaded];
+  const LONG_AFTER = T0 + 1_000 + 90 * MIN;
+
+  async function mp4(content = "mp4"): Promise<void> {
+    await mkdir(clipsDir(), { recursive: true });
+    await writeFile(join(clipsDir(), `${CLIP}.mp4`), content);
+  }
+
+  test("is recorded ready from the kept file with no network call, even more than 60 min after the submit", async () => {
+    await writeLines(CLIP, lines(downloadedLine()));
+    await mp4();
+    const r = rig({ now: LONG_AFTER, role: "hidden" });
+    await recover(r);
+    expect(await recordOf()).toMatchObject({ recovered: true, outcome: { status: "ready", sha256: MP4_SHA, bytes: 3, face: FACE } });
+    expect(r.calls).toMatchObject({ poll: [], download: [], generation: [], keys: 0 });
+    expect(r.calls.posters).toHaveLength(1);
+    expect(existsSync(join(clipsDir(), `${CLIP}.poster.jpg`))).toBe(true);
+    expect(existsSync(clipJournalPath(clipsDir(), CLIP))).toBe(false);
+  });
+
+  test("is recorded ready from the kept file within the 60 min too, without fetching it again", async () => {
+    await writeLines(CLIP, lines(downloadedLine()));
+    await mp4();
+    const r = rig({ now: T0 + 10 * MIN });
+    await recover(r);
+    expect((await recordOf()).outcome.status).toBe("ready");
+    expect(r.calls.download).toEqual([]);
+  });
+
+  test("is `download-expired` after 60 min when the kept file's hash is not the journal's", async () => {
+    await writeLines(CLIP, lines(downloadedLine()));
+    await mp4("not the clip");
+    const r = rig({ now: LONG_AFTER });
+    await recover(r);
+    expect((await recordOf()).outcome).toEqual({ status: "failed", reason: "download-expired" });
+    expect(r.calls.download).toEqual([]);
+  });
+
+  test("is `download-expired` after 60 min when the kept file's size is not the journal's", async () => {
+    await writeLines(CLIP, lines(downloadedLine(MP4_SHA, 999)));
+    await mp4();
+    await recover(rig({ now: LONG_AFTER }));
+    expect((await recordOf()).outcome).toEqual({ status: "failed", reason: "download-expired" });
+  });
+
+  test("is `download-expired` after 60 min when the kept file is gone", async () => {
+    await writeLines(CLIP, lines(downloadedLine()));
+    await recover(rig({ now: LONG_AFTER }));
+    expect((await recordOf()).outcome).toEqual({ status: "failed", reason: "download-expired" });
+  });
+
+  test("is fetched again within the 60 min when the kept file does not match", async () => {
+    await writeLines(CLIP, lines(downloadedLine()));
+    await mp4("not the clip");
+    const r = rig({ now: T0 + 10 * MIN });
+    await recover(r);
+    expect(r.calls.download).toEqual(["job-1"]);
+    expect((await recordOf()).outcome.status).toBe("ready");
+  });
+
+  test("falls back to the 60 min rule when the kept file no longer validates", async () => {
+    await writeLines(CLIP, lines(downloadedLine()));
+    await mp4();
+    const r = rig({ now: LONG_AFTER });
+    const refusing: ClipRecoveryHost = { ...r.host, media: { ...r.host.media, validateClipFile: async () => ({ ok: false, reason: "not-h264", detail: "x" }) } };
+    const { jobs } = await recoverClips(refusing, library);
+    await Promise.all(jobs);
+    expect((await recordOf()).outcome).toEqual({ status: "failed", reason: "download-expired" });
+  });
+});
+
+describe("the order of a recovery's steps", () => {
+  test("decides whether temps may be swept right before the sweep, not before the folders are read", async () => {
+    await writeLines(CLIP, [requested()]);
+    await writeFile(join(clipsDir(), ".0a1b2c3d4e5f.in.tmp"), "x");
+    // A `clips.create` that arrives while the folders are being read starts its job, and its first frame's temp is already on disk.
+    const r: ReturnType<typeof rig> = rig({ onIsActive: () => void r.active.add(OTHER) });
+    await recoverClips(r.host, library);
+    expect(existsSync(join(clipsDir(), ".0a1b2c3d4e5f.in.tmp"))).toBe(true);
+  });
+
+  test("starts no job once the library is no longer the live one", async () => {
+    await writeLines(CLIP, [requested()]);
+    const r = rig({ current: false });
+    const { jobs } = await recoverClips(r.host, library);
+    expect(jobs).toHaveLength(0);
+    expect(existsSync(clipJournalPath(clipsDir(), CLIP))).toBe(true);
+  });
+});
+
+describe("a recovery and a concurrent delete or record of the same clip", () => {
+  test("takes the clip's lock to act on it", async () => {
+    await writeLines(CLIP, [requested()]);
+    const r = rig();
+    await recover(r);
+    expect(r.calls.locked).toEqual([CLIP]);
+  });
+
+  test("resurrects nothing when the clip is deleted between the scan and the act: no job, no record", async () => {
+    await writeLines(CLIP, [requested(), submitted(KLING, T0 + 1_000)]);
+    const r = rig({ beforeLocked: async () => void (await rm(clipJournalPath(clipsDir(), CLIP))) });
+    const { jobs } = await recoverClips(r.host, library);
+    expect(jobs).toHaveLength(0);
+    expect(existsSync(clipRecordPath(clipsDir(), CLIP))).toBe(false);
+    expect(r.calls.poll).toEqual([]);
+  });
+
+  test("starts no job when a record appeared between the scan and the act, and drops the stale journal", async () => {
+    await writeLines(CLIP, [requested()]);
+    const r = rig({
+      beforeLocked: async () => {
+        await writeClipRecord(clipsDir(), {
+          schemaVersion: 1,
+          id: CLIP,
+          avatarId: AVATAR,
+          sourcePhotoId: PHOTO,
+          createdAt: iso(T0),
+          seen: false,
+          motion: MOTION,
+          request: REQUEST,
+          provider: { model: "kling-std", attempts: [] },
+          recovered: false,
+          exports: [],
+          outcome: { status: "failed", reason: "refused-free" },
+        });
+      },
+    });
+    const { jobs } = await recoverClips(r.host, library);
+    expect(jobs).toHaveLength(0);
+    expect(existsSync(clipJournalPath(clipsDir(), CLIP))).toBe(false);
+    expect((await recordOf()).outcome).toEqual({ status: "failed", reason: "refused-free" });
+  });
+});
+
+describe("a poster that is missing", () => {
+  test("is not drawn again for a failed record that has an mp4 beside it", async () => {
+    await mkdir(clipsDir(), { recursive: true });
+    await writeFile(join(clipsDir(), `${CLIP}.mp4`), "mp4");
+    await writeClipRecord(clipsDir(), {
+      schemaVersion: 1,
+      id: CLIP,
+      avatarId: AVATAR,
+      sourcePhotoId: PHOTO,
+      createdAt: iso(T0),
+      seen: false,
+      motion: MOTION,
+      request: REQUEST,
+      provider: { model: "kling-std", attempts: [] },
+      recovered: false,
+      exports: [],
+      outcome: { status: "failed", reason: "download-failed" },
+    });
+    const r = rig();
+    const { jobs } = await recoverClips(r.host, library);
+    expect(jobs).toHaveLength(0);
+    expect(r.calls.posters).toEqual([]);
   });
 });

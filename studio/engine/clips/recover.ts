@@ -1,4 +1,6 @@
-import { rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { PROTOCOL_VERSION, type ClipAttemptModel, type ClipFace, type ClipFailReason, type ClipRequest, type EngineError } from "../../shared/engine";
 import { CLIP_RETRYABLE_FAILURES } from "../../shared/engine/clips";
@@ -17,7 +19,7 @@ import { makePoster } from "./frames";
 import { holdsAfterRestart, holdUntilForTerminal, type ClipHolds } from "./holds";
 import { clipAttemptId, parseClipAttemptId, summarizeJournal, type JournalAttempt, type JournalSummary } from "./journal";
 import type { ClipJournalLine, ClipRecord } from "./schemas";
-import { clipsDirOf, journalOf, posterPath, posterTempPath, readClipRecord, removeJournal, writeClipRecord } from "./store";
+import { clipFilePath, clipsDirOf, journalOf, posterPath, posterTempPath, readClipRecord, removeJournal, writeClipRecord } from "./store";
 import type { ClipTimings } from "./timings";
 import { validateClipFile, type ClipColour } from "./validate";
 
@@ -68,7 +70,16 @@ export interface ClipRecoveryHost {
   readonly clock: () => number;
   readonly newId: () => string;
   readonly timings: ClipTimings;
-  readonly holds: Pick<ClipHolds, "hold">;
+  readonly holds: Pick<ClipHolds, "hold" | "untilOf">;
+  /**
+   * The clip's lock, the one the clip records use (delete, markSeen, retry): held from re-reading a clip's journal to registering its job, so a concurrent `clips.delete` (journal, then record,
+   * then media) cannot land between the scan and the act and have the clip brought back.
+   */
+  readonly withClipLock: <T>(clipId: string, work: () => Promise<T>) => Promise<T>;
+  /** The library is still the live one: a recovery that was slow to start (a switch away and back) starts nothing for a library that is no longer live. */
+  readonly isCurrent: () => boolean;
+  /** This process reserved the attempt itself (its hold is the registry's, taken when it was reserved). */
+  readonly isOwn: (attemptId: string) => boolean;
   /** Fires when the engine stops: every recovery job stops waiting. */
   readonly signal: AbortSignal;
   readonly ledger: () => RecoveryLedger | null;
@@ -96,7 +107,8 @@ export type RecoveryPlan =
   | { kind: "unreadable-journal" }
   | { kind: "fail"; reason: ClipFailReason; model: ClipAttemptModel }
   | { kind: "poll"; attemptId: string; model: ClipAttemptModel; providerJobId: string; submittedAtMs: number }
-  | { kind: "download"; attemptId: string; model: ClipAttemptModel; providerJobId: string; submittedAtMs: number };
+  /** `local`: the journal says the file was fetched and checked (`downloaded`), so the kept `<clipId>.mp4` is tried first, with no network and at any age. */
+  | { kind: "download"; attemptId: string; model: ClipAttemptModel; providerJobId: string; submittedAtMs: number; local?: { sha256: string; bytes: number } };
 
 export interface PlanInput {
   readonly summary: JournalSummary;
@@ -148,8 +160,10 @@ export function planRecovery(input: PlanInput): RecoveryPlan {
   if (completed?.providerJobId !== undefined && completed.submittedAt !== undefined) {
     const submittedAtMs = Date.parse(completed.submittedAt);
     const model = modelOf(completed, request);
-    if (nowMs >= submittedAtMs + timings.lateGiveUpMs) return { kind: "fail", reason: "download-expired", model };
-    return { kind: "download", attemptId: completed.attemptId, model, providerJobId: completed.providerJobId, submittedAtMs };
+    // A file the journal says was fetched and checked may be on disk: it is tried first, whatever the age (it costs no network). Without that line the 60 min rule is all there is.
+    const local = summary.downloaded === null ? undefined : { sha256: summary.downloaded.sha256, bytes: summary.downloaded.bytes };
+    if (local === undefined && nowMs >= submittedAtMs + timings.lateGiveUpMs) return { kind: "fail", reason: "download-expired", model };
+    return { kind: "download", attemptId: completed.attemptId, model, providerJobId: completed.providerJobId, submittedAtMs, ...(local === undefined ? {} : { local }) };
   }
 
   // The attempt that was out when the process stopped: polled while it is under 60 min old.
@@ -172,6 +186,31 @@ export function planRecovery(input: PlanInput): RecoveryPlan {
   if (last?.ended !== undefined) return { kind: "fail", reason: reasonOfEnded(last.ended), model: modelOf(last, request) };
 
   return { kind: "fail", reason: "lost", model: request.model };
+}
+
+function sha256Of(path: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash("sha256");
+    createReadStream(path)
+      .on("data", (chunk) => hash.update(chunk))
+      .on("error", reject)
+      .on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+// ---------- the holds of a restart, from the ledger alone ----------
+
+/**
+ * The holds for open reserves of clip attempts when no journal of theirs is in view (no library is open, or the clip belongs to another library): nothing says how far the render got, so each
+ * is held 60 min from its reserve line's `at` (the longest an attempt is polled). Entries whose time has passed are left out. Pure.
+ */
+export function holdsFromLedger(reserves: readonly { attemptId: string; at: string }[], nowMs: number, timings: ClipTimings): Map<string, number> {
+  const until = new Map<string, number>();
+  for (const reserve of reserves) {
+    const untilMs = Date.parse(reserve.at) + timings.holdSubmittedMs;
+    if (!Number.isNaN(untilMs) && untilMs > nowMs) until.set(reserve.attemptId, untilMs);
+  }
+  return until;
 }
 
 // ---------- the sweep ----------
@@ -245,7 +284,6 @@ export async function recoverClips(host: ClipRecoveryHost, library: RecoveryLibr
   const jobs: Promise<void>[] = [];
   const ledger = host.ledger();
   const nowMs = host.clock();
-  const sweepTemps = !host.work.anyActive();
 
   // ----- 1. what is on disk: the journals with no record, and the ready records without a poster -----
   const candidates: Candidate[] = [];
@@ -272,17 +310,34 @@ export async function recoverClips(host: ClipRecoveryHost, library: RecoveryLibr
           host.log(`[clip] the journal of clip ${p.clipId} could not be read (${error instanceof Error ? error.name : typeof error}); recovery skips it`);
         }
       } else if (p.suffix === ".json" && !present.has(`${p.clipId}.poster.jpg`) && present.has(`${p.clipId}.mp4`) && !present.has(`${p.clipId}.journal.jsonl`)) {
-        repaints.push({ avatarId: avatar.id, clipsDir, clipId: p.clipId });
+        // Only a ready clip has a poster to draw again.
+        try {
+          const record = await readClipRecord(clipsDir, p.clipId);
+          if (record.kind === "record" && record.record.outcome.status === "ready") repaints.push({ avatarId: avatar.id, clipsDir, clipId: p.clipId });
+        } catch (error) {
+          host.log(`[clip] the record of clip ${p.clipId} could not be read (${error instanceof Error ? error.name : typeof error}); its poster is not looked at`);
+        }
       }
     }
   }
 
-  // ----- 2. the holds of a restart, before anything slower -----
-  const reserves = (ledger?.openReserves() ?? []).filter((r) => parseClipAttemptId(r.attemptId) !== null).map((r) => ({ attemptId: r.attemptId, at: r.at }));
-  const journal = candidates.filter((c) => c.record !== "record").flatMap((c) => c.lines);
-  for (const [attemptId, untilMs] of holdsAfterRestart({ reserves, journal, nowMs, timings: host.timings })) host.holds.hold(attemptId, untilMs);
+  // ----- 2. the holds of a restart, before anything slower. They only EXTEND what the registry holds: a later open of a library never shortens an entry (an earlier open, or the start, may know more). -----
+  // A clip with a journal in view is held by the journal's rules (`holdsAfterRestart`); an open reserve of a clip with none in view (its journal is in a library that is not open, or is gone) may
+  // be a render still going, so it is held 60 min from the reserve line's `at`. A reserve this process made itself keeps the hold it took.
+  const openClip = (ledger?.openReserves() ?? []).filter((r) => parseClipAttemptId(r.attemptId) !== null && !host.isOwn(r.attemptId));
+  const inView = new Set(candidates.map((c) => c.clipId));
+  const seen = openClip.filter((r) => inView.has(parseClipAttemptId(r.attemptId)?.clipId ?? ""));
+  const unseen = openClip.filter((r) => !inView.has(parseClipAttemptId(r.attemptId)?.clipId ?? ""));
+  const extend = (attemptId: string, untilMs: number): void => {
+    if (untilMs > (host.holds.untilOf(attemptId) ?? 0)) host.holds.hold(attemptId, untilMs);
+  };
+  const journal = candidates.flatMap((c) => c.lines);
+  for (const [attemptId, untilMs] of holdsAfterRestart({ reserves: seen.map((r) => ({ attemptId: r.attemptId, at: r.at })), journal, nowMs, timings: host.timings })) extend(attemptId, untilMs);
+  for (const [attemptId, untilMs] of holdsFromLedger(unseen, nowMs, host.timings)) extend(attemptId, untilMs);
 
   // ----- 3. the sweep, then the stale journals -----
+  // Decided here, after the folders were read: a `clips.create` that arrived meanwhile has a first-frame temp on disk, and its job counts as active.
+  const sweepTemps = !host.work.anyActive();
   for (const folder of folders) await sweepClipsDir(folder.clipsDir, { sweepTemps, isActive: (clipId) => host.work.isActive(clipId) });
   for (const candidate of candidates) {
     if (candidate.record !== "record") continue;
@@ -300,17 +355,33 @@ export async function recoverClips(host: ClipRecoveryHost, library: RecoveryLibr
       continue;
     }
     if (candidate.record === "record") continue;
-    const summary = summarizeJournal(candidate.lines);
-    const reservedAttempts = new Set([1, 2].map((n) => clipAttemptId(candidate.clipId, n as 1 | 2)).filter((id) => ledger?.reserveOf(id) !== undefined));
-    const plan = planRecovery({ summary, recordExists: false, reservedAttempts, nowMs, timings: host.timings });
-    if (plan.kind === "unreadable-journal" || plan.kind === "stale-journal") {
-      host.log(`[clip] the journal of clip ${candidate.clipId} has no \`requested\` line; recovery leaves it`);
-      continue;
-    }
-    const run = startRecoveryJob(host, candidate.avatarId, candidate.clipId, (job) => new Recovery(host, library, candidate, summary, reservedAttempts, plan, job).run());
-    if (run !== null) jobs.push(run);
+    // A library that was switched away from while this recovery waited (A, then B, then A again) is not this call's to recover any more.
+    if (!host.isCurrent()) break;
+    // Under the clip's lock the journal and the record are read AGAIN, and the job is registered before the lock goes: a delete (journal, record, media) that ran since the scan has taken the
+    // journal away, a record written since means the clip is done. Either way nothing is brought back.
+    const run = await host.withClipLock(candidate.clipId, async () => {
+      const lines = await journalOf(candidate.clipsDir, candidate.clipId).read();
+      if (lines.length === 0) return null;
+      const record = await readClipRecord(candidate.clipsDir, candidate.clipId);
+      if (record.kind !== "missing") {
+        if (record.kind === "record") await removeJournal(candidate.clipsDir, candidate.clipId).catch(() => undefined);
+        return null;
+      }
+      const fresh: Candidate = { ...candidate, lines };
+      const summary = summarizeJournal(lines);
+      const reservedAttempts = new Set([1, 2].map((n) => clipAttemptId(candidate.clipId, n as 1 | 2)).filter((id) => ledger?.reserveOf(id) !== undefined));
+      const plan = planRecovery({ summary, recordExists: false, reservedAttempts, nowMs, timings: host.timings });
+      if (plan.kind === "unreadable-journal" || plan.kind === "stale-journal") {
+        host.log(`[clip] the journal of clip ${candidate.clipId} has no \`requested\` line; recovery leaves it`);
+        return null;
+      }
+      // Wrapped: a promise returned from the lock's work would be awaited with it, and the lock would be held for the whole job.
+      return { running: startRecoveryJob(host, candidate.avatarId, candidate.clipId, (job) => new Recovery(host, library, fresh, summary, reservedAttempts, plan, job).run()) };
+    });
+    if (run?.running != null) jobs.push(run.running);
   }
   for (const repaint of repaints) {
+    if (!host.isCurrent()) break;
     const run = startRecoveryJob(host, repaint.avatarId, repaint.clipId, (job) => repaintPoster(host, repaint.clipsDir, repaint.clipId, job));
     if (run !== null) jobs.push(run);
   }
@@ -489,13 +560,46 @@ class Recovery {
 
   // ----- the file -----
 
-  private async fetchAndRecord(plan: { attemptId: string; model: ClipAttemptModel; providerJobId: string; submittedAtMs: number }, providerCostMicros: number | null, known?: RecoveryClient): Promise<JobOutcome> {
+  /**
+   * The kept `<clipId>.mp4`, when it is the file the journal's `downloaded` line describes (its size and sha256) and still validates: then the clip is finished with no network. Any other state of
+   * the file (missing, another size or hash, no longer a clip) is null, and the 60 min rule decides.
+   */
+  private async keptFile(local: { sha256: string; bytes: number }): Promise<Extract<ClipDownload, { kind: "saved" }> | null> {
+    const { candidate, host } = this;
+    const path = clipFilePath(candidate.clipsDir, candidate.clipId);
+    try {
+      if ((await stat(path)).size !== local.bytes) return null;
+      if ((await sha256Of(path)) !== local.sha256) return null;
+      const judged = await this.media.validateClipFile(path, this.requested.request.seconds);
+      if (!judged.ok) {
+        host.log(`[clip] ${candidate.clipId}: the kept file no longer validates (${judged.reason})`);
+        return null;
+      }
+      return { kind: "saved", path, sha256: local.sha256, clip: judged.clip };
+    } catch {
+      return null;
+    }
+  }
+
+  private async fetchAndRecord(
+    plan: { attemptId: string; model: ClipAttemptModel; providerJobId: string; submittedAtMs: number; local?: { sha256: string; bytes: number } },
+    providerCostMicros: number | null,
+    known?: RecoveryClient,
+  ): Promise<JobOutcome> {
     const { host, job, candidate } = this;
     const request = this.requested.request;
     const giveUpAtMs = plan.submittedAtMs + host.timings.lateGiveUpMs;
     const earlier = this.summary.attempts.find((a) => a.attemptId === plan.attemptId)?.ended;
     const cost = providerCostMicros ?? earlier?.providerCostMicros ?? null;
     const completed = { attemptId: plan.attemptId, outcome: "completed" as const, ...(cost === null ? {} : { providerCostMicros: cost }) };
+
+    // The process stopped after the file was fetched and checked (the quit while «Проверяем лицо» or «Сохраняем» does not wait): the paid file is on disk, and it is finished from there.
+    if (plan.local !== undefined) {
+      const kept = await this.keptFile(plan.local);
+      if (job.signal.aborted) return "interrupted";
+      if (kept !== null) return this.finish(plan, completed, kept);
+      if (host.clock() >= giveUpAtMs) return this.recordFailure("download-expired", plan.model, completed);
+    }
 
     const client = known ?? (await this.client(giveUpAtMs));
     if (client === "stopped") return "interrupted";
@@ -516,7 +620,16 @@ class Recovery {
       return this.recordFailure(download.reason, plan.model, completed, plan.submittedAtMs);
     }
     await this.journal.downloaded({ sha256: download.sha256, bytes: download.clip.bytes, at: iso(host.clock()) });
+    return this.finish(plan, completed, download);
+  }
 
+  /** From a validated file on disk to the record: the poster, the face check, the commit. */
+  private async finish(
+    plan: { model: ClipAttemptModel; submittedAtMs: number },
+    completed: Parameters<Recovery["attempts"]>[0],
+    download: Extract<ClipDownload, { kind: "saved" }>,
+  ): Promise<JobOutcome> {
+    const { job, candidate } = this;
     job.phase({ phase: "checking", model: plan.model, done: 2 });
     await this.poster(download.path, download.clip.colour);
     const face = await this.face(download);

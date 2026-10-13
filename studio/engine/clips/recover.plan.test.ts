@@ -87,6 +87,19 @@ describe("an attempt that ended `completed` in an earlier process, with no recor
   });
 });
 
+describe("an attempt that ended `completed` and whose file the journal says was downloaded", () => {
+  const downloaded: ClipJournalLine = { type: "downloaded", sha256: "a".repeat(64), bytes: 1234, at: iso(T0 + 100_000) };
+  const lines = [requested, submitted(KLING, T0 + 1_000), ended(KLING, T0 + 90_000, "completed", "usage"), downloaded];
+
+  test("carries the hash and size to check the kept file against, within 60 min", () => {
+    expect(plan(lines, { nowMs: T0 + 10 * MIN })).toEqual({ kind: "download", attemptId: KLING, model: "kling", providerJobId: "job-1", submittedAtMs: T0 + 1_000, local: { sha256: "a".repeat(64), bytes: 1234 } });
+  });
+
+  test("still asks for the kept file after 60 min, since it needs no network", () => {
+    expect(plan(lines, { nowMs: T0 + 1_000 + 90 * MIN })).toMatchObject({ kind: "download", local: { sha256: "a".repeat(64), bytes: 1234 } });
+  });
+});
+
 describe("an attempt that ended in a failure", () => {
   const lines = (status: Extract<ClipJournalLine, { type: "ended" }>["status"], costSource: Extract<ClipJournalLine, { type: "ended" }>["costSource"]): ClipJournalLine[] => [
     requested,

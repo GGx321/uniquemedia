@@ -1477,7 +1477,9 @@ export class Engine {
     }
     engine.#live = await engine.#openOrNull(init.settings.libraryPath);
     engine.#adoptLaunches(engine.#live);
-    if (engine.#live !== null) engine.#sweepMediaStaging(engine.#live.library);
+    if (engine.#live !== null) engine.#libraryBecameLive(engine.#live.library);
+    // No library is open (a volume that is not mounted): the clips' journals cannot be read, but their open reserves can still be held (5b.1, S5.V6).
+    else engine.#clips.restartHolds();
     const exportCheck = await engine.#refreshExportStatus();
     for (const notice of init.notices) engine.#addNotice(notice);
     // In the BACKGROUND, never awaited (main's start deadline is 30 s, a locked leftover costs a second and a hung export
@@ -2011,7 +2013,7 @@ export class Engine {
         // A different library is live: settle its crash windows in the background (never awaited here).
         if (staged.identity !== beforeIdentity) {
           this.#videos.libraryOpened(staged.library);
-          this.#sweepMediaStaging(staged.library);
+          this.#libraryBecameLive(staged.library);
         }
         this.#settings = { ...this.#settings, libraryPath: call.path };
         this.#pendingLibraryPath = call.path;
@@ -2115,8 +2117,8 @@ export class Engine {
     }
   }
 
-  /** Removes what a crash left in the staging folder of a library that has just become the live one. In the background; never rejects. */
-  #sweepMediaStaging(library: Library): void {
+  /** What a library that has just become the live one needs: the own-media staging folder swept, and the clips recovered (see `ClipService.libraryOpened`). In the background; never rejects. */
+  #libraryBecameLive(library: Library): void {
     this.#media.libraryOpened(library);
     // 5b.1 (S5.V6, §5.12): the clips of this library: the restart's holds, the sweep of its clips folders and a free recovery job per journal with no record.
     this.#clips.libraryOpened(library);
@@ -5714,7 +5716,7 @@ export class Engine {
         // A different library is live: settle its crash windows in the background (never awaited here).
         if (live !== null && live.identity !== beforeIdentity) {
           this.#videos.libraryOpened(live.library);
-          this.#sweepMediaStaging(live.library);
+          this.#libraryBecameLive(live.library);
         }
       }
       this.#settings = { ...this.#settings, libraryPath: next.libraryPath };
