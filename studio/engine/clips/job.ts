@@ -319,12 +319,13 @@ class ClipChain {
         deps.log(`[clip] ${input.clipId}: the download could not be stored (${error instanceof Error ? error.name : typeof error})`);
         return this.recordFailure("download-failed", model, attempts);
       }
+      // The paid file is on disk now: the journal says so BEFORE a stop is looked at (S5.V6), so a stop in this window leaves `downloaded` beside the mp4 and a restart finishes it from disk.
+      if (download.kind === "saved") await this.journal.downloaded({ sha256: download.sha256, bytes: download.clip.bytes, at: iso(deps.attempt.now()) });
       if (this.signal.aborted) throw new Stopped();
       if (download.kind === "failed") {
         deps.log(`[clip] ${input.clipId}: the download failed (${download.reason})`);
         return this.recordFailure(download.reason, model, attempts);
       }
-      await this.journal.downloaded({ sha256: download.sha256, bytes: download.clip.bytes, at: iso(deps.attempt.now()) });
 
       this.done = 2;
       this.phase({ phase: "checking", model });

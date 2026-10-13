@@ -541,6 +541,32 @@ describe("runClipJob: nothing reserved, cancelled, stopped", () => {
     expect(w.moneyClosed).toBe(1);
   });
 
+  test("stopped right after the paid file was renamed into place: the journal still says `downloaded`, so a restart finishes it from disk", async () => {
+    const controller = new AbortController();
+    const w = world();
+    const outcome = await runClipJob(
+      {
+        ...w.deps,
+        media: {
+          ...w.deps.media,
+          downloadClip: async (options) => {
+            const path = join(options.clipsDir, `${options.clipId}.mp4`);
+            await writeFile(path, "mp4 bytes");
+            controller.abort();
+            return { kind: "saved", path, sha256: SHA, clip: VALID };
+          },
+        },
+      },
+      input(),
+      controller.signal,
+    );
+    expect(outcome).toEqual({ kind: "interrupted" });
+    const lines = await readFile(clipJournalPath(dir(), CLIP), "utf8");
+    expect(lines).toContain('"type":"downloaded"');
+    expect(lines).toContain(SHA);
+    expect(existsSync(join(dir(), `${CLIP}.json`))).toBe(false);
+  });
+
   test("cancelled by the attempt before its POST: the journal it wrote is removed, no record", async () => {
     const w = world({ result: { kind: "cancelled", attempts: [] } });
     expect(await run(w)).toEqual({ kind: "cancelled" });
