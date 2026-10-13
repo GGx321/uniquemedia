@@ -4,6 +4,7 @@ import { isHandCapture } from "../../shared/scenes/captures";
 import { contentProblems } from "../../shared/scenes/contentLine";
 import { rendersActivity } from "../../shared/scenes/custom";
 import { PHONE_WORDS, SELFIE_WORDS } from "../../shared/scenes/words";
+import { VIDEO_TIERS } from "../money/prices";
 import type { VideoFrameImage, VideoRequest } from "../openrouter/types";
 import type { FrameFacts } from "./frameFacts";
 import {
@@ -34,9 +35,6 @@ import {
 // at bold, everything else at ordinary); neither stages the camera or the edit; on a capture where her phone is in her hand or propped, neither names a phone; on a frame
 // whose face does not show, the motion moves no part of her face (no prompt contradicts its photo); and the prompt is at most 130 words. A prompt over the cap takes the
 // capture's short camera line (pov-legs), never losing an anchor.
-
-/** The provider models of a clip (plan §5.5, the probes' ids): Kling 3.0 std at 720p, pro at 1080p, and Grok Imagine Video 1.5 at 720p. */
-export const CLIP_VIDEO_MODELS = { std: "kwaivgi/kling-v3.0-std", pro: "kwaivgi/kling-v3.0-pro", grok: "x-ai/grok-imagine-video-1.5" } as const;
 
 export type ClipPromptResult = { readonly ok: true; readonly prompt: string; readonly words: number } | { readonly ok: false; readonly problems: readonly string[] };
 
@@ -139,16 +137,8 @@ const JPEG_DATA_URL = /^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/;
 export function clipRequestBody(input: ClipRequestInput): ClipRequestBody {
   if (!JPEG_DATA_URL.test(input.firstFrame)) throw new RangeError("a clip's first frame must be a JPEG data URL");
   const frame_images: readonly VideoFrameImage[] = [{ type: "image_url", image_url: { url: input.firstFrame }, frame_type: "first_frame" }];
-  if (input.model === "grok") {
-    return { model: CLIP_VIDEO_MODELS.grok, prompt: input.prompt, duration: input.seconds, resolution: "720p", aspect_ratio: "9:16", frame_images };
-  }
-  return {
-    model: CLIP_VIDEO_MODELS[input.quality],
-    prompt: input.prompt,
-    duration: input.seconds,
-    resolution: input.quality === "pro" ? "1080p" : "720p",
-    aspect_ratio: "9:16",
-    generate_audio: false,
-    frame_images,
-  };
+  // The sent model is the priced one: V2's tier table names the model and the resolution each clip price was read for.
+  const tier = VIDEO_TIERS[input.model === "grok" ? "grok" : input.quality];
+  const body = { model: tier.model, prompt: input.prompt, duration: input.seconds, resolution: tier.resolution, aspect_ratio: "9:16" as const, frame_images };
+  return input.model === "grok" ? body : { ...body, generate_audio: false };
 }

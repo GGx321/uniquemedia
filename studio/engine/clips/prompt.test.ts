@@ -4,7 +4,8 @@ import type { OwnPlanSlot, PlanSlot } from "../scenes/schema";
 import { shotOf } from "../../shared/scenes/captures";
 import { CUSTOM_REF } from "../scenes/testing/customPool";
 import { frameFactsOf, type FrameFacts, type FrameFactsResult } from "./frameFacts";
-import { CLIP_VIDEO_MODELS, clipPromptOf, clipRequestBody, poseSentenceFor } from "./prompt";
+import { VIDEO_TIERS } from "../money/prices";
+import { clipPromptOf, clipRequestBody, poseSentenceFor } from "./prompt";
 import { ADULT_LINE, COMES_OFF_LINE, CONTINUITY_LINE, LEGS_LINE, LOOK_LINE, PRONE_ANCHOR, PROMPT_WORDS_MAX, SLOW_LINE, cameraLineOf, legwearLineOf, wordCount, type ClipDialect } from "./videoLook";
 import { photoOf, pick, planlessPhoto, sceneRun, slotOf } from "./testing/frameFixtures";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -288,8 +289,16 @@ describe("the request body (§5.5)", () => {
     expect("generate_audio" in body).toBe(false);
   });
 
-  test("the model ids are the probes'", () => {
-    expect(CLIP_VIDEO_MODELS).toEqual({ std: "kwaivgi/kling-v3.0-std", pro: "kwaivgi/kling-v3.0-pro", grok: "x-ai/grok-imagine-video-1.5" });
+  test("the sent model is the priced model: every body names the model and the resolution of V2's VIDEO_TIERS", () => {
+    for (const model of ["kling", "grok"] as const) {
+      for (const quality of ["std", "pro"] as const) {
+        for (const seconds of [5, 10] as const) {
+          const body = clipRequestBody({ prompt: "P", model, quality, seconds, firstFrame: FRAME });
+          const tier = VIDEO_TIERS[model === "grok" ? "grok" : quality];
+          expect({ model: body.model, resolution: body.resolution }).toEqual({ model: tier.model, resolution: tier.resolution });
+        }
+      }
+    }
   });
 
   test("a first frame that is not a JPEG data URL is refused", () => {
