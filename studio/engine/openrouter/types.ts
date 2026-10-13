@@ -262,14 +262,17 @@ export interface VideoFrameImage {
   frame_type: "first_frame" | "last_frame";
 }
 
-/** The body of `POST /videos`. The caller builds it (prompt, frames, price); the client only sends it. */
+/**
+ * The body of `POST /videos`. The caller builds it (prompt, frames, price); the client only sends it. `generate_audio` is Kling's alone (`false`): Grok's listing has no audio flag,
+ * so its body carries none (plan s5b1 §5.5; S5.V4a1 made the field optional, additively).
+ */
 export interface VideoRequest {
   model: string;
   prompt: string;
   duration: number;
   resolution: "720p" | "1080p";
   aspect_ratio: "9:16";
-  generate_audio: false;
+  generate_audio?: false;
   frame_images: readonly VideoFrameImage[];
 }
 
