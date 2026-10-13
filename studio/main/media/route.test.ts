@@ -89,3 +89,41 @@ describe("parseMediaRoute refuses everything else", () => {
     });
   }
 });
+
+describe("parseMediaRoute and the clip routes (S5.V4b)", () => {
+  test("accepts clip/<avatarId>/<clipId>", () => {
+    expect(parseMediaRoute(`studio-media://clip/${A}/${B}`)).toEqual({ route: "clip", avatarId: A, clipId: B });
+  });
+
+  test("accepts clipposter/<avatarId>/<clipId>", () => {
+    expect(parseMediaRoute(`studio-media://clipposter/${A}/${B}`)).toEqual({ route: "clipposter", avatarId: A, clipId: B });
+  });
+
+  const rejectedClips: [string, string][] = [
+    ["a clip with one id", `studio-media://clip/${A}`],
+    ["a clip with three ids", `studio-media://clip/${A}/${B}/${A}`],
+    ["a clipposter with one id", `studio-media://clipposter/${A}`],
+    ["a clip with a dot-dot as the clip id", `studio-media://clip/${A}/..`],
+    ["a clip with a dot-dot walk", `studio-media://clip/${A}/../../etc/passwd`],
+    ["a clip id with a dot", `studio-media://clip/${A}/${B}.mp4`],
+    ["a clip id with a dot-dot inside it", `studio-media://clip/${A}/clip-..-0001`],
+    ["an avatar id with a dot", `studio-media://clip/avatar.0001/${B}`],
+    ["an encoded slash in a clip id", `studio-media://clip/${A}%2f${B}`],
+    ["an encoded dot-dot as a clip id", `studio-media://clip/${A}/%2e%2e`],
+    ["a raw backslash in a clip id", `studio-media://clip/${A}\\${B}`],
+    ["a clipposter with an encoded backslash", `studio-media://clipposter/${A}%5C${B}`],
+    ["a clip in capitals", `studio-media://CLIP/${A}/${B}`],
+    ["a clip id in capitals", `studio-media://clip/${A}/SECOND-0002`],
+    ["a clip with an empty segment", `studio-media://clip/${A}//${B}`],
+    ["a clip with a trailing slash", `studio-media://clip/${A}/${B}/`],
+    ["a clip with a query", `studio-media://clip/${A}/${B}?x=1`],
+    ["a clip with a short id", `studio-media://clip/${A}/abc`],
+    ["a route that only starts like a clip", `studio-media://clips/${A}/${B}`],
+    ["a clip poster spelled with a dash", `studio-media://clip-poster/${A}/${B}`],
+  ];
+  for (const [name, url] of rejectedClips) {
+    test(`rejects ${name}`, () => {
+      expect(parseMediaRoute(url)).toBeNull();
+    });
+  }
+});

@@ -5,6 +5,8 @@ export type MediaRoute =
   | { readonly route: "photo"; readonly avatarId: string; readonly photoId: string }
   | { readonly route: "video"; readonly avatarId: string; readonly videoId: string }
   | { readonly route: "poster"; readonly avatarId: string; readonly videoId: string }
+  | { readonly route: "clip"; readonly avatarId: string; readonly clipId: string }
+  | { readonly route: "clipposter"; readonly avatarId: string; readonly clipId: string }
   | { readonly route: "track"; readonly trackId: string }
   | { readonly route: "cover"; readonly trackId: string }
   | { readonly route: "sticker"; readonly stickerId: string }
@@ -36,6 +38,9 @@ export function parseMediaRoute(url: string): MediaRoute | null {
     case "video":
     case "poster":
       return second === undefined ? null : { route, avatarId: first, videoId: second };
+    case "clip":
+    case "clipposter":
+      return second === undefined ? null : { route, avatarId: first, clipId: second };
     case "track":
       return second === undefined ? { route, trackId: first } : null;
     case "cover":
