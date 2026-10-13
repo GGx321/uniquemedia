@@ -7,7 +7,7 @@ import { FfmpegError, FfmpegTimeoutError } from "../../node/runFfmpeg";
 import { imageSize } from "../library/media";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { FRAME_STEP_MS, makePoster, sampleFrames } from "./frames";
-import { meanLuma, useClipFixtures } from "./testing/clipFixtures";
+import { meanLuma, meanRgb, useClipFixtures } from "./testing/clipFixtures";
 useNativeGlobals();
 
 // §5.11 and §5.10: one frame every half second as a 720 x 1280 JPEG (a frame at 0, then 0.5, 1, ...), and the poster, the frame at 0.5 s. Both read the library's file under a
@@ -98,6 +98,33 @@ describe("sampleFrames", () => {
     expect(args[args.indexOf("-f") + 1]).toBe("mov");
     expect(args).toContain("-an");
   });
+});
+
+// The providers' files are BT.709; a JPEG is read as BT.601. A conversion that changes only the range tints every frame (the green-tint pain of the uniquifier), and grey cannot show it.
+describe("colour", () => {
+  const PATCHES: [string, string, [number, number, number]][] = [
+    ["green", "0x2EB32E", [46, 179, 46]],
+    ["red", "0xC43031", [196, 48, 47]],
+    ["blue", "0x3C5ABE", [60, 90, 190]],
+  ];
+  const near = (got: readonly number[], want: readonly number[]): void => {
+    got.forEach((channel, i) => expect(Math.abs(channel - (want[i] ?? 0))).toBeLessThanOrEqual(3));
+  };
+
+  for (const [name, hex, rgb] of PATCHES) {
+    test(`the poster of a BT.709 ${name} clip is ${name} within 3 per channel`, async () => {
+      const path = await clip({ width: 720, height: 1280, seconds: 5, patch: hex });
+      const out = join(scratch, "poster.tmp");
+      await makePoster({ clipPath: path, outPath: out });
+      near(await meanRgb(new Uint8Array(await readFile(out))), rgb);
+    });
+
+    test(`every sampled frame of a BT.709 ${name} clip is ${name} within 3 per channel`, async () => {
+      const path = await clip({ width: 1080, height: 1920, seconds: 5, patch: hex });
+      const frames = await sampleFrames({ clipPath: path, durationMs: 5_000, scratchDir: scratch });
+      for (const frame of [frames[0], frames.at(-1)]) near(await meanRgb(frame ?? new Uint8Array()), rgb);
+    });
+  }
 });
 
 describe("makePoster", () => {

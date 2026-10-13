@@ -48,7 +48,8 @@ function inputHead(clipPath: string, extra: readonly string[] = []): string[] {
 }
 
 const JPEG_OUTPUT = ["-pix_fmt", "yuvj420p", "-q:v", "3"];
-const SCALE = `scale=${FRAME_WIDTH}:${FRAME_HEIGHT}`;
+// The providers' files are BT.709 limited range and a JPEG is read as BT.601 full range. `yuvj420p` alone changes only the range, which tints every frame, so the matrix is converted here.
+const SCALE = `scale=${FRAME_WIDTH}:${FRAME_HEIGHT}:in_color_matrix=bt709:in_range=tv:out_color_matrix=bt601:out_range=pc`;
 
 function supervision(options: FfmpegRunOptions, timeoutMs: number): { timeoutMs: number; signal?: AbortSignal; spawner?: FfmpegSpawner } {
   return {

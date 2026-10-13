@@ -19,6 +19,10 @@ export interface ClipSpec {
   readonly secondVideo?: boolean;
   /** Default true: `moov` before `mdat`, as the providers' files and the app's exports have it. */
   readonly faststart?: boolean;
+  /** A flat colour (`0xRRGGBB`) tagged BT.709 limited range, as the providers' files are. */
+  readonly patch?: string;
+  /** The picture is stored turned and shown upright by a rotation in the track header (the width and height are the SHOWN ones). */
+  readonly rotate?: 90;
 }
 
 /** Runs the bundled ffmpeg with an argv array; throws with the stderr tail when it fails. */
@@ -26,6 +30,19 @@ export async function runFfmpegForFixture(argv: readonly string[]): Promise<void
   const proc = Bun.spawn([ffmpegPath(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", ...argv], { stdout: "ignore", stderr: "pipe" });
   const [stderr, code] = await Promise.all([Bun.readableStreamToText(proc.stderr), proc.exited]);
   if (code !== 0) throw new Error(`ffmpeg exited ${code}: ${stderr.slice(-1200)}`);
+}
+
+/** The colour of a flat JPEG as a viewer reads it (a JPEG is BT.601 full range), by ffmpeg: [r, g, b]. */
+export async function meanRgb(jpeg: Uint8Array): Promise<[number, number, number]> {
+  const proc = Bun.spawn([ffmpegPath(), "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "jpeg_pipe", "-i", "pipe:0", "-vf", "crop=2:2:100:100,format=rgb24", "-frames:v", "1", "-f", "rawvideo", "pipe:1"], {
+    stdin: jpeg,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, stderr, code] = await Promise.all([Bun.readableStreamToArrayBuffer(proc.stdout), Bun.readableStreamToText(proc.stderr), proc.exited]);
+  if (code !== 0 || out.byteLength !== 12) throw new Error(`ffmpeg exited ${code} with ${out.byteLength} bytes: ${stderr.slice(-400)}`);
+  const px = new Uint8Array(out);
+  return [px[0] ?? 0, px[1] ?? 0, px[2] ?? 0];
 }
 
 /** The mean brightness (0-255) of a JPEG, by ffmpeg: a black frame is near 0 and a white one near 255. */
@@ -41,7 +58,10 @@ export async function meanLuma(jpeg: Uint8Array): Promise<number> {
 }
 
 function lavfiVideo(spec: ClipSpec): string {
-  const { width, height, seconds, fps = 24 } = spec;
+  const { seconds, fps = 24 } = spec;
+  const [width, height] = spec.rotate === undefined ? [spec.width, spec.height] : [spec.height, spec.width];
+  // A flat colour from the first frame, converted with the BT.709 matrix and tagged so: a grey fixture cannot show a wrong matrix, a coloured one does.
+  if (spec.patch !== undefined) return `color=c=${spec.patch}:s=${width}x${height}:r=${fps}:d=${seconds},format=rgb24,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p`;
   return `color=c=black:s=${width}x${height}:r=${fps}:d=${seconds},drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='gte(t,0.25)'`;
 }
 
@@ -54,11 +74,21 @@ export async function writeClip(path: string, spec: ClipSpec): Promise<void> {
   args.push("-map", "0:v");
   if (spec.secondVideo === true) args.push("-map", "1:v");
   if (spec.audio === true) args.push("-map", spec.secondVideo === true ? "2:a" : "1:a", "-c:a", "aac", "-b:a", "32k");
-  if (codec === "h264") args.push("-c:v", "libx264", "-preset", "ultrafast", "-crf", "35", "-pix_fmt", "yuv420p");
+  if (codec === "h264") args.push("-c:v", "libx264", "-preset", "ultrafast", "-crf", spec.patch === undefined ? "35" : "12", "-pix_fmt", "yuv420p");
   else args.push("-c:v", "libx265", "-preset", "ultrafast", "-crf", "35", "-pix_fmt", "yuv420p", "-tag:v", "hvc1", "-x265-params", "log-level=error");
+  if (spec.patch !== undefined) args.push("-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv");
   if (spec.faststart !== false) args.push("-movflags", "+faststart");
-  args.push(path);
+  if (spec.rotate === undefined) {
+    args.push(path);
+    await runFfmpegForFixture(args);
+    return;
+  }
+  // Stored as height x width, then the rotation is written into the header without touching the samples.
+  const stored = `${path}.stored.mp4`;
+  args.push(stored);
   await runFfmpegForFixture(args);
+  await runFfmpegForFixture(["-display_rotation", String(360 - spec.rotate), "-i", stored, "-c", "copy", "-movflags", "+faststart", path]);
+  await rm(stored, { force: true });
 }
 
 /**

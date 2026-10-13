@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { imageSize } from "../library/media";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { firstFrameSize, makeFirstFrame } from "./firstFrame";
-import { runFfmpegForFixture } from "./testing/clipFixtures";
+import { meanRgb, runFfmpegForFixture } from "./testing/clipFixtures";
 useNativeGlobals();
 
 // §5.5 «The first frame»: the photo scaled to fit the clip's output (std and Grok 720 x 1280, pro 1080 x 1920), never upscaled, as a JPEG. A photo within 2 % of 9:16 is centre-cropped to
@@ -143,6 +143,20 @@ describe("makeFirstFrame", () => {
     const result = await makeFirstFrame({ photo: whole.subarray(0, 60), model: "kling", quality: "std", scratchDir: scratch });
     expect(result).toEqual({ ok: false, reason: "photo-unreadable" });
   });
+
+  for (const [name, hex, rgb, size] of [
+    ["scaling", "0x2EB32E", [46, 179, 46], [1152, 2048]],
+    ["cropping and scaling", "0xC43031", [196, 48, 47], [1000, 1780]],
+  ] as const) {
+    test(`keeps the colour of a photo through ${name} within 3 per channel`, async () => {
+      const path = join(photosDir, `patch-${hex}.png`);
+      await runFfmpegForFixture(["-f", "lavfi", "-i", `color=c=${hex}:s=${size[0]}x${size[1]}:d=1,format=rgb24`, "-frames:v", "1", path]);
+      const result = await makeFirstFrame({ photo: new Uint8Array(await readFile(path)), model: "kling", quality: "std", scratchDir: scratch });
+      if (!result.ok) throw new Error(result.reason);
+      const got = await meanRgb(result.jpeg);
+      got.forEach((channel, i) => expect(Math.abs(channel - (rgb[i] ?? 0))).toBeLessThanOrEqual(3));
+    });
+  }
 
   test("leaves the scratch folder empty after a crop", async () => {
     await frame(1000, 1780, "kling", "std");
