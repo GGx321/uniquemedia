@@ -65,8 +65,9 @@ function estimateOver(priced: PricedBook, prices: ClipPrices, req: ClipEstimateR
     expectedMicros: clipExpectedMicros(parts),
     worstMicros: clipWorstMicros(parts),
     prices: priced.book.videoSource,
-    // The video table's own date when it stood in, else the load's day: never the image table's date.
-    pricesAsOf: priced.book.videoFallbackDate ?? priced.asOf,
+    // The video part's own day (the video table's date when it stood in, else the load's day), never a mixed book's image-table date. A hand-built PricedBook without it: the
+    // video table's date when it stood in, else `asOf`.
+    pricesAsOf: priced.videoAsOf ?? priced.book.videoFallbackDate ?? priced.asOf,
   };
 }
 

@@ -5,7 +5,7 @@ import { clipReserveMicros, type BoldClipsMode, type ClipQuality, type ClipSecon
 import { Estimate } from "../../shared/engine/estimate";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { MoneyError } from "./errors";
-import type { PricedBook } from "./priceCache";
+import { PriceCache, type PricedBook } from "./priceCache";
 import { FALLBACK_VIDEO_DATE, loadPriceBook, VIDEO_TIERS, type FetchLike } from "./prices";
 import { clipOptionPrices, clipPricesOf, estimateClip, type ClipEstimateRequest } from "./videoEstimate";
 useNativeGlobals();
@@ -333,4 +333,24 @@ test("every option price is a valid Estimate and the four Kling keys are there",
   expect(Object.keys(options.prices).sort()).toEqual(["grok10", "grok5", "pro10", "pro5", "std10", "std5"]);
   expect(Object.keys(options.noFallbackPrices).sort()).toEqual(["pro10", "pro5", "std10", "std5"]);
   for (const estimate of [...Object.values(options.prices), ...Object.values(options.noFallbackPrices)]) expect(Estimate.safeParse(estimate).success).toBe(true);
+});
+
+// ---------- round 2: a mixed book dates the video part by its own day ----------
+
+test("a live video estimate from a mixed book (image fallback) is dated by the load day, not the image table's date", async () => {
+  const book = await loadPriceBook({ fetch: fetchOf({ [LISTING_URL]: LISTING }), baseUrl: BASE, imageModels: ["x-ai/grok-imagine-image-2.0"], chatModels: [], videoModels: VIDEO_MODELS });
+  const cache = new PriceCache({ load: async () => book, clock: () => Date.parse("2026-10-13T10:00:00.000Z"), monotonic: () => 0 });
+  const priced = await cache.get({ imageModels: ["x-ai/grok-imagine-image-2.0"], chatModels: [], videoModels: VIDEO_MODELS });
+
+  const estimate = estimateClip(priced, kling("std", 5), { mode: "auto" });
+
+  expect([estimate.prices, estimate.pricesAsOf]).toEqual(["live", "2026-10-13"]);
+});
+
+test("a dated video part keeps the video table's date", async () => {
+  const book = await loadPriceBook({ fetch: fetchOf({ [LISTING_URL]: new Error("offline") }), baseUrl: BASE, imageModels: [], chatModels: [], videoModels: VIDEO_MODELS });
+  const cache = new PriceCache({ load: async () => book, clock: () => Date.parse("2026-10-13T10:00:00.000Z"), monotonic: () => 0 });
+  const priced = await cache.get({ imageModels: [], chatModels: [], videoModels: VIDEO_MODELS });
+
+  expect(estimateClip(priced, kling("std", 5), { mode: "auto" }).pricesAsOf).toBe(FALLBACK_VIDEO_DATE);
 });

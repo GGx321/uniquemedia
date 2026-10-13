@@ -28,6 +28,11 @@ function wantedOf(models: PriceModels): PriceModels {
 export interface PricedBook {
   book: PriceBook;
   asOf: string;
+  /**
+   * 5b.1 (S5.V2): the day of the VIDEO part alone: the video table's date when it stood in, else the load's day. `asOf` is the older of every dated table in a mixed book (images
+   * from the table, video live reads the image table's date), so a clip's estimate reads this one. The cache always sets it; a hand-built value may leave it out.
+   */
+  videoAsOf?: string;
 }
 
 /** Live prices are loaded again after this long. */
@@ -74,7 +79,8 @@ export class PriceCache {
     if (pending !== undefined) return pending;
 
     const loading = this.#load(wanted).then((book) => {
-      const priced = { book, asOf: book.fallbackDate ?? new Date(this.#clock()).toISOString().slice(0, 10) };
+      const day = new Date(this.#clock()).toISOString().slice(0, 10);
+      const priced = { book, asOf: book.fallbackDate ?? day, videoAsOf: book.videoFallbackDate ?? day };
       this.#entries.set(key, { priced, loadedAtMono: this.#monotonic() });
       return priced;
     });
