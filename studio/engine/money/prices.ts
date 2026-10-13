@@ -483,9 +483,9 @@ export const FALLBACK_VIDEO: ReadonlyMap<string, VideoPrice> = new Map(
   ])
 );
 
-const VIDEO_DECIMAL = /^\d+(?:\.\d+)?$/;
-/** A SKU key that names a resolution (`..._720p`, `..._1080p`, `..._2k`, `..._4k`). A model with any such key is not priced flat. */
-const RESOLUTION_SKU = /_(?:\d{3,4}p|\dk)$/i;
+const VIDEO_DECIMAL = /^(\d+)(?:\.(\d+))?$/;
+/** A SKU key that names a resolution (`..._720p`, `..._1080p`, `..._2k`, `..._4k`) at the end of the key or before a suffix (`..._1080p_with_audio`). A model with any such key is not priced flat. */
+const RESOLUTION_SKU = /_(?:\d{3,4}p|\dk)(?:_|$)/i;
 
 const VideoListing = z.object({ data: z.array(z.unknown()) });
 const ListedVideoModel = z.object({ id: z.string(), pricing_skus: z.record(z.string(), z.unknown()) });
@@ -494,15 +494,15 @@ type Skus = Readonly<Record<string, unknown>>;
 
 /**
  * Reads the listing's models by id. A body without a single `data[{id, pricing_skus}]` is UNREADABLE: it throws a plain Error, which the loader answers with the dated table.
- * Entries that do not parse are skipped (one odd entry must not hide the others); the first entry of an id wins.
+ * Entries that do not parse are skipped (one odd entry must not hide the others). An id listed twice keeps BOTH entries: its price is the dearest of them (`videoPriceFrom`).
  */
-function readVideoListing(body: unknown): Map<string, Skus> {
+function readVideoListing(body: unknown): Map<string, Skus[]> {
   const listing = VideoListing.safeParse(body);
   if (!listing.success) throw new Error(`Unexpected /videos/models body: ${z.prettifyError(listing.error)}`);
-  const models = new Map<string, Skus>();
+  const models = new Map<string, Skus[]>();
   for (const item of listing.data.data) {
     const entry = ListedVideoModel.safeParse(item);
-    if (entry.success && !models.has(entry.data.id)) models.set(entry.data.id, entry.data.pricing_skus);
+    if (entry.success) models.set(entry.data.id, [...(models.get(entry.data.id) ?? []), entry.data.pricing_skus]);
   }
   if (models.size === 0) throw new Error("Unexpected /videos/models body: no entry has an id and pricing_skus");
   return models;
@@ -512,13 +512,21 @@ function videoUnavailable(message: string): MoneyError {
   return new MoneyError("PRICE_UNAVAILABLE", message, { scope: "video" });
 }
 
-/** A listed price (USD, or cents when `cents`) as whole micro-dollars, rounded UP. A value that is not a plain non-negative decimal, or is out of range, is PRICE_UNAVAILABLE. */
+/**
+ * A listed price (USD, or cents when `cents`) as whole micro-dollars, rounded UP, from the decimal text itself: BigInt and no float, so a digit far below a micro-dollar still
+ * counts (`"0.0840000000004"` is 84 001). A value that is not a plain non-negative decimal, or is out of range, is PRICE_UNAVAILABLE.
+ */
 function videoMicros(value: unknown, where: string, cents: boolean): number {
-  const number = typeof value === "string" && VIDEO_DECIMAL.test(value) ? Number(value) : typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
-  if (number === null) throw videoUnavailable(`${where} is not a plain non-negative price`);
-  const micros = costToMicrosCeil(cents ? number / 100 : number);
-  if (!Number.isSafeInteger(micros)) throw videoUnavailable(`${where} is out of range`);
-  return micros;
+  const text = typeof value === "string" ? value : typeof value === "number" && Number.isFinite(value) && value >= 0 ? value.toFixed(12) : "";
+  const match = VIDEO_DECIMAL.exec(text);
+  if (match === null) throw videoUnavailable(`${where} is not a plain non-negative price`);
+  // A cent is 1e-2 USD = 1e4 micro-dollars: four decimal places keep a cents price exact, six keep a USD one.
+  const digits = cents ? 4 : 6;
+  const fraction = match[2] ?? "";
+  let scaled = BigInt(match[1] ?? "0") * 10n ** BigInt(digits) + BigInt(fraction.slice(0, digits).padEnd(digits, "0"));
+  if (/[1-9]/.test(fraction.slice(digits))) scaled += 1n;
+  if (scaled > BigInt(Number.MAX_SAFE_INTEGER)) throw videoUnavailable(`${where} is out of range`);
+  return Number(scaled);
 }
 
 /**
@@ -536,9 +544,7 @@ function perSecondMicros(skus: Skus, model: string, resolution: VideoResolution)
   throw videoUnavailable(`/videos/models lists no ${resolution} price for ${model}`);
 }
 
-function videoPriceFrom(listing: ReadonlyMap<string, Skus>, model: string, resolution: VideoResolution): VideoPrice {
-  const skus = listing.get(model);
-  if (skus === undefined) throw videoUnavailable(`/videos/models does not list ${model}`);
+function videoPriceOfEntry(skus: Skus, model: string, resolution: VideoResolution): VideoPrice {
   const perSecond = perSecondMicros(skus, model, resolution);
   // A zero price would reserve nothing.
   if (perSecond === 0) throw videoUnavailable(`${model} is priced 0 at ${resolution}, which would reserve nothing`);
@@ -548,6 +554,20 @@ function videoPriceFrom(listing: ReadonlyMap<string, Skus>, model: string, resol
     resolution,
     perSecondMicros: perSecond,
     perInputImageMicros: imageInput === undefined ? 0 : videoMicros(imageInput, `${model} cents_per_image_input`, true),
+    source: "live",
+  };
+}
+
+/** The model's price at the resolution. An id listed twice takes the dearest of its entries, field by field (never the first: a cheaper duplicate must not under-reserve); an entry without the tier refuses the whole model. */
+function videoPriceFrom(listing: ReadonlyMap<string, Skus[]>, model: string, resolution: VideoResolution): VideoPrice {
+  const entries = listing.get(model);
+  if (entries === undefined || entries.length === 0) throw videoUnavailable(`/videos/models does not list ${model}`);
+  const prices = entries.map((skus) => videoPriceOfEntry(skus, model, resolution));
+  return {
+    model,
+    resolution,
+    perSecondMicros: Math.max(...prices.map((price) => price.perSecondMicros)),
+    perInputImageMicros: Math.max(...prices.map((price) => price.perInputImageMicros)),
     source: "live",
   };
 }
@@ -568,7 +588,7 @@ async function loadVideoPrices(fetch: FetchLike, base: string, models: readonly 
     if (tier === undefined) throw videoUnavailable(`no video tier is known for ${model}`);
     return { model, resolution: VIDEO_TIERS[tier].resolution };
   });
-  let listing: Map<string, Skus>;
+  let listing: Map<string, Skus[]>;
   try {
     listing = readVideoListing(await getJson(fetch, `${base}/videos/models`, timeoutMs));
   } catch (err) {

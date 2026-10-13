@@ -511,3 +511,104 @@ test("a video book with live prices is dated by the day of the load", async () =
 
   expect(priced.asOf).toBe("2026-10-13");
 });
+
+// ---------- round 2: exact decimals, duplicate ids, resolution SKUs with a suffix, the video part's own date ----------
+
+const perSecondOf = (value: unknown): number => parseVideoModels(listingOf({ m: { image_to_video_duration_seconds_720p: value } }), "m", "720p").perSecondMicros;
+
+test("a decimal with a digit far below a micro-dollar rounds up, not to nearest", () => {
+  expect(perSecondOf("0.0840000000004")).toBe(84_001);
+});
+
+test("a long decimal rounds up at the sixth place", () => {
+  expect(perSecondOf("0.123456789")).toBe(123_457);
+});
+
+test("an exact decimal padded with zeros stays exact", () => {
+  expect(perSecondOf("0.0840000000000")).toBe(84_000);
+  expect(perSecondOf("0.084")).toBe(84_000);
+  expect(perSecondOf("1")).toBe(1_000_000);
+});
+
+test("a JSON number is read as its decimal, rounded up like the string", () => {
+  expect(perSecondOf(0.084)).toBe(84_000);
+  expect(perSecondOf(0.112)).toBe(112_000);
+});
+
+test("cents are converted exactly and rounded up: 1.00000001 cents is 10 001 µ$", () => {
+  const input = (cents: string): number => parseVideoModels(listingOf({ m: { image_to_video_duration_seconds_720p: "0.1", cents_per_image_input: cents } }), "m", "720p").perInputImageMicros;
+
+  expect(input("1.00000001")).toBe(10_001);
+  expect(input("1")).toBe(10_000);
+  expect(input("0.2")).toBe(2_000);
+});
+
+test("a duplicated model id takes the dearer price when the cheaper entry comes first", () => {
+  const body = {
+    data: [
+      { id: "m", pricing_skus: { image_to_video_duration_seconds_720p: "0.05", cents_per_image_input: "1" } },
+      { id: "m", pricing_skus: { image_to_video_duration_seconds_720p: "0.09", cents_per_image_input: "2" } },
+    ],
+  };
+
+  expect(parseVideoModels(body, "m", "720p")).toMatchObject({ perSecondMicros: 90_000, perInputImageMicros: 20_000 });
+});
+
+test("a duplicated model id takes the dearer price when the dearer entry comes first", () => {
+  const body = {
+    data: [
+      { id: "m", pricing_skus: { image_to_video_duration_seconds_720p: "0.09" } },
+      { id: "m", pricing_skus: { image_to_video_duration_seconds_720p: "0.05" } },
+    ],
+  };
+
+  expect(parseVideoModels(body, "m", "720p").perSecondMicros).toBe(90_000);
+});
+
+test("a duplicated model id with one entry lacking the tier is PRICE_UNAVAILABLE for the video scope", () => {
+  const body = {
+    data: [
+      { id: "m", pricing_skus: { image_to_video_duration_seconds_720p: "0.05" } },
+      { id: "m", pricing_skus: { image_to_video_duration_seconds_1080p: "0.09" } },
+    ],
+  };
+
+  expect(moneyErrorOf(() => parseVideoModels(body, "m", "720p")).scope).toBe("video");
+});
+
+test("a SKU that names a resolution before a suffix makes the model not flat: _1080p_with_audio", () => {
+  const body = listingOf({ m: { duration_seconds: "0.1", duration_seconds_1080p_with_audio: "0.3" } });
+
+  expect(moneyErrorOf(() => parseVideoModels(body, "m", "720p")).scope).toBe("video");
+});
+
+test("a _2k SKU makes the model not flat", () => {
+  const body = listingOf({ m: { duration_seconds: "0.1", duration_seconds_2k: "0.2" } });
+
+  expect(moneyErrorOf(() => parseVideoModels(body, "m", "720p")).scope).toBe("video");
+});
+
+test("a suffix with no resolution (_with_audio) does not make the model resolution-priced", () => {
+  const body = listingOf({ m: { duration_seconds: "0.1", duration_seconds_with_audio: "0.15" } });
+
+  expect(parseVideoModels(body, "m", "720p").perSecondMicros).toBe(100_000);
+});
+
+test("a priced book of the cache carries the video part's own day, live or dated", async () => {
+  const live = new PriceCache({ load: async () => await loadVideo({ [LISTING_URL]: LISTING }), clock: () => NOW, monotonic: () => 0 });
+  const dated = new PriceCache({ load: async () => await loadVideo({}), clock: () => NOW, monotonic: () => 0 });
+  const models = { imageModels: [], chatModels: [], videoModels: ALL_VIDEO };
+
+  expect((await live.get(models)).videoAsOf).toBe("2026-10-13");
+  expect((await dated.get(models)).videoAsOf).toBe(FALLBACK_VIDEO_DATE);
+});
+
+test("a mixed book (image fallback, video live) is dated by the image table but its video part by the load day", async () => {
+  const mixed = await loadPriceBook({ fetch: fakeFetch({ [LISTING_URL]: LISTING }), baseUrl: BASE, imageModels: ["x-ai/grok-imagine-image-2.0"], chatModels: [], videoModels: ALL_VIDEO });
+  const cache = new PriceCache({ load: async () => mixed, clock: () => NOW, monotonic: () => 0 });
+
+  const priced = await cache.get({ imageModels: ["x-ai/grok-imagine-image-2.0"], chatModels: [], videoModels: ALL_VIDEO });
+
+  expect(priced.asOf).toBe(FALLBACK_PRICES_DATE);
+  expect(priced.videoAsOf).toBe("2026-10-13");
+});
