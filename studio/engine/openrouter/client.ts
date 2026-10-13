@@ -67,7 +67,7 @@ export function createOpenRouterClient(options: OpenRouterClientOptions): OpenRo
     log: options.log ?? (() => {}),
     timeoutMs: checkedInt("timeoutMs", options.timeoutMs ?? REQUEST_TIMEOUT_MS, REQUEST_TIMEOUT_MS),
     maxBodyBytes: checkedInt("maxBodyBytes", options.maxBodyBytes ?? MAX_BODY_BYTES, Number.MAX_SAFE_INTEGER),
-    downloadTimeoutMs: checkedInt("downloadTimeoutMs", options.downloadTimeoutMs ?? DOWNLOAD_TIMEOUT_MS, Number.MAX_SAFE_INTEGER),
+    downloadTimeoutMs: checkedInt("downloadTimeoutMs", options.downloadTimeoutMs ?? DOWNLOAD_TIMEOUT_MS, DOWNLOAD_TIMEOUT_MS),
     ...(options.openFile === undefined ? {} : { openFile: options.openFile }),
     sleep: options.sleep ?? sleep,
     random: options.random ?? Math.random,
