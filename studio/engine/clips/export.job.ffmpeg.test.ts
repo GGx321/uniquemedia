@@ -338,6 +338,20 @@ describe("a stop", () => {
   });
 });
 
+describe("the library's file (I5.54: every export is made from the provider's bytes)", () => {
+  test("a file that is not the bytes its record names is refused INTERNAL, before ffmpeg is asked anything", async () => {
+    let asked = false;
+    const r = await world({ deps: { videoStreams: async () => ((asked = true), "ok") } });
+    await copyFile(await fixtures.pro(), clipFilePath(r.clipsDir, CLIP));
+
+    const state = await r.settled(await r.started(CLIP));
+
+    expect(errorOf(state)).toMatchObject({ code: "INTERNAL" });
+    expect(asked).toBe(false);
+    expect(await r.folderNames()).toEqual([]);
+  });
+});
+
 describe("the second layer: ffmpeg is asked how many video streams the file has, before the encode", () => {
   test("it is asked about the library's file with the codec and the size the walker judged", async () => {
     const asked: unknown[] = [];
@@ -359,7 +373,8 @@ describe("the second layer: ffmpeg is asked how many video streams the file has,
   test("a file the walker already refuses (two video tracks) never reaches ffmpeg", async () => {
     let asked = false;
     const r = await world({ deps: { videoStreams: async () => ((asked = true), "ok") } });
-    await copyFile(await fixtures.twoVideos(), clipFilePath(r.clipsDir, CLIP));
+    // The record names these very bytes: only the walker can refuse them.
+    await r.putClip(CLIP, await fixtures.twoVideos());
     const state = await r.settled(await r.started(CLIP));
 
     expect(errorOf(state)).toMatchObject({ code: "INTERNAL" });

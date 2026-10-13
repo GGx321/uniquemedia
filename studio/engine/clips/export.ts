@@ -15,6 +15,7 @@ import { checkVideoStreams, type VideoStreamsOptions, type VideoStreamsVerdict }
 import { assertFolderContained, ContainmentError } from "../videos/commit";
 import { NODE_COMMIT_FS, type CommitFs, type FileFacts, type FileIdentity } from "../videos/commitFs";
 import { CLIP_EXPORT_KIND, highestNamedNumber, type ExportNumberLibrary, type NumberFs } from "../videos/exportNumbers";
+import { hashFile } from "../videos/fileBytes";
 import type { CommitTracker } from "../videos/live";
 import { partNameOf } from "../videos/record";
 import { readRootId } from "../videos/rootMarker";
@@ -32,7 +33,7 @@ import { clipFilePath, readClipRecord } from "./store";
 //
 // The job re-encodes the LIBRARY'S file (the provider's bytes, never touched: I5.54) into the avatar's folder inside the export root and COMMITS EXACTLY AS A RENDER DOES
 // (videos/commit.ts; commitFs.ts: «deliberately no copy»):
-//   the folder checked again -> the library's file judged by the walker, then by ffmpeg itself (one video stream, before `-map 0:V:0`) -> `<folder>/.studio-part-<jobId>.mp4` registered
+//   the folder checked again -> the library's file (the bytes its record names) judged by the walker, then by ffmpeg itself (one video stream, before `-map 0:V:0`) -> `<folder>/.studio-part-<jobId>.mp4` registered
 //   in the renders' live commits and created empty by the job -> the encode (bounded, under the job's signal) -> the temp probed (H.264 1080 x 1920 at the profile's rate, no sound,
 //   the source's length) and checked by `verifyClipExport` (I5.58) -> fsync -> THE ROOT LOCK: the marker and the folder looked at again, the number above `highestNamedNumber`
 //   (which sees every clip record), `claimExportName` (the placeholder registered live), the temp and the placeholder re-checked, RENAME (an EXDEV is a refusal, never a copy), the
@@ -349,8 +350,12 @@ export class ClipExports {
     if (!check.ok) throw exportRefusal(check.reason, "the export folder cannot take the clip");
     signal.throwIfAborted();
 
-    // 2. The library's file: the walker judges it, then ffmpeg itself says it has one video stream, the one the walker judged (the encode maps `0:V:0`).
+    // 2. The library's file: the bytes its record names (I5.54: the provider's, kept as they came), judged by the walker, then by ffmpeg itself: one video stream, the one the walker
+    //    judged (the encode maps `0:V:0`).
     const source = clipFilePath(job.clipsDir, job.clipId);
+    const sourceSha = await hashFile(source).catch((error: unknown) => Promise.reject(internal(`the clip's file in Studio cannot be read (${codeOf(error)})`)));
+    if (job.record.outcome.status !== "ready" || sourceSha !== job.record.outcome.sha256) throw internal("the clip's file in Studio is not the file its record names");
+    signal.throwIfAborted();
     const judged = await this.#judge(source);
     const streams = await (deps.videoStreams ?? checkVideoStreams)({ path: source, expected: { codec: judged.codec, width: judged.width, height: judged.height }, signal, timeoutMs: STREAMS_TIMEOUT_MS });
     if (streams !== "ok") throw internal(`the clip's file in Studio is not one plain video stream to ffmpeg (${streams})`);
