@@ -6,7 +6,7 @@ import type { KeyCommand } from "./keyFlow";
 import type { MediaPickCommand } from "./mediaImportFlow";
 import type { MusicKeyCommand } from "./musicKeyFlow";
 import type { AvatarDeleteCommand } from "./avatarDeleteFlow";
-import type { RevealCommand, RevealFolderCommand } from "./revealFlow";
+import type { ClipRevealCommand, RevealCommand, RevealFolderCommand } from "./revealFlow";
 import type { SettingsCommand } from "./settingsFlow";
 import type { OwnStickerBytesCommand } from "./ownStickerBytesFlow";
 import type { StickerBytesCommand } from "./stickerBytesFlow";
@@ -33,6 +33,7 @@ function routesSpy() {
   const exportFolder: ExportFolderCommand[] = [];
   const reveal: RevealCommand[] = [];
   const revealFolder: RevealFolderCommand[] = [];
+  const clipReveal: ClipRevealCommand[] = [];
   const avatarDelete: AvatarDeleteCommand[] = [];
   const mediaImport: MediaPickCommand[] = [];
   const stickerBytes: StickerBytesCommand[] = [];
@@ -67,6 +68,10 @@ function routesSpy() {
       revealFolder.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { opened: "avatar" } };
     },
+    clipReveal: async (command) => {
+      clipReveal.push(command);
+      return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { clipId: command.payload.clipId } };
+    },
     avatarDelete: async (command) => {
       avatarDelete.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { avatarId: command.payload.avatarId, videoFilesTrashed: 0, videoFilesKept: 0, videoFilesUnchecked: 0, videoFolder: null } };
@@ -88,7 +93,7 @@ function routesSpy() {
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
     },
   };
-  return { routes, mainOnly, musicKey, settings, importPhoto, exportFolder, reveal, revealFolder, avatarDelete, mediaImport, stickerBytes, ownStickerBytes, engine };
+  return { routes, mainOnly, musicKey, settings, importPhoto, exportFolder, reveal, revealFolder, clipReveal, avatarDelete, mediaImport, stickerBytes, ownStickerBytes, engine };
 }
 
 function command(type: string, payload: unknown = {}, id = "cmd-00000001"): unknown {
@@ -283,6 +288,22 @@ describe("handleRendererRequest", () => {
     expect(reveal).toEqual([]);
   });
 
+  test("clips.reveal is main's alone (S5.V4c): it reaches the clip reveal route and is never forwarded to the engine", async () => {
+    const { routes, reveal, revealFolder, clipReveal, engine } = routesSpy();
+    const response = await handleRendererRequest(command("clips.reveal", { avatarId: "avatar-0001", clipId: "clip-0001" }), APP_FRAME, PACKAGED, routes);
+    expect(response).toMatchObject({ ok: true, type: "clips.reveal", result: { clipId: "clip-0001" } });
+    expect(ResponseMessage.safeParse(response).success).toBe(true);
+    expect(clipReveal.map((c) => c.payload)).toEqual([{ avatarId: "avatar-0001", clipId: "clip-0001" }]);
+    expect([reveal, revealFolder, engine]).toEqual([[], [], []]);
+  });
+
+  test("clips.reveal carrying a path is refused by the contract before any route runs", async () => {
+    const { routes, clipReveal, engine } = routesSpy();
+    const response = await handleRendererRequest(command("clips.reveal", { avatarId: "avatar-0001", clipId: "clip-0001", path: "/Volumes/Reels/a.mp4" }), APP_FRAME, PACKAGED, routes);
+    expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    expect([clipReveal, engine]).toEqual([[], []]);
+  });
+
   test("avatars.delete is main's alone: it reaches the delete route and is never forwarded to the engine", async () => {
     const { routes, mainOnly, settings, importPhoto, exportFolder, reveal, avatarDelete, engine } = routesSpy();
     const response = await handleRendererRequest(command("avatars.delete", { avatarId: "avatar-0001" }), APP_FRAME, PACKAGED, routes);
@@ -427,6 +448,9 @@ describe("handleRendererRequest", () => {
         throw new Error("unreachable");
       },
       revealFolder: async () => {
+        throw new Error("unreachable");
+      },
+      clipReveal: async () => {
         throw new Error("unreachable");
       },
       mediaImport: async () => {

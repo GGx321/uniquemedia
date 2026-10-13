@@ -10,6 +10,12 @@ import { errorResponseFor, EXPORT_CHANGING_DETAIL, isSafeName, PROTOCOL_VERSION,
 
 export type RevealCommand = Extract<CommandMessage, { type: "videos.reveal" }>;
 export type RevealFolderCommand = Extract<CommandMessage, { type: "videos.revealFolder" }>;
+export type ClipRevealCommand = Extract<CommandMessage, { type: "clips.reveal" }>;
+
+/** Stage 5, 5b.1, S5.V4c: «Показать в Finder» on a clip, `clips.reveal {avatarId, clipId}` (main only). */
+export function isClipRevealCommand(command: CommandMessage): command is ClipRevealCommand {
+  return command.type === "clips.reveal";
+}
 
 export function isRevealCommand(command: CommandMessage): command is RevealCommand {
   return command.type === "videos.reveal";
@@ -75,6 +81,26 @@ export async function handleRevealCommand(command: RevealCommand, deps: RevealFl
   if (place === null) return errorResponseFor(command, { code: "INTERNAL", detail: "the video's place is not inside the export folder" });
   deps.show(place);
   return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { videoId: video.videoId } };
+}
+
+/**
+ * Stage 5, 5b.1, S5.V4c (plan s5b1 §5.2, §5.13): a clip's copy in «Готовые видео». The engine's `clips.get` answers each export line with the `fileState` it computed against the
+ * current export folder (size and sha256: a Finder-deleted copy whose name another file took reads `changed`, never `present`). The NEWEST present copy is shown; none is VALIDATION
+ * `not-exported`. As for a render, the relative path is checked again here, so the joined place never leaves the export folder, and a folder switched meanwhile is IN_FLIGHT.
+ */
+export async function handleClipRevealCommand(command: ClipRevealCommand, deps: RevealFlowDeps): Promise<ResponseMessage> {
+  const root = deps.exportPath();
+  const { avatarId, clipId } = command.payload;
+  const answer = await deps.engine.request({ v: PROTOCOL_VERSION, id: deps.newId(), kind: "command", type: "clips.get", payload: { avatarId, clipId } });
+  if (!answer.ok) return errorResponseFor(command, answer.error);
+  if (answer.type !== "clips.get") return errorResponseFor(command, { code: "INTERNAL", detail: "the engine answered the clip with something else" });
+  const present = answer.result.clip.exports.findLast((line) => line.fileState === "present");
+  if (present === undefined) return errorResponseFor(command, { code: "VALIDATION", clipReason: "not-exported", detail: "the clip has no copy in the export folder" });
+  if (deps.exportPath() !== root) return errorResponseFor(command, { code: "IN_FLIGHT", detail: EXPORT_CHANGING_DETAIL });
+  const place = placeOf(root, present.relPath, deps.platform);
+  if (place === null) return errorResponseFor(command, { code: "INTERNAL", detail: "the clip's copy is not inside the export folder" });
+  deps.show(place);
+  return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { clipId: answer.result.clip.clipId } };
 }
 
 /** The states of a record whose file lives (or lived) in the CURRENT export folder: its folder name is this root's. */

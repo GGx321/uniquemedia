@@ -117,6 +117,9 @@ async function harness() {
         revealFolder: async () => {
           throw new Error("not used");
         },
+        clipReveal: async () => {
+          throw new Error("not used");
+        },
         mediaImport: async () => {
           throw new Error("not used");
         },

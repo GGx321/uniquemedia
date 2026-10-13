@@ -13,7 +13,7 @@ import type { ImportPhotoCommand } from "./importFlow";
 import type { KeyCommand } from "./keyFlow";
 import type { MediaPickCommand } from "./mediaImportFlow";
 import type { MusicKeyCommand } from "./musicKeyFlow";
-import { isRevealCommand, isRevealFolderCommand, type RevealCommand, type RevealFolderCommand } from "./revealFlow";
+import { isClipRevealCommand, isRevealCommand, isRevealFolderCommand, type ClipRevealCommand, type RevealCommand, type RevealFolderCommand } from "./revealFlow";
 import { isSettingsCommand, type SettingsCommand } from "./settingsFlow";
 import { isOwnStickerBytesCommand, type OwnStickerBytesCommand } from "./ownStickerBytesFlow";
 import { isStickerBytesCommand, type StickerBytesCommand } from "./stickerBytesFlow";
@@ -80,6 +80,8 @@ export interface RequestRoutes {
   reveal(command: RevealCommand): Promise<ResponseMessage>;
   /** 3e.2 (K17): «Папка «Готовые видео»». Main finds the avatar's folder in the export folder itself and opens it. */
   revealFolder(command: RevealFolderCommand): Promise<ResponseMessage>;
+  /** Stage 5, 5b.1, S5.V4c: «Показать в Finder» on a clip. Main finds the clip's newest present copy itself from its ids and asks the system file manager to show it. */
+  clipReveal(command: ClipRevealCommand): Promise<ResponseMessage>;
   /**
    * «Удалить аватар»: `avatars.delete {avatarId}`. Main asks the engine what goes, checks every path against its own roots, moves the avatar's folder to the
    * system Trash first and its video files after, and tells the engine how it ended. The window names an avatar and is never told a path.
@@ -119,6 +121,7 @@ async function route(raw: unknown, routes: RequestRoutes): Promise<ResponseMessa
     if (isExportFolderCommand(message)) return routes.exportFolder(message);
     if (isRevealCommand(message)) return routes.reveal(message);
     if (isRevealFolderCommand(message)) return routes.revealFolder(message);
+    if (isClipRevealCommand(message)) return routes.clipReveal(message);
     if (isAvatarDeleteCommand(message)) return routes.avatarDelete(message);
     if (isStickerBytesCommand(message)) return routes.stickerBytes(message);
     if (isOwnStickerBytesCommand(message)) return routes.ownStickerBytes(message);

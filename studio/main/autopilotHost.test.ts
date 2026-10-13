@@ -798,6 +798,7 @@ describe("LOW-4: the settings route is outside the gate", () => {
       exportFolder: async (c) => answer(c),
       reveal: async (c) => answer(c),
       revealFolder: async (c) => answer(c),
+      clipReveal: async (c) => answer(c),
       avatarDelete: async (c) => answer(c),
       stickerBytes: async (c) => answer(c),
       ownStickerBytes: async (c) => answer(c),

@@ -30,7 +30,7 @@ import { installProcessGuards } from "../engine/processGuards";
 import { e2eIdentityProblem } from "./e2eIdentity";
 import { engineEnv } from "./engineEnv";
 import { handleExportFolderCommand } from "./exportFolderFlow";
-import { handleRevealCommand, handleRevealFolderCommand } from "./revealFlow";
+import { handleClipRevealCommand, handleRevealCommand, handleRevealFolderCommand } from "./revealFlow";
 import { handleAvatarDeleteCommand, NODE_FLOW_FS } from "./avatarDeleteFlow";
 import { trashableOn } from "./trashSupport";
 import { forwardEngineOutput } from "./engineOutput";
@@ -506,6 +506,15 @@ async function startStudio(): Promise<void> {
         }),
       reveal: (command) =>
         handleRevealCommand(command, {
+          engine,
+          exportPath: () => settings.current.exportPath,
+          show: (path) => shell.showItemInFolder(path),
+          newId: randomUUID,
+          platform: process.platform,
+        }),
+      // S5.V4c: «Показать в Finder» on a clip: main asks the engine for the clip's copies and shows the newest present one, as it shows a render's file.
+      clipReveal: (command) =>
+        handleClipRevealCommand(command, {
           engine,
           exportPath: () => settings.current.exportPath,
           show: (path) => shell.showItemInFolder(path),
