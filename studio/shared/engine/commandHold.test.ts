@@ -17,6 +17,7 @@ const HELD: CommandType[] = [
   "avatars.rewriteDescriptor",
   "avatars.checkDescriptor",
   "avatars.importAvatar",
+  "clips.create",
   "categories.create",
   "categories.regenerate",
   "music.refresh",

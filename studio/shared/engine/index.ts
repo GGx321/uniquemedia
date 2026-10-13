@@ -5,6 +5,7 @@ export * from "./avatar";
 export * from "./avatarDelete";
 export * from "./body";
 export * from "./categories";
+export * from "./clips";
 export * from "./commands";
 export * from "./commandHold";
 export * from "./descriptorEdit";

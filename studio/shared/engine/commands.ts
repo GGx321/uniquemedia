@@ -4,6 +4,7 @@ import { AutopilotContinueResult, AutopilotEstimateResult, AutopilotGetResult, A
 import { AvatarDeletePreview, AvatarDeleteResult } from "./avatarDelete";
 import { AvatarBody } from "./body";
 import { CategoriesListResult, CategoryDescription, CategoryName, CategoryPoses, CategoryRef, CategorySummary, CustomCategoryId, MAX_RUN_CATEGORIES, SceneLevel, POOL_OUTFITS_MAX, POOL_PLACES_MAX, PoolText } from "./categories";
+import { ClipModelChoice, ClipMotionId, ClipOptions, ClipQuality, ClipSeconds, ClipSummary, MAX_LISTED_CLIPS } from "./clips";
 import { nonEmpty, ProtocolVersion } from "./envelope";
 import { EngineError } from "./errors";
 import { EventMessage } from "./events";
@@ -271,6 +272,10 @@ const MAIN_ONLY_SPECS = [
   // with none there yet it opens the export folder itself (`opened` says which). EXPORT_UNAVAILABLE (`exportReason`) when the
   // export folder cannot be used, NOT_FOUND for an unknown avatar.
   defineCommand("videos.revealFolder", z.strictObject({ avatarId: Id }), z.strictObject({ opened: z.enum(["avatar", "root"]) })),
+  // Stage 5, 5b.1 (S5.V1, additive): «Показать в Finder» on a saved clip. Only main can open the system file manager. Main asks the engine `clips.get`, takes the newest export whose
+  // `fileState` is `present` in the current export folder, and shows it (the `videos.reveal` pattern); the engine has no such command and refuses it. NOT_FOUND for an unknown avatar or
+  // clip; VALIDATION with `clipReason` `not-exported` («Сначала сохраните клип в папку.») for a clip with no copy there.
+  defineCommand("clips.reveal", z.strictObject({ avatarId: Id, clipId: Id }), z.strictObject({ clipId: Id })),
   // Stage 3 (3d.4, review round 1): a built-in sticker's bytes for the preview's ImageDecoder. The media scheme stays closed to
   // script reads (never corsEnabled), so main answers from the verified built-in catalogue (the catalogue's sha256, the APNG
   // re-inspected, the manifest agreeing): the window names an id, and is told the file and never a path. NOT_FOUND for an id the
@@ -387,6 +392,37 @@ const ENGINE_SPECS = [
   defineCommand("avatars.portraits", z.strictObject({ avatarId: Id }), AvatarPortraits),
   defineCommand("avatars.pickPortrait", z.strictObject({ avatarId: Id, photoId: Id }), z.strictObject({ avatar: AvatarSummary })),
   defineCommand("avatars.discardPortraits", z.strictObject({ avatarId: Id }), z.strictObject({ avatarId: Id, removed: Count })),
+  // Stage 5, 5b.1 «Оживить» (S5.V1, additive): one photo becomes one clip (Kling, or Grok when Kling refuses), reviewed on a sheet before any money moves. A clip is a job of kind `clip`.
+  //  - `options` is free: what the sheet shows for a gallery photo (the motions, the six prices, the fallback and the month's room). An unsuitable photo is a RESULT with its reason, not an
+  //    error. LIBRARY_UNAVAILABLE, NOT_FOUND, PRICE_UNAVAILABLE (`priceScope` `video`).
+  //  - `create` is paid, accepted like `generatePortraits`, and answers the `clip` job that runs on (job.progress, then job.done / failed / cancelled). Refused free, in order: IN_FLIGHT
+  //    (`clipReason` `one-at-a-time`, checked first), AUTH_INVALID, the ledger's refusals, LIBRARY_UNAVAILABLE, NOT_FOUND, VALIDATION with `clipReason` (`not-a-gallery-photo`,
+  //    `age-unverified`, `photo-unreadable`, `not-vertical`, `bold-off`, `no-motion`, `unknown-motion`, `grok-not-offered`), PRICE_UNAVAILABLE, PRICE_CHANGED, BUDGET_EXCEEDED.
+  //    The motion is an id (`scene` or `g-<slug>`), never free text (I5.51). There is no reveal: it was dropped (Q-B).
+  //  - `list` is the avatar's clips, newest first, at most MAX_LISTED_CLIPS; `notListedTotal` as in `montages.list` (absent when 0, never 0).
+  //  - `get` is one clip with each export's `fileState` looked at now; `markSeen`, `delete` (IN_FLIGHT `job-running`), `retryDownload` (a free job; VALIDATION `download-expired`) and `export`
+  //    (the re-encoding job of I5.55; VALIDATION `not-ready`, EXPORT_UNAVAILABLE, DISK_FULL) follow. NOT_FOUND for a clip the avatar does not have.
+  defineCommand("clips.options", z.strictObject({ avatarId: Id, photoId: Id }), ClipOptions),
+  defineCommand(
+    "clips.create",
+    z.strictObject({
+      avatarId: Id,
+      photoId: Id,
+      motionId: ClipMotionId,
+      model: ClipModelChoice,
+      quality: ClipQuality,
+      seconds: ClipSeconds,
+      fallback: z.enum(["auto", "none"]),
+      ...AcceptedWorst,
+    }),
+    z.strictObject({ jobId: Id }),
+  ),
+  defineCommand("clips.list", z.strictObject({ avatarId: Id }), z.strictObject({ clips: z.array(ClipSummary).max(MAX_LISTED_CLIPS), notListedTotal: Count.min(1).optional() })),
+  defineCommand("clips.get", z.strictObject({ avatarId: Id, clipId: Id }), z.strictObject({ clip: ClipSummary })),
+  defineCommand("clips.markSeen", z.strictObject({ avatarId: Id, clipId: Id }), z.strictObject({ clipId: Id })),
+  defineCommand("clips.delete", z.strictObject({ avatarId: Id, clipId: Id }), z.strictObject({ clipId: Id })),
+  defineCommand("clips.retryDownload", z.strictObject({ avatarId: Id, clipId: Id }), z.strictObject({ jobId: Id })),
+  defineCommand("clips.export", z.strictObject({ avatarId: Id, clipId: Id }), z.strictObject({ jobId: Id })),
   // «Удалить аватар»: what the confirmation shows (counts of photos, candidates, drafts, videos and of the video files that would go to the Trash too).
   // Free and read-only. Refuses like the delete itself does while anything of the avatar runs (IN_FLIGHT), so the dialog says so instead of offering a
   // button that cannot work; NOT_FOUND for an avatar the library does not have, LIBRARY_UNAVAILABLE without a library.

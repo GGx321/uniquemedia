@@ -231,6 +231,20 @@ describe("the sidebar's rows", () => {
     expect(counts.queue).toBe(2);
   });
 
+  test("a running clip is not «Генерация»: it neither joins the photo runs' count nor adds slots to it (S5.V1)", () => {
+    const clip: JobView = { ...run(9), kind: "clip", runId: null, done: 1, total: 4 };
+    expect(sidebarCounts([clip], new Set()).generation).toBeNull();
+    expect(sidebarCounts([run(1, { done: 3, total: 20 }), clip], new Set()).generation).toEqual({ done: 3, total: 20 });
+  });
+
+  test("a running clip is not a render or a scenes job either, but it is a task in «Очередь»", () => {
+    const clip: JobView = { ...run(9), kind: "clip", runId: null, done: 1, total: 4 };
+    const counts = sidebarCounts([clip], new Set());
+    expect(counts.render).toBeNull();
+    expect(counts.scenes).toBeNull();
+    expect(counts.queue).toBe(1);
+  });
+
   test("«Очередь · N задач» counts the queued and running renders with the photo runs", () => {
     const jobs = [run(1), render(2, { status: "queued" }), render(3), render(4, { status: "done" })];
     expect(sidebarCounts(jobs, new Set(["job-00000002", "job-00000003", "job-00000004"])).queue).toBe(3);

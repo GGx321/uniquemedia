@@ -103,3 +103,49 @@ describe("JobRegistry.progress", () => {
     expect(JobState.safeParse(jobs.states()[0]).success).toBe(true);
   });
 });
+
+// Stage 5, 5b.1, S5.V1: the clip ladder writes only valid states, so no `mended` branch is needed for it. A valid clip state stays in the snapshot; a broken one is left out,
+// and the log names the job and the field, never what it held.
+describe("validJobStates and a clip job", () => {
+  const clip: JobState = { kind: "clip", jobId: "job-00000001", avatarId: "avatar-aaaa-0001", clipId: "clip-0000001", status: "running", done: 1, total: 4, phase: "rendering" };
+
+  test("keeps a valid clip state and logs nothing", () => {
+    const lines: string[] = [];
+
+    const kept = validJobStates([clip], (line) => lines.push(line));
+
+    expect(kept).toEqual([clip]);
+    expect(lines).toEqual([]);
+  });
+
+  test("keeps a clip state in every phase", () => {
+    for (const phase of ["preparing", "submitting", "rendering", "proving", "downloading", "checking", "saving", "late", "recovering", "exporting"] as const) {
+      expect(validJobStates([{ ...clip, phase }], () => undefined)).toHaveLength(1);
+    }
+  });
+
+  test("drops a clip state with a phase the contract does not know, and says so without the value", () => {
+    const lines: string[] = [];
+    const broken = { ...clip, phase: "SECRET-phase" } as unknown as JobState;
+
+    const kept = validJobStates([broken], (line) => lines.push(line));
+
+    expect(kept).toEqual([]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("job-00000001");
+    expect(lines[0]).toContain("clip");
+    expect(lines.join("\n")).not.toContain("SECRET");
+  });
+
+  test("drops a clip state with no clip id", () => {
+    const { clipId: _clipId, ...noClip } = clip;
+    expect(validJobStates([noClip as unknown as JobState], () => undefined)).toEqual([]);
+  });
+
+  test("a clip beside the other kinds does not disturb them", () => {
+    const jobs = new JobRegistry();
+    jobs.startCandidates("job-00000002", "draft-00000002", 4);
+    const kept = validJobStates([clip, ...jobs.states()], () => undefined);
+    expect(kept.map((s) => s.kind)).toEqual(["clip", "avatar.candidates"]);
+  });
+});

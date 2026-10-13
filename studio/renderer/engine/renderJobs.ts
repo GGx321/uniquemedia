@@ -92,7 +92,8 @@ function slotsBeforeProgress(job: JobView): number {
 
 export function sidebarCounts(jobs: readonly JobView[], batch: ReadonlySet<string>): SidebarCounts {
   const active = jobs.filter(isActive);
-  const photo = active.filter((job) => !isRender(job) && job.kind !== "scenes");
+  // A clip (Stage 5, 5b.1) is its own kind of task: it is in «Очередь», but its steps are not photo runs' slots (S5.V8 gives it its own row).
+  const photo = active.filter((job) => !isRender(job) && job.kind !== "scenes" && job.kind !== "clip");
   const scenes = active.filter((job) => job.kind === "scenes");
   const batchJobs = jobs.filter((job) => isRender(job) && batch.has(job.jobId));
   const running = batchJobs.filter(isActive);

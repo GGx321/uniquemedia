@@ -127,6 +127,17 @@ import { z } from "zod";
 //  - `SCENE_REASONS` gain `bold-level-needed`, `model-refused` and `model-empty`; `LAUNCH_REASONS` gain `bold-level-needed` (Russian texts in `SCENE_REASONS_RU` / `LAUNCH_REASONS_RU`).
 //  - Rollback: an older build cannot read a plan.json, a scene-set file or a launch file whose request or draft carries `level: "bold"`, a plan with a slot `route` or `models.bold`, a `stoppedError` or slot end with `priceScope` or the new scene reasons (its schemas are strict), nor the ids of the
 //    two «Смелая» categories S5.9b2 adds; a photo sidecar's `source.route` is stripped harmlessly (its source schema is not strict). Roll back only before the first «Смелая» run.
+// Stage 5, 5b.1, S5.V1 (additive, no bump; nine commands, a job kind, an error field, a money field; nothing that exists changes): «Оживить», one photo into one clip.
+//  - commands `clips.options` (free, `{ avatarId, photoId }` → `ClipOptions`: a suitable photo's sheet, or an unsuitable one with its reason), `clips.create` (paid, held while the Mac sleeps;
+//    `{ avatarId, photoId, motionId, model, quality, seconds, fallback, acceptedWorstMicros }` → `{ jobId }`, no reveal), `clips.list` (→ `{ clips, notListedTotal? }`), `clips.get`
+//    (→ `{ clip }`, each export with its `fileState`), `clips.markSeen`, `clips.delete`, `clips.retryDownload` and `clips.export` (→ `{ jobId }`), all free; and `clips.reveal`, which only main answers
+//    (`MAIN_ONLY_COMMANDS`; the engine refuses it).
+//  - the job kind `clip` in the job events and `JobState` (`done / total` count the steps of a clip, or the frames of an export; `phase`, and in `rendering` the `model` and `submittedAt`, in
+//    `proving` the `proveUntil`) and its result `ClipJobResult`; `ClipSummary`, `ClipOptions`, `ClipExport` (its profile says which fps mode made the file) and the rest live in clips.ts.
+//  - `EngineError.clipReason` (`CLIP_REASONS`, only on VALIDATION, or on IN_FLIGHT for `one-at-a-time`, `job-running` and `submitted`; never beside another reason; Russian texts `CLIP_REASONS_RU`)
+//    and `EngineError.priceScope` gains `video` (only on PRICE_UNAVAILABLE; its text is in `PRICE_SCOPES_RU`).
+//  - `MoneyStatus.reconcileAvailableAt` (the open variant only, optional): the earliest time `money.reconcile` can run while it is held.
+//  - `Estimate` moved to estimate.ts and is still exported from state.ts. Rollback: an older build cannot read a clip job in a snapshot (its `JobState` is strict), and never looks in a `clips` folder.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 

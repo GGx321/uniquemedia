@@ -318,6 +318,43 @@ export const PORTRAIT_REASONS = ["not-imported", "too-many-candidates", "not-a-c
 export const PortraitReason = z.enum(PORTRAIT_REASONS);
 export type PortraitReason = z.infer<typeof PortraitReason>;
 
+/**
+ * Why a clip command was refused (`EngineError.clipReason`, Stage 5, 5b.1, S5.V1, additive in v5). The window's text depends on it, so it is a closed code.
+ *
+ * With VALIDATION:
+ * - not-a-gallery-photo / age-unverified / photo-unreadable / not-vertical / bold-off / no-motion: the photo cannot be brought to life (the six `CLIP_UNSUITABLE_REASONS`;
+ *   `clips.options` answers them as a result, `clips.create` refuses with the same reason when it is sent anyway).
+ * - unknown-motion: the motion id the sheet sent is not one the photo offers any more.
+ * - grok-not-offered: `model: "grok"` outside mode `offer`, or on a photo that allows no fallback (I5.47).
+ * - download-expired: the file is gone from OpenRouter (`clips.retryDownload`, after `retryDownloadUntil` or on a 404 / 410).
+ * - not-ready: `clips.export` on a clip that is not `ready`.
+ * - not-exported: `clips.reveal` on a clip with no copy in the export folder.
+ *
+ * With IN_FLIGHT:
+ * - one-at-a-time: a paid clip is already in flight (`clips.create`).
+ * - job-running: a job of this clip runs (`clips.delete`, `clips.retryDownload`, `clips.export`).
+ * - submitted: the clip is already at the provider, so it cannot be cancelled (`avatars.cancel`).
+ */
+export const CLIP_VALIDATION_REASONS = [
+  "not-a-gallery-photo",
+  "age-unverified",
+  "photo-unreadable",
+  "not-vertical",
+  "bold-off",
+  "no-motion",
+  "unknown-motion",
+  "grok-not-offered",
+  "download-expired",
+  "not-ready",
+  "not-exported",
+] as const;
+export const CLIP_IN_FLIGHT_REASONS = ["one-at-a-time", "job-running", "submitted"] as const;
+export const CLIP_REASONS = [...CLIP_VALIDATION_REASONS, ...CLIP_IN_FLIGHT_REASONS] as const;
+/** The reasons `clips.options` answers for a photo that cannot be brought to life: the first six of `CLIP_VALIDATION_REASONS`, as one set. */
+export const CLIP_UNSUITABLE_REASONS = ["not-a-gallery-photo", "age-unverified", "photo-unreadable", "not-vertical", "bold-off", "no-motion"] as const;
+export const ClipReason = z.enum(CLIP_REASONS);
+export type ClipReason = z.infer<typeof ClipReason>;
+
 /** A scene's number in its set (the same bounds as `SceneId` in scenes.ts, which imports this file). */
 const SceneIdNumber = z.number().int().min(1).max(10_000);
 
@@ -450,6 +487,11 @@ export const EngineError = z
     descriptorReason: DescriptorReason.optional(),
     /** Additive (Stage 5, S5.3a): which rule a portrait command broke (`PORTRAIT_REASONS`); only on VALIDATION (INTERNAL for `source-unavailable`), never beside another reason. The window's text is `PORTRAIT_REASONS_RU`. */
     portraitReason: PortraitReason.optional(),
+    /**
+     * Additive (Stage 5, 5b.1, S5.V1): which rule a clip command broke (`CLIP_REASONS`); on VALIDATION, or on IN_FLIGHT for `one-at-a-time`, `job-running` and `submitted`; never beside another
+     * reason. The window's text is `CLIP_REASONS_RU`.
+     */
+    clipReason: ClipReason.optional(),
     /** Additive (Stage 5, S5.0a): the owner's own offending words, only with the reason `youth-word` (at most a handful, each short). */
     descriptorWords: z.array(z.string().min(1).max(60)).max(10).optional(),
     /**
@@ -461,10 +503,10 @@ export const EngineError = z
      */
     spentMicros: Count.optional(),
     /**
-     * Additive (5a.3, S5.9a, gap D): which price a PRICE_UNAVAILABLE could not find: `bold`, the Seedream 2K tier of a «Смелая» estimate. Only on PRICE_UNAVAILABLE; a refusal
-     * for any other price carries none, and the window shows its general text.
+     * Additive (5a.3, S5.9a, gap D): which price a PRICE_UNAVAILABLE could not find: `bold`, the Seedream 2K tier of a «Смелая» estimate; and (5b.1, S5.V1) `video`, a listing that reads but
+     * lacks a model or resolution a clip needs. Only on PRICE_UNAVAILABLE; a refusal for any other price carries none, and the window shows its general text.
      */
-    priceScope: z.literal("bold").optional(),
+    priceScope: z.enum(["bold", "video"]).optional(),
   })
   .refine((e) => e.priceScope === undefined || e.code === "PRICE_UNAVAILABLE", {
     message: "priceScope may only be present on PRICE_UNAVAILABLE",
@@ -522,6 +564,19 @@ export const EngineError = z
     {
       message: "a refusal has one reason: a portraitReason, a descriptorReason, a launchReason, a sceneReason or a categoryReason",
       path: ["portraitReason"],
+    },
+  )
+  .refine((e) => e.clipReason === undefined || e.code === ((CLIP_IN_FLIGHT_REASONS as readonly string[]).includes(e.clipReason) ? "IN_FLIGHT" : "VALIDATION"), {
+    message: "clipReason may only be present on VALIDATION, except one-at-a-time, job-running and submitted, which belong to IN_FLIGHT",
+    path: ["clipReason"],
+  })
+  .refine(
+    (e) =>
+      e.clipReason === undefined ||
+      (e.portraitReason === undefined && e.descriptorReason === undefined && e.sceneReason === undefined && e.categoryReason === undefined && e.launchReason === undefined),
+    {
+      message: "a refusal has one reason: a clipReason, a portraitReason, a descriptorReason, a launchReason, a sceneReason or a categoryReason",
+      path: ["clipReason"],
     },
   )
   .refine((e) => e.descriptorWords === undefined || e.descriptorReason === "youth-word", {

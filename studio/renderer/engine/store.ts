@@ -1,4 +1,5 @@
 import {
+  CLIP_JOB_STEPS,
   ENGINE_GONE_DETAIL,
   type ApiKeyStatus,
   type AvatarSummary,
@@ -211,6 +212,7 @@ export function jobFromState(j: Exclude<JobState, { kind: "import" }>): JobView 
 type JobRef = { readonly jobId: string; readonly avatarId: string } & (
   | { readonly kind: "avatar.candidates" }
   | { readonly kind: "avatar.portraits" }
+  | { readonly kind: "clip" }
   | { readonly kind: "run"; readonly runId: string }
   | { readonly kind: "scenes"; readonly sceneSetId: string }
   | { readonly kind: "render"; readonly montageId: string | null; readonly videoId: string | null }
@@ -1058,7 +1060,9 @@ export class EngineStore {
               ? result.written + result.unwritten
               : result.kind === "render"
               ? Math.round((result.durationMs * 3) / 100)
-              : result.candidates.length + result.failedSlots.length;
+              : result.kind === "clip"
+                ? CLIP_JOB_STEPS
+                : result.candidates.length + result.failedSlots.length;
         const ref: JobRef =
           result.kind === "run"
             ? { kind: "run", jobId, runId: result.runId, avatarId: result.avatarId }

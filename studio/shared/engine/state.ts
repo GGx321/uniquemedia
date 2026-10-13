@@ -2,7 +2,9 @@ import { z } from "zod";
 import { AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
 import { AvatarBody, BodyProposal } from "./body";
 import { CategoryName, CategoryRef, LegsShare, MAX_RUN_CATEGORIES, PhotoCategory, SceneCategory, SceneLevel, SceneRoute } from "./categories";
+import { clipJobFields, clipJobRef, ClipJobResult } from "./clips";
 import { EngineError, ExportUnavailableReason, SceneReason } from "./errors";
+import { Estimate, PriceSource } from "./estimate";
 import { ImageQuality } from "./imageModels";
 import { MediaFileName, MediaKind, MediaSummary } from "./media";
 import { AbsolutePath, Count, Id, LaunchId, Micros, ModelId, SafeText } from "./primitives";
@@ -196,6 +198,11 @@ export const MoneyStatus = z.discriminatedUnion("ledger", [
       reconcileNeeded: z.boolean(),
       reconcileReasons: ReconcileReasons,
       halt: MoneyHalt.nullable(),
+      /**
+       * Additive (Stage 5, 5b.1, S5.V1): the earliest time `money.reconcile` can run while it cannot run now (the quiet rule, and the hold a clip that may still bill puts on it,
+       * I5.48). The banner hides «Перейти к сверке» and says «до HH:MM» without computing anything. Absent when the reconcile is not held.
+       */
+      reconcileAvailableAt: IsoDateTime.optional(),
     })
     .refine((s) => s.reconcileNeeded === s.reconcileReasons.length > 0, {
       message: "reconcileReasons must be non-empty exactly when reconcileNeeded is true",
@@ -210,26 +217,8 @@ export const MoneyStatus = z.discriminatedUnion("ledger", [
   }),
 ]);
 
-/** Where prices came from: the live OpenRouter endpoints or the dated fallback table. */
-export const PriceSource = z.enum(["live", "fallback"]);
-
-/** A cost shown before anything is spent: expected and worst case, both in micro-dollars. */
-export const Estimate = z
-  .strictObject({
-    expectedMicros: Micros,
-    worstMicros: Micros,
-    prices: PriceSource,
-    pricesAsOf: IsoDate,
-    /**
-     * Additive (5a.3, S5.9a, gap C): the price of one attempt on the Seedream route (list, 2K), present only when the plan has Seedream slots, so the card can say
-     * «до $X за попытку» without a price of its own. Nothing writes it before S5.9d.
-     */
-    boldAttemptMicros: Micros.positive().optional(),
-  })
-  .refine((e) => e.expectedMicros <= e.worstMicros, {
-    message: "expected cost must not exceed the worst case",
-    path: ["expectedMicros"],
-  });
+// `PriceSource` and `Estimate` moved to estimate.ts (S5.V1: clips.ts names an Estimate and state.ts imports clips.ts, so the schema cannot live here); they are still exported from here.
+export { Estimate, PriceSource };
 
 /**
  * CLOCK_SKEW as T2 reports it: the ledger holds a time later than the wall
@@ -457,7 +446,7 @@ export const UnreadableAvatar = z.strictObject({
 
 // ---------- jobs ----------
 
-export const JobKind = z.enum(["avatar.candidates", "run", "render", "import", "scenes", "avatar.portraits"]);
+export const JobKind = z.enum(["avatar.candidates", "run", "render", "import", "scenes", "avatar.portraits", "clip"]);
 export const JobStatus = z.enum(["queued", "running", "done", "failed", "cancelled"]);
 
 const doneWithinTotal = {
@@ -540,8 +529,13 @@ export const JobProgress = z
     z.strictObject({ ...scenesJobRef, ...progressCounts }),
     z.strictObject({ ...renderJobRef, ...progressCounts, ...renderSaving, ...renderQueued }),
     z.strictObject({ ...importJobRef, ...progressCounts, ...renderQueued, ...importStage }),
+    z.strictObject({ ...clipJobRef, ...progressCounts, ...clipJobFields }),
   ])
   .refine(doneWithinTotal.check, doneWithinTotal.params)
+  .refine((p) => p.kind !== "clip" || p.proveUntil === undefined || p.phase === "proving", {
+    message: "the end of the proof window belongs to the proving phase",
+    path: ["proveUntil"],
+  })
   .refine((p) => !(p.kind === "render" && p.queued === true) || (p.done === 0 && p.saving !== true), {
     message: "a queued render is announced at zero and is not saving",
     path: ["queued"],
@@ -568,10 +562,11 @@ export const JobFailed = z.discriminatedUnion("kind", [
   z.strictObject({ ...scenesJobRef, error: EngineError }),
   z.strictObject({ ...renderJobRef, error: EngineError }),
   z.strictObject({ ...importJobRef, error: EngineError }),
+  z.strictObject({ ...clipJobRef, error: EngineError }),
 ]);
 
 /** `job.cancelled`'s payload: the job's identity (see `JobProgress`). */
-export const JobCancelled = z.discriminatedUnion("kind", [z.strictObject(candidatesJobRef), z.strictObject(portraitsJobRef), z.strictObject(runJobRef), z.strictObject(scenesJobRef), z.strictObject(renderJobRef), z.strictObject(importJobRef)]);
+export const JobCancelled = z.discriminatedUnion("kind", [z.strictObject(candidatesJobRef), z.strictObject(portraitsJobRef), z.strictObject(runJobRef), z.strictObject(scenesJobRef), z.strictObject(renderJobRef), z.strictObject(importJobRef), z.strictObject(clipJobRef)]);
 
 /** A batch's slot, 1 to 4. */
 const CandidateSlot = z.number().int().min(1).max(4);
@@ -744,7 +739,7 @@ export const ImportResult = z
   .strictObject({ kind: z.literal("import"), mediaId: Id, media: MediaSummary })
   .refine((r) => r.media.mediaId === r.mediaId, { message: "the media must be the one the result names", path: ["media"] });
 
-export const JobResult = z.discriminatedUnion("kind", [CandidatesResult, PortraitsResult, RunResult, ScenesResult, RenderResult, ImportResult]);
+export const JobResult = z.discriminatedUnion("kind", [CandidatesResult, PortraitsResult, RunResult, ScenesResult, RenderResult, ImportResult, ClipJobResult]);
 
 const jobCommon = {
   jobId: Id,
@@ -807,8 +802,18 @@ export const JobState = z
       ...jobCommon,
       result: ImportResult.optional(),
     }),
+    z.strictObject({
+      ...clipJobRef,
+      ...clipJobFields,
+      ...jobCommon,
+      result: ClipJobResult.optional(),
+    }),
   ])
   .refine(doneWithinTotal.check, doneWithinTotal.params)
+  .refine((j) => j.kind !== "clip" || j.proveUntil === undefined || j.phase === "proving", {
+    message: "the end of the proof window belongs to the proving phase",
+    path: ["proveUntil"],
+  })
   .refine((j) => j.kind !== "import" || j.prepare === undefined || j.stage === "prepare", {
     message: "what the probe judged belongs to the prepare stage only",
     path: ["prepare"],
@@ -829,6 +834,8 @@ export const JobState = z
       if (j.kind === "run") return j.result.kind === "run" && j.result.runId === j.runId && j.result.avatarId === j.avatarId;
       if (j.kind === "scenes") return j.result.kind === "scenes" && j.result.sceneSetId === j.sceneSetId && j.result.avatarId === j.avatarId;
       if (j.kind === "import") return j.result.kind === "import" && j.result.mediaId === j.mediaId;
+      // Before the render fall-through below: a clip has no `videoId`, and without this case its result would be judged as a render's.
+      if (j.kind === "clip") return j.result.kind === "clip" && j.result.clipId === j.clipId && j.result.avatarId === j.avatarId;
       return j.result.kind === "render" && j.result.videoId === j.videoId && j.result.avatarId === j.avatarId;
     },
     { message: "result must belong to this job", path: ["result"] },
@@ -1097,7 +1104,6 @@ export type OpenMoneyStatus = Extract<MoneyStatus, { ledger: "open" }>;
 export type ReconcileWarning = z.infer<typeof ReconcileWarning>;
 export type NoticeCode = z.infer<typeof NoticeCode>;
 export type EngineNotice = z.infer<typeof EngineNotice>;
-export type Estimate = z.infer<typeof Estimate>;
 export type ReconcileResult = z.infer<typeof ReconcileResult>;
 export type Candidate = z.infer<typeof Candidate>;
 export type Draft = z.infer<typeof Draft>;

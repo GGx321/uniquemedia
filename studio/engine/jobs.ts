@@ -261,6 +261,22 @@ export class JobRegistry {
         return { kind: "avatar.portraits", jobId, avatarId: entry.state.avatarId, done, total };
       case "scenes":
         return { kind: "scenes", jobId, sceneSetId: entry.state.sceneSetId, avatarId: entry.state.avatarId, done, total };
+      case "clip": {
+        // Stage 5, 5b.1, S5.V1: compile-only. No code starts this kind yet (S5.V4a1 adds `startClip`); the branch keeps the switch exhaustive and carries the phase the way the state holds it.
+        const { clipId, phase, model, submittedAt, proveUntil } = entry.state;
+        return {
+          kind: "clip",
+          jobId,
+          avatarId: entry.state.avatarId,
+          clipId,
+          done,
+          total,
+          phase,
+          ...(model === undefined ? {} : { model }),
+          ...(submittedAt === undefined ? {} : { submittedAt }),
+          ...(proveUntil === undefined ? {} : { proveUntil }),
+        };
+      }
       case "import": {
         const { stage, prepare } = entry.state;
         return {

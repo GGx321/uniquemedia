@@ -2776,6 +2776,18 @@ export class MockEngine implements EngineBridge {
         this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: rest } });
         return this.ok(c, { avatar: rest });
       }
+      // Stage 5, 5b.1, S5.V1: compile-only stub. The clip commands are in the contract; S5.V7 gives them the engine's behaviour (and removes this case). Until then they refuse like the engine's
+      // methods that are not built (S5.V4a1) do: INTERNAL, free.
+      case "clips.options":
+      case "clips.create":
+      case "clips.list":
+      case "clips.get":
+      case "clips.markSeen":
+      case "clips.delete":
+      case "clips.retryDownload":
+      case "clips.export":
+      case "clips.reveal":
+        return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not built yet` });
       // Stage 5, S5.3c: the reference portrait of an imported avatar, in the engine's order and words (see the section below).
       case "avatars.estimatePortraits":
         // Free and avatar-independent: no key, no library, no avatar.

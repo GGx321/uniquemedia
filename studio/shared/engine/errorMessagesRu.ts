@@ -1,4 +1,5 @@
-import type { CaptionIssue, CategoryReason, DescriptorReason, EngineError, ErrorCode, ExportUnavailableReason, LaunchReason, MusicUnavailableReason, PhotoUnavailableReason, PortraitReason, SceneReason } from "./errors";
+import type { ClipExportProfile } from "./clips";
+import type { CaptionIssue, CategoryReason, ClipReason, DescriptorReason, EngineError, ErrorCode, ExportUnavailableReason, LaunchReason, MusicUnavailableReason, PhotoUnavailableReason, PortraitReason, SceneReason } from "./errors";
 import { MAX_PICKED_FILES, type MediaKind, type MediaUnsupportedReason } from "./media";
 import { MIN_CLIP_MS, type MontageIssueCode } from "./montage";
 import type { UsageUnknownReason } from "./state";
@@ -275,7 +276,37 @@ export const LAUNCH_REASONS_RU = {
 /** Which price a PRICE_UNAVAILABLE could not find, for `EngineError.priceScope` (5a.3, state 55): the window shows this instead of the general text. */
 export const PRICE_SCOPES_RU = {
   bold: "Цена Seedream 2K сейчас недоступна — «Смелую» не запустить. Остальное работает как обычно.",
+  video: "Цены видео у OpenRouter сейчас не читаются — клип не запустить. Фото работают как обычно.",
 } as const satisfies Record<NonNullable<EngineError["priceScope"]>, string>;
+
+/** Why a clip command was refused, for `clipReason` (VALIDATION; IN_FLIGHT for the last three): each text names the cause and the way out. Stage 5, 5b.1 (plan s5b1 §5.2). */
+export const CLIP_REASONS_RU = {
+  "no-motion": "Для этого кадра движение не подобрать: лица не видно.",
+  "not-a-gallery-photo": "Оживить можно только кадр из галереи аватара — импортированное фото и варианты мастер-портрета не оживляются.",
+  "age-unverified": "Этот кадр не прошёл проверку возраста — его не оживляем.",
+  "photo-unreadable": "Файл этого фото не читается — проверьте папку библиотеки.",
+  "not-vertical": "Кадр не вертикальный 9:16 — оживить нельзя.",
+  "bold-off": "Кадры «Смелой» пока не оживляются.",
+  "unknown-motion": "Это движение больше недоступно — откройте «Оживить» заново.",
+  "grok-not-offered": "Grok сейчас не предлагается для этого клипа.",
+  "download-expired": "Файл у OpenRouter больше недоступен — скачать снова нельзя.",
+  "not-ready": "Клип ещё не готов.",
+  "not-exported": "Сначала сохраните клип в папку.",
+  "one-at-a-time": "Сейчас снимается другой клип — дождитесь его (обычно 1–3 минуты).",
+  "job-running": "С этим клипом сейчас идёт работа — дождитесь её окончания.",
+  submitted: "Клип уже отправлен — отменить нельзя.",
+} as const satisfies Record<ClipReason, string>;
+
+/**
+ * The small line under a saved clip («Сохранить в папку» re-encodes, owner Q-C, 2026-10-13): the size, the frame rate the profile wrote and that the metadata is cleaned. It claims
+ * nothing about a device or a place, and nothing about how the clip was made (I5.58).
+ */
+export function clipExportLineRu(profile: ClipExportProfile): string {
+  return `1080 × 1920 · ${profile === "1080p24" ? 24 : 30} к/с · метаданные очищены`;
+}
+
+/** An export that failed (an encode error, a timeout, a failed check): free, and the file in Studio is untouched. */
+export const CLIP_EXPORT_FAILED_RU = "Не удалось сохранить клип в папку — файл в Studio цел. Попробуйте ещё раз.";
 
 /** Russian text for each structural problem of a montage (the `issues` of MONTAGE_INVALID). */
 export const MONTAGE_ISSUE_MESSAGES_RU = {
