@@ -809,6 +809,23 @@ export class Transcript {
     this.#drain();
   }
 
+  /**
+   * A `settle` that lasts until `ready` accepts the answer to `type` (read quietly, never written): the rig settles as often as the job needs and the transcript says ONE `~ settle`,
+   * so a slow machine, whose job ends one settle later, tells the same story. The events that came on the way follow the line, as they follow a plain `settle`. `ms` of wall time fail the scenario.
+   */
+  async settleUntil(type: string, payload: unknown, ready: (answer: Answer) => boolean, what: string, ms = 45_000): Promise<void> {
+    this.#drain();
+    const deadline = Date.now() + ms;
+    for (;;) {
+      await this.#rig.settle();
+      await this.quiesce();
+      if (ready(await this.#rig.send(type, payload))) break;
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    }
+    this.#lines.push("~ settle");
+    this.#drain();
+  }
+
   /** After the rig was stopped: whatever the scenario left running ended now, and its events are written under a marker. */
   finish(): void {
     const mark = this.#lines.length;

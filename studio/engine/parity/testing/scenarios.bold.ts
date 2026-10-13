@@ -37,16 +37,16 @@ async function quietly(t: Telling, type: string, payload: unknown): Promise<Answ
   return answer;
 }
 
-/** The avatar's set once its write has settled, read quietly, with its scenes. */
+/** The avatar's set once its write has settled (one `~ settle` in the transcript, however many the machine needs), read quietly, with its scenes. */
 async function settledSet(t: Telling, avatarId: string): Promise<{ set: Record<string, unknown>; scenes: Rows }> {
-  for (let i = 0; i < 2_000; i++) {
-    const answer = await quietly(t, "scenes.get", { avatarId });
+  const readyOf = (answer: Answer): Record<string, unknown> | null => {
     const set = answer.ok ? record(answer.result.sceneSet) : null;
-    if (set !== null && set.status === "ready") return { set, scenes: rowsOf(set.scenes) };
-    await t.settle();
-    await t.quiesce();
-  }
-  throw new Error("the scene set never finished its write");
+    return set !== null && set.status === "ready" ? set : null;
+  };
+  await t.settleUntil("scenes.get", { avatarId }, (answer) => readyOf(answer) !== null, "the scene set to finish its write");
+  const set = readyOf(await quietly(t, "scenes.get", { avatarId }));
+  if (set === null) throw new Error("the scene set is not ready after its settle");
+  return { set, scenes: rowsOf(set.scenes) };
 }
 
 /** Starts a run quietly, answers its id. */
