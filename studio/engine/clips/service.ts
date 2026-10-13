@@ -195,7 +195,10 @@ export class ClipService {
     return this.reconcileWaitMs() > 0 ? this.holds.latestUntil() : null;
   }
 
-  /** The engine stops: the holds' timers are cleared (nothing is announced after this) and every clip job stops waiting. */
+  /**
+   * The engine stops: the holds' timers are cleared, so no hold expiry is announced after this, and every clip job stops waiting. A clip that runs still ends on its own: once its POST
+   * may have left it abandons its reserve (open at worst for the next start's reconcile), and announces `money.changed` and `job.cancelled` as it goes.
+   */
   shutdown(): void {
     this.holds.clear();
     this.#stop.abort();

@@ -1504,7 +1504,8 @@ export class Engine {
     // The free steps' runs end now, whatever they still have in flight: a render that never reports its end would leave a run sleeping for ever on a timer that is not unref'd, and the process alive.
     this.#freeSteps?.dispose();
     this.#mediaAbort.abort();
-    // 5b.1 (§5.12): a clip is not waited for (its reserve stays open for the next start's reconcile), and the hold registry's timers are cleared: nothing is announced after this.
+    // 5b.1 (§5.12): a clip is not waited for (its reserve stays open for the next start's reconcile), and the hold registry's timers are cleared, so no hold expiry is announced
+    // after this. A clip that runs still abandons its reserve, and announces `money.changed` and `job.cancelled` as it ends.
     this.#clips.shutdown();
     if (this.#internalNoticeTimer !== null) clearTimeout(this.#internalNoticeTimer);
     this.#internalNoticeTimer = null;
