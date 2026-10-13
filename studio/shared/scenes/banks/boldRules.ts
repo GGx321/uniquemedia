@@ -33,9 +33,13 @@ export const NO_STRAPS = /\bstrap-?less\b|\bbandeau\b|\bbottoms\b|\bsweatshirts?
 
 /**
  * What covers her when she is under it, in it or pulls it up (the sheet she holds to her chest is the bedsheet moment's outfit, so «sheet» counts only as «the sheets» she lies
- * under). Round 3: the cover word is the head of its phrase: a whole word, and not one that another noun follows («a throw pillow», «a quilted jacket», «her plaid shirt»).
+ * under). Polish after C4: a cover word counts wherever it stands in the phrase («under the covers reading», «under the duvet until noon», «under the duvet cover»); what keeps a
+ * false noun out is the noun itself, named: another thing made of the same cloth (a pillow, a jacket, a shirt, a bag), a fort built of it, a pattern.
  */
-const COVER = String.raw`(?:duvet|blankets?|covers|quilts?|comforters?|throws?|plaids?)\b(?!\s+(?!(?:up|over|around|closer|higher|across|on|in|to|and|as|while|with|from|a|the|her)\b)[a-z]+)`;
+const NOT_A_COVER = String.raw`(?!\s+(?:pillows?|cushions?|jackets?|coats?|shirts?|dress(?:es)?|skirts?|shorts|pants|scarf|scarves|cardigans?|sweaters?|bags?|forts?|patterns?|prints?)\b)`;
+const COVER = String.raw`(?:duvet|blankets?|covers|quilts?|comforters?|throws?|plaids?)\b${NOT_A_COVER}`;
+/** Up to two words between the article and the cover word («the soft blanket»), none of them a picnic or a beach. */
+const COVER_GAP = String.raw`(?:(?!picnic\b|beach\b)[a-z]+\s+){0,2}`;
 
 /**
  * S5.R4: a moment under a cover (rule bold-covered; a bold slot never takes one, engine/scenes/fit.ts), in its text or its motion: under, beneath or into a cover («lies curled up
@@ -44,10 +48,10 @@ const COVER = String.raw`(?:duvet|blankets?|covers|quilts?|comforters?|throws?|p
  * and the sheet she holds to her chest is the outfit itself.
  */
 export const COVERS_HER = new RegExp(
-  String.raw`\b(?:under|beneath|into|in)\s+(?:the|a|her)\s+(?:[a-z]+\s+)?(?:${COVER}|sheets\b)` +
-    String.raw`|\b(?:with|wrapped in)\s+(?:a|the|her)\s+(?:[a-z]+\s+)?${COVER}` +
+  String.raw`\b(?:under|beneath|into|in)\s+(?:the|a|her)\s+${COVER_GAP}(?:${COVER}|sheets\b)` +
+    String.raw`|\b(?:with|wrapped in)\s+(?:a|the|her)\s+${COVER_GAP}${COVER}` +
     String.raw`|\bpull(?:s|ing)?\s+(?:the|a|her)\s+${COVER}(?:\s+[a-z]+){0,2}?\s+(?:up|over|closer|around|higher)\b` +
-    String.raw`|\b(?:the|a|her)\s+(?:[a-z]+\s+)?${COVER}\s+(?:over|across|around)\s+her\b`,
+    String.raw`|\b(?:the|a|her)\s+${COVER_GAP}${COVER}\s+(?:over|across|around)\s+her\b`,
   "i",
 );
 

@@ -120,6 +120,11 @@ describe("COVERS_HER: a moment under a cover", () => {
     "dozes under the sheets",
     // S5.R4 round 3: a cover laid over her.
     "sits back, the blanket over her legs",
+    // Polish after C4: a cover word followed by more words is still a cover, unless the next word makes it another noun.
+    "stays under the covers reading",
+    "curls up under the blanket again",
+    "dozes under the duvet until noon",
+    "lies under the duvet cover",
   ])("«%s» is under a cover", (text) => {
     expect(COVERS_HER.test(text)).toBe(true);
   });
@@ -135,6 +140,12 @@ describe("COVERS_HER: a moment under a cover", () => {
     "sits with a throw pillow",
     "poses with a quilted jacket",
     "stands in her plaid shirt",
+    // Polish after C4: the false nouns, named.
+    "sits in a blanket fort",
+    "plays under a pillow fort",
+    "sits with a picnic blanket spread out",
+    "lies under a quilted jacket",
+    "sits with a throw pillow in her lap",
   ])("«%s» is not", (text) => {
     expect(COVERS_HER.test(text)).toBe(false);
   });

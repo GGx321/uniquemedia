@@ -168,6 +168,10 @@ describe("a category bank", () => {
     "smiles at her reflection",
     "checks her reflection in the mirror",
     "eyes the horizon",
+    // Polish after C4: «in the mirror» is where she stands, not what she looks at; and herself is her reflection.
+    "stares at the sea in the mirror",
+    "looks at herself in the mirror",
+    "smiles at herself",
   ])("«%s» looks at something other than the viewer", (text) => {
     expect(looksElsewhere(text)).toBe(true);
   });
@@ -187,6 +191,8 @@ describe("a category bank", () => {
     "looks into the mirror",
     "glances at the mirror",
     "faces the mirror",
+    "looks at her phone in the mirror",
+    "smiles into the mirror",
   ])("«%s» does not", (text) => {
     expect(looksElsewhere(text)).toBe(false);
   });
