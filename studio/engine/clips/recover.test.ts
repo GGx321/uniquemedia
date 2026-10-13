@@ -600,6 +600,17 @@ describe("the recovery job", () => {
     expect((await recordOf()).outcome.status).toBe("ready");
   });
 
+  test("looks for a key every 2 s, not every poll interval: the key is a local value main sends a moment after the start", async () => {
+    await writeLines(CLIP, [requested(), submitted(KLING, T0 + 1_000)]);
+    const r = rig({
+      key: (n) => {
+        if (n < 2) throw new EngineFailure({ code: "AUTH_INVALID", detail: "no OpenRouter API key is stored" });
+      },
+    });
+    await recover(r);
+    expect(r.calls.sleeps).toEqual([2_000]);
+  });
+
   test("gives up on a key that never comes at the 60 min mark: `late`", async () => {
     const submittedAt = T0 + 1_000;
     await writeLines(CLIP, [requested(), submitted(KLING, submittedAt)]);

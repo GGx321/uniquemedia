@@ -371,7 +371,10 @@ function startRecoveryJob(host: ClipRecoveryHost, avatarId: string, clipId: stri
   })();
 }
 
-type PolledStatus = Extract<Awaited<ReturnType<RecoveryClient["pollVideo"]>>, { kind: "status" }>;
+/** How often a recovery that waits for the key looks for it: the key is a local value main sends a moment after the engine starts, so the look is cheap and short. */
+const KEY_LOOK_MS = 2_000;
+
+type PolledStatus =Extract<Awaited<ReturnType<RecoveryClient["pollVideo"]>>, { kind: "status" }>;
 const TERMINAL = new Set<string>(["completed", "failed", "cancelled", "expired"]);
 
 class Recovery {
@@ -423,7 +426,7 @@ class Recovery {
       }
       const remaining = giveUpAtMs - host.clock();
       if (remaining <= 0) return "deadline";
-      await host.sleep(Math.min(host.timings.pollMs, remaining), job.signal);
+      await host.sleep(Math.min(host.timings.pollMs, KEY_LOOK_MS, remaining), job.signal);
     }
   }
 
