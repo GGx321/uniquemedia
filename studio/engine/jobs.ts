@@ -1,3 +1,4 @@
+import { CLIP_JOB_STEPS, type ClipAttemptModel, type ClipPhase } from "../shared/engine/clips";
 import type { EngineError, FailedCandidateSlot, FailedPortraitSlot, ImportPrepare, ImportResult, JobProgress, JobState, MediaFileName, MediaKind, RenderResult } from "../shared/engine";
 import type { RunJobEnd } from "./runs/runJob";
 
@@ -34,6 +35,23 @@ export type ImportJobEnd =
   | { status: "done"; result: ImportResult }
   | { status: "failed"; error: EngineError }
   | { status: "cancelled" };
+
+/**
+ * How a clip job ends (Stage 5, 5b.1, S5.V4a1): `done` once its record committed (a ready clip or a recorded failure: the record says which), `failed` when no record could be
+ * written (a refusal before any money, or a fault), `cancelled` for a cancel before the POST or a stop.
+ */
+export type ClipJobEnd = { status: "done" } | { status: "failed"; error: EngineError } | { status: "cancelled" };
+
+/** What a clip job's phase update says (§5.1): the phase, the model and the submit time where the tile shows them, the end of the proof window in `proving`, and the steps reached. */
+export interface ClipPhaseUpdate {
+  readonly phase: ClipPhase;
+  readonly model?: ClipAttemptModel;
+  readonly submittedAt?: string;
+  /** Kept only with `proving`: the contract allows it nowhere else, and a state that breaks it would drop the paid job from the snapshot. */
+  readonly proveUntil?: string;
+  /** The steps reached (video, download, check, save); never goes back, never past the total. */
+  readonly done?: number;
+}
 
 /** An import's identity: what the bytes are and the file's display name (its base name, never a path). */
 export interface ImportJobRef {
@@ -87,6 +105,65 @@ export class JobRegistry {
   /** Registers a running writer job of a scene set; `total` counts the scenes it will ask the writer for, `done` the ones it has written. Its signal fires on `cancel`. */
   startScenes(jobId: string, set: { sceneSetId: string; avatarId: string; total: number }): AbortSignal {
     return this.#start({ kind: "scenes", jobId, sceneSetId: set.sceneSetId, avatarId: set.avatarId, status: "running", done: 0, total: set.total });
+  }
+
+  /**
+   * Registers a running clip job (Stage 5, 5b.1, S5.V4a1): `total` is the four steps of a clip (video, download, check, save), and it starts in `preparing` (a recovery job in
+   * `recovering`). Its signal fires on `cancel`; the clip service lets a cancel through only before the POST.
+   */
+  startClip(jobId: string, ref: { avatarId: string; clipId: string }, phase: ClipPhase = "preparing"): AbortSignal {
+    return this.#start({ kind: "clip", jobId, avatarId: ref.avatarId, clipId: ref.clipId, phase, status: "running", done: 0, total: CLIP_JOB_STEPS });
+  }
+
+  /**
+   * Moves a running clip job to its next phase: the update replaces the phase's fields (the model, the submit time, the end of the proof window), and the end of the proof window is
+   * kept only in `proving`. `done` never goes back and never passes the total. The `job.progress` payload to announce, or null for any other job or one that ended.
+   */
+  clipPhase(jobId: string, update: ClipPhaseUpdate): JobProgress | null {
+    const entry = this.#jobs.get(jobId);
+    if (entry === undefined || entry.state.kind !== "clip" || entry.state.status !== "running") return null;
+    const { avatarId, clipId, total } = entry.state;
+    const counted = update.done === undefined || !Number.isFinite(update.done) ? entry.state.done : Math.floor(update.done);
+    const done = Math.min(total, Math.max(entry.state.done, counted));
+    const fields = {
+      phase: update.phase,
+      ...(update.model === undefined ? {} : { model: update.model }),
+      ...(update.submittedAt === undefined ? {} : { submittedAt: update.submittedAt }),
+      ...(update.proveUntil === undefined || update.phase !== "proving" ? {} : { proveUntil: update.proveUntil }),
+    };
+    entry.state = { kind: "clip", jobId, avatarId, clipId, status: "running", done, total, ...fields };
+    return { kind: "clip", jobId, avatarId, clipId, done, total, ...fields };
+  }
+
+  /** Ends a running clip job; its final state, or null for any other job or one that already ended. A done job is at its full count and carries its clip. */
+  finishClip(jobId: string, end: ClipJobEnd): JobState | null {
+    const entry = this.#jobs.get(jobId);
+    if (entry === undefined || entry.state.kind !== "clip" || entry.state.status !== "running") return null;
+    const { kind, avatarId, clipId, phase, model, submittedAt, proveUntil, done, total } = entry.state;
+    const common = {
+      kind,
+      jobId,
+      avatarId,
+      clipId,
+      phase,
+      ...(model === undefined ? {} : { model }),
+      ...(submittedAt === undefined ? {} : { submittedAt }),
+      ...(proveUntil === undefined ? {} : { proveUntil }),
+      total,
+    };
+    switch (end.status) {
+      case "done":
+        entry.state = { ...common, status: "done", done: total, result: { kind, avatarId, clipId } };
+        break;
+      case "failed":
+        entry.state = { ...common, status: "failed", done, error: end.error };
+        break;
+      case "cancelled":
+        entry.state = { ...common, status: "cancelled", done };
+        break;
+    }
+    this.#dropOldFinished(jobId);
+    return entry.state;
   }
 
   /** Ends a running scenes job; its final state, or null for any other job or one that already ended. */
@@ -191,10 +268,14 @@ export class JobRegistry {
     return n;
   }
 
-  /** Whether a candidates job, a photo run or a render of this avatar is queued or running. An own-media import belongs to no avatar. */
-  hasLiveJobFor(avatarId: string): boolean {
+  /**
+   * Whether a job of this avatar (a candidates job, a photo run, a render, a clip...) is queued or running. An own-media import belongs to no avatar. `clips: false` leaves clip jobs
+   * out (I5.50): the autopilot asks it that way, since a clip never claims its avatar, while a delete counts every job.
+   */
+  hasLiveJobFor(avatarId: string, options: { clips?: boolean } = {}): boolean {
     for (const { state } of this.#jobs.values()) {
       if (state.kind === "import" || state.avatarId !== avatarId) continue;
+      if (state.kind === "clip" && options.clips === false) continue;
       if (state.status === "running" || state.status === "queued") return true;
     }
     return false;
@@ -262,7 +343,7 @@ export class JobRegistry {
       case "scenes":
         return { kind: "scenes", jobId, sceneSetId: entry.state.sceneSetId, avatarId: entry.state.avatarId, done, total };
       case "clip": {
-        // Stage 5, 5b.1, S5.V1: compile-only. No code starts this kind yet (S5.V4a1 adds `startClip`); the branch keeps the switch exhaustive and carries the phase the way the state holds it.
+        // A clip's steps move with its phases (`clipPhase`); this branch only repeats the state as it is, the phase's fields included.
         const { clipId, phase, model, submittedAt, proveUntil } = entry.state;
         return {
           kind: "clip",
