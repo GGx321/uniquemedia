@@ -135,8 +135,17 @@ export class SceneSetService {
   readonly #finishing = new Set<string>();
   readonly #idleWaiters = new Map<string, (() => void)[]>();
 
+  /** How many live entries have been released: a read that spans a change of it may hold a file from before a job's last write. */
+  #released = 0;
+
   constructor(deps: SceneSetServiceDeps) {
     this.#deps = deps;
+  }
+
+  /** Releases a set's live entry (its job is over, or never started) and counts it for the readers. */
+  #unlive(sceneSetId: string): void {
+    this.#live.delete(sceneSetId);
+    this.#released++;
   }
 
   /** Whether a job of this set runs (or is about to): what an approval (CS.5) asks, as every free edit does. */
@@ -234,16 +243,24 @@ export class SceneSetService {
   async get(avatarId: string): Promise<ScenesGetResult> {
     const library = this.#needLibrary();
     if (library.getAvatar(avatarId) === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
-    const { sets, unreadable } = await library.sceneSets.list(avatarId);
-    // The open set (not yet used) is the one to show; with none open, the newest used one, read-only. At most one set is open, so this is the newest in practice.
-    let shown = sets.at(-1);
-    for (const set of [...sets].reverse()) {
-      if (!(await library.runFolderExists(set.runId))) {
-        shown = set;
-        break;
+    // The file and what is running are two reads: a job that ends in between would leave its «ready» with the revision from before its last write. So the read
+    // is repeated (at most twice) when a live entry was released while the file was being read; after that the answer is what is on disk.
+    for (let attempt = 0; ; attempt++) {
+      const released = this.#released;
+      const { sets, unreadable } = await library.sceneSets.list(avatarId);
+      // The open set (not yet used) is the one to show; with none open, the newest used one, read-only. At most one set is open, so this is the newest in practice.
+      let shown = sets.at(-1);
+      for (const set of [...sets].reverse()) {
+        if (!(await library.runFolderExists(set.runId))) {
+          shown = set;
+          break;
+        }
       }
+      if (attempt < 2 && released !== this.#released) continue;
+      // No await between this check and the view's own read of what is live.
+      const view = shown === undefined ? null : this.#view(library, shown);
+      return { sceneSet: view === null ? null : await view, unreadable };
     }
-    return { sceneSet: shown === undefined ? null : await this.#view(library, shown), unreadable };
   }
 
   /** What composing `count` scenes could cost; NOT_FOUND for an avatar that cannot get photos or a custom category the library lacks, before any price is fetched. */
@@ -513,7 +530,7 @@ export class SceneSetService {
       return { sceneSetId, jobId };
     } finally {
       if (!launched) {
-        if (mine !== null && this.#live.get(sceneSetId) === mine) this.#live.delete(sceneSetId);
+        if (mine !== null && this.#live.get(sceneSetId) === mine) this.#unlive(sceneSetId);
         this.#notifyIdle(sceneSetId);
         if (!free) deps.paidEnd();
         deps.releaseAvatar(avatarId);
@@ -612,7 +629,7 @@ export class SceneSetService {
     } finally {
       if (!launched) {
         const wasLive = mine !== null && this.#live.get(sceneSetId) === mine;
-        if (wasLive) this.#live.delete(sceneSetId);
+        if (wasLive) this.#unlive(sceneSetId);
         this.#notifyIdle(sceneSetId);
         deps.paidEnd();
         if (claimed !== null) deps.releaseAvatar(claimed);
@@ -792,7 +809,7 @@ export class SceneSetService {
     }
     // Not live any more: the view built below is the set at rest. (Until it is announced, an unlink of the set still waits.)
     this.#finishing.add(sceneSetId);
-    this.#live.delete(sceneSetId);
+    this.#unlive(sceneSetId);
     deps.paidEnd();
     deps.releaseAvatar(avatarId);
     try {
