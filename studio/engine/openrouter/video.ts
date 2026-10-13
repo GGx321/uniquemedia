@@ -301,7 +301,9 @@ const PollBody = z.object({
   status: z.string().min(1),
   error: z.unknown().optional(),
   usage: z.unknown().optional(),
+  generation_id: z.unknown().optional(),
 });
+const GenerationId = z.string().regex(SAFE_ID);
 const UsageCost = z.object({ cost: z.number().finite().nonnegative() });
 
 const STATUS_WORDS: ReadonlyMap<string, VideoStatus> = new Map<string, VideoStatus>(Object.entries({
@@ -351,5 +353,6 @@ export async function pollVideo(ctx: ClientContext, id: string, signal?: AbortSi
     usageCostMicros: billOf(parsed.data.usage),
     error,
     contentFailure: isContentFailure(rawError, null),
+    generationId: GenerationId.safeParse(parsed.data.generation_id).data ?? null,
   };
 }

@@ -295,10 +295,11 @@ export type VideoStatus = "pending" | "in_progress" | "completed" | "failed" | "
  * - `status`: a readable answer. `usageCostMicros` is the job's own bill when the body carries a valid one, else null (a completed job
  *   may come without it; `/generation` then answers). `error` is the provider's text of a failed job.
  *   `contentFailure` is true when that text is a content refusal (moderation, Kling's risk control).
+ *   `generationId` is the body's `generation_id` when it is a plain id, else null: the proof of a free refusal reads `/generation` by the job id and trusts it only when the two are the same (I5.47).
  * - `unreadable`: no answer or an invalid body; the caller polls again.
  */
 export type VideoPollResult =
-  | { kind: "status"; status: VideoStatus; rawStatus: string; usageCostMicros: number | null; error: string | null; contentFailure: boolean }
+  | { kind: "status"; status: VideoStatus; rawStatus: string; usageCostMicros: number | null; error: string | null; contentFailure: boolean; generationId: string | null }
   | ({ kind: "unreadable" } & FreeCallFault);
 
 /**

@@ -28,7 +28,7 @@ test("GETs /videos/<id> with the key as a bearer token", async () => {
 test("reads a pending job", async () => {
   const { run } = poll([{ status: 200, body: fixture("poll-pending") }]);
 
-  expect(await run()).toEqual({ kind: "status", status: "pending", rawStatus: "pending", usageCostMicros: null, error: null, contentFailure: false });
+  expect(await run()).toEqual({ kind: "status", status: "pending", rawStatus: "pending", usageCostMicros: null, error: null, contentFailure: false, generationId: FIXTURE_ID });
 });
 
 test.each([
@@ -47,7 +47,7 @@ test.each([
 test("reads a completed job with its own bill in micro-dollars", async () => {
   const { run } = poll([{ status: 200, body: fixture("poll-completed") }]);
 
-  expect(await run()).toEqual({ kind: "status", status: "completed", rawStatus: "completed", usageCostMicros: 420_000, error: null, contentFailure: false });
+  expect(await run()).toEqual({ kind: "status", status: "completed", rawStatus: "completed", usageCostMicros: 420_000, error: null, contentFailure: false, generationId: FIXTURE_ID });
 });
 
 test("reads a completed job that comes without usage, with no bill", async () => {
@@ -71,7 +71,7 @@ test.each([
 test("reads a failed job with its moderation text as a content failure", async () => {
   const { run } = poll([{ status: 200, body: fixture("poll-failed-moderation") }]);
 
-  expect(await run()).toEqual({ kind: "status", status: "failed", rawStatus: "failed", usageCostMicros: null, error: MODERATION, contentFailure: true });
+  expect(await run()).toEqual({ kind: "status", status: "failed", rawStatus: "failed", usageCostMicros: null, error: MODERATION, contentFailure: true, generationId: "gen-vid-0000000000-FIXTURE0000000000002" });
 });
 
 test("reads Kling's risk-control refusal as a content failure", async () => {
@@ -187,4 +187,32 @@ test("does not count no text and an ordinary finish reason", () => {
 
 test("does not count a prompt echo that merely contains the word moderation in a long unrelated text", () => {
   expect(isContentFailure("internal error while writing the result", null)).toBe(false);
+});
+
+// I5.47: the proof of a free refusal reads /generation by the job id, so the poll's own `generation_id` must be the same id. The transport reports it and judges nothing.
+test("reports the generation_id the body carries", async () => {
+  const { run } = poll([{ status: 200, body: fixture("poll-completed") }]);
+
+  const result = await run();
+
+  expect(result).toMatchObject({ kind: "status", generationId: FIXTURE_ID });
+});
+
+test("reports a null generation_id when the body has none", async () => {
+  const { generation_id: _dropped, ...withoutIt } = fixture("poll-pending");
+  const { run } = poll([{ status: 200, body: withoutIt }]);
+
+  expect(await run()).toMatchObject({ kind: "status", generationId: null });
+});
+
+test("reports a null generation_id when it is not a plain id", async () => {
+  const { run } = poll([{ status: 200, body: { ...fixture("poll-pending"), generation_id: { nested: true } } }]);
+
+  expect(await run()).toMatchObject({ kind: "status", generationId: null });
+});
+
+test("reports the generation_id of a failed job too", async () => {
+  const { run } = poll([{ status: 200, body: { ...fixture("poll-failed-risk-control"), generation_id: FIXTURE_ID } }]);
+
+  expect(await run()).toMatchObject({ kind: "status", status: "failed", generationId: FIXTURE_ID });
 });
