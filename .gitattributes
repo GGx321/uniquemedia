@@ -6,3 +6,7 @@ studio/assets/stickers/** -text
 # The pinned prompt fixtures are compared word for word with the prompt the code
 # builds (LF), so Git must not turn them into CRLF on a Windows checkout either.
 studio/engine/**/fixtures/*-system-prompt.txt -text
+
+# The clip prompt pins are compared word for word with the prompt the code builds
+# (LF), so Git must not turn them into CRLF on a Windows checkout either.
+studio/engine/clips/fixtures/*.txt -text
