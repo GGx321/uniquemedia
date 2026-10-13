@@ -51,7 +51,8 @@ import type { ClipTimings } from "./timings";
 // Stage 5, 5b.1, S5.V4a1 (plan s5b1 §5.2, §5.9, I5.46-I5.50): the clip commands on the engine's service bag (the SceneSetService precedent). It owns:
 // - the SLOT: one paid clip at a time, claimed synchronously at dispatch (before the first await, so two calls with no await between them make one job) and held, with the engine's
 //   paid-command count (`paidStart`/`paidEnd`), until the clip's money closes (every reserve settled or abandoned);
-// - the WORK count: every clip job from its start until its record, which the engine's library switch waits for;
+// - the WORK count: every create job and download retry from its start until its record, which the engine's library switch waits for (a restart's recovery is not counted: a switch stops it);
+// - the per-clip guard (`#activeClips`): ONE set for every job on a clip (create, retry, recovery), which a delete or a retry of that clip answers `job-running` by;
 // - the HOLD REGISTRY (V3b's `holds.ts`): which attempts may still bill, so the reconcile waits (`TOO_SOON`) and a held abandoned reserve of this process is not a reconcile reason; every change of
 //   it announces the money again (`money.changed`), because no ledger line marks those moments;
 // - the order of `clips.create`'s refusals, every one free and before any reserve or journal.
@@ -171,9 +172,9 @@ export class ClipService {
    * back, once: an earlier clip ending late never frees a later clip's slot.
    */
   #slot: object | null = null;
-  /** Clip jobs from their start until their record (or their end without one). */
+  /** Create jobs and download retries from their start until their record (or their end without one); a recovery is not counted. */
   #work = 0;
-  /** The clips that have a job on their journal now: no second job on one journal. */
+  /** The clips a job works on now (create, retry, recovery): no second job on one clip, and a delete or a retry of one is `job-running`. */
   readonly #activeClips = new Set<string>();
   /** The attempts this process reserved: only those, while held, are left out of the reconcile reasons (a foreign reserve stops paid work whatever its hold says). */
   readonly #ownAttempts = new Set<string>();
