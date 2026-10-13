@@ -250,9 +250,8 @@ describe("a free refusal of a Seedream slot", () => {
   test("is final: one request, no other model, no spare id", async () => {
     const run = await newRun(1, [0]);
     const net = network(() => MODERATION);
-    const { sent } = start(run, net);
-    await until(() => net.imageCalls().length >= 1, "the refused request");
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    const { end, sent } = start(run, net);
+    await end;
     expect([net.imageCalls().map(modelOf), sent]).toEqual([[SEEDREAM], [`${RUN_ID}:slot-1#1`]]);
   });
 
