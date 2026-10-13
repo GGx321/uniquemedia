@@ -612,3 +612,68 @@ test("a mixed book (image fallback, video live) is dated by the image table but 
   expect(priced.asOf).toBe(FALLBACK_PRICES_DATE);
   expect(priced.videoAsOf).toBe("2026-10-13");
 });
+
+// ---------- round 3: JSON numbers through the exact path, the safe-integer edge, an unreadable duplicate ----------
+
+test("a JSON number with a digit far below a micro-dollar rounds up like its string", () => {
+  expect(perSecondOf(0.0840000000004)).toBe(84_001);
+});
+
+test("a JSON number in exponent form is expanded exactly: 8.4e-11 USD is 1 µ$", () => {
+  expect(perSecondOf(8.4e-11)).toBe(1);
+});
+
+test("a positive JSON number below the rounding of toFixed(12) is one micro-dollar, never zero", () => {
+  const input = (cents: number): number => parseVideoModels(listingOf({ m: { image_to_video_duration_seconds_720p: "0.1", cents_per_image_input: cents } }), "m", "720p").perInputImageMicros;
+
+  expect(input(1e-13)).toBe(1);
+  expect(input(0)).toBe(0);
+});
+
+test("a large JSON number is exact: 1500 USD is 1 500 000 000 µ$", () => {
+  expect(perSecondOf(1500)).toBe(1_500_000_000);
+});
+
+test("a JSON number too large for toFixed to print plainly is PRICE_UNAVAILABLE for the video scope", () => {
+  expect(moneyErrorOf(() => perSecondOf(1e30)).scope).toBe("video");
+});
+
+test("a price of exactly Number.MAX_SAFE_INTEGER micro-dollars is accepted", () => {
+  expect(perSecondOf("9007199254.740991")).toBe(Number.MAX_SAFE_INTEGER);
+});
+
+test("a price one micro-dollar above Number.MAX_SAFE_INTEGER is PRICE_UNAVAILABLE for the video scope", () => {
+  expect(moneyErrorOf(() => perSecondOf("9007199254.740992")).scope).toBe("video");
+});
+
+test("a price of 9007199254740993 USD is PRICE_UNAVAILABLE for the video scope", () => {
+  expect(moneyErrorOf(() => perSecondOf("9007199254740993")).scope).toBe("video");
+});
+
+test("a duplicated model id with an unreadable entry is PRICE_UNAVAILABLE for the video scope, in either order", () => {
+  const good = { id: "m", pricing_skus: { image_to_video_duration_seconds_720p: "0.05" } };
+  const broken = { id: "m", pricing_skus: null };
+
+  for (const data of [[good, broken], [broken, good]]) {
+    const error = moneyErrorOf(() => parseVideoModels({ data }, "m", "720p"));
+    expect([error.code, error.scope]).toEqual(["PRICE_UNAVAILABLE", "video"]);
+  }
+});
+
+test("an unreadable entry for another model does not stop a model that reads", () => {
+  const body = { data: [{ id: "other", pricing_skus: null }, { id: "m", pricing_skus: { image_to_video_duration_seconds_720p: "0.05" } }] };
+
+  expect(parseVideoModels(body, "m", "720p").perSecondMicros).toBe(50_000);
+});
+
+test("a listing whose only entries are unreadable is still unreadable as a whole, so the dated table stands in", async () => {
+  const book = await loadVideo({ [LISTING_URL]: { data: [{ id: STD, pricing_skus: null }, { id: PRO }] } });
+
+  expect(book.videoSource).toBe("fallback");
+});
+
+test("an unreadable entry of a model the clip needs makes the load reject, never the table", async () => {
+  const body = { data: [...LISTING.data, { id: STD, pricing_skus: null }] };
+
+  expect((await moneyErrorOfAsync(loadVideo({ [LISTING_URL]: body }))).scope).toBe("video");
+});
