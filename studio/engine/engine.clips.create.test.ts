@@ -1,12 +1,12 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { readdir, writeFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ClipOptions, ResponseMessage, type EngineError } from "../shared/engine";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
-import { COMMAND_DEADLINE_MS } from "./control";
+import { CLIP_PLAN_READ_TIMEOUT_MS, COMMAND_DEADLINE_MS } from "./control";
 import { LIVE_LIBRARY_IDENTITY_TIMEOUT_MS } from "./videos/timeouts";
-import { CLIP_PLAN_READ_TIMEOUT_MS, readPlanWithin } from "./clips/service";
+import { readPlanWithin } from "./clips/service";
 import {
   clipNetwork,
   clipsDir,
@@ -289,6 +289,12 @@ describe("the run plan read", () => {
   test("is bounded by CLIP_PLAN_READ_TIMEOUT_MS (5 s), which fits inside clips.create's deadline", () => {
     expect(CLIP_PLAN_READ_TIMEOUT_MS).toBe(5_000);
     expect(COMMAND_DEADLINE_MS["clips.create"]).toBeGreaterThanOrEqual(PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + CLIP_PLAN_READ_TIMEOUT_MS);
+  });
+
+  test("has one definition, in control.ts beside the deadline it is a share of: the clip service reads that one", async () => {
+    const service = await readFile(join(import.meta.dir, "clips", "service.ts"), "utf8");
+    expect(service).not.toMatch(/CLIP_PLAN_READ_TIMEOUT_MS\s*=/);
+    expect(service).toMatch(/import \{[^}]*\bCLIP_PLAN_READ_TIMEOUT_MS\b[^}]*\} from "\.\.\/control"/);
   });
 
   test("a read that does not answer in time rejects, so the photo has no plan; a read that answers is passed on", async () => {

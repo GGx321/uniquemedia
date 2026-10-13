@@ -291,8 +291,11 @@ export function isControlMessage(message: unknown): boolean {
   return typeof message === "object" && message !== null && "kind" in message && message.kind === "control";
 }
 
-/** How long `clips.create` may spend reading the photo's run plan (a local JSON file) before it refuses; its share of the command's deadline. */
-const CLIP_PLAN_READ_TIMEOUT_MS = 5_000;
+/**
+ * How long `clips.create` (and `clips.options`) may spend reading the photo's run plan (a local JSON file); its share of the command's deadline. A read that takes longer is no plan
+ * (§5.4 item 5): the clip service reads this very constant (S5.V4a1).
+ */
+export const CLIP_PLAN_READ_TIMEOUT_MS = 5_000;
 
 /** Room for the engine's own work around its network waits: ledger fsyncs, the library write, a reserve queued behind a reconcile. */
 const COMMAND_SLACK_MS = 30_000;

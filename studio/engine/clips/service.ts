@@ -11,6 +11,7 @@ import {
   type EngineError,
 } from "../../shared/engine";
 import type { UnsequencedEvent } from "../../shared/engine/events";
+import { CLIP_PLAN_READ_TIMEOUT_MS } from "../control";
 import { EngineFailure } from "../engineFailure";
 import type { ExportRootCheck } from "../exportRoot";
 import type { WorkerFaceGate } from "../face/worker/workerGate";
@@ -45,9 +46,6 @@ import type { ClipTimings } from "./timings";
 //   it announces the money again (`money.changed`), because no ledger line marks those moments;
 // - the order of `clips.create`'s refusals, every one free and before any reserve or journal.
 // A clip never claims its avatar (photo runs, edits and portraits go on), belongs to no launch group, and is registered with its avatar so a delete waits for it.
-
-/** How long the photo's run plan (a local JSON file) may take to read before the photo is taken as having no plan (§5.4 item 5); its share of `clips.create`'s deadline (control.ts). */
-export const CLIP_PLAN_READ_TIMEOUT_MS = 5_000;
 
 /** The video models a clip is priced for: the tiers V2 prices (VIDEO_TIERS), one GET of the listing for the three. */
 const CLIP_PRICE_MODELS: PriceModels = { imageModels: [], chatModels: [], videoModels: Object.values(VIDEO_TIERS).map((tier) => tier.model) };
