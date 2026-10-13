@@ -103,14 +103,25 @@ async function cropToPng(
   }
 }
 
+/**
+ * Why the photo cannot be a first frame, read from its header alone (no decode, no ffmpeg), or null: `photo-unreadable` for bytes that are not an image the first frame can read,
+ * `not-vertical` beyond 2 % of 9:16. `clips.options` and `clips.create` ask it before any money (S5.V4a1); `makeFirstFrame` asks it first, so the two never disagree on a header.
+ */
+export function firstFrameRefusalOf(photo: Uint8Array): Extract<FirstFrame, { ok: false }>["reason"] | null {
+  const size = imageSize(photo);
+  if (inputFormat(photo) === null || size === null) return "photo-unreadable";
+  return nearNineSixteen(size.width, size.height) ? null : "not-vertical";
+}
+
 /** The photo as the first frame of a clip, or why it cannot be one. Rejects only for an abort or a failure that is not a verdict on the photo. */
 export async function makeFirstFrame(options: MakeFirstFrameOptions): Promise<FirstFrame> {
   const { photo, signal } = options;
   if (signal?.aborted) throw signal.reason;
+  const refusal = firstFrameRefusalOf(photo);
+  if (refusal !== null) return { ok: false, reason: refusal };
   const format = inputFormat(photo);
   const size = imageSize(photo);
   if (format === null || size === null) return { ok: false, reason: "photo-unreadable" };
-  if (!nearNineSixteen(size.width, size.height)) return { ok: false, reason: "not-vertical" };
   const target = firstFrameSize(options.model, options.quality);
   try {
     let source = photo;

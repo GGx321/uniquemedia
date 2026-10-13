@@ -6,7 +6,7 @@ import { isTempName } from "../library/durableFs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { imageSize } from "../library/media";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import { firstFrameSize, makeFirstFrame } from "./firstFrame";
+import { firstFrameRefusalOf, firstFrameSize, makeFirstFrame } from "./firstFrame";
 import { meanRgb, runFfmpegForFixture } from "./testing/clipFixtures";
 useNativeGlobals();
 
@@ -190,5 +190,31 @@ describe("makeFirstFrame", () => {
     const run = makeFirstFrame({ photo: await photo(1000, 1780), model: "kling", quality: "std", scratchDir: scratch, signal: controller.signal });
     await expect(run).rejects.toThrow("cancelled by the owner");
     expect(await readdir(scratch)).toEqual([]);
+  });
+});
+
+describe("firstFrameRefusalOf (S5.V4a1: `clips.options` and `clips.create` refuse a photo by its header, before any money)", () => {
+  test("a 9:16 photo, or one within 2 % of it, is no refusal", async () => {
+    expect(firstFrameRefusalOf(await photo(720, 1280))).toBeNull();
+    expect(firstFrameRefusalOf(await photo(1152, 2048, "jpg"))).toBeNull();
+    expect(firstFrameRefusalOf(await photo(1000, 1780))).toBeNull();
+  });
+
+  test("a photo beyond 2 % of 9:16 is `not-vertical`, never `photo-unreadable`", async () => {
+    expect(firstFrameRefusalOf(await photo(1280, 720))).toBe("not-vertical");
+    expect(firstFrameRefusalOf(await photo(800, 1280))).toBe("not-vertical");
+  });
+
+  test("bytes that are not an image are `photo-unreadable`", () => {
+    expect(firstFrameRefusalOf(new TextEncoder().encode("not an image"))).toBe("photo-unreadable");
+    expect(firstFrameRefusalOf(new Uint8Array(0))).toBe("photo-unreadable");
+  });
+
+  test("agrees with makeFirstFrame on whole photos", async () => {
+    for (const [width, height] of [[720, 1280], [1000, 1780], [1280, 720], [800, 1280]] as const) {
+      const bytes = await photo(width, height);
+      const made = await makeFirstFrame({ photo: bytes, model: "kling", quality: "std", scratchDir: scratch });
+      expect(firstFrameRefusalOf(bytes)).toBe(made.ok ? null : made.reason);
+    }
   });
 });
