@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { CLIPS_DIR, CLIP_RECORD_SCHEMA_VERSION, isFromNewerVersion, VIDEOS_DIR } from "../library/layout";
 import { ClipJournalLine, ClipRecord, parseClipJournalLine } from "./schemas";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // Stage 5, 5b.1, S5.V1 (plan s5b1 §5.3, §8): where clips live on disk and the shape of what is written there. The record is the commit (I5.53); the journal is
 // append-only, one fsynced line per event (I5.45). Both are read from disk, so both are strict: a file that does not parse is not a record.
