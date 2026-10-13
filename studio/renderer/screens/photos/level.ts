@@ -116,8 +116,12 @@ function boldCaption(frames: LevelFrames, total: string): string {
   return `${frames.bold} из ${total} — смелые: ${frames.boldCategories.map((ref) => BOLD_WORD[ref]).join(", ")}; ${frames.flirty} — кокетливые. ${BOLD_TAIL}`;
 }
 
-/** «Смелая» with no «Смелая» frame to count: the five draw as «Кокетливая», custom categories as ever. */
-function boldWithout(categories: readonly CategoryRef[]): string {
+/**
+ * «Смелая» with no «Смелая» category to count: the five draw as «Кокетливая», custom categories as ever. With no category picked at all neither sentence names the
+ * cause, and no other string fits: nothing is said.
+ */
+function boldWithout(categories: readonly CategoryRef[]): string | null {
+  if (categories.length === 0) return null;
   return categories.some((ref) => !isCustomCategory(ref)) ? BOLD_FIVE : FLIRTY_BUILTIN_ONLY;
 }
 
@@ -130,12 +134,14 @@ export function cardLevelCaption(level: SceneLevel, count: number, categories: r
   const frames = levelFrames(count, categories, level);
   const total = countOf(count, ["кадра", "кадров", "кадров"]);
   if (level === "flirty") return frames.flirty === 0 && categories.length > 0 ? FLIRTY_BUILTIN_ONLY : flirtyCaption(frames.flirty, count);
-  return frames.boldCategories.length > 0 ? boldCaption(frames, total) : boldWithout(categories);
+  if (frames.boldCategories.length === 0) return boldWithout(categories);
+  // A «Смелая» category that gets photos but no bold frame (one photo): «0 из N» would read as a fault, and no other string fits.
+  return frames.bold > 0 ? boldCaption(frames, total) : null;
 }
 
-/** Whether the card's run draws Seedream frames: «Смелая» with a «Смелая» category that gets photos (the slow-frames line follows it). */
+/** Whether the card's run draws Seedream frames: «Смелая» with at least one bold frame (the slow-frames line follows it). */
 export function drawsBoldFrames(level: SceneLevel, count: number, categories: readonly CategoryRef[]): boolean {
-  return level === "bold" && count > 0 && levelFrames(count, categories, level).boldCategories.length > 0;
+  return level === "bold" && count > 0 && levelFrames(count, categories, level).bold > 0;
 }
 
 /** The share «Автопилот» says before its plan has new photos to count: a «Смелая» category's ten frames (as «Кокетливая» says its 6 of 10). */
@@ -164,6 +170,8 @@ export function launchLevelCaption(level: SceneLevel, plan: LaunchPlanCounts | n
     bold += frames.bold;
     flirty += frames.flirty;
   }
+  // No bold frame among the new photos (one per avatar): «≈ 0 из N» would read as a fault, and no other string fits.
+  if (bold === 0) return null;
   return `≈ ${boldCaption({ bold, flirty, boldCategories: bolds }, countOf(plan.totals.toGenerate, ["нового кадра", "новых кадров", "новых кадров"]))}`;
 }
 

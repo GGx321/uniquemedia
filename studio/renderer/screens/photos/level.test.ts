@@ -7,6 +7,7 @@ import {
   BOLD_SLOW,
   boldAttemptLine,
   cardLevelCaption,
+  drawsBoldFrames,
   flirtyCaption,
   flirtyFrames,
   gatedNote,
@@ -248,6 +249,36 @@ describe("the card's «Подача» caption (mockups 47, 47a, 47b, 48#kept)", 
   test("«Кокетливая» says what it always said", () => {
     expect(cardLevelCaption("flirty", 20, ["home", "travel", "glam"])).toBe(flirtyCaption(12, 20));
     expect(cardLevelCaption("flirty", 20, ["cat-paris-cafes"])).toBe("Подача — только во встроенных категориях");
+  });
+});
+
+// No existing string fits these cases, so each says nothing: «Подача — только во встроенных категориях» names a cause that is not theirs, and «0 из N» bold reads as a fault.
+describe("«Смелая» with nothing bold to count says nothing", () => {
+  const avatar = (toGenerate: number) => ({ toGenerate, blocked: null });
+
+  test("no category picked: no caption, and no slow-frames line", () => {
+    expect(cardLevelCaption("bold", 20, [])).toBe(null);
+    expect(drawsBoldFrames("bold", 20, [])).toBe(false);
+  });
+
+  test("one photo in a «Смелая» category (0 bold of 1): no caption, no slow-frames line", () => {
+    expect(levelFrames(1, ["nightwear"], "bold").bold).toBe(0);
+    expect(cardLevelCaption("bold", 1, ["nightwear"])).toBe(null);
+    expect(drawsBoldFrames("bold", 1, ["nightwear"])).toBe(false);
+  });
+
+  test("two photos in a «Смелая» category (1 bold of 2): the caption and the line stay", () => {
+    expect(cardLevelCaption("bold", 2, ["nightwear"])).toBe(`1 из 2${NB}кадров — смелые: бельё; 1 — кокетливые. ${SEEDREAM_TAIL}`);
+    expect(drawsBoldFrames("bold", 2, ["nightwear"])).toBe(true);
+  });
+
+  test("a launch with no category picked says nothing", () => {
+    expect(launchLevelCaption("bold", null, [])).toBe(null);
+    expect(launchLevelCaption("bold", { avatars: [avatar(5)], totals: { toGenerate: 5 } }, [])).toBe(null);
+  });
+
+  test("a launch whose new photos hold no bold frame (one per avatar) says nothing", () => {
+    expect(launchLevelCaption("bold", { avatars: [avatar(1)], totals: { toGenerate: 1 } }, ["nightwear"])).toBe(null);
   });
 });
 
