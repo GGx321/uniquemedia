@@ -201,6 +201,24 @@ describe("the anchors (§5.5 items 4-6)", () => {
     expect(prompt).not.toContain(CONTINUITY_LINE);
   });
 
+  test("a bag's strap keeps the base line: the moment names the bag, and the prompt reads the moment (post-review)", () => {
+    // «adjusts the strap of her bag» → «she tugs the strap a little»: the motion says only «strap»; the activity the photo carries makes it a held bag's.
+    const bag = pick("photoshoot", (m) => /\bstrap\b/.test(m.motion) && /\bbag\b/.test(m.text));
+    const facts = factsFor(slotOf(bag, bag.moment.captures.includes("friend") ? "friend" : (bag.moment.captures[0] ?? "friend")));
+    expect(facts.activity).toBe(bag.moment.text);
+    const prompt = promptOf(facts, sceneMotion(facts));
+    expect(prompt).toContain(CONTINUITY_LINE);
+    expect(prompt).not.toContain(COMES_OFF_LINE);
+  });
+
+  test("a garment strap with the same kind of motion takes «comes off» (post-review)", () => {
+    const strap = pick("beach", (m) => /\bstrap\b/.test(m.motion) && !/\bbag\b/.test(m.text));
+    const facts = factsFor(slotOf(strap, strap.moment.captures[0] ?? "friend", strap.moment.angle ?? "front"));
+    const prompt = promptOf(facts, sceneMotion(facts));
+    expect(prompt).toContain(COMES_OFF_LINE);
+    expect(prompt).not.toContain(CONTINUITY_LINE);
+  });
+
   test("the legwear line only with the slot's own legwear, never on a noLegwear moment, never from the motion's words", () => {
     const socks = pick("home", (m) => m.captures.includes("timer") && m.noLegwear !== true && m.legs === undefined);
     expect(promptOf(factsFor(slotOf(socks, "timer", "front", { legwear: "sheer black tights" })), "she slowly takes a breath and relaxes her shoulders")).toContain(legwearLineOf("sheer black tights"));
