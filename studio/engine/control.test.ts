@@ -64,6 +64,31 @@ describe("COMMAND_DEADLINE_MS['runs.start'] covers the worst awaited path", () =
   });
 });
 
+// Stage 5, 5b.1, S5.V1 (plan s5b1 §5.2): the clip commands. `clips.options` waits for a price load (which times out into the dated table) and answers; `clips.create` answers
+// with its job id once its checks, a price load, the library's identity and the plan read are done, and main must not answer INTERNAL while a paid clip starts that the window never tracks.
+describe("COMMAND_DEADLINE_MS for the clip commands (S5.V1)", () => {
+  test("clips.options is 45 s: a price load that times out, then the engine's own slack", () => {
+    expect(COMMAND_DEADLINE_MS["clips.options"]).toBe(45_000);
+    expect(COMMAND_DEADLINE_MS["clips.options"]).toBe(PRICE_FETCH_TIMEOUT_MS + 30_000);
+  });
+
+  test("clips.create waits for a price load, the library's identity, the plan read and the slack, and not for the reference load", () => {
+    const deadline = COMMAND_DEADLINE_MS["clips.create"] ?? 0;
+    expect(deadline).toBe(PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + 5_000 + 30_000);
+    expect(deadline).toBeLessThan(COMMAND_DEADLINE_MS["avatars.generatePortraits"] ?? 0);
+  });
+
+  test("clips.create outwaits clips.options, so a start is never given up on before an estimate is", () => {
+    expect(COMMAND_DEADLINE_MS["clips.create"] ?? 0).toBeGreaterThan(COMMAND_DEADLINE_MS["clips.options"] ?? Infinity);
+  });
+
+  test("the other clip commands only read or move the clip's own files and keep main's default", () => {
+    for (const type of ["clips.list", "clips.get", "clips.markSeen", "clips.delete", "clips.retryDownload", "clips.export"] as const) {
+      expect(COMMAND_DEADLINE_MS[type]).toBeUndefined();
+    }
+  });
+});
+
 describe("EngineInit.defaultExportPath", () => {
   const settings = {
     monthlyBudgetMicros: 10_000_000,

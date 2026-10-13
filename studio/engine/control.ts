@@ -291,6 +291,9 @@ export function isControlMessage(message: unknown): boolean {
   return typeof message === "object" && message !== null && "kind" in message && message.kind === "control";
 }
 
+/** How long `clips.create` may spend reading the photo's run plan (a local JSON file) before it refuses; its share of the command's deadline. */
+const CLIP_PLAN_READ_TIMEOUT_MS = 5_000;
+
 /** Room for the engine's own work around its network waits: ledger fsyncs, the library write, a reserve queued behind a reconcile. */
 const COMMAND_SLACK_MS = 30_000;
 
@@ -319,6 +322,11 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   // images starts that the window never tracks. The estimate waits for a price load that times out, so the fallback estimate still arrives.
   "avatars.estimatePortraits": PRICE_FETCH_TIMEOUT_MS + COMMAND_SLACK_MS,
   "avatars.generatePortraits": PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + REFERENCE_TIMEOUT_MS + EMBEDDING_COMPUTE_TIMEOUT_MS + COMMAND_SLACK_MS,
+  // Stage 5, 5b.1, S5.V1: the sheet's options wait for a price load (which times out into the dated table) and the photo's plan read. `clips.create` answers with its job id once its checks, a
+  // price load, the library's identity and the plan read are done (the first frame is made by the job): main's default 30 s would answer INTERNAL while a paid clip starts that the window
+  // never tracks. The portraits' formula without the reference load. The other clip commands only read or move the clip's own files and keep the default.
+  "clips.options": PRICE_FETCH_TIMEOUT_MS + COMMAND_SLACK_MS,
+  "clips.create": PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + CLIP_PLAN_READ_TIMEOUT_MS + COMMAND_SLACK_MS,
   // Answers with the job id once its checks and a price load are done; the job runs on and reports by events.
   "avatars.generateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.createDraft": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
