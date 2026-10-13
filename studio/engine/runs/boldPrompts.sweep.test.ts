@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { GAZE } from "../../shared/scenes/banks";
 import { COVERS_HER, OPENS_WITH_ARMS_UP } from "../../shared/scenes/banks/boldRules";
 import { ARMS_UP, looksElsewhere } from "../../shared/scenes/banks/schema";
-import { FEET_IN_THE_WATER, FEET_IN_THE_WATER_MAX, poseFamilyOf } from "../../shared/scenes/banks/boldDesign.testkit";
+import { countInFamily, FEET_IN_THE_WATER, FEET_IN_THE_WATER_MAX, poseFamilyOf } from "../../shared/scenes/banks/boldDesign.testkit";
 import { HELD_OBJECT_WORDS } from "../../shared/scenes/words";
 import { boldPromptMatrix, boldRunPrompts, type PromptFrame } from "./testing/boldRunPrompts";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -137,11 +137,13 @@ describe("a 20-photo run with «Ножки» 30 % never pays for the same scene 
 
   // S5.R4 round 2: the legs moments differed in words, not in pose: «legs stretched out» was 3 of 6 legs frames in 30 of 45 «Ночнушки» and 29 of 45 beach runs.
   test.each(["nightwear", "beach"] as const)("%s: no pose family twice among a run's legs frames (her feet in the water: at most two)", (category) => {
-    const families = runsOf(category).map((frames) => frames.filter((f) => f.slot.framing === "legs").map((f) => poseFamilyOf(f.slot.activity ?? "") ?? `none: ${f.slot.activity}`));
+    const legsOf = runsOf(category).map((frames) => frames.filter((f) => f.slot.framing === "legs").map((f) => f.slot.activity ?? ""));
+    const families = legsOf.map((list) => list.map((activity) => poseFamilyOf(activity) ?? `none: ${activity}`));
     const twice = families.flatMap((list, i) => repeated(list.filter((family) => family !== FEET_IN_THE_WATER)).map((family) => `seed ${RUN_SEEDS[i]}: ${family}`));
     expect(twice.slice(0, 5)).toEqual([]);
     // S5.R4 round 3: all three «feet in the water» frames came in 22 of 45 beach runs.
-    const wet = families.flatMap((list, i) => (list.filter((family) => family === FEET_IN_THE_WATER).length > FEET_IN_THE_WATER_MAX ? [`seed ${RUN_SEEDS[i]}`] : []));
+    // Polish after C4: every frame whose words name the family counts, not only the ones that name it alone.
+    const wet = legsOf.flatMap((list, i) => (countInFamily(list, FEET_IN_THE_WATER) > FEET_IN_THE_WATER_MAX ? [`seed ${RUN_SEEDS[i]}`] : []));
     expect(wet).toEqual([]);
   });
 

@@ -57,6 +57,9 @@ export const POSE_FAMILIES: readonly (readonly [string, RegExp])[] = [
   ["one knee bent", /\b(?:one|a) knee\b|\bknees?\s+(?:bent|up|drawn up)\b/i],
   ["a foot lifted", /\b(?:lifts?|raises?)\s+(?:one|a|her)\s+(?:bare\s+)?(?:foot|leg)\b/i],
   ["her weight on one leg", /\bweight on one leg\b/i],
+  // Polish after C4: standing still, her feet together («Ночнушки») or in the sand («beach»).
+  ["her feet together", /\bfeet together\b/i],
+  ["her feet in the sand", /\bfeet in the sand\b/i],
   ["legs over the armrest", /\blegs? over the\b/i],
   ["legs crossed", /\bcross\w*\b/i],
   ["legs stretched out", /\bstretch\w*\b|\blegs?\s+(?:out|forward)\b|\bout straight\b/i],
@@ -67,6 +70,9 @@ export const FEET_IN_THE_WATER_MAX = 2;
 
 /** Every pose family a text's words name, in the list's order. */
 export const poseFamiliesOf = (text: string): string[] => POSE_FAMILIES.filter(([, words]) => words.test(text)).map(([family]) => family);
+
+/** How many of the texts name the family, whatever other families they also name (a step down into the water is a stepping and her feet in the water). */
+export const countInFamily = (texts: readonly string[], family: string): number => texts.filter((text) => poseFamiliesOf(text).includes(family)).length;
 
 /** A legs moment's pose family: the one family its words name; undefined when they name none, or more than one (the moment is then worded apart). */
 export const poseFamilyOf = (text: string): string | undefined => {
@@ -84,6 +90,8 @@ const stemOf = (word: string): string => (word === "feet" ? "foot" : word.replac
  * the mirror» and «lifts one bare foot to the mirror» read the same; «sits on the sand, legs out» and «sits on the grass, legs out» do not (another place is another photo).
  */
 export function poseWordsOf(text: string): string {
-  const words = (text.toLowerCase().match(/[a-z]+/g) ?? []).filter((w) => !SAME_POSE_WORDS.has(w)).map(stemOf);
+  // Polish after C4: shifting her weight onto a leg or onto a hip is one pose («weight on one leg» and «weight on one hip», «to the other leg»).
+  const unshifted = text.toLowerCase().replace(/\b(?:on|to)\s+(?:one|the other)\s+(?:leg|hip)\b/g, "");
+  const words = (unshifted.match(/[a-z]+/g) ?? []).filter((w) => !SAME_POSE_WORDS.has(w)).map(stemOf);
   return [...new Set(words)].sort().join(" ");
 }

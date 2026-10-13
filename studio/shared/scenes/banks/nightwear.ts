@@ -187,7 +187,8 @@ export const NIGHTWEAR: CategoryBank = {
         { text: "leans on the edge of the tub", motion: "she leans back a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "fixes her hair in a clip", motion: "she pins her hair up slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "own" },
         // S5.R4 round 3: in place of «lifts one foot to the mirror», which was «Дом»'s «lifts one bare foot to the mirror» with «Дом»'s motion.
-        { text: "stands with her weight on one leg", motion: "she shifts her weight to the other leg slowly", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        // Polish after C4: «stands with her weight on one leg» was «Дом»'s «weight on one hip» (both are mirror-hidden); her feet together is a pose of its own.
+        { text: "stands with her feet together", motion: "she turns one foot out slowly", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
         { text: "pats on some face cream", motion: "she pats her cheek gently", captures: ["mirror"], twoHanded: false, gaze: "focus" },
         { text: "leans toward the mirror", motion: "she leans in a little closer", captures: ["mirror"], twoHanded: false, level: "flirty" },
         { text: "sits on the counter", motion: "she turns her head a little toward the mirror", captures: ["mirror-hidden"], twoHanded: false, angle: "three-quarter", mirrorBack: true, level: "bold", route: "seedream" },

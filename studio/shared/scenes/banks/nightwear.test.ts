@@ -226,7 +226,7 @@ describe("the legs moments (plan §6.2, S5.8a rules, M5)", () => {
     // S5.R4 round 2: worded apart from «Фитнес»'s and «Дом»'s moments of the same text; the poses are the same.
     ["an armchair in her bedroom", "stretches out her legs", ["pov-legs"], "she points her toes slowly"],
     // S5.R4 round 3: in place of «lifts one foot to the mirror» and «crosses her legs, a foot dangling» (C3′'s chair frame), which were «Дом»'s poses with «Дом»'s motions.
-    ["her bathroom", "stands with her weight on one leg", ["mirror-hidden"], "she shifts her weight to the other leg slowly"],
+    ["her bathroom", "stands with her feet together", ["mirror-hidden"], "she turns one foot out slowly"],
     ["an armchair in her bedroom", "sits, legs over the armrest", ["mirror-hidden"], "she bounces her feet a little"],
     // S5.R4: three more, so a 20-photo run at «Ножки» 30 % never repeats one; round 2: each a pose of its own.
     ["her bed", "lies on her side, one knee bent", ["pov-legs"], "she slides her top knee forward a little"],

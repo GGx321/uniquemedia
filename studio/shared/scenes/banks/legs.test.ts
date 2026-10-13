@@ -3,7 +3,7 @@ import { isHandCapture, LEGS_CAPTURES, shotOf, type Capture } from "../captures"
 import { momentAllowed } from "../render";
 import { legwearFits } from "../template";
 import { DRESS_LENGTH, DRESS_OR_SKIRT, LEGS_UNSUITED_OUTFITS, YOUTH_PROPS, isOwnerBannedOutfit } from "../words";
-import { FEET_IN_THE_WATER, FEET_IN_THE_WATER_MAX, poseFamiliesOf, poseFamilyOf, poseWordsOf } from "./boldDesign.testkit";
+import { countInFamily, FEET_IN_THE_WATER, FEET_IN_THE_WATER_MAX, poseFamiliesOf, poseFamilyOf, poseWordsOf } from "./boldDesign.testkit";
 import { BANKS } from "./index";
 import { categoryBankProblems, MOTION_TEXT_MAX } from "./schema";
 import { BANK_CATEGORIES, type BankCategory, type Moment } from "./types";
@@ -47,7 +47,7 @@ const TABLE: Row[] = [
   // S5.R4 round 2: worded apart from «Фитнес»'s «sits with her legs stretched out» and «Дом»'s chair frame; the poses are the same.
   { category: "nightwear", place: "an armchair in her bedroom", text: "stretches out her legs", motion: "she points her toes slowly", captures: ["pov-legs"] },
   // S5.R4 round 3: in place of «lifts one foot to the mirror» and «crosses her legs, a foot dangling», «Дом»'s poses and motions in other words.
-  { category: "nightwear", place: "her bathroom", text: "stands with her weight on one leg", motion: "she shifts her weight to the other leg slowly", captures: ["mirror-hidden"] },
+  { category: "nightwear", place: "her bathroom", text: "stands with her feet together", motion: "she turns one foot out slowly", captures: ["mirror-hidden"] },
   { category: "nightwear", place: "an armchair in her bedroom", text: "sits, legs over the armrest", motion: "she bounces her feet a little", captures: ["mirror-hidden"] },
   // S5.R4: three more a «Смелая» bank, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one; round 2: each a pose of its own.
   { category: "nightwear", place: "her bed", text: "lies on her side, one knee bent", motion: "she slides her top knee forward a little", captures: ["pov-legs"] },
@@ -60,7 +60,7 @@ const TABLE: Row[] = [
   { category: "beach", place: "a rooftop pool", text: "dangles her feet in the water", motion: "she dips her toes in the water slowly", captures: ["pov-legs"] },
   { category: "beach", place: "the water's edge", text: "lets the waves wash over her feet", motion: "she wiggles her toes in the foam slowly", captures: ["pov-legs"] },
   // S5.R4 round 3: «steps down into the water» (a rooftop pool) was the third «feet in the water» picture.
-  { category: "beach", place: "the beach", text: "walks on tiptoe across the sand", motion: "she takes a small careful step", captures: ["pov-legs"] },
+  { category: "beach", place: "the beach", text: "stands with her feet in the sand", motion: "she shifts from one foot to the other slowly", captures: ["pov-legs"] },
   { category: "beach", place: "the rocks by the sea", text: "lifts one leg, toes pointed", motion: "she lowers her lifted leg slowly", captures: ["pov-legs"] },
 ];
 
@@ -228,10 +228,21 @@ describe("a «Смелая» bank's legs moments are different poses (S5.R4 roun
     ["dangles her feet in the water", ["feet in the water"]],
     ["lets the waves wash over her feet", ["feet in the water"]],
     ["walks on tiptoe across the sand", ["on tiptoe"]],
+    ["stands with her feet together", ["her feet together"]],
+    ["stands with her feet in the sand", ["her feet in the sand"]],
     ["sits, legs over the armrest", ["legs over the armrest"]],
     ["sits on the floor", []],
   ])("«%s» names %p", (text, families) => {
     expect(poseFamiliesOf(text).sort()).toEqual(families);
+  });
+
+  // Polish after C4: the prompt sweep counted a run's «feet in the water» frames by the one family a moment names, so a moment worded into two families (a step down into the water)
+  // was not counted at all. A frame counts in every family its words name.
+  test("a frame counts in every family its words name", () => {
+    const frames = ["steps down into the water", "dangles her feet in the water", "sits on the floor", "sits on the sand, legs out"];
+    expect(countInFamily(frames, FEET_IN_THE_WATER)).toBe(2);
+    expect(countInFamily(frames, "stepping")).toBe(1);
+    expect(countInFamily(frames, "legs stretched out")).toBe(1);
   });
 
   test.each(["nightwear", "beach"] as const)("%s: every legs moment names exactly one pose family", (category) => {
@@ -284,6 +295,51 @@ describe("a «Смелая» bank's legs moments are different poses (S5.R4 roun
       ...(motions.has(poseWordsOf(moment.motion)) ? [`«${moment.motion}» = ${motions.get(poseWordsOf(moment.motion))}`] : []),
     ]);
     expect(same).toEqual([]);
+  });
+
+  // Polish after C4: not only the legs moments. A mixed beach + fitness run showed «stretches her arms overhead / she reaches a little higher» twice. Every moment of a «Смелая» bank
+  // (not only its legs ones) is held against every other bank: the same text AND the same motion, read as poses, is one moment drawn twice. A shared text or a shared motion alone
+  // (the sibling banks share a head turn) is not: the photos differ in their place, their outfit and their other half.
+  // «Ночнушки» was written beside «Дом» and still repeats twelve of its bed, chair and hair moments word for word (eleven of «Дом», one of «Гламур»); both are among the five frozen banks (its plan is pinned), so
+  // these twelve are known, listed by the «Ночнушки» text, and they only shrink: the test fails on any other twin, and on a listed text that is no twin any more.
+  test("a weight shift is one pose, whether it is on a leg or a hip", () => {
+    expect(poseWordsOf("stands with her weight on one leg")).toBe(poseWordsOf("stands with her weight on one hip"));
+    expect(poseWordsOf("she shifts her weight to the other leg slowly")).toBe(poseWordsOf("she shifts her weight slowly"));
+    expect(poseWordsOf("stands with her weight on one leg")).not.toBe(poseWordsOf("stands with her hand on one leg"));
+  });
+
+  const NIGHTWEAR_HOME_TWINS: readonly string[] = [
+    "lies on her side, head on her hand",
+    "rests her cheek on the pillow",
+    "lies prone, her cheek on her hand",
+    "lies on her stomach, head tilted",
+    "lies prone, glancing back",
+    "lies prone, ankles crossed behind",
+    "lies prone, feet raised behind",
+    "lies on her stomach, hips behind",
+    "tucks her hair behind one ear",
+    "sits on the edge of the bed",
+    "sits with one leg crossed",
+    "pulls one knee up to her chest",
+  ];
+  const SIBLINGS: readonly BankCategory[] = ["home", "glamour"];
+  const twinsOf = (category: BankCategory): { moment: Moment; twin: string; bank: BankCategory }[] => {
+    const others = BANK_CATEGORIES.filter((c) => c !== category).flatMap((c) => BANKS[c].places.flatMap((p) => p.moments.map((m) => ({ bank: c, moment: m }))));
+    const byPose = new Map(others.map((o) => [`${poseWordsOf(o.moment.text)}|${poseWordsOf(o.moment.motion)}`, o]));
+    return BANKS[category].places.flatMap((p) => p.moments).flatMap((moment) => {
+      const twin = byPose.get(`${poseWordsOf(moment.text)}|${poseWordsOf(moment.motion)}`);
+      return twin === undefined ? [] : [{ moment, twin: `${twin.bank}: «${twin.moment.text}» / «${twin.moment.motion}»`, bank: twin.bank }];
+    });
+  };
+  const allowed = (category: BankCategory, t: { moment: Moment; bank: BankCategory }): boolean => category === "nightwear" && SIBLINGS.includes(t.bank) && NIGHTWEAR_HOME_TWINS.includes(t.moment.text);
+
+  test.each(["nightwear", "beach"] as const)("%s: no moment is a moment of another bank, text and motion together", (category) => {
+    expect(twinsOf(category).filter((t) => !allowed(category, t)).map((t) => `«${t.moment.text}» / «${t.moment.motion}» = ${t.twin}`)).toEqual([]);
+  });
+
+  test("every listed «Ночнушки» twin of «Дом» or «Гламур» still is one", () => {
+    const found = twinsOf("nightwear").filter((t) => SIBLINGS.includes(t.bank)).map((t) => t.moment.text);
+    expect(NIGHTWEAR_HOME_TWINS.filter((text) => !found.includes(text))).toEqual([]);
   });
 });
 

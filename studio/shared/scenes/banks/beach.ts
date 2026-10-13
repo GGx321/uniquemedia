@@ -64,7 +64,8 @@ export const BEACH: CategoryBank = {
         { text: "sits on the sand, legs out", motion: "she slowly buries her toes in the sand", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" }, details: ["a few seashells by her toes", "her flip-flops beside her feet"] },
         // S5.R4 round 3: its motion was «Дом»'s and «Ночнушки»'s word for word.
         // S5.R4 round 3: in place of the rooftop's «steps down into the water», the third «feet in the water» picture beside «dangles her feet in the water» and the waves.
-        { text: "walks on tiptoe across the sand", motion: "she takes a small careful step", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" }, details: ["a few seashells near her toes", "some footprints ahead of her"] },
+        // Polish after C4: in place of «walks on tiptoe across the sand»: a tiptoe is unreadable from above and the footprints ahead of her were ambiguous. Standing still, her feet in the sand read.
+        { text: "stands with her feet in the sand", motion: "she shifts from one foot to the other slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" }, details: ["a pale shell beside her toes", "a thin line of foam ahead of her"] },
         { text: "crosses her ankles on the towel", motion: "she taps her crossed feet together slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" }, details: ["a few seashells by her toes", "her sunglasses beside her feet"] },
       ],
     },
@@ -119,9 +120,10 @@ export const BEACH: CategoryBank = {
       times: ["midday", "golden hour"],
       moments: [
         { text: "leans on the glass railing", motion: "her hair lifts a little in the wind", captures: ["friend", "selfie", "candid"], twoHanded: false, level: "flirty", outdoor: true },
-        { text: "adjusts the strap on her shoulder", motion: "she slides the strap up a little", captures: ["friend", "candid"], twoHanded: false, angle: "profile", outfits: STRAPPED, outdoor: true },
+        { text: "adjusts the strap on her shoulder", motion: "she lets the strap settle on her shoulder slowly", captures: ["friend", "candid"], twoHanded: false, angle: "profile", outfits: STRAPPED, outdoor: true },
         // S5.R4 round 3: with one legs moment left here the rooftop draws more of a plan's frames, and its one moment in profile took 6 of 20 away frames; a second shares them.
-        { text: "stretches her arms overhead", motion: "she reaches a little higher", captures: ["friend", "candid"], twoHanded: true, angle: "profile", outdoor: true },
+        // Polish after C4: in place of «stretches her arms overhead», which was «Фитнес»'s moment and motion word for word; she stays in profile, now at the pool's edge.
+        { text: "crouches, one hand in the water", motion: "she trails her fingers through the water slowly", captures: ["friend", "candid"], twoHanded: false, angle: "profile", water: true, outfits: IN_THE_WATER, outdoor: true },
         // The beach probe: looking back over her shoulder at the rooftop pool.
         { text: "looks back over her shoulder", motion: "she turns her head a little further", captures: ["friend", "timer"], twoHanded: false, angle: "three-quarter", gaze: "own", level: "bold", route: "seedream", outdoor: true },
         { text: "sips a cold drink by the water", motion: "she lowers the glass a little", captures: ["friend", "selfie", "candid"], twoHanded: false, outdoor: true },
