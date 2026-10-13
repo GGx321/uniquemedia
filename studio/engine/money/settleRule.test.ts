@@ -127,6 +127,11 @@ test("costToMicrosCeil rounds a reserve figure up, never under by a micro-dollar
   expect(costToMicrosCeil(0.0400004)).toBe(40_001);
 });
 
+test("costToMicrosCeil never turns a positive figure into zero, however small", () => {
+  expect(costToMicrosCeil(1e-13)).toBe(1);
+  expect(costToMicrosCeil(Number.MIN_VALUE)).toBe(1);
+});
+
 test("costToMicrosCeil keeps an exact price exact: float noise in dollars * 1e6 does not add a micro-dollar", () => {
   expect(costToMicrosCeil(0.045)).toBe(45_000);
   expect(costToMicrosCeil(0.0014)).toBe(1_400);

@@ -46,7 +46,9 @@ export function costToMicros(costUsd: number): number {
  * is first cut to 1e-6 of a micro-dollar: an exact price stays exact.
  */
 export function costToMicrosCeil(costUsd: number): number {
-  return Math.ceil(Number((costUsd * 1e6).toFixed(6)));
+  const micros = Math.ceil(Number((costUsd * 1e6).toFixed(6)));
+  // A positive figure is never zero, however small: zero would read as «free».
+  return costUsd > 0 ? Math.max(1, micros) : micros;
 }
 
 /**
