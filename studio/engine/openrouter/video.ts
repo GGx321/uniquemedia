@@ -157,7 +157,8 @@ export async function downloadVideo(ctx: ClientContext, id: string, toPath: stri
 
     if (status >= 300 && status < 400) {
       giveUpOnBody();
-      return { kind: "redirect-refused", httpStatus: status, host: hostOf(res.headers.get("location")) };
+      const host = hostOf(res.headers.get("location"));
+      return { kind: "redirect-refused", httpStatus: status, host: host === null ? null : clean(ctx, host) };
     }
     if (status === 404 || status === 410) {
       giveUpOnBody();
