@@ -214,7 +214,8 @@ describe("a run's cap lets a request out only while one attempt fits", () => {
     mock.scheduler.runAll();
     // The refusal is free; the next slot is sent (930 000 µ$ remain, an attempt is 93 000), comes back empty and is billed; it is the run's third empty answer, so the job stops.
     expect((await unwrap(mock.client.request("runs.list", {}))).runs[0]).toMatchObject({ committedMicros: 3 * MOCK_BOLD_IMAGE, failed: 4, open: 0 });
-    expect(failedOf(events)?.type).toBe("job.failed");
+    const failed = failedOf(events);
+    expect(failed?.type === "job.failed" && failed.payload.error.code).toBe("INTERNAL");
   });
 
   test("a Seedream slot with less than one attempt left is not sent, stays open, and the job ends RUN_CAP_EXCEEDED", async () => {
@@ -244,5 +245,56 @@ describe("a run's cap lets a request out only while one attempt fits", () => {
     const failed = failedOf(events);
     expect(failed?.type === "job.failed" && failed.payload.error.code).toBe("RUN_CAP_EXCEEDED");
     expect((await unwrap(mock.client.request("runs.list", {}))).runs.find((r) => r.runId === runId)).toMatchObject({ done: 3, open: 1 });
+  });
+});
+
+// Polish (post-C4): the engine reserves the IMAGE alone before it sends (image.ts) and the age check separately after the picture is back (ageGate.ts); a refusal of either only
+// sets `limited`. A slot the test armed to fail goes through the same reserve, so a cap that leaves no room holds it open instead of ending it.
+describe("a run's send is decided by the image's own reserve, the age check by its own", () => {
+  const failedOf = (events: readonly EventMessage[]) => events.find((e) => e.type === "job.failed");
+  const AGE_WORST = 2_000;
+  // The first slot of every run below is drawn and settles the 2K attempt plus the age check's typical price; `room` is what the cap then leaves for the second slot.
+  const FIRST_SLOT = MOCK_BOLD_IMAGE + 1_400;
+
+  async function resumeMidJob(room: number) {
+    const mock = makeMock({ imageAgeCheck: "on" });
+    const events: EventMessage[] = [];
+    mock.client.subscribe((e) => events.push(e));
+    const runId = mock.engine.seedRun(boldRun(3, ["beach"]), 0, FIRST_SLOT + room);
+    await unwrap(mock.client.request("runs.resume", { runId, acceptedWorstMicros: ENOUGH }));
+    mock.scheduler.runAll();
+    const run = (await unwrap(mock.client.request("runs.list", {}))).runs.find((r) => r.runId === runId);
+    return { run, events };
+  }
+
+  test("with the age check on and room for the image but not for its age check, the image is sent and billed, the slot stays open and the job ends RUN_CAP_EXCEEDED", async () => {
+    const { run, events } = await resumeMidJob(MOCK_BOLD_IMAGE + AGE_WORST - 1);
+    expect(run).toMatchObject({ committedMicros: FIRST_SLOT + MOCK_BOLD_IMAGE, done: 1, open: 2 });
+    const failed = failedOf(events);
+    expect(failed?.type === "job.failed" && failed.payload.error.code).toBe("RUN_CAP_EXCEEDED");
+  });
+
+  test("with the age check on and room for the image and its age check, the second slot is drawn", async () => {
+    const { run } = await resumeMidJob(MOCK_BOLD_IMAGE + AGE_WORST);
+    expect(run).toMatchObject({ done: 2, open: 1 });
+  });
+
+  test("with room for less than the image, the second slot is not sent", async () => {
+    const { run } = await resumeMidJob(MOCK_BOLD_IMAGE - 1);
+    expect(run).toMatchObject({ committedMicros: FIRST_SLOT, done: 1, open: 2 });
+  });
+
+  test("a slot armed to fail meets the cap like any other: with no room for its image it stays open and the job ends RUN_CAP_EXCEEDED", async () => {
+    const mock = makeMock();
+    const events: EventMessage[] = [];
+    mock.client.subscribe((e) => events.push(e));
+    // Three ordinary slots at 50 000 µ$; the cap funds two and leaves 40 000 µ$ for the third, which is armed to fail.
+    const runId = mock.engine.seedRun({ avatarId: MIA.avatarId, count: 3, categories: ["home"], poses: NO_POSES }, 0, 140_000);
+    mock.engine.failNextRunSlots(1);
+    await unwrap(mock.client.request("runs.resume", { runId, acceptedWorstMicros: ENOUGH }));
+    mock.scheduler.runAll();
+    expect((await unwrap(mock.client.request("runs.list", {}))).runs.find((r) => r.runId === runId)).toMatchObject({ done: 2, failed: 0, open: 1 });
+    const failed = failedOf(events);
+    expect(failed?.type === "job.failed" && failed.payload.error.code).toBe("RUN_CAP_EXCEEDED");
   });
 });

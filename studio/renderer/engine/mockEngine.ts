@@ -4489,15 +4489,23 @@ export class MockEngine implements EngineBridge {
   }
 
   /**
+   * One request's own reserve: the 2K attempt on Seedream, the owner's model's price otherwise. The engine reserves the IMAGE ALONE before it sends
+   * (`openrouter/image.ts`); the age check reserves its own ceiling after the picture is back (`runs/ageGate.ts`).
+   */
+  private imageReserve(route?: "seedream"): number {
+    return route === "seedream" ? MOCK_BOLD_IMAGE : this.runImagePrice;
+  }
+
+  /** The cheapest next attempt of a slot: its image and, when the run has them, its age check's ceiling (the engine's `cheapestSlotAttempt`, which `minToProgress` is built from). */
+  private attemptPrice(run: MockRun, route?: "seedream"): number {
+    return this.imageReserve(route) + (run.ageCheck ? MOCK_AGE_CHECK_PER_SLOT.worst : 0);
+  }
+
+  /**
    * One slot of `run` at today's prices: what a success is expected to cost
    * (one image, and its age check when the run has them) and the worst case
    * of one attempt. The age-check mode is the run's own, captured at start.
    */
-  /** One request's own reserve: the 2K attempt on Seedream, the owner's model's price otherwise, and the age check's ceiling when it is on (the engine's `imageWorst` + `ageWorst`). */
-  private attemptPrice(run: MockRun, route?: "seedream"): number {
-    return (route === "seedream" ? MOCK_BOLD_IMAGE : this.runImagePrice) + (run.ageCheck ? MOCK_AGE_CHECK_PER_SLOT.worst : 0);
-  }
-
   private slotPrice(run: MockRun, route?: "seedream"): { expected: number; attemptWorst: number } {
     const image = this.runImagePrice;
     // 5a.3 (S5.9f): a Seedream slot expects the 2K attempt, and reserves never below the owner's model (the engine's `remainingPlan`).
@@ -4671,9 +4679,10 @@ export class MockEngine implements EngineBridge {
           this.reserves.delete(key);
           job.reserveKeys = job.reserveKeys.filter((k) => k !== key);
           const seedream = planned.route === "seedream";
-          // 5a.3 (S5.9f, round 3): the engine reserves per ATTEMPT (93 000 µ$ on Seedream 2K, the owner's model's price otherwise) and lets a request out only while the run's settled money leaves
-          // room for it (budget.ts: committed + worst > cap is RUN_CAP_EXCEEDED). A slot that does not fit is not sent and stays open; the job then ends failed with that code.
-          if (step < openIndexes.length - failing && run.settledMicros + this.attemptPrice(run, planned.route) > run.capMicros) {
+          // 5a.3 (S5.9f, round 3): the engine reserves the IMAGE per attempt (93 000 µ$ on Seedream 2K, the owner's model's price otherwise) and lets a request out only while the run's
+          // settled money leaves room for it (budget.ts: committed + worst > cap is RUN_CAP_EXCEEDED). That holds for every slot, one the test armed to fail included: a slot that does not
+          // fit is not sent and stays open; the job then ends failed with that code. The age check reserves its own ceiling later (below).
+          if (run.settledMicros + this.imageReserve(planned.route) > run.capMicros) {
             job.limited = true;
             return;
           }
@@ -4700,6 +4709,12 @@ export class MockEngine implements EngineBridge {
             planned.end = "failed";
             if (failedRunError !== null) planned.error = failedRunError;
             this.emitMoney();
+          } else if (run.ageCheck && run.settledMicros + this.imageReserve(planned.route) + MOCK_AGE_CHECK_PER_SLOT.worst > run.capMicros) {
+            // The image was sent and is billed; the age check's own ceiling no longer fits, which only limits the job (`runJob.ts`: a gate's limit sets `limited`). No photo is kept, the slot stays open.
+            run.settledMicros += this.imageReserve(planned.route);
+            this.spend(this.imageReserve(planned.route));
+            job.limited = true;
+            return;
           } else {
             planned.end = "done";
             const photoId = this.nextId("photo");
