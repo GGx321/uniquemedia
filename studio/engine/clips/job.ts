@@ -107,6 +107,18 @@ export type ClipJobOutcome =
 /** Thrown inside the chain when the signal fires while it waits. */
 class Stopped extends Error {}
 
+/** What ffmpeg says about the file it WRITES, not the one it reads: such an error proves nothing about the clip. Only the C library's fixed phrases are looked for. */
+const OUTPUT_SIDE_ERROR = /Input\/output error|Read-only file system|Permission denied|Operation not permitted/i;
+
+/**
+ * Whether a failed poster PROVES ffmpeg cannot decode the paid file: ffmpeg ran and exited on its own with an error code (not a timeout, not a kill we did not send: `exitCode` null),
+ * and the error is not about its own output (a full disk, EIO, a read-only or forbidden folder). Only then is the file removed; any other failure keeps it.
+ */
+function posterProvesUndecodable(error: unknown): boolean {
+  if (!(error instanceof FfmpegError) || error instanceof FfmpegTimeoutError || error.exitCode === null) return false;
+  return !isNoSpaceError(error) && !OUTPUT_SIDE_ERROR.test(error.stderrTail);
+}
+
 const iso = (ms: number): string => new Date(ms).toISOString();
 
 /** The model that made the file, or that tried last, as the record names it. */
@@ -322,8 +334,6 @@ class ClipChain {
         await rm(download.path, { force: true });
         return this.recordFailure("invalid-file", model, attempts);
       }
-      // A full disk: the provider's file stays (I5.54), and the clip says so; `retryDownload` can finish it once there is room.
-      if (poster === "disk-full") return this.recordFailure("disk-full", model, attempts);
       const face = await this.face(download, embedding);
 
       this.done = 3;
@@ -348,12 +358,12 @@ class ClipChain {
   }
 
   /**
-   * The poster under a fresh temp name, made durable and renamed onto its own name (ffmpeg never overwrites a file). The provider's file is paid for and already validated, so a poster
-   * that cannot be drawn costs it its place only when ffmpeg PROVES it cannot decode it (`undecodable`: it exited with an error that is not a full disk). A full disk is `disk-full`.
-   * Anything else (a timeout under a render's load, ffmpeg that cannot be started, a flush that failed) is `missing`: the clip is ready without its poster, and the record still names
-   * `<clipId>.poster.jpg` (the strict schema fixes the name), so a window shows a placeholder until the poster is drawn again (S5.V4a2 / S5.V8).
+   * The poster under a fresh temp name, made durable and renamed onto its own name (ffmpeg never overwrites a file). The provider's file is paid for, validated and already stored, so a
+   * poster that cannot be drawn costs it its place only when ffmpeg PROVES it cannot decode it (`undecodable`, `posterProvesUndecodable`). Anything else (a timeout under a render's
+   * load, a kill we did not send, ffmpeg that cannot be started, a full disk, an error on the poster's own output or its flush) is `missing`: the clip is ready without its poster, and the
+   * record still names `<clipId>.poster.jpg` (the strict schema fixes the name), so a window shows a placeholder until the poster is drawn again (S5.V6 / S5.V8).
    */
-  private async poster(download: Extract<ClipDownload, { kind: "saved" }>): Promise<"drawn" | "missing" | "disk-full" | "undecodable"> {
+  private async poster(download: Extract<ClipDownload, { kind: "saved" }>): Promise<"drawn" | "missing" | "undecodable"> {
     const { input, deps } = this;
     const temp = posterTempPath(input.clipsDir, input.clipId);
     try {
@@ -365,8 +375,8 @@ class ClipChain {
     } catch (error) {
       await rm(temp, { force: true }).catch(() => undefined);
       if (this.signal.aborted) throw new Stopped();
-      const kind = isNoSpaceError(error) ? "disk-full" : error instanceof FfmpegError && !(error instanceof FfmpegTimeoutError) ? "undecodable" : "missing";
-      const then = kind === "missing" ? "the clip is kept without one" : kind === "disk-full" ? "the disk is full; the file is kept" : "ffmpeg cannot decode the file; it is not kept";
+      const kind = posterProvesUndecodable(error) ? "undecodable" : "missing";
+      const then = kind === "missing" ? "the clip is kept without one" : "ffmpeg cannot decode the file; it is not kept";
       deps.log(`[clip] ${input.clipId}: the poster could not be drawn (${error instanceof Error ? error.name : typeof error}); ${then}`);
       return kind;
     }

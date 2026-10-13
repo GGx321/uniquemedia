@@ -444,10 +444,31 @@ describe("runClipJob: a poster that cannot be drawn never costs the paid file it
     expect((await readdir(dir())).sort()).toEqual([`${CLIP}.json`, `${CLIP}.mp4`]);
   });
 
-  test("a full disk is `disk-full`, retryable, and the paid file is kept", async () => {
+  test("a full disk at the poster: the file is already stored, so the clip is ready without its poster", async () => {
     for (const error of [Object.assign(new Error("write failed"), { code: "ENOSPC" }), new FfmpegError("ffmpeg exited with code 1", 1, "av_interleaved_write_frame(): No space left on device")]) {
       const { outcome } = await withPosterFailure(error);
-      expect(recordOf(outcome).outcome).toMatchObject({ status: "failed", reason: "disk-full", retryDownloadUntil: expect.any(String) });
+      expect(recordOf(outcome).outcome).toMatchObject({ status: "ready" });
+      expect((await readdir(dir())).sort()).toEqual([`${CLIP}.json`, `${CLIP}.mp4`]);
+    }
+  });
+
+  test("ffmpeg killed by a signal we did not send proves nothing about the file: ready without its poster, the file kept", async () => {
+    const { outcome } = await withPosterFailure(new FfmpegError("ffmpeg was killed by signal SIGKILL", null, ""));
+    expect(recordOf(outcome).outcome).toMatchObject({ status: "ready" });
+    expect((await readdir(dir())).sort()).toEqual([`${CLIP}.json`, `${CLIP}.mp4`]);
+  });
+
+  test("an error on the poster's own output (EIO, EROFS, EACCES) proves nothing about the file: ready without its poster, the file kept", async () => {
+    const errors = [
+      new FfmpegError("ffmpeg exited with code 1", 1, "av_interleaved_write_frame(): Input/output error"),
+      new FfmpegError("ffmpeg exited with code 1", 1, "Could not open file : Read-only file system"),
+      new FfmpegError("ffmpeg exited with code 1", 1, "Could not open file : Permission denied"),
+      Object.assign(new Error("fsync failed"), { code: "EIO" }),
+      Object.assign(new Error("rename failed"), { code: "EROFS" }),
+    ];
+    for (const error of errors) {
+      const { outcome } = await withPosterFailure(error);
+      expect(recordOf(outcome).outcome).toMatchObject({ status: "ready" });
       expect((await readdir(dir())).sort()).toEqual([`${CLIP}.json`, `${CLIP}.mp4`]);
     }
   });
