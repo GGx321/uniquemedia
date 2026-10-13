@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { faultOf, freeGet, httpFault, microsOf, SAFE_ID } from "./freeCall";
+import { costToMicrosCeil } from "../money/settleRule";
+import { faultOf, freeGet, httpFault, SAFE_ID } from "./freeCall";
 import { clean, safeJson, type ClientContext } from "./transport";
 import type { GenerationResult } from "./types";
 
@@ -43,7 +44,7 @@ export async function fetchGeneration(ctx: ClientContext, id: string, signal?: A
     const why = parsed === null ? `the body exceeded ${ctx.maxBodyBytes} bytes` : "the body is not a generation record with a valid total_cost";
     return { kind: "unreadable", ...faultOf(ctx, "malformed", status, `${label}: HTTP ${status}, ${why}`) };
   }
-  const totalCostMicros = microsOf(parsed.data.data.total_cost);
+  const totalCostMicros = costToMicrosCeil(parsed.data.data.total_cost);
   if (!Number.isSafeInteger(totalCostMicros)) {
     return { kind: "unreadable", ...faultOf(ctx, "malformed", status, `${label}: HTTP ${status}, total_cost is too large`) };
   }

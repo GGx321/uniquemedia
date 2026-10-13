@@ -28,6 +28,13 @@ export interface OpenRouterRequestInit {
 /** The subset of `fetch` the client needs; the global `fetch` satisfies it. */
 export type OpenRouterFetch = (url: string, init: OpenRouterRequestInit) => Promise<OpenRouterResponse>;
 
+/** The part of a file handle the download writes with; `fs.promises.FileHandle` satisfies it. */
+export interface OpenedFile {
+  write(bytes: Uint8Array): Promise<unknown>;
+  sync(): Promise<void>;
+  close(): Promise<void>;
+}
+
 export interface OpenRouterClientOptions {
   /** Held in memory only; never logged, never part of an error message. */
   apiKey: string;
@@ -63,6 +70,10 @@ export interface OpenRouterClientOptions {
   clock?: () => number;
   /** Monotonic ms, for latency. */
   monotonic?: () => number;
+  /** A clip download's whole-body limit, file writes included. Default `DOWNLOAD_TIMEOUT_MS` (10 min). */
+  downloadTimeoutMs?: number;
+  /** Creates the download's file, exclusively (it must fail if the path exists). Default: `fs.promises.open(path, "wx")`. */
+  openFile?: (path: string) => Promise<OpenedFile>;
 }
 
 /**
@@ -297,8 +308,8 @@ export type VideoPollResult =
  * - `gone`: 404 or 410, the file has left OpenRouter for good.
  * - `redirect-refused`: the answer was a redirect. None is followed, whatever its target, so the bearer key never goes to another host;
  *   `host` is the target's host when it could be read (never its path or query, which may be a signed URL).
- * - `failed`: anything else; the file is removed. `disk` is a local write error, `empty` a 200 without a body, `exists` a file already at the path (never touched).
- * On every result but `saved`, no file is left at the path.
+ * - `failed`: anything else; the file this call made is removed. `disk` is a local write error, `empty` a 200 without a body, `exists` a file already at the path (never touched).
+ * On every result but `saved`, this call leaves no file of its own at the path; on `exists` the file that was already there stays (by design).
  */
 export type VideoDownloadResult =
   | { kind: "saved"; bytes: number }

@@ -1,9 +1,10 @@
 import { Buffer } from "node:buffer";
-import { open, rm, type FileHandle } from "node:fs/promises";
+import { open, rm } from "node:fs/promises";
 import { z } from "zod";
-import { faultOf, freeGet, httpFault, microsOf, SAFE_ID } from "./freeCall";
+import { costToMicrosCeil } from "../money/settleRule";
+import { faultOf, freeGet, httpFault, SAFE_ID } from "./freeCall";
 import { clean, describe, errorDetail, finalKind, isModerationRefusal, safeJson, sendOnce, type ClientContext } from "./transport";
-import type { BodyReader, OpenRouterResponse, VideoDownloadResult, VideoPollResult, VideoRequest, VideoStatus, VideoSubmitResult } from "./types";
+import type { BodyReader, OpenedFile, OpenRouterResponse, VideoDownloadResult, VideoPollResult, VideoRequest, VideoStatus, VideoSubmitResult } from "./types";
 
 // The async video transport: HTTP only. No reserve, no settle, no journal, no retry. The state machine that owns the money is S5.V3b.
 
@@ -71,6 +72,28 @@ function uncertain(ctx: ClientContext, cause: Extract<VideoSubmitResult, { kind:
 
 // ---------- GET /videos/<id>/content ----------
 
+/** How long a call waits on the disk after it was stopped (timeout or abort): a local open or close ends in milliseconds. */
+const POST_STOP_WAIT_MS = 500;
+const TIMED_OUT = Symbol("timed out");
+
+/** `work`, or `TIMED_OUT` after `ms`: a hung file system cannot hold the caller. */
+async function within<T>(work: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const limit = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), ms);
+  });
+  try {
+    return await Promise.race([work, limit]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** "wx": never truncate or later delete a file that was already there. */
+function openExclusive(path: string): Promise<OpenedFile> {
+  return open(path, "wx");
+}
+
 /** The whole body, from request to the last byte. A clip is up to 100 MiB, so this is far above the 20 s of a free JSON GET. */
 export const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1_000;
 /** How much of a non-2xx body is read for its message. */
@@ -99,7 +122,8 @@ function hostOf(location: string | null): string | null {
  * Streams the finished clip into `toPath`, flushed to disk, byte for byte. The caller owns `toPath` (a temp name) and renames it after
  * V4b's checks. No redirect is followed, whatever its target: the bearer key must never be sent to another host. A body over `capBytes`
  * is refused as soon as it is known (by `Content-Length`, or by the bytes that arrive, whichever comes first). On every result but
- * `saved`, no file is left at `toPath`.
+ * `saved`, this call leaves no file of its own at `toPath`; a file that was already there is never touched (`exists`). Every wait on the
+ * disk, and every wait after a stop, is bounded, so a hung file system cannot hold the call past its timeout.
  */
 export async function downloadVideo(ctx: ClientContext, id: string, toPath: string, capBytes: number, signal: AbortSignal): Promise<VideoDownloadResult> {
   if (!Number.isSafeInteger(capBytes) || capBytes < 1) throw new RangeError(`capBytes must be a positive integer, got ${capBytes}`);
@@ -122,16 +146,17 @@ export async function downloadVideo(ctx: ClientContext, id: string, toPath: stri
   stopped.catch(() => {});
   if (signal.aborted) onAbort();
   else signal.addEventListener("abort", onAbort, { once: true });
-  const timer = setTimeout(() => stop("timeout"), DOWNLOAD_TIMEOUT_MS);
+  const timeoutMs = ctx.downloadTimeoutMs ?? DOWNLOAD_TIMEOUT_MS;
+  const timer = setTimeout(() => stop("timeout"), timeoutMs);
   const race = <T>(work: Promise<T>): Promise<T> => {
     work.catch(() => {});
     return Promise.race([work, stopped]);
   };
   const interrupted = (): VideoDownloadResult =>
-    stoppedBy === "timeout" ? failed("timeout", null, `${label}: not finished within ${DOWNLOAD_TIMEOUT_MS} ms`) : failed("aborted", null, `${label}: aborted`);
+    stoppedBy === "timeout" ? failed("timeout", null, `${label}: not finished within ${timeoutMs} ms`) : failed("aborted", null, `${label}: aborted`);
 
   let reader: BodyReader | null = null;
-  let handle: FileHandle | null = null;
+  let handle: OpenedFile | null = null;
   let opened = false;
   let keepFile = false;
   try {
@@ -180,7 +205,7 @@ export async function downloadVideo(ctx: ClientContext, id: string, toPath: stri
     if (reader === null) return failed("empty", status, `${label}: HTTP ${status}, no body`);
 
     // "wx": never truncate or later delete a file that was already there.
-    const opening = open(toPath, "wx");
+    const opening = (ctx.openFile ?? openExclusive)(toPath);
     try {
       handle = await race(opening);
       opened = true;
@@ -188,11 +213,14 @@ export async function downloadVideo(ctx: ClientContext, id: string, toPath: stri
       giveUpOnBody();
       if (stoppedBy !== null) {
         // The open may land after the stop (a local open ends quickly): close and remove what it made.
-        const late = await opening.catch(() => null);
-        if (late !== null) {
-          await late.close().catch(() => {});
+        // Bounded: a hung open is cleaned up in the background if it ever lands.
+        const late = await within(opening.catch(() => null), POST_STOP_WAIT_MS);
+        const cleanUp = async (file: OpenedFile): Promise<void> => {
+          await within(file.close().catch(() => {}), POST_STOP_WAIT_MS);
           await rm(toPath, { force: true }).catch(() => {});
-        }
+        };
+        if (late === TIMED_OUT) void opening.then(cleanUp, () => {});
+        else if (late !== null) await cleanUp(late);
         return interrupted();
       }
       const exists = err instanceof Error && "code" in err && err.code === "EEXIST";
@@ -237,7 +265,7 @@ export async function downloadVideo(ctx: ClientContext, id: string, toPath: stri
   } finally {
     clearTimeout(timer);
     signal.removeEventListener("abort", onAbort);
-    if (handle !== null) await handle.close().catch(() => {});
+    if (handle !== null) await within(handle.close().catch(() => {}), POST_STOP_WAIT_MS);
     if (opened && !keepFile) await rm(toPath, { force: true }).catch(() => {});
   }
 }
@@ -297,7 +325,7 @@ function errorTextOf(error: unknown): string | null {
 function billOf(usage: unknown): number | null {
   const parsed = UsageCost.safeParse(usage);
   if (!parsed.success) return null;
-  const micros = microsOf(parsed.data.cost);
+  const micros = costToMicrosCeil(parsed.data.cost);
   return Number.isSafeInteger(micros) ? micros : null;
 }
 

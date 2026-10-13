@@ -4,7 +4,7 @@ import { REQUEST_TIMEOUT_MS, type Budget, type ReserveHandle } from "../money/bu
 import { MoneyError } from "../money/errors";
 import type { Scope } from "../money/ledger";
 import { settleRule, type AttemptOutcome } from "../money/settleRule";
-import type { BodyReader, Failed, FailureKind, LedgerEffect, NotOk, OpenRouterFetch, OpenRouterRequestInit, OpenRouterResponse } from "./types";
+import type { OpenedFile, BodyReader, Failed, FailureKind, LedgerEffect, NotOk, OpenRouterFetch, OpenRouterRequestInit, OpenRouterResponse } from "./types";
 
 export const MAX_MESSAGE_CHARS = 500;
 /** Default cap on a response body: far above a 2K image as base64. */
@@ -45,6 +45,9 @@ export interface ClientContext {
   log: (line: string) => void;
   timeoutMs: number;
   maxBodyBytes: number;
+  /** Set by the client; see `OpenRouterClientOptions`. */
+  downloadTimeoutMs?: number;
+  openFile?: (path: string) => Promise<OpenedFile>;
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   random: () => number;
   clock: () => number;

@@ -7,7 +7,7 @@ import { fetchCredits } from "./credits";
 import { fetchGeneration } from "./generation";
 import { generateImage } from "./image";
 import { makeHeadRedactor, makeRedactor } from "./redact";
-import { downloadVideo, pollVideo, submitVideo } from "./video";
+import { DOWNLOAD_TIMEOUT_MS, downloadVideo, pollVideo, submitVideo } from "./video";
 import { MAX_BODY_BYTES, type ClientContext } from "./transport";
 import type { OpenRouterClient, OpenRouterClientOptions } from "./types";
 
@@ -67,6 +67,8 @@ export function createOpenRouterClient(options: OpenRouterClientOptions): OpenRo
     log: options.log ?? (() => {}),
     timeoutMs: checkedInt("timeoutMs", options.timeoutMs ?? REQUEST_TIMEOUT_MS, REQUEST_TIMEOUT_MS),
     maxBodyBytes: checkedInt("maxBodyBytes", options.maxBodyBytes ?? MAX_BODY_BYTES, Number.MAX_SAFE_INTEGER),
+    downloadTimeoutMs: checkedInt("downloadTimeoutMs", options.downloadTimeoutMs ?? DOWNLOAD_TIMEOUT_MS, Number.MAX_SAFE_INTEGER),
+    ...(options.openFile === undefined ? {} : { openFile: options.openFile }),
     sleep: options.sleep ?? sleep,
     random: options.random ?? Math.random,
     clock: options.clock ?? Date.now,

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeClient, LOCAL_BASE, TEST_KEY } from "./testing/fakes";
 import { FIXTURE_ID } from "./testing/videoFixtures";
-import type { OpenRouterFetch, OpenRouterRequestInit } from "./types";
+import type { OpenRouterClientOptions, OpenRouterFetch, OpenRouterRequestInit } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -77,9 +77,9 @@ function bytes(length: number, fill = 7): Uint8Array {
   return new Uint8Array(length).fill(fill);
 }
 
-function download(reply: Reply, cap = 1_000, overrides: { id?: string; to?: string; signal?: AbortSignal } = {}) {
+function download(reply: Reply, cap = 1_000, overrides: { id?: string; to?: string; signal?: AbortSignal; client?: Partial<OpenRouterClientOptions> } = {}) {
   const { fetch, seen } = byteFetch(reply);
-  const harness = makeClient(fetch);
+  const harness = makeClient(fetch, overrides.client);
   const run = () => harness.client.downloadVideo(overrides.id ?? FIXTURE_ID, overrides.to ?? target, cap, overrides.signal ?? new AbortController().signal);
   return { ...harness, seen, run };
 }
@@ -309,3 +309,37 @@ test("asks once and never retries a failing download", async () => {
 
   expect(seen).toHaveLength(1);
 });
+
+// ---------- a hung file system cannot hold the call past the timeout ----------
+
+const NEVER = new Promise<never>(() => {});
+const HUNG_HANDLE = { write: () => NEVER, sync: () => NEVER, close: () => NEVER };
+const BOUND_MS = 3_000;
+
+async function timedOut(client: Partial<OpenRouterClientOptions>): Promise<{ result: unknown; elapsedMs: number }> {
+  const { run } = download({ chunks: [bytes(10), bytes(10)] }, 1_000, { client: { downloadTimeoutMs: 50, ...client } });
+  const started = Date.now();
+  const result = await run();
+  return { result, elapsedMs: Date.now() - started };
+}
+
+test("returns timeout within the bound when a disk write hangs, even if closing the file hangs too", async () => {
+  const { result, elapsedMs } = await timedOut({ openFile: async () => HUNG_HANDLE });
+
+  expect(result).toMatchObject({ kind: "failed", cause: "timeout" });
+  expect(elapsedMs).toBeLessThan(BOUND_MS);
+}, 10_000);
+
+test("returns timeout within the bound when the file never opens", async () => {
+  const { result, elapsedMs } = await timedOut({ openFile: () => NEVER });
+
+  expect(result).toMatchObject({ kind: "failed", cause: "timeout" });
+  expect(elapsedMs).toBeLessThan(BOUND_MS);
+}, 10_000);
+
+test("returns timeout within the bound when the flush to disk hangs", async () => {
+  const { result, elapsedMs } = await timedOut({ openFile: async () => ({ write: async () => {}, sync: () => NEVER, close: () => NEVER }) });
+
+  expect(result).toMatchObject({ kind: "failed", cause: "timeout" });
+  expect(elapsedMs).toBeLessThan(BOUND_MS);
+}, 10_000);
