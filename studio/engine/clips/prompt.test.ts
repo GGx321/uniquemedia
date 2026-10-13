@@ -301,6 +301,19 @@ describe("the request body (§5.5)", () => {
     expect(clipRequestBody({ prompt: "P", model: "kling", quality: "pro", seconds: 10, firstFrame: FRAME })).toMatchObject({ model: "kwaivgi/kling-v3.0-pro", duration: 10, resolution: "1080p" });
   });
 
+  test("the bytes sent: Kling std, Kling pro and Grok serialise in the probes' key order, generate_audio before the frames (post-review)", () => {
+    const frames = `"frame_images":[{"type":"image_url","image_url":{"url":"${FRAME}"},"frame_type":"first_frame"}]`;
+    expect(JSON.stringify(clipRequestBody({ prompt: "P", model: "kling", quality: "std", seconds: 5, firstFrame: FRAME }))).toBe(
+      `{"model":"kwaivgi/kling-v3.0-std","prompt":"P","duration":5,"resolution":"720p","aspect_ratio":"9:16","generate_audio":false,${frames}}`,
+    );
+    expect(JSON.stringify(clipRequestBody({ prompt: "P", model: "kling", quality: "pro", seconds: 10, firstFrame: FRAME }))).toBe(
+      `{"model":"kwaivgi/kling-v3.0-pro","prompt":"P","duration":10,"resolution":"1080p","aspect_ratio":"9:16","generate_audio":false,${frames}}`,
+    );
+    expect(JSON.stringify(clipRequestBody({ prompt: "P", model: "grok", quality: "std", seconds: 5, firstFrame: FRAME }))).toBe(
+      `{"model":"x-ai/grok-imagine-video-1.5","prompt":"P","duration":5,"resolution":"720p","aspect_ratio":"9:16",${frames}}`,
+    );
+  });
+
   test("Grok: 720p and no audio flag at all (its listing has none)", () => {
     const body = clipRequestBody({ prompt: "P", model: "grok", quality: "pro", seconds: 5, firstFrame: FRAME });
     expect(body).toMatchObject({ model: "x-ai/grok-imagine-video-1.5", resolution: "720p", duration: 5, aspect_ratio: "9:16" });

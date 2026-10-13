@@ -138,7 +138,11 @@ export function clipRequestBody(input: ClipRequestInput): ClipRequestBody {
   if (!JPEG_DATA_URL.test(input.firstFrame)) throw new RangeError("a clip's first frame must be a JPEG data URL");
   const frame_images: readonly VideoFrameImage[] = [{ type: "image_url", image_url: { url: input.firstFrame }, frame_type: "first_frame" }];
   // The sent model is the priced one: V2's tier table names the model and the resolution each clip price was read for.
-  const tier = VIDEO_TIERS[input.model === "grok" ? "grok" : input.quality];
-  const body = { model: tier.model, prompt: input.prompt, duration: input.seconds, resolution: tier.resolution, aspect_ratio: "9:16" as const, frame_images };
-  return input.model === "grok" ? body : { ...body, generate_audio: false };
+  // The keys go in the probes' order (generate_audio before the frames), pinned byte for byte by a test.
+  if (input.model === "grok") {
+    const grok = VIDEO_TIERS.grok;
+    return { model: grok.model, prompt: input.prompt, duration: input.seconds, resolution: grok.resolution, aspect_ratio: "9:16", frame_images };
+  }
+  const kling = VIDEO_TIERS[input.quality];
+  return { model: kling.model, prompt: input.prompt, duration: input.seconds, resolution: kling.resolution, aspect_ratio: "9:16", generate_audio: false, frame_images };
 }
