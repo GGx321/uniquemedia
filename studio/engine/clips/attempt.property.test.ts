@@ -160,6 +160,22 @@ describe("random outcome sequences", () => {
           check(stopAt !== null || rig.posts().length >= 1, "the clip never sent its first request");
 
           // What the provider billed for the clip: every attempt whose POST left, at its drawn charge. The hidden bills are in it.
+          // Every POST has a reserve of its own before it, and a clip that was cancelled left nothing: no POST, every reserve released, nothing open.
+          let reserved = 0;
+          let posted = 0;
+          for (const event of rig.trace) {
+            if (event.startsWith("ledger:reserve:") && event.endsWith(":ok")) reserved++;
+            if (event.startsWith("post:")) {
+              check(reserved > posted, "a POST left without a reserve of its own before it");
+              posted++;
+            }
+          }
+          if (result.kind === "cancelled") {
+            check(posted === 0, "a cancelled clip POSTed");
+            check(rig.ledger.openReserves().filter((r) => r.attemptId.startsWith("clip-")).length === 0, "a cancelled clip left a reserve open");
+            check(rig.trace.filter((e) => e.startsWith("ledger:release:")).length === reserved, "a cancelled clip did not release every reserve");
+          }
+
           const provider = (rig.posts("kling").length > 0 ? (drawnOf.kling?.charge ?? 0) : 0) + (rig.posts("grok").length > 0 ? (drawnOf.grok?.charge ?? 0) : 0);
           check(provider <= input.acceptedWorstMicros, `the provider billed ${provider}, over the accepted worst ${input.acceptedWorstMicros}`);
 

@@ -62,7 +62,7 @@ export interface ClipPhaseEvent {
 }
 
 export interface ClipRunDeps {
-  /** The engine's budget. `release` is never used: a reserve is settled or abandoned, because once the request body is built the POST may leave. */
+  /** The engine's budget. A reserve is settled, or abandoned once the POST may have left; `release` is used only when the clip was stopped before the POST, when nothing reached the provider. */
   readonly budget: Pick<Budget, "tryReserve" | "settle" | "abandon" | "release" | "ledger">;
   readonly client: Pick<OpenRouterClient, "submitVideo" | "pollVideo" | "fetchGeneration" | "fetchCredits">;
   readonly journal: Pick<ClipJournal, "requested" | "submitted" | "ended">;
@@ -108,8 +108,8 @@ export interface ClipRunInput {
 
 /** How a failed clip was billed, for its tile: nothing, a number the provider gave, or the worst case. */
 export type CostKind = "free" | "billed" | "worst";
-/** Why a refusal's cost is unknown (settled at worst). */
-/** `id-mismatch`: the poll's generation_id is not the job id (or is missing), so /generation cannot be trusted to be this job's record (I5.47). */
+/**
+ * Why a refusal's cost is unknown (settled at worst). `id-mismatch`: the poll's generation_id is not the job id (or is missing), so /generation cannot be trusted to be this job's record (I5.47). */
 export type UnknownWhy = "net-increase" | "unreadable" | "net-uncounted" | "id-mismatch";
 
 /** One attempt as the clip's record keeps it. */
@@ -205,7 +205,7 @@ type AttemptEnd =
   | { kind: "cancelled" }
   | { kind: "interrupted" };
 
-/** Thrown inside an attempt when the signal fires while it waits; the attempt turns it into `interrupted`. */
+/** Thrown inside an attempt when the signal fires while it waits; the attempt turns it into `cancelled` before the POST (the reserve is released) and `interrupted` after it (the reserve stays open at worst). */
 class Stopped extends Error {}
 
 /**
@@ -335,7 +335,6 @@ class Attempt {
   private abandoned = false;
   /** The POST is about to leave (or has): from here a stop leaves the reserve open at worst. Before it, a stop releases the reserve. */
   private sent = false;
-  private reserveAtMs = 0;
 
   constructor(
     private readonly ctx: Ctx,
@@ -369,8 +368,7 @@ class Attempt {
     const t = deps.timings;
     const reserveLine = deps.budget.ledger.reserveOf(this.attemptId);
     // From the reserve on, the POST may leave: a throw or a crash before `submitted` is held 20 min from the reserve line's `at` (I5.48).
-    this.reserveAtMs = reserveLine === undefined ? deps.now() : Date.parse(reserveLine.at);
-    deps.holds.hold(this.attemptId, holdUntilForReserve(this.reserveAtMs, t));
+    deps.holds.hold(this.attemptId, holdUntilForReserve(reserveLine === undefined ? deps.now() : Date.parse(reserveLine.at), t));
     deps.onPhase?.({ phase: "submitting", model: this.model });
 
     // The net-usage baseline: read BEFORE the POST, so a charge that shows up before the terminal status (probe P-V: ≈ 38 s after the POST) is part of the comparison, not of the baseline.
@@ -542,7 +540,7 @@ class Attempt {
 
   /**
    * The proof of a refusal (I5.47). `/generation` at ≥ 15 s and at ≥ 2 min after the terminal poll, both zero evidence (a 404 or a total_cost of 0); then the net-usage check. A read above zero is the bill; a read that
-   * stays unreadable is unknown; the check that rose is unknown; the check that cannot count is skipped in mode `auto` and unknown in mode `offer`.
+   * stays unreadable is unknown; the check that rose is unknown; the check that cannot count (an unreadable baseline or read, or a ledger that moved in between) is unknown in BOTH modes: it does not prove the refusal free.
    */
   private async prove(terminalAtMs: number): Promise<Proof> {
     const t = this.deps.timings;

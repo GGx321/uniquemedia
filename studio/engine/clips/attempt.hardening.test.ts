@@ -89,11 +89,26 @@ describe("a clip stopped before its POST leaves nothing at worst", () => {
     expect(journalOf(rig)).toEqual(["requested"]);
   });
 
-  test("a signal that fired before the attempt began reserves nothing", async () => {
+  test("a signal that fired before the attempt began reserves, writes and sends nothing", async () => {
     await make();
     rig.abort();
     expect((await rig.run()).kind).toBe("cancelled");
     expect(rig.ledger.lines).toHaveLength(0);
     expect(rig.posts()).toHaveLength(0);
+    expect(journalOf(rig)).toEqual([]);
+  });
+
+  test("a baseline read that is answered but stopped the clip while it ran: nothing is sent, the reserve is released", async () => {
+    await make({ usage: () => 5_000_000 });
+    const answering = rig.deps.client.fetchCredits;
+    rig.deps.client.fetchCredits = async () => {
+      rig.abort();
+      return answering();
+    };
+    expect((await rig.run()).kind).toBe("cancelled");
+    expect(rig.posts()).toHaveLength(0);
+    expect(rig.trace).toContain(`ledger:release:${KLING}`);
+    expect(rig.ledger.openReserves()).toHaveLength(0);
+    expect(rig.holds.untilOf(KLING)).toBeUndefined();
   });
 });
