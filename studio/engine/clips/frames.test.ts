@@ -1,6 +1,7 @@
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { isTempName } from "../library/durableFs";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { fakeSpawner } from "../../node/fakeFfmpeg.testkit";
 import { FfmpegError, FfmpegTimeoutError } from "../../node/runFfmpeg";
@@ -88,6 +89,14 @@ describe("sampleFrames", () => {
     await expect(run).rejects.toThrow("owner cancelled");
     expect(calls[0]?.child.killedWith.length).toBeGreaterThan(0);
     expect(await readdir(scratch)).toEqual([]);
+  });
+
+  test("makes its temp folder the library's way, so a sweep after a crash finds it", async () => {
+    const { spawner, calls } = fakeSpawner(({ child }) => child.exit(0));
+    await sampleFrames({ clipPath: "/clips/a.mp4", durationMs: 5_000, scratchDir: scratch, spawner });
+    const folder = dirname(calls[0]?.args.at(-1) ?? "");
+    expect(dirname(folder)).toBe(scratch);
+    expect(basename(folder).startsWith(".") && isTempName(basename(folder))).toBe(true);
   });
 
   test("allows only the file protocol, forces the MP4 demuxer and drops sound", async () => {

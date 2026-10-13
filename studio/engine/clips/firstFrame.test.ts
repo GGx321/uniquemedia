@@ -1,6 +1,8 @@
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { fakeSpawner } from "../../node/fakeFfmpeg.testkit";
+import { isTempName } from "../library/durableFs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { imageSize } from "../library/media";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -157,6 +159,17 @@ describe("makeFirstFrame", () => {
       got.forEach((channel, i) => expect(Math.abs(channel - (rgb[i] ?? 0))).toBeLessThanOrEqual(3));
     });
   }
+
+  test("names the crop's two temp files the library's way, so a sweep after a crash finds them", async () => {
+    const { spawner, calls } = fakeSpawner(({ child }) => child.exit(1));
+    await makeFirstFrame({ photo: await photo(1000, 1780), model: "kling", quality: "std", scratchDir: scratch, spawner });
+    const args = calls[0]?.args ?? [];
+    const input = args[args.indexOf("-i") + 1] ?? "";
+    const output = args.at(-1) ?? "";
+    expect(basename(input).startsWith(".") && isTempName(basename(input))).toBe(true);
+    expect(isTempName(basename(output))).toBe(true);
+    expect(dirname(input)).toBe(scratch);
+  });
 
   test("leaves the scratch folder empty after a crop", async () => {
     await frame(1000, 1780, "kling", "std");

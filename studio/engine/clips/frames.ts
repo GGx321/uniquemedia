@@ -1,4 +1,5 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
 
@@ -72,7 +73,9 @@ export interface SampleFramesOptions extends FfmpegRunOptions {
  * (`FfmpegTimeoutError`) or is aborted (the signal's reason); the temp folder is gone in every case.
  */
 export async function sampleFrames(options: SampleFramesOptions): Promise<Uint8Array[]> {
-  const folder = await mkdtemp(join(options.scratchDir, ".frames-"));
+  // The library's temp convention (a dot, `.tmp` at the end), so a sweep after a crash finds what a killed job left.
+  const folder = join(options.scratchDir, `.frames-${randomBytes(6).toString("hex")}.tmp`);
+  await mkdir(folder);
   try {
     const pattern = join(folder, "f%03d.jpg");
     await runFfmpegArgv({

@@ -3,7 +3,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ClipModelChoice, ClipQuality } from "../../shared/engine";
 import { downscaleToJpeg, inputFormat, MAX_SOURCE_PIXELS } from "../../node/downscale";
-import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv } from "../../node/runFfmpeg";
+import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
 import { imageSize } from "../library/media";
 
 // Stage 5, 5b.1, S5.V4b (plan s5b1 §5.5, «The first frame»): the photo, as the JPEG the provider is given. It is scaled to fit the clip's output and NEVER upscaled: std and Grok 720 x 1280,
@@ -38,6 +38,8 @@ export interface MakeFirstFrameOptions {
   readonly scratchDir: string;
   /** Aborting rejects with the signal's reason. */
   readonly signal?: AbortSignal;
+  /** Test seam: a scripted ffmpeg for the crop. */
+  readonly spawner?: FfmpegSpawner;
 }
 
 /** How far a photo may be from 9:16 to be cropped rather than refused: 2 % of the ratio. */
@@ -60,10 +62,18 @@ function centredNineSixteen(width: number, height: number): { width: number; hei
   return k < 1 ? null : { width: 9 * k, height: 16 * k };
 }
 
-async function cropToPng(photo: Uint8Array, format: string, crop: { width: number; height: number }, scratchDir: string, signal: AbortSignal | undefined): Promise<Uint8Array> {
+async function cropToPng(
+  photo: Uint8Array,
+  format: string,
+  crop: { width: number; height: number },
+  scratchDir: string,
+  signal: AbortSignal | undefined,
+  spawner: FfmpegSpawner | undefined,
+): Promise<Uint8Array> {
+  // The library's temp convention (a dot, `.tmp` at the end), so a sweep after a crash finds what a killed job left.
   const stem = join(scratchDir, `.${randomBytes(6).toString("hex")}`);
-  const input = `${stem}.in`;
-  const output = `${stem}.crop.png`;
+  const input = `${stem}.in.tmp`;
+  const output = `${stem}.crop.png.tmp`;
   try {
     await writeFile(input, photo);
     await runFfmpegArgv({
@@ -77,11 +87,15 @@ async function cropToPng(photo: Uint8Array, format: string, crop: { width: numbe
         "-i", input,
         "-frames:v", "1",
         "-vf", `crop=${crop.width}:${crop.height}`,
+        "-c:v", "png",
+        "-update", "1",
+        "-f", "image2",
         output,
       ],
       output,
       timeoutMs: CROP_TIMEOUT_MS,
       ...(signal === undefined ? {} : { signal }),
+      ...(spawner === undefined ? {} : { spawner }),
     });
     return new Uint8Array(await readFile(output));
   } finally {
@@ -103,7 +117,7 @@ export async function makeFirstFrame(options: MakeFirstFrameOptions): Promise<Fi
     if (16 * size.width !== 9 * size.height) {
       const crop = centredNineSixteen(size.width, size.height);
       if (crop === null) return { ok: false, reason: "photo-unreadable" };
-      source = await cropToPng(photo, format, crop, options.scratchDir, signal);
+      source = await cropToPng(photo, format, crop, options.scratchDir, signal, options.spawner);
     }
     const jpeg = await downscaleToJpeg(source, { maxSide: target.height, ...(signal === undefined ? {} : { signal }) });
     const made = imageSize(jpeg);
