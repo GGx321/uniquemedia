@@ -256,15 +256,22 @@ describe("the card's «Подача» caption (mockups 47, 47a, 47b, 48#kept)", 
 describe("«Смелая» with nothing bold to count says nothing", () => {
   const avatar = (toGenerate: number) => ({ toGenerate, blocked: null });
 
-  test("no category picked: no caption, and no slow-frames line", () => {
+  test("no category picked: no caption, and no slow-frames line (no «Смелая» category is selected)", () => {
     expect(cardLevelCaption("bold", 20, [])).toBe(null);
     expect(drawsBoldFrames("bold", 20, [])).toBe(false);
   });
 
-  test("one photo in a «Смелая» category (0 bold of 1): no caption, no slow-frames line", () => {
+  // Seedream draws more than the bold frames (every «Пляж и бассейн» frame, flirty satin in «Ночнушки»), so the slow-frames line follows the category, not the bold count.
+  test("one photo in a «Смелая» category (0 bold of 1): no «0 из 1» caption, but the slow-frames line stays", () => {
     expect(levelFrames(1, ["nightwear"], "bold").bold).toBe(0);
     expect(cardLevelCaption("bold", 1, ["nightwear"])).toBe(null);
-    expect(drawsBoldFrames("bold", 1, ["nightwear"])).toBe(false);
+    expect(drawsBoldFrames("bold", 1, ["nightwear"])).toBe(true);
+  });
+
+  test("one photo in «Пляж и бассейн»: no «0 из 1» caption, but the slow-frames line stays", () => {
+    expect(levelFrames(1, ["beach"], "bold").bold).toBe(0);
+    expect(cardLevelCaption("bold", 1, ["beach"])).toBe(null);
+    expect(drawsBoldFrames("bold", 1, ["beach"])).toBe(true);
   });
 
   test("two photos in a «Смелая» category (1 bold of 2): the caption and the line stay", () => {

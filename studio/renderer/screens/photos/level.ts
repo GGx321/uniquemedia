@@ -139,9 +139,12 @@ export function cardLevelCaption(level: SceneLevel, count: number, categories: r
   return frames.bold > 0 ? boldCaption(frames, total) : null;
 }
 
-/** Whether the card's run draws Seedream frames: «Смелая» with at least one bold frame (the slow-frames line follows it). */
+/**
+ * Whether the card's run draws Seedream frames: «Смелая» with a «Смелая» category that gets photos (the slow-frames line follows it). Not the bold count: Seedream also
+ * draws every «Пляж и бассейн» frame and the flirty satin in «Ночнушки», so a run of one photo with 0 bold frames is still slow.
+ */
 export function drawsBoldFrames(level: SceneLevel, count: number, categories: readonly CategoryRef[]): boolean {
-  return level === "bold" && count > 0 && levelFrames(count, categories, level).bold > 0;
+  return level === "bold" && count > 0 && levelFrames(count, categories, level).boldCategories.length > 0;
 }
 
 /** The share «Автопилот» says before its plan has new photos to count: a «Смелая» category's ten frames (as «Кокетливая» says its 6 of 10). */
