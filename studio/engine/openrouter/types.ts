@@ -244,6 +244,52 @@ export type GenerationResult =
   | { kind: "not-found" }
   | ({ kind: "unreadable" } & FreeCallFault);
 
+/** One image of a video request, as the API takes it: a JPEG data URL. */
+export interface VideoFrameImage {
+  type: "image_url";
+  image_url: { url: string };
+  frame_type: "first_frame" | "last_frame";
+}
+
+/** The body of `POST /videos`. The caller builds it (prompt, frames, price); the client only sends it. */
+export interface VideoRequest {
+  model: string;
+  prompt: string;
+  duration: number;
+  resolution: "720p" | "1080p";
+  aspect_ratio: "9:16";
+  generate_audio: false;
+  frame_images: readonly VideoFrameImage[];
+}
+
+/**
+ * What one `POST /videos` did. It is sent once, never resent: a job may be billed from the moment the request leaves.
+ * - `accepted`: a 2xx with a usable job id.
+ * - `refused`: a definite 4xx. Nothing was started and nothing is billed. `moderation` is true for a content refusal.
+ * - `uncertain`: no answer, a 5xx, or a 2xx without a usable id. The job may exist and may bill, so the caller keeps its reserve open.
+ */
+export type VideoSubmitResult =
+  | { kind: "accepted"; id: string }
+  | { kind: "refused"; httpStatus: number; errorKind: FailureKind; moderation: boolean; detail: string }
+  | { kind: "uncertain"; cause: "timeout" | "aborted" | "network" | "server-error" | "unreadable-accept"; httpStatus: number | null; detail: string };
+
+/**
+ * The job states the API reports, plus `unknown` for a word this client has not seen (the caller keeps polling).
+ * `queued` reads as `pending` and `processing` as `in_progress`.
+ */
+export type VideoStatus = "pending" | "in_progress" | "completed" | "failed" | "cancelled" | "expired" | "unknown";
+
+/**
+ * One `GET /videos/<id>` (free).
+ * - `status`: a readable answer. `usageCostMicros` is the job's own bill when the body carries a valid one, else null (a completed job
+ *   may come without it; `/generation` then answers). `error` is the provider's text of a failed job.
+ *   `contentFailure` is true when that text is a content refusal (moderation, Kling's risk control).
+ * - `unreadable`: no answer or an invalid body; the caller polls again.
+ */
+export type VideoPollResult =
+  | { kind: "status"; status: VideoStatus; rawStatus: string; usageCostMicros: number | null; error: string | null; contentFailure: boolean }
+  | ({ kind: "unreadable" } & FreeCallFault);
+
 export interface OpenRouterClient {
   generateImage(params: ImageParams): Promise<ImageResult>;
   chat(params: ChatParams): Promise<ChatResult>;
@@ -251,4 +297,8 @@ export interface OpenRouterClient {
   fetchCredits(): Promise<unknown>;
   /** `GET /generation?id=<id>`: the provider's bill for one generation, or the fact that none is there (yet). */
   fetchGeneration(id: string, signal?: AbortSignal): Promise<GenerationResult>;
+  /** `POST /videos`: starts one video job, once. No money here: the caller reserves before and settles after. */
+  submitVideo(request: VideoRequest, signal: AbortSignal): Promise<VideoSubmitResult>;
+  /** `GET /videos/<id>`: the job's status. */
+  pollVideo(id: string, signal?: AbortSignal): Promise<VideoPollResult>;
 }
