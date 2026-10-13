@@ -1,12 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { ClipSummary } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
+import { EngineFailure } from "../engineFailure";
 import { JobRegistry } from "../jobs";
 import type { Library } from "../library";
 import { Budget } from "../money/budget";
 import { Ledger } from "../money/ledger";
+import type { PricedBook } from "../money/priceCache";
+import { loadPriceBook, VIDEO_TIERS } from "../money/prices";
+import { clipOptionPrices } from "../money/videoEstimate";
 import { CommitTracker } from "../videos/live";
 import { ClipService, type ClipServiceDeps } from "./service";
 import { SHORT_CLIP_TIMINGS } from "./timings";
@@ -36,7 +43,7 @@ interface World {
   state: { photo: boolean; export: Awaited<ReturnType<ClipServiceDeps["exportStatus"]>> };
 }
 
-async function world(options: { download?: () => Promise<void> } = {}): Promise<World> {
+async function world(options: { download?: () => Promise<void>; mode?: "auto" | "offer"; prices?: ClipServiceDeps["prices"] } = {}): Promise<World> {
   dir = await mkdtemp(join(tmpdir(), "studio-clip-service-"));
   const clipsDir = join(dir, "avatars", AVATAR, "clips");
   await ensureClipsDir(clipsDir);
@@ -65,7 +72,7 @@ async function world(options: { download?: () => Promise<void> } = {}): Promise<
     usableKey: () => "sk-test",
     paidBudget: () => budget,
     budget: () => budget,
-    prices: fail("prices"),
+    prices: options.prices ?? fail("prices"),
     checkAccepted: () => undefined,
     checkMonthlyRoom: () => undefined,
     monthFits: () => true,
@@ -94,6 +101,7 @@ async function world(options: { download?: () => Promise<void> } = {}): Promise<
     liveCommits: new CommitTracker(),
     withRootLock: (_root, work) => work(),
     exportNumbers: () => null,
+    ...(options.mode === undefined ? {} : { mode: options.mode }),
   };
   const service = new ClipService(deps);
   return { service, clipsDir, jobs, events, state };
@@ -169,5 +177,97 @@ describe("the clip records on the clip service", () => {
     expect(w.jobs.stateOf(jobId)?.status).toBe("cancelled");
     const read = await readClipRecord(w.clipsDir, CLIP);
     expect(read.kind === "record" ? read.record : null).toEqual(before);
+  });
+});
+
+// §5.2, §5.7 (I5.47): in mode `offer` a Kling clip that was refused for free, on a photo that allowed a fallback, is offered on Grok («Снять на Grok · до $0.85»). The offer is a price,
+// computed when the clips are listed, from the live price book: Grok's own clip of the same length, the very figure `clips.options` shows as `grok5` / `grok10`.
+
+const LISTING = JSON.parse(readFileSync(fileURLToPath(new URL("../money/fixtures/videos-models-2026-10-10.json", import.meta.url)), "utf8")) as unknown;
+
+async function liveBook(): Promise<PricedBook> {
+  const book = await loadPriceBook({
+    fetch: async () => ({ ok: true, status: 200, json: async () => LISTING }),
+    baseUrl: "http://127.0.0.1:9/api/v1",
+    imageModels: [],
+    chatModels: [],
+    videoModels: Object.values(VIDEO_TIERS).map((tier) => tier.model),
+  });
+  return { book, asOf: "2026-10-13" };
+}
+
+const OTHER = "clip-0000002";
+const failureOf = (clips: readonly ClipSummary[], id: string) => {
+  const clip = clips.find((c) => c.clipId === id);
+  return clip?.status === "failed" ? clip.failure : null;
+};
+
+describe("the Grok offer, computed when the clips are listed", () => {
+  test("offers Grok at Grok's own price for the clip's length, in mode offer, on a Kling clip refused for free", async () => {
+    const priced = await liveBook();
+    const w = await world({ mode: "offer", prices: async () => priced });
+    await writeClipRecord(w.clipsDir, failedRecord("refused-free", undefined));
+    await writeClipRecord(w.clipsDir, failedRecord("refused-free", undefined, { id: OTHER, request: { model: "kling", quality: "pro", seconds: 10, fallback: "auto" } }));
+    const { clips } = await w.service.list({ avatarId: AVATAR });
+    const { prices } = clipOptionPrices(priced, { mode: "offer", bold: false });
+    expect(failureOf(clips, CLIP)).toEqual({ reason: "refused-free", grokOffer: prices.grok5 });
+    expect(failureOf(clips, OTHER)).toEqual({ reason: "refused-free", grokOffer: prices.grok10 });
+    // What the tile reads: «Снять на Grok · до $0.85» for 5 s.
+    expect(prices.grok5.worstMicros).toBe(850_000);
+    for (const clip of clips) expect(ClipSummary.safeParse(clip).success).toBe(true);
+  });
+
+  test("offers nothing in mode auto, and reads no price for it", async () => {
+    let reads = 0;
+    const w = await world({
+      mode: "auto",
+      prices: async () => {
+        reads++;
+        return liveBook();
+      },
+    });
+    await writeClipRecord(w.clipsDir, failedRecord("refused-free", undefined));
+    const { clips } = await w.service.list({ avatarId: AVATAR });
+    expect(failureOf(clips, CLIP)).toEqual({ reason: "refused-free" });
+    expect(reads).toBe(0);
+  });
+
+  const notOffered: [string, Parameters<typeof failedRecord>[2] & object, Parameters<typeof failedRecord>[0]][] = [
+    ["a Grok clip refused for free (42r)", { request: { model: "grok", quality: "std", seconds: 5, fallback: "none" }, provider: { model: "grok", attempts: [] } }, "refused-free"],
+    ["a Grok clip, even one whose request names a fallback", { request: { model: "grok", quality: "std", seconds: 5, fallback: "auto" }, provider: { model: "grok", attempts: [] } }, "refused-free"],
+    ["a Kling clip with fallback none: chosen (42p), or a frame of «Смелая» kept to Kling (42q)", { request: { model: "kling", quality: "std", seconds: 5, fallback: "none" } }, "refused-free"],
+    ["a clip Kling and Grok both refused", {}, "refused-both"],
+    ["a refusal that was paid", {}, "refused-paid"],
+    ["a refusal whose cost is not known", {}, "refused-unknown"],
+    ["a provider error", {}, "provider-error"],
+    ["a clip Grok had no room for", {}, "grok-no-room"],
+  ];
+  for (const [what, overrides, reason] of notOffered) {
+    test(`offers nothing for ${what}, and reads no price for it`, async () => {
+      let reads = 0;
+      const w = await world({
+        mode: "offer",
+        prices: async () => {
+          reads++;
+          return liveBook();
+        },
+      });
+      await writeClipRecord(w.clipsDir, failedRecord(reason, undefined, overrides));
+      const { clips } = await w.service.list({ avatarId: AVATAR });
+      expect(failureOf(clips, CLIP)).toEqual({ reason });
+      expect(reads).toBe(0);
+    });
+  }
+
+  test("lists the clips without the offer when the video prices cannot be read", async () => {
+    const w = await world({
+      mode: "offer",
+      prices: async () => {
+        throw new EngineFailure({ code: "PRICE_UNAVAILABLE", priceScope: "video", detail: "the video listing is unreadable" });
+      },
+    });
+    await writeClipRecord(w.clipsDir, failedRecord("refused-free", undefined));
+    const { clips } = await w.service.list({ avatarId: AVATAR });
+    expect(failureOf(clips, CLIP)).toEqual({ reason: "refused-free" });
   });
 });

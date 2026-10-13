@@ -88,6 +88,30 @@ describe("clips.list", () => {
     await expect(rig.records.list({ avatarId: AVATAR })).rejects.toMatchObject(refusal("LEDGER_UNREADABLE"));
   });
 
+  test("puts the Grok offers it is handed on the clips they name, and asks for them with the listed records", async () => {
+    await rig.put(failedRecord("refused-free", undefined));
+    await rig.put(failedRecord("refused-free", undefined, { id: OTHER }));
+    const offer = { expectedMicros: 710_000, worstMicros: 850_000, prices: "live" as const, pricesAsOf: "2026-10-13" };
+    const asked: string[][] = [];
+    const { clips } = await rig.records.list(
+      { avatarId: AVATAR },
+      {
+        grokOffers: async (records) => {
+          asked.push(records.map((r) => r.id).sort());
+          return new Map([[CLIP, offer]]);
+        },
+      },
+    );
+    expect(asked).toEqual([[CLIP, OTHER]]);
+    const failureOf = (id: string) => {
+      const clip = clips.find((c) => c.clipId === id);
+      return clip?.status === "failed" ? clip.failure : null;
+    };
+    expect(failureOf(CLIP)).toEqual({ reason: "refused-free", grokOffer: offer });
+    expect(failureOf(OTHER)).toEqual({ reason: "refused-free" });
+    for (const clip of clips) expect(ClipSummary.safeParse(clip).success).toBe(true);
+  });
+
   test("lists a ready clip whose poster file is absent as an ordinary ready clip, with nothing logged", async () => {
     await rig.put(readyRecord());
     await writeFile(rig.file(`${CLIP}.mp4`), "x");

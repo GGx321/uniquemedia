@@ -183,6 +183,25 @@ describe("clipSummaryOf", () => {
     expect(clipSummaryOf(record, free).exports).toEqual([exportLine(1)]);
     expect(clipSummaryOf(record, free, [{ ...exportLine(1), fileState: "present" }]).exports).toEqual([{ ...exportLine(1), fileState: "present" }]);
   });
+
+  const offer = { expectedMicros: 710_000, worstMicros: 850_000, prices: "live" as const, pricesAsOf: "2026-10-13" };
+
+  test("puts the Grok offer it is given into a failed clip's failure, as the contract has it", () => {
+    const summary = clipSummaryOf(failedRecord("refused-free", undefined), free, undefined, offer);
+    expect(ClipSummary.safeParse(summary).success).toBe(true);
+    expect(summary).toMatchObject({ status: "failed", failure: { reason: "refused-free", grokOffer: offer } });
+  });
+
+  test("has no Grok offer unless it is given one", () => {
+    const summary = clipSummaryOf(failedRecord("refused-free", undefined), free);
+    expect(summary.status === "failed" ? summary.failure : null).toEqual({ reason: "refused-free" });
+  });
+
+  test("never puts a Grok offer on a ready clip", () => {
+    const summary = clipSummaryOf(readyRecord(), free, undefined, offer);
+    expect(ClipSummary.safeParse(summary).success).toBe(true);
+    expect(JSON.stringify(summary)).not.toContain("grokOffer");
+  });
 });
 
 describe("clipRewriteOf (I5.53: the only four rewrites of a committed record)", () => {

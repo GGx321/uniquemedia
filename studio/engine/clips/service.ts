@@ -11,6 +11,7 @@ import {
   type CommandPayload,
   type EngineError,
 } from "../../shared/engine";
+import type { Estimate } from "../../shared/engine/estimate";
 import type { UnsequencedEvent } from "../../shared/engine/events";
 import { CLIP_PLAN_READ_TIMEOUT_MS } from "../control";
 import { EngineFailure } from "../engineFailure";
@@ -42,6 +43,7 @@ import { parseClipAttemptId } from "./journal";
 import { motionChoicesOf } from "./motion";
 import { ClipRecords, type ClipRecordsDeps } from "./records";
 import { holdsFromLedger, recoverClips, type ClipRecoveryHost } from "./recover";
+import type { ClipRecord } from "./schemas";
 import { clipsDirOf } from "./store";
 import type { ClipTimings } from "./timings";
 
@@ -82,6 +84,11 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
     const timer = setTimeout(done, Math.max(0, ms));
     signal.addEventListener("abort", done, { once: true });
   });
+}
+
+/** A Kling clip refused for free whose request kept its fallback: what mode `offer` offers on Grok. */
+function offersGrok(record: ClipRecord): boolean {
+  return record.outcome.status === "failed" && record.outcome.reason === "refused-free" && record.request.model === "kling" && record.request.fallback === "auto";
 }
 
 /** A signal that fires when either does. */
@@ -220,7 +227,24 @@ export class ClipService {
   // ---------- the records (S5.V4a2) ----------
 
   list(payload: CommandPayload<"clips.list">): ReturnType<ClipRecords["list"]> {
-    return this.#records.list(payload);
+    return this.#records.list(payload, { grokOffers: (records) => this.#grokOffers(records) });
+  }
+
+  /**
+   * §5.2, §5.7 (I5.47): the Grok offer of each listed clip that has one, computed now from the live price book. Only mode `offer` offers, and only on a Kling clip refused for free whose request
+   * kept its fallback: a Grok clip, a clip whose owner chose no fallback, and a frame of «Смелая» kept to Kling (its fallback was forced to `none` at create) are never offered. The offer is Grok's
+   * own clip of the same length, the figure `clips.options` shows (`grok5` / `grok10`). With no clip to offer no price is read; a book that cannot be read leaves the offers out of the list.
+   */
+  async #grokOffers(records: readonly ClipRecord[]): Promise<Map<string, Estimate>> {
+    const offered = this.#mode === "offer" ? records.filter(offersGrok) : [];
+    if (offered.length === 0) return new Map();
+    try {
+      const { prices } = clipOptionPrices(await this.#deps.prices(CLIP_PRICE_MODELS), { mode: this.#mode, boldClips: this.#boldClips, bold: false });
+      return new Map(offered.map((record) => [record.id, record.request.seconds === 10 ? prices.grok10 : prices.grok5]));
+    } catch (error) {
+      this.#deps.log(`[clip] the Grok offer could not be priced (${error instanceof Error ? error.name : typeof error}); the clips are listed without it`);
+      return new Map();
+    }
   }
 
   get(payload: CommandPayload<"clips.get">): ReturnType<ClipRecords["get"]> {

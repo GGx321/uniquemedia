@@ -14,6 +14,7 @@ import {
   type EngineError,
   type FileState,
 } from "../../shared/engine";
+import type { Estimate } from "../../shared/engine/estimate";
 import type { UnsequencedEvent } from "../../shared/engine/events";
 import { EngineFailure } from "../engineFailure";
 import { FileStateChecker, newHashBudget, type HashBudget } from "../videos/fileState";
@@ -77,8 +78,11 @@ function providerCostOf(record: ClipRecord): number | undefined {
   return figures.length === 0 ? undefined : figures.reduce((sum, micros) => sum + micros, 0);
 }
 
-/** The record as the windows see it. The cost comes in from the ledger; `exports` default to the record's lines (no `fileState`). */
-export function clipSummaryOf(record: ClipRecord, cost: ClipCost, exports: readonly ClipExport[] = record.exports): ClipSummary {
+/**
+ * The record as the windows see it. The cost comes in from the ledger; `exports` default to the record's lines (no `fileState`). `grokOffer` is the mode-`offer` tile's Grok price, which the clip
+ * service computes at list time (§5.2): it goes into a failed clip's `failure`, and a ready clip has none.
+ */
+export function clipSummaryOf(record: ClipRecord, cost: ClipCost, exports: readonly ClipExport[] = record.exports, grokOffer?: Estimate): ClipSummary {
   const providerCostMicros = providerCostOf(record);
   const common = {
     clipId: record.id,
@@ -97,7 +101,8 @@ export function clipSummaryOf(record: ClipRecord, cost: ClipCost, exports: reado
   };
   const { outcome } = record;
   if (outcome.status === "ready") return { ...common, status: "ready", width: outcome.width, height: outcome.height, durationMs: outcome.durationMs, face: outcome.face };
-  return { ...common, status: "failed", failure: { reason: outcome.reason }, ...(outcome.retryDownloadUntil === undefined ? {} : { retryDownloadUntil: outcome.retryDownloadUntil }) };
+  const failure = { reason: outcome.reason, ...(grokOffer === undefined ? {} : { grokOffer }) };
+  return { ...common, status: "failed", failure, ...(outcome.retryDownloadUntil === undefined ? {} : { retryDownloadUntil: outcome.retryDownloadUntil }) };
 }
 
 /** Everything but the three things a rewrite may move, so two records can be told apart by what must stay. */
@@ -160,6 +165,12 @@ export interface ClipRecordsDeps {
 
 type Payload<T extends "clips.list" | "clips.get" | "clips.markSeen" | "clips.delete" | "clips.retryDownload"> = CommandPayload<T>;
 
+/** What `clips.list` takes from the clip service. */
+export interface ClipListOptions {
+  /** The mode-`offer` Grok price of each listed clip that is offered one, by clip id (§5.2: computed at list time from the live price book). A clip it leaves out has no offer. */
+  readonly grokOffers?: (records: readonly ClipRecord[]) => Promise<ReadonlyMap<string, Estimate>>;
+}
+
 /** `<clipId>.json`: a record. Journals (`.journal.jsonl`), media and temp files do not match. */
 const RECORD_NAME = /^([a-z0-9-]{8,64})\.json$/;
 const JOURNAL_NAME = /^([a-z0-9-]{8,64})\.journal\.jsonl$/;
@@ -220,7 +231,7 @@ export class ClipRecords {
 
   // ---------- clips.list ----------
 
-  async list(payload: Payload<"clips.list">): Promise<{ clips: ClipSummary[]; notListedTotal?: number }> {
+  async list(payload: Payload<"clips.list">, options: ClipListOptions = {}): Promise<{ clips: ClipSummary[]; notListedTotal?: number }> {
     const clipsDir = this.#dirOf(payload.avatarId);
     const listed = await readFolderNames(clipsDir);
     if (!listed.ok) throw listed.error;
@@ -242,7 +253,8 @@ export class ClipRecords {
     records.sort((a, b) => (a.createdAt === b.createdAt ? (a.id < b.id ? 1 : -1) : a.createdAt < b.createdAt ? 1 : -1));
     const ledger = records.length === 0 ? null : this.#ledger();
     const costs = ledger === null ? new Map<string, ClipCost>() : clipCostsOf(ledger);
-    const clips = records.map((record) => clipSummaryOf(record, costs.get(record.id) ?? FREE));
+    const offers = records.length === 0 || options.grokOffers === undefined ? new Map<string, Estimate>() : await options.grokOffers(records);
+    const clips = records.map((record) => clipSummaryOf(record, costs.get(record.id) ?? FREE, record.exports, offers.get(record.id)));
     // A journal beside a committed record is a leftover of a clip that finished: removed unless a job still works on that clip.
     for (const record of records) {
       if (!journals.has(record.id) || this.#deps.host.busy(record.id)) continue;

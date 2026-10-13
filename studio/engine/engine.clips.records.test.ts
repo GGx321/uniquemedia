@@ -6,7 +6,7 @@ import { ResponseMessage, type ClipSummary } from "../shared/engine";
 import { clipAttemptId } from "./clips/journal";
 import { journalOf, readClipRecord, writeClipRecord } from "./clips/store";
 import { SHORT_CLIP_TIMINGS, type ClipTimings } from "./clips/timings";
-import { clipMp4, clipNetwork, clipsDir, command, create, jobEnd, jobIdOf, seedClipAvatar, startClipEngine, until, type ClipEngine } from "./clips/testing/engineClipKit";
+import { clipMp4, clipNetwork, clipsDir, command, create, jobEnd, jobIdOf, options, optionsOf, seedClipAvatar, startClipEngine, until, type ClipEngine } from "./clips/testing/engineClipKit";
 import { EngineReply } from "./control";
 import { openLibrary } from "./library";
 import { sequentialIds, steppingClock } from "./library/testing/helpers";
@@ -142,6 +142,37 @@ describe("a delete of a clip that a recovery works on", () => {
     expect(resultOf<{ clipId: string }>(await answer(engine, "clips.delete", { avatarId, clipId }), "clips.delete")).toEqual({ clipId });
     expect((await readdir(folder)).filter((name) => name.startsWith(clipId))).toEqual([]);
     await engine.engine.shutdown();
+  });
+});
+
+describe("the Grok offer through the engine (mode offer)", () => {
+  const RISK_CONTROL = "task failed with status: FAIL, message: Failure to pass the risk control system";
+
+  async function refusedFree(fallback: "auto" | "none"): Promise<{ engine: ClipEngine; avatarId: string; photoId: string; clipId: string }> {
+    const { avatarId, photoId } = await seedClipAvatar(libraryDir());
+    const engine = await startClipEngine(dir(), { net: clipNetwork({ kling: { terminal: { status: "failed", error: RISK_CONTROL } } }), deps: { clipSwitches: { mode: "offer" } } });
+    const clipId = jobIdOf(await create(engine, { avatarId, photoId, fallback, acceptedWorstMicros: 504_000 }));
+    await jobEnd(engine, clipId);
+    return { engine, avatarId, photoId, clipId };
+  }
+
+  const failureOf = (clips: readonly ClipSummary[], clipId: string) => {
+    const clip = clips.find((c) => c.clipId === clipId);
+    return clip?.status === "failed" ? clip.failure : null;
+  };
+
+  test("clips.list offers Grok on a Kling clip refused for free, at the figure clips.options shows for Grok", async () => {
+    const { engine, avatarId, photoId, clipId } = await refusedFree("auto");
+    const sheet = optionsOf(await options(engine, avatarId, photoId));
+    if (!sheet.suitable) throw new Error("expected a suitable photo");
+    const { clips } = resultOf<{ clips: ClipSummary[] }>(await answer(engine, "clips.list", { avatarId }), "clips.list");
+    expect(failureOf(clips, clipId)).toEqual({ reason: "refused-free", grokOffer: sheet.prices.grok5 });
+  });
+
+  test("clips.list offers nothing on a clip whose owner chose no fallback", async () => {
+    const { engine, avatarId, clipId } = await refusedFree("none");
+    const { clips } = resultOf<{ clips: ClipSummary[] }>(await answer(engine, "clips.list", { avatarId }), "clips.list");
+    expect(failureOf(clips, clipId)).toEqual({ reason: "refused-free" });
   });
 });
 
