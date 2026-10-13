@@ -45,6 +45,22 @@ describe("the generate card's step 2 under «Смелая»", () => {
     await waitFor(() => expect(priceRow(/фото$/)).toContain(about(asked.result.estimate.expectedMicros)));
     expect(callsOf(engine, "runs.estimateImages").some((c) => "count" in c.payload && c.payload.level === "bold" && c.payload.categories?.join() === "nightwear,beach")).toBe(true);
   });
+
+  test("a price list with no 2K tier says state 55 under the card's step 2, as a warning", async () => {
+    const { engine } = await openCard();
+    await click(within(within(card()).getByRole("radiogroup", { name: "Подача" })).getByRole("radio", { name: "Смелая" }));
+    await only("Ночнушки и бельё", "Пляж и бассейн");
+    // One more change of the categories, with the refusals queued only now: the asks it makes are all refused, so the notice cannot be the answer of a later, successful one.
+    const refused = 3;
+    for (let i = 0; i < refused; i++) engine.failNext("runs.estimateImages", { code: "PRICE_UNAVAILABLE", priceScope: "bold", detail: "the price list has no 2K tier" });
+    const before = callsOf(engine, "runs.estimateImages").length;
+    await only("Ночнушки и бельё");
+    const asks = callsOf(engine, "runs.estimateImages").length - before;
+    expect(asks).toBeGreaterThan(0);
+    expect(asks).toBeLessThanOrEqual(refused);
+    const notice = await screen.findByText(PRICE_SCOPES_RU.bold);
+    expect(notice.closest(".notice")?.classList.contains("notice-warn")).toBe(true);
+  });
 });
 
 function openStrip() {
@@ -84,9 +100,14 @@ describe("the owner's strip under «Смелая»", () => {
 
   test("a refusal that is not about the 2K tier shows no state 55", async () => {
     const { engine } = openStrip();
-    engine.failNext("runs.estimateImages", { code: "PRICE_UNAVAILABLE", detail: "no price" });
+    // Four refusals queued: the strip asks at most that often while it loads, so every ask it makes is refused and none can answer ok behind a single one.
+    const refused = 4;
+    for (let i = 0; i < refused; i++) engine.failNext("runs.estimateImages", { code: "PRICE_UNAVAILABLE", detail: "no price" });
     await showStrip();
     await flush();
+    const asks = callsOf(engine, "runs.estimateImages").length;
+    expect(asks).toBeGreaterThan(0);
+    expect(asks).toBeLessThanOrEqual(refused);
     expect(screen.queryByText(PRICE_SCOPES_RU.bold) === null).toBe(true);
   });
 });
