@@ -481,7 +481,7 @@ export function errorDetail(text: string): string {
   return `${message ?? "(no message)"}${metadata ? ` ${JSON.stringify(metadata)}` : ""}`;
 }
 
-function isModerationRefusal(status: number, text: string): boolean {
+export function isModerationRefusal(status: number, text: string): boolean {
   if (status !== 400 && status !== 403 && status !== 422) return false;
   const parsed = ErrorBody.safeParse(safeJson(text));
   if (!parsed.success) return false;
