@@ -298,3 +298,24 @@ describe("a run's send is decided by the image's own reserve, the age check by i
     expect(failed?.type === "job.failed" && failed.payload.error.code).toBe("RUN_CAP_EXCEEDED");
   });
 });
+
+// A paid attempt whose picture was dropped (the age check had no room) still counts toward the slot's three (journal.ts: `paidAttempts`): a resume prices only the attempts left,
+// and a slot with all three paid ends without a fourth.
+describe("a slot's paid attempts count on resume", () => {
+  const worstOf = async (mock: ReturnType<typeof makeMock>, runId: string) => (await unwrap(mock.client.request("runs.estimateResume", { runId }))).estimate.worstMicros;
+
+  test("a slot with two paid attempts is priced at one more, not three", async () => {
+    const mock = makeMock();
+    const fresh = mock.engine.seedRun(boldRun(2, ["beach"]), 0, ENOUGH);
+    const spent = mock.engine.seedRun(boldRun(2, ["beach"]), 0, ENOUGH, { paid: 2 });
+    expect(await worstOf(mock, spent)).toBe(((await worstOf(mock, fresh)) * 4) / 6);
+  });
+
+  test("a slot with all three attempts paid ends failed on resume instead of being sent again", async () => {
+    const mock = makeMock();
+    const runId = mock.engine.seedRun(boldRun(2, ["beach"]), 0, ENOUGH, { paid: 3 });
+    await unwrap(mock.client.request("runs.resume", { runId, acceptedWorstMicros: ENOUGH }));
+    mock.scheduler.runAll();
+    expect((await unwrap(mock.client.request("runs.list", {}))).runs.find((r) => r.runId === runId)).toMatchObject({ done: 1, failed: 1, open: 0 });
+  });
+});

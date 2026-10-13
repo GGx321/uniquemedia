@@ -387,6 +387,8 @@ interface MockRunSlot {
   error?: EngineError;
   /** 5a.3 (S5.9f): the slot is drawn on the Seedream route (2K, one reference, no fallback), as the engine's `PlanSlot.route`. Absent = the owner's model. */
   route?: "seedream";
+  /** Attempts of this slot already paid for, picture kept or not (an age check with no room drops the picture, not the bill): the engine's `paidAttempts`, at most three. Absent = none. */
+  paid?: number;
 }
 
 /**
@@ -1827,7 +1829,7 @@ export class MockEngine implements EngineBridge {
    * settled slots have used up, without needing a real run to actually
    * exhaust it slot by slot). Answers the run's id.
    */
-  seedRun(request: RunRequest, done: number, capMicros?: number, opts: { writerDone?: boolean; launchId?: string } = {}): string {
+  seedRun(request: RunRequest, done: number, capMicros?: number, opts: { writerDone?: boolean; launchId?: string; paid?: number } = {}): string {
     this.seedCounter += 1;
     const n = String(this.seedCounter).padStart(4, "0");
     const runId = `run-seed-${n}`;
@@ -1859,6 +1861,9 @@ export class MockEngine implements EngineBridge {
       this.photos.push({ photoId, avatarId: request.avatarId, runId, category: slot.category, ...this.categoryNameOf(run, slot.category), createdAt: at, used: false, usedIn: [], rejected: false, reserved: false, eligible: true, ...(qa ? { qa } : {}) });
     });
     this.photos.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    // `paid`: attempts already paid on the first open slot (a picture dropped after its bill), for a test of what a resume owes.
+    const firstOpen = slots[Math.min(done, slots.length)];
+    if (opts.paid !== undefined && firstOpen !== undefined) firstOpen.paid = Math.min(opts.paid, MOCK_RUN_ATTEMPTS_PER_SLOT);
     this.runs = [...this.runs, run];
     return runId;
   }
@@ -4495,6 +4500,10 @@ export class MockEngine implements EngineBridge {
    * One request's own reserve: the 2K attempt on Seedream, the owner's model's price otherwise. The engine reserves the IMAGE ALONE before it sends
    * (`openrouter/image.ts`); the age check reserves its own ceiling after the picture is back (`runs/ageGate.ts`).
    */
+  private attemptsLeft(slot: MockRunSlot | undefined): number {
+    return Math.max(0, MOCK_RUN_ATTEMPTS_PER_SLOT - (slot?.paid ?? 0));
+  }
+
   private imageReserve(route?: "seedream"): number {
     return route === "seedream" ? MOCK_BOLD_IMAGE : this.runImagePrice;
   }
@@ -4553,7 +4562,9 @@ export class MockEngine implements EngineBridge {
     // 5a.3 (S5.9f): each open slot is priced on its own route; the 2K attempt is named while a Seedream slot is open.
     const prices = openSlots.map((s) => this.slotPrice(run, s.route));
     const sum = (pick: (p: { expected: number; attemptWorst: number }) => number): number => prices.reduce((total, p) => total + pick(p), 0);
-    const worstMicros = Math.min(MOCK_RUN_ATTEMPTS_PER_SLOT * sum((p) => p.attemptWorst) + writerWorst, capLeft);
+    // Each slot's paid attempts are spent (invariant 7: three in all); only the ones it has left are priced (the engine's `remainingPlan`).
+    const attemptsWorst = prices.reduce((total, p, i) => total + this.attemptsLeft(openSlots[i]) * p.attemptWorst, 0);
+    const worstMicros = Math.min(attemptsWorst + writerWorst, capLeft);
     const named = openSlots.some((s) => s.route === "seedream") ? { boldAttemptMicros: MOCK_BOLD_IMAGE } : {};
     return { expectedMicros: Math.min(sum((p) => p.expected) + writerExpected, worstMicros), worstMicros, prices: this.price.prices, pricesAsOf: this.price.pricesAsOf, ...named };
   }
@@ -4655,7 +4666,7 @@ export class MockEngine implements EngineBridge {
     // same sum). Matches resumePrice's own min(rawRemaining, capLeft).
     let capLeft = Math.max(0, run.capMicros - run.settledMicros);
     job.reserveKeys.forEach((key, step) => {
-      const reserve = Math.min(MOCK_RUN_ATTEMPTS_PER_SLOT * (slotPrices[step]?.attemptWorst ?? 0), capLeft);
+      const reserve = Math.min(this.attemptsLeft(run.slots[openIndexes[step] ?? -1]) * (slotPrices[step]?.attemptWorst ?? 0), capLeft);
       this.reserves.set(key, reserve);
       capLeft -= reserve;
     });
@@ -4682,6 +4693,15 @@ export class MockEngine implements EngineBridge {
           this.reserves.delete(key);
           job.reserveKeys = job.reserveKeys.filter((k) => k !== key);
           const seedream = planned.route === "seedream";
+          // All three attempts already paid (journal.ts invariant 7): the slot ends without a fourth, before anything is reserved.
+          if (this.attemptsLeft(planned) === 0) {
+            planned.end = "failed";
+            planned.error = { code: "INTERNAL", detail: `slot ${slotIndex + 1} used its ${MOCK_RUN_ATTEMPTS_PER_SLOT} paid attempts` };
+            job.status = "running";
+            job.done += 1;
+            this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.progress", payload: { kind: "run", jobId: job.jobId, runId: job.runId, avatarId: job.avatarId, done: job.done, total: job.total } });
+            return;
+          }
           // 5a.3 (S5.9f, round 3): the engine reserves the IMAGE per attempt (93 000 µ$ on Seedream 2K, the owner's model's price otherwise) and lets a request out only while the run's
           // settled money leaves room for it (budget.ts: committed + worst > cap is RUN_CAP_EXCEEDED). That holds for every slot, one the test armed to fail included: a slot that does not
           // fit is not sent and stays open; the job then ends failed with that code. The age check reserves its own ceiling later (below).
@@ -4716,6 +4736,7 @@ export class MockEngine implements EngineBridge {
             // The image was sent and is billed; the age check's own ceiling no longer fits, which only limits the job (`runJob.ts`: a gate's limit sets `limited`). No photo is kept, the slot stays open.
             run.settledMicros += this.imageReserve(planned.route);
             this.spend(this.imageReserve(planned.route));
+            planned.paid = (planned.paid ?? 0) + 1;
             job.limited = true;
             return;
           } else {

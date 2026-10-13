@@ -3153,7 +3153,9 @@ export class Engine {
       if (payload.sceneSetId !== undefined) {
         const set = await library.sceneSets.get(payload.avatarId, payload.sceneSetId);
         if (set === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no scene set ${payload.sceneSetId} for avatar ${payload.avatarId}` });
-        // A count below the active scenes is the strip's «only the written ones» (its «Убрать» has not run yet): a scene with no text is not one of the frames, so its route is not counted.
+        // CONTRACT OF THE COUNT FORM WITH `sceneSetId` (inferred, no flag): `count` equal to the active scenes prices all of them; `count` BELOW them means «only the written ones»
+        // (the strip's `no-text` block, before its «Убрать» has run), so only active scenes WITH text are candidates and an empty scene's route is not counted. A caller that
+        // sends a smaller count for any other reason gets the written scenes' routes too.
         const active = set.scenes.filter((scene) => !scene.removed);
         const drawn = payload.count < active.length ? active.filter((scene) => scene.text !== null) : active;
         bold = Math.min(payload.count, routedSlots(drawn.flatMap((scene) => (scene.origin === "planned" ? [scene.slot] : []))));
