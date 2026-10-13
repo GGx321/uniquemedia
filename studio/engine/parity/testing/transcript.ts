@@ -809,9 +809,21 @@ export class Transcript {
     this.#drain();
   }
 
+  /** The scenes jobs that announced progress and have not yet announced their end (`job.done`, `job.failed`, `job.cancelled`), by id. */
+  #openSceneJobs(): string[] {
+    const open = new Set<string>();
+    for (const event of this.#rig.events()) {
+      if (event.type === "job.progress" && event.payload.kind === "scenes") open.add(event.payload.jobId);
+      else if (event.type === "job.done" || event.type === "job.failed" || event.type === "job.cancelled") open.delete(event.payload.jobId);
+    }
+    return [...open];
+  }
+
   /**
-   * A `settle` that lasts until `ready` accepts the answer to `type` (read quietly, never written): the rig settles as often as the job needs and the transcript says ONE `~ settle`,
-   * so a slow machine, whose job ends one settle later, tells the same story. The events that came on the way follow the line, as they follow a plain `settle`. `ms` of wall time fail the scenario.
+   * A `settle` that lasts until `ready` accepts the answer to `type` (read quietly, never written) AND every scenes job has announced its end: the real engine stores the finished set
+   * a moment BEFORE it announces `job.done`, so the answer alone can be ready while that event is still to come, and an event that lands after the drain would fall into the next quiet read.
+   * The rig settles as often as the job needs and the transcript says ONE `~ settle`, so a slow machine tells the same story. The events that came on the way follow the line, in order,
+   * as they follow a plain `settle`. `ms` of wall time fail the scenario.
    */
   async settleUntil(type: string, payload: unknown, ready: (answer: Answer) => boolean, what: string, ms = 45_000): Promise<void> {
     this.#drain();
@@ -819,8 +831,9 @@ export class Transcript {
     for (;;) {
       await this.#rig.settle();
       await this.quiesce();
-      if (ready(await this.#rig.send(type, payload))) break;
+      if (this.#openSceneJobs().length === 0 && ready(await this.#rig.send(type, payload))) break;
       if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
     }
     this.#lines.push("~ settle");
     this.#drain();
