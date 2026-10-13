@@ -366,6 +366,8 @@ export async function recoverClips(host: ClipRecoveryHost, library: RecoveryLibr
     let started: { running: Promise<void> } | null = null;
     try {
       started = await host.withClipLock(candidate.clipId, async () => {
+        // The lock may have been waited for (a delete on a slow disk): a library switched away meanwhile is not this call's to act on.
+        if (!host.isCurrent()) return null;
         const leave = host.work.enter(candidate.clipId);
         if (leave === null) return null;
         let handedOver = false;
@@ -406,6 +408,7 @@ export async function recoverClips(host: ClipRecoveryHost, library: RecoveryLibr
     let started: { running: Promise<void> } | null = null;
     try {
       started = await host.withClipLock(repaint.clipId, async () => {
+        if (!host.isCurrent()) return null;
         const leave = host.work.enter(repaint.clipId);
         if (leave === null) return null;
         let handedOver = false;

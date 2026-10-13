@@ -808,6 +808,16 @@ describe("a ready clip whose poster is missing", () => {
     expect(r.calls.locked).toEqual([CLIP]);
   });
 
+  test("is not drawn again when the library stops being the live one while the clip's lock is waited for", async () => {
+    await readyRecord();
+    const options: Options = {};
+    options.beforeLocked = async () => void (options.current = false);
+    const r = rig(options);
+    const { jobs } = await recoverClips(r.host, library);
+    expect(jobs).toHaveLength(0);
+    expect(r.calls.posters).toEqual([]);
+  });
+
   test("is not drawn again when the clip is deleted between the scan and the act: no job, no poster", async () => {
     await readyRecord();
     const r = rig({
@@ -1073,6 +1083,18 @@ describe("a recovery and a concurrent delete or record of the same clip", () => 
     expect(jobs).toHaveLength(0);
     expect(existsSync(clipRecordPath(clipsDir(), CLIP))).toBe(false);
     expect(r.calls.poll).toEqual([]);
+  });
+
+  test("starts no job when the library stops being the live one while the clip's lock is waited for", async () => {
+    await writeLines(CLIP, [requested()]);
+    const options: Options = {};
+    // The records' lock may be held by a delete for as long as the disk takes: a library switch can land in that wait.
+    options.beforeLocked = async () => void (options.current = false);
+    const r = rig(options);
+    const { jobs } = await recoverClips(r.host, library);
+    expect(jobs).toHaveLength(0);
+    expect(existsSync(clipJournalPath(clipsDir(), CLIP))).toBe(true);
+    expect(existsSync(clipRecordPath(clipsDir(), CLIP))).toBe(false);
   });
 
   test("an I/O error under one clip's lock costs that clip its recovery this time, not the others theirs", async () => {
