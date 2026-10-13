@@ -22,6 +22,7 @@ import type { PhotoSidecar } from "../library/schemas";
 import { scopeKey, type Budget, type ReserveHandle, type ReserveRequest } from "../money/budget";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import { VIDEO_TIERS } from "../money/prices";
+import { RECONCILE_QUIET_MS } from "../money/reconcile";
 import { timeoutSignal, untilAborted } from "../money/timeoutSignal";
 import { clipOptionPrices, clipPricesOf, estimateClip } from "../money/videoEstimate";
 import type { OpenRouterClient } from "../openrouter/types";
@@ -31,13 +32,16 @@ import type { ExportNumberLibrary } from "../videos/exportNumbers";
 import type { CommitTracker } from "../videos/live";
 import type { RootLockOptions } from "../videos/rootLock";
 import type { ClipRunDeps } from "./attempt";
+import type { ClipFaceRole } from "./faceRole";
 import { firstFrameRefusalOf } from "./firstFrame";
 import { checkClipFace } from "./faceCheck";
 import { clipFallbackOf, readFrameFacts, type FrameFacts } from "./frameFacts";
 import { createClipHolds, type ClipHolds, type HoldTimers } from "./holds";
 import { runClipJob, type ClipJobDeps, type ClipJobOutcome } from "./job";
+import { parseClipAttemptId } from "./journal";
 import { motionChoicesOf } from "./motion";
 import { ClipRecords, type ClipRecordsDeps } from "./records";
+import { recoverClips, type ClipRecoveryHost } from "./recover";
 import { clipsDirOf } from "./store";
 import type { ClipTimings } from "./timings";
 
@@ -277,9 +281,24 @@ export class ClipService {
     return Math.ceil(this.holds.waitMs());
   }
 
-  /** When the clips' holds let the reconcile run, or null when nothing holds it. */
+  /**
+   * When the reconcile can run, or null when nothing delays it: the latest of the clips' holds and, for a clip's reserve of an EARLIER process, the reconcile's own quiet wait (about 5 min after a
+   * restart, S5.V6), so the banner can say when without computing anything. A photo's reserve and a clip's own abandoned reserve add nothing here: the first is the photo path's, unchanged, and
+   * the second is covered by its hold.
+   */
   reconcileAvailableAt(): number | null {
-    return this.reconcileWaitMs() > 0 ? this.holds.latestUntil() : null;
+    const held = this.reconcileWaitMs() > 0 ? this.holds.latestUntil() : null;
+    const quiet = this.#quietUntil();
+    return held === null ? quiet : quiet === null ? held : Math.max(held, quiet);
+  }
+
+  #quietUntil(): number | null {
+    const budget = this.#deps.budget();
+    if (budget === null) return null;
+    const earlier = budget.ledger.openReserves().some((reserve) => parseClipAttemptId(reserve.attemptId) !== null && !budget.isInFlight(reserve.attemptId) && !this.#ownAttempts.has(reserve.attemptId));
+    if (!earlier) return null;
+    const { quietMs } = budget.quiet();
+    return quietMs < RECONCILE_QUIET_MS ? this.#deps.clock() + Math.ceil(RECONCILE_QUIET_MS - quietMs) : null;
   }
 
   /**
@@ -289,6 +308,51 @@ export class ClipService {
   shutdown(): void {
     this.holds.clear();
     this.#stop.abort();
+  }
+
+  // ---------- a library became the live one (S5.V6, §5.12) ----------
+
+  /** The clip jobs' counters, for a recovery job: the per-clip guard (no second job on one journal) and `#clipWork` (a library switch waits). Null: a job already works on that clip. */
+  #enterWork(clipId: string): (() => void) | null {
+    if (this.#activeClips.has(clipId)) return null;
+    this.#activeClips.add(clipId);
+    this.#work++;
+    return () => {
+      this.#activeClips.delete(clipId);
+      this.#work--;
+    };
+  }
+
+  /** The role the clip's source photo had at the gate, or null when it cannot be known (the photo is gone; a plan that does not read is no plan, as `clips.create` reads it). */
+  async #faceRoleOf(library: Library, photoId: string): Promise<ClipFaceRole | null> {
+    const photo = library.getPhoto(photoId);
+    if (photo === undefined) return null;
+    const read = await readFrameFacts(photo, (runId) => readPlanWithin(() => this.#deps.readRunPlan(library, runId), CLIP_PLAN_READ_TIMEOUT_MS), this.#deps.log);
+    return read.kind === "not-a-gallery-photo" ? null : read.facts.faceRole;
+  }
+
+  /** Recovers the clips of a library that has just become the live one: the restart's holds, the sweep, and one free job per journal with no record. In the background; never rejects. */
+  libraryOpened(library: Library): void {
+    const deps = this.#deps;
+    const host: ClipRecoveryHost = {
+      clock: deps.clock,
+      newId: deps.newId,
+      timings: deps.timings,
+      holds: this.holds,
+      signal: this.#stop.signal,
+      ledger: () => deps.budget()?.ledger ?? null,
+      jobs: deps.jobs,
+      emit: deps.emit,
+      work: { enter: (clipId) => this.#enterWork(clipId), anyActive: () => this.#activeClips.size > 0, isActive: (clipId) => this.#activeClips.has(clipId) },
+      usableKey: deps.usableKey,
+      openRouter: deps.openRouter,
+      sleep: abortableSleep,
+      faceGate: deps.faceGate,
+      faceRoleOf: (photoId) => this.#faceRoleOf(library, photoId),
+      masterEmbedding: (avatarId, signal) => this.#masterEmbedding(library, avatarId, deps.faceGate(), signal),
+      log: deps.log,
+    };
+    recoverClips(host, library).catch((error: unknown) => deps.log(`[clip] the recovery of the library could not run (${error instanceof Error ? error.name : typeof error})`));
   }
 
   // ---------- clips.cancel (through avatars.cancel) ----------

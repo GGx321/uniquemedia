@@ -2118,6 +2118,8 @@ export class Engine {
   /** Removes what a crash left in the staging folder of a library that has just become the live one. In the background; never rejects. */
   #sweepMediaStaging(library: Library): void {
     this.#media.libraryOpened(library);
+    // 5b.1 (S5.V6, §5.12): the clips of this library: the restart's holds, the sweep of its clips folders and a free recovery job per journal with no record.
+    this.#clips.libraryOpened(library);
   }
 
   /** True while a job or paid command writes into the live library, a pick/archive is running, a reject mark is being written, an own-media import is running, or a render is queued or running (invariant 25): a library switch must be refused. */
