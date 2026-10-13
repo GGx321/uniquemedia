@@ -21,6 +21,7 @@ import { PRICES } from "./testing/attemptRig";
 import { planlessPhoto } from "./testing/frameFixtures";
 import { SHORT_CLIP_TIMINGS } from "./timings";
 import type { ClipColour, ValidClip } from "./validate";
+import { FfmpegError, FfmpegTimeoutError } from "../../node/runFfmpeg";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -391,10 +392,48 @@ describe("runClipJob: a clip that fails", () => {
     expect(gone.outcome).toEqual({ status: "failed", reason: "download-expired" });
   });
 
-  test("a poster that cannot be drawn makes the paid file `invalid-file`, and leaves neither the file nor a temp", async () => {
+});
+
+describe("runClipJob: a poster that cannot be drawn never costs the paid file its place (I5.54)", () => {
+  async function withPosterFailure(error: unknown): Promise<{ w: World; outcome: ClipJobOutcome }> {
     const w = world();
-    const failing: ClipJobDeps = { ...w.deps, media: { ...w.deps.media, makePoster: async () => Promise.reject(new Error("ffmpeg could not decode the frame")) } };
-    const outcome = await runClipJob(failing, input(), new AbortController().signal);
+    const failing: ClipJobDeps = {
+      ...w.deps,
+      media: {
+        ...w.deps.media,
+        makePoster: async (options) => {
+          // ffmpeg may leave a partial output behind before it fails.
+          await writeFile(options.outPath, "partial");
+          throw error;
+        },
+      },
+    };
+    return { w, outcome: await runClipJob(failing, input(), new AbortController().signal) };
+  }
+
+  test("ffmpeg timed out (a loaded Mac): the clip is ready without its poster, the provider's file kept, no temp left", async () => {
+    const { w, outcome } = await withPosterFailure(new FfmpegTimeoutError(30_000, ""));
+    expect(recordOf(outcome).outcome).toMatchObject({ status: "ready", posterFile: `${CLIP}.poster.jpg`, face: FACE });
+    expect((await readdir(dir())).sort()).toEqual([`${CLIP}.json`, `${CLIP}.mp4`]);
+    expect(w.logs.some((line) => line.includes("poster"))).toBe(true);
+  });
+
+  test("ffmpeg could not be started: ready without its poster, the file kept", async () => {
+    const { outcome } = await withPosterFailure(Object.assign(new Error("spawn ffmpeg ENOENT"), { code: "ENOENT" }));
+    expect(recordOf(outcome).outcome).toMatchObject({ status: "ready" });
+    expect((await readdir(dir())).sort()).toEqual([`${CLIP}.json`, `${CLIP}.mp4`]);
+  });
+
+  test("a full disk is `disk-full`, retryable, and the paid file is kept", async () => {
+    for (const error of [Object.assign(new Error("write failed"), { code: "ENOSPC" }), new FfmpegError("ffmpeg exited with code 1", 1, "av_interleaved_write_frame(): No space left on device")]) {
+      const { outcome } = await withPosterFailure(error);
+      expect(recordOf(outcome).outcome).toMatchObject({ status: "failed", reason: "disk-full", retryDownloadUntil: expect.any(String) });
+      expect((await readdir(dir())).sort()).toEqual([`${CLIP}.json`, `${CLIP}.mp4`]);
+    }
+  });
+
+  test("ffmpeg that proves it cannot decode the file makes it `invalid-file`: the file is removed, the paid failure retryable", async () => {
+    const { outcome } = await withPosterFailure(new FfmpegError("ffmpeg exited with code 1", 1, "Invalid data found when processing input"));
     expect(recordOf(outcome).outcome).toMatchObject({ status: "failed", reason: "invalid-file", retryDownloadUntil: expect.any(String) });
     expect(await readdir(dir())).toEqual([`${CLIP}.json`]);
   });
