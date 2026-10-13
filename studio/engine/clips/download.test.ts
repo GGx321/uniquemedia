@@ -95,7 +95,7 @@ describe("downloadClip", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.id).toBe(JOB_ID);
     expect(calls[0]?.capBytes).toBe(100 * 1024 * 1024);
-    expect(calls[0]?.toPath.startsWith(`${clipsDir}/.${CLIP_ID}.`)).toBe(true);
+    expect(calls[0]?.toPath.startsWith(join(clipsDir, `.${CLIP_ID}.`))).toBe(true);
     expect(calls[0]?.toPath.endsWith(".tmp")).toBe(true);
   });
 

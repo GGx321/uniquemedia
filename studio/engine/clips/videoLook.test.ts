@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
+import { relativePosix } from "../../testing/posixPath";
 import { BANKS } from "../../shared/scenes/banks";
 import { BANK_CATEGORIES } from "../../shared/scenes/banks/types";
 import { MOTION_STAGING } from "../../shared/scenes/words";
@@ -370,7 +371,7 @@ function productionSources(dir: string): string[] {
 describe("the video lines live in clips/videoLook.ts alone (I5.1, I5.51)", () => {
   const studio = join(import.meta.dir, "..", "..");
   const sources = productionSources(studio)
-    .map((path) => ({ path: relative(studio, path), text: readFileSync(path, "utf8") }))
+    .map((path) => ({ path: relativePosix(studio, path), text: readFileSync(path, "utf8") }))
     .filter((source) => source.path !== "engine/clips/videoLook.ts");
   const LINES = [
     ...new Set(Object.values(KLING_LINES).filter((line) => !line.includes("the phone covering her face"))),

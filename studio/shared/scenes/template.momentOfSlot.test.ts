@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
+import { relativePosix } from "../../testing/posixPath";
 import { BANKS } from "./banks";
 import { BANK_CATEGORIES } from "./banks/types";
 import * as template from "./template";
@@ -80,7 +81,7 @@ function productionSources(dir: string): string[] {
 
 describe("one lookup: no production module walks a bank's moments by text but the template (S5.V5)", () => {
   const studio = join(import.meta.dir, "..", "..");
-  const sources = productionSources(studio).map((path) => ({ path: relative(studio, path), text: readFileSync(path, "utf8") }));
+  const sources = productionSources(studio).map((path) => ({ path: relativePosix(studio, path), text: readFileSync(path, "utf8") }));
 
   test("a moment is found by its text in exactly one production module, the template", () => {
     const finders = sources.filter((s) => /\.moments\.find\(\s*\(\w+\)\s*=>\s*\w+\.text\s*===/.test(s.text)).map((s) => s.path);
