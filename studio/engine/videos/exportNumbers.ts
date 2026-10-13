@@ -1,8 +1,10 @@
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { ClipRecord } from "../clips/schemas";
 import type { Library } from "../library";
 import type { UsageReason } from "../library/library";
 import { hasErrorCode } from "../library/durableFs";
+import { AVATARS_DIR, CLIPS_DIR } from "../library/layout";
 import { videoPaths, VideoRecordSchema } from "./record";
 
 // The number a new video's file name starts from (Stage 3 review 3-M2, rounds 2 and 3).
@@ -19,6 +21,10 @@ import { videoPaths, VideoRecordSchema } from "./record";
 // read is logged and left out: its number is then guarded by the file the claim finds (or not) in the folder, which is no worse than before this check existed, and one
 // unreadable file must not fail every commit.
 //
+// CLIP EXPORTS (Stage 5, 5b.1, S5.V4c, I5.55). A clip's export is named like a render's file (`<date>_clip_<NNN>.mp4`), and its record (`avatars/<id>/clips/<clipId>.json`) keeps a line
+// per export. For the kind `clip` those records of every avatar are read as well (from disk: they are in no index), under the same signal and the same file budget. For every render
+// kind none of this runs: the clips folders are not even listed, so a render's number is byte-equal with and without clips.
+//
 // NOT COVERED (residual): two libraries that use one export root number independently, since neither sees the other's records.
 
 /** An intent is a few KiB of JSON; anything bigger is not one (the listing's own bound). */
@@ -26,6 +32,9 @@ const MAX_FILE_BYTES = 1024 * 1024;
 /** A folder of junk cannot stall a commit: at most this many files are read in all. */
 export const MAX_INTENTS_READ = 2000;
 const FILE_NAME = /^[a-z0-9-]{8,64}\.json$/;
+
+/** The kind token of a clip's export (`<date>_clip_<NNN>.mp4`, Stage 5, S5.V4c). */
+export const CLIP_EXPORT_KIND = "clip";
 
 export interface ExportNumberScope {
   readonly rootId: string;
@@ -112,13 +121,23 @@ export async function highestNamedNumber(
     const n = numberIn(relPath, scope);
     if (n !== null && n > highest) highest = n;
   };
+  /** A video record or intent names its one file. */
+  const seeVideoRecord = (value: unknown): void => {
+    const parsed = VideoRecordSchema.safeParse(value);
+    if (parsed.success) see(parsed.data.file.rootId, parsed.data.file.relPath);
+  };
+  /** A clip record names every export it made, a file the owner deleted included. */
+  const seeClipRecord = (value: unknown): void => {
+    const parsed = ClipRecord.safeParse(value);
+    if (parsed.success) for (const line of parsed.data.exports) see(line.rootId, line.relPath);
+  };
   for (const file of library.namedVideoFiles()) see(file.rootId, file.relPath);
 
   let budget = MAX_INTENTS_READ;
   let unreadable = 0;
   let unlistable = 0;
-  /** Reads the intents or records in `dir`; false when the file budget ran out. */
-  const scan = async (dir: string): Promise<boolean> => {
+  /** Reads the intents or records in `dir` and hands each parsed file to `seeFile` (which sees the places it names); false when the file budget ran out. */
+  const scan = async (dir: string, seeFile: (value: unknown) => void = seeVideoRecord): Promise<boolean> => {
     let names: string[];
     try {
       names = (await abortable(signal, fs.readdir(dir))).filter((entry) => entry.isFile && FILE_NAME.test(entry.name)).map((entry) => entry.name);
@@ -148,8 +167,7 @@ export async function highestNamedNumber(
         unreadable++;
         continue;
       }
-      const parsed = VideoRecordSchema.safeParse(value);
-      if (parsed.success) see(parsed.data.file.rootId, parsed.data.file.relPath);
+      seeFile(value);
     }
     return true;
   };
@@ -160,6 +178,7 @@ export async function highestNamedNumber(
     if (!(await scan(pendingDir))) break scanning;
     // An avatar whose index is stale or has a record it could not read does not have all its records in the index: its folder is read from disk.
     if (library.usageReasons(avatar.id).some((reason) => READ_FROM_DISK_REASONS.has(reason)) && !(await scan(videosDir))) break scanning;
+    if (scope.kind === CLIP_EXPORT_KIND && !(await scan(join(libraryRoot, AVATARS_DIR, avatar.id, CLIPS_DIR), seeClipRecord))) break scanning;
   }
   if (unreadable > 0) log(`commit: ${unreadable} file(s) could not be read and are not counted for the file numbers`);
   if (unlistable > 0) log(`commit: ${unlistable} folder(s) could not be listed and are not counted for the file numbers`);
