@@ -398,6 +398,11 @@ describe("the face role (I5.52): a clip is judged only when its photo was", () =
 describe("one source for captures and faces (static)", () => {
   const source = readFileSync(join(import.meta.dir, "frameFacts.ts"), "utf8");
 
+  test("frameFacts takes the face role from V4b's faceRole.ts and keeps no copy: one definition for the role it computes and faceCheck takes", () => {
+    expect(source).toMatch(/from "\.\/faceRole"/);
+    expect(source).not.toMatch(/type\s+ClipFaceRole\s*=/);
+  });
+
   test("frameFacts takes captureOfShot and faceVisibleOf from 5a.2's captures and keeps no copy", () => {
     expect(source).toMatch(/from "\.\.\/\.\.\/shared\/scenes\/captures"/);
     expect(source).not.toMatch(/function\s+(captureOfShot|faceVisibleOf|shotOf)\b/);

@@ -10,6 +10,7 @@ import type { PhotoSidecar } from "../library/schemas";
 import { facePoseOf } from "../runs/faceGate";
 import type { RunPlan } from "../runs/plan";
 import type { OwnPlanSlot, PlanSlot } from "../scenes/schema";
+import type { ClipFaceRole } from "./faceRole";
 import type { ClipCapture } from "./videoLook";
 
 // Stage 5, 5b.1, S5.V5 (plan s5b1 §5.4, I5.52, I5.57): what a clip knows of its photo, read from the photo's sidecar, its run's plan.json and the banks, never from pixels.
@@ -20,13 +21,6 @@ import type { ClipCapture } from "./videoLook";
 //
 // «Как в сцене» is offered only when the photo's own prompt still says «she {moment}» (the template writes «, she …», the plain sentence «She …»): an owner-edited scene that
 // no longer says it gets code motions only, and no pose sentence, since the photo may not show that activity.
-
-/**
- * I5.52, the clip face check's role, which mirrors the photo gate's: a clip is judged only when its photo was. `judged`: the gate checked the photo's face (a front or a
- * three-quarter pose). `profile`: the gate skipped it by its pose. `hidden`: the photo was marked, never judged (mirror-hidden, pov-legs, back, low-feet, a legs framing),
- * or, with no plan, it carries no unmarked likeness.
- */
-export type ClipFaceRole = "judged" | "profile" | "hidden";
 
 export interface FrameFacts {
   readonly photoId: string;
@@ -44,6 +38,10 @@ export interface FrameFacts {
   readonly pose: ScenePose;
   /** Whether her face shows (`faceVisibleOf`); without a plan, read from the photo's own face marks. */
   readonly face: FaceVisibility;
+  /**
+   * I5.52 (the type is V4b's `faceRole.ts`, its one definition): `judged` when the gate checked the photo's face (a front or a three-quarter pose), `profile` when it skipped
+   * it by its pose, `hidden` when the photo was marked, never judged (mirror-hidden, pov-legs, back, low-feet, a legs framing) or, with no plan, carries no unmarked likeness.
+   */
   readonly faceRole: ClipFaceRole;
   /** A «Ножки» frame (`framing: "legs"`). */
   readonly legs: boolean;
@@ -180,10 +178,6 @@ export async function readFrameFacts(photo: PhotoSidecar, readPlan: (runId: stri
 }
 
 /**
- * Why `clips.options` and `clips.create` refuse a gallery photo before its motions are looked at, in their order: an age verdict that is not adult, then a frame of «Смелая»
- * while `BOLD_CLIPS` is `off` (I5.57). The pixel checks (`photo-unreadable`, `not-vertical`) are the first frame's and sit between the two in `clips.create`'s order.
- */
-/**
  * `ClipOptions.fallback` for this photo (I5.47, I5.57): the engine's mode, or `none` for a frame of «Смелая» that `BOLD_CLIPS` keeps to Kling (`kling-only`; `off` sends nothing
  * at all). Such a frame never falls back and is never offered Grok: its worst is Kling's reserve alone. The money side reads the same rule in `clipAllowsAutoGrok`.
  */
@@ -191,6 +185,10 @@ export function clipFallbackOf(facts: FrameFacts, boldClips: BoldClipsMode = BOL
   return facts.bold && boldClips !== "with-fallback" ? "none" : mode;
 }
 
+/**
+ * Why `clips.options` and `clips.create` refuse a gallery photo before its motions are looked at, in their order: an age verdict that is not adult, then a frame of «Смелая»
+ * while `BOLD_CLIPS` is `off` (I5.57). The pixel checks (`photo-unreadable`, `not-vertical`) are the first frame's and sit between the two in `clips.create`'s order.
+ */
 export function frameRefusalOf(facts: FrameFacts, boldClips: BoldClipsMode): "age-unverified" | "bold-off" | null {
   if (facts.ageRefused) return "age-unverified";
   if (facts.bold && boldClips === "off") return "bold-off";
