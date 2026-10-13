@@ -16,15 +16,18 @@ export type MoneyErrorCode =
   /** Neither the live price nor the fallback table knows the model. */
   | "PRICE_UNAVAILABLE";
 
+/** What a PRICE_UNAVAILABLE could not find, when it is narrower than the general case (see `MoneyError.scope`). */
+export type MoneyErrorScope = "bold" | "video";
+
 /** Every failure of the money core is one of these, so callers can switch on `code`. */
 export class MoneyError extends Error {
   readonly code: MoneyErrorCode;
   /** True when every paid call in this process must stop. */
   readonly fatal: boolean;
-  /** 5a.3 (S5.9d, gap D): "bold" on a PRICE_UNAVAILABLE for the «Смелая» route's 2K tier alone, so the card can say the rest still works. Absent for every other price failure. */
-  readonly scope?: "bold";
+  /** "bold" (5a.3, S5.9d, gap D) on a PRICE_UNAVAILABLE for the «Смелая» route's 2K tier alone, so the card can say the rest still works; "video" (5b.1, S5.V2) for a video listing that reads but lacks a needed model or resolution tier. Absent for every other price failure. */
+  readonly scope?: MoneyErrorScope;
 
-  constructor(code: MoneyErrorCode, message: string, options: { fatal?: boolean; scope?: "bold" } = {}) {
+  constructor(code: MoneyErrorCode, message: string, options: { fatal?: boolean; scope?: MoneyErrorScope } = {}) {
     super(message);
     this.name = "MoneyError";
     this.code = code;
