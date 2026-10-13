@@ -33,6 +33,10 @@ const MAX_ALLOC_BYTES = 512 * 1024 * 1024;
  * - `interpolate`: motion-compensated (`mci`, overlapped blocks, bidirectional search): a plain `fps=30` repeats every fourth frame, which judders on slow motion (§5.13);
  * - `duplicate`: that plain `fps=30`, for the owner's A/B at canary C3;
  * - `native24`: the file stays at 24 fps (only the owner picks it).
+ *
+ * MEASURED (S5.V4c, 2026-10-14, the owner's M4 Max, ffmpeg-static 6.0, this argv, a 10 s 24 fps `testsrc2` source): from 720 x 1280, interpolate 27.0 s, duplicate 4.1 s,
+ * native24 3.6 s; from 1080 x 1920, interpolate 58.2 s, duplicate 4.0 s, native24 3.5 s (about 8-11 MB each). `minterpolate` runs on one thread; x264 is capped at two. So the
+ * export always shows its progress, and its bound is 10 minutes (`EXPORT_ENCODE_TIMEOUT_MS`).
  */
 const FPS_STEP: Readonly<Record<ExportFpsMode, string>> = {
   interpolate: "minterpolate=fps=30:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1",
