@@ -126,8 +126,16 @@ export const COMES_OFF_LINE = "Nothing new appears, and nothing she wears comes 
  */
 export const WORN_OR_HELD = /\b(?:straps?|sheets?|blankets?|duvets?|waistbands?|hems?|laces|zip(?:s|ped|ping|per|pers)?|coats?|earrings?|sunglasses|slides one arm in)\b/i;
 
-/** A bag she holds (round 2): its strap or its zip moves a held object, so the base line keeps it (K09 lost its bag), whether the motion or the moment names the bag. */
-const HELD_BAG = /\b(?:bags?|handbags?|clutch(?:es)?|purses?|totes?|backpacks?)\b/i;
+/**
+ * A bag she holds (round 2): its strap or its zip moves a held object, so the base line keeps it (K09 lost its bag), whether the motion or the moment names the bag. «bag»,
+ * «handbag» and «backpack» are nouns; «clutch», «purse» and «tote» are verbs too («clutches the sheet», «purses her lips», «her fingers clutch the duvet»), so they count
+ * only as nouns: right after an article or a possessive, or after one or two words that describe a bag («a small clutch», «her small black clutch», «a canvas tote»).
+ */
+const BAG_ADJECTIVE = "(?:small|little|tiny|big|black|white|red|gold|silver|beige|brown|leather|canvas|straw|woven|beaded|quilted|evening)";
+const HELD_BAG = new RegExp(
+  `\\b(?:bags?|handbags?|backpacks?)\\b|\\b(?:a|an|the|her|his|their|my|your|its)\\s+(?:${BAG_ADJECTIVE}\\s+){0,2}(?:clutch(?:es)?|purses?|totes?)\\b`,
+  "i",
+);
 
 /**
  * The continuity line for a motion: «comes off» when it moves what she wears, the base line otherwise, and always the base line for a bag she holds. `activity` is the

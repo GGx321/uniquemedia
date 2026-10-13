@@ -224,6 +224,32 @@ describe("the continuity line (critic M5, r2.2; the controller's round 2)", () =
       expect(continuityLineOf(motion, activity)).toBe(CONTINUITY_LINE);
     });
   }
+
+  // Post-review: «clutch», «purse» and «tote» are bags only as nouns, after an article or a possessive (and an adjective or two of a bag); as verbs they hold nothing.
+  const BAG_NOUNS: readonly (readonly [string, string])[] = [
+    ["she slides the strap up slowly", "walks with a small clutch"],
+    ["she slides the strap up slowly", "holds her purse by the strap"],
+    ["she slides the strap up slowly", "carries a canvas tote"],
+    ["she tugs the strap a little", "picks up her small black clutch"],
+  ];
+  for (const [motion, activity] of BAG_NOUNS) {
+    test(`a clutch, a purse or a tote she holds keeps the base line: ${motion} (${activity})`, () => {
+      expect(continuityLineOf(motion, activity)).toBe(CONTINUITY_LINE);
+    });
+  }
+
+  const BAG_VERBS: readonly (readonly [string, string])[] = [
+    ["she pulls the sheet a little higher", "clutches the sheet to her chest"],
+    ["she slides the strap up slowly", "purses her lips at the mirror"],
+    ["she tugs the coat closer slowly", "totes her coat over one arm"],
+    ["she clutches the blanket a little closer", "lies curled under the blanket"],
+    ["her fingers clutch the duvet a little tighter", "lies curled up under the duvet"],
+  ];
+  for (const [motion, activity] of BAG_VERBS) {
+    test(`the verb «clutches», «purses» or «totes» holds no bag: ${motion} (${activity})`, () => {
+      expect(continuityLineOf(motion, activity)).toBe(COMES_OFF_LINE);
+    });
+  }
 });
 
 /** What a motion names that a continuity line must be decided for: a garment, cover or accessory, a sleeve put on, or a held object, her weight, the window glass. */
