@@ -15,7 +15,10 @@ export const DURATION_TOLERANCE_MS = 500;
 const ASPECT_SLACK = 16;
 
 /** Why a file is not a clip. Every one of these is a paid `invalid-file` for the job; the reason is for the log and the tests. */
-export type ClipInvalidReason = "not-mp4" | "unreadable" | "several-video-streams" | "not-h264" | "not-vertical" | "too-narrow" | "wrong-duration";
+export type ClipInvalidReason = "not-mp4" | "unreadable" | "several-video-streams" | "not-h264" | "not-vertical" | "too-narrow" | "wrong-duration" | "bad-rate";
+
+/** The most `ClipRecord.fps` holds: a faster file could not be recorded, and a paid clip must never be left without its record. */
+export const MAX_CLIP_FPS = 240;
 
 /** What the rule needs to know about a file. */
 export interface ClipFacts {
@@ -25,6 +28,8 @@ export interface ClipFacts {
   readonly width: number;
   readonly height: number;
   readonly durationMs: number;
+  /** Samples per second on average. */
+  readonly fps: number;
 }
 
 export type ClipJudgement = { readonly ok: true } | { readonly ok: false; readonly reason: ClipInvalidReason };
@@ -35,6 +40,7 @@ export function judgeClipFacts(facts: ClipFacts, requestedSeconds: number): Clip
   if (Math.abs(16 * facts.width - 9 * facts.height) > ASPECT_SLACK) return { ok: false, reason: "not-vertical" };
   if (facts.width < MIN_CLIP_WIDTH) return { ok: false, reason: "too-narrow" };
   if (Math.abs(facts.durationMs - requestedSeconds * 1000) > DURATION_TOLERANCE_MS) return { ok: false, reason: "wrong-duration" };
+  if (!(facts.fps > 0 && facts.fps <= MAX_CLIP_FPS)) return { ok: false, reason: "bad-rate" };
   return { ok: true };
 }
 
@@ -85,6 +91,7 @@ export async function validateClipFile(path: string, requestedSeconds: number): 
       width: turned ? video.height : video.width,
       height: turned ? video.width : video.height,
       durationMs: probe.info.durationMs,
+      fps: video.sourceFps,
     };
     const judged = judgeClipFacts(facts, requestedSeconds);
     if (!judged.ok) return invalid(judged.reason, `${facts.codec} ${facts.width} x ${facts.height}, ${facts.durationMs} ms for ${requestedSeconds} s asked`);

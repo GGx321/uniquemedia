@@ -17,7 +17,7 @@ afterEach(async () => {
   dir = "";
 });
 
-const GOOD: ClipFacts = { codec: "h264", width: 720, height: 1280, durationMs: 5_000 };
+const GOOD: ClipFacts = { codec: "h264", width: 720, height: 1280, durationMs: 5_000, fps: 24 };
 
 describe("judgeClipFacts", () => {
   test("accepts a 720 x 1280 H.264 clip of the length asked", () => {
@@ -75,6 +75,18 @@ describe("judgeClipFacts", () => {
     expect(judgeClipFacts({ ...GOOD, durationMs: 5_501 }, 5)).toEqual({ ok: false, reason: "wrong-duration" });
   });
 
+  test("accepts a clip at the record's top rate of 240 fps", () => {
+    expect(judgeClipFacts({ ...GOOD, fps: 240 }, 5)).toEqual({ ok: true });
+  });
+
+  test("refuses a clip faster than 240 fps: the record could not hold it, and a paid clip would have none", () => {
+    expect(judgeClipFacts({ ...GOOD, fps: 240.001 }, 5)).toEqual({ ok: false, reason: "bad-rate" });
+  });
+
+  test("refuses a clip with no rate", () => {
+    expect(judgeClipFacts({ ...GOOD, fps: 0 }, 5)).toEqual({ ok: false, reason: "bad-rate" });
+  });
+
   test("refuses a 5 s clip when 10 s were asked", () => {
     expect(judgeClipFacts(GOOD, 10)).toEqual({ ok: false, reason: "wrong-duration" });
   });
@@ -110,6 +122,19 @@ describe("validateClipFile", () => {
     const result = await validateClipFile(path, 5);
     if (!result.ok) throw new Error(`expected a valid clip, got ${result.reason}`);
     expect(result.clip.hasAudio).toBe(true);
+  });
+
+  test("judges the picture as it is shown: a 1280 x 720 track turned a quarter is a 720 x 1280 clip", async () => {
+    const path = await clip({ width: 720, height: 1280, seconds: 5, rotate: 90 });
+    const result = await validateClipFile(path, 5);
+    if (!result.ok) throw new Error(`expected a valid clip, got ${result.reason}`);
+    expect([result.clip.width, result.clip.height]).toEqual([720, 1280]);
+  });
+
+  test("refuses a 720 x 1280 track turned a quarter, which is shown as 16:9", async () => {
+    const path = await clip({ width: 1280, height: 720, seconds: 5, rotate: 90 });
+    const result = await validateClipFile(path, 5);
+    expect(result.ok ? "ok" : result.reason).toBe("not-vertical");
   });
 
   test("refuses a 16:9 file", async () => {
