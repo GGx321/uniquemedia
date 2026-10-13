@@ -338,6 +338,8 @@ export interface SceneSetStoreDeps {
   beforeUnlink?: ((path: string) => void | Promise<void>) | undefined;
   /** Test seam: called before each record is read. What it throws is what the read threw (an OS error, on any platform). */
   beforeRead?: ((path: string) => void | Promise<void>) | undefined;
+  /** Test seam: called after a record is read and before the caller gets it, so a test can let the world move on between the read and its use. */
+  afterRead?: ((path: string) => void | Promise<void>) | undefined;
   /** Test seam: called before an avatar's scenes/ folder is listed. What it throws is what the listing threw. */
   beforeList?: ((dir: string) => void | Promise<void>) | undefined;
 }
@@ -400,6 +402,7 @@ export class SceneSetStore {
   async #read(path: string, sceneSetId: string, avatarId: string): Promise<Read> {
     // The OS refusing the read (a transient EIO, EMFILE, EBUSY, no permission, a cloud placeholder) says nothing about the record: `io`, for the caller to act on.
     const file = await readRecordFile(path, this.deps.beforeRead);
+    await this.deps.afterRead?.(path);
     if (!file.ok) return file.reason === "io" ? { ok: false, reason: "io", error: file.error } : { ok: false, reason: file.reason === "missing" ? "missing" : "unreadable" };
     const raw = file.value;
     if (isFromNewerVersion(raw, SCENE_SET_FILE_SCHEMA_VERSION)) return { ok: false, reason: "unreadable" };

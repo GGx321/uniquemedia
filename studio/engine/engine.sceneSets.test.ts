@@ -119,9 +119,9 @@ function sceneNetwork(opts: { writer?: Handler; image?: Handler; prices?: (call:
   };
 }
 
-function engineOver(net: ReturnType<typeof sceneNetwork>, opts: { key?: string | null; monthlyBudgetMicros?: number; clock?: () => number; withFaceGate?: boolean; beforeRename?: (path: string) => void; beforeRead?: (path: string) => void; beforeList?: (dir: string) => void } = {}) {
+function engineOver(net: ReturnType<typeof sceneNetwork>, opts: { key?: string | null; monthlyBudgetMicros?: number; clock?: () => number; withFaceGate?: boolean; beforeRename?: (path: string) => void; beforeRead?: (path: string) => void; beforeList?: (dir: string) => void; afterRead?: (path: string) => void | Promise<void> } = {}) {
   const deps = {
-    ...(opts.beforeRename === undefined && opts.beforeRead === undefined && opts.beforeList === undefined ? {} : { library: { testHooks: { ...(opts.beforeRename === undefined ? {} : { beforeRename: opts.beforeRename }), ...(opts.beforeRead === undefined ? {} : { beforeRead: opts.beforeRead }), ...(opts.beforeList === undefined ? {} : { beforeList: opts.beforeList }) } } }),
+    ...(opts.beforeRename === undefined && opts.beforeRead === undefined && opts.beforeList === undefined && opts.afterRead === undefined ? {} : { library: { testHooks: { ...(opts.beforeRename === undefined ? {} : { beforeRename: opts.beforeRename }), ...(opts.beforeRead === undefined ? {} : { beforeRead: opts.beforeRead }), ...(opts.beforeList === undefined ? {} : { beforeList: opts.beforeList }), ...(opts.afterRead === undefined ? {} : { afterRead: opts.afterRead }) } } }),
     ...(opts.clock === undefined ? {} : { clock: opts.clock }),
     // A photo run needs a wired face gate to start; a fake one that passes every photo is all a test of the avatar's claim needs.
     ...(opts.withFaceGate === true ? { qaGates: [{ name: "face", paid: false, check: async () => ({ verdict: "pass" as const }) }] } : {}),
@@ -1835,5 +1835,56 @@ describe("a read the OS fails (fix round 2)", () => {
 
     expect(refused(await engine.handle(composeCommand(avatarId, { count: 0 })))).toMatchObject({ code: "VALIDATION", sceneReason: "library-unreadable" });
     expect(setFiles(avatarId)).toEqual([]);
+  });
+});
+
+// The window's read of a set is ONE consistent picture: a job that ends while the file is being read must not leave a «ready» answer with the revision from before its last write.
+describe("scenes.get while the job ends", () => {
+  test("never answers «ready» with a revision older than the write that ended the job", async () => {
+    const avatarId = await seedAvatar();
+    const gate = (): { open: () => void; opened: Promise<void> } => {
+      let open: () => void = () => {};
+      const opened = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      return { open, opened };
+    };
+    const finishReached = gate();
+    const finishRelease = gate();
+    const readReached = gate();
+    const readRelease = gate();
+    let setRenames = 0;
+    let armed = false;
+    let consumed = false;
+    const { engine, events } = await engineOver(sceneNetwork(), {
+      // The set file is renamed three times for a one-chunk compose: created (1), the chunk stored (2), the job's end recorded (3). The third waits, so the file stays at revision 2 while the job is live.
+      beforeRename: async (path) => {
+        if (!path.includes(join("avatars", avatarId, "scenes"))) return;
+        if (++setRenames === 3) {
+          finishReached.open();
+          await finishRelease.opened;
+        }
+      },
+      // The window's read of the file waits after it has read revision 2, until the job has ended.
+      afterRead: async () => {
+        if (!armed || consumed) return;
+        consumed = true;
+        readReached.open();
+        await readRelease.opened;
+      },
+    });
+
+    const { jobId } = composed(await engine.handle(composeCommand(avatarId, { count: 20 })));
+    await finishReached.opened;
+    armed = true;
+    const answer = engine.handle(command("scenes.get", { avatarId }));
+    await readReached.opened;
+    finishRelease.open();
+    await jobEnd(events, jobId ?? "none");
+    readRelease.open();
+
+    const result = ok(await answer);
+    if (result.type !== "scenes.get" || result.result.sceneSet === null) throw new Error("expected a set");
+    expect(result.result.sceneSet).toMatchObject({ status: "ready", revision: 3 });
   });
 });
