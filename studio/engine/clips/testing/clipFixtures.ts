@@ -28,6 +28,18 @@ export async function runFfmpegForFixture(argv: readonly string[]): Promise<void
   if (code !== 0) throw new Error(`ffmpeg exited ${code}: ${stderr.slice(-1200)}`);
 }
 
+/** The mean brightness (0-255) of a JPEG, by ffmpeg: a black frame is near 0 and a white one near 255. */
+export async function meanLuma(jpeg: Uint8Array): Promise<number> {
+  const proc = Bun.spawn([ffmpegPath(), "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "jpeg_pipe", "-i", "pipe:0", "-vf", "scale=1:1,format=gray", "-frames:v", "1", "-f", "rawvideo", "pipe:1"], {
+    stdin: jpeg,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, stderr, code] = await Promise.all([Bun.readableStreamToArrayBuffer(proc.stdout), Bun.readableStreamToText(proc.stderr), proc.exited]);
+  if (code !== 0 || out.byteLength !== 1) throw new Error(`ffmpeg exited ${code} with ${out.byteLength} bytes: ${stderr.slice(-400)}`);
+  return new Uint8Array(out)[0] ?? 0;
+}
+
 function lavfiVideo(spec: ClipSpec): string {
   const { width, height, seconds, fps = 24 } = spec;
   return `color=c=black:s=${width}x${height}:r=${fps}:d=${seconds},drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='gte(t,0.25)'`;
