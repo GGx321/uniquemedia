@@ -5717,6 +5717,9 @@ export class Engine {
         if (live !== null && live.identity !== beforeIdentity) {
           this.#videos.libraryOpened(live.library);
           this.#libraryBecameLive(live.library);
+        } else if (live === null) {
+          // Switched into LIBRARY_UNAVAILABLE: the recoveries of the library that went away stop (their journals and holds stay).
+          this.#clips.libraryClosed();
         }
       }
       this.#settings = { ...this.#settings, libraryPath: next.libraryPath };

@@ -324,8 +324,16 @@ export class ClipService {
     };
   }
 
-  /** The recoveries of the library that was live before the next one: stopped by `libraryOpened`. */
+  /** The recoveries of the library that was live before the next one: stopped by `libraryOpened` and by `libraryClosed`. */
   #recoveryStop = new AbortController();
+  /** The ids of the recovery jobs running now, whatever phase they are in: a cancel of one answers `job-running`. */
+  readonly #recoveryJobs = new Set<string>();
+
+  /** The live library went away with no other taking its place (LIBRARY_UNAVAILABLE): its recoveries stop too, with their journals and holds kept. */
+  libraryClosed(): void {
+    this.#recoveryStop.abort();
+    this.#recoveryStop = new AbortController();
+  }
 
   /**
    * The restart's holds when NO library is open at the start (a volume that is not mounted): the journals cannot be read, but the ledger can say which clip reserves are open, and each may be a
@@ -361,7 +369,17 @@ export class ClipService {
       isOwn: (attemptId) => this.#ownAttempts.has(attemptId),
       signal: eitherSignal(this.#stop.signal, this.#recoveryStop.signal),
       ledger: () => deps.budget()?.ledger ?? null,
-      jobs: deps.jobs,
+      jobs: {
+        startClip: (jobId, ref, phase) => {
+          this.#recoveryJobs.add(jobId);
+          return deps.jobs.startClip(jobId, ref, phase);
+        },
+        clipPhase: (jobId, update) => deps.jobs.clipPhase(jobId, update),
+        finishClip: (jobId, end) => {
+          this.#recoveryJobs.delete(jobId);
+          return deps.jobs.finishClip(jobId, end);
+        },
+      },
       emit: deps.emit,
       work: { enter: (clipId) => this.#enterWork(clipId), anyActive: () => this.#activeClips.size > 0, isActive: (clipId) => this.#activeClips.has(clipId) },
       usableKey: deps.usableKey,
@@ -382,8 +400,8 @@ export class ClipService {
     const state = this.#deps.jobs.stateOf(jobId);
     if (state?.kind !== "clip") throw new EngineFailure({ code: "NOT_FOUND", detail: `no clip job ${jobId} in this engine` });
     if (state.status !== "running") return;
-    // A recovery (after a restart) is not a clip that was just sent: its own words, from the existing texts.
-    if (state.phase === "recovering") throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "job-running", detail: "the clip is being recovered after a restart; it cannot be cancelled" });
+    // A recovery (after a restart) is not a clip that was just sent, in whatever phase it is in: its own words, from the existing texts.
+    if (this.#recoveryJobs.has(jobId)) throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "job-running", detail: "the clip is being recovered after a restart; it cannot be cancelled" });
     if (state.phase !== "preparing") throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "submitted", detail: "the clip has already been sent; it cannot be cancelled" });
     this.#deps.jobs.cancel(jobId);
   }

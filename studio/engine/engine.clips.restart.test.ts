@@ -11,7 +11,7 @@ import { SHORT_CLIP_TIMINGS, type ClipTimings } from "./clips/timings";
 import type { ClipRecord } from "./clips/schemas";
 import { clipNetwork, clipsDir, command, create, jobEnd, jobIdOf, phasesOf, seedClipAvatar, startClipEngine, until, type ClipEngine } from "./clips/testing/engineClipKit";
 import { journalOf, readClipRecord } from "./clips/store";
-import { engineInit, ledgerLines, NOW, useEngineDir, writeLedger } from "./testing/engineHarness";
+import { engineInit, engineSettings, ledgerLines, NOW, useEngineDir, writeLedger } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -296,7 +296,34 @@ describe("a recovery job is a clip job like any other", () => {
 
     expect(existsSync(join(clipsDir(libraryDir(), avatarId), `${clipId}.journal.jsonl`))).toBe(true);
     expect(existsSync(join(clipsDir(libraryDir(), avatarId), `${clipId}.json`))).toBe(false);
-    expect((await moneyStatus(engine)).reconcileAvailableAt).toBeDefined();
+    // The submitted attempt is held 60 min (here the short set's 10 min) from its submit, which is later than the quiet wait: the exact time, not just «some time».
+    expect((await moneyStatus(engine)).reconcileAvailableAt).toBe(new Date(NOW + TIMINGS.holdSubmittedMs).toISOString());
+  });
+
+  test("a switch into LIBRARY_UNAVAILABLE stops it too", async () => {
+    const { avatarId, clipId } = await submittedOnDisk();
+    const engine = await startClipEngine(dir(), { net: clipNetwork({ kling: { held: true } }), timings: TIMINGS });
+    await until(() => engine.events().some((e) => e.type === "job.progress" && e.payload.kind === "clip"), "the recovery job");
+
+    await engine.engine.receive({ kind: "control", type: "settings.update", settings: engineSettings(dir(), { libraryPath: join(dir(), "does-not-exist") }) });
+    await until(() => engine.events().some((e) => e.type === "job.cancelled" && e.payload.kind === "clip"), "the recovery job's stop");
+    expect(existsSync(join(clipsDir(libraryDir(), avatarId), `${clipId}.journal.jsonl`))).toBe(true);
+  });
+
+  test("a cancel of it says so in every phase, not only `recovering`", async () => {
+    await submittedOnDisk();
+    const engine = await startClipEngine(dir(), { net: clipNetwork({ kling: { content: "held" } }), timings: TIMINGS });
+    await until(() => engine.events().some((e) => e.type === "job.progress" && e.payload.kind === "clip" && e.payload.phase === "downloading"), "the download");
+    const progress = engine.events().find((e) => e.type === "job.progress" && e.payload.kind === "clip");
+    const jobId = progress?.type === "job.progress" ? progress.payload.jobId : "";
+
+    const answer = await engine.engine.handle(command("avatars.cancel", { jobId }));
+    expect(answer.ok).toBe(false);
+    if (answer.ok) throw new Error("unreachable");
+    expect(answer.error).toMatchObject({ code: "IN_FLIGHT", clipReason: "job-running" });
+
+    engine.net.releaseContent("kling");
+    await clipJobDone(engine);
   });
 
   test("a cancel of it says the clip is being worked on, not that it was sent", async () => {

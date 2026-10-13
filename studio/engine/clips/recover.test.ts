@@ -960,6 +960,63 @@ describe("a clip whose file was already fetched and checked when the process sto
   });
 });
 
+describe("a kept file that cannot be judged now", () => {
+  const MP4_SHA = createHash("sha256").update("mp4").digest("hex");
+  const lines: ClipJournalLine[] = [requested(), submitted(KLING, T0 + 1_000), ended(KLING, T0 + 90_000, "completed", "usage"), { type: "downloaded", sha256: MP4_SHA, bytes: 3, at: iso(T0 + 100_000) }];
+
+  test("keeps the journal and records nothing when validating it fails for a reason that is not the file's (EBUSY, EMFILE)", async () => {
+    await writeLines(CLIP, lines);
+    await writeFile(join(clipsDir(), `${CLIP}.mp4`), "mp4");
+    const r = rig({ now: T0 + 1_000 + 90 * MIN });
+    const busy: ClipRecoveryHost = {
+      ...r.host,
+      media: {
+        ...r.host.media,
+        validateClipFile: async () => {
+          throw Object.assign(new Error("busy"), { code: "EBUSY" });
+        },
+      },
+    };
+    const { jobs } = await recoverClips(busy, library);
+    await Promise.all(jobs);
+    expect(existsSync(clipRecordPath(clipsDir(), CLIP))).toBe(false);
+    expect(existsSync(clipJournalPath(clipsDir(), CLIP))).toBe(true);
+    expect(r.types()).toContain("job.failed");
+  });
+
+  test("still decides `download-expired` when the file is plainly not there", async () => {
+    await writeLines(CLIP, lines);
+    const r = rig({ now: T0 + 1_000 + 90 * MIN });
+    await recover(r);
+    expect((await recordOf()).outcome).toEqual({ status: "failed", reason: "download-expired" });
+  });
+});
+
+describe("a stop right after the paid file was renamed into place", () => {
+  test("leaves `downloaded` in the journal beside the mp4, so the next start finishes it from disk", async () => {
+    await writeLines(CLIP, [requested(), submitted(KLING, T0 + 1_000)]);
+    const r = rig();
+    const stopping: ClipRecoveryHost = {
+      ...r.host,
+      media: {
+        ...r.host.media,
+        downloadClip: async (o) => {
+          const path = join(o.clipsDir, `${o.clipId}.mp4`);
+          await writeFile(path, "mp4");
+          r.stop.abort();
+          return { kind: "saved", path, sha256: SHA, clip: VALID };
+        },
+      },
+    };
+    const { jobs } = await recoverClips(stopping, library);
+    await Promise.all(jobs);
+    const journal = await journalOf(clipsDir(), CLIP).read();
+    expect(journal.at(-1)).toMatchObject({ type: "downloaded", sha256: SHA });
+    expect(existsSync(clipRecordPath(clipsDir(), CLIP))).toBe(false);
+    expect(r.types()).toContain("job.cancelled");
+  });
+});
+
 describe("the order of a recovery's steps", () => {
   test("decides whether temps may be swept right before the sweep, not before the folders are read", async () => {
     await writeLines(CLIP, [requested()]);
@@ -994,6 +1051,22 @@ describe("a recovery and a concurrent delete or record of the same clip", () => 
     expect(jobs).toHaveLength(0);
     expect(existsSync(clipRecordPath(clipsDir(), CLIP))).toBe(false);
     expect(r.calls.poll).toEqual([]);
+  });
+
+  test("an I/O error under one clip's lock costs that clip its recovery this time, not the others theirs", async () => {
+    await writeLines(CLIP, [requested(CLIP)]);
+    await writeLines(OTHER, [requested(OTHER)]);
+    const logs: string[] = [];
+    const r = rig({
+      beforeLocked: async (clipId) => {
+        if (clipId === CLIP) throw Object.assign(new Error("emfile"), { code: "EMFILE" });
+      },
+    });
+    const { jobs } = await recoverClips({ ...r.host, log: (line) => void logs.push(line) }, library);
+    await Promise.all(jobs);
+    expect((await recordOf(OTHER)).outcome).toMatchObject({ reason: "lost" });
+    expect(existsSync(clipJournalPath(clipsDir(), CLIP))).toBe(true);
+    expect(logs.some((line) => line.includes(CLIP))).toBe(true);
   });
 
   test("starts no job when a record appeared between the scan and the act, and drops the stale journal", async () => {
