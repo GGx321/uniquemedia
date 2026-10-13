@@ -247,11 +247,11 @@ describe("Grok behind Kling follows the same rules", () => {
     ]);
   });
 
-  test("an uncertain submit to Grok leaves Grok's reserve open, held 20 min from the POST, and sends nothing again", async () => {
+  test("an uncertain submit to Grok leaves Grok's reserve open, held 20 min from the reserve line's `at`, and sends nothing again", async () => {
     await make({ mode: "auto", kling: refused, grok: { submit: { kind: "uncertain", cause: "network", httpStatus: null, detail: "reset" } } });
     expect(failed(await rig.run())).toMatchObject({ reason: "submit-uncertain", model: "grok", cost: "worst" });
     expect(rig.ledger.openReserves().map((r) => r.attemptId)).toEqual([GROK]);
-    expect(rig.holds.untilOf(GROK)).toBe(rig.posts("grok")[0]!.t + 20 * MINUTE);
+    expect(rig.holds.untilOf(GROK)).toBe(Date.parse(rig.reserves().find((r) => r.attemptId === GROK)?.at ?? "") + 20 * MINUTE);
     expect(rig.posts("grok")).toHaveLength(1);
   });
 

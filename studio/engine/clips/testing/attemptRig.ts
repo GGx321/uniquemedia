@@ -45,6 +45,8 @@ export interface JobScript {
   generation?: (sinceTerminalMs: number, t: number) => GenerationResult;
   /** Polls answer `unreadable` until this many ms after the POST. */
   pollUnreadableUntilMs?: number;
+  /** The `generation_id` the poll reports. Default: the job's own id (I5.47); `null` is a body without one. */
+  generationId?: string | null;
 }
 
 export const REFUSED_BY_RISK_CONTROL: TerminalScript = { status: "failed", error: "task failed with status: FAIL, message: Failure to pass the risk control system", contentFailure: true };
@@ -175,6 +177,10 @@ export async function createRig(options: RigOptions = {}): Promise<Rig> {
       trace.push(`ledger:settle:${handle.attemptId}:${bill.costMicros}:${bill.estimated ? "estimated" : "exact"}`);
       return real.settle(handle, bill);
     },
+    async release(handle: ReserveHandle, reason: string) {
+      trace.push(`ledger:release:${handle.attemptId}`);
+      return real.release(handle, reason);
+    },
     async abandon(handle: ReserveHandle) {
       trace.push(`ledger:abandon:${handle.attemptId}`);
       return real.abandon(handle);
@@ -209,15 +215,16 @@ export async function createRig(options: RigOptions = {}): Promise<Rig> {
       if (post !== undefined && script.pollUnreadableUntilMs !== undefined && state.t - post < script.pollUnreadableUntilMs) {
         return { kind: "unreadable", cause: "timeout", httpStatus: null, detail: "no answer" };
       }
+      const generationId = script.generationId === undefined ? id : script.generationId;
       const terminalAt = terminalAtOf(key);
       if (terminalAt === null || state.t < terminalAt) {
-        return { kind: "status", status: "in_progress", rawStatus: "in_progress", usageCostMicros: null, error: null, contentFailure: false };
+        return { kind: "status", status: "in_progress", rawStatus: "in_progress", usageCostMicros: null, error: null, contentFailure: false, generationId };
       }
       const terminal = script.terminal ?? { status: "completed", usageCostMicros: 420_000 };
       if (terminal.status === "completed") {
-        return { kind: "status", status: "completed", rawStatus: "completed", usageCostMicros: terminal.usageCostMicros, error: null, contentFailure: false };
+        return { kind: "status", status: "completed", rawStatus: "completed", usageCostMicros: terminal.usageCostMicros, error: null, contentFailure: false, generationId };
       }
-      return { kind: "status", status: terminal.status, rawStatus: terminal.status, usageCostMicros: null, error: terminal.error, contentFailure: terminal.contentFailure };
+      return { kind: "status", status: terminal.status, rawStatus: terminal.status, usageCostMicros: null, error: terminal.error, contentFailure: terminal.contentFailure, generationId };
     },
     async fetchGeneration(id: string): Promise<GenerationResult> {
       const key = keyOf(id);

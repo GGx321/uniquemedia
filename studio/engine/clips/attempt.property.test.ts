@@ -1,13 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { clipReserveMicros, type ClipQuality, type ClipSeconds } from "../../shared/engine/clips";
-import type { VideoSubmitResult } from "../openrouter/types";
-import { createRig, gen404, genFound, genFromAfter, genUnreadable, GROK, KLING, PROVIDER_FAILED, PRICES, REFUSED_BY_RISK_CONTROL, SECOND, type JobScript } from "./testing/attemptRig";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
+import type { VideoSubmitResult } from "../openrouter/types";
+import { createRig, gen404, genFound, genFromAfter, genUnreadable, GROK, KLING, PRICES, PROVIDER_FAILED, REFUSED_BY_RISK_CONTROL, SECOND, T0, type JobScript } from "./testing/attemptRig";
 useNativeGlobals();
 
 // 5b.1, S5.V3b (plan s5b1 §8 V3b): properties over random outcome sequences, both modes, fallback `auto` and `none`, «Смелая» and a Grok clip. A seeded generator, so a failure replays. What must hold for
-// every sequence: the clip's settled and open money never exceeds its accepted worst; a POST leaves at most once per attempt id and at most two per clip; Grok runs only behind a Kling that settled 0, and only
-// where the rules let it; nothing settles twice.
+// every sequence: what the PROVIDER bills for the clip, hidden bills included, never exceeds the clip's accepted worst (the ledger's own sums are not enough: a charge nobody saw is the one that matters);
+// a POST leaves at most once per attempt id; Grok runs only behind a Kling that settled 0 and only where the rules let it; nothing settles twice.
+//
+// The world is hostile on purpose: /credits is unreadable, a photo run touches the ledger inside the proof window, the journal fails on `submitted`, the engine is stopped, and a refused or failed job
+// carries a HIDDEN bill (/generation is a 404, and /credits shows it only when it can be read). With the net-usage check treated as «skipped» in mode auto, this property fails: Kling is billed and Grok
+// runs behind it.
 
 function mulberry32(seed: number): () => number {
   let a = seed;
@@ -29,47 +33,82 @@ const refusedSubmit = (httpStatus: number, errorKind: "AUTH_INVALID" | "INSUFFIC
 
 interface Drawn {
   script: JobScript;
-  /** This model's charge shows in /credits after its POST and stays. */
-  netIncrease: boolean;
+  /** What the provider bills for this attempt when its POST was accepted or may have been (a job exists), in micro-dollars. */
+  charge: number;
   name: string;
 }
 
 function draw(rng: () => number, reserve: number): Drawn {
   const pick = <T>(items: readonly T[]): T => items[Math.floor(rng() * items.length)] as T;
   const cost = (): number => 1 + Math.floor(rng() * reserve);
-  const kind = pick(["completed-usage", "completed-gen", "moderation-4xx", "other-4xx", "uncertain", "refused-clean", "refused-increase", "refused-paid", "provider-error", "late", "unreadable"] as const);
+  const bill = (): number => Math.ceil(reserve / 2) + Math.floor(rng() * (reserve / 2));
+  const kind = pick([
+    "completed-usage",
+    "completed-gen",
+    "moderation-4xx",
+    "other-4xx",
+    "uncertain",
+    "uncertain-billed",
+    "refused-clean",
+    "refused-clean",
+    "refused-hidden",
+    "refused-hidden",
+    "refused-hidden",
+    "provider-hidden",
+    "refused-paid",
+    "provider-error",
+    "provider-hidden",
+    "late",
+    "unreadable",
+  ] as const);
   switch (kind) {
-    case "completed-usage":
-      return { name: kind, netIncrease: false, script: { terminal: { status: "completed", usageCostMicros: cost() } } };
-    case "completed-gen":
-      return { name: kind, netIncrease: false, script: { terminal: { status: "completed", usageCostMicros: null }, generation: genFromAfter(15 * SECOND, cost()) } };
+    case "completed-usage": {
+      const c = cost();
+      return { name: kind, charge: c, script: { terminal: { status: "completed", usageCostMicros: c } } };
+    }
+    case "completed-gen": {
+      const c = cost();
+      return { name: kind, charge: c, script: { terminal: { status: "completed", usageCostMicros: null }, generation: genFromAfter(15 * SECOND, c) } };
+    }
     case "moderation-4xx":
-      return { name: kind, netIncrease: false, script: { submit: refusedSubmit(400, "HTTP_ERROR", true) } };
+      return { name: kind, charge: 0, script: { submit: refusedSubmit(400, "HTTP_ERROR", true) } };
     case "other-4xx":
-      return { name: kind, netIncrease: false, script: { submit: pick([refusedSubmit(401, "AUTH_INVALID", false), refusedSubmit(402, "INSUFFICIENT_CREDITS", false), refusedSubmit(429, "RATE_LIMITED", false)]) } };
+      return { name: kind, charge: 0, script: { submit: pick([refusedSubmit(401, "AUTH_INVALID", false), refusedSubmit(402, "INSUFFICIENT_CREDITS", false), refusedSubmit(429, "RATE_LIMITED", false)]) } };
     case "uncertain":
-      return { name: kind, netIncrease: false, script: { submit: { kind: "uncertain", cause: pick(["timeout", "network", "server-error"] as const), httpStatus: null, detail: "x" } } };
+      return { name: kind, charge: 0, script: { submit: { kind: "uncertain", cause: pick(["timeout", "network", "server-error"] as const), httpStatus: null, detail: "x" } } };
+    case "uncertain-billed":
+      // The POST reached the provider and the job ran, but the answer never came back.
+      return { name: kind, charge: bill(), script: { submit: { kind: "uncertain", cause: "timeout", httpStatus: null, detail: "x" } } };
     case "refused-clean":
-      return { name: kind, netIncrease: false, script: { terminal: REFUSED_BY_RISK_CONTROL, generation: gen404 } };
-    case "refused-increase":
-      return { name: kind, netIncrease: true, script: { terminal: REFUSED_BY_RISK_CONTROL, generation: gen404 } };
-    case "refused-paid":
-      return { name: kind, netIncrease: false, script: { terminal: REFUSED_BY_RISK_CONTROL, generation: genFromAfter(pick([15, 100]) * SECOND, cost()) } };
-    case "provider-error":
-      return { name: kind, netIncrease: false, script: { terminal: PROVIDER_FAILED, generation: pick([gen404, () => genFound(cost())] as const) } };
+      return { name: kind, charge: 0, script: { terminal: REFUSED_BY_RISK_CONTROL, generation: gen404 } };
+    case "refused-hidden":
+      // Refused, billed, and /generation says nothing: only /credits can show it.
+      return { name: kind, charge: bill(), script: { terminal: REFUSED_BY_RISK_CONTROL, generation: gen404 } };
+    case "refused-paid": {
+      const c = cost();
+      return { name: kind, charge: c, script: { terminal: REFUSED_BY_RISK_CONTROL, generation: genFromAfter(pick([15, 100]) * SECOND, c) } };
+    }
+    case "provider-error": {
+      const c = cost();
+      return pick([true, false])
+        ? { name: kind, charge: 0, script: { terminal: PROVIDER_FAILED, generation: gen404 } }
+        : { name: kind, charge: c, script: { terminal: PROVIDER_FAILED, generation: () => genFound(c) } };
+    }
+    case "provider-hidden":
+      return { name: kind, charge: bill(), script: { terminal: PROVIDER_FAILED, generation: gen404 } };
     case "late":
-      return { name: kind, netIncrease: false, script: { terminalAfterMs: "never" } };
+      return { name: kind, charge: cost(), script: { terminalAfterMs: "never" } };
     case "unreadable":
-      return { name: kind, netIncrease: false, script: { terminal: REFUSED_BY_RISK_CONTROL, generation: genUnreadable } };
+      return { name: kind, charge: 0, script: { terminal: REFUSED_BY_RISK_CONTROL, generation: genUnreadable } };
   }
 }
 
 describe("random outcome sequences", () => {
   for (const mode of ["auto", "offer"] as const) {
-    test(`(${mode}) the clip never holds more than its accepted worst, never POSTs an attempt twice, and runs Grok only behind a free Kling`, async () => {
+    test(`(${mode}) what the provider bills never exceeds the accepted worst, no attempt POSTs twice, and Grok runs only behind a free Kling`, async () => {
       const problems: string[] = [];
       const rng = mulberry32(mode === "auto" ? 20261013 : 13102026);
-      for (let i = 0; i < 120; i++) {
+      for (let i = 0; i < 400; i++) {
         const quality: ClipQuality = rng() < 0.5 ? "std" : "pro";
         const seconds: ClipSeconds = rng() < 0.5 ? 5 : 10;
         const fallback = rng() < 0.7 ? "auto" : "none";
@@ -80,29 +119,54 @@ describe("random outcome sequences", () => {
         const grokReserve = clipReserveMicros(PRICES.grok, seconds);
         const first = draw(rng, firstReserve);
         const second = draw(rng, grokReserve);
+        const creditsBroken = rng() < 0.3;
+        const foreignRunAt = rng() < 0.3 ? T0 + Math.floor(rng() * 400) * SECOND : null;
+        const journalFails = rng() < 0.1;
+        const stopAt = rng() < 0.1 ? T0 + Math.floor(rng() * 600) * SECOND : null;
+        const label = `#${i} ${mode} ${model}/${quality}/${seconds}s fallback=${fallback} bold=${bold} first=${first.name} second=${second.name} creditsBroken=${creditsBroken} foreign=${foreignRunAt !== null} journalFails=${journalFails} stop=${stopAt !== null}`;
         const check = (ok: boolean, what: string): void => void (ok || problems.push(`${label}: ${what}`));
-        const label = `#${i} ${mode} ${model}/${quality}/${seconds}s fallback=${fallback} bold=${bold} first=${first.name} second=${second.name}`;
 
+        const drawnOf = { kling: grokClip ? undefined : first, grok: grokClip ? first : second } as const;
+        let foreignCost = 0;
         const rig = await createRig({
           mode,
           boldClips: "kling-only",
           kling: grokClip ? {} : first.script,
           grok: grokClip ? first.script : second.script,
-          usage: (t, posts) =>
-            5_000_000 + (posts.kling !== undefined && first.netIncrease && !grokClip && t >= posts.kling + 38 * SECOND ? 300_000 : 0) + (posts.grok !== undefined && (grokClip ? first : second).netIncrease && t >= posts.grok + 38 * SECOND ? 300_000 : 0),
+          // /credits shows every bill ≈ 38 s after its POST, and the photo run's cost once it settled; when it cannot be read it shows nothing.
+          usage: (t, posts) => {
+            if (creditsBroken) return "throw";
+            let total = 5_000_000;
+            for (const key of ["kling", "grok"] as const) {
+              const post = posts[key];
+              if (post !== undefined && t >= post + 38 * SECOND) total += drawnOf[key]?.charge ?? 0;
+            }
+            return total + (foreignRunAt !== null && t >= foreignRunAt ? foreignCost : 0);
+          },
         });
         try {
+          if (journalFails) rig.failJournalOn.add("submitted");
+          if (foreignRunAt !== null) {
+            foreignCost = 90_000;
+            rig.at(foreignRunAt, () => rig.photoRun("run-0001", foreignCost));
+          }
+          if (stopAt !== null) rig.at(stopAt, () => rig.abort());
           const request = { model, quality, seconds, fallback } as const;
           const input = rig.input({ request: grokClip ? { ...request, fallback: "none" } : request, bold });
           const result = await rig.run({ request: input.request, bold, acceptedWorstMicros: input.acceptedWorstMicros });
 
           check(result.kind !== "not-reserved", "the cap refused a reserve of the clip's own");
-          check(result.kind !== "interrupted", "nobody stopped this clip, yet it was interrupted");
-          check(rig.posts().length >= 1, "the clip never sent its first request");
-          check(rig.ledger.lines.some((l) => l.type === "reserve"), "the clip sent a request without a reserve");
+          check(stopAt !== null || (result.kind !== "interrupted" && result.kind !== "cancelled"), "nobody stopped this clip, yet it was interrupted");
+          check(stopAt !== null || rig.posts().length >= 1, "the clip never sent its first request");
 
-          const settledAndOpen = rig.settles().reduce((sum, s) => sum + s.costMicros, 0) + rig.ledger.openReserves().reduce((sum, r) => sum + r.worstMicros, 0);
-          check(settledAndOpen <= input.acceptedWorstMicros, `over the accepted worst: ${settledAndOpen} > ${input.acceptedWorstMicros}`);
+          // What the provider billed for the clip: every attempt whose POST left, at its drawn charge. The hidden bills are in it.
+          const provider = (rig.posts("kling").length > 0 ? (drawnOf.kling?.charge ?? 0) : 0) + (rig.posts("grok").length > 0 ? (drawnOf.grok?.charge ?? 0) : 0);
+          check(provider <= input.acceptedWorstMicros, `the provider billed ${provider}, over the accepted worst ${input.acceptedWorstMicros}`);
+
+          const ours = (attemptId: string): boolean => attemptId.startsWith("clip-");
+          const settledAndOpen =
+            rig.settles().filter((s) => ours(s.attemptId)).reduce((sum, s) => sum + s.costMicros, 0) + rig.ledger.openReserves().filter((r) => ours(r.attemptId)).reduce((sum, r) => sum + r.worstMicros, 0);
+          check(settledAndOpen <= input.acceptedWorstMicros, `the ledger holds ${settledAndOpen}, over the accepted worst ${input.acceptedWorstMicros}`);
 
           check(rig.posts("kling").length <= 1, "Kling POSTed more than once");
           check(rig.posts("grok").length <= 1, "Grok POSTed more than once");

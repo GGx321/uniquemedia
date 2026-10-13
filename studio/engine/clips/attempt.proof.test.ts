@@ -100,10 +100,46 @@ describe("the net-usage check", () => {
     expect(indexOf(rig, "credits")).toBeLessThan(indexOf(rig, "post:kling"));
   });
 
-  test("a photo run that settled between the two reads: the check does not count, so mode auto skips it", async () => {
+  test("a photo run that settled between the two reads: the check does not count, so mode auto settles the worst too", async () => {
     await make({ mode: "auto", kling: refused, grok: grokOk, usage: (t) => 5_000_000 + (t >= TERMINAL + 30 * SECOND ? 90_000 : 0) });
     rig.at(TERMINAL + 60 * SECOND, () => rig.photoRun("run-0001", 90_000));
-    expect(completed(await rig.run()).model).toBe("grok");
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", unknownWhy: "net-uncounted", cost: "worst" });
+    expect(rig.posts("grok")).toHaveLength(0);
+  });
+
+  test("an INVISIBLE Kling charge with an uncountable check never leads to Grok (the clip's real spend stays under its accepted worst)", async () => {
+    // Kling was billed $0.42 but nothing shows: /generation is 404 and /credits cannot be read. Grok would add $0.71 and the clip would cost $1.13 against $0.85 accepted.
+    await make({ mode: "auto", kling: refused, grok: grokOk, usage: () => "throw" });
+    await rig.run();
+    expect(rig.posts("grok")).toHaveLength(0);
+    expect(rig.settles().reduce((sum, s) => sum + s.costMicros, 0)).toBeLessThanOrEqual(GROK_RESERVE);
+  });
+
+  test("a poll whose generation_id is not the job id never proves free: worst in both modes, no Grok", async () => {
+    for (const mode of ["auto", "offer"] as const) {
+      await make({ mode, kling: { ...refused, generationId: "job-someone-else" }, grok: grokOk });
+      expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", cost: "worst", unknownWhy: "id-mismatch" });
+      expect(rig.posts("grok")).toHaveLength(0);
+      expect(rig.generationReads()).toHaveLength(0);
+      await rig.dispose();
+    }
+  });
+
+  test("a poll with no generation_id at all cannot be verified, so it never proves free either", async () => {
+    await make({ mode: "auto", kling: { ...refused, generationId: null }, grok: grokOk });
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", unknownWhy: "id-mismatch" });
+  });
+
+  test("a completed job without usage whose generation_id is not the job id settles the worst, never another job's record", async () => {
+    await make({ kling: { terminal: { status: "completed", usageCostMicros: null }, generationId: "job-someone-else", generation: genFromAfter(15 * SECOND, 100_000) } });
+    const result = completed(await rig.run());
+    expect(result).toMatchObject({ costSource: "worst", providerCostMicros: null });
+    expect(rig.generationReads()).toHaveLength(0);
+  });
+
+  test("a completed job WITH usage keeps its usage even when the generation_id differs", async () => {
+    await make({ kling: { generationId: "job-someone-else" } });
+    expect(completed(await rig.run())).toMatchObject({ costSource: "usage", providerCostMicros: KLING_BILLED });
   });
 
   test("a photo run that settled between the two reads: the check does not count, so mode offer settles the worst", async () => {

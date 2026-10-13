@@ -18,7 +18,7 @@ import { VIDEO_TIERS, type VideoResolution, type VideoTier } from "../money/pric
 import { costToMicros } from "../money/settleRule";
 import { isContentFailure } from "../openrouter/video";
 import type { FailureKind, GenerationResult, OpenRouterClient, VideoPollResult, VideoRequest } from "../openrouter/types";
-import { holdUntilForReserve, holdUntilForSubmitted, holdUntilForTerminal, holdUntilForUncertain, type ClipHolds } from "./holds";
+import { holdUntilForReserve, holdUntilForSubmitted, holdUntilForTerminal, type ClipHolds } from "./holds";
 import { clipAttemptId, type ClipJournal } from "./journal";
 import type { ClipAttemptOutcome, ClipCostSource } from "./schemas";
 import { PROOF_READ_TRIES, type ClipTimings } from "./timings";
@@ -63,7 +63,7 @@ export interface ClipPhaseEvent {
 
 export interface ClipRunDeps {
   /** The engine's budget. `release` is never used: a reserve is settled or abandoned, because once the request body is built the POST may leave. */
-  readonly budget: Pick<Budget, "tryReserve" | "settle" | "abandon" | "ledger">;
+  readonly budget: Pick<Budget, "tryReserve" | "settle" | "abandon" | "release" | "ledger">;
   readonly client: Pick<OpenRouterClient, "submitVideo" | "pollVideo" | "fetchGeneration" | "fetchCredits">;
   readonly journal: Pick<ClipJournal, "requested" | "submitted" | "ended">;
   readonly holds: Pick<ClipHolds, "hold" | "release">;
@@ -109,7 +109,8 @@ export interface ClipRunInput {
 /** How a failed clip was billed, for its tile: nothing, a number the provider gave, or the worst case. */
 export type CostKind = "free" | "billed" | "worst";
 /** Why a refusal's cost is unknown (settled at worst). */
-export type UnknownWhy = "net-increase" | "unreadable" | "net-uncounted";
+/** `id-mismatch`: the poll's generation_id is not the job id (or is missing), so /generation cannot be trusted to be this job's record (I5.47). */
+export type UnknownWhy = "net-increase" | "unreadable" | "net-uncounted" | "id-mismatch";
 
 /** One attempt as the clip's record keeps it. */
 export interface AttemptSummary {
@@ -159,8 +160,13 @@ export type ClipRunResult =
       aboveWorst: MoneyError | null;
     }
   | { kind: "late"; attempts: AttemptSummary[]; late: LateAttempt }
-  /** The reserve was refused (month, cap, RECONCILE_REQUIRED, HALTED) before anything was sent: free. */
-  | { kind: "not-reserved"; refusal: ReserveRefusal; attempts: AttemptSummary[] }
+  /**
+   * The reserve was refused (month, cap, RECONCILE_REQUIRED, HALTED) before anything was sent: free. `afterFreeRefusal`: this was Grok's reserve behind a Kling that was refused and settled 0, and the refusal is
+   * NOT the month or the cap (those end the clip `grok-no-room`): the caller says why Grok could not run.
+   */
+  | { kind: "not-reserved"; refusal: ReserveRefusal; afterFreeRefusal: boolean; attempts: AttemptSummary[] }
+  /** The signal fired before the POST left: nothing was sent, the reserve (if any) was released, nothing is open. */
+  | { kind: "cancelled"; attempts: AttemptSummary[] }
   /** The signal fired (the engine is shutting down): the reserve stays open at worst, nothing is settled by a guess. */
   | { kind: "interrupted"; attempts: AttemptSummary[] };
 
@@ -196,6 +202,7 @@ type AttemptEnd =
   | { kind: "failed"; reason: ClipFailReason; cost: CostKind; unknownWhy?: UnknownWhy; detail?: string; aboveWorst: MoneyError | null }
   | { kind: "late"; late: LateAttempt }
   | { kind: "not-reserved"; refusal: ReserveRefusal }
+  | { kind: "cancelled" }
   | { kind: "interrupted" };
 
 /** Thrown inside an attempt when the signal fires while it waits; the attempt turns it into `interrupted`. */
@@ -211,6 +218,9 @@ export async function runClip(deps: ClipRunDeps, input: ClipRunInput, signal: Ab
   // The sheet and `clips.create` refuse both before anything is written; a caller that gets here anyway sends nothing.
   if (input.bold && boldClips === "off") throw new RangeError("a frame of «Смелая» is not suitable while BOLD_CLIPS is `off`: nothing may be sent");
   if (input.request.model === "grok" && mode !== "offer") throw new RangeError("a Grok clip exists only in mode `offer`");
+
+  // Stopped before anything is written: no journal, no reserve, nothing for a restart to find.
+  if (signal.aborted) return { kind: "cancelled", attempts: [] };
 
   const prices: ClipPrices = Object.freeze({ std: { ...input.prices.std }, pro: { ...input.prices.pro }, grok: { ...input.prices.grok } });
   const attempts: AttemptSummary[] = [];
@@ -234,8 +244,13 @@ export async function runClip(deps: ClipRunDeps, input: ClipRunInput, signal: Ab
     return { kind: "failed", reason: "refused-free", attempts, model: firstModel, cost: "free", grokOffer: next === "offer", aboveWorst: null };
   }
   const second = await runAttempt(ctx, 2, "grok");
-  // Grok's reserve refused (the month took the room while Kling was being proven): the clip ends free, and nothing was sent.
-  if (second.kind === "not-reserved") return { kind: "failed", reason: "grok-no-room", attempts, model: "grok", cost: "free", grokOffer: false, aboveWorst: null };
+  // Grok's reserve refused. The month or the cap (a photo run took the room while Kling was being proven): the clip ends free as `grok-no-room`. Any other refusal (RECONCILE_REQUIRED, HALTED) is not
+  // about room, and is handed back as it is. Either way nothing was sent.
+  if (second.kind === "not-reserved") {
+    const aboutRoom = second.refusal.reason === "BUDGET_EXCEEDED" || second.refusal.reason === "RUN_CAP_EXCEEDED";
+    if (aboutRoom) return { kind: "failed", reason: "grok-no-room", attempts, model: "grok", cost: "free", grokOffer: false, aboveWorst: null };
+    return { kind: "not-reserved", refusal: second.refusal, afterFreeRefusal: true, attempts };
+  }
   if (second.kind === "refused-free") return { kind: "failed", reason: "refused-both", attempts, model: "grok", cost: "free", grokOffer: false, aboveWorst: null };
   return resultOf(ctx, second, "grok", true);
 }
@@ -260,7 +275,9 @@ function resultOf(ctx: Ctx, end: Exclude<AttemptEnd, { kind: "refused-free" }>, 
     case "late":
       return { kind: "late", attempts, late: end.late };
     case "not-reserved":
-      return { kind: "not-reserved", refusal: end.refusal, attempts };
+      return { kind: "not-reserved", refusal: end.refusal, afterFreeRefusal: false, attempts };
+    case "cancelled":
+      return { kind: "cancelled", attempts };
     case "interrupted":
       return { kind: "interrupted", attempts };
   }
@@ -281,6 +298,7 @@ async function runAttempt(ctx: Ctx, n: 1 | 2, model: ClipAttemptModel): Promise<
   const reserveMicros = clipReserveMicros(ctx.prices[tier], seconds);
   const attemptId = clipAttemptId(input.clipId, n);
 
+  if (ctx.signal.aborted) return { kind: "cancelled" };
   const body = await input.buildRequest({ n, attemptId, model, tier, modelId, resolution, seconds, reserveMicros });
   const reserved = await deps.budget.tryReserve({ attemptId, jobId: input.clipId, scope: { avatarJobId: input.clipId }, model: modelId, worstMicros: reserveMicros });
   if (!reserved.ok) return { kind: "not-reserved", refusal: reserved };
@@ -315,6 +333,9 @@ class Attempt {
   private mark = 0;
   private baseline: number | null = null;
   private abandoned = false;
+  /** The POST is about to leave (or has): from here a stop leaves the reserve open at worst. Before it, a stop releases the reserve. */
+  private sent = false;
+  private reserveAtMs = 0;
 
   constructor(
     private readonly ctx: Ctx,
@@ -332,6 +353,12 @@ class Attempt {
       return await this.execute(body);
     } catch (error) {
       if (!(error instanceof Stopped)) throw error;
+      if (!this.sent) {
+        // Stopped before the POST: nothing reached the provider, so nothing may stay open at worst.
+        await this.deps.budget.release(this.handle, "stopped before the POST");
+        this.deps.holds.release(this.attemptId);
+        return { kind: "cancelled" };
+      }
       if (!this.abandoned && this.deps.budget.ledger.closeOf(this.attemptId) === undefined) await this.abandon();
       return { kind: "interrupted" };
     }
@@ -342,14 +369,17 @@ class Attempt {
     const t = deps.timings;
     const reserveLine = deps.budget.ledger.reserveOf(this.attemptId);
     // From the reserve on, the POST may leave: a throw or a crash before `submitted` is held 20 min from the reserve line's `at` (I5.48).
-    deps.holds.hold(this.attemptId, holdUntilForReserve(reserveLine === undefined ? deps.now() : Date.parse(reserveLine.at), t));
+    this.reserveAtMs = reserveLine === undefined ? deps.now() : Date.parse(reserveLine.at);
+    deps.holds.hold(this.attemptId, holdUntilForReserve(this.reserveAtMs, t));
     deps.onPhase?.({ phase: "submitting", model: this.model });
 
     // The net-usage baseline: read BEFORE the POST, so a charge that shows up before the terminal status (probe P-V: ≈ 38 s after the POST) is part of the comparison, not of the baseline.
     this.mark = deps.budget.ledger.lines.length;
-    this.baseline = await this.readUsage(1);
+    // Read PROOF_READ_TRIES times: one /credits blip before the POST must not cost the clip its Grok (a clip without a baseline can never prove a refusal free).
+    this.baseline = await this.readUsage(PROOF_READ_TRIES);
+    if (ctx.signal.aborted) throw new Stopped();
 
-    const sentAtMs = deps.now();
+    this.sent = true;
     let submit: Awaited<ReturnType<ClipRunDeps["client"]["submitVideo"]>>;
     try {
       submit = await deps.client.submitVideo(body, ctx.signal);
@@ -370,8 +400,8 @@ class Attempt {
     }
 
     if (submit.kind === "uncertain") {
+      // The hold keeps its base, the reserve line's `at` + 20 min (the same one a restart reads from the ledger).
       await this.abandon();
-      deps.holds.hold(this.attemptId, holdUntilForUncertain(sentAtMs, t));
       this.record("uncertain", "none");
       return { kind: "failed", reason: "submit-uncertain", cost: "worst", detail: submit.detail, aboveWorst: null };
     }
@@ -440,7 +470,8 @@ class Attempt {
       source = "usage";
     } else {
       // No usage on the poll: /generation answers, from 15 s after the status (a 404 right after `completed` is a billed job whose record has not appeared yet, never zero).
-      const read = await this.readGeneration(terminalAtMs + this.deps.timings.proofFirstReadMs, true);
+      // Only a record of THIS job may be read: a poll that names another generation id gets no /generation read at all.
+      const read: GenerationRead = this.idIsVerified(poll) ? await this.readGeneration(terminalAtMs + this.deps.timings.proofFirstReadMs, true) : { kind: "unreadable" };
       if (read.kind === "found") {
         costMicros = read.micros;
         providerCost = read.micros;
@@ -470,8 +501,9 @@ class Attempt {
     const { deps } = this;
     let content = poll.status === "failed" && poll.contentFailure;
     deps.onPhase?.({ phase: "proving", model: this.model, content, proveUntil: iso(terminalAtMs + deps.timings.proofSecondReadMs) });
-    const proof = await this.prove(terminalAtMs);
-    if (proof.kind === "free" && proof.contentByFinish) content = true;
+    const proof: Proof = this.idIsVerified(poll) ? await this.prove(terminalAtMs) : { kind: "unknown", why: "id-mismatch" };
+    // A moderation finish on /generation makes a FAILED job a content refusal; a cancelled or expired job, or a provider error, is never one (I5.47: no automatic Grok behind it).
+    if (proof.kind === "free" && proof.contentByFinish && poll.status === "failed") content = true;
 
     let costKind: CostKind;
     let costSource: ClipCostSource;
@@ -526,9 +558,16 @@ class Attempt {
     const baseline = this.baseline;
     const counts = baseline !== null && after !== null && this.ledgerIsQuiet();
     if (counts && after - baseline > NET_USAGE_TOLERANCE_MICROS) return { kind: "unknown", why: "net-increase" };
-    if (!counts && this.ctx.mode === "offer") return { kind: "unknown", why: "net-uncounted" };
+    // A check that cannot count (the baseline or the second read is unreadable, or the ledger moved in between) does NOT prove the refusal free, in either mode: an invisible Kling charge would
+    // otherwise be followed by an automatic Grok and the clip would cost more than the owner accepted. Kling settles at worst; the tile offers a manual retry.
+    if (!counts) return { kind: "unknown", why: "net-uncounted" };
     const contentByFinish = [first, second].some((read) => read.kind === "found" && isContentFailure(null, read.finishReason));
     return { kind: "free", contentByFinish };
+  }
+
+  /** The poll names this very job as its generation (I5.47). A missing or different id fails closed: the /generation record could belong to another job. */
+  private idIsVerified(poll: StatusPoll): boolean {
+    return poll.generationId !== null && poll.generationId === this.providerJobId;
   }
 
   /** The net-usage check counts only if nothing else touched the ledger between its two reads (this attempt's own lines excepted). */

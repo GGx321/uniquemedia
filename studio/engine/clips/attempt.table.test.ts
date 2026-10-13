@@ -275,17 +275,50 @@ describe("row 7 · a poll-time content refusal, 404 on both reads", () => {
     expect(journalOf(rig)).toContain(`ended:${KLING}:refused:proof`);
   });
 
-  test("(auto · the check could not count: a photo run settled between the reads) skips the check, settles 0, Grok runs", async () => {
+  test("(auto · the check could not count: a photo run settled between the reads) is NOT proven free: worst, estimated, no automatic Grok", async () => {
     await make({ mode: "auto", kling: refused, usage: (t) => usageWith(T0 + 100 * SECOND)(t), grok: { terminal: { status: "completed", usageCostMicros: GROK_BILLED } } });
     photoRunInTheWindow(rig);
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", cost: "worst", unknownWhy: "net-uncounted", grokOffer: false });
+    expect(rig.settles(KLING)).toMatchObject([{ costMicros: KLING_RESERVE, estimated: true }]);
+    expectNoGrok(rig, GROK);
+  });
+
+  test("(auto · /credits unreadable) the check cannot count: worst, estimated, no automatic Grok", async () => {
+    await make({ mode: "auto", kling: refused, usage: () => "throw", grok: { terminal: { status: "completed", usageCostMicros: GROK_BILLED } } });
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", cost: "worst", unknownWhy: "net-uncounted", grokOffer: false });
+    expect(rig.settles(KLING)).toMatchObject([{ costMicros: KLING_RESERVE, estimated: true }]);
+    expectNoGrok(rig, GROK);
+  });
+
+  test("(auto · one /credits blip before the POST) the baseline is read three times, so the clip keeps its Grok", async () => {
+    let reads = 0;
+    await make({ mode: "auto", kling: refused, usage: () => (++reads === 1 ? "throw" : 5_000_000), grok: { terminal: { status: "completed", usageCostMicros: GROK_BILLED } } });
     expect(completed(await rig.run()).model).toBe("grok");
     expect(rig.settles(KLING)).toMatchObject([{ costMicros: 0, estimated: false }]);
   });
 
-  test("(auto · /credits unreadable) the check cannot count: skipped, settles 0, Grok runs", async () => {
-    await make({ mode: "auto", kling: refused, usage: () => "throw", grok: { terminal: { status: "completed", usageCostMicros: GROK_BILLED } } });
-    expect(completed(await rig.run()).model).toBe("grok");
-    expect(rig.settles(KLING)).toMatchObject([{ costMicros: 0 }]);
+  test("(auto · /credits unreadable three times before the POST) no baseline: worst, no Grok", async () => {
+    let reads = 0;
+    await make({ mode: "auto", kling: refused, usage: () => (++reads <= 3 ? "throw" : 5_000_000), grok: { terminal: { status: "completed", usageCostMicros: GROK_BILLED } } });
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", unknownWhy: "net-uncounted" });
+    expectNoGrok(rig, GROK);
+  });
+
+  test("(auto × fallback none · the check could not count) worst, estimated: not refused-free", async () => {
+    await make({ mode: "auto", kling: refused, usage: () => "throw" });
+    expect(failed(await rig.run({ request: { model: "kling", quality: "std", seconds: 5, fallback: "none" } }))).toMatchObject({ reason: "refused-unknown", cost: "worst", unknownWhy: "net-uncounted" });
+    expect(rig.settles(KLING)).toMatchObject([{ costMicros: KLING_RESERVE, estimated: true }]);
+  });
+
+  test("(auto × «Смелая» kling-only · the check could not count) worst, estimated: not refused-free", async () => {
+    await make({ mode: "auto", boldClips: "kling-only", kling: refused, usage: () => "throw" });
+    expect(failed(await rig.run({ bold: true }))).toMatchObject({ reason: "refused-unknown", cost: "worst", unknownWhy: "net-uncounted" });
+  });
+
+  test("(auto · Grok's own attempt) the check could not count on it: worst", async () => {
+    await make({ mode: "auto", kling: refused, grok: refused, usage: (t, posts) => (posts.grok !== undefined ? "throw" : 5_000_000) });
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", model: "grok", cost: "worst", unknownWhy: "net-uncounted" });
+    expect(rig.settles()).toMatchObject([{ costMicros: 0 }, { costMicros: GROK_RESERVE, estimated: true }]);
   });
 
   test("(offer · check clean) settles 0 and offers Grok as a new click", async () => {
@@ -468,6 +501,12 @@ describe("row 11 · a poll-time non-content failure (`provider-error`) takes the
   test("(auto · a net increase) settles the worst, estimated", async () => {
     await make({ mode: "auto", kling: providerFailed, usage: (t, posts) => 5_000_000 + (posts.kling !== undefined && t >= posts.kling + 38 * SECOND ? KLING_BILLED : 0) });
     expect(failed(await rig.run())).toMatchObject({ reason: "provider-error", cost: "worst" });
+  });
+
+  test("(auto · the check could not count) worst, estimated: a 404 is not zero in either mode", async () => {
+    await make({ mode: "auto", kling: providerFailed, usage: () => "throw" });
+    expect(failed(await rig.run())).toMatchObject({ reason: "provider-error", cost: "worst", unknownWhy: "net-uncounted" });
+    expect(rig.settles(KLING)).toMatchObject([{ costMicros: KLING_RESERVE, estimated: true }]);
   });
 
   test("(offer · clean) settles 0, free: the offer never follows a provider error", async () => {
