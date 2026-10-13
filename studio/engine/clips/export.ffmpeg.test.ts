@@ -126,7 +126,7 @@ describe("the other sources", () => {
 
 // The «as built» numbers (plan s5b1 §5.13): what minterpolate costs against plain duplication on a 5 s 720p clip on this machine. A measurement, so it runs in the perf tier only.
 const longer = useClipFixtures();
-perfOnlyTest("[perf] the export's encode time: interpolate against duplicate, 5 s of 720p", async () => {
+perfOnlyTest("the export's encode time: interpolate against duplicate, 5 s of 720p", async () => {
   const source = await longer({ width: 720, height: 1280, seconds: 5 });
   const times: Record<string, number> = {};
   for (const mode of ["interpolate", "duplicate"] as const) {
