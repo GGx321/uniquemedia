@@ -213,6 +213,9 @@ export interface AssembledScene {
   references: readonly LibraryReference[];
 }
 
+/** The «Смелая» banks' moments that need her whole body in a friend's photo, beyond the ones about her feet. */
+const BOLD_WHOLE_BODY_WORDS = /\bcrouch\w*\b/i;
+
 /**
  * Builds one slot's final image prompt, in the settled order (S5.1a, plan 6.2): the capture line, the pose phrase, the writer's sentence, the room
  * phrase (if the slot's place is a room), the reference binding and the avatar's descriptor (via `promptSubject`, the only path from the avatar
@@ -247,7 +250,8 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, senten
   const posePhrase = legs ? legsPhrase : capture === "mirror-hidden" ? (look?.mirrorBack === true ? MIRROR_BACK_POSE_PHRASE : HIDDEN_FACE_POSE_PHRASE[slot.pose]) : (glancePhrase ?? POSE_PHRASE[slot.pose]);
   const bindingAnchor = faceless ? NO_FACE_ANCHOR : BINDING_ANCHOR[slot.pose];
   // S5.6R: a friend's photo of a moment about her feet shows her whole body (an own scene has no stored moment: the line its key draws).
-  const wholeBody = !isOwnSlot(slot) && FEET_MOMENT_WORDS.test(slot.activity);
+  // Polish after C4 (round 2): a «Смелая» bank's crouch (a hand in the water) shows her whole body too; the ordinary banks' crouch keeps the line its key draws.
+  const wholeBody = !isOwnSlot(slot) && (FEET_MOMENT_WORDS.test(slot.activity) || (isBoldCategory(slot.category) && BOLD_WHOLE_BODY_WORDS.test(slot.activity)));
   const scene = withNotDenim(field(sentence), isOwnSlot(slot) ? undefined : slot.outfit);
   const raw =
     `${captureLineOf(capture, key, { wholeBody })} ${look?.mirrorBack === true ? `${MIRROR_BACK_LINE} ` : ""}${posePhrase}. ${scene}. ` +

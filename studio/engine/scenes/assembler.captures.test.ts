@@ -85,6 +85,31 @@ describe("a friend's photo of a moment about her feet", () => {
   });
 });
 
+// Polish after C4, round 2: the beach's «crouches, one hand in the water» was framed «from her knees up» in 20 of 53 frames, which leaves the hand in the water out of the picture. Only the
+// «Смелая» banks' crouch takes the whole body; «Виды»'s «crouches at the water's edge» keeps the line its key draws.
+describe("a crouch in a «Смелая» bank", () => {
+  const KEYS = Array.from({ length: 40 }, (_, i) => `slot-${i + 1}`);
+
+  test.each(["friend", "candid"] as const)("a %s photo of the beach's crouch shows her whole body, never from her knees up", (capture) => {
+    for (const attemptIdBase of KEYS) {
+      const slot = slotOf(capture, { category: "beach", location: "a rooftop pool", activity: "crouches, one hand in the water", outfit: "a black bikini", attemptIdBase });
+      const prompt = assemble(slot);
+      expect(prompt.startsWith(captureLineOf(capture, keyOf(slot), { wholeBody: true }))).toBe(true);
+      expect(prompt).not.toContain("from her knees up");
+    }
+  });
+
+  test("an ordinary category's crouch keeps the line its key draws, knees-up included", () => {
+    let kneesUp = 0;
+    for (const attemptIdBase of KEYS) {
+      const slot = slotOf("friend", { category: "travel", location: "a harbour", activity: "crouches at the water's edge", outfit: "a navy wrap dress", attemptIdBase });
+      expect(assemble(slot).startsWith(captureLineOf("friend", keyOf(slot)))).toBe(true);
+      if (assemble(slot).includes("from her knees up")) kneesUp++;
+    }
+    expect(kneesUp).toBeGreaterThan(0);
+  });
+});
+
 describe("back or side to the mirror", () => {
   test("a moment tagged mirrorBack adds the sentence straight after the capture line", () => {
     const slot = slotOf("mirror-hidden", { location: "her bathroom", activity: "sits on the counter by the mirror", outfit: "an open-back top and grey jeans", pose: "three-quarter" });
