@@ -167,6 +167,7 @@ import type { ClipRecordsDeps } from "./clips/records";
 import { ClipService } from "./clips/service";
 import { clipTimings, type ClipTimings } from "./clips/timings";
 import type { BoldClipsMode } from "../shared/engine/clips";
+import type { ExportFpsMode } from "./clips/exportProfile";
 import { NODE_COMMIT_FS } from "./videos/commitFs";
 import { withRootLock } from "./videos/rootLock";
 import { CommitTracker } from "./videos/live";
@@ -379,8 +380,8 @@ export interface EngineDeps {
    * E2E smoke passes the short one (`clipTimings("short")`), which keeps every ordering of the real one.
    */
   clipTimings?: ClipTimings;
-  /** Test knobs of 5b.1: the fallback mode (`GROK_FALLBACK`) and `BOLD_CLIPS`, so every value can be played against the real engine. The constants rule otherwise. */
-  clipSwitches?: { mode?: "auto" | "offer"; boldClips?: BoldClipsMode };
+  /** Test knobs of 5b.1: the fallback mode (`GROK_FALLBACK`), `BOLD_CLIPS` and the export's `EXPORT_FPS` (S5.V4c), so every value can be played against the real engine. The constants rule otherwise. */
+  clipSwitches?: { mode?: "auto" | "offer"; boldClips?: BoldClipsMode; exportFps?: ExportFpsMode };
   /** Test seam of the clip records (S5.V4a2): the delete's removal of a file, so a test can hold a delete in its middle. */
   clipRecords?: Pick<ClipRecordsDeps, "remove">;
 }
@@ -1196,6 +1197,7 @@ export class Engine {
       timings: deps.clipTimings ?? clipTimings(),
       ...(deps.clipSwitches?.mode === undefined ? {} : { mode: deps.clipSwitches.mode }),
       ...(deps.clipSwitches?.boldClips === undefined ? {} : { boldClips: deps.clipSwitches.boldClips }),
+      ...(deps.clipSwitches?.exportFps === undefined ? {} : { exportFps: deps.clipSwitches.exportFps }),
       ...(deps.clipRecords === undefined ? {} : { records: deps.clipRecords }),
       log: (line) => console.warn(`studio engine: ${line}`),
       exportStatus: (requiredBytes) => this.#refreshExportStatus(requiredBytes),
@@ -2812,9 +2814,9 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.delete(command.payload) };
       case "clips.retryDownload":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.retryDownload(command.payload) };
+      // S5.V4c: «Сохранить в папку» starts the clip's export job (free; its refusals come before any byte).
       case "clips.export":
-        // S5.V4c (the export) builds this.
-        return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not built yet` });
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.export(command.payload) };
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }

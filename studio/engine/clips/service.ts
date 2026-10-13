@@ -33,6 +33,8 @@ import type { ExportNumberLibrary } from "../videos/exportNumbers";
 import type { CommitTracker } from "../videos/live";
 import type { RootLockOptions } from "../videos/rootLock";
 import type { ClipRunDeps } from "./attempt";
+import { ClipExports } from "./export";
+import type { ExportFpsMode } from "./exportProfile";
 import type { ClipFaceRole } from "./faceRole";
 import { firstFrameRefusalOf } from "./firstFrame";
 import { checkClipFace } from "./faceCheck";
@@ -157,6 +159,8 @@ export interface ClipServiceDeps {
   withRootLock: <T>(root: string, work: () => Promise<T>, options?: RootLockOptions) => Promise<T>;
   /** What `highestNamedNumber` reads of the live library, or null when none is open. */
   exportNumbers: () => { library: ExportNumberLibrary; libraryRoot: string } | null;
+  /** Test knob: the export's fps mode (`EXPORT_FPS` when absent). */
+  exportFps?: ExportFpsMode;
 }
 
 type CreatePayload = CommandPayload<"clips.create">;
@@ -183,12 +187,27 @@ export class ClipService {
 
   /** S5.V4a2: the committed records (list, get, markSeen, delete, retryDownload); the commands below hand over to it. */
   readonly #records: ClipRecords;
+  /** S5.V4c: «Сохранить в папку», the export jobs (one at a time). */
+  readonly #exports: ClipExports;
 
   constructor(deps: ClipServiceDeps) {
     this.#deps = deps;
     this.#mode = deps.mode ?? GROK_FALLBACK;
     this.#boldClips = deps.boldClips ?? BOLD_CLIPS;
     this.holds = createClipHolds({ now: deps.clock, ...(deps.holdTimers === undefined ? {} : { timers: deps.holdTimers }), onChange: () => deps.emitMoney() });
+    // A job on a clip (a download retry, an export) holds the clip against its other commands and the library against a switch, until it ends.
+    const host = {
+      busy: (clipId: string) => this.#activeClips.has(clipId),
+      begin: (clipId: string) => {
+        this.#work++;
+        this.#activeClips.add(clipId);
+        return () => {
+          this.#work--;
+          this.#activeClips.delete(clipId);
+        };
+      },
+      stop: this.#stop.signal,
+    };
     this.#records = new ClipRecords({
       newId: deps.newId,
       clock: deps.clock,
@@ -208,22 +227,37 @@ export class ClipService {
         if (check.ok) return { root: check.root, rootId: check.rootId, caseInsensitive: true };
         return check.unanswered === true ? "unanswered" : null;
       },
-      host: {
-        busy: (clipId) => this.#activeClips.has(clipId),
-        begin: (clipId) => {
-          this.#work++;
-          this.#activeClips.add(clipId);
-          return () => {
-            this.#work--;
-            this.#activeClips.delete(clipId);
-          };
-        },
-        stop: this.#stop.signal,
-      },
+      host,
       faceOf: (input) => this.#faceOf(input),
       log: deps.log,
       ...(deps.records?.remove === undefined ? {} : { remove: deps.records.remove }),
     });
+    this.#exports = new ClipExports({
+      newId: deps.newId,
+      clock: deps.clock,
+      log: deps.log,
+      library: () => {
+        const library = deps.currentLibrary();
+        return library === null ? null : { key: library, clipsDirOf: (avatarId) => clipsDirOf(library, avatarId), avatar: (avatarId) => library.getAvatar(avatarId) };
+      },
+      pendingDelete: deps.pendingDelete,
+      jobs: deps.jobs,
+      emit: deps.emit,
+      host,
+      withClipLock: (clipId, work) => this.#records.withClipLock(clipId, work),
+      rewrite: (avatarId, clipId, build) => this.#records.rewrite(avatarId, clipId, build),
+      exportStatus: deps.exportStatus,
+      liveCommits: deps.liveCommits,
+      withRootLock: deps.withRootLock,
+      exportNumbers: deps.exportNumbers,
+      ...(deps.exportFps === undefined ? {} : { fps: deps.exportFps }),
+    });
+  }
+
+  // ---------- «Сохранить в папку» (S5.V4c) ----------
+
+  export(payload: CommandPayload<"clips.export">): Promise<{ jobId: string }> {
+    return this.#exports.start(payload);
   }
 
   // ---------- the records (S5.V4a2) ----------
@@ -357,6 +391,8 @@ export class ClipService {
   libraryClosed(): void {
     this.#recoveryStop.abort();
     this.#recoveryStop = new AbortController();
+    // An export reads the library's file and writes its record: it stops too (until its name is claimed; from then it finishes).
+    this.#exports.libraryGone();
   }
 
   /**
@@ -424,6 +460,8 @@ export class ClipService {
     const state = this.#deps.jobs.stateOf(jobId);
     if (state?.kind !== "clip") throw new EngineFailure({ code: "NOT_FOUND", detail: `no clip job ${jobId} in this engine` });
     if (state.status !== "running") return;
+    // An export (S5.V4c) moves no money: it stops until its name is claimed, and ends `cancelled`.
+    if (this.#exports.owns(jobId)) return this.#exports.cancel(jobId);
     // A recovery (after a restart) is not a clip that was just sent, in whatever phase it is in: its own words, from the existing texts.
     if (this.#recoveryJobs.has(jobId)) throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "job-running", detail: "the clip is being recovered after a restart; it cannot be cancelled" });
     if (state.phase !== "preparing") throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "submitted", detail: "the clip has already been sent; it cannot be cancelled" });
