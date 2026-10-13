@@ -1888,3 +1888,87 @@ describe("scenes.get while the job ends", () => {
     expect(result.result.sceneSet).toMatchObject({ status: "ready", revision: 3 });
   });
 });
+
+describe("scenes.get while jobs come and go", () => {
+  test("never answers «ready» with the older revision when refused writes on another avatar fall into the reads and the job ends in a later one", async () => {
+    const avatarId = await seedAvatar();
+    const other = await seedAvatar();
+    const otherSet = await seedSet(other, { sceneSetId: "set-seed-0002", runId: "run-seed-0002" });
+    const opened = (): { open: () => void; opened: Promise<void> } => {
+      let open: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      return { open, opened: gate };
+    };
+    const finishReached = opened();
+    const finishRelease = opened();
+    let setRenames = 0;
+    let armed = false;
+    let reads = 0;
+    let jobId = "none";
+    let running: Started | null = null;
+    const here = join("avatars", avatarId, "scenes");
+    running = await engineOver(sceneNetwork(), {
+      beforeRename: async (path) => {
+        if (!path.includes(here)) return;
+        if (++setRenames === 3) {
+          finishReached.open();
+          await finishRelease.opened;
+        }
+      },
+      // Each read of this avatar's set: the first two are overtaken by a refused write on the other avatar (it writes no file), the third by the end of this avatar's job.
+      afterRead: async (path) => {
+        if (!armed || !path.includes(here) || running === null) return;
+        reads++;
+        if (reads <= 2) expect(code(await running.engine.handle(writeCommand(99, 10 * ATTEMPT, otherSet)))).toBe("SCENES_CHANGED");
+        else if (reads === 3) {
+          finishRelease.open();
+          await jobEnd(running.events, jobId);
+        }
+      },
+    });
+
+    jobId = composed(await running.engine.handle(composeCommand(avatarId, { count: 20 }))).jobId ?? "none";
+    await finishReached.opened;
+    armed = true;
+    const first = ok(await running.engine.handle(command("scenes.get", { avatarId })));
+    finishRelease.open();
+    await jobEnd(running.events, jobId);
+
+    if (first.type !== "scenes.get" || first.result.sceneSet === null) throw new Error("expected a set");
+    const answered = first.result.sceneSet;
+    expect(answered.status === "ready" && answered.revision < 3).toBe(false);
+    expect(await setOf(running.engine, avatarId)).toMatchObject({ status: "ready", revision: 3 });
+  });
+
+  test("answers «writing» with the revision it read when a job of the set starts while the set is being read", async () => {
+    const avatarId = await seedAvatar();
+    const rewriting = held();
+    let armed = false;
+    let started: Promise<ResponseMessage> | null = null;
+    let sceneSetId = "none";
+    let revision = 0;
+    let running: Started | null = null;
+    running = await engineOver(sceneNetwork({ writer: (call, n) => (n === 1 ? goodAnswer(call, n) : rewriting.handler(call, n)) }), {
+      afterRead: async () => {
+        if (!armed || running === null || started !== null) return;
+        started = running.engine.handle(command("scenes.write", { sceneSetId, revision, target: { kind: "rewrite", sceneIds: [1], redraw: false }, acceptedWorstMicros: 10 * ATTEMPT }));
+        await started;
+      },
+    });
+    const composedSet = composed(await running.engine.handle(composeCommand(avatarId, { count: 20 })));
+    await jobEnd(running.events, composedSet.jobId ?? "none");
+    sceneSetId = composedSet.sceneSetId;
+    const settled = await setOf(running.engine, avatarId);
+    revision = settled.revision;
+    armed = true;
+
+    const during = await setOf(running.engine, avatarId);
+
+    expect(during).toMatchObject({ status: "writing", revision, write: { kind: "rewrite" } });
+    rewriting.release();
+    const rewriteJob = jobOf(await (started ?? Promise.reject(new Error("the rewrite never started"))));
+    await jobEnd(running.events, rewriteJob);
+  });
+});

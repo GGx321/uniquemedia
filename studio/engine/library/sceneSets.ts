@@ -338,7 +338,7 @@ export interface SceneSetStoreDeps {
   beforeUnlink?: ((path: string) => void | Promise<void>) | undefined;
   /** Test seam: called before each record is read. What it throws is what the read threw (an OS error, on any platform). */
   beforeRead?: ((path: string) => void | Promise<void>) | undefined;
-  /** Test seam: called after a record is read and before the caller gets it, so a test can let the world move on between the read and its use. */
+  /** Test seam: called after each read of a record, whatever it found (a missing or unreadable record too), before the caller gets the result, so a test can let the world move on between the read and its use. */
   afterRead?: ((path: string) => void | Promise<void>) | undefined;
   /** Test seam: called before an avatar's scenes/ folder is listed. What it throws is what the listing threw. */
   beforeList?: ((dir: string) => void | Promise<void>) | undefined;

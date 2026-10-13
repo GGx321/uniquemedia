@@ -83,7 +83,7 @@ export interface LibraryDeps {
     beforeUnlink?: (path: string) => void | Promise<void>;
     /** Called before each category record or scene set record is read; what it throws is what the read threw (an OS error such as EIO or EBUSY, on any platform). */
     beforeRead?: (path: string) => void | Promise<void>;
-    /** Called after a scene set record is read, before the reader uses it: a test lets the set move on in between. */
+    /** Called after each read of a scene set record, whatever it found, before the reader uses the result: a test lets the set move on in between. */
     afterRead?: (path: string) => void | Promise<void>;
     /** Called before the categories/ folder or an avatar's scenes/ folder is listed; what it throws is what the listing threw. */
     beforeList?: (dir: string) => void | Promise<void>;
