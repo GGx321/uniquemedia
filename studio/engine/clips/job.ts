@@ -418,10 +418,17 @@ class ClipChain {
     };
   }
 
-  /** The record is the commit (I5.53); the journal goes once it stands. */
+  /**
+   * The record is the commit (I5.53); the journal goes once it stands. A journal that cannot be removed then (the disk refused the removal or the folder's flush) changes nothing of
+   * the clip: it is recorded, and a stale journal next to a record is the restart's to remove (S5.V6). It is logged, never an error of the job.
+   */
   private async commit(record: ClipRecord): Promise<ClipJobOutcome> {
     await writeClipRecord(this.input.clipsDir, record);
-    await removeJournal(this.input.clipsDir, this.input.clipId);
+    try {
+      await removeJournal(this.input.clipsDir, this.input.clipId);
+    } catch (error) {
+      this.deps.log(`[clip] ${this.input.clipId}: the record stands, but its journal could not be removed (${error instanceof Error ? error.name : typeof error}); the next start removes the stale journal`);
+    }
     return { kind: "recorded", record };
   }
 

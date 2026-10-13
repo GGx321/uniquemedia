@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { CLIP_JOB_STEPS, JobProgress, type ClipFace, type ClipMotionChoice, type ClipRequest } from "../../shared/engine";
 import { tempDirFor } from "../../testing/tempDir";
@@ -392,6 +392,26 @@ describe("runClipJob: a clip that fails", () => {
     expect(gone.outcome).toEqual({ status: "failed", reason: "download-expired" });
   });
 
+});
+
+describe("runClipJob: the record is the commit (I5.53)", () => {
+  test("a journal that cannot be removed after the record stands still ends recorded, and says the journal is stale", async () => {
+    const refused: AttemptSummary = { attemptId: `${CLIP}:video#1`, model: "kling", providerJobId: "job-kling", outcome: "refused", costSource: "proof" };
+    const w = world({
+      result: { kind: "failed", reason: "refused-free", attempts: [refused], model: "kling", cost: "free", grokOffer: false, aboveWorst: null },
+      during: async () => {
+        // The journal's place is taken by a folder with a file in it: its removal fails, after the record was written.
+        const journal = clipJournalPath(dir(), CLIP);
+        await rm(journal, { force: true });
+        await mkdir(journal);
+        await writeFile(join(journal, "x"), "x");
+      },
+    });
+    const outcome = await run(w, { request: { model: "kling", quality: "std", seconds: 5, fallback: "none" }, acceptedWorstMicros: 504_000 });
+
+    expect(recordOf(outcome)).toEqual(await onDisk());
+    expect(w.logs.some((line) => line.includes("journal"))).toBe(true);
+  });
 });
 
 describe("runClipJob: a poster that cannot be drawn never costs the paid file its place (I5.54)", () => {
