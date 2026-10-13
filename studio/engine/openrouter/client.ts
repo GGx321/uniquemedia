@@ -4,6 +4,7 @@ import { OPENROUTER_API_BASE } from "../money/prices";
 import { OpenRouterError } from "./errors";
 import { chat } from "./chat";
 import { fetchCredits } from "./credits";
+import { fetchGeneration } from "./generation";
 import { generateImage } from "./image";
 import { makeHeadRedactor, makeRedactor } from "./redact";
 import { MAX_BODY_BYTES, type ClientContext } from "./transport";
@@ -76,6 +77,7 @@ export function createOpenRouterClient(options: OpenRouterClientOptions): OpenRo
     generateImage: (params) => generateImage(ctx, params),
     chat: (params) => chat(ctx, params),
     fetchCredits: () => fetchCredits(ctx),
+    fetchGeneration: (id, signal) => fetchGeneration(ctx, id, signal),
   };
 }
 

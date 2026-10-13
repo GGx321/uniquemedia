@@ -1,0 +1,7 @@
+{
+  "id": "gen-vid-0000000000-FIXTURE0000000000003",
+  "generation_id": "gen-vid-0000000000-FIXTURE0000000000003",
+  "polling_url": "https://openrouter.ai/api/v1/videos/gen-vid-0000000000-FIXTURE0000000000003",
+  "status": "failed",
+  "error": "task failed with status: FAIL, message: Failure to pass the risk control system"
+}

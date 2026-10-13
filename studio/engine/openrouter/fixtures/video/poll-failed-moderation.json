@@ -1,0 +1,7 @@
+{
+  "id": "gen-vid-0000000000-FIXTURE0000000000002",
+  "generation_id": "gen-vid-0000000000-FIXTURE0000000000002",
+  "polling_url": "https://openrouter.ai/api/v1/videos/gen-vid-0000000000-FIXTURE0000000000002",
+  "status": "failed",
+  "error": "Generated video rejected by content moderation."
+}

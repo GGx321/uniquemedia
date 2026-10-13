@@ -221,9 +221,34 @@ export interface ChatParams extends AttemptParams {
   images?: readonly Uint8Array[];
 }
 
+/** Why a free GET (a poll, a `/generation` lookup) gave no usable answer. */
+export type FreeCallCause = "auth" | "credits" | "http" | "timeout" | "aborted" | "network" | "malformed";
+
+/** A free GET that gave no usable answer. Never a thrown error: the caller decides what an unknown answer means for the money. */
+export interface FreeCallFault {
+  cause: FreeCallCause;
+  httpStatus: number | null;
+  /** Redacted, at most 500 characters. */
+  detail: string;
+}
+
+/**
+ * `GET /generation?id=` (free).
+ * - `found`: the provider's own bill in integer micro-dollars, and why the job ended.
+ * - `not-found`: the API's own 404 for this id. Distinct from `unreadable`: right after a video completes it is a 404 for about 15 s,
+ *   and for a refused Kling job it stayed one through +10 min (probes P0 and P-V), so it is evidence, not a failure.
+ * - `unreadable`: anything else (a 5xx, a timeout, a 404 that is not the API's, a body that fails validation).
+ */
+export type GenerationResult =
+  | { kind: "found"; totalCostMicros: number; finishReason: string | null }
+  | { kind: "not-found" }
+  | ({ kind: "unreadable" } & FreeCallFault);
+
 export interface OpenRouterClient {
   generateImage(params: ImageParams): Promise<ImageResult>;
   chat(params: ChatParams): Promise<ChatResult>;
   /** The parsed JSON body of `GET /credits`, for the money core's reconcile. */
   fetchCredits(): Promise<unknown>;
+  /** `GET /generation?id=<id>`: the provider's bill for one generation, or the fact that none is there (yet). */
+  fetchGeneration(id: string, signal?: AbortSignal): Promise<GenerationResult>;
 }
