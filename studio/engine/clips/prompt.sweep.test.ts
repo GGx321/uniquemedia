@@ -129,6 +129,10 @@ describe("every bank motion makes a valid clip prompt (§8 V5 sweep)", () => {
     }
   });
 
+  test("no mirror-hidden prompt sends the camera up to her face: the phone covers it (round 2)", () => {
+    for (const s of SWEPT()) if (s.facts.capture === "mirror-hidden") expect(s.prompt).not.toMatch(/turns up to her face/);
+  });
+
   test("no motion and no activity carries a video word, and both pass the content line at the slot's level", () => {
     for (const s of SWEPT()) {
       expect(hasVideoStagingWord(s.motion)).toBe(false);
@@ -260,6 +264,12 @@ describe("the prompt pins (clips/fixtures/*.txt)", () => {
     const picked = everyMoment().find((p) => p.moment.captures.includes("prone") && /\bhips\b/.test(p.moment.motion));
     if (picked === undefined) throw new Error("no prone hips moment");
     pinned("prone-hips.kling", promptFor(factsFor(picked, "prone", false), picked.moment.motion, "kling"));
+  });
+
+  test("a legs frame by the mirror: the first mirror-hidden legs moment", () => {
+    const picked = everyMoment().find((p) => p.moment.captures.includes("mirror-hidden") && p.moment.legs?.framing === "legs");
+    if (picked === undefined) throw new Error("no mirror-hidden legs moment");
+    pinned("mirror-hidden-legs.kling", promptFor(factsFor(picked, "mirror-hidden", false), picked.moment.motion, "kling"));
   });
 
   test("a legs frame with legwear: the longest legwear on the first pov-legs moment that may wear it", () => {

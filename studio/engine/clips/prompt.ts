@@ -8,7 +8,6 @@ import type { VideoFrameImage, VideoRequest } from "../openrouter/types";
 import type { FrameFacts } from "./frameFacts";
 import {
   ADULT_LINE,
-  LEGS_LINE,
   LOOK_LINE,
   PRONE_ANCHOR,
   PROMPT_WORDS_MAX,
@@ -16,6 +15,7 @@ import {
   cameraLineOf,
   continuityLineOf,
   hasVideoStagingWord,
+  legsLineOf,
   legwearLineOf,
   motionSentenceOf,
   poseSentenceOf,
@@ -105,7 +105,7 @@ export function clipPromptOf(facts: FrameFacts, motion: string, dialect: ClipDia
     poseSentenceFor(facts),
     motionSentenceOf(motion),
     lyingOnHerStomach(facts) ? PRONE_ANCHOR : null,
-    facts.legs ? LEGS_LINE : null,
+    facts.legs ? legsLineOf(facts.capture) : null,
     continuityLineOf(motion),
     facts.legwear === null ? null : legwearLineOf(facts.legwear),
     SLOW_LINE,

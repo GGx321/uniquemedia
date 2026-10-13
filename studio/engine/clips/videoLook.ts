@@ -101,6 +101,17 @@ export const PRONE_ANCHOR = "She stays lying on her stomach the whole time; she 
 /** The legs line (new): a «Ножки» frame keeps her legs filling the frame. «frame» is the code's own word; the staging list reads motions and activities only. */
 export const LEGS_LINE = "Her legs fill most of the frame the whole time; the camera never turns up to her face.";
 
+/**
+ * The legs line by the mirror (round 2): the camera line already holds the phone in front of her face, so this one says what fills the frame and nothing of her face, as
+ * the photo's own legs phrase there does (engine/scenes/assembler.ts BOLD_MIRROR_LEGS_POSE_PHRASE, S5.R4 round 3).
+ */
+const MIRROR_LEGS_LINE = "Her legs fill most of the frame the whole time.";
+
+/** The legs line of a «Ножки» frame on this capture. */
+export function legsLineOf(capture: ClipCapture): string {
+  return capture === "mirror-hidden" ? MIRROR_LEGS_LINE : LEGS_LINE;
+}
+
 /** The continuity line (new; spike B K05's paper card, K09's lost bag). */
 export const CONTINUITY_LINE = "Nothing new appears, and nothing she holds or wears changes.";
 

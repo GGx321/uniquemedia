@@ -18,6 +18,7 @@ import {
   WORN_OR_HELD,
   cameraLineOf,
   continuityLineOf,
+  legsLineOf,
   hasVideoStagingWord,
   legwearLineOf,
   motionSentenceOf,
@@ -277,6 +278,19 @@ describe("the continuity sweep over all 7 banks (critic M5, r2.2)", () => {
     const coat = motions.filter((motion) => /\bcoat\b/.test(motion));
     expect(coat.length).toBeGreaterThan(0);
     for (const motion of coat) expect(continuityLineOf(motion)).toBe(COMES_OFF_LINE);
+  });
+});
+
+describe("the legs line (round 2)", () => {
+  test("a legs frame keeps the camera on her legs and off her face", () => {
+    for (const capture of CLIP_CAPTURES) {
+      if (capture !== "mirror-hidden") expect(legsLineOf(capture)).toBe(LEGS_LINE);
+    }
+  });
+
+  test("by the mirror the phone already covers her face, so the line says nothing of her face (the photo's own legs phrase there, S5.R4 r3)", () => {
+    expect(legsLineOf("mirror-hidden")).toBe("Her legs fill most of the frame the whole time.");
+    expect(cameraLineOf("mirror-hidden", "kling")).toContain("in front of her face");
   });
 });
 

@@ -176,6 +176,15 @@ describe("the anchors (§5.5 items 4-6)", () => {
     expect(promptOf(timer, sceneMotion(timer))).not.toContain(PRONE_ANCHOR);
   });
 
+  test("a «Ножки» frame by the mirror says only that her legs fill the frame: the phone already covers her face (round 2)", () => {
+    const legs = factsFor(slotOf(pick("home", (m) => m.captures.includes("mirror-hidden") && m.legs?.framing === "legs"), "mirror-hidden"));
+    const prompt = promptOf(legs, sceneMotion(legs));
+    expect(prompt).toContain("Her legs fill most of the frame the whole time.");
+    expect(prompt).not.toContain(LEGS_LINE);
+    expect(prompt).not.toMatch(/turns up to her face/);
+    expect(prompt).toContain("she holds her phone right in front of her face");
+  });
+
   test("the legs line on a «Ножки» frame only", () => {
     const legs = factsFor(slotOf(pick("photoshoot", (m) => m.captures.includes("low-feet")), "low-feet"));
     const plain = factsFor(slotOf(pick("photoshoot", (m) => m.captures.includes("friend") && m.legs === undefined), "friend"));
