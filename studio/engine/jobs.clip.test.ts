@@ -154,3 +154,42 @@ describe("JobRegistry: clip jobs", () => {
     expect(jobs.hasLiveJobFor(AVATAR)).toBe(false);
   });
 });
+
+// S5.V4c (plan s5b1 §5.13): an export is a clip job of its own phase, `exporting`, whose steps are the frames it encodes; its result names where the copy went.
+describe("JobRegistry: a clip's export job", () => {
+  const REL_PATH = "Nini/2026-10-14_clip_001.mp4";
+
+  test("starts in `exporting` with the frames it will encode as its total", () => {
+    const jobs = new JobRegistry();
+    jobs.startClip(JOB, { avatarId: AVATAR, clipId: CLIP }, "exporting", 151);
+
+    expect(jobs.stateOf(JOB)).toEqual({ kind: "clip", jobId: JOB, avatarId: AVATAR, clipId: CLIP, phase: "exporting", status: "running", done: 0, total: 151 });
+    valid(jobs.states());
+  });
+
+  test("its frames count up and never pass the total", () => {
+    const jobs = new JobRegistry();
+    jobs.startClip(JOB, { avatarId: AVATAR, clipId: CLIP }, "exporting", 151);
+
+    expect(jobs.clipPhase(JOB, { phase: "exporting", done: 60 })).toMatchObject({ phase: "exporting", done: 60, total: 151 });
+    expect(jobs.clipPhase(JOB, { phase: "exporting", done: 400 })).toMatchObject({ done: 151, total: 151 });
+  });
+
+  test("ends done with its clip and the place of the copy", () => {
+    const jobs = new JobRegistry();
+    jobs.startClip(JOB, { avatarId: AVATAR, clipId: CLIP }, "exporting", 151);
+
+    const state = jobs.finishClip(JOB, { status: "done", exported: { relPath: REL_PATH } });
+
+    expect(state).toMatchObject({ status: "done", done: 151, total: 151, result: { kind: "clip", avatarId: AVATAR, clipId: CLIP, exported: { relPath: REL_PATH } } });
+    valid(jobs.states());
+  });
+
+  test("a create job's done result names no copy", () => {
+    const jobs = new JobRegistry();
+    jobs.startClip(JOB, { avatarId: AVATAR, clipId: CLIP });
+
+    expect(jobs.finishClip(JOB, { status: "done" })).toMatchObject({ result: { kind: "clip", avatarId: AVATAR, clipId: CLIP } });
+    expect(jobs.stateOf(JOB)).not.toHaveProperty("result.exported");
+  });
+});

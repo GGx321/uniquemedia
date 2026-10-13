@@ -40,7 +40,11 @@ export type ImportJobEnd =
  * How a clip job ends (Stage 5, 5b.1, S5.V4a1): `done` once its record committed (a ready clip or a recorded failure: the record says which), `failed` when no record could be
  * written (a refusal before any money, or a fault), `cancelled` for a cancel before the POST or a stop.
  */
-export type ClipJobEnd = { status: "done" } | { status: "failed"; error: EngineError } | { status: "cancelled" };
+export type ClipJobEnd =
+  /** `exported`: an export job's copy (S5.V4c), relative to the export folder; absent for every other clip job. */
+  | { status: "done"; exported?: { relPath: string } }
+  | { status: "failed"; error: EngineError }
+  | { status: "cancelled" };
 
 /** What a clip job's phase update says (§5.1): the phase, the model and the submit time where the tile shows them, the end of the proof window in `proving`, and the steps reached. */
 export interface ClipPhaseUpdate {
@@ -109,10 +113,11 @@ export class JobRegistry {
 
   /**
    * Registers a running clip job (Stage 5, 5b.1, S5.V4a1): `total` is the four steps of a clip (video, download, check, save), and it starts in `preparing` (a recovery job in
-   * `recovering`). Its signal fires on `cancel`; the clip service lets a cancel through only before the POST.
+   * `recovering`). Its signal fires on `cancel`; the clip service lets a cancel through only before the POST. An export job (S5.V4c) starts in `exporting` and counts the frames it
+   * encodes (`total`).
    */
-  startClip(jobId: string, ref: { avatarId: string; clipId: string }, phase: ClipPhase = "preparing"): AbortSignal {
-    return this.#start({ kind: "clip", jobId, avatarId: ref.avatarId, clipId: ref.clipId, phase, status: "running", done: 0, total: CLIP_JOB_STEPS });
+  startClip(jobId: string, ref: { avatarId: string; clipId: string }, phase: ClipPhase = "preparing", total: number = CLIP_JOB_STEPS): AbortSignal {
+    return this.#start({ kind: "clip", jobId, avatarId: ref.avatarId, clipId: ref.clipId, phase, status: "running", done: 0, total });
   }
 
   /**
@@ -153,7 +158,7 @@ export class JobRegistry {
     };
     switch (end.status) {
       case "done":
-        entry.state = { ...common, status: "done", done: total, result: { kind, avatarId, clipId } };
+        entry.state = { ...common, status: "done", done: total, result: { kind, avatarId, clipId, ...(end.exported === undefined ? {} : { exported: { relPath: end.exported.relPath } }) } };
         break;
       case "failed":
         entry.state = { ...common, status: "failed", done, error: end.error };
