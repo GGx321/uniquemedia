@@ -53,7 +53,7 @@ describe("attempt ids", () => {
 
 describe("the journal file", () => {
   test("lives next to the record, named after the clip", () => {
-    expect(clipJournalPath("/lib/avatars/a/clips", "clip-00001")).toBe("/lib/avatars/a/clips/clip-00001.journal.jsonl");
+    expect(clipJournalPath("/lib/avatars/a/clips", "clip-00001")).toBe(join("/lib/avatars/a/clips", "clip-00001.journal.jsonl"));
   });
 
   test("writes `requested` as the first line, valid to the schema", async () => {
