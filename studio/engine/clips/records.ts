@@ -365,8 +365,9 @@ export class ClipRecords {
 
   /**
    * A failed download of a paid clip, fetched again for free (I5.53): refused unless the record is `download-failed`, `invalid-file` or `disk-full`, and no job works on it. Past
-   * `retryDownloadUntil` (or with no window at all) the record turns `download-expired` and the call is refused. Otherwise a registered `clip` job re-runs V4b's download and validation and
-   * rewrites the record; it never writes the ledger. All of this is decided under the clip's lock, so a delete cannot slip in between the check and the job.
+   * `retryDownloadUntil` the record turns `download-expired` and the call is refused; a record with no window has passed none, so it is retried, and only /content saying the file is gone
+   * expires it. Otherwise a registered `clip` job re-runs V4b's download and validation and rewrites the record; it never writes the ledger. All of this is decided under the clip's lock, so a
+   * delete cannot slip in between the check and the job.
    */
   async retryDownload(payload: Payload<"clips.retryDownload">): Promise<{ jobId: string }> {
     const { avatarId, clipId } = payload;
