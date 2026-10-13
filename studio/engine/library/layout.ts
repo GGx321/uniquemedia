@@ -63,6 +63,13 @@ export const SIDECAR_SCHEMA_VERSION = 1;
 export const MONTAGE_FILE_SCHEMA_VERSION = 1;
 /** A video record's `schemaVersion`: the writer (task 3a.8b) stamps it, the reader (videoRecords.ts) refuses a newer one with its own reason. */
 export const VIDEO_RECORD_SCHEMA_VERSION = 1;
+/**
+ * Clips (Stage 5, 5b.1, S5.V1): `avatars/<avatarId>/clips/<clipId>.{mp4,poster.jpg,json}` beside `videos`, with a `<clipId>.journal.jsonl` while a clip is in flight. The record
+ * (`<clipId>.json`) is the commit; the survey never looks in here, so nothing is quarantined and an older build never sees a clip.
+ */
+export const CLIPS_DIR = "clips";
+/** A clip record's `schemaVersion`: the store stamps it, and a newer one is refused and kept as it is (it would lose what it does not know on the next write). */
+export const CLIP_RECORD_SCHEMA_VERSION = 1;
 
 /**
  * A temp file left by a crash while one of the library root's own JSON
