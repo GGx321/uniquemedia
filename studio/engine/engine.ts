@@ -2797,13 +2797,19 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.options(command.payload) };
       case "clips.create":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.create(command.payload) };
+      // S5.V4a2: the committed records, which the clip service holds (free; a delete or a retry of a clip a job works on is IN_FLIGHT `job-running`).
       case "clips.list":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.list(command.payload) };
       case "clips.get":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.get(command.payload) };
       case "clips.markSeen":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.markSeen(command.payload) };
       case "clips.delete":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.delete(command.payload) };
       case "clips.retryDownload":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.retryDownload(command.payload) };
       case "clips.export":
-        // S5.V4a2 (the records) and S5.V4c (the export) build these.
+        // S5.V4c (the export) builds this.
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not built yet` });
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
