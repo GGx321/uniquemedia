@@ -318,4 +318,48 @@ describe("a slot's paid attempts count on resume", () => {
     mock.scheduler.runAll();
     expect((await unwrap(mock.client.request("runs.list", {}))).runs.find((r) => r.runId === runId)).toMatchObject({ done: 1, failed: 1, open: 0 });
   });
+
+  test("the estimate's expected sum leaves out a slot with all three attempts paid, as the engine does", async () => {
+    const mock = makeMock();
+    const one = mock.engine.seedRun(boldRun(1, ["beach"]), 0, ENOUGH);
+    const exhausted = mock.engine.seedRun(boldRun(2, ["beach"]), 0, ENOUGH, { paid: 3 });
+    const expectedOf = async (runId: string) => (await unwrap(mock.client.request("runs.estimateResume", { runId }))).estimate.expectedMicros;
+    expect(await expectedOf(exhausted)).toBe(await expectedOf(one));
+  });
+
+  test("a run whose only open slot has all three attempts paid is not ended by its cap: the engine has nothing to fund", async () => {
+    const mock = makeMock();
+    const runId = mock.engine.seedRun(boldRun(1, ["beach"]), 0, 1_000, { paid: 3 });
+    expect((await unwrap(mock.client.request("runs.list", {}))).runs.find((r) => r.runId === runId)).toMatchObject({ capExhausted: false, resumable: true });
+  });
+
+  test("such a run is not held by a missing 2K tier, and names no 2K attempt", async () => {
+    const mock = makeMock();
+    const runId = mock.engine.seedRun(boldRun(1, ["beach"]), 0, ENOUGH, { paid: 3 });
+    mock.engine.lackBoldPrice();
+    const reply = await mock.client.request("runs.estimateResume", { runId });
+    expect(reply.ok).toBe(true);
+    expect(reply.ok && reply.result.estimate.boldAttemptMicros).toBeUndefined();
+  });
+
+  test("a resume reserves only the attempts the slot has left", async () => {
+    const committedAtStart = async (paid: number | undefined) => {
+      const mock = makeMock();
+      const runId = mock.engine.seedRun(boldRun(1, ["beach"]), 0, ENOUGH, paid === undefined ? {} : { paid });
+      await unwrap(mock.client.request("runs.resume", { runId, acceptedWorstMicros: ENOUGH }));
+      return (await unwrap(mock.client.request("runs.list", {}))).runs.find((r) => r.runId === runId)?.committedMicros ?? Number.NaN;
+    };
+    const fresh = await committedAtStart(undefined);
+    expect(fresh).toBeGreaterThan(0);
+    expect((await committedAtStart(2)) * 3).toBe(fresh);
+  });
+
+  test("an age check with no room drops the picture but not the bill: the slot has one attempt paid", async () => {
+    const mock = makeMock({ imageAgeCheck: "on" });
+    const runId = mock.engine.seedRun(boldRun(3, ["beach"]), 0, MOCK_BOLD_IMAGE + 1_400 + MOCK_BOLD_IMAGE + 1_999);
+    await unwrap(mock.client.request("runs.resume", { runId, acceptedWorstMicros: ENOUGH }));
+    mock.scheduler.runAll();
+    const run = (mock.engine as unknown as { runs: { runId: string; slots: { end: string | null; paid?: number }[] }[] }).runs.find((r) => r.runId === runId);
+    expect(run?.slots.map((s) => s.paid ?? 0)).toEqual([0, 1, 0]);
+  });
 });

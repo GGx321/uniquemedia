@@ -4464,9 +4464,9 @@ export class MockEngine implements EngineBridge {
     };
   }
 
-  /** Whether a slot of the run is still open on the Seedream route. */
+  /** Whether a slot of the run that can still be sent is open on the Seedream route (one with all three attempts paid needs no 2K price). */
   private openSeedream(run: MockRun): boolean {
-    return run.slots.some((s) => s.end === null && s.route === "seedream");
+    return this.playableSlots(run).some((s) => s.route === "seedream");
   }
 
   private openSlots(run: MockRun): number {
@@ -4496,14 +4496,20 @@ export class MockEngine implements EngineBridge {
     return run.settledMicros + open;
   }
 
-  /**
-   * One request's own reserve: the 2K attempt on Seedream, the owner's model's price otherwise. The engine reserves the IMAGE ALONE before it sends
-   * (`openrouter/image.ts`); the age check reserves its own ceiling after the picture is back (`runs/ageGate.ts`).
-   */
+  /** How many of the slot's three paid attempts it still has (the engine's `RUN_ATTEMPTS_PER_SLOT - paidAttempts`). */
   private attemptsLeft(slot: MockRunSlot | undefined): number {
     return Math.max(0, MOCK_RUN_ATTEMPTS_PER_SLOT - (slot?.paid ?? 0));
   }
 
+  /** The run's open slots that still have an attempt to send: the engine's `remainingPlan` skips the rest (they close on resume without one). */
+  private playableSlots(run: MockRun): MockRunSlot[] {
+    return run.slots.filter((s) => s.end === null && this.attemptsLeft(s) > 0);
+  }
+
+  /**
+   * One request's own reserve: the 2K attempt on Seedream, the owner's model's price otherwise. The engine reserves the IMAGE ALONE before it sends
+   * (`openrouter/image.ts`); the age check reserves its own ceiling after the picture is back (`runs/ageGate.ts`).
+   */
   private imageReserve(route?: "seedream"): number {
     return route === "seedream" ? MOCK_BOLD_IMAGE : this.runImagePrice;
   }
@@ -4554,7 +4560,8 @@ export class MockEngine implements EngineBridge {
 
   /** What a resume could still spend: its open slots' attempts at today's prices, never more than the cap leaves. */
   private resumePrice(run: MockRun): Estimate {
-    const openSlots = run.slots.filter((s) => s.end === null);
+    // Only slots with an attempt left are priced: the engine skips the others (`remaining.ts`), expected sum, 2K naming and all.
+    const openSlots = this.playableSlots(run);
     const capLeft = Math.max(0, run.capMicros - this.runCommitted(run));
     // The real engine's remainingEstimate: an unwritten chunk adds the writer's ceiling (the run's `writerLoad`, fixed at its start: none for a built-in or covered run), and its typical share per scene.
     const writerWorst = run.writerDone ? 0 : run.writerLoad.chunks * MOCK_RUN_WRITER.worstPerChunk;
@@ -4584,7 +4591,9 @@ export class MockEngine implements EngineBridge {
     // The real engine's minToProgress: ONE writer call's ceiling for an unwritten chunk (the writer runs first) plus one image attempt.
     const writer = run.writerDone || run.writerLoad.chunks === 0 ? 0 : MOCK_RUN_WRITER.worstPerCall;
     // The cheapest next attempt of any open slot (the engine's `minToProgress`).
-    const cheapest = Math.min(...run.slots.filter((s) => s.end === null).map((s) => this.attemptPrice(run, s.route)));
+    // A slot with all three attempts paid sends nothing, so with none left to send there is nothing to fund (`minToProgress` null).
+    const playable = this.playableSlots(run);
+    const cheapest = playable.length === 0 ? 0 : Math.min(...playable.map((s) => this.attemptPrice(run, s.route)));
     return run.capMicros - this.runCommitted(run) < writer + cheapest;
   }
 
