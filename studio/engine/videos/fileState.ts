@@ -73,7 +73,7 @@ async function lstatOrNull(fs: CommitFs, path: string): Promise<FileFacts | null
 }
 
 /** The place a record's file should be, if the record and the root agree. Never leaves the root: the relative path is validated by the record's schema. */
-export function recordFilePath(record: VideoRecord, root: ExportRootRef): { folder: string; file: string } {
+export function recordFilePath(record: Pick<VideoRecord, "file">, root: ExportRootRef): { folder: string; file: string } {
   const [folderName, fileName] = record.file.relPath.split("/");
   if (folderName === undefined || fileName === undefined) throw new TypeError("a record's relPath is <folder>/<file>");
   const folder = join(root.root, folderName);
@@ -98,7 +98,7 @@ export class FileStateChecker {
     return this.#verified.get(videoId);
   }
 
-  async check(record: VideoRecord, root: ExportRootRef | null, options: { verify: Verification; budget?: HashBudget; whenSpent?: "present" | "unchecked" }): Promise<FileState> {
+  async check(record: Pick<VideoRecord, "id" | "file">, root: ExportRootRef | null, options: { verify: Verification; budget?: HashBudget; whenSpent?: "present" | "unchecked" }): Promise<FileState> {
     if (root === null || record.file.rootId !== root.rootId) return "elsewhere";
     // The id alone proves nothing: the marker at this path must hold it (an empty folder there is another root).
     if (!(await this.#markers.matches(root.root, root.rootId))) return "elsewhere";
