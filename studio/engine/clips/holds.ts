@@ -8,7 +8,7 @@ import type { ClipTimings } from "./timings";
 //
 // | Attempt state                                                  | Held until                      |
 // | submitted, no terminal status yet                              | submit + 60 min                 |
-// | uncertain submit (5xx, timeout, network at the POST)           | the POST's time + 20 min        |
+// | uncertain submit (5xx, timeout, network at the POST)           | the reserve line's `at` + 20 min |
 // | terminal status (completed, failed, cancelled, expired)        | terminal + 2 min                |
 // | a ledger reserve with no `submitted` line (a throw, a crash)   | the reserve line's `at` + 20 min |
 
@@ -104,14 +104,9 @@ export function createClipHolds(deps: ClipHoldsDeps): ClipHolds {
   };
 }
 
-/** A ledger reserve with no `submitted` line: the POST may have left (a throw, a crash). */
+/** A ledger reserve with no `submitted` line, and an uncertain submit: the POST may have left (a throw, a crash, no answer). One base in this process and after a restart: the reserve line's `at`. */
 export function holdUntilForReserve(reserveAtMs: number, t: ClipTimings): number {
   return reserveAtMs + t.holdUncertainMs;
-}
-
-/** An uncertain submit: from the time the POST left. */
-export function holdUntilForUncertain(sentAtMs: number, t: ClipTimings): number {
-  return sentAtMs + t.holdUncertainMs;
 }
 
 /** A submitted job with no terminal status yet. */

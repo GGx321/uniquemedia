@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createClipHolds, holdsAfterRestart, holdUntilForReserve, holdUntilForSubmitted, holdUntilForTerminal, holdUntilForUncertain, type HoldTimers } from "./holds";
+import { createClipHolds, holdsAfterRestart, holdUntilForReserve, holdUntilForSubmitted, holdUntilForTerminal, type HoldTimers } from "./holds";
 import type { ClipJournalLine } from "./schemas";
 import { REAL_CLIP_TIMINGS, SHORT_CLIP_TIMINGS } from "./timings";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -57,10 +57,6 @@ describe("the rows of I5.48's table", () => {
     expect(holdUntilForReserve(T0, T)).toBe(T0 + 20 * MIN);
   });
 
-  test("an uncertain submit is held 20 min from the moment the POST left", () => {
-    expect(holdUntilForUncertain(T0, T)).toBe(T0 + 20 * MIN);
-  });
-
   test("a submitted job with no terminal status is held 60 min from the submit", () => {
     expect(holdUntilForSubmitted(T0, T)).toBe(T0 + 60 * MIN);
   });
@@ -70,8 +66,8 @@ describe("the rows of I5.48's table", () => {
   });
 
   test("the short set keeps the same order of holds", () => {
-    expect(holdUntilForTerminal(T0, SHORT_CLIP_TIMINGS)).toBeLessThan(holdUntilForUncertain(T0, SHORT_CLIP_TIMINGS));
-    expect(holdUntilForUncertain(T0, SHORT_CLIP_TIMINGS)).toBeLessThan(holdUntilForSubmitted(T0, SHORT_CLIP_TIMINGS));
+    expect(holdUntilForTerminal(T0, SHORT_CLIP_TIMINGS)).toBeLessThan(holdUntilForReserve(T0, SHORT_CLIP_TIMINGS));
+    expect(holdUntilForReserve(T0, SHORT_CLIP_TIMINGS)).toBeLessThan(holdUntilForSubmitted(T0, SHORT_CLIP_TIMINGS));
   });
 });
 
@@ -235,7 +231,7 @@ describe("the registry", () => {
 describe("«the job ended, the hold is still on»", () => {
   test("an uncertain submit: nothing but the registry holds the reconcile for 20 min", () => {
     const { holds, timers } = rig();
-    holds.hold("clip-1:video#1", holdUntilForUncertain(timers.now, T));
+    holds.hold("clip-1:video#1", holdUntilForReserve(timers.now, T));
     // The job is over here: nothing of it is passed to the registry, which keeps answering.
     timers.advanceTo(T0 + 19 * MIN + 59_000);
     expect(holds.waitMs()).toBe(1_000);
