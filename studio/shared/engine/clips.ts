@@ -121,21 +121,26 @@ export interface ClipPriceParts {
 }
 
 function checkedRates(rates: ClipRates): void {
-  if (!Number.isFinite(rates.perSecondMicros) || rates.perSecondMicros < 0 || !Number.isFinite(rates.perInputImageMicros) || rates.perInputImageMicros < 0) {
-    throw new RangeError("a clip price must be a finite, non-negative number of micro-dollars");
+  if (!Number.isSafeInteger(rates.perSecondMicros) || rates.perSecondMicros < 0 || !Number.isSafeInteger(rates.perInputImageMicros) || rates.perInputImageMicros < 0) {
+    throw new RangeError("a clip price must be a non-negative whole number of micro-dollars");
   }
 }
 
-/** What one attempt reserves right before its POST: (requested seconds + 1) x the per-second price + the input image, rounded up to a whole micro-dollar (I5.46). */
-export function clipReserveMicros(rates: ClipRates, seconds: number): number {
-  checkedRates(rates);
-  return Math.ceil((seconds + 1) * rates.perSecondMicros + rates.perInputImageMicros);
+function checkedFigure(micros: number): number {
+  if (!Number.isSafeInteger(micros)) throw new RangeError("a clip figure must be a whole number of micro-dollars within the safe range");
+  return micros;
 }
 
-/** What one attempt bills when it completes: the requested seconds x the per-second price + the input image, rounded up. */
+/** What one attempt reserves right before its POST: (requested seconds + 1) x the per-second price + the input image (I5.46). Prices are whole micro-dollars, so the figure is too: a price that is not is refused, never rounded. */
+export function clipReserveMicros(rates: ClipRates, seconds: number): number {
+  checkedRates(rates);
+  return checkedFigure((seconds + 1) * rates.perSecondMicros + rates.perInputImageMicros);
+}
+
+/** What one attempt bills when it completes: the requested seconds x the per-second price + the input image. Refuses a price that is not a whole number of micro-dollars. */
 export function clipBilledMicros(rates: ClipRates, seconds: number): number {
   checkedRates(rates);
-  return Math.ceil(seconds * rates.perSecondMicros + rates.perInputImageMicros);
+  return checkedFigure(seconds * rates.perSecondMicros + rates.perInputImageMicros);
 }
 
 /**
@@ -207,8 +212,8 @@ export const ClipOptions = z.discriminatedUnion("suitable", [
       monthFits: MonthFits,
     })
     .refine((o) => new Set(o.motions.map((m) => m.id)).size === o.motions.length, { message: "a motion id must not repeat", path: ["motions"] })
-    .refine((o) => o.fallback !== "none" || Object.values(o.monthFits).every((fit) => fit !== "with-fallback"), {
-      message: "a photo with no fallback never fits the month with one",
+    .refine((o) => o.fallback === "auto" || Object.values(o.monthFits).every((fit) => fit !== "with-fallback"), {
+      message: "only mode auto has a Grok reserve to fit the month with: neither `offer` nor `none` fits it with a fallback",
       path: ["monthFits"],
     })
     .refine((o) => !o.bold || !boldKeepsKlingAlone(BOLD_CLIPS) || o.fallback === "none", {
@@ -259,6 +264,9 @@ export const ClipFailReason = z.enum([
   "download-expired",
 ]);
 export type ClipFailReason = z.infer<typeof ClipFailReason>;
+
+/** The paid failures whose file is still at the provider, so a free `retryDownload` can fetch it (I5.53): the only ones that carry `retryDownloadUntil`. */
+export const CLIP_RETRYABLE_FAILURES: readonly ClipFailReason[] = ["download-failed", "invalid-file", "disk-full"];
 
 /** Which fps mode made an exported file (I5.55): interpolated 30, duplicated 30, or native 24. */
 export const ClipExportProfile = z.enum(["1080p30-interp", "1080p30-dup", "1080p24"]);
@@ -318,6 +326,10 @@ export const ClipSummary = z.discriminatedUnion("status", [
     failure: z.strictObject({ reason: ClipFailReason, grokOffer: Estimate.optional() }),
     /** A paid failure of the download can be retried free until this time. */
     retryDownloadUntil: IsoDateTime.optional(),
+  })
+  .refine((c) => c.retryDownloadUntil === undefined || CLIP_RETRYABLE_FAILURES.includes(c.failure.reason), {
+    message: "only a failed download can be retried",
+    path: ["retryDownloadUntil"],
   }),
 ]);
 export type ClipSummary = z.infer<typeof ClipSummary>;

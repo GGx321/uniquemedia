@@ -12,7 +12,6 @@ import { MAX_SCENES_PER_SET, ScenesResult } from "./scenes";
 import { RenderResult } from "./video";
 
 const IsoDateTime = z.iso.datetime();
-const IsoDate = z.iso.date();
 
 /** A calendar month in UTC, `YYYY-MM`: the global budget's window. */
 export const YearMonth = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "must be YYYY-MM");

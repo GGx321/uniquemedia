@@ -109,13 +109,6 @@ describe("the per-attempt figures (I5.46)", () => {
     expect(clipBilledMicros(PRICES.grok, 5)).toBe(710_000);
     expect(clipBilledMicros(PRICES.grok, 10)).toBe(1_410_000);
   });
-
-  test("a fractional price rounds the figure up to a whole micro-dollar, never down", () => {
-    const rates = { perSecondMicros: 84_000.4, perInputImageMicros: 0.2 };
-    expect(clipReserveMicros(rates, 5)).toBe(Math.ceil(6 * 84_000.4 + 0.2));
-    expect(Number.isInteger(clipReserveMicros(rates, 5))).toBe(true);
-    expect(clipReserveMicros(rates, 5)).toBeGreaterThanOrEqual(6 * 84_000.4 + 0.2);
-  });
 });
 
 describe("a price that cannot be a price", () => {
@@ -127,6 +120,28 @@ describe("a price that cannot be a price", () => {
 
   test("a negative input-image price is refused too", () => {
     expect(() => clipBilledMicros({ perSecondMicros: 84_000, perInputImageMicros: -1 }, 5)).toThrow(RangeError);
+  });
+
+  test("a fractional per-second price is refused by both formulas: prices are whole micro-dollars", () => {
+    expect(() => clipReserveMicros({ perSecondMicros: 84_000.5, perInputImageMicros: 0 }, 5)).toThrow(RangeError);
+    expect(() => clipBilledMicros({ perSecondMicros: 84_000.5, perInputImageMicros: 0 }, 5)).toThrow(RangeError);
+  });
+
+  test("a fractional input-image price is refused by both formulas", () => {
+    expect(() => clipReserveMicros({ perSecondMicros: 84_000, perInputImageMicros: 0.5 }, 5)).toThrow(RangeError);
+    expect(() => clipBilledMicros({ perSecondMicros: 84_000, perInputImageMicros: 0.5 }, 5)).toThrow(RangeError);
+  });
+
+  test("a price past the safe integers is refused by both formulas", () => {
+    const huge = { perSecondMicros: Number.MAX_SAFE_INTEGER + 1, perInputImageMicros: 0 };
+    expect(() => clipReserveMicros(huge, 5)).toThrow(RangeError);
+    expect(() => clipBilledMicros(huge, 5)).toThrow(RangeError);
+  });
+
+  test("a result past the safe integers is refused by both formulas", () => {
+    const big = { perSecondMicros: Number.MAX_SAFE_INTEGER, perInputImageMicros: 0 };
+    expect(() => clipReserveMicros(big, 5)).toThrow(RangeError);
+    expect(() => clipBilledMicros(big, 5)).toThrow(RangeError);
   });
 
   test("a free model (0) is a legal price", () => {
@@ -210,7 +225,7 @@ describe("clipWorstMicros never falls below a branch that can run (brute force)"
     PRICES,
     { ...PRICES, grok: { perSecondMicros: 1, perInputImageMicros: 0 } },
     { ...PRICES, std: { perSecondMicros: 900_000, perInputImageMicros: 5 } },
-    { std: { perSecondMicros: 83_333.3, perInputImageMicros: 0.5 }, pro: { perSecondMicros: 111_111.1, perInputImageMicros: 0 }, grok: { perSecondMicros: 139_999.9, perInputImageMicros: 9_999.9 } },
+    { std: { perSecondMicros: 83_333, perInputImageMicros: 1 }, pro: { perSecondMicros: 111_111, perInputImageMicros: 0 }, grok: { perSecondMicros: 139_999, perInputImageMicros: 9_999 } },
   ];
 
   test("over models x options x modes x fallbacks x levels x price books", () => {
@@ -333,7 +348,7 @@ describe("ClipOptions", () => {
   test("fallback is auto, offer or none", () => {
     const alone = { std5: "without-fallback", pro5: "without-fallback", std10: "none", pro10: "none" };
     expect(ClipOptions.safeParse({ ...suitable, fallback: "auto" }).success).toBe(true);
-    expect(ClipOptions.safeParse({ ...suitable, fallback: "offer" }).success).toBe(true);
+    expect(ClipOptions.safeParse({ ...suitable, fallback: "offer", monthFits: alone }).success).toBe(true);
     expect(ClipOptions.safeParse({ ...suitable, fallback: "none", monthFits: alone }).success).toBe(true);
     expect(ClipOptions.safeParse({ ...suitable, fallback: "grok" }).success).toBe(false);
   });
@@ -350,6 +365,12 @@ describe("ClipOptions", () => {
     expect(ClipOptions.safeParse(bold).success).toBe(true);
     expect(ClipOptions.safeParse({ ...bold, fallback: "auto" }).success).toBe(false);
     expect(ClipOptions.safeParse({ ...bold, fallback: "offer" }).success).toBe(false);
+  });
+
+  test("fallback offer: monthFits never says with-fallback either (no Grok reserve stands behind an offer)", () => {
+    const alone = { std5: "without-fallback", pro5: "without-fallback", std10: "none", pro10: "none" };
+    expect(ClipOptions.safeParse({ ...suitable, fallback: "offer", monthFits: alone }).success).toBe(true);
+    expect(ClipOptions.safeParse({ ...suitable, fallback: "offer", monthFits: { ...alone, std5: "with-fallback" } }).success).toBe(false);
   });
 
   test("an ordinary frame may have fallback none (the owner's choice, or a month that fits Kling alone)", () => {
@@ -525,6 +546,15 @@ describe("ClipSummary", () => {
     expect(ClipSummary.safeParse(offer).success).toBe(true);
     const retry = { ...failed, cost: { micros: 420_000, kind: "billed" }, failure: { reason: "download-failed" }, retryDownloadUntil: "2026-10-13T11:00:00.000Z" };
     expect(ClipSummary.safeParse(retry).success).toBe(true);
+  });
+
+  test("retryDownloadUntil belongs to a failed download only, as in the record", () => {
+    const until = "2026-10-13T11:00:00.000Z";
+    for (const reason of ["download-failed", "invalid-file", "disk-full"]) {
+      expect(ClipSummary.safeParse({ ...failed, failure: { reason }, retryDownloadUntil: until }).success).toBe(true);
+    }
+    expect(ClipSummary.safeParse({ ...failed, failure: { reason: "refused-free" }, retryDownloadUntil: until }).success).toBe(false);
+    expect(ClipSummary.safeParse({ ...failed, failure: { reason: "download-expired" }, retryDownloadUntil: until }).success).toBe(false);
   });
 
   test("the cost kind free is only ever 0", () => {

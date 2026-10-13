@@ -300,6 +300,7 @@ export const CLIP_REASONS_RU = {
 /**
  * The small line under a saved clip («Сохранить в папку» re-encodes, owner Q-C, 2026-10-13): the size, the frame rate the profile wrote and that the metadata is cleaned. It claims
  * nothing about a device or a place, and nothing about how the clip was made (I5.58).
+ * The «24 к/с» variant (profile `1080p24`) is DERIVED from the 30 one, not owner-approved text: the owner confirms it with the C3 fps A/B (plan s5b1 §9.4 rule 13).
  */
 export function clipExportLineRu(profile: ClipExportProfile): string {
   return `1080 × 1920 · ${profile === "1080p24" ? 24 : 30} к/с · метаданные очищены`;
