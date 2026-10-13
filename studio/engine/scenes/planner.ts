@@ -266,6 +266,9 @@ const isAwayAngle = (angle: Pose | undefined): boolean => angle === "profile" ||
 
 const momentKey = (location: string, activity: string): string => `${location}\u0000${activity}`;
 
+/** A moment text as the run compares it: the text is all the photo prompt carries of a moment, so two categories' moments with the same text are one photo. */
+const textKeyOf = (text: string): string => text.toLowerCase().replace(/\s+/g, " ").trim();
+
 /**
  * The least-used of the items by `usage`, with the ties it broke on `rng`. Among the tied ones each preference in turn narrows the choice to the items that meet it,
  * when any of them does (a preference is never ahead of the balance, and one nobody meets changes nothing).
@@ -296,8 +299,15 @@ function planBuiltIn(
   recent: ReadonlySet<string>,
   level: Level,
   legsCount: number,
+  claimed: ReadonlySet<string> = new Set(),
 ): PlanSlot[] {
   const deck = new Bag(pool.captureDeck, streams.rng);
+  // Polish after C4 (round 2): the moment texts, normalised, that another category's slots already hold in this run. Only a «Смелая» category is given any; with none the plan is the one it always was.
+  const keepFree = <T>(items: readonly T[], textOf: (item: T) => string): readonly T[] => {
+    if (claimed.size === 0) return items;
+    const free = items.filter((item) => !claimed.has(textKeyOf(textOf(item))));
+    return free.length > 0 ? free : items;
+  };
   const kind = kindOfDeck(pool.captureDeck);
   const info: readonly Outfit[] = outfitInfoOf(pool);
   const general = generalOutfits(pool);
@@ -398,7 +408,10 @@ function planBuiltIn(
       // A legs slot: the least-used legs moment among the legs moments of the places that have one (a place with more of them is drawn more often, and a plan's legs slots go round them
       // before any repeats), its capture, then the outfit (the moment's pins first), the time and the legwear.
       const legsRng = streams.legsRng;
-      const pairs = legsPlacesOf(pool).flatMap((at) => legsMomentsAt(at).map((m) => ({ place: at, moment: m })));
+      const pairs = keepFree(
+        legsPlacesOf(pool).flatMap((at) => legsMomentsAt(at).map((m) => ({ place: at, moment: m }))),
+        (p) => p.moment.text,
+      );
       const pair = leastUsed(pairs, (p) => legsMomentUses.get(momentKey(p.place.name, p.moment.text)) ?? 0, [(p) => !recent.has(momentKey(p.place.name, p.moment.text)), (p) => (legsPlaceUses.get(p.place.name) ?? 0) === Math.min(...pairs.map((q) => legsPlaceUses.get(q.place.name) ?? 0))], legsRng);
       const { place, moment } = pair;
       const capture = rngPick(legsRng, legsCapturesAt(place, moment));
@@ -462,7 +475,15 @@ function planBuiltIn(
     // A flirty slot, among equals, goes where a flirty moment fits and takes one.
     const hasOwnLevelMoment = (place: Place): boolean => fits(place).some(isOwnLevel);
     const isAway = (m: Activity): boolean => isAwayAngle(m.angle);
-    const awayPlaces = settled.places.filter((p) => fits(p).some(isAway));
+    // A place whose moments of the kind are all held by another category's slots is a last resort (polish after C4, round 2).
+    const isFree = (m: Activity): boolean => !claimed.has(textKeyOf(m.text));
+    const placesWith = (wanted: (m: Activity) => boolean): readonly Place[] => {
+      const all = settled.places.filter((p) => fits(p).some(wanted));
+      if (claimed.size === 0) return all;
+      const open = all.filter((p) => fits(p).some((m) => wanted(m) && isFree(m)));
+      return open.length > 0 ? open : all;
+    };
+    const awayPlaces = placesWith(isAway);
     const awayRoll = streams.awayRng();
     const awayNeeded = awayWanted - awayCount;
     // «Дом» (a self-shot deck) has no lower bound: its one non-hand capture, the timer, turns away on one roll in three and every other timer frame faces the camera, so
@@ -474,14 +495,14 @@ function planBuiltIn(
     // A wanted away slot goes, among the least-used places, to one with an away moment; when none of them has one it goes to the least-used place that does.
     const hasAwayMoment = (p: Place): boolean => awayPlaces.includes(p);
     const placePreferences = [...(wantsAway ? [hasAwayMoment] : []), hasFreshMoment, ...(slotLevel !== "ordinary" ? [hasOwnLevelMoment] : [])];
-    let place = leastUsed(settled.places, placeUsage, placePreferences, tieRng);
+    let place = leastUsed(claimed.size === 0 ? settled.places : placesWith(() => true), placeUsage, placePreferences, tieRng);
     if (wantsAway && !hasAwayMoment(place)) place = leastUsed(awayPlaces, placeUsage, [hasFreshMoment], tieRng);
     const momentPreferences = (at: Place): ((m: Activity) => boolean)[] => [(m) => !recent.has(momentKey(at.name, m.text)), ...(slotLevel !== "ordinary" ? [isOwnLevel] : [])];
     const momentsAt = (at: Place): readonly Activity[] => {
       const fitting = fits(at);
-      if (wantsAway) return fitting.filter(isAway);
+      if (wantsAway) return keepFree(fitting.filter(isAway), (m) => m.text);
       const facing = fitting.filter((m) => !isAway(m));
-      return selfShot && facing.length > 0 ? facing : fitting;
+      return keepFree(selfShot && facing.length > 0 ? facing : fitting, (m) => m.text);
     };
     let moment = leastUsed(momentsAt(place), (m) => momentUses.get(momentKey(place.name, m.text)) ?? 0, momentPreferences(place), tieRng);
     if (isAwayAngle(moment.angle) && awayCount >= awayCap) {
@@ -491,7 +512,7 @@ function planBuiltIn(
       if (where.length > 0) {
         place = leastUsed(where, (p) => placeUses.get(p.name) ?? 0, [], streams.angleRng);
         const at = place;
-        moment = leastUsed(fits(at).filter(nonAway), (m) => momentUses.get(momentKey(at.name, m.text)) ?? 0, momentPreferences(at), streams.angleRng);
+        moment = leastUsed(keepFree(fits(at).filter(nonAway), (m) => m.text), (m) => momentUses.get(momentKey(at.name, m.text)) ?? 0, momentPreferences(at), streams.angleRng);
       }
     }
     const finalPose: Pose = moment.angle ?? pose;
@@ -575,9 +596,16 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
       ? split.map(() => 0)
       : apportionLegs(legsCountOf(legsShare, legsEligible.reduce((sum, n) => sum + n, 0), count), legsEligible, shuffle(makeRng(subSeed(seed, "legs")), split.map((_, i) => i)));
 
-  const slots: PlanSlot[] = [];
-  let nextIndex = 1;
-  for (const [entry, { ref, count: n }] of split.entries()) {
+  // Polish after C4 (round 2): the categories are planned the ordinary ones first, then the «Смелая» ones, so a «Смелая» category can yield the moment texts the others hold in the run.
+  // Every category draws on streams of its own, so the order changes no draw; the slots go back in the canonical order below.
+  const firstIndexOf: number[] = [];
+  split.reduce((next, { count: n }, entry) => ((firstIndexOf[entry] = next), next + n), 1);
+  const boldFirst = (entry: number): number => (input.level === "bold" && isBoldCategory(plannerCategoryOf(split[entry]?.ref as CategoryRef)) ? 1 : 0);
+  const planningOrder = split.map((_, entry) => entry).sort((a, b) => boldFirst(a) - boldFirst(b) || a - b);
+  const slotsOf: PlanSlot[][] = split.map(() => []);
+  for (const entry of planningOrder) {
+    const { ref, count: n } = split[entry] as (typeof split)[number];
+    const nextIndex = firstIndexOf[entry] as number;
     const category = plannerCategoryOf(ref);
     const pool = pools[category];
     if (pool === undefined) throw new RangeError(`no pool for category ${category}`);
@@ -608,10 +636,12 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
         legsRng: makeRng(subSeed(seed, `legs:${category}`)),
         ordinaryCaptures: () => planBuiltIn(streamsFor(), builtInPool, category, n, first, excluded, recent, "ordinary", legs).map((slot) => (slot.framing === "legs" ? null : (slot.capture ?? captureOfShot(slot.shot)))),
       });
-      slots.push(...planBuiltIn(streamsFor(), builtInPool, category, n, nextIndex, excluded, recent, categoryLevel, legs));
-    } else slots.push(...planCategory(rng, poseRng, fixRng, pool, category, n, nextIndex, excluded));
-    nextIndex += n;
+      // The texts the other categories already hold: only a «Смелая» category's slot yields them.
+      const claimed = new Set(categoryLevel === "bold" ? slotsOf.flatMap((held, other) => (other === entry ? [] : held.map((slot) => textKeyOf(slot.activity)))) : []);
+      slotsOf[entry] = planBuiltIn(streamsFor(), builtInPool, category, n, nextIndex, excluded, recent, categoryLevel, legs, claimed);
+    } else slotsOf[entry] = planCategory(rng, poseRng, fixRng, pool, category, n, nextIndex, excluded);
   }
+  const slots: PlanSlot[] = slotsOf.flat();
   return ScenePlanSchema.parse({ version: 1, seed, slots });
 }
 
