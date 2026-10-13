@@ -127,10 +127,12 @@ const AT_THE_VIEWER = /\b(?:viewer|camera|lens)\b/i;
  * at it («smiles at her reflection», «checks her reflection in the mirror») is one.
  */
 const AT_THE_MIRROR = /\bmirror\b/i;
-const AT_HER_REFLECTION = /\b(?:at|on|to)\s+(?:her\s+reflection|herself)\b|\bcheck(?:s|ing)?\s+her\s+reflection\b/i;
+const AT_HER_REFLECTION = /\b(?:at|on|to)\s+her\s+reflection\b|\bat\s+herself\b|\bcheck(?:s|ing)?\s+her\s+reflection\b/i;
 /** Where she stands, not what she looks at: «in the mirror» after the verb («stares at the sea in the mirror»). */
 const IN_THE_MIRROR = /\bin\s+(?:the|a)\s+mirror\b/gi;
 const HER_PHONE = /\bphone\b/i;
+/** A look in the mirror that names a target of its own: «stares at the sea in the mirror». A bare «stares in the mirror» names none. */
+const LOOK_AT_A_TARGET = /\b(?:look(?:s|ing)?|watch(?:es|ing)?|gaz(?:e|es|ing)|star(?:e|es|ing)|peer(?:s|ing)?|glanc(?:e|es|ing))\s+(?:(?:up|back)\s+)?(?:at|toward|towards|across|over|out|past|through|along|down)\s+(?:the|a|an|her|his|some)\b/i;
 /** Eyes on something by the verb alone: she watches, gazes, stares or peers at it, admires it, takes in the view, eyes it. */
 const EYES_ON = /\b(?:watch(?:es|ing)?|gaz(?:e|es|ing)|star(?:e|es|ing)|peer(?:s|ing)?|admir(?:e|es|ing))\b|\btak(?:es|ing) in the view\b|\beyes\s+(?:the|a)\b/i;
 /** A look or a glance with a direction or a target («looks out at», «looking down the street»); a bare «looks up», «glancing back» or «over her shoulder» names none. */
@@ -150,6 +152,7 @@ export function looksElsewhere(text: string): boolean {
     // Her phone in the mirror is the viewer's place; «in the mirror» after anything else only says where she is, so the rest of the clause is read without it.
     if (HER_PHONE.test(clause) && AT_THE_MIRROR.test(clause)) return false;
     const looked = clause.replace(IN_THE_MIRROR, " ");
+    if (looked !== clause) return LOOK_AT_A_TARGET.test(looked) || FACING.test(looked);
     return !AT_THE_VIEWER.test(looked) && !AT_THE_MIRROR.test(looked) && (EYES_ON.test(looked) || LOOK_TOWARD.test(looked) || FACING.test(looked));
   });
 }

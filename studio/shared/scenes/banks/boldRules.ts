@@ -34,9 +34,9 @@ export const NO_STRAPS = /\bstrap-?less\b|\bbandeau\b|\bbottoms\b|\bsweatshirts?
 /**
  * What covers her when she is under it, in it or pulls it up (the sheet she holds to her chest is the bedsheet moment's outfit, so «sheet» counts only as «the sheets» she lies
  * under). Polish after C4: a cover word counts wherever it stands in the phrase («under the covers reading», «under the duvet until noon», «under the duvet cover»); what keeps a
- * false noun out is the noun itself, named: another thing made of the same cloth (a pillow, a jacket, a shirt, a bag), a fort built of it, a pattern.
+ * false noun out is the noun itself, named: another thing made of the same cloth (a pillow, a jacket, a shirt, a bag), a fort built of it, a pattern, what is worn (pyjamas, a robe, a hoodie), a rug, and «a blanket of stars».
  */
-const NOT_A_COVER = String.raw`(?!\s+(?:pillows?|cushions?|jackets?|coats?|shirts?|dress(?:es)?|skirts?|shorts|pants|scarf|scarves|cardigans?|sweaters?|bags?|forts?|patterns?|prints?)\b)`;
+const NOT_A_COVER = String.raw`(?!\s+(?:pillows?|cushions?|jackets?|coats?|shirts?|dress(?:es)?|skirts?|shorts|pants|scarf|scarves|cardigans?|sweaters?|hoodies?|pyjamas|pajamas|robes?|rugs?|bags?|forts?|patterns?|prints?|of)\b)`;
 const COVER = String.raw`(?:duvet|blankets?|covers|quilts?|comforters?|throws?|plaids?)\b${NOT_A_COVER}`;
 /** Up to two words between the article and the cover word («the soft blanket»), none of them a picnic or a beach. */
 const COVER_GAP = String.raw`(?:(?!picnic\b|beach\b)[a-z]+\s+){0,2}`;

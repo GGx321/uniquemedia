@@ -193,6 +193,13 @@ describe("a category bank", () => {
     "faces the mirror",
     "looks at her phone in the mirror",
     "smiles into the mirror",
+    // Round 2: a mirror look with no target of its own, and talking or smiling to herself, look nowhere else.
+    "gazes in the mirror",
+    "stares in the mirror",
+    "peers in the mirror",
+    "smiles to herself",
+    "laughs to herself",
+    "talks to herself",
   ])("«%s» does not", (text) => {
     expect(looksElsewhere(text)).toBe(false);
   });

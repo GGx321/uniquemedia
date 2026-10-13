@@ -125,6 +125,7 @@ describe("COVERS_HER: a moment under a cover", () => {
     "curls up under the blanket again",
     "dozes under the duvet until noon",
     "lies under the duvet cover",
+    "snuggles under the throw blanket",
   ])("«%s» is under a cover", (text) => {
     expect(COVERS_HER.test(text)).toBe(true);
   });
@@ -146,6 +147,12 @@ describe("COVERS_HER: a moment under a cover", () => {
     "sits with a picnic blanket spread out",
     "lies under a quilted jacket",
     "sits with a throw pillow in her lap",
+    // Round 2: what is worn, laid on the floor or only named in a figure of speech.
+    "stands in her plaid pyjamas",
+    "sits in a plaid robe",
+    "lies under a blanket of stars",
+    "sits under the throw rug",
+    "stands in a quilted hoodie",
   ])("«%s» is not", (text) => {
     expect(COVERS_HER.test(text)).toBe(false);
   });
