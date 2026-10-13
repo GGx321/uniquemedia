@@ -135,17 +135,21 @@ export class SceneSetService {
   readonly #finishing = new Set<string>();
   readonly #idleWaiters = new Map<string, (() => void)[]>();
 
-  /** How many live entries have been released: a read that spans a change of it may hold a file from before a job's last write. */
-  #released = 0;
+  /** Per avatar, how many jobs have ended after writing their set's file: a read that spans a change of it may hold a file from before the job's last write. */
+  readonly #ended = new Map<string, number>();
 
   constructor(deps: SceneSetServiceDeps) {
     this.#deps = deps;
   }
 
-  /** Releases a set's live entry (its job is over, or never started) and counts it for the readers. */
+  /** Releases a set's live entry. A refused or failed claim wrote no file, so it is not counted for the readers (`#jobEnded` is). */
   #unlive(sceneSetId: string): void {
     this.#live.delete(sceneSetId);
-    this.#released++;
+  }
+
+  /** A job wrote its set's file for the last time and is over: a read that began before this may hold the file from before it. */
+  #jobEnded(avatarId: string): void {
+    this.#ended.set(avatarId, (this.#ended.get(avatarId) ?? 0) + 1);
   }
 
   /** Whether a job of this set runs (or is about to): what an approval (CS.5) asks, as every free edit does. */
@@ -244,9 +248,9 @@ export class SceneSetService {
     const library = this.#needLibrary();
     if (library.getAvatar(avatarId) === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
     // The file and what is running are two reads: a job that ends in between would leave its «ready» with the revision from before its last write. So the read
-    // is repeated (at most twice) when a live entry was released while the file was being read; after that the answer is what is on disk.
-    for (let attempt = 0; ; attempt++) {
-      const released = this.#released;
+    // is repeated while a job of this avatar has ended since it began. Every repeat means one real job end, and an avatar runs one job at a time, so this ends.
+    for (;;) {
+      const ended = this.#ended.get(avatarId) ?? 0;
       const { sets, unreadable } = await library.sceneSets.list(avatarId);
       // The open set (not yet used) is the one to show; with none open, the newest used one, read-only. At most one set is open, so this is the newest in practice.
       let shown = sets.at(-1);
@@ -256,7 +260,7 @@ export class SceneSetService {
           break;
         }
       }
-      if (attempt < 2 && released !== this.#released) continue;
+      if (ended !== (this.#ended.get(avatarId) ?? 0)) continue;
       // No await between this check and the view's own read of what is live.
       const view = shown === undefined ? null : this.#view(library, shown);
       return { sceneSet: view === null ? null : await view, unreadable };
@@ -810,6 +814,7 @@ export class SceneSetService {
     // Not live any more: the view built below is the set at rest. (Until it is announced, an unlink of the set still waits.)
     this.#finishing.add(sceneSetId);
     this.#unlive(sceneSetId);
+    this.#jobEnded(avatarId);
     deps.paidEnd();
     deps.releaseAvatar(avatarId);
     try {
