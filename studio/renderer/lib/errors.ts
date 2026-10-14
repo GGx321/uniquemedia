@@ -9,6 +9,8 @@ import {
   MUSIC_UNAVAILABLE_REASONS_RU,
   NO_ANSWER_DETAIL_PREFIX,
   CATEGORY_REASONS_RU,
+  CLIP_REASONS_RU,
+  PRICE_SCOPES_RU,
   descriptorReasonRu,
   LAUNCH_REASONS_RU,
   SCENE_REASONS_RU,
@@ -94,6 +96,10 @@ function baseText(error: EngineError): string {
   if (error.code === "VALIDATION" && error.sceneReason !== undefined) return namedScene(error.sceneReason, error.sceneId) ?? SCENE_REASONS_RU[error.sceneReason];
   // S5.3d: a reference-portrait command says which rule it broke (VALIDATION), or that the imported photo is gone (the one INTERNAL with a reason).
   if ((error.code === "VALIDATION" || error.code === "INTERNAL") && error.portraitReason !== undefined) return PORTRAIT_REASONS_RU[error.portraitReason];
+  // Stage 5, 5b.1 (S5.V8): a clip command says why it was refused — the photo that cannot be brought to life, one paid clip at a time, a clip already sent.
+  if ((error.code === "VALIDATION" || error.code === "IN_FLIGHT") && error.clipReason !== undefined) return CLIP_REASONS_RU[error.clipReason];
+  // The video prices are not readable (38f): only clips wait. The 2K tier's own (`bold`) is said by the screens that price «Смелая» (boldPrice.tsx), as before.
+  if (error.code === "PRICE_UNAVAILABLE" && error.priceScope === "video") return PRICE_SCOPES_RU.video;
   if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_CHANGING_DETAIL) return DRAFT_CHANGING_RU;
   if (error.code === "INTERNAL" && error.detail === HOST_ASLEEP_DETAIL) return HOST_ASLEEP_RU;
