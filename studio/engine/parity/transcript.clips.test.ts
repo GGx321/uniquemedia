@@ -72,7 +72,7 @@ describe("a clip's job.progress", () => {
     }
 
     test("a create whose job tells the facts it was asked for is accepted, and its lines are as they were", async () => {
-      const { transcript } = created([event({ ...CLIP, done: 0, phase: "preparing", ...FACTS }), event({ ...CLIP, done: 0, phase: "submitting", model: "kling", ...FACTS })]);
+      const { transcript } = created([event({ ...CLIP, done: 0, phase: "preparing", ...FACTS }), event({ ...CLIP, done: 0, phase: "submitting", model: "kling", ...FACTS, openReserveMicros: 504_000 })]);
       await transcript.call("clips.create", PAYLOAD);
       expect(transcript.lines().filter((l) => l.startsWith("event job.progress"))).toEqual([
         'event job.progress {"kind":"clip","jobId":"job#1","avatarId":"avatar#1","clipId":"job#1","total":4,"phase":"preparing","done":0}',
@@ -97,6 +97,22 @@ describe("a clip's job.progress", () => {
       await transcript.call("clips.create", PAYLOAD);
       seen.push(event({ ...CLIP, done: 0, phase: "rendering", model: "kling", submittedAt: "2026-10-14T10:00:00.000Z" }));
       await expect(transcript.settle()).rejects.toThrow(/facts/i);
+    });
+
+    test("a create job in a phase that holds a reserve open tells it, within what the owner accepted", async () => {
+      for (const phase of ["submitting", "rendering", "proving", "late"] as const) {
+        const without = created([event({ ...CLIP, done: 0, phase, model: "kling", ...FACTS })]);
+        await expect(without.transcript.call("clips.create", PAYLOAD)).rejects.toThrow(/reserve/i);
+      }
+      const above = created([event({ ...CLIP, done: 0, phase: "rendering", model: "kling", ...FACTS, openReserveMicros: 850_001 })]);
+      await expect(above.transcript.call("clips.create", PAYLOAD)).rejects.toThrow(/reserve/i);
+      const within = created([event({ ...CLIP, done: 0, phase: "rendering", model: "kling", ...FACTS, openReserveMicros: 504_000 })]);
+      await within.transcript.call("clips.create", PAYLOAD);
+    });
+
+    test("a create job's first phase, before any reserve, needs none", async () => {
+      const { transcript } = created([event({ ...CLIP, done: 0, phase: "preparing", ...FACTS })]);
+      await transcript.call("clips.create", PAYLOAD);
     });
 
     test("a job that no create asked for (an export, a retried download) is not held to them", async () => {
