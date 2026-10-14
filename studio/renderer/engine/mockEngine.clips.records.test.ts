@@ -191,6 +191,34 @@ describe("clips.retryDownload", () => {
     expect(m.engine.peekClips().attempts).toHaveLength(1);
   });
 
+  // engine/clips/records.ts: the key is looked up after the record is judged (`usableKey("fetch a finished clip again")`), and before any job exists. The ledger is not asked: the fetch is free.
+  test("AUTH_INVALID without a key, refused before a job starts, the record untouched", async () => {
+    const m = makeClipMock();
+    const clipId = await failed(m);
+    const before = await onlyClip(m);
+    await m.client.request("settings.clearApiKey", {});
+    const eventsBefore = m.events.length;
+    expect((await refusal(m.client.request("clips.retryDownload", { avatarId: AVATAR, clipId }))).code).toBe("AUTH_INVALID");
+    expect(m.events.length).toBe(eventsBefore);
+    expect(await onlyClip(m)).toEqual(before);
+  });
+
+  test("a clip with nothing to fetch is judged before the key: VALIDATION, even without a key", async () => {
+    const m = makeClipMock();
+    const clipId = await runClip(m);
+    await m.client.request("settings.clearApiKey", {});
+    expect((await refusal(m.client.request("clips.retryDownload", { avatarId: AVATAR, clipId }))).code).toBe("VALIDATION");
+  });
+
+  test("a ledger that needs a reconcile does not stop the free fetch", async () => {
+    const m = makeClipMock();
+    const clipId = await failed(m);
+    m.engine.haltAboveWorst();
+    expect((await m.client.request("clips.retryDownload", { avatarId: AVATAR, clipId })).ok).toBe(true);
+    m.scheduler.runAll();
+    expect((await onlyClip(m)).status).toBe("ready");
+  });
+
   test("works for each of the three paid failures of a download", async () => {
     for (const script of ["download-failed", "invalid-file", "disk-full"] as const) {
       const m = makeClipMock();

@@ -251,6 +251,8 @@ interface Job {
   moneyClosed: boolean;
   /** An export waiting for its turn. */
   queued: boolean;
+  /** An export past the point of no return: the name it claimed. A cancel from then on changes nothing (engine/clips/export.ts, «done wins»). */
+  claimed: string | null;
 }
 
 type Out<T> = { ok: true; result: T } | { ok: false; error: EngineError };
@@ -270,6 +272,10 @@ export interface MockClipsHost {
   emitMoney(): void;
   /** The key and ledger gate of a paid command (`keyAndLedgerGate`). */
   gate(): EngineError | null;
+  /** What the budget refuses a clip attempt's reserve with while the ledger is halted or needs a reconcile (`Budget.blocked`), or null: the attempts meet it mid-job, after the create's own gate passed. */
+  reserveRefusal(): EngineError | null;
+  /** `usableKey` (engine/clips/records.ts): the key alone, for a free call that still goes to the provider. */
+  keyGate(): EngineError | null;
   markKeyRejected(): void;
   /** The mock's open reserves, attempt id to worst: the clips add theirs and take them back. */
   reserves: Map<string, number>;
@@ -851,7 +857,7 @@ export class MockClips {
 
   #newJob(avatarId: string, kind: Job["kind"], phase: ClipPhase = "preparing", total: number = CLIP_JOB_STEPS, clipId?: string): Job {
     const jobId = this.#host.nextId("job");
-    const job: Job = { jobId, avatarId, clipId: clipId ?? jobId, kind, status: "running", phase, done: 0, total, timers: [], moneyClosed: false, queued: false };
+    const job: Job = { jobId, avatarId, clipId: clipId ?? jobId, kind, status: "running", phase, done: 0, total, timers: [], moneyClosed: false, queued: false, claimed: null };
     this.#jobs.set(jobId, job);
     return job;
   }
@@ -930,6 +936,20 @@ export class MockClips {
     const reserveMicros = clipReserveMicros(RATES[tier], request.seconds);
     const scripted = n === 1 ? run.script.first : run.script.then;
     const clipId = job.clipId;
+    // The budget's `blocked` comes before its limits (engine/money/budget.ts): a halted ledger, or reserves that wait for a reconcile, refuse the reserve with nothing sent.
+    const blocked = host.reserveRefusal();
+    if (blocked !== null) {
+      this.#closeMoney(job);
+      if (n === 2) {
+        // engine/clips/job.ts `not-reserved` after a free refusal: Kling settled 0 and Grok could not even be reserved (for a reason that is not room): the clip ends free as Kling's refusal, and the money status tells.
+        host.emitMoney();
+        this.#fail(run, request.model, "refused-free");
+        return;
+      }
+      this.#dropJournal(clipId);
+      this.#finish(job, { status: "failed", error: blocked });
+      return;
+    }
     const refusedByMonth = (n === 2 && scripted === "no-room") || !this.#fits(reserveMicros);
     if (refusedByMonth) {
       this.#closeMoney(job);
@@ -1317,6 +1337,9 @@ export class MockClips {
       record.outcome = { status: "failed", reason: "download-expired" };
       return bad({ code: "VALIDATION", clipReason: "download-expired", detail: "the file is no longer at the provider" });
     }
+    // The key is looked up after the record is judged and before a job exists (`usableKey("fetch a finished clip again")`); the fetch is free, so the ledger is not asked.
+    const keyless = this.#host.keyGate();
+    if (keyless !== null) return bad(keyless);
     const model: AttemptModel = record.model === "grok" ? "grok" : "kling";
     const job = this.#newJob(avatarId, "retry", "downloading", CLIP_JOB_STEPS, clipId);
     const result = this.#retryResult ?? "ok";
@@ -1414,31 +1437,45 @@ export class MockClips {
         this.#progress(job, { phase: "exporting", done: Math.floor(job.total * mark) });
       });
     });
-    this.#after(job, step * (marks.length + 1), () => this.#commitExport(job));
+    this.#after(job, step * (marks.length + 1), () => this.#claimExport(job));
   }
 
-  #commitExport(job: Job): void {
+  /** The claim of the copy's name (engine/clips/export.ts, the root lock): the point of no return. A cancel before it ends the export; from it on the export runs to its record. */
+  #claimExport(job: Job): void {
     const record = this.#records.get(job.clipId);
     const avatar = this.#host.avatar(job.avatarId);
     if (record === undefined || avatar === undefined || record.outcome.status !== "ready") {
       this.#finish(job, { status: "failed", error: { code: "INTERNAL", detail: "the clip is no longer ready" } });
-    } else {
+      this.#exportRunning = null;
+      this.#nextExport();
+      return;
+    }
+    const host = this.#host;
+    const at = host.nowIso();
+    const named = [...this.#records.values()].flatMap((r) => r.exports.map((e) => e.relPath));
+    const relPath = host.exportRelPath(avatar.name, job.avatarId, localDateOf(new Date(at)), named);
+    host.exportFiles().add(relPath);
+    this.#exported.push(relPath);
+    job.claimed = relPath;
+    this.#after(job, 1, () => this.#recordExport(job, relPath, at));
+  }
+
+  /** The export line of the claimed copy (the I5.53 rewrite), and the end of the job. */
+  #recordExport(job: Job, relPath: string, at: string): void {
+    const record = this.#records.get(job.clipId);
+    if (record !== undefined && record.outcome.status === "ready") {
       const host = this.#host;
-      const at = host.nowIso();
-      const named = [...this.#records.values()].flatMap((r) => r.exports.map((e) => e.relPath));
-      const relPath = host.exportRelPath(avatar.name, job.avatarId, localDateOf(new Date(at)), named);
-      host.exportFiles().add(relPath);
-      this.#exported.push(relPath);
       const profile: ClipExportProfile = this.#exportFps === "interpolate" ? "1080p30-interp" : this.#exportFps === "duplicate" ? "1080p30-dup" : "1080p24";
       const line: ClipExportLine = { rootId: host.exportRootId(), relPath, profile, at, bytes: Math.round(record.outcome.durationMs * 1_500), sha256: fakeSha(`${job.clipId}:${relPath}`) };
       record.exports = [...record.exports, line];
-      this.#finish(job, { status: "done", exported: { relPath } });
     }
+    this.#finish(job, { status: "done", exported: { relPath } });
     this.#exportRunning = null;
     this.#nextExport();
   }
 
   #cancelExport(job: Job): void {
+    if (job.claimed !== null) return;
     this.#exportQueue = this.#exportQueue.filter((j) => j !== job);
     const running = this.#exportRunning === job;
     this.#finish(job, { status: "cancelled" });

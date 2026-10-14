@@ -318,6 +318,35 @@ describe("the settle table (plan §5.7), mode auto", () => {
     expect(await onlyClip(m)).toMatchObject({ status: "failed", failure: { reason: "grok-no-room" }, model: "grok", fallback: false, cost: { micros: 0, kind: "free" } });
   });
 
+  // engine/clips/job.ts (`not-reserved`, `afterFreeRefusal`): Grok's reserve can be refused for a reason that is not room, here a halted ledger (a settle above its worst case elsewhere while Kling was
+  // being proven). The clip ends free as Kling's `refused-free`, the owner is told through the money status, and nothing was sent to Grok.
+  test("7g Grok's reserve is refused by a halted ledger behind a free Kling: `refused-free` on Kling, free, with no Grok POST, and the money says why", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextClip({ first: "refused-free", then: "ok" });
+    const { jobId } = await unwrap(create(m));
+    stepUntil(m, reached(m, jobId, "proving"), "proving");
+    m.engine.haltAboveWorst();
+    const before = m.events.length;
+    m.scheduler.runAll();
+    expect(m.engine.peekClips().posts).toEqual(["kling"]);
+    expect(endOf(m.events, jobId)).toMatchObject({ type: "job.done" });
+    expect(await onlyClip(m)).toMatchObject({ status: "failed", failure: { reason: "refused-free" }, model: "kling-std", fallback: false, cost: { micros: 0, kind: "free" } });
+    expect(m.events.slice(before).some((e) => e.type === "money.changed")).toBe(true);
+    expect(await money(m)).toMatchObject({ halt: { cause: "SETTLE_ABOVE_WORST" } });
+  });
+
+  test("7h a ledger that needs a reconcile before the first reserve refuses the clip itself, in the budget's words, with nothing sent", async () => {
+    const m = makeClipMock();
+    const { jobId } = await unwrap(create(m));
+    m.engine.haltAboveWorst();
+    m.scheduler.runAll();
+    expect(endOf(m.events, jobId)).toMatchObject({ type: "job.failed", payload: { jobId, error: { code: "SETTLE_ABOVE_WORST" } } });
+    expect(m.engine.peekClips().posts).toEqual([]);
+    expect(m.engine.peekClips().attempts).toEqual([]);
+    expect(m.engine.peekClips().journals[jobId]).toBeUndefined();
+    expect(await listClips(m)).toEqual([]);
+  });
+
   test("9 a refusal that /generation bills: settled at that figure, `refused-paid`, no Grok", async () => {
     const m = makeClipMock();
     m.engine.scriptNextClip("refused-paid");

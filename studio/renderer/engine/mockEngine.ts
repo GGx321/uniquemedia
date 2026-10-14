@@ -960,6 +960,8 @@ export class MockEngine implements EngineBridge {
         emit: (event) => this.emit(event),
         emitMoney: () => this.emitMoney(),
         gate: () => this.keyAndLedgerGate(),
+        reserveRefusal: () => this.clipReserveRefusal(),
+        keyGate: () => this.keyGate(),
         markKeyRejected: () => {
           if (!this.settings.apiKey.stored) return;
           this.settings = { ...this.settings, apiKey: { ...this.settings.apiKey, rejected: true } };
@@ -3457,14 +3459,28 @@ export class MockEngine implements EngineBridge {
     return null;
   }
 
-  /** The key and the ledger: the engine's first checks before any paid call, before it even looks up what the command names. */
-  private keyAndLedgerGate(): EngineError | null {
+  /** `usableKey`: a free call that still needs the key (a clip's file fetched again) is refused without one, or with one the provider rejected. */
+  private keyGate(): EngineError | null {
     const key = this.settings.apiKey;
     if (!key.stored) return { code: "AUTH_INVALID", detail: "no API key is stored" };
     if (key.rejected) return { code: "AUTH_INVALID" };
+    return null;
+  }
+
+  /** The key and the ledger: the engine's first checks before any paid call, before it even looks up what the command names. */
+  private keyAndLedgerGate(): EngineError | null {
+    const unusable = this.keyGate();
+    if (unusable) return unusable;
     const stopped = this.ledgerStop();
     if (stopped) return stopped;
     if (this.reconcileReasons.length > 0 || this.halt !== null) return { code: "RECONCILE_REQUIRED" };
+    return null;
+  }
+
+  /** `Budget.blocked`, as a clip's attempt meets it at its reserve: a halted ledger first, then reserves that wait for a reconcile; the words of the clip job's `refusalError`. */
+  private clipReserveRefusal(): EngineError | null {
+    if (this.halt !== null) return { code: this.halt.cause, detail: "the ledger is halted; nothing was sent" };
+    if (this.reconcileReasons.length > 0) return { code: "RECONCILE_REQUIRED", detail: `${this.reserves.size} open attempt(s); reconcile before a clip; nothing was sent` };
     return null;
   }
 

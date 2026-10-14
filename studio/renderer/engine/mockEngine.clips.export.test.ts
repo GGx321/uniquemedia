@@ -217,6 +217,21 @@ describe("a running export", () => {
     expect(m.engine.peekClips().exportedFiles).toEqual([]);
   });
 
+  // engine/clips/export.ts: a cancel is honoured up to the claim of the name; from the claim on the export runs to its record («done wins», as a render's commit).
+  test("a cancel after the name is claimed is answered, and changes nothing: the export ends done with its copy and its export line", async () => {
+    const m = makeClipMock();
+    const { jobId } = await running(m);
+    for (let i = 0; i < 100 && m.engine.peekClips().exportedFiles.length === 0; i++) if (!m.scheduler.next()) break;
+    expect(m.engine.peekClips().exportedFiles).toHaveLength(1);
+    expect(endOf(m.events, jobId)).toBeUndefined();
+    expect(await unwrap(m.client.request("avatars.cancel", { jobId }))).toEqual({ jobId });
+    m.scheduler.runAll();
+    expect(endOf(m.events, jobId)).toMatchObject({ type: "job.done" });
+    expect(m.events.some((e) => e.type === "job.cancelled" && e.payload.jobId === jobId)).toBe(false);
+    const [relPath] = m.engine.peekClips().exportedFiles;
+    expect((await onlyClip(m)).exports).toEqual([expect.objectContaining({ relPath })]);
+  });
+
   test("refuses its avatar's delete and a library switch", async () => {
     const m = makeClipMock();
     await running(m);
