@@ -94,6 +94,15 @@ function headerTimes(bytes: Uint8Array): Array<{ type: string; created: number; 
   return out;
 }
 
+/** The packed language code of every `mdhd` (an independent reading of the version-0 boxes ffmpeg writes: it sits 20 bytes into the body). */
+function mdhdLanguages(bytes: Uint8Array): number[] {
+  const text = Buffer.from(bytes).toString("latin1");
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const out: number[] = [];
+  for (let at = text.indexOf("mdhd"); at >= 0 && at < text.indexOf("mdat"); at = text.indexOf("mdhd", at + 4)) out.push(view.getUint16(at + 4 + 20));
+  return out;
+}
+
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "studio-clip-export-verify-"));
   source = join(dir, "seeded.mp4");
@@ -167,6 +176,20 @@ describe("what the verifier catches", () => {
 
   test("a creation_time within 2 s of the export time passes", async () => {
     expect((await verifyClipExport(clean, { createdAt: new Date(EXPORTED_AT.getTime() + 1_500) })).ok).toBe(true);
+  });
+
+  test("the clean export's mdhd says «und» (the premise of the language pin)", async () => {
+    expect(mdhdLanguages(new Uint8Array(await readFile(clean)))).toEqual([0x55c4]);
+  });
+
+  test("a source language carried into mdhd (fra) is refused", async () => {
+    const french = await exportWith("language-fra", adding("-metadata:s:v:0", "language=fra"));
+    expect(mdhdLanguages(new Uint8Array(await readFile(french)))).not.toEqual([0x55c4]);
+
+    const verdict = await verifyClipExport(french, { createdAt: EXPORTED_AT });
+
+    expect(verdict.ok).toBe(false);
+    expect(codesOf(verdict)).toContain("METADATA_VALUE_NOT_ALLOWED");
   });
 
   test("without -empty_hdlr_name 1 the video handler is named again, and the export is refused", async () => {

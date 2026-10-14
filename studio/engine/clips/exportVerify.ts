@@ -153,6 +153,18 @@ function checkTimes(bytes: Uint8Array, box: Mp4Box, expectedS: number, tolerance
   }
 }
 
+/** The packed ISO 639-2/T code «und» (undetermined): 5 bits per letter, each letter minus 0x60. */
+const MDHD_LANGUAGE_UND = 0x55c4;
+
+/** `mdhd` names no language but «und»: a language of the source (`fra`, ...) carried through would be a tag the owner did not choose. */
+function checkLanguage(bytes: Uint8Array, mdhd: Mp4Box, reasons: Reasons): void {
+  const wide = u8(bytes, mdhd.body) === 1;
+  // version 0: flags, two 32-bit times, the timescale, a 32-bit duration; version 1 has 64-bit times and duration.
+  const language = u16(bytes, mdhd.body + (wide ? 32 : 20));
+  if (language === undefined) return reasons.add("STRUCTURE_UNRECOGNISED", "mdhd has no room for its language", mdhd.path);
+  if (language !== MDHD_LANGUAGE_UND) reasons.add("METADATA_VALUE_NOT_ALLOWED", `mdhd language is 0x${language.toString(16)}, expected und`, mdhd.path);
+}
+
 /** A handler's name region (after its 24 fixed bytes) is empty or one NUL; a handler of `meta` is `mdir`, a track's `vide`. */
 function checkHandler(bytes: Uint8Array, hdlr: Mp4Box, type: string, reasons: Reasons): void {
   if (hdlr.end - hdlr.body < 24) return reasons.add("STRUCTURE_UNRECOGNISED", "hdlr has no room for a handler type", hdlr.path);
@@ -254,7 +266,10 @@ function checkMoov(bytes: Uint8Array, children: readonly Mp4Box[], expected: Cli
     for (const tkhd of kids(trak, "tkhd")) checkTimes(bytes, tkhd, expectedS, toleranceS, reasons);
     const mdia = kids(trak, "mdia")[0];
     if (mdia === undefined) continue;
-    for (const mdhd of kids(mdia, "mdhd")) checkTimes(bytes, mdhd, expectedS, toleranceS, reasons);
+    for (const mdhd of kids(mdia, "mdhd")) {
+      checkTimes(bytes, mdhd, expectedS, toleranceS, reasons);
+      checkLanguage(bytes, mdhd, reasons);
+    }
     for (const hdlr of kids(mdia, "hdlr")) checkHandler(bytes, hdlr, "vide", reasons);
     const minf = kids(mdia, "minf")[0];
     if (minf === undefined) continue;
