@@ -55,12 +55,13 @@ async function runCheck(): Promise<void> {
 }
 
 describe("the tab", () => {
-  test("is the fourth on the avatar's page; its price is asked for only when it is opened, and nothing paid is sent", async () => {
+  test("is the last on the avatar's page; its price is asked for only when it is opened, and nothing paid is sent", async () => {
     const harness = setup({ avatars: [MIA] });
     fireEvent.click(await screen.findByRole("button", { name: "Mia" }));
     await screen.findByRole("heading", { level: 1, name: "Mia" });
     await flush();
-    expect(screen.getAllByRole("tab").map(text)).toEqual(["Фото", "История сцен", "Видео", "Внешность"]);
+    // 5b.1 (S5.V8, R-14): «Клипы» joins after «Фото».
+    expect(screen.getAllByRole("tab").map(text)).toEqual(["Фото", "Клипы", "История сцен", "Видео", "Внешность"]);
     expect(callsOf(harness.engine, "avatars.estimateCheckDescriptor")).toHaveLength(0);
 
     fireEvent.click(screen.getByRole("tab", { name: "Внешность" }));

@@ -8,6 +8,7 @@ import { FocusEdge } from "../../ui/FocusEdge";
 import { Icon, Spin } from "../../ui/Icon";
 import { PortraitPlaceholder } from "../../ui/Portrait";
 import { useAnnouncer } from "../../ui/useAnnouncer";
+import { AnimateButton } from "../clips/AnimateButton";
 import { useMediaRetry } from "../../ui/useMediaRetry";
 import { useBackdropClose, useModalDialog } from "../../ui/useModalDialog";
 import { montagePickRefusal, PhotoBadges, type MarkControl } from "./photoState";
@@ -66,6 +67,10 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
   const [stepNews, sayStep] = useAnnouncer();
   /** A refused mark is said once, when it comes: a refusal the viewer opened with is old news. */
   const [refusalNews, sayRefusal] = useAnnouncer();
+  /** S5.V8: the «Оживить» sheet is open over the viewer: the viewer's keys and its focus rule wait for it. */
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const sheetOpenRef = useRef(false);
+  sheetOpenRef.current = sheetOpen;
   const seenFailure = useRef(mark.failure);
   useModalDialog({ dialog: dialogRef, initialFocus: closeRef, onClose, returnFocus: () => returnFocus(photo.photoId, index) });
   // The dialog's empty band round the arrows looks like the dark around it, and closes like it.
@@ -80,7 +85,7 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
   // ← and →, wherever the focus is inside the viewer.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || sheetOpenRef.current) return;
       const direction = viewerStep(event);
       if (direction === null) return;
       event.preventDefault();
@@ -120,7 +125,7 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
   // next Space or Enter never steps or marks by surprise.
   useEffect(() => {
     const root = dialogRef.current;
-    if (root === null) return;
+    if (root === null || sheetOpen) return;
     const active = document.activeElement;
     const off = active instanceof HTMLButtonElement && active.disabled;
     if (active instanceof HTMLElement && root.contains(active) && !off) return;
@@ -208,6 +213,8 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
                   {why}
                 </p>
               )}
+              {/* S5.V8 (mockup 37): «Оживить», between the pick and the reject: the sheet, then a paid clip. */}
+              <AnimateButton photo={photo} subtitle={`${title} · ${category}`} frameLabel={`Кадр, который оживёт: фото ${index + 1}`} onSheet={setSheetOpen} />
               {/* Busy is aria-disabled, not disabled: the button keeps the focus while the engine answers. */}
               <button
                 type="button"

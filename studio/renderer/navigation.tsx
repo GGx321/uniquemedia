@@ -31,8 +31,8 @@ export type Route =
 
 export type SettingsFocus = "key" | "money" | "export" | "music";
 
-/** The tabs of an avatar's Photos screen that work: «Фото» and «Видео» (3e.2), «Внешность» (S5.0d); «История сцен» is not built yet. */
-export type PhotosTab = "photos" | "videos" | "look";
+/** The tabs of an avatar's Photos screen that work: «Фото» and «Видео» (3e.2), «Внешность» (S5.0d), «Клипы» (5b.1, S5.V8); «История сцен» is not built yet. */
+export type PhotosTab = "photos" | "clips" | "videos" | "look";
 
 /**
  * S5.0d: how the window came to an avatar's «Внешность» right after making her. `created`: the wizard's «Сохранить», with the worst case of the check

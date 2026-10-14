@@ -169,6 +169,8 @@ interface GalleryProps {
   /** Whether the avatar's usage can be trusted: «Неиспользованные» is empty while it cannot. */
   usage: AvatarSummary["usage"];
   mark: MarkControl;
+  /** S5.V8: the photo the viewer opens on when the gallery comes in (the clip viewer's «Из фото»). */
+  initialViewing?: string | null;
 }
 
 /**
@@ -180,11 +182,11 @@ interface GalleryProps {
  * tile's photo opens it in the viewer (PhotoViewer), which steps through the
  * photos as the filter shows them.
  */
-export function Gallery({ gallery, error, more, pending, picked, refused, onToggle, onRetry, filter, onFilter, usage, mark }: GalleryProps) {
+export function Gallery({ gallery, error, more, pending, picked, refused, onToggle, onRetry, filter, onFilter, usage, mark, initialViewing = null }: GalleryProps) {
   const titleId = useId(); // L12: was the hardcoded "gallery-title"
   const sectionRef = useRef<HTMLElement>(null);
   /** The photo open in the viewer, by id: a list that changes under it moves its number, never what it shows. */
-  const [viewing, setViewing] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<string | null>(initialViewing);
   const loading = gallery === null && error === null;
   const photos = galleryPhotos(gallery?.photos ?? [], filter, usage);
   const skipped = filter === "all" ? (gallery?.skippedTotal ?? 0) : 0;

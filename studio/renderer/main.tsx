@@ -15,6 +15,7 @@ import "./autopilot.css";
 import "./look.css";
 import "./portraits.css";
 import "./body.css";
+import "./clips.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root is missing from studio/renderer/index.html");

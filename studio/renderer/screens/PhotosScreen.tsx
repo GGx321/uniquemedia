@@ -4,6 +4,8 @@ import { useCategoryLibrary, useEngine, useEngineView, useSceneSet } from "../en
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
 import { useNavigate, type LookLanding, type PhotosTab } from "../navigation";
 import { AccountBanner } from "../ui/AccountBanner";
+import { clipIntents, ClipsProvider, unseenCount, useClipList, type ClipsControl } from "./clips/clipsContext";
+import { ClipsTab } from "./clips/ClipsTab";
 import { EngineOffline } from "../ui/EngineOffline";
 import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice } from "../ui/Notice";
@@ -17,7 +19,7 @@ import { Gallery, type PendingSlots } from "./photos/Gallery";
 import { GenerateCard } from "./photos/GenerateCard";
 import type { MarkControl, MarkFailure } from "./photos/photoState";
 import { listedPicks, usablePicks, useMontagePicks } from "./photos/picks";
-import { arrangeCategories, categoriesAt, DEFAULT_RUN_FORM, paidBlockedReason, sceneWriters, type RunForm } from "./photos/runForm";
+import { arrangeCategories, categoriesAt, DEFAULT_RUN_FORM, paidBlockedReason, photoCategoryLabel, sceneWriters, type RunForm } from "./photos/runForm";
 import { readLegs, writeLegs } from "./photos/legs";
 import { readLevel, writeLevel } from "./photos/level";
 import { useRunForms } from "./photos/runForms";
@@ -85,10 +87,17 @@ function AvatarPhotos({
   const ready = view.phase === "ready";
   const { avatarId } = avatar;
   const photosTabId = useId();
+  const clipsTabId = useId();
   const videosTabId = useId();
   const lookTabId = useId();
   const panelId = useId();
   const [tab, setTab] = useState<PhotosTab>(initialTab);
+  /** S5.V8: a clip just started from the sheet (the «Клипы» tab's heading takes the focus), and a photo «Из фото» asked the «Фото» tab's viewer to show. */
+  const [clipArrived, setClipArrived] = useState(0);
+  const [openPhoto, setOpenPhoto] = useState<string | null>(null);
+  useEffect(() => {
+    if (tab === "photos" && openPhoto !== null) setOpenPhoto(null);
+  }, [tab, openPhoto]);
   // S5.0d: the descriptor check lives with the screen, not the tab, so a look at «Фото» and back keeps its verdict.
   const look = useLookCheck(avatarId, landing, {
     shown: tab === "look",
@@ -347,12 +356,38 @@ function AvatarPhotos({
     onMark,
   };
 
-  const tabIds: Record<PhotosTab, string> = { photos: photosTabId, videos: videosTabId, look: lookTabId };
+  // S5.V8: the avatar's clips, listed for the «Клипы» tab and its count of unseen ones (seen from every tab), and what the photo viewer's «Оживить» shares with them.
+  const clipList = useClipList(avatarId, view);
+  const unseenClips = unseenCount(clipList);
+  const galleryPhotos = gallery.pages?.photos ?? [];
+  const clipsControl: ClipsControl = {
+    avatar,
+    view,
+    list: clipList,
+    photoInfo: (photoId) => {
+      const index = galleryPhotos.findIndex((p) => p.photoId === photoId);
+      const photo = galleryPhotos[index];
+      return photo === undefined ? null : { photo, position: index + 1, total: galleryPhotos.length, label: photoCategoryLabel(photo) };
+    },
+    galleryComplete: gallery.pages !== null && gallery.pages.nextCursor === null,
+    started: (jobId, intent) => {
+      clipIntents(store).set(intent.clipId, intent);
+      store.trackClipJob(jobId, avatarId, intent.clipId, "create");
+      setTab("clips");
+      setClipArrived((n) => n + 1);
+    },
+    showPhoto: (photoId) => {
+      setOpenPhoto(photoId);
+      setTab("photos");
+    },
+  };
+
+  const tabIds: Record<PhotosTab, string> = { photos: photosTabId, clips: clipsTabId, videos: videosTabId, look: lookTabId };
   // ← and → move between the tabs that work, round the ends («История сцен» is not built yet).
   const onTabKey = (event: KeyboardEvent<HTMLButtonElement>): void => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
-    const order: readonly PhotosTab[] = ["photos", "videos", "look"];
+    const order: readonly PhotosTab[] = ["photos", "clips", "videos", "look"];
     const step = event.key === "ArrowRight" ? 1 : order.length - 1;
     const next = order[(order.indexOf(tab) + step) % order.length] ?? "photos";
     setTab(next);
@@ -399,6 +434,28 @@ function AvatarPhotos({
           >
             Фото
           </button>
+          {/* S5.V8 (R-14, mockup 39): «Клипы» after «Фото»; the accent's count of clips not opened yet, said to a screen reader as «, новых: N». */}
+          <button
+            type="button"
+            role="tab"
+            id={clipsTabId}
+            aria-selected={tab === "clips"}
+            aria-controls={panelId}
+            tabIndex={tab === "clips" ? 0 : -1}
+            className={tab === "clips" ? "on" : undefined}
+            onClick={() => setTab("clips")}
+            onKeyDown={onTabKey}
+          >
+            Клипы
+            {unseenClips > 0 && (
+              <span className="tab-new-wrap">
+                <span className="tab-new" aria-hidden="true">
+                  {unseenClips}
+                </span>
+                <span className="sr-only">, новых: {unseenClips}</span>
+              </span>
+            )}
+          </button>
           <button type="button" role="tab" aria-selected="false" disabled title="Скоро">
             История сцен
           </button>
@@ -429,7 +486,7 @@ function AvatarPhotos({
             Внешность
           </button>
         </div>
-        {tab === "look" ? null : tab === "photos" ? (
+        {tab === "look" || tab === "clips" ? null : tab === "photos" ? (
           <div className="photos-montage">
             {montageWhy !== null && (
               <span id={whyId} className="faint photos-montage-why">
@@ -461,6 +518,7 @@ function AvatarPhotos({
         )}
       </header>
 
+      <ClipsProvider value={clipsControl}>
       <div id={panelId} className="photos-panel" role="tabpanel" aria-labelledby={tabIds[tab]}>
         {view.phase === "offline" ? <EngineOffline view={view} /> : <AccountBanner view={view} />}
         {createError !== null && (
@@ -557,14 +615,18 @@ function AvatarPhotos({
                   onFilter={setFilter}
                   usage={avatar.usage}
                   mark={mark}
+                  initialViewing={openPhoto}
                 />
               </div>
             </div>
           </>
+        ) : tab === "clips" ? (
+          <ClipsTab control={clipsControl} arrived={clipArrived} />
         ) : (
           <VideosTab avatar={avatar} view={view} />
         )}
       </div>
+      </ClipsProvider>
     </div>
   );
 }

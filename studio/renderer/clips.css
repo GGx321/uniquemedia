@@ -1,0 +1,157 @@
+/* Stage 5, 5b.1, S5.V8: «Оживить» and the «Клипы» tab — the approved mockups 37–46 (.omc/stage5/design, NEW_CSS_S5B and NEW_CSS_S5B2), on the app's tokens only. The mockup's
+   artboard-only classes (the state keys, the macOS quit dialog: main draws that one) and the dropped reveal (Q-B) are left out. */
+
+/* the photo viewer: «Оживить», the one way from a photo to a paid clip — the accent's quiet tint, so it reads apart from the pick and the reject */
+.viewer-animate { border-color: var(--accent-35); color: var(--accent-text); }
+.viewer-animate > svg { color: var(--accent); }
+.viewer-animate:hover:not(:disabled) { border-color: var(--accent-45); background: var(--accent-08); color: var(--accent-text); }
+.viewer-why-link { padding: 0; border: 0; background: none; color: var(--link); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+
+/* the sheet: a dialog over the viewer — the viewer's scrim already darkens the page, so this one is lighter */
+.clip-sheet-scrim { background: var(--scrim-50); z-index: 55; }
+.clip-sheet { width: 640px; max-width: calc(100vw - 32px); }
+.clip-sheet-head { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.clip-sheet-body { flex-direction: row; gap: 20px; padding-top: 16px; }
+.clip-sheet-frame { display: flex; flex-shrink: 0; flex-direction: column; gap: 8px; width: 132px; margin: 0; }
+.clip-sheet-photo { width: 132px; aspect-ratio: 9 / 16; border-radius: 10px; background: var(--frame-black); }
+.clip-sheet-photo > .portrait { position: absolute; inset: 0; }
+.clip-sheet-photo .portrait-silhouette { height: 74%; }
+.clip-frame-pill { position: absolute; left: 6px; bottom: 6px; font-size: 10.5px; }
+.clip-sheet-cap { font-size: 11px; line-height: 1.4; }
+.clip-sheet-form { display: flex; flex: 1; flex-direction: column; gap: 16px; min-width: 0; }
+.clip-group { display: flex; flex-direction: column; gap: 8px; }
+.clip-opts { display: flex; flex-direction: column; gap: 6px; }
+.clip-opt { position: relative; padding: 10px 12px; cursor: pointer; }
+.clip-opt:has(.choice-input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.clip-en { color: var(--faint); font-style: normal; }
+.clip-rows { display: flex; flex-direction: column; gap: 10px; }
+.clip-row { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 12px; }
+.clip-seg { justify-self: start; }
+.clip-sheet-foot { display: flex; flex-direction: column; gap: 10px; padding: 14px 20px 16px; border-top: 1px solid var(--line); }
+.clip-price { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.clip-price-line { color: var(--text); font-size: 14px; font-weight: 600; }
+.clip-price-line .mono { font-size: 13px; font-weight: 500; }
+.clip-note { margin: -2px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+.clip-note-quiet { color: var(--faint); }
+.clip-sheet-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.clip-model { color: var(--text-2); font-size: 12.5px; }
+.clip-sheet-btns .mono { font-size: 12px; }
+/* 38: the 1080p line under «Модель» (controller decision 7) */
+.clip-row-note { grid-column: 2; margin: -4px 0 0; }
+/* 38f: the notice stands in the form's place — the motions come with the prices, so there is no form; the price reads «—» */
+.clip-sheet-unpriced { justify-content: flex-start; }
+.clip-price-none { color: var(--faint); font-family: var(--font-mono); font-weight: 500; }
+
+/* the «Клипы» tab: VideosTab's head over the gallery's tile shape (142.5 × 224), the poster a 9:16 frame cut like a photo tile */
+.clips-tab { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.clips-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); align-items: start; gap: 18px 12px; }
+.clip-slot { min-width: 0; }
+.clip-tile { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.clip-poster { aspect-ratio: 142.5 / 224; border-radius: 10px; background: var(--photo-queued); }
+.clip-poster > .portrait, .clip-poster > .clip-poster-img { position: absolute; inset: 0; }
+.clip-poster > .clip-poster-img { width: 100%; height: 100%; object-fit: cover; }
+.clip-poster .portrait-silhouette { height: 70%; }
+.clip-badges { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; pointer-events: none; }
+.clip-pills { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px; pointer-events: none; }
+.clip-len { font-size: 10.5px; font-weight: 500; }
+.clip-len-long { color: var(--accent-text); }
+.clip-tag { font-size: 10.5px; color: var(--text-2); }
+.clip-new { background: var(--accent); color: var(--accent-ink); font-size: 10.5px; }
+.clip-face-low { max-width: 100%; height: auto; min-height: 22px; padding: 3px 8px; border-radius: 8px; color: var(--warn); font-size: 10.5px; font-weight: 600; line-height: 1.3; white-space: normal; }
+.clip-open { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 0; border: 0; background: none; color: var(--text); cursor: pointer; }
+.clip-open:focus-visible { outline: none; }
+.clip-poster:has(> .clip-open:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; overflow: visible; }
+.clip-play { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding-left: 2px; border: 1px solid var(--pick-ring); border-radius: 50%; background: var(--scrim-72); opacity: 0; transition: opacity 0.12s ease; }
+.clip-tile:hover .clip-play, .clip-open:focus-visible .clip-play { opacity: 1; }
+.clip-cap { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 0 2px; }
+.clip-cap-top { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.clip-name { flex: 1; min-width: 0; margin: 0; overflow: hidden; font-size: 12.5px; font-weight: 600; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.clip-meta { margin: 0; font-size: 10.5px; line-height: 1.45; }
+.clip-line { margin: 0; color: var(--text-2); font-size: 11.5px; line-height: 1.4; }
+.clip-saved-mark { display: inline-flex; align-items: center; gap: 4px; margin: 1px 0 0; color: var(--ok); font-size: 11px; font-weight: 500; }
+/* running: the source photo dimmed, the accent's ring of a job in flight, the phase and its steps under it */
+.clip-tile-work .clip-poster { box-shadow: 0 0 0 2px var(--accent-35); }
+.clip-dim { position: absolute; inset: 0; background: var(--scrim-soft); }
+.clip-dim-strong { background: var(--scrim-60); }
+.clip-state { font-size: 10.5px; }
+.clip-state-work { color: var(--link); }
+.clip-state-warn { color: var(--warn); }
+.clip-state-quiet { color: var(--muted); }
+.clip-phase { display: flex; align-items: flex-start; gap: 6px; margin: 1px 0 0; color: var(--link); font-size: 12px; font-weight: 600; line-height: 1.4; }
+.clip-phase .spin { flex-shrink: 0; width: 12px; height: 12px; margin-top: 2px; border-width: 1.8px; }
+.clip-phase-warn { color: var(--warn); }
+.clip-phase-quiet { color: var(--text-2); }
+.clip-steps { display: flex; gap: 3px; margin: 3px 0 2px; }
+.clip-steps > span { flex: 1; height: 3px; border-radius: 3px; background: var(--track); }
+.clip-steps > .done { background: var(--accent); }
+.clip-steps > .now { background: var(--accent-40); }
+.clip-steps-warn > .now { background: var(--warn-45); }
+.clip-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.clip-btn { height: auto; min-height: 30px; padding: 5px 10px; font-size: 12px; line-height: 1.25; white-space: normal; text-align: left; }
+.clip-btn-stack { align-items: flex-start; gap: 0; }
+.clip-btn-stack .mono { font-size: 10.5px; font-weight: 500; }
+/* failed: the photo dimmed further, the icon in the tone of the money — a free end muted, a paid or open one warm */
+.clip-alert { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--warn); }
+.clip-alert-dot { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid var(--warn-35); border-radius: 50%; background: var(--scrim-72); }
+.clip-fail-free .clip-alert { color: var(--muted); }
+.clip-fail-free .clip-alert-dot { border-color: var(--border-strong); }
+.clip-fail-text { margin: 1px 0 0; color: var(--text-2); font-size: 12px; line-height: 1.4; }
+.clip-fail-paid .clip-fail-text, .clip-fail-open .clip-fail-text { color: var(--warn); }
+.clip-fail-why { margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+.clip-trash { flex-shrink: 0; width: 26px; height: 26px; margin: -4px -2px 0 0; }
+
+/* the clip viewer: the photo viewer's card; the clip plays muted, in a loop, with a quiet bar */
+.clip-frame > .portrait, .clip-frame > .clip-video { position: absolute; inset: 0; }
+.clip-frame > .clip-video { width: 100%; height: 100%; object-fit: contain; background: var(--frame-black); }
+.clip-hud { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; gap: 8px; padding: 36px 14px 12px; background: linear-gradient(180deg, transparent 0%, var(--scrim-72) 100%); pointer-events: none; }
+.clip-hud-bar { height: 3px; overflow: hidden; border-radius: 3px; background: var(--pv-bar-track); }
+.clip-hud-bar > span { display: block; height: 100%; background: var(--pv-bar-fill); }
+.clip-hud-row { display: flex; align-items: center; justify-content: space-between; color: var(--text); font-size: 11px; }
+.clip-hud-mute { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); }
+.clip-tag-meta { height: 22px; background: var(--panel-3); }
+.clip-facts { display: flex; flex-direction: column; gap: 9px; margin: 0; padding-top: 14px; border-top: 1px solid var(--line); }
+.clip-fact { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 10px; }
+.clip-fact > dt { color: var(--faint); font-size: 11.5px; line-height: 1.5; }
+.clip-fact > dd { min-width: 0; margin: 0; color: var(--text-2); font-size: 12.5px; line-height: 1.45; }
+.clip-fact > dd .mono { font-size: 11.5px; }
+.clip-fact .clip-en { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.4; }
+.clip-fact-warn > dd { color: var(--warn); }
+.clip-fact-quiet > dd { color: var(--muted); }
+.clip-src { display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; background: none; color: var(--link); font: inherit; text-align: left; cursor: pointer; }
+.clip-src:hover > span:last-child { text-decoration: underline; text-underline-offset: 2px; }
+.clip-src-thumb { flex-shrink: 0; width: 22px; height: 39px; border-radius: 4px; }
+.clip-src-thumb > .portrait { position: absolute; inset: 0; }
+.clip-src-gone { color: var(--muted); }
+/* 43a: the saved file's path wraps anywhere (a long avatar name, a deep folder), never out of the column */
+.clip-saved { display: flex; align-items: flex-start; gap: 7px; margin: 0; padding: 8px 10px; border: 1px solid var(--ok-35); border-radius: 9px; background: var(--ok-08); color: var(--ok); font-size: 12px; line-height: 1.4; }
+.clip-saved > svg { flex-shrink: 0; margin-top: 2px; }
+.clip-saved > span { min-width: 0; }
+.clip-saved .mono { color: var(--text-2); font-size: 11px; overflow-wrap: anywhere; word-break: break-word; }
+.clip-saved-line { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+.clip-export-warn { display: flex; flex-direction: column; gap: 6px; padding: 9px 10px; border: 1px solid var(--warn-35); border-radius: 9px; background: var(--warn-08); color: var(--text-2); font-size: 12px; line-height: 1.4; }
+.clip-export-warn > b { color: var(--warn); font-weight: 600; }
+.viewer-actions .clip-export-warn .btn { align-self: flex-start; width: auto; margin-top: 2px; }
+/* 43c: the export failed — warm, not alarming: the clip in Studio is whole and the save can run again */
+.clip-export-fail { flex-direction: row; align-items: flex-start; gap: 8px; }
+.clip-export-fail > svg { flex-shrink: 0; margin-top: 1px; color: var(--warn); }
+/* 43: the export's progress line, right under its busy button */
+.clip-export-bar { margin-top: -3px; }
+.clip-export-bar > span { transition: width 0.2s ease; }
+.clip-del:hover:not(:disabled) { border-color: var(--danger-35); background: var(--danger-08); color: var(--danger); }
+
+/* the «Клипы» tab's count of unseen clips (controller decision 2): the accent, as «новый» on the tile */
+.tab-new-wrap { display: inline-flex; }
+.tab-new { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; margin-left: 6px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font-family: var(--font-mono); font-size: 10px; font-weight: 500; line-height: 1; }
+/* the queue's clip row (controller decision 1): the «Генерация» row's shape, the clip's steps for its bar */
+.side-clip .clip-steps { margin: 0; }
+.side-clip-warn { color: var(--warn); }
+/* 46: the clip's line inside the reconcile banner (controller decision 6) */
+.notice-text .notice-clip { display: block; margin-top: 4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .clip-play, .clip-export-bar > span { transition: none; }
+}
+
+@media (max-width: 720px) {
+  .clip-sheet-body { flex-direction: column; }
+}
