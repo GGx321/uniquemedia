@@ -165,6 +165,41 @@ describe("a batch's money, one member at a time", () => {
   });
 });
 
+describe("the wait for the money to be alone (I5.62)", () => {
+  /** The terminal hold of a refusal outlasts the test, and the alone-wait is long enough to be seen but short enough to wait out. */
+  const SLOW_HOLD: typeof SHORT_CLIP_TIMINGS = { ...SHORT_CLIP_TIMINGS, holdTerminalMs: 5_000, aloneWaitMs: 400 };
+  const alone = (engine: ClipEngine, jobId: string): boolean => engine.events().some((e) => e.type === "job.progress" && e.payload.kind === "clip" && e.payload.jobId === jobId && e.payload.waitReason === "alone");
+
+  test("there is none after a completed clip settled exactly: the next member goes at once, and no `alone` is told", async () => {
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(3));
+    const engine = await started({ timings: SLOW_HOLD });
+    const { jobIds } = batchOf(await createBatch(engine, { avatarId, photoIds }));
+    await endsOf(engine, jobIds);
+
+    for (const id of jobIds) expect(alone(engine, id)).toBe(false);
+    expect(engine.net.posts("kling")).toHaveLength(3);
+  });
+
+  test("after a refused sibling the next member waits for the money to be alone, up to the bound, then submits; the reconcile stays held meanwhile", async () => {
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(2));
+    const net = clipNetwork({ klingBy: (n) => (n === 1 ? { terminal: { status: "failed", error: RISK_CONTROL } } : undefined) });
+    const engine = await started({ net, timings: SLOW_HOLD });
+    const { jobIds } = batchOf(await createBatch(engine, { avatarId, photoIds, fallback: "none", acceptedWorstMicros: 2 * 504_000 }));
+
+    await until(() => alone(engine, jobIds[1] ?? ""), "member 2 waiting for the money to be alone");
+    const told = Date.now();
+    expect(engine.net.posts("kling")).toHaveLength(1);
+    expect(await engine.engine.handle(command("money.reconcile"))).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
+    expect(await clipJob(engine, jobIds[1] ?? "")).toMatchObject({ phase: "queued", waitReason: "alone", batchIndex: 2 });
+
+    await until(() => engine.net.posts("kling").length === 2, "member 2's POST");
+    expect(Date.now() - told).toBeGreaterThanOrEqual(SLOW_HOLD.aloneWaitMs - 60);
+    expect(typesOf(await endsOf(engine, jobIds))).toEqual(["job.done", "job.done"]);
+    expect((await recordOf(avatarId, jobIds[0] ?? "")).outcome).toMatchObject({ status: "failed", reason: "refused-free" });
+    expectNothingHeld(engine);
+  });
+});
+
 describe("one clip money unit across the whole engine (I5.61)", () => {
   test("a single clip is refused `batch-running` while a batch holds the unit, and a batch is refused `one-at-a-time` during a single clip", async () => {
     const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(3));

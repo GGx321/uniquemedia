@@ -618,13 +618,14 @@ describe("ClipBatch: a 429 at the submit (L11)", () => {
     expect(w.sleeps.filter((ms) => ms === SHORT_CLIP_TIMINGS.rateLimitPauseMs).length).toBeGreaterThanOrEqual(1);
   });
 
-  test("is not requeued after a stop", async () => {
+  test("a member that is not rate-limited is never requeued (an uncertain submit ends the batch, it does not retry)", async () => {
     const w = newWorld();
     w.script = (run, world) => {
       closeAs(world, run, run.member.index === 1 ? failed("submit-uncertain") : COMPLETED);
     };
     await build(w, 2).run();
     expect(w.runs).toEqual(ids(2).slice(0, 1));
+    expect(w.jobs.states().filter((state) => state.kind === "clip" && state.batchIndex === 1)).toHaveLength(1);
   });
 });
 

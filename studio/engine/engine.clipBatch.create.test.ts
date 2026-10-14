@@ -90,6 +90,20 @@ describe("clips.batchOptions", () => {
     for (const answer of [roomy, tight, empty]) expect(ClipBatchOptions.safeParse(answer).success).toBe(true);
   });
 
+  test("the boundary: a room exactly the sum fits, one micro-dollar less does not (with the fallback, and without it)", async () => {
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(3));
+    // With Grok behind them the three need 2 550 000; on Kling alone, 1 512 000.
+    const exactWith = optionsOf(await batchOptions(await started({ monthlyBudgetMicros: 2_550_000 }), avatarId, photoIds));
+    expect(exactWith.monthFits.std5).toBe("with-fallback");
+    const oneLess = optionsOf(await batchOptions(await started({ monthlyBudgetMicros: 2_550_000 - 1 }), avatarId, photoIds));
+    expect(oneLess.monthFits.std5).toBe("without-fallback");
+    const exactWithout = optionsOf(await batchOptions(await started({ monthlyBudgetMicros: 1_512_000 }), avatarId, photoIds));
+    expect(exactWithout.monthFits.std5).toBe("without-fallback");
+    const none = optionsOf(await batchOptions(await started({ monthlyBudgetMicros: 1_512_000 - 1 }), avatarId, photoIds));
+    expect(none.monthFits.std5).toBe("none");
+    for (const answer of [exactWith, oneLess, exactWithout, none]) expect(ClipBatchOptions.safeParse(answer).success).toBe(true);
+  });
+
   test("never says with-fallback for a batch of «Смелая» frames, which are Kling's alone", async () => {
     const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), [{ category: "nightwear" }, { category: "nightwear" }]);
     const answer = optionsOf(await batchOptions(await started(), avatarId, photoIds));
@@ -220,6 +234,14 @@ describe("clips.createBatch refuses, free and in order", () => {
     const { jobIds } = batchOf(await createBatch(engine, { avatarId, photoIds: photoIds.slice(0, 2), acceptedWorstMicros: 1_700_000 }));
     expect(jobIds).toHaveLength(2);
     for (const id of jobIds) await jobEnd(engine, id);
+  });
+
+  test("a month room exactly the sum is accepted (the boundary: one micro-dollar less is BUDGET_EXCEEDED, above)", async () => {
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(3));
+    const engine = await started({ monthlyBudgetMicros: 2_550_000 });
+    const { jobIds } = batchOf(await createBatch(engine, { avatarId, photoIds }));
+    expect(jobIds).toHaveLength(3);
+    for (const id of jobIds) expect((await jobEnd(engine, id)).type).toBe("job.done");
   });
 
   test("every refusal gives the unit back, so the next batch is taken", async () => {
