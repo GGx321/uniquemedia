@@ -215,6 +215,15 @@ export class ClipRecords {
     return library.clipsDirOf(avatarId);
   }
 
+  /**
+   * The clip's folder and committed record as a command that works on one clip reads them (S5.WA2's `media.importClip`): LIBRARY_UNAVAILABLE with no library, NOT_FOUND for an avatar that is not in it
+   * or is being deleted, and for a clip the avatar does not have. A read; the caller takes the clip's lock if it decides anything from it.
+   */
+  async locate(avatarId: string, clipId: string): Promise<{ clipsDir: string; record: ClipRecord }> {
+    const clipsDir = this.#dirOf(avatarId);
+    return { clipsDir, record: await this.#recordOf(clipsDir, clipId) };
+  }
+
   async #recordOf(clipsDir: string, clipId: string): Promise<ClipRecord> {
     const read = await readClipRecord(clipsDir, clipId);
     if (read.kind !== "record" || read.record.id !== clipId) throw notFound(`no clip ${clipId} in this avatar's clips`);

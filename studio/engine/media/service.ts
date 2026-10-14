@@ -315,6 +315,15 @@ export class MediaService {
     });
   }
 
+  /** The live montage copy of a clip (5b.2, S5.WA2): the media record whose `origin.clipId` is this clip, or undefined. A media being deleted is not one. */
+  async copyOfClip(clipId: string): Promise<MediaSummary | undefined> {
+    return this.#deps.withLibrary(async (library) => {
+      const area = this.#areaOf(library.root);
+      await area.ready;
+      return area.records.copies().find((copy) => copy.origin?.clipId === clipId);
+    });
+  }
+
   /** Whether the record is an own track the render can read: audio, with a length, stored as the importer's m4a. The one rule of `ownTrack.ts`, from the record alone. */
   #isOwnTrack(area: Area, media: MediaSummary): boolean {
     return media.kind === "audio" && media.durationMs !== null && area.records.integrityOf(media.mediaId)?.format === "m4a";

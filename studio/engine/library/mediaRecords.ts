@@ -712,6 +712,15 @@ export class MediaRecords {
     return { media: all.slice(0, MAX_LISTED_MEDIA).map((r) => this.#summaryOf(r)), total: all.length };
   }
 
+  /** Every montage copy of a clip (a video whose record has an `origin`), newest first, with no cap: the engine's lifetime rules look at all of them. */
+  copies(): MediaSummary[] {
+    const orderOf = (record: RecordShape): number => this.#order.get(record.id) ?? 0;
+    return [...this.#index.values()]
+      .filter((record) => record.origin !== undefined)
+      .sort((a, b) => (a.createdAt === b.createdAt ? orderOf(b) - orderOf(a) : a.createdAt < b.createdAt ? 1 : -1))
+      .map((record) => this.#summaryOf(record));
+  }
+
   get(mediaId: string): MediaSummary | undefined {
     const record = this.#index.get(mediaId);
     return record === undefined ? undefined : this.#summaryOf(record);

@@ -1209,6 +1209,7 @@ export class Engine {
       liveCommits: this.#commits,
       withRootLock: (root, work, options) => withRootLock(deps.videos?.fs ?? NODE_COMMIT_FS, root, work, options),
       exportNumbers: () => (this.#live === null ? null : { library: this.#live.library, libraryRoot: this.#live.library.root }),
+      media: this.#media,
     });
     // S4.6a: the orchestrator core. It gets the registry and the Budget groups through its constructor; the engine keeps no public handle on it.
     this.#orchestrator = new Orchestrator({
@@ -2631,6 +2632,9 @@ export class Engine {
         if (!this.#media.cancel(jobId)) throw new EngineFailure({ code: "NOT_FOUND", detail: `no import job ${jobId} in this engine` });
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { jobId } };
       }
+      // 5b.2 (S5.WA2): a ready clip becomes the editor's own video, as its own copy. The clip service holds the clip's lock for the import job; its refusals are the contract's.
+      case "media.importClip":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.importClip(command.payload) };
       case "videos.get":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { video: await this.#videos.get(command.payload.videoId) } };
       case "videos.render":
