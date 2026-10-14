@@ -163,3 +163,40 @@ test("a clip job's failure keeps its clip, so a clip that ended with no record (
   await emit({ type: "job.failed", payload: { kind: "clip", jobId: "job-00000097", avatarId: AVATAR, clipId: "job-00000097", error: { code: "BUDGET_EXCEEDED", detail: "x" } } });
   expect(store.getView().jobs.find((j) => j.jobId === "job-00000097")).toMatchObject({ status: "failed", error: { code: "BUDGET_EXCEEDED" }, clip: { clipId: "job-00000097", phase: "preparing" } });
 });
+
+// Stage 5, 5b.1, S5.V8b: a clip job tells the window what its tile shows, so a window that first hears of the job (a new window, a reload) needs no memory of the click.
+const FACTS = {
+  photoId: "photo-zoe-0001",
+  request: { model: "kling", quality: "std", seconds: 5, fallback: "none" },
+  motion: { source: "code", label: "Моргает и улыбается" },
+  acceptedWorstMicros: 504_000,
+} as const;
+
+test("a clip job's first event, with the facts, gives the job view the facts", async () => {
+  const { store, emit } = await rawHost();
+  await emit({ type: "job.progress", payload: { kind: "clip", jobId: "job-00000079", avatarId: AVATAR, clipId: "job-00000079", done: 0, total: 4, phase: "recovering", ...FACTS } });
+
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000079")?.clip?.facts).toEqual(FACTS);
+});
+
+test("a clip job listed in the snapshot with the facts gives the job view the facts", async () => {
+  const { store } = await rawHost([{ kind: "clip", jobId: "job-00000080", avatarId: AVATAR, clipId: "job-00000080", status: "running", done: 0, total: 4, phase: "recovering", ...FACTS }]);
+
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000080")?.clip?.facts).toEqual(FACTS);
+});
+
+test("a later event of the job keeps the facts an earlier one told", async () => {
+  const { store, emit } = await rawHost();
+  const ref = { kind: "clip", jobId: "job-00000081", avatarId: AVATAR, clipId: "job-00000081", total: 4 } as const;
+  await emit({ type: "job.progress", payload: { ...ref, done: 0, phase: "preparing", ...FACTS } });
+  await emit({ type: "job.progress", payload: { ...ref, done: 0, phase: "submitting", model: "kling" } });
+
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000081")?.clip).toMatchObject({ phase: "submitting", facts: FACTS });
+});
+
+test("a clip job of an older engine, with no facts, has none", async () => {
+  const { store, emit } = await rawHost();
+  await emit({ type: "job.progress", payload: { kind: "clip", jobId: "job-00000082", avatarId: AVATAR, clipId: "job-00000082", done: 0, total: 4, phase: "preparing" } });
+
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000082")?.clip?.facts).toBeUndefined();
+});

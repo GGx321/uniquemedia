@@ -278,15 +278,21 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
       ) : (
         <div ref={gridRef} className="clips-grid">
           {work.map((job) => {
+            // S5.V8b: what the tile shows is the engine's own (the job's facts, told in its events and its snapshot), so a window that never saw the click draws it whole; this window's intent is the
+            // fallback for a job that tells none (an older engine's).
+            const facts = job.clip.facts;
             const intent = intents.get(job.clip.clipId);
             const record = recordOf.get(job.clip.clipId);
             const phase = isActiveJob(job) ? (job.clip.phase ?? "preparing") : "saving";
+            const grokOffer = facts === undefined ? intent?.requestModel === "grok" : facts.request.model === "grok";
             const line = phaseLine(
               { phase, model: job.clip.model, submittedAt: job.clip.submittedAt, proveUntil: job.clip.proveUntil },
-              { nowMs: now, seenMs: seen.current.get(job.jobId) ?? now, lateUntilMs: lateUntilOf(job), grokOffer: intent?.requestModel === "grok" },
+              { nowMs: now, seenMs: seen.current.get(job.jobId) ?? now, lateUntilMs: lateUntilOf(job), grokOffer },
             );
             const heldOpen = phase === "late" || phase === "recovering";
-            const reserve = intent === undefined ? null : job.clip.model === "grok" ? intent.grokWorstMicros : intent.klingWorstMicros;
+            const acceptedWorst = facts?.acceptedWorstMicros ?? intent?.acceptedWorstMicros ?? null;
+            // What a late or recovered attempt holds open is its own model's reserve (the sheet's, when this window has it); the engine's accepted worst case stands in for a window that has not.
+            const reserve = intent === undefined ? acceptedWorst : job.clip.model === "grok" ? intent.grokWorstMicros : intent.klingWorstMicros;
             const moneyLine =
               record !== undefined
                 ? "бесплатно"
@@ -294,16 +300,16 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
                   ? reserve === null
                     ? null
                     : `до ${upUsd(reserve)} — спишется при сверке`
-                  : intent === undefined
+                  : acceptedWorst === null
                     ? null
-                    : `до ${upUsd(intent.acceptedWorstMicros)}`;
-            const seconds = intent?.seconds ?? record?.request.seconds ?? null;
+                    : `до ${upUsd(acceptedWorst)}`;
+            const seconds = facts?.request.seconds ?? intent?.seconds ?? record?.request.seconds ?? null;
             return (
               <div key={job.jobId} className="clip-slot">
                 <WorkTile
-                  motion={intent?.motionLabel ?? record?.motion.label ?? "Клип"}
+                  motion={facts?.motion.label ?? intent?.motionLabel ?? record?.motion.label ?? "Клип"}
                   avatarId={avatarId}
-                  photoId={intent?.photoId ?? record?.photoId ?? null}
+                  photoId={facts?.photoId ?? intent?.photoId ?? record?.photoId ?? null}
                   clip={job.clip}
                   line={line}
                   done={job.done}
@@ -321,9 +327,9 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
             return (
               <div key={job.jobId} className="clip-slot">
                 <FailedJobTile
-                  motion={intent?.motionLabel ?? "Клип"}
+                  motion={job.clip.facts?.motion.label ?? intent?.motionLabel ?? "Клип"}
                   avatarId={avatarId}
-                  photoId={intent?.photoId ?? null}
+                  photoId={job.clip.facts?.photoId ?? intent?.photoId ?? null}
                   clipId={job.clip.clipId}
                   error={job.error ?? { code: "INTERNAL" }}
                   onDismiss={() => {
