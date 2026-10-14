@@ -195,8 +195,12 @@ export function ClipsTab({ control, arrived }: { control: ClipsControl; arrived:
   }
 
   const onOpen = useCallback((clipId: string) => setViewing(clipId), []);
+  /** The clip the viewer just deleted: its tile is about to go, so the focus goes to the tab's heading, as after a tile's own delete. */
+  const deleted = useRef<string | null>(null);
   const tileFor = (clipId: string): HTMLElement | null =>
-    gridRef.current?.querySelector<HTMLElement>(`button.clip-open[data-clip-id="${clipId}"]`) ?? gridRef.current?.querySelector<HTMLElement>("button.clip-open") ?? heading.current;
+    deleted.current === clipId
+      ? heading.current
+      : (gridRef.current?.querySelector<HTMLElement>(`button.clip-open[data-clip-id="${clipId}"]`) ?? gridRef.current?.querySelector<HTMLElement>("button.clip-open") ?? heading.current);
 
   const subtitleOf = (photoId: string): string | null => {
     const place = photoInfo(photoId);
@@ -367,6 +371,7 @@ export function ClipsTab({ control, arrived }: { control: ClipsControl; arrived:
             showPhoto(photoId);
           }}
           onDeleted={() => {
+            deleted.current = shown.clipId;
             setViewing(null);
             list.reread();
           }}

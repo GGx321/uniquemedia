@@ -584,6 +584,8 @@ describe("43: the clip viewer and «Сохранить в папку»", () => {
     expect(callsOf(h.engine, "clips.delete")).toHaveLength(1);
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(tilesNamed()).toEqual([]);
+    // Its tile is gone with it: the focus waits on the tab's heading, never on the page.
+    expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 2, name: "Клипы" })));
   });
 
   test("44 over a saved clip: «Копия в «Готовые видео» останется.»", async () => {
