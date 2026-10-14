@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CLIP_FILE_DAMAGED_DETAIL, ERROR_MESSAGES_RU, type ClipCost, type ClipFailReason, type ClipFace, type ClipSummary, type Estimate } from "../../../shared/engine";
+import { CLIP_FILE_DAMAGED_DETAIL, ClipFailReason, ERROR_MESSAGES_RU, type ClipCost, type ClipFace, type ClipSummary, type Estimate } from "../../../shared/engine";
 import {
   clipLength,
   costFact,
@@ -123,7 +123,48 @@ describe("a failed tile (§6 42, the tone by the money)", () => {
   });
 
   test("a charge still open on a tile whose text names no money reads «… — спишется при сверке»", () => {
-    expect(failedTile(failed("refused-unknown", OPEN), ctx).money).toBe("до $0.51 — спишется при сверке");
+    const tile = failedTile(failed("refused-unknown", OPEN), ctx);
+    expect(tile.text).toBe("Отказ модели — стоимость не прочитана");
+    expect(tile.money).toBe("до $0.51 — спишется при сверке");
+  });
+
+  const OPEN_TEXTS: [ClipFailReason, string][] = [
+    ["refused-paid", "Отказ модели после генерации"],
+    ["refused-unknown", "Отказ модели — стоимость не прочитана"],
+    ["provider-error", "Kling не снял клип — стоимость не прочитана"],
+    ["download-failed", "Файл клипа не скачался"],
+    ["invalid-file", "Файл клипа повреждён"],
+    ["download-expired", "Файл у OpenRouter больше недоступен"],
+  ];
+  test.each(OPEN_TEXTS)("%s with an open cost: the text names no amount, the money line carries it", (reason, text) => {
+    const until = new Date(NOW + 36 * 60_000).toISOString();
+    const tile = failedTile(failed(reason, OPEN, { retryDownloadUntil: until }), ctx);
+    expect(tile.text).toBe(text);
+    expect(tile.money).toBe("до $0.51 — спишется при сверке");
+  });
+
+  test("disk-full with an open cost shows the «до … — спишется при сверке» line, not a bare amount", () => {
+    const until = new Date(NOW + 36 * 60_000).toISOString();
+    const tile = failedTile(failed("disk-full", OPEN, { retryDownloadUntil: until }), ctx);
+    expect([tile.text, tile.money]).toEqual(["Нет места на диске", "до $0.51 — спишется при сверке"]);
+  });
+
+  describe("the text and the money line never contradict (every reason x open / settled)", () => {
+    const REASONS = ClipFailReason.options;
+    const until = new Date(NOW + 36 * 60_000).toISOString();
+    const PAST_TENSE_MONEY = /оплачен(?!о ли)|списано|\$\d/;
+
+    test.each(REASONS)("%s with an open cost: no past-tense amount beside «спишется»", (reason) => {
+      const tile = failedTile(failed(reason, OPEN, { retryDownloadUntil: until }), ctx);
+      if (tile.money?.includes("спишется")) expect(tile.text).not.toMatch(PAST_TENSE_MONEY);
+    });
+
+    test.each(REASONS)("%s with a settled cost (billed or the maximum): the money line never says «спишется»", (reason) => {
+      for (const cost of [PAID, WORST]) {
+        const tile = failedTile(failed(reason, cost, { retryDownloadUntil: until }), ctx);
+        expect(tile.money ?? "").not.toContain("спишется");
+      }
+    });
   });
 });
 

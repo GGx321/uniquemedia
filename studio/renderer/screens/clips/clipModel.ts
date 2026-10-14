@@ -208,8 +208,10 @@ export function failedTile(clip: Failed, ctx: { nowMs: number; bold: boolean; mo
     case "refused-both":
       return { ...base, text: "Kling и Grok отказали — бесплатно" };
     case "refused-paid":
+      if (cost.kind === "open") return { ...base, text: "Отказ модели после генерации" };
       return { ...base, text: `Отказ модели после генерации — оплачено ${paid}` };
     case "refused-unknown":
+      if (cost.kind === "open") return { ...base, text: "Отказ модели — стоимость не прочитана" };
       return { ...base, text: `Отказ модели — стоимость не прочитана, списано по максимуму ${upUsd(cost.micros)}` };
     case "refused-free": {
       const offer = clip.failure.grokOffer;
@@ -224,6 +226,7 @@ export function failedTile(clip: Failed, ctx: { nowMs: number; bold: boolean; mo
     case "provider-error":
       if (cost.kind === "free") return { ...base, text: `${modelName(clip)} не снял клип — бесплатно`, actions: ["again"] };
       if (cost.kind === "billed") return { ...base, text: `${modelName(clip)} не снял клип — оплачено ${paid}`, actions: [] };
+      if (cost.kind === "open") return { ...base, text: `${modelName(clip)} не снял клип — стоимость не прочитана`, actions: [] };
       return { ...base, text: `${modelName(clip)} не снял клип — стоимость не прочитана, списано по максимуму ${upUsd(cost.micros)}`, actions: [] };
     case "grok-no-room":
       return { ...base, text: "Kling отказал бесплатно, а на Grok не хватило месячного бюджета" };
@@ -242,12 +245,16 @@ export function failedTile(clip: Failed, ctx: { nowMs: number; bold: boolean; mo
     case "lost":
       return { ...base, text: CLIP_LOST_TEXT, money: reconcileMoney(cost) };
     case "download-failed":
+      if (cost.kind === "open") return { ...base, text: "Файл клипа не скачался", actions: ["redownload"], retryUntil: clockLabel(until ?? 0) };
       return { ...base, text: `Файл клипа не скачался — оплачено ${paid}`, actions: ["redownload"], retryUntil: clockLabel(until ?? 0) };
     case "invalid-file":
+      if (cost.kind === "open") return { ...base, text: "Файл клипа повреждён", actions: ["redownload"], retryUntil: clockLabel(until ?? 0) };
       return { ...base, text: `Файл клипа повреждён — оплачено ${paid}`, actions: ["redownload"], retryUntil: clockLabel(until ?? 0) };
     case "disk-full":
+      if (cost.kind === "open") return { ...base, text: "Нет места на диске", money: openLine, actions: ["redownload"], retryUntil: clockLabel(until ?? 0) };
       return { ...base, text: "Нет места на диске — клип оплачен", money: paid, actions: ["redownload"], retryUntil: clockLabel(until ?? 0) };
     case "download-expired":
+      if (cost.kind === "open") return { ...base, text: "Файл у OpenRouter больше недоступен", actions: [] };
       return { ...base, text: `Файл у OpenRouter больше недоступен — оплачено ${paid}`, actions: [] };
   }
 }
