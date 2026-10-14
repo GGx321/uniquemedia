@@ -12,8 +12,9 @@ import { useTempDir } from "../library/testing/helpers";
 import { momentOfSlot } from "../../shared/scenes/template";
 import { boldContentLevel } from "../../shared/scenes/contentLine";
 import { captureOfShot } from "../../shared/scenes/captures";
-import { GROK_FALLBACK, type AvatarDescriptor } from "../../shared/engine";
+import { GROK_FALLBACK, isBoldCategory, type AvatarDescriptor } from "../../shared/engine";
 import { assembleSlot } from "../scenes/assembler";
+import { captureLineOf, slotKeyOf } from "../scenes/phoneLook";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { clipFallbackOf, frameFactsOf, frameRefusalOf, readFrameFacts, type FrameFacts, type FrameFactsResult } from "./frameFacts";
 import { SHIPPED_POV_CAPTURE_LINES } from "./videoLook";
@@ -488,20 +489,34 @@ describe("the kit's photo prompt opens with the capture line a run writes (S5.WP
   const master = asLibraryReference(JPEG);
   const photoPromptOf = (photo: PhotoSidecar): string => (photo.source.kind === "generated" ? photo.source.prompt : "");
 
-  test("every bank moment on every capture it lists: the same opening sentence as the real assembler's prompt for that slot", () => {
+  /** Run ids enough that a friend's or a candid photo draws the knees-up variant on some of them, where a whole-body framing changes the line. */
+  const RUN_IDS = ["run-00000020", "run-00000021", "run-00000022", "run-00000023", "run-00000024", "run-00000025"];
+
+  test("every bank moment on every capture it lists, under several keys: the same opening sentence as the real assembler's prompt for that slot", () => {
     let checked = 0;
+    // Where the whole-body framing changed the line (the line is not the one the key draws alone): the cases that hold the kit to the assembler's framing rule.
+    let framedFeet = 0;
+    let framedBoldCrouch = 0;
     for (const picked of everyMoment()) {
       for (const capture of picked.moment.captures) {
-        const run = sceneRun("run-00000020", [slotOf(picked, capture)]);
-        const slot = run.scenes.slots[0] as PlanSlot;
-        const line = photoCaptureLineOf(run.runId, slot);
-        const assembled = assembleSlot(descriptor, slot, sentenceOf(run.runId, slot), master, { runId: run.runId }).prompt;
-        expect(assembled.startsWith(`${line} `)).toBe(true);
-        expect(photoPromptOf(photoOf(run, slot)).startsWith(`${line} `)).toBe(true);
-        checked++;
+        for (const runId of RUN_IDS) {
+          const run = sceneRun(runId, [slotOf(picked, capture)]);
+          const slot = run.scenes.slots[0] as PlanSlot;
+          const line = photoCaptureLineOf(run.runId, slot);
+          const assembled = assembleSlot(descriptor, slot, sentenceOf(run.runId, slot), master, { runId: run.runId }).prompt;
+          expect(assembled.startsWith(`${line} `)).toBe(true);
+          expect(photoPromptOf(photoOf(run, slot)).startsWith(`${line} `)).toBe(true);
+          if (line !== captureLineOf(capture, slotKeyOf(run.runId, slot.attemptIdBase))) {
+            if (isBoldCategory(slot.category) && /\bcrouch/i.test(slot.activity)) framedBoldCrouch++;
+            else framedFeet++;
+          }
+          checked++;
+        }
       }
     }
-    expect(checked).toBeGreaterThanOrEqual(271);
+    expect(checked).toBeGreaterThanOrEqual(271 * RUN_IDS.length);
+    expect(framedFeet).toBeGreaterThan(0);
+    expect(framedBoldCrouch).toBeGreaterThan(0);
   });
 
   test("an own scene: the line of its shot, as the assembler reads an own scene", () => {
