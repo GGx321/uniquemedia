@@ -2725,6 +2725,12 @@ export class MockEngine implements EngineBridge {
         return this.clipOut(c, this.clips.createBatch(c.payload));
       case "clips.cancelBatch":
         return this.clipOut(c, this.clips.cancelBatch(c.payload));
+      // ---- 5b.2 part C (S5.WC1): append-only block. The compile stubs answer as the engine's `default` branch does, word for word, until S5.WC4 builds the motion calls.
+      case "clips.estimateSuggest":
+      case "clips.suggestMotions":
+      case "clips.estimateIdea":
+      case "clips.translateIdea":
+        return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });
       case "autopilot.estimate":
         // S5.8a: «Ножки» with no built-in category is refused first, for free.
         if (legsNeedsBuiltIn(c.payload.draft)) return this.fail(c, { code: "VALIDATION", launchReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the launch names none" });

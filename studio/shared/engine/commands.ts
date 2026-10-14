@@ -4,7 +4,8 @@ import { AutopilotContinueResult, AutopilotEstimateResult, AutopilotGetResult, A
 import { AvatarDeletePreview, AvatarDeleteResult } from "./avatarDelete";
 import { AvatarBody } from "./body";
 import { CategoriesListResult, CategoryDescription, CategoryName, CategoryPoses, CategoryRef, CategorySummary, CustomCategoryId, MAX_RUN_CATEGORIES, SceneLevel, POOL_OUTFITS_MAX, POOL_PLACES_MAX, PoolText } from "./categories";
-import { ClipBatchItem, ClipBatchOptions, ClipModelChoice, ClipMotionId, ClipOptions, ClipQuality, ClipSeconds, ClipSummary, MAX_BATCH_CLIPS, MAX_LISTED_CLIPS, photoIdsUnique } from "./clips";
+import { ClipSuggestResult, ClipTranslateResult, OwnIdeaText } from "./clipMotions";
+import { ClipBatchItem,ClipBatchOptions, ClipModelChoice, ClipMotionId, ClipOptions, ClipQuality, ClipSeconds, ClipSummary, MAX_BATCH_CLIPS, MAX_LISTED_CLIPS, photoIdsUnique } from "./clips";
 import { nonEmpty, ProtocolVersion } from "./envelope";
 import { EngineError } from "./errors";
 import { EventMessage } from "./events";
@@ -453,6 +454,24 @@ const ENGINE_SPECS = [
       .refine((r) => new Set(r.jobIds).size === r.jobIds.length, { message: "a job appears once", path: ["jobIds"] }),
   ),
   defineCommand("clips.cancelBatch", z.strictObject({ avatarId: Id, batchId: Id }), z.strictObject({ cancelled: Count.max(MAX_BATCH_CLIPS) })),
+  // Stage 5, 5b.2 part C, S5.WC1 (additive): «свои движения», the vision writer's suggestions and the owner's own idea (plan s5b2 §5.3, I5.66-I5.68; Q-H = 2). Two paid LLM calls, each with a free estimate.
+  //  - `estimateSuggest` / `estimateIdea` are free: an `Estimate` for the one call (worst case = two attempts: `MOTION_SUGGEST_WORST_MICROS` / `MOTION_TRANSLATE_WORST_MICROS` by design). LIBRARY_UNAVAILABLE,
+  //    NOT_FOUND (the avatar or its photo), PRICE_UNAVAILABLE. They make no model call.
+  //  - `suggestMotions` is paid, held while the Mac sleeps and accepted like `clips.create` (`acceptedWorstMicros`). The vision writer looks at the photo at most 1024 px and answers `ok` (one to three checked
+  //    `v-<n>` motions, stored under the photo, and the `ClipFrameReading`) or `none`. Every answer carries `costMicros`.
+  //  - `translateIdea` is paid, held and accepted the same way. `text` is the owner's idea: 1-300 characters, no control character (a newline is refused here; the window replaces line breaks with spaces before it
+  //    sends), and it exists nowhere but this payload and the engine's memory while the call runs (I5.67). The answer is `ok` (the new `o-<n>` item, which the window selects), `none`, or `rejected` with closed
+  //    `MotionProblem`s in a fixed display order. An idea that takes clothing off is accepted ONLY on a frame of «Смелая»; elsewhere it is `takes-off`; the vision writer never suggests it.
+  //  - Refused free, in this order: IN_FLIGHT (`clipReason` `clip-busy` while a clip or a batch holds the clip money unit, `suggest-busy` / `idea-busy` while a call for this photo runs), AUTH_INVALID, the ledger's
+  //    refusals, LIBRARY_UNAVAILABLE, NOT_FOUND, VALIDATION with `clipReason` (`not-a-gallery-photo`, `age-unverified`, `photo-unreadable`, `not-vertical`, `no-motion`), PRICE_UNAVAILABLE, PRICE_CHANGED, BUDGET_EXCEEDED.
+  //    Money is the descriptor check's pattern without its avatar claim (I5.68): at most two attempts, the scope capped at the call's worst case, an unusable answer paid, a moderation 4xx free.
+  //  - The guard, both ways (r2.1 N10; the engine binds): `clips.create` and `clips.createBatch` answer IN_FLIGHT `motion-busy` while ANY part C call runs (GLOBAL: any avatar, any photo), and these two calls
+  //    answer `clip-busy` while any clip money unit is in flight.
+  //  - No clip command carries a motion text: `clips.create` and `clips.createBatch` name `v-<n>` and `o-<n>` ids and the engine resolves them from the photo's motion store (I5.67).
+  defineCommand("clips.estimateSuggest", z.strictObject({ avatarId: Id, photoId: Id }), Estimate),
+  defineCommand("clips.suggestMotions", z.strictObject({ avatarId: Id, photoId: Id, ...AcceptedWorst }), ClipSuggestResult),
+  defineCommand("clips.estimateIdea", z.strictObject({ avatarId: Id, photoId: Id }), Estimate),
+  defineCommand("clips.translateIdea", z.strictObject({ avatarId: Id, photoId: Id, text: OwnIdeaText, ...AcceptedWorst }), ClipTranslateResult),
   // «Удалить аватар»: what the confirmation shows (counts of photos, candidates, drafts, videos and of the video files that would go to the Trash too).
   // Free and read-only. Refuses like the delete itself does while anything of the avatar runs (IN_FLIGHT), so the dialog says so instead of offering a
   // button that cannot work; NOT_FOUND for an avatar the library does not have, LIBRARY_UNAVAILABLE without a library.

@@ -577,7 +577,8 @@ describe("clipReason batch-running and clip-busy", () => {
 
   test("the texts are §5.2.1's, word for word", () => {
     expect(CLIP_REASONS_RU["batch-running"]).toBe("Сейчас снимаются клипы пакета — дождитесь окончания или отмените оставшиеся.");
-    expect(CLIP_REASONS_RU["clip-busy"]).toBe("Пока снимается клип, предложения и перевод недоступны — дождитесь окончания.");
+    // S5.WC1: the owner's veto replaced the WB1 draft of this text («Пока снимается клип, предложения и перевод недоступны — дождитесь окончания.»).
+    expect(CLIP_REASONS_RU["clip-busy"]).toBe("Сейчас снимается клип — предложить или перевести движение можно после него.");
   });
 });
 

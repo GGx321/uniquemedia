@@ -29,6 +29,7 @@ import {
   type ClipMonthFit,
   type ClipMotion,
   type ClipMotionChoice,
+  type ClipMotionSource,
   type ClipOptionKey,
   type ClipOptions,
   type ClipPhase,
@@ -272,7 +273,7 @@ interface Line {
 interface JobFacts {
   photoId: string;
   request: ClipRequest;
-  motion: { source: "scene" | "code"; label: string };
+  motion: { source: ClipMotionSource; label: string };
   acceptedWorstMicros: number;
 }
 

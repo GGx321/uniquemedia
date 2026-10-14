@@ -72,6 +72,14 @@ export const CLIPS_DIR = "clips";
 export const CLIP_RECORD_SCHEMA_VERSION = 1;
 
 /**
+ * Own motions (Stage 5, 5b.2 part C, S5.WC1): `avatars/<avatarId>/motions/<photoId>.json` beside `clips`, one store per photo: the vision writer's suggestions and the owner's own ideas, as checked English texts and
+ * labels (never the idea's full words: I5.67), and the last frame reading. Like `clips`, the survey never looks in here (WC3 verifies it), so nothing is quarantined.
+ */
+export const MOTIONS_DIR = "motions";
+/** A motion store's `schemaVersion`: the store stamps it, and a newer one is refused and kept as it is (it would lose what it does not know on the next write). */
+export const MOTION_STORE_SCHEMA_VERSION = 1;
+
+/**
  * A temp file left by a crash while one of the library root's own JSON
  * files — library.json, or the removed refused-imports.json (T6c review
  * round 3, L8) — was being written (durableFs.ts's own `.<name>.<hex>.tmp` shape).

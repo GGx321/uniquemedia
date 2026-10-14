@@ -1,6 +1,27 @@
 import { z } from "zod";
-import { AttemptId, CLIP_RETRYABLE_FAILURES, ClipAttemptModel, ClipExportLine, ClipFace, ClipFailReason, ClipModelUsed, ClipMotion, ClipRequest, Id, MAX_BATCH_CLIPS, Micros, Sha256Hex, clipBatchFieldsTogether } from "../../shared/engine";
-import { CLIP_RECORD_SCHEMA_VERSION } from "../library/layout";
+import {
+  AttemptId,
+  CLIP_RETRYABLE_FAILURES,
+  ClipAttemptModel,
+  ClipExportLine,
+  ClipFace,
+  ClipFailReason,
+  ClipFrameReading,
+  ClipModelUsed,
+  ClipMotion,
+  ClipMotionId,
+  ClipRequest,
+  Id,
+  MAX_BATCH_CLIPS,
+  MOTION_LABEL_MAX,
+  MOTION_STORE_MAX_ITEMS,
+  MOTION_TEXT_MAX,
+  Micros,
+  Sha256Hex,
+  clipBatchFieldsTogether,
+  clipMotionIdSource,
+} from "../../shared/engine";
+import { CLIP_RECORD_SCHEMA_VERSION, MOTION_STORE_SCHEMA_VERSION } from "../library/layout";
 
 // Stage 5, 5b.1, S5.V1 (plan s5b1 §5.3): what a clip writes to disk, as pure zod. Both are READ from disk, so both are strict: a file that does not parse is not a record.
 //
@@ -145,3 +166,33 @@ export function parseClipJournalLine(raw: unknown): ClipJournalLine | null {
   const parsed = ClipJournalLine.safeParse(raw);
   return parsed.success ? parsed.data : null;
 }
+
+// ---------- the photo's motion store (5b.2 part C, S5.WC1; plan s5b2 §5.3, I5.67) ----------
+
+/** One stored motion: a suggestion of the vision writer (`v-<n>`) or an own idea made English (`o-<n>`). Only the checked text and the label are kept, never the owner's full words. */
+const MotionStoreItem = z
+  .strictObject({
+    id: ClipMotionId,
+    source: z.enum(["vision", "own"]),
+    label: z.string().min(1).max(MOTION_LABEL_MAX),
+    text: z.string().min(1).max(MOTION_TEXT_MAX).regex(/^[\x20-\x7e]+$/, "must be printable ASCII"),
+    /** The OpenRouter model that wrote it. */
+    model: z.string().min(1).max(100),
+    at: At,
+  })
+  .refine((item) => clipMotionIdSource(item.id) === item.source, { message: "the form of the id belongs to its source: v-<n> (vision), o-<n> (own)", path: ["id"] });
+
+/**
+ * `avatars/<avatarId>/motions/<photoId>.json` (`MOTIONS_DIR`): strict, READ from disk. Up to twelve items in the order they were made (the oldest are trimmed first); a changed photo sha256 empties it; `reading` is the
+ * last `ClipFrameReading` (replaced by a new suggestion, cleared with the items when the sha changes).
+ */
+export const MotionStoreFile = z
+  .strictObject({
+    schemaVersion: z.literal(MOTION_STORE_SCHEMA_VERSION),
+    photoId: Id,
+    photoSha256: Sha256Hex,
+    items: z.array(MotionStoreItem).max(MOTION_STORE_MAX_ITEMS),
+    reading: ClipFrameReading.optional(),
+  })
+  .refine((file) => new Set(file.items.map((item) => item.id)).size === file.items.length, { message: "an item id appears once", path: ["items"] });
+export type MotionStoreFile = z.infer<typeof MotionStoreFile>;

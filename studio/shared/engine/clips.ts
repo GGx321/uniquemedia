@@ -68,25 +68,64 @@ export type ClipModelUsed = z.infer<typeof ClipModelUsed>;
 export const ClipAttemptModel = ClipModelChoice;
 export type ClipAttemptModel = z.infer<typeof ClipAttemptModel>;
 
-/** A motion id on the wire: the photo's own scene motion, or a code motion `g-<slug>`. Never free text (I5.51). */
-export const ClipMotionId = z.union([z.literal("scene"), z.string().max(40).regex(/^g-[a-z0-9]+(?:-[a-z0-9]+)*$/, "must be `scene` or g-<slug>")]);
+/**
+ * A motion id on the wire: the photo's own scene motion (`scene`), a code motion (`g-<slug>`), and, since 5b.2 part C (S5.WC1), a motion the vision writer suggested (`v-<1..99>`) or one the owner's own idea made
+ * (`o-<1..99>`). Never free text (I5.51, I5.67): the engine resolves a `v-` or `o-` id from the photo's motion store and checks it again.
+ */
+export const ClipMotionId = z.union([
+  z.literal("scene"),
+  z.string().max(40).regex(/^g-[a-z0-9]+(?:-[a-z0-9]+)*$/, "must be `scene`, g-<slug>, v-<1..99> or o-<1..99>"),
+  z.string().regex(/^[vo]-(?:[1-9]|[1-9][0-9])$/, "must be `scene`, g-<slug>, v-<1..99> or o-<1..99>"),
+]);
 export type ClipMotionId = z.infer<typeof ClipMotionId>;
 
-/** One motion the sheet offers: the Russian label, the English text the prompt carries. The id `scene` is the photo's own scene motion and nothing else. */
+/** Where a motion comes from: the photo's scene, the code's bank, the vision writer's suggestions, or the owner's own idea (5b.2 part C). */
+export const CLIP_MOTION_SOURCES = ["scene", "code", "vision", "own"] as const;
+export const ClipMotionSource = z.enum(CLIP_MOTION_SOURCES);
+export type ClipMotionSource = z.infer<typeof ClipMotionSource>;
+
+/** The source an id's form belongs to: `scene`, `g-…` code, `v-…` vision, `o-…` own. The id and the source of a motion always agree. */
+export function clipMotionIdSource(id: string): ClipMotionSource {
+  if (id === "scene") return "scene";
+  if (id.startsWith("v-")) return "vision";
+  if (id.startsWith("o-")) return "own";
+  return "code";
+}
+
+/** The most a label may hold (Russian, the owner's own words cut by `ownIdeaLabel` for an own idea), and the most an English text from a model or from the owner's idea may hold (I5.66). */
+export const MOTION_LABEL_MAX = 40;
+export const MOTION_TEXT_MAX = 60;
+
+/** How many choices of each source a photo's list holds at most (plan s5b2 §5.3, L2): the scene's own, the code's bank, the newest suggestions and the newest own ideas that still pass their check. */
+export const CLIP_CHOICES_MAX = { scene: 1, code: 3, vision: 3, own: 2 } as const satisfies Record<ClipMotionSource, number>;
+/** Nine in all: 1 + 3 + 3 + 2. */
+export const CLIP_MOTIONS_MAX = CLIP_CHOICES_MAX.scene + CLIP_CHOICES_MAX.code + CLIP_CHOICES_MAX.vision + CLIP_CHOICES_MAX.own;
+
+/** What a model's or an owner's text must be to reach a video provider: printable ASCII, as every video request is (I5.67). */
+const PRINTABLE_ASCII = /^[\x20-\x7e]+$/;
+
+/**
+ * One motion the sheet offers: the Russian label, the English text the prompt carries. The id's form belongs to the source (`scene`, `g-<slug>` code, `v-<n>` vision, `o-<n>` own). A text a model or the owner's
+ * idea made (vision, own) is at most 60 characters of printable ASCII (I5.66, I5.67); a scene or code text keeps its 120.
+ */
 export const ClipMotionChoice = z
   .strictObject({
     id: ClipMotionId,
-    source: z.enum(["scene", "code"]),
-    label: z.string().min(1).max(40),
+    source: ClipMotionSource,
+    label: z.string().min(1).max(MOTION_LABEL_MAX),
     text: z.string().min(1).max(120),
   })
-  .refine((m) => (m.id === "scene") === (m.source === "scene"), { message: "the id `scene` belongs to the source `scene` only", path: ["id"] });
+  .refine((m) => clipMotionIdSource(m.id) === m.source, { message: "the form of the id belongs to its source: `scene`, g-<slug> (code), v-<n> (vision), o-<n> (own)", path: ["id"] })
+  .refine((m) => (m.source !== "vision" && m.source !== "own") || (m.text.length <= MOTION_TEXT_MAX && PRINTABLE_ASCII.test(m.text)), {
+    message: "a suggested or own text is at most 60 characters of printable ASCII",
+    path: ["text"],
+  });
 export type ClipMotionChoice = z.infer<typeof ClipMotionChoice>;
 
 /** The motion a clip was made with, as a record and a summary keep it. */
 export const ClipMotion = z.strictObject({
-  source: z.enum(["scene", "code"]),
-  label: z.string().min(1).max(40),
+  source: ClipMotionSource,
+  label: z.string().min(1).max(MOTION_LABEL_MAX),
   text: z.string().min(1).max(120),
 });
 export type ClipMotion = z.infer<typeof ClipMotion>;
@@ -239,13 +278,22 @@ function boldKeepsKlingAlone(mode: BoldClipsMode): boolean {
   return mode !== "with-fallback";
 }
 
+/** Whether a list of motions comes in the order scene, code, vision, own (the order of `CLIP_MOTION_SOURCES`). */
+function motionsInSourceOrder(motions: readonly { readonly source: ClipMotionSource }[]): boolean {
+  const ranks = motions.map((m) => CLIP_MOTION_SOURCES.indexOf(m.source));
+  return ranks.every((rank, i) => i === 0 || (ranks[i - 1] ?? 0) <= rank);
+}
+
 export const ClipOptions = z.discriminatedUnion("suitable", [
   z
     .strictObject({
       suitable: z.literal(true),
       photoId: Id,
-      /** One to four, the default first. */
-      motions: z.array(ClipMotionChoice).min(1).max(4),
+      /**
+       * One to nine, the default first, in the order scene, code, vision, own (5b.2 part C: scene 1 + code up to 3 + the newest suggestions up to 3 + the newest own ideas up to 2, `CLIP_CHOICES_MAX`).
+       * Suggestions and ideas are the photo's stored ones, checked again by the engine at this call.
+       */
+      motions: z.array(ClipMotionChoice).min(1).max(CLIP_MOTIONS_MAX),
       prices: KlingPrices.extend({ grok5: Estimate, grok10: Estimate }),
       /** The engine's mode, or `none`: this photo never falls back («Смелая» under `kling-only`). */
       fallback: z.enum(["auto", "offer", "none"]),
@@ -256,6 +304,14 @@ export const ClipOptions = z.discriminatedUnion("suitable", [
       monthFits: MonthFits,
     })
     .refine((o) => new Set(o.motions.map((m) => m.id)).size === o.motions.length, { message: "a motion id must not repeat", path: ["motions"] })
+    .refine((o) => CLIP_MOTION_SOURCES.every((source) => o.motions.filter((m) => m.source === source).length <= CLIP_CHOICES_MAX[source]), {
+      message: "a photo lists at most 1 scene motion, 3 code motions, 3 suggested motions and 2 own ideas",
+      path: ["motions"],
+    })
+    .refine((o) => motionsInSourceOrder(o.motions), {
+      message: "the motions come in the order scene, code, suggested, own",
+      path: ["motions"],
+    })
     .refine((o) => o.fallback === "auto" || Object.values(o.monthFits).every((fit) => fit !== "with-fallback"), {
       message: "only mode auto has a Grok reserve to fit the month with: neither `offer` nor `none` fits it with a fallback",
       path: ["monthFits"],

@@ -1,3 +1,4 @@
+import type { MotionProblem } from "./clipMotions";
 import type { ClipCancelDetail, ClipExportProfile } from "./clips";
 import type { CaptionIssue, CategoryReason, ClipReason, DescriptorReason, EngineError, ErrorCode, ExportUnavailableReason, LaunchReason, MusicUnavailableReason, PhotoUnavailableReason, PortraitReason, SceneReason } from "./errors";
 import { MAX_PICKED_FILES, type MediaKind, type MediaUnsupportedReason } from "./media";
@@ -300,7 +301,11 @@ export const CLIP_REASONS_RU = {
   "in-use": "Клип сейчас в рендере — удалите его, когда рендер закончится.",
   // 5b.2 (S5.WB1), plan s5b2 §5.2.1: `batch-running` is mockup 37e's text (and the sheet's busy line); `clip-busy` is part C's guard while a clip or a batch holds the unit.
   "batch-running": "Сейчас снимаются клипы пакета — дождитесь окончания или отмените оставшиеся.",
-  "clip-busy": "Пока снимается клип, предложения и перевод недоступны — дождитесь окончания.",
+  "clip-busy": "Сейчас снимается клип — предложить или перевести движение можно после него.",
+  // 5b.2 (S5.WC1), part C's guard in the other direction and the per-photo guards: the owner's texts (mockups 62a, 59e).
+  "motion-busy": "Подождите: идёт подбор движения или перевод.",
+  "suggest-busy": "Движения для этого фото уже подбираются — дождитесь ответа.",
+  "idea-busy": "Идея для этого фото уже переводится — дождитесь ответа.",
 } as const satisfies Record<ClipReason, string>;
 
 /** «клип / клипа / клипов» for a count: 1, 21, 31 ... take the singular, 2-4 (but not 12-14) the paucal, the rest the genitive plural. */
@@ -456,3 +461,19 @@ export const USAGE_UNKNOWN_REASONS_RU = {
   "rejects-unreadable":
     "Журнал ваших отметок «Отклонено» повреждён, поэтому Studio не знает, какие фото вы отклонили. Отметки можно восстановить: всё, что читается, сохранится, а копия журнала останется в карантине библиотеки.",
 } as const satisfies Record<UsageUnknownReason, string>;
+
+/**
+ * Why the translator refused an owner's idea (5b.2 part C, S5.WC1; mockups 63b-63c): one text per closed `MotionProblem`, the owner's wording (veto). The window shows the text of the FIRST problem of a
+ * rejection (they come in the fixed display order). Each ends with a period. `takes-off` is told only on a frame that is not «Смелая» (Q-H = 2).
+ */
+export const MOTION_PROBLEMS_RU = {
+  "not-motion": "Так не получится: в идее нет движения — опишите, что она делает в кадре.",
+  content: "Так не получится: такие слова для этого кадра не подходят — опишите движение иначе.",
+  "takes-off": "Так не получится: в этом кадре одежда остаётся на месте — такое движение только для кадров «Смелой».",
+  staging: "Так не получится: камера и монтаж в клипе не меняются — опишите, что делает она.",
+  phone: "Так не получится: телефон в этом кадре не упоминаем — уберите его из идеи.",
+  "face-hidden": "Так не получится: лица в этом кадре не видно — опишите движение тела, а не лица.",
+  "two-movements": "Так не получится: два движения сразу — оставьте одно.",
+  "not-small": "Так не получится: движение слишком большое — опишите небольшое и медленное.",
+  "too-long": "Так не получится: для клипа это слишком подробно — опишите движение короче.",
+} as const satisfies Record<MotionProblem, string>;

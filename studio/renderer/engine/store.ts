@@ -5,6 +5,7 @@ import {
   type AvatarSummary,
   type ClipAttemptModel,
   type ClipPhase,
+  type ClipMotionSource,
   type ClipRequest,
   type Draft,
   type EngineError,
@@ -103,12 +104,12 @@ export interface ClipJobInfo {
 export interface ClipJobFacts {
   readonly photoId: string;
   readonly request: ClipRequest;
-  readonly motion: { readonly source: "scene" | "code"; readonly label: string };
+  readonly motion: { readonly source: ClipMotionSource; readonly label: string };
   readonly acceptedWorstMicros: number;
 }
 
 /** The facts a job snapshot or event carries, all four or none. */
-function factsOf(job: { photoId?: string; request?: ClipRequest; motion?: { source: "scene" | "code"; label: string }; acceptedWorstMicros?: number }): ClipJobFacts | undefined {
+function factsOf(job: { photoId?: string; request?: ClipRequest; motion?: { source: ClipMotionSource; label: string }; acceptedWorstMicros?: number }): ClipJobFacts | undefined {
   const { photoId, request, motion, acceptedWorstMicros } = job;
   return photoId === undefined || request === undefined || motion === undefined || acceptedWorstMicros === undefined ? undefined : { photoId, request, motion, acceptedWorstMicros };
 }

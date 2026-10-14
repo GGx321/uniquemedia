@@ -19,6 +19,8 @@ const HELD: CommandType[] = [
   "avatars.importAvatar",
   "clips.create",
   "clips.createBatch",
+  "clips.suggestMotions",
+  "clips.translateIdea",
   "categories.create",
   "categories.regenerate",
   "music.refresh",

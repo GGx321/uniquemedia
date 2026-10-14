@@ -337,7 +337,9 @@ export type PortraitReason = z.infer<typeof PortraitReason>;
  * - submitted: the clip is already at the provider, so it cannot be cancelled (`avatars.cancel`).
  * - in-use (5b.2, S5.WA1): `clips.delete` while a render holds the clip's montage copy; nothing is removed.
  * - batch-running (5b.2, S5.WB1): a batch holds the clip money unit, so `clips.create`, `clips.createBatch` and the single «Оживить» wait (I5.61). `one-at-a-time` stays for a single clip holding it.
- * - clip-busy (5b.2, S5.WB1): a paid clip or batch holds the unit, so part C's paid calls (the vision writer, the translator) wait (I5.68).
+ * - clip-busy (5b.2, S5.WB1; text by S5.WC1): a paid clip or batch holds the unit, so part C's paid calls (`clips.suggestMotions`, `clips.translateIdea`) wait (I5.68).
+ * - motion-busy (5b.2, S5.WC1; the other direction of the same guard, r2.1 N10): a part C call runs, so `clips.create` and `clips.createBatch` wait. GLOBAL: while ANY part C call runs, for any avatar and any photo.
+ * - suggest-busy / idea-busy (5b.2, S5.WC1): a `clips.suggestMotions` / `clips.translateIdea` for the same photo is already running (one call per photo at a time).
  *
  * One `clipReason` per error. A batch item that breaks a rule is reported with its OWN reason (`bold-off`, `unknown-motion`, ...) and the path `["items", i]`; there is no batch-level reason for it.
  */
@@ -355,7 +357,7 @@ export const CLIP_VALIDATION_REASONS = [
   "not-exported",
   "file-damaged",
 ] as const;
-export const CLIP_IN_FLIGHT_REASONS = ["one-at-a-time", "job-running", "submitted", "in-use", "batch-running", "clip-busy"] as const;
+export const CLIP_IN_FLIGHT_REASONS = ["one-at-a-time", "job-running", "submitted", "in-use", "batch-running", "clip-busy", "motion-busy", "suggest-busy", "idea-busy"] as const;
 export const CLIP_REASONS = [...CLIP_VALIDATION_REASONS, ...CLIP_IN_FLIGHT_REASONS] as const;
 /** The reasons `clips.options` answers for a photo that cannot be brought to life: the first six of `CLIP_VALIDATION_REASONS`, as one set. */
 export const CLIP_UNSUITABLE_REASONS = ["not-a-gallery-photo", "age-unverified", "photo-unreadable", "not-vertical", "bold-off", "no-motion"] as const;
@@ -495,7 +497,7 @@ export const EngineError = z
     /** Additive (Stage 5, S5.3a): which rule a portrait command broke (`PORTRAIT_REASONS`); only on VALIDATION (INTERNAL for `source-unavailable`), never beside another reason. The window's text is `PORTRAIT_REASONS_RU`. */
     portraitReason: PortraitReason.optional(),
     /**
-     * Additive (Stage 5, 5b.1, S5.V1): which rule a clip command broke (`CLIP_REASONS`); on VALIDATION, or on IN_FLIGHT for `one-at-a-time`, `job-running`, `submitted`, `in-use`, `batch-running` and `clip-busy`; never beside another
+     * Additive (Stage 5, 5b.1, S5.V1): which rule a clip command broke (`CLIP_REASONS`); on VALIDATION, or on IN_FLIGHT for `one-at-a-time`, `job-running`, `submitted`, `in-use`, `batch-running`, `clip-busy`, `motion-busy`, `suggest-busy` and `idea-busy`; never beside another
      * reason. The window's text is `CLIP_REASONS_RU`.
      */
     clipReason: ClipReason.optional(),
@@ -584,7 +586,7 @@ export const EngineError = z
     },
   )
   .refine((e) => e.clipReason === undefined || e.code === ((CLIP_IN_FLIGHT_REASONS as readonly string[]).includes(e.clipReason) ? "IN_FLIGHT" : "VALIDATION"), {
-    message: "clipReason may only be present on VALIDATION, except one-at-a-time, job-running, submitted, in-use, batch-running and clip-busy, which belong to IN_FLIGHT",
+    message: "clipReason may only be present on VALIDATION, except one-at-a-time, job-running, submitted, in-use, batch-running, clip-busy, motion-busy, suggest-busy and idea-busy, which belong to IN_FLIGHT",
     path: ["clipReason"],
   })
   .refine(

@@ -61,6 +61,11 @@ export const SLEEP_CLASS: Record<CommandType, SleepClass> = {
   "clips.batchOptions": "free",
   "clips.createBatch": "held",
   "clips.cancelBatch": "free",
+  // 5b.2 (S5.WC1): the two estimates only read; the two LLM calls spend, so they are held while the Mac sleeps.
+  "clips.estimateSuggest": "free",
+  "clips.suggestMotions": "held",
+  "clips.estimateIdea": "free",
+  "clips.translateIdea": "held",
   "media.importClip": "free",
   "avatars.deletePreview": "free",
   "avatars.rewriteDescriptor": "held",
