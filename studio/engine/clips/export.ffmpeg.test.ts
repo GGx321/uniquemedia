@@ -124,6 +124,24 @@ describe("the other sources", () => {
   });
 });
 
+describe("a source stored turned and shown upright by the track header's rotation", () => {
+  const rotated = useClipFixtures();
+  const source = () => rotated({ width: 720, height: 1280, seconds: 1, rotate: 90 });
+
+  test("the source really carries a quarter-turn rotation (the premise)", async () => {
+    expect((await infoOf(await source())).video.rotation).not.toBe(0);
+  });
+
+  test("exports to 1080 x 1920 at 30 fps with no rotation, and passes the verifier", async () => {
+    const { file } = await exportOf(await source(), "duplicate");
+    const info = await infoOf(file);
+
+    expectDelivered(info, 30);
+    expect(info.video.rotation).toBe(0);
+    expect((await verifyClipExport(file, { createdAt: new Date(NOW) })).ok).toBe(true);
+  });
+});
+
 describe("a source whose video track carries a DASH role", () => {
   /** The kling fixture remuxed with the video track marked `comment`: the muxer writes `udta/kind` for it. */
   async function roleSource(): Promise<string> {
