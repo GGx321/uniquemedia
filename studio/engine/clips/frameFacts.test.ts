@@ -6,14 +6,17 @@ import { contractCategory, buildRunPlan, RunPlanSchema, type RunPlan } from "../
 import { plan } from "../scenes";
 import type { OwnPlanSlot, PlanSlot } from "../scenes/schema";
 import { openLibrary, type Library } from "../library/library";
+import type { PhotoSidecar } from "../library/schemas";
 import { PLAN_FILE, RUNS_DIR } from "../library/layout";
 import { useTempDir } from "../library/testing/helpers";
 import { momentOfSlot } from "../../shared/scenes/template";
 import { boldContentLevel } from "../../shared/scenes/contentLine";
 import { captureOfShot } from "../../shared/scenes/captures";
-import { GROK_FALLBACK } from "../../shared/engine";
+import { GROK_FALLBACK, type AvatarDescriptor } from "../../shared/engine";
+import { assembleSlot } from "../scenes/assembler";
+import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { clipFallbackOf, frameFactsOf, frameRefusalOf, readFrameFacts, type FrameFacts, type FrameFactsResult } from "./frameFacts";
-import { AVATAR, MODELS, photoOf, pick, planlessPhoto, sceneRun, sentenceOf, slotOf } from "./testing/frameFixtures";
+import { AVATAR, MODELS, everyMoment, photoCaptureLineOf, photoOf, pick, planlessPhoto, sceneRun, sentenceOf, slotOf } from "./testing/frameFixtures";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -418,5 +421,35 @@ describe("one source for captures and faces (static)", () => {
     const run = sceneRun("run-00000019", [slotOf(pick("home", (m) => m.captures.includes("timer")), "timer")]);
     const slot = run.scenes.slots[0] as PlanSlot;
     expect(photoOf(run, slot).source).toMatchObject({ prompt: expect.stringContaining(sentenceOf(run.runId, slot)) });
+  });
+});
+
+describe("the kit's photo prompt opens with the capture line a run writes (S5.WP1, plan s5b2 I5.69, M2)", () => {
+  const descriptor: AvatarDescriptor = { age: 25, text: "25-year-old European woman, light olive skin, hazel eyes, shoulder-length wavy chestnut hair, athletic build." };
+  const master = asLibraryReference(JPEG);
+  const photoPromptOf = (photo: PhotoSidecar): string => (photo.source.kind === "generated" ? photo.source.prompt : "");
+
+  test("every bank moment on every capture it lists: the same opening sentence as the real assembler's prompt for that slot", () => {
+    let checked = 0;
+    for (const picked of everyMoment()) {
+      for (const capture of picked.moment.captures) {
+        const run = sceneRun("run-00000020", [slotOf(picked, capture)]);
+        const slot = run.scenes.slots[0] as PlanSlot;
+        const line = photoCaptureLineOf(run.runId, slot);
+        const assembled = assembleSlot(descriptor, slot, sentenceOf(run.runId, slot), master, { runId: run.runId }).prompt;
+        expect(assembled.startsWith(`${line} `)).toBe(true);
+        expect(photoPromptOf(photoOf(run, slot)).startsWith(`${line} `)).toBe(true);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(271);
+  });
+
+  test("an own scene: the line of its shot, as the assembler reads an own scene", () => {
+    const run = sceneRun("run-00000021", [{ kind: "own", shot: "selfie", pose: "front", text: "She smiles on a train." }]);
+    const own = run.scenes.slots[0] as OwnPlanSlot;
+    const assembled = assembleSlot(descriptor, own, sentenceOf(run.runId, own), master, { runId: run.runId }).prompt;
+    expect(assembled.startsWith(`${photoCaptureLineOf(run.runId, own)} `)).toBe(true);
+    expect(photoPromptOf(photoOf(run, own)).startsWith(`${photoCaptureLineOf(run.runId, own)} `)).toBe(true);
   });
 });

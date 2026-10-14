@@ -1,9 +1,11 @@
 import { BANKS } from "../../../shared/scenes/banks";
 import type { BankCategory, BankPlace, Moment } from "../../../shared/scenes/banks/types";
-import { shotOf, type Capture } from "../../../shared/scenes/captures";
+import { captureOfShot, shotOf, type Capture } from "../../../shared/scenes/captures";
 import { plainSentence } from "../../../shared/scenes/plain";
 import { templateSentence } from "../../../shared/scenes/template";
-import { isCustomCategory, type CategorySnapshot, type ScenePose } from "../../../shared/engine";
+import { FEET_MOMENT_WORDS } from "../../../shared/scenes/words";
+import { isBoldCategory, isCustomCategory, type CategorySnapshot, type ScenePose } from "../../../shared/engine";
+import { captureLineOf, slotKeyOf } from "../../scenes/phoneLook";
 import { customSnapshot } from "../../scenes/testing/customPool";
 import { PhotoSidecarSchema, type PhotoSidecar } from "../../library/schemas";
 import { buildSceneRunPlan, type RunPlan } from "../../runs/plan";
@@ -95,7 +97,25 @@ export function sceneRun(runId: string, slots: readonly (PlanSlot | { kind: "own
 
 let photoCounter = 0;
 
-/** A gallery photo of a run's slot, as the run's `photoMeta` writes it: the slot's first attempt id, the slot, the category, and a prompt that carries the sentence. */
+/** The «Смелая» banks' moments a friend's photo shows whole, beyond the feet: engine/scenes/assembler.ts BOLD_WHOLE_BODY_WORDS (private there), copied for the kit. */
+const BOLD_WHOLE_BODY_WORDS = /\bcrouch\w*\b/i;
+
+/**
+ * The capture line the real assembler opens the photo's prompt with (engine/scenes/assembler.ts `assembleSlot`): the slot's capture (an own scene's from its shot), keyed by
+ * `${runId}:${attemptIdBase}`, with the whole-body framing of a moment about her feet (and a «Смелая» crouch). S5.WP1 (plan s5b2 I5.69, M2): a clip reads which capture
+ * line its photo holds, so the kit's photo holds the one a run writes.
+ */
+export function photoCaptureLineOf(runId: string, slot: PlanSlot | OwnPlanSlot): string {
+  const key = slotKeyOf(runId, slot.attemptIdBase);
+  if (slot.category === "own") return captureLineOf(captureOfShot(slot.shot), key);
+  const wholeBody = FEET_MOMENT_WORDS.test(slot.activity) || (isBoldCategory(slot.category) && BOLD_WHOLE_BODY_WORDS.test(slot.activity));
+  return captureLineOf(slot.capture ?? captureOfShot(slot.shot), key, { wholeBody });
+}
+
+/**
+ * A gallery photo of a run's slot, as the run's `photoMeta` writes it: the slot's first attempt id, the slot, the category, and a prompt that opens with the slot's capture
+ * line and carries the sentence.
+ */
 export function photoOf(run: RunPlan, slot: PlanSlot | OwnPlanSlot, extra: { prompt?: string; qa?: PhotoSidecar["qa"]; category?: string } = {}): PhotoSidecar {
   photoCounter++;
   const id = `photo-${String(photoCounter).padStart(6, "0")}`;
@@ -117,7 +137,7 @@ export function photoOf(run: RunPlan, slot: PlanSlot | OwnPlanSlot, extra: { pro
       jobId: run.runId,
       attemptId: `${run.runId}:${slot.attemptIdBase}#1`,
       promptSha: "d".repeat(64),
-      prompt: extra.prompt ?? `A photo she took of herself. ${sentence}. She is an adult woman.`,
+      prompt: extra.prompt ?? `${photoCaptureLineOf(run.runId, slot)} ${sentence}. She is an adult woman.`,
       slot: slot.attemptIdBase,
       category: extra.category ?? photoCategory(slot.category),
       costMicros: 40_000,
