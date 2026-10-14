@@ -86,6 +86,15 @@ describe("a failed tile (§6 42, the tone by the money)", () => {
     expect(tile.actions).toEqual(["again"]);
   });
 
+  test("mode auto, a fallback allowed, and still «refused free»: Grok was never reserved because paid work had stopped (RECONCILE_REQUIRED, a halt) — the tile says so", () => {
+    const blocked = failedTile(failed("refused-free", FREE), { nowMs: NOW, bold: false, mode: "auto" });
+    expect(blocked.text).toBe("Kling отказал бесплатно, а Grok не запущен: платные запросы были остановлены");
+    expect(blocked.actions).toEqual(["again"]);
+    // In mode offer the same end is the offer's (42n, or 42p without a fallback); a frame of «Смелая» has none (42q).
+    expect(failedTile(failed("refused-free", FREE), { nowMs: NOW, bold: false, mode: "offer" }).text).toBe("Kling отказал бесплатно");
+    expect(failedTile(failed("refused-free", FREE), { nowMs: NOW, bold: true, mode: "auto" }).text).toBe("Kling отказал бесплатно — для кадров «Смелой» запасной модели нет");
+  });
+
   test("42n: mode offer, refused free: «Снять на Grok · до $0.85» at the engine's own price, never «Оживить снова…»", () => {
     const tile = failedTile(failed("refused-free", FREE, { failure: { reason: "refused-free", grokOffer: GROK_OFFER } }), ctx);
     expect(tile.text).toBe("Kling отказал бесплатно");

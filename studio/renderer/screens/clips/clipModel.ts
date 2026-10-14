@@ -1,4 +1,4 @@
-import { CLIP_RETRYABLE_FAILURES, type ClipCost, type ClipFace, type ClipFailReason, type ClipPhase, type ClipSummary } from "../../../shared/engine";
+import { CLIP_RETRYABLE_FAILURES, GROK_FALLBACK, type ClipCost, type ClipFace, type ClipFailReason, type ClipPhase, type ClipSummary } from "../../../shared/engine";
 import { CLIP_LOST_TEXT, CLIP_RECOVERED_TEXT, CLIP_RECOVERING_TEXT } from "../../../shared/engine/clipRestartTexts";
 import { NBSP } from "../../lib/format";
 import { formatUsdTiered } from "../../lib/money";
@@ -182,7 +182,8 @@ function reconcileMoney(cost: ClipCost): string {
  * a frame of «Смелая» kept to Kling (I5.57), so its free refusal says there is no fallback for it (42q). A paid download past its `retryDownloadUntil` reads as 42o, whose file the
  * provider no longer serves; the engine turns the record so at the next retry.
  */
-export function failedTile(clip: Failed, ctx: { nowMs: number; bold: boolean }): FailedTileModel {
+export function failedTile(clip: Failed, ctx: { nowMs: number; bold: boolean; mode?: "auto" | "offer" }): FailedTileModel {
+  const mode = ctx.mode ?? GROK_FALLBACK;
   const { cost } = clip;
   const tone = cost.kind === "free" ? "free" : cost.kind === "open" ? "open" : "paid";
   const until = clip.retryDownloadUntil === undefined ? null : Date.parse(clip.retryDownloadUntil);
@@ -205,6 +206,9 @@ export function failedTile(clip: Failed, ctx: { nowMs: number; bold: boolean }):
       if (offer !== undefined) return { ...base, text: "Kling отказал бесплатно", actions: ["grok"], grokWorst: upUsd(offer.worstMicros) };
       if (clip.request.model === "grok") return { ...base, text: "Grok отказал бесплатно" };
       if (ctx.bold) return { ...base, text: "Kling отказал бесплатно — для кадров «Смелой» запасной модели нет" };
+      // Mode auto with the fallback allowed runs Grok behind a free refusal: ending here means Grok's reserve was refused for no lack of room — paid work had stopped
+      // (RECONCILE_REQUIRED, a halt; the banner above says which). A new string for the owner.
+      if (mode === "auto" && clip.request.fallback === "auto") return { ...base, text: "Kling отказал бесплатно, а Grok не запущен: платные запросы были остановлены" };
       return { ...base, text: "Kling отказал бесплатно" };
     }
     case "provider-error":
