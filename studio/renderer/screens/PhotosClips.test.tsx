@@ -741,8 +741,8 @@ describe("43d: the clip viewer keeps nothing of the clip it left", () => {
   }
 
   // There is no command for one photo by id, and the photo viewer closes on a photo the pages read do not hold: so a source photo beyond the pages read cannot be opened from here, and
-  // the line says where it is instead of offering a button that would do nothing.
-  test("a source photo beyond the pages read is named as being in the gallery, with no button that would open nothing", async () => {
+  // the line says only that it is not shown here, instead of offering a button that would do nothing.
+  test("a source photo beyond the pages read is not shown here, with no button that would open nothing", async () => {
     const many = Array.from({ length: MAX_LISTED_PHOTOS + 1 }, (_, i) => scenePhoto(i + 1, {}, NINI));
     const h = setup({ avatars: [summary(many)], photos: many });
     h.engine.seedClips(NINI.avatarId, 1);
@@ -754,7 +754,7 @@ describe("43d: the clip viewer keeps nothing of the clip it left", () => {
     await flush();
     await flush();
     const source = within(clipViewer()).getByText("Из фото", { selector: "dt" }).nextElementSibling;
-    expect(source?.textContent).toBe("исходное фото — в галерее");
+    expect(source?.textContent).toBe("исходное фото здесь не показано");
     expect(source?.querySelector("button") === null).toBe(true);
   });
 

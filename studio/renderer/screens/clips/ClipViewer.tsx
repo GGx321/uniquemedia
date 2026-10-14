@@ -314,7 +314,7 @@ export function ClipViewer(props: ClipViewerProps) {
                       </span>
                     </button>
                   ) : (
-                    <span className="clip-src-gone">{galleryComplete ? "исходное фото удалено" : "исходное фото — в галерее"}</span>
+                    <span className="clip-src-gone">{galleryComplete ? "исходное фото удалено" : "исходное фото здесь не показано"}</span>
                   )}
                 </dd>
               </div>
