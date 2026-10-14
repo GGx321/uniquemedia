@@ -31,7 +31,7 @@ const MAX_ALLOC_BYTES = 512 * 1024 * 1024;
 /**
  * The 24 -> 30 step, before the scale (at the source size: interpolating 720p is about a third of the work of 1080p).
  * - `interpolate`: motion-compensated (`mci`, overlapped blocks, bidirectional search): a plain `fps=30` repeats every fourth frame, which judders on slow motion (§5.13);
- * - `duplicate`: that plain `fps=30`, for the owner's A/B at canary C3;
+ * - `duplicate`: that plain `fps=30`, the default since canary C3 (the owner saw no difference in the blind A/B/C; it encodes about 3x faster);
  * - `native24`: the file stays at 24 fps (only the owner picks it).
  *
  * MEASURED (S5.V4c, 2026-10-14, the owner's M4 Max, ffmpeg-static 6.0, this argv, a 10 s 24 fps `testsrc2` source): from 720 x 1280, interpolate 27.0 s, duplicate 4.1 s,

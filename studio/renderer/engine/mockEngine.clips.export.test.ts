@@ -61,7 +61,7 @@ describe("clips.export", () => {
     const relPath = exportedPath(m, jobId);
     expect(relPath).toMatch(/^Mia\/\d{4}-\d{2}-\d{2}_clip_001\.mp4$/);
     const { clip } = await unwrap(m.client.request("clips.get", { avatarId: AVATAR, clipId }));
-    expect(clip.exports).toEqual([expect.objectContaining({ relPath, profile: "1080p30-interp", fileState: "present", bytes: expect.any(Number), sha256: expect.stringMatching(/^[0-9a-f]{64}$/) })]);
+    expect(clip.exports).toEqual([expect.objectContaining({ relPath, profile: "1080p30-dup", fileState: "present", bytes: expect.any(Number), sha256: expect.stringMatching(/^[0-9a-f]{64}$/) })]);
     expect(clip.exports[0]?.relPath.split("/")[1]?.slice(0, 10)).toMatch(DATE);
     // The list shows the lines without a state: it never looks at the folder.
     expect((await onlyClip(m)).exports[0]).not.toHaveProperty("fileState");
@@ -72,7 +72,7 @@ describe("clips.export", () => {
     const clipId = await readyClip(m);
     const { jobId } = await unwrap(m.client.request("clips.export", { avatarId: AVATAR, clipId }));
     const first = progressOf(m.events, jobId)[0];
-    expect(first).toMatchObject({ kind: "clip", jobId, clipId, phase: "exporting", done: 0, total: expectedExportFrames(5_000, "interpolate") });
+    expect(first).toMatchObject({ kind: "clip", jobId, clipId, phase: "exporting", done: 0, total: expectedExportFrames(5_000, "duplicate") });
     m.scheduler.runAll();
     const progress = progressOf(m.events, jobId);
     expect(new Set(progress.map((p) => p.phase))).toEqual(new Set(["exporting"]));

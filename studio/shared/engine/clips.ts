@@ -28,10 +28,11 @@ export type BoldClipsMode = "kling-only" | "with-fallback" | "off";
 export const BOLD_CLIPS: BoldClipsMode = "kling-only";
 
 /**
- * I5.55: how an export turns the providers' 24 fps into the 30 the owner asked for. `interpolate`: motion-interpolated (`minterpolate`), the default until the owner's eye picks at canary
- * C3. `duplicate`: plain `fps=30`, which repeats every fourth frame. `native24`: the file stays at 24 fps (only the owner picks it).
+ * I5.55: how an export turns the providers' 24 fps into the 30 the owner asked for. `duplicate`: plain `fps=30`, which repeats every fourth frame; the default since canary C3, where
+ * the owner saw no difference between the three in a blind A/B/C and it encodes about 3x faster (5 s against 15 s for a 5 s clip). `interpolate`: motion-interpolated
+ * (`minterpolate`), slower. `native24`: the file stays at 24 fps (only the owner picks it).
  */
-export const EXPORT_FPS: "interpolate" | "duplicate" | "native24" = "interpolate";
+export const EXPORT_FPS: "interpolate" | "duplicate" | "native24" = "duplicate";
 
 /** `clips.list` answers at most this many clips, newest first. */
 export const MAX_LISTED_CLIPS = 500;

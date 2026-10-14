@@ -48,8 +48,8 @@ describe("the constants", () => {
     expect(BOLD_CLIPS).toBe("kling-only");
   });
 
-  test("EXPORT_FPS defaults to interpolate (I5.55)", () => {
-    expect(EXPORT_FPS).toBe("interpolate");
+  test("EXPORT_FPS defaults to duplicate: the owner-driven change after the blind A/B/C of canary C3 (I5.55)", () => {
+    expect(EXPORT_FPS).toBe("duplicate");
   });
 
   test("a listing is cut at 500 clips", () => {

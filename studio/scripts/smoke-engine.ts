@@ -4087,7 +4087,7 @@ const CLIP_ROOT_ID = "smoke-clip-root-0001";
  */
 const CLIP_JOB_TIMEOUT_MS = 60_000;
 
-/** The export is an ffmpeg encode (motion-interpolated by default), not a wait on the provider: its own bound, still well inside the step. */
+/** The export is an ffmpeg encode (frame-duplicated by default), not a wait on the provider: its own bound, still well inside the step. */
 const CLIP_EXPORT_TIMEOUT_MS = 120_000;
 
 /**
