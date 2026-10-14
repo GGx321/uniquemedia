@@ -40,10 +40,15 @@ export function useModalDialog({ dialog, initialFocus, onClose, returnFocus }: M
 
   useEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    // S5.V8: a dialog may open over another (the «Оживить» sheet over the photo viewer): only the top one keeps the keyboard and the focus, the one under it waits.
+    const me = {};
+    OPEN_DIALOGS.push(me);
+    const isTop = (): boolean => OPEN_DIALOGS.at(-1) === me;
     const inerted = dialog.current === null ? [] : inertOutside(dialog.current);
     initialFocus.current?.focus();
     let backward = false;
     const onKey = (event: KeyboardEvent): void => {
+      if (!isTop()) return;
       if (event.key === "Escape") {
         event.preventDefault();
         latest.current.onClose();
@@ -52,6 +57,7 @@ export function useModalDialog({ dialog, initialFocus, onClose, returnFocus }: M
       }
     };
     const onFocusIn = (event: FocusEvent): void => {
+      if (!isTop()) return;
       const root = dialog.current;
       const target = event.target;
       if (root === null || !(target instanceof HTMLElement)) return;
@@ -67,12 +73,17 @@ export function useModalDialog({ dialog, initialFocus, onClose, returnFocus }: M
     return () => {
       window.removeEventListener("keydown", onKey);
       document.removeEventListener("focusin", onFocusIn);
+      const at = OPEN_DIALOGS.indexOf(me);
+      if (at >= 0) OPEN_DIALOGS.splice(at, 1);
       for (const el of inerted) el.removeAttribute("inert");
       const target = latest.current.returnFocus?.() ?? (opener?.isConnected === true ? opener : null);
       target?.focus();
     };
   }, [dialog, initialFocus]);
 }
+
+/** The dialogs open now, the newest last: the newest is the one in front, and the only one whose keyboard and focus rules act. */
+const OPEN_DIALOGS: object[] = [];
 
 /** Makes every other child of `body` inert while the dialog (inside one of them, its portal) is open; answers those it changed. */
 function inertOutside(root: HTMLElement): HTMLElement[] {
