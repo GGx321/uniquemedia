@@ -47,14 +47,14 @@ describe("the prompts probe P-V ran (2026-10-13), word for word", () => {
   test("S1: «Пляж и бассейн», candid, steps out of the water", () => {
     const facts = factsFor(slotOf(pick("beach", (m) => m.text === "steps out of the water"), "candid", "front", { level: "bold" }));
     expect(promptOf(facts, sceneMotion(facts))).toBe(
-      "Handheld by a friend who stays at the same distance, gentle sway, the framing drifts only a little. The adult woman steps out of the water. Over the whole clip she keeps walking slowly. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. No text on screen. She is an adult woman.",
+      "Handheld by a friend who holds the phone steady at the same distance; the framing barely moves. The adult woman steps out of the water. Over the whole clip she keeps walking slowly. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. No text on screen. She is an adult woman.",
     );
   });
 
   test("S2: «Ночнушки и бельё», a selfie from above, one knee up", () => {
     const facts = factsFor(slotOf(pick("nightwear", (m) => m.text === "lies back, one knee up"), "above"));
     expect(promptOf(facts, sceneMotion(facts))).toBe(
-      "A selfie at arm's length: the camera stays in her outstretched hand the whole time. The adult woman lies back, one knee up. Over the whole clip she sways her knee a little. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. No text on screen. She is an adult woman.",
+      "A selfie taken with the phone in her hand, at the same arm's length from her the whole time, never moving back; her arm reaches toward the lens and leaves the frame at its edge. The adult woman lies back, one knee up. Over the whole clip she sways her knee a little. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. No text on screen. She is an adult woman.",
     );
   });
 

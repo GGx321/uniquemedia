@@ -26,16 +26,19 @@ export const CLIP_CAPTURES: readonly ClipCapture[] = [...CAPTURES, "unknown"];
 /** I5.51: every clip prompt is at most this many words. The longest Kling ran was the hips-2 take at 114; the sweep pins the longest this builder writes. */
 export const PROMPT_WORDS_MAX = 130;
 
-const SELFIE_TWO_HANDS = "A selfie at arm's length: the camera stays in her outstretched hands the whole time.";
-const SELFIE_ONE_HAND = "A selfie at arm's length: the camera stays in her outstretched hand the whole time.";
-const FRIEND = "Handheld by a friend who stays at the same distance, gentle sway, the framing drifts only a little.";
+// C3 (K4): the first selfie line let the phone drift back, leaving her holding an empty outstretched arm. The clip is taken BY the phone, which stays at one arm's length, and her
+// arm leaves the frame at its edge, so no empty hand is ever shown.
+const SELFIE_TWO_HANDS = "A selfie taken with the phone in her hands, at the same arm's length from her the whole time, never moving back; her arms reach toward the lens and leave the frame at its edges.";
+const SELFIE_ONE_HAND = "A selfie taken with the phone in her hand, at the same arm's length from her the whole time, never moving back; her arm reaches toward the lens and leaves the frame at its edge.";
+// C3 (K3): «gentle sway» read as jerky. The friend holds the phone steady.
+const FRIEND = "Handheld by a friend who holds the phone steady at the same distance; the framing barely moves.";
 const POV_LEGS_OPENING = "A first-person point-of-view video: the camera is exactly where her eyes are, looking straight down her own body,";
 const NO_FACE_MIRROR_HAND = "no face, no mirror and no hand";
 
 const KLING_CAMERA_LINES: Readonly<Record<ClipCapture, string>> = {
-  // lifevid B2 and C, word for word.
+  // lifevid B2 and C, rewritten after C3 (K4).
   prone: SELFIE_TWO_HANDS,
-  // The same line with one hand (new): P-V S2 ran it on `above`.
+  // The same line with one hand: P-V S2 ran the first wording on `above`; rewritten after C3 (K4).
   selfie: SELFIE_ONE_HAND,
   above: SELFIE_ONE_HAND,
   // New (r2: the capture had no line); echoes the photo's over-the-shoulder line.
@@ -51,7 +54,7 @@ const KLING_CAMERA_LINES: Readonly<Record<ClipCapture, string>> = {
   // Spike B K02's base; «same distance» is new (C3 rule 7). P-V S1 ran it on a candid frame.
   friend: FRIEND,
   // New (r2); echoes the photo's low-feet line.
-  "low-feet": "Handheld by a friend crouching low near her feet who stays at the same distance; the framing drifts only a little.",
+  "low-feet": "Handheld by a friend crouching low near her feet who holds the phone steady at the same distance; the framing barely moves.",
   // Spike B K09's base: a candid is a friend's photo.
   candid: FRIEND,
   // New: a photo with no plan says nothing about who held the phone.
