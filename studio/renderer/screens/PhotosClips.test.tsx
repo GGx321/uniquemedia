@@ -627,7 +627,7 @@ describe("43: the clip viewer and «Сохранить в папку»", () => {
     const saved = within(clipViewer()).getByText(/^Сохранено:/);
     expect(saved.textContent).toMatch(/^Сохранено: export \/ Nini \/ \d{4}-\d\d-\d\d_clip_001\.mp4/);
     expect(within(clipViewer()).getByText("1080 × 1920 · 30 к/с · метаданные очищены")).toBeDefined();
-    fireEvent.click(within(clipViewer()).getByRole("button", { name: "Показать в Finder" }));
+    fireEvent.click(within(clipViewer()).getByRole("button", { name: "Открыть в папке" }));
     await flush();
     expect(callsOf(h.engine, "clips.reveal")).toHaveLength(1);
     expect(h.engine.revealedClips).toHaveLength(1);

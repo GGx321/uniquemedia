@@ -380,7 +380,7 @@ export function ClipViewer(props: ClipViewerProps) {
               {saved !== null && !running && (
                 <button type="button" className="btn btn-s" aria-busy={revealing || undefined} onClick={() => void reveal()}>
                   {revealing && <Spin />}
-                  Показать в Finder
+                  Открыть в папке
                 </button>
               )}
               {/* One button through the whole save: busy is aria-disabled, never disabled, so it keeps the focus (the review's note). */}
