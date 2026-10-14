@@ -178,7 +178,8 @@ import type { MediaImporters } from "./media/imports";
 import { MediaService, type SetForAutopilotResult } from "./media/service";
 import { TrackFlagLogError } from "./music/autopilotTrackFlags";
 import { MediaDiskError } from "./library/mediaRecords";
-import { hasErrorCode, pauseBeforeRetry } from "./library/durableFs";
+import { pauseBeforeRetry } from "./library/durableFs";
+import { knownAvatarsOf } from "./clips/knownAvatars";
 import type { MediaStagingOptions } from "./media/staging";
 import { countRecordsByRoot, libraryHasVideoRecords } from "./videos/rootCounts";
 import { ownPhotoSourceOf, readVerifiedOwnPhoto } from "./videos/ownPhotos";
@@ -1218,7 +1219,8 @@ export class Engine {
       // 5b.2 (S5.WA2): the clip service imports a clip through the media service and owns its copy's lifetime; the media service's own words are adapted here.
       media: {
         import: (call, signal) => this.#media.import(call, signal),
-        copyOfClip: (clipId) => this.#media.copyOfClip(clipId),
+        copyOfClip: (avatarId, clipId) => this.#media.copyOfClip(avatarId, clipId),
+        copiesOfClip: (avatarId, clipId) => this.#media.copiesOfClip(avatarId, clipId),
         copies: (root) => this.#media.copies(root),
         deleteMedia: (mediaId) => this.#media.delete(mediaId),
       },
@@ -2156,21 +2158,8 @@ export class Engine {
    * (a manifest that did not read) keeps its copies. A sweep that was started for a library that is no longer the live one keeps everything: the copies it would list are another library's.
    */
   async #sweepClipCopies(library: Library): Promise<void> {
-    const current = (): boolean => this.library === library;
     try {
-      await this.#clips.sweepCopies({
-        root: library.root,
-        has: (avatarId) => !current() || library.getAvatar(avatarId) !== undefined,
-        folderState: async (avatarId) => {
-          if (!current() || !(await libraryIsThere(library.root))) return "unknown";
-          try {
-            await lstat(library.avatarDirPath(avatarId));
-            return "there";
-          } catch (error) {
-            return hasErrorCode(error, "ENOENT") ? "gone" : "unknown";
-          }
-        },
-      });
+      await this.#clips.sweepCopies(knownAvatarsOf(library, () => this.library === library, libraryIsThere));
     } catch (error) {
       console.warn(`studio engine: the sweep of clip copies failed (${error instanceof Error ? error.name : typeof error})`);
     }
@@ -5409,6 +5398,8 @@ export class Engine {
       if (held(id) || library.getAvatar(id) === undefined) continue;
       library.detachAvatar(id);
       this.#jobs.forgetFinishedFor(id);
+      // The avatar's folder is gone for good: its montage copies go too, in the background (same rule as the `trashed` outcome).
+      void this.#clips.removeCopiesOfAvatar(id);
       this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.removed", payload: { avatarId: id } });
     }
   }

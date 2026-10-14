@@ -259,7 +259,7 @@ export class ClipService {
       ...(copies === null
         ? {}
         : {
-            copies: { removeOf: (clipId: string) => copies.removeOfClip(clipId) },
+            copies: { removeOf: (avatarId: string, clipId: string) => copies.removeOfClip(avatarId, clipId) },
             // 5b.2 (Q-F = 1): what uses a ready clip: a finished video (the used index) and the saved drafts that hold its copy.
             uses: {
               videoUse: (avatarId: string, clipId: string, photoId: string) => deps.currentLibrary()?.videoUseOfClip(avatarId, clipId, photoId),

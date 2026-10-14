@@ -315,13 +315,18 @@ export class MediaService {
     });
   }
 
-  /** The live montage copy of a clip (5b.2, S5.WA2): the media record whose `origin.clipId` is this clip, or undefined. A media being deleted is not one. */
-  async copyOfClip(clipId: string): Promise<MediaSummary | undefined> {
+  /** Every live montage copy of an avatar's clip (5b.2, S5.WA2): the media records whose origin names this avatar and this clip. One is the rule; more can exist after a crash. A media being deleted is not one. */
+  async copiesOfClip(avatarId: string, clipId: string): Promise<MediaSummary[]> {
     return this.#deps.withLibrary(async (library) => {
       const area = this.#areaOf(library.root);
       await area.ready;
-      return area.records.copies().find((copy) => copy.origin?.clipId === clipId);
+      return area.records.copies().filter((copy) => copy.origin?.clipId === clipId && copy.origin.avatarId === avatarId);
     });
+  }
+
+  /** The live montage copy of an avatar's clip, or undefined. */
+  async copyOfClip(avatarId: string, clipId: string): Promise<MediaSummary | undefined> {
+    return (await this.copiesOfClip(avatarId, clipId))[0];
   }
 
   /** Every montage copy of the library (5b.2, S5.WA2), with no cap, and whether the library's media could be read at all (an unreadable folder lists nothing, which says nothing). */

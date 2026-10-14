@@ -346,6 +346,24 @@ describe("the callers that keep the scene photos on purpose (§5.1.3)", () => {
   });
 });
 
+describe("the free-space and staging sums keep the scene photos (plan §5.1.3, scenePhotoBytes)", () => {
+  test("the staged bytes are the scene photo's stored size plus the copy's, never the clip's photo's", async () => {
+    const w = world();
+    const m1 = copy("media-copy-0001", w.avatar.id, "clip-0000001", photoOf(w, 1));
+    const asked: number[] = [];
+    const { rig } = rigWith(w, [m1], { deps: { renderOverrides: { runDeps: { stagingTimeoutMs: (bytes: number) => (asked.push(bytes), 60_000) } } } });
+    const scene = w.library.getPhoto(photoOf(w, 0))?.bytes ?? 0;
+    const clipsPhoto = w.library.getPhoto(photoOf(w, 1))?.bytes ?? 0;
+    expect(scene).toBeGreaterThan(0);
+    expect(clipsPhoto).toBeGreaterThan(0);
+
+    await rig.service.render({ spec: specOfParts(w, [{ scene: photoOf(w, 0) }, { copy: m1.mediaId }]) });
+    await rig.queue.idle();
+
+    expect(asked).toEqual([scene + 3_000]);
+  });
+});
+
 describe("a commit that fails after its intent: the frames stay held while the intent is settled", () => {
   test("the clip's photo is held with the scene photo", async () => {
     const w = world();

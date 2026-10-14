@@ -141,15 +141,24 @@ describe("copyOfClip()", () => {
     const r = rig();
     const one = await importVideo(r, "a.mp4", { origin: origin(1) });
     await importVideo(r, "b.mp4", { origin: origin(2) });
-    expect((await r.service.copyOfClip("clip-0000001"))?.mediaId).toBe(one);
-    expect(await r.service.copyOfClip("clip-0000009")).toBeUndefined();
+    expect((await r.service.copyOfClip("avatar-mia-0001", "clip-0000001"))?.mediaId).toBe(one);
+    expect(await r.service.copyOfClip("avatar-mia-0001", "clip-0000009")).toBeUndefined();
+  });
+
+  test("does not find another avatar's clip with the same id, and copiesOfClip lists every copy of the clip", async () => {
+    const r = rig();
+    const one = await importVideo(r, "a.mp4", { origin: origin(1) });
+    const twin = await importVideo(r, "b.mp4", { origin: origin(1) });
+    await importVideo(r, "c.mp4", { origin: origin(1, "avatar-zed-0002") });
+    expect(await r.service.copyOfClip("avatar-nobody-0009", "clip-0000001")).toBeUndefined();
+    expect((await r.service.copiesOfClip("avatar-mia-0001", "clip-0000001")).map((c) => c.mediaId).sort()).toEqual([one, twin].sort());
   });
 
   test("does not find a copy that was deleted", async () => {
     const r = rig();
     const one = await importVideo(r, "a.mp4", { origin: origin(1) });
     expect(await r.service.delete(one)).toBe("deleted");
-    expect(await r.service.copyOfClip("clip-0000001")).toBeUndefined();
+    expect(await r.service.copyOfClip("avatar-mia-0001", "clip-0000001")).toBeUndefined();
   });
 
   test("does not find a copy that a render holds as gone: the delete says in-use and the copy stays", async () => {
@@ -157,7 +166,7 @@ describe("copyOfClip()", () => {
     const one = await importVideo(r, "a.mp4", { origin: origin(1) });
     r.reserved.add(one);
     expect(await r.service.delete(one)).toBe("in-use");
-    expect((await r.service.copyOfClip("clip-0000001"))?.mediaId).toBe(one);
+    expect((await r.service.copyOfClip("avatar-mia-0001", "clip-0000001"))?.mediaId).toBe(one);
   });
 });
 

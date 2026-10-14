@@ -19,14 +19,14 @@ const exists = (path: string): Promise<boolean> =>
     () => false,
   );
 
-async function world(removeOf: (clipId: string) => Promise<unknown>) {
+async function world(removeOf: (avatarId: string, clipId: string) => Promise<unknown>) {
   const asked: string[] = [];
   const rig = await createRecordsRig({
     deps: {
       copies: {
-        removeOf: async (clipId) => {
-          asked.push(clipId);
-          return removeOf(clipId);
+        removeOf: async (avatarId, clipId) => {
+          asked.push(`${avatarId} ${clipId}`);
+          return removeOf(avatarId, clipId);
         },
       },
     },
@@ -48,7 +48,7 @@ describe("clips.delete and the clip's copy", () => {
 
     await w.rig.records.delete({ avatarId: AVATAR, clipId: CLIP });
 
-    expect(w.asked).toEqual([CLIP]);
+    expect(w.asked).toEqual([`${AVATAR} ${CLIP}`]);
     expect(seen).toEqual([true, true, true]);
     expect(await w.survivors()).toEqual([false, false, false]);
   });

@@ -21,7 +21,7 @@ import { clipFilePath } from "./store";
 export interface ClipMediaPort {
   import(call: MediaImportCall, signal?: AbortSignal): Promise<MediaImportResult>;
   /** The live copy of a clip: the media record whose `origin.clipId` is this clip. */
-  copyOfClip(clipId: string): Promise<MediaSummary | undefined>;
+  copyOfClip(avatarId: string, clipId: string): Promise<MediaSummary | undefined>;
 }
 
 export interface ClipImportsDeps {
@@ -62,8 +62,8 @@ export class ClipImports {
       const { outcome } = record;
       if (outcome.status !== "ready") throw new EngineFailure({ code: "VALIDATION", clipReason: "not-ready", detail: `clip ${clipId} is not ready, so it has no file to prepare` });
       // One copy per clip: a live copy is answered at once, whoever else works on the clip.
-      const live = await deps.media.copyOfClip(clipId);
-      if (live !== undefined && live.origin?.avatarId === avatarId) return { mediaId: live.mediaId };
+      const live = await deps.media.copyOfClip(avatarId, clipId);
+      if (live !== undefined) return { mediaId: live.mediaId };
       if (deps.host.busy(clipId)) throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "job-running", detail: `a job is working on clip ${clipId}` });
 
       // From here the clip is held until the import job has ended, and every way out below gives it back.
@@ -81,9 +81,14 @@ export class ClipImports {
       try {
         const file = clipFilePath(clipsDir, clipId);
         // The sha256 check, inside the lock: the file must be the one the record names (a file in Studio's folder may have been touched by something else).
-        const sha256 = await hashFile(file).catch(() => null);
-        if (sha256 === null || sha256 !== outcome.sha256) throw new EngineFailure({ code: "VALIDATION", clipReason: "file-damaged", detail: `the file of clip ${clipId} is not the one its record names` });
+        // The identity is taken BEFORE the hash: the importer opens the file and compares its handle with it, so a file swapped after the hash is refused there (no gap between the check and the use).
         const identity = await lstat(file, { bigint: true }).then(pickedIdentityOf, () => null);
+        const sha256 = identity === null ? null : await hashFile(file).catch(() => null);
+        if (sha256 === null || sha256 !== outcome.sha256) {
+          // A file that cannot be read may be gone because the avatar's folder went to the Trash meanwhile: that is NOT_FOUND (this throws it), not a damaged file.
+          if (sha256 === null) await deps.locate(avatarId, clipId);
+          throw new EngineFailure({ code: "VALIDATION", clipReason: "file-damaged", detail: sha256 === null ? `the file of clip ${clipId} cannot be read` : `the file of clip ${clipId} is not the one its record names` });
+        }
         if (identity === null) throw new EngineFailure({ code: "VALIDATION", clipReason: "file-damaged", detail: `the file of clip ${clipId} cannot be read` });
 
         const result = await deps.media.import(

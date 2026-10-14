@@ -6,7 +6,7 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { EngineFailure } from "../engineFailure";
 import { pickedIdentityOf } from "../media/identity";
 import type { MediaImportCall, MediaImportResult } from "../media/imports";
-import { ClipImports, copyNameOf, type ClipMediaPort } from "./importClip";
+import { ClipImports, copyNameOf, type ClipImportsDeps, type ClipMediaPort } from "./importClip";
 import type { ClipRecord } from "./schemas";
 import { AVATAR, CLIP, clipFilePath, createRecordsRig, failedRecord, readyRecord, type RecordsRig } from "./testing/recordsRig";
 useNativeGlobals();
@@ -33,6 +33,7 @@ function readyWith(bytes: Buffer, overrides: Partial<ClipRecord> = {}): ClipReco
 interface World {
   rig: RecordsRig;
   imports: ClipImports;
+  deps: ClipImportsDeps;
   calls: MediaImportCall[];
   state: { copy: MediaSummary | undefined; result: MediaImportResult; importThrows: Error | null };
   file: string;
@@ -54,7 +55,7 @@ async function world(record: ClipRecord | null = readyWith(BYTES), bytes: Buffer
     },
     copyOfClip: async () => state.copy,
   };
-  const imports = new ClipImports({
+  const deps: ClipImportsDeps = {
     media,
     locate: (avatarId, clipId) => rig.records.locate(avatarId, clipId),
     withClipLock: (clipId, work) => rig.records.withClipLock(clipId, work),
@@ -67,8 +68,8 @@ async function world(record: ClipRecord | null = readyWith(BYTES), bytes: Buffer
       stop: new AbortController().signal,
     },
     log: () => undefined,
-  });
-  return { rig, imports, calls, state, file };
+  };
+  return { rig, imports: new ClipImports(deps), deps, calls, state, file };
 }
 
 const start = (w: World, clipId = CLIP, avatarId = AVATAR) => w.imports.start({ avatarId, clipId });
@@ -170,6 +171,41 @@ describe("the refusals, in the contract's order", () => {
     expect(w.calls).toEqual([]);
   });
 
+  test("a file that cannot be read because the avatar's folder went to the Trash meanwhile is NOT_FOUND, not file-damaged", async () => {
+    const w = await world(readyWith(BYTES), null);
+    let looks = 0;
+    const imports = new ClipImports({
+      ...w.deps,
+      locate: async (avatarId, clipId) => {
+        if (++looks > 1) throw new EngineFailure({ code: "NOT_FOUND", detail: "no avatar in the open library" });
+        return w.rig.records.locate(avatarId, clipId);
+      },
+    });
+    expect((await refusal(imports.start({ avatarId: AVATAR, clipId: CLIP }))).code).toBe("NOT_FOUND");
+    expect(looks).toBe(2);
+    expect(w.rig.state.busy.size).toBe(0);
+  });
+
+  test("the same for a file that is a link (the hash fails) while the avatar is gone", async () => {
+    const w = await world(readyWith(BYTES), null);
+    await writeFile(`${w.file}.target`, BYTES);
+    await symlink(`${w.file}.target`, w.file);
+    let looks = 0;
+    const imports = new ClipImports({
+      ...w.deps,
+      locate: async (avatarId, clipId) => {
+        if (++looks > 1) throw new EngineFailure({ code: "NOT_FOUND", detail: "no avatar in the open library" });
+        return w.rig.records.locate(avatarId, clipId);
+      },
+    });
+    expect((await refusal(imports.start({ avatarId: AVATAR, clipId: CLIP }))).code).toBe("NOT_FOUND");
+  });
+
+  test("an unreadable file with the avatar still there stays file-damaged", async () => {
+    const w = await world(readyWith(BYTES), null);
+    expect((await refusal(start(w))).clipReason).toBe("file-damaged");
+  });
+
   test("a live copy answers its media id at once, even while another job holds the clip", async () => {
     const w = await world();
     w.state.copy = COPY;
@@ -178,10 +214,12 @@ describe("the refusals, in the contract's order", () => {
     expect(w.calls).toEqual([]);
   });
 
-  test("a copy of another avatar's clip with the same clip id is not this clip's copy", async () => {
+  test("asks the media service for the copy of THIS avatar's clip", async () => {
     const w = await world();
-    w.state.copy = { ...COPY, origin: { ...COPY.origin!, avatarId: "avatar-zzzz-0009" } };
-    expect(await start(w)).toEqual({ jobId: "job-import-0001" });
+    const asked: string[] = [];
+    w.imports = new ClipImports({ ...w.deps, media: { ...w.deps.media, copyOfClip: async (avatarId, clipId) => (asked.push(`${avatarId} ${clipId}`), undefined) } });
+    await start(w);
+    expect(asked).toEqual([`${AVATAR} ${CLIP}`]);
   });
 });
 

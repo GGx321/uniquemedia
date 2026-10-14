@@ -212,6 +212,32 @@ describe("the avatar's copies go only when the avatar does", () => {
   });
 });
 
+describe("avatars.pruneMissing (an avatar whose folder went to the Trash and the engine knew no delete for)", () => {
+  test("removes the avatar's copies, asynchronously and after the avatar is announced removed, and keeps every other avatar's", async () => {
+    const w = await world();
+    const mediaA = await copyOfPlanted(w.started, w.clipA);
+    const mediaB = await copyOfPlanted(w.started, w.clipB);
+    await rm(join(libraryDir(), "avatars", w.b.avatarId), { recursive: true, force: true });
+
+    await w.started.engine.receive({ kind: "control", type: "avatars.pruneMissing", callId: "call-00000007" });
+    await until(() => removedEvents(w.started).includes(mediaB), "the copy's removal");
+
+    expect((await copiesOf(w.started)).map((c) => c.mediaId)).toEqual([mediaA]);
+    expect(await storedFiles()).toEqual([`${mediaA}.json`, `${mediaA}.mp4`]);
+    const types = w.started.events().map((e) => (e.type === "media.changed" ? `media.changed:${e.payload.change}` : e.type));
+    expect(types.indexOf("avatar.removed")).toBeLessThan(types.indexOf("media.changed:removed"));
+  });
+
+  test("leaves the copies of an avatar it did not forget", async () => {
+    const w = await world();
+    const mediaA = await copyOfPlanted(w.started, w.clipA);
+    await w.started.engine.receive({ kind: "control", type: "avatars.pruneMissing", callId: "call-00000007" });
+    await w.started.engine.mediaSettled();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect((await copiesOf(w.started)).map((c) => c.mediaId)).toEqual([mediaA]);
+  });
+});
+
 describe("the library-open sweep", () => {
   test("removes the copies of an avatar whose folder is gone from the disk, and keeps every other avatar's", async () => {
     const first = await world();

@@ -10,8 +10,8 @@ import { EngineFailure } from "../engineFailure";
 
 /** What the copy rules need of the media service. */
 export interface ClipCopyMedia {
-  /** The live copy of a clip, or undefined. */
-  copyOfClip(clipId: string): Promise<MediaSummary | undefined>;
+  /** Every live copy of an avatar's clip (normally one). */
+  copiesOfClip(avatarId: string, clipId: string): Promise<MediaSummary[]>;
   /**
    * Every copy of the library (the live one, or the one at `root`: the sweep reads the library it was started for and holds nothing); `readable` is false when the library's own media folder could
    * not be read (then the list says nothing).
@@ -94,22 +94,24 @@ export class ClipCopies {
   }
 
   /**
-   * Removes the clip's copy, if it has one: true when one was removed. IN_FLIGHT `in-use` when a render holds it (nothing is removed); INTERNAL when the disk fails, so the caller deletes nothing
-   * of the clip either. A copy that vanished meanwhile is no error.
+   * Removes EVERY copy of the avatar's clip (normally one): true when one was removed. IN_FLIGHT `in-use` when a render holds one (the clip stays); INTERNAL when the disk fails, so the caller
+   * deletes nothing of the clip either. A copy that vanished meanwhile is no error.
    */
-  async removeOfClip(clipId: string): Promise<boolean> {
-    const copy = await this.#media.copyOfClip(clipId);
-    if (copy === undefined) return false;
-    let outcome: Awaited<ReturnType<ClipCopyMedia["deleteMedia"]>>;
-    try {
-      outcome = await this.#media.deleteMedia(copy.mediaId);
-    } catch (error) {
-      if (error instanceof EngineFailure) throw error;
-      this.#log(`[clip] ${clipId}: its montage copy could not be removed (${errorName(error)})`);
-      throw new EngineFailure({ code: "INTERNAL", detail: "the clip's copy for the montage could not be removed" });
+  async removeOfClip(avatarId: string, clipId: string): Promise<boolean> {
+    let removed = false;
+    for (const copy of await this.#media.copiesOfClip(avatarId, clipId)) {
+      let outcome: Awaited<ReturnType<ClipCopyMedia["deleteMedia"]>>;
+      try {
+        outcome = await this.#media.deleteMedia(copy.mediaId);
+      } catch (error) {
+        if (error instanceof EngineFailure) throw error;
+        this.#log(`[clip] ${clipId}: its montage copy could not be removed (${errorName(error)})`);
+        throw new EngineFailure({ code: "INTERNAL", detail: "the clip's copy for the montage could not be removed" });
+      }
+      if (outcome === "in-use") throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "in-use", detail: `a render holds the montage copy of clip ${clipId}` });
+      if (outcome === "deleted") removed = true;
     }
-    if (outcome === "in-use") throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "in-use", detail: `a render holds the montage copy of clip ${clipId}` });
-    return outcome === "deleted";
+    return removed;
   }
 
   /**

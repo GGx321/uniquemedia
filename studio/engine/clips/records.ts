@@ -166,7 +166,7 @@ export interface ClipRecordsDeps {
    * 5b.2 (S5.WA2, I5.59): the clip's montage copy. A delete removes it FIRST, under the clip's lock; it throws what refuses the delete (IN_FLIGHT `in-use` while a render holds the copy, INTERNAL when the
    * disk fails) and then nothing of the clip is removed. Absent: a service built without the media service, which has no copies.
    */
-  copies?: { removeOf: (clipId: string) => Promise<unknown> };
+  copies?: { removeOf: (avatarId: string, clipId: string) => Promise<unknown> };
   /**
    * 5b.2 (S5.WA2, Q-F = 1): what uses a ready clip, for `ClipSummary.use`. `videoUse` is the used index's answer for a clip and the photo it was made from; `draftsOf` is how many saved drafts of the
    * avatar hold each clip's copy, read once for a whole list. A reader that fails leaves its part out (logged): `use` is a help for the dialog, not a gate. Absent: no clip has a `use`.
@@ -406,7 +406,7 @@ export class ClipRecords {
       if (this.#deps.host.busy(clipId)) throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "job-running", detail: `a job is working on clip ${clipId}` });
       await this.#recordOf(clipsDir, clipId);
       // The copy goes first (a render that holds it refuses the whole delete, with nothing removed); then the clip, so no copy outlives its clip.
-      await this.#deps.copies?.removeOf(clipId);
+      await this.#deps.copies?.removeOf(payload.avatarId, clipId);
       const remove = this.#deps.remove ?? ((path: string) => rm(path, { force: true }));
       await remove(clipJournalPath(clipsDir, clipId));
       await fsyncDir(clipsDir);

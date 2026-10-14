@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFile, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { MediaOrigin, MediaSummary, ResponseMessage } from "../../../shared/engine";
 import { openFileSource } from "../../media/video/fileSource";
@@ -114,4 +114,3 @@ export async function factsOfFile(path: string): Promise<VideoInfo> {
   }
 }
 
-export const sizeOf = async (path: string): Promise<number> => (await stat(path)).size;

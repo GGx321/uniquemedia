@@ -88,7 +88,7 @@ describe("an avatar delete that became pending while the copy was being made", (
     expect(w.events.some((e) => e.type === "media.changed")).toBe(false);
     expect(w.events.at(-1)?.type).toBe("job.cancelled");
     expect(w.rig.state.busy.size).toBe(0);
-    expect(await w.media.copyOfClip(CLIP)).toBeUndefined();
+    expect(await w.media.copyOfClip(AVATAR, CLIP)).toBeUndefined();
   });
 
   test("an avatar that left the library meanwhile is the same", async () => {
@@ -113,6 +113,6 @@ describe("an avatar delete that became pending while the copy was being made", (
     expect(end).toBe("done");
     expect((await w.stored()).filter((name) => name.endsWith(".json"))).toHaveLength(1);
     expect(await w.staged()).toEqual([]);
-    expect((await w.media.copyOfClip(CLIP))?.origin).toMatchObject({ clipId: CLIP, avatarId: AVATAR });
+    expect((await w.media.copyOfClip(AVATAR, CLIP))?.origin).toMatchObject({ clipId: CLIP, avatarId: AVATAR });
   });
 });
