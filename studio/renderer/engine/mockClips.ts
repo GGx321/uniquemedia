@@ -183,6 +183,8 @@ export type MockJournalLine =
       status: "completed" | "failed" | "cancelled" | "expired" | "refused" | "uncertain" | "late";
       providerCostMicros?: number;
       costSource: "usage" | "generation" | "proof" | "worst" | "none";
+      /** A POST the provider refused with a 4xx that is not moderation: why, so a restart records the reason the live path did (engine/clips/schemas.ts `failReason`). */
+      failReason?: ClipFailReason;
       at: string;
     }
   | { type: "downloaded"; sha256: string; bytes: number; at: string };
@@ -433,6 +435,14 @@ function reasonOfEnded(ended: Extract<MockJournalLine, { type: "ended" }>): Clip
   }
 }
 
+/** engine/clips/recover.ts `reasonOfAttempt`: an `ended` line with no `submitted` line is a POST the provider refused (settled 0), never `lost` and never «settled at worst». */
+function reasonOfAttempt(attempt: JournalAttempt, ended: Extract<MockJournalLine, { type: "ended" }>): ClipFailReason {
+  if (attempt.submittedAt !== undefined) return reasonOfEnded(ended);
+  if (ended.status === "refused") return "refused-free";
+  if (ended.status === "failed") return ended.failReason ?? "bad-request";
+  return reasonOfEnded(ended);
+}
+
 function planOf(lines: readonly MockJournalLine[], reserved: ReadonlySet<string>, nowMs: number, t: MockClipTimings): Plan {
   const { requested, attempts, downloaded } = summarize(lines);
   if (requested === null) return { kind: "fail", reason: "lost", model: "kling" };
@@ -452,9 +462,13 @@ function planOf(lines: readonly MockJournalLine[], reserved: ReadonlySet<string>
   const submittedIds = new Set(attempts.filter((a) => a.submittedAt !== undefined).map((a) => a.attemptId));
   const unsent = [...reserved].filter((id) => !submittedIds.has(id)).sort();
   const lastUnsent = unsent.at(-1);
-  if (lastUnsent !== undefined) return { kind: "fail", reason: "lost", model: modelOf({ attemptId: lastUnsent }) };
+  if (lastUnsent !== undefined) {
+    const unsentAttempt = attempts.find((a) => a.attemptId === lastUnsent);
+    if (unsentAttempt?.ended === undefined) return { kind: "fail", reason: "lost", model: modelOf({ attemptId: lastUnsent }) };
+    return { kind: "fail", reason: reasonOfAttempt(unsentAttempt, unsentAttempt.ended), model: modelOf(unsentAttempt) };
+  }
   const last = attempts.findLast((a) => a.ended !== undefined);
-  if (last?.ended !== undefined) return { kind: "fail", reason: reasonOfEnded(last.ended), model: modelOf(last) };
+  if (last?.ended !== undefined) return { kind: "fail", reason: reasonOfAttempt(last, last.ended), model: modelOf(last) };
   return { kind: "fail", reason: "lost", model: requested.request.model };
 }
 
@@ -1042,7 +1056,7 @@ export class MockClips {
       this.#settle(line, 0, false);
       this.#release(attemptId);
       const content = scripted === "refused-submit";
-      ended(content ? "refused" : "failed", "none");
+      this.#journal(job.clipId, { type: "ended", attemptId, status: content ? "refused" : "failed", costSource: "none", ...(content ? {} : { failReason: submitFailures[scripted] ?? "bad-request" }), at: iso(host.clockMs()) });
       this.#attemptsDone(job.clipId, { attemptId, model, outcome: content ? "refused" : "failed", costSource: "none" });
       if (content) return this.#afterFreeRefusal(run, n);
       if (scripted === "key-invalid") host.markKeyRejected();

@@ -143,6 +143,17 @@ function reasonOfEnded(ended: EndedLine): ClipFailReason {
   }
 }
 
+/**
+ * Why an attempt the journal says ended is recorded as it is. An `ended` line with NO `submitted` line is a POST the provider refused (VR item 2): the reserve was settled 0 before the line was written,
+ * so the record says what the live path did (a moderation refusal is `refused-free`; another 4xx names its reason, `bad-request` when the line has none), never `lost` and never «settled at worst».
+ */
+function reasonOfAttempt(attempt: JournalAttempt, ended: EndedLine): ClipFailReason {
+  if (attempt.submittedAt !== undefined) return reasonOfEnded(ended);
+  if (ended.status === "refused") return "refused-free";
+  if (ended.status === "failed") return ended.failReason ?? "bad-request";
+  return reasonOfEnded(ended);
+}
+
 /** The attempt ids of a clip, with their number: 1 is the chosen model, 2 the automatic Grok behind Kling. */
 function numberOf(attemptId: string): 1 | 2 {
   return parseClipAttemptId(attemptId)?.n ?? 1;
@@ -183,11 +194,16 @@ export function planRecovery(input: PlanInput): RecoveryPlan {
   const submittedIds = new Set(summary.attempts.filter((a) => a.submittedAt !== undefined).map((a) => a.attemptId));
   const unsent = [...reservedAttempts].filter((id) => parseClipAttemptId(id) !== null && !submittedIds.has(id)).sort();
   const lastUnsent = unsent.at(-1);
-  if (lastUnsent !== undefined) return { kind: "fail", reason: "lost", model: modelOf({ attemptId: lastUnsent }, request) };
+  if (lastUnsent !== undefined) {
+    // An attempt whose POST was refused has an `ended` line and its reserve is already closed: it is not unsent.
+    const unsentAttempt = summary.attempts.find((a) => a.attemptId === lastUnsent);
+    if (unsentAttempt?.ended === undefined) return { kind: "fail", reason: "lost", model: modelOf({ attemptId: lastUnsent }, request) };
+    return { kind: "fail", reason: reasonOfAttempt(unsentAttempt, unsentAttempt.ended), model: modelOf(unsentAttempt, request) };
+  }
 
   // Every attempt the journal names ended in a failure: the clip says how the last one did.
   const last = summary.attempts.findLast((a) => a.ended !== undefined);
-  if (last?.ended !== undefined) return { kind: "fail", reason: reasonOfEnded(last.ended), model: modelOf(last, request) };
+  if (last?.ended !== undefined) return { kind: "fail", reason: reasonOfAttempt(last, last.ended), model: modelOf(last, request) };
 
   return { kind: "fail", reason: "lost", model: request.model };
 }

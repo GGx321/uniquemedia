@@ -53,6 +53,36 @@ describe("a journal with only `requested`", () => {
   });
 });
 
+// VR item 2: an `ended` line with no `submitted` line is a POST the provider refused, settled 0 before the line was written. The ledger holds 0, so the record must not say the reconcile will settle it at worst.
+describe("an attempt whose POST was refused (an `ended` line, no `submitted` line, a reserve already settled 0)", () => {
+  const reserved = { reservedAttempts: new Set([KLING]) };
+
+  test("a moderation refusal at the POST is `refused-free`, not lost", () => {
+    expect(plan([requested, ended(KLING, T0 + 1_000, "refused", "none")], reserved)).toEqual({ kind: "fail", reason: "refused-free", model: "kling" });
+  });
+
+  test.each(["rate-limited", "key-invalid", "no-credits", "bad-request"] as const)("a refusal at the POST that named %s is recorded with that reason", (failReason) => {
+    const line = { ...ended(KLING, T0 + 1_000, "failed", "none"), failReason } as ClipJournalLine;
+    expect(plan([requested, line], reserved)).toEqual({ kind: "fail", reason: failReason, model: "kling" });
+  });
+
+  test("a refusal at the POST with no reason on its line is `bad-request`, the general 4xx", () => {
+    expect(plan([requested, ended(KLING, T0 + 1_000, "failed", "none")], reserved)).toEqual({ kind: "fail", reason: "bad-request", model: "kling" });
+  });
+
+  test("the same lines with no reserve in the ledger are read the same way", () => {
+    expect(plan([requested, ended(KLING, T0 + 1_000, "refused", "none")])).toEqual({ kind: "fail", reason: "refused-free", model: "kling" });
+  });
+
+  test("Grok reserved behind a refused Kling POST, with no line of its own, is still lost: its reserve waits", () => {
+    expect(plan([requested, ended(KLING, T0 + 1_000, "refused", "none")], { reservedAttempts: new Set([KLING, GROK]) })).toEqual({ kind: "fail", reason: "lost", model: "grok" });
+  });
+
+  test("a SUBMITTED attempt that ended refused with no cost source is still unknown: its reserve is open at worst", () => {
+    expect(plan([requested, submitted(KLING, T0 + 1_000), ended(KLING, T0 + 2_000, "refused", "none")], reserved)).toEqual({ kind: "fail", reason: "refused-unknown", model: "kling" });
+  });
+});
+
 describe("a submitted attempt with no `ended` line", () => {
   test("is polled while it is less than 60 min old", () => {
     expect(plan([requested, submitted(KLING, T0 + 1_000)], { nowMs: T0 + 30 * MIN })).toEqual({ kind: "poll", attemptId: KLING, model: "kling", providerJobId: "job-1", submittedAtMs: T0 + 1_000 });

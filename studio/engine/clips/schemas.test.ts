@@ -203,6 +203,13 @@ describe("the journal lines", () => {
     expect(ClipJournalLine.safeParse({ ...ended, at: "later" }).success).toBe(false);
   });
 
+  test("ended may name the reason a POST was refused, and only a known fail reason (VR item 2: a restart reads it)", () => {
+    const refusedAtPost = { type: "ended", attemptId: `${ID}:video#1`, status: "failed", costSource: "none", at: AT };
+    expect(ClipJournalLine.safeParse({ ...refusedAtPost, failReason: "rate-limited" }).success).toBe(true);
+    expect(ClipJournalLine.safeParse(refusedAtPost).success).toBe(true);
+    expect(ClipJournalLine.safeParse({ ...refusedAtPost, failReason: "rate limited" }).success).toBe(false);
+  });
+
   test("ended's provider cost is optional and its cost source is required", () => {
     const { providerCostMicros: _cost, ...noCost } = ended;
     expect(ClipJournalLine.safeParse(noCost).success).toBe(true);

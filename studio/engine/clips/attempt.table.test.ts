@@ -215,6 +215,17 @@ describe.each(MODES)("row 4 · 401 / 402 / 429 / another 4xx at the submit · mo
     expect(rig.posts()).toHaveLength(1);
     expectNoGrok(rig, GROK);
   });
+
+  test.each([
+    ["401", refusedHttp(401, "AUTH_INVALID"), "key-invalid"],
+    ["402", refusedHttp(402, "INSUFFICIENT_CREDITS"), "no-credits"],
+    ["429", refusedHttp(429, "RATE_LIMITED"), "rate-limited"],
+    ["400 that is not moderation", refusedHttp(400, "HTTP_ERROR"), "bad-request"],
+  ] as const)("%s names its reason on the journal's `ended` line, so a restart records the same reason (VR item 2)", async (_name, submit, reason) => {
+    await make({ mode, kling: { submit } });
+    await rig.run();
+    expect(rig.journalLines.filter((l) => l.type === "ended")).toMatchObject([{ attemptId: KLING, status: "failed", costSource: "none", failReason: reason }]);
+  });
 });
 
 describe.each(MODES)("row 5 · 5xx, timeout or network error at the submit · mode %s", (mode) => {

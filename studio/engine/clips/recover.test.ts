@@ -256,6 +256,25 @@ describe("a journal with only `requested`", () => {
   });
 });
 
+// VR item 2: a restart after a POST the provider refused. The reserve was settled 0 before the `ended` line was written, so the record says what the live path would have, not `lost` with its
+// «reconcile will settle it at worst».
+describe("a journal whose attempt ended at the POST, with no `submitted` line", () => {
+  test("a moderation refusal becomes a failed `refused-free` record, with no network call", async () => {
+    await writeLines(CLIP, [requested(), ended(KLING, T0 + 1_000, "refused", "none")]);
+    const r = rig({ reserves: [{ attemptId: KLING, at: iso(T0) }] });
+    await recover(r);
+    expect((await recordOf()).outcome).toEqual({ status: "failed", reason: "refused-free" });
+    expect(r.calls.poll).toEqual([]);
+  });
+
+  test.each(["rate-limited", "key-invalid", "no-credits", "bad-request"] as const)("a refusal that named %s is recorded as a failed record with that reason", async (failReason) => {
+    await writeLines(CLIP, [requested(), { ...ended(KLING, T0 + 1_000, "failed", "none"), failReason } as ClipJournalLine]);
+    const r = rig({ reserves: [{ attemptId: KLING, at: iso(T0) }] });
+    await recover(r);
+    expect((await recordOf()).outcome).toEqual({ status: "failed", reason: failReason });
+  });
+});
+
 describe("a submitted attempt with no `ended` line", () => {
   test("whose job completed is downloaded, validated, given a poster and a face check, and recorded ready and recovered", async () => {
     const submittedAt = T0 + 1_000;

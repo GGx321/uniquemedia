@@ -394,10 +394,12 @@ class Attempt {
       const halt = await this.settle(0, false);
       deps.holds.release(this.attemptId);
       const content = submit.moderation;
-      await deps.journal.ended({ attemptId: this.attemptId, status: content ? "refused" : "failed", costSource: "none", at: iso(deps.now()) });
+      const reason = reasonOfKind(submit.errorKind);
+      // A refusal that is not moderation names its reason on the line, so a restart records what this run did (VR item 2).
+      await deps.journal.ended({ attemptId: this.attemptId, status: content ? "refused" : "failed", costSource: "none", ...(content ? {} : { failReason: reason }), at: iso(deps.now()) });
       this.record(content ? "refused" : "failed", "none");
       if (content) return { kind: "refused-free" };
-      return { kind: "failed", reason: reasonOfKind(submit.errorKind), cost: "free", detail: submit.detail, aboveWorst: halt };
+      return { kind: "failed", reason, cost: "free", detail: submit.detail, aboveWorst: halt };
     }
 
     if (submit.kind === "uncertain") {
