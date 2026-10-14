@@ -259,6 +259,8 @@ describe("a reconcile while the restart's walk of the clips folders is still run
     try {
       await until(() => gate.reached(), "the walk to reach the clips folder");
       before = changes();
+      // A walk that outlasts the moment the banner was told («in 2 s»).
+      second.clocks.skew(5_000);
     } finally {
       gate.open();
     }

@@ -490,9 +490,11 @@ export class ClipService {
     recoverClips(host, library)
       .catch((error: unknown) => deps.log(`[clip] the recovery of the library could not run (${error instanceof Error ? error.name : typeof error})`))
       .finally(() => {
+        const began = this.#walks.get(walkId) ?? deps.clock();
         this.#walks.delete(walkId);
-        // The wait that the walk asked for ends here: a banner showing «через пару секунд» refreshes.
-        deps.emitMoney();
+        // The wait that the walk asked for ends here: a banner that showed «через пару секунд» refreshes. Only for a walk that outlasted that moment; a quick walk ends before anyone is told to wait,
+        // and an event at every start would only trail the replies of the commands the start answers.
+        if (deps.clock() - began >= WALK_RETRY_MS) deps.emitMoney();
       });
   }
 
