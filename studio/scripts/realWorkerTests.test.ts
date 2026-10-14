@@ -627,7 +627,7 @@ describe("the Electron-Node steps' bounds", () => {
     // The package script behind the job is the same runner with the shard flag only, so it cannot drift from the suite's own flags.
     const scripts = scriptsOf(JSON.parse(await readFile(join(ROOT, "package.json"), "utf8")));
     expect(scripts["test:studio:suite:shard"]).toBe("bun studio/scripts/realWorkerTests.ts");
-    expect(scripts["test:studio:suite"]).toBe(`bun studio/scripts/realWorkerTests.ts --shards=3 --suite`);
+    expect(scripts["test:studio:suite"]).toBe(`bun studio/scripts/realWorkerTests.ts --shards=4 --suite`);
   });
 
   // Owner decision 2026-10-05: the repo is public, so an installer uploaded as an artifact is downloadable by any logged-in GitHub user,

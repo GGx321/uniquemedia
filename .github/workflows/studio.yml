@@ -167,8 +167,8 @@ jobs:
       # hours until GitHub's own job-level limit kicks in: each attempt is
       # killed after 15 minutes by the script itself (a hang is never
       # retried), and this step's limit is the bound of every attempt it may
-      # take (3 shards x 3 attempts x 15 minutes) plus slack. The suite runs
-      # as 3 shards, each its own bun process with its own bound and retry
+      # take (4 shards x 3 attempts x 15 minutes) plus slack. The suite runs
+      # as 4 shards, each its own bun process with its own bound and retry
       # (see realWorkerTests.ts): Windows needs 7.5 to 10+ minutes for all of
       # it, and it grows, so one bound for the whole suite would have to keep
       # growing too.
@@ -181,11 +181,11 @@ jobs:
       # a load error or a hang is never retried), and prints a ::warning::
       # on every retry.
       #
-      # CI-5: not on Windows. There the same 3-shard-equivalent suite runs in the `test-windows` job below, as parallel jobs (every
+      # CI-5: not on Windows. There the same shard-equivalent suite runs in the `test-windows` job below, as parallel jobs (every
       # test file in exactly one of them: realWorkerTests.test.ts proves the partition). macOS stays
       # here: its whole suite is about 2.5 minutes, and a macOS minute bills 10x, so splitting it would cost more than it saves.
       - run: bun run test:studio:suite ./studio
-        timeout-minutes: 150
+        timeout-minutes: 195
         if: runner.os != 'Windows'
       # The real workers' tests (the face worker's, the text worker's) run under ELECTRON'S NODE, the product's own
       # runtime (studio/scripts/electronNodeTests.ts: bun bundles them, the Electron binary runs them as plain Node).
@@ -286,7 +286,7 @@ jobs:
           fi
           bun studio/scripts/smoke-engine.ts --app "$app"
 
-  # The Windows bun suite (CI-5), as parallel jobs: the suite `build` runs on macOS (`bun run test:studio:suite ./studio`, 3 shards one
+  # The Windows bun suite (CI-5), as parallel jobs: the suite `build` runs on macOS (`bun run test:studio:suite ./studio`, 4 shards one
   # after another) is here one shard per job, 8 in all (6 until run 38106625177, whose shard 2 of 6 reached the 15-minute bound; 4 until run 38036567315, whose shard 1 of 4 reached it
   # at 900 s on 195 files, parity.test.ts alone 175 s). Before, `build (windows-latest)` ran the three shards in sequence (4.5, 6.2 and
   # 8.1 minutes in run 37193353642, 21 minutes with setup); now the wall time is the slowest shard plus the setup, and the typecheck,
@@ -550,7 +550,7 @@ jobs:
       # `:canary` scripts pass --known-crashes-only). Every retry, here and in the build job, is printed as a
       # ::warning:: annotation so the crash rate stays visible.
       - run: bun run test:studio:suite:canary ./studio --randomize
-        timeout-minutes: 150
+        timeout-minutes: 195
       # The real workers' Electron-Node tests (face and text): the canary's `bun latest` is only the bundler here.
       - name: Real worker tests (Electron's Node)
         run: bun run test:studio:electron-node
