@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { AvatarSummary, ClipSummary, EngineError, PhotoSummary } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import { isActiveJob, type EngineStore, type EngineView, type JobView } from "../../engine/store";
@@ -70,19 +70,20 @@ export interface ClipList {
   /** Newest first; null until `clips.list` first answers. */
   readonly clips: readonly ClipSummary[] | null;
   readonly error: EngineError | null;
-  /** The clip jobs' ends the list on show has seen: a job that ended after them may not be listed yet. */
-  readonly readForEnds: string | null;
-  /** The ends of the avatar's clip jobs now. */
-  readonly ends: string;
+  /** The clip jobs (ids) that had ended when the list on show was asked for: a job that ended after that may not be listed yet. Null until the first answer. */
+  readonly readEnded: ReadonlySet<string> | null;
   readonly reread: () => void;
 }
 
 /** The ended clip jobs of an avatar, as one key: a new end reads the list again. */
 function endsOf(jobs: readonly JobView[], avatarId: string): string {
-  return jobs
-    .filter((job) => job.kind === "clip" && job.avatarId === avatarId && !isActiveJob(job))
+  return endedJobs(jobs, avatarId)
     .map((job) => `${job.jobId}:${job.status}`)
     .join("|");
+}
+
+function endedJobs(jobs: readonly JobView[], avatarId: string): JobView[] {
+  return jobs.filter((job) => job.kind === "clip" && job.avatarId === avatarId && !isActiveJob(job));
 }
 
 /** The avatar's `clips.list`, read on open, after each clip job of the avatar ends, when the export folder's state moves, and on demand (a delete, a «новый» seen). */
@@ -92,15 +93,18 @@ export function useClipList(avatarId: string, view: EngineView): ClipList {
   const ends = endsOf(view.jobs, avatarId);
   const exportKey = view.exportStatus === null ? "none" : view.exportStatus.status === "ok" ? "ok" : `unavailable:${view.exportStatus.reason}`;
   const [reread, setReread] = useState(0);
-  const [state, setState] = useState<{ clips: readonly ClipSummary[] | null; error: EngineError | null; readForEnds: string | null }>({ clips: null, error: null, readForEnds: null });
+  const [state, setState] = useState<{ clips: readonly ClipSummary[] | null; error: EngineError | null; readEnded: ReadonlySet<string> | null }>({ clips: null, error: null, readEnded: null });
+  // The jobs that had ended when a read began, kept in a ref so the read's effect reruns on the ends' key alone.
+  const jobsRef = useRef(view.jobs);
+  jobsRef.current = view.jobs;
 
   useEffect(() => {
     if (!ready) return;
     let alive = true;
-    const asked = ends;
+    const asked = new Set(endedJobs(jobsRef.current, avatarId).map((job) => job.jobId));
     void client.request("clips.list", { avatarId }).then((reply) => {
       if (!alive) return;
-      if (reply.ok) setState({ clips: reply.result.clips, error: null, readForEnds: asked });
+      if (reply.ok) setState({ clips: reply.result.clips, error: null, readEnded: asked });
       else setState((now) => ({ ...now, error: reply.error }));
     });
     return () => {
@@ -108,7 +112,7 @@ export function useClipList(avatarId: string, view: EngineView): ClipList {
     };
   }, [ready, client, avatarId, ends, exportKey, reread]);
 
-  return useMemo(() => ({ ...state, ends, reread: () => setReread((n) => n + 1) }), [state, ends]);
+  return useMemo(() => ({ ...state, reread: () => setReread((n) => n + 1) }), [state]);
 }
 
 /** How many ready clips the owner has not opened yet: the «Клипы» tab's count (README §S5.VD decision 11). */

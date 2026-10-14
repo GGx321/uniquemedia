@@ -756,6 +756,51 @@ describe("43d: the clip viewer keeps nothing of the clip it left", () => {
   });
 });
 
+describe("a deleted clip does not come back as a «Сохраняем» tile", () => {
+  test("create X, delete it, export Y: while the list is read again after the export, X has no tile and nothing is announced for it", async () => {
+    const h = setup({ avatars: [summary(PHOTOS)], photos: PHOTOS });
+    h.engine.seedClips(NINI.avatarId, 1);
+    fireEvent.click(await screen.findByRole("button", { name: "Nini" }));
+    await screen.findByRole("heading", { level: 1, name: "Nini" });
+    await flush();
+    await animateFromSheet(await openSheet());
+    runJobs(h.scheduler, 60);
+    await flush();
+    await flush();
+    // X (the one made now, the newest) is deleted from its viewer.
+    const newest = screen.getAllByRole("button", { name: /^Открыть клип/ })[0];
+    if (newest === undefined) throw new Error("no clip tile");
+    fireEvent.click(newest);
+    await flush();
+    await flush();
+    const viewerOf = (): HTMLElement => screen.getByRole("dialog", { name: /^Клип \d+ из \d+$/ });
+    fireEvent.click(within(viewerOf()).getByRole("button", { name: "Удалить" }));
+    await flush();
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: "Удалить клип?" })).getByRole("button", { name: "Удалить" }));
+    await flush();
+    await flush();
+    expect(tilesNamed()).toHaveLength(1);
+    // Y (the seeded one) is exported; the list read after the export ends is slow.
+    fireEvent.click(screen.getByRole("button", { name: /^Открыть клип/ }));
+    await flush();
+    await flush();
+    fireEvent.click(within(viewerOf()).getByRole("button", { name: "Сохранить в папку" }));
+    await flush();
+    await flush();
+    h.engine.delayNext("clips.list", 1_000_000);
+    const listsBefore = callsOf(h.engine, "clips.list").length;
+    for (let i = 0; i < 30 && callsOf(h.engine, "clips.list").length === listsBefore; i++) {
+      tick(h.scheduler, 1);
+      await flush();
+    }
+    expect(callsOf(h.engine, "clips.list").length).toBeGreaterThan(listsBefore);
+    fireEvent.click(within(viewerOf()).getByRole("button", { name: "Закрыть" }));
+    await flush();
+    expect(screen.queryAllByRole("article", { name: /Клип в работе/ })).toHaveLength(0);
+    expect(screen.queryAllByText("Сохраняем")).toHaveLength(0);
+  });
+});
+
 describe("46: after a restart", () => {
   test("a clip in work when Studio closed: the recovery tile, one banner with the clip's line and no «Перейти к сверке», then the recovered clip «до сверки»", async () => {
     const h = await openNini();

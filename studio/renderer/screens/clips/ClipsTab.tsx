@@ -83,9 +83,9 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
   const records = list.clips ?? [];
   const recordOf = new Map(records.map((clip) => [clip.clipId, clip]));
   const clipJobs = view.jobs.filter((job): job is JobView & { clip: NonNullable<JobView["clip"]> } => job.kind === "clip" && job.avatarId === avatarId && job.clip !== undefined && !job.clip.export);
-  /** Jobs that ended since the list on show was read: their record may not be listed yet, so their tile stays as it was. */
-  const listBehind = list.readForEnds !== list.ends;
-  const work = clipJobs.filter((job) => isActiveJob(job) || (job.status === "done" && listBehind && !recordOf.has(job.clip.clipId)));
+  /** A job that ended after the list on show was asked for: its record may not be listed yet, so its tile stays as it was. One the list already accounts for and does not hold was deleted. */
+  const behind = (job: JobView): boolean => list.readEnded === null || !list.readEnded.has(job.jobId);
+  const work = clipJobs.filter((job) => isActiveJob(job) || (job.status === "done" && behind(job) && !recordOf.has(job.clip.clipId)));
   const workClips = new Set(work.map((job) => job.clip.clipId));
   const failedJobs = clipJobs.filter((job) => job.status === "failed" && job.error !== null && !recordOf.has(job.clip.clipId) && !dismissed.has(job.jobId));
   const now = useNow(work.length > 0 || records.some((clip) => clip.status === "failed" && clip.retryDownloadUntil !== undefined));
