@@ -307,7 +307,7 @@ export function phaseLine(p: ClipProgress, ctx: PhaseContext): PhaseLine {
   switch (p.phase) {
     // 5b.2, S5.WB1: a batch member waiting for its turn (mockup 60). A compile stub: S5.WB4 adds the wait reasons («ждём, пока закончатся другие расходы»).
     case "queued":
-      return { text: "В очереди", tone: "quiet", pill: "в очереди", cancel: true };
+      return { text: "В очереди", tone: "quiet", pill: "в очереди", cancel: false };
     case "preparing":
       return work("Готовим кадр", true);
     case "submitting":

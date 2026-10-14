@@ -440,7 +440,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
         pro10: { expected: 0, worst: 0, worstNoFallback: 0 },
       },
       monthRoomMicros: 6_200_000,
-      monthFits: { std5: "with-fallback", pro5: "with-fallback", std10: "with-fallback", pro10: "with-fallback" },
+      monthFits: { std5: "none", pro5: "none", std10: "none", pro10: "none" },
     },
   },
   "clips.createBatch": {

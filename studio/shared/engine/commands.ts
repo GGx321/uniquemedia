@@ -429,7 +429,8 @@ const ENGINE_SPECS = [
   //  - `createBatch` is paid, accepted like `create` (`acceptedWorstMicros` is the SUM of the members' worst cases) and held while the Mac sleeps. It answers the batch id and one `clip` job id per member, in the
   //    pick order (each job starts in the phase `queued` and carries `batchId`, `batchIndex`, `batchSize`). Refused free, in this order: IN_FLIGHT (`clipReason` `one-at-a-time`, or `batch-running` while a batch
   //    holds the unit; first, synchronously), AUTH_INVALID, the ledger's refusals, LIBRARY_UNAVAILABLE, NOT_FOUND, VALIDATION with the item's OWN `clipReason` (`not-a-gallery-photo`, `bold-off`, `unknown-motion`, ...) and the path
-  //    `["items", i]` (one reason per error; there is no batch-level reason), PRICE_UNAVAILABLE, PRICE_CHANGED (the sum), BUDGET_EXCEEDED (the sum, from the month hold). Its deadline adds 1 s per item.
+  //    `["items", i]` (one reason per error; there is no batch-level reason). NOT_FOUND here refers to the AVATAR only: a member's photo that is missing or belongs to another avatar is that member's own
+  //    VALIDATION `not-a-gallery-photo` at `["items", i]`, so the sheet draws it on its row. PRICE_UNAVAILABLE, PRICE_CHANGED (the sum), BUDGET_EXCEEDED (the sum, from the month hold). Its deadline adds 1 s per item.
   //  - `cancelBatch` is free: it cancels the QUEUED members only (a submitted member is never cancelled) and says how many it cancelled, possibly 0. NOT_FOUND for a batch the avatar does not have.
   //    A cancelled member reports `ClipCancelDetail` `cancelled` on its `job.cancelled`.
   defineCommand("clips.batchOptions", z.strictObject({ avatarId: Id, photoIds: z.array(Id).min(1).max(MAX_BATCH_CLIPS).refine(photoIdsUnique, { message: "a photo appears once" }) }), ClipBatchOptions),
@@ -451,7 +452,7 @@ const ENGINE_SPECS = [
       .strictObject({ batchId: Id, jobIds: z.array(Id).min(1).max(MAX_BATCH_CLIPS) })
       .refine((r) => new Set(r.jobIds).size === r.jobIds.length, { message: "a job appears once", path: ["jobIds"] }),
   ),
-  defineCommand("clips.cancelBatch", z.strictObject({ avatarId: Id, batchId: Id }), z.strictObject({ cancelled: Count })),
+  defineCommand("clips.cancelBatch", z.strictObject({ avatarId: Id, batchId: Id }), z.strictObject({ cancelled: Count.max(MAX_BATCH_CLIPS) })),
   // «Удалить аватар»: what the confirmation shows (counts of photos, candidates, drafts, videos and of the video files that would go to the Trash too).
   // Free and read-only. Refuses like the delete itself does while anything of the avatar runs (IN_FLIGHT), so the dialog says so instead of offering a
   // button that cannot work; NOT_FOUND for an avatar the library does not have, LIBRARY_UNAVAILABLE without a library.

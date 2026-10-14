@@ -289,6 +289,10 @@ const ClipBatchSum = z
 /**
  * What `clips.batchOptions` answers (free): each photo's own `ClipOptions` in the order asked, the four sums over the photos that can be made (`clipBatchWorstMicros` and `clipBatchExpectedMicros`, the one formula),
  * the month's room and, per option, whether the month takes the whole batch with the fallback behind it, without it, or not at all. The engine's figure, the same one `clips.createBatch` checks.
+ *
+ * `monthRoomMicros` = max(0, monthlyBudget - (spent + open + held)): the `#monthFits` / `tryHold` model that `clips.createBatch` holds against, NOT `Engine.monthRoom()` (the autopilot's caps).
+ * `monthFits[option]`: `with-fallback` when the option's `worst` is within the room; `without-fallback` when only `worstNoFallback` is; `none` otherwise. A batch where no suitable member allows Grok (each has
+ * `fallback` other than `auto`) cannot say `with-fallback`: its two worst cases are equal, so it reports `without-fallback`, like the single clip, and the sheet shows no second button at the same price.
  */
 export const ClipBatchOptions = z
   .strictObject({
@@ -297,19 +301,32 @@ export const ClipBatchOptions = z
     monthRoomMicros: Micros,
     monthFits: MonthFits,
   })
-  .refine((o) => photoIdsUnique(o.items.map((item) => item.photoId)), { message: "a photo appears once", path: ["items"] });
+  .refine((o) => photoIdsUnique(o.items.map((item) => item.photoId)), { message: "a photo appears once", path: ["items"] })
+  .refine((o) => CLIP_OPTION_KEYS.every((key) => o.monthFits[key] !== "with-fallback" || o.sums[key].worst <= o.monthRoomMicros), {
+    message: "an option fits the month with its fallback only if its worst case is within the room",
+    path: ["monthFits"],
+  })
+  .refine((o) => CLIP_OPTION_KEYS.every((key) => o.monthFits[key] !== "without-fallback" || o.sums[key].worstNoFallback <= o.monthRoomMicros), {
+    message: "an option fits the month without its fallback only if the Kling-alone worst case is within the room",
+    path: ["monthFits"],
+  })
+  .refine((o) => o.items.some((item) => item.suitable && item.fallback === "auto") || CLIP_OPTION_KEYS.every((key) => o.monthFits[key] !== "with-fallback"), {
+    message: "a batch where no member allows a fallback model never fits the month with one",
+    path: ["monthFits"],
+  });
 export type ClipBatchOptions = z.infer<typeof ClipBatchOptions>;
 
 /**
  * Why a batch member did not run, told on its `job.cancelled` and in its `JobState` (plan s5b2 §5.2.1; texts: `clipCancelDetailRu`). Every one is free: nothing was reserved.
- * - photo-gone: the photo was deleted or unreadable at the member's turn; the batch goes on.
+ * - photo-gone: the photo was removed from the gallery before the member's turn; the batch goes on.
+ * - photo-unreadable: the photo is still in the gallery but its file is missing or damaged at the member's turn; the batch goes on.
  * - price-changed: the price re-read at the turn put the member's worst above its share; it and the queue end.
  * - price-unavailable: the price could not be read at the turn (r2.1 N7); it and the queue end.
  * - ledger-stopped: a reserve was refused by the ledger (halted, a reconcile is needed, torn) or a settle came above its worst.
  * - money-uncertain: a member ended `submit-uncertain`, `late` or `lost`; the queue is not spent blind.
  * - cancelled: the owner cancelled (`clips.cancelBatch`, or `avatars.cancel` on one queued member).
  */
-export const CLIP_CANCEL_DETAILS = ["photo-gone", "price-changed", "price-unavailable", "ledger-stopped", "money-uncertain", "cancelled"] as const;
+export const CLIP_CANCEL_DETAILS = ["photo-gone", "photo-unreadable", "price-changed", "price-unavailable", "ledger-stopped", "money-uncertain", "cancelled"] as const;
 export const ClipCancelDetail = z.enum(CLIP_CANCEL_DETAILS);
 export type ClipCancelDetail = z.infer<typeof ClipCancelDetail>;
 
@@ -494,6 +511,7 @@ export const clipJobFields = {
   photoId: Id.optional(),
   request: ClipRequest.optional(),
   motion: ClipJobMotion.optional(),
+  /** What the owner accepted for THIS clip. A batch member's is its own share (its worst case under the batch's price book), never the batch's sum. */
   acceptedWorstMicros: Micros.optional(),
   /**
    * What the ledger can still charge for this clip: the sum of its reserves that are open (unsettled), as the engine holds them. Told in every phase where one is open, and absent where none is.
@@ -517,6 +535,16 @@ export function clipBatchFieldsTogether(job: { batchId?: unknown; batchIndex?: n
   return told === 3 && (job.batchIndex ?? 0) <= (job.batchSize ?? 0);
 }
 export const CLIP_BATCH_FIELDS_TOGETHER = { message: "a clip job tells its batch id, its place and the batch's size together, or none of them, with the place within the size" };
+
+/**
+ * A `queued` job is a batch member that has done nothing yet (I5.61): the whole batch trio, no progress, no model, no submit time, no proof window and no open reserve. (The proof window is also refused
+ * outside `proving`.) Any other phase passes.
+ */
+export function clipQueuedShape(job: { phase: ClipPhase; done: number; batchId?: unknown; model?: unknown; submittedAt?: unknown; proveUntil?: unknown; openReserveMicros?: unknown }): boolean {
+  if (job.phase !== "queued") return true;
+  return job.batchId !== undefined && job.done === 0 && job.model === undefined && job.submittedAt === undefined && job.proveUntil === undefined && job.openReserveMicros === undefined;
+}
+export const CLIP_QUEUED_SHAPE = { message: "a queued clip job is a batch member at zero: the batch trio, and no model, submit time, proof window or open reserve" };
 
 /** A wait reason belongs to a `queued` or a `proving` job. */
 export function clipWaitReasonPlaced(job: { phase: ClipPhase; waitReason?: unknown }): boolean {

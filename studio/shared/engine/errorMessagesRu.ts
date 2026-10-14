@@ -314,8 +314,8 @@ function clipNounRu(count: number): string {
 
 /**
  * What a batch says about members that did not run (mockups 60c-60f; plan s5b2 §5.2.1), for the `count` queued members a stop or a cancel left unmade. Every text tells the owner nothing was charged for them.
- * 60c-60f and `price-unavailable` (r2.1 N7) are the plan's texts; the singular forms (1, 21, ...) are the same sentences with the number agreeing. `photo-gone` has no mockup: its text is DERIVED, not
- * owner-approved, and it speaks of one member whatever the count. Refuses a count that is not a positive whole number.
+ * 60c-60f and `price-unavailable` (r2.1 N7) are the plan's texts; the singular forms (1, 21, ...) are the same sentences with the number agreeing. `photo-gone` and `photo-unreadable` (a photo still in the gallery
+ * whose file is missing or damaged) are the owner-vetoed texts of the round-2 review; each speaks of the ONE member whose photo it is, so `count` is ignored for them. Refuses a count that is not a positive whole number.
  */
 export function clipCancelDetailRu(detail: ClipCancelDetail, count: number): string {
   if (!Number.isInteger(count) || count < 1) throw new RangeError("a cancelled-member text counts at least one member");
@@ -335,8 +335,20 @@ export function clipCancelDetailRu(detail: ClipCancelDetail, count: number): str
     case "price-unavailable":
       return `Цены видео у OpenRouter сейчас не читаются — ${rest} ${count} ${noun} ${notMade}, бесплатно.`;
     case "photo-gone":
-      return "Этого фото больше нет в галерее — клип не снимался, бесплатно.";
+      return "Это фото удалено из галереи — клип не снимался, бесплатно.";
+    case "photo-unreadable":
+      return "Файл этого фото не читается — клип не снимался, бесплатно.";
   }
+}
+
+/**
+ * What the batch header says after a restart or a quit dropped the queued members (mockup 60c, restart): they had no record, no reserve and no journal line, so nothing was charged. Same forms as
+ * `clipCancelDetailRu`. Refuses a count that is not a positive whole number.
+ */
+export function clipBatchDroppedRu(count: number): string {
+  if (!Number.isInteger(count) || count < 1) throw new RangeError("a dropped-members text counts at least one member");
+  const one = count % 10 === 1 && count % 100 !== 11;
+  return `${one ? "Оставшийся" : "Оставшиеся"} ${count} ${clipNounRu(count)} ${one ? "не снимался" : "не снимались"} — бесплатно.`;
 }
 
 /**

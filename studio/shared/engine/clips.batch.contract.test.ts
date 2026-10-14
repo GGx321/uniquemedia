@@ -20,7 +20,7 @@ import {
   type ClipPrices,
 } from "./clips";
 import { CLIP_REASONS, CLIP_IN_FLIGHT_REASONS, EngineError } from "./errors";
-import { CLIP_REASONS_RU, clipCancelDetailRu } from "./errorMessagesRu";
+import { CLIP_REASONS_RU, clipBatchDroppedRu, clipCancelDetailRu } from "./errorMessagesRu";
 import { COMMAND_TYPES, ENGINE_COMMAND_TYPES, MAIN_ONLY_COMMANDS, OkResponse } from "./commands";
 import { SLEEP_CLASS, heldWhileAsleep } from "./commandHold";
 import { PROTOCOL_VERSION } from "./envelope";
@@ -218,6 +218,8 @@ describe("clips.cancelBatch", () => {
     expect(answers("clips.cancelBatch", { cancelled: 0 })).toBe(true);
     expect(answers("clips.cancelBatch", { cancelled: -1 })).toBe(false);
     expect(answers("clips.cancelBatch", { cancelled: 1.5 })).toBe(false);
+    expect(answers("clips.cancelBatch", { cancelled: MAX_BATCH_CLIPS })).toBe(true);
+    expect(answers("clips.cancelBatch", { cancelled: MAX_BATCH_CLIPS + 1 })).toBe(false);
     expect(answers("clips.cancelBatch", {})).toBe(false);
   });
 });
@@ -266,6 +268,33 @@ describe("ClipBatchOptions", () => {
     expect(ClipBatchOptions.safeParse(batchOptions({ monthFits: { std5: "none", pro5: "none", std10: "without-fallback", pro10: "none" } })).success).toBe(true);
     const { std5: _gone, ...partial } = fits;
     expect(ClipBatchOptions.safeParse(batchOptions({ monthFits: partial })).success).toBe(false);
+  });
+
+  // monthRoomMicros = max(0, monthlyBudget - (spent + open + held)): the `#monthFits` / `tryHold` model, not `Engine.monthRoom()` (the autopilot's caps). monthFits is the engine's verdict on the whole batch.
+  test("an option fits the month with its fallback only if its worst case is within the room", () => {
+    const room = 3_000_000;
+    expect(ClipBatchOptions.safeParse(batchOptions({ monthRoomMicros: room })).success).toBe(false);
+    const fit = { std5: "with-fallback", pro5: "with-fallback", std10: "without-fallback", pro10: "without-fallback" };
+    expect(ClipBatchOptions.safeParse(batchOptions({ monthRoomMicros: room, monthFits: fit })).success).toBe(true);
+    expect(ClipBatchOptions.safeParse(batchOptions({ monthRoomMicros: room, monthFits: { ...fit, std10: "with-fallback" } })).success).toBe(false);
+  });
+
+  test("an option fits the month without its fallback only if the Kling-alone worst case is within the room", () => {
+    const tight = { ...fits, std5: "without-fallback" };
+    expect(ClipBatchOptions.safeParse(batchOptions({ monthRoomMicros: 1_008_000, monthFits: { ...tight, pro5: "none", std10: "none", pro10: "none" } })).success).toBe(true);
+    expect(ClipBatchOptions.safeParse(batchOptions({ monthRoomMicros: 1_007_999, monthFits: { ...tight, pro5: "none", std10: "none", pro10: "none" } })).success).toBe(false);
+  });
+
+  test("a batch where no member allows Grok never fits `with-fallback`: it reports `without-fallback`, like a single clip", () => {
+    const klingOnly = (i: number) => ({ ...suitable(i), fallback: "none", monthFits: { std5: "none", pro5: "none", std10: "none", pro10: "none" } });
+    const same = { std5: "without-fallback", pro5: "without-fallback", std10: "without-fallback", pro10: "without-fallback" };
+    expect(ClipBatchOptions.safeParse(batchOptions({ items: [klingOnly(0), klingOnly(1)], monthFits: same })).success).toBe(true);
+    expect(ClipBatchOptions.safeParse(batchOptions({ items: [klingOnly(0), klingOnly(1)], monthFits: fits })).success).toBe(false);
+  });
+
+  test("a batch where one member allows Grok may fit `with-fallback`", () => {
+    const klingOnly = { ...suitable(1), fallback: "none", monthFits: { std5: "none", pro5: "none", std10: "none", pro10: "none" } };
+    expect(ClipBatchOptions.safeParse(batchOptions({ items: [suitable(0), klingOnly], monthFits: fits })).success).toBe(true);
   });
 });
 
@@ -343,10 +372,13 @@ describe("clipBatchWorstMicros and clipBatchExpectedMicros (I5.62)", () => {
 // ---------- the job: queued, waitReason, the batch fields ----------
 
 const ref = { kind: "clip", jobId: JOB, avatarId: AVATAR, clipId: CLIP };
-const progress = (over: Record<string, unknown> = {}) => ({ ...ref, done: 0, total: 4, phase: "queued", ...over });
-const state = (over: Record<string, unknown> = {}) => ({ ...ref, status: "queued", done: 0, total: 4, phase: "queued", ...over });
+const progress = (over: Record<string, unknown> = {}) => ({ ...ref, done: 1, total: 4, phase: "rendering", ...over });
+const state = (over: Record<string, unknown> = {}) => ({ ...ref, status: "running", done: 1, total: 4, phase: "rendering", ...over });
 const batchFields: Record<string, unknown> = { batchId: BATCH, batchIndex: 3, batchSize: 10 };
 const facts = { photoId: photoId(0), request: { model: "kling", quality: "std", seconds: 5, fallback: "auto" }, motion: { source: "scene", label: "Как в сцене" }, acceptedWorstMicros: 850_000 };
+// A queued member as the engine announces it: the whole trio, nothing reserved, nothing sent, at zero.
+const queuedProgress = (over: Record<string, unknown> = {}): Record<string, unknown> => progress({ phase: "queued", done: 0, ...batchFields, ...over });
+const queuedState = (over: Record<string, unknown> = {}): Record<string, unknown> => state({ status: "queued", phase: "queued", done: 0, ...batchFields, ...over });
 
 describe("the queued phase", () => {
   test("is the first phase of a clip job, before the 5b.1 ladder", () => {
@@ -354,14 +386,37 @@ describe("the queued phase", () => {
   });
 
   test("passes the job refine, in a progress and in a state, with or without the create facts", () => {
-    expect(JobProgress.safeParse(progress()).success).toBe(true);
-    expect(JobProgress.safeParse(progress({ ...facts, ...batchFields })).success).toBe(true);
-    expect(JobState.safeParse(state()).success).toBe(true);
-    expect(JobState.safeParse(state({ ...facts, ...batchFields })).success).toBe(true);
+    expect(JobProgress.safeParse(queuedProgress()).success).toBe(true);
+    expect(JobProgress.safeParse(queuedProgress(facts)).success).toBe(true);
+    expect(JobState.safeParse(queuedState()).success).toBe(true);
+    expect(JobState.safeParse(queuedState(facts)).success).toBe(true);
   });
 
-  test("a queued job has no proof window, no model and no submit time", () => {
-    expect(JobProgress.safeParse(progress({ proveUntil: "2026-10-14T10:02:00.000Z" })).success).toBe(false);
+  test("a queued job is a batch member: it carries the whole trio, in a progress and in a state", () => {
+    for (const key of Object.keys(batchFields)) {
+      const { [key]: _gone, ...rest } = queuedProgress();
+      expect(JobProgress.safeParse(rest).success).toBe(false);
+      const { [key]: _g2, ...restState } = queuedState();
+      expect(JobState.safeParse(restState).success).toBe(false);
+    }
+    const { batchId: _b, batchIndex: _i, batchSize: _s, ...none } = queuedProgress();
+    expect(JobProgress.safeParse(none).success).toBe(false);
+  });
+
+  test("a queued job has made no progress: done is 0", () => {
+    expect(JobProgress.safeParse(queuedProgress({ done: 1 })).success).toBe(false);
+    expect(JobState.safeParse(queuedState({ done: 1 })).success).toBe(false);
+  });
+
+  test("a queued job has no proof window, no model, no submit time and no open reserve", () => {
+    for (const extra of [{ proveUntil: "2026-10-14T10:02:00.000Z" }, { model: "kling" }, { submittedAt: "2026-10-14T10:00:00.000Z" }, { openReserveMicros: 850_000 }]) {
+      expect(JobProgress.safeParse(queuedProgress(extra)).success).toBe(false);
+      expect(JobState.safeParse(queuedState(extra)).success).toBe(false);
+    }
+  });
+
+  test("a member that was cancelled while queued keeps its queued phase at zero", () => {
+    expect(JobState.safeParse(queuedState({ status: "cancelled", detail: "cancelled" })).success).toBe(true);
   });
 });
 
@@ -369,8 +424,8 @@ describe("waitReason", () => {
   const WAIT = ["turn", "alone", "rate-limit", "proof"] as const;
 
   test("is one of turn, alone, rate-limit and proof", () => {
-    for (const waitReason of WAIT) expect(JobProgress.safeParse(progress({ waitReason })).success).toBe(true);
-    expect(JobProgress.safeParse(progress({ waitReason: "sleeping" })).success).toBe(false);
+    for (const waitReason of WAIT) expect(JobProgress.safeParse(queuedProgress({ waitReason })).success).toBe(true);
+    expect(JobProgress.safeParse(queuedProgress({ waitReason: "sleeping" })).success).toBe(false);
   });
 
   test("appears only on a queued or a proving job", () => {
@@ -424,7 +479,7 @@ describe("batchId, batchIndex and batchSize", () => {
   });
 
   test("the event on the wire carries them", () => {
-    const event = { v: PROTOCOL_VERSION, id: "evt-00000001", kind: "event", seq: 1, bootId: "boot-00000001", type: "job.progress", payload: progress({ ...batchFields, waitReason: "alone" }) };
+    const event = { v: PROTOCOL_VERSION, id: "evt-00000001", kind: "event", seq: 1, bootId: "boot-00000001", type: "job.progress", payload: queuedProgress({ waitReason: "alone" }) };
     expect(EventMessage.safeParse(event).success).toBe(true);
   });
 });
@@ -432,8 +487,8 @@ describe("batchId, batchIndex and batchSize", () => {
 // ---------- the cancelled members ----------
 
 describe("the cancelled-member details", () => {
-  test("are the six of §5.2.1", () => {
-    expect([...CLIP_CANCEL_DETAILS].sort()).toEqual(["cancelled", "ledger-stopped", "money-uncertain", "photo-gone", "price-changed", "price-unavailable"]);
+  test("are the six of §5.2.1 and `photo-unreadable` (a photo still in the gallery whose file is missing or damaged)", () => {
+    expect([...CLIP_CANCEL_DETAILS].sort()).toEqual(["cancelled", "ledger-stopped", "money-uncertain", "photo-gone", "photo-unreadable", "price-changed", "price-unavailable"]);
     expect(ClipCancelDetail.safeParse("price-changed").success).toBe(true);
     expect(ClipCancelDetail.safeParse("batch-member").success).toBe(false);
   });
@@ -447,6 +502,7 @@ describe("the cancelled-member details", () => {
 
   test("a cancelled clip state says why, and only a cancelled one does", () => {
     expect(JobState.safeParse(state({ status: "cancelled", detail: "ledger-stopped" })).success).toBe(true);
+    expect(JobState.safeParse(state({ status: "cancelled", detail: "photo-unreadable" })).success).toBe(true);
     expect(JobState.safeParse(state({ status: "running", detail: "ledger-stopped" })).success).toBe(false);
     expect(JobState.safeParse(state({ status: "failed", error: { code: "INTERNAL" }, detail: "cancelled" })).success).toBe(false);
   });
@@ -501,6 +557,20 @@ describe("clipReason batch-running and clip-busy", () => {
     expect(EngineError.safeParse({ code: "VALIDATION", clipReason: "bold-off" }).success).toBe(true);
   });
 
+  // clips.createBatch: NOT_FOUND refers to the AVATAR only (it carries no path). A member's photo that is missing or belongs to another avatar is the member's own VALIDATION `not-a-gallery-photo`
+  // at `path: ["items", i]`, so the sheet can draw it on that row.
+  test("a member's missing or foreign photo is VALIDATION not-a-gallery-photo at its item path", () => {
+    const error = EngineError.parse({ code: "VALIDATION", clipReason: "not-a-gallery-photo", path: ["items", 4], detail: "item 4 is not a photo of this avatar's gallery" });
+    expect(error).toMatchObject({ code: "VALIDATION", clipReason: "not-a-gallery-photo", path: ["items", 4] });
+    expect(CLIP_REASONS_RU["not-a-gallery-photo"]).toContain("кадр из галереи");
+  });
+
+  test("NOT_FOUND (the avatar) carries no item path, and a path never rides on it", () => {
+    expect(EngineError.safeParse({ code: "NOT_FOUND", detail: "no such avatar" }).success).toBe(true);
+    expect(EngineError.safeParse({ code: "NOT_FOUND", clipReason: "not-a-gallery-photo", path: ["items", 4] }).success).toBe(false);
+    expect(EngineError.safeParse({ code: "NOT_FOUND", path: ["items", 4] }).success).toBe(false);
+  });
+
   test("there is one clipReason per error: a second reason beside it is refused", () => {
     expect(EngineError.safeParse({ code: "IN_FLIGHT", clipReason: "batch-running", portraitReason: "not-imported" }).success).toBe(false);
   });
@@ -532,8 +602,27 @@ describe("the cancelled-member texts (mockups 60c-60f)", () => {
     expect(clipCancelDetailRu("price-unavailable", 6)).toBe("Цены видео у OpenRouter сейчас не читаются — оставшиеся 6 клипов не снимались, бесплатно.");
   });
 
-  test("the photo is gone: a member alone, free (derived text, not owner-approved)", () => {
-    expect(clipCancelDetailRu("photo-gone", 1)).toBe("Этого фото больше нет в галерее — клип не снимался, бесплатно.");
+  test("the photo was removed from the gallery: one member, free", () => {
+    expect(clipCancelDetailRu("photo-gone", 1)).toBe("Это фото удалено из галереи — клип не снимался, бесплатно.");
+  });
+
+  test("the photo is in the gallery but its file is missing or damaged: one member, free, and it does not say «удалено»", () => {
+    expect(clipCancelDetailRu("photo-unreadable", 1)).toBe("Файл этого фото не читается — клип не снимался, бесплатно.");
+    expect(clipCancelDetailRu("photo-unreadable", 1)).not.toContain("удалено");
+  });
+
+  test("the two photo texts speak of one member whatever the count passed", () => {
+    for (const detail of ["photo-gone", "photo-unreadable"] as const) expect(clipCancelDetailRu(detail, 7)).toBe(clipCancelDetailRu(detail, 1));
+  });
+
+  test("a restart or a quit drops the queue: «Оставшиеся N клипов не снимались — бесплатно.» (mockup 60c, restart)", () => {
+    expect(clipBatchDroppedRu(5)).toBe("Оставшиеся 5 клипов не снимались — бесплатно.");
+    expect(clipBatchDroppedRu(2)).toBe("Оставшиеся 2 клипа не снимались — бесплатно.");
+    expect(clipBatchDroppedRu(1)).toBe("Оставшийся 1 клип не снимался — бесплатно.");
+    expect(clipBatchDroppedRu(11)).toBe("Оставшиеся 11 клипов не снимались — бесплатно.");
+    expect(clipBatchDroppedRu(21)).toBe("Оставшийся 21 клип не снимался — бесплатно.");
+    expect(clipBatchDroppedRu(22)).toBe("Оставшиеся 22 клипа не снимались — бесплатно.");
+    for (const bad of [0, -1, 1.5, Number.NaN]) expect(() => clipBatchDroppedRu(bad)).toThrow(RangeError);
   });
 
   test("the noun agrees with the number: 1, 2, 5, 11, 21, 22 and 25", () => {

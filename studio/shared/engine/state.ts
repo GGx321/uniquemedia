@@ -5,6 +5,7 @@ import { CategoryName, CategoryRef, LegsShare, MAX_RUN_CATEGORIES, PhotoCategory
 import {
   CLIP_BATCH_FIELDS_TOGETHER,
   CLIP_FACTS_TOGETHER,
+  CLIP_QUEUED_SHAPE,
   CLIP_WAIT_REASON_PLACED,
   ClipCancelDetail,
   clipBatchFieldsTogether,
@@ -12,6 +13,7 @@ import {
   clipJobFields,
   clipJobRef,
   ClipJobResult,
+  clipQueuedShape,
   clipWaitReasonPlaced,
 } from "./clips";
 import { EngineError, ExportUnavailableReason, SceneReason } from "./errors";
@@ -556,6 +558,7 @@ export const JobProgress = z
   })
   .refine((p) => p.kind !== "clip" || clipBatchFieldsTogether(p), { ...CLIP_BATCH_FIELDS_TOGETHER, path: ["batchId"] })
   .refine((p) => p.kind !== "clip" || clipWaitReasonPlaced(p), { ...CLIP_WAIT_REASON_PLACED, path: ["waitReason"] })
+  .refine((p) => p.kind !== "clip" || clipQueuedShape(p), { ...CLIP_QUEUED_SHAPE, path: ["phase"] })
   .refine((p) => p.kind !== "import" || importOriginOnVideo.check(p), importOriginOnVideo.params)
   .refine((p) => !(p.kind === "render" && p.queued === true) || (p.done === 0 && p.saving !== true), {
     message: "a queued render is announced at zero and is not saving",
@@ -851,6 +854,7 @@ export const JobState = z
   })
   .refine((j) => j.kind !== "clip" || clipBatchFieldsTogether(j), { ...CLIP_BATCH_FIELDS_TOGETHER, path: ["batchId"] })
   .refine((j) => j.kind !== "clip" || clipWaitReasonPlaced(j), { ...CLIP_WAIT_REASON_PLACED, path: ["waitReason"] })
+  .refine((j) => j.kind !== "clip" || clipQueuedShape(j), { ...CLIP_QUEUED_SHAPE, path: ["phase"] })
   .refine((j) => j.kind !== "clip" || j.detail === undefined || j.status === "cancelled", { message: "a cancel detail belongs to a cancelled clip", path: ["detail"] })
   .refine((j) => j.kind !== "import" || importOriginOnVideo.check(j), importOriginOnVideo.params)
   .refine((j) => j.kind !== "import" || j.prepare === undefined || j.stage === "prepare", {

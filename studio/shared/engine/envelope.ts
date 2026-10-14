@@ -152,7 +152,8 @@ import { z } from "zod";
 //    `inDrafts` `{ count, first?: { name, frame } }` (drafts that hold the copy; the delete dialog's warning, with the first draft's `MontageName` and 1-based frame).
 //  - `CLIP_REASONS` gain `file-damaged` (VALIDATION) and `in-use` (IN_FLIGHT, a `clips.delete` while a render holds the copy); Russian texts in `CLIP_REASONS_RU`.
 //  - `frame-foreign` and `frame-repeated` (the admission's PHOTO_UNAVAILABLE details, plan §5.1.3) are details of an existing code and belong to the engine task S5.WA2, not to this contract.
-//  - Rollback: `origin` is persisted in media records (on disk), and an older build (5b.1) has strict schemas, so it would list a media record with an `origin` as unreadable.
+//  - Rollback: a 5b.1 build reads media and video records loosely and ignores `origin` and `clipFrames`: a clip copy shows in «Мои» as an ordinary own video (placeable, deletable by hand) and a photo used only
+//    through a clip copy looks free; nothing becomes unreadable, the fields survive, and a 5b.2+ build reads them again; videos rendered by the old build carry no `clipFrames`.
 //    Job refs carry `origin` only on the wire while a job runs. `use` and the two new reasons are wire-only within one build: nothing stores them, so an older build never reads them from disk. Studio has no downgrade path; roll back only before the first clip is put in a montage.
 // Stage 5, 5b.2, S5.WB1 (additive, no bump; three commands, one job phase and four job fields, two clip reasons, one error field): the batch «Оживить выбранные» (part B1, one clip at a time).
 //  - commands `clips.batchOptions` (free: `{ avatarId, photoIds: 1..20 unique }` → `ClipBatchOptions`: each photo's `ClipOptions`, the four sums `{ expected, worst, worstNoFallback }`, `monthRoomMicros`, `monthFits`),
@@ -164,12 +165,14 @@ import { z } from "zod";
 //  - the clip job phase `queued` (first in `CLIP_PHASES`); a clip job also carries `batchId`, `batchIndex` (1-based) and `batchSize` (all three or none) and `waitReason` (`turn` | `alone` | `rate-limit` | `proof`, only on `queued` or
 //    `proving`). `ClipRecord` and `ClipSummary` also carry the same trio `batchId`, `batchIndex`, `batchSize` (optional, all three or none, the place within the size) so the «Клипы» tab's batch header survives `KEEP_FINISHED`
 //    and a restart (L9): the window counts members by DISTINCT `batchIndex` (a 429 requeue gives two records for one photo) and says «не снимались N» as `batchSize` minus the members that have a record. A cancelled clip job (`job.cancelled`, `JobState`) may say why: `detail`
-//    `ClipCancelDetail` (`photo-gone` | `price-changed` | `price-unavailable` | `ledger-stopped` | `money-uncertain` | `cancelled`); the Russian texts are `clipCancelDetailRu(detail, count)` (mockups 60c-60f).
+//    `ClipCancelDetail` (`photo-gone` = removed from the gallery | `photo-unreadable` = in the gallery, file missing or damaged | `price-changed` | `price-unavailable` | `ledger-stopped` | `money-uncertain` | `cancelled`); the Russian texts are `clipCancelDetailRu(detail, count)` (mockups 60c-60f).
+//    A `queued` job must carry the whole trio, `done` 0, and no model, submit time, proof window or open reserve. `clips.createBatch`: NOT_FOUND means the avatar only; a member's missing or foreign photo is VALIDATION
+//    `not-a-gallery-photo` at `path: ["items", i]`. `clips.cancelBatch` answers `cancelled` 0..20. `clipBatchDroppedRu(count)` is the header's text after a restart or quit dropped the queue.
 //  - `CLIP_REASONS` gain `batch-running` and `clip-busy`, both IN_FLIGHT only. There is ONE `clipReason` per error and no `batch-member` reason: an item that breaks a rule is refused as VALIDATION with its OWN reason and the new
 //    `EngineError.path` `["items", i]` (only on a VALIDATION with a `clipReason`) (L3).
 //  - two refines carried over from the WA1 review: `ClipUse.inDrafts.first` only when `count` is 1, and the import job's `origin` (`JobState`, `JobProgress`, `JobFailed`, `JobCancelled`) only when `mediaKind` is `video`.
 //    Rollback of these two: a build without them accepts what this one refuses, never the other way round.
-//  - Rollback: the `ClipRecord` trio `batchId` / `batchIndex` / `batchSize` is PERSISTED ON DISK (a clip record), and an older build (5b.1/5b.2 before this task) has a strict `ClipRecord`, so it would list a batch member's record as unreadable. The job fields, `queued`,
+//  - Rollback: the `ClipRecord` trio `batchId` / `batchIndex` / `batchSize` is PERSISTED ON DISK (a clip record), and an older build (5b.1/5b.2 before this task) has a STRICT `ClipRecord` (`engine/clips/store.ts` reads a record that fails it as `invalid`), so it would list a batch member's record as unreadable; unlike the media and video records of 5b.2 part A, this one is not read loosely. The job fields, `queued`,
 //    `waitReason`, `detail`, `path`, `ClipSummary.batchId` and the two new reasons are wire-only within one build: nothing stores them. Studio has no downgrade path; roll back only before the first batch is run.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);

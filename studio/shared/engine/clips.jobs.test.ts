@@ -33,7 +33,9 @@ describe("the phases of a clip job", () => {
 
 describe("JobProgress for a clip", () => {
   test("parses in every phase", () => {
-    for (const phase of CLIP_PHASES) expect(JobProgress.safeParse(progress({ phase })).success).toBe(true);
+    // A queued job is a batch member at zero (5b.2): it tells the whole batch trio. Every other phase here is a single clip's.
+    const member = { batchId: "batch-00000001", batchIndex: 1, batchSize: 2 };
+    for (const phase of CLIP_PHASES) expect(JobProgress.safeParse(progress(phase === "queued" ? { phase, done: 0, ...member } : { phase })).success).toBe(true);
   });
 
   test("done may equal total but not exceed it", () => {
@@ -122,7 +124,8 @@ describe("JobResult for a clip", () => {
 
 describe("JobState for a clip", () => {
   test("a running clip passes the refine in each phase with done within total", () => {
-    for (const phase of CLIP_PHASES) expect(JobState.safeParse(state({ phase })).success).toBe(true);
+    const member = { batchId: "batch-00000001", batchIndex: 1, batchSize: 2 };
+    for (const phase of CLIP_PHASES) expect(JobState.safeParse(state(phase === "queued" ? { phase, done: 0, ...member } : { phase })).success).toBe(true);
   });
 
   test("done past total is refused", () => {
