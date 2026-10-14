@@ -176,6 +176,17 @@ describe("a clip whose money the earlier process had settled (`downloading`, `ch
     }
   });
 
+  test("the restart still holds the reconcile 2 min after the terminal status the earlier process saw, though that process settled the reserve (the journal's `ended` line is a hold of its own)", async () => {
+    const m = makeClipMock();
+    const jobId = await restartAt(m, "downloading");
+    const ended = m.engine.peekClips().journals[jobId]?.find((l) => l.type === "ended");
+    if (ended === undefined || ended.type !== "ended") throw new Error("the journal has no `ended` line");
+    const status = await money(m);
+    expect(Date.parse(status.reconcileAvailableAt ?? "")).toBe(Date.parse(ended.at) + REAL_CLIP_TIMINGS.holdTerminalMs);
+    expect(status).toMatchObject({ reconcileNeeded: false, unsettledMicros: 0 });
+    expect(await reconcile(m)).toMatchObject({ ok: true, result: { status: "too-early" } });
+  });
+
   test("the journal of a clip is complete before the file is: `downloading` has no `downloaded` line", async () => {
     const m = makeClipMock();
     const { jobId } = await unwrap(create(m));

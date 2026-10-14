@@ -1502,19 +1502,21 @@ export class MockClips {
       recoveries.push({ clipId, avatarId, plan: planOf(lines, reservedBy(clipId), host.clockMs(), t), lines, fate });
     }
     // The holds of a restart (engine/clips/holds.ts, `holdsAfterRestart`): per attempt the latest fact wins.
+    // Per attempt the latest fact wins (an open reserve alone: 20 min from its line; a `submitted` line: 60 min from it; an `ended` line: 2 min from it), and a journal's lines count whether or not the
+    // earlier process settled the reserve (`holdsAfterRestart`: the ledger gives only the reserves that are still open).
     const nowMs = host.clockMs();
-    const until = new Map<string, number>();
-    for (const line of this.#lines) {
-      if (line.state !== "open") continue;
-      until.set(line.attemptId, line.reserveAtMs + t.holdUncertainMs);
-    }
+    const until = new Map<string, { rank: number; untilMs: number }>();
+    const put = (attemptId: string, rank: number, untilMs: number): void => {
+      if ((until.get(attemptId)?.rank ?? 0) <= rank) until.set(attemptId, { rank, untilMs });
+    };
+    for (const line of this.#lines) if (line.state === "open") put(line.attemptId, 1, line.reserveAtMs + t.holdUncertainMs);
     for (const lines of this.#journals.values()) {
       for (const line of lines) {
-        if (line.type === "submitted" && until.has(line.attemptId)) until.set(line.attemptId, Date.parse(line.at) + t.holdSubmittedMs);
-        else if (line.type === "ended" && until.has(line.attemptId)) until.set(line.attemptId, Date.parse(line.at) + t.holdTerminalMs);
+        if (line.type === "submitted") put(line.attemptId, 2, Date.parse(line.at) + t.holdSubmittedMs);
+        else if (line.type === "ended") put(line.attemptId, 3, Date.parse(line.at) + t.holdTerminalMs);
       }
     }
-    for (const [attemptId, untilMs] of until) if (untilMs > nowMs) this.#hold(attemptId, untilMs - nowMs);
+    for (const [attemptId, { untilMs }] of until) if (untilMs > nowMs) this.#hold(attemptId, untilMs - nowMs);
     for (const recovery of recoveries) this.#recover(recovery);
   }
 
