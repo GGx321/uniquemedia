@@ -60,7 +60,7 @@ export const ReadyTile = memo(function ReadyTile({ clip, nowMs, onOpen }: { clip
   const meta = readyMeta(clip, nowMs);
   return (
     <article className="clip-tile" aria-label={`Клип: ${clip.motion.label}`}>
-      <div className="ph clip-poster">
+      <div className="ph clip-tile-poster">
         <Poster clip={clip} />
         <button type="button" className="clip-open" data-clip-id={clip.clipId} aria-haspopup="dialog" aria-label={`Открыть клип «${clip.motion.label}», ${length}`} onClick={() => onOpen(clip.clipId)}>
           <span className="clip-play">
@@ -113,7 +113,7 @@ export function WorkTile({ motion, avatarId, photoId, clip, line, done, total, l
   const grok = clip.model === "grok";
   return (
     <article className="clip-tile clip-tile-work" aria-label={`Клип в работе: ${motion}`} aria-busy="true">
-      <div className="ph clip-poster">
+      <div className="ph clip-tile-poster">
         {photoId === null ? <PortraitPlaceholder seed={clip.clipId} label={`Кадр клипа «${motion}»`} /> : <Portrait avatarId={avatarId} photoId={photoId} label={`Кадр клипа «${motion}»`} />}
         <span className="clip-dim" />
         {line.tone === "work" && <div className="shim" />}
@@ -164,7 +164,7 @@ export function FailedTile({ clip, nowMs, bold, busy, onAgain, onRedownload, onG
   const name = clip.motion.label;
   return (
     <article className={`clip-tile clip-tile-failed clip-fail-${model.tone}`} aria-label={`Клип не получился: ${name}`}>
-      <div className="ph clip-poster">
+      <div className="ph clip-tile-poster">
         <Portrait avatarId={clip.avatarId} photoId={clip.photoId} label={`Кадр клипа «${name}»`} />
         <span className="clip-dim clip-dim-strong" />
         <span className="clip-alert" aria-hidden="true">
@@ -220,7 +220,7 @@ export function FailedTile({ clip, nowMs, bold, busy, onAgain, onRedownload, onG
 export function FailedJobTile({ motion, avatarId, photoId, clipId, error, onDismiss }: { motion: string; avatarId: string; photoId: string | null; clipId: string; error: EngineError; onDismiss: () => void }) {
   return (
     <article className="clip-tile clip-tile-failed clip-fail-free" aria-label={`Клип не получился: ${motion}`}>
-      <div className="ph clip-poster">
+      <div className="ph clip-tile-poster">
         {photoId === null ? <PortraitPlaceholder seed={clipId} label={`Кадр клипа «${motion}»`} /> : <Portrait avatarId={avatarId} photoId={photoId} label={`Кадр клипа «${motion}»`} />}
         <span className="clip-dim clip-dim-strong" />
         <span className="clip-alert" aria-hidden="true">

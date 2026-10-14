@@ -259,7 +259,7 @@ export function ClipsTab({ control, arrived }: { control: ClipsControl; arrived:
         <div className="clips-grid" aria-hidden="true">
           {Array.from({ length: 3 }, (_, i) => (
             <div key={i} className="clip-slot">
-              <div className="ph clip-poster">
+              <div className="ph clip-tile-poster">
                 <div className="shim" />
               </div>
             </div>

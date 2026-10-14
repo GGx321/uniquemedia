@@ -47,10 +47,10 @@
 .clips-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); align-items: start; gap: 18px 12px; }
 .clip-slot { min-width: 0; }
 .clip-tile { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.clip-poster { aspect-ratio: 142.5 / 224; border-radius: 10px; background: var(--photo-queued); }
-.clip-poster > .portrait, .clip-poster > .clip-poster-img { position: absolute; inset: 0; }
-.clip-poster > .clip-poster-img { width: 100%; height: 100%; object-fit: cover; }
-.clip-poster .portrait-silhouette { height: 70%; }
+.clip-tile-poster { aspect-ratio: 142.5 / 224; border-radius: 10px; background: var(--photo-queued); }
+.clip-tile-poster > .portrait, .clip-tile-poster > .clip-poster-img { position: absolute; inset: 0; }
+.clip-tile-poster > .clip-poster-img { width: 100%; height: 100%; object-fit: cover; }
+.clip-tile-poster .portrait-silhouette { height: 70%; }
 .clip-badges { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; pointer-events: none; }
 .clip-pills { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px; pointer-events: none; }
 .clip-len { font-size: 10.5px; font-weight: 500; }
@@ -60,7 +60,7 @@
 .clip-face-low { max-width: 100%; height: auto; min-height: 22px; padding: 3px 8px; border-radius: 8px; color: var(--warn); font-size: 10.5px; font-weight: 600; line-height: 1.3; white-space: normal; }
 .clip-open { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 0; border: 0; background: none; color: var(--text); cursor: pointer; }
 .clip-open:focus-visible { outline: none; }
-.clip-poster:has(> .clip-open:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; overflow: visible; }
+.clip-tile-poster:has(> .clip-open:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; overflow: visible; }
 .clip-play { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding-left: 2px; border: 1px solid var(--pick-ring); border-radius: 50%; background: var(--scrim-72); opacity: 0; transition: opacity 0.12s ease; }
 .clip-tile:hover .clip-play, .clip-open:focus-visible .clip-play { opacity: 1; }
 .clip-cap { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 0 2px; }
@@ -70,7 +70,7 @@
 .clip-line { margin: 0; color: var(--text-2); font-size: 11.5px; line-height: 1.4; }
 .clip-saved-mark { display: inline-flex; align-items: center; gap: 4px; margin: 1px 0 0; color: var(--ok); font-size: 11px; font-weight: 500; }
 /* running: the source photo dimmed, the accent's ring of a job in flight, the phase and its steps under it */
-.clip-tile-work .clip-poster { box-shadow: 0 0 0 2px var(--accent-35); }
+.clip-tile-work .clip-tile-poster { box-shadow: 0 0 0 2px var(--accent-35); }
 .clip-dim { position: absolute; inset: 0; background: var(--scrim-soft); }
 .clip-dim-strong { background: var(--scrim-60); }
 .clip-state { font-size: 10.5px; }
