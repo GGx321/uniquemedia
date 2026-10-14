@@ -1,5 +1,6 @@
 import {
   BOLD_CLIPS,
+  CLIP_FILE_DAMAGED_DETAIL,
   CLIP_JOB_STEPS,
   CLIP_RETRYABLE_FAILURES,
   EXPORT_FPS,
@@ -167,7 +168,8 @@ export type MockClipFace = "match" | "mismatch" | "few-faces" | "worker";
 export type MockClipScript = MockClipAttempt | { first?: MockClipAttempt; then?: MockClipAttempt; face?: MockClipFace };
 
 export type MockRetryResult = "ok" | "failed" | "gone";
-export type MockExportResult = "ok" | "fail";
+/** `fail`: the encode fails halfway. `damaged`: the library's own file is not usable — the engine's `#damaged` stop, before the encode: no frame, INTERNAL with `CLIP_FILE_DAMAGED_DETAIL`. */
+export type MockExportResult = "ok" | "fail" | "damaged";
 
 // ---------- the journal, as the engine writes it ----------
 
@@ -1438,8 +1440,10 @@ export class MockClips {
     const marks = [0.25, 0.5, 0.75];
     marks.forEach((mark, i) => {
       this.#after(job, step * (i + 1), () => {
-        if (result === "fail" && i === 1) {
-          this.#finish(job, { status: "failed", error: { code: "INTERNAL", detail: "the clip could not be encoded" } });
+        // The damaged file stops the job at its first step, after the 0 and before any frame (engine/clips/export.ts, step 2 before the encode); a failed encode is halfway.
+        const stop = result === "damaged" && i === 0 ? CLIP_FILE_DAMAGED_DETAIL : result === "fail" && i === 1 ? "the clip could not be encoded" : null;
+        if (stop !== null) {
+          this.#finish(job, { status: "failed", error: { code: "INTERNAL", detail: stop } });
           this.#exportRunning = null;
           this.#nextExport();
           return;

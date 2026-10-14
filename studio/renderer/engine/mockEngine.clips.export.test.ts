@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { CLIP_FILE_DAMAGED_DETAIL } from "../../shared/engine";
 import { expectedExportBytes, expectedExportFrames } from "../../engine/clips/exportProfile";
 import { FREE_MARGIN_BYTES } from "../../engine/freeBytes";
 import { AVATAR, create, endOf, listClips, makeClipMock, money, onlyClip, progressOf, refusal, runClip, unwrap, type ClipMock } from "./mockEngine.clips.testkit";
@@ -260,6 +261,21 @@ describe("a running export", () => {
     const { jobId } = await unwrap(m.client.request("clips.export", { avatarId: AVATAR, clipId }));
     m.scheduler.runAll();
     expect(endOf(m.events, jobId)).toMatchObject({ type: "job.failed", payload: { kind: "clip", jobId, clipId, error: { code: "INTERNAL" } } });
+    expect(await onlyClip(m)).toEqual(before);
+    expect(m.engine.peekClips().exportedFiles).toEqual([]);
+  });
+
+  // engine/clips/export.ts `#damaged`: the library's own file stops the export after the folder check and before the encode, so the job has shown its 0 and no frame; INTERNAL with the
+  // one detail the window reads as a damaged file. Nothing was made: no copy, no export line, no money.
+  test("a damaged library file ends the job failed INTERNAL with the damaged-file detail, before any frame, and leaves the clip as it was", async () => {
+    const m = makeClipMock();
+    const clipId = await readyClip(m);
+    const before = await onlyClip(m);
+    m.engine.nextClipExport("damaged");
+    const { jobId } = await unwrap(m.client.request("clips.export", { avatarId: AVATAR, clipId }));
+    m.scheduler.runAll();
+    expect(endOf(m.events, jobId)).toMatchObject({ type: "job.failed", payload: { kind: "clip", jobId, clipId, error: { code: "INTERNAL", detail: CLIP_FILE_DAMAGED_DETAIL } } });
+    expect(progressOf(m.events, jobId).every((p) => p.done === 0)).toBe(true);
     expect(await onlyClip(m)).toEqual(before);
     expect(m.engine.peekClips().exportedFiles).toEqual([]);
   });

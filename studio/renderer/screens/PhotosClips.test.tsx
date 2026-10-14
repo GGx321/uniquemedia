@@ -1,7 +1,7 @@
 import { describe, expect, setSystemTime, test } from "bun:test";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { StrictMode } from "react";
-import { CLIP_EXPORT_FAILED_RU, CLIP_REASONS_RU, ERROR_MESSAGES_RU, PRICE_SCOPES_RU, type AvatarSummary, type PhotoSummary } from "../../shared/engine";
+import { CLIP_EXPORT_FAILED_RU, CLIP_FILE_DAMAGED_RU, CLIP_REASONS_RU, ERROR_MESSAGES_RU, PRICE_SCOPES_RU, type AvatarSummary, type PhotoSummary } from "../../shared/engine";
 import { CLIP_RESTART_BANNER } from "../../shared/engine/clipRestartTexts";
 import { App } from "../App";
 import { MockEngine, mockEngineClient, type MockEngineOptions } from "../engine/mockEngine";
@@ -627,6 +627,20 @@ describe("43: the clip viewer and «Сохранить в папку»", () => {
     await flush();
     expect(within(clipViewer()).getByRole("alert").textContent).toBe(CLIP_EXPORT_FAILED_RU);
     expect(within(clipViewer()).getByRole("button", { name: "Сохранить в папку" }).getAttribute("aria-disabled")).not.toBe("true");
+  });
+
+  test("43c′: the clip's file in Studio is damaged — «Файл клипа в Studio повреждён или не читается — сохранить его в папку нельзя.», not «файл в Studio цел»", async () => {
+    const h = await readyClip();
+    h.engine.nextClipExport("damaged");
+    fireEvent.click(within(clipViewer()).getByRole("button", { name: "Сохранить в папку" }));
+    await flush();
+    tick(h.scheduler, 4);
+    await flush();
+    await flush();
+    const alert = within(clipViewer()).getByRole("alert");
+    expect(alert.textContent).toBe("Файл клипа в Studio повреждён или не читается — сохранить его в папку нельзя.");
+    expect(alert.textContent).toBe(CLIP_FILE_DAMAGED_RU);
+    expect(alert.textContent).not.toContain("цел");
   });
 
   test("43b: the export folder cannot take it — the app's own words and «Открыть папку в Настройках»", async () => {
