@@ -34,6 +34,29 @@ export function clipIntents(store: EngineStore): Map<string, ClipIntent> {
   return intents;
 }
 
+const DISMISSALS = new WeakMap<EngineStore, Set<string>>();
+/** How many put-away «Клип не снят» tiles a window remembers (the oldest are forgotten first, as the store's dismissed imports are). */
+export const MAX_DISMISSED_CLIP_JOBS = 200;
+
+/** The failed clip jobs whose tile the owner put away, for the window's life: the job stays in the store's view for the session, so the tab (left and come back to, or another avatar between) must not bring its tile back. */
+export function clipDismissals(store: EngineStore): ReadonlySet<string> {
+  return DISMISSALS.get(store) ?? new Set();
+}
+
+/** Puts a failed clip job's tile away for good; bounded, the oldest forgotten first. */
+export function dismissClipJob(store: EngineStore, jobId: string): void {
+  let set = DISMISSALS.get(store);
+  if (set === undefined) {
+    set = new Set();
+    DISMISSALS.set(store, set);
+  }
+  set.add(jobId);
+  for (const old of set) {
+    if (set.size <= MAX_DISMISSED_CLIP_JOBS) break;
+    set.delete(old);
+  }
+}
+
 /** Where a gallery photo stands in the pages read: its place newest first, and the gallery's size. */
 export interface PhotoPlace {
   readonly photo: PhotoSummary;

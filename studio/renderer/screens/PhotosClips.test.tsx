@@ -514,6 +514,22 @@ describe("40–42: the tiles", () => {
     expect(callsOf(h.engine, "clips.delete")).toHaveLength(0);
   });
 
+  test("a «Клип не снят» tile put away stays away after the tab is left and come back to", async () => {
+    const h = await openNini();
+    await animateFromSheet(await openSheet());
+    act(() => h.engine.requireReconcile(["open-reserves"]));
+    tick(h.scheduler);
+    await flush();
+    await flush();
+    fireEvent.click(within(tile("Клип не получился: Моргает и улыбается")).getByRole("button", { name: "Убрать «Моргает и улыбается»" }));
+    await flush();
+    expect(screen.queryByRole("article", { name: /Клип не получился/ }) === null).toBe(true);
+    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
+    await flush();
+    await showClips();
+    expect(screen.queryByRole("article", { name: /Клип не получился/ }) === null).toBe(true);
+  });
+
   test("a ready clip whose poster file is missing shows the placeholder, not a broken picture", async () => {
     const scheduler = new ManualScheduler();
     const engine = new MockEngine({ scheduler, latencyMs: 0, avatars: [summary(PHOTOS)], photos: PHOTOS });

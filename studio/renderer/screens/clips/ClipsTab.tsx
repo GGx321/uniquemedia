@@ -5,7 +5,7 @@ import { isActiveJob, type JobView } from "../../engine/store";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice } from "../../ui/Notice";
 import { clipLength, phaseLine, upUsd } from "./clipModel";
-import { clipIntents, type ClipIntent, type ClipsControl } from "./clipsContext";
+import { clipDismissals, clipIntents, dismissClipJob, type ClipIntent, type ClipsControl } from "./clipsContext";
 import { ClipSheet } from "./ClipSheet";
 import { FailedJobTile, FailedTile, ReadyTile, WorkTile } from "./ClipTile";
 import { ClipViewer } from "./ClipViewer";
@@ -52,7 +52,9 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
   const [rootDisplay, setRootDisplay] = useState<string | null>(null);
   const [error, setError] = useState<EngineError | null>(null);
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
-  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
+  // The put-away tiles are the window's (see `clipDismissals`); the state only draws the tab again.
+  const [, setDismissals] = useState(0);
+  const dismissed = clipDismissals(store);
   const [viewing, setViewing] = useState<string | null>(null);
   const [sheet, setSheet] = useState<{ photoId: string } | null>(null);
   const [opening, setOpening] = useState(false);
@@ -325,7 +327,8 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
                   clipId={job.clip.clipId}
                   error={job.error ?? { code: "INTERNAL" }}
                   onDismiss={() => {
-                    setDismissed((now) => new Set(now).add(job.jobId));
+                    dismissClipJob(store, job.jobId);
+                    setDismissals((n) => n + 1);
                     heading.current?.focus();
                   }}
                 />
