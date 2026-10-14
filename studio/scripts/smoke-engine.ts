@@ -2520,7 +2520,7 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
       generatedPhotos.length === PHOTO_COUNT && generatedPhotos.length === photoIdCount,
       { stored: generatedPhotos.length, reported: photoIdCount, PHOTO_COUNT },
     );
-    const faceScores = faceScoreProblems(aimed.slots, generatedPhotos.map((p) => ({ id: p.id, faceCos: p.qa.faceCos })), slotIndexByPhoto(journalEvents));
+    const faceScores = faceScoreProblems(aimed.slots, generatedPhotos.map((p) => ({ id: p.id, faceCos: p.qa.faceCos, ...(p.source.kind === "generated" && p.source.slot !== undefined ? { attemptIdBase: p.source.slot } : {}) })), slotIndexByPhoto(journalEvents));
     check(
       "run scenario: every photo on a face-visible slot carries qa.faceCos >= 0.55 and every face-hidden/body photo a marked faceCos — the face gate ran for real, models and ORT loaded from inside app.asar",
       faceScores.length === 0,

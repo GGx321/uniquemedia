@@ -82,6 +82,14 @@ describe("profile and legs slots in the smoke's checks", () => {
     expect(faceScoreProblems(all, [{ id: "p4", faceCos: 0.9 }, { id: "p7", faceCos: undefined }], owners)).toHaveLength(1);
   });
 
+  test("a photo the journal never ended (a kill between the sidecar and its slot line) is placed by its sidecar's slot, not reported as unplanned", () => {
+    const journaled = new Map([["p4", 4]]);
+    const stored = [{ id: "p4", faceCos: 0.9 }, { id: "p5", faceCos: 0.9, attemptIdBase: "slot-5" }];
+    expect(faceScoreProblems(all, stored, journaled)).toEqual([]);
+    // A photo that names no planned slot at all is still an error.
+    expect(faceScoreProblems(all, [...stored, { id: "p99", faceCos: 0.9, attemptIdBase: "slot-99" }], journaled)).toEqual(["photo p99 belongs to no planned slot"]);
+  });
+
   test("a face-gate retry on a profile or legs slot is flagged", () => {
     const target = { slotIndex: 4, prompt: "prompt 4" };
     expect(faceRetryProblems(all, [attempt(4, "qa-retry"), attempt(6, "qa-retry")], target)).toHaveLength(1);

@@ -66,6 +66,8 @@ export function pickMismatchTarget(slots: readonly RunSlot[], prompts: ReadonlyM
 export interface StoredPhotoFacts {
   id: string;
   faceCos: number | undefined;
+  /** The photo sidecar's own `source.slot` (the plan slot's attemptIdBase): the owner of a photo whose journal line a kill took (foldRun adopts it the same way). */
+  attemptIdBase?: string;
 }
 
 /** The slot each stored photo belongs to, from the journal's own slot ends (both jobs of a resumed run). */
@@ -85,7 +87,7 @@ export function faceScoreProblems(slots: readonly RunSlot[], photos: readonly St
   const slotOf = new Map(slots.map((s) => [s.slotIndex, s]));
   let judged = 0;
   for (const photo of photos) {
-    const index = photoSlots.get(photo.id);
+    const index = photoSlots.get(photo.id) ?? (photo.attemptIdBase === undefined ? undefined : slots.find((s) => s.attemptIdBase === photo.attemptIdBase)?.slotIndex);
     const slot = index === undefined ? undefined : slotOf.get(index);
     if (slot === undefined) {
       problems.push(`photo ${photo.id} belongs to no planned slot`);
