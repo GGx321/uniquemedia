@@ -379,17 +379,22 @@ describe("a camera line only from what the photo's prompt proves (S5.WP1, plan s
    * reached photos; everything before 6c94d102 is the pre-fix «looking down along her own legs … held at her eye level». A change to phoneLook's pov-legs line fails the
    * test below: the old wording must stay on this list, or the photos drawn with it would lose their POV line.
    */
-  const SHIPPED = [
-    // e6865355 (2026-10-12 14:22, «name her legs, not her thighs, in the look down her legs»): today's line.
-    "A first-person point-of-view photo: the camera is exactly where her eyes are, looking straight down her own body; her legs are close to the lens in the foreground and her feet are at the far end, only her own legs are in the picture, with no face, no mirror and no hand.",
-    // 6c94d102 (2026-10-12 13:05, «shoot the look down her legs as a first-person photo»): the C3′ fix itself, main's line until e6865355.
-    "A first-person point-of-view photo: the camera is exactly where her eyes are, looking straight down her own body; her thighs and knees are close to the lens in the foreground and her feet are at the far end, only her own legs are in the picture, with no face, no mirror and no hand.",
-  ];
+  /** e6865355 (2026-10-12 14:22, «name her legs, not her thighs, in the look down her legs»): today's line. */
+  const AT_E6865355 =
+    "A first-person point-of-view photo: the camera is exactly where her eyes are, looking straight down her own body; her legs are close to the lens in the foreground and her feet are at the far end, only her own legs are in the picture, with no face, no mirror and no hand.";
+  /** 6c94d102 (2026-10-12 13:05, «shoot the look down her legs as a first-person photo»): the C3′ fix itself, main's line until e6865355. */
+  const AT_6C94D102 =
+    "A first-person point-of-view photo: the camera is exactly where her eyes are, looking straight down her own body; her thighs and knees are close to the lens in the foreground and her feet are at the far end, only her own legs are in the picture, with no face, no mirror and no hand.";
+  const SHIPPED = [AT_E6865355, AT_6C94D102];
   /** The pov-legs line before the C3′ fix (aba9a3f6 to 6c94d102): it drew a selfie from above (C3 K1's first frame), so it proves no first-person view. */
   const PRE_FIX = "A photo she took looking down along her own legs from where she lies or sits, held at her eye level; nothing in her hand can be seen.";
 
   test("the shipped POV wordings, pinned with their commits, today's first", () => {
     expect(SHIPPED_POV_CAPTURE_LINES).toEqual(SHIPPED);
+  });
+
+  test("append-only: both historical wordings stay on the list whatever its order, so a photo drawn with either keeps its POV line", () => {
+    for (const line of [AT_E6865355, AT_6C94D102]) expect(SHIPPED_POV_CAPTURE_LINES).toContain(line);
   });
 
   test("today's photo line is the first of them: one source, phoneLook's", () => {
