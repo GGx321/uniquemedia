@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stallNthFsync } from "./stallFsync";
+import { stallNthFsync, stallNextFsync } from "./stallFsync";
 
 async function timedSync(path: string): Promise<number> {
   const handle = await open(path, "w");
@@ -45,5 +45,59 @@ describe("stallNthFsync", () => {
 
   test("rejects an nth that is not a positive integer", async () => {
     await expect(stallNthFsync({ nth: 0, ms: 1 })).rejects.toThrow("nth must be a positive integer");
+  });
+});
+
+describe("stallNextFsync", () => {
+  test("lets every sync before arm() through and stalls the first one after it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "stall-fsync-"));
+    const stall = await stallNextFsync({ ms: 120 });
+    try {
+      const before = await timedSync(join(dir, "a"));
+      expect(stall.stalled()).toBe(false);
+      stall.arm();
+      const armed = await timedSync(join(dir, "b"));
+      const after = await timedSync(join(dir, "c"));
+      expect(before).toBeLessThan(100);
+      expect(armed).toBeGreaterThanOrEqual(110);
+      expect(after).toBeLessThan(100);
+      expect(stall.stalled()).toBe(true);
+    } finally {
+      stall.restore();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("never stalls when arm() is not called", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "stall-fsync-"));
+    const stall = await stallNextFsync({ ms: 120 });
+    try {
+      expect(await timedSync(join(dir, "a"))).toBeLessThan(100);
+      expect(stall.stalled()).toBe(false);
+    } finally {
+      stall.restore();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("reports when the stalled sync was released, after the stall's length", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "stall-fsync-"));
+    const stall = await stallNextFsync({ ms: 120 });
+    try {
+      expect(stall.releasedAt()).toBeNull();
+      const armedAt = performance.now();
+      stall.arm();
+      await timedSync(join(dir, "a"));
+      const released = stall.releasedAt();
+      expect(released).not.toBeNull();
+      expect((released ?? 0) - armedAt).toBeGreaterThanOrEqual(110);
+    } finally {
+      stall.restore();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a negative stall length", async () => {
+    await expect(stallNextFsync({ ms: -1 })).rejects.toThrow("ms must be a non-negative number");
   });
 });

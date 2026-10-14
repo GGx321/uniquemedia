@@ -8,7 +8,7 @@ import type { DrawSliceResult } from "../sceneSets/launchDraw";
 import type { LaunchSliceStart } from "./paidPort";
 import { A, ALL, B, cleanupRigs, composes, deferred, FakeTimers, idle, LAUNCH, PHOTO, RUN1, RUN2, rig, SET1, SET2, type Rig } from "./testing/paidRig";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import { stallNthFsync } from "../../testing/stallFsync";
+import { stallNextFsync } from "../../testing/stallFsync";
 useNativeGlobals();
 
 // Stage 4, S4.6b2 (plan §4.6, §3.7, §3.8; invariants A6, A13, A19): the paid steps' failure table, row by row, the bounded automatic continues under a fake clock, the failure-rate guard and
@@ -601,11 +601,25 @@ describe("§4.6: a request that gets no answer continues by itself, twice, then 
   }
 
   test("a stalled fsync on the way to the hold only delays it: the wait is on the launch's events, not on a clock", async () => {
-    const stall = await stallNthFsync({ nth: 11, ms: 5_000 });
+    // Armed when the slice start is asked, i.e. just before the failed end that raises the hold: the first sync after that is the hold's own write (its temp file's fsync, which every platform
+    // makes). Not counted by ordinal: the folder flush is skipped on Windows, so the same path makes fewer syncs there.
+    const stall = await stallNextFsync({ ms: 5_000 });
     try {
-      const { r, launch } = await dropping([failedEnd("NETWORK"), "done"]);
+      const timers = new FakeTimers();
+      const r = await rig({ steps: { timers, clock: () => timers.now } });
+      drawnPath(r);
+      scripted(r, [failedEnd("NETWORK"), "done"]);
+      const start = r.port.start;
+      if (start === null) throw new Error("no scripted start");
+      r.port.start = async (id) => {
+        stall.arm();
+        return start(id);
+      };
+      const launch = await r.start({ sceneReview: false });
       const hold = await reachHold(r, launch.launchId, "network");
+      const reachedAt = performance.now();
       expect(stall.stalled()).toBe(true);
+      expect(reachedAt).toBeGreaterThanOrEqual(stall.releasedAt() ?? Number.POSITIVE_INFINITY);
       expect(hold.reason).toBe("network");
     } finally {
       stall.restore();
