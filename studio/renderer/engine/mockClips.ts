@@ -968,7 +968,9 @@ export class MockClips {
     const line = this.#reserve(clipId, n, model, reserveMicros);
     this.#hold(line.attemptId, this.#t.holdUncertainMs);
     this.#progress(job, { phase: "submitting", model });
-    this.#after(job, host.stepMs, () => this.#post(run, n, model, line, scripted));
+    // An unreadable `/credits` (`refused-uncounted`) is read three times, 5 s apart, for the net-usage baseline BEFORE the POST (engine/clips/attempt.ts): the send leaves 10 s later.
+    const baselinePauses = scripted === "refused-uncounted" ? (PROOF_READ_TRIES - 1) * this.#t.proofRetryMs : 0;
+    this.#after(job, host.stepMs + baselinePauses, () => this.#post(run, n, model, line, scripted));
   }
 
   #post(run: CreateRun, n: 1 | 2, model: AttemptModel, line: Line, scripted: MockClipAttempt): void {
@@ -1049,7 +1051,9 @@ export class MockClips {
     const free = scripted === "refused-free" || scripted === "provider-error";
     const paid = scripted === "refused-paid" || scripted === "provider-error-paid";
     // engine/clips/attempt.ts `prove`: a `/generation` record that bills ends the proof at its FIRST reading (15 s); every other proof goes through the second (2 min) and the net-usage check.
-    this.#after(job, paid ? this.#t.proofFirstReadMs : this.#t.proofSecondReadMs, () => {
+    // ...and the same three reads after the second `/generation` one: the check that cannot count settles 10 s after it.
+    const checkPauses = scripted === "refused-uncounted" ? (PROOF_READ_TRIES - 1) * this.#t.proofRetryMs : 0;
+    this.#after(job, paid ? this.#t.proofFirstReadMs : this.#t.proofSecondReadMs + checkPauses, () => {
       if (free) this.#settle(line, 0, false);
       else if (paid) this.#settle(line, billed, false);
       else this.#settle(line, line.worstMicros, true);

@@ -43,8 +43,26 @@ describe("when a clip's money settles, after the provider's terminal status", ()
     expect(await afterSubmit(script, "end")).toBe(3 * T.pollMs + T.proofFirstReadMs);
   });
 
-  test.each(["refused-free", "refused-unknown", "refused-uncounted", "provider-error"] as const)("%s: a refusal that needs the whole proof is settled by its second reading, 2 min after the status", async (script) => {
+  test.each(["refused-free", "refused-unknown", "provider-error"] as const)("%s: a refusal that needs the whole proof is settled by its second reading, 2 min after the status", async (script) => {
     expect(await afterSubmit(script, "end")).toBe(3 * T.pollMs + T.proofSecondReadMs);
+  });
+
+  // engine/clips/attempt.ts: an unreadable `/credits` is read three times, 5 s apart, both for the baseline BEFORE the POST and for the check after the second `/generation` reading.
+  test("refused-uncounted: the unreadable account check costs two pauses of 5 s after the second reading, so the money settles 2 min 10 s after the status", async () => {
+    expect(await afterSubmit("refused-uncounted", "end")).toBe(3 * T.pollMs + T.proofSecondReadMs + 2 * T.proofRetryMs);
+  });
+
+  test("refused-uncounted: the baseline read before the POST costs two pauses of 5 s, so the send leaves 10 s later than an ordinary one", async () => {
+    const gap = async (script: "ok" | "refused-uncounted"): Promise<number> => {
+      const m = makeClipMock();
+      m.engine.scriptNextClip(script);
+      const { jobId } = await unwrap(create(m, { fallback: "none", acceptedWorstMicros: 504_000 }));
+      stepUntil(m, reached(m, jobId, "submitting"), "submitting");
+      const reserved = m.engine.peekClips().nowMs;
+      stepUntil(m, reached(m, jobId, "rendering"), "rendering");
+      return m.engine.peekClips().nowMs - reserved;
+    };
+    expect((await gap("refused-uncounted")) - (await gap("ok"))).toBe(2 * T.proofRetryMs);
   });
 });
 
@@ -335,7 +353,32 @@ describe("the settle table (plan §5.7), mode auto", () => {
     expect(await money(m)).toMatchObject({ halt: { cause: "SETTLE_ABOVE_WORST" } });
   });
 
-  test("7h a ledger that needs a reconcile before the first reserve refuses the clip itself, in the budget's words, with nothing sent", async () => {
+  test("7g' Grok's reserve is refused with RECONCILE_REQUIRED (reserves that wait for a reconcile) behind a free Kling: the same end, free, no Grok POST, and the money says why", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextClip({ first: "refused-free", then: "ok" });
+    const { jobId } = await unwrap(create(m));
+    stepUntil(m, reached(m, jobId, "proving"), "proving");
+    m.engine.requireReconcile(["open-reserves"]);
+    m.scheduler.runAll();
+    expect(m.engine.peekClips().posts).toEqual(["kling"]);
+    expect(endOf(m.events, jobId)).toMatchObject({ type: "job.done" });
+    expect(await onlyClip(m)).toMatchObject({ status: "failed", failure: { reason: "refused-free" }, model: "kling-std", fallback: false, cost: { micros: 0, kind: "free" } });
+    expect(await money(m)).toMatchObject({ reconcileNeeded: true });
+  });
+
+  test("7h' reserves that wait for a reconcile before the first reserve refuse the clip itself with RECONCILE_REQUIRED, with nothing sent", async () => {
+    const m = makeClipMock();
+    const { jobId } = await unwrap(create(m));
+    m.engine.requireReconcile(["open-reserves"]);
+    m.scheduler.runAll();
+    expect(endOf(m.events, jobId)).toMatchObject({ type: "job.failed", payload: { jobId, error: { code: "RECONCILE_REQUIRED" } } });
+    expect(m.engine.peekClips().posts).toEqual([]);
+    expect(m.engine.peekClips().attempts).toEqual([]);
+    expect(m.engine.peekClips().journals[jobId]).toBeUndefined();
+    expect(await listClips(m)).toEqual([]);
+  });
+
+  test("7h a halted ledger before the first reserve refuses the clip itself, in the budget's words, with nothing sent", async () => {
     const m = makeClipMock();
     const { jobId } = await unwrap(create(m));
     m.engine.haltAboveWorst();
