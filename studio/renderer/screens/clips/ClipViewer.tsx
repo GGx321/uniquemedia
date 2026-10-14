@@ -126,8 +126,8 @@ export function ClipViewer(props: ClipViewerProps) {
   const [refusal, setRefusal] = useState<EngineError | null>(null);
   const [revealError, setRevealError] = useState<EngineError | null>(null);
   const [revealing, setRevealing] = useState(false);
-  /** The export job this viewer started, until its job is known in the view. */
-  const [sent, setSent] = useState(false);
+  /** The clip whose export request is on its way (until its job is known in the view). */
+  const [sentFor, setSentFor] = useState<string | null>(null);
   const [percentShown, setPercentShown] = useState<string | null>(null);
   const [news, setNews] = useState("");
   // The viewer stays mounted from clip to clip (a key would drop the focus), so what belongs to one clip is dropped when the clip changes — in the render that shows the new one.
@@ -139,7 +139,6 @@ export function ClipViewer(props: ClipViewerProps) {
     setRefusal(null);
     setRevealError(null);
     setRevealing(false);
-    setSent(false);
     setPercentShown(null);
     setNews("");
   }
@@ -175,7 +174,7 @@ export function ClipViewer(props: ClipViewerProps) {
   }, [client, clip.avatarId, clip.clipId, clip.seen]);
 
   const job = exportJobOf(view.jobs, clip.clipId);
-  const running = sent || (job !== null && isActiveJob(job));
+  const running = sentFor === clip.clipId || (job !== null && isActiveJob(job));
   const runningId = job !== null && isActiveJob(job) ? job.jobId : null;
   // Past 2 s an export says how far it is (§5.13); a fast one finishes before.
   useEffect(() => {
@@ -200,13 +199,20 @@ export function ClipViewer(props: ClipViewerProps) {
 
   const saved = savedExport(clip);
   const exportStatus = view.exportStatus;
-  // The folder's state is the store's alone: a refusal only asks for a fresh check (below), so a folder that is back lets the button work again.
-  const folderReason: ExportUnavailableReason | null = exportStatus?.status === "unavailable" ? exportStatus.reason : null;
-  const saveWaits = running || folderReason !== null;
+  // The general state of the folder is the store's: it locks the button, and a folder that is back lets it work again. A refusal of THIS clip (the engine judges the size: «не хватает
+  // места» never enters the general status) shows its reason for this clip only and locks nothing; the next click asks again.
+  const storeReason: ExportUnavailableReason | null = exportStatus?.status === "unavailable" ? exportStatus.reason : null;
+  const refusedReason: ExportUnavailableReason | null = refusal?.code === "EXPORT_UNAVAILABLE" && refusal.exportReason !== undefined ? refusal.exportReason : null;
+  const folderReason = storeReason ?? refusedReason;
+  const saveWaits = running || storeReason !== null;
+  // Once the store has its own word on the folder (it went away, or came back), a refusal of the folder is old news.
+  useEffect(() => {
+    setRefusal((now) => (now?.code === "EXPORT_UNAVAILABLE" ? null : now));
+  }, [storeReason]);
 
   async function save(): Promise<void> {
     if (saveWaits) return;
-    setSent(true);
+    setSentFor(clip.clipId);
     setRefusal(null);
     setNews("Сохраняем клип в папку…");
     const asked = clip.clipId;
@@ -217,11 +223,12 @@ export function ClipViewer(props: ClipViewerProps) {
       onExportStarted(reply.result.jobId);
     } else if (reply.error.code === "EXPORT_UNAVAILABLE") void store.recheckExport({ force: true });
     // The viewer may be on another clip by now: the answer is not its news.
-    if (!mounted.current || clipIdRef.current !== asked) return;
-    setSent(false);
+    if (!mounted.current) return;
+    setSentFor((now) => (now === asked ? null : now));
+    if (clipIdRef.current !== asked) return;
     if (!reply.ok) {
       setNews("");
-      if (reply.error.code !== "EXPORT_UNAVAILABLE") setRefusal(reply.error);
+      setRefusal(reply.error);
     }
   }
 
@@ -360,7 +367,7 @@ export function ClipViewer(props: ClipViewerProps) {
                   </button>
                 </div>
               )}
-              {refusal !== null && <p className="viewer-error">{errorText(refusal)}</p>}
+              {refusal !== null && refusal.code !== "EXPORT_UNAVAILABLE" && <p className="viewer-error">{errorText(refusal)}</p>}
               {saved !== null && !running && (
                 <p className="clip-saved" role="status">
                   <Icon name="check" size={14} strokeWidth={2.6} />

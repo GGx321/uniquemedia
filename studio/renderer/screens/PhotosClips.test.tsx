@@ -754,6 +754,36 @@ describe("43d: the clip viewer keeps nothing of the clip it left", () => {
     expect(clipViewer().querySelector(".viewer-error") === null).toBe(true);
   });
 
+  test("a refusal for this clip's size (not enough space) shows its reason and the Settings link, never locks the button, and is gone under the next clip", async () => {
+    const h = await openSeeded();
+    h.engine.setExportFreeBytes(1_000);
+    fireEvent.click(saveButton());
+    await flush();
+    await flush();
+    expect(within(clipViewer()).getByText("Папка «Готовые видео» недоступна")).toBeDefined();
+    expect(within(clipViewer()).getByText("В папке не хватает свободного места.")).toBeDefined();
+    expect(within(clipViewer()).getByRole("button", { name: "Открыть папку в Настройках" })).toBeDefined();
+    expect(saveButton().getAttribute("aria-disabled")).not.toBe("true");
+    fireEvent.click(saveButton());
+    await flush();
+    expect(callsOf(h.engine, "clips.export")).toHaveLength(2);
+    await step("ArrowRight");
+    expect(within(clipViewer()).queryByText("В папке не хватает свободного места.") === null).toBe(true);
+  });
+
+  test("stepping away from a clip whose save is on its way and back keeps its button busy", async () => {
+    const h = await openSeeded();
+    h.engine.delayNext("clips.export", 1_000_000);
+    fireEvent.click(saveButton());
+    await flush();
+    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
+    await step("ArrowRight");
+    expect(saveButton().getAttribute("aria-disabled")).not.toBe("true");
+    await step("ArrowLeft");
+    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
+    expect(callsOf(h.engine, "clips.export")).toHaveLength(1);
+  });
+
   test("a folder that refused the save and is back lets «Сохранить в папку» work again, on any clip", async () => {
     const h = await openSeeded();
     h.engine.setExportDisk({ status: "unavailable", reason: "missing" });
