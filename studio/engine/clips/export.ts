@@ -427,6 +427,11 @@ export class ClipExports {
     } catch (error) {
       if (signal.aborted) throw error;
       if (isNoSpaceError(error)) throw exportRefusal("not-enough-space", "the export folder's disk filled up during the encode");
+      // The folder (or the whole volume) vanished while ffmpeg ran, so its second pass could not finish: the same refusal as the check before the claim (state 43b), not an INTERNAL.
+      // Bounded like every call on the export volume; only its «missing» answer changes the outcome, any other trouble leaves the encode's own failure.
+      await onExportVolume(signal, stepMs, () => fs.lstat(temp)).catch((probe: unknown) => {
+        if (probe instanceof EngineFailure && probe.error.code === "EXPORT_UNAVAILABLE" && probe.error.exportReason === "missing") throw probe;
+      });
       throw internal(error instanceof FfmpegTimeoutError ? "the clip's encode took too long" : "the clip could not be encoded");
     }
     await reached("encoded");

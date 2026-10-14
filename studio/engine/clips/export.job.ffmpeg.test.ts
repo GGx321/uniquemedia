@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { copyFile, readdir, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { CLIP_FILE_DAMAGED_DETAIL, EXPORT_CHANGING_DETAIL, type JobState } from "../../shared/engine";
 import { FfmpegError, FfmpegTimeoutError, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -272,6 +272,21 @@ describe("the failures (free; the library's file untouched; what the job made is
     const { r, state, before } = await failsWith(async () => Promise.reject(new FfmpegError("ffmpeg exited 1", 1, "av_interleaved_write_frame(): No space left on device")));
     expect(errorOf(state)).toMatchObject({ code: "EXPORT_UNAVAILABLE", exportReason: "not-enough-space" });
     await untouched(r, before);
+  });
+
+  test("the export folder removed while ffmpeg runs (its second pass fails) is EXPORT_UNAVAILABLE missing, not INTERNAL", async () => {
+    const { r, state, before } = await failsWith(async (encode) => {
+      await rm(dirname(encode.output), { recursive: true, force: true });
+      throw new FfmpegError("ffmpeg exited 1", 1, "av_write_trailer(): No such file or directory");
+    });
+    expect(errorOf(state)).toMatchObject({ code: "EXPORT_UNAVAILABLE", exportReason: "missing" });
+    expect(await r.sha(clipFilePath(r.clipsDir, CLIP))).toBe(before);
+    expect((await r.record(CLIP)).exports).toEqual([]);
+  });
+
+  test("an ffmpeg error with the export folder still there stays INTERNAL", async () => {
+    const { state } = await failsWith(async () => Promise.reject(new FfmpegError("ffmpeg exited 1", 1, "No such file or directory")));
+    expect(errorOf(state)).toMatchObject({ code: "INTERNAL" });
   });
 
   test("the folder is looked at again when a queued export's turn comes: gone by then is EXPORT_UNAVAILABLE missing, and nothing of it is written", async () => {
