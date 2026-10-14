@@ -621,7 +621,7 @@ function AvatarPhotos({
             </div>
           </>
         ) : tab === "clips" ? (
-          <ClipsTab control={clipsControl} arrived={clipArrived} />
+          <ClipsTab control={clipsControl} arrived={clipArrived} onArrivalHandled={() => setClipArrived(0)} />
         ) : (
           <VideosTab avatar={avatar} view={view} />
         )}

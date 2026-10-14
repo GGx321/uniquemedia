@@ -41,7 +41,7 @@ function folderOf(rootDisplay: string | null, clips: readonly ClipSummary[]): st
   return `${rootDisplay.replace(/[\\/]+$/, "")}${separator}${relPath.slice(0, relPath.indexOf("/"))}`;
 }
 
-export function ClipsTab({ control, arrived }: { control: ClipsControl; arrived: number }) {
+export function ClipsTab({ control, arrived, onArrivalHandled }: { control: ClipsControl; arrived: number; onArrivalHandled: () => void }) {
   const { client, store } = useEngine();
   const { avatar, view, list, photoInfo, galleryComplete, started, showPhoto } = control;
   const { avatarId } = avatar;
@@ -60,10 +60,13 @@ export function ClipsTab({ control, arrived }: { control: ClipsControl; arrived:
   const seen = useRef(new Map<string, number>());
   const intents = clipIntents(store);
 
-  // A clip just started from the sheet: the tab's heading takes the focus, the new tile right under it.
+  // A clip just started from the sheet: the tab's heading takes the focus, the new tile right under it. One-shot: the screen is told, so a later visit to the tab (→ from «Фото»)
+  // leaves the focus on the tab.
   useEffect(() => {
-    if (arrived > 0) heading.current?.focus();
-  }, [arrived]);
+    if (arrived === 0) return;
+    heading.current?.focus();
+    onArrivalHandled();
+  }, [arrived, onArrivalHandled]);
 
   const exportPath = view.settings?.exportPath ?? null;
   useEffect(() => {

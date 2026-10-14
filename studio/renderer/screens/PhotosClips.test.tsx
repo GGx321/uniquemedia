@@ -87,6 +87,25 @@ describe("the «Клипы» tab among the avatar's tabs (39, R-14)", () => {
     expect(photos.getAttribute("aria-selected")).toBe("true");
   });
 
+  test("a clip just started puts the focus on the tab's heading once; coming back to «Клипы» with → leaves it on the tab, and the arrows keep going", async () => {
+    await openNini();
+    await animateFromSheet(await openSheet());
+    expect(document.activeElement === screen.getByRole("heading", { level: 2, name: "Клипы" })).toBe(true);
+    const photos = screen.getByRole("tab", { name: "Фото" });
+    fireEvent.click(photos);
+    await flush();
+    photos.focus();
+    fireEvent.keyDown(photos, { key: "ArrowRight" });
+    await flush();
+    expect(clipsTab().getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement === clipsTab()).toBe(true);
+    fireEvent.keyDown(clipsTab(), { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "Видео" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Видео" }), { key: "ArrowLeft" });
+    fireEvent.keyDown(clipsTab(), { key: "ArrowLeft" });
+    expect(photos.getAttribute("aria-selected")).toBe("true");
+  });
+
   test("39: no clips yet — «Клипов пока нет» and «Откройте фото и нажмите «Оживить».», no count on the tab", async () => {
     await openNini();
     await showClips();
