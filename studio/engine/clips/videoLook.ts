@@ -1,6 +1,6 @@
 import { CAPTURES, type Capture } from "../../shared/scenes/captures";
 import { MOTION_STAGING } from "../../shared/scenes/words";
-import { FACE_COVER } from "../scenes/phoneLook";
+import { FACE_COVER, captureLineOf } from "../scenes/phoneLook";
 
 // Stage 5, 5b.1, S5.V5 (plan s5b1 §5.5, I5.51): the video look. Every line a clip prompt carries lives here and nowhere else (I5.1, one module per medium; the photo's
 // lines are engine/scenes/phoneLook.ts). The prompt builder (prompt.ts) only places them.
@@ -20,7 +20,7 @@ import { FACE_COVER } from "../scenes/phoneLook";
 /** The provider a prompt is written for. The two dialects differ only on the timer line (Grok's probe G04 ran its own). */
 export type ClipDialect = "kling" | "grok";
 
-/** Who took the photo, or `unknown` for a photo whose run plan is missing or unreadable (plan §5.4). */
+/** Who took the photo, or `unknown` for a photo whose run plan is missing or unreadable (plan §5.4) or whose prompt does not prove its pov-legs slot (`provenCaptureOf`). */
 export type ClipCapture = Capture | "unknown";
 export const CLIP_CAPTURES: readonly ClipCapture[] = [...CAPTURES, "unknown"];
 
@@ -74,6 +74,32 @@ const GROK_CAMERA_LINES: Readonly<Partial<Record<ClipCapture, string>>> = {
 const SHORT_CAMERA_LINES: Readonly<Partial<Record<ClipCapture, string>>> = {
   "pov-legs": `${POV_LEGS_OPENING} and stays still, with ${NO_FACE_MIRROR_HAND}.`,
 };
+
+/**
+ * S5.WP1 (plan s5b2 I5.69): every pov-legs capture line a run has written into a photo's prompt since the C3′ fix, today's first: today's is phoneLook's own (one source),
+ * the older ones are kept here verbatim, each with its commit, so a photo drawn with them still proves its first-person view. A change to phoneLook's pov-legs line must add
+ * the line it replaces to this list (videoLook.test.ts pins the list). The line before the fix («looking down along her own legs … held at her eye level») is not on it: it
+ * drew a selfie from above (C3 K1's first frame), and a clip that told Kling it was a POV shot cut to a real one mid-way.
+ */
+export const SHIPPED_POV_CAPTURE_LINES: readonly string[] = [
+  // e6865355 (2026-10-12): today's line.
+  captureLineOf("pov-legs", ""),
+  // 6c94d102 (2026-10-12): the C3′ fix itself, main's line until e6865355 named her legs instead.
+  "A first-person point-of-view photo: the camera is exactly where her eyes are, looking straight down her own body; her thighs and knees are close to the lens in the foreground and her feet are at the far end, only her own legs are in the picture, with no face, no mirror and no hand.",
+];
+
+/** Whether a photo's prompt carries a shipped POV capture line, verbatim: the only proof a pov-legs photo was drawn as a first-person view. */
+export function holdsPovCaptureLine(photoPrompt: string): boolean {
+  return SHIPPED_POV_CAPTURE_LINES.some((line) => photoPrompt.includes(line));
+}
+
+/**
+ * The capture a clip reads of a planned photo (I5.69): a camera line only from what the photo's own prompt proves. A slot planned as pov-legs whose photo's prompt holds
+ * no shipped POV line is `unknown`, whose camera line claims nothing; every other capture is the slot's.
+ */
+export function provenCaptureOf(capture: Capture, photoPrompt: string): ClipCapture {
+  return capture === "pov-legs" && !holdsPovCaptureLine(photoPrompt) ? "unknown" : capture;
+}
 
 /** The first sentence of every clip prompt: how the phone moves, from who took the photo. */
 export function cameraLineOf(capture: ClipCapture, dialect: ClipDialect): string {

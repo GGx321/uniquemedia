@@ -1,0 +1,322 @@
+{
+  "note": "Canary C3, clip K1 (2026-10-14): the photo sidecar and its run plan from the C3 harness library, with every identifier replaced. The photo was drawn on 2026-10-12 before the C3′ pov-legs fix (6c94d102), so its prompt holds the old wording. Kept as they were: the prompt (its avatar descriptor elided), the slots, the request and the models. Placeholders: the photo, avatar, run and job ids, the photo sha256 and prompt sha, the byte size, both timestamps and the plan seed; the photo qa keeps none of its marks.",
+  "photo": {
+    "schemaVersion": 1,
+    "id": "00000000-0000-4000-8000-0000000000c1",
+    "avatarId": "00000000-0000-4000-8000-0000000000a1",
+    "file": "00000000-0000-4000-8000-0000000000c1.jpg",
+    "mediaType": "image/jpeg",
+    "width": 720,
+    "height": 1280,
+    "bytes": 1000,
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source": {
+      "kind": "generated",
+      "model": "x-ai/grok-imagine-image-quality",
+      "provider": "openrouter",
+      "jobId": "00000000-0000-4000-8000-0000000000d1",
+      "attemptId": "00000000-0000-4000-8000-0000000000b1:slot-6#1",
+      "promptSha": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "prompt": "A photo she took looking down along her own legs from where she lies or sits, held at her eye level; nothing in her hand can be seen. Her legs fill most of the frame; her face may be out of frame. In her bedroom, she stretches her legs along the bed, wearing a cropped hoodie and bike shorts. The room is ordinary and fairly tidy, with a bedside lamp. The same woman as in the reference photo, with the exact hair colour and hair length from the reference photo, her build and skin tone, and her exact body proportions as described; [the avatar descriptor, elided]. Ordinary phone photo straight from her camera roll: morning daylight, flat auto-exposure, slight noise in the shadows, mild JPEG compression, a slight wide-angle stretch at the edges, everything in focus, the background as sharp as she is. She is an adult woman. No other people in the photo; no text, logos, brand names or watermark. Her phone arm is out of the frame; her other hand is free and holds nothing.",
+      "slot": "slot-6",
+      "category": "home",
+      "costMicros": 60000
+    },
+    "qa": {},
+    "createdAt": "2026-10-12T10:00:10.000Z"
+  },
+  "plan": {
+    "schemaVersion": 1,
+    "runId": "00000000-0000-4000-8000-0000000000b1",
+    "avatarId": "00000000-0000-4000-8000-0000000000a1",
+    "createdAt": "2026-10-12T10:00:00.000Z",
+    "request": {
+      "avatarId": "00000000-0000-4000-8000-0000000000a1",
+      "count": 10,
+      "categories": [
+        "home"
+      ],
+      "level": "flirty",
+      "legsShare": 30
+    },
+    "imageAgeCheck": "off",
+    "cameraRealism": true,
+    "models": {
+      "image": "x-ai/grok-imagine-image-quality",
+      "imageQuality": null,
+      "fallback": "bytedance-seed/seedream-5-0-pro",
+      "text": "x-ai/grok-4.3"
+    },
+    "capMicros": 1800000,
+    "plannedWorstMicros": 1800000,
+    "scenes": {
+      "version": 1,
+      "seed": 1,
+      "slots": [
+        {
+          "slotIndex": 1,
+          "category": "home",
+          "location": "her bed",
+          "timeOfDay": "night",
+          "activity": "lies on her stomach, feet up",
+          "outfit": "grey leggings and a cropped tee",
+          "shot": "selfie",
+          "pose": "three-quarter",
+          "attemptIdBase": "slot-1",
+          "repeatedPair": false,
+          "capture": "prone",
+          "level": "flirty"
+        },
+        {
+          "slotIndex": 2,
+          "category": "home",
+          "location": "her bedroom",
+          "timeOfDay": "morning",
+          "activity": "stands with her weight on one hip",
+          "outfit": "grey leggings and a cropped tee",
+          "shot": "mirror",
+          "pose": "front",
+          "attemptIdBase": "slot-2",
+          "repeatedPair": false,
+          "level": "flirty"
+        },
+        {
+          "slotIndex": 3,
+          "category": "home",
+          "location": "her hallway",
+          "timeOfDay": "evening",
+          "activity": "waits by the door, ready to go",
+          "outfit": "an open-back top and grey jeans",
+          "shot": "mirror",
+          "pose": "three-quarter",
+          "attemptIdBase": "slot-3",
+          "repeatedPair": false,
+          "capture": "mirror-hidden",
+          "level": "flirty"
+        },
+        {
+          "slotIndex": 4,
+          "category": "home",
+          "location": "her bathroom",
+          "timeOfDay": "morning",
+          "activity": "sits on the edge of the bathtub",
+          "outfit": "an open-back top and grey jeans",
+          "shot": "friend",
+          "pose": "front",
+          "attemptIdBase": "slot-4",
+          "repeatedPair": false,
+          "capture": "timer",
+          "level": "flirty"
+        },
+        {
+          "slotIndex": 5,
+          "category": "home",
+          "location": "her bed",
+          "timeOfDay": "evening",
+          "activity": "lies with her ankles crossed",
+          "outfit": "soft joggers and a cropped tee",
+          "shot": "selfie",
+          "pose": "front",
+          "attemptIdBase": "slot-5",
+          "repeatedPair": false,
+          "capture": "pov-legs",
+          "framing": "legs"
+        },
+        {
+          "slotIndex": 6,
+          "category": "home",
+          "location": "her bedroom",
+          "timeOfDay": "morning",
+          "activity": "stretches her legs along the bed",
+          "outfit": "a cropped hoodie and bike shorts",
+          "shot": "selfie",
+          "pose": "front",
+          "attemptIdBase": "slot-6",
+          "repeatedPair": false,
+          "capture": "pov-legs",
+          "framing": "legs"
+        },
+        {
+          "slotIndex": 7,
+          "category": "home",
+          "location": "the floor of her bedroom",
+          "timeOfDay": "night",
+          "activity": "lies back on the rug",
+          "outfit": "an oversized sweater as a dress",
+          "shot": "selfie",
+          "pose": "front",
+          "attemptIdBase": "slot-7",
+          "repeatedPair": false,
+          "capture": "above",
+          "level": "flirty"
+        },
+        {
+          "slotIndex": 8,
+          "category": "home",
+          "location": "her bedroom",
+          "timeOfDay": "night",
+          "activity": "sits, soles toward the mirror",
+          "outfit": "silk pajamas",
+          "shot": "mirror",
+          "pose": "front",
+          "attemptIdBase": "slot-8",
+          "repeatedPair": false,
+          "capture": "mirror-hidden",
+          "framing": "legs"
+        },
+        {
+          "slotIndex": 9,
+          "category": "home",
+          "location": "a chair in her bedroom",
+          "timeOfDay": "night",
+          "activity": "sits with her knees together",
+          "outfit": "silk pajamas",
+          "shot": "mirror",
+          "pose": "front",
+          "attemptIdBase": "slot-9",
+          "repeatedPair": false,
+          "capture": "mirror-hidden"
+        },
+        {
+          "slotIndex": 10,
+          "category": "home",
+          "location": "her bed",
+          "timeOfDay": "morning",
+          "activity": "lies prone, her cheek on her hand",
+          "outfit": "grey leggings and a cropped tee",
+          "shot": "selfie",
+          "pose": "three-quarter",
+          "attemptIdBase": "slot-10",
+          "repeatedPair": false,
+          "capture": "prone",
+          "level": "flirty"
+        }
+      ]
+    },
+    "slotAttempts": [
+      {
+        "slotIndex": 1,
+        "attemptIds": [
+          "00000000-0000-4000-8000-0000000000b1:slot-1#1",
+          "00000000-0000-4000-8000-0000000000b1:slot-1#2",
+          "00000000-0000-4000-8000-0000000000b1:slot-1#3",
+          "00000000-0000-4000-8000-0000000000b1:slot-1#4",
+          "00000000-0000-4000-8000-0000000000b1:slot-1#5"
+        ]
+      },
+      {
+        "slotIndex": 2,
+        "attemptIds": [
+          "00000000-0000-4000-8000-0000000000b1:slot-2#1",
+          "00000000-0000-4000-8000-0000000000b1:slot-2#2",
+          "00000000-0000-4000-8000-0000000000b1:slot-2#3",
+          "00000000-0000-4000-8000-0000000000b1:slot-2#4",
+          "00000000-0000-4000-8000-0000000000b1:slot-2#5"
+        ]
+      },
+      {
+        "slotIndex": 3,
+        "attemptIds": [
+          "00000000-0000-4000-8000-0000000000b1:slot-3#1",
+          "00000000-0000-4000-8000-0000000000b1:slot-3#2",
+          "00000000-0000-4000-8000-0000000000b1:slot-3#3",
+          "00000000-0000-4000-8000-0000000000b1:slot-3#4",
+          "00000000-0000-4000-8000-0000000000b1:slot-3#5"
+        ]
+      },
+      {
+        "slotIndex": 4,
+        "attemptIds": [
+          "00000000-0000-4000-8000-0000000000b1:slot-4#1",
+          "00000000-0000-4000-8000-0000000000b1:slot-4#2",
+          "00000000-0000-4000-8000-0000000000b1:slot-4#3",
+          "00000000-0000-4000-8000-0000000000b1:slot-4#4",
+          "00000000-0000-4000-8000-0000000000b1:slot-4#5"
+        ]
+      },
+      {
+        "slotIndex": 5,
+        "attemptIds": [
+          "00000000-0000-4000-8000-0000000000b1:slot-5#1",
+          "00000000-0000-4000-8000-0000000000b1:slot-5#2",
+          "00000000-0000-4000-8000-0000000000b1:slot-5#3",
+          "00000000-0000-4000-8000-0000000000b1:slot-5#4",
+          "00000000-0000-4000-8000-0000000000b1:slot-5#5"
+        ]
+      },
+      {
+        "slotIndex": 6,
+        "attemptIds": [
+          "00000000-0000-4000-8000-0000000000b1:slot-6#1",
+          "00000000-0000-4000-8000-0000000000b1:slot-6#2",
+          "00000000-0000-4000-8000-0000000000b1:slot-6#3",
+          "00000000-0000-4000-8000-0000000000b1:slot-6#4",
+          "00000000-0000-4000-8000-0000000000b1:slot-6#5"
+        ]
+      },
+      {
+        "slotIndex": 7,
+        "attemptIds": [
+          "00000000-0000-4000-8000-0000000000b1:slot-7#1",
+          "00000000-0000-4000-8000-0000000000b1:slot-7#2",
+          "00000000-0000-4000-8000-0000000000b1:slot-7#3",
+          "00000000-0000-4000-8000-0000000000b1:slot-7#4",
+          "00000000-0000-4000-8000-0000000000b1:slot-7#5"
+        ]
+      },
+      {
+        "slotIndex": 8,
+        "attemptIds": [
+          "00000000-0000-4000-8000-0000000000b1:slot-8#1",
+          "00000000-0000-4000-8000-0000000000b1:slot-8#2",
+          "00000000-0000-4000-8000-0000000000b1:slot-8#3",
+          "00000000-0000-4000-8000-0000000000b1:slot-8#4",
+          "00000000-0000-4000-8000-0000000000b1:slot-8#5"
+        ]
+      },
+      {
+        "slotIndex": 9,
+        "attemptIds": [
+          "00000000-0000-4000-8000-0000000000b1:slot-9#1",
+          "00000000-0000-4000-8000-0000000000b1:slot-9#2",
+          "00000000-0000-4000-8000-0000000000b1:slot-9#3",
+          "00000000-0000-4000-8000-0000000000b1:slot-9#4",
+          "00000000-0000-4000-8000-0000000000b1:slot-9#5"
+        ]
+      },
+      {
+        "slotIndex": 10,
+        "attemptIds": [
+          "00000000-0000-4000-8000-0000000000b1:slot-10#1",
+          "00000000-0000-4000-8000-0000000000b1:slot-10#2",
+          "00000000-0000-4000-8000-0000000000b1:slot-10#3",
+          "00000000-0000-4000-8000-0000000000b1:slot-10#4",
+          "00000000-0000-4000-8000-0000000000b1:slot-10#5"
+        ]
+      }
+    ],
+    "writerChunks": [
+      {
+        "chunk": 1,
+        "slotIndexes": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "attemptIds": [
+          "00000000-0000-4000-8000-0000000000b1:writer-1#1",
+          "00000000-0000-4000-8000-0000000000b1:writer-1#2",
+          "00000000-0000-4000-8000-0000000000b1:writer-1#3",
+          "00000000-0000-4000-8000-0000000000b1:writer-1#4"
+        ]
+      }
+    ]
+  }
+}

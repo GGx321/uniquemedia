@@ -5,15 +5,17 @@ import { BANKS } from "../../shared/scenes/banks";
 import type { BankCategory } from "../../shared/scenes/banks/types";
 import { posesFor, type Capture } from "../../shared/scenes/captures";
 import { contentProblems } from "../../shared/scenes/contentLine";
-import { contractCategory, buildRunPlan, type RunPlan } from "../runs/plan";
+import { PHONE_WORDS, SELFIE_WORDS } from "../../shared/scenes/words";
+import { contractCategory, buildRunPlan, RunPlanSchema, type RunPlan } from "../runs/plan";
 import { plan } from "../scenes";
 import type { PlanSlot } from "../scenes/schema";
+import { PhotoSidecarSchema } from "../library/schemas";
 import { BOLD_CLIPS, clipAllowsAutoGrok } from "../../shared/engine";
 import { clipFallbackOf, frameFactsOf, type FrameFacts, type FrameFactsResult } from "./frameFacts";
 import { motionChoicesOf } from "./motion";
 import { clipPromptOf } from "./prompt";
-import { ADULT_LINE, CLIP_CAPTURES, PROMPT_WORDS_MAX, SLOW_LINE, hasVideoStagingWord, legwearLineOf, type ClipDialect } from "./videoLook";
-import { AVATAR, MODELS, everyMoment, photoOf, planlessPhoto, sceneRun, slotOf, type Picked } from "./testing/frameFixtures";
+import { ADULT_LINE, CLIP_CAPTURES, LEGS_LINE, PROMPT_WORDS_MAX, SLOW_LINE, hasVideoStagingWord, legwearLineOf, type ClipDialect } from "./videoLook";
+import { AVATAR, MODELS, everyMoment, photoOf, planlessPhoto, sceneRun, sentenceOf, slotOf, type Picked } from "./testing/frameFixtures";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -220,6 +222,57 @@ describe("no outfit in a video prompt (I5.51, I5.57): every slot of the two «С
       }
     }
     expect(slots).toBeGreaterThanOrEqual(2_000);
+  });
+});
+
+describe("an old pov-legs photo with no POV line takes the unknown camera line (S5.WP1, plan s5b2 I5.69)", () => {
+  /** The pov-legs line before the C3′ fix (aba9a3f6 to 6c94d102): it drew a selfie from above. */
+  const PRE_FIX = "A photo she took looking down along her own legs from where she lies or sits, held at her eye level; nothing in her hand can be seen.";
+  const UNKNOWN_LINE = "The framing stays almost still, with a little natural sway.";
+
+  test("C3 K1's own photo and plan (fixtures/c3-k1.json): exactly the prompt with the unknown line, the legs line kept, in both dialects", () => {
+    const k1 = JSON.parse(readFileSync(join(PINS, "c3-k1.json"), "utf8")) as { photo: unknown; plan: unknown };
+    const facts = factsOf(frameFactsOf(PhotoSidecarSchema.parse(k1.photo), RunPlanSchema.parse(k1.plan)));
+    expect({ capture: facts.capture, legs: facts.legs, faceRole: facts.faceRole, sceneMotion: facts.sceneMotion }).toEqual({ capture: "unknown", legs: true, faceRole: "hidden", sceneMotion: true });
+    const scene = motionChoicesOf(facts)[0];
+    expect(scene).toMatchObject({ id: "scene", text: "she points and flexes her toes slowly" });
+    const expected =
+      "The framing stays almost still, with a little natural sway. The adult woman stretches her legs along the bed. Over the whole clip she points and flexes her toes slowly. " +
+      "Her legs fill most of the frame the whole time; the camera never turns up to her face. Nothing new appears, and nothing she holds or wears changes. " +
+      "Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. " +
+      "No text on screen. She is an adult woman.";
+    for (const dialect of DIALECTS) expect(promptFor(facts, scene?.text ?? "", dialect)).toBe(expected);
+  });
+
+  test("every pov-legs bank moment drawn with the pre-fix line, legwear on and off, every motion it is offered, both dialects: the unknown line, the legs line, at most 130 words", () => {
+    let prompts = 0;
+    for (const picked of everyMoment().filter((p) => p.moment.captures.includes("pov-legs"))) {
+      for (const legwear of picked.moment.noLegwear === true ? [false] : [false, true]) {
+        const slot = slotOf(picked, "pov-legs", poseOf(picked, "pov-legs"), legwear ? { legwear: LONGEST_LEGWEAR } : {});
+        const run = sceneRun("run-00000302", [slot]);
+        const runSlot = run.scenes.slots[0] as PlanSlot;
+        const facts = factsOf(frameFactsOf(photoOf(run, runSlot, { prompt: `${PRE_FIX} ${sentenceOf(run.runId, runSlot)}. She is an adult woman.` }), run));
+        expect(facts.capture).toBe("unknown");
+        const choices = motionChoicesOf(facts);
+        expect(choices[0]?.id).toBe("scene");
+        // An unknown capture lifts the phone rule pov-legs (a hand capture) is held to; no pov-legs motion or activity names a phone, so it lets nothing new through.
+        for (const text of [facts.activity ?? "", ...choices.map((choice) => choice.text)]) expect(PHONE_WORDS.test(text) || SELFIE_WORDS.test(text)).toBe(false);
+        for (const choice of choices) {
+          for (const dialect of DIALECTS) {
+            const result = clipPromptOf(facts, choice.text, dialect);
+            if (!result.ok) throw new Error(`${picked.place.name}/«${picked.moment.text}» (${choice.id}, ${dialect}): ${result.problems.join("; ")}`);
+            expect(result.prompt.startsWith(`${UNKNOWN_LINE} `)).toBe(true);
+            expect(result.prompt).toContain(LEGS_LINE);
+            // The camera line is the unknown one (no «reach» in it: videoLook.test.ts); a bank motion may say «reaches» («she reaches toward her toes slowly»).
+            expect(result.prompt).not.toMatch(/first-person|point-of-view/i);
+            expect(result.prompt).toContain("One continuous shot, no cuts.");
+            expect(result.words).toBeLessThanOrEqual(PROMPT_WORDS_MAX);
+            prompts++;
+          }
+        }
+      }
+    }
+    expect(prompts).toBeGreaterThanOrEqual(22 * 2);
   });
 });
 

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { relativePosix } from "../../testing/posixPath";
 import { BANKS } from "../../shared/scenes/banks";
 import { BANK_CATEGORIES } from "../../shared/scenes/banks/types";
+import { CAPTURES } from "../../shared/scenes/captures";
 import { MOTION_STAGING } from "../../shared/scenes/words";
 import * as phoneLook from "../scenes/phoneLook";
 import {
@@ -15,15 +16,18 @@ import {
   LOOK_LINE,
   PRONE_ANCHOR,
   PROMPT_WORDS_MAX,
+  SHIPPED_POV_CAPTURE_LINES,
   SLOW_LINE,
   WORN_OR_HELD,
   cameraLineOf,
   continuityLineOf,
+  holdsPovCaptureLine,
   legsLineOf,
   hasVideoStagingWord,
   legwearLineOf,
   motionSentenceOf,
   poseSentenceOf,
+  provenCaptureOf,
   shortCameraLineOf,
   wordCount,
   type ClipCapture,
@@ -364,6 +368,63 @@ describe("the legs line (round 2)", () => {
   test("by the mirror the phone already covers her face, so the line says nothing of her face (the photo's own legs phrase there, S5.R4 r3)", () => {
     expect(legsLineOf("mirror-hidden")).toBe("Her legs fill most of the frame the whole time.");
     expect(cameraLineOf("mirror-hidden", "kling")).toContain("in front of her face");
+  });
+});
+
+describe("a camera line only from what the photo's prompt proves (S5.WP1, plan s5b2 I5.69)", () => {
+  /**
+   * Every wording engine/scenes/phoneLook.ts has given the pov-legs capture line since the C3′ fix, newest first, with its commit. Found with
+   * `git log --all -m -G'first-person|point-of-view|down her own body|looking down along' -- studio/engine/scenes/phoneLook.ts studio/engine/scenes/assembler.ts` and
+   * `git log --all -S'first-person point-of-view photo'` over every file (the assembler only places the line): two commits, both on main's first parent, so both
+   * reached photos; everything before 6c94d102 is the pre-fix «looking down along her own legs … held at her eye level». A change to phoneLook's pov-legs line fails the
+   * test below: the old wording must stay on this list, or the photos drawn with it would lose their POV line.
+   */
+  const SHIPPED = [
+    // e6865355 (2026-10-12 14:22, «name her legs, not her thighs, in the look down her legs»): today's line.
+    "A first-person point-of-view photo: the camera is exactly where her eyes are, looking straight down her own body; her legs are close to the lens in the foreground and her feet are at the far end, only her own legs are in the picture, with no face, no mirror and no hand.",
+    // 6c94d102 (2026-10-12 13:05, «shoot the look down her legs as a first-person photo»): the C3′ fix itself, main's line until e6865355.
+    "A first-person point-of-view photo: the camera is exactly where her eyes are, looking straight down her own body; her thighs and knees are close to the lens in the foreground and her feet are at the far end, only her own legs are in the picture, with no face, no mirror and no hand.",
+  ];
+  /** The pov-legs line before the C3′ fix (aba9a3f6 to 6c94d102): it drew a selfie from above (C3 K1's first frame), so it proves no first-person view. */
+  const PRE_FIX = "A photo she took looking down along her own legs from where she lies or sits, held at her eye level; nothing in her hand can be seen.";
+
+  test("the shipped POV wordings, pinned with their commits, today's first", () => {
+    expect(SHIPPED_POV_CAPTURE_LINES).toEqual(SHIPPED);
+  });
+
+  test("today's photo line is the first of them: one source, phoneLook's", () => {
+    expect(SHIPPED_POV_CAPTURE_LINES[0]).toBe(phoneLook.captureLineOf("pov-legs", "run-1:slot-1"));
+  });
+
+  test("a prompt holds a POV line only when it carries one of them verbatim", () => {
+    for (const line of SHIPPED) expect(holdsPovCaptureLine(`${line} Her legs fill most of the frame; her face may be out of frame. She is an adult woman.`)).toBe(true);
+    expect(holdsPovCaptureLine(`${PRE_FIX} Her legs fill most of the frame; her face may be out of frame. She is an adult woman.`)).toBe(false);
+    expect(holdsPovCaptureLine("")).toBe(false);
+    // A part of the line is not the line: «first-person» alone, or the line cut short before its last clause.
+    expect(holdsPovCaptureLine("A first-person point-of-view photo: the camera is exactly where her eyes are, looking straight down her own body.")).toBe(false);
+    expect(holdsPovCaptureLine((SHIPPED[0] ?? "").replace(", with no face, no mirror and no hand.", "."))).toBe(false);
+  });
+
+  test("pov-legs without a POV line reads as unknown; with one, as pov-legs", () => {
+    expect(provenCaptureOf("pov-legs", `${PRE_FIX} She is an adult woman.`)).toBe("unknown");
+    expect(provenCaptureOf("pov-legs", "")).toBe("unknown");
+    for (const line of SHIPPED) expect(provenCaptureOf("pov-legs", `${line} She is an adult woman.`)).toBe("pov-legs");
+  });
+
+  test("every other capture is read as it is, with a POV line, the pre-fix line or none", () => {
+    for (const capture of CAPTURES) {
+      if (capture === "pov-legs") continue;
+      for (const prompt of ["", `${PRE_FIX} She is an adult woman.`, `${SHIPPED[0] ?? ""} She is an adult woman.`]) expect(provenCaptureOf(capture, prompt)).toBe(capture);
+    }
+  });
+
+  test("the unknown line a disproved pov-legs photo takes: no «reach», no phone, and no first-person view", () => {
+    for (const dialect of ["kling", "grok"] as const) {
+      const line = cameraLineOf("unknown", dialect);
+      expect(line).not.toMatch(/reach/i);
+      expect(line).not.toMatch(/\bphones?\b/i);
+      expect(line).not.toMatch(/first-person|point-of-view|her eyes/i);
+    }
   });
 });
 

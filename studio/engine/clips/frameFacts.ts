@@ -11,7 +11,7 @@ import { facePoseOf } from "../runs/faceGate";
 import type { RunPlan } from "../runs/plan";
 import type { OwnPlanSlot, PlanSlot } from "../scenes/schema";
 import type { ClipFaceRole } from "./faceRole";
-import type { ClipCapture } from "./videoLook";
+import { provenCaptureOf, type ClipCapture } from "./videoLook";
 
 // Stage 5, 5b.1, S5.V5 (plan s5b1 §5.4, I5.52, I5.57): what a clip knows of its photo, read from the photo's sidecar, its run's plan.json and the banks, never from pixels.
 //
@@ -34,6 +34,7 @@ export interface FrameFacts {
   readonly sceneMotion: boolean;
   /** The slot's activity, when the photo's prompt still carries it: the pose sentence's source. Null for an own scene and without a plan. */
   readonly activity: string | null;
+  /** Who took the photo, as far as its own prompt proves it (S5.WP1, I5.69): a slot planned as pov-legs whose photo holds no shipped POV line is `unknown`. */
   readonly capture: ClipCapture;
   readonly pose: ScenePose;
   /** Whether her face shows (`faceVisibleOf`); without a plan, read from the photo's own face marks. */
@@ -93,7 +94,7 @@ function plannedFacts(photo: PhotoSidecar, source: GeneratedSource, slot: PlanSl
     moment,
     sceneMotion: moment !== null && says(source.prompt, `she ${moment.text}`),
     activity: carried ? activity : null,
-    capture: slot.capture ?? captureOfShot(slot.shot),
+    capture: provenCaptureOf(slot.capture ?? captureOfShot(slot.shot), source.prompt),
     pose: slot.pose,
     face: faceVisibleOf(slot),
     faceRole: roleOf(facePoseOf(slot)),

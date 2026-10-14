@@ -16,6 +16,7 @@ import { GROK_FALLBACK, type AvatarDescriptor } from "../../shared/engine";
 import { assembleSlot } from "../scenes/assembler";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { clipFallbackOf, frameFactsOf, frameRefusalOf, readFrameFacts, type FrameFacts, type FrameFactsResult } from "./frameFacts";
+import { SHIPPED_POV_CAPTURE_LINES } from "./videoLook";
 import { AVATAR, MODELS, everyMoment, photoCaptureLineOf, photoOf, pick, planlessPhoto, sceneRun, sentenceOf, slotOf } from "./testing/frameFixtures";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -395,6 +396,64 @@ describe("the face role (I5.52): a clip is judged only when its photo was", () =
     expect(factsOf(frameFactsOf(planlessPhoto("home", { faceCos: 0.7 }), null)).face).toBe("yes");
     expect(factsOf(frameFactsOf(planlessPhoto("home", { faceCos: 0.7, faceMarked: true }), null)).face).toBe("no");
     expect(factsOf(frameFactsOf(planlessPhoto("home", {}), null)).face).toBe("maybe");
+  });
+});
+
+describe("a pov-legs photo whose prompt holds no shipped POV line reads as unknown (S5.WP1, plan s5b2 I5.69)", () => {
+  /** The pov-legs line before the C3′ fix: such a photo is really a selfie from above (C3 K1). */
+  const PRE_FIX = "A photo she took looking down along her own legs from where she lies or sits, held at her eye level; nothing in her hand can be seen.";
+  const pov = pick("home", (m) => m.captures.includes("pov-legs"));
+  const run = sceneRun("run-00000022", [slotOf(pov, "pov-legs")]);
+  const slot = run.scenes.slots[0] as PlanSlot;
+  const opened = (opening: string): string => `${opening} ${sentenceOf(run.runId, slot)}. She is an adult woman.`;
+  const factsWith = (opening: string): FrameFacts => factsOf(frameFactsOf(photoOf(run, slot, { prompt: opened(opening) }), run));
+  /** The facts but the photo id, which every photo has its own of. */
+  const fields = ({ photoId: _id, ...rest }: FrameFacts): Omit<FrameFacts, "photoId"> => rest;
+
+  test("the pre-fix line: the capture is unknown", () => {
+    expect(factsWith(PRE_FIX).capture).toBe("unknown");
+  });
+
+  test("no capture line at all: the capture is unknown", () => {
+    expect(factsOf(frameFactsOf(photoOf(run, slot, { prompt: `${sentenceOf(run.runId, slot)}. She is an adult woman.` }), run)).capture).toBe("unknown");
+  });
+
+  test("each shipped POV wording keeps pov-legs", () => {
+    expect(SHIPPED_POV_CAPTURE_LINES.length).toBeGreaterThanOrEqual(2);
+    for (const line of SHIPPED_POV_CAPTURE_LINES) expect(factsWith(line).capture).toBe("pov-legs");
+  });
+
+  test("only the capture moves: the face role and the face stay the gate's, the legs framing, the moment, the motion and the activity stay", () => {
+    const proven = factsWith(SHIPPED_POV_CAPTURE_LINES[0] ?? "");
+    const disproved = factsWith(PRE_FIX);
+    expect(disproved.faceRole).toBe("hidden");
+    expect(disproved.legs).toBe(true);
+    expect(fields(disproved)).toEqual({ ...fields(proven), capture: "unknown" });
+  });
+
+  test("no other capture moves: every bank moment on every capture it lists, with the pre-fix line, with no capture line, and with its own line", () => {
+    let checked = 0;
+    for (const picked of everyMoment()) {
+      for (const capture of picked.moment.captures) {
+        const each = sceneRun("run-00000023", [slotOf(picked, capture)]);
+        const eachSlot = each.scenes.slots[0] as PlanSlot;
+        const sentence = sentenceOf(each.runId, eachSlot);
+        const own = factsOf(frameFactsOf(photoOf(each, eachSlot), each));
+        expect(own.capture).toBe(capture);
+        for (const prompt of [`${PRE_FIX} ${sentence}. She is an adult woman.`, `${sentence}. She is an adult woman.`]) {
+          const facts = factsOf(frameFactsOf(photoOf(each, eachSlot, { prompt }), each));
+          expect(fields(facts)).toEqual({ ...fields(own), capture: capture === "pov-legs" ? "unknown" : capture });
+        }
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(271);
+  });
+
+  test("an own scene and a photo with no plan are untouched: their captures never read the prompt", () => {
+    const ownRun = sceneRun("run-00000024", [{ kind: "own", shot: "selfie", pose: "front", text: "She smiles on a train." }]);
+    expect(factsOf(frameFactsOf(photoOf(ownRun, ownRun.scenes.slots[0] as OwnPlanSlot, { prompt: PRE_FIX }), ownRun)).capture).toBe("selfie");
+    expect(factsOf(frameFactsOf(planlessPhoto("home", { faceCos: 0.7 }), null)).capture).toBe("unknown");
   });
 });
 
