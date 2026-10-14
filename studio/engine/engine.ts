@@ -376,8 +376,8 @@ export interface EngineDeps {
   /** Test seam of the library the engine opens: its crash points (`testHooks`), e.g. a write that fails after a paid call. */
   library?: Pick<LibraryDeps, "testHooks">;
   /**
-   * Stage 5, 5b.1 (S5.V4a1, critic M6): every duration of the clip money path (polls, the proof window, the lifetime, the holds). The real set unless a test, a parity rig or the
-   * E2E smoke passes the short one (`clipTimings("short")`), which keeps every ordering of the real one.
+   * Stage 5, 5b.1 (S5.V4a1, critic M6): every duration of the clip money path (polls, the proof window, the lifetime, the holds). The real set unless a test or a parity rig passes the short one
+   * (`clipTimings("short")`), or an E2E build passes `E2E_CLIP_TIMINGS` (the real set divided by twenty, engine/main.ts); each keeps every ordering of the real one.
    */
   clipTimings?: ClipTimings;
   /** Test knobs of 5b.1: the fallback mode (`GROK_FALLBACK`), `BOLD_CLIPS` and the export's `EXPORT_FPS` (S5.V4c), so every value can be played against the real engine. The constants rule otherwise. */

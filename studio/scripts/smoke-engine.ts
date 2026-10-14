@@ -821,7 +821,7 @@ function checkProductionBundles(where: string, main: string, engine: string, pre
   const pageProblems = productionRendererPageProblems(rendererPage);
   check(`${where}: the page's CSP keeps it to its own origin (frames, children, plugins, <base> and forms shut; no file:)`, pageProblems.length === 0, pageProblems);
   const engineProblems = productionEngineBundleProblems(engine, sharedChunks);
-  check(`${where}: the engine and its shared chunks were built without the E2E flag (no base-URL override, no test-only commit hold)`, engineProblems.length === 0, engineProblems);
+  check(`${where}: the engine and its shared chunks were built without the E2E flag (no base-URL override, no test-only commit hold, no E2E clip timings)`, engineProblems.length === 0, engineProblems);
   const timingProblems = productionMoneyTimingProblems(sharedChunks);
   check(`${where}: the money timings are the production ones (the E2E build's shortened reconcile wait and request timeout are compiled out)`, timingProblems.length === 0, timingProblems);
   check(`${where}: a preload bundle was read`, preload.length > 0);

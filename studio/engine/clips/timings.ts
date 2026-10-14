@@ -1,6 +1,7 @@
-// Stage 5, 5b.1, S5.V3b (plan s5b1 §5.15, critic M6): every duration of the clip money path in one object. The engine passes the REAL set; the engine tests, the parity rigs and the packaged
-// smoke pass the SHORT set, so «proof 2 min → Grok», `late` and the holds run in milliseconds. The short set is the real one divided by a thousand, which keeps every ordering (15 s < 2 min
-// < 20 min < 60 min stay in that order), so each story that passes on one passes on the other.
+// Stage 5, 5b.1, S5.V3b (plan s5b1 §5.15, critic M6): every duration of the clip money path in one object. The engine runs the REAL set; the engine tests and the parity rigs pass the SHORT set, so
+// «proof 2 min → Grok», `late` and the holds run in milliseconds. The short set is the real one divided by a thousand; the packaged smoke's E2E build passes the E2E set, the real one divided by
+// twenty (seconds, not milliseconds, so a slow runner does not turn a clip `late`). Each keeps every ordering (15 s < 2 min < 20 min < 60 min stay in that order), so each story that passes on one
+// passes on the others.
 
 const SECOND = 1_000;
 const MINUTE = 60 * SECOND;

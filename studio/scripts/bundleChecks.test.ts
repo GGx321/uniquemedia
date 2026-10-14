@@ -358,6 +358,17 @@ describe("productionEngineProblems", () => {
     expect(productionEngineBundleProblems(SHUT, chunk)).toEqual(["a test-only commit hold is in the engine bundle"]);
   });
 
+  // The packaged smoke reads the engine bundle through this function, so the E2E clip timings are checked in the PACKAGED artefact too, whether the entry or a shared chunk holds them.
+  test("flags the E2E clip timings handed to the engine, in the entry or in a chunk beside it", () => {
+    const problem = "the engine entry passes clipTimings (a production engine runs the real clip timings)";
+    expect(productionEngineBundleProblems(`${SHUT}\nEngine.start(init.data, { clipTimings: E2E_CLIP_TIMINGS });`, "var E2E_CLIP_TIMINGS = Object.freeze({});")).toEqual([problem, "the engine entry uses E2E_CLIP_TIMINGS"]);
+    expect(productionEngineBundleProblems(SHUT, "Engine.start(init.data, { clipTimings: clipTimings(\"short\") });")).toEqual([problem]);
+  });
+
+  test("passes the E2E set's bare declaration in a chunk: the bundler keeps it, nothing hands it to the engine", () => {
+    expect(productionEngineBundleProblems(SHUT, "var E2E_CLIP_TIMINGS = Object.freeze({});")).toEqual([]);
+  });
+
   test("passes an engine bundle and shared chunks that carry none of it", () => {
     expect(productionEngineBundleProblems(SHUT, "var RECONCILE_QUIET_MS = 12e4;")).toEqual([]);
   });

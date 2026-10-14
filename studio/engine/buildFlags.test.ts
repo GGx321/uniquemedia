@@ -241,6 +241,9 @@ describe("the smoke test's production bundle checks", () => {
       "the mock-CDN transport is in the engine bundle",
       // 3a.9: the commit hold the packaged E2E arms; compiled out of production (the passing test above).
       "a test-only commit hold is in the engine bundle",
+      // 5b.1, S5.V7: the E2E clip timings the packaged smoke's clip scenario runs on; compiled out of production (the passing test above).
+      "the engine entry passes clipTimings (a production engine runs the real clip timings)",
+      "the engine entry uses E2E_CLIP_TIMINGS",
     ]);
   });
 });

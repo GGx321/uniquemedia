@@ -280,7 +280,8 @@ export function productionEngineProblems(engine: string): string[] {
  * import (the commit hold, for one) into a chunk, and then the entry's own text no longer shows it.
  */
 export function productionEngineBundleProblems(engine: string, sharedChunks: string): string[] {
-  return productionEngineProblems(`${engine}\n${sharedChunks}`);
+  const text = `${engine}\n${sharedChunks}`;
+  return [...productionEngineProblems(text), ...productionClipTimingProblems(text)];
 }
 
 /**
