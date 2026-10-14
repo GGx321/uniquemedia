@@ -1426,7 +1426,7 @@ export class MockClips {
       const host = this.#host;
       const at = host.nowIso();
       const named = [...this.#records.values()].flatMap((r) => r.exports.map((e) => e.relPath));
-      const relPath = host.exportRelPath(avatar.name, job.avatarId, at.slice(0, 10), named);
+      const relPath = host.exportRelPath(avatar.name, job.avatarId, localDateOf(new Date(at)), named);
       host.exportFiles().add(relPath);
       this.#exported.push(relPath);
       const profile: ClipExportProfile = this.#exportFps === "interpolate" ? "1080p30-interp" : this.#exportFps === "duplicate" ? "1080p30-dup" : "1080p24";
@@ -1660,6 +1660,12 @@ export class MockClips {
       commit(plan.model, { status: "failed", reason: content ? "refused-unknown" : "provider-error" }, attemptsOf({ attemptId: plan.attemptId, outcome: content ? "refused" : "failed" }));
     });
   }
+}
+
+/** The local calendar date as `YYYY-MM-DD`: what the owner reads in an export's name (engine/exportName.ts `formatExportDate`, which the mock cannot import). */
+function localDateOf(date: Date): string {
+  const two = (n: number): string => String(n).padStart(2, "0");
+  return `${String(date.getFullYear()).padStart(4, "0")}-${two(date.getMonth() + 1)}-${two(date.getDate())}`;
 }
 
 /** The scripted attempts whose file is completed and billed but cannot be stored: the same reasons on a create and in a recovery. */

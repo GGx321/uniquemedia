@@ -24,6 +24,32 @@ async function exportClip(m: ClipMock, clipId: string): Promise<string> {
   return jobId;
 }
 
+// engine/exportName.ts `formatExportDate`: the date in the name is the LOCAL calendar date, what the owner reads. Two zones 25 hours apart (UTC+14, UTC-11) cannot both read the UTC date at any instant.
+describe("the date in the copy's name", () => {
+  const localDate = (date: Date): string => `${String(date.getFullYear()).padStart(4, "0")}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+  test("is the local calendar date of the export's instant, not the UTC one", async () => {
+    const was = process.env.TZ;
+    const found: { zone: string; named: string; local: string; utc: string }[] = [];
+    try {
+      for (const zone of ["Pacific/Kiritimati", "Pacific/Pago_Pago"]) {
+        process.env.TZ = zone;
+        const m = makeClipMock();
+        const clipId = await readyClip(m);
+        const jobId = await exportClip(m, clipId);
+        const { clip } = await unwrap(m.client.request("clips.get", { avatarId: AVATAR, clipId }));
+        const at = clip.exports[0]?.at ?? "";
+        found.push({ zone, named: exportedPath(m, jobId).split("/")[1]?.slice(0, 10) ?? "", local: localDate(new Date(at)), utc: at.slice(0, 10) });
+      }
+    } finally {
+      if (was === undefined) delete process.env.TZ;
+      else process.env.TZ = was;
+    }
+    expect(found.some((f) => f.local !== f.utc)).toBe(true);
+    for (const f of found) expect(f.named).toBe(f.local);
+  });
+});
+
 describe("clips.export", () => {
   test("starts a clip job in `exporting` that ends job.done with the copy's place; clips.get then shows it present", async () => {
     const m = makeClipMock();
