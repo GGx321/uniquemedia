@@ -152,7 +152,11 @@ jobs:
             catch (e) { console.log(`::error::${name} binary missing or not executable: ${path} (${e.message})`); failed = true; }
           }
           process.exit(failed ? 1 : 0)'
+      # The studio project's typecheck needs about 2.1 GB of heap; Node's default on a 7 GB runner is about 2 GB, so it ran
+      # out of memory once the project grew (5b.1). 4 GB keeps headroom; splitting the project is the longer fix.
       - run: bunx tsc --noEmit -p studio/tsconfig.json
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
       # studio/shared is the contract the engine, the main process and the renderer all import: it must typecheck with NO Node,
       # Bun or DOM types (its own tsconfig sets `types: []`), which the step above (Node types included) does not prove. Moved
       # here from two tests that each spawned this same tsc (CI-4: 4 and 3 s on Windows).
@@ -533,7 +537,11 @@ jobs:
           key: face-models-${{ hashFiles('studio/engine/face/modelSource.ts') }}
       - name: Fetch face gate models
         run: bun run models:face
+      # The studio project's typecheck needs about 2.1 GB of heap; Node's default on a 7 GB runner is about 2 GB, so it ran
+      # out of memory once the project grew (5b.1). 4 GB keeps headroom; splitting the project is the longer fix.
       - run: bunx tsc --noEmit -p studio/tsconfig.json
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
       # The shared contract's own typecheck (no Node, Bun or DOM types), as in the build job, here under `bun latest`'s tsc resolution.
       - run: bunx tsc --noEmit -p studio/shared/tsconfig.json
       # Same bounds as the build job's own step above, but the retry is narrower: the canary exists to catch
