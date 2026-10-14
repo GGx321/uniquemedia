@@ -1,5 +1,6 @@
 import { type CommandResult, type EngineError, newestFirstPhotos, type PhotoSummary } from "../../../shared/engine";
 import type { EngineReply } from "../../engine/client";
+import { sameJson } from "../montage/json";
 
 // S4.P2: an avatar's photos past photos.list's 500 (MAX_LISTED_PHOTOS). The engine answers newest first, a page at a time, and names
 // where the next page starts with a cursor the window never reads or makes: it only sends it back. «Показать ещё» appends the next
@@ -69,6 +70,19 @@ function reaches(page: PhotoPage, photo: PhotoSummary): boolean {
   return last === undefined || newestFirstPhotos(last, photo) >= 0;
 }
 
+/**
+ * `fresh` with each photo that is the same as the one `held` has of it taken from `held`: a read that changed nothing for a photo hands back an equal
+ * object, and a new object would draw the photo's tile again for nothing (500 tiles at once for a page; a tile is memoized on its photo's identity).
+ * A photo that did change keeps its fresh object.
+ */
+function reusing(held: readonly PhotoSummary[], fresh: readonly PhotoSummary[]): PhotoSummary[] {
+  const before = new Map(held.map((p) => [p.photoId, p]));
+  return fresh.map((p) => {
+    const same = before.get(p.photoId);
+    return same !== undefined && sameJson(same, p) ? same : p;
+  });
+}
+
 /** Always wanted: a read no one calls off. */
 const always = (): boolean => true;
 
@@ -123,8 +137,9 @@ async function readChain(read: ReadPage, enough: (page: PhotoPage) => boolean, i
 export async function readThrough(read: ReadPage, held: PhotoPages | null, isCurrent: () => boolean = always): Promise<PagesRead | null> {
   const depth = held?.depth ?? null;
   const chain = await readChain(read, (page) => depth === null || reaches(page, depth), isCurrent);
-  if (chain === null || !chain.ok || held === null || depth === null) return chain;
-  const { list } = chain;
+  if (chain === null || !chain.ok || held === null) return chain;
+  const list = { ...chain.list, photos: reusing(held.photos, chain.list.photos) };
+  if (depth === null) return { ok: true, list };
   const kept = list.photos.filter((p) => newestFirstPhotos(p, depth) <= 0);
   const cut = list.photos.length - kept.length;
   if (cut === 0) return { ok: true, list: { ...list, depth } };
@@ -146,7 +161,7 @@ export async function readTop(read: ReadPage, held: PhotoPages | null, isCurrent
   if (chain === null || !chain.ok) return chain;
   const brought = chain.list.photos;
   const lastBrought = brought.at(-1);
-  const now = new Map(brought.map((p) => [p.photoId, p]));
+  const now = new Map(reusing(held.photos, brought).map((p) => [p.photoId, p]));
   const kept = held.photos.flatMap((p) => {
     const fresh = now.get(p.photoId);
     if (fresh !== undefined) return [fresh];

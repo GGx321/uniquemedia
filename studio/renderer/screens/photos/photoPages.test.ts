@@ -179,6 +179,37 @@ describe("new photos in front (a run's photo landed)", () => {
   });
 });
 
+// A tile is memoized on its photo's object, so a re-read that brings a photo unchanged must hand back the object already held; one that changed gets the new one.
+describe("a re-read keeps the object of a photo it brings unchanged", () => {
+  const reads: [string, typeof readThrough][] = [
+    ["readThrough", readThrough],
+    ["readTop", readTop],
+  ];
+  const owners: [string, number][] = [
+    ["never paged", 0],
+    ["paged once", 1],
+  ];
+  for (const [[name, reread], [owner, presses]] of reads.flatMap((r) => owners.map((o) => [r, o] as const))) {
+    test(`${name}, owner ${owner}: the photos that did not change are the very objects held, the one that did is new`, async () => {
+      const before = await paged(engineWith(photos(1, 1200)).read, presses);
+      const result = await reread(engineWith(photos(1, 1200, (n) => (n === 900 ? { rejected: true, eligible: false } : {}))).read, before);
+      if (result === null || !result.ok) throw new Error("no list");
+      const heldById = new Map(before.photos.map((p) => [p.photoId, p]));
+      const changed = result.list.photos.filter((p) => heldById.get(p.photoId) !== p);
+      expect(ids(changed)).toEqual(["photo-mia-0900"]);
+      expect(changed[0]?.rejected).toBe(true);
+    });
+
+    test(`${name}, owner ${owner}: a read that changes nothing hands back every held object`, async () => {
+      const before = await paged(engineWith(photos(1, 1200)).read, presses);
+      const result = await reread(engineWith(photos(1, 1200)).read, before);
+      if (result === null || !result.ok) throw new Error("no list");
+      expect(result.list.photos).toHaveLength(before.photos.length);
+      expect(result.list.photos.every((p, i) => p === before.photos[i])).toBe(true);
+    });
+  }
+});
+
 describe("a read that must stop", () => {
   test("once it is no longer wanted (the screen went), it stops after the page in flight and asks nothing more", async () => {
     const before = await paged(engineWith(photos(1, 2000)).read, 3);
