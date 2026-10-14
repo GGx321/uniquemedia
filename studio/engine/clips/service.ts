@@ -189,8 +189,12 @@ export class ClipService {
   readonly #activeClips = new Set<string>();
   /** The attempts this process reserved: only those, while held, are left out of the reconcile reasons (a foreign reserve stops paid work whatever its hold says). */
   readonly #ownAttempts = new Set<string>();
-  /** Startup walks of a library's clips folders still running (S5.VR): until one has taken the restart's holds, the reconcile cannot know what may still bill. */
-  #walks = 0;
+  /**
+   * Startup walks of a library's clips folders still running, by the time each began (S5.VR): until one has taken the restart's holds, the reconcile cannot know what may still bill. A walk that hangs
+   * (a dropped external disk) is waited for only until `holdSubmittedMs` after it began: every restart hold counts from an `at` earlier than the start, so none can run past that.
+   */
+  readonly #walks = new Map<number, number>();
+  #walkSeq = 0;
   /** Fired by `shutdown`: every clip job stops waiting (a reserve whose POST may have left stays open at worst). */
   readonly #stop = new AbortController();
 
@@ -356,7 +360,14 @@ export class ClipService {
    */
   reconcileWaitMs(): number {
     const held = Math.ceil(this.holds.waitMs());
-    return this.#walks > 0 ? Math.max(held, WALK_RETRY_MS) : held;
+    return this.#walkWaiting() ? Math.max(held, WALK_RETRY_MS) : held;
+  }
+
+  /** A startup walk is running and still inside its bound. */
+  #walkWaiting(): boolean {
+    if (this.#walks.size === 0) return false;
+    const began = Math.min(...this.#walks.values());
+    return this.#deps.clock() < began + this.#deps.timings.holdSubmittedMs;
   }
 
   /**
@@ -365,9 +376,12 @@ export class ClipService {
    * the second is covered by its hold.
    */
   reconcileAvailableAt(): number | null {
-    const held = this.reconcileWaitMs() > 0 ? this.holds.latestUntil() : null;
+    const held = this.holds.waitMs() > 0 ? this.holds.latestUntil() : null;
+    // While a walk runs the reconcile answers «in a moment», so the banner says that moment and not «now».
+    const walk = this.#walkWaiting() ? this.#deps.clock() + WALK_RETRY_MS : null;
     const quiet = this.#quietUntil();
-    return held === null ? quiet : quiet === null ? held : Math.max(held, quiet);
+    const times = [held, quiet, walk].filter((t): t is number => t !== null);
+    return times.length === 0 ? null : Math.max(...times);
   }
 
   #quietUntil(): number | null {
@@ -471,11 +485,14 @@ export class ClipService {
       ...(deps.recoveryBeforeList === undefined ? {} : { beforeList: deps.recoveryBeforeList }),
       log: deps.log,
     };
-    this.#walks++;
+    const walkId = ++this.#walkSeq;
+    this.#walks.set(walkId, deps.clock());
     recoverClips(host, library)
       .catch((error: unknown) => deps.log(`[clip] the recovery of the library could not run (${error instanceof Error ? error.name : typeof error})`))
       .finally(() => {
-        this.#walks--;
+        this.#walks.delete(walkId);
+        // The wait that the walk asked for ends here: a banner showing «через пару секунд» refreshes.
+        deps.emitMoney();
       });
   }
 

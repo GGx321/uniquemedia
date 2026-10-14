@@ -200,16 +200,18 @@ describe("a reconcile while the restart's walk of the clips folders is still run
     const before = await readFile(ledgerPath(), "utf8");
     const gate = walkGate();
     const second = await startClipEngine(dir(), { timings: TIMINGS, deps: { clipRecoveryBeforeList: gate.beforeList } });
-    await until(() => gate.reached(), "the walk to reach the clips folder");
-    second.clocks.skew(10 * MIN);
+    try {
+      await until(() => gate.reached(), "the walk to reach the clips folder");
+      second.clocks.skew(6 * MIN);
 
-    const held = await reconcile(second);
-    expect(held).toMatchObject({ ok: true, result: { status: "too-early" } });
-    if (!held.ok || held.result.status !== "too-early") throw new Error("unreachable");
-    expect(held.result.retryAfterMs).toBeGreaterThan(0);
-    expect(await readFile(ledgerPath(), "utf8")).toBe(before);
-
-    gate.open();
+      const held = await reconcile(second);
+      expect(held).toMatchObject({ ok: true, result: { status: "too-early" } });
+      if (!held.ok || held.result.status !== "too-early") throw new Error("unreachable");
+      expect(held.result.retryAfterMs).toBeGreaterThan(0);
+      expect(await readFile(ledgerPath(), "utf8")).toBe(before);
+    } finally {
+      gate.open();
+    }
     await clipJobDone(second);
   });
 
@@ -217,12 +219,66 @@ describe("a reconcile while the restart's walk of the clips folders is still run
     await quitMidClip();
     const gate = walkGate();
     const second = await startClipEngine(dir(), { timings: TIMINGS, deps: { clipRecoveryBeforeList: gate.beforeList } });
-    await until(() => gate.reached(), "the walk to reach the clips folder");
-    gate.open();
+    try {
+      await until(() => gate.reached(), "the walk to reach the clips folder");
+    } finally {
+      gate.open();
+    }
     await clipJobDone(second);
     await second.engine.settled();
     second.clocks.skew(20 * MIN);
     expect(await reconcile(second)).toMatchObject({ ok: true, result: { status: "done", closedReserves: 1 } });
+  });
+
+  test("money.status says when the reconcile can run while the walk runs, so the banner does not offer a reconcile that answers «in 2 s»", async () => {
+    await quitMidClip();
+    const gate = walkGate();
+    const second = await startClipEngine(dir(), { timings: TIMINGS, deps: { clipRecoveryBeforeList: gate.beforeList } });
+    try {
+      await until(() => gate.reached(), "the walk to reach the clips folder");
+      second.clocks.skew(6 * MIN);
+      const status = await moneyStatus(second);
+      expect(status.reconcileAvailableAt).toBeDefined();
+      // Past the quiet rule (skewed 6 min), only the walk holds it: the time is a moment ahead of now, not in the past.
+      expect(Date.parse(String(status.reconcileAvailableAt))).toBeGreaterThan(NOW + 6 * MIN);
+    } finally {
+      gate.open();
+    }
+    await clipJobDone(second);
+  });
+
+  test("announces money.changed when the walk ends, so a banner waiting on it refreshes", async () => {
+    // A library with a clips folder to walk and nothing to recover: no job, so the walk's own end is the only thing that can announce.
+    const { avatarId } = await seedClipAvatar(libraryDir());
+    await mkdir(clipsDir(libraryDir(), avatarId), { recursive: true });
+    await writeFile(join(clipsDir(libraryDir(), avatarId), "notes.txt"), "x");
+    const gate = walkGate();
+    const second = await startClipEngine(dir(), { timings: TIMINGS, deps: { clipRecoveryBeforeList: gate.beforeList } });
+    const changes = (): number => second.events().filter((e) => e.type === "money.changed").length;
+    let before = 0;
+    try {
+      await until(() => gate.reached(), "the walk to reach the clips folder");
+      before = changes();
+    } finally {
+      gate.open();
+    }
+    await second.engine.settled();
+    await until(() => changes() > before, "money.changed at the walk's end");
+  });
+
+  test("a walk that hangs (a dropped external disk) holds the reconcile only until the longest restart hold would have ended, then lets it run", async () => {
+    await quitMidClip();
+    const gate = walkGate();
+    const second = await startClipEngine(dir(), { timings: TIMINGS, deps: { clipRecoveryBeforeList: gate.beforeList } });
+    try {
+      await until(() => gate.reached(), "the walk to reach the clips folder");
+      second.clocks.skew(TIMINGS.holdSubmittedMs - MIN);
+      expect(await reconcile(second)).toMatchObject({ ok: true, result: { status: "too-early" } });
+      second.clocks.skew(2 * MIN);
+      expect(await reconcile(second)).toMatchObject({ ok: true, result: { status: "done", closedReserves: 1 } });
+    } finally {
+      gate.open();
+    }
   });
 });
 
@@ -358,7 +414,8 @@ describe("a recovery job is a clip job like any other", () => {
 
   const reply = async (engine: ClipEngine, call: unknown): Promise<EngineReply> => {
     await engine.engine.receive(call);
-    return EngineReply.parse(engine.posted.at(-1));
+    // The last REPLY, not the last message: a walk's end announces `money.changed` and may land after it.
+    return EngineReply.parse(engine.posted.findLast((m) => typeof m === "object" && m !== null && "type" in m && m.type === "reply"));
   };
 
   test("an avatar delete waits for it", async () => {
