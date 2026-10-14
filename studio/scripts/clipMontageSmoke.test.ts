@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../testing/nativeGlobals";
 import type { Probed } from "../engine/render/ffmpeg.testkit";
 import { copySummaryProblems, fixtureClipArgv, fixturePosterArgv, frameUseProblems, MONTAGE_SMOKE, montageSmokeExpectation, montageSmokeSpec, providerFileProblems, storedCopyProblems } from "./clipMontageSmoke";
+
+useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WA3: the pure checks of the clip-montage smoke. The run that makes them mean something is clipMontageSmoke.engine.test.ts (the real engine, no Electron) and the packaged smoke (CI).
 
