@@ -302,6 +302,21 @@ describe("38: the sheet «Оживить фото»", () => {
     expect(within(sheet()).getByText(/Цена изменилась: теперь не больше/).textContent).toBe(`Цена изменилась: теперь не больше ${worst}. Подтвердите ещё раз.`);
   });
 
+  test("38b: the new price leaves no room in the month — the main button turns off and the focus goes to the sheet's heading, never to the page", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    // Grok's reserve (the auto worst case) now exceeds the month; Kling alone still fits.
+    h.engine.setClipRates({ ...GROK_DEARER, grok: { perSecondMicros: 5_000_000, perInputImageMicros: 10_000 } });
+    const go = within(s).getByRole("button", { name: "Оживить · до $0.85" });
+    go.focus();
+    fireEvent.click(go);
+    await flush();
+    await flush();
+    const main = within(sheet()).getByRole("button", { name: /^Оживить · до/ });
+    expect(main.hasAttribute("disabled")).toBe(true);
+    expect(document.activeElement === within(sheet()).getByRole("heading", { level: 2, name: "Оживить фото" })).toBe(true);
+  });
+
   test("38c: the month holds Kling alone — «Оживить» waits, the notice says what the clip needs, «Оживить без запасной модели · до $0.51» sends fallback none", async () => {
     const h = await openNini({ money: { spentMicros: 9_400_000, monthlyBudgetMicros: 10_000_000 } });
     const s = await openSheet();

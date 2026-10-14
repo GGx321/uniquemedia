@@ -64,6 +64,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   const dialogRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const mainRef = useRef<HTMLButtonElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   useModalDialog({ dialog: dialogRef, initialFocus: closeRef, onClose, returnFocus });
 
   const [asked, setAsked] = useState(0);
@@ -99,11 +100,17 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   const refreshing = options.status === "ready" && options.refreshing;
   const waiting = options.status === "loading" || refreshing || busy !== null || blockText !== null;
 
-  // The new options are in: if the button that had the focus is gone (the «без запасной модели» one, when the new price no longer leaves room for it), the main button takes it.
+  // The new options are in: a button that had the focus and is gone or turned off (Chromium drops the focus of a control that turns disabled to the page) hands it to the main button, else
+  // to the sheet's heading, so the next key is never typed into the page.
   useEffect(() => {
     if (refreshing || priceChanged === null) return;
     const root = dialogRef.current;
-    if (root !== null && !root.contains(document.activeElement)) mainRef.current?.focus();
+    if (root === null) return;
+    const active = document.activeElement;
+    const lost = !root.contains(active) || (active instanceof HTMLButtonElement && active.disabled);
+    if (!lost) return;
+    const main = mainRef.current;
+    (main !== null && !main.disabled ? main : titleRef.current)?.focus();
   }, [refreshing, priceChanged, options]);
 
   /** A change of the choice ends what was said about the last price. */
@@ -152,6 +159,8 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     if (reply.error.code === "PRICE_CHANGED") {
       // 38b: the price the click accepted is gone; the engine's new one is asked, shown, and needs its own click.
       setPriceChanged(way);
+      // Refreshing now, in this very update: no click may reach the old handler (and its old accepted worst) before the effect that asks again has run.
+      setOptions((now) => (now.status === "ready" ? { ...now, refreshing: true } : now));
       setAsked((n) => n + 1);
       return;
     }
@@ -176,7 +185,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
         <FocusEdge edge="start" />
         <header className="cat-dlg-head clip-sheet-head">
           <div className="cat-dlg-titles">
-            <h2 id={`${ids}-title`} className="cat-dlg-title">
+            <h2 ref={titleRef} id={`${ids}-title`} className="cat-dlg-title" tabIndex={-1}>
               Оживить фото
             </h2>
             {subtitle !== null && <p className="cat-dlg-sub muted">{subtitle}</p>}
