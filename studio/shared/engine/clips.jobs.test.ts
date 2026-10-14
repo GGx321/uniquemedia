@@ -206,3 +206,45 @@ describe("the job events carry a clip", () => {
     expect(EventMessage.safeParse(event("job.progress", { kind: "run", jobId: JOB, runId: "run-00000001", avatarId: AVATAR, done: 1, total: 5 })).success).toBe(true);
   });
 });
+
+// Stage 5, 5b.1, S5.V8b (additive, protocol 5): a clip create job carries the facts its tile shows, so a window that first sees the job (a new window after a restart, a reload mid-render) draws it whole.
+describe("the facts a clip job carries", () => {
+  const facts = {
+    photoId: "photo-aaaa-0001",
+    request: { model: "kling", quality: "std", seconds: 5, fallback: "auto" },
+    motion: { source: "code", label: "Моргает и улыбается" },
+    acceptedWorstMicros: 510_000,
+  };
+
+  test("a progress event of an older engine, without the facts, still parses", () => {
+    expect(JobProgress.safeParse(progress()).success).toBe(true);
+  });
+
+  test("a progress event carries the photo, the request, the motion's label and the accepted worst case", () => {
+    const parsed = JobProgress.safeParse(progress({ phase: "recovering", ...facts }));
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.kind === "clip" ? parsed.data.acceptedWorstMicros : null).toBe(510_000);
+  });
+
+  test("a job state of an older engine, without the facts, still parses", () => {
+    expect(JobState.safeParse(state()).success).toBe(true);
+  });
+
+  test("a job state in the snapshot carries the same facts", () => {
+    expect(JobState.safeParse(state({ phase: "recovering", ...facts })).success).toBe(true);
+  });
+
+  test("an event on the wire carries the facts", () => {
+    expect(EventMessage.safeParse(event("job.progress", progress({ ...facts }))).success).toBe(true);
+  });
+
+  test("the motion carries its source and label, not the English prompt text", () => {
+    expect(JobProgress.safeParse(progress({ ...facts, motion: { ...facts.motion, text: "she slowly blinks" } })).success).toBe(false);
+  });
+
+  test("a request or an amount the contract does not know is refused", () => {
+    expect(JobProgress.safeParse(progress({ ...facts, request: { ...facts.request, seconds: 7 } })).success).toBe(false);
+    expect(JobProgress.safeParse(progress({ ...facts, acceptedWorstMicros: -1 })).success).toBe(false);
+    expect(JobProgress.safeParse(progress({ ...facts, acceptedWorstMicros: 0.5 })).success).toBe(false);
+  });
+});

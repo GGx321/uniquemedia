@@ -347,12 +347,24 @@ export const CLIP_JOB_STEPS = 4;
 /** A clip job's identity, in every event it sends. The clip's id is the job's id's twin: the journal, the record, the ledger ids and the job agree on it. */
 export const clipJobRef = { kind: z.literal("clip"), jobId: Id, avatarId: Id, clipId: Id };
 
-/** What a running clip job adds to its identity: the phase, and in `rendering` the model and the submit time, in `proving` the end of the proof window. */
+/** The motion a clip job shows on its tile: the source and the Russian label. The English prompt text is the engine's, never the window's. */
+export const ClipJobMotion = ClipMotion.pick({ source: true, label: true });
+export type ClipJobMotion = z.infer<typeof ClipJobMotion>;
+
+/**
+ * What a running clip job adds to its identity: the phase, and in `rendering` the model and the submit time, in `proving` the end of the proof window.
+ * (S5.V8b) A create job also carries the facts its tile shows, taken from the journal's `requested` line: the photo, the request, the motion's label and the worst case the owner accepted,
+ * so a window that first sees the job (after a restart, or a reload) draws it whole. An export job carries none of them; an older engine's job carries none either.
+ */
 export const clipJobFields = {
   phase: ClipPhase,
   model: ClipAttemptModel.optional(),
   submittedAt: IsoDateTime.optional(),
   proveUntil: IsoDateTime.optional(),
+  photoId: Id.optional(),
+  request: ClipRequest.optional(),
+  motion: ClipJobMotion.optional(),
+  acceptedWorstMicros: Micros.optional(),
 };
 
 /** A finished clip job. An export job's result also names where the copy went. The renderer takes the job's avatar from `avatarId`. */
