@@ -248,3 +248,40 @@ describe("the facts a clip job carries", () => {
     expect(JobProgress.safeParse(progress({ ...facts, acceptedWorstMicros: 0.5 })).success).toBe(false);
   });
 });
+
+// S5.V8b follow-up: the four create facts come together or not at all; the open reserve is its own fact, told wherever the ledger holds one open.
+describe("the facts of a clip job, together and apart", () => {
+  const facts = {
+    photoId: "photo-aaaa-0001",
+    request: { model: "kling", quality: "std", seconds: 5, fallback: "auto" },
+    motion: { source: "code", label: "Моргает и улыбается" },
+    acceptedWorstMicros: 850_000,
+  };
+
+  test.each(["photoId", "request", "motion", "acceptedWorstMicros"] as const)("a progress event with `%s` missing from the four is refused", (missing) => {
+    const { [missing]: _gone, ...rest } = facts;
+    expect(JobProgress.safeParse(progress(rest)).success).toBe(false);
+  });
+
+  test.each(["photoId", "request", "motion", "acceptedWorstMicros"] as const)("a job state with `%s` missing from the four is refused", (missing) => {
+    const { [missing]: _gone, ...rest } = facts;
+    expect(JobState.safeParse(state(rest)).success).toBe(false);
+  });
+
+  test("all four present, or none, parse", () => {
+    expect(JobProgress.safeParse(progress(facts)).success).toBe(true);
+    expect(JobProgress.safeParse(progress()).success).toBe(true);
+    expect(JobState.safeParse(state(facts)).success).toBe(true);
+  });
+
+  test("the open reserve is told alone, with the four or without them", () => {
+    expect(JobProgress.safeParse(progress({ openReserveMicros: 504_000 })).success).toBe(true);
+    expect(JobProgress.safeParse(progress({ ...facts, openReserveMicros: 504_000 })).success).toBe(true);
+    expect(JobState.safeParse(state({ openReserveMicros: 504_000 })).success).toBe(true);
+  });
+
+  test("the open reserve is a whole number of micro-dollars, never negative", () => {
+    expect(JobProgress.safeParse(progress({ openReserveMicros: -1 })).success).toBe(false);
+    expect(JobProgress.safeParse(progress({ openReserveMicros: 0.5 })).success).toBe(false);
+  });
+});

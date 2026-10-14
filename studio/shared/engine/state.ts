@@ -2,7 +2,7 @@ import { z } from "zod";
 import { AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
 import { AvatarBody, BodyProposal } from "./body";
 import { CategoryName, CategoryRef, LegsShare, MAX_RUN_CATEGORIES, PhotoCategory, SceneCategory, SceneLevel, SceneRoute } from "./categories";
-import { clipJobFields, clipJobRef, ClipJobResult } from "./clips";
+import { CLIP_FACTS_TOGETHER, clipFactsTogether, clipJobFields, clipJobRef, ClipJobResult } from "./clips";
 import { EngineError, ExportUnavailableReason, SceneReason } from "./errors";
 import { Estimate, PriceSource } from "./estimate";
 import { ImageQuality } from "./imageModels";
@@ -531,6 +531,7 @@ export const JobProgress = z
     z.strictObject({ ...clipJobRef, ...progressCounts, ...clipJobFields }),
   ])
   .refine(doneWithinTotal.check, doneWithinTotal.params)
+  .refine((p) => p.kind !== "clip" || clipFactsTogether(p), { ...CLIP_FACTS_TOGETHER, path: ["photoId"] })
   .refine((p) => p.kind !== "clip" || p.proveUntil === undefined || p.phase === "proving", {
     message: "the end of the proof window belongs to the proving phase",
     path: ["proveUntil"],
@@ -809,6 +810,7 @@ export const JobState = z
     }),
   ])
   .refine(doneWithinTotal.check, doneWithinTotal.params)
+  .refine((j) => j.kind !== "clip" || clipFactsTogether(j), { ...CLIP_FACTS_TOGETHER, path: ["photoId"] })
   .refine((j) => j.kind !== "clip" || j.proveUntil === undefined || j.phase === "proving", {
     message: "the end of the proof window belongs to the proving phase",
     path: ["proveUntil"],
