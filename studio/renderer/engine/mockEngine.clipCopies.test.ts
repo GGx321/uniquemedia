@@ -234,6 +234,15 @@ describe("media.importClip: the job fails or is cancelled", () => {
     expect(typeof (await importCopy(m, clipId))).toBe("string");
   });
 
+  test("a restart drops the running import with its record, and the clip is free again", async () => {
+    const m = makeCopyMock();
+    const clipId = await readyClip(m);
+    await startImport(m, clipId);
+    m.engine.restart();
+    expect(await mediaOf(m)).toEqual([]);
+    expect(typeof (await importCopy(m, clipId))).toBe("string");
+  });
+
   test("the snapshot lists the import job with its origin while it runs and when it is done", async () => {
     const m = makeCopyMock();
     const clipId = await readyClip(m);
