@@ -45,7 +45,7 @@ export function refusedJobProblems(calls: readonly VideoCall[], jobId: string): 
   if (!mine.some((c) => c.kind === "poll")) problems.push("the refused job was never polled");
   const readings = mine.filter((c) => c.kind === "generation");
   for (const reading of readings) if (reading.status !== 404) problems.push(`the refused job had a /generation answer of ${reading.status}, not 404`);
-  if (readings.length === 1) problems.push("the refused job was read on /generation once: the proof needs two readings");
+  if (readings.length < 2) problems.push(`the refused job was read on /generation ${readings.length === 1 ? "once" : `${readings.length} times`}: the proof needs two readings`);
   if (mine.some((c) => c.kind === "content")) problems.push("the file of the refused job was asked for");
   return problems;
 }

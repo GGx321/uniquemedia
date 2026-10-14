@@ -45,6 +45,7 @@ describe("refusedJobProblems: a refused job is free and ends there", () => {
     expect(refusedJobProblems([call("poll", "j1", 200), call("generation", "j1", 404), call("generation", "j1", 200)], "j1")).toEqual(["the refused job had a /generation answer of 200, not 404"]);
     expect(refusedJobProblems([call("poll", "j1", 200), call("generation", "j1", 404)], "j1")).toEqual(["the refused job was read on /generation once: the proof needs two readings"]);
     expect(refusedJobProblems([call("poll", "j1", 200), call("generation", "j1", 404), call("generation", "j1", 404), call("content", "j1", 404)], "j1")).toEqual(["the file of the refused job was asked for"]);
+    expect(refusedJobProblems([call("poll", "j1", 200)], "j1")).toEqual(["the refused job was read on /generation 0 times: the proof needs two readings"]);
     expect(refusedJobProblems([call("generation", "j1", 404), call("generation", "j1", 404)], "j1")).toEqual(["the refused job was never polled"]);
   });
 });
