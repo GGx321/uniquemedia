@@ -19,14 +19,27 @@ const RESTART_WAIT_MS = 5 * 60_000;
 function useReconcileWait(view: EngineView): number | null {
   const at = view.money?.ledger === "open" && view.money.reconcileAvailableAt !== undefined ? Date.parse(view.money.reconcileAvailableAt) : null;
   const [, setPassed] = useState(0);
-  // The clock is read on every render (the engine dates by the same clock); the timer only draws the banner again when that time comes.
+  // The clock is read on every render (the engine dates by the same clock); the effect only draws the banner again when that time may have come.
   const ahead = at !== null && at > Date.now();
   useEffect(() => {
     if (at === null) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // A timer that fires while the date is still ahead (a clock set back, a drifting timer) is armed again; the page coming back to the front looks at the clock too (a sleep stops timers).
+    const check = (): void => {
+      clearTimeout(timer);
+      setPassed((n) => n + 1);
+      const wait = at - Date.now();
+      if (wait > 0) timer = setTimeout(check, Math.min(wait + 50, 2 ** 31 - 1));
+    };
     const wait = at - Date.now();
-    if (wait <= 0) return;
-    const timer = setTimeout(() => setPassed((n) => n + 1), Math.min(wait + 50, 2 ** 31 - 1));
-    return () => clearTimeout(timer);
+    if (wait > 0) timer = setTimeout(check, Math.min(wait + 50, 2 ** 31 - 1));
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+    };
   }, [at]);
   return ahead ? at : null;
 }

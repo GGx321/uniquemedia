@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
+import { act, render, screen } from "@testing-library/react";
 import type { MoneyStatus, Settings } from "../../shared/engine";
 import { CLIP_RESTART_BANNER, clipReconcileWaitText } from "../../shared/engine/clipRestartTexts";
 import type { EngineView, JobView } from "../engine/store";
@@ -133,5 +133,59 @@ describe("«Нужна сверка расходов» while the reconcile canno
   test("a clip reserve that is only held stops no paid work, so there is no banner (I5.48: not a reconcile reason)", () => {
     show(view(money({ reconcileNeeded: false, availableInMs: 30 * MINUTE })));
     expect(screen.queryByText("Нужна сверка расходов") === null).toBe(true);
+  });
+});
+
+// The button comes back when the engine's date is reached. Nothing tells the window (the quiet rule moves no event), so the banner watches the clock itself: a timer for the date, armed
+// again if it fires early (a clock set back, a timer that drifted), and a look at the clock when the window comes back to the front (a sleep, a hidden tab).
+describe("«Перейти к сверке» comes back when the time has come", () => {
+  const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+  afterEach(() => setSystemTime());
+
+  test("the button appears by itself after the date is crossed", async () => {
+    show(view(money({ reconcileNeeded: true, availableInMs: 120 })));
+    expect(goReconcile() === null).toBe(true);
+    await act(async () => {
+      await sleep(320);
+    });
+    expect(goReconcile()).not.toBeNull();
+  });
+
+  test("a timer that fires while the clock is still short of the date is armed again, and the button comes later", async () => {
+    const date = Date.now() + 150;
+    show(view(money({ reconcileNeeded: true, availableInMs: 150 })));
+    // The clock is set back (and stands there: a set system time does not tick) 300 ms after the timer was armed: when the timer fires, about 200 ms on, the date is still ahead.
+    setSystemTime(new Date(Date.now() - 300));
+    await act(async () => {
+      await sleep(260);
+    });
+    expect(goReconcile() === null).toBe(true);
+    // The clock is put right with no event; only the timer armed again can draw the banner.
+    setSystemTime(new Date(date + 1_000));
+    expect(goReconcile() === null).toBe(true);
+    await act(async () => {
+      await sleep(700);
+    });
+    expect(goReconcile()).not.toBeNull();
+  });
+
+  test("the window coming to the front after the date has passed shows the button at once", async () => {
+    show(view(money({ reconcileNeeded: true, availableInMs: 10 * MINUTE })));
+    expect(goReconcile() === null).toBe(true);
+    // The machine slept: the clock is past the date, and no timer has fired.
+    setSystemTime(new Date(Date.now() + 11 * MINUTE));
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(goReconcile()).not.toBeNull();
+  });
+
+  test("the page becoming visible again after the date has passed shows the button at once", async () => {
+    show(view(money({ reconcileNeeded: true, availableInMs: 10 * MINUTE })));
+    setSystemTime(new Date(Date.now() + 11 * MINUTE));
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(goReconcile()).not.toBeNull();
   });
 });
