@@ -44,7 +44,7 @@ const faceCover = (): string => {
 
 const FRIEND = "Handheld steadily by a friend at the same distance the whole time; the framing barely moves.";
 
-/** The Kling camera lines: plan §5.5's, except the selfie and friend lines, which the C3 polish (2026-10-14) rewrote; those are new and unproven until re-checked. */
+/** The Kling camera lines: plan §5.5's, except the selfie and friend lines, which the C3 polish (2026-10-14) rewrote; those were re-checked 2026-10-14 (paid re-check R1–R3; owner: better); low-feet has the same wording as FRIEND and was re-checked through it. */
 const SELFIE = "A selfie at arm's length: the view stays at that same distance from her and the framing never changes; one arm leaves the frame at its edge the whole time.";
 const KLING_LINES: Readonly<Record<ClipCapture, string>> = {
   prone: SELFIE,
