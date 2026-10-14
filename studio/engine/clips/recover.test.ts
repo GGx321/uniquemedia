@@ -96,6 +96,8 @@ interface Options {
   /** Called by `isActive` (it answers `active`): lets a test change the world in the middle of step 1. */
   onIsActive?: (clipId: string) => void;
   generation?: GenerationResult;
+  /** How the old process already closed an attempt in the ledger (a settle it wrote before it stopped). */
+  closes?: Record<string, { type: "settle"; costMicros: number; estimated: boolean } | { type: "release"; reason: string }>;
 }
 
 function rig(options: Options = {}) {
@@ -145,7 +147,7 @@ function rig(options: Options = {}) {
         const found = (options.reserves ?? []).find((r) => r.attemptId === id);
         return found === undefined ? undefined : { ...found, worstMicros: 504_000 };
       },
-      closeOf: () => undefined,
+      closeOf: (id) => options.closes?.[id],
     }),
     jobs,
     emit: (event) => void events.push(event),
@@ -395,6 +397,41 @@ describe("a submitted attempt with no `ended` line", () => {
     expect((await recordOf()).provider.attempts[0]).toMatchObject({ outcome: "refused", costSource: "none" });
     expect(r.held.get(KLING)).toBe(T0 + 5 * MIN + 2 * MIN);
     expect(r.calls.download).toEqual([]);
+  });
+
+  // VR item 3: the old process proved the refusal and wrote `settle` before it stopped, but not the journal's `ended` line. The record takes its reason from that settle, and recovery writes no ledger line.
+  describe("whose job failed for a content reason, and the old process already settled it in the ledger", () => {
+    const refusal = () => status("failed", { contentFailure: true, error: "risk control" });
+
+    test("a settle of 0 is `refused-free`", async () => {
+      await writeLines(CLIP, [requested(), submitted(KLING, T0 + 1_000)]);
+      await recover(rig({ poll: refusal, closes: { [KLING]: { type: "settle", costMicros: 0, estimated: false } } }));
+      expect((await recordOf()).outcome).toEqual({ status: "failed", reason: "refused-free" });
+    });
+
+    test("a settle at the worst case (estimated) is `refused-unknown`", async () => {
+      await writeLines(CLIP, [requested(), submitted(KLING, T0 + 1_000)]);
+      await recover(rig({ poll: refusal, closes: { [KLING]: { type: "settle", costMicros: 504_000, estimated: true } } }));
+      expect((await recordOf()).outcome).toEqual({ status: "failed", reason: "refused-unknown" });
+    });
+
+    test("a settle above 0 that is not an estimate is `refused-paid`", async () => {
+      await writeLines(CLIP, [requested(), submitted(KLING, T0 + 1_000)]);
+      await recover(rig({ poll: refusal, closes: { [KLING]: { type: "settle", costMicros: 420_000, estimated: false } } }));
+      expect((await recordOf()).outcome).toEqual({ status: "failed", reason: "refused-paid" });
+    });
+
+    test("a reserve still open is `refused-unknown`, as before: the reconcile will settle it at worst", async () => {
+      await writeLines(CLIP, [requested(), submitted(KLING, T0 + 1_000)]);
+      await recover(rig({ poll: refusal, reserves: [{ attemptId: KLING, at: iso(T0) }] }));
+      expect((await recordOf()).outcome).toEqual({ status: "failed", reason: "refused-unknown" });
+    });
+
+    test("a failure that is not a content refusal stays `provider-error` whatever the settle says, as the live path records it", async () => {
+      await writeLines(CLIP, [requested(), submitted(KLING, T0 + 1_000)]);
+      await recover(rig({ poll: () => status("failed"), closes: { [KLING]: { type: "settle", costMicros: 0, estimated: false } } }));
+      expect((await recordOf()).outcome).toEqual({ status: "failed", reason: "provider-error" });
+    });
   });
 
   test.each([

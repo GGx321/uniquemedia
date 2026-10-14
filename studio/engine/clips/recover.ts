@@ -47,6 +47,8 @@ import { validateClipFile, type ClipColour } from "./validate";
 export interface RecoveryLedger extends ClipReserveLedger {
   openReserves(): readonly { attemptId: string; at: string }[];
   reserveOf(attemptId: string): { attemptId: string; at: string; worstMicros: number } | undefined;
+  /** How an attempt was closed: a settle (with what it settled and whether that was an estimate) or a release. Read-only, like the rest: recovery never writes a line. */
+  closeOf(attemptId: string): { readonly type: "settle"; readonly costMicros: number; readonly estimated: boolean } | { readonly type: "release" } | undefined;
 }
 
 /** The part of the library a recovery reads: the avatars and where their folders are. */
@@ -608,7 +610,18 @@ class Recovery {
     }
     const outcome = status.contentFailure ? "refused" : status.status === "cancelled" ? "cancelled" : status.status === "expired" ? "expired" : "failed";
     await this.journal.ended({ attemptId: plan.attemptId, status: outcome, costSource: "none", at: iso(atMs) });
-    return this.recordFailure(outcome === "refused" ? "refused-unknown" : "provider-error", plan.model, { attemptId: plan.attemptId, outcome });
+    return this.recordFailure(outcome === "refused" ? this.refusalReason(plan.attemptId) : "provider-error", plan.model, { attemptId: plan.attemptId, outcome });
+  }
+
+  /**
+   * The reason of a content refusal. When the old process already settled the attempt (the proof passed and `settle` was written, then it stopped before the journal's `ended` line), the reason comes from
+   * that settle: 0 is `refused-free`, an estimate is `refused-unknown`, a bill is `refused-paid`. With the reserve still open, nothing proved it free and the reconcile will settle it at worst. Read-only (I5.49).
+   */
+  private refusalReason(attemptId: string): ClipFailReason {
+    const close = this.host.ledger()?.closeOf(attemptId);
+    if (close?.type !== "settle") return "refused-unknown";
+    if (close.estimated) return "refused-unknown";
+    return close.costMicros === 0 ? "refused-free" : "refused-paid";
   }
 
   /** The provider's own number, for information only: the poll's usage, else one `/generation` read of this job's own record. */

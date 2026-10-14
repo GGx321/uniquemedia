@@ -577,6 +577,13 @@ export class MockClips {
     this.#exportStates.set(`${clipId}:${index}`, state);
   }
 
+  /** Test-only: the reserve of `attemptId` is settled, nothing else (no journal line, no record), as a process that stopped between the ledger's `settle` and the journal's `ended` leaves it. */
+  settleBeforeCrash(attemptId: string, bill: { costMicros: number; estimated: boolean }): void {
+    const line = this.#lines.find((l) => l.attemptId === attemptId && l.state === "open");
+    if (line === undefined) throw new Error(`no open reserve for ${attemptId}`);
+    this.#settle(line, bill.costMicros, bill.estimated);
+  }
+
   passTime(ms: number): void {
     this.#host.setClockAtLeast(this.#host.clockMs() + ms);
     let changed = false;
@@ -1772,7 +1779,10 @@ export class MockClips {
       }
       const content = attemptFate === "refused-free" || attemptFate === "refused-paid" || attemptFate === "refused-unknown" || attemptFate === "refused-uncounted";
       this.#journal(clipId, { type: "ended", attemptId: plan.attemptId, status: content ? "refused" : "failed", costSource: "none", at: iso(host.clockMs()) });
-      commit(plan.model, { status: "failed", reason: content ? "refused-unknown" : "provider-error" }, attemptsOf({ attemptId: plan.attemptId, outcome: content ? "refused" : "failed" }));
+      // engine/clips/recover.ts `refusalReason`: a refusal the old process had already settled takes its reason from that settle; an open reserve is for the reconcile to settle at worst.
+      const settled = this.#lines.find((l) => l.attemptId === plan.attemptId && l.state === "settled");
+      const refusal: ClipFailReason = settled === undefined || settled.estimated ? "refused-unknown" : settled.costMicros === 0 ? "refused-free" : "refused-paid";
+      commit(plan.model, { status: "failed", reason: content ? refusal : "provider-error" }, attemptsOf({ attemptId: plan.attemptId, outcome: content ? "refused" : "failed" }));
     });
   }
 }

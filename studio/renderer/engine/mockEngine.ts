@@ -1613,6 +1613,11 @@ export class MockEngine implements EngineBridge {
     this.clips.leaveStaleJournal(clipId);
   }
 
+  /** The engine settled a clip's attempt in the ledger and stopped before the journal's `ended` line (engine/clips/attempt.ts: `settle`, then `journal.ended`). Call it, then `restart()`. */
+  settleClipReserveBeforeCrash(attemptId: string, bill: { costMicros: number; estimated: boolean }): void {
+    this.clips.settleBeforeCrash(attemptId, bill);
+  }
+
   /** What a clip's n-th export reads in `clips.get` (the owner deleted the file in Finder, replaced it...). */
   tamperClipExport(clipId: string, index: number, state: FileState): void {
     this.clips.tamperExport(clipId, index, state);

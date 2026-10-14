@@ -326,3 +326,44 @@ describe("a journal whose attempt ended at the POST (VR item 2)", () => {
     expect(mock).toEqual({ kind: "fail", reason, model: "kling" });
   });
 });
+
+// VR item 3 (engine/clips/recover.ts `refusalReason`): the old process settled the refused attempt in the ledger and stopped before the journal's `ended` line. The recovery takes the record's reason
+// from that settle, and writes no ledger line of its own.
+describe("a content refusal the old process had already settled when it stopped (VR item 3)", () => {
+  async function restartedAfterSettle(bill: { costMicros: number; estimated: boolean }) {
+    const m = makeClipMock();
+    m.engine.scriptNextClip("refused-free");
+    const { jobId } = await unwrap(create(m, { fallback: "none", acceptedWorstMicros: 504_000 }));
+    stepUntil(m, "proving", jobId);
+    m.engine.settleClipReserveBeforeCrash(`${jobId}:video#1`, bill);
+    m.engine.restart();
+    m.scheduler.runAll();
+    return { m, jobId };
+  }
+
+  test("a settle of 0 is recorded `refused-free`: nothing is left for the reconcile", async () => {
+    const { m } = await restartedAfterSettle({ costMicros: 0, estimated: false });
+    expect(await onlyClip(m)).toMatchObject({ status: "failed", failure: { reason: "refused-free" }, recovered: true, cost: { micros: 0, kind: "free" } });
+    expect(await money(m)).toMatchObject({ unsettledMicros: 0, reconcileNeeded: false });
+  });
+
+  test("a settle at the worst case is recorded `refused-unknown`", async () => {
+    const { m } = await restartedAfterSettle({ costMicros: 504_000, estimated: true });
+    expect(await onlyClip(m)).toMatchObject({ status: "failed", failure: { reason: "refused-unknown" }, cost: { micros: 504_000, kind: "estimated" } });
+  });
+
+  test("a settle of what the provider billed is recorded `refused-paid`", async () => {
+    const { m } = await restartedAfterSettle({ costMicros: 420_000, estimated: false });
+    expect(await onlyClip(m)).toMatchObject({ status: "failed", failure: { reason: "refused-paid" }, cost: { micros: 420_000, kind: "billed" } });
+  });
+
+  test("with the reserve still open the record stays `refused-unknown`, for the reconcile to settle at worst", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextClip("refused-free");
+    const { jobId } = await unwrap(create(m, { fallback: "none", acceptedWorstMicros: 504_000 }));
+    stepUntil(m, "proving", jobId);
+    m.engine.restart();
+    m.scheduler.runAll();
+    expect(await onlyClip(m)).toMatchObject({ status: "failed", failure: { reason: "refused-unknown" } });
+  });
+});
