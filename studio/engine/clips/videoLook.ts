@@ -5,7 +5,10 @@ import { FACE_COVER, captureLineOf } from "../scenes/phoneLook";
 // Stage 5, 5b.1, S5.V5 (plan s5b1 §5.5, I5.51): the video look. Every line a clip prompt carries lives here and nowhere else (I5.1, one module per medium; the photo's
 // lines are engine/scenes/phoneLook.ts). The prompt builder (prompt.ts) only places them.
 //
-// Where each line comes from (the probes that worked; a line marked «new» is unproven, and canary C3 judges it):
+// Where each line comes from (the probes that worked). A line marked «new» had no probe of its own. Canary C3 (2026-10-14, five clips K1–K5) judged the lines its clips
+// ran; its results and the owner's verdicts are in docs/studio/2026-10-10-stage-5-plan.md §30.8. After it the selfie and friend lines were rewritten (the C3 polish) and
+// re-checked the same day (paid re-check R1–R3; owner: better). The pov-legs camera line has never run on a real first-person photo in a paid clip: C3 K1's first frame
+// was an old pre-C3′ pov-legs photo, really a selfie from above (S5.WP1 gives such a photo the unknown line):
 // - the camera lines are the probes' own (lifevid A, B2 and C; spike B's K01, K02, K09; Grok's G04) or echo the photo's capture line of the same capture
 //   (phoneLook FIXED_CAPTURE_LINE): pov-legs is main's photo line (the C3′ winner) turned to video, without «phone» and without «at her eye level», the wording that
 //   failed in C3′; mirror-hidden says the photo's FACE_COVER, imported, so the clip hides her face exactly as the photo did;
