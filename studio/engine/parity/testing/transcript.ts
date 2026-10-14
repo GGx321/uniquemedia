@@ -220,9 +220,106 @@ function avatarLine(avatar: unknown): Record<string, unknown> {
   };
 }
 
+/**
+ * Stage 5 (5b.1, S5.V7): a clip job's progress, as both engines are bound to tell it. A create's phases and steps are the contract (preparing 0, submitting 0, rendering 0, proving 0,
+ * downloading 1, checking 2, saving 3), so they are written exactly; the clock (`submittedAt`, `proveUntil`) is masked. An export counts the frames ffmpeg has written, which the mock cannot
+ * know (it plays a few steps): it is written by where it stands (the start, somewhere between, the end), and a run of «between» is one line (`Transcript.lines`).
+ */
+function clipProgressLine(p: Extract<EventMessage, { type: "job.progress" }>["payload"] & { kind: "clip" }, norm: Normalizer): string {
+  const ids = { kind: p.kind, jobId: p.jobId, avatarId: p.avatarId, clipId: p.clipId };
+  if (p.phase === "exporting") {
+    const progress = p.done === 0 ? "zero" : p.done >= p.total ? "total" : "mid";
+    return `event job.progress ${compact(norm.value({ ...ids, total: "<frames>", phase: p.phase, progress }))}`;
+  }
+  const line = {
+    ...ids,
+    total: p.total,
+    phase: p.phase,
+    done: p.done,
+    ...(p.model === undefined ? {} : { model: p.model }),
+    ...(p.submittedAt === undefined ? {} : { submittedAt: "<set>" }),
+    ...(p.proveUntil === undefined ? {} : { proveUntil: "<set>" }),
+  };
+  return `event job.progress ${compact(norm.value(line))}`;
+}
+
+/** An estimate as `[expected, worst]`: the figures are the same prices in both engines; the day they were read on is a clock. */
+function figures(estimate: unknown): [unknown, unknown] {
+  const e = objectOf(estimate);
+  return [e.expectedMicros, e.worstMicros];
+}
+
+/** `clips.options` for a suitable photo: the motions, the sheet's twelve figures, where the prices came from, the engine's mode and the month's fit. An unsuitable one is a photo and a reason, written as it is. */
+function clipOptionsLine(result: Record<string, unknown>, norm: Normalizer): string {
+  if (result.suitable !== true) return `< ok ${compact(norm.value(result))}`;
+  const priced = (set: unknown): Record<string, unknown> => Object.fromEntries(Object.entries(objectOf(set)).map(([key, estimate]) => [key, figures(estimate)]));
+  const prices = objectOf(result.prices);
+  const motions = (Array.isArray(result.motions) ? result.motions : []).map((m) => {
+    const { id, source, label, text } = objectOf(m);
+    return { id, source, label, text };
+  });
+  return `< ok ${compact(
+    norm.value({
+      suitable: true,
+      photoId: result.photoId,
+      motions,
+      fallback: result.fallback,
+      bold: result.bold,
+      source: objectOf(prices.std5).prices,
+      prices: priced(prices),
+      noFallbackPrices: priced(result.noFallbackPrices),
+      monthFits: result.monthFits,
+    }),
+  )}`;
+}
+
+/** A clip as a list and a read tell it: the facts both engines are bound to, less the clock, the byte sizes, the frames and the file's exact length. */
+function clipFacts(clip: unknown, norm: Normalizer): Record<string, unknown> {
+  const c = objectOf(clip);
+  const motion = objectOf(c.motion);
+  const exports = (Array.isArray(c.exports) ? c.exports : []).map((line) => {
+    const e = objectOf(line);
+    return { rootId: norm.register("root", String(e.rootId)), relPath: e.relPath, profile: e.profile, ...(e.fileState === undefined ? {} : { fileState: e.fileState }) };
+  });
+  const base = {
+    clipId: c.clipId,
+    photoId: c.photoId,
+    status: c.status,
+    seen: c.seen,
+    motion: { source: motion.source, label: motion.label, text: motion.text },
+    request: c.request,
+    model: c.model,
+    fallback: c.fallback,
+    recovered: c.recovered,
+    cost: c.cost,
+    ...(c.providerCostMicros === undefined ? {} : { providerCostMicros: c.providerCostMicros }),
+    exports,
+  };
+  if (c.status === "ready") {
+    const face = objectOf(c.face);
+    // A verdict needs at least three frames with one face; how many the sampler found is the file's and ffmpeg's. A skipped check says how many it had.
+    const told = { verdict: face.verdict, ...(face.p75 === undefined ? {} : { p75: face.p75 }), frames: face.verdict === "skipped" ? face.frames : "enough", ...(face.why === undefined ? {} : { why: face.why }) };
+    return { ...base, width: c.width, height: c.height, seconds: Math.round(Number(c.durationMs) / 1000), face: told };
+  }
+  const failure = objectOf(c.failure);
+  return {
+    ...base,
+    failure: { reason: failure.reason, ...(failure.grokOffer === undefined ? {} : { grokOffer: figures(failure.grokOffer) }) },
+    ...(c.retryDownloadUntil === undefined ? {} : { retryDownloadUntil: "<set>" }),
+  };
+}
+
+function clipsLine(type: "clips.list" | "clips.get", result: Record<string, unknown>, norm: Normalizer): string {
+  if (type === "clips.get") return `< ok ${compact(norm.value({ clip: clipFacts(result.clip, norm) }))}`;
+  const clips = (Array.isArray(result.clips) ? result.clips : []).map((clip) => clipFacts(clip, norm));
+  return `< ok ${compact(norm.value({ clips, ...(result.notListedTotal === undefined ? {} : { notListedTotal: result.notListedTotal }) }))}`;
+}
+
 /** One event as a line of the transcript, or null for an event the suite is not about. */
 export function eventLine(event: EventMessage, norm: Normalizer): string | null {
   if (!COVERED_EVENTS.has(event.type)) return null;
+  // Stage 5 (5b.1, S5.V7): a clip's progress is told by its own phase, which the generic line would overwrite with `start` or `mid`.
+  if (event.type === "job.progress" && event.payload.kind === "clip") return clipProgressLine(event.payload, norm);
   if (event.type === "job.progress") {
     const p = objectOf(event.payload);
     const done = typeof p.done === "number" ? p.done : -1;
@@ -382,13 +479,14 @@ function autopilotBrief(result: Record<string, unknown>): Record<string, unknown
  */
 export function answerLine(type: string, answer: Answer, norm: Normalizer, running: boolean | "brief" | "card" = false): string {
   if (!answer.ok) {
-    const { code, detail, issues, exportReason, musicReason, captionIssue, photoReason, categoryReason, sceneReason, sceneId, launchReason, descriptorReason, descriptorWords, portraitReason } = answer.error;
+    const { code, detail, issues, exportReason, musicReason, captionIssue, photoReason, categoryReason, sceneReason, sceneId, launchReason, descriptorReason, descriptorWords, portraitReason, clipReason, priceScope } = answer.error;
     // The transport's VALIDATION text is the engine's or the client's own words: only its code is compared. A music error's
     // detail names times of the rig's own clock: its code and its cause are compared.
     // S4.8 (`running`): a launch's refusals say sums and sentences of the engine's own (the remaining worst case, the key's state); the code and the reason are the contract.
     // S4.6p: a launch the price is asked for is told in each engine's own words (which launch, which avatar); its code is the contract.
     // S4.10 fix D: an IN_FLIGHT given to a command sent while a launch runs names the job in each engine's own words; its code is the contract.
-    const text = code === "VALIDATION" || (running !== false && code === "IN_FLIGHT") || code.startsWith("MUSIC_") || (running && type.startsWith("autopilot.")) || type === "runs.estimateImages" || (code === "PRICE_CHANGED" && (type === "avatars.checkDescriptor" || type === "avatars.generatePortraits" || type === "scenes.write")) ? undefined : detail;
+    // Stage 5 (5b.1, S5.V7): a clip's refusal is told by its code and its `clipReason` (or `priceScope`); the sums and sentences around them are each engine's own words.
+    const text = code === "VALIDATION" || clipReason !== undefined || type.startsWith("clips.") || (running !== false && code === "IN_FLIGHT") || code.startsWith("MUSIC_") || (running && type.startsWith("autopilot.")) || type === "runs.estimateImages" || (code === "PRICE_CHANGED" && (type === "avatars.checkDescriptor" || type === "avatars.generatePortraits" || type === "scenes.write")) ? undefined : detail;
     return `< error ${code} ${compact(
       norm.value({
         ...(text === undefined ? {} : { detail: text }),
@@ -405,8 +503,24 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer, runni
         ...(descriptorWords === undefined ? {} : { descriptorWords }),
         // Stage 5 (S5.3c): written only when set, so every older line stays as it was.
         ...(portraitReason === undefined ? {} : { portraitReason }),
+        // Stage 5 (5b.1, S5.V7): the same.
+        ...(clipReason === undefined ? {} : { clipReason }),
+        ...(priceScope === undefined ? {} : { priceScope }),
       }),
     )}`;
+  }
+  if (type === "clips.options") return clipOptionsLine(answer.result, norm);
+  if (type === "clips.list" || type === "clips.get") return clipsLine(type, answer.result, norm);
+  if (type === "money.status") {
+    // The month, the budget and the clock are each rig's own; what a clip's money makes of the status is the contract: whether a reconcile is needed and why, whether it is held (never until when),
+    // and the sums, which are integer micro-dollars from the same prices.
+    const s = answer.result;
+    return `< ok ${compact({ reconcileNeeded: s.reconcileNeeded, reconcileReasons: s.reconcileReasons, held: s.reconcileAvailableAt !== undefined, spentMicros: s.spentMicros, unsettledMicros: s.unsettledMicros, unsettledCount: s.unsettledCount })}`;
+  }
+  if (type === "money.reconcile") {
+    // The credits' own figures are the fake account's: the status and what the reconcile closed are the contract; how long a too-early answer asks to wait is a clock.
+    const r = answer.result;
+    return `< ok ${compact(r.status === "done" ? { status: r.status, closedReserves: r.closedReserves } : { status: r.status })}`;
   }
   if (type === "avatars.editDescriptor" || type === "avatars.setBody" || type === "avatars.dismissBodyProposal") {
     // Stage 5 (S5.0a): the avatar's text is what the owner sent, folded, and its age: the same in both engines. The rest of the summary is `avatarLine`'s (S5.2a: its body and proposal included,
@@ -623,6 +737,15 @@ export class Transcript {
     this.#seen = rig.events().length;
   }
 
+  /** The last steps each clip job reported. */
+  readonly #clipSteps = new Map<string, number>();
+
+  #checkClipProgress(p: { jobId: string; done: number; total: number }): void {
+    const before = this.#clipSteps.get(p.jobId) ?? 0;
+    if (p.done < before || p.done > p.total) throw new Error(`clip job ${this.norm.text(p.jobId)} reported ${p.done} of ${p.total} steps after ${before}: a clip's steps never go back and never pass the total`);
+    this.#clipSteps.set(p.jobId, p.done);
+  }
+
   /** The events that came since the last look, in order. */
   #drain(): void {
     const all = this.#rig.events();
@@ -637,6 +760,9 @@ export class Transcript {
         this.#importProgress.check(event.payload);
         if (event.payload.queued === true) this.#queued.push(String(objectOf(this.norm.value({ jobId: event.payload.jobId })).jobId));
       }
+      // A clip's numbers are told by where they stand (an export) or are the contract (a create's steps); the rule they must satisfy is checked here, on both engines: the steps never go back
+      // and never pass the total.
+      if (event.type === "job.progress" && event.payload.kind === "clip") this.#checkClipProgress(event.payload);
       const line = eventLine(event, this.norm);
       if (line !== null) this.#lines.push(line);
     }
@@ -728,6 +854,46 @@ export class Transcript {
     }
     this.#seen = this.#rig.events().length;
     this.#lines.push("# the run ended");
+  }
+
+  /**
+   * Stage 5 (5b.1, S5.V7): lets the rig move a little at a time until `done` holds, and no further: the real engine gets a few milliseconds, the mock its next task. A clip's story waits on the
+   * condition it is about (a phase, the end of a job, the hold's end), never on a count of settles or a sleep, so a slow machine tells the same story. `ms` of wall time fail the scenario.
+   */
+  async #pumpUntil(done: () => boolean | Promise<boolean>, what: string, ms: number): Promise<void> {
+    const pump = this.#rig.pump;
+    if (pump === undefined) throw new Error("this rig cannot let a clip go on");
+    const deadline = Date.now() + ms;
+    for (let i = 0; ; i++) {
+      if (await done()) return;
+      if (Date.now() > deadline || i > 20_000) throw new Error(`timed out waiting for ${what}`);
+      await pump.call(this.#rig);
+    }
+  }
+
+  /** Waits for an event (any of the rig's, from the start), then writes what came on the way. */
+  async untilEvent(what: string, match: (event: EventMessage) => boolean, ms = 45_000): Promise<void> {
+    await this.#pumpUntil(() => this.#rig.events().some(match), what, ms);
+    this.#drain();
+  }
+
+  /** Waits for the end of a job (`job.done`, `job.failed` or `job.cancelled`), then writes what came on the way. */
+  async untilJobEnds(jobId: string, ms = 45_000): Promise<void> {
+    await this.untilEvent(`the end of job ${this.norm.text(jobId)}`, (e) => (e.type === "job.done" || e.type === "job.failed" || e.type === "job.cancelled") && e.payload.jobId === jobId, ms);
+  }
+
+  /** Waits for a clip job to announce `phase`. */
+  async untilPhase(jobId: string, phase: string, ms = 45_000): Promise<void> {
+    await this.untilEvent(`clip job ${this.norm.text(jobId)} to reach ${phase}`, (e) => e.type === "job.progress" && e.payload.kind === "clip" && e.payload.jobId === jobId && e.payload.phase === phase, ms);
+  }
+
+  /** Waits until `money.status`, read quietly (it writes no line), satisfies `ready`: the hold's end, say. */
+  async untilMoney(what: string, ready: (status: Record<string, unknown>) => boolean, ms = 45_000): Promise<void> {
+    await this.#pumpUntil(async () => {
+      const answer = await this.#rig.send("money.status", {});
+      return answer.ok && ready(answer.result);
+    }, what, ms);
+    this.#drain();
   }
 
   /**
@@ -870,7 +1036,7 @@ export class Transcript {
   lines(): string[] {
     const out: string[] = [];
     for (const line of this.#lines.flatMap((l) => l.split("\n"))) {
-      const isMid = line.startsWith("event job.progress ") && line.endsWith(`"phase":"mid"}`);
+      const isMid = (line.startsWith("event job.progress ") && line.endsWith(`"phase":"mid"}`)) || (line.startsWith('event job.progress {"kind":"clip"') && line.endsWith('"progress":"mid"}'));
       if (isMid && out.at(-1) === line) continue;
       out.push(line);
     }
