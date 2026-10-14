@@ -13,7 +13,7 @@ import type { VideoRequest } from "../openrouter/types";
 import type { AttemptPlan, AttemptSummary, ClipRunDeps, ClipRunInput, ClipRunResult, LateAttempt, LateResult } from "./attempt";
 import type { ClipDownload } from "./download";
 import { frameFactsOf, type FrameFacts } from "./frameFacts";
-import { runClipJob, type ClipJobDeps, type ClipJobInput, type ClipJobOutcome } from "./job";
+import { runClipJob, type ClipJobDeps, type ClipJobInput, type ClipJobOutcome, type ClipMoneyEnd } from "./job";
 import { clipJournalPath } from "./journal";
 import { motionChoicesOf } from "./motion";
 import { ClipRecord } from "./schemas";
@@ -21,6 +21,7 @@ import { PRICES } from "./testing/attemptRig";
 import { planlessPhoto } from "./testing/frameFixtures";
 import { SHORT_CLIP_TIMINGS } from "./timings";
 import type { ClipColour, ValidClip } from "./validate";
+import { MoneyError } from "../money/errors";
 import { FfmpegError, FfmpegTimeoutError } from "../../node/runFfmpeg";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -95,6 +96,8 @@ interface World {
   posterOutPaths: string[];
   faceOptions: { colour: unknown; role: unknown; log: unknown; masterEmbedding: unknown }[];
   moneyClosed: number;
+  /** What each `onMoneyClosed` call was told about how the run ended (5b.2); undefined when nothing was run. */
+  closedWith: (ClipMoneyEnd | undefined)[];
   notices: ReserveRefusal[];
 }
 
@@ -119,6 +122,7 @@ function world(script: Script = {}): World {
     posterOutPaths: [],
     faceOptions: [],
     moneyClosed: 0,
+    closedWith: [],
     notices: [],
     deps: undefined as unknown as ClipJobDeps,
   };
@@ -141,8 +145,9 @@ function world(script: Script = {}): World {
       w.phases.push(update);
       w.order.push(`phase:${update.phase}`);
     },
-    onMoneyClosed: () => {
+    onMoneyClosed: (end) => {
       w.moneyClosed++;
+      w.closedWith.push(end);
       w.order.push("money-closed");
     },
     onMoneyNotice: (refusal) => void w.notices.push(refusal),
@@ -604,5 +609,97 @@ describe("runClipJob: nothing reserved, cancelled, stopped", () => {
     const proving = w.phases.find((p) => p.phase === "proving");
     expect(proving).toMatchObject({ model: "kling", proveUntil: AT });
     for (const phase of w.phases.filter((p) => p.phase !== "proving")) expect(phase).not.toHaveProperty("proveUntil");
+  });
+});
+
+// ---------- 5b.2 (S5.WB2): a batch member ----------
+
+const TRIO = { batchId: "batch-00000001", batchIndex: 3, batchSize: 10 } as const;
+
+describe("runClipJob: a batch member (5b.2, I5.63)", () => {
+  test("its ready record carries the batch trio, on disk too, so the header outlives the job registry", async () => {
+    const w = world();
+    const record = recordOf(await run(w, { batch: TRIO }));
+
+    expect(record).toMatchObject(TRIO);
+    expect(await onDisk()).toMatchObject(TRIO);
+  });
+
+  test("its failed record carries the trio as well", async () => {
+    const w = world({ result: { kind: "failed", reason: "refused-free", attempts: [], model: "kling", cost: "free", grokOffer: false, aboveWorst: null } });
+    const record = recordOf(await run(w, { batch: TRIO }));
+
+    expect(record).toMatchObject({ outcome: { status: "failed", reason: "refused-free" }, ...TRIO });
+  });
+
+  test("a single clip's record carries none of it", async () => {
+    const record = recordOf(await run(world()));
+
+    expect(record).not.toHaveProperty("batchId");
+    expect(record).not.toHaveProperty("batchIndex");
+    expect(record).not.toHaveProperty("batchSize");
+  });
+
+  test("its proof phase says it waits for the proof, and a single clip's does not", async () => {
+    const proving = (deps: ClipRunDeps): void => {
+      deps.onPhase?.({ phase: "submitting", model: "kling" });
+      deps.onPhase?.({ phase: "proving", model: "kling", proveUntil: AT, content: true });
+    };
+    const member = world({ during: proving });
+    await run(member, { batch: TRIO });
+    const single = world({ during: proving });
+    await run(single);
+
+    expect(member.phases.find((p) => p.phase === "proving")).toMatchObject({ waitReason: "proof" });
+    expect(member.phases.filter((p) => p.phase !== "proving").every((p) => p.waitReason === undefined)).toBe(true);
+    expect(single.phases.find((p) => p.phase === "proving")?.waitReason).toBeUndefined();
+  });
+});
+
+describe("runClipJob: how the money closed is told to the one who waits for it (5b.2, I5.62)", () => {
+  test("a completed clip closes as completed, with no halt", async () => {
+    const w = world();
+    await run(w, { batch: TRIO });
+    expect(w.closedWith).toEqual([{ kind: "completed", aboveWorst: false }]);
+  });
+
+  test("a completed clip billed above its reserve closes as completed with the halt told", async () => {
+    const halt = new MoneyError("SETTLE_ABOVE_WORST", "above", { fatal: true });
+    const w = world({ result: { ...COMPLETED, aboveWorst: halt } });
+    await run(w, { batch: TRIO });
+    expect(w.closedWith).toEqual([{ kind: "completed", aboveWorst: true }]);
+  });
+
+  test("a failed clip closes with its reason", async () => {
+    const w = world({ result: { kind: "failed", reason: "submit-uncertain", attempts: [], model: "kling", cost: "worst", grokOffer: false, aboveWorst: null } });
+    await run(w, { batch: TRIO });
+    expect(w.closedWith).toEqual([{ kind: "failed", reason: "submit-uncertain", aboveWorst: false }]);
+  });
+
+  test("a failed clip whose settle came above the reserve closes with the halt told", async () => {
+    const halt = new MoneyError("SETTLE_ABOVE_WORST", "above", { fatal: true });
+    const w = world({ result: { kind: "failed", reason: "refused-paid", attempts: [], model: "kling", cost: "billed", grokOffer: false, aboveWorst: halt } });
+    await run(w, { batch: TRIO });
+    expect(w.closedWith).toEqual([{ kind: "failed", reason: "refused-paid", aboveWorst: true }]);
+  });
+
+  test("a late attempt closes as late, before it is polled for its file", async () => {
+    const late = { attemptId: `${CLIP}:video#1`, model: "kling" as const, providerJobId: "job-kling", submittedAtMs: Date.parse(SUBMITTED), giveUpAtMs: Date.parse(SUBMITTED) + 3_600_000 };
+    const w = world({ result: { kind: "late", attempts: [], late }, late: { kind: "failed", reason: "late" } });
+    await run(w, { batch: TRIO });
+    expect(w.closedWith).toEqual([{ kind: "late" }]);
+  });
+
+  test("a reserve the ledger refused closes with the refusal", async () => {
+    const refusal: ReserveRefusal = { ok: false, reason: "RECONCILE_REQUIRED", openAttempts: 1, torn: false };
+    const w = world({ result: { kind: "not-reserved", refusal, afterFreeRefusal: false, attempts: [] } });
+    await run(w, { batch: TRIO });
+    expect(w.closedWith).toEqual([{ kind: "not-reserved", refusal, afterFreeRefusal: false }]);
+  });
+
+  test("a photo refused before any money closes with nothing to tell", async () => {
+    const w = world({ firstFrame: { ok: false, reason: "photo-unreadable" } });
+    await run(w, { batch: TRIO });
+    expect(w.closedWith).toEqual([undefined]);
   });
 });

@@ -13,7 +13,7 @@ import {
   type EngineError,
 } from "../../shared/engine";
 import type { WorkerFaceGate } from "../face/worker/workerGate";
-import type { ClipPhaseUpdate } from "../jobs";
+import type { ClipBatchRef, ClipPhaseUpdate } from "../jobs";
 import type { ReserveRefusal } from "../money/budget";
 import { jpegDataUrl } from "../openrouter/image";
 import type { OpenRouterClient } from "../openrouter/types";
@@ -64,11 +64,44 @@ export interface ClipJobDeps {
   /** The master's SFace embedding, for a judged photo; null when it cannot be taken (the clip is then kept unchecked). Never rejects for that. */
   readonly masterEmbedding: (signal: AbortSignal) => Promise<Float32Array | null>;
   readonly onPhase: (update: ClipPhaseUpdate) => void;
-  /** Every reserve of the clip settled or abandoned, or none was made: called exactly once, whatever the outcome. */
-  readonly onMoneyClosed: () => void;
+  /**
+   * Every reserve of the clip settled or abandoned, or none was made: called exactly once, whatever the outcome. `end` says how the money state machine ended (5b.2: the batch scheduler decides
+   * its next turn, and its stops, by it); it is absent when the machine never ran (a photo refused in `preparing`, a cancel there, a fault).
+   */
+  readonly onMoneyClosed: (end?: ClipMoneyEnd) => void;
   /** Grok's reserve behind a free Kling was refused for a reason that is not room (RECONCILE_REQUIRED, a halt): the owner must see the money's state. */
   readonly onMoneyNotice: (refusal: ReserveRefusal) => void;
   readonly log: (line: string) => void;
+}
+
+/**
+ * How a clip's money state machine ended, as the batch scheduler needs it (5b.2, I5.62): enough to tell a clean end from the ones that stop a batch. No money figure travels here.
+ * - `aboveWorst`: a settle came above its reserve, so the ledger is halted (`SETTLE_ABOVE_WORST`) until the owner reconciles.
+ * - `not-reserved`: the ledger refused the reserve (`refusal`), before anything was sent.
+ */
+export type ClipMoneyEnd =
+  | { kind: "completed"; aboveWorst: boolean }
+  | { kind: "failed"; reason: ClipFailReason; aboveWorst: boolean }
+  | { kind: "late" }
+  | { kind: "not-reserved"; refusal: ReserveRefusal; afterFreeRefusal: boolean }
+  | { kind: "cancelled" }
+  | { kind: "interrupted" };
+
+function moneyEndOf(result: ClipRunResult): ClipMoneyEnd {
+  switch (result.kind) {
+    case "completed":
+      return { kind: "completed", aboveWorst: result.aboveWorst !== null };
+    case "failed":
+      return { kind: "failed", reason: result.reason, aboveWorst: result.aboveWorst !== null };
+    case "late":
+      return { kind: "late" };
+    case "not-reserved":
+      return { kind: "not-reserved", refusal: result.refusal, afterFreeRefusal: result.afterFreeRefusal };
+    case "cancelled":
+      return { kind: "cancelled" };
+    case "interrupted":
+      return { kind: "interrupted" };
+  }
 }
 
 export interface ClipJobInput {
@@ -89,6 +122,8 @@ export interface ClipJobInput {
   /** `<library>/avatars/<avatarId>/clips`. */
   readonly clipsDir: string;
   readonly createdAt: string;
+  /** 5b.2 (I5.63): the batch this clip is a member of; its record then carries the trio, so the «Клипы» header outlives the job registry. Absent for a single clip. */
+  readonly batch?: ClipBatchRef;
 }
 
 export type ClipJobOutcome =
@@ -137,10 +172,10 @@ function refusalError(refusal: ReserveRefusal): EngineError {
 /** Runs one clip from its first frame to its record. Never rejects for the clip's own outcomes; a disk that cannot take the record, or a defect, rejects (the journal then stays). */
 export async function runClipJob(deps: ClipJobDeps, input: ClipJobInput, signal: AbortSignal): Promise<ClipJobOutcome> {
   let moneyClosed = false;
-  const closeMoney = (): void => {
+  const closeMoney = (end?: ClipMoneyEnd): void => {
     if (moneyClosed) return;
     moneyClosed = true;
-    deps.onMoneyClosed();
+    deps.onMoneyClosed(end);
   };
   try {
     return await new ClipChain(deps, input, signal, closeMoney).run();
@@ -161,7 +196,7 @@ class ClipChain {
     private readonly deps: ClipJobDeps,
     private readonly input: ClipJobInput,
     private readonly signal: AbortSignal,
-    private readonly closeMoney: () => void,
+    private readonly closeMoney: (end?: ClipMoneyEnd) => void,
   ) {
     this.media = { ...REAL_MEDIA, ...deps.media };
     this.journal = journalOf(input.clipsDir, input.clipId);
@@ -189,7 +224,7 @@ class ClipChain {
     // ----- the money -----
     const runDeps = this.runDeps();
     const result = await (deps.run ?? runClip)(runDeps, this.runInput(frames), this.signal);
-    this.closeMoney();
+    this.closeMoney(moneyEndOf(result));
 
     switch (result.kind) {
       case "completed":
@@ -286,6 +321,8 @@ class ClipChain {
       model: event.model,
       ...(event.submittedAt === undefined ? {} : { submittedAt: event.submittedAt }),
       ...(event.proveUntil === undefined ? {} : { proveUntil: event.proveUntil }),
+      // A batch member in the proof window waits for the strict proof (the contract allows a wait reason on `queued` and `proving` only).
+      ...(event.phase === "proving" && this.input.batch !== undefined ? { waitReason: "proof" as const } : {}),
     });
   }
 
@@ -387,6 +424,7 @@ class ClipChain {
       request: input.request,
       provider: { model: modelUsed(model, input.request), attempts: attempts.map(recordAttempt) },
       recovered: false,
+      ...(input.batch === undefined ? {} : { batchId: input.batch.batchId, batchIndex: input.batch.batchIndex, batchSize: input.batch.batchSize }),
       exports: [],
       outcome,
     };

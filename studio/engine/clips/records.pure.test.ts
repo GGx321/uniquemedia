@@ -147,6 +147,23 @@ describe("clipSummaryOf", () => {
     expect("width" in summary).toBe(false);
   });
 
+  test("tells a batch member's trio, ready or failed, so the «Клипы» header counts from records (5b.2, L9)", () => {
+    const trio = { batchId: "batch-0001", batchIndex: 2, batchSize: 5 };
+    const ready = clipSummaryOf({ ...readyRecord(), ...trio }, free);
+    const failed = clipSummaryOf({ ...failedRecord("refused-free", undefined), ...trio }, free);
+    expect(ClipSummary.safeParse(ready).success).toBe(true);
+    expect(ClipSummary.safeParse(failed).success).toBe(true);
+    expect(ready).toMatchObject(trio);
+    expect(failed).toMatchObject(trio);
+  });
+
+  test("tells no trio for a single clip's record", () => {
+    const summary = clipSummaryOf(readyRecord(), free);
+    expect("batchId" in summary).toBe(false);
+    expect("batchIndex" in summary).toBe(false);
+    expect("batchSize" in summary).toBe(false);
+  });
+
   test("has no retry window for a failure that cannot be retried", () => {
     const summary = clipSummaryOf(failedRecord("refused-free", undefined), free);
     expect("retryDownloadUntil" in summary).toBe(false);

@@ -99,6 +99,8 @@ export function clipSummaryOf(record: ClipRecord, cost: ClipCost, exports: reado
     cost,
     ...(providerCostMicros === undefined ? {} : { providerCostMicros }),
     exports: [...exports],
+    // 5b.2 (L9): a batch member tells its trio, all three or none (the record's own refine), so the header survives `KEEP_FINISHED` and a restart.
+    ...(record.batchId === undefined || record.batchIndex === undefined || record.batchSize === undefined ? {} : { batchId: record.batchId, batchIndex: record.batchIndex, batchSize: record.batchSize }),
   };
   const { outcome } = record;
   if (outcome.status === "ready") return { ...common, status: "ready", width: outcome.width, height: outcome.height, durationMs: outcome.durationMs, face: outcome.face, ...(use === undefined ? {} : { use }) };
