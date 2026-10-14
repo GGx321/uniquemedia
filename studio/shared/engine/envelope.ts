@@ -137,6 +137,7 @@ import { z } from "zod";
 //  - `EngineError.clipReason` (`CLIP_REASONS`, only on VALIDATION, or on IN_FLIGHT for `one-at-a-time`, `job-running` and `submitted`; never beside another reason; Russian texts `CLIP_REASONS_RU`)
 //    and `EngineError.priceScope` gains `video` (only on PRICE_UNAVAILABLE; its text is in `PRICE_SCOPES_RU`).
 //  - `MoneyStatus.reconcileAvailableAt` (the open variant only, optional): the earliest time `money.reconcile` can run while it is held.
+//  - (S5.V8 follow-up) `CLIP_FILE_DAMAGED_DETAIL`: the detail of an INTERNAL export stopped by the clip's own file in Studio, so the window never calls that file intact.
 //  - `Estimate` moved to estimate.ts and is still exported from state.ts. Rollback: an older build cannot read a clip job in a snapshot (its `JobState` is strict), and never looks in a `clips` folder.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);

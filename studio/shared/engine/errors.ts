@@ -659,6 +659,13 @@ export const RENDER_NOT_QUEUED_DETAIL = "the render request ran out of time befo
 export const HOST_ASLEEP_DETAIL = "the Mac is going to sleep or has just woken; the command was not sent, try again in a moment";
 
 /**
+ * Stage 5, 5b.1 (S5.V8 follow-up, additive): `EngineError.detail` of an INTERNAL export of a clip («Сохранить в папку») stopped by the clip's own file in Studio — not the bytes its
+ * record names, unreadable, or a file the walker or ffmpeg refuses (I5.54). Every other INTERNAL of an export leaves that file whole, and the window says so (43c); this one must not:
+ * it says the file is damaged (`CLIP_FILE_DAMAGED_RU`). A plain string, not a new `ErrorCode`, like `DRAFT_TOO_NEW_DETAIL`.
+ */
+export const CLIP_FILE_DAMAGED_DETAIL = "the clip's file in Studio is damaged or unreadable: it is not the file its record names";
+
+/**
  * `EngineError.detail` of LIBRARY_TOO_NEW from `montages.create` and `videos.render` for an avatar with a video record a newer Studio
  * wrote (its photo usage cannot be judged). One text for the engine and the mock.
  */

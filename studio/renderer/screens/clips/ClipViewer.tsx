@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CLIP_EXPORT_FAILED_RU, clipExportLineRu, EXPORT_UNAVAILABLE_REASONS_RU, type ClipSummary, type EngineError, type ExportUnavailableReason } from "../../../shared/engine";
+import { clipExportLineRu, EXPORT_UNAVAILABLE_REASONS_RU, type ClipSummary, type EngineError, type ExportUnavailableReason } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../../engine/store";
 import { errorText } from "../../lib/errors";
@@ -15,7 +15,7 @@ import { useMediaRetry } from "../../ui/useMediaRetry";
 import { useBackdropClose, useModalDialog } from "../../ui/useModalDialog";
 import { useMounted } from "../photos/shared";
 import { viewerStep } from "../photos/viewerModel";
-import { clipLength, costFact, exportPercent, faceBadge, faceFact, modelFact, readyTags, savedExport } from "./clipModel";
+import { clipLength, costFact, exportFailureText, exportPercent, faceBadge, faceFact, modelFact, readyTags, savedExport } from "./clipModel";
 import type { PhotoPlace } from "./clipsContext";
 import { DeleteClipDialog } from "./DeleteClipDialog";
 
@@ -65,12 +65,6 @@ export function savedPathLabel(rootDisplay: string | null, relPath: string): str
 /** The newest export job of this clip, or null. */
 function exportJobOf(jobs: readonly JobView[], clipId: string): JobView | null {
   return jobs.filter((job) => job.kind === "clip" && job.clip?.export === true && job.clip.clipId === clipId).at(-1) ?? null;
-}
-
-/** What a failed save says: the engine's encode or check failed (43c), else its own words. */
-function exportFailureText(error: EngineError): string {
-  if (error.code === "INTERNAL") return CLIP_EXPORT_FAILED_RU;
-  return errorText(error);
 }
 
 function ClipFrame({ clip, label }: { clip: Ready; label: string }) {

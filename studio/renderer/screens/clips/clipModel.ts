@@ -1,5 +1,6 @@
-import { CLIP_RETRYABLE_FAILURES, GROK_FALLBACK, type ClipCost, type ClipFace, type ClipFailReason, type ClipPhase, type ClipSummary } from "../../../shared/engine";
+import { CLIP_EXPORT_FAILED_RU, CLIP_FILE_DAMAGED_DETAIL, CLIP_RETRYABLE_FAILURES, GROK_FALLBACK, type EngineError, type ClipCost, type ClipFace, type ClipFailReason, type ClipPhase, type ClipSummary } from "../../../shared/engine";
 import { CLIP_LOST_TEXT, CLIP_RECOVERED_TEXT, CLIP_RECOVERING_TEXT } from "../../../shared/engine/clipRestartTexts";
+import { errorText } from "../../lib/errors";
 import { NBSP } from "../../lib/format";
 import { formatUsdTiered } from "../../lib/money";
 
@@ -19,6 +20,15 @@ export const nearUsd = (micros: number): string => formatUsdTiered(micros, "near
 /** A cost as its kind reads: billed to the nearest, every other (open, at the worst) a maximum, rounded up. */
 export function costFigure(cost: ClipCost): string {
   return cost.kind === "billed" ? nearUsd(cost.micros) : upUsd(cost.micros);
+}
+
+/**
+ * What a failed «Сохранить в папку» says (§6 43c): an encode or a check that failed leaves the clip in Studio whole and the save can run again; the clip's own file stopping it (the
+ * S5.V8 follow-up's `CLIP_FILE_DAMAGED_DETAIL`) says that file is damaged; anything else, the engine's own words.
+ */
+export function exportFailureText(error: EngineError): string {
+  if (error.code === "INTERNAL" && error.detail !== CLIP_FILE_DAMAGED_DETAIL) return CLIP_EXPORT_FAILED_RU;
+  return errorText(error);
 }
 
 /** «0:05», «0:10»: a clip's length on its poster. */

@@ -309,6 +309,12 @@ export function clipExportLineRu(profile: ClipExportProfile): string {
 /** An export that failed (an encode error, a timeout, a failed check): free, and the file in Studio is untouched. */
 export const CLIP_EXPORT_FAILED_RU = "Не удалось сохранить клип в папку — файл в Studio цел. Попробуйте ещё раз.";
 
+/**
+ * An export stopped by the clip's own file in Studio (`CLIP_FILE_DAMAGED_DETAIL`): the one failure after which «файл в Studio цел» would be untrue. S5.V8 follow-up; the owner confirms
+ * the words (42f′ «Файл клипа повреждён» is the approved phrase it grows from).
+ */
+export const CLIP_FILE_DAMAGED_RU = "Файл клипа в Studio повреждён или не читается — сохранить его в папку нельзя.";
+
 /** Russian text for each structural problem of a montage (the `issues` of MONTAGE_INVALID). */
 export const MONTAGE_ISSUE_MESSAGES_RU = {
   "no-clips": "В монтаже нет ни одного кадра.",

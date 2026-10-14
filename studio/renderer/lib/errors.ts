@@ -9,6 +9,8 @@ import {
   MUSIC_UNAVAILABLE_REASONS_RU,
   NO_ANSWER_DETAIL_PREFIX,
   CATEGORY_REASONS_RU,
+  CLIP_FILE_DAMAGED_DETAIL,
+  CLIP_FILE_DAMAGED_RU,
   CLIP_REASONS_RU,
   PRICE_SCOPES_RU,
   descriptorReasonRu,
@@ -103,6 +105,8 @@ function baseText(error: EngineError): string {
   if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_CHANGING_DETAIL) return DRAFT_CHANGING_RU;
   if (error.code === "INTERNAL" && error.detail === HOST_ASLEEP_DETAIL) return HOST_ASLEEP_RU;
+  // S5.V8 follow-up: a clip's save stopped by its own file in Studio says that file is damaged, never «Внутренняя ошибка движка».
+  if (error.code === "INTERNAL" && error.detail === CLIP_FILE_DAMAGED_DETAIL) return CLIP_FILE_DAMAGED_RU;
   // 3c.6: music that could not be fetched says why, and whether the request counted; «позже» only where waiting helps.
   if (error.code === "MUSIC_UNAVAILABLE" && error.musicReason !== undefined) return MUSIC_UNAVAILABLE_REASONS_RU[error.musicReason];
   return ERROR_MESSAGES_RU[error.code];

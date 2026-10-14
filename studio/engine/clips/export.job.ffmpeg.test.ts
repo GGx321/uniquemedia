@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { copyFile, readdir, readFile } from "node:fs/promises";
+import { copyFile, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { EXPORT_CHANGING_DETAIL, type JobState } from "../../shared/engine";
+import { CLIP_FILE_DAMAGED_DETAIL, EXPORT_CHANGING_DETAIL, type JobState } from "../../shared/engine";
 import { FfmpegError, FfmpegTimeoutError, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { FREE_MARGIN_BYTES } from "../freeBytes";
@@ -233,6 +233,8 @@ describe("the failures (free; the library's file untouched; what the job made is
   test("an ffmpeg error is INTERNAL", async () => {
     const { r, state, before } = await failsWith(async () => Promise.reject(new FfmpegError("ffmpeg exited 1", 1, "Invalid data found when processing input")));
     expect(errorOf(state)).toMatchObject({ code: "INTERNAL" });
+    // The library's file is whole: the window says so (43c), never that it is damaged.
+    expect(errorOf(state)).not.toMatchObject({ detail: CLIP_FILE_DAMAGED_DETAIL });
     await untouched(r, before);
   });
 
@@ -470,8 +472,19 @@ describe("the library's file (I5.54: every export is made from the provider's by
 
     const state = await r.settled(await r.started(CLIP));
 
-    expect(errorOf(state)).toMatchObject({ code: "INTERNAL" });
+    // S5.V8 follow-up: the detail says the file in Studio is damaged, so the window never tells the owner it is intact (43c).
+    expect(errorOf(state)).toMatchObject({ code: "INTERNAL", detail: CLIP_FILE_DAMAGED_DETAIL });
     expect(asked).toBe(false);
+    expect(await r.folderNames()).toEqual([]);
+  });
+
+  test("a file that cannot be read at all is the same damaged file to the window", async () => {
+    const r = await world();
+    await rm(clipFilePath(r.clipsDir, CLIP));
+
+    const state = await r.settled(await r.started(CLIP));
+
+    expect(errorOf(state)).toMatchObject({ code: "INTERNAL", detail: CLIP_FILE_DAMAGED_DETAIL });
     expect(await r.folderNames()).toEqual([]);
   });
 });
@@ -489,7 +502,7 @@ describe("the second layer: ffmpeg is asked how many video streams the file has,
     const r = await world({ deps: { videoStreams: async () => "several", encode: async () => void (encoded = true) } });
     const state = await r.settled(await r.started(CLIP));
 
-    expect(errorOf(state)).toMatchObject({ code: "INTERNAL" });
+    expect(errorOf(state)).toMatchObject({ code: "INTERNAL", detail: CLIP_FILE_DAMAGED_DETAIL });
     expect(encoded).toBe(false);
     expect(await r.folderNames()).toEqual([]);
   });
@@ -501,7 +514,7 @@ describe("the second layer: ffmpeg is asked how many video streams the file has,
     await r.putClip(CLIP, await fixtures.twoVideos());
     const state = await r.settled(await r.started(CLIP));
 
-    expect(errorOf(state)).toMatchObject({ code: "INTERNAL" });
+    expect(errorOf(state)).toMatchObject({ code: "INTERNAL", detail: CLIP_FILE_DAMAGED_DETAIL });
     expect(asked).toBe(false);
     expect((await readdir(r.exportRoot)).filter((n) => n.startsWith(".studio-part"))).toEqual([]);
     expect(await r.folderNames()).toEqual([]);

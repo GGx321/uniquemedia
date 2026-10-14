@@ -1,6 +1,6 @@
 import * as nodePath from "node:path";
 import { dirname } from "node:path";
-import { EXPORT_CHANGING_DETAIL, EXPORT_FPS, PROTOCOL_VERSION, type ClipExportLine, type CommandPayload, type EngineError, type ExportUnavailableReason } from "../../shared/engine";
+import { CLIP_FILE_DAMAGED_DETAIL, EXPORT_CHANGING_DETAIL, EXPORT_FPS, PROTOCOL_VERSION, type ClipExportLine, type CommandPayload, type EngineError, type ExportUnavailableReason } from "../../shared/engine";
 import type { UnsequencedEvent } from "../../shared/engine/events";
 import { FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { EngineFailure } from "../engineFailure";
@@ -41,7 +41,8 @@ import { clipFilePath, readClipRecord } from "./store";
 //
 // CANCEL: a quit (the clip service's stop), the library going away and a cancel of the job are honoured up to the claim; from the claim on the export runs to its record ("done
 // wins", as a render's commit). FAILURES are free and leave the library's file as it was: an encode error, a timeout or a failed check is INTERNAL (the window's text: «Не удалось
-// сохранить клип в папку — файл в Studio цел.»), a full disk or a folder that cannot take the file is the render's EXPORT_UNAVAILABLE and its reason; the temp and the placeholder are
+// сохранить клип в папку — файл в Studio цел.»), except a library file that is itself not usable, whose INTERNAL carries `CLIP_FILE_DAMAGED_DETAIL` (the window never calls it intact);
+// a full disk or a folder that cannot take the file is the render's EXPORT_UNAVAILABLE and its reason; the temp and the placeholder are
 // removed while they are still ours (their inode and shape). A CRASH leaves at most a `.studio-part-*` and an empty placeholder of the render's pattern, which the render recovery
 // sweeps once they are no longer live; a crash after the rename leaves a whole file no record names, and the next claim steps over its name.
 
@@ -389,13 +390,14 @@ export class ClipExports {
 
     // 2. The library's file: the bytes its record names (I5.54: the provider's, kept as they came), judged by the walker, then by ffmpeg itself: one video stream, the one the walker
     //    judged (the encode maps `0:V:0`).
+    // S5.V8 follow-up: each refusal of the library's own file is the one INTERNAL after which the file is NOT whole (`CLIP_FILE_DAMAGED_DETAIL`); the log keeps why.
     const source = clipFilePath(job.clipsDir, job.clipId);
-    const sourceSha = await hashFile(source).catch((error: unknown) => Promise.reject(internal(`the clip's file in Studio cannot be read (${codeOf(error)})`)));
-    if (job.record.outcome.status !== "ready" || sourceSha !== job.record.outcome.sha256) throw internal("the clip's file in Studio is not the file its record names");
+    const sourceSha = await hashFile(source).catch((error: unknown) => Promise.reject(this.#damaged(`cannot be read (${codeOf(error)})`)));
+    if (job.record.outcome.status !== "ready" || sourceSha !== job.record.outcome.sha256) throw this.#damaged("is not the file its record names");
     signal.throwIfAborted();
     const judged = await this.#judge(source);
     const streams = await (deps.videoStreams ?? checkVideoStreams)({ path: source, expected: { codec: judged.codec, width: judged.width, height: judged.height }, signal, timeoutMs: STREAMS_TIMEOUT_MS });
-    if (streams !== "ok") throw internal(`the clip's file in Studio is not one plain video stream to ffmpeg (${streams})`);
+    if (streams !== "ok") throw this.#damaged(`is not one plain video stream to ffmpeg (${streams})`);
     signal.throwIfAborted();
 
     // 3. The avatar's folder inside the export root, and the temp in it: live BEFORE its first byte, and made empty by the job (ffmpeg only truncates it).
@@ -536,17 +538,23 @@ export class ClipExports {
     return { status: "done", exported: { relPath } };
   }
 
+  /** The library's own file stopped the export (I5.54): logged with why, and answered with the detail the window reads as a damaged file, never an intact one (S5.V8 follow-up). */
+  #damaged(why: string): EngineFailure {
+    this.#deps.log(`[clip] the clip's file in Studio ${why}; the export stops`);
+    return internal(CLIP_FILE_DAMAGED_DETAIL);
+  }
+
   /** The library's file as the walker judges it: one H.264 video track (or the refusal, INTERNAL: the file in Studio is the provider's and was judged when it came). */
   async #judge(path: string): Promise<JudgedSource> {
     let probe: Awaited<ReturnType<typeof probeVideo>>;
     try {
       probe = await probeFile(path);
     } catch (error) {
-      throw internal(`the clip's file in Studio cannot be read (${codeOf(error)})`);
+      throw this.#damaged(`cannot be read (${codeOf(error)})`);
     }
-    if (!probe.ok) throw internal(`the clip's file in Studio was refused by the walker (${probe.reason})`);
+    if (!probe.ok) throw this.#damaged(`was refused by the walker (${probe.reason})`);
     const { video } = probe.info;
-    if (video.codec !== "h264") throw internal(`the clip's file in Studio is ${video.codec}, not H.264`);
+    if (video.codec !== "h264") throw this.#damaged(`is ${video.codec}, not H.264`);
     if (video.dynamicRange !== "sdr") this.#deps.log(`[clip] the clip is ${video.dynamicRange}; its export is not tone-mapped`);
     return {
       codec: "h264",

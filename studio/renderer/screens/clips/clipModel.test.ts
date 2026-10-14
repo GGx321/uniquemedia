@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { ClipCost, ClipFailReason, ClipFace, ClipSummary, Estimate } from "../../../shared/engine";
+import { CLIP_FILE_DAMAGED_DETAIL, ERROR_MESSAGES_RU, type ClipCost, type ClipFailReason, type ClipFace, type ClipSummary, type Estimate } from "../../../shared/engine";
 import {
   clipLength,
   costFact,
+  exportFailureText,
   faceBadge,
   faceFact,
   failedTile,
@@ -187,6 +188,22 @@ describe("the clip viewer's facts (§6 43)", () => {
     expect(fact({ verdict: "skipped", frames: 0, why: "profile" })).toEqual({ tone: "quiet", value: null, text: "не проверялось: лицо в профиль" });
     expect(fact({ verdict: "skipped", frames: 2, why: "few-faces" })).toEqual({ tone: "quiet", value: null, text: "не проверялось: мало кадров с лицом" });
     expect(fact({ verdict: "skipped", frames: 0, why: "worker" }).text).toBe("не проверялось");
+  });
+});
+
+describe("a save that failed (§6 43c)", () => {
+  test("an encode or a check that failed says the clip in Studio is intact, and the save can run again", () => {
+    expect(exportFailureText({ code: "INTERNAL", detail: "the clip could not be encoded" })).toBe("Не удалось сохранить клип в папку — файл в Studio цел. Попробуйте ещё раз.");
+  });
+
+  test("a save stopped by the clip's own file in Studio never says it is intact (the S5.V8 follow-up's detail)", () => {
+    const text = exportFailureText({ code: "INTERNAL", detail: CLIP_FILE_DAMAGED_DETAIL });
+    expect(text).toBe("Файл клипа в Studio повреждён или не читается — сохранить его в папку нельзя.");
+    expect(text).not.toContain("цел");
+  });
+
+  test("any other end is the engine's own words for it", () => {
+    expect(exportFailureText({ code: "NOT_FOUND" })).toBe(ERROR_MESSAGES_RU.NOT_FOUND);
   });
 });
 

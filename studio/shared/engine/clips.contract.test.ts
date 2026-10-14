@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { ClipReason, CLIP_REASONS, CLIP_UNSUITABLE_REASONS, EngineError, LAUNCH_REASONS } from "./errors";
-import { CLIP_EXPORT_FAILED_RU, CLIP_REASONS_RU, clipExportLineRu, PRICE_SCOPES_RU } from "./errorMessagesRu";
+import { ClipReason, CLIP_FILE_DAMAGED_DETAIL, CLIP_REASONS, CLIP_UNSUITABLE_REASONS, EngineError, LAUNCH_REASONS } from "./errors";
+import { CLIP_EXPORT_FAILED_RU, CLIP_FILE_DAMAGED_RU, CLIP_REASONS_RU, clipExportLineRu, PRICE_SCOPES_RU } from "./errorMessagesRu";
 import { COMMAND_TYPES, ENGINE_COMMAND_TYPES, MAIN_ONLY_COMMANDS, OkResponse, type CommandType } from "./commands";
 import { SLEEP_CLASS, heldWhileAsleep } from "./commandHold";
 import { PROTOCOL_VERSION } from "./envelope";
@@ -278,6 +278,14 @@ describe("the export texts (owner Q-C: re-encoded 1080 × 1920, metadata cleaned
 
   test("a failed export says the Studio file is intact", () => {
     expect(CLIP_EXPORT_FAILED_RU).toBe("Не удалось сохранить клип в папку — файл в Studio цел. Попробуйте ещё раз.");
+  });
+
+  // S5.V8 follow-up (additive): an export that stops on the library's own file — not the bytes its record names, or a file the walker or ffmpeg refuses — must not say «файл цел».
+  test("an export stopped by the clip's own file in Studio is told apart by its detail and says the file is damaged, never that it is intact", () => {
+    expect(CLIP_FILE_DAMAGED_DETAIL).toBe("the clip's file in Studio is damaged or unreadable: it is not the file its record names");
+    expect(EngineError.parse({ code: "INTERNAL", detail: CLIP_FILE_DAMAGED_DETAIL }).detail).toBe(CLIP_FILE_DAMAGED_DETAIL);
+    expect(CLIP_FILE_DAMAGED_RU).toBe("Файл клипа в Studio повреждён или не читается — сохранить его в папку нельзя.");
+    expect(CLIP_FILE_DAMAGED_RU).not.toContain("цел");
   });
 
   test("no export text claims a device, a place or that the clip is not AI (I5.58)", () => {
