@@ -35,6 +35,7 @@ import { command, engineSettings, GOOD, MODERATION, NOW, network as portraitNetw
 import { fakeGate, match } from "../../testing/portraitKit";
 import { photoJpeg } from "../../clips/testing/engineClipKit";
 import { SHORT_CLIP_TIMINGS } from "../../clips/timings";
+import { clipFilePath, clipsDirOf } from "../../clips/store";
 import type { ExportFpsMode } from "../../clips/exportProfile";
 import type { MockClipScript } from "../../../renderer/engine/mockClips";
 import type { BoldClipsMode } from "../../../shared/engine";
@@ -160,6 +161,8 @@ export interface ClipControl {
   passTime(ms: number): void;
   /** A `late-ok` clip comes in at the provider. Until a story says so it is still rendering, however long the engine waits: the story releases it by this event, never by a clock. The mock plays its own late file, so it has nothing to do. */
   arrive(): void;
+  /** 5b.2 (S5.WA3): the clip's file in Studio is replaced by another (its sha256 no longer matches the record): the real rig overwrites the file, the mock is told. */
+  damageFile(clipId: string): Promise<void>;
 }
 
 const NO_CLIPS: ClipControl = {
@@ -182,6 +185,9 @@ const NO_CLIPS: ClipControl = {
     throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
   },
   passTime: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+  damageFile: () => {
     throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
   },
 };
@@ -265,6 +271,10 @@ const PARITY_PREPARE = { total: 60, steps: 3, judged: { hdrToSdr: true, fromFps:
 export const PARITY_VIDEO_BYTES = 200;
 /** What the real rig's video importer says of a clip it takes, and what the mock is told to say. */
 export const PARITY_VIDEO_FACTS = { width: 1080, height: 1920, durationMs: 6400, sourceFps: 29.97, hdrToSdr: true, loopFrames: null, delayFrames: null } as const;
+/** 5b.2 (S5.WA3): a clip's montage copy is named «Клип <date> <time>.mp4»; the rig's stand-in importer knows it by the prefix, and says what the real one would of the rig's 5 s 720 x 1280 clip at 24 fps. */
+const PARITY_COPY_PREFIX = "Клип ";
+const PARITY_COPY_FRAMES = 150;
+const PARITY_COPY_FACTS = { width: 720, height: 1280, durationMs: 5000, sourceFps: 24, hdrToSdr: false, loopFrames: null, delayFrames: null } as const;
 /** A clip with this in its first bytes is the one the real rig's video importer refuses as a `codec`. */
 const PARITY_UNSUPPORTED_CODEC = "vp09";
 
@@ -630,9 +640,9 @@ export function mockRig(options: RigOptions = {}): ParityRig {
       : [];
   // Stage 5 (5b.1, S5.V7): Lia and her photos, one of each kind the clip rules tell apart; the same summaries the real rig's JPEGs stand for.
   const clipRig = clipRigOf(options);
-  const lia: AvatarSummary = { ...MIA, avatarId: MOCK_CLIP_AVATAR_ID, name: CLIP_AVATAR_NAME, masterPhotoId: MOCK_CLIP_MASTER_ID, photoCount: CLIP_PHOTO_KINDS.length, eligibleUnusedCount: CLIP_PHOTO_KINDS.length };
+  const lia: AvatarSummary = { ...MIA, avatarId: MOCK_CLIP_AVATAR_ID, name: CLIP_AVATAR_NAME, masterPhotoId: MOCK_CLIP_MASTER_ID, photoCount: CLIP_PHOTO_KINDS.length, eligibleUnusedCount: CLIP_PHOTO_KINDS.length - 1 };
   const liaPhotos: PhotoSummary[] =
-    clipRig === null ? [] : CLIP_PHOTO_KINDS.map((kind, i) => ({ ...scenePhoto(i + 1, { category: CLIP_PHOTO_SPEC[kind].category, qa: { ...CLIP_PHOTO_SPEC[kind].qa } }, lia), photoId: mockClipPhotoId(kind) }));
+    clipRig === null ? [] : CLIP_PHOTO_KINDS.map((kind, i) => ({ ...scenePhoto(i + 1, { category: CLIP_PHOTO_SPEC[kind].category, qa: { ...CLIP_PHOTO_SPEC[kind].qa } }, lia), photoId: mockClipPhotoId(kind), ...(kind === "unknown" ? { eligible: false } : {}) }));
   const avatars: AvatarSummary[] = [
     options.usage === undefined
       ? { ...MIA, photoCount: MAIN_PHOTOS, eligibleUnusedCount: MAIN_PHOTOS, ...proposed }
@@ -813,6 +823,7 @@ export function mockRig(options: RigOptions = {}): ParityRig {
               fileBack: (back) => engine.nextClipRetry(back ? "ok" : "failed"),
               passTime: (ms) => engine.passClipTime(ms),
               arrive: () => undefined,
+              damageFile: async (clipId) => engine.damageClipFile(clipId),
             },
     },
     async stop() {
@@ -1238,6 +1249,15 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   // is an MP4 of `PARITY_VIDEO_BYTES` bytes (a stand-in for the mezzanine: the rig's ffmpeg is not there, so a render only COPIES it, verified, and the rig's
   // ffmpeg ignores it), so the record is the same size as before and a render of an own video clip can read it back.
   const parityVideoImporter: MediaImporter = async ({ staged, name, workFile, prepare }) => {
+    // 5b.2 (S5.WA3): a clip's montage copy («Клип <date> <time>.mp4»). The real importer would probe the clip (a 5 s 720 x 1280 clip at 24 fps in this rig) and encode its 150 output frames; the stand-in
+    // says the same and reports a quarter of the frames at a time, as `preparedVideo` does. The mock is told the same facts by the clip's own record.
+    if (name.startsWith(PARITY_COPY_PREFIX)) {
+      prepare?.begin(PARITY_COPY_FRAMES, { hdrToSdr: false, fromFps: 24 });
+      for (const done of [37, 75, 112]) prepare?.report(done);
+      const copy = await workFile();
+      await writeFile(copy.path, PARITY_MEZZANINE, { flag: "wx" });
+      return { ok: true, facts: PARITY_COPY_FACTS, output: { file: copy, format: "mp4" } };
+    }
     if (Buffer.from(staged.head).toString("latin1").includes(PARITY_UNSUPPORTED_CODEC)) return { ok: false, reason: "codec" };
     // 3f.6: the `preparedVideo` pick reports its work as the real importer does (its output frames), a quarter of them at a time.
     if (name === PREPARED_VIDEO) {
@@ -1757,6 +1777,11 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
               arrive: () => provider.arrive(),
               passTime: (ms) => {
                 clipSkew += ms;
+              },
+              damageFile: async (clipId) => {
+                const library = engine.library;
+                if (library === null || clipWorld === undefined) throw new Error("the rig has no library to damage a clip in");
+                await writeFile(clipFilePath(clipsDirOf(library, clipWorld.avatarId), clipId), "not the clip any more");
               },
             },
     },
