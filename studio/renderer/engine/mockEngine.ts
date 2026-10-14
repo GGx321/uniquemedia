@@ -3485,7 +3485,9 @@ export class MockEngine implements EngineBridge {
   private reconcile(c: CommandMessage): ResponseMessage {
     const stopped = this.ledgerStop();
     if (stopped) return this.fail(c, stopped);
-    if (this.running().length > 0 || this.autopilot.hasLiveRequests() || this.clips.paidOpen()) return this.fail(c, { code: "IN_FLIGHT" });
+    if (this.running().length > 0 || this.autopilot.hasLiveRequests()) return this.fail(c, { code: "IN_FLIGHT" });
+    // 5b.1: a clip's paid count (the slot, until its money closes) refuses a reconcile in the engine's words.
+    if (this.clips.paidOpen()) return this.fail(c, { code: "IN_FLIGHT", detail: "1 paid job(s) of this engine are running; reconcile when they end" });
     // 5b.1 (I5.48): a video bills when it completes, so the reconcile waits while an attempt of a clip may still bill.
     const early = this.clips.tooEarly();
     if (early !== null) return this.ok(c, early);

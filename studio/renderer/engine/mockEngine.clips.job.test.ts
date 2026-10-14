@@ -146,6 +146,8 @@ describe("one paid clip at a time (I5.50)", () => {
     const { jobId } = await unwrap(create(m));
     stepUntil(m, reached(m, jobId, "rendering"), "rendering");
     expect(await reconcile(m)).toEqual({ ok: false, code: "IN_FLIGHT" });
+    // In the engine's words: the paid count of the one clip.
+    expect(await refusal(m.client.request("money.reconcile", {}))).toMatchObject({ code: "IN_FLIGHT", detail: "1 paid job(s) of this engine are running; reconcile when they end" });
     m.scheduler.runAll();
     expect(await reconcile(m)).toMatchObject({ ok: true, result: { status: "done" } });
   });
