@@ -145,6 +145,9 @@ import { acceptedRemainingProblems, launchIsActive, ledgerProblems, midRenderPro
 import { ideaWriteProblems, templateComposeProblems, type WriteFacts } from "./templateSmoke";
 import { LLM_ONLY_CATEGORY_POOL } from "../engine/scenes/testing/llmOnlyFixture";
 import { BOLD_MODEL, boldRequestProblems, expectedBilledMicros, failedReasonsOf, ownerRequestProblems, type SentImageRequest } from "./boldSmoke";
+import { verifyClipExport } from "../engine/clips/exportVerify";
+import { VIDEO_TIERS } from "../engine/money/prices";
+import { clipPostProblems, exportedCopyProblems, refusedJobProblems } from "./clipSmoke";
 import { electronBinary } from "./electronBinary";
 import { failureDetail } from "./failureDetail";
 import { textAssetPackageProblems, textRasteriserOutputProblems } from "./textSmoke";
@@ -4073,6 +4076,128 @@ async function runBoldRouteScenario(target: Target): Promise<void> {
   }
 }
 
+// ---------- «Оживить» end-to-end scenario (Stage 5, 5b.1, S5.V7) ----------
+
+/** The identity of the clip scenario's export folder (its marker's `rootId`). */
+const CLIP_ROOT_ID = "smoke-clip-root-0001";
+
+/**
+ * The longest a clip's job may take here. The packaged engine runs the REAL clip timings (a poll every 20 s; a refusal is proven free by readings of `/generation` 15 s and 2 min after it), so the
+ * fallback leg alone waits about three minutes, and the export (motion-interpolated by default) about one more. These are the engine's own durations, not the harness's patience.
+ */
+const CLIP_JOB_TIMEOUT_MS = 8 * 60_000;
+
+/**
+ * «Оживить» in the packaged app, end to end against the mock OpenRouter's video routes: its own app instance, userData, library, export folder and mock. One photo is drawn by an ordinary run (the
+ * mock's pool, the real face gate), then: a clip is made (one POST, billed from the poll's `usage.cost`); a second is refused by the provider's risk control at the poll (the mock is armed
+ * for the first Kling job of it), proven free by two readings of `/generation` (the API's 404) and a quiet account, and followed by Grok by itself (the second attempt, one more POST); the
+ * clip is exported, and the copy's name and file are judged by the export's own verifier (I5.55, I5.58). Asserted: one POST per attempt id, in the models' order; the refused job asked
+ * for nothing but its polls and two 404 readings; the ledger equals what the mock billed and nothing is open; no request reached a route the mock does not know.
+ *
+ * clipSmoke.engine.test.ts plays the very same steps against the real engine on loopback, so the mock's routes and the checks are held without Electron. Needs Electron: CI only, never run locally.
+ */
+async function runClipScenario(target: Target): Promise<void> {
+  const mock = await startMockOpenRouter({ descriptorText: AVATAR_DESCRIPTOR, distinctImages: true, faceFixture: true, clips: true });
+  const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-clips-"));
+  const userData = join(tmp, "userData");
+  const libraryRoot = join(tmp, "clip-library");
+  const exportRoot = join(tmp, "export");
+  for (const dir of [userData, libraryRoot, exportRoot]) await mkdir(dir, { recursive: true });
+  await writeFile(join(exportRoot, EXPORT_MARKER_FILE), JSON.stringify({ schemaVersion: 1, rootId: CLIP_ROOT_ID, createdAt: new Date().toISOString() }));
+  await saveSettings(userData, { ...defaultSettings(userData), libraryPath: libraryRoot, exportPath: exportRoot });
+
+  const running = await launch(target, userData, [`--studio-openrouter-base-url=${mock.url}`, `--studio-pick-folder=${libraryRoot}`]);
+  try {
+    const { cdp } = running;
+    const keySet = await req(cdp, "settings.setApiKey", { key: SMOKE_KEY });
+    check("clips scenario: settings.setApiKey stores the fake key", field(keySet, "ok") === true, keySet);
+    const avatarId = await createActiveAvatarForRun(cdp, "Bea", "clips scenario");
+
+    // 1. One photo, from an ordinary run.
+    const runRequest = { avatarId, count: 2, categories: RUN_CATEGORIES, poses: RUN_POSES };
+    const runEstimate = await req(cdp, "runs.estimate", runRequest);
+    const run = await req(cdp, "runs.start", { ...runRequest, acceptedWorstMicros: field(runEstimate, "result", "estimate", "worstMicros") });
+    check("clips scenario: runs.start plans and launches the run that draws the photos", field(run, "ok") === true, run);
+    const runEnd = await waitFor("the run's job to end", () => endEventOf(cdp, field(run, "result", "jobId")), 120_000);
+    const photoIds = field(runEnd, "payload", "result", "photoIds");
+    const photoId = Array.isArray(photoIds) ? photoIds[0] : undefined;
+    check("clips scenario: the run finished with photos", field(runEnd, "type") === "job.done" && typeof photoId === "string", runEnd);
+
+    // 2. The sheet.
+    const options = await req(cdp, "clips.options", { avatarId, photoId });
+    const motions = field(options, "result", "motions");
+    const motionId = Array.isArray(motions) ? field(motions[0], "id") : undefined;
+    check(
+      "clips scenario: clips.options says the photo can be brought to life: a motion, and the std 5 s worst case of $0.85 (Kling's reserve with Grok's behind it)",
+      field(options, "ok") === true && field(options, "result", "suitable") === true && typeof motionId === "string" && field(options, "result", "prices", "std5", "worstMicros") === 850_000,
+      options,
+    );
+    const create = { avatarId, photoId, motionId, model: "kling", quality: "std", seconds: 5, fallback: "auto", acceptedWorstMicros: 850_000 };
+    const ledgerClipAttempts = async (): Promise<string[]> => (await reservedAttemptIds(userData, "")).filter((id) => /:video#[12]$/.test(id));
+
+    // 3. A clip is made.
+    const firstCreated = await req(cdp, "clips.create", create);
+    const firstJob = field(firstCreated, "result", "jobId");
+    check("clips scenario: clips.create starts a clip job", field(firstCreated, "ok") === true && typeof firstJob === "string", firstCreated);
+    const firstEnd = await waitFor("the first clip's job to end", () => endEventOf(cdp, firstJob), CLIP_JOB_TIMEOUT_MS, 500);
+    check("clips scenario: the first clip ends as job.done", field(firstEnd, "type") === "job.done" && field(firstEnd, "payload", "result", "kind") === "clip", firstEnd);
+    check("clips scenario: the mock saw exactly one POST for it, to Kling", mock.videoRequests().length === 1 && mock.videoRequests()[0]?.model === VIDEO_TIERS.std.model, mock.videoRequests());
+
+    // 4. A refusal at the poll, proven free, and Grok behind it.
+    mock.armVideoRefusal(VIDEO_TIERS.std.model);
+    const secondCreated = await req(cdp, "clips.create", create);
+    const secondJob = field(secondCreated, "result", "jobId");
+    check("clips scenario: the second clips.create starts (the first clip's money is closed)", field(secondCreated, "ok") === true && typeof secondJob === "string", secondCreated);
+    const secondEnd = await waitFor("the second clip's job to end", () => endEventOf(cdp, secondJob), CLIP_JOB_TIMEOUT_MS, 500);
+    check("clips scenario: the second clip ends as job.done, not as a failure", field(secondEnd, "type") === "job.done", secondEnd);
+    const listed = await req(cdp, "clips.list", { avatarId });
+    const clips = field(listed, "result", "clips");
+    const second = Array.isArray(clips) ? clips.find((c) => field(c, "clipId") === secondJob) : undefined;
+    check(
+      "clips scenario: the second clip is ready, made by Grok behind a free Kling, and billed Grok's figure ($0.71)",
+      field(second, "status") === "ready" && field(second, "model") === "grok" && field(second, "fallback") === true && field(second, "cost", "micros") === 710_000 && field(second, "cost", "kind") === "billed",
+      second,
+    );
+
+    // 5. One POST per attempt id; the refused job asked for nothing more than its polls and two 404 readings.
+    const attemptIds = await ledgerClipAttempts();
+    const postProblems = clipPostProblems(mock.videoRequests(), attemptIds, [VIDEO_TIERS.std.model, VIDEO_TIERS.std.model, VIDEO_TIERS.grok.model]);
+    check("clips scenario: one POST /videos per attempt id (Kling, Kling, then Grok), never resent", postProblems.length === 0, postProblems);
+    const refusedId = mock.videoRequests()[1]?.id ?? "";
+    const refusedProblems = refusedJobProblems(mock.videoCalls(), refusedId);
+    check("clips scenario: the refused job was polled and proven free by two readings of /generation, each the API's 404, and its file was never fetched", refusedProblems.length === 0, refusedProblems);
+
+    // 6. The money: the ledger is where the mock's bill is, and nothing is open.
+    const money = await req(cdp, "money.status");
+    check(
+      "clips scenario: money.status' ledger total equals the mock's charged costs, no open reserves",
+      field(money, "ok") === true && field(money, "result", "spentMicros") === Math.round(mock.totalUsageUsd() * 1_000_000) && field(money, "result", "unsettledMicros") === 0 && field(money, "result", "unsettledCount") === 0,
+      { money, billed: mock.totalUsageUsd() },
+    );
+
+    // 7. «Сохранить в папку».
+    const exportStarted = await req(cdp, "clips.export", { avatarId, clipId: secondJob });
+    const exportJob = field(exportStarted, "result", "jobId");
+    check("clips scenario: clips.export starts the export job", field(exportStarted, "ok") === true && typeof exportJob === "string", exportStarted);
+    const exportEnd = await waitFor("the export job to end", () => endEventOf(cdp, exportJob), CLIP_JOB_TIMEOUT_MS, 500);
+    const relPath = field(exportEnd, "payload", "result", "exported", "relPath");
+    check("clips scenario: the export ends as job.done", field(exportEnd, "type") === "job.done", exportEnd);
+    const got = await req(cdp, "clips.get", { avatarId, clipId: secondJob });
+    const line = field(got, "result", "clip", "exports");
+    const exported = Array.isArray(line) ? line[0] : undefined;
+    check("clips scenario: clips.get shows the copy present in the export folder", field(exported, "fileState") === "present" && field(exported, "relPath") === relPath, got);
+    const verdict = typeof relPath === "string" ? await verifyClipExport(join(exportRoot, relPath), { createdAt: new Date(String(field(exported, "at"))) }) : { ok: false, reasons: [{ code: "NO_FILE" }], sha256: null, bytes: 0 };
+    const exportProblems = exportedCopyProblems(typeof relPath === "string" ? relPath : undefined, verdict);
+    check("clips scenario: the copy is named <avatar>/<date>_clip_<NNN>.mp4 and its file passes the export's verifier (I5.58)", exportProblems.length === 0, exportProblems);
+    check("clips scenario: the export asked the provider for nothing", mock.videoRequests().length === 3, mock.videoRequests());
+    check("clips scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
+  } finally {
+    await quit(running);
+    await mock.stop();
+    await removeTemp(tmp);
+  }
+}
+
 function finish(): void {
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
@@ -4127,6 +4252,13 @@ async function main(): Promise<void> {
   // `--only scene-set-run` runs the scene-set run scenario alone (CS.5), for working on it.
   if (argValue("--only") === "scene-set-run") {
     await runSceneSetRunScenario(target);
+    finish();
+    return;
+  }
+
+  // `--only clips` runs the «Оживить» scenario alone (5b.1, S5.V7), for working on it.
+  if (argValue("--only") === "clips") {
+    await runClipScenario(target);
     finish();
     return;
   }
@@ -4575,6 +4707,7 @@ async function main(): Promise<void> {
   await runCategoryScenario(target);
   await runSceneSetRunScenario(target);
   await runBoldRouteScenario(target);
+  await runClipScenario(target);
   await runPackagedRenderScenario(target);
   await runAutopilotScenario(target);
   finish();
