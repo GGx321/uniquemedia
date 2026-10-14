@@ -1,4 +1,5 @@
-import { NO_ANSWER_DETAIL_PREFIX, PORTRAITS_PER_BATCH, type EngineError, type VideoSummary } from "../../shared/engine";
+import { CLIP_JOB_STEPS, NO_ANSWER_DETAIL_PREFIX, PORTRAITS_PER_BATCH, type AvatarSummary, type EngineError, type VideoSummary } from "../../shared/engine";
+import { exportPercent, queuePhase } from "../screens/clips/clipModel";
 import type { RenderBlock } from "../screens/montage/renderBlock";
 import type { EngineReply } from "./client";
 import type { JobView } from "./store";
@@ -110,6 +111,41 @@ export function sidebarCounts(jobs: readonly JobView[], batch: ReadonlySet<strin
             fraction: (batchJobs.length - running.length + running.reduce((sum, j) => sum + (j.total > 0 ? Math.min(1, j.done / j.total) : 0), 0)) / batchJobs.length,
           },
   };
+}
+
+/** S5.V8: one clip at work in «Очередь» (README §S5.VD decision 10): «Клип · Nini», its short phase, and its steps — or an export's frames — for the bar. */
+export interface ClipQueueRow {
+  readonly jobId: string;
+  readonly label: string;
+  readonly phase: string;
+  /** Late reads in the warning's tone. */
+  readonly warn: boolean;
+  readonly meter: { readonly kind: "steps"; readonly done: number; readonly total: number } | { readonly kind: "bar"; readonly percent: number };
+}
+
+/**
+ * The clip rows of the sidebar's queue, in submission order: each queued or running clip job — a create, a recovery, a `retryDownload` or an export — named by its avatar
+ * («Клип · Nini»; «Клип» for an avatar the window does not list). `seenAt` is when the window first saw the job, for an elapsed time from another clock (clipModel.ts).
+ */
+export function clipQueueRows(jobs: readonly JobView[], avatars: readonly AvatarSummary[], ctx: { nowMs: number; seenAt: (jobId: string) => number }): ClipQueueRow[] {
+  const names = new Map(avatars.map((a) => [a.avatarId, a.name]));
+  return jobs.flatMap((job): ClipQueueRow[] => {
+    const clip = job.clip;
+    if (job.kind !== "clip" || clip === undefined || !isActive(job)) return [];
+    const name = names.get(job.avatarId);
+    const phase = clip.phase ?? (clip.export ? "exporting" : "preparing");
+    const progress = { phase, model: clip.model, submittedAt: clip.submittedAt, proveUntil: clip.proveUntil, done: job.done, total: job.total };
+    const said = queuePhase(progress, { nowMs: ctx.nowMs, seenMs: ctx.seenAt(job.jobId), lateUntilMs: null, grokOffer: false });
+    return [
+      {
+        jobId: job.jobId,
+        label: name === undefined ? "Клип" : `Клип · ${name}`,
+        phase: said.text,
+        warn: said.warn,
+        meter: phase === "exporting" ? { kind: "bar", percent: exportPercent(job.done, job.total) } : { kind: "steps", done: job.done, total: job.total || CLIP_JOB_STEPS },
+      },
+    ];
+  });
 }
 
 export type SubmitOutcome =

@@ -14,6 +14,7 @@ import { SidebarMarkView, useSidebarMark } from "./screens/autopilot/SidebarMark
 import { AvatarImport } from "./screens/AvatarImport";
 import { AvatarsScreen } from "./screens/AvatarsScreen";
 import { AvatarWizard } from "./screens/AvatarWizard";
+import { ClipQueueRows } from "./screens/clips/ClipQueueRows";
 import { DraftsScreen } from "./screens/DraftsScreen";
 import { EditorScreen } from "./screens/EditorScreen";
 import { DraftFlushes, DraftFlushesProvider } from "./screens/montage/flushes";
@@ -273,6 +274,8 @@ function SidebarStatus() {
             </div>
           </div>
         )}
+        {/* S5.V8: a clip at work has its own row, «Клип · Nini · Снимается 1:20». */}
+        <ClipQueueRows jobs={view.jobs} avatars={view.avatars} />
       </section>
       {money && (
         <section className="side-box side-spend" aria-label="Расходы за месяц">
