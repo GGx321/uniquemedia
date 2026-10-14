@@ -44,6 +44,17 @@ describe("the journal before anything (I5.45)", () => {
     });
   });
 
+  test("`requested` names the batch of a batch member (5b.2), so a restart's record carries the trio; a single clip's line has none", async () => {
+    await make();
+    await rig.run({ batch: { batchId: "batch-00000001", batchIndex: 2, batchSize: 5 } });
+    expect(rig.journalLines[0]).toMatchObject({ type: "requested", batch: { batchId: "batch-00000001", batchIndex: 2, batchSize: 5 } });
+    await rig.dispose();
+
+    await make();
+    await rig.run();
+    expect(rig.journalLines[0]).not.toHaveProperty("batch");
+  });
+
   test("`requested` is written once for a clip with two attempts", async () => {
     await make({ mode: "auto", kling: refused, grok: grokOk });
     await rig.run();

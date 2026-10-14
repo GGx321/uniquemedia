@@ -7,7 +7,7 @@ import { CLIP_RETRYABLE_FAILURES } from "../../shared/engine/clips";
 import type { UnsequencedEvent } from "../../shared/engine/events";
 import { EngineFailure } from "../engineFailure";
 import type { WorkerFaceGate } from "../face/worker/workerGate";
-import type { ClipJobEnd, ClipJobFacts, JobRegistry } from "../jobs";
+import type { ClipBatchRef, ClipJobEnd, ClipJobFacts, JobRegistry } from "../jobs";
 import { hasErrorCode, readFolderNames, isTempName } from "../library/durableFs";
 import { isLibraryId } from "../library/ids";
 import type { OpenRouterClient } from "../openrouter/types";
@@ -410,7 +410,7 @@ export async function recoverClips(host: ClipRecoveryHost, library: RecoveryLibr
           }
           handedOver = true;
           // Wrapped: a promise returned from the lock's work would be awaited with it, and the lock would be held for the whole job.
-          return { running: startRecoveryJob(host, candidate.avatarId, candidate.clipId, factsOf(summary), leave, (job) => new Recovery(host, library, fresh, summary, reservedAttempts, plan, job).run()) };
+          return { running: startRecoveryJob(host, candidate.avatarId, candidate.clipId, factsOf(summary), summary.requested?.batch, leave, (job) => new Recovery(host, library, fresh, summary, reservedAttempts, plan, job).run()) };
         } finally {
           if (!handedOver) leave();
         }
@@ -437,7 +437,7 @@ export async function recoverClips(host: ClipRecoveryHost, library: RecoveryLibr
           const read = await readClipRecord(repaint.clipsDir, repaint.clipId);
           if (read.kind !== "record" || read.record.outcome.status !== "ready") return null;
           handedOver = true;
-          return { running: startRecoveryJob(host, repaint.avatarId, repaint.clipId, undefined, leave, (job) => repaintPoster(host, repaint.clipsDir, repaint.clipId, job)) };
+          return { running: startRecoveryJob(host, repaint.avatarId, repaint.clipId, undefined, undefined, leave, (job) => repaintPoster(host, repaint.clipsDir, repaint.clipId, job)) };
         } finally {
           if (!handedOver) leave();
         }
@@ -472,10 +472,10 @@ function factsOf(summary: JournalSummary): ClipJobFacts | undefined {
 }
 
 /** Registers the job, runs `work`, and announces its end. Null when a job already works on the clip. Never rejects. */
-function startRecoveryJob(host: ClipRecoveryHost, avatarId: string, clipId: string, facts: ClipJobFacts | undefined, leave: () => void, work: (job: Job) => Promise<JobOutcome>): Promise<void> {
+function startRecoveryJob(host: ClipRecoveryHost, avatarId: string, clipId: string, facts: ClipJobFacts | undefined, batch: ClipBatchRef | undefined, leave: () => void, work: (job: Job) => Promise<JobOutcome>): Promise<void> {
   const jobId = host.newId();
   const ref = { kind: "clip" as const, jobId, avatarId, clipId };
-  const cancel = host.jobs.startClip(jobId, { avatarId, clipId, ...(facts === undefined ? {} : { facts }) }, "recovering");
+  const cancel = host.jobs.startClip(jobId, { avatarId, clipId, ...(facts === undefined ? {} : { facts }), ...(batch === undefined ? {} : { batch }) }, "recovering");
   const job: Job = {
     jobId,
     avatarId,
@@ -786,6 +786,8 @@ class Recovery {
       request: requested.request,
       provider: { model: model === "grok" ? "grok" : requested.request.quality === "pro" ? "kling-pro" : "kling-std", attempts: this.attempts(decided) },
       recovered: true,
+      // 5b.2 (I5.63): a batch member recovered after a restart keeps its place in the batch, so the «Клипы» header counts it.
+      ...(requested.batch === undefined ? {} : { batchId: requested.batch.batchId, batchIndex: requested.batch.batchIndex, batchSize: requested.batch.batchSize }),
       exports: [],
     };
   }

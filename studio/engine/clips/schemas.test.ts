@@ -227,6 +227,23 @@ describe("the journal lines", () => {
     expect(ClipJournalLine.safeParse(none).success).toBe(false);
   });
 
+  test("requested may name the batch the clip is a member of (5b.2), so a restart's record carries the trio; a 5b.1 line without it still parses", () => {
+    const batch = { batchId: "batch-0001", batchIndex: 2, batchSize: 5 };
+    expect(ClipJournalLine.safeParse({ ...requested, batch }).success).toBe(true);
+    expect(ClipJournalLine.safeParse(requested).success).toBe(true);
+  });
+
+  test("the batch of a requested line is all three fields, the place within the size, strict", () => {
+    const batch = { batchId: "batch-0001", batchIndex: 2, batchSize: 5 };
+    expect(ClipJournalLine.safeParse({ ...requested, batch: { ...batch, batchIndex: 5 } }).success).toBe(true);
+    expect(ClipJournalLine.safeParse({ ...requested, batch: { ...batch, batchSize: 20, batchIndex: 20 } }).success).toBe(true);
+    expect(ClipJournalLine.safeParse({ ...requested, batch: { ...batch, batchIndex: 6 } }).success).toBe(false);
+    expect(ClipJournalLine.safeParse({ ...requested, batch: { ...batch, batchIndex: 0 } }).success).toBe(false);
+    expect(ClipJournalLine.safeParse({ ...requested, batch: { ...batch, batchSize: 21, batchIndex: 21 } }).success).toBe(false);
+    expect(ClipJournalLine.safeParse({ ...requested, batch: { batchId: batch.batchId, batchIndex: 2 } }).success).toBe(false);
+    expect(ClipJournalLine.safeParse({ ...requested, batch: { ...batch, extra: 1 } }).success).toBe(false);
+  });
+
   test("submitted names the attempt, the model and the provider's job", () => {
     expect(ClipJournalLine.safeParse({ ...submitted, model: "grok" }).success).toBe(true);
     expect(ClipJournalLine.safeParse({ ...submitted, model: "seedance" }).success).toBe(false);

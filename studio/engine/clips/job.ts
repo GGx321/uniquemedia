@@ -298,6 +298,7 @@ class ClipChain {
       motion: { source: input.motion.source, label: input.motion.label, text: input.motion.text },
       acceptedWorstMicros: input.acceptedWorstMicros,
       bold: input.facts.bold,
+      ...(input.batch === undefined ? {} : { batch: input.batch }),
       prices: input.prices,
       mode: input.mode,
       boldClips: input.boldClips,

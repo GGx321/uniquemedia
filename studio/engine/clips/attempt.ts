@@ -97,6 +97,8 @@ export interface ClipRunInput {
   acceptedWorstMicros: number;
   /** A frame of «Смелая» (I5.57). */
   bold: boolean;
+  /** 5b.2 (I5.63): the batch the clip is a member of; journaled on `requested` so a restart's record carries the trio. Absent for a single clip. */
+  batch?: { batchId: string; batchIndex: number; batchSize: number };
   /** The clip's own price book, read once at `clips.create` (I5.46). Copied at the start: nothing that changes later reaches a reserve. */
   prices: ClipPrices;
   /** The engine's mode (`GROK_FALLBACK`). */
@@ -233,6 +235,7 @@ export async function runClip(deps: ClipRunDeps, input: ClipRunInput, signal: Ab
     request: input.request,
     motion: input.motion,
     acceptedWorstMicros: input.acceptedWorstMicros,
+    ...(input.batch === undefined ? {} : { batch: input.batch }),
     at: new Date(deps.now()).toISOString(),
   });
 

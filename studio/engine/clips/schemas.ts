@@ -97,6 +97,11 @@ const RequestedLine = z.strictObject({
   request: ClipRequest,
   motion: ClipMotion,
   acceptedWorstMicros: Micros,
+  /** 5b.2 (S5.WB2; additive, optional): the batch the clip is a member of, so the record a restart writes for it carries the trio too. A 5b.1 line has none. */
+  batch: z
+    .strictObject({ batchId: Id, batchIndex: z.number().int().min(1).max(MAX_BATCH_CLIPS), batchSize: z.number().int().min(1).max(MAX_BATCH_CLIPS) })
+    .refine((b) => b.batchIndex <= b.batchSize, { message: "a batch member's place is within the batch's size", path: ["batchIndex"] })
+    .optional(),
   at: At,
 });
 
