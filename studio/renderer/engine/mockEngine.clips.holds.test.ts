@@ -143,6 +143,35 @@ describe("money.status with a held clip reserve", () => {
     expect(last).not.toHaveProperty("reconcileAvailableAt");
   });
 
+  // The engine leaves a running clip's reserve out of the reconcile reasons (`isInFlight`, engine.ts `moneyStatus`): from its reserve to its settle the reserve is this process's own work. The mock
+  // used to announce `reconcileNeeded: true` for a moment before the hold was taken and again when the terminal hold ended in the same tick as the proof settled: a paidStop and a banner blinking.
+  const noFlicker: [string, Parameters<typeof makeClipMock>[0], Parameters<ClipMock["engine"]["scriptNextClip"]>[0]][] = [
+    ["a clip that completes (mode auto)", {}, "ok"],
+    ["a clip refused for free, then Grok behind it (mode auto)", {}, { first: "refused-free", then: "ok" }],
+    ["a clip refused for free, left at the offer (mode offer)", { clips: { mode: "offer" } }, "refused-free"],
+    ["a provider error", {}, "provider-error"],
+    ["a refusal that was paid", {}, "refused-paid"],
+  ];
+  for (const [what, options, script] of noFlicker) {
+    test(`never announces reconcileNeeded while ${what} runs, nor when its holds end`, async () => {
+      const m = makeClipMock(options);
+      m.engine.scriptNextClip(script);
+      await runClip(m);
+      pastTheHold(m);
+      const statuses = moneyEvents(m.events).filter((s) => s.ledger === "open");
+      expect(statuses.length).toBeGreaterThan(2);
+      expect(statuses.filter((s) => s.reconcileNeeded || s.reconcileReasons.includes("open-reserves"))).toEqual([]);
+    });
+  }
+
+  test("announces open-reserves for an uncertain submit once the reserve is abandoned and its hold ends", async () => {
+    const m = makeClipMock();
+    await uncertainClip(m);
+    expect(moneyEvents(m.events).filter((s) => s.ledger === "open" && s.reconcileNeeded)).toEqual([]);
+    pastTheHold(m);
+    expect(moneyEvents(m.events).at(-1)).toMatchObject({ reconcileNeeded: true, reconcileReasons: ["open-reserves"] });
+  });
+
   test("with no hold, money.status carries no reconcileAvailableAt", async () => {
     const m = makeClipMock();
     expect(await money(m)).not.toHaveProperty("reconcileAvailableAt");

@@ -220,6 +220,8 @@ interface Line {
   estimated: boolean;
   /** Reserved by this process (a restart makes every open line foreign). */
   own: boolean;
+  /** From the reserve until the line settles or is abandoned (a late or uncertain attempt): the budget's `isInFlight`, which the engine leaves out of the reconcile reasons. */
+  inFlight: boolean;
 }
 
 interface Job {
@@ -544,7 +546,7 @@ export class MockClips {
         outcome: { status: "ready", width: 720, height: 1280, durationMs: 5_000, face: { verdict: "match", p75: 0.86, frames: 10 } },
       });
       this.#files.set(id, { journal: false, record: true, media: true });
-      this.#lines.push({ attemptId: attemptIdOf(id, 1), clipId: id, model: "kling", worstMicros: 504_000, reserveAtMs: Date.parse(createdAt), state: "settled", costMicros: 420_000, estimated: false, own: false });
+      this.#lines.push({ attemptId: attemptIdOf(id, 1), clipId: id, model: "kling", worstMicros: 504_000, reserveAtMs: Date.parse(createdAt), state: "settled", costMicros: 420_000, estimated: false, own: false, inFlight: false });
     }
   }
 
@@ -594,9 +596,12 @@ export class MockClips {
     for (const [id, job] of [...this.#jobs]) if (job.avatarId === avatarId) this.#jobs.delete(id);
   }
 
-  /** An open reserve of a clip that is not a reconcile reason: this process's own, while its hold lasts (the renderer's paidStop would stop every paid action for nothing). */
+  /**
+   * An open reserve of a clip that is not a reconcile reason: this process's own, while it is in flight (engine.ts: `!budget.isInFlight`) or its hold lasts (the renderer's paidStop would stop every
+   * paid action for nothing). Without the in-flight half the reserve showed as a reason for a moment before its hold was taken, and when the terminal hold ended in the proof settle's own tick.
+   */
   #hidden(line: Line): boolean {
-    return line.own && this.#holds.has(line.attemptId);
+    return line.own && (line.inFlight || this.#holds.has(line.attemptId));
   }
 
   /** `open-reserves` is a reason for an open clip reserve that is not held. */
@@ -672,7 +677,7 @@ export class MockClips {
   // ---------- the ledger lines ----------
 
   #reserve(clipId: string, n: 1 | 2, model: AttemptModel, worstMicros: number): Line {
-    const line: Line = { attemptId: attemptIdOf(clipId, n), clipId, model, worstMicros, reserveAtMs: this.#host.clockMs(), state: "open", costMicros: 0, estimated: false, own: true };
+    const line: Line = { attemptId: attemptIdOf(clipId, n), clipId, model, worstMicros, reserveAtMs: this.#host.clockMs(), state: "open", costMicros: 0, estimated: false, own: true, inFlight: true };
     this.#lines.push(line);
     this.#host.reserves.set(line.attemptId, worstMicros);
     this.#lastWriteMs = line.reserveAtMs;
@@ -682,6 +687,7 @@ export class MockClips {
 
   #settle(line: Line, costMicros: number, estimated: boolean): void {
     line.state = "settled";
+    line.inFlight = false;
     line.costMicros = costMicros;
     line.estimated = estimated;
     this.#host.reserves.delete(line.attemptId);
@@ -962,6 +968,7 @@ export class MockClips {
     }
     if (scripted === "uncertain") {
       this.#posts.push(model);
+      line.inFlight = false; // abandoned: the reserve stays open at worst, held by its hold
       ended("uncertain", "none");
       this.#attemptsDone(job.clipId, { attemptId, model, outcome: "uncertain", costSource: "none" });
       return this.#fail(run, model, "submit-uncertain");
@@ -1026,6 +1033,7 @@ export class MockClips {
     const { job } = run;
     const host = this.#host;
     // I5.48: no terminal status 20 min after the submit. The reserve stays open at worst (abandoned); a late `completed` writes no ledger line.
+    line.inFlight = false;
     this.#attemptsDone(job.clipId, { attemptId: line.attemptId, model, providerJobId, outcome: "late", costSource: "none" });
     this.#progress(job, { phase: "late", model, submittedAt: iso(submittedMs) });
     this.#closeMoney(job);
@@ -1481,7 +1489,10 @@ export class MockClips {
     this.#exportQueue = [];
     this.#exportRunning = null;
     this.#restartedAtMs = host.clockMs();
-    for (const line of this.#lines) line.own = false;
+    for (const line of this.#lines) {
+      line.own = false;
+      line.inFlight = false;
+    }
 
     const reservedBy = (clipId: string): Set<string> => new Set(this.#lines.filter((l) => l.clipId === clipId).map((l) => l.attemptId));
     const recoveries: { clipId: string; avatarId: string; plan: Plan; lines: MockJournalLine[]; fate: Script }[] = [];
