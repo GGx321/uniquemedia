@@ -301,3 +301,152 @@ describe("the order of the quit questions", () => {
     expect(await confirmInOrder([])).toBe(true);
   });
 });
+
+// ---------- 5b.2 (S5.WB2): a batch ----------
+
+/** A progress event of a batch member: `queued` carries a wait reason, and every phase carries the trio. */
+const member = (jobId: string, phase: ClipPhase, index: number, size = 10): EventMessage =>
+  EventMessage.parse({
+    v: PROTOCOL_VERSION,
+    id: id(),
+    kind: "event",
+    seq: seq + 1,
+    bootId: "boot-00000001",
+    type: "job.progress",
+    payload: {
+      kind: "clip",
+      jobId,
+      avatarId: AVATAR,
+      clipId: jobId,
+      done: 0,
+      total: 4,
+      phase,
+      batchId: "batch-00000001",
+      batchIndex: index,
+      batchSize: size,
+      ...(phase === "queued" ? { waitReason: "turn" } : {}),
+    },
+  });
+
+const M = (n: number): string => `clip-0000010${n}`;
+
+describe("a batch: the power blocker and the quit question stay on while members are queued (I5.63)", () => {
+  test("the blocker is held while a member is only `queued`", () => {
+    const { host, blocker } = rig();
+    host.observe(member(M(1), "queued", 1));
+    expect(blocker.starts).toBe(1);
+    expect(host.blockerHeld).toBe(true);
+  });
+
+  test("the blocker is held while a member is `preparing`, which a single clip's is not", () => {
+    const batch = rig();
+    batch.host.observe(member(M(1), "preparing", 1));
+    expect(batch.host.blockerHeld).toBe(true);
+    const single = rig();
+    single.host.observe(progress(A, "preparing"));
+    expect(single.host.blockerHeld).toBe(false);
+  });
+
+  test("the blocker stays through the whole batch, the member's download included, while another member is queued", () => {
+    const { host, blocker } = rig();
+    host.observe(member(M(1), "downloading", 1));
+    host.observe(member(M(2), "queued", 2));
+    expect(host.blockerHeld).toBe(true);
+    expect(blocker.stops).toEqual([]);
+  });
+
+  test("the blocker goes when the last member ends", () => {
+    const { host, blocker } = rig();
+    host.observe(member(M(1), "rendering", 1));
+    host.observe(member(M(2), "queued", 2));
+    host.observe(done(M(1)));
+    expect(blocker.stops).toEqual([]);
+    host.observe(cancelled(M(2)));
+    expect(blocker.stops).toEqual([1]);
+  });
+
+  test("the blocker is not held for members that all ended", () => {
+    const { host } = rig();
+    host.observe(member(M(1), "queued", 1));
+    host.observe(cancelled(M(1)));
+    expect(host.blockerHeld).toBe(false);
+  });
+
+  test("asks about the queue alone when nothing is in flight (45b, queued only), counting `preparing` with the queue", async () => {
+    const { host, asked } = rig();
+    host.observe(member(M(1), "preparing", 1));
+    host.observe(member(M(2), "queued", 2));
+    host.observe(member(M(3), "queued", 3));
+    await host.confirmQuit();
+    expect(asked).toEqual([{ message: "Клипы пакета ещё в очереди: 3", detail: "Если выйти сейчас, они не снимутся — бесплатно.", buttons: [QUIT_STAY_LABEL, QUIT_LEAVE_LABEL], defaultId: 0, cancelId: 0 }]);
+  });
+
+  test("asks about the clips in flight and the queue (45b): how many are in flight, and that the queued ones will not be made", async () => {
+    const { host, asked } = rig();
+    host.observe(member(M(1), "rendering", 1));
+    for (const n of [2, 3, 4, 5]) host.observe(member(M(n), "queued", n));
+    await host.confirmQuit();
+    expect(asked).toEqual([
+      {
+        message: "Клипы ещё снимаются: 1",
+        detail: "Ещё 4 в очереди — они не снимутся. Если выйти сейчас, после запуска понадобится сверка расходов (около 5 минут).",
+        buttons: [QUIT_STAY_LABEL, QUIT_LEAVE_LABEL],
+        defaultId: 0,
+        cancelId: 0,
+      },
+    ]);
+  });
+
+  test("asks state 45's question when the last member is in flight and nothing is queued", async () => {
+    const { host, asked } = rig();
+    host.observe(member(M(1), "rendering", 10, 10));
+    await host.confirmQuit();
+    expect(asked[0]).toEqual({ message: CLIP_QUIT_MESSAGE, detail: CLIP_QUIT_DETAIL, buttons: [QUIT_STAY_LABEL, QUIT_LEAVE_LABEL], defaultId: 0, cancelId: 0 });
+  });
+
+  test("the counts follow the queue: a cancelled member leaves it", async () => {
+    const { host, asked } = rig();
+    host.observe(member(M(1), "submitting", 1));
+    host.observe(member(M(2), "queued", 2));
+    host.observe(member(M(3), "queued", 3));
+    host.observe(cancelled(M(3)));
+    await host.confirmQuit();
+    expect(asked[0]?.detail).toContain("Ещё 1 в очереди");
+    host.observe(cancelled(M(2)));
+    await host.confirmQuit();
+    expect(asked[1]).toMatchObject({ message: CLIP_QUIT_MESSAGE });
+  });
+
+  test("keeps the app on «Остаться» and quits on «Выйти» with a queue as with a clip", async () => {
+    const stay = rig(0);
+    stay.host.observe(member(M(1), "queued", 1));
+    expect(await stay.host.confirmQuit()).toBe(false);
+    const leave = rig(1);
+    leave.host.observe(member(M(1), "queued", 1));
+    expect(await leave.host.confirmQuit()).toBe(true);
+  });
+
+  test("a single clip in `preparing` still asks nothing (a batch changes nothing for it)", async () => {
+    const { host, asked } = rig();
+    host.observe(progress(A, "preparing"));
+    expect(await host.confirmQuit()).toBe(true);
+    expect(asked).toEqual([]);
+  });
+
+  test("forgets queued members when the engine is gone", async () => {
+    const { host, asked, blocker } = rig();
+    host.observe(member(M(1), "queued", 1));
+    host.engineGone();
+    expect(await host.confirmQuit()).toBe(true);
+    expect(asked).toEqual([]);
+    expect(blocker.stops).toEqual([1]);
+  });
+
+  test("a recovery job of a batch member is not the queue: it asks nothing and holds nothing", async () => {
+    const { host, asked } = rig();
+    host.observe(member(M(1), "recovering", 1));
+    expect(await host.confirmQuit()).toBe(true);
+    expect(asked).toEqual([]);
+    expect(host.blockerHeld).toBe(false);
+  });
+});

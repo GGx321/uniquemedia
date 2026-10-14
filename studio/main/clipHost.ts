@@ -14,6 +14,11 @@ import { QUIT_LEAVE_LABEL, QUIT_STAY_LABEL, type PowerBlockerPort, type QuitDial
 
 /** The phases between the POST being prepared and the proof window closing: the clip may bill, and the render goes on at the provider. */
 const IN_FLIGHT: ReadonlySet<ClipPhase> = new Set<ClipPhase>(["submitting", "rendering", "proving"]);
+/**
+ * 5b.2 (I5.63, 45b): the queue side of a batch. A member that is `queued`, or in `preparing` (free, and counted with the queue, not with the clips in flight), is still to be made: it keeps the power blocker and the
+ * quit question, which says the queued ones will not be made. A single clip's `preparing` is none of that.
+ */
+const QUEUE_SIDE: ReadonlySet<ClipPhase> = new Set<ClipPhase>(["queued", "preparing"]);
 
 export interface ClipHostDeps {
   blocker: PowerBlockerPort;
@@ -26,10 +31,24 @@ export function clipQuitDialog(): QuitDialogSpec {
   return { message: CLIP_QUIT_MESSAGE, detail: CLIP_QUIT_DETAIL, buttons: [QUIT_STAY_LABEL, QUIT_LEAVE_LABEL], defaultId: 0, cancelId: 0 };
 }
 
+/** State 45b's dialog (5b.2): the clips in flight and the queue behind them, or the queue alone. The same shape as 45's. */
+export function clipBatchQuitDialog(inFlight: number, queued: number): QuitDialogSpec {
+  if (inFlight === 0) {
+    return { message: `Клипы пакета ещё в очереди: ${queued}`, detail: "Если выйти сейчас, они не снимутся — бесплатно.", buttons: [QUIT_STAY_LABEL, QUIT_LEAVE_LABEL], defaultId: 0, cancelId: 0 };
+  }
+  return {
+    message: `Клипы ещё снимаются: ${inFlight}`,
+    detail: `Ещё ${queued} в очереди — они не снимутся. Если выйти сейчас, после запуска понадобится сверка расходов (около 5 минут).`,
+    buttons: [QUIT_STAY_LABEL, QUIT_LEAVE_LABEL],
+    defaultId: 0,
+    cancelId: 0,
+  };
+}
+
 export class ClipHost {
   readonly #deps: ClipHostDeps;
-  /** The clip jobs main knows of and the phase each is in. */
-  readonly #phases = new Map<string, ClipPhase>();
+  /** The clip jobs main knows of, the phase each is in, and whether it is a member of a batch (it carries the batch trio). */
+  readonly #phases = new Map<string, { phase: ClipPhase; member: boolean }>();
   #blockerId: number | null = null;
   #disposed = false;
 
@@ -50,7 +69,7 @@ export class ClipHost {
     switch (event.type) {
       case "job.progress":
         if (event.payload.kind !== "clip") return;
-        this.#phases.set(event.payload.jobId, event.payload.phase);
+        this.#phases.set(event.payload.jobId, { phase: event.payload.phase, member: event.payload.batchId !== undefined });
         break;
       case "job.failed":
       case "job.cancelled":
@@ -73,13 +92,22 @@ export class ClipHost {
     this.#guard("power blocker", () => this.#syncBlocker());
   }
 
-  #inFlight(): boolean {
-    for (const phase of this.#phases.values()) if (IN_FLIGHT.has(phase)) return true;
-    return false;
+  /** How many clips are between `submitting` and `proving`: they may bill. */
+  #inFlightCount(): number {
+    let n = 0;
+    for (const { phase } of this.#phases.values()) if (IN_FLIGHT.has(phase)) n++;
+    return n;
+  }
+
+  /** How many batch members are still to be made and have cost nothing yet: `queued`, or `preparing`. */
+  #queuedCount(): number {
+    let n = 0;
+    for (const { phase, member } of this.#phases.values()) if (member && QUEUE_SIDE.has(phase)) n++;
+    return n;
   }
 
   #syncBlocker(): void {
-    const hold = !this.#disposed && this.#inFlight();
+    const hold = !this.#disposed && (this.#inFlightCount() > 0 || this.#queuedCount() > 0);
     if (hold && this.#blockerId === null) this.#blockerId = this.#deps.blocker.start();
     else if (!hold && this.#blockerId !== null) {
       const id = this.#blockerId;
@@ -99,10 +127,15 @@ export class ClipHost {
     this.#guard("power blocker", () => this.#syncBlocker());
   }
 
-  /** quitFlow's `confirmQuit`, for the clip: true to quit. No question when no clip is between `submitting` and `proving`; «Остаться» (or Escape) keeps the app and changes nothing. */
+  /**
+   * quitFlow's `confirmQuit`, for the clip: true to quit. No question when no clip is between `submitting` and `proving` and no batch member is queued; «Остаться» (or Escape) keeps the app and changes nothing.
+   * A batch with members still to be made asks 45b's question: the clips in flight and the queue behind them, or the queue alone.
+   */
   async confirmQuit(): Promise<boolean> {
-    if (!this.#inFlight()) return true;
-    const pressed = await this.#deps.dialog.ask(clipQuitDialog());
+    const inFlight = this.#inFlightCount();
+    const queued = this.#queuedCount();
+    if (inFlight === 0 && queued === 0) return true;
+    const pressed = await this.#deps.dialog.ask(queued === 0 ? clipQuitDialog() : clipBatchQuitDialog(inFlight, queued));
     return pressed === 1;
   }
 }
