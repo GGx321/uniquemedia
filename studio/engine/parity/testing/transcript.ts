@@ -68,7 +68,7 @@ export const INTENTIONAL_DIFFERENCES: readonly string[] = [
   "the body (Stage 5, S5.2a, `avatars.setBody`, `avatars.dismissBodyProposal`): played are the write and its replace-the-whole-body rule, the refusals the contract and the composite give (the closed `descriptorReason` `too-long-with-body`, from either side: a body on a long text and a long text on a body), an archived avatar, the stored proposal cleared by a body and by a dismiss, and a body set while an autopilot launch holds the avatar. The summary's `body` and `bodyProposal` are written only when set (`avatarLine`), so every older line is unchanged. Not played: the IN_FLIGHT a rewrite, a candidates batch, an archive or a delete gives, a draft, and a schema-version-1 record (the mock keeps no record version), the write race inside the library's lock, and the phrase in a run's prompt (the mock draws no prompt): engine.body, mockEngine.body and the prompt tests hold those. The VALIDATION detail is not compared, as for every VALIDATION",
   "the reference portrait (Stage 5, S5.3c, `avatars.estimatePortraits`, `avatars.generatePortraits`, `avatars.portraits`, `avatars.pickPortrait`, `avatars.discardPortraits`): the price is each engine's own (the mock's $0.06 a slot, the engine's bundled table at the rig's model), so the transcript writes that it is ordered, that it is a price, that it names its source and whether expected equals worst; the text of a PRICE_CHANGED is each engine's own (the engine names both sums): its code is compared. A batch RUNS in both rigs, one slot at a time, by the one outcome table the mock exports (three portraits at 0.76, 0.72 and 0.61, one not hers at 0.48, one the model refuses): the engine's face gate and fake OpenRouter are scripted by it, the mock plays it. The money a batch spends and the order of its money events are not written (`money.changed` is not covered); the engine's own tests hold them (engine.portraits.generate, mockEngine.portraits). The engine's job.progress counts a slot AFTER its portrait is stored; the portraits list is read straight after the batch, so a missing portrait would be seen. Not played: the refusals that need a key, a ledger or a library the rig always has, a descriptor the rules refuse, a face gate that is missing or broken, a source with no face, a model with no reference price, a month without room, and the claims of a descriptor check, an archive and a delete (the mock runs those to their end at once): engine.portraits, engine.portraits.generate and mockEngine.portraits hold them. The VALIDATION detail is not compared, as for every VALIDATION",
   "the descriptor check (Stage 5, S5.0c, `avatars.estimateCheckDescriptor`, `avatars.checkDescriptor`): the rig scripts no chat, so only the FREE commands and the free refusals of the paid one are played (an unknown avatar, a worst case below the price, a payload the contract refuses, the claim a running launch holds). The price is each engine's own (the mock's fixed figures, the engine's bundled table), so the transcript writes that it is ordered (expected within worst), that it is a price (above zero) and that it names its source; the two are held to the same figure by the engine's and the mock's own suites. The text of a check's PRICE_CHANGED is each engine's own (the engine's names both sums, the mock's none): its code is compared; every other refusal's text is compared. A check that RUNS (the verdict, the money flow, an import's `descriptorCheck`, that it never writes) is held by engine.checkDescriptor, engine.avatarsImport and mockEngine.checkDescriptor. No key (AUTH_INVALID) and no library (LIBRARY_UNAVAILABLE) cannot be played in the rig (it always has both) and are held by engine.checkDescriptor and mockEngine.checkDescriptor. A draft, an unreadable stored descriptor (DESCRIPTOR_INVALID) and the other jobs' claims (a rewrite, a candidates batch, an archive, a delete) are held by those suites too",
-  "clips (Stage 5, 5b.1, S5.V7, `clips.*`): the real rig plays the video provider by a fake (testing/clipProvider.ts) that answers each ATTEMPT of a clip by the outcome the story scripts, in the mock's own words (`MockClipAttempt`), on the short timing set (`clipTimings(\"short\")`: every duration the real one divided by a thousand, every ordering kept) and a clock that moves with the wall clock; the mock plays the same short set on its manual clock. A story waits on the end of a job, a phase or a hold (`untilJobEnds`, `untilPhase`, `untilMoney`), never on a count of settles or a sleep. Written are the commands, the answers, a clip's job.progress (its phase, steps and model; `submittedAt` and `proveUntil` as `<set>`), its end, and the facts of `money.status` and `money.reconcile` (whether a reconcile is needed and why, whether it is held, never until when; what it closed; a too-early answer never says how long). NOT written, by design: the words of a clip's refusals (the code, the `clipReason` and the `priceScope` are the contract), the frames of a face check (a verdict needs three; a skipped check says how many it had), a file's exact length (whole seconds) and size, the sha256 and time of an export, the frame counts of an export's progress (the story writes that it began at the start, only went forward and spoke more than once: `Transcript.exportProgress`), and the words of a clip job that failed (its code). Not played: the restart (the real rig plays no crash restart; clips/recover.test.ts and mockEngine.clips.restart.test.ts hold it on the same journal lines), `no-room` (the month's refusal of Grok's reserve is the mock's script; the engine's attempt tests hold it), `disk-full`, `clips.reveal` (main's alone), and the cancel in `preparing` (a race against the first frame in the real engine; both engines' own tests hold it). The budget's own two-minute quiet rule still applies to the real engine's reconcile: a story that reconciles moves the engine's clock ahead first (`ClipControl.passTime`), and the mock models the same rule for a clip's money only.",
+  "clips (Stage 5, 5b.1, S5.V7, `clips.*`): the real rig plays the video provider by a fake (testing/clipProvider.ts) that answers each ATTEMPT of a clip by the outcome the story scripts, in the mock's own words (`MockClipAttempt`), on the short timing set (`clipTimings(\"short\")`: every duration the real one divided by a thousand, every ordering kept) and a clock that moves with the wall clock; the mock plays the same short set on its manual clock. A story waits on the end of a job, a phase or a hold (`untilJobEnds`, `untilPhase`, `untilMoney`), never on a count of settles or a sleep. Written are the commands, the answers, a clip's job.progress (its phase, steps and model; `submittedAt` and `proveUntil` as `<set>`), its end, and the facts of `money.status` and `money.reconcile` (whether a reconcile is needed and why, whether it is held, never until when; what it closed; a too-early answer never says how long). NOT written, by design: the words of a clip's refusals (the code, the `clipReason` and the `priceScope` are the contract), the frames of a face check (a verdict needs three; a skipped check says how many it had), a file's exact length (whole seconds) and size, the facts a clip create job tells in every event (photo, request, motion label, accepted worst case: held to what the create asked for, on both, written in no line: `#checkClipFacts`), the sha256 and time of an export, the frame counts of an export's progress (the story writes that it began at the start, only went forward and spoke more than once: `Transcript.exportProgress`), and the words of a clip job that failed (its code). Not played: the restart (the real rig plays no crash restart; clips/recover.test.ts and mockEngine.clips.restart.test.ts hold it on the same journal lines), `no-room` (the month's refusal of Grok's reserve is the mock's script; the engine's attempt tests hold it), `disk-full`, `clips.reveal` (main's alone), and the cancel in `preparing` (a race against the first frame in the real engine; both engines' own tests hold it). The budget's own two-minute quiet rule still applies to the real engine's reconcile: a story that reconciles moves the engine's clock ahead first (`ClipControl.passTime`), and the mock models the same rule for a clip's money only.",
 ];
 
 /** A music status as both rigs can be bound to it: the counts, the log's state and the refresh's state; the times as set or null. */
@@ -750,6 +750,26 @@ export class Transcript {
     this.#clipSteps.set(p.jobId, p.done);
   }
 
+  /** What each `clips.create` asked for, by the job it started: the facts the job's events must tell back (S5.V8b). Held on both engines; written in no line. */
+  readonly #clipAsked = new Map<string, Record<string, unknown>>();
+
+  /**
+   * A clip create job tells the facts its tile shows (the photo, the request, the motion's label, the accepted worst case) in every event, and they are the facts the create asked for. The
+   * request's `fallback` is not compared: the sheet narrows it for a Grok clip and a frame of «Смелая», in both engines the same way, and the engines' own suites hold that.
+   */
+  #checkClipFacts(p: Extract<EventMessage, { type: "job.progress" }>["payload"] & { kind: "clip" }): void {
+    const asked = this.#clipAsked.get(p.jobId);
+    if (asked === undefined) return;
+    const name = this.norm.text(p.jobId);
+    const fail = (what: string): never => {
+      throw new Error(`clip job ${name} (${p.phase}): ${what}`);
+    };
+    if (p.photoId === undefined || p.request === undefined || p.motion === undefined || p.acceptedWorstMicros === undefined) fail("a create job tells no facts (photo, request, motion, accepted worst case)");
+    if (p.photoId !== asked.photoId) fail(`its photo is not the one asked for`);
+    if (p.request?.model !== asked.model || p.request?.quality !== asked.quality || p.request?.seconds !== asked.seconds) fail("its request is not the one asked for");
+    if (p.acceptedWorstMicros !== asked.acceptedWorstMicros) fail("its accepted worst case is not the one asked for");
+  }
+
   /** The events that came since the last look, in order. */
   #drain(): void {
     const all = this.#rig.events();
@@ -766,7 +786,10 @@ export class Transcript {
       }
       // A clip's numbers are told by where they stand (an export) or are the contract (a create's steps); the rule they must satisfy is checked here, on both engines: the steps never go back
       // and never pass the total.
-      if (event.type === "job.progress" && event.payload.kind === "clip") this.#checkClipProgress(event.payload);
+      if (event.type === "job.progress" && event.payload.kind === "clip") {
+        this.#checkClipProgress(event.payload);
+        this.#checkClipFacts(event.payload);
+      }
       const line = eventLine(event, this.norm);
       if (line !== null) this.#lines.push(line);
     }
@@ -779,8 +802,19 @@ export class Transcript {
     this.#lines.push(`> ${type} ${compact(this.norm.value(payload))}`);
     const answer = await this.#rig.send(type, payload);
     this.#drain();
+    if (type === "clips.create") this.#askedClip(payload, answer);
     this.#lines.push(answerLine(type, answer, this.norm));
     return answer;
+  }
+
+  /** A `clips.create` that was taken: the job it started owes the facts it asked for, from its first event, which may have come before the answer. */
+  #askedClip(payload: unknown, answer: Answer): void {
+    if (!answer.ok) return;
+    const jobId = objectOf(answer.result).jobId;
+    if (typeof jobId !== "string") return;
+    const { photoId, model, quality, seconds, acceptedWorstMicros } = objectOf(payload);
+    this.#clipAsked.set(jobId, { photoId, model, quality, seconds, acceptedWorstMicros });
+    for (const event of this.#rig.events()) if (event.type === "job.progress" && event.payload.kind === "clip" && event.payload.jobId === jobId) this.#checkClipFacts(event.payload);
   }
 
   /**

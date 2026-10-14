@@ -58,6 +58,54 @@ describe("a clip's job.progress", () => {
     await expect(transcript.settle()).rejects.toThrow(/clip/i);
   });
 
+  describe("the facts of a clip create job (S5.V8b): held on both engines, written in no line", () => {
+    const PAYLOAD = { avatarId: "avatar-lia-0007", photoId: "photo-lia-0003", motionId: "g-blink", model: "kling", quality: "std", seconds: 5, fallback: "auto", acceptedWorstMicros: 850_000 };
+    const FACTS = { photoId: "photo-lia-0003", request: { model: "kling", quality: "std", seconds: 5, fallback: "auto" }, motion: { source: "code", label: "Моргает и улыбается" }, acceptedWorstMicros: 850_000 };
+
+    /** A transcript whose rig has already told `events` when the create is answered (they come BEFORE the answer, as a job's first events do). */
+    function created(events: EventMessage[]): { transcript: Transcript; seen: EventMessage[] } {
+      const seen: EventMessage[] = [];
+      const rig: Recorded = { events: () => seen, send: async () => ({ ok: true, result: { jobId: "job-0001" } }), advance: async () => undefined, settle: async () => undefined };
+      const transcript = new Transcript(rig, normalizer());
+      seen.push(...events);
+      return { transcript, seen };
+    }
+
+    test("a create whose job tells the facts it was asked for is accepted, and its lines are as they were", async () => {
+      const { transcript } = created([event({ ...CLIP, done: 0, phase: "preparing", ...FACTS }), event({ ...CLIP, done: 0, phase: "submitting", model: "kling", ...FACTS })]);
+      await transcript.call("clips.create", PAYLOAD);
+      expect(transcript.lines().filter((l) => l.startsWith("event job.progress"))).toEqual([
+        'event job.progress {"kind":"clip","jobId":"job#1","avatarId":"avatar#1","clipId":"job#1","total":4,"phase":"preparing","done":0}',
+        'event job.progress {"kind":"clip","jobId":"job#1","avatarId":"avatar#1","clipId":"job#1","total":4,"phase":"submitting","done":0,"model":"kling"}',
+      ]);
+    });
+
+    test("a create whose job tells no facts is refused: both engines are held to carry them", async () => {
+      const { transcript } = created([event({ ...CLIP, done: 0, phase: "preparing" })]);
+      await expect(transcript.call("clips.create", PAYLOAD)).rejects.toThrow(/facts/i);
+    });
+
+    test("a create whose job names another photo or another accepted worst case is refused", async () => {
+      const otherPhoto = created([event({ ...CLIP, done: 0, phase: "preparing", ...FACTS, photoId: "photo-lia-0009" })]);
+      await expect(otherPhoto.transcript.call("clips.create", PAYLOAD)).rejects.toThrow(/photo/i);
+      const otherWorst = created([event({ ...CLIP, done: 0, phase: "preparing", ...FACTS, acceptedWorstMicros: 504_000 })]);
+      await expect(otherWorst.transcript.call("clips.create", PAYLOAD)).rejects.toThrow(/accepted/i);
+    });
+
+    test("an event that comes after the answer is held to the same facts", async () => {
+      const { transcript, seen } = created([event({ ...CLIP, done: 0, phase: "preparing", ...FACTS })]);
+      await transcript.call("clips.create", PAYLOAD);
+      seen.push(event({ ...CLIP, done: 0, phase: "rendering", model: "kling", submittedAt: "2026-10-14T10:00:00.000Z" }));
+      await expect(transcript.settle()).rejects.toThrow(/facts/i);
+    });
+
+    test("a job that no create asked for (an export, a retried download) is not held to them", async () => {
+      const { transcript } = created([event({ ...CLIP, jobId: "job-0005", done: 0, phase: "downloading" })]);
+      await transcript.call("clips.create", PAYLOAD);
+      await transcript.settle();
+    });
+  });
+
   test("a render's progress is written as it always was", () => {
     const norm = new Normalizer();
     const line = eventLine(event({ kind: "render", jobId: "job-0001", videoId: "video-0001", avatarId: "avatar-lia-0007", montageId: null, done: 0, total: 240 }), norm);
