@@ -1209,6 +1209,12 @@ export class Engine {
       liveCommits: this.#commits,
       withRootLock: (root, work, options) => withRootLock(deps.videos?.fs ?? NODE_COMMIT_FS, root, work, options),
       exportNumbers: () => (this.#live === null ? null : { library: this.#live.library, libraryRoot: this.#live.library.root }),
+      // 5b.2 (Q-F = 1): the saved drafts of an avatar, for «в черновиках» on a clip: only their names and their clips are read.
+      drafts: async (avatarId) => {
+        const library = this.library;
+        if (library === null) return [];
+        return (await this.#drafts.list(library, avatarId)).montages.map((montage) => ({ name: montage.name, clips: montage.spec.clips }));
+      },
       // 5b.2 (S5.WA2): the clip service imports a clip through the media service and owns its copy's lifetime; the media service's own words are adapted here.
       media: {
         import: (call, signal) => this.#media.import(call, signal),

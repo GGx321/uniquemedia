@@ -38,13 +38,59 @@ function errorName(error: unknown): string {
   return error instanceof Error ? error.name : typeof error;
 }
 
+/** A saved draft as the draft uses of a clip need it: its name and, per clip, the media an own video clip names. */
+export interface DraftView {
+  readonly name: string | null;
+  readonly clips: readonly { readonly kind: string; readonly mediaId?: string | undefined }[];
+}
+
+/** How many saved drafts hold a copy of a clip, and, for exactly one, which draft and which clip of it (1-based): `ClipUse.inDrafts`. */
+export interface DraftUse {
+  readonly count: number;
+  readonly first?: { readonly name: string | null; readonly frame: number };
+}
+
 export class ClipCopies {
   readonly #media: ClipCopyMedia;
+  readonly #drafts: ((avatarId: string) => Promise<readonly DraftView[]>) | undefined;
   readonly #log: (line: string) => void;
 
-  constructor(deps: { media: ClipCopyMedia; log: (line: string) => void }) {
+  constructor(deps: { media: ClipCopyMedia; drafts?: (avatarId: string) => Promise<readonly DraftView[]>; log: (line: string) => void }) {
     this.#media = deps.media;
+    this.#drafts = deps.drafts;
     this.#log = deps.log;
+  }
+
+  /**
+   * How many saved drafts of the avatar hold each clip's copy, by clip id (`ClipUse.inDrafts`, the delete dialog's warning). A draft counts once per clip however often it holds the copy; `first` is
+   * set ONLY when exactly one draft holds it (the dialog names a draft only then): that draft's name (null when it has none) and the 1-based place of the clip in it. A clip no draft holds has no entry.
+   * The drafts are read only when the avatar has a copy at all; drafts or media that cannot be read say nothing (logged, never thrown): the warning is a help, not a gate.
+   */
+  async draftUsesOf(avatarId: string): Promise<ReadonlyMap<string, DraftUse>> {
+    const uses = new Map<string, DraftUse>();
+    if (this.#drafts === undefined) return uses;
+    try {
+      const copies = (await this.#media.copies()).copies.filter((copy) => copy.origin?.avatarId === avatarId);
+      if (copies.length === 0) return uses;
+      const clipOfMedia = new Map(copies.flatMap((copy) => (copy.origin === undefined ? [] : [[copy.mediaId, copy.origin.clipId] as const])));
+      const holders = new Map<string, { name: string | null; frame: number }[]>();
+      for (const draft of await this.#drafts(avatarId)) {
+        const placed = new Map<string, number>();
+        draft.clips.forEach((clip, index) => {
+          const clipId = clip.kind === "video" && clip.mediaId !== undefined ? clipOfMedia.get(clip.mediaId) : undefined;
+          if (clipId !== undefined && !placed.has(clipId)) placed.set(clipId, index + 1);
+        });
+        for (const [clipId, frame] of placed) holders.set(clipId, [...(holders.get(clipId) ?? []), { name: draft.name, frame }]);
+      }
+      for (const [clipId, held] of holders) {
+        const only = held.length === 1 ? held[0] : undefined;
+        uses.set(clipId, only === undefined ? { count: held.length } : { count: 1, first: only });
+      }
+    } catch (error) {
+      this.#log(`[clip] the drafts that hold clip copies could not be read (${errorName(error)})`);
+      return new Map();
+    }
+    return uses;
   }
 
   /**

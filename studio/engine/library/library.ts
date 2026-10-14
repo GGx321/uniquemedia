@@ -1122,6 +1122,16 @@ export class Library {
     return named;
   }
 
+  /**
+   * How a finished video of the avatar uses a clip's frame (5b.2, Q-F = 1; `ClipSummary.use.inVideo`), from the used index: `clip` when some video's `clipFrames` name this clip, `photo` when the frame
+   * is used through the photo itself or a sibling clip of it, undefined when no video uses it. A record is a video that exists: its file may be gone, it still uses the frame.
+   */
+  videoUseOfClip(avatarId: string, clipId: string, photoId: string): "clip" | "photo" | undefined {
+    const videos = this.#videosByAvatar.get(avatarId) ?? [];
+    if (videos.some((video) => video.clipIds?.includes(clipId) === true)) return "clip";
+    return videos.some((video) => video.photoIds.includes(photoId)) ? "photo" : undefined;
+  }
+
   /** How many of the avatar's video records were rendered from this draft (whatever state their files are in). */
   videoCountForMontage(avatarId: string, montageId: string): number {
     return (this.#videosByAvatar.get(avatarId) ?? []).filter((record) => record.montageId === montageId).length;

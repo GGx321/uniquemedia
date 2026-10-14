@@ -34,7 +34,7 @@ import type { CommitTracker } from "../videos/live";
 import type { RootLockOptions } from "../videos/rootLock";
 import type { ClipRunDeps } from "./attempt";
 import { ClipExports } from "./export";
-import { ClipCopies, type ClipCopyMedia, type KnownAvatars } from "./copies";
+import { ClipCopies, type ClipCopyMedia, type DraftView, type KnownAvatars } from "./copies";
 import { ClipImports, type ClipMediaPort } from "./importClip";
 import type { ExportFpsMode } from "./exportProfile";
 import type { ClipFaceRole } from "./faceRole";
@@ -172,6 +172,8 @@ export interface ClipServiceDeps {
   exportSwitch?: { pending(): boolean; currentPath(): string };
   /** 5b.2 (S5.WA2): the own-media service, for `media.importClip`. Absent: the command answers INTERNAL (a test that builds a clip service without media). */
   media?: ClipMediaPort & ClipCopyMedia;
+  /** 5b.2 (S5.WA2): the avatar's saved montage drafts, for `ClipSummary.use.inDrafts` (which drafts hold a clip's copy). Absent: no clip has `inDrafts`. */
+  drafts?: (avatarId: string) => Promise<readonly DraftView[]>;
 }
 
 type CreatePayload = CommandPayload<"clips.create">;
@@ -215,7 +217,7 @@ export class ClipService {
     this.#deps = deps;
     this.#mode = deps.mode ?? GROK_FALLBACK;
     this.#boldClips = deps.boldClips ?? BOLD_CLIPS;
-    const copies = deps.media === undefined ? null : new ClipCopies({ media: deps.media, log: deps.log });
+    const copies = deps.media === undefined ? null : new ClipCopies({ media: deps.media, ...(deps.drafts === undefined ? {} : { drafts: deps.drafts }), log: deps.log });
     this.#copies = copies;
     this.holds = createClipHolds({ now: deps.clock, ...(deps.holdTimers === undefined ? {} : { timers: deps.holdTimers }), onChange: () => deps.emitMoney() });
     // A job on a clip (a download retry, an export) holds the clip against its other commands and the library against a switch, until it ends.
@@ -254,7 +256,16 @@ export class ClipService {
       faceOf: (input) => this.#faceOf(input),
       log: deps.log,
       ...(deps.records?.remove === undefined ? {} : { remove: deps.records.remove }),
-      ...(copies === null ? {} : { copies: { removeOf: (clipId: string) => copies.removeOfClip(clipId) } }),
+      ...(copies === null
+        ? {}
+        : {
+            copies: { removeOf: (clipId: string) => copies.removeOfClip(clipId) },
+            // 5b.2 (Q-F = 1): what uses a ready clip: a finished video (the used index) and the saved drafts that hold its copy.
+            uses: {
+              videoUse: (avatarId: string, clipId: string, photoId: string) => deps.currentLibrary()?.videoUseOfClip(avatarId, clipId, photoId),
+              draftsOf: (avatarId: string) => copies.draftUsesOf(avatarId),
+            },
+          }),
     });
     this.#exports = new ClipExports({
       newId: deps.newId,

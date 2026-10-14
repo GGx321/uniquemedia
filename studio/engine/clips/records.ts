@@ -10,6 +10,7 @@ import {
   type ClipExportLine,
   type ClipFace,
   type ClipSummary,
+  type ClipUse,
   type CommandPayload,
   type EngineError,
   type FileState,
@@ -23,6 +24,7 @@ import type { ClipJobEnd, ClipPhaseUpdate, JobRegistry } from "../jobs";
 import { fsyncDir, readFolderNames } from "../library/durableFs";
 import type { Ledger } from "../money/ledger";
 import type { OpenRouterClient } from "../openrouter/types";
+import type { DraftUse } from "./copies";
 import { downloadClip, type ClipDownload, type DownloadClipOptions } from "./download";
 import type { CheckClipFaceOptions } from "./faceCheck";
 import { makePoster, type MakePosterOptions } from "./frames";
@@ -81,7 +83,7 @@ function providerCostOf(record: ClipRecord): number | undefined {
  * The record as the windows see it. The cost comes in from the ledger; `exports` default to the record's lines (no `fileState`). `grokOffer` is the mode-`offer` tile's Grok price, which the clip
  * service computes at list time (§5.2): it goes into a failed clip's `failure`, and a ready clip has none.
  */
-export function clipSummaryOf(record: ClipRecord, cost: ClipCost, exports: readonly ClipExport[] = record.exports, grokOffer?: Estimate): ClipSummary {
+export function clipSummaryOf(record: ClipRecord, cost: ClipCost, exports: readonly ClipExport[] = record.exports, grokOffer?: Estimate, use?: ClipUse): ClipSummary {
   const providerCostMicros = providerCostOf(record);
   const common = {
     clipId: record.id,
@@ -99,7 +101,7 @@ export function clipSummaryOf(record: ClipRecord, cost: ClipCost, exports: reado
     exports: [...exports],
   };
   const { outcome } = record;
-  if (outcome.status === "ready") return { ...common, status: "ready", width: outcome.width, height: outcome.height, durationMs: outcome.durationMs, face: outcome.face };
+  if (outcome.status === "ready") return { ...common, status: "ready", width: outcome.width, height: outcome.height, durationMs: outcome.durationMs, face: outcome.face, ...(use === undefined ? {} : { use }) };
   const failure = { reason: outcome.reason, ...(grokOffer === undefined ? {} : { grokOffer }) };
   return { ...common, status: "failed", failure, ...(outcome.retryDownloadUntil === undefined ? {} : { retryDownloadUntil: outcome.retryDownloadUntil }) };
 }
@@ -165,6 +167,14 @@ export interface ClipRecordsDeps {
    * disk fails) and then nothing of the clip is removed. Absent: a service built without the media service, which has no copies.
    */
   copies?: { removeOf: (clipId: string) => Promise<unknown> };
+  /**
+   * 5b.2 (S5.WA2, Q-F = 1): what uses a ready clip, for `ClipSummary.use`. `videoUse` is the used index's answer for a clip and the photo it was made from; `draftsOf` is how many saved drafts of the
+   * avatar hold each clip's copy, read once for a whole list. A reader that fails leaves its part out (logged): `use` is a help for the dialog, not a gate. Absent: no clip has a `use`.
+   */
+  uses?: {
+    videoUse: (avatarId: string, clipId: string, photoId: string) => "clip" | "photo" | undefined;
+    draftsOf: (avatarId: string) => Promise<ReadonlyMap<string, DraftUse>>;
+  };
 }
 
 type Payload<T extends "clips.list" | "clips.get" | "clips.markSeen" | "clips.delete" | "clips.retryDownload"> = CommandPayload<T>;
@@ -267,7 +277,8 @@ export class ClipRecords {
     const ledger = records.length === 0 ? null : this.#ledger();
     const costs = ledger === null ? new Map<string, ClipCost>() : clipCostsOf(ledger);
     const offers = records.length === 0 || options.grokOffers === undefined ? new Map<string, Estimate>() : await options.grokOffers(records);
-    const clips = records.map((record) => clipSummaryOf(record, costs.get(record.id) ?? FREE, record.exports, offers.get(record.id)));
+    const uses = await this.#usesOf(payload.avatarId, records);
+    const clips = records.map((record) => clipSummaryOf(record, costs.get(record.id) ?? FREE, record.exports, offers.get(record.id), uses.get(record.id)));
     // A journal beside a committed record is a leftover of a clip that finished: removed unless a job still works on that clip.
     for (const record of records) {
       if (!journals.has(record.id) || this.#deps.host.busy(record.id)) continue;
@@ -295,7 +306,37 @@ export class ClipRecords {
     const record = await this.#recordOf(clipsDir, payload.clipId);
     const cost = clipCostOf(this.#ledger(), record.id);
     const offer = options.grokOffers === undefined ? undefined : (await options.grokOffers([record])).get(record.id);
-    return { clip: clipSummaryOf(record, cost, await this.#exportsOf(record), offer) };
+    const use = (await this.#usesOf(payload.avatarId, [record])).get(record.id);
+    return { clip: clipSummaryOf(record, cost, await this.#exportsOf(record), offer, use) };
+  }
+
+  /**
+   * `ClipSummary.use` of each READY record (5b.2, S5.WA2): how a finished video uses its frame, and how many saved drafts hold its copy. Only a ready clip is ever used; a clip nothing uses has no entry.
+   * A reader that fails leaves its part out and is logged. The drafts are read once, and only when a ready clip is asked about.
+   */
+  async #usesOf(avatarId: string, records: readonly ClipRecord[]): Promise<Map<string, ClipUse>> {
+    const readers = this.#deps.uses;
+    const uses = new Map<string, ClipUse>();
+    const ready = records.filter((record) => record.outcome.status === "ready");
+    if (readers === undefined || ready.length === 0) return uses;
+    let drafts: ReadonlyMap<string, DraftUse> = new Map();
+    try {
+      drafts = await readers.draftsOf(avatarId);
+    } catch (error) {
+      this.#deps.log(`[clip] the drafts that hold clip copies could not be read (${errorName(error)}); the clips are listed without them`);
+    }
+    for (const record of ready) {
+      let inVideo: "clip" | "photo" | undefined;
+      try {
+        inVideo = readers.videoUse(avatarId, record.id, record.sourcePhotoId);
+      } catch (error) {
+        this.#deps.log(`[clip] ${record.id}: the used index could not be read (${errorName(error)}); the clip is listed without it`);
+      }
+      const inDrafts = drafts.get(record.id);
+      if (inVideo === undefined && inDrafts === undefined) continue;
+      uses.set(record.id, { ...(inVideo === undefined ? {} : { inVideo }), ...(inDrafts === undefined ? {} : { inDrafts }) });
+    }
+    return uses;
   }
 
   /** Each export line with the state of its file in the current export folder (the shared `FileState`, `changed` included). Not asked at all for a clip with no export. */

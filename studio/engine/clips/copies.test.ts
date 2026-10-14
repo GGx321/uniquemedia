@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { EngineError, MediaSummary } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { EngineFailure } from "../engineFailure";
-import { ClipCopies, type AvatarFolderState, type ClipCopyMedia, type KnownAvatars } from "./copies";
+import { ClipCopies, type AvatarFolderState, type ClipCopyMedia, type DraftView, type KnownAvatars } from "./copies";
 useNativeGlobals();
 
 // 5b.2, S5.WA2 (I5.59): the rules of a copy's lifetime with the media service faked: what a clip delete removes, what an avatar delete removes, and the library-open sweep of orphans.
@@ -70,6 +70,81 @@ async function refusal(promise: Promise<unknown>): Promise<EngineError> {
   }
   throw new Error("expected a refusal");
 }
+
+describe("which saved drafts hold a clip's copy (ClipUse.inDrafts)", () => {
+  const draftOf = (name: string | null, ...mediaIds: (string | null)[]): DraftView => ({ name, clips: mediaIds.map((mediaId) => (mediaId === null ? { kind: "photo" } : { kind: "video", mediaId })) });
+
+  function withDrafts(held: MediaSummary[], drafts: readonly DraftView[] | Error) {
+    const f = fake(held);
+    const asked: string[] = [];
+    const copies = new ClipCopies({
+      media: f.media,
+      drafts: async (avatarId) => {
+        asked.push(avatarId);
+        if (drafts instanceof Error) throw drafts;
+        return drafts;
+      },
+      log: (line) => f.logs.push(line),
+    });
+    return { copies, asked, logs: f.logs };
+  }
+
+  test("one draft: the count is 1 and the first says its name and the clip's 1-based place", async () => {
+    const w = withDrafts([copy("media-1", "avatar-a", "clip-1")], [draftOf("Лето", null, "media-1")]);
+    expect((await w.copies.draftUsesOf("avatar-a")).get("clip-1")).toEqual({ count: 1, first: { name: "Лето", frame: 2 } });
+  });
+
+  test("a draft with no name says null", async () => {
+    const w = withDrafts([copy("media-1", "avatar-a", "clip-1")], [draftOf(null, "media-1")]);
+    expect((await w.copies.draftUsesOf("avatar-a")).get("clip-1")).toEqual({ count: 1, first: { name: null, frame: 1 } });
+  });
+
+  test("two drafts: the count is 2 and there is no first (the dialog names a draft only when there is one)", async () => {
+    const w = withDrafts([copy("media-1", "avatar-a", "clip-1")], [draftOf("A", "media-1"), draftOf("B", null, "media-1")]);
+    const use = (await w.copies.draftUsesOf("avatar-a")).get("clip-1");
+    expect(use).toEqual({ count: 2 });
+    expect(use !== undefined && "first" in use).toBe(false);
+  });
+
+  test("a draft that holds the copy twice counts once, at its first place", async () => {
+    const w = withDrafts([copy("media-1", "avatar-a", "clip-1")], [draftOf("A", null, "media-1", "media-1")]);
+    expect((await w.copies.draftUsesOf("avatar-a")).get("clip-1")).toEqual({ count: 1, first: { name: "A", frame: 2 } });
+  });
+
+  test("each clip has its own count", async () => {
+    const w = withDrafts([copy("media-1", "avatar-a", "clip-1"), copy("media-2", "avatar-a", "clip-2")], [draftOf("A", "media-1", "media-2"), draftOf("B", "media-2")]);
+    const uses = await w.copies.draftUsesOf("avatar-a");
+    expect(uses.get("clip-1")).toEqual({ count: 1, first: { name: "A", frame: 1 } });
+    expect(uses.get("clip-2")).toEqual({ count: 2 });
+  });
+
+  test("a clip no draft holds has no entry, and an own video that is no copy counts for nobody", async () => {
+    const w = withDrafts([copy("media-1", "avatar-a", "clip-1")], [draftOf("A", "media-own")]);
+    expect((await w.copies.draftUsesOf("avatar-a")).size).toBe(0);
+  });
+
+  test("another avatar's copies are not asked about", async () => {
+    const w = withDrafts([copy("media-1", "avatar-b", "clip-1")], [draftOf("A", "media-1")]);
+    expect((await w.copies.draftUsesOf("avatar-a")).size).toBe(0);
+  });
+
+  test("the drafts are not read at all when the avatar has no copy", async () => {
+    const w = withDrafts([], [draftOf("A", "media-1")]);
+    expect((await w.copies.draftUsesOf("avatar-a")).size).toBe(0);
+    expect(w.asked).toEqual([]);
+  });
+
+  test("drafts that cannot be read say nothing, and the failure is logged and never thrown", async () => {
+    const w = withDrafts([copy("media-1", "avatar-a", "clip-1")], new Error("the drafts folder cannot be listed"));
+    expect((await w.copies.draftUsesOf("avatar-a")).size).toBe(0);
+    expect(w.logs).toHaveLength(1);
+  });
+
+  test("a service built without a draft reader has no draft uses", async () => {
+    const f = fake([copy("media-1", "avatar-a", "clip-1")]);
+    expect((await f.copies.draftUsesOf("avatar-a")).size).toBe(0);
+  });
+});
 
 describe("removing the copy of one clip (a clips.delete)", () => {
   test("a clip with no copy removes nothing", async () => {
