@@ -104,7 +104,9 @@ function newWorld(): World {
 /** What the clip job does when its money closes (`closeMoney` of the service): the hold was consumed by the reserve, the cap goes, the batch is told; then the job ends. */
 function closeAs(w: World, run: MemberRun, end: ClipMoneyEnd | undefined): void {
   const { member } = run;
-  w.holds.delete(clipAttemptId(member.clipId, 1));
+  // Only a reserve consumes the month hold: a member that never reserved (nothing ran, a cancel in preparing, a refused reserve) leaves it to the batch to give back.
+  const reserved = end !== undefined && end.kind !== "cancelled" && !(end.kind === "not-reserved" && !end.afterFreeRefusal);
+  if (reserved) w.holds.delete(clipAttemptId(member.clipId, 1));
   w.caps.delete(member.capKey);
   w.running--;
   run.onMoneyClosed(end);
@@ -128,9 +130,9 @@ function ports(w: World): BatchPorts {
         openReserves: () => w.openReserves.map((attemptId) => ({ attemptId })),
         closeOf: (id: string) => w.closes.get(id),
       } as unknown as BatchPorts["budget"]["ledger"],
+      // Like the budget's: a hold that is not there (consumed by a reserve) is left as it is, and only a real release is counted.
       releaseHold: (id) => {
-        w.holds.delete(id);
-        w.released.push(id);
+        if (w.holds.delete(id)) w.released.push(id);
       },
     },
     holds: { entries: () => w.liveHolds, isCompleted: (id) => w.completedHolds.has(id) },
@@ -475,7 +477,9 @@ describe("ClipBatch: what a member's end means for the rest", () => {
 
       expect(w.runs).toEqual(ids(4).slice(0, 1));
       expect(details(w, ids(4))).toEqual([undefined, detail, detail, detail]);
-      expect(w.released).toEqual(ids(4).slice(1).map((id) => clipAttemptId(id, 1)));
+      // The queue's holds go back; so does the first member's own when its reserve was refused (it never took it).
+      const refusedAtReserve = end.kind === "not-reserved" && !end.afterFreeRefusal;
+      expect(w.released).toEqual((refusedAtReserve ? ids(4) : ids(4).slice(1)).map((id) => clipAttemptId(id, 1)));
       expectClean(w);
     });
   }

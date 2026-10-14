@@ -282,6 +282,8 @@ export class ClipBatch {
   /** The member's money closed: what its end means for the rest of the batch. Synchronous, so a requeue exists before the member's own `job.done` is announced. */
   #closed(member: BatchMember, end: ClipMoneyEnd | undefined): void {
     member.state = "ended";
+    // The first reserve takes the member's month hold; a member whose money closed without one (nothing ran, a cancel in preparing, a reserve the ledger refused) must not leave it behind.
+    if (member.held) this.#ports.budget.releaseHold(clipAttemptId(member.clipId, 1));
     if (end === undefined) return;
     switch (end.kind) {
       case "completed":
