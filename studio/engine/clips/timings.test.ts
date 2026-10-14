@@ -36,6 +36,18 @@ describe("the real set", () => {
     expect(REAL_CLIP_TIMINGS.holdSubmittedMs).toBe(60 * MINUTE);
   });
 
+  test("waits at most 2 min 10 s for the money to be alone before a batch member's POST (5b.2, I5.62)", () => {
+    expect(REAL_CLIP_TIMINGS.aloneWaitMs).toBe(2 * MINUTE + 10 * SECOND);
+  });
+
+  test("the alone-wait outlasts a refusal's hold, so a refused sibling never makes the next member give up early", () => {
+    expect(REAL_CLIP_TIMINGS.aloneWaitMs).toBeGreaterThan(REAL_CLIP_TIMINGS.holdTerminalMs);
+  });
+
+  test("pauses a batch for 60 s after a 429 (5b.2, I5.62)", () => {
+    expect(REAL_CLIP_TIMINGS.rateLimitPauseMs).toBe(60 * SECOND);
+  });
+
   test("shows an export's progress line after 2 s", () => {
     expect(REAL_CLIP_TIMINGS.exportProgressMs).toBe(2 * SECOND);
   });

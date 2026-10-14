@@ -29,6 +29,10 @@ export interface ClipTimings {
   readonly holdSubmittedMs: number;
   /** An export shows its progress line only after this long (§5.13). */
   readonly exportProgressMs: number;
+  /** 5b.2 (I5.62): a batch member waits at most this long for the money to be alone (`clipAlone`) before its POST; past it, it submits and a refusal is then `net-uncounted` (worst), as in 5b.1. */
+  readonly aloneWaitMs: number;
+  /** 5b.2 (I5.62): after a 429 at a member's submit, no batch member is submitted for this long. */
+  readonly rateLimitPauseMs: number;
 }
 
 /** A free call (`/generation`, `/credits`) that comes back unreadable is read this many times before the money path stops trusting it (I5.47). */
@@ -46,6 +50,8 @@ export const REAL_CLIP_TIMINGS: ClipTimings = Object.freeze({
   holdTerminalMs: 2 * MINUTE,
   holdSubmittedMs: 60 * MINUTE,
   exportProgressMs: 2 * SECOND,
+  aloneWaitMs: 2 * MINUTE + 10 * SECOND,
+  rateLimitPauseMs: 60 * SECOND,
 });
 
 export const SHORT_CLIP_TIMINGS: ClipTimings = Object.freeze({
@@ -60,6 +66,8 @@ export const SHORT_CLIP_TIMINGS: ClipTimings = Object.freeze({
   holdTerminalMs: REAL_CLIP_TIMINGS.holdTerminalMs / 1_000,
   holdSubmittedMs: REAL_CLIP_TIMINGS.holdSubmittedMs / 1_000,
   exportProgressMs: REAL_CLIP_TIMINGS.exportProgressMs / 1_000,
+  aloneWaitMs: REAL_CLIP_TIMINGS.aloneWaitMs / 1_000,
+  rateLimitPauseMs: REAL_CLIP_TIMINGS.rateLimitPauseMs / 1_000,
 });
 
 /**
@@ -78,6 +86,8 @@ export const E2E_CLIP_TIMINGS: ClipTimings = Object.freeze({
   holdTerminalMs: REAL_CLIP_TIMINGS.holdTerminalMs / 20,
   holdSubmittedMs: REAL_CLIP_TIMINGS.holdSubmittedMs / 20,
   exportProgressMs: REAL_CLIP_TIMINGS.exportProgressMs / 20,
+  aloneWaitMs: REAL_CLIP_TIMINGS.aloneWaitMs / 20,
+  rateLimitPauseMs: REAL_CLIP_TIMINGS.rateLimitPauseMs / 20,
 });
 
 /** The set the engine runs with (`EngineDeps.clipTimings` overrides it): real unless a test, a parity rig or the E2E smoke asks for a shorter one. */
