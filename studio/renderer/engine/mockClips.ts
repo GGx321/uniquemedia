@@ -498,6 +498,8 @@ export class MockClips {
   readonly #records = new Map<string, MockClipRecord>();
   readonly #lines: Line[] = [];
   readonly #journals = new Map<string, MockJournalLine[]>();
+  /** Every journal line ever written, per clip, kept after the record removes the journal: what a test compares to the engine's lines (engine/clips/attempt.ts). */
+  readonly #journalWrites = new Map<string, MockJournalLine[]>();
   readonly #files = new Map<string, { journal: boolean; record: boolean; media: boolean }>();
   readonly #jobs = new Map<string, Job>();
   /** What each clip's attempts will do: the script of its create (kept for a restart's recovery, which polls the same provider). */
@@ -628,6 +630,7 @@ export class MockClips {
       attempts: this.#lines.map((l) => ({ ...l })),
       posts: [...this.#posts],
       journals: Object.fromEntries([...this.#journals].map(([id, lines]) => [id, [...lines]])),
+      journalWrites: Object.fromEntries([...this.#journalWrites].map(([id, lines]) => [id, [...lines]])),
       files: Object.fromEntries([...this.#files].filter(([, f]) => f.journal || f.record || f.media)),
       nowMs: this.#host.clockMs(),
       restartedAtMs: this.#restartedAtMs,
@@ -1071,8 +1074,8 @@ export class MockClips {
     }
     if (scripted === "uncertain") {
       this.#posts.push(model);
-      line.inFlight = false; // abandoned: the reserve stays open at worst, held by its hold
-      ended("uncertain", "none");
+      // Abandoned: the reserve stays open at worst, held by its hold. The journal gets NO `ended` line, as the engine's (attempt.ts): a restart would read one as «ended: held 2 min».
+      line.inFlight = false;
       this.#attemptsDone(job.clipId, { attemptId, model, outcome: "uncertain", costSource: "none" });
       return this.#fail(run, model, "submit-uncertain");
     }
@@ -1260,6 +1263,7 @@ export class MockClips {
   #journal(clipId: string, line: MockJournalLine): void {
     const lines = this.#journals.get(clipId) ?? [];
     this.#journals.set(clipId, [...lines, line]);
+    this.#journalWrites.set(clipId, [...(this.#journalWrites.get(clipId) ?? []), line]);
   }
 
   #dropJournal(clipId: string): void {
@@ -1626,6 +1630,8 @@ export class MockClips {
       line.inFlight = false;
     }
 
+    // engine/clips/recover.ts: a clip whose journal is in view is held by the journal's rules; an open reserve of a clip with none in view (its record went first, and took the journal) is held 60 min from its `at`.
+    const journalInView = new Set(this.#journals.keys());
     const reservedBy = (clipId: string): Set<string> => new Set(this.#lines.filter((l) => l.clipId === clipId).map((l) => l.attemptId));
     const recoveries: { clipId: string; avatarId: string; plan: Plan; lines: MockJournalLine[]; fate: Script }[] = [];
     for (const [clipId, lines] of [...this.#journals]) {
@@ -1645,14 +1651,14 @@ export class MockClips {
       recoveries.push({ clipId, avatarId, plan: planOf(lines, reservedBy(clipId), host.clockMs(), t), lines, fate });
     }
     // The holds of a restart (engine/clips/holds.ts, `holdsAfterRestart`): per attempt the latest fact wins.
-    // Per attempt the latest fact wins (an open reserve alone: 20 min from its line; a `submitted` line: 60 min from it; an `ended` line: 2 min from it), and a journal's lines count whether or not the
+    // Per attempt the latest fact wins (an open reserve with its journal in view: 20 min from its line, with none in view 60 min; a `submitted` line: 60 min from it; an `ended` line: 2 min from it), and a journal's lines count whether or not the
     // earlier process settled the reserve (`holdsAfterRestart`: the ledger gives only the reserves that are still open).
     const nowMs = host.clockMs();
     const until = new Map<string, { rank: number; untilMs: number }>();
     const put = (attemptId: string, rank: number, untilMs: number): void => {
       if ((until.get(attemptId)?.rank ?? 0) <= rank) until.set(attemptId, { rank, untilMs });
     };
-    for (const line of this.#lines) if (line.state === "open") put(line.attemptId, 1, line.reserveAtMs + t.holdUncertainMs);
+    for (const line of this.#lines) if (line.state === "open") put(line.attemptId, 1, line.reserveAtMs + (journalInView.has(line.clipId) ? t.holdUncertainMs : t.holdSubmittedMs));
     for (const lines of this.#journals.values()) {
       for (const line of lines) {
         if (line.type === "submitted") put(line.attemptId, 2, Date.parse(line.at) + t.holdSubmittedMs);

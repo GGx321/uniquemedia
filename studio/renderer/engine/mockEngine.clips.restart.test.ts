@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { planRecovery } from "../../engine/clips/recover";
+import { holdsFromLedger, planRecovery } from "../../engine/clips/recover";
+import { createRig } from "../../engine/clips/testing/attemptRig";
 import { summarizeJournal } from "../../engine/clips/journal";
 import { REAL_CLIP_TIMINGS } from "../../engine/clips/timings";
 import { MOCK_CLIP_TIMINGS, mockRecoveryPlan } from "./mockClips";
@@ -365,5 +366,42 @@ describe("a content refusal the old process had already settled when it stopped 
     m.engine.restart();
     m.scheduler.runAll();
     expect(await onlyClip(m)).toMatchObject({ status: "failed", failure: { reason: "refused-unknown" } });
+  });
+});
+
+// VR item 6: the engine never writes `ended {status: "uncertain"}` (an uncertain submit leaves the journal at `requested`, attempt.table.test.ts row 5): a restart reads such a line as «ended: held 2 min»,
+// and the hold of an uncertain submit would be cut from 20 min to 2. The mock writes the same lines as the engine, and this pins it against the engine's own run.
+describe("the journal of an uncertain submit (VR items 4 and 6)", () => {
+  const uncertain = { kind: "uncertain", cause: "timeout", httpStatus: null, detail: "no answer" } as const;
+
+  test("the mock writes the lines the engine writes: `requested` and nothing else, no `ended uncertain`", async () => {
+    const rig = await createRig({ mode: "auto", kling: { submit: uncertain } });
+    try {
+      await rig.run();
+      const m = makeClipMock();
+      m.engine.scriptNextClip("uncertain");
+      const { jobId } = await unwrap(create(m));
+      m.scheduler.runAll();
+      const engineLines = rig.journalLines.map((l) => (l.type === "ended" ? `ended:${l.status}:${l.costSource}` : l.type));
+      const mockLines = (m.engine.peekClips().journalWrites[jobId] ?? []).map((l) => (l.type === "ended" ? `ended:${l.status}:${l.costSource}` : l.type));
+      expect(engineLines).toEqual(["requested"]);
+      expect(mockLines).toEqual(engineLines);
+    } finally {
+      await rig.dispose();
+    }
+  });
+
+  test("after a restart the reserve of an uncertain submit, whose journal went with its record, is held 60 min from its `at`, as the engine holds a reserve with no journal in view", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextClip("uncertain");
+    const { jobId } = await unwrap(create(m));
+    m.scheduler.runAll();
+    m.engine.restart();
+    const { attempts, holds, nowMs } = m.engine.peekClips();
+    const [attempt] = attempts;
+    expect(attempt).toBeDefined();
+    const engineHolds = holdsFromLedger([{ attemptId: `${jobId}:video#1`, at: new Date(attempt?.reserveAtMs ?? 0).toISOString() }], nowMs, REAL_CLIP_TIMINGS);
+    expect(engineHolds.get(`${jobId}:video#1`)).toBe((attempt?.reserveAtMs ?? 0) + 60 * 60_000);
+    expect(holds.get(`${jobId}:video#1`)).toBe(engineHolds.get(`${jobId}:video#1`));
   });
 });
