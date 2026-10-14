@@ -33,6 +33,43 @@ function progressOf(events: EventMessage[], jobId: string) {
   return events.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "clip" && e.payload.jobId === jobId ? [e.payload] : []));
 }
 
+describe("the facts a clip job carries", () => {
+  test("a fresh job's first event and every later one carry the photo, the request, the motion's label and the accepted worst case", async () => {
+    const { avatarId, photoId } = await seedClipAvatar(libraryDir());
+    const engine = await startClipEngine(dir());
+    const jobId = jobIdOf(await create(engine, { avatarId, photoId }));
+    await jobEnd(engine, jobId);
+
+    const events = progressOf(engine.events(), jobId);
+    expect(events.length).toBeGreaterThan(1);
+    for (const progress of events) {
+      expect(progress).toMatchObject({ photoId, request: { model: "kling", quality: "std", seconds: 5, fallback: "auto" }, motion: { source: "code", label: "Моргает и улыбается" }, acceptedWorstMicros: 850_000 });
+      expect(JobProgress.safeParse(progress).success).toBe(true);
+    }
+  });
+
+  test("the motion's English prompt text never leaves the engine", async () => {
+    const { avatarId, photoId } = await seedClipAvatar(libraryDir());
+    const engine = await startClipEngine(dir());
+    const jobId = jobIdOf(await create(engine, { avatarId, photoId }));
+    await jobEnd(engine, jobId);
+
+    for (const progress of progressOf(engine.events(), jobId)) expect(progress.motion).not.toHaveProperty("text");
+  });
+
+  test("the snapshot lists a running job with the same facts, for a window that opens mid-render", async () => {
+    const { avatarId, photoId } = await seedClipAvatar(libraryDir());
+    const engine = await startClipEngine(dir(), { net: clipNetwork({ kling: { held: true } }) });
+    const jobId = jobIdOf(await create(engine, { avatarId, photoId }));
+    await until(() => phasesOf(engine, jobId).includes("rendering"), "rendering");
+    const snapshot = await engine.engine.handle(command("engine.snapshot"));
+    if (!snapshot.ok || snapshot.type !== "engine.snapshot") throw new Error("no snapshot");
+    expect(snapshot.result.jobs).toEqual([expect.objectContaining({ kind: "clip", jobId, photoId, acceptedWorstMicros: 850_000, motion: { source: "code", label: "Моргает и улыбается" } })]);
+    engine.net.release("kling");
+    await jobEnd(engine, jobId);
+  });
+});
+
 describe("a clip from create to record", () => {
   test("phases in order with done within total; the reserve and its settle in integer micros; the record committed; job.done carries the clip", async () => {
     const { avatarId, photoId } = await seedClipAvatar(libraryDir());

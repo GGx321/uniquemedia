@@ -193,3 +193,54 @@ describe("JobRegistry: a clip's export job", () => {
     expect(jobs.stateOf(JOB)).not.toHaveProperty("result.exported");
   });
 });
+
+// Stage 5, 5b.1, S5.V8b: a create job carries the facts its tile shows from its first state to its end, so a window that first sees it draws it whole.
+describe("JobRegistry: the facts of a clip create job", () => {
+  const FACTS = {
+    photoId: "photo-00000001",
+    request: { model: "kling", quality: "std", seconds: 5, fallback: "auto" },
+    motion: { source: "code", label: "Моргает и улыбается" },
+    acceptedWorstMicros: 510_000,
+  } as const;
+
+  test("a job started with facts lists them in its first state", () => {
+    const jobs = new JobRegistry();
+    jobs.startClip(JOB, { avatarId: AVATAR, clipId: CLIP, facts: FACTS });
+
+    expect(jobs.stateOf(JOB)).toMatchObject(FACTS);
+    valid(jobs.states());
+  });
+
+  test("a phase update announces the facts with the phase, and the state keeps them", () => {
+    const jobs = new JobRegistry();
+    jobs.startClip(JOB, { avatarId: AVATAR, clipId: CLIP, facts: FACTS }, "recovering");
+
+    const progress = jobs.clipPhase(JOB, { phase: "rendering", model: "kling", submittedAt: AT });
+
+    expect(progress).toMatchObject({ phase: "rendering", ...FACTS });
+    expect(JobProgress.safeParse(progress).success).toBe(true);
+    expect(jobs.stateOf(JOB)).toMatchObject(FACTS);
+  });
+
+  test("the job still lists them once it has ended", () => {
+    const jobs = new JobRegistry();
+    jobs.startClip(JOB, { avatarId: AVATAR, clipId: CLIP, facts: FACTS });
+
+    const ended = jobs.finishClip(JOB, { status: "failed", error: { code: "INTERNAL", detail: "x" } });
+
+    expect(ended).toMatchObject({ status: "failed", ...FACTS });
+    valid(jobs.states());
+  });
+
+  test("a job started without facts (an export, a retried download) carries none", () => {
+    const jobs = new JobRegistry();
+    jobs.startClip(JOB, { avatarId: AVATAR, clipId: CLIP }, "exporting", 120);
+
+    const progress = jobs.clipPhase(JOB, { phase: "exporting" });
+
+    for (const key of ["photoId", "request", "motion", "acceptedWorstMicros"]) {
+      expect(progress).not.toHaveProperty(key);
+      expect(jobs.stateOf(JOB)).not.toHaveProperty(key);
+    }
+  });
+});
