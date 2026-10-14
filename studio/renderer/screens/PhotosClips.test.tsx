@@ -176,6 +176,9 @@ describe("37: «Оживить» in the photo viewer", () => {
   });
 });
 
+/** The listing after Grok got dearer: in mode auto the worst case is Grok's reserve, so every ceiling moves. */
+const GROK_DEARER = { std: { perSecondMicros: 84_000, perInputImageMicros: 0 }, pro: { perSecondMicros: 112_000, perInputImageMicros: 0 }, grok: { perSecondMicros: 160_000, perInputImageMicros: 10_000 } };
+
 describe("38: the sheet «Оживить фото»", () => {
   test("the frame, the motions from the engine, quality, length, the model, the price line and the button at its ceiling (mode auto)", async () => {
     await openNini();
@@ -254,13 +257,49 @@ describe("38: the sheet «Оживить фото»", () => {
   test("38b: PRICE_CHANGED asks the engine again and says the new ceiling; the click needs to come again", async () => {
     const h = await openNini();
     const s = await openSheet();
-    h.engine.failNext("clips.create", { code: "PRICE_CHANGED", detail: "the price moved" });
+    expect(priceLine(s)).toBe("Обычно $0.42 · не больше $0.85");
+    // The listing moved after the sheet was read: the click accepts $0.85, the engine's worst is now higher.
+    h.engine.setClipRates(GROK_DEARER);
     await animateFromSheet(s);
-    expect(within(sheet()).getByText(/Цена изменилась: теперь не больше/).textContent).toBe("Цена изменилась: теперь не больше $0.85. Подтвердите ещё раз.");
+    expect(priceLine(sheet())).not.toContain("$0.85");
+    const worst = /не больше (\$[\d.]+)/.exec(priceLine(sheet()))?.[1] ?? "";
+    expect(worst).not.toBe("");
+    expect(within(sheet()).getByText(/Цена изменилась: теперь не больше/).textContent).toBe(`Цена изменилась: теперь не больше ${worst}. Подтвердите ещё раз.`);
+    expect(within(sheet()).getByRole("button", { name: `Оживить · до ${worst}` })).toBeDefined();
     expect(callsOf(h.engine, "clips.options").length).toBeGreaterThanOrEqual(2);
     expect(callsOf(h.engine, "clips.create")).toHaveLength(1);
     fireEvent.click(radio(sheet(), "10 секунд"));
     expect(within(sheet()).queryByText(/Цена изменилась/) === null).toBe(true);
+  });
+
+  test("38b: while the new price is read the figures on show stay, the main button keeps the focus and a click on it sends nothing; the new figure comes with the focus still there", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    h.engine.setClipRates(GROK_DEARER);
+    h.engine.delayNext("clips.options", 50);
+    const go = within(s).getByRole("button", { name: "Оживить · до $0.85" });
+    go.focus();
+    fireEvent.click(go);
+    await flush();
+    await flush();
+    expect(callsOf(h.engine, "clips.create")).toHaveLength(1);
+    // The re-read is on its way: the old figures stay, nothing under the focus turns off.
+    const main = within(sheet()).getByRole("button", { name: "Оживить · до $0.85" });
+    expect(main.hasAttribute("disabled")).toBe(false);
+    expect(main.getAttribute("aria-disabled")).toBe("true");
+    expect(document.activeElement === main).toBe(true);
+    fireEvent.click(main);
+    await flush();
+    expect(callsOf(h.engine, "clips.create")).toHaveLength(1);
+    tick(h.scheduler, 3);
+    await flush();
+    await flush();
+    const worst = /не больше (\$[\d.]+)/.exec(priceLine(sheet()))?.[1] ?? "";
+    expect(worst).not.toBe("$0.85");
+    const fresh = within(sheet()).getByRole("button", { name: `Оживить · до ${worst}` });
+    expect(fresh.getAttribute("aria-disabled")).not.toBe("true");
+    expect(document.activeElement === fresh).toBe(true);
+    expect(within(sheet()).getByText(/Цена изменилась: теперь не больше/).textContent).toBe(`Цена изменилась: теперь не больше ${worst}. Подтвердите ещё раз.`);
   });
 
   test("38c: the month holds Kling alone — «Оживить» waits, the notice says what the clip needs, «Оживить без запасной модели · до $0.51» sends fallback none", async () => {

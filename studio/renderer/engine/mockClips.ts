@@ -440,6 +440,7 @@ export { planOf as mockRecoveryPlan };
 export class MockClips {
   readonly #host: MockClipsHost;
   readonly #t: MockClipTimings;
+  #rates: ClipPrices = RATES;
   readonly #mode: "auto" | "offer";
   readonly #boldClips: BoldClipsMode;
   readonly #exportFps: "interpolate" | "duplicate" | "native24";
@@ -494,6 +495,11 @@ export class MockClips {
 
   setVideoPrices(mode: MockVideoPrices): void {
     this.#prices = mode;
+  }
+
+  /** The listing's per-second rates move: every estimate from now on is the new one, so a click accepted at the old worst gets PRICE_CHANGED, as the engine's does. */
+  setRates(rates: ClipPrices): void {
+    this.#rates = Object.freeze({ ...rates });
   }
 
   setPhotoPixels(photoId: string, pixels: "ok" | "unreadable" | "not-vertical"): void {
@@ -759,7 +765,7 @@ export class MockClips {
 
   #estimate(parts: Omit<ClipPriceParts, "prices" | "mode" | "boldClips">): Estimate | null {
     if (this.#prices === "missing") return null;
-    const full: ClipPriceParts = { ...parts, mode: this.#mode, boldClips: this.#boldClips, prices: RATES };
+    const full: ClipPriceParts = { ...parts, mode: this.#mode, boldClips: this.#boldClips, prices: this.#rates };
     return {
       expectedMicros: clipExpectedMicros(full),
       worstMicros: clipWorstMicros(full),

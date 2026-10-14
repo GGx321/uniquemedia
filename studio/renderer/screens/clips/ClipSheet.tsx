@@ -49,7 +49,11 @@ export interface ClipSheetProps {
   readonly returnFocus?: () => HTMLElement | null;
 }
 
-type Options = { readonly status: "loading" } | { readonly status: "ready"; readonly options: ClipOptions } | { readonly status: "failed"; readonly error: EngineError };
+/** `refreshing`: the engine is asked again (38b) and the options read before stay on show meanwhile — the buttons keep their place and the focus on them. */
+type Options =
+  | { readonly status: "loading" }
+  | { readonly status: "ready"; readonly options: ClipOptions; readonly photoId: string; readonly refreshing: boolean }
+  | { readonly status: "failed"; readonly error: EngineError };
 
 export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, onStarted, returnFocus }: ClipSheetProps) {
   const { client, store } = useEngine();
@@ -59,6 +63,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   const ids = useId();
   const dialogRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const mainRef = useRef<HTMLButtonElement>(null);
   useModalDialog({ dialog: dialogRef, initialFocus: closeRef, onClose, returnFocus });
 
   const [asked, setAsked] = useState(0);
@@ -75,10 +80,10 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
 
   useEffect(() => {
     let alive = true;
-    setOptions({ status: "loading" });
+    setOptions((now) => (now.status === "ready" && now.photoId === photoId ? { ...now, refreshing: true } : { status: "loading" }));
     void client.request("clips.options", { avatarId, photoId }).then((reply) => {
       if (!alive) return;
-      setOptions(reply.ok ? { status: "ready", options: reply.result } : { status: "failed", error: reply.error });
+      setOptions(reply.ok ? { status: "ready", options: reply.result, photoId, refreshing: false } : { status: "failed", error: reply.error });
     });
     return () => {
       alive = false;
@@ -91,7 +96,15 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   // An avatar the list no longer holds (a race with a delete) is left to the engine, which refuses it on its own.
   const block = animateBlock(view, view.avatars.find((a) => a.avatarId === avatarId)?.status !== "archived");
   const blockText = block === null ? null : block.kind === "nokey" ? "Нужен ключ OpenRouter — добавьте его в Настройках." : block.text;
-  const waiting = options.status === "loading" || busy !== null || blockText !== null;
+  const refreshing = options.status === "ready" && options.refreshing;
+  const waiting = options.status === "loading" || refreshing || busy !== null || blockText !== null;
+
+  // The new options are in: if the button that had the focus is gone (the «без запасной модели» one, when the new price no longer leaves room for it), the main button takes it.
+  useEffect(() => {
+    if (refreshing || priceChanged === null) return;
+    const root = dialogRef.current;
+    if (root !== null && !root.contains(document.activeElement)) mainRef.current?.focus();
+  }, [refreshing, priceChanged, options]);
 
   /** A change of the choice ends what was said about the last price. */
   const choose = (change: () => void): void => {
@@ -269,7 +282,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
         </div>
 
         <footer className="clip-sheet-foot">
-          {priceChanged !== null && sheet !== null && options.status === "ready" && (
+          {priceChanged !== null && sheet !== null && options.status === "ready" && !refreshing && (
             <Notice tone="warn">
               Цена изменилась: теперь не больше <span className="mono">{upUsd(priceChanged === "alone" && sheet.noFallback !== null ? sheet.noFallback.worstMicros : sheet.main.worstMicros)}</span>. Подтвердите ещё раз.
             </Notice>
@@ -311,6 +324,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
               </button>
             ) : (
               <button
+                ref={mainRef}
                 type="button"
                 className="btn btn-p"
                 disabled={!sheet.fits || blockText !== null}

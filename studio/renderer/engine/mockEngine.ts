@@ -28,6 +28,7 @@ import {
   type EngineNotice,
   type ExportStatus,
   type ExportUnavailableReason,
+  type ClipPrices,
   type Estimate,
   EventLog,
   type EventMessage,
@@ -1580,6 +1581,11 @@ export class MockEngine implements EngineBridge {
   /** How the mock's video listing reads: `live`, `fallback` (unreadable: the dated table of 2026-10-10 stands in) or `missing` (readable and lacking a price: PRICE_UNAVAILABLE `video`). */
   setVideoPrices(mode: MockVideoPrices): void {
     this.clips.setVideoPrices(mode);
+  }
+
+  /** The video listing's per-second rates move (a clip accepted at the old worst case gets PRICE_CHANGED). */
+  setClipRates(rates: ClipPrices): void {
+    this.clips.setRates(rates);
   }
 
   /** What the first frame makes of a photo's pixels: `unreadable` (`photo-unreadable`) or `not-vertical`. The mock holds no pixels, so a test says it. */
