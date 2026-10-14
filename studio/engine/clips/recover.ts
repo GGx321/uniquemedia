@@ -103,6 +103,8 @@ export interface ClipRecoveryHost {
   /** The master's embedding for a judged clip, or null when it cannot be taken. Bound to the library the recovery runs on. */
   readonly masterEmbedding: (avatarId: string, signal: AbortSignal) => Promise<Float32Array | null>;
   readonly media?: Partial<RecoveryMedia>;
+  /** Test seam: awaited before each clips folder of the startup walk is listed, so a test can hold the walk open (the same seam `readFolderNames` has). */
+  readonly beforeList?: (dir: string) => void | Promise<void>;
   readonly log: (line: string) => void;
 }
 
@@ -313,7 +315,7 @@ export async function recoverClips(host: ClipRecoveryHost, library: RecoveryLibr
   const folders: { avatarId: string; clipsDir: string }[] = [];
   for (const avatar of library.listAvatars()) {
     const clipsDir = clipsDirOf(library, avatar.id);
-    const listed = await readFolderNames(clipsDir);
+    const listed = await readFolderNames(clipsDir, host.beforeList);
     if (!listed.ok) {
       host.log(`[clip] the clips folder of avatar ${avatar.id} could not be listed; recovery skips it`);
       continue;

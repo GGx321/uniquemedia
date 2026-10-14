@@ -66,6 +66,8 @@ const CLIP_PRICE_MODELS: PriceModels = { imageModels: [], chatModels: [], videoM
 
 /** A face embedding is a free local computation, bounded like the portraits' (`EMBEDDING_COMPUTE_TIMEOUT_MS`). */
 const MASTER_EMBEDDING_TIMEOUT_MS = EMBEDDING_COMPUTE_TIMEOUT_MS;
+/** What a reconcile refused for the startup walk is told to wait before it tries again. */
+const WALK_RETRY_MS = 2_000;
 
 /** `read()`, or a rejection once `ms` passed: a plan that does not answer in time is no plan (the caller logs it and goes on without one). */
 export async function readPlanWithin<T>(read: () => Promise<T>, ms: number): Promise<T> {
@@ -150,6 +152,8 @@ export interface ClipServiceDeps {
   holdTimers?: HoldTimers;
   /** Test seam: the records' removal of a file (the delete's), so a test can hold a delete in its middle. */
   records?: Pick<ClipRecordsDeps, "remove">;
+  /** Test seam: awaited before each clips folder of a library's startup walk is listed, so a test can hold the walk open. */
+  recoveryBeforeList?: (dir: string) => void | Promise<void>;
   log: (line: string) => void;
   // ----- S5.V4c's members (the export commits like a render): declared and wired here, read by the export job -----
   /** The export folder, checked now (as a render's save checks it). */
@@ -185,6 +189,8 @@ export class ClipService {
   readonly #activeClips = new Set<string>();
   /** The attempts this process reserved: only those, while held, are left out of the reconcile reasons (a foreign reserve stops paid work whatever its hold says). */
   readonly #ownAttempts = new Set<string>();
+  /** Startup walks of a library's clips folders still running (S5.VR): until one has taken the restart's holds, the reconcile cannot know what may still bill. */
+  #walks = 0;
   /** Fired by `shutdown`: every clip job stops waiting (a reserve whose POST may have left stays open at worst). */
   readonly #stop = new AbortController();
 
@@ -343,9 +349,14 @@ export class ClipService {
     return this.#ownAttempts.has(attemptId) && this.holds.untilOf(attemptId) !== undefined;
   }
 
-  /** How long the reconcile must wait for the clips' holds, in whole ms (0: it need not). */
+  /**
+   * How long the reconcile must wait for the clips' holds, in whole ms (0: it need not). While a library's startup walk of the clips folders is still running the holds of a restart do not exist
+   * yet, and only the reconcile's quiet rule (about 5 min) would hold it back: a walk slower than that, on a slow external disk, would let it settle at worst a clip that is still rendering. So it waits
+   * for the walk, and asks to be tried again soon (S5.VR).
+   */
   reconcileWaitMs(): number {
-    return Math.ceil(this.holds.waitMs());
+    const held = Math.ceil(this.holds.waitMs());
+    return this.#walks > 0 ? Math.max(held, WALK_RETRY_MS) : held;
   }
 
   /**
@@ -457,9 +468,15 @@ export class ClipService {
       faceGate: deps.faceGate,
       faceRoleOf: (photoId) => this.#faceRoleOf(library, photoId),
       masterEmbedding: (avatarId, signal) => this.#masterEmbedding(library, avatarId, deps.faceGate(), signal),
+      ...(deps.recoveryBeforeList === undefined ? {} : { beforeList: deps.recoveryBeforeList }),
       log: deps.log,
     };
-    recoverClips(host, library).catch((error: unknown) => deps.log(`[clip] the recovery of the library could not run (${error instanceof Error ? error.name : typeof error})`));
+    this.#walks++;
+    recoverClips(host, library)
+      .catch((error: unknown) => deps.log(`[clip] the recovery of the library could not run (${error instanceof Error ? error.name : typeof error})`))
+      .finally(() => {
+        this.#walks--;
+      });
   }
 
   // ---------- clips.cancel (through avatars.cancel) ----------

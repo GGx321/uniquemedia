@@ -184,6 +184,48 @@ describe("a quit while a clip renders, then a new engine on the same folders", (
   });
 });
 
+// VR item 5: with a library open the restart's holds appear only after an async walk of every avatar's clips folder. Until then nothing holds the reconcile back but the quiet rule (about 5 min), and a walk
+// slower than that (a slow external disk) would let a reconcile settle at worst a clip that is still rendering. The reconcile answers TOO_SOON while the walk runs.
+describe("a reconcile while the restart's walk of the clips folders is still running", () => {
+  /** A gate the folder walk waits at, before it lists the first clips folder. */
+  function walkGate() {
+    let open!: () => void;
+    const opened = new Promise<void>((resolve) => void (open = resolve));
+    let reached = false;
+    return { beforeList: async () => { reached = true; await opened; }, open, reached: () => reached };
+  }
+
+  test("is TOO_SOON, and the ledger is untouched, even after the quiet rule has passed", async () => {
+    await quitMidClip();
+    const before = await readFile(ledgerPath(), "utf8");
+    const gate = walkGate();
+    const second = await startClipEngine(dir(), { timings: TIMINGS, deps: { clipRecoveryBeforeList: gate.beforeList } });
+    await until(() => gate.reached(), "the walk to reach the clips folder");
+    second.clocks.skew(10 * MIN);
+
+    const held = await reconcile(second);
+    expect(held).toMatchObject({ ok: true, result: { status: "too-early" } });
+    if (!held.ok || held.result.status !== "too-early") throw new Error("unreachable");
+    expect(held.result.retryAfterMs).toBeGreaterThan(0);
+    expect(await readFile(ledgerPath(), "utf8")).toBe(before);
+
+    gate.open();
+    await clipJobDone(second);
+  });
+
+  test("runs once the walk has taken the holds: the wait it asked for ends with the walk", async () => {
+    await quitMidClip();
+    const gate = walkGate();
+    const second = await startClipEngine(dir(), { timings: TIMINGS, deps: { clipRecoveryBeforeList: gate.beforeList } });
+    await until(() => gate.reached(), "the walk to reach the clips folder");
+    gate.open();
+    await clipJobDone(second);
+    await second.engine.settled();
+    second.clocks.skew(20 * MIN);
+    expect(await reconcile(second)).toMatchObject({ ok: true, result: { status: "done", closedReserves: 1 } });
+  });
+});
+
 describe("a journal and a reserve of an earlier process, with nothing else", () => {
   async function crashedBeforeSubmit(reserveAt: number): Promise<{ avatarId: string; clipId: string }> {
     const { avatarId, photoId } = await seedClipAvatar(libraryDir());

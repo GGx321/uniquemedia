@@ -384,6 +384,8 @@ export interface EngineDeps {
   clipSwitches?: { mode?: "auto" | "offer"; boldClips?: BoldClipsMode; exportFps?: ExportFpsMode };
   /** Test seam of the clip records (S5.V4a2): the delete's removal of a file, so a test can hold a delete in its middle. */
   clipRecords?: Pick<ClipRecordsDeps, "remove">;
+  /** Test seam: awaited before each clips folder of a library's startup walk is listed (S5.VR), so a test can hold the walk open. */
+  clipRecoveryBeforeList?: (dir: string) => void | Promise<void>;
 }
 
 /** How long one `videos.render` may spend filling the focus of its photos. Under main's 30 s command deadline, so the answer (or the refusal) always arrives before main gives up. */
@@ -1201,6 +1203,7 @@ export class Engine {
       // S5.V4c review: an export, like a render, commits only into the folder the settings name, and never while a pick of another one waits for its settings.
       exportSwitch: { pending: () => this.#exportSwitchPending(), currentPath: () => this.#settings.exportPath },
       ...(deps.clipRecords === undefined ? {} : { records: deps.clipRecords }),
+      ...(deps.clipRecoveryBeforeList === undefined ? {} : { recoveryBeforeList: deps.clipRecoveryBeforeList }),
       log: (line) => console.warn(`studio engine: ${line}`),
       exportStatus: (requiredBytes) => this.#refreshExportStatus(requiredBytes),
       liveCommits: this.#commits,
