@@ -184,7 +184,7 @@ export type MockJournalLine =
       providerCostMicros?: number;
       costSource: "usage" | "generation" | "proof" | "worst" | "none";
       /** A POST the provider refused with a 4xx that is not moderation: why, so a restart records the reason the live path did (engine/clips/schemas.ts `failReason`). */
-      failReason?: ClipFailReason;
+      failReason?: "rate-limited" | "key-invalid" | "no-credits" | "bad-request";
       at: string;
     }
   | { type: "downloaded"; sha256: string; bytes: number; at: string };
@@ -1075,7 +1075,7 @@ export class MockClips {
       this.#journal(job.clipId, { type: "ended", attemptId, status, costSource, ...(providerCostMicros === undefined ? {} : { providerCostMicros }), at: iso(host.clockMs()) });
 
     // ----- refused at the POST: no job exists, nothing is billed -----
-    const submitFailures: Partial<Record<MockClipAttempt, ClipFailReason>> = { "rate-limited": "rate-limited", "bad-request": "bad-request", "key-invalid": "key-invalid", "no-credits": "no-credits" };
+    const submitFailures: Partial<Record<MockClipAttempt, "rate-limited" | "key-invalid" | "no-credits" | "bad-request">> = { "rate-limited": "rate-limited", "bad-request": "bad-request", "key-invalid": "key-invalid", "no-credits": "no-credits" };
     if (scripted === "refused-submit" || submitFailures[scripted] !== undefined) {
       this.#posts.push(model);
       this.#settle(line, 0, false);

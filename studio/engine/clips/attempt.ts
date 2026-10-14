@@ -20,7 +20,7 @@ import { isContentFailure } from "../openrouter/video";
 import type { FailureKind, GenerationResult, OpenRouterClient, VideoPollResult, VideoRequest } from "../openrouter/types";
 import { holdUntilForReserve, holdUntilForSubmitted, holdUntilForTerminal, type ClipHolds } from "./holds";
 import { clipAttemptId, type ClipJournal } from "./journal";
-import type { ClipAttemptOutcome, ClipCostSource } from "./schemas";
+import type { ClipAttemptOutcome, ClipCostSource, PostRefusalReason } from "./schemas";
 import { PROOF_READ_TRIES, type ClipTimings } from "./timings";
 
 // Stage 5, 5b.1, S5.V3b (plan s5b1 §5.7, §5.8, I5.44-I5.48): the clip's MONEY STATE MACHINE. Pure over injected deps (the budget, the journal, the HTTP client, the holds, a clock and a sleep), so a test plays
@@ -319,7 +319,7 @@ const CreditsBody = z.object({ data: z.object({ total_usage: z.number().finite()
 
 const iso = (ms: number): string => new Date(ms).toISOString();
 
-function reasonOfKind(kind: FailureKind): ClipFailReason {
+function reasonOfKind(kind: FailureKind): PostRefusalReason {
   if (kind === "AUTH_INVALID") return "key-invalid";
   if (kind === "INSUFFICIENT_CREDITS") return "no-credits";
   if (kind === "RATE_LIMITED") return "rate-limited";

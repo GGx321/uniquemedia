@@ -210,6 +210,12 @@ describe("the journal lines", () => {
     expect(ClipJournalLine.safeParse({ ...refusedAtPost, failReason: "rate limited" }).success).toBe(false);
   });
 
+  test("ended's failReason is exactly what a refused POST can name: lost, refused-paid and the other reasons are refused", () => {
+    const refusedAtPost = { type: "ended", attemptId: `${ID}:video#1`, status: "failed", costSource: "none", at: AT };
+    for (const failReason of ["rate-limited", "key-invalid", "no-credits", "bad-request"]) expect(ClipJournalLine.safeParse({ ...refusedAtPost, failReason }).success).toBe(true);
+    for (const failReason of ["lost", "refused-paid", "refused-free", "submit-uncertain", "provider-error", "late"]) expect(ClipJournalLine.safeParse({ ...refusedAtPost, failReason }).success).toBe(false);
+  });
+
   test("ended's provider cost is optional and its cost source is required", () => {
     const { providerCostMicros: _cost, ...noCost } = ended;
     expect(ClipJournalLine.safeParse(noCost).success).toBe(true);

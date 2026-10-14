@@ -104,6 +104,10 @@ const SubmittedLine = z.strictObject({
   at: At,
 });
 
+/** The reasons a POST the provider refused with a 4xx that is not moderation can carry (`attempt.ts` `reasonOfKind` emits exactly these). */
+export const PostRefusalReason = z.enum(["rate-limited", "key-invalid", "no-credits", "bad-request"]);
+export type PostRefusalReason = z.infer<typeof PostRefusalReason>;
+
 const EndedLine = z.strictObject({
   type: z.literal("ended"),
   attemptId: AttemptId,
@@ -111,7 +115,7 @@ const EndedLine = z.strictObject({
   providerCostMicros: Micros.optional(),
   costSource: ClipCostSource,
   /** A POST the provider refused with a 4xx that is not moderation: why, so a restart records the reason the live path did (VR item 2). The ledger already holds 0 for it. */
-  failReason: ClipFailReason.optional(),
+  failReason: PostRefusalReason.optional(),
   /** Required: after a restart the «terminal + 2 min» hold of a late `completed` (I5.48) is read from it. */
   at: At,
 });
