@@ -130,6 +130,23 @@ export function ClipViewer(props: ClipViewerProps) {
   const [sent, setSent] = useState(false);
   const [percentShown, setPercentShown] = useState<string | null>(null);
   const [news, setNews] = useState("");
+  // The viewer stays mounted from clip to clip (a key would drop the focus), so what belongs to one clip is dropped when the clip changes — in the render that shows the new one.
+  const [stateFor, setStateFor] = useState(clip.clipId);
+  const clipIdRef = useRef(clip.clipId);
+  clipIdRef.current = clip.clipId;
+  if (stateFor !== clip.clipId) {
+    setStateFor(clip.clipId);
+    setRefusal(null);
+    setRevealError(null);
+    setRevealing(false);
+    setSent(false);
+    setPercentShown(null);
+    setNews("");
+  }
+  /** The export jobs this viewer started: only their end is announced. */
+  const startedJobs = useRef(new Set<string>());
+  /** What the last effect saw of the clip's export job: an end is news only when it is seen to come. */
+  const lastSeen = useRef<{ clipId: string; jobId: string | null; status: string | null }>({ clipId: clip.clipId, jobId: null, status: null });
   useModalDialog({ dialog: dialogRef, initialFocus: closeRef, onClose, returnFocus: () => returnFocus(clip.clipId) });
   const backdrop = useBackdropClose(onClose, [scrimRef, dialogRef]);
   const coveredRef = useRef(covered || asking);
@@ -171,15 +188,20 @@ export function ClipViewer(props: ClipViewerProps) {
 
   // Its end, said politely where the button is (the green line and the warning say it on screen).
   const jobStatus = job?.status ?? null;
+  const jobId = job?.jobId ?? null;
   useEffect(() => {
+    const before = lastSeen.current;
+    lastSeen.current = { clipId: clip.clipId, jobId, status: jobStatus };
+    // Not on arriving at a clip (opened, or stepped onto), not for a job another visit started, not twice for one end.
+    if (before.clipId !== clip.clipId || jobId === null || !startedJobs.current.has(jobId) || (before.jobId === jobId && before.status === jobStatus)) return;
     if (jobStatus === "done") setNews("Клип сохранён в папку.");
     else if (jobStatus === "failed") setNews("Клип не сохранён в папку.");
-  }, [jobStatus, job?.jobId]);
+  }, [clip.clipId, jobStatus, jobId]);
 
   const saved = savedExport(clip);
   const exportStatus = view.exportStatus;
-  const folderReason: ExportUnavailableReason | null =
-    refusal?.code === "EXPORT_UNAVAILABLE" && refusal.exportReason !== undefined ? refusal.exportReason : exportStatus?.status === "unavailable" ? exportStatus.reason : null;
+  // The folder's state is the store's alone: a refusal only asks for a fresh check (below), so a folder that is back lets the button work again.
+  const folderReason: ExportUnavailableReason | null = exportStatus?.status === "unavailable" ? exportStatus.reason : null;
   const saveWaits = running || folderReason !== null;
 
   async function save(): Promise<void> {
@@ -187,17 +209,19 @@ export function ClipViewer(props: ClipViewerProps) {
     setSent(true);
     setRefusal(null);
     setNews("Сохраняем клип в папку…");
+    const asked = clip.clipId;
     const reply = await client.request("clips.export", { avatarId: clip.avatarId, clipId: clip.clipId });
     if (reply.ok) {
+      startedJobs.current.add(reply.result.jobId);
       store.trackClipJob(reply.result.jobId, clip.avatarId, clip.clipId, "export");
       onExportStarted(reply.result.jobId);
-    }
-    if (!mounted.current) return;
+    } else if (reply.error.code === "EXPORT_UNAVAILABLE") void store.recheckExport({ force: true });
+    // The viewer may be on another clip by now: the answer is not its news.
+    if (!mounted.current || clipIdRef.current !== asked) return;
     setSent(false);
     if (!reply.ok) {
-      setRefusal(reply.error);
       setNews("");
-      if (reply.error.code === "EXPORT_UNAVAILABLE") void store.recheckExport({ force: true });
+      if (reply.error.code !== "EXPORT_UNAVAILABLE") setRefusal(reply.error);
     }
   }
 
@@ -336,7 +360,7 @@ export function ClipViewer(props: ClipViewerProps) {
                   </button>
                 </div>
               )}
-              {refusal !== null && refusal.code !== "EXPORT_UNAVAILABLE" && <p className="viewer-error">{errorText(refusal)}</p>}
+              {refusal !== null && <p className="viewer-error">{errorText(refusal)}</p>}
               {saved !== null && !running && (
                 <p className="clip-saved" role="status">
                   <Icon name="check" size={14} strokeWidth={2.6} />

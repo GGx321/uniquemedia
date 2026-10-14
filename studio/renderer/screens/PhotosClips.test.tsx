@@ -627,6 +627,96 @@ describe("43: the clip viewer and «Сохранить в папку»", () => {
   });
 });
 
+describe("43d: the clip viewer keeps nothing of the clip it left", () => {
+  /** Two ready clips of Nini's library (no photo of them in the gallery), the newest open. */
+  async function openSeeded() {
+    const h = setup({ avatars: [summary(PHOTOS)], photos: PHOTOS });
+    h.engine.seedClips(NINI.avatarId, 2);
+    fireEvent.click(await screen.findByRole("button", { name: "Nini" }));
+    await screen.findByRole("heading", { level: 1, name: "Nini" });
+    await flush();
+    await showClips();
+    openTile(0);
+    await flush();
+    await flush();
+    return h;
+  }
+  const openTile = (n: number): void => {
+    const opens = screen.getAllByRole("button", { name: /^Открыть клип/ });
+    const target = opens[n];
+    if (target === undefined) throw new Error(`no tile ${n}`);
+    fireEvent.click(target);
+  };
+  const clipViewer = (): HTMLElement => screen.getByRole("dialog", { name: /^Клип \d+ из \d+$/ });
+  const saveButton = (): HTMLElement => within(clipViewer()).getByRole("button", { name: /^Сохран/ });
+  const news = (): string => clipViewer().querySelector("p[aria-live='polite']")?.textContent ?? "";
+  async function step(key: "ArrowLeft" | "ArrowRight"): Promise<void> {
+    fireEvent.keyDown(window, { key });
+    await flush();
+    await flush();
+  }
+
+  test("a refusal shown on one clip is gone under the next one", async () => {
+    const h = await openSeeded();
+    h.engine.failNext("clips.export", { code: "INTERNAL", detail: "the disk said no" });
+    fireEvent.click(saveButton());
+    await flush();
+    expect(clipViewer().querySelector(".viewer-error") === null).toBe(false);
+    await step("ArrowRight");
+    expect(within(clipViewer()).getByRole("heading", { level: 2 }).textContent).toBe("Клип 2 из 2");
+    expect(clipViewer().querySelector(".viewer-error") === null).toBe(true);
+  });
+
+  test("a folder that refused the save and is back lets «Сохранить в папку» work again, on any clip", async () => {
+    const h = await openSeeded();
+    h.engine.setExportDisk({ status: "unavailable", reason: "missing" });
+    fireEvent.click(saveButton());
+    await flush();
+    await flush();
+    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
+    h.engine.setExportDisk({ status: "ok" });
+    await act(async () => {
+      await h.client.request("export.check", {});
+    });
+    await flush();
+    expect(within(clipViewer()).queryByText("Папка «Готовые видео» недоступна") === null).toBe(true);
+    expect(saveButton().getAttribute("aria-disabled")).not.toBe("true");
+    fireEvent.click(saveButton());
+    await flush();
+    expect(callsOf(h.engine, "clips.export")).toHaveLength(2);
+  });
+
+  test("opening a clip whose export finished earlier says nothing", async () => {
+    const h = await openSeeded();
+    fireEvent.click(saveButton());
+    await flush();
+    tick(h.scheduler, 10);
+    await flush();
+    await flush();
+    expect(news()).toBe("Клип сохранён в папку.");
+    fireEvent.click(within(clipViewer()).getByRole("button", { name: "Закрыть" }));
+    await flush();
+    openTile(0);
+    await flush();
+    await flush();
+    expect(within(clipViewer()).getByText(/^Сохранено:/)).toBeDefined();
+    expect(news()).toBe("");
+  });
+
+  test("stepping onto a clip does not carry the last clip's news along, nor its «Сохраняем…»", async () => {
+    const h = await openSeeded();
+    fireEvent.click(saveButton());
+    await flush();
+    tick(h.scheduler, 10);
+    await flush();
+    await flush();
+    await step("ArrowRight");
+    expect(news()).toBe("");
+    await step("ArrowLeft");
+    expect(news()).toBe("");
+  });
+});
+
 describe("46: after a restart", () => {
   test("a clip in work when Studio closed: the recovery tile, one banner with the clip's line and no «Перейти к сверке», then the recovered clip «до сверки»", async () => {
     const h = await openNini();
