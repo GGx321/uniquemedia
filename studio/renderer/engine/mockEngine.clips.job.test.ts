@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { REAL_CLIP_TIMINGS } from "../../engine/clips/timings";
 import { CLIP_JOB_STEPS, JobProgress } from "../../shared/engine";
 import { AVATAR, CLIP_PHOTOS, create, endOf, listClips, makeClipMock, money, onlyClip, phasesOf, progressOf, reconcile, refusal, runClip, unwrap, type ClipMock } from "./mockEngine.clips.testkit";
 
@@ -12,6 +13,40 @@ function stepUntil(m: ClipMock, condition: () => boolean, what: string): void {
 }
 
 const reached = (m: ClipMock, jobId: string, phase: string) => () => phasesOf(m.events, jobId).includes(phase);
+
+// engine/clips/attempt.ts: how long after the terminal status the money settles. A bill the poll carries is settled at once; a completed poll with no usage waits for `/generation` (15 s after the status, a 404
+// read again twice, 5 s apart) and settles at the worst; a refusal that `/generation` bills is settled by its FIRST reading (15 s), and one that needs the proof (a 404, a net-usage check) by its second (2 min).
+describe("when a clip's money settles, after the provider's terminal status", () => {
+  const T = REAL_CLIP_TIMINGS;
+
+  /** The mock's clock, when `phase` (or the job's end) was reached, counted from the submit (the moment `rendering` was announced). */
+  async function afterSubmit(script: Parameters<ClipMock["engine"]["scriptNextClip"]>[0], until: "downloading" | "end"): Promise<number> {
+    const m = makeClipMock();
+    m.engine.scriptNextClip(script);
+    // No fallback, so a free refusal ends the job at its own settle instead of going on to Grok.
+    const { jobId } = await unwrap(create(m, { fallback: "none", acceptedWorstMicros: 504_000 }));
+    stepUntil(m, reached(m, jobId, "rendering"), "rendering");
+    const submitted = m.engine.peekClips().nowMs;
+    stepUntil(m, until === "end" ? () => endOf(m.events, jobId) !== undefined : reached(m, jobId, until), until);
+    return m.engine.peekClips().nowMs - submitted;
+  }
+
+  test("a poll that carries its usage settles at the terminal status", async () => {
+    expect(await afterSubmit("ok", "downloading")).toBe(3 * T.pollMs);
+  });
+
+  test("a poll with no usage waits for `/generation`: 15 s, read again twice 5 s apart, then settles at the worst", async () => {
+    expect(await afterSubmit("ok-uncosted", "downloading")).toBe(3 * T.pollMs + T.proofFirstReadMs + 2 * T.proofRetryMs);
+  });
+
+  test.each(["refused-paid", "provider-error-paid"] as const)("%s: a refusal /generation bills is settled by the first reading, 15 s after the status", async (script) => {
+    expect(await afterSubmit(script, "end")).toBe(3 * T.pollMs + T.proofFirstReadMs);
+  });
+
+  test.each(["refused-free", "refused-unknown", "refused-uncounted", "provider-error"] as const)("%s: a refusal that needs the whole proof is settled by its second reading, 2 min after the status", async (script) => {
+    expect(await afterSubmit(script, "end")).toBe(3 * T.pollMs + T.proofSecondReadMs);
+  });
+});
 
 describe("a clip from create to record", () => {
   test("phases in order with done within total; job.done carries the clip; the record is ready with the engine's figures", async () => {

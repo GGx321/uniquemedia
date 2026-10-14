@@ -57,6 +57,8 @@ export interface MockClipTimings {
   readonly pollMs: number;
   readonly proofFirstReadMs: number;
   readonly proofSecondReadMs: number;
+  /** The pause before a free read that came back unreadable (or a record not there yet, for a completed job) is tried again. */
+  readonly proofRetryMs: number;
   readonly lifetimeMs: number;
   readonly latePollMs: number;
   readonly lateGiveUpMs: number;
@@ -73,6 +75,7 @@ const REAL: MockClipTimings = Object.freeze({
   pollMs: 20 * SECOND,
   proofFirstReadMs: 15 * SECOND,
   proofSecondReadMs: 2 * MINUTE,
+  proofRetryMs: 5 * SECOND,
   lifetimeMs: 20 * MINUTE,
   latePollMs: 60 * SECOND,
   lateGiveUpMs: 60 * MINUTE,
@@ -87,6 +90,7 @@ const scaled = (set: MockClipTimings, by: number): MockClipTimings =>
     pollMs: set.pollMs / by,
     proofFirstReadMs: set.proofFirstReadMs / by,
     proofSecondReadMs: set.proofSecondReadMs / by,
+    proofRetryMs: set.proofRetryMs / by,
     lifetimeMs: set.lifetimeMs / by,
     latePollMs: set.latePollMs / by,
     lateGiveUpMs: set.lateGiveUpMs / by,
@@ -99,6 +103,10 @@ const scaled = (set: MockClipTimings, by: number): MockClipTimings =>
 /** `real`: the engine's. `short`: the real one divided by a thousand, every ordering kept (the parity rig and the packaged smoke). `demo`: the dev build, where a minute of waiting is too long to look at. */
 export const MOCK_CLIP_TIMINGS = Object.freeze({ real: REAL, short: scaled(REAL, 1_000), demo: scaled(REAL, 20) });
 export type MockClipTimingsName = keyof typeof MOCK_CLIP_TIMINGS;
+
+/** A free read that is not there yet (or not readable) is tried this many times before the money path settles without it (engine/clips/timings.ts `PROOF_READ_TRIES`; held to it by mockEngine.clips.holds.test.ts). */
+export const MOCK_PROOF_READ_TRIES = 3;
+const PROOF_READ_TRIES = MOCK_PROOF_READ_TRIES;
 
 /** The budget's own quiet rule and request timeout (engine/money/reconcile.ts, budget.ts): a restart's reserve waits for both. */
 const RECONCILE_QUIET_MS = 2 * MINUTE;
@@ -1001,11 +1009,16 @@ export class MockClips {
     const completes: MockClipAttempt[] = ["ok", "ok-uncosted", "download-failed", "invalid-file", "disk-full"];
     if (completes.includes(scripted)) {
       const uncosted = scripted === "ok-uncosted";
-      this.#settle(line, uncosted ? line.worstMicros : billed, uncosted);
-      ended("completed", uncosted ? "worst" : "usage", uncosted ? undefined : billed);
-      this.#attemptsDone(job.clipId, { attemptId, model, providerJobId, outcome: "completed", ...(uncosted ? {} : { providerCostMicros: billed }), costSource: uncosted ? "worst" : "usage" });
-      this.#closeMoney(job);
-      this.#deliver(run, model, scripted);
+      const settleAndDeliver = (): void => {
+        this.#settle(line, uncosted ? line.worstMicros : billed, uncosted);
+        ended("completed", uncosted ? "worst" : "usage", uncosted ? undefined : billed);
+        this.#attemptsDone(job.clipId, { attemptId, model, providerJobId, outcome: "completed", ...(uncosted ? {} : { providerCostMicros: billed }), costSource: uncosted ? "worst" : "usage" });
+        this.#closeMoney(job);
+        this.#deliver(run, model, scripted);
+      };
+      // engine/clips/attempt.ts `settleCompleted`: a poll with no usage asks `/generation` 15 s after the status, and a record not there yet is read again (three reads, 5 s apart): only then is the worst booked.
+      if (uncosted) this.#after(job, this.#t.proofFirstReadMs + (PROOF_READ_TRIES - 1) * this.#t.proofRetryMs, settleAndDeliver);
+      else settleAndDeliver();
       return;
     }
 
@@ -1013,9 +1026,10 @@ export class MockClips {
     const content = scripted === "refused-free" || scripted === "refused-paid" || scripted === "refused-unknown" || scripted === "refused-uncounted";
     const proveUntil = iso(host.clockMs() + this.#t.proofSecondReadMs);
     this.#progress(job, { phase: "proving", model, proveUntil });
-    this.#after(job, this.#t.proofSecondReadMs, () => {
-      const free = scripted === "refused-free" || scripted === "provider-error";
-      const paid = scripted === "refused-paid" || scripted === "provider-error-paid";
+    const free = scripted === "refused-free" || scripted === "provider-error";
+    const paid = scripted === "refused-paid" || scripted === "provider-error-paid";
+    // engine/clips/attempt.ts `prove`: a `/generation` record that bills ends the proof at its FIRST reading (15 s); every other proof goes through the second (2 min) and the net-usage check.
+    this.#after(job, paid ? this.#t.proofFirstReadMs : this.#t.proofSecondReadMs, () => {
       if (free) this.#settle(line, 0, false);
       else if (paid) this.#settle(line, billed, false);
       else this.#settle(line, line.worstMicros, true);
@@ -1078,8 +1092,7 @@ export class MockClips {
     const { job, request } = run;
     const step = this.#host.stepMs;
     this.#progress(job, { phase: "downloading", model, done: 1 });
-    const failures: Partial<Record<MockClipAttempt, ClipFailReason>> = { "download-failed": "download-failed", "invalid-file": "invalid-file", "disk-full": "disk-full" };
-    const failure = failures[scripted];
+    const failure = DOWNLOAD_FAILURES[scripted];
     if (failure !== undefined) {
       this.#after(job, step, () => {
         const submitted = this.#submittedAt(job.clipId, model);
@@ -1604,6 +1617,12 @@ export class MockClips {
       }
       this.#progress(job, { phase: "downloading", model: p.model, submittedAt: iso(p.submittedAtMs), done: 1 });
       this.#after(job, step, () => {
+        // The provider's file cannot be stored (engine/clips/recover.ts `fetchAndRecord`): the clip is recorded failed, and fetched again until 60 min after its submit.
+        const failure = DOWNLOAD_FAILURES[(p.attemptId.endsWith("#2") ? fate.then : fate.first)];
+        if (failure !== undefined) {
+          commit(p.model, { status: "failed", reason: failure, retryDownloadUntil: iso(p.submittedAtMs + t.lateGiveUpMs) }, attemptsOf(decided));
+          return;
+        }
         this.#journal(clipId, { type: "downloaded", sha256: fakeSha(clipId), bytes: 1_000_000 * request.seconds, at: iso(host.clockMs()) });
         checking();
       });
@@ -1630,8 +1649,10 @@ export class MockClips {
     this.#after(job, step, () => {
       this.#hold(plan.attemptId, t.holdTerminalMs);
       if (completes.includes(attemptFate)) {
-        this.#journal(clipId, { type: "ended", attemptId: plan.attemptId, status: "completed", costSource: "none", providerCostMicros: billed, at: iso(host.clockMs()) });
-        fetchAndRecord(plan, billed, false);
+        // `providerCost`: the poll's usage, else one /generation read of the job's own record; a poll with neither (`ok-uncosted`) gives the journal and the record no number at all.
+        const provider = attemptFate === "ok-uncosted" ? undefined : billed;
+        this.#journal(clipId, { type: "ended", attemptId: plan.attemptId, status: "completed", costSource: "none", ...(provider === undefined ? {} : { providerCostMicros: provider }), at: iso(host.clockMs()) });
+        fetchAndRecord(plan, provider, false);
         return;
       }
       const content = attemptFate === "refused-free" || attemptFate === "refused-paid" || attemptFate === "refused-unknown" || attemptFate === "refused-uncounted";
@@ -1640,6 +1661,9 @@ export class MockClips {
     });
   }
 }
+
+/** The scripted attempts whose file is completed and billed but cannot be stored: the same reasons on a create and in a recovery. */
+const DOWNLOAD_FAILURES: Partial<Record<MockClipAttempt, ClipFailReason>> = { "download-failed": "download-failed", "invalid-file": "invalid-file", "disk-full": "disk-full" };
 
 interface CreateRun {
   job: Job;

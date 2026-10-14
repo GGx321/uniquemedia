@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { REAL_CLIP_TIMINGS, SHORT_CLIP_TIMINGS } from "../../engine/clips/timings";
-import { MOCK_CLIP_TIMINGS } from "./mockClips";
+import { PROOF_READ_TRIES, REAL_CLIP_TIMINGS, SHORT_CLIP_TIMINGS } from "../../engine/clips/timings";
+import { MOCK_CLIP_TIMINGS, MOCK_PROOF_READ_TRIES } from "./mockClips";
 import { create, makeClipMock, money, moneyEvents, onlyClip, reconcile, runClip, unwrap, type ClipMock } from "./mockEngine.clips.testkit";
 
 // Stage 5, 5b.1, S5.V7 (plan I5.48): the reconcile hold in the mock, as the engine keeps it (engine.clips.money.test.ts is the reference). A video bills when it completes, so while an attempt of
@@ -25,6 +25,7 @@ describe("the timing sets", () => {
       pollMs: 20_000,
       proofFirstReadMs: 15_000,
       proofSecondReadMs: 120_000,
+      proofRetryMs: 5_000,
       lifetimeMs: 1_200_000,
       latePollMs: 60_000,
       lateGiveUpMs: 3_600_000,
@@ -34,6 +35,10 @@ describe("the timing sets", () => {
       exportProgressMs: 2_000,
     });
     for (const key of Object.keys(REAL) as (keyof typeof REAL)[]) expect(SHORT[key]).toBe(REAL[key] / 1_000);
+  });
+
+  test("the number of reads of a free call is the engine's", () => {
+    expect(MOCK_PROOF_READ_TRIES).toBe(PROOF_READ_TRIES);
   });
 
   test("every figure the mock keeps is the engine's own, in both sets (the mock cannot import engine/, so the two are held side by side here)", () => {

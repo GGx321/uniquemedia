@@ -105,6 +105,28 @@ describe("a clip that was submitted and had no end (`rendering`, `proving`, `lat
     expect(await money(m)).toMatchObject({ reconcileNeeded: true, unsettledMicros: 504_000 });
   });
 
+  // engine/clips/recover.ts `providerCost`: the poll's own usage, else one /generation read of the job's record; a poll with neither gives no number at all (never the figure the model would bill).
+  test("a clip whose poll carried no usage is recovered with no provider number: the engine has none to give", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextClip("ok-uncosted");
+    await restartAt(m, "rendering");
+    m.scheduler.runAll();
+    const clip = await onlyClip(m);
+    expect(clip).toMatchObject({ status: "ready", recovered: true, cost: { micros: 504_000, kind: "open" } });
+    expect(clip).not.toHaveProperty("providerCostMicros");
+  });
+
+  test.each(["download-failed", "invalid-file", "disk-full"] as const)("a clip whose file %s while the engine was away is recovered failed with the same reason, and may be fetched again until 60 min after its submit", async (script) => {
+    const m = makeClipMock();
+    m.engine.scriptNextClip(script);
+    const jobId = await restartAt(m, "rendering");
+    const submitted = (m.engine.peekClips().journals[jobId] ?? []).find((l) => l.type === "submitted");
+    m.scheduler.runAll();
+    const clip = await onlyClip(m);
+    expect(clip).toMatchObject({ clipId: jobId, status: "failed", recovered: true, failure: { reason: script }, cost: { micros: 504_000, kind: "open" } });
+    expect(clip.status === "failed" ? clip.retryDownloadUntil : undefined).toBe(new Date(Date.parse(submitted?.type === "submitted" ? submitted.at : "") + REAL_CLIP_TIMINGS.lateGiveUpMs).toISOString());
+  });
+
   test("the recovery's phases: recovering, then downloading, checking and saving, and job.done", async () => {
     const m = makeClipMock();
     await restartAt(m, "rendering");
