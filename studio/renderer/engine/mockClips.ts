@@ -443,6 +443,8 @@ export class MockClips {
   readonly #host: MockClipsHost;
   readonly #t: MockClipTimings;
   #rates: ClipPrices = RATES;
+  /** The list each clip was created by (the provider bills a recovered job by it). */
+  readonly #clipRates = new Map<string, ClipPrices>();
   readonly #mode: "auto" | "offer";
   readonly #boldClips: BoldClipsMode;
   readonly #exportFps: "interpolate" | "duplicate" | "native24";
@@ -857,7 +859,8 @@ export class MockClips {
     this.#fates.set(job.clipId, script);
     this.#clipAvatars.set(job.clipId, payload.avatarId);
     const createdAt = this.#host.nowIso();
-    const run: CreateRun = { job, photoId: payload.photoId, request, motion: { source: "code", label: motion.label, text: motion.text }, accepted: payload.acceptedWorstMicros, facts: read.facts, script, createdAt, mode: this.#mode };
+    const run: CreateRun = { job, photoId: payload.photoId, request, motion: { source: "code", label: motion.label, text: motion.text }, accepted: payload.acceptedWorstMicros, facts: read.facts, script, createdAt, mode: this.#mode, rates: this.#rates };
+    this.#clipRates.set(job.clipId, this.#rates);
     this.#progress(job, { phase: "preparing" });
     this.#after(job, this.#host.stepMs, () => this.#attempt(run, 1, request.model));
     return good({ jobId: job.jobId });
@@ -941,7 +944,7 @@ export class MockClips {
     if (job.status !== "running") return;
     const host = this.#host;
     const tier = model === "grok" ? "grok" : request.quality;
-    const reserveMicros = clipReserveMicros(RATES[tier], request.seconds);
+    const reserveMicros = clipReserveMicros(run.rates[tier], request.seconds);
     const scripted = n === 1 ? run.script.first : run.script.then;
     const clipId = job.clipId;
     // The budget's `blocked` comes before its limits (engine/money/budget.ts): a halted ledger, or reserves that wait for a reconcile, refuse the reserve with nothing sent.
@@ -986,7 +989,7 @@ export class MockClips {
     const host = this.#host;
     const seconds = request.seconds;
     const tier = model === "grok" ? "grok" : request.quality;
-    const billed = clipBilledMicros(RATES[tier], seconds);
+    const billed = clipBilledMicros(run.rates[tier], seconds);
     const attemptId = line.attemptId;
     const ended = (status: Extract<MockJournalLine, { type: "ended" }>["status"], costSource: Extract<MockJournalLine, { type: "ended" }>["costSource"], providerCostMicros?: number): void =>
       this.#journal(job.clipId, { type: "ended", attemptId, status, costSource, ...(providerCostMicros === undefined ? {} : { providerCostMicros }), at: iso(host.clockMs()) });
@@ -1687,7 +1690,8 @@ export class MockClips {
     const attemptFate = plan.attemptId.endsWith("#2") ? fate.then : fate.first;
     this.#progress(job, { phase: "recovering", model: plan.model, submittedAt: iso(plan.submittedAtMs) });
     const tier = plan.model === "grok" ? "grok" : request.quality;
-    const billed = clipBilledMicros(RATES[tier], request.seconds);
+    // The provider bills by the list the clip was reserved by; the engine settles a recovered job from the provider's own figure, which the mock stands in for here.
+    const billed = clipBilledMicros((this.#clipRates.get(clipId) ?? this.#rates)[tier], request.seconds);
     const giveUpAt = plan.submittedAtMs + t.lateGiveUpMs;
     const completes: MockClipAttempt[] = ["ok", "ok-uncosted", "download-failed", "invalid-file", "disk-full", "late-ok"];
     if (attemptFate === "late" || attemptFate === "uncertain") {
@@ -1732,5 +1736,7 @@ interface CreateRun {
   script: Script;
   createdAt: string;
   mode: "auto" | "offer";
+  /** The price list this create was priced by: the reserve and the charge use it, as `runClipJob({ prices: job.prices })` does. */
+  rates: ClipPrices;
 }
 
