@@ -29,7 +29,7 @@ describe("the date in the copy's name", () => {
   const localDate = (date: Date): string => `${String(date.getFullYear()).padStart(4, "0")}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
   test("is the local calendar date of the export's instant, not the UTC one", async () => {
-    const was = process.env.TZ;
+    const was = process.env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
     const found: { zone: string; named: string; local: string; utc: string }[] = [];
     try {
       for (const zone of ["Pacific/Kiritimati", "Pacific/Pago_Pago"]) {
@@ -42,9 +42,11 @@ describe("the date in the copy's name", () => {
         found.push({ zone, named: exportedPath(m, jobId).split("/")[1]?.slice(0, 10) ?? "", local: localDate(new Date(at)), utc: at.slice(0, 10) });
       }
     } finally {
-      if (was === undefined) delete process.env.TZ;
-      else process.env.TZ = was;
+      // Always assign: in Bun, `delete process.env.TZ` leaves the process in the last zone set, and later files in the worker would read their dates in it.
+      process.env.TZ = was;
     }
+    // A leaked zone fails here, in this file, not as a date mismatch in some later screen test.
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(was);
     expect(found.some((f) => f.local !== f.utc)).toBe(true);
     for (const f of found) expect(f.named).toBe(f.local);
   });
