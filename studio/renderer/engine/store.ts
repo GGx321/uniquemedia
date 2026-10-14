@@ -3,6 +3,8 @@ import {
   ENGINE_GONE_DETAIL,
   type ApiKeyStatus,
   type AvatarSummary,
+  type ClipAttemptModel,
+  type ClipPhase,
   type Draft,
   type EngineError,
   type EngineNotice,
@@ -68,6 +70,45 @@ export interface JobView {
   readonly total: number;
   readonly result: JobResult | null;
   readonly error: EngineError | null;
+  /** Stage 5, 5b.1 (S5.V8): a clip job's own identity and where it stands; absent on every other kind. */
+  readonly clip?: ClipJobInfo;
+}
+
+/**
+ * What the window keeps of a clip job (S5.V8): the clip it works on and its phase, straight off its events (plan s5b1 §5.1). A create job's clip is its own id; a recovery, a
+ * `retryDownload` and an export work on a clip that has (or will have) a record. `recovery` and `export` stay once seen, so a recovery job that moved on to its download is still
+ * the restart's, and an export is never read as the clip's own job.
+ */
+export interface ClipJobInfo {
+  readonly clipId: string;
+  /** Null until the first event names one (a job first heard of at its end). */
+  readonly phase: ClipPhase | null;
+  /** In `submitting` and `rendering`: Kling or Grok (the fallback runs through the same phases, §5.1). */
+  readonly model: ClipAttemptModel | null;
+  readonly submittedAt: string | null;
+  /** The end of the proof window, in `proving` only. */
+  readonly proveUntil: string | null;
+  /** A restart's recovery job (seen in `recovering`). */
+  readonly recovery: boolean;
+  /** An export job («Сохранить в папку», phase `exporting`). */
+  readonly export: boolean;
+}
+
+/** How a clip job this window starts begins: a create in `preparing`, an export in `exporting`, a `retryDownload` in `downloading` (§5.1). */
+export type ClipJobStart = "create" | "export" | "retry";
+
+const CLIP_START_PHASE: Record<ClipJobStart, ClipPhase> = { create: "preparing", export: "exporting", retry: "downloading" };
+
+function clipInfo(clipId: string, phase: ClipPhase | null, more: { model?: ClipAttemptModel; submittedAt?: string; proveUntil?: string } = {}, before?: ClipJobInfo): ClipJobInfo {
+  return {
+    clipId,
+    phase: phase ?? before?.phase ?? null,
+    model: more.model ?? null,
+    submittedAt: more.submittedAt ?? null,
+    proveUntil: more.proveUntil ?? null,
+    recovery: (before?.recovery ?? false) || phase === "recovering",
+    export: (before?.export ?? false) || phase === "exporting",
+  };
 }
 
 export type SyncPhase = "connecting" | "ready" | "offline";
@@ -205,6 +246,14 @@ export function jobFromState(j: Exclude<JobState, { kind: "import" }>): JobView 
     total: j.total,
     result: j.result ?? null,
     error: j.error ?? null,
+    ...(j.kind === "clip"
+      ? {
+          clip: {
+            ...clipInfo(j.clipId, j.phase, { model: j.model, submittedAt: j.submittedAt, proveUntil: j.proveUntil }),
+            export: j.phase === "exporting" || j.result?.exported !== undefined,
+          },
+        }
+      : {}),
   };
 }
 
@@ -212,7 +261,7 @@ export function jobFromState(j: Exclude<JobState, { kind: "import" }>): JobView 
 type JobRef = { readonly jobId: string; readonly avatarId: string } & (
   | { readonly kind: "avatar.candidates" }
   | { readonly kind: "avatar.portraits" }
-  | { readonly kind: "clip" }
+  | { readonly kind: "clip"; readonly clipId: string; readonly start?: ClipPhase; readonly exported?: boolean }
   | { readonly kind: "run"; readonly runId: string }
   | { readonly kind: "scenes"; readonly sceneSetId: string }
   | { readonly kind: "render"; readonly montageId: string | null; readonly videoId: string | null }
@@ -232,6 +281,7 @@ function newJob(ref: JobRef): JobView {
     total: 0,
     result: null,
     error: null,
+    ...(ref.kind === "clip" ? { clip: { ...clipInfo(ref.clipId, ref.start ?? null), export: ref.start === "exporting" || ref.exported === true } } : {}),
   };
 }
 
@@ -583,6 +633,14 @@ export class EngineStore {
    */
   trackScenesJob(jobId: string, sceneSetId: string, avatarId: string, total: number): void {
     this.patchJob({ kind: "scenes", jobId, sceneSetId, avatarId }, (job) => ({ ...job, total: job.total || total }));
+  }
+
+  /**
+   * S5.V8: records a clip job this window just started — a create (`clips.create`, its clip its own id), an export (`clips.export`) or a `retryDownload` — in its first phase, so
+   * the tile and the queue row show it before the first event; a create counts its four steps until a job.progress says otherwise. Merges with any events that beat the reply.
+   */
+  trackClipJob(jobId: string, avatarId: string, clipId: string, start: ClipJobStart): void {
+    this.patchJob({ kind: "clip", jobId, avatarId, clipId, start: CLIP_START_PHASE[start] }, (job) => ({ ...job, total: job.total || (start === "export" ? 0 : CLIP_JOB_STEPS) }));
   }
 
   /**
@@ -1034,9 +1092,16 @@ export class EngineStore {
         // A render announced `queued` is waiting for a slot (the same announcement at zero otherwise means it started); a job that
         // already runs is never taken back.
         const queued = event.payload.kind === "render" && event.payload.queued === true;
+        // S5.V8: a clip's event says where it stands (its phase, and the model and submit time of the attempt on its way).
+        const progress = event.payload;
+        const clip = (job: JobView): ClipJobInfo | undefined =>
+          progress.kind === "clip" ? clipInfo(progress.clipId, progress.phase, { model: progress.model, submittedAt: progress.submittedAt, proveUntil: progress.proveUntil }, job.clip) : job.clip;
         this.patchJob(
           event.payload,
-          (job) => (isFinished(job) ? job : { ...job, status: queued && job.status !== "running" ? "queued" : "running", done, total, saving: job.saving || saving }),
+          (job) =>
+            isFinished(job)
+              ? job
+              : { ...job, status: queued && job.status !== "running" ? "queued" : "running", done, total, saving: job.saving || saving, ...(job.kind === "clip" ? { clip: clip(job) } : {}) },
           lastSeq,
         );
         return;
@@ -1071,8 +1136,11 @@ export class EngineStore {
               : result.kind === "render"
               ? // The result names no draft: a render first heard of here keeps none (one already known keeps its own).
                 { kind: "render", jobId, avatarId: result.avatarId, montageId: null, videoId: result.videoId }
-              : // S5.3d: a portrait batch first heard of at its end is a portrait batch, never labelled a candidates batch.
-                { kind: result.kind, jobId, avatarId: result.avatarId };
+              : result.kind === "clip"
+                ? // S5.V8: a clip job first heard of at its end keeps its clip; an export's result names where the copy went.
+                  { kind: "clip", jobId, avatarId: result.avatarId, clipId: result.clipId, exported: result.exported !== undefined }
+                : // S5.3d: a portrait batch first heard of at its end is a portrait batch, never labelled a candidates batch.
+                  { kind: result.kind, jobId, avatarId: result.avatarId };
         this.patchJob(
           ref,
           (job) => {
@@ -1085,6 +1153,7 @@ export class EngineStore {
               done: Math.max(job.done, total),
               result,
               error: null,
+              ...(job.clip !== undefined && result.kind === "clip" && result.exported !== undefined ? { clip: { ...job.clip, export: true } } : {}),
             };
           },
           lastSeq,

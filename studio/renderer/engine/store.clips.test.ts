@@ -81,7 +81,22 @@ test("a clip job in a snapshot is restored as a clip job", async () => {
   const { store } = await rawHost([{ kind: "clip", jobId: "job-00000081", avatarId: AVATAR, clipId: "clip-0000005", status: "running", done: 2, total: 4, phase: "downloading" }]);
 
   expect(store.getView().jobs).toEqual([
-    { jobId: "job-00000081", kind: "clip", avatarId: AVATAR, runId: null, montageId: null, videoId: null, saving: false, status: "running", done: 2, total: 4, result: null, error: null },
+    // S5.V8: the clip's own identity rides with it (its clip, its phase), so the tiles and the queue row can say where it stands.
+    {
+      jobId: "job-00000081",
+      kind: "clip",
+      avatarId: AVATAR,
+      runId: null,
+      montageId: null,
+      videoId: null,
+      saving: false,
+      status: "running",
+      done: 2,
+      total: 4,
+      result: null,
+      error: null,
+      clip: { clipId: "clip-0000005", phase: "downloading", model: null, submittedAt: null, proveUntil: null, recovery: false, export: false },
+    },
   ]);
 });
 
@@ -93,4 +108,58 @@ test("a running clip is not «Генерация»: it never joins the photo run
   expect(counts.generation).toBeNull();
   expect(counts.render).toBeNull();
   expect(counts.scenes).toBeNull();
+});
+
+// ---------- S5.V8: what the window keeps of a clip job ----------
+
+test("a clip's job.progress carries its phase, its model and the submit time onto the job's view", async () => {
+  const { store, emit } = await rawHost();
+  const at = "2026-10-11T11:06:00.000Z";
+  await emit({ type: "job.progress", payload: { kind: "clip", jobId: "job-00000090", avatarId: AVATAR, clipId: "job-00000090", done: 0, total: 4, phase: "rendering", model: "kling", submittedAt: at } });
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000090")?.clip).toEqual({ clipId: "job-00000090", phase: "rendering", model: "kling", submittedAt: at, proveUntil: null, recovery: false, export: false });
+
+  const until = "2026-10-11T11:09:00.000Z";
+  await emit({ type: "job.progress", payload: { kind: "clip", jobId: "job-00000090", avatarId: AVATAR, clipId: "job-00000090", done: 0, total: 4, phase: "proving", model: "kling", proveUntil: until } });
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000090")?.clip).toMatchObject({ phase: "proving", proveUntil: until, submittedAt: null });
+});
+
+test("a restart's recovery job is remembered as one after it moves on (the banner's «Клип был в работе, когда Studio закрылась»)", async () => {
+  const { store, emit } = await rawHost();
+  const ref = { kind: "clip" as const, jobId: "job-00000091", avatarId: AVATAR, clipId: "clip-0000009" };
+  await emit({ type: "job.progress", payload: { ...ref, done: 0, total: 4, phase: "recovering" } });
+  await emit({ type: "job.progress", payload: { ...ref, done: 1, total: 4, phase: "downloading" } });
+  await emit({ type: "job.done", payload: { jobId: ref.jobId, result: { kind: "clip", avatarId: AVATAR, clipId: ref.clipId } } });
+  const job = store.getView().jobs.find((j) => j.jobId === ref.jobId);
+  expect(job?.status).toBe("done");
+  expect(job?.clip).toMatchObject({ clipId: "clip-0000009", phase: "downloading", recovery: true, export: false });
+});
+
+test("an export job is told apart from the clip's own job: `export` from its phase, and from its result", async () => {
+  const { store, emit } = await rawHost();
+  await emit({ type: "job.progress", payload: { kind: "clip", jobId: "job-00000092", avatarId: AVATAR, clipId: "clip-0000010", done: 60, total: 150, phase: "exporting" } });
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000092")?.clip).toMatchObject({ clipId: "clip-0000010", phase: "exporting", export: true });
+
+  await emit({ type: "job.done", payload: { jobId: "job-00000093", result: { kind: "clip", avatarId: AVATAR, clipId: "clip-0000010", exported: { relPath: "Nini/2026-10-11_clip_001.mp4" } } } });
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000093")?.clip).toMatchObject({ clipId: "clip-0000010", export: true });
+});
+
+test("a clip job this window just started is listed at once, in its first phase, and its events merge into it", async () => {
+  const { store, emit } = await rawHost();
+  store.trackClipJob("job-00000094", AVATAR, "job-00000094", "create");
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000094")).toMatchObject({ kind: "clip", status: "queued", total: 4, clip: { clipId: "job-00000094", phase: "preparing", export: false } });
+  store.trackClipJob("job-00000095", AVATAR, "clip-0000011", "export");
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000095")?.clip).toMatchObject({ clipId: "clip-0000011", phase: "exporting", export: true });
+  store.trackClipJob("job-00000096", AVATAR, "clip-0000012", "retry");
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000096")?.clip).toMatchObject({ clipId: "clip-0000012", phase: "downloading", export: false });
+
+  await emit({ type: "job.progress", payload: { kind: "clip", jobId: "job-00000094", avatarId: AVATAR, clipId: "job-00000094", done: 0, total: 4, phase: "submitting", model: "kling" } });
+  expect(store.getView().jobs.filter((j) => j.jobId === "job-00000094")).toHaveLength(1);
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000094")).toMatchObject({ status: "running", clip: { phase: "submitting", model: "kling" } });
+});
+
+test("a clip job's failure keeps its clip, so a clip that ended with no record (a refused reserve, say) is still the owner's to see", async () => {
+  const { store, emit } = await rawHost();
+  store.trackClipJob("job-00000097", AVATAR, "job-00000097", "create");
+  await emit({ type: "job.failed", payload: { kind: "clip", jobId: "job-00000097", avatarId: AVATAR, clipId: "job-00000097", error: { code: "BUDGET_EXCEEDED", detail: "x" } } });
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000097")).toMatchObject({ status: "failed", error: { code: "BUDGET_EXCEEDED" }, clip: { clipId: "job-00000097", phase: "preparing" } });
 });
