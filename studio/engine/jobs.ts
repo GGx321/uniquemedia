@@ -1,4 +1,5 @@
-import { CLIP_JOB_STEPS, type ClipAttemptModel, type ClipJobMotion, type ClipPhase, type ClipRequest } from "../shared/engine/clips";
+import type { z } from "zod";
+import { CLIP_JOB_STEPS, type ClipAttemptModel, type ClipCancelDetail, type ClipJobMotion, type ClipPhase, type ClipRequest, type clipJobFields } from "../shared/engine/clips";
 import type { EngineError, FailedCandidateSlot, FailedPortraitSlot, ImportPrepare, ImportResult, JobProgress, JobState, MediaFileName, MediaKind, MediaOrigin, RenderResult } from "../shared/engine";
 import type { RunJobEnd } from "./runs/runJob";
 
@@ -44,7 +45,11 @@ export type ClipJobEnd =
   /** `exported`: an export job's copy (S5.V4c), relative to the export folder; absent for every other clip job. */
   | { status: "done"; exported?: { relPath: string } }
   | { status: "failed"; error: EngineError }
-  | { status: "cancelled" };
+  /** `detail` (5b.2, S5.WB2): why a batch member that never ran was cancelled; absent for a single clip and for a cancel the contract has no reason for. */
+  | { status: "cancelled"; detail?: ClipCancelDetail };
+
+/** What a batch member waits for (`waitReason` of the contract's clip job fields): its `turn`, the money to be `alone`, the 60 s pause after a 429 (`rate-limit`), or the strict `proof`. */
+export type ClipWaitReason = NonNullable<z.infer<typeof clipJobFields.waitReason>>;
 
 /** What a clip job's phase update says (§5.1): the phase, the model and the submit time where the tile shows them, the end of the proof window in `proving`, and the steps reached. */
 export interface ClipPhaseUpdate {
@@ -57,6 +62,16 @@ export interface ClipPhaseUpdate {
   readonly openReserveMicros?: number;
   /** The steps reached (video, download, check, save); never goes back, never past the total. */
   readonly done?: number;
+  /** 5b.2 (S5.WB2): what a batch member waits for. Kept only with `queued` and `proving`, where the contract allows it; replaced by each update, like the model. */
+  readonly waitReason?: ClipWaitReason;
+}
+
+/** A batch member's place (5b.2, S5.WB2): the three fields come all or none, so a state that has them has all of them. */
+export interface ClipBatchRef {
+  readonly batchId: string;
+  /** 1-based, the pick order. */
+  readonly batchIndex: number;
+  readonly batchSize: number;
 }
 
 /**
@@ -79,6 +94,17 @@ function clipFactsOf(state: { photoId?: string; request?: ClipRequest; motion?: 
     ...(motion === undefined ? {} : { motion }),
     ...(acceptedWorstMicros === undefined ? {} : { acceptedWorstMicros }),
   };
+}
+
+/** The batch trio of a clip job's state, to be copied into the next state and the next event; empty for a job that has none. */
+function clipBatchOf(state: { batchId?: string; batchIndex?: number; batchSize?: number }): Partial<ClipBatchRef> {
+  const { batchId, batchIndex, batchSize } = state;
+  return batchId === undefined || batchIndex === undefined || batchSize === undefined ? {} : { batchId, batchIndex, batchSize };
+}
+
+/** The wait reason a phase may carry: the contract allows one on `queued` and `proving` only. */
+function waitReasonFor(phase: ClipPhase, reason: ClipWaitReason | undefined): { waitReason?: ClipWaitReason } {
+  return reason !== undefined && (phase === "queued" || phase === "proving") ? { waitReason: reason } : {};
 }
 
 /** An import's identity: what the bytes are and the file's display name (its base name, never a path). */
@@ -142,9 +168,15 @@ export class JobRegistry {
    * `recovering`). Its signal fires on `cancel`; the clip service lets a cancel through only before the POST. An export job (S5.V4c) starts in `exporting` and counts the frames it
    * encodes (`total`).
    */
-  startClip(jobId: string, ref: { avatarId: string; clipId: string; facts?: ClipJobFacts }, phase: ClipPhase = "preparing", total: number = CLIP_JOB_STEPS): AbortSignal {
+  startClip(
+    jobId: string,
+    ref: { avatarId: string; clipId: string; facts?: ClipJobFacts; batch?: ClipBatchRef & { waitReason?: ClipWaitReason } },
+    phase: ClipPhase = "preparing",
+    total: number = CLIP_JOB_STEPS,
+  ): AbortSignal {
     const facts = ref.facts === undefined ? {} : { photoId: ref.facts.photoId, request: ref.facts.request, motion: ref.facts.motion, acceptedWorstMicros: ref.facts.acceptedWorstMicros };
-    return this.#start({ kind: "clip", jobId, avatarId: ref.avatarId, clipId: ref.clipId, phase, status: "running", done: 0, total, ...facts });
+    const batch = ref.batch === undefined ? {} : { ...clipBatchOf(ref.batch), ...waitReasonFor(phase, ref.batch.waitReason) };
+    return this.#start({ kind: "clip", jobId, avatarId: ref.avatarId, clipId: ref.clipId, phase, status: "running", done: 0, total, ...facts, ...batch });
   }
 
   /**
@@ -157,12 +189,16 @@ export class JobRegistry {
     const { avatarId, clipId, total } = entry.state;
     const counted = update.done === undefined || !Number.isFinite(update.done) ? entry.state.done : Math.floor(update.done);
     const done = Math.min(total, Math.max(entry.state.done, counted));
+    // A `queued` member has done nothing: the contract allows it no model, submit time, proof window or open reserve (`clipQueuedShape`).
+    const queued = update.phase === "queued";
     const fields = {
       phase: update.phase,
       ...clipFactsOf(entry.state),
-      ...(update.openReserveMicros === undefined || update.openReserveMicros <= 0 ? {} : { openReserveMicros: Math.floor(update.openReserveMicros) }),
-      ...(update.model === undefined ? {} : { model: update.model }),
-      ...(update.submittedAt === undefined ? {} : { submittedAt: update.submittedAt }),
+      ...clipBatchOf(entry.state),
+      ...waitReasonFor(update.phase, update.waitReason),
+      ...(queued || update.openReserveMicros === undefined || update.openReserveMicros <= 0 ? {} : { openReserveMicros: Math.floor(update.openReserveMicros) }),
+      ...(queued || update.model === undefined ? {} : { model: update.model }),
+      ...(queued || update.submittedAt === undefined ? {} : { submittedAt: update.submittedAt }),
       ...(update.proveUntil === undefined || update.phase !== "proving" ? {} : { proveUntil: update.proveUntil }),
     };
     entry.state = { kind: "clip", jobId, avatarId, clipId, status: "running", done, total, ...fields };
@@ -181,6 +217,7 @@ export class JobRegistry {
       clipId,
       phase,
       ...clipFactsOf(entry.state),
+      ...clipBatchOf(entry.state),
       ...(openReserveMicros === undefined ? {} : { openReserveMicros }),
       ...(model === undefined ? {} : { model }),
       ...(submittedAt === undefined ? {} : { submittedAt }),
@@ -195,7 +232,7 @@ export class JobRegistry {
         entry.state = { ...common, status: "failed", done, error: end.error };
         break;
       case "cancelled":
-        entry.state = { ...common, status: "cancelled", done };
+        entry.state = { ...common, status: "cancelled", done, ...(end.detail === undefined ? {} : { detail: end.detail }) };
         break;
     }
     this.#dropOldFinished(jobId);
@@ -380,7 +417,7 @@ export class JobRegistry {
         return { kind: "scenes", jobId, sceneSetId: entry.state.sceneSetId, avatarId: entry.state.avatarId, done, total };
       case "clip": {
         // A clip's steps move with its phases (`clipPhase`); this branch only repeats the state as it is, the phase's fields included.
-        const { clipId, phase, model, submittedAt, proveUntil, openReserveMicros } = entry.state;
+        const { clipId, phase, model, submittedAt, proveUntil, openReserveMicros, waitReason } = entry.state;
         return {
           kind: "clip",
           jobId,
@@ -390,6 +427,8 @@ export class JobRegistry {
           total,
           phase,
           ...clipFactsOf(entry.state),
+          ...clipBatchOf(entry.state),
+          ...waitReasonFor(phase, waitReason),
           ...(openReserveMicros === undefined ? {} : { openReserveMicros }),
           ...(model === undefined ? {} : { model }),
           ...(submittedAt === undefined ? {} : { submittedAt }),
