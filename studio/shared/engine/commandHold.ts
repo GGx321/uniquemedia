@@ -57,6 +57,7 @@ export const SLEEP_CLASS: Record<CommandType, SleepClass> = {
   "clips.retryDownload": "free",
   "clips.export": "free",
   "clips.reveal": "free",
+  "media.importClip": "free",
   "avatars.deletePreview": "free",
   "avatars.rewriteDescriptor": "held",
   "avatars.estimateImport": "free",

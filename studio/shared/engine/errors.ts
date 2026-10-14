@@ -329,11 +329,13 @@ export type PortraitReason = z.infer<typeof PortraitReason>;
  * - download-expired: the file is gone from OpenRouter (`clips.retryDownload`, after `retryDownloadUntil` or on a 404 / 410).
  * - not-ready: `clips.export` on a clip that is not `ready`.
  * - not-exported: `clips.reveal` on a clip with no copy in the export folder.
+ * - file-damaged (5b.2, S5.WA1): `media.importClip` on a ready clip whose file in Studio is not the one its record names (the sha256 differs, or the file is gone or unreadable).
  *
  * With IN_FLIGHT:
  * - one-at-a-time: a paid clip is already in flight (`clips.create`).
  * - job-running: a job of this clip runs (`clips.delete`, `clips.retryDownload`, `clips.export`).
  * - submitted: the clip is already at the provider, so it cannot be cancelled (`avatars.cancel`).
+ * - in-use (5b.2, S5.WA1): `clips.delete` while a render holds the clip's montage copy; nothing is removed.
  */
 export const CLIP_VALIDATION_REASONS = [
   "not-a-gallery-photo",
@@ -347,8 +349,9 @@ export const CLIP_VALIDATION_REASONS = [
   "download-expired",
   "not-ready",
   "not-exported",
+  "file-damaged",
 ] as const;
-export const CLIP_IN_FLIGHT_REASONS = ["one-at-a-time", "job-running", "submitted"] as const;
+export const CLIP_IN_FLIGHT_REASONS = ["one-at-a-time", "job-running", "submitted", "in-use"] as const;
 export const CLIP_REASONS = [...CLIP_VALIDATION_REASONS, ...CLIP_IN_FLIGHT_REASONS] as const;
 /** The reasons `clips.options` answers for a photo that cannot be brought to life: the first six of `CLIP_VALIDATION_REASONS`, as one set. */
 export const CLIP_UNSUITABLE_REASONS = ["not-a-gallery-photo", "age-unverified", "photo-unreadable", "not-vertical", "bold-off", "no-motion"] as const;
@@ -488,7 +491,7 @@ export const EngineError = z
     /** Additive (Stage 5, S5.3a): which rule a portrait command broke (`PORTRAIT_REASONS`); only on VALIDATION (INTERNAL for `source-unavailable`), never beside another reason. The window's text is `PORTRAIT_REASONS_RU`. */
     portraitReason: PortraitReason.optional(),
     /**
-     * Additive (Stage 5, 5b.1, S5.V1): which rule a clip command broke (`CLIP_REASONS`); on VALIDATION, or on IN_FLIGHT for `one-at-a-time`, `job-running` and `submitted`; never beside another
+     * Additive (Stage 5, 5b.1, S5.V1): which rule a clip command broke (`CLIP_REASONS`); on VALIDATION, or on IN_FLIGHT for `one-at-a-time`, `job-running`, `submitted` and `in-use`; never beside another
      * reason. The window's text is `CLIP_REASONS_RU`.
      */
     clipReason: ClipReason.optional(),
@@ -567,7 +570,7 @@ export const EngineError = z
     },
   )
   .refine((e) => e.clipReason === undefined || e.code === ((CLIP_IN_FLIGHT_REASONS as readonly string[]).includes(e.clipReason) ? "IN_FLIGHT" : "VALIDATION"), {
-    message: "clipReason may only be present on VALIDATION, except one-at-a-time, job-running and submitted, which belong to IN_FLIGHT",
+    message: "clipReason may only be present on VALIDATION, except one-at-a-time, job-running, submitted and in-use, which belong to IN_FLIGHT",
     path: ["clipReason"],
   })
   .refine(

@@ -175,6 +175,10 @@ export const MAX_LISTED_BY_ID = 50;
 
 const PositiveInt = z.number().int().positive();
 
+/** Where a montage copy came from (5b.2, I5.59): a clip of an avatar, made from one of the avatar's photos. */
+export const MediaOrigin = z.strictObject({ kind: z.literal("clip"), avatarId: Id, clipId: Id, photoId: Id });
+export type MediaOrigin = z.infer<typeof MediaOrigin>;
+
 /**
  * One own file as the window sees it (K28): what it is and what the editor needs to place it. There is NO path and no hash here: the file
  * lives in the library's `media/` folder under a name the engine made, and is reached by its id only (`studio-media://`, 3f.3b). Which
@@ -205,9 +209,15 @@ export const MediaSummary = z
      * The mark lives in an append-only log beside the records (`media.setForAutopilot`); absent means not marked, and so does a log that cannot be read.
      */
     forAutopilot: z.boolean().optional(),
+    /**
+     * Stage 5, 5b.2 (additive, S5.WA1): this video is the montage copy of a clip (`media.importClip`), and says which clip and which photo it came from. Absent on every other file.
+     * Only a video has one. A window never lists a copy in «Мои», and the engine's frame rule reads the photo from here.
+     */
+    origin: MediaOrigin.optional(),
   })
   .superRefine((media, ctx) => {
     const fail = (path: string, message: string): void => void ctx.addIssue({ code: "custom", path: [path], message });
+    if (media.origin !== undefined && media.kind !== "video") fail("origin", "only a video can be the copy of a clip");
     const pixels = media.kind !== "audio";
     if (pixels !== (media.width !== null)) fail("width", pixels ? `a ${media.kind} has a width` : "a track has no width");
     if (pixels !== (media.height !== null)) fail("height", pixels ? `a ${media.kind} has a height` : "a track has no height");
@@ -247,6 +257,10 @@ export type MediaListResult = z.infer<typeof MediaListResult>;
 /** `media.delete`: removes the file and its record. A draft that names it keeps the reference and reads it as `media-unavailable`. */
 export const MediaDeletePayload = z.strictObject({ mediaId: Id });
 export const MediaDeleteResult = z.strictObject({ mediaId: Id });
+
+/** `media.importClip` (5b.2, S5.WA1): a ready clip of an avatar becomes an own video. The window sends two ids and never a path; the answer is the copy's media id. */
+export const MediaImportClipPayload = z.strictObject({ avatarId: Id, clipId: Id });
+export const MediaImportClipResult = z.strictObject({ mediaId: Id });
 
 /** `media.cancelImport`: stops a running import job (the copy, the importer or the record), leaving nothing behind. */
 export const MediaCancelImportPayload = z.strictObject({ jobId: Id });

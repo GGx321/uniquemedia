@@ -183,10 +183,10 @@ describe("the sleep classes (S4.7)", () => {
 });
 
 describe("EngineError.clipReason", () => {
-  const VALIDATION_REASONS = ["not-a-gallery-photo", "age-unverified", "photo-unreadable", "not-vertical", "bold-off", "no-motion", "unknown-motion", "grok-not-offered", "download-expired", "not-ready", "not-exported"];
-  const IN_FLIGHT_REASONS = ["one-at-a-time", "job-running", "submitted"];
+  const VALIDATION_REASONS = ["not-a-gallery-photo", "age-unverified", "photo-unreadable", "not-vertical", "bold-off", "no-motion", "unknown-motion", "grok-not-offered", "download-expired", "not-ready", "not-exported", "file-damaged"];
+  const IN_FLIGHT_REASONS = ["one-at-a-time", "job-running", "submitted", "in-use"];
 
-  test("the closed set is the fourteen of §5.2's table", () => {
+  test("the closed set is the fourteen of §5.2's table and the two 5b.2 adds (file-damaged, in-use)", () => {
     const actual: string[] = [...CLIP_REASONS];
     expect(actual.sort()).toEqual([...VALIDATION_REASONS, ...IN_FLIGHT_REASONS].sort());
     expect(ClipReason.safeParse("one-at-a-time").success).toBe(true);
@@ -255,6 +255,9 @@ describe("CLIP_REASONS_RU: one text per reason, verbatim from §5.2", () => {
     "one-at-a-time": "Сейчас снимается другой клип — дождитесь его (обычно 1–3 минуты).",
     "job-running": "С этим клипом сейчас идёт работа — дождитесь её окончания.",
     submitted: "Клип уже отправлен — отменить нельзя.",
+    // 5b.2 (S5.WA1), from mockups 44b and 57c.
+    "file-damaged": "Файл клипа в Studio повреждён или не читается — для монтажа его не подготовить.",
+    "in-use": "Клип сейчас в рендере — удалите его после окончания.",
   };
 
   test("every reason has its text, word for word", () => {

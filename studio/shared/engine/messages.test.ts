@@ -439,6 +439,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "media.list": { payload: { kind: "photo" }, result: { media: [ownMedia], total: 1 } },
   "media.delete": { payload: { mediaId: "media-00000001" }, result: { mediaId: "media-00000001" } },
   "media.cancelImport": { payload: { jobId: "job-00000001" }, result: { jobId: "job-00000001" } },
+  "media.importClip": { payload: { avatarId: "avatar-0001", clipId: "clip-0000001" }, result: { mediaId: "media-00000001" } },
   "categories.list": {
     payload: {},
     result: {
@@ -699,6 +700,7 @@ describe("contract surface", () => {
         "media.list",
         "media.delete",
         "media.cancelImport",
+        "media.importClip",
         "categories.list",
         "categories.estimate",
         "categories.create",

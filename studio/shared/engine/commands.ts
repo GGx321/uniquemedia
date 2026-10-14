@@ -12,7 +12,7 @@ import { ImageModelCatalogue, ImageQuality } from "./imageModels";
 import { Focus, MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, MontageDraft, MontageIssues, MontageListItem, MontageName, MontageShape, PhotoRef, TextLayer } from "./montage";
 import { AbsolutePath, ApiKey, Count, Id, LaunchId, Micros, ModelId, MusicKey } from "./primitives";
 import { COMPOSE_NEEDS_CATEGORY, COMPOSE_REQUEST_FIELDS, ComposeRequest, composeNeedsCategory, MAX_COMPOSE_SCENES, SceneEditOp, SceneWriteTarget, ScenesEditResult, ScenesGetResult } from "./scenes";
-import { MediaCancelImportPayload, MediaCancelImportResult, MediaDeletePayload, MediaDeleteResult, MediaListPayload, MediaListResult, MediaPickImportPayload, MediaPickResult, MediaSummary } from "./media";
+import { MediaCancelImportPayload, MediaCancelImportResult, MediaDeletePayload, MediaDeleteResult, MediaImportClipPayload, MediaImportClipResult, MediaListPayload, MediaListResult, MediaPickImportPayload, MediaPickResult, MediaSummary } from "./media";
 import { OwnStickerBytes, OwnStickerBytesPayload, StickerBytes, StickerBytesPayload } from "./stickerBytes";
 import { FileState, MAX_LISTED_VIDEOS, VideoSummary } from "./video";
 import {
@@ -720,6 +720,11 @@ const ENGINE_SPECS = [
   defineCommand("media.list", MediaListPayload, MediaListResult),
   defineCommand("media.delete", MediaDeletePayload, MediaDeleteResult),
   defineCommand("media.cancelImport", MediaCancelImportPayload, MediaCancelImportResult),
+  // Stage 5, 5b.2, S5.WA1 (additive): a ready clip becomes an own video of the montage editor, as its own copy (plan s5b2 §5.1, I5.59). Free, an engine command (it opens no file dialog and takes no path),
+  // and it answers once the copy exists, so it has its own deadline (`COMMAND_DEADLINE_MS`). A live copy of the clip is answered at once (one copy per clip). The copy's `MediaSummary.origin` names the clip.
+  // Refused free, in order: LIBRARY_UNAVAILABLE, NOT_FOUND (the clip, or an avatar being deleted), VALIDATION `clipReason` `not-ready` (the clip is not ready) or `file-damaged` (its file is not the one its
+  // record names), IN_FLIGHT `job-running` (an export, a delete or another import of this clip), and MEDIA_UNSUPPORTED `mediaReason` `no-space` for a full disk (the importer's free-space rule; no new code).
+  defineCommand("media.importClip", MediaImportClipPayload, MediaImportClipResult),
   // CS.2: the owner's own scene categories, one library-wide list shared by every avatar (plan §4.1). All of them but the estimate need an
   // open library (LIBRARY_UNAVAILABLE without one); the estimate needs neither a library nor a key.
   // `categories.list`: the readable categories in creation order (at most 50, the oldest first), `unreadable` files kept as they are, `overLimit`

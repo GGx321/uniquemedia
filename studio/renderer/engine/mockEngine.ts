@@ -2661,6 +2661,9 @@ export class MockEngine implements EngineBridge {
       case "media.cancelImport":
         if (!this.ownMedia.cancel(c.payload.jobId)) return this.fail(c, { code: "NOT_FOUND", detail: `no import job ${c.payload.jobId} in this engine` });
         return this.ok(c, { jobId: c.payload.jobId });
+      // ---- 5b.2 part A (S5.WA1): append-only block. The compile stub answers as the engine's `default` branch does, word for word, until S5.WA3 builds the import.
+      case "media.importClip":
+        return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });
       case "autopilot.estimate":
         // S5.8a: «Ножки» with no built-in category is refused first, for free.
         if (legsNeedsBuiltIn(c.payload.draft)) return this.fail(c, { code: "VALIDATION", launchReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the launch names none" });

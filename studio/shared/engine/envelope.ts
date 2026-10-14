@@ -143,6 +143,15 @@ import { z } from "zod";
 //    the job (a new window after a restart, a reload mid-render) draws its tile whole. An export job and an older engine's job carry none. Rollback: an older build refuses a clip job that carries them (its `JobState` and `JobProgress` are strict); roll back only with no clip job running.
 //  - (S5.V8b follow-up, additive, optional) a clip job also carries `openReserveMicros`: what the ledger can still charge for the clip (the sum of its open reserves), told wherever one is open and absent where none is; the tile of
 //    `late` and `recovering` says it as «спишется при сверке», every other phase says `acceptedWorstMicros`. The four facts above are told together or not at all (a schema refine). Rollback as above.
+// Stage 5, 5b.2, S5.WA1 (additive, no bump; one command, one summary field each on a media and a clip, two clip reasons): clips in the montage editor.
+//  - command `media.importClip` (free, an engine command: `{ avatarId, clipId }` → `{ mediaId }`, no path): a ready clip becomes the editor's own video, as its own copy, one per clip. It has its own deadline
+//    (`COMMAND_DEADLINE_MS`). Its refusals use the machinery that exists: LIBRARY_UNAVAILABLE, NOT_FOUND, VALIDATION `clipReason` `not-ready` / `file-damaged`, IN_FLIGHT `job-running`, and MEDIA_UNSUPPORTED
+//    `mediaReason` `no-space` for a full disk (there is no DISK_FULL code).
+//  - `MediaSummary.origin` (optional, only on a video): `{ kind: "clip", avatarId, clipId, photoId }`, strict. `ClipSummary.use` (optional, only on a ready clip): `{ inVideo: true }` or absent (Q-F = 1).
+//  - `CLIP_REASONS` gain `file-damaged` (VALIDATION) and `in-use` (IN_FLIGHT, a `clips.delete` while a render holds the copy); Russian texts in `CLIP_REASONS_RU`.
+//  - `frame-foreign` and `frame-repeated` (the admission's PHOTO_UNAVAILABLE details, plan §5.1.3) are details of an existing code and belong to the engine task S5.WA2, not to this contract.
+//  - Rollback: an older build (5b.1) has strict schemas and cannot read `origin` on an own-media record (and, with it, a draft or a record that names the copy), nor a `use` on a clip, nor the two new reasons.
+//    Studio has no downgrade path; a downgrade would list those records as unreadable. Roll back only before the first clip is put in a montage.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 

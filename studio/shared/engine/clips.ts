@@ -319,6 +319,12 @@ export const ClipSummary = z.discriminatedUnion("status", [
     height: z.number().int().positive(),
     durationMs: z.number().int().positive(),
     face: ClipFace,
+    /**
+     * 5b.2 (additive, S5.WA1; Q-F = 1): present, and only `{ inVideo: true }`, when this clip's frame (its photo, or any clip of it) is in a finished video, so the «Клипы» tab dims it
+     * (57b, 41e) and the delete dialog says «Клип есть в готовом видео» (44b). Absent otherwise, as `notListedTotal` is. «This frame is in this draft» is the window's own look at its draft, and a clip a
+     * render holds is told by the delete's IN_FLIGHT `in-use`; neither is a state of the clip. Only a ready clip is ever used.
+     */
+    use: z.strictObject({ inVideo: z.literal(true) }).optional(),
   }),
   z.strictObject({
     ...clipSummaryCommon,
