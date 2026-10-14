@@ -467,7 +467,8 @@ class Attempt {
     let estimated = false;
     let providerCost: number | null;
     let source: ClipCostSource;
-    if (poll.usageCostMicros !== null) {
+    // A `usage.cost` of 0 on a completed job is «not yet» like a 0 from /generation: it falls through to the reads below (VR item 7).
+    if (poll.usageCostMicros !== null && poll.usageCostMicros > 0) {
       costMicros = poll.usageCostMicros;
       providerCost = poll.usageCostMicros;
       source = "usage";

@@ -143,6 +143,42 @@ describe.each(MODES)("row 2 · a completed job whose /generation total_cost read
   });
 });
 
+// VR item 7b: the same for a poll that carries `usage.cost: 0` on a COMPLETED job. A 0 there is «not yet», not a free clip: the `/generation` reads decide, and a 0 that stays settles the worst.
+describe.each(MODES)("row 1 · a completed job whose usage.cost reads 0 · mode %s", (mode) => {
+  const zeroUsage = { status: "completed", usageCostMicros: 0 } as const;
+
+  test("falls through to /generation and settles the positive value it reads", async () => {
+    await make({ mode, kling: { terminal: zeroUsage, generation: genFromAfter(15 * SECOND, KLING_BILLED) } });
+    expect(completed(await rig.run())).toMatchObject({ providerCostMicros: KLING_BILLED, costSource: "generation" });
+    expect(rig.clipLedger()).toEqual([
+      ["reserve", KLING, KLING_RESERVE],
+      ["settle", KLING, KLING_BILLED],
+    ]);
+  });
+
+  test("a 0 on /generation too settles the worst, estimated: never a free clip", async () => {
+    await make({ mode, kling: { terminal: zeroUsage, generation: () => genFound(0) } });
+    expect(completed(await rig.run())).toMatchObject({ providerCostMicros: null, costSource: "worst" });
+    expect(rig.clipLedger()).toEqual([
+      ["reserve", KLING, KLING_RESERVE],
+      ["settle-estimated", KLING, KLING_RESERVE],
+    ]);
+    expect(rig.generationReads()).toHaveLength(3);
+  });
+
+  test("a 0 whose generation_id is not the job's settles the worst without any /generation read", async () => {
+    await make({ mode, kling: { terminal: zeroUsage, generationId: "job-someone-else", generation: genFromAfter(15 * SECOND, 100_000) } });
+    expect(completed(await rig.run())).toMatchObject({ providerCostMicros: null, costSource: "worst" });
+    expect(rig.generationReads()).toHaveLength(0);
+  });
+
+  test("a positive usage.cost is settled at once, with no /generation read", async () => {
+    await make({ mode, kling: { terminal: { status: "completed", usageCostMicros: KLING_BILLED } } });
+    expect(completed(await rig.run())).toMatchObject({ providerCostMicros: KLING_BILLED, costSource: "usage" });
+    expect(rig.generationReads()).toHaveLength(0);
+  });
+});
+
 describe.each(MODES)("row 3 · 4xx moderation at the submit · mode %s", (mode) => {
   test("settles 0 (no job exists), frees the hold and ends the Kling attempt as a content refusal", async () => {
     await make({ mode, kling: { submit: moderation4xx }, grok: { terminal: { status: "completed", usageCostMicros: GROK_BILLED } } });
