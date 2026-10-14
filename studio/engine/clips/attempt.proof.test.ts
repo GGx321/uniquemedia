@@ -183,6 +183,62 @@ describe("the net-usage check", () => {
   });
 });
 
+describe("the net-usage check counts only while no other money is open (VR item 1)", () => {
+  const FOREIGN = "clip-00009#1";
+  /** Clip A's temporary charge: on the account before B's baseline, refunded inside B's window, while B's own refusal is billed. */
+  const chargeAndRefund = (t: number, posts: Readonly<Record<"kling" | "grok", number | undefined>>): number =>
+    5_000_000 + 420_000 + (posts.kling !== undefined && t >= posts.kling + 38 * SECOND ? KLING_BILLED : 0) - (t >= TERMINAL + 30 * SECOND ? 420_000 : 0);
+  const openForeignReserve = async (): Promise<void> => {
+    const reserved = await rig.budget.tryReserve({ attemptId: "run-0007:img#1", jobId: "run-0007", scope: { runId: "run-0007" }, model: "x-ai/grok-imagine-image", worstMicros: 90_000 });
+    if (!reserved.ok) throw new Error(`the foreign reserve was refused: ${reserved.reason}`);
+    await rig.budget.abandon(reserved.handle);
+  };
+
+  test("another clip's refunded charge inside the window leaves the check uncounted: worst, and no Grok", async () => {
+    await make({ mode: "auto", kling: refused, grok: grokOk, usage: chargeAndRefund });
+    rig.holds.hold(FOREIGN, T0 + 20 * MINUTE);
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", cost: "worst", unknownWhy: "net-uncounted" });
+    expect(rig.posts("grok")).toHaveLength(0);
+    expect(rig.settles(KLING)).toMatchObject([{ costMicros: KLING_RESERVE, estimated: true }]);
+  });
+
+  test("a foreign hold at the baseline read leaves the check uncounted, in mode offer too", async () => {
+    await make({ mode: "offer", kling: refused });
+    rig.holds.hold(FOREIGN, T0 + 20 * MINUTE);
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", cost: "worst", unknownWhy: "net-uncounted", grokOffer: false });
+  });
+
+  test("a foreign hold that expired before the second read still spoils the check: it was there at the baseline", async () => {
+    await make({ mode: "offer", kling: refused });
+    rig.holds.hold(FOREIGN, T0 + 30 * SECOND);
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", unknownWhy: "net-uncounted" });
+  });
+
+  test("a foreign hold that appears only before the second read spoils the check", async () => {
+    await make({ mode: "offer", kling: refused });
+    rig.at(TERMINAL + 60 * SECOND, () => rig.holds.hold(FOREIGN, TERMINAL + 10 * MINUTE));
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", unknownWhy: "net-uncounted" });
+  });
+
+  test("a foreign reserve left open at the baseline read leaves the check uncounted", async () => {
+    await make({ mode: "offer", kling: refused });
+    await openForeignReserve();
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", cost: "worst", unknownWhy: "net-uncounted" });
+  });
+
+  test("a foreign reserve that was closed before the baseline and holds nothing does not spoil the check", async () => {
+    await make({ mode: "offer", kling: refused });
+    await rig.photoRun("run-0007", 90_000);
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-free", cost: "free", grokOffer: true });
+  });
+
+  test("the clean case: only this attempt is open and held, and P0's refunded charge is proven free so Grok runs", async () => {
+    await make({ mode: "auto", kling: refused, grok: grokOk, usage: (t) => 5_000_000 + (t >= 38 * SECOND + T0 && t < TERMINAL + 25 * SECOND ? KLING_BILLED : 0) });
+    expect(completed(await rig.run()).model).toBe("grok");
+    expect(rig.settles(KLING)).toMatchObject([{ costMicros: 0, estimated: false }]);
+  });
+});
+
 describe("Kling's reserve stays open for the whole window", () => {
   test("it is in flight at worst at every /generation read, and Grok is reserved only after Kling settled 0", async () => {
     await make({ mode: "auto", kling: refused, grok: grokOk });

@@ -489,6 +489,8 @@ export class MockClips {
   /** What each clip's attempts will do: the script of its create (kept for a restart's recovery, which polls the same provider). */
   readonly #fates = new Map<string, Script>();
   readonly #holds = new Map<string, { until: number; cancel: () => void }>();
+  /** Attempts whose net-usage baseline was read while another reserve or hold was live (engine/clips/attempt.ts `baselineAlone`). */
+  readonly #crowdedAtBaseline = new Set<string>();
   readonly #exportStates = new Map<string, FileState>();
   /** The folder-relative paths clip exports made, in order. */
   readonly #exported: string[] = [];
@@ -712,6 +714,14 @@ export class MockClips {
     });
     this.#holds.set(attemptId, { until, cancel });
     host.emitMoney();
+  }
+
+  /** Another attempt's reserve is open, or another attempt's hold is live (engine/clips/attempt.ts `moneyIsAlone`, negated). */
+  #otherMoneyOpen(attemptId: string): boolean {
+    if (this.#lines.some((l) => l.state === "open" && l.attemptId !== attemptId)) return true;
+    const now = this.#host.clockMs();
+    for (const [heldId, hold] of this.#holds) if (heldId !== attemptId && hold.until > now) return true;
+    return false;
   }
 
   #release(attemptId: string): void {
@@ -1008,6 +1018,7 @@ export class MockClips {
     }
     const line = this.#reserve(clipId, n, model, reserveMicros);
     this.#hold(line.attemptId, this.#t.holdUncertainMs);
+    if (this.#otherMoneyOpen(line.attemptId)) this.#crowdedAtBaseline.add(line.attemptId);
     this.#progress(job, { phase: "submitting", model });
     // An unreadable `/credits` (`refused-uncounted`) is read three times, 5 s apart, for the net-usage baseline BEFORE the POST (engine/clips/attempt.ts): the send leaves 10 s later.
     const baselinePauses = scripted === "refused-uncounted" ? (PROOF_READ_TRIES - 1) * this.#t.proofRetryMs : 0;
@@ -1089,12 +1100,14 @@ export class MockClips {
     const content = scripted === "refused-free" || scripted === "refused-paid" || scripted === "refused-unknown" || scripted === "refused-uncounted";
     const proveUntil = iso(host.clockMs() + this.#t.proofSecondReadMs);
     this.#progress(job, { phase: "proving", model, proveUntil });
-    const free = scripted === "refused-free" || scripted === "provider-error";
+    const freeScripted = scripted === "refused-free" || scripted === "provider-error";
     const paid = scripted === "refused-paid" || scripted === "provider-error-paid";
     // engine/clips/attempt.ts `prove`: a `/generation` record that bills ends the proof at its FIRST reading (15 s); every other proof goes through the second (2 min) and the net-usage check.
     // ...and the same three reads after the second `/generation` one: the check that cannot count settles 10 s after it.
     const checkPauses = scripted === "refused-uncounted" ? (PROOF_READ_TRIES - 1) * this.#t.proofRetryMs : 0;
     this.#after(job, paid ? this.#t.proofFirstReadMs : this.#t.proofSecondReadMs + checkPauses, () => {
+      // engine/clips/attempt.ts `prove`: the check counts only if nothing but this attempt was open or held at the baseline AND is at the second read; else the refusal is not proven free.
+      const free = freeScripted && !this.#crowdedAtBaseline.has(attemptId) && !this.#otherMoneyOpen(attemptId);
       if (free) this.#settle(line, 0, false);
       else if (paid) this.#settle(line, billed, false);
       else this.#settle(line, line.worstMicros, true);

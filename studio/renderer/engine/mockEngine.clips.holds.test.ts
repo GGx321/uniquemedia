@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { PROOF_READ_TRIES, REAL_CLIP_TIMINGS, SHORT_CLIP_TIMINGS } from "../../engine/clips/timings";
 import { MOCK_CLIP_TIMINGS, MOCK_PROOF_READ_TRIES } from "./mockClips";
-import { create, makeClipMock, money, moneyEvents, onlyClip, reconcile, runClip, unwrap, type ClipMock } from "./mockEngine.clips.testkit";
+import { create, listClips, makeClipMock, money, moneyEvents, onlyClip, reconcile, runClip, unwrap, type ClipMock } from "./mockEngine.clips.testkit";
 
 // Stage 5, 5b.1, S5.V7 (plan I5.48): the reconcile hold in the mock, as the engine keeps it (engine.clips.money.test.ts is the reference). A video bills when it completes, so while an attempt of
 // this process may still bill the reconcile answers TOO_SOON; a held reserve of this process is not a reconcile reason (the renderer's paidStop would stop every paid action for nothing);
@@ -203,5 +203,29 @@ describe("the reconcile settles a clip's open reserve at its worst, and the clip
     pastTheHold(m);
     await reconcile(m);
     expect(await onlyClip(m)).toMatchObject({ cost: { micros: 504_000, kind: "estimated" } });
+  });
+});
+
+// VR item 1 (engine/clips/attempt.ts `moneyIsAlone`, attempt.proof.test.ts): the net-usage check counts only while nothing but the attempt is open or held. Another clip's charge, refunded inside
+// the window, would hide this attempt's own billed refusal; so with other money open a refusal is never proven free, in either mode: worst, and no Grok.
+describe("the net-usage check with other money open (VR item 1)", () => {
+  test("a refusal behind another clip's uncertain submit (its reserve open, its hold live) is settled at worst: no free proof, no Grok", async () => {
+    const m = makeClipMock();
+    await uncertainClip(m);
+    m.engine.scriptNextClip("refused-free");
+    await runClip(m);
+    expect(m.engine.peekClips().posts).toEqual(["kling", "kling"]);
+    const second = (await listClips(m)).find((c) => c.status === "failed" && c.failure.reason !== "submit-uncertain");
+    expect(second).toMatchObject({ status: "failed", failure: { reason: "refused-unknown" }, model: "kling-std", cost: { micros: 504_000, kind: "estimated" } });
+  });
+
+  test("the same refusal after the reconcile closed the other reserve is proven free again, and Grok runs", async () => {
+    const m = makeClipMock();
+    await uncertainClip(m);
+    pastTheHold(m);
+    expect(await reconcile(m)).toMatchObject({ ok: true, result: { status: "done", closedReserves: 1 } });
+    m.engine.scriptNextClip("refused-free");
+    await runClip(m);
+    expect(m.engine.peekClips().posts).toEqual(["kling", "kling", "grok"]);
   });
 });

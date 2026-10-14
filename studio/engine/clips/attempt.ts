@@ -45,7 +45,7 @@ import { PROOF_READ_TRIES, type ClipTimings } from "./timings";
 //   11 poll-time non-content failure              → the same proof as 7-10                             → provider-error, never Grok, never the offer
 //   12 no terminal status 20 min after the submit → abandon, phase `late`                              → a late completed: download, NO ledger line; else failed `late`
 // «The proof» is I5.47's: `/generation` is read ≥ 15 s and again ≥ 2 min after the terminal poll (probe P-V: a 404 RIGHT AFTER `completed` is still a billed job, so one early 404 proves nothing), and a
-// net-usage check compares a `/credits` baseline read BEFORE the POST with a read made together with the second `/generation` read; it COUNTS only if the ledger holds no line of anything else between the two.
+// net-usage check compares a `/credits` baseline read BEFORE the POST with a read made together with the second `/generation` read; it COUNTS only if the ledger holds no line of anything else between the two AND nothing but this attempt is open or held at either read (VR item 1).
 // Kling's reserve stays open at worst for the whole window, and Grok is reserved only after Kling settled 0, so a late bill can never push the clip over its accepted worst.
 
 // ---------- the contract of the run ----------
@@ -66,7 +66,7 @@ export interface ClipRunDeps {
   readonly budget: Pick<Budget, "tryReserve" | "settle" | "abandon" | "release" | "ledger">;
   readonly client: Pick<OpenRouterClient, "submitVideo" | "pollVideo" | "fetchGeneration" | "fetchCredits">;
   readonly journal: Pick<ClipJournal, "requested" | "submitted" | "ended">;
-  readonly holds: Pick<ClipHolds, "hold" | "release">;
+  readonly holds: Pick<ClipHolds, "hold" | "release" | "entries">;
   readonly timings: ClipTimings;
   /** Epoch ms. */
   readonly now: () => number;
@@ -332,6 +332,8 @@ class Attempt {
   /** The ledger's length before the baseline read: any line after it that is not this attempt's makes the net-usage check not count. */
   private mark = 0;
   private baseline: number | null = null;
+  /** No reserve or hold of anything else was open when the baseline was read (VR item 1): a charge of another clip could be refunded inside the window and hide this attempt's own. */
+  private baselineAlone = false;
   private abandoned = false;
   /** The POST is about to leave (or has): from here a stop leaves the reserve open at worst. Before it, a stop releases the reserve. */
   private sent = false;
@@ -375,6 +377,7 @@ class Attempt {
     this.mark = deps.budget.ledger.lines.length;
     // Read PROOF_READ_TRIES times: one /credits blip before the POST must not cost the clip its Grok (a clip without a baseline can never prove a refusal free).
     this.baseline = await this.readUsage(PROOF_READ_TRIES);
+    this.baselineAlone = this.moneyIsAlone();
     if (ctx.signal.aborted) throw new Stopped();
 
     this.sent = true;
@@ -554,7 +557,7 @@ class Attempt {
 
     const after = await this.readUsage(PROOF_READ_TRIES);
     const baseline = this.baseline;
-    const counts = baseline !== null && after !== null && this.ledgerIsQuiet();
+    const counts = baseline !== null && after !== null && this.baselineAlone && this.moneyIsAlone() && this.ledgerIsQuiet();
     if (counts && after - baseline > NET_USAGE_TOLERANCE_MICROS) return { kind: "unknown", why: "net-increase" };
     // A check that cannot count (the baseline or the second read is unreadable, or the ledger moved in between) does NOT prove the refusal free, in either mode: an invisible Kling charge would
     // otherwise be followed by an automatic Grok and the clip would cost more than the owner accepted. Kling settles at worst; the tile offers a manual retry.
@@ -571,6 +574,18 @@ class Attempt {
   /** The net-usage check counts only if nothing else touched the ledger between its two reads (this attempt's own lines excepted). */
   private ledgerIsQuiet(): boolean {
     return this.deps.budget.ledger.lines.slice(this.mark).every((line) => "attemptId" in line && line.attemptId === this.attemptId);
+  }
+
+  /**
+   * Nothing but this attempt is open: the ledger's open reserves and the hold registry (live entries only) name no other attempt. A reserve or a hold of another clip or job may bill or refund inside the
+   * window, and a refund would cancel this attempt's own charge in the account-wide counter.
+   */
+  private moneyIsAlone(): boolean {
+    const { deps, attemptId } = this;
+    if (deps.budget.ledger.openReserves().some((reserve) => reserve.attemptId !== attemptId)) return false;
+    const nowMs = deps.now();
+    for (const [heldId, untilMs] of deps.holds.entries()) if (heldId !== attemptId && untilMs > nowMs) return false;
+    return true;
   }
 
   // ----- free reads -----
