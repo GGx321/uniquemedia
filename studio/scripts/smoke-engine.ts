@@ -4146,17 +4146,7 @@ async function runClipScenario(target: Target): Promise<void> {
     check("clips scenario: the first clip ends as job.done", field(firstEnd, "type") === "job.done" && field(firstEnd, "payload", "result", "kind") === "clip", firstEnd);
     check("clips scenario: the mock saw exactly one POST for it, to Kling", mock.videoRequests().length === 1 && mock.videoRequests()[0]?.model === VIDEO_TIERS.std.model, mock.videoRequests());
 
-    // 4. A refusal at the poll, proven free, and Grok behind it. The first clip is still held for the reconcile for a moment after its job ends («terminal + 2 min»); a refusal counts as proven free only
-    // when nothing but its own attempt is open or held (S5.VR), so the scenario waits the hold out, as an owner who starts the next clip a minute later would.
-    await waitFor(
-      "the first clip's hold to end",
-      async () => {
-        const status = await req(cdp, "money.status");
-        return field(status, "ok") === true && field(status, "result", "reconcileAvailableAt") === undefined ? true : null;
-      },
-      CLIP_JOB_TIMEOUT_MS,
-      200,
-    );
+    // 4. A refusal at the poll, proven free, and Grok behind it.
     mock.armVideoRefusal(VIDEO_TIERS.std.model);
     const secondCreated = await req(cdp, "clips.create", create);
     const secondJob = field(secondCreated, "result", "jobId");

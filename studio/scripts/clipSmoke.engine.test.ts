@@ -51,20 +51,6 @@ async function ready(): Promise<{ engine: ClipEngine; m: MockOpenRouter; avatarI
   return { engine, m: mock, avatarId, photoId };
 }
 
-/**
- * Waits until nothing of the engine's is held for the reconcile any more (the finished clip's «terminal + 2 min»). A refusal counts as proven free only when nothing but its own attempt is open or held
- * (S5.VR): a clip started inside the previous clip's hold would be settled at worst, with no Grok behind it, and that is the rule, not the scenario.
- */
-async function untilNothingIsHeld(engine: ClipEngine): Promise<void> {
-  const deadline = Date.now() + 10_000;
-  for (;;) {
-    const status = (await answer(engine, "money.status", {})) as { reconcileAvailableAt?: string };
-    if (status.reconcileAvailableAt === undefined) return;
-    if (Date.now() > deadline) throw new Error("the first clip's hold never ended");
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-}
-
 async function answer(engine: ClipEngine, type: string, payload: object) {
   const response = await engine.engine.handle(command(type, payload));
   if (!response.ok) throw new Error(`${type} answered ${response.error.code}`);
@@ -81,7 +67,6 @@ describe("the smoke's clip scenario, against the real engine", () => {
     expect(m.videoRequests().map((r) => r.model)).toEqual([KLING]);
 
     // 2. A content refusal at the poll: proven free by two /generation readings (the API's 404) and a quiet account; Grok follows by itself.
-    await untilNothingIsHeld(engine);
     m.armVideoRefusal(KLING);
     const second = jobIdOf(await create(engine, { avatarId, photoId }));
     expect((await jobEnd(engine, second)).type).toBe("job.done");
