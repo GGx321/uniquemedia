@@ -348,6 +348,7 @@ export const CLIP_SCENARIOS: readonly Scenario[] = [
       await t.untilPhase(jobId, "late");
       t.note("the clip has not come: no record yet, the reserve is open and held");
       await list(t, w);
+      control.clips.arrive();
       await t.untilJobEnds(jobId);
       t.note("it came: ready, its cost the open reserve until the reconcile, the provider's number for information");
       await list(t, w);

@@ -18,8 +18,8 @@ afterEach(async () => {
   provider = undefined;
 });
 
-function make(options: Parameters<typeof clipProvider>[0] = {}): ClipProvider {
-  provider = clipProvider({ lateOkAfterMs: 30, ...options });
+function make(): ClipProvider {
+  provider = clipProvider();
   return provider;
 }
 
@@ -250,14 +250,25 @@ describe("holding the render and the late clip", () => {
     expect((await call(p, "GET", `/videos/${sent.id}`)).json).toMatchObject({ status: "in_progress" });
   });
 
-  test("a clip that comes in late is in progress until its time, then completed", async () => {
+  test("a clip that comes in late is in progress however long it takes, until the story says it has arrived, then completed", async () => {
     const p = make();
     p.script("late-ok");
     p.beginClip();
     const sent = await submit(p);
     expect((await call(p, "GET", `/videos/${sent.id}`)).json).toMatchObject({ status: "in_progress" });
     await new Promise((resolve) => setTimeout(resolve, 60));
+    expect((await call(p, "GET", `/videos/${sent.id}`)).json).toMatchObject({ status: "in_progress" });
+    p.arrive();
     expect((await call(p, "GET", `/videos/${sent.id}`)).json).toMatchObject({ status: "completed" });
+  });
+
+  test("an arrival only completes the late clips: a clip that never comes stays in progress", async () => {
+    const p = make();
+    p.script("late");
+    p.beginClip();
+    const sent = await submit(p);
+    p.arrive();
+    expect((await call(p, "GET", `/videos/${sent.id}`)).json).toMatchObject({ status: "in_progress" });
   });
 });
 

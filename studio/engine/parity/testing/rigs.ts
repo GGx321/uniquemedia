@@ -158,6 +158,8 @@ export interface ClipControl {
   fileBack(back: boolean): void;
   /** The owner comes back after `ms`: the engine's clock moves ahead. */
   passTime(ms: number): void;
+  /** A `late-ok` clip comes in at the provider. Until a story says so it is still rendering, however long the engine waits: the story releases it by this event, never by a clock. The mock plays its own late file, so it has nothing to do. */
+  arrive(): void;
 }
 
 const NO_CLIPS: ClipControl = {
@@ -174,6 +176,9 @@ const NO_CLIPS: ClipControl = {
     throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
   },
   fileBack: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+  arrive: () => {
     throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
   },
   passTime: () => {
@@ -807,6 +812,7 @@ export function mockRig(options: RigOptions = {}): ParityRig {
               posts: () => engine.peekClips().posts,
               fileBack: (back) => engine.nextClipRetry(back ? "ok" : "failed"),
               passTime: (ms) => engine.passClipTime(ms),
+              arrive: () => undefined,
             },
     },
     async stop() {
@@ -1748,6 +1754,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
               prices: (mode) => provider.setPrices(mode),
               posts: () => provider.posts(),
               fileBack: (back) => provider.heal(back),
+              arrive: () => provider.arrive(),
               passTime: (ms) => {
                 clipSkew += ms;
               },

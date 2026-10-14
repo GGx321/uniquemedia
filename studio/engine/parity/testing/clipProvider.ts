@@ -58,7 +58,6 @@ interface Job {
   tier: "std" | "pro" | "grok";
   seconds: number;
   outcome: MockClipAttempt;
-  postedAt: number;
 }
 
 interface Clip {
@@ -75,6 +74,8 @@ export interface ClipProvider {
   script(script: MockClipScript): void;
   /** A clip has been accepted by the engine: its attempts play the armed script (or complete). */
   beginClip(): void;
+  /** A `late-ok` clip comes in: until then its polls stay in progress, however long the engine waits (the story says when, never a clock). */
+  arrive(): void;
   /** While held, every poll is in progress (the render is still going); released, the outcome shows. */
   hold(held: boolean): void;
   /** The provider has the file of a clip whose download failed (`download-failed`, `invalid-file`) again: a retry fetches it. */
@@ -83,11 +84,6 @@ export interface ClipProvider {
   /** The model of each POST that left, in order. */
   posts(): AttemptModel[];
   close(): Promise<void>;
-}
-
-export interface ClipProviderOptions {
-  /** How long after its POST a `late-ok` clip is still in progress (the rig's lifetime is 1.2 s). */
-  lateOkAfterMs?: number;
 }
 
 const PLAYABLE_ONLY = "no-room";
@@ -110,13 +106,13 @@ const dollars = (micros: number): number => micros / 1_000_000;
 /** Outcomes whose poll ends `completed`. */
 const COMPLETES: readonly MockClipAttempt[] = ["ok", "ok-uncosted", "download-failed", "invalid-file", "disk-full"];
 
-export function clipProvider(options: ClipProviderOptions = {}): ClipProvider {
-  const lateOkAfterMs = options.lateOkAfterMs ?? 1_500;
+export function clipProvider(): ClipProvider {
   const jobs = new Map<string, Job>();
   const posted: AttemptModel[] = [];
   let armed: { first: MockClipAttempt; then: MockClipAttempt } | null = null;
   let clip: Clip = { first: "ok", then: "ok", ordinal: 0 };
   let held = false;
+  let arrived = false;
   let healed = false;
   let prices: VideoListing = "live";
   let folder: Promise<string> | undefined;
@@ -190,7 +186,7 @@ export function clipProvider(options: ClipProviderOptions = {}): ClipProvider {
         return response(502, { error: { message: "bad gateway" } });
       default: {
         const id = `prov-${model}-${posted.length}`;
-        jobs.set(id, { id, model, tier, seconds, outcome, postedAt: Date.now() });
+        jobs.set(id, { id, model, tier, seconds, outcome });
         return response(202, { id, polling_url: `https://openrouter.ai/api/v1/videos/${id}`, status: "pending" });
       }
     }
@@ -201,7 +197,7 @@ export function clipProvider(options: ClipProviderOptions = {}): ClipProvider {
     if (job === undefined) return response(404, { error: { code: 404, message: `Video ${id} not found` } });
     const running = { id, generation_id: id, status: "in_progress" };
     if (held || job.outcome === "late") return response(200, running);
-    if (job.outcome === "late-ok" && Date.now() - job.postedAt < lateOkAfterMs) return response(200, running);
+    if (job.outcome === "late-ok" && !arrived) return response(200, running);
     if (COMPLETES.includes(job.outcome) || job.outcome === "late-ok") {
       const uncosted = job.outcome === "ok-uncosted";
       return response(200, { id, generation_id: id, status: "completed", ...(uncosted ? {} : { usage: { cost: dollars(billedMicros(job)), is_byok: false } }) });
@@ -240,9 +236,13 @@ export function clipProvider(options: ClipProviderOptions = {}): ClipProvider {
     beginClip: () => {
       clip = { ...(armed ?? { first: "ok" as const, then: "ok" as const }), ordinal: 0 };
       armed = null;
+      arrived = false;
     },
     hold: (value) => {
       held = value;
+    },
+    arrive: () => {
+      arrived = true;
     },
     heal: (value) => {
       healed = value;
