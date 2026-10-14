@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { CLIP_UNSUITABLE_REASONS } from "./errors";
 import { Estimate } from "./estimate";
+import { MontageName } from "./montage";
 import { Count, Id, Micros } from "./primitives";
 import { FileState, RelativePath } from "./video";
 
@@ -291,6 +292,23 @@ export type ClipExportLine = z.infer<typeof ClipExportLine>;
 export const ClipExport = ClipExportLine.extend({ fileState: FileState.optional() });
 export type ClipExport = z.infer<typeof ClipExport>;
 
+/**
+ * What uses a ready clip (5b.2, S5.WA1; `ClipSummary.use`): at least one key, so "not used" is the absence of `use`. `MontageName` is the montage draft's own, already bounded name type
+ * (1 to 80 characters, no control characters), so no new bound is added; a draft with no name has `name: null`.
+ */
+export const ClipUse = z
+  .strictObject({
+    inVideo: z.enum(["clip", "photo"]).optional(),
+    inDrafts: z
+      .strictObject({
+        count: z.number().int().positive(),
+        first: z.strictObject({ name: MontageName.nullable(), frame: z.number().int().positive() }).optional(),
+      })
+      .optional(),
+  })
+  .refine((use) => use.inVideo !== undefined || use.inDrafts !== undefined, { message: "use must say something; an unused clip has no `use`" });
+export type ClipUse = z.infer<typeof ClipUse>;
+
 const clipSummaryCommon = {
   clipId: Id,
   avatarId: Id,
@@ -320,11 +338,14 @@ export const ClipSummary = z.discriminatedUnion("status", [
     durationMs: z.number().int().positive(),
     face: ClipFace,
     /**
-     * 5b.2 (additive, S5.WA1; Q-F = 1): present, and only `{ inVideo: true }`, when this clip's frame (its photo, or any clip of it) is in a finished video, so the «Клипы» tab dims it
-     * (57b, 41e) and the delete dialog says «Клип есть в готовом видео» (44b). Absent otherwise, as `notListedTotal` is. «This frame is in this draft» is the window's own look at its draft, and a clip a
-     * render holds is told by the delete's IN_FLIGHT `in-use`; neither is a state of the clip. Only a ready clip is ever used.
+     * 5b.2 (additive, S5.WA1; Q-F = 1): present when this clip's frame is in a finished video, absent otherwise (as `notListedTotal` is). `inVideo` says how:
+     * - `"clip"`: a finished video's `clipFrames` name THIS clip;
+     * - `"photo"`: the frame is used through the photo itself or a sibling clip of it.
+     * The «Клипы» tab dims the clip in both cases (57b, 41e), but 44b's «Клип есть в готовом видео — видео не изменится.» applies only to `"clip"`. `inDrafts` is for the delete dialog on a screen with no draft
+     * loaded: how many drafts hold the clip's copy, and, for the one-draft line, that draft's name and the frame (1-based) the copy stands at (`first`, the first draft the engine found; the dialog reads it
+     * when `count` is 1). A clip a render holds is told by the delete's IN_FLIGHT `in-use`, not by `use`. Only a ready clip is ever used.
      */
-    use: z.strictObject({ inVideo: z.literal(true) }).optional(),
+    use: ClipUse.optional(),
   }),
   z.strictObject({
     ...clipSummaryCommon,

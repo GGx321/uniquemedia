@@ -258,9 +258,11 @@ export type MediaListResult = z.infer<typeof MediaListResult>;
 export const MediaDeletePayload = z.strictObject({ mediaId: Id });
 export const MediaDeleteResult = z.strictObject({ mediaId: Id });
 
-/** `media.importClip` (5b.2, S5.WA1): a ready clip of an avatar becomes an own video. The window sends two ids and never a path; the answer is the copy's media id. */
+/** `media.importClip` (5b.2, S5.WA1): a ready clip of an avatar becomes an own video. The window sends two ids and never a path; the answer is the copy's media id or the import job's id. */
 export const MediaImportClipPayload = z.strictObject({ avatarId: Id, clipId: Id });
-export const MediaImportClipResult = z.strictObject({ mediaId: Id });
+/** A live copy of the clip exists: its media id at once. Otherwise an import job starts (kind `import`, with the clip's `origin`) and its id is answered; the media id comes with `job.done`. */
+export const MediaImportClipResult = z.union([z.strictObject({ mediaId: Id }), z.strictObject({ jobId: Id })]);
+export type MediaImportClipResult = z.infer<typeof MediaImportClipResult>;
 
 /** `media.cancelImport`: stops a running import job (the copy, the importer or the record), leaving nothing behind. */
 export const MediaCancelImportPayload = z.strictObject({ jobId: Id });

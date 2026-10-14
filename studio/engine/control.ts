@@ -297,9 +297,6 @@ export function isControlMessage(message: unknown): boolean {
  */
 export const CLIP_PLAN_READ_TIMEOUT_MS = 5_000;
 
-/** The most time `media.importClip` budgets for the importer's encode of one clip (a 10 s clip at the mezzanine's settings takes seconds; the rest is headroom for a loaded machine). */
-const CLIP_IMPORT_ENCODE_BUDGET_MS = 5 * 60_000;
-
 /** Room for the engine's own work around its network waits: ledger fsyncs, the library write, a reserve queued behind a reconcile. */
 const COMMAND_SLACK_MS = 30_000;
 
@@ -333,9 +330,6 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   // never tracks. The portraits' formula without the reference load. The other clip commands only read or move the clip's own files and keep the default.
   "clips.options": PRICE_FETCH_TIMEOUT_MS + COMMAND_SLACK_MS,
   "clips.create": PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + CLIP_PLAN_READ_TIMEOUT_MS + COMMAND_SLACK_MS,
-  // Stage 5, 5b.2, S5.WA1: `media.importClip` answers with the copy's media id, so it waits for the importer's encode (a 5 or 10 s clip, seconds in practice) and for the clip lock behind an export. The bound
-  // is the encode's own ceiling plus the command slack, so main never answers INTERNAL while a copy is still being made and the window never asks twice.
-  "media.importClip": CLIP_IMPORT_ENCODE_BUDGET_MS + COMMAND_SLACK_MS,
   // Answers with the job id once its checks and a price load are done; the job runs on and reports by events.
   "avatars.generateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.createDraft": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,

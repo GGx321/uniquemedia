@@ -144,14 +144,16 @@ import { z } from "zod";
 //  - (S5.V8b follow-up, additive, optional) a clip job also carries `openReserveMicros`: what the ledger can still charge for the clip (the sum of its open reserves), told wherever one is open and absent where none is; the tile of
 //    `late` and `recovering` says it as «спишется при сверке», every other phase says `acceptedWorstMicros`. The four facts above are told together or not at all (a schema refine). Rollback as above.
 // Stage 5, 5b.2, S5.WA1 (additive, no bump; one command, one summary field each on a media and a clip, two clip reasons): clips in the montage editor.
-//  - command `media.importClip` (free, an engine command: `{ avatarId, clipId }` → `{ mediaId }`, no path): a ready clip becomes the editor's own video, as its own copy, one per clip. It has its own deadline
-//    (`COMMAND_DEADLINE_MS`). Its refusals use the machinery that exists: LIBRARY_UNAVAILABLE, NOT_FOUND, VALIDATION `clipReason` `not-ready` / `file-damaged`, IN_FLIGHT `job-running`, and MEDIA_UNSUPPORTED
-//    `mediaReason` `no-space` for a full disk (there is no DISK_FULL code).
-//  - `MediaSummary.origin` (optional, only on a video): `{ kind: "clip", avatarId, clipId, photoId }`, strict. `ClipSummary.use` (optional, only on a ready clip): `{ inVideo: true }` or absent (Q-F = 1).
+//  - command `media.importClip` (free, an engine command: `{ avatarId, clipId }` → `{ mediaId }` when a live copy exists, else `{ jobId }`; no path): a ready clip becomes the editor's own video, as its own copy,
+//    one per clip. It answers after its pre-job checks on the default deadline, like `media.import`; the encode runs in an `import` job. Its refusals use the machinery that exists, in this order: LIBRARY_UNAVAILABLE,
+//    NOT_FOUND, VALIDATION `clipReason` `not-ready`, IN_FLIGHT `job-running`, VALIDATION `file-damaged`, MEDIA_UNSUPPORTED `mediaReason` `no-space` for a full disk (there is no DISK_FULL code).
+//  - `MediaSummary.origin` (optional, only on a video): `{ kind: "clip", avatarId, clipId, photoId }`, strict. The `import` job ref (`JobState`, `JobProgress`, `JobFailed`, `JobCancelled`) gains the same optional `origin`.
+//    `ClipSummary.use` (optional, only on a ready clip, at least one key, else absent; Q-F = 1): `inVideo` `"clip" | "photo"` (a finished video holds this clip, or its frame through the photo or a sibling clip) and
+//    `inDrafts` `{ count, first?: { name, frame } }` (drafts that hold the copy; the delete dialog's warning, with the first draft's `MontageName` and 1-based frame).
 //  - `CLIP_REASONS` gain `file-damaged` (VALIDATION) and `in-use` (IN_FLIGHT, a `clips.delete` while a render holds the copy); Russian texts in `CLIP_REASONS_RU`.
 //  - `frame-foreign` and `frame-repeated` (the admission's PHOTO_UNAVAILABLE details, plan §5.1.3) are details of an existing code and belong to the engine task S5.WA2, not to this contract.
-//  - Rollback: an older build (5b.1) has strict schemas and cannot read `origin` on an own-media record (and, with it, a draft or a record that names the copy), nor a `use` on a clip, nor the two new reasons.
-//    Studio has no downgrade path; a downgrade would list those records as unreadable. Roll back only before the first clip is put in a montage.
+//  - Rollback: `origin` is persisted in media records (on disk), and an older build (5b.1) has strict schemas, so it would list a media record with an `origin` as unreadable.
+//    Job refs carry `origin` only on the wire while a job runs. `use` and the two new reasons are wire-only within one build: nothing stores them, so an older build never reads them from disk. Studio has no downgrade path; roll back only before the first clip is put in a montage.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 

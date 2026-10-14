@@ -401,7 +401,7 @@ const ENGINE_SPECS = [
   //    The motion is an id (`scene` or `g-<slug>`), never free text (I5.51). There is no reveal: it was dropped (Q-B).
   //  - `list` is the avatar's clips, newest first, at most MAX_LISTED_CLIPS; `notListedTotal` as in `montages.list` (absent when 0, never 0).
   //  - `get` is one clip with each export's `fileState` looked at now; `markSeen`, `delete` (IN_FLIGHT `job-running`), `retryDownload` (a free job; VALIDATION `download-expired`) and `export`
-  //    (the re-encoding job of I5.55; VALIDATION `not-ready`, EXPORT_UNAVAILABLE, DISK_FULL) follow. NOT_FOUND for a clip the avatar does not have.
+  //    (the re-encoding job of I5.55; VALIDATION `not-ready`, EXPORT_UNAVAILABLE) follow; there is no DISK_FULL code: a full export disk is EXPORT_UNAVAILABLE with its reason. NOT_FOUND for a clip the avatar does not have.
   defineCommand("clips.options", z.strictObject({ avatarId: Id, photoId: Id }), ClipOptions),
   defineCommand(
     "clips.create",
@@ -720,10 +720,14 @@ const ENGINE_SPECS = [
   defineCommand("media.list", MediaListPayload, MediaListResult),
   defineCommand("media.delete", MediaDeletePayload, MediaDeleteResult),
   defineCommand("media.cancelImport", MediaCancelImportPayload, MediaCancelImportResult),
-  // Stage 5, 5b.2, S5.WA1 (additive): a ready clip becomes an own video of the montage editor, as its own copy (plan s5b2 §5.1, I5.59). Free, an engine command (it opens no file dialog and takes no path),
-  // and it answers once the copy exists, so it has its own deadline (`COMMAND_DEADLINE_MS`). A live copy of the clip is answered at once (one copy per clip). The copy's `MediaSummary.origin` names the clip.
-  // Refused free, in order: LIBRARY_UNAVAILABLE, NOT_FOUND (the clip, or an avatar being deleted), VALIDATION `clipReason` `not-ready` (the clip is not ready) or `file-damaged` (its file is not the one its
-  // record names), IN_FLIGHT `job-running` (an export, a delete or another import of this clip), and MEDIA_UNSUPPORTED `mediaReason` `no-space` for a full disk (the importer's free-space rule; no new code).
+  // Stage 5, 5b.2, S5.WA1 (additive): a ready clip becomes an own video of the montage editor, as its own copy (plan s5b2 §5.1, I5.59). Free, an engine command (it opens no file dialog and takes no path).
+  // It follows `media.import` and `clips.create`: it answers after its pre-job checks (the default deadline), never after the encode. The answer is `{ mediaId }` when a live copy of the clip exists (one copy
+  // per clip), else `{ jobId }` of the import job that starts (kind `import`, its job ref carries the clip's `origin`; cancel it with `media.cancelImport`; the media id and the copy's `MediaSummary.origin`
+  // come with `job.done` and `media.changed`).
+  // Refused free, in this order: LIBRARY_UNAVAILABLE, NOT_FOUND (the clip, or an avatar being deleted), VALIDATION `clipReason` `not-ready` (the clip is not ready), IN_FLIGHT `job-running` (the clip lock:
+  // an export, a delete or another import of this clip), VALIDATION `file-damaged` (the sha256 check inside the lock: the file is not the one its record names), and MEDIA_UNSUPPORTED `mediaReason`
+  // `no-space` for a full disk (the importer's free-space rule; there is no DISK_FULL code). Only `no-space` leaves the clip import as MEDIA_UNSUPPORTED: every other importer outcome (`failed`, `structure`,
+  // `codec`, `too-short`, `changed`, `unreadable`, ...) surfaces as INTERNAL (mockup 57c), and the window takes the no-space text from `mediaReasonRu(reason, "video")`. The engine's mapping is pinned by S5.WA2.
   defineCommand("media.importClip", MediaImportClipPayload, MediaImportClipResult),
   // CS.2: the owner's own scene categories, one library-wide list shared by every avatar (plan §4.1). All of them but the estimate need an
   // open library (LIBRARY_UNAVAILABLE without one); the estimate needs neither a library nor a key.

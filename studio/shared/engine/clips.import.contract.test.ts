@@ -6,7 +6,9 @@ import { SLEEP_CLASS, heldWhileAsleep } from "./commandHold";
 import { PROTOCOL_VERSION } from "./envelope";
 import { parseEngineCommand } from "./messages";
 import { ClipSummary } from "./clips";
+import { EventMessage } from "./events";
 import { MediaListResult, MediaSummary } from "./media";
+import { JobCancelled, JobFailed, JobProgress, JobResult, JobState } from "./state";
 import { Clip } from "./montage";
 
 // Stage 5, 5b.2, S5.WA1 (plan s5b2 §5.1, §8): the contract of clips in the montage editor. `media.importClip`, `MediaSummary.origin`, `ClipSummary.use`, and the clip reasons
@@ -88,10 +90,17 @@ describe("media.importClip", () => {
     expect(accepts("media.importClip", { avatarId: "../x", clipId: CLIP })).toBe(false);
   });
 
-  test("answers the copy's media id and nothing else", () => {
+  test("answers {mediaId} when a live copy exists, or {jobId} when an import job starts, and nothing else", () => {
     expect(answers("media.importClip", { mediaId: "media-00000001" })).toBe(true);
+    expect(answers("media.importClip", { jobId: "job-00000001" })).toBe(true);
     expect(answers("media.importClip", {})).toBe(false);
     expect(answers("media.importClip", { mediaId: "media-00000001", jobId: "job-00000001" })).toBe(false);
+    expect(answers("media.importClip", { jobId: "job-00000001", extra: 1 })).toBe(false);
+  });
+
+  test("answers at once after its checks (the default deadline); it does not wait for the encode", () => {
+    // The deadline itself is pinned in engine/control.clipImport.test.ts.
+    expect(answers("media.importClip", { jobId: "job-00000001" })).toBe(true);
   });
 
   test("is free: it is classified, and it is not held while the Mac sleeps", () => {
@@ -146,7 +155,7 @@ describe("clipReason `file-damaged` and `in-use`", () => {
   });
 
   test("each has its Russian text, word for word (44b for `in-use`, 57c's family for `file-damaged`)", () => {
-    expect<string>(CLIP_REASONS_RU["in-use"]).toBe("Клип сейчас в рендере — удалите его после окончания.");
+    expect<string>(CLIP_REASONS_RU["in-use"]).toBe("Клип сейчас в рендере — удалите его, когда рендер закончится.");
     expect<string>(CLIP_REASONS_RU["file-damaged"]).toBe("Файл клипа в Studio повреждён или не читается — для монтажа его не подготовить.");
   });
 
@@ -201,24 +210,28 @@ describe("ClipSummary.use", () => {
     expect("use" in parsed).toBe(false);
   });
 
-  test("a ready clip may say its frame is in a finished video", () => {
-    const parsed = ClipSummary.parse({ ...readyClip, use: { inVideo: true } });
-    expect(parsed.status === "ready" ? parsed.use : "not ready").toEqual({ inVideo: true });
+  test("a ready clip may say a finished video holds THIS clip (`clip`) or its frame through the photo or a sibling clip (`photo`)", () => {
+    for (const inVideo of ["clip", "photo"] as const) {
+      const parsed = ClipSummary.parse({ ...readyClip, use: { inVideo } });
+      expect(parsed.status === "ready" ? parsed.use : "not ready").toEqual({ inVideo });
+    }
   });
 
-  test("`use` is strict and says only `inVideo: true`: false, an extra key and an empty object are refused", () => {
+  test("`use` is strict and says `inVideo: clip | photo`: true, false, another word and an extra key are refused", () => {
+    expect(ClipSummary.safeParse({ ...readyClip, use: { inVideo: true } }).success).toBe(false);
     expect(ClipSummary.safeParse({ ...readyClip, use: { inVideo: false } }).success).toBe(false);
+    expect(ClipSummary.safeParse({ ...readyClip, use: { inVideo: "draft" } }).success).toBe(false);
     expect(ClipSummary.safeParse({ ...readyClip, use: {} }).success).toBe(false);
-    expect(ClipSummary.safeParse({ ...readyClip, use: { inVideo: true, videoId: "video-1" } }).success).toBe(false);
+    expect(ClipSummary.safeParse({ ...readyClip, use: { inVideo: "clip", videoId: "video-1" } }).success).toBe(false);
   });
 
   test("a failed clip has no `use`", () => {
     expect(ClipSummary.safeParse(failedClip).success).toBe(true);
-    expect(ClipSummary.safeParse({ ...failedClip, use: { inVideo: true } }).success).toBe(false);
+    expect(ClipSummary.safeParse({ ...failedClip, use: { inVideo: "clip" } }).success).toBe(false);
   });
 
   test("clips.list and clips.get carry it", () => {
-    const used = { ...readyClip, use: { inVideo: true } };
+    const used = { ...readyClip, use: { inVideo: "photo" } };
     expect(answers("clips.list", { clips: [used, readyClip] })).toBe(true);
     expect(answers("clips.get", { clip: used })).toBe(true);
   });
@@ -228,5 +241,84 @@ describe("the montage contract is untouched (I5.59)", () => {
   test("a montage clip has exactly three kinds: photo, collage and video", () => {
     const kinds = Clip.options.map((option) => option.shape.kind.value);
     expect([...kinds].sort()).toEqual(["collage", "photo", "video"]);
+  });
+});
+
+describe("ClipSummary.use.inDrafts (the delete dialog's draft warning)", () => {
+  const withUse = (use: unknown) => ClipSummary.safeParse({ ...readyClip, use });
+
+  test("parses with each key alone and with both together", () => {
+    expect(withUse({ inVideo: "clip" }).success).toBe(true);
+    expect(withUse({ inDrafts: { count: 2 } }).success).toBe(true);
+    expect(withUse({ inVideo: "photo", inDrafts: { count: 1, first: { name: "Лето", frame: 3 } } }).success).toBe(true);
+  });
+
+  test("one draft may name itself and the frame the copy stands at; an unnamed draft has a null name", () => {
+    expect(withUse({ inDrafts: { count: 1, first: { name: "Лето", frame: 3 } } }).success).toBe(true);
+    expect(withUse({ inDrafts: { count: 1, first: { name: null, frame: 1 } } }).success).toBe(true);
+  });
+
+  test("an empty `use` is refused: absent means not used", () => {
+    expect(withUse({}).success).toBe(false);
+  });
+
+  test("a count of 0, a fraction or a negative is refused", () => {
+    for (const count of [0, 1.5, -1]) expect(withUse({ inDrafts: { count } }).success).toBe(false);
+  });
+
+  test("a frame of 0 is refused, and so is a draft name that is empty, over 80 characters or holds a control character", () => {
+    expect(withUse({ inDrafts: { count: 1, first: { name: "x", frame: 0 } } }).success).toBe(false);
+    expect(withUse({ inDrafts: { count: 1, first: { name: "", frame: 1 } } }).success).toBe(false);
+    expect(withUse({ inDrafts: { count: 1, first: { name: "x".repeat(81), frame: 1 } } }).success).toBe(false);
+    expect(withUse({ inDrafts: { count: 1, first: { name: "a\u0007b", frame: 1 } } }).success).toBe(false);
+  });
+
+  test("inDrafts is strict, and a failed clip has none", () => {
+    expect(withUse({ inDrafts: { count: 1, drafts: [] } }).success).toBe(false);
+    expect(withUse({ inDrafts: { count: 1, first: { name: "x", frame: 1, id: "m" } } }).success).toBe(false);
+    expect(ClipSummary.safeParse({ ...failedClip, use: { inDrafts: { count: 1 } } }).success).toBe(false);
+  });
+});
+
+describe("the import job carries the clip's origin (I5.59)", () => {
+  const job = { kind: "import", jobId: "job-00000005", mediaKind: "video", name: "Клип 2026-10-14 10-00.mp4", mediaId: null, status: "running", done: 400, total: 1000 };
+  const { status: _status, ...progress } = job;
+  const { done: _done, total: _total, ...ref } = progress;
+  const clipSummary = { ...ownVideo, origin };
+  const envelope = { v: 5, id: "event-00000001", kind: "event", seq: 1, bootId: "boot-00000001" };
+
+  test("a job state, a progress and a failure carry it", () => {
+    expect(JobState.parse({ ...job, origin })).toMatchObject({ origin });
+    expect(JobProgress.parse({ ...progress, origin })).toMatchObject({ origin });
+    expect(JobFailed.parse({ ...ref, origin, error: { code: "INTERNAL" } })).toMatchObject({ origin });
+    expect(JobCancelled.parse({ ...ref, origin })).toMatchObject({ origin });
+  });
+
+  test("a job without an origin parses as before and gains no key", () => {
+    expect("origin" in JobState.parse(job)).toBe(false);
+    expect("origin" in JobProgress.parse(progress)).toBe(false);
+    expect("origin" in JobCancelled.parse(ref)).toBe(false);
+  });
+
+  test("the origin is strict and valid: an extra key, another kind and a bad clip id are refused", () => {
+    expect(JobState.safeParse({ ...job, origin: { ...origin, path: "/x" } }).success).toBe(false);
+    expect(JobState.safeParse({ ...job, origin: { ...origin, kind: "photo" } }).success).toBe(false);
+    expect(JobState.safeParse({ ...job, origin: { ...origin, clipId: "../x" } }).success).toBe(false);
+    expect(JobProgress.safeParse({ ...progress, origin: { kind: "clip", avatarId: AVATAR, photoId: PHOTO } }).success).toBe(false);
+  });
+
+  test("only an import job has it: a clip job refuses it", () => {
+    expect(JobCancelled.safeParse({ kind: "clip", jobId: "job-00000006", origin }).success).toBe(false);
+  });
+
+  test("the finished import's result carries the stored media with its origin, and the job state with it", () => {
+    const result = { kind: "import", mediaId: "media-00000001", media: clipSummary };
+    expect(JobResult.parse(result)).toMatchObject({ media: { origin } });
+    expect(JobState.safeParse({ ...job, origin, status: "done", done: 1000, mediaId: "media-00000001", result }).success).toBe(true);
+  });
+
+  test("media.changed carries the copy's origin", () => {
+    const parsed = EventMessage.parse({ ...envelope, type: "media.changed", payload: { change: "upserted", media: clipSummary } });
+    expect(parsed.type === "media.changed" && parsed.payload.change === "upserted" ? parsed.payload.media.origin : "wrong").toEqual(origin);
   });
 });

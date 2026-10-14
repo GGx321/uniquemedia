@@ -297,7 +297,7 @@ export const CLIP_REASONS_RU = {
   submitted: "Клип уже отправлен — отменить нельзя.",
   // 5b.2 (S5.WA1). `in-use` is mockup 44b's text; `file-damaged` grows from 57c and the export's CLIP_FILE_DAMAGED_RU, and never says the Studio file is intact.
   "file-damaged": "Файл клипа в Studio повреждён или не читается — для монтажа его не подготовить.",
-  "in-use": "Клип сейчас в рендере — удалите его после окончания.",
+  "in-use": "Клип сейчас в рендере — удалите его, когда рендер закончится.",
 } as const satisfies Record<ClipReason, string>;
 
 /**

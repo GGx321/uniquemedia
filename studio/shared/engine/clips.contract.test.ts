@@ -257,7 +257,7 @@ describe("CLIP_REASONS_RU: one text per reason, verbatim from §5.2", () => {
     submitted: "Клип уже отправлен — отменить нельзя.",
     // 5b.2 (S5.WA1), from mockups 44b and 57c.
     "file-damaged": "Файл клипа в Studio повреждён или не читается — для монтажа его не подготовить.",
-    "in-use": "Клип сейчас в рендере — удалите его после окончания.",
+    "in-use": "Клип сейчас в рендере — удалите его, когда рендер закончится.",
   };
 
   test("every reason has its text, word for word", () => {

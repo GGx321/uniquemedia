@@ -6,7 +6,7 @@ import { CLIP_FACTS_TOGETHER, clipFactsTogether, clipJobFields, clipJobRef, Clip
 import { EngineError, ExportUnavailableReason, SceneReason } from "./errors";
 import { Estimate, PriceSource } from "./estimate";
 import { ImageQuality } from "./imageModels";
-import { MediaFileName, MediaKind, MediaSummary } from "./media";
+import { MediaFileName, MediaKind, MediaOrigin, MediaSummary } from "./media";
 import { AbsolutePath, Count, Id, LaunchId, Micros, ModelId, SafeText } from "./primitives";
 import { MAX_SCENES_PER_SET, ScenesResult } from "./scenes";
 import { RenderResult } from "./video";
@@ -485,7 +485,8 @@ const renderJobRef = { kind: z.literal("render"), jobId: Id, videoId: Id, avatar
  * `total` count BYTES of the picked file copied, of the size it had when it was opened; a phase after the copy (the importer's
  * normalisation, the record) holds `done` at `total`.
  */
-const importJobRef = { kind: z.literal("import"), jobId: Id, mediaKind: MediaKind, name: MediaFileName, mediaId: Id.nullable() };
+// `origin` (5b.2, S5.WA1, additive): set only on the import of a clip's montage copy (`media.importClip`), so a window keeps it out of «Мои», draws 57a from the job list after a reload and takes the media id from `job.done`.
+const importJobRef = { kind: z.literal("import"), jobId: Id, mediaKind: MediaKind, name: MediaFileName, mediaId: Id.nullable(), origin: MediaOrigin.optional() };
 
 /**
  * Which part of an import `done / total` are counting (3f.6): `copy` is the copy of the picked file, in BYTES (what it was before the field
