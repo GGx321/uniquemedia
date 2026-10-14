@@ -141,6 +141,23 @@ describe("clips.list", () => {
     for (const clip of clips) expect(ClipSummary.safeParse(clip).success).toBe(true);
   });
 
+  test("puts the Grok offer it is handed on the one clip get returns, asking for it with that record alone", async () => {
+    await rig.put(failedRecord("refused-free", undefined));
+    const offer = { expectedMicros: 710_000, worstMicros: 850_000, prices: "live" as const, pricesAsOf: "2026-10-13" };
+    const asked: string[][] = [];
+    const { clip } = await rig.records.get(
+      { avatarId: AVATAR, clipId: CLIP },
+      {
+        grokOffers: async (records) => {
+          asked.push(records.map((r) => r.id));
+          return new Map([[CLIP, offer]]);
+        },
+      },
+    );
+    expect(asked).toEqual([[CLIP]]);
+    expect(clip.status === "failed" ? clip.failure : null).toEqual({ reason: "refused-free", grokOffer: offer });
+  });
+
   test("lists a ready clip whose poster file is absent as an ordinary ready clip, with nothing logged", async () => {
     await rig.put(readyRecord());
     await writeFile(rig.file(`${CLIP}.mp4`), "x");

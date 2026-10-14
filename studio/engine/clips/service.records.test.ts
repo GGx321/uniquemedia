@@ -217,6 +217,31 @@ describe("the Grok offer, computed when the clips are listed", () => {
     for (const clip of clips) expect(ClipSummary.safeParse(clip).success).toBe(true);
   });
 
+  test("clips.get carries the same offer as the list does, so a tile refreshed through get keeps «Снять на Grok»", async () => {
+    const priced = await liveBook();
+    const w = await world({ mode: "offer", prices: async () => priced });
+    await writeClipRecord(w.clipsDir, failedRecord("refused-free", undefined));
+    const { clip } = await w.service.get({ avatarId: AVATAR, clipId: CLIP });
+    const { prices } = clipOptionPrices(priced, { mode: "offer", bold: false });
+    expect(clip.status === "failed" ? clip.failure : null).toEqual({ reason: "refused-free", grokOffer: prices.grok5 });
+    expect(ClipSummary.safeParse(clip).success).toBe(true);
+  });
+
+  test("clips.get offers nothing in mode auto, and reads no price for it", async () => {
+    let reads = 0;
+    const w = await world({
+      mode: "auto",
+      prices: async () => {
+        reads++;
+        return liveBook();
+      },
+    });
+    await writeClipRecord(w.clipsDir, failedRecord("refused-free", undefined));
+    const { clip } = await w.service.get({ avatarId: AVATAR, clipId: CLIP });
+    expect(clip.status === "failed" ? clip.failure : null).toEqual({ reason: "refused-free" });
+    expect(reads).toBe(0);
+  });
+
   test("offers nothing in mode auto, and reads no price for it", async () => {
     let reads = 0;
     const w = await world({

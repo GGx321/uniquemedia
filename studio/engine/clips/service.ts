@@ -292,7 +292,7 @@ export class ClipService {
   }
 
   get(payload: CommandPayload<"clips.get">): ReturnType<ClipRecords["get"]> {
-    return this.#records.get(payload);
+    return this.#records.get(payload, { grokOffers: (records) => this.#grokOffers(records) });
   }
 
   markSeen(payload: CommandPayload<"clips.markSeen">): ReturnType<ClipRecords["markSeen"]> {

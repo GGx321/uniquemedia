@@ -275,11 +275,13 @@ export class ClipRecords {
 
   // ---------- clips.get ----------
 
-  async get(payload: Payload<"clips.get">): Promise<{ clip: ClipSummary }> {
+  /** The same Grok offer the list carries (`options.grokOffers`, asked for this one record), so a tile refreshed through `clips.get` keeps its «Снять на Grok». */
+  async get(payload: Payload<"clips.get">, options: ClipListOptions = {}): Promise<{ clip: ClipSummary }> {
     const clipsDir = this.#dirOf(payload.avatarId);
     const record = await this.#recordOf(clipsDir, payload.clipId);
     const cost = clipCostOf(this.#ledger(), record.id);
-    return { clip: clipSummaryOf(record, cost, await this.#exportsOf(record)) };
+    const offer = options.grokOffers === undefined ? undefined : (await options.grokOffers([record])).get(record.id);
+    return { clip: clipSummaryOf(record, cost, await this.#exportsOf(record), offer) };
   }
 
   /** Each export line with the state of its file in the current export folder (the shared `FileState`, `changed` included). Not asked at all for a clip with no export. */
