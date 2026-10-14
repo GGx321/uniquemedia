@@ -746,6 +746,8 @@ export class MockClips {
    */
   #otherMoneyOpen(attemptId: string): boolean {
     if (this.#lines.some((l) => l.state === "open" && l.attemptId !== attemptId)) return true;
+    // The engine reads `ledger.openReserves()` across every kind (photo runs, scenes, portraits, autopilot), not only the clips': the host's open reserves are that ledger.
+    for (const openId of this.#host.reserves.keys()) if (openId !== attemptId) return true;
     const now = this.#host.clockMs();
     for (const [heldId, hold] of this.#holds) {
       if (heldId === attemptId || hold.until <= now) continue;

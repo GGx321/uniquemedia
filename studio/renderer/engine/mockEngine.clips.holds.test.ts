@@ -238,6 +238,15 @@ describe("the net-usage check with other money open (VR item 1)", () => {
     expect(m.engine.peekClips().posts).toEqual(["kling", "kling"]);
   });
 
+  test("an open reserve of ANOTHER kind (a photo run) leaves the proof uncounted too: the engine's ledger sees every reserve, not only a clip's", async () => {
+    const m = makeClipMock();
+    m.engine.openForeignReserve("run-0007:img#1", 90_000);
+    m.engine.scriptNextClip("refused-free");
+    await runClip(m);
+    expect(m.engine.peekClips().posts).toEqual(["kling"]);
+    expect(await onlyClip(m)).toMatchObject({ status: "failed", failure: { reason: "refused-unknown" }, cost: { micros: 504_000, kind: "estimated" } });
+  });
+
   test("the same refusal after the reconcile closed the other reserve is proven free again, and Grok runs", async () => {
     const m = makeClipMock();
     await uncertainClip(m);

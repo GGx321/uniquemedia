@@ -1613,6 +1613,11 @@ export class MockEngine implements EngineBridge {
     this.clips.leaveStaleJournal(clipId);
   }
 
+  /** A reserve of another kind (a photo run, a scene set, a portrait) is open in the ledger, as the engine's `Budget` holds it while that request is out. */
+  openForeignReserve(attemptId: string, worstMicros: number): void {
+    this.reserves.set(attemptId, worstMicros);
+  }
+
   /** The engine settled a clip's attempt in the ledger and stopped before the journal's `ended` line (engine/clips/attempt.ts: `settle`, then `journal.ended`). Call it, then `restart()`. */
   settleClipReserveBeforeCrash(attemptId: string, bill: { costMicros: number; estimated: boolean }): void {
     this.clips.settleBeforeCrash(attemptId, bill);
