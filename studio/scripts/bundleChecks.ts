@@ -83,6 +83,21 @@ const FORBIDDEN_DEBUG_MARKERS = [
   "quitLaunch",
   "MockAutopilot",
   "MockRun",
+  // Stage 5 (5b.1, S5.V7): the mock's clips and their switches: the scripted outcome of the next clip, the video listing's state, a photo's pixels, a retry, an export and a delete that fail, a stale journal, a tampered
+  // copy, seeded clips, the peek at the registry, the copies revealed, and the owner's absence. The mock is dev-only, and these names exist nowhere else.
+  "MockClips",
+  "scriptNextClip",
+  "setVideoPrices",
+  "setClipPhotoPixels",
+  "nextClipRetry",
+  "nextClipExport",
+  "failNextClipDelete",
+  "leaveStaleClipJournal",
+  "tamperClipExport",
+  "seedClips",
+  "peekClips",
+  "revealedClips",
+  "passClipTime",
   // 3c.4: the mock CDN's E2E-only switch (main.ts's musicCdnBaseUrlForTests).
   "studio-music-cdn-base-url",
   "ELECTRON_RENDERER_URL",
