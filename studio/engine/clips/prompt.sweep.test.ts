@@ -159,7 +159,7 @@ describe("every bank motion makes a valid clip prompt (§8 V5 sweep)", () => {
 });
 
 /**
- * Pinned by S5.V5, moved by the C3 polish (the no-cuts sentence added 4 words to every prompt): the longest prompt of the sweep, exactly at the cap: a pov-legs legs frame
+ * Pinned by S5.V5, moved by the C3 polish (the no-cuts sentence added 5 words to every prompt): the longest prompt of the sweep, exactly at the cap: a pov-legs legs frame
  * on its full camera line (one word more and it takes the short line, as the legwear frame now does). fixtures/longest.txt holds its text.
  */
 const LONGEST: { words: number; where: string; dialect: ClipDialect } = {

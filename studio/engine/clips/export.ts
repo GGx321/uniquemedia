@@ -46,7 +46,7 @@ import { clipFilePath, readClipRecord } from "./store";
 // removed while they are still ours (their inode and shape). A CRASH leaves at most a `.studio-part-*` and an empty placeholder of the render's pattern, which the render recovery
 // sweeps once they are no longer live; a crash after the rename leaves a whole file no record names, and the next claim steps over its name.
 
-/** The encode's bound (§5.13): a 10 s 1080p clip interpolates in about a minute on the owner's Mac. */
+/** The encode's bound (§5.13), set by the slowest mode: a 10 s 1080p clip in `interpolate` takes about a minute on the owner's Mac (the default `duplicate` takes seconds). */
 export const EXPORT_ENCODE_TIMEOUT_MS = 10 * 60_000;
 /** How long one group of export-volume calls may take before the volume counts as not answering (the render's `EXPORT_STEP_DEADLINE_MS`). */
 export const EXPORT_STEP_MS = 30_000;

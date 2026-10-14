@@ -13,7 +13,9 @@ useNativeGlobals();
 
 // Stage 5, 5b.1, S5.V5 (plan s5b1 §5.5, I5.51, I5.57): the clip prompt is code. In order: the camera line, the pose sentence (the slot's activity), the motion sentence, the
 // prone anchor, the legs line, the continuity line, the legwear line, the pacing, the look, and «She is an adult woman.». It carries no outfit text. The three prompts probe P-V
-// ran on frames of «Смелая» (2026-10-13, 3 of 3 completed, accepted by the owner) are pinned word for word: the builder must still write them.
+// ran on frames of «Смелая» (2026-10-13, 3 of 3 completed, accepted by the owner) are pinned below, with the camera and look lines the C3 polish (2026-10-14) rewrote. What P-V ran,
+// as history: S1 opened with «Handheld by a friend who stays at the same distance, gentle sway, the framing drifts only a little.», S2 with «A selfie at arm's length: the camera
+// stays in her outstretched hand the whole time.», and all three looks were «Vertical phone video, slight noise, everything in focus. No text on screen.»
 
 function factsOf(result: FrameFactsResult): FrameFacts {
   if (result.kind !== "gallery") throw new Error(`expected a gallery photo, got ${result.kind}`);
@@ -47,14 +49,14 @@ describe("the prompts probe P-V ran (2026-10-13), as the C3 polish rewrote their
   test("S1: «Пляж и бассейн», candid, steps out of the water", () => {
     const facts = factsFor(slotOf(pick("beach", (m) => m.text === "steps out of the water"), "candid", "front", { level: "bold" }));
     expect(promptOf(facts, sceneMotion(facts))).toBe(
-      "Handheld by a friend who holds the phone steady at the same distance; the framing barely moves. The adult woman steps out of the water. Over the whole clip she keeps walking slowly. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. No text on screen. She is an adult woman.",
+      "Handheld steadily by a friend at the same distance the whole time; the framing barely moves. The adult woman steps out of the water. Over the whole clip she keeps walking slowly. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. No text on screen. She is an adult woman.",
     );
   });
 
   test("S2: «Ночнушки и бельё», a selfie from above, one knee up", () => {
     const facts = factsFor(slotOf(pick("nightwear", (m) => m.text === "lies back, one knee up"), "above"));
     expect(promptOf(facts, sceneMotion(facts))).toBe(
-      "A selfie taken with the phone in her hand, at the same arm's length from her the whole time, never moving back; her arm reaches toward the lens and leaves the frame at its edge. The adult woman lies back, one knee up. Over the whole clip she sways her knee a little. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. No text on screen. She is an adult woman.",
+      "A selfie at arm's length: the view stays at that same distance from her and the framing never changes; one arm leaves the frame at its edge the whole time. The adult woman lies back, one knee up. Over the whole clip she sways her knee a little. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. No text on screen. She is an adult woman.",
     );
   });
 

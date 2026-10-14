@@ -10,11 +10,12 @@ import { FACE_COVER } from "../scenes/phoneLook";
 //   (phoneLook FIXED_CAPTURE_LINE): pov-legs is main's photo line (the C3′ winner) turned to video, without «phone» and without «at her eye level», the wording that
 //   failed in C3′; mirror-hidden says the photo's FACE_COVER, imported, so the clip hides her face exactly as the photo did;
 // - probe P-V (2026-10-13) ran the friend, above and mirror lines with the pose, motion, continuity, pacing, look and adult lines below, on three frames of «Смелая»: 3 of 3
-//   completed, and the owner accepted the clips;
+//   completed, and the owner accepted the clips (the friend and selfie lines have since been rewritten by the C3 polish and are unproven until re-checked);
 // - the prone anchor is the hips-2 take's sentence, word for word (the owner rejected a downward-dog clip);
-// - the pacing and the look are the probes' SLOW and LOOK, verbatim.
+// - the pacing is the probes' SLOW, verbatim; the look is the probes' LOOK plus «One continuous shot, no cuts.» (C3 polish, 2026-10-14).
 //
-// Never a negated look term beyond the probes' own («No text on screen»): a negation puts the term into the prompt (I5.10).
+// Never a negated look term beyond the probes' own («No text on screen»): a negation puts the term into the prompt (I5.10). «no cuts» is a deliberate exception (C3 K1: a clip
+// jumped mid-way): it negates an edit event, not a look term.
 
 /** The provider a prompt is written for. The two dialects differ only on the timer line (Grok's probe G04 ran its own). */
 export type ClipDialect = "kling" | "grok";
@@ -26,21 +27,20 @@ export const CLIP_CAPTURES: readonly ClipCapture[] = [...CAPTURES, "unknown"];
 /** I5.51: every clip prompt is at most this many words. The longest Kling ran was the hips-2 take at 114; the sweep pins the longest this builder writes. */
 export const PROMPT_WORDS_MAX = 130;
 
-// C3 (K4): the first selfie line let the phone drift back, leaving her holding an empty outstretched arm. The clip is taken BY the phone, which stays at one arm's length, and her
-// arm leaves the frame at its edge, so no empty hand is ever shown.
-const SELFIE_TWO_HANDS = "A selfie taken with the phone in her hands, at the same arm's length from her the whole time, never moving back; her arms reach toward the lens and leave the frame at its edges.";
-const SELFIE_ONE_HAND = "A selfie taken with the phone in her hand, at the same arm's length from her the whole time, never moving back; her arm reaches toward the lens and leaves the frame at its edge.";
-// C3 (K3): «gentle sway» read as jerky. The friend holds the phone steady.
-const FRIEND = "Handheld by a friend who holds the phone steady at the same distance; the framing barely moves.";
+// New (C3 polish, 2026-10-14), unproven until re-checked. C3 (K4): the first selfie line let the view drift back and left her holding an empty arm. One line serves every
+// selfie capture: the view stays at one distance, the framing never changes, and one arm leaves the frame at its edge, so no empty hand is shown. No «phone» (a phone-in-hand
+// capture would invite a phone in view) and no «reach» (spike B: a reach toward the lens pulls the camera back). Her photo has one arm out and a free hand, so no «hands».
+const SELFIE = "A selfie at arm's length: the view stays at that same distance from her and the framing never changes; one arm leaves the frame at its edge the whole time.";
+// New (C3 polish, 2026-10-14), unproven until re-checked. C3 (K3): «gentle sway» read as jerky. The friend holds steady; the line names no phone.
+const FRIEND = "Handheld steadily by a friend at the same distance the whole time; the framing barely moves.";
 const POV_LEGS_OPENING = "A first-person point-of-view video: the camera is exactly where her eyes are, looking straight down her own body,";
 const NO_FACE_MIRROR_HAND = "no face, no mirror and no hand";
 
 const KLING_CAMERA_LINES: Readonly<Record<ClipCapture, string>> = {
-  // lifevid B2 and C, rewritten after C3 (K4).
-  prone: SELFIE_TWO_HANDS,
-  // The same line with one hand: P-V S2 ran the first wording on `above`; rewritten after C3 (K4).
-  selfie: SELFIE_ONE_HAND,
-  above: SELFIE_ONE_HAND,
+  // New (C3 polish): lifevid B2 and C's wording is gone, one line for every selfie.
+  prone: SELFIE,
+  selfie: SELFIE,
+  above: SELFIE,
   // New (r2: the capture had no line); echoes the photo's over-the-shoulder line.
   "over-shoulder": "A selfie over her own shoulder as she lies on her stomach: the phone stays in her hand above her shoulder the whole time and the framing never changes.",
   // Main's photo line (phoneLook, the C3′ winner) turned to video.
@@ -51,10 +51,10 @@ const KLING_CAMERA_LINES: Readonly<Record<ClipCapture, string>> = {
   "mirror-hidden": `A mirror selfie: she holds her phone right in front of her face, ${FACE_COVER}, the whole time; it sways only a little.`,
   // Spike B K01 («The phone is propped on a shelf and does not move at all.»).
   timer: "The phone is propped up and does not move at all; the framing never changes.",
-  // Spike B K02's base; «same distance» is new (C3 rule 7). P-V S1 ran it on a candid frame.
+  // New (C3 polish); spike B K02's idea, P-V S1 ran an older wording on a candid frame.
   friend: FRIEND,
-  // New (r2); echoes the photo's low-feet line.
-  "low-feet": "Handheld by a friend crouching low near her feet who holds the phone steady at the same distance; the framing barely moves.",
+  // New (C3 polish); echoes the photo's low-feet line.
+  "low-feet": "Handheld steadily by a friend crouching low near her feet, at the same distance the whole time; the framing barely moves.",
   // Spike B K09's base: a candid is a friend's photo.
   candid: FRIEND,
   // New: a photo with no plan says nothing about who held the phone.

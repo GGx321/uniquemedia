@@ -32,7 +32,7 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
 // Stage 5, 5b.1, S5.V5 (plan s5b1 §5.5, I5.51): the video lines, one module per medium (I5.1). Each camera line is adapted from a probe prompt that worked or echoes the
-// photo's own capture line (engine/scenes/phoneLook.ts); the pacing, the look and the adult line are the probes' words, verbatim. The prompt is the product: these pins are
+// photo's own capture line (engine/scenes/phoneLook.ts); the pacing and the adult line are the probes' words, verbatim; the look is theirs plus «One continuous shot, no cuts.» (C3 polish). The prompt is the product: these pins are
 // its text, and a change here is a change the owner sees.
 
 /** FACE_COVER, read off the module object so a missing export fails an assertion, not the import. */
@@ -42,13 +42,14 @@ const faceCover = (): string => {
   return value;
 };
 
-const FRIEND = "Handheld by a friend who holds the phone steady at the same distance; the framing barely moves.";
+const FRIEND = "Handheld steadily by a friend at the same distance the whole time; the framing barely moves.";
 
-/** The Kling camera lines of plan §5.5, word for word. */
+/** The Kling camera lines: plan §5.5's, except the selfie and friend lines, which the C3 polish (2026-10-14) rewrote; those are new and unproven until re-checked. */
+const SELFIE = "A selfie at arm's length: the view stays at that same distance from her and the framing never changes; one arm leaves the frame at its edge the whole time.";
 const KLING_LINES: Readonly<Record<ClipCapture, string>> = {
-  prone: "A selfie taken with the phone in her hands, at the same arm's length from her the whole time, never moving back; her arms reach toward the lens and leave the frame at its edges.",
-  selfie: "A selfie taken with the phone in her hand, at the same arm's length from her the whole time, never moving back; her arm reaches toward the lens and leaves the frame at its edge.",
-  above: "A selfie taken with the phone in her hand, at the same arm's length from her the whole time, never moving back; her arm reaches toward the lens and leaves the frame at its edge.",
+  prone: SELFIE,
+  selfie: SELFIE,
+  above: SELFIE,
   "over-shoulder": "A selfie over her own shoulder as she lies on her stomach: the phone stays in her hand above her shoulder the whole time and the framing never changes.",
   "pov-legs":
     "A first-person point-of-view video: the camera is exactly where her eyes are, looking straight down her own body, and it stays still; her legs are close to the lens and her feet are at the far end, with no face, no mirror and no hand.",
@@ -56,7 +57,7 @@ const KLING_LINES: Readonly<Record<ClipCapture, string>> = {
   "mirror-hidden": "A mirror selfie: she holds her phone right in front of her face, the phone covering her face from her eyebrows to her chin, the whole time; it sways only a little.",
   timer: "The phone is propped up and does not move at all; the framing never changes.",
   friend: FRIEND,
-  "low-feet": "Handheld by a friend crouching low near her feet who holds the phone steady at the same distance; the framing barely moves.",
+  "low-feet": "Handheld steadily by a friend crouching low near her feet, at the same distance the whole time; the framing barely moves.",
   candid: FRIEND,
   unknown: "The framing stays almost still, with a little natural sway.",
 };
@@ -67,7 +68,7 @@ describe("the camera lines (plan §5.5)", () => {
   });
 
   for (const capture of Object.keys(KLING_LINES) as ClipCapture[]) {
-    test(`Kling, ${capture}: the plan's line, word for word`, () => {
+    test(`Kling, ${capture}: the pinned line, word for word`, () => {
       expect(cameraLineOf(capture, "kling")).toBe(KLING_LINES[capture]);
     });
   }
@@ -81,24 +82,35 @@ describe("the camera lines (plan §5.5)", () => {
 
   for (const capture of ["prone", "selfie", "above"] as const) {
     for (const dialect of ["kling", "grok"] as const) {
-      test(`${capture}, ${dialect}: a selfie taken with the phone, kept at the same arm's length, never moving back, her arm leaving the frame at its edge (C3 K4)`, () => {
+      test(`${capture}, ${dialect}: the view stays at the same distance, the framing never changes, one arm leaves the frame at its edge, and the line names no phone (C3 K4)`, () => {
         const line = cameraLineOf(capture, dialect);
-        expect(line).toContain("taken with the phone in her hand");
-        expect(line).toContain("at the same arm's length from her the whole time, never moving back");
-        expect(line).toMatch(/reach(?:es)? toward the lens and leaves? the frame at its edges?\.$/);
-        // «frame» is the line's own word (the legs line says it too); the staging lists read motions and activities. The camera and edit words stay out.
-        expect(line).not.toMatch(/\b(?:dolly|crane|drone|gimbal|orbit\w*|push-?ins?|cinematic\w*|film\w*|zoom\w*|pans?|cuts?|transitions?)\b/i);
+        expect(line).toContain("the view stays at that same distance from her");
+        expect(line).toContain("the framing never changes");
+        expect(line).toContain("one arm leaves the frame at its edge");
+        expect(line).not.toMatch(/phone/i);
         expect(wordCount(line)).toBeLessThanOrEqual(36);
       });
     }
   }
 
   for (const capture of ["friend", "candid", "low-feet"] as const) {
-    test(`${capture}: the friend holds the phone steady at the same distance and the framing barely moves, with no sway (C3 K3)`, () => {
+    test(`${capture}: the friend holds steady at the same distance the whole time, the framing barely moves, no sway, no drift and no phone (C3 K3)`, () => {
       const line = cameraLineOf(capture, "kling");
-      expect(line).toContain("holds the phone steady at the same distance");
+      expect(line).toContain("Handheld steadily by a friend");
+      expect(line).toContain("at the same distance the whole time");
       expect(line).toContain("the framing barely moves");
-      expect(line).not.toMatch(/sway|drift/i);
+      expect(line).not.toMatch(/sway|drift|phone/i);
+    });
+  }
+
+  for (const capture of CLIP_CAPTURES) {
+    test(`${capture}: no camera line carries «reach» (spike B: a reach toward the lens pulls the camera back), nor a camera or edit word`, () => {
+      for (const dialect of ["kling", "grok"] as const) {
+        const line = cameraLineOf(capture, dialect);
+        expect(line).not.toMatch(/reach/i);
+        // «frame» is the lines' own word (the legs line says it too); the staging lists read motions and activities.
+        expect(line).not.toMatch(/\b(?:dolly|crane|drone|gimbal|orbit\w*|push-?ins?|cinematic\w*|film\w*|zoom\w*|pans?|cuts?|transitions?)\b/i);
+      }
     });
   }
 
