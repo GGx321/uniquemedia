@@ -3614,9 +3614,16 @@ export class MockEngine implements EngineBridge {
 
   /** Whether anything of the avatar runs or is reserved: a candidates job, a photo run, a render (queued or running), a video intent a crash left pending. */
   private deleteBusy(avatarId: string): boolean {
+    return this.deleteBusyReason(avatarId) !== null;
+  }
+
+  /** The refusal's reason, in the engine's words and order (`#deleteBusy`): a photo run, a candidate job or a render first, then (5b.2, S5.WA3, r2.1 N2) a clip import of the avatar, then a render that holds a copy. */
+  private deleteBusyReason(avatarId: string): string | null {
     const heldByIntent = this.photos.some((p) => p.avatarId === avatarId && this.pendingVideoPhotos.has(p.photoId));
-    // 5b.2 (S5.WA3, r2.1 N2): a clip import of the avatar runs, or a render holds a copy of one of its clips.
-    return this.jobRunningFor(avatarId) || this.renderJobs.some((j) => isActive(j) && j.avatarId === avatarId) || this.clips.liveFor(avatarId) || heldByIntent || this.clipCopies.holdsAvatar(avatarId);
+    if (this.jobRunningFor(avatarId) || this.renderJobs.some((j) => isActive(j) && j.avatarId === avatarId) || this.clips.liveFor(avatarId) || heldByIntent) return "a photo run, a candidate job or a video render of this avatar is running";
+    if (this.clipCopies.importingFor(avatarId)) return "a clip of this avatar is being prepared for a montage";
+    if (this.clipCopies.holdsCopy(avatarId)) return "a video render holds a copy of a clip of this avatar";
+    return null;
   }
 
   /** Whether a queued or running render holds this own media (the render queue's reserved set). */
@@ -3640,9 +3647,10 @@ export class MockEngine implements EngineBridge {
     const gone = this.libraryGate();
     if (gone) return this.fail(c, gone);
     if (!this.avatarKnown(avatarId)) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
-    if (this.deleteBusy(avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run, a candidate job or a video render of this avatar is running; delete the avatar when it ends" });
+    const busy = this.deleteBusyReason(avatarId);
+    if (busy !== null) return this.fail(c, { code: "IN_FLIGHT", detail: `${busy}; delete the avatar when it ends` });
     this.checkExport();
-    const found = this.videos.filter((v) => v.summary.avatarId === avatarId && this.fileStateOf(v) === "present").length;
+    const found =this.videos.filter((v) => v.summary.avatarId === avatarId && this.fileStateOf(v) === "present").length;
     const counts = this.deleteCounts(avatarId);
     return this.ok(c, { avatarId, ...counts, videoFilesFound: found, videoFilesUnchecked: 0 });
   }
@@ -3652,9 +3660,10 @@ export class MockEngine implements EngineBridge {
     const gone = this.writeLibraryGate();
     if (gone) return this.fail(c, gone);
     if (!this.avatarKnown(avatarId)) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
-    if (this.deleteBusy(avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run, a candidate job or a video render of this avatar is running; delete the avatar when it ends" });
+    const busy = this.deleteBusyReason(avatarId);
+    if (busy !== null) return this.fail(c, { code: "IN_FLIGHT", detail: `${busy}; delete the avatar when it ends` });
     this.checkExport();
-    const present = this.videos.filter((v) => v.summary.avatarId === avatarId && this.fileStateOf(v) === "present");
+    const present =this.videos.filter((v) => v.summary.avatarId === avatarId && this.fileStateOf(v) === "present");
     for (const video of present) this.exportFiles.delete(video.summary.relPath);
     for (const video of this.videos) if (video.summary.avatarId === avatarId) this.removedVideoIds.set(video.summary.videoId, { avatarId, mark: video.summary.publishedAt ?? null });
     const mine = new Set(this.photos.filter((p) => p.avatarId === avatarId).map((p) => p.photoId));

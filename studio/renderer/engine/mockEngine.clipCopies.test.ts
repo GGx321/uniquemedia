@@ -262,7 +262,8 @@ describe("the clip lock during the import", () => {
     const m = makeCopyMock();
     const clipId = await readyClip(m);
     const jobId = await startImport(m, clipId);
-    expect((await errorOf(m.client.request("avatars.delete", { avatarId: AVATAR }))).code).toBe("IN_FLIGHT");
+    expect(await errorOf(m.client.request("avatars.delete", { avatarId: AVATAR }))).toMatchObject({ code: "IN_FLIGHT", detail: "a clip of this avatar is being prepared for a montage; delete the avatar when it ends" });
+    expect((await errorOf(m.client.request("avatars.deletePreview", { avatarId: AVATAR }))).code).toBe("IN_FLIGHT");
     runUntilEnd(m, jobId);
     await unwrap(m.client.request("avatars.delete", { avatarId: AVATAR }));
   });

@@ -151,9 +151,14 @@ export class MockClipCopies {
     for (const copy of this.#media.copiesOfAvatar(avatarId)) if (!this.#host.mediaHeld(copy.mediaId)) this.#media.delete(copy.mediaId);
   }
 
-  /** The avatar's delete waits while a clip import of it runs, or a render holds a copy of one of its clips. */
-  holdsAvatar(avatarId: string): boolean {
-    return this.#clips.importingFor(avatarId) || this.#media.copiesOfAvatar(avatarId).some((copy) => this.#host.mediaHeld(copy.mediaId));
+  /** A clip import of this avatar runs: its delete waits (the import job has no avatar of its own in the job list). */
+  importingFor(avatarId: string): boolean {
+    return this.#clips.importingFor(avatarId);
+  }
+
+  /** A queued or running render holds a copy of one of this avatar's clips: its delete waits. */
+  holdsCopy(avatarId: string): boolean {
+    return this.#media.copiesOfAvatar(avatarId).some((copy) => this.#host.mediaHeld(copy.mediaId));
   }
 
   // ---------- what uses a clip (Q-F = 1) ----------
