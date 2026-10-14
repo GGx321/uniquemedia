@@ -39,6 +39,12 @@ async function started(clips: Parameters<typeof startMockOpenRouter>[0]["clips"]
   return mock;
 }
 
+/** A clock the test moves by hand: the mock's job timers read it, so no assertion depends on how long a real request took on a busy runner. */
+function manualClock(start = 1_000_000) {
+  let at = start;
+  return { now: () => at, advance: (ms: number): void => void (at += ms) };
+}
+
 const get = (m: MockOpenRouter, path: string): Promise<Response> => nativeFetch(`${m.url}${path}`);
 const post = (m: MockOpenRouter, body: unknown): Promise<Response> => nativeFetch(`${m.url}/videos`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 const request = (over: Record<string, unknown> = {}) => ({ model: KLING, prompt: "she blinks", duration: 5, resolution: "720p", aspect_ratio: "9:16", frame_images: [], ...over });
@@ -108,21 +114,25 @@ describe("a poll", () => {
   });
 
   test("carries no usage when the scenario says so: the engine then reads the bill from /generation, which has it once the record appears", async () => {
-    const m = await started({ usageOnPoll: false, generationAfterMs: 40 });
+    const clock = manualClock();
+    const m = await started({ usageOnPoll: false, generationAfterMs: 40, clock: clock.now });
     const id = await submit(m);
     const poll = (await (await get(m, `/videos/${id}`)).json()) as Record<string, unknown>;
     expect(poll).toMatchObject({ status: "completed" });
     expect(poll).not.toHaveProperty("usage");
     expect(m.totalUsageUsd()).toBeCloseTo(0.42, 9);
-    await Bun.sleep(80);
+    clock.advance(80);
     expect(await (await get(m, `/generation?id=${id}`)).json()).toMatchObject({ data: { total_cost: 0.42 } });
   });
 
   test("of a job that is not finished yet is in progress, until `completeAfterMs` has passed", async () => {
-    const m = await started({ completeAfterMs: 80, generationAfterMs: 60 });
+    const clock = manualClock();
+    const m = await started({ completeAfterMs: 80, generationAfterMs: 60, clock: clock.now });
     const id = await submit(m);
     expect(((await (await get(m, `/videos/${id}`)).json()) as { status: string }).status).toBe("in_progress");
-    await Bun.sleep(120);
+    clock.advance(79);
+    expect(((await (await get(m, `/videos/${id}`)).json()) as { status: string }).status).toBe("in_progress");
+    clock.advance(1);
     expect(((await (await get(m, `/videos/${id}`)).json()) as { status: string }).status).toBe("completed");
   });
 
@@ -161,13 +171,14 @@ describe("/generation", () => {
   });
 
   test("a job that completed has no record at first, and one after `generationAfterMs` (a video's record appears a while after it completes)", async () => {
-    const m = await started({ generationAfterMs: 80 });
+    const clock = manualClock();
+    const m = await started({ generationAfterMs: 80, clock: clock.now });
     const id = await submit(m);
     await get(m, `/videos/${id}`);
     const early = await get(m, `/generation?id=${id}`);
     expect(early.status).toBe(404);
     expect(await early.json()).toEqual({ error: { code: 404, message: `Generation ${id} not found` } });
-    await Bun.sleep(120);
+    clock.advance(80);
     const late = await get(m, `/generation?id=${id}`);
     expect(late.status).toBe(200);
     expect(await late.json()).toMatchObject({ data: { id, total_cost: 0.42, finish_reason: "stop" } });

@@ -470,7 +470,13 @@ export interface MockOpenRouterOptions {
    * 15 s, probe P-V). The poll carries `usage.cost` unless `usageOnPoll` is false, which makes the engine read `/generation` for the bill. The file is one real 720 x 1280 H.264 clip of 5 s made once
    * by the bundled ffmpeg, whatever length was asked: the smoke asks for 5 s. Without this option every video route is an unexpected request.
    */
-  clips?: boolean | { completeAfterMs?: number; generationAfterMs?: number; usageOnPoll?: boolean };
+  clips?: boolean | {
+    completeAfterMs?: number;
+    generationAfterMs?: number;
+    usageOnPoll?: boolean;
+    /** The clock the jobs' timers read (default `Date.now`): a test moves it by hand, so a pause on a busy runner cannot flip a state it asserts. */
+    clock?: () => number;
+  };
 }
 
 /** A `POST /videos` the mock answered: the job it made and what the request asked for. */
@@ -658,6 +664,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
   const clipOptions = opts.clips === undefined || opts.clips === false ? null : opts.clips === true ? {} : opts.clips;
   const completeAfterMs = clipOptions?.completeAfterMs ?? 0;
   const generationAfterMs = clipOptions?.generationAfterMs ?? CLIP_RECORD_DELAY_MS;
+  const clipNow = clipOptions?.clock ?? Date.now;
   const usageOnPoll = clipOptions?.usageOnPoll ?? true;
   const clipFile = clipOptions === null ? null : clipMp4();
   const videoJobs = new Map<string, MockVideoJob>();
@@ -860,7 +867,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
       const seconds = typeof sent.json === "object" && sent.json !== null && typeof Reflect.get(sent.json, "duration") === "number" ? Number(Reflect.get(sent.json, "duration")) : null;
       videoRequests.push({ id, model: entry.model, seconds, resolution: entry.resolution });
       const refused = takeArmed(videoRefusals, entry.model);
-      videoJobs.set(id, { id, model: entry.model, seconds: seconds ?? 5, createdAt: Date.now(), refused, completedAt: null });
+      videoJobs.set(id, { id, model: entry.model, seconds: seconds ?? 5, createdAt: clipNow(), refused, completedAt: null });
       return answered("submit", id, json({ id, polling_url: `${mockBase()}/videos/${id}`, status: "pending" }, 202));
     }
     const content = /^\/api\/v1\/videos\/([^/]+)\/content$/.exec(path);
@@ -878,11 +885,11 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
       const id = decodeURIComponent(poll[1] ?? "");
       const job = videoJobs.get(id);
       if (job === undefined) return answered("poll", id, json({ error: { code: 404, message: `Video ${id} not found` } }, 404));
-      if (job.completedAt === null && Date.now() - job.createdAt < completeAfterMs) return answered("poll", id, json({ id, generation_id: id, status: "in_progress" }));
+      if (job.completedAt === null && clipNow() - job.createdAt < completeAfterMs) return answered("poll", id, json({ id, generation_id: id, status: "in_progress" }));
       if (job.refused) return answered("poll", id, json({ id, generation_id: id, status: "failed", error: KLING_RISK_CONTROL }));
       if (job.completedAt === null) {
         // The bill is booked once, when the job completes (a refused job's charge was refunded within seconds in probe P0: net nothing).
-        job.completedAt = Date.now();
+        job.completedAt = clipNow();
         totalUsageUsd += videoBillUsd(job);
       }
       return answered("poll", id, json({ id, generation_id: id, status: "completed", ...(usageOnPoll ? { usage: { cost: videoBillUsd(job), is_byok: false } } : {}) }));
@@ -891,7 +898,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
       record(req, path, NO_BODY);
       const id = new URL(req.url).searchParams.get("id") ?? "";
       const job = videoJobs.get(id);
-      if (job !== undefined && !job.refused && job.completedAt !== null && Date.now() - job.completedAt >= generationAfterMs) {
+      if (job !== undefined && !job.refused && job.completedAt !== null && clipNow() - job.completedAt >= generationAfterMs) {
         return answered("generation", id, json({ data: { id, total_cost: videoBillUsd(job), finish_reason: "stop" } }));
       }
       // The API's own 404, in its exact words (engine/openrouter/generation.ts): a refused job never got a record, and a completed one has none yet.
