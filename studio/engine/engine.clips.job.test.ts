@@ -48,6 +48,18 @@ describe("the facts a clip job carries", () => {
     }
   });
 
+  test("the open reserve is told while the ledger holds one open, and not after it settled", async () => {
+    const { avatarId, photoId } = await seedClipAvatar(libraryDir());
+    const engine = await startClipEngine(dir());
+    const jobId = jobIdOf(await create(engine, { avatarId, photoId }));
+    await jobEnd(engine, jobId);
+
+    const byPhase = (phase: string) => progressOf(engine.events(), jobId).filter((p) => p.phase === phase);
+    expect(byPhase("preparing")[0]).not.toHaveProperty("openReserveMicros");
+    for (const phase of ["submitting", "rendering"]) expect(byPhase(phase)[0]).toMatchObject({ openReserveMicros: 504_000 });
+    for (const phase of ["downloading", "checking", "saving"]) expect(byPhase(phase)[0]).not.toHaveProperty("openReserveMicros");
+  });
+
   test("the motion's English prompt text never leaves the engine", async () => {
     const { avatarId, photoId } = await seedClipAvatar(libraryDir());
     const engine = await startClipEngine(dir());

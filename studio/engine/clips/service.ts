@@ -43,6 +43,7 @@ import { createClipHolds, type ClipHolds, type HoldTimers } from "./holds";
 import { runClipJob, type ClipJobDeps, type ClipJobOutcome } from "./job";
 import { parseClipAttemptId } from "./journal";
 import { motionChoicesOf } from "./motion";
+import { openClipReserveMicros } from "./openReserve";
 import { ClipRecords, type ClipRecordsDeps } from "./records";
 import { clipFaceOf } from "./ready";
 import { holdsFromLedger, recoverClips, type ClipRecoveryHost } from "./recover";
@@ -648,7 +649,7 @@ export class ClipService {
         faceGate: gate === null || gate.isBroken() ? null : gate,
         masterEmbedding: (embedSignal) => this.#masterEmbedding(job.library, job.avatarId, gate, embedSignal),
         onPhase: (update) => {
-          const progress = deps.jobs.clipPhase(job.jobId, update);
+          const progress = deps.jobs.clipPhase(job.jobId, { ...update, openReserveMicros: openClipReserveMicros(job.budget.ledger, job.clipId) });
           if (progress !== null) deps.emit({ v: PROTOCOL_VERSION, id: deps.newId(), kind: "event", type: "job.progress", payload: progress });
         },
         onMoneyClosed: closeMoney,
