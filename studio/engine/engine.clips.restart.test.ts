@@ -86,6 +86,34 @@ describe("a quit while a clip renders, then a new engine on the same folders", (
     expect(progress[0]).toMatchObject({ kind: "clip", clipId, phase: "recovering" });
   });
 
+  test("the recovery job carries the facts of the journal's `requested` line, in every event", async () => {
+    const { avatarId, photoId, clipId } = await quitMidClip();
+    const lines = await journalOf(clipsDir(libraryDir(), avatarId), clipId).read();
+    const requested = lines.find((line) => line.type === "requested");
+    if (requested === undefined || requested.type !== "requested") throw new Error("the journal has no requested line");
+
+    const second = await startClipEngine(dir(), { timings: TIMINGS });
+    await clipJobDone(second);
+
+    const progress = second.events().flatMap((e) => (e.type === "job.progress" && e.payload.kind === "clip" ? [e.payload] : []));
+    expect(progress.length).toBeGreaterThan(0);
+    for (const event of progress) {
+      expect(event.photoId).toBe(photoId);
+      expect(event.request).toEqual(requested.request);
+      expect(event.motion).toEqual({ source: requested.motion.source, label: requested.motion.label });
+      expect(event.acceptedWorstMicros).toBe(requested.acceptedWorstMicros);
+    }
+  });
+
+  test("the snapshot lists a recovering job with those facts for a window that opens after the restart", async () => {
+    const { avatarId, photoId, clipId } = await quitMidClip();
+    const second = await startClipEngine(dir(), { net: clipNetwork({ kling: { held: true } }), timings: TIMINGS });
+    await until(() => second.events().some((e) => e.type === "job.progress" && e.payload.kind === "clip" && e.payload.clipId === clipId), "the recovery job");
+    const snapshot = await second.engine.handle(command("engine.snapshot"));
+    if (!snapshot.ok || snapshot.type !== "engine.snapshot") throw new Error("no snapshot");
+    expect(snapshot.result.jobs).toEqual([expect.objectContaining({ kind: "clip", avatarId, clipId, phase: "recovering", photoId, acceptedWorstMicros: 850_000 })]);
+  });
+
   test("refuses paid commands with RECONCILE_REQUIRED until the owner reconciles", async () => {
     const { avatarId, photoId } = await quitMidClip();
     const second = await startClipEngine(dir(), { timings: TIMINGS });

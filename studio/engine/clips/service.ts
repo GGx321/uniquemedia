@@ -560,7 +560,11 @@ export class ClipService {
     }
     const jobId = deps.newId();
     const clipId = jobId;
-    const cancel = deps.jobs.startClip(jobId, { avatarId, clipId });
+    const cancel = deps.jobs.startClip(jobId, {
+      avatarId,
+      clipId,
+      facts: { photoId: photo.id, request, motion: { source: motion.source, label: motion.label }, acceptedWorstMicros: payload.acceptedWorstMicros },
+    });
     const capKey = scopeKey({ avatarJobId: clipId });
     // §5.9: the clip's scope cap; every reserve of the clip lives inside it, and it goes when the money closes.
     deps.setCap(capKey, Math.min(payload.acceptedWorstMicros, estimate.worstMicros));

@@ -1,4 +1,4 @@
-import { CLIP_JOB_STEPS, type ClipAttemptModel, type ClipPhase } from "../shared/engine/clips";
+import { CLIP_JOB_STEPS, type ClipAttemptModel, type ClipJobMotion, type ClipPhase, type ClipRequest } from "../shared/engine/clips";
 import type { EngineError, FailedCandidateSlot, FailedPortraitSlot, ImportPrepare, ImportResult, JobProgress, JobState, MediaFileName, MediaKind, RenderResult } from "../shared/engine";
 import type { RunJobEnd } from "./runs/runJob";
 
@@ -55,6 +55,28 @@ export interface ClipPhaseUpdate {
   readonly proveUntil?: string;
   /** The steps reached (video, download, check, save); never goes back, never past the total. */
   readonly done?: number;
+}
+
+/**
+ * The facts a clip create job carries from its start (S5.V8b), so a window that first sees it draws its tile whole: from the input of a fresh job, from the journal's `requested` line of a
+ * recovered one. The motion is its source and label; the English prompt text stays in the engine.
+ */
+export interface ClipJobFacts {
+  readonly photoId: string;
+  readonly request: ClipRequest;
+  readonly motion: ClipJobMotion;
+  readonly acceptedWorstMicros: number;
+}
+
+/** The facts of a clip job's state, to be copied into the next state and the next event; empty for a job that has none (an export, a retried download). */
+function clipFactsOf(state: { photoId?: string; request?: ClipRequest; motion?: ClipJobMotion; acceptedWorstMicros?: number }): Partial<ClipJobFacts> {
+  const { photoId, request, motion, acceptedWorstMicros } = state;
+  return {
+    ...(photoId === undefined ? {} : { photoId }),
+    ...(request === undefined ? {} : { request }),
+    ...(motion === undefined ? {} : { motion }),
+    ...(acceptedWorstMicros === undefined ? {} : { acceptedWorstMicros }),
+  };
 }
 
 /** An import's identity: what the bytes are and the file's display name (its base name, never a path). */
@@ -116,8 +138,9 @@ export class JobRegistry {
    * `recovering`). Its signal fires on `cancel`; the clip service lets a cancel through only before the POST. An export job (S5.V4c) starts in `exporting` and counts the frames it
    * encodes (`total`).
    */
-  startClip(jobId: string, ref: { avatarId: string; clipId: string }, phase: ClipPhase = "preparing", total: number = CLIP_JOB_STEPS): AbortSignal {
-    return this.#start({ kind: "clip", jobId, avatarId: ref.avatarId, clipId: ref.clipId, phase, status: "running", done: 0, total });
+  startClip(jobId: string, ref: { avatarId: string; clipId: string; facts?: ClipJobFacts }, phase: ClipPhase = "preparing", total: number = CLIP_JOB_STEPS): AbortSignal {
+    const facts = ref.facts === undefined ? {} : { photoId: ref.facts.photoId, request: ref.facts.request, motion: ref.facts.motion, acceptedWorstMicros: ref.facts.acceptedWorstMicros };
+    return this.#start({ kind: "clip", jobId, avatarId: ref.avatarId, clipId: ref.clipId, phase, status: "running", done: 0, total, ...facts });
   }
 
   /**
@@ -132,6 +155,7 @@ export class JobRegistry {
     const done = Math.min(total, Math.max(entry.state.done, counted));
     const fields = {
       phase: update.phase,
+      ...clipFactsOf(entry.state),
       ...(update.model === undefined ? {} : { model: update.model }),
       ...(update.submittedAt === undefined ? {} : { submittedAt: update.submittedAt }),
       ...(update.proveUntil === undefined || update.phase !== "proving" ? {} : { proveUntil: update.proveUntil }),
@@ -151,6 +175,7 @@ export class JobRegistry {
       avatarId,
       clipId,
       phase,
+      ...clipFactsOf(entry.state),
       ...(model === undefined ? {} : { model }),
       ...(submittedAt === undefined ? {} : { submittedAt }),
       ...(proveUntil === undefined ? {} : { proveUntil }),
@@ -358,6 +383,7 @@ export class JobRegistry {
           done,
           total,
           phase,
+          ...clipFactsOf(entry.state),
           ...(model === undefined ? {} : { model }),
           ...(submittedAt === undefined ? {} : { submittedAt }),
           ...(proveUntil === undefined ? {} : { proveUntil }),
