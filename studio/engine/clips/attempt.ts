@@ -45,7 +45,7 @@ import { PROOF_READ_TRIES, type ClipTimings } from "./timings";
 //   11 poll-time non-content failure              → the same proof as 7-10                             → provider-error, never Grok, never the offer
 //   12 no terminal status 20 min after the submit → abandon, phase `late`                              → a late completed: download, NO ledger line; else failed `late`
 // «The proof» is I5.47's: `/generation` is read ≥ 15 s and again ≥ 2 min after the terminal poll (probe P-V: a 404 RIGHT AFTER `completed` is still a billed job, so one early 404 proves nothing), and a
-// net-usage check compares a `/credits` baseline read BEFORE the POST with a read made together with the second `/generation` read; it COUNTS only if the ledger holds no line of anything else between the two AND nothing but this attempt is open or held at either read (VR item 1).
+// net-usage check compares a `/credits` baseline read BEFORE the POST with a read made together with the second `/generation` read; it COUNTS only if the ledger holds no line of anything else between the two AND no foreign money can still move at either read: no other open reserve, no live hold of a settle that is not exact (VR item 1).
 // Kling's reserve stays open at worst for the whole window, and Grok is reserved only after Kling settled 0, so a late bill can never push the clip over its accepted worst.
 
 // ---------- the contract of the run ----------
@@ -580,14 +580,21 @@ class Attempt {
   }
 
   /**
-   * Nothing but this attempt is open: the ledger's open reserves and the hold registry (live entries only) name no other attempt. A reserve or a hold of another clip or job may bill or refund inside the
-   * window, and a refund would cancel this attempt's own charge in the account-wide counter.
+   * No foreign money can still MOVE on `/credits` during this attempt's window (VR item 1). A foreign attempt blocks the check when it has an open reserve, or a live hold whose close is not exact (a settle
+   * at worst, an estimate: an abandoned uncertain submit, an unreadable cost). A live hold of an attempt settled EXACTLY (a cost read from `usage` or `/generation`, or 0 proven free) does not: its bill is
+   * known, and its `terminal + 2 min` hold exists only to keep the reconcile away. A refund of a foreign charge would cancel this attempt's own charge in the account-wide counter.
    */
   private moneyIsAlone(): boolean {
     const { deps, attemptId } = this;
-    if (deps.budget.ledger.openReserves().some((reserve) => reserve.attemptId !== attemptId)) return false;
+    const ledger = deps.budget.ledger;
+    if (ledger.openReserves().some((reserve) => reserve.attemptId !== attemptId)) return false;
     const nowMs = deps.now();
-    for (const [heldId, untilMs] of deps.holds.entries()) if (heldId !== attemptId && untilMs > nowMs) return false;
+    for (const [heldId, untilMs] of deps.holds.entries()) {
+      if (heldId === attemptId || untilMs <= nowMs) continue;
+      const close = ledger.closeOf(heldId);
+      // No close line: the hold names money that was never settled. A release means nothing was sent. A settle is exact unless it is an estimate.
+      if (close === undefined || (close.type === "settle" && close.estimated)) return false;
+    }
     return true;
   }
 

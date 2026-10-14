@@ -740,11 +740,18 @@ export class MockClips {
     host.emitMoney();
   }
 
-  /** Another attempt's reserve is open, or another attempt's hold is live (engine/clips/attempt.ts `moneyIsAlone`, negated). */
+  /**
+   * Foreign money can still move (engine/clips/attempt.ts `moneyIsAlone`, negated): another attempt's reserve is open, or its hold is live and its close is not exact (no close, or a settle at worst).
+   * A live hold of an attempt settled exactly (a known cost, or 0 proven free) does not count.
+   */
   #otherMoneyOpen(attemptId: string): boolean {
     if (this.#lines.some((l) => l.state === "open" && l.attemptId !== attemptId)) return true;
     const now = this.#host.clockMs();
-    for (const [heldId, hold] of this.#holds) if (heldId !== attemptId && hold.until > now) return true;
+    for (const [heldId, hold] of this.#holds) {
+      if (heldId === attemptId || hold.until <= now) continue;
+      const line = this.#lines.find((l) => l.attemptId === heldId);
+      if (line === undefined || line.state === "open" || line.estimated) return true;
+    }
     return false;
   }
 

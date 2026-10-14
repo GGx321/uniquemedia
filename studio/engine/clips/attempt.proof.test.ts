@@ -226,6 +226,43 @@ describe("the net-usage check counts only while no other money is open (VR item 
     expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", cost: "worst", unknownWhy: "net-uncounted" });
   });
 
+  /** A previous attempt of another job, settled in the ledger (exactly, or as an estimate) and still held for the reconcile. */
+  const settledAndHeld = async (attemptId: string, bill: { costMicros: number; estimated: boolean }, heldUntil: number): Promise<void> => {
+    const jobId = attemptId.split(":")[0] ?? attemptId;
+    const reserved = await rig.budget.tryReserve({ attemptId, jobId, scope: { runId: jobId }, model: "x-ai/grok-imagine-image", worstMicros: 90_000 });
+    if (!reserved.ok) throw new Error(`the reserve was refused: ${reserved.reason}`);
+    await rig.budget.settle(reserved.handle, bill);
+    rig.holds.hold(attemptId, heldUntil);
+  };
+
+  test("a previous attempt settled EXACTLY whose `terminal + 2 min` hold is still live does not spoil the check: proven free, Grok runs", async () => {
+    await make({ mode: "auto", kling: refused, grok: grokOk });
+    await settledAndHeld("run-0007:img#1", { costMicros: 90_000, estimated: false }, T0 + 2 * MINUTE);
+    expect(completed(await rig.run()).model).toBe("grok");
+    expect(rig.settles(KLING)).toMatchObject([{ costMicros: 0, estimated: false }]);
+  });
+
+  test("a previous refusal proven free (settled 0) with its hold live does not spoil the check", async () => {
+    await make({ mode: "offer", kling: refused });
+    await settledAndHeld("run-0007:img#1", { costMicros: 0, estimated: false }, T0 + 2 * MINUTE);
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-free", cost: "free", grokOffer: true });
+  });
+
+  test("a previous attempt settled as an ESTIMATE (an unreadable cost) with its hold live leaves the check uncounted", async () => {
+    await make({ mode: "auto", kling: refused, grok: grokOk });
+    await settledAndHeld("run-0007:img#1", { costMicros: 90_000, estimated: true }, T0 + 2 * MINUTE);
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", cost: "worst", unknownWhy: "net-uncounted" });
+    expect(rig.posts("grok")).toHaveLength(0);
+  });
+
+  test("an abandoned uncertain submit (open at worst) refunding inside the window still leaves the check uncounted", async () => {
+    await make({ mode: "auto", kling: refused, grok: grokOk, usage: chargeAndRefund });
+    await openForeignReserve();
+    rig.holds.hold("run-0007:img#1", T0 + 20 * MINUTE);
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", unknownWhy: "net-uncounted" });
+    expect(rig.posts("grok")).toHaveLength(0);
+  });
+
   test("a foreign reserve that was closed before the baseline and holds nothing does not spoil the check", async () => {
     await make({ mode: "offer", kling: refused });
     await rig.photoRun("run-0007", 90_000);

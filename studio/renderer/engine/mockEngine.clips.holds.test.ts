@@ -219,6 +219,25 @@ describe("the net-usage check with other money open (VR item 1)", () => {
     expect(second).toMatchObject({ status: "failed", failure: { reason: "refused-unknown" }, model: "kling-std", cost: { micros: 504_000, kind: "estimated" } });
   });
 
+  test("a previous clip that completed with an exact cost, its `terminal + 2 min` hold still live, does not spoil the proof: Grok runs", async () => {
+    const m = makeClipMock();
+    await runClip(m);
+    expect(m.engine.peekClips().holds.size).toBe(1);
+    m.engine.scriptNextClip("refused-free");
+    await runClip(m);
+    expect(m.engine.peekClips().posts).toEqual(["kling", "kling", "grok"]);
+  });
+
+  test("a previous clip whose cost was unreadable (settled at worst, an estimate) with its hold live leaves the proof uncounted: worst, no Grok", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextClip("ok-uncosted");
+    await runClip(m);
+    expect(m.engine.peekClips().holds.size).toBe(1);
+    m.engine.scriptNextClip("refused-free");
+    await runClip(m);
+    expect(m.engine.peekClips().posts).toEqual(["kling", "kling"]);
+  });
+
   test("the same refusal after the reconcile closed the other reserve is proven free again, and Grok runs", async () => {
     const m = makeClipMock();
     await uncertainClip(m);
