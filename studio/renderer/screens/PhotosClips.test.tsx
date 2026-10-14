@@ -1,7 +1,7 @@
 import { describe, expect, setSystemTime, test } from "bun:test";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { StrictMode } from "react";
-import { CLIP_EXPORT_FAILED_RU, CLIP_FILE_DAMAGED_RU, CLIP_REASONS_RU, ERROR_MESSAGES_RU, PRICE_SCOPES_RU, type AvatarSummary, type PhotoSummary } from "../../shared/engine";
+import { MAX_LISTED_PHOTOS, CLIP_EXPORT_FAILED_RU, CLIP_FILE_DAMAGED_RU, CLIP_REASONS_RU, ERROR_MESSAGES_RU, PRICE_SCOPES_RU, type AvatarSummary, type PhotoSummary } from "../../shared/engine";
 import { CLIP_RESTART_BANNER } from "../../shared/engine/clipRestartTexts";
 import { App } from "../App";
 import { MockEngine, mockEngineClient, type MockEngineOptions } from "../engine/mockEngine";
@@ -724,6 +724,24 @@ describe("43d: the clip viewer keeps nothing of the clip it left", () => {
     await flush();
     await flush();
   }
+
+  // There is no command for one photo by id, and the photo viewer closes on a photo the pages read do not hold: so a source photo beyond the pages read cannot be opened from here, and
+  // the line says where it is instead of offering a button that would do nothing.
+  test("a source photo beyond the pages read is named as being in the gallery, with no button that would open nothing", async () => {
+    const many = Array.from({ length: MAX_LISTED_PHOTOS + 1 }, (_, i) => scenePhoto(i + 1, {}, NINI));
+    const h = setup({ avatars: [summary(many)], photos: many });
+    h.engine.seedClips(NINI.avatarId, 1);
+    fireEvent.click(await screen.findByRole("button", { name: "Nini" }));
+    await screen.findByRole("heading", { level: 1, name: "Nini" });
+    await flush();
+    await showClips();
+    openTile(0);
+    await flush();
+    await flush();
+    const source = within(clipViewer()).getByText("Из фото", { selector: "dt" }).nextElementSibling;
+    expect(source?.textContent).toBe("исходное фото — в галерее");
+    expect(source?.querySelector("button") === null).toBe(true);
+  });
 
   test("a refusal shown on one clip is gone under the next one", async () => {
     const h = await openSeeded();
