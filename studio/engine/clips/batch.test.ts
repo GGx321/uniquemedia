@@ -126,7 +126,7 @@ function ports(w: World): BatchPorts {
     budget: {
       ledger: {
         openReserves: () => w.openReserves.map((attemptId) => ({ attemptId })),
-        closeOf: (id) => w.closes.get(id),
+        closeOf: (id: string) => w.closes.get(id),
       } as unknown as BatchPorts["budget"]["ledger"],
       releaseHold: (id) => {
         w.holds.delete(id);
@@ -528,17 +528,22 @@ describe("ClipBatch: a 429 at the submit (L11)", () => {
   test("the requeued job exists when the first member's money closes, before the first member's own job ends", async () => {
     const w = newWorld();
     let seen: unknown[] = [];
+    let announced: unknown[] = [];
     w.script = (run, world) => {
       world.running--;
       world.holds.delete(clipAttemptId(run.member.clipId, 1));
       world.caps.delete(run.member.capKey);
       run.onMoneyClosed(run.member.index === 1 && !run.member.retried ? rateLimited : COMPLETED);
-      // The first member's job has not ended yet: its record is still being written. A window that lists clips now must already find a queued job for its place.
-      if (run.member.index === 1 && !run.member.retried) seen = world.jobs.states().filter((s) => s.kind === "clip" && s.batchIndex === 1 && s.status === "running" && s.jobId !== run.member.jobId);
+      // The first member's job has not ended yet: its record is still being written. A window that lists clips now must already find a queued job for its place, and have been told of it.
+      if (run.member.index === 1 && !run.member.retried) {
+        seen = world.jobs.states().filter((s) => s.kind === "clip" && s.batchIndex === 1 && s.status === "running" && s.jobId !== run.member.jobId);
+        announced = world.events.filter((e) => e.type === "job.progress" && e.payload.kind === "clip" && e.payload.batchIndex === 1 && e.payload.jobId !== run.member.jobId);
+      }
       world.jobs.finishClip(run.member.jobId, { status: "done" });
     };
     await build(w, 2).run();
 
+    expect(announced).toHaveLength(1);
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({ phase: "queued", waitReason: "rate-limit", batchIndex: 1, batchSize: 2 });
     expect(JobState.safeParse(seen[0]).success).toBe(true);

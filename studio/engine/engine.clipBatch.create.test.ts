@@ -131,6 +131,27 @@ describe("clips.batchOptions", () => {
     for (const id of jobIds) await jobEnd(engine, id);
   });
 
+  test("reads the month ONCE, after its last await, and derives every figure from that read (never two reads a hold could slip between)", async () => {
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(4));
+    const engine = await started({ monthlyBudgetMicros: 3_000_000 });
+    const budget = engine.engine.budget;
+    if (budget === null) throw new Error("no budget");
+    const read = budget.status.bind(budget);
+    let reads = 0;
+    budget.status = () => {
+      reads++;
+      return read();
+    };
+
+    const answer = optionsOf(await batchOptions(engine, avatarId, photoIds));
+
+    expect(reads).toBe(1);
+    expect(answer.monthRoomMicros).toBe(3_000_000);
+    expect(ClipBatchOptions.safeParse(answer).success).toBe(true);
+    // Each photo's own sheet is derived from the same figure as the batch's.
+    expect(answer.items.every((item) => item.suitable && item.monthFits.std5 === "with-fallback")).toBe(true);
+  });
+
   test("is free: no ledger line, no hold, no job", async () => {
     const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(2));
     const engine = await started();
