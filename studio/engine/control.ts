@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AbsolutePath, ApiKey, Count, EngineError, EngineNotice, Id, MediaFileName, MediaPickKind, MediaUnsupportedReason, MusicKey, PickedFileIdentity, Settings, type EngineCommandMessage } from "../shared/engine";
+import { AbsolutePath, ApiKey, Count, EngineError, EngineNotice, Id, MAX_BATCH_CLIPS, MediaFileName, MediaPickKind, MediaUnsupportedReason, MusicKey, PickedFileIdentity, Settings, type EngineCommandMessage } from "../shared/engine";
 import { DESCRIPTOR_MAX_ATTEMPTS } from "./avatars/descriptor";
 import { POOL_MAX_ATTEMPTS } from "./scenes/poolCall";
 import { DESCRIPTOR_CHECK_MAX_ATTEMPT_MS, DESCRIPTOR_CHECK_MAX_ATTEMPTS, IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
@@ -297,6 +297,15 @@ export function isControlMessage(message: unknown): boolean {
  */
 export const CLIP_PLAN_READ_TIMEOUT_MS = 5_000;
 
+/** 5b.2 (S5.WB1, L4): a batch reads its photos' run plans this many at a time (the batch service reads this very constant), so its deadline counts rounds of reads and not photos. */
+export const CLIP_PLAN_READ_PARALLEL = 4;
+
+/** The rounds of plan reads of a full batch. */
+const CLIP_BATCH_PLAN_ROUNDS = Math.ceil(MAX_BATCH_CLIPS / CLIP_PLAN_READ_PARALLEL);
+
+/** What `clips.createBatch` adds per item to its deadline (5b.2, S5.WB1). */
+const CLIP_BATCH_ITEM_MS = 1_000;
+
 /** Room for the engine's own work around its network waits: ledger fsyncs, the library write, a reserve queued behind a reconcile. */
 const COMMAND_SLACK_MS = 30_000;
 
@@ -330,6 +339,10 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   // never tracks. The portraits' formula without the reference load. The other clip commands only read or move the clip's own files and keep the default.
   "clips.options": PRICE_FETCH_TIMEOUT_MS + COMMAND_SLACK_MS,
   "clips.create": PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + CLIP_PLAN_READ_TIMEOUT_MS + COMMAND_SLACK_MS,
+  // Stage 5, 5b.2, S5.WB1 (plan s5b2 §5.2.1, L4): a batch reads its photos' plans CLIP_PLAN_READ_PARALLEL at a time, so the plan reads of a full batch take ⌈20 / 4⌉ rounds, not 20. `clips.createBatch` adds one second
+  // per item for the member jobs it starts and the month hold it takes in one call. `clips.cancelBatch` only cancels queued members (memory-only) and keeps the default.
+  "clips.batchOptions": PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + CLIP_BATCH_PLAN_ROUNDS * CLIP_PLAN_READ_TIMEOUT_MS + COMMAND_SLACK_MS,
+  "clips.createBatch": PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + CLIP_BATCH_PLAN_ROUNDS * CLIP_PLAN_READ_TIMEOUT_MS + COMMAND_SLACK_MS + MAX_BATCH_CLIPS * CLIP_BATCH_ITEM_MS,
   // Answers with the job id once its checks and a price load are done; the job runs on and reports by events.
   "avatars.generateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.createDraft": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,

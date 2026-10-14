@@ -57,6 +57,10 @@ export const SLEEP_CLASS: Record<CommandType, SleepClass> = {
   "clips.retryDownload": "free",
   "clips.export": "free",
   "clips.reveal": "free",
+  // 5b.2 (S5.WB1): only the batch's start spends, so only it is held while the Mac sleeps.
+  "clips.batchOptions": "free",
+  "clips.createBatch": "held",
+  "clips.cancelBatch": "free",
   "media.importClip": "free",
   "avatars.deletePreview": "free",
   "avatars.rewriteDescriptor": "held",

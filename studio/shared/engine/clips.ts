@@ -38,6 +38,15 @@ export const EXPORT_FPS: "interpolate" | "duplicate" | "native24" = "duplicate";
 /** `clips.list` answers at most this many clips, newest first. */
 export const MAX_LISTED_CLIPS = 500;
 
+/** 5b.2 (S5.WB1; plan s5b2 §5.2.1): a batch «Оживить выбранные» holds one to this many clips. */
+export const MAX_BATCH_CLIPS = 20;
+
+/**
+ * 5b.2 (S5.WB1; I5.61): how many Kling attempts a batch keeps between their reserve and their settle or abandon. 1 under B1 (Q-E = 1: one at a time). B2 (optional, only after probe P-N and the owner's OK) may raise it to
+ * 3 in one reviewed follow-up commit; the type already allows 1, 2 or 3 so that commit changes this line alone. Grok attempts run one at a time in every mode.
+ */
+export const MAX_CLIPS_IN_FLIGHT: 1 | 2 | 3 = 1;
+
 // ---------- the sheet's choices ----------
 
 /** std = Kling 3.0 std 720p; pro = Kling 3.0 pro 1080p. */
@@ -172,6 +181,39 @@ export function clipExpectedMicros(parts: ClipPriceParts): number {
   return clipBilledMicros(firstRates(parts), parts.seconds);
 }
 
+/**
+ * What a batch shares (5b.2, S5.WB1): the quality, length, fallback choice and price book are the batch's, the engine's mode is the engine's. A member differs only by its frame (`bold`): a batch never holds
+ * a Grok-first clip (`model: "grok"` never enters a batch), so the model is Kling for every member.
+ */
+export type ClipBatchParts = Omit<ClipPriceParts, "model" | "bold">;
+/** One member as the formula sees it: only whether its frame is one of «Смелая» (Kling alone, I5.57). */
+export interface ClipBatchMember {
+  readonly bold: boolean;
+}
+
+function checkedMembers(members: readonly ClipBatchMember[]): void {
+  if (members.length < 1 || members.length > MAX_BATCH_CLIPS) throw new RangeError(`a batch holds 1 to ${MAX_BATCH_CLIPS} clips`);
+}
+
+/**
+ * The batch's worst case (I5.62): the sum of every member's `clipWorstMicros` under the batch's price book, Kling first. It is the figure the owner accepts for the whole batch (`acceptedWorstMicros`), the sum the
+ * engine checks (`PRICE_CHANGED`), and the sum of the member caps. Whole micro-dollars; a sum outside the safe integers, or a price that is not whole, is refused.
+ */
+export function clipBatchWorstMicros(members: readonly ClipBatchMember[], parts: ClipBatchParts): number {
+  checkedMembers(members);
+  let total = 0;
+  for (const member of members) total = checkedFigure(total + clipWorstMicros({ ...parts, model: "kling", bold: member.bold }));
+  return total;
+}
+
+/** What the batch is expected to bill: every member's Kling clip, completed. */
+export function clipBatchExpectedMicros(members: readonly ClipBatchMember[], parts: ClipBatchParts): number {
+  checkedMembers(members);
+  let total = 0;
+  for (const member of members) total = checkedFigure(total + clipExpectedMicros({ ...parts, model: "kling", bold: member.bold }));
+  return total;
+}
+
 // ---------- clips.options ----------
 
 /** The four Kling options of the sheet (quality x length), the keys of `noFallbackPrices` and `monthFits`. */
@@ -225,6 +267,51 @@ export const ClipOptions = z.discriminatedUnion("suitable", [
   z.strictObject({ suitable: z.literal(false), photoId: Id, reason: ClipUnsuitableReason }),
 ]);
 export type ClipOptions = z.infer<typeof ClipOptions>;
+
+// ---------- the batch commands (5b.2, S5.WB1) ----------
+
+/** One member of a batch as the sheet sends it: the photo and the motion id the owner picked for it (an id, never text: I5.51). The model never travels: a batch is Kling's. */
+export const ClipBatchItem = z.strictObject({ photoId: Id, motionId: ClipMotionId });
+export type ClipBatchItem = z.infer<typeof ClipBatchItem>;
+
+/** Whether the photos in a list are all different. */
+export function photoIdsUnique(photoIds: readonly string[]): boolean {
+  return new Set(photoIds).size === photoIds.length;
+}
+
+/** One option's three figures over the batch: expected (all Kling, completed), worst with the fallback the engine allows, worst without it. */
+const ClipBatchSum = z
+  .strictObject({ expected: Micros, worst: Micros, worstNoFallback: Micros })
+  .refine((s) => s.expected <= s.worstNoFallback && s.worstNoFallback <= s.worst, {
+    message: "expected <= worstNoFallback <= worst: a reserve is above what a clip bills, and a fallback only adds",
+  });
+
+/**
+ * What `clips.batchOptions` answers (free): each photo's own `ClipOptions` in the order asked, the four sums over the photos that can be made (`clipBatchWorstMicros` and `clipBatchExpectedMicros`, the one formula),
+ * the month's room and, per option, whether the month takes the whole batch with the fallback behind it, without it, or not at all. The engine's figure, the same one `clips.createBatch` checks.
+ */
+export const ClipBatchOptions = z
+  .strictObject({
+    items: z.array(ClipOptions).min(1).max(MAX_BATCH_CLIPS),
+    sums: z.strictObject({ std5: ClipBatchSum, pro5: ClipBatchSum, std10: ClipBatchSum, pro10: ClipBatchSum }),
+    monthRoomMicros: Micros,
+    monthFits: MonthFits,
+  })
+  .refine((o) => photoIdsUnique(o.items.map((item) => item.photoId)), { message: "a photo appears once", path: ["items"] });
+export type ClipBatchOptions = z.infer<typeof ClipBatchOptions>;
+
+/**
+ * Why a batch member did not run, told on its `job.cancelled` and in its `JobState` (plan s5b2 §5.2.1; texts: `clipCancelDetailRu`). Every one is free: nothing was reserved.
+ * - photo-gone: the photo was deleted or unreadable at the member's turn; the batch goes on.
+ * - price-changed: the price re-read at the turn put the member's worst above its share; it and the queue end.
+ * - price-unavailable: the price could not be read at the turn (r2.1 N7); it and the queue end.
+ * - ledger-stopped: a reserve was refused by the ledger (halted, a reconcile is needed, torn) or a settle came above its worst.
+ * - money-uncertain: a member ended `submit-uncertain`, `late` or `lost`; the queue is not spent blind.
+ * - cancelled: the owner cancelled (`clips.cancelBatch`, or `avatars.cancel` on one queued member).
+ */
+export const CLIP_CANCEL_DETAILS = ["photo-gone", "price-changed", "price-unavailable", "ledger-stopped", "money-uncertain", "cancelled"] as const;
+export const ClipCancelDetail = z.enum(CLIP_CANCEL_DETAILS);
+export type ClipCancelDetail = z.infer<typeof ClipCancelDetail>;
 
 // ---------- the record as the windows see it ----------
 
@@ -306,7 +393,9 @@ export const ClipUse = z
       })
       .optional(),
   })
-  .refine((use) => use.inVideo !== undefined || use.inDrafts !== undefined, { message: "use must say something; an unused clip has no `use`" });
+  .refine((use) => use.inVideo !== undefined || use.inDrafts !== undefined, { message: "use must say something; an unused clip has no `use`" })
+  // 5b.2, S5.WB1 (a WA1 review carry-over): the dialog names a draft only when exactly one holds the copy, so `first` beside a count above 1 is a contradiction.
+  .refine((use) => use.inDrafts?.first === undefined || use.inDrafts.count === 1, { message: "`first` names the one draft there is: it comes only with a count of 1", path: ["inDrafts", "first"] });
 export type ClipUse = z.infer<typeof ClipUse>;
 
 const clipSummaryCommon = {
@@ -327,6 +416,14 @@ const clipSummaryCommon = {
   /** The provider's own number, for information; the ledger's is `cost`. */
   providerCostMicros: Micros.optional(),
   exports: z.array(ClipExport).max(200),
+  /**
+   * 5b.2 (additive, S5.WB1; plan I5.63, L9): the batch this clip was made in, its 1-based place and the batch's size, all three or none (`clipBatchFieldsTogether`), so the «Клипы» tab's batch header survives
+   * `KEEP_FINISHED` and a restart. The window counts members by DISTINCT `batchIndex` (a 429 requeue gives two records for one photo) and says «не снимались N» as `batchSize` minus the members that have a record.
+   * Absent for a single clip.
+   */
+  batchId: Id.optional(),
+  batchIndex: z.number().int().min(1).max(MAX_BATCH_CLIPS).optional(),
+  batchSize: z.number().int().min(1).max(MAX_BATCH_CLIPS).optional(),
 };
 
 export const ClipSummary = z.discriminatedUnion("status", [
@@ -346,7 +443,8 @@ export const ClipSummary = z.discriminatedUnion("status", [
      * when `count` is 1). A clip a render holds is told by the delete's IN_FLIGHT `in-use`, not by `use`. Only a ready clip is ever used.
      */
     use: ClipUse.optional(),
-  }),
+  })
+  .refine((c) => clipBatchFieldsTogether(c), { message: "a clip tells its batch id, its place and the batch's size together, or none of them, with the place within the size", path: ["batchId"] }),
   z.strictObject({
     ...clipSummaryCommon,
     status: z.literal("failed"),
@@ -358,14 +456,18 @@ export const ClipSummary = z.discriminatedUnion("status", [
   .refine((c) => c.retryDownloadUntil === undefined || CLIP_RETRYABLE_FAILURES.includes(c.failure.reason), {
     message: "only a failed download can be retried",
     path: ["retryDownloadUntil"],
-  }),
+  })
+  .refine((c) => clipBatchFieldsTogether(c), { message: "a clip tells its batch id, its place and the batch's size together, or none of them, with the place within the size", path: ["batchId"] }),
 ]);
 export type ClipSummary = z.infer<typeof ClipSummary>;
 
 // ---------- the job ----------
 
-/** The phases of a clip job (§5.1). `late` comes after the lifetime, `recovering` after a restart, `exporting` is the export job's only phase. */
-export const CLIP_PHASES = ["preparing", "submitting", "rendering", "proving", "downloading", "checking", "saving", "late", "recovering", "exporting"] as const;
+/**
+ * The phases of a clip job (§5.1). `late` comes after the lifetime, `recovering` after a restart, `exporting` is the export job's only phase.
+ * `queued` (5b.2, S5.WB1; I5.61) is a batch member waiting for its turn: memory-only, no reserve, nothing in the journal. It is the first phase, before `preparing`.
+ */
+export const CLIP_PHASES = ["queued", "preparing", "submitting", "rendering", "proving", "downloading", "checking", "saving", "late", "recovering", "exporting"] as const;
 export const ClipPhase = z.enum(CLIP_PHASES);
 export type ClipPhase = z.infer<typeof ClipPhase>;
 
@@ -398,7 +500,29 @@ export const clipJobFields = {
    * Independent of the four facts above. A tile in `late` or `recovering` says it as «спишется при сверке»; the cap the sheet promised is `acceptedWorstMicros`.
    */
   openReserveMicros: Micros.optional(),
+  /**
+   * 5b.2 (additive, S5.WB1; plan s5b2 §5.2.1): the member of a batch. `batchId`, `batchIndex` (1-based, the pick order) and `batchSize` come all or none; a single clip and an export carry none.
+   * `waitReason` says what a `queued` or `proving` job waits for: its `turn`, the money to be `alone`, the 60 s pause after a 429 (`rate-limit`), or the strict `proof`. No other phase has one.
+   */
+  batchId: Id.optional(),
+  batchIndex: z.number().int().min(1).max(MAX_BATCH_CLIPS).optional(),
+  batchSize: z.number().int().min(1).max(MAX_BATCH_CLIPS).optional(),
+  waitReason: z.enum(["turn", "alone", "rate-limit", "proof"]).optional(),
 };
+
+/** The three batch fields of a clip job are all told or none of them, and the position is within the size. */
+export function clipBatchFieldsTogether(job: { batchId?: unknown; batchIndex?: number; batchSize?: number }): boolean {
+  const told = [job.batchId, job.batchIndex, job.batchSize].filter((field) => field !== undefined).length;
+  if (told === 0) return true;
+  return told === 3 && (job.batchIndex ?? 0) <= (job.batchSize ?? 0);
+}
+export const CLIP_BATCH_FIELDS_TOGETHER = { message: "a clip job tells its batch id, its place and the batch's size together, or none of them, with the place within the size" };
+
+/** A wait reason belongs to a `queued` or a `proving` job. */
+export function clipWaitReasonPlaced(job: { phase: ClipPhase; waitReason?: unknown }): boolean {
+  return job.waitReason === undefined || job.phase === "queued" || job.phase === "proving";
+}
+export const CLIP_WAIT_REASON_PLACED = { message: "a wait reason belongs to the queued and proving phases" };
 
 /** The four create facts of a clip job are all told or none of them. */
 export function clipFactsTogether(job: { photoId?: unknown; request?: unknown; motion?: unknown; acceptedWorstMicros?: unknown }): boolean {

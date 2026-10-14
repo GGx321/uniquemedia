@@ -1,4 +1,4 @@
-import type { ClipExportProfile } from "./clips";
+import type { ClipCancelDetail, ClipExportProfile } from "./clips";
 import type { CaptionIssue, CategoryReason, ClipReason, DescriptorReason, EngineError, ErrorCode, ExportUnavailableReason, LaunchReason, MusicUnavailableReason, PhotoUnavailableReason, PortraitReason, SceneReason } from "./errors";
 import { MAX_PICKED_FILES, type MediaKind, type MediaUnsupportedReason } from "./media";
 import { MIN_CLIP_MS, type MontageIssueCode } from "./montage";
@@ -298,7 +298,46 @@ export const CLIP_REASONS_RU = {
   // 5b.2 (S5.WA1). `in-use` is mockup 44b's text; `file-damaged` grows from 57c and the export's CLIP_FILE_DAMAGED_RU, and never says the Studio file is intact.
   "file-damaged": "Файл клипа в Studio повреждён или не читается — для монтажа его не подготовить.",
   "in-use": "Клип сейчас в рендере — удалите его, когда рендер закончится.",
+  // 5b.2 (S5.WB1), plan s5b2 §5.2.1: `batch-running` is mockup 37e's text (and the sheet's busy line); `clip-busy` is part C's guard while a clip or a batch holds the unit.
+  "batch-running": "Сейчас снимаются клипы пакета — дождитесь окончания или отмените оставшиеся.",
+  "clip-busy": "Пока снимается клип, предложения и перевод недоступны — дождитесь окончания.",
 } as const satisfies Record<ClipReason, string>;
+
+/** «клип / клипа / клипов» for a count: 1, 21, 31 ... take the singular, 2-4 (but not 12-14) the paucal, the rest the genitive plural. */
+function clipNounRu(count: number): string {
+  const tens = count % 100;
+  const units = count % 10;
+  if (units === 1 && tens !== 11) return "клип";
+  if (units >= 2 && units <= 4 && (tens < 12 || tens > 14)) return "клипа";
+  return "клипов";
+}
+
+/**
+ * What a batch says about members that did not run (mockups 60c-60f; plan s5b2 §5.2.1), for the `count` queued members a stop or a cancel left unmade. Every text tells the owner nothing was charged for them.
+ * 60c-60f and `price-unavailable` (r2.1 N7) are the plan's texts; the singular forms (1, 21, ...) are the same sentences with the number agreeing. `photo-gone` has no mockup: its text is DERIVED, not
+ * owner-approved, and it speaks of one member whatever the count. Refuses a count that is not a positive whole number.
+ */
+export function clipCancelDetailRu(detail: ClipCancelDetail, count: number): string {
+  if (!Number.isInteger(count) || count < 1) throw new RangeError("a cancelled-member text counts at least one member");
+  const one = count % 10 === 1 && count % 100 !== 11;
+  const noun = clipNounRu(count);
+  const rest = one ? "оставшийся" : "оставшиеся";
+  const notMade = one ? "не снимался" : "не снимались";
+  switch (detail) {
+    case "cancelled":
+      return `Отменено: ${count} ${noun} ${notMade} — бесплатно`;
+    case "ledger-stopped":
+      return `Пакет остановлен: нужна сверка расходов. ${one ? "Оставшийся" : "Оставшиеся"} ${count} ${noun} ${notMade} — бесплатно.`;
+    case "price-changed":
+      return `Цена у OpenRouter выросла — ${rest} ${count} ${noun} ${notMade}, бесплатно. Запустите ${one ? "его" : "их"} заново.`;
+    case "money-uncertain":
+      return `Клип задержался или не ясно, оплачен ли он — ${rest} ${count} ${notMade}, чтобы не тратить вслепую. Бесплатно.`;
+    case "price-unavailable":
+      return `Цены видео у OpenRouter сейчас не читаются — ${rest} ${count} ${noun} ${notMade}, бесплатно.`;
+    case "photo-gone":
+      return "Этого фото больше нет в галерее — клип не снимался, бесплатно.";
+  }
+}
 
 /**
  * The small line under a saved clip («Сохранить в папку» re-encodes, owner Q-C, 2026-10-13): the size, the frame rate the profile wrote and that the metadata is cleaned. It claims

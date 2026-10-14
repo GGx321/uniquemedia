@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AttemptId, CLIP_RETRYABLE_FAILURES, ClipAttemptModel, ClipExportLine, ClipFace, ClipFailReason, ClipModelUsed, ClipMotion, ClipRequest, Id, Micros, Sha256Hex } from "../../shared/engine";
+import { AttemptId, CLIP_RETRYABLE_FAILURES, ClipAttemptModel, ClipExportLine, ClipFace, ClipFailReason, ClipModelUsed, ClipMotion, ClipRequest, Id, MAX_BATCH_CLIPS, Micros, Sha256Hex, clipBatchFieldsTogether } from "../../shared/engine";
 import { CLIP_RECORD_SCHEMA_VERSION } from "../library/layout";
 
 // Stage 5, 5b.1, S5.V1 (plan s5b1 §5.3): what a clip writes to disk, as pure zod. Both are READ from disk, so both are strict: a file that does not parse is not a record.
@@ -73,6 +73,10 @@ export const ClipRecord = z
       attempts: z.array(RecordAttempt).max(2),
     }),
     recovered: z.boolean(),
+    /** 5b.2 (additive, optional; S5.WB1, L9): the batch this clip was made in. A record written by 5b.1 has none and parses unchanged, at the same schema version. */
+    batchId: Id.optional(),
+    batchIndex: z.number().int().min(1).max(MAX_BATCH_CLIPS).optional(),
+    batchSize: z.number().int().min(1).max(MAX_BATCH_CLIPS).optional(),
     /** Written once per export, never rewritten; the computed `fileState` is not stored. */
     exports: z.array(ClipExportLine).max(200),
     outcome: z.discriminatedUnion("status", [ReadyOutcome, FailedOutcome]),
@@ -81,6 +85,7 @@ export const ClipRecord = z
     message: "a clip's files are named after the clip",
     path: ["outcome"],
   })
+  .refine((r) => clipBatchFieldsTogether(r), { message: "a record tells its batch id, its place and the batch's size together, or none of them, with the place within the size", path: ["batchId"] })
   .refine((r) => r.outcome.status === "ready" || r.exports.length === 0, { message: "a clip that failed has nothing exported", path: ["exports"] });
 export type ClipRecord = z.infer<typeof ClipRecord>;
 

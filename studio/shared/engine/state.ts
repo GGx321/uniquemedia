@@ -2,7 +2,18 @@ import { z } from "zod";
 import { AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
 import { AvatarBody, BodyProposal } from "./body";
 import { CategoryName, CategoryRef, LegsShare, MAX_RUN_CATEGORIES, PhotoCategory, SceneCategory, SceneLevel, SceneRoute } from "./categories";
-import { CLIP_FACTS_TOGETHER, clipFactsTogether, clipJobFields, clipJobRef, ClipJobResult } from "./clips";
+import {
+  CLIP_BATCH_FIELDS_TOGETHER,
+  CLIP_FACTS_TOGETHER,
+  CLIP_WAIT_REASON_PLACED,
+  ClipCancelDetail,
+  clipBatchFieldsTogether,
+  clipFactsTogether,
+  clipJobFields,
+  clipJobRef,
+  ClipJobResult,
+  clipWaitReasonPlaced,
+} from "./clips";
 import { EngineError, ExportUnavailableReason, SceneReason } from "./errors";
 import { Estimate, PriceSource } from "./estimate";
 import { ImageQuality } from "./imageModels";
@@ -488,6 +499,12 @@ const renderJobRef = { kind: z.literal("render"), jobId: Id, videoId: Id, avatar
 // `origin` (5b.2, S5.WA1, additive): set only on the import of a clip's montage copy (`media.importClip`), so a window keeps it out of «Мои», draws 57a from the job list after a reload and takes the media id from `job.done`.
 const importJobRef = { kind: z.literal("import"), jobId: Id, mediaKind: MediaKind, name: MediaFileName, mediaId: Id.nullable(), origin: MediaOrigin.optional() };
 
+// S5.WB1 (a WA1 review carry-over): only a video can be the copy of a clip, the same rule `MediaSummary.origin` has. The check is shared by every shape that carries the import ref.
+const importOriginOnVideo = {
+  check: (j: { mediaKind: string; origin?: unknown }) => j.origin === undefined || j.mediaKind === "video",
+  params: { message: "only a video can be the copy of a clip", path: ["origin"] },
+};
+
 /**
  * Which part of an import `done / total` are counting (3f.6): `copy` is the copy of the picked file, in BYTES (what it was before the field
  * existed, so an absent stage is a copy and an older bundle's message stays valid); `prepare` is the importer's own work, in the importer's own
@@ -537,6 +554,9 @@ export const JobProgress = z
     message: "the end of the proof window belongs to the proving phase",
     path: ["proveUntil"],
   })
+  .refine((p) => p.kind !== "clip" || clipBatchFieldsTogether(p), { ...CLIP_BATCH_FIELDS_TOGETHER, path: ["batchId"] })
+  .refine((p) => p.kind !== "clip" || clipWaitReasonPlaced(p), { ...CLIP_WAIT_REASON_PLACED, path: ["waitReason"] })
+  .refine((p) => p.kind !== "import" || importOriginOnVideo.check(p), importOriginOnVideo.params)
   .refine((p) => !(p.kind === "render" && p.queued === true) || (p.done === 0 && p.saving !== true), {
     message: "a queued render is announced at zero and is not saving",
     path: ["queued"],
@@ -562,12 +582,23 @@ export const JobFailed = z.discriminatedUnion("kind", [
   z.strictObject({ ...runJobRef, error: EngineError }),
   z.strictObject({ ...scenesJobRef, error: EngineError }),
   z.strictObject({ ...renderJobRef, error: EngineError }),
-  z.strictObject({ ...importJobRef, error: EngineError }),
+  z.strictObject({ ...importJobRef, error: EngineError }).refine(importOriginOnVideo.check, importOriginOnVideo.params),
   z.strictObject({ ...clipJobRef, error: EngineError }),
 ]);
 
-/** `job.cancelled`'s payload: the job's identity (see `JobProgress`). */
-export const JobCancelled = z.discriminatedUnion("kind", [z.strictObject(candidatesJobRef), z.strictObject(portraitsJobRef), z.strictObject(runJobRef), z.strictObject(scenesJobRef), z.strictObject(renderJobRef), z.strictObject(importJobRef), z.strictObject(clipJobRef)]);
+/**
+ * `job.cancelled`'s payload: the job's identity (see `JobProgress`). A cancelled clip job may add why (`detail`, 5b.2, S5.WB1): a batch member that never ran says so (`ClipCancelDetail`, texts `clipCancelDetailRu`);
+ * a clip cancelled before 5b.2 carries none.
+ */
+export const JobCancelled = z.discriminatedUnion("kind", [
+  z.strictObject(candidatesJobRef),
+  z.strictObject(portraitsJobRef),
+  z.strictObject(runJobRef),
+  z.strictObject(scenesJobRef),
+  z.strictObject(renderJobRef),
+  z.strictObject(importJobRef).refine(importOriginOnVideo.check, importOriginOnVideo.params),
+  z.strictObject({ ...clipJobRef, detail: ClipCancelDetail.optional() }),
+]);
 
 /** A batch's slot, 1 to 4. */
 const CandidateSlot = z.number().int().min(1).max(4);
@@ -806,6 +837,8 @@ export const JobState = z
     z.strictObject({
       ...clipJobRef,
       ...clipJobFields,
+      /** 5b.2 (S5.WB1): why a batch member that never ran was cancelled; only on a cancelled clip. */
+      detail: ClipCancelDetail.optional(),
       ...jobCommon,
       result: ClipJobResult.optional(),
     }),
@@ -816,6 +849,10 @@ export const JobState = z
     message: "the end of the proof window belongs to the proving phase",
     path: ["proveUntil"],
   })
+  .refine((j) => j.kind !== "clip" || clipBatchFieldsTogether(j), { ...CLIP_BATCH_FIELDS_TOGETHER, path: ["batchId"] })
+  .refine((j) => j.kind !== "clip" || clipWaitReasonPlaced(j), { ...CLIP_WAIT_REASON_PLACED, path: ["waitReason"] })
+  .refine((j) => j.kind !== "clip" || j.detail === undefined || j.status === "cancelled", { message: "a cancel detail belongs to a cancelled clip", path: ["detail"] })
+  .refine((j) => j.kind !== "import" || importOriginOnVideo.check(j), importOriginOnVideo.params)
   .refine((j) => j.kind !== "import" || j.prepare === undefined || j.stage === "prepare", {
     message: "what the probe judged belongs to the prepare stage only",
     path: ["prepare"],

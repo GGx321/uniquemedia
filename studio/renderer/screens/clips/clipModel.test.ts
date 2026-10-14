@@ -286,8 +286,14 @@ describe("a clip at work: its tile's phase (§6 40) and its queue row (README S5
     expect(line("rendering", { model: "kling", submittedAt: "2026-09-24T10:00:00.000Z" }, { seenMs: NOW - 5_000 }).text).toBe("Снимается · 0:05");
   });
 
+  // 5b.2, S5.WB1: a compile stub for the `queued` phase of a batch member (mockup 60's «В очереди»; S5.WB4 adds the wait reasons). A queued member can be cancelled alone (`avatars.cancel`).
+  test("a queued batch member reads «В очереди», quiet, and can be cancelled", () => {
+    expect(line("queued")).toEqual({ text: "В очереди", tone: "quiet", pill: "в очереди", cancel: true });
+  });
+
   test("the queue row's short phases, the export's with its percent (VD2's «Клип · Nini · Сохраняем 40 %»)", () => {
     const q = (phase: Parameters<typeof queuePhase>[0]["phase"], over: Partial<Parameters<typeof queuePhase>[0]> = {}) => queuePhase({ phase, done: 0, total: 4, ...over }, base);
+    expect(q("queued")).toEqual({ text: "В очереди", warn: false });
     expect(q("preparing")).toEqual({ text: "Готовим кадр", warn: false });
     expect(q("submitting", { model: "kling" }).text).toBe("Отправляем");
     expect(q("rendering", { model: "kling", submittedAt: submitted }).text).toBe("Снимается 1:20");

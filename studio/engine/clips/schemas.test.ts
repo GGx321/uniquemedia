@@ -164,6 +164,48 @@ describe("ClipRecord", () => {
   });
 });
 
+// Stage 5, 5b.2, S5.WB1 (plan s5b2 I5.63, r2 change L9): the record of a batch member carries the batch id, so the «Клипы» tab's header counts from records once the member jobs leave KEEP_FINISHED.
+// Additive and optional: a record written by 5b.1 has none and parses unchanged, at the same schema version.
+describe("ClipRecord.batchId", () => {
+  const BATCH = "batch-00000001";
+
+  test("a record written before 5b.2 parses and gains no key, ready or failed", () => {
+    expect("batchId" in ClipRecord.parse(ready)).toBe(false);
+    expect("batchId" in ClipRecord.parse(failed)).toBe(false);
+  });
+
+  // The batch header survives KEEP_FINISHED and a restart from records alone: the window counts members by DISTINCT batchIndex (a 429 requeue gives two records for one photo) and says
+  // «не снимались N» as batchSize minus the members that have a record.
+  const TRIO = { batchId: BATCH, batchIndex: 3, batchSize: 10 };
+
+  test("the trio batchId, batchIndex and batchSize parses together, ready or failed, at schema version 1", () => {
+    expect(ClipRecord.parse({ ...ready, ...TRIO })).toMatchObject({ schemaVersion: 1, ...TRIO });
+    expect(ClipRecord.parse({ ...failed, ...TRIO })).toMatchObject(TRIO);
+  });
+
+  test("any partial trio is refused", () => {
+    for (const key of Object.keys(TRIO)) {
+      const { [key]: _gone, ...two } = TRIO as Record<string, unknown>;
+      expect(ClipRecord.safeParse({ ...ready, ...two }).success).toBe(false);
+      expect(ClipRecord.safeParse({ ...ready, [key]: (TRIO as Record<string, unknown>)[key] }).success).toBe(false);
+    }
+  });
+
+  test("the place is one-based and within the size; the size is one to twenty", () => {
+    expect(ClipRecord.safeParse({ ...ready, ...TRIO, batchIndex: 10 }).success).toBe(true);
+    expect(ClipRecord.safeParse({ ...ready, ...TRIO, batchIndex: 11 }).success).toBe(false);
+    expect(ClipRecord.safeParse({ ...ready, ...TRIO, batchIndex: 0 }).success).toBe(false);
+    expect(ClipRecord.safeParse({ ...ready, batchId: BATCH, batchIndex: 20, batchSize: 20 }).success).toBe(true);
+    expect(ClipRecord.safeParse({ ...ready, batchId: BATCH, batchIndex: 1, batchSize: 21 }).success).toBe(false);
+    expect(ClipRecord.safeParse({ ...ready, ...TRIO, batchIndex: 1.5 }).success).toBe(false);
+  });
+
+  test("a batch id is an id: a path or an empty string is refused", () => {
+    expect(ClipRecord.safeParse({ ...ready, ...TRIO, batchId: "../batch" }).success).toBe(false);
+    expect(ClipRecord.safeParse({ ...ready, ...TRIO, batchId: "" }).success).toBe(false);
+  });
+});
+
 describe("the journal lines", () => {
   const requested = { type: "requested", clipId: ID, photoId: "photo-0001", request, motion, acceptedWorstMicros: 850_000, at: AT };
   const submitted = { type: "submitted", attemptId: `${ID}:video#1`, model: "kling", providerJobId: "job-abc123", at: AT };

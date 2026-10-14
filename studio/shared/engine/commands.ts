@@ -4,7 +4,7 @@ import { AutopilotContinueResult, AutopilotEstimateResult, AutopilotGetResult, A
 import { AvatarDeletePreview, AvatarDeleteResult } from "./avatarDelete";
 import { AvatarBody } from "./body";
 import { CategoriesListResult, CategoryDescription, CategoryName, CategoryPoses, CategoryRef, CategorySummary, CustomCategoryId, MAX_RUN_CATEGORIES, SceneLevel, POOL_OUTFITS_MAX, POOL_PLACES_MAX, PoolText } from "./categories";
-import { ClipModelChoice, ClipMotionId, ClipOptions, ClipQuality, ClipSeconds, ClipSummary, MAX_LISTED_CLIPS } from "./clips";
+import { ClipBatchItem, ClipBatchOptions, ClipModelChoice, ClipMotionId, ClipOptions, ClipQuality, ClipSeconds, ClipSummary, MAX_BATCH_CLIPS, MAX_LISTED_CLIPS, photoIdsUnique } from "./clips";
 import { nonEmpty, ProtocolVersion } from "./envelope";
 import { EngineError } from "./errors";
 import { EventMessage } from "./events";
@@ -423,6 +423,35 @@ const ENGINE_SPECS = [
   defineCommand("clips.delete", z.strictObject({ avatarId: Id, clipId: Id }), z.strictObject({ clipId: Id })),
   defineCommand("clips.retryDownload", z.strictObject({ avatarId: Id, clipId: Id }), z.strictObject({ jobId: Id })),
   defineCommand("clips.export", z.strictObject({ avatarId: Id, clipId: Id }), z.strictObject({ jobId: Id })),
+  // Stage 5, 5b.2 part B, S5.WB1 (additive): the batch «Оживить выбранные», one to MAX_BATCH_CLIPS (20) photos made into clips one at a time (plan s5b2 §5.2, I5.61-I5.63). The batch is Kling's: no `model`, no motion text.
+  //  - `batchOptions` is free: each photo's `ClipOptions`, the four sums over the batch (the one formula `clipBatchWorstMicros`), the month's room and what fits. LIBRARY_UNAVAILABLE, NOT_FOUND (the avatar),
+  //    PRICE_UNAVAILABLE (`priceScope` `video`). Its deadline counts ⌈N / 4⌉ plan reads: the engine reads the plans four at a time (L4).
+  //  - `createBatch` is paid, accepted like `create` (`acceptedWorstMicros` is the SUM of the members' worst cases) and held while the Mac sleeps. It answers the batch id and one `clip` job id per member, in the
+  //    pick order (each job starts in the phase `queued` and carries `batchId`, `batchIndex`, `batchSize`). Refused free, in this order: IN_FLIGHT (`clipReason` `one-at-a-time`, or `batch-running` while a batch
+  //    holds the unit; first, synchronously), AUTH_INVALID, the ledger's refusals, LIBRARY_UNAVAILABLE, NOT_FOUND, VALIDATION with the item's OWN `clipReason` (`not-a-gallery-photo`, `bold-off`, `unknown-motion`, ...) and the path
+  //    `["items", i]` (one reason per error; there is no batch-level reason), PRICE_UNAVAILABLE, PRICE_CHANGED (the sum), BUDGET_EXCEEDED (the sum, from the month hold). Its deadline adds 1 s per item.
+  //  - `cancelBatch` is free: it cancels the QUEUED members only (a submitted member is never cancelled) and says how many it cancelled, possibly 0. NOT_FOUND for a batch the avatar does not have.
+  //    A cancelled member reports `ClipCancelDetail` `cancelled` on its `job.cancelled`.
+  defineCommand("clips.batchOptions", z.strictObject({ avatarId: Id, photoIds: z.array(Id).min(1).max(MAX_BATCH_CLIPS).refine(photoIdsUnique, { message: "a photo appears once" }) }), ClipBatchOptions),
+  defineCommand(
+    "clips.createBatch",
+    z.strictObject({
+      avatarId: Id,
+      items: z
+        .array(ClipBatchItem)
+        .min(1)
+        .max(MAX_BATCH_CLIPS)
+        .refine((items) => photoIdsUnique(items.map((item) => item.photoId)), { message: "a photo appears once" }),
+      quality: ClipQuality,
+      seconds: ClipSeconds,
+      fallback: z.enum(["auto", "none"]),
+      ...AcceptedWorst,
+    }),
+    z
+      .strictObject({ batchId: Id, jobIds: z.array(Id).min(1).max(MAX_BATCH_CLIPS) })
+      .refine((r) => new Set(r.jobIds).size === r.jobIds.length, { message: "a job appears once", path: ["jobIds"] }),
+  ),
+  defineCommand("clips.cancelBatch", z.strictObject({ avatarId: Id, batchId: Id }), z.strictObject({ cancelled: Count })),
   // «Удалить аватар»: what the confirmation shows (counts of photos, candidates, drafts, videos and of the video files that would go to the Trash too).
   // Free and read-only. Refuses like the delete itself does while anything of the avatar runs (IN_FLIGHT), so the dialog says so instead of offering a
   // button that cannot work; NOT_FOUND for an avatar the library does not have, LIBRARY_UNAVAILABLE without a library.

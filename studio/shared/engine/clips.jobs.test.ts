@@ -26,8 +26,8 @@ describe("JobKind", () => {
 });
 
 describe("the phases of a clip job", () => {
-  test("are the §5.1 ladder plus late, recovering and exporting", () => {
-    expect([...CLIP_PHASES]).toEqual(["preparing", "submitting", "rendering", "proving", "downloading", "checking", "saving", "late", "recovering", "exporting"]);
+  test("are `queued` (5b.2), the §5.1 ladder plus late, recovering and exporting", () => {
+    expect([...CLIP_PHASES]).toEqual(["queued", "preparing", "submitting", "rendering", "proving", "downloading", "checking", "saving", "late", "recovering", "exporting"]);
   });
 });
 

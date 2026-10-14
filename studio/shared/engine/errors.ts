@@ -336,6 +336,10 @@ export type PortraitReason = z.infer<typeof PortraitReason>;
  * - job-running: a job of this clip runs (`clips.delete`, `clips.retryDownload`, `clips.export`).
  * - submitted: the clip is already at the provider, so it cannot be cancelled (`avatars.cancel`).
  * - in-use (5b.2, S5.WA1): `clips.delete` while a render holds the clip's montage copy; nothing is removed.
+ * - batch-running (5b.2, S5.WB1): a batch holds the clip money unit, so `clips.create`, `clips.createBatch` and the single «Оживить» wait (I5.61). `one-at-a-time` stays for a single clip holding it.
+ * - clip-busy (5b.2, S5.WB1): a paid clip or batch holds the unit, so part C's paid calls (the vision writer, the translator) wait (I5.68).
+ *
+ * One `clipReason` per error. A batch item that breaks a rule is reported with its OWN reason (`bold-off`, `unknown-motion`, ...) and the path `["items", i]`; there is no batch-level reason for it.
  */
 export const CLIP_VALIDATION_REASONS = [
   "not-a-gallery-photo",
@@ -351,7 +355,7 @@ export const CLIP_VALIDATION_REASONS = [
   "not-exported",
   "file-damaged",
 ] as const;
-export const CLIP_IN_FLIGHT_REASONS = ["one-at-a-time", "job-running", "submitted", "in-use"] as const;
+export const CLIP_IN_FLIGHT_REASONS = ["one-at-a-time", "job-running", "submitted", "in-use", "batch-running", "clip-busy"] as const;
 export const CLIP_REASONS = [...CLIP_VALIDATION_REASONS, ...CLIP_IN_FLIGHT_REASONS] as const;
 /** The reasons `clips.options` answers for a photo that cannot be brought to life: the first six of `CLIP_VALIDATION_REASONS`, as one set. */
 export const CLIP_UNSUITABLE_REASONS = ["not-a-gallery-photo", "age-unverified", "photo-unreadable", "not-vertical", "bold-off", "no-motion"] as const;
@@ -491,10 +495,16 @@ export const EngineError = z
     /** Additive (Stage 5, S5.3a): which rule a portrait command broke (`PORTRAIT_REASONS`); only on VALIDATION (INTERNAL for `source-unavailable`), never beside another reason. The window's text is `PORTRAIT_REASONS_RU`. */
     portraitReason: PortraitReason.optional(),
     /**
-     * Additive (Stage 5, 5b.1, S5.V1): which rule a clip command broke (`CLIP_REASONS`); on VALIDATION, or on IN_FLIGHT for `one-at-a-time`, `job-running`, `submitted` and `in-use`; never beside another
+     * Additive (Stage 5, 5b.1, S5.V1): which rule a clip command broke (`CLIP_REASONS`); on VALIDATION, or on IN_FLIGHT for `one-at-a-time`, `job-running`, `submitted`, `in-use`, `batch-running` and `clip-busy`; never beside another
      * reason. The window's text is `CLIP_REASONS_RU`.
      */
     clipReason: ClipReason.optional(),
+    /**
+     * Additive (Stage 5, 5b.2, S5.WB1; plan s5b2 §5.2.1, L3): where in the payload a clip refusal points: `["items", i]`, the batch item (0-based) whose own `clipReason` this is. Only on a VALIDATION that
+     * carries a `clipReason` (`clips.createBatch`); the window draws the reason's text on that row.
+     * The index is not bounded here (errors.ts cannot import clips.ts, which imports it): the engine points only inside the payload it already validated, whose items are at most `MAX_BATCH_CLIPS`.
+     */
+    path: z.tuple([z.literal("items"), Count]).optional(),
     /** Additive (Stage 5, S5.0a): the owner's own offending words, only with the reason `youth-word` (at most a handful, each short). */
     descriptorWords: z.array(z.string().min(1).max(60)).max(10).optional(),
     /**
@@ -510,6 +520,10 @@ export const EngineError = z
      * lacks a model or resolution a clip needs. Only on PRICE_UNAVAILABLE; a refusal for any other price carries none, and the window shows its general text.
      */
     priceScope: z.enum(["bold", "video"]).optional(),
+  })
+  .refine((e) => e.path === undefined || (e.code === "VALIDATION" && e.clipReason !== undefined), {
+    message: "path may only accompany a VALIDATION with a clipReason: it points at the batch item that broke the rule",
+    path: ["path"],
   })
   .refine((e) => e.priceScope === undefined || e.code === "PRICE_UNAVAILABLE", {
     message: "priceScope may only be present on PRICE_UNAVAILABLE",
@@ -570,7 +584,7 @@ export const EngineError = z
     },
   )
   .refine((e) => e.clipReason === undefined || e.code === ((CLIP_IN_FLIGHT_REASONS as readonly string[]).includes(e.clipReason) ? "IN_FLIGHT" : "VALIDATION"), {
-    message: "clipReason may only be present on VALIDATION, except one-at-a-time, job-running, submitted and in-use, which belong to IN_FLIGHT",
+    message: "clipReason may only be present on VALIDATION, except one-at-a-time, job-running, submitted, in-use, batch-running and clip-busy, which belong to IN_FLIGHT",
     path: ["clipReason"],
   })
   .refine(

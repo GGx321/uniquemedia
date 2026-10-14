@@ -305,6 +305,9 @@ export function phaseLine(p: ClipProgress, ctx: PhaseContext): PhaseLine {
   const work = (text: string, cancel = false): PhaseLine => ({ text, tone: "work", pill: "в работе", cancel });
   const grokBehind = p.model === "grok" && !ctx.grokOffer;
   switch (p.phase) {
+    // 5b.2, S5.WB1: a batch member waiting for its turn (mockup 60). A compile stub: S5.WB4 adds the wait reasons («ждём, пока закончатся другие расходы»).
+    case "queued":
+      return { text: "В очереди", tone: "quiet", pill: "в очереди", cancel: true };
     case "preparing":
       return work("Готовим кадр", true);
     case "submitting":
@@ -338,6 +341,8 @@ export function exportPercent(done: number, total: number): number {
 export function queuePhase(p: ClipProgress & { readonly done: number; readonly total: number }, ctx: PhaseContext): { text: string; warn: boolean } {
   const plain = (text: string): { text: string; warn: boolean } => ({ text, warn: false });
   switch (p.phase) {
+    case "queued":
+      return plain("В очереди");
     case "preparing":
       return plain("Готовим кадр");
     case "submitting":

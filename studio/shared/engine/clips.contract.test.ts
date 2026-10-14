@@ -172,8 +172,9 @@ describe("the sleep classes (S4.7)", () => {
     for (const type of CLIP_COMMANDS) expect(SLEEP_CLASS[type]).toBeDefined();
   });
 
-  test("only clips.create starts paid work, so only it is held while the Mac sleeps", () => {
+  test("only clips.create (and, from 5b.2, clips.createBatch) starts paid work, so only they are held while the Mac sleeps", () => {
     expect(heldWhileAsleep("clips.create")).toBe(true);
+    expect(heldWhileAsleep("clips.createBatch")).toBe(true);
     for (const type of CLIP_COMMANDS) if (type !== "clips.create") expect(heldWhileAsleep(type)).toBe(false);
   });
 
@@ -184,9 +185,9 @@ describe("the sleep classes (S4.7)", () => {
 
 describe("EngineError.clipReason", () => {
   const VALIDATION_REASONS = ["not-a-gallery-photo", "age-unverified", "photo-unreadable", "not-vertical", "bold-off", "no-motion", "unknown-motion", "grok-not-offered", "download-expired", "not-ready", "not-exported", "file-damaged"];
-  const IN_FLIGHT_REASONS = ["one-at-a-time", "job-running", "submitted", "in-use"];
+  const IN_FLIGHT_REASONS = ["one-at-a-time", "job-running", "submitted", "in-use", "batch-running", "clip-busy"];
 
-  test("the closed set is the fourteen of §5.2's table and the two 5b.2 adds (file-damaged, in-use)", () => {
+  test("the closed set is the fourteen of §5.2's table and the four 5b.2 adds (file-damaged, in-use, batch-running, clip-busy)", () => {
     const actual: string[] = [...CLIP_REASONS];
     expect(actual.sort()).toEqual([...VALIDATION_REASONS, ...IN_FLIGHT_REASONS].sort());
     expect(ClipReason.safeParse("one-at-a-time").success).toBe(true);
@@ -258,6 +259,9 @@ describe("CLIP_REASONS_RU: one text per reason, verbatim from §5.2", () => {
     // 5b.2 (S5.WA1), from mockups 44b and 57c.
     "file-damaged": "Файл клипа в Studio повреждён или не читается — для монтажа его не подготовить.",
     "in-use": "Клип сейчас в рендере — удалите его, когда рендер закончится.",
+    // 5b.2 (S5.WB1), mockups 37e and the sheet's busy line (plan s5b2 §5.2.1).
+    "batch-running": "Сейчас снимаются клипы пакета — дождитесь окончания или отмените оставшиеся.",
+    "clip-busy": "Пока снимается клип, предложения и перевод недоступны — дождитесь окончания.",
   };
 
   test("every reason has its text, word for word", () => {

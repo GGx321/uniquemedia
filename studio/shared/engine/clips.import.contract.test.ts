@@ -322,3 +322,50 @@ describe("the import job carries the clip's origin (I5.59)", () => {
     expect(parsed.type === "media.changed" && parsed.payload.change === "upserted" ? parsed.payload.media.origin : "wrong").toEqual(origin);
   });
 });
+
+// Two refines carried over from the WA1 review (S5.WB1 owns the contract files now).
+describe("ClipUse.inDrafts.first is told only for one draft", () => {
+  const withUse = (use: unknown) => ClipSummary.safeParse({ ...readyClip, use });
+  const first = { name: "Лето", frame: 3 };
+
+  test("`first` with a count of 1 parses, and so does a count above 1 without it", () => {
+    expect(withUse({ inDrafts: { count: 1, first } }).success).toBe(true);
+    expect(withUse({ inDrafts: { count: 2 } }).success).toBe(true);
+    expect(withUse({ inDrafts: { count: 1 } }).success).toBe(true);
+  });
+
+  test("`first` with a count above 1 is refused: the dialog names a draft only when there is exactly one", () => {
+    expect(withUse({ inDrafts: { count: 2, first } }).success).toBe(false);
+    expect(withUse({ inVideo: "clip", inDrafts: { count: 7, first } }).success).toBe(false);
+  });
+});
+
+describe("the import job's origin belongs to a video (the same rule as MediaSummary.origin)", () => {
+  const job = (mediaKind: string, over: Record<string, unknown> = {}) => ({ kind: "import", jobId: "job-00000005", mediaKind, name: "x.mp4", mediaId: null, status: "running", done: 400, total: 1000, ...over });
+  const { status: _status, done: _done, total: _total, ...videoRef } = job("video");
+
+  test("a video import carries it in a state, a progress, a failure and a cancel", () => {
+    expect(JobState.safeParse({ ...job("video"), origin }).success).toBe(true);
+    const { status: _s, ...progress } = job("video");
+    expect(JobProgress.safeParse({ ...progress, origin }).success).toBe(true);
+    expect(JobFailed.safeParse({ ...videoRef, origin, error: { code: "INTERNAL" } }).success).toBe(true);
+    expect(JobCancelled.safeParse({ ...videoRef, origin }).success).toBe(true);
+  });
+
+  test("a photo, sticker or audio import refuses it everywhere", () => {
+    for (const mediaKind of ["photo", "sticker", "audio"]) {
+      const { status: _s, done: _d, total: _t, ...ref } = job(mediaKind);
+      const { status: _s2, ...progress } = job(mediaKind);
+      expect(JobState.safeParse({ ...job(mediaKind), origin }).success).toBe(false);
+      expect(JobProgress.safeParse({ ...progress, origin }).success).toBe(false);
+      expect(JobFailed.safeParse({ ...ref, origin, error: { code: "INTERNAL" } }).success).toBe(false);
+      expect(JobCancelled.safeParse({ ...ref, origin }).success).toBe(false);
+    }
+  });
+
+  test("a photo import without an origin parses as before", () => {
+    expect(JobState.safeParse(job("photo")).success).toBe(true);
+    expect(JobCancelled.safeParse({ kind: "import", jobId: "job-00000005", mediaKind: "photo", name: "x.jpg", mediaId: null }).success).toBe(true);
+  });
+});
+
