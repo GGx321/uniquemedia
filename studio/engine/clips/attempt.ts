@@ -474,7 +474,8 @@ class Attempt {
     } else {
       // No usage on the poll: /generation answers, from 15 s after the status (a 404 right after `completed` is a billed job whose record has not appeared yet, never zero).
       // Only a record of THIS job may be read: a poll that names another generation id gets no /generation read at all.
-      const read: GenerationRead = this.idIsVerified(poll) ? await this.readGeneration(terminalAtMs + this.deps.timings.proofFirstReadMs, true) : { kind: "unreadable" };
+      // A completed job is billed by nature: a `total_cost` of 0 is «not yet», read again like a 404, and a 0 that stays settles the worst like an unreadable cost (VR item 7).
+      const read: GenerationRead = this.idIsVerified(poll) ? await this.readGeneration(terminalAtMs + this.deps.timings.proofFirstReadMs, true, true) : { kind: "unreadable" };
       if (read.kind === "found") {
         costMicros = read.micros;
         providerCost = read.micros;
@@ -594,14 +595,16 @@ class Attempt {
 
   /**
    * One `/generation` slot: waits until `atMs`, then reads up to PROOF_READ_TRIES times. A 404 is final for a refusal (zero evidence, no retry); for a completed job it is a record that has not appeared yet,
-   * so it is read again. Unreadable is read again, then given up.
+   * so it is read again; a `total_cost` of 0 is read again too when `retryZero` says the job is a completed one. Unreadable is read again, then given up.
    */
-  private async readGeneration(atMs: number, retryNotFound: boolean): Promise<GenerationRead> {
+  private async readGeneration(atMs: number, retryNotFound: boolean, retryZero = false): Promise<GenerationRead> {
     await this.sleepUntil(atMs);
     for (let tries = 1; ; tries++) {
       const read = await this.generationOnce();
-      if (read.kind === "found") return { kind: "found", micros: read.totalCostMicros, finishReason: read.finishReason };
+      const notYet = retryZero && read.kind === "found" && read.totalCostMicros === 0;
+      if (read.kind === "found" && !notYet) return { kind: "found", micros: read.totalCostMicros, finishReason: read.finishReason };
       if (read.kind === "not-found" && !retryNotFound) return { kind: "not-found" };
+      // A 0 that stays on a completed job is not a cost anyone read: it ends as an unreadable record, never as a free clip.
       if (tries >= PROOF_READ_TRIES) return read.kind === "not-found" ? { kind: "not-found" } : { kind: "unreadable" };
       await this.sleepFor(this.deps.timings.proofRetryMs);
     }

@@ -130,7 +130,7 @@ export type MockVideoPrices = "live" | "fallback" | "missing";
 
 /**
  * What one attempt (Kling, or Grok behind it) does. The names follow the engine's settle table (plan §5.7):
- * - `ok`: completed with `usage.cost`. `ok-uncosted`: completed with no usage and no `/generation` record, settled at the worst.
+ * - `ok`: completed with `usage.cost`. `ok-uncosted`: completed with no usage and no `/generation` record (or one that reads 0 on all three reads: a completed job's 0 is «not yet», VR item 7), settled at the worst.
  * - `refused-submit`: a moderation 4xx at the POST (free, no job). `refused-free`: a content failure at the poll, proven free. `refused-paid`: `/generation` bills it. `refused-unknown`: the net-usage
  *   check rose. `refused-uncounted`: the check could not count (the STRICT proof: not free).
  * - `provider-error` / `-paid` / `-unknown`: a failure that is not a content refusal, through the same proof.

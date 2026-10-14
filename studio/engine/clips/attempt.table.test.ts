@@ -103,6 +103,46 @@ describe.each(MODES)("row 2 · completed without usage · mode %s", (mode) => {
   });
 });
 
+// VR item 7: a completed job is billed by nature, so a `total_cost` of 0 on `/generation` is «not yet», never a free clip (whether a 200 can carry a temporary 0 is unproven, and the conservative reading
+// costs nothing: it settles the worst, estimated, like a record that cannot be read). A refusal's 0 is the strict free proof and is unchanged (row 7, attempt.proof.test.ts).
+describe.each(MODES)("row 2 · a completed job whose /generation total_cost reads 0 · mode %s", (mode) => {
+  const noUsage = { status: "completed", usageCostMicros: null } as const;
+
+  test("a 0 read first and a positive value seconds later settles the positive value", async () => {
+    await make({ mode, kling: { terminal: noUsage, generation: (since) => (since < 20 * SECOND ? genFound(0) : genFound(KLING_BILLED)) } });
+    expect(completed(await rig.run())).toMatchObject({ providerCostMicros: KLING_BILLED, costSource: "generation" });
+    expect(rig.clipLedger()).toEqual([
+      ["reserve", KLING, KLING_RESERVE],
+      ["settle", KLING, KLING_BILLED],
+    ]);
+    expect(rig.generationReads().length).toBeGreaterThan(1);
+  });
+
+  test("a 0 on every read settles the worst, estimated, as an unreadable cost: never a free clip", async () => {
+    await make({ mode, kling: { terminal: noUsage, generation: () => genFound(0) } });
+    expect(completed(await rig.run())).toMatchObject({ providerCostMicros: null, costSource: "worst" });
+    expect(rig.clipLedger()).toEqual([
+      ["reserve", KLING, KLING_RESERVE],
+      ["settle-estimated", KLING, KLING_RESERVE],
+    ]);
+    expect(rig.generationReads()).toHaveLength(3);
+    expect(journalOf(rig).at(-1)).toBe(`ended:${KLING}:completed:worst`);
+  });
+
+  test("a positive value at once is settled by the first read, unchanged", async () => {
+    await make({ mode, kling: { terminal: noUsage, generation: () => genFound(KLING_BILLED) } });
+    expect(completed(await rig.run())).toMatchObject({ providerCostMicros: KLING_BILLED, costSource: "generation" });
+    expect(rig.generationReads()).toHaveLength(1);
+  });
+
+  test("the 0 is read again on the existing spacing: 5 s apart, three reads in all", async () => {
+    await make({ mode, kling: { terminal: noUsage, generation: () => genFound(0) } });
+    await rig.run();
+    const sinces = rig.generationReads().map((r) => r.sinceTerminal);
+    expect(sinces).toEqual([15 * SECOND, 20 * SECOND, 25 * SECOND]);
+  });
+});
+
 describe.each(MODES)("row 3 · 4xx moderation at the submit · mode %s", (mode) => {
   test("settles 0 (no job exists), frees the hold and ends the Kling attempt as a content refusal", async () => {
     await make({ mode, kling: { submit: moderation4xx }, grok: { terminal: { status: "completed", usageCostMicros: GROK_BILLED } } });
