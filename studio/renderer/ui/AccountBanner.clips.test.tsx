@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
+import { afterEach, describe, expect, jest, spyOn, test } from "bun:test";
 import { act, render, screen } from "@testing-library/react";
 import type { MoneyStatus, Settings } from "../../shared/engine";
 import { CLIP_RESTART_BANNER, clipReconcileWaitText } from "../../shared/engine/clipRestartTexts";
@@ -139,50 +139,60 @@ describe("«Нужна сверка расходов» while the reconcile canno
 // The button comes back when the engine's date is reached. Nothing tells the window (the quiet rule moves no event), so the banner watches the clock itself: a timer for the date, armed
 // again if it fires early (a clock set back, a timer that drifted), and a look at the clock when the window comes back to the front (a sleep, a hidden tab).
 describe("«Перейти к сверке» comes back when the time has come", () => {
-  const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-  afterEach(() => setSystemTime());
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+  const advance = (ms: number): void => {
+    act(() => {
+      jest.advanceTimersByTime(ms);
+    });
+  };
 
-  test("the button appears by itself after the date is crossed", async () => {
+  test("the button appears by itself after the date is crossed", () => {
+    jest.useFakeTimers();
     show(view(money({ reconcileNeeded: true, availableInMs: 120 })));
     expect(goReconcile() === null).toBe(true);
-    await act(async () => {
-      await sleep(320);
-    });
+    advance(320);
     expect(goReconcile()).not.toBeNull();
   });
 
-  test("a timer that fires while the clock is still short of the date is armed again, and the button comes later", async () => {
-    const date = Date.now() + 150;
-    show(view(money({ reconcileNeeded: true, availableInMs: 150 })));
-    // The clock is set back (and stands there: a set system time does not tick) 300 ms after the timer was armed: when the timer fires, about 200 ms on, the date is still ahead.
-    setSystemTime(new Date(Date.now() - 300));
-    await act(async () => {
-      await sleep(260);
-    });
-    expect(goReconcile() === null).toBe(true);
-    // The clock is put right with no event; only the timer armed again can draw the banner.
-    setSystemTime(new Date(date + 1_000));
-    expect(goReconcile() === null).toBe(true);
-    await act(async () => {
-      await sleep(700);
-    });
-    expect(goReconcile()).not.toBeNull();
+  test("a timer that fires while the clock is still short of the date is armed again, and the button comes later", () => {
+    jest.useFakeTimers();
+    // The timers run on their own virtual time and the clock on a number the test moves: the clock lags, as after a set-back or a drifting timer.
+    const base = Date.now();
+    let clock = base;
+    const now = spyOn(Date, "now").mockImplementation(() => clock);
+    try {
+      show(view(money({ reconcileNeeded: true, availableInMs: 150 })));
+      advance(260);
+      // The timer fired (about 200 ms in) with the clock still 100 ms short of the date: the banner is as it was.
+      expect(goReconcile() === null).toBe(true);
+      // The clock reaches the date with no event; only the timer armed again can draw the banner.
+      clock = base + 1_000;
+      expect(goReconcile() === null).toBe(true);
+      advance(700);
+      expect(goReconcile()).not.toBeNull();
+    } finally {
+      now.mockRestore();
+    }
   });
 
-  test("the window coming to the front after the date has passed shows the button at once", async () => {
+  test("the window coming to the front after the date has passed shows the button at once", () => {
+    jest.useFakeTimers();
     show(view(money({ reconcileNeeded: true, availableInMs: 10 * MINUTE })));
     expect(goReconcile() === null).toBe(true);
     // The machine slept: the clock is past the date, and no timer has fired.
-    setSystemTime(new Date(Date.now() + 11 * MINUTE));
+    jest.setSystemTime(new Date(Date.now() + 11 * MINUTE));
     act(() => {
       window.dispatchEvent(new Event("focus"));
     });
     expect(goReconcile()).not.toBeNull();
   });
 
-  test("the page becoming visible again after the date has passed shows the button at once", async () => {
+  test("the page becoming visible again after the date has passed shows the button at once", () => {
+    jest.useFakeTimers();
     show(view(money({ reconcileNeeded: true, availableInMs: 10 * MINUTE })));
-    setSystemTime(new Date(Date.now() + 11 * MINUTE));
+    jest.setSystemTime(new Date(Date.now() + 11 * MINUTE));
     act(() => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
