@@ -33,6 +33,18 @@ import { PNG_1X1, SAMPLE_IMPORTED_SOURCE, samplePhotoMeta, sequentialIds, steppi
 import { RenderFailure } from "../../renderQueue/queue";
 import { command, engineSettings, GOOD, MODERATION, NOW, network as portraitNetwork, portraitPng, portraitReply, startEngine, TRAITS, until } from "../../testing/engineHarness";
 import { fakeGate, match } from "../../testing/portraitKit";
+import { photoJpeg } from "../../clips/testing/engineClipKit";
+import { SHORT_CLIP_TIMINGS } from "../../clips/timings";
+import type { ExportFpsMode } from "../../clips/exportProfile";
+import type { MockClipScript } from "../../../renderer/engine/mockClips";
+import type { BoldClipsMode } from "../../../shared/engine";
+import { clipProvider, type ClipProvider } from "./clipProvider";
+import { CLIP_AVATAR_NAME, CLIP_PHOTO_KINDS, CLIP_PHOTO_SPEC, clipPhotoMap, MOCK_CLIP_AVATAR_ID, MOCK_CLIP_MASTER_ID, mockClipPhotoId, type ClipPhotoKind, type ClipWorld } from "./clipWorld";
+
+/** The options of a rig with `clips`, or null for a rig without. */
+function clipRigOf(options: RigOptions): ClipRigOptions | null {
+  return options.clips === undefined || options.clips === false ? null : options.clips === true ? {} : options.clips;
+}
 import { chatBody, type Reply } from "../../openrouter/testing/fakes";
 import { imageReplyFor, isSeedream, network as launchNetwork, writerReply, type SeedreamFault } from "../../testing/wiringKit";
 import { within } from "../../testing/within";
@@ -66,6 +78,8 @@ export interface World {
   readonly scored: ReadonlySet<string>;
   /** Stage 5 (S5.3c), a rig with `portraits`: the imported avatars it seeds. */
   readonly portraitAvatars?: PortraitAvatars;
+  /** Stage 5 (5b.1, S5.V7), a rig with `clips`: Lia and her photos, one of each kind the clip rules tell apart (`clipWorld.ts`). */
+  readonly clipWorld?: ClipWorld;
 }
 
 /**
@@ -123,6 +137,56 @@ export interface Control {
   previewServed(previewId: string): Promise<boolean>;
   /** Stage 4 (S4.8): what only a rig can do to a launch's world. A rig started without `RigOptions.launch` refuses every one. */
   readonly launch: LaunchControl;
+  /** Stage 5 (5b.1, S5.V7): what only a rig can do to a clip's outside world. A rig started without `RigOptions.clips` refuses every one. */
+  readonly clips: ClipControl;
+}
+
+/**
+ * Stage 5 (5b.1, S5.V7): the clips' outside world, told the same way to both rigs. The real rig answers through the fake video provider (`testing/clipProvider.ts`) and its scripted face gate; the mock
+ * arms its testkit switches (`scriptNextClip`, `setVideoPrices`, `nextClipRetry`, `passClipTime`). The vocabulary of a script is the mock's (`MockClipScript`).
+ */
+export interface ClipControl {
+  /** The NEXT clip that `clips.create` accepts plays this: an outcome for its first attempt, one for the Grok behind it, and its face verdict. Used once. */
+  next(script: MockClipScript): void;
+  /** While held, the clip's render does not finish (the real provider's polls stay in progress). The mock stands still between pumps, so it needs no hold. */
+  hold(held: boolean): void;
+  /** How the video price listing reads: live (the default), unreadable (the dated table stands in), or readable and lacking Grok's price. */
+  prices(mode: "live" | "fallback" | "missing"): void;
+  /** The models of the POSTs that left so far, in order. */
+  posts(): readonly string[];
+  /** The provider has the file of a clip whose download failed again (`true`), or still has not (`false`). */
+  fileBack(back: boolean): void;
+  /** The owner comes back after `ms`: the engine's clock moves ahead. */
+  passTime(ms: number): void;
+}
+
+const NO_CLIPS: ClipControl = {
+  next: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+  hold: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+  prices: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+  posts: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+  fileBack: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+  passTime: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+};
+
+/** What a rig with `clips` is told: the engine's mode (`GROK_FALLBACK`), `BOLD_CLIPS`, the export's fps mode, and the month's budget. All the engine's own defaults when absent. */
+export interface ClipRigOptions {
+  readonly mode?: "auto" | "offer";
+  readonly boldClips?: BoldClipsMode;
+  readonly exportFps?: ExportFpsMode;
+  readonly budgetMicros?: number;
 }
 
 /**
@@ -409,6 +473,12 @@ export interface RigOptions {
    * n-th image is the n-th slot; the mock is seeded with the same. No older story asks for it, so their lines are unchanged.
    */
   readonly portraits?: boolean;
+  /**
+   * Stage 5 (5b.1, S5.V7): Lia, an active avatar whose photos tell the clip rules apart (`World.clipWorld`), and the clip engine's outside world. The real rig seeds real JPEGs, plays the video
+   * provider by the fake (`clipProvider.ts`) and the face gate by a script, on the short timing set (`clipTimings("short")`) and a clock that moves; the mock is seeded with the same photos and
+   * plays the same short set. Nothing else of the world changes, so no older story's line moves. `true`: the engine's own switches.
+   */
+  readonly clips?: boolean | ClipRigOptions;
 }
 
 /** The body proposal of a rig with `bodyProposal`: what a photo import read (a bust and a height it could not see), kept on Mia until the owner saves or dismisses it. */
@@ -553,6 +623,11 @@ export function mockRig(options: RigOptions = {}): ParityRig {
           { avatarId: "avatar-lena-0006", sourcePhotoId: "photo-lena-source", candidates: Array.from({ length: PARITY_CROWDED_COUNT }, (_, i) => ({ photoId: `photo-lena-pending-${i + 1}`, likeness: 0.7 })) },
         ]
       : [];
+  // Stage 5 (5b.1, S5.V7): Lia and her photos, one of each kind the clip rules tell apart; the same summaries the real rig's JPEGs stand for.
+  const clipRig = clipRigOf(options);
+  const lia: AvatarSummary = { ...MIA, avatarId: MOCK_CLIP_AVATAR_ID, name: CLIP_AVATAR_NAME, masterPhotoId: MOCK_CLIP_MASTER_ID, photoCount: CLIP_PHOTO_KINDS.length, eligibleUnusedCount: CLIP_PHOTO_KINDS.length };
+  const liaPhotos: PhotoSummary[] =
+    clipRig === null ? [] : CLIP_PHOTO_KINDS.map((kind, i) => ({ ...scenePhoto(i + 1, { category: CLIP_PHOTO_SPEC[kind].category, qa: { ...CLIP_PHOTO_SPEC[kind].qa } }, lia), photoId: mockClipPhotoId(kind) }));
   const avatars: AvatarSummary[] = [
     options.usage === undefined
       ? { ...MIA, photoCount: MAIN_PHOTOS, eligibleUnusedCount: MAIN_PHOTOS, ...proposed }
@@ -560,12 +635,19 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     { ...SOFIA, photoCount: OTHER_PHOTOS, eligibleUnusedCount: OTHER_PHOTOS },
     { ...NORA, photoCount: 0, eligibleUnusedCount: 0 },
     ...portraitAvatars,
+    ...(clipRig === null ? [] : [lia]),
   ];
   const engine = new MockEngine({
     scheduler,
     avatars,
     portraits: portraitSeeds,
-    photos,
+    photos: [...photos, ...liaPhotos],
+    ...(clipRig === null
+      ? {}
+      : {
+          clips: { timings: "short" as const, ...(clipRig.mode === undefined ? {} : { mode: clipRig.mode }), ...(clipRig.boldClips === undefined ? {} : { boldClips: clipRig.boldClips }), ...(clipRig.exportFps === undefined ? {} : { exportFps: clipRig.exportFps }) },
+          ...(clipRig.budgetMicros === undefined ? {} : { money: { monthlyBudgetMicros: clipRig.budgetMicros } }),
+        }),
     renderConcurrency: options.renderConcurrency ?? 1,
     // The S4.1 stories are bound to the mock's canned launch; a rig that asks for a running launch gets the mock that runs one.
     launchRun: options.launch === true ? "timers" : "canned",
@@ -614,7 +696,13 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     archivedAvatarId: NORA.avatarId,
     scored: scored(photoIds),
     ...(options.portraits === true ? { portraitAvatars: { imported: "avatar-nini-0004", pending: "avatar-ava-0005", crowded: "avatar-lena-0006" } } : {}),
+    ...(clipRig === null ? {} : { clipWorld: { avatarId: MOCK_CLIP_AVATAR_ID, masterPhotoId: MOCK_CLIP_MASTER_ID, photos: clipPhotoMap(mockClipPhotoId) } }),
   };
+  // The mock holds no pixels: a picture that is not 9:16, and one whose file no longer matches its sidecar, are said to it.
+  if (clipRig !== null) {
+    engine.setClipPhotoPixels(mockClipPhotoId("landscape"), "not-vertical");
+    engine.setClipPhotoPixels(mockClipPhotoId("unreadable"), "unreadable");
+  }
   /** Runs the mock's clock until an event of `wanted` came after `from`. */
   const runUntil = (from: number, wanted: (e: EventMessage) => boolean): void => {
     for (let i = 0; i < 200 && !events.slice(from).some(wanted); i++) scheduler.next();
@@ -708,6 +796,18 @@ export function mockRig(options: RigOptions = {}): ParityRig {
       holdText: (held) => engine.holdTextDrawing(held),
       releaseText: () => engine.releaseTextDrawing(),
       previewServed: async (previewId) => engine.mockPreviewPng(previewId) !== null,
+      clips:
+        clipRig === null
+          ? NO_CLIPS
+          : {
+              next: (script) => engine.scriptNextClip(script),
+              // The mock's clock stands still between pumps, so a render cannot finish while a story sends a command: it needs no hold.
+              hold: () => undefined,
+              prices: (mode) => engine.setVideoPrices(mode),
+              posts: () => engine.peekClips().posts,
+              fileBack: (back) => engine.nextClipRetry(back ? "ok" : "failed"),
+              passTime: (ms) => engine.passClipTime(ms),
+            },
     },
     async stop() {
       engine.holdTextDrawing(false);
@@ -791,6 +891,39 @@ async function seedImportedAvatar(library: Awaited<ReturnType<typeof openLibrary
     await library.addPhoto(avatar.id, portraitPng((i % 4) + 2), samplePhotoMeta({ width: 60, height: 80, source: { ...FIXTURE_BASE, slot: `portrait-${(i % 5) + 1}` }, qa: { faceCos, headRatio: 0.3 } }));
   }
   return avatar.id;
+}
+
+/**
+ * Stage 5 (5b.1, S5.V7): Lia and a photo of each kind the clip rules tell apart, real JPEGs of the sizes a clip reads (the first frame is 9:16). None has a run plan on disk, so each is judged by its own
+ * face marks, as the mock plays them. The photo that is «unreadable» has a file that no longer matches its sidecar.
+ */
+async function seedClipWorld(library: Awaited<ReturnType<typeof openLibrary>>["library"]): Promise<ClipWorld> {
+  if (FIXTURE_BASE.kind !== "generated") throw new Error("expected a generated sample source");
+  const avatarId = await seedAvatar(library, CLIP_AVATAR_NAME, TINY_MASTER);
+  const masterPhotoId = library.getAvatar(avatarId)?.masterPhotoId;
+  if (masterPhotoId === undefined || masterPhotoId === null) throw new Error("the clip avatar has no master photo");
+  const ids = new Map<ClipPhotoKind, string>();
+  for (const [i, kind] of CLIP_PHOTO_KINDS.entries()) {
+    const spec = CLIP_PHOTO_SPEC[kind];
+    const [width, height] = spec.landscape === true ? [1280, 720] : [720, 1280];
+    const photo = await library.addPhoto(avatarId, await photoJpeg(width, height), {
+      mediaType: "image/jpeg",
+      width,
+      height,
+      source: { ...FIXTURE_BASE, category: spec.category, attemptId: `run-00000099:slot-${i + 1}#1`, slot: `slot-${i + 1}` },
+      qa: { ...spec.qa },
+    });
+    ids.set(kind, photo.id);
+  }
+  return {
+    avatarId,
+    masterPhotoId,
+    photos: clipPhotoMap((kind) => {
+      const id = ids.get(kind);
+      if (id === undefined) throw new Error(`no ${kind} photo was seeded`);
+      return id;
+    }),
+  };
 }
 
 async function seedAvatar(library: Awaited<ReturnType<typeof openLibrary>>["library"], name: string, seed: SeedMaster = TINY_MASTER): Promise<string> {
@@ -893,6 +1026,34 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   const otherAvatarId = await seedAvatar(library, "Sofia", master);
   const otherPhotoIds = await seedPhotos(library, otherAvatarId, OTHER_PHOTOS, 2);
   const archivedAvatarId = await seedAvatar(library, "Nora", master);
+  // Stage 5 (5b.1, S5.V7): Lia and her photos, real JPEGs; the video provider is a fake, the face gate a script, the clock one that moves (the short timing set is real milliseconds).
+  const clipRig = clipRigOf(options);
+  const clipWorld = clipRig === null ? undefined : await seedClipWorld(library);
+  const provider: ClipProvider | null = clipRig === null ? null : clipProvider();
+  type FaceScript = "match" | "mismatch" | "few-faces" | "worker";
+  let armedFace: FaceScript = "match";
+  let faceNow: FaceScript = "match";
+  let faceCalls = 0;
+  const clipGate =
+    clipRig === null
+      ? undefined
+      : fakeGate({
+          check: async () => {
+            faceCalls += 1;
+            switch (faceNow) {
+              case "match":
+                return match(PARITY_MATCH_COS);
+              case "mismatch":
+                return { kind: "mismatch", similarity: 0.41, faces: 1, headRatio: 0.3 };
+              case "few-faces":
+                return faceCalls <= 2 ? match(PARITY_MATCH_COS) : { kind: "no-face", faces: 0 };
+              case "worker":
+                throw new Error("the face worker is gone");
+            }
+          },
+        });
+  const clipsStarted = Date.now();
+  let clipSkew = 0;
   const portraitAvatars: PortraitAvatars | undefined =
     options.portraits === true
       ? {
@@ -981,7 +1142,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     await writeFile(join(dir, "library", "avatars", avatarId, "scenes", "set-parity-broken.json"), "{not json");
   }
 
-  const world: World = { avatarId, photoIds, otherAvatarId, otherPhotoIds, archivedAvatarId, scored: scored(photoIds), ...(portraitAvatars === undefined ? {} : { portraitAvatars }) };
+  const world: World = { avatarId, photoIds, otherAvatarId, otherPhotoIds, archivedAvatarId, scored: scored(photoIds), ...(portraitAvatars === undefined ? {} : { portraitAvatars }), ...(clipWorld === undefined ? {} : { clipWorld }) };
   const gate = new Gate();
   /** Renders standing at the gate now: their ffmpeg held, or their commit held at its claim. */
   let parked = 0;
@@ -1166,11 +1327,31 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     const started = await startEngine(dir, {
     ...(launchNet === undefined ? (portraitNet === undefined ? {} : { net: portraitNet }) : { net: launchNet }),
     bootId: `boot-0000-${String.fromCharCode(96 + boots).repeat(4)}`,
-    init: { renderTmpDir: join(dir, "userData", "render-tmp"), settings: settings(launching ? { imageAgeCheck: "off" } : portraitScript ? { imageAgeCheck: "off", concurrency: { network: 1 } } : {}), musicDir },
+    init: {
+      renderTmpDir: join(dir, "userData", "render-tmp"),
+      settings: settings(launching ? { imageAgeCheck: "off" } : portraitScript ? { imageAgeCheck: "off", concurrency: { network: 1 } } : clipRig?.budgetMicros !== undefined ? { monthlyBudgetMicros: clipRig.budgetMicros } : {}),
+      musicDir,
+    },
     deps: {
       post: (message) => posted.push(message),
       // A launch's reconcile is allowed once the ledger has been quiet for a while: the rig moves the clock when the owner is away (`quit`).
       ...(launching ? { clock: () => NOW + shifted, monotonic: () => shifted } : {}),
+      // Stage 5 (5b.1, S5.V7): the video provider is the rig's fake, every duration of the clip money path is the short set, the engine's clock moves with the wall clock (the budget's own quiet rule counts
+      // real time) and a story can move it ahead (`ClipControl.passTime`), and the face gate is the script above.
+      ...(provider === null || clipGate === undefined
+        ? {}
+        : {
+            fetch: provider.fetch,
+            clipTimings: SHORT_CLIP_TIMINGS,
+            clipSwitches: {
+              ...(clipRig?.mode === undefined ? {} : { mode: clipRig.mode }),
+              ...(clipRig?.boldClips === undefined ? {} : { boldClips: clipRig.boldClips }),
+              ...(clipRig?.exportFps === undefined ? {} : { exportFps: clipRig.exportFps }),
+            },
+            clock: () => NOW + (Date.now() - clipsStarted) + clipSkew,
+            monotonic: () => Date.now() - clipsStarted + clipSkew,
+            portraitFaceGate: clipGate.gate,
+          }),
       ...(portraitGate === undefined ? {} : { portraitFaceGate: portraitGate.gate }),
       musicSink: store,
       musicTracks: store,
@@ -1220,6 +1401,12 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     return started.engine;
   };
   let engine = await boot();
+  // The clip world's damaged photo: its file stops matching its sidecar once the engine is up (a library that opened with the file already wrong would set the photo aside, which is another story).
+  if (clipWorld !== undefined) {
+    const damaged = engine.library?.photoFilePath(clipWorld.photos.unreadable);
+    if (damaged === undefined) throw new Error("the clip world's damaged photo has no file");
+    await writeFile(damaged, "not the photo any more");
+  }
   // Nora is retired: the engine's own command, so the library's state is the engine's.
   const archived = ResponseMessage.parse(await engine.handle(command("avatars.archive", { avatarId: archivedAvatarId })));
   if (!archived.ok) throw new Error(`could not archive the third avatar: ${archived.error.code}`);
@@ -1356,7 +1543,15 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
         const running = (): number => engine.renders.states().filter((s) => s.status === "running").length;
         await until(() => parked >= running(), "every running render at the gate", 10_000);
       }
-      return answerOf(ResponseMessage.parse(await engine.handle(command(type, payload))));
+      const answer = answerOf(ResponseMessage.parse(await engine.handle(command(type, payload))));
+      // A clip the engine accepted starts its attempts now (the job reaches its first POST after real I/O, so this lands first): the armed script is theirs, once, as the mock's is.
+      if (type === "clips.create" && answer.ok && provider !== null) {
+        provider.beginClip();
+        faceNow = armedFace;
+        armedFace = "match";
+        faceCalls = 0;
+      }
+      return answer;
     },
     async advance(step) {
       const from = events().length;
@@ -1541,13 +1736,30 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
           await mkdir(log);
         }
       },
+      clips:
+        provider === null
+          ? NO_CLIPS
+          : {
+              next: (script) => {
+                provider.script(script);
+                armedFace = typeof script === "string" ? "match" : (script.face ?? "match");
+              },
+              hold: (held) => provider.hold(held),
+              prices: (mode) => provider.setPrices(mode),
+              posts: () => provider.posts(),
+              fileBack: (back) => provider.heal(back),
+              passTime: (ms) => {
+                clipSkew += ms;
+              },
+            },
     },
     stop: async () => {
       textLane.hold(false);
       holdImports(false);
-      // A launch's free runs poll on timers: the engine is shut down so none outlives the scenario.
-      if (launching) await within(engine.shutdown(50), 30_000, "the engine to shut down");
+      // A launch's free runs poll on timers, and a clip's holds are timers too: the engine is shut down so none outlives the scenario.
+      if (launching || provider !== null) await within(engine.shutdown(50), 30_000, "the engine to shut down");
       else await settle();
+      await provider?.close();
     },
   };
 }
