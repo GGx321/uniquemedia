@@ -472,18 +472,29 @@ export class MediaService {
    * otherwise `deleted`. A disk that fails throws `MediaDiskError` (no path in it).
    */
   async delete(mediaId: string): Promise<"deleted" | "not-found" | "in-use"> {
-    return this.#deps.withLibrary(async (library) => {
-      const area = this.#areaOf(library.root);
-      await area.ready;
-      if (!area.records.has(mediaId)) return "not-found";
-      // NO AWAIT from the provider's answer to the removal: `remove` takes the record out of the index in its synchronous prefix, so no lookup's admission
-      // (`onFound`) can run between «not reserved» and «gone». An await here would let a render reserve a media whose delete has already decided.
-      if (this.#deps.reservedMedia?.(mediaId) === true) return "in-use";
-      const removed = await area.records.remove(mediaId);
-      if (!removed) return "not-found";
-      this.#event("media.changed", { change: "removed", mediaId });
-      return "deleted";
-    });
+    return this.#deps.withLibrary(async (library) => this.#deleteFrom(this.#areaOf(library.root), mediaId));
+  }
+
+  /**
+   * `delete`, for the library at `root`, holding NOTHING of the engine's library (5b.2, S5.WA2): the background cleanup of a deleted avatar's clip copies belongs to the library the avatar was
+   * in, and must never refuse or delay the owner's switch to another one (`withLibrary` counts as a small write, which `library.open` waits for). A library this service has not opened has no such
+   * media; what is left is the next open's sweep. It cannot touch another library's media: the area is the root's own.
+   */
+  async deleteIn(root: string, mediaId: string): Promise<"deleted" | "not-found" | "in-use"> {
+    const area = this.#areas.get(root);
+    return area === undefined ? "not-found" : this.#deleteFrom(area, mediaId);
+  }
+
+  async #deleteFrom(area: Area, mediaId: string): Promise<"deleted" | "not-found" | "in-use"> {
+    await area.ready;
+    if (!area.records.has(mediaId)) return "not-found";
+    // NO AWAIT from the provider's answer to the removal: `remove` takes the record out of the index in its synchronous prefix, so no lookup's admission
+    // (`onFound`) can run between «not reserved» and «gone». An await here would let a render reserve a media whose delete has already decided.
+    if (this.#deps.reservedMedia?.(mediaId) === true) return "in-use";
+    const removed = await area.records.remove(mediaId);
+    if (!removed) return "not-found";
+    this.#event("media.changed", { change: "removed", mediaId });
+    return "deleted";
   }
 
   // ---------- the job ----------

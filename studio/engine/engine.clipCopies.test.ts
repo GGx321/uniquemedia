@@ -1,8 +1,10 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { readdir, rm } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { EngineReply } from "./control";
+import { openLibrary } from "./library";
+import { sequentialIds, steppingClock } from "./library/testing/helpers";
 import { useClipFixtures } from "./clips/testing/clipFixtures";
 import { copiesOf, importClipCommand, plantReadyClip, type PlantedClip } from "./clips/testing/copyKit";
 import { command, jobEnd, until, type ClipEngine } from "./clips/testing/engineClipKit";
@@ -209,6 +211,45 @@ describe("the avatar's copies go only when the avatar does", () => {
     await until(() => removedEvents(w.started).includes(other), "the other copy's removal");
 
     expect((await copiesOf(w.started)).map((c) => c.mediaId)).toEqual([first]);
+  });
+});
+
+describe("a library switch and the background cleanup of a deleted avatar's copies", () => {
+  /** A copy removal stalled in its disk call until `open()`. */
+  function stalledUnlink() {
+    let open: () => void = () => undefined;
+    const door = new Promise<void>((resolve) => (open = resolve));
+    let enter: () => void = () => undefined;
+    const entered = new Promise<void>((resolve) => (enter = resolve));
+    return {
+      open,
+      entered,
+      fs: {
+        unlink: async (path: string): Promise<void> => {
+          enter();
+          await door;
+          await rm(path, { force: true });
+        },
+      },
+    };
+  }
+
+  test("library.open right after trashed is not refused while the cleanup is stalled, and the old library's copy goes once it is let go", async () => {
+    const stall = stalledUnlink();
+    const w = await world({ deps: { mediaRecords: { fs: stall.fs } } });
+    const mediaA = await copyOfPlanted(w.started, w.clipA);
+    const other = join(dir(), "other");
+    await mkdir(other, { recursive: true });
+    await openLibrary(other, { now: steppingClock(), newId: sequentialIds("other") });
+    expect((await reply(w.started, deletePrepare(w.a.avatarId))).error).toBeUndefined();
+
+    await reply(w.started, deleteFinish(w.a.avatarId, "trashed"));
+    await stall.entered;
+    const switched = await reply(w.started, { kind: "control", type: "library.open", callId: "call-00000009", path: other });
+
+    expect(switched.error).toBeUndefined();
+    stall.open();
+    await eventually(async () => !(await storedFiles()).some((name) => name.startsWith(mediaA)), "the old library's copy to go");
   });
 });
 

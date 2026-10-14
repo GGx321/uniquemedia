@@ -181,6 +181,7 @@ import { MediaDiskError } from "./library/mediaRecords";
 import { pauseBeforeRetry } from "./library/durableFs";
 import { knownAvatarsOf } from "./clips/knownAvatars";
 import type { MediaStagingOptions } from "./media/staging";
+import type { MediaRecordsOptions } from "./library/mediaRecords";
 import { countRecordsByRoot, libraryHasVideoRecords } from "./videos/rootCounts";
 import { ownPhotoSourceOf, readVerifiedOwnPhoto } from "./videos/ownPhotos";
 import { ownTrackFactsOf } from "./videos/ownTrack";
@@ -260,6 +261,8 @@ export interface EngineDeps {
   reservedMedia?: (mediaId: string) => boolean;
   /** Test knob: the disk calls, `O_NOFOLLOW`, chunk size and caps of the staging copy. */
   mediaStaging?: Pick<MediaStagingOptions, "ops" | "noFollow" | "chunkBytes" | "caps" | "freeBytes" | "freeMarginBytes" | "fs" | "warn">;
+  /** Test knob: the own-media records' disk calls (a test stalls a removal here). */
+  mediaRecords?: Pick<MediaRecordsOptions, "fs">;
   /** Test knob: how long the engine lets one `media.import` call take to open the file (the job's copy is not bound by it); `MEDIA_IMPORT_ENGINE_DEADLINE_MS` unless a test says otherwise. */
   mediaImportDeadlineMs?: number;
   /** Where library folders' identities are read; the real filesystem unless a test plays another volume. */
@@ -980,6 +983,7 @@ export class Engine {
       // The render queue's reserved set, as photos have (3f.2); a test may pass its own.
       reservedMedia: (mediaId) => this.#mediaReserved(mediaId),
       staging: deps.mediaStaging,
+      records: deps.mediaRecords,
       log: (line) => console.warn(`studio engine: ${line}`),
     });
     this.#settings = init.settings;
@@ -1222,7 +1226,7 @@ export class Engine {
         copyOfClip: (avatarId, clipId) => this.#media.copyOfClip(avatarId, clipId),
         copiesOfClip: (avatarId, clipId) => this.#media.copiesOfClip(avatarId, clipId),
         copies: (root) => this.#media.copies(root),
-        deleteMedia: (mediaId) => this.#media.delete(mediaId),
+        deleteMedia: (mediaId, root) => (root === undefined ? this.#media.delete(mediaId) : this.#media.deleteIn(root, mediaId)),
       },
     });
     // S4.6a: the orchestrator core. It gets the registry and the Budget groups through its constructor; the engine keeps no public handle on it.
@@ -5372,7 +5376,7 @@ export class Engine {
       this.#jobs.forgetFinishedFor(avatarId);
       // 5b.2 (S5.WA2, r2.1 N5): the avatar's montage copies go only now (the folder is in the Trash), in the background and after the avatar was forgotten, never inside this synchronous step.
       // What cannot be removed now is swept at the next library open.
-      void this.#clips.removeCopiesOfAvatar(avatarId);
+      void this.#clips.removeCopiesOfAvatar(avatarId, pending.library.root);
       for (const sceneSetId of pending.sceneSetIds) this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "scenes.changed", payload: { change: "removed", sceneSetId, avatarId } });
       this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.removed", payload: { avatarId } });
     } finally {
@@ -5399,7 +5403,7 @@ export class Engine {
       library.detachAvatar(id);
       this.#jobs.forgetFinishedFor(id);
       // The avatar's folder is gone for good: its montage copies go too, in the background (same rule as the `trashed` outcome).
-      void this.#clips.removeCopiesOfAvatar(id);
+      void this.#clips.removeCopiesOfAvatar(id, library.root);
       this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.removed", payload: { avatarId: id } });
     }
   }

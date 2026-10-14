@@ -18,7 +18,7 @@ export interface ClipCopyMedia {
    */
   copies(root?: string): Promise<{ readable: boolean; copies: MediaSummary[] }>;
   /** `media.delete`'s path: `in-use` while a queued or running render holds the media. */
-  deleteMedia(mediaId: string): Promise<"deleted" | "not-found" | "in-use">;
+  deleteMedia(mediaId: string, root?: string): Promise<"deleted" | "not-found" | "in-use">;
 }
 
 /** Whether an avatar's folder is on the disk right now. `unknown`: it could not be looked at (the copy is then kept). */
@@ -118,15 +118,15 @@ export class ClipCopies {
    * Removes every copy of an avatar's clips (the avatar went to the Trash). Never throws: a copy that cannot go now (a render holds it, the disk fails) is logged and left for the next
    * library open's sweep.
    */
-  async removeOfAvatar(avatarId: string): Promise<void> {
+  async removeOfAvatar(avatarId: string, root: string): Promise<void> {
     let copies: MediaSummary[];
     try {
-      copies = (await this.#media.copies()).copies.filter((copy) => copy.origin?.avatarId === avatarId);
+      copies = (await this.#media.copies(root)).copies.filter((copy) => copy.origin?.avatarId === avatarId);
     } catch (error) {
       this.#log(`[clip] the copies of a deleted avatar could not be listed (${errorName(error)}); the next library open sweeps them`);
       return;
     }
-    for (const copy of copies) await this.#removeQuietly(copy, "left");
+    for (const copy of copies) await this.#removeQuietly(copy, "left", root);
   }
 
   /**
@@ -158,15 +158,15 @@ export class ClipCopies {
         continue;
       }
       if (folder === "unknown") continue;
-      if (await this.#removeQuietly(copy, "kept for the next sweep")) removed++;
+      if (await this.#removeQuietly(copy, "kept for the next sweep", avatars.root)) removed++;
     }
     return removed;
   }
 
   /** Removes one copy; true when it went. A copy that is held or whose removal fails is logged and stays. */
-  async #removeQuietly(copy: MediaSummary, what: string): Promise<boolean> {
+  async #removeQuietly(copy: MediaSummary, what: string, root: string): Promise<boolean> {
     try {
-      const outcome = await this.#media.deleteMedia(copy.mediaId);
+      const outcome = await this.#media.deleteMedia(copy.mediaId, root);
       if (outcome === "in-use") {
         this.#log(`[clip] a montage copy is held by a render and is ${what}`);
         return false;

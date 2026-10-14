@@ -309,8 +309,8 @@ export class ClipService {
   }
 
   /** The avatar went to the Trash: its montage copies are removed, asynchronously and quietly (what cannot go now is swept at the next library open). */
-  removeCopiesOfAvatar(avatarId: string): Promise<void> {
-    return this.#copies?.removeOfAvatar(avatarId) ?? Promise.resolve();
+  removeCopiesOfAvatar(avatarId: string, root: string): Promise<void> {
+    return this.#copies?.removeOfAvatar(avatarId, root) ?? Promise.resolve();
   }
 
   /** The library-open sweep of copies whose avatar and whose avatar folder are gone. Never throws. */

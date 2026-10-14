@@ -33,6 +33,8 @@ interface Fake {
   logs: string[];
   /** The `root` each listing of the copies was asked for. */
   listedFor: (string | undefined)[];
+  /** The `root` each removal was asked for. */
+  deletedFor: (string | undefined)[];
   state: { readable: boolean; inUse: Set<string>; throws: Set<string>; listThrows: boolean };
 }
 
@@ -40,6 +42,7 @@ function fake(held: MediaSummary[]): Fake {
   const deleted: string[] = [];
   const logs: string[] = [];
   const listedFor: (string | undefined)[] = [];
+  const deletedFor: (string | undefined)[] = [];
   const state: Fake["state"] = { readable: true, inUse: new Set(), throws: new Set(), listThrows: false };
   const media: ClipCopyMedia = {
     copiesOfClip: async (avatarId, clipId) => held.filter((c) => c.origin?.clipId === clipId && c.origin.avatarId === avatarId),
@@ -48,7 +51,8 @@ function fake(held: MediaSummary[]): Fake {
       if (state.listThrows) throw new Error("the media list cannot be read");
       return { readable: state.readable, copies: [...held] };
     },
-    deleteMedia: async (mediaId) => {
+    deleteMedia: async (mediaId, root) => {
+      deletedFor.push(root);
       if (state.throws.has(mediaId)) throw new Error("the disk failed");
       if (state.inUse.has(mediaId)) return "in-use";
       const at = held.findIndex((c) => c.mediaId === mediaId);
@@ -58,7 +62,7 @@ function fake(held: MediaSummary[]): Fake {
       return "deleted";
     },
   };
-  return { copies: new ClipCopies({ media, log: (line) => logs.push(line) }), media, held, deleted, logs, listedFor, state };
+  return { copies: new ClipCopies({ media, log: (line) => logs.push(line) }), media, held, deleted, logs, listedFor, deletedFor, state };
 }
 
 async function refusal(promise: Promise<unknown>): Promise<EngineError> {
@@ -202,16 +206,23 @@ describe("removing the copy of one clip (a clips.delete)", () => {
 describe("removing the copies of an avatar (the trashed outcome)", () => {
   test("removes every copy of that avatar and no other avatar's", async () => {
     const f = fake([copy("media-1", "avatar-a", "clip-1"), copy("media-2", "avatar-a", "clip-2"), copy("media-3", "avatar-b", "clip-3")]);
-    await f.copies.removeOfAvatar("avatar-a");
+    await f.copies.removeOfAvatar("avatar-a", "/library");
     expect(f.deleted.sort()).toEqual(["media-1", "media-2"]);
     expect(f.held.map((c) => c.mediaId)).toEqual(["media-3"]);
+  });
+
+  test("lists and removes in the library the avatar was in (a root), so a switch to another library is never touched", async () => {
+    const f = fake([copy("media-1", "avatar-a", "clip-1")]);
+    await f.copies.removeOfAvatar("avatar-a", "/old-library");
+    expect(f.listedFor).toEqual(["/old-library"]);
+    expect(f.deletedFor).toEqual(["/old-library"]);
   });
 
   test("one that is held or fails does not stop the others, and is logged", async () => {
     const f = fake([copy("media-1", "avatar-a", "clip-1"), copy("media-2", "avatar-a", "clip-2"), copy("media-3", "avatar-a", "clip-3")]);
     f.state.inUse.add("media-1");
     f.state.throws.add("media-2");
-    await f.copies.removeOfAvatar("avatar-a");
+    await f.copies.removeOfAvatar("avatar-a", "/library");
     expect(f.deleted).toEqual(["media-3"]);
     expect(f.logs.length).toBeGreaterThanOrEqual(2);
   });
@@ -219,7 +230,7 @@ describe("removing the copies of an avatar (the trashed outcome)", () => {
   test("never throws, even when the media list cannot be read", async () => {
     const f = fake([copy("media-1", "avatar-a", "clip-1")]);
     f.state.listThrows = true;
-    await f.copies.removeOfAvatar("avatar-a");
+    await f.copies.removeOfAvatar("avatar-a", "/library");
     expect(f.logs).toHaveLength(1);
   });
 });
@@ -282,6 +293,12 @@ describe("the library-open sweep of orphan copies", () => {
     f.state.throws.add("media-2");
     expect(await f.copies.sweep(avatars([], { "avatar-gone": "gone" }))).toBe(1);
     expect(f.deleted).toEqual(["media-3"]);
+  });
+
+  test("removes in the library it was started for too", async () => {
+    const f = fake([copy("media-1", "avatar-gone", "clip-1")]);
+    await f.copies.sweep(avatars([], { "avatar-gone": "gone" }));
+    expect(f.deletedFor).toEqual(["/library"]);
   });
 
   test("lists the copies of the library it was started for, not of whichever is live by then", async () => {

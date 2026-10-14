@@ -170,6 +170,43 @@ describe("copyOfClip()", () => {
   });
 });
 
+describe("deleteIn()", () => {
+  test("removes a media of the library at a root while holding nothing of the engine's library, and says in-use for a held one", async () => {
+    const r = rig();
+    const one = await importVideo(r, "a.mp4", { origin: origin(1) });
+    const two = await importVideo(r, "b.mp4", { origin: origin(2) });
+    r.reserved.add(two);
+    const holds: number[] = [];
+    const counting = new MediaService({
+      jobs: new JobRegistry(),
+      emit: () => undefined,
+      withLibrary: (work) => {
+        holds.push(1);
+        return work({ root: libraryRoot() });
+      },
+      newId: () => `id-${String(++counter).padStart(8, "0")}`,
+      now: () => new Date("2026-10-14T10:00:00.000Z"),
+      importers: { video },
+      reservedMedia: (mediaId) => r.reserved.has(mediaId),
+      log: () => undefined,
+    });
+    rigs.push(counting);
+    counting.libraryOpened({ root: libraryRoot() });
+
+    expect(await counting.deleteIn(libraryRoot(), one)).toBe("deleted");
+    expect(await counting.deleteIn(libraryRoot(), two)).toBe("in-use");
+    expect(await counting.deleteIn(libraryRoot(), one)).toBe("not-found");
+    expect(holds).toEqual([]);
+  });
+
+  test("a root this service has not opened has no such media", async () => {
+    const r = rig();
+    const one = await importVideo(r, "a.mp4", { origin: origin(1) });
+    expect(await r.service.deleteIn(join(tmp(), "elsewhere"), one)).toBe("not-found");
+    expect((await r.service.copies()).copies.map((c) => c.mediaId)).toEqual([one]);
+  });
+});
+
 describe("copyIdsOf()", () => {
   test("answers an avatar's copy ids at once, from the records in memory", async () => {
     const r = rig();
