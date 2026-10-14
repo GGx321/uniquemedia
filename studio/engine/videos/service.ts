@@ -1,6 +1,6 @@
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
-import type { FileState, VideoSummary, CommandPayload, EngineError, MediaKind, PhotoUnavailableReason, UnsequencedEvent } from "../../shared/engine";
+import type { FileState, VideoSummary, CommandPayload, EngineError, MediaKind, MediaOrigin, PhotoUnavailableReason, UnsequencedEvent } from "../../shared/engine";
 import { LaunchId, LaunchVideoKey, commonPhotoReason, EXPORT_CHANGING_DETAIL, LIBRARY_TOO_NEW_DETAIL, MAX_LISTED_VIDEOS, PROTOCOL_VERSION, RENDER_NOT_QUEUED_DETAIL, renderQueueFullDetail, usageUntrustedDetail } from "../../shared/engine";
 import { AUTOPILOT_MAX_TOTAL_MS } from "../../shared/autopilot/spec";
 import { draftCaptionIssues } from "../../shared/text/draftCaptionIssues";
@@ -38,7 +38,7 @@ import { newHashBudget, recordFilePath, type FileStateChecker } from "./fileStat
 import type { LayerDeps } from "./layers";
 import { MAX_RECORD_FILES_READ, readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./listing";
 import type { CommitTracker, LiveCommits } from "./live";
-import { scenePhotoIds, videoPaths, type VideoProvenance, type VideoRecord } from "./record";
+import { clipFramesOf, framePhotoIds, recordFramePhotoIds, scenePhotoIds, videoPaths, type FrameOrigin, type VideoProvenance, type VideoRecord } from "./record";
 import { markPublished, PublishedUnreadableError, readPublished, type PublishedRead } from "./published";
 import { recoverVideos, type ExportRootRef, type RecoverDeps } from "./recovery";
 import { CASE_PROBE_TIMEOUT_MS, DELETE_TIMEOUT_MS, LIST_BUDGET_MS, RECORD_CHECK_TIMEOUT_MS } from "./timeouts";
@@ -237,6 +237,42 @@ function sceneCells(spec: Pick<MontageDraft, "clips">): SceneCell[] {
 }
 
 /**
+ * The clip copies of a spec as frame cells (5b.2, I5.60): one per own video clip whose media is a copy, with the copy's photo and the clip's own place as the issue's path. They are judged, reserved
+ * and refused as the scene cells are, so a used, held, rejected or missing frame is told at the clip.
+ */
+function clipFrameCells(spec: Pick<MontageDraft, "clips">, origins: ReadonlyMap<string, MediaOrigin>): SceneCell[] {
+  const cells: SceneCell[] = [];
+  spec.clips.forEach((clip, i) => {
+    const origin = clip.kind === "video" ? origins.get(clip.mediaId) : undefined;
+    if (origin !== undefined) cells.push({ photoId: origin.photoId, path: ["clips", i] });
+  });
+  return cells;
+}
+
+/**
+ * What admission refuses about frames before it looks at the library (5b.2, I5.60): a copy of ANOTHER avatar's clip (`frame-foreign`), and a frame the spec holds twice, whether as a photo and a clip of
+ * it, two clips of one photo, or one copy twice (`frame-repeated`: a clip copy is placeable once per Reel). PHOTO_UNAVAILABLE at the clip's path, with the reason in `detail`. Null when the spec is fine.
+ */
+function frameOffences(spec: Pick<MontageDraft, "clips" | "avatarId">, origins: ReadonlyMap<string, MediaOrigin>): EngineFailure | null {
+  const sceneIds = new Set(sceneCells(spec).map((cell) => cell.photoId));
+  const framed = new Set<string>();
+  const offences: { path: (string | number)[]; detail: "frame-foreign" | "frame-repeated" }[] = [];
+  spec.clips.forEach((clip, i) => {
+    const origin = clip.kind === "video" ? origins.get(clip.mediaId) : undefined;
+    if (origin === undefined) return;
+    if (origin.avatarId !== spec.avatarId) {
+      offences.push({ path: ["clips", i], detail: "frame-foreign" });
+      return;
+    }
+    if (sceneIds.has(origin.photoId) || framed.has(origin.photoId)) offences.push({ path: ["clips", i], detail: "frame-repeated" });
+    framed.add(origin.photoId);
+  });
+  const first = offences[0];
+  if (first === undefined) return null;
+  return new EngineFailure({ code: "PHOTO_UNAVAILABLE", issues: offences.slice(0, MAX_MONTAGE_ISSUES).map((offence) => ({ code: "photo-unavailable", path: offence.path })), detail: first.detail });
+}
+
+/**
  * What the engine refuses an AUTOPILOT render (A8, A9, plan §8.3): a total above `AUTOPILOT_MAX_TOTAL_MS` (refused, never clamped) and any text layer. They are the montage's own
  * issue codes: `duration-too-long` at the clips, and `too-many-text-layers` at each text layer (the autopilot allows none).
  */
@@ -294,12 +330,13 @@ async function within<T>(ms: number, work: () => Promise<T>, onTimeout: () => Er
 }
 
 /**
- * Marks every scene photo of `record` rejected (`rejected.jsonl`) and answers their ids, in the order the video shows them: those that were already rejected are listed too, since
- * they are rejected afterwards. A photo the library no longer has is skipped (there is nothing to reject). Any other failure ends the delete before it removes anything.
+ * Marks every frame of `record` rejected (`rejected.jsonl`) and answers their ids, in the order the video shows them (its scene photos, then the photos of its clip copies: a photo and its clips are
+ * one frame, 5b.2): those that were already rejected are listed too, since they are rejected afterwards. A photo the library no longer has is skipped (there is nothing to reject). Any other failure
+ * ends the delete before it removes anything.
  */
 async function rejectScenePhotos(library: Library, record: VideoRecord): Promise<string[]> {
   const rejected: string[] = [];
-  for (const photoId of scenePhotoIds(record.spec.clips)) {
+  for (const photoId of recordFramePhotoIds(record)) {
     try {
       await library.setRejected(record.avatarId, photoId, true);
     } catch (error) {
@@ -407,7 +444,7 @@ export class VideoService {
         if (source.library !== null && source.library !== library) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${source.montageId} in the open library` });
         // The own media were found in the library that was open when they were looked up: another one now holds none of them.
         if ((admission.photos.size + admission.videos.size + admission.stickers.size > 0 || admission.track !== null) && admission.library !== library) throw new EngineFailure({ code: "IN_FLIGHT", detail: "the library was switched while the render was being prepared" });
-        return this.#render(library, spec, source, renderTmpDir, check, admission.photos, admission.videos, admission.stickers, admission.track, { remaining, marginMs });
+        return this.#render(library, spec, source, renderTmpDir, check, admission.photos, admission.videos, admission.stickers, admission.track, admission.origins, { remaining, marginMs });
       });
     } finally {
       admission.release();
@@ -426,9 +463,19 @@ export class VideoService {
    */
   async #admitOwnMedia(
     spec: MontageDraft,
-  ): Promise<{ photos: Map<string, OwnPhotoSource>; videos: Map<string, OwnVideoSource>; stickers: Map<string, OwnStickerSource>; track: OwnTrackSource | null; library: Library | null; release: () => void }> {
+  ): Promise<{
+    photos: Map<string, OwnPhotoSource>;
+    videos: Map<string, OwnVideoSource>;
+    stickers: Map<string, OwnStickerSource>;
+    track: OwnTrackSource | null;
+    /** 5b.2 (S5.WA2): the own videos that are a clip's montage copy, by media id: where each came from (the frame rule reads the photo from here). */
+    origins: Map<string, MediaOrigin>;
+    library: Library | null;
+    release: () => void;
+  }> {
     const photos = new Map<string, OwnPhotoSource>();
     const videos = new Map<string, OwnVideoSource>();
+    const origins = new Map<string, MediaOrigin>();
     const stickers = new Map<string, OwnStickerSource>();
     const admitted: { track: OwnTrackSource | null } = { track: null };
     const holds: (() => void)[] = [];
@@ -439,7 +486,7 @@ export class VideoService {
     const videoClips = ownVideoClips(spec);
     const stickerCells = ownStickerCells(spec);
     const music = spec.music?.source === "own" ? spec.music : null;
-    if (photoCells.length + videoClips.length + stickerCells.length === 0 && music === null) return { photos, videos, stickers, track: null, library: null, release };
+    if (photoCells.length + videoClips.length + stickerCells.length === 0 && music === null) return { photos, videos, stickers, track: null, origins, library: null, release };
     const library = this.#deps.openLibrary();
     const media = this.#deps.media;
     try {
@@ -467,6 +514,8 @@ export class VideoService {
           if (source === null) return;
           holds.push(this.#deps.queue.holdMedia(mediaId));
           videos.set(mediaId, source);
+          // 5b.2: a clip's montage copy says which clip and which photo it came from, in the same step that finds it.
+          if (found.summary.origin !== undefined) origins.set(mediaId, found.summary.origin);
         });
       }
       const askedStickers = new Set<string>();
@@ -498,11 +547,14 @@ export class VideoService {
         ...ownTrackIssues(spec, (mediaId) => (held !== null && held.mediaId === mediaId ? { durationMs: held.durationMs } : null)),
       ];
       if (issues.length > 0) throw new EngineFailure({ code: "MONTAGE_INVALID", issues: issues.slice(0, MAX_MONTAGE_ISSUES) });
+      // 5b.2 (I5.60): a clip copy of another avatar, and a frame the spec holds twice, are refused before anything else is looked at (a used or held frame is judged with the scene photos, in `#render`).
+      const offence = frameOffences(spec, origins);
+      if (offence !== null) throw offence;
     } catch (error) {
       release();
       throw error;
     }
-    return { photos, videos, stickers, track: admitted.track, library, release };
+    return { photos, videos, stickers, track: admitted.track, origins, library, release };
   }
 
   /**
@@ -546,6 +598,7 @@ export class VideoService {
     ownVideos: ReadonlyMap<string, OwnVideoSource>,
     ownStickers: ReadonlyMap<string, OwnStickerSource>,
     ownTrack: OwnTrackSource | null,
+    origins: ReadonlyMap<string, MediaOrigin>,
     time: { remaining(): number; marginMs: number },
   ): Promise<{ jobId: string; videoId: string }> {
     const deps = this.#deps;
@@ -558,8 +611,12 @@ export class VideoService {
     if (avatar === undefined || avatar.status !== "active") throw new EngineFailure({ code: "NOT_FOUND", detail: `no active avatar ${spec.avatarId} in the open library` });
 
     const cells = sceneCells(spec);
+    // 5b.2 (I5.60, Q-F = 1): a clip's photo is a frame of the spec as a scene photo is, and is judged, reserved and refused the same way, at the clip's own path.
+    const originOf: FrameOrigin = (mediaId) => origins.get(mediaId);
+    const frameCells = clipFrameCells(spec, origins);
+    const allCells = [...cells, ...frameCells];
     await this.#readIndexAgain(library, spec.avatarId);
-    this.#assertAvailable(library, spec.avatarId, cells);
+    this.#assertAvailable(library, spec.avatarId, allCells);
 
     let filled: MontageDraft;
     const focusMs = time.remaining() - time.marginMs;
@@ -585,7 +642,7 @@ export class VideoService {
 
     // From here to `submit` nothing is awaited.
     if (time.remaining() <= 0) throw outOfTime();
-    this.#assertAvailable(library, spec.avatarId, cells);
+    this.#assertAvailable(library, spec.avatarId, allCells);
     if (this.#closing) throw new EngineFailure({ code: "INTERNAL", detail: "the engine is shutting down" });
     // The folder the plan is about to name must still be the export folder, and none may be being switched: a render that commits
     // into the old folder after the owner was told «nothing is left behind» would be lost with the folder they then clear out.
@@ -602,6 +659,7 @@ export class VideoService {
       sources.set(cell.photoId, { path, width: sidecar.width, height: sidecar.height });
     }
 
+    const clipFrames = clipFramesOf(filled.clips, originOf);
     const jobId = deps.newId();
     const videoId = deps.newId();
     const plan: RenderPlan = {
@@ -623,6 +681,8 @@ export class VideoService {
       // An own video clip: the mezzanine as the admission found it; the job streams a verified copy into its own folder, the library file is never an ffmpeg input.
       ownVideos: [...ownVideos.values()],
       ownStickers: [...ownStickers.values()],
+      // 5b.2: the clips whose copies the spec holds, resolved once here; the intent and the record keep them, so no later deletion of a copy, a clip or an avatar frees the photo.
+      ...(clipFrames.length === 0 ? {} : { clipFrames }),
       audio: { kind: "silent" },
       // The id and the start only: the file's path comes from the track store when the job runs (invariant 31).
       ...(filled.music?.source === "trending" ? { track: { trackId: filled.music.trackId, startMs: filled.music.startMs } } : {}),
@@ -654,14 +714,15 @@ export class VideoService {
       jobId,
       ref: { videoId, avatarId: spec.avatarId, montageId, ...(source.provenance === undefined ? {} : { launchId: source.provenance.launchId }) },
       totalFrames: totalFramesOf(filled.clips),
-      photoIds: scenePhotoIds(filled.clips),
+      // The frames: the scene photos and the photos of the clip copies. The queue reserves them, so two queued renders of one frame collide there (`renderQueue` itself is unchanged).
+      photoIds: framePhotoIds(filled.clips, originOf),
       mediaIds: [...ownPhotos.keys(), ...ownVideos.keys(), ...ownStickers.keys(), ...(ownTrack === null ? [] : [ownTrack.mediaId])],
       execute: execute(plan),
     });
     if (!result.ok) {
       if (result.code === "QUEUE_FULL") throw new EngineFailure({ code: "RENDER_QUEUE_FULL", detail: renderQueueFullDetail(result.limit) });
       const held = new Set(result.photoIds);
-      throw unavailable(cells.filter((cell) => held.has(cell.photoId)), "another render that is queued or running holds this photo", "held-by-render");
+      throw unavailable(allCells.filter((cell) => held.has(cell.photoId)), "another render that is queued or running holds this photo", "held-by-render");
     }
 
     // A render that has to wait is announced now; one that started already was, by its `started` event.

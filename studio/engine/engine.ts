@@ -1249,7 +1249,8 @@ export class Engine {
       monthlyBudgetMicros: () => this.#settings.monthlyBudgetMicros,
       // A clip never claims its avatar (5b.1, I5.50): a launch does not skip an avatar whose clip is being made.
       isBusy: (avatarId) => this.#busyAvatars.has(avatarId) || this.#jobs.hasLiveJobFor(avatarId, { clips: false }),
-      photoIdsInDrafts: (library, avatarId) => this.#drafts.photoIdsInDrafts(library, avatarId),
+      // 5b.2 (I5.60): a draft that holds a clip's copy holds the clip's photo; the copies' origins come from the media list.
+      photoIdsInDrafts: (library, avatarId) => this.#drafts.photoIdsInDrafts(library, avatarId, () => this.#media.origins()),
       paidGate: () => this.#launchPaidGate(),
       exportStatus: () => this.#exportStatus,
       // S4.10 fix B: the plan card's figures. The music is counted from the free steps' own ports (one instance) and the auto-refresh word is a dry run of the service's rule; the balance is
@@ -1345,7 +1346,7 @@ export class Engine {
       renderFailure: (jobId) => renderFailureOf(this.#renders.states(), jobId),
       liveRenders: () => liveRendersOf(this.#renders.states()),
       focus: { prefetchFocus: (avatarId, photoId, options) => this.#focusOf(live()).prefetchFocus(avatarId, photoId, options) },
-      photoIdsInDrafts: (avatarId) => draftsRead(keyOf(avatarId), () => this.#drafts.photoIdsInDrafts(live(), avatarId)),
+      photoIdsInDrafts: (avatarId) => draftsRead(keyOf(avatarId), () => this.#drafts.photoIdsInDrafts(live(), avatarId, () => this.#media.origins())),
       // The answer depends on the launch's own set, so a read for another launch of the same avatar is not joined.
       sliceRuns: (avatarId) => slicesRead(keyOf([avatarId, this.#orchestrator.sceneSetOf(avatarId) ?? ""].join("|")), () => this.#launchSliceRuns(avatarId)),
       trackUsage: (avatarId) => usageRead(keyOf(avatarId), () => trackUsage(live().root, avatarId)),

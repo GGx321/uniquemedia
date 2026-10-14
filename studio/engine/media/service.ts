@@ -340,6 +340,15 @@ export class MediaService {
     });
   }
 
+  /**
+   * Where every clip copy of the live library comes from, by media id (5b.2, S5.WA2): what a draft's frames are resolved by (`DraftStore.photoIdsInDrafts`). `readable` is false when the library's media
+   * folder could not be read; it throws like any read of the live library (no library open).
+   */
+  async origins(): Promise<{ readable: boolean; origins: ReadonlyMap<string, MediaOrigin> }> {
+    const { readable, copies } = await this.copies();
+    return { readable, origins: new Map(copies.flatMap((copy) => (copy.origin === undefined ? [] : [[copy.mediaId, copy.origin] as const]))) };
+  }
+
   /** The media ids of the copies of an avatar's clips in the library at `root`, from the records in memory: empty for a library this service has not opened. Synchronous, for the avatar delete's look. */
   copyIdsOf(root: string, avatarId: string): string[] {
     return (

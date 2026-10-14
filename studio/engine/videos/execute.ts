@@ -27,7 +27,7 @@ import { copyOwnVideos, ownVideoCopyName, OwnVideoUnavailableError, type OwnVide
 import type { OwnStickerSource } from "./ownStickers";
 import { resolveLayers, type LayerDeps } from "./layers";
 import { CommitTracker } from "./live";
-import { partNameOf, scenePhotoIds, type VideoProvenance, type VideoRecord } from "./record";
+import { partNameOf, recordFramePhotoIds, scenePhotoIds, type ClipFrame, type VideoProvenance, type VideoRecord } from "./record";
 import type { ExportRootRef } from "./recovery";
 import { readRootId } from "./rootMarker";
 import { createTempExclusive } from "./tempFile";
@@ -120,6 +120,11 @@ export interface RenderPlan {
   readonly title: string | null;
   /** Stage 4: the autopilot's provenance (origin, launch, video key), carried into the intent and the record; absent for a manual render. */
   readonly provenance?: VideoProvenance;
+  /**
+   * 5b.2 (S5.WA2, I5.60, Q-F = 1): the clips whose montage copies the spec holds, resolved once at admission. They go into the intent and the record, and their photos are held with the spec's scene photos
+   * while an intent is settled. Absent when the spec holds no clip copy.
+   */
+  readonly clipFrames?: readonly ClipFrame[];
   /** The kind token of the file name. */
   readonly videoKind: string;
   /** The tile's music (title, artist); for a plan with a `track` the job fills it from the track it opened. */
@@ -195,7 +200,7 @@ export interface SettleInput {
   readonly videoId: string;
   readonly jobId: string;
   readonly exportRoot: ExportRootRef;
-  /** The scene photos of the video's spec: held while the intent is pending, whatever the settle makes of it. */
+  /** The video's frames (5b.2): the scene photos of its spec and the photos of its clip copies, held while the intent is pending, whatever the settle makes of it. */
   readonly photoIds: readonly string[];
 }
 
@@ -510,6 +515,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
           ...(track === null || music === null || outcome.music === undefined ? {} : { audio: { trackSha: track.sha256, startMs: music.startMs, gainDb: outcome.music.gainDb } }),
           spec: plan.spec,
           ...(plan.provenance === undefined ? {} : { provenance: plan.provenance }),
+          ...(plan.clipFrames === undefined ? {} : { clipFrames: plan.clipFrames }),
           forbiddenStrings,
         },
         {
@@ -566,7 +572,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
         const cancelled = context.signal.aborted && error === context.signal.reason;
         // A failure before the intent's write began left no intent: nothing to settle, and no photo to hold for one.
         if (deadlineFired || cancelled || deps.settleLeftover === undefined || !mayHaveLeftIntent(error)) throw error;
-        const adopted = await settleBounded(deps.settleLeftover, { avatarId: plan.avatarId, videoId: plan.videoId, jobId: plan.jobId, exportRoot: { root, rootId, caseInsensitive }, photoIds: scenePhotoIds(plan.spec.clips) }, stepMs, log, deps.deadlineTimers);
+        const adopted = await settleBounded(deps.settleLeftover, { avatarId: plan.avatarId, videoId: plan.videoId, jobId: plan.jobId, exportRoot: { root, rootId, caseInsensitive }, photoIds: recordFramePhotoIds({ spec: plan.spec, clipFrames: plan.clipFrames }) }, stepMs, log, deps.deadlineTimers);
         if (adopted === null) throw error;
         // The video exists: the job is done, not failed.
         try {

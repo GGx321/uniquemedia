@@ -116,6 +116,26 @@ describe("copies()", () => {
   });
 });
 
+describe("origins()", () => {
+  test("is every copy's origin by media id, and says whether the media could be read", async () => {
+    const r = rig();
+    const one = await importVideo(r, "a.mp4", { origin: origin(1) });
+    await importVideo(r, "own.mp4");
+    const two = await importVideo(r, "b.mp4", { origin: origin(2) });
+
+    const read = await r.service.origins();
+
+    expect(read.readable).toBe(true);
+    expect([...read.origins.keys()].sort()).toEqual([one, two].sort());
+    expect(read.origins.get(one)).toEqual(origin(1));
+  });
+
+  test("is not readable when the library's media folder is a link", async () => {
+    await symlink(tmp(), join(libraryRoot(), "media"));
+    expect(await rig().service.origins()).toMatchObject({ readable: false });
+  });
+});
+
 describe("copyOfClip()", () => {
   test("finds the live copy of a clip and only of that clip", async () => {
     const r = rig();

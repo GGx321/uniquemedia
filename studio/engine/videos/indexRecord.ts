@@ -1,5 +1,5 @@
 import type { Library } from "../library";
-import { scenePhotoIds, type VideoRecord } from "./record";
+import { recordFramePhotoIds, type VideoRecord } from "./record";
 
 // Telling the used index about a record the commit has just made durable
 // (invariant 24: "used" comes from the records). This is the job's last step,
@@ -29,7 +29,15 @@ function kindOf(error: unknown): string {
 
 export async function indexCommittedRecord(library: IndexPort, record: VideoRecord, log: (line: string) => void): Promise<IndexOutcome> {
   try {
-    library.addVideoRecordToIndex(record.avatarId, { videoId: record.id, photoIds: scenePhotoIds(record.spec.clips), montageId: record.montageId, file: { rootId: record.file.rootId, relPath: record.file.relPath } });
+    // 5b.2 (I5.60): the record's FRAMES are what it uses: its scene photos and the photos of the clips whose copies it holds (the snapshot in the record, never the media).
+    const clipIds = [...new Set((record.clipFrames ?? []).map((frame) => frame.clipId))];
+    library.addVideoRecordToIndex(record.avatarId, {
+      videoId: record.id,
+      photoIds: recordFramePhotoIds(record),
+      ...(clipIds.length === 0 ? {} : { clipIds }),
+      montageId: record.montageId,
+      file: { rootId: record.file.rootId, relPath: record.file.relPath },
+    });
     return "indexed";
   } catch (error) {
     log(`video ${record.id}: the used index could not take the committed record (${kindOf(error)}); rebuilding it from disk`);

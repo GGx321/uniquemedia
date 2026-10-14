@@ -42,12 +42,20 @@ const ClipUse = z.discriminatedUnion("kind", [
  */
 export const RecordSpecShape = z.looseObject({ clips: z.array(ClipUse).min(1) });
 
+/**
+ * 5b.2 (S5.WA2, I5.60, Q-F = 1): one clip frame of a record, as far as "used" goes: the photo a montage copy's clip was made from, and the clip. Strict about the two ids it reads, so a
+ * `clipFrames` that does not say them is refused as a whole (the record is a problem and its photos stay closed) rather than read as "uses nothing".
+ */
+const ClipFrameUse = z.looseObject({ photoId: LibraryIdSchema, clipId: LibraryIdSchema });
+
 /** What the reader needs of a record; a record with no clip at all is not a rendered video. */
 const VideoRecordShape = z.looseObject({
   schemaVersion: z.literal(VIDEO_RECORD_SCHEMA_VERSION),
   id: LibraryIdSchema,
   avatarId: LibraryIdSchema,
   spec: RecordSpecShape,
+  /** 5b.2 (additive): the clips whose copies the video holds; their photos are used like the scene photos. Absent on every record written before. */
+  clipFrames: z.array(ClipFrameUse).optional(),
   /** Only the draft's name matters here; a value that is not an id reads as "no draft" and never makes the record unreadable. */
   montageId: LibraryIdSchema.nullable().optional().catch(null),
   /** Where the file lives, by root and relative path: only the export file names' numbering reads it, so a value that does not fit reads as "unknown" and never makes the record unreadable. */
@@ -57,8 +65,10 @@ const VideoRecordShape = z.looseObject({
 /** One record, reduced to what the index needs. */
 export interface VideoRecordUse {
   videoId: string;
-  /** The scene photos it lists, each once, in order of appearance. */
+  /** Its frames: the scene photos it lists, each once, in order of appearance, then the photos of its clip copies (5b.2). */
   photoIds: string[];
+  /** 5b.2 (S5.WA2): the clips whose copies it holds, from its `clipFrames`; absent when it holds none. A photo may be used while none of ITS clips is (the photo itself, or a sibling clip). */
+  clipIds?: string[];
   /** The draft it was rendered from; null for a headless spec, or a record written before drafts existed. */
   montageId?: string | null;
   /** The export file the record names (root id and path inside the root); absent when the record does not say. */
@@ -146,9 +156,11 @@ export async function readVideoRecordFile(avatarDir: string, avatarId: string, n
     const cells = clip.kind === "photo" ? [clip.cell] : clip.kind === "collage" ? clip.cells : [];
     for (const cell of cells) if (cell.photo.source === "scene") photoIds.add(cell.photo.photoId);
   }
+  for (const frame of record.clipFrames ?? []) photoIds.add(frame.photoId);
+  const clipIds = [...new Set((record.clipFrames ?? []).map((frame) => frame.clipId))];
   return {
     kind: "record",
-    record: { videoId: record.id, photoIds: [...photoIds], montageId: record.montageId ?? null, ...(record.file === undefined ? {} : { file: { rootId: record.file.rootId, relPath: record.file.relPath } }) },
+    record: { videoId: record.id, photoIds: [...photoIds], ...(clipIds.length === 0 ? {} : { clipIds }), montageId: record.montageId ?? null, ...(record.file === undefined ? {} : { file: { rootId: record.file.rootId, relPath: record.file.relPath } }) },
   };
 }
 

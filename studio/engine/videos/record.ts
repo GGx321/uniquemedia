@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { z } from "zod";
-import { Id, LaunchId, LaunchVideoKey, MontageName, RelativePath, VideoKindToken } from "../../shared/engine";
+import { Id, LaunchId, LaunchVideoKey, MAX_CLIPS, MontageName, RelativePath, VideoKindToken } from "../../shared/engine";
 import { AVATARS_DIR, VIDEOS_DIR, VIDEO_RECORD_SCHEMA_VERSION } from "../library/layout";
 import { RecordSpecShape } from "../library/videoRecords";
 
@@ -42,6 +42,9 @@ export const VideoFileRef = z.looseObject({
 });
 export type VideoFileRef = z.infer<typeof VideoFileRef>;
 
+/** One clip frame of a record or an intent (`ClipFrame`). */
+const ClipFrameSchema = z.strictObject({ mediaId: Id, clipId: Id, photoId: Id });
+
 /**
  * A record, and an intent (the record-to-be). `spec` is the RESOLVED montage
  * shape: focus filled, the exact clips rendered. Loose, so a later build's extra
@@ -80,6 +83,12 @@ export const VideoRecordSchema = z.looseObject({
   /** Stage 4 (additive): the launch that made it, and the video's key in it (`<avatar>-<n>`), the launch's idempotency key for a render submitted before a crash. */
   launchId: LaunchId.optional(),
   launchVideoKey: LaunchVideoKey.optional(),
+  /**
+   * 5b.2 (additive, S5.WA2; plan s5b2 I5.60, Q-F = 1): the clips whose montage copies this video holds, resolved ONCE at admission: the copy, the clip and the photo the clip was made from. A photo
+   * and every clip made from it are one frame, so these photos are used as the spec's scene photos are, and nothing depends on the copy later (a deleted clip, copy or avatar never frees a used
+   * frame). Absent from a video with no clip copy and from every record written before 5b.2. Strict when present: an entry that is not a frame makes the record unreadable.
+   */
+  clipFrames: z.array(ClipFrameSchema).max(MAX_CLIPS).optional(),
 });
 export type VideoRecord = z.infer<typeof VideoRecordSchema>;
 
@@ -96,6 +105,8 @@ export interface VideoProvenance {
 /** A clip as far as "used" goes, structurally, so the contract's `Clip` and a record's loose clip both fit. */
 interface ClipLike {
   readonly kind: string;
+  /** An own video clip's media (a clip's montage copy is one). */
+  readonly mediaId?: string;
   readonly cell?: CellLike;
   readonly cells?: readonly CellLike[];
 }
@@ -154,3 +165,35 @@ export const VideoRecordWriteSchema = VideoRecordSchema.refine(
   (r) => [r.origin, r.launchId, r.launchVideoKey].every((v) => v === undefined) || [r.origin, r.launchId, r.launchVideoKey].every((v) => v !== undefined),
   { message: "provenance is origin, launchId and launchVideoKey together, or none of them", path: ["origin"] },
 );
+
+// ---------- frames (5b.2, S5.WA2; plan s5b2 I5.60, Q-F = 1): a photo and every clip made from it are ONE frame ----------
+
+/** What a spec says of a clip's montage copy, once, at admission: the copy, the clip, and the photo the clip was made from. A record and an intent keep it, so nothing depends on the copy later. */
+export type ClipFrame = z.infer<typeof ClipFrameSchema>;
+
+/** Where a copy comes from, as far as frames go: `MediaSummary.origin` has this shape and more. Undefined for a media that is no clip's copy. */
+export type FrameOrigin = (mediaId: string) => { readonly clipId: string; readonly photoId: string } | undefined;
+
+/** The snapshot of a spec's clip frames: one per own video clip whose media is a clip's copy, in clip order, each media once. */
+export function clipFramesOf(clips: readonly ClipLike[], originOf: FrameOrigin): ClipFrame[] {
+  const seen = new Set<string>();
+  const frames: ClipFrame[] = [];
+  for (const clip of clips) {
+    if (clip.kind !== "video" || clip.mediaId === undefined || seen.has(clip.mediaId)) continue;
+    const origin = originOf(clip.mediaId);
+    if (origin === undefined) continue;
+    seen.add(clip.mediaId);
+    frames.push({ mediaId: clip.mediaId, clipId: origin.clipId, photoId: origin.photoId });
+  }
+  return frames;
+}
+
+/** A spec's frames: its scene photos, then the photo of every clip copy it holds, each once. What "used" means for a spec that is being rendered or drafted. */
+export function framePhotoIds(clips: readonly ClipLike[], originOf: FrameOrigin): string[] {
+  return [...new Set([...scenePhotoIds(clips), ...clipFramesOf(clips, originOf).map((frame) => frame.photoId)])];
+}
+
+/** The frames of a record or an intent: the spec's scene photos, then its `clipFrames`' photos (an old record has none), each once. Never reads the media. */
+export function recordFramePhotoIds(record: { readonly spec: { readonly clips: readonly ClipLike[] }; readonly clipFrames?: readonly { readonly photoId: string }[] | undefined }): string[] {
+  return [...new Set([...scenePhotoIds(record.spec.clips), ...(record.clipFrames ?? []).map((frame) => frame.photoId)])];
+}

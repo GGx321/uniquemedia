@@ -13,7 +13,7 @@ import { hashFile } from "./fileBytes";
 import { indexCommittedRecord, type IndexPort } from "./indexRecord";
 import { commitIntent } from "./intents";
 import type { LiveCommits } from "./live";
-import { scenePhotoIds, videoPaths, VideoRecordSchema, type VideoRecord } from "./record";
+import { recordFramePhotoIds, videoPaths, VideoRecordSchema, type VideoRecord } from "./record";
 import { readRootId } from "./rootMarker";
 import { LockWaitTimeout, withRootLock } from "./rootLock";
 
@@ -435,7 +435,7 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
             // Until this intent is adopted or dropped, its photos are held: its file may be adopted at any time, and a run that defers it
             // (the export folder absent, another root, a busy lock) must not leave them looking free all session. A job that is running
             // owns its intent, and the queue holds its photos: a hold here would outlive a rollback.
-            if (live?.hasJob(parsed.data.jobId) !== true) input.library.holdPendingPhotos(avatar.id, videoId, scenePhotoIds(parsed.data.spec.clips));
+            if (live?.hasJob(parsed.data.jobId) !== true) input.library.holdPendingPhotos(avatar.id, videoId, recordFramePhotoIds(parsed.data));
           }
         } catch (error) {
           if (hasErrorCode(error, "ENOENT")) continue; // consumed while we looked: nothing to settle

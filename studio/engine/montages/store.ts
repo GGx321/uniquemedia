@@ -9,7 +9,7 @@ import { runExclusive } from "../library/keyedMutex";
 import { isFromNewerVersion, MONTAGE_FILE_SCHEMA_VERSION } from "../library/layout";
 import type { Library } from "../library/library";
 import { openRegularNoFollow, UnsafeOpenError, type OpenRegularOptions } from "../library/openRegular";
-import { scenePhotoIds } from "../videos/record";
+import { framePhotoIds, scenePhotoIds } from "../videos/record";
 import { unlinkWithRetry } from "../library/unlinkRetry";
 
 // The montage drafts on disk (Stage 3 plan, "Library, storage and contract additions"):
@@ -70,6 +70,12 @@ export interface DraftListing {
   /** More draft files than `MAX_DRAFT_FILES_READ`: the oldest were not read (and are counted in `notRead`). */
   truncated: boolean;
 }
+
+/**
+ * Where the clip copies of the library come from (5b.2, I5.60), as `photoIdsInDrafts` reads them: by media id, the clip and the photo each is the copy of. `readable` is false when the library's media
+ * list could not be read at all (an empty `origins` then says nothing). It may throw (no library): that is the same.
+ */
+export type DraftCopyOrigins = () => Promise<{ readable: boolean; origins: ReadonlyMap<string, { readonly clipId: string; readonly photoId: string }> }>;
 
 /** An avatar's drafts folder that could not be listed (not a missing one: that is no drafts). `code` is the disk's. */
 export class DraftFolderError extends Error {
@@ -261,11 +267,24 @@ export class DraftStore {
    * and the owner's render of the draft would then hit PHOTO_UNAVAILABLE. Own photos are no scene photos and are not listed. `complete` is false when a draft file could not be read or
    * more draft files exist than one listing reads (`list`'s own bounds): the answer is then what is KNOWN, and the caller that must not take a held photo treats it as unknown.
    */
-  async photoIdsInDrafts(library: Library, avatarId: string): Promise<{ photoIds: ReadonlySet<string>; complete: boolean }> {
+  async photoIdsInDrafts(library: Library, avatarId: string, copies?: DraftCopyOrigins): Promise<{ photoIds: ReadonlySet<string>; complete: boolean }> {
     const listing = await this.list(library, avatarId);
     const photoIds = new Set<string>();
     for (const montage of listing.montages) for (const photoId of scenePhotoIds(montage.spec.clips)) photoIds.add(photoId);
-    return { photoIds, complete: listing.skipped === 0 && listing.notRead === 0 && !listing.truncated };
+    let complete = listing.skipped === 0 && listing.notRead === 0 && !listing.truncated;
+    // 5b.2 (I5.60, Q-F = 1): a draft that holds a clip's copy holds the clip's photo. A draft has no snapshot, so the copy's origin is read from the media list, and only when a draft has a video clip.
+    // A copy whose summary is MISSING holds no frame and the answer stays complete (r2.1 N1: such a draft cannot render that copy, and media ids are never reused); `complete` is false only when the
+    // media list itself cannot be read, because the autopilot fails closed per avatar and would take every library photo of it out of a launch.
+    if (copies !== undefined && listing.montages.some((montage) => montage.spec.clips.some((clip) => clip.kind === "video"))) {
+      try {
+        const read = await copies();
+        if (!read.readable) complete = false;
+        else for (const photoId of framePhotoIds(listing.montages.flatMap((montage) => montage.spec.clips), (mediaId) => read.origins.get(mediaId))) photoIds.add(photoId);
+      } catch {
+        complete = false;
+      }
+    }
+    return { photoIds, complete };
   }
 
   /** `entries` by modification time, newest first, ties by name; a file that cannot be looked at goes last. */
