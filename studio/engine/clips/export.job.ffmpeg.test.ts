@@ -2,7 +2,7 @@ import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { copyFile, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { JobState } from "../../shared/engine";
+import { EXPORT_CHANGING_DETAIL, type JobState } from "../../shared/engine";
 import { FfmpegError, FfmpegTimeoutError, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { FREE_MARGIN_BYTES } from "../freeBytes";
@@ -348,6 +348,59 @@ describe("a stop", () => {
 
     expect(state.status).toBe("done");
     expect((await r.record(CLIP)).exports).toHaveLength(1);
+  });
+});
+
+describe("the export folder being switched (an export commits into the folder the settings name, as a render does)", () => {
+  test("a pick of another folder waiting for its settings refuses clips.export IN_FLIGHT, and no job starts", async () => {
+    const r = await world();
+    r.state.switchPending = true;
+
+    expect(refusalOf(await r.start(CLIP))).toMatchObject({ code: "IN_FLIGHT", detail: EXPORT_CHANGING_DETAIL });
+    expect(r.jobs.states()).toEqual([]);
+  });
+
+  test("the folder changed under a running export: refused IN_FLIGHT before the claim, nothing left in the old folder or the record", async () => {
+    let r: ExportRig | null = null;
+    r = await world({ deps: { hooks: { reached: (step) => void (step === "verified" && r !== null ? (r.state.currentExportPath = join(r.dir, "other")) : undefined) } } });
+    const state = await r.settled(await r.started(CLIP));
+
+    expect(errorOf(state)).toMatchObject({ code: "IN_FLIGHT", detail: EXPORT_CHANGING_DETAIL });
+    expect(await r.folderNames()).toEqual([]);
+    expect((await r.record(CLIP)).exports).toEqual([]);
+  });
+
+  test("a pick that started while an export was queued stops it at its turn, before any byte", async () => {
+    const first = heldEncode();
+    let calls = 0;
+    const r = await world({ deps: { encode: async (encode) => (++calls === 1 ? first.encode(encode) : copyingEncode(fixtures.cleanExport)(encode)) } });
+    await r.putClip("clip-0000002", await fixtures.kling());
+    const a = await r.started(CLIP);
+    await first.started;
+    const b = await r.started("clip-0000002");
+
+    r.state.switchPending = true;
+    first.release();
+    await r.settled(a);
+
+    expect(errorOf(await r.settled(b))).toMatchObject({ code: "IN_FLIGHT", detail: EXPORT_CHANGING_DETAIL });
+    expect(calls).toBe(1);
+  });
+
+  test("active() counts the running export and the queued one (export.choose waits for both), and nothing once they ended", async () => {
+    const first = heldEncode();
+    let calls = 0;
+    const r = await world({ deps: { encode: async (encode) => (++calls === 1 ? first.encode(encode) : copyingEncode(fixtures.cleanExport)(encode)) } });
+    await r.putClip("clip-0000002", await fixtures.kling());
+    const a = await r.started(CLIP);
+    await first.started;
+    const b = await r.started("clip-0000002");
+
+    expect(r.exports.active()).toBe(2);
+    first.release();
+    await r.settled(a);
+    await r.settled(b);
+    expect(r.exports.active()).toBe(0);
   });
 });
 

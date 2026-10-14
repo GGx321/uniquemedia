@@ -1198,6 +1198,8 @@ export class Engine {
       ...(deps.clipSwitches?.mode === undefined ? {} : { mode: deps.clipSwitches.mode }),
       ...(deps.clipSwitches?.boldClips === undefined ? {} : { boldClips: deps.clipSwitches.boldClips }),
       ...(deps.clipSwitches?.exportFps === undefined ? {} : { exportFps: deps.clipSwitches.exportFps }),
+      // S5.V4c review: an export, like a render, commits only into the folder the settings name, and never while a pick of another one waits for its settings.
+      exportSwitch: { pending: () => this.#exportSwitchPending(), currentPath: () => this.#settings.exportPath },
       ...(deps.clipRecords === undefined ? {} : { records: deps.clipRecords }),
       log: (line) => console.warn(`studio engine: ${line}`),
       exportStatus: (requiredBytes) => this.#refreshExportStatus(requiredBytes),
@@ -3657,16 +3659,20 @@ export class Engine {
   async #chooseExportFolder(path: string): Promise<Pick<EngineReply, "error" | "exportFolder">> {
     // A render commits into the folder it was planned for, and its record would be left behind by a switch under it. One that is
     // still being prepared counts: its plan already names the folder, and nothing is queued for `active()` to see.
-    const inFlight = (): boolean => this.#renders.active() > 0 || this.#videos.preparing > 0;
-    const refuseInFlight = { error: { code: "IN_FLIGHT", detail: "a video render is queued or running; change the export folder when it ends" } } as const;
-    if (inFlight()) return refuseInFlight;
+    // S5.V4c: a clip's export (queued or running) saves into the folder too, and its record would name the old one.
+    const inFlight = (): boolean => this.#renders.active() > 0 || this.#videos.preparing > 0 || this.#clips.exporting();
+    const refuseInFlight = (): Pick<EngineReply, "error"> =>
+      this.#clips.exporting() && this.#renders.active() === 0 && this.#videos.preparing === 0
+        ? { error: { code: "IN_FLIGHT", detail: "a clip is being saved to the export folder; change the export folder when it ends" } }
+        : { error: { code: "IN_FLIGHT", detail: "a video render is queued or running; change the export folder when it ends" } };
+    if (inFlight()) return refuseInFlight();
     // Never created: the dialog makes folders, and a path that is not there is a drive that is not plugged in.
     const check = await this.#boundedExportCheck(path, { mayCreate: false, probeCase: false });
     if (!check.ok) return { error: { code: "EXPORT_UNAVAILABLE", exportReason: check.reason, detail: `the folder cannot be the export folder (${check.reason})` } };
     try {
       const counts = this.#live === null ? { resolved: 0, elsewhere: 0, unreadable: 0, truncated: false } : await countRecordsByRoot(this.#live.library, check.rootId);
       // From now until the settings arrive, no render may be submitted: the owner is about to be told what the folder holds.
-      if (inFlight()) return refuseInFlight;
+      if (inFlight()) return refuseInFlight();
       this.#exportSwitchUntil = this.#deps.monotonic() + EXPORT_SWITCH_WAIT_MS;
       return { exportFolder: { rootId: check.rootId, resolved: counts.resolved, elsewhere: counts.elsewhere, incomplete: counts.unreadable > 0 || counts.truncated } };
     } catch (error) {

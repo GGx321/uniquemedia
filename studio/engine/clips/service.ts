@@ -161,6 +161,8 @@ export interface ClipServiceDeps {
   exportNumbers: () => { library: ExportNumberLibrary; libraryRoot: string } | null;
   /** Test knob: the export's fps mode (`EXPORT_FPS` when absent). */
   exportFps?: ExportFpsMode;
+  /** The engine's export folder switch, as a render reads it: a pick waiting for its settings, and the folder the settings name now. */
+  exportSwitch?: { pending(): boolean; currentPath(): string };
 }
 
 type CreatePayload = CommandPayload<"clips.create">;
@@ -251,6 +253,7 @@ export class ClipService {
       withRootLock: deps.withRootLock,
       exportNumbers: deps.exportNumbers,
       ...(deps.exportFps === undefined ? {} : { fps: deps.exportFps }),
+      ...(deps.exportSwitch === undefined ? {} : { exportSwitch: deps.exportSwitch }),
     });
   }
 
@@ -258,6 +261,11 @@ export class ClipService {
 
   export(payload: CommandPayload<"clips.export">): Promise<{ jobId: string }> {
     return this.#exports.start(payload);
+  }
+
+  /** An export is queued or running: it saves into the current export folder, so a pick of another one waits (`export.choose`). */
+  exporting(): boolean {
+    return this.#exports.active() > 0;
   }
 
   // ---------- the records (S5.V4a2) ----------

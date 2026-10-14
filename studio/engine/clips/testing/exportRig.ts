@@ -42,6 +42,9 @@ export interface ExportRigState {
   freeBytes: number | null;
   /** Replaces the whole export check when set. */
   exportCheck: ((requiredBytes?: number) => Promise<ExportRootCheck>) | null;
+  /** The engine's view of the export folder: a pick waiting for its settings, and the folder the settings name now. */
+  switchPending: boolean;
+  currentExportPath: string;
 }
 
 export interface ExportRig {
@@ -148,7 +151,7 @@ export async function createExportRig(options: ExportRigOptions = {}): Promise<E
   const { library } = await openLibrary(libraryRoot, { now: steppingClock(), newId: sequentialIds("exportrig") });
   const clipsDir = clipsDirOf(library, avatarId);
   await ensureClipsDir(clipsDir);
-  const state: ExportRigState = { now: NOW, open: true, pendingDelete: new Set(), busy: new Set(), work: 0, freeBytes: null, exportCheck: null };
+  const state: ExportRigState = { now: NOW, open: true, pendingDelete: new Set(), busy: new Set(), work: 0, freeBytes: null, exportCheck: null, switchPending: false, currentExportPath: exportRoot };
   const stop = new AbortController();
   const events: UnsequencedEvent[] = [];
   const logs: string[] = [];
@@ -216,6 +219,7 @@ export async function createExportRig(options: ExportRigOptions = {}): Promise<E
     liveCommits: live,
     withRootLock: (root, work, lockOptions) => withRootLock(NODE_COMMIT_FS, root, work, lockOptions),
     exportNumbers: () => (state.open ? { library, libraryRoot } : null),
+    exportSwitch: { pending: () => state.switchPending, currentPath: () => state.currentExportPath },
     fps: options.fps ?? "duplicate",
     ...options.deps,
   });

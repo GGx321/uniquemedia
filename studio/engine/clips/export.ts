@@ -1,6 +1,6 @@
 import * as nodePath from "node:path";
 import { dirname } from "node:path";
-import { EXPORT_FPS, PROTOCOL_VERSION, type ClipExportLine, type CommandPayload, type EngineError, type ExportUnavailableReason } from "../../shared/engine";
+import { EXPORT_CHANGING_DETAIL, EXPORT_FPS, PROTOCOL_VERSION, type ClipExportLine, type CommandPayload, type EngineError, type ExportUnavailableReason } from "../../shared/engine";
 import type { UnsequencedEvent } from "../../shared/engine/events";
 import { FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { EngineFailure } from "../engineFailure";
@@ -87,6 +87,8 @@ export interface ClipExportsDeps {
   withRootLock: <T>(root: string, work: () => Promise<T>, options?: RootLockOptions) => Promise<T>;
   /** What `highestNamedNumber` reads of the live library, or null when none is open. */
   exportNumbers: () => { library: ExportNumberLibrary; libraryRoot: string } | null;
+  /** The engine's export folder switch (the render's `exportSwitch`): a pick waiting for its settings, and the folder the settings name now. */
+  exportSwitch?: { pending(): boolean; currentPath(): string };
   /** `EXPORT_FPS` unless a test picks another mode. */
   fps?: ExportFpsMode;
   // ----- test seams -----
@@ -224,6 +226,20 @@ export class ClipExports {
     return this.#running.has(jobId);
   }
 
+  /** The exports queued or running: each will save into the export folder the settings name, so a pick of another folder waits for them (`export.choose`). */
+  active(): number {
+    return this.#running.size;
+  }
+
+  /**
+   * The folder an export commits into is the one the settings name, and none may be being switched (the render's rule, `videos/service.ts`): a copy saved into the old folder
+   * after the owner was told what the new one holds would read `elsewhere` and could not be shown. IN_FLIGHT, before any byte or before the claim.
+   */
+  #assertNoSwitch(root: string): void {
+    const exportSwitch = this.#deps.exportSwitch;
+    if (exportSwitch !== undefined && (exportSwitch.pending() || root !== exportSwitch.currentPath())) throw failure({ code: "IN_FLIGHT", detail: EXPORT_CHANGING_DETAIL });
+  }
+
   /** Stops an export (honoured until its name is claimed). */
   cancel(jobId: string): void {
     this.#running.get(jobId)?.abort(new DOMException("the export was cancelled", "AbortError"));
@@ -265,7 +281,8 @@ export class ClipExports {
       const durationMs = record.outcome.durationMs;
       const check = await deps.exportStatus(expectedExportBytes(durationMs) + FREE_MARGIN_BYTES);
       if (!check.ok) throw exportRefusal(check.reason, "the export folder cannot take the clip");
-      // Nothing awaited from here to the job's registration: a delete prepared meanwhile, or the library switched away, wins.
+      // Nothing awaited from here to the job's registration: a delete prepared meanwhile, the library switched away, or a pick of another export folder, wins.
+      this.#assertNoSwitch(check.root);
       const now = this.#libraryFor(avatarId);
       if (now.library.key !== first.library.key) throw failure({ code: "NOT_FOUND", detail: `avatar ${avatarId} is no longer in the library its clip was read from` });
       if (deps.host.busy(clipId)) throw failure({ code: "IN_FLIGHT", clipReason: "job-running", detail: `a job is working on clip ${clipId}` });
@@ -348,6 +365,7 @@ export class ClipExports {
     // 1. The folder again: the queue may have waited, and minutes may pass before the claim.
     const check = await deps.exportStatus(expectedExportBytes(job.durationMs) + FREE_MARGIN_BYTES);
     if (!check.ok) throw exportRefusal(check.reason, "the export folder cannot take the clip");
+    this.#assertNoSwitch(check.root);
     signal.throwIfAborted();
 
     // 2. The library's file: the bytes its record names (I5.54: the provider's, kept as they came), judged by the walker, then by ffmpeg itself: one video stream, the one the walker
@@ -431,8 +449,9 @@ export class ClipExports {
           deps.log,
           deps.numberFs,
         );
-        // The point of no return: nothing is awaited between this look and the claim's start.
+        // The point of no return: nothing is awaited between these looks (a cancel; the folder still the one the settings name) and the claim's start.
         signal.throwIfAborted();
+        this.#assertNoSwitch(check.root);
         state.pastNoReturn = true;
         let identity: FileIdentity | null = null;
         let claim: Awaited<ReturnType<typeof claimExportName>>;

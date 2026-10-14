@@ -2,13 +2,13 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { ResponseMessage, type ClipSummary } from "../shared/engine";
+import { EXPORT_CHANGING_DETAIL, ResponseMessage, type ClipSummary } from "../shared/engine";
 import type { ExportFpsMode } from "./clips/exportProfile";
 import { command, create, jobEnd, jobIdOf, seedClipAvatar, startClipEngine, until, type ClipEngine } from "./clips/testing/engineClipKit";
 import { EngineReply } from "./control";
 import { openLibrary } from "./library";
 import { sequentialIds, steppingClock } from "./library/testing/helpers";
-import { useEngineDir } from "./testing/engineHarness";
+import { engineInit, useEngineDir } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -78,6 +78,29 @@ describe("clips.export through the engine", () => {
   });
 });
 
+describe("an export and a pick of another export folder", () => {
+  test("after an ok pick clips.export is refused IN_FLIGHT until the settings arrive; then the copy goes into the new folder and reads present", async () => {
+    const { engine, avatarId, clipId } = await madeClip("duplicate");
+    const other = join(dir(), "other-export");
+    await mkdir(other, { recursive: true });
+
+    const picked = await reply(engine, { kind: "control", type: "export.choose", callId: "call-00000007", path: other });
+    expect(picked.exportFolder).toBeDefined();
+    const refused = await answer(engine, "clips.export", { avatarId, clipId });
+    expect(refused.ok ? null : refused.error).toMatchObject({ code: "IN_FLIGHT", detail: EXPORT_CHANGING_DETAIL });
+
+    await engine.engine.receive({ kind: "control", type: "settings.update", settings: { ...engineInit(dir()).settings, imageAgeCheck: "off", exportPath: other } });
+    const jobId = exportJobOf(await answer(engine, "clips.export", { avatarId, clipId }));
+    const end = await jobEnd(engine, jobId);
+    const relPath = end.type === "job.done" && end.payload.result.kind === "clip" ? end.payload.result.exported?.relPath : undefined;
+
+    expect(existsSync(join(other, relPath ?? "-"))).toBe(true);
+    expect(await exported()).toEqual([]);
+    const got = await answer(engine, "clips.get", { avatarId, clipId });
+    expect(got.ok && got.type === "clips.get" ? got.result.clip.exports.map((line) => line.fileState) : null).toEqual(["present"]);
+  });
+});
+
 describe("a running export", () => {
   /** An export long enough to be looked at while it runs: 5 s of 720p, motion-interpolated. */
   async function running(): Promise<{ engine: ClipEngine; avatarId: string; clipId: string; jobId: string }> {
@@ -118,6 +141,20 @@ describe("a running export", () => {
     const refused = await reply(engine, { kind: "control", type: "avatar.deletePrepare", callId: "call-00000001", avatarId, token: "token-00000001" });
 
     expect(refused.error?.code).toBe("IN_FLIGHT");
+    await answer(engine, "avatars.cancel", { jobId });
+    await jobEnd(engine, jobId);
+  });
+
+  test("refuses a pick of another export folder (export.choose) IN_FLIGHT, naming the clip", async () => {
+    const other = join(dir(), "other-export");
+    await mkdir(other, { recursive: true });
+    const { engine, jobId } = await running();
+
+    const refused = await reply(engine, { kind: "control", type: "export.choose", callId: "call-00000007", path: other });
+
+    expect(refused.error).toMatchObject({ code: "IN_FLIGHT" });
+    expect(refused.error?.detail).toContain("clip");
+    expect(refused.exportFolder).toBeUndefined();
     await answer(engine, "avatars.cancel", { jobId });
     await jobEnd(engine, jobId);
   });
