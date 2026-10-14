@@ -129,7 +129,7 @@ import { JOURNAL_FILE, PLAN_FILE, RUNS_DIR } from "../engine/library/layout";
 import { endedSlots, faceRetryProblems, faceScoreProblems, isFaceJudged, latestPrompts, pickMismatchTarget, slotIndexByPhoto, type MismatchTarget } from "./runFaceSmoke";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
 import { APP_PAGE_URL, APP_SCHEME, isAppPage } from "../main/appProtocol";
-import { AutopilotGetResult, PROTOCOL_VERSION } from "../shared/engine";
+import { AutopilotGetResult, ClipUse, MediaOrigin, PROTOCOL_VERSION } from "../shared/engine";
 import { LaunchFile } from "../engine/autopilot/launchFile";
 import { ffmpegPath } from "../node/ffmpegBinary";
 import { musicLists } from "../engine/music/fixtures";
@@ -148,6 +148,19 @@ import { BOLD_MODEL, boldRequestProblems, expectedBilledMicros, failedReasonsOf,
 import { verifyClipExport } from "../engine/clips/exportVerify";
 import { VIDEO_TIERS } from "../engine/money/prices";
 import { clipPostProblems, exportedCopyProblems, refusedJobProblems } from "./clipSmoke";
+import {
+  copySummaryProblems,
+  fixtureClipArgv,
+  fixturePosterArgv,
+  frameUseProblems,
+  montageSmokeExpectation,
+  montageSmokeSpec,
+  plantSmokeClip,
+  providerFileProblems,
+  runFixtureFfmpeg,
+  storedCopyProblems,
+  type PlantedSmokeClip,
+} from "./clipMontageSmoke";
 import { electronBinary } from "./electronBinary";
 import { failureDetail } from "./failureDetail";
 import { textAssetPackageProblems, textRasteriserOutputProblems } from "./textSmoke";
@@ -4201,6 +4214,116 @@ async function runClipScenario(target: Target): Promise<void> {
   }
 }
 
+// ---------- «Клипы в монтаже» end-to-end scenario (Stage 5, 5b.2, S5.WA3) ----------
+
+/** The identity of the clip-montage scenario's export folder (its marker's `rootId`). */
+const CLIP_MONTAGE_ROOT_ID = "smoke-clip-montage-root-0001";
+
+/**
+ * «Клипы в монтаже» in the packaged app, end to end, with NO provider and no money: a fixture clip made by ffmpeg (24 fps H.264 and AAC, 2 s, 720 x 1280) is planted as TWO ready clips of two photos of
+ * the scene library, as the clip job would have committed them. In the app: each clip is imported as its copy (`media.importClip`, the packaged video importer and the packaged ffmpeg: a 30 fps H.264
+ * copy with no audio, never upscaled, its origin on the record); a Reel of ONE photo and the TWO copies is rendered for real and passes the render verifier at 1080 x 1920, 30 fps, with the exact
+ * frame count (the engine's own verifier run again, and the ffprobe and box-reader second opinion); both clips and the three photos carry the Reel's used mark (one frame, one video); the
+ * provider's files are byte for byte what was planted.
+ *
+ * clipMontageSmoke.engine.test.ts plays the very same steps against the real engine without Electron (it runs on a developer's machine); this needs Electron: CI only, never run locally.
+ */
+async function runClipMontageScenario(target: Target): Promise<void> {
+  const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-clipmontage-"));
+  const userData = join(tmp, "userData");
+  const libraryRoot = join(tmp, "library");
+  const exportRoot = join(tmp, "export");
+  const scratch = join(tmp, "scratch");
+  const fixtures = join(tmp, "fixtures");
+  for (const dir of [userData, libraryRoot, exportRoot, scratch, fixtures]) await mkdir(dir, { recursive: true });
+  await writeFile(join(exportRoot, EXPORT_MARKER_FILE), JSON.stringify({ schemaVersion: 1, rootId: CLIP_MONTAGE_ROOT_ID, createdAt: new Date().toISOString() }));
+
+  // The fixture clip and the library: the scene library's avatar and photos, and two ready clips planted on the second and the third photo.
+  const source = join(fixtures, "fixture-clip.mp4");
+  const poster = join(fixtures, "fixture-poster.jpg");
+  await runFixtureFfmpeg(fixtureClipArgv(source));
+  await runFixtureFfmpeg(fixturePosterArgv(source, poster));
+  const world = await seedSceneLibrary(libraryRoot, scratch);
+  const { avatarId } = world;
+  const [scenePhoto = "", photoA = "", photoB = ""] = world.photoIds;
+  const clipA = await plantSmokeClip(libraryRoot, avatarId, photoA, "clip-0000001", source, poster);
+  const clipB = await plantSmokeClip(libraryRoot, avatarId, photoB, "clip-0000002", source, poster);
+  await saveSettings(userData, { ...defaultSettings(userData), libraryPath: libraryRoot, exportPath: exportRoot });
+
+  const running = await launch(target, userData);
+  try {
+    const { cdp } = running;
+    const sha256Of = async (path: string): Promise<string> => createHash("sha256").update(new Uint8Array(await readFile(path))).digest("hex");
+
+    // 1. Each clip becomes its copy: a job under the clip's lock, with the clip's origin in its ref.
+    const copyOf = async (clip: PlantedSmokeClip): Promise<string> => {
+      const started = await req(cdp, "media.importClip", { avatarId, clipId: clip.clipId });
+      const jobId = field(started, "result", "jobId");
+      check(`clip montage scenario: media.importClip starts an import job for ${clip.clipId}`, field(started, "ok") === true && typeof jobId === "string", started);
+      const end = await waitFor(`the import of ${clip.clipId} to end`, () => endEventOf(cdp, jobId), RENDER_WAIT_MS, 200);
+      const mediaId = field(end, "payload", "result", "mediaId");
+      check(`clip montage scenario: the import of ${clip.clipId} ends as job.done with a media id`, field(end, "type") === "job.done" && typeof mediaId === "string", end);
+      return String(mediaId);
+    };
+    const mediaA = await copyOf(clipA);
+    const mediaB = await copyOf(clipB);
+
+    // 2. What the library says of the copies, and what the packaged importer stored.
+    const listed = await req(cdp, "media.list", { kind: "video" });
+    const media = field(listed, "result", "media");
+    const copies = Array.isArray(media) ? media : [];
+    for (const [clip, mediaId] of [[clipA, mediaA], [clipB, mediaB]] as const) {
+      const copy = copies.find((m) => field(m, "mediaId") === mediaId);
+      const facts = copy === undefined ? undefined : { kind: String(field(copy, "kind")), width: Number(field(copy, "width")), height: Number(field(copy, "height")), durationMs: Number(field(copy, "durationMs")), sourceFps: Number(field(copy, "sourceFps")), origin: MediaOrigin.safeParse(field(copy, "origin")).data };
+      const summaryProblems = copySummaryProblems(facts, clip);
+      check(`clip montage scenario: the copy of ${clip.clipId} is a video with the clip's origin, size, length and 24 fps source`, summaryProblems.length === 0, summaryProblems);
+      const storedProblems = storedCopyProblems(await probeVideo(join(libraryRoot, "media", `${mediaId}.mp4`)));
+      check(`clip montage scenario: the stored copy of ${clip.clipId} is H.264 at 30 fps constant with no audio, inside the frame`, storedProblems.length === 0, storedProblems);
+      const providerProblems = providerFileProblems(clip.clipId, clip.sha256, await sha256Of(clip.file));
+      check(`clip montage scenario: the provider's file of ${clip.clipId} is byte for byte what was planted (I5.54)`, providerProblems.length === 0, providerProblems);
+    }
+    const again = await req(cdp, "media.importClip", { avatarId, clipId: clipA.clipId });
+    check("clip montage scenario: a second import of a clip answers its copy at once (one copy per clip)", field(again, "ok") === true && field(again, "result", "mediaId") === mediaA, again);
+
+    // 3. The Reel: one photo and the two copies, rendered for real.
+    const expected = montageSmokeExpectation();
+    const submitted = await req(cdp, "videos.render", { spec: montageSmokeSpec(avatarId, scenePhoto, [mediaA, mediaB]) });
+    const jobId = field(submitted, "result", "jobId");
+    check("clip montage scenario: videos.render accepts a Reel of a photo and two copies", field(submitted, "ok") === true && typeof jobId === "string", submitted);
+    const end = await waitFor("the Reel's render to end", () => endEventOf(cdp, jobId), RENDER_WAIT_MS, 200);
+    const relPath = field(end, "payload", "result", "relPath");
+    check("clip montage scenario: the Reel ends as job.done with a committed video", field(end, "type") === "job.done" && typeof relPath === "string", end);
+    if (typeof relPath === "string") {
+      const path = join(exportRoot, relPath);
+      const bytes = new Uint8Array(await readFile(path));
+      const verified = await verifyRenderedMp4(path, { frames: expected.frames });
+      check(`clip montage scenario: the engine's own verifier accepts the Reel when run again on the committed file (${expected.frames} frames)`, verified.ok, verified);
+      const problems = renderedFileProblems(expected, { probe: await probeVideo(path), facts: mp4Facts(bytes) });
+      check("clip montage scenario: ffprobe and the box reader find a 1080 x 1920, 30 fps Reel of the exact frame count and exactly the metadata the engine writes", problems.length === 0, problems);
+    }
+
+    // 4. One frame, one video: both clips and all three photos are used by the Reel; the provider's files are still not touched.
+    const clipsListed = await req(cdp, "clips.list", { avatarId });
+    const photosListed = await req(cdp, "photos.list", { avatarId });
+    const clipsOut = field(clipsListed, "result", "clips");
+    const photosOut = field(photosListed, "result", "photos");
+    const useProblems = frameUseProblems(
+      (Array.isArray(clipsOut) ? clipsOut : []).map((c) => ({ clipId: String(field(c, "clipId")), use: ClipUse.safeParse(field(c, "use")).data })),
+      [clipA.clipId, clipB.clipId],
+      (Array.isArray(photosOut) ? photosOut : []).map((p) => ({ photoId: String(field(p, "photoId")), used: field(p, "used") === true, reserved: field(p, "reserved") === true })),
+      [scenePhoto, photoA, photoB],
+    );
+    check("clip montage scenario: both clips are used `inVideo: clip` and the Reel's three frames are used and no longer reserved", useProblems.length === 0, useProblems);
+    for (const clip of [clipA, clipB]) {
+      const problems = providerFileProblems(clip.clipId, clip.sha256, await sha256Of(clip.file));
+      check(`clip montage scenario: the provider's file of ${clip.clipId} is still byte for byte what was planted after the render`, problems.length === 0, problems);
+    }
+  } finally {
+    await quit(running);
+    await removeTemp(tmp);
+  }
+}
+
 function finish(): void {
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
@@ -4262,6 +4385,13 @@ async function main(): Promise<void> {
   // `--only clips` runs the «Оживить» scenario alone (5b.1, S5.V7), for working on it.
   if (argValue("--only") === "clips") {
     await runClipScenario(target);
+    finish();
+    return;
+  }
+
+  // `--only clipmontage` runs the «Клипы в монтаже» scenario alone (5b.2, S5.WA3), for working on it.
+  if (argValue("--only") === "clipmontage") {
+    await runClipMontageScenario(target);
     finish();
     return;
   }
@@ -4711,6 +4841,7 @@ async function main(): Promise<void> {
   await runSceneSetRunScenario(target);
   await runBoldRouteScenario(target);
   await runClipScenario(target);
+  await runClipMontageScenario(target);
   await runPackagedRenderScenario(target);
   await runAutopilotScenario(target);
   finish();
