@@ -200,3 +200,19 @@ test("a clip job of an older engine, with no facts, has none", async () => {
 
   expect(store.getView().jobs.find((j) => j.jobId === "job-00000082")?.clip?.facts).toBeUndefined();
 });
+
+test("a clip job's open reserve is the one its latest event told: it goes when an event stops telling it", async () => {
+  const { store, emit } = await rawHost();
+  const ref = { kind: "clip", jobId: "job-00000083", avatarId: AVATAR, clipId: "job-00000083", total: 4 } as const;
+  await emit({ type: "job.progress", payload: { ...ref, done: 0, phase: "rendering", model: "kling", openReserveMicros: 504_000 } });
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000083")?.clip?.openReserveMicros).toBe(504_000);
+
+  await emit({ type: "job.progress", payload: { ...ref, done: 1, phase: "downloading", model: "kling" } });
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000083")?.clip?.openReserveMicros).toBeUndefined();
+});
+
+test("a clip job listed in the snapshot with an open reserve gives the job view the reserve, with no create facts needed", async () => {
+  const { store } = await rawHost([{ kind: "clip", jobId: "job-00000084", avatarId: AVATAR, clipId: "job-00000084", status: "running", done: 0, total: 4, phase: "recovering", openReserveMicros: 504_000 }]);
+
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000084")?.clip?.openReserveMicros).toBe(504_000);
+});

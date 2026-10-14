@@ -4,7 +4,7 @@ import { useCategoryLibrary, useEngine, useEngineView, useSceneSet } from "../en
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
 import { useNavigate, type LookLanding, type PhotosTab } from "../navigation";
 import { AccountBanner } from "../ui/AccountBanner";
-import { clipIntents, ClipsProvider, unseenCount, useClipList, type ClipsControl } from "./clips/clipsContext";
+import { ClipsProvider, unseenCount, useClipList, type ClipsControl } from "./clips/clipsContext";
 import { ClipsTab } from "./clips/ClipsTab";
 import { EngineOffline } from "../ui/EngineOffline";
 import { Icon, Spin } from "../ui/Icon";
@@ -370,9 +370,9 @@ function AvatarPhotos({
       return photo === undefined ? null : { photo, position: index + 1, total: galleryPhotos.length, label: photoCategoryLabel(photo) };
     },
     galleryComplete: gallery.pages !== null && gallery.pages.nextCursor === null,
-    started: (jobId, intent) => {
-      clipIntents(store).set(intent.clipId, intent);
-      store.trackClipJob(jobId, avatarId, intent.clipId, "create");
+    started: (jobId) => {
+      // A create job's clip is its own id.
+      store.trackClipJob(jobId, avatarId, jobId, "create");
       setTab("clips");
       setClipArrived((n) => n + 1);
     },

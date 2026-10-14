@@ -5,7 +5,7 @@ import { isActiveJob, type JobView } from "../../engine/store";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice } from "../../ui/Notice";
 import { clipLength, phaseLine, upUsd } from "./clipModel";
-import { clipDismissals, clipIntents, dismissClipJob, type ClipIntent, type ClipsControl } from "./clipsContext";
+import { clipDismissals, dismissClipJob, type ClipsControl } from "./clipsContext";
 import { ClipSheet } from "./ClipSheet";
 import { FailedJobTile, FailedTile, ReadyTile, WorkTile } from "./ClipTile";
 import { ClipViewer } from "./ClipViewer";
@@ -60,7 +60,6 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
   const [opening, setOpening] = useState(false);
   /** When this window first saw each clip job on its way: an elapsed time from another clock counts from here. */
   const seen = useRef(new Map<string, number>());
-  const intents = clipIntents(store);
 
   // A clip just started from the sheet: the tab's heading takes the focus, the new tile right under it. One-shot: the screen is told, so a later visit to the tab (→ from «Фото»)
   // leaves the focus on the tab.
@@ -177,18 +176,7 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
       list.reread();
       return;
     }
-    const intent: ClipIntent = {
-      clipId: reply.result.jobId,
-      avatarId,
-      photoId: clip.photoId,
-      motionLabel: motion.label,
-      requestModel: "grok",
-      seconds: clip.request.seconds,
-      acceptedWorstMicros: offer.worstMicros,
-      klingWorstMicros: offer.worstMicros,
-      grokWorstMicros: offer.worstMicros,
-    };
-    started(reply.result.jobId, intent);
+    started(reply.result.jobId);
   }
 
   async function openFolder(): Promise<void> {
@@ -278,38 +266,26 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
       ) : (
         <div ref={gridRef} className="clips-grid">
           {work.map((job) => {
-            // S5.V8b: what the tile shows is the engine's own (the job's facts, told in its events and its snapshot), so a window that never saw the click draws it whole; this window's intent is the
-            // fallback for a job that tells none (an older engine's).
+            // What the tile shows is the engine's own: the job's facts, told in its events and its snapshot (S5.V8b), so a window that never saw the click draws it whole. Its money column is the one the
+            // README's phase table names: «до $X — спишется при сверке» is what the ledger can still charge (`openReserveMicros`) in `late` and `recovering`, and the cap the sheet promised
+            // (`acceptedWorstMicros`) in every other phase.
             const facts = job.clip.facts;
-            const intent = intents.get(job.clip.clipId);
             const record = recordOf.get(job.clip.clipId);
             const phase = isActiveJob(job) ? (job.clip.phase ?? "preparing") : "saving";
-            const grokOffer = facts === undefined ? intent?.requestModel === "grok" : facts.request.model === "grok";
             const line = phaseLine(
               { phase, model: job.clip.model, submittedAt: job.clip.submittedAt, proveUntil: job.clip.proveUntil },
-              { nowMs: now, seenMs: seen.current.get(job.jobId) ?? now, lateUntilMs: lateUntilOf(job), grokOffer },
+              { nowMs: now, seenMs: seen.current.get(job.jobId) ?? now, lateUntilMs: lateUntilOf(job), grokOffer: facts?.request.model === "grok" },
             );
             const heldOpen = phase === "late" || phase === "recovering";
-            const acceptedWorst = facts?.acceptedWorstMicros ?? intent?.acceptedWorstMicros ?? null;
-            // What a late or recovered attempt holds open is its own model's reserve (the sheet's, when this window has it); the engine's accepted worst case stands in for a window that has not.
-            const reserve = intent === undefined ? acceptedWorst : job.clip.model === "grok" ? intent.grokWorstMicros : intent.klingWorstMicros;
-            const moneyLine =
-              record !== undefined
-                ? "бесплатно"
-                : heldOpen
-                  ? reserve === null
-                    ? null
-                    : `до ${upUsd(reserve)} — спишется при сверке`
-                  : acceptedWorst === null
-                    ? null
-                    : `до ${upUsd(acceptedWorst)}`;
-            const seconds = facts?.request.seconds ?? intent?.seconds ?? record?.request.seconds ?? null;
+            const figure = heldOpen ? job.clip.openReserveMicros : facts?.acceptedWorstMicros;
+            const moneyLine = record !== undefined ? "бесплатно" : figure === undefined ? null : heldOpen ? `до ${upUsd(figure)} — спишется при сверке` : `до ${upUsd(figure)}`;
+            const seconds = facts?.request.seconds ?? record?.request.seconds ?? null;
             return (
               <div key={job.jobId} className="clip-slot">
                 <WorkTile
-                  motion={facts?.motion.label ?? intent?.motionLabel ?? record?.motion.label ?? "Клип"}
+                  motion={facts?.motion.label ?? record?.motion.label ?? "Клип"}
                   avatarId={avatarId}
-                  photoId={facts?.photoId ?? intent?.photoId ?? record?.photoId ?? null}
+                  photoId={facts?.photoId ?? record?.photoId ?? null}
                   clip={job.clip}
                   line={line}
                   done={job.done}
@@ -323,13 +299,12 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
             );
           })}
           {failedJobs.map((job) => {
-            const intent = intents.get(job.clip.clipId);
             return (
               <div key={job.jobId} className="clip-slot">
                 <FailedJobTile
-                  motion={job.clip.facts?.motion.label ?? intent?.motionLabel ?? "Клип"}
+                  motion={job.clip.facts?.motion.label ?? "Клип"}
                   avatarId={avatarId}
-                  photoId={job.clip.facts?.photoId ?? intent?.photoId ?? null}
+                  photoId={job.clip.facts?.photoId ?? null}
                   clipId={job.clip.clipId}
                   error={job.error ?? { code: "INTERNAL" }}
                   onDismiss={() => {
@@ -400,10 +375,10 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
           subtitle={subtitleOf(sheet.photoId)}
           frameLabel={`Кадр, который оживёт: ${subtitleOf(sheet.photoId) ?? "фото"}`}
           onClose={() => setSheet(null)}
-          onStarted={(jobId, intent) => {
+          onStarted={(jobId) => {
             setSheet(null);
             setViewing(null);
-            started(jobId, intent);
+            started(jobId);
           }}
         />
       )}
