@@ -324,6 +324,33 @@ export class MediaService {
     });
   }
 
+  /** Every montage copy of the library (5b.2, S5.WA2), with no cap, and whether the library's media could be read at all (an unreadable folder lists nothing, which says nothing). */
+  async copies(root?: string): Promise<{ readable: boolean; copies: MediaSummary[] }> {
+    if (root !== undefined) {
+      // The library-open sweep reads the library it was started for and holds nothing (a hold would refuse the owner's next library switch); a library this service has not opened lists nothing.
+      const area = this.#areas.get(root);
+      if (area === undefined) return { readable: false, copies: [] };
+      await area.ready;
+      return { readable: area.records.readable(), copies: area.records.copies() };
+    }
+    return this.#deps.withLibrary(async (library) => {
+      const area = this.#areaOf(library.root);
+      await area.ready;
+      return { readable: area.records.readable(), copies: area.records.copies() };
+    });
+  }
+
+  /** The media ids of the copies of an avatar's clips in the library at `root`, from the records in memory: empty for a library this service has not opened. Synchronous, for the avatar delete's look. */
+  copyIdsOf(root: string, avatarId: string): string[] {
+    return (
+      this.#areas
+        .get(root)
+        ?.records.copies()
+        .filter((copy) => copy.origin?.avatarId === avatarId)
+        .map((copy) => copy.mediaId) ?? []
+    );
+  }
+
   /** Whether the record is an own track the render can read: audio, with a length, stored as the importer's m4a. The one rule of `ownTrack.ts`, from the record alone. */
   #isOwnTrack(area: Area, media: MediaSummary): boolean {
     return media.kind === "audio" && media.durationMs !== null && area.records.integrityOf(media.mediaId)?.format === "m4a";

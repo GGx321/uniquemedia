@@ -178,7 +178,7 @@ import type { MediaImporters } from "./media/imports";
 import { MediaService, type SetForAutopilotResult } from "./media/service";
 import { TrackFlagLogError } from "./music/autopilotTrackFlags";
 import { MediaDiskError } from "./library/mediaRecords";
-import { pauseBeforeRetry } from "./library/durableFs";
+import { hasErrorCode, pauseBeforeRetry } from "./library/durableFs";
 import type { MediaStagingOptions } from "./media/staging";
 import { countRecordsByRoot, libraryHasVideoRecords } from "./videos/rootCounts";
 import { ownPhotoSourceOf, readVerifiedOwnPhoto } from "./videos/ownPhotos";
@@ -977,7 +977,7 @@ export class Engine {
       now: () => new Date(deps.clock()),
       importers: deps.mediaImporters,
       // The render queue's reserved set, as photos have (3f.2); a test may pass its own.
-      reservedMedia: (mediaId) => (deps.reservedMedia ?? ((id: string) => this.#renders.reservesMedia(id)))(mediaId),
+      reservedMedia: (mediaId) => this.#mediaReserved(mediaId),
       staging: deps.mediaStaging,
       log: (line) => console.warn(`studio engine: ${line}`),
     });
@@ -1209,7 +1209,13 @@ export class Engine {
       liveCommits: this.#commits,
       withRootLock: (root, work, options) => withRootLock(deps.videos?.fs ?? NODE_COMMIT_FS, root, work, options),
       exportNumbers: () => (this.#live === null ? null : { library: this.#live.library, libraryRoot: this.#live.library.root }),
-      media: this.#media,
+      // 5b.2 (S5.WA2): the clip service imports a clip through the media service and owns its copy's lifetime; the media service's own words are adapted here.
+      media: {
+        import: (call, signal) => this.#media.import(call, signal),
+        copyOfClip: (clipId) => this.#media.copyOfClip(clipId),
+        copies: (root) => this.#media.copies(root),
+        deleteMedia: (mediaId) => this.#media.delete(mediaId),
+      },
     });
     // S4.6a: the orchestrator core. It gets the registry and the Budget groups through its constructor; the engine keeps no public handle on it.
     this.#orchestrator = new Orchestrator({
@@ -2134,6 +2140,33 @@ export class Engine {
     this.#media.libraryOpened(library);
     // 5b.1 (S5.V6, §5.12): the clips of this library: the restart's holds, the sweep of its clips folders and a free recovery job per journal with no record.
     this.#clips.libraryOpened(library);
+    // 5b.2 (S5.WA2, I5.59): the montage copies whose avatar is gone with its folder (a delete whose finish was lost, a copy that could not be removed then) are swept, in the background.
+    void this.#sweepClipCopies(library);
+  }
+
+  /**
+   * The library-open sweep of orphan clip copies. A copy goes only when its avatar is not in the library AND `avatars/<id>/` is gone from the disk; an avatar the index lacks but whose folder is there
+   * (a manifest that did not read) keeps its copies. A sweep that was started for a library that is no longer the live one keeps everything: the copies it would list are another library's.
+   */
+  async #sweepClipCopies(library: Library): Promise<void> {
+    const current = (): boolean => this.library === library;
+    try {
+      await this.#clips.sweepCopies({
+        root: library.root,
+        has: (avatarId) => !current() || library.getAvatar(avatarId) !== undefined,
+        folderState: async (avatarId) => {
+          if (!current() || !(await libraryIsThere(library.root))) return "unknown";
+          try {
+            await lstat(library.avatarDirPath(avatarId));
+            return "there";
+          } catch (error) {
+            return hasErrorCode(error, "ENOENT") ? "gone" : "unknown";
+          }
+        },
+      });
+    } catch (error) {
+      console.warn(`studio engine: the sweep of clip copies failed (${error instanceof Error ? error.name : typeof error})`);
+    }
   }
 
   /** True while a job or paid command writes into the live library, a pick/archive is running, a reject mark is being written, an own-media import is running, or a render is queued or running (invariant 25): a library switch must be refused. */
@@ -5228,10 +5261,18 @@ export class Engine {
     if (this.#jobs.hasLiveJobFor(avatarId, { clips: false }) || this.#renders.reservedPhotos(avatarId).size > 0) return "a photo run, a candidate job or a video render of this avatar is running";
     // 5b.1 (I5.50): a clip job of the avatar (its money, its file, its record) is waited for too; its own words, so the existing ones stay as they were.
     if (this.#jobs.hasLiveJobFor(avatarId)) return "a clip of this avatar is being made";
+    // 5b.2 (S5.WA2, r2.1 N2): a clip import of the avatar has no job of its own in the registry (an import belongs to no avatar), and a render that holds a copy of one of its clips holds the avatar's files.
+    if (this.#clips.importingFor(avatarId)) return "a clip of this avatar is being prepared for a montage";
+    if (this.#media.copyIdsOf(library.root, avatarId).some((mediaId) => this.#mediaReserved(mediaId))) return "a video render holds a copy of a clip of this avatar";
     if ((this.#focusRequests.get(avatarId) ?? 0) > 0) return "a focus request for this avatar is running";
     if (library.pendingVideoCount(avatarId) > 0) return "a video of this avatar is still being saved";
     if (this.#librarySmallWrites > 0 || this.#videos.preparing > 0) return "a draft, a mark or a video of the library is being written";
     return null;
+  }
+
+  /** Whether a queued or running render holds this own media (the render queue's reserved set; a test may pass its own through `EngineDeps.reservedMedia`). */
+  #mediaReserved(mediaId: string): boolean {
+    return (this.#deps.reservedMedia ?? ((id: string) => this.#renders.reservesMedia(id)))(mediaId);
   }
 
   /** `avatars.deletePreview`: the counts the confirmation shows. Refuses like the delete does while the avatar is busy, so the dialog never offers what cannot work. */
@@ -5333,6 +5374,9 @@ export class Engine {
         return;
       }
       this.#jobs.forgetFinishedFor(avatarId);
+      // 5b.2 (S5.WA2, r2.1 N5): the avatar's montage copies go only now (the folder is in the Trash), in the background and after the avatar was forgotten, never inside this synchronous step.
+      // What cannot be removed now is swept at the next library open.
+      void this.#clips.removeCopiesOfAvatar(avatarId);
       for (const sceneSetId of pending.sceneSetIds) this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "scenes.changed", payload: { change: "removed", sceneSetId, avatarId } });
       this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.removed", payload: { avatarId } });
     } finally {

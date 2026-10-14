@@ -34,6 +34,7 @@ import type { CommitTracker } from "../videos/live";
 import type { RootLockOptions } from "../videos/rootLock";
 import type { ClipRunDeps } from "./attempt";
 import { ClipExports } from "./export";
+import { ClipCopies, type ClipCopyMedia, type KnownAvatars } from "./copies";
 import { ClipImports, type ClipMediaPort } from "./importClip";
 import type { ExportFpsMode } from "./exportProfile";
 import type { ClipFaceRole } from "./faceRole";
@@ -170,7 +171,7 @@ export interface ClipServiceDeps {
   /** The engine's export folder switch, as a render reads it: a pick waiting for its settings, and the folder the settings name now. */
   exportSwitch?: { pending(): boolean; currentPath(): string };
   /** 5b.2 (S5.WA2): the own-media service, for `media.importClip`. Absent: the command answers INTERNAL (a test that builds a clip service without media). */
-  media?: ClipMediaPort;
+  media?: ClipMediaPort & ClipCopyMedia;
 }
 
 type CreatePayload = CommandPayload<"clips.create">;
@@ -207,11 +208,15 @@ export class ClipService {
   readonly #exports: ClipExports;
   /** 5b.2 (S5.WA2): a clip becoming the montage's own video; absent when the service was built without the media service. */
   readonly #imports: ClipImports | null;
+  /** 5b.2 (S5.WA2): how long a clip's montage copy lives (a clip delete, an avatar delete, the library-open sweep); absent without the media service. */
+  readonly #copies: ClipCopies | null;
 
   constructor(deps: ClipServiceDeps) {
     this.#deps = deps;
     this.#mode = deps.mode ?? GROK_FALLBACK;
     this.#boldClips = deps.boldClips ?? BOLD_CLIPS;
+    const copies = deps.media === undefined ? null : new ClipCopies({ media: deps.media, log: deps.log });
+    this.#copies = copies;
     this.holds = createClipHolds({ now: deps.clock, ...(deps.holdTimers === undefined ? {} : { timers: deps.holdTimers }), onChange: () => deps.emitMoney() });
     // A job on a clip (a download retry, an export) holds the clip against its other commands and the library against a switch, until it ends.
     const host = {
@@ -249,6 +254,7 @@ export class ClipService {
       faceOf: (input) => this.#faceOf(input),
       log: deps.log,
       ...(deps.records?.remove === undefined ? {} : { remove: deps.records.remove }),
+      ...(copies === null ? {} : { copies: { removeOf: (clipId: string) => copies.removeOfClip(clipId) } }),
     });
     this.#exports = new ClipExports({
       newId: deps.newId,
@@ -289,6 +295,16 @@ export class ClipService {
   importClip(payload: CommandPayload<"media.importClip">): Promise<{ mediaId: string } | { jobId: string }> {
     if (this.#imports === null) return Promise.reject(new EngineFailure({ code: "INTERNAL", detail: "media.importClip is not implemented yet" }));
     return this.#imports.start(payload);
+  }
+
+  /** The avatar went to the Trash: its montage copies are removed, asynchronously and quietly (what cannot go now is swept at the next library open). */
+  removeCopiesOfAvatar(avatarId: string): Promise<void> {
+    return this.#copies?.removeOfAvatar(avatarId) ?? Promise.resolve();
+  }
+
+  /** The library-open sweep of copies whose avatar and whose avatar folder are gone. Never throws. */
+  sweepCopies(avatars: KnownAvatars): Promise<number> {
+    return this.#copies?.sweep(avatars) ?? Promise.resolve(0);
   }
 
   /** A clip import of this avatar runs: an avatar delete waits for it (the import job has no avatar in the job registry). */

@@ -160,6 +160,11 @@ export interface ClipRecordsDeps {
   log: (line: string) => void;
   /** Test seam: removes a file, and not finding it is fine (`rm` with `force` by default). Only the delete's files go through it. */
   remove?: (path: string) => Promise<void>;
+  /**
+   * 5b.2 (S5.WA2, I5.59): the clip's montage copy. A delete removes it FIRST, under the clip's lock; it throws what refuses the delete (IN_FLIGHT `in-use` while a render holds the copy, INTERNAL when the
+   * disk fails) and then nothing of the clip is removed. Absent: a service built without the media service, which has no copies.
+   */
+  copies?: { removeOf: (clipId: string) => Promise<unknown> };
 }
 
 type Payload<T extends "clips.list" | "clips.get" | "clips.markSeen" | "clips.delete" | "clips.retryDownload"> = CommandPayload<T>;
@@ -358,6 +363,8 @@ export class ClipRecords {
     await this.withClipLock(clipId, async () => {
       if (this.#deps.host.busy(clipId)) throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "job-running", detail: `a job is working on clip ${clipId}` });
       await this.#recordOf(clipsDir, clipId);
+      // The copy goes first (a render that holds it refuses the whole delete, with nothing removed); then the clip, so no copy outlives its clip.
+      await this.#deps.copies?.removeOf(clipId);
       const remove = this.#deps.remove ?? ((path: string) => rm(path, { force: true }));
       await remove(clipJournalPath(clipsDir, clipId));
       await fsyncDir(clipsDir);

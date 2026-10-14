@@ -259,6 +259,8 @@ export class MediaRecords {
   /** The order records came into the index: the tie-break of a listing when two were made in the same instant. */
   readonly #order = new Map<string, number>();
   #entered = 0;
+  /** The folder could not be read at the last `recover` (a link, an unreadable folder): the index is empty because nothing was read, not because there is no media. */
+  #unreadable = false;
   /** Records being removed: out of the index from the first moment of the removal (nobody finds them), back in if it fails. */
   readonly #deleting = new Map<string, RecordShape>();
   /** Ids between the file's rename and the record's write: a cleanup must not take their file for an orphan. */
@@ -558,10 +560,12 @@ export class MediaRecords {
     const stopped = (): boolean => signal?.aborted === true;
     const budget = { left: this.#options.hashBudgetBytes ?? RECOVER_HASH_BUDGET_BYTES };
     const empty: MediaRecoveryReport = { listed: 0, quarantinedOrphans: 0, restored: 0, problems: [], unusable: false };
+    this.#unreadable = false;
     const state = await this.#dirState();
     if (state === "absent") return empty;
     if (state === "unsafe") {
       this.#warn("the library's media folder is not a plain folder; own media are not read");
+      this.#unreadable = true;
       return { ...empty, unusable: true };
     }
     let entries;
@@ -569,6 +573,7 @@ export class MediaRecords {
       entries = await readdir(this.#dir, { withFileTypes: true });
     } catch {
       this.#warn("the library's media folder could not be read; own media are not listed");
+      this.#unreadable = true;
       return { ...empty, unusable: true };
     }
     const recordIds = new Set<string>();
@@ -710,6 +715,11 @@ export class MediaRecords {
     const orderOf = (record: RecordShape): number => this.#order.get(record.id) ?? 0;
     all.sort((a, b) => (a.createdAt === b.createdAt ? orderOf(b) - orderOf(a) : a.createdAt < b.createdAt ? 1 : -1));
     return { media: all.slice(0, MAX_LISTED_MEDIA).map((r) => this.#summaryOf(r)), total: all.length };
+  }
+
+  /** Whether the index says what the library holds: false when the media folder could not be read at the last `recover` (an empty list then says nothing). */
+  readable(): boolean {
+    return !this.#unreadable;
   }
 
   /** Every montage copy of a clip (a video whose record has an `origin`), newest first, with no cap: the engine's lifetime rules look at all of them. */
