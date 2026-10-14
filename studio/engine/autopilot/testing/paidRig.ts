@@ -55,7 +55,7 @@ export async function until(condition: () => boolean, what: string, timeoutMs = 
  * has seen the hold in the file and reads the copy (or anything built from it) at once can find none yet. Wait on the copy when the copy is what the test then reads.
  */
 export async function untilHeld(r: Rig, what = "the hold in the snapshot"): Promise<NonNullable<LaunchView["paidHold"]>> {
-  await until(() => (r.orchestrator.snapshotView()?.paidHold ?? null) !== null, what);
+  await r.when(() => (r.orchestrator.snapshotView()?.paidHold ?? null) !== null, what);
   const hold = r.orchestrator.snapshotView()?.paidHold ?? null;
   if (hold === null) throw new Error(`${what}: the hold went away`);
   return hold;
@@ -302,6 +302,12 @@ export interface Rig {
   budget: Budget;
   groups: LaunchGroups;
   fileOf(launchId: string): LaunchFile;
+  /**
+   * Resolves once `condition()` holds. Event-driven: it looks now, then again every time the steps could have changed the answer (the orchestrator announced the launch, a pass ended), and
+   * never on a clock. A wall-clock deadline here measures the runner, not the code: a pass that waits on an fsync still arrives, however long the disk takes. A pass that really hangs is cut by
+   * the test's own timeout (the suite runner gives every test 30 s), which is the hang detector.
+   */
+  when(condition: () => boolean, what: string): Promise<void>;
   start(draft?: Parameters<typeof startInput>[0]): Promise<LaunchView>;
   settle(setId: string, attempt: string, cost: number, worst?: number): Promise<void>;
 }
@@ -328,6 +334,13 @@ export async function rig(options: RigOptions = {}): Promise<Rig> {
     captured = ctx;
     begin(ctx);
   };
+  // Everything that can move what a test waits on ends in one of two places: the orchestrator announcing the launch (every write of the launch file, after the in-memory copy is replaced) or a pass
+  // ending. Both wake the waiters; `Rig.when` re-checks its condition on each.
+  const watchers = new Set<() => void>();
+  const wake = (): void => {
+    for (const watcher of [...watchers]) watcher();
+  };
+  steps.onReadyChange(wake);
   let n = 0;
   const orchestrator = new Orchestrator({
     stores,
@@ -340,7 +353,7 @@ export async function rig(options: RigOptions = {}): Promise<Rig> {
     admission: () => (port.admit ? null : { blockedBy: "reconcile-required", error: { code: "RECONCILE_REQUIRED", detail: "the ledger holds open reserves of a previous process" } }),
     keyState: () => "ok",
     roomFreeMicros: () => 1_000_000_000,
-    emit: () => undefined,
+    emit: wake,
     degrade: () => undefined,
     coalesce: { intervalMs: 0 },
     warn: () => undefined,
@@ -359,6 +372,22 @@ export async function rig(options: RigOptions = {}): Promise<Rig> {
     budget,
     groups,
     fileOf: (launchId) => JSON.parse(readFileSync(join(libraryRoot, AUTOPILOT_DIR, `${launchId}.json`), "utf8")) as LaunchFile,
+    when: (condition, what) =>
+      new Promise<void>((resolve, reject) => {
+        const look = (): void => {
+          try {
+            if (!condition()) return;
+          } catch (error) {
+            watchers.delete(look);
+            reject(new Error(`${what}: the condition threw (${error instanceof Error ? error.message : String(error)})`));
+            return;
+          }
+          watchers.delete(look);
+          resolve();
+        };
+        watchers.add(look);
+        look();
+      }),
     start: (draft) => orchestrator.start(startInput(draft), library),
     settle: async (setId, attempt, cost, worst = WRITER) => {
       const reserved = await budget.tryReserve({ attemptId: `${setId}:${attempt}`, jobId: "job-fixture-0001", scope: { avatarJobId: "job-fixture-0001" }, model: "x-ai/grok-4.3", worstMicros: worst });

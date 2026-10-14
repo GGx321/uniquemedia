@@ -8,6 +8,7 @@ import type { DrawSliceResult } from "../sceneSets/launchDraw";
 import type { LaunchSliceStart } from "./paidPort";
 import { A, ALL, B, cleanupRigs, composes, deferred, FakeTimers, idle, LAUNCH, PHOTO, RUN1, RUN2, rig, SET1, SET2, until, type Rig } from "./testing/paidRig";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
+import { stallNthFsync } from "../../testing/stallFsync";
 useNativeGlobals();
 
 // Stage 4, S4.6b2 (plan §4.6, §3.7, §3.8; invariants A6, A13, A19): the paid steps' failure table, row by row, the bounded automatic continues under a fake clock, the failure-rate guard and
@@ -78,7 +79,7 @@ const holdOf = (r: Rig, launchId: string): PaidHold | null => {
 };
 
 async function reachHold(r: Rig, launchId: string, reason: PaidHold["reason"]): Promise<PaidHold> {
-  await until(() => holdOf(r, launchId)?.reason === reason, `the ${reason} hold`);
+  await r.when(() => holdOf(r, launchId)?.reason === reason, `the ${reason} hold`);
   const hold = holdOf(r, launchId);
   if (hold === null) throw new Error("no hold");
   return hold;
@@ -598,6 +599,18 @@ describe("§4.6: a request that gets no answer continues by itself, twice, then 
     const launch = await r.start({ sceneReview: false });
     return { r, timers, run, launch };
   }
+
+  test("a stalled fsync on the way to the hold only delays it: the wait is on the launch's events, not on a clock", async () => {
+    const stall = await stallNthFsync({ nth: 11, ms: 5_000 });
+    try {
+      const { r, launch } = await dropping([failedEnd("NETWORK"), "done"]);
+      const hold = await reachHold(r, launch.launchId, "network");
+      expect(stall.stalled()).toBe(true);
+      expect(hold.reason).toBe("network");
+    } finally {
+      stall.restore();
+    }
+  }, 20_000);
 
   test("the first drop holds as «network» with the next try at one minute, logs the retry, and the slice is started again when the minute is up", async () => {
     const { r, timers, run, launch } = await dropping([failedEnd("NETWORK"), "done"]);
