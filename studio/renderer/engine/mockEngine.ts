@@ -3612,12 +3612,10 @@ export class MockEngine implements EngineBridge {
     this.videoFilesKeptNext = count;
   }
 
-  /** Whether anything of the avatar runs or is reserved: a candidates job, a photo run, a render (queued or running), a video intent a crash left pending. */
-  private deleteBusy(avatarId: string): boolean {
-    return this.deleteBusyReason(avatarId) !== null;
-  }
-
-  /** The refusal's reason, in the engine's words and order (`#deleteBusy`): a photo run, a candidate job or a render first, then (5b.2, S5.WA3, r2.1 N2) a clip import of the avatar, then a render that holds a copy. */
+  /**
+   * Why the avatar cannot be deleted now, or null: in the engine's words and order (`#deleteBusy`). A candidates job, a photo run, a render (queued or running) or a video intent a crash left pending
+   * first; then (5b.2, S5.WA3, r2.1 N2) a clip import of the avatar, then a render that holds a copy of one of its clips.
+   */
   private deleteBusyReason(avatarId: string): string | null {
     const heldByIntent = this.photos.some((p) => p.avatarId === avatarId && this.pendingVideoPhotos.has(p.photoId));
     if (this.jobRunningFor(avatarId) || this.renderJobs.some((j) => isActive(j) && j.avatarId === avatarId) || this.clips.liveFor(avatarId) || heldByIntent) return "a photo run, a candidate job or a video render of this avatar is running";
