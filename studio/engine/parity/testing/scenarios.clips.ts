@@ -434,8 +434,8 @@ export const CLIP_SCENARIOS: readonly Scenario[] = [
     },
   },
   {
-    name: "clips: the export folder decides the export: unplugged, too small, and a pick of another folder is refused while a clip is being saved",
-    rig: { clips: { exportFps: "interpolate" } },
+    name: "clips: the export folder decides the export: unplugged, or too small for the clip",
+    rig: { clips: { exportFps: "duplicate" } },
     async run(t, world, control) {
       const w = clipsOf(world);
       const clipId = await makeClip(t, w, control, null, { photoId: w.photos.plain });
@@ -447,14 +447,28 @@ export const CLIP_SCENARIOS: readonly Scenario[] = [
       control.freeSpace(100 * 1024 * 1024);
       await t.call("clips.export", { avatarId: w.avatarId, clipId });
       control.freeSpace(null);
-      t.note("an export is running: a pick of another export folder waits");
+      t.note("room again: the export goes through");
       const jobId = jobIdOf(await t.call("clips.export", { avatarId: w.avatarId, clipId }));
+      await t.untilJobEnds(jobId);
+      await t.call("clips.get", { avatarId: w.avatarId, clipId });
+    },
+  },
+  {
+    name: "clips: exports are saved one at a time in the order asked, and a pick of another export folder is refused while any of them is queued or running",
+    rig: { clips: { exportFps: "duplicate" } },
+    async run(t, world, control) {
+      const w = clipsOf(world);
+      const clips: string[] = [];
+      for (let i = 0; i < 3; i++) clips.push(await makeClip(t, w, control, null, { photoId: w.photos.plain }));
+      const jobs: string[] = [];
+      for (const clipId of clips) jobs.push(jobIdOf(await t.call("clips.export", { avatarId: w.avatarId, clipId })));
+      t.note("three exports are out: one runs, the others wait their turn; the folder cannot be changed under them, and the same clip is not saved twice at once");
       await control.exportDialog("fresh");
       await t.call("settings.setExportPath", {});
-      await t.call("clips.export", { avatarId: w.avatarId, clipId });
-      await t.untilJobEnds(jobId);
-      exported(t, jobId);
-      await t.call("clips.get", { avatarId: w.avatarId, clipId });
+      await t.call("clips.export", { avatarId: w.avatarId, clipId: clips[0] ?? "" });
+      for (const jobId of jobs) await t.untilJobEnds(jobId);
+      t.note("the copies are numbered in the order asked");
+      for (const clipId of clips) await t.call("clips.get", { avatarId: w.avatarId, clipId });
     },
   },
 ];
