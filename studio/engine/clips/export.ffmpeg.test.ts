@@ -9,7 +9,7 @@ import { openFileSource } from "../media/video/fileSource";
 import { probeVideo, type VideoInfo } from "../media/video/videoProbe";
 import { clipExportArgv, type ExportFpsMode } from "./exportProfile";
 import { verifyClipExport } from "./exportVerify";
-import { useClipFixtures } from "./testing/clipFixtures";
+import { runFfmpegForFixture, useClipFixtures } from "./testing/clipFixtures";
 import { createExportRig, NOW, useExportFixtures, type ExportRig } from "./testing/exportRig";
 import { clipFilePath } from "./store";
 useNativeGlobals();
@@ -121,6 +121,32 @@ describe("the other sources", () => {
     expect([...done].sort((a, b) => a - b)).toEqual(done);
     // A 1 s clip at 30 fps.
     expect(state).toMatchObject({ status: "done", done: 30, total: 30 });
+  });
+});
+
+describe("a source whose video track carries a DASH role", () => {
+  /** The kling fixture remuxed with the video track marked `comment`: the muxer writes `udta/kind` for it. */
+  async function roleSource(): Promise<string> {
+    const source = await fixtures.kling();
+    const out = `${source}.role.mp4`;
+    await runFfmpegForFixture(["-i", source, "-map", "0:v", "-c", "copy", "-disposition:v:0", "default+comment", out]);
+    return out;
+  }
+
+  test("the source really carries a kind box (the premise)", async () => {
+    expect(Buffer.from(await readFile(await roleSource())).includes("urn:mpeg:dash:role:2011")).toBe(true);
+  });
+
+  test.each([
+    ["interpolate", 30],
+    ["duplicate", 30],
+    ["native24", 24],
+  ] as const)("%s exports it, passes the verifier and writes no kind box", async (mode, fps) => {
+    const { file } = await exportOf(await roleSource(), mode);
+
+    expectDelivered(await infoOf(file), fps);
+    expect(Buffer.from(await readFile(file)).includes("urn:mpeg:dash:role:2011")).toBe(false);
+    expect((await verifyClipExport(file, { createdAt: new Date(NOW) })).ok).toBe(true);
   });
 });
 

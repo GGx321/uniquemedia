@@ -98,6 +98,8 @@ export function clipExportArgv(input: ClipExportArgvInput): string[] {
     // The first video stream and nothing else: Grok's stray sound (and any other track) never reaches the export.
     "-map", "0:V:0",
     "-an", "-sn", "-dn",
+    // The source's disposition is not carried: a DASH role on the provider's track (`comment`, `dub`, ...) would make the muxer write a `udta/kind` box the verifier refuses.
+    "-disposition:v:0", "default",
     "-vf", `${FPS_STEP[input.mode]},${scaleOf(input.colour)},format=yuv420p`,
     "-c:v", "libx264", "-profile:v", "high", "-preset", "medium", "-crf", "18",
     "-maxrate", "12M", "-bufsize", "24M", "-g", "60", "-threads", "2",
