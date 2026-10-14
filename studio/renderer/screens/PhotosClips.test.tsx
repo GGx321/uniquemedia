@@ -931,12 +931,19 @@ describe("46: after a restart", () => {
 // S5.V8b: the clip job carries the facts its tile shows, so a window that never saw the click (a new window after a restart, a reload) draws the tile whole. Each test below makes the clip
 // straight on the engine, closes the window and opens another on the same engine: that window has no memory of the sheet.
 describe("46: a tile in a window that never saw the click", () => {
-  const MADE = { avatarId: NINI.avatarId, photoId: PLAIN.photoId, motionId: "g-blink", model: "kling", quality: "std", seconds: 5, fallback: "none", acceptedWorstMicros: 504_000 } as const;
+  const MADE = { avatarId: NINI.avatarId, photoId: PLAIN.photoId, motionId: "g-blink", model: "kling", quality: "std", seconds: 5, fallback: "auto", acceptedWorstMicros: 850_000 } as const;
 
-  async function makeThenReopen(h: Awaited<ReturnType<typeof openNini>>, ticks: number, restart: boolean): Promise<void> {
+  async function makeThenReopen(h: Awaited<ReturnType<typeof openNini>>, ticks: number | "late", restart: boolean): Promise<void> {
     const made = await h.client.request("clips.create", MADE);
     expect(made.ok).toBe(true);
-    tick(h.scheduler, ticks);
+    if (ticks === "late") {
+      for (let i = 0; i < 40; i++) {
+        const snapshot = await h.client.request("engine.snapshot", {});
+        if (snapshot.ok && snapshot.result.jobs.some((j) => j.kind === "clip" && j.phase === "late")) break;
+        tick(h.scheduler);
+        await flush();
+      }
+    } else tick(h.scheduler, ticks);
     await flush();
     if (restart) act(() => h.engine.restart());
     h.unmount();
@@ -948,7 +955,7 @@ describe("46: a tile in a window that never saw the click", () => {
     await flush();
   }
 
-  test("after a restart: the recovery tile has the photo's frame, the motion, the length and the money line", async () => {
+  test("after a restart, in mode auto with Kling in flight: the recovery tile says «до $0.51 — спишется при сверке», the open reserve, not the $0.85 the click accepted", async () => {
     const h = await openNini();
     setSystemTime(new Date(h.engine.peekClips().nowMs));
     try {
@@ -966,15 +973,26 @@ describe("46: a tile in a window that never saw the click", () => {
     }
   });
 
-  test("a reload while the clip renders: the tile has the motion, the length and the ceiling the owner accepted", async () => {
+  test("a reload while the clip renders: the tile has the motion, the length and the ceiling the owner accepted (the table says the cap in every phase but «late» and «recovering»)", async () => {
     const h = await openNini();
     await makeThenReopen(h, 2, false);
 
     const working = screen.getByRole("article", { name: "Клип в работе: Моргает и улыбается" });
     expect(within(working).getByRole("status").textContent).toMatch(/^Снимается · \d+:\d\d$/);
     expect(within(working).getByText("0:05")).toBeDefined();
-    expect(within(working).getByText("до $0.51")).toBeDefined();
+    expect(within(working).getByText("до $0.85")).toBeDefined();
     expect(within(working).getByRole("img", { name: "Кадр клипа «Моргает и улыбается»" }).getAttribute("style")).toContain(placeholderGradient(PLAIN.photoId));
+  });
+
+  test("a reload while the clip is late: the tile says what is still open, «до $0.51 — спишется при сверке»", async () => {
+    const h = await openNini();
+    h.engine.scriptNextClip("late");
+    await makeThenReopen(h, "late", false);
+
+    const late = screen.getByRole("article", { name: "Клип в работе: Моргает и улыбается" });
+    expect(within(late).getByRole("status").textContent).toMatch(/^Задерживается\./);
+    expect(within(late).getByText("до $0.51 — спишется при сверке")).toBeDefined();
+    expect(within(late).queryByText("до $0.85") === null).toBe(true);
   });
 
   test("the queue row still names the clip by its avatar, and the tile's facts do not change it", async () => {

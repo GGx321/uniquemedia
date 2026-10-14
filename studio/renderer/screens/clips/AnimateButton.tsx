@@ -91,9 +91,9 @@ export function AnimateButton({ photo, subtitle, frameLabel, onSheet }: AnimateB
           frameLabel={frameLabel}
           onClose={() => show(false)}
           returnFocus={() => buttonRef.current}
-          onStarted={(jobId, intent) => {
+          onStarted={(jobId) => {
             show(false);
-            clips.started(jobId, intent);
+            clips.started(jobId);
           }}
         />
       )}

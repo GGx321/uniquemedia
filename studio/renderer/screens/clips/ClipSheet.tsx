@@ -12,7 +12,6 @@ import { useModalDialog } from "../../ui/useModalDialog";
 import { useMounted } from "../photos/shared";
 import { animateBlock } from "./animate";
 import { upUsd } from "./clipModel";
-import type { ClipIntent } from "./clipsContext";
 import { sheetView, type SuitableOptions } from "./sheetModel";
 
 // Stage 5, 5b.1, S5.V8: the sheet «Оживить фото» (mockups 38, 38b, 38c, 38e, 38f; plan s5b1 §6, §5.14 «Before money»). Nothing is paid without it: it shows the frame, the motion, the
@@ -44,7 +43,7 @@ export interface ClipSheetProps {
   readonly frameLabel: string;
   readonly onClose: () => void;
   /** The engine took the clip: its job, and what this window knows of it. */
-  readonly onStarted: (jobId: string, intent: ClipIntent) => void;
+  readonly onStarted: (jobId: string) => void;
   /** Where the focus goes when the sheet closes: the button that opened it; else what had the focus then. */
   readonly returnFocus?: () => HTMLElement | null;
 }
@@ -141,17 +140,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     store.setPaidInFlight(avatarId, false);
     sending.current = false;
     if (reply.ok) {
-      onStarted(reply.result.jobId, {
-        clipId: reply.result.jobId,
-        avatarId,
-        photoId,
-        motionLabel: motion.label,
-        requestModel: "kling",
-        seconds,
-        acceptedWorstMicros: button.worstMicros,
-        klingWorstMicros: suitable.noFallbackPrices[sheet.key].worstMicros,
-        grokWorstMicros: (seconds === 10 ? suitable.prices.grok10 : suitable.prices.grok5).worstMicros,
-      });
+      onStarted(reply.result.jobId);
       return;
     }
     if (!mounted.current) return;

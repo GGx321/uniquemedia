@@ -6,34 +6,6 @@ import { isActiveJob, type EngineStore, type EngineView, type JobView } from "..
 // Stage 5, 5b.1, S5.V8: what the avatar's screen shares with its clips — the «Клипы» tab, the photo viewer's «Оживить» and the sheet. The clips are listed on demand (`clips.list`,
 // plan s5b1 §5.2: no event of their own) and read again when a clip job of the avatar ends and when the export folder's state moves (every export is judged against it).
 
-/** What this window knows of a clip it started (the sheet's choice), by the clip's id: a running tile names its motion and its photo, and its money line what may still go. */
-export interface ClipIntent {
-  readonly clipId: string;
-  readonly avatarId: string;
-  readonly photoId: string;
-  readonly motionLabel: string;
-  /** `grok`: started by «Снять на Grok» (the offer's clip), so Grok is not a fallback behind a refusal. */
-  readonly requestModel: "kling" | "grok";
-  readonly seconds: 5 | 10;
-  /** The accepted worst, the engine's figure the click sent. */
-  readonly acceptedWorstMicros: number;
-  /** The reserve of each model's attempt (the engine's estimates of Kling alone and of Grok, from the same `clips.options`): what a late attempt holds open. */
-  readonly klingWorstMicros: number;
-  readonly grokWorstMicros: number;
-}
-
-const INTENTS = new WeakMap<EngineStore, Map<string, ClipIntent>>();
-
-/** The intents of this window's store: kept for the window's life, so a screen left and come back to (or a restart's recovery of the same clip) still knows them. */
-export function clipIntents(store: EngineStore): Map<string, ClipIntent> {
-  let intents = INTENTS.get(store);
-  if (intents === undefined) {
-    intents = new Map();
-    INTENTS.set(store, intents);
-  }
-  return intents;
-}
-
 const DISMISSALS = new WeakMap<EngineStore, Set<string>>();
 /** How many put-away «Клип не снят» tiles a window remembers (the oldest are forgotten first, as the store's dismissed imports are). */
 export const MAX_DISMISSED_CLIP_JOBS = 200;
@@ -74,8 +46,8 @@ export interface ClipsControl {
   readonly photoInfo: (photoId: string) => PhotoPlace | null;
   /** Every page of the gallery is in: a photo it does not hold is gone. */
   readonly galleryComplete: boolean;
-  /** A clip job this window started (a create from the sheet or a tile): tracked, remembered, and the «Клипы» tab shown. */
-  readonly started: (jobId: string, intent: ClipIntent) => void;
+  /** A clip job this window started (a create from the sheet or a tile): tracked, and the «Клипы» tab shown. What its tile shows is the engine's own, told by the job. */
+  readonly started: (jobId: string) => void;
   /** Show a photo in the «Фото» tab's viewer («Из фото»). */
   readonly showPhoto: (photoId: string) => void;
 }

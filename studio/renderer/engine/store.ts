@@ -91,6 +91,8 @@ export interface ClipJobInfo {
   readonly proveUntil: string | null;
   /** (S5.V8b) What the tile shows of a create job, told by the engine itself; absent for an export, a retried download or an older engine's job. Kept once seen. */
   readonly facts?: ClipJobFacts;
+  /** What the ledger can still charge for the clip, as the latest event told it; absent when none is open. The tile of `late` and `recovering` says it («спишется при сверке»). */
+  readonly openReserveMicros?: number;
   /** A restart's recovery job (seen in `recovering`). */
   readonly recovery: boolean;
   /** An export job («Сохранить в папку», phase `exporting`). */
@@ -116,7 +118,7 @@ export type ClipJobStart = "create" | "export" | "retry";
 
 const CLIP_START_PHASE: Record<ClipJobStart, ClipPhase> = { create: "preparing", export: "exporting", retry: "downloading" };
 
-function clipInfo(clipId: string, phase: ClipPhase | null, more: { model?: ClipAttemptModel; submittedAt?: string; proveUntil?: string; facts?: ClipJobFacts } = {}, before?: ClipJobInfo): ClipJobInfo {
+function clipInfo(clipId: string, phase: ClipPhase | null, more: { model?: ClipAttemptModel; submittedAt?: string; proveUntil?: string; facts?: ClipJobFacts; openReserveMicros?: number } = {}, before?: ClipJobInfo): ClipJobInfo {
   return {
     clipId,
     phase: phase ?? before?.phase ?? null,
@@ -124,6 +126,7 @@ function clipInfo(clipId: string, phase: ClipPhase | null, more: { model?: ClipA
     submittedAt: more.submittedAt ?? null,
     proveUntil: more.proveUntil ?? null,
     ...((more.facts ?? before?.facts) === undefined ? {} : { facts: more.facts ?? before?.facts }),
+    ...(more.openReserveMicros === undefined ? {} : { openReserveMicros: more.openReserveMicros }),
     recovery: (before?.recovery ?? false) || phase === "recovering",
     export: (before?.export ?? false) || phase === "exporting",
   };
@@ -267,7 +270,7 @@ export function jobFromState(j: Exclude<JobState, { kind: "import" }>): JobView 
     ...(j.kind === "clip"
       ? {
           clip: {
-            ...clipInfo(j.clipId, j.phase, { model: j.model, submittedAt: j.submittedAt, proveUntil: j.proveUntil, facts: factsOf(j) }),
+            ...clipInfo(j.clipId, j.phase, { model: j.model, submittedAt: j.submittedAt, proveUntil: j.proveUntil, facts: factsOf(j), openReserveMicros: j.openReserveMicros }),
             export: j.phase === "exporting" || j.result?.exported !== undefined,
           },
         }
@@ -1113,7 +1116,7 @@ export class EngineStore {
         // S5.V8: a clip's event says where it stands (its phase, and the model and submit time of the attempt on its way).
         const progress = event.payload;
         const clip = (job: JobView): ClipJobInfo | undefined =>
-          progress.kind === "clip" ? clipInfo(progress.clipId, progress.phase, { model: progress.model, submittedAt: progress.submittedAt, proveUntil: progress.proveUntil, facts: factsOf(progress) }, job.clip) : job.clip;
+          progress.kind === "clip" ? clipInfo(progress.clipId, progress.phase, { model: progress.model, submittedAt: progress.submittedAt, proveUntil: progress.proveUntil, facts: factsOf(progress), openReserveMicros: progress.openReserveMicros }, job.clip) : job.clip;
         this.patchJob(
           event.payload,
           (job) =>
