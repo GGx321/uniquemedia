@@ -1,26 +1,33 @@
 import {
   BOLD_CLIPS,
+  CLIP_OPTION_KEYS,
   GROK_FALLBACK,
   PROTOCOL_VERSION,
+  clipBatchExpectedMicros,
+  clipBatchWorstMicros,
+  clipWorstMicros,
   type BoldClipsMode,
+  type ClipBatchOptions,
   type ClipFace,
   type ClipMonthFit,
   type ClipMotionChoice,
+  type ClipOptionKey,
   type ClipOptions,
+  type ClipPrices,
   type ClipRequest,
   type CommandPayload,
   type EngineError,
 } from "../../shared/engine";
 import type { Estimate } from "../../shared/engine/estimate";
 import type { UnsequencedEvent } from "../../shared/engine/events";
-import { CLIP_PLAN_READ_TIMEOUT_MS } from "../control";
+import { CLIP_PLAN_READ_PARALLEL, CLIP_PLAN_READ_TIMEOUT_MS } from "../control";
 import { EngineFailure } from "../engineFailure";
 import type { ExportRootCheck } from "../exportRoot";
 import type { WorkerFaceGate } from "../face/worker/workerGate";
-import type { ClipJobEnd, JobRegistry } from "../jobs";
+import type { ClipBatchRef, ClipJobEnd, JobRegistry } from "../jobs";
 import type { Library } from "../library";
 import type { PhotoSidecar } from "../library/schemas";
-import { scopeKey, type Budget, type ReserveHandle, type ReserveRequest } from "../money/budget";
+import { scopeKey, type Budget, type ReserveHandle, type ReserveRefusal, type ReserveRequest } from "../money/budget";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import { VIDEO_TIERS } from "../money/prices";
 import { RECONCILE_QUIET_MS } from "../money/reconcile";
@@ -33,6 +40,7 @@ import type { ExportNumberLibrary } from "../videos/exportNumbers";
 import type { CommitTracker } from "../videos/live";
 import type { RootLockOptions } from "../videos/rootLock";
 import type { ClipRunDeps } from "./attempt";
+import { ClipBatch, type BatchMember, type BatchPorts, type MemberRun, type PhotoRecheck } from "./batch";
 import { ClipExports } from "./export";
 import { ClipCopies, type ClipCopyMedia, type DraftView, type KnownAvatars } from "./copies";
 import { ClipImports, type ClipMediaPort } from "./importClip";
@@ -42,8 +50,8 @@ import { firstFrameRefusalOf } from "./firstFrame";
 import { checkClipFace } from "./faceCheck";
 import { clipFallbackOf, readFrameFacts, type FrameFacts } from "./frameFacts";
 import { createClipHolds, type ClipHolds, type HoldTimers } from "./holds";
-import { runClipJob, type ClipJobDeps, type ClipJobOutcome } from "./job";
-import { parseClipAttemptId } from "./journal";
+import { runClipJob, type ClipJobDeps, type ClipJobOutcome, type ClipMoneyEnd } from "./job";
+import { clipAttemptId, parseClipAttemptId } from "./journal";
 import { motionChoicesOf } from "./motion";
 import { openClipReserveMicros } from "./openReserve";
 import { ClipRecords, type ClipRecordsDeps } from "./records";
@@ -100,6 +108,19 @@ function offersGrok(record: ClipRecord): boolean {
   return record.outcome.status === "failed" && record.outcome.reason === "refused-free" && record.request.model === "kling" && record.request.fallback === "auto";
 }
 
+/** A refusal of the batch's month hold, as the command's error: the codes map one to one (the batch is refused whole, and nothing was held). */
+function holdRefusalOf(refusal: ReserveRefusal): EngineError {
+  switch (refusal.reason) {
+    case "BUDGET_EXCEEDED":
+    case "RUN_CAP_EXCEEDED":
+      return { code: refusal.reason, detail: `committed ${refusal.committedMicros} µ$ + the batch's ${refusal.worstMicros} µ$ > the limit ${refusal.limitMicros} µ$; nothing was held` };
+    case "RECONCILE_REQUIRED":
+      return { code: "RECONCILE_REQUIRED", detail: `${refusal.openAttempts} open attempt(s)${refusal.torn ? ", a torn ledger line" : ""}; reconcile before a batch; nothing was held` };
+    case "HALTED":
+      return { code: refusal.cause, detail: "the ledger is halted; nothing was held" };
+  }
+}
+
 /** A signal that fires when either does. */
 function eitherSignal(a: AbortSignal, b: AbortSignal): AbortSignal {
   const controller = new AbortController();
@@ -130,6 +151,8 @@ export interface ClipServiceDeps {
   checkMonthlyRoom: (budget: Budget, worstMicros: number) => void;
   /** The very figure `checkMonthlyRoom` refuses by (spent + open + held), as a yes or no: `clips.options`' month never disagrees with `clips.create`'s (I5.47). */
   monthFits: (budget: Budget, worstMicros: number) => boolean;
+  /** 5b.2: the same month figure as a room, `max(0, monthlyBudget - (spent + open + held))`: `clips.batchOptions` reads it once and derives every `monthFits` from it, so its answer agrees with itself. */
+  monthRoomMicros: (budget: Budget) => number;
   /** The engine's paid-command count: a library switch and a reconcile are refused while it is above 0. */
   paidStart: () => void;
   paidEnd: () => void;
@@ -177,6 +200,20 @@ export interface ClipServiceDeps {
 }
 
 type CreatePayload = CommandPayload<"clips.create">;
+type CreateBatchPayload = CommandPayload<"clips.createBatch">;
+
+/** The token of the one clip money unit: what holds it, and the batch it is when it is one. */
+interface ClipUnit {
+  readonly kind: "clip" | "batch";
+}
+
+/** A photo of a batch as read at create or in `clips.batchOptions`: why it cannot be made, or its facts and the motions it offers. */
+type ItemRead =
+  | { kind: "refused"; reason: Extract<ClipOptions, { suitable: false }>["reason"] }
+  | { kind: "suitable"; facts: FrameFacts; motions: ReturnType<typeof motionChoicesOf> };
+
+/** Finished batches kept for a late `clips.cancelBatch`. */
+const KEEP_FINISHED_BATCHES = 50;
 
 export class ClipService {
   readonly #deps: ClipServiceDeps;
@@ -185,10 +222,12 @@ export class ClipService {
   /** I5.48: the attempts that may still bill. Apart from the jobs: a job may end long before its hold does. */
   readonly holds: ClipHolds;
   /**
-   * I5.50: the one paid clip, from its dispatch until its money closes. The holder is the create's own token, so only that clip can give the slot (and the paid count with it)
-   * back, once: an earlier clip ending late never frees a later clip's slot.
+   * I5.50 / I5.61: the ONE clip money unit of the whole engine, from its dispatch until its money closes: a single clip, or a batch (until its last member's money closes). The holder is
+   * the dispatch's own token, so only that unit can give the paid count back, once: an earlier clip ending late never frees a later unit.
    */
-  #slot: object | null = null;
+  #unit: ClipUnit | null = null;
+  /** 5b.2: the batches of this process, by id; a finished one stays (bounded) so a late `clips.cancelBatch` answers 0 and not NOT_FOUND. */
+  readonly #batches = new Map<string, ClipBatch>();
   /** Create jobs and download retries from their start until their record (or their end without one); a recovery is not counted. */
   #work = 0;
   /** The clips a job works on now (create, retry, recovery): no second job on one clip, and a delete or a retry of one is `job-running`. */
@@ -564,8 +603,19 @@ export class ClipService {
     if (this.#exports.owns(jobId)) return this.#exports.cancel(jobId);
     // A recovery (after a restart) is not a clip that was just sent, in whatever phase it is in: its own words, from the existing texts.
     if (this.#recoveryJobs.has(jobId)) throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "job-running", detail: "the clip is being recovered after a restart; it cannot be cancelled" });
+    // 5b.2 (I5.63): a batch member still waiting for its turn is cancelled alone, free; the rest of the batch goes on.
+    if (state.phase === "queued") {
+      for (const batch of this.#batches.values()) if (batch.cancelMember(jobId)) return;
+    }
     if (state.phase !== "preparing") throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "submitted", detail: "the clip has already been sent; it cannot be cancelled" });
     this.#deps.jobs.cancel(jobId);
+  }
+
+  /** `clips.cancelBatch` (5b.2, I5.63): every member still queued is cancelled, free; a member already sent is never cancelled. The count of those cancelled. NOT_FOUND for a batch this avatar does not have. */
+  cancelBatch(payload: CommandPayload<"clips.cancelBatch">): { cancelled: number } {
+    const batch = this.#batches.get(payload.batchId);
+    if (batch === undefined || batch.avatarId !== payload.avatarId) throw new EngineFailure({ code: "NOT_FOUND", detail: `avatar ${payload.avatarId} has no batch ${payload.batchId}` });
+    return { cancelled: batch.cancelQueued() };
   }
 
   // ---------- clips.options ----------
@@ -578,13 +628,17 @@ export class ClipService {
     if (read.kind === "refused") return { suitable: false, photoId: photo.id, reason: read.reason };
     const { facts } = read;
     const priced = await this.#deps.prices(CLIP_PRICE_MODELS);
+    const budget = this.#deps.budget();
+    return this.#suitableOptions(photo.id, facts, read.motions, priced, (worstMicros) => budget !== null && this.#deps.monthFits(budget, worstMicros));
+  }
+
+  /** The sheet of one suitable photo (`ClipOptions`): its prices from one book, and whether the month (`fits`, one yes-or-no on a worst case) takes each option. */
+  #suitableOptions(photoId: string, facts: FrameFacts, motions: ReturnType<typeof motionChoicesOf>, priced: Awaited<ReturnType<ClipServiceDeps["prices"]>>, fits: (worstMicros: number) => boolean): ClipOptions {
     const fallback = clipFallbackOf(facts, this.#boldClips, this.#mode);
     const { prices, noFallbackPrices } = clipOptionPrices(priced, { mode: this.#mode, boldClips: this.#boldClips, bold: facts.bold });
-    const budget = this.#deps.budget();
     const fit = (withWorst: number, withoutWorst: number): ClipMonthFit => {
-      if (budget === null) return "none";
-      if (fallback === "auto" && this.#deps.monthFits(budget, withWorst)) return "with-fallback";
-      return this.#deps.monthFits(budget, withoutWorst) ? "without-fallback" : "none";
+      if (fallback === "auto" && fits(withWorst)) return "with-fallback";
+      return fits(withoutWorst) ? "without-fallback" : "none";
     };
     const monthFits = {
       std5: fit(prices.std5.worstMicros, noFallbackPrices.std5.worstMicros),
@@ -592,28 +646,121 @@ export class ClipService {
       std10: fit(prices.std10.worstMicros, noFallbackPrices.std10.worstMicros),
       pro10: fit(prices.pro10.worstMicros, noFallbackPrices.pro10.worstMicros),
     };
-    return { suitable: true, photoId: photo.id, motions: read.motions, prices, fallback, bold: facts.bold, noFallbackPrices, monthFits };
+    return { suitable: true, photoId, motions, prices, fallback, bold: facts.bold, noFallbackPrices, monthFits };
+  }
+
+  // ---------- clips.batchOptions (5b.2, S5.WB2) ----------
+
+  /**
+   * The sheet of a batch, free: each photo's own `ClipOptions` in the order asked, the four sums over the photos that can be made, the month's room and what fits. The month is read ONCE, after
+   * the last await and in one synchronous step, and every `monthFits` (a photo's and the batch's) is derived from that one figure, so the answer never disagrees with itself even while a hold is taken
+   * elsewhere (a concurrent hold would otherwise make an answer the contract's own refines reject).
+   */
+  async batchOptions(payload: CommandPayload<"clips.batchOptions">): Promise<ClipBatchOptions> {
+    const library = this.#deps.currentLibrary();
+    if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
+    this.#avatarOf(library, payload.avatarId);
+    const reads = await this.#readItems(library, payload.avatarId, payload.photoIds);
+    const priced = await this.#deps.prices(CLIP_PRICE_MODELS);
+    // ----- from here, synchronous -----
+    const budget = this.#deps.budget();
+    const room = budget === null ? 0 : this.#deps.monthRoomMicros(budget);
+    const fits = (worstMicros: number): boolean => budget !== null && worstMicros <= room;
+    const items = reads.map((read, i): ClipOptions => {
+      const photoId = payload.photoIds[i] ?? "";
+      if (read.kind === "refused") return { suitable: false, photoId, reason: read.reason };
+      return this.#suitableOptions(photoId, read.facts, read.motions, priced, fits);
+    });
+    const members = reads.flatMap((read) => (read.kind === "suitable" ? [{ bold: read.facts.bold }] : []));
+    const book = clipPricesOf(priced);
+    const anyFallback = items.some((item) => item.suitable && item.fallback === "auto");
+    const sum = (quality: "std" | "pro", seconds: 5 | 10) => {
+      if (members.length === 0) return { expected: 0, worst: 0, worstNoFallback: 0 };
+      const parts = { quality, seconds, mode: this.#mode, boldClips: this.#boldClips, prices: book };
+      return {
+        expected: clipBatchExpectedMicros(members, { ...parts, fallback: "auto" }),
+        worst: clipBatchWorstMicros(members, { ...parts, fallback: "auto" }),
+        worstNoFallback: clipBatchWorstMicros(members, { ...parts, fallback: "none" }),
+      };
+    };
+    const sums = { std5: sum("std", 5), pro5: sum("pro", 5), std10: sum("std", 10), pro10: sum("pro", 10) };
+    const fit = (key: ClipOptionKey): ClipMonthFit => {
+      if (members.length === 0) return "none";
+      if (anyFallback && fits(sums[key].worst)) return "with-fallback";
+      return fits(sums[key].worstNoFallback) ? "without-fallback" : "none";
+    };
+    const monthFits = { std5: fit("std5"), pro5: fit("pro5"), std10: fit("std10"), pro10: fit("pro10") };
+    return { items, sums, monthRoomMicros: room, monthFits };
+  }
+
+  /** The avatar, active and not being deleted: NOT_FOUND otherwise. */
+  #avatarOf(library: Library, avatarId: string): void {
+    const avatar = library.getAvatar(avatarId);
+    if (avatar === undefined || avatar.status !== "active" || this.#deps.pendingDelete(avatarId)) throw new EngineFailure({ code: "NOT_FOUND", detail: `no active avatar ${avatarId} in the open library` });
+  }
+
+  /**
+   * Each photo's facts and motions (or why it cannot be made), CLIP_PLAN_READ_PARALLEL at a time (L4): the deadline of the batch commands counts rounds of plan reads. A photo that is not in the
+   * library, or is another avatar's, is `not-a-gallery-photo` (an item's own answer, never NOT_FOUND). The photo bytes are not kept: a member's are read again at its turn.
+   */
+  async #readItems(library: Library, avatarId: string, photoIds: readonly string[]): Promise<ItemRead[]> {
+    const reads: ItemRead[] = new Array<ItemRead>(photoIds.length);
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        const i = next++;
+        if (i >= photoIds.length) return;
+        const photo = library.getPhoto(photoIds[i] ?? "");
+        if (photo === undefined || photo.avatarId !== avatarId) {
+          reads[i] = { kind: "refused", reason: "not-a-gallery-photo" };
+          continue;
+        }
+        const read = await this.#facts(library, photo);
+        reads[i] = read.kind === "refused" ? read : { kind: "suitable", facts: read.facts, motions: read.motions };
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CLIP_PLAN_READ_PARALLEL, photoIds.length) }, worker));
+    return reads;
   }
 
   // ---------- clips.create ----------
 
+  /**
+   * Why a new clip money unit cannot start now, or null (5b.2, I5.61). The ONE place the in-flight refusal of `clips.create` and `clips.createBatch` is decided: a single clip holding the unit is
+   * `one-at-a-time`, a batch holding it is `batch-running`. Part C's `motion-busy` guard joins here.
+   */
+  unitRefusal(): EngineFailure | null {
+    if (this.#unit === null) return null;
+    if (this.#unit.kind === "batch") {
+      return new EngineFailure({ code: "IN_FLIGHT", clipReason: "batch-running", detail: "a batch of clips is being made; wait for it to end or cancel the rest" });
+    }
+    return new EngineFailure({ code: "IN_FLIGHT", clipReason: "one-at-a-time", detail: "another clip is being made; one paid clip runs at a time" });
+  }
+
+  /** Takes the unit and the paid count, synchronously (5b.1's order: before the first await). */
+  #claimUnit(kind: ClipUnit["kind"]): ClipUnit {
+    const unit: ClipUnit = { kind };
+    this.#unit = unit;
+    this.#deps.paidStart();
+    return unit;
+  }
+
   /** The slot is the FIRST check, taken before the first await: two calls with no await between them make exactly one job. */
   async create(payload: CreatePayload): Promise<{ jobId: string }> {
-    if (this.#slot !== null) throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "one-at-a-time", detail: "another clip is being made; one paid clip runs at a time" });
-    const slot = {};
-    this.#slot = slot;
-    this.#deps.paidStart();
+    const refusal = this.unitRefusal();
+    if (refusal !== null) throw refusal;
+    const slot = this.#claimUnit("clip");
     let started = false;
     try {
       const answer = await this.#create(payload, slot);
       started = true;
       return answer;
     } finally {
-      if (!started) this.#releaseSlot(slot);
+      if (!started) this.#releaseUnit(slot);
     }
   }
 
-  async #create(payload: CreatePayload, slot: object): Promise<{ jobId: string }> {
+  async #create(payload: CreatePayload, slot: ClipUnit): Promise<{ jobId: string }> {
     const deps = this.#deps;
     const key = deps.usableKey("bring a photo to life");
     const budget = deps.paidBudget();
@@ -669,7 +816,7 @@ export class ClipService {
       jobId,
       clipId,
       avatarId,
-      photo,
+      photoId: photo.id,
       bytes,
       facts,
       motion,
@@ -678,16 +825,217 @@ export class ClipService {
       prices,
       capKey,
       cancel,
-      slot,
+      unit: slot,
     });
     return { jobId };
   }
 
-  /** Gives the slot and the paid count back, once, and only for the clip that holds it. */
-  #releaseSlot(slot: object): void {
-    if (this.#slot !== slot) return;
-    this.#slot = null;
+  /** Gives the unit and the paid count back, once, and only for the unit that holds it. */
+  #releaseUnit(unit: ClipUnit): void {
+    if (this.#unit !== unit) return;
+    this.#unit = null;
     this.#deps.paidEnd();
+  }
+
+  // ---------- clips.createBatch (5b.2, S5.WB2) ----------
+
+  /**
+   * The batch «Оживить выбранные» (plan s5b2 §5.2.2, I5.61-I5.63). The unit is the FIRST check, taken before the first await like a single clip's, and it is the batch's until its last member's money
+   * closes. Every refusal below is free and leaves nothing behind: no hold, no cap, no job, no unit.
+   */
+  async createBatch(payload: CreateBatchPayload): Promise<{ batchId: string; jobIds: string[] }> {
+    const refusal = this.unitRefusal();
+    if (refusal !== null) throw refusal;
+    const unit = this.#claimUnit("batch");
+    let started = false;
+    try {
+      const answer = await this.#createBatch(payload, unit);
+      started = true;
+      return answer;
+    } finally {
+      if (!started) this.#releaseUnit(unit);
+    }
+  }
+
+  async #createBatch(payload: CreateBatchPayload, unit: ClipUnit): Promise<{ batchId: string; jobIds: string[] }> {
+    const deps = this.#deps;
+    const key = deps.usableKey("bring photos to life");
+    const budget = deps.paidBudget();
+    const library = await deps.liveLibrary();
+    const { avatarId } = payload;
+    // NOT_FOUND is the avatar's alone: a photo that is missing or another avatar's is that item's own VALIDATION.
+    this.#avatarOf(library, avatarId);
+    await deps.assertAvatarOnDisk(library, avatarId);
+
+    // The items in the pick order; the lowest refused item is the one told, with its own reason and its path (one `clipReason` per error).
+    const reads = await this.#readItems(library, avatarId, payload.items.map((item) => item.photoId));
+    const chosen: { photoId: string; facts: FrameFacts; motion: ClipMotionChoice }[] = [];
+    for (const [i, item] of payload.items.entries()) {
+      const read = reads[i];
+      if (read === undefined || read.kind === "refused") {
+        const reason = read === undefined ? "not-a-gallery-photo" : read.reason;
+        throw new EngineFailure({ code: "VALIDATION", clipReason: reason, path: ["items", i], detail: `item ${i} (photo ${item.photoId}) cannot be brought to life (${reason})` });
+      }
+      const motion = read.motions.find((choice) => choice.id === item.motionId);
+      if (motion === undefined) {
+        throw new EngineFailure({ code: "VALIDATION", clipReason: "unknown-motion", path: ["items", i], detail: `item ${i}: the motion ${item.motionId} is not one this photo offers` });
+      }
+      chosen.push({ photoId: item.photoId, facts: read.facts, motion });
+    }
+
+    // The price book of the batch, and each member's share: its worst case under it (Kling-only for «Смелая», max(Kling, Grok) in `auto` with a fallback allowed).
+    const priced = await deps.prices(CLIP_PRICE_MODELS);
+    const book = clipPricesOf(priced);
+    const drafts = chosen.map((member) => {
+      const fallback = clipFallbackOf(member.facts, this.#boldClips, this.#mode) === "none" ? "none" : payload.fallback;
+      const request: ClipRequest = { model: "kling", quality: payload.quality, seconds: payload.seconds, fallback };
+      const share = clipWorstMicros({ ...request, mode: this.#mode, bold: member.facts.bold, boldClips: this.#boldClips, prices: book });
+      const jobId = deps.newId();
+      return { ...member, request, share, jobId, clipId: jobId, capKey: scopeKey({ avatarJobId: jobId }) };
+    });
+    const total = clipBatchWorstMicros(
+      chosen.map((member) => ({ bold: member.facts.bold })),
+      { quality: payload.quality, seconds: payload.seconds, mode: this.#mode, fallback: payload.fallback, boldClips: this.#boldClips, prices: book },
+    );
+    if (drafts.reduce((sum, d) => sum + d.share, 0) !== total) throw new EngineFailure({ code: "INTERNAL", detail: "the members' shares do not add up to the batch's worst case" });
+    deps.checkAccepted(total, payload.acceptedWorstMicros);
+
+    // Each member's cap is its share, and the month is held for every member at once (all or nothing): a refusal leaves nothing held and nothing capped.
+    for (const d of drafts) deps.setCap(d.capKey, d.share);
+    const batchId = deps.newId();
+    let registered = false;
+    try {
+      const hold = await budget.tryHold(drafts.map((d) => ({ attemptId: clipAttemptId(d.clipId, 1), scope: { avatarJobId: d.clipId }, worstMicros: d.share })));
+      if (!hold.ok) throw new EngineFailure(holdRefusalOf(hold));
+      // After the last await, with none before the jobs are registered: a delete prepared meanwhile (the avatar detached), or a library switched away, wins.
+      if (deps.pendingDelete(avatarId) || library.getAvatar(avatarId) === undefined || deps.currentLibrary() !== library) {
+        throw new EngineFailure({ code: "NOT_FOUND", detail: `avatar ${avatarId} is no longer in the open library` });
+      }
+      const size = drafts.length;
+      const members: BatchMember[] = drafts.map((d, i) => ({
+        index: i + 1,
+        photoId: d.photoId,
+        motion: d.motion,
+        request: d.request,
+        facts: d.facts,
+        share: d.share,
+        jobId: d.jobId,
+        clipId: d.clipId,
+        capKey: d.capKey,
+        signal: deps.jobs.startClip(
+          d.jobId,
+          {
+            avatarId,
+            clipId: d.clipId,
+            facts: { photoId: d.photoId, request: d.request, motion: { source: d.motion.source, label: d.motion.label }, acceptedWorstMicros: d.share },
+            batch: { batchId, batchIndex: i + 1, batchSize: size, waitReason: "turn" },
+          },
+          "queued",
+        ),
+        wake: new AbortController(),
+        held: true,
+        retried: false,
+        state: "queued",
+      }));
+      registered = true;
+      for (const member of members) {
+        const progress = deps.jobs.progress(member.jobId, 0);
+        if (progress !== null) deps.emit({ v: PROTOCOL_VERSION, id: deps.newId(), kind: "event", type: "job.progress", payload: progress });
+      }
+      // The batch's own work count: a library switch waits while any member is queued or running, and gives way when the batch is over.
+      this.#work++;
+      const batch = new ClipBatch(this.#batchPorts({ key, budget, library, avatarId, batchId, size, unit }), { id: batchId, avatarId, members });
+      this.#remember(batch);
+      batch.start();
+      return { batchId, jobIds: members.map((member) => member.jobId) };
+    } finally {
+      if (!registered) {
+        for (const d of drafts) {
+          budget.releaseHold(clipAttemptId(d.clipId, 1));
+          deps.clearCap(d.capKey);
+        }
+      }
+    }
+  }
+
+  /** The batches kept: the running ones, and the last few that ended. */
+  #remember(batch: ClipBatch): void {
+    this.#batches.set(batch.id, batch);
+    const finished = [...this.#batches.values()].filter((candidate) => candidate.over);
+    for (const old of finished.slice(0, Math.max(0, finished.length - KEEP_FINISHED_BATCHES))) this.#batches.delete(old.id);
+  }
+
+  /** What a batch needs of the service: the engine's seams, the hold registry, and the clip job of one member. */
+  #batchPorts(ctx: { key: string; budget: Budget; library: Library; avatarId: string; batchId: string; size: number; unit: ClipUnit }): BatchPorts {
+    const deps = this.#deps;
+    return {
+      clock: deps.clock,
+      newId: deps.newId,
+      timings: deps.timings,
+      jobs: deps.jobs,
+      emit: deps.emit,
+      emitMoney: deps.emitMoney,
+      setCap: deps.setCap,
+      clearCap: deps.clearCap,
+      log: deps.log,
+      budget: ctx.budget,
+      holds: this.holds,
+      mode: this.#mode,
+      boldClips: this.#boldClips,
+      stop: this.#stop.signal,
+      readPrices: async () => clipPricesOf(await deps.prices(CLIP_PRICE_MODELS)),
+      recheck: (member) => this.#recheck(ctx.library, ctx.avatarId, member.photoId),
+      runMember: (run) => this.#startMember(run, ctx),
+      finished: () => {
+        this.#work--;
+        this.#releaseUnit(ctx.unit);
+        deps.emitMoney();
+      },
+      sleep: abortableSleep,
+    };
+  }
+
+  /** A member's turn has come: 5b.1's clip job, verbatim, under the member's own scope and cap. The batch hears of its money through `run.onMoneyClosed`. */
+  #startMember(run: MemberRun, ctx: { key: string; budget: Budget; library: Library; avatarId: string; batchId: string; size: number }): void {
+    const { member } = run;
+    this.#work++;
+    this.#activeClips.add(member.clipId);
+    void this.#runJob({
+      key: ctx.key,
+      budget: ctx.budget,
+      library: ctx.library,
+      jobId: member.jobId,
+      clipId: member.clipId,
+      avatarId: ctx.avatarId,
+      photoId: member.photoId,
+      bytes: run.bytes,
+      facts: member.facts,
+      motion: member.motion,
+      request: member.request,
+      acceptedWorstMicros: member.share,
+      prices: run.prices,
+      capKey: member.capKey,
+      cancel: member.signal,
+      unit: null,
+      member: { ref: { batchId: ctx.batchId, batchIndex: member.index, batchSize: ctx.size }, onMoneyClosed: run.onMoneyClosed },
+    });
+  }
+
+  /** A member's photo at its turn: still in the gallery of its avatar, and its file still readable and usable as a first frame. */
+  async #recheck(library: Library, avatarId: string, photoId: string): Promise<PhotoRecheck> {
+    const deps = this.#deps;
+    const present = (): boolean => deps.currentLibrary() === library && !deps.pendingDelete(avatarId) && library.getAvatar(avatarId) !== undefined && library.getPhoto(photoId)?.avatarId === avatarId;
+    if (!present()) return { kind: "gone" };
+    let bytes: Uint8Array;
+    try {
+      bytes = await library.readPhotoVerified(photoId);
+    } catch (error) {
+      if (!present()) return { kind: "gone" };
+      deps.log(`[clip] photo ${photoId} could not be read at its batch turn (${error instanceof Error ? error.name : typeof error})`);
+      return { kind: "unreadable" };
+    }
+    if (!present()) return { kind: "gone" };
+    return firstFrameRefusalOf(bytes) === null ? { kind: "ok", bytes } : { kind: "unreadable" };
   }
 
   // ---------- the job ----------
@@ -699,7 +1047,7 @@ export class ClipService {
     jobId: string;
     clipId: string;
     avatarId: string;
-    photo: PhotoSidecar;
+    photoId: string;
     bytes: Uint8Array;
     facts: FrameFacts;
     motion: ClipMotionChoice;
@@ -708,20 +1056,27 @@ export class ClipService {
     prices: ReturnType<typeof clipPricesOf>;
     capKey: string;
     cancel: AbortSignal;
-    /** The create's slot token: only this clip gives the slot back. */
-    slot: object;
+    /** A single clip's unit token: only this clip gives the unit back, when its money closes. A batch member holds none: the batch gives the unit back when its last member's money closes. */
+    unit: ClipUnit | null;
+    /** 5b.2: the batch this clip is a member of, and what to tell it when the money closed. */
+    member?: { ref: ClipBatchRef; onMoneyClosed: (end?: ClipMoneyEnd) => void };
   }): Promise<void> {
     const deps = this.#deps;
     const signal = eitherSignal(job.cancel, this.#stop.signal);
     const ref = { kind: "clip" as const, jobId: job.jobId, avatarId: job.avatarId, clipId: job.clipId };
     let moneyClosed = false;
-    /** Every reserve of the clip is settled or abandoned (or none was made): the slot, the paid count and the cap go, once. */
-    const closeMoney = (): void => {
+    /** Every reserve of the clip is settled or abandoned (or none was made): the unit (a single clip's), the paid count and the cap go, once; a batch member then tells its batch how it ended. */
+    const closeMoney = (end?: ClipMoneyEnd): void => {
       if (moneyClosed) return;
       moneyClosed = true;
-      this.#releaseSlot(job.slot);
+      if (job.unit !== null) this.#releaseUnit(job.unit);
       deps.clearCap(job.capKey);
       deps.emitMoney();
+      try {
+        job.member?.onMoneyClosed(end);
+      } catch (error) {
+        deps.log(`[clip] ${job.clipId}: the batch could not take the end of its member's money (${error instanceof Error ? error.name : typeof error})`);
+      }
     };
     let end: ClipJobEnd;
     try {
@@ -743,7 +1098,7 @@ export class ClipService {
           const progress = deps.jobs.clipPhase(job.jobId, { ...update, openReserveMicros: openClipReserveMicros(job.budget.ledger, job.clipId) });
           if (progress !== null) deps.emit({ v: PROTOCOL_VERSION, id: deps.newId(), kind: "event", type: "job.progress", payload: progress });
         },
-        onMoneyClosed: closeMoney,
+        onMoneyClosed: (end) => closeMoney(end),
         onMoneyNotice: (refusal) => {
           deps.log(`[clip] ${job.clipId}: Grok could not be reserved behind a free Kling (${refusal.reason}); the clip ends free`);
           deps.emitMoney();
@@ -755,7 +1110,7 @@ export class ClipService {
         {
           clipId: job.clipId,
           avatarId: job.avatarId,
-          photoId: job.photo.id,
+          photoId: job.photoId,
           photo: job.bytes,
           facts: job.facts,
           motion: job.motion,
@@ -766,10 +1121,11 @@ export class ClipService {
           boldClips: this.#boldClips,
           clipsDir: clipsDirOf(job.library, job.avatarId),
           createdAt: new Date(deps.clock()).toISOString(),
+          ...(job.member === undefined ? {} : { batch: job.member.ref }),
         },
         signal,
       );
-      end = this.#endOf(outcome, job.key);
+      end = this.#endOf(outcome, job.key, job.member !== undefined);
     } catch (error) {
       deps.log(`[clip] ${job.clipId}: the job failed (${error instanceof Error ? error.name : typeof error})`);
       end = { status: "failed", error: this.#errorOf(error) };
@@ -784,13 +1140,13 @@ export class ClipService {
       const v = PROTOCOL_VERSION;
       if (state?.status === "done" && state.result !== undefined) deps.emit({ v, id: deps.newId(), kind: "event", type: "job.done", payload: { jobId: job.jobId, result: state.result } });
       else if (end.status === "failed") deps.emit({ v, id: deps.newId(), kind: "event", type: "job.failed", payload: { ...ref, error: end.error } });
-      else if (end.status === "cancelled") deps.emit({ v, id: deps.newId(), kind: "event", type: "job.cancelled", payload: ref });
+      else if (end.status === "cancelled") deps.emit({ v, id: deps.newId(), kind: "event", type: "job.cancelled", payload: end.detail === undefined ? ref : { ...ref, detail: end.detail } });
     } catch (error) {
       deps.log(`[clip] the end of job ${job.jobId} could not be announced (${error instanceof Error ? error.name : typeof error})`);
     }
   }
 
-  #endOf(outcome: ClipJobOutcome, key: string): ClipJobEnd {
+  #endOf(outcome: ClipJobOutcome, key: string, member = false): ClipJobEnd {
     switch (outcome.kind) {
       case "recorded":
         if (outcome.record.outcome.status === "failed" && outcome.record.outcome.reason === "key-invalid") this.#deps.markKeyRejected(key);
@@ -798,6 +1154,8 @@ export class ClipService {
       case "refused":
         return { status: "failed", error: outcome.error };
       case "cancelled":
+        // A batch member the owner cancelled before its POST says so; a stop of the engine (`interrupted`) is no one's cancel.
+        return member ? { status: "cancelled", detail: "cancelled" } : { status: "cancelled" };
       case "interrupted":
         return { status: "cancelled" };
     }

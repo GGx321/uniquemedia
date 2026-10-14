@@ -142,9 +142,12 @@ export function photoJpeg(width = 720, height = 1280): Promise<Uint8Array> {
 
 export interface ClipNetworkOptions {
   /** The video listing: a body, "offline" (the fetch fails: the dated table stands in), or "held" (answers when `releasePrices()` is called). */
-  listing?: object | "offline" | "held";
+  listing?: object | "offline" | "held" | (() => object);
   kling?: VideoScript;
   grok?: VideoScript;
+  /** 5b.2 (S5.WB2): the script of the nth POST of a model (1-based), when one differs from `kling` / `grok`: a batch whose second clip is refused, or whose third is held. */
+  klingBy?: (n: number) => VideoScript | undefined;
+  grokBy?: (n: number) => VideoScript | undefined;
   /** `/credits` total_usage in dollars; default constant. */
   usage?: () => number;
 }
@@ -160,6 +163,12 @@ export function clipNetwork(options: ClipNetworkOptions = {}) {
   const priceGate = gate(options.listing !== "held");
   let posts = 0;
   const modelOfJob = new Map<string, "kling" | "grok">();
+  // 5b.2: a POST may have a script and a poll gate of its own (the nth of its model); the rest read the model's.
+  const perModel = { kling: 0, grok: 0 };
+  const jobScripts = new Map<string, VideoScript>();
+  const jobGates = new Map<string, Gate>();
+  const jobByPost = new Map<string, string>();
+  const scriptOf = (id: string): VideoScript => jobScripts.get(id) ?? scripts[modelOfJob.get(id) ?? "kling"];
 
   const fetch: OpenRouterFetch = async (url: string, init: OpenRouterRequestInit) => {
     calls.push({ method: init.method, url, body: init.body });
@@ -167,6 +176,7 @@ export function clipNetwork(options: ClipNetworkOptions = {}) {
     if (path === "/videos/models") {
       await whenOpen(priceGate, init.signal);
       if (options.listing === "offline") throw new TypeError("fetch failed");
+      if (typeof options.listing === "function") return response(200, options.listing());
       return response(200, options.listing === undefined || options.listing === "held" ? listing() : options.listing);
     }
     if (path === "/models" || path.endsWith("/endpoints")) throw new TypeError("fetch failed");
@@ -174,18 +184,25 @@ export function clipNetwork(options: ClipNetworkOptions = {}) {
     if (path === "/videos" && init.method === "POST") {
       const body = JSON.parse(init.body ?? "{}") as { model?: string };
       const model = body.model === GROK ? "grok" : "kling";
-      const script = scripts[model];
+      const nth = ++perModel[model];
+      const own = (model === "kling" ? options.klingBy : options.grokBy)?.(nth);
+      const script = own ?? scripts[model];
       if (script.submit === "network") throw new TypeError("fetch failed");
       if (typeof script.submit === "object") return response(script.submit.status, script.submit.body ?? { error: { message: "refused" } });
       const id = `job-${model}-${++posts}`;
       modelOfJob.set(id, model);
+      jobByPost.set(`${model}#${nth}`, id);
+      if (own !== undefined) {
+        jobScripts.set(id, own);
+        if (own.held === true) jobGates.set(id, gate(false));
+      }
       return response(202, { id, polling_url: `https://openrouter.ai/api/v1/videos/${id}`, status: "pending" });
     }
     const content = /^\/videos\/([^/]+)\/content$/.exec(path);
     if (content !== null) {
       const model = modelOfJob.get(decodeURIComponent(content[1] ?? "")) ?? "kling";
       await whenOpen(contentGates[model], init.signal);
-      if (scripts[model].content === "gone") return response(410, { error: { code: 410, message: "gone" } });
+      if (scriptOf(decodeURIComponent(content[1] ?? "")).content === "gone") return response(410, { error: { code: 410, message: "gone" } });
       const bytes = await clipMp4();
       return response(200, bytes, { "content-length": String(bytes.length) });
     }
@@ -193,8 +210,8 @@ export function clipNetwork(options: ClipNetworkOptions = {}) {
     if (poll !== null) {
       const id = decodeURIComponent(poll[1] ?? "");
       const model = modelOfJob.get(id) ?? "kling";
-      if (!pollGates[model].open) return response(200, { id, generation_id: id, status: "in_progress" });
-      const terminal = scripts[model].terminal ?? { status: "completed", cost: 0.42 };
+      if (!(jobGates.get(id) ?? pollGates[model]).open) return response(200, { id, generation_id: id, status: "in_progress" });
+      const terminal = scriptOf(id).terminal ?? { status: "completed", cost: 0.42 };
       if (terminal.status === "completed") {
         const cost = terminal.cost === undefined ? 0.42 : terminal.cost;
         return response(200, { id, generation_id: id, status: "completed", ...(cost === null ? {} : { usage: { cost, is_byok: false } }) });
@@ -203,7 +220,7 @@ export function clipNetwork(options: ClipNetworkOptions = {}) {
     }
     if (path === "/generation") {
       const id = new URL(url).searchParams.get("id") ?? "";
-      const generation = scripts[modelOfJob.get(id) ?? "kling"].generation ?? "404";
+      const generation = scriptOf(id).generation ?? "404";
       if (generation === "404") return response(404, { error: { code: 404, message: `Generation ${id} not found` } });
       return response(200, { data: { id, total_cost: generation.cost, finish_reason: "stop" } });
     }
@@ -215,6 +232,13 @@ export function clipNetwork(options: ClipNetworkOptions = {}) {
     calls,
     posts: (model?: "kling" | "grok") => calls.filter((c) => c.method === "POST" && c.url.endsWith("/videos") && (model === undefined || (JSON.parse(c.body ?? "{}").model === GROK) === (model === "grok"))),
     release: (model: "kling" | "grok") => release(pollGates[model]),
+    /** 5b.2: lets the nth POST of a model (1-based) turn terminal; a script with `held` waits for this. */
+    releaseNth: (model: "kling" | "grok", n: number) => {
+      const id = jobByPost.get(`${model}#${n}`);
+      const own = id === undefined ? undefined : jobGates.get(id);
+      if (own === undefined) throw new Error(`no held ${model} POST number ${n}`);
+      release(own);
+    },
     releaseContent: (model: "kling" | "grok") => release(contentGates[model]),
     releasePrices: () => release(priceGate),
   };

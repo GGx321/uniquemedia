@@ -1180,6 +1180,7 @@ export class Engine {
       checkAccepted: (worstMicros, acceptedWorstMicros) => Engine.#checkAccepted(worstMicros, acceptedWorstMicros),
       checkMonthlyRoom: (budget, worstMicros) => Engine.#checkMonthlyRoom(budget, worstMicros),
       monthFits: (budget, worstMicros) => Engine.#monthFits(budget, worstMicros),
+      monthRoomMicros: (budget) => Engine.#monthRoomMicros(budget),
       paidStart: () => {
         this.#paidCommands++;
       },
@@ -2859,6 +2860,13 @@ export class Engine {
       // S5.V4c: «Сохранить в папку» starts the clip's export job (free; its refusals come before any byte).
       case "clips.export":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.export(command.payload) };
+      // 5b.2 (S5.WB2): the batch «Оживить выбранные». `createBatch` takes the clip money unit and the paid count synchronously, before its first await, like `clips.create`.
+      case "clips.batchOptions":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.batchOptions(command.payload) };
+      case "clips.createBatch":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.createBatch(command.payload) };
+      case "clips.cancelBatch":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: this.#clips.cancelBatch(command.payload) };
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }
@@ -5634,6 +5642,15 @@ export class Engine {
     const month = budget.status();
     const committed = month.spentThisMonthMicros + month.openReserveMicros + month.heldMicros;
     return committed + worstMicros <= month.monthlyBudgetMicros;
+  }
+
+  /**
+   * The same month figure as a room (5b.2): `max(0, monthlyBudget - (spent + open + held))`, the model `#monthFits` and the budget's `tryHold` refuse by (NOT `monthRoom()`, which also subtracts the
+   * autopilot's live caps). `clips.batchOptions` reads it once and derives every `monthFits` from it.
+   */
+  static #monthRoomMicros(budget: Budget): number {
+    const month = budget.status();
+    return Math.max(0, month.monthlyBudgetMicros - (month.spentThisMonthMicros + month.openReserveMicros + month.heldMicros));
   }
 
   /** The key for a paid or keyed call: stored, and not rejected by OpenRouter. */

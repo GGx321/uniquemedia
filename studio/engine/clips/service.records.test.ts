@@ -76,6 +76,7 @@ async function world(options: { download?: () => Promise<void>; mode?: "auto" | 
     checkAccepted: () => undefined,
     checkMonthlyRoom: () => undefined,
     monthFits: () => true,
+    monthRoomMicros: () => 0,
     paidStart: () => undefined,
     paidEnd: () => undefined,
     setCap: () => undefined,
