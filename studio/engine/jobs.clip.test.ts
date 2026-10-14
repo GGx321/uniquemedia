@@ -244,3 +244,36 @@ describe("JobRegistry: the facts of a clip create job", () => {
     }
   });
 });
+
+describe("JobRegistry: the open reserve of a clip job", () => {
+  test("a phase update that says it announces it with the phase, and the state keeps it", () => {
+    const jobs = new JobRegistry();
+    jobs.startClip(JOB, { avatarId: AVATAR, clipId: CLIP });
+
+    const progress = jobs.clipPhase(JOB, { phase: "rendering", model: "kling", submittedAt: AT, openReserveMicros: 504_000 });
+
+    expect(progress).toMatchObject({ phase: "rendering", openReserveMicros: 504_000 });
+    expect(JobProgress.safeParse(progress).success).toBe(true);
+    expect(jobs.stateOf(JOB)).toMatchObject({ openReserveMicros: 504_000 });
+  });
+
+  test("a phase update that does not say it (the reserve was settled) carries none", () => {
+    const jobs = new JobRegistry();
+    jobs.startClip(JOB, { avatarId: AVATAR, clipId: CLIP });
+    jobs.clipPhase(JOB, { phase: "rendering", model: "kling", openReserveMicros: 504_000 });
+
+    const progress = jobs.clipPhase(JOB, { phase: "downloading", model: "kling" });
+
+    expect(progress).not.toHaveProperty("openReserveMicros");
+    expect(jobs.stateOf(JOB)).not.toHaveProperty("openReserveMicros");
+  });
+
+  test("the ended job still lists the last open reserve it told", () => {
+    const jobs = new JobRegistry();
+    jobs.startClip(JOB, { avatarId: AVATAR, clipId: CLIP });
+    jobs.clipPhase(JOB, { phase: "late", model: "kling", openReserveMicros: 504_000 });
+
+    expect(jobs.finishClip(JOB, { status: "cancelled" })).toMatchObject({ openReserveMicros: 504_000 });
+  });
+});
+

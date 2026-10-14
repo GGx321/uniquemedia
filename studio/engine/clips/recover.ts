@@ -17,6 +17,7 @@ import type { ClipFaceRole } from "./faceRole";
 import { makePoster } from "./frames";
 import { holdsAfterRestart, holdUntilForTerminal, type ClipHolds } from "./holds";
 import { clipAttemptId, parseClipAttemptId, summarizeJournal, type JournalAttempt, type JournalSummary } from "./journal";
+import { openClipReserveMicros, type ClipReserveLedger } from "./openReserve";
 import { clipFaceOf, drawPoster, readyOutcomeOf } from "./ready";
 import type { ClipJournalLine, ClipRecord } from "./schemas";
 import { clipFilePath, clipsDirOf, journalOf, readClipRecord, removeJournal, writeClipRecord } from "./store";
@@ -43,9 +44,9 @@ import { validateClipFile, type ClipColour } from "./validate";
 //   | a record already exists                                         | remove the stale journal                                  |                                     |
 
 /** The ledger as recovery sees it: read-only. There is no write on this type, so recovery cannot write a line (I5.49). */
-export interface RecoveryLedger {
+export interface RecoveryLedger extends ClipReserveLedger {
   openReserves(): readonly { attemptId: string; at: string }[];
-  reserveOf(attemptId: string): { attemptId: string; at: string } | undefined;
+  reserveOf(attemptId: string): { attemptId: string; at: string; worstMicros: number } | undefined;
 }
 
 /** The part of the library a recovery reads: the avatars and where their folders are. */
@@ -461,7 +462,8 @@ function startRecoveryJob(host: ClipRecoveryHost, avatarId: string, clipId: stri
     clipId,
     signal: eitherSignal(cancel, host.signal),
     phase: (update) => {
-      const progress = host.jobs.clipPhase(jobId, update);
+      // What the ledger holds open for the clip, as it stands at this moment: the earlier process's reserve, until the owner's reconcile closes it.
+      const progress = host.jobs.clipPhase(jobId, { ...update, openReserveMicros: openClipReserveMicros(host.ledger(), clipId) });
       if (progress !== null) host.emit({ v: PROTOCOL_VERSION, id: host.newId(), kind: "event", type: "job.progress", payload: progress });
     },
   };

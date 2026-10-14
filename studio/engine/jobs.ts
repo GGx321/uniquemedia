@@ -53,6 +53,8 @@ export interface ClipPhaseUpdate {
   readonly submittedAt?: string;
   /** Kept only with `proving`: the contract allows it nowhere else, and a state that breaks it would drop the paid job from the snapshot. */
   readonly proveUntil?: string;
+  /** (S5.V8b) What the ledger can still charge for the clip now (its open reserves); absent when none is open. Replaced by each update, like the model. */
+  readonly openReserveMicros?: number;
   /** The steps reached (video, download, check, save); never goes back, never past the total. */
   readonly done?: number;
 }
@@ -156,6 +158,7 @@ export class JobRegistry {
     const fields = {
       phase: update.phase,
       ...clipFactsOf(entry.state),
+      ...(update.openReserveMicros === undefined || update.openReserveMicros <= 0 ? {} : { openReserveMicros: Math.floor(update.openReserveMicros) }),
       ...(update.model === undefined ? {} : { model: update.model }),
       ...(update.submittedAt === undefined ? {} : { submittedAt: update.submittedAt }),
       ...(update.proveUntil === undefined || update.phase !== "proving" ? {} : { proveUntil: update.proveUntil }),
@@ -168,7 +171,7 @@ export class JobRegistry {
   finishClip(jobId: string, end: ClipJobEnd): JobState | null {
     const entry = this.#jobs.get(jobId);
     if (entry === undefined || entry.state.kind !== "clip" || entry.state.status !== "running") return null;
-    const { kind, avatarId, clipId, phase, model, submittedAt, proveUntil, done, total } = entry.state;
+    const { kind, avatarId, clipId, phase, model, submittedAt, proveUntil, openReserveMicros, done, total } = entry.state;
     const common = {
       kind,
       jobId,
@@ -176,6 +179,7 @@ export class JobRegistry {
       clipId,
       phase,
       ...clipFactsOf(entry.state),
+      ...(openReserveMicros === undefined ? {} : { openReserveMicros }),
       ...(model === undefined ? {} : { model }),
       ...(submittedAt === undefined ? {} : { submittedAt }),
       ...(proveUntil === undefined ? {} : { proveUntil }),
@@ -374,7 +378,7 @@ export class JobRegistry {
         return { kind: "scenes", jobId, sceneSetId: entry.state.sceneSetId, avatarId: entry.state.avatarId, done, total };
       case "clip": {
         // A clip's steps move with its phases (`clipPhase`); this branch only repeats the state as it is, the phase's fields included.
-        const { clipId, phase, model, submittedAt, proveUntil } = entry.state;
+        const { clipId, phase, model, submittedAt, proveUntil, openReserveMicros } = entry.state;
         return {
           kind: "clip",
           jobId,
@@ -384,6 +388,7 @@ export class JobRegistry {
           total,
           phase,
           ...clipFactsOf(entry.state),
+          ...(openReserveMicros === undefined ? {} : { openReserveMicros }),
           ...(model === undefined ? {} : { model }),
           ...(submittedAt === undefined ? {} : { submittedAt }),
           ...(proveUntil === undefined ? {} : { proveUntil }),

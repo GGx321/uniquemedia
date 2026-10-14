@@ -105,6 +105,27 @@ describe("a quit while a clip renders, then a new engine on the same folders", (
     }
   });
 
+  test("a recovered clip asked for with an automatic fallback tells the Kling reserve still open, not the cap it was asked at", async () => {
+    const { avatarId, clipId } = await quitMidClip();
+    const second = await startClipEngine(dir(), { timings: TIMINGS });
+    await clipJobDone(second);
+
+    const progress = second.events().flatMap((e) => (e.type === "job.progress" && e.payload.kind === "clip" ? [e.payload] : []));
+    expect(progress.length).toBeGreaterThan(0);
+    for (const event of progress) {
+      expect(event).toMatchObject({ clipId, avatarId, request: { fallback: "auto" }, acceptedWorstMicros: 850_000, openReserveMicros: 504_000 });
+    }
+  });
+
+  test("the snapshot lists a recovering job with the open reserve for a window that opens after the restart", async () => {
+    const { clipId } = await quitMidClip();
+    const second = await startClipEngine(dir(), { net: clipNetwork({ kling: { held: true } }), timings: TIMINGS });
+    await until(() => second.events().some((e) => e.type === "job.progress" && e.payload.kind === "clip" && e.payload.clipId === clipId), "the recovery job");
+    const snapshot = await second.engine.handle(command("engine.snapshot"));
+    if (!snapshot.ok || snapshot.type !== "engine.snapshot") throw new Error("no snapshot");
+    expect(snapshot.result.jobs).toEqual([expect.objectContaining({ clipId, phase: "recovering", openReserveMicros: 504_000 })]);
+  });
+
   test("the snapshot lists a recovering job with those facts for a window that opens after the restart", async () => {
     const { avatarId, photoId, clipId } = await quitMidClip();
     const second = await startClipEngine(dir(), { net: clipNetwork({ kling: { held: true } }), timings: TIMINGS });

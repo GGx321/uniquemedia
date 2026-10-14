@@ -139,7 +139,14 @@ function rig(options: Options = {}) {
     isCurrent: () => options.current !== false,
     isOwn: (attemptId) => options.own?.includes(attemptId) ?? false,
     signal: stop.signal,
-    ledger: () => ({ openReserves: () => options.reserves ?? [], reserveOf: (id) => (options.reserves ?? []).find((r) => r.attemptId === id) }),
+    ledger: () => ({
+      openReserves: () => options.reserves ?? [],
+      reserveOf: (id) => {
+        const found = (options.reserves ?? []).find((r) => r.attemptId === id);
+        return found === undefined ? undefined : { ...found, worstMicros: 504_000 };
+      },
+      closeOf: () => undefined,
+    }),
     jobs,
     emit: (event) => void events.push(event),
     work: {
