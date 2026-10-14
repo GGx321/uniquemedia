@@ -3,8 +3,8 @@ import type { BankCategory, BankPlace, Moment } from "../../../shared/scenes/ban
 import { captureOfShot, shotOf, type Capture } from "../../../shared/scenes/captures";
 import { plainSentence } from "../../../shared/scenes/plain";
 import { templateSentence } from "../../../shared/scenes/template";
-import { FEET_MOMENT_WORDS } from "../../../shared/scenes/words";
-import { isBoldCategory, isCustomCategory, type CategorySnapshot, type ScenePose } from "../../../shared/engine";
+import { isCustomCategory, type CategorySnapshot, type ScenePose } from "../../../shared/engine";
+import { wholeBodyOf } from "../../scenes/assembler";
 import { captureLineOf, slotKeyOf } from "../../scenes/phoneLook";
 import { customSnapshot } from "../../scenes/testing/customPool";
 import { PhotoSidecarSchema, type PhotoSidecar } from "../../library/schemas";
@@ -97,19 +97,14 @@ export function sceneRun(runId: string, slots: readonly (PlanSlot | { kind: "own
 
 let photoCounter = 0;
 
-/** The «Смелая» banks' moments a friend's photo shows whole, beyond the feet: engine/scenes/assembler.ts BOLD_WHOLE_BODY_WORDS (private there), copied for the kit. */
-const BOLD_WHOLE_BODY_WORDS = /\bcrouch\w*\b/i;
-
 /**
  * The capture line the real assembler opens the photo's prompt with (engine/scenes/assembler.ts `assembleSlot`): the slot's capture (an own scene's from its shot), keyed by
- * `${runId}:${attemptIdBase}`, with the whole-body framing of a moment about her feet (and a «Смелая» crouch). S5.WP1 (plan s5b2 I5.69, M2): a clip reads which capture
- * line its photo holds, so the kit's photo holds the one a run writes.
+ * `${runId}:${attemptIdBase}`, with the assembler's own whole-body framing (`wholeBodyOf`). S5.WP1 (plan s5b2 I5.69, M2): a clip reads which capture line its photo
+ * holds, so the kit's photo holds the one a run writes.
  */
 export function photoCaptureLineOf(runId: string, slot: PlanSlot | OwnPlanSlot): string {
-  const key = slotKeyOf(runId, slot.attemptIdBase);
-  if (slot.category === "own") return captureLineOf(captureOfShot(slot.shot), key);
-  const wholeBody = FEET_MOMENT_WORDS.test(slot.activity) || (isBoldCategory(slot.category) && BOLD_WHOLE_BODY_WORDS.test(slot.activity));
-  return captureLineOf(slot.capture ?? captureOfShot(slot.shot), key, { wholeBody });
+  const capture = slot.category === "own" ? captureOfShot(slot.shot) : (slot.capture ?? captureOfShot(slot.shot));
+  return captureLineOf(capture, slotKeyOf(runId, slot.attemptIdBase), { wholeBody: wholeBodyOf(slot) });
 }
 
 /**
