@@ -396,7 +396,8 @@ export class ClipRecords {
    * The journal first (beside a live record it is stale by definition), a flush, then the record (the commit, I5.53), a flush, then the media. A journal with no record is recovered by the
    * restart as a running clip, so it must never outlive the record: if either removal fails the delete fails with the record still in place and nothing resurrected. Media that will not go is
    * logged and left to the recovery sweep (no record and no journal), since the clip is already gone. The mp4 of a failed record goes too (a `download-failed` record may have left one).
-   * An exported copy is not the clip's to remove.
+   * An exported copy is not the clip's to remove. The clip's MONTAGE copy (5b.2, an own video of the editor) is: it goes FIRST, under the lock, and a render that holds it refuses the whole delete
+   * (IN_FLIGHT `in-use`) with nothing removed.
    */
   async delete(payload: Payload<"clips.delete">): Promise<{ clipId: string }> {
     const { clipId } = payload;
