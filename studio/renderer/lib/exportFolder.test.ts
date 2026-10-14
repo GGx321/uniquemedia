@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ERROR_MESSAGES_RU, EXPORT_UNAVAILABLE_REASONS, EXPORT_UNAVAILABLE_REASONS_RU } from "../../shared/engine";
-import { EXPORT_UNAVAILABLE_TITLE, LIBRARY_RENDER_BUSY_TEXT, pickedNotice, refusedPickText, unavailableText } from "./exportFolder";
+import { CLIP_EXPORT_BUSY_DETAIL_PREFIX, EXPORT_UNAVAILABLE_TITLE, LIBRARY_RENDER_BUSY_TEXT, pickedNotice, refusedPickText, unavailableText } from "./exportFolder";
 import { NBSP } from "./format";
 
 // 3e.3: what the «Готовые видео» card tells the owner after a pick, and why a folder cannot be used. Pure text, from the engine's
@@ -93,6 +93,23 @@ describe("refusedPickText", () => {
 
   test("a pick refused while a render runs says to wait for it, or to cancel it", () => {
     expect(refusedPickText({ code: "IN_FLIGHT" })).toBe("Пока идут рендеры, папку менять нельзя: дождитесь их конца или отмените их.");
+    expect(refusedPickText({ code: "IN_FLIGHT", detail: "a video render is queued or running; change the export folder when it ends" })).toBe(
+      "Пока идут рендеры, папку менять нельзя: дождитесь их конца или отмените их.",
+    );
+  });
+
+  // S5.V8: a clip being saved to the folder holds it too (S5.V4c), and then there is no render to wait for or cancel: the engine's detail tells the two apart.
+  test("a pick refused while a clip is being saved to the folder says to wait for the save, not for renders", () => {
+    const text = refusedPickText({ code: "IN_FLIGHT", detail: `${CLIP_EXPORT_BUSY_DETAIL_PREFIX}; change the export folder when it ends` });
+    expect(text).toBe("Пока клип сохраняется в папку, папку менять нельзя: дождитесь конца сохранения.");
+    expect(text).not.toContain("рендер");
+  });
+
+  test("the engine and the mock word that refusal as the window reads it", async () => {
+    for (const file of ["../../engine/engine.ts", "../engine/mockEngine.ts"]) {
+      const source = await Bun.file(new URL(file, import.meta.url)).text();
+      expect(source).toContain(`detail: "${CLIP_EXPORT_BUSY_DETAIL_PREFIX};`);
+    }
   });
 
   test("any other error is the ordinary text for it", () => {

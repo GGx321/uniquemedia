@@ -60,8 +60,16 @@ export function launchHoldsLibrary(launch: LaunchView | null): boolean {
   return launch !== null && (launch.status === "running" || launch.status === "pausing" || launch.status === "stopping");
 }
 
+/**
+ * S5.V8: how the engine (and the mock) begins the IN_FLIGHT detail of a pick refused while a clip is being saved to the folder (S5.V4c, `#chooseExportFolder`). Diagnostics, never shown:
+ * it only tells this refusal from a render's, which the owner can cancel. exportFolder.test.ts holds both engines to it.
+ */
+export const CLIP_EXPORT_BUSY_DETAIL_PREFIX = "a clip is being saved to the export folder";
+
 /** Why a pick was refused, and that nothing changed: the old folder is still the export folder. */
 export function refusedPickText(error: EngineError): string {
+  // A clip's save holds the folder (I5.55): there is no render to wait for or to cancel, only the save to wait for.
+  if (error.code === "IN_FLIGHT" && error.detail?.startsWith(CLIP_EXPORT_BUSY_DETAIL_PREFIX) === true) return "Пока клип сохраняется в папку, папку менять нельзя: дождитесь конца сохранения.";
   if (error.code === "IN_FLIGHT") return "Пока идут рендеры, папку менять нельзя: дождитесь их конца или отмените их.";
   if (error.code === "EXPORT_UNAVAILABLE") {
     const why = error.exportReason === undefined ? "" : `${EXPORT_UNAVAILABLE_REASONS_RU[error.exportReason]} `;
