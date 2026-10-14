@@ -4,7 +4,7 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import studioViteConfig from "../../electron.studio.vite.config";
-import { productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems } from "../scripts/bundleChecks";
+import { productionBundleProblems, productionEngineBundleProblems, productionClipTimingProblems, productionMainProblems, productionMoneyTimingProblems } from "../scripts/bundleChecks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -69,6 +69,19 @@ describe("the E2E build's shortened money timings", () => {
     expect(chunks).toMatch(/^var RECONCILE_QUIET_MS = 5e3;$/m);
     expect(chunks).toMatch(/^var REQUEST_TIMEOUT_MS = 15e3;$/m);
     expect(productionMoneyTimingProblems(chunks)).toEqual(["RECONCILE_QUIET_MS is not the production 120 s (or was not found)", "REQUEST_TIMEOUT_MS is not the production 180 s (or was not found)"]);
+  });
+});
+
+// The packaged smoke's clip scenario runs the engine on the E2E clip timings (the real set divided by twenty); a production engine is handed none and falls back to the real ones.
+describe("the E2E build's shortened clip timings", () => {
+  test("a normal build hands the engine no clip timings and names no E2E set", async () => {
+    expect(productionClipTimingProblems(await engineOf(normalDir))).toEqual([]);
+  });
+
+  test("an E2E build hands the engine the E2E set, and the production check catches it (so the check can see it at all)", async () => {
+    const engine = await engineOf(e2eDir);
+    expect(engine).toMatch(/clipTimings: E2E_CLIP_TIMINGS/);
+    expect(productionClipTimingProblems(engine)).toEqual(["the engine entry passes clipTimings (a production engine runs the real clip timings)", "the engine entry uses E2E_CLIP_TIMINGS"]);
   });
 });
 

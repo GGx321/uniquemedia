@@ -230,6 +230,18 @@ export function productionMoneyTimingProblems(chunks: string): string[] {
 }
 
 /**
+ * Problems with out-studio/engine/main.js of a production build: the packaged smoke runs the clip money path on the E2E set (`E2E_CLIP_TIMINGS`, the real one divided by twenty), handed to the engine
+ * behind `STUDIO_E2E`; a production engine is handed no clip timings at all and falls back to the real ones. Neither the property nor the set's name may be left in the entry.
+ */
+export function productionClipTimingProblems(engine: string): string[] {
+  const problems: string[] = [];
+  if (/\bclipTimings:/.test(engine)) problems.push("the engine entry passes clipTimings (a production engine runs the real clip timings)");
+  // The bundler keeps the set's declaration (a frozen object is not dropped as unused), so one mention is the declaration itself; any more is a use.
+  if ((engine.match(/E2E_CLIP_TIMINGS/g) ?? []).length > 1) problems.push("the engine entry uses E2E_CLIP_TIMINGS");
+  return problems;
+}
+
+/**
  * Problems with out-studio/engine/main.js of a production build (invariant 13): neither the OpenRouter nor the flashapi
  * base URL may be overridable. Each must be the one call with the build flag folded to `false`; a bundle that lost the
  * call altogether is a problem too, since the rule then cannot be read from it.

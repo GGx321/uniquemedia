@@ -61,7 +61,25 @@ export const SHORT_CLIP_TIMINGS: ClipTimings = Object.freeze({
   exportProgressMs: REAL_CLIP_TIMINGS.exportProgressMs / 1_000,
 });
 
-/** The set the engine runs with (`EngineDeps.clipTimings` overrides it): real unless a test, a parity rig or the E2E smoke asks for the short one. */
+/**
+ * The packaged smoke's set: the real one divided by twenty (a poll every second, the proof's readings at 0.75 s and 6 s, a lifetime of a minute). Not the short set: a lifetime of 1.2 s would turn a clip
+ * the fake provider takes a moment over into `late` on a slow runner. Only an E2E build hands it to the engine (engine/main.ts, behind `STUDIO_E2E`); a production bundle is checked for its absence.
+ */
+export const E2E_CLIP_TIMINGS: ClipTimings = Object.freeze({
+  pollMs: REAL_CLIP_TIMINGS.pollMs / 20,
+  proofFirstReadMs: REAL_CLIP_TIMINGS.proofFirstReadMs / 20,
+  proofSecondReadMs: REAL_CLIP_TIMINGS.proofSecondReadMs / 20,
+  proofRetryMs: REAL_CLIP_TIMINGS.proofRetryMs / 20,
+  lifetimeMs: REAL_CLIP_TIMINGS.lifetimeMs / 20,
+  latePollMs: REAL_CLIP_TIMINGS.latePollMs / 20,
+  lateGiveUpMs: REAL_CLIP_TIMINGS.lateGiveUpMs / 20,
+  holdUncertainMs: REAL_CLIP_TIMINGS.holdUncertainMs / 20,
+  holdTerminalMs: REAL_CLIP_TIMINGS.holdTerminalMs / 20,
+  holdSubmittedMs: REAL_CLIP_TIMINGS.holdSubmittedMs / 20,
+  exportProgressMs: REAL_CLIP_TIMINGS.exportProgressMs / 20,
+});
+
+/** The set the engine runs with (`EngineDeps.clipTimings` overrides it): real unless a test, a parity rig or the E2E smoke asks for a shorter one. */
 export function clipTimings(set: "real" | "short" = "real"): ClipTimings {
   return set === "short" ? SHORT_CLIP_TIMINGS : REAL_CLIP_TIMINGS;
 }

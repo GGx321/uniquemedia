@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionEngineProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, productionRendererPageProblems, relativeImportsOf, stickerEncodeWorkerProblems, textWorkerProblems } from "./bundleChecks";
+import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionEngineProblems, productionClipTimingProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, productionRendererPageProblems, relativeImportsOf, stickerEncodeWorkerProblems, textWorkerProblems } from "./bundleChecks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -204,6 +204,24 @@ describe("productionMoneyTimingProblems: an E2E build's shortened money timings 
 
   test("two declarations of one constant are flagged, whichever is the real one", () => {
     expect(productionMoneyTimingProblems(`${PRODUCTION}\nvar RECONCILE_QUIET_MS = 5e3;`)).toEqual(["RECONCILE_QUIET_MS is declared 2 times in the shared chunks (exactly one expected)"]);
+  });
+});
+
+describe("productionClipTimingProblems: the E2E clip timings never reach a production engine", () => {
+  const PROBLEM = "the engine entry passes clipTimings (a production engine runs the real clip timings)";
+
+  test("passes an engine entry that hands the engine no clip timings", () => {
+    expect(productionClipTimingProblems("const ready = Engine.start(init.data, {\n  fetch,\n});")).toEqual([]);
+  });
+
+  test("flags an engine entry that passes a clipTimings set, whichever it is", () => {
+    expect(productionClipTimingProblems("var E2E_CLIP_TIMINGS = Object.freeze({});\nEngine.start(init.data, {\n  ...{ clipTimings: E2E_CLIP_TIMINGS },\n});")).toEqual([PROBLEM, "the engine entry uses E2E_CLIP_TIMINGS"]);
+    expect(productionClipTimingProblems('Engine.start(init.data, { clipTimings: clipTimings("short") });')).toEqual([PROBLEM]);
+  });
+
+  test("passes the E2E set's bare declaration, which the bundler keeps, and flags a use of it passed another way", () => {
+    expect(productionClipTimingProblems("var E2E_CLIP_TIMINGS = Object.freeze({});")).toEqual([]);
+    expect(productionClipTimingProblems("var E2E_CLIP_TIMINGS = Object.freeze({});\nconst t = E2E_CLIP_TIMINGS;")).toEqual(["the engine entry uses E2E_CLIP_TIMINGS"]);
   });
 });
 

@@ -36,6 +36,7 @@ import { createStickerImporter } from "./media/stickerImporter";
 import { createStickerEncodeGate, createStickerEncodeSpawner } from "./stickers/encodeGate";
 import { createVideoImporter } from "./media/videoImporter";
 import { createCommitHold } from "./videos/e2eCommitHold";
+import { E2E_CLIP_TIMINGS } from "./clips/timings";
 
 const parentPort = process.parentPort;
 if (!parentPort) throw new Error("the studio engine must run as an Electron utilityProcess");
@@ -268,6 +269,9 @@ parentPort.once("message", (event) => {
       // is not linked) to kill the engine there. `STUDIO_E2E` is a build-time constant: a production bundle has neither the
       // branch nor the module (bundleChecks.ts's `productionEngineProblems`).
       ...(STUDIO_E2E ? { videos: { renderOverrides: { hooks: { reached: createCommitHold({ dir: dirname(init.data.ledgerPath) }) } } } } : {}),
+      // 5b.1, S5.V7: only an E2E build runs the clip money path on the E2E set (the real timings divided by twenty), so the smoke's clip scenario takes seconds, not minutes. A production engine is handed
+      // none and runs the real ones (bundleChecks.ts's `productionClipTimingProblems`).
+      ...(STUDIO_E2E ? { clipTimings: E2E_CLIP_TIMINGS } : {}),
       // 3f.2: the own-photo importer. JPEG and PNG are decoded by the WASM codecs in their own worker thread (fix round 1: ended on a
       // cancel, a time limit and when idle, so the engine thread stays free and the memory goes back); a WebP is decoded by ffmpeg in a child
       // process; the stored file is a JPEG without metadata.

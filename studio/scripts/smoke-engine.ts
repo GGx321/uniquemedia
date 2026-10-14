@@ -4082,10 +4082,13 @@ async function runBoldRouteScenario(target: Target): Promise<void> {
 const CLIP_ROOT_ID = "smoke-clip-root-0001";
 
 /**
- * The longest a clip's job may take here. The packaged engine runs the REAL clip timings (a poll every 20 s; a refusal is proven free by readings of `/generation` 15 s and 2 min after it), so the
- * fallback leg alone waits about three minutes, and the export (motion-interpolated by default) about one more. These are the engine's own durations, not the harness's patience.
+ * The longest a clip's job may take here. The E2E engine runs the clip money path on the E2E set (the real timings divided by twenty: a poll every second, a refusal proven free by readings of
+ * `/generation` at 0.75 s and 6 s), so the fallback leg takes about ten seconds; a minute is room for a slow runner, and a hang fails inside the step with its diagnosis, not at the step's 15 minutes.
  */
-const CLIP_JOB_TIMEOUT_MS = 8 * 60_000;
+const CLIP_JOB_TIMEOUT_MS = 60_000;
+
+/** The export is an ffmpeg encode (motion-interpolated by default), not a wait on the provider: its own bound, still well inside the step. */
+const CLIP_EXPORT_TIMEOUT_MS = 120_000;
 
 /**
  * «Оживить» in the packaged app, end to end against the mock OpenRouter's video routes: its own app instance, userData, library, export folder and mock. One photo is drawn by an ordinary run (the
@@ -4179,7 +4182,7 @@ async function runClipScenario(target: Target): Promise<void> {
     const exportStarted = await req(cdp, "clips.export", { avatarId, clipId: secondJob });
     const exportJob = field(exportStarted, "result", "jobId");
     check("clips scenario: clips.export starts the export job", field(exportStarted, "ok") === true && typeof exportJob === "string", exportStarted);
-    const exportEnd = await waitFor("the export job to end", () => endEventOf(cdp, exportJob), CLIP_JOB_TIMEOUT_MS, 500);
+    const exportEnd = await waitFor("the export job to end", () => endEventOf(cdp, exportJob), CLIP_EXPORT_TIMEOUT_MS, 500);
     const relPath = field(exportEnd, "payload", "result", "exported", "relPath");
     check("clips scenario: the export ends as job.done", field(exportEnd, "type") === "job.done", exportEnd);
     const got = await req(cdp, "clips.get", { avatarId, clipId: secondJob });

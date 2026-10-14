@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { clipTimings, PROOF_READ_TRIES, REAL_CLIP_TIMINGS, SHORT_CLIP_TIMINGS, type ClipTimings } from "./timings";
+import { clipTimings, E2E_CLIP_TIMINGS, PROOF_READ_TRIES, REAL_CLIP_TIMINGS, SHORT_CLIP_TIMINGS, type ClipTimings } from "./timings";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -81,7 +81,32 @@ describe("the short set", () => {
   });
 });
 
+describe("the E2E set (the packaged smoke's)", () => {
+  test("is the real set divided by twenty", () => {
+    for (const key of KEYS) expect(E2E_CLIP_TIMINGS[key] * 20).toBe(REAL_CLIP_TIMINGS[key]);
+  });
+
+  test("keeps the order of every pair of durations the real set has", () => {
+    for (const a of KEYS) {
+      for (const b of KEYS) expect(Math.sign(E2E_CLIP_TIMINGS[a] - E2E_CLIP_TIMINGS[b])).toBe(Math.sign(REAL_CLIP_TIMINGS[a] - REAL_CLIP_TIMINGS[b]));
+    }
+  });
+
+  test("leaves a clip a lifetime wide enough that a slow CI runner does not turn it into `late`", () => {
+    expect(E2E_CLIP_TIMINGS.lifetimeMs).toBeGreaterThanOrEqual(60 * SECOND);
+  });
+
+  test("is whole milliseconds, never zero, and frozen", () => {
+    for (const key of KEYS) {
+      expect(Number.isInteger(E2E_CLIP_TIMINGS[key])).toBe(true);
+      expect(E2E_CLIP_TIMINGS[key]).toBeGreaterThan(0);
+    }
+    expect(Object.isFrozen(E2E_CLIP_TIMINGS)).toBe(true);
+  });
+});
+
 describe("clipTimings", () => {
+
   test("answers the real set by default", () => {
     expect(clipTimings()).toBe(REAL_CLIP_TIMINGS);
   });
