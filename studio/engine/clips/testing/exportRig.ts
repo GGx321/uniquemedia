@@ -91,6 +91,7 @@ export interface ExportRigOptions {
 export function useExportFixtures() {
   const clip = useClipFixtures();
   let prebuilt: Promise<string> | undefined;
+  let tagged: Promise<string> | undefined;
   const fixtures = {
     /** Kling std: 720 x 1280, 24 fps, 1 s, no sound. */
     kling: () => clip({ width: 720, height: 1280, seconds: 1 }),
@@ -109,6 +110,17 @@ export function useExportFixtures() {
         return output;
       })();
       return prebuilt;
+    },
+    /** The same export with one tag more (a title naming the provider): what I5.58 refuses, a whole file with a real sha256. */
+    taggedExport: (): Promise<string> => {
+      tagged ??= (async () => {
+        const source = await fixtures.kling();
+        const output = `${source}.tagged.mp4`;
+        const argv = clipExportArgv({ input: source, output, mode: "duplicate", colour: { matrix: 1, fullRange: false, dynamicRange: "sdr" }, exportedAt: new Date(NOW) });
+        await runFfmpegArgv({ argv: [...argv.slice(0, -3), "-metadata", "title=Kling clip", ...argv.slice(-3)], output, timeoutMs: 120_000 });
+        return output;
+      })();
+      return tagged;
     },
   };
   return fixtures;

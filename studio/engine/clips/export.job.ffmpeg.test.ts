@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { copyFile, readdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { copyFile, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { JobState } from "../../shared/engine";
 import { FfmpegError, FfmpegTimeoutError, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
@@ -241,9 +242,21 @@ describe("the failures (free; the library's file untouched; what the job made is
     await untouched(r, before);
   });
 
-  test("a file that fails its I5.58 check is INTERNAL, and no name is claimed", async () => {
-    const { r, state, before } = await failsWith(undefined, { verify: async () => ({ ok: false, reasons: [{ code: "TAG_PRESENT", message: "a tag" }], sha256: null, bytes: 1 }) });
+  test("a file the I5.58 check refuses is INTERNAL and no name is claimed, though the check read it whole (a real sha256 and size)", async () => {
+    // As the real verifier answers a refusal: the verdict is no, the hash and the size are the file's own (so only the verdict can stop the commit).
+    const refusing = async (path: string) => {
+      const bytes = await readFile(path);
+      return { ok: false, reasons: [{ code: "TAG_PRESENT" as const, message: "a tag" }], sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length };
+    };
+    const { r, state, before } = await failsWith(undefined, { verify: refusing });
     expect(errorOf(state)).toMatchObject({ code: "INTERNAL" });
+    await untouched(r, before);
+  });
+
+  test("the real verifier on an encode that carries a tag (a title naming the provider) stops the export: INTERNAL, nothing in the folder or the record", async () => {
+    const { r, state, before } = await failsWith(copyingEncode(fixtures.taggedExport));
+    expect(errorOf(state)).toMatchObject({ code: "INTERNAL" });
+    expect(r.logs.some((line) => line.includes("TAG_PRESENT"))).toBe(true);
     await untouched(r, before);
   });
 
