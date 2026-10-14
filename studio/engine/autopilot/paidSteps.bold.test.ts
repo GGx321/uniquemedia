@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { EngineFailure } from "../engineFailure";
 import type { DrawSliceResult } from "../sceneSets/launchDraw";
-import { ALL, cleanupRigs, composes, LAUNCH, PHOTO, RUN1, rig, SET1, until, type Rig } from "./testing/paidRig";
+import { ALL, cleanupRigs, composes, LAUNCH, PHOTO, RUN1, rig, SET1, type Rig } from "./testing/paidRig";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -17,6 +17,7 @@ function recordLooks(r: Rig): Look[] {
   const looks: Look[] = [];
   r.port.photoWorstMicros = async (look?: Look) => {
     if (look !== undefined) looks.push(look);
+    r.port.onActivity?.();
     return PHOTO;
   };
   return looks;
@@ -39,7 +40,7 @@ describe("a slice's sizing", () => {
     r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
     const looks = recordLooks(r);
     await r.start({ sceneReview: false, level: "bold", categories: ["home", "nightwear"] });
-    await until(() => looks.length > 0, "the sizing's price");
+    await r.when(() => looks.length > 0, "the sizing's price");
     expect(looks[0]).toEqual({ level: "bold", categories: ["home", "nightwear"] });
   });
 
@@ -49,7 +50,7 @@ describe("a slice's sizing", () => {
     r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
     const looks = recordLooks(r);
     await r.start({ sceneReview: false });
-    await until(() => looks.length > 0, "the sizing's price");
+    await r.when(() => looks.length > 0, "the sizing's price");
     expect(looks[0]).toEqual({ categories: ["home"] });
   });
 });
@@ -63,7 +64,7 @@ describe("the month's room for a new step", () => {
     };
     const looks = recordLooks(r);
     await r.start({ sceneReview: false, level: "bold", categories: ["nightwear"] });
-    await until(() => looks.some((look) => look.level === "bold"), "the hold's price");
+    await r.when(() => looks.some((look) => look.level === "bold"), "the hold's price");
     expect(looks.at(-1)).toEqual({ level: "bold", categories: ["nightwear"] });
   });
 });

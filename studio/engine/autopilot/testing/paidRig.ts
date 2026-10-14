@@ -69,13 +69,17 @@ export class FakeTimers implements StepTimers {
   readonly clock = (): number => this.now + this.#ticks++;
   readonly #due = new Map<number, { at: number; run: () => void }>();
   #next = 1;
+  /** Told after every `set`, `clear` and `advance`, so `Rig.when` can look again: `pending()` is something a test waits on and nothing else announces its changes. */
+  onChange: (() => void) | null = null;
   set(run: () => void, ms: number): number {
     const id = this.#next++;
     this.#due.set(id, { at: this.now + ms, run });
+    this.onChange?.();
     return id;
   }
   clear(handle: TimerHandle): void {
     if (typeof handle === "number") this.#due.delete(handle);
+    this.onChange?.();
   }
   /** How many timers are armed. */
   pending(): number {
@@ -92,6 +96,7 @@ export class FakeTimers implements StepTimers {
       next[1].run();
     }
     this.now = target;
+    this.onChange?.();
   }
   iso(offsetMs = 0): string {
     return new Date(this.now + offsetMs).toISOString();
@@ -313,7 +318,7 @@ export interface Rig {
   /**
    * Resolves once `condition()` holds. Event-driven: it looks now, then again every time the steps could have changed the answer (the orchestrator announced the launch, a pass ended), and
    * never on a clock. A wall-clock deadline here measures the runner, not the code: a pass that waits on an fsync still arrives, however long the disk takes. A pass that really hangs is cut by
-   * the test's own timeout (the suite runner gives every test 30 s), which is the hang detector.
+   * the test's own timeout, which is the hang detector: 30 s under `realWorkerTests.ts` (it passes `--timeout`), and `bun test` run by hand uses Bun's 5 s default.
    */
   when(condition: () => boolean, what: string): Promise<void>;
   start(draft?: Parameters<typeof startInput>[0]): Promise<LaunchView>;
@@ -350,10 +355,12 @@ export async function rig(options: RigOptions = {}): Promise<Rig> {
   };
   steps.onReadyChange(wake);
   // The double announces what it was asked. The planted behaviour runs right after the call is recorded, so the waiters look again a microtask later too, when what it set is in place.
-  port.onActivity = () => {
+  const wakeNow = (): void => {
     wake();
     queueMicrotask(wake);
   };
+  port.onActivity = wakeNow;
+  if (options.steps?.timers instanceof FakeTimers) options.steps.timers.onChange = wakeNow;
   let n = 0;
   const orchestrator = new Orchestrator({
     stores,
