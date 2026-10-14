@@ -5,6 +5,7 @@ import {
   type AvatarSummary,
   type ClipAttemptModel,
   type ClipPhase,
+  type ClipRequest,
   type Draft,
   type EngineError,
   type EngineNotice,
@@ -88,10 +89,26 @@ export interface ClipJobInfo {
   readonly submittedAt: string | null;
   /** The end of the proof window, in `proving` only. */
   readonly proveUntil: string | null;
+  /** (S5.V8b) What the tile shows of a create job, told by the engine itself; absent for an export, a retried download or an older engine's job. Kept once seen. */
+  readonly facts?: ClipJobFacts;
   /** A restart's recovery job (seen in `recovering`). */
   readonly recovery: boolean;
   /** An export job («Сохранить в папку», phase `exporting`). */
   readonly export: boolean;
+}
+
+/** The engine's facts of a clip create job (S5.V8b): the photo, the request, the motion's source and label, and the worst case the owner accepted. */
+export interface ClipJobFacts {
+  readonly photoId: string;
+  readonly request: ClipRequest;
+  readonly motion: { readonly source: "scene" | "code"; readonly label: string };
+  readonly acceptedWorstMicros: number;
+}
+
+/** The facts a job snapshot or event carries, all four or none. */
+function factsOf(job: { photoId?: string; request?: ClipRequest; motion?: { source: "scene" | "code"; label: string }; acceptedWorstMicros?: number }): ClipJobFacts | undefined {
+  const { photoId, request, motion, acceptedWorstMicros } = job;
+  return photoId === undefined || request === undefined || motion === undefined || acceptedWorstMicros === undefined ? undefined : { photoId, request, motion, acceptedWorstMicros };
 }
 
 /** How a clip job this window starts begins: a create in `preparing`, an export in `exporting`, a `retryDownload` in `downloading` (§5.1). */
@@ -99,13 +116,14 @@ export type ClipJobStart = "create" | "export" | "retry";
 
 const CLIP_START_PHASE: Record<ClipJobStart, ClipPhase> = { create: "preparing", export: "exporting", retry: "downloading" };
 
-function clipInfo(clipId: string, phase: ClipPhase | null, more: { model?: ClipAttemptModel; submittedAt?: string; proveUntil?: string } = {}, before?: ClipJobInfo): ClipJobInfo {
+function clipInfo(clipId: string, phase: ClipPhase | null, more: { model?: ClipAttemptModel; submittedAt?: string; proveUntil?: string; facts?: ClipJobFacts } = {}, before?: ClipJobInfo): ClipJobInfo {
   return {
     clipId,
     phase: phase ?? before?.phase ?? null,
     model: more.model ?? null,
     submittedAt: more.submittedAt ?? null,
     proveUntil: more.proveUntil ?? null,
+    ...((more.facts ?? before?.facts) === undefined ? {} : { facts: more.facts ?? before?.facts }),
     recovery: (before?.recovery ?? false) || phase === "recovering",
     export: (before?.export ?? false) || phase === "exporting",
   };
@@ -249,7 +267,7 @@ export function jobFromState(j: Exclude<JobState, { kind: "import" }>): JobView 
     ...(j.kind === "clip"
       ? {
           clip: {
-            ...clipInfo(j.clipId, j.phase, { model: j.model, submittedAt: j.submittedAt, proveUntil: j.proveUntil }),
+            ...clipInfo(j.clipId, j.phase, { model: j.model, submittedAt: j.submittedAt, proveUntil: j.proveUntil, facts: factsOf(j) }),
             export: j.phase === "exporting" || j.result?.exported !== undefined,
           },
         }
@@ -1095,7 +1113,7 @@ export class EngineStore {
         // S5.V8: a clip's event says where it stands (its phase, and the model and submit time of the attempt on its way).
         const progress = event.payload;
         const clip = (job: JobView): ClipJobInfo | undefined =>
-          progress.kind === "clip" ? clipInfo(progress.clipId, progress.phase, { model: progress.model, submittedAt: progress.submittedAt, proveUntil: progress.proveUntil }, job.clip) : job.clip;
+          progress.kind === "clip" ? clipInfo(progress.clipId, progress.phase, { model: progress.model, submittedAt: progress.submittedAt, proveUntil: progress.proveUntil, facts: factsOf(progress) }, job.clip) : job.clip;
         this.patchJob(
           event.payload,
           (job) =>

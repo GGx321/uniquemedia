@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { StrictMode } from "react";
 import { MAX_LISTED_PHOTOS, CLIP_EXPORT_FAILED_RU, CLIP_FILE_DAMAGED_RU, CLIP_REASONS_RU, ERROR_MESSAGES_RU, PRICE_SCOPES_RU, type AvatarSummary, type PhotoSummary } from "../../shared/engine";
 import { CLIP_RESTART_BANNER } from "../../shared/engine/clipRestartTexts";
+import { placeholderGradient } from "../lib/media";
 import { App } from "../App";
 import { MockEngine, mockEngineClient, type MockEngineOptions } from "../engine/mockEngine";
 import { MIA, scenePhoto } from "../engine/mockEngine.testkit";
@@ -924,5 +925,62 @@ describe("46: after a restart", () => {
     } finally {
       setSystemTime();
     }
+  });
+});
+
+// S5.V8b: the clip job carries the facts its tile shows, so a window that never saw the click (a new window after a restart, a reload) draws the tile whole. Each test below makes the clip
+// straight on the engine, closes the window and opens another on the same engine: that window has no memory of the sheet.
+describe("46: a tile in a window that never saw the click", () => {
+  const MADE = { avatarId: NINI.avatarId, photoId: PLAIN.photoId, motionId: "g-blink", model: "kling", quality: "std", seconds: 5, fallback: "none", acceptedWorstMicros: 504_000 } as const;
+
+  async function makeThenReopen(h: Awaited<ReturnType<typeof openNini>>, ticks: number, restart: boolean): Promise<void> {
+    const made = await h.client.request("clips.create", MADE);
+    expect(made.ok).toBe(true);
+    tick(h.scheduler, ticks);
+    await flush();
+    if (restart) act(() => h.engine.restart());
+    h.unmount();
+    render(<App client={h.client} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Nini" }));
+    await screen.findByRole("heading", { level: 1, name: "Nini" });
+    await flush();
+    await showClips();
+    await flush();
+  }
+
+  test("after a restart: the recovery tile has the photo's frame, the motion, the length and the money line", async () => {
+    const h = await openNini();
+    setSystemTime(new Date(h.engine.peekClips().nowMs));
+    try {
+      await makeThenReopen(h, 2, true);
+
+      const recovering = screen.getByRole("article", { name: "Клип в работе: Моргает и улыбается" });
+      expect(within(recovering).getByRole("status").textContent).toBe("Восстанавливаем после перезапуска");
+      expect(within(recovering).getByText("0:05")).toBeDefined();
+      expect(within(recovering).getByText("до $0.51 — спишется при сверке")).toBeDefined();
+      const frame = within(recovering).getByRole("img", { name: "Кадр клипа «Моргает и улыбается»" });
+      expect(frame.getAttribute("style")).toContain(placeholderGradient(PLAIN.photoId));
+      expect(screen.queryByRole("article", { name: "Клип в работе: Клип" }) === null).toBe(true);
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test("a reload while the clip renders: the tile has the motion, the length and the ceiling the owner accepted", async () => {
+    const h = await openNini();
+    await makeThenReopen(h, 2, false);
+
+    const working = screen.getByRole("article", { name: "Клип в работе: Моргает и улыбается" });
+    expect(within(working).getByRole("status").textContent).toMatch(/^Снимается · \d+:\d\d$/);
+    expect(within(working).getByText("0:05")).toBeDefined();
+    expect(within(working).getByText("до $0.51")).toBeDefined();
+    expect(within(working).getByRole("img", { name: "Кадр клипа «Моргает и улыбается»" }).getAttribute("style")).toContain(placeholderGradient(PLAIN.photoId));
+  });
+
+  test("the queue row still names the clip by its avatar, and the tile's facts do not change it", async () => {
+    const h = await openNini();
+    await makeThenReopen(h, 3, false);
+
+    expect(within(sidebarQueue()).getByText("Клип · Nini")).toBeDefined();
   });
 });
