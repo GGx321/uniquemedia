@@ -234,6 +234,14 @@ interface Line {
   inFlight: boolean;
 }
 
+/** What a create job's tile shows (S5.V8b): from the request for a fresh job, from the journal's `requested` line for a recovered one. The same four fields the engine's job carries. */
+interface JobFacts {
+  photoId: string;
+  request: ClipRequest;
+  motion: { source: "scene" | "code"; label: string };
+  acceptedWorstMicros: number;
+}
+
 interface Job {
   jobId: string;
   avatarId: string;
@@ -244,6 +252,8 @@ interface Job {
   model?: AttemptModel;
   submittedAt?: string;
   proveUntil?: string;
+  /** A create or recovery job of a clip that is still being made; an export or a retried download has none. */
+  facts?: JobFacts;
   done: number;
   total: number;
   result?: { kind: "clip"; avatarId: string; clipId: string; exported?: { relPath: string } };
@@ -255,6 +265,11 @@ interface Job {
   queued: boolean;
   /** An export past the point of no return: the name it claimed. A cancel from then on changes nothing (engine/clips/export.ts, «done wins»). */
   claimed: string | null;
+}
+
+/** The facts a job's events and state carry, or nothing: the fields are all there or none is. */
+function jobFactsOf(job: Job): Partial<JobFacts> {
+  return job.facts === undefined ? {} : { photoId: job.facts.photoId, request: job.facts.request, motion: job.facts.motion, acceptedWorstMicros: job.facts.acceptedWorstMicros };
 }
 
 type Out<T> = { ok: true; result: T } | { ok: false; error: EngineError };
@@ -855,6 +870,7 @@ export class MockClips {
     const script = this.#script ?? { first: "ok" as const, then: "ok" as const, face: undefined };
     this.#script = null;
     const job = this.#newJob(payload.avatarId, "create");
+    job.facts = { photoId: payload.photoId, request, motion: { source: "code", label: motion.label }, acceptedWorstMicros: payload.acceptedWorstMicros };
     this.#slot = job;
     this.#fates.set(job.clipId, script);
     this.#clipAvatars.set(job.clipId, payload.avatarId);
@@ -901,6 +917,7 @@ export class MockClips {
       done: job.done,
       total: job.total,
       phase: job.phase,
+      ...jobFactsOf(job),
       ...(job.model === undefined ? {} : { model: job.model }),
       ...(job.submittedAt === undefined ? {} : { submittedAt: job.submittedAt }),
       ...(job.proveUntil === undefined ? {} : { proveUntil: job.proveUntil }),
@@ -1529,6 +1546,7 @@ export class MockClips {
         done: job.status === "done" ? job.total : job.done,
         total: job.total,
         phase: job.phase,
+        ...jobFactsOf(job),
         ...(job.model === undefined ? {} : { model: job.model }),
         ...(job.submittedAt === undefined ? {} : { submittedAt: job.submittedAt }),
         ...(job.proveUntil === undefined ? {} : { proveUntil: job.proveUntil }),
@@ -1604,9 +1622,11 @@ export class MockClips {
     const t = this.#t;
     const step = host.stepMs;
     const job = this.#newJob(avatarId, "recovery", "recovering", CLIP_JOB_STEPS, clipId);
-    this.#progress(job, { phase: "recovering" });
     const summary = summarize(lines);
     const requested = summary.requested;
+    // As the engine's recovery job: the facts come from the journal's `requested` line, and a journal without one has none.
+    if (requested !== null) job.facts = { photoId: requested.photoId, request: requested.request, motion: { source: requested.motion.source, label: requested.motion.label }, acceptedWorstMicros: requested.acceptedWorstMicros };
+    this.#progress(job, { phase: "recovering" });
     if (requested === null || plan.kind === "stale-journal") {
       this.#finish(job, { status: "done" });
       return;
