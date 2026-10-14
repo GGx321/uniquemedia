@@ -41,9 +41,11 @@
  * threshold.
  */
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { VIDEO_TIERS } from "../engine/money/prices";
 import { FALLBACK_IMAGE_MODEL } from "../engine/runs/plan";
 import { WRITER_JSON_SCHEMA } from "../engine/scenes";
 import { ideaNamesMirror } from "../shared/engine";
@@ -461,6 +463,29 @@ export interface MockOpenRouterOptions {
    * mandelbrot/pattern stays cheaper to render.
    */
   faceFixture?: boolean;
+  /**
+   * Stage 5 (5b.1, S5.V7): serves the video routes a clip uses (`GET /videos/models`, `POST /videos`, `GET /videos/<id>`, `GET /videos/<id>/content`, `GET /generation`), by the way the provider answered
+   * the probes: one job per POST; a job completes on its first poll after `completeAfterMs` (default 0) and books its bill once, then; a job armed to be refused (`armVideoRefusal`) fails with
+   * Kling's risk-control text, books nothing and never gets a `/generation` record (the API's exact 404, probe P0); a completed job's record appears `generationAfterMs` after it completed (default
+   * 15 s, probe P-V). The poll carries `usage.cost` unless `usageOnPoll` is false, which makes the engine read `/generation` for the bill. The file is one real 720 x 1280 H.264 clip of 5 s made once
+   * by the bundled ffmpeg, whatever length was asked: the smoke asks for 5 s. Without this option every video route is an unexpected request.
+   */
+  clips?: boolean | { completeAfterMs?: number; generationAfterMs?: number; usageOnPoll?: boolean };
+}
+
+/** A `POST /videos` the mock answered: the job it made and what the request asked for. */
+export interface MockVideoRequest {
+  id: string;
+  model: string | null;
+  seconds: number | null;
+  resolution: string | null;
+}
+
+/** Every call of the video routes, in order: which route, which job (null for the listing), and the status the mock answered. */
+export interface MockVideoCall {
+  kind: "listing" | "submit" | "poll" | "content" | "generation";
+  jobId: string | null;
+  status: number;
 }
 
 export interface ImageHold {
@@ -472,6 +497,59 @@ export interface ImageHold {
 
 /** How many different pictures the distinct pool holds before the first one is served again. */
 const DEFAULT_POOL_SIZE = 48;
+
+// ---------- video clips (5b.1, S5.V7) ----------
+
+/** How long after a video completes its `/generation` record appears (probe P-V: about 15 s; a 404 sooner is a billed job whose record is not there yet). */
+const CLIP_RECORD_DELAY_MS = 15_000;
+
+/** Kling's own wording for a refusal at the poll (probe P0). */
+const KLING_RISK_CONTROL = "task failed with status: FAIL, message: Failure to pass the risk control system";
+
+/** One job the mock made for a `POST /videos`. */
+interface MockVideoJob {
+  id: string;
+  model: string | null;
+  seconds: number;
+  createdAt: number;
+  /** Armed to be refused by the provider's risk control when polled. */
+  refused: boolean;
+  /** When the first poll reported it completed; null until then. */
+  completedAt: number | null;
+}
+
+/** What a completed job bills, in USD: the listing's figures (Kling 0.084 and 0.112 $/s, Grok 0.14 $/s and 0.01 per input image). */
+function videoBillUsd(job: Pick<MockVideoJob, "model" | "seconds">): number {
+  const perSecond = job.model === VIDEO_TIERS.pro.model ? 0.112 : job.model === VIDEO_TIERS.grok.model ? 0.14 : 0.084;
+  const image = job.model === VIDEO_TIERS.grok.model ? 0.01 : 0;
+  // Whole micro-dollars, as the engine's prices are.
+  return Math.round((job.seconds * perSecond + image) * 1_000_000) / 1_000_000;
+}
+
+let clipMp4Cache: Uint8Array<ArrayBuffer> | null = null;
+
+/** One real clip, made once by the bundled ffmpeg: 720 x 1280 H.264, 5 s, the layout providers' files have. Never a committed binary. */
+function clipMp4(): Uint8Array<ArrayBuffer> {
+  if (clipMp4Cache !== null) return clipMp4Cache;
+  const folder = mkdtempSync(join(tmpdir(), "studio-mock-clip-"));
+  try {
+    const out = join(folder, "clip.mp4");
+    const r = spawnSync(
+      ffmpegPath(),
+      [
+        "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-f", "lavfi", "-i", "color=c=black:s=720x1280:r=24:d=5,drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='gte(t,0.25)'",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "35", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out,
+      ],
+      { timeout: 60_000 },
+    );
+    if (r.status !== 0) throw new Error(`the mock OpenRouter could not make a clip with ffmpeg: ${r.stderr.toString()}`);
+    clipMp4Cache = new Uint8Array(readFileSync(out));
+    return clipMp4Cache;
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+}
 
 export interface MockOpenRouter {
   /** Pass as --studio-openrouter-base-url. */
@@ -518,6 +596,15 @@ export interface MockOpenRouter {
    * (a faceless image on a face-hidden frame is only marked, never retried) once it has read the run's plan. The render is paid here, not inside a request.
    */
   armFaceMismatch(prompt: string): void;
+  /** 5b.1: the `POST /videos` requests the mock answered (a job each), in order. Needs the `clips` option. */
+  videoRequests(): MockVideoRequest[];
+  /** 5b.1: every call of the video routes, in order, with the status the mock answered. */
+  videoCalls(): MockVideoCall[];
+  /**
+   * 5b.1: the next `times` (default 1) jobs POSTed for `model` are refused by the provider's risk control when polled: `failed` with Kling's own text, nothing billed, no `/generation` record. A job
+   * for any other model completes as before.
+   */
+  armVideoRefusal(model: string, times?: number): void;
   stop(): Promise<void>;
 }
 
@@ -567,6 +654,16 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
   // S4.E2E: while a hold is set, an image request is recorded on arrival and answered only when the hold is released.
   let armedMismatch: { prompt: string; bytes: Uint8Array } | null = null;
   let imageHold: { promise: Promise<void>; release: () => void; arrived: number } | null = null;
+  // Stage 5 (5b.1, S5.V7): the video routes, when the scenario asks for them.
+  const clipOptions = opts.clips === undefined || opts.clips === false ? null : opts.clips === true ? {} : opts.clips;
+  const completeAfterMs = clipOptions?.completeAfterMs ?? 0;
+  const generationAfterMs = clipOptions?.generationAfterMs ?? CLIP_RECORD_DELAY_MS;
+  const usageOnPoll = clipOptions?.usageOnPoll ?? true;
+  const clipFile = clipOptions === null ? null : clipMp4();
+  const videoJobs = new Map<string, MockVideoJob>();
+  const videoRequests: MockVideoRequest[] = [];
+  const videoCalls: MockVideoCall[] = [];
+  const videoRefusals = new Map<string, number>();
 
   // Reused verbatim: the exact bodies studio/engine/money/prices.test.ts
   // already proved the real client parses, so the mock's prices are exactly
@@ -576,6 +673,8 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
   const modelsFixture = readFileSync(join(FIXTURES, "models-chat.json"), "utf8");
   // 5a.3 (S5.9f): the Seedream endpoint lists the 2K tier (`high_resolution`) and the reference image, which the «Смелая» route's price and acceptance read.
   const seedreamFixture = readFileSync(join(FIXTURES, "endpoints-seedream-5-0-pro.json"), "utf8");
+  // 5b.1 (S5.V7): the 2026-10-10 video listing, the very fixture the engine's price parser is tested on.
+  const videoListing = readFileSync(join(FIXTURES, "videos-models-2026-10-10.json"), "utf8");
   // 5a.3 (S5.9f): requests for a model that the scenario armed to refuse, or to answer with no image, and how many each still meets.
   const refusals = new Map<string, number>();
   const empties = new Map<string, number>();
@@ -733,9 +832,78 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
         const mediaType = opts.faceFixture ? "image/jpeg" : "image/png";
         return json({ created: 1_790_000_000, data: [{ b64_json: b64(bytes), media_type: mediaType }], usage: { cost } });
       }
+      if (clipOptions !== null && clipFile !== null) {
+        const answer = await videoRoute(req, path);
+        if (answer !== null) return answer;
+      }
       return loudly404(record(req, path, method === "POST" ? await bodyOf(req) : NO_BODY));
     },
   });
+
+  // ---------- the video routes (5b.1, S5.V7) ----------
+
+  /** The route's answer, or null when the request is not a video route. Every answer is logged. */
+  async function videoRoute(req: Request, path: string): Promise<Response | null> {
+    const { method } = req;
+    const answered = (kind: MockVideoCall["kind"], jobId: string | null, response: Response): Response => {
+      videoCalls.push({ kind, jobId, status: response.status });
+      return response;
+    };
+    if (method === "GET" && path === "/api/v1/videos/models") {
+      record(req, path, NO_BODY);
+      return answered("listing", null, new Response(videoListing, { status: 200, headers: { "content-type": "application/json" } }));
+    }
+    if (method === "POST" && path === "/api/v1/videos") {
+      const sent = await bodyOf(req);
+      const entry = record(req, path, sent);
+      const id = `smoke-vid-${videoRequests.length + 1}`;
+      const seconds = typeof sent.json === "object" && sent.json !== null && typeof Reflect.get(sent.json, "duration") === "number" ? Number(Reflect.get(sent.json, "duration")) : null;
+      videoRequests.push({ id, model: entry.model, seconds, resolution: entry.resolution });
+      const refused = takeArmed(videoRefusals, entry.model);
+      videoJobs.set(id, { id, model: entry.model, seconds: seconds ?? 5, createdAt: Date.now(), refused, completedAt: null });
+      return answered("submit", id, json({ id, polling_url: `${mockBase()}/videos/${id}`, status: "pending" }, 202));
+    }
+    const content = /^\/api\/v1\/videos\/([^/]+)\/content$/.exec(path);
+    if (method === "GET" && content !== null) {
+      record(req, path, NO_BODY);
+      const id = decodeURIComponent(content[1] ?? "");
+      const job = videoJobs.get(id);
+      if (job === undefined || job.completedAt === null || job.refused) return answered("content", id, json({ error: { code: 404, message: `Video ${id} not found` } }, 404));
+      if (clipFile === null) return null;
+      return answered("content", id, new Response(clipFile, { status: 200, headers: { "content-type": "video/mp4", "content-length": String(clipFile.length) } }));
+    }
+    const poll = /^\/api\/v1\/videos\/([^/]+)$/.exec(path);
+    if (method === "GET" && poll !== null) {
+      record(req, path, NO_BODY);
+      const id = decodeURIComponent(poll[1] ?? "");
+      const job = videoJobs.get(id);
+      if (job === undefined) return answered("poll", id, json({ error: { code: 404, message: `Video ${id} not found` } }, 404));
+      if (job.completedAt === null && Date.now() - job.createdAt < completeAfterMs) return answered("poll", id, json({ id, generation_id: id, status: "in_progress" }));
+      if (job.refused) return answered("poll", id, json({ id, generation_id: id, status: "failed", error: KLING_RISK_CONTROL }));
+      if (job.completedAt === null) {
+        // The bill is booked once, when the job completes (a refused job's charge was refunded within seconds in probe P0: net nothing).
+        job.completedAt = Date.now();
+        totalUsageUsd += videoBillUsd(job);
+      }
+      return answered("poll", id, json({ id, generation_id: id, status: "completed", ...(usageOnPoll ? { usage: { cost: videoBillUsd(job), is_byok: false } } : {}) }));
+    }
+    if (method === "GET" && path === "/api/v1/generation") {
+      record(req, path, NO_BODY);
+      const id = new URL(req.url).searchParams.get("id") ?? "";
+      const job = videoJobs.get(id);
+      if (job !== undefined && !job.refused && job.completedAt !== null && Date.now() - job.completedAt >= generationAfterMs) {
+        return answered("generation", id, json({ data: { id, total_cost: videoBillUsd(job), finish_reason: "stop" } }));
+      }
+      // The API's own 404, in its exact words (engine/openrouter/generation.ts): a refused job never got a record, and a completed one has none yet.
+      return answered("generation", id, json({ error: { code: 404, message: `Generation ${id} not found` } }, 404));
+    }
+    return null;
+  }
+
+  /** The mock's base URL, as the engine was given it. */
+  function mockBase(): string {
+    return `http://127.0.0.1:${server.port}/api/v1`;
+  }
 
   return {
     url: `http://127.0.0.1:${server.port}/api/v1`,
@@ -762,6 +930,11 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
       if (!opts.faceFixture || !opts.distinctImages) throw new Error("armFaceMismatch needs faceFixture and distinctImages");
       // One index past the pool: PDQ-distinct from every pooled image, and the pool's own order is left untouched.
       armedMismatch = { prompt, bytes: facePoolNoFacePng(poolSize, "jpeg") };
+    },
+    videoRequests: () => [...videoRequests],
+    videoCalls: () => [...videoCalls],
+    armVideoRefusal: (model, times = 1) => {
+      videoRefusals.set(model, (videoRefusals.get(model) ?? 0) + times);
     },
     holdImages: () => {
       imageHold?.release();
