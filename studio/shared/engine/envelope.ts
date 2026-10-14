@@ -141,6 +141,8 @@ import { z } from "zod";
 //  - `Estimate` moved to estimate.ts and is still exported from state.ts. Rollback: an older build cannot read a clip job in a snapshot (its `JobState` is strict), and never looks in a `clips` folder.
 //  - (S5.V8b, additive, optional) a clip create job also carries `photoId`, `request`, `motion` (`source` and `label` only) and `acceptedWorstMicros` in its job.progress and its `JobState`, taken from the journal's `requested` line, so a window that first sees
 //    the job (a new window after a restart, a reload mid-render) draws its tile whole. An export job and an older engine's job carry none. Rollback: an older build refuses a clip job that carries them (its `JobState` and `JobProgress` are strict); roll back only with no clip job running.
+//  - (S5.V8b follow-up, additive, optional) a clip job also carries `openReserveMicros`: what the ledger can still charge for the clip (the sum of its open reserves), told wherever one is open and absent where none is; the tile of
+//    `late` and `recovering` says it as «спишется при сверке», every other phase says `acceptedWorstMicros`. The four facts above are told together or not at all (a schema refine). Rollback as above.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 

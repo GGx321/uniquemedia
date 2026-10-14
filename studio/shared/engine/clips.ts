@@ -365,7 +365,19 @@ export const clipJobFields = {
   request: ClipRequest.optional(),
   motion: ClipJobMotion.optional(),
   acceptedWorstMicros: Micros.optional(),
+  /**
+   * What the ledger can still charge for this clip: the sum of its reserves that are open (unsettled), as the engine holds them. Told in every phase where one is open, and absent where none is.
+   * Independent of the four facts above. A tile in `late` or `recovering` says it as «спишется при сверке»; the cap the sheet promised is `acceptedWorstMicros`.
+   */
+  openReserveMicros: Micros.optional(),
 };
+
+/** The four create facts of a clip job are all told or none of them. */
+export function clipFactsTogether(job: { photoId?: unknown; request?: unknown; motion?: unknown; acceptedWorstMicros?: unknown }): boolean {
+  const told = [job.photoId, job.request, job.motion, job.acceptedWorstMicros].filter((fact) => fact !== undefined).length;
+  return told === 0 || told === 4;
+}
+export const CLIP_FACTS_TOGETHER = { message: "a clip job tells its photo, request, motion and accepted worst case together, or none of them" };
 
 /** A finished clip job. An export job's result also names where the copy went. The renderer takes the job's avatar from `avatarId`. */
 export const ClipJobResult = z.strictObject({
