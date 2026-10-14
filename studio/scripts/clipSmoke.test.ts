@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { clipPostProblems, exportedCopyProblems, refusedJobProblems, type VideoCall } from "./clipSmoke";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+
+useNativeGlobals();
 
 // Stage 5, 5b.1, S5.V7: what the packaged smoke checks of a clip, as functions with no Electron in them. The smoke only has to call them with what its mock OpenRouter and the app reported; the engine
 // itself is held against the same mock by clipSmoke.engine.test.ts.
