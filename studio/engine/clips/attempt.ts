@@ -12,6 +12,7 @@ import {
   type ClipRequest,
   type ClipSeconds,
 } from "../../shared/engine/clips";
+import { clipAlone } from "../../shared/engine/clipAlone";
 import type { Budget, ReserveHandle, ReserveRefusal } from "../money/budget";
 import { MoneyError } from "../money/errors";
 import { VIDEO_TIERS, type VideoResolution, type VideoTier } from "../money/prices";
@@ -592,16 +593,8 @@ class Attempt {
    */
   private moneyIsAlone(): boolean {
     const { deps, attemptId } = this;
-    const ledger = deps.budget.ledger;
-    if (ledger.openReserves().some((reserve) => reserve.attemptId !== attemptId)) return false;
-    const nowMs = deps.now();
-    for (const [heldId, untilMs] of deps.holds.entries()) {
-      if (heldId === attemptId || untilMs <= nowMs) continue;
-      const close = ledger.closeOf(heldId);
-      const exactAndCompleted = close?.type === "settle" && !close.estimated && deps.holds.isCompleted(heldId);
-      if (!exactAndCompleted) return false;
-    }
-    return true;
+    // 5b.2 (L6): the rule itself is the pure `clipAlone` (shared/engine/clipAlone.ts), which the batch scheduler's alone-wait reads too.
+    return clipAlone({ ledger: deps.budget.ledger, holds: deps.holds, attemptId, nowMs: deps.now() });
   }
 
   // ----- free reads -----
