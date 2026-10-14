@@ -68,6 +68,7 @@ export const INTENTIONAL_DIFFERENCES: readonly string[] = [
   "the body (Stage 5, S5.2a, `avatars.setBody`, `avatars.dismissBodyProposal`): played are the write and its replace-the-whole-body rule, the refusals the contract and the composite give (the closed `descriptorReason` `too-long-with-body`, from either side: a body on a long text and a long text on a body), an archived avatar, the stored proposal cleared by a body and by a dismiss, and a body set while an autopilot launch holds the avatar. The summary's `body` and `bodyProposal` are written only when set (`avatarLine`), so every older line is unchanged. Not played: the IN_FLIGHT a rewrite, a candidates batch, an archive or a delete gives, a draft, and a schema-version-1 record (the mock keeps no record version), the write race inside the library's lock, and the phrase in a run's prompt (the mock draws no prompt): engine.body, mockEngine.body and the prompt tests hold those. The VALIDATION detail is not compared, as for every VALIDATION",
   "the reference portrait (Stage 5, S5.3c, `avatars.estimatePortraits`, `avatars.generatePortraits`, `avatars.portraits`, `avatars.pickPortrait`, `avatars.discardPortraits`): the price is each engine's own (the mock's $0.06 a slot, the engine's bundled table at the rig's model), so the transcript writes that it is ordered, that it is a price, that it names its source and whether expected equals worst; the text of a PRICE_CHANGED is each engine's own (the engine names both sums): its code is compared. A batch RUNS in both rigs, one slot at a time, by the one outcome table the mock exports (three portraits at 0.76, 0.72 and 0.61, one not hers at 0.48, one the model refuses): the engine's face gate and fake OpenRouter are scripted by it, the mock plays it. The money a batch spends and the order of its money events are not written (`money.changed` is not covered); the engine's own tests hold them (engine.portraits.generate, mockEngine.portraits). The engine's job.progress counts a slot AFTER its portrait is stored; the portraits list is read straight after the batch, so a missing portrait would be seen. Not played: the refusals that need a key, a ledger or a library the rig always has, a descriptor the rules refuse, a face gate that is missing or broken, a source with no face, a model with no reference price, a month without room, and the claims of a descriptor check, an archive and a delete (the mock runs those to their end at once): engine.portraits, engine.portraits.generate and mockEngine.portraits hold them. The VALIDATION detail is not compared, as for every VALIDATION",
   "the descriptor check (Stage 5, S5.0c, `avatars.estimateCheckDescriptor`, `avatars.checkDescriptor`): the rig scripts no chat, so only the FREE commands and the free refusals of the paid one are played (an unknown avatar, a worst case below the price, a payload the contract refuses, the claim a running launch holds). The price is each engine's own (the mock's fixed figures, the engine's bundled table), so the transcript writes that it is ordered (expected within worst), that it is a price (above zero) and that it names its source; the two are held to the same figure by the engine's and the mock's own suites. The text of a check's PRICE_CHANGED is each engine's own (the engine's names both sums, the mock's none): its code is compared; every other refusal's text is compared. A check that RUNS (the verdict, the money flow, an import's `descriptorCheck`, that it never writes) is held by engine.checkDescriptor, engine.avatarsImport and mockEngine.checkDescriptor. No key (AUTH_INVALID) and no library (LIBRARY_UNAVAILABLE) cannot be played in the rig (it always has both) and are held by engine.checkDescriptor and mockEngine.checkDescriptor. A draft, an unreadable stored descriptor (DESCRIPTOR_INVALID) and the other jobs' claims (a rewrite, a candidates batch, an archive, a delete) are held by those suites too",
+  "clips (Stage 5, 5b.1, S5.V7, `clips.*`): the real rig plays the video provider by a fake (testing/clipProvider.ts) that answers each ATTEMPT of a clip by the outcome the story scripts, in the mock's own words (`MockClipAttempt`), on the short timing set (`clipTimings(\"short\")`: every duration the real one divided by a thousand, every ordering kept) and a clock that moves with the wall clock; the mock plays the same short set on its manual clock. A story waits on the end of a job, a phase or a hold (`untilJobEnds`, `untilPhase`, `untilMoney`), never on a count of settles or a sleep. Written are the commands, the answers, a clip's job.progress (its phase, steps and model; `submittedAt` and `proveUntil` as `<set>`), its end, and the facts of `money.status` and `money.reconcile` (whether a reconcile is needed and why, whether it is held, never until when; what it closed; a too-early answer never says how long). NOT written, by design: the words of a clip's refusals (the code, the `clipReason` and the `priceScope` are the contract), the frames of a face check (a verdict needs three; a skipped check says how many it had), a file's exact length (whole seconds) and size, the sha256 and time of an export, the frame counts of an export's progress (the story writes that it began at the start, only went forward and spoke more than once: `Transcript.exportProgress`), and the words of a clip job that failed (its code). Not played: the restart (the real rig plays no crash restart; clips/recover.test.ts and mockEngine.clips.restart.test.ts hold it on the same journal lines), `no-room` (the month's refusal of Grok's reserve is the mock's script; the engine's attempt tests hold it), `disk-full`, `clips.reveal` (main's alone), and the cancel in `preparing` (a race against the first frame in the real engine; both engines' own tests hold it). The budget's own two-minute quiet rule still applies to the real engine's reconcile: a story that reconciles moves the engine's clock ahead first (`ClipControl.passTime`), and the mock models the same rule for a clip's money only.",
 ];
 
 /** A music status as both rigs can be bound to it: the counts, the log's state and the refresh's state; the times as set or null. */
@@ -222,15 +223,13 @@ function avatarLine(avatar: unknown): Record<string, unknown> {
 
 /**
  * Stage 5 (5b.1, S5.V7): a clip job's progress, as both engines are bound to tell it. A create's phases and steps are the contract (preparing 0, submitting 0, rendering 0, proving 0,
- * downloading 1, checking 2, saving 3), so they are written exactly; the clock (`submittedAt`, `proveUntil`) is masked. An export counts the frames ffmpeg has written, which the mock cannot
- * know (it plays a few steps): it is written by where it stands (the start, somewhere between, the end), and a run of «between» is one line (`Transcript.lines`).
+ * downloading 1, checking 2, saving 3), so they are written exactly; the clock (`submittedAt`, `proveUntil`) is masked. An export is not written (below).
  */
-function clipProgressLine(p: Extract<EventMessage, { type: "job.progress" }>["payload"] & { kind: "clip" }, norm: Normalizer): string {
+function clipProgressLine(p: Extract<EventMessage, { type: "job.progress" }>["payload"] & { kind: "clip" }, norm: Normalizer): string | null {
   const ids = { kind: p.kind, jobId: p.jobId, avatarId: p.avatarId, clipId: p.clipId };
-  if (p.phase === "exporting") {
-    const progress = p.done === 0 ? "zero" : p.done >= p.total ? "total" : "mid";
-    return `event job.progress ${compact(norm.value({ ...ids, total: "<frames>", phase: p.phase, progress }))}`;
-  }
+  // An export is not a line: the engine counts the frames ffmpeg has written as it writes them (the last may fall short of the total), the mock plays a few steps, and whether the first lands before or
+  // after the answer is a race of microtasks. What an export reported is a FACT (`Transcript.exportProgress`), and the rule its numbers keep is checked on both (`#checkClipProgress`).
+  if (p.phase === "exporting") return null;
   const line = {
     ...ids,
     total: p.total,
@@ -320,6 +319,11 @@ export function eventLine(event: EventMessage, norm: Normalizer): string | null 
   if (!COVERED_EVENTS.has(event.type)) return null;
   // Stage 5 (5b.1, S5.V7): a clip's progress is told by its own phase, which the generic line would overwrite with `start` or `mid`.
   if (event.type === "job.progress" && event.payload.kind === "clip") return clipProgressLine(event.payload, norm);
+  // A clip job that failed (a download that could not be fetched, an encode): the code is the contract, the words are each engine's own.
+  if (event.type === "job.failed" && event.payload.kind === "clip") {
+    const { kind, jobId, avatarId, clipId, error } = event.payload;
+    return `event job.failed ${compact(norm.value({ kind, jobId, avatarId, clipId, error: { code: error.code } }))}`;
+  }
   if (event.type === "job.progress") {
     const p = objectOf(event.payload);
     const done = typeof p.done === "number" ? p.done : -1;
@@ -871,6 +875,15 @@ export class Transcript {
     }
   }
 
+  /**
+   * What an export job reported: whether it began at 0 of its frames, whether its steps only went forward, and how many times it spoke. A story writes this as a note, so that «the export showed progress»
+   * is compared between the engines without the engine's frame counts or the race of the first event against the answer.
+   */
+  exportProgress(jobId: string): { began: boolean; forward: boolean; steps: number } {
+    const steps = this.#rig.events().flatMap((e) => (e.type === "job.progress" && e.payload.kind === "clip" && e.payload.phase === "exporting" && e.payload.jobId === jobId ? [e.payload.done] : []));
+    return { began: steps[0] === 0, forward: steps.every((done, i) => i === 0 || done >= (steps[i - 1] ?? 0)), steps: steps.length };
+  }
+
   /** Waits for an event (any of the rig's, from the start), then writes what came on the way. */
   async untilEvent(what: string, match: (event: EventMessage) => boolean, ms = 45_000): Promise<void> {
     await this.#pumpUntil(() => this.#rig.events().some(match), what, ms);
@@ -1036,7 +1049,7 @@ export class Transcript {
   lines(): string[] {
     const out: string[] = [];
     for (const line of this.#lines.flatMap((l) => l.split("\n"))) {
-      const isMid = (line.startsWith("event job.progress ") && line.endsWith(`"phase":"mid"}`)) || (line.startsWith('event job.progress {"kind":"clip"') && line.endsWith('"progress":"mid"}'));
+      const isMid = line.startsWith("event job.progress ") && line.endsWith(`"phase":"mid"}`);
       if (isMid && out.at(-1) === line) continue;
       out.push(line);
     }

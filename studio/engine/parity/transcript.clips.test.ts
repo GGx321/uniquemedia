@@ -34,23 +34,20 @@ describe("a clip's job.progress", () => {
     expect(eventLine(event({ ...CLIP, done: 0, phase: "preparing" }), norm)).toBe('event job.progress {"kind":"clip","jobId":"job#1","avatarId":"avatar#1","clipId":"job#1","total":4,"phase":"preparing","done":0}');
   });
 
-  test("an export's progress is told by where it stands, not by its frame count: the engine counts the frames ffmpeg wrote, the mock a few steps", () => {
+  test("an export's progress is not a line: the engine counts the frames ffmpeg wrote when it wrote them, the mock plays a few steps, and where the first one lands against the answer is a race", () => {
     const norm = normalizer();
     const exporting = { ...CLIP, jobId: "job-0002", total: 150, phase: "exporting" } as const;
-    expect(eventLine(event({ ...exporting, done: 0 }), norm)).toBe('event job.progress {"kind":"clip","jobId":"job#1","avatarId":"avatar#1","clipId":"clip#1","total":"<frames>","phase":"exporting","progress":"zero"}');
-    expect(eventLine(event({ ...exporting, done: 47 }), norm)).toBe('event job.progress {"kind":"clip","jobId":"job#1","avatarId":"avatar#1","clipId":"clip#1","total":"<frames>","phase":"exporting","progress":"mid"}');
-    expect(eventLine(event({ ...exporting, done: 150 }), norm)).toBe('event job.progress {"kind":"clip","jobId":"job#1","avatarId":"avatar#1","clipId":"clip#1","total":"<frames>","phase":"exporting","progress":"total"}');
+    for (const done of [0, 47, 150]) expect(eventLine(event({ ...exporting, done }), norm)).toBeNull();
   });
 
-  test("a run of mid-export lines is one line, and the start and the end stand", async () => {
+  test("what an export reported is a fact a story can write: it began at the start, only went forward, and said more than once", async () => {
     const seen: EventMessage[] = [];
     const rig: Recorded = { events: () => seen, send: async () => ({ ok: true, result: {} }), advance: async () => undefined, settle: async () => undefined };
     const transcript = new Transcript(rig, normalizer());
     const exporting = { ...CLIP, total: 150, phase: "exporting" } as const;
-    seen.push(...[0, 10, 40, 90, 150].map((done) => event({ ...exporting, done })));
-    await transcript.settle();
-    const written = transcript.lines().filter((l) => l.startsWith("event job.progress"));
-    expect(written.map((l) => /"progress":"(\w+)"/.exec(l)?.[1])).toEqual(["zero", "mid", "total"]);
+    seen.push(...[0, 10, 40, 150].map((done) => event({ ...exporting, done })));
+    expect(transcript.exportProgress("job-0001")).toEqual({ began: true, forward: true, steps: 4 });
+    expect(transcript.exportProgress("job-0042")).toEqual({ began: false, forward: true, steps: 0 });
   });
 
   test("a job's steps never go back and never pass its total: the rule both engines are held to in place of the numbers", async () => {
@@ -73,6 +70,20 @@ describe("a clip's end", () => {
     const norm = normalizer();
     const done = eventLine(event({ jobId: "job-0009", result: { kind: "clip", avatarId: "avatar-lia-0007", clipId: "job-0001", exported: { relPath: "Lia/2026-10-14_clip_001.mp4" } } }, "job.done"), norm);
     expect(done).toBe('event job.done {"jobId":"job#1","result":{"kind":"clip","avatarId":"avatar#1","clipId":"clip#1","exported":{"relPath":"Lia/<date>_clip_001.mp4"}}}');
+  });
+});
+
+describe("a clip job that failed", () => {
+  test("is told by its code: the words of a failed download or a failed encode are each engine's own", () => {
+    const norm = normalizer();
+    const failed = eventLine(event({ kind: "clip", jobId: "job-0003", avatarId: "avatar-lia-0007", clipId: "job-0001", error: { code: "NETWORK", detail: "GET /videos/<id>/content: HTTP 502" } }, "job.failed"), norm);
+    expect(failed).toBe('event job.failed {"kind":"clip","jobId":"job#1","avatarId":"avatar#1","clipId":"clip#1","error":{"code":"NETWORK"}}');
+  });
+
+  test("another job's failure is written as it was", () => {
+    const norm = normalizer();
+    const failed = eventLine(event({ kind: "run", jobId: "job-0003", runId: "run-0001", avatarId: "avatar-lia-0007", error: { code: "INTERNAL", detail: "words" } }, "job.failed"), norm);
+    expect(failed).toContain('"detail":"words"');
   });
 });
 
