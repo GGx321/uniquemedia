@@ -139,6 +139,8 @@ import { z } from "zod";
 //  - `MoneyStatus.reconcileAvailableAt` (the open variant only, optional): the earliest time `money.reconcile` can run while it is held.
 //  - (S5.V8 follow-up) `CLIP_FILE_DAMAGED_DETAIL`: the detail of an INTERNAL export stopped by the clip's own file in Studio, so the window never calls that file intact.
 //  - `Estimate` moved to estimate.ts and is still exported from state.ts. Rollback: an older build cannot read a clip job in a snapshot (its `JobState` is strict), and never looks in a `clips` folder.
+//  - (S5.V8b, additive, optional) a clip create job also carries `photoId`, `request`, `motion` (`source` and `label` only) and `acceptedWorstMicros` in its job.progress and its `JobState`, taken from the journal's `requested` line, so a window that first sees
+//    the job (a new window after a restart, a reload mid-render) draws its tile whole. An export job and an older engine's job carry none. Rollback: an older build refuses a clip job that carries them (its `JobState` and `JobProgress` are strict); roll back only with no clip job running.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 
