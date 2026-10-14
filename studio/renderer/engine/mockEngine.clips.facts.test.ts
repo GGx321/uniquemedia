@@ -84,3 +84,29 @@ describe("a clip recovered after the mock's restart", () => {
     for (const event of recovery) expect(event).toMatchObject(FACTS);
   });
 });
+
+describe("the open reserve of a clip job in the mock", () => {
+  test("is told while the clip's reserve is open, as the engine tells it, and not after it settled", async () => {
+    const m = makeClipMock();
+    const jobId = await runClip(m);
+
+    const byPhase = (phase: string) => progressOf(m.events, jobId).filter((p) => p.phase === phase);
+    expect(byPhase("preparing")[0]).not.toHaveProperty("openReserveMicros");
+    for (const phase of ["submitting", "rendering"]) expect(byPhase(phase)[0]).toMatchObject({ openReserveMicros: 504_000 });
+    for (const phase of ["downloading", "checking", "saving"]) expect(byPhase(phase)[0]).not.toHaveProperty("openReserveMicros");
+  });
+
+  test("a recovered clip asked for with an automatic fallback tells the Kling reserve still open, in every event and in the snapshot", async () => {
+    const m = makeClipMock();
+    const { jobId } = await unwrap(create(m));
+    stepUntil(m, "rendering", jobId);
+    m.engine.restart();
+
+    const snapshot = await unwrap(m.client.request("engine.snapshot", {}));
+    expect(snapshot.jobs.find((j) => j.kind === "clip" && j.clipId === jobId)).toMatchObject({ phase: "recovering", acceptedWorstMicros: 850_000, openReserveMicros: 504_000 });
+    m.scheduler.runAll();
+    const recovery = m.events.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "clip" && e.payload.jobId !== jobId && e.payload.clipId === jobId ? [e.payload] : []));
+    expect(recovery.length).toBeGreaterThan(1);
+    for (const event of recovery) expect(event).toMatchObject({ acceptedWorstMicros: 850_000, openReserveMicros: 504_000 });
+  });
+});

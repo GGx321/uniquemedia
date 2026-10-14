@@ -254,6 +254,8 @@ interface Job {
   proveUntil?: string;
   /** A create or recovery job of a clip that is still being made; an export or a retried download has none. */
   facts?: JobFacts;
+  /** What the mock's ledger can still charge for the clip, as of the job's last phase; absent when no reserve is open (the engine's `openClipReserveMicros`). */
+  openReserveMicros?: number;
   done: number;
   total: number;
   result?: { kind: "clip"; avatarId: string; clipId: string; exported?: { relPath: string } };
@@ -268,8 +270,15 @@ interface Job {
 }
 
 /** The facts a job's events and state carry, or nothing: the fields are all there or none is. */
-function jobFactsOf(job: Job): Partial<JobFacts> {
-  return job.facts === undefined ? {} : { photoId: job.facts.photoId, request: job.facts.request, motion: job.facts.motion, acceptedWorstMicros: job.facts.acceptedWorstMicros };
+function jobFactsOf(job: Job): Partial<JobFacts> & { openReserveMicros?: number } {
+  if (job.facts === undefined) return {};
+  return {
+    photoId: job.facts.photoId,
+    request: job.facts.request,
+    motion: job.facts.motion,
+    acceptedWorstMicros: job.facts.acceptedWorstMicros,
+    ...(job.openReserveMicros === undefined ? {} : { openReserveMicros: job.openReserveMicros }),
+  };
 }
 
 type Out<T> = { ok: true; result: T } | { ok: false; error: EngineError };
@@ -904,6 +913,10 @@ export class MockClips {
     job.model = update.model;
     job.submittedAt = update.submittedAt;
     job.proveUntil = update.phase === "proving" ? update.proveUntil : undefined;
+    if (job.facts !== undefined) {
+      const open = this.#lines.filter((l) => l.clipId === job.clipId && l.state === "open").reduce((sum, l) => sum + l.worstMicros, 0);
+      job.openReserveMicros = open > 0 ? open : undefined;
+    }
     job.done = Math.min(job.total, Math.max(job.done, update.done ?? job.done));
     this.#host.emit({ v: PROTOCOL_VERSION, id: this.#host.nextId("evt"), kind: "event", type: "job.progress", payload: this.#progressOf(job) });
   }
