@@ -126,6 +126,7 @@ import { MockCategories } from "./mockCategories";
 import { MockSceneSets, MOCK_SCENE_ATTEMPT_WORST, type MockSceneAttempt, type MockSceneSetSeed } from "./mockSceneSets";
 import { MockAutopilot, type MockAutopilotUnit, type PaidFault } from "./mockAutopilot";
 import { boldAttemptWorst, isBoldLook, MOCK_BOLD_IMAGE, requestBoldPhotos } from "./mockBoldRoute";
+import { MockClips, type MockClipsOptions, type MockClipScript, type MockExportResult, type MockRetryResult, type MockVideoPrices } from "./mockClips";
 import { demoOwnMedia, MockOwnMedia, type MockMediaAccept, type MockOwnSeed } from "./mockMedia";
 import { realScheduler, type Scheduler } from "./scheduler";
 
@@ -376,6 +377,11 @@ export interface MockEngineOptions {
    * Off, a drawn photo is the avatar's template photo with nothing of its own (every older story).
    */
   launchFaceMarks?: { marked: number; match: number };
+  /**
+   * 5b.1 (S5.V7): the clips. `mode` is the engine's `GROK_FALLBACK`, `boldClips` its `BOLD_CLIPS`, `exportFps` its `EXPORT_FPS`, and `timings` the engine's `ClipTimings` set the clip money path keeps
+   * (`real` by default, `demo` in the demo preset; the parity rig passes `short`, as the engine's rig does).
+   */
+  clips?: MockClipsOptions;
 }
 
 /** A photo run's slot: its category (the plan's), and how it ended — null while it is still open. */
@@ -769,6 +775,8 @@ export class MockEngine implements EngineBridge {
   /** The avatars whose folder `videos.revealFolder` was asked to open (3e.2), in order: nothing opens in the mock. */
   readonly revealedFolders: string[] = [];
 
+  /** 5b.1 (S5.V7): the clips of the mock; the commands, the job and the money are in mockClips.ts. */
+  private readonly clips: MockClips;
   private readonly scheduler: Scheduler;
   private readonly latencyMs: number;
   private readonly stepMs: number;
@@ -939,6 +947,43 @@ export class MockEngine implements EngineBridge {
     this.textPreviews = new MockTextPreviews({ scheduler: this.scheduler, drawMs: options.textDrawMs ?? 0, newId: () => this.nextId("preview") });
     this.latencyMs = options.latencyMs ?? 0;
     this.stepMs = options.stepMs ?? 700;
+    this.clips = new MockClips(
+      {
+        scheduler: this.scheduler,
+        stepMs: this.stepMs,
+        nextId: (prefix) => this.nextId(prefix),
+        nowIso: () => this.nowIso(),
+        clockMs: () => this.clock,
+        setClockAtLeast: (ms) => {
+          if (ms > this.clock) this.clock = ms;
+        },
+        emit: (event) => this.emit(event),
+        emitMoney: () => this.emitMoney(),
+        gate: () => this.keyAndLedgerGate(),
+        markKeyRejected: () => {
+          if (!this.settings.apiKey.stored) return;
+          this.settings = { ...this.settings, apiKey: { ...this.settings.apiKey, rejected: true } };
+          this.emitSettingsChanged();
+        },
+        reserves: this.reserves,
+        spend: (micros) => this.spend(micros),
+        spentMicros: () => this.spentMicros,
+        monthlyBudgetMicros: () => this.settings.monthlyBudgetMicros,
+        pricesAsOf: () => this.price.pricesAsOf,
+        avatar: (avatarId) => {
+          const avatar = this.avatars.find((a) => a.avatarId === avatarId);
+          return avatar === undefined ? undefined : { name: avatar.name, active: avatar.status === "active", masterPhotoId: avatar.masterPhotoId };
+        },
+        deletePending: () => false,
+        photo: (avatarId, photoId) => this.photos.find((p) => p.avatarId === avatarId && p.photoId === photoId),
+        checkExport: (requiredBytes) => this.checkExport(requiredBytes),
+        exportOk: () => this.exportReported.status === "ok",
+        exportRootId: () => this.exportRootId,
+        exportFiles: () => this.exportFiles,
+        exportRelPath: (avatarName, avatarId, date, named) => mockRelPath(mockFolderName(avatarName, avatarId), date, "clip", this.exportFiles, named),
+      },
+      { ...(options.preset === "demo" ? { timings: "demo" as const } : {}), ...options.clips },
+    );
     this.ownMedia = new MockOwnMedia({ scheduler: this.scheduler, stepMs: this.stepMs, nextId: (prefix) => this.nextId(prefix), nowIso: () => this.nowIso(), emit: (event) => this.emit(event) });
     this.categories = new MockCategories(
       { ...(options.categories === undefined ? {} : { categories: options.categories }), ...(options.unreadableCategories === undefined ? {} : { unreadable: options.unreadableCategories }), ...(options.interruptedCategories === undefined ? {} : { interrupted: options.interruptedCategories }) },
@@ -1523,6 +1568,68 @@ export class MockEngine implements EngineBridge {
     this.settings = { ...this.settings, apiKey: { ...this.settings.apiKey, encryptionAvailable: available } };
   }
 
+  // ---------- the clips' switches (5b.1, S5.V7) ----------
+
+  /** The NEXT `clips.create` plays `script` (an outcome name, or `{ first, then, face }`); used once. Without it a clip completes. */
+  scriptNextClip(script: MockClipScript): void {
+    this.clips.nextClip(script);
+  }
+
+  /** How the mock's video listing reads: `live`, `fallback` (unreadable: the dated table of 2026-10-10 stands in) or `missing` (readable and lacking a price: PRICE_UNAVAILABLE `video`). */
+  setVideoPrices(mode: MockVideoPrices): void {
+    this.clips.setVideoPrices(mode);
+  }
+
+  /** What the first frame makes of a photo's pixels: `unreadable` (`photo-unreadable`) or `not-vertical`. The mock holds no pixels, so a test says it. */
+  setClipPhotoPixels(photoId: string, pixels: "ok" | "unreadable" | "not-vertical"): void {
+    this.clips.setPhotoPixels(photoId, pixels);
+  }
+
+  /** The NEXT `clips.retryDownload` ends `ok` (the default), `failed` (a network failure: job.failed) or `gone` (the provider no longer has the file: the record turns `download-expired`). */
+  nextClipRetry(result: MockRetryResult): void {
+    this.clips.nextRetry(result);
+  }
+
+  /** The NEXT export's encode fails (`fail`): job.failed INTERNAL, the clip as it was. */
+  nextClipExport(result: MockExportResult): void {
+    this.clips.nextExport(result);
+  }
+
+  /** The NEXT `clips.delete` fails at its journal or its record step (I5.53's order: journal, record, media). */
+  failNextClipDelete(at: "journal" | "record"): void {
+    this.clips.failNextDelete(at);
+  }
+
+  /** A journal is left beside the clip's committed record (a crash between the commit and the journal's removal). */
+  leaveStaleClipJournal(clipId: string): void {
+    this.clips.leaveStaleJournal(clipId);
+  }
+
+  /** What a clip's n-th export reads in `clips.get` (the owner deleted the file in Finder, replaced it...). */
+  tamperClipExport(clipId: string, index: number, state: FileState): void {
+    this.clips.tamperExport(clipId, index, state);
+  }
+
+  /** `count` ready clips of an avatar, as a library that has made many would list them. */
+  seedClips(avatarId: string, count: number): void {
+    this.clips.seed(avatarId, count);
+  }
+
+  /** The owner comes back after `ms`: the mock's clock moves ahead, and the holds that ran out end. */
+  passClipTime(ms: number): void {
+    this.clips.passTime(ms);
+  }
+
+  /** What the clips' tests look at: the hold registry, the ledger lines, the POSTs that left, the journals, the files, the exported copies. */
+  peekClips() {
+    return this.clips.peek();
+  }
+
+  /** The copies `clips.reveal` was asked to show, in order: nothing opens in the mock. */
+  get revealedClips(): readonly { avatarId: string; clipId: string; relPath: string }[] {
+    return this.clips.revealed;
+  }
+
   /** Paid calls stop until a reconcile; announced with `money.reconcileNeeded`. */
   requireReconcile(reasons: ReconcileReason[]): void {
     this.reconcileReasons = [...new Set([...this.reconcileReasons, ...reasons])];
@@ -1928,6 +2035,8 @@ export class MockEngine implements EngineBridge {
     this.ownMedia.restart();
     this.boot += 1;
     this.log = new EventLog(this.capacity, this.bootId());
+    // 5b.1 (§5.12): the clip jobs of the old process are gone with it; a clip with a journal and no record is recovered by a free job, and its reserve waits for the owner's reconcile.
+    this.clips.restart();
     if (this.reserves.size > 0) {
       // The reserves belong to a process that no longer exists: the engine's launch is not admitted until a reconcile (`Budget.blocked()`), unlike a reserve of this session.
       this.previousProcessReserves = true;
@@ -2474,7 +2583,7 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, this.settings);
       case "settings.setLibraryPath":
         // A library switch is refused while any job, a render included, is queued or running.
-        if (this.running().length > 0 || this.renderJobs.some(isActive) || this.ownMedia.active() > 0 || this.categories.inFlight()) return this.fail(c, { code: "IN_FLIGHT" });
+        if (this.running().length > 0 || this.renderJobs.some(isActive) || this.ownMedia.active() > 0 || this.categories.inFlight() || this.clips.busy()) return this.fail(c, { code: "IN_FLIGHT" });
         if (c.payload.path !== this.settings.libraryPath) this.librarySwitchGeneration += 1;
         this.settings = { ...this.settings, libraryPath: c.payload.path };
         this.emitSettingsChanged();
@@ -2650,6 +2759,7 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { jobId: this.startJob(draft.avatarId) });
       }
       case "avatars.cancel": {
+        if (this.clips.owns(c.payload.jobId)) return this.clipOut(c, this.clips.cancel(c.payload.jobId));
         const portraitJob = this.portraitJobs.find((j) => j.jobId === c.payload.jobId);
         const job = portraitJob ?? this.jobs.find((j) => j.jobId === c.payload.jobId);
         if (!job) return this.fail(c, { code: "NOT_FOUND" });
@@ -2779,15 +2889,23 @@ export class MockEngine implements EngineBridge {
       // Stage 5, 5b.1, S5.V1: compile-only stub. The clip commands are in the contract; S5.V7 gives them the engine's behaviour (and removes this case). Until then they refuse like the engine's
       // methods that are not built (S5.V4a1) do: INTERNAL, free.
       case "clips.options":
+        return this.clipOut(c, this.clips.options(c.payload));
       case "clips.create":
+        return this.clipOut(c, this.clips.create(c.payload));
       case "clips.list":
+        return this.clipOut(c, this.clips.list(c.payload));
       case "clips.get":
+        return this.clipOut(c, this.clips.get(c.payload));
       case "clips.markSeen":
+        return this.clipOut(c, this.clips.markSeen(c.payload));
       case "clips.delete":
+        return this.clipOut(c, this.clips.delete(c.payload));
       case "clips.retryDownload":
+        return this.clipOut(c, this.clips.retryDownload(c.payload));
       case "clips.export":
+        return this.clipOut(c, this.clips.export(c.payload));
       case "clips.reveal":
-        return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not built yet` });
+        return this.clipOut(c, this.clips.reveal(c.payload));
       // Stage 5, S5.3c: the reference portrait of an imported avatar, in the engine's order and words (see the section below).
       case "avatars.estimatePortraits":
         // Free and avatar-independent: no key, no library, no avatar.
@@ -3324,6 +3442,10 @@ export class MockEngine implements EngineBridge {
     return OkResponse.parse({ v: PROTOCOL_VERSION, id: c.id, kind: "response", type: c.type, ok: true, result });
   }
 
+  private clipOut(c: CommandMessage, out: { ok: true; result: unknown } | { ok: false; error: EngineError }): ResponseMessage {
+    return out.ok ? this.ok(c, out.result) : this.fail(c, out.error);
+  }
+
   private fail(c: CommandMessage, error: EngineError): ResponseMessage {
     return { v: PROTOCOL_VERSION, id: c.id, kind: "response", type: c.type, ok: false, error };
   }
@@ -3363,7 +3485,10 @@ export class MockEngine implements EngineBridge {
   private reconcile(c: CommandMessage): ResponseMessage {
     const stopped = this.ledgerStop();
     if (stopped) return this.fail(c, stopped);
-    if (this.running().length > 0 || this.autopilot.hasLiveRequests()) return this.fail(c, { code: "IN_FLIGHT" });
+    if (this.running().length > 0 || this.autopilot.hasLiveRequests() || this.clips.paidOpen()) return this.fail(c, { code: "IN_FLIGHT" });
+    // 5b.1 (I5.48): a video bills when it completes, so the reconcile waits while an attempt of a clip may still bill.
+    const early = this.clips.tooEarly();
+    if (early !== null) return this.ok(c, early);
     const ledgerDelta = this.spentSinceReconcile + this.unsettledMicros();
     const result: ReconcileResult = this.reconcileQueue.shift() ?? {
       status: "done",
@@ -3378,6 +3503,7 @@ export class MockEngine implements EngineBridge {
     };
     if (result.status === "done") {
       // Open reserves close at their worst case.
+      this.clips.onReconciled();
       this.spentMicros += this.unsettledMicros();
       this.reserves.clear();
       this.spentSinceReconcile = 0;
@@ -3410,7 +3536,7 @@ export class MockEngine implements EngineBridge {
   /** Whether anything of the avatar runs or is reserved: a candidates job, a photo run, a render (queued or running), a video intent a crash left pending. */
   private deleteBusy(avatarId: string): boolean {
     const heldByIntent = this.photos.some((p) => p.avatarId === avatarId && this.pendingVideoPhotos.has(p.photoId));
-    return this.jobRunningFor(avatarId) || this.renderJobs.some((j) => isActive(j) && j.avatarId === avatarId) || heldByIntent;
+    return this.jobRunningFor(avatarId) || this.renderJobs.some((j) => isActive(j) && j.avatarId === avatarId) || this.clips.liveFor(avatarId) || heldByIntent;
   }
 
   /** What would go with the avatar, counted as the engine counts it (`avatarDeleteCounts`). */
@@ -3458,6 +3584,7 @@ export class MockEngine implements EngineBridge {
     this.portraitStates.delete(avatarId);
     this.runJobs = this.runJobs.filter((j) => j.avatarId !== avatarId);
     this.sceneSets.removeAvatar(avatarId);
+    this.clips.removeAvatar(avatarId);
     for (const photoId of mine) this.pendingVideoPhotos.delete(photoId);
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.removed", payload: { avatarId } });
     const kept = this.videoFilesKeptNext;
@@ -3742,6 +3869,9 @@ export class MockEngine implements EngineBridge {
     if (pick === null) return this.ok(c, { picked: false });
     if (this.renderJobs.some(isActive)) {
       return this.fail(c, { code: "IN_FLIGHT", detail: "a video render is queued or running; change the export folder when it ends" });
+    }
+    if (this.clips.exporting()) {
+      return this.fail(c, { code: "IN_FLIGHT", detail: "a clip is being saved to the export folder; change the export folder when it ends" });
     }
     const path = pick?.path ?? `${MOCK_HOME}/Reels-${++this.unscriptedPicks}`;
     if (pick?.refuse !== undefined) {
@@ -5003,7 +5133,7 @@ export class MockEngine implements EngineBridge {
       drafts: this.drafts,
       unreadableAvatars: this.unreadable,
       unreadableTotal: this.unreadableCount(),
-      jobs: [...this.jobs.map((j) => this.jobState(j)), ...this.portraitJobs.map((j) => this.portraitJobState(j)), ...this.runJobs.map((j) => this.runJobState(j)), ...this.renderJobs.map((j) => this.renderJobState(j)), ...this.ownMedia.jobStates(), ...this.sceneSets.jobStates()],
+      jobs: [...this.jobs.map((j) => this.jobState(j)), ...this.portraitJobs.map((j) => this.portraitJobState(j)), ...this.runJobs.map((j) => this.runJobState(j)), ...this.renderJobs.map((j) => this.renderJobState(j)), ...this.ownMedia.jobStates(), ...this.sceneSets.jobStates(), ...this.clips.jobStates()],
       librarySwitchGeneration: this.librarySwitchGeneration,
       exportStatus: this.exportReported,
       notices: [],
@@ -5308,6 +5438,9 @@ export class MockEngine implements EngineBridge {
         halt: this.unavailable,
       };
     }
+    // 5b.1 (I5.48): a clip's own abandoned reserve is a reason only once its hold is over; while held it is unsettled money and nothing more.
+    const reasons: ReconcileReason[] = this.clips.openReserveReason() && !this.reconcileReasons.includes("open-reserves") ? ["open-reserves", ...this.reconcileReasons] : this.reconcileReasons;
+    const availableAt = this.clips.reconcileAvailableAt();
     return {
       ledger: "open",
       month,
@@ -5315,9 +5448,10 @@ export class MockEngine implements EngineBridge {
       monthlyBudgetMicros: this.settings.monthlyBudgetMicros,
       unsettledMicros: this.unsettledMicros(),
       unsettledCount: this.reserves.size,
-      reconcileNeeded: this.reconcileReasons.length > 0,
-      reconcileReasons: this.reconcileReasons,
+      reconcileNeeded: reasons.length > 0,
+      reconcileReasons: reasons,
       halt: this.halt,
+      ...(availableAt === null ? {} : { reconcileAvailableAt: new Date(availableAt).toISOString() }),
     };
   }
 
