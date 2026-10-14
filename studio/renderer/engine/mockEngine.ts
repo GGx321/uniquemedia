@@ -129,6 +129,7 @@ import { MockAutopilot, type MockAutopilotUnit, type PaidFault } from "./mockAut
 import { boldAttemptWorst, isBoldLook, MOCK_BOLD_IMAGE, requestBoldPhotos } from "./mockBoldRoute";
 import { MockClips, type MockClipsOptions, type MockClipScript, type MockExportResult, type MockRetryResult, type MockVideoPrices } from "./mockClips";
 import { demoOwnMedia, MockOwnMedia, type MockMediaAccept, type MockOwnSeed } from "./mockMedia";
+import { MockClipCopies } from "./mockClipCopies";
 import { realScheduler, type Scheduler } from "./scheduler";
 
 // An in-memory engine that speaks the T0 wire protocol. It exists so the
@@ -631,7 +632,10 @@ const MOCK_SEED_TRACK = { source: "trending", title: "Soft Static", artist: "Ivo
 /** A rendered video the mock keeps: the record the windows see, the photos it shows, and the draft as the record was written. */
 interface MockVideo {
   summary: VideoSummary;
+  /** Its frames: the scene photos, then (5b.2) the photos of the clips whose copies it holds. */
   photoIds: string[];
+  /** 5b.2 (S5.WA3): the clips whose copies it holds, from the record's `clipFrames` snapshot: a deleted clip, copy or avatar never frees a used frame. Absent on a video with no clip copy. */
+  clipIds?: string[];
   /** The draft it was rendered from AS WRITTEN: null when that draft was already deleted at commit. `videos.list` also shows null once it is deleted later. */
   montageId: string | null;
   /** What a check of its file finds, when the test says so; null = present (or `elsewhere` while the export folder is unusable). */
@@ -651,7 +655,12 @@ interface MockRenderJob {
   title: string | null;
   /** The job keeps the spec it was queued with: a later save or delete of the draft does not reach it. */
   spec: MontageDraft;
+  /** The spec's FRAMES (5b.2, I5.60): its scene photos, then the photos of the clip copies it holds. The queue reserves them; the video it makes uses them. */
   photoIds: string[];
+  /** The scene photos alone: what a video's `photoCount` shows (5b.2 keeps it unchanged). */
+  scenePhotoCount: number;
+  /** 5b.2: the clips whose copies the spec holds, resolved ONCE at admission (the record's `clipFrames`). */
+  clipIds: string[];
   /** The own media the spec names (3f.2): held against `media.delete` while the job is queued or running. */
   mediaIds: string[];
   status: JobState["status"];
@@ -939,6 +948,8 @@ export class MockEngine implements EngineBridge {
   private cancelSceneWriteBeforeAnswer = false;
   /** Own media's records and import jobs (3f.1b). */
   private readonly ownMedia: MockOwnMedia;
+  /** 5b.2 (S5.WA3): a clip's montage copy: the import, its lifetime, and what uses a clip. */
+  private readonly clipCopies: MockClipCopies;
   private nextRenderFailure: { error: EngineError; at: "encode" | "saving" | "late" } | null = null;
   private music: MockMusic;
   private readonly textPreviews: MockTextPreviews;
@@ -984,10 +995,19 @@ export class MockEngine implements EngineBridge {
         exportRootId: () => this.exportRootId,
         exportFiles: () => this.exportFiles,
         exportRelPath: (avatarName, avatarId, date, named) => mockRelPath(mockFolderName(avatarName, avatarId), date, "clip", this.exportFiles, named),
+        // 5b.2 (S5.WA3): the clip's montage copy goes with the clip, and what uses a clip is told by the copies.
+        removeCopies: (avatarId, clipId) => this.clipCopies.removeOfClip(avatarId, clipId),
+        use: (avatarId, clipId, photoId) => this.clipCopies.use(avatarId, clipId, photoId),
       },
       { ...(options.preset === "demo" ? { timings: "demo" as const } : {}), ...options.clips },
     );
     this.ownMedia = new MockOwnMedia({ scheduler: this.scheduler, stepMs: this.stepMs, nextId: (prefix) => this.nextId(prefix), nowIso: () => this.nowIso(), emit: (event) => this.emit(event) });
+    this.clipCopies = new MockClipCopies(this.clips, this.ownMedia, {
+      libraryGate: () => this.libraryGate(),
+      mediaHeld: (mediaId) => this.mediaHeldByRender(mediaId),
+      videosOf: (avatarId) => this.videos.filter((v) => v.summary.avatarId === avatarId).map((v) => ({ clipIds: v.clipIds ?? [], photoIds: v.photoIds })),
+      draftsOf: (avatarId) => [...this.montages.values()].filter((m) => m.spec.avatarId === avatarId).map((m) => ({ name: m.name, clips: m.spec.clips.map((clip) => ({ kind: clip.kind, ...(clip.kind === "video" ? { mediaId: clip.mediaId } : {}) })) })),
+    });
     this.categories = new MockCategories(
       { ...(options.categories === undefined ? {} : { categories: options.categories }), ...(options.unreadableCategories === undefined ? {} : { unreadable: options.unreadableCategories }), ...(options.interruptedCategories === undefined ? {} : { interrupted: options.interruptedCategories }) },
       { nextId: (prefix) => this.nextId(prefix), nowIso: () => this.nowIso() },
@@ -1631,6 +1651,23 @@ export class MockEngine implements EngineBridge {
   /** `count` ready clips of an avatar, as a library that has made many would list them. */
   seedClips(avatarId: string, count: number): void {
     this.clips.seed(avatarId, count);
+  }
+
+  // ---- 5b.2 part A (S5.WA3): append-only block. The switches of the clips' montage copies.
+
+  /** The clip's file in Studio is no longer the one its record names (the sha256 check of `media.importClip`): the next import of it meets VALIDATION `file-damaged`. */
+  damageClipFile(clipId: string): void {
+    this.clips.damageFile(clipId);
+  }
+
+  /** The NEXT `media.importClip` is refused at the start, as `media.import` refuses: `no-space` is MEDIA_UNSUPPORTED, any other reason one INTERNAL. Used once. */
+  refuseNextClipImport(reason: MediaUnsupportedReason | "too-many"): void {
+    this.clipCopies.refuseNext(reason);
+  }
+
+  /** The NEXT clip copy's job fails inside, as the importer fails: `no-space` keeps its reason, any other is one INTERNAL. Used once. */
+  failNextClipImport(reason: MediaUnsupportedReason): void {
+    this.clipCopies.failNext(reason);
   }
 
   /** The owner comes back after `ms`: the mock's clock moves ahead, and the holds that ran out end. */
@@ -2654,16 +2691,16 @@ export class MockEngine implements EngineBridge {
         if (refusal) return this.fail(c, refusal);
         if (!this.ownMedia.has(mediaId)) return this.fail(c, { code: "NOT_FOUND", detail: `no own media ${mediaId} in the open library` });
         // The engine asks the render queue's reserved set after it knows the media is there: a queued or running render that names it refuses.
-        if (this.renderJobs.some((job) => isActive(job) && job.mediaIds.includes(mediaId))) return this.fail(c, { code: "IN_FLIGHT", detail: "a queued or running render uses this media; delete it when the render ends" });
+        if (this.mediaHeldByRender(mediaId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a queued or running render uses this media; delete it when the render ends" });
         this.ownMedia.delete(mediaId);
         return this.ok(c, { mediaId });
       }
       case "media.cancelImport":
         if (!this.ownMedia.cancel(c.payload.jobId)) return this.fail(c, { code: "NOT_FOUND", detail: `no import job ${c.payload.jobId} in this engine` });
         return this.ok(c, { jobId: c.payload.jobId });
-      // ---- 5b.2 part A (S5.WA1): append-only block. The compile stub answers as the engine's `default` branch does, word for word, until S5.WA3 builds the import.
+      // ---- 5b.2 part A (S5.WA3): append-only block. A ready clip becomes the editor's own video, as its own copy (the engine's `ClipImports`, in `mockClipCopies.ts`).
       case "media.importClip":
-        return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });
+        return this.clipOut(c, this.clipCopies.importClip(c.payload));
       // ---- 5b.2 part B (S5.WB1): append-only block. The compile stubs answer as the engine's `default` branch does, word for word, until S5.WB3 builds the batch.
       case "clips.batchOptions":
       case "clips.createBatch":
@@ -3578,7 +3615,13 @@ export class MockEngine implements EngineBridge {
   /** Whether anything of the avatar runs or is reserved: a candidates job, a photo run, a render (queued or running), a video intent a crash left pending. */
   private deleteBusy(avatarId: string): boolean {
     const heldByIntent = this.photos.some((p) => p.avatarId === avatarId && this.pendingVideoPhotos.has(p.photoId));
-    return this.jobRunningFor(avatarId) || this.renderJobs.some((j) => isActive(j) && j.avatarId === avatarId) || this.clips.liveFor(avatarId) || heldByIntent;
+    // 5b.2 (S5.WA3, r2.1 N2): a clip import of the avatar runs, or a render holds a copy of one of its clips.
+    return this.jobRunningFor(avatarId) || this.renderJobs.some((j) => isActive(j) && j.avatarId === avatarId) || this.clips.liveFor(avatarId) || heldByIntent || this.clipCopies.holdsAvatar(avatarId);
+  }
+
+  /** Whether a queued or running render holds this own media (the render queue's reserved set). */
+  private mediaHeldByRender(mediaId: string): boolean {
+    return this.renderJobs.some((job) => isActive(job) && job.mediaIds.includes(mediaId));
   }
 
   /** What would go with the avatar, counted as the engine counts it (`avatarDeleteCounts`). */
@@ -3629,6 +3672,8 @@ export class MockEngine implements EngineBridge {
     this.clips.removeAvatar(avatarId);
     for (const photoId of mine) this.pendingVideoPhotos.delete(photoId);
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.removed", payload: { avatarId } });
+    // 5b.2 (S5.WA3, r2.1 N5): the avatar's montage copies go only now that the avatar is forgotten (the Trash took its folder), never before.
+    this.clipCopies.removeOfAvatar(avatarId);
     const kept = this.videoFilesKeptNext;
     this.videoFilesKeptNext = 0;
     const folder = present[0]?.summary.relPath.split("/")[0] ?? null;
@@ -3964,6 +4009,48 @@ export class MockEngine implements EngineBridge {
     return montageId !== null && this.montages.has(montageId) ? montageId : null;
   }
 
+  // ---------- clip frames (5b.2, S5.WA3; I5.60, Q-F = 1): a photo and every clip made from it are ONE frame ----------
+
+  /** The clips of a spec whose own video is a clip's montage copy, in clip order: the clip's place, the copy and where it came from. */
+  private copyClipsOf(spec: MontageDraft): { index: number; mediaId: string; origin: NonNullable<ReturnType<MockOwnMedia["originOf"]>> }[] {
+    return spec.clips.flatMap((clip, index) => {
+      const origin = clip.kind === "video" ? this.ownMedia.originOf(clip.mediaId) : undefined;
+      return clip.kind === "video" && origin !== undefined ? [{ index, mediaId: clip.mediaId, origin }] : [];
+    });
+  }
+
+  /** The clip frames of a spec: one per copy, each media once, with the clip and the photo it was made from (the record's `clipFrames`). */
+  private clipFramesOf(spec: MontageDraft): { mediaId: string; clipId: string; photoId: string }[] {
+    const seen = new Set<string>();
+    return this.copyClipsOf(spec).flatMap(({ mediaId, origin }) => (seen.has(mediaId) ? [] : (seen.add(mediaId), [{ mediaId, clipId: origin.clipId, photoId: origin.photoId }])));
+  }
+
+  /** The clip copies of a spec as frame cells: the copy's photo, with the clip's own place as the issue's path. They are judged, reserved and refused as the scene cells are. */
+  private clipFrameCells(spec: MontageDraft): { photoId: string; path: (string | number)[] }[] {
+    return this.copyClipsOf(spec).map(({ index, origin }) => ({ photoId: origin.photoId, path: ["clips", index] }));
+  }
+
+  /**
+   * What admission refuses about frames before it looks at the library: a copy of ANOTHER avatar's clip (`frame-foreign`), and a frame the spec holds twice, whether as a photo and a clip of it, two clips of
+   * one photo, or one copy twice (`frame-repeated`). PHOTO_UNAVAILABLE at the clip's path, with the offence in `detail`. Null when the spec is fine.
+   */
+  private frameOffence(spec: MontageDraft): EngineError | null {
+    const sceneIds = new Set(sceneCells(spec).map((cell) => cell.photoId));
+    const framed = new Set<string>();
+    const offences: { path: (string | number)[]; detail: "frame-foreign" | "frame-repeated" }[] = [];
+    for (const { index, origin } of this.copyClipsOf(spec)) {
+      if (origin.avatarId !== spec.avatarId) {
+        offences.push({ path: ["clips", index], detail: "frame-foreign" });
+        continue;
+      }
+      if (sceneIds.has(origin.photoId) || framed.has(origin.photoId)) offences.push({ path: ["clips", index], detail: "frame-repeated" });
+      framed.add(origin.photoId);
+    }
+    const first = offences[0];
+    if (first === undefined) return null;
+    return { code: "PHOTO_UNAVAILABLE", issues: offences.slice(0, MAX_MONTAGE_ISSUES).map((offence) => ({ code: "photo-unavailable", path: offence.path })), detail: first.detail };
+  }
+
   private videosRender(c: CommandMessage, payload: { montageId: string } | { spec: MontageDraft }): ResponseMessage {
     let montageId: string | null = null;
     let title: string | null = null;
@@ -3997,12 +4084,19 @@ export class MockEngine implements EngineBridge {
       ...ownTrackIssues(spec, (mediaId) => this.ownMedia.holdsTrack(mediaId)),
     ].slice(0, MAX_MONTAGE_ISSUES);
     if (missing.length > 0) return this.fail(c, { code: "MONTAGE_INVALID", issues: missing });
+    // 5b.2 (S5.WA3, I5.60, Q-F = 1): a clip copy of another avatar, and a frame the spec holds twice (a photo and its clip, two clips of one photo, one copy twice), are refused before the export folder or
+    // the photos are looked at, at the clip's own path, with the offence in `detail`.
+    const offence = this.frameOffence(spec);
+    if (offence !== null) return this.fail(c, offence);
     const reason = this.checkExport(estimateBytesUpper(spec.clips));
     if (reason !== null) return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason: reason });
     const refusal = this.libraryGate() ?? this.activeAvatarRefusal(spec.avatarId);
     if (refusal) return this.fail(c, refusal);
     const cells = sceneCells(spec);
-    const unavailable = cells.filter((cell) => !this.photoUsable(spec.avatarId, cell.photoId));
+    // A clip's photo is a frame as a scene photo is, and is judged, reserved and refused the same way, at the clip's own path.
+    const frameCells = this.clipFrameCells(spec);
+    const allCells = [...cells, ...frameCells];
+    const unavailable = allCells.filter((cell) => !this.photoUsable(spec.avatarId, cell.photoId));
     const refusedCells = unavailable.slice(0, MAX_MONTAGE_ISSUES).map((cell) => ({ photoId: cell.photoId, issue: { code: "photo-unavailable" as const, path: cell.path } }));
     const usageRefusal = this.usageRefusal(spec.avatarId, refusedCells.map((r) => r.issue));
     if (usageRefusal !== null) return this.fail(c, usageRefusal);
@@ -4018,7 +4112,9 @@ export class MockEngine implements EngineBridge {
       montageId,
       title,
       spec,
-      photoIds: cells.map((cell) => cell.photoId),
+      photoIds: [...new Set([...cells, ...frameCells].map((cell) => cell.photoId))],
+      scenePhotoCount: cells.length,
+      clipIds: this.clipFramesOf(spec).map((frame) => frame.clipId),
       mediaIds: [...new Set([...[...ownPhotoCells(spec), ...ownVideoClips(spec), ...ownStickerCells(spec)].map((cell) => cell.mediaId), ...(spec.music?.source === "own" ? [spec.music.mediaId] : [])])],
       status: "queued",
       done: 0,
@@ -4155,14 +4251,14 @@ export class MockEngine implements EngineBridge {
       relPath,
       fileState: "present",
       montageId,
-      photoCount: job.photoIds.length,
+      photoCount: job.scenePhotoCount,
       music: track !== undefined ? { title: track.title, artist: track.artist, trackId: track.trackId } : ownName !== undefined ? { title: ownName, artist: null, trackId: null } : null,
       hasPoster: false,
       title: job.title,
       // The first clip as it was rendered: the tile's still (3e.2), as the engine reads it from the record.
       firstClip: spec.clips[0] ?? null,
     };
-    this.videos.push({ summary, photoIds: job.photoIds, montageId, fileState: null, rootId: this.exportRootId });
+    this.videos.push({ summary, photoIds: job.photoIds, ...(job.clipIds.length === 0 ? {} : { clipIds: job.clipIds }), montageId, fileState: null, rootId: this.exportRootId });
     this.adjustAvatar(job.avatarId, { videoCount: 1 });
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "video.changed", payload: { change: "upserted", video: summary } });
     return { relPath, bytes, durationMs, kind };

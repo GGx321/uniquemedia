@@ -31,6 +31,7 @@ import {
   type ClipRequest,
   type ClipSeconds,
   type ClipSummary,
+  type ClipUse,
   type CommandPayload,
   type EngineError,
   type Estimate,
@@ -320,6 +321,12 @@ export interface MockClipsHost {
   exportRootId(): string;
   exportFiles(): Set<string>;
   exportRelPath(avatarName: string, avatarId: string, date: string, named: Iterable<string>): string;
+  /**
+   * 5b.2 (S5.WA3, I5.59, Q-F = 1): what the clips need of the montage copies. `removeCopies` is the clip delete's first step (the engine's `ClipCopies.removeOfClip`): every copy of the clip is removed, or a
+   * render that holds one refuses (`in-use`) with nothing removed. `use` is `ClipSummary.use` of a ready clip: a finished video's use of its frame, and the saved drafts that hold its copy.
+   */
+  removeCopies(avatarId: string, clipId: string): "none" | "removed" | "in-use";
+  use(avatarId: string, clipId: string, photoId: string): ClipUse | undefined;
 }
 
 export interface MockClipsOptions {
@@ -493,6 +500,10 @@ export class MockClips {
   #retryResult: MockRetryResult | null = null;
   #exportResult: MockExportResult | null = null;
   #failDelete: "journal" | "record" | null = null;
+  /** 5b.2 (S5.WA3): the clips an import of the montage copy holds, by clip id, with the avatar each belongs to: the clip's lock while `media.importClip` runs. */
+  readonly #importing = new Map<string, string>();
+  /** 5b.2: the clips whose file in Studio is no longer the one the record names (the sha256 check of `media.importClip`); a test says so, the mock holds no file. */
+  readonly #damaged = new Set<string>();
 
   /** The committed records by clip id, in creation order. */
   readonly #records = new Map<string, MockClipRecord>();
@@ -1332,7 +1343,11 @@ export class MockClips {
       exports: record.exports.map((line, i): ClipExport => (withStates ? { ...line, fileState: this.#fileStateOf(record.id, i, line) } : { ...line })),
     };
     const { outcome } = record;
-    if (outcome.status === "ready") return { ...common, status: "ready", width: outcome.width, height: outcome.height, durationMs: outcome.durationMs, face: outcome.face };
+    if (outcome.status === "ready") {
+      // 5b.2 (Q-F = 1): what uses a ready clip; a clip nothing uses has none.
+      const use = this.#host.use(record.avatarId, record.id, record.photoId);
+      return { ...common, status: "ready", width: outcome.width, height: outcome.height, durationMs: outcome.durationMs, face: outcome.face, ...(use === undefined ? {} : { use }) };
+    }
     const offer = this.#grokOffer(record);
     return { ...common, status: "failed", failure: { reason: outcome.reason, ...(offer === null ? {} : { grokOffer: offer }) }, ...(outcome.retryDownloadUntil === undefined ? {} : { retryDownloadUntil: outcome.retryDownloadUntil }) };
   }
@@ -1394,7 +1409,7 @@ export class MockClips {
   }
 
   #busyClip(clipId: string): boolean {
-    return [...this.#jobs.values()].some((j) => j.status === "running" && j.clipId === clipId);
+    return this.#importing.has(clipId) || [...this.#jobs.values()].some((j) => j.status === "running" && j.clipId === clipId);
   }
 
   delete(payload: CommandPayload<"clips.delete">): Out<{ clipId: string }> {
@@ -1407,6 +1422,8 @@ export class MockClips {
     const fault = this.#failDelete;
     this.#failDelete = null;
     // The journal first, then the record (the commit), then the media: a record-less journal would be recovered as a live clip, so the journal never outlives the record.
+    // 5b.2 (I5.59): the clip's montage copy goes FIRST; a render that holds it refuses the whole delete with nothing removed.
+    if (this.#host.removeCopies(payload.avatarId, clipId) === "in-use") return bad({ code: "IN_FLIGHT", clipReason: "in-use", detail: `a render holds the montage copy of clip ${clipId}` });
     if (fault === "journal") return bad({ code: "INTERNAL", detail: "the clip's journal could not be removed" });
     this.#journals.delete(clipId);
     const files = this.#files.get(clipId);
@@ -1415,6 +1432,42 @@ export class MockClips {
     this.#records.delete(clipId);
     this.#files.delete(clipId);
     return good({ clipId });
+  }
+
+  // ---------- the clip as the montage copies need it (5b.2, S5.WA3; append-only block) ----------
+
+  /** What `media.importClip` reads of the clip's committed record: NOT_FOUND for an avatar that is not in the library or is being deleted, and for a clip the avatar does not have. */
+  copySource(avatarId: string, clipId: string): Out<{ photoId: string; createdAt: string; ready: { width: number; height: number; durationMs: number } | null }> {
+    const found = this.#recordOf(avatarId, clipId);
+    if (!found.ok) return found;
+    const { photoId, createdAt, outcome } = found.result;
+    return good({ photoId, createdAt, ready: outcome.status === "ready" ? { width: outcome.width, height: outcome.height, durationMs: outcome.durationMs } : null });
+  }
+
+  /** Whether the file of a clip is no longer the one its record names. */
+  fileDamaged(clipId: string): boolean {
+    return this.#damaged.has(clipId);
+  }
+
+  /** A test says the clip's file in Studio was replaced by another (the next `media.importClip` meets `file-damaged`). */
+  damageFile(clipId: string): void {
+    this.#damaged.add(clipId);
+  }
+
+  /** The clip's lock for an import: busy (a delete, an export and a second import answer `job-running`) until the returned release is called. */
+  holdForImport(avatarId: string, clipId: string): () => void {
+    this.#importing.set(clipId, avatarId);
+    return () => void this.#importing.delete(clipId);
+  }
+
+  /** Whether the clip is held by an import, or by any job of the clip (an import is refused as `job-running` for either). */
+  busyForImport(clipId: string): boolean {
+    return this.#busyClip(clipId);
+  }
+
+  /** A clip import of this avatar runs: its delete waits (the import job has no avatar of its own in the job list). */
+  importingFor(avatarId: string): boolean {
+    return [...this.#importing.values()].includes(avatarId);
   }
 
   // ---------- clips.retryDownload ----------

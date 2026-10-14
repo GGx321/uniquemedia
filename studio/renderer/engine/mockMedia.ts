@@ -1,4 +1,4 @@
-import { fromFpsOf, MAX_LISTED_MEDIA, MEZZANINE_FPS, PROTOCOL_VERSION, type EngineError, type ImportPrepare, type ImportResult, type JobState, type MediaKind, type MediaSummary, type MediaUnsupportedReason, type UnsequencedEvent } from "../../shared/engine";
+import { fromFpsOf, MAX_LISTED_MEDIA, MEZZANINE_FPS, PROTOCOL_VERSION, type EngineError, type ImportPrepare, type ImportResult, type JobState, type MediaKind, type MediaOrigin, type MediaSummary, type MediaUnsupportedReason, type UnsequencedEvent } from "../../shared/engine";
 import type { Scheduler } from "./scheduler";
 
 // The mock's own media (3f.1b): the engine's import jobs and records, on the mock's clock. The mock copies nothing and keeps no path: the
@@ -114,6 +114,20 @@ interface ImportJob {
   error: EngineError | undefined;
   cancelRequested: boolean;
   cancelTimers: (() => void)[];
+  /** 5b.2 (S5.WA3): set on the import of a clip's montage copy only (`media.importClip`): it rides on the job's ref, its progress, its end and the record. */
+  readonly origin: MediaOrigin | undefined;
+  /** 5b.2: the last look before the record (the engine's `stillWanted`): false cancels the job, which then writes no record. */
+  readonly stillWanted: (() => boolean) | undefined;
+  /** 5b.2: runs once when the job has ended, whichever way (the clip's lock is given back here). */
+  readonly onEnd: (() => void) | undefined;
+  ended: boolean;
+}
+
+/** What `startImport` is told of a clip's copy (5b.2): where it comes from, the last look, and the hook of the job's end. */
+export interface MockClipImport {
+  readonly origin: MediaOrigin;
+  readonly stillWanted: () => boolean;
+  readonly onEnd: () => void;
 }
 
 export interface MockOwnMediaDeps {
@@ -151,7 +165,7 @@ export class MockOwnMedia {
   }
 
   /** Starts the job of an accepted file and announces it at zero; its id, or null when too many are pending (the engine's `too-many`). */
-  startImport(name: string, accept: MockMediaAccept): string | null {
+  startImport(name: string, accept: MockMediaAccept, clip?: MockClipImport): string | null {
     if (this.active() >= MOCK_MAX_PENDING_IMPORTS) return null;
     const job: ImportJob = {
       jobId: this.#deps.nextId("job"),
@@ -169,6 +183,10 @@ export class MockOwnMedia {
       error: undefined,
       cancelRequested: false,
       cancelTimers: [],
+      origin: clip?.origin,
+      stillWanted: clip?.stillWanted,
+      onEnd: clip?.onEnd,
+      ended: false,
     };
     // As the engine: imports run one at a time, and one that finds the turn taken waits in its queue, announced queued.
     if (this.active() > 0) job.status = "queued";
@@ -184,7 +202,19 @@ export class MockOwnMedia {
   }
 
   #announce(job: ImportJob): void {
-    this.#event("job.progress", { kind: "import", jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: null, done: 0, total: job.total, ...(job.status === "queued" ? { queued: true } : {}) });
+    this.#event("job.progress", { ...this.#refOf(job), done: 0, total: job.total, ...(job.status === "queued" ? { queued: true } : {}) });
+  }
+
+  /** The job's identity as every event of it names it: the clip's copy adds its origin. */
+  #refOf(job: ImportJob) {
+    return { kind: "import" as const, jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: null, ...(job.origin === undefined ? {} : { origin: job.origin }) };
+  }
+
+  /** The job has ended, whichever way: whoever holds something for it lets go now (once). */
+  #ended(job: ImportJob): void {
+    if (job.ended) return;
+    job.ended = true;
+    job.onEnd?.();
   }
 
   #startRunning(job: ImportJob): void {
@@ -232,7 +262,7 @@ export class MockOwnMedia {
   /** The copy is over: it is announced whole, the prepare stage begins at zero of its own total, and its steps follow, each a step of the clock apart. */
   #prepare(job: ImportJob, prepare: MockMediaPrepare): void {
     if (job.status !== "running" || !this.#jobs.includes(job)) return;
-    const ref = { kind: "import" as const, jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: null };
+    const ref = this.#refOf(job);
     if (job.cancelRequested) {
       this.#end(job);
       return;
@@ -269,10 +299,11 @@ export class MockOwnMedia {
 
   #end(job: ImportJob): void {
     if (job.status !== "running" || !this.#jobs.includes(job)) return;
-    const ref = { kind: "import" as const, jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: null };
+    const ref = this.#refOf(job);
     if (job.cancelRequested) {
       job.status = "cancelled";
       this.#event("job.cancelled", ref);
+      this.#ended(job);
       this.#promote();
       return;
     }
@@ -283,10 +314,22 @@ export class MockOwnMedia {
     }
     if (job.accept.failWith !== undefined) {
       // The copy is done and the importer turns the file away: the job fails with its reason, nothing is stored, the next job takes its turn.
-      const error: EngineError = { code: "MEDIA_UNSUPPORTED", mediaReason: job.accept.failWith, detail: `the file was refused: ${job.accept.failWith}` };
+      // A clip's copy is told the clip way (the contract): only a full disk keeps its reason, every other outcome of the importer is one INTERNAL.
+      const reason = job.accept.failWith;
+      const error: EngineError =
+        job.origin === undefined || reason === "no-space" ? { code: "MEDIA_UNSUPPORTED", mediaReason: reason, detail: `the file was refused: ${reason}` } : { code: "INTERNAL", detail: `the file was refused: ${reason}` };
       job.status = "failed";
       job.error = error;
       this.#event("job.failed", { ...ref, error });
+      this.#ended(job);
+      this.#promote();
+      return;
+    }
+    // The last look before the record (5b.2, the import-delete race): a copy nobody wants any more is never recorded, and the job ends cancelled.
+    if (job.stillWanted !== undefined && !job.stillWanted()) {
+      job.status = "cancelled";
+      this.#event("job.cancelled", ref);
+      this.#ended(job);
       this.#promote();
       return;
     }
@@ -298,6 +341,7 @@ export class MockOwnMedia {
       createdAt: this.#deps.nowIso(),
       ...DEFAULT_FACTS[job.mediaKind],
       ...job.accept.facts,
+      ...(job.origin === undefined ? {} : { origin: job.origin }),
     };
     this.#records.push(summary);
     if (job.accept.face === true) this.#faces.add(summary.mediaId);
@@ -309,6 +353,7 @@ export class MockOwnMedia {
     job.mediaId = summary.mediaId;
     job.result = { kind: "import", mediaId: summary.mediaId, media: summary };
     this.#event("job.done", { jobId: job.jobId, result: job.result });
+    this.#ended(job);
     this.#promote();
   }
 
@@ -323,7 +368,8 @@ export class MockOwnMedia {
         this.#deps.scheduler.schedule(CANCEL_DELAY_MS, () => {
           if (job.status !== "queued" || !this.#jobs.includes(job)) return;
           job.status = "cancelled";
-          this.#event("job.cancelled", { kind: "import", jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: null });
+          this.#event("job.cancelled", this.#refOf(job));
+          this.#ended(job);
         }),
       );
       return true;
@@ -459,11 +505,33 @@ export class MockOwnMedia {
     return true;
   }
 
+  // ---------- the montage copies of clips (5b.2, S5.WA3) ----------
+
+  /** Every live copy of an avatar's clip (normally one), oldest first. */
+  copiesOfClip(avatarId: string, clipId: string): MediaSummary[] {
+    return this.#records.filter((r) => r.origin?.avatarId === avatarId && r.origin.clipId === clipId);
+  }
+
+  /** The live copy of an avatar's clip, or undefined. */
+  copyOfClip(avatarId: string, clipId: string): MediaSummary | undefined {
+    return this.copiesOfClip(avatarId, clipId)[0];
+  }
+
+  /** Every copy of an avatar's clips. */
+  copiesOfAvatar(avatarId: string): MediaSummary[] {
+    return this.#records.filter((r) => r.origin?.avatarId === avatarId);
+  }
+
+  /** Where a media comes from, when it is a clip's copy. */
+  originOf(mediaId: string): MediaOrigin | undefined {
+    return this.#records.find((r) => r.mediaId === mediaId)?.origin;
+  }
+
   /** The import jobs as a snapshot lists them. */
   jobStates(): JobState[] {
     return this.#jobs.map((job): JobState => {
       const staged = job.stage === "prepare" ? { stage: "prepare" as const, total: job.units, ...(job.judged === undefined ? {} : { prepare: job.judged }) } : { total: job.total };
-      const common = { kind: "import" as const, jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: job.mediaId, done: job.done, ...staged };
+      const common = { kind: "import" as const, jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: job.mediaId, ...(job.origin === undefined ? {} : { origin: job.origin }), done: job.done, ...staged };
       if (job.status === "done" && job.result !== undefined) return { ...common, status: "done", result: job.result };
       if (job.status === "failed" && job.error !== undefined) return { ...common, status: "failed", error: job.error };
       return { ...common, status: job.status === "cancelled" ? "cancelled" : job.status === "queued" ? "queued" : "running" };
@@ -472,7 +540,10 @@ export class MockOwnMedia {
 
   /** The engine process restarts: the records are on disk and stay, the jobs were in memory and are gone with it, with whatever they were about to store. */
   restart(): void {
-    for (const job of this.#jobs) for (const cancel of job.cancelTimers) cancel();
+    for (const job of this.#jobs) {
+      for (const cancel of job.cancelTimers) cancel();
+      this.#ended(job);
+    }
     this.#jobs = [];
     this.#waiting = [];
   }
