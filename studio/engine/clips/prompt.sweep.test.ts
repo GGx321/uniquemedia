@@ -129,6 +129,14 @@ describe("every bank motion makes a valid clip prompt (§8 V5 sweep)", () => {
     }
   });
 
+  test("every prompt says it is one continuous shot with no cuts, after the look and before the adult line (C3 K1)", () => {
+    for (const s of SWEPT()) {
+      expect(s.prompt).toContain("One continuous shot, no cuts.");
+      expect(s.prompt.indexOf("One continuous shot, no cuts.")).toBeGreaterThan(s.prompt.indexOf("Vertical phone video"));
+      expect(s.prompt.indexOf("One continuous shot, no cuts.")).toBeLessThan(s.prompt.indexOf(ADULT_LINE));
+    }
+  });
+
   test("no mirror-hidden prompt sends the camera up to her face: the phone covers it (round 2)", () => {
     for (const s of SWEPT()) if (s.facts.capture === "mirror-hidden") expect(s.prompt).not.toMatch(/turns up to her face/);
   });
@@ -151,12 +159,12 @@ describe("every bank motion makes a valid clip prompt (§8 V5 sweep)", () => {
 });
 
 /**
- * Pinned by S5.V5: the longest prompt of the sweep, exactly at the cap: a pov-legs legs frame with legwear on its full camera line (one word more and it takes the short
- * line, as «stretches her legs along the bed» does). fixtures/longest.txt holds its text.
+ * Pinned by S5.V5, moved by the C3 polish (the no-cuts sentence added 4 words to every prompt): the longest prompt of the sweep, exactly at the cap: a pov-legs legs frame
+ * on its full camera line (one word more and it takes the short line, as the legwear frame now does). fixtures/longest.txt holds its text.
  */
 const LONGEST: { words: number; where: string; dialect: ClipDialect } = {
   words: 130,
-  where: "nightwear/an armchair in her bedroom/«stretches out her legs» on pov-legs with legwear (scene)",
+  where: "travel/a balcony over city rooftops/«stretches her legs on the chair» on pov-legs (scene)",
   dialect: "kling",
 };
 

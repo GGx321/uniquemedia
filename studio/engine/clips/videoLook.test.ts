@@ -182,7 +182,7 @@ describe("the sentences of a clip prompt", () => {
 
   test("the pacing, the look and the adult line, verbatim", () => {
     expect(SLOW_LINE).toBe("Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures.");
-    expect(LOOK_LINE).toBe("Vertical phone video, slight noise, everything in focus. No text on screen.");
+    expect(LOOK_LINE).toBe("Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. No text on screen.");
     expect(ADULT_LINE).toBe("She is an adult woman.");
   });
 

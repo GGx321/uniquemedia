@@ -157,8 +157,8 @@ export function legwearLineOf(legwear: string): string {
 /** The pacing, verbatim from the probes. */
 export const SLOW_LINE = "Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures.";
 
-/** The look, verbatim from the probes. */
-export const LOOK_LINE = "Vertical phone video, slight noise, everything in focus. No text on screen.";
+/** The look: the probes' own words, plus «One continuous shot, no cuts.» (C3 K1: a clip jumped mid-way). */
+export const LOOK_LINE = "Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. No text on screen.";
 
 /** I5.13: every clip prompt ends with it. */
 export const ADULT_LINE = "She is an adult woman.";
