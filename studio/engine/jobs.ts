@@ -1,5 +1,5 @@
 import { CLIP_JOB_STEPS, type ClipAttemptModel, type ClipJobMotion, type ClipPhase, type ClipRequest } from "../shared/engine/clips";
-import type { EngineError, FailedCandidateSlot, FailedPortraitSlot, ImportPrepare, ImportResult, JobProgress, JobState, MediaFileName, MediaKind, RenderResult } from "../shared/engine";
+import type { EngineError, FailedCandidateSlot, FailedPortraitSlot, ImportPrepare, ImportResult, JobProgress, JobState, MediaFileName, MediaKind, MediaOrigin, RenderResult } from "../shared/engine";
 import type { RunJobEnd } from "./runs/runJob";
 
 // The engine's jobs as `Snapshot.jobs` lists them. In memory only: avatar
@@ -85,6 +85,8 @@ function clipFactsOf(state: { photoId?: string; request?: ClipRequest; motion?: 
 export interface ImportJobRef {
   readonly mediaKind: MediaKind;
   readonly name: MediaFileName;
+  /** 5b.2 (S5.WA2): set on the import of a clip's montage copy only; it rides on the job's state, progress and end. */
+  readonly origin?: MediaOrigin | undefined;
 }
 
 /** A render's identity: the video it makes, its avatar and the draft it came from (null for a headless spec). */
@@ -262,7 +264,7 @@ export class JobRegistry {
    */
   startImport(jobId: string, ref: ImportJobRef, total: number, options: { queued?: boolean } = {}): AbortSignal {
     if (!Number.isSafeInteger(total) || total < 0) throw new Error("an import's size must be a count of bytes");
-    return this.#start({ kind: "import", jobId, mediaKind: ref.mediaKind, name: ref.name, mediaId: null, status: options.queued === true ? "queued" : "running", done: 0, total });
+    return this.#start({ kind: "import", jobId, mediaKind: ref.mediaKind, name: ref.name, mediaId: null, ...(ref.origin === undefined ? {} : { origin: ref.origin }), status: options.queued === true ? "queued" : "running", done: 0, total });
   }
 
   /** Moves a queued import to running (its turn came); false for any other job or state. */
@@ -277,8 +279,8 @@ export class JobRegistry {
   announceImport(jobId: string): JobProgress | null {
     const state = this.#jobs.get(jobId)?.state;
     if (state === undefined || state.kind !== "import" || (state.status !== "queued" && state.status !== "running")) return null;
-    const { mediaKind, name, total, done } = state;
-    return { kind: "import", jobId, mediaKind, name, mediaId: null, done, total, ...(state.status === "queued" ? { queued: true } : {}) };
+    const { mediaKind, name, total, done, origin } = state;
+    return { kind: "import", jobId, mediaKind, name, mediaId: null, ...(origin === undefined ? {} : { origin }), done, total, ...(state.status === "queued" ? { queued: true } : {}) };
   }
 
   /**
@@ -291,8 +293,8 @@ export class JobRegistry {
     if (entry === undefined || entry.state.kind !== "import" || entry.state.status !== "running" || entry.state.stage === "prepare") return null;
     if (!Number.isSafeInteger(total) || total < 1) return null;
     entry.state = { ...entry.state, stage: "prepare", done: 0, total, ...(prepare === undefined ? {} : { prepare }) };
-    const { mediaKind, name } = entry.state;
-    return { kind: "import", jobId, mediaKind, name, mediaId: null, done: 0, total, stage: "prepare", ...(prepare === undefined ? {} : { prepare }) };
+    const { mediaKind, name, origin } = entry.state;
+    return { kind: "import", jobId, mediaKind, name, mediaId: null, ...(origin === undefined ? {} : { origin }), done: 0, total, stage: "prepare", ...(prepare === undefined ? {} : { prepare }) };
   }
 
   /** How many imports are queued or running: what a library switch must wait for (the copy and the record write into the library, and a queued one holds its file open). */
@@ -395,13 +397,14 @@ export class JobRegistry {
         };
       }
       case "import": {
-        const { stage, prepare } = entry.state;
+        const { stage, prepare, origin } = entry.state;
         return {
           kind: "import",
           jobId,
           mediaKind: entry.state.mediaKind,
           name: entry.state.name,
           mediaId: null,
+          ...(origin === undefined ? {} : { origin }),
           done,
           total,
           ...(stage === undefined ? {} : { stage }),
@@ -508,9 +511,9 @@ export class JobRegistry {
   finishImport(jobId: string, end: ImportJobEnd): JobState | null {
     const entry = this.#jobs.get(jobId);
     if (entry === undefined || (entry.state.status !== "running" && entry.state.status !== "queued") || entry.state.kind !== "import") return null;
-    const { kind, mediaKind, name, done, total, stage, prepare } = entry.state;
+    const { kind, mediaKind, name, done, total, stage, prepare, origin } = entry.state;
     // The job ends in the stage it was in, with what its probe judged: a snapshot of a finished import says how it was prepared.
-    const common = { kind, jobId, mediaKind, name, total, ...(stage === undefined ? {} : { stage }), ...(prepare === undefined ? {} : { prepare }) };
+    const common = { kind, jobId, mediaKind, name, total, ...(origin === undefined ? {} : { origin }), ...(stage === undefined ? {} : { stage }), ...(prepare === undefined ? {} : { prepare }) };
     switch (end.status) {
       case "done":
         entry.state = { ...common, mediaId: end.result.mediaId, status: "done", done: total, result: end.result };

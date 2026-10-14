@@ -1,4 +1,4 @@
-import type { ImportPrepare, MediaKind, MediaPickKind, MediaUnsupportedReason, PickedFileIdentity } from "../../shared/engine";
+import type { ImportPrepare, MediaKind, MediaOrigin, MediaPickKind, MediaUnsupportedReason, PickedFileIdentity } from "../../shared/engine";
 import type { MediaFacts } from "../library/mediaRecords";
 import type { MediaFormat } from "./sniff";
 import type { StagedMedia, WorkFile } from "./staging";
@@ -92,6 +92,18 @@ export interface MediaImportCall {
   readonly name: string;
   /** The identity main saw when the dialog answered. */
   readonly expected: PickedFileIdentity;
+  /**
+   * 5b.2 (S5.WA2, I5.59): set only by `media.importClip`. This file is the clip's montage copy: the value goes to the job's ref, to the record and to the summary (`MediaSummary.origin`), and a failed
+   * import is told the clip way (a full disk is MEDIA_UNSUPPORTED `no-space`, every other outcome is INTERNAL). The importer's encode does not know it.
+   */
+  readonly origin?: MediaOrigin | undefined;
+  /**
+   * The last look before the record (S5.WA2, the import-delete race): asked after the importer has answered and before `MediaRecords.commit`. `false` cancels the job, which then removes the staged
+   * file and every work file and writes no record. A throw counts as `false`. Absent: always wanted.
+   */
+  readonly stillWanted?: (() => boolean | Promise<boolean>) | undefined;
+  /** Runs once when the job that this call started has ended (done, failed or cancelled), after its end was told. Never for a call that was refused. */
+  readonly onEnd?: (() => void) | undefined;
 }
 
 /** The answer to `media.import`: a job that has started (its copy has not been made yet), or the file's refusal. */

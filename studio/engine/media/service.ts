@@ -4,6 +4,7 @@ import {
   PROTOCOL_VERSION,
   type EngineError,
   type MediaKind,
+  type MediaOrigin,
   type MediaSummary,
   type MediaUnsupportedReason,
   type UnsequencedEvent,
@@ -249,16 +250,22 @@ export class MediaService {
       let jobSignal: AbortSignal;
       try {
         // A job that finds the turn taken is queued: it holds its file open and waits.
-        jobSignal = this.#deps.jobs.startImport(jobId, { mediaKind: opened.kind, name: call.name }, opened.bytes, { queued: this.#active });
+        jobSignal = this.#deps.jobs.startImport(jobId, { mediaKind: opened.kind, name: call.name, ...(call.origin === undefined ? {} : { origin: call.origin }) }, opened.bytes, { queued: this.#active });
       } catch {
         await opened.close();
         return { ok: false, reason: "failed", detail: "the import could not be registered" };
       }
       this.#announce(jobId);
       area.active++;
-      const run: Promise<void> = this.#run(jobId, area, opened, call.name, jobSignal).finally(() => {
+      const run: Promise<void> = this.#run(jobId, area, opened, call, jobSignal).finally(() => {
         area.active--;
         this.#running.delete(run);
+        // After the job told its end (`#run` finishes before it returns): whoever holds something for this import (a clip's lock) lets go now. A throw is the caller's bug, never the import's.
+        try {
+          call.onEnd?.();
+        } catch {
+          this.#deps.log(`import job ${jobId}: its end hook threw`);
+        }
       });
       this.#running.add(run);
       return { ok: true, jobId };
@@ -431,10 +438,11 @@ export class MediaService {
 
   // ---------- the job ----------
 
-  async #run(jobId: string, area: Area, opened: OpenedMedia, name: string, signal: AbortSignal): Promise<void> {
+  async #run(jobId: string, area: Area, opened: OpenedMedia, call: MediaImportCall, signal: AbortSignal): Promise<void> {
+    const { name } = call;
     let end: End;
     try {
-      end = await this.#execute(jobId, area, opened, name, signal);
+      end = await this.#execute(jobId, area, opened, call, signal);
     } catch (error) {
       // A bug or a disk failure that nothing below classified: only the fact and the code travel, never a message that may name a path.
       this.#deps.log(`import job ${jobId} failed unexpectedly (${errorCodeOf(error)})`);
@@ -444,11 +452,12 @@ export class MediaService {
       // The handle goes before the job is told to be over; the staged copy and the work files already went.
       await opened.close();
     } finally {
-      this.#finish(jobId, opened.kind, name, end);
+      this.#finish(jobId, opened.kind, name, end, call.origin);
     }
   }
 
-  async #execute(jobId: string, area: Area, opened: OpenedMedia, name: string, signal: AbortSignal): Promise<End> {
+  async #execute(jobId: string, area: Area, opened: OpenedMedia, call: MediaImportCall, signal: AbortSignal): Promise<End> {
+    const { name } = call;
     if (!(await this.#turn(signal))) return { status: "cancelled" };
     const works: WorkFile[] = [];
     // Sealed when the job ends: an importer that was dropped (it ignored the cancel) and asks for a file later gets none, so nothing is
@@ -559,8 +568,16 @@ export class MediaService {
         name,
         facts: outcome.facts,
         ...(outcome.waveform === undefined ? {} : { waveform: outcome.waveform }),
+        ...(call.origin === undefined ? {} : { origin: call.origin }),
         ...(outcome.output === undefined ? { sha256: staged.sha256 } : outcome.output.sha256 === undefined ? {} : { sha256: outcome.output.sha256 }),
       };
+      // The last look (S5.WA2, the import-delete race): a copy nobody wants any more is never recorded. The staged file and the work files go in the `finally` below.
+      if (call.stillWanted !== undefined) {
+        const wanted = await Promise.resolve()
+          .then(call.stillWanted)
+          .catch(() => false);
+        if (!wanted || signal.aborted) return { status: "cancelled" };
+      }
       let media: MediaSummary;
       for (let attempt = 1; ; attempt++) {
         try {
@@ -610,8 +627,8 @@ export class MediaService {
     };
   }
 
-  #finish(jobId: string, mediaKind: MediaKind, name: string, end: End): void {
-    const ref = { kind: "import" as const, jobId, mediaKind, name, mediaId: null };
+  #finish(jobId: string, mediaKind: MediaKind, name: string, end: End, origin?: MediaOrigin): void {
+    const ref = { kind: "import" as const, jobId, mediaKind, name, mediaId: null, ...(origin === undefined ? {} : { origin }) };
     let told: boolean;
     switch (end.status) {
       case "done": {
@@ -621,7 +638,9 @@ export class MediaService {
         break;
       }
       case "failed": {
-        const error: EngineError = { code: "MEDIA_UNSUPPORTED", mediaReason: end.reason, detail: end.detail };
+        // A clip's copy is told the clip way (the contract, mockup 57c): only a full disk keeps its reason; every other importer outcome is INTERNAL.
+        const error: EngineError =
+          origin === undefined || end.reason === "no-space" ? { code: "MEDIA_UNSUPPORTED", mediaReason: end.reason, detail: end.detail } : { code: "INTERNAL", detail: end.detail };
         if (this.#deps.jobs.finishImport(jobId, { status: "failed", error }) === null) return;
         told = this.#event("job.failed", { ...ref, error });
         break;

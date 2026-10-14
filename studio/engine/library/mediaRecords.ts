@@ -4,7 +4,7 @@ import type { BigIntStats } from "node:fs";
 import { link, lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
-import { Id, MAX_LISTED_MEDIA, MediaFileName, MediaKind, MediaSummary } from "../../shared/engine";
+import { Id, MAX_LISTED_MEDIA, MediaFileName, MediaKind, MediaOrigin, MediaSummary } from "../../shared/engine";
 import type { MediaFormat } from "../media/sniff";
 import { MAX_ENVELOPE_STEPS } from "../music/trackRecord";
 import { isNoSpaceError } from "../freeBytes";
@@ -87,6 +87,8 @@ const RecordShape = z.looseObject({
   hdrToSdr: z.boolean(),
   loopFrames: z.number().int().positive().max(300).nullable(),
   delayFrames: z.array(z.number().int().positive().max(300)).min(1).max(300).nullable(),
+  /** 5b.2 (additive, S5.WA2): the clip this video is the montage copy of. Strict when present: a value this build cannot read makes the record unreadable, never a copy that looks like an own video. */
+  origin: MediaOrigin.optional(),
 });
 type RecordShape = z.infer<typeof RecordShape>;
 
@@ -167,6 +169,8 @@ export interface MediaCommitInput {
   readonly sha256?: string | undefined;
   /** A track's waveform (3f.4): one value per 50 ms, each an integer 0 to 1000. Only an audio record has one; `waveformOf` reads it back. */
   readonly waveform?: readonly number[] | undefined;
+  /** 5b.2 (S5.WA2): the clip this video is the montage copy of; written into the record and told in its summary. Only a video has one. */
+  readonly origin?: MediaOrigin | undefined;
 }
 
 export type MediaCommitFailure = "invalid" | "unsafe" | "exists" | "cancelled" | "disk" | "no-space";
@@ -527,6 +531,7 @@ export class MediaRecords {
       hdrToSdr: record.hdrToSdr,
       loopFrames: record.loopFrames,
       delayFrames: record.delayFrames,
+      ...(record.origin === undefined ? {} : { origin: record.origin }),
     };
   }
 
@@ -780,6 +785,7 @@ export class MediaRecords {
       hdrToSdr: input.facts.hdrToSdr,
       loopFrames: input.facts.loopFrames,
       delayFrames: input.facts.delayFrames === null ? null : [...input.facts.delayFrames],
+      ...(input.origin === undefined ? {} : { origin: input.origin }),
     };
     if (!MediaSummary.safeParse(candidate).success) throw new MediaCommitError("invalid", "the file's facts do not fit its kind");
     if (!FORMATS_OF_KIND[input.kind].includes(input.format)) throw new MediaCommitError("invalid", `a ${input.kind} is not stored as ${input.format}`);
@@ -844,6 +850,7 @@ export class MediaRecords {
         loopFrames: input.facts.loopFrames,
         delayFrames: candidate.delayFrames,
         ...(input.waveform === undefined ? {} : { waveform: [...input.waveform] }),
+        ...(input.origin === undefined ? {} : { origin: input.origin }),
       };
       const hook = this.#options.hooks?.beforeRecordRename;
       await writeJsonAtomic(recordPath, record, hook === undefined ? {} : { beforeRename: hook });
