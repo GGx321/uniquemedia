@@ -66,7 +66,7 @@ export interface ClipRunDeps {
   readonly budget: Pick<Budget, "tryReserve" | "settle" | "abandon" | "release" | "ledger">;
   readonly client: Pick<OpenRouterClient, "submitVideo" | "pollVideo" | "fetchGeneration" | "fetchCredits">;
   readonly journal: Pick<ClipJournal, "requested" | "submitted" | "ended">;
-  readonly holds: Pick<ClipHolds, "hold" | "release" | "entries">;
+  readonly holds: Pick<ClipHolds, "hold" | "release" | "entries" | "markCompleted" | "isCompleted">;
   readonly timings: ClipTimings;
   /** Epoch ms. */
   readonly now: () => number;
@@ -376,8 +376,10 @@ class Attempt {
     // The net-usage baseline: read BEFORE the POST, so a charge that shows up before the terminal status (probe P-V: ≈ 38 s after the POST) is part of the comparison, not of the baseline.
     this.mark = deps.budget.ledger.lines.length;
     // Read PROOF_READ_TRIES times: one /credits blip before the POST must not cost the clip its Grok (a clip without a baseline can never prove a refusal free).
+    const aloneBefore = this.moneyIsAlone();
     this.baseline = await this.readUsage(PROOF_READ_TRIES);
-    this.baselineAlone = this.moneyIsAlone();
+    // Alone before the read AND after it: a hold or a reserve that was there for part of the read is foreign money that could move.
+    this.baselineAlone = aloneBefore && this.moneyIsAlone();
     if (ctx.signal.aborted) throw new Stopped();
 
     this.sent = true;
@@ -497,6 +499,8 @@ class Attempt {
       at: iso(this.deps.now()),
     });
     this.record("completed", source, providerCost ?? undefined);
+    // The job completed and its cost is settled: its hold may sit beside another attempt's net-usage check (S5.VR).
+    this.deps.holds.markCompleted(this.attemptId);
     return { kind: "completed", attemptId: this.attemptId, providerJobId: this.providerJobId ?? "", providerCostMicros: providerCost, costSource: source, aboveWorst: halt };
   }
 
@@ -581,9 +585,10 @@ class Attempt {
   }
 
   /**
-   * No foreign money can still MOVE on `/credits` during this attempt's window (VR item 1). A foreign attempt blocks the check when it has an open reserve, or a live hold whose close is not exact (a settle
-   * at worst, an estimate: an abandoned uncertain submit, an unreadable cost). A live hold of an attempt settled EXACTLY (a cost read from `usage` or `/generation`, or 0 proven free) does not: its bill is
-   * known, and its `terminal + 2 min` hold exists only to keep the reconcile away. A refund of a foreign charge would cancel this attempt's own charge in the account-wide counter.
+   * No foreign money can still MOVE on `/credits` during this attempt's window (VR item 1). A foreign attempt blocks the check when it has an open reserve, or a live hold that is not the hold of a COMPLETED
+   * attempt settled exactly (a delivered video billed by a cost the provider gave: its bill is known and cannot be refunded). Every other live hold blocks: an abandoned submit, an estimate, and also an exactly
+   * settled REFUSAL, whose temporary charge could be refunded inside this window and mask this attempt's own (a proven-free refusal's hold ends at its close anyway). A refund of a foreign charge would cancel
+   * this attempt's own charge in the account-wide counter.
    */
   private moneyIsAlone(): boolean {
     const { deps, attemptId } = this;
@@ -593,8 +598,8 @@ class Attempt {
     for (const [heldId, untilMs] of deps.holds.entries()) {
       if (heldId === attemptId || untilMs <= nowMs) continue;
       const close = ledger.closeOf(heldId);
-      // No close line: the hold names money that was never settled. A release means nothing was sent. A settle is exact unless it is an estimate.
-      if (close === undefined || (close.type === "settle" && close.estimated)) return false;
+      const exactAndCompleted = close?.type === "settle" && !close.estimated && deps.holds.isCompleted(heldId);
+      if (!exactAndCompleted) return false;
     }
     return true;
   }

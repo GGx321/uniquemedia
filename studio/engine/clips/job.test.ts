@@ -126,7 +126,7 @@ function world(script: Script = {}): World {
     attempt: {
       budget: {} as ClipRunDeps["budget"],
       client: {} as ClipRunDeps["client"],
-      holds: { hold: () => {}, release: () => {}, entries: () => new Map() },
+      holds: { hold: () => {}, release: () => {}, entries: () => new Map(), markCompleted: () => {}, isCompleted: () => false },
       timings: SHORT_CLIP_TIMINGS,
       now: () => Date.parse(AT),
       sleep: async () => {},

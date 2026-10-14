@@ -37,6 +37,10 @@ export interface ClipHolds {
   /** Ends an attempt's hold at once (an attempt that provably never reached the provider). */
   release(attemptId: string): void;
   untilOf(attemptId: string): number | undefined;
+  /** Marks a HELD attempt as completed: a delivered video, settled by a cost the provider gave (S5.VR). The mark goes with the hold. */
+  markCompleted(attemptId: string): void;
+  /** Whether the attempt is held and was marked completed. Only such a hold may sit beside another attempt's net-usage check. */
+  isCompleted(attemptId: string): boolean;
   /** The latest `until` of all the entries, or null when nothing is held. */
   latestUntil(): number | null;
   /** How long the reconcile has to wait now: the latest `until` minus now, or 0. */
@@ -49,7 +53,7 @@ export interface ClipHolds {
 
 export function createClipHolds(deps: ClipHoldsDeps): ClipHolds {
   const timers = deps.timers ?? realTimers;
-  const held = new Map<string, { until: number; timer: unknown }>();
+  const held = new Map<string, { until: number; timer: unknown; completed: boolean }>();
   let closed = false;
 
   function drop(attemptId: string): boolean {
@@ -70,7 +74,7 @@ export function createClipHolds(deps: ClipHoldsDeps): ClipHolds {
       }
       if (held.get(attemptId)?.until === untilMs) return;
       drop(attemptId);
-      const entry: { until: number; timer: unknown } = { until: untilMs, timer: null };
+      const entry: { until: number; timer: unknown; completed: boolean } = { until: untilMs, timer: null, completed: false };
       entry.timer = timers.set(() => {
         // A timer that was replaced or cleared must not remove its successor.
         if (held.get(attemptId) !== entry) return;
@@ -85,6 +89,11 @@ export function createClipHolds(deps: ClipHoldsDeps): ClipHolds {
       if (drop(attemptId)) deps.onChange();
     },
     untilOf: (attemptId) => held.get(attemptId)?.until,
+    markCompleted(attemptId) {
+      const entry = held.get(attemptId);
+      if (entry !== undefined) entry.completed = true;
+    },
+    isCompleted: (attemptId) => held.get(attemptId)?.completed === true,
     latestUntil() {
       let latest: number | null = null;
       for (const { until } of held.values()) latest = latest === null ? until : Math.max(latest, until);

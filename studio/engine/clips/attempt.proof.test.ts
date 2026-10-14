@@ -229,23 +229,59 @@ describe("the net-usage check counts only while no other money is open (VR item 
   /** A previous attempt of another job, settled in the ledger (exactly, or as an estimate) and still held for the reconcile. */
   const settledAndHeld = async (attemptId: string, bill: { costMicros: number; estimated: boolean }, heldUntil: number): Promise<void> => {
     const jobId = attemptId.split(":")[0] ?? attemptId;
-    const reserved = await rig.budget.tryReserve({ attemptId, jobId, scope: { runId: jobId }, model: "x-ai/grok-imagine-image", worstMicros: 90_000 });
+    const reserved = await rig.budget.tryReserve({ attemptId, jobId, scope: { runId: jobId }, model: "x-ai/grok-imagine-image", worstMicros: 500_000 });
     if (!reserved.ok) throw new Error(`the reserve was refused: ${reserved.reason}`);
     await rig.budget.settle(reserved.handle, bill);
     rig.holds.hold(attemptId, heldUntil);
   };
 
-  test("a previous attempt settled EXACTLY whose `terminal + 2 min` hold is still live does not spoil the check: proven free, Grok runs", async () => {
+  test("a previous attempt that COMPLETED and was settled exactly, its `terminal + 2 min` hold still live, does not spoil the check: proven free, Grok runs", async () => {
     await make({ mode: "auto", kling: refused, grok: grokOk });
     await settledAndHeld("run-0007:img#1", { costMicros: 90_000, estimated: false }, T0 + 2 * MINUTE);
+    rig.holds.markCompleted("run-0007:img#1");
     expect(completed(await rig.run()).model).toBe("grok");
     expect(rig.settles(KLING)).toMatchObject([{ costMicros: 0, estimated: false }]);
   });
 
-  test("a previous refusal proven free (settled 0) with its hold live does not spoil the check", async () => {
+  test("a previous REFUSAL settled exactly (billed, refused-paid) with its hold live leaves the check uncounted: its temporary charge could be refunded inside the window", async () => {
+    await make({ mode: "auto", kling: refused, grok: grokOk });
+    await settledAndHeld("run-0007:img#1", { costMicros: 420_000, estimated: false }, T0 + 2 * MINUTE);
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", cost: "worst", unknownWhy: "net-uncounted" });
+    expect(rig.posts("grok")).toHaveLength(0);
+  });
+
+  test("a completed attempt settled as an ESTIMATE is not exempt either, even marked completed", async () => {
     await make({ mode: "offer", kling: refused });
-    await settledAndHeld("run-0007:img#1", { costMicros: 0, estimated: false }, T0 + 2 * MINUTE);
-    expect(failed(await rig.run())).toMatchObject({ reason: "refused-free", cost: "free", grokOffer: true });
+    await settledAndHeld("run-0007:img#1", { costMicros: 90_000, estimated: true }, T0 + 2 * MINUTE);
+    rig.holds.markCompleted("run-0007:img#1");
+    expect(failed(await rig.run())).toMatchObject({ unknownWhy: "net-uncounted" });
+  });
+
+  test("a clip that completes marks its own hold completed; a refusal that was billed does not", async () => {
+    await make({ mode: "offer" });
+    completed(await rig.run());
+    expect(rig.holds.isCompleted(KLING)).toBe(true);
+    await rig.dispose();
+    await make({ mode: "offer", kling: { ...refused, generation: genFromAfter(15 * SECOND, KLING_BILLED) } });
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-paid" });
+    expect(rig.holds.isCompleted(KLING)).toBe(false);
+  });
+
+  test("the check is also uncounted when the foreign hold is there BEFORE the baseline read and gone after it (VR LOW 3)", async () => {
+    let first = true;
+    await make({
+      mode: "offer",
+      kling: refused,
+      usage: () => {
+        if (first) {
+          first = false;
+          rig.holds.release(FOREIGN);
+        }
+        return 5_000_000;
+      },
+    });
+    rig.holds.hold(FOREIGN, T0 + 20 * MINUTE);
+    expect(failed(await rig.run())).toMatchObject({ reason: "refused-unknown", unknownWhy: "net-uncounted" });
   });
 
   test("a previous attempt settled as an ESTIMATE (an unreadable cost) with its hold live leaves the check uncounted", async () => {

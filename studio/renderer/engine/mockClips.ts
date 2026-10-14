@@ -507,6 +507,8 @@ export class MockClips {
   readonly #holds = new Map<string, { until: number; cancel: () => void }>();
   /** Attempts whose net-usage baseline was read while another reserve or hold was live (engine/clips/attempt.ts `baselineAlone`). */
   readonly #crowdedAtBaseline = new Set<string>();
+  /** Held attempts that COMPLETED (engine/clips/holds.ts `markCompleted`): the mark goes with the hold. */
+  readonly #completedHolds = new Set<string>();
   readonly #exportStates = new Map<string, FileState>();
   /** The folder-relative paths clip exports made, in order. */
   readonly #exported: string[] = [];
@@ -727,6 +729,7 @@ export class MockClips {
 
   #hold(attemptId: string, durationMs: number): void {
     this.#holds.get(attemptId)?.cancel();
+    this.#completedHolds.delete(attemptId);
     const host = this.#host;
     const until = host.clockMs() + durationMs;
     const cancel = host.scheduler.schedule(durationMs, () => {
@@ -734,6 +737,7 @@ export class MockClips {
       if (entry === undefined || entry.until !== until) return;
       host.setClockAtLeast(until);
       this.#holds.delete(attemptId);
+      this.#completedHolds.delete(attemptId);
       host.emitMoney();
     });
     this.#holds.set(attemptId, { until, cancel });
@@ -742,7 +746,7 @@ export class MockClips {
 
   /**
    * Foreign money can still move (engine/clips/attempt.ts `moneyIsAlone`, negated): another attempt's reserve is open, or its hold is live and its close is not exact (no close, or a settle at worst).
-   * A live hold of an attempt settled exactly (a known cost, or 0 proven free) does not count.
+   * A live hold of a COMPLETED attempt settled exactly does not count (engine/clips/attempt.ts); any other live hold does.
    */
   #otherMoneyOpen(attemptId: string): boolean {
     if (this.#lines.some((l) => l.state === "open" && l.attemptId !== attemptId)) return true;
@@ -752,7 +756,8 @@ export class MockClips {
     for (const [heldId, hold] of this.#holds) {
       if (heldId === attemptId || hold.until <= now) continue;
       const line = this.#lines.find((l) => l.attemptId === heldId);
-      if (line === undefined || line.state === "open" || line.estimated) return true;
+      // Exempt only the hold of a COMPLETED attempt settled exactly; a refusal settled exactly (billed) could have its temporary charge refunded inside the window.
+      if (line === undefined || line.state === "open" || line.estimated || !this.#completedHolds.has(heldId)) return true;
     }
     return false;
   }
@@ -762,6 +767,7 @@ export class MockClips {
     if (entry === undefined) return;
     entry.cancel();
     this.#holds.delete(attemptId);
+    this.#completedHolds.delete(attemptId);
     this.#host.emitMoney();
   }
 
@@ -1120,6 +1126,7 @@ export class MockClips {
         this.#settle(line, uncosted ? line.worstMicros : billed, uncosted);
         ended("completed", uncosted ? "worst" : "usage", uncosted ? undefined : billed);
         this.#attemptsDone(job.clipId, { attemptId, model, providerJobId, outcome: "completed", ...(uncosted ? {} : { providerCostMicros: billed }), costSource: uncosted ? "worst" : "usage" });
+        this.#completedHolds.add(attemptId);
         this.#closeMoney(job);
         this.#deliver(run, model, scripted);
       };

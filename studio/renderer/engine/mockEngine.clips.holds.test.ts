@@ -228,6 +228,16 @@ describe("the net-usage check with other money open (VR item 1)", () => {
     expect(m.engine.peekClips().posts).toEqual(["kling", "kling", "grok"]);
   });
 
+  test("a previous refusal settled exactly but BILLED (refused-paid), its hold still live, leaves the proof uncounted: worst, no Grok", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextClip("refused-paid");
+    await runClip(m, { fallback: "none", acceptedWorstMicros: 504_000 });
+    expect(m.engine.peekClips().holds.size).toBe(1);
+    m.engine.scriptNextClip("refused-free");
+    await runClip(m);
+    expect(m.engine.peekClips().posts).toEqual(["kling", "kling"]);
+  });
+
   test("a previous clip whose cost was unreadable (settled at worst, an estimate) with its hold live leaves the proof uncounted: worst, no Grok", async () => {
     const m = makeClipMock();
     m.engine.scriptNextClip("ok-uncosted");

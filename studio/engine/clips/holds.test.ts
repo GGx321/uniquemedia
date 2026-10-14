@@ -52,6 +52,45 @@ function rig() {
   return { timers, holds, changes: () => changes };
 }
 
+// S5.VR: which held attempts COMPLETED (a delivered video, settled by a cost the provider gave). Only those may sit in the registry beside another attempt's net-usage check.
+describe("the completed mark of a hold", () => {
+  test("is false for an attempt nobody marked, and for one nobody holds", () => {
+    const { holds } = rig();
+    holds.hold("a#1", T0 + 2 * MIN);
+    expect(holds.isCompleted("a#1")).toBe(false);
+    expect(holds.isCompleted("b#1")).toBe(false);
+  });
+
+  test("is true once a held attempt is marked", () => {
+    const { holds } = rig();
+    holds.hold("a#1", T0 + 2 * MIN);
+    holds.markCompleted("a#1");
+    expect(holds.isCompleted("a#1")).toBe(true);
+  });
+
+  test("marks nothing for an attempt that is not held", () => {
+    const { holds } = rig();
+    holds.markCompleted("a#1");
+    expect(holds.isCompleted("a#1")).toBe(false);
+  });
+
+  test("goes with the hold: released, expired or replaced by another time", () => {
+    const { holds, timers } = rig();
+    holds.hold("a#1", T0 + 2 * MIN);
+    holds.markCompleted("a#1");
+    holds.release("a#1");
+    expect(holds.isCompleted("a#1")).toBe(false);
+    holds.hold("b#1", T0 + 2 * MIN);
+    holds.markCompleted("b#1");
+    timers.advanceTo(T0 + 3 * MIN);
+    expect(holds.isCompleted("b#1")).toBe(false);
+    holds.hold("c#1", T0 + 4 * MIN);
+    holds.markCompleted("c#1");
+    holds.hold("c#1", T0 + 5 * MIN);
+    expect(holds.isCompleted("c#1")).toBe(false);
+  });
+});
+
 describe("the rows of I5.48's table", () => {
   test("a ledger reserve with no submitted line is held 20 min from the reserve line's `at`", () => {
     expect(holdUntilForReserve(T0, T)).toBe(T0 + 20 * MIN);
