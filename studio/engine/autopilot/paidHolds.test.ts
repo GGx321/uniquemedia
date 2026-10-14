@@ -6,7 +6,7 @@ import { failureWords } from "./paidSteps";
 import type { RunJobEnd } from "../runs/runJob";
 import type { DrawSliceResult } from "../sceneSets/launchDraw";
 import type { LaunchSliceStart } from "./paidPort";
-import { A, ALL, B, cleanupRigs, composes, deferred, FakeTimers, idle, LAUNCH, PHOTO, RUN1, RUN2, rig, SET1, SET2, until, type Rig } from "./testing/paidRig";
+import { A, ALL, B, cleanupRigs, composes, deferred, FakeTimers, idle, LAUNCH, PHOTO, RUN1, RUN2, rig, SET1, SET2, type Rig } from "./testing/paidRig";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { stallNthFsync } from "../../testing/stallFsync";
 useNativeGlobals();
@@ -178,7 +178,7 @@ describe("§4.6: a slice run that ends failed", () => {
     // The run's slots stay open for good (its cap is used): the engine reports it finished once nothing can be funded.
     r.port.sliceStatuses = async () => new Map([[RUN1, statusAfter ? { finished: true as const, committedMicros: PHOTO * 10 } : { finished: false as const, openSlots: 10 }]]);
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
     expect(holdOf(r, launch.launchId)).toBeNull();
   });
 
@@ -212,8 +212,8 @@ describe("§4.6: a slice run that ends failed", () => {
     const view = await r.orchestrator.resume(launch.launchId, held.remainingMicros);
     expect(view.status).toBe("running");
     expect(view.remainingMicros).toBe(held.remainingMicros);
-    await until(() => run.starts() === 2, "the second start");
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    await r.when(() => run.starts() === 2, "the second start");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
     expect(holdOf(r, launch.launchId)).toBeNull();
   });
 
@@ -225,7 +225,7 @@ describe("§4.6: a slice run that ends failed", () => {
     await reachHold(r, launch.launchId, "internal");
     const held = (await r.orchestrator.get(launch.launchId)).launch;
     await r.orchestrator.resume(launch.launchId, held.remainingMicros);
-    await until(() => run.starts() === 2, "the second start");
+    await r.when(() => run.starts() === 2, "the second start");
     await reachHold(r, launch.launchId, "internal");
     await idle();
     expect(run.starts()).toBe(2);
@@ -375,10 +375,10 @@ describe("§4.6: the avatar's own refusals skip it and the others go on", () => 
       return { kind: "started", jobId: "job-run-0002", ended: Promise.resolve(doneEnd()) };
     };
     const launch = await r.start({ avatarIds: [A, B], sceneReview: false });
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "skipped", "the skip");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "skipped", "the skip");
     expect(r.fileOf(launch.launchId).avatars[0]?.skipped).toEqual({ reason });
     expect(holdOf(r, launch.launchId)).toBeNull();
-    await until(() => started.includes(RUN2), "the other avatar's slice");
+    await r.when(() => started.includes(RUN2), "the other avatar's slice");
     expect((await logOf(r, launch.launchId)).find((l) => l.kind === "skipped")).toMatchObject({ avatarId: A, reason });
   });
 });
@@ -404,16 +404,16 @@ describe("§4.6: PRICE_UNAVAILABLE retries after 5, 15 and 60 minutes, then hold
     await idle();
     expect(reads).toBe(1);
     timers.advance(1);
-    await until(() => holdOf(r, launch.launchId)?.reason === "price-unavailable" && reads === 2, "the second try");
-    await until(() => (holdOf(r, launch.launchId)?.detail as { attempt?: number } | undefined)?.attempt === 2, "the second hold");
+    await r.when(() => holdOf(r, launch.launchId)?.reason === "price-unavailable" && reads === 2, "the second try");
+    await r.when(() => (holdOf(r, launch.launchId)?.detail as { attempt?: number } | undefined)?.attempt === 2, "the second hold");
     expect(holdOf(r, launch.launchId)?.detail).toEqual({ attempt: 2, nextAt: timers.iso(15 * MIN) });
 
     timers.advance(15 * MIN);
-    await until(() => reads === 3 && (holdOf(r, launch.launchId)?.detail as { attempt?: number } | undefined)?.attempt === 3, "the third hold");
+    await r.when(() => reads === 3 && (holdOf(r, launch.launchId)?.detail as { attempt?: number } | undefined)?.attempt === 3, "the third hold");
     expect(holdOf(r, launch.launchId)?.detail).toEqual({ attempt: 3, nextAt: timers.iso(60 * MIN) });
 
     timers.advance(60 * MIN);
-    await until(() => reads === 4 && (holdOf(r, launch.launchId)?.detail as { nextAt?: string | null } | undefined)?.nextAt === null, "the retries used up");
+    await r.when(() => reads === 4 && (holdOf(r, launch.launchId)?.detail as { nextAt?: string | null } | undefined)?.nextAt === null, "the retries used up");
     expect(holdOf(r, launch.launchId)?.detail).toEqual({ attempt: 3, nextAt: null });
     expect(timers.pending()).toBe(0);
     timers.advance(24 * 60 * MIN);
@@ -436,7 +436,7 @@ describe("§4.6: PRICE_UNAVAILABLE retries after 5, 15 and 60 minutes, then hold
     const launch = await r.start({ sceneReview: false });
     await reachHold(r, launch.launchId, "price-unavailable");
     timers.advance(5 * MIN);
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
     expect(holdOf(r, launch.launchId)).toBeNull();
   });
 });
@@ -516,10 +516,10 @@ describe("§4.6: a scene step that fails (compose and the launch's own «Доп�
     const launch = await r.start({ sceneReview: false });
     await reachHold(r, launch.launchId, "network");
     timers.advance(MIN);
-    await until(() => r.port.calls.filter((c) => c === "writeLaunchScenes").length === 1 && timers.pending() === 1, "the second drop and its wait");
+    await r.when(() => r.port.calls.filter((c) => c === "writeLaunchScenes").length === 1 && timers.pending() === 1, "the second drop and its wait");
     timers.advance(5 * MIN);
-    await until(() => r.port.calls.filter((c) => c === "writeLaunchScenes").length === 2, "the third write");
-    await until(() => holdOf(r, launch.launchId)?.reason === "network" && (holdOf(r, launch.launchId)?.detail as { nextAt: string | null }).nextAt === null, "the hold for a person");
+    await r.when(() => r.port.calls.filter((c) => c === "writeLaunchScenes").length === 2, "the third write");
+    await r.when(() => holdOf(r, launch.launchId)?.reason === "network" && (holdOf(r, launch.launchId)?.detail as { nextAt: string | null }).nextAt === null, "the hold for a person");
   });
 
   test("a compose that stopped on INTERNAL holds as «internal» with the job's detail, and «Продолжить» writes the scenes again", async () => {
@@ -547,8 +547,8 @@ describe("§4.6: a scene step that fails (compose and the launch's own «Доп�
     const held = (await r.orchestrator.get(launch.launchId)).launch;
     expect(held.resumeBlockedBy).toBeNull();
     await r.orchestrator.resume(launch.launchId, held.remainingMicros);
-    await until(() => r.port.calls.includes("writeLaunchScenes"), "the scenes written again");
-    await until(() => r.port.calls.includes("drawLaunchSlice"), "the pass to go on to the draw");
+    await r.when(() => r.port.calls.includes("writeLaunchScenes"), "the scenes written again");
+    await r.when(() => r.port.calls.includes("drawLaunchSlice"), "the pass to go on to the draw");
     expect(holdOf(r, launch.launchId)).toBeNull();
   });
 
@@ -623,8 +623,8 @@ describe("§4.6: a request that gets no answer continues by itself, twice, then 
     await idle();
     expect(run.starts()).toBe(1);
     timers.advance(1);
-    await until(() => run.starts() === 2, "the second start");
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    await r.when(() => run.starts() === 2, "the second start");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
     expect(holdOf(r, launch.launchId)).toBeNull();
     expect(timers.pending()).toBe(0);
   });
@@ -649,32 +649,32 @@ describe("§4.6: a request that gets no answer continues by itself, twice, then 
     const hold = await reachHold(r, launch.launchId, "network");
     expect(hold.detail).toMatchObject({ drops: 1, attempt: 1 });
     timers.advance(MIN);
-    await until(() => run.starts() === 2, "the second start");
+    await r.when(() => run.starts() === 2, "the second start");
   });
 
   test("the second drop of the same job continues after five minutes", async () => {
     const { r, timers, run, launch } = await dropping([failedEnd("NETWORK"), failedEnd("NETWORK"), "done"]);
     await reachHold(r, launch.launchId, "network");
     timers.advance(MIN);
-    await until(() => run.starts() === 2 && (holdOf(r, launch.launchId)?.detail as { drops?: number } | undefined)?.drops === 2 && timers.pending() === 1, "the second hold and its wait");
+    await r.when(() => run.starts() === 2 && (holdOf(r, launch.launchId)?.detail as { drops?: number } | undefined)?.drops === 2 && timers.pending() === 1, "the second hold and its wait");
     expect(holdOf(r, launch.launchId)?.detail).toEqual({ drops: 2, attempt: 2, nextAt: timers.iso(5 * MIN) });
     expect(r.fileOf(launch.launchId).autoContinues).toEqual({ [RUN1]: { drops: 2, continues: 2 } });
     timers.advance(5 * MIN - 1);
     await idle();
     expect(run.starts()).toBe(2);
     timers.advance(1);
-    await until(() => run.starts() === 3, "the third start");
+    await r.when(() => run.starts() === 3, "the third start");
   });
 
   test("the third drop holds as «network» for a person: no retry is armed, nothing more is sent, whatever the clock does", async () => {
     const { r, timers, run, launch } = await dropping([failedEnd("NETWORK")]);
     await reachHold(r, launch.launchId, "network");
     timers.advance(MIN);
-    await until(() => run.starts() === 2, "the second start");
-    await until(() => (holdOf(r, launch.launchId)?.detail as { drops?: number } | undefined)?.drops === 2 && timers.pending() === 1, "the second hold and its wait");
+    await r.when(() => run.starts() === 2, "the second start");
+    await r.when(() => (holdOf(r, launch.launchId)?.detail as { drops?: number } | undefined)?.drops === 2 && timers.pending() === 1, "the second hold and its wait");
     timers.advance(5 * MIN);
-    await until(() => run.starts() === 3, "the third start");
-    await until(() => (holdOf(r, launch.launchId)?.detail as { drops?: number } | undefined)?.drops === 3, "the third hold");
+    await r.when(() => run.starts() === 3, "the third start");
+    await r.when(() => (holdOf(r, launch.launchId)?.detail as { drops?: number } | undefined)?.drops === 3, "the third hold");
     expect(holdOf(r, launch.launchId)?.detail).toEqual({ drops: 3, attempt: 2, nextAt: null });
     expect(timers.pending()).toBe(0);
     timers.advance(24 * 60 * MIN);
@@ -698,10 +698,10 @@ describe("§4.6: a request that gets no answer continues by itself, twice, then 
     };
     scripted(r, [failedEnd("NETWORK"), "done"]);
     const launch = await r.start({ sceneReview: false });
-    await until(() => holdOf(r, launch.launchId)?.reason === "network" && timers.pending() === 1, "the compose drop and its wait");
+    await r.when(() => holdOf(r, launch.launchId)?.reason === "network" && timers.pending() === 1, "the compose drop and its wait");
     r.port.sets.delete(SET1);
     timers.advance(MIN);
-    await until(() => r.fileOf(launch.launchId).autoContinues?.[RUN1] !== undefined, "the slice drop");
+    await r.when(() => r.fileOf(launch.launchId).autoContinues?.[RUN1] !== undefined, "the slice drop");
     expect(r.fileOf(launch.launchId).autoContinues).toEqual({ [`${SET1}:scenes`]: { drops: 1, continues: 1 }, [RUN1]: { drops: 1, continues: 1 } });
   });
 
@@ -743,7 +743,7 @@ describe("§4.6: a request that gets no answer continues by itself, twice, then 
     await reachHold(r, launch.launchId, "network");
     const view = await r.orchestrator.resume(launch.launchId, launch.remainingMicros);
     expect(view.status).toBe("running");
-    await until(() => run.starts() === 2, "the second start");
+    await r.when(() => run.starts() === 2, "the second start");
     expect(timers.pending()).toBe(0);
     timers.advance(10 * MIN);
     await idle();
@@ -755,7 +755,7 @@ describe("§4.6: a request that gets no answer continues by itself, twice, then 
     await reachHold(r, launch.launchId, "network");
     r.port.admit = false;
     timers.advance(MIN);
-    await until(() => (holdOf(r, launch.launchId)?.detail as { nextAt?: string | null } | undefined)?.nextAt === null, "the hold with no retry");
+    await r.when(() => (holdOf(r, launch.launchId)?.detail as { nextAt?: string | null } | undefined)?.nextAt === null, "the hold with no retry");
     expect(run.starts()).toBe(1);
     expect(timers.pending()).toBe(0);
   });
@@ -808,7 +808,7 @@ describe("§4.6: the failure-rate guard (a slice of four photos or more, half of
       return { kind: "started", jobId: `job-${runId}`, ended: Promise.resolve(doneEnd()) };
     };
     const launch = await r.start({ avatarIds: [A, B], sceneReview: false });
-    await until(() => r.fileOf(launch.launchId).avatars.every((a) => a.phase === "montage" || a.phase === "skipped"), "both avatars at rest");
+    await r.when(() => r.fileOf(launch.launchId).avatars.every((a) => a.phase === "montage" || a.phase === "skipped"), "both avatars at rest");
     return { r, launch, draws, started };
   }
 
@@ -839,7 +839,7 @@ describe("§4.6: the failure-rate guard (a slice of four photos or more, half of
     r.port.outcomes.set(RUN1, { slots: 10, checkFailures: 9 });
     scripted(r, ["done"]);
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
     expect(r.fileOf(launch.launchId).avatars[0]?.skipped).toBeNull();
   });
 
@@ -863,14 +863,14 @@ describe("§4.6: the failure-rate guard (a slice of four photos or more, half of
       return { kind: "started", jobId: "job-run-0001", ended: Promise.resolve(doneEnd()) };
     };
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.port.calls.includes("startLaunchSlice"), "the start");
+    await r.when(() => r.port.calls.includes("startLaunchSlice"), "the start");
     const pausing = r.orchestrator.pause(launch.launchId);
     gate.resolve();
     await pausing;
     await r.orchestrator.settled();
     expect(draws).toHaveLength(1);
     await r.orchestrator.resume(launch.launchId, launch.remainingMicros);
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "skipped", "the skip");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "skipped", "the skip");
     expect(draws).toHaveLength(1);
   });
 });
@@ -893,7 +893,7 @@ describe("host.power (plan §3.8): sleep stops new attempts, waking puts right w
       return { kind: "started", jobId: "job-run-0002", ended: Promise.resolve(doneEnd()) };
     };
     const launch = await r.start({ sceneReview: false });
-    await until(() => starts === 1, "the slice in flight");
+    await r.when(() => starts === 1, "the slice in flight");
     return { r, launch, ended, starts: () => starts };
   }
 
@@ -915,9 +915,9 @@ describe("host.power (plan §3.8): sleep stops new attempts, waking puts right w
     ended.resolve({ status: "cancelled" });
     await idle();
     await r.orchestrator.power("resume");
-    await until(() => starts() === 2, "the second start");
+    await r.when(() => starts() === 2, "the second start");
     expect(r.orchestrator.mayPay(launch.launchId)).toBe(true);
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
   });
 
   test("S4.10 M-1: the Mac wakes BEFORE the soft-stopped slice ends: its cancelled end is the sleep's, no hold, and the slice is started again", async () => {
@@ -926,9 +926,9 @@ describe("host.power (plan §3.8): sleep stops new attempts, waking puts right w
     await r.orchestrator.power("resume");
     // The job ends cancelled only now, after the wake-up: the order the gate-before-resume test misses.
     ended.resolve({ status: "cancelled" });
-    await until(() => starts() === 2, "the slice started again");
+    await r.when(() => starts() === 2, "the slice started again");
     expect(holdOf(r, launch.launchId)).toBeNull();
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
     expect(holdOf(r, launch.launchId)).toBeNull();
   });
 
@@ -961,12 +961,12 @@ describe("host.power (plan §3.8): sleep stops new attempts, waking puts right w
     r.port.approve = async () => r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
     r.port.draw = async () => ({ kind: "none-left" });
     const launch = await r.start({ sceneReview: false });
-    await until(() => live, "the compose in flight");
+    await r.when(() => live, "the compose in flight");
     await r.orchestrator.power("suspend");
     await r.orchestrator.power("resume");
     idleGate.resolve();
-    await until(() => r.port.calls.includes("writeLaunchScenes"), "the scenes written again");
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    await r.when(() => r.port.calls.includes("writeLaunchScenes"), "the scenes written again");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
     expect(holdOf(r, launch.launchId)).toBeNull();
   });
 
@@ -981,7 +981,7 @@ describe("host.power (plan §3.8): sleep stops new attempts, waking puts right w
       return { kind: "started", jobId: "job-run-0001", ended: starts === 1 ? ended.promise : Promise.resolve(failedEnd("NETWORK")) };
     };
     const launch = await r.start({ sceneReview: false });
-    await until(() => starts === 1, "the slice in flight");
+    await r.when(() => starts === 1, "the slice in flight");
     await r.orchestrator.power("suspend");
     ended.resolve({ status: "cancelled" });
     await idle();
@@ -1003,8 +1003,8 @@ describe("host.power (plan §3.8): sleep stops new attempts, waking puts right w
     await idle();
     expect(run.starts()).toBe(1);
     await r.orchestrator.power("resume");
-    await until(() => run.starts() === 2, "the second start");
-    await until(() => holdOf(r, launch.launchId) === null, "the hold cleared");
+    await r.when(() => run.starts() === 2, "the second start");
+    await r.when(() => holdOf(r, launch.launchId) === null, "the hold cleared");
   });
 
   test("a compose whose start has not returned when the Mac sleeps is stopped the moment it returns", async () => {
@@ -1014,12 +1014,12 @@ describe("host.power (plan §3.8): sleep stops new attempts, waking puts right w
     r.port.compose = async () => start.promise;
     r.port.softScenes = () => live;
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.port.calls.includes("composeLaunchSet"), "the compose call");
+    await r.when(() => r.port.calls.includes("composeLaunchSet"), "the compose call");
     await r.orchestrator.power("suspend");
     live = true;
     r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH });
     start.resolve({ sceneSetId: SET1, jobId: "job-compose-0001" });
-    await until(() => r.port.calls.filter((c) => c === "softStopScenes").length >= 1, "the soft stop");
+    await r.when(() => r.port.calls.filter((c) => c === "softStopScenes").length >= 1, "the soft stop");
     await idle();
     expect(r.port.calls).not.toContain("approveLaunchSet");
     expect(launch.status).toBe("running");
@@ -1048,6 +1048,6 @@ describe("host.power (plan §3.8): sleep stops new attempts, waking puts right w
     await r.orchestrator.power("suspend");
     expect(r.orchestrator.mayPay(launch.launchId)).toBe(false);
     await r.orchestrator.resume(launch.launchId, launch.remainingMicros);
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
   });
 });

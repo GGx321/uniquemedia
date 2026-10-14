@@ -7,7 +7,7 @@ import type { DrawSliceResult } from "../sceneSets/launchDraw";
 import type { LaunchFile } from "./launchFile";
 import { AUTOPILOT_DIR } from "./launchStore";
 import { NOT_PAYABLE_DETAIL, type LaunchComposePayload, type LaunchSliceStart } from "./paidPort";
-import { A, ALL, B, BIG, cleanupRigs, composes, deferred, FakePort, idle, LAUNCH, PHOTO, RUN1, RUN2, rig, SET1, SET2, T0, until, untilHeld, WRITER, type Rig } from "./testing/paidRig";
+import { A, ALL, B, BIG, cleanupRigs, composes, deferred, FakePort, idle, LAUNCH, PHOTO, RUN1, RUN2, rig, SET1, SET2, T0, untilHeld, WRITER, type Rig } from "./testing/paidRig";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -30,15 +30,15 @@ describe("soft stop while the step's own start has not returned (plan §18)", ()
     r.port.softScenes = () => live;
     r.port.idleSet = async () => (live ? stopped.promise : undefined);
     const launch = await r.start();
-    await until(() => r.port.calls.includes("composeLaunchSet"), "the compose call");
+    await r.when(() => r.port.calls.includes("composeLaunchSet"), "the compose call");
     const pausing = r.orchestrator.pause(launch.launchId);
-    await until(() => r.port.calls.includes("softStopScenes"), "the first soft stop");
+    await r.when(() => r.port.calls.includes("softStopScenes"), "the first soft stop");
     expect(r.port.calls.filter((c) => c === "softStopScenes")).toHaveLength(1);
     // The start returns: the set is live now, and the very stop that found nothing before must be sent again.
     live = true;
     r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH });
     start.resolve({ sceneSetId: SET1, jobId: "job-compose-0001" });
-    await until(() => r.port.calls.filter((c) => c === "softStopScenes").length >= 2, "the second soft stop");
+    await r.when(() => r.port.calls.filter((c) => c === "softStopScenes").length >= 2, "the second soft stop");
     stopped.resolve();
     const paused = await pausing;
     expect(["pausing", "paused"]).toContain(paused.status);
@@ -62,12 +62,12 @@ describe("soft stop while the step's own start has not returned (plan §18)", ()
     r.port.start = async () => startOfRun.promise;
     r.port.softRun = () => live;
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.port.calls.includes("startLaunchSlice"), "the slice start");
+    await r.when(() => r.port.calls.includes("startLaunchSlice"), "the slice start");
     const pausing = r.orchestrator.pause(launch.launchId);
-    await until(() => r.port.calls.includes("softStopRun"), "the first soft stop");
+    await r.when(() => r.port.calls.includes("softStopRun"), "the first soft stop");
     live = true;
     startOfRun.resolve({ kind: "started", jobId: "job-run-0001", ended: ended.promise });
-    await until(() => r.port.calls.filter((c) => c === "softStopRun").length >= 2, "the second soft stop");
+    await r.when(() => r.port.calls.filter((c) => c === "softStopRun").length >= 2, "the second soft stop");
     ended.resolve({ status: "cancelled" });
     await pausing;
     await r.orchestrator.settled();
@@ -85,12 +85,12 @@ describe("a slice is sized only after compose() has returned (plan §19)", () =>
     r.port.approve = async () => r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
     r.port.draw = async () => ({ kind: "none-left" });
     await r.start({ sceneReview: false });
-    await until(() => r.port.calls.includes("composeLaunchSet"), "the compose call");
+    await r.when(() => r.port.calls.includes("composeLaunchSet"), "the compose call");
     await idle();
     expect(r.port.calls).not.toContain("monthRoom");
     r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH });
     composeDone.resolve({ sceneSetId: SET1, jobId: "job-compose-0001" });
-    await until(() => r.port.calls.includes("monthRoom"), "the first sizing");
+    await r.when(() => r.port.calls.includes("monthRoom"), "the first sizing");
     expect(r.port.calls.indexOf("monthRoom")).toBeGreaterThan(r.port.calls.indexOf("composeLaunchSet:returned"));
   });
 
@@ -105,14 +105,14 @@ describe("a slice is sized only after compose() has returned (plan §19)", () =>
     r.port.approve = async (setId) => r.port.seed({ sceneSetId: setId, runId: setId === SET1 ? RUN1 : RUN2, avatarId: setId === SET1 ? A : B, launchId: LAUNCH, draw: { sceneIds: ALL } });
     r.port.draw = async () => ({ kind: "none-left" });
     await r.start({ avatarIds: [A, B], sceneReview: false });
-    await until(() => r.port.calls.includes("composeLaunchSet"), "the compose call");
+    await r.when(() => r.port.calls.includes("composeLaunchSet"), "the compose call");
     // The second avatar has read the price of a photo and is about to read the room; the first avatar's compose is inside its start window.
     photoOpen.resolve();
     await idle();
     expect(r.port.calls).not.toContain("monthRoom");
     r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH });
     composeDone.resolve({ sceneSetId: SET1, jobId: "job-compose-0001" });
-    await until(() => r.port.calls.includes("monthRoom"), "the sizing");
+    await r.when(() => r.port.calls.includes("monthRoom"), "the sizing");
     expect(r.port.calls.indexOf("monthRoom")).toBeGreaterThan(r.port.calls.indexOf("composeLaunchSet:returned"));
   });
 });
@@ -136,7 +136,7 @@ describe("the launch's own «Дописать» (plan §3.6 row 2, §4.3 item 3)
     r.port.writeCost = () => WRITER;
     await stoppedSet(r, 11_200);
     const launch = await r.start({ sceneReview: true });
-    await until(() => sent.length === 1, "the write");
+    await r.when(() => sent.length === 1, "the write");
     const compose = r.fileOf(launch.launchId).avatars[0]?.allocation.composeMicros ?? 0;
     expect(sent[0]).toBe(compose - 11_200);
   });
@@ -146,7 +146,7 @@ describe("the launch's own «Дописать» (plan §3.6 row 2, §4.3 item 3)
     r.port.writeCost = () => 60_000;
     await stoppedSet(r, 30_000);
     const launch = await r.start({ sceneReview: true });
-    await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
+    await r.when(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
     const compose = r.fileOf(launch.launchId).avatars[0]?.allocation.composeMicros ?? 0;
     expect(r.fileOf(launch.launchId).paidHold).toMatchObject({ reason: "price", detail: { stage: "rewrite", needMicros: 60_000, leftMicros: compose - 30_000 } });
     expect(r.port.calls).not.toContain("writeLaunchScenes");
@@ -175,7 +175,7 @@ describe("the paid path's own holds (plan §4.3 item 4, §4.4)", () => {
     r.port.room = { budgetMicros: 1_000_000, committedMicros: 900_000, freeMicros: PHOTO - 1 };
     approvedPath(r);
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
+    await r.when(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
     expect(r.fileOf(launch.launchId).paidHold).toMatchObject({ reason: "budget", detail: { kind: "new-slice", freeMicros: PHOTO - 1, needMicros: PHOTO } });
     expect(r.port.calls).not.toContain("drawLaunchSlice");
   });
@@ -190,7 +190,7 @@ describe("the paid path's own holds (plan §4.3 item 4, §4.4)", () => {
       return { kind: "none-left" };
     };
     const launch = await r.start({ sceneReview: false });
-    await until(() => sizes.length === 1, "the draw");
+    await r.when(() => sizes.length === 1, "the draw");
     expect(sizes).toEqual([4]);
     expect(r.fileOf(launch.launchId).paidHold).toBeNull();
   });
@@ -200,7 +200,7 @@ describe("the paid path's own holds (plan §4.3 item 4, §4.4)", () => {
     approvedPath(r);
     r.port.draw = async () => ({ kind: "no-room", leftMicros: PHOTO - 1 });
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
+    await r.when(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
     expect(r.fileOf(launch.launchId).paidHold).toMatchObject({ reason: "price", detail: { stage: "slice", toPhotos: 0 } });
     expect(r.port.calls).not.toContain("startLaunchSlice");
   });
@@ -211,7 +211,7 @@ describe("the paid path's own holds (plan §4.3 item 4, §4.4)", () => {
     r.port.draw = drawsEntry(r, [1, 2, 3], PHOTO * 3);
     r.port.start = async () => ({ kind: "started", jobId: "job-run-0001", ended: Promise.resolve({ status: "cancelled" } as RunJobEnd) });
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.port.calls.includes("startLaunchSlice"), "the slice start");
+    await r.when(() => r.port.calls.includes("startLaunchSlice"), "the slice start");
     await r.orchestrator.settled();
     const get = await r.orchestrator.get(launch.launchId);
     expect(get.log.find((l) => l.kind === "price-shrink")).toMatchObject({ fromPhotos: 10, toPhotos: 3 });
@@ -229,16 +229,16 @@ describe("the paid path's own holds (plan §4.3 item 4, §4.4)", () => {
       return { kind: "started", jobId: "job-run-0001", ended: Promise.resolve({ status: "cancelled" } as RunJobEnd) };
     };
     const launch = await r.start({ sceneReview: false });
-    await until(() => attempts === 1, "the first refusal");
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "avatar-busy", "the busy phase");
-    await until(() => attempts === 2, "the retry");
+    await r.when(() => attempts === 1, "the first refusal");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "avatar-busy", "the busy phase");
+    await r.when(() => attempts === 2, "the retry");
   });
 
   test("a set whose file is unreadable skips its avatar as set-unreadable and sends nothing", async () => {
     const r = await rig();
     r.port.unreadable = 1;
     const launch = await r.start();
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "skipped", "the skip");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "skipped", "the skip");
     expect(r.fileOf(launch.launchId).avatars[0]?.skipped).toEqual({ reason: "set-unreadable" });
     expect(r.port.calls).not.toContain("composeLaunchSet");
     // N3: nothing is released. The skipped avatar keeps its allocation, so the allocations still add up to W′ exactly.
@@ -263,7 +263,7 @@ describe("a paid path that cannot go on never leaves the launch running with no 
     drawnEntry(r);
     r.port.resumeHoldError = new EngineFailure({ code: "RUN_CAP_EXCEEDED", detail: "run's cap leaves 0 micro-dollars, less than its next attempt could cost: it has ended" });
     const launch = await r.start({ sceneReview: true });
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the slice to be given up as spent");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the slice to be given up as spent");
     expect(r.fileOf(launch.launchId).paidHold).toBeNull();
   });
 
@@ -278,7 +278,7 @@ describe("a paid path that cannot go on never leaves the launch running with no 
     };
     r.port.resumeHoldError = new EngineFailure({ code: "VALIDATION", detail: "some other words of the engine" });
     const launch = await r.start({ sceneReview: true });
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the slice to be given up as spent");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the slice to be given up as spent");
     expect(r.fileOf(launch.launchId).paidHold).toBeNull();
   });
 
@@ -287,7 +287,7 @@ describe("a paid path that cannot go on never leaves the launch running with no 
     drawnEntry(r);
     r.port.resumeHoldError = new EngineFailure({ code: "PRICE_UNAVAILABLE", detail: "the price list could not be loaded" });
     const launch = await r.start({ sceneReview: true });
-    await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
+    await r.when(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
     expect(r.fileOf(launch.launchId).paidHold).toMatchObject({ reason: "price-unavailable", detail: { attempt: 1 } });
   });
 
@@ -296,7 +296,7 @@ describe("a paid path that cannot go on never leaves the launch running with no 
     drawnEntry(r);
     r.port.resumeHoldError = new EngineFailure({ code: "INTERNAL", detail: "ENOENT: no such file or directory, open '/Users/alex/Library/runs/plan.json'" });
     const launch = await r.start({ sceneReview: true });
-    await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
+    await r.when(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
     const hold = r.fileOf(launch.launchId).paidHold;
     expect(hold).toMatchObject({ reason: "internal", detail: { kind: "job-failed" } });
     expect(JSON.stringify(hold)).toContain("INTERNAL");
@@ -309,7 +309,7 @@ describe("a paid path that cannot go on never leaves the launch running with no 
     r.port.budget = null;
     r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, written: 0 });
     const launch = await r.start({ sceneReview: true });
-    await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
+    await r.when(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
     expect(r.fileOf(launch.launchId).paidHold).toMatchObject({ reason: "internal", detail: { kind: "job-failed", message: "the ledger cannot be read" } });
     // The hold reaches the file on disk first, then the engine's in-memory copy (the snapshot): the copy is awaited, not read at once.
     expect(await untilHeld(r)).toMatchObject({ reason: "internal" });
@@ -324,7 +324,7 @@ describe("a paid path that cannot go on never leaves the launch running with no 
       throw new EngineFailure({ code: "VALIDATION", sceneReason: "no-active-scenes", detail: "scene set orch-0002 has no scene with text to draw" });
     };
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
     const row = r.fileOf(launch.launchId).avatars[0];
     expect(row?.videos.filter((v) => v.source === "generated").every((v) => v.state === "dropped" && v.dropReason === "not-enough-photos")).toBe(true);
     expect(r.fileOf(launch.launchId).paidHold).toBeNull();
@@ -338,7 +338,7 @@ describe("a paid path that cannot go on never leaves the launch running with no 
     const r = await rig();
     drawnEntry(r);
     const launch = await r.start({ sceneReview: true });
-    await until(() => r.fileOf(launch.launchId).paidHold !== null, "the budget hold");
+    await r.when(() => r.fileOf(launch.launchId).paidHold !== null, "the budget hold");
     expect(r.fileOf(launch.launchId).paidHold).toMatchObject({ reason: "budget" });
   });
 });
@@ -408,7 +408,7 @@ describe("the owner's own open set mid-launch makes only that avatar wait (S4.10
   test("the avatar waits as «open-set» (no hold, no failed job) while the other avatar goes on to its montage", async () => {
     const owner = { open: true };
     const { r, launch } = await twoAvatars(owner);
-    await until(() => r.fileOf(launch.launchId).avatars[1]?.phase === "montage", "the other avatar's montage");
+    await r.when(() => r.fileOf(launch.launchId).avatars[1]?.phase === "montage", "the other avatar's montage");
     const rows = r.fileOf(launch.launchId).avatars;
     expect(rows[0]).toMatchObject({ avatarId: A, phase: "waiting", waiting: { reason: "open-set" } });
     expect(r.fileOf(launch.launchId).paidHold).toBeNull();
@@ -419,10 +419,10 @@ describe("the owner's own open set mid-launch makes only that avatar wait (S4.10
   test("an announced scene set wakes the waiting avatar: it composes again once the owner has closed theirs", async () => {
     const owner = { open: true };
     const { r, launch } = await twoAvatars(owner);
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "open-set", "the wait");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "open-set", "the wait");
     owner.open = false;
     r.port.announce(r.port.seed({ sceneSetId: "set-owner-0001", runId: "run-owner-0001", avatarId: A }));
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the avatar to go on");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the avatar to go on");
     expect(r.fileOf(launch.launchId).paidHold).toBeNull();
   });
 
@@ -440,11 +440,11 @@ describe("the owner's own open set mid-launch makes only that avatar wait (S4.10
     r.port.approve = async () => r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
     r.port.draw = async () => ({ kind: "none-left" });
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "open-set", "the row to say open-set");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "open-set", "the row to say open-set");
     owner.open = false;
     r.port.announce(r.port.seed({ sceneSetId: "set-owner-0001", runId: "run-owner-0001", avatarId: A }));
     held.release();
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the avatar to go on");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the avatar to go on");
     expect(r.fileOf(launch.launchId).paidHold).toBeNull();
   });
 
@@ -465,7 +465,7 @@ describe("the owner's own open set mid-launch makes only that avatar wait (S4.10
     r.port.approve = async () => r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
     r.port.draw = async () => ({ kind: "none-left" });
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the avatar to go on");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the avatar to go on");
     expect(r.fileOf(launch.launchId).paidHold).toBeNull();
   });
 
@@ -491,10 +491,10 @@ describe("the owner's own open set mid-launch makes only that avatar wait (S4.10
     r.port.approve = async () => r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
     r.port.draw = async () => ({ kind: "none-left" });
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "open-set", "the wait");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "open-set", "the wait");
     // The first announce wakes the poll; its read is the one that goes stale.
     r.port.announce(r.port.seed({ sceneSetId: "set-owner-0001", runId: "run-owner-0001", avatarId: A }));
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the avatar to go on");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the avatar to go on");
     expect(reads).toBeGreaterThanOrEqual(2);
   });
 
@@ -507,7 +507,7 @@ describe("the owner's own open set mid-launch makes only that avatar wait (S4.10
     };
     r.port.ownerOpen = () => true;
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "open-set", "the row to say open-set");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "open-set", "the row to say open-set");
     const stopping = stopper.stop(launch.launchId);
     await stopper.entered;
     held.release();
@@ -523,9 +523,9 @@ describe("the owner's own open set mid-launch makes only that avatar wait (S4.10
     };
     const launch = await r.start({ sceneReview: false });
     const polls = (): number => r.port.calls.filter((c) => c === "hasOpenSet").length;
-    await until(() => polls() >= 3, "the first polls");
+    await r.when(() => polls() >= 3, "the first polls");
     const revision = r.fileOf(launch.launchId).revision;
-    await until(() => polls() >= 23, "twenty more polls");
+    await r.when(() => polls() >= 23, "twenty more polls");
     expect(r.fileOf(launch.launchId).revision).toBe(revision);
     expect(r.fileOf(launch.launchId).avatars[0]).toMatchObject({ phase: "waiting", waiting: { reason: "open-set" } });
     expect(r.port.calls.filter((c) => c === "composeLaunchSet")).toHaveLength(1);
@@ -547,9 +547,9 @@ describe("the owner's own open set mid-launch makes only that avatar wait (S4.10
     r.port.approve = async () => r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
     r.port.draw = async () => ({ kind: "none-left" });
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.port.calls.filter((c) => c === "hasOpenSet").length >= 3, "the polls");
+    await r.when(() => r.port.calls.filter((c) => c === "hasOpenSet").length >= 3, "the polls");
     owner.open = false;
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
     const log = (await r.orchestrator.get(launch.launchId)).log;
     expect(log.filter((l) => l.kind === "open-set")).toHaveLength(1);
     expect(log.filter((l) => l.kind === "scenes-writing")).toHaveLength(1);
@@ -578,7 +578,7 @@ describe("an exception out of the pass never leaves the launch running with no h
     const r = await rig();
     r.port.libraryOpen = false;
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
+    await r.when(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
     expect(r.fileOf(launch.launchId).paidHold).toMatchObject({ reason: "internal", detail: { kind: "job-failed", message: expect.stringContaining("LIBRARY_UNAVAILABLE") } });
     expect(await untilHeld(r)).toMatchObject({ reason: "internal" });
   });
@@ -591,7 +591,7 @@ describe("an exception out of the pass never leaves the launch running with no h
       throw new Error("EIO: i/o error, write '/Users/alex/Library/runs/plan.json'");
     };
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
+    await r.when(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
     const hold = r.fileOf(launch.launchId).paidHold;
     expect(hold).toMatchObject({ reason: "internal", detail: { kind: "job-failed", message: "Error" } });
     expect(JSON.stringify(hold)).not.toContain("/Users/alex");
@@ -607,7 +607,7 @@ describe("an exception out of the pass never leaves the launch running with no h
       throw new Error("late failure");
     };
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.port.calls.includes("drawLaunchSlice"), "the draw call");
+    await r.when(() => r.port.calls.includes("drawLaunchSlice"), "the draw call");
     // The pause drains the pass, which waits on the gate: the pause is clicked, then the draw fails inside it.
     const pausing = r.orchestrator.pause(launch.launchId);
     gate.resolve();
@@ -662,7 +662,7 @@ describe("a busy avatar is waited for, not given up on (MEDIUM)", () => {
       return cancelledStart();
     };
     const launch = await r.start({ sceneReview: true });
-    await until(() => attempts === 16, "the sixteenth try", 6_000);
+    await r.when(() => attempts === 16, "the sixteenth try");
     await r.orchestrator.settled();
     const log = (await r.orchestrator.get(launch.launchId)).log;
     expect(log.filter((l) => l.kind === "avatar-busy")).toHaveLength(1);
@@ -682,10 +682,10 @@ describe("a busy avatar is waited for, not given up on (MEDIUM)", () => {
       return { kind: "started", jobId: "job-run-0002", ended: Promise.resolve({ status: "failed", error: { code: "RUN_CAP_EXCEEDED", detail: "the slice's cap is spent" } } as RunJobEnd) };
     };
     await r.start({ avatarIds: [A, B], sceneReview: true });
-    await until(() => started.includes(RUN2), "the other avatar's slice", 3_000);
+    await r.when(() => started.includes(RUN2), "the other avatar's slice");
     expect(started.filter((id) => id === RUN1).length).toBeGreaterThanOrEqual(1);
     freeA = true;
-    await until(() => started.filter((id) => id === RUN1).length >= 2, "the busy avatar's retry");
+    await r.when(() => started.filter((id) => id === RUN1).length >= 2, "the busy avatar's retry");
   });
 
   test("the launch's own «Дописать» under IN_FLIGHT waits and retries", async () => {
@@ -704,8 +704,8 @@ describe("a busy avatar is waited for, not given up on (MEDIUM)", () => {
     };
     r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, written: 0 });
     const launch = await r.start({ sceneReview: true });
-    await until(() => sent.length === 1, "the retried write");
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "awaiting-review", "the pass to reach the review");
+    await r.when(() => sent.length === 1, "the retried write");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "awaiting-review", "the pass to reach the review");
     expect(tries).toBe(2);
     expect(r.fileOf(launch.launchId).paidHold).toBeNull();
   });
@@ -721,8 +721,8 @@ describe("a busy avatar is waited for, not given up on (MEDIUM)", () => {
     };
     r.port.draw = async () => ({ kind: "none-left" });
     const launch = await r.start({ sceneReview: false });
-    await until(() => tries === 2, "the second approval");
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the draw after it");
+    await r.when(() => tries === 2, "the second approval");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the draw after it");
   });
 });
 
@@ -744,7 +744,7 @@ describe("an unreadable-sets avatar, a skip and the view (fix round 1)", () => {
     ];
     await Bun.write(path, JSON.stringify(file));
     hold.resolve();
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "skipped", "the skip");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "skipped", "the skip");
     const videos = r.fileOf(launch.launchId).avatars[0]?.videos ?? [];
     expect(videos[0]).toMatchObject({ state: "rendering", dropReason: null });
     expect(videos[1]).toMatchObject({ state: "assigned", source: "library", dropReason: null });
@@ -759,7 +759,7 @@ describe("an unreadable-sets avatar, a skip and the view (fix round 1)", () => {
     const ended = deferred<RunJobEnd>();
     r.port.start = async () => ({ kind: "started", jobId: "job-run-0001", ended: ended.promise });
     const launch = await r.start({ sceneReview: true });
-    await until(() => r.port.calls.includes("startLaunchSlice:returned"), "the slice start");
+    await r.when(() => r.port.calls.includes("startLaunchSlice:returned"), "the slice start");
     const row = (await r.orchestrator.get(launch.launchId)).launch.avatars[0];
     expect(row?.resumableSlots).toBe(4);
     ended.resolve({ status: "cancelled" });
@@ -771,10 +771,10 @@ describe("an unreadable-sets avatar, a skip and the view (fix round 1)", () => {
     r.port.readGate = hold.promise;
     r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH });
     await r.start({ sceneReview: true });
-    await until(() => r.port.reads === 1, "the first read");
+    await r.when(() => r.port.reads === 1, "the first read");
     r.steps.begin(r.ctx());
     hold.resolve();
-    await until(() => r.port.reads >= 2, "the second pass");
+    await r.when(() => r.port.reads >= 2, "the second pass");
   });
 });
 
@@ -790,7 +790,7 @@ describe("the month hold of a resumed slice names the launch's live slices (L3)"
       return { kind: "started", jobId: "job-run-0002", ended: new Promise<RunJobEnd>(() => undefined) };
     };
     await r.start({ avatarIds: [A, B], sceneReview: true });
-    await until(() => r.port.holdArgs.length >= 1, "the hold");
+    await r.when(() => r.port.holdArgs.length >= 1, "the hold");
     const live = (r.port.holdArgs[0]?.[1] ?? []) as { scope: { runId: string } }[];
     expect(live.map((l) => l.scope.runId).sort()).toEqual([RUN1, RUN2].sort());
   });
@@ -809,7 +809,7 @@ describe("an avatar none of whose videos waits for photos draws nothing (6e)", (
     file.avatars[0].videos = file.avatars[0].videos.map((v) => ({ ...v, state: "dropped" as const, dropReason: "not-enough-photos" as const }));
     await Bun.write(path, JSON.stringify(file));
     hold.resolve();
-    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "montage");
+    await r.when(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "montage");
     expect(r.port.calls).not.toContain("drawLaunchSlice");
     expect(r.port.calls).not.toContain("startLaunchSlice");
   });
@@ -826,7 +826,7 @@ describe("a launch that is not payable now is left quietly (LOW)", () => {
       throw new EngineFailure({ code: "VALIDATION", detail: `${NOT_PAYABLE_DETAIL}: launch ${LAUNCH} is paused` });
     };
     const launch = await r.start({ sceneReview: true });
-    await until(() => attempts === 1, "the refused start");
+    await r.when(() => attempts === 1, "the refused start");
     await idle();
     await idle();
     expect(attempts).toBe(1);
@@ -893,7 +893,7 @@ describe("the compose a launch sends (S5.7a, S5.7b)", () => {
       return compose(payload, ids);
     };
     const launch = await r.start(draft);
-    await until(() => sent.length > 0, "the compose call");
+    await r.when(() => sent.length > 0, "the compose call");
     await r.orchestrator.stop(launch.launchId);
     const [payload] = sent;
     if (payload === undefined) throw new Error("the launch composed nothing");
@@ -952,7 +952,7 @@ describe("the compose a launch sends (S5.7a, S5.7b)", () => {
       return compose(payload, ids);
     };
     const launch = await r.start(draft);
-    await until(() => sent.length > 0, "the compose call");
+    await r.when(() => sent.length > 0, "the compose call");
     await r.orchestrator.stop(launch.launchId);
     const [payload] = sent;
     if (payload === undefined) throw new Error("the launch composed nothing");
@@ -986,7 +986,7 @@ describe("the compose a launch sends (S5.7a, S5.7b)", () => {
       return compose(payload, ids);
     };
     const launch = await r.start({ categories: ["home", CUSTOM], videosPerAvatar: 1, planSeed: 5, legsShare: 30 });
-    await until(() => r.port.calls.includes("composeLaunchSet:returned"), "the compose to return");
+    await r.when(() => r.port.calls.includes("composeLaunchSet:returned"), "the compose to return");
     await r.orchestrator.stop(launch.launchId);
     expect(r.fileOf(launch.launchId).paidHold).toBeNull();
   });

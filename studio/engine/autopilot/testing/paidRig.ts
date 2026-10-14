@@ -103,6 +103,8 @@ export const idle = (): Promise<void> => new Promise((resolve) => setTimeout(res
 /** The engine, as far as the paid steps see it. Every method records its call; a method with no behaviour planted refuses, so a stray call fails the test. */
 export class FakePort implements PaidPort {
   readonly calls: string[] = [];
+  /** Told after every recorded call and set read, so `Rig.when` can look again: a test that waits on what the double was asked is waiting on an event the double announces. */
+  onActivity: (() => void) | null = null;
   readonly sets = new Map<string, StoredSceneSet>();
   unreadable = 0;
   budget: Budget | null;
@@ -145,6 +147,7 @@ export class FakePort implements PaidPort {
       sceneSets: {
         get: async (_avatarId, sceneSetId) => {
           this.reads += 1;
+          this.onActivity?.();
           if (this.readGate !== null) await this.readGate;
           return this.sets.get(sceneSetId) ?? null;
         },
@@ -153,53 +156,58 @@ export class FakePort implements PaidPort {
     };
   }
 
-  #plain(name: string): never {
+  #note(name: string): void {
     this.calls.push(name);
+    this.onActivity?.();
+  }
+
+  #plain(name: string): never {
+    this.#note(name);
     throw new Error(`unexpected call: ${name}`);
   }
 
   async composeLaunchSet(payload: LaunchComposePayload, launch: { ids: { sceneSetId: string; runId: string }; launchId: string }) {
-    this.calls.push("composeLaunchSet");
+    this.#note("composeLaunchSet");
     if (this.compose === null) return this.#plain("composeLaunchSet");
     const result = await this.compose(payload, launch.ids, launch.launchId);
-    this.calls.push("composeLaunchSet:returned");
+    this.#note("composeLaunchSet:returned");
     return result;
   }
 
   async composeEstimate(_request: { avatarId: string; count: number }): Promise<Estimate> {
-    this.calls.push("composeEstimate");
+    this.#note("composeEstimate");
     return { expectedMicros: 0, worstMicros: 75_000, prices: "fallback", pricesAsOf: "2026-10-09" };
   }
 
   async writeEstimate(sceneSetId: string): Promise<Estimate> {
-    this.calls.push("writeEstimate");
+    this.#note("writeEstimate");
     const worst = this.writeCost === null ? WRITER * 2 : this.writeCost(sceneSetId);
     return { expectedMicros: 0, worstMicros: worst, prices: "fallback", pricesAsOf: "2026-10-09" };
   }
 
   async writeLaunchScenes(input: { sceneSetId: string; launchId: string; revision: number; acceptedWorstMicros: number }) {
-    this.calls.push("writeLaunchScenes");
+    this.#note("writeLaunchScenes");
     if (this.write === null) return this.#plain("writeLaunchScenes");
     return this.write(input);
   }
 
   async approveLaunchSet(input: { sceneSetId: string }): Promise<StoredSceneSet> {
-    this.calls.push("approveLaunchSet");
+    this.#note("approveLaunchSet");
     if (this.approve === null) return this.#plain("approveLaunchSet");
     return this.approve(input.sceneSetId);
   }
 
   async drawLaunchSlice(input: { sceneSetId: string; launchId: string; size: number; drawMicros: number }): Promise<DrawSliceResult> {
-    this.calls.push("drawLaunchSlice");
+    this.#note("drawLaunchSlice");
     if (this.draw === null) return this.#plain("drawLaunchSlice");
     return this.draw(input);
   }
 
   async startLaunchSlice(runId: string): Promise<LaunchSliceStart> {
-    this.calls.push("startLaunchSlice");
+    this.#note("startLaunchSlice");
     if (this.start === null) return this.#plain("startLaunchSlice");
     const result = await this.start(runId);
-    this.calls.push("startLaunchSlice:returned");
+    this.#note("startLaunchSlice:returned");
     return result;
   }
 
@@ -208,13 +216,13 @@ export class FakePort implements PaidPort {
   }
 
   async photoWorstMicros(_look?: PhotoLook): Promise<number> {
-    this.calls.push("photoWorstMicros");
+    this.#note("photoWorstMicros");
     if (this.photoGate !== null) await this.photoGate;
     return this.photoWorst;
   }
 
   monthRoom(): MonthRoom | null {
-    this.calls.push("monthRoom");
+    this.#note("monthRoom");
     return this.room;
   }
 
@@ -222,7 +230,7 @@ export class FakePort implements PaidPort {
   resumeHoldError: Error | null = null;
 
   async resumeSliceHold(runId: string, extraLive: readonly unknown[] = []): Promise<BudgetHoldDetail> {
-    this.calls.push("resumeSliceHold");
+    this.#note("resumeSliceHold");
     this.holdArgs.push([runId, extraLive]);
     if (this.resumeHoldError !== null) throw this.resumeHoldError;
     return { kind: "resume-slice", freeMicros: 0, needMicros: 100_000 };
@@ -231,7 +239,7 @@ export class FakePort implements PaidPort {
   /** S4.10 M-3: whether the owner has an open scene set of their own for the avatar now (a free read of the set listing; it claims nothing and writes nothing). */
   ownerOpen: (avatarId: string) => boolean = () => false;
   async hasOpenSet(avatarId: string, _exceptSetId: string): Promise<boolean> {
-    this.calls.push("hasOpenSet");
+    this.#note("hasOpenSet");
     return this.ownerOpen(avatarId);
   }
 
@@ -246,7 +254,7 @@ export class FakePort implements PaidPort {
   }
 
   admitted(): boolean {
-    this.calls.push("admitted");
+    this.#note("admitted");
     return this.admit;
   }
 
@@ -255,22 +263,22 @@ export class FakePort implements PaidPort {
   }
 
   softStopScenes(sceneSetId: string): boolean {
-    this.calls.push("softStopScenes");
+    this.#note("softStopScenes");
     return this.softScenes(sceneSetId);
   }
 
   softStopRun(runId: string): boolean {
-    this.calls.push("softStopRun");
+    this.#note("softStopRun");
     return this.softRun(runId);
   }
 
   whenSceneSetIdle(sceneSetId: string): Promise<void> {
-    this.calls.push("whenSceneSetIdle");
+    this.#note("whenSceneSetIdle");
     return this.idleSet(sceneSetId);
   }
 
   async unlinkLaunchSet(sceneSetId: string) {
-    this.calls.push("unlinkLaunchSet");
+    this.#note("unlinkLaunchSet");
     if (this.unlinkError !== null) throw this.unlinkError;
     this.unlinked.push(sceneSetId);
     return { phase: "awaiting" as const };
@@ -341,6 +349,11 @@ export async function rig(options: RigOptions = {}): Promise<Rig> {
     for (const watcher of [...watchers]) watcher();
   };
   steps.onReadyChange(wake);
+  // The double announces what it was asked. The planted behaviour runs right after the call is recorded, so the waiters look again a microtask later too, when what it set is in place.
+  port.onActivity = () => {
+    wake();
+    queueMicrotask(wake);
+  };
   let n = 0;
   const orchestrator = new Orchestrator({
     stores,

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { PaidHold } from "../../shared/engine/autopilot";
 import { EngineFailure } from "../engineFailure";
 import type { RunJobEnd } from "../runs/runJob";
-import { A, ALL, B, cleanupRigs, deferred, FakeTimers, idle, LAUNCH, PHOTO, RUN1, RUN2, rig, SET1, SET2, T0, until, type Rig } from "./testing/paidRig";
+import { A, ALL, B, cleanupRigs, deferred, FakeTimers, idle, LAUNCH, PHOTO, RUN1, RUN2, rig, SET1, SET2, T0, type Rig } from "./testing/paidRig";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -54,7 +54,7 @@ async function twoJobs(timers: FakeTimers, steps: Parameters<typeof rig>[0] = {}
     return { kind: "started", jobId: "job-run-2", ended: new Promise<RunJobEnd>(() => undefined) };
   };
   const launch = await r.start({ avatarIds: [A, B], sceneReview: false });
-  await until(() => seen.startsA === 1 && r.port.calls.filter((c) => c === "whenSceneSetIdle").length >= 2, "both jobs in flight");
+  await r.when(() => seen.startsA === 1 && r.port.calls.filter((c) => c === "whenSceneSetIdle").length >= 2, "both jobs in flight");
   return { r, launch, endA, idleB, seen };
 }
 
@@ -67,13 +67,13 @@ describe("one hold, one timer: who wins is decided in the file's own write, by r
     // A's slice has already dropped twice and used both automatic continues.
     await r.ctx().update((f) => ({ ...f, autoContinues: { [RUN1]: { drops: 2, continues: 2 } } }));
     idleB.resolve();
-    await until(() => r.ctx().file().paidHold?.reason === "network" && timers.pending() === 1, "B's retry hold");
+    await r.when(() => r.ctx().file().paidHold?.reason === "network" && timers.pending() === 1, "B's retry hold");
     expect(holdDetail(r)?.nextAt).not.toBeNull();
     endA.resolve(drop);
-    await until(() => holdDetail(r)?.nextAt === null, "the hold for a person");
+    await r.when(() => holdDetail(r)?.nextAt === null, "the hold for a person");
     expect(holdDetail(r)?.drops).toBe(3);
     expect(r.fileOf(launch.launchId).autoContinues?.[RUN1]).toEqual({ drops: 3, continues: 2 });
-    await until(() => timers.pending() === 0, "B's timer taken back");
+    await r.when(() => timers.pending() === 0, "B's timer taken back");
     timers.advance(10 * MIN);
     await idle();
     expect(seen.startsA).toBe(1);
@@ -85,7 +85,7 @@ describe("one hold, one timer: who wins is decided in the file's own write, by r
     const { r, launch, idleB } = await twoJobs(timers);
     await r.ctx().raisePaidHold({ reason: "credits", at: timers.iso(), detail: {} });
     idleB.resolve();
-    await until(() => r.fileOf(launch.launchId).autoContinues?.[`${SET2}:scenes`] !== undefined, "B's drop counted");
+    await r.when(() => r.fileOf(launch.launchId).autoContinues?.[`${SET2}:scenes`] !== undefined, "B's drop counted");
     await idle();
     expect(r.ctx().file().paidHold?.reason).toBe("credits");
     expect(timers.pending()).toBe(0);
@@ -97,11 +97,11 @@ describe("one hold, one timer: who wins is decided in the file's own write, by r
     const timers = new FakeTimers();
     const { r, idleB, endA, seen } = await twoJobs(timers);
     idleB.resolve();
-    await until(() => r.ctx().file().paidHold?.reason === "network" && timers.pending() === 1, "B's retry hold");
+    await r.when(() => r.ctx().file().paidHold?.reason === "network" && timers.pending() === 1, "B's retry hold");
     endA.resolve({ status: "failed", error: { code: "AUTH_INVALID", detail: "rejected" } });
-    await until(() => r.ctx().file().paidHold?.reason === "key", "the key hold");
+    await r.when(() => r.ctx().file().paidHold?.reason === "key", "the key hold");
     expect(r.ctx().file().paidHold?.reason).toBe("key");
-    await until(() => timers.pending() === 0, "the displaced hold's timer taken back");
+    await r.when(() => timers.pending() === 0, "the displaced hold's timer taken back");
     timers.advance(10 * MIN);
     await idle();
     expect(seen.writesB).toBe(0);
@@ -128,18 +128,18 @@ describe("one hold, one timer: who wins is decided in the file's own write, by r
       return countedWrite === null ? { jobId: "job-write" } : countedWrite(input);
     };
     setup.endA.resolve(drop);
-    await until(() => setup.r.ctx().file().paidHold?.reason === "network", "a network hold");
+    await setup.r.when(() => setup.r.ctx().file().paidHold?.reason === "network", "a network hold");
     // Wait for B's drop to END (its observable: both timers were armed, B's drop is counted, and the loser's timer is taken back), not for a quiet period that a loaded machine can outlast.
-    await until(
+    await setup.r.when(
       () => timers.armed === 2 && timers.pending() === 1 && setup.r.ctx().file().autoContinues?.[`${SET2}:scenes`]?.drops === 1,
       "B's drop to end with its timer taken back",
     );
     expect(timers.pending()).toBe(1);
     timers.advance(10 * MIN);
-    await until(() => setup.r.ctx().file().paidHold === null, "the hold cleared by the timer that belongs to it");
-    await until(() => setup.seen.startsA >= 2 && setup.seen.writesB >= 1, "both jobs started again");
+    await setup.r.when(() => setup.r.ctx().file().paidHold === null, "the hold cleared by the timer that belongs to it");
+    await setup.r.when(() => setup.seen.startsA >= 2 && setup.seen.writesB >= 1, "both jobs started again");
     // Every armed timer belongs to a standing waiting hold: with no hold standing none is armed.
-    await until(() => timers.pending() === 0, "no timer left armed", 1_000);
+    await setup.r.when(() => timers.pending() === 0, "no timer left armed");
     expect(setup.r.ctx().file().paidHold).toBeNull();
   });
 
@@ -148,9 +148,9 @@ describe("one hold, one timer: who wins is decided in the file's own write, by r
     const { r, endA, idleB } = await twoJobs(timers);
     endA.resolve(drop);
     idleB.resolve();
-    await until(() => r.ctx().file().paidHold?.reason === "network", "a hold");
+    await r.when(() => r.ctx().file().paidHold?.reason === "network", "a hold");
     // Wait for both drops to END (both timers were armed, the loser's is taken back, both drops are counted), not for a quiet period that a loaded machine can outlast.
-    await until(
+    await r.when(
       () => timers.armed === 2 && timers.pending() === 1 && r.ctx().file().autoContinues?.[RUN1]?.drops === 1 && r.ctx().file().autoContinues?.[`${SET2}:scenes`]?.drops === 1,
       "both drops to end with one timer left",
     );
@@ -158,7 +158,7 @@ describe("one hold, one timer: who wins is decided in the file's own write, by r
     const nextAt = holdDetail(r)?.nextAt;
     expect(nextAt).toBeDefined();
     timers.advance(Date.parse(nextAt ?? "") - timers.now + 1);
-    await until(() => r.ctx().file().paidHold === null, "the hold cleared");
+    await r.when(() => r.ctx().file().paidHold === null, "the hold cleared");
   });
 });
 
@@ -174,7 +174,7 @@ describe("one scene step is one job for the automatic continues (M4)", () => {
     r.port.write = async () => ({ jobId: "job-write" });
     const launch = await r.start({ sceneReview: false });
     for (let i = 0; i < 6; i++) {
-      await until(() => r.ctx().file().paidHold?.reason === "network" && (holdDetail(r)?.nextAt === null || timers.pending() === 1), "a hold");
+      await r.when(() => r.ctx().file().paidHold?.reason === "network" && (holdDetail(r)?.nextAt === null || timers.pending() === 1), "a hold");
       if (holdDetail(r)?.nextAt === null) break;
       timers.advance(10 * MIN);
       await idle();
@@ -204,9 +204,9 @@ describe("a wake-up re-arms or fires the wait it interrupted (M1)", () => {
       return { kind: "started", jobId: "j", ended: Promise.resolve(drop) };
     };
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.ctx().file().paidHold?.reason === "network" && timers.pending() === 1, "hold 1");
+    await r.when(() => r.ctx().file().paidHold?.reason === "network" && timers.pending() === 1, "hold 1");
     timers.advance(MIN);
-    await until(() => holdDetail(r)?.drops === 2 && timers.pending() === 1, "hold 2 (a five-minute wait)");
+    await r.when(() => holdDetail(r)?.drops === 2 && timers.pending() === 1, "hold 2 (a five-minute wait)");
     return { r, launch, starts: () => starts };
   }
 
@@ -223,7 +223,7 @@ describe("a wake-up re-arms or fires the wait it interrupted (M1)", () => {
     expect(w.r.ctx().file().paidHold).not.toBeNull();
     expect(timers.pending()).toBe(1);
     timers.advance(5 * MIN - 1_000);
-    await until(() => w.starts() > before, "the start after the remainder");
+    await w.r.when(() => w.starts() > before, "the start after the remainder");
   });
 
   test("a wake-up after the wait was due goes through the same check as the timer: with the ledger closed the wait ends and a person decides", async () => {
@@ -235,7 +235,7 @@ describe("a wake-up re-arms or fires the wait it interrupted (M1)", () => {
     w.r.port.admit = false;
     await w.r.orchestrator.power("resume");
     await w.r.orchestrator.settled();
-    await until(() => holdDetail(w.r)?.nextAt === null, "the hold for a person");
+    await w.r.when(() => holdDetail(w.r)?.nextAt === null, "the hold for a person");
     expect(w.starts()).toBe(before);
     expect(timers.pending()).toBe(0);
   });
@@ -248,7 +248,7 @@ describe("a wake-up re-arms or fires the wait it interrupted (M1)", () => {
     timers.advance(10 * MIN);
     await w.r.orchestrator.power("resume");
     await w.r.orchestrator.settled();
-    await until(() => w.starts() > before, "the start");
+    await w.r.when(() => w.starts() > before, "the start");
   });
 
   test("a wake-up never clears a waiting hold without asking the admission rule", async () => {
@@ -305,7 +305,7 @@ describe("the owner's click proves the Mac is awake (M3)", () => {
       return r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
     };
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.port.calls.includes("approveLaunchSet"), "approve");
+    await r.when(() => r.port.calls.includes("approveLaunchSet"), "approve");
     await r.orchestrator.power("suspend");
     expect(r.orchestrator.mayPay(launch.launchId)).toBe(false);
     const view = await r.orchestrator.resume(launch.launchId, launch.remainingMicros);
@@ -327,7 +327,7 @@ describe("the owner's click proves the Mac is awake (M3)", () => {
       return r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
     };
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.port.calls.includes("approveLaunchSet"), "approve");
+    await r.when(() => r.port.calls.includes("approveLaunchSet"), "approve");
     await expect(r.orchestrator.resume(launch.launchId, launch.remainingMicros)).rejects.toBeInstanceOf(EngineFailure);
     gate.resolve();
     await idle();
@@ -351,7 +351,7 @@ describe("RECONCILE_REQUIRED does not invent a drop (L4)", () => {
       throw new EngineFailure({ code: "RECONCILE_REQUIRED", detail: "1 open attempt(s)" });
     };
     const launch = await r.start({ sceneReview: false });
-    await until(() => r.ctx().file().paidHold?.reason === "network", "the hold");
+    await r.when(() => r.ctx().file().paidHold?.reason === "network", "the hold");
     expect(r.fileOf(launch.launchId).autoContinues).toEqual({ [RUN1]: { drops: 1, continues: 0 } });
     expect(holdDetail(r)).toMatchObject({ drops: 1, nextAt: null });
   });
@@ -378,8 +378,8 @@ describe("a job's third drop still demands «Сверка» under another task's
               : ({ reason: first, at: timers.iso(), detail: {} } as const);
       await r.ctx().raisePaidHold(standing);
       idleB.resolve();
-      await until(() => r.fileOf(launch.launchId).autoContinues?.[`${SET2}:scenes`]?.drops === 3, "B's third drop counted");
-      await until(() => r.ctx().file().paidHold?.reason === "network", "the network hold with no retry");
+      await r.when(() => r.fileOf(launch.launchId).autoContinues?.[`${SET2}:scenes`]?.drops === 3, "B's third drop counted");
+      await r.when(() => r.ctx().file().paidHold?.reason === "network", "the network hold with no retry");
       expect(holdDetail(r)).toMatchObject({ drops: 3, nextAt: null });
       expect((await r.orchestrator.get(launch.launchId)).launch.resumeBlockedBy).toBe("network");
       await expect(r.orchestrator.resume(launch.launchId, 10_000_000_000)).rejects.toBeInstanceOf(EngineFailure);
@@ -394,7 +394,7 @@ describe("a job's third drop still demands «Сверка» under another task's
     await r.ctx().update((f) => ({ ...f, autoContinues: { [`${SET2}:scenes`]: { drops: 2, continues: 2 } } }));
     await r.ctx().raisePaidHold({ reason: "halt", at: timers.iso(), detail: { code: "SETTLE_ABOVE_WORST" } });
     idleB.resolve();
-    await until(() => r.fileOf(launch.launchId).autoContinues?.[`${SET2}:scenes`]?.drops === 3, "B's third drop counted");
+    await r.when(() => r.fileOf(launch.launchId).autoContinues?.[`${SET2}:scenes`]?.drops === 3, "B's third drop counted");
     await idle();
     expect(r.ctx().file().paidHold?.reason).toBe("halt");
   });
@@ -426,7 +426,7 @@ describe("a failed job's internal hold never hides a network hold that needs a r
   test("the network hold with no retry stands first; A's job then fails INTERNAL: the network hold stays, «Продолжить» is refused until a reconcile", async () => {
     const { r, launch, endA, idleB } = await withOpenReserve();
     idleB.resolve();
-    await until(() => r.ctx().file().paidHold?.reason === "network" && holdDetail(r)?.nextAt === null, "the network hold with no retry");
+    await r.when(() => r.ctx().file().paidHold?.reason === "network" && holdDetail(r)?.nextAt === null, "the network hold with no retry");
     endA.resolve(internalEnd);
     await idle();
     expect(r.ctx().file().paidHold?.reason).toBe("network");
@@ -437,10 +437,10 @@ describe("a failed job's internal hold never hides a network hold that needs a r
   test("the failed job's hold stands first; B's third drop then takes the hold over: «Продолжить» is refused until a reconcile", async () => {
     const { r, launch, endA, idleB } = await withOpenReserve();
     endA.resolve(internalEnd);
-    await until(() => r.ctx().file().paidHold?.reason === "internal", "the failed job's hold");
+    await r.when(() => r.ctx().file().paidHold?.reason === "internal", "the failed job's hold");
     expect((await r.orchestrator.get(launch.launchId)).launch.resumeBlockedBy).toBeNull();
     idleB.resolve();
-    await until(() => r.ctx().file().paidHold?.reason === "network", "the network hold over it");
+    await r.when(() => r.ctx().file().paidHold?.reason === "network", "the network hold over it");
     expect(holdDetail(r)).toMatchObject({ drops: 3, nextAt: null });
     expect((await r.orchestrator.get(launch.launchId)).launch.resumeBlockedBy).toBe("network");
     await expect(r.orchestrator.resume(launch.launchId, 10_000_000_000)).rejects.toBeInstanceOf(EngineFailure);
@@ -454,15 +454,15 @@ describe("the third drop is the third drop, whoever held the launch when the fir
     const { r, launch, idleB, seen } = await twoJobs(timers);
     await r.ctx().raisePaidHold({ reason: "credits", at: timers.iso(), detail: {} });
     idleB.resolve();
-    await until(() => r.fileOf(launch.launchId).autoContinues?.[`${SET2}:scenes`]?.drops === 1, "drop 1 under credits");
+    await r.when(() => r.fileOf(launch.launchId).autoContinues?.[`${SET2}:scenes`]?.drops === 1, "drop 1 under credits");
     // Under a hold for a person no wait could serve the drop: it is counted, no continue is spent.
     expect(r.fileOf(launch.launchId).autoContinues?.[`${SET2}:scenes`]).toEqual({ drops: 1, continues: 0 });
     await idle();
     await r.orchestrator.resume(launch.launchId, 10_000_000_000);
-    await until(() => holdDetail(r)?.drops === 2 && timers.pending() === 1, "drop 2 and its wait");
+    await r.when(() => holdDetail(r)?.drops === 2 && timers.pending() === 1, "drop 2 and its wait");
     expect(holdDetail(r)?.nextAt).not.toBeNull();
     timers.advance(10 * MIN);
-    await until(() => holdDetail(r)?.drops === 3 && r.ctx().file().paidHold?.reason === "network", "drop 3");
+    await r.when(() => holdDetail(r)?.drops === 3 && r.ctx().file().paidHold?.reason === "network", "drop 3");
     expect(holdDetail(r)?.nextAt).toBeNull();
     expect(timers.pending()).toBe(0);
     const writes = seen.writesB;
