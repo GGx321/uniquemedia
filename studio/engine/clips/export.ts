@@ -197,6 +197,19 @@ const isIdentity = (facts: FileFacts, identity: FileIdentity): boolean => facts.
 /** The length of the picture in ms (the edit's, else the samples'): what an export keeps of the source. */
 const pictureMs = (info: VideoInfo): number => (info.video.presentation.ticks / info.video.presentation.timescale) * 1000;
 
+/** Resolves when `turn` does, or as soon as `signal` fires (never rejects). */
+function untilTurnOrStop(turn: Promise<void>, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const stop = (): void => resolve();
+    signal.addEventListener("abort", stop, { once: true });
+    void turn.then(() => {
+      signal.removeEventListener("abort", stop);
+      resolve();
+    });
+  });
+}
+
 async function probeFile(path: string): Promise<ReturnType<typeof probeVideo>> {
   const opened = await openFileSource(path);
   try {
@@ -304,8 +317,14 @@ export class ClipExports {
         signal: AbortSignal.any([registry, own.signal, deps.host.stop, this.#libraryStop.signal]),
         end: deps.host.begin(clipId),
       };
-      const run = this.#queue.then(() => this.#run(job));
-      this.#queue = run.catch(() => undefined);
+      // FIFO: the export runs once every export ahead of it has ended. A stop while it waits ends it at once (it finds its signal fired and makes nothing), and the queue's tail
+      // still waits for the ones ahead, so the next export never overtakes them.
+      const turn = this.#queue;
+      const run = untilTurnOrStop(turn, job.signal).then(() => this.#run(job));
+      this.#queue = Promise.all([turn, run]).then(
+        () => undefined,
+        () => undefined,
+      );
       return { jobId };
     });
   }

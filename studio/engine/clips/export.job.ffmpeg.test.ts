@@ -351,6 +351,64 @@ describe("a stop", () => {
   });
 });
 
+describe("a queued export that is stopped", () => {
+  /** A first export held in its encode, and the next ones queued behind it (one clip each). */
+  async function queue(count: number) {
+    const first = heldEncode();
+    const encoded: string[] = [];
+    const r = await world({
+      deps: {
+        encode: async (encode) => {
+          encoded.push(encode.output);
+          return encoded.length === 1 ? first.encode(encode) : copyingEncode(fixtures.cleanExport)(encode);
+        },
+      },
+    });
+    const ids = [CLIP];
+    for (let n = 2; n <= count; n++) {
+      const clipId = `clip-000000${n}`;
+      await r.putClip(clipId, await fixtures.kling());
+      ids.push(clipId);
+    }
+    const head = await r.started(CLIP);
+    await first.started;
+    const queued: string[] = [];
+    for (const clipId of ids.slice(1)) queued.push(await r.started(clipId));
+    return { r, first, head, queued, encoded, ids };
+  }
+
+  test("a cancel ends it at once, while the export ahead still runs: its clip is free again, and only the running one holds the library", async () => {
+    const { r, first, head, queued, ids } = await queue(2);
+    const [second] = queued;
+    if (second === undefined) throw new Error("no queued export");
+
+    r.exports.cancel(second);
+
+    expect((await r.settled(second)).status).toBe("cancelled");
+    expect(r.jobs.stateOf(head)?.status).toBe("running");
+    expect([r.state.busy.has(ids[1] ?? ""), r.state.work, r.exports.active()]).toEqual([false, 1, 1]);
+    first.release();
+    expect((await r.settled(head)).status).toBe("done");
+  });
+
+  test("the queue keeps its order: the export behind a cancelled one still waits for the one running ahead", async () => {
+    const { r, first, head, queued, encoded } = await queue(3);
+    const [second, third] = queued;
+    if (second === undefined || third === undefined) throw new Error("no queued exports");
+
+    r.exports.cancel(second);
+    await r.settled(second);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(encoded).toHaveLength(1);
+    expect(r.jobs.stateOf(third)).toMatchObject({ status: "running", done: 0 });
+    first.release();
+    await r.settled(head);
+    expect((await r.settled(third)).status).toBe("done");
+    expect(encoded).toHaveLength(2);
+  });
+});
+
 describe("the export folder being switched (an export commits into the folder the settings name, as a render does)", () => {
   test("a pick of another folder waiting for its settings refuses clips.export IN_FLIGHT, and no job starts", async () => {
     const r = await world();
