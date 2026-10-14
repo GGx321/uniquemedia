@@ -78,7 +78,7 @@ describe("the «Клипы» tab among the avatar's tabs (39, R-14)", () => {
     photos.focus();
     fireEvent.keyDown(photos, { key: "ArrowRight" });
     expect(clipsTab().getAttribute("aria-selected")).toBe("true");
-    expect(document.activeElement).toBe(clipsTab());
+    expect(document.activeElement === clipsTab()).toBe(true);
     fireEvent.keyDown(clipsTab(), { key: "ArrowRight" });
     expect(screen.getByRole("tab", { name: "Видео" }).getAttribute("aria-selected")).toBe("true");
     fireEvent.keyDown(screen.getByRole("tab", { name: "Видео" }), { key: "ArrowLeft" });
@@ -93,7 +93,7 @@ describe("the «Клипы» tab among the avatar's tabs (39, R-14)", () => {
     expect(screen.getByRole("heading", { level: 2, name: "Клипы" })).toBeDefined();
     expect(screen.getByText("Клипов пока нет")).toBeDefined();
     expect(screen.getByText("Откройте фото и нажмите «Оживить».")).toBeDefined();
-    expect(clipsTab().querySelector(".tab-new")).toBeNull();
+    expect(clipsTab().querySelector(".tab-new") === null).toBe(true);
   });
 });
 
@@ -206,7 +206,7 @@ describe("38: the sheet «Оживить фото»", () => {
     const creates = callsOf(h.engine, "clips.create");
     expect(creates).toHaveLength(1);
     expect(creates[0]?.payload).toEqual({ avatarId: NINI.avatarId, photoId: PLAIN.photoId, motionId: "g-blink", model: "kling", quality: "std", seconds: 5, fallback: "auto", acceptedWorstMicros: 850_000 });
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("dialog") === null).toBe(true);
     expect(clipsTab().getAttribute("aria-selected")).toBe("true");
     const work = tile("Клип в работе: Моргает и улыбается");
     expect(within(work).getByRole("status").textContent).toBe("Готовим кадр");
@@ -216,7 +216,7 @@ describe("38: the sheet «Оживить фото»", () => {
     tick(h.scheduler);
     await flush();
     expect(within(tile("Клип в работе: Моргает и улыбается")).getByRole("status").textContent).toBe("Отправляем в Kling");
-    expect(within(tile("Клип в работе: Моргает и улыбается")).queryByRole("button", { name: "Отменить" })).toBeNull();
+    expect(within(tile("Клип в работе: Моргает и улыбается")).queryByRole("button", { name: "Отменить" }) === null).toBe(true);
     expect(within(sidebarQueue()).getByText("Отправляем")).toBeDefined();
   });
 
@@ -228,7 +228,7 @@ describe("38: the sheet «Оживить фото»", () => {
     expect(callsOf(h.engine, "avatars.cancel")).toHaveLength(1);
     runJobs(h.scheduler, 5);
     await flush();
-    expect(screen.queryByRole("article", { name: /Клип в работе/ })).toBeNull();
+    expect(screen.queryByRole("article", { name: /Клип в работе/ }) === null).toBe(true);
     expect(h.engine.peekClips().posts).toEqual([]);
   });
 
@@ -241,7 +241,7 @@ describe("38: the sheet «Оживить фото»", () => {
     expect(callsOf(h.engine, "clips.options").length).toBeGreaterThanOrEqual(2);
     expect(callsOf(h.engine, "clips.create")).toHaveLength(1);
     fireEvent.click(radio(sheet(), "10 секунд"));
-    expect(within(sheet()).queryByText(/Цена изменилась/)).toBeNull();
+    expect(within(sheet()).queryByText(/Цена изменилась/) === null).toBe(true);
   });
 
   test("38c: the month holds Kling alone — «Оживить» waits, the notice says what the clip needs, «Оживить без запасной модели · до $0.51» sends fallback none", async () => {
@@ -263,9 +263,9 @@ describe("38: the sheet «Оживить фото»", () => {
     expect(within(s).getByText("Kling 3.0 · 720p")).toBeDefined();
     expect(priceLine(s)).toBe("Обычно $0.42 · не больше $0.51");
     expect(notes(s)).toEqual(["Для кадров «Смелой» запасной модели нет: если Kling откажет, клип не снимется — отказ бесплатный.", "Звука нет. Клип появится во вкладке «Клипы» через 1–3 минуты."]);
-    expect(within(s).queryByRole("button", { name: /без запасной модели/ })).toBeNull();
+    expect(within(s).queryByRole("button", { name: /без запасной модели/ }) === null).toBe(true);
     fireEvent.click(radio(s, "Чётче · 1080p"));
-    expect(within(s).queryByText("Запасная модель (Grok) снимает в 720p")).toBeNull();
+    expect(within(s).queryByText("Запасная модель (Grok) снимает в 720p") === null).toBe(true);
     expect(priceLine(s)).toBe("Обычно $0.56 · не больше $0.68");
   });
 
@@ -278,7 +278,7 @@ describe("38: the sheet «Оживить фото»", () => {
     const go = within(s).getByRole("button", { name: "Оживить" });
     expect(go.hasAttribute("disabled")).toBe(true);
     expect(whyOf(go)).toContain(PRICE_SCOPES_RU.video);
-    expect(within(s).queryByRole("radiogroup")).toBeNull();
+    expect(within(s).queryByRole("radiogroup") === null).toBe(true);
   });
 
   test("«Отмена» closes the sheet and the viewer is there again, the focus back on «Оживить»", async () => {
@@ -286,7 +286,7 @@ describe("38: the sheet «Оживить фото»", () => {
     const s = await openSheet();
     fireEvent.click(within(s).getByRole("button", { name: "Отмена" }));
     await flush();
-    expect(screen.queryByRole("dialog", { name: "Оживить фото" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Оживить фото" }) === null).toBe(true);
     expect(focusedLabel()).toBe(describeElement(animateIn(viewer())));
   });
 
@@ -295,7 +295,7 @@ describe("38: the sheet «Оживить фото»", () => {
     await openSheet();
     fireEvent.keyDown(document.activeElement ?? window, { key: "Escape" });
     await flush();
-    expect(screen.queryByRole("dialog", { name: "Оживить фото" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Оживить фото" }) === null).toBe(true);
     expect(viewer()).toBeDefined();
   });
 });
@@ -331,7 +331,7 @@ describe("40–42: the tiles", () => {
     expect(within(ready).getByText(/^\$0\.42 · /)).toBeDefined();
     expect(within(ready).getByRole("button", { name: "Открыть клип «Моргает и улыбается», 0:05" })).toBeDefined();
     expect(clipsTab().textContent).toBe("Клипы1, новых: 1");
-    expect(within(sidebarQueue()).queryByText("Клип · Nini")).toBeNull();
+    expect(within(sidebarQueue()).queryByText("Клип · Nini") === null).toBe(true);
   });
 
   test("40: the phases as they come, «Снимается · m:ss» counting, the steps filling", async () => {
@@ -380,8 +380,8 @@ describe("40–42: the tiles", () => {
     await flush();
     await flush();
     expect(callsOf(h.engine, "clips.delete")).toHaveLength(1);
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(screen.queryByRole("article", { name: /Клип не получился/ })).toBeNull();
+    expect(screen.queryByRole("dialog") === null).toBe(true);
+    expect(screen.queryByRole("article", { name: /Клип не получился/ }) === null).toBe(true);
   });
 
   test("42n then 42r (mode offer): «Снять на Grok · до $0.85» sends a Grok create at the engine's own price; Grok's free refusal offers «Оживить снова…», never Grok again", async () => {
@@ -393,7 +393,7 @@ describe("40–42: the tiles", () => {
     await flush();
     const offered = tile("Клип не получился: Моргает и улыбается");
     expect(within(offered).getByText("Kling отказал бесплатно")).toBeDefined();
-    expect(within(offered).queryByRole("button", { name: "Оживить снова…" })).toBeNull();
+    expect(within(offered).queryByRole("button", { name: "Оживить снова…" }) === null).toBe(true);
     h.engine.scriptNextClip("refused-free");
     fireEvent.click(within(offered).getByRole("button", { name: "Снять на Grok · до $0.85" }));
     await flush();
@@ -409,7 +409,7 @@ describe("40–42: the tiles", () => {
     const refused = screen.getAllByRole("article", { name: "Клип не получился: Моргает и улыбается" }).find((a) => within(a).queryByText("Grok отказал бесплатно") !== null);
     expect(refused).toBeDefined();
     expect(within(refused as HTMLElement).getByRole("button", { name: "Оживить снова…" })).toBeDefined();
-    expect(within(refused as HTMLElement).queryByRole("button", { name: /Снять на Grok/ })).toBeNull();
+    expect(within(refused as HTMLElement).queryByRole("button", { name: /Снять на Grok/ }) === null).toBe(true);
   });
 
   test("42d: an uncertain submit — «Неизвестно, оплачено ли — сверка покажет» with «до $0.51 — спишется при сверке», no retry", async () => {
@@ -452,7 +452,7 @@ describe("40–42: the tiles", () => {
     expect(within(failed).getByText(ERROR_MESSAGES_RU.RECONCILE_REQUIRED)).toBeDefined();
     fireEvent.click(within(failed).getByRole("button", { name: "Убрать «Моргает и улыбается»" }));
     await flush();
-    expect(screen.queryByRole("article", { name: /Клип не получился/ })).toBeNull();
+    expect(screen.queryByRole("article", { name: /Клип не получился/ }) === null).toBe(true);
     expect(callsOf(h.engine, "clips.delete")).toHaveLength(0);
   });
 
@@ -471,7 +471,7 @@ describe("40–42: the tiles", () => {
     expect(img).not.toBeNull();
     fireEvent.error(img as Element);
     await flush();
-    expect(ready.querySelector("img.clip-poster-img")).toBeNull();
+    expect(ready.querySelector("img.clip-poster-img") === null).toBe(true);
     expect(ready.querySelector(".portrait-placeholder")).not.toBeNull();
   });
 });
@@ -503,7 +503,7 @@ describe("43: the clip viewer and «Сохранить в папку»", () => {
     expect(fact("Стоимость")).toBe("$0.42");
     expect(fact("Лицо")).toBe("0.86 (по 10 кадрам)");
     expect(callsOf(h.engine, "clips.markSeen")).toHaveLength(1);
-    expect(clipsTab().querySelector(".tab-new")).toBeNull();
+    expect(clipsTab().querySelector(".tab-new") === null).toBe(true);
     expect(within(clipViewer()).getByText("без звука · по кругу")).toBeDefined();
   });
 
@@ -515,10 +515,10 @@ describe("43: the clip viewer and «Сохранить в папку»", () => {
     await flush();
     expect(callsOf(h.engine, "clips.export")).toHaveLength(1);
     const busy = within(clipViewer()).getByRole("button", { name: "Сохраняем…" });
-    expect(busy).toBe(save);
+    expect(busy === save).toBe(true);
     expect(busy.getAttribute("aria-disabled")).toBe("true");
     expect(busy.hasAttribute("disabled")).toBe(false);
-    expect(document.activeElement).toBe(busy);
+    expect(document.activeElement === busy).toBe(true);
     fireEvent.click(busy);
     await flush();
     expect(callsOf(h.engine, "clips.export")).toHaveLength(1);
@@ -527,7 +527,7 @@ describe("43: the clip viewer and «Сохранить в папку»", () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 2_100));
     });
-    expect(within(clipViewer()).getByRole("button", { name: /^Сохраняем · \d+\u00a0%$/ })).toBe(save);
+    expect(within(clipViewer()).getByRole("button", { name: /^Сохраняем · \d+\u00a0%$/ }) === save).toBe(true);
     const bar = within(clipViewer()).getByRole("progressbar", { name: "Сохранение клипа в папку" });
     expect(Number(bar.getAttribute("aria-valuenow"))).toBeGreaterThan(0);
     expect(within(sidebarQueue()).getByText(/^Сохраняем \d+\s?%$/)).toBeDefined();
@@ -574,7 +574,7 @@ describe("43: the clip viewer and «Сохранить в папку»", () => {
     expect(within(ask).getByText("Файл клипа удалится из Studio. Копии в «Готовые видео» нет — если клип нужен, сначала сохраните его в папку. Деньги за него уже потрачены.")).toBeDefined();
     fireEvent.click(within(ask).getByRole("button", { name: "Отмена" }));
     await flush();
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.queryByRole("alertdialog") === null).toBe(true);
     expect(clipViewer()).toBeDefined();
     fireEvent.click(within(clipViewer()).getByRole("button", { name: "Удалить" }));
     await flush();
@@ -582,7 +582,7 @@ describe("43: the clip viewer and «Сохранить в папку»", () => {
     await flush();
     await flush();
     expect(callsOf(h.engine, "clips.delete")).toHaveLength(1);
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("dialog") === null).toBe(true);
     expect(tilesNamed()).toEqual([]);
     // Its tile is gone with it: the focus waits on the tab's heading, never on the page.
     expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 2, name: "Клипы" })));
@@ -627,8 +627,8 @@ describe("46: after a restart", () => {
       expect(screen.getByText("Нужна сверка расходов")).toBeDefined();
       // 46 #held: a clip that was rendering may still bill for up to an hour after its submit (I5.48), far past the restart's own minutes: the banner says until when.
       expect(screen.getByText(/^Сверка ждёт окончания клипа — до \d\d:\d\d\.$/)).toBeDefined();
-      expect(screen.queryByText(CLIP_RESTART_BANNER)).toBeNull();
-      expect(screen.queryByRole("button", { name: "Перейти к сверке" })).toBeNull();
+      expect(screen.queryByText(CLIP_RESTART_BANNER) === null).toBe(true);
+      expect(screen.queryByRole("button", { name: "Перейти к сверке" }) === null).toBe(true);
       expect(within(sidebarQueue()).getByText("Восстановление")).toBeDefined();
       runJobs(h.scheduler, 40);
       await flush();

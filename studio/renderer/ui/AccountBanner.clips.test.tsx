@@ -100,28 +100,28 @@ describe("«Нужна сверка расходов» while the reconcile canno
     show(view(m));
     expect(screen.getByText("Нужна сверка расходов")).toBeDefined();
     expect(screen.getByText(clipReconcileWaitText(Date.parse(m.ledger === "open" ? (m.reconcileAvailableAt ?? "") : "")))).toBeDefined();
-    expect(goReconcile()).toBeNull();
+    expect(goReconcile() === null).toBe(true);
   });
 
   test("46: right after a restart with a clip in work, the restart's line, and no «Перейти к сверке»", () => {
     show(view(money({ reconcileNeeded: true, availableInMs: 4 * MINUTE }), [recoveryJob]));
     expect(screen.getByText(CLIP_RESTART_BANNER)).toBeDefined();
-    expect(goReconcile()).toBeNull();
+    expect(goReconcile() === null).toBe(true);
   });
 
   test("46 #held: the recovering clip may still bill past the restart's minutes: the time it waits for", () => {
     const m = money({ reconcileNeeded: true, availableInMs: 40 * MINUTE });
     show(view(m, [recoveryJob]));
-    expect(screen.queryByText(CLIP_RESTART_BANNER)).toBeNull();
+    expect(screen.queryByText(CLIP_RESTART_BANNER) === null).toBe(true);
     expect(screen.getByText(/^Сверка ждёт окончания клипа — до \d\d:\d\d\.$/)).toBeDefined();
-    expect(goReconcile()).toBeNull();
+    expect(goReconcile() === null).toBe(true);
   });
 
   test("once the time has come the button is back and the clip's line goes", () => {
     show(view(money({ reconcileNeeded: true, availableInMs: -MINUTE }), [recoveryJob]));
     expect(goReconcile()).not.toBeNull();
-    expect(screen.queryByText(CLIP_RESTART_BANNER)).toBeNull();
-    expect(screen.queryByText(/Сверка ждёт окончания клипа/)).toBeNull();
+    expect(screen.queryByText(CLIP_RESTART_BANNER) === null).toBe(true);
+    expect(screen.queryByText(/Сверка ждёт окончания клипа/) === null).toBe(true);
   });
 
   test("with no date at all (nothing holds the reconcile) the banner is as before", () => {
@@ -132,6 +132,6 @@ describe("«Нужна сверка расходов» while the reconcile canno
 
   test("a clip reserve that is only held stops no paid work, so there is no banner (I5.48: not a reconcile reason)", () => {
     show(view(money({ reconcileNeeded: false, availableInMs: 30 * MINUTE })));
-    expect(screen.queryByText("Нужна сверка расходов")).toBeNull();
+    expect(screen.queryByText("Нужна сверка расходов") === null).toBe(true);
   });
 });
