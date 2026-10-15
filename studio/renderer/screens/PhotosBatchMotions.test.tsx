@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { CLIP_REASONS_RU, type AvatarSummary, type PhotoSummary } from "../../shared/engine";
-import { MOCK_SUGGEST_PRICE, MOCK_TRANSLATE_PRICE, mockIdeaAnswer } from "../engine/mockClipMotions";
+import { MOCK_SUGGEST_PRICE, MOCK_TRANSLATE_PRICE, mockIdeaAnswer, type MockModelReply } from "../engine/mockClipMotions";
 import type { MockEngineOptions } from "../engine/mockEngine";
 import { MIA, scenePhoto } from "../engine/mockEngine.testkit";
 import { callsOf, flush, setup } from "../testing";
@@ -185,5 +185,89 @@ describe("59e: «Оживить N» and a running part C call (r2.1 N10)", () =>
     expect(callsOf(h.engine, "clips.createBatch")).toHaveLength(2);
     // The batch started: the sheet is gone.
     expect(screen.queryByRole("dialog", { name: "Оживить 2 фото" }) == null).toBe(true);
+  });
+});
+
+/** The writer's answer with these labels and texts (the mock's own helper numbers its labels). */
+function labelled(pairs: readonly [string, string][]): MockModelReply {
+  const content = JSON.stringify({ motions: pairs.map(([label_ru, text_en]) => ({ label_ru, text_en })), frame: { capture: "unknown", phoneVisible: false, faceVisible: true } });
+  return { kind: "answer", content, costMicros: 3_400 };
+}
+const FIRST_THREE = labelled([
+  ["Дует на чай", "she slowly tucks a strand of hair behind her ear"],
+  ["Прячет улыбку", "she tilts her head a little to one side and smiles"],
+  ["Глубоко вдыхает", "she slowly takes a breath and relaxes her shoulders"],
+]);
+const NEXT_THREE = labelled([
+  ["Смотрит вниз", "she slowly looks down and smiles to herself"],
+  ["Смотрит в сторону", "she slowly glances to the side and looks back"],
+  ["Поправляет волосы", "she slowly tucks a strand of hair behind her ear"],
+]);
+
+describe("S5.WC5b (M2): the batch rows follow the photo's stored motions", () => {
+  test("a call for a listed photo ends while the sheet is open: the rows are read again, the options kept; a chosen suggestion pushed out is said, its row on the first motion", async () => {
+    const h = await openNini();
+    h.engine.scriptNextMotionReplies([FIRST_THREE]);
+    await h.client.request("clips.suggestMotions", { avatarId: NINI.avatarId, photoId: PLAIN.photoId, acceptedWorstMicros: MOCK_SUGGEST_PRICE.worstMicros });
+    // A sheet of Фото 3 asks for three more and is closed while the call runs (the window knows the call).
+    fireEvent.click(screen.getByRole("button", { name: "Открыть фото 3: Дом" }));
+    await flush();
+    fireEvent.click(within(screen.getByRole("dialog", { name: /^Фото \d+ из \d+$/ })).getByRole("button", { name: "Оживить" }));
+    await settle();
+    const clipSheet = screen.getByRole("dialog", { name: "Оживить фото" });
+    h.engine.holdMotionCalls(true);
+    h.engine.scriptNextMotionReplies([NEXT_THREE]);
+    fireEvent.click(within(clipSheet).getByRole("button", { name: /^Предложить движения/ }));
+    await settle();
+    fireEvent.click(within(clipSheet).getByRole("button", { name: "Отмена" }));
+    await flush();
+    fireEvent.click(within(screen.getByRole("dialog", { name: /^Фото \d+ из \d+$/ })).getByRole("button", { name: "Закрыть" }));
+    await flush();
+    const s = await openBatch();
+    const row = rowOf(s, "Фото 3 · Дом");
+    fireEvent.change(selectOf(row), { target: { value: "v-1" } });
+    fireEvent.click(within(s).getByRole("radio", { name: "Чётче · 1080p" }));
+    await flush();
+    const asked = callsOf(h.engine, "clips.batchOptions").length;
+    h.engine.holdMotionCalls(false);
+    await settle();
+    expect(callsOf(h.engine, "clips.batchOptions").length).toBe(asked + 1);
+    const again = rowOf(s, "Фото 3 · Дом");
+    expect(listOf(selectOf(again)).includes("Дует на чай")).toBe(false);
+    expect(selectOf(again).value).toBe("g-blink");
+    expect(again.querySelector(".mc-ben") == null).toBe(true);
+    expect(plain(within(s).getByRole("status").textContent)).toBe("Фото 3 · Дом: движение «Дует на чай» больше не в списке — выбрано «Моргает и улыбается».");
+    expect((within(s).getByRole("radio", { name: "Чётче · 1080p" }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  test("`unknown-motion` after «Оживить 2»: the row stays (not struck) with «Движение больше недоступно — выберите другое.», one alert, the rows read again; the next click goes", async () => {
+    const h = await openNini();
+    await seedStores(h);
+    const s = await openBatch();
+    fireEvent.change(selectOf(rowOf(s, "Фото 3 · Дом")), { target: { value: "v-1" } });
+    await flush();
+    h.engine.tamperMotionStore(PLAIN.photoId, (store) => {
+      store.items = store.items.filter((item) => item.id !== "v-1");
+    });
+    const asked = callsOf(h.engine, "clips.batchOptions").length;
+    fireEvent.click(mainButton(s));
+    await settle();
+    const row = rowOf(s, "Фото 3 · Дом");
+    expect(row.classList.contains("batch-row-off")).toBe(false);
+    expect(plain(row.querySelector(".batch-note")?.textContent)).toBe("Движение больше недоступно — выберите другое.");
+    expect(plain(within(s).getByRole("alert").textContent)).toBe("Фото 3 · Дом: движение больше недоступно — выберите другое.");
+    expect(callsOf(h.engine, "clips.batchOptions").length).toBe(asked + 1);
+    expect(selectOf(row).value).toBe("g-blink");
+    expect(document.activeElement === cancelButton(s)).toBe(true);
+    // Another choice ends the line; the click goes.
+    fireEvent.change(selectOf(row), { target: { value: "v-2" } });
+    await flush();
+    expect(row.querySelector(".batch-note") == null).toBe(true);
+    fireEvent.click(mainButton(s));
+    await settle();
+    expect(callsOf(h.engine, "clips.createBatch").at(-1)?.payload.items).toEqual([
+      { photoId: PLAIN.photoId, motionId: "v-2" },
+      { photoId: BOLD.photoId, motionId: "g-blink" },
+    ]);
   });
 });
