@@ -164,6 +164,7 @@ import { maskHome } from "./renderQueue/scrubber";
 import { createFocusResolver, type FocusFaceGate, type FocusResolver } from "./focus/focusResolver";
 import type { WorkerFaceGate } from "./face/worker/workerGate";
 import type { ClipBatchFile } from "./clips/batchSummary";
+import type { RenameRetryOptions } from "./library/renameRetry";
 import type { ClipRecordsDeps } from "./clips/records";
 import { ClipService } from "./clips/service";
 import { clipTimings, type ClipTimings } from "./clips/timings";
@@ -393,6 +394,8 @@ export interface EngineDeps {
   clipRecoveryBeforeList?: (dir: string) => void | Promise<void>;
   /** Test seam (5b.2, S5.WB2c): awaited before each batch summary is written; what it throws is what the write threw (a full disk, a volume that went away). */
   clipBatchSummaryBeforeWrite?: (file: ClipBatchFile) => void | Promise<void>;
+  /** Test seam: the batch summaries' rename retry (`renameWithRetry`): its platform, rename and sleep, so Windows' refused renames can be played on any machine. */
+  clipBatchSummaryRetry?: RenameRetryOptions;
 }
 
 /** How long one `videos.render` may spend filling the focus of its photos. Under main's 30 s command deadline, so the answer (or the refusal) always arrives before main gives up. */
@@ -1215,6 +1218,7 @@ export class Engine {
       ...(deps.clipRecords === undefined ? {} : { records: deps.clipRecords }),
       ...(deps.clipRecoveryBeforeList === undefined ? {} : { recoveryBeforeList: deps.clipRecoveryBeforeList }),
       ...(deps.clipBatchSummaryBeforeWrite === undefined ? {} : { batchSummaryBeforeWrite: deps.clipBatchSummaryBeforeWrite }),
+      ...(deps.clipBatchSummaryRetry === undefined ? {} : { batchSummaryRetry: deps.clipBatchSummaryRetry }),
       log: (line) => console.warn(`studio engine: ${line}`),
       exportStatus: (requiredBytes) => this.#refreshExportStatus(requiredBytes),
       liveCommits: this.#commits,

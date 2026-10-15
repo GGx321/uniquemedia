@@ -5,6 +5,7 @@ import { CLIP_BATCH_RULES, clipBatchFields, type ClipBatchSummary, type ClipCost
 import { batchSummaryOf, clipBatchOutcomeOf, startBatchState } from "../../shared/engine/clipBatchSummary";
 import { fsyncDir, hasErrorCode, isTempName, readFolderNames, readRecordFile, writeJsonAtomic } from "../library/durableFs";
 import { isLibraryId } from "../library/ids";
+import type { RenameRetryOptions } from "../library/renameRetry";
 import type { ClipJobOutcome } from "./job";
 import type { ClipRecord } from "./schemas";
 
@@ -35,6 +36,8 @@ export function batchSummaryPath(clipsDir: string, batchId: string): string {
 }
 
 const SUMMARY_NAME = /^(.+)\.json$/;
+/** The temp sibling the shared atomic write makes of `<batchId>.json` (`tempSiblingPath`): `.<batchId>.json.<hex>.tmp`. */
+const TEMP_NAME = /^\.(.+)\.json\.[0-9a-f]+\.tmp$/;
 
 // ---------- the pure rules (shared/engine/clipBatchSummary.ts, so the mock reads the same) ----------
 
@@ -91,15 +94,20 @@ function errorName(error: unknown): string {
 export class BatchSummaryStore {
   readonly #log: (line: string) => void;
   readonly #beforeWrite: ((file: ClipBatchFile) => void | Promise<void>) | undefined;
+  readonly #retry: RenameRetryOptions | undefined;
   readonly #tails = new Map<string, Promise<void>>();
   readonly #pending = new Set<Promise<unknown>>();
   /** The last state each change meant to write, by the file's path, whether or not the write went through. A forgotten batch leaves it. */
   readonly #latest = new Map<string, ClipBatchFile>();
 
-  /** `beforeWrite` is a test seam: awaited before each write, what it throws is what the write threw (a full disk, a volume that went away). */
-  constructor(deps: { log: (line: string) => void; beforeWrite?: (file: ClipBatchFile) => void | Promise<void> }) {
+  /**
+   * `beforeWrite` is a test seam: awaited before each write, what it throws is what the write threw (a full disk, a volume that went away). `retry` is another: the rename's retry of the shared atomic write
+   * (`renameWithRetry`), so Windows' refused renames can be played anywhere.
+   */
+  constructor(deps: { log: (line: string) => void; beforeWrite?: (file: ClipBatchFile) => void | Promise<void>; retry?: RenameRetryOptions }) {
     this.#log = deps.log;
     this.#beforeWrite = deps.beforeWrite;
+    this.#retry = deps.retry;
   }
 
   /** Runs `work` after every earlier piece of work on this batch's file. */
@@ -136,13 +144,32 @@ export class BatchSummaryStore {
     });
   }
 
-  /** Removes a batch's summary (retention), after every earlier change of it. */
+  /** Removes a batch's summary (retention) and any temp file of it, after every earlier change of it. */
   forget(clipsDir: string, batchId: string): Promise<void> {
     return this.#serial(clipsDir, batchId, async () => {
       this.#latest.delete(batchSummaryPath(clipsDir, batchId));
       await rm(batchSummaryPath(clipsDir, batchId), { force: true });
+      await this.#removeTemps(clipsDir, batchId);
       await fsyncDir(batchesDirOf(clipsDir));
     });
+  }
+
+  /**
+   * Removes the temp files a write left in the avatar's `batches/` (a quit or a crash in the middle of one): each batch's after every earlier change of that batch, so a write in flight never loses its own.
+   * Never rejects: what cannot be removed now is the next sweep's.
+   */
+  async sweepTemps(clipsDir: string): Promise<void> {
+    const listed = await readFolderNames(batchesDirOf(clipsDir));
+    if (!listed.ok) return;
+    const batchIds = new Set(listed.names.flatMap((name) => TEMP_NAME.exec(name)?.[1] ?? []).filter((id) => isLibraryId(id)));
+    for (const batchId of batchIds) await this.#serial(clipsDir, batchId, () => this.#removeTemps(clipsDir, batchId));
+  }
+
+  /** The temp files of one batch's summary, removed. Called only while no write of that batch runs. */
+  async #removeTemps(clipsDir: string, batchId: string): Promise<void> {
+    const listed = await readFolderNames(batchesDirOf(clipsDir));
+    if (!listed.ok) return;
+    for (const name of listed.names) if (TEMP_NAME.exec(name)?.[1] === batchId) await rm(join(batchesDirOf(clipsDir), name), { force: true });
   }
 
   /** A piece of work `settled()` waits for (the restart's pass over the summaries). */
@@ -201,7 +228,14 @@ export class BatchSummaryStore {
     if (await makeFolder(clipsDir)) await fsyncDir(dirname(clipsDir));
     const dir = batchesDirOf(clipsDir);
     if (await makeFolder(dir)) await fsyncDir(clipsDir);
-    await writeJsonAtomic(batchSummaryPath(clipsDir, file.batchId), file);
+    try {
+      // The shared atomic write retries a rename Windows refuses while another handle holds the file (`renameWithRetry`, about 3 s).
+      await writeJsonAtomic(batchSummaryPath(clipsDir, file.batchId), file, this.#retry === undefined ? {} : { retry: this.#retry });
+    } catch (error) {
+      // A write that failed for good leaves no temp file behind (S5.WB2c, Windows): the state it meant is kept (`#latest`) and the next change writes it whole. The caller logs the failure, once.
+      await this.#removeTemps(clipsDir, file.batchId).catch(() => undefined);
+      throw error;
+    }
   }
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ClipBatchSummary, type ClipCost } from "../../shared/engine";
@@ -456,5 +456,93 @@ describe("BatchSummaryStore", () => {
     summaries.track(new Promise<void>((resolve) => setTimeout(() => ((finished = true), resolve()), 20)));
     await summaries.settled();
     expect(finished).toBe(true);
+  });
+});
+
+describe("BatchSummaryStore on Windows (CI 38713903237): a rename refused while another handle holds the file", () => {
+  async function folder(): Promise<{ clipsDir: string; done: () => Promise<void> }> {
+    const root = await mkdtemp(join(tmpdir(), "studio-batch-summary-win-"));
+    return { clipsDir: join(root, "clips"), done: () => rm(root, { recursive: true, force: true }) };
+  }
+  const eperm = (): Error => Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
+  /** Windows' rename of the shared atomic write: refused with EPERM `refusals` times (or while `blocked`), then the real rename; no real sleep. */
+  function windows(state: { refusals: number; blocked: boolean }) {
+    return {
+      platform: "win32",
+      sleep: async () => undefined,
+      rename: async (from: string, to: string) => {
+        if (state.blocked || state.refusals > 0) {
+          state.refusals--;
+          throw eperm();
+        }
+        await rename(from, to);
+      },
+    };
+  }
+  const tempsIn = async (clipsDir: string): Promise<string[]> => (await readdir(join(clipsDir, BATCHES_DIR))).filter((name) => name.endsWith(".tmp"));
+
+  test("a rename refused a few times is retried by the shared atomic write and lands: the file is whole and no temp file is left", async () => {
+    const { clipsDir, done } = await folder();
+    try {
+      const logs: string[] = [];
+      const state = { refusals: 0, blocked: false };
+      const summaries = new BatchSummaryStore({ log: (line) => void logs.push(line), retry: windows(state) });
+      await summaries.change(clipsDir, BATCH, () => fresh(2));
+      state.refusals = 3;
+      await summaries.change(clipsDir, BATCH, (current) => (current === null ? null : applyBatchChange(current, { kind: "running", index: 1, clipId: clip(1) })));
+
+      const onDisk = ClipBatchFile.parse(JSON.parse(await readFile(batchSummaryPath(clipsDir, BATCH), "utf8")));
+      expect(outcomes(onDisk)).toEqual(["running", "queued"]);
+      expect(await readdir(join(clipsDir, BATCHES_DIR))).toEqual([`${BATCH}.json`]);
+      expect(logs).toEqual([]);
+    } finally {
+      await done();
+    }
+  });
+
+  test("a rename refused for good fails the write once: its temp file is removed, the state it meant is kept, and the next write lands it whole", async () => {
+    const { clipsDir, done } = await folder();
+    try {
+      const logs: string[] = [];
+      const state = { refusals: 0, blocked: false };
+      const summaries = new BatchSummaryStore({ log: (line) => void logs.push(line), retry: windows(state) });
+      await summaries.change(clipsDir, BATCH, () => fresh(2));
+      state.blocked = true;
+      await summaries.change(clipsDir, BATCH, (current) => (current === null ? null : applyBatchChange(current, { kind: "running", index: 1, clipId: clip(1) })));
+
+      expect(await tempsIn(clipsDir)).toEqual([]);
+      expect(logs.filter((line) => line.includes(BATCH))).toHaveLength(1);
+      expect(outcomes((await summaries.read(clipsDir))[0] ?? fresh())).toEqual(["running", "queued"]);
+      expect(outcomes(ClipBatchFile.parse(JSON.parse(await readFile(batchSummaryPath(clipsDir, BATCH), "utf8"))))).toEqual(["queued", "queued"]);
+
+      state.blocked = false;
+      state.refusals = 0;
+      await summaries.change(clipsDir, BATCH, (current) => (current === null ? null : applyBatchChange(current, { kind: "ended", index: 1, clipId: clip(1), outcome: "ready" })));
+      expect(outcomes(ClipBatchFile.parse(JSON.parse(await readFile(batchSummaryPath(clipsDir, BATCH), "utf8"))))).toEqual(["ready", "queued"]);
+      expect(await readdir(join(clipsDir, BATCHES_DIR))).toEqual([`${BATCH}.json`]);
+    } finally {
+      await done();
+    }
+  });
+
+  test("a temp file a crash left beside the summaries is swept, and a batch forgotten takes its temp files with it; a summary is never touched", async () => {
+    const { clipsDir, done } = await folder();
+    try {
+      const summaries = new BatchSummaryStore({ log: () => undefined });
+      const other = "batch-00000002";
+      await summaries.change(clipsDir, BATCH, () => fresh(1));
+      await summaries.change(clipsDir, other, () => startBatchFile({ batchId: other, avatarId: AVATAR, createdAt: AT, clipIds: [clip(9)] }));
+      await writeFile(join(clipsDir, BATCHES_DIR, `.${BATCH}.json.4161ce0f2144.tmp`), "{");
+      await writeFile(join(clipsDir, BATCHES_DIR, `.${other}.json.0123456789ab.tmp`), "{");
+
+      await summaries.sweepTemps(clipsDir);
+      expect((await readdir(join(clipsDir, BATCHES_DIR))).sort()).toEqual([`${BATCH}.json`, `${other}.json`]);
+
+      await writeFile(join(clipsDir, BATCHES_DIR, `.${other}.json.ba9876543210.tmp`), "{");
+      await summaries.forget(clipsDir, other);
+      expect(await readdir(join(clipsDir, BATCHES_DIR))).toEqual([`${BATCH}.json`]);
+    } finally {
+      await done();
+    }
   });
 });

@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path";
 import type { z } from "zod";
 import { LibraryError } from "./errors";
 import { runExclusive } from "./keyedMutex";
-import { renameWithRetry } from "./renameRetry";
+import { renameWithRetry, type RenameRetryOptions } from "./renameRetry";
 
 export interface AtomicWriteOptions {
   /** Test seam: runs after the temp file is durable and before the rename.
@@ -13,6 +13,8 @@ export interface AtomicWriteOptions {
   beforeRename?: (finalPath: string) => void | Promise<void>;
   /** Test seam: runs after the rename and before the folder's flush. Throwing here is a flush that failed with the new file already in place. */
   afterRename?: (finalPath: string) => void | Promise<void>;
+  /** Test seam: the rename's retry (`renameWithRetry`): its platform, its rename and its sleep, so Windows' refused renames can be played anywhere. */
+  retry?: RenameRetryOptions;
 }
 
 /** Temp names are dot-prefixed siblings ending in `.tmp`, so startup
@@ -84,7 +86,7 @@ export async function writeFileAtomic(
     throw error;
   }
   await options.beforeRename?.(path);
-  await renameWithRetry(temp, path);
+  await renameWithRetry(temp, path, options.retry);
   await options.afterRename?.(path);
   await fsyncDir(dirname(path));
 }

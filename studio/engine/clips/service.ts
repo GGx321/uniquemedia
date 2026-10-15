@@ -26,6 +26,7 @@ import type { ExportRootCheck } from "../exportRoot";
 import type { WorkerFaceGate } from "../face/worker/workerGate";
 import type { ClipBatchRef, ClipJobEnd, JobRegistry } from "../jobs";
 import type { Library } from "../library";
+import type { RenameRetryOptions } from "../library/renameRetry";
 import type { PhotoSidecar } from "../library/schemas";
 import { scopeKey, type Budget, type ReserveHandle, type ReserveRefusal, type ReserveRequest } from "../money/budget";
 import type { PricedBook, PriceModels } from "../money/priceCache";
@@ -201,6 +202,8 @@ export interface ClipServiceDeps {
   recoveryBeforeList?: (dir: string) => void | Promise<void>;
   /** Test seam (5b.2, S5.WB2c): awaited before each batch summary is written; what it throws is what the write threw. */
   batchSummaryBeforeWrite?: (file: ClipBatchFile) => void | Promise<void>;
+  /** Test seam: the batch summary's rename retry (`renameWithRetry`), so Windows' refused renames can be played anywhere. */
+  batchSummaryRetry?: RenameRetryOptions;
   log: (line: string) => void;
   // ----- S5.V4c's members (the export commits like a render): declared and wired here, read by the export job -----
   /** The export folder, checked now (as a render's save checks it). */
@@ -282,7 +285,11 @@ export class ClipService {
     this.#boldClips = deps.boldClips ?? BOLD_CLIPS;
     const copies = deps.media === undefined ? null : new ClipCopies({ media: deps.media, ...(deps.drafts === undefined ? {} : { drafts: deps.drafts }), log: deps.log });
     this.#copies = copies;
-    this.#summaries = new BatchSummaryStore({ log: deps.log, ...(deps.batchSummaryBeforeWrite === undefined ? {} : { beforeWrite: deps.batchSummaryBeforeWrite }) });
+    this.#summaries = new BatchSummaryStore({
+      log: deps.log,
+      ...(deps.batchSummaryBeforeWrite === undefined ? {} : { beforeWrite: deps.batchSummaryBeforeWrite }),
+      ...(deps.batchSummaryRetry === undefined ? {} : { retry: deps.batchSummaryRetry }),
+    });
     this.holds = createClipHolds({ now: deps.clock, ...(deps.holdTimers === undefined ? {} : { timers: deps.holdTimers }), onChange: () => deps.emitMoney() });
     // A job on a clip (a download retry, an export) holds the clip against its other commands and the library against a switch, until it ends.
     const host = {
@@ -1093,6 +1100,8 @@ export class ClipService {
     const ledger = this.#deps.budget()?.ledger;
     if (ledger === undefined) return;
     const costs = clipCostsOf(ledger);
+    // A temp file a quit or a crash left in the middle of a write goes too (S5.WB2c, Windows).
+    await this.#summaries.sweepTemps(clipsDir);
     for (const batchId of toForget(files, (file) => moneyOpen(file, costs))) await this.#summaries.forget(clipsDir, batchId);
   }
 
@@ -1109,6 +1118,8 @@ export class ClipService {
         if (this.#batches.get(file.batchId)?.over === false) continue;
         await this.#summaries.change(clipsDir, file.batchId, async (current) => {
           if (current === null) return null;
+      // A temp file the last process left in the middle of a write (a quit, a crash) goes first (S5.WB2c, Windows).
+      await this.#summaries.sweepTemps(clipsDir);
           const looks = new Map<string, MemberLook>();
           for (const clipId of clipIdsToLook(current)) looks.set(clipId, await this.#lookAfterRestart(clipsDir, clipId));
           return this.#priced(afterRestart(current, looks, at));
