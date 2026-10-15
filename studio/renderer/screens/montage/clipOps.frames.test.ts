@@ -163,7 +163,7 @@ describe("a clip copy is neither split nor duplicated (its frame would repeat)",
     expect(splitClipAt(spec, 2, 5_000, unknown)).toEqual({ ok: false, reason: "frame-unknown" });
     expect(duplicateClip(spec, 2, unknown)).toEqual({ ok: false, reason: "frame-unknown" });
     expect(selectionActions(spec, selection, 5_000, unknown)).toMatchObject({ split: { enabled: false, why: "frame-unknown" }, duplicate: { enabled: false, why: "frame-unknown" }, remove: { enabled: true } });
-    expect(actionWhyLabel("frame-unknown")).toBe("Читаем видео ролика — подождите");
+    expect(actionWhyLabel("frame-unknown")).toBe("Читаем видео в кадрах — подождите");
     // A photo clip is not a video: its copy (empty cells) holds no frame.
     expect(selectionActions(spec, { kind: "clip", clipId: "clip-001", cell: 0 }, 0, unknown).duplicate).toEqual({ enabled: true });
   });

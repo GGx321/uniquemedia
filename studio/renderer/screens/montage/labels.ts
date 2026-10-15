@@ -219,10 +219,10 @@ export function actionWhyLabel(why: ActionBlock, framesFailed = false): string {
 }
 
 /** S5.WA4 round 2 (review M3): what waits while a video of the draft is being read (a frame may not be placed, the video not split or copied). */
-export const FRAMES_UNKNOWN_TITLE = "Читаем видео ролика — подождите";
+export const FRAMES_UNKNOWN_TITLE = "Читаем видео в кадрах — подождите";
 
 /** S5.WA4 round 3: the read of the draft's videos failed: it is tried again on its own, and «Повторить» asks now; nothing promises it will pass by itself. */
-export const FRAMES_FAILED_TEXT = "Не удалось прочитать видео ролика.";
+export const FRAMES_FAILED_TEXT = "Не удалось прочитать видео в кадрах — пока новые кадры не добавить.";
 
 // ---------- the layer and music tracks (3d.3b) ----------
 

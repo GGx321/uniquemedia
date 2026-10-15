@@ -167,8 +167,10 @@ describe("57a: a click makes the clip's copy and places it", () => {
     expect(pick.getAttribute("aria-disabled")).toBe("true");
     expect(pick.getAttribute("aria-busy")).toBe("true");
     expect(pick.hasAttribute("disabled")).toBe(false);
+    // S5.WAR L4: the button says what is going on.
+    expect(plain(pick.getAttribute("aria-label"))).toBe("Клип «Наклоняет голову», 0:05: готовим для монтажа");
     // Round 2 (review L2): the tab's one live region, mounted before the click, is filled with it; the tile's own line is no live region.
-    expect(within(media()).getByRole("status").textContent).toBe("Клип «Наклоняет голову»: Готовим для монтажа…");
+    expect(within(media()).getByRole("status").textContent).toBe("Клип «Наклоняет голову»: готовим для монтажа…");
     expect(within(tileOf(b)).queryAllByRole("status").length).toBe(0);
     expect(plain(tileOf(b).querySelector(".edc-busy-label")?.textContent)).toBe("Готовим для монтажа…");
     // A second click while it is made asks nothing again.
@@ -183,6 +185,8 @@ describe("57a: a click makes the clip's copy and places it", () => {
     expect(tiles()).toEqual(["Клип «Наклоняет голову», 0:05, Фото 4 · в кадре 3"]);
     expect(plain(pickOf(b).getAttribute("aria-label"))).toBe("Клип «Наклоняет голову», 0:05: выбрать кадр 3");
     expect(tileOf(b).querySelector(".ed-bin-slot")?.textContent).toBe("3");
+    // S5.WAR: the live region says where it went.
+    expect(within(media()).getByRole("status").textContent).toBe("Клип «Наклоняет голову» — в кадре 3");
   });
 
   test("a click on a placed clip selects its kadr; a clip whose copy exists is placed at once, with no job", async () => {
@@ -280,7 +284,7 @@ describe("57b: a frame taken (Q-F = 1)", () => {
     // The rejected photo has no number in the bin: its clip is called by the photo's category.
     expect(tiles()).toEqual(["Клип «Медленный вдох», 0:05, Дом · фото отклонено", "Клип «Наклоняет голову», 0:05, Фото 6 · в видео", "Клип «Моргает и улыбается», 0:05, Фото 6 · в видео"]);
     expect(pickOf(used).getAttribute("title")).toBe("Этот клип уже в готовом видео — второй раз не ставится");
-    expect(pickOf(sibling).getAttribute("title")).toBe("Фото этого клипа или другой клип из него уже в готовом видео — второй раз не ставится");
+    expect(pickOf(sibling).getAttribute("title")).toBe("Это фото или другой его клип уже в готовом видео — кадр второй раз не ставится");
     expect(pickOf(rejected).getAttribute("title")).toBe("Фото этого клипа отклонено — в монтаж не ставится");
     expect(tileOf(used).querySelector(".edc-state")?.textContent).toBe("в видео");
     expect(tileOf(rejected).querySelector(".edc-state")?.textContent).toBe("фото отклонено");
@@ -330,9 +334,13 @@ describe("57c: a refused preparation, one text per reason", () => {
     expect(tileOf(b).classList.contains("edc-tile-failed")).toBe(true);
     expect(pickOf(b).hasAttribute("disabled")).toBe(false);
     expect(kadrs()).toHaveLength(2);
-    fireEvent.click(within(card).getByRole("button", { name: "Закрыть: Клип «Наклоняет голову»" }));
+    const x = within(card).getByRole("button", { name: "Закрыть: Клип «Наклоняет голову»" });
+    x.focus();
+    fireEvent.click(x);
     await flush();
     expect(within(media()).queryByRole("alert") === null).toBe(true);
+    // S5.WAR L5: the focus goes back to the clip's tile — its button, pressable again.
+    expect(focusedLabel()).toBe(describeElement(pickOf(b)));
     // «Мои» never shows a clip import's failure.
     fireEvent.click(within(media()).getByRole("tab", { name: "Мои" }));
     await flush();
@@ -365,6 +373,8 @@ describe("57c: a refused preparation, one text per reason", () => {
     expect(focusedLabel()).toBe(describeElement(within(media()).getByRole("button", { name: "Закрыть: Клип «Наклоняет голову»" })));
     fireEvent.click(within(media()).getByRole("button", { name: "Закрыть: Клип «Наклоняет голову»" }));
     await flush();
+    // S5.WAR L5: closed, the card hands the focus back to its clip's tile, never to the page — the tile itself, its button being off.
+    expect(focusedLabel()).toBe(describeElement(tileOf(b)));
     expect(pickOf(b).hasAttribute("disabled")).toBe(true);
     expect(tiles()).toEqual(["Клип «Наклоняет голову», 0:05, Фото 4 · файл повреждён"]);
   });
@@ -491,20 +501,34 @@ describe("round 2: a placement that can no longer go in, and a draft video not k
     const copy = await makeCopy(h, used);
     const free = await makeClip(h, P(3), "g-tilt");
     await openEditor(h, [photoClip(0, P(2)), copyClip(1, copy)]);
-    expect(tiles()).toEqual(["Клип «Наклоняет голову», 0:05, Фото 4 · не удалось прочитать видео ролика", "Клип «Моргает и улыбается», 0:05, Фото 2 · не удалось прочитать видео ролика"]);
+    expect(tiles()).toEqual(["Клип «Наклоняет голову», 0:05, Фото 4 · не удалось прочитать видео в кадрах", "Клип «Моргает и улыбается», 0:05, Фото 2 · не удалось прочитать видео в кадрах"]);
     const pick = pickOf(free);
     expect(pick.getAttribute("aria-disabled")).toBe("true");
-    expect(pick.getAttribute("title")).toBe("Не удалось прочитать видео ролика.");
-    expect(screen.getByText("Не удалось прочитать видео ролика.")).toBeDefined();
+    expect(pick.getAttribute("title")).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
+    // S5.WAR M3: the wait is not silent — the notice (with «Повторить»), the line under the tiles, and the tiles dimmed.
+    const retry = screen.getByRole("button", { name: "Повторить" });
+    expect(retry.closest(".notice")?.textContent).toContain("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
+    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
+    expect(tileOf(free).classList.contains("edc-tile-wait")).toBe(true);
+    expect(tileOf(free).querySelector(".ed-bin-dim") !== null).toBe(true);
+    // S5.WAR L2: a retry that fails again leaves the notice where it is, and the focus on «Повторить».
+    retry.focus();
+    fireEvent.click(retry);
+    await flush();
+    await flush();
+    expect(focusedLabel()).toBe(describeElement(screen.getByRole("button", { name: "Повторить" })));
+    expect(screen.getByRole("button", { name: "Повторить" }) === retry).toBe(true);
     fireEvent.click(pick);
     await flush();
     expect(callsOf(h.engine, "media.importClip").filter((call) => call.payload.clipId === free).length).toBe(0);
     // The bin's free photos wait too; the timeline's video is neither split nor copied.
     fireEvent.click(within(media()).getByRole("tab", { name: "Фото" }));
     await flush();
-    const photo1 = within(within(media()).getByRole("list", { name: "Фото аватара" })).getByRole("button", { name: "Фото 1: не удалось прочитать видео ролика" });
+    const photo1 = within(within(media()).getByRole("list", { name: "Фото аватара" })).getByRole("button", { name: "Фото 1: не удалось прочитать видео в кадрах" });
     expect(photo1.getAttribute("aria-disabled")).toBe("true");
-    expect(photo1.getAttribute("title")).toBe("Не удалось прочитать видео ролика.");
+    expect(photo1.getAttribute("title")).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
+    expect(photo1.closest("li")?.classList.contains("ed-bin-tile-wait")).toBe(true);
+    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
     fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 2:/ }));
     await flush();
     // S5.WAR L1: a video whose origin is not known is neither «клип» nor the owner's own: plain «Видео», no tag.
@@ -513,19 +537,60 @@ describe("round 2: a placement that can no longer go in, and a draft video not k
     expect(timeline().querySelector(".ed-clip-on .ed-ctag-top") === null).toBe(true);
     expect(screen.getByRole("button", { name: "Кадр 2: видео" })).toBeDefined();
     expect(document.body.textContent?.includes("Своё видео")).toBe(false);
-    expect(within(timeline()).getByRole("button", { name: "Разрезать по плейхеду" }).getAttribute("title")).toBe("Не удалось прочитать видео ролика.");
-    expect(within(timeline()).getByRole("button", { name: "Дублировать выбранное" }).getAttribute("title")).toBe("Не удалось прочитать видео ролика.");
+    expect(within(timeline()).getByRole("button", { name: "Разрезать по плейхеду" }).getAttribute("title")).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
+    expect(within(timeline()).getByRole("button", { name: "Дублировать выбранное" }).getAttribute("title")).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
 
     // The library answers again: «Повторить» reads it now.
     gate.failing = false;
     fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
     await flush();
     await flush();
-    expect(screen.queryByText("Не удалось прочитать видео ролика.") === null).toBe(true);
+    expect(screen.queryByRole("button", { name: "Повторить" }) === null).toBe(true);
     fireEvent.click(within(media()).getByRole("tab", { name: "Клипы" }));
     await flush();
     expect(tiles()).toEqual(["Клип «Наклоняет голову», 0:05, Фото 4 · не использован", "Клип «Моргает и улыбается», 0:05, Фото 2 · в кадре 2"]);
     expect(pickOf(free).getAttribute("aria-disabled")).toBeNull();
+  });
+
+  test("S5.WAR M3: while the draft's videos are being read, the waiting tiles are dimmed and the line under them says «Читаем видео в кадрах — подождите»", async () => {
+    const gate = { release: (): void => undefined };
+    const held = new Promise<void>((resolve) => {
+      gate.release = resolve;
+    });
+    const holding = (base: EngineClient): EngineClient => ({
+      ...base,
+      request: async (type, payload) => {
+        if (type === "media.list" && "mediaIds" in payload && payload.mediaIds !== undefined) await held;
+        return base.request(type, payload);
+      },
+    });
+    const app = await mineStudio(holding);
+    const events: EventMessage[] = [];
+    app.client.subscribe((e) => events.push(e));
+    const h: Harness = { engine: app.engine, scheduler: app.scheduler, client: app.client, events };
+    const used = await makeClip(h, P(5));
+    const copy = await makeCopy(h, used);
+    const free = await makeClip(h, P(3), "g-tilt");
+    await openEditor(h, [photoClip(0, P(2)), copyClip(1, copy)]);
+    expect(plain(tileOf(free).getAttribute("aria-label"))).toBe("Клип «Наклоняет голову», 0:05, Фото 4 · читаем видео в кадрах");
+    expect(plain(pickOf(free).getAttribute("aria-label"))).toBe("Клип «Наклоняет голову», 0:05: подождите, читаем видео в кадрах");
+    expect(pickOf(free).getAttribute("title")).toBe("Читаем видео в кадрах — подождите");
+    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Читаем видео в кадрах — подождите");
+    expect(tileOf(free).classList.contains("edc-tile-wait")).toBe(true);
+    expect(tileOf(free).querySelector(".ed-bin-dim") !== null).toBe(true);
+    // Not a failure: no notice, no «Повторить».
+    expect(screen.queryByRole("button", { name: "Повторить" }) === null).toBe(true);
+    fireEvent.click(within(media()).getByRole("tab", { name: "Фото" }));
+    await flush();
+    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Читаем видео в кадрах — подождите");
+    fireEvent.click(within(media()).getByRole("tab", { name: "Клипы" }));
+    await flush();
+    // The read answers: the tiles go, the line says what a click does.
+    gate.release();
+    await flush();
+    await flush();
+    expect(tileOf(free).classList.contains("edc-tile-wait")).toBe(false);
+    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Клик — кадр в конец ролика. Перетащите на «Кадры», чтобы вставить между кадрами.");
   });
 
   test("round 3: the card's ✕ takes the focus once — leaving the tab and coming back does not take it again", async () => {

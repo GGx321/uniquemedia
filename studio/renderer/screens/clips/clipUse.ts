@@ -13,7 +13,7 @@ const nbDash = (text: string): string => text.replace(/ — /g, `${NBSP}— `);
 
 const USED_TITLES: Record<NonNullable<ClipUse["inVideo"]>, string> = {
   clip: "Этот клип уже в готовом видео — второй раз не ставится",
-  photo: "Фото этого клипа или другой клип из него уже в готовом видео — второй раз не ставится",
+  photo: "Это фото или другой его клип уже в готовом видео — кадр второй раз не ставится",
 };
 
 /** 41e: the tile's «в видео», with the title of the way the video holds the frame; null when no finished video does. */

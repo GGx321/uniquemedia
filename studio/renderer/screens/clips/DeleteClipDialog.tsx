@@ -20,13 +20,13 @@ export interface DeleteClipDialogProps {
   readonly busy: boolean;
   /** 5b.2: what uses the clip (44b's lines); absent for an unused clip. */
   readonly use?: ClipUse | undefined;
-  /** 5b.2: «Удалить» was refused `in-use` (a render holds the clip's copy). */
-  readonly inRender?: boolean;
+  /** 5b.2: how many times «Удалить» was refused `in-use` (a render holds the clip's copy); 0 while it was not. Each refusal is said again (S5.WAR L7). */
+  readonly inRender?: number;
   readonly onCancel: () => void;
   readonly onDelete: () => void;
 }
 
-export function DeleteClipDialog({ saved, busy, use, inRender = false, onCancel, onDelete }: DeleteClipDialogProps) {
+export function DeleteClipDialog({ saved, busy, use, inRender = 0, onCancel, onDelete }: DeleteClipDialogProps) {
   const ids = useId();
   const dialogRef = useRef<HTMLElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -37,9 +37,9 @@ export function DeleteClipDialog({ saved, busy, use, inRender = false, onCancel,
       if (!busy) onCancel();
     },
   });
-  // 44b `#in-render`: the refusal came; the focus goes to «Отмена» (README M3).
+  // 44b `#in-render`: the refusal came; the focus goes to «Отмена» (README M3) — again on a repeated refusal (S5.WAR L7).
   useEffect(() => {
-    if (inRender) cancelRef.current?.focus();
+    if (inRender > 0) cancelRef.current?.focus();
   }, [inRender]);
   const lines = deleteUseLines(use);
   const described = [`${ids}-lead`, ...(lines.video === null ? [] : [`${ids}-video`]), ...(lines.draft === null ? [] : [`${ids}-draft`])].join(" ");
@@ -68,8 +68,9 @@ export function DeleteClipDialog({ saved, busy, use, inRender = false, onCancel,
               <span>{lines.draft}</span>
             </p>
           )}
-          {inRender && (
-            <p className="del-note del-note-alert" role="alert">
+          {inRender > 0 && (
+            // A new alert per refusal (its key), so a repeated one is announced again (S5.WAR L7).
+            <p key={inRender} className="del-note del-note-alert" role="alert">
               <Icon name="alert" size={15} strokeWidth={2} />
               <span>{IN_RENDER_LINE}</span>
             </p>

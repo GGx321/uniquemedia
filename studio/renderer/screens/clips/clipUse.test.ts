@@ -13,7 +13,7 @@ const nb = (text: string): string => text.replace(/ — /g, `${NBSP}— `);
 describe("41e: the tile's «в видео»", () => {
   test("one badge for both `use.inVideo` values, the title tells them apart; none for an unused clip or one only in a draft", () => {
     expect(clipUsedBadge({ inVideo: "clip" })).toEqual({ label: "в видео", title: "Этот клип уже в готовом видео — второй раз не ставится" });
-    expect(clipUsedBadge({ inVideo: "photo" })).toEqual({ label: "в видео", title: "Фото этого клипа или другой клип из него уже в готовом видео — второй раз не ставится" });
+    expect(clipUsedBadge({ inVideo: "photo" })).toEqual({ label: "в видео", title: "Это фото или другой его клип уже в готовом видео — кадр второй раз не ставится" });
     expect(clipUsedBadge(undefined)).toBeNull();
     expect(clipUsedBadge({ inDrafts: { count: 1, first: { name: "утро дома", frame: 3 } } })).toBeNull();
   });

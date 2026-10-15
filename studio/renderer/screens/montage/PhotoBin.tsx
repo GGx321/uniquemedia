@@ -7,7 +7,7 @@ import type { PhotoPages } from "../photos/photoPages";
 import type { MoreState } from "../photos/usePhotoPages";
 import { binFacets, type BinFilter, binTiles, type BinTile, isBuiltInCategory, tileAction } from "./bin";
 import type { AddRefusal } from "./clipOps";
-import { FAILED_WORDS } from "./clipTiles";
+import { FAILED_WORDS, WAIT_WORDS } from "./clipTiles";
 import { addBlockedLabel, FRAMES_FAILED_TEXT, FRAMES_UNKNOWN_TITLE } from "./labels";
 import { type FillTarget, fillWords } from "./mine";
 
@@ -59,8 +59,9 @@ const inVideos = (n: number): string => `в ${n} видео`;
 export const CLIP_IN_LABEL = "клип этого фото уже в ролике";
 export const CLIP_IN_TITLE = "Клип этого фото уже в ролике";
 
-/** The bin's line under the photos: what a click does now. */
-function binHint(fillTarget: PhotoBinProps["fillTarget"], addBlock: AddRefusal | null): string {
+/** The bin's line under the photos: what a click does now — nothing while the draft's videos are read, or after the read failed (S5.WAR M3). */
+function binHint(fillTarget: PhotoBinProps["fillTarget"], addBlock: AddRefusal | null, framesKnown: boolean, framesFailed: boolean): string {
+  if (!framesKnown) return framesFailed ? FRAMES_FAILED_TEXT : FRAMES_UNKNOWN_TITLE;
   if (fillTarget !== null) return `Клик — ${fillTarget.replace === true ? "" : "фото "}${fillWords(fillTarget)}. Перетащите фото на дорожку «Кадры», чтобы вставить новый кадр.`;
   if (addBlock !== null) return addBlockedLabel(addBlock);
   return "Клик — кадр в конец ролика. Перетащите фото на дорожку «Кадры», чтобы вставить его между кадрами.";
@@ -96,7 +97,7 @@ function actionLabel(tile: BinTile, fillTarget: PhotoBinProps["fillTarget"], add
     case "append":
       return "добавить кадр в конец ролика";
     case "wait":
-      return framesFailed ? FAILED_WORDS : "подождите, читаем видео ролика";
+      return framesFailed ? FAILED_WORDS : WAIT_WORDS;
   }
 }
 
@@ -208,7 +209,11 @@ export function PhotoBin({ avatarName, avatarId, spec, photos, paging = null, fi
             const waiting = does === "wait";
             const draggable = tile.state === "free" && !waiting;
             return (
-              <li key={photo.photoId} className={slot !== null ? "ph ed-bin-tile ed-bin-tile-in" : "ph ed-bin-tile"} aria-label={`Фото ${n}${stateLabel(tile)}`}>
+              <li
+                key={photo.photoId}
+                className={["ph ed-bin-tile", slot !== null ? "ed-bin-tile-in" : "", waiting ? "ed-bin-tile-wait" : ""].filter(Boolean).join(" ")}
+                aria-label={`Фото ${n}${stateLabel(tile)}`}
+              >
                 <button
                   type="button"
                   className="ed-bin-pick"
@@ -235,6 +240,8 @@ export function PhotoBin({ avatarName, avatarId, spec, photos, paging = null, fi
                 >
                   <Portrait avatarId={avatarId} photoId={photo.photoId} label={`Фото ${n}`} />
                 </button>
+                {/* S5.WAR M3: a waiting photo is dimmed as a taken one, with no state pill: the line under the tiles says why. */}
+                {waiting && <span className="ed-bin-dim" aria-hidden="true" />}
                 {taken && (
                   <>
                     <span className="ed-bin-dim" aria-hidden="true" />
@@ -258,8 +265,8 @@ export function PhotoBin({ avatarName, avatarId, spec, photos, paging = null, fi
         <MorePhotos pages={paging.pages} more={paging.state} added={paging.added} onMore={paging.onMore} firstShown={firstShown} fallback={lastPick} variant="bin" />
       )}
       {eligible > 0 && (
-        <p id={hintId} className={addBlock !== null && fillTarget === null ? "ed-bin-hint ed-bin-hint-full" : "faint ed-bin-hint"}>
-          {binHint(fillTarget, addBlock)}
+        <p id={hintId} className={(addBlock !== null && fillTarget === null) || (!framesKnown && framesFailed) ? "ed-bin-hint ed-bin-hint-full" : "faint ed-bin-hint"}>
+          {binHint(fillTarget, addBlock, framesKnown, framesFailed)}
         </p>
       )}
     </>

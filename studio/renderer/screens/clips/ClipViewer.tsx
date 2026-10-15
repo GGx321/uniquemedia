@@ -124,8 +124,8 @@ export function ClipViewer(props: ClipViewerProps) {
   const saveRef = useRef<HTMLButtonElement>(null);
   const [asking, setAsking] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  /** 5b.2 (44b): «Удалить» was refused `in-use`, a render holds the clip's copy: the open dialog says so. */
-  const [inRender, setInRender] = useState(false);
+  /** 5b.2 (44b): how many times «Удалить» was refused `in-use` (a render holds the clip's copy): the open dialog says so, again on each refusal (S5.WAR L7). */
+  const [inRender, setInRender] = useState(0);
   const [refusal, setRefusal] = useState<EngineError | null>(null);
   const [revealError, setRevealError] = useState<EngineError | null>(null);
   const [revealing, setRevealing] = useState(false);
@@ -141,7 +141,7 @@ export function ClipViewer(props: ClipViewerProps) {
     setStateFor(clip.clipId);
     setRefusal(null);
     setRevealError(null);
-    setInRender(false);
+    setInRender(0);
     setRevealing(false);
     setPercentShown(null);
     setNews("");
@@ -256,7 +256,7 @@ export function ClipViewer(props: ClipViewerProps) {
     const outcome = deleteOutcome(reply);
     // 5b.2 (44b `#in-render`): a render holds the clip's copy: the dialog stays and says so; a try after the render is harmless.
     if (outcome.kind === "in-render") {
-      setInRender(true);
+      setInRender((n) => n + 1);
       return;
     }
     setAsking(false);
@@ -442,7 +442,7 @@ export function ClipViewer(props: ClipViewerProps) {
             inRender={inRender}
             onCancel={() => {
               setAsking(false);
-              setInRender(false);
+              setInRender(0);
             }}
             onDelete={() => void remove()}
           />

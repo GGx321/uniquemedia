@@ -19,7 +19,7 @@ import { type BinFilter, isFreePhoto } from "./montage/bin";
 import { ClipPlacements, copyFactsOf, importAnswerOf, placeBoundary, readyCopyFacts } from "./montage/clipImport";
 import { ClipProperties } from "./montage/ClipProperties";
 import { type ClipCard, ClipsTab } from "./montage/ClipsTab";
-import { clipImportFailure, type ClipTile, clipTiles, copyLabeller, placementRefusalText } from "./montage/clipTiles";
+import { clipImportFailure, type ClipTile, clipTiles, copyLabeller, type FramesWait, placementRefusalText } from "./montage/clipTiles";
 import { sameJson } from "./montage/json";
 import { LayerProperties } from "./montage/LayerProperties";
 import { addLayerRefusal } from "./montage/layerOps";
@@ -579,7 +579,7 @@ function DraftEditor({
   // 3f.3b: the own videos the clips play (their records, by id), and what the render refuses each video clip for: the engine's verdict on the spec on
   // screen, else the window's guess from the records.
   // Round 3 (re-review): the read of the draft's videos is followed. A failed read is said (with «Повторить»), and tried again on its own — after 2 s, 5 s,
-  // 15 s, then every 30 s — and when the window comes back; while a read is out the controls say «Читаем видео ролика — подождите».
+  // 15 s, then every 30 s — and when the window comes back; while a read is out the controls say «Читаем видео в кадрах — подождите».
   const [videoRead, setVideoRead] = useState<RecordsRead>("reading");
   const [videoFailures, setVideoFailures] = useState(0);
   const [videoAttempt, setVideoAttempt] = useState(0);
@@ -610,8 +610,10 @@ function DraftEditor({
   const originRef = useRef(originOf);
   originRef.current = originOf;
   const framesAreKnown = framesKnown(state.spec, originOf);
-  // A video not known after a FAILED read is not «being read»: the controls say the read failed, and a notice offers «Повторить».
-  const framesFailed = !framesAreKnown && videoRead === "failed";
+  // A video not known after a FAILED read is not «being read»: the controls say the read failed, and a notice offers «Повторить». It stays so while a
+  // retry is out (S5.WAR L2: the notice does not blink on each try, and the focus stays on its «Повторить»), until a read succeeds.
+  const framesFailed = !framesAreKnown && videoFailures > 0;
+  const framesWait: FramesWait = framesAreKnown ? null : framesFailed ? "failed" : "reading";
   // The window came back: a failed read is tried again at once.
   const videoReadNow = useRef(videoRead);
   videoReadNow.current = videoRead;
@@ -712,12 +714,12 @@ function DraftEditor({
   const clipCards: ClipCard[] = [
     ...[...clipRefusals].flatMap(([clipId, text]) => {
       const clip = clipsById.get(clipId);
-      return clip === undefined ? [] : [{ key: `clip:${clipId}`, motion: clip.motion.label, text }];
+      return clip === undefined ? [] : [{ key: `clip:${clipId}`, clipId, motion: clip.motion.label, text }];
     }),
     ...failedClipImports.flatMap((job) => {
       const clip = job.origin === undefined ? undefined : clipsById.get(job.origin.clipId);
       const failure = job.error === null ? null : clipImportFailure(job.error);
-      return clip === undefined || failure === null ? [] : [{ key: `job:${job.jobId}`, motion: clip.motion.label, text: failure.text }];
+      return clip === undefined || failure === null ? [] : [{ key: `job:${job.jobId}`, clipId: clip.clipId, motion: clip.motion.label, text: failure.text }];
     }),
   ];
   // 57f: a copy in the draft is called by its clip's motion and its photo, never by the copy's file name.
@@ -1389,6 +1391,7 @@ function DraftEditor({
                 onCloseCard={closeClipCard}
                 fillTarget={fillTarget}
                 addBlock={addRefusal(state.spec)}
+                framesWait={framesWait}
                 onPick={(tile) => void pickClip(tile)}
                 onDrag={setDrag}
               />

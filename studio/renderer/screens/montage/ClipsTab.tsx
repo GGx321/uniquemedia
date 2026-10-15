@@ -1,11 +1,11 @@
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { EngineError } from "../../../shared/engine";
 import { errorText } from "../../lib/errors";
 import { NBSP } from "../../lib/format";
 import { Icon } from "../../ui/Icon";
 import { Poster } from "../clips/ClipTile";
 import type { AddRefusal } from "./clipOps";
-import { clipAction, clipsHint, type ClipTile, clipTileAria, clipTileTitle, PREPARING, pickAria, TAKEN_BAND, TAKEN_LABELS } from "./clipTiles";
+import { clipAction, clipsHint, type ClipTile, type ClipTileState, clipTileAria, clipTileTitle, type FramesWait, PREPARING, pickAria, placedNews, preparingNews, TAKEN_BAND, TAKEN_LABELS } from "./clipTiles";
 import type { BinDrag, FillTarget } from "./mine";
 
 // 5b.2 part A (S5.WA4; plan §5.1; mockups 57–57d, README §S5.WAD): the editor's «Клипы» tab, after «Фото». The draft avatar's ready clips, two to a row:
@@ -15,11 +15,15 @@ import type { BinDrag, FillTarget } from "./mine";
 // (README L5); a preparing tile stays focusable but does nothing (`aria-disabled`, `aria-busy`, L6), as does a clip that waits while a video of the draft
 // is not known (S5.WA4 round 2). The tab's one live region is always there and is filled with what is being prepared (L7; round 2, L2). A refused
 // preparation is a card over the tiles, one text per reason (57c); after a damaged file or a placement the draft no longer takes, the focus goes to the
-// card's ✕ (round 2, L1). The tab has no delete: a copy lives and dies with its clip.
+// card's ✕ (round 2, L1); closed, a card hands the focus back to its clip's tile (S5.WAR L5). While the draft's videos are read (or after the read failed)
+// the waiting tiles are dimmed and the line under them says why (S5.WAR M3); the live region also says where a clip just went. The tab has no delete: a
+// copy lives and dies with its clip.
 
 /** A refused preparation (57c): its card's key, the clip's motion for the title, and the reason's text. */
 export interface ClipCard {
   readonly key: string;
+  /** The clip the card is about: closed, the card hands the focus back to its tile (S5.WAR L5). */
+  readonly clipId: string;
   readonly motion: string;
   readonly text: string;
 }
@@ -41,6 +45,8 @@ export interface ClipsTabProps {
   readonly fillTarget: FillTarget;
   /** Why no kadr can be added (20 kadrs, or nothing left of the 15 s). */
   readonly addBlock: AddRefusal | null;
+  /** S5.WAR M3: the draft's videos are being read, or their read failed: nothing is placed, and the line under the tiles says so; null once known. */
+  readonly framesWait?: FramesWait;
   /** A tile clicked: select its kadr, or place its copy at the end. */
   readonly onPick: (tile: ClipTile) => void;
   /** A clip dragged out of the tab (onto «Кадры»), or null when the drag ends. */
@@ -68,7 +74,8 @@ function TileHead({ tile }: { tile: ClipTile }) {
       </>
     );
   }
-  if (state.kind === "damaged") return <span className="ed-bin-dim" aria-hidden="true" />;
+  // A damaged file, and a clip that waits while the draft's videos are read (S5.WAR M3): the bin's dim.
+  if (state.kind === "damaged" || state.kind === "unknown") return <span className="ed-bin-dim" aria-hidden="true" />;
   if (state.kind === "busy") {
     return (
       <>
@@ -99,12 +106,14 @@ function ClipTileView({ tile, addBlock, hintId, onPick, onDrag }: { tile: ClipTi
     state.kind === "placed" ? "edc-tile-in" : "",
     state.kind === "taken" || state.kind === "damaged" ? "edc-tile-taken" : "",
     busy ? "edc-tile-busy" : "",
+    action === "wait" ? "edc-tile-wait" : "",
     state.kind === "failed" || state.kind === "damaged" ? "edc-tile-failed" : "",
   ]
     .filter(Boolean)
     .join(" ");
   return (
-    <li className={classes} aria-label={clipTileAria(tile)} data-clip-id={clip.clipId}>
+    // Focusable from code only (S5.WAR L5): a closed card hands the focus back here when the tile's button is off.
+    <li className={classes} aria-label={clipTileAria(tile)} data-clip-id={clip.clipId} tabIndex={-1}>
       <div className="ph edc-poster">
         <button
           type="button"
@@ -186,10 +195,45 @@ function ClipAlert({ card, focusTick, onFocused, onClose }: { card: ClipCard; fo
   );
 }
 
-export function ClipsTab({ avatarName, tiles, listError, onRetryList, cards, cardFocus = null, onCardFocused, onCloseCard, fillTarget, addBlock, onPick, onDrag }: ClipsTabProps) {
+/** A tile that turns `placed` from one of these was just placed from the tab (a click, a drag, a copy made): the live region says where. */
+const PLACED_FROM: ReadonlySet<ClipTileState["kind"]> = new Set(["free", "failed", "busy"]);
+
+/** S5.WAR: the clip just placed, said by the live region until it leaves its kadr or another one is placed. */
+function usePlacedNews(tiles: readonly ClipTile[] | null): string | null {
+  const before = useRef(new Map<string, ClipTileState["kind"]>());
+  const [news, setNews] = useState<{ readonly clipId: string; readonly text: string } | null>(null);
+  useEffect(() => {
+    if (tiles === null) return;
+    const was = before.current;
+    let placed: { clipId: string; text: string } | null = null;
+    for (const tile of tiles) {
+      const prev = was.get(tile.clip.clipId);
+      if (tile.state.kind === "placed" && prev !== undefined && PLACED_FROM.has(prev)) placed = { clipId: tile.clip.clipId, text: placedNews(tile.clip.motion.label, tile.state.slot) };
+    }
+    before.current = new Map(tiles.map((tile) => [tile.clip.clipId, tile.state.kind]));
+    if (placed !== null) setNews(placed);
+    else setNews((now) => (now !== null && tiles.find((tile) => tile.clip.clipId === now.clipId)?.state.kind !== "placed" ? null : now));
+  }, [tiles]);
+  return news?.text ?? null;
+}
+
+export function ClipsTab({ avatarName, tiles, listError, onRetryList, cards, cardFocus = null, onCardFocused, onCloseCard, fillTarget, addBlock, framesWait = null, onPick, onDrag }: ClipsTabProps) {
   const hintId = useId();
-  // The tab's one live region, always mounted (round 2, L2): what is being prepared now.
-  const preparing = (tiles ?? []).filter((tile) => tile.state.kind === "busy").map((tile) => `Клип «${tile.clip.motion.label}»: ${PREPARING}`);
+  const listRef = useRef<HTMLUListElement>(null);
+  // The tab's one live region, always mounted (round 2, L2): what is being prepared now, and where a clip just went.
+  const preparing = (tiles ?? []).filter((tile) => tile.state.kind === "busy").map((tile) => preparingNews(tile.clip.motion.label));
+  const placed = usePlacedNews(tiles);
+  const news = placed === null ? preparing : [...preparing, placed];
+  // S5.WAR L5: a closed card hands the focus back to its clip's tile, after the render that drops the card: the tile's button when it is pressable,
+  // else the tile itself.
+  const [refocus, setRefocus] = useState<{ readonly clipId: string; readonly tick: number } | null>(null);
+  useEffect(() => {
+    if (refocus === null) return;
+    const tile = Array.from(listRef.current?.querySelectorAll<HTMLElement>("li[data-clip-id]") ?? []).find((li) => li.dataset.clipId === refocus.clipId);
+    const pick = tile?.querySelector<HTMLButtonElement>(".edc-pick");
+    if (pick !== undefined && pick !== null && !pick.disabled) pick.focus();
+    else tile?.focus();
+  }, [refocus]);
   return (
     <>
       <div className="ed-chips">
@@ -198,7 +242,7 @@ export function ClipsTab({ avatarName, tiles, listError, onRetryList, cards, car
         </span>
       </div>
       <p className="sr-only" role="status">
-        {preparing.join(" ")}
+        {news.join(" ")}
       </p>
       {cards.map((card) => (
         <ClipAlert
@@ -206,7 +250,10 @@ export function ClipsTab({ avatarName, tiles, listError, onRetryList, cards, car
           card={card}
           focusTick={cardFocus?.key === card.key ? cardFocus.tick : null}
           onFocused={() => onCardFocused?.()}
-          onClose={() => onCloseCard(card.key)}
+          onClose={() => {
+            onCloseCard(card.key);
+            setRefocus((now) => ({ clipId: card.clipId, tick: (now?.tick ?? 0) + 1 }));
+          }}
         />
       ))}
       {tiles === null ? (
@@ -238,13 +285,13 @@ export function ClipsTab({ avatarName, tiles, listError, onRetryList, cards, car
         </div>
       ) : (
         <>
-          <ul className="ed-bin edc-grid" aria-label="Клипы аватара">
+          <ul ref={listRef} className="ed-bin edc-grid" aria-label="Клипы аватара">
             {tiles.map((tile) => (
               <ClipTileView key={tile.clip.clipId} tile={tile} addBlock={addBlock} hintId={hintId} onPick={onPick} onDrag={onDrag} />
             ))}
           </ul>
-          <p id={hintId} className={addBlock !== null ? "ed-bin-hint ed-bin-hint-full" : "faint ed-bin-hint"}>
-            {clipsHint(fillTarget, addBlock)}
+          <p id={hintId} className={addBlock !== null || framesWait === "failed" ? "ed-bin-hint ed-bin-hint-full" : "faint ed-bin-hint"}>
+            {clipsHint(fillTarget, addBlock, framesWait)}
           </p>
         </>
       )}
