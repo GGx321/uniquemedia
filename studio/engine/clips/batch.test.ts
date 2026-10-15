@@ -57,6 +57,8 @@ interface World {
   running: number;
   maxRunning: number;
   finished: number;
+  /** The order of the money closes and of `finished`, as they happened. */
+  order: string[];
   moneyEmits: number;
   /** The price book of the next read; a function may throw. */
   prices: () => ClipPrices;
@@ -104,6 +106,7 @@ function newWorld(): World {
     running: 0,
     maxRunning: 0,
     finished: 0,
+    order: [],
     moneyEmits: 0,
     prices: () => PRICES,
     priceReads: 0,
@@ -136,6 +139,7 @@ function closeAs(w: World, run: MemberRun, end: ClipMoneyEnd | undefined): void 
   if (reserved) w.holds.delete(clipAttemptId(member.clipId, 1));
   w.caps.delete(member.capKey);
   w.running--;
+  w.order.push("closed");
   run.onMoneyClosed(end);
   w.jobs.finishClip(member.jobId, { status: "done" });
 }
@@ -191,7 +195,10 @@ function ports(w: World): BatchPorts {
       w.maxRunning = Math.max(w.maxRunning, w.running);
       void Promise.resolve(w.script(run, w));
     },
-    finished: () => void w.finished++,
+    finished: () => {
+      w.finished++;
+      w.order.push("finished");
+    },
     note: (change) => {
       if (w.noteThrows) throw new Error("the summary could not be told");
       w.notes.push(change);
@@ -867,6 +874,62 @@ describe("ClipBatch: the engine stops or a defect", () => {
 
     expect(w.runs).toEqual(ids(3).slice(0, 1));
     expectClean(w);
+  });
+});
+
+describe("ClipBatch: the unit goes back once, at the very end", () => {
+  test("`finished` is called exactly once, after the last member's money closed and never between members", async () => {
+    const w = newWorld();
+    const seenAtClose: number[] = [];
+    w.script = async (run, world) => {
+      await flush(5);
+      seenAtClose.push(world.finished);
+      closeAs(world, run, COMPLETED);
+    };
+    await build(w, 3).run();
+    expect(w.order).toEqual(["closed", "closed", "closed", "finished"]);
+    expect(seenAtClose).toEqual([0, 0, 0]);
+    expect(w.finished).toBe(1);
+  });
+
+  test("the same when members fail, are gone, or end without a settle: one `finished`, last", async () => {
+    const w = newWorld();
+    const plan: (ClipMoneyEnd | undefined)[] = [failed("refused-free"), undefined, COMPLETED, { kind: "cancelled" }];
+    let call = 0;
+    w.script = async (run, world) => {
+      await Promise.resolve();
+      closeAs(world, run, plan[call++ % plan.length]);
+    };
+    w.recheck = (member) => (member.index === 3 ? { kind: "gone" } : { kind: "ok", bytes: new Uint8Array([1]) });
+    await build(w, 4).run();
+    expect(w.order.filter((step) => step === "finished")).toHaveLength(1);
+    expect(w.order.at(-1)).toBe("finished");
+  });
+
+  test("a member still running keeps the batch unfinished however long the gap before the next turn is", async () => {
+    const w = newWorld();
+    let release: () => void = () => undefined;
+    w.script = (run, world) => {
+      if (run.member.index === 1) {
+        return new Promise<void>((resolve) => {
+          release = () => {
+            closeAs(world, run, COMPLETED);
+            resolve();
+          };
+        });
+      }
+      closeAs(world, run, COMPLETED);
+      return undefined;
+    };
+    const { batch, run } = build(w, 2);
+    const ended = run();
+    await until(() => w.runs.length === 1, "member 1 running");
+    await flush(50);
+    expect(w.finished).toBe(0);
+    expect(batch.over).toBe(false);
+    release();
+    await ended;
+    expect(w.order).toEqual(["closed", "closed", "finished"]);
   });
 });
 

@@ -58,22 +58,38 @@ describe("a batch holds the clip money unit for its whole life: a part C call is
     expect(w.net.chats.length).toBe(1);
   });
 
-  test("in the gap between member 1's money closing and member 2's start", async () => {
-    const w = await world(2, (n) => n === 2);
+  test("in the gap: member 1's money is closed and member 2 is held at its turn (before it starts), a part C call is still `clip-busy`", async () => {
+    const w = await world(2, (n) => n === 1);
+    const secondPhoto = w.photoIds[1] ?? "";
+    const library = w.started.engine.library;
+    if (library === null || library === undefined) throw new Error("no library");
+    // Member 2's turn begins by looking at its photo again (`recheck`); that read is held until the test lets it go. Nothing else reads the second photo meanwhile.
+    const door = gate();
+    let held = false;
+    let armed = false;
+    const original = library.readPhotoVerified.bind(library);
+    library.readPhotoVerified = async (photoId: string) => {
+      if (armed && photoId === secondPhoto) {
+        held = true;
+        await door.promise;
+      }
+      return original(photoId);
+    };
     const made = batchOf(await createBatch(w.started, { avatarId: w.avatarId, photoIds: w.photoIds }));
     const [first = "", second = ""] = made.jobIds;
-    await jobEnd(w.started, first);
-    // Every look between the first member's end and the second one's rendering is `clip-busy`; the chat is never called.
-    let looks = 0;
-    while (!phasesOf(w.started, second).includes("rendering")) {
-      expect(errorOf(await suggestOn(w, w.photoIds[0] ?? "")).clipReason).toBe("clip-busy");
-      looks += 1;
-      if (looks > 400) throw new Error("the second member never reached rendering");
-    }
-    expect(errorOf(await suggestOn(w, w.photoIds[1] ?? "")).clipReason).toBe("clip-busy");
+    await until(() => phasesOf(w.started, first).includes("rendering"), "the first member rendering");
+    armed = true;
+    w.net.releaseNth("kling", 1);
+    await until(() => held, "member 2 held at its turn");
+    // Member 1's money has closed (the turn only starts after it); member 2 has not started.
+    expect(phasesOf(w.started, second).includes("rendering")).toBe(false);
+    expect(errorOf(await suggestOn(w, w.photoIds[0] ?? "")).clipReason).toBe("clip-busy");
+    expect(errorOf(await w.started.engine.handle(createCommand({ avatarId: w.avatarId, photoId: secondPhoto }))).clipReason).toBe("batch-running");
     expect(w.net.chats).toHaveLength(0);
-    w.net.releaseNth("kling", 2);
+    door.open();
     await jobEnd(w.started, second);
+    await until(() => w.started.engine.budget?.status().openReserveMicros === 0, "the money closed");
+    expect(resultOf(await suggestOn(w, w.photoIds[0] ?? ""))).toMatchObject({ outcome: "ok" });
   });
 });
 
