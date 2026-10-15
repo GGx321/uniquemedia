@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { PRICE_SCOPES_RU, type ClipMotionId, type ClipOptions, type ClipQuality, type ClipSeconds, type EngineError } from "../../../shared/engine";
 import { useEngine, useEngineView } from "../../engine/react";
 import { errorText } from "../../lib/errors";
+import { nbDash } from "../../lib/format";
 import { useNavigate } from "../../navigation";
 import { FocusEdge } from "../../ui/FocusEdge";
 import { Icon, Spin } from "../../ui/Icon";
@@ -10,9 +11,9 @@ import { Notice } from "../../ui/Notice";
 import { Portrait } from "../../ui/Portrait";
 import { useModalDialog } from "../../ui/useModalDialog";
 import { useMounted } from "../photos/shared";
-import { animateBlock, batchHoldsUnit, clipSlotTaken } from "./animate";
+import { animateBlock } from "./animate";
 import { upUsd } from "./clipModel";
-import { frameNotesNews, MOTION_BUSY, motionGoneNews, motionRowLabel, showsEnglish, SUGGESTED_TAG } from "./motionModel";
+import { frameNotesNews, MOTION_BUSY, MOTION_UNAVAILABLE, motionGoneNews, motionRowLabel, showsEnglish, SUGGESTED_TAG } from "./motionModel";
 import { FrameNotes, MotionActions, MotionGuard, MotionNews, MotionStatus, QuietNotice, useMotionCalls, type MotionBlock } from "./MotionSuggest";
 import { OwnIdea } from "./OwnIdea";
 import { sheetView, type SuitableOptions } from "./sheetModel";
@@ -93,6 +94,8 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   const [error, setError] = useState<EngineError | null>(null);
   /** 62a #after-click: the engine refused the click `motion-busy` (a part C call this window did not know of); said once, until the next click or choice. */
   const [motionBusyAfter, setMotionBusyAfter] = useState(false);
+  /** S5.WC5b: the engine refused the click `unknown-motion` (the chosen row is gone from the photo's store); the list is read again and the line stays until the next click or choice. */
+  const [motionGoneAfter, setMotionGoneAfter] = useState(false);
   /**
    * 62b, 63a: a new row to focus — and select, an own idea — once the list read AFTER the call (`after`: the last ask before it) holds it; `last`, the last new row, is scrolled into view first.
    */
@@ -244,6 +247,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     setPriceChanged(null);
     setError(null);
     setMotionBusyAfter(false);
+    setMotionGoneAfter(false);
   };
 
   async function send(way: "main" | "alone"): Promise<void> {
@@ -254,6 +258,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     setBusy(way);
     setError(null);
     setMotionBusyAfter(false);
+    setMotionGoneAfter(false);
     store.setPaidInFlight(avatarId, true);
     const reply = await client.request("clips.create", {
       avatarId,
@@ -288,6 +293,14 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
       setToCancel((n) => n + 1);
       return;
     }
+    if (reply.error.code === "VALIDATION" && reply.error.clipReason === "unknown-motion") {
+      // S5.WC5b: the row the owner chose is gone from the photo's store. The list is read again (the drop is then said and the first row chosen, `dropGone`), and the sheet says what to do — not
+      // «откройте «Оживить» заново», which the sheet itself makes needless.
+      setMotionGoneAfter(true);
+      calls.announce("alert", MOTION_UNAVAILABLE);
+      setAsked((n) => n + 1);
+      return;
+    }
     setError(reply.error);
   }
 
@@ -295,10 +308,10 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   const whyId = `${ids}-why`;
   const guardId = `${ids}-guard`;
   const blockId = `${ids}-block`;
-  const unitHeld = clipSlotTaken(view) || batchHoldsUnit(view);
-  // Round 2 (L4): this sheet's own clip on its way holds the clip money unit as much as a running one.
-  const clipBusy = unitHeld || busy !== null;
-  const motionBlock: MotionBlock = { clipBusy, otherId: blockText !== null && !clipBusy ? blockId : null };
+  // S5.WC5b (M1): a clip or a batch that runs is said by the footer (`blockText`: «Сейчас снимается другой клип…», «Сейчас снимаются клипы пакета…»), and the part C buttons point at that very line,
+  // so the two never disagree. The sheet's own «Оживить» on its way (round 2, L4) has no footer line: the buttons say `CLIP_BUSY` then.
+  const clipBusy = busy !== null && blockText === null;
+  const motionBlock: MotionBlock = { clipBusy, otherId: blockText !== null ? blockId : null };
   const actionIds = { panel: `${ids}-idea`, guard: guardId, clipBusy: `${ids}-clip-busy`, suggestPrice: `${ids}-suggest-price` };
   const goWhy = suitable !== null && calls.anyRunning ? guardId : undefined;
 
@@ -459,6 +472,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
           )}
           {error !== null && <Notice tone="danger">{errorText(error)}</Notice>}
           {motionBusyAfter && <QuietNotice tone="info">{MOTION_BUSY}</QuietNotice>}
+          {motionGoneAfter && <QuietNotice tone="warn">{nbDash(MOTION_UNAVAILABLE)}</QuietNotice>}
           {blockText !== null && suitable !== null && (
             <div id={blockId}>
               <Notice tone="warn" role="status">
