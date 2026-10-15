@@ -244,6 +244,31 @@ export interface EngineView {
    * there when the Avatars screen is left and opened again, until the owner dismisses it. A newer notice never replaces an unread warning.
    */
   readonly avatarDeleteNotices: readonly AvatarDeleteNotice[];
+  /**
+   * 5b.2 part C (S5.WC5; plan s5b2 §5.3, I5.68): the vision and translator calls this window sent and has not had answered, avatar → {photo, kind}, in the order sent. Window-wide, so the sheet of a
+   * photo opened again while its call runs says «Смотрим кадр…» / «Переводим…», and «Оживить» of any sheet waits while any call runs (the engine's `motion-busy` is GLOBAL). It is NOT the avatar's paid
+   * lock (`paidInFlightAvatars`): a part C call claims no avatar, so a photo run goes on meanwhile.
+   */
+  readonly motionCalls: ReadonlyMap<string, readonly MotionCall[]>;
+}
+
+/** 5b.2 part C: `clips.suggestMotions` («suggest») or `clips.translateIdea` («idea»). */
+export type MotionCallKind = "suggest" | "idea";
+
+/** One part C call on its way: the photo it is for and which of the two it is. */
+export interface MotionCall {
+  readonly photoId: string;
+  readonly kind: MotionCallKind;
+}
+
+/** Whether any part C call this window sent is on its way, for any avatar. */
+export function motionCallRunning(view: EngineView): boolean {
+  return view.motionCalls.size > 0;
+}
+
+/** The kinds of the part C calls on their way for this avatar's photo, in the order they were sent. */
+export function motionCallsOf(view: EngineView, avatarId: string, photoId: string): MotionCallKind[] {
+  return (view.motionCalls.get(avatarId) ?? []).filter((call) => call.photoId === photoId).map((call) => call.kind);
 }
 
 /** What is said once an avatar is gone: its name (a draft has none), how many video files stayed behind or were not checked, and the export subfolder they are in. */
@@ -279,6 +304,7 @@ const INITIAL: EngineView = {
   cancellingJobs: new Set(),
   paidInFlightAvatars: new Set(),
   avatarDeleteNotices: [],
+  motionCalls: new Map(),
 };
 
 export function isActiveJob(job: JobView): boolean {
@@ -795,6 +821,21 @@ export class EngineStore {
     if (inFlight) paidInFlightAvatars.add(avatarId);
     else paidInFlightAvatars.delete(avatarId);
     this.update({ paidInFlightAvatars });
+  }
+
+  /**
+   * 5b.2 part C (S5.WC5): a vision or translator call for `avatarId` was sent (`running`) or answered. The same call told twice is one; an answer for a call not on record changes nothing.
+   * The avatar's entry goes with its last call, so `motionCallRunning` is a plain size check.
+   */
+  setMotionCall(avatarId: string, call: MotionCall, running: boolean): void {
+    const now = this.view.motionCalls.get(avatarId) ?? [];
+    const has = now.some((c) => c.photoId === call.photoId && c.kind === call.kind);
+    if (has === running) return;
+    const next = running ? [...now, { photoId: call.photoId, kind: call.kind }] : now.filter((c) => c.photoId !== call.photoId || c.kind !== call.kind);
+    const motionCalls = new Map(this.view.motionCalls);
+    if (next.length > 0) motionCalls.set(avatarId, next);
+    else motionCalls.delete(avatarId);
+    this.update({ motionCalls });
   }
 
   /** How many plain notices (nothing left behind) are kept; the warnings are never counted or dropped. */
@@ -1316,11 +1357,15 @@ export class EngineStore {
         const { avatarId } = event.payload;
         const paidInFlightAvatars = new Set(this.view.paidInFlightAvatars);
         paidInFlightAvatars.delete(avatarId);
+        // 5b.2 part C: the engine waits for an avatar's running calls before it deletes it; any still on record here would never be answered for this window.
+        const motionCalls = new Map(this.view.motionCalls);
+        motionCalls.delete(avatarId);
         this.update({
           avatars: this.view.avatars.filter((a) => a.avatarId !== avatarId),
           drafts: this.view.drafts.filter((d) => d.avatarId !== avatarId),
           jobs: this.view.jobs.filter((j) => j.avatarId !== avatarId),
           paidInFlightAvatars,
+          motionCalls,
           lastSeq,
         });
         for (const listener of [...this.avatarRemovedListeners]) listener(avatarId);
