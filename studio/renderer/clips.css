@@ -329,10 +329,3 @@
   .mc-sheet .spin, .mc-guard .spin { animation: none; }
 }
 
-@media (max-width: 720px) {
-  .clip-sheet-body { flex-direction: column; }
-  /* stacked, the sheet's body scrolls as 38's does; the group is not the one scroll region then */
-  .mc-sheet .mc-body { overflow-y: auto; }
-  .mc-frame-col { flex-direction: row; width: auto; }
-  .mc-batch .batch-row { grid-template-columns: 22px minmax(0, 1fr) minmax(0, 220px); }
-}
