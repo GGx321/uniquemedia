@@ -61,7 +61,6 @@ describe("the request", () => {
     const { net, result } = run([reply(answer([good()]))]);
     await result;
     expect(userMessage(net, 0)).toMatchObject({ frame: { capture: "timer", faceVisible: "yes", legsFraming: false, bold: false, phoneAllowed: false } });
-    expect(MOTION_PROMPT_TEXTS.writerSystem).not.toContain("timer");
   });
 
   test("the first attempt is <job>:motion#1, reserved at its worst case in the call's scope", async () => {

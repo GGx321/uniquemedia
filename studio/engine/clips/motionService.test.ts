@@ -6,7 +6,11 @@ import { tempDirFor } from "../../testing/tempDir";
 import { openLibrary, type Library } from "../library";
 import { chatBody, fakeFetch, JPEG, makeClient, setupMoney, type Money, type Step } from "../openrouter/testing/fakes";
 import { EngineFailure } from "../engineFailure";
+import { scopeKey } from "../money/budget";
+import { suggestEstimate, translateEstimate } from "../money/motionEstimate";
+import { translatorPriceShape } from "./ideaTranslator";
 import { ClipMotions, type ClipMotionsDeps } from "./motionService";
+import { writerPriceShape } from "./motionWriter";
 import { GOOD_MOTION, timerFrame } from "./testing/motionKit";
 import { seedClipAvatar } from "./testing/engineClipKit";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -31,7 +35,7 @@ interface Rig {
   readonly library: Library;
   readonly avatarId: string;
   readonly photoId: string;
-  readonly state: { deleting: boolean; current: Library | null; paid: number };
+  readonly state: { deleting: boolean; current: Library | null; paid: number; caps: ["set" | "clear", string, number][] };
   readonly logs: string[];
   readonly storeDir: string;
 }
@@ -44,7 +48,7 @@ async function rig(steps: (state: Rig["state"]) => Step[]): Promise<Rig> {
   await mkdir(libraryDir, { recursive: true });
   const seeded = await seedClipAvatar(libraryDir);
   const { library } = await openLibrary(libraryDir);
-  const state: Rig["state"] = { deleting: false, current: library, paid: 0 };
+  const state: Rig["state"] = { deleting: false, current: library, paid: 0, caps: [] };
   const net = fakeFetch(steps(state));
   const { client } = makeClient(net.fetch);
   const logs: string[] = [];
@@ -69,8 +73,8 @@ async function rig(steps: (state: Rig["state"]) => Step[]): Promise<Rig> {
     checkMonthlyRoom: () => undefined,
     paidStart: () => void state.paid++,
     paidEnd: () => void state.paid--,
-    setCap: () => undefined,
-    clearCap: () => undefined,
+    setCap: (key, micros) => void state.caps.push(["set", key, micros]),
+    clearCap: (key) => void state.caps.push(["clear", key, 0]),
     openRouter: () => client,
     emitMoney: () => undefined,
     markKeyRejected: () => undefined,
@@ -125,6 +129,41 @@ describe("after the last await", () => {
       },
     ]);
     await expect(r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "NOT_FOUND" } });
+  });
+});
+
+describe("the call's cap", () => {
+  const SCOPE_KEY = scopeKey({ avatarJobId: "job-00000007" });
+  const priced = () => ({ book: money.priceBook, asOf: "2026-09-24" });
+
+  test("the writer's scope is capped at the price the owner accepts (two attempts), and the cap goes when the call ends", async () => {
+    const r = await rig(() => [reply(GOOD_ANSWER)]);
+    await r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 });
+    expect(r.state.caps).toEqual([
+      ["set", SCOPE_KEY, suggestEstimate(priced(), "x-ai/grok-4.3", writerPriceShape()).worstMicros],
+      ["clear", SCOPE_KEY, 0],
+    ]);
+  });
+
+  test("the translator's scope is capped the same way", async () => {
+    const r = await rig(() => [{ status: 200, body: chatBody(JSON.stringify({ text_en: GOOD_MOTION }), { cost: 0.001 }) }]);
+    await r.motions.translateIdea({ avatarId: r.avatarId, photoId: r.photoId, text: "поворачивает голову", acceptedWorstMicros: 1_000_000 });
+    expect(r.state.caps).toEqual([
+      ["set", SCOPE_KEY, translateEstimate(priced(), "x-ai/grok-4.3", translatorPriceShape()).worstMicros],
+      ["clear", SCOPE_KEY, 0],
+    ]);
+  });
+
+  test("the cap goes in every ending: a failed call (a 401) too", async () => {
+    const r = await rig(() => [{ status: 401, body: { error: { message: "no auth" } } }]);
+    await expect(r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 })).rejects.toBeDefined();
+    expect(r.state.caps.map((c) => c[0])).toEqual(["set", "clear"]);
+  });
+
+  test("no cap is set by a call refused before its money (a price change, a missing photo)", async () => {
+    const r = await rig(() => []);
+    await expect(r.motions.suggestMotions({ avatarId: r.avatarId, photoId: "photo-nope-0001", acceptedWorstMicros: 1_000_000 })).rejects.toBeDefined();
+    expect(r.state.caps).toEqual([]);
   });
 });
 
