@@ -296,11 +296,11 @@ const EXPOSURE_MORE =
 /**
  * S5.WC2b: the exposure verbs a model reaches for beyond `EXPOSURE_MORE`, read on a vision or own text alone (a scene or code text keeps today's list): showing, displaying,
  * uncovering, peeking, flashing, revealing, exposing or baring her skin, chest, cleavage, stomach, midriff, thighs or body, up to three words apart («exposes her upper
- * thigh», «shows off her cleavage», «gives a peek of cleavage»), her bare back, and cleavage named at all («lets her cleavage show»). Her shoulders, her face and her back as
- * she turns stay a motion's.
+ * thigh», «shows off her cleavage», «gives a peek of cleavage»), her bare back, and cleavage named at all («lets her cleavage show»); and showing, revealing or exposing
+ * more, everything or herself, which names no body part but bares one («adjusts her top, revealing more»). Her shoulders, her face and her back as she turns stay a motion's.
  */
 const EXPOSURE_MODEL =
-  /\b(?:(?:uncover\w*|show\w*|display\w*|peek\w*|flash\w*|reveal\w*|expos\w*|bar(?:e|es|ed|ing))\s+(?:[a-z'-]+\s+){0,3}?(?:skin|chest|cleavage|breasts?|stomach|belly|midriff|navel|bottom|butt|buttocks|thighs?|body|bust|bare\s+back)|cleavage|underboob|sideboob)\b/gi;
+  /\b(?:(?:uncover\w*|show\w*|display\w*|peek\w*|flash\w*|reveal\w*|expos\w*|bar(?:e|es|ed|ing))\s+(?:[a-z'-]+\s+){0,3}?(?:skin|chest|cleavage|breasts?|stomach|belly|midriff|navel|bottom|butt|buttocks|thighs?|body|bust|bare\s+back)|(?:uncover\w*|show\w*|display\w*|flash\w*|reveal\w*|expos\w*|bar(?:e|es|ed|ing))\s+(?:(?:a little|a bit|a lot|much|even|slightly|some|far)\s+)?(?:more|everything|it all|herself)|cleavage|underboob|sideboob)\b/gi;
 /** Explicit acts and words a model says beyond the bank's list. */
 const EXPLICIT_MORE =
   /\b(?:spread(?:s|ing)?\s+(?:her\s+)?(?:legs|thighs)|touch(?:es|ing)?\s+herself|strok(?:e|es|ing)\s+herself|masturbat\w*|porn\w*|xxx|hentai|erotic\w*|explicit|moan\w*|grop\w*|horny|aroused)\b/gi;

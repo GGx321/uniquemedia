@@ -717,6 +717,18 @@ describe("the exposure verbs a model reaches for (S5.WC2b): show, display, uncov
     });
   }
 
+  /** An exposure verb that names no body part but «more», «everything», «it all» or «herself» (the whitelist reads an adjusted neckline as kept on, the tail shows). */
+  const SHOWS_MORE = ["she slowly adjusts her neckline, showing more", "she slowly adjusts her top, revealing more", "she slowly turns, exposing a little more", "she slowly uncovers herself"];
+
+  for (const text of SHOWS_MORE) {
+    test(`content as vision and own on an ordinary frame and as vision on «Смелая»; accepted as own on «Смелая»: «${text}»`, () => {
+      expect(motionTextProblems(text, FRIEND, "vision")).toEqual(["content"]);
+      expect(motionTextProblems(text, FRIEND, "own")).toEqual(["content"]);
+      expect(motionTextProblems(text, BOLD, "vision")).toEqual(["content"]);
+      expect(motionTextProblems(text, BOLD, "own")).toEqual([]);
+    });
+  }
+
   test("what only looks like it stays a motion: her shoulders, her face, over her sunglasses, her back as she turns, her hand", () => {
     for (const text of ["she slowly bares her shoulders", "she slowly uncovers her face", "she slowly peeks over her sunglasses", "she slowly turns to show her back", "she slowly shows her hand"]) {
       for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, []]);
