@@ -587,6 +587,15 @@ export const wornBreaks = keptBy((text: string): WornBreaks => {
   return { takesOff, shows };
 });
 
+/**
+ * Whether a motion takes clothing off as its source is read: `takesOff` for every source, and for a vision or own text also what the whitelist reads as moving what she wears
+ * beyond it. The prompt reads this (S5.WC2b): an own idea accepted on «Смелая» that only the whitelist refuses elsewhere still goes to Kling alone, with «Nothing new
+ * appears.» and no clothing clause. A scene or code text's answer is `takesOff`'s, so its prompt never moves.
+ */
+export function takesOffBy(text: string, source: ClipMotionSource): boolean {
+  return takesOff(text) || ((source === "vision" || source === "own") && wornBreaks(text).takesOff.length > 0);
+}
+
 const ownOnBold = (scope: Scope): boolean => scope.source === "own" && scope.frame.bold;
 
 const isModelText = (scope: Scope): boolean => scope.source === "vision" || scope.source === "own";

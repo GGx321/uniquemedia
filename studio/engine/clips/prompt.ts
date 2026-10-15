@@ -2,7 +2,7 @@ import type { ClipAttemptModel, ClipMotionSource, ClipQuality, ClipSeconds, Moti
 import { MOMENT_VERBS } from "../../shared/scenes/banks/schema";
 import { contentProblems } from "../../shared/scenes/contentLine";
 import { rendersActivity } from "../../shared/scenes/custom";
-import { motionTextFindings, motionTextProblems, namesPhone, phoneInHandOrPropped, takesOff } from "../../shared/scenes/motionText";
+import { motionTextFindings, motionTextProblems, namesPhone, phoneInHandOrPropped, takesOffBy } from "../../shared/scenes/motionText";
 import { VIDEO_TIERS } from "../money/prices";
 import type { VideoFrameImage, VideoRequest } from "../openrouter/types";
 import type { FrameFacts } from "./frameFacts";
@@ -75,20 +75,22 @@ function lyingOnHerStomach(facts: FrameFacts): boolean {
 /**
  * The clip prompt for this frame and motion in this dialect, or the problems that keep it from being sent. `source` is where the motion comes from, always named (S5.WC2
  * round 2): a vision or own text takes the grammar a scene text took at its bank's load. A motion that takes clothing off (an own idea on «Смелая», Q-H = 2) is Kling's
- * alone: its Grok prompt is never built, whatever `BOLD_CLIPS` lets the frame fall back to.
+ * alone: its Grok prompt is never built, whatever `BOLD_CLIPS` lets the frame fall back to. «Takes clothing off» is read by the source (`takesOffBy`, S5.WC2b): an own idea
+ * the clothing-verb whitelist refuses elsewhere («her robe falls open») takes it off here too.
  */
 export function clipPromptOf(facts: FrameFacts, motion: string, dialect: ClipDialect, source: ClipMotionSource): ClipPromptResult {
   const findings = motionTextFindings(motion, facts, source);
   if (findings.length > 0) return { ok: false, problems: findings.map((finding) => `${finding.problem} (${finding.rule}): ${finding.what}`) };
-  if (dialect === "grok" && takesOff(motion)) return { ok: false, problems: ["takes-off (grok): a motion that takes clothing off goes to Kling alone"] };
+  const off = takesOffBy(motion, source);
+  if (dialect === "grok" && off) return { ok: false, problems: ["takes-off (grok): a motion that takes clothing off goes to Kling alone"] };
   const rest = [
     poseSentenceFor(facts),
     motionSentenceOf(motion),
     lyingOnHerStomach(facts) ? PRONE_ANCHOR : null,
     facts.legs ? legsLineOf(facts.capture) : null,
-    continuityLineOf(motion, facts.activity),
+    continuityLineOf(motion, facts.activity, off),
     // Q-H = 2: a motion that takes clothing off (an own idea on «Смелая») carries no clothing clause, the legwear's included: Kling decides.
-    facts.legwear === null || takesOff(motion) ? null : legwearLineOf(facts.legwear),
+    facts.legwear === null || off ? null : legwearLineOf(facts.legwear),
     SLOW_LINE,
     LOOK_LINE,
     ADULT_LINE,
@@ -111,7 +113,7 @@ const DIALECTS: readonly ClipDialect[] = ["kling", "grok"];
 export function clipMotionProblems(facts: FrameFacts, text: string, source: ClipMotionSource): MotionProblem[] {
   const problems = motionTextProblems(text, facts, source);
   if (problems.length > 0) return problems;
-  const dialects: readonly ClipDialect[] = takesOff(text) ? ["kling"] : DIALECTS;
+  const dialects: readonly ClipDialect[] = takesOffBy(text, source) ? ["kling"] : DIALECTS;
   return dialects.every((dialect) => clipPromptOf(facts, text, dialect, source).ok) ? [] : ["too-long"];
 }
 

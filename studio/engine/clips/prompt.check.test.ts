@@ -158,6 +158,41 @@ describe("the continuity line of an own idea that takes clothing off, on a frame
   });
 });
 
+// ---------- S5.WC2b: what the clothing-verb whitelist reads as taking clothing off is taken off in the prompt too ----------
+
+describe("an own idea only the whitelist reads as taking clothing off: on «Смелая» Kling's alone, with «Nothing new appears.» (S5.WC2b, Q-H = 2)", () => {
+  /** Accepted own ideas on «Смелая» that the takes-off forms never read (the whitelist does). */
+  const OPENS = ["her robe slowly falls open", "she slowly loosens the tie of her robe", "she slowly works her skirt up"];
+
+  test("the Kling prompt says «Nothing new appears.» alone: neither «comes off» nor the base line", () => {
+    for (const motion of OPENS) {
+      const result = clipPromptOf(boldMirror(), motion, "kling", "own");
+      if (!result.ok) throw new Error(result.problems.join("; "));
+      expect([motion, result.prompt.includes(`${NOTHING_NEW_LINE} ${SLOW_LINE}`)]).toEqual([motion, true]);
+      expect([motion, result.prompt.includes(COMES_OFF_LINE) || result.prompt.includes(CONTINUITY_LINE)]).toEqual([motion, false]);
+    }
+  });
+
+  test("its Grok prompt is refused, and it is offered (Kling alone)", () => {
+    for (const motion of OPENS) {
+      const grok = clipPromptOf(boldMirror(), motion, "grok", "own");
+      expect([motion, grok.ok]).toEqual([motion, false]);
+      if (!grok.ok) expect(grok.problems.join(" ")).toContain("takes-off");
+      expect([motion, clipMotionProblems(boldMirror(), motion, "own")]).toEqual([motion, []]);
+    }
+  });
+
+  test("on a frame with legwear the legwear line goes too", () => {
+    const result = clipPromptOf(boldMirror("sheer black stockings"), "her robe slowly falls open", "kling", "own");
+    if (!result.ok) throw new Error(result.problems.join("; "));
+    expect(result.prompt).not.toContain("stay on her feet");
+  });
+
+  test("a scene or code text keeps the takes-off forms alone (no bank or code motion says these): the continuity line of the motion by itself does not move", () => {
+    expect(continuityLineOf("her robe slowly falls open", null)).toBe(COMES_OFF_LINE);
+  });
+});
+
 // ---------- the pins added by S5.WC2 (every existing pin stays byte for byte; prompt.sweep.test.ts holds them) ----------
 
 const PINS = join(import.meta.dir, "fixtures");

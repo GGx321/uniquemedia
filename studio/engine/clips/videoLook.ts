@@ -183,10 +183,11 @@ const HELD_BAG = new RegExp(
 /**
  * The continuity line for a motion: «Nothing new appears.» alone when it takes clothing off (Q-H = 2: only an own idea on a frame of «Смелая» passes the check with one), «comes
  * off» when it moves what she wears, the base line otherwise, and always the base line for a bag she holds. `activity` is the slot's moment as the photo carries it (null when
- * it does not): «adjusts the strap of her bag» makes «she tugs the strap a little» a bag's strap.
+ * it does not): «adjusts the strap of her bag» makes «she tugs the strap a little» a bag's strap. `takesClothingOff` is the prompt's reading of the motion by its source
+ * (`takesOffBy`, S5.WC2b); by itself the motion is read with `takesOff`.
  */
-export function continuityLineOf(motion: string, activity: string | null): string {
-  if (takesOff(motion)) return NOTHING_NEW_LINE;
+export function continuityLineOf(motion: string, activity: string | null, takesClothingOff: boolean = takesOff(motion)): string {
+  if (takesClothingOff) return NOTHING_NEW_LINE;
   if (HELD_BAG.test(motion) || (activity !== null && HELD_BAG.test(activity))) return CONTINUITY_LINE;
   return WORN_OR_HELD.test(motion) ? COMES_OFF_LINE : CONTINUITY_LINE;
 }
