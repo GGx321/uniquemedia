@@ -350,16 +350,23 @@ function doneHeader(members: readonly MemberRead[], counts: BatchCounts, summary
     money,
   ].filter((part) => part !== "");
   const ok = summary !== null && (refused.length === 0 || refusalsFree) && (summary.cost.kind === "billed" || summary.cost.kind === "free");
-  return { title: `Пакет готов: ${parts.join(" · ")}`, tone: ok ? "ok" : "info" };
+  // S5.WB4c: a batch that made no clip «закончен», not «готов»; with nothing to count, no empty tail.
+  const head = counts.done > 0 ? "Пакет готов" : "Пакет закончен";
+  return { title: parts.length > 0 ? `${head}: ${parts.join(" · ")}` : head, tone: ok ? "ok" : "info" };
 }
 
-/** 60b #worst: a refusal the summary says was settled at its worst says why it counts (round 2, M5); two or more say it once, with no figure the window would have to add up. */
+/**
+ * 60b #worst: a member the summary says was settled at its worst says why it counts — a refusal that could not be proven free (round 2, M5), or any other member whose exact cost was not read (S5.WB4c).
+ * Two or more say it once, with no figure the window would have to add up.
+ */
 function worstLine(members: readonly MemberRead[]): string | null {
-  const worst = members.filter((m) => m.state === "refused" && m.money?.kind === "estimated");
+  const worst = members.filter((m) => m.money?.kind === "estimated");
   const first = worst[0];
   if (first === undefined || first.money === null) return null;
-  if (worst.length === 1) return `Отказ учтён по максимуму ${upUsd(first.money.micros)}: не удалось доказать, что он бесплатный.`;
-  return "Отказы учтены по максимуму: не удалось доказать, что они бесплатные.";
+  const refusals = worst.every((m) => m.state === "refused");
+  if (worst.length === 1) return refusals ? `Отказ учтён по максимуму ${upUsd(first.money.micros)}: не удалось доказать, что он бесплатный.` : `Клип учтён по максимуму ${upUsd(first.money.micros)}: точная стоимость не прочитана.`;
+  if (refusals) return "Отказы учтены по максимуму: не удалось доказать, что они бесплатные.";
+  return `По максимуму учтено ${worst.length} ${plural(worst.length, CLIP_FORMS)}: точная стоимость не прочитана.`;
 }
 
 // ---------- the records of a batch on the «Клипы» tab (README decision 9) ----------

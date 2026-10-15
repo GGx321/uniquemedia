@@ -426,7 +426,22 @@ describe("the end (60b): every money word from the summary's `cost` and `costKin
 
   test("no refusal: no refusal part; nothing paid at all: «бесплатно» once", () => {
     expect(view({ records: [], jobs: [], summary: summary(times(10, R), { ended: true }) }).title).toBe("Пакет готов: 10 клипов · $4.20");
-    expect(view({ records: [], jobs: [], summary: summary([{ outcome: "refused" }, { outcome: "refused" }], { ended: true }) }).title).toBe("Пакет готов: 2 отказа бесплатно");
+  });
+
+  test("S5.WB4c: no clip made — «Пакет закончен: 2 отказа бесплатно», never «готов» with no clip", () => {
+    expect(view({ records: [], jobs: [], summary: summary([{ outcome: "refused" }, { outcome: "refused" }], { ended: true }) }).title).toBe("Пакет закончен: 2 отказа бесплатно");
+  });
+
+  test("S5.WB4c: a made clip the ledger settled at its worst says why it counts too — not only a refusal", () => {
+    const v = view({ records: [], jobs: [], summary: summary([R, { outcome: "ready", costMicros: 504_000, costKind: "estimated" }], { ended: true }) });
+    expect(v.title).toBe("Пакет готов: 2 клипа · $0.93");
+    expect(v.line).toBe("Клип учтён по максимуму $0.51: точная стоимость не прочитана.");
+  });
+
+  test("S5.WB4c: several at their worst, not all of them refusals: one line, no figure to add up", () => {
+    const worstReady: M = { outcome: "ready", costMicros: 504_000, costKind: "estimated" };
+    const worstRefused: M = { outcome: "refused", costMicros: 504_000, costKind: "estimated" };
+    expect(view({ records: [], jobs: [], summary: summary([R, worstReady, worstRefused], { ended: true }) }).line).toBe("По максимуму учтено 2 клипа: точная стоимость не прочитана.");
   });
 });
 
@@ -451,6 +466,10 @@ describe("no summary: counts from the records, neutral words, never a money word
     const v = view({ records: [ready(1, { size: 2 })], jobs: [job(2, { phase: "saving" }, { status: "done" }, { size: 2 })] });
     expect(v.counts.notShot).toBe(0);
     expect(v.title).not.toContain("не снимал");
+  });
+
+  test("S5.WB4c: nothing to count at all — «Пакет закончен», with no empty tail", () => {
+    expect(view({ records: [], jobs: [job(1, { phase: "saving" }, { status: "done" }, { size: 1 })] }).title).toBe("Пакет закончен");
   });
 
   test("a stop the jobs told: the parts and the tone, but no line — it would say «бесплатно»", () => {
