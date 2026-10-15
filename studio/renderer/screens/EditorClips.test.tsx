@@ -504,11 +504,11 @@ describe("round 2: a placement that can no longer go in, and a draft video not k
     expect(tiles()).toEqual(["Клип «Наклоняет голову», 0:05, Фото 4 · не удалось прочитать видео в кадрах", "Клип «Моргает и улыбается», 0:05, Фото 2 · не удалось прочитать видео в кадрах"]);
     const pick = pickOf(free);
     expect(pick.getAttribute("aria-disabled")).toBe("true");
-    expect(pick.getAttribute("title")).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
+    expect(pick.getAttribute("title")).toBe("Не удалось прочитать видео в кадрах\u00a0— пока новые кадры не добавить.");
     // S5.WAR M3: the wait is not silent — the notice (with «Повторить»), the line under the tiles, and the tiles dimmed.
     const retry = screen.getByRole("button", { name: "Повторить" });
-    expect(retry.closest(".notice")?.textContent).toContain("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
-    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
+    expect(retry.closest(".notice")?.textContent).toContain("Не удалось прочитать видео в кадрах\u00a0— пока новые кадры не добавить.");
+    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Не удалось прочитать видео в кадрах\u00a0— пока новые кадры не добавить.");
     expect(tileOf(free).classList.contains("edc-tile-wait")).toBe(true);
     expect(tileOf(free).querySelector(".ed-bin-dim") !== null).toBe(true);
     // S5.WAR L2: a retry that fails again leaves the notice where it is, and the focus on «Повторить».
@@ -526,9 +526,9 @@ describe("round 2: a placement that can no longer go in, and a draft video not k
     await flush();
     const photo1 = within(within(media()).getByRole("list", { name: "Фото аватара" })).getByRole("button", { name: "Фото 1: не удалось прочитать видео в кадрах" });
     expect(photo1.getAttribute("aria-disabled")).toBe("true");
-    expect(photo1.getAttribute("title")).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
+    expect(photo1.getAttribute("title")).toBe("Не удалось прочитать видео в кадрах\u00a0— пока новые кадры не добавить.");
     expect(photo1.closest("li")?.classList.contains("ed-bin-tile-wait")).toBe(true);
-    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
+    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Не удалось прочитать видео в кадрах\u00a0— пока новые кадры не добавить.");
     fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 2:/ }));
     await flush();
     // S5.WAR L1: a video whose origin is not known is neither «клип» nor the owner's own: plain «Видео», no tag.
@@ -537,8 +537,8 @@ describe("round 2: a placement that can no longer go in, and a draft video not k
     expect(timeline().querySelector(".ed-clip-on .ed-ctag-top") === null).toBe(true);
     expect(screen.getByRole("button", { name: "Кадр 2: видео" })).toBeDefined();
     expect(document.body.textContent?.includes("Своё видео")).toBe(false);
-    expect(within(timeline()).getByRole("button", { name: "Разрезать по плейхеду" }).getAttribute("title")).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
-    expect(within(timeline()).getByRole("button", { name: "Дублировать выбранное" }).getAttribute("title")).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
+    expect(within(timeline()).getByRole("button", { name: "Разрезать по плейхеду" }).getAttribute("title")).toBe("Не удалось прочитать видео в кадрах\u00a0— пока новые кадры не добавить.");
+    expect(within(timeline()).getByRole("button", { name: "Дублировать выбранное" }).getAttribute("title")).toBe("Не удалось прочитать видео в кадрах\u00a0— пока новые кадры не добавить.");
 
     // The library answers again: «Повторить» reads it now.
     gate.failing = false;
@@ -574,15 +574,15 @@ describe("round 2: a placement that can no longer go in, and a draft video not k
     await openEditor(h, [photoClip(0, P(2)), copyClip(1, copy)]);
     expect(plain(tileOf(free).getAttribute("aria-label"))).toBe("Клип «Наклоняет голову», 0:05, Фото 4 · читаем видео в кадрах");
     expect(plain(pickOf(free).getAttribute("aria-label"))).toBe("Клип «Наклоняет голову», 0:05: подождите, читаем видео в кадрах");
-    expect(pickOf(free).getAttribute("title")).toBe("Читаем видео в кадрах — подождите");
-    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Читаем видео в кадрах — подождите");
+    expect(pickOf(free).getAttribute("title")).toBe("Читаем видео в кадрах\u00a0— подождите");
+    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Читаем видео в кадрах\u00a0— подождите");
     expect(tileOf(free).classList.contains("edc-tile-wait")).toBe(true);
     expect(tileOf(free).querySelector(".ed-bin-dim") !== null).toBe(true);
     // Not a failure: no notice, no «Повторить».
     expect(screen.queryByRole("button", { name: "Повторить" }) === null).toBe(true);
     fireEvent.click(within(media()).getByRole("tab", { name: "Фото" }));
     await flush();
-    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Читаем видео в кадрах — подождите");
+    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Читаем видео в кадрах\u00a0— подождите");
     fireEvent.click(within(media()).getByRole("tab", { name: "Клипы" }));
     await flush();
     // The read answers: the tiles go, the line says what a click does.
