@@ -23,7 +23,7 @@ function asciiEscaped(text: string, upper: boolean): string {
  * "holds a fragment" when any 41 characters in a row of the idea (as typed, JSON-escaped, or `\u`-escaped in either case: the forms in which a raw body could echo it) are found in it. The label, his first 40
  * characters, is allowed: 40 characters are not a fragment. Empty when no place holds one; otherwise one line per place that does.
  */
-export function canaryProblems(idea: string, places: readonly Haystack[]): string[] {
+export function canaryProblems(idea: string, places: readonly Haystack[], marker?: string): string[] {
   if (idea.length <= FRAGMENT - 1) return ["the idea is not longer than 40 characters, so a fragment of it cannot be told from its label"];
   const json = JSON.stringify(idea).slice(1, -1);
   const forms = [idea, json, asciiEscaped(json, false), asciiEscaped(json, true)];
@@ -34,6 +34,8 @@ export function canaryProblems(idea: string, places: readonly Haystack[]): strin
       return [];
     })[0];
     if (found !== undefined) problems.push(`${place.where} holds a fragment of the idea (${FRAGMENT} characters from character ${found})`);
+    // The literal marker the idea carries: an echo too short for a fragment is still his words.
+    else if (marker !== undefined && place.text.includes(marker)) problems.push(`${place.where} holds the literal marker ${marker}`);
   }
   return problems;
 }

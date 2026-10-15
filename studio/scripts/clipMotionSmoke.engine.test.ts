@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { clipsDir as clipsDirOf, command, create, jobEnd, jobIdOf, seedClipAvatar, startClipEngine } from "../engine/clips/testing/engineClipKit";
 import { ledgerLines, useEngineDir } from "../engine/testing/engineHarness";
@@ -19,7 +19,8 @@ setDefaultTimeout(120_000);
 
 const dir = useEngineDir("studio-clip-motion-smoke-engine-");
 /** More than 40 characters, so a fragment of it can be told from its label. */
-const IDEA = "медленно поворачивает голову к окну и улыбается, CANARY-9c41";
+const CANARY = "CANARY-9c41";
+const IDEA = `медленно поворачивает голову к окну и улыбается, ${CANARY}`;
 
 const nativeFetch = Bun.fetch;
 const happyDomResponse = globalThis.Response;
@@ -104,20 +105,27 @@ describe("the smoke's part C scenario, against the real engine", () => {
       // 5. The canary (I5.67): the translator's request holds his words as JSON data, and nowhere else is a fragment of them.
       const translatorRequest = mock.motionRequests()[1];
       expect(translatorRequest?.bodyText).toContain(IDEA);
-      const writerRequest = mock.motionRequests()[0];
-      const videoRequests = mock.requests.filter((r) => r.path.endsWith("/videos") && r.method === "POST");
-      expect(videoRequests.length).toBeGreaterThan(0);
-      const places: Haystack[] = [
+      expect(mock.requests.some((r) => r.path.endsWith("/videos") && r.method === "POST")).toBe(true);
+      const provider = mock;
+      const gather = async (): Promise<Haystack[]> => [
         ...(await filesUnder(dir())),
         { where: "an event the engine posted", text: JSON.stringify(engine.posted) },
         { where: "a log line", text: logs.join("\n") },
-        { where: "the writer's chat request", text: writerRequest?.bodyText ?? "" },
-        ...videoRequests.map((r, i) => ({ where: `video request ${i + 1}`, text: r.bodyText })),
+        // EVERY request the provider saw except the translator's own: the writer's, the video requests, the price reads, the credits.
+        ...provider.requests.filter((r) => r.schemaName !== "motion_idea").map((r, i) => ({ where: `provider request ${i + 1} (${r.method} ${r.path})`, text: `${r.url}\n${r.bodyText}` })),
       ];
+      const places = await gather();
       expect(places.length).toBeGreaterThan(10);
-      expect(canaryProblems(IDEA, places)).toEqual([]);
+      expect(canaryProblems(IDEA, places, CANARY)).toEqual([]);
       expect(clipsDirOf(join(dir(), "library"), avatarId)).toContain(avatarId);
       expect(mock.unexpected).toEqual([]);
+
+      // 6. The negative control: the same scan, after the idea is planted in a file and in a log line, finds both.
+      await writeFile(join(dir(), "planted.txt"), `a note: ${IDEA}`);
+      console.warn(`planted: ${IDEA}`);
+      const found = canaryProblems(IDEA, await gather(), CANARY);
+      expect(found.some((line) => line.startsWith("the file /planted.txt"))).toBe(true);
+      expect(found.some((line) => line.startsWith("a log line"))).toBe(true);
     } finally {
       console.warn = warn;
       console.error = error;

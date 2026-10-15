@@ -34,6 +34,15 @@ describe("canaryProblems (I5.67: the owner's words are in the translator's reque
     expect(canaryProblems(IDEA, [{ where: "upper", text: escaped.replace(/\\u([0-9a-f]{4})/g, (_m, hex: string) => `\\u${hex.toUpperCase()}`) }])).toHaveLength(1);
   });
 
+  test("finds the literal marker of the idea even where no 41 characters of it are in a row", () => {
+    expect(canaryProblems(IDEA, [{ where: "a log line", text: "x CANARY-9c41 y" }], "CANARY-9c41")).toEqual(["a log line holds the literal marker CANARY-9c41"]);
+    expect(canaryProblems(IDEA, [{ where: "a log line", text: "x CANARY-9c41 y" }])).toEqual([]);
+  });
+
+  test("names a place once even when it holds both a fragment and the marker", () => {
+    expect(canaryProblems(IDEA, [{ where: "the store", text: IDEA }], "CANARY-9c41")).toHaveLength(1);
+  });
+
   test("refuses an idea of 40 characters or fewer: its label would be all of it, and the canary would prove nothing", () => {
     expect(canaryProblems("короткая идея", [{ where: "x", text: "y" }])).toEqual(["the idea is not longer than 40 characters, so a fragment of it cannot be told from its label"]);
   });

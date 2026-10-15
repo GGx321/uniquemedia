@@ -4595,18 +4595,17 @@ async function runClipMotionScenario(target: Target): Promise<void> {
 
     // 7. The canary (I5.67): his words are in the translator's request, as data, and nowhere else.
     const translatorRequest = mock.motionRequests().find((r) => r.schemaName === "motion_idea");
-    const writerRequest = mock.motionRequests().find((r) => r.schemaName === "motion_suggestions");
     check("clip motions scenario: the translator's request carries his words as data (the one place they may be)", translatorRequest?.bodyText.includes(MOTION_IDEA) === true, translatorRequest?.bodyText.slice(0, 300));
     const events = String(await cdp.evaluate("JSON.stringify(window.__smoke.events)"));
     const places: Haystack[] = [
       ...(await textsUnder(tmp)),
       { where: "an event the window saw", text: events },
       { where: "the app's own log", text: running.output() },
-      { where: "the writer's chat request", text: writerRequest?.bodyText ?? "" },
-      ...mock.requests.filter((r) => r.method === "POST" && r.path.endsWith("/videos")).map((r, i) => ({ where: `video request ${i + 1}`, text: r.bodyText })),
+      // EVERY request the provider saw except the translator's own: the writer's, the video requests, the price reads, the credits.
+      ...mock.requests.filter((r) => r.schemaName !== "motion_idea").map((r, i) => ({ where: `provider request ${i + 1} (${r.method} ${r.path})`, text: `${r.url}\n${r.bodyText}` })),
     ];
-    const canary = canaryProblems(MOTION_IDEA, places);
-    check("clip motions scenario: no fragment longer than 40 characters of his words is in any file, event, log line or video request", canary.length === 0 && places.length > 10, { canary, places: places.length });
+    const canary = canaryProblems(MOTION_IDEA, places, "CANARY-9c41");
+    check("clip motions scenario: no fragment longer than 40 characters of his words, and not the marker CANARY-9c41, is in any file, event, log line or provider request but the translator's", canary.length === 0 && places.length > 10, { canary, places: places.length });
     check("clip motions scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
   } finally {
     await quit(running);
