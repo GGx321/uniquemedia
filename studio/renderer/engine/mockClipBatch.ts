@@ -1,4 +1,5 @@
-import type { ClipCancelDetail, ClipPrices, EngineError } from "../../shared/engine";
+import type { ClipBatchStop, ClipCancelDetail, ClipPrices, EngineError } from "../../shared/engine";
+import type { BatchChange } from "../../shared/engine/clipBatchSummary";
 
 // Stage 5, 5b.2, S5.WB3 (plan s5b2 §5.2.2, I5.61-I5.63): the batch «Оживить выбранные» of the mock engine, the mirror of engine/clips/batch.ts. It is the same scheduler over the same ports, written for the
 // mock's clock: no promise waits, every wait is a timer of the mock's scheduler, so a test and the parity rig move it by the clock they already move. A batch is the queue of its members and the one walk over it:
@@ -71,6 +72,8 @@ export interface MockBatchPorts<P> {
   /** The batch is over: the unit goes back. Called once. */
   readonly finished: () => void;
   readonly log: (line: string) => void;
+  /** 5b.2 (S5.WB2c): a transition of the batch, for its summary, at the engine's moments (engine/clips/batch.ts `ports.note`). */
+  readonly note: (change: BatchChange) => void;
 }
 
 /** A member whose money ended in one of these has an open reserve nobody can price until the reconcile: the queue is not spent blind. */
@@ -137,6 +140,7 @@ export class MockClipBatch<P> {
     this.#stopped = true;
     let cancelled = 0;
     for (const member of this.#members) if (member.state === "queued" && this.#cancel(member, "cancelled")) cancelled++;
+    if (cancelled > 0) this.#ports.note({ kind: "stop", detail: "cancelled" });
     return cancelled;
   }
 
@@ -169,6 +173,7 @@ export class MockClipBatch<P> {
       // The end: nothing queued and the last member's money is closed.
       this.#stopped = true;
       this.#finished = true;
+      this.#ports.note({ kind: "over", at: new Date(this.#ports.clock()).toISOString() });
       this.#ports.finished();
       return;
     }
@@ -219,6 +224,7 @@ export class MockClipBatch<P> {
       }
       member.state = "running";
       member.wake = null;
+      ports.note({ kind: "running", index: member.index, clipId: member.clipId });
       ports.runMember(member, prices);
     });
   }
@@ -299,13 +305,17 @@ export class MockClipBatch<P> {
     const ports = this.#ports;
     this.#notBefore = ports.clock() + ports.timings.rateLimitPauseMs;
     if (member.retried || this.#stopped) return;
-    this.#members.push(ports.requeue(member));
+    const next = ports.requeue(member);
+    this.#members.push(next);
+    ports.note({ kind: "requeued", index: next.index, clipId: next.clipId });
   }
 
   /** Every member still queued ends cancelled for free with `detail`; nothing is requeued after it. */
-  #stop(detail: ClipCancelDetail): void {
+  #stop(detail: ClipBatchStop): void {
     this.#stopped = true;
-    for (const member of this.#members) if (member.state === "queued") this.#cancel(member, detail);
+    let cancelled = 0;
+    for (const member of this.#members) if (member.state === "queued" && this.#cancel(member, detail)) cancelled++;
+    if (cancelled > 0) this.#ports.note({ kind: "stop", detail });
   }
 
   /** A member whose turn could not start (no usable key): its job fails, free, with the error; the batch goes on (each later member fails the same way, fast). */
@@ -315,6 +325,7 @@ export class MockClipBatch<P> {
     member.wake?.();
     member.wake = null;
     if (member.held) this.#ports.releaseHold(member);
+    this.#ports.note({ kind: "ended", index: member.index, clipId: member.clipId, outcome: "failed" });
     this.#ports.failJob(member, error);
     this.#next(member);
   }
@@ -326,6 +337,7 @@ export class MockClipBatch<P> {
     member.wake?.();
     member.wake = null;
     if (member.held) this.#ports.releaseHold(member);
+    this.#ports.note(detail === undefined ? { kind: "dropped", index: member.index, clipId: member.clipId } : { kind: "cancelled", index: member.index, clipId: member.clipId, detail });
     this.#ports.cancelJob(member, detail);
     this.#next(member);
     return true;

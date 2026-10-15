@@ -6,6 +6,7 @@ import {
   EXPORT_FPS,
   GROK_FALLBACK,
   isBoldCategory,
+  MAX_LISTED_BATCHES,
   MAX_LISTED_CLIPS,
   PROTOCOL_VERSION,
   CLIP_OPTION_KEYS,
@@ -18,6 +19,7 @@ import {
   clipWorstMicros,
   type BoldClipsMode,
   type ClipBatchOptions,
+  type ClipBatchSummary,
   type ClipCancelDetail,
   type ClipCost,
   type ClipExport,
@@ -51,6 +53,21 @@ import {
   type ReconcileResult,
 } from "../../shared/engine";
 import { clipAlone } from "../../shared/engine/clipAlone";
+import {
+  afterRestart,
+  applyBatchChange,
+  batchSummaryOf,
+  clipBatchOutcomeOf,
+  moneyOpen,
+  newestFirst,
+  runningClipIds,
+  startBatchState,
+  toForget,
+  withCosts,
+  type BatchChange,
+  type ClipBatchState,
+  type MemberLook,
+} from "../../shared/engine/clipBatchSummary";
 import type { UnsequencedEvent } from "../../shared/engine/events";
 import { MockClipBatch, type BatchMember, type MockBatchPorts, type MockMoneyEnd } from "./mockClipBatch";
 import type { Scheduler } from "./scheduler";
@@ -309,6 +326,8 @@ interface Job {
   detail?: ClipCancelDetail;
   /** 5b.2: the batch this job is a member of and the member it stands for: the batch is told how its money ended. */
   member?: { batch: MockClipBatch<MemberPayload>; ref: BatchMember<MemberPayload> };
+  /** 5b.2 (S5.WB2c): a member job whose turn came (engine `#startMember`): its own end is told to the batch's summary. */
+  ran?: true;
 }
 
 type WaitReason = "turn" | "alone" | "rate-limit" | "proof";
@@ -606,6 +625,8 @@ export class MockClips {
   #unit: { kind: "clip"; job: Job } | { kind: "batch"; batch: MockClipBatch<MemberPayload> } | null = null;
   /** 5b.2: the batches of this process, by id (a finished one stays, bounded, so a late `clips.cancelBatch` answers 0 and not NOT_FOUND). */
   readonly #batches = new Map<string, MockClipBatch<MemberPayload>>();
+  /** 5b.2 (S5.WB2c): each batch's own summary, by batch id (the engine's `clips/batches/<batchId>.json`): it outlives a restart, as the records do, and a clip delete never touches it. */
+  readonly #summaries = new Map<string, ClipBatchState>();
   /** 5b.2 (`Budget.tryHold`): the month's room held for the members still to reserve, by attempt id: in memory only, gone with the process. */
   readonly #monthHolds = new Map<string, number>();
   /** The live caps of the clips (engine `setCap`/`clearCap`), by clip id: a single clip's accepted worst case, a batch member's share; set at the create, gone when the money closes or the member never runs. */
@@ -1255,6 +1276,9 @@ export class MockClips {
     // The armed scripts are this batch's alone (used once): whatever an earlier batch left unplayed is gone.
     this.#batchPlay = this.#batchScripts ?? [];
     this.#batchScripts = null;
+    // 5b.2 (S5.WB2c): the batch's summary, every member queued, before its first turn; then the avatar's oldest summaries past the kept ones go.
+    this.#summaries.set(batchId, startBatchState({ batchId, avatarId, createdAt: this.#host.nowIso(), clipIds: members.map((member) => member.clipId) }));
+    this.#forgetOldBatches(avatarId);
     const batch = new MockClipBatch<MemberPayload>(this.#batchPorts(avatarId, batchId, size), { id: batchId, avatarId, members });
     for (const member of members) {
       const job = this.#jobs.get(member.jobId);
@@ -1343,7 +1367,51 @@ export class MockClips {
         host.emitMoney();
       },
       log: () => undefined,
+      note: (change) => this.#noteBatch(batchId, change),
     };
+  }
+
+  // ---------- the batch summaries (5b.2, S5.WB2c; engine/clips/batchSummary.ts) ----------
+
+  /** The ledger's cost of each clip a summary names (`#costOf`, the engine's `clipCostsOf`). */
+  #costsOf(state: ClipBatchState): Map<string, ClipCost> {
+    return new Map(state.members.flatMap((member) => member.clipIds).map((clipId) => [clipId, this.#costOf(clipId)]));
+  }
+
+  /** A transition of a batch, applied to its summary with the ledger's money now. */
+  #noteBatch(batchId: string, change: BatchChange): void {
+    const state = this.#summaries.get(batchId);
+    if (state === undefined) return;
+    const next = applyBatchChange(state, change);
+    this.#summaries.set(batchId, withCosts(next, this.#costsOf(next)));
+  }
+
+  /** A batch member's record was committed (a recovery's, or a download fetched again): its member ends as the record says. */
+  #noteMemberRecord(record: MockClipRecord): void {
+    if (record.batch === undefined) return;
+    this.#noteBatch(record.batch.batchId, { kind: "ended", index: record.batch.batchIndex, clipId: record.id, outcome: clipBatchOutcomeOf(record.outcome) });
+  }
+
+  /** Past the kept ones, an avatar's summaries whose queue ended and whose money is closed go. */
+  #forgetOldBatches(avatarId: string): void {
+    const mine = [...this.#summaries.values()].filter((state) => state.avatarId === avatarId);
+    for (const batchId of toForget(mine, (state) => moneyOpen(state, this.#costsOf(state)))) this.#summaries.delete(batchId);
+  }
+
+  /** The restart's pass (engine `#endBatchesAfterRestart`): a batch the summaries still have running ends; a member at work is looked up by its journal, its record, its reserve. */
+  #endBatchesAfterRestart(): void {
+    const at = this.#host.nowIso();
+    const look = (clipId: string): MemberLook => {
+      if (this.#journals.has(clipId)) return { kind: "journal" };
+      const record = this.#records.get(clipId);
+      if (record !== undefined) return { kind: "record", outcome: clipBatchOutcomeOf(record.outcome) };
+      return this.#lines.some((line) => line.clipId === clipId) ? { kind: "reserved" } : { kind: "nothing" };
+    };
+    for (const [batchId, state] of this.#summaries) {
+      if (state.endedAt !== undefined && runningClipIds(state).length === 0) continue;
+      const next = afterRestart(state, new Map(runningClipIds(state).map((clipId) => [clipId, look(clipId)])), at);
+      this.#summaries.set(batchId, withCosts(next, this.#costsOf(next)));
+    }
   }
 
   /** A member's turn has come: the clip of a single create, under the member's own job, share and price book. */
@@ -1367,6 +1435,7 @@ export class MockClips {
     };
     this.#clipAvatars.set(job.clipId, avatarId);
     this.#clipRates.set(job.clipId, prices);
+    job.ran = true;
     this.#progress(job, { phase: "preparing" });
     this.#after(job, this.#host.stepMs, () => this.#attempt(run, 1, "kling"));
   }
@@ -1423,6 +1492,15 @@ export class MockClips {
   /** Ends a job and tells the windows. A done job is at its full count and carries its clip. A cancelled batch member says why (`detail`). */
   #finish(job: Job, end: { status: "done"; exported?: { relPath: string } } | { status: "failed"; error: EngineError } | { status: "cancelled"; detail?: ClipCancelDetail }): void {
     if (job.status !== "running") return;
+    // 5b.2 (S5.WB2c): a member whose turn came tells its summary how it ended, before its end is announced (engine `#runJob`): as its record says, failed with no record, cancelled by the owner before
+    // its POST. A stop of the process tells nothing (a restart's pass decides).
+    if (job.member !== undefined && job.ran === true && job.batch !== undefined) {
+      const at = { index: job.batch.batchIndex, clipId: job.clipId };
+      const record = this.#records.get(job.clipId);
+      if (end.status === "done") this.#noteBatch(job.batch.batchId, { kind: "ended", ...at, outcome: record === undefined ? "failed" : clipBatchOutcomeOf(record.outcome) });
+      else if (end.status === "failed") this.#noteBatch(job.batch.batchId, { kind: "ended", ...at, outcome: "failed" });
+      else if (end.detail !== undefined) this.#noteBatch(job.batch.batchId, { kind: "cancelled", ...at, detail: end.detail });
+    }
     for (const cancel of job.timers) cancel();
     job.timers = [];
     const ref = { kind: "clip" as const, jobId: job.jobId, avatarId: job.avatarId, clipId: job.clipId };
@@ -1829,7 +1907,7 @@ export class MockClips {
     return good(record);
   }
 
-  list(payload: CommandPayload<"clips.list">): Out<{ clips: ClipSummary[]; notListedTotal?: number }> {
+  list(payload: CommandPayload<"clips.list">): Out<{ clips: ClipSummary[]; notListedTotal?: number; batches?: ClipBatchSummary[] }> {
     const avatar = this.#host.avatar(payload.avatarId);
     if (avatar === undefined || this.#host.deletePending(payload.avatarId)) return bad({ code: "NOT_FOUND", detail: `no avatar ${payload.avatarId} in the open library` });
     const mine = [...this.#records.values()].filter((r) => r.avatarId === payload.avatarId);
@@ -1845,7 +1923,11 @@ export class MockClips {
       }
     }
     const left = mine.length - shown.length;
-    return good(left === 0 ? { clips } : { clips, notListedTotal: left });
+    // 5b.2 (S5.WB2c): the avatar's batch summaries, newest first, each member with the ledger's money now and the batch's one total.
+    const batches = newestFirst([...this.#summaries.values()].filter((state) => state.avatarId === payload.avatarId))
+      .slice(0, MAX_LISTED_BATCHES)
+      .map((state) => batchSummaryOf(state, this.#costsOf(state)));
+    return good({ clips, ...(left === 0 ? {} : { notListedTotal: left }), ...(batches.length === 0 ? {} : { batches }) });
   }
 
   get(payload: CommandPayload<"clips.get">): Out<{ clip: ClipSummary }> {
@@ -1970,6 +2052,7 @@ export class MockClips {
             const size = sizeOf(model, record.request.quality);
             record.outcome = { status: "ready", ...size, durationMs: record.request.seconds * 1_000, face: this.#faceOf({ bold: false, judged: true, ageRefused: false }, undefined, record.request.seconds) };
             this.#files.set(clipId, { journal: false, record: true, media: true });
+            this.#noteMemberRecord(record);
             this.#finish(job, { status: "done" });
           });
         });
@@ -2202,6 +2285,8 @@ export class MockClips {
       }
     }
     for (const [attemptId, { untilMs }] of until) if (untilMs > nowMs) this.#hold(attemptId, untilMs - nowMs);
+    // 5b.2 (S5.WB2c, I5.63): no batch resumes after a restart: every batch the summaries still have running ends now.
+    this.#endBatchesAfterRestart();
     for (const recovery of recoveries) this.#recover(recovery);
   }
 
@@ -2239,6 +2324,8 @@ export class MockClips {
         outcome,
         ...(requested.batch === undefined ? {} : { batch: { ...requested.batch } }),
       });
+      const recorded = this.#records.get(clipId);
+      if (recorded !== undefined) this.#noteMemberRecord(recorded);
       this.#journals.delete(clipId);
       this.#files.set(clipId, { journal: false, record: true, media: outcome.status === "ready" });
       this.#finish(job, { status: "done" });
