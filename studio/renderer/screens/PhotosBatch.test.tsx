@@ -261,7 +261,7 @@ describe("59: the sheet «Оживить N фото»", () => {
     await flush();
     const row = rowOf(s, "Фото 3 · Дом");
     expect(row.classList.contains("batch-row-off")).toBe(true);
-    expect(row.textContent).toContain(CLIP_REASONS_RU["photo-unreadable"]);
+    expect(row.textContent).toContain(CLIP_REASONS_RU["photo-unreadable"].replace(" —", `${NBSP}—`));
     const alerts = within(s).getAllByRole("alert");
     expect(alerts.map((a) => a.textContent)).toEqual([`Фото 3 · Дом не оживить: файл не читается. Сумма пересчитана${NBSP}— подтвердите ещё раз.`]);
     expect(priceLine(s)).toBe("Обычно $1.26 · не больше $2.21");

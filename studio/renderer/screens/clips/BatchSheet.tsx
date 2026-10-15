@@ -186,7 +186,7 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
             </span>
             <span className="batch-what">
               <span className="batch-label">{pick.label}</span>
-              {note !== null && <span className={note.bold ? "batch-note batch-note-bold" : "batch-note"}>{note.text}</span>}
+              {note !== null && <span className={note.bold ? "batch-note batch-note-bold" : "batch-note"}>{nbDash(note.text)}</span>}
             </span>
             {motionId !== null && (
               <select
