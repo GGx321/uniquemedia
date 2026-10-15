@@ -81,6 +81,7 @@ function view(m: MoneyStatus, jobs: readonly JobView[] = []): EngineView {
     cancellingJobs: new Set(),
     paidInFlightAvatars: new Set(),
     avatarDeleteNotices: [],
+    motionCalls: new Map(),
   };
 }
 
