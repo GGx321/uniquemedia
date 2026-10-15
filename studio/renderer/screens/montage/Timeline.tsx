@@ -1,4 +1,4 @@
-import { type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Clip, MontageDraft, PhotoRef } from "../../../shared/engine";
 import { MAX_CLIPS, MIN_CLIP_MS } from "../../../shared/montage";
 import type { EngineClient } from "../../engine/client";
@@ -14,7 +14,7 @@ import { addLayerRefusal, layerCap, layerCount } from "./layerOps";
 import { laneHeight, laneLayout, LayerTracks } from "./LayerTracks";
 import type { TrackVerdict } from "./musicOps";
 import { MusicTrack, type TrackLookup } from "./MusicTrack";
-import { type OwnVideos, type VideoProblem, videoLookup } from "./ownVideos";
+import { originOfVideos, type OwnVideos, type VideoProblem, videoLookup } from "./ownVideos";
 import type { PhotoProblem } from "./renderBlock";
 import { type ActionState, resolveSelection, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
@@ -169,7 +169,9 @@ export interface TimelineProps {
 }
 
 export function Timeline({ session, spec, avatarId, flagged, highlighted, flaggedLayers, musicLookup, musicListVersion, musicVerdict, timeline, dragPhoto, onInsertPhoto, onAddClip, onAddMusic, onAddSticker, onSelectClip, videos, videoProblems }: TimelineProps) {
-  const commands = useSelectionCommands(session, timeline);
+  // 5b.2: a clip's montage copy (its record names the clip) is neither split nor copied (Q-F = 1).
+  const originOf = useMemo(() => originOfVideos(videos), [videos]);
+  const commands = useSelectionCommands(session, timeline, originOf);
   const lanesRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
@@ -193,7 +195,7 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
   const durations = spec.clips.map((c) => c.durationMs);
   const empty = spec.clips.length === 0;
   const resolved = resolveSelection(spec, selection);
-  const actions = selectionActions(spec, selection, playheadMs);
+  const actions = selectionActions(spec, selection, playheadMs, originOf);
   const addBlock = addRefusal(spec);
   const texts = layerCount(spec, "text");
   const stickers = layerCount(spec, "sticker");

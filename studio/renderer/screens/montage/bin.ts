@@ -16,8 +16,11 @@ export interface BinFilter {
   readonly category: BinCategory | null;
 }
 
-/** `placed`: in this draft; `free`: may go in; `used`: in a video; `reserved`: in a queued or running render. */
-export type BinState = "placed" | "free" | "used" | "reserved";
+/**
+ * `placed`: in this draft; `free`: may go in; `used`: in a video; `reserved`: in a queued or running render; `clip-in` (5b.2, Q-F = 1, mockup 57e): the copy
+ * of a clip made from it is in this draft, so its frame is taken.
+ */
+export type BinState = "placed" | "free" | "used" | "reserved" | "clip-in";
 
 export interface BinTile {
   readonly photo: PhotoSummary;
@@ -42,19 +45,20 @@ function slotsOf(spec: MontageDraft): ReadonlyMap<string, number> {
   return slots;
 }
 
-const stateOf = (photo: PhotoSummary, slot: number | null): BinState => (slot !== null ? "placed" : isFreePhoto(photo) ? "free" : photo.used || photo.usedIn.length > 0 ? "used" : "reserved");
+const stateOf = (photo: PhotoSummary, slot: number | null, clipIn: boolean): BinState =>
+  slot !== null ? "placed" : clipIn ? "clip-in" : isFreePhoto(photo) ? "free" : photo.used || photo.usedIn.length > 0 ? "used" : "reserved";
 
 /** Whether a photo passes the chips. */
 const passes = (photo: PhotoSummary, filter: BinFilter, category = filter.category): boolean => (!filter.unusedOnly || isFreePhoto(photo)) && (category === null || photo.category === category);
 
-/** The tiles the chips leave, in the list's order. */
-export function binTiles(photos: readonly PhotoSummary[], spec: MontageDraft, filter: BinFilter): BinTile[] {
+/** The tiles the chips leave, in the list's order; `clipFrames` are the photos whose clip copies the draft holds (`copyFramePhotoIds`, 5b.2). */
+export function binTiles(photos: readonly PhotoSummary[], spec: MontageDraft, filter: BinFilter, clipFrames: ReadonlySet<string> = new Set()): BinTile[] {
   const slots = slotsOf(spec);
   return photos
     .filter((photo) => photo.eligible)
     .map((photo, i) => {
       const slot = slots.get(photo.photoId) ?? null;
-      return { photo, n: i + 1, slot, state: stateOf(photo, slot) };
+      return { photo, n: i + 1, slot, state: stateOf(photo, slot, clipFrames.has(photo.photoId)) };
     })
     .filter((tile) => passes(tile.photo, filter));
 }
@@ -94,7 +98,7 @@ export function binFacets(photos: readonly PhotoSummary[], filter: BinFilter): {
 }
 
 /**
- * What a click on a tile does: `select` the clip a placed photo is in; nothing for a `taken` one (in a video or a render); a free
+ * What a click on a tile does: `select` the clip a placed photo is in; nothing for a `taken` one (in a video, a render, or this draft as a clip: 5b.2); a free
  * one `fill`s the empty cell waiting for it, or is `append`ed as a new clip, unless the draft is `full` (20 clips, or nothing
  * left of the 15 s).
  */

@@ -188,6 +188,11 @@ export function actionWhyLabel(why: ActionBlock): string {
       return "Выше в это время ничего нет";
     case "bottom":
       return "Ниже в это время ничего нет";
+    // 5b.2 (mockup 57f): a clip's montage copy would repeat its frame if split or copied (Q-F = 1), as a photo would.
+    case "clip-split":
+      return "Клип не режется: одно фото — один раз в ролике";
+    case "clip-copy":
+      return "Клип не копируется: одно фото — один раз в ролике";
   }
 }
 

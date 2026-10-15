@@ -18,7 +18,7 @@ import { draftSpec, photoClip, videoClip } from "./testkit";
 // file, a file the element cannot open) a stand-in of the same place is drawn instead.
 
 const MEDIA = "media-00000007";
-const WIDE: OwnVideo = { mediaId: MEDIA, name: "street-walk.mp4", width: 1_080, height: 608, durationMs: 14_000, sourceFps: 29.97, hdrToSdr: false };
+const WIDE: OwnVideo = { mediaId: MEDIA, name: "street-walk.mp4", width: 1_080, height: 608, durationMs: 14_000, sourceFps: 29.97, hdrToSdr: false, origin: null };
 const KNOWN: VideoLookup = { state: "known", video: WIDE };
 /** 2 s of a photo, then 2 s of the video from 1.8 s into it. */
 const SPEC: MontageDraft = draftSpec([photoClip(0, "photo-mia-0001", 2_000), { ...videoClip(1, 2_000, 1_800), mediaId: MEDIA }]);

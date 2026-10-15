@@ -27,7 +27,7 @@ import { MusicTab } from "./montage/MusicTab";
 import { useTrackSummary } from "./montage/MusicTrack";
 import { changeTouches, draftMediaIds } from "./montage/ownMedia";
 import { MediaStandIn } from "./montage/PanelSplitter";
-import { useOwnVideos, videoProblems } from "./montage/ownVideos";
+import { originOfVideos, useOwnVideos, videoProblems } from "./montage/ownVideos";
 import { TrimPeekStore } from "./montage/trimPeek";
 import { PhotoBin } from "./montage/PhotoBin";
 import { replaceSticker } from "./montage/stickerOps";
@@ -41,6 +41,7 @@ import {
   appendVideoClip,
   cellsOf,
   clipStartMs,
+  copyFramePhotoIds,
   type Edit,
   insertOwnPhotoClip,
   insertPhotoClip,
@@ -556,6 +557,8 @@ function DraftEditor({
   // 3f.3b: the own videos the clips play (their records, by id), and what the render refuses each video clip for: the engine's verdict on the spec on
   // screen, else the window's guess from the records.
   const ownVideos = useOwnVideos(client, ownVideoClips(state.spec).map((clip) => clip.mediaId), store);
+  // 5b.2 (I5.60, Q-F = 1): which own videos are clips' montage copies: a photo and its clips are one frame, placed once.
+  const originOf = useMemo(() => originOfVideos(ownVideos), [ownVideos]);
   const clipVideoProblems = videoProblems(state.spec, verdict, ownVideos);
   // 3f.3b fix round 1 (L8): «Обрезка» tells the preview which frame a drag is at, without re-rendering the editor.
   const [trimPeek] = useState(() => new TrimPeekStore());
@@ -672,7 +675,7 @@ function DraftEditor({
     const photo = photoIndex?.get(photoId);
     if (photo === undefined || !isFreePhoto(photo)) return;
     const spec = session.state.spec;
-    const result = boundary === undefined ? appendPhotoClip(spec, photoId) : insertPhotoClip(spec, boundary, photoId);
+    const result = boundary === undefined ? appendPhotoClip(spec, photoId, null, originOf) : insertPhotoClip(spec, boundary, photoId, null, originOf);
     if (!result.ok || result.id === undefined || !session.edit(result.spec)) return;
     focus.resolve(photoId);
     const index = result.spec.clips.findIndex((c) => c.clipId === result.id);
@@ -694,7 +697,7 @@ function DraftEditor({
   function fillCell(clipIndex: number, cell: number, photoId: string): void {
     const photo = photoIndex?.get(photoId);
     if (photo === undefined || !isFreePhoto(photo)) return;
-    const result = setCellPhoto(session.state.spec, clipIndex, cell, photoId);
+    const result = setCellPhoto(session.state.spec, clipIndex, cell, photoId, null, originOf);
     if (!result.ok || !session.edit(result.spec)) return;
     focus.resolve(photoId);
     selectAfterFill(result.spec, clipIndex, cell);
@@ -1120,6 +1123,7 @@ function DraftEditor({
                 fillTarget={fillTarget}
                 addBlock={addRefusal(state.spec)}
                 onDragPhoto={(photoId) => setDrag(photoId === null ? null : { source: "scene", photoId })}
+                clipFrames={copyFramePhotoIds(state.spec, originOf)}
               />
             ) : tab === "mine" ? (
               <MineTabAtPlayhead

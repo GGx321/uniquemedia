@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Focus, MontageDraft, PhotoRef } from "../../../shared/engine";
 import type { EngineClient } from "../../engine/client";
-import { evenOut, totalMs } from "./clipOps";
+import { evenOut, type OriginOf, totalMs } from "./clipOps";
 import { type FrameClock, windowFrameClock } from "./playback";
 import { PlayheadStore } from "./playhead";
 import { addOwnStickerLayer, addStickerLayer, addTextLayer } from "./layerOps";
@@ -67,9 +67,9 @@ export function playheadStep(timeline: Pick<TimelineState, "playhead">): number 
 /**
  * The toolbar's and the properties' actions on the selection, each one undo step through the session. They read
  * the session's CURRENT draft (not a render's copy), so a click right after another edit acts on it, and the playhead
- * as it is at the click (a playback may be moving it).
+ * as it is at the click (a playback may be moving it). `originOf` (5b.2) tells a clip's montage copy, which is neither split nor copied.
  */
-export function useSelectionCommands(session: DraftSession, timeline: TimelineState) {
+export function useSelectionCommands(session: DraftSession, timeline: TimelineState, originOf?: OriginOf) {
   const { select, selection, playhead } = timeline;
   return {
     remove: useCallback((): boolean => {
@@ -79,17 +79,17 @@ export function useSelectionCommands(session: DraftSession, timeline: TimelineSt
       return true;
     }, [session, selection, select]),
     duplicate: useCallback((): boolean => {
-      const result = duplicateSelected(session.state.spec, selection);
+      const result = duplicateSelected(session.state.spec, selection, originOf);
       if (typeof result === "string" || !session.edit(result.spec)) return false;
       select(result.selection);
       return true;
-    }, [session, selection, select]),
+    }, [session, selection, select, originOf]),
     split: useCallback((): boolean => {
-      const result = splitSelected(session.state.spec, selection, clockMs(playhead.get().ms));
+      const result = splitSelected(session.state.spec, selection, clockMs(playhead.get().ms), originOf);
       if (typeof result === "string" || !session.edit(result.spec)) return false;
       select(result.selection);
       return true;
-    }, [session, selection, select, playhead]),
+    }, [session, selection, select, playhead, originOf]),
     /** «Поровну»: the same total over every clip. */
     evenOut: useCallback((): boolean => {
       const spec = session.state.spec;

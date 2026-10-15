@@ -1,4 +1,4 @@
-import { type DragEvent, type KeyboardEvent, useId } from "react";
+import { type DragEvent, type KeyboardEvent, useId, useMemo } from "react";
 import type { Clip, MontageDraft, Motion } from "../../../shared/engine";
 import { MAX_TOTAL_MS } from "../../../shared/montage";
 import { Icon } from "../../ui/Icon";
@@ -6,7 +6,7 @@ import { OwnPortrait, Portrait } from "../../ui/Portrait";
 import { type ClipLayout, cellsOf, type Edit, clipStartMs, layoutOf, maxDurationMs, roomMs, setDuration, setLayout, setMotion, setStagger, totalMs } from "./clipOps";
 import { ownsKeys } from "./keys";
 import { actionWhyLabel, clipKindLabel, rangeLabel, secondsLabel, staggerRowLabel } from "./labels";
-import { type OwnVideos, type VideoProblem, videoLookup } from "./ownVideos";
+import { originOfVideos, type OwnVideos, type VideoProblem, videoLookup } from "./ownVideos";
 import { selectClip, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
 import type { TrimPeekStore } from "./trimPeek";
@@ -76,7 +76,9 @@ export interface ClipPropertiesProps {
 }
 
 export function ClipProperties({ session, spec, index, cell, avatarId, timeline, focusPending, dragPhoto, onFillCell, videos, videoProblems, trimPeek }: ClipPropertiesProps) {
-  const commands = useSelectionCommands(session, timeline);
+  // 5b.2: a clip's montage copy is neither split nor copied (Q-F = 1, 57f).
+  const originOf = useMemo(() => originOfVideos(videos), [videos]);
+  const commands = useSelectionCommands(session, timeline, originOf);
   const durationId = useId();
   // Where the playhead rests (3d.4): a playback does not re-render the panel.
   const restMs = usePlayheadRest(timeline.playhead);
@@ -85,7 +87,7 @@ export function ClipProperties({ session, spec, index, cell, avatarId, timeline,
   const start = clipStartMs(spec, index);
   const layout = layoutOf(clip);
   const cells = cellsOf(clip);
-  const actions = selectionActions(spec, timeline.selection, restMs);
+  const actions = selectionActions(spec, timeline.selection, restMs, originOf);
   const face = layout === null ? null : faceState(clip, cell, focusPending);
   const max = maxDurationMs(spec, index);
   const room = roomMs(spec);
