@@ -671,3 +671,22 @@ describe("the babydoll is a garment (round 3): the check only recognises it, the
     }
   });
 });
+
+describe("the final touch: where the veto reads, and pulling up what covers her legs", () => {
+  test("a body part AFTER the garment («above her knees») does not cancel the lift: takes-off on an ordinary and a low-feet frame", () => {
+    for (const text of ["she slowly lifts her skirt above her knees", "she slowly lifts her shirt above her hips"]) {
+      expect([text, motionTextProblems(text, FRIEND, "own")]).toEqual([text, ["takes-off"]]);
+      expect([text, motionTextProblems(text, LOW_FEET, "own")]).toEqual([text, ["takes-off"]]);
+    }
+  });
+
+  test("a body part before the garment still vetoes, and «her top knee» is still no garment", () => {
+    expect(takesOff("she slowly lifts her hand to her top")).toBe(false);
+    expect(takesOff("she slowly lifts her top knee a little")).toBe(false);
+  });
+
+  test("pulling up her jeans dresses her (the owner's own example: «bent over, pulling her jeans up»): no takes-off; a skirt pulled up still is", () => {
+    expect(motionTextProblems("she slowly pulls up her jeans a little", FRIEND, "own")).toEqual([]);
+    expect(motionTextProblems("she slowly pulls her skirt up", FRIEND, "own")).toEqual(["takes-off"]);
+  });
+});

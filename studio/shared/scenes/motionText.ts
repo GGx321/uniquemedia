@@ -170,22 +170,42 @@ const MOVE_VERBS = "pull|pulls|pulling|tug|tugs|tugging|lift|lifts|lifting|ease|
 const AWAY = String.raw`(?:off|down|away|open|apart|aside|over\s+her\s+head|from\s+her\s+(?:shoulders?|body|hips?|chest|arms?))`;
 /** Round 3: lifting what she wears takes it off too («lifts her shirt», «hikes up her skirt», «pulls her skirt up», «lifts the hem of her dress», «her skirt rides up»). */
 const UP_VERBS = "pull|pulls|pulling|roll|rolls|rolling|draw|draws|drawing|tug|tugs|tugging|hike|hikes|hiking|hitch|hitches|hitching";
-const GARMENT_FORMS: readonly RegExp[] = [
-  new RegExp(String.raw`\b(?:${MOVE_VERBS})\s+((?:[a-z'-]+\s+){1,4}?)${AWAY}\b`, "gi"),
+const LIFT_VERBS = "lift|lifts|lifting|raise|raises|raising|hike|hikes|hiking|hitch|hitches|hitching";
+
+/** One garment-anchored form. `up`: a form that moves the garment up, where a lower garment pulled up is put on, not taken off (the owner's «bent over, pulling her jeans up»). */
+interface GarmentForm {
+  readonly form: RegExp;
+  readonly up?: true;
+}
+const GARMENT_FORMS: readonly GarmentForm[] = [
+  { form: new RegExp(String.raw`\b(?:${MOVE_VERBS})\s+((?:[a-z'-]+\s+){1,4}?)${AWAY}\b`, "gi") },
   // Round 3: «parts» and «spreads» her robe, beside «opens» and «unties» it.
-  /\b(?:drop|drops|dropping|shed|sheds|shedding|open|opens|opening|part|parts|parting|spread|spreads|spreading|unti\w*|undo|undoes|undoing|unhook\w*|unfasten\w*|unwrap\w*|unlac\w*|unclasp\w*|lower|lowers|lowering|loosen\w*)\b((?:\s+[a-z'-]+){1,3})/gi,
-  /\b(?:step|steps|stepping|wriggl\w*|wiggl\w*|get|gets|getting|climb\w*|shimm(?:y|ies|ying)|wrestl\w*)\s+out\s+of\b((?:\s+[a-z'-]+){1,3})/gi,
-  /\blet(?:s|ting)?\s+((?:[a-z'-]+\s+){1,3}?)(?:(?:fall|slip|swing)\s+)?(?:open|part|parts)\b/gi,
-  // Round 3: «lifts», «raises», «hikes up», «hitches up» what she wears, its hem included («lifts the hem of her dress»).
-  /\b(?:lift|lifts|lifting|raise|raises|raising|hike|hikes|hiking|hitch|hitches|hitching)\b(?:\s+up)?((?:\s+[a-z'-]+){1,5})/gi,
+  {
+    form: /\b(?:drop|drops|dropping|shed|sheds|shedding|open|opens|opening|part|parts|parting|spread|spreads|spreading|unti\w*|undo|undoes|undoing|unhook\w*|unfasten\w*|unwrap\w*|unlac\w*|unclasp\w*|lower|lowers|lowering|loosen\w*)\b((?:\s+[a-z'-]+){1,3})/gi,
+  },
+  { form: /\b(?:step|steps|stepping|wriggl\w*|wiggl\w*|get|gets|getting|climb\w*|shimm(?:y|ies|ying)|wrestl\w*)\s+out\s+of\b((?:\s+[a-z'-]+){1,3})/gi },
+  { form: /\blet(?:s|ting)?\s+((?:[a-z'-]+\s+){1,3}?)(?:(?:fall|slip|swing)\s+)?(?:open|part|parts)\b/gi },
+  // Round 3: «lifts», «raises» what she wears, its hem included («lifts the hem of her dress»); «hikes up», «hitches up» it.
+  { form: new RegExp(String.raw`\b(?:${LIFT_VERBS})\b(?!\s+up\b)((?:\s+[a-z'-]+){1,5})`, "gi") },
+  { form: new RegExp(String.raw`\b(?:${LIFT_VERBS})\s+up\b((?:\s+[a-z'-]+){1,5})`, "gi"), up: true },
   // «pulls up her top», «rolls up her top»; «pulls her skirt up».
-  new RegExp(String.raw`\b(?:${UP_VERBS})\s+up\b((?:\s+[a-z'-]+){1,3})`, "gi"),
-  new RegExp(String.raw`\b(?:${UP_VERBS})\s+((?:[a-z'-]+\s+){1,3}?)up\b`, "gi"),
+  { form: new RegExp(String.raw`\b(?:${UP_VERBS})\s+up\b((?:\s+[a-z'-]+){1,3})`, "gi"), up: true },
+  { form: new RegExp(String.raw`\b(?:${UP_VERBS})\s+((?:[a-z'-]+\s+){1,3}?)up\b`, "gi"), up: true },
   // «her skirt rides up».
-  /\b((?:[a-z'-]+\s+){1,3}?)(?:rides?|riding|creeps?|creeping)\s+up\b/gi,
+  { form: /\b((?:[a-z'-]+\s+){1,3}?)(?:rides?|riding|creeps?|creeping)\s+up\b/gi, up: true },
 ];
 
+/** What covers her legs: pulled up, it is put on. */
+const LOWER_WEAR = new Set(["jeans", "trousers", "pants", "leggings", "shorts", "tights", "stockings", "sock", "socks"]);
+
 const wordsOf = (match: RegExpMatchArray): string[] => (match[1] ?? "").toLowerCase().match(/[a-z'-]+/g) ?? [];
+
+/** The index of the first garment among the words, read on the words together so «her top knee» stays no garment; -1 for none. */
+function firstGarmentAt(words: readonly string[]): number {
+  const joined = words.join(" ");
+  const found = GARMENT.exec(joined);
+  return found === null ? -1 : joined.slice(0, found.index).split(" ").filter((word) => word !== "").length;
+}
 
 /**
  * Whether a motion takes clothing off: one of `TAKES_OFF_PHRASES` (and the same act in a model's other words: «peels off», «shrugs off», «slips the robe off», «undresses»,
@@ -195,10 +215,13 @@ const wordsOf = (match: RegExpMatchArray): string[] => (match[1] ?? "").toLowerC
 export function takesOff(text: string): boolean {
   const phrase = TAKES_OFF_FORMS.some((form) => Array.from(text.matchAll(form)).some((match) => !wordsOf(match).some((word) => NOT_WORN.has(word))));
   if (phrase) return true;
-  return GARMENT_FORMS.some((form) =>
+  // The veto reads up to and including the first garment: «lifts her hand to her top» is her hand, «lifts her skirt above her knees» is her skirt.
+  return GARMENT_FORMS.some(({ form, up }) =>
     Array.from(text.matchAll(form)).some((match) => {
       const object = wordsOf(match);
-      return GARMENT.test(object.join(" ")) && !object.some((word) => NOT_WORN.has(word));
+      const at = firstGarmentAt(object);
+      if (at < 0 || object.slice(0, at + 1).some((word) => NOT_WORN.has(word))) return false;
+      return !(up === true && LOWER_WEAR.has(object[at] ?? ""));
     }),
   );
 }
