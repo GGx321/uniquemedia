@@ -69,4 +69,52 @@ describe("knownAvatarsOf", () => {
     await writeFile(join(libraryDir(), "avatars"), "not a folder");
     expect(await known.folderState(avatarId)).toBe("unknown");
   });
+
+  // Windows answers ENOENT, not ENOTDIR, for a stat THROUGH a file; the rule is pinned here on every platform by playing that answer.
+  describe("«gone» only when the avatars folder itself is a readable directory (the Windows answer played)", () => {
+    const enoent = (): Error => Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    const dirStat = { isDirectory: () => true };
+    const fileStat = { isDirectory: () => false };
+
+    test("a file where the avatars folder goes, with the avatar entry answering ENOENT through it, is unknown", async () => {
+      const { library, avatarId } = await open();
+      const known = knownAvatarsOf(library, () => true, there, async (path) => {
+        if (path === join(libraryDir(), "avatars")) return fileStat;
+        throw enoent();
+      });
+      expect(await known.folderState(avatarId)).toBe("unknown");
+    });
+
+    test("a missing avatars folder is unknown", async () => {
+      const { library, avatarId } = await open();
+      const known = knownAvatarsOf(library, () => true, there, async () => {
+        throw enoent();
+      });
+      expect(await known.folderState(avatarId)).toBe("unknown");
+    });
+
+    test("an avatars folder that cannot be looked at is unknown", async () => {
+      const { library, avatarId } = await open();
+      const known = knownAvatarsOf(library, () => true, there, async (path) => {
+        if (path === join(libraryDir(), "avatars")) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+        throw enoent();
+      });
+      expect(await known.folderState(avatarId)).toBe("unknown");
+    });
+
+    test("a readable avatars folder with the avatar's entry ENOENT is gone", async () => {
+      const { library, avatarId } = await open();
+      const known = knownAvatarsOf(library, () => true, there, async (path) => {
+        if (path === join(libraryDir(), "avatars")) return dirStat;
+        throw enoent();
+      });
+      expect(await known.folderState(avatarId)).toBe("gone");
+    });
+
+    test("a readable avatars folder with the entry present is there", async () => {
+      const { library, avatarId } = await open();
+      const known = knownAvatarsOf(library, () => true, there, async () => dirStat);
+      expect(await known.folderState(avatarId)).toBe("there");
+    });
+  });
 });
