@@ -29,6 +29,9 @@ const REMAINING: Record<string, string[]> = {
   "SettingsScreen.tsx": ["credits - result.ledgerDeltaMicros"],
   // Bar geometry: the sum and the difference only become percentages of the budget (`pctOf`) for the widths of the plan card's bar; no amount is printed from them.
   "autopilot/planModel.ts": ["committedMicros + expectedMicros", "worstMicros - expectedMicros"],
+  // 5b.2, S5.WB4: the pick bar's «В этом месяце осталось $6.20 — это примерно 7 клипов» is, by the plan (s5b2 §5.2.1, §6 58a), «from MoneyStatus and the budget setting»: budget − spent − open,
+  // rounded DOWN, only a hint before any engine call. The sheet that follows shows the engine's own room (`clips.batchOptions.monthRoomMicros`). Open for the engine: a room figure in MoneyStatus.
+  "clips/batchModel.ts": ["money.monthlyBudgetMicros - money.spentMicros"],
   // Open for the engine (plan §33): the strip's totals «Весь запуск» / «Дальше» add the images' figure to the write's. The engine has no combined price of a write and a draw.
   "photos/SceneStrip.tsx": [
     "images.expectedMicros + note.price.expectedMicros",
