@@ -256,6 +256,21 @@ describe("part C's guard: the whole batch holds the clip money unit, gaps betwee
   });
 });
 
+describe("I5.62: the surplus between the accepted sum and the shares is not shared out", () => {
+  test("an accepted sum above the batch's worst case holds each member only its own worst case", async () => {
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(2));
+    const engine = await started({ net: clipNetwork({ klingBy: firstHeld }) });
+    // Accepted: 2 x 850 000 worst plus 500 000 of surplus.
+    const { jobIds } = batchOf(await createBatch(engine, { avatarId, photoIds, acceptedWorstMicros: 2 * 850_000 + 500_000 }));
+    await until(() => phasesOf(engine, jobIds[0] ?? "").includes("rendering"), "member 1 rendering");
+
+    // Member 1's hold became its reserve; member 2 holds its own worst case and not a share of the surplus.
+    expect(engine.engine.budget?.status().heldMicros).toBe(850_000);
+    engine.net.releaseNth("kling", 1);
+    await Promise.all(jobIds.map((id) => jobEnd(engine, id)));
+  });
+});
+
 describe("L7: a lost library is not a deleted photo", () => {
   test("a library that is no longer the open one at a member's turn stops the batch `cancelled`, free: no member is called `photo-gone`", async () => {
     const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(3));

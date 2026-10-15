@@ -224,6 +224,22 @@ describe("afterRestart: no batch resumes after a restart (I5.63)", () => {
     expect(file.endedAt).toBe(LATER);
   });
 
+  describe("a member with two clips (a 429's retry) is judged by its NEWEST clip, never its first", () => {
+    // clip(1) was 429'd (free), clip(9) is the retry; the other clip's look is a decoy that would give a different answer.
+    const requeued = (): ClipBatchFile => applyBatchChange(fresh(1), { kind: "requeued", index: 1, clipId: clip(9) });
+    const decoy = { kind: "record", outcome: "refused" } as const;
+    const judged = (newest: MemberLook): string | undefined => afterRestart(requeued(), look({ [clip(1)]: decoy, [clip(9)]: newest }), LATER).members[0]?.outcome;
+
+    test("only the newest is looked up", () => {
+      expect(clipIdsToLook(requeued())).toEqual([clip(9)]);
+    });
+
+    test("only the newest has a journal: running", () => expect(judged({ kind: "journal" })).toBe("running"));
+    test("only the newest has a record: its outcome", () => expect(judged({ kind: "record", outcome: "ready" })).toBe("ready"));
+    test("only the newest has a reserve: failed", () => expect(judged({ kind: "reserved" })).toBe("failed"));
+    test("nothing for the newest, the first was the free 429: dropped", () => expect(judged({ kind: "nothing" })).toBe("dropped"));
+  });
+
   test("a member the summary still had queued is looked at like one at work (round 2: its turn's write can be lost after its POST left)", () => {
     expect(clipIdsToLook(midBatch())).toEqual([clip(1), clip(2), clip(3)]);
     const queued = fresh(1);

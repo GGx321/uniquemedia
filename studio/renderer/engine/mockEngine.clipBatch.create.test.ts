@@ -242,6 +242,13 @@ describe("clips.createBatch accepts", () => {
     runUntilEnds(m, jobIds);
   });
 
+  test("the surplus between the accepted sum and the shares is not shared out: each member holds its own worst case (I5.62, WB2d)", async () => {
+    const m = makeBatchMock(2);
+    const { jobIds } = await startBatch(m, m.photoIds, { acceptedWorstMicros: 2 * 850_000 + 500_000 });
+    expect([...m.engine.peekClips().monthHolds]).toEqual(jobIds.map((id) => [`${id}:video#1`, 850_000]));
+    runUntilEnds(m, jobIds);
+  });
+
   test("a member's share is its worst case under the batch's book: a month hold each, and the first reserve takes its hold", async () => {
     const m = makeBatchMock(3);
     const { jobIds } = await startBatch(m, m.photoIds);

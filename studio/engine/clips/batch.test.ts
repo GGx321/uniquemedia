@@ -519,6 +519,7 @@ describe("ClipBatch: what a member's end means for the rest", () => {
     ["a settle above the reserve on a failed clip", failed("refused-paid", true), "ledger-stopped"],
     ["a reserve refused by a halted ledger", { kind: "not-reserved", refusal: refusal("HALTED"), afterFreeRefusal: false }, "ledger-stopped"],
     ["a reserve refused for a reconcile to do", { kind: "not-reserved", refusal: refusal("RECONCILE_REQUIRED"), afterFreeRefusal: false }, "ledger-stopped"],
+    ["a reserve refused for a torn ledger line", { kind: "not-reserved", refusal: { ok: false, reason: "RECONCILE_REQUIRED", openAttempts: 0, torn: true }, afterFreeRefusal: false }, "ledger-stopped"],
     ["Grok refused by the ledger behind a free Kling", { kind: "not-reserved", refusal: refusal("RECONCILE_REQUIRED"), afterFreeRefusal: true }, "ledger-stopped"],
     ["an uncertain submit", failed("submit-uncertain"), "money-uncertain"],
     ["a late failure", failed("late"), "money-uncertain"],
