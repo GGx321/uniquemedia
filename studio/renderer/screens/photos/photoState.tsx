@@ -16,6 +16,15 @@ export function montagePickRefusal(photo: PhotoSummary): string | null {
   return null;
 }
 
+/**
+ * 5b.2 (S5.WB4; plan s5b2 §5.2.1, Q-J = 1): why a photo cannot be picked for a batch of clips, or null when it can. Its own predicate, not the montage's: a clip may
+ * be made of a photo already in a video, a rejected one or one a render holds (it then never goes into a montage, Q-F = 1), so nothing a summary can tell refuses
+ * it. Whether the engine can bring the photo to life is the sheet's to show, row by row (`clips.batchOptions`).
+ */
+export function clipPickRefusal(_photo: PhotoSummary): string | null {
+  return null;
+}
+
 /** A mark the engine refused: on which photo, and why. */
 export interface MarkFailure {
   readonly photoId: string;
