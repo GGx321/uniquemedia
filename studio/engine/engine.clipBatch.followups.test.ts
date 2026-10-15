@@ -7,7 +7,7 @@ import { BATCHES_DIR, batchSummaryPath, startBatchFile } from "./clips/batchSumm
 import { clipAttemptId, clipJournalPath } from "./clips/journal";
 import { journalOf, writeClipRecord } from "./clips/store";
 import { batchOf, createBatch, jobsOf, plainPhotos, seedBatchAvatar } from "./clips/testing/batchKit";
-import { clipNetwork, clipsDir, command, jobEnd, phasesOf, startClipEngine, until, type ClipEngine, type VideoScript } from "./clips/testing/engineClipKit";
+import { clipNetwork, clipsDir, command, create, jobEnd, phasesOf, startClipEngine, until, type ClipEngine, type VideoScript } from "./clips/testing/engineClipKit";
 import { readyRecord } from "./clips/testing/recordsRig";
 import { SHORT_CLIP_TIMINGS, type ClipTimings } from "./clips/timings";
 import { NOW, ledgerLines, useEngineDir, writeLedger } from "./testing/engineHarness";
@@ -202,6 +202,57 @@ describe("L3: a lost summary write plus a crash does not under-count the batch",
     expect(summary.members[0]).toMatchObject({ outcome: "ready", clipIds: [first, retry], costMicros: 504_000, costKind: "open" });
     expect(summary.cost).toEqual({ micros: 504_000, kind: "open" });
     await engine.engine.shutdown();
+  });
+});
+
+describe("L11 (engine side): a lost member that never reserved is free in its record and in the summary", () => {
+  test("a crash between the `requested` line and the reserve: the record is `lost` with no attempt, the member's cost is free, and the ledger is untouched", async () => {
+    const clipId = "clip-00000091";
+    const { avatarId, photoId, folder, batchId, at } = await crashedBatch(clipId);
+    await journalOf(folder, clipId).requested({ clipId, photoId, request: REQUEST, motion: MOTION, acceptedWorstMicros: 850_000, batch: { batchId, batchIndex: 1, batchSize: 1 }, at });
+
+    const engine = await startClipEngine(dir(), { timings: TIMINGS, monthlyBudgetMicros: BUDGET, deps: { launchSteps: IDLE_STEPS } });
+    await until(() => engine.events().some((e) => e.type === "job.done" && e.payload.result.kind === "clip"), "the recovery's record");
+
+    const listed = await engine.engine.handle(command("clips.list", { avatarId }));
+    if (!listed.ok || listed.type !== "clips.list") throw new Error(`expected clips.list, got ${JSON.stringify(listed)}`);
+    expect(listed.result.clips.find((c) => c.clipId === clipId)).toMatchObject({ status: "failed", failure: { reason: "lost" }, cost: { micros: 0, kind: "free" } });
+    const summary = await summaryOf(engine, avatarId, batchId);
+    expect(summary.members[0]).toMatchObject({ outcome: "failed", costMicros: 0, costKind: "free" });
+    expect(summary.cost).toEqual({ micros: 0, kind: "free" });
+    expect(ledgerLines(dir())).toEqual([]);
+    await engine.engine.shutdown();
+  });
+});
+
+describe("part C's guard: the whole batch holds the clip money unit, gaps between members included (WB2d)", () => {
+  // Part C's `suggestMotions` / `translateIdea` answer `clip-busy` from the same decision `ClipService.unitRefusal` makes for `clips.create` and `clips.createBatch` (its "ONE place"). The service is private to the
+  // engine, so the guard is read through the seam that exists: a single clip's create, whose FIRST check is that decision. Any other answer than `batch-running` would be a window for part C's call in a gap.
+  test("a single clip is refused `batch-running` at every sample from the batch's start to its last member's render, between members too", async () => {
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(4));
+    const engine = await started({ net: clipNetwork({ klingBy: () => ({ held: true }) }) });
+    const { jobIds } = batchOf(await createBatch(engine, { avatarId, photoIds: photoIds.slice(0, 3) }));
+    const answers: string[] = [];
+    let polling = true;
+    const poll = (async () => {
+      while (polling) {
+        const answer = await create(engine, { avatarId, photoId: photoIds[3] ?? "" });
+        answers.push(answer.ok ? "ok" : (answer.error.clipReason ?? answer.error.code));
+        await Bun.sleep(1);
+      }
+    })();
+    for (const [i, jobId] of jobIds.entries()) {
+      await until(() => phasesOf(engine, jobId).includes("rendering"), `member ${i + 1} rendering`);
+      if (i < jobIds.length - 1) engine.net.releaseNth("kling", i + 1);
+    }
+    polling = false;
+    await poll;
+    engine.net.releaseNth("kling", 3);
+    await Promise.all(jobIds.map((id) => jobEnd(engine, id)));
+
+    expect(answers.length).toBeGreaterThan(3);
+    expect(new Set(answers)).toEqual(new Set(["batch-running"]));
+    expect(engine.net.posts("kling")).toHaveLength(3);
   });
 });
 
