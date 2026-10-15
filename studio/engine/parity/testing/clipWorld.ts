@@ -34,6 +34,13 @@ export interface ClipWorld {
   readonly avatarId: string;
   readonly masterPhotoId: string;
   readonly photos: Readonly<Record<ClipPhotoKind, string>>;
+  /** 5b.2 (S5.WB3), a rig with `clips: { batch: n }`: n more ordinary frames of Lia (each a `plain` one: a likeness, three code motions), in the order a batch picks them. */
+  readonly batch?: readonly string[];
+}
+
+/** The id of the n-th (1-based) extra frame of a batch rig, as the mock names it. */
+export function mockBatchPhotoId(n: number): string {
+  return `photo-lia-batch-${n}`;
 }
 
 export function mockClipPhotoId(kind: ClipPhotoKind): string {

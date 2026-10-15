@@ -73,6 +73,7 @@ export const INTENTIONAL_DIFFERENCES: readonly string[] = [
   "the descriptor check (Stage 5, S5.0c, `avatars.estimateCheckDescriptor`, `avatars.checkDescriptor`): the rig scripts no chat, so only the FREE commands and the free refusals of the paid one are played (an unknown avatar, a worst case below the price, a payload the contract refuses, the claim a running launch holds). The price is each engine's own (the mock's fixed figures, the engine's bundled table), so the transcript writes that it is ordered (expected within worst), that it is a price (above zero) and that it names its source; the two are held to the same figure by the engine's and the mock's own suites. The text of a check's PRICE_CHANGED is each engine's own (the engine's names both sums, the mock's none): its code is compared; every other refusal's text is compared. A check that RUNS (the verdict, the money flow, an import's `descriptorCheck`, that it never writes) is held by engine.checkDescriptor, engine.avatarsImport and mockEngine.checkDescriptor. No key (AUTH_INVALID) and no library (LIBRARY_UNAVAILABLE) cannot be played in the rig (it always has both) and are held by engine.checkDescriptor and mockEngine.checkDescriptor. A draft, an unreadable stored descriptor (DESCRIPTOR_INVALID) and the other jobs' claims (a rewrite, a candidates batch, an archive, a delete) are held by those suites too",
   "clips (Stage 5, 5b.1, S5.V7, `clips.*`): the real rig plays the video provider by a fake (testing/clipProvider.ts) that answers each ATTEMPT of a clip by the outcome the story scripts, in the mock's own words (`MockClipAttempt`), on the short timing set (`clipTimings(\"short\")`: every duration the real one divided by a thousand, every ordering kept) and a clock that moves with the wall clock; the mock plays the same short set on its manual clock. A story waits on the end of a job, a phase or a hold (`untilJobEnds`, `untilPhase`, `untilMoney`), never on a count of settles or a sleep. Written are the commands, the answers, a clip's job.progress (its phase, steps and model; `submittedAt` and `proveUntil` as `<set>`), its end, and the facts of `money.status` and `money.reconcile` (whether a reconcile is needed and why, whether it is held, never until when; what it closed; a too-early answer never says how long). NOT written, by design: the words of a clip's refusals (the code, the `clipReason` and the `priceScope` are the contract), the frames of a face check (a verdict needs three; a skipped check says how many it had), a file's exact length (whole seconds) and size, the facts a clip create job tells in every event (photo, request, motion label, accepted worst case, and in the phases that hold a reserve open the open reserve: held to what the create asked for, on both, written in no line: `#checkClipFacts`), the sha256 and time of an export, the frame counts of an export's progress (the story writes that it began at the start, only went forward and spoke more than once: `Transcript.exportProgress`), and the words of a clip job that failed (its code). Not played: the restart (the real rig plays no crash restart; clips/recover.test.ts and mockEngine.clips.restart.test.ts hold it on the same journal lines), `no-room` (the month's refusal of Grok's reserve is the mock's script; the engine's attempt tests hold it), `disk-full`, `clips.reveal` (main's alone), and the cancel in `preparing` (a race against the first frame in the real engine; both engines' own tests hold it). The budget's own two-minute quiet rule still applies to the real engine's reconcile: a story that reconciles moves the engine's clock ahead first (`ClipControl.passTime`), and the mock models the same rule for a clip's money only.",
   "clips in the montage (Stage 5, 5b.2, S5.WA3, `media.importClip`, `scenarios.clipMontage.ts`): the render is the rig's fake ffmpeg (no ffmpeg in parity; the real render of copies is the smoke's), and the video importer is the rig's stand-in, which says what the real one would of a 5 s 720 x 1280 clip at 24 fps. A copy's display name («Клип <date> <time>.mp4») is made from the clip's creation instant in the owner's local time and is written as `<copy name>`; the copy stage of its import counts the bytes of the clip's mp4 (the real file, the mock's estimate) and its `total` is masked. What both are bound to is the origin, the refusals and their order, the dedupe, the clip lock, the copy's lifetime, the frame rule and `ClipSummary.use`.",
+  "the batch «Оживить выбранные» (Stage 5, 5b.2, S5.WB3, `clips.batchOptions`, `clips.createBatch`, `clips.cancelBatch`, `scenarios.clipBatch.ts`): the same fake provider and short timing set as the clips above; a rig with `clips: { batch: n }` has n more ordinary frames, and a batch story plays one script per member (`ClipControl.nextBatch`: the provider cannot see a member's boundaries, so a Kling POST starts the next script and a Grok POST is the `then` of the member before it). A batch member's events are NOT written in the order they came: one member's download and the next member's turn run side by side, and which comes first is the engine's I/O against the mock's clock. They are told per member (`Transcript.members`), in the batch's order: the phases it went through (what it waited for at the start, `turn` or `rate-limit` for a member requeued after a 429; the strict proof in `proving`), and how it ended (`done`, `failed(<code>)`, `cancelled(<detail>)`). The waits in between (`alone`, `rate-limit` told again) depend on whether the money is alone at that moment and are not written; the engine's and the mock's own suites hold them, with a clock they control. A story waits on the batch's end by `Transcript.untilBatchEnds`, which reads the unit free through a refused `clips.createBatch` (written nowhere). A list of batch members is written in the batch's order, not newest first. Not played: `ok-above-worst` and `fault` (the real provider cannot be told a bill above the reserve or a defect of the money path: engine.clipBatch.run.test.ts holds both stops), `refused-uncounted` in a batch (its `/credits` is read before the member's POST, when the provider does not yet know which member it is), and the restart (the real rig plays no crash restart: engine.clipBatch.restart.test.ts and mockEngine.clipBatch.run.test.ts hold it on the same journal lines). The price cache is the engine's (10 minutes, `passTime`); the mock models the cache at a member's turn alone.",
 ];
 
 /** A music status as both rigs can be bound to it: the counts, the log's state and the refresh's state; the times as set or null. */
@@ -105,6 +106,8 @@ const ID_KINDS: Readonly<Record<string, string>> = {
   previewId: "preview",
   clipId: "clip",
   layerId: "layer",
+  // 5b.2 (S5.WB3): a batch's id, named by order of appearance like every other identifier.
+  batchId: "batch",
 };
 const ID_LIST_KINDS: Readonly<Record<string, string>> = { photoIds: "photo", usedIn: "video", jobIds: "job", rejectedPhotoIds: "photo" };
 
@@ -263,26 +266,38 @@ function figures(estimate: unknown): [unknown, unknown] {
 
 /** `clips.options` for a suitable photo: the motions, the sheet's twelve figures, where the prices came from, the engine's mode and the month's fit. An unsuitable one is a photo and a reason, written as it is. */
 function clipOptionsLine(result: Record<string, unknown>, norm: Normalizer): string {
-  if (result.suitable !== true) return `< ok ${compact(norm.value(result))}`;
+  return `< ok ${compact(norm.value(clipOptionsFacts(result)))}`;
+}
+
+/** The facts of one photo's `ClipOptions` (see `clipOptionsLine`): a batch's items are told the same way. */
+function clipOptionsFacts(result: Record<string, unknown>): Record<string, unknown> {
+  if (result.suitable !== true) return result;
   const priced = (set: unknown): Record<string, unknown> => Object.fromEntries(Object.entries(objectOf(set)).map(([key, estimate]) => [key, figures(estimate)]));
   const prices = objectOf(result.prices);
   const motions = (Array.isArray(result.motions) ? result.motions : []).map((m) => {
     const { id, source, label, text } = objectOf(m);
     return { id, source, label, text };
   });
-  return `< ok ${compact(
-    norm.value({
-      suitable: true,
-      photoId: result.photoId,
-      motions,
-      fallback: result.fallback,
-      bold: result.bold,
-      source: objectOf(prices.std5).prices,
-      prices: priced(prices),
-      noFallbackPrices: priced(result.noFallbackPrices),
-      monthFits: result.monthFits,
-    }),
-  )}`;
+  return {
+    suitable: true,
+    photoId: result.photoId,
+    motions,
+    fallback: result.fallback,
+    bold: result.bold,
+    source: objectOf(prices.std5).prices,
+    prices: priced(prices),
+    noFallbackPrices: priced(result.noFallbackPrices),
+    monthFits: result.monthFits,
+  };
+}
+
+/**
+ * 5b.2 (S5.WB3) `clips.batchOptions`: each photo as `clips.options` tells it, the four sums (expected, worst, worst on Kling alone: integer micro-dollars from the same prices), the month's room (the rig's
+ * budget less what was spent and what is open: the same on both) and what the month takes. The room is the figure the engine's `createBatch` holds against.
+ */
+function batchOptionsLine(result: Record<string, unknown>, norm: Normalizer): string {
+  const items = (Array.isArray(result.items) ? result.items : []).map((item) => clipOptionsFacts(objectOf(item)));
+  return `< ok ${compact(norm.value({ items, sums: result.sums, monthRoomMicros: result.monthRoomMicros, monthFits: result.monthFits }))}`;
 }
 
 /** A clip as a list and a read tell it: the facts both engines are bound to, less the clock, the byte sizes, the frames and the file's exact length. */
@@ -306,6 +321,8 @@ function clipFacts(clip: unknown, norm: Normalizer): Record<string, unknown> {
     cost: c.cost,
     ...(c.providerCostMicros === undefined ? {} : { providerCostMicros: c.providerCostMicros }),
     exports,
+    // 5b.2 (S5.WB3): a batch member tells its place, written only when it has one, so every older line stays as it was.
+    ...(c.batchId === undefined ? {} : { batchId: c.batchId, batchIndex: c.batchIndex, batchSize: c.batchSize }),
   };
   if (c.status === "ready") {
     const face = objectOf(c.face);
@@ -326,6 +343,12 @@ function clipFacts(clip: unknown, norm: Normalizer): Record<string, unknown> {
 function clipsLine(type: "clips.list" | "clips.get", result: Record<string, unknown>, norm: Normalizer): string {
   if (type === "clips.get") return `< ok ${compact(norm.value({ clip: clipFacts(result.clip, norm) }))}`;
   const clips = (Array.isArray(result.clips) ? result.clips : []).map((clip) => clipFacts(clip, norm));
+  // 5b.2 (S5.WB3): a list of batch members only is written in the batch's order (its place, then the order the clips were made in), not newest first: two clips made in the same millisecond tie on the
+  // time the list sorts by, and break the tie by an id each engine makes its own way. The clip aliases follow the order of the members' first events, which is the order they were made in.
+  if (clips.length > 1 && clips.every((clip) => clip.batchIndex !== undefined)) {
+    const aliasOf = (clip: Record<string, unknown>): number => Number(String(norm.value(clip.clipId, "clipId")).split("#")[1]);
+    clips.sort((a, b) => Number(a.batchIndex) - Number(b.batchIndex) || aliasOf(a) - aliasOf(b));
+  }
   return `< ok ${compact(norm.value({ clips, ...(result.notListedTotal === undefined ? {} : { notListedTotal: result.notListedTotal }) }))}`;
 }
 
@@ -500,7 +523,7 @@ function autopilotBrief(result: Record<string, unknown>): Record<string, unknown
  */
 export function answerLine(type: string, answer: Answer, norm: Normalizer, running: boolean | "brief" | "card" = false): string {
   if (!answer.ok) {
-    const { code, detail, issues, exportReason, musicReason, captionIssue, photoReason, categoryReason, sceneReason, sceneId, launchReason, descriptorReason, descriptorWords, portraitReason, clipReason, priceScope } = answer.error;
+    const { code, detail, issues, exportReason, musicReason, captionIssue, photoReason, categoryReason, sceneReason, sceneId, launchReason, descriptorReason, descriptorWords, portraitReason, clipReason, priceScope, path } = answer.error;
     // The transport's VALIDATION text is the engine's or the client's own words: only its code is compared. A music error's
     // detail names times of the rig's own clock: its code and its cause are compared.
     // S4.8 (`running`): a launch's refusals say sums and sentences of the engine's own (the remaining worst case, the key's state); the code and the reason are the contract.
@@ -527,10 +550,13 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer, runni
         // Stage 5 (5b.1, S5.V7): the same.
         ...(clipReason === undefined ? {} : { clipReason }),
         ...(priceScope === undefined ? {} : { priceScope }),
+        // 5b.2 (S5.WB3): the batch item an error points at, written only when set.
+        ...(path === undefined ? {} : { path }),
       }),
     )}`;
   }
   if (type === "clips.options") return clipOptionsLine(answer.result, norm);
+  if (type === "clips.batchOptions") return batchOptionsLine(answer.result, norm);
   if (type === "clips.list" || type === "clips.get") return clipsLine(type, answer.result, norm);
   if (type === "money.status") {
     // The month, the budget and the clock are each rig's own; what a clip's money makes of the status is the contract: whether a reconcile is needed and why, whether it is held (never until when),
@@ -784,11 +810,73 @@ export class Transcript {
     if (p.photoId === undefined || p.request === undefined || p.motion === undefined || p.acceptedWorstMicros === undefined) fail("a create job tells no facts (photo, request, motion, accepted worst case)");
     if (p.photoId !== asked.photoId) fail(`its photo is not the one asked for`);
     if (p.request?.model !== asked.model || p.request?.quality !== asked.quality || p.request?.seconds !== asked.seconds) fail("its request is not the one asked for");
-    if (p.acceptedWorstMicros !== asked.acceptedWorstMicros) fail("its accepted worst case is not the one asked for");
+    if (asked.acceptedWorstMicros !== undefined && p.acceptedWorstMicros !== asked.acceptedWorstMicros) fail("its accepted worst case is not the one asked for");
     // A reserve is open from the attempt's reserve line until it settles (or for good, when abandoned), which spans these four phases: the job tells it, and it never passes what the owner accepted.
     if (CLIP_PHASES_WITH_RESERVE.has(p.phase) && (p.openReserveMicros === undefined || p.openReserveMicros <= 0 || p.openReserveMicros > (p.acceptedWorstMicros ?? 0))) {
       fail("its open reserve is missing or above what the owner accepted");
     }
+  }
+
+  /** 5b.2 (S5.WB3): each batch member's job, by id: its place, the phases it reported and how it ended. */
+  readonly #memberJobs = new Map<string, { index: number; order: number; tokens: string[]; end: string | null }>();
+
+  /**
+   * Keeps a batch member's event for `members()`; true when the event was one (and is not written in order). A job is a member once a progress event of it carries a batch id; that event always comes first.
+   * The identifiers are named here, in the order the events came, so the numbers do not depend on where a line is written.
+   */
+  #bucketMember(event: EventMessage): boolean {
+    if (event.type === "job.progress" && event.payload.kind === "clip") {
+      const p = event.payload;
+      if (p.batchId === undefined) return false;
+      this.norm.value({ batchId: p.batchId, jobId: p.jobId, clipId: p.clipId, avatarId: p.avatarId });
+      let member = this.#memberJobs.get(p.jobId);
+      if (member === undefined) {
+        member = { index: p.batchIndex ?? 0, order: this.#memberJobs.size, tokens: [], end: null };
+        this.#memberJobs.set(p.jobId, member);
+      }
+      // A member's first word is what it waits for (`turn`, or `rate-limit` for a requeued one); the waits that follow are the engine's I/O against the mock's clock and are not written (`alone` is told only
+      // when the money is not alone at that moment). `proving` says it waits for the strict proof.
+      const token = p.phase === "queued" ? (member.tokens.length === 0 ? `queued(${p.waitReason ?? "-"})` : null) : p.phase === "proving" ? `proving(${p.waitReason ?? "-"})` : p.phase;
+      if (token !== null && member.tokens.at(-1) !== token) member.tokens.push(token);
+      return true;
+    }
+    if (event.type === "job.done" || event.type === "job.failed" || event.type === "job.cancelled") {
+      const member = this.#memberJobs.get(event.payload.jobId);
+      if (member === undefined) return false;
+      if (event.type === "job.done") member.end = "done";
+      else if (event.type === "job.failed") member.end = event.payload.kind === "clip" ? `failed(${event.payload.error.code})` : "failed";
+      else member.end = event.payload.kind === "clip" ? `cancelled(${event.payload.detail ?? "-"})` : "cancelled";
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * 5b.2 (S5.WB3): the batch members as they stand, one line each, in the batch's order (a member requeued after a 429 follows the first): the phases it went through (what it waited for at the start; the
+   * proof it waited for), and how it ended. This is what a batch story is bound to say of the queue.
+   */
+  members(): void {
+    this.#drain();
+    const jobs = [...this.#memberJobs.entries()].sort(([, a], [, b]) => a.index - b.index || a.order - b.order);
+    for (const [jobId, member] of jobs) {
+      const name = this.norm.text(jobId);
+      this.#lines.push(`# member ${member.index} ${name}: ${[...member.tokens, member.end ?? "running"].join(" > ")}`);
+    }
+  }
+
+  /**
+   * 5b.2 (S5.WB3): lets the rig move until the batch is over: the unit is free again (read quietly with `probe`, a `clips.createBatch` that breaks the first rule it meets after the unit, so it is
+   * refused `IN_FLIGHT` while a batch or a clip holds the unit and is refused by its own fault, free, once it does not) and every member job has ended. A retry exists before the unit is free, so a
+   * member requeued after a 429 is waited for. `ms` of wall time fail the scenario.
+   */
+  async untilBatchEnds(probe: unknown, ms = 45_000): Promise<void> {
+    await this.#pumpUntil(async () => {
+      const answer = await this.#rig.send("clips.createBatch", probe);
+      if (!answer.ok && answer.error.code === "IN_FLIGHT") return false;
+      this.#drain();
+      return [...this.#memberJobs.values()].every((member) => member.end !== null);
+    }, "the batch to end", ms);
+    this.#drain();
   }
 
   /** The events that came since the last look, in order. */
@@ -811,6 +899,9 @@ export class Transcript {
         this.#checkClipProgress(event.payload);
         this.#checkClipFacts(event.payload);
       }
+      // 5b.2 (S5.WB3): a batch member's events are told per member (`members()`), not in the order they came in: one member's download and the next member's turn run side by side, and which of their events
+      // comes first is the engine's I/O against the mock's clock.
+      if (this.#bucketMember(event)) continue;
       const line = eventLine(event, this.norm);
       if (line !== null) this.#lines.push(line);
     }
@@ -824,8 +915,25 @@ export class Transcript {
     const answer = await this.#rig.send(type, payload);
     this.#drain();
     if (type === "clips.create") this.#askedClip(payload, answer);
+    if (type === "clips.createBatch") this.#askedBatch(payload, answer);
     this.#lines.push(answerLine(type, answer, this.norm));
     return answer;
+  }
+
+  /**
+   * 5b.2 (S5.WB3): a `clips.createBatch` that was taken: each member's job owes the facts its item asked for (the photo, Kling, the quality and the length), from its first event. The accepted worst case of
+   * a member is its share, which the sheet does not write; it is held by the engine's and the mock's own suites.
+   */
+  #askedBatch(payload: unknown, answer: Answer): void {
+    if (!answer.ok) return;
+    const { jobIds } = objectOf(answer.result);
+    const { items, quality, seconds } = objectOf(payload);
+    if (!Array.isArray(jobIds) || !Array.isArray(items)) return;
+    for (const [i, jobId] of jobIds.entries()) {
+      if (typeof jobId !== "string") continue;
+      this.#clipAsked.set(jobId, { photoId: objectOf(items[i]).photoId, model: "kling", quality, seconds });
+      for (const event of this.#rig.events()) if (event.type === "job.progress" && event.payload.kind === "clip" && event.payload.jobId === jobId) this.#checkClipFacts(event.payload);
+    }
   }
 
   /** A `clips.create` that was taken: the job it started owes the facts it asked for, from its first event, which may have come before the answer. */

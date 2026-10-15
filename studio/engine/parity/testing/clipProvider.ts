@@ -16,10 +16,10 @@ const MODERATION = "xAI blocked this request through content moderation.";
 const PROVIDER_ERROR = "Provider returned an internal error";
 
 /** The 2026-10-10 listing (engine/clips/testing/engineClipKit.ts, `listing`): Kling std 0.084 $/s, pro 0.112 $/s, Grok 14 ¢/s + 1 ¢ per image. */
-function listing(withGrokSkus: boolean): object {
+function listing(withGrokSkus: boolean, stdPerSecond = "0.084"): object {
   return {
     data: [
-      { id: VIDEO_TIERS.std.model, pricing_skus: { image_to_video_duration_seconds_720p: "0.084", image_to_video_duration_seconds_1080p: "0.084" } },
+      { id: VIDEO_TIERS.std.model, pricing_skus: { image_to_video_duration_seconds_720p: stdPerSecond, image_to_video_duration_seconds_1080p: stdPerSecond } },
       { id: VIDEO_TIERS.pro.model, pricing_skus: { image_to_video_duration_seconds_720p: "0.112", image_to_video_duration_seconds_1080p: "0.112" } },
       { id: VIDEO_TIERS.grok.model, pricing_skus: withGrokSkus ? { cents_per_image_input: "1", cents_per_video_output_second_720p: "14" } : {} },
     ],
@@ -74,6 +74,17 @@ export interface ClipProvider {
   script(script: MockClipScript): void;
   /** A clip has been accepted by the engine: its attempts play the armed script (or complete). */
   beginClip(): void;
+  /**
+   * 5b.2 (S5.WB3): arms the NEXT batch's members, one script each, in the order their Kling POSTs leave (the provider cannot see a member's boundaries; a Kling POST starts the next one, and a Grok POST is the
+   * `then` of the member before it). Used once, by the next `beginBatch`.
+   */
+  scriptBatch(scripts: readonly MockClipScript[]): void;
+  /** A batch has been accepted by the engine: its members play the armed scripts, and an entry the story did not give completes. Until the next `beginClip`. */
+  beginBatch(): void;
+  /** While held, a POST that has arrived waits for its answer (a 429 the engine has not met yet), however long the engine waits: the story releases it by this event, never by a clock. */
+  holdSubmit(held: boolean): void;
+  /** The listing's Kling std rate moves, in micro-dollars per second (the engine's cache sees it once it is older than 10 minutes). */
+  setKlingStdRate(perSecondMicros: number): void;
   /** A `late-ok` clip comes in: until then its polls stay in progress, however long the engine waits (the story says when, never a clock). */
   arrive(): void;
   /** While held, every poll is in progress (the render is still going); released, the outcome shows. */
@@ -86,12 +97,15 @@ export interface ClipProvider {
   close(): Promise<void>;
 }
 
-const PLAYABLE_ONLY = "no-room";
+/** What only the mock can play: `no-room` is the month's refusal of Grok's reserve; `ok-above-worst` and `fault` (5b.2) are a bill above the reserve and a defect of the money path, which the engine's own tests hold. */
+const MOCK_ONLY: readonly MockClipAttempt[] = ["no-room", "ok-above-worst", "fault"];
 
 function attemptsOf(script: MockClipScript): { first: MockClipAttempt; then: MockClipAttempt } {
   const parts = typeof script === "string" ? { first: script } : script;
   const played = { first: parts.first ?? "ok", then: parts.then ?? "ok" };
-  if (played.first === PLAYABLE_ONLY || played.then === PLAYABLE_ONLY) throw new Error("`no-room` is the month's refusal of Grok's reserve: the mock plays it, the real engine cannot be told it by a provider");
+  for (const outcome of [played.first, played.then]) {
+    if (MOCK_ONLY.includes(outcome)) throw new Error(`\`${outcome}\` is played by the mock alone: the real engine cannot be told it by a provider (the engine's own tests hold it)`);
+  }
   return played;
 }
 
@@ -111,6 +125,12 @@ export function clipProvider(): ClipProvider {
   const posted: AttemptModel[] = [];
   let armed: { first: MockClipAttempt; then: MockClipAttempt } | null = null;
   let clip: Clip = { first: "ok", then: "ok", ordinal: 0 };
+  /** 5b.2: the batch's members still to play, and whether a batch is the one being played (its Kling POST starts the next member). */
+  let armedBatch: { first: MockClipAttempt; then: MockClipAttempt }[] | null = null;
+  let batch: { first: MockClipAttempt; then: MockClipAttempt }[] | null = null;
+  let submitGate: Promise<void> | null = null;
+  let releaseSubmit: (() => void) | null = null;
+  let klingStd = "0.084";
   let held = false;
   let arrived = false;
   let healed = false;
@@ -147,13 +167,17 @@ export function clipProvider(): ClipProvider {
     const path = new URL(url).pathname.replace(/^\/api\/v1/, "");
     if (path === "/videos/models") {
       if (prices === "fallback") throw new TypeError("fetch failed");
-      return response(200, listing(prices === "live"));
+      return response(200, listing(prices === "live", klingStd));
     }
     if (path === "/credits") {
       if (creditsDown()) return response(500, { error: { message: "credits are unreadable" } });
       return response(200, { data: { total_credits: 100, total_usage: usage() } });
     }
-    if (path === "/videos" && init.method === "POST") return submit(init);
+    if (path === "/videos" && init.method === "POST") {
+      // 5b.2: a held POST has arrived and waits for its answer; the engine's request is out, and nothing is decided until the story lets it go.
+      if (submitGate !== null) await submitGate;
+      return submit(init);
+    }
     const content = /^\/videos\/([^/]+)\/content$/.exec(path);
     if (content !== null) return serve(decodeURIComponent(content[1] ?? ""));
     const poll = /^\/videos\/([^/]+)$/.exec(path);
@@ -168,6 +192,11 @@ export function clipProvider(): ClipProvider {
     const model: AttemptModel = record.model === VIDEO_TIERS.grok.model ? "grok" : "kling";
     const tier = model === "grok" ? "grok" : record.model === VIDEO_TIERS.pro.model ? "pro" : "std";
     const seconds = typeof record.duration === "number" ? record.duration : 5;
+    // A batch's Kling POST starts the next member: its script, or a clean clip when the story gave none (a requeued member takes one again).
+    if (batch !== null && model === "kling") {
+      clip = { ...(batch.shift() ?? { first: "ok" as const, then: "ok" as const }), ordinal: 0 };
+      arrived = false;
+    }
     clip.ordinal += 1;
     const outcome = clip.ordinal === 1 ? clip.first : clip.then;
     posted.push(model);
@@ -237,6 +266,29 @@ export function clipProvider(): ClipProvider {
       clip = { ...(armed ?? { first: "ok" as const, then: "ok" as const }), ordinal: 0 };
       armed = null;
       arrived = false;
+      batch = null;
+    },
+    scriptBatch: (scripts) => {
+      armedBatch = scripts.map(attemptsOf);
+    },
+    beginBatch: () => {
+      batch = armedBatch ?? [];
+      armedBatch = null;
+      arrived = false;
+    },
+    holdSubmit: (value) => {
+      if (value) {
+        submitGate ??= new Promise<void>((resolve) => {
+          releaseSubmit = resolve;
+        });
+        return;
+      }
+      releaseSubmit?.();
+      submitGate = null;
+      releaseSubmit = null;
+    },
+    setKlingStdRate: (perSecondMicros) => {
+      klingStd = String(perSecondMicros / 1_000_000);
     },
     hold: (value) => {
       held = value;

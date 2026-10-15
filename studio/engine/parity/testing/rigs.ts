@@ -40,7 +40,7 @@ import type { ExportFpsMode } from "../../clips/exportProfile";
 import type { MockClipScript } from "../../../renderer/engine/mockClips";
 import type { BoldClipsMode } from "../../../shared/engine";
 import { clipProvider, type ClipProvider } from "./clipProvider";
-import { CLIP_AVATAR_NAME, CLIP_PHOTO_KINDS, CLIP_PHOTO_SPEC, clipPhotoMap, MOCK_CLIP_AVATAR_ID, MOCK_CLIP_MASTER_ID, mockClipPhotoId, type ClipPhotoKind, type ClipWorld } from "./clipWorld";
+import { CLIP_AVATAR_NAME, CLIP_PHOTO_KINDS, CLIP_PHOTO_SPEC, clipPhotoMap, MOCK_CLIP_AVATAR_ID, MOCK_CLIP_MASTER_ID, mockBatchPhotoId, mockClipPhotoId, type ClipPhotoKind, type ClipWorld } from "./clipWorld";
 
 /** The options of a rig with `clips`, or null for a rig without. */
 function clipRigOf(options: RigOptions): ClipRigOptions | null {
@@ -163,6 +163,19 @@ export interface ClipControl {
   arrive(): void;
   /** 5b.2 (S5.WA3): the clip's file in Studio is replaced by another (its sha256 no longer matches the record): the real rig overwrites the file, the mock is told. */
   damageFile(clipId: string): Promise<void>;
+  /**
+   * 5b.2 (S5.WB3): the NEXT batch plays one script per member, in the order the members' first POSTs leave (a member requeued after a 429 takes the next one again); an entry the story did not give is a
+   * clean clip. Used once. The real provider cannot play `ok-above-worst`, `fault` or `no-room`; `refused-uncounted` is not used in a batch (its `/credits` is read before the POST).
+   */
+  nextBatch(scripts: readonly MockClipScript[]): void;
+  /** While held, a POST that has reached the provider waits for its answer, so a story can act while a member is being submitted. The mock stands still between pumps, so it needs no hold. */
+  holdSubmit(held: boolean): void;
+  /** The listing's Kling std rate moves (µ$ per second); the engine sees it once its price cache is older than 10 minutes (`passTime`). */
+  klingRate(perSecondMicros: number): void;
+  /** A photo of the clip world leaves the gallery (the owner deleted it). */
+  removePhoto(photoId: string): Promise<void>;
+  /** A photo of the clip world is damaged: its file is not a picture any more. */
+  damagePhoto(photoId: string): Promise<void>;
 }
 
 const NO_CLIPS: ClipControl = {
@@ -190,6 +203,21 @@ const NO_CLIPS: ClipControl = {
   damageFile: () => {
     throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
   },
+  nextBatch: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+  holdSubmit: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+  klingRate: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+  removePhoto: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+  damagePhoto: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
 };
 
 /** What a rig with `clips` is told: the engine's mode (`GROK_FALLBACK`), `BOLD_CLIPS`, the export's fps mode, and the month's budget. All the engine's own defaults when absent. */
@@ -198,6 +226,8 @@ export interface ClipRigOptions {
   readonly boldClips?: BoldClipsMode;
   readonly exportFps?: ExportFpsMode;
   readonly budgetMicros?: number;
+  /** 5b.2 (S5.WB3): this many more ordinary frames for Lia (`ClipWorld.batch`), for the batch stories. Absent: none, so no older story's line moves. */
+  readonly batch?: number;
 }
 
 /**
@@ -639,9 +669,16 @@ export function mockRig(options: RigOptions = {}): ParityRig {
       : [];
   // Stage 5 (5b.1, S5.V7): Lia and her photos, one of each kind the clip rules tell apart; the same summaries the real rig's JPEGs stand for.
   const clipRig = clipRigOf(options);
-  const lia: AvatarSummary = { ...MIA, avatarId: MOCK_CLIP_AVATAR_ID, name: CLIP_AVATAR_NAME, masterPhotoId: MOCK_CLIP_MASTER_ID, photoCount: CLIP_PHOTO_KINDS.length, eligibleUnusedCount: CLIP_PHOTO_KINDS.length - 1 };
+  // 5b.2 (S5.WB3): the batch rig's extra ordinary frames, after the seven kinds (none in any older rig).
+  const batchExtra = clipRig?.batch ?? 0;
+  const lia: AvatarSummary = { ...MIA, avatarId: MOCK_CLIP_AVATAR_ID, name: CLIP_AVATAR_NAME, masterPhotoId: MOCK_CLIP_MASTER_ID, photoCount: CLIP_PHOTO_KINDS.length + batchExtra, eligibleUnusedCount: CLIP_PHOTO_KINDS.length - 1 + batchExtra };
   const liaPhotos: PhotoSummary[] =
-    clipRig === null ? [] : CLIP_PHOTO_KINDS.map((kind, i) => ({ ...scenePhoto(i + 1, { category: CLIP_PHOTO_SPEC[kind].category, qa: { ...CLIP_PHOTO_SPEC[kind].qa } }, lia), photoId: mockClipPhotoId(kind), ...(kind === "unknown" ? { eligible: false } : {}) }));
+    clipRig === null
+      ? []
+      : [
+          ...CLIP_PHOTO_KINDS.map((kind, i) => ({ ...scenePhoto(i + 1, { category: CLIP_PHOTO_SPEC[kind].category, qa: { ...CLIP_PHOTO_SPEC[kind].qa } }, lia), photoId: mockClipPhotoId(kind), ...(kind === "unknown" ? { eligible: false } : {}) })),
+          ...Array.from({ length: batchExtra }, (_, i) => ({ ...scenePhoto(CLIP_PHOTO_KINDS.length + i + 1, { category: CLIP_PHOTO_SPEC.plain.category, qa: { ...CLIP_PHOTO_SPEC.plain.qa } }, lia), photoId: mockBatchPhotoId(i + 1) })),
+        ];
   const avatars: AvatarSummary[] = [
     options.usage === undefined
       ? { ...MIA, photoCount: MAIN_PHOTOS, eligibleUnusedCount: MAIN_PHOTOS, ...proposed }
@@ -710,7 +747,16 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     archivedAvatarId: NORA.avatarId,
     scored: scored(photoIds),
     ...(options.portraits === true ? { portraitAvatars: { imported: "avatar-nini-0004", pending: "avatar-ava-0005", crowded: "avatar-lena-0006" } } : {}),
-    ...(clipRig === null ? {} : { clipWorld: { avatarId: MOCK_CLIP_AVATAR_ID, masterPhotoId: MOCK_CLIP_MASTER_ID, photos: clipPhotoMap(mockClipPhotoId) } }),
+    ...(clipRig === null
+      ? {}
+      : {
+          clipWorld: {
+            avatarId: MOCK_CLIP_AVATAR_ID,
+            masterPhotoId: MOCK_CLIP_MASTER_ID,
+            photos: clipPhotoMap(mockClipPhotoId),
+            ...(batchExtra === 0 ? {} : { batch: Array.from({ length: batchExtra }, (_, i) => mockBatchPhotoId(i + 1)) }),
+          },
+        }),
   };
   // The mock holds no pixels: a picture that is not 9:16, and one whose file no longer matches its sidecar, are said to it.
   if (clipRig !== null) {
@@ -823,6 +869,13 @@ export function mockRig(options: RigOptions = {}): ParityRig {
               passTime: (ms) => engine.passClipTime(ms),
               arrive: () => undefined,
               damageFile: async (clipId) => engine.damageClipFile(clipId),
+              nextBatch: (scripts) => engine.scriptNextBatch(scripts),
+              // The mock's clock stands still between pumps, so a POST cannot be answered while a story sends a command: it needs no hold.
+              holdSubmit: () => undefined,
+              klingRate: (perSecondMicros) =>
+                engine.setClipRates({ std: { perSecondMicros, perInputImageMicros: 0 }, pro: { perSecondMicros: 112_000, perInputImageMicros: 0 }, grok: { perSecondMicros: 140_000, perInputImageMicros: 10_000 } }),
+              removePhoto: async (photoId) => engine.removeClipPhoto(photoId),
+              damagePhoto: async (photoId) => engine.setClipPhotoPixels(photoId, "unreadable"),
             },
     },
     async stop() {
@@ -913,7 +966,7 @@ async function seedImportedAvatar(library: Awaited<ReturnType<typeof openLibrary
  * Stage 5 (5b.1, S5.V7): Lia and a photo of each kind the clip rules tell apart, real JPEGs of the sizes a clip reads (the first frame is 9:16). None has a run plan on disk, so each is judged by its own
  * face marks, as the mock plays them. The photo that is «unreadable» has a file that no longer matches its sidecar.
  */
-async function seedClipWorld(library: Awaited<ReturnType<typeof openLibrary>>["library"]): Promise<ClipWorld> {
+async function seedClipWorld(library: Awaited<ReturnType<typeof openLibrary>>["library"], batchExtra = 0): Promise<ClipWorld> {
   if (FIXTURE_BASE.kind !== "generated") throw new Error("expected a generated sample source");
   const avatarId = await seedAvatar(library, CLIP_AVATAR_NAME, TINY_MASTER);
   const masterPhotoId = library.getAvatar(avatarId)?.masterPhotoId;
@@ -931,6 +984,19 @@ async function seedClipWorld(library: Awaited<ReturnType<typeof openLibrary>>["l
     });
     ids.set(kind, photo.id);
   }
+  // 5b.2 (S5.WB3): the batch rig's extra ordinary frames, after the seven kinds: each is a `plain` one, a real 9:16 JPEG with a likeness.
+  const batch: string[] = [];
+  for (let n = 1; n <= batchExtra; n++) {
+    const slot = CLIP_PHOTO_KINDS.length + n;
+    const photo = await library.addPhoto(avatarId, await photoJpeg(720, 1280), {
+      mediaType: "image/jpeg",
+      width: 720,
+      height: 1280,
+      source: { ...FIXTURE_BASE, category: CLIP_PHOTO_SPEC.plain.category, attemptId: `run-00000099:slot-${slot}#1`, slot: `slot-${slot}` },
+      qa: { ...CLIP_PHOTO_SPEC.plain.qa },
+    });
+    batch.push(photo.id);
+  }
   return {
     avatarId,
     masterPhotoId,
@@ -939,6 +1005,7 @@ async function seedClipWorld(library: Awaited<ReturnType<typeof openLibrary>>["l
       if (id === undefined) throw new Error(`no ${kind} photo was seeded`);
       return id;
     }),
+    ...(batch.length === 0 ? {} : { batch }),
   };
 }
 
@@ -1044,7 +1111,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   const archivedAvatarId = await seedAvatar(library, "Nora", master);
   // Stage 5 (5b.1, S5.V7): Lia and her photos, real JPEGs; the video provider is a fake, the face gate a script, the clock one that moves (the short timing set is real milliseconds).
   const clipRig = clipRigOf(options);
-  const clipWorld = clipRig === null ? undefined : await seedClipWorld(library);
+  const clipWorld = clipRig === null ? undefined : await seedClipWorld(library, clipRig.batch ?? 0);
   const provider: ClipProvider | null = clipRig === null ? null : clipProvider();
   type FaceScript = "match" | "mismatch" | "few-faces" | "worker";
   let armedFace: FaceScript = "match";
@@ -1576,6 +1643,12 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
         armedFace = "match";
         faceCalls = 0;
       }
+      // 5b.2 (S5.WB3): a batch the engine accepted plays its members' scripts, one per Kling POST (the first member reaches its POST after real I/O, so this lands first); every face is a match.
+      if (type === "clips.createBatch" && answer.ok && provider !== null) {
+        provider.beginBatch();
+        faceNow = "match";
+        faceCalls = 0;
+      }
       return answer;
     },
     async advance(step) {
@@ -1781,6 +1854,19 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
                 const library = engine.library;
                 if (library === null || clipWorld === undefined) throw new Error("the rig has no library to damage a clip in");
                 await writeFile(clipFilePath(clipsDirOf(library, clipWorld.avatarId), clipId), "not the clip any more");
+              },
+              nextBatch: (scripts) => provider.scriptBatch(scripts),
+              holdSubmit: (held) => provider.holdSubmit(held),
+              klingRate: (perSecondMicros) => provider.setKlingStdRate(perSecondMicros),
+              removePhoto: async (photoId) => {
+                const library = engine.library;
+                if (library === null || clipWorld === undefined) throw new Error("the rig has no library to remove a photo from");
+                await library.deletePhoto(clipWorld.avatarId, photoId);
+              },
+              damagePhoto: async (photoId) => {
+                const file = engine.library?.photoFilePath(photoId);
+                if (file === undefined) throw new Error("the photo has no file to damage");
+                await writeFile(file, "not the photo any more");
               },
             },
     },
