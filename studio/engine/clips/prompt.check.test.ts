@@ -188,6 +188,14 @@ describe("an own idea only the whitelist reads as taking clothing off: on «См
     expect(result.prompt).not.toContain("stay on her feet");
   });
 
+  test("the controller's decision 6: an own idea the whitelist reads as kept on («pulls her top down a little») is no undressing: «comes off», both dialects", () => {
+    const motion = "she slowly pulls her top down a little";
+    const kling = clipPromptOf(boldMirror(), motion, "kling", "own");
+    if (!kling.ok) throw new Error(kling.problems.join("; "));
+    expect(kling.prompt).toContain(`${COMES_OFF_LINE} ${SLOW_LINE}`);
+    expect(clipPromptOf(boldMirror(), motion, "grok", "own").ok).toBe(true);
+  });
+
   test("a scene or code text keeps the takes-off forms alone (no bank or code motion says these): the continuity line of the motion by itself does not move", () => {
     expect(continuityLineOf("her robe slowly falls open", null)).toBe(COMES_OFF_LINE);
   });
