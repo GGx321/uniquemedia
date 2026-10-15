@@ -95,6 +95,16 @@ describe("a clip import's view keeps its origin", () => {
     expect(importsFromSnapshot([state], new Set())[0]?.origin).toEqual(ORIGIN);
   });
 
+  test("a view first made without it takes the origin a later event of the job brings, and keeps it (review L7)", () => {
+    const first = applyImportProgress([], progress({ origin: undefined }));
+    expect(first[0]?.origin).toBeUndefined();
+    const later = applyImportProgress(first, progress({ done: 5 }));
+    expect(later[0]?.origin).toEqual(ORIGIN);
+    // An event without it never takes it away.
+    expect(applyImportProgress(later, progress({ done: 6, origin: undefined }))[0]?.origin).toEqual(ORIGIN);
+    expect(applyImportFailed(applyImportProgress([], progress({ origin: undefined })), { kind: "import", jobId: "job-0000002", mediaKind: "video", name: COPY.name, mediaId: null, origin: ORIGIN, error: { code: "INTERNAL" } })[0]?.origin).toEqual(ORIGIN);
+  });
+
   test("an own file's import has none", () => {
     expect(applyImportProgress([], progress({ origin: undefined }))[0]?.origin).toBeUndefined();
   });

@@ -103,7 +103,9 @@ function patchImport(imports: readonly ImportView[], ref: ImportRef, patch: (vie
   const at = imports.findIndex((i) => i.jobId === ref.jobId);
   const current = at < 0 ? fresh(ref) : imports[at];
   if (current === undefined) return imports;
-  const next = patch(current);
+  // 5b.2 (review L7): a view first made without the clip's origin takes it from a later event that brings it, and never loses it.
+  const patched = patch(current);
+  const next = patched.origin === undefined && ref.origin !== undefined ? { ...patched, origin: ref.origin } : patched;
   if (next === current && at >= 0) return imports;
   return capFinished(at < 0 ? [...imports, next] : imports.map((i, n) => (n === at ? next : i)));
 }
