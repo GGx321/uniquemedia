@@ -91,7 +91,7 @@ const PhotoTile = memo(function PhotoTile({ photo, position, pickMode, picked, o
         type="button"
         className={clips ? "photo-pick photo-pick-clip" : "photo-pick"}
         aria-pressed={picked}
-        aria-label={`${clips ? "Выбрать для клипов" : "Выбрать для монтажа"}: фото ${position}, ${label}${why === null ? "" : ` · ${why}`}`}
+        aria-label={`${clips ? "Выбрать для клипов" : "Выбрать для монтажа"}: фото ${position}, ${label}${why === null ? "" : ` · ${why}`}${clips && picked && order !== null ? ` · в пакете ${order}` : ""}`}
         title={why ?? undefined}
         disabled={why !== null && !picked}
         onClick={() => onToggle(photo.photoId)}
