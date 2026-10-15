@@ -747,7 +747,8 @@ describe("round 2: where the focus goes after 63a, and a chosen row that leaves 
     expect(rowTitles(s).includes("Дует на чай")).toBe(false);
     const first = rowTitles(s)[0] ?? "";
     expect(checkedRow(s).startsWith(first)).toBe(true);
-    expect(news("polite", s)).toBe(`Предложено 3 движения — оплачено $0.003. Движение «Дует на чай» больше не в списке — выбрано «${first}».`);
+    // Round 3 (R2, probe P4): the drop alone — the result line was said already and is not read twice.
+    expect(news("polite", s)).toBe(`Движение «Дует на чай» больше не в списке — выбрано «${first}».`);
   });
 });
 
@@ -772,6 +773,74 @@ describe("round 2: L1 and 63a together", () => {
     expect(rowTitles(s).includes("Своя идея: медленно поворачивает голову")).toBe(false);
     expect(checkedRow(s).startsWith("Своя идея: медленно поправляет волосы")).toBe(true);
     expect(news("polite", s)).toBe("Идея переведена — оплачено $0.001.");
+  });
+});
+
+describe("round 3: a list read again that fails or drops the chosen row", () => {
+  test("R1 (P2): 63a, then the list cannot be priced — no «Повторить» is drawn, the focus goes to «Отмена», not to the page", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    await typeIdea(s, "медленно поворачивает голову");
+    h.engine.failNext("clips.options", { code: "PRICE_UNAVAILABLE", priceScope: "video", detail: "no price" });
+    await translate(s);
+    expect(within(s).queryByRole("button", { name: "Повторить" }) == null).toBe(true);
+    expect(focused()).toBe(describeElement(cancelButton(s)));
+  });
+
+  test("R1 (P1): a 63b refusal with the focus in the field, then the list cannot be read — the focus goes to «Повторить»", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    await typeIdea(s, "отпивает чай, а потом поправляет волосы");
+    const twice = "she slowly sips her tea and then tucks her hair behind her ear";
+    h.engine.scriptNextMotionReplies([mockIdeaAnswer(twice), mockIdeaAnswer(twice)]);
+    h.engine.delayNext("clips.options", 1_000);
+    h.engine.failNext("clips.options", { code: "NETWORK", detail: "fetch failed" });
+    await translate(s);
+    expect(document.activeElement === field(s)).toBe(true);
+    tick(h.scheduler);
+    await settle();
+    expect(focused()).toBe(describeElement(within(s).getByRole("button", { name: "Повторить" })));
+  });
+
+  test("R1 (P3): a BUDGET_EXCEEDED refusal, then the list cannot be priced — the focus goes to «Отмена»", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    await typeIdea(s, "медленно поворачивает голову");
+    h.engine.failNext("clips.translateIdea", { code: "BUDGET_EXCEEDED", detail: "no room" });
+    h.engine.failNext("clips.options", { code: "PRICE_UNAVAILABLE", priceScope: "video", detail: "no price" });
+    translateButton(s).focus();
+    await translate(s);
+    expect(focused()).toBe(describeElement(cancelButton(s)));
+  });
+
+  test("R3: the chosen idea leaves the list and the new one is not in it — the drop is said, the first row chosen, the focus on «Своя идея…»", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    for (const [idea, english] of [
+      ["медленно поворачивает голову", "she slowly turns her head toward the window"],
+      ["медленно улыбается", "she slowly looks down and smiles to herself"],
+    ] as const) {
+      await typeIdea(s, idea);
+      h.engine.scriptNextMotionReplies([mockIdeaAnswer(english)]);
+      await translate(s);
+    }
+    fireEvent.click(radios(s).find((r) => r.value === "o-1") as HTMLElement);
+    await flush();
+    await typeIdea(s, "медленно поправляет волосы");
+    h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly tucks a strand of hair behind her ear")]);
+    h.engine.delayNext("clips.options", 1_000);
+    await translate(s);
+    // The list read again holds neither his chosen idea nor the new one.
+    h.engine.tamperMotionStore(PLAIN.photoId, (store) => {
+      store.items = store.items.filter((item) => item.id !== "o-1" && item.id !== "o-3");
+    });
+    tick(h.scheduler);
+    await settle();
+    const first = rowTitles(s)[0] ?? "";
+    expect(rowTitles(s).filter((title) => title.startsWith("Своя идея"))).toEqual(["Своя идея: медленно улыбается"]);
+    expect(checkedRow(s).startsWith(first)).toBe(true);
+    expect(news("polite", s)).toBe(`Движение «Своя идея: медленно поворачивает голову» больше не в списке — выбрано «${first}».`);
+    expect(focused()).toBe(describeElement(ideaToggle(s)));
   });
 });
 

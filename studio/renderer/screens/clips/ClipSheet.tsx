@@ -100,8 +100,6 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   const [toCancel, setToCancel] = useState(0);
   const askedRef = useRef(asked);
   askedRef.current = asked;
-  /** Round 2 (L1): the list on its way was asked after a part C call, whose result the polite region has just said: what follows is said with it. */
-  const afterCall = useRef(false);
   /** Round 2 (L1): the row the owner chose, as its title read, while the list holds it. */
   const chosen = useRef<{ readonly id: ClipMotionId; readonly title: string } | null>(null);
 
@@ -130,10 +128,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     photoId,
     view,
     offered: suitable !== null,
-    relist: () => {
-      afterCall.current = true;
-      setAsked((n) => n + 1);
-    },
+    relist: () => setAsked((n) => n + 1),
     reveal: (id, select, last) => setPending({ id, select, last: last ?? null, after: askedRef.current }),
     toCancel: () => setToCancel((n) => n + 1),
     toIdeaToggle: () => toggleRef.current?.focus(),
@@ -153,19 +148,35 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     (main !== null && !main.disabled ? main : titleRef.current)?.focus();
   }, [refreshing, priceChanged, options]);
 
+  /** Round 3 (R1): where the focus goes when what held it is gone — «Повторить» when the failure offers it, else «Отмена» (every state has it), else the heading. */
+  const keepFocus = (): void => (retryRef.current ?? cancelRef.current ?? titleRef.current)?.focus();
+
+  // Round 2 (L1): the row the owner chose left the list read again (only the newest suggestions and ideas are listed) — the first row is chosen, and the drop alone is said (round 3, R2:
+  // the call's result line was said already), never a silent jump.
+  const picked = motionId === null || suitable === null ? undefined : suitable.motions.find((m) => m.id === motionId);
+  const dropGone = (): void => {
+    if (suitable === null || motionId === null || picked !== undefined) return;
+    const first = suitable.motions[0];
+    const gone = chosen.current !== null && chosen.current.id === motionId ? chosen.current.title : null;
+    setMotionId(null);
+    if (gone !== null && first !== undefined) calls.announce("polite", motionGoneNews(gone, motionRowLabel(first)));
+  };
+
   // 62b / 63a: the list read after the call is in — the row the call made is focused (and chosen, for his idea), the group brought down to the last new row first (62b). A row the list
-  // does not hold (only the newest are listed) leaves the focus on «Своя идея…», and a list that could not be read on «Повторить»: never on the page (round 2, M2).
+  // does not hold (only the newest are listed) leaves the focus on «Своя идея…», and a list that could not be read on what the failure offers: never on the page (round 2, M2; round 3, R1).
   useEffect(() => {
     if (pending === null || options.status === "loading" || refreshing) return;
     if (options.asked <= pending.after) return;
     setPending(null);
     if (options.status === "failed") {
-      retryRef.current?.focus();
+      keepFocus();
       return;
     }
     const inputOf = (id: ClipMotionId | null) => (id === null ? null : dialogRef.current?.querySelector<HTMLInputElement>(`input[name="${ids}-motion-choice"][value="${id}"]`));
     const input = inputOf(pending.id);
     if (input === null || input === undefined) {
+      // Round 3 (R3): his new idea is not listed, so nothing replaces the choice the effect below left alone for it: a dropped choice is said here.
+      if (pending.select) dropGone();
       (toggleRef.current ?? titleRef.current)?.focus();
       return;
     }
@@ -174,19 +185,21 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     input.focus();
   }, [pending, options, refreshing]);
 
-  // Round 2 (L1): the row the owner chose left the list read again (only the newest suggestions and ideas are listed) — the first row is chosen, and that is said, never a silent jump.
-  const picked = motionId === null || suitable === null ? undefined : suitable.motions.find((m) => m.id === motionId);
   useEffect(() => {
     if (suitable === null || refreshing) return;
-    const was = afterCall.current;
-    afterCall.current = false;
-    // His new idea is about to be chosen (63a, the effect above): what it replaces needs no word.
-    if (motionId === null || picked !== undefined || pending?.select === true) return;
-    const first = suitable.motions[0];
-    const gone = chosen.current !== null && chosen.current.id === motionId ? chosen.current.title : null;
-    setMotionId(null);
-    if (gone !== null && first !== undefined) calls.announce("polite", motionGoneNews(gone, motionRowLabel(first)), was);
+    // His new idea is about to be chosen (63a, the effect above): what it replaces needs no word — unless it is not listed, which that effect says itself.
+    if (pending?.select === true) return;
+    dropGone();
   }, [suitable, refreshing]);
+
+  // Round 3 (R1): the list read again failed, or the photo is no longer one to bring to life: the form is gone, and with it a focus it held — it goes to what the sheet offers now.
+  const formGone = options.status === "failed" || (options.status === "ready" && !options.options.suitable);
+  useEffect(() => {
+    if (!formGone) return;
+    const root = dialogRef.current;
+    const active = document.activeElement;
+    if (root !== null && (active === null || !active.isConnected || !root.contains(active))) keepFocus();
+  }, [formGone, options]);
   useEffect(() => {
     if (picked !== undefined) chosen.current = { id: picked.id, title: motionRowLabel(picked) };
   }, [picked]);
