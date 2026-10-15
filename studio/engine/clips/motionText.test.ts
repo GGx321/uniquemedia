@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MOTION_PROBLEMS, MotionProblems, type ClipMotionSource, type MotionProblem } from "../../shared/engine";
 import type { BankCategory } from "../../shared/scenes/banks/types";
-import { motionTextProblems, type MotionFrame } from "../../shared/scenes/motionText";
+import { bankMotionFindings, motionTextProblems, NO_REPAIR_PROBLEMS, repairMayHelp, takesOff, type MotionFrame } from "../../shared/scenes/motionText";
+import { boldContentLevel } from "../../shared/scenes/contentLine";
 import { PhotoSidecarSchema } from "../library/schemas";
 import { RunPlanSchema } from "../runs/plan";
 import type { OwnPlanSlot, PlanSlot } from "../scenes/schema";
@@ -269,5 +270,97 @@ describe("the sources: a scene motion's grammar ran when its bank loaded; code, 
         expect([where, source, problems]).toEqual([where, source, FACE_DROPPED.has(where) ? ["face-hidden"] : []]);
       }
     }
+  });
+});
+
+// ---------- Q-H = 2 (the owner, 2026-10-14): a motion that takes clothing off ----------
+
+describe("TAKES_OFF: the pinned list of a motion that takes clothing off (plan §5.3)", () => {
+  /** The plan's seven («takes off», «pulls off», «removes her», «unbuttons», «unzips her», «slips out of», «lets … fall»), each as a motion would say it, the particle split too. */
+  const PINNED = [
+    "she slowly takes off her robe",
+    "she slowly takes her robe off",
+    "she slowly pulls off her top",
+    "she slowly pulls the sheet off",
+    "she slowly removes her robe",
+    "she slowly unbuttons her shirt",
+    "she slowly unzips her dress",
+    "she slowly slips out of her dress",
+    "she slowly lets the strap fall",
+    "she slowly lets her robe fall to the floor",
+  ];
+  /** Beyond the seven (S5.WC2, for the review): the same act in the words a model reaches for. */
+  const ALSO = ["she slowly slips the robe off her shoulders", "she slowly slides the strap off her shoulder", "she slowly peels off her top", "she slowly shrugs off her jacket", "she slowly undresses", "she slowly strips"];
+
+  for (const text of [...PINNED, ...ALSO]) {
+    test(`takes clothing off: «${text}»`, () => {
+      expect(takesOff(text)).toBe(true);
+    });
+  }
+
+  /** What only looks like it: hair, a hand, her head or her body, a breath, a sip, sand, a bag, the bed. */
+  const NOT = [
+    "she slowly lets her hair fall over her shoulder",
+    "she slowly lets her head fall back",
+    "she slowly lets her arms fall to her sides",
+    "she slowly removes her hand from her hip",
+    "she slowly pulls her hair off her face",
+    "she slowly takes a breath",
+    "she slowly takes a small sip",
+    "she brushes the sand off slowly",
+    "she slowly unzips her bag",
+    "she slowly slides off the bed",
+    "she slowly takes her sunglasses in her hand",
+  ];
+  for (const text of NOT) {
+    test(`does not: «${text}»`, () => {
+      expect(takesOff(text)).toBe(false);
+    });
+  }
+
+  test("no bank motion and no code motion takes clothing off (the bank is unchanged by Q-H)", () => {
+    expect(everyMoment().filter((p) => takesOff(p.moment.motion)).map((p) => p.moment.motion)).toEqual([]);
+    expect(CODE_MOTIONS.filter((m) => takesOff(m.text)).map((m) => m.id)).toEqual([]);
+  });
+});
+
+describe("Q-H = 2: an own idea that takes clothing off is accepted on a frame of «Смелая» only (I5.66, §12)", () => {
+  const ROBE = "she slowly takes off her robe";
+
+  test("an own idea on a frame of «Смелая»: accepted", () => {
+    expect(motionTextProblems(ROBE, BOLD, "own")).toEqual([]);
+  });
+
+  test("the same own idea on a frame that is not «Смелая»: takes-off", () => {
+    expect(motionTextProblems(ROBE, FRIEND, "own")).toEqual(["takes-off"]);
+    expect(motionTextProblems(ROBE, TIMER, "own")).toEqual(["takes-off"]);
+  });
+
+  test("a vision text that takes clothing off is refused on every frame, «Смелая» included: the writer never proposes it", () => {
+    expect(motionTextProblems(ROBE, BOLD, "vision")).toEqual(["takes-off"]);
+    expect(motionTextProblems(ROBE, FRIEND, "vision")).toEqual(["takes-off"]);
+  });
+
+  test("a scene or code text that takes clothing off never passes either; the bank's loader does not read the rule (the bank is unchanged)", () => {
+    for (const source of ["scene", "code"] as const) expect(motionTextProblems(ROBE, BOLD, source)).toEqual(["takes-off"]);
+    expect(bankMotionFindings(ROBE, boldContentLevel(), false)).toEqual([]);
+  });
+
+  test("an explicit word with the verb on an ordinary frame: content and takes-off, in the contract's fixed order (content first; the WCD review's L5 is reported, not reordered)", () => {
+    expect(motionTextProblems("she slowly takes off her bra", FRIEND, "own")).toEqual(["content", "takes-off"]);
+    expect(motionTextProblems("she slowly takes off her bra", BOLD, "own")).toEqual([]);
+  });
+});
+
+describe("takes-off gets no repair attempt (WC3 reads this)", () => {
+  test("the problems a repair cannot help are takes-off alone", () => {
+    expect([...NO_REPAIR_PROBLEMS]).toEqual(["takes-off"]);
+  });
+
+  test("a rejection holding takes-off is final; any other may be repaired once", () => {
+    expect(repairMayHelp(["takes-off"])).toBe(false);
+    expect(repairMayHelp(["content", "takes-off"])).toBe(false);
+    expect(repairMayHelp(["not-small"])).toBe(true);
+    expect(repairMayHelp(["content", "phone"])).toBe(true);
   });
 });

@@ -41,6 +41,7 @@ export const MOTION_RULES = [
   "revealing",
   "youth-prop",
   "hair-colour",
+  "takes-off",
   "selfie",
   "camera",
   "she-her",
@@ -93,6 +94,71 @@ export function phoneInHandOrPropped(frame: Pick<MotionFrame, "capture" | "plann
   return inHandOrPropped(frame.capture) || inHandOrPropped(frame.plannedCapture);
 }
 
+// ---------- TAKES_OFF (Q-H = 2, the owner 2026-10-14; plan s5b2 §5.3) ----------
+
+/** The plan's pinned list: what a motion that takes clothing off says. Each is read in its inflections and with its particle split («takes her robe off»). */
+export const TAKES_OFF_PHRASES = ["takes off", "pulls off", "removes her", "unbuttons", "unzips her", "slips out of", "lets … fall"] as const;
+
+/**
+ * What a match is about when it is NOT clothing: her hair or her body («lets her hair fall», «removes her hand from her hip»), a breath, a sip or a step, something she holds
+ * («unzips her bag»), or a seat or a place she leaves («slides off the bed»). A towel, a sheet or a blanket she wears or lies under stays clothing: pulling it off uncovers her.
+ */
+const NOT_WORN = new Set(
+  (
+    "hair ponytail ponytails braid braids bangs fringe curl curls strand strands head face eye eyes eyelid eyelids lid lids gaze chin neck lip lips arm arms hand hands finger fingers " +
+    "wrist wrists elbow elbows shoulder shoulders hip hips leg legs knee knees foot feet toe toes body weight breath sip bite step steps look glance " +
+    "bag bags handbag handbags backpack backpacks purse purses clutch clutches tote totes keys key phone cup mug glass bottle book fork " +
+    "bed sofa couch chair stool bench ledge wall railing table counter floor curb swing"
+  ).split(" "),
+);
+
+/** The forms, each with the words that say what comes off: after the phrase («takes off her robe») or between its verb and its particle («takes her robe off»). */
+const OFF_VERBS = "take|takes|taking|took|pull|pulls|pulling|slip|slips|slipping|slide|slides|sliding|peel|peels|peeling|shrug|shrugs|shrugging|strip|strips|stripping";
+const TAKES_OFF_FORMS: readonly RegExp[] = [
+  // «takes off her robe», «pulls off her top», and the same act in other words: «peels off», «shrugs off», «slides off», «slips off», «strips off».
+  new RegExp(`\\b(?:${OFF_VERBS})\\s+off\\b((?:\\s+[a-z'-]+){0,3})`, "gi"),
+  // «takes her robe off», «pulls the sheet off», «slips the robe off her shoulders».
+  new RegExp(`\\b(?:${OFF_VERBS})\\s+((?:[a-z'-]+\\s+){1,3}?)off\\b`, "gi"),
+  // «removes her robe».
+  /\bremov(?:e|es|ing|ed)\b((?:\s+[a-z'-]+){0,3})/gi,
+  // «unbuttons her shirt»: always clothing.
+  /\bunbutton\w*()/gi,
+  // «unzips her dress» (not her bag).
+  /\bunzip(?:s|ping|ped)?\b((?:\s+[a-z'-]+){0,3})/gi,
+  // «slips out of her dress» (not out of bed).
+  /\bslip(?:s|ping|ped)?\s+out\s+of\b((?:\s+[a-z'-]+){0,3})/gi,
+  // «lets the strap fall», «lets her robe slip» (not her hair, her head or her arms).
+  /\blet(?:s|ting)?\s+((?:[a-z'-]+\s+){1,3}?)(?:fall|falls|falling|drop|drops|dropping|slip|slips|slipping|slide|slides|sliding)\b/gi,
+  // «undresses», «strips» (not «strips the bed»).
+  /\bundress\w*()/gi,
+  /\bstrip(?:s|ping|ped)?\b((?:\s+[a-z'-]+){0,3})/gi,
+];
+
+/**
+ * Whether a motion takes clothing off: one of `TAKES_OFF_PHRASES` (and the same act in a model's other words: «peels off», «shrugs off», «slips the robe off», «undresses»,
+ * «strips»), unless what comes off is her hair, her body, something she holds or a seat. No bank motion and no code motion says one (motionText.test.ts sweeps them).
+ */
+export function takesOff(text: string): boolean {
+  return TAKES_OFF_FORMS.some((form) =>
+    Array.from(text.matchAll(form)).some((match) => {
+      const object = (match[1] ?? "").toLowerCase().match(/[a-z'-]+/g) ?? [];
+      return !object.some((word) => NOT_WORN.has(word));
+    }),
+  );
+}
+
+/**
+ * The problems a repair attempt cannot help (S5.WC2, for WC3): an own idea that takes clothing off on a frame that is not «Смелая» is the owner's own choice, and a repair could
+ * only make it into another motion than he asked for, so it is rejected at once with `takes-off` (its text says the idea is for frames of «Смелая»); a vision text that takes
+ * clothing off is dropped.
+ */
+export const NO_REPAIR_PROBLEMS: readonly MotionProblem[] = ["takes-off"];
+
+/** Whether a second attempt may help a text with these problems: never when one of them is `NO_REPAIR_PROBLEMS`. */
+export function repairMayHelp(problems: readonly MotionProblem[]): boolean {
+  return !problems.some((problem) => NO_REPAIR_PROBLEMS.includes(problem));
+}
+
 const PRINTABLE = /^[\x20-\x7e]+$/;
 const MOTION_START = /^(?:she|her)\s/;
 
@@ -143,6 +209,13 @@ const RULES: readonly RuleCheck[] = [
   },
   { rule: "youth-prop", problem: "content", check: (text, scope) => (takesGrammar(scope) && YOUTH_PROPS.test(text) ? "names a youth prop" : null) },
   { rule: "hair-colour", problem: "content", check: (text, scope) => (takesGrammar(scope) && HAIR_COLOUR_WORDS.test(text) ? "names a hair colour or a dye" : null) },
+  {
+    // Q-H = 2: only an own idea on a frame of «Смелая» may take clothing off. The bank never reads this rule (the bank is unchanged); a vision text never passes it.
+    rule: "takes-off",
+    problem: "takes-off",
+    check: (text, scope) =>
+      scope.source !== "bank" && !(scope.source === "own" && scope.frame.bold) && takesOff(text) ? "takes clothing off, which only an own idea on a frame of «Смелая» may" : null,
+  },
   { rule: "selfie", problem: "phone", check: (text, scope) => (takesGrammar(scope) && SELFIE_WORDS.test(text) ? "says selfie or front camera, which draws a phone" : null) },
   { rule: "camera", problem: "staging", check: (text, scope) => (takesGrammar(scope) && CAMERA_WORDS.test(text) ? "names a camera or a lens" : null) },
   { rule: "she-her", problem: "not-motion", check: (text) => (MOTION_START.test(text) ? null : "opens with «she» or «her»") },
