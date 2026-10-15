@@ -126,6 +126,8 @@ export async function chat(ctx: ClientContext, params: ChatParams): Promise<Chat
     // stays whole, which is what this raw body exists to diagnose.
     // 5b.2 (S5.WC3, I5.67): a caller's own scrub (the owner's idea) runs after the pattern rules.
     scrubRaw: callerScrub === undefined ? omitByPattern : (text: string) => callerScrub(omitByPattern(text)),
+    // The caller's own scrub also covers the provider's words in a failed answer (a provider may echo the request).
+    ...(callerScrub === undefined ? {} : { scrubDetail: callerScrub }),
     // M7 leftover: descriptor and age-check answers are small; this only
     // bounds a redacted body that escaped the scrub above whole (see
     // RAW_KEEP_BYTES_CHAT's own comment, transport.ts).

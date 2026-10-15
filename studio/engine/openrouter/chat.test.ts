@@ -242,6 +242,41 @@ test("without a scrubRaw of the caller's, a saved raw body is scrubbed of image 
   expect(raws[0]?.text).toContain("the secret idea");
 });
 
+// 5b.2 (S5.WC3, round 3 L3): a provider that echoes the request in an error puts the idea into the transport's retry log line and into the failed result's message. A call that carries `scrubRaw`
+// runs both through it.
+const ECHO = (n: number): Step => ({ status: 503, body: { error: { message: `upstream failed on: the secret idea (try ${n})` } } });
+const hide = (text: string): string => text.replaceAll("the secret idea", "[omitted]");
+
+test("a call's scrubRaw also runs over the retry log lines and the final error message of an echoing 5xx", async () => {
+  const { result, logs } = await run([ECHO(1), ECHO(2), ECHO(3), ECHO(4), ECHO(5)], { scrubRaw: hide });
+
+  expect(result).toMatchObject({ status: "error", kind: "HTTP_ERROR" });
+  expect(result.status === "error" ? result.message : "").not.toContain("the secret idea");
+  expect(result.status === "error" ? result.message : "").toContain("[omitted]");
+  expect(logs.length).toBeGreaterThan(0);
+  expect(logs.join("\n")).not.toContain("the secret idea");
+});
+
+test("a moderation refusal's message is scrubbed the same way", async () => {
+  const { result } = await run([{ status: 400, body: { error: { message: "blocked by content moderation: the secret idea" } } }], { scrubRaw: hide });
+
+  expect(result).toMatchObject({ status: "refused" });
+  expect(result.status === "refused" ? result.message : "").not.toContain("the secret idea");
+});
+
+test("a non-retryable failure's message is scrubbed too", async () => {
+  const { result } = await run([{ status: 422, body: { error: { message: "cannot read: the secret idea" } } }], { scrubRaw: hide });
+
+  expect(result.status === "error" ? result.message : "").not.toContain("the secret idea");
+});
+
+test("without a scrubRaw of the caller's, the log and the message keep the provider's words, as before", async () => {
+  const { result, logs } = await run([ECHO(1), ECHO(2), ECHO(3), ECHO(4), ECHO(5)]);
+
+  expect(result.status === "error" ? result.message : "").toContain("the secret idea");
+  expect(logs.join("\n")).toContain("the secret idea");
+});
+
 test("a long base64 run (128+ chars) with no data-URL prefix is scrubbed too", async () => {
   const run128 = "A".repeat(200);
   const body = { usage: { cost: 0.002 }, blob: run128 };
