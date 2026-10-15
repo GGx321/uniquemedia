@@ -1559,6 +1559,14 @@ export class Engine {
     return renders;
   }
 
+  /**
+   * 5b.2 (S5.WB2c): resolves once every batch summary change under way is written (or failed and logged). A batch's last changes (its dropped members, its end) are written after a shutdown has stopped it.
+   * Tests wait on it; nothing else does.
+   */
+  clipSummariesSettled(): Promise<void> {
+    return this.#clips.summariesSettled();
+  }
+
   /** Resolves once the open library's own-media recovery and every running import (with its cleanup) are done. Tests wait on it; nothing else does. */
   mediaSettled(): Promise<void> {
     return this.#media.settled();

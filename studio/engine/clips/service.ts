@@ -1087,6 +1087,11 @@ export class ClipService {
     }
   }
 
+  /** Resolves once every batch summary change and the restart's pass are written (or failed and logged). Tests wait on it; nothing else does. */
+  summariesSettled(): Promise<void> {
+    return this.#summaries.settled();
+  }
+
   /** A batch member's record was committed (a recovery's, or a download fetched again): its member ends as the record says. */
   #noteMemberRecord(clipsDir: string, record: ClipRecord): void {
     if (record.batchId === undefined || record.batchIndex === undefined) return;
@@ -1095,13 +1100,13 @@ export class ClipService {
 
   /** Past the kept ones (`KEEP_BATCHES`), an avatar's batch summaries whose queue ended and whose money is closed go. With no ledger to read, nothing goes (an open cost cannot be told). */
   async #forgetOldBatches(clipsDir: string): Promise<void> {
+    // A temp file a quit or a crash left in the middle of a write goes too (S5.WB2c, Windows).
+    await this.#summaries.sweepTemps(clipsDir);
     const files = await this.#summaries.read(clipsDir);
     if (files.length <= KEEP_BATCHES) return;
     const ledger = this.#deps.budget()?.ledger;
     if (ledger === undefined) return;
     const costs = clipCostsOf(ledger);
-    // A temp file a quit or a crash left in the middle of a write goes too (S5.WB2c, Windows).
-    await this.#summaries.sweepTemps(clipsDir);
     for (const batchId of toForget(files, (file) => moneyOpen(file, costs))) await this.#summaries.forget(clipsDir, batchId);
   }
 
@@ -1113,13 +1118,13 @@ export class ClipService {
     const at = new Date(this.#deps.clock()).toISOString();
     for (const avatar of library.listAvatars()) {
       const clipsDir = clipsDirOf(library, avatar.id);
+      // A temp file the last process left in the middle of a write (a quit, a crash) goes first (S5.WB2c, Windows).
+      await this.#summaries.sweepTemps(clipsDir);
       for (const file of await this.#summaries.read(clipsDir)) {
         if (file.endedAt !== undefined && clipIdsToLook(file).length === 0) continue;
         if (this.#batches.get(file.batchId)?.over === false) continue;
         await this.#summaries.change(clipsDir, file.batchId, async (current) => {
           if (current === null) return null;
-      // A temp file the last process left in the middle of a write (a quit, a crash) goes first (S5.WB2c, Windows).
-      await this.#summaries.sweepTemps(clipsDir);
           const looks = new Map<string, MemberLook>();
           for (const clipId of clipIdsToLook(current)) looks.set(clipId, await this.#lookAfterRestart(clipsDir, clipId));
           return this.#priced(afterRestart(current, looks, at));

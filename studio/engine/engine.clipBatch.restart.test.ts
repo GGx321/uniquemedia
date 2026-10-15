@@ -1,9 +1,10 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { batchOf, createBatch, jobsOf, plainPhotos, seedBatchAvatar } from "./clips/testing/batchKit";
 import { clipNetwork, clipsDir, jobEnd, phasesOf, startClipEngine, until, type ClipEngine } from "./clips/testing/engineClipKit";
+import type { EngineDeps } from "./engine";
 import { BATCHES_DIR } from "./clips/batchSummary";
 import { readClipRecord } from "./clips/store";
 import { SHORT_CLIP_TIMINGS, type ClipTimings } from "./clips/timings";
@@ -24,10 +25,29 @@ const BUDGET = 10_000_000;
 /** The short set, but with a long give-up time (a slow machine must not turn a recovery into `late`) and a terminal hold that outlasts the test's reads. */
 const TIMINGS: ClipTimings = { ...SHORT_CLIP_TIMINGS, lateGiveUpMs: 10 * MIN, holdTerminalMs: 30_000, holdUncertainMs: 30_000, holdSubmittedMs: 10 * MIN };
 
+/**
+ * Windows as CI 38713903237 met it (S5.WB2c): each rename of a batch summary is refused once with EPERM, as while another handle holds the file, and the shared atomic write's retry waits a real moment before the
+ * next try, so a write is in flight (its temp file on disk) for a while.
+ */
+function windowsRenames(): EngineDeps["clipBatchSummaryRetry"] {
+  const refused = new Set<string>();
+  return {
+    platform: "win32",
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(ms, 300))),
+    rename: async (from, to) => {
+      if (!refused.has(from)) {
+        refused.add(from);
+        throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
+      }
+      await rename(from, to);
+    },
+  };
+}
+
 /** A batch of `n` whose first member is in `rendering` when the process stops: its reserve and journal are on disk, the rest were only in memory. */
-async function quitMidBatch(n = 3): Promise<{ avatarId: string; photoIds: string[]; batchId: string; jobIds: string[]; first: ClipEngine }> {
+async function quitMidBatch(n = 3, deps: Partial<EngineDeps> = {}): Promise<{ avatarId: string; photoIds: string[]; batchId: string; jobIds: string[]; first: ClipEngine }> {
   const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(n));
-  const first = await startClipEngine(dir(), { net: clipNetwork({ klingBy: (k) => (k === 1 ? { held: true } : undefined) }), timings: TIMINGS, monthlyBudgetMicros: BUDGET });
+  const first = await startClipEngine(dir(), { net: clipNetwork({ klingBy: (k) => (k === 1 ? { held: true } : undefined) }), timings: TIMINGS, monthlyBudgetMicros: BUDGET, deps });
   const { batchId, jobIds } = batchOf(await createBatch(first, { avatarId, photoIds }));
   await until(() => phasesOf(first, jobIds[0] ?? "").includes("rendering"), "member 1 rendering");
   await first.engine.shutdown();
@@ -41,13 +61,14 @@ async function clipJobDone(engine: ClipEngine): Promise<void> {
 
 describe("a quit in the middle of a batch", () => {
   test("drops the queued members for free: no record, no journal, no reserve, and no hold or cap is left", async () => {
-    const { avatarId, batchId, jobIds, first } = await quitMidBatch(3);
+    const { avatarId, batchId, jobIds, first } = await quitMidBatch(3, { clipBatchSummaryRetry: windowsRenames() });
 
     const ends = jobIds.map((id) => first.events().find((e) => (e.type === "job.cancelled" || e.type === "job.done") && "jobId" in e.payload && e.payload.jobId === id));
     expect(ends.map((e) => e?.type)).toEqual(["job.cancelled", "job.cancelled", "job.cancelled"]);
     // Only the member that was sent left anything of its own on disk; the other two were memory-only. (5b.2, S5.WB2c: beside the clips, the batch's own summary is in `batches/`; it is the batch's, not a member's.)
     expect((await readdir(clipsDir(libraryDir(), avatarId))).filter((name) => name !== BATCHES_DIR).sort()).toEqual([`${jobIds[0]}.journal.jsonl`]);
-    await until(() => existsSync(join(clipsDir(libraryDir(), avatarId), BATCHES_DIR, `${batchId}.json`)), "the batch's summary");
+    // The batch's last changes (its dropped members, its end) are written after the shutdown stopped it: the folder is looked at once they are all written (CI 38713903237 listed it mid-write on Windows).
+    await first.engine.clipSummariesSettled();
     expect(await readdir(join(clipsDir(libraryDir(), avatarId), BATCHES_DIR))).toEqual([`${batchId}.json`]);
     expect(ledgerLines(dir()).map((l) => [l.type, l.attemptId])).toEqual([["reserve", `${jobIds[0]}:video#1`]]);
     expect(first.engine.budget?.status().heldMicros).toBe(0);
