@@ -382,6 +382,41 @@ export const CLIP_BATCH_SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    name: "price cache: a single clip reads the book the sheet read, within 10 minutes, whatever the listing says now; once the cache has run out the new price is PRICE_CHANGED",
+    rig: RIG,
+    async run(t, world, control) {
+      const w = clipsOf(world);
+      const single = { avatarId: w.avatarId, photoId: w.photos.plain, motionId: "g-blink", model: "kling", quality: "std", seconds: 5, fallback: "auto", acceptedWorstMicros: STD_5 };
+      await t.call("clips.options", { avatarId: w.avatarId, photoId: w.photos.plain });
+      t.note("the listing's Kling rate more than doubles; the cache still holds the book the sheet read");
+      control.clips.klingRate(200_000);
+      const created = await t.call("clips.create", single);
+      const jobId = resultOf(created).jobId;
+      if (typeof jobId !== "string") throw new Error("expected a job id");
+      await t.untilJobEnds(jobId);
+      t.note("the owner is away longer than the cache lives: the engine reads the listing again");
+      control.clips.passTime(11 * MIN);
+      await t.call("clips.create", single);
+      await t.call("clips.options", { avatarId: w.avatarId, photoId: w.photos.plain });
+      posts(t, control);
+    },
+  },
+  {
+    name: "price cache: a single clip's sheet and a batch's sheet are one book: the listing that moved is seen by both at once, or by neither",
+    rig: RIG,
+    async run(t, world, control) {
+      const w = clipsOf(world);
+      await t.call("clips.options", { avatarId: w.avatarId, photoId: w.photos.plain });
+      control.clips.klingRate(200_000);
+      t.note("within the cache's life the batch's sheet is priced by the book the single clip's sheet read");
+      await t.call("clips.batchOptions", { avatarId: w.avatarId, photoIds: [w.photos.plain] });
+      control.clips.passTime(11 * MIN);
+      t.note("past it the new rate is read by the batch's sheet and the single clip's alike");
+      await t.call("clips.batchOptions", { avatarId: w.avatarId, photoIds: [w.photos.plain] });
+      await t.call("clips.options", { avatarId: w.avatarId, photoId: w.photos.plain });
+    },
+  },
+  {
     name: "clip batch: a member that never comes goes late and ends the queue (money-uncertain) before the later members are spent",
     rig: RIG,
     async run(t, world, control) {
