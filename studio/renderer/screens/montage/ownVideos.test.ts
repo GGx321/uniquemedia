@@ -30,7 +30,7 @@ const summary = (over: Partial<MediaSummary> = {}): MediaSummary => ({
   ...over,
 });
 
-const LATTE = { mediaId: "media-own-0001", name: "latte-pour.mov", width: 1_080, height: 1_920, durationMs: 6_400, sourceFps: 60, hdrToSdr: true };
+const LATTE = { mediaId: "media-own-0001", name: "latte-pour.mov", width: 1_080, height: 1_920, durationMs: 6_400, sourceFps: 60, hdrToSdr: true, origin: null };
 
 const known = (...videos: (typeof LATTE)[]): OwnVideos => ({ held: new Map(videos.map((v) => [v.mediaId, v])), answered: new Set(videos.map((v) => v.mediaId)) });
 
@@ -146,7 +146,7 @@ describe("useOwnVideos", () => {
     const { result } = renderHook(() => useOwnVideos(client, [DEMO, "media-00000404", DEMO], store));
     await waitFor(() => expect(videoLookup(result.current, DEMO).state).toBe("known"));
     expect(lists(asked)).toEqual([{ kind: "video", mediaIds: ["media-00000404", DEMO] }]);
-    expect(videoLookup(result.current, DEMO)).toEqual({ state: "known", video: { mediaId: DEMO, name: "demo-clip.mov", width: 1_080, height: 608, durationMs: 14_000, sourceFps: 29.97, hdrToSdr: false } });
+    expect(videoLookup(result.current, DEMO)).toEqual({ state: "known", video: { mediaId: DEMO, name: "demo-clip.mov", width: 1_080, height: 608, durationMs: 14_000, sourceFps: 29.97, hdrToSdr: false, origin: null } });
     expect(videoLookup(result.current, "media-00000404")).toEqual({ state: "gone" });
   });
 

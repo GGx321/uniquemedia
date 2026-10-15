@@ -1,6 +1,6 @@
 import { MAX_STICKER_LAYERS, MAX_TEXT_LAYERS, MIN_LAYER_MS, type Clip, type Layer, type MontageDraft } from "../../../shared/engine";
 import { MIN_CLIP_MS, STEP_MS } from "../../../shared/montage";
-import { addRefusal, cellsOf, clipStartMs, duplicateClip, type Edit, type Refusal, removeClip, splitClipAt } from "./clipOps";
+import { addRefusal, cellsOf, clipStartMs, duplicateClip, type Edit, type OriginOf, type Refusal, removeClip, splitClipAt } from "./clipOps";
 import { duplicateLayer, type LayerEdit, type LayerRefusal, lowerLayer, raiseLayer, removeLayer, splitLayerAt } from "./layerOps";
 
 // 3d.3a: the timeline's one selected item (a clip and one of its cells, a text or sticker layer, or the music), and
@@ -29,9 +29,10 @@ export type Resolved =
  * - `clip-cap` / `no-room` / `layer-cap`: no place for a copy (`Refusal`'s meaning);
  * - `music`: the one track is neither split nor copied;
  * - `not-a-layer`: only a text or a sticker has a place in the z-order;
- * - `top` / `bottom`: no layer on screen at the same time is above / below it (`raiseLayer`, `lowerLayer`).
+ * - `top` / `bottom`: no layer on screen at the same time is above / below it (`raiseLayer`, `lowerLayer`);
+ * - `clip-split` / `clip-copy` (5b.2, Q-F = 1): a clip's montage copy is neither split nor copied, either would repeat its frame.
  */
-export type ActionBlock = "nothing-selected" | "photo-split" | "playhead-outside" | "too-short" | "clip-cap" | "no-room" | "layer-cap" | "music" | "not-a-layer" | "top" | "bottom";
+export type ActionBlock = "nothing-selected" | "photo-split" | "playhead-outside" | "too-short" | "clip-cap" | "no-room" | "layer-cap" | "music" | "not-a-layer" | "top" | "bottom" | "clip-split" | "clip-copy";
 
 export type ActionState = { readonly enabled: true } | { readonly enabled: false; readonly why: ActionBlock };
 
@@ -94,8 +95,8 @@ const refusalBlock = (why: Refusal | null): ActionState => (why === null ? ON : 
 /** Whether a z-order step is possible, and its own refusal (`top`, `bottom`) when not. */
 const zState = (edit: LayerEdit): ActionState => (edit.ok ? ON : off(edit.reason === "top" || edit.reason === "bottom" ? edit.reason : "not-a-layer"));
 
-/** What the toolbar can do with the selection, the playhead at `playheadMs`. */
-export function selectionActions(spec: MontageDraft, selection: Selection | null, playheadMs: number): Actions {
+/** What the toolbar can do with the selection, the playhead at `playheadMs`; `originOf` tells a clip's montage copy (5b.2) apart from an own video. */
+export function selectionActions(spec: MontageDraft, selection: Selection | null, playheadMs: number, originOf?: OriginOf): Actions {
   const item = resolveSelection(spec, selection);
   if (item === null) {
     const none = off("nothing-selected");
@@ -116,6 +117,7 @@ export function selectionActions(spec: MontageDraft, selection: Selection | null
     };
   }
   const { clip, index } = item;
+  if (clip.kind === "video" && originOf?.(clip.mediaId) !== undefined) return { split: off("clip-split"), duplicate: off("clip-copy"), remove: ON, raise: flat, lower: flat };
   const start = clipStartMs(spec, index);
   const split = clip.kind === "video" ? splitState(start, start + clip.durationMs, playheadMs, MIN_CLIP_MS) : off("photo-split");
   const cap = addRefusal(spec);
@@ -137,18 +139,18 @@ function selectCreated(edit: Edit | LayerEdit, kind: "clip" | "layer"): Applied 
   return { spec: edit.spec, selection };
 }
 
-/** «Дублировать выбранное»: the copy is selected. */
-export function duplicateSelected(spec: MontageDraft, selection: Selection | null): Applied | Refusal | LayerRefusal {
+/** «Дублировать выбранное»: the copy is selected. A clip's montage copy is refused (`originOf`, 5b.2). */
+export function duplicateSelected(spec: MontageDraft, selection: Selection | null, originOf?: OriginOf): Applied | Refusal | LayerRefusal {
   const item = resolveSelection(spec, selection);
   if (item === null || item.kind === "music") return "not-splittable";
-  return item.kind === "layer" ? selectCreated(duplicateLayer(spec, item.index), "layer") : selectCreated(duplicateClip(spec, item.index), "clip");
+  return item.kind === "layer" ? selectCreated(duplicateLayer(spec, item.index), "layer") : selectCreated(duplicateClip(spec, item.index, originOf), "clip");
 }
 
-/** «Разрезать по плейхеду»: the second part is selected. */
-export function splitSelected(spec: MontageDraft, selection: Selection | null, playheadMs: number): Applied | Refusal | LayerRefusal {
+/** «Разрезать по плейхеду»: the second part is selected. A clip's montage copy is refused (`originOf`, 5b.2). */
+export function splitSelected(spec: MontageDraft, selection: Selection | null, playheadMs: number, originOf?: OriginOf): Applied | Refusal | LayerRefusal {
   const item = resolveSelection(spec, selection);
   if (item === null || item.kind === "music") return "not-splittable";
-  return item.kind === "layer" ? selectCreated(splitLayerAt(spec, item.index, playheadMs), "layer") : selectCreated(splitClipAt(spec, item.index, playheadMs), "clip");
+  return item.kind === "layer" ? selectCreated(splitLayerAt(spec, item.index, playheadMs), "layer") : selectCreated(splitClipAt(spec, item.index, playheadMs, originOf), "clip");
 }
 
 /** A z-order step of the selected layer; the layer stays selected. */

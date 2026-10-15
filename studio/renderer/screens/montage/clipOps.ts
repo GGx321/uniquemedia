@@ -1,4 +1,4 @@
-import { type Cell, type Clip, type Focus, MAX_SOURCE_OFFSET_MS, type MontageDraft, type Motion, type PhotoRef } from "../../../shared/engine";
+import { type Cell, type Clip, type Focus, MAX_SOURCE_OFFSET_MS, type MediaOrigin, type MontageDraft, type Motion, type PhotoRef } from "../../../shared/engine";
 import { MAX_CLIPS, MAX_TOTAL_MS, MIN_CLIP_MS, splitEvenly, STEP_MS } from "../../../shared/montage";
 
 // 3d.3a: the clip track's edits, as pure functions over a draft. The editor sends each result through
@@ -7,7 +7,9 @@ import { MAX_CLIPS, MAX_TOTAL_MS, MIN_CLIP_MS, splitEvenly, STEP_MS } from "../.
 // - the contract's draft rules (`MontageDraft`): no scene photo twice, unique ids, at most 20 clips, layer caps;
 // - the editor's own limits, which a draft alone does not enforce: every clip a whole number of 100 ms steps and at
 //   least 0.1 s (`MIN_CLIP_MS`, one step), and the clips together never longer than 15 s (a render's bound, kept while editing);
-// - CF4: a photo or collage clip is never split, and its copy has empty cells, because both would repeat a photo.
+// - CF4: a photo or collage clip is never split, and its copy has empty cells, because both would repeat a photo;
+// - 5b.2 (I5.60, Q-F = 1): one frame, once. A clip's montage copy (an own video whose record names the clip, `OriginOf`) shares its photo's frame: the
+//   photo, the copy and any sibling clip's copy go in once between them, and a copy is never split or duplicated.
 //
 // A refusal the owner can meet (a cap, no room, a photo already placed) is a `Refusal`; an index outside the
 // draft is a programming error and throws a RangeError, like the shared geometry does.
@@ -24,9 +26,12 @@ export type ClipLayout = "photo" | "collage2" | "collage3" | "collage4";
  * - `not-splittable`: a photo or collage clip (CF4), or a point not strictly inside the item;
  * - `too-short`: a part of a split would be under its minimum (0.1 s for a clip, 0.3 s for a layer), or an own video is shorter than a clip's
  *   minimum (3f.6);
- * - `not-a-photo-clip`: a layout, motion or stagger change on a clip that has none.
+ * - `not-a-photo-clip`: a layout, motion or stagger change on a clip that has none;
+ * - `clip-frame` (5b.2, Q-F = 1): a split or a copy of a clip's montage copy, which would repeat its frame.
+ *
+ * Under Q-F = 1 `photo-in-draft` means the FRAME is in the montage: the photo itself, or a clip copy of it (`framePhotoIds`).
  */
-export type Refusal = "clip-cap" | "no-room" | "photo-in-draft" | "layer-cap" | "not-splittable" | "too-short" | "not-a-photo-clip";
+export type Refusal = "clip-cap" | "no-room" | "photo-in-draft" | "layer-cap" | "not-splittable" | "too-short" | "not-a-photo-clip" | "clip-frame";
 
 /** An edit's result: the new draft, and the id of the clip or layer it created (to select it), or why not. */
 export type Edit = { readonly ok: true; readonly spec: MontageDraft; readonly id?: string } | { readonly ok: false; readonly reason: Refusal };
@@ -100,6 +105,35 @@ export function cellsOf(clip: Clip): readonly Cell[] {
   return clip.kind === "photo" ? [clip.cell] : clip.kind === "collage" ? clip.cells : [];
 }
 
+/**
+ * Where an own video came from when it is a clip's montage copy (5b.2, I5.59: `MediaSummary.origin`, read from the media list); undefined for the owner's
+ * own video, and for one whose record is not known yet.
+ */
+export type OriginOf = (mediaId: string) => MediaOrigin | undefined;
+const NO_ORIGINS: OriginOf = () => undefined;
+
+/** The frames the draft's clip copies hold (5b.2): the photo each copy's clip was made from. None for the owner's own videos, nor while no origin is known. */
+export function copyFramePhotoIds(spec: MontageDraft, originOf: OriginOf = NO_ORIGINS): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const clip of spec.clips) {
+    if (clip.kind !== "video") continue;
+    const origin = originOf(clip.mediaId);
+    if (origin !== undefined) ids.add(origin.photoId);
+  }
+  return ids;
+}
+
+/**
+ * The montage's frames (5b.2, I5.60, Q-F = 1: a photo and every clip made from it are one frame): its scene photos and the photo of each own video that is a
+ * clip's copy. With no origins known it is the scene photos alone, as before 5b.2; the engine judges the stored draft by the same rule (`frame-repeated`).
+ */
+export function framePhotoIds(spec: MontageDraft, originOf: OriginOf = NO_ORIGINS): ReadonlySet<string> {
+  return new Set([...scenePhotoIds(spec), ...copyFramePhotoIds(spec, originOf)]);
+}
+
+/** A clip copy of the draft: its video clip names a media whose origin is a clip (5b.2). */
+const isClipCopy = (clip: Clip, originOf: OriginOf): boolean => clip.kind === "video" && originOf(clip.mediaId) !== undefined;
+
 /** Every scene photo the montage holds. */
 export function scenePhotoIds(spec: MontageDraft): ReadonlySet<string> {
   const ids = new Set<string>();
@@ -109,20 +143,20 @@ export function scenePhotoIds(spec: MontageDraft): ReadonlySet<string> {
 
 const sceneCell = (photoId: string, focus: Focus | null): Cell => ({ photo: { source: "scene", photoId }, focus });
 
-/** A new photo clip of `photoId` before the clip at `boundary` (0 = the start, the clip count = the end). */
-export function insertPhotoClip(spec: MontageDraft, boundary: number, photoId: string, focus: Focus | null = null): Edit {
+/** A new photo clip of `photoId` before the clip at `boundary` (0 = the start, the clip count = the end); refused when its frame is in the draft. */
+export function insertPhotoClip(spec: MontageDraft, boundary: number, photoId: string, focus: Focus | null = null, originOf: OriginOf = NO_ORIGINS): Edit {
   assertIndex(boundary, spec.clips.length + 1, "boundary");
   const why = addRefusal(spec);
   if (why !== null) return refuse(why);
-  if (scenePhotoIds(spec).has(photoId)) return refuse("photo-in-draft");
+  if (framePhotoIds(spec, originOf).has(photoId)) return refuse("photo-in-draft");
   const clipId = nextClipId(spec);
   const clip: Clip = { clipId, durationMs: Math.min(ADD_CLIP_MS, roomMs(spec)), transitionIn: "cut", kind: "photo", cell: sceneCell(photoId, focus), motion: "kenburns" };
   return done(withClips(spec, [...spec.clips.slice(0, boundary), clip, ...spec.clips.slice(boundary)]), clipId);
 }
 
 /** «Клик — кадр в конец ролика». */
-export function appendPhotoClip(spec: MontageDraft, photoId: string, focus: Focus | null = null): Edit {
-  return insertPhotoClip(spec, spec.clips.length, photoId, focus);
+export function appendPhotoClip(spec: MontageDraft, photoId: string, focus: Focus | null = null, originOf: OriginOf = NO_ORIGINS): Edit {
+  return insertPhotoClip(spec, spec.clips.length, photoId, focus, originOf);
 }
 
 // ---------- the owner's own photos and videos (3f.6, «Мои») ----------
@@ -146,10 +180,11 @@ export function appendOwnPhotoClip(spec: MontageDraft, mediaId: string, focus: F
   return insertOwnPhotoClip(spec, spec.clips.length, mediaId, focus);
 }
 
-/** What placing an own video needs of its record: its id and the stored video's length. */
+/** What placing an own video needs of its record: its id, the stored video's length, and (5b.2) the clip it is the montage copy of. */
 export interface OwnVideoFacts {
   readonly mediaId: string;
   readonly durationMs: number;
+  readonly origin?: MediaOrigin;
 }
 
 /** The longest clip an own video of `durationMs` can fill from its start: its length cut down to the 100 ms grid. */
@@ -158,12 +193,16 @@ export const videoClipLimitMs = (durationMs: number): number => Math.floor(Math.
 /**
  * A new clip of the own video `video` before the clip at `boundary`: from its start (`trimStartMs` 0, a whole frame), for min(2.0 s, the room,
  * its own length on the grid), focus left to the default crop. A video under the shortest clip on the grid is `too-short` (the importer refuses
- * one at import; this holds anyway). The caps are told first, as for a photo.
+ * one at import; this holds anyway). The caps are told first, as for a photo. A clip's copy (5b.2) whose frame is in the draft is `photo-in-draft`.
  */
-export function insertVideoClip(spec: MontageDraft, boundary: number, video: OwnVideoFacts): Edit {
+export function insertVideoClip(spec: MontageDraft, boundary: number, video: OwnVideoFacts, originOf: OriginOf = NO_ORIGINS): Edit {
   assertIndex(boundary, spec.clips.length + 1, "boundary");
   const why = addRefusal(spec);
   if (why !== null) return refuse(why);
+  // 5b.2 (Q-F = 1): a clip copy goes in once, and never beside its photo or a sibling clip's copy. The copy's own origin is known here even when the
+  // media list has not told it yet, so the same copy placed twice is caught too.
+  const { origin } = video;
+  if (origin !== undefined && framePhotoIds(spec, (mediaId) => (mediaId === video.mediaId ? origin : originOf(mediaId))).has(origin.photoId)) return refuse("photo-in-draft");
   const limit = videoClipLimitMs(video.durationMs);
   if (limit < MIN_CLIP_MS) return refuse("too-short");
   const clipId = nextClipId(spec);
@@ -172,8 +211,8 @@ export function insertVideoClip(spec: MontageDraft, boundary: number, video: Own
 }
 
 /** An own video's tile clicked: a clip at the end. */
-export function appendVideoClip(spec: MontageDraft, video: OwnVideoFacts): Edit {
-  return insertVideoClip(spec, spec.clips.length, video);
+export function appendVideoClip(spec: MontageDraft, video: OwnVideoFacts, originOf: OriginOf = NO_ORIGINS): Edit {
+  return insertVideoClip(spec, spec.clips.length, video, originOf);
 }
 
 /** Puts the own photo `mediaId` (with `focus`) into cell `cell` of clip `clipIndex`. The same media already there is the same draft. */
@@ -261,11 +300,12 @@ export function evenOut(spec: MontageDraft): MontageDraft {
 /**
  * Splits an own video clip at `atMs` on the montage's timeline (snapped to 100 ms): the second part is a new clip
  * that continues the source where the first stops, never further into it than the contract's `MAX_SOURCE_OFFSET_MS`
- * (3f.3b). Never a photo or collage clip (CF4).
+ * (3f.3b). Never a photo or collage clip (CF4), nor a clip's copy (5b.2: `clip-frame`).
  */
-export function splitClipAt(spec: MontageDraft, index: number, atMs: number): Edit {
+export function splitClipAt(spec: MontageDraft, index: number, atMs: number, originOf: OriginOf = NO_ORIGINS): Edit {
   const clip = clipAt(spec, index);
   if (clip.kind !== "video") return refuse("not-splittable");
+  if (isClipCopy(clip, originOf)) return refuse("clip-frame");
   const start = clipStartMs(spec, index);
   const at = Math.round(atMs / STEP_MS) * STEP_MS - start;
   if (at <= 0 || at >= clip.durationMs || clip.trimStartMs + at > MAX_SOURCE_OFFSET_MS) return refuse("not-splittable");
@@ -279,10 +319,11 @@ export function splitClipAt(spec: MontageDraft, index: number, atMs: number): Ed
 
 /**
  * A copy of clip `index` right after it, cut to the room. A photo or collage copy keeps its layout, motion and
- * stagger with EMPTY cells (CF4: one photo, once); a video copy is the same video.
+ * stagger with EMPTY cells (CF4: one photo, once); a video copy is the same video. A clip's copy is never duplicated (5b.2: `clip-frame`).
  */
-export function duplicateClip(spec: MontageDraft, index: number): Edit {
+export function duplicateClip(spec: MontageDraft, index: number, originOf: OriginOf = NO_ORIGINS): Edit {
   const clip = clipAt(spec, index);
+  if (isClipCopy(clip, originOf)) return refuse("clip-frame");
   const why = addRefusal(spec);
   if (why !== null) return refuse(why);
   const clipId = nextClipId(spec);
@@ -332,15 +373,15 @@ export function setStagger(spec: MontageDraft, index: number, on: boolean): Edit
   return done(clip.stagger === on ? spec : replaceClip(spec, index, { ...clip, stagger: on }));
 }
 
-/** Puts scene photo `photoId` (with `focus`) into cell `cell` of clip `clipIndex`; null empties the cell. */
-export function setCellPhoto(spec: MontageDraft, clipIndex: number, cell: number, photoId: string | null, focus: Focus | null = null): Edit {
+/** Puts scene photo `photoId` (with `focus`) into cell `cell` of clip `clipIndex`; null empties the cell. A photo whose frame is in the draft is refused. */
+export function setCellPhoto(spec: MontageDraft, clipIndex: number, cell: number, photoId: string | null, focus: Focus | null = null, originOf: OriginOf = NO_ORIGINS): Edit {
   const clip = clipAt(spec, clipIndex);
   if (clip.kind === "video") throw new RangeError(`clip ${clipIndex} is a video and has no cells`);
   const cells = cellsOf(clip);
   assertIndex(cell, cells.length, "cell index");
   const current = cells[cell]?.photo;
   if (photoId !== null && current?.source === "scene" && current.photoId === photoId) return done(spec);
-  if (photoId !== null && scenePhotoIds(spec).has(photoId)) return refuse("photo-in-draft");
+  if (photoId !== null && framePhotoIds(spec, originOf).has(photoId)) return refuse("photo-in-draft");
   const next = photoId === null ? EMPTY_CELL : sceneCell(photoId, focus);
   if (clip.kind === "photo") return done(replaceClip(spec, clipIndex, { ...clip, cell: next }));
   return done(replaceClip(spec, clipIndex, { ...clip, cells: clip.cells.map((c, i) => (i === cell ? next : c)) }));

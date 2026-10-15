@@ -1,7 +1,8 @@
-import type { MediaSummary, MontageDraft } from "../../../shared/engine";
+import type { MediaOrigin, MediaSummary, MontageDraft } from "../../../shared/engine";
 import { ownVideoIssues } from "../../../shared/montage";
 import type { EngineClient } from "../../engine/client";
 import type { EngineStore } from "../../engine/store";
+import type { OriginOf } from "./clipOps";
 import { sameJson } from "./json";
 import { type MediaRecords, useMediaRecords } from "./ownMedia";
 import type { EngineVerdict } from "./renderBlock";
@@ -28,6 +29,8 @@ export interface OwnVideo {
   readonly sourceFps: number;
   /** It was HDR and was tone-mapped to SDR. */
   readonly hdrToSdr: boolean;
+  /** 5b.2 (I5.59): the clip this video is the montage copy of; null for the owner's own video. */
+  readonly origin: MediaOrigin | null;
 }
 
 export type OwnVideos = MediaRecords<OwnVideo>;
@@ -40,7 +43,37 @@ export type VideoProblem = "media-unavailable" | "video-too-short";
 /** The editor's view of a media record: null for anything that is not a video with a size, a length and a source rate. */
 export function ownVideoOf(summary: MediaSummary): OwnVideo | null {
   if (summary.kind !== "video" || summary.width === null || summary.height === null || summary.durationMs === null || summary.sourceFps === null) return null;
-  return { mediaId: summary.mediaId, name: summary.name, width: summary.width, height: summary.height, durationMs: summary.durationMs, sourceFps: summary.sourceFps, hdrToSdr: summary.hdrToSdr };
+  return {
+    mediaId: summary.mediaId,
+    name: summary.name,
+    width: summary.width,
+    height: summary.height,
+    durationMs: summary.durationMs,
+    sourceFps: summary.sourceFps,
+    hdrToSdr: summary.hdrToSdr,
+    origin: summary.origin ?? null,
+  };
+}
+
+/** 5b.2 (I5.60): which of the draft's own videos are clips' montage copies, as their records say; the frame rule (`clipOps.ts`) reads it. */
+export function originOfVideos(videos: OwnVideos): OriginOf {
+  return (mediaId) => videos.held.get(mediaId)?.origin ?? undefined;
+}
+
+/**
+ * The records with the copies this editor placed itself (5b.2): a copy just placed is known at once (its origin, its length), before `media.list` answers for
+ * it. A record the list holds wins; a placed copy the list has answered for and does not hold (deleted with its clip meanwhile) stays gone.
+ */
+export function withPlaced(videos: OwnVideos, placed: ReadonlyMap<string, OwnVideo>): OwnVideos {
+  const extra = [...placed.values()].filter((video) => !videos.held.has(video.mediaId) && !videos.answered.has(video.mediaId));
+  if (extra.length === 0) return videos;
+  const held = new Map(videos.held);
+  const answered = new Set(videos.answered);
+  for (const video of extra) {
+    held.set(video.mediaId, video);
+    answered.add(video.mediaId);
+  }
+  return { held, answered };
 }
 
 /** What the window knows of the video `mediaId`. */

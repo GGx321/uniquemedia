@@ -12,7 +12,8 @@ import { type FillTarget, fillWords } from "./mine";
 
 // The «Фото» tab (Editor.dc.html, EditorNew.dc.html; P6–P15). 3d.3a placed photos from it; 3d.5 adds the chips: the draft's avatar
 // (read-only, CF15), «Неиспользованные N» (free photos only) and the category. The bin holds the avatar's eligible photos only, each
-// with the clip it is in (the slot badge). One photo → one video (Q1): a photo in a video or a render is dimmed and cannot be added.
+// with the clip it is in (the slot badge). One photo → one video (Q1): a photo in a video or a render is dimmed and cannot be added. 5b.2 (Q-F = 1, 57e):
+// so is a photo whose clip copy is in this draft: its frame is taken.
 
 export interface PhotoBinProps {
   readonly avatarName: string;
@@ -34,6 +35,8 @@ export interface PhotoBinProps {
   readonly addBlock: AddRefusal | null;
   /** A free photo dragged out of the bin (onto the track or a cell), or null when the drag ends. */
   readonly onDragPhoto: (photoId: string | null) => void;
+  /** 5b.2 (Q-F = 1, mockup 57e): the photos whose clip copies the draft holds: their frame is taken. */
+  readonly clipFrames?: ReadonlySet<string>;
 }
 
 /** The bin's «Показать ещё» (S4.P2): the bin is a picker of the avatar's photos, so the photos past the first 500 must be reachable too. */
@@ -46,6 +49,10 @@ export interface BinPaging {
 }
 
 const inVideos = (n: number): string => `в ${n} видео`;
+
+/** 5b.2 (57e): a photo whose clip copy is in this draft: the tile's band (and the state its `li` names); the title says it with a capital. */
+export const CLIP_IN_LABEL = "клип этого фото уже в ролике";
+export const CLIP_IN_TITLE = "Клип этого фото уже в ролике";
 
 /** The bin's line under the photos: what a click does now. */
 function binHint(fillTarget: PhotoBinProps["fillTarget"], addBlock: AddRefusal | null): string {
@@ -63,6 +70,8 @@ function stateLabel(tile: BinTile): string {
       return ` · использовано ${inVideos(Math.max(1, tile.photo.usedIn.length))}`;
     case "reserved":
       return " · в рендере";
+    case "clip-in":
+      return ` · ${CLIP_IN_LABEL}`;
     case "free":
       return " · не использовано";
   }
@@ -84,7 +93,7 @@ function actionLabel(tile: BinTile, fillTarget: PhotoBinProps["fillTarget"], add
   }
 }
 
-export function PhotoBin({ avatarName, avatarId, spec, photos, paging = null, filter, onFilter, onPick, fillTarget, addBlock, onDragPhoto }: PhotoBinProps) {
+export function PhotoBin({ avatarName, avatarId, spec, photos, paging = null, filter, onFilter, onPick, fillTarget, addBlock, onDragPhoto, clipFrames }: PhotoBinProps) {
   const hintId = useId();
   const categoryId = useId();
   const binRef = useRef<HTMLUListElement>(null);
@@ -105,7 +114,7 @@ export function PhotoBin({ avatarName, avatarId, spec, photos, paging = null, fi
   }, []);
   const all = photos ?? [];
   const eligible = all.filter((p) => p.eligible).length;
-  const tiles = binTiles(all, spec, filter);
+  const tiles = binTiles(all, spec, filter, clipFrames);
   const facets = binFacets(all, filter);
   const builtIns = facets.categories.filter((c) => isBuiltInCategory(c.category));
   const owners = facets.categories.filter((c) => !isBuiltInCategory(c.category));
@@ -197,6 +206,7 @@ export function PhotoBin({ avatarName, avatarId, spec, photos, paging = null, fi
                   data-photo-id={photo.photoId}
                   aria-label={`Фото ${n}: ${actionLabel(tile, fillTarget, addBlock)}`}
                   aria-describedby={hintId}
+                  title={tile.state === "clip-in" ? CLIP_IN_TITLE : undefined}
                   disabled={taken || does === "full"}
                   draggable={draggable}
                   onClick={() => onPick(photo.photoId)}
@@ -216,7 +226,14 @@ export function PhotoBin({ avatarName, avatarId, spec, photos, paging = null, fi
                 {taken && (
                   <>
                     <span className="ed-bin-dim" aria-hidden="true" />
-                    <span className="pill mono ed-bin-used">{tile.state === "used" ? (photo.usedIn.length > 0 ? inVideos(photo.usedIn.length) : "в видео") : "в рендере"}</span>
+                    {tile.state === "clip-in" ? (
+                      // 57e: a longer state than the bin's pill: a band at the tile's foot; the `li` says it already.
+                      <span className="edc-band edc-band-bin" aria-hidden="true">
+                        {CLIP_IN_LABEL}
+                      </span>
+                    ) : (
+                      <span className="pill mono ed-bin-used">{tile.state === "used" ? (photo.usedIn.length > 0 ? inVideos(photo.usedIn.length) : "в видео") : "в рендере"}</span>
+                    )}
                   </>
                 )}
                 {slot !== null && <span className="mono ed-bin-slot">{slot}</span>}
