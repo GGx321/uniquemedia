@@ -1,4 +1,4 @@
-import type { EngineError, EventMessage, ImportPrepare, ImportResult, ImportStage, JobProgress, JobState, MediaKind } from "../../shared/engine";
+import type { EngineError, EventMessage, ImportPrepare, ImportResult, ImportStage, JobProgress, JobState, MediaKind, MediaOrigin } from "../../shared/engine";
 
 // The own-media import model (3f.6, K29): pure logic, no screen. An import is no avatar's job, so the store keeps it apart from `jobs`
 // (`EngineView.imports`): from the snapshot, then from `job.progress` / `job.done` / `job.failed` / `job.cancelled` of kind `import`.
@@ -32,6 +32,11 @@ export interface ImportView {
    * «отменяем…», a cancelled one with it was the owner's own (nothing to tell), one without it was cancelled by the engine.
    */
   readonly cancelRequested: boolean;
+  /**
+   * 5b.2 (S5.WA4): the clip whose montage copy this job makes (`media.importClip`), from the job's ref; absent for the owner's own file. «Мои» leaves such
+   * a job out; the editor's «Клипы» tab draws its tile's «Готовим для монтажа…» from it, a window reload included.
+   */
+  readonly origin?: MediaOrigin;
 }
 
 export type ImportProgress = Extract<JobProgress, { kind: "import" }>;
@@ -60,8 +65,29 @@ export function importPercent(view: Pick<ImportView, "status" | "stage" | "done"
   return view.stage === "prepare" ? Math.min(99, COPY_SHARE + part(100 - COPY_SHARE)) : part(COPY_SHARE);
 }
 
-function fresh(ref: { readonly jobId: string; readonly mediaKind: MediaKind; readonly name: string }): ImportView {
-  return { jobId: ref.jobId, mediaKind: ref.mediaKind, name: ref.name, status: "queued", stage: "copy", done: 0, total: 0, prepare: null, mediaId: null, error: null, cancelRequested: false };
+/** What every event of an import names it by: the job, the file's kind and name, and (5b.2) the clip whose copy it makes. */
+interface ImportRef {
+  readonly jobId: string;
+  readonly mediaKind: MediaKind;
+  readonly name: string;
+  readonly origin?: MediaOrigin | undefined;
+}
+
+function fresh(ref: ImportRef): ImportView {
+  return {
+    jobId: ref.jobId,
+    mediaKind: ref.mediaKind,
+    name: ref.name,
+    status: "queued",
+    stage: "copy",
+    done: 0,
+    total: 0,
+    prepare: null,
+    mediaId: null,
+    error: null,
+    cancelRequested: false,
+    ...(ref.origin === undefined ? {} : { origin: ref.origin }),
+  };
 }
 
 /** The finished imports beyond the newest `MAX_FINISHED_IMPORTS` are dropped, oldest first; the order of the rest is kept. */
@@ -73,7 +99,7 @@ function capFinished(imports: readonly ImportView[]): readonly ImportView[] {
 }
 
 /** `patch` applied to the import `ref` names, created from that identity when this is the first the window hears of it (appended). */
-function patchImport(imports: readonly ImportView[], ref: Parameters<typeof fresh>[0], patch: (view: ImportView) => ImportView): readonly ImportView[] {
+function patchImport(imports: readonly ImportView[], ref: ImportRef, patch: (view: ImportView) => ImportView): readonly ImportView[] {
   const at = imports.findIndex((i) => i.jobId === ref.jobId);
   const current = at < 0 ? fresh(ref) : imports[at];
   if (current === undefined) return imports;
@@ -100,7 +126,7 @@ export function applyImportProgress(imports: readonly ImportView[], progress: Im
 
 /** A `job.done` of an import: its record's id, the whole bar. One first heard of here is made from its record. */
 export function applyImportDone(imports: readonly ImportView[], jobId: string, result: ImportResult): readonly ImportView[] {
-  const ref = { jobId, mediaKind: result.media.kind, name: result.media.name };
+  const ref: ImportRef = { jobId, mediaKind: result.media.kind, name: result.media.name, origin: result.media.origin };
   return patchImport(imports, ref, (view) => ({ ...view, status: "done", mediaId: result.mediaId, total: view.total, done: view.total, error: null }));
 }
 
@@ -169,6 +195,7 @@ export function importsFromSnapshot(states: readonly ImportState[], dismissed: R
         mediaId: state.mediaId,
         error: state.error ?? null,
         cancelRequested: asked.has(state.jobId) && (state.status === "queued" || state.status === "running" || state.status === "cancelled"),
+        ...(state.origin === undefined ? {} : { origin: state.origin }),
       };
     });
   return capFinished(views);

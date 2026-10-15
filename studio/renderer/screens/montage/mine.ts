@@ -96,9 +96,28 @@ function visualAction(media: MediaSummary, slot: number | null, options: Section
   return options.addBlock === null ? "append" : "full";
 }
 
-/** The tab's three sections: the imports on their way (queued or running) first, then the records, newest first. */
-export function mineSections(library: MineLibrary, imports: readonly ImportView[], spec: MontageDraft, options: SectionOptions): MineSections {
-  const active = imports.filter(isActiveImport);
+/** A clip's montage copy (5b.2, I5.59): the engine's file, never the owner's, so «Мои» never shows it. */
+const isClipCopy = (media: MediaSummary): boolean => media.origin?.kind === "clip";
+
+/** The imports «Мои» shows (its tiles, its status card, its failure cards): never one that makes a clip's copy (5b.2: its ref carries the clip's `origin`). */
+export function mineImports(imports: readonly ImportView[]): readonly ImportView[] {
+  return imports.some((view) => view.origin !== undefined) ? imports.filter((view) => view.origin === undefined) : imports;
+}
+
+/**
+ * The library «Мои» shows and counts (5b.2): the listing without the clips' copies, and its total less the copies listed (a copy past the 500 newest is not
+ * known, so it cannot be taken off). The same object when it lists no copy.
+ */
+export function mineLibrary(library: MineLibrary): MineLibrary {
+  const copies = library.media.filter(isClipCopy).length;
+  if (copies === 0) return library;
+  return { media: library.media.filter((media) => !isClipCopy(media)), total: Math.max(0, library.total - copies) };
+}
+
+/** The tab's three sections: the imports on their way (queued or running) first, then the records, newest first. A clip's copy is in neither (5b.2). */
+export function mineSections(all: MineLibrary, imports: readonly ImportView[], spec: MontageDraft, options: SectionOptions): MineSections {
+  const library = mineLibrary(all);
+  const active = mineImports(imports).filter(isActiveImport);
   const slots = ownSlots(spec);
   const total = totalMs(spec);
   const ownTrack = spec.music?.source === "own" ? spec.music : null;

@@ -27,6 +27,8 @@ import {
   MAX_POSTERS,
   type MineLibrary,
   mineHint,
+  mineImports,
+  mineLibrary,
   mineSections,
   nextListening,
   type PickOutcome,
@@ -523,7 +525,8 @@ export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, sele
     store.cancelRefused(target.jobId);
     if (mounted.current) setCancelError(reply.error);
   }
-  const imports = view.imports;
+  // 5b.2: a clip's copy being made is the «Клипы» tab's, never «Мои»'s: not a tile, not the status card, not a failure card.
+  const imports = mineImports(view.imports);
   const running = imports.find((i) => i.status === "running");
   const waiting = imports.filter((i) => i.status === "queued").length;
   const failures = imports.flatMap((i) => {
@@ -604,7 +607,8 @@ export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, sele
     }
   }
 
-  const library = list.state === "ready" ? list.library : { media: [], total: 0 };
+  // 5b.2: the clips' copies are the engine's files: never listed, never counted, never deleted by hand here.
+  const library = mineLibrary(list.state === "ready" ? list.library : { media: [], total: 0 });
   const sections = mineSections(library, imports, spec, { fillTarget, addBlock, selectedSticker });
   const empty = list.state === "ready" && library.media.length === 0 && !imports.some(isActiveImport);
   const montageMs = totalMs(spec);
