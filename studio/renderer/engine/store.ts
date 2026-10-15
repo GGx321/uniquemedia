@@ -8,6 +8,8 @@ import {
   type ClipPhase,
   type ClipMotionSource,
   type ClipRequest,
+  type ClipSuggestResult,
+  type ClipTranslateResult,
   type Draft,
   type EngineError,
   type EngineNotice,
@@ -265,6 +267,9 @@ export interface MotionCall {
 export function motionCallRunning(view: EngineView): boolean {
   return view.motionCalls.size > 0;
 }
+
+/** 5b.2 part C (S5.WC5b): what a part C call answered, kept for its photo's sheet when no sheet was open to show it. */
+export type MotionResult = { readonly kind: "suggest"; readonly result: ClipSuggestResult } | { readonly kind: "idea"; readonly result: ClipTranslateResult };
 
 /** The kinds of the part C calls on their way for this avatar's photo, in the order they were sent. */
 export function motionCallsOf(view: EngineView, avatarId: string, photoId: string): MotionCallKind[] {
@@ -838,6 +843,24 @@ export class EngineStore {
     this.update({ motionCalls });
   }
 
+  /**
+   * 5b.2 part C (S5.WC5b): the last answer of a call whose sheet was closed before it came, by avatar and photo — memory only, never the owner's idea text — so the sheet opened again says it
+   * once (a paid `none` or `rejected` would else be lost). Not part of the view: nothing on screen changes until a sheet takes it.
+   */
+  private readonly motionResults = new Map<string, MotionResult>();
+
+  keepMotionResult(avatarId: string, photoId: string, result: MotionResult): void {
+    this.motionResults.set(`${avatarId}/${photoId}`, result);
+  }
+
+  /** The kept answer for the photo, handed out once. */
+  takeMotionResult(avatarId: string, photoId: string): MotionResult | null {
+    const key = `${avatarId}/${photoId}`;
+    const kept = this.motionResults.get(key) ?? null;
+    this.motionResults.delete(key);
+    return kept;
+  }
+
   /** How many plain notices (nothing left behind) are kept; the warnings are never counted or dropped. */
   private static readonly PLAIN_AVATAR_NOTICES = 3;
   private avatarNoticeSeq = 0;
@@ -1360,6 +1383,7 @@ export class EngineStore {
         // 5b.2 part C: the engine waits for an avatar's running calls before it deletes it; any still on record here would never be answered for this window.
         const motionCalls = new Map(this.view.motionCalls);
         motionCalls.delete(avatarId);
+        for (const key of [...this.motionResults.keys()]) if (key.startsWith(`${avatarId}/`)) this.motionResults.delete(key);
         this.update({
           avatars: this.view.avatars.filter((a) => a.avatarId !== avatarId),
           drafts: this.view.drafts.filter((d) => d.avatarId !== avatarId),
