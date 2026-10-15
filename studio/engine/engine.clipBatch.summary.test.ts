@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ClipBatchSummary, ResponseMessage, type EventMessage } from "../shared/engine";
 import { BATCHES_DIR, ClipBatchFile, batchSummaryPath, startBatchFile } from "./clips/batchSummary";
 import { clipAttemptId } from "./clips/journal";
-import { writeClipRecord } from "./clips/store";
+import { journalOf, writeClipRecord } from "./clips/store";
 import { batchOf, cancelBatch, createBatch, plainPhotos, seedBatchAvatar } from "./clips/testing/batchKit";
 import { clipNetwork, clipsDir, command, jobEnd, listing, phasesOf, startClipEngine, until, type ClipEngine, type VideoScript } from "./clips/testing/engineClipKit";
 import { readyRecord } from "./clips/testing/recordsRig";
@@ -304,6 +304,36 @@ describe("round 2 (the money review)", () => {
     expect(summary.cost).toEqual({ micros: 840_000, kind: "billed" });
     const onDisk = ClipBatchFile.parse(JSON.parse(await readFile(batchSummaryPath(clipsDir(libraryDir(), avatarId), batchId), "utf8")));
     expect(onDisk.members[1]).toMatchObject({ outcome: "ready", clipIds: [jobIds[1], retry], costMicros: 420_000, costKind: "billed" });
+  });
+
+  test("a member the summary still had queued whose clip was sent (its turn's write lost to the crash) is recovered and made, its money open until the reconcile", async () => {
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(1));
+    const folder = clipsDir(libraryDir(), avatarId);
+    await mkdir(join(folder, BATCHES_DIR), { recursive: true });
+    const batchId = "batch-00000099";
+    const clipId = "clip-00000091";
+    const at = new Date(NOW - 2 * MIN).toISOString();
+    await writeFile(batchSummaryPath(folder, batchId), JSON.stringify(startBatchFile({ batchId, avatarId, createdAt: at, clipIds: [clipId] })));
+    const journal = journalOf(folder, clipId);
+    await journal.requested({
+      clipId,
+      photoId: photoIds[0] ?? "",
+      request: { model: "kling", quality: "std", seconds: 5, fallback: "auto" },
+      motion: { source: "code", label: "Моргает и улыбается", text: "she slowly blinks and gives a small smile" },
+      acceptedWorstMicros: 850_000,
+      batch: { batchId, batchIndex: 1, batchSize: 1 },
+      at,
+    });
+    await journal.submitted({ attemptId: clipAttemptId(clipId, 1), model: "kling", providerJobId: "job-kling-1", at });
+    await writeLedger(dir(), [{ type: "reserve", attemptId: clipAttemptId(clipId, 1), jobId: clipId, scope: { avatarJobId: clipId }, model: "kwaivgi/kling-v3.0-std", worstMicros: 504_000, at }]);
+
+    const engine = await startClipEngine(dir(), { timings: TIMINGS, monthlyBudgetMicros: BUDGET });
+    await until(() => engine.events().some((e) => e.type === "job.done" && e.payload.result.kind === "clip"), "the recovery's record");
+
+    const summary = await summaryOf(engine, avatarId, batchId);
+    expect(shape(summary)).toEqual([[1, "ready", 504_000, "open", 1]]);
+    expect(summary.endedAt).toBeDefined();
+    await engine.engine.shutdown();
   });
 });
 

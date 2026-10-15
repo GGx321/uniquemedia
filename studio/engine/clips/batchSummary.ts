@@ -37,7 +37,7 @@ const SUMMARY_NAME = /^(.+)\.json$/;
 
 // ---------- the pure rules (shared/engine/clipBatchSummary.ts, so the mock reads the same) ----------
 
-export { KEEP_BATCHES, afterRestart, applyBatchChange, memberCostOf, moneyOpen, newestFirst, runningClipIds, toForget, withCosts, type BatchChange, type MemberLook } from "../../shared/engine/clipBatchSummary";
+export { KEEP_BATCHES, afterRestart, applyBatchChange, clipIdsToLook, memberCostOf, moneyOpen, newestFirst, toForget, withCosts, type BatchChange, type MemberLook } from "../../shared/engine/clipBatchSummary";
 
 /** A batch as it is created, as the engine's file: every member queued under its first clip, free. */
 export function startBatchFile(start: { batchId: string; avatarId: string; createdAt: string; clipIds: readonly string[] }): ClipBatchFile {

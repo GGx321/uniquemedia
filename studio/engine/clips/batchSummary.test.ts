@@ -10,9 +10,9 @@ import {
   afterRestart,
   applyBatchChange,
   batchSummaryPath,
+  clipIdsToLook,
   moneyOpen,
   outcomeOfRecord,
-  runningClipIds,
   startBatchFile,
   summaryOf,
   toForget,
@@ -87,6 +87,11 @@ describe("applyBatchChange: a member moves only from where it stands, and only u
     expect(file.members[0]?.outcome).toBe("ready");
     const cancelled = applyBatchChange(fresh(), { kind: "cancelled", index: 3, clipId: clip(3), detail: "price-changed" });
     expect(applyBatchChange(cancelled, { kind: "running", index: 3, clipId: clip(3) }).members[2]?.outcome).toBe("cancelled");
+  });
+
+  test("a dropped member whose clip is recorded after all (a recovery after the restart) ends as its record says (round 2)", () => {
+    const dropped = applyBatchChange(fresh(1), { kind: "dropped", index: 1, clipId: clip(1) });
+    expect(applyBatchChange(dropped, { kind: "ended", index: 1, clipId: clip(1), outcome: "ready" }).members[0]?.outcome).toBe("ready");
   });
 
   test("a failed member whose clip is made after all (a download fetched again, a recovery) becomes ready", () => {
@@ -171,14 +176,22 @@ describe("afterRestart: no batch resumes after a restart (I5.63)", () => {
   const look = (entries: Record<string, MemberLook>): ReadonlyMap<string, MemberLook> => new Map(Object.entries(entries));
   const midBatch = (): ClipBatchFile => applyBatchChange(fresh(3), { kind: "running", index: 1, clipId: clip(1) });
 
-  test("the queued members are dropped, free, and the queue is over", () => {
-    const file = afterRestart(midBatch(), look({ [clip(1)]: { kind: "journal" } }), LATER);
+  test("the queued members whose clips left nothing anywhere are dropped, and the queue is over", () => {
+    const file = afterRestart(midBatch(), look({ [clip(1)]: { kind: "journal" }, [clip(2)]: { kind: "nothing" } }), LATER);
     expect(outcomes(file)).toEqual(["running", "dropped", "dropped"]);
     expect(file.endedAt).toBe(LATER);
   });
 
+  test("a member the summary still had queued is looked at like one at work (round 2: its turn's write can be lost after its POST left)", () => {
+    expect(clipIdsToLook(midBatch())).toEqual([clip(1), clip(2), clip(3)]);
+    const queued = fresh(1);
+    expect(afterRestart(queued, look({ [clip(1)]: { kind: "journal" } }), LATER).members[0]?.outcome).toBe("running");
+    expect(afterRestart(queued, look({ [clip(1)]: { kind: "record", outcome: "ready" } }), LATER).members[0]?.outcome).toBe("ready");
+    expect(afterRestart(queued, look({ [clip(1)]: { kind: "reserved" } }), LATER).members[0]?.outcome).toBe("failed");
+    expect(afterRestart(queued, look({ [clip(1)]: { kind: "nothing" } }), LATER).members[0]?.outcome).toBe("dropped");
+  });
+
   test("the member that was sent and has a journal stays at work: its recovery will tell its end", () => {
-    expect(runningClipIds(midBatch())).toEqual([clip(1)]);
     expect(afterRestart(midBatch(), look({ [clip(1)]: { kind: "journal" } }), LATER).members[0]?.outcome).toBe("running");
   });
 

@@ -60,7 +60,7 @@ import {
   clipBatchOutcomeOf,
   moneyOpen,
   newestFirst,
-  runningClipIds,
+  clipIdsToLook,
   startBatchState,
   toForget,
   withCosts,
@@ -1409,8 +1409,8 @@ export class MockClips {
       return this.#lines.some((line) => line.clipId === clipId) ? { kind: "reserved" } : { kind: "nothing" };
     };
     for (const [batchId, state] of this.#summaries) {
-      if (state.endedAt !== undefined && runningClipIds(state).length === 0) continue;
-      const next = afterRestart(state, new Map(runningClipIds(state).map((clipId) => [clipId, look(clipId)])), at);
+      if (state.endedAt !== undefined && clipIdsToLook(state).length === 0) continue;
+      const next = afterRestart(state, new Map(clipIdsToLook(state).map((clipId) => [clipId, look(clipId)])), at);
       this.#summaries.set(batchId, withCosts(next, this.#costsOf(next)));
     }
   }

@@ -444,13 +444,15 @@ export const MAX_LISTED_BATCHES = 20;
 
 /**
  * Where a member of a batch stands, as the ENGINE wrote it at each of its transitions (never derived from the records, so a clip the owner deleted stays what it was):
- * - queued: waits for its turn (memory-only in the engine; a restart turns it `dropped`);
+ * - queued: waits for its turn (memory-only in the engine; a restart looks at its clip, and with nothing of it anywhere turns it `dropped`);
  * - running: its turn came (from `preparing` to its record, a recovery after a restart included);
  * - ready: its clip was made;
  * - refused: the provider refused its content (`refused-*`, or Grok had no room behind a free Kling refusal);
- * - failed: it ended without a clip for any other reason (a failed download, a 429 for the second time, a key refused, a ledger that refused its reserve, …);
+ * - failed: it ended without a clip for any other reason (a failed download, a 429 for the second time, a key refused, a ledger that refused its reserve, a restart that found only its reserve, …);
  * - cancelled: it never ran, and `detail` says why (`ClipCancelDetail`);
- * - dropped: it never ran because the engine stopped (a quit, a restart): free.
+ * - dropped: the engine stopped before it was made (a quit, a restart) and nothing of its clip was found.
+ * An outcome NEVER tells money: a member's money is its `costMicros` and `costKind` and the batch's is its `cost`, the ledger's, whatever the outcome (round 2: a member a restart dropped may still have a reserve
+ * open). The window says «бесплатно» only from a `free` cost.
  */
 export const CLIP_BATCH_OUTCOMES = ["queued", "running", "ready", "refused", "failed", "cancelled", "dropped"] as const;
 export const ClipBatchOutcome = z.enum(CLIP_BATCH_OUTCOMES);

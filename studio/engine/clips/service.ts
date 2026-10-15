@@ -47,9 +47,9 @@ import {
   BatchSummaryStore,
   afterRestart,
   applyBatchChange,
+  clipIdsToLook,
   moneyOpen,
   outcomeOfRecord,
-  runningClipIds,
   startBatchFile,
   toForget,
   withCosts,
@@ -1103,12 +1103,12 @@ export class ClipService {
     for (const avatar of library.listAvatars()) {
       const clipsDir = clipsDirOf(library, avatar.id);
       for (const file of await this.#summaries.read(clipsDir)) {
-        if (file.endedAt !== undefined && runningClipIds(file).length === 0) continue;
+        if (file.endedAt !== undefined && clipIdsToLook(file).length === 0) continue;
         if (this.#batches.get(file.batchId)?.over === false) continue;
         await this.#summaries.change(clipsDir, file.batchId, async (current) => {
           if (current === null) return null;
           const looks = new Map<string, MemberLook>();
-          for (const clipId of runningClipIds(current)) looks.set(clipId, await this.#lookAfterRestart(clipsDir, clipId));
+          for (const clipId of clipIdsToLook(current)) looks.set(clipId, await this.#lookAfterRestart(clipsDir, clipId));
           return this.#priced(afterRestart(current, looks, at));
         });
       }

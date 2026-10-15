@@ -198,8 +198,10 @@ import { z } from "zod";
 //    `cancelled` | `dropped` (`CLIP_BATCH_OUTCOMES`); `detail` (a `ClipCancelDetail`) comes only and always with `cancelled`; `clipIds` are 1..2 (a 429 requeue adds the second), a clip in one member only; `stop` is one of
 //    `CLIP_BATCH_STOPS`, told only when it cancelled a member, and leaves nothing queued; `endedAt` comes only with nothing queued. Every money figure is integer micros with its kind (`ClipCostKind`): a member's is the
 //    ledger's for its clip ids (`clipCostsOf`, I5.49: the clips' own tile figure, which stays once a clip is deleted because the ledger keeps its lines), and `cost` is `clipBatchCostOf(members)`, the batch's ONE total.
-//  - on disk: `avatars/<id>/clips/batches/<batchId>.json` (`ClipBatchFile`, `schemaVersion` 1, strict) is a NEW store, written atomically by the engine at each member transition and when a restart ends a batch (queued
-//    members `dropped`); a clip delete never touches it. The engine keeps the newest 20 per avatar, and any older one whose money is still open.
+//    Money is told ONLY by `costMicros`/`costKind` and `cost`, never by `outcome` (a member a restart dropped may still have a reserve open).
+//  - on disk: `avatars/<id>/clips/batches/<batchId>.json` (`ClipBatchFile`, `schemaVersion` 1, strict) is a NEW store, written atomically by the engine at each member transition and when a restart ends a batch (a member
+//    still queued or at work is told by its clip's journal, record or reserve; with nothing of it anywhere it is `dropped`); a clip delete never touches it. The engine keeps the newest 20 per avatar, and any older one
+//    whose money is still open or whose queue isn't finished.
 //  - Rollback (checked against 91adc7f0's readers): a 5b.1 build looks only at FILES directly in `clips/` (`clips.list` by `<clipId>.json`, the startup recovery and its sweep by a clip id and a known suffix, `exportNumbers`
 //    by files only, `main/media/resolve.ts` by named paths), so it ignores the `batches` folder: nothing becomes unreadable, nothing is swept, an avatar delete takes the folder with the avatar, and a 5b.2+ build reads the
 //    summaries again. `batches`, `ClipBatchSummary` and its enums are wire-only within one build (91adc7f0's `clips.list` result is strict, but the window and the engine ship together). Studio has no downgrade path.

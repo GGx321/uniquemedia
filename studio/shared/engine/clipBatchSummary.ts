@@ -48,11 +48,14 @@ export type BatchChange =
 
 type Outcome = ClipBatchMemberSummary["outcome"];
 
-/** Where each change may move a member from. A member made, refused, cancelled or dropped never moves again (a word that comes late about it is ignored). */
+/**
+ * Where each change may move a member from. A member made, refused or cancelled never moves again (a word that comes late about it is ignored). A clip's own end (`ended`, from its job or its record) is the truth
+ * about it, so it also lifts a member the restart had to call `dropped` or `failed` without its record.
+ */
 const FROM: Readonly<Record<"running" | "requeued" | "ended" | "cancelled" | "dropped", readonly Outcome[]>> = {
   running: ["queued"],
   requeued: ["queued", "running"],
-  ended: ["queued", "running", "failed"],
+  ended: ["queued", "running", "failed", "dropped"],
   cancelled: ["queued", "running"],
   dropped: ["queued", "running"],
 };
@@ -66,7 +69,7 @@ function moveMember(member: ClipBatchMemberSummary, change: Extract<BatchChange,
     case "running":
       return { ...rest, outcome: "running" };
     case "ended":
-      // Only a clip that was made lifts a failed member (a download fetched again, a recovery's record): a failed member never turns refused or failed again.
+      // Only a clip that was made lifts a failed member (a download fetched again, a recovery's record): a failed member never turns refused or failed again. A dropped one takes its clip's end, whatever it is.
       if (member.outcome === "failed" && change.outcome !== "ready") return member;
       return { ...rest, outcome: change.outcome };
     case "cancelled":
@@ -138,23 +141,26 @@ export function clipBatchOutcomeOf(outcome: { readonly status: "ready" } | { rea
  */
 export type MemberLook = { readonly kind: "journal" } | { readonly kind: "record"; readonly outcome: "ready" | "refused" | "failed" } | { readonly kind: "reserved" } | { readonly kind: "nothing" };
 
-/** The newest clip of each member at work: what a restart looks up. */
-export function runningClipIds(state: ClipBatchState): string[] {
-  return state.members.flatMap((m) => (m.outcome === "running" ? m.clipIds.slice(-1) : []));
+/**
+ * The newest clip of each member still queued or at work: what a restart looks up. A queued member is looked at too: its turn's write can be lost to a crash after its POST left (round 2), and only its clip's
+ * journal, record and reserve can tell.
+ */
+export function clipIdsToLook(state: ClipBatchState): string[] {
+  return state.members.flatMap((m) => (m.outcome === "queued" || m.outcome === "running" ? m.clipIds.slice(-1) : []));
 }
 
 /**
- * The summary of a batch the process was running when it stopped (I5.63): no batch resumes after a restart, so its queue is over now. A queued member is dropped (memory-only, free). A member at work stays at
- * work while its journal waits for the recovery; otherwise it ends as its record says, failed when only the ledger says it moved money, dropped when nothing of it is anywhere. A batch that ended is left as it is.
+ * The summary of a batch the process was running when it stopped (I5.63): no batch resumes after a restart, so its queue is over now. A member still queued or at work is told by its newest clip: at work while
+ * its journal waits for the recovery (which tells its end); as its record says; failed when only the ledger says it moved money; dropped when nothing of it is anywhere (memory-only, never ran). Its money is
+ * never decided here: it is the ledger's (`costMicros`/`costKind`). A batch that ended is left as it is.
  */
 export function afterRestart<T extends ClipBatchState>(state: T, looks: ReadonlyMap<string, MemberLook>, at: string): T {
   const members = state.members.map((m): ClipBatchMemberSummary => {
-    if (m.outcome === "queued") return { ...m, outcome: "dropped" };
-    if (m.outcome !== "running") return m;
+    if (m.outcome !== "queued" && m.outcome !== "running") return m;
     const look = looks.get(m.clipIds.at(-1) ?? "") ?? { kind: "nothing" };
     switch (look.kind) {
       case "journal":
-        return m;
+        return { ...m, outcome: "running" };
       case "record":
         return { ...m, outcome: look.outcome };
       case "reserved":
