@@ -506,6 +506,18 @@ describe("60b–60f: the end and the stops", () => {
     expect(focusedLabel()).toBe("button «Оживить выбранные · 3»");
   });
 
+  test("60f, the late member's tile: its line and its money keep the dash off the start of a line (S5.WB4c)", async () => {
+    const h = await openNini();
+    h.engine.scriptNextBatch(["late"]);
+    await startBatch([[1], [3]]);
+    const lateTile = (): HTMLElement | undefined => screen.queryAllByRole("article", { name: /^Клип в работе: / }).find((a) => a.textContent?.includes("Задерживается") === true);
+    await until(h, () => lateTile() !== undefined, "the late member");
+    const tile = lateTile();
+    if (tile === undefined) throw new Error("no late tile");
+    expect(tile.querySelector(".clip-phase")?.textContent).toMatch(new RegExp(`^Задерживается\\. Клип ещё может прийти до \\d\\d:\\d\\d${NBSP}— потом понадобится сверка расходов\\.$`));
+    expect(tile.querySelector(".clip-meta")?.textContent).toBe(`до $0.51${NBSP}— спишется при сверке`);
+  });
+
   test("60f: a member's money is uncertain — the rest is not spent blind: «Клип задержался или не ясно, оплачен ли он — оставшиеся 2 не снимались…»", async () => {
     const h = await openNini();
     h.engine.scriptNextBatch(["uncertain"]);
@@ -605,6 +617,154 @@ describe("round 2 (S5.WB4b): the header from the engine's summary", () => {
     await flush();
     expect(clipsHeading()).toBeDefined();
     expect((document.querySelector(".batch-head") ?? null) === null).toBe(true);
+  });
+});
+
+describe("round 3 (S5.WB4c): the links and the words around a running batch", () => {
+  const ZOE: AvatarSummary = { ...MIA, avatarId: "avatar-zoe-0001", name: "Zoe", masterPhotoId: "photo-zoe-master" };
+  const ZOE_PHOTOS = [scenePhoto(1, { qa: { faceCos: 0.86 } }, ZOE), scenePhoto(3, { qa: { faceCos: 0.86 } }, ZOE)];
+
+  /** Nini's batch of three, started straight on the engine (another window's), then Zoe's screen open. */
+  async function ninisBatchSeenFromZoe() {
+    const photos = [...PHOTOS, ...ZOE_PHOTOS];
+    const h = setup({ avatars: [{ ...NINI, photoCount: PHOTOS.length, eligibleUnusedCount: PHOTOS.length }, { ...ZOE, photoCount: 2, eligibleUnusedCount: 2 }], photos, money: MONTH });
+    const ids = [PLAIN.photoId, USED.photoId, OTHER.photoId];
+    const options = await h.client.request("clips.batchOptions", { avatarId: NINI.avatarId, photoIds: ids });
+    if (!options.ok) throw new Error("no batch options");
+    const made = await h.client.request("clips.createBatch", {
+      avatarId: NINI.avatarId,
+      items: ids.map((photoId) => ({ photoId, motionId: "g-blink" })),
+      quality: "std",
+      seconds: 5,
+      fallback: "auto",
+      acceptedWorstMicros: options.result.sums.std5.worst,
+    });
+    if (!made.ok) throw new Error(`no batch: ${made.error.code}`);
+    fireEvent.click(await screen.findByRole("button", { name: "Zoe" }));
+    await screen.findByRole("heading", { level: 1, name: "Zoe" });
+    await flush();
+    tick(h.scheduler, 2);
+    await flush();
+    return h;
+  }
+
+  test("MEDIUM: Nini's batch seen on Zoe's screen names Nini, and «отмените оставшиеся» opens NINI's «Клипы», not Zoe's", async () => {
+    await ninisBatchSeenFromZoe();
+    await clipsMode();
+    fireEvent.click(pickFor("клипов", 1));
+    await flush();
+    expect(whyOf(bar())).toBe(`Сейчас снимаются клипы пакета Nini${NBSP}— дождитесь окончания или отмените оставшиеся.`);
+    fireEvent.click(screen.getByRole("button", { name: "отмените оставшиеся" }));
+    await flush();
+    await flush();
+    expect(screen.getByRole("heading", { level: 1, name: "Nini" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: /^Клипы/ }).getAttribute("aria-selected")).toBe("true");
+    expect(within(batchHead()).getByRole("button", { name: "Отменить оставшиеся" })).toBeDefined();
+  });
+
+  test("the sidebar's «Клип 1/3 · Nini» leads to Nini's «Клипы» too", async () => {
+    await ninisBatchSeenFromZoe();
+    fireEvent.click(within(sidebarQueue()).getByRole("button", { name: "Клип 1/3 · Nini" }));
+    await flush();
+    await flush();
+    expect(screen.getByRole("heading", { level: 1, name: "Nini" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: /^Клипы/ }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  test("nothing left to cancel (the last member in flight): the reason stays, the link goes", async () => {
+    const h = await openNini();
+    await startBatch([[1]]);
+    await until(h, () => screen.queryAllByText(/^Снимается/).length > 0, "the one member rendering");
+    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
+    await flush();
+    await pickClips([6]);
+    expect(whyOf(bar())).toBe(`Сейчас снимаются клипы пакета${NBSP}— дождитесь окончания или отмените оставшиеся.`);
+    expect(screen.queryAllByRole("button", { name: "отмените оставшиеся" })).toHaveLength(0);
+  });
+
+  test("«Отменить оставшиеся» goes when the last member's turn comes: a focus on it moves to the header's line", async () => {
+    const h = await openNini();
+    await startBatch([[1], [3]]);
+    await until(h, () => document.querySelector(".clip-tile-work:not(.clip-tile-queued)") !== null, "the first member at work");
+    within(batchHead()).getByRole("button", { name: "Отменить оставшиеся" }).focus();
+    await until(h, () => within(batchHead()).queryAllByRole("button", { name: "Отменить оставшиеся" }).length === 0, "the queue empty");
+    expect(document.activeElement?.classList.contains("batch-title")).toBe(true);
+  });
+
+  test("a clip pick's place in the batch is in its name: «… · в пакете 2»", async () => {
+    await openNini();
+    await clipsMode();
+    await pickClips([6], [1]);
+    expect(pickFor("клипов", 1).getAttribute("aria-label")).toBe("Выбрать для клипов: фото 1, Дом · в пакете 2");
+  });
+
+  test("«Отметить их снова» adds the photos not shot to the photos already picked for clips", async () => {
+    const h = await openNini();
+    await clipsMode();
+    await pickClips([1], [3], [2]);
+    const s = await openBatchSheet();
+    fireEvent.click(mainButton(s));
+    await flush();
+    await flush();
+    h.engine.setClipRates({ std: { perSecondMicros: 90_000, perInputImageMicros: 0 }, pro: { perSecondMicros: 112_000, perInputImageMicros: 0 }, grok: { perSecondMicros: 160_000, perInputImageMicros: 10_000 } });
+    act(() => h.engine.passClipTime(11 * 60_000));
+    await flush();
+    await until(h, () => headLine()?.startsWith("Цена у OpenRouter выросла") === true, "the price stop");
+    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
+    await flush();
+    await pickClips([6]);
+    fireEvent.click(screen.getByRole("tab", { name: /^Клипы/ }));
+    await flush();
+    fireEvent.click(within(batchHead()).getByRole("button", { name: "Отметить их снова" }));
+    await flush();
+    await flush();
+    expect([6, 1, 3, 2].map((n) => pickFor("клипов", n).textContent)).toEqual(["1", "2", "3", "4"]);
+  });
+
+  test("PRICE_CHANGED that leaves the new sum over the month says the month in the same alert, and does not ask to confirm", async () => {
+    const h = await openNini({ money: { spentMicros: 6_800_000, monthlyBudgetMicros: 10_000_000 } });
+    await clipsMode();
+    await pickClips(...FIVE);
+    const s = await openBatchSheet();
+    h.engine.setClipRates({ std: { perSecondMicros: 84_000, perInputImageMicros: 0 }, pro: { perSecondMicros: 112_000, perInputImageMicros: 0 }, grok: { perSecondMicros: 160_000, perInputImageMicros: 10_000 } });
+    act(() => h.engine.passClipTime(11 * 60_000));
+    fireEvent.click(mainButton(s));
+    await flush();
+    await flush();
+    const alerts = within(s).getAllByRole("alert");
+    expect(alerts.map((a) => a.textContent)).toEqual(["Цена изменилась: теперь не больше $3.42. Не хватает месячного бюджета: пакету нужно до $3.42, осталось $3.20. Уберите часть фото или поднимите бюджет в Настройках."]);
+    expect(within(s).queryAllByRole("status")).toHaveLength(0);
+    expect(focusedLabel()).toBe("button «Отмена»");
+  });
+
+  test("PRICE_UNAVAILABLE at the click that reads again when asked: a short status says why nothing went", async () => {
+    const h = await openNini();
+    await clipsMode();
+    await pickClips(...FIVE);
+    const s = await openBatchSheet();
+    // The listing did not read at the click and reads again when the sheet asks: the sheet looks as it did.
+    h.engine.failNext("clips.createBatch", { code: "PRICE_UNAVAILABLE", priceScope: "video", detail: "the video listing did not read" });
+    fireEvent.click(mainButton(s));
+    await flush();
+    await flush();
+    expect(callsOf(h.engine, "clips.createBatch")).toHaveLength(1);
+    expect(within(s).getByRole("status").textContent).toBe(`Цены видео не прочитались при отправке${NBSP}— запросили их снова. Подтвердите ещё раз.`);
+    expect(mainButton(s).textContent).toBe("Оживить 4 · до $3.06");
+    expect(focusedLabel()).toBe("button «Отмена»");
+  });
+
+  test("no key: the sheet says it in the one wording, «Нужен ключ OpenRouter — Настройки.» with its link", async () => {
+    const h = await openNini();
+    await clipsMode();
+    await pickClips([1]);
+    const s = await openBatchSheet();
+    // The key removed from another window while the sheet is open.
+    await act(async () => {
+      await h.client.request("settings.clearApiKey", {});
+    });
+    await flush();
+    expect(within(s).getByRole("status").textContent).toBe(`Нужен ключ OpenRouter${NBSP}— Настройки.`);
+    expect(within(s).getByRole("button", { name: "Настройки" })).toBeDefined();
   });
 });
 
