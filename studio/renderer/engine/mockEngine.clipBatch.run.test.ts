@@ -342,7 +342,7 @@ describe("the stops (I5.62): the rest is cancelled for free, every hold released
     expect(rest(m, jobIds)).toEqual(["cancelled", "cancelled"]);
     expect(m.engine.peekClips().posts).toHaveLength(0);
     expect([...m.engine.peekClips().monthHolds]).toEqual([]);
-    expect((await money(m)).openReserveMicros ?? 0).toBe(0);
+    expect((await money(m)).unsettledMicros).toBe(0);
   });
 
   test("a reserve the ledger refuses (halted, or a reconcile to do) fails that member and stops the rest `ledger-stopped`", async () => {
