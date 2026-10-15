@@ -103,6 +103,13 @@ describe("the word gate has one home (static)", () => {
   // S5.WC2 round 3: the one motion check's GARMENT list names it as well, only to recognise a motion that takes it off («drops her babydoll»); the exemption stays the content line's.
   test("the bold exemption is named only in boldRules.ts and read only by the content line, and the garment is worn only in the «Смелая» nightwear bank", () => {
     expect(filesWith(/\bBOLD_EXEMPT_YOUTH\b/)).toEqual(["shared/scenes/banks/boldRules.ts", "shared/scenes/contentLine.ts"]);
-    expect(filesWith(/babydoll/i)).toEqual(["shared/scenes/banks/boldRules.ts", "shared/scenes/banks/nightwear.ts", "shared/scenes/contentLine.ts", "shared/scenes/motionText.ts"]);
+    // S5.WC2b round 2: the motion grammar's closed garment list recognises it too (a dressing form may move it, nothing else may), as motionText.ts does.
+    expect(filesWith(/babydoll/i)).toEqual([
+      "shared/scenes/banks/boldRules.ts",
+      "shared/scenes/banks/nightwear.ts",
+      "shared/scenes/contentLine.ts",
+      "shared/scenes/motionGrammar.ts",
+      "shared/scenes/motionText.ts",
+    ]);
   });
 });
