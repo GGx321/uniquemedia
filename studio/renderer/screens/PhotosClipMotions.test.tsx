@@ -619,7 +619,7 @@ describe("the paid buttons' refusals, as the other paid buttons'", () => {
     expect(news("alert", s)).toBe("Месячный бюджет исчерпан. Увеличьте его в Настройках или дождитесь следующего месяца.");
   });
 
-  test("`motions-full`: «Для этого фото больше нельзя добавить движений — выберите другое фото.»", async () => {
+  test("`motions-full`: «Для этого фото новых движений больше не добавить — выберите из списка.»", async () => {
     const h = await openNini();
     const s = await openSheet();
     // A store that has issued its last id (the engine never reuses one).
@@ -629,7 +629,7 @@ describe("the paid buttons' refusals, as the other paid buttons'", () => {
     });
     fireEvent.click(suggestButton(s));
     await settle();
-    expect(plain(s.querySelector(".mc-scroll .notice")?.textContent)).toBe("Для этого фото больше нельзя добавить движений — выберите другое фото.");
+    expect(plain(s.querySelector(".mc-scroll .notice")?.textContent)).toBe("Для этого фото новых движений больше не добавить — выберите из списка.");
   });
 });
 
