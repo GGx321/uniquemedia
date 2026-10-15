@@ -59,8 +59,11 @@ export function monthLine(money: MoneyStatus | null, mode: "auto" | "offer" = GR
 
 // ---------- the members of a batch ----------
 
-/** Where a member stands: made, at work, waiting its turn, late, refused (a record that is not a clip), or not shot (no clip will come of it). */
-export type MemberState = "done" | "run" | "wait" | "late" | "refused" | "off";
+/**
+ * Where a member stands: made, at work, waiting its turn, late, refused (a record that is not a clip), not shot (no clip will come of it), or `removed` — made, and its record since deleted by the owner
+ * (its job ended `done` and the list read after that holds nothing of it): in no part, and never «не снимался».
+ */
+export type MemberState = "done" | "run" | "wait" | "late" | "refused" | "off" | "removed";
 
 export interface BatchMember {
   /** 1-based, the pick order. */
@@ -141,11 +144,20 @@ function recordsByIndex(records: readonly ClipSummary[], batchId: string): Map<n
 
 /** The stop details, in the order one is named when several were told. A photo gone or unreadable is the member's own and stops nothing. */
 const STOPS: readonly ClipCancelDetail[] = ["ledger-stopped", "money-uncertain", "price-changed", "price-unavailable", "cancelled"];
-const OWN_PHOTO: readonly ClipCancelDetail[] = ["photo-gone", "photo-unreadable"];
+type OwnPhotoDetail = "photo-gone" | "photo-unreadable";
+const isOwnPhoto = (why: MemberRead["why"]): why is OwnPhotoDetail => why === "photo-gone" || why === "photo-unreadable";
 
 interface MemberRead extends BatchMember {
-  /** Why an `off` member was not shot. */
-  readonly why: ClipCancelDetail | "failed" | "dropped" | "not-retried" | null;
+  /** Why an `off` member was not shot: the cancel's detail, its job's failure, or `dropped` (a restart, or the engine ending it without a word). */
+  readonly why: ClipCancelDetail | "failed" | "dropped" | null;
+}
+
+/** Why a member none of whose jobs is at work came to nothing: by its latest job. A cancel the engine gave no reason for is not the owner's: it is dropped, as a restart drops. */
+function offWhy(jobs: readonly ClipJob[]): MemberRead["why"] {
+  const latest = jobs.at(-1);
+  if (latest?.status === "cancelled") return latest.clip.detail ?? "dropped";
+  if (latest?.status === "failed") return "failed";
+  return "dropped";
 }
 
 function readMember(index: number, records: readonly ClipSummary[], jobs: readonly ClipJob[], recordIds: ReadonlySet<string>, pending: (job: JobView) => boolean): MemberRead {
@@ -159,16 +171,20 @@ function readMember(index: number, records: readonly ClipSummary[], jobs: readon
   }
   // Its job ended and its record is on its way to the list: still the tile's «Сохраняем».
   if (jobs.some((job) => job.status === "done" && !recordIds.has(job.clip.clipId) && pending(job))) return at("run");
+  /** A job of this member that made a record the list read after it no longer holds: the owner deleted that record. */
+  const deleted = (except: string | null): boolean => jobs.some((job) => job.status === "done" && job.clip.clipId !== except && !recordIds.has(job.clip.clipId));
   if (last !== undefined) {
     if (last.status === "ready") return at("done");
-    // A first 429 whose retry never ran (the owner cancelled it, a stop came first): no clip came of the member, for free. A second 429 is the member's final refusal.
-    if (last.failure.reason === "rate-limited" && records.length === 1) return at("off", jobs.findLast((job) => job.status === "cancelled")?.clip.detail ?? "not-retried");
+    if (last.failure.reason === "rate-limited" && records.length === 1) {
+      // The first 429's record deleted: this one is the retry's, the member's final refusal.
+      if (deleted(last.clipId)) return at("refused");
+      // A first 429 whose retry never ran (the owner cancelled it, a stop came first, a restart dropped it): no clip came of the member, for free.
+      return at("off", offWhy(jobs.filter((job) => job.clip.clipId !== last.clipId)));
+    }
     return at("refused");
   }
-  const cancelled = jobs.findLast((job) => job.status === "cancelled");
-  if (cancelled !== undefined) return at("off", cancelled.clip.detail ?? "cancelled");
-  if (jobs.some((job) => job.status === "failed")) return at("off", "failed");
-  return at("off", "dropped");
+  if (jobs.at(-1)?.status === "done" && deleted(null)) return at("removed");
+  return at("off", offWhy(jobs));
 }
 
 const one = (n: number): boolean => n % 10 === 1 && n % 100 !== 11;
@@ -209,13 +225,14 @@ export function batchView(batchId: string, input: BatchInput): BatchView | null 
   const count = (state: MemberState): number => members.filter((m) => m.state === state).length;
   const counts: BatchCounts = { done: count("done"), running: count("run"), queued: count("wait"), notShot: count("off"), refused: count("refused") };
   const off = members.filter((m) => m.state === "off");
-  const ownPhoto = off.findLast((m) => m.why !== null && OWN_PHOTO.includes(m.why as ClipCancelDetail))?.why as ClipCancelDetail | undefined;
+  const ownPhoto = off.map((m) => m.why).findLast(isOwnPhoto);
   const photoLine = ownPhoto === undefined ? null : clipCancelDetailRu(ownPhoto, 1);
   const base = { batchId, size, members: members.map(({ index, state, photoId }) => ({ index, state, photoId })), counts, again: null };
   const live = counts.running > 0 || counts.queued > 0;
   const close = counts.queued === 0 && counts.running === 0;
 
-  const stop = STOPS.find((detail) => off.some((m) => m.why === detail));
+  // A cancel is the batch's stop once nothing waits any more: one queued member cancelled on its own (`avatars.cancel`) leaves the rest waiting.
+  const stop = STOPS.find((detail) => off.some((m) => m.why === detail) && (detail !== "cancelled" || counts.queued === 0));
   if (stop !== undefined) {
     const told = off.filter((m) => m.why === stop);
     const asked = input.cancelled?.batchId === batchId ? input.cancelled.count : 0;
@@ -260,8 +277,8 @@ function doneHeader(records: readonly ClipSummary[], batchId: string, finals: re
   const own = records.filter((record) => record.batchId === batchId);
   const refusals = finals.filter((record) => record.status === "failed");
   const free = refusals.every((record) => record.cost.kind === "free");
-  // No engine figure sums a batch (plan s5b2 §6 60b): the header adds its records' ledger costs, each the engine's own (`ClipCost`, I5.49).
-  const total = own.reduce((sum, record) => sum + record.cost.micros, 0);
+  // No engine figure sums a batch (plan s5b2 §6 60b): the header adds its records' ledger costs, each the engine's own (`ClipCost`, I5.49). noRendererMoney.test.ts lists it.
+  const total = own.reduce((totalMicros, record) => totalMicros + record.cost.micros, 0);
   const ceiling = own.some((record) => record.cost.kind === "estimated" || record.cost.kind === "open");
   const parts = [
     counts.done > 0 ? `${counts.done} ${plural(counts.done, CLIP_FORMS)}` : "",
@@ -278,7 +295,7 @@ function worstLine(finals: readonly ClipSummary[]): string | null {
   const first = worst[0];
   if (first === undefined) return null;
   if (worst.length === 1) return `Отказ учтён по максимуму ${upUsd(first.cost.micros)}: не удалось доказать, что он бесплатный.`;
-  return `Отказы учтены по максимуму ${upUsd(worst.reduce((sum, record) => sum + record.cost.micros, 0))}: не удалось доказать, что они бесплатные.`;
+  return `Отказы учтены по максимуму ${upUsd(worst.reduce((worstMicros, record) => worstMicros + record.cost.micros, 0))}: не удалось доказать, что они бесплатные.`;
 }
 
 // ---------- the records of a batch on the «Клипы» tab (README decision 9) ----------

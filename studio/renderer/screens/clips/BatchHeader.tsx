@@ -8,8 +8,8 @@ import type { BatchTone, BatchView, MemberState } from "./batchModel";
 // and a restart), the second line a stop, a cancel, a restart or a photo gone says, a strip of the members' photos in turn order, and the one action: «Отменить оставшиеся» while members wait, else ✕
 // (and 60e's «Отметить их снова»). It is not a live region (decision 13): after «Отменить оставшиеся» the focus goes to its line, which is read then.
 
-/** A strip cell per member state (the mockup's `.batch-cell-*`): made, at work, waiting, refused, late, not shot. */
-const CELL: Record<MemberState, string> = { done: "done", run: "run", wait: "wait", refused: "refused", late: "late", off: "off" };
+/** A strip cell per member state (the mockup's `.batch-cell-*`): made, at work, waiting, refused, late, not shot; a clip made and since deleted reads as made. */
+const CELL: Record<MemberState, string> = { done: "done", run: "run", wait: "wait", refused: "refused", late: "late", off: "off", removed: "done" };
 const ICON: Record<BatchTone, "sparkle" | "check" | "info" | "alert"> = { run: "sparkle", ok: "check", info: "info", warn: "alert" };
 
 export interface BatchHeaderProps {

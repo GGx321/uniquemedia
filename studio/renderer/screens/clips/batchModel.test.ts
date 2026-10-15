@@ -345,6 +345,44 @@ describe("after a restart: no batch job left", () => {
   });
 });
 
+describe("what the window cannot read as «не снимался» (review of S5.WB4)", () => {
+  test("a member whose clip was made and then deleted by the owner is in no part — never «не снимался — бесплатно»", () => {
+    const madeThenDeleted = job(2, { phase: "saving" }, { status: "done" }, { size: 2 });
+    const v = view({ records: [ready(1, { size: 2 })], jobs: [madeThenDeleted] });
+    expect(v.title).toBe("Пакет готов: 1 клип · $0.42");
+    expect(v.line).toBeNull();
+    expect(v.counts.notShot).toBe(0);
+  });
+
+  test("a final 429 whose first 429 the owner deleted is the member's refusal, not «не снимался»", () => {
+    const first = job(2, { phase: "submitting", model: "kling" }, { status: "done" }, { size: 2 });
+    const finalRecord = failed(2, "rate-limited", { size: 2 });
+    const retry = job(2, { phase: "saving", clipId: finalRecord.clipId }, { status: "done" }, { size: 2 });
+    const v = view({ records: newestFirst([ready(1, { size: 2 }), finalRecord]), jobs: [first, retry] });
+    expect(v.members[1]?.state).toBe("refused");
+    expect(v.title).toBe("Пакет готов: 1 клип · 1 отказ бесплатно · $0.42");
+  });
+
+  test("members the engine dropped without a reason (a fault of its scheduler) are not «Отменено»: the owner cancelled nothing", () => {
+    const silent = job(2, { phase: "queued" }, { status: "cancelled" }, { size: 2 });
+    const v = view({ records: [ready(1, { size: 2 })], jobs: [silent] });
+    expect(v.line).toBe("Оставшийся 1 клип не снимался — бесплатно.");
+  });
+
+  test("one queued member cancelled on its own (`avatars.cancel`) does not stop the batch: the others still wait, «Отменить оставшиеся» stays", () => {
+    const v = view({ records: newestFirst(readyRange(1, 4)), jobs: [rendering(5), cancelledJob(6, "cancelled"), queued(7), queued(8), queued(9), queued(10)] });
+    expect(v.title).toBe("Пакет · 4 из 10 готовы · снимается 1 · в очереди 4 · не снимался 1");
+    expect(v.cancel).toBe(true);
+    expect(v.tone).toBe("run");
+  });
+
+  test("after a restart, a first 429 whose retry the restart dropped is dropped with the rest: the line and the title agree", () => {
+    const v = view({ records: newestFirst([...readyRange(1, 7), failed(8, "rate-limited")]), jobs: [] });
+    expect(v.title).toBe("Пакет · 7 из 10 готовы · не снимались 3");
+    expect(v.line).toBe("Оставшиеся 3 клипа не снимались — бесплатно.");
+  });
+});
+
 describe("the end (60b): «бесплатно» only for a refusal proven free", () => {
   test("a refusal whose cost is `free`: «Пакет готов: 9 клипов · 1 отказ бесплатно · $3.78», ok", () => {
     const v = view({ records: newestFirst([...readyRange(1, 8), failed(9, "refused-free", { cost: FREE }), ready(10)]), jobs: [] });
