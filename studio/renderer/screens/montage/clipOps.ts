@@ -114,7 +114,10 @@ export function cellsOf(clip: Clip): readonly Cell[] {
  */
 export type OriginOf = (mediaId: string) => MediaOrigin | null | undefined;
 
-/** A caller that knows the draft holds no clip copy (the owner's own files, the tests): every video is the owner's own. */
+/**
+ * A caller that knows the draft holds no clip copy (the owner's own files, the tests): every video is the owner's own. A caller that omits `originOf` gets
+ * this, the fail-OPEN rule: every placement path of the editor must pass its real `originOf` (S5.WA4 round 3).
+ */
 export const NO_COPIES: OriginOf = () => null;
 
 /** Whether the draft's frames are known: every own video clip's origin is (a copy's, or null). Until then no frame is placed (fail closed). */
