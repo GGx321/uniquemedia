@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { Estimate, MOTION_SUGGEST_EXPECTED_MICROS, MOTION_SUGGEST_WORST_MICROS, MOTION_TRANSLATE_EXPECTED_MICROS, MOTION_TRANSLATE_WORST_MICROS, MOTION_MAX_ATTEMPTS } from "../../shared/engine";
 import { chatAttemptWorstMicros } from "../openrouter/chat";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import { PriceBook } from "./prices";
-import { SUGGEST_ATTEMPT, TRANSLATE_ATTEMPT, motionPriceModels, suggestEstimate, translateEstimate } from "./motionEstimate";
+import { PriceBook } from "../money/prices";
+import { SUGGEST_ATTEMPT, TRANSLATE_ATTEMPT, motionPriceModels } from "../money/motionEstimate";
+import { suggestPrice as suggestEstimate, translatePrice as translateEstimate } from "./motionPrice";
 useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WC3 (plan s5b2 §5.3 «Money per call», I5.68): the two estimates of part C, on the settings' text model. The worst case is two attempts, each priced as the chat client reserves

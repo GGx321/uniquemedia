@@ -12,14 +12,15 @@ import { EngineFailure } from "../engineFailure";
 import type { Library } from "../library";
 import type { PhotoSidecar } from "../library/schemas";
 import { scopeKey, type Budget } from "../money/budget";
-import { motionPriceModels, suggestEstimate, translateEstimate } from "../money/motionEstimate";
+import { motionPriceModels } from "../money/motionEstimate";
+import { suggestPrice, translatePrice } from "./motionPrice";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import type { OpenRouterClient } from "../openrouter/types";
 import type { FrameFacts } from "./frameFacts";
-import { runIdeaTranslator, translatorPriceShape } from "./ideaTranslator";
+import { runIdeaTranslator } from "./ideaTranslator";
 import { clipMotionProblems } from "./prompt";
 import { addItems, isFull, listedItems, MotionStores, type MotionItem } from "./motionStore";
-import { runMotionWriter, writerPriceShape } from "./motionWriter";
+import { runMotionWriter } from "./motionWriter";
 
 // Stage 5, 5b.2, S5.WC3 (plan s5b2 §5.3, I5.66-I5.68; Q-H = 2): the four part C commands (`clips.estimateSuggest`, `clips.suggestMotions`, `clips.estimateIdea`, `clips.translateIdea`) and the photo's stored
 // motions, on the clip service's seams.
@@ -133,13 +134,13 @@ export class ClipMotions {
   async estimateSuggest(payload: CommandPayload<"clips.estimateSuggest">): Promise<Estimate> {
     await this.#photoForEstimate(payload.avatarId, payload.photoId);
     const textModel = this.#deps.textModel();
-    return suggestEstimate(await this.#deps.prices(motionPriceModels(textModel)), textModel, writerPriceShape());
+    return suggestPrice(await this.#deps.prices(motionPriceModels(textModel)), textModel);
   }
 
   async estimateIdea(payload: CommandPayload<"clips.estimateIdea">): Promise<Estimate> {
     await this.#photoForEstimate(payload.avatarId, payload.photoId);
     const textModel = this.#deps.textModel();
-    return translateEstimate(await this.#deps.prices(motionPriceModels(textModel)), textModel, translatorPriceShape());
+    return translatePrice(await this.#deps.prices(motionPriceModels(textModel)), textModel);
   }
 
   async #photoForEstimate(avatarId: string, photoId: string): Promise<void> {
@@ -233,7 +234,7 @@ export class ClipMotions {
     const ready = await this.#prepare("suggest motions for a photo", "vision", avatarId, payload.photoId);
     const textModel = deps.textModel();
     const priced = await deps.prices(motionPriceModels(textModel));
-    const estimate = suggestEstimate(priced, textModel, writerPriceShape());
+    const estimate = suggestPrice(priced, textModel);
     deps.checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
     deps.checkMonthlyRoom(ready.budget, estimate.worstMicros);
     // The photo at most 1024 px, a JPEG: made from the gallery photo's own bytes, never the master's.
@@ -290,7 +291,7 @@ export class ClipMotions {
     const ready = await this.#prepare("translate an idea", "own", avatarId, payload.photoId);
     const textModel = deps.textModel();
     const priced = await deps.prices(motionPriceModels(textModel));
-    const estimate = translateEstimate(priced, textModel, translatorPriceShape());
+    const estimate = translatePrice(priced, textModel);
     deps.checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
     deps.checkMonthlyRoom(ready.budget, estimate.worstMicros);
     this.#stillThere(ready.library, avatarId);

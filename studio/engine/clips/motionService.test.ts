@@ -7,10 +7,8 @@ import { openLibrary, type Library } from "../library";
 import { chatBody, fakeFetch, JPEG, makeClient, setupMoney, type Money, type Step } from "../openrouter/testing/fakes";
 import { EngineFailure } from "../engineFailure";
 import { scopeKey } from "../money/budget";
-import { suggestEstimate, translateEstimate } from "../money/motionEstimate";
-import { translatorPriceShape } from "./ideaTranslator";
 import { ClipMotions, type ClipMotionsDeps } from "./motionService";
-import { writerPriceShape } from "./motionWriter";
+import { suggestPrice, translatePrice } from "./motionPrice";
 import { GOOD_MOTION, timerFrame } from "./testing/motionKit";
 import { seedClipAvatar } from "./testing/engineClipKit";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -140,7 +138,7 @@ describe("the call's cap", () => {
     const r = await rig(() => [reply(GOOD_ANSWER)]);
     await r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 });
     expect(r.state.caps).toEqual([
-      ["set", SCOPE_KEY, suggestEstimate(priced(), "x-ai/grok-4.3", writerPriceShape()).worstMicros],
+      ["set", SCOPE_KEY, suggestPrice(priced(), "x-ai/grok-4.3").worstMicros],
       ["clear", SCOPE_KEY, 0],
     ]);
   });
@@ -149,7 +147,7 @@ describe("the call's cap", () => {
     const r = await rig(() => [{ status: 200, body: chatBody(JSON.stringify({ text_en: GOOD_MOTION }), { cost: 0.001 }) }]);
     await r.motions.translateIdea({ avatarId: r.avatarId, photoId: r.photoId, text: "поворачивает голову", acceptedWorstMicros: 1_000_000 });
     expect(r.state.caps).toEqual([
-      ["set", SCOPE_KEY, translateEstimate(priced(), "x-ai/grok-4.3", translatorPriceShape()).worstMicros],
+      ["set", SCOPE_KEY, translatePrice(priced(), "x-ai/grok-4.3").worstMicros],
       ["clear", SCOPE_KEY, 0],
     ]);
   });

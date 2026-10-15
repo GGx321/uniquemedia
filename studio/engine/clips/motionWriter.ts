@@ -1,13 +1,13 @@
 import { z } from "zod";
 import { CLIP_CHOICES_MAX, MOTION_LABEL_MAX, MOTION_MAX_ATTEMPTS, MOTION_PROBLEMS, ownIdeaLabel, type ClipFrameNote, type ClipFrameReading, type EngineError, type MotionProblem } from "../../shared/engine";
 import { repairMayHelp } from "../../shared/scenes/motionText";
-import { SUGGEST_ATTEMPT, type MotionAttemptShape } from "../money/motionEstimate";
+import { SUGGEST_ATTEMPT } from "../money/motionEstimate";
 import type { Budget } from "../money/budget";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import type { ChatMessage, ChatParams, ChatResult } from "../openrouter/types";
 import type { FrameFacts } from "./frameFacts";
-import { ACTIVITY_MAX_CHARS, NEVER_ABORTED, checkModelText, framePayload, stepOf, type FramePayload } from "./motionCall";
+import { ACTIVITY_MAX_CHARS, NEVER_ABORTED, type MotionAttemptShape, checkModelText, framePayload, stepOf, type FramePayload } from "./motionCall";
 import { MOTION_PROMPT_TEXTS } from "./motionPrompts";
 import { CLIP_CAPTURES } from "./videoLook";
 

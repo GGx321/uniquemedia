@@ -1,11 +1,11 @@
 import { z } from "zod";
 import { MOTION_MAX_ATTEMPTS, MOTION_PROBLEMS, OWN_IDEA_MAX, type EngineError, type MotionProblem } from "../../shared/engine";
 import { repairMayHelp } from "../../shared/scenes/motionText";
-import { TRANSLATE_ATTEMPT, type MotionAttemptShape } from "../money/motionEstimate";
+import { TRANSLATE_ATTEMPT } from "../money/motionEstimate";
 import type { Scope } from "../money/ledger";
 import type { ChatMessage } from "../openrouter/types";
 import type { FrameFacts } from "./frameFacts";
-import { ACTIVITY_MAX_CHARS, NEVER_ABORTED, checkModelText, framePayload, stepOf, type FramePayload } from "./motionCall";
+import { ACTIVITY_MAX_CHARS, NEVER_ABORTED, type MotionAttemptShape, checkModelText, framePayload, stepOf, type FramePayload } from "./motionCall";
 import { MOTION_PROMPT_TEXTS } from "./motionPrompts";
 import type { MotionJobDeps } from "./motionWriter";
 

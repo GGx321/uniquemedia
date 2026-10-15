@@ -1,12 +1,18 @@
 import { MOTION_ENGLISH, MOTION_TEXT_MAX, type ClipMotionSource, type EngineError, type MotionProblem } from "../../shared/engine";
 import { phoneInHandOrPropped } from "../../shared/scenes/motionText";
 import { toEngineError } from "../openrouter/engineError";
-import type { ChatResult } from "../openrouter/types";
+import type { ChatMessage, ChatResult } from "../openrouter/types";
 import type { FrameFacts } from "./frameFacts";
 import { clipMotionProblems } from "./prompt";
 
 // Stage 5, 5b.2, S5.WC3 (plan s5b2 §5.3, I5.66, I5.68): what the vision writer and the idea translator share: the frame's facts as the model sees them, the normalisation of a model's text before the
 // one motion check, and how one chat result reads.
+
+/** The largest message a call can send, for its estimate: its messages and its JSON schema. */
+export interface MotionAttemptShape {
+  readonly messages: readonly ChatMessage[];
+  readonly jsonSchema: { name: string; schema: Record<string, unknown> };
+}
 
 /** The longest bank activity the facts carry: the writer needs the gist, and a bounded message keeps the reserve (and so the price the owner accepts) bounded. */
 export const ACTIVITY_MAX_CHARS = 160;
