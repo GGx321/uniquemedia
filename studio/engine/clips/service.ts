@@ -9,6 +9,7 @@ import {
   type BoldClipsMode,
   type ClipBatchOptions,
   type ClipFace,
+  type ClipFrameReading,
   type ClipMonthFit,
   type ClipMotionChoice,
   type ClipOptionKey,
@@ -23,6 +24,7 @@ import type { UnsequencedEvent } from "../../shared/engine/events";
 import { CLIP_PLAN_READ_PARALLEL, CLIP_PLAN_READ_TIMEOUT_MS } from "../control";
 import { EngineFailure } from "../engineFailure";
 import type { ExportRootCheck } from "../exportRoot";
+import { downscaleToJpeg } from "../../node/downscale";
 import type { WorkerFaceGate } from "../face/worker/workerGate";
 import type { ClipBatchRef, ClipJobEnd, JobRegistry } from "../jobs";
 import type { Library } from "../library";
@@ -67,9 +69,11 @@ import type { ClipFaceRole } from "./faceRole";
 import { firstFrameRefusalOf } from "./firstFrame";
 import { checkClipFace } from "./faceCheck";
 import { clipFallbackOf, readFrameFacts, type FrameFacts } from "./frameFacts";
+import { ClipMotions, type MotionFactsRead } from "./motionService";
 import { createClipHolds, type ClipHolds, type HoldTimers } from "./holds";
 import { runClipJob, type ClipJobDeps, type ClipJobOutcome, type ClipMoneyEnd } from "./job";
 import { clipAttemptId, parseClipAttemptId, summarizeJournal } from "./journal";
+import { undressesBy } from "../../shared/scenes/motionText";
 import { motionChoicesOf } from "./motion";
 import { openClipReserveMicros } from "./openReserve";
 import { ClipRecords, clipCostsOf, type ClipRecordsDeps } from "./records";
@@ -222,6 +226,10 @@ export interface ClipServiceDeps {
   media?: ClipMediaPort & ClipCopyMedia;
   /** 5b.2 (S5.WA2): the avatar's saved montage drafts, for `ClipSummary.use.inDrafts` (which drafts hold a clip's copy). Absent: no clip has `inDrafts`. */
   drafts?: (avatarId: string) => Promise<readonly DraftView[]>;
+  /** 5b.2 (S5.WC3): the settings' text model, the one the part C calls (the vision writer, the idea translator) are priced and sent on. */
+  textModel: () => string;
+  /** 5b.2 (S5.WC3) test seam: the photo as a JPEG of at most `maxSide` px for the vision writer. Absent: the real ffmpeg downscale. */
+  downscale?: (bytes: Uint8Array, maxSide: number, signal?: AbortSignal) => Promise<Uint8Array>;
 }
 
 type CreatePayload = CommandPayload<"clips.create">;
@@ -235,7 +243,7 @@ interface ClipUnit {
 /** A photo of a batch as read at create or in `clips.batchOptions`: why it cannot be made, or its facts and the motions it offers. */
 type ItemRead =
   | { kind: "refused"; reason: Extract<ClipOptions, { suitable: false }>["reason"] }
-  | { kind: "suitable"; facts: FrameFacts; motions: ReturnType<typeof motionChoicesOf> };
+  | { kind: "suitable"; facts: FrameFacts; motions: ReturnType<typeof motionChoicesOf>; reading: ClipFrameReading | undefined };
 
 /** Finished batches kept for a late `clips.cancelBatch`. */
 const KEEP_FINISHED_BATCHES = 50;
@@ -278,9 +286,37 @@ export class ClipService {
   readonly #copies: ClipCopies | null;
   /** 5b.2 (S5.WB2c): each batch's own summary on disk, written at every member transition, read by `clips.list`. */
   readonly #summaries: BatchSummaryStore;
+  /** 5b.2 (S5.WC3): the vision writer, the idea translator and the photo's stored motions (part C). */
+  readonly #motions: ClipMotions;
 
   constructor(deps: ClipServiceDeps) {
     this.#deps = deps;
+    this.#motions = new ClipMotions({
+      newId: deps.newId,
+      now: () => new Date(deps.clock()).toISOString(),
+      unitHeld: () => this.#unit !== null,
+      currentLibrary: deps.currentLibrary,
+      liveLibrary: deps.liveLibrary,
+      usableKey: deps.usableKey,
+      paidBudget: deps.paidBudget,
+      photoOf: (library, avatarId, photoId) => this.#photoOf(library, avatarId, photoId),
+      assertAvatarOnDisk: deps.assertAvatarOnDisk,
+      facts: (library, photo) => this.#motionFacts(library, photo),
+      prices: deps.prices,
+      textModel: deps.textModel,
+      checkAccepted: deps.checkAccepted,
+      checkMonthlyRoom: deps.checkMonthlyRoom,
+      paidStart: deps.paidStart,
+      paidEnd: deps.paidEnd,
+      setCap: deps.setCap,
+      clearCap: deps.clearCap,
+      openRouter: deps.openRouter,
+      emitMoney: deps.emitMoney,
+      markKeyRejected: deps.markKeyRejected,
+      pendingDelete: deps.pendingDelete,
+      downscale: deps.downscale ?? ((bytes, maxSide, signal) => downscaleToJpeg(bytes, { maxSide, ...(signal === undefined ? {} : { signal }) })),
+      log: deps.log,
+    });
     this.#mode = deps.mode ?? GROK_FALLBACK;
     this.#boldClips = deps.boldClips ?? BOLD_CLIPS;
     const copies = deps.media === undefined ? null : new ClipCopies({ media: deps.media, ...(deps.drafts === undefined ? {} : { drafts: deps.drafts }), log: deps.log });
@@ -613,6 +649,8 @@ export class ClipService {
       faceGate: deps.faceGate,
       faceRoleOf: (photoId) => this.#faceRoleOf(library, photoId),
       masterEmbedding: (avatarId, signal) => this.#masterEmbedding(library, avatarId, deps.faceGate(), signal),
+      // 5b.2 (S5.WC3, I5.67): an own idea's journal line has no label; the photo's motion store gives it back.
+      ownLabelOf: (avatarId, photoId, text) => this.#motions.ownLabelOf(library, avatarId, photoId, text),
       ...(deps.recoveryBeforeList === undefined ? {} : { beforeList: deps.recoveryBeforeList }),
       // 5b.2 (S5.WB2c): a recovered batch member's record tells its batch's summary how it ended.
       recorded: (avatarId, record) => this.#noteMemberRecord(clipsDirOf(library, avatarId), record),
@@ -659,6 +697,29 @@ export class ClipService {
     return { cancelled: batch.cancelQueued() };
   }
 
+  // ---------- part C: own motions (5b.2, S5.WC3) ----------
+
+  estimateSuggest(payload: CommandPayload<"clips.estimateSuggest">): ReturnType<ClipMotions["estimateSuggest"]> {
+    return this.#motions.estimateSuggest(payload);
+  }
+
+  estimateIdea(payload: CommandPayload<"clips.estimateIdea">): ReturnType<ClipMotions["estimateIdea"]> {
+    return this.#motions.estimateIdea(payload);
+  }
+
+  suggestMotions(payload: CommandPayload<"clips.suggestMotions">): ReturnType<ClipMotions["suggestMotions"]> {
+    return this.#motions.suggestMotions(payload);
+  }
+
+  translateIdea(payload: CommandPayload<"clips.translateIdea">): ReturnType<ClipMotions["translateIdea"]> {
+    return this.#motions.translateIdea(payload);
+  }
+
+  /** Part C calls of this avatar running now: an avatar delete waits for them (I5.68). */
+  motionsRunningFor(avatarId: string): number {
+    return this.#motions.runningFor(avatarId);
+  }
+
   // ---------- clips.options ----------
 
   async options(payload: CommandPayload<"clips.options">): Promise<ClipOptions> {
@@ -670,11 +731,11 @@ export class ClipService {
     const { facts } = read;
     const priced = await this.#deps.prices(CLIP_PRICE_MODELS);
     const budget = this.#deps.budget();
-    return this.#suitableOptions(photo.id, facts, read.motions, priced, (worstMicros) => budget !== null && this.#deps.monthFits(budget, worstMicros));
+    return this.#suitableOptions(photo.id, facts, read.motions, read.reading, priced, (worstMicros) => budget !== null && this.#deps.monthFits(budget, worstMicros));
   }
 
   /** The sheet of one suitable photo (`ClipOptions`): its prices from one book, and whether the month (`fits`, one yes-or-no on a worst case) takes each option. */
-  #suitableOptions(photoId: string, facts: FrameFacts, motions: ReturnType<typeof motionChoicesOf>, priced: Awaited<ReturnType<ClipServiceDeps["prices"]>>, fits: (worstMicros: number) => boolean): ClipOptions {
+  #suitableOptions(photoId: string, facts: FrameFacts, motions: ReturnType<typeof motionChoicesOf>, reading: ClipFrameReading | undefined, priced: Awaited<ReturnType<ClipServiceDeps["prices"]>>, fits: (worstMicros: number) => boolean): ClipOptions {
     const fallback = clipFallbackOf(facts, this.#boldClips, this.#mode);
     const { prices, noFallbackPrices } = clipOptionPrices(priced, { mode: this.#mode, boldClips: this.#boldClips, bold: facts.bold });
     const fit = (withWorst: number, withoutWorst: number): ClipMonthFit => {
@@ -687,7 +748,7 @@ export class ClipService {
       std10: fit(prices.std10.worstMicros, noFallbackPrices.std10.worstMicros),
       pro10: fit(prices.pro10.worstMicros, noFallbackPrices.pro10.worstMicros),
     };
-    return { suitable: true, photoId, motions, prices, fallback, bold: facts.bold, noFallbackPrices, monthFits };
+    return { suitable: true, photoId, motions, prices, fallback, bold: facts.bold, noFallbackPrices, monthFits, ...(reading === undefined ? {} : { reading }) };
   }
 
   // ---------- clips.batchOptions (5b.2, S5.WB2) ----------
@@ -710,7 +771,7 @@ export class ClipService {
     const items = reads.map((read, i): ClipOptions => {
       const photoId = payload.photoIds[i] ?? "";
       if (read.kind === "refused") return { suitable: false, photoId, reason: read.reason };
-      return this.#suitableOptions(photoId, read.facts, read.motions, priced, fits);
+      return this.#suitableOptions(photoId, read.facts, read.motions, read.reading, priced, fits);
     });
     const members = reads.flatMap((read) => (read.kind === "suitable" ? [{ bold: read.facts.bold }] : []));
     const book = clipPricesOf(priced);
@@ -757,7 +818,7 @@ export class ClipService {
           continue;
         }
         const read = await this.#facts(library, photo);
-        reads[i] = read.kind === "refused" ? read : { kind: "suitable", facts: read.facts, motions: read.motions };
+        reads[i] = read.kind === "refused" ? read : { kind: "suitable", facts: read.facts, motions: read.motions, reading: read.reading };
       }
     };
     await Promise.all(Array.from({ length: Math.min(CLIP_PLAN_READ_PARALLEL, photoIds.length) }, worker));
@@ -771,7 +832,11 @@ export class ClipService {
    * `one-at-a-time`, a batch holding it is `batch-running`. Part C's `motion-busy` guard joins here.
    */
   unitRefusal(): EngineFailure | null {
-    if (this.#unit === null) return null;
+    if (this.#unit === null) {
+      // 5b.2 (S5.WC3, r2.1 N10): the other direction of the guard, GLOBAL: while ANY part C call runs (any avatar, any photo) no clip baseline may be read, because a chat reserve is open.
+      if (this.#motions.running() > 0) return new EngineFailure({ code: "IN_FLIGHT", clipReason: "motion-busy", detail: "a motion is being suggested or an idea translated; wait for it to end" });
+      return null;
+    }
     if (this.#unit.kind === "batch") {
       return new EngineFailure({ code: "IN_FLIGHT", clipReason: "batch-running", detail: "a batch of clips is being made; wait for it to end or cancel the rest" });
     }
@@ -825,7 +890,8 @@ export class ClipService {
     const { facts, bytes } = read;
     const motion = read.motions.find((choice) => choice.id === payload.motionId);
     if (motion === undefined) throw new EngineFailure({ code: "VALIDATION", clipReason: "unknown-motion", detail: `the motion ${payload.motionId} is not one this photo offers` });
-    const photoFallback = clipFallbackOf(facts, this.#boldClips, this.#mode);
+    // Q-H = 2: a motion that takes clothing off or bares her (an own idea on a frame of «Смелая») is Kling's alone, whatever `BOLD_CLIPS` lets the frame fall back to: Grok never sees it.
+    const photoFallback = undressesBy(motion.text, motion.source, facts.bold) ? "none" : clipFallbackOf(facts, this.#boldClips, this.#mode);
     // I5.47: a Grok clip is the offer of mode `offer`, on a photo that allows a fallback; anywhere else it is refused.
     if (payload.model === "grok" && (this.#mode !== "offer" || photoFallback === "none")) {
       throw new EngineFailure({ code: "VALIDATION", clipReason: "grok-not-offered", detail: "Grok is not offered for this clip" });
@@ -941,7 +1007,8 @@ export class ClipService {
     const priced = await deps.prices(CLIP_PRICE_MODELS);
     const book = clipPricesOf(priced);
     const drafts = chosen.map((member) => {
-      const fallback = clipFallbackOf(member.facts, this.#boldClips, this.#mode) === "none" ? "none" : payload.fallback;
+      const kept = undressesBy(member.motion.text, member.motion.source, member.facts.bold) || clipFallbackOf(member.facts, this.#boldClips, this.#mode) === "none";
+      const fallback = kept ? "none" : payload.fallback;
       const request: ClipRequest = { model: "kling", quality: payload.quality, seconds: payload.seconds, fallback };
       const share = clipWorstMicros({ ...request, mode: this.#mode, bold: member.facts.bold, boldClips: this.#boldClips, prices: book });
       const jobId = deps.newId();
@@ -951,8 +1018,11 @@ export class ClipService {
       chosen.map((member) => ({ bold: member.facts.bold })),
       { quality: payload.quality, seconds: payload.seconds, mode: this.#mode, fallback: payload.fallback, boldClips: this.#boldClips, prices: book },
     );
-    if (drafts.reduce((sum, d) => sum + d.share, 0) !== total) throw new EngineFailure({ code: "INTERNAL", detail: "the members' shares do not add up to the batch's worst case" });
-    deps.checkAccepted(total, payload.acceptedWorstMicros);
+    // A member whose motion undresses her never falls back to Grok, so its share can be below the fallback figure the window summed; with none of them the shares add up to the batch's worst case exactly.
+    const shares = drafts.reduce((sum, d) => sum + d.share, 0);
+    const forced = chosen.some((member) => undressesBy(member.motion.text, member.motion.source, member.facts.bold));
+    if (forced ? shares > total : shares !== total) throw new EngineFailure({ code: "INTERNAL", detail: "the members' shares do not add up to the batch's worst case" });
+    deps.checkAccepted(shares, payload.acceptedWorstMicros);
 
     // Each member's cap is its share, and the month is held for every member at once (all or nothing): a refusal leaves nothing held and nothing capped.
     for (const d of drafts) deps.setCap(d.capKey, d.share);
@@ -1418,8 +1488,10 @@ export class ClipService {
   async #facts(
     library: Library,
     photo: PhotoSidecar,
+    withStored = true,
   ): Promise<
-    { kind: "suitable"; facts: FrameFacts; bytes: Uint8Array; motions: ReturnType<typeof motionChoicesOf> } | { kind: "refused"; reason: Extract<ClipOptions, { suitable: false }>["reason"] }
+    | { kind: "suitable"; facts: FrameFacts; bytes: Uint8Array; motions: ReturnType<typeof motionChoicesOf>; reading?: ClipFrameReading }
+    | { kind: "refused"; reason: Extract<ClipOptions, { suitable: false }>["reason"] }
   > {
     const log = this.#deps.log;
     const result = await readFrameFacts(photo, (runId) => readPlanWithin(() => this.#deps.readRunPlan(library, runId), CLIP_PLAN_READ_TIMEOUT_MS), log);
@@ -1436,8 +1508,17 @@ export class ClipService {
     const pixels = firstFrameRefusalOf(bytes);
     if (pixels !== null) return { kind: "refused", reason: pixels };
     if (facts.bold && this.#boldClips === "off") return { kind: "refused", reason: "bold-off" };
-    const motions = motionChoicesOf(facts, log);
-    if (motions.length === 0) return { kind: "refused", reason: "no-motion" };
-    return { kind: "suitable", facts, bytes, motions };
+    const base = motionChoicesOf(facts, log);
+    if (base.length === 0) return { kind: "refused", reason: "no-motion" };
+    // 5b.2 (S5.WC3, I5.67): the photo's stored suggestions and ideas, re-checked now, after the scene's and the code's: the same list `clips.create` resolves a `v-` or an `o-` id from.
+    if (!withStored) return { kind: "suitable", facts, bytes, motions: base };
+    const stored = await this.#motions.stored(library, photo, facts);
+    return { kind: "suitable", facts, bytes, motions: [...base, ...stored.motions], ...(stored.reading === undefined ? {} : { reading: stored.reading }) };
+  }
+
+  /** What a part C call reads of a photo: its facts and file, or its reason. The stored motions are not read (the call has no use for them). */
+  async #motionFacts(library: Library, photo: PhotoSidecar): Promise<MotionFactsRead> {
+    const read = await this.#facts(library, photo, false);
+    return read.kind === "refused" ? read : { kind: "suitable", facts: read.facts, bytes: read.bytes };
   }
 }

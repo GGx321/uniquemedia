@@ -1,0 +1,202 @@
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { existsSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tempDirFor } from "../../testing/tempDir";
+import { openLibrary, type Library } from "../library";
+import { chatBody, fakeFetch, JPEG, makeClient, setupMoney, type Money, type Step } from "../openrouter/testing/fakes";
+import { EngineFailure } from "../engineFailure";
+import { ClipMotions, type ClipMotionsDeps } from "./motionService";
+import { GOOD_MOTION, timerFrame } from "./testing/motionKit";
+import { seedClipAvatar } from "./testing/engineClipKit";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
+setDefaultTimeout(30_000);
+
+// Stage 5, 5b.2, S5.WC3 (plan s5b2 I5.68): what a part C call does after its last await. `#pendingDelete` and the library are looked at again then: an avatar that is being deleted, or a library that was
+// switched away, gets NOT_FOUND and nothing stored, although the call was paid. A store that cannot be written after a paid call is `none` with the cost, never a lost bill.
+
+const dir = tempDirFor({ beforeEach, afterEach }, "studio-motion-service-");
+
+let money: Money;
+beforeEach(async () => {
+  money = await setupMoney();
+});
+afterEach(async () => {
+  await money.cleanup();
+});
+
+interface Rig {
+  readonly motions: ClipMotions;
+  readonly library: Library;
+  readonly avatarId: string;
+  readonly photoId: string;
+  readonly state: { deleting: boolean; current: Library | null; paid: number };
+  readonly logs: string[];
+  readonly storeDir: string;
+}
+
+const reply = (content: object, cost = 0.0034): Step => ({ status: 200, body: chatBody(JSON.stringify(content), { cost }) });
+const GOOD_ANSWER = { motions: [{ label_ru: "Поправляет прядь", text_en: GOOD_MOTION }], frame: { capture: "timer", phoneVisible: false, faceVisible: true } };
+
+async function rig(steps: (state: Rig["state"]) => Step[]): Promise<Rig> {
+  const libraryDir = join(dir(), "library");
+  await mkdir(libraryDir, { recursive: true });
+  const seeded = await seedClipAvatar(libraryDir);
+  const { library } = await openLibrary(libraryDir);
+  const state: Rig["state"] = { deleting: false, current: library, paid: 0 };
+  const net = fakeFetch(steps(state));
+  const { client } = makeClient(net.fetch);
+  const logs: string[] = [];
+  const deps: ClipMotionsDeps = {
+    newId: () => "job-00000007",
+    now: () => "2026-10-15T10:00:00.000Z",
+    unitHeld: () => false,
+    currentLibrary: () => state.current,
+    liveLibrary: async () => library,
+    usableKey: () => "sk-test",
+    paidBudget: () => money.budget,
+    photoOf: (lib, avatarId, photoId) => {
+      const photo = lib.getPhoto(photoId);
+      if (photo === undefined || photo.avatarId !== avatarId) throw new EngineFailure({ code: "NOT_FOUND", detail: "no such photo" });
+      return photo;
+    },
+    assertAvatarOnDisk: async () => undefined,
+    facts: async () => ({ kind: "suitable", facts: timerFrame(), bytes: JPEG }),
+    prices: async () => ({ book: money.priceBook, asOf: "2026-09-24" }),
+    textModel: () => "x-ai/grok-4.3",
+    checkAccepted: () => undefined,
+    checkMonthlyRoom: () => undefined,
+    paidStart: () => void state.paid++,
+    paidEnd: () => void state.paid--,
+    setCap: () => undefined,
+    clearCap: () => undefined,
+    openRouter: () => client,
+    emitMoney: () => undefined,
+    markKeyRejected: () => undefined,
+    pendingDelete: () => state.deleting,
+    downscale: async () => JPEG,
+    log: (line) => logs.push(line),
+  };
+  return { motions: new ClipMotions(deps), library, avatarId: seeded.avatarId, photoId: seeded.photoId, state, logs, storeDir: join(library.avatarDirPath(seeded.avatarId), "motions") };
+}
+
+describe("after the last await", () => {
+  test("an avatar delete prepared while the writer's chat runs: NOT_FOUND, nothing stored, and the paid call is settled in the ledger", async () => {
+    const r = await rig((state) => [
+      () => {
+        state.deleting = true;
+        return { status: 200, body: chatBody(JSON.stringify(GOOD_ANSWER), { cost: 0.0034 }) };
+      },
+    ]);
+    await expect(r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "NOT_FOUND" } });
+    expect(existsSync(r.storeDir)).toBe(false);
+    expect(money.lines().filter((l) => l.type === "settle").map((l) => l.costMicros)).toEqual([3_400]);
+    expect(money.ledger.openReserves()).toEqual([]);
+  });
+
+  test("the same for the translator's call", async () => {
+    const r = await rig((state) => [
+      () => {
+        state.deleting = true;
+        return { status: 200, body: chatBody(JSON.stringify({ text_en: GOOD_MOTION }), { cost: 0.001 }) };
+      },
+    ]);
+    await expect(r.motions.translateIdea({ avatarId: r.avatarId, photoId: r.photoId, text: "поворачивает голову", acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "NOT_FOUND" } });
+    expect(existsSync(r.storeDir)).toBe(false);
+  });
+
+  test("a library switched away while the call runs: NOT_FOUND, nothing stored", async () => {
+    const r = await rig((state) => [
+      () => {
+        state.current = null;
+        return { status: 200, body: chatBody(JSON.stringify(GOOD_ANSWER), { cost: 0.0034 }) };
+      },
+    ]);
+    await expect(r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "NOT_FOUND" } });
+    expect(existsSync(r.storeDir)).toBe(false);
+  });
+
+  test("a moderation refusal ends the same way for a deleted avatar: NOT_FOUND, never a `none` for a folder that is gone", async () => {
+    const r = await rig((state) => [
+      () => {
+        state.deleting = true;
+        return { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
+      },
+    ]);
+    await expect(r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "NOT_FOUND" } });
+  });
+});
+
+describe("the counts", () => {
+  test("running() and runningFor() count a call from its first step and go back to 0 and to the paid count's start, even when the call fails", async () => {
+    const r = await rig(() => [{ status: 401, body: { error: { message: "no auth" } } }]);
+    const call = r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 });
+    expect(r.motions.running()).toBe(1);
+    expect(r.motions.runningFor(r.avatarId)).toBe(1);
+    expect(r.state.paid).toBe(1);
+    await expect(call).rejects.toMatchObject({ error: { code: "AUTH_INVALID" } });
+    expect([r.motions.running(), r.motions.runningFor(r.avatarId), r.state.paid]).toEqual([0, 0, 0]);
+  });
+
+  test("a call refused before its first step counted nothing", async () => {
+    const r = await rig(() => []);
+    await expect(r.motions.suggestMotions({ avatarId: r.avatarId, photoId: "photo-nope-0001", acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "NOT_FOUND" } });
+    expect([r.motions.running(), r.state.paid]).toEqual([0, 0]);
+  });
+
+  test("the guard is decided before the first await: a held unit refuses at once and counts nothing", async () => {
+    const r = await rig(() => []);
+    const held = new ClipMotions({ ...(await depsOf(r)), unitHeld: () => true });
+    await expect(held.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1 })).rejects.toMatchObject({ error: { code: "IN_FLIGHT", clipReason: "clip-busy" } });
+    expect(held.running()).toBe(0);
+  });
+});
+
+describe("a store that cannot be written after a paid call", () => {
+  test("is `none` with the cost the owner paid, logged by photo id and never with a text", async () => {
+    const r = await rig(() => [reply(GOOD_ANSWER, 0.0034)]);
+    // `motions` is a file, so its folder cannot be made.
+    await mkdir(r.library.avatarDirPath(r.avatarId), { recursive: true });
+    await writeFile(r.storeDir, "in the way");
+    const result = await r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 });
+    expect(result).toEqual({ outcome: "none", costMicros: 3_400 });
+    const line = r.logs.find((l) => l.includes("could not be stored"));
+    expect(line).toContain(r.photoId);
+    expect(line).not.toContain(GOOD_MOTION);
+  });
+});
+
+/** The deps a rig was built from, for a variant of it. */
+async function depsOf(r: Rig): Promise<ClipMotionsDeps> {
+  return {
+    newId: () => "job-00000008",
+    now: () => "2026-10-15T10:00:00.000Z",
+    unitHeld: () => false,
+    currentLibrary: () => r.library,
+    liveLibrary: async () => r.library,
+    usableKey: () => "sk-test",
+    paidBudget: () => money.budget,
+    photoOf: (lib, avatarId, photoId) => {
+      const photo = lib.getPhoto(photoId);
+      if (photo === undefined || photo.avatarId !== avatarId) throw new EngineFailure({ code: "NOT_FOUND", detail: "no such photo" });
+      return photo;
+    },
+    assertAvatarOnDisk: async () => undefined,
+    facts: async () => ({ kind: "suitable", facts: timerFrame(), bytes: JPEG }),
+    prices: async () => ({ book: money.priceBook, asOf: "2026-09-24" }),
+    textModel: () => "x-ai/grok-4.3",
+    checkAccepted: () => undefined,
+    checkMonthlyRoom: () => undefined,
+    paidStart: () => undefined,
+    paidEnd: () => undefined,
+    setCap: () => undefined,
+    clearCap: () => undefined,
+    openRouter: () => makeClient(fakeFetch([]).fetch).client,
+    emitMoney: () => undefined,
+    markKeyRejected: () => undefined,
+    pendingDelete: () => false,
+    downscale: async () => JPEG,
+    log: () => undefined,
+  };
+}

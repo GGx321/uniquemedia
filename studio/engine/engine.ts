@@ -388,6 +388,8 @@ export interface EngineDeps {
   clipTimings?: ClipTimings;
   /** Test knobs of 5b.1: the fallback mode (`GROK_FALLBACK`), `BOLD_CLIPS` and the export's `EXPORT_FPS` (S5.V4c), so every value can be played against the real engine. The constants rule otherwise. */
   clipSwitches?: { mode?: "auto" | "offer"; boldClips?: BoldClipsMode; exportFps?: ExportFpsMode };
+  /** 5b.2 (S5.WC3) test seam: the photo as a JPEG of at most `maxSide` px for the vision writer (the real ffmpeg downscale otherwise). */
+  clipDownscale?: (bytes: Uint8Array, maxSide: number, signal?: AbortSignal) => Promise<Uint8Array>;
   /** Test seam of the clip records (S5.V4a2): the delete's removal of a file, so a test can hold a delete in its middle. */
   clipRecords?: Pick<ClipRecordsDeps, "remove">;
   /** Test seam: awaited before each clips folder of a library's startup walk is listed (S5.VR), so a test can hold the walk open. */
@@ -1208,6 +1210,9 @@ export class Engine {
       pendingDelete: (avatarId) => this.#pendingDelete?.avatarId === avatarId,
       assertAvatarOnDisk: (library, avatarId) => this.#assertAvatarOnDisk(library, avatarId),
       readRunPlan: (library, runId) => this.#readRunPlan(library, runId),
+      // 5b.2 (S5.WC3): the part C calls are priced and sent on the settings' text model; a test may replace the photo's downscale.
+      textModel: () => this.#avatarModels().textModel,
+      ...(deps.clipDownscale === undefined ? {} : { downscale: deps.clipDownscale }),
       faceGate: () => deps.portraitFaceGate ?? null,
       timings: deps.clipTimings ?? clipTimings(),
       ...(deps.clipSwitches?.mode === undefined ? {} : { mode: deps.clipSwitches.mode }),
@@ -2884,6 +2889,15 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.createBatch(command.payload) };
       case "clips.cancelBatch":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: this.#clips.cancelBatch(command.payload) };
+      // 5b.2 (S5.WC3): «свои движения». The two estimates are free; the two calls are paid, counted as paid commands by the clip service itself and claim no avatar (I5.68).
+      case "clips.estimateSuggest":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.estimateSuggest(command.payload) };
+      case "clips.estimateIdea":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.estimateIdea(command.payload) };
+      case "clips.suggestMotions":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.suggestMotions(command.payload) };
+      case "clips.translateIdea":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#clips.translateIdea(command.payload) };
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }
@@ -5288,6 +5302,8 @@ export class Engine {
     if (this.#jobs.hasLiveJobFor(avatarId)) return "a clip of this avatar is being made";
     // 5b.2 (S5.WA2, r2.1 N2): a clip import of the avatar has no job of its own in the registry (an import belongs to no avatar), and a render that holds a copy of one of its clips holds the avatar's files.
     if (this.#clips.importingFor(avatarId)) return "a clip of this avatar is being prepared for a montage";
+    // 5b.2 (S5.WC3, I5.68): a motion suggestion or an idea translation of the avatar is a paid call that ends in its folder (the motion store); the delete waits for it.
+    if (this.#clips.motionsRunningFor(avatarId) > 0) return "a motion suggestion or an idea translation of this avatar is running";
     if (this.#media.copyIdsOf(library.root, avatarId).some((mediaId) => this.#mediaReserved(mediaId))) return "a video render holds a copy of a clip of this avatar";
     if ((this.#focusRequests.get(avatarId) ?? 0) > 0) return "a focus request for this avatar is running";
     if (library.pendingVideoCount(avatarId) > 0) return "a video of this avatar is still being saved";

@@ -102,6 +102,7 @@ async function world(options: { download?: () => Promise<void>; mode?: "auto" | 
     liveCommits: new CommitTracker(),
     withRootLock: (_root, work) => work(),
     exportNumbers: () => null,
+    textModel: () => "x-ai/grok-4.3",
     ...(options.mode === undefined ? {} : { mode: options.mode }),
   };
   const service = new ClipService(deps);
