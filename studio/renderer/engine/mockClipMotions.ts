@@ -29,7 +29,8 @@ import { motionTextProblems, repairMayHelp } from "../../shared/scenes/motionTex
 // guard (both ways, global) and the same store (ids from `next`, never reused, twelve FIFO, a changed photo empties it).
 //
 // HELD to the engine by tests that can import both: the prices and the normalising/ check (mockEngine.clipMotions.table.test.ts), the stories of parity (scenarios.clipMotions.ts).
-// The one thing the mock does not run is `clipPromptOf`'s 130-word cap: a planless frame (all the mock has) puts at most 60 characters between fixed lines, so the cap cannot bind there (the table test pins it).
+// `stored()` re-checks a listed item with `checkModelText` (the shared check plus the motion English of the contract); the engine re-checks with `clipMotionProblems` (the same plus `clipPromptOf`'s 130 words). They
+// differ only on a record someone tampered with. The one thing the mock does not run is `clipPromptOf`'s 130-word cap: a planless frame (all the mock has) puts at most 60 characters between fixed lines, so the cap cannot bind there (the table test pins it).
 
 type Out<T> = { ok: true; result: T } | { ok: false; error: EngineError };
 const good = <T>(result: T): Out<T> => ({ ok: true, result });
@@ -47,8 +48,48 @@ export const MOCK_TRANSLATE_PRICE = { expectedMicros: 1_000, worstMicros: 9_650 
 type CallKind = "suggest" | "idea";
 
 const priceOf = (kind: CallKind): { expectedMicros: number; worstMicros: number } => (kind === "suggest" ? MOCK_SUGGEST_PRICE : MOCK_TRANSLATE_PRICE);
-/** What one attempt reserves: the call's worst case is `MOTION_MAX_ATTEMPTS` of them. */
-const attemptWorst = (kind: CallKind): number => priceOf(kind).worstMicros / MOTION_MAX_ATTEMPTS;
+
+// What ONE attempt reserves (engine/openrouter/chat.ts `chatAttemptWorstMicros`, at the bundled price of the default text model): the caller's ceilings, the prompt never below its byte floor, rounded up to a whole
+// micro-dollar. The engine reserves for the message it really sends (the system prompt, the user's JSON with the frame, the idea, the feedback and the previous text, the schema, and the photo's allowance), not for half
+// of the call's widest case, so the mock builds the same user JSON and counts the same bytes. The sizes of the PROVISIONAL system prompts and of the two schemas are held to the engine by
+// mockEngine.clipMotions.table.test.ts, and the whole reserve of every attempt by mockEngine.clipMotions.money.test.ts (the real ledger).
+export const MOCK_PROMPT_BYTES: { writer: number; translator: number; translatorBold: number } = { writer: 1_231, translator: 1_073, translatorBold: 1_188 };
+export const MOCK_SCHEMA_BYTES: { suggest: number; idea: number } = { suggest: 669, idea: 144 };
+/** The caller's ceilings of one attempt (engine/money/motionEstimate.ts). */
+const CEILINGS = { suggest: { maxTokens: 1_000, inputTokens: 3_000, images: 1 }, idea: { maxTokens: 500, inputTokens: 1_000, images: 0 } } as const;
+const TEMPLATE_TOKENS_PER_MESSAGE = 16;
+const CHAT_IMAGE_TOKEN_ALLOWANCE = 1_500;
+/** The text model's price in pico-dollars per token (x-ai/grok-4.3 at the bundled table). */
+const PROMPT_PICO = 1_250_000;
+const COMPLETION_PICO = 2_500_000;
+
+/** The user message's JSON, as the engine writes it (`messagesOf` of the writer and of the translator), and the bytes the reserve counts. */
+export function attemptWorstMicros(kind: CallKind, user: string, bold: boolean): number {
+  const system = kind === "suggest" ? MOCK_PROMPT_BYTES.writer : bold ? MOCK_PROMPT_BYTES.translatorBold : MOCK_PROMPT_BYTES.translator;
+  const { maxTokens, inputTokens, images } = CEILINGS[kind];
+  const floor = system + new TextEncoder().encode(user).length + MOCK_SCHEMA_BYTES[kind] + 2 * TEMPLATE_TOKENS_PER_MESSAGE + images * CHAT_IMAGE_TOKEN_ALLOWANCE;
+  const pico = maxTokens * COMPLETION_PICO + Math.max(inputTokens, floor) * PROMPT_PICO;
+  return Math.floor((pico + 999_999) / 1_000_000);
+}
+
+/** engine/clips/motionCall.ts `framePayload` for a planless frame: nobody is known to have taken the photo, her face shows, no activity, no phone. */
+function framePayloadOf(frame: MockMotionFrame): Record<string, unknown> {
+  return {
+    capture: "unknown",
+    plannedCapture: "unknown",
+    faceVisible: "yes",
+    faceRole: "judged",
+    legsFraming: false,
+    level: typeof frame.level === "string" ? frame.level : "bold",
+    bold: frame.bold,
+    activity: null,
+    phoneAllowed: false,
+  };
+}
+
+type Feedback = readonly (MotionProblem | "unreadable")[];
+/** How much of the model's own last English text is fed back to it (engine/clips/ideaTranslator.ts `PREVIOUS_MAX_CHARS`). */
+const PREVIOUS_MAX_CHARS = 80;
 
 // ---------- the model's answers, scripted ----------
 
@@ -240,6 +281,8 @@ export interface MockMotionPorts {
   gate(): EngineError | null;
   /** What the budget refuses an attempt's reserve with while the ledger is halted or needs a reconcile, or null. */
   reserveRefusal(): EngineError | null;
+  /** A settle came in above its reserve: the ledger halts (`SETTLE_ABOVE_WORST`) until the owner reconciles. */
+  haltLedger(): void;
   markKeyRejected(): void;
   /** The avatar's photo exists (an active avatar, not being deleted, the photo its own): NOT_FOUND otherwise. The master is a photo. */
   find(avatarId: string, photoId: string): Out<true>;
@@ -538,17 +581,20 @@ export class MockClipMotions {
   }
 
   /** One attempt as the transport runs it: reserve (the month and the ledger permitting), send, close the reserve by the settle rule. */
-  async #attempt(jobId: string, kind: CallKind, n: number): Promise<ChatStep> {
+  async #attempt(jobId: string, kind: CallKind, n: number, user: string, bold: boolean): Promise<ChatStep> {
     const ports = this.#ports;
     const attemptId = `${jobId}:${kind === "suggest" ? "motion" : "idea"}#${n}`;
-    const worstMicros = attemptWorst(kind);
+    const worstMicros = attemptWorstMicros(kind, user, bold);
+    // The budget's reserve: the ledger halted or needing a reconcile first (a bill above an earlier reserve stops it), then the call's own scope cap, then the month.
     const refusal = ports.reserveRefusal();
     if (refusal !== null) return { kind: "error", error: refusal, costMicros: 0, leftOpen: false };
+    let inScope = 0;
+    for (const earlier of this.#lines) if (earlier.attemptId.startsWith(`${jobId}:`)) inScope += earlier.state === "open" ? earlier.worstMicros : earlier.costMicros;
+    if (inScope + worstMicros > priceOf(kind).worstMicros) return { kind: "no-room", costMicros: 0 };
     if (ports.committedMicros() + worstMicros > ports.monthlyBudgetMicros()) return { kind: "no-room", costMicros: 0 };
     const line: Line = { attemptId, worstMicros, state: "open", costMicros: 0, estimated: false };
     this.#lines.push(line);
     ports.reserves.set(attemptId, worstMicros);
-    ports.emitMoney();
     const epoch = this.#epoch;
     await this.#atTheModel();
     // The process died while the request was out: no answer, the reserve stays as the dead process left it.
@@ -560,6 +606,8 @@ export class MockClipMotions {
       line.estimated = estimated;
       ports.reserves.delete(attemptId);
       ports.spend(costMicros);
+      // A bill above the reserve is recorded, and the ledger stops (`SETTLE_ABOVE_WORST`): the next reserve of any kind is refused. The answer is still used (engine/openrouter/transport.ts, `aboveWorst`).
+      if (costMicros > worstMicros) ports.haltLedger();
     };
     const expected = priceOf(kind).expectedMicros;
     switch (reply.kind) {
@@ -627,8 +675,11 @@ export class MockClipMotions {
     frame: MockMotionFrame,
   ): Promise<{ kind: "ok"; drafts: { label: string; text: string }[]; reading: ClipFrameReading; costMicros: number } | { kind: "none"; costMicros: number } | { kind: "error"; error: EngineError; costMicros: number }> {
     let cost = 0;
+    // What the next attempt is told: the closed codes of what was wrong with the last answer, never a text.
+    let feedback: Feedback = [];
     for (let attempt = 1; attempt <= MOTION_MAX_ATTEMPTS; attempt++) {
-      const step = await this.#attempt(jobId, "suggest", attempt);
+      const user = JSON.stringify({ frame: framePayloadOf(frame), ...(feedback.length === 0 ? {} : { problems: feedback }) });
+      const step = await this.#attempt(jobId, "suggest", attempt, user, frame.bold);
       cost += step.costMicros;
       if (step.kind === "refused") return { kind: "none", costMicros: cost };
       if (step.kind === "no-room") {
@@ -637,19 +688,27 @@ export class MockClipMotions {
       if (step.kind === "error") return endsAsResult(step, cost - step.costMicros) ? { kind: "none", costMicros: cost } : { kind: "error", error: step.error, costMicros: cost };
       if (step.kind === "unreadable") {
         if (step.final === true) return { kind: "none", costMicros: cost };
+        feedback = ["unreadable"];
         continue;
       }
       const answer = readWriterAnswer(step.content);
-      if (answer === null) continue;
+      if (answer === null) {
+        feedback = ["unreadable"];
+        continue;
+      }
       const drafts: { label: string; text: string }[] = [];
       const seen = new Set<string>();
       let mayHelp = false;
+      const repairable = new Set<MotionProblem>();
       for (const [i, motion] of answer.motions.entries()) {
         const label = cleanLabel(motion.label_ru);
         const { text, problems } = checkModelText(frame, motion.text_en, "vision");
         if (problems.length > 0) {
           this.#ports.log(`[clip] photo ${photoId}: suggestion ${i + 1} of ${answer.motions.length} dropped (${problems.join(", ")})`);
-          if (repairMayHelp(problems)) mayHelp = true;
+          if (repairMayHelp(problems)) {
+            mayHelp = true;
+            for (const problem of problems) repairable.add(problem);
+          }
           continue;
         }
         if (label === null) {
@@ -662,6 +721,8 @@ export class MockClipMotions {
       }
       if (drafts.length > 0) return { kind: "ok", drafts, reading: readingOf(answer.frame), costMicros: cost };
       if (!mayHelp) return { kind: "none", costMicros: cost };
+      const codes = MOTION_PROBLEMS.filter((problem) => repairable.has(problem));
+      feedback = codes.length === 0 ? ["unreadable"] : codes;
     }
     return { kind: "none", costMicros: cost };
   }
@@ -670,7 +731,7 @@ export class MockClipMotions {
 
   async #translate(avatarId: string, photoId: string, idea: string, ready: { frame: MockMotionFrame; sha: string }): Promise<Out<ClipTranslateResult>> {
     const jobId = this.#ports.nextId("job");
-    const outcome = await this.#capped(jobId, "idea", () => this.#runTranslator(jobId, ready.frame));
+    const outcome = await this.#capped(jobId, "idea", () => this.#runTranslator(jobId, idea, ready.frame));
     if (outcome.kind === "error") {
       if (outcome.error.code === "AUTH_INVALID") this.#ports.markKeyRejected();
       return bad(outcome.error);
@@ -686,14 +747,19 @@ export class MockClipMotions {
 
   async #runTranslator(
     jobId: string,
+    idea: string,
     frame: MockMotionFrame,
   ): Promise<{ kind: "ok"; text: string; costMicros: number } | { kind: "rejected"; problems: MotionProblem[]; costMicros: number } | { kind: "none"; costMicros: number } | { kind: "error"; error: EngineError; costMicros: number }> {
     let cost = 0;
     let lastProblems: MotionProblem[] | null = null;
     const settled = (): { kind: "rejected"; problems: MotionProblem[]; costMicros: number } | { kind: "none"; costMicros: number } =>
       lastProblems === null ? { kind: "none", costMicros: cost } : { kind: "rejected", problems: lastProblems, costMicros: cost };
+    let feedback: Feedback = [];
+    let previous: string | null = null;
     for (let attempt = 1; attempt <= MOTION_MAX_ATTEMPTS; attempt++) {
-      const step = await this.#attempt(jobId, "idea", attempt);
+      // The idea is a value inside JSON (data, never instructions); the feedback is closed codes and the previous text only when it is plain motion English.
+      const user = JSON.stringify({ idea, frame: framePayloadOf(frame), ...(feedback.length === 0 ? {} : { problems: feedback }), ...(previous === null ? {} : { previous }) });
+      const step = await this.#attempt(jobId, "idea", attempt, user, frame.bold);
       cost += step.costMicros;
       if (step.kind === "refused") return settled();
       if (step.kind === "no-room") {
@@ -702,15 +768,23 @@ export class MockClipMotions {
       if (step.kind === "error") return endsAsResult(step, cost - step.costMicros) ? settled() : { kind: "error", error: step.error, costMicros: cost };
       if (step.kind === "unreadable") {
         if (step.final === true) return settled();
+        feedback = ["unreadable"];
+        previous = null;
         continue;
       }
       const english = readIdeaAnswer(step.content);
-      if (english === null) continue;
+      if (english === null) {
+        feedback = ["unreadable"];
+        previous = null;
+        continue;
+      }
       const { text, problems } = checkModelText(frame, english, "own");
       if (problems.length === 0) return { kind: "ok", text, costMicros: cost };
       lastProblems = problems;
       // `takes-off` gets no repair: the idea is the owner's own choice.
       if (!repairMayHelp(problems)) return settled();
+      feedback = problems;
+      previous = MOTION_ENGLISH.test(text) ? text.slice(0, PREVIOUS_MAX_CHARS) : null;
     }
     return settled();
   }

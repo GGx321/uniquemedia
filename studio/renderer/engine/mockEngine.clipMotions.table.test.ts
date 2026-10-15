@@ -6,7 +6,12 @@ import { checkModelText as engineCheck, normalizeModelText as engineNormalize } 
 import { planlessPhoto } from "../../engine/clips/testing/frameFixtures";
 import { contentLevelOf } from "../../shared/scenes/contentLine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import { checkModelText, MOCK_MOTION_PROBLEMS, MOCK_SUGGEST_PRICE, MOCK_TRANSLATE_PRICE, normalizeModelText } from "./mockClipMotions";
+import { chatAttemptWorstMicros } from "../../engine/openrouter/chat";
+import { TRANSLATE_ATTEMPT, SUGGEST_ATTEMPT } from "../../engine/money/motionEstimate";
+import { MOTION_PROMPT_TEXTS } from "../../engine/clips/motionPrompts";
+import { WRITER_JSON_SCHEMA } from "../../engine/clips/motionWriter";
+import { TRANSLATOR_JSON_SCHEMA } from "../../engine/clips/ideaTranslator";
+import { attemptWorstMicros, checkModelText, MOCK_MOTION_PROBLEMS, MOCK_PROMPT_BYTES, MOCK_SCHEMA_BYTES, MOCK_SUGGEST_PRICE, MOCK_TRANSLATE_PRICE, normalizeModelText } from "./mockClipMotions";
 import { MOTION_PROBLEMS } from "../../shared/engine";
 useNativeGlobals();
 
@@ -31,6 +36,27 @@ describe("the prices", () => {
   test("a call's worst case is two attempts of a whole number of micro-dollars", () => {
     expect(MOCK_SUGGEST_PRICE.worstMicros % 2).toBe(0);
     expect(MOCK_TRANSLATE_PRICE.worstMicros % 2).toBe(0);
+  });
+
+  test("the sizes the mock counts for an attempt's reserve are the engine's prompts' and schemas' (the day S5.WCX changes a prompt, this says which number to move)", () => {
+    const bytes = (text: string): number => Buffer.byteLength(text, "utf8");
+    expect(MOCK_PROMPT_BYTES).toEqual({ writer: bytes(MOTION_PROMPT_TEXTS.writerSystem), translator: bytes(MOTION_PROMPT_TEXTS.translatorSystem), translatorBold: bytes(MOTION_PROMPT_TEXTS.translatorSystemBold) });
+    expect(MOCK_SCHEMA_BYTES).toEqual({ suggest: bytes(JSON.stringify(WRITER_JSON_SCHEMA)), idea: bytes(JSON.stringify(TRANSLATOR_JSON_SCHEMA)) });
+  });
+
+  test("an attempt's reserve is the engine's formula over the message: a table of messages", () => {
+    const system = MOTION_PROMPT_TEXTS.writerSystem;
+    for (const user of ["{}", JSON.stringify({ frame: { a: 1 } }), "я".repeat(300), JSON.stringify({ idea: "я".repeat(300), problems: ["not-motion"], previous: "x".repeat(80) })]) {
+      const engine = chatAttemptWorstMicros(PRICED.book, { model: MODEL, messages: [{ role: "system", content: system }, { role: "user", content: user }], jsonSchema: WRITER_JSON_SCHEMA, ...SUGGEST_ATTEMPT });
+      expect(attemptWorstMicros("suggest", user, false)).toBe(engine);
+    }
+    const idea = MOTION_PROMPT_TEXTS.translatorSystemBold;
+    for (const user of ["{}", "я".repeat(900)]) {
+      const engine = chatAttemptWorstMicros(PRICED.book, { model: MODEL, messages: [{ role: "system", content: idea }, { role: "user", content: user }], jsonSchema: TRANSLATOR_JSON_SCHEMA, ...TRANSLATE_ATTEMPT });
+      expect(attemptWorstMicros("idea", user, true)).toBe(engine);
+    }
+    // A message under the ceiling pays the ceiling; one over it pays its own size.
+    expect(attemptWorstMicros("idea", "{}", false)).toBe(chatAttemptWorstMicros(PRICED.book, { model: MODEL, messages: [{ role: "system", content: MOTION_PROMPT_TEXTS.translatorSystem }, { role: "user", content: "{}" }], jsonSchema: TRANSLATOR_JSON_SCHEMA, ...TRANSLATE_ATTEMPT }));
   });
 
   test("the mock's closed list of problems is the contract's", () => {

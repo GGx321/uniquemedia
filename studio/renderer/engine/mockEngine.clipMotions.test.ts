@@ -75,6 +75,14 @@ describe("clips.suggestMotions: the money", () => {
     expect([status.spentMicros, status.unsettledMicros]).toEqual([3_400, 0]);
   });
 
+  test("the call announces its money once, after it has ended, not at every reserve", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([UNREADABLE, suggestion(GOOD_TEXTS.slice(0, 1))]);
+    const before = m.events.filter((e) => e.type === "money.changed").length;
+    await unwrap(suggest(m));
+    expect(m.events.filter((e) => e.type === "money.changed").length - before).toBe(1);
+  });
+
   test("PRICE_CHANGED when the accepted worst case is below the live estimate: free, nothing sent", async () => {
     const m = makeClipMock();
     expect((await errorOf(suggest(m, PLAIN, SUGGEST.worstMicros - 1))).code).toBe("PRICE_CHANGED");
@@ -291,6 +299,7 @@ describe("clips.translateIdea", () => {
     ["staging", "she slowly zooms in on her face"],
     ["phone", "she slowly raises her phone and takes a photo"],
     ["content", "she slowly adjusts her bra"],
+    ["too-long", "she slowly turns her head a little to one side and smiles softly at nothing"],
   ] as const)("a text with the problem %s is `rejected` with it, after one repair: two chat calls", async (problem, text) => {
     const m = makeClipMock();
     m.engine.scriptNextMotionReplies([idea(text), idea(text)]);
@@ -342,7 +351,8 @@ describe("clips.translateIdea", () => {
     const m = makeClipMock();
     m.engine.scriptNextMotionReplies([idea(NOT_MOTION), { kind: "timeout" }]);
     expect((await errorOf(translate(m))).code).toBe("TIMEOUT");
-    expect((await money(m)).unsettledMicros).toBe(TRANSLATE_ATTEMPT);
+    // The repair carries the closed codes and the previous text, so its reserve is above the first attempt's (the real ledger agrees: money.test.ts).
+    expect((await money(m)).unsettledMicros).toBe(3_265);
   });
 
   test("ids count on: the next idea is o-2", async () => {

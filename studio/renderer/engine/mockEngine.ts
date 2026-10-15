@@ -983,6 +983,10 @@ export class MockEngine implements EngineBridge {
         ledgerReadable: () => this.unavailable === null,
         reserves: this.reserves,
         spend: (micros) => this.spend(micros),
+        spendQuietly: (micros) => {
+          this.spentMicros += micros;
+          this.spentSinceReconcile += micros;
+        },
         spentMicros: () => this.spentMicros,
         monthlyBudgetMicros: () => this.settings.monthlyBudgetMicros,
         pricesAsOf: () => this.price.pricesAsOf,

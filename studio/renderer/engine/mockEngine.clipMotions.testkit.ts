@@ -15,9 +15,9 @@ export const BOLD = CLIP_PHOTOS.bold.photoId;
 /** The prices of the two calls at the engine's bundled table with its PROVISIONAL system prompts (clips/motionPrice.ts). */
 export const SUGGEST = { expectedMicros: 3_400, worstMicros: 14_810 } as const;
 export const TRANSLATE = { expectedMicros: 1_000, worstMicros: 9_650 } as const;
-/** One attempt reserves half of a call's worst case. */
-export const SUGGEST_ATTEMPT = 7_405;
-export const TRANSLATE_ATTEMPT = 4_825;
+/** What the first attempt of a call on the plain frame reserves: the engine reserves for the message it really sends (chatAttemptWorstMicros), so it is below half of the widest case; mockEngine.clipMotions.money.test.ts holds it to the real ledger. */
+export const SUGGEST_ATTEMPT = 7_024;
+export const TRANSLATE_ATTEMPT = 3_184;
 
 export const GOOD_TEXTS = [
   "she slowly tucks a strand of hair behind her ear",

@@ -408,6 +408,8 @@ export interface MockClipsHost {
   /** The mock's open reserves, attempt id to worst: the clips add theirs and take them back. */
   reserves: Map<string, number>;
   spend(micros: number): void;
+  /** `spend` without the `money.changed` it announces: a part C call announces its money once, when it has ended (5b.2, S5.WC4). */
+  spendQuietly(micros: number): void;
   spentMicros(): number;
   monthlyBudgetMicros(): number;
   pricesAsOf(): string;
@@ -679,8 +681,10 @@ export class MockClips {
     this.#motions = new MockClipMotions(
       {
         unitHeld: () => this.#unit !== null,
-        gate: () => host.gate(),
+        // `usableKey`, then `paidBudget`: a ledger that was halted answers the halt's own cause (`SETTLE_ABOVE_WORST`), a ledger that waits for a reconcile `RECONCILE_REQUIRED` (the shared gate says the second for both).
+        gate: () => this.#paidGate(),
         reserveRefusal: () => host.reserveRefusal(),
+        haltLedger: () => host.haltLedger(),
         markKeyRejected: () => host.markKeyRejected(),
         find: (avatarId, photoId) => {
           const found = this.#photoOf(avatarId, photoId);
@@ -691,7 +695,7 @@ export class MockClips {
         committedMicros: () => this.#committed(),
         monthlyBudgetMicros: () => host.monthlyBudgetMicros(),
         reserves: host.reserves,
-        spend: (micros) => host.spend(micros),
+        spend: (micros) => host.spendQuietly(micros),
         emitMoney: () => host.emitMoney(),
         nextId: (prefix) => host.nextId(prefix),
         sleep: (ms) => new Promise<void>((resolve) => host.scheduler.schedule(ms, resolve)),
@@ -701,6 +705,12 @@ export class MockClips {
       },
       options.motionCallMs === undefined ? {} : { callMs: options.motionCallMs },
     );
+  }
+
+  /** `usableKey`, then `paidBudget`: a ledger that was halted answers the halt's own cause (`SETTLE_ABOVE_WORST`), one that waits for a reconcile `RECONCILE_REQUIRED` (the shared gate says the second for both). */
+  #paidGate(): EngineError | null {
+    const gated = this.#host.gate();
+    return gated !== null && gated.code === "RECONCILE_REQUIRED" ? (this.#host.reserveRefusal() ?? gated) : gated;
   }
 
   // ---------- part C: own motions (5b.2, S5.WC4) ----------
@@ -754,6 +764,12 @@ export class MockClips {
 
   translateIdea(payload: CommandPayload<"clips.translateIdea">): ReturnType<MockClipMotions["translateIdea"]> {
     return this.#motions.translateIdea(payload);
+  }
+
+  /** The engine's `ownLabelOf`: the label of an own idea in the photo's store, or null when the photo is not the avatar's (any more) or the store does not hold it. */
+  #ownLabelOf(avatarId: string, photoId: string, text: string): string | null {
+    if (this.#host.photo(avatarId, photoId) === undefined) return null;
+    return this.#motions.ownLabelOf(avatarId, photoId, text, this.#shaOf(photoId));
   }
 
   /** The photo file's identity for the store: the same until `changePhotoFile`. */
@@ -1306,7 +1322,7 @@ export class MockClips {
     // The unit is the FIRST check (I5.50, I5.61).
     const held = this.unitRefusal();
     if (held !== null) return bad(held);
-    const gated = this.#host.gate();
+    const gated = this.#paidGate();
     if (gated !== null) return bad(gated);
     const found = this.#photoOf(payload.avatarId, payload.photoId);
     if (!found.ok) return found;
@@ -1355,7 +1371,7 @@ export class MockClips {
   createBatch(payload: CommandPayload<"clips.createBatch">): Out<{ batchId: string; jobIds: string[] }> {
     const held = this.unitRefusal();
     if (held !== null) return bad(held);
-    const gated = this.#host.gate();
+    const gated = this.#paidGate();
     if (gated !== null) return bad(gated);
     const openMoney = this.#openClipMoneyRefusal();
     if (openMoney !== null) return bad(openMoney);
@@ -2465,7 +2481,7 @@ export class MockClips {
     const motion: ClipMotion | null =
       requested === null
         ? null
-        : { ...requested.motion, label: requested.motion.label ?? this.#motions.ownLabelOf(avatarId, requested.photoId, requested.motion.text, this.#shaOf(requested.photoId)) ?? OWN_IDEA_FALLBACK_LABEL };
+        : { ...requested.motion, label: requested.motion.label ?? this.#ownLabelOf(avatarId, requested.photoId, requested.motion.text) ?? OWN_IDEA_FALLBACK_LABEL };
     // As the engine's recovery job: the facts come from the journal's `requested` line, and a journal without one has none.
     if (requested !== null && motion !== null) job.facts = { photoId: requested.photoId, request: requested.request, motion: { source: motion.source, label: motion.label }, acceptedWorstMicros: requested.acceptedWorstMicros };
     // 5b.2 (I5.63): a batch member sent before the restart recovers as a single clip does, and keeps its place in the batch (the journal's `requested` line carries it), so the «Клипы» header counts it.

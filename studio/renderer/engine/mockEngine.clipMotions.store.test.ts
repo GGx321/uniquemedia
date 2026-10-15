@@ -269,6 +269,16 @@ describe("the journal and a restart (I5.67)", () => {
     expect((await listClips(m))[0]?.motion).toEqual({ source: "own", label: OWN_IDEA_FALLBACK_LABEL, text: GOOD_TEXTS[2] });
   });
 
+  test("when the photo is no longer the avatar's the recovered label is «Своя идея» too: the engine asks the photo before the store", async () => {
+    const m = await filled();
+    const own = await unwrap(create(m, { motionId: "o-3" }));
+    for (let i = 0; i < 400 && !phasesOf(m.events, own.jobId).includes("submitting"); i++) if (!m.scheduler.next()) break;
+    m.engine.removeClipPhoto(PLAIN);
+    m.engine.restart();
+    m.scheduler.runAll();
+    expect((await listClips(m))[0]?.motion).toEqual({ source: "own", label: OWN_IDEA_FALLBACK_LABEL, text: GOOD_TEXTS[2] });
+  });
+
   test("the store survives a restart", async () => {
     const m = await filled();
     m.engine.restart();
