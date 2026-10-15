@@ -323,6 +323,50 @@ export const CLIP_MOTION_SCENARIOS: readonly Scenario[] = [
       await status(t);
     },
   },
+  // Round 2 (APPENDED): the money of an attempt is the engine's formula over the message it really sends, and a bill above the reserve stops the ledger.
+  {
+    name: "clip motions: an attempt is reserved for the message it sends, settled at its worst case when the paid body is no chat answer, and the open reserve is told while the call waits",
+    rig: RIG,
+    async run(t, world, control) {
+      const w = clipsOf(world);
+      t.note("a paid body that is no chat answer: settled at the attempt's worst case, no second attempt");
+      await suggest(t, w, control, [{ kind: "unusable-body" }]);
+      await status(t);
+      await translate(t, w, control, [{ kind: "unusable-body" }]);
+      await status(t);
+      t.note("a suggestion at the model: its reserve is open, at the size of its message");
+      control.clips.motions.hold(true);
+      control.clips.motions.script([suggestion(GOOD.slice(0, 1))]);
+      const call = t.start("clips.suggestMotions", suggestPayload(w));
+      await control.clips.motions.untilAtModel();
+      await status(t);
+      control.clips.motions.hold(false);
+      await t.untilAnswered(call + 1);
+      t.note("an idea of 300 letters at the model: a longer message, a larger reserve");
+      control.clips.motions.hold(true);
+      control.clips.motions.script([translation(GOOD[1] ?? "")]);
+      const long = t.start("clips.translateIdea", ideaPayload(w, "я".repeat(300)));
+      await control.clips.motions.untilAtModel();
+      await status(t);
+      control.clips.motions.hold(false);
+      await t.untilAnswered(long + 1);
+      await status(t);
+    },
+  },
+  {
+    name: "clip motions: a bill above the reserve stops the ledger: the answer is used, the repair is refused, and the next call is refused with the ledger's cause",
+    rig: RIG,
+    async run(t, world, control) {
+      const w = clipsOf(world);
+      t.note("the model bills $0.02 for an attempt reserved at about $0.007");
+      await suggest(t, w, control, [{ kind: "answer", content: "I cannot see the photo", costMicros: 20_000 }, UNREADABLE]);
+      await status(t);
+      t.note("the ledger is stopped: no paid call of any kind is sent");
+      await t.call("clips.suggestMotions", suggestPayload(w));
+      await t.call("clips.translateIdea", ideaPayload(w));
+      await t.call("clips.create", createPayload(w, w.photos.plain, "g-blink"));
+    },
+  },
   {
     name: "clip motions: a frame of «Смелая» while bold clips are off is refused for both calls, free",
     rig: { clips: { batch: 4, budgetMicros: BUDGET, boldClips: "off" } },
