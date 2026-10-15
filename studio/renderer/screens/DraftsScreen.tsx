@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { AvatarSummary, EngineError, MontageListItem, PhotoSummary } from "../../shared/engine";
+import { type AvatarSummary, type EngineError, MAX_LISTED_BY_ID, type MontageListItem, type PhotoSummary } from "../../shared/engine";
 import type { EngineClient } from "../engine/client";
 import { useEngine, useEngineView } from "../engine/react";
 import { latestRenderOf, percentOf, renderPhase } from "../engine/renderJobs";
@@ -13,7 +13,7 @@ import { ScreenTitle } from "../ui/ScreenTitle";
 import { cancelOnEscape, useConfirmFocus } from "../ui/useConfirmFocus";
 import { ClipPoster } from "./montage/ClipPoster";
 import { draftMeta, draftTitle, whenLabel } from "./montage/labels";
-import { photoProblems } from "./montage/renderBlock";
+import { type FrameOriginOf, photoProblems } from "./montage/renderBlock";
 import { useMounted } from "./photos/shared";
 
 // 3d.2: the drafts screen (EditorEmpty.dc.html, «Монтаж · черновики»), where the sidebar's «Монтаж» leads. The
@@ -21,6 +21,12 @@ import { useMounted } from "./photos/shared";
 // poster, summary, a running render and what stops its render; «Пустой ролик» and the «Новый ролик» tile.
 
 type PhotoIndex = ReadonlyMap<string, ReadonlyMap<string, PhotoSummary>>;
+
+/** 5b.2 (S5.WAR N1): where each flagged clip copy comes from, by its media id: its photo, or null for a media known to be no copy (or gone). */
+type CopyOrigins = ReadonlyMap<string, { readonly photoId: string } | null>;
+
+const NO_PHOTOS: ReadonlyMap<string, PhotoSummary> = new Map();
+const NO_ORIGINS: CopyOrigins = new Map();
 
 interface DraftList {
   readonly items: readonly MontageListItem[];
@@ -30,6 +36,8 @@ interface DraftList {
   readonly notListedTotal: number;
   /** Per avatar whose drafts have a refused photo: its photos by id, to say why (rejected, in a video). */
   readonly photos: PhotoIndex;
+  /** The flagged clip copies' origins, as the media list answered for them (a copy it did not answer for is not known). */
+  readonly origins: CopyOrigins;
 }
 
 const DRAFT_FORMS = ["черновик", "черновика", "черновиков"] as const;
@@ -37,15 +45,52 @@ const RENDER_FORMS = ["рендер идёт", "рендера идут", "ре�
 const SKIPPED_FORMS = ["черновик не читается", "черновика не читаются", "черновиков не читаются"] as const;
 const NOT_LISTED_FORMS = ["черновик не показан: файлов слишком много", "черновика не показаны: файлов слишком много", "черновиков не показаны: файлов слишком много"] as const;
 
-/** The drafts, and the photos of the avatars whose drafts the engine flagged (a failed photos.list only loses the wording). */
+/** 5b.2 (I5.60): the clip copies the engine flagged at the clip itself (`photo-unavailable` at `["clips", i]`), by media id. */
+function flaggedCopyIds(items: readonly MontageListItem[]): string[] {
+  const ids = new Set<string>();
+  for (const item of items) {
+    for (const issue of item.issues) {
+      if (issue.code !== "photo-unavailable") continue;
+      const [root, i, part] = issue.path;
+      const clip = root === "clips" && typeof i === "number" && part === undefined ? item.montage.spec.clips[i] : undefined;
+      if (clip?.kind === "video") ids.add(clip.mediaId);
+    }
+  }
+  return [...ids];
+}
+
+/** The origins of `ids` by the media list, read in pages it takes; a page it refuses leaves its copies not known (S5.WAR N1). */
+async function readOrigins(client: EngineClient, ids: readonly string[]): Promise<CopyOrigins> {
+  const pages: string[][] = [];
+  for (let i = 0; i < ids.length; i += MAX_LISTED_BY_ID) pages.push(ids.slice(i, i + MAX_LISTED_BY_ID));
+  const answers = await Promise.all(pages.map(async (mediaIds) => ({ mediaIds, reply: await client.request("media.list", { kind: "video", mediaIds }) })));
+  const origins = new Map<string, { readonly photoId: string } | null>();
+  for (const { mediaIds, reply } of answers) {
+    if (!reply.ok) continue;
+    const held = new Map(reply.result.media.map((media) => [media.mediaId, media]));
+    for (const mediaId of mediaIds) {
+      const origin = held.get(mediaId)?.origin;
+      origins.set(mediaId, origin === undefined ? null : { photoId: origin.photoId });
+    }
+  }
+  return origins;
+}
+
+/**
+ * The drafts, the photos of the avatars whose drafts the engine flagged, and the origins of the flagged clip copies (5b.2, S5.WAR N1): a failed
+ * photos.list or media.list only loses the wording.
+ */
 async function loadDrafts(client: EngineClient): Promise<{ ok: true; list: DraftList } | { ok: false; error: EngineError }> {
   const reply = await client.request("montages.list", {});
   if (!reply.ok) return reply;
   const flagged = [...new Set(reply.result.items.filter((i) => i.issues.some((x) => x.code === "photo-unavailable")).map((i) => i.montage.spec.avatarId))];
-  const answers = await Promise.all(flagged.map(async (avatarId) => ({ avatarId, reply: await client.request("photos.list", { avatarId }) })));
+  const [answers, origins] = await Promise.all([
+    Promise.all(flagged.map(async (avatarId) => ({ avatarId, reply: await client.request("photos.list", { avatarId }) }))),
+    readOrigins(client, flaggedCopyIds(reply.result.items)),
+  ]);
   const photos = new Map<string, ReadonlyMap<string, PhotoSummary>>();
   for (const { avatarId, reply: listed } of answers) if (listed.ok) photos.set(avatarId, new Map(listed.result.photos.map((p) => [p.photoId, p])));
-  return { ok: true, list: { items: reply.result.items, total: reply.result.total, skippedTotal: reply.result.skippedTotal, notListedTotal: reply.result.notListedTotal ?? 0, photos } };
+  return { ok: true, list: { items: reply.result.items, total: reply.result.total, skippedTotal: reply.result.skippedTotal, notListedTotal: reply.result.notListedTotal ?? 0, photos, origins } };
 }
 
 /** The render of this draft still queued or running, the newest if several. */
@@ -57,11 +102,14 @@ function activeRenderOf(jobs: readonly JobView[], montageId: string): JobView | 
 /**
  * The one note under a draft's summary (D14, D15). A photo the engine refuses for a reason the owner can fix comes
  * first, in amber; then «✓ уже N видео из этого черновика». A photo held by a render in flight is not a note: the
- * render shows.
+ * render shows. 5b.2 (S5.WAR N1): a clip copy's frame is judged by its photo (`originOf`), so a frame in the draft's own
+ * video counts as the draft's photos do; a copy whose origin is not known is no fixable reason — it is told only when
+ * the draft has no video of its own.
  */
-function cardNote(item: MontageListItem, photos: ReadonlyMap<string, PhotoSummary>): { text: string; warn: boolean } | null {
-  const flagged = photoProblems(item.montage.spec, { spec: item.montage.spec, issues: item.issues }, photos);
-  const fixable = flagged.find((f) => f.problem === "rejected" || f.problem === "unavailable");
+function cardNote(item: MontageListItem, photos: ReadonlyMap<string, PhotoSummary>, originOf: FrameOriginOf): { text: string; warn: boolean } | null {
+  const flagged = photoProblems(item.montage.spec, { spec: item.montage.spec, issues: item.issues }, photos, originOf);
+  const unusable = (f: (typeof flagged)[number]): boolean => f.problem === "rejected" || f.problem === "unavailable";
+  const fixable = flagged.find((f) => f.checking !== true && unusable(f));
   if (fixable) {
     const what = fixable.problem === "rejected" ? "фото отклонено" : "фото недоступно";
     return { text: `Кадр ${fixable.clip + 1}: ${what} — замените его, иначе рендер недоступен`, warn: true };
@@ -69,6 +117,8 @@ function cardNote(item: MontageListItem, photos: ReadonlyMap<string, PhotoSummar
   if (item.videoCount > 0) return { text: `✓ уже ${item.videoCount}${NBSP}видео из этого черновика`, warn: false };
   const used = flagged.find((f) => f.problem === "used");
   if (used) return { text: `Кадр ${used.clip + 1}: фото уже в другом видео — замените его, иначе рендер недоступен`, warn: true };
+  const unknown = flagged.find((f) => f.checking === true);
+  if (unknown) return { text: `Кадр ${unknown.clip + 1}: фото недоступно — замените его, иначе рендер недоступен`, warn: true };
   return null;
 }
 
@@ -76,6 +126,7 @@ function DraftCard({
   item,
   avatar,
   photos,
+  origins,
   job,
   now,
   onDeleted,
@@ -83,6 +134,8 @@ function DraftCard({
   item: MontageListItem;
   avatar: AvatarSummary | null;
   photos: ReadonlyMap<string, PhotoSummary>;
+  /** The flagged clip copies' origins (S5.WAR N1). */
+  origins: CopyOrigins;
   job: JobView | null;
   now: Date;
   /** The draft is deleted: its card goes with the next list, so the focus moves off it. */
@@ -111,7 +164,7 @@ function DraftCard({
   }
   const { montage } = item;
   const title = draftTitle(avatar?.name ?? null, montage.name);
-  const note = cardNote(item, photos);
+  const note = cardNote(item, photos, (mediaId) => origins.get(mediaId));
   const first = montage.spec.clips[0];
   const phase = job === null ? null : renderPhase(job);
   const percent = job === null ? 0 : percentOf(job.done, job.total);
@@ -451,7 +504,8 @@ export function DraftsScreen({ lastAvatarId }: { lastAvatarId: string | null }) 
                   key={item.montage.montageId}
                   item={item}
                   avatar={avatarOf(item.montage.spec.avatarId)}
-                  photos={list?.photos.get(item.montage.spec.avatarId) ?? new Map()}
+                  photos={list?.photos.get(item.montage.spec.avatarId) ?? NO_PHOTOS}
+                  origins={list?.origins ?? NO_ORIGINS}
                   job={activeRenderOf(view.jobs, item.montage.montageId)}
                   now={now}
                   onDeleted={() => listHeading.current?.focus()}

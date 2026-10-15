@@ -37,11 +37,11 @@ export interface RenderBlockInput {
   readonly avatarUsage?: AvatarSummary["usage"];
   /** The text layers whose caption the engine's preview refused as it stands now (`refusedCaptionLayers`); absent: none. */
   readonly previewRefused?: ReadonlySet<string>;
-  /** Where a clip's montage copy comes from (its photo), by media id: what a refused copy's photo is judged by. Absent: a refused copy reads as an unavailable photo. */
+  /** Where a clip's montage copy comes from (its photo), by media id: what a refused copy's photo is judged by. Absent: a refused copy is «Проверяем фото…» (S5.WAR N2). */
   readonly originOf?: FrameOriginOf;
 }
 
-/** The photo a clip copy was made from, by the copy's media id; undefined for a media that is no copy. */
+/** The photo a clip copy was made from, by the copy's media id; null for a media known to be no copy (or gone); undefined while it is not known. */
 export type FrameOriginOf = (mediaId: string) => { readonly photoId: string } | null | undefined;
 
 export type UsedVideo = "this-draft" | { readonly file: string };
@@ -63,6 +63,11 @@ export interface FlaggedCell {
   readonly problem: PhotoProblem;
   /** The video holding it, for a used photo. */
   readonly videoId?: string;
+  /**
+   * S5.WAR N1, N2: a clip copy whose origin (its photo) is not read yet: why the engine refuses its frame is not known — it may be in the draft's own
+   * video. It is flagged all the same, and told as being checked, never as «фото недоступно».
+   */
+  readonly checking?: true;
 }
 
 /** Walks the scene photos of `spec` in timeline order. */
@@ -121,7 +126,13 @@ export function photoProblems(spec: MontageDraft, verdict: EngineVerdict | null,
   });
   spec.clips.forEach((clip, i) => {
     if (clip.kind !== "video" || !flaggedCopies.has(clip.mediaId)) return;
-    const photoId = originOf?.(clip.mediaId)?.photoId;
+    const origin = originOf?.(clip.mediaId);
+    // Not read yet (or no way to read it): checked, not guessed (S5.WAR N1, N2).
+    if (origin === undefined) {
+      cells.push({ clip: i, cell: 0, photoId: "", problem: "unavailable", checking: true });
+      return;
+    }
+    const photoId = origin?.photoId;
     cells.push({ clip: i, cell: 0, photoId: photoId ?? "", ...classify(photoId === undefined ? undefined : photos.get(photoId)) });
   });
   return cells.sort((a, b) => a.clip - b.clip || a.cell - b.cell);
@@ -254,6 +265,8 @@ export function renderBlock(input: RenderBlockInput): RenderBlock | null {
     // An avatar whose usage is unknown refuses all its photos: say that, and mark every flagged clip.
     const unknown = input.avatarUsage?.state === "unknown" ? input.avatarUsage.reasons[0] : undefined;
     if (unknown !== undefined) return reason(usageText(unknown), [...new Set(flagged.map((f) => f.clip))]);
+    // S5.WAR N2: a copy whose origin is still being read is not «фото недоступно»: the same wait as for the photos.
+    if (first.checking === true) return reason("Проверяем фото…", [first.clip]);
     const clips = first.problem === "used" ? [...new Set(flagged.map((f) => f.clip))] : [first.clip];
     return reason(photoText(first, input.usedVideo), clips);
   }
