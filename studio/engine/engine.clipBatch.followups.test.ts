@@ -183,6 +183,28 @@ describe("L6: a member's turn never hangs on its photo", () => {
   });
 });
 
+describe("L3: a lost summary write plus a crash does not under-count the batch", () => {
+  test("a 429's retry the summary never listed is recovered and joins its member, its money in the batch's total", async () => {
+    const first = "clip-00000081";
+    const retry = "clip-00000082";
+    const { avatarId, photoId, folder, batchId, at } = await crashedBatch(first);
+    // The first clip ended `rate-limited`, free; the write that told the retry was lost to the crash, then the retry's POST left and its reserve stands.
+    await writeClipRecord(folder, readyRecord({ id: first, avatarId, sourcePhotoId: photoId, batchId, batchIndex: 1, batchSize: 1, provider: { model: "kling-std", attempts: [] }, outcome: { status: "failed", reason: "rate-limited" } }));
+    const journal = journalOf(folder, retry);
+    await journal.requested({ clipId: retry, photoId, request: REQUEST, motion: MOTION, acceptedWorstMicros: 850_000, batch: { batchId, batchIndex: 1, batchSize: 1 }, at });
+    await journal.submitted({ attemptId: clipAttemptId(retry, 1), model: "kling", providerJobId: "job-kling-1", at });
+    await writeLedger(dir(), [{ type: "reserve", attemptId: clipAttemptId(retry, 1), jobId: retry, scope: { avatarJobId: retry }, model: "kwaivgi/kling-v3.0-std", worstMicros: 504_000, at }]);
+
+    const engine = await startClipEngine(dir(), { timings: TIMINGS, monthlyBudgetMicros: BUDGET, deps: { launchSteps: IDLE_STEPS } });
+    await until(() => engine.events().some((e) => e.type === "job.done" && e.payload.result.kind === "clip"), "the recovery's record");
+
+    const summary = await summaryOf(engine, avatarId, batchId);
+    expect(summary.members[0]).toMatchObject({ outcome: "ready", clipIds: [first, retry], costMicros: 504_000, costKind: "open" });
+    expect(summary.cost).toEqual({ micros: 504_000, kind: "open" });
+    await engine.engine.shutdown();
+  });
+});
+
 describe("L7: a lost library is not a deleted photo", () => {
   test("a library that is no longer the open one at a member's turn stops the batch `cancelled`, free: no member is called `photo-gone`", async () => {
     const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(3));

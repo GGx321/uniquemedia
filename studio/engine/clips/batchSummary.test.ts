@@ -101,6 +101,32 @@ describe("applyBatchChange: a member moves only from where it stands, and only u
     expect(file.members[0]?.outcome).toBe("ready");
   });
 
+  test("a record of a clip the member does not list yet (its requeue write was lost to a crash) joins the member and ends it (WB2d, L3)", () => {
+    // The first clip was 429'd (a free failed end), the crash took the write that told the retry; the retry's recovered record names the batch and the place.
+    let file = applyBatchChange(applyBatchChange(fresh(2), { kind: "running", index: 2, clipId: clip(2) }), { kind: "ended", index: 2, clipId: clip(2), outcome: "failed" });
+    file = applyBatchChange(file, { kind: "ended", index: 2, clipId: clip(9), outcome: "ready" });
+    expect(file.members[1]).toMatchObject({ outcome: "ready", clipIds: [clip(2), clip(9)] });
+    const withMoney = withCosts(file, costs({ [clip(2)]: { micros: 0, kind: "free" }, [clip(9)]: billed() }));
+    expect(withMoney.members[1]).toMatchObject({ costMicros: 420_000, costKind: "billed" });
+  });
+
+  test("the same holds for a member the restart called dropped, and the clip is listed once", () => {
+    let file = applyBatchChange(fresh(1), { kind: "dropped", index: 1, clipId: clip(1) });
+    file = applyBatchChange(file, { kind: "ended", index: 1, clipId: clip(9), outcome: "failed" });
+    file = applyBatchChange(file, { kind: "ended", index: 1, clipId: clip(9), outcome: "ready" });
+    expect(file.members[0]).toMatchObject({ outcome: "ready", clipIds: [clip(1), clip(9)] });
+  });
+
+  test("a made member does not take a clip it does not list: a made, refused or cancelled member never moves again", () => {
+    const made = applyBatchChange(applyBatchChange(fresh(1), { kind: "running", index: 1, clipId: clip(1) }), { kind: "ended", index: 1, clipId: clip(1), outcome: "ready" });
+    expect(applyBatchChange(made, { kind: "ended", index: 1, clipId: clip(9), outcome: "failed" }).members[0]).toMatchObject({ outcome: "ready", clipIds: [clip(1)] });
+  });
+
+  test("the end of an older clip the member lists is still ignored once a newer one stands (a 429's first clip)", () => {
+    const requeued = applyBatchChange(fresh(1), { kind: "requeued", index: 1, clipId: clip(2) });
+    expect(applyBatchChange(requeued, { kind: "ended", index: 1, clipId: clip(1), outcome: "failed" }).members[0]).toMatchObject({ outcome: "queued", clipIds: [clip(1), clip(2)] });
+  });
+
   test("a stop is told once, and only when it cancelled a member", () => {
     let file = applyBatchChange(fresh(), { kind: "cancelled", index: 2, clipId: clip(2), detail: "price-changed" });
     file = applyBatchChange(applyBatchChange(file, { kind: "cancelled", index: 3, clipId: clip(3), detail: "price-changed" }), { kind: "stop", detail: "price-changed" });

@@ -60,8 +60,11 @@ const FROM: Readonly<Record<"running" | "requeued" | "ended" | "cancelled" | "dr
   dropped: ["queued", "running"],
 };
 
-function moveMember(member: ClipBatchMemberSummary, change: Extract<BatchChange, { index: number }>): ClipBatchMemberSummary {
-  if (!FROM[change.kind].includes(member.outcome)) return member;
+function moveMember(listed: ClipBatchMemberSummary, change: Extract<BatchChange, { index: number }>): ClipBatchMemberSummary {
+  if (!FROM[change.kind].includes(listed.outcome)) return listed;
+  // A clip's end names its batch and place (a job's, or its record's), which proves it is the member's even when the write that listed it was lost to a crash (the requeue of a 429): it joins the member, and
+  // its money with it (WB2d, L3). Only an end does this: any other change about a clip the member does not list is about a clip that is not its.
+  const member = change.kind === "ended" && !listed.clipIds.includes(change.clipId) ? { ...listed, clipIds: [...listed.clipIds, change.clipId] } : listed;
   const { detail: _detail, ...rest } = member;
   if (change.kind === "requeued") return member.clipIds.includes(change.clipId) ? member : { ...rest, outcome: "queued", clipIds: [...member.clipIds, change.clipId] };
   if (member.clipIds.at(-1) !== change.clipId) return member;
