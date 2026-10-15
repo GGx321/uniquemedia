@@ -615,3 +615,29 @@ describe("round 2: a placement that can no longer go in, and a draft video not k
     expect(close()).toBeDefined();
   });
 });
+
+describe("S5.WA5 (M2): a draft's copy whose frame went bad in another window", () => {
+  test("the copy's kadr carries the refused-photo tag and «Рендер» says why, before the engine refuses at render", async () => {
+    const h = await clipsStudio();
+    const a = await makeClip(h, P(3), "g-breath");
+    const copy = await makeCopy(h, a);
+    await asAnotherWindow(() => h.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: P(3), rejected: true }));
+    await openEditor(h, [photoClip(0, P(2)), photoClip(1, P(4)), copyClip(2, copy)]);
+
+    const slot = within(timeline()).getByRole("button", { name: /^Кадр 3: / }).closest(".ed-clip-slot");
+    expect(slot?.classList.contains("ed-clip-flagged")).toBe(true);
+    expect(slot?.textContent).toContain("⚠ фото отклонено");
+    expect(document.body.textContent).toContain("Кадр 3: фото отклонено — замените его");
+  });
+
+  test("a copy of a free frame carries no tag", async () => {
+    const h = await clipsStudio();
+    const a = await makeClip(h, P(7), "g-tilt");
+    const copy = await makeCopy(h, a);
+    await openEditor(h, [photoClip(0, P(2)), photoClip(1, P(4)), copyClip(2, copy)]);
+
+    const slot = within(timeline()).getByRole("button", { name: /^Кадр 3: / }).closest(".ed-clip-slot");
+    expect(slot?.classList.contains("ed-clip-flagged")).toBe(false);
+    expect(slot?.textContent).toContain("▶ клип");
+  });
+});
