@@ -225,6 +225,23 @@ test("an unusable chat body's image-shaped data (a data URL) is scrubbed; ordina
   expect(raws[0]?.text).toContain(longText);
 });
 
+// 5b.2 (S5.WC3, I5.67): the owner's idea is in the request, and a model that echoes it in an unusable answer would leave it on disk. A caller passes its own scrub, run after the image-data scrub.
+test("a caller's scrubRaw also runs on a saved raw body, after the image-data scrub", async () => {
+  const dataUrl = `data:image/png;base64,${b64(PNG)}`;
+  const body = { usage: { cost: 0.002 }, echo: "the secret idea", leaked_image: dataUrl };
+  const { raws } = await run([{ status: 200, body }], { scrubRaw: (text) => text.replaceAll("the secret idea", "[omitted]") });
+
+  expect(raws[0]?.text).not.toContain("the secret idea");
+  expect(raws[0]?.text).toContain("[omitted]");
+  expect(raws[0]?.text).toContain("image data omitted");
+});
+
+test("without a scrubRaw of the caller's, a saved raw body is scrubbed of image data alone, as before", async () => {
+  const { raws } = await run([{ status: 200, body: { usage: { cost: 0.002 }, echo: "the secret idea" } }]);
+
+  expect(raws[0]?.text).toContain("the secret idea");
+});
+
 test("a long base64 run (128+ chars) with no data-URL prefix is scrubbed too", async () => {
   const run128 = "A".repeat(200);
   const body = { usage: { cost: 0.002 }, blob: run128 };

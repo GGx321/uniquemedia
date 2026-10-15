@@ -230,6 +230,11 @@ export interface ChatParams extends AttemptParams {
   reasoningEffort: ReasoningEffort;
   /** JPEGs, attached to the last user message. */
   images?: readonly Uint8Array[];
+  /**
+   * 5b.2 (S5.WC3, I5.67): a caller's own scrub of a saved raw body, run AFTER the image-data scrub (`omitByPattern`). A paid answer that cannot be used is saved on disk; a caller whose request held text
+   * that must not outlive the call (the owner's idea) removes it from the saved body here. Absent: only the image-data scrub runs, as before.
+   */
+  scrubRaw?: (text: string) => string;
 }
 
 /** Why a free GET (a poll, a `/generation` lookup) gave no usable answer. */

@@ -98,6 +98,7 @@ export function chatAttemptWorstMicros(priceBook: PriceBook, shape: ChatPriceSha
 export async function chat(ctx: ClientContext, params: ChatParams): Promise<ChatResult> {
   const images = params.images ?? [];
   const worstMicros = chatAttemptWorstMicros(params.priceBook, { ...params, images: images.length });
+  const callerScrub = params.scrubRaw;
   const result = await runPaidAttempt(ctx, {
     attemptId: params.attemptId,
     jobId: params.jobId,
@@ -123,7 +124,8 @@ export async function chat(ctx: ClientContext, params: ChatParams): Promise<Chat
     // (invariant 8) must not leave it whole on disk. Pattern rules only,
     // never the JSON path's ">256-char string" rule: the answer text itself
     // stays whole, which is what this raw body exists to diagnose.
-    scrubRaw: omitByPattern,
+    // 5b.2 (S5.WC3, I5.67): a caller's own scrub (the owner's idea) runs after the pattern rules.
+    scrubRaw: callerScrub === undefined ? omitByPattern : (text: string) => callerScrub(omitByPattern(text)),
     // M7 leftover: descriptor and age-check answers are small; this only
     // bounds a redacted body that escaped the scrub above whole (see
     // RAW_KEEP_BYTES_CHAT's own comment, transport.ts).
