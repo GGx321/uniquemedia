@@ -656,7 +656,10 @@ export function Timeline({
                             : clip.kind === "video"
                               ? copy !== null
                                 ? `▶ ${COPY_KIND}`
-                                : "▶ видео"
+                                : origin === undefined
+                                  ? // 5b.2 (S5.WAR L1): not read yet, it may be a clip's copy: no tag that calls it the owner's video.
+                                    null
+                                  : "▶ видео"
                               : null;
                     const refused = problem !== null || videoProblem !== null;
                     const classes = ["ed-clip-slot", selected ? "ed-clip-on" : "", refused ? "ed-clip-flagged" : highlighted.includes(i) ? "ed-clip-warn" : "", lifted ? "ed-clip-lifted" : ""].filter(Boolean).join(" ");

@@ -309,7 +309,8 @@ describe("an own video clip (3f.3b)", () => {
     expect(videoTag("media-unavailable", 90)).toBe("media-unavailable");
     expect(VIDEO_TAG_TEXTS["video-under-min"]).toBe(nb("Видео короче 0.1 с — в ролик его не поставить"));
     expect(VIDEO_TAG_TEXTS["video-too-short"]).toBe(MONTAGE_ISSUE_MESSAGES_RU["video-too-short"]);
-    expect(VIDEO_TAG_TEXTS["media-unavailable"]).toBe(MONTAGE_ISSUE_MESSAGES_RU["media-unavailable"]);
+    // 5b.2 (S5.WAR M1): a missing video may be a clip's copy deleted with its clip, so its words are neutral, not the contract's «среди ваших файлов».
+    expect(VIDEO_TAG_TEXTS["media-unavailable"]).toBe("Видео этого кадра больше нет в Studio — замените кадр.");
   });
 
   test("the clip block: «▶ видео» named by its file, or what the render refuses it for", () => {

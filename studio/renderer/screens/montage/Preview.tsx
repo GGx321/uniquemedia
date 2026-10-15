@@ -289,6 +289,13 @@ interface StageProps {
 function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, focusPending, dragPhoto, onFillCell, onSelectCell, videos, trimPeek, copyOf }: StageProps) {
   /** 5b.2 (57f): a cell that plays a clip's copy (its record, or the editor, says so). */
   const isCopy = (cell: CellView): boolean => cell.content.kind === "video" && (copyOf !== undefined ? copyOf(cell.content.mediaId) !== null : (videos.held.get(cell.content.mediaId)?.origin ?? null) !== null);
+  /** S5.WAR L1: what a video cell is called — a clip's copy, the owner's own video (its record says so), or a plain video (not read yet, or gone). */
+  const videoKind = (cell: CellView): VideoKind => {
+    if (cell.content.kind !== "video") return "other";
+    if (isCopy(cell)) return "copy";
+    const held = videos.held.get(cell.content.mediaId);
+    return held !== undefined && held.origin === null ? "own" : "other";
+  };
   /** A copy's name on the video's stand-in: its clip's motion («Клип» while it is not known); null for an own video, named by its file. */
   const copyNameOf = (mediaId: string): string | null => {
     const copy = copyOf?.(mediaId);
@@ -557,7 +564,7 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
           clipNumber={view.index + 1}
           cellCount={view.cells.length}
           cell={cell}
-          copy={isCopy(cell)}
+          video={videoKind(cell)}
           pictureUrl={cell.content.kind === "scene" ? (mock ? null : photoUrl(spec.avatarId, cell.content.photoId)) : cell.content.kind === "ownPhoto" ? ownPhotoUrl(client, cell.content.mediaId) : null}
           selected={selectedCell === cell.index}
           dropping={takesPhoto(cell)}
@@ -745,8 +752,8 @@ interface CellProps {
   readonly clipNumber: number;
   readonly cellCount: number;
   readonly cell: CellView;
-  /** 5b.2 (57f): the cell plays a clip's copy: «Кадр 3: клип». */
-  readonly copy: boolean;
+  /** 5b.2 (57f, S5.WAR L1): what a video cell plays: a clip's copy («Кадр 3: клип»), the owner's own video, or a video not read yet or gone («видео»). */
+  readonly video: VideoKind;
   /** The photo's picture: a scene photo's or an own photo's through main's media route; null in the dev mock (its stand-in is drawn). */
   readonly pictureUrl: string | null;
   readonly selected: boolean;
@@ -763,9 +770,12 @@ interface CellProps {
   readonly onDrop: (event: DragEvent<HTMLElement>) => void;
 }
 
-function cellLabel(clipNumber: number, cellCount: number, cell: CellView, copy: boolean): string {
+/** A video cell: a clip's copy, the owner's own video, or neither known (not read yet, or gone). */
+type VideoKind = "copy" | "own" | "other";
+
+function cellLabel(clipNumber: number, cellCount: number, cell: CellView, video: VideoKind): string {
   const where = cellCount > 1 ? `Кадр ${clipNumber}, ячейка ${cell.index + 1}` : `Кадр ${clipNumber}`;
-  const what: Record<CellView["content"]["kind"], string | null> = { empty: "пустая", video: copy ? COPY_KIND : "своё видео", ownPhoto: "своё фото", scene: null };
+  const what: Record<CellView["content"]["kind"], string | null> = { empty: "пустая", video: video === "copy" ? COPY_KIND : video === "own" ? "своё видео" : "видео", ownPhoto: "своё фото", scene: null };
   const said = what[cell.content.kind];
   return said === null ? where : `${where}: ${said}`;
 }
@@ -798,7 +808,7 @@ function OwnPhotoPicture({ url, mediaId, window, source }: { url: string | null;
   return <img key={retry.key} className="pv-photo" src={url} alt="" draggable={false} style={pictureStyle(window, source)} onError={retry.onError} />;
 }
 
-function PreviewCell({ clipNumber, cellCount, cell, copy, pictureUrl: url, selected, dropping, onSize, onPointerDown, onSelect, onKeyDown, onKeyUp, onBlur, onDragOver, onDrop }: CellProps) {
+function PreviewCell({ clipNumber, cellCount, cell, video, pictureUrl: url, selected, dropping, onSize, onPointerDown, onSelect, onKeyDown, onKeyUp, onBlur, onDragOver, onDrop }: CellProps) {
   const { content, window, source } = cell;
   const classes = ["pv-cell", content.kind === "video" ? "pv-cell-video" : "", selected ? "pv-cell-on" : "", dropping ? "pv-cell-drop" : ""].filter(Boolean).join(" ");
   const style: CSSProperties = { ...boxStyle(cell.rect), opacity: cell.alphaPermille / 1000 };
@@ -807,7 +817,7 @@ function PreviewCell({ clipNumber, cellCount, cell, copy, pictureUrl: url, selec
       type="button"
       className={classes}
       style={style}
-      aria-label={cellLabel(clipNumber, cellCount, cell, copy)}
+      aria-label={cellLabel(clipNumber, cellCount, cell, video)}
       aria-pressed={selected}
       // The arrows move only what can move (fix round 1, L9: never on an own video already 9:16).
       aria-keyshortcuts={selected && framedOf(cell) !== null ? "ArrowLeft ArrowRight ArrowUp ArrowDown Escape" : undefined}

@@ -102,10 +102,16 @@ export const VIDEO_PROBLEM_TAGS: Record<VideoTag, string> = {
   "video-under-min": `⚠ видео короче ${secondsLabel(MIN_CLIP_MS)}`,
 };
 
-/** The properties' words for it: the contract's own, but for a video under the shortest clip, whose «сдвиньте начало» could not be followed. */
+/** 5b.2 (S5.WAR M1): a video of a kadr that is gone. Neutral: it may have been a clip's copy, deleted with its clip, as well as a file of «Мои». */
+export const GONE_VIDEO_TEXT = "Видео этого кадра больше нет в Studio — замените кадр.";
+
+/**
+ * The properties' words for it: the contract's own, but for a video under the shortest clip, whose «сдвиньте начало» could not be followed, and for a video
+ * that is gone, whose contract words («среди ваших файлов») would call a deleted clip's copy the owner's file (5b.2, S5.WAR M1).
+ */
 export const VIDEO_TAG_TEXTS: Record<VideoTag, string> = {
   "video-too-short": MONTAGE_ISSUE_MESSAGES_RU["video-too-short"],
-  "media-unavailable": MONTAGE_ISSUE_MESSAGES_RU["media-unavailable"],
+  "media-unavailable": GONE_VIDEO_TEXT,
   "video-under-min": `Видео короче ${secondsLabel(MIN_CLIP_MS)} — в ролик его не поставить`,
 };
 

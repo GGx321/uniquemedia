@@ -5,6 +5,9 @@ import { FRAME_H, FRAME_W, videoClipCrop } from "../../shared/montage";
 import type { MockEngine } from "../engine/mockEngine";
 import { PHOTO_IDS } from "../engine/mockEngine.testkit";
 import { NBSP } from "../lib/format";
+
+/** 5b.2 (S5.WAR M1): a missing video's words are neutral (it may have been a clip's copy), not the contract's «среди ваших файлов». */
+const GONE_VIDEO_TEXT = "Видео этого кадра больше нет в Studio — замените кадр.";
 import { callsOf, flush } from "../testing";
 import { AUTOSAVE_DEBOUNCE_MS } from "./montage/autosave";
 import { dragFocus } from "./montage/previewDrag";
@@ -527,7 +530,7 @@ describe("an own file deleted while its draft is open (fix round 1, M1)", () => 
     expect(isDisabled(renderButton())).toBe(true);
     expect(why()).toBe("Кадр 2: файла больше нет");
     await selectVideo();
-    expect(within(props()).getByText(MONTAGE_ISSUE_MESSAGES_RU["media-unavailable"])).toBeDefined();
+    expect(within(props()).getByText(GONE_VIDEO_TEXT)).toBeDefined();
   });
 
   test("an own photo in a cell deleted after a clean verdict blocks «Рендер» with its frame", async () => {
@@ -634,9 +637,11 @@ describe("what the render refuses a video clip for", () => {
     const block = within(timeline()).getByRole("button", { name: s("Кадр 2: файла больше нет, 2.0 с") });
     expect(within(block).getByText("⚠ файла больше нет")).toBeDefined();
     await selectVideo();
-    expect(within(props()).getByText(MONTAGE_ISSUE_MESSAGES_RU["media-unavailable"])).toBeDefined();
+    expect(within(props()).getByText(GONE_VIDEO_TEXT)).toBeDefined();
     expect(within(props()).getByText("Видео нет — обрезать нечего")).toBeDefined();
     expect(within(preview()).getByText("Файла больше нет")).toBeDefined();
+    // Gone, it is no longer known to be the owner's own file: no «свой файл».
+    expect(within(props()).queryByText("свой файл") === null).toBe(true);
     expect(within(props()).getByText("Звук видео не используется — в ролике только музыка")).toBeDefined();
   });
 });

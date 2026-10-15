@@ -141,7 +141,9 @@ describe("the element", () => {
     const gone = mount({ video: { state: "gone" }, window: null });
     expect(gone.view.container.querySelector("video") === null).toBe(true);
     expect(gone.view.container.textContent).toContain("Файла больше нет");
-    expect(gone.view.container.textContent).toContain("Это видео удалили из «Моих» — уберите этот кадр.");
+    // 5b.2 (S5.WAR M1): neutral — the video may have been a clip's copy, deleted with its clip, not a file of «Мои».
+    expect(gone.view.container.textContent).toContain("Видео этого кадра больше нет в Studio — замените кадр.");
+    expect(gone.view.container.textContent?.includes("Моих")).toBe(false);
     const unknown = mount({ video: { state: "unknown" }, window: null });
     expect(unknown.view.container.querySelector("video") === null).toBe(true);
     expect(unknown.view.container.querySelector(".pv-video-ground") !== null).toBe(true);
