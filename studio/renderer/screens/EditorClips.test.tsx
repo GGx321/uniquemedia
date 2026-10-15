@@ -124,6 +124,18 @@ describe("57: the «Клипы» tab", () => {
     expect(within(media()).queryAllByRole("button", { name: /Удалить/ })).toEqual([]);
   });
 
+  test("no room left of the 15 s: the hint says so of a clip (WAD re-review N5), and a free clip cannot be added", async () => {
+    const h = await clipsStudio();
+    const clip = await makeClip(h, P(7), "g-tilt");
+    await openEditor(h, [photoClip(0, P(2), 7_500), photoClip(1, P(4), 7_500)]);
+    const hint = media().querySelector(".ed-bin-hint");
+    expect(hint?.textContent).toBe("В ролике уже 15 с: на новый кадр нет места. Укоротите кадр, чтобы добавить клип.");
+    expect(hint?.classList.contains("ed-bin-hint-full")).toBe(true);
+    expect(plain(pickOf(clip).getAttribute("aria-label"))).toBe("Клип «Наклоняет голову», 0:05: кадров больше не добавить");
+    expect(pickOf(clip).hasAttribute("disabled")).toBe(true);
+    expect(pickOf(clip).getAttribute("draggable")).toBe("false");
+  });
+
   test("57d: no clips yet — the empty card", async () => {
     const h = await clipsStudio();
     await openEditor(h, [photoClip(0, P(2))]);
@@ -262,7 +274,34 @@ describe("57b: a frame taken (Q-F = 1)", () => {
   });
 });
 
+describe("57b: a frame held by a render", () => {
+  test("a render that holds the clip's photo: «в рендере», dimmed, «уже занято»", async () => {
+    const h = await clipsStudio();
+    const clip = await makeClip(h, P(5));
+    const rendering = await asAnotherWindow(() => h.client.request("videos.render", { spec: { schemaVersion: 1, avatarId: MIA.avatarId, layers: [], music: null, seed: 7, clips: [photoClip(0, P(5)), photoClip(1, P(6))] } }));
+    if (!rendering.ok) throw new Error(`videos.render: ${rendering.error.code}`);
+    await openEditor(h, [photoClip(0, P(2)), photoClip(1, P(4))]);
+    expect(tiles()).toEqual(["Клип «Моргает и улыбается», 0:05, Фото 6 · в рендере"]);
+    expect(tileOf(clip).querySelector(".edc-state")?.textContent).toBe("в рендере");
+    expect(plain(pickOf(clip).getAttribute("aria-label"))).toBe("Клип «Моргает и улыбается», 0:05: уже занято");
+    expect(pickOf(clip).hasAttribute("title")).toBe(false);
+  });
+});
+
 describe("57c: a refused preparation, one text per reason", () => {
+  test("NOT_FOUND (the clip went in another window): no card, and the tile goes with the list read again", async () => {
+    const h = await clipsStudio();
+    const clip = await makeClip(h, P(7), "g-tilt");
+    await openEditor(h, [photoClip(0, P(2)), photoClip(1, P(4))]);
+    // Another window deletes the clip; this tab has not read its list since.
+    await asAnotherWindow(() => h.client.request("clips.delete", { avatarId: MIA.avatarId, clipId: clip }));
+    fireEvent.click(pickOf(clip));
+    await flush();
+    await flush();
+    expect(within(media()).queryByRole("alert")).toBeNull();
+    expect(within(media()).getByText("Клипов пока нет.")).toBeDefined();
+  });
+
   test("an importer failure: the card over the tiles, the tile marked and pressable; ✕ closes the card", async () => {
     const h = await clipsStudio();
     const b = await makeClip(h, P(7), "g-tilt");
@@ -348,6 +387,8 @@ describe("57e, 57f: the copy in the draft", () => {
     expect(within(timeline()).getByRole("button", { name: "Разрезать по плейхеду" }).getAttribute("title")).toBe("Клип не режется: одно фото — один раз в ролике");
     expect(within(timeline()).getByRole("button", { name: "Дублировать выбранное" }).getAttribute("title")).toBe("Клип не копируется: одно фото — один раз в ролике");
     expect(screen.getByRole("button", { name: "Кадр 3: клип" })).toBeDefined();
+    // The selected copy fills the 9:16 frame: its pill says «клип» where an own video's says «видео».
+    expect(screen.getByRole("region", { name: "Превью" }).querySelector(".pv-video-pill")?.textContent).toBe("клип 9:16 · весь кадр");
     // The copy's own file name («Клип <дата> <время>.mp4») is nowhere: not in the text, not in a name.
     expect(document.body.textContent?.includes(".mp4")).toBe(false);
     expect(document.body.textContent?.includes("Клип 20")).toBe(false);
