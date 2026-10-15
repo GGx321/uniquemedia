@@ -1,6 +1,7 @@
-import { MOTION_ENGLISH, MOTION_PROBLEMS, MOTION_TEXT_MAX, type ClipMotionSource, type MotionProblem } from "../engine";
+import { ageMentions, ageUpperBounds, MOTION_ENGLISH, MOTION_PROBLEMS, MOTION_TEXT_MAX, type ClipMotionSource, type MotionProblem } from "../engine";
 import { isHandCapture, type Capture, type FaceVisibility } from "./captures";
 import { contentProblems, type ContentLevel, type ContentProblem } from "./contentLine";
+import { explicitActsIn, exposureWordsIn } from "./explicitWords";
 import { CAMERA_WORDS, HAIR_COLOUR_WORDS, MOTION_SMALL, MOTION_STAGING, PHONE_WORDS, SELFIE_WORDS, YOUTH_PROPS } from "./words";
 
 // Stage 5, 5b.2, S5.WC2 (plan s5b2 I5.66, §8 WC2): the one motion check. A motion text is data, whoever wrote it: a bank's author (`bank`, at load), the code's table (`code`), a
@@ -43,17 +44,22 @@ export const MOTION_RULES = [
   "form",
   "length",
   "youth",
+  "number",
   "revealing",
+  "exposure",
+  "explicit",
   "youth-prop",
   "hair-colour",
   "instruction",
   "negation",
+  "new-subject",
   "takes-off",
   "selfie",
   "camera",
   "she-her",
   "words",
   "small",
+  "fast",
   "one-movement",
   "sentence",
   "staging",
@@ -74,8 +80,12 @@ export interface MotionFinding<Rule extends MotionRule = MotionRule> {
   readonly what: string;
 }
 
-/** I5.51: camera and edit words of a video, beyond the bank's own staging list. */
-const VIDEO_STAGING = /\b(?:dolly|crane|drone|gimbal|orbit\w*|push-?ins?|cinematic\w*|film\w*|colou?r grading|lens flares?|transitions?)\b/i;
+/**
+ * I5.51: camera and edit words of a video, beyond the bank's own staging list. Round 2 (S5.WC2): slow-mo, a time-lapse, a fade in or out, handheld, a focus pull, a 4K
+ * or 8K, an aspect ratio, a frame rate.
+ */
+const VIDEO_STAGING =
+  /\b(?:dolly|crane|drone|gimbal|orbit\w*|push-?ins?|cinematic\w*|film\w*|colou?r grading|lens flares?|transitions?|slow-?mo|time-?lapse\w*|fade-?(?:in|out)|fades?\s+(?:in|out|to)|hand-?held|(?:rack|soft|shallow|deep)[- ]focus|out of focus|defocus\w*|focus (?:pull|shift)\w*|\d+k|aspect ratio|frame rate|fps|steadicam)\b/i;
 
 /** Whether a motion or an activity stages the camera or the edit: the bank's MOTION_STAGING, or a video word (I5.51). */
 export function hasVideoStagingWord(text: string): boolean {
@@ -144,14 +154,41 @@ const TAKES_OFF_FORMS: readonly RegExp[] = [
 ];
 
 /**
+ * Round 2 (S5.WC2, the content review): what she wears, by name. «top» is a garment unless it names the upper one of two («her top knee», «the top of her head»). The
+ * one motion check's garment-anchored takes-off forms read it, and so does videoLook's `WORN_OR_HELD` (a garment only moved takes «comes off»).
+ */
+export const GARMENT =
+  /\b(?:robes?|tops?(?!\s+(?:knee|leg|foot|arm|hand|of|step|stair|shelf|bunk)\b)|dress(?:es)?|shirts?|t-shirts?|tees?|blouses?|towels?|bras?|bralettes?|straps?|skirts?|jackets?|hoodies?|sweaters?|jumpers?|cardigans?|coats?|shorts|jeans|trousers|pants|leggings|bikinis?|swim(?:suits?|wear)|lingerie|stockings|tights|pajamas|pyjamas|nightgowns?|nighties?|nightdress(?:es)?|camisoles?|cami|bodysuits?|kimonos?|sarongs?|shawls?|panties|briefs|underwear|thongs?)\b/i;
+
+/**
+ * Round 2: the same act said with a garment, in the words a model reaches for. Each needs a garment in what it moves (and none of `NOT_WORN`): a verb that moves it off,
+ * down, away, open, aside or over her head («pulls her top over her head», «eases her dress off», «slides her straps down», «slips her robe from her shoulders»); a verb
+ * that undoes it («drops», «sheds», «opens», «unties», «undoes», «unhooks», «unfastens», «unwraps», «lowers», «loosens» her robe); stepping, wriggling or getting out of
+ * it; letting it open.
+ */
+const MOVE_VERBS = "pull|pulls|pulling|tug|tugs|tugging|lift|lifts|lifting|ease|eases|easing|push|pushes|pushing|draw|draws|drawing|lower|lowers|lowering|slide|slides|sliding|slip|slips|slipping|peel|peels|peeling|roll|rolls|rolling|work|works|working|shrug|shrugs|shrugging|inch|inches|inching|take|takes|taking";
+const AWAY = String.raw`(?:off|down|away|open|apart|aside|over\s+her\s+head|from\s+her\s+(?:shoulders?|body|hips?|chest|arms?))`;
+const GARMENT_FORMS: readonly RegExp[] = [
+  new RegExp(String.raw`\b(?:${MOVE_VERBS})\s+((?:[a-z'-]+\s+){1,4}?)${AWAY}\b`, "gi"),
+  /\b(?:drop|drops|dropping|shed|sheds|shedding|open|opens|opening|unti\w*|undo|undoes|undoing|unhook\w*|unfasten\w*|unwrap\w*|unlac\w*|unclasp\w*|lower|lowers|lowering|loosen\w*)\b((?:\s+[a-z'-]+){1,3})/gi,
+  /\b(?:step|steps|stepping|wriggl\w*|wiggl\w*|get|gets|getting|climb\w*|shimm(?:y|ies|ying)|wrestl\w*)\s+out\s+of\b((?:\s+[a-z'-]+){1,3})/gi,
+  /\blet(?:s|ting)?\s+((?:[a-z'-]+\s+){1,3}?)(?:fall\s+|slip\s+|swing\s+)?open\b/gi,
+];
+
+const wordsOf = (match: RegExpMatchArray): string[] => (match[1] ?? "").toLowerCase().match(/[a-z'-]+/g) ?? [];
+
+/**
  * Whether a motion takes clothing off: one of `TAKES_OFF_PHRASES` (and the same act in a model's other words: «peels off», «shrugs off», «slips the robe off», «undresses»,
- * «strips»), unless what comes off is her hair, her body, something she holds or a seat. No bank motion and no code motion says one (motionText.test.ts sweeps them).
+ * «strips»), unless what comes off is her hair, her body, something she holds or a seat; or, since round 2, a garment moved off, down, away or open, undone, or stepped out
+ * of. No bank motion and no code motion says one (motionText.test.ts sweeps them).
  */
 export function takesOff(text: string): boolean {
-  return TAKES_OFF_FORMS.some((form) =>
+  const phrase = TAKES_OFF_FORMS.some((form) => Array.from(text.matchAll(form)).some((match) => !wordsOf(match).some((word) => NOT_WORN.has(word))));
+  if (phrase) return true;
+  return GARMENT_FORMS.some((form) =>
     Array.from(text.matchAll(form)).some((match) => {
-      const object = (match[1] ?? "").toLowerCase().match(/[a-z'-]+/g) ?? [];
-      return !object.some((word) => NOT_WORN.has(word));
+      const object = wordsOf(match);
+      return GARMENT.test(object.join(" ")) && !object.some((word) => NOT_WORN.has(word));
     }),
   );
 }
@@ -183,6 +220,52 @@ const INSTRUCTION_WORDS = /\b(?:ignor\w*|disregard\w*|instructions?|prompts?|sys
 const NEGATION = /\b(?:no|not|never|without|nothing|none|nobody|neither|nor)\b|n't\b/i;
 /** A motion is at least «she» or «her», a verb and its manner. */
 const MOTION_WORDS_MIN = 3;
+
+// ---------- round 2 (S5.WC2, the content review) ----------
+
+/**
+ * The two costly reads of a check, kept per text: the content line's answer at a level (`contentProblems`) and the ages and age bounds a text states (`ageMentions`,
+ * `ageUpperBounds`). A frame's prompt checks the same few motion texts again and again (every choice, both dialects, and the job's last build), so each answer is kept, at
+ * most `KEPT_MAX` of them (then the memory starts over). Both are pure functions of their keys: what is kept never changes an answer.
+ */
+const KEPT_MAX = 1_024;
+function keptBy<T>(compute: (key: string) => T): (key: string) => T {
+  const kept = new Map<string, T>();
+  return (key) => {
+    const found = kept.get(key);
+    if (found !== undefined) return found;
+    if (kept.size >= KEPT_MAX) kept.clear();
+    const value = compute(key);
+    kept.set(key, value);
+    return value;
+  };
+}
+const agesIn = keptBy((text): readonly number[] => [...ageMentions(text), ...ageUpperBounds(text)]);
+const contentAt = new Map<ContentLevel, (text: string) => readonly ContentProblem[]>();
+/** `contentProblems(text, level)`, kept per level and text. */
+function contentIn(text: string, level: ContentLevel): readonly ContentProblem[] {
+  let read = contentAt.get(level);
+  if (read === undefined) {
+    read = keptBy((key) => contentProblems(key, level));
+    contentAt.set(level, read);
+  }
+  return read(text);
+}
+
+/** Every number word but «one», which the bank's own motions say («she swings one foot a little») and which `ageText` too never reads alone as an age. */
+const NUMBER_WORDS =
+  /\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|dozen)\b/i;
+/** Exposure a model says beyond the bank's list (scenes/explicitWords.ts). */
+const EXPOSURE_MORE =
+  /\b(?:bare[- ](?:breasts?|chest(?:ed)?|bottom|butt)|breasts?|unclothed|undressed|in the nude|birthday suit|au naturel|wearing nothing|nothing on|without clothes|sans clothes)\b/gi;
+/** Explicit acts and words a model says beyond the bank's list. */
+const EXPLICIT_MORE =
+  /\b(?:spread(?:s|ing)?\s+(?:her\s+)?(?:legs|thighs)|touch(?:es|ing)?\s+herself|strok(?:e|es|ing)\s+herself|masturbat\w*|porn\w*|xxx|hentai|erotic\w*|explicit|moan\w*|grop\w*|horny|aroused)\b/gi;
+/** Someone or something new in the clip: another person, or something that appears, enters or joins («…, a man walks in», «…, a second woman appears»). */
+const NEW_SUBJECT =
+  /\b(?:man|men|woman|women|guy|guys|person|people|stranger|someone|somebody|anyone|anybody|boyfriend|girlfriend|husband|crowd|another|second|new|he|him|his|appears?|appearing|enters?|entering|arriv\w*|joins?|joining|emerg\w*|walks?\s+in|comes?\s+in|shows?\s+up)\b/i;
+/** Speed a model may add beside a small word («slowly turns, very fast and abruptly»): the movement is not small then. */
+const FAST = /\b(?:fast|faster|quick|quickly|rapid|rapidly|abrupt|abruptly|sudden|suddenly|wild|wildly|jerk\w*|frantic\w*|vigorous\w*|energetic\w*|swift\w*|hurried\w*|brisk\w*)\b/i;
 
 const isModelText = (scope: Scope): boolean => scope.source === "vision" || scope.source === "own";
 
@@ -226,12 +309,23 @@ const RULES: readonly RuleCheck[] = [
   },
   { rule: "length", problem: "too-long", check: (text, scope) => (takesGrammar(scope) && text.length > MOTION_TEXT_MAX ? `must be at most ${MOTION_TEXT_MAX} characters` : null) },
   {
+    // Round 2 (HIGH): an age or an age bound is a hard line on every source and every frame, the bank's load included (`adultTextProblems`'s readers, ageText.ts).
     rule: "youth",
     problem: "content",
-    check: (_text, _scope, content) => {
+    check: (text, _scope, content) => {
       const youth = contentWordsOf(content, "youth-word");
-      return youth.length > 0 ? `names a youth word (${words(youth)})` : null;
+      const ages = agesIn(text);
+      const said = [youth.length > 0 ? `names a youth word (${words(youth)})` : null, ages.length > 0 ? `names an age or an age bound (${ages.join(", ")})` : null];
+      const found = said.filter((what): what is string => what !== null);
+      return found.length > 0 ? found.join("; ") : null;
     },
+  },
+  {
+    // Round 2: a model's text holds no number at all, a digit or a number word but «one» (the bank says «she swings one foot a little»): a motion never needs one, and an age
+    // hides in one («sixteen») where `ageMentions` reads no context.
+    rule: "number",
+    problem: "content",
+    check: (text, scope) => (isModelText(scope) && (/\d/.test(text) || NUMBER_WORDS.test(text)) ? "names a number" : null),
   },
   {
     rule: "revealing",
@@ -242,10 +336,36 @@ const RULES: readonly RuleCheck[] = [
       return revealing.length > 0 ? `names a revealing word at this frame's level (${words(revealing)})` : null;
     },
   },
+  {
+    // Round 2 (the controller's decision on explicit content): exposure is the owner's own idea's alone on a frame of «Смелая», as undressing is (Q-H = 2); refused for
+    // every other source and on every other frame. The bank's sweeps hold its own texts to the same lists.
+    rule: "exposure",
+    problem: "content",
+    check: (text, scope) => {
+      if (scope.source === "bank" || (scope.source === "own" && scope.frame.bold)) return null;
+      const exposure = [...exposureWordsIn(text), ...Array.from(text.matchAll(new RegExp(EXPOSURE_MORE)), (m) => m[0])];
+      return exposure.length > 0 ? `names exposure (${words(exposure)})` : null;
+    },
+  },
+  {
+    // Round 2: an explicit act is refused on every frame, for every source.
+    rule: "explicit",
+    problem: "content",
+    check: (text, scope) => {
+      if (scope.source === "bank") return null;
+      const acts = [...explicitActsIn(text), ...Array.from(text.matchAll(new RegExp(EXPLICIT_MORE)), (m) => m[0])];
+      return acts.length > 0 ? `names an explicit act (${words(acts)})` : null;
+    },
+  },
   { rule: "youth-prop", problem: "content", check: (text, scope) => (takesGrammar(scope) && YOUTH_PROPS.test(text) ? "names a youth prop" : null) },
   { rule: "hair-colour", problem: "content", check: (text, scope) => (takesGrammar(scope) && HAIR_COLOUR_WORDS.test(text) ? "names a hair colour or a dye" : null) },
   { rule: "instruction", problem: "content", check: (text, scope) => (isModelText(scope) && INSTRUCTION_WORDS.test(text) ? "talks to a model, not about her movement" : null) },
   { rule: "negation", problem: "content", check: (text, scope) => (isModelText(scope) && NEGATION.test(text) ? "negates, which puts what it negates into the prompt" : null) },
+  {
+    rule: "new-subject",
+    problem: "content",
+    check: (text, scope) => (isModelText(scope) && NEW_SUBJECT.test(text) ? "brings someone or something new into the clip" : null),
+  },
   {
     // Q-H = 2: only an own idea on a frame of «Смелая» may take clothing off. The bank never reads this rule (the bank is unchanged); a vision text never passes it.
     rule: "takes-off",
@@ -266,6 +386,7 @@ const RULES: readonly RuleCheck[] = [
     problem: "not-small",
     check: (text, scope) => (takesGrammar(scope) && !MOTION_SMALL.test(text) ? "is small or slow: «slowly», «a little», «a bit», «slightly», «gently» or «small»" : null),
   },
+  { rule: "fast", problem: "not-small", check: (text, scope) => (isModelText(scope) && FAST.test(text) ? "says it is fast, abrupt or sudden" : null) },
   {
     rule: "one-movement",
     problem: "two-movements",
@@ -299,7 +420,7 @@ const RULES: readonly RuleCheck[] = [
 
 function findingsIn(text: string, scope: Scope): MotionFinding[] {
   let read: readonly ContentProblem[] | undefined;
-  const content: ContentRead = () => (read ??= contentProblems(text, levelOf(scope)));
+  const content: ContentRead = () => (read ??= contentIn(text, levelOf(scope)));
   return RULES.flatMap(({ rule, problem, check }) => {
     const what = check(text, scope, content);
     return what === null ? [] : [{ rule, problem, what }];

@@ -382,7 +382,8 @@ describe("injection-ish text a model may send: each refused with the right code"
   });
 
   test("a text that does not open with «she» or «her», a capital included: not-motion", () => {
-    expect(vision("the woman slowly turns her head")).toEqual(["not-motion"]);
+    // Since round 2 «woman» also reads as someone in the clip (new-subject, content); not-motion stays first.
+    expect(vision("the woman slowly turns her head")).toEqual(["not-motion", "content"]);
     expect(vision("She slowly turns her head")).toEqual(["not-motion"]);
   });
 
@@ -432,5 +433,174 @@ describe("injection-ish text a model may send: each refused with the right code"
       expect(motionTextProblems(text, FRIEND, "code")).toEqual([]);
       expect(motionTextProblems(text, FRIEND, "scene")).toEqual([]);
     }
+  });
+});
+
+// ---------- review round 2 (the opus content review of S5.WC2) ----------
+
+describe("an age is a hard line, on every source and every frame (round 2, HIGH)", () => {
+  /** The review's cases, each said with an undressing on a frame of «Смелая», where an own idea that takes clothing off is otherwise accepted. */
+  const AGES = [
+    "she slowly takes off her robe, 15 years old",
+    "she slowly takes off her robe, aged 16",
+    "she slowly takes off her robe, she is 16",
+    "she slowly takes off her robe, sixteen",
+    "she slowly takes off her robe, 16yo",
+    "she slowly takes off her robe, age 17",
+    "she slowly takes off her robe, under 18",
+    "she slowly takes off her robe, 18",
+  ];
+
+  for (const text of AGES) {
+    test(`content on «Смелая» (own, vision) and on an ordinary frame: «${text}»`, () => {
+      expect(motionTextProblems(text, BOLD, "own")).toContain("content");
+      expect(motionTextProblems(text, BOLD, "vision")).toContain("content");
+      expect(motionTextProblems(text, FRIEND, "own")).toContain("content");
+      expect(motionTextProblems(text, FRIEND, "vision")).toContain("content");
+    });
+  }
+
+  test("the same ages with no undressing, on an ordinary frame: content alone", () => {
+    for (const text of ["she slowly turns, she is 16", "she slowly turns, sixteen", "she slowly turns, 16yo", "she slowly turns, age 17", "she slowly turns, under 18", "she slowly turns, 18"]) {
+      expect([text, motionTextProblems(text, FRIEND, "own")]).toEqual([text, ["content"]]);
+    }
+  });
+
+  test("an age or an age bound is content for a scene and a code text too, and the bank's loader reports it as a youth line", () => {
+    for (const text of ["she slowly turns, aged 16", "she slowly turns, she is 16", "she slowly turns, under 18", "she slowly turns, 15 years old"]) {
+      expect([text, motionTextProblems(text, FRIEND, "scene")]).toEqual([text, ["content"]]);
+      expect([text, motionTextProblems(text, FRIEND, "code")]).toEqual([text, ["content"]]);
+      expect(bankMotionFindings(text, "ordinary", false).map((finding) => finding.rule)).toEqual(["youth"]);
+    }
+  });
+
+  test("a vision or own text holds no digit and no number word (a motion never needs one); «one» stays, as the bank proves it («she swings one foot a little»)", () => {
+    for (const text of ["she slowly turns 2 steps", "she slowly takes two steps", "she slowly turns, twenty", "she slowly turns, twenty-five"]) {
+      expect([text, motionTextProblems(text, FRIEND, "own")]).toEqual([text, ["content"]]);
+    }
+    expect(motionTextProblems("she slowly swings one foot a little", FRIEND, "own")).toEqual([]);
+  });
+
+  test("no bank motion and no code motion names an age, a digit or a number word but «one»", () => {
+    const texts = [...everyMoment().map((p) => p.moment.motion), ...CODE_MOTIONS.map((m) => m.text)];
+    expect(texts.filter((text) => /\d/.test(text) || /\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|teen|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty)\b/i.test(text))).toEqual([]);
+  });
+});
+
+describe("explicit and exposure words (round 2, the controller's decision on explicit content)", () => {
+  const EXPOSURE = ["she slowly turns, nude", "she slowly poses nude", "she slowly turns, with bare breasts", "she slowly turns, nipples visible", "she slowly turns, naked"];
+  const EXPLICIT = ["she slowly spreads her legs", "she slowly touches herself", "she slowly turns, porn style", "she slowly smiles, XXX", "she slowly masturbates", "she slowly turns, sex"];
+
+  test("on an ordinary frame a vision or own text with an exposure or an explicit word: content", () => {
+    for (const text of [...EXPOSURE, ...EXPLICIT]) {
+      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, ["content"]]);
+    }
+  });
+
+  test("on a frame of «Смелая» an explicit act is content for every source", () => {
+    for (const text of EXPLICIT) {
+      for (const source of ["scene", "code", "vision", "own"] as const) expect(motionTextProblems(text, BOLD, source)).toContain("content");
+    }
+  });
+
+  test("on a frame of «Смелая» exposure is the owner's own idea's alone (as undressing is, Q-H = 2): own passes, vision, scene and code are content", () => {
+    for (const text of EXPOSURE) {
+      expect([text, motionTextProblems(text, BOLD, "own")]).toEqual([text, []]);
+      for (const source of ["scene", "code", "vision"] as const) expect(motionTextProblems(text, BOLD, source)).toContain("content");
+    }
+  });
+
+  test("no bank motion and no code motion is newly refused: every one still passes as scene on its frames (the sweep above) and names no explicit or exposure word", () => {
+    for (const { where, picked, facts } of everyFrame()) {
+      if (FACE_DROPPED.has(where)) continue;
+      expect([where, motionTextProblems(picked.moment.motion, facts, "scene")]).toEqual([where, []]);
+    }
+  });
+});
+
+describe("TAKES_OFF paraphrases a model reaches for (round 2, MEDIUM): a garment and a verb that takes it off", () => {
+  const PARAPHRASES = [
+    "she slowly pulls her top over her head",
+    "she slowly lifts her top off",
+    "she slowly tugs her top off",
+    "she slowly eases her dress off",
+    "she slowly drops her robe",
+    "she slowly sheds her robe",
+    "she slowly opens her robe",
+    "she slowly unties her robe",
+    "she slowly undoes her robe",
+    "she slowly unhooks her top",
+    "she slowly unfastens her dress",
+    "she slowly pulls her dress down",
+    "she slowly lowers her straps",
+    "she slowly slides her straps down",
+    "she slowly pushes her straps down",
+    "she slowly steps out of her dress",
+    "she slowly wriggles out of her dress",
+    "she slowly gets out of her dress",
+    "she slowly unwraps her towel",
+    "she slowly slips her robe from her shoulders",
+    "she slowly peels her top away",
+    "she slowly lets her robe open",
+    "she slowly pulls her robe open",
+  ];
+
+  for (const text of PARAPHRASES) {
+    test(`takes-off on an ordinary frame (own) and on «Смелая» (vision); accepted as own on «Смелая»: «${text}»`, () => {
+      expect(takesOff(text)).toBe(true);
+      expect(motionTextProblems(text, FRIEND, "own")).toEqual(["takes-off"]);
+      expect(motionTextProblems(text, BOLD, "vision")).toEqual(["takes-off"]);
+      expect(motionTextProblems(text, BOLD, "own")).toEqual([]);
+    });
+  }
+
+  test("a garment moved but kept on, or a bank word that only looks like one, is not taking it off", () => {
+    for (const text of [
+      "she slowly slides her top knee forward a little",
+      "she slowly smooths the hem down",
+      "she slowly pulls the blanket up a little",
+      "she slowly tugs the coat closer",
+      "she slowly slides the strap up",
+      "she slowly lets the strap settle on her shoulder",
+      "she slowly smooths her dress",
+      "she slowly ties her robe tighter",
+    ]) {
+      expect([text, takesOff(text)]).toEqual([text, false]);
+    }
+  });
+});
+
+describe("the comma tail and the video words a model may add (round 2, LOW)", () => {
+  test("a new subject in the clip (someone walks in, something new appears): content", () => {
+    expect(vision("she slowly turns, a man walks in")).toEqual(["content"]);
+    expect(vision("she slowly turns, a second woman appears")).toEqual(["content"]);
+    expect(vision("she slowly turns, new outfit appears")).toEqual(["content"]);
+    expect(vision("she slowly turns as someone enters")).toEqual(["content"]);
+  });
+
+  test("the bank's own comma tail stays: «she walks on slowly, the water at her feet»", () => {
+    expect(vision("she walks on slowly, the water at her feet")).toEqual([]);
+  });
+
+  test("slow-mo, a time-lapse, a fade, handheld, a focus pull, 4K, an aspect ratio: staging", () => {
+    for (const text of [
+      "she slowly turns, slow-mo",
+      "she slowly turns in slow motion",
+      "she slowly turns, timelapse",
+      "she slowly turns, time-lapse",
+      "she slowly turns, fade to black",
+      "she slowly turns, handheld",
+      "she slowly turns, rack focus",
+      "she slowly turns, aspect ratio",
+    ]) {
+      expect([text, vision(text)]).toEqual([text, ["staging"]]);
+    }
+    expect(vision("she slowly turns, 4K")).toEqual(["content", "staging"]);
+  });
+
+  test("very fast, abrupt or sudden, whatever small word rides with it: not-small", () => {
+    expect(vision("she slowly turns, very fast and abruptly")).toEqual(["not-small"]);
+    expect(vision("she slowly turns, then suddenly spins")).toEqual(["two-movements", "not-small"]);
+    expect(vision("she turns a little, quickly")).toEqual(["not-small"]);
   });
 });
