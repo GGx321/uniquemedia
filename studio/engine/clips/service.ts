@@ -770,6 +770,15 @@ export class ClipService {
     return new EngineFailure({ code: "IN_FLIGHT", clipReason: "one-at-a-time", detail: "another clip is being made; one paid clip runs at a time" });
   }
 
+  /**
+   * WB2d (L2): a batch does not start while any clip reserve is open (an uncertain submit, a late clip, a restart's recovery): every member would wait out the whole alone-bound and then submit blind, and a
+   * refusal of it would be `net-uncounted`, settled at worst. The closest existing reason is `one-at-a-time` («another clip is being made, wait»); the contract has no word for «its money is still open».
+   */
+  #openClipMoneyRefusal(): EngineFailure | null {
+    const open = this.#deps.budget()?.ledger.openReserves().some((reserve) => parseClipAttemptId(reserve.attemptId) !== null) ?? false;
+    return open ? new EngineFailure({ code: "IN_FLIGHT", clipReason: "one-at-a-time", detail: "another clip's money is still open; wait for it to close (or for the reconcile) before a batch" }) : null;
+  }
+
   /** Takes the unit and the paid count, synchronously (5b.1's order: before the first await). */
   #claimUnit(kind: ClipUnit["kind"]): ClipUnit {
     const unit: ClipUnit = { kind };
@@ -877,7 +886,7 @@ export class ClipService {
    * closes. Every refusal below is free and leaves nothing behind: no hold, no cap, no job, no unit.
    */
   async createBatch(payload: CreateBatchPayload): Promise<{ batchId: string; jobIds: string[] }> {
-    const refusal = this.unitRefusal();
+    const refusal = this.unitRefusal() ?? this.#openClipMoneyRefusal();
     if (refusal !== null) throw refusal;
     const unit = this.#claimUnit("batch");
     let started = false;
