@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { EventMessage, PROTOCOL_VERSION, type ClipPhase } from "../shared/engine";
 import { CLIP_QUIT_DETAIL, CLIP_QUIT_MESSAGE } from "../shared/engine/clipRestartTexts";
 import { QUIT_LEAVE_LABEL, QUIT_STAY_LABEL, type QuitDialogSpec } from "./autopilotHost";
-import { ClipHost, confirmInOrder } from "./clipHost";
+import { ClipHost, clipBatchQuitDialog, confirmInOrder } from "./clipHost";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -388,13 +388,31 @@ describe("a batch: the power blocker and the quit question stay on while members
     await host.confirmQuit();
     expect(asked).toEqual([
       {
-        message: "Клипы ещё снимаются: 1",
+        message: CLIP_QUIT_MESSAGE,
         detail: "Ещё 4 в очереди — они не снимутся. Если выйти сейчас, после запуска понадобится сверка расходов (около 5 минут).",
         buttons: [QUIT_STAY_LABEL, QUIT_LEAVE_LABEL],
         defaultId: 0,
         cancelId: 0,
       },
     ]);
+  });
+
+  test("45b with one of each (S5.WB4c): the singular forms — «Клип ещё снимается» and «Ещё 1 в очереди — он не снимется…»", () => {
+    expect(clipBatchQuitDialog(1, 1)).toEqual({
+      message: CLIP_QUIT_MESSAGE,
+      detail: "Ещё 1 в очереди — он не снимется. Если выйти сейчас, после запуска понадобится сверка расходов (около 5 минут).",
+      buttons: [QUIT_STAY_LABEL, QUIT_LEAVE_LABEL],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    expect(clipBatchQuitDialog(1, 4).message).toBe(CLIP_QUIT_MESSAGE);
+    expect(clipBatchQuitDialog(1, 4).detail).toBe("Ещё 4 в очереди — они не снимутся. Если выйти сейчас, после запуска понадобится сверка расходов (около 5 минут).");
+  });
+
+  test("45b #queued-only with one: «Клип пакета ещё в очереди: 1» and «Если выйти сейчас, он не снимется — бесплатно.»; more keep the plan's plural", () => {
+    expect(clipBatchQuitDialog(0, 1)).toMatchObject({ message: "Клип пакета ещё в очереди: 1", detail: "Если выйти сейчас, он не снимется — бесплатно." });
+    expect(clipBatchQuitDialog(0, 21)).toMatchObject({ message: "Клипы пакета ещё в очереди: 21", detail: "Если выйти сейчас, они не снимутся — бесплатно." });
+    expect(clipBatchQuitDialog(2, 3).message).toBe("Клипы ещё снимаются: 2");
   });
 
   test("asks state 45's question when the last member is in flight and nothing is queued", async () => {

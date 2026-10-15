@@ -31,14 +31,27 @@ export function clipQuitDialog(): QuitDialogSpec {
   return { message: CLIP_QUIT_MESSAGE, detail: CLIP_QUIT_DETAIL, buttons: [QUIT_STAY_LABEL, QUIT_LEAVE_LABEL], defaultId: 0, cancelId: 0 };
 }
 
-/** State 45b's dialog (5b.2): the clips in flight and the queue behind them, or the queue alone. The same shape as 45's. */
+/** One clip: the singular («клип … он не снимется»). The plan's plural stands for every other count (a batch holds at most 20, so «21» never comes). */
+const singular = (n: number): boolean => n === 1;
+
+/**
+ * State 45b's dialog (5b.2): the clips in flight and the queue behind them, or the queue alone. The same shape as 45's. One clip in flight is 45's own message, «Клип ещё снимается»; one queued says
+ * «он не снимется» (S5.WB4c); the plan's texts stand for the others.
+ */
 export function clipBatchQuitDialog(inFlight: number, queued: number): QuitDialogSpec {
+  const notMade = singular(queued) ? "он не снимется" : "они не снимутся";
   if (inFlight === 0) {
-    return { message: `Клипы пакета ещё в очереди: ${queued}`, detail: "Если выйти сейчас, они не снимутся — бесплатно.", buttons: [QUIT_STAY_LABEL, QUIT_LEAVE_LABEL], defaultId: 0, cancelId: 0 };
+    return {
+      message: `${singular(queued) ? "Клип пакета" : "Клипы пакета"} ещё в очереди: ${queued}`,
+      detail: `Если выйти сейчас, ${notMade} — бесплатно.`,
+      buttons: [QUIT_STAY_LABEL, QUIT_LEAVE_LABEL],
+      defaultId: 0,
+      cancelId: 0,
+    };
   }
   return {
-    message: `Клипы ещё снимаются: ${inFlight}`,
-    detail: `Ещё ${queued} в очереди — они не снимутся. Если выйти сейчас, после запуска понадобится сверка расходов (около 5 минут).`,
+    message: inFlight === 1 ? CLIP_QUIT_MESSAGE : `Клипы ещё снимаются: ${inFlight}`,
+    detail: `Ещё ${queued} в очереди — ${notMade}. Если выйти сейчас, после запуска понадобится сверка расходов (около 5 минут).`,
     buttons: [QUIT_STAY_LABEL, QUIT_LEAVE_LABEL],
     defaultId: 0,
     cancelId: 0,
