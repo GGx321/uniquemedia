@@ -12,7 +12,7 @@ import { useModalDialog } from "../../ui/useModalDialog";
 import { useMounted } from "../photos/shared";
 import { animateBlock, batchHoldsUnit, clipSlotTaken } from "./animate";
 import { upUsd } from "./clipModel";
-import { frameNotesNews, MOTION_BUSY, motionRowLabel, showsEnglish, SUGGESTED_TAG } from "./motionModel";
+import { frameNotesNews, MOTION_BUSY, motionGoneNews, motionRowLabel, showsEnglish, SUGGESTED_TAG } from "./motionModel";
 import { FrameNotes, MotionActions, MotionGuard, MotionNews, MotionStatus, QuietNotice, useMotionCalls, type MotionBlock } from "./MotionSuggest";
 import { OwnIdea } from "./OwnIdea";
 import { sheetView, type SuitableOptions } from "./sheetModel";
@@ -56,10 +56,11 @@ export interface ClipSheetProps {
 }
 
 /** `refreshing`: the engine is asked again (38b) and the options read before stay on show meanwhile — the buttons keep their place and the focus on them. */
+/** `asked`: which ask of the engine the answer is for, so a row awaited after a call is looked for only in the list read after it. */
 type Options =
   | { readonly status: "loading" }
-  | { readonly status: "ready"; readonly options: ClipOptions; readonly photoId: string; readonly refreshing: boolean }
-  | { readonly status: "failed"; readonly error: EngineError };
+  | { readonly status: "ready"; readonly options: ClipOptions; readonly photoId: string; readonly refreshing: boolean; readonly asked: number }
+  | { readonly status: "failed"; readonly error: EngineError; readonly asked: number };
 
 export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, onStarted, returnFocus }: ClipSheetProps) {
   const { client, store } = useEngine();
@@ -72,8 +73,11 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   const mainRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const suggestRef = useRef<HTMLButtonElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const retryRef = useRef<HTMLButtonElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollInRef = useRef<HTMLDivElement>(null);
   useModalDialog({ dialog: dialogRef, initialFocus: closeRef, onClose, returnFocus });
 
   const [asked, setAsked] = useState(0);
@@ -89,16 +93,24 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   const [error, setError] = useState<EngineError | null>(null);
   /** 62a #after-click: the engine refused the click `motion-busy` (a part C call this window did not know of); said once, until the next click or choice. */
   const [motionBusyAfter, setMotionBusyAfter] = useState(false);
-  /** 62b, 63a: a new row to focus — and select, an own idea — once the list holds it. */
-  const [pending, setPending] = useState<{ readonly id: ClipMotionId; readonly select: boolean } | null>(null);
+  /**
+   * 62b, 63a: a new row to focus — and select, an own idea — once the list read AFTER the call (`after`: the last ask before it) holds it; `last`, the last new row, is scrolled into view first.
+   */
+  const [pending, setPending] = useState<{ readonly id: ClipMotionId; readonly select: boolean; readonly last: ClipMotionId | null; readonly after: number } | null>(null);
   const [toCancel, setToCancel] = useState(0);
+  const askedRef = useRef(asked);
+  askedRef.current = asked;
+  /** Round 2 (L1): the list on its way was asked after a part C call, whose result the polite region has just said: what follows is said with it. */
+  const afterCall = useRef(false);
+  /** Round 2 (L1): the row the owner chose, as its title read, while the list holds it. */
+  const chosen = useRef<{ readonly id: ClipMotionId; readonly title: string } | null>(null);
 
   useEffect(() => {
     let alive = true;
     setOptions((now) => (now.status === "ready" && now.photoId === photoId ? { ...now, refreshing: true } : { status: "loading" }));
     void client.request("clips.options", { avatarId, photoId }).then((reply) => {
       if (!alive) return;
-      setOptions(reply.ok ? { status: "ready", options: reply.result, photoId, refreshing: false } : { status: "failed", error: reply.error });
+      setOptions(reply.ok ? { status: "ready", options: reply.result, photoId, refreshing: false, asked } : { status: "failed", error: reply.error, asked });
     });
     return () => {
       alive = false;
@@ -118,9 +130,13 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     photoId,
     view,
     offered: suitable !== null,
-    relist: () => setAsked((n) => n + 1),
-    reveal: (id, select) => setPending({ id, select }),
+    relist: () => {
+      afterCall.current = true;
+      setAsked((n) => n + 1);
+    },
+    reveal: (id, select, last) => setPending({ id, select, last: last ?? null, after: askedRef.current }),
     toCancel: () => setToCancel((n) => n + 1),
+    toIdeaToggle: () => toggleRef.current?.focus(),
   });
   const waiting = options.status === "loading" || refreshing || busy !== null || blockText !== null || calls.anyRunning;
 
@@ -137,15 +153,43 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     (main !== null && !main.disabled ? main : titleRef.current)?.focus();
   }, [refreshing, priceChanged, options]);
 
-  // 62b / 63a: the row the call made is in the list now — focused (and chosen, for his idea), the group scrolled to it.
+  // 62b / 63a: the list read after the call is in — the row the call made is focused (and chosen, for his idea), the group brought down to the last new row first (62b). A row the list
+  // does not hold (only the newest are listed) leaves the focus on «Своя идея…», and a list that could not be read on «Повторить»: never on the page (round 2, M2).
   useEffect(() => {
-    if (pending === null || suitable === null || refreshing) return;
-    const input = dialogRef.current?.querySelector<HTMLInputElement>(`input[name="${ids}-motion-choice"][value="${pending.id}"]`);
-    if (input === null || input === undefined) return;
+    if (pending === null || options.status === "loading" || refreshing) return;
+    if (options.asked <= pending.after) return;
     setPending(null);
+    if (options.status === "failed") {
+      retryRef.current?.focus();
+      return;
+    }
+    const inputOf = (id: ClipMotionId | null) => (id === null ? null : dialogRef.current?.querySelector<HTMLInputElement>(`input[name="${ids}-motion-choice"][value="${id}"]`));
+    const input = inputOf(pending.id);
+    if (input === null || input === undefined) {
+      (toggleRef.current ?? titleRef.current)?.focus();
+      return;
+    }
     if (pending.select) choose(() => setMotionId(pending.id));
+    inputOf(pending.last)?.closest("label")?.scrollIntoView?.({ block: "nearest" });
     input.focus();
-  }, [pending, suitable, refreshing]);
+  }, [pending, options, refreshing]);
+
+  // Round 2 (L1): the row the owner chose left the list read again (only the newest suggestions and ideas are listed) — the first row is chosen, and that is said, never a silent jump.
+  const picked = motionId === null || suitable === null ? undefined : suitable.motions.find((m) => m.id === motionId);
+  useEffect(() => {
+    if (suitable === null || refreshing) return;
+    const was = afterCall.current;
+    afterCall.current = false;
+    // His new idea is about to be chosen (63a, the effect above): what it replaces needs no word.
+    if (motionId === null || picked !== undefined || pending?.select === true) return;
+    const first = suitable.motions[0];
+    const gone = chosen.current !== null && chosen.current.id === motionId ? chosen.current.title : null;
+    setMotionId(null);
+    if (gone !== null && first !== undefined) calls.announce("polite", motionGoneNews(gone, motionRowLabel(first)), was);
+  }, [suitable, refreshing]);
+  useEffect(() => {
+    if (picked !== undefined) chosen.current = { id: picked.id, title: motionRowLabel(picked) };
+  }, [picked]);
 
   useEffect(() => {
     if (toCancel > 0) cancelRef.current?.focus();
@@ -161,18 +205,25 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     if (said !== null) calls.announce("polite", said);
   }, [suitable, refreshing]);
 
-  // The group's edges fade where it goes on (README §S5.WCD decision 5).
+  // The group's edges fade where it goes on (README §S5.WCD decision 5): on a scroll, and when the group or what is in it changes size (round 2, L9).
+  const hasGroup = suitable !== null;
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (el === null) return;
+    if (!hasGroup || el === null) return;
     const edges = (): void => {
       el.classList.toggle("mc-less", el.scrollTop > 2);
       el.classList.toggle("mc-more", el.scrollTop + el.clientHeight < el.scrollHeight - 2);
     };
     edges();
     el.addEventListener("scroll", edges);
-    return () => el.removeEventListener("scroll", edges);
-  });
+    const sizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(edges);
+    sizes?.observe(el);
+    if (scrollInRef.current !== null) sizes?.observe(scrollInRef.current);
+    return () => {
+      el.removeEventListener("scroll", edges);
+      sizes?.disconnect();
+    };
+  }, [hasGroup]);
 
   /** A change of the choice ends what was said about the last price. */
   const choose = (change: () => void): void => {
@@ -232,7 +283,9 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   const guardId = `${ids}-guard`;
   const blockId = `${ids}-block`;
   const unitHeld = clipSlotTaken(view) || batchHoldsUnit(view);
-  const motionBlock: MotionBlock = { clipBusy: unitHeld, otherId: blockText !== null && !unitHeld ? blockId : null };
+  // Round 2 (L4): this sheet's own clip on its way holds the clip money unit as much as a running one.
+  const clipBusy = unitHeld || busy !== null;
+  const motionBlock: MotionBlock = { clipBusy, otherId: blockText !== null && !clipBusy ? blockId : null };
   const actionIds = { panel: `${ids}-idea`, guard: guardId, clipBusy: `${ids}-clip-busy`, suggestPrice: `${ids}-suggest-price` };
   const goWhy = suitable !== null && calls.anyRunning ? guardId : undefined;
 
@@ -281,7 +334,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
                 <Notice
                   tone="danger"
                   actions={
-                    <button type="button" className="btn btn-s" onClick={() => setAsked((n) => n + 1)}>
+                    <button ref={retryRef} type="button" className="btn btn-s" onClick={() => setAsked((n) => n + 1)}>
                       Повторить
                     </button>
                   }
@@ -306,35 +359,37 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
                   <MotionStatus line={calls.status} />
                 </div>
                 <div ref={scrollRef} className="mc-scroll">
-                  <div className="clip-opts" role="radiogroup" aria-labelledby={`${ids}-motion`}>
-                    {(suitable?.motions ?? []).map((m) => {
-                      const on = motion?.id === m.id;
-                      const mine = m.source === "vision" || m.source === "own";
-                      return (
-                        <label key={m.id} className={["ap-opt", "clip-opt", on ? "ap-opt-on" : "", mine ? "mc-opt" : ""].filter((c) => c !== "").join(" ")}>
-                          <input type="radio" className="choice-input" name={`${ids}-motion-choice`} value={m.id} checked={on} onChange={() => choose(() => setMotionId(m.id))} />
-                          <span className="ap-radio" aria-hidden="true" />
-                          <span className="ap-opt-text">
-                            <span className="mc-opt-head">
-                              <b>{motionRowLabel(m)}</b>
-                              {m.source === "vision" && <span className="tag mc-tag">{SUGGESTED_TAG}</span>}
-                            </span>
-                            {showsEnglish(m) && (
-                              <span className="ap-opt-sub clip-en" lang="en">
-                                {m.text}
+                  <div ref={scrollInRef} className="mc-scroll-in">
+                    <div className="clip-opts" role="radiogroup" aria-labelledby={`${ids}-motion`}>
+                      {(suitable?.motions ?? []).map((m) => {
+                        const on = motion?.id === m.id;
+                        const mine = m.source === "vision" || m.source === "own";
+                        return (
+                          <label key={m.id} className={["ap-opt", "clip-opt", on ? "ap-opt-on" : "", mine ? "mc-opt" : ""].filter((c) => c !== "").join(" ")}>
+                            <input type="radio" className="choice-input" name={`${ids}-motion-choice`} value={m.id} checked={on} onChange={() => choose(() => setMotionId(m.id))} />
+                            <span className="ap-radio" aria-hidden="true" />
+                            <span className="ap-opt-text">
+                              <span className="mc-opt-head">
+                                <b>{motionRowLabel(m)}</b>
+                                {m.source === "vision" && <span className="tag mc-tag">{SUGGESTED_TAG}</span>}
                               </span>
-                            )}
-                          </span>
-                        </label>
-                      );
-                    })}
+                              {showsEnglish(m) && (
+                                <span className="ap-opt-sub clip-en" lang="en">
+                                  {m.text}
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    {suitable !== null && (
+                      <>
+                        <MotionActions calls={calls} block={motionBlock} ids={actionIds} suggestRef={suggestRef} toggleRef={toggleRef} />
+                        <OwnIdea calls={calls} block={motionBlock} ids={actionIds} />
+                      </>
+                    )}
                   </div>
-                  {suitable !== null && (
-                    <>
-                      <MotionActions calls={calls} block={motionBlock} ids={actionIds} suggestRef={suggestRef} />
-                      <OwnIdea calls={calls} block={motionBlock} ids={actionIds} />
-                    </>
-                  )}
                 </div>
               </div>
               <div className="clip-rows">

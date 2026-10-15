@@ -100,10 +100,10 @@ export function translatedLine(costMicros: number): MoneyLine {
   return withCost("Идея переведена", costMicros);
 }
 
-/** 63b, 63c: under a refusal, what the translation cost: «За перевод оплачено $0.002.» (a rejection is normally paid; 0 says «бесплатно»). */
+/** 63b, 63c: under a refusal, what the translation cost: «За перевод оплачено $0.002.» (a rejection is normally paid; 0 says «Перевод — бесплатно.»). */
 export function rejectedPaidLine(costMicros: number): MoneyLine {
   const { word, money } = moneyParts(costMicros);
-  return money === null ? { before: `За перевод ${word}.`, money: null, after: "" } : { before: `За перевод ${word}`, money, after: "." };
+  return money === null ? { before: `Перевод${NBSP}— ${word}.`, money: null, after: "" } : { before: `За перевод ${word}`, money, after: "." };
 }
 
 /** 63b #none-paid / #none-free: `translateIdea` answered `none`. */
@@ -114,11 +114,12 @@ export function ideaNoneLine(costMicros: number): MoneyLine {
 // ---------- a rejected idea ----------
 
 /**
- * The refusal of an idea: the text of each problem, in the contract's display order (`MOTION_PROBLEMS`: the first is the one that matters most), each the owner's wording (`MOTION_PROBLEMS_RU`). `takes-off` is
- * only ever told on a frame that is not «Смелая» (Q-H = 2), and its text is said whenever it is among them.
+ * The refusal of an idea: ONE text, the first problem's in the contract's display order (`MOTION_PROBLEMS`; contract `clipMotions.ts`, README §S5.WCD «Один текст на отказ», mockup 63b), in the owner's
+ * wording (`MOTION_PROBLEMS_RU`). `takes-off` is only ever told on a frame that is not «Смелая» (Q-H = 2).
  */
-export function rejectionTexts(problems: readonly MotionProblem[]): string[] {
-  return MOTION_PROBLEMS.filter((problem) => problems.includes(problem)).map((problem) => MOTION_PROBLEMS_RU[problem]);
+export function rejectionText(problems: readonly MotionProblem[]): string | null {
+  const first = MOTION_PROBLEMS.find((problem) => problems.includes(problem));
+  return first === undefined ? null : MOTION_PROBLEMS_RU[first];
 }
 
 // ---------- the rows ----------
@@ -138,10 +139,16 @@ export function batchTagOf(motion: Pick<ClipMotionChoice, "source">): string | n
   return motion.source === "vision" ? SUGGESTED_TAG : motion.source === "own" ? OWN_TAG : null;
 }
 
-/** 62d: what is said of the frame's marks, «Заметки о кадре: …; ….»; null without one. */
+/** 62d: what is said of the frame's marks, one sentence: «Заметки о кадре: камера в кадре не такая, как в сцене; в кадре виден второй телефон — ….»; null without one. */
 export function frameNotesNews(notes: readonly ClipFrameNote[]): string | null {
   if (notes.length === 0) return null;
-  return `${NOTES_LABEL}: ${notes.map((note) => FRAME_NOTES_RU[note]).join("; ")}.`;
+  const lower = (text: string): string => `${text.charAt(0).toLocaleLowerCase("ru")}${text.slice(1)}`;
+  return `${NOTES_LABEL}: ${notes.map((note) => lower(FRAME_NOTES_RU[note])).join("; ")}.`;
+}
+
+/** Round 2 (L1): the chosen row left the list read again (only the newest suggestions and ideas are listed) — said, and what is chosen now. */
+export function motionGoneNews(gone: string, chosen: string): string {
+  return `Движение «${gone}» больше не в списке${NBSP}— выбрано «${chosen}».`;
 }
 
 // ---------- the idea field ----------

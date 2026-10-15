@@ -18,7 +18,7 @@ import { batchRowNote, batchSheetView, itemRefusal, itemRefusedAlert, type Batch
 import { upUsd } from "./clipModel";
 import { AUTO_NOTE, LENGTHS, NO_FALLBACK_NOTE, PRO_NOTE, QUALITIES } from "./ClipSheet";
 import { batchTagOf, GROUP_OWN, GROUP_VISION, MOTION_BUSY } from "./motionModel";
-import { MotionGuard, MotionNews, QuietNotice, type News } from "./MotionSuggest";
+import { MotionGuard } from "./MotionSuggest";
 
 // 5b.2, S5.WB4: the sheet «Оживить N фото» (mockups 59, 59a, 59b, 59c and #item-refused, #after-click; plan s5b2 §5.2.1; README §S5.WBD decisions 4–6, 13–14). Nothing is paid without it: the picked photos
 // in turn order, each with its motion (the engine's list for that photo), the options for the whole batch, and the engine's sums (`clips.batchOptions`, free). «Оживить N» sends exactly the engine's worst for the
@@ -26,7 +26,7 @@ import { MotionGuard, MotionNews, QuietNotice, type News } from "./MotionSuggest
 // PRICE_CHANGED and BUDGET_EXCEEDED ask the engine again; a refused item (VALIDATION at `["items", i]`) is struck with its own reason and the sum is asked again without it.
 // 5b.2 part C (S5.WC5; mockups 59d, 59e): a row's list holds the photo's stored suggestions and own ideas too (groups «Предложено» and «Свои идеи»), and the chosen one shows its mark and its English under
 // the photo (I5.67: seen before any video money). The batch sheet makes no paid part C call. While a part C call runs «Оживить N» waits beside the guard; a click the engine refused `motion-busy` (a call
-// this window did not know of) says so once, the focus on «Отмена», and «Оживить N» stays as it was (59e).
+// this window did not know of) says so once, as the sheet's other after-click alerts do (one live region at a time, WBD-13), the focus on «Отмена», and «Оживить N» stays as it was (59e).
 
 const QUEUE_NOTE = "Клипы снимаются по очереди и появятся во вкладке «Клипы».";
 
@@ -66,9 +66,6 @@ type After =
 /** S5.WB4c: the short status after a click the engine refused because the video prices did not read, when asking again read them. */
 const UNPRICED_AGAIN = "Цены видео не прочитались при отправке — запросили их снова. Подтвердите ещё раз.";
 
-/** The batch sheet says nothing politely of part C: its polite region stays empty. */
-const QUIET: News = { text: "", seq: 0 };
-
 export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }: BatchSheetProps) {
   const { client, store } = useEngine();
   const view = useEngineView();
@@ -95,8 +92,6 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
   const [error, setError] = useState<EngineError | null>(null);
   /** The focus goes to «Отмена» once the answer that needs a new click is on show. */
   const [toCancel, setToCancel] = useState(0);
-  /** 59e: what the sheet's live region says (in the page from the start): the click's `motion-busy`, said once. */
-  const [news, setNews] = useState<News>({ text: "", seq: 0 });
 
   useEffect(() => {
     if (askedKey === "") return;
@@ -179,7 +174,6 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
     } else if (code === "IN_FLIGHT" && reply.error.clipReason === "motion-busy") {
       // 59e: nothing was held or priced; once the call ends the same click goes through.
       setAfter({ kind: "motion-busy" });
-      setNews((now) => ({ text: MOTION_BUSY, seq: now.seq + 1 }));
     } else if (item !== null) {
       // 59 #item-refused: the row is struck with its OWN reason, and the sum is asked again without it.
       const label = picks.find((p) => p.photoId === item.photoId)?.label ?? "Фото";
@@ -383,7 +377,11 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
               {nbDash(UNPRICED_AGAIN)}
             </Notice>
           )}
-          {notice === "motion" && <QuietNotice tone="info">{MOTION_BUSY}</QuietNotice>}
+          {notice === "motion" && (
+            <Notice tone="info" role="alert">
+              {MOTION_BUSY}
+            </Notice>
+          )}
           {notice === "error" && error !== null && <Notice tone="danger">{errorText(error)}</Notice>}
           {notice === "block" && block !== null && (
             <div id={noticeId}>
@@ -459,7 +457,6 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
             </button>
             <MotionGuard id={guardId} busy={motionRunning && sheet !== null} />
           </div>
-          <MotionNews news={{ polite: QUIET, alert: news }} />
         </footer>
         <FocusEdge edge="end" />
       </section>

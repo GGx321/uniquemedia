@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, within } from "@testing-library/react";
-import { CLIP_REASONS_RU, MOTION_PROBLEMS_RU, OWN_IDEA_MAX, type AvatarSummary, type PhotoSummary } from "../../shared/engine";
+import { CLIP_REASONS_RU, MOTION_PROBLEMS_RU, OWN_IDEA_MAX, type AvatarSummary, type CommandMessage, type PhotoSummary, type ResponseMessage } from "../../shared/engine";
 import { formatUsdTiered } from "../lib/money";
 import { MOCK_SUGGEST_PRICE, MOCK_TRANSLATE_PRICE, mockIdeaAnswer, mockSuggestionAnswer, type MockModelReply } from "../engine/mockClipMotions";
 import type { MockEngineOptions } from "../engine/mockEngine";
 import { MIA, scenePhoto } from "../engine/mockEngine.testkit";
-import { callsOf, describeElement, flush, setup } from "../testing";
+import { callsOf, describeElement, flush, setup, tick } from "../testing";
 
 // 5b.2 part C, S5.WC5 (plan s5b2 §5.3, §6 rows 62–63c, I5.66–I5.68, Q-H = 2; mockups .omc/stage5/design/62-*.html … 63c-*.html and README §S5.WCD): «Предложить движения» and «Своя идея…» in the
 // sheet «Оживить фото», against the mock engine, which plays the model's answers and does with them what the engine does (mockClipMotions.ts). Every figure is the engine's: the buttons show the live
@@ -344,7 +344,7 @@ describe("62d: the frame's notes", () => {
     await settle();
     const list = within(s).getByRole("list", { name: "Заметки о кадре" });
     expect(within(list).getAllByRole("listitem").map((li) => plain(li.textContent))).toEqual(["В кадре виден второй телефон — он может остаться в клипе"]);
-    expect(news("polite", s)).toBe("Предложено 1 движение — оплачено $0.003. Заметки о кадре: В кадре виден второй телефон — он может остаться в клипе.");
+    expect(news("polite", s)).toBe("Предложено 1 движение — оплачено $0.003. Заметки о кадре: в кадре виден второй телефон — он может остаться в клипе.");
     expect(plain(s.querySelector(".clip-price-line")?.textContent)).toBe(price);
     expect(isOff(goButton(s))).toBe(false);
   });
@@ -358,7 +358,7 @@ describe("62d: the frame's notes", () => {
     const s = await openSheet();
     const list = within(s).getByRole("list", { name: "Заметки о кадре" });
     expect(within(list).getAllByRole("listitem").map((li) => plain(li.textContent))).toEqual(["Камера в кадре не такая, как в сцене", "В кадре виден второй телефон — он может остаться в клипе"]);
-    expect(news("polite", s)).toBe("Заметки о кадре: Камера в кадре не такая, как в сцене; В кадре виден второй телефон — он может остаться в клипе.");
+    expect(news("polite", s)).toBe("Заметки о кадре: камера в кадре не такая, как в сцене; в кадре виден второй телефон — он может остаться в клипе.");
   });
 
   test("no reading: no list", async () => {
@@ -507,7 +507,7 @@ describe("63a: the idea translated", () => {
 });
 
 describe("63b, 63c: the idea refused", () => {
-  test("63b: the reasons in the contract's order, «За перевод оплачено $0.002.»; the field keeps his text, is invalid and described by them, takes the focus; nothing else says it (no double read)", async () => {
+  test("63b: ONE reason, the first in the contract's order, and «За перевод оплачено $0.002.»; the field keeps his text, is invalid and described by it, takes the focus; nothing else says it (no double read)", async () => {
     const h = await openNini();
     const s = await openSheet();
     await typeIdea(s, "отпивает чай, а потом поправляет волосы");
@@ -515,7 +515,8 @@ describe("63b, 63c: the idea refused", () => {
     h.engine.scriptNextMotionReplies([mockIdeaAnswer(twice), mockIdeaAnswer(twice)]);
     await translate(s);
     const refusal = s.querySelector(".mc-refusal") as HTMLElement;
-    expect(Array.from(refusal.querySelectorAll("p")).map((p) => plain(p.textContent))).toEqual([plain(MOTION_PROBLEMS_RU["two-movements"]), plain(MOTION_PROBLEMS_RU["too-long"])]);
+    // The answer broke two rules (two-movements, too-long): the first in the display order is said, alone (README «Один текст на отказ»).
+    expect(Array.from(refusal.querySelectorAll("p")).map((p) => plain(p.textContent))).toEqual([plain(MOTION_PROBLEMS_RU["two-movements"])]);
     expect(plain(refusal.querySelector(".mc-paid")?.textContent)).toBe("За перевод оплачено $0.002.");
     expect(refusal.getAttribute("role")).toBeNull();
     expect(refusal.classList.contains("mc-refusal-warn")).toBe(true);
@@ -533,12 +534,12 @@ describe("63b, 63c: the idea refused", () => {
     expect(field(s).getAttribute("aria-invalid")).toBe("false");
   });
 
-  test("each code says its own text: not-small, phone, not-motion before staging, content before not-small", async () => {
+  test("each code says its own text, one per refusal: not-small, phone; not-motion over staging, content over not-small", async () => {
     const cases: [string, string[]][] = [
       ["she quickly spins around", [MOTION_PROBLEMS_RU["not-small"]]],
       ["she slowly lowers her phone and looks at the mirror", [MOTION_PROBLEMS_RU.phone]],
-      ["the camera slowly zooms in on her face", [MOTION_PROBLEMS_RU["not-motion"], MOTION_PROBLEMS_RU.staging]],
-      ["she smiles like a schoolgirl", [MOTION_PROBLEMS_RU.content, MOTION_PROBLEMS_RU["not-small"]]],
+      ["the camera slowly zooms in on her face", [MOTION_PROBLEMS_RU["not-motion"]]],
+      ["she smiles like a schoolgirl", [MOTION_PROBLEMS_RU.content]],
     ];
     const h = await openNini();
     const s = await openSheet();
@@ -663,6 +664,187 @@ describe("the guard the other way: a clip holds the clip money unit (`clip-busy`
     expect(plain(s.querySelector(".mc-scroll .notice")?.textContent)).toBe(plain(CLIP_REASONS_RU["clip-busy"]));
     expect(news("alert", s)).toBe(plain(CLIP_REASONS_RU["clip-busy"]));
     expect(focused()).toContain("Предложить движения");
+  });
+});
+
+/** The writer's answer with these labels and texts (the mock's own helper numbers its labels). */
+function labelled(pairs: readonly [string, string][]): MockModelReply {
+  const content = JSON.stringify({ motions: pairs.map(([label_ru, text_en]) => ({ label_ru, text_en })), frame: { capture: "unknown", phoneVisible: false, faceVisible: true } });
+  return { kind: "answer", content, costMicros: 3_400 };
+}
+
+describe("round 2: where the focus goes after 63a, and a chosen row that leaves the list", () => {
+  test("M2: once the idea is translated the focus is on «Своя идея…» while the list is read again — never on the page", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    await typeIdea(s, "медленно поворачивает голову");
+    h.engine.delayNext("clips.options", 1_000);
+    await translate(s);
+    expect(focused()).toBe(describeElement(ideaToggle(s)));
+    tick(h.scheduler);
+    await settle();
+    expect(document.activeElement === radios(s).find((r) => r.checked)).toBe(true);
+  });
+
+  test("M2: the new row is not in the list read again — the focus stays on «Своя идея…» and nothing waits to take it later", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    await typeIdea(s, "медленно поворачивает голову");
+    h.engine.delayNext("clips.options", 1_000);
+    await translate(s);
+    h.engine.tamperMotionStore(PLAIN.photoId, (store) => {
+      store.items = store.items.filter((item) => item.source !== "own");
+    });
+    tick(h.scheduler);
+    await settle();
+    expect(rowTitles(s).some((title) => title.startsWith("Своя идея"))).toBe(false);
+    expect(focused()).toBe(describeElement(ideaToggle(s)));
+    // A later list that holds an own idea again takes no focus from where the owner is.
+    radios(s)[1]?.focus();
+    h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly turns her head toward the window")]);
+    await h.client.request("clips.translateIdea", { avatarId: NINI.avatarId, photoId: PLAIN.photoId, text: "улыбается", acceptedWorstMicros: MOCK_TRANSLATE_PRICE.worstMicros });
+    fireEvent.click(radios(s)[1] as HTMLElement);
+    await settle();
+    expect(document.activeElement === radios(s)[1]).toBe(true);
+  });
+
+  test("M2: the list could not be read again — the focus goes to what the sheet offers then («Повторить»), not to the page", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    await typeIdea(s, "медленно поворачивает голову");
+    h.engine.delayNext("clips.options", 1_000);
+    h.engine.failNext("clips.options", { code: "NETWORK", detail: "fetch failed" });
+    await translate(s);
+    tick(h.scheduler);
+    await settle();
+    expect(focused()).toBe(describeElement(within(s).getByRole("button", { name: "Повторить" })));
+  });
+
+  test("L1: a chosen suggestion pushed out of the newest three is said, and the first row is chosen — no silent jump", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    h.engine.scriptNextMotionReplies([
+      labelled([
+        ["Дует на чай", "she slowly tucks a strand of hair behind her ear"],
+        ["Прячет улыбку", "she tilts her head a little to one side and smiles"],
+        ["Глубоко вдыхает", "she slowly takes a breath and relaxes her shoulders"],
+      ]),
+    ]);
+    fireEvent.click(suggestButton(s));
+    await settle();
+    fireEvent.click(radios(s).find((r) => r.closest("label")?.textContent?.startsWith("Дует на чай") === true) as HTMLElement);
+    await flush();
+    expect(checkedRow(s).startsWith("Дует на чай")).toBe(true);
+    h.engine.scriptNextMotionReplies([
+      labelled([
+        ["Смотрит вниз", "she slowly looks down and smiles to herself"],
+        ["Смотрит в сторону", "she slowly glances to the side and looks back"],
+        ["Поправляет волосы", "she slowly tucks a strand of hair behind her ear"],
+      ]),
+    ]);
+    fireEvent.click(suggestButton(s));
+    await settle();
+    expect(rowTitles(s).includes("Дует на чай")).toBe(false);
+    const first = rowTitles(s)[0] ?? "";
+    expect(checkedRow(s).startsWith(first)).toBe(true);
+    expect(news("polite", s)).toBe(`Предложено 3 движения — оплачено $0.003. Движение «Дует на чай» больше не в списке — выбрано «${first}».`);
+  });
+});
+
+describe("round 2: L1 and 63a together", () => {
+  test("the chosen idea pushed out by a new one: the new idea is chosen (63a), not the first row, and no drop is said", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    for (const [idea, english] of [
+      ["медленно поворачивает голову", "she slowly turns her head toward the window"],
+      ["медленно улыбается", "she slowly looks down and smiles to herself"],
+    ] as const) {
+      await typeIdea(s, idea);
+      h.engine.scriptNextMotionReplies([mockIdeaAnswer(english)]);
+      await translate(s);
+    }
+    // He goes back to his first idea, then writes a third: only the newest two are listed, so the first leaves the list.
+    fireEvent.click(radios(s).find((r) => r.value === "o-1") as HTMLElement);
+    await flush();
+    await typeIdea(s, "медленно поправляет волосы");
+    h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly tucks a strand of hair behind her ear")]);
+    await translate(s);
+    expect(rowTitles(s).includes("Своя идея: медленно поворачивает голову")).toBe(false);
+    expect(checkedRow(s).startsWith("Своя идея: медленно поправляет волосы")).toBe(true);
+    expect(news("polite", s)).toBe("Идея переведена — оплачено $0.001.");
+  });
+});
+
+describe("round 2: the smaller points", () => {
+  test("L3: one `clips.options` per finished call", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    const before = callsOf(h.engine, "clips.options").length;
+    fireEvent.click(suggestButton(s));
+    await settle();
+    expect(callsOf(h.engine, "clips.options").length).toBe(before + 1);
+    await typeIdea(s, "медленно поворачивает голову");
+    await translate(s);
+    expect(callsOf(h.engine, "clips.options").length).toBe(before + 2);
+  });
+
+  test("L2 (62b): the group is brought down to the last new row, then the focus goes to the first", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    const seen: string[] = [];
+    const original = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) {
+      seen.push(this.querySelector("input")?.value ?? this.tagName);
+    };
+    try {
+      fireEvent.click(suggestButton(s));
+      await settle();
+    } finally {
+      HTMLElement.prototype.scrollIntoView = original;
+    }
+    expect(seen).toEqual(["v-3"]);
+    expect((document.activeElement as HTMLInputElement | null)?.value).toBe("v-1");
+    expect(callsOf(h.engine, "clips.suggestMotions")).toHaveLength(1);
+  });
+
+  test("L4: the sheet's own «Оживить» on its way holds both part C buttons with `clip-busy`'s words", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    await typeIdea(s, "медленно поворачивает голову");
+    h.engine.delayNext("clips.create", 1_000);
+    fireEvent.click(goButton(s));
+    await flush();
+    const text = plain(CLIP_REASONS_RU["clip-busy"]);
+    expect(isOff(suggestButton(s))).toBe(true);
+    expect(describedText(suggestButton(s))).toBe(text);
+    expect(isOff(translateButton(s))).toBe(true);
+    fireEvent.click(suggestButton(s));
+    await flush();
+    expect(callsOf(h.engine, "clips.suggestMotions")).toHaveLength(0);
+    tick(h.scheduler);
+    await settle();
+  });
+
+  test("L8: an estimate of nothing says «бесплатно», never «до $0.000»", async () => {
+    const h = await openNini();
+    const original = h.engine.request.bind(h.engine);
+    // The mock prices a suggestion at the engine's figure; a test stands a free one in its answer.
+    h.engine.request = async (command: CommandMessage): Promise<ResponseMessage> => {
+      const reply = await original(command);
+      if (!reply.ok || reply.type !== "clips.estimateSuggest") return reply;
+      return { ...reply, result: { ...reply.result, expectedMicros: 0, worstMicros: 0 } };
+    };
+    const s = await openSheet();
+    expect(suggestButton(s).textContent).toBe("Предложить движения · бесплатно");
+  });
+
+  test("a rejection that cost nothing says «Перевод — бесплатно.»", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    await typeIdea(s, "медленно снимает кардиган");
+    h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly takes off her robe", 0)]);
+    await translate(s);
+    expect(plain(s.querySelector(".mc-refusal .mc-paid")?.textContent)).toBe("Перевод — бесплатно.");
   });
 });
 

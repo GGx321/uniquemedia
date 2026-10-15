@@ -266,9 +266,9 @@
 .mc-form { min-height: 0; }
 .mc-form > .clip-rows { flex-shrink: 0; }
 .mc-group { flex: 0 1 auto; min-height: 0; }
-.mc-scroll { display: flex; flex-direction: column; gap: 6px; min-height: 150px; margin: -4px -6px 0; padding: 4px 6px 4px; overflow-y: auto; scrollbar-color: var(--border-strong) transparent; scrollbar-width: thin; }
-.mc-scroll > .clip-opts { flex-shrink: 0; }
-.mc-scroll > .notice, .mc-scroll > .price-failed { flex-shrink: 0; }
+.mc-scroll { min-height: 150px; margin: -4px -6px 0; padding: 4px 6px 4px; overflow-y: auto; scrollbar-color: var(--border-strong) transparent; scrollbar-width: thin; }
+/* what scrolls, in one box, so a change of its size is seen (the edges below) */
+.mc-scroll-in { display: flex; flex-direction: column; gap: 6px; }
 .mc-scroll.mc-more { mask-image: linear-gradient(to bottom, black calc(100% - 22px), transparent); }
 .mc-scroll.mc-less { mask-image: linear-gradient(to top, black calc(100% - 22px), transparent); }
 .mc-scroll.mc-more.mc-less { mask-image: linear-gradient(to bottom, transparent, black 22px, black calc(100% - 22px), transparent); }
@@ -304,7 +304,7 @@
 .mc-refusal-info { color: var(--text-2); }
 .mc-refusal-info > svg { color: var(--info); }
 .mc-paid { display: block; margin-top: 2px; color: var(--muted); font-size: 11.5px; }
-/* the guard (§5.3 motion-busy) beside the buttons it holds: no new height in the footer; empty, it takes no room but stays a live region */
+/* the guard (§5.3 motion-busy) beside the buttons it holds, which it describes: no new height in the footer; empty, it takes no room */
 .mc-guard { display: flex; flex: 1 1 200px; align-items: center; gap: 7px; align-self: center; margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.35; }
 .mc-guard:empty { flex: 0 0 0; }
 .mc-guard .spin { width: 11px; height: 11px; border-width: 1.6px; color: var(--link); }
