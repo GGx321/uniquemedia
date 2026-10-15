@@ -192,7 +192,7 @@ function reconcileMoney(cost: ClipCost): string {
  * a frame of «Смелая» kept to Kling (I5.57), so its free refusal says there is no fallback for it (42q). A paid download past its `retryDownloadUntil` reads as 42o, whose file the
  * provider no longer serves; the engine turns the record so at the next retry.
  */
-export function failedTile(clip: Failed, ctx: { nowMs: number; bold: boolean; mode?: "auto" | "offer" }): FailedTileModel {
+export function failedTile(clip: Failed, ctx: { nowMs: number; bold: boolean; mode?: "auto" | "offer"; batchRetry?: boolean }): FailedTileModel {
   const mode = ctx.mode ?? GROK_FALLBACK;
   const { cost } = clip;
   const tone = cost.kind === "free" ? "free" : cost.kind === "open" ? "open" : "paid";
@@ -233,6 +233,8 @@ export function failedTile(clip: Failed, ctx: { nowMs: number; bold: boolean; mo
     case "bad-request":
       return { ...base, text: "OpenRouter не принял запрос — бесплатно" };
     case "rate-limited":
+      // 5b.2 (60 #rate-limit, round 2 M3): a batch member's first 429 — the batch shoots the photo again at its tail, so there is nothing for the owner to do.
+      if (ctx.batchRetry === true) return { ...base, text: `OpenRouter занят${NBSP}— бесплатно, снимем ещё раз в конце пакета.`, actions: [] };
       return { ...base, text: "OpenRouter занят — бесплатно. Попробуйте через минуту." };
     case "key-invalid":
       return { ...base, text: "Ключ OpenRouter не принят", money: reconcileMoney(cost) };
@@ -266,6 +268,15 @@ export interface ClipProgress {
   readonly model?: "kling" | "grok" | null;
   readonly submittedAt?: string | null;
   readonly proveUntil?: string | null;
+  /** 5b.2: what a `queued` batch member waits for (its turn, the money to be alone, the pause after a 429). */
+  readonly waitReason?: "turn" | "alone" | "rate-limit" | "proof" | null;
+}
+
+/** 5b.2 (§6 60, round 2 M3): a queued member's line on its tile, by what it waits for. */
+function queuedText(reason: ClipProgress["waitReason"]): string {
+  if (reason === "alone") return "В очереди · ждём, пока закончатся другие расходы";
+  if (reason === "rate-limit") return `В очереди · OpenRouter занят${NBSP}— продолжим через минуту`;
+  return "В очереди";
 }
 
 export interface PhaseContext {
@@ -305,9 +316,9 @@ export function phaseLine(p: ClipProgress, ctx: PhaseContext): PhaseLine {
   const work = (text: string, cancel = false): PhaseLine => ({ text, tone: "work", pill: "в работе", cancel });
   const grokBehind = p.model === "grok" && !ctx.grokOffer;
   switch (p.phase) {
-    // 5b.2, S5.WB1: a batch member waiting for its turn (mockup 60). A compile stub: S5.WB4 adds the wait reasons («ждём, пока закончатся другие расходы»).
+    // 5b.2: a batch member waiting for its turn (mockup 60, #alone, #rate-limit): nothing is spent while it waits, and it has no cancel of its own («Отменить оставшиеся» does it).
     case "queued":
-      return { text: "В очереди", tone: "quiet", pill: "в очереди", cancel: false };
+      return { text: queuedText(p.waitReason), tone: "quiet", pill: "в очереди", cancel: false };
     case "preparing":
       return work("Готовим кадр", true);
     case "submitting":
@@ -341,8 +352,9 @@ export function exportPercent(done: number, total: number): number {
 export function queuePhase(p: ClipProgress & { readonly done: number; readonly total: number }, ctx: PhaseContext): { text: string; warn: boolean } {
   const plain = (text: string): { text: string; warn: boolean } => ({ text, warn: false });
   switch (p.phase) {
+    // 5b.2 (round 2 L3, M3): the short forms of a member's wait.
     case "queued":
-      return plain("В очереди");
+      return plain(p.waitReason === "alone" ? "Ждём конца других расходов" : p.waitReason === "rate-limit" ? "Пауза OpenRouter" : "В очереди");
     case "preparing":
       return plain("Готовим кадр");
     case "submitting":

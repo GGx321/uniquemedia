@@ -121,28 +121,43 @@ export interface ClipQueueRow {
   /** Late reads in the warning's tone. */
   readonly warn: boolean;
   readonly meter: { readonly kind: "steps"; readonly done: number; readonly total: number } | { readonly kind: "bar"; readonly percent: number };
+  /** 5b.2: a batch's one row, «Клип 5/10 · Nini»: a long name ends in «…» rather than widening the box (round 2, L7). */
+  readonly batch?: true;
+  /** 5b.2: the batch's member waits (its turn, other money, a 429's pause): the phase in grey and no step under way (round 2, L3). */
+  readonly quiet?: true;
 }
 
 /**
  * The clip rows of the sidebar's queue, in submission order: each queued or running clip job — a create, a recovery, a `retryDownload` or an export — named by its avatar
  * («Клип · Nini»; «Клип» for an avatar the window does not list). `seenAt` is when the window first saw the job, for an elapsed time from another clock (clipModel.ts).
+ * 5b.2 (S5.WB4; README §S5.WBD decision 11): a batch has one row — its member at work, else the member whose turn waits — «Клип 5/10 · Nini»; the members still queued count in «Очередь · N задач» alone.
  */
 export function clipQueueRows(jobs: readonly JobView[], avatars: readonly AvatarSummary[], ctx: { nowMs: number; seenAt: (jobId: string) => number }): ClipQueueRow[] {
   const names = new Map(avatars.map((a) => [a.avatarId, a.name]));
+  const isClip = (job: JobView): boolean => job.kind === "clip" && job.clip !== undefined && isActive(job);
+  // The row each batch is drawn by: the member at work (any phase past `queued`), else the first one queued.
+  const shown = new Map<string, string>();
+  for (const job of jobs) if (isClip(job) && job.clip?.batch !== undefined && job.clip.phase !== "queued" && !shown.has(job.clip.batch.batchId)) shown.set(job.clip.batch.batchId, job.jobId);
+  for (const job of jobs) if (isClip(job) && job.clip?.batch !== undefined && !shown.has(job.clip.batch.batchId)) shown.set(job.clip.batch.batchId, job.jobId);
   return jobs.flatMap((job): ClipQueueRow[] => {
     const clip = job.clip;
     if (job.kind !== "clip" || clip === undefined || !isActive(job)) return [];
+    const batch = clip.batch;
+    if (batch !== undefined && shown.get(batch.batchId) !== job.jobId) return [];
     const name = names.get(job.avatarId);
     const phase = clip.phase ?? (clip.export ? "exporting" : "preparing");
-    const progress = { phase, model: clip.model, submittedAt: clip.submittedAt, proveUntil: clip.proveUntil, done: job.done, total: job.total };
+    const progress = { phase, model: clip.model, submittedAt: clip.submittedAt, proveUntil: clip.proveUntil, waitReason: clip.waitReason, done: job.done, total: job.total };
     const said = queuePhase(progress, { nowMs: ctx.nowMs, seenMs: ctx.seenAt(job.jobId), lateUntilMs: null, grokOffer: false });
+    const clipName = batch === undefined ? "Клип" : `Клип ${batch.index}/${batch.size}`;
     return [
       {
         jobId: job.jobId,
-        label: name === undefined ? "Клип" : `Клип · ${name}`,
+        label: name === undefined ? clipName : `${clipName} · ${name}`,
         phase: said.text,
         warn: said.warn,
         meter: phase === "exporting" ? { kind: "bar", percent: exportPercent(job.done, job.total) } : { kind: "steps", done: job.done, total: job.total || CLIP_JOB_STEPS },
+        ...(batch === undefined ? {} : { batch: true as const }),
+        ...(batch !== undefined && phase === "queued" ? { quiet: true as const } : {}),
       },
     ];
   });

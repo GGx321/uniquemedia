@@ -57,3 +57,40 @@ describe("the clip rows of «Очередь»", () => {
     expect(clipQueueRows([clipJob(8, { phase: "downloading" }, { done: 1 })], [], { nowMs: NOW, seenAt: () => NOW })[0]).toMatchObject({ label: "Клип", phase: "Скачивается", meter: { kind: "steps", done: 1, total: 4 } });
   });
 });
+
+// 5b.2, S5.WB4 (§7.1 row S5.WB4; README §S5.WBD decision 11, round 2 L3/L7): a batch has ONE row — the member at work, or the one whose turn waits — «Клип 5/10 · Nini» and its phase. The members still
+// queued count in «Очередь · N задач» and have no row of their own; a wait reads quiet.
+describe("a batch's row in «Очередь»", () => {
+  const member = (n: number, index: number, info: Partial<ClipJobInfo>, patch: Partial<JobView> = {}): JobView =>
+    clipJob(n, { phase: "queued", ...info, batch: { batchId: "batch-0000001", index, size: 10 } }, patch);
+
+  test("one row for the batch: the member at work, «Клип 5/10 · Nini · Снимается 1:20»; the queued ones have none", () => {
+    const jobs = [
+      member(20, 4, { phase: "saving" }, { status: "done", done: 4 }),
+      member(21, 5, { phase: "rendering", model: "kling", submittedAt: new Date(NOW - 80_000).toISOString() }, { done: 0 }),
+      member(22, 6, { waitReason: "turn" }),
+      member(23, 7, { waitReason: "turn" }),
+    ];
+    expect(rows(jobs)).toEqual([{ jobId: "job-00000021", label: "Клип 5/10 · Nini", phase: "Снимается 1:20", warn: false, meter: { kind: "steps", done: 0, total: 4 }, batch: true }]);
+  });
+
+  test("nothing at work: the member whose turn waits, quiet — «Ждём конца других расходов», «Пауза OpenRouter»", () => {
+    expect(rows([member(24, 6, { waitReason: "alone" }), member(25, 7, { waitReason: "turn" })])).toEqual([
+      { jobId: "job-00000024", label: "Клип 6/10 · Nini", phase: "Ждём конца других расходов", warn: false, meter: { kind: "steps", done: 0, total: 4 }, batch: true, quiet: true },
+    ]);
+    expect(rows([member(26, 10, { waitReason: "rate-limit" })])[0]).toMatchObject({ label: "Клип 10/10 · Nini", phase: "Пауза OpenRouter", quiet: true });
+  });
+
+  test("a late member is the batch's row, in the warning's tone (60f)", () => {
+    expect(rows([member(27, 5, { phase: "late", model: "kling" })])[0]).toMatchObject({ label: "Клип 5/10 · Nini", phase: "Задерживается", warn: true });
+  });
+
+  test("a single clip beside a batch keeps its own row", () => {
+    const single = clipJob(28, { phase: "downloading" }, { done: 1 });
+    expect(rows([single, member(29, 1, { phase: "submitting", model: "kling" })]).map((row) => row.label)).toEqual(["Клип · Nini", "Клип 1/10 · Nini"]);
+  });
+
+  test("an avatar the window does not list: «Клип 3/10»", () => {
+    expect(clipQueueRows([member(30, 3, { phase: "preparing" })], [], { nowMs: NOW, seenAt: () => NOW })[0]?.label).toBe("Клип 3/10");
+  });
+});

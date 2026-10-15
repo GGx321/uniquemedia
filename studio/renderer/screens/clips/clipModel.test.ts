@@ -248,6 +248,35 @@ describe("a save that failed (§6 43c)", () => {
   });
 });
 
+// ---------- 5b.2, S5.WB4: a batch member waits (mockup 60, its #alone and #rate-limit; README §S5.WBD decisions 9–11) ----------
+
+describe("a batch member waiting its turn says what it waits for", () => {
+  const base: PhaseContext = { nowMs: NOW, seenMs: NOW, lateUntilMs: null, grokOffer: false };
+
+  test("the tile: «В очереди», «В очереди · ждём, пока закончатся другие расходы», «В очереди · OpenRouter занят — продолжим через минуту»; quiet, no cancel of its own", () => {
+    expect(phaseLine({ phase: "queued", waitReason: "turn" }, base)).toEqual({ text: "В очереди", tone: "quiet", pill: "в очереди", cancel: false });
+    expect(phaseLine({ phase: "queued", waitReason: "alone" }, base)).toEqual({ text: "В очереди · ждём, пока закончатся другие расходы", tone: "quiet", pill: "в очереди", cancel: false });
+    expect(phaseLine({ phase: "queued", waitReason: "rate-limit" }, base)).toEqual({ text: "В очереди · OpenRouter занят — продолжим через минуту", tone: "quiet", pill: "в очереди", cancel: false });
+  });
+
+  test("the queue row's short forms: «Ждём конца других расходов», «Пауза OpenRouter»", () => {
+    expect(queuePhase({ phase: "queued", waitReason: "alone", done: 0, total: 4 }, base)).toEqual({ text: "Ждём конца других расходов", warn: false });
+    expect(queuePhase({ phase: "queued", waitReason: "rate-limit", done: 0, total: 4 }, base)).toEqual({ text: "Пауза OpenRouter", warn: false });
+    expect(queuePhase({ phase: "queued", waitReason: "turn", done: 0, total: 4 }, base)).toEqual({ text: "В очереди", warn: false });
+  });
+});
+
+describe("a member's first 429 in a batch (60 #rate-limit, round 2 M3)", () => {
+  test("while its retry is on its way: «OpenRouter занят — бесплатно, снимем ещё раз в конце пакета.», free, and no «Оживить снова…»", () => {
+    const tile = failedTile(failed("rate-limited", FREE), { ...ctx, batchRetry: true });
+    expect({ text: tile.text, tone: tile.tone, money: tile.money, actions: tile.actions }).toEqual({ text: "OpenRouter занят — бесплатно, снимем ещё раз в конце пакета.", tone: "free", money: null, actions: [] });
+  });
+
+  test("otherwise 42j, with «Оживить снова…»", () => {
+    expect(failedTile(failed("rate-limited", FREE), { ...ctx, batchRetry: false })).toMatchObject({ text: "OpenRouter занят — бесплатно. Попробуйте через минуту.", actions: ["again"] });
+  });
+});
+
 describe("a clip at work: its tile's phase (§6 40) and its queue row (README S5.VD decision 10)", () => {
   const submitted = new Date(NOW - 80_000).toISOString();
   const base: PhaseContext = { nowMs: NOW, seenMs: NOW - 80_000, lateUntilMs: null, grokOffer: false };
