@@ -690,3 +690,40 @@ describe("the final touch: where the veto reads, and pulling up what covers her 
     expect(motionTextProblems("she slowly pulls her skirt up", FRIEND, "own")).toEqual(["takes-off"]);
   });
 });
+
+// ---------- S5.WC2b (the structural follow-up to the three review rounds): the exposure verbs, and a whitelist of clothing verbs ----------
+
+describe("the exposure verbs a model reaches for (S5.WC2b): show, display, uncover, peek, and cleavage alone, are exposure: content, but for an own idea on «Смелая»", () => {
+  /** The review rounds' leaks that show her body (each passed on every frame before), and two more of the same family. */
+  const SHOWS = [
+    "she slowly shows her midriff",
+    "she slowly shows off her cleavage",
+    "she slowly uncovers her chest",
+    "she slowly displays her body",
+    "she slowly exposes her upper thigh",
+    "she slowly reveals her bare back",
+    "she slowly gives a peek of cleavage",
+    "she slowly lets her cleavage show",
+    "she slowly shows a little skin",
+    "she slowly smooths her top over her cleavage",
+  ];
+
+  for (const text of SHOWS) {
+    test(`content as vision and own on an ordinary frame and as vision on «Смелая»; accepted as own on «Смелая»: «${text}»`, () => {
+      expect(motionTextProblems(text, FRIEND, "vision")).toEqual(["content"]);
+      expect(motionTextProblems(text, FRIEND, "own")).toEqual(["content"]);
+      expect(motionTextProblems(text, BOLD, "vision")).toEqual(["content"]);
+      expect(motionTextProblems(text, BOLD, "own")).toEqual([]);
+    });
+  }
+
+  test("what only looks like it stays a motion: her shoulders, her face, over her sunglasses, her back as she turns, her hand", () => {
+    for (const text of ["she slowly bares her shoulders", "she slowly uncovers her face", "she slowly peeks over her sunglasses", "she slowly turns to show her back", "she slowly shows her hand"]) {
+      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, []]);
+    }
+  });
+
+  test("the new exposure verbs read a model's text alone: a scene or code text keeps today's exposure list (the bank and the code table say none of them; the sweeps above hold all 271 and all 7)", () => {
+    for (const source of ["scene", "code"] as const) expect(motionTextProblems("she slowly shows her midriff", FRIEND, source)).toEqual([]);
+  });
+});

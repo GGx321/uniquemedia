@@ -291,6 +291,14 @@ const NUMBER_WORDS =
 /** Exposure a model says beyond the bank's list (scenes/explicitWords.ts). */
 const EXPOSURE_MORE =
   /\b(?:bare[- ](?:breasts?|chest(?:ed)?|bottom|butt)|breasts?|unclothed|undressed|in the nude|birthday suit|au naturel|wearing nothing|nothing on|without clothes|sans clothes|(?:flash|reveal|expos|bare)\w*\s+(?:(?:her|a|an|some|little|bit|of|more|bare)\s+){0,4}(?:skin|chest|cleavage|breasts?|stomach|belly|midriff|bottom|butt|thighs?|body))\b/gi;
+/**
+ * S5.WC2b: the exposure verbs a model reaches for beyond `EXPOSURE_MORE`, read on a vision or own text alone (a scene or code text keeps today's list): showing, displaying,
+ * uncovering, peeking, flashing, revealing, exposing or baring her skin, chest, cleavage, stomach, midriff, thighs or body, up to three words apart («exposes her upper
+ * thigh», «shows off her cleavage», «gives a peek of cleavage»), her bare back, and cleavage named at all («lets her cleavage show»). Her shoulders, her face and her back as
+ * she turns stay a motion's.
+ */
+const EXPOSURE_MODEL =
+  /\b(?:(?:uncover\w*|show\w*|display\w*|peek\w*|flash\w*|reveal\w*|expos\w*|bar(?:e|es|ed|ing))\s+(?:[a-z'-]+\s+){0,3}?(?:skin|chest|cleavage|breasts?|stomach|belly|midriff|navel|bottom|butt|buttocks|thighs?|body|bust|bare\s+back)|cleavage|underboob|sideboob)\b/gi;
 /** Explicit acts and words a model says beyond the bank's list. */
 const EXPLICIT_MORE =
   /\b(?:spread(?:s|ing)?\s+(?:her\s+)?(?:legs|thighs)|touch(?:es|ing)?\s+herself|strok(?:e|es|ing)\s+herself|masturbat\w*|porn\w*|xxx|hentai|erotic\w*|explicit|moan\w*|grop\w*|horny|aroused)\b/gi;
@@ -371,12 +379,16 @@ const RULES: readonly RuleCheck[] = [
   },
   {
     // Round 2 (the controller's decision on explicit content): exposure is the owner's own idea's alone on a frame of «Смелая», as undressing is (Q-H = 2); refused for
-    // every other source and on every other frame. The bank's sweeps hold its own texts to the same lists.
+    // every other source and on every other frame. The bank's sweeps hold its own texts to the same lists. S5.WC2b: a model's text also takes `EXPOSURE_MODEL`.
     rule: "exposure",
     problem: "content",
     check: (text, scope) => {
       if (scope.source === "bank" || (scope.source === "own" && scope.frame.bold)) return null;
-      const exposure = [...exposureWordsIn(text), ...Array.from(text.matchAll(new RegExp(EXPOSURE_MORE)), (m) => m[0])];
+      const exposure = [
+        ...exposureWordsIn(text),
+        ...Array.from(text.matchAll(new RegExp(EXPOSURE_MORE)), (m) => m[0]),
+        ...(isModelText(scope) ? Array.from(text.matchAll(new RegExp(EXPOSURE_MODEL)), (m) => m[0]) : []),
+      ];
       return exposure.length > 0 ? `names exposure (${words(exposure)})` : null;
     },
   },
