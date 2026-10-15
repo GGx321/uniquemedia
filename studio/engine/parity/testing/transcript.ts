@@ -352,6 +352,25 @@ function clipsLine(type: "clips.list" | "clips.get", result: Record<string, unkn
   return `< ok ${compact(norm.value({ clips, ...(result.notListedTotal === undefined ? {} : { notListedTotal: result.notListedTotal }) }))}`;
 }
 
+/**
+ * 5b.2 (S5.WB2c): a `clips.list` written for its BATCH SUMMARIES (`Transcript.callBatches`): the clips it holds (their names only, in name order) and each summary as the engine wrote it. Its times are clocks:
+ * `createdAt` is masked as everywhere, and the end is written as told or not. `clipsLine` writes no `batches`, so the older lines did not move.
+ */
+function batchesLine(result: Record<string, unknown>, norm: Normalizer): string {
+  const clips = (Array.isArray(result.clips) ? result.clips : []).map((clip) => String(norm.value(objectOf(clip).clipId, "clipId")));
+  clips.sort((a, b) => Number(a.split("#")[1]) - Number(b.split("#")[1]));
+  const batches = (Array.isArray(result.batches) ? result.batches : []).map((raw) => {
+    const s = objectOf(raw);
+    const members = (Array.isArray(s.members) ? s.members : []).map((member) => {
+      const m = objectOf(member);
+      const clipIds = Array.isArray(m.clipIds) ? m.clipIds.map((id) => norm.register("clip", String(id))) : [];
+      return { batchIndex: m.batchIndex, outcome: m.outcome, ...(m.detail === undefined ? {} : { detail: m.detail }), costMicros: m.costMicros, costKind: m.costKind, clipIds };
+    });
+    return { ...objectOf(norm.value({ batchId: s.batchId, avatarId: s.avatarId, size: s.size, createdAt: s.createdAt })), members, ended: s.endedAt !== undefined, ...(s.stop === undefined ? {} : { stop: s.stop }), cost: s.cost };
+  });
+  return `< ok ${compact({ clips, batches })}`;
+}
+
 /** One event as a line of the transcript, or null for an event the suite is not about. */
 export function eventLine(event: EventMessage, norm: Normalizer): string | null {
   if (!COVERED_EVENTS.has(event.type)) return null;
@@ -918,6 +937,17 @@ export class Transcript {
     if (type === "clips.create") this.#askedClip(payload, answer);
     if (type === "clips.createBatch") this.#askedBatch(payload, answer);
     this.#lines.push(answerLine(type, answer, this.norm));
+    return answer;
+  }
+
+  /** 5b.2 (S5.WB2c): `clips.list` with the engine's batch summaries written (`batchesLine`). Only the stories that ask for them carry them, so the older transcripts are unchanged. */
+  async callBatches(avatarId: string): Promise<Answer> {
+    this.#drain();
+    const payload = { avatarId };
+    this.#lines.push(`> clips.list ${compact(this.norm.value(payload))}`);
+    const answer = await this.#rig.send("clips.list", payload);
+    this.#drain();
+    this.#lines.push(answer.ok ? batchesLine(answer.result, this.norm) : answerLine("clips.list", answer, this.norm));
     return answer;
   }
 

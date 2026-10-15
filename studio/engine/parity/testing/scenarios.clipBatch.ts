@@ -424,4 +424,22 @@ export const CLIP_BATCH_SCENARIOS: readonly Scenario[] = [
       await runBatch(t, w, control, ["late"], { photoIds: frames(w, 3) });
     },
   },
+  // 5b.2, S5.WB2c (APPENDED): the batch's own summary, written by the engine. The «Клипы» header reads it, never the records: a clip the owner deleted is not a member that was dropped unshot, and its cost
+  // stays in the batch's total. The restart here is a quit and a new start with no clip in flight (`ClipControl.restart`), so no recovery runs; the crash restart stays in the engines' own suites.
+  {
+    name: "clip batch: the engine's summary of a batch tells each member and its money; a batch clip the owner deletes, then a restart, leave it as it was",
+    rig: RIG,
+    async run(t, world, control) {
+      const w = clipsOf(world);
+      const { jobIds } = await runBatch(t, w, control, [], { photoIds: frames(w, 3) });
+      t.note("the batch's own summary: three clips made at $0.42 each, the batch $1.26, billed");
+      await t.callBatches(w.avatarId);
+      t.note("the owner deletes the second clip: it leaves the list, and its member stays made, its cost in the batch's total");
+      await t.call("clips.delete", { avatarId: w.avatarId, clipId: jobIds[1] });
+      await t.callBatches(w.avatarId);
+      t.note("Studio is quit and opened again: the summary is as it was, and no member reads as not made");
+      await control.clips.restart();
+      await t.callBatches(w.avatarId);
+    },
+  },
 ];

@@ -176,6 +176,11 @@ export interface ClipControl {
   removePhoto(photoId: string): Promise<void>;
   /** A photo of the clip world is damaged: its file is not a picture any more. */
   damagePhoto(photoId: string): Promise<void>;
+  /**
+   * 5b.2 (S5.WB2c): Studio is quit and opened again while no clip is in flight: the real rig shuts its engine down and starts a new one on the same folders, the mock restarts. A story calls it only once
+   * every clip job has ended, so no recovery runs and no event of the new process is about a clip.
+   */
+  restart(): Promise<void>;
 }
 
 const NO_CLIPS: ClipControl = {
@@ -216,6 +221,9 @@ const NO_CLIPS: ClipControl = {
     throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
   },
   damagePhoto: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+  restart: () => {
     throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
   },
 };
@@ -876,6 +884,10 @@ export function mockRig(options: RigOptions = {}): ParityRig {
                 engine.setClipRates({ std: { perSecondMicros, perInputImageMicros: 0 }, pro: { perSecondMicros: 112_000, perInputImageMicros: 0 }, grok: { perSecondMicros: 140_000, perInputImageMicros: 10_000 } }),
               removePhoto: async (photoId) => engine.removeClipPhoto(photoId),
               damagePhoto: async (photoId) => engine.setClipPhotoPixels(photoId, "unreadable"),
+              restart: async () => {
+                engine.restart();
+                scheduler.runAll();
+              },
             },
     },
     async stop() {
@@ -1868,6 +1880,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
                 if (file === undefined) throw new Error("the photo has no file to damage");
                 await writeFile(file, "not the photo any more");
               },
+              restart: quitAndReopen,
             },
     },
     stop: async () => {
