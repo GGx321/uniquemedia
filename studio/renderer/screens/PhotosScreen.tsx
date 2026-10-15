@@ -458,7 +458,8 @@ function AvatarPhotos({
         {NBSP}— {month.tail}
       </>
     ) : null;
-  const clipsBlocked = !ready || clipPicked.size === 0 || clipBlock !== null || clipPicked.size > MAX_BATCH_CLIPS;
+  // A paid command of this avatar still on its way (a sheet closed mid-send, say): no second sheet until it answers.
+  const clipsBlocked = !ready || paidInFlight || clipPicked.size === 0 || clipBlock !== null || clipPicked.size > MAX_BATCH_CLIPS;
 
   const tabIds: Record<PhotosTab, string> = { photos: photosTabId, clips: clipsTabId, videos: videosTabId, look: lookTabId };
   // ← and → move between the tabs that work, round the ends («История сцен» is not built yet).

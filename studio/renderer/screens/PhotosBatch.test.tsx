@@ -322,6 +322,22 @@ describe("59: the sheet «Оживить N фото»", () => {
     expect(focusedLabel()).toBe("button «Отмена»");
   });
 
+  test("59c after the click: the video prices stopped reading while the sheet was open — the sheet asks again and turns into 59c, the focus on «Отмена»", async () => {
+    const h = await openNini();
+    await clipsMode();
+    await pickClips(...FIVE);
+    const s = await openBatchSheet();
+    h.engine.setVideoPrices("missing");
+    act(() => h.engine.passClipTime(11 * 60_000));
+    fireEvent.click(mainButton(s));
+    await flush();
+    await flush();
+    expect(within(s).getByRole("status").textContent).toBe(`Цены видео у OpenRouter сейчас не читаются${NBSP}— клип не запустить. Фото работают как обычно.`);
+    expect(priceLine(s)).toBe("—");
+    expect(mainButton(s).getAttribute("aria-disabled")).toBe("true");
+    expect(focusedLabel()).toBe("button «Отмена»");
+  });
+
   test("59c: PRICE_UNAVAILABLE `video` — the rows bare, 38f's notice, «Цена —», «Оживить» waits described by it", async () => {
     const h = await openNini();
     h.engine.setVideoPrices("missing");

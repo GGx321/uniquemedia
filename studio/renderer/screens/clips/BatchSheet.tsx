@@ -93,7 +93,8 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
   }, [toCancel]);
 
   const ready = options.status === "ready" ? options : null;
-  const refreshing = ready?.refreshing === true;
+  // The options on show were asked for other rows (a row refused after the click, before the effect that asks again has run): they wait, so nothing is sent or said on them.
+  const refreshing = ready !== null && (ready.refreshing || ready.asked !== askedKey);
   // Every row refused after the click: there is nothing left to ask the engine about, nor to send.
   const sheet: BatchSheetView | null = askedKey === "" || ready === null || ready.options.items.every((item) => !item.suitable) ? null : batchSheetView(ready.options, { quality, seconds });
   const unpriced = options.status === "failed" && options.error.code === "PRICE_UNAVAILABLE" && options.error.priceScope === "video";
@@ -143,15 +144,16 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
       reply.error,
       items.map((i) => i.photoId),
     );
-    if (code === "PRICE_CHANGED" || code === "BUDGET_EXCEEDED") {
-      // 59a, 59b #after-click: the engine's figures are asked again (the remaining room, the Kling-only sum, L12) and need a new click.
-      setAfter({ kind: code === "PRICE_CHANGED" ? "price" : "budget", way });
+    if (code === "PRICE_CHANGED" || code === "BUDGET_EXCEEDED" || (code === "PRICE_UNAVAILABLE" && reply.error.priceScope === "video")) {
+      // 59a, 59b #after-click: the engine's figures are asked again (the remaining room, the Kling-only sum, L12) and need a new click. A price that stopped reading turns the sheet into 59c.
+      if (code !== "PRICE_UNAVAILABLE") setAfter({ kind: code === "PRICE_CHANGED" ? "price" : "budget", way });
       setOptions((now) => (now.status === "ready" ? { ...now, refreshing: true } : now));
       setAgain((n) => n + 1);
     } else if (item !== null) {
       // 59 #item-refused: the row is struck with its OWN reason, and the sum is asked again without it.
       const label = picks.find((p) => p.photoId === item.photoId)?.label ?? "Фото";
       setRefused((now) => new Map(now).set(item.photoId, item.reason));
+      setOptions((now) => (now.status === "ready" ? { ...now, refreshing: true } : now));
       setAfter({ kind: "item", text: itemRefusedAlert(label, item.reason) });
     } else {
       setError(reply.error);
@@ -161,14 +163,28 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
   }
 
   const whyId = `${ids}-why`;
-  const budgetId = `${ids}-budget`;
+  const noticeId = `${ids}-notice`;
   const title = `Оживить ${picks.length} фото`;
   const shownAfter = after !== null && !refreshing && options.status === "ready" ? after : null;
-  // The month's notice: a status when `monthFits` says it at open, an alert when `tryHold` said it after the click (59b #after-click).
-  const budgetAlert = shownAfter?.kind === "budget";
-  const budgetShown = sheet !== null && (sheet.budgetNeed !== null || budgetAlert);
+  // The month's notice: a status when `monthFits` says it at open, an alert when `tryHold` said it after the click (59b #after-click) — while the way clicked still does not fit the room asked again.
+  const budgetAlert = shownAfter?.kind === "budget" && sheet !== null && !sheet.fits && (shownAfter.way === "main" || sheet.noFallback === null);
+  const budgetShown = sheet !== null && (shownAfter?.kind === "budget" ? budgetAlert : sheet.budgetNeed !== null);
   const budgetNeed = sheet === null ? "" : shownAfter?.kind === "budget" && shownAfter.way === "alone" && sheet.noFallback !== null ? upUsd(sheet.noFallback.worstMicros) : upUsd(sheet.main.worstMicros);
   const mainOff = sheet === null || !sheet.fits || waiting || sheet.count === 0;
+  // One live region at a time (README decision 13): the click's answer, else the engine's error, else why paid work waits, else the month.
+  const notice: "price" | "item" | "error" | "block" | "budget" | null =
+    shownAfter?.kind === "price" && sheet !== null
+      ? "price"
+      : shownAfter?.kind === "item"
+        ? "item"
+        : error !== null
+          ? "error"
+          : blockText !== null && ready !== null
+            ? "block"
+            : budgetShown
+              ? "budget"
+              : null;
+  const mainWhy = unpriced ? whyId : notice === "block" || notice === "budget" ? noticeId : undefined;
 
   const rows = (
     <ul className="batch-rows" aria-label="Фото пакета">
@@ -294,19 +310,26 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
         </div>
 
         <footer className="clip-sheet-foot">
-          {/* One live region at a time (README decision 13): the click's answer, else the month's notice, else the engine's error, else why paid work waits. */}
-          {shownAfter !== null && shownAfter.kind === "price" && sheet !== null && (
+          {notice === "price" && shownAfter?.kind === "price" && sheet !== null && (
             <Notice tone="warn" role="alert">
               Цена изменилась: теперь не больше <span className="mono">{shownAfter.way === "alone" && sheet.noFallback !== null ? upUsd(sheet.noFallback.worstMicros) : sheet.worst}</span>. Подтвердите ещё раз.
             </Notice>
           )}
-          {shownAfter !== null && shownAfter.kind === "item" && (
+          {notice === "item" && shownAfter?.kind === "item" && (
             <Notice tone="warn" role="alert">
               {shownAfter.text}
             </Notice>
           )}
-          {budgetShown && sheet !== null && (
-            <div id={budgetId}>
+          {notice === "error" && error !== null && <Notice tone="danger">{errorText(error)}</Notice>}
+          {notice === "block" && blockText !== null && (
+            <div id={noticeId}>
+              <Notice tone="warn" role="status">
+                {nbDash(blockText)}
+              </Notice>
+            </div>
+          )}
+          {notice === "budget" && sheet !== null && (
+            <div id={noticeId}>
               <Notice tone="warn" role={budgetAlert ? "alert" : "status"}>
                 Не хватает месячного бюджета: пакету нужно до <span className="mono">{budgetNeed}</span>, осталось <span className="mono">{sheet.room}</span>. Уберите часть фото или поднимите бюджет в{" "}
                 <button type="button" className="viewer-why-link" onClick={() => navigate({ name: "settings", focus: "money" })}>
@@ -315,12 +338,6 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
                 .
               </Notice>
             </div>
-          )}
-          {error !== null && <Notice tone="danger">{errorText(error)}</Notice>}
-          {blockText !== null && ready !== null && (
-            <Notice tone="warn" role="status">
-              {nbDash(blockText)}
-            </Notice>
           )}
           <div className="clip-price">
             <span className="lbl">Цена</span>
@@ -346,7 +363,7 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
               className="btn btn-p"
               aria-busy={busy === "main" || options.status === "loading" || undefined}
               aria-disabled={mainOff || undefined}
-              aria-describedby={unpriced ? whyId : sheet !== null && !sheet.fits && budgetShown ? budgetId : undefined}
+              aria-describedby={mainWhy}
               onClick={() => void send("main")}
             >
               {(busy === "main" || options.status === "loading") && <Spin />}
