@@ -361,6 +361,84 @@ describe("the last look before the record", () => {
   });
 });
 
+// S5.WA5 (L2): an avatar delete's prepare asks `importingFor`. The import is counted from the moment `start` is called, not after its first awaits (the clip lock, the record, the copy lookup), so a
+// prepare issued right behind the command is refused; and every way out that is not a running job gives the count back.
+describe("an import is counted from the call, not after its awaits (S5.WA5, L2)", () => {
+  test("is counted at once, before the call has awaited anything", async () => {
+    const w = await world();
+
+    const answer = start(w);
+
+    expect(w.imports.importingFor(AVATAR)).toBe(true);
+    await answer;
+    w.calls[0]?.onEnd?.();
+    expect(w.imports.importingFor(AVATAR)).toBe(false);
+  });
+
+  test("another avatar is not held by it", async () => {
+    const w = await world();
+
+    const answer = start(w);
+
+    expect(w.imports.importingFor("avatar-other-0001")).toBe(false);
+    await answer;
+  });
+
+  test("stays counted while the job runs, until its end", async () => {
+    const w = await world();
+
+    await start(w);
+
+    expect(w.imports.importingFor(AVATAR)).toBe(true);
+    w.calls[0]?.onEnd?.();
+    expect(w.imports.importingFor(AVATAR)).toBe(false);
+  });
+
+  test("a clip that is not ready gives the count back", async () => {
+    const w = await world(failedRecord("download-failed", undefined), null);
+
+    await refusal(start(w));
+
+    expect(w.imports.importingFor(AVATAR)).toBe(false);
+  });
+
+  test("a clip that is not there gives the count back", async () => {
+    const w = await world(null, null);
+
+    await refusal(start(w));
+
+    expect(w.imports.importingFor(AVATAR)).toBe(false);
+  });
+
+  test("a live copy answered at once gives the count back", async () => {
+    const w = await world();
+    w.state.copy = COPY;
+
+    await start(w);
+
+    expect(w.imports.importingFor(AVATAR)).toBe(false);
+  });
+
+  test("a clip another job holds (job-running) gives the count back", async () => {
+    const w = await world();
+    w.rig.state.busy.add(CLIP);
+
+    await refusal(start(w));
+
+    expect(w.imports.importingFor(AVATAR)).toBe(false);
+  });
+
+  test("two imports asked together leave exactly one counted, and none once its job ended", async () => {
+    const w = await world();
+
+    await Promise.allSettled([start(w), start(w)]);
+
+    expect(w.imports.importingFor(AVATAR)).toBe(true);
+    w.calls[0]?.onEnd?.();
+    expect(w.imports.importingFor(AVATAR)).toBe(false);
+  });
+});
+
 describe("the display name", () => {
   test("is «Клип <YYYY-MM-DD> <HH-MM>.mp4» in the owner's local time", () => {
     expect(copyNameOf(new Date(2026, 9, 14, 22, 17, 31).toISOString())).toBe("Клип 2026-10-14 22-17.mp4");

@@ -57,6 +57,31 @@ export class ClipImports {
   async start(payload: CommandPayload<"media.importClip">): Promise<{ mediaId: string } | { jobId: string }> {
     const { avatarId, clipId } = payload;
     const deps = this.#deps;
+    // Counted before the first await (S5.WA5, L2): an avatar delete's prepare asks `importingFor` as soon as this command is in, and must not slip in while the clip lock, the record and the copy
+    // lookup are still being awaited. Given back exactly once: by every way out that is not a running job, or by the job's end.
+    this.#running.set(avatarId, (this.#running.get(avatarId) ?? 0) + 1);
+    let counted = true;
+    const uncount = (): void => {
+      if (!counted) return;
+      counted = false;
+      const left = (this.#running.get(avatarId) ?? 1) - 1;
+      if (left <= 0) this.#running.delete(avatarId);
+      else this.#running.set(avatarId, left);
+    };
+    let started = false;
+    try {
+      const answer = await this.#start(payload, uncount);
+      started = "jobId" in answer;
+      return answer;
+    } finally {
+      // A job that is running keeps the count until its end; everything else (a refusal, a live copy answered at once) gives it back now.
+      if (!started) uncount();
+    }
+  }
+
+  async #start(payload: CommandPayload<"media.importClip">, uncount: () => void): Promise<{ mediaId: string } | { jobId: string }> {
+    const { avatarId, clipId } = payload;
+    const deps = this.#deps;
     return deps.withClipLock(clipId, async () => {
       const { clipsDir, record } = await deps.locate(avatarId, clipId);
       const { outcome } = record;
@@ -69,13 +94,10 @@ export class ClipImports {
       // From here the clip is held until the import job has ended, and every way out below gives it back.
       let held = true;
       const release = deps.host.begin(clipId);
-      this.#running.set(avatarId, (this.#running.get(avatarId) ?? 0) + 1);
       const end = (): void => {
         if (!held) return;
         held = false;
-        const left = (this.#running.get(avatarId) ?? 1) - 1;
-        if (left <= 0) this.#running.delete(avatarId);
-        else this.#running.set(avatarId, left);
+        uncount();
         release();
       };
       try {
