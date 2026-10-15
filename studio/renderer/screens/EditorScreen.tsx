@@ -531,11 +531,6 @@ function DraftEditor({
   const photos = bin.pages?.photos ?? null;
 
   const photoIndex = useMemo(() => (photos === null ? null : new Map(photos.map((p) => [p.photoId, p]))), [photos]);
-  const flagged = photoProblems(state.spec, verdict, photoIndex ?? new Map());
-  const usedVideoId = flagged.find((f) => f.problem === "used")?.videoId ?? null;
-  // The first unusable photo of each clip: the timeline's «⚠ фото отклонено» tags.
-  const clipProblems = new Map<number, PhotoProblem>();
-  for (const cell of flagged) if (!clipProblems.has(cell.clip)) clipProblems.set(cell.clip, cell.problem);
 
   // ---------- the timeline (3d.3a; 3d.3b: layers and music) ----------
   const timeline = useTimeline(state.spec, undefined, kept?.place ?? null);
@@ -610,6 +605,12 @@ function DraftEditor({
   const originRef = useRef(originOf);
   originRef.current = originOf;
   const framesAreKnown = framesKnown(state.spec, originOf);
+  // The unusable photos: a scene cell's, and (5b.2, I5.60) a clip copy's, told at the clip. The copy's photo is read from the copies' origins, which are known below.
+  const flagged = photoProblems(state.spec, verdict, photoIndex ?? new Map(), originOf);
+  const usedVideoId = flagged.find((f) => f.problem === "used")?.videoId ?? null;
+  // The first unusable photo of each clip: the timeline's «⚠ фото отклонено» tags.
+  const clipProblems = new Map<number, PhotoProblem>();
+  for (const cell of flagged) if (!clipProblems.has(cell.clip)) clipProblems.set(cell.clip, cell.problem);
   // A video not known after a FAILED read is not «being read»: the controls say the read failed, and a notice offers «Повторить». It stays so while a
   // retry is out (S5.WAR L2: the notice does not blink on each try, and the focus stays on its «Повторить»), until a read succeeds.
   const framesFailed = !framesAreKnown && videoFailures > 0;
@@ -1053,6 +1054,7 @@ function DraftEditor({
     spec: state.spec,
     exportStatus: view.exportStatus,
     avatarActive: avatar?.status !== "archived",
+    originOf,
     ...(avatar == null ? {} : { avatarUsage: avatar.usage }),
     verdict,
     photos: photoIndex,

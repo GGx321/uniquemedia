@@ -37,7 +37,12 @@ export interface RenderBlockInput {
   readonly avatarUsage?: AvatarSummary["usage"];
   /** The text layers whose caption the engine's preview refused as it stands now (`refusedCaptionLayers`); absent: none. */
   readonly previewRefused?: ReadonlySet<string>;
+  /** Where a clip's montage copy comes from (its photo), by media id: what a refused copy's photo is judged by. Absent: a refused copy reads as an unavailable photo. */
+  readonly originOf?: FrameOriginOf;
 }
+
+/** The photo a clip copy was made from, by the copy's media id; undefined for a media that is no copy. */
+export type FrameOriginOf = (mediaId: string) => { readonly photoId: string } | null | undefined;
 
 export type UsedVideo = "this-draft" | { readonly file: string };
 
@@ -49,7 +54,7 @@ export interface RenderBlock {
   readonly clips?: readonly number[];
 }
 
-/** A cell of the current spec whose scene photo the engine refused. */
+/** A cell of the current spec whose scene photo the engine refused, or a clip whose copy's photo it refused (cell 0). */
 export interface FlaggedCell {
   readonly clip: number;
   /** 0 for a photo clip; the cell's index in a collage. */
@@ -97,19 +102,29 @@ function classify(photo: PhotoSummary | undefined): { problem: PhotoProblem; vid
  * cells of the spec IT judged, so each is matched by its photo: a flagged photo stays flagged wherever the owner
  * moved it since, and one he removed flags nothing.
  */
-export function photoProblems(spec: MontageDraft, verdict: EngineVerdict | null, photos: ReadonlyMap<string, PhotoSummary>): FlaggedCell[] {
+export function photoProblems(spec: MontageDraft, verdict: EngineVerdict | null, photos: ReadonlyMap<string, PhotoSummary>, originOf?: FrameOriginOf): FlaggedCell[] {
   if (verdict === null) return [];
   const flagged = new Set<string>();
+  // 5b.2 (I5.60, Q-F = 1): the engine tells a copy whose frame is no longer free at the clip itself (`["clips", i]`). The copy, not its place, is flagged, as a photo is.
+  const flaggedCopies = new Set<string>();
   for (const issue of verdict.issues) {
     if (issue.code !== "photo-unavailable") continue;
     const photoId = photoAt(verdict.spec, issue.path);
     if (photoId !== null) flagged.add(photoId);
+    const [root, i, part] = issue.path;
+    const judged = root === "clips" && typeof i === "number" && part === undefined ? verdict.spec.clips[i] : undefined;
+    if (judged?.kind === "video") flaggedCopies.add(judged.mediaId);
   }
   const cells: FlaggedCell[] = [];
   forEachScenePhoto(spec, (photoId, clip, cell) => {
     if (flagged.has(photoId)) cells.push({ clip, cell, photoId, ...classify(photos.get(photoId)) });
   });
-  return cells;
+  spec.clips.forEach((clip, i) => {
+    if (clip.kind !== "video" || !flaggedCopies.has(clip.mediaId)) return;
+    const photoId = originOf?.(clip.mediaId)?.photoId;
+    cells.push({ clip: i, cell: 0, photoId: photoId ?? "", ...classify(photoId === undefined ? undefined : photos.get(photoId)) });
+  });
+  return cells.sort((a, b) => a.clip - b.clip || a.cell - b.cell);
 }
 
 /** What the engine's referential issue of a layer says on its block (3d.3b). */
@@ -231,7 +246,7 @@ export function renderBlock(input: RenderBlockInput): RenderBlock | null {
   const usage = input.avatarUsage;
   if (usage?.state === "unknown" && usage.reasons[0] === "library-too-new") return reason(usageText("library-too-new"));
 
-  const flagged = photoProblems(spec, verdict, input.photos ?? new Map());
+  const flagged = photoProblems(spec, verdict, input.photos ?? new Map(), input.originOf);
   const first = flagged[0];
   if (first !== undefined) {
     // Until the photos are read, why is not known: the button is blocked all the same, without a guess.

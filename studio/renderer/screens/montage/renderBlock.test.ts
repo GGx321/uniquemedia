@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { MontageDraft, MontageIssue, PhotoSummary } from "../../../shared/engine";
 import { layerProblems, photoProblems, renderBlock, type RenderBlockInput } from "./renderBlock";
-import { AVATAR_ID, draftSpec, photoClip, stickerLayer, textLayer } from "./testkit";
+import { AVATAR_ID, draftSpec, photoClip, stickerLayer, textLayer, videoClip } from "./testkit";
 
 // Why «Рендер» is disabled (3d.2; the 3d.6 checklist's order): the export folder, then no clips, the length, an
 // empty cell, a photo that cannot go into a video (one photo → one video, the owner's Q1), a caption, a layer
@@ -299,5 +299,58 @@ describe("layerProblems: the layers the engine refuses", () => {
       { code: "not-yet-supported", path: ["layers", 0] },
     ];
     expect([...layerProblems(spec, issues)]).toEqual([["layer-001", "надпись не проходит проверку"]]);
+  });
+});
+
+// S5.WA5 (M2): the engine tells a clip copy whose frame is no longer free at the clip itself (`["clips", i]`), and the window draws it as a refused photo is.
+describe("photoProblems: a clip copy whose frame the engine refused", () => {
+  const spec: MontageDraft = draftSpec([photoClip(0, "photo-mia-0001"), videoClip(1)]);
+  const issues: MontageIssue[] = [{ code: "photo-unavailable", path: ["clips", 1] }];
+  const originOf = (mediaId: string) => (mediaId === "media-own-0001" ? { photoId: "photo-mia-0003" } : undefined);
+
+  test("the copy's clip is flagged by the state of the copy's photo", () => {
+    const flagged = photoProblems(spec, { spec, issues }, photosOf(photo(3, { used: true, usedIn: ["video-0000002"] })), originOf);
+
+    expect(flagged).toEqual([{ clip: 1, cell: 0, photoId: "photo-mia-0003", problem: "used", videoId: "video-0000002" }]);
+  });
+
+  test("a rejected photo says so at the copy's clip", () => {
+    expect(photoProblems(spec, { spec, issues }, photosOf(photo(3, { rejected: true, eligible: false })), originOf)).toMatchObject([{ clip: 1, problem: "rejected" }]);
+  });
+
+  test("a window that cannot tell where the copy comes from still flags the clip, as unavailable", () => {
+    expect(photoProblems(spec, { spec, issues }, photosOf())).toMatchObject([{ clip: 1, cell: 0, problem: "unavailable" }]);
+  });
+
+  test("a scene cell and a copy flagged together come in timeline order", () => {
+    const both: MontageIssue[] = [{ code: "photo-unavailable", path: ["clips", 1] }, { code: "photo-unavailable", path: ["clips", 0, "cell"] }];
+
+    expect(photoProblems(spec, { spec, issues: both }, photosOf(), originOf).map((f) => f.clip)).toEqual([0, 1]);
+  });
+
+  test("an issue at a photo clip's own path (no cell) flags nothing", () => {
+    expect(photoProblems(spec, { spec, issues: [{ code: "photo-unavailable", path: ["clips", 0] }] }, photosOf(), originOf)).toEqual([]);
+  });
+
+  test("the verdict's clip is followed by its copy, not by its place: the clip moved since", () => {
+    const moved: MontageDraft = draftSpec([videoClip(1), photoClip(0, "photo-mia-0001")]);
+
+    expect(photoProblems(moved, { spec, issues }, photosOf(), originOf)).toMatchObject([{ clip: 0 }]);
+  });
+});
+
+describe("renderBlock: a clip copy whose frame the engine refused", () => {
+  const spec: MontageDraft = draftSpec([photoClip(0, "photo-mia-0001"), videoClip(1), photoClip(2, "photo-mia-0002")]);
+  const verdict = { spec, issues: [{ code: "photo-unavailable" as const, path: ["clips", 1]}] };
+  const originOf = () => ({ photoId: "photo-mia-0003" });
+
+  test("blocks the render at the copy's clip, in the words of a refused photo", () => {
+    const r = renderBlock(input({ spec, verdict, photos: photosOf(photo(3, { rejected: true, eligible: false })), originOf }));
+
+    expect(r).toEqual({ text: "Кадр 2: фото отклонено — замените его", settings: false, clips: [1] });
+  });
+
+  test("blocks without a guess while the photos are not read", () => {
+    expect(renderBlock(input({ spec, verdict, photos: null, originOf }))).toEqual({ text: "Проверяем фото…", settings: false, clips: [1] });
   });
 });
