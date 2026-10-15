@@ -33,7 +33,7 @@ interface Rig {
   readonly library: Library;
   readonly avatarId: string;
   readonly photoId: string;
-  readonly state: { deleting: boolean; current: Library | null; paid: number; caps: ["set" | "clear", string, number][]; timeouts: number[] };
+  readonly state: { deleting: boolean; current: Library | null; paid: number; caps: ["set" | "clear", string, number][]; timeouts: number[]; onPrices: (() => void) | undefined };
   readonly logs: string[];
   readonly storeDir: string;
 }
@@ -46,7 +46,7 @@ async function rig(steps: (state: Rig["state"]) => Step[], extra: Partial<ClipMo
   await mkdir(libraryDir, { recursive: true });
   const seeded = await seedClipAvatar(libraryDir);
   const { library } = await openLibrary(libraryDir);
-  const state: Rig["state"] = { deleting: false, current: library, paid: 0, caps: [], timeouts: [] };
+  const state: Rig["state"] = { deleting: false, current: library, paid: 0, caps: [], timeouts: [], onPrices: undefined };
   const net = fakeFetch(steps(state));
   const { client } = makeClient(net.fetch);
   const logs: string[] = [];
@@ -65,7 +65,10 @@ async function rig(steps: (state: Rig["state"]) => Step[], extra: Partial<ClipMo
     },
     assertAvatarOnDisk: async () => undefined,
     facts: async () => ({ kind: "suitable", facts: timerFrame(), bytes: JPEG }),
-    prices: async () => ({ book: money.priceBook, asOf: "2026-09-24" }),
+    prices: async () => {
+      state.onPrices?.();
+      return { book: money.priceBook, asOf: "2026-09-24" };
+    },
     textModel: () => "x-ai/grok-4.3",
     checkAccepted: () => undefined,
     checkMonthlyRoom: () => undefined,
@@ -133,6 +136,32 @@ describe("after the last await", () => {
       },
     ]);
     await expect(r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "NOT_FOUND" } });
+  });
+});
+
+describe("before the reserve: the avatar is looked at again after the price read (round 3, L2)", () => {
+  test("a delete prepared while the translator's price is read: NOT_FOUND, no reserve, no ledger line, no chat, no cap", async () => {
+    const r = await rig(() => []);
+    r.state.onPrices = () => void (r.state.deleting = true);
+    await expect(r.motions.translateIdea({ avatarId: r.avatarId, photoId: r.photoId, text: "поворачивает голову", acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "NOT_FOUND" } });
+    expect(money.lines()).toEqual([]);
+    expect(r.state.caps).toEqual([]);
+    expect([r.motions.running(), r.state.paid]).toEqual([0, 0]);
+  });
+
+  test("the same for the writer's price read", async () => {
+    const r = await rig(() => []);
+    r.state.onPrices = () => void (r.state.deleting = true);
+    await expect(r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "NOT_FOUND" } });
+    expect(money.lines()).toEqual([]);
+    expect(r.state.caps).toEqual([]);
+  });
+
+  test("a library switched away while the price is read: NOT_FOUND before any reserve", async () => {
+    const r = await rig(() => []);
+    r.state.onPrices = () => void (r.state.current = null);
+    await expect(r.motions.translateIdea({ avatarId: r.avatarId, photoId: r.photoId, text: "поворачивает голову", acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "NOT_FOUND" } });
+    expect(money.lines()).toEqual([]);
   });
 });
 
