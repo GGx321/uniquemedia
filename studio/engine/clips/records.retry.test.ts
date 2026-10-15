@@ -373,7 +373,7 @@ describe("clips.retryDownload: races with a delete and a stop", () => {
     await open({
       deps: {
         // A copy of the library folder holds the same avatar ids: only its clips folder tells the two apart.
-        library: () => ({ hasAvatar: () => true, clipsDirOf: (id) => join(rig.dir, moved ? "copy" : "", "avatars", id, "clips") }),
+        library: () => ({ root: rig.dir, hasAvatar: () => true, clipsDirOf: (id) => join(rig.dir, moved ? "copy" : "", "avatars", id, "clips") }),
         usableKey: () => {
           moved = true;
           return "sk-test";

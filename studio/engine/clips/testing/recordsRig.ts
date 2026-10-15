@@ -92,7 +92,7 @@ export async function createRecordsRig(options: RigOptions = {}): Promise<Record
   const deps: ClipRecordsDeps = {
     newId: () => `job-${String(nextId++).padStart(8, "0")}`,
     clock: () => state.now,
-    library: () => (state.open ? { hasAvatar: (id) => state.avatars.has(id), clipsDirOf: (id) => join(dir, "avatars", id, "clips") } : null),
+    library: () => (state.open ? { root: dir, hasAvatar: (id) => state.avatars.has(id), clipsDirOf: (id) => join(dir, "avatars", id, "clips") } : null),
     pendingDelete: (id) => state.pendingDelete.has(id),
     ledger: () => state.ledger,
     jobs,

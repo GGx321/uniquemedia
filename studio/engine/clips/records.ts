@@ -143,6 +143,8 @@ export interface ClipLibrary {
   hasAvatar: (avatarId: string) => boolean;
   /** `<library>/avatars/<avatarId>/clips`. */
   clipsDirOf: (avatarId: string) => string;
+  /** The library's root: what a clip's copy is looked up by, so a delete stays in the library its clip folder was taken from (S5.WA5, L1). */
+  readonly root: string;
 }
 
 export interface ClipRecordsDeps {
@@ -168,7 +170,7 @@ export interface ClipRecordsDeps {
    * 5b.2 (S5.WA2, I5.59): the clip's montage copy. A delete removes it FIRST, under the clip's lock; it throws what refuses the delete (IN_FLIGHT `in-use` while a render holds the copy, INTERNAL when the
    * disk fails) and then nothing of the clip is removed. Absent: a service built without the media service, which has no copies.
    */
-  copies?: { removeOf: (avatarId: string, clipId: string) => Promise<unknown> };
+  copies?: { removeOf: (avatarId: string, clipId: string, root: string) => Promise<unknown> };
   /**
    * 5b.2 (S5.WA2, Q-F = 1): what uses a ready clip, for `ClipSummary.use`. `videoUse` is the used index's answer for a clip and the photo it was made from; `draftsOf` is how many saved drafts of the
    * avatar hold each clip's copy, read once for a whole list. A reader that fails leaves its part out (logged): `use` is a help for the dialog, not a gate. Absent: no clip has a `use`.
@@ -226,10 +228,15 @@ export class ClipRecords {
 
   /** The avatar's clips folder: LIBRARY_UNAVAILABLE with no library, NOT_FOUND for an avatar that is not in it or is being deleted. */
   #dirOf(avatarId: string): string {
+    return this.#locate(avatarId).clipsDir;
+  }
+
+  /** The avatar's clips folder AND the root of the library it is in, from ONE look at the open library: the pair names one library even if a switch lands later (S5.WA5, L1). */
+  #locate(avatarId: string): { clipsDir: string; root: string } {
     const library = this.#deps.library();
     if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
     if (!library.hasAvatar(avatarId) || this.#deps.pendingDelete(avatarId)) throw notFound(`no avatar ${avatarId} in the open library`);
-    return library.clipsDirOf(avatarId);
+    return { clipsDir: library.clipsDirOf(avatarId), root: library.root };
   }
 
   /**
@@ -403,12 +410,13 @@ export class ClipRecords {
    */
   async delete(payload: Payload<"clips.delete">): Promise<{ clipId: string }> {
     const { clipId } = payload;
-    const clipsDir = this.#dirOf(payload.avatarId);
+    // The library the folder came from (S5.WA5, L1): the copy is looked up there, never in whatever library is live by the time the lock is won.
+    const { clipsDir, root } = this.#locate(payload.avatarId);
     await this.withClipLock(clipId, async () => {
       if (this.#deps.host.busy(clipId)) throw new EngineFailure({ code: "IN_FLIGHT", clipReason: "job-running", detail: `a job is working on clip ${clipId}` });
       await this.#recordOf(clipsDir, clipId);
       // The copy goes first (a render that holds it refuses the whole delete, with nothing removed); then the clip, so no copy outlives its clip.
-      await this.#deps.copies?.removeOf(payload.avatarId, clipId);
+      await this.#deps.copies?.removeOf(payload.avatarId, clipId, root);
       const remove = this.#deps.remove ?? ((path: string) => rm(path, { force: true }));
       await remove(clipJournalPath(clipsDir, clipId));
       await fsyncDir(clipsDir);

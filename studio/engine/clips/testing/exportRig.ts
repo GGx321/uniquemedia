@@ -187,7 +187,7 @@ export async function createExportRig(options: ExportRigOptions = {}): Promise<E
   const records = new ClipRecords({
     newId,
     clock: () => state.now,
-    library: () => (state.open ? { hasAvatar: (id) => library.getAvatar(id) !== undefined, clipsDirOf: (id) => clipsDirOf(library, id) } : null),
+    library: () => (state.open ? { root: library.root, hasAvatar: (id) => library.getAvatar(id) !== undefined, clipsDirOf: (id) => clipsDirOf(library, id) } : null),
     pendingDelete: (id) => state.pendingDelete.has(id),
     ledger: () => ({ lines: [], closeOf: () => undefined }),
     jobs,
