@@ -140,7 +140,7 @@ import { startMockFlashapi } from "./mockFlashapi";
 import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, productionRendererPageProblems, stickerEncodeWorkerProblems, textWorkerProblems } from "./bundleChecks";
 import { FACE_FIXTURE_PATH } from "./facePool";
 import { portraitBatchProblems, portraitSmokeProblems } from "./portraitSmoke";
-import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type ImageHold, type MockOpenRouter, type MockRequest } from "./mockOpenRouter";
+import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, DEFAULT_MOTION_TRANSLATION, markerMatch, requestCarries, startMockOpenRouter, type ImageHold, type MockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { acceptedRemainingProblems, launchIsActive, ledgerProblems, midRenderProblems, oneSetOneRunProblems, photoAttemptProblems, postsByModel, quietRestartProblems, readLedger, restartNoticeProblems, restartPauseProblems, reviewRowOf, videosOnDiskProblems } from "./autopilotSmoke";
 import { ideaWriteProblems, templateComposeProblems, type WriteFacts } from "./templateSmoke";
 import { LLM_ONLY_CATEGORY_POOL } from "../engine/scenes/testing/llmOnlyFixture";
@@ -148,6 +148,7 @@ import { BOLD_MODEL, boldRequestProblems, expectedBilledMicros, failedReasonsOf,
 import { verifyClipExport } from "../engine/clips/exportVerify";
 import { VIDEO_TIERS } from "../engine/money/prices";
 import { batchClipProblems, batchLedgerProblems, clipPostProblems, exportedCopyProblems, refusedJobProblems, type BatchLedgerLine } from "./clipSmoke";
+import { canaryProblems, motionLedgerProblems, type Haystack } from "./clipMotionSmoke";
 import {
   copySummaryProblems,
   fixtureClipArgv,
@@ -4464,6 +4465,156 @@ async function runClipBatchScenario(target: Target): Promise<void> {
   }
 }
 
+/** Every file under `root` as text, for the canary: a binary file is read both ways, so a fragment of the idea would show in it as it would anywhere. */
+async function textsUnder(root: string): Promise<Haystack[]> {
+  const found: Haystack[] = [];
+  for (const entry of await readdir(root, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const path = join(entry.parentPath, entry.name);
+    const latin = await readFile(path, "latin1").catch(() => "");
+    found.push({ where: `the file ${path.slice(root.length)}`, text: `${latin}\n${Buffer.from(latin, "latin1").toString("utf8")}` });
+  }
+  return found;
+}
+
+/** The owner's idea of the part C scenario: more than 40 characters, so a fragment of it can be told from its label (the first 40, cut by word). */
+const MOTION_IDEA = "медленно поворачивает голову к окну и улыбается, CANARY-9c41";
+
+/**
+ * «Свои движения» in the packaged app (5b.2, S5.WC4): its own app instance, userData, library and mock (the video routes and the chat route of part C). A photo is drawn by an ordinary run. Asserted: the two
+ * estimates are free (no chat request); one suggestion is paid at the mock's bill ($0.0034) and stored as v-1..v-3, one translation of a long idea is paid ($0.001) and stored as o-1 under the label cut from his words;
+ * the sheet lists all four after the code's; a clip is made from o-1 and its record says `own`; the ledger holds exactly the two calls, each reserved and settled, equals what the mock billed and has nothing open;
+ * the I5.67 canary: the translator's request holds the idea as data, and no fragment longer than 40 characters of it is in any file under userData or the library, any event the window saw, the app's own log,
+ * the writer's request or any video request; no request reached a route the mock does not know.
+ *
+ * clipMotionSmoke.engine.test.ts plays the very same steps against the real engine without Electron (it runs on a developer's machine); this needs Electron: CI only, never run locally.
+ */
+async function runClipMotionScenario(target: Target): Promise<void> {
+  const mock = await startMockOpenRouter({ descriptorText: AVATAR_DESCRIPTOR, distinctImages: true, faceFixture: true, clips: true, motions: true });
+  const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-clip-motions-"));
+  const userData = join(tmp, "userData");
+  const libraryRoot = join(tmp, "clip-library");
+  const exportRoot = join(tmp, "export");
+  for (const dir of [userData, libraryRoot, exportRoot]) await mkdir(dir, { recursive: true });
+  await writeFile(join(exportRoot, EXPORT_MARKER_FILE), JSON.stringify({ schemaVersion: 1, rootId: CLIP_ROOT_ID, createdAt: new Date().toISOString() }));
+  await saveSettings(userData, { ...defaultSettings(userData), libraryPath: libraryRoot, exportPath: exportRoot });
+
+  const running = await launch(target, userData, [`--studio-openrouter-base-url=${mock.url}`, `--studio-pick-folder=${libraryRoot}`]);
+  try {
+    const { cdp } = running;
+    const keySet = await req(cdp, "settings.setApiKey", { key: SMOKE_KEY });
+    check("clip motions scenario: settings.setApiKey stores the fake key", field(keySet, "ok") === true, keySet);
+    const avatarId = await createActiveAvatarForRun(cdp, "Cleo", "clip motions scenario");
+
+    // 1. A photo, from an ordinary run.
+    const runRequest = { avatarId, count: 2, categories: RUN_CATEGORIES, poses: RUN_POSES };
+    const runEstimate = await req(cdp, "runs.estimate", runRequest);
+    const run = await req(cdp, "runs.start", { ...runRequest, acceptedWorstMicros: field(runEstimate, "result", "estimate", "worstMicros") });
+    check("clip motions scenario: runs.start plans and launches the run that draws the photo", field(run, "ok") === true, run);
+    const runEnd = await waitFor("the run's job to end", () => endEventOf(cdp, field(run, "result", "jobId")), 120_000);
+    const drawn = field(runEnd, "payload", "result", "photoIds");
+    const photoId = Array.isArray(drawn) ? drawn.find((id): id is string => typeof id === "string") : undefined;
+    check("clip motions scenario: the run finished with a photo", field(runEnd, "type") === "job.done" && photoId !== undefined, runEnd);
+    if (photoId === undefined) return;
+
+    // 2. The estimates are free: no chat request of part C has left.
+    const suggestEstimate = await req(cdp, "clips.estimateSuggest", { avatarId, photoId });
+    const ideaEstimate = await req(cdp, "clips.estimateIdea", { avatarId, photoId });
+    check(
+      "clip motions scenario: both estimates answer a price and send nothing to the model",
+      field(suggestEstimate, "ok") === true && field(ideaEstimate, "ok") === true && Number(field(suggestEstimate, "result", "worstMicros")) > 0 && Number(field(ideaEstimate, "result", "worstMicros")) > 0 && mock.motionRequests().length === 0,
+      { suggestEstimate, ideaEstimate, requests: mock.motionRequests().length },
+    );
+
+    // 3. One suggestion, paid at the mock's bill, stored as v-1..v-3.
+    const spentBefore = Number(field(await req(cdp, "money.status"), "result", "spentMicros"));
+    const usageBefore = mock.totalUsageUsd();
+    const suggested = await req(cdp, "clips.suggestMotions", { avatarId, photoId, acceptedWorstMicros: field(suggestEstimate, "result", "worstMicros") });
+    const suggestedIds = field(suggested, "result", "motions");
+    check(
+      "clip motions scenario: clips.suggestMotions is paid at $0.0034 and answers v-1..v-3 with a reading",
+      field(suggested, "ok") === true && field(suggested, "result", "outcome") === "ok" && field(suggested, "result", "costMicros") === 3_400 && Array.isArray(suggestedIds) && suggestedIds.map((m) => field(m, "id")).join() === "v-1,v-2,v-3",
+      suggested,
+    );
+
+    // 4. One translation of a long idea, paid, stored as o-1 under the label cut from his words.
+    const translated = await req(cdp, "clips.translateIdea", { avatarId, photoId, text: MOTION_IDEA, acceptedWorstMicros: field(ideaEstimate, "result", "worstMicros") });
+    const label = field(translated, "result", "item", "label");
+    check(
+      "clip motions scenario: clips.translateIdea is paid at $0.001 and answers o-1 under a label of at most 40 characters that leaves the end of his words out",
+      field(translated, "ok") === true && field(translated, "result", "item", "id") === "o-1" && field(translated, "result", "costMicros") === 1_000 && typeof label === "string" && label.length <= 40 && !label.includes("CANARY"),
+      translated,
+    );
+
+    // 5. The sheet lists the code's motions, the suggestions and the idea; a clip is made from the idea.
+    const options = await req(cdp, "clips.options", { avatarId, photoId });
+    const listedMotions = field(options, "result", "motions");
+    const motionIds = Array.isArray(listedMotions) ? listedMotions.map((m) => String(field(m, "id"))) : [];
+    check("clip motions scenario: clips.options lists v-1, v-2, v-3 and o-1 after the code's motions", ["v-1", "v-2", "v-3", "o-1"].every((id) => motionIds.includes(id)) && motionIds.indexOf("o-1") > motionIds.indexOf("v-3"), options);
+    const created = await req(cdp, "clips.create", {
+      avatarId,
+      photoId,
+      motionId: "o-1",
+      model: "kling",
+      quality: "std",
+      seconds: 5,
+      fallback: "auto",
+      acceptedWorstMicros: field(options, "result", "prices", "std5", "worstMicros"),
+    });
+    const clipJob = field(created, "result", "jobId");
+    check("clip motions scenario: clips.create accepts the idea's id", field(created, "ok") === true && typeof clipJob === "string", created);
+    const clipEnd = await waitFor("the clip's job to end", () => endEventOf(cdp, clipJob), CLIP_BATCH_TIMEOUT_MS, 500);
+    check("clip motions scenario: the clip made from o-1 ends as job.done", field(clipEnd, "type") === "job.done", clipEnd);
+    const listed = await req(cdp, "clips.list", { avatarId });
+    const clips = field(listed, "result", "clips");
+    const made = Array.isArray(clips) ? clips.find((clip) => field(clip, "clipId") === clipJob) : undefined;
+    check("clip motions scenario: the clip's record says `own`, with the label and the English text", field(made, "motion", "source") === "own" && field(made, "motion", "label") === label && field(made, "motion", "text") === DEFAULT_MOTION_TRANSLATION, made);
+
+    // 6. The money: exactly the two calls in the ledger, each reserved and settled; the change equals what the mock billed; nothing is open.
+    const ledgerText = await readFile(join(userData, "ledger.jsonl"), "utf8").catch(() => "");
+    const lines = ledgerText.split("\n").flatMap((line) => {
+      try {
+        const parsed: unknown = JSON.parse(line);
+        const type = field(parsed, "type");
+        const attemptId = field(parsed, "attemptId");
+        return typeof type === "string" && typeof attemptId === "string" ? [{ type, attemptId }] : [];
+      } catch {
+        return [];
+      }
+    });
+    const ledgerFaults = motionLedgerProblems(lines, ["motion", "idea"]);
+    check("clip motions scenario: the ledger holds the two calls, each reserved before it was sent and settled", ledgerFaults.length === 0, { ledgerFaults });
+    const money = await req(cdp, "money.status");
+    const spentDelta = Number(field(money, "result", "spentMicros")) - spentBefore;
+    const usageDelta = Math.round((mock.totalUsageUsd() - usageBefore) * 1_000_000);
+    check(
+      "clip motions scenario: the ledger's change equals the mock's charged costs ($0.4244: the suggestion, the translation and a Kling clip), no open reserves",
+      field(money, "ok") === true && spentDelta === usageDelta && spentDelta === 424_400 && field(money, "result", "unsettledMicros") === 0 && field(money, "result", "unsettledCount") === 0,
+      { money, spentBefore, spentDelta, usageDelta },
+    );
+
+    // 7. The canary (I5.67): his words are in the translator's request, as data, and nowhere else.
+    const translatorRequest = mock.motionRequests().find((r) => r.schemaName === "motion_idea");
+    const writerRequest = mock.motionRequests().find((r) => r.schemaName === "motion_suggestions");
+    check("clip motions scenario: the translator's request carries his words as data (the one place they may be)", translatorRequest?.bodyText.includes(MOTION_IDEA) === true, translatorRequest?.bodyText.slice(0, 300));
+    const events = String(await cdp.evaluate("JSON.stringify(window.__smoke.events)"));
+    const places: Haystack[] = [
+      ...(await textsUnder(tmp)),
+      { where: "an event the window saw", text: events },
+      { where: "the app's own log", text: running.output() },
+      { where: "the writer's chat request", text: writerRequest?.bodyText ?? "" },
+      ...mock.requests.filter((r) => r.method === "POST" && r.path.endsWith("/videos")).map((r, i) => ({ where: `video request ${i + 1}`, text: r.bodyText })),
+    ];
+    const canary = canaryProblems(MOTION_IDEA, places);
+    check("clip motions scenario: no fragment longer than 40 characters of his words is in any file, event, log line or video request", canary.length === 0 && places.length > 10, { canary, places: places.length });
+    check("clip motions scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
+  } finally {
+    await quit(running);
+    await mock.stop();
+    await removeTemp(tmp);
+  }
+}
+
 function finish(): void {
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
@@ -4539,6 +4690,13 @@ async function main(): Promise<void> {
   // `--only clip-batch` runs the «Оживить выбранные» scenario alone (5b.2, S5.WB3), for working on it.
   if (argValue("--only") === "clip-batch") {
     await runClipBatchScenario(target);
+    finish();
+    return;
+  }
+
+  // `--only clip-motions` runs the «Свои движения» scenario alone (5b.2, S5.WC4), for working on it.
+  if (argValue("--only") === "clip-motions") {
+    await runClipMotionScenario(target);
     finish();
     return;
   }
@@ -4990,6 +5148,7 @@ async function main(): Promise<void> {
   await runClipScenario(target);
   await runClipMontageScenario(target);
   await runClipBatchScenario(target);
+  await runClipMotionScenario(target);
   await runPackagedRenderScenario(target);
   await runAutopilotScenario(target);
   finish();

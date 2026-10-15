@@ -17,7 +17,9 @@
  *   "avatar_descriptor"; the age check, schema "age_check"; T6c's vision
  *   describe call, schema "import_describe"; the scene writer, schema
  *   "scene_sentences"; a custom category's pool, schema "scene_pool"; S5.0c's
- *   descriptor-vs-master check, schema "descriptor_check")
+ *   descriptor-vs-master check, schema "descriptor_check"; with the `motions`
+ *   option, 5b.2's vision motion writer, schema "motion_suggestions", and
+ *   idea translator, schema "motion_idea")
  * - POST /images                                 (candidate and scene
  *   portraits — a real, valid, non-animated PNG rendered once by the bundled
  *   ffmpeg, never a committed binary blob)
@@ -50,6 +52,8 @@ import { FALLBACK_IMAGE_MODEL } from "../engine/runs/plan";
 import { WRITER_JSON_SCHEMA } from "../engine/scenes";
 import { ideaNamesMirror } from "../shared/engine";
 import { DESCRIPTOR_CHECK_JSON_SCHEMA } from "../engine/avatars/descriptorCheck";
+import { TRANSLATOR_JSON_SCHEMA } from "../engine/clips/ideaTranslator";
+import { WRITER_JSON_SCHEMA as MOTION_WRITER_JSON_SCHEMA } from "../engine/clips/motionWriter";
 import { IDEA_JSON_SCHEMA } from "../engine/scenes/ideaWriter";
 import { SHOT_LABEL } from "../engine/scenes/writer";
 import { POOL_JSON_SCHEMA } from "../engine/scenes/poolGen";
@@ -415,6 +419,14 @@ export const DEFAULT_IMPORT_DESCRIBE_ANSWER: MockImportDescribeAnswer = {
   descriptor: "27-year-old Latina woman, tan skin, brown eyes, long wavy black hair, athletic build.",
 };
 
+/** 5b.2 (S5.WC4): the three small motions the mock's vision writer suggests, and the English text its translator answers (each passes the engine's motion check on an ordinary frame). */
+export const DEFAULT_MOTION_SUGGESTIONS: readonly string[] = [
+  "she slowly tucks a strand of hair behind her ear",
+  "she tilts her head a little to one side and smiles",
+  "she slowly takes a breath and relaxes her shoulders",
+];
+export const DEFAULT_MOTION_TRANSLATION = "she tilts her head a little to one side and smiles";
+
 export interface MockOpenRouterOptions {
   /** Must match the app's settings.imageModel (default: the same default the app itself uses). */
   imageModel?: string;
@@ -425,9 +437,14 @@ export interface MockOpenRouterOptions {
   /** Which age-check call, counted across the whole run (1-based), answers "not an adult"; 0 rejects none. */
   rejectAgeCheckNumber?: number;
   /** USD per call; /credits' total_usage is the running sum of exactly these. */
-  costsUsd?: { descriptor?: number; image?: number; age?: number; importDescribe?: number; descriptorCheck?: number; writer?: number; pool?: number; boldImage?: number };
+  costsUsd?: { descriptor?: number; image?: number; age?: number; importDescribe?: number; descriptorCheck?: number; writer?: number; pool?: number; boldImage?: number; motionSuggest?: number; motionIdea?: number };
   /** CS.2: fields that replace those of the default pool the mock answers for the "scene_pool" schema (a category's pool call), e.g. `{ label: "Seine bakeries" }`. */
   poolAnswer?: Record<string, unknown>;
+  /**
+   * Stage 5 (5b.2, S5.WC4): serves the chat route of part C «свои движения»: the vision writer ("motion_suggestions": `suggestions`, labelled «Движение n», and a frame reading of nothing special) and the idea
+   * translator ("motion_idea": `translation`), each billed once at `costsUsd.motionSuggest` / `motionIdea`. Without this option both are unexpected requests.
+   */
+  motions?: boolean | { suggestions?: readonly string[]; translation?: string };
   /**
    * T6's kill-and-resume scenario: held after the request is recorded (so a
    * caller can see it arrive) and before the response is built, so a run
@@ -587,6 +604,8 @@ export interface MockOpenRouter {
   sceneWriterRequests(): MockRequest[];
   /** CS.2: a custom category's pool calls ("scene_pool" schema). */
   poolRequests(): MockRequest[];
+  /** 5b.2 (S5.WC4): the part C chat requests: the vision writer's ("motion_suggestions") and the idea translator's ("motion_idea"). */
+  motionRequests(): MockRequest[];
   priceRequests(): MockRequest[];
   creditsRequests(): MockRequest[];
   /** The running total this mock has billed, in USD — what /credits reports. */
@@ -640,7 +659,7 @@ function promptOf(body: unknown): string | null {
  * What each call bills, in USD, unless a scenario says otherwise. `boldImage` is what a 2K Seedream image bills: P-5a3 measured $0.045 against a list price of $0.09 (plan s5a3 §«P-5a3 results»).
  * The smoke's own bill sum (`boldSmoke.ts`) reads the two image figures from here.
  */
-export const DEFAULT_COSTS_USD = { descriptor: 0.0021, image: 0.04, age: 0.0014, importDescribe: 0.0021, descriptorCheck: 0.0023, writer: 0.011, pool: 0.0051, boldImage: 0.045 };
+export const DEFAULT_COSTS_USD = { descriptor: 0.0021, image: 0.04, age: 0.0014, importDescribe: 0.0021, descriptorCheck: 0.0023, writer: 0.011, pool: 0.0051, boldImage: 0.045, motionSuggest: 0.0034, motionIdea: 0.001 };
 
 export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<MockOpenRouter> {
   const imageModel = opts.imageModel ?? DEFAULT_IMAGE_MODEL;
@@ -667,6 +686,10 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
   const clipNow = clipOptions?.clock ?? Date.now;
   const usageOnPoll = clipOptions?.usageOnPoll ?? true;
   const clipFile = clipOptions === null ? null : clipMp4();
+  // Stage 5 (5b.2, S5.WC4): the chat route of part C, when the scenario asks for it.
+  const motionOptions = opts.motions === undefined || opts.motions === false ? null : opts.motions === true ? {} : opts.motions;
+  const motionSuggestions = motionOptions?.suggestions ?? DEFAULT_MOTION_SUGGESTIONS;
+  const motionTranslation = motionOptions?.translation ?? DEFAULT_MOTION_TRANSLATION;
   const videoJobs = new Map<string, MockVideoJob>();
   const videoRequests: MockVideoRequest[] = [];
   const videoCalls: MockVideoCall[] = [];
@@ -802,6 +825,17 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
               : { scenes: writerSlotsOf(entry.body).map((s) => ({ slotIndex: s.slotIndex, sentence: writerSentenceFor(s) })) };
           return json(chatCompletion(JSON.stringify(answer), costs.writer));
         }
+        // 5b.2 (S5.WC4): part C. The vision writer looks at one photo and suggests small motions (strict JSON: motions with a Russian label and an English text, and a frame reading); the translator says the owner's idea as one English motion.
+        if (motionOptions !== null && entry.schemaName === MOTION_WRITER_JSON_SCHEMA.name) {
+          const answer = {
+            motions: motionSuggestions.map((text, i) => ({ label_ru: `Движение ${i + 1}`, text_en: text })),
+            frame: { capture: "unknown", phoneVisible: false, faceVisible: true },
+          };
+          return json(chatCompletion(JSON.stringify(answer), costs.motionSuggest));
+        }
+        if (motionOptions !== null && entry.schemaName === TRANSLATOR_JSON_SCHEMA.name) {
+          return json(chatCompletion(JSON.stringify({ text_en: motionTranslation }), costs.motionIdea));
+        }
         if (entry.schemaName === POOL_JSON_SCHEMA.name) {
           const basePool = /сзади|back view|from behind/i.test(poolDescriptionOf(entry.body)) ? BACK_VIEW_POOL_ANSWER : DEFAULT_POOL_ANSWER;
           return json(chatCompletion(JSON.stringify({ ...basePool, ...opts.poolAnswer }), costs.pool));
@@ -930,6 +964,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
     descriptorCheckRequests: () => requests.filter((r) => r.schemaName === DESCRIPTOR_CHECK_JSON_SCHEMA.name),
     sceneWriterRequests: () => requests.filter((r) => r.schemaName === WRITER_JSON_SCHEMA.name || r.schemaName === IDEA_JSON_SCHEMA.name),
     poolRequests: () => requests.filter((r) => r.schemaName === POOL_JSON_SCHEMA.name),
+    motionRequests: () => requests.filter((r) => r.schemaName === MOTION_WRITER_JSON_SCHEMA.name || r.schemaName === TRANSLATOR_JSON_SCHEMA.name),
     priceRequests: () => requests.filter((r) => r.path.endsWith("/endpoints") || r.path === "/api/v1/models"),
     creditsRequests: () => requests.filter((r) => r.path === "/api/v1/credits"),
     totalUsageUsd: () => totalUsageUsd,
