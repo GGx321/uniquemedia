@@ -153,7 +153,7 @@ describe("the tiles (57, 57b)", () => {
     if (waiting === undefined) throw new Error("no tile");
     expect(clipTileAria(waiting)).toBe("Клип «Как в сцене», 0:05, Фото 1 · читаем видео в кадрах");
     expect(pickAria(waiting, null)).toBe("Клип «Как в сцене», 0:05: подождите, читаем видео в кадрах");
-    expect(clipTileTitle(waiting, null)).toBe("Читаем видео в кадрах — подождите");
+    expect(clipTileTitle(waiting, null)).toBe("Читаем видео в кадрах\u00a0— подождите");
     expect(clipAction(waiting, null)).toBe("wait");
   });
 
@@ -163,10 +163,10 @@ describe("the tiles (57, 57b)", () => {
     expect(tile.state).toEqual({ kind: "unknown", failed: true });
     expect(clipTileAria(tile)).toBe("Клип «Как в сцене», 0:05, Фото 1 · не удалось прочитать видео в кадрах");
     expect(pickAria(tile, null)).toBe("Клип «Как в сцене», 0:05: не удалось прочитать видео в кадрах");
-    expect(clipTileTitle(tile, null)).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
+    expect(clipTileTitle(tile, null)).toBe("Не удалось прочитать видео в кадрах\u00a0— пока новые кадры не добавить.");
     expect(clipAction(tile, null)).toBe("wait");
-    expect(actionWhyLabel("frame-unknown", true)).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
-    expect(actionWhyLabel("frame-unknown")).toBe("Читаем видео в кадрах — подождите");
+    expect(actionWhyLabel("frame-unknown", true)).toBe("Не удалось прочитать видео в кадрах\u00a0— пока новые кадры не добавить.");
+    expect(actionWhyLabel("frame-unknown")).toBe("Читаем видео в кадрах\u00a0— подождите");
   });
 
   test("a draft with no video at all knows its frames whatever the origins say", () => {
@@ -312,8 +312,8 @@ describe("the line under the tiles (57, `#cell`, `#full`; WAD re-review N5)", ()
   });
 
   test("S5.WAR M3: while the draft's videos are read, or after the read failed, the line says that instead of what a click would do", () => {
-    expect(clipsHint(null, null, "reading")).toBe("Читаем видео в кадрах — подождите");
-    expect(clipsHint({ clip: 0, cell: 1 }, "clip-cap", "failed")).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
+    expect(clipsHint(null, null, "reading")).toBe("Читаем видео в кадрах\u00a0— подождите");
+    expect(clipsHint({ clip: 0, cell: 1 }, "clip-cap", "failed")).toBe("Не удалось прочитать видео в кадрах\u00a0— пока новые кадры не добавить.");
     expect(clipsHint(null, null, null)).toBe("Клик — кадр в конец ролика. Перетащите на «Кадры», чтобы вставить между кадрами.");
   });
 });
@@ -335,7 +335,7 @@ describe("a copy that can no longer go in where it was asked for (S5.WA4 round 2
     expect(placementRefusalText("photo-in-draft", spec, P(7))).toBe("Клип этого фото уже в ролике");
     expect(placementRefusalText("clip-cap", spec, P(7))).toBe("Не больше 20 кадров в одном видео");
     expect(placementRefusalText("no-room", spec, P(7))).toBe("В ролике уже 15 с — укоротите кадр");
-    expect(placementRefusalText("frame-unknown", spec, P(7))).toBe("Читаем видео в кадрах — подождите");
+    expect(placementRefusalText("frame-unknown", spec, P(7))).toBe("Читаем видео в кадрах\u00a0— подождите");
   });
 });
 
