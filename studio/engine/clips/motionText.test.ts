@@ -727,3 +727,136 @@ describe("the exposure verbs a model reaches for (S5.WC2b): show, display, uncov
     for (const source of ["scene", "code"] as const) expect(motionTextProblems("she slowly shows her midriff", FRIEND, source)).toEqual([]);
   });
 });
+
+describe("the clothing-verb whitelist (S5.WC2b): what she wears may be adjusted, smoothed, straightened, tucked, fixed, brushed, tugged a little, pulled down a little, pulled up (her jeans), zipped or buttoned up, and nothing else", () => {
+  /** The review rounds' leaks that move, open, lift or lower what she wears, the subject-first ones included (each passed on every frame before). */
+  const LEAKS = [
+    "she slowly tugs the hem of her skirt upward",
+    "she slowly slides her dress up her thighs",
+    "she slowly gathers her skirt up",
+    "she slowly pushes her skirt up",
+    "she slowly works her skirt up",
+    "she slowly flips her skirt up",
+    "she slowly inches her dress higher",
+    "she slowly draws her hem higher",
+    "she slowly hoists her skirt",
+    "her dress lifts a little in the wind",
+    "her robe slowly falls open",
+    "her robe slowly slips open",
+    "her shirt slowly falls off her shoulder",
+    "her strap slowly slips off her shoulder",
+    "she slowly unbelts her robe",
+    "she slowly undoes the belt of her robe",
+    "she slowly loosens the tie of her robe",
+    "she slowly peels her robe back",
+  ];
+
+  /** What no list names: a whitelist refuses a verb it does not name, whatever its words (a pronoun, a second clause, another subject, a garment beyond GARMENT). */
+  const UNNAMED = [
+    "she slowly nudges her skirt higher",
+    "she slowly bunches her dress at her hips",
+    "her towel slowly loosens",
+    "she slowly pulls her strap down a little",
+    "she slowly brushes her strap off her shoulder",
+    "she slowly adjusts her neckline lower",
+    "her dress strap slowly slides down",
+    "she slowly smooths her skirt and lifts it a little",
+    "her robe sways a little and opens",
+    "she slowly pulls her strap up and off",
+    "she slowly turns as the wind lifts her skirt",
+    "she slowly hooks her thumbs in her waistband",
+    "she slowly slides her hand under her skirt",
+    "her sundress slowly slips off her shoulders",
+    "she slowly loosens her belt",
+    "she slowly pulls the sheet down a little",
+    "her skirt flutters up a little in the breeze",
+    "she slowly tucks her skirt into her waistband",
+    "she slowly brushes off her strap",
+    "she slowly undoes a button",
+    "her silk slips a little off her shoulder",
+  ];
+
+  for (const text of [...LEAKS, ...UNNAMED]) {
+    test(`takes-off as vision and own on an ordinary frame and as vision on «Смелая»; accepted as own on «Смелая»: «${text}»`, () => {
+      expect(motionTextProblems(text, FRIEND, "vision")).toEqual(["takes-off"]);
+      expect(motionTextProblems(text, FRIEND, "own")).toEqual(["takes-off"]);
+      expect(motionTextProblems(text, BOLD, "vision")).toEqual(["takes-off"]);
+      expect(motionTextProblems(text, BOLD, "own")).toEqual([]);
+    });
+  }
+
+  /** Her body (cleavage, chest, midriff, stomach, belly, thighs, bare skin) with a verb the whitelist does not name: a body part shown, content. */
+  const BODY = ["she slowly runs her hand along her thigh", "she slowly slides a hand over her stomach", "her midriff slowly comes into view", "she slowly pushes her chest out a little"];
+
+  for (const text of BODY) {
+    test(`content as vision and own on an ordinary frame and as vision on «Смелая»; accepted as own on «Смелая»: «${text}»`, () => {
+      expect(motionTextProblems(text, FRIEND, "vision")).toEqual(["content"]);
+      expect(motionTextProblems(text, FRIEND, "own")).toEqual(["content"]);
+      expect(motionTextProblems(text, BOLD, "vision")).toEqual(["content"]);
+      expect(motionTextProblems(text, BOLD, "own")).toEqual([]);
+    });
+  }
+
+  /** The task's documented motions, which only look like taking something off. */
+  const DOCUMENTED = [
+    "she slowly lifts her chin",
+    "she slowly raises one hand",
+    "she slowly pulls the blanket up a little",
+    "she slowly parts her lips",
+    "she slowly spreads her fingers",
+    "she slowly lifts the cup a little",
+    "she slowly bares her shoulders",
+    "she slowly pulls up her jeans a little",
+    "she slowly adjusts her top a little",
+    "she slowly smooths her dress",
+    "she slowly zips up her jacket",
+    "she slowly takes a sip",
+    "she slowly tucks her hair behind her ear",
+  ];
+  /** The whitelist's other forms, the covering forms the bank says («tugs the coat closer», «slides the strap up», «lets the strap settle»), and what she wears only named. */
+  const WHITELISTED = [
+    "she slowly straightens her collar",
+    "she slowly fixes the strap of her dress",
+    "she slowly tucks in her shirt",
+    "she slowly tucks her shirt into her jeans",
+    "she slowly brushes the sand off her skirt",
+    "she slowly brushes off her skirt",
+    "she slowly brushes off her jeans",
+    "she slowly tugs at her sleeve a little",
+    "she slowly pulls the hem down a little",
+    "she slowly pulls her socks up a little",
+    "she slowly buttons up her coat",
+    "she slowly zips her jacket up",
+    "she slowly smooths her skirt over her thighs",
+    "she slowly pulls the sheet a little higher",
+    "she slowly pulls the sheet up to her chest",
+    "she slowly pulls her sweatshirt down a little",
+    "she slowly pulls her robe tighter",
+    "she slowly slides the strap back up",
+    "she slowly lets the strap settle on her shoulder",
+    "she slowly turns in her dress",
+    "she slowly sits up in her robe",
+    "her dress sways a little in the breeze",
+    "she slowly slides her hands into her jacket pockets",
+    "she slowly grips the strap of her bag",
+    "she slowly presses the elevator button",
+    "she slowly adjusts her silk scarf",
+    "she slowly taps her dress shoes together",
+  ];
+
+  test("the documented motions pass as vision and own on an ordinary frame", () => {
+    for (const text of DOCUMENTED) for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, []]);
+  });
+
+  test("the whitelist's own forms pass as vision and own on an ordinary frame", () => {
+    for (const text of WHITELISTED) for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, []]);
+  });
+
+  test("every code motion passes as a vision and an own text too (the sweep above holds the 271 bank motions on every frame)", () => {
+    for (const motion of CODE_MOTIONS) for (const source of ["vision", "own"] as const) expect([motion.id, source, motionTextProblems(motion.text, FRIEND, source)]).toEqual([motion.id, source, []]);
+  });
+
+  test("the whitelist reads a model's text alone: a scene or code text keeps today's rules (no bank or code motion names what she wears outside it)", () => {
+    for (const source of ["scene", "code"] as const) expect(motionTextProblems("her robe slowly falls open", FRIEND, source)).toEqual([]);
+  });
+});

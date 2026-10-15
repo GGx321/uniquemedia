@@ -54,6 +54,8 @@ export const MOTION_RULES = [
   "negation",
   "new-subject",
   "takes-off",
+  "worn-verb",
+  "body-verb",
   "selfie",
   "camera",
   "she-her",
@@ -308,6 +310,285 @@ const NEW_SUBJECT =
 /** Speed a model may add beside a small word («slowly turns, very fast and abruptly»): the movement is not small then. */
 const FAST = /\b(?:fast|faster|quick|quickly|rapid|rapidly|abrupt|abruptly|sudden|suddenly|wild|wildly|jerk\w*|frantic\w*|vigorous\w*|energetic\w*|swift\w*|hurried\w*|brisk\w*)\b/i;
 
+// ---------- S5.WC2b: the clothing-verb whitelist (a vision or own text; the three review rounds' leaks) ----------
+//
+// The takes-off forms above are a blacklist, and each review round found paraphrases it missed («works her skirt up», «her robe falls open», «loosens the tie of her robe»).
+// A model's text is held to a whitelist instead: where it names what she wears (a garment, a part of one, its fabric, a cover she lies under) or her body (cleavage, chest,
+// midriff, stomach, belly, navel, thighs, bare skin, a bare back), the only verbs that may act on it are the ones that keep her dressed: adjusts, smooths (down), straightens,
+// fixes; tucks (in) a top or a strap, never a skirt, a dress or a hem; brushes (off) what she wears but a strap, a waistband, a neckline, a collar or a towel, or the sand off
+// any of it; tugs (at) … a little; pulls … down a little (a hem, a sleeve, a top); pulls up what covers her legs, a strap, a waistband, a neckline, a towel or a sheet; zips
+// or buttons (up). Beside them, the covering forms the bank itself says («tugs the coat closer», «slides the strap up», «lets the strap settle on her shoulder», «pulls the
+// sheet a little higher»), what she wears only swaying, rippling, rustling or settling («her dress sways a little in the breeze»), and her standing, sitting or turning in it.
+// Anything else is refused: a garment moved, opened, lifted, lowered or removed is `takes-off`; her body shown is `content`. A text is read clause by clause (a comma, «and»,
+// «as», «while» … open the next, unless what follows only continues the last: «… up and off her shoulder»), the subject-first ones included («her robe falls open»); «it» and
+// «them» are what she wears where the text names it; a clause with no subject of its own keeps the last one («her robe sways a little and opens»). The bank, a scene text and
+// the code's table keep the rules above (the sweeps hold all 271 and all 7).
+
+/** The fabric of what she wears («her silk slips»); before another noun it names that noun's fabric («her silk scarf»), read as one with it. */
+const FABRIC = new Set(["fabric", "fabrics", "material", "cloth", "silk", "satin", "lace", "chiffon"]);
+/** What she wears beyond `GARMENT`: the garments a model may name that its list does not hold, and the folds or the fabric of one. */
+const WORN_MORE = new Set([
+  ...(
+    "gown gowns sundress sundresses minidress minidresses shirtdress shirtdresses bathrobe bathrobes housecoat housecoats nightshirt nightshirts sweatshirt sweatshirts " +
+    "undershirt undershirts miniskirt miniskirts sweatpants joggers chemise chemises negligee negligees corset corsets bustier bustiers vest vests romper rompers jumpsuit " +
+    "jumpsuits playsuit playsuits overalls leotard leotards catsuit catsuits tunic tunics kaftan kaftans caftan caftans blazer blazers parka parkas poncho ponchos pullover " +
+    "pullovers turtleneck turtlenecks knickers garter garters monokini monokinis sock socks folds"
+  ).split(" "),
+  ...FABRIC,
+]);
+/** The parts of what she wears («a button» and «a tie» are hers unless they are something else's: «the elevator button»). */
+const WORN_PARTS = new Set(
+  "hem hems hemline hemlines strap straps collar collars sleeve sleeves neckline necklines waistband waistbands zip zips zipper zippers sash sashes drawstring drawstrings bodice bodices clasp clasps buckle buckles belt belts button buttons tie ties".split(
+    " ",
+  ),
+);
+/** A part that is mostly a verb («lets her hand slip»): hers only after «her», after a garment, or «of» a garment («the slip of her dress»). */
+const PARTS_IF_HERS = new Set(["slip", "slips"]);
+/** What she lies under: pulled up it covers her, pushed down it uncovers her. */
+const COVERS = new Set(["sheet", "sheets", "bedsheet", "bedsheets", "blanket", "blankets", "duvet", "duvets", "quilt", "quilts", "comforter", "comforters"]);
+/** Her body the whitelist reads; «skin» and «back» only bare. */
+const BODY_WORDS = new Set(["cleavage", "chest", "midriff", "stomach", "belly", "navel", "thigh", "thighs", "bust", "underboob", "sideboob"]);
+const BODY_IF_BARE = new Set(["skin", "back"]);
+/** Whose part is not hers: a strap, a zip or a belt of something she holds, sits in or wears on her feet («the strap of her bag», «the seat belt»). */
+const NOT_HERS = new Set([
+  ...NOT_WORN,
+  ..."seat watch camera guitar suitcase luggage shoe shoes sandal sandals boot boots heel heels sneaker sneakers helmet leash door window curtain curtains tent umbrella paper elevator lift remote doorbell keyboard".split(
+    " ",
+  ),
+]);
+/** «top» is no garment before these («her top lip»), beside the ones `GARMENT` itself skips. */
+const TOP_NOT = new Set(["lip", "lips", "teeth", "tooth", "row", "corner", "half", "floor", "drawer", "lid"]);
+
+/**
+ * Which way a garment covers her: pulled up (what covers her legs, a strap, a waistband, a neckline, a towel, a sheet), pulled down (a hem, a sleeve, and a top, which alone
+ * may also be tucked in), or neither (a skirt, a dress, a robe: tucked or lifted, it bares her); or her body.
+ */
+type WornClass = "UP" | "DOWN" | "TOP" | "WORN" | "BODY";
+const UP_WORN = new Set([...LOWER_WEAR, "waistband", "waistbands", "strap", "straps", "neckline", "necklines", "collar", "collars", "zip", "zips", "zipper", "zippers", "towel", "towels", ...COVERS]);
+const DOWN_WORN = new Set(["hem", "hems", "hemline", "hemlines", "sleeve", "sleeves"]);
+const TOP_WORN = new Set(
+  "top tops shirt shirts t-shirt t-shirts tee tees blouse blouses sweater sweaters jumper jumpers sweatshirt sweatshirts undershirt undershirts camisole camisoles cami turtleneck turtlenecks pullover pullovers".split(
+    " ",
+  ),
+);
+
+const DETERMINERS = new Set(["her", "the", "a", "an", "its", "one", "both", "some", "each"]);
+const PRONOUNS = new Set(["it", "them", "they"]);
+const ADVERBS = "slowly gently softly slightly carefully lightly neatly calmly absently idly casually smoothly lazily quietly tenderly delicately deliberately playfully shyly just still again";
+const ADVERB_SET = new Set(ADVERBS.split(" "));
+/** The words that open a new clause. */
+const CLAUSE_OPENERS = new Set([",", "and", "as", "while", "when", "until", "till", "but", "so", "then", "or", "before"]);
+/** A would-be clause that opens with one of these continues the last one («… up and off her shoulder»): it is read with it, its opener included. */
+const CONTINUES = new Set(
+  "up down off out away open apart aside back over higher lower closer tighter upward upwards downward downwards into onto from to toward towards across along past through under around above below in on with at by".split(
+    " ",
+  ),
+);
+/** Words that are never a modifier inside what she wears («her silk robe»): a walk back from a garment stops at them. */
+const FUNCTION_WORDS = new Set([...DETERMINERS, ...PRONOUNS, ...ADVERB_SET, ...CLAUSE_OPENERS, ...CONTINUES, "she", "little", "bit", "of"]);
+
+/**
+ * Whether the word at `i` is a garment: `GARMENT` (read with the two words after it, so «her top knee» stays none) or `WORN_MORE`; never one that only names a pocket or what
+ * is not hers («her jacket pockets», «her dress shoes»).
+ */
+function garmentAt(tokens: readonly string[], i: number): boolean {
+  const word = tokens[i] ?? "";
+  const next = tokens[i + 1] ?? "";
+  if (next === "pocket" || next === "pockets" || NOT_HERS.has(next)) return false;
+  if (WORN_MORE.has(word)) return true;
+  if (/^tops?$/.test(word) && TOP_NOT.has(next)) return false;
+  return GARMENT.exec(tokens.slice(i, i + 3).join(" "))?.index === 0;
+}
+
+/** The words of «of …» at `i` («of her small bag» → small, bag), past its determiners; none when `i` is not «of». */
+const ofObject = (tokens: readonly string[], i: number): string[] => (tokens[i] === "of" ? tokens.slice(i + 1, i + 5).filter((word) => !DETERMINERS.has(word)).slice(0, 3) : []);
+
+/** The class of the word at `i` when it names what she wears or her body, else null. `vAt` is the clause's verb, never an anchor («she zips the bag», «she dresses»). */
+function anchorAt(tokens: readonly string[], i: number, vAt: number, garmentNamed: boolean): WornClass | null {
+  if (i === vAt) return null;
+  const word = tokens[i] ?? "";
+  const prev = tokens[i - 1] ?? "";
+  const ofWhat = ofObject(tokens, i + 1);
+  const classOf = (w: string): WornClass => (UP_WORN.has(w) ? "UP" : DOWN_WORN.has(w) ? "DOWN" : TOP_WORN.has(w) ? "TOP" : "WORN");
+  if (BODY_WORDS.has(word)) return word === "chest" && tokens[i + 1] === "of" ? null : "BODY";
+  if (BODY_IF_BARE.has(word)) return prev === "bare" ? "BODY" : null;
+  if (COVERS.has(word)) return tokens[i + 1] === "of" ? null : "UP";
+  if (word === "covers") return prev === "the" || prev === "her" ? "UP" : null;
+  if (WORN_PARTS.has(word) || PARTS_IF_HERS.has(word)) {
+    if (NOT_HERS.has(prev) || ofWhat.some((w) => NOT_HERS.has(w))) return null;
+    if (PARTS_IF_HERS.has(word) && !(prev === "her" || tokens[i - 2] === "her" || (i > 0 && garmentAt(tokens, i - 1)) || ofWhat.some((_, k) => garmentAt(ofWhat, k)))) return null;
+    return classOf(word);
+  }
+  if (garmentAt(tokens, i)) return classOf(word);
+  if (PRONOUNS.has(word) && garmentNamed) return "WORN";
+  return null;
+}
+
+/** The first word past the adverbs from `from`. */
+function pastAdverbs(tokens: readonly string[], from: number): number {
+  let i = from;
+  while (ADVERB_SET.has(tokens[i] ?? "")) i++;
+  return i;
+}
+
+/** Where a clause's verb is: past «she» or a pronoun and the adverbs; past the adverbs in a clause with no subject of its own; after the subject when it opens with one (-1). */
+const verbAt = (clause: readonly string[]): number => {
+  const first = clause[0] ?? "";
+  if (first === "she" || PRONOUNS.has(first)) return pastAdverbs(clause, 1);
+  return DETERMINERS.has(first) ? -1 : pastAdverbs(clause, 0);
+};
+
+/** A clause with each run of words that names what she wears or her body folded into one tag («the hem of her skirt» → `#DOWN`, «her silk robe» → `#WORN`). */
+function tagged(tokens: readonly string[], garmentNamed: boolean): string[] {
+  const vAt = verbAt(tokens);
+  const classes = tokens.map((_, i) => anchorAt(tokens, i, vAt, garmentNamed));
+  const out: string[] = [];
+  let i = 0;
+  while (i < tokens.length) {
+    if (classes[i] === null) {
+      out.push(tokens[i] ?? "");
+      i++;
+      continue;
+    }
+    // Back to a determiner over at most two modifiers («her silk robe»); a bare noun stays alone («a peek of cleavage»).
+    let start = i;
+    for (let j = i - 1, mods = 0; j >= 0 && mods <= 2; j--, mods++) {
+      const word = tokens[j] ?? "";
+      if (DETERMINERS.has(word)) {
+        start = j;
+        break;
+      }
+      if (FUNCTION_WORDS.has(word) || j === vAt || classes[j] !== null) break;
+    }
+    // On over the anchors that follow («her bra strap»), then over «of» what she wears («the hem of her skirt»): the class is the first run's last word's.
+    let end = i;
+    while (classes[end + 1] != null) end++;
+    const head = classes[end] ?? "WORN";
+    // A fabric before a noun names that noun's («her silk scarf», «her silk slips»): read as one, so a whitelisted verb still reaches it and any other verb is refused.
+    const after = tokens[end + 1];
+    if (FABRIC.has(tokens[end] ?? "") && after !== undefined && !FUNCTION_WORDS.has(after) && end + 1 !== vAt) end++;
+    if (tokens[end + 1] === "of") {
+      for (let k = end + 2; k <= end + 5 && k < tokens.length; k++) {
+        if (classes[k] != null) {
+          end = k;
+          while (classes[end + 1] != null) end++;
+          break;
+        }
+        const word = tokens[k] ?? "";
+        if (FUNCTION_WORDS.has(word) && !DETERMINERS.has(word)) break;
+      }
+    }
+    out.splice(out.length - (i - start), i - start, `#${head}`);
+    i = end + 1;
+  }
+  return out;
+}
+
+const ADV = `(?:${ADVERBS.split(" ").join("|")})`;
+const MANNER = String.raw`(?:${ADV}|a little|a bit|into place|in place|back into place|back in place|with (?:one|both) hands?|with her (?:fingers|fingertips|hand|hands|thumb|thumbs))`;
+const SHOULDER = String.raw`(?:(?:back )?(?:on|onto|over) her shoulders?)`;
+const WORN_TAG = "#(?:UP|DOWN|TOP|WORN)";
+const SMALL_WORDS = /\b(?:a little|a bit|slightly)\b/;
+const DEBRIS = "(?:sand|dust|lint|crumbs?|fluff|hairs?|petals?|leaves|leaf|snow|snowflakes?|water|drops?|droplets?|dirt|grass|specks?)";
+const WEAR_VERBS = "(?:turns?|turning|sways?|swaying|stands?|standing|sits?|sitting|smiles?|smiling|laughs?|laughing|walks?|walking|poses?|posing|relax(?:es)?|relaxing|rests?|resting|waits?|waiting|breathes?|breathing)";
+/** What may follow the object: the manner, and `more`. */
+const tail = (more: string): string => String.raw`(?: (?:${MANNER}${more === "" ? "" : `|${more}`}))*`;
+/** «she», the adverbs, one of `verbs`, its particle, the adverbs, the object, the tail. */
+const verbClause = (verbs: string, particles: string, object: string, more: string): RegExp =>
+  new RegExp(String.raw`^she (?:${ADV} )*(?:${verbs})${particles === "" ? "" : `(?: (?:${particles}))?`} (?:${ADV} )*${object}${tail(more)}$`);
+
+/**
+ * One form the whitelist names: the clause it matches (tags in capitals, so a tag never reads as a word), what else the clause must say («tugs … a little»), and what its own
+ * words must not name («brushes off» a strap takes it off).
+ */
+interface WornForm {
+  readonly form: RegExp;
+  readonly needs?: readonly RegExp[];
+  readonly unless?: RegExp;
+}
+const WORN_FORMS: readonly WornForm[] = [
+  // adjusts, straightens, fixes (a strap back on her shoulder too).
+  { form: verbClause("adjusts?|adjusting|straightens?|straightening|fix(?:es)?|fixing", "", WORN_TAG, SHOULDER) },
+  // smooths (down, out; over her hips or thighs).
+  { form: verbClause("smooth(?:s|es)?|smoothing", "down|out", WORN_TAG, String.raw`down|out|(?:over|across|down|along) (?:#BODY|her (?:hips|legs|knees|lap|waist))`) },
+  // tucks (in; into her jeans) a top, or what is pulled up to cover her (a strap, a towel, a sheet); never a skirt, a dress or a hem, which tucked up bares her.
+  { form: verbClause("tucks?|tucking", "in", "#(?:TOP|UP)", `in|(?:in|into|under) ${WORN_TAG}|around her`) },
+  // brushes (off) what she wears, but a strap, a waistband, a neckline, a collar or a towel (which «brushes off» takes off); or the sand off any of it.
+  { form: verbClause("brush(?:es)?|brushing", "off|down", WORN_TAG, "down"), unless: /\b(?:straps?|waistbands?|necklines?|collars?|towels?)\b/ },
+  { form: verbClause("brush(?:es)?|brushing", "", String.raw`(?:(?:the|some|a) )?${DEBRIS}(?: ${ADV})* (?:off|from) (?:${WORN_TAG}|#BODY)`, "") },
+  // tugs (at) … a little.
+  { form: verbClause("tugs?|tugging", "at", WORN_TAG, ""), needs: [SMALL_WORDS] },
+  // pulls … down a little: a hem, a sleeve, a top.
+  { form: verbClause("pulls?|pulling|tugs?|tugging", "down", "#(?:DOWN|TOP)", "down"), needs: [/\bdown\b/, SMALL_WORDS] },
+  // pulls up what covers her legs, a strap, a waistband, a sheet («pulls the sheet a little higher», «slides the strap up», «tugs the waistband up», «pulls the sheet up to her chest»).
+  {
+    form: verbClause("pulls?|pulling|tugs?|tugging|slides?|sliding", "(?:back )?up", "#UP", String.raw`(?:back )?up|higher|${SHOULDER}|to (?:#BODY|her (?:chin|neck|shoulders?|waist|hips|knees))`),
+    needs: [/\b(?:up|higher|on|onto|over)\b/],
+  },
+  // pulls or tugs it closer or tighter («tugs the coat closer», «pulls the blanket a little closer»).
+  { form: verbClause("pulls?|pulling|tugs?|tugging", "", WORN_TAG, "closer|tighter|around her(?: (?:shoulders|body|waist))?"), needs: [/\b(?:closer|tighter|around)\b/] },
+  // zips or buttons (up).
+  { form: verbClause("zips?|zipping|buttons?|buttoning", "up", WORN_TAG, "up") },
+  // lets the strap settle on her shoulder.
+  { form: new RegExp(String.raw`^she (?:${ADV} )*(?:lets?|letting) (?:${ADV} )*${WORN_TAG} settles?${tail(`${SHOULDER}|back`)}$`) },
+  // stands, sits (up) or turns in it.
+  { form: new RegExp(String.raw`^she (?:${ADV} )*${WEAR_VERBS}(?: (?:up|down|back))?(?: ${ADV})* in ${WORN_TAG}${tail("")}$`) },
+  // what she wears sways, ripples, rustles or settles.
+  {
+    form: new RegExp(
+      String.raw`^${WORN_TAG} (?:${ADV} )*(?:sways?|swaying|ripples?|rippling|rustles?|rustling|settles?|settling)${tail(String.raw`${SHOULDER}|in the (?:breeze|wind)|around her (?:legs|knees|ankles)`)}$`,
+    ),
+  },
+];
+
+/** The clauses of a model's text that break the whitelist: those that move what she wears beyond it (`takesOff`), and those that show her body (`shows`). */
+export interface WornBreaks {
+  readonly takesOff: readonly string[];
+  readonly shows: readonly string[];
+}
+
+/** A text's clauses: a comma or a joining word opens the next, unless the next only continues this one («… up and off her shoulder»). */
+function clausesOf(text: string): string[][] {
+  const tokens = text.toLowerCase().match(/[a-z0-9'-]+|,/g) ?? [];
+  const clauses: string[][] = [[]];
+  tokens.forEach((word, i) => {
+    const current = clauses[clauses.length - 1] ?? [];
+    if (CLAUSE_OPENERS.has(word) && current.length > 0 && !CONTINUES.has(tokens[pastAdverbs(tokens, i + 1)] ?? "")) clauses.push([]);
+    else current.push(word);
+  });
+  return clauses.filter((clause) => clause.length > 0);
+}
+
+/** The whitelist's reading of a text (the section's comment). Pure; kept per text. */
+export const wornBreaks = keptBy((text: string): WornBreaks => {
+  const clauses = clausesOf(text);
+  // «it» and «them» are what she wears only where the text names a garment.
+  const garmentNamed = clauses.some((clause) => clause.some((_, i) => ![null, "BODY"].includes(anchorAt(clause, i, verbAt(clause), false))));
+  const takesOff: string[] = [];
+  const shows: string[] = [];
+  /** Who acts in the last clause: «she», what she wears (its tag), or someone or something else. */
+  let subject = "she";
+  for (const clause of clauses) {
+    const words = tagged(clause, garmentNamed);
+    const first = clause[0] ?? "";
+    const opener = words[0] ?? "";
+    // A clause opens with «she», with a pronoun or a determiner (what she wears, or something else), or with its verb (then its subject is the last clause's).
+    if (first === "she" || PRONOUNS.has(first) || DETERMINERS.has(first)) subject = opener === "she" || opener.startsWith("#") ? opener : "other";
+    const read = opener === subject || subject === "other" ? words : [subject, ...words];
+    const tags = read.filter((word) => word.startsWith("#"));
+    if (tags.length === 0) continue;
+    const said = read.join(" ");
+    const plain = clause.join(" ");
+    if (WORN_FORMS.some(({ form, needs = [], unless }) => form.test(said) && needs.every((need) => need.test(said)) && unless?.test(plain) !== true)) continue;
+    // The clause's subject when it is what she wears or her body, else the first thing it acts on.
+    const acted = read[0]?.startsWith("#") === true ? read[0] : tags[0];
+    (acted === "#BODY" ? shows : takesOff).push(plain);
+  }
+  return { takesOff, shows };
+});
+
+const ownOnBold = (scope: Scope): boolean => scope.source === "own" && scope.frame.bold;
+
 const isModelText = (scope: Scope): boolean => scope.source === "vision" || scope.source === "own";
 
 /** Where a rule reads: the bank at load (no frame), or a frame with the text's source. */
@@ -417,6 +698,26 @@ const RULES: readonly RuleCheck[] = [
     problem: "takes-off",
     check: (text, scope) =>
       scope.source !== "bank" && !(scope.source === "own" && scope.frame.bold) && takesOff(text) ? "takes clothing off, which only an own idea on a frame of «Смелая» may" : null,
+  },
+  {
+    // S5.WC2b: a model's text moves what she wears only in the whitelist's ways (`wornBreaks`); beyond them it takes clothing off. Q-H = 2 as above.
+    rule: "worn-verb",
+    problem: "takes-off",
+    check: (text, scope) => {
+      if (!isModelText(scope) || ownOnBold(scope)) return null;
+      const breaks = wornBreaks(text).takesOff;
+      return breaks.length > 0 ? `moves what she wears beyond adjusting, smoothing, tucking or pulling it back into place (${words(breaks)})` : null;
+    },
+  },
+  {
+    // S5.WC2b: her body named with a verb the whitelist does not name shows it: content, but for an own idea on «Смелая» (as exposure).
+    rule: "body-verb",
+    problem: "content",
+    check: (text, scope) => {
+      if (!isModelText(scope) || ownOnBold(scope)) return null;
+      const breaks = wornBreaks(text).shows;
+      return breaks.length > 0 ? `shows her body (${words(breaks)})` : null;
+    },
   },
   { rule: "selfie", problem: "phone", check: (text, scope) => (takesGrammar(scope) && SELFIE_WORDS.test(text) ? "says selfie or front camera, which draws a phone" : null) },
   { rule: "camera", problem: "staging", check: (text, scope) => (takesGrammar(scope) && CAMERA_WORDS.test(text) ? "names a camera or a lens" : null) },
