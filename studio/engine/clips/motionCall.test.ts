@@ -100,6 +100,13 @@ describe("stepOf: one chat result as the part C jobs read it", () => {
     expect(stepOf(blocked)).toEqual({ kind: "no-room", costMicros: 0 });
   });
 
+  test("a failure whose reserve is settled is not left open; a timeout or a network failure is (the paid amount cannot be trusted then)", () => {
+    const settled = stepOf({ status: "error", kind: "HTTP_ERROR", message: "503", httpStatus: 503, fatal: false, ledger: { action: "settled", costMicros: 0, estimated: false } });
+    expect(settled).toMatchObject({ kind: "error", leftOpen: false });
+    const timeout = stepOf({ status: "error", kind: "TIMEOUT", message: "t", httpStatus: null, fatal: false, ledger: { action: "left-open", worstMicros: 5 } });
+    expect(timeout).toMatchObject({ kind: "error", error: { code: "TIMEOUT" }, leftOpen: true });
+  });
+
   test("any other failure is an engine error", () => {
     const step = stepOf(authAnswer());
     expect(step).toMatchObject({ kind: "error", error: { code: "AUTH_INVALID" }, costMicros: 0 });

@@ -7,7 +7,7 @@ import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import type { ChatMessage, ChatParams, ChatResult } from "../openrouter/types";
 import type { FrameFacts } from "./frameFacts";
-import { ACTIVITY_MAX_CHARS, NEVER_ABORTED, type MotionAttemptShape, checkModelText, framePayload, stepOf, type FramePayload } from "./motionCall";
+import { ACTIVITY_MAX_CHARS, NEVER_ABORTED, type MotionAttemptShape, checkModelText, endsAsResult, framePayload, stepOf, type FramePayload } from "./motionCall";
 import { MOTION_PROMPT_TEXTS } from "./motionPrompts";
 import { CLIP_CAPTURES } from "./videoLook";
 
@@ -215,7 +215,7 @@ export async function runMotionWriter(deps: MotionJobDeps, job: WriterJob): Prom
       return attempt === 1 ? { kind: "error", error: { code: "BUDGET_EXCEEDED", detail: "the month has no room for the motion writer's call" }, costMicros: cost } : { kind: "none", costMicros: cost };
     }
     // L2: a first attempt that was paid, then a second that fails (a timeout, a 5xx, a 402): `none` with what was paid, so the window can say «оплачено $X». A key that is refused is still an error.
-    if (step.kind === "error") return cost > 0 && step.error.code !== "AUTH_INVALID" ? { kind: "none", costMicros: cost } : { kind: "error", error: step.error, costMicros: cost };
+    if (step.kind === "error") return endsAsResult(step, cost - step.costMicros) ? { kind: "none", costMicros: cost } : { kind: "error", error: step.error, costMicros: cost };
     if (step.kind === "unreadable") {
       if (step.final === true) return { kind: "none", costMicros: cost };
       feedback = ["unreadable"];

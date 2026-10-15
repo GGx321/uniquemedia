@@ -80,7 +80,8 @@ export type ChatStep =
   | { kind: "refused"; costMicros: number }
   /** The month or the call's cap had no room for the attempt: nothing was sent. */
   | { kind: "no-room"; costMicros: number }
-  | { kind: "error"; error: EngineError; costMicros: number };
+  /** `leftOpen`: the attempt's reserve stays open at its worst case (a timeout, a network failure): whether it was billed is not known, so a paid amount from before cannot be told as the whole truth. */
+  | { kind: "error"; error: EngineError; costMicros: number; leftOpen: boolean };
 
 function settledCost(ledger: { action: string; costMicros?: number }): number {
   return ledger.action === "settled" ? (ledger.costMicros ?? 0) : 0;
@@ -94,14 +95,22 @@ export function stepOf(result: ChatResult): ChatStep {
       return { kind: "refused", costMicros: settledCost(result.ledger) };
     case "blocked":
       if (result.refusal.reason === "BUDGET_EXCEEDED" || result.refusal.reason === "RUN_CAP_EXCEEDED") return { kind: "no-room", costMicros: 0 };
-      return { kind: "error", error: toEngineError(result)?.error ?? { code: "INTERNAL", detail: "the request was not sent" }, costMicros: 0 };
+      return { kind: "error", error: toEngineError(result)?.error ?? { code: "INTERNAL", detail: "the request was not sent" }, costMicros: 0, leftOpen: false };
     case "error":
       if (result.kind === "EMPTY_CONTENT") return { kind: "unreadable", costMicros: settledCost(result.ledger) };
       if (result.kind === "UNUSABLE_PAID_RESPONSE") return { kind: "unreadable", costMicros: settledCost(result.ledger), final: true };
-      return { kind: "error", error: toEngineError(result)?.error ?? { code: "INTERNAL", detail: result.message }, costMicros: settledCost(result.ledger) };
+      return { kind: "error", error: toEngineError(result)?.error ?? { code: "INTERNAL", detail: result.message }, costMicros: settledCost(result.ledger), leftOpen: result.ledger.action === "left-open" };
     case "aborted":
-      return { kind: "error", error: { code: "INTERNAL", detail: "the request was cancelled" }, costMicros: 0 };
+      return { kind: "error", error: { code: "INTERNAL", detail: "the request was cancelled" }, costMicros: 0, leftOpen: result.ledger.action === "left-open" };
   }
+}
+
+/**
+ * Whether a failure of a LATER attempt may end the call as a plain result with what the earlier attempts cost (review L2, LOW-c): only a failure whose reserve is settled (a 5xx, a 429), and not one
+ * that must reach the owner as it is: a refused key, no credits, or an attempt whose reserve stays open (a timeout, a network failure: it may have been billed, so «оплачено $X» would understate).
+ */
+export function endsAsResult(step: Extract<ChatStep, { kind: "error" }>, paidBefore: number): boolean {
+  return paidBefore > 0 && !step.leftOpen && step.error.code !== "AUTH_INVALID" && step.error.code !== "INSUFFICIENT_CREDITS";
 }
 
 /** The call is one short request inside a user's command: it cannot be cancelled (as the descriptor check). */

@@ -298,7 +298,7 @@ export class ClipService {
     this.#motions = new ClipMotions({
       newId: deps.newId,
       now: () => new Date(deps.clock()).toISOString(),
-      unitHeld: () => this.#unit !== null,
+      unitHeld: () => this.#unitHeld(),
       currentLibrary: deps.currentLibrary,
       liveLibrary: deps.liveLibrary,
       usableKey: deps.usableKey,
@@ -834,16 +834,25 @@ export class ClipService {
   // ---------- clips.create ----------
 
   /**
+   * «A clip money unit is held» (5b.2, S5.WC3 on B1): the ONE predicate behind both directions of the guard. `unitRefusal` (a clip or a batch waits) and part C's `clip-busy` (a chat call waits) both read
+   * it, so they cannot diverge. A single clip holds the unit from its claim until its money closes; a batch holds it for its WHOLE life, from the claim until its last member's money closes (queued
+   * members, the gaps between members and the rest of a member that finishes after `clips.cancelBatch` included): only `#releaseUnit` ends it.
+   */
+  #unitHeld(): boolean {
+    return this.#unit !== null;
+  }
+
+  /**
    * Why a new clip money unit cannot start now, or null (5b.2, I5.61). The ONE place the in-flight refusal of `clips.create` and `clips.createBatch` is decided: a single clip holding the unit is
    * `one-at-a-time`, a batch holding it is `batch-running`. Part C's `motion-busy` guard joins here.
    */
   unitRefusal(): EngineFailure | null {
-    if (this.#unit === null) {
+    if (!this.#unitHeld()) {
       // 5b.2 (S5.WC3, r2.1 N10): the other direction of the guard, GLOBAL: while ANY part C call runs (any avatar, any photo) no clip baseline may be read, because a chat reserve is open.
       if (this.#motions.running() > 0) return new EngineFailure({ code: "IN_FLIGHT", clipReason: "motion-busy", detail: "a motion is being suggested or an idea translated; wait for it to end" });
       return null;
     }
-    if (this.#unit.kind === "batch") {
+    if (this.#unit?.kind === "batch") {
       return new EngineFailure({ code: "IN_FLIGHT", clipReason: "batch-running", detail: "a batch of clips is being made; wait for it to end or cancel the rest" });
     }
     return new EngineFailure({ code: "IN_FLIGHT", clipReason: "one-at-a-time", detail: "another clip is being made; one paid clip runs at a time" });

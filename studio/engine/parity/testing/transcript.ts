@@ -892,7 +892,8 @@ export class Transcript {
   async untilBatchEnds(probe: unknown, ms = 45_000): Promise<void> {
     await this.#pumpUntil(async () => {
       const answer = await this.#rig.send("clips.create", probe);
-      if (!answer.ok && answer.error.code === "IN_FLIGHT") return false;
+      // `motion-busy` (5b.2 part C) says a vision or translator call runs, never that a batch holds the unit: the two exclude each other, so it is not «held».
+      if (!answer.ok && answer.error.code === "IN_FLIGHT" && answer.error.clipReason !== "motion-busy") return false;
       this.#drain();
       return [...this.#memberJobs.values()].every((member) => member.end !== null);
     }, "the batch to end", ms);

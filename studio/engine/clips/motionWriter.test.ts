@@ -235,9 +235,15 @@ describe("the money of a refusal and of a failure", () => {
     expect(await result).toEqual({ kind: "none", costMicros: 2_100 });
   });
 
-  test("a 402 on the second attempt is the same", async () => {
+  test("a 402 on the second attempt stays an error: «нет кредитов» is not hidden behind a paid `none` (LOW-c)", async () => {
     const { result } = run([reply("not json", 0.0021), { status: 402, body: { error: { message: "no credits" } } }]);
-    expect(await result).toEqual({ kind: "none", costMicros: 2_100 });
+    expect(await result).toMatchObject({ kind: "error", error: { code: "INSUFFICIENT_CREDITS" } });
+  });
+
+  test("a timeout or a network failure on the second attempt stays an error: its reserve is left open, so the paid amount would be understated (LOW-c)", async () => {
+    const down: Step = { reject: new TypeError("fetch failed") };
+    const { result } = run([reply("not json", 0.0021), down, down, down, down, down]);
+    expect(await result).toMatchObject({ kind: "error", error: { code: "NETWORK" } });
   });
 
   test("a 401 is an error with its code, and the cost so far", async () => {

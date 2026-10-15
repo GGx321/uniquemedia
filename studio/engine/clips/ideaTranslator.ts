@@ -1,11 +1,11 @@
 import { z } from "zod";
-import { MOTION_MAX_ATTEMPTS, MOTION_PROBLEMS, OWN_IDEA_MAX, type EngineError, type MotionProblem } from "../../shared/engine";
+import { MOTION_ENGLISH, MOTION_MAX_ATTEMPTS, MOTION_PROBLEMS, OWN_IDEA_MAX, type EngineError, type MotionProblem } from "../../shared/engine";
 import { repairMayHelp } from "../../shared/scenes/motionText";
 import { TRANSLATE_ATTEMPT } from "../money/motionEstimate";
 import type { Scope } from "../money/ledger";
 import type { ChatMessage } from "../openrouter/types";
 import type { FrameFacts } from "./frameFacts";
-import { ACTIVITY_MAX_CHARS, NEVER_ABORTED, type MotionAttemptShape, checkModelText, framePayload, stepOf, type FramePayload } from "./motionCall";
+import { ACTIVITY_MAX_CHARS, NEVER_ABORTED, type MotionAttemptShape, checkModelText, endsAsResult, framePayload, stepOf, type FramePayload } from "./motionCall";
 import { MOTION_PROMPT_TEXTS } from "./motionPrompts";
 import type { MotionJobDeps } from "./motionWriter";
 
@@ -116,6 +116,9 @@ export function ideaScrub(idea: string): (text: string) => string {
   return (text) => ordered.reduce((scrubbed, form) => scrubbed.split(form).join(marker), text);
 }
 
+/** A JSON key the scrub keeps whole (review LOW-a). */
+const IDENTIFIER_KEY = /^[A-Za-z0-9_.$@-]{1,64}$/;
+
 const STRING_OR_RUN = /"(?:[^"\\]|\\.)*(?:"|$)|-?\d[\d.eE+-]*|true|false|null|[{}\[\]:,\s]+|[^"{}\[\]:,\s]+/gy;
 
 /**
@@ -134,7 +137,10 @@ export function rawScrub(idea: string): (text: string) => string {
         const closed = token.length > 1 && token.endsWith('"') && !/(?:^|[^\\])(?:\\\\)*\\"$/.test(token);
         const body = token.slice(1, closed ? -1 : undefined);
         const isKey = closed && /^\s*:/.test(text.slice((match.index ?? 0) + token.length));
-        out += isKey && forms(body) === body ? token : `"${forms(body) !== body ? marker : `[string: ${body.length} chars]`}"`;
+        const echoes = forms(body) !== body;
+        // A key stays only if it is identifier-like (LOW-a); any other key is the model's text and goes like a value does.
+        if (isKey && !echoes && IDENTIFIER_KEY.test(body)) out += token;
+        else out += `"${echoes ? marker : `[${isKey ? "key" : "string"}: ${body.length} chars]`}"`;
       } else if (/^[{}\[\]:,\s]+$/.test(token) || /^(?:-?\d[\d.eE+-]*|true|false|null)$/.test(token)) out += token;
       else out += `[text: ${token.length} chars]`;
     }
@@ -178,7 +184,7 @@ export async function runIdeaTranslator(deps: MotionJobDeps, job: TranslatorJob)
       return attempt === 1 ? { kind: "error", error: { code: "BUDGET_EXCEEDED", detail: "the month has no room for the translator's call" }, costMicros: cost } : settled();
     }
     // L2: a first attempt that was paid, then a second that fails (a timeout, a 5xx, a 402): the owner is told what the first cost, not left with a bare error. A key that is refused is still an error.
-    if (step.kind === "error") return cost > 0 && step.error.code !== "AUTH_INVALID" ? settled() : { kind: "error", error: step.error, costMicros: cost };
+    if (step.kind === "error") return endsAsResult(step, cost - step.costMicros) ? settled() : { kind: "error", error: step.error, costMicros: cost };
     if (step.kind === "unreadable") {
       if (step.final === true) return settled();
       feedback = ["unreadable"];
@@ -197,8 +203,8 @@ export async function runIdeaTranslator(deps: MotionJobDeps, job: TranslatorJob)
     // `takes-off` gets no repair: the idea is the owner's own choice, and a repair could only make it another motion than he asked for.
     if (!repairMayHelp(problems)) return settled();
     feedback = problems;
-    // L3: only plain printable ASCII goes back to the model (the text is the model's own, but the check refused it).
-    previous = /^[\x20-\x7e]+$/.test(text) ? text.slice(0, PREVIOUS_MAX_CHARS) : null;
+    // L3, LOW-b: only text in the contract's motion English goes back to the model (letters, digits, spaces and , . ' -): no quote, bracket or semicolon that could carry an instruction.
+    previous = MOTION_ENGLISH.test(text) ? text.slice(0, PREVIOUS_MAX_CHARS) : null;
   }
   return settled();
 }
