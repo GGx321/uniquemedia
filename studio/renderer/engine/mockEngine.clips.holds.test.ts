@@ -33,6 +33,9 @@ describe("the timing sets", () => {
       holdTerminalMs: 120_000,
       holdSubmittedMs: 3_600_000,
       exportProgressMs: 2_000,
+      // 5b.2 (S5.WB3): the batch's alone-wait bound and the pause after a 429, the engine's two new figures.
+      aloneWaitMs: 130_000,
+      rateLimitPauseMs: 60_000,
     });
     for (const key of Object.keys(REAL) as (keyof typeof REAL)[]) expect(SHORT[key]).toBe(REAL[key] / 1_000);
   });

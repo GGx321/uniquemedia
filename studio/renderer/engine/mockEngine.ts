@@ -979,6 +979,7 @@ export class MockEngine implements EngineBridge {
           this.settings = { ...this.settings, apiKey: { ...this.settings.apiKey, rejected: true } };
           this.emitSettingsChanged();
         },
+        haltLedger: () => this.haltAboveWorst(),
         reserves: this.reserves,
         spend: (micros) => this.spend(micros),
         spentMicros: () => this.spentMicros,
@@ -1597,6 +1598,19 @@ export class MockEngine implements EngineBridge {
   /** The NEXT `clips.create` plays `script` (an outcome name, or `{ first, then, face }`); used once. Without it a clip completes. */
   scriptNextClip(script: MockClipScript): void {
     this.clips.nextClip(script);
+  }
+
+  /**
+   * 5b.2 (S5.WB3): the NEXT `clips.createBatch` plays one script per member, in the order the members' first POSTs leave (a member requeued after a 429 takes the next one again); an entry the story did
+   * not give is `ok`. Used once.
+   */
+  scriptNextBatch(scripts: readonly MockClipScript[]): void {
+    this.clips.nextBatch(scripts);
+  }
+
+  /** 5b.2 (S5.WB3): a photo is removed from the gallery (the owner deleted it), as a batch member's turn finds it `photo-gone`. */
+  removeClipPhoto(photoId: string): void {
+    this.photos = this.photos.filter((p) => p.photoId !== photoId);
   }
 
   /** How the mock's video listing reads: `live`, `fallback` (unreadable: the dated table of 2026-10-10 stands in) or `missing` (readable and lacking a price: PRICE_UNAVAILABLE `video`). */
@@ -2702,11 +2716,13 @@ export class MockEngine implements EngineBridge {
       // ---- 5b.2 part A (S5.WA3): append-only block. A ready clip becomes the editor's own video, as its own copy (the engine's `ClipImports`, in `mockClipCopies.ts`).
       case "media.importClip":
         return this.clipOut(c, this.clipCopies.importClip(c.payload));
-      // ---- 5b.2 part B (S5.WB1): append-only block. The compile stubs answer as the engine's `default` branch does, word for word, until S5.WB3 builds the batch.
+      // ---- 5b.2 part B (S5.WB3): append-only block. The batch «Оживить выбранные», built in mockClips.ts (the queue itself in mockClipBatch.ts), refusal for refusal and number for number as the engine's.
       case "clips.batchOptions":
+        return this.clipOut(c, this.clips.batchOptions(c.payload));
       case "clips.createBatch":
+        return this.clipOut(c, this.clips.createBatch(c.payload));
       case "clips.cancelBatch":
-        return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });
+        return this.clipOut(c, this.clips.cancelBatch(c.payload));
       case "autopilot.estimate":
         // S5.8a: «Ножки» with no built-in category is refused first, for free.
         if (legsNeedsBuiltIn(c.payload.draft)) return this.fail(c, { code: "VALIDATION", launchReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the launch names none" });

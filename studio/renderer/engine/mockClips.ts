@@ -8,12 +8,17 @@ import {
   isBoldCategory,
   MAX_LISTED_CLIPS,
   PROTOCOL_VERSION,
+  CLIP_OPTION_KEYS,
   clipAllowsAutoGrok,
+  clipBatchExpectedMicros,
+  clipBatchWorstMicros,
   clipBilledMicros,
   clipExpectedMicros,
   clipReserveMicros,
   clipWorstMicros,
   type BoldClipsMode,
+  type ClipBatchOptions,
+  type ClipCancelDetail,
   type ClipCost,
   type ClipExport,
   type ClipExportLine,
@@ -21,8 +26,10 @@ import {
   type ClipFace,
   type ClipFailReason,
   type ClipModelUsed,
+  type ClipMonthFit,
   type ClipMotion,
   type ClipMotionChoice,
+  type ClipOptionKey,
   type ClipOptions,
   type ClipPhase,
   type ClipPriceParts,
@@ -42,7 +49,9 @@ import {
   type PhotoSummary,
   type ReconcileResult,
 } from "../../shared/engine";
+import { clipAlone } from "../../shared/engine/clipAlone";
 import type { UnsequencedEvent } from "../../shared/engine/events";
+import { MockClipBatch, type BatchMember, type MockBatchPorts, type MockMoneyEnd } from "./mockClipBatch";
 import type { Scheduler } from "./scheduler";
 
 // Stage 5, 5b.1, S5.V7 (plan s5b1 §5.15): the clips of the mock engine. It answers what the ENGINE answers (engine/clips/*), number for number and state for state, so the «Клипы» tab can be built and
@@ -68,6 +77,10 @@ export interface MockClipTimings {
   readonly holdTerminalMs: number;
   readonly holdSubmittedMs: number;
   readonly exportProgressMs: number;
+  /** 5b.2 (I5.62): a batch member waits at most this long for the money to be alone before its POST; past it, it submits and a refusal is then `net-uncounted` (worst). */
+  readonly aloneWaitMs: number;
+  /** 5b.2 (I5.62): after a 429 at a member's submit, no batch member is submitted for this long. */
+  readonly rateLimitPauseMs: number;
 }
 
 const SECOND = 1_000;
@@ -85,6 +98,8 @@ const REAL: MockClipTimings = Object.freeze({
   holdTerminalMs: 2 * MINUTE,
   holdSubmittedMs: 60 * MINUTE,
   exportProgressMs: 2 * SECOND,
+  aloneWaitMs: 2 * MINUTE + 10 * SECOND,
+  rateLimitPauseMs: 60 * SECOND,
 });
 
 const scaled = (set: MockClipTimings, by: number): MockClipTimings =>
@@ -100,6 +115,8 @@ const scaled = (set: MockClipTimings, by: number): MockClipTimings =>
     holdTerminalMs: set.holdTerminalMs / by,
     holdSubmittedMs: set.holdSubmittedMs / by,
     exportProgressMs: set.exportProgressMs / by,
+    aloneWaitMs: set.aloneWaitMs / by,
+    rateLimitPauseMs: set.rateLimitPauseMs / by,
   });
 
 /** `real`: the engine's. `short`: the real one divided by a thousand, every ordering kept (the parity rig and the packaged smoke). `demo`: the dev build, where a minute of waiting is too long to look at. */
@@ -139,6 +156,8 @@ export type MockVideoPrices = "live" | "fallback" | "missing";
  * - `late`: no terminal status for the lifetime and never one. `late-ok`: one that comes in after the lifetime.
  * - `download-failed`, `invalid-file`, `disk-full`: completed and billed, the file not stored.
  * - `no-room` (Grok only): the month has no room for Grok's reserve.
+ * - `ok-above-worst` (5b.2, S5.WB3): completed, and billed above the reserve: the ledger halts (`SETTLE_ABOVE_WORST`), the clip is delivered. `fault` (5b.2): the money state machine throws after the reserve, so whether
+ *   anything is open is not known: the job fails INTERNAL and the reserve stays open. Neither can be played by the real rig's provider (the engine's tests hold them); the mock plays them for the batch's stops.
  */
 export type MockClipAttempt =
   | "ok"
@@ -161,7 +180,9 @@ export type MockClipAttempt =
   | "download-failed"
   | "invalid-file"
   | "disk-full"
-  | "no-room";
+  | "no-room"
+  | "ok-above-worst"
+  | "fault";
 
 export type MockClipFace = "match" | "mismatch" | "few-faces" | "worker";
 
@@ -176,7 +197,7 @@ export type MockExportResult = "ok" | "fail" | "damaged";
 
 /** The lines of a clip's journal (engine/clips/schemas.ts): the same shapes, so the engine's own recovery plan can read the mock's. */
 export type MockJournalLine =
-  | { type: "requested"; clipId: string; photoId: string; request: ClipRequest; motion: ClipMotion; acceptedWorstMicros: number; at: string }
+  | { type: "requested"; clipId: string; photoId: string; request: ClipRequest; motion: ClipMotion; acceptedWorstMicros: number; batch?: BatchRef; at: string }
   | { type: "submitted"; attemptId: string; model: "kling" | "grok"; providerJobId: string; at: string }
   | {
       type: "ended";
@@ -191,6 +212,14 @@ export type MockJournalLine =
   | { type: "downloaded"; sha256: string; bytes: number; at: string };
 
 type AttemptModel = "kling" | "grok";
+
+/** A batch member's place (engine/jobs.ts `ClipBatchRef`): the three fields come all or none. */
+interface BatchRef {
+  batchId: string;
+  /** 1-based, the pick order. */
+  batchIndex: number;
+  batchSize: number;
+}
 
 interface RecordAttempt {
   attemptId: string;
@@ -219,6 +248,8 @@ interface MockClipRecord {
   recovered: boolean;
   exports: ClipExportLine[];
   outcome: ClipOutcome;
+  /** 5b.2: the batch the clip was made in (the record's `batchId`, `batchIndex`, `batchSize`). */
+  batch?: BatchRef;
 }
 
 /** One reserve of the clip's ledger lines (`<clipId>:video#<n>`), open until it is settled. */
@@ -270,6 +301,22 @@ interface Job {
   queued: boolean;
   /** An export past the point of no return: the name it claimed. A cancel from then on changes nothing (engine/clips/export.ts, «done wins»). */
   claimed: string | null;
+  /** 5b.2: the batch this job is a member of, and what a `queued` or `proving` member waits for. */
+  batch?: BatchRef;
+  waitReason?: WaitReason;
+  /** 5b.2: why a batch member that never ran was cancelled (`job.cancelled`'s `detail`). */
+  detail?: ClipCancelDetail;
+  /** 5b.2: the batch this job is a member of and the member it stands for: the batch is told how its money ended. */
+  member?: { batch: MockClipBatch<MemberPayload>; ref: BatchMember<MemberPayload> };
+}
+
+type WaitReason = "turn" | "alone" | "rate-limit" | "proof";
+
+/** What a batch member needs to run its clip when its turn comes (the batch itself needs none of it). */
+interface MemberPayload {
+  request: ClipRequest;
+  motion: ClipMotion;
+  facts: Facts;
 }
 
 /** The facts a job's events and state carry, or nothing: the fields are all there or none is. */
@@ -282,6 +329,13 @@ function jobFactsOf(job: Job): Partial<JobFacts> & { openReserveMicros?: number 
     acceptedWorstMicros: job.facts.acceptedWorstMicros,
     ...(job.openReserveMicros === undefined ? {} : { openReserveMicros: job.openReserveMicros }),
   };
+}
+
+/** 5b.2: a batch member's place in the batch, in every event and state of its job (all three or none), and what it waits for while it is `queued` or `proving` (the contract allows no other phase one). */
+function jobBatchOf(job: Job): { batchId?: string; batchIndex?: number; batchSize?: number; waitReason?: WaitReason } {
+  if (job.batch === undefined) return {};
+  const waits = job.waitReason !== undefined && (job.phase === "queued" || job.phase === "proving");
+  return { batchId: job.batch.batchId, batchIndex: job.batch.batchIndex, batchSize: job.batch.batchSize, ...(waits ? { waitReason: job.waitReason } : {}) };
 }
 
 type Out<T> = { ok: true; result: T } | { ok: false; error: EngineError };
@@ -306,6 +360,8 @@ export interface MockClipsHost {
   /** `usableKey` (engine/clips/records.ts): the key alone, for a free call that still goes to the provider. */
   keyGate(): EngineError | null;
   markKeyRejected(): void;
+  /** 5b.2: a settle came in above its reserve: the ledger halts (`SETTLE_ABOVE_WORST`) until the owner reconciles. */
+  haltLedger(): void;
   /** The mock's open reserves, attempt id to worst: the clips add theirs and take them back. */
   reserves: Map<string, number>;
   spend(micros: number): void;
@@ -384,6 +440,9 @@ function factsOf(photo: PhotoSummary): Facts {
 }
 
 type Refusal = "not-a-gallery-photo" | "age-unverified" | "photo-unreadable" | "not-vertical" | "bold-off" | "no-motion";
+
+/** A photo as the clip rules read it: why it cannot be brought to life, or its facts and the motions it offers. */
+type ItemRead = { kind: "refused"; reason: Refusal } | { kind: "suitable"; facts: Facts; motions: readonly ClipMotionChoice[] };
 
 interface Script {
   first: MockClipAttempt;
@@ -529,8 +588,19 @@ export class MockClips {
   readonly #clipAvatars = new Map<string, string>();
   readonly #attemptsByClip = new Map<string, RecordAttempt[]>();
 
-  /** The create that holds the one paid slot, from its dispatch until its money closes. */
-  #slot: Job | null = null;
+  /**
+   * I5.50 / I5.61: the ONE clip money unit of the whole engine, from its dispatch until its money closes: a single clip (its create's job), or a batch (until its last member's money closes). A refusal of a
+   * second `clips.create` or `clips.createBatch` names which of the two holds it.
+   */
+  #unit: { kind: "clip"; job: Job } | { kind: "batch"; batch: MockClipBatch<MemberPayload> } | null = null;
+  /** 5b.2: the batches of this process, by id (a finished one stays, bounded, so a late `clips.cancelBatch` answers 0 and not NOT_FOUND). */
+  readonly #batches = new Map<string, MockClipBatch<MemberPayload>>();
+  /** 5b.2 (`Budget.tryHold`): the month's room held for the members still to reserve, by attempt id: in memory only, gone with the process. */
+  readonly #monthHolds = new Map<string, number>();
+  /** 5b.2: the price book a batch was priced by, and when it was read: a turn re-reads it only when it is older than the cache's life (engine/money/priceCache.ts). */
+  #book: { rates: ClipPrices; readAtMs: number; live: boolean } | null = null;
+  /** 5b.2: what the next batch's members play, one entry per member, taken when a member's first reserve is made (its POST is about to leave). */
+  #batchScripts: Script[] | null = null;
   #lastWriteMs = Number.NEGATIVE_INFINITY;
   #restartedAtMs = Number.NEGATIVE_INFINITY;
   #exportQueue: Job[] = [];
@@ -550,6 +620,17 @@ export class MockClips {
   nextClip(script: MockClipScript): void {
     const parts = typeof script === "string" ? { first: script } : script;
     this.#script = { first: parts.first ?? "ok", then: parts.then ?? "ok", face: parts.face };
+  }
+
+  /**
+   * 5b.2: the NEXT batch plays `scripts`, one per member, in the order the members' first POSTs leave (a member requeued after a 429 takes the next one again); an entry the story did not give is `ok`.
+   * Used once, by the next `clips.createBatch`.
+   */
+  nextBatch(scripts: readonly MockClipScript[]): void {
+    this.#batchScripts = scripts.map((entry) => {
+      const parts = typeof entry === "string" ? { first: entry } : entry;
+      return { first: parts.first ?? "ok", then: parts.then ?? "ok", face: parts.face };
+    });
   }
 
   setVideoPrices(mode: MockVideoPrices): void {
@@ -640,6 +721,15 @@ export class MockClips {
   peek() {
     return {
       holds: new Map([...this.#holds].map(([id, h]) => [id, h.until])),
+      /** 5b.2: the month's room held for batch members that have not reserved yet, by attempt id. */
+      monthHolds: new Map(this.#monthHolds),
+      /** 5b.2: who holds the one clip money unit. */
+      unit: this.#unit === null ? null : this.#unit.kind,
+      /** 5b.2: a clip job holds the library (a switch waits), and the avatars whose clip jobs are live (an avatar delete waits). */
+      busy: this.busy(),
+      liveAvatars: [...new Set([...this.#jobs.values()].filter((j) => j.status === "running").map((j) => j.avatarId))],
+      /** 5b.2 (45b): what the quit question counts: the clips between `submitting` and `proving`, and the batch members still to be made (`queued` or `preparing`). */
+      quit: this.quitCounts(),
       attempts: this.#lines.map((l) => ({ ...l })),
       posts: [...this.#posts],
       journals: Object.fromEntries([...this.#journals].map(([id, lines]) => [id, [...lines]])),
@@ -653,9 +743,21 @@ export class MockClips {
 
   // ---------- money, as the engine's #moneyStatus and #reconcile read it ----------
 
-  /** The paid slot is held: a reconcile is refused IN_FLIGHT, as the engine's paid-command count refuses it. */
+  /** The one clip money unit is held (a single clip, or a batch with members still to be made): a reconcile is refused IN_FLIGHT, as the engine's paid-command count refuses it. */
   paidOpen(): boolean {
-    return this.#slot !== null;
+    return this.#unit !== null;
+  }
+
+  /** main/clipHost.ts (45, 45b): the clips between `submitting` and `proving` may bill; the batch members that are `queued` or `preparing` have cost nothing yet and will not be made if the app quits. */
+  quitCounts(): { inFlight: number; queued: number } {
+    let inFlight = 0;
+    let queued = 0;
+    for (const job of this.#jobs.values()) {
+      if (job.status !== "running" || job.kind === "export") continue;
+      if (job.phase === "submitting" || job.phase === "rendering" || job.phase === "proving") inFlight++;
+      else if (job.batch !== undefined && (job.phase === "queued" || job.phase === "preparing")) queued++;
+    }
+    return { inFlight, queued };
   }
 
   /** A clip job (create, retry, export) holds the library: a switch waits. */
@@ -760,17 +862,27 @@ export class MockClips {
    * A live hold of a COMPLETED attempt settled exactly does not count (engine/clips/attempt.ts); any other live hold does.
    */
   #otherMoneyOpen(attemptId: string): boolean {
-    if (this.#lines.some((l) => l.state === "open" && l.attemptId !== attemptId)) return true;
-    // The engine reads `ledger.openReserves()` across every kind (photo runs, scenes, portraits, autopilot), not only the clips': the host's open reserves are that ledger.
-    for (const openId of this.#host.reserves.keys()) if (openId !== attemptId) return true;
-    const now = this.#host.clockMs();
-    for (const [heldId, hold] of this.#holds) {
-      if (heldId === attemptId || hold.until <= now) continue;
-      const line = this.#lines.find((l) => l.attemptId === heldId);
-      // Exempt only the hold of a COMPLETED attempt settled exactly; a refusal settled exactly (billed) could have its temporary charge refunded inside the window.
-      if (line === undefined || line.state === "open" || line.estimated || !this.#completedHolds.has(heldId)) return true;
-    }
-    return false;
+    return !this.#alone(attemptId);
+  }
+
+  /**
+   * The engine's rule itself (shared/engine/clipAlone.ts), read by the engine's attempts and by its batch's alone-wait alike (5b.2, L6): no foreign money can still move on `/credits`. The ledger the engine
+   * reads is the budget's, across every kind of job (photo runs, scenes, portraits, autopilot), not only the clips': the host's open reserves are that ledger. `attemptId` may be one that does not exist yet
+   * (a batch member waiting for its turn), which excludes nothing.
+   */
+  #alone(attemptId: string): boolean {
+    return clipAlone({
+      ledger: {
+        openReserves: () => [...this.#host.reserves.keys()].map((id) => ({ attemptId: id })),
+        closeOf: (id) => {
+          const line = this.#lines.find((l) => l.attemptId === id);
+          return line === undefined || line.state === "open" ? undefined : { type: "settle", estimated: line.estimated };
+        },
+      },
+      holds: { entries: () => new Map([...this.#holds].map(([id, hold]) => [id, hold.until])), isCompleted: (id) => this.#completedHolds.has(id) },
+      attemptId,
+      nowMs: this.#host.clockMs(),
+    });
   }
 
   #release(attemptId: string): void {
@@ -787,6 +899,8 @@ export class MockClips {
   #reserve(clipId: string, n: 1 | 2, model: AttemptModel, worstMicros: number): Line {
     const line: Line = { attemptId: attemptIdOf(clipId, n), clipId, model, worstMicros, reserveAtMs: this.#host.clockMs(), state: "open", costMicros: 0, estimated: false, own: true, inFlight: true };
     this.#lines.push(line);
+    // A batch member's first reserve takes the place of its hold (`Budget.tryReserve`: «the attempt's own hold is what this reserve replaces»).
+    this.#monthHolds.delete(line.attemptId);
     this.#host.reserves.set(line.attemptId, worstMicros);
     this.#lastWriteMs = line.reserveAtMs;
     this.#host.emitMoney();
@@ -835,7 +949,7 @@ export class MockClips {
   }
 
   /** The engine's `#facts`, in its order: not a gallery photo, its age, its pixels, «Смелая» off, no motion. */
-  #read(photo: PhotoSummary | null): { kind: "refused"; reason: Refusal } | { kind: "suitable"; facts: Facts; motions: readonly ClipMotionChoice[] } {
+  #read(photo: PhotoSummary | null): ItemRead {
     if (photo === null) return { kind: "refused", reason: "not-a-gallery-photo" };
     const facts = factsOf(photo);
     if (facts.ageRefused) return { kind: "refused", reason: "age-unverified" };
@@ -862,14 +976,22 @@ export class MockClips {
     };
   }
 
-  #committed(): number {
+  /** What the month has committed: spent, open at worst, and (5b.2) held for the members of a batch that have not reserved yet, less `exceptHold`'s own hold, which its reserve replaces (`Budget.tryReserve`). */
+  #committed(exceptHold?: string): number {
     let open = 0;
     for (const worst of this.#host.reserves.values()) open += worst;
-    return this.#host.spentMicros() + open;
+    let held = 0;
+    for (const [id, micros] of this.#monthHolds) if (id !== exceptHold) held += micros;
+    return this.#host.spentMicros() + open + held;
   }
 
-  #fits(worstMicros: number): boolean {
-    return this.#committed() + worstMicros <= this.#host.monthlyBudgetMicros();
+  #fits(worstMicros: number, exceptHold?: string): boolean {
+    return this.#committed(exceptHold) + worstMicros <= this.#host.monthlyBudgetMicros();
+  }
+
+  /** `max(0, monthlyBudget - (spent + open + held))`: the model `#fits` and the hold refuse by (engine.ts `#monthRoomMicros`). */
+  #monthRoom(): number {
+    return Math.max(0, this.#host.monthlyBudgetMicros() - this.#committed());
   }
 
   #unavailable(): EngineError {
@@ -884,7 +1006,11 @@ export class MockClips {
     const read = this.#read(found.result.photo);
     if (read.kind === "refused") return good({ suitable: false, photoId: payload.photoId, reason: read.reason });
     if (this.#prices === "missing") return bad(this.#unavailable());
-    const { facts } = read;
+    return good(this.#suitableOptions(payload.photoId, read.facts, read.motions, (worstMicros) => this.#fits(worstMicros)));
+  }
+
+  /** The sheet of one suitable photo (`ClipOptions`): its prices from one book, and whether the month (`fits`, one yes-or-no on a worst case) takes each option. */
+  #suitableOptions(photoId: string, facts: Facts, motions: readonly ClipMotionChoice[], fits: (worstMicros: number) => boolean): Extract<ClipOptions, { suitable: true }> {
     const fallback = this.#fallbackOf(facts);
     const kling = (quality: ClipQuality, seconds: ClipSeconds, withFallback: "auto" | "none"): Estimate => {
       const estimate = this.#estimate({ model: "kling", quality, seconds, fallback: withFallback, bold: facts.bold });
@@ -900,26 +1026,91 @@ export class MockClips {
     const prices = set("auto");
     const noFallbackPrices = set("none");
     const fit = (key: keyof typeof prices) => {
-      if (fallback === "auto" && this.#fits(prices[key].worstMicros)) return "with-fallback" as const;
-      return this.#fits(noFallbackPrices[key].worstMicros) ? ("without-fallback" as const) : ("none" as const);
+      if (fallback === "auto" && fits(prices[key].worstMicros)) return "with-fallback" as const;
+      return fits(noFallbackPrices[key].worstMicros) ? ("without-fallback" as const) : ("none" as const);
     };
-    return good({
+    return {
       suitable: true,
-      photoId: payload.photoId,
-      motions: read.motions.map((m) => ({ ...m })),
+      photoId,
+      motions: motions.map((m) => ({ ...m })),
       prices: { ...prices, grok5: grok(5), grok10: grok(10) },
       fallback,
       bold: facts.bold,
       noFallbackPrices,
       monthFits: { std5: fit("std5"), pro5: fit("pro5"), std10: fit("std10"), pro10: fit("pro10") },
+    };
+  }
+
+  // ---------- clips.batchOptions (5b.2, S5.WB3) ----------
+
+  /** One photo as a batch reads it, in the engine's order: a photo that is not in the gallery of the avatar (missing, another avatar's, the master) is `not-a-gallery-photo` (an item's own answer, never NOT_FOUND). */
+  #readItem(avatarId: string, photoId: string): ItemRead {
+    const avatar = this.#host.avatar(avatarId);
+    if (photoId === avatar?.masterPhotoId) return { kind: "refused", reason: "not-a-gallery-photo" };
+    const photo = this.#host.photo(avatarId, photoId);
+    return this.#read(photo === undefined ? null : photo);
+  }
+
+  /** The avatar, active and not being deleted: NOT_FOUND otherwise. */
+  #activeAvatar(avatarId: string): Out<true> {
+    const avatar = this.#host.avatar(avatarId);
+    if (avatar === undefined || !avatar.active || this.#host.deletePending(avatarId)) return bad({ code: "NOT_FOUND", detail: `no active avatar ${avatarId} in the open library` });
+    return good(true);
+  }
+
+  /**
+   * The sheet of a batch, free: each photo's own `ClipOptions` in the order asked, the four sums over the photos that can be made, the month's room and what fits. The month is read ONCE and every
+   * `monthFits` (a photo's and the batch's) is derived from that one figure, so the answer never disagrees with itself.
+   */
+  batchOptions(payload: CommandPayload<"clips.batchOptions">): Out<ClipBatchOptions> {
+    const active = this.#activeAvatar(payload.avatarId);
+    if (!active.ok) return active;
+    const reads = payload.photoIds.map((photoId) => this.#readItem(payload.avatarId, photoId));
+    if (this.#prices === "missing") return bad(this.#unavailable());
+    const room = this.#monthRoom();
+    const fits = (worstMicros: number): boolean => worstMicros <= room;
+    const items = reads.map((read, i): ClipOptions => {
+      const photoId = payload.photoIds[i] ?? "";
+      if (read.kind === "refused") return { suitable: false, photoId, reason: read.reason };
+      return this.#suitableOptions(photoId, read.facts, read.motions, fits);
     });
+    const members = reads.flatMap((read) => (read.kind === "suitable" ? [{ bold: read.facts.bold }] : []));
+    const anyFallback = items.some((item) => item.suitable && item.fallback === "auto");
+    const sum = (quality: ClipQuality, seconds: ClipSeconds) => {
+      if (members.length === 0) return { expected: 0, worst: 0, worstNoFallback: 0 };
+      const parts = { quality, seconds, mode: this.#mode, boldClips: this.#boldClips, prices: this.#rates };
+      return {
+        expected: clipBatchExpectedMicros(members, { ...parts, fallback: "auto" }),
+        worst: clipBatchWorstMicros(members, { ...parts, fallback: "auto" }),
+        worstNoFallback: clipBatchWorstMicros(members, { ...parts, fallback: "none" }),
+      };
+    };
+    const sums = { std5: sum("std", 5), pro5: sum("pro", 5), std10: sum("std", 10), pro10: sum("pro", 10) };
+    const fit = (key: ClipOptionKey): ClipMonthFit => {
+      if (members.length === 0) return "none";
+      if (anyFallback && fits(sums[key].worst)) return "with-fallback";
+      return fits(sums[key].worstNoFallback) ? "without-fallback" : "none";
+    };
+    const monthFits = { std5: fit("std5"), pro5: fit("pro5"), std10: fit("std10"), pro10: fit("pro10") };
+    return good({ items, sums, monthRoomMicros: room, monthFits });
   }
 
   // ---------- clips.create ----------
 
+  /**
+   * Why a new clip money unit cannot start now, or null (5b.2, I5.61). The ONE place the in-flight refusal of `clips.create` and `clips.createBatch` is decided (engine/clips/service.ts `unitRefusal`): a single clip
+   * holding the unit is `one-at-a-time`, a batch holding it is `batch-running`.
+   */
+  unitRefusal(): EngineError | null {
+    if (this.#unit === null) return null;
+    if (this.#unit.kind === "batch") return { code: "IN_FLIGHT", clipReason: "batch-running", detail: "a batch of clips is being made; wait for it to end or cancel the rest" };
+    return { code: "IN_FLIGHT", clipReason: "one-at-a-time", detail: "another clip is being made; one paid clip runs at a time" };
+  }
+
   create(payload: CommandPayload<"clips.create">): Out<{ jobId: string }> {
-    // The slot is the FIRST check (I5.50).
-    if (this.#slot !== null) return bad({ code: "IN_FLIGHT", clipReason: "one-at-a-time", detail: "another clip is being made; one paid clip runs at a time" });
+    // The unit is the FIRST check (I5.50, I5.61).
+    const held = this.unitRefusal();
+    if (held !== null) return bad(held);
     const gated = this.#host.gate();
     if (gated !== null) return bad(gated);
     const found = this.#photoOf(payload.avatarId, payload.photoId);
@@ -940,7 +1131,7 @@ export class MockClips {
     this.#script = null;
     const job = this.#newJob(payload.avatarId, "create");
     job.facts = { photoId: payload.photoId, request, motion: { source: "code", label: motion.label }, acceptedWorstMicros: payload.acceptedWorstMicros };
-    this.#slot = job;
+    this.#unit = { kind: "clip", job };
     this.#fates.set(job.clipId, script);
     this.#clipAvatars.set(job.clipId, payload.avatarId);
     const createdAt = this.#host.nowIso();
@@ -949,6 +1140,195 @@ export class MockClips {
     this.#progress(job, { phase: "preparing" });
     this.#after(job, this.#host.stepMs, () => this.#attempt(run, 1, request.model));
     return good({ jobId: job.jobId });
+  }
+
+  // ---------- clips.createBatch (5b.2, S5.WB3) ----------
+
+  /**
+   * The batch «Оживить выбранные» (plan s5b2 §5.2.2, I5.61-I5.63), refusal for refusal as the engine's `createBatch`: the unit first, then the key and the ledger, the avatar, each item in the pick order (its own
+   * reason with its path), the price, the sum the owner accepted, and the month hold. Every refusal is free and leaves nothing behind: no hold, no job, no unit.
+   */
+  createBatch(payload: CommandPayload<"clips.createBatch">): Out<{ batchId: string; jobIds: string[] }> {
+    const held = this.unitRefusal();
+    if (held !== null) return bad(held);
+    const gated = this.#host.gate();
+    if (gated !== null) return bad(gated);
+    const { avatarId } = payload;
+    const active = this.#activeAvatar(avatarId);
+    if (!active.ok) return active;
+
+    // The items in the pick order; the lowest refused item is the one told, with its own reason and its path (one `clipReason` per error).
+    const chosen: { photoId: string; facts: Facts; motion: ClipMotionChoice }[] = [];
+    for (const [i, item] of payload.items.entries()) {
+      const read = this.#readItem(avatarId, item.photoId);
+      if (read.kind === "refused") return bad({ code: "VALIDATION", clipReason: read.reason, path: ["items", i], detail: `item ${i} (photo ${item.photoId}) cannot be brought to life (${read.reason})` });
+      const motion = read.motions.find((choice) => choice.id === item.motionId);
+      if (motion === undefined) return bad({ code: "VALIDATION", clipReason: "unknown-motion", path: ["items", i], detail: `item ${i}: the motion ${item.motionId} is not one this photo offers` });
+      chosen.push({ photoId: item.photoId, facts: read.facts, motion });
+    }
+
+    // The price book of the batch, and each member's share: its worst case under it (Kling-only for «Смелая», max(Kling, Grok) in `auto` with a fallback allowed).
+    if (this.#prices === "missing") return bad(this.#unavailable());
+    const book = this.#rates;
+    const drafts = chosen.map((member) => {
+      const fallback = this.#fallbackOf(member.facts) === "none" ? ("none" as const) : payload.fallback;
+      const request: ClipRequest = { model: "kling", quality: payload.quality, seconds: payload.seconds, fallback };
+      const share = clipWorstMicros({ ...request, mode: this.#mode, bold: member.facts.bold, boldClips: this.#boldClips, prices: book });
+      return { ...member, request, share };
+    });
+    const total = clipBatchWorstMicros(
+      chosen.map((member) => ({ bold: member.facts.bold })),
+      { quality: payload.quality, seconds: payload.seconds, mode: this.#mode, fallback: payload.fallback, boldClips: this.#boldClips, prices: book },
+    );
+    if (drafts.reduce((sum, d) => sum + d.share, 0) !== total) return bad({ code: "INTERNAL", detail: "the members' shares do not add up to the batch's worst case" });
+    if (total > payload.acceptedWorstMicros) return bad({ code: "PRICE_CHANGED", detail: `the worst case is now ${total} µ$, above the accepted ${payload.acceptedWorstMicros} µ$` });
+    // The month is held for every member at once (`Budget.tryHold`): all or nothing.
+    if (!this.#fits(total)) return bad({ code: "BUDGET_EXCEEDED", detail: `committed ${this.#committed()} µ$ + the batch's ${total} µ$ > the limit ${this.#host.monthlyBudgetMicros()} µ$; nothing was held` });
+
+    const batchId = this.#host.nextId("batch");
+    const size = drafts.length;
+    const members: BatchMember<MemberPayload>[] = drafts.map((d, i) => {
+      const job = this.#newJob(avatarId, "create", "queued");
+      job.facts = { photoId: d.photoId, request: d.request, motion: { source: "code", label: d.motion.label }, acceptedWorstMicros: d.share };
+      job.batch = { batchId, batchIndex: i + 1, batchSize: size };
+      this.#monthHolds.set(attemptIdOf(job.clipId, 1), d.share);
+      return {
+        index: i + 1,
+        photoId: d.photoId,
+        bold: d.facts.bold,
+        share: d.share,
+        jobId: job.jobId,
+        clipId: job.clipId,
+        held: true,
+        retried: false,
+        payload: { request: d.request, motion: { source: "code", label: d.motion.label, text: d.motion.text }, facts: d.facts },
+        state: "queued",
+        wake: null,
+      };
+    });
+    for (const member of members) this.#progress(this.#jobs.get(member.jobId) ?? this.#absent(member.jobId), { phase: "queued", waitReason: "turn" });
+    this.#book = { rates: book, readAtMs: this.#host.clockMs(), live: this.#prices === "live" };
+    const batch = new MockClipBatch<MemberPayload>(this.#batchPorts(avatarId, batchId, size), { id: batchId, avatarId, members });
+    for (const member of members) {
+      const job = this.#jobs.get(member.jobId);
+      if (job !== undefined) job.member = { batch, ref: member };
+    }
+    this.#remember(batch);
+    this.#unit = { kind: "batch", batch };
+    batch.start();
+    return good({ batchId, jobIds: members.map((member) => member.jobId) });
+  }
+
+  #absent(jobId: string): never {
+    throw new Error(`no clip job ${jobId}`);
+  }
+
+  /** The batches kept: the running ones, and the last few that ended (the engine keeps 50). */
+  #remember(batch: MockClipBatch<MemberPayload>): void {
+    this.#batches.set(batch.id, batch);
+    const finished = [...this.#batches.values()].filter((candidate) => candidate.over);
+    for (const old of finished.slice(0, Math.max(0, finished.length - 50))) this.#batches.delete(old.id);
+  }
+
+  /** `clips.cancelBatch` (I5.63): every member still queued is cancelled, free; a member already sent is never cancelled. The count of those cancelled. NOT_FOUND for a batch this avatar does not have. */
+  cancelBatch(payload: CommandPayload<"clips.cancelBatch">): Out<{ cancelled: number }> {
+    const batch = this.#batches.get(payload.batchId);
+    if (batch === undefined || batch.avatarId !== payload.avatarId) return bad({ code: "NOT_FOUND", detail: `avatar ${payload.avatarId} has no batch ${payload.batchId}` });
+    return good({ cancelled: batch.cancelQueued() });
+  }
+
+  /** A timer of the mock's scheduler that moves the mock's clock as it fires, without a job to own it (a batch's own waits). */
+  #later(ms: number, fn: () => void): () => void {
+    const due = this.#host.clockMs() + ms;
+    return this.#host.scheduler.schedule(ms, () => {
+      this.#host.setClockAtLeast(due);
+      fn();
+    });
+  }
+
+  /** The price book at a member's turn: the cache while it is fresh (10 minutes for a live listing, a minute for the dated table: engine/money/priceCache.ts), else a read; null when the listing reads and lacks a price. */
+  #turnBook(): ClipPrices | null {
+    const now = this.#host.clockMs();
+    const cached = this.#book;
+    if (cached !== null && now - cached.readAtMs < (cached.live ? 10 * MINUTE : MINUTE)) return cached.rates;
+    if (this.#prices === "missing") return null;
+    this.#book = { rates: this.#rates, readAtMs: now, live: this.#prices === "live" };
+    return this.#rates;
+  }
+
+  /** A member's photo at its turn: still in the gallery of its avatar, and its file still usable as a first frame. */
+  #recheck(avatarId: string, photoId: string): "ok" | "gone" | "unreadable" {
+    const avatar = this.#host.avatar(avatarId);
+    if (avatar === undefined || this.#host.deletePending(avatarId) || this.#host.photo(avatarId, photoId) === undefined) return "gone";
+    return this.#pixels.has(photoId) ? "unreadable" : "ok";
+  }
+
+  /** What a batch needs of the mock: its clock, its ledger, its jobs, and the clip of one member. */
+  #batchPorts(avatarId: string, batchId: string, size: number): MockBatchPorts<MemberPayload> {
+    const host = this.#host;
+    const jobOf = (member: BatchMember<MemberPayload>): Job => this.#jobs.get(member.jobId) ?? this.#absent(member.jobId);
+    return {
+      clock: () => host.clockMs(),
+      later: (ms, fn) => this.#later(ms, fn),
+      timings: this.#t,
+      readKey: () => host.keyGate(),
+      readPrices: () => this.#turnBook(),
+      worstOf: (member, prices) => clipWorstMicros({ ...member.payload.request, mode: this.#mode, bold: member.bold, boldClips: this.#boldClips, prices }),
+      recheck: (member) => this.#recheck(avatarId, member.photoId),
+      alone: (member) => this.#alone(attemptIdOf(member.clipId, 1)),
+      told: (member, reason) => this.#progress(jobOf(member), { phase: "queued", waitReason: reason }),
+      cancelJob: (member, detail) => {
+        const job = jobOf(member);
+        this.#finish(job, detail === undefined ? { status: "cancelled" } : { status: "cancelled", detail });
+        host.emitMoney();
+      },
+      failJob: (member, error) => {
+        this.#finish(jobOf(member), { status: "failed", error });
+        host.emitMoney();
+      },
+      requeue: (member) => {
+        const first = jobOf(member);
+        const job = this.#newJob(avatarId, "create", "queued");
+        job.facts = first.facts === undefined ? undefined : { ...first.facts };
+        job.batch = { batchId, batchIndex: member.index, batchSize: size };
+        this.#progress(job, { phase: "queued", waitReason: "rate-limit" });
+        const next: BatchMember<MemberPayload> = { ...member, jobId: job.jobId, clipId: job.clipId, held: false, retried: true, state: "queued", wake: null };
+        job.member = { batch: first.member?.batch ?? this.#absent(member.jobId), ref: next };
+        return next;
+      },
+      runMember: (member, prices) => this.#startMember(member, prices, avatarId),
+      releaseHold: (member) => void this.#monthHolds.delete(attemptIdOf(member.clipId, 1)),
+      finished: () => {
+        this.#unit = null;
+        host.emitMoney();
+      },
+      log: () => undefined,
+    };
+  }
+
+  /** A member's turn has come: the clip of a single create, under the member's own job, share and price book. */
+  #startMember(member: BatchMember<MemberPayload>, prices: ClipPrices, avatarId: string): void {
+    const job = this.#jobs.get(member.jobId);
+    if (job === undefined) return;
+    const { payload } = member;
+    const run: CreateRun = {
+      job,
+      photoId: member.photoId,
+      request: payload.request,
+      motion: payload.motion,
+      accepted: member.share,
+      facts: payload.facts,
+      // The member plays the batch's next script when its first reserve is made, when its POST is about to leave (`#attempt`).
+      script: { first: "ok", then: "ok", face: undefined },
+      takesBatchScript: true,
+      createdAt: this.#host.nowIso(),
+      mode: this.#mode,
+      rates: prices,
+    };
+    this.#clipAvatars.set(job.clipId, avatarId);
+    this.#clipRates.set(job.clipId, prices);
+    this.#progress(job, { phase: "preparing" });
+    this.#after(job, this.#host.stepMs, () => this.#attempt(run, 1, "kling"));
   }
 
   #newJob(avatarId: string, kind: Job["kind"], phase: ClipPhase = "preparing", total: number = CLIP_JOB_STEPS, clipId?: string): Job {
@@ -967,12 +1347,14 @@ export class MockClips {
     job?.timers.push(cancel);
   }
 
-  #progress(job: Job, update: { phase: ClipPhase; model?: AttemptModel; submittedAt?: string; proveUntil?: string; done?: number }): void {
+  #progress(job: Job, update: { phase: ClipPhase; model?: AttemptModel; submittedAt?: string; proveUntil?: string; done?: number; waitReason?: WaitReason }): void {
     if (job.status !== "running") return;
     job.phase = update.phase;
     job.model = update.model;
     job.submittedAt = update.submittedAt;
     job.proveUntil = update.phase === "proving" ? update.proveUntil : undefined;
+    // What a batch member waits for is replaced by each update, like the model (engine/jobs.ts `clipPhase`); a member in the proof window waits for the strict proof (engine/clips/job.ts `attemptPhase`).
+    job.waitReason = update.waitReason ?? (job.batch !== undefined && update.phase === "proving" ? "proof" : undefined);
     if (job.facts !== undefined) {
       const open = this.#lines.filter((l) => l.clipId === job.clipId && l.state === "open").reduce((sum, l) => sum + l.worstMicros, 0);
       job.openReserveMicros = open > 0 ? open : undefined;
@@ -991,14 +1373,15 @@ export class MockClips {
       total: job.total,
       phase: job.phase,
       ...jobFactsOf(job),
+      ...jobBatchOf(job),
       ...(job.model === undefined ? {} : { model: job.model }),
       ...(job.submittedAt === undefined ? {} : { submittedAt: job.submittedAt }),
       ...(job.proveUntil === undefined ? {} : { proveUntil: job.proveUntil }),
     };
   }
 
-  /** Ends a job and tells the windows. A done job is at its full count and carries its clip. */
-  #finish(job: Job, end: { status: "done"; exported?: { relPath: string } } | { status: "failed"; error: EngineError } | { status: "cancelled" }): void {
+  /** Ends a job and tells the windows. A done job is at its full count and carries its clip. A cancelled batch member says why (`detail`). */
+  #finish(job: Job, end: { status: "done"; exported?: { relPath: string } } | { status: "failed"; error: EngineError } | { status: "cancelled"; detail?: ClipCancelDetail }): void {
     if (job.status !== "running") return;
     for (const cancel of job.timers) cancel();
     job.timers = [];
@@ -1015,16 +1398,21 @@ export class MockClips {
       this.#host.emit({ v, id: this.#host.nextId("evt"), kind: "event", type: "job.failed", payload: { ...ref, error: end.error } });
     } else {
       job.status = "cancelled";
-      this.#host.emit({ v, id: this.#host.nextId("evt"), kind: "event", type: "job.cancelled", payload: ref });
+      if (end.detail !== undefined) job.detail = end.detail;
+      this.#host.emit({ v, id: this.#host.nextId("evt"), kind: "event", type: "job.cancelled", payload: end.detail === undefined ? ref : { ...ref, detail: end.detail } });
     }
   }
 
-  /** Every reserve of the clip is settled or abandoned (or none was made): the slot goes, once. */
-  #closeMoney(job: Job): void {
+  /**
+   * Every reserve of the clip is settled or abandoned (or none was made): a single clip gives the unit back, once; a batch member then tells its batch how its money ended (`end`; absent when the machine never
+   * ran), which decides the next turn and the stops. Synchronous, so a stop or a requeue exists before the member's own `job.done` is announced.
+   */
+  #closeMoney(job: Job, end?: MockMoneyEnd): void {
     if (job.moneyClosed) return;
     job.moneyClosed = true;
-    if (this.#slot === job) this.#slot = null;
+    if (this.#unit?.kind === "clip" && this.#unit.job === job) this.#unit = null;
     this.#host.emitMoney();
+    job.member?.batch.closed(job.member.ref, end);
   }
 
   // ---------- the money state machine of one attempt (engine/clips/attempt.ts) ----------
@@ -1035,12 +1423,11 @@ export class MockClips {
     const host = this.#host;
     const tier = model === "grok" ? "grok" : request.quality;
     const reserveMicros = clipReserveMicros(run.rates[tier], request.seconds);
-    const scripted = n === 1 ? run.script.first : run.script.then;
     const clipId = job.clipId;
     // The budget's `blocked` comes before its limits (engine/money/budget.ts): a halted ledger, or reserves that wait for a reconcile, refuse the reserve with nothing sent.
     const blocked = host.reserveRefusal();
     if (blocked !== null) {
-      this.#closeMoney(job);
+      this.#closeMoney(job, { kind: "not-reserved", reason: blocked.code === "RECONCILE_REQUIRED" ? "RECONCILE_REQUIRED" : "HALTED" });
       if (n === 2) {
         // engine/clips/job.ts `not-reserved` after a free refusal: Kling settled 0 and Grok could not even be reserved (for a reason that is not room): the clip ends free as Kling's refusal, and the money status tells.
         host.emitMoney();
@@ -1051,25 +1438,42 @@ export class MockClips {
       this.#finish(job, { status: "failed", error: blocked });
       return;
     }
-    const refusedByMonth = (n === 2 && scripted === "no-room") || !this.#fits(reserveMicros);
+    // A batch member plays the batch's next script from its first reserve on: its POST is about to leave (a member that fails before it takes none, as the real provider is asked for none).
+    if (n === 1 && run.takesBatchScript === true && !this.#fates.has(clipId)) {
+      run.script = this.#batchScripts?.shift() ?? { first: "ok", then: "ok", face: undefined };
+      this.#fates.set(clipId, run.script);
+    }
+    const scripted = n === 1 ? run.script.first : run.script.then;
+    // The attempt's own month hold, if it has one, is what this reserve replaces: it is not counted twice (`Budget.tryReserve`).
+    const refusedByMonth = (n === 2 && scripted === "no-room") || !this.#fits(reserveMicros, attemptIdOf(clipId, n));
     if (refusedByMonth) {
-      this.#closeMoney(job);
       if (n === 2) {
+        this.#closeMoney(job, { kind: "failed", reason: "grok-no-room", aboveWorst: false });
         this.#commit(run, { model: "grok", attempts: this.#attemptsOf(clipId), outcome: { status: "failed", reason: "grok-no-room" } });
         return;
       }
+      this.#closeMoney(job, { kind: "not-reserved", reason: "BUDGET_EXCEEDED" });
       this.#dropJournal(clipId);
       this.#finish(job, { status: "failed", error: { code: "BUDGET_EXCEEDED", detail: `committed ${this.#committed()} µ$ + the clip's ${reserveMicros} µ$ > the limit ${host.monthlyBudgetMicros()} µ$; nothing was sent` } });
       return;
     }
     if (n === 1) {
-      this.#journal(clipId, { type: "requested", clipId, photoId: run.photoId, request, motion: run.motion, acceptedWorstMicros: run.accepted, at: run.createdAt });
+      this.#journal(clipId, { type: "requested", clipId, photoId: run.photoId, request, motion: run.motion, acceptedWorstMicros: run.accepted, ...(job.batch === undefined ? {} : { batch: { ...job.batch } }), at: run.createdAt });
       this.#files.set(clipId, { journal: true, record: false, media: false });
     }
     const line = this.#reserve(clipId, n, model, reserveMicros);
     this.#hold(line.attemptId, this.#t.holdUncertainMs);
     if (this.#otherMoneyOpen(line.attemptId)) this.#crowdedAtBaseline.add(line.attemptId);
     this.#progress(job, { phase: "submitting", model });
+    // The money state machine throws after the reserve: whether anything is open is not known (the journal stays, the reserve is left to the reconcile).
+    if (scripted === "fault") {
+      this.#after(job, host.stepMs, () => {
+        line.inFlight = false;
+        this.#closeMoney(job, { kind: "fault" });
+        this.#finish(job, { status: "failed", error: { code: "INTERNAL", detail: "the clip's money path failed" } });
+      });
+      return;
+    }
     // An unreadable `/credits` (`refused-uncounted`) is read three times, 5 s apart, for the net-usage baseline BEFORE the POST (engine/clips/attempt.ts): the send leaves 10 s later.
     const baselinePauses = scripted === "refused-uncounted" ? (PROOF_READ_TRIES - 1) * this.#t.proofRetryMs : 0;
     this.#after(job, host.stepMs + baselinePauses, () => this.#post(run, n, model, line, scripted));
@@ -1130,15 +1534,19 @@ export class MockClips {
     this.#hold(attemptId, this.#t.holdTerminalMs);
 
     // ----- completed -----
-    const completes: MockClipAttempt[] = ["ok", "ok-uncosted", "download-failed", "invalid-file", "disk-full"];
+    const completes: MockClipAttempt[] = ["ok", "ok-uncosted", "ok-above-worst", "download-failed", "invalid-file", "disk-full"];
     if (completes.includes(scripted)) {
       const uncosted = scripted === "ok-uncosted";
+      // 5b.2: a bill above the reserve is recorded, and the ledger halts (`SETTLE_ABOVE_WORST`); the clip is still delivered (engine/clips/attempt.ts, `aboveWorst`).
+      const above = scripted === "ok-above-worst";
+      const cost = above ? line.worstMicros + 1 : billed;
       const settleAndDeliver = (): void => {
-        this.#settle(line, uncosted ? line.worstMicros : billed, uncosted);
-        ended("completed", uncosted ? "worst" : "usage", uncosted ? undefined : billed);
-        this.#attemptsDone(job.clipId, { attemptId, model, providerJobId, outcome: "completed", ...(uncosted ? {} : { providerCostMicros: billed }), costSource: uncosted ? "worst" : "usage" });
+        this.#settle(line, uncosted ? line.worstMicros : cost, uncosted);
+        ended("completed", uncosted ? "worst" : "usage", uncosted ? undefined : cost);
+        this.#attemptsDone(job.clipId, { attemptId, model, providerJobId, outcome: "completed", ...(uncosted ? {} : { providerCostMicros: cost }), costSource: uncosted ? "worst" : "usage" });
         this.#completedHolds.add(attemptId);
-        this.#closeMoney(job);
+        if (above) host.haltLedger();
+        this.#closeMoney(job, { kind: "completed", aboveWorst: above });
         this.#deliver(run, model, scripted);
       };
       // engine/clips/attempt.ts `settleCompleted`: a poll with no usage asks `/generation` 15 s after the status, and a record not there yet is read again (three reads, 5 s apart): only then is the worst booked.
@@ -1179,7 +1587,7 @@ export class MockClips {
     line.inFlight = false;
     this.#attemptsDone(job.clipId, { attemptId: line.attemptId, model, providerJobId, outcome: "late", costSource: "none" });
     this.#progress(job, { phase: "late", model, submittedAt: iso(submittedMs) });
-    this.#closeMoney(job);
+    this.#closeMoney(job, { kind: "late" });
     const t = this.#t;
     if (scripted === "late-ok") {
       this.#after(job, t.latePollMs * 2, () => {
@@ -1211,7 +1619,7 @@ export class MockClips {
 
   /** The clip ends here with a failure the record says: the money is closed first, and nothing more is sent. */
   #fail(run: CreateRun, model: AttemptModel, reason: ClipFailReason): void {
-    this.#closeMoney(run.job);
+    this.#closeMoney(run.job, { kind: "failed", reason, aboveWorst: false });
     this.#commit(run, { model, attempts: this.#attemptsOf(run.job.clipId), outcome: { status: "failed", reason } });
   }
 
@@ -1314,6 +1722,7 @@ export class MockClips {
       recovered: false,
       exports: [],
       outcome: parts.outcome,
+      ...(job.batch === undefined ? {} : { batch: { ...job.batch } }),
     };
     this.#records.set(record.id, record);
     this.#journals.delete(record.id);
@@ -1339,6 +1748,8 @@ export class MockClips {
       fallback: record.attempts.some((a) => a.attemptId.endsWith("#2")),
       recovered: record.recovered,
       cost,
+      // 5b.2 (L9): a batch member tells its trio, all three or none, so the header survives `KEEP_FINISHED` and a restart.
+      ...(record.batch === undefined ? {} : { batchId: record.batch.batchId, batchIndex: record.batch.batchIndex, batchSize: record.batch.batchSize }),
       ...(providerCosts.length === 0 ? {} : { providerCostMicros: providerCosts.reduce((sum, micros) => sum + micros, 0) }),
       exports: record.exports.map((line, i): ClipExport => (withStates ? { ...line, fileState: this.#fileStateOf(record.id, i, line) } : { ...line })),
     };
@@ -1408,8 +1819,9 @@ export class MockClips {
     return good({ clipId: payload.clipId });
   }
 
+  /** An import holds the clip, or a job works on it. A batch member still waiting for its turn is not working on anything yet (engine/clips/service.ts: its clip id enters the active set when its turn comes). */
   #busyClip(clipId: string): boolean {
-    return this.#importing.has(clipId) || [...this.#jobs.values()].some((j) => j.status === "running" && j.clipId === clipId);
+    return this.#importing.has(clipId) || [...this.#jobs.values()].some((j) => j.status === "running" && j.clipId === clipId && !(j.member !== undefined && j.phase === "queued"));
   }
 
   delete(payload: CommandPayload<"clips.delete">): Out<{ clipId: string }> {
@@ -1539,8 +1951,11 @@ export class MockClips {
       return good({ jobId });
     }
     if (job.kind === "recovery") return bad({ code: "IN_FLIGHT", clipReason: "job-running", detail: "the clip is being recovered after a restart; it cannot be cancelled" });
+    // 5b.2 (I5.63): a batch member still waiting for its turn is cancelled alone, free; the rest of the batch goes on.
+    if (job.phase === "queued" && job.member?.batch.cancelMember(jobId) === true) return good({ jobId });
     if (job.phase !== "preparing") return bad({ code: "IN_FLIGHT", clipReason: "submitted", detail: "the clip has already been sent; it cannot be cancelled" });
-    this.#finish(job, { status: "cancelled" });
+    // A batch member the owner cancelled before its POST says so (engine/clips/service.ts `#endOf`).
+    this.#finish(job, job.member === undefined ? { status: "cancelled" } : { status: "cancelled", detail: "cancelled" });
     this.#closeMoney(job);
     return good({ jobId });
   }
@@ -1667,12 +2082,14 @@ export class MockClips {
         total: job.total,
         phase: job.phase,
         ...jobFactsOf(job),
+        ...jobBatchOf(job),
         ...(job.model === undefined ? {} : { model: job.model }),
         ...(job.submittedAt === undefined ? {} : { submittedAt: job.submittedAt }),
         ...(job.proveUntil === undefined ? {} : { proveUntil: job.proveUntil }),
       };
       if (job.status === "done" && job.result !== undefined) return { ...base, result: job.result };
       if (job.status === "failed" && job.error !== undefined) return { ...base, error: job.error };
+      if (job.status === "cancelled" && job.detail !== undefined) return { ...base, detail: job.detail };
       return base;
     });
   }
@@ -1690,7 +2107,12 @@ export class MockClips {
     for (const hold of this.#holds.values()) hold.cancel();
     this.#holds.clear();
     this.#jobs.clear();
-    this.#slot = null;
+    // 5b.2 (I5.63): the queued members of a batch are memory-only and die with the process, for free: no reserve, no journal, no record, and the month holds with them. No batch resumes after a restart.
+    for (const batch of this.#batches.values()) batch.drop();
+    this.#batches.clear();
+    this.#monthHolds.clear();
+    this.#book = null;
+    this.#unit = null;
     this.#exportQueue = [];
     this.#exportRunning = null;
     this.#restartedAtMs = host.clockMs();
@@ -1748,6 +2170,8 @@ export class MockClips {
     const requested = summary.requested;
     // As the engine's recovery job: the facts come from the journal's `requested` line, and a journal without one has none.
     if (requested !== null) job.facts = { photoId: requested.photoId, request: requested.request, motion: { source: requested.motion.source, label: requested.motion.label }, acceptedWorstMicros: requested.acceptedWorstMicros };
+    // 5b.2 (I5.63): a batch member sent before the restart recovers as a single clip does, and keeps its place in the batch (the journal's `requested` line carries it), so the «Клипы» header counts it.
+    if (requested?.batch !== undefined) job.batch = { ...requested.batch };
     this.#progress(job, { phase: "recovering" });
     if (requested === null || plan.kind === "stale-journal") {
       this.#finish(job, { status: "done" });
@@ -1768,6 +2192,7 @@ export class MockClips {
         recovered: true,
         exports: [],
         outcome,
+        ...(requested.batch === undefined ? {} : { batch: { ...requested.batch } }),
       });
       this.#journals.delete(clipId);
       this.#files.set(clipId, { journal: false, record: true, media: outcome.status === "ready" });
@@ -1879,6 +2304,8 @@ interface CreateRun {
   accepted: number;
   facts: Facts;
   script: Script;
+  /** 5b.2: a batch member's script is the batch's next, taken when its first reserve is made. */
+  takesBatchScript?: true;
   createdAt: string;
   mode: "auto" | "offer";
   /** The price list this create was priced by: the reserve and the charge use it, as `runClipJob({ prices: job.prices })` does. */
