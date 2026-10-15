@@ -119,20 +119,29 @@ export interface WorkTileProps {
   readonly money: string | null;
   readonly cancelling: boolean;
   readonly onCancel: (() => void) | null;
+  /** 5b.2 (S5.WB4): a batch member's place, the pill «6/10» at the poster's top right («Клип 6 из 10 в пакете»). */
+  readonly place?: { readonly index: number; readonly size: number };
+  /** 5b.2 (60): a member waiting its turn — calm: no shimmer, no spinner, no step under way; nothing is spent while it waits (README decision 10). */
+  readonly waiting?: boolean;
 }
 
 /** A clip at work (§6 40): the source photo dimmed, the phase with a spinner, the steps, the money that may still go; «Отменить» only before the POST. */
-export function WorkTile({ motion, avatarId, photoId, clip, line, done, total, length, money, cancelling, onCancel }: WorkTileProps) {
+export function WorkTile({ motion, avatarId, photoId, clip, line, done, total, length, money, cancelling, onCancel, place, waiting = false }: WorkTileProps) {
   const grok = clip.model === "grok";
   return (
-    <article className="clip-tile clip-tile-work" aria-label={`Клип в работе: ${motion}`} aria-busy="true">
+    <article className={waiting ? "clip-tile clip-tile-work clip-tile-queued" : "clip-tile clip-tile-work"} aria-label={`${waiting ? "Клип в очереди" : "Клип в работе"}: ${motion}`} aria-busy={waiting ? undefined : "true"}>
       <div className="ph clip-tile-poster">
         {photoId === null ? <PortraitPlaceholder seed={clip.clipId} label={`Кадр клипа «${motion}»`} /> : <Portrait avatarId={avatarId} photoId={photoId} label={`Кадр клипа «${motion}»`} />}
         <span className="clip-dim" />
-        {line.tone === "work" && <div className="shim" />}
+        {line.tone === "work" && !waiting && <div className="shim" />}
         <div className="clip-badges">
           <span className={`pill clip-state clip-state-${line.tone}`}>{line.pill}</span>
         </div>
+        {place !== undefined && (
+          <span className="pill mono batch-index" title={`Клип ${place.index} из ${place.size} в пакете`}>
+            {place.index}/{place.size}
+          </span>
+        )}
         <Pills length={length} tags={grok ? ["Grok"] : []} />
       </div>
       <div className="clip-cap">
@@ -141,11 +150,19 @@ export function WorkTile({ motion, avatarId, photoId, clip, line, done, total, l
             {motion}
           </h3>
         </div>
-        <p className={line.tone === "warn" ? "clip-phase clip-phase-warn" : line.tone === "quiet" ? "clip-phase clip-phase-quiet" : "clip-phase"} role="status">
-          <span className="spin" aria-hidden="true" />
-          <span>{line.text}</span>
-        </p>
-        <ClipSteps done={done} total={total} warn={line.tone === "warn"} />
+        {waiting ? (
+          // Not a live region: only the clip at work speaks (decision 13).
+          <p className="clip-phase clip-phase-wait">
+            <span className="wait-dot" aria-hidden="true" />
+            <span>{line.text}</span>
+          </p>
+        ) : (
+          <p className={line.tone === "warn" ? "clip-phase clip-phase-warn" : line.tone === "quiet" ? "clip-phase clip-phase-quiet" : "clip-phase"} role="status">
+            <span className="spin" aria-hidden="true" />
+            <span>{line.text}</span>
+          </p>
+        )}
+        <ClipSteps done={done} total={total} warn={line.tone === "warn"} idle={waiting} />
         {money !== null && <p className="mono faint clip-meta">{money}</p>}
         {line.cancel && onCancel !== null && (
           <div className="clip-actions">
@@ -170,10 +187,12 @@ export interface FailedTileProps {
   readonly onRedownload: (clip: Failed) => void;
   readonly onGrok: (clip: Failed) => void;
   readonly onRemove: (clip: Failed) => void;
+  /** 5b.2 (60 #rate-limit): a batch member's first 429 whose retry is on its way — «…снимем ещё раз в конце пакета.», no «Оживить снова…». */
+  readonly batchRetry?: boolean;
 }
 
-export function FailedTile({ clip, nowMs, bold, busy, onAgain, onRedownload, onGrok, onRemove }: FailedTileProps) {
-  const model = failedTile(clip, { nowMs, bold });
+export function FailedTile({ clip, nowMs, bold, busy, onAgain, onRedownload, onGrok, onRemove, batchRetry = false }: FailedTileProps) {
+  const model = failedTile(clip, { nowMs, bold, batchRetry });
   const name = clip.motion.label;
   return (
     <article className={`clip-tile clip-tile-failed clip-fail-${model.tone}`} aria-label={`Клип не получился: ${name}`}>

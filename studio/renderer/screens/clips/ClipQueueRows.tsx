@@ -21,13 +21,14 @@ export function ClipQueueRows({ jobs, avatars }: { jobs: readonly JobView[]; ava
   return (
     <>
       {rows.map((row) => (
-        <div key={row.jobId} className="side-meter side-clip">
+        // 5b.2 (S5.WB4): a batch's one row, «Клип 5/10 · Nini»: a long name ends in «…» and the phase goes under it, to the right; a wait reads grey.
+        <div key={row.jobId} className={row.batch === true ? "side-meter side-clip side-clip-batch" : "side-meter side-clip"}>
           <div className="side-meter-row">
-            <span>{row.label}</span>
-            <span className={row.warn ? "side-clip-warn" : "link-text"}>{row.phase}</span>
+            <span title={row.batch === true ? row.label : undefined}>{row.label}</span>
+            <span className={row.warn ? "side-clip-warn" : row.quiet === true ? "side-clip-quiet" : "link-text"}>{row.phase}</span>
           </div>
           {row.meter.kind === "steps" ? (
-            <ClipSteps done={row.meter.done} total={row.meter.total} warn={row.warn} />
+            <ClipSteps done={row.meter.done} total={row.meter.total} warn={row.warn} idle={row.quiet === true} />
           ) : (
             <div className="bar" aria-hidden="true">
               <span style={{ width: `${row.meter.percent}%` }} />

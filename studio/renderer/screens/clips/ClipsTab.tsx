@@ -4,8 +4,10 @@ import { useEngine } from "../../engine/react";
 import { isActiveJob, type JobView } from "../../engine/store";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice } from "../../ui/Notice";
+import { BatchHeader } from "./BatchHeader";
+import { batchRecordRoles, batchView, latestBatchId } from "./batchModel";
 import { clipLength, phaseLine, upUsd } from "./clipModel";
-import { clipDismissals, dismissClipJob, type ClipsControl } from "./clipsContext";
+import { batchDismissals, clipDismissals, dismissBatch, dismissClipJob, type ClipsControl } from "./clipsContext";
 import { ClipSheet } from "./ClipSheet";
 import { FailedJobTile, FailedTile, ReadyTile, WorkTile } from "./ClipTile";
 import { ClipViewer } from "./ClipViewer";
@@ -13,6 +15,9 @@ import { ClipViewer } from "./ClipViewer";
 // Stage 5, 5b.1, S5.V8: the avatar's «Клипы» tab (mockups 39–42, 46; plan s5b1 §6; README §S5.VD decisions 4–6). A gallery, not the «Видео» cards: a clip is a picture the owner
 // publishes. VideosTab's head (the title, the count, the path and «Папка «Готовые видео»») over a grid of 9:16 tiles: the clips at work first (from the store's jobs), then the clip
 // jobs that ended with no record, then the records newest first (`clips.list`). Every figure is the engine's.
+// 5b.2, S5.WB4 (mockups 60–60f): the newest batch's header over the tiles (BatchHeader, `batchView`); its members waiting their turn are calm tiles with their place «6/10» and no cancel of their own
+// («Отменить оставшиеся» is the header's, free: `clips.cancelBatch`); one tile per member — the first record of a member that has a later one is not drawn, and a first 429 whose retry is on its way says the
+// batch will shoot it again (README decision 9).
 
 type Ready = Extract<ClipSummary, { status: "ready" }>;
 type Failed = Extract<ClipSummary, { status: "failed" }>;
@@ -60,6 +65,14 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
   const [opening, setOpening] = useState(false);
   /** When this window first saw each clip job on its way: an elapsed time from another clock counts from here. */
   const seen = useRef(new Map<string, number>());
+  /** 5b.2: «Отменить оставшиеся» on its way, and what `clips.cancelBatch` answered (its `{cancelled}` is the header's N, L11). */
+  const [cancellingBatch, setCancellingBatch] = useState(false);
+  const [cancelled, setCancelled] = useState<{ batchId: string; count: number } | null>(null);
+  const batchTitle = useRef<HTMLHeadingElement>(null);
+  const [focusBatch, setFocusBatch] = useState(0);
+  useEffect(() => {
+    if (focusBatch > 0) batchTitle.current?.focus();
+  }, [focusBatch]);
 
   // A clip just started from the sheet: the tab's heading takes the focus, the new tile right under it. One-shot: the screen is told, so a later visit to the tab (→ from «Фото»)
   // leaves the focus on the tab.
@@ -92,6 +105,16 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
   const now = useNow(work.length > 0 || records.some((clip) => clip.status === "failed" && clip.retryDownloadUntil !== undefined));
   for (const job of work) if (!seen.current.has(job.jobId)) seen.current.set(job.jobId, Date.now());
 
+  // 5b.2: the batch's header and how its members' records are drawn. A member whose job ended and whose record is not listed yet is still at work (its tile above says «Сохраняем»).
+  const pendingJob = (job: JobView): boolean => job.kind === "clip" && job.clip !== undefined && job.status === "done" && behind(job) && !recordOf.has(job.clip.clipId);
+  const avatarJobs = view.jobs.filter((job) => job.avatarId === avatarId);
+  const roles = batchRecordRoles(records, avatarJobs, pendingJob);
+  const batchId = list.clips === null ? null : latestBatchId(records, avatarJobs);
+  const batch = batchId === null || batchDismissals(store).has(batchId) ? null : batchView(batchId, { records, jobs: avatarJobs, pending: pendingJob, cancelled });
+  // The cancel this window sent is answered: the button goes at once, whatever the members' own events still have to say.
+  const header = batch !== null && cancelled?.batchId === batch.batchId ? { ...batch, cancel: false } : batch;
+  const shownRecords = records.filter((clip) => roles.get(clip.clipId) !== "hidden");
+
   const money = view.money?.ledger === "open" ? view.money : null;
   const lateUntilOf = (job: JobView & { clip: NonNullable<JobView["clip"]> }): number | null => {
     if (money?.reconcileAvailableAt !== undefined) return Date.parse(money.reconcileAvailableAt);
@@ -119,6 +142,20 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
     const reply = await client.request("avatars.cancel", { jobId: job.jobId });
     if (reply.ok) store.markCancelling(job.jobId);
     else setError(reply.error);
+  }
+
+  /** 60: «Отменить оставшиеся» — free, without a question: the queued members go, a member at work finishes (I5.63). The focus then goes to the header's line, which says how many. */
+  async function cancelRest(id: string): Promise<void> {
+    setCancellingBatch(true);
+    setError(null);
+    const reply = await client.request("clips.cancelBatch", { avatarId, batchId: id });
+    setCancellingBatch(false);
+    if (!reply.ok) {
+      setError(reply.error);
+      return;
+    }
+    setCancelled({ batchId: id, count: reply.result.cancelled });
+    setFocusBatch((n) => n + 1);
   }
 
   async function remove(clip: Failed): Promise<void> {
@@ -204,7 +241,7 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
     return place !== null && isBoldCategory(place.photo.category) && BOLD_CLIPS !== "with-fallback";
   };
 
-  const empty = list.clips !== null && records.length === 0 && work.length === 0 && failedJobs.length === 0;
+  const empty = list.clips !== null && records.length === 0 && work.length === 0 && failedJobs.length === 0 && header === null;
   const folder = folderOf(rootDisplay, records);
 
   return (
@@ -213,7 +250,7 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
         <h2 ref={heading} id={titleId} className="videos-title" tabIndex={-1}>
           Клипы
         </h2>
-        {list.clips !== null && records.length > 0 && <span className="mono muted videos-sum">{records.length} · сначала новые</span>}
+        {list.clips !== null && shownRecords.length > 0 && <span className="mono muted videos-sum">{shownRecords.length} · сначала новые</span>}
         <div className="videos-folder">
           {folder !== null && (
             <span className="mono faint videos-path" title={folder}>
@@ -248,6 +285,22 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
         />
       )}
 
+      {header !== null && (
+        <BatchHeader
+          avatarId={avatarId}
+          batch={header}
+          cancelling={cancellingBatch}
+          titleRef={batchTitle}
+          onCancel={() => void cancelRest(header.batchId)}
+          onClose={() => {
+            dismissBatch(store, header.batchId);
+            setDismissals((n) => n + 1);
+            heading.current?.focus();
+          }}
+          onAgain={control.pickAgain}
+        />
+      )}
+
       {list.clips === null && list.error === null ? (
         <div className="clips-grid" aria-hidden="true">
           {Array.from({ length: 3 }, (_, i) => (
@@ -264,7 +317,7 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
           <span className="cand-slot-sub">Откройте фото и нажмите «Оживить».</span>
         </div>
       ) : (
-        <div ref={gridRef} className="clips-grid">
+        <div ref={gridRef} className={header !== null ? "clips-grid clips-grid-batch" : "clips-grid"}>
           {work.map((job) => {
             // What the tile shows is the engine's own: the job's facts, told in its events and its snapshot (S5.V8b), so a window that never saw the click draws it whole. Its money column is the one the
             // README's phase table names: «до $X — спишется при сверке» is what the ledger can still charge (`openReserveMicros`) in `late` and `recovering`, and the cap the sheet promised
@@ -273,7 +326,7 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
             const record = recordOf.get(job.clip.clipId);
             const phase = isActiveJob(job) ? (job.clip.phase ?? "preparing") : "saving";
             const line = phaseLine(
-              { phase, model: job.clip.model, submittedAt: job.clip.submittedAt, proveUntil: job.clip.proveUntil },
+              { phase, model: job.clip.model, submittedAt: job.clip.submittedAt, proveUntil: job.clip.proveUntil, waitReason: job.clip.waitReason },
               { nowMs: now, seenMs: seen.current.get(job.jobId) ?? now, lateUntilMs: lateUntilOf(job), grokOffer: facts?.request.model === "grok" },
             );
             const heldOpen = phase === "late" || phase === "recovering";
@@ -294,6 +347,8 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
                   money={moneyLine}
                   cancelling={view.cancellingJobs.has(job.jobId)}
                   onCancel={isActiveJob(job) ? () => void cancel(job) : null}
+                  place={job.clip.batch}
+                  waiting={phase === "queued"}
                 />
               </div>
             );
@@ -316,7 +371,7 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
               </div>
             );
           })}
-          {records
+          {shownRecords
             .filter((clip) => !workClips.has(clip.clipId))
             .map((clip) => (
               <div key={clip.clipId} className="clip-slot">
@@ -332,6 +387,7 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
                     onRedownload={(c) => void redownload(c)}
                     onGrok={(c) => void shootOnGrok(c)}
                     onRemove={(c) => void remove(c)}
+                    batchRetry={roles.get(clip.clipId) === "batch-retry"}
                   />
                 )}
               </div>
