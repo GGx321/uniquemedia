@@ -358,7 +358,11 @@ export class ClipBatch {
   #moneyMayBeOpen(member: BatchMember): boolean {
     const { ledger, status } = this.#ports.budget;
     if (ledger.failed || status().state === "halted") return true;
-    return ledger.reserveOf(clipAttemptId(member.clipId, 1)) !== undefined || ledger.reserveOf(clipAttemptId(member.clipId, 2)) !== undefined;
+    // A reserve counts only while it is OPEN: a fault after the settle (the journal's `ended` line failed) leaves nothing for a reconcile.
+    return [1, 2].some((n) => {
+      const attemptId = clipAttemptId(member.clipId, n as 1 | 2);
+      return ledger.reserveOf(attemptId) !== undefined && ledger.closeOf(attemptId) === undefined;
+    });
   }
 
   /**

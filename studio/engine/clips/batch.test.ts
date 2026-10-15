@@ -966,6 +966,19 @@ describe("ClipBatch: a fault inside the money machine (round 2, WB2d L1)", () =>
     expectClean(w);
   });
 
+  test("stops the batch `cancelled` when the faulted member's reserve was already settled: a fault after the settle leaves nothing open (R1)", async () => {
+    const w = newWorld();
+    w.script = (run, world) => {
+      const attempt = clipAttemptId(run.member.clipId, 1);
+      world.reserved.add(attempt);
+      world.closes.set(attempt, { type: "settle", estimated: false });
+      closeAs(world, run, { kind: "fault" });
+    };
+    await build(w, 3).run();
+
+    expect(details(w, ids(3))).toEqual([undefined, "cancelled", "cancelled"]);
+  });
+
   test("keeps `ledger-stopped` for a fault before any reserve when the ledger is halted", async () => {
     const w = newWorld();
     w.budgetHalted = true;
