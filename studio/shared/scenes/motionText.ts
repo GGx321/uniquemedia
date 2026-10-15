@@ -158,7 +158,7 @@ const TAKES_OFF_FORMS: readonly RegExp[] = [
  * one motion check's garment-anchored takes-off forms read it, and so does videoLook's `WORN_OR_HELD` (a garment only moved takes «comes off»).
  */
 export const GARMENT =
-  /\b(?:robes?|tops?(?!\s+(?:knee|leg|foot|arm|hand|of|step|stair|shelf|bunk)\b)|dress(?:es)?|shirts?|t-shirts?|tees?|blouses?|towels?|bras?|bralettes?|straps?|skirts?|jackets?|hoodies?|sweaters?|jumpers?|cardigans?|coats?|shorts|jeans|trousers|pants|leggings|bikinis?|swim(?:suits?|wear)|lingerie|stockings|tights|pajamas|pyjamas|nightgowns?|nighties?|nightdress(?:es)?|camisoles?|cami|bodysuits?|kimonos?|sarongs?|shawls?|panties|briefs|underwear|thongs?)\b/i;
+  /\b(?:robes?|tops?(?!\s+(?:knee|leg|foot|arm|hand|of|step|stair|shelf|bunk)\b)|dress(?:es)?|shirts?|t-shirts?|tees?|blouses?|towels?|bras?|bralettes?|straps?|skirts?|jackets?|hoodies?|sweaters?|jumpers?|cardigans?|coats?|shorts|jeans|trousers|pants|leggings|bikinis?|swimsuits?|swimwear|lingerie|stockings|tights|pajamas|pyjamas|nightgowns?|nighties?|nightdress(?:es)?|camisoles?|cami|bodysuits?|kimonos?|sarongs?|shawls?|panties|briefs|underwear|thongs?|babydolls?)\b/i;
 
 /**
  * Round 2: the same act said with a garment, in the words a model reaches for. Each needs a garment in what it moves (and none of `NOT_WORN`): a verb that moves it off,
@@ -168,11 +168,21 @@ export const GARMENT =
  */
 const MOVE_VERBS = "pull|pulls|pulling|tug|tugs|tugging|lift|lifts|lifting|ease|eases|easing|push|pushes|pushing|draw|draws|drawing|lower|lowers|lowering|slide|slides|sliding|slip|slips|slipping|peel|peels|peeling|roll|rolls|rolling|work|works|working|shrug|shrugs|shrugging|inch|inches|inching|take|takes|taking";
 const AWAY = String.raw`(?:off|down|away|open|apart|aside|over\s+her\s+head|from\s+her\s+(?:shoulders?|body|hips?|chest|arms?))`;
+/** Round 3: lifting what she wears takes it off too («lifts her shirt», «hikes up her skirt», «pulls her skirt up», «lifts the hem of her dress», «her skirt rides up»). */
+const UP_VERBS = "pull|pulls|pulling|roll|rolls|rolling|draw|draws|drawing|tug|tugs|tugging|hike|hikes|hiking|hitch|hitches|hitching";
 const GARMENT_FORMS: readonly RegExp[] = [
   new RegExp(String.raw`\b(?:${MOVE_VERBS})\s+((?:[a-z'-]+\s+){1,4}?)${AWAY}\b`, "gi"),
-  /\b(?:drop|drops|dropping|shed|sheds|shedding|open|opens|opening|unti\w*|undo|undoes|undoing|unhook\w*|unfasten\w*|unwrap\w*|unlac\w*|unclasp\w*|lower|lowers|lowering|loosen\w*)\b((?:\s+[a-z'-]+){1,3})/gi,
+  // Round 3: «parts» and «spreads» her robe, beside «opens» and «unties» it.
+  /\b(?:drop|drops|dropping|shed|sheds|shedding|open|opens|opening|part|parts|parting|spread|spreads|spreading|unti\w*|undo|undoes|undoing|unhook\w*|unfasten\w*|unwrap\w*|unlac\w*|unclasp\w*|lower|lowers|lowering|loosen\w*)\b((?:\s+[a-z'-]+){1,3})/gi,
   /\b(?:step|steps|stepping|wriggl\w*|wiggl\w*|get|gets|getting|climb\w*|shimm(?:y|ies|ying)|wrestl\w*)\s+out\s+of\b((?:\s+[a-z'-]+){1,3})/gi,
-  /\blet(?:s|ting)?\s+((?:[a-z'-]+\s+){1,3}?)(?:fall\s+|slip\s+|swing\s+)?open\b/gi,
+  /\blet(?:s|ting)?\s+((?:[a-z'-]+\s+){1,3}?)(?:(?:fall|slip|swing)\s+)?(?:open|part|parts)\b/gi,
+  // Round 3: «lifts», «raises», «hikes up», «hitches up» what she wears, its hem included («lifts the hem of her dress»).
+  /\b(?:lift|lifts|lifting|raise|raises|raising|hike|hikes|hiking|hitch|hitches|hitching)\b(?:\s+up)?((?:\s+[a-z'-]+){1,5})/gi,
+  // «pulls up her top», «rolls up her top»; «pulls her skirt up».
+  new RegExp(String.raw`\b(?:${UP_VERBS})\s+up\b((?:\s+[a-z'-]+){1,3})`, "gi"),
+  new RegExp(String.raw`\b(?:${UP_VERBS})\s+((?:[a-z'-]+\s+){1,3}?)up\b`, "gi"),
+  // «her skirt rides up».
+  /\b((?:[a-z'-]+\s+){1,3}?)(?:rides?|riding|creeps?|creeping)\s+up\b/gi,
 ];
 
 const wordsOf = (match: RegExpMatchArray): string[] => (match[1] ?? "").toLowerCase().match(/[a-z'-]+/g) ?? [];
@@ -257,7 +267,7 @@ const NUMBER_WORDS =
   /\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|dozen)\b/i;
 /** Exposure a model says beyond the bank's list (scenes/explicitWords.ts). */
 const EXPOSURE_MORE =
-  /\b(?:bare[- ](?:breasts?|chest(?:ed)?|bottom|butt)|breasts?|unclothed|undressed|in the nude|birthday suit|au naturel|wearing nothing|nothing on|without clothes|sans clothes)\b/gi;
+  /\b(?:bare[- ](?:breasts?|chest(?:ed)?|bottom|butt)|breasts?|unclothed|undressed|in the nude|birthday suit|au naturel|wearing nothing|nothing on|without clothes|sans clothes|(?:flash|reveal|expos|bare)\w*\s+(?:(?:her|a|an|some|little|bit|of|more|bare)\s+){0,4}(?:skin|chest|cleavage|breasts?|stomach|belly|midriff|bottom|butt|thighs?|body))\b/gi;
 /** Explicit acts and words a model says beyond the bank's list. */
 const EXPLICIT_MORE =
   /\b(?:spread(?:s|ing)?\s+(?:her\s+)?(?:legs|thighs)|touch(?:es|ing)?\s+herself|strok(?:e|es|ing)\s+herself|masturbat\w*|porn\w*|xxx|hentai|erotic\w*|explicit|moan\w*|grop\w*|horny|aroused)\b/gi;

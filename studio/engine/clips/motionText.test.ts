@@ -604,3 +604,70 @@ describe("the comma tail and the video words a model may add (round 2, LOW)", ()
     expect(vision("she turns a little, quickly")).toEqual(["not-small"]);
   });
 });
+
+// ---------- review round 3 ----------
+
+/** A «Ножки» frame whose camera sits low by her feet (an ordinary category): a lifted hem there is the risk the round names. */
+const LOW_FEET = planned("photoshoot", (m) => m.captures.includes("low-feet"), "low-feet");
+
+describe("lifting or parting clothing takes it off (round 3): takes-off, accepted only as an own idea on «Смелая»", () => {
+  const LIFTS = [
+    "she slowly lifts her shirt",
+    "she slowly lifts her skirt",
+    "she slowly raises her top",
+    "she slowly hikes up her skirt",
+    "she slowly pulls her skirt up",
+    "she slowly pulls up her top",
+    "she slowly rolls up her top",
+    "she slowly hitches up her dress",
+    "she slowly lifts the hem of her dress",
+    "her skirt slowly rides up a little",
+  ];
+  const PARTS = ["she slowly parts her robe", "she slowly lets her robe part", "she slowly spreads her robe"];
+
+  test("the low-feet frame is a «Ножки» frame of an ordinary category", () => {
+    expect({ capture: LOW_FEET.capture, legs: LOW_FEET.legs, bold: LOW_FEET.bold }).toEqual({ capture: "low-feet", legs: true, bold: false });
+  });
+
+  for (const text of [...LIFTS, ...PARTS]) {
+    test(`takes-off on an ordinary and a low-feet frame (own), and as vision on «Смелая»; accepted as own on «Смелая»: «${text}»`, () => {
+      expect(takesOff(text)).toBe(true);
+      expect(motionTextProblems(text, FRIEND, "own")).toEqual(["takes-off"]);
+      expect(motionTextProblems(text, LOW_FEET, "own")).toEqual(["takes-off"]);
+      expect(motionTextProblems(text, BOLD, "vision")).toEqual(["takes-off"]);
+      expect(motionTextProblems(text, BOLD, "own")).toEqual([]);
+    });
+  }
+
+  test("a lift, a part or a spread of what is not clothing stays a motion", () => {
+    for (const text of ["she slowly lifts her chin", "she slowly raises one hand", "she slowly pulls the blanket up a little", "she slowly parts her lips", "she slowly spreads her fingers", "she slowly lifts the cup a little"]) {
+      expect([text, takesOff(text)]).toEqual([text, false]);
+    }
+  });
+});
+
+describe("an exposure verb with a body part is exposure (round 3): content, but for an own idea on «Смелая»", () => {
+  const FLASHES = ["she slowly flashes her chest", "she slowly reveals her chest", "she slowly flashes a little skin", "she slowly bares her stomach", "she slowly exposes her thighs"];
+
+  for (const text of FLASHES) {
+    test(`content on an ordinary frame and as vision on «Смелая»; own on «Смелая» passes: «${text}»`, () => {
+      expect(motionTextProblems(text, FRIEND, "own")).toEqual(["content"]);
+      expect(motionTextProblems(text, FRIEND, "vision")).toEqual(["content"]);
+      expect(motionTextProblems(text, BOLD, "vision")).toEqual(["content"]);
+      expect(motionTextProblems(text, BOLD, "own")).toEqual([]);
+    });
+  }
+
+  test("her shoulders stay allowed", () => {
+    expect(motionTextProblems("she slowly bares her shoulders", FRIEND, "own")).toEqual([]);
+  });
+});
+
+describe("the babydoll is a garment (round 3): the check only recognises it, the content line decides what may be said", () => {
+  test("«drops her babydoll» and «pulls her babydoll over her head» as vision on «Смелая»: takes-off; as own there: accepted", () => {
+    for (const text of ["she slowly drops her babydoll", "she slowly pulls her babydoll over her head"]) {
+      expect([text, motionTextProblems(text, BOLD, "vision")]).toEqual([text, ["takes-off"]]);
+      expect([text, motionTextProblems(text, BOLD, "own")]).toEqual([text, []]);
+    }
+  });
+});

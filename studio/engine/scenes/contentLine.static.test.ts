@@ -36,8 +36,10 @@ describe("the word gate has one home (static)", () => {
     expect(/bikinis\?\|swimsuits\?/.test("never name bikini, swimsuit, swimwear")).toBe(false);
   });
 
-  test("the revealing-word alternation is written once, in shared/scenes/words.ts", () => {
-    expect(filesWith(/bikinis\?\|swimsuits\?/)).toEqual(["shared/scenes/words.ts"]);
+  // S5.WC2 round 3: the one motion check's GARMENT list (shared/scenes/motionText.ts) names swimwear too. It only RECOGNISES a garment, to read a motion that takes one off;
+  // whether a word may be said at a frame's level is still `contentProblems`'s, from this list.
+  test("the revealing-word alternation is written once, in shared/scenes/words.ts (the motion check's garment list beside it)", () => {
+    expect(filesWith(/bikinis\?\|swimsuits\?/)).toEqual(["shared/scenes/motionText.ts", "shared/scenes/words.ts"]);
   });
 
   test("only the content line, the re-export and the unchanged LLM-path sites name the revealing-word list or its helpers", () => {
@@ -98,8 +100,9 @@ describe("the word gate has one home (static)", () => {
   });
 
   // S5.9b2 (plan s5a3 §6.4, answer (b)): the garment itself is worn in the «Ночнушки и бельё» bank, the one production text that names it beside the rule's own home.
+  // S5.WC2 round 3: the one motion check's GARMENT list names it as well, only to recognise a motion that takes it off («drops her babydoll»); the exemption stays the content line's.
   test("the bold exemption is named only in boldRules.ts and read only by the content line, and the garment is worn only in the «Смелая» nightwear bank", () => {
     expect(filesWith(/\bBOLD_EXEMPT_YOUTH\b/)).toEqual(["shared/scenes/banks/boldRules.ts", "shared/scenes/contentLine.ts"]);
-    expect(filesWith(/babydoll/i)).toEqual(["shared/scenes/banks/boldRules.ts", "shared/scenes/banks/nightwear.ts", "shared/scenes/contentLine.ts"]);
+    expect(filesWith(/babydoll/i)).toEqual(["shared/scenes/banks/boldRules.ts", "shared/scenes/banks/nightwear.ts", "shared/scenes/contentLine.ts", "shared/scenes/motionText.ts"]);
   });
 });
