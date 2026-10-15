@@ -148,6 +148,17 @@
 /* 46: the clip's line inside the reconcile banner (controller decision 6) */
 .notice-text .notice-clip { display: block; margin-top: 4px; }
 
+/* 5b.2 (S5.WA4; mockups 41e, 44b): «в видео» on a tile, after the face badge — one badge for both ways a finished video holds the frame, its title
+   tells which (so it takes the pointer, unlike the badges' column) */
+.clip-used { gap: 4px; color: var(--text-2); font-size: 10.5px; pointer-events: auto; cursor: default; }
+.clip-used svg { color: var(--muted); }
+/* 44b: the lines under «Удалить клип?»'s text — a finished video (info), a draft that holds the copy (a warning), the render's refusal after «Удалить» (an alert) */
+.del-note { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 9px 11px; border: 1px solid var(--info-28); border-radius: 9px; background: var(--info-08); color: var(--text-2); font-size: 12.5px; line-height: 1.45; }
+.del-note > svg { flex-shrink: 0; margin-top: 2px; color: var(--info); }
+.del-note-warn, .del-note-alert { border-color: var(--warn-35); background: var(--warn-08); }
+.del-note-warn > svg, .del-note-alert > svg { color: var(--warn); }
+.del-note-alert { color: var(--text); }
+
 @media (prefers-reduced-motion: reduce) {
   .clip-play, .clip-export-bar > span { transition: none; }
 }
