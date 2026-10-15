@@ -58,6 +58,8 @@ export interface MockBatchPorts<P> {
   readonly worstOf: (member: BatchMember<P>, prices: ClipPrices) => number;
   readonly recheck: (member: BatchMember<P>) => "ok" | "gone" | "unreadable";
   readonly alone: (member: BatchMember<P>) => boolean;
+  /** WB2d (L1): whether a faulted member can have left money open: a reserve of either attempt is in the ledger, or the ledger is halted (engine/clips/batch.ts `#moneyMayBeOpen`). */
+  readonly moneyMayBeOpen: (member: BatchMember<P>) => boolean;
   /** The member waits: `queued` with the reason, announced. */
   readonly told: (member: BatchMember<P>, reason: "turn" | "alone" | "rate-limit") => void;
   /** A queued member never runs: its job ends cancelled (with why), announced; its month hold goes back. */
@@ -298,8 +300,8 @@ export class MockClipBatch<P> {
         if (end.reason === "RECONCILE_REQUIRED" || end.reason === "HALTED") this.#stop("ledger-stopped");
         return;
       case "fault":
-        // A defect inside the money machine: whether anything is open is not known, so the rest is not spent blind.
-        return this.#stop("ledger-stopped");
+        // A defect inside the money machine. «Needs a reconcile» is told only when it is true (engine/clips/batch.ts): a fault before any reserve leaves nothing open, and the stop is the plain `cancelled`.
+        return this.#stop(this.#ports.moneyMayBeOpen(member) ? "ledger-stopped" : "cancelled");
       case "cancelled":
       case "interrupted":
         return;

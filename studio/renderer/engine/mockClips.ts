@@ -200,7 +200,8 @@ export type MockClipAttempt =
   | "disk-full"
   | "no-room"
   | "ok-above-worst"
-  | "fault";
+  | "fault"
+  | "fault-early";
 
 export type MockClipFace = "match" | "mismatch" | "few-faces" | "worker";
 
@@ -1208,12 +1209,18 @@ export class MockClips {
 
   // ---------- clips.createBatch (5b.2, S5.WB3) ----------
 
+  /** WB2d (L2), as the engine's `#openClipMoneyRefusal`: a batch does not start while any clip reserve is open; the closest existing reason is `one-at-a-time`. */
+  #openClipMoneyRefusal(): EngineError | null {
+    const open = [...this.#host.reserves.keys()].some((attemptId) => attemptId.includes(":video#"));
+    return open ? { code: "IN_FLIGHT", clipReason: "one-at-a-time", detail: "another clip's money is still open; wait for it to close (or for the reconcile) before a batch" } : null;
+  }
+
   /**
    * The batch «Оживить выбранные» (plan s5b2 §5.2.2, I5.61-I5.63), refusal for refusal as the engine's `createBatch`: the unit first, then the key and the ledger, the avatar, each item in the pick order (its own
    * reason with its path), the price, the sum the owner accepted, and the month hold. Every refusal is free and leaves nothing behind: no hold, no job, no unit.
    */
   createBatch(payload: CommandPayload<"clips.createBatch">): Out<{ batchId: string; jobIds: string[] }> {
-    const held = this.unitRefusal();
+    const held = this.unitRefusal() ?? this.#openClipMoneyRefusal();
     if (held !== null) return bad(held);
     const gated = this.#host.gate();
     if (gated !== null) return bad(gated);
@@ -1337,6 +1344,10 @@ export class MockClips {
       worstOf: (member, prices) => clipWorstMicros({ ...member.payload.request, mode: this.#mode, bold: member.bold, boldClips: this.#boldClips, prices }),
       recheck: (member) => this.#recheck(avatarId, member.photoId),
       alone: (member) => this.#alone(attemptIdOf(member.clipId, 1)),
+      moneyMayBeOpen: (member) => {
+        const refusal = host.reserveRefusal();
+        return host.reserves.has(attemptIdOf(member.clipId, 1)) || host.reserves.has(attemptIdOf(member.clipId, 2)) || (refusal !== null && refusal.code !== "RECONCILE_REQUIRED");
+      },
       told: (member, reason) => this.#progress(jobOf(member), { phase: "queued", waitReason: reason }),
       cancelJob: (member, detail) => {
         const job = jobOf(member);
@@ -1564,6 +1575,14 @@ export class MockClips {
       this.#fates.set(clipId, run.script);
     }
     const scripted = n === 1 ? run.script.first : run.script.then;
+    // WB2d (L1): a defect before the journal's first line and the reserve (the line failed to write, a prompt did not build): the job fails INTERNAL with nothing open.
+    if (scripted === "fault-early") {
+      this.#after(job, host.stepMs, () => {
+        this.#closeMoney(job, { kind: "fault" });
+        this.#finish(job, { status: "failed", error: { code: "INTERNAL", detail: "the clip's money path failed before any reserve" } });
+      });
+      return;
+    }
     // The attempt's own month hold, if it has one, is what this reserve replaces: it is not counted twice (`Budget.tryReserve`).
     const refusedByMonth = (n === 2 && scripted === "no-room") || !this.#fits(reserveMicros, attemptIdOf(clipId, n));
     if (refusedByMonth) {

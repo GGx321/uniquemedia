@@ -332,6 +332,19 @@ describe("the stops (I5.62): the rest is cancelled for free, every hold released
     expect([...m.engine.peekClips().monthHolds]).toEqual([]);
   });
 
+  test("a defect before any reserve stops the queue `cancelled`, not `ledger-stopped`: nothing is open, so no reconcile is asked for (WB2d, L1)", async () => {
+    const m = makeBatchMock(3);
+    script(m, ["fault-early"]);
+    const { jobIds } = await startBatch(m, m.photoIds);
+    runUntilEnds(m, jobIds);
+    expect(types(m, jobIds)).toEqual(["job.failed", "job.cancelled", "job.cancelled"]);
+    expect(endOf(m.events, jobIds[0] ?? "")).toMatchObject({ payload: { error: { code: "INTERNAL" } } });
+    expect(rest(m, jobIds)).toEqual(["cancelled", "cancelled"]);
+    expect(m.engine.peekClips().posts).toHaveLength(0);
+    expect([...m.engine.peekClips().monthHolds]).toEqual([]);
+    expect((await money(m)).openReserveMicros ?? 0).toBe(0);
+  });
+
   test("a reserve the ledger refuses (halted, or a reconcile to do) fails that member and stops the rest `ledger-stopped`", async () => {
     const m = makeBatchMock(3);
     const { jobIds } = await startBatch(m, m.photoIds);
@@ -359,6 +372,19 @@ describe("the stops (I5.62): the rest is cancelled for free, every hold released
     expect(m.engine.peekClips().posts).toHaveLength(1);
     expect((await money(m)).unsettledMicros).toBe(504_000);
     expect([...m.engine.peekClips().monthHolds]).toEqual([]);
+  });
+
+  test("after an uncertain submit a new batch is refused `one-at-a-time`, free, while the clip's reserve is open (WB2d, L2)", async () => {
+    const m = makeBatchMock(3);
+    script(m, ["uncertain"]);
+    const { jobIds } = await startBatch(m, m.photoIds.slice(0, 1));
+    runUntilEnds(m, jobIds);
+    const posts = m.engine.peekClips().posts.length;
+
+    expect(await refusal(createBatch(m, m.photoIds.slice(1)))).toMatchObject({ code: "IN_FLIGHT", clipReason: "one-at-a-time" });
+    expect(m.engine.peekClips().posts).toHaveLength(posts);
+    expect([...m.engine.peekClips().monthHolds]).toEqual([]);
+    expect((await money(m)).unsettledMicros).toBe(504_000);
   });
 
   test("a clip that outlives its lifetime goes `late` and ends the queue `money-uncertain` before the later members are spent", async () => {
