@@ -608,9 +608,10 @@ function DraftEditor({
   // The unusable photos: a scene cell's, and (5b.2, I5.60) a clip copy's, told at the clip. The copy's photo is read from the copies' origins, which are known below.
   const flagged = photoProblems(state.spec, verdict, photoIndex ?? new Map(), originOf);
   const usedVideoId = flagged.find((f) => f.problem === "used")?.videoId ?? null;
-  // The first unusable photo of each clip: the timeline's «⚠ фото отклонено» tags.
+  // The first unusable photo of each clip: the timeline's «⚠ фото отклонено» tags. A copy whose origin is still being read gets none: why is not known
+  // yet (S5.WAR N2) — «Рендер» says «Проверяем фото…» and marks the kadr.
   const clipProblems = new Map<number, PhotoProblem>();
-  for (const cell of flagged) if (!clipProblems.has(cell.clip)) clipProblems.set(cell.clip, cell.problem);
+  for (const cell of flagged) if (cell.checking !== true && !clipProblems.has(cell.clip)) clipProblems.set(cell.clip, cell.problem);
   // A video not known after a FAILED read is not «being read»: the controls say the read failed, and a notice offers «Повторить». It stays so while a
   // retry is out (S5.WAR L2: the notice does not blink on each try, and the focus stays on its «Повторить»), until a read succeeds.
   const framesFailed = !framesAreKnown && videoFailures > 0;

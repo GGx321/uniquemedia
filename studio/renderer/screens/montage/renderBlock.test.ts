@@ -318,8 +318,15 @@ describe("photoProblems: a clip copy whose frame the engine refused", () => {
     expect(photoProblems(spec, { spec, issues }, photosOf(photo(3, { rejected: true, eligible: false })), originOf)).toMatchObject([{ clip: 1, problem: "rejected" }]);
   });
 
-  test("a window that cannot tell where the copy comes from still flags the clip, as unavailable", () => {
-    expect(photoProblems(spec, { spec, issues }, photosOf())).toMatchObject([{ clip: 1, cell: 0, problem: "unavailable" }]);
+  // S5.WAR N1, N2: a copy whose origin is not known yet is still flagged, but marked `checking`: why its frame is refused is not known, so it is not told
+  // as «фото недоступно» (its frame may simply be in the draft's own video).
+  test("a window that cannot tell where the copy comes from still flags the clip, marked as being checked", () => {
+    expect(photoProblems(spec, { spec, issues }, photosOf())).toEqual([{ clip: 1, cell: 0, photoId: "", problem: "unavailable", checking: true }]);
+    expect(photoProblems(spec, { spec, issues }, photosOf(), () => undefined)).toEqual([{ clip: 1, cell: 0, photoId: "", problem: "unavailable", checking: true }]);
+  });
+
+  test("a video known to be no copy (origin null) is told as an unavailable photo, not as being checked", () => {
+    expect(photoProblems(spec, { spec, issues }, photosOf(), () => null)).toEqual([{ clip: 1, cell: 0, photoId: "", problem: "unavailable" }]);
   });
 
   test("a scene cell and a copy flagged together come in timeline order", () => {
@@ -352,5 +359,11 @@ describe("renderBlock: a clip copy whose frame the engine refused", () => {
 
   test("blocks without a guess while the photos are not read", () => {
     expect(renderBlock(input({ spec, verdict, photos: null, originOf }))).toEqual({ text: "Проверяем фото…", settings: false, clips: [1] });
+  });
+
+  test("S5.WAR N2: blocks without a guess while the copy's origin is being read — not «фото недоступно»", () => {
+    const photos = photosOf(photo(3, { rejected: true, eligible: false }));
+    expect(renderBlock(input({ spec, verdict, photos, originOf: () => undefined }))).toEqual({ text: "Проверяем фото…", settings: false, clips: [1] });
+    expect(renderBlock(input({ spec, verdict, photos }))).toEqual({ text: "Проверяем фото…", settings: false, clips: [1] });
   });
 });

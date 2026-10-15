@@ -640,4 +640,45 @@ describe("S5.WA5 (M2): a draft's copy whose frame went bad in another window", (
     expect(slot?.classList.contains("ed-clip-flagged")).toBe(false);
     expect(slot?.textContent).toContain("▶ клип");
   });
+
+  test("S5.WAR N2: while the copy's origin is being read, «Рендер» says «Проверяем фото…» — never «фото недоступно»; read, the true reason", async () => {
+    // Held only once the editor opens: «Черновики» reads the flagged copies' origins too (N1).
+    const gate = { on: false, release: (): void => undefined };
+    const held = new Promise<void>((resolve) => {
+      gate.release = resolve;
+    });
+    const holding = (base: EngineClient): EngineClient => ({
+      ...base,
+      request: async (type, payload) => {
+        if (gate.on && type === "media.list" && "mediaIds" in payload && payload.mediaIds !== undefined) await held;
+        return base.request(type, payload);
+      },
+    });
+    const app = await mineStudio(holding);
+    const events: EventMessage[] = [];
+    app.client.subscribe((e) => events.push(e));
+    const h: Harness = { engine: app.engine, scheduler: app.scheduler, client: app.client, events };
+    const copy = await makeCopy(h, await makeClip(h, P(3), "g-breath"));
+    await asAnotherWindow(() => h.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: P(3), rejected: true }));
+    const made = await makeDraft(h.client, MIA.avatarId, []);
+    const saved = await asAnotherWindow(() => h.client.request("montages.save", { montageId: made.montageId, spec: { ...made.spec, clips: [photoClip(0, P(2)), photoClip(1, P(4)), copyClip(2, copy)] }, name: "утро дома" }));
+    if (!saved.ok) throw new Error(`montages.save: ${saved.error.code}`);
+    await openDrafts();
+    await screen.findByRole("heading", { level: 3, name: /Mia/ });
+    gate.on = true;
+    fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
+    await screen.findByRole("region", { name: "Таймлайн" });
+    await flush();
+
+    expect(document.body.textContent).toContain("Проверяем фото…");
+    expect(document.body.textContent?.includes("фото недоступно")).toBe(false);
+    expect(timeline().textContent?.includes("⚠ фото")).toBe(false);
+
+    gate.release();
+    await flush();
+    await flush();
+    expect(document.body.textContent).toContain("Кадр 3: фото отклонено — замените его");
+    const slot = within(timeline()).getByRole("button", { name: /^Кадр 3: / }).closest(".ed-clip-slot");
+    expect(slot?.textContent).toContain("⚠ фото отклонено");
+  });
 });
