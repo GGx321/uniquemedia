@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import type { AvatarSummary, ClipSummary, EngineError, PhotoSummary } from "../../../shared/engine";
+import type { AvatarSummary, ClipBatchSummary, ClipSummary, CommandResult, EngineError, PhotoSummary } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import { isActiveJob, type EngineStore, type EngineView, type JobView } from "../../engine/store";
 
@@ -64,10 +64,22 @@ export function useClips(): ClipsControl | null {
 export interface ClipList {
   /** Newest first; null until `clips.list` first answers. */
   readonly clips: readonly ClipSummary[] | null;
+  /**
+   * 5b.2 (S5.WB2c): the avatar's batch summaries as the engine wrote them, newest first; empty when it has none, null until `clips.list` first answers. A batch's header reads its members and its money from
+   * here, never from the records (a deleted clip is not a member that was dropped unshot).
+   */
+  readonly batches: readonly ClipBatchSummary[] | null;
   readonly error: EngineError | null;
   /** The clip jobs (ids) that had ended when the list on show was asked for: a job that ended after that may not be listed yet. Null until the first answer. */
   readonly readEnded: ReadonlySet<string> | null;
   readonly reread: () => void;
+}
+
+type ClipListState = Omit<ClipList, "reread">;
+
+/** What the window keeps of a `clips.list` answer: the clips, the engine's batch summaries (an answer without them is an avatar with none), and the jobs that had ended when it was asked for. */
+export function clipListStateOf(result: CommandResult<"clips.list">, asked: ReadonlySet<string>): ClipListState {
+  return { clips: result.clips, batches: result.batches ?? [], error: null, readEnded: asked };
 }
 
 /** The ended clip jobs of an avatar, as one key: a new end reads the list again. */
@@ -88,7 +100,7 @@ export function useClipList(avatarId: string, view: EngineView): ClipList {
   const ends = endsOf(view.jobs, avatarId);
   const exportKey = view.exportStatus === null ? "none" : view.exportStatus.status === "ok" ? "ok" : `unavailable:${view.exportStatus.reason}`;
   const [reread, setReread] = useState(0);
-  const [state, setState] = useState<{ clips: readonly ClipSummary[] | null; error: EngineError | null; readEnded: ReadonlySet<string> | null }>({ clips: null, error: null, readEnded: null });
+  const [state, setState] = useState<ClipListState>({ clips: null, batches: null, error: null, readEnded: null });
   // The jobs that had ended when a read began, kept in a ref so the read's effect reruns on the ends' key alone.
   const jobsRef = useRef(view.jobs);
   jobsRef.current = view.jobs;
@@ -99,7 +111,7 @@ export function useClipList(avatarId: string, view: EngineView): ClipList {
     const asked = new Set(endedJobs(jobsRef.current, avatarId).map((job) => job.jobId));
     void client.request("clips.list", { avatarId }).then((reply) => {
       if (!alive) return;
-      if (reply.ok) setState({ clips: reply.result.clips, error: null, readEnded: asked });
+      if (reply.ok) setState(clipListStateOf(reply.result, asked));
       else setState((now) => ({ ...now, error: reply.error }));
     });
     return () => {
