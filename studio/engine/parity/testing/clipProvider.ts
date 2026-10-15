@@ -1,9 +1,11 @@
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { MockModelReply } from "../../../renderer/engine/mockClipMotions";
 import type { MockClipAttempt, MockClipScript } from "../../../renderer/engine/mockClips";
 import { writeClip } from "../../clips/testing/clipFixtures";
 import { VIDEO_TIERS } from "../../money/prices";
+import { chatBody } from "../../openrouter/testing/fakes";
 import type { OpenRouterFetch, OpenRouterRequestInit, OpenRouterResponse } from "../../openrouter/types";
 
 // Test-only (Stage 5, 5b.1, S5.V7): the fake video provider of the parity rig. It answers what OpenRouter answers for a clip: the price listing, `POST /videos`, the poll, the file, `/generation` and
@@ -92,6 +94,17 @@ export interface ClipProvider {
   /** The provider has the file of a clip whose download failed (`download-failed`, `invalid-file`) again: a retry fetches it. */
   heal(healed: boolean): void;
   setPrices(mode: VideoListing): void;
+  /**
+   * 5b.2 (S5.WC4): the chat route of part C. The model's answers to the NEXT chat requests, one per request in the order they arrive (`MockModelReply`, the mock's own vocabulary). A request with no answer left is
+   * a defect of the story and throws. `timeout` and `network` are played by the mock alone (the real transport waits 60 s for the first and retries the second).
+   */
+  scriptChat(replies: readonly MockModelReply[]): void;
+  /** While held, a chat request that has arrived waits for its answer, however long the engine waits: the story releases it by this event, never by a clock. */
+  holdChat(held: boolean): void;
+  /** The chat requests waiting for their answer now. */
+  chatWaiting(): number;
+  /** The body of each chat request that left, in order: what the engine sent to the model. */
+  chatRequests(): string[];
   /** The model of each POST that left, in order. */
   posts(): AttemptModel[];
   close(): Promise<void>;
@@ -130,6 +143,12 @@ export function clipProvider(): ClipProvider {
   let batch: { first: MockClipAttempt; then: MockClipAttempt }[] | null = null;
   let submitGate: Promise<void> | null = null;
   let releaseSubmit: (() => void) | null = null;
+  /** 5b.2 (S5.WC4): the chat route of part C: the answers still to give, the bodies that arrived, and the gate that holds a request at the model. */
+  let chatReplies: MockModelReply[] = [];
+  const chatBodies: string[] = [];
+  let chatGate: Promise<void> | null = null;
+  let releaseChat: (() => void) | null = null;
+  let chatWaiting = 0;
   let klingStd = "0.084";
   let held = false;
   let arrived = false;
@@ -173,6 +192,7 @@ export function clipProvider(): ClipProvider {
       if (creditsDown()) return response(500, { error: { message: "credits are unreadable" } });
       return response(200, { data: { total_credits: 100, total_usage: usage() } });
     }
+    if (path === "/chat/completions" && init.method === "POST") return answerChat(init);
     if (path === "/videos" && init.method === "POST") {
       // 5b.2: a held POST has arrived and waits for its answer; the engine's request is out, and nothing is decided until the story lets it go.
       if (submitGate !== null) await submitGate;
@@ -185,6 +205,47 @@ export function clipProvider(): ClipProvider {
     if (path === "/generation") return answerGeneration(new URL(url).searchParams.get("id") ?? "");
     throw new Error(`the parity clip provider has no answer for ${init.method} ${path}`);
   };
+
+  /** 5b.2 (S5.WC4): a part C chat request (the vision writer's or the translator's): the next scripted answer, once the story lets it go. */
+  async function answerChat(init: OpenRouterRequestInit): Promise<OpenRouterResponse> {
+    chatBodies.push(init.body ?? "");
+    if (chatGate !== null) {
+      chatWaiting += 1;
+      try {
+        await chatGate;
+      } finally {
+        chatWaiting -= 1;
+      }
+    }
+    const reply = chatReplies.shift();
+    if (reply === undefined) throw new Error("the parity clip provider was asked for a chat answer the story did not script");
+    return chatResponse(reply);
+  }
+
+  /** What a scripted answer bills: the mock's default (the call's expected figure) is the mock's, so a story that plays both rigs names the figure. */
+  function billedChat(costMicros: number | undefined): number {
+    if (costMicros === undefined) throw new Error("a story that plays the real rig names the cost of every chat answer it scripts");
+    return costMicros;
+  }
+
+  function chatResponse(reply: MockModelReply): OpenRouterResponse {
+    switch (reply.kind) {
+      case "answer":
+        return response(200, chatBody(reply.content, { cost: dollars(billedChat(reply.costMicros)) }));
+      case "empty":
+        return response(200, chatBody(null, { cost: dollars(billedChat(reply.costMicros)) }));
+      case "unusable-body":
+        // Paid, and not a chat answer at all: the engine settles it at the attempt's worst case and ends the call.
+        return response(200, { note: "this is not a chat completion" });
+      case "refused":
+        return response(400, { error: { message: MODERATION } });
+      case "http":
+        return response(reply.status, { error: { message: `HTTP ${reply.status}` } });
+      case "timeout":
+      case "network":
+        throw new Error(`\`${reply.kind}\` is played by the mock alone: the real transport waits 60 s for a timeout and retries a network failure (the engine's own tests hold both)`);
+    }
+  }
 
   function submit(init: OpenRouterRequestInit): OpenRouterResponse {
     const body: unknown = JSON.parse(init.body ?? "{}");
@@ -287,6 +348,22 @@ export function clipProvider(): ClipProvider {
       submitGate = null;
       releaseSubmit = null;
     },
+    scriptChat: (replies) => {
+      chatReplies = [...replies];
+    },
+    holdChat: (value) => {
+      if (value) {
+        chatGate ??= new Promise<void>((resolve) => {
+          releaseChat = resolve;
+        });
+        return;
+      }
+      releaseChat?.();
+      chatGate = null;
+      releaseChat = null;
+    },
+    chatWaiting: () => chatWaiting,
+    chatRequests: () => [...chatBodies],
     setKlingStdRate: (perSecondMicros) => {
       klingStd = String(perSecondMicros / 1_000_000);
     },

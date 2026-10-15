@@ -37,6 +37,7 @@ import { photoJpeg } from "../../clips/testing/engineClipKit";
 import { SHORT_CLIP_TIMINGS } from "../../clips/timings";
 import { clipFilePath, clipsDirOf } from "../../clips/store";
 import type { ExportFpsMode } from "../../clips/exportProfile";
+import type { MockModelReply } from "../../../renderer/engine/mockClipMotions";
 import type { MockClipScript } from "../../../renderer/engine/mockClips";
 import type { BoldClipsMode } from "../../../shared/engine";
 import { clipProvider, type ClipProvider } from "./clipProvider";
@@ -181,9 +182,42 @@ export interface ClipControl {
    * every clip job has ended, so no recovery runs and no event of the new process is about a clip.
    */
   restart(): Promise<void>;
+  /** 5b.2 (S5.WC4): the model's side of part C (the vision writer and the idea translator). */
+  readonly motions: MotionControl;
 }
 
+/**
+ * 5b.2 (S5.WC4): what only a rig can do to the model a part C call asks. The real rig answers through the fake provider's chat route (`clipProvider.scriptChat`) and the mock plays the same answers
+ * (`scriptNextMotionReplies`); the vocabulary is the mock's (`MockModelReply`). Every answer a story scripts names its cost, so the two rigs bill the same.
+ */
+export interface MotionControl {
+  /** The model's answers to the NEXT chat requests, one per request in the order they are sent (a writer's or a translator's attempt). */
+  script(replies: readonly MockModelReply[]): void;
+  /** While held, a chat request that has been sent waits for its answer; released, every waiting request goes on. */
+  hold(held: boolean): void;
+  /** Waits until `count` chat requests are out and unanswered (the call is «at the model»). */
+  untilAtModel(count?: number): Promise<void>;
+  /** The photo's motion store has issued every id of the source: its next call is `motions-full`. */
+  fillIds(photoId: string, source: "vision" | "own"): Promise<void>;
+}
+
+const NO_MOTIONS: MotionControl = {
+  script: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+  hold: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+  untilAtModel: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+  fillIds: () => {
+    throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
+  },
+};
+
 const NO_CLIPS: ClipControl = {
+  motions: NO_MOTIONS,
   next: () => {
     throw new Error("this rig has no clips: the story needs `rig: { clips: true }`");
   },
@@ -888,6 +922,16 @@ export function mockRig(options: RigOptions = {}): ParityRig {
                 engine.restart();
                 scheduler.runAll();
               },
+              motions: {
+                script: (replies) => engine.scriptNextMotionReplies(replies),
+                hold: (held) => engine.holdMotionCalls(held),
+                untilAtModel: async (count = 1) => {
+                  // The mock answers from promises, not from a clock: a few turns of the event loop bring a call to the model.
+                  for (let i = 0; i < 200 && engine.peekMotions().waiting < count; i++) await new Promise<void>((resolve) => setTimeout(resolve, 1));
+                  if (engine.peekMotions().waiting < count) throw new Error(`${count} part C call(s) never reached the model`);
+                },
+                fillIds: async (photoId, source) => engine.tamperMotionStore(photoId, (store) => void (store.next[source] = 1_000)),
+              },
             },
     },
     async stop() {
@@ -1446,6 +1490,8 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
         ? {}
         : {
             fetch: provider.fetch,
+            // 5b.2 (S5.WC4): the vision writer sees the photo as the rig seeded it (no ffmpeg here); the request is the engine's own.
+            clipDownscale: async (bytes) => bytes,
             clipTimings: SHORT_CLIP_TIMINGS,
             clipSwitches: {
               ...(clipRig?.mode === undefined ? {} : { mode: clipRig.mode }),
@@ -1881,6 +1927,26 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
                 await writeFile(file, "not the photo any more");
               },
               restart: quitAndReopen,
+              motions: {
+                script: (replies) => provider.scriptChat(replies),
+                hold: (held) => provider.holdChat(held),
+                untilAtModel: async (count = 1) => {
+                  const from = Date.now();
+                  while (provider.chatWaiting() < count) {
+                    if (Date.now() - from > 15_000) throw new Error(`${count} part C call(s) never reached the model`);
+                    await new Promise<void>((resolve) => setTimeout(resolve, 2));
+                  }
+                },
+                fillIds: async (photoId, source) => {
+                  const library = engine.library;
+                  const photo = library?.getPhoto(photoId);
+                  if (library === null || photo === undefined || clipWorld === undefined) throw new Error("the rig has no photo to fill the motion ids of");
+                  const folder = join(library.avatarDirPath(photo.avatarId), "motions");
+                  await mkdir(folder, { recursive: true });
+                  const next = { vision: 1, own: 1, [source]: 1_000 };
+                  await writeFile(join(folder, `${photoId}.json`), JSON.stringify({ schemaVersion: 1, photoId, photoSha256: photo.sha256, next, items: [] }));
+                },
+              },
             },
     },
     stop: async () => {
