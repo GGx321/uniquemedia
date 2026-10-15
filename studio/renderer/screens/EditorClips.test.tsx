@@ -411,6 +411,30 @@ describe("57e, 57f: the copy in the draft", () => {
   });
 });
 
+describe("S5.WAR M1: a clip deleted while its copy stands in a draft", () => {
+  test("the draft's kadr is told in neutral words: no «Моих», no «свой файл»", async () => {
+    const h = await clipsStudio();
+    const b = await makeClip(h, P(7), "g-tilt");
+    const copy = await makeCopy(h, b);
+    const made = await makeDraft(h.client, MIA.avatarId, []);
+    const saved = await asAnotherWindow(() => h.client.request("montages.save", { montageId: made.montageId, spec: { ...made.spec, clips: [photoClip(0, P(2)), photoClip(1, P(4)), copyClip(2, copy)] }, name: "утро дома" }));
+    if (!saved.ok) throw new Error(`montages.save: ${saved.error.code}`);
+    // 44b: «кадр будет помечен, пока его не замените» — the clip goes, its copy with it.
+    const deleted = await asAnotherWindow(() => h.client.request("clips.delete", { avatarId: MIA.avatarId, clipId: b }));
+    if (!deleted.ok) throw new Error(`clips.delete: ${deleted.error.code}`);
+    await openDrafts();
+    fireEvent.click(await screen.findByRole("button", { name: "Открыть" }));
+    await screen.findByRole("region", { name: "Таймлайн" });
+    await flush();
+    fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 3:/ }));
+    await flush();
+    expect(within(props()).getByText("Видео этого кадра больше нет в Studio — замените кадр.")).toBeDefined();
+    expect(within(props()).queryByText("свой файл") === null).toBe(true);
+    expect(document.body.textContent?.includes("Моих")).toBe(false);
+    expect(document.body.textContent?.includes("среди ваших файлов")).toBe(false);
+  });
+});
+
 describe("«Мои» never lists a clip's copy", () => {
   test("neither the copy nor a copy being made: the library reads empty", async () => {
     const h = await clipsStudio();
@@ -483,6 +507,12 @@ describe("round 2: a placement that can no longer go in, and a draft video not k
     expect(photo1.getAttribute("title")).toBe("Не удалось прочитать видео ролика.");
     fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 2:/ }));
     await flush();
+    // S5.WAR L1: a video whose origin is not known is neither «клип» nor the owner's own: plain «Видео», no tag.
+    expect(props().querySelector(".ed-video-name")?.textContent).toBe("Видео");
+    expect(props().querySelector(".ed-video-tags .tag") === null).toBe(true);
+    expect(timeline().querySelector(".ed-clip-on .ed-ctag-top") === null).toBe(true);
+    expect(screen.getByRole("button", { name: "Кадр 2: видео" })).toBeDefined();
+    expect(document.body.textContent?.includes("Своё видео")).toBe(false);
     expect(within(timeline()).getByRole("button", { name: "Разрезать по плейхеду" }).getAttribute("title")).toBe("Не удалось прочитать видео ролика.");
     expect(within(timeline()).getByRole("button", { name: "Дублировать выбранное" }).getAttribute("title")).toBe("Не удалось прочитать видео ролика.");
 

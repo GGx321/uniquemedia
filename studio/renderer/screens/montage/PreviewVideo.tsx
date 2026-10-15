@@ -4,6 +4,7 @@ import { FPS, type Rect, type Size } from "../../../shared/montage";
 import { useEngine } from "../../engine/react";
 import { ownVideoUrl } from "../../lib/media";
 import { Icon } from "../../ui/Icon";
+import { GONE_VIDEO_TEXT } from "./labels";
 import type { VideoLookup } from "./ownVideos";
 import type { PlayheadStore } from "./playhead";
 import { peekTarget, storedFrames, videoCorrection, videoTarget } from "./videoSync";
@@ -69,7 +70,8 @@ export function PreviewVideo({ spec, playhead, mediaId, video, window, sourceFra
       {playable ? (
         <VideoElement url={url} spec={spec} playhead={playhead} mediaId={mediaId} frames={storedFrames(known.durationMs)} peekFrame={peekFrame} style={placed} onFail={() => setFailed(url)} />
       ) : video.state === "gone" ? (
-        <VideoCard tone="warn" title="Файла больше нет" note="Это видео удалили из «Моих» — уберите этот кадр." />
+        // 5b.2 (S5.WAR M1): neutral — the video may have been a clip's copy, deleted with its clip.
+        <VideoCard tone="warn" title="Файла больше нет" note={GONE_VIDEO_TEXT} />
       ) : failed !== null && failed === url ? (
         <VideoCard tone="warn" title="Видео не открылось" note={name} />
       ) : (

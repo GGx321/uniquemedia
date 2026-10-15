@@ -112,13 +112,16 @@ export function VideoClipBody({ session, spec, index, video, problem, trimPeek, 
             {copy.source !== null && <span className="faint edc-card-src">{copy.source}</span>}
           </>
         ) : (
-          <span className="ed-video-name">{known?.name ?? (video.state === "gone" ? "Файла больше нет" : "Своё видео")}</span>
+          // 5b.2 (S5.WAR M1, L1): a video not read yet may be a clip's copy, and a gone one may have been: neither is called the owner's own.
+          <span className="ed-video-name">{known?.name ?? (video.state === "gone" ? "Файла больше нет" : "Видео")}</span>
         )}
         {known !== null && <span className="mono muted ed-video-facts">{videoFactsLabel(known)}</span>}
-        <span className="ed-video-tags">
-          <span className="tag">{copy !== null ? COPY_KIND : "свой файл"}</span>
-          {known?.hdrToSdr === true && <span className="tag tag-o">HDR → SDR</span>}
-        </span>
+        {(copy !== null || known !== null) && (
+          <span className="ed-video-tags">
+            <span className="tag">{copy !== null ? COPY_KIND : "свой файл"}</span>
+            {known?.hdrToSdr === true && <span className="tag tag-o">HDR → SDR</span>}
+          </span>
+        )}
         <span className="faint ed-video-mute">
           <Icon name="soundOff" size={13} />
           Звук видео не используется — в ролике только музыка
