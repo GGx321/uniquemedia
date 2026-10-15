@@ -3,6 +3,7 @@ import { HairLength, POOL_TEXT_MAX, PoolTime, youthWords } from "../../engine";
 import { CAPTURES, isHandCapture, LEGS_CAPTURES, posesFor, shotOf, type Capture } from "../captures";
 import { boldContentLevel, contentProblems } from "../contentLine";
 import { atOrBelow } from "../level";
+import { bankMotionFindings, type BankMotionRule } from "../motionText";
 import { momentAllowed } from "../render";
 import {
   AWAY_ACTION_WORDS,
@@ -25,8 +26,6 @@ import {
   LEG_COVERING_OUTFIT,
   LEGS_UNSUITED_OUTFITS,
   LYING_START,
-  MOTION_SMALL,
-  MOTION_STAGING,
   PHONE_WORDS,
   SELFIE_WORDS,
   unfabricBottomsIn,
@@ -181,7 +180,6 @@ const GAZE_START = /^(looking|glancing|giving|her eyes|eyes|checking)\b/;
 const CUE_START = /^(?:(?:a|an|one|her)\s|mid-)/;
 const CUE_GAZE = /\b(look\w*|glanc\w*|gaz\w*|star(?:e|es|ing)|eyes?|viewer|camera|lens|phone)\b/i;
 const HAIR_START = /^(in|half|tucked|pinned|blow-dried|a little|twisted|loose|worn|swept|down|braided|clipped|tied)\b/;
-const MOTION_START = /^(she|her)\s/;
 const MIRROR = /mirror/i;
 const VIEWER = /\bviewer\b/i;
 
@@ -238,14 +236,28 @@ function plainWords(text: string): string[] {
   return (text.toLowerCase().match(/[a-z]+(?:-[a-z]+)*/g) ?? []).filter((w) => w.length >= 3 && !SHARED_WORDS.has(w));
 }
 
+/** The bank's rule id of each motion rule of the one check (shared/scenes/motionText.ts). */
+const MOTION_RULE_IDS: Readonly<Record<BankMotionRule, Rule>> = {
+  printable: BANK_RULE.text,
+  length: BANK_RULE.text,
+  youth: BANK_RULE.youth,
+  "youth-prop": BANK_RULE.youthProp,
+  "hair-colour": BANK_RULE.hairColour,
+  selfie: BANK_RULE.selfie,
+  camera: BANK_RULE.camera,
+  "she-her": BANK_RULE.motionGrammar,
+  small: BANK_RULE.motionGrammar,
+  "one-movement": BANK_RULE.motionGrammar,
+  staging: BANK_RULE.motionStaging,
+  "phone-moment": BANK_RULE.motionPhone,
+};
+
+/**
+ * S5.WC2 (plan s5b2 I5.66): a motion is held to the one motion check, the same that holds a code motion, a vision suggestion and the owner's idea; this adapter names each finding
+ * with the bank's own rule id, in the check's words and order (banks/motionAdapter.test.ts pins them to the lines this loader wrote before). A start pose is a text, not a motion.
+ */
 function checkMotion(add: Add, where: string, moment: Moment, bold: boolean): void {
-  const motion = moment.motion;
-  checkText(add, `${where} (motion)`, motion, MOTION_TEXT_MAX, bold);
-  if (!MOTION_START.test(motion)) add(BANK_RULE.motionGrammar, `${where} (motion)`, "opens with «she» or «her»");
-  if (!MOTION_SMALL.test(motion)) add(BANK_RULE.motionGrammar, `${where} (motion)`, "is small or slow: «slowly», «a little», «a bit», «slightly», «gently» or «small»");
-  if (/\bthen\b|;/.test(motion) || (motion.match(/\band\b/g) ?? []).length > 1) add(BANK_RULE.motionGrammar, `${where} (motion)`, "is one movement (at most a there-and-back with one «and»)");
-  if (MOTION_STAGING.test(motion)) add(BANK_RULE.motionStaging, `${where} (motion)`, "moves her, never the camera or the edit");
-  if (PHONE_WORDS.test(motion) && moment.phone !== true) add(BANK_RULE.motionPhone, `${where} (motion)`, "brings in a phone the moment does not use (a second phone)");
+  for (const finding of bankMotionFindings(moment.motion, bold ? boldContentLevel() : "ordinary", moment.phone === true)) add(MOTION_RULE_IDS[finding.rule], `${where} (motion)`, finding.what);
   if (moment.startPose !== undefined) checkText(add, `${where} (start pose)`, moment.startPose, MOTION_TEXT_MAX, bold);
 }
 
