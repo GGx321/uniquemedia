@@ -965,13 +965,14 @@ export class MockClips {
     return facts.bold && this.#boldClips !== "with-fallback" ? "none" : this.#mode;
   }
 
-  #estimate(parts: Omit<ClipPriceParts, "prices" | "mode" | "boldClips">): Estimate | null {
-    if (this.#prices === "missing") return null;
-    const full: ClipPriceParts = { ...parts, mode: this.#mode, boldClips: this.#boldClips, prices: this.#rates };
+  /** `book`: a price book already read (a batch's: the cache's, which a listing that has since lost a price does not change); without it the listing is read now, fresh, as a single clip does. */
+  #estimate(parts: Omit<ClipPriceParts, "prices" | "mode" | "boldClips">, book?: ClipPrices): Estimate | null {
+    if (book === undefined && this.#prices === "missing") return null;
+    const full: ClipPriceParts = { ...parts, mode: this.#mode, boldClips: this.#boldClips, prices: book ?? this.#rates };
     return {
       expectedMicros: clipExpectedMicros(full),
       worstMicros: clipWorstMicros(full),
-      prices: this.#prices,
+      prices: this.#prices === "missing" ? "live" : this.#prices,
       pricesAsOf: this.#prices === "fallback" ? FALLBACK_DATE : this.#host.pricesAsOf(),
     };
   }
@@ -1010,15 +1011,15 @@ export class MockClips {
   }
 
   /** The sheet of one suitable photo (`ClipOptions`): its prices from one book, and whether the month (`fits`, one yes-or-no on a worst case) takes each option. */
-  #suitableOptions(photoId: string, facts: Facts, motions: readonly ClipMotionChoice[], fits: (worstMicros: number) => boolean): Extract<ClipOptions, { suitable: true }> {
+  #suitableOptions(photoId: string, facts: Facts, motions: readonly ClipMotionChoice[], fits: (worstMicros: number) => boolean, book?: ClipPrices): Extract<ClipOptions, { suitable: true }> {
     const fallback = this.#fallbackOf(facts);
     const kling = (quality: ClipQuality, seconds: ClipSeconds, withFallback: "auto" | "none"): Estimate => {
-      const estimate = this.#estimate({ model: "kling", quality, seconds, fallback: withFallback, bold: facts.bold });
+      const estimate = this.#estimate({ model: "kling", quality, seconds, fallback: withFallback, bold: facts.bold }, book);
       if (estimate === null) throw new Error("unreachable");
       return estimate;
     };
     const grok = (seconds: ClipSeconds): Estimate => {
-      const estimate = this.#estimate({ model: "grok", quality: "std", seconds, fallback: "none", bold: facts.bold });
+      const estimate = this.#estimate({ model: "grok", quality: "std", seconds, fallback: "none", bold: facts.bold }, book);
       if (estimate === null) throw new Error("unreachable");
       return estimate;
     };
@@ -1066,19 +1067,21 @@ export class MockClips {
     const active = this.#activeAvatar(payload.avatarId);
     if (!active.ok) return active;
     const reads = payload.photoIds.map((photoId) => this.#readItem(payload.avatarId, photoId));
-    if (this.#prices === "missing") return bad(this.#unavailable());
+    // The price goes through the cache, as the engine's does (10 minutes for a live listing): a listing that lost a price a minute ago is not seen yet.
+    const book = this.#turnBook();
+    if (book === null) return bad(this.#unavailable());
     const room = this.#monthRoom();
     const fits = (worstMicros: number): boolean => worstMicros <= room;
     const items = reads.map((read, i): ClipOptions => {
       const photoId = payload.photoIds[i] ?? "";
       if (read.kind === "refused") return { suitable: false, photoId, reason: read.reason };
-      return this.#suitableOptions(photoId, read.facts, read.motions, fits);
+      return this.#suitableOptions(photoId, read.facts, read.motions, fits, book);
     });
     const members = reads.flatMap((read) => (read.kind === "suitable" ? [{ bold: read.facts.bold }] : []));
     const anyFallback = items.some((item) => item.suitable && item.fallback === "auto");
     const sum = (quality: ClipQuality, seconds: ClipSeconds) => {
       if (members.length === 0) return { expected: 0, worst: 0, worstNoFallback: 0 };
-      const parts = { quality, seconds, mode: this.#mode, boldClips: this.#boldClips, prices: this.#rates };
+      const parts = { quality, seconds, mode: this.#mode, boldClips: this.#boldClips, prices: book };
       return {
         expected: clipBatchExpectedMicros(members, { ...parts, fallback: "auto" }),
         worst: clipBatchWorstMicros(members, { ...parts, fallback: "auto" }),
@@ -1168,8 +1171,8 @@ export class MockClips {
     }
 
     // The price book of the batch, and each member's share: its worst case under it (Kling-only for «Смелая», max(Kling, Grok) in `auto` with a fallback allowed).
-    if (this.#prices === "missing") return bad(this.#unavailable());
-    const book = this.#rates;
+    const book = this.#turnBook();
+    if (book === null) return bad(this.#unavailable());
     const drafts = chosen.map((member) => {
       const fallback = this.#fallbackOf(member.facts) === "none" ? ("none" as const) : payload.fallback;
       const request: ClipRequest = { model: "kling", quality: payload.quality, seconds: payload.seconds, fallback };
@@ -1207,7 +1210,6 @@ export class MockClips {
       };
     });
     for (const member of members) this.#progress(this.#jobs.get(member.jobId) ?? this.#absent(member.jobId), { phase: "queued", waitReason: "turn" });
-    this.#book = { rates: book, readAtMs: this.#host.clockMs(), live: this.#prices === "live" };
     const batch = new MockClipBatch<MemberPayload>(this.#batchPorts(avatarId, batchId, size), { id: batchId, avatarId, members });
     for (const member of members) {
       const job = this.#jobs.get(member.jobId);

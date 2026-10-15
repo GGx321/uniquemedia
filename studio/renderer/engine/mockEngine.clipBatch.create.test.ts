@@ -99,6 +99,20 @@ describe("clips.batchOptions", () => {
     await nothingLeft(m);
   });
 
+  test("reads the price through the cache, as the engine does: a listing that lost a price a moment ago is not seen until the cache (10 minutes) has run out", async () => {
+    const m = makeBatchMock(2);
+    await unwrap(batchOptions(m, m.photoIds));
+    m.engine.setVideoPrices("missing");
+    expect((await batchOptions(m, m.photoIds)).ok).toBe(true);
+    const { jobIds } = await startBatch(m, m.photoIds);
+    runUntilEnds(m, jobIds);
+    // The batch's own turns re-read the book as it was at its create (the cache is fresh), so five minutes later the cache still answers; six minutes after that it has run out.
+    m.engine.passClipTime(5 * 60_000);
+    expect((await batchOptions(m, m.photoIds)).ok).toBe(true);
+    m.engine.passClipTime(6 * 60_000);
+    expect(await refusal(batchOptions(m, m.photoIds))).toMatchObject({ code: "PRICE_UNAVAILABLE", priceScope: "video" });
+  });
+
   test("NOT_FOUND for an avatar the library does not have", async () => {
     const m = makeBatchMock(1);
     expect((await refusal(batchOptions(m, m.photoIds, "avatar-nope-0001"))).code).toBe("NOT_FOUND");
