@@ -460,9 +460,9 @@ describe("MotionProblem", () => {
       "not-small": "Так не получится: движение слишком большое — опишите небольшое и медленное.",
       "too-long": "Так не получится: для клипа это слишком подробно — опишите движение короче.",
       staging: "Так не получится: камера и монтаж в клипе не меняются — опишите, что делает она.",
-      phone: "Так не получится: телефон в этом кадре не упоминаем — уберите его из идеи.",
+      phone: "Так не получится: телефон в этом кадре не трогаем — уберите его из идеи.",
       "face-hidden": "Так не получится: лица в этом кадре не видно — опишите движение тела, а не лица.",
-      content: "Так не получится: такие слова для этого кадра не подходят — опишите движение иначе.",
+      content: "Так не получится: такие слова не подходят для клипа этого кадра — опишите движение иначе.",
       "takes-off": "Так не получится: здесь одежда остаётся на месте — такое движение только для кадров «Смелой».",
       "not-motion": "Так не получится: в идее нет движения — опишите, что она делает в кадре.",
     } as const;
@@ -498,7 +498,7 @@ describe("clipReason motion-busy, suggest-busy, idea-busy and clip-busy", () => 
     expect(CLIP_IN_FLIGHT_REASONS as readonly string[]).not.toContain("motions-full");
     expect(EngineError.safeParse({ code: "VALIDATION", clipReason: "motions-full" }).success).toBe(true);
     expect(EngineError.safeParse({ code: "IN_FLIGHT", clipReason: "motions-full" }).success).toBe(false);
-    expect(CLIP_REASONS_RU["motions-full"]).toBe("Для этого фото больше нельзя добавить движений — выберите другое фото.");
+    expect(CLIP_REASONS_RU["motions-full"]).toBe("Для этого фото новых движений больше не добавить — выберите из списка.");
   });
 
   // L6: a call on a «Смелая» frame while bold clips are off refuses free with the existing reason.
