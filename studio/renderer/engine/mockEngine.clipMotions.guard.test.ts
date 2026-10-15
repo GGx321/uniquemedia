@@ -3,7 +3,7 @@ import { ManualScheduler } from "./scheduler";
 import { MockEngine, mockEngineClient } from "./mockEngine";
 import { MIA, SOFIA, scenePhoto } from "./mockEngine.testkit";
 import { makeBatchMock, phasesOf, startBatch, stepUntil } from "./mockEngine.clipBatch.testkit";
-import { AVATAR, GOOD_TEXTS, IDEA, PLAIN, create, endOf, errorOf, flush, idea, makeClipMock, suggest, suggestion, translate, unwrap } from "./mockEngine.clipMotions.testkit";
+import { AVATAR, GOOD_TEXTS, IDEA, PLAIN, create, endOf, errorOf, flush, idea, makeClipMock, money, suggest, suggestion, translate, unwrap } from "./mockEngine.clipMotions.testkit";
 import { CLIP_PHOTOS } from "./mockEngine.clips.testkit";
 
 // Stage 5, 5b.2, S5.WC4 (plan s5b2 §5.3, I5.68; review r2.1 N10): the guard between the clip money and the part C calls, BOTH ways and global, in the mock, as in the engine (engine.clipMotions.guard.test.ts,
@@ -229,6 +229,20 @@ describe("what a running call holds", () => {
     expect((await m.client.request("avatars.archive", { avatarId: AVATAR })).ok).toBe(true);
     m.engine.holdMotionCalls(false);
     await running;
+  });
+
+  test("a restart with a call at the model forgets the call: nothing is counted, its reserve is the earlier process's and waits for the reconcile, and a clip is refused for it", async () => {
+    const m = makeClipMock();
+    m.engine.holdMotionCalls(true);
+    const running = suggest(m);
+    await flush();
+    m.engine.restart();
+    // The process that asked is gone: its answer never comes (the mock ends the stale request with an error), and nothing it counted is left.
+    expect(await running).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+    expect(m.engine.peekMotions()).toMatchObject({ running: 0, caps: [] });
+    expect(await money(m)).toMatchObject({ reconcileNeeded: true, unsettledMicros: 7_405, unsettledCount: 1 });
+    expect((await errorOf(create(m))).code).toBe("RECONCILE_REQUIRED");
+    expect((await errorOf(suggest(m))).code).toBe("RECONCILE_REQUIRED");
   });
 
   test("the call's cap is live while it runs and gone when it ends", async () => {
