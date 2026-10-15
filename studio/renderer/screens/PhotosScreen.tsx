@@ -426,7 +426,8 @@ function AvatarPhotos({
       setClipArrived((n) => n + 1);
     },
     pickAgain: (photoIds) => {
-      setClipPicked(new Set(photoIds));
+      // S5.WB4c: added to what is picked for clips already, after it (the batch's turn order), never in its place.
+      setClipPicked((current) => new Set([...current, ...photoIds]));
       setPickMode("clips");
       setTab("photos");
       setFocusBatchButton((n) => n + 1);
@@ -443,13 +444,18 @@ function AvatarPhotos({
   };
 
   // 5b.2 (58a, 37e #bar): «Оживить выбранные · N» and the line under it — the hint, why paid clips wait (a batch running, the key, the account), the cap, else the month's room.
-  const clipBlock = animateBlock(view, avatar.status === "active");
+  const clipBlock = animateBlock(view, avatar.status === "active", avatarId);
+  // S5.WB4c: «отмените оставшиеся» leads to the batch's own avatar — this screen's «Клипы», or another avatar's screen opened there.
+  const showBatchClips = (batchAvatarId: string): void => {
+    if (batchAvatarId === avatarId) clipsControl.showClips();
+    else navigate({ name: "photos", avatarId: batchAvatarId, tab: "clips" });
+  };
   const month = monthLine(view.money);
   const clipWhy =
     clipPicked.size === 0 ? (
       "Отметьте фото, чтобы оживить их"
     ) : clipBlock !== null ? (
-      <AnimateWhy why={clipBlock} onShowClips={clipsControl.showClips} />
+      <AnimateWhy why={clipBlock} onShowClips={showBatchClips} />
     ) : clipPicked.size > MAX_BATCH_CLIPS ? (
       nbDash(`Не больше ${MAX_BATCH_CLIPS} клипов в одном пакете — снимите лишние`)
     ) : month !== null ? (

@@ -71,12 +71,12 @@ describe("a batch's row in «Очередь»", () => {
       member(22, 6, { waitReason: "turn" }),
       member(23, 7, { waitReason: "turn" }),
     ];
-    expect(rows(jobs)).toEqual([{ jobId: "job-00000021", label: "Клип 5/10 · Nini", phase: "Снимается 1:20", warn: false, meter: { kind: "steps", done: 0, total: 4 }, batch: true }]);
+    expect(rows(jobs)).toEqual([{ jobId: "job-00000021", label: "Клип 5/10 · Nini", phase: "Снимается 1:20", warn: false, meter: { kind: "steps", done: 0, total: 4 }, batch: { avatarId: NINI.avatarId } }]);
   });
 
   test("nothing at work: the member whose turn waits, quiet — «Ждём конца других расходов», «Пауза OpenRouter»", () => {
     expect(rows([member(24, 6, { waitReason: "alone" }), member(25, 7, { waitReason: "turn" })])).toEqual([
-      { jobId: "job-00000024", label: "Клип 6/10 · Nini", phase: "Ждём конца других расходов", warn: false, meter: { kind: "steps", done: 0, total: 4 }, batch: true, quiet: true },
+      { jobId: "job-00000024", label: "Клип 6/10 · Nini", phase: "Ждём конца других расходов", warn: false, meter: { kind: "steps", done: 0, total: 4 }, batch: { avatarId: NINI.avatarId }, quiet: true },
     ]);
     expect(rows([member(26, 10, { waitReason: "rate-limit" })])[0]).toMatchObject({ label: "Клип 10/10 · Nini", phase: "Пауза OpenRouter", quiet: true });
   });

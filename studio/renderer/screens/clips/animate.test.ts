@@ -27,7 +27,10 @@ function clip(info: Partial<ClipJobInfo>, patch: Partial<JobView> = {}): JobView
   };
 }
 const member = (index: number, info: Partial<ClipJobInfo>, patch: Partial<JobView> = {}): JobView => clip({ ...info, batch: { batchId: "batch-0000001", index, size: 4 } }, patch);
-const viewOf = (jobs: readonly JobView[]): EngineView => ({ phase: "ready", jobs, settings: null, money: null, engineError: null, notices: [] }) as unknown as EngineView;
+const NINI = "avatar-nini-0001";
+const MIA = "avatar-mia-0001";
+const viewOf = (jobs: readonly JobView[]): EngineView =>
+  ({ phase: "ready", jobs, settings: null, money: null, engineError: null, notices: [], avatars: [{ avatarId: NINI, name: "Nini" }, { avatarId: MIA, name: "Mia" }] }) as unknown as EngineView;
 
 describe("a batch holds the clip money unit", () => {
   test("while a member waits its turn, or one is between its dispatch and its money's close", () => {
@@ -47,8 +50,21 @@ describe("a batch holds the clip money unit", () => {
 });
 
 describe("why «Оживить» waits", () => {
-  test("37e: a batch is running — «Сейчас снимаются клипы пакета — дождитесь окончания или отмените оставшиеся.»", () => {
-    expect(animateBlock(viewOf([member(1, { phase: "submitting", model: "kling" }), member(2, { phase: "queued" })]), true)).toEqual({ kind: "batch", text: CLIP_REASONS_RU["batch-running"] });
+  test("37e: a batch is running — «Сейчас снимаются клипы пакета — дождитесь окончания или отмените оставшиеся.», with the batch's avatar for the link", () => {
+    expect(animateBlock(viewOf([member(1, { phase: "submitting", model: "kling" }), member(2, { phase: "queued" })]), true, NINI)).toEqual({ kind: "batch", text: CLIP_REASONS_RU["batch-running"], avatarId: NINI, queued: true });
+  });
+
+  test("S5.WB4c: the batch is another avatar's — the text names her, «…клипы пакета Nini…», and the link goes to her «Клипы»", () => {
+    expect(animateBlock(viewOf([member(1, { phase: "submitting", model: "kling" }), member(2, { phase: "queued" })]), true, MIA)).toEqual({
+      kind: "batch",
+      text: CLIP_REASONS_RU["batch-running"].replace("клипы пакета", "клипы пакета Nini"),
+      avatarId: NINI,
+      queued: true,
+    });
+  });
+
+  test("S5.WB4c: nothing is queued any more (the last member in flight): nothing to cancel, so no link", () => {
+    expect(animateBlock(viewOf([member(4, { phase: "rendering", model: "kling" })]), true, NINI)).toMatchObject({ kind: "batch", queued: false });
   });
 
   test("37b: a single clip still says «Сейчас снимается другой клип…»", () => {

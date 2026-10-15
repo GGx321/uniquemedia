@@ -122,7 +122,7 @@ export interface ClipQueueRow {
   readonly warn: boolean;
   readonly meter: { readonly kind: "steps"; readonly done: number; readonly total: number } | { readonly kind: "bar"; readonly percent: number };
   /** 5b.2: a batch's one row, «Клип 5/10 · Nini»: a long name ends in «…» rather than widening the box (round 2, L7). */
-  readonly batch?: true;
+  readonly batch?: { readonly avatarId: string };
   /** 5b.2: the batch's member waits (its turn, other money, a 429's pause): the phase in grey and no step under way (round 2, L3). */
   readonly quiet?: true;
 }
@@ -160,7 +160,7 @@ export function clipQueueRows(jobs: readonly JobView[], avatars: readonly Avatar
         phase: said.text,
         warn: said.warn,
         meter: phase === "exporting" ? { kind: "bar", percent: exportPercent(job.done, job.total) } : { kind: "steps", done: job.done, total: job.total || CLIP_JOB_STEPS },
-        ...(batch === undefined ? {} : { batch: true as const }),
+        ...(batch === undefined ? {} : { batch: { avatarId: job.avatarId } }),
         ...(batch !== undefined && phase === "queued" ? { quiet: true as const } : {}),
       },
     ];

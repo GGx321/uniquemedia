@@ -151,7 +151,7 @@ describe("37: «Оживить» in the photo viewer", () => {
     const v = await openPhoto(3);
     const button = animateIn(v);
     expect(button.hasAttribute("disabled")).toBe(true);
-    expect(whyOf(button)).toBe("Нужен ключ OpenRouter — Настройки.");
+    expect(whyOf(button)).toBe("Нужен ключ OpenRouter — Настройки.");
     expect(within(v).getByRole("button", { name: "Настройки" })).toBeDefined();
   });
 
@@ -172,7 +172,7 @@ describe("37: «Оживить» in the photo viewer", () => {
     await flush();
     const button = animateIn(await openPhoto(3));
     expect(button.hasAttribute("disabled")).toBe(true);
-    expect(whyOf(button)).toBe(CLIP_REASONS_RU["one-at-a-time"]);
+    expect(whyOf(button)).toBe(CLIP_REASONS_RU["one-at-a-time"].replace(" —", "\u00a0—"));
     expect(within(sidebarQueue()).getByText("Клип · Nini")).toBeDefined();
   });
 });
