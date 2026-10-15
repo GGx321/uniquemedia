@@ -128,6 +128,8 @@ const ADJECTIVES = new Set(
       "denim leather wool woollen woolen cotton linen knit knitted cozy cosy oversized favorite favourite summer winter rain picnic beach bath hotel morning evening fluffy fuzzy chunky",
   ),
 );
+/** What she wears on her feet: a garment word before it only names the kind («her dress shoes»). */
+const FOOTWEAR = new Set(list("heels shoes sandals sneakers boots slippers flip-flops"));
 /** A noun that names a part of what follows «of»: «a strand of hair» is her hair, «the top of her head» is her head. */
 const PARTITIVES = new Set(list("strand strands lock locks piece bit edge corner end top"));
 /** A part that belongs to what it is of, or to what names it first: «the strap of her bag», «the seat belt», «the elevator button». */
@@ -300,7 +302,7 @@ const VERBS: ReadonlyMap<string, VerbRule> = new Map<string, VerbRule>([
   ["grips", { objects: [PROP, ACC] }],
   ["hooks", { objects: [HAND], strokes: true }],
   ["sets", { objects: [PROP, ACC] }],
-  ["brings", { objects: [PROP, ACC, HAND] }],
+  ["brings", { objects: [PROP, ACC, HAND], strokes: true, extra: `to ${FACE}` }],
   ["digs", { objects: [FEET, HAND] }],
   ["gets", { objects: [] }],
 ]);
@@ -359,7 +361,7 @@ const WEAR_PP = `in ${WORN}`;
 function verbShape(verb: string, rule: VerbRule): RegExp {
   const objects = rule.objects.length === 0 ? "" : `(?: ${alt([...rule.objects, "#PRON"])})?`;
   const more = [...(rule.wear === true ? [WEAR_PP] : []), ...(rule.extra === undefined ? [] : [rule.extra])];
-  const rest = rule.strokes === true ? `(?: ${STROKE_TAIL_ITEM})*` : tail(more);
+  const rest = rule.strokes === true ? `(?: ${alt([STROKE_TAIL_ITEM, ...more])})*` : tail(more);
   const shape = `^she(?: ${ADV})* ${forms([verb])}(?: ${alt(DIRECTIONS)})?(?: ${ADV})*${objects}${rest}$`;
   // Her hair, and only her hair, may be moved off or from her shoulder («brushes her hair off her shoulder»).
   const hair = rule.objects.includes(HAIR) ? `|^she(?: ${ADV})* ${forms([verb])}(?: ${alt(DIRECTIONS)})?(?: ${ADV})* ${HAIR}${tail([...more, `(?:off|from) ${SHOULDER}`])}$` : "";
@@ -496,7 +498,8 @@ function nounAt(tokens: readonly string[], i: number): NounClass | null {
     while (j >= 0 && (DETERMINERS.has(tokens[j] ?? "") || ADJECTIVES.has(tokens[j] ?? "") || NOUNS.get(tokens[j] ?? "") === "PLACE")) j--;
     const prep = tokens[j] ?? "";
     if (PLACE_PREPS.has(prep)) return "PLACE";
-    if (LEAVING_PREPS.has(prep) && tokens.slice(j + 1, i).includes("the")) {
+    // The final touch: never bedding she lies under (getting off or out from the sheets leaves it), never after «out» («steps out from the towel» leaves it on the floor).
+    if (LEAVING_PREPS.has(prep) && tokens.slice(j + 1, i).includes("the") && /^(?:towels?|blankets?)$/.test(word) && tokens[j - 1] !== "out") {
       let k = j - 1;
       while (k >= 0 && (PARTICLES.has(tokens[k] ?? "") || ADVERBS.has(tokens[k] ?? ""))) k--;
       if (BODY_MOVES.has(tokens[k] ?? "")) return "PLACE";
@@ -511,6 +514,11 @@ const describes = (word: string): boolean => ADJECTIVES.has(word) || (NOUNS.has(
 /** The class of a noun phrase from its head and what it is «of»: «a strand of hair» → her hair, «the strap of her bag» → a prop, «the hem of her dress» → a skirt. */
 function phraseClass(head: string, headClass: NounClass, modifiers: readonly string[], ofClass: NounClass | null): NounClass {
   if (PARTS_OF_THINGS.has(head) && modifiers.some((m) => NOT_HERS.has(m))) return "PROP";
+  // The final touch (M-A): a prop or an accessory word that names part of what she wears («her bra cup», «the clip of her bra», «the laces of her dress», «the hood of
+  // her robe») is that garment's part, never a held thing; her shoes stay her shoes («her dress shoes»).
+  const wornWord = (word: string): boolean => (WORN_CLASSES as readonly string[]).includes(NOUNS.get(word) ?? "");
+  const wornOf = ofClass !== null && (WORN_CLASSES as readonly string[]).includes(ofClass);
+  if ((headClass === "PROP" || headClass === "ACC") && !FOOTWEAR.has(head) && (modifiers.some(wornWord) || wornOf)) return "PART";
   if (ofClass === null) {
     // «bikini bottoms» are what covers her legs; «her jeans pockets» a pocket.
     if (head === "bottoms" && modifiers.some((m) => m === "bikini" || m === "swimsuit")) return "LOWER";
@@ -644,7 +652,11 @@ function namesUndressing(tokens: readonly string[], text: string, pronounAlone: 
   };
   if (tokens.some((word, i) => UNDRESS_VERBS.has(word) || (OFF_WORDS.has(word) && !(word === "off" && offCleans(i))))) return true;
   if (/\b(?:no|without)\b/.test(text)) return true;
-  if (/\baround her (?:waist|hips|ankles|feet)\b|\bover the (?:chair|bed|floor|sofa|couch)\b/.test(text)) return true;
+  if (/\baround her (?:waist|hips|ankles|feet)\b|\bover the (?:chair|bed|floor|sofa|couch)\b|\bat her feet\b/.test(text)) return true;
+  // The final touch's LOW: zipped down; out of or out from what she wears («steps out from her towel», «rises out of her top»).
+  if (/\b(?:un)?zip\w*\b.*\bdown\b|\bout (?:of|from)\b/.test(text)) return true;
+  // A part of what she wears (a ring, a clip, laces, a cup) pulled or tugged at undoes it («pulls the ring of her bikini top»).
+  if (/\b(?:pull|tug)\w*\b/.test(text) && /\b(?:ring|clip|laces|lace|cup|clasp|hook|tie|knot)\b/.test(text)) return true;
   // A hand or a garment under, inside or into what she wears («slides her hand under her skirt», «tucks her skirt into her waistband»).
   if (tokens.some((word, i) => /^(?:under|beneath|inside|into)$/.test(word) && tokens.slice(i + 1, i + 4).some((_, k) => (WORN_CLASSES as readonly string[]).includes(classes[i + 1 + k] ?? "")))) return true;
   const knitOnly = KNITWEAR.test(text) && !ROBES.test(text) && [...kinds].every((kind) => kind === "OUTER");
@@ -663,10 +675,12 @@ const NO_PRONOUN = /#(?:OUTER|TOP|LOWER|SKIRT|STRAP|SLEEVE|INNER|TOWEL|OUTFIT|PA
 
 /** Verbs that let go of what her hands held (the re-review's M2: «holds her robe closed and drops her hands»). */
 const RELEASES = new Set(list("drops drop dropping lowers lower lowering relaxes relax relaxing releases release releasing lets let letting loosens loosen loosening"));
+/** Verbs that move her arms with no object (the final touch's M-B: «holds her robe closed and stretches»). */
+const ARM_MOVES = new Set(list("stretches stretch stretching reaches reach reaching waves wave waving raises raise raising lifts lift lifting spreads spread spreading"));
 /** Verbs of a dressing form that hold what she wears closed or in place. */
 const HOLDS = new Set(list("holds hold holding pulls pull pulling wraps wrap wrapping closes close closing tugs tug tugging keeps keep keeping"));
 /** A pose of her body the grammar never reads (the re-review's M4 and LOW). */
-const MIRROR = /\btowards? (?:the |her )?mirror\b/;
+const MIRROR = /\b(?:towards?|to|at|into|infrontof|facing) (?:the |her )?mirror\b/;
 const POSE_VERBS = new Set(list("bends bend bending arches arch arching pushes push pushing sticks stick sticking presses press pressing"));
 const LIFT_VERBS = new Set(list("lifts lift lifting raises raise raising"));
 
@@ -678,8 +692,17 @@ function posesHer(plain: string, words: readonly string[], verbWord: string): bo
     if (/^lean/.test(verbWord) && /\b(?:forward|over|down)\b/.test(plain)) return true;
   }
   if (/\b(?:press|squeez)\w*\s+(?:her\s+)?arms\b/.test(plain)) return true;
-  return words.some((word) => word === KNEE || word === LEGS) && /\b(?:out|aside|apart|wide|wider|open)\b/.test(plain);
+  // The final touch (M-D): a hand slid or run up her knee or her leg.
+  if (/^(?:slid|run|brings?|bringing)/.test(verbWord) && words.some((word) => word === KNEE || word === LEGS) && /\b(?:higher|up|upward|upwards|further)\b/.test(plain)) return true;
+  return words.some((word) => word === KNEE || word === LEGS) && /\b(?:out|aside|apart|wide|wider|open)\b|SIDETOSIDE/.test(plain);
 }
+
+/** A bare verb that moves her hand along her body when it follows a clause that moved her hand («brings her hand to her lips and lower»). */
+const BARE_MOVES = new Set(list("lower lowers raise raises lift lifts slide slides drop drops move moves"));
+/** Slipping, sliding, falling or dropping at her shoulder (only her hair may: «her hair slips over her shoulder»). */
+const SLIPS_AT_SHOULDER = /\b(?:slip|slid|fall|fell|drop)\w*\b.*\bshoulders?\b/;
+/** What she wore, lying at her feet or around her ankles (the final touch's LOW: «the towel at her feet»). */
+const AT_HER_FEET = /\b(?:towels?|sheets?|robes?|dress(?:es)?|skirts?|tops?|clothes|bra|bikini|panties|shorts|jeans|outfit)\b[^,]{0,24}\b(?:at her feet|around her ankles)\b/;
 
 /** Reads a motion text (see the module's comment). Pure. */
 export function readMotion(text: string): MotionReading {
@@ -687,7 +710,9 @@ export function readMotion(text: string): MotionReading {
   const plainText = tokens.join(" ");
   const bodyShown = tokens.filter((word, i) => BODY_SHOWN.has(word) && !(word === "bottom" && tokens[i + 1] === "of"));
   // An arched back with her hips, anywhere in the text (the re-review's E: «arches her back and lifts her hips»).
-  const archHips = /\barch\w*\b/.test(plainText) && /\bhips?\b/.test(plainText);
+  // Her knees or legs named, then «them» or «it» moved aside, apart or open, whichever noun came last («lifts her knees over a book, lowering them aside»).
+  const kneesApart = /\b(?:knees?|legs?)\b/.test(plainText) && /\b(?:them|it)\b/.test(plainText) && /\b(?:aside|apart|wide|wider|open|opening|out|spread\w*)\b/.test(plainText);
+  const archHips = (/\barch\w*\b/.test(plainText) && /\bhips?\b/.test(plainText)) || kneesApart;
   const empty = { clauses: [], unread: [plainText], bodyShown, poses: archHips };
   if (tokens.length === 0 || tokens.length > 40 || tokens.some((word) => OTHER_OPENERS.has(word))) return { ok: false, undresses: namesUndressing(tokens, plainText, false), ...empty };
   // The breeze form reads the whole text at once («her hair and dress sway a little in the wind»).
@@ -701,8 +726,10 @@ export function readMotion(text: string): MotionReading {
   let pronounAlone = false;
   let subject = "she";
   let subjectWords = "";
-  /** A dressing form held what she wears closed or in place; a later clause letting her hands go undresses her. */
+  /** A dressing form held what she wears closed or in place; a later clause moving her hands or her arms lets it go (the final touch's M-B). */
   let held = false;
+  /** What the last clause moved: a bare «and lower» after it moves the same (along her body after her hand; off her after what she wears). */
+  let lastObject: string | null = null;
   let released = false;
   let poses = archHips;
   const read: { text: string; route: ClauseRoute }[] = [];
@@ -750,11 +777,19 @@ export function readMotion(text: string): MotionReading {
     const kept = reads(DRESSING, said, own) || reads(COVERING, said, own) || reads(LAID_OUT, said, own);
     const generic = words[0] === "she" && verb !== undefined && (VERB_SHAPES.get(verb)?.test(said) ?? false);
     const ok = kept || generic || reads(POSTURE, said, own) || reads(SUBJECT_FORMS, said, own);
-    const letsGo = held && RELEASES.has(verbWord) && (words.includes(HAND) || /\b(?:go|grip)\b/.test(plain));
-    const posed = posesHer(plain, words, verbWord);
+    const movesArms = words.slice(1).includes(HAND) || ARM_MOVES.has(verbWord) || (RELEASES.has(verbWord) && /\b(?:go|grip)\b/.test(plain));
+    const letsGo = held && movesArms;
+    const bare = words.filter((word) => word !== ADV).length === 2 && BARE_MOVES.has(verbWord);
+    const slipsAtShoulder = words[0] === "she" && SLIPS_AT_SHOULDER.test(plain) && !words.includes(HAIR);
+    // A bare verb after a clause that moved something moves it again: her hand along her body (content), what she wears off her (takes-off), else no motion it reads.
+    const wornBefore = lastObject !== null && /^#(?:OUTER|TOP|LOWER|SKIRT|STRAP|SLEEVE|INNER|TOWEL|OUTFIT|PART|XWORN|COVER)$/.test(lastObject);
+    if (bare && (held || wornBefore)) released = true;
+    const posed = posesHer(plain, words, verbWord) || (bare && lastObject === HAND);
+    const elided = bare && lastObject !== null;
+    if (slipsAtShoulder) released = true;
     if (letsGo) released = true;
     if (posed) poses = true;
-    if (!ok || letsGo || posed) {
+    if (!ok || letsGo || posed || slipsAtShoulder || elided) {
       read.push({ text: plain, route: "free" });
       unread.push(plain);
     } else {
@@ -762,11 +797,16 @@ export function readMotion(text: string): MotionReading {
       read.push({ text: plain, route: kept ? "kept" : generic && holdsObject ? "held" : "free" });
     }
     if (kept && HOLDS.has(verbWord)) held = true;
+    lastObject = words.slice(2).find((word) => word.startsWith("#")) ?? null;
     const named = words.filter((word, k) => k > 0 && ANTECEDENTS.has(word));
     if (named.length > 0) antecedent = named[named.length - 1] ?? antecedent;
   }
-  // Each clause may read alone and the two still pose her: an arched back with her hips lifted.
+  // Each clause may read alone and the two still pose her: an arched back with her hips lifted; what she wore left at her feet.
   if (archHips && unread.length === 0) unread.push(plainText);
+  if (AT_HER_FEET.test(plainText)) {
+    released = true;
+    if (unread.length === 0) unread.push(plainText);
+  }
   if (unread.length === 0) return { ok: true, clauses: read, unread: [], undresses: false, bodyShown, poses: false };
   return { ok: false, clauses: read, unread, undresses: released || namesUndressing(tokens, plainText, pronounAlone), bodyShown, poses };
 }
