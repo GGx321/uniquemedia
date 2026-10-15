@@ -980,6 +980,7 @@ export class MockEngine implements EngineBridge {
           this.emitSettingsChanged();
         },
         haltLedger: () => this.haltAboveWorst(),
+        ledgerReadable: () => this.unavailable === null,
         reserves: this.reserves,
         spend: (micros) => this.spend(micros),
         spentMicros: () => this.spentMicros,
@@ -2563,7 +2564,8 @@ export class MockEngine implements EngineBridge {
         const run = this.runs.find((r) => r.runId === job.runId);
         return run === undefined || run.launchId !== undefined ? [] : [{ capMicros: run.capMicros, committedMicros: this.runCommitted(run) }];
       });
-    const room = monthRoomMicros({ budgetMicros: this.settings.monthlyBudgetMicros, spentMicros: this.spentMicros, openMicros: this.unsettledMicros(), heldMicros: 0, liveScopes });
+    // 5b.2: the clips' holds and the unspent rest of their live caps (engine `monthRoom`: `budget.status().heldMicros` and every cap in the table).
+    const room = monthRoomMicros({ budgetMicros: this.settings.monthlyBudgetMicros, spentMicros: this.spentMicros, openMicros: this.unsettledMicros(), heldMicros: this.clips.heldMicros(), liveScopes: [...liveScopes, ...this.clips.liveCaps()] });
     return { budgetMicros: room.budgetMicros, committedMicros: room.committedMicros };
   }
 
@@ -3566,7 +3568,8 @@ export class MockEngine implements EngineBridge {
   private priceGate(acceptedWorstMicros: number, worstMicros: number, options: { freeIsAlwaysFine?: boolean } = {}): EngineError | null {
     if (acceptedWorstMicros < worstMicros) return { code: "PRICE_CHANGED" };
     if (options.freeIsAlwaysFine === true && worstMicros === 0) return null;
-    const committed = this.spentMicros + this.unsettledMicros() + worstMicros;
+    // Spent + open + HELD (5b.2: the month a batch holds for its members is no one else's), as the engine's `#checkMonthlyRoom` counts it.
+    const committed = this.spentMicros + this.unsettledMicros() + this.clips.heldMicros() + worstMicros;
     if (committed > this.settings.monthlyBudgetMicros) return { code: "BUDGET_EXCEEDED" };
     return null;
   }

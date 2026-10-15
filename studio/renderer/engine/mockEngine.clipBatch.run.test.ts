@@ -344,18 +344,8 @@ describe("the stops (I5.62): the rest is cancelled for free, every hold released
     expect([...m.engine.peekClips().monthHolds]).toEqual([]);
   });
 
-  test("a month with no room for a member's reserve fails that member only, and the batch goes on (the room is not a ledger stop): its hold goes back, and the next member may fit", async () => {
-    const m = makeBatchMock(3, { money: { monthlyBudgetMicros: 3 * 850_000 } });
-    const { jobIds } = await startBatch(m, m.photoIds);
-    stepUntil(m, () => phasesOf(m.events, jobIds[0] ?? "").includes("rendering"), "member 1 rendering");
-    // Another kind of job takes the room the batch had counted on, after the batch was admitted: 420 000 spent + 1 000 000 + member 3's hold 850 000 + member 2's reserve 504 000 > 2 550 000.
-    m.engine.openForeignReserve("photo-run-0009:slot-1#1", 1_000_000);
-    runUntilEnds(m, jobIds);
-    expect(types(m, jobIds)).toEqual(["job.done", "job.failed", "job.done"]);
-    expect(endOf(m.events, jobIds[1] ?? "")).toMatchObject({ payload: { error: { code: "BUDGET_EXCEEDED" } } });
-    expect(m.engine.peekClips().posts).toHaveLength(2);
-    expect([...m.engine.peekClips().monthHolds]).toEqual([]);
-  });
+  // A member's month is held at the batch's create, so no other job can take its room afterwards (every paid command counts the holds: mockEngine.clipBatch.edges.test.ts). The one reserve that can meet a
+  // month with no room is a member requeued after a 429, which takes no hold: that path is pinned there.
 
   test("an uncertain submit ends the queue `money-uncertain`: the member's reserve stays open at worst, nothing else is spent", async () => {
     const m = makeBatchMock(3);

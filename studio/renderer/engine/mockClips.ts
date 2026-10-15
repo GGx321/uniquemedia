@@ -312,6 +312,14 @@ interface Job {
 
 type WaitReason = "turn" | "alone" | "rate-limit" | "proof";
 
+/** A price book as the engine's cache keeps it: the rates, when they were read, and where they came from (`live` listing, or the dated table) and the day. */
+interface PriceBook {
+  rates: ClipPrices;
+  readAtMs: number;
+  source: "live" | "fallback";
+  asOf: string;
+}
+
 /** What a batch member needs to run its clip when its turn comes (the batch itself needs none of it). */
 interface MemberPayload {
   request: ClipRequest;
@@ -362,6 +370,8 @@ export interface MockClipsHost {
   markKeyRejected(): void;
   /** 5b.2: a settle came in above its reserve: the ledger halts (`SETTLE_ABOVE_WORST`) until the owner reconciles. */
   haltLedger(): void;
+  /** 5b.2: the ledger can be read (`Budget` exists); when it cannot, a batch's sheet has no room and nothing fits. */
+  ledgerReadable(): boolean;
   /** The mock's open reserves, attempt id to worst: the clips add theirs and take them back. */
   reserves: Map<string, number>;
   spend(micros: number): void;
@@ -597,10 +607,14 @@ export class MockClips {
   readonly #batches = new Map<string, MockClipBatch<MemberPayload>>();
   /** 5b.2 (`Budget.tryHold`): the month's room held for the members still to reserve, by attempt id: in memory only, gone with the process. */
   readonly #monthHolds = new Map<string, number>();
+  /** The live caps of the clips (engine `setCap`/`clearCap`), by clip id: a single clip's accepted worst case, a batch member's share; set at the create, gone when the money closes or the member never runs. */
+  readonly #caps = new Map<string, number>();
   /** 5b.2: the price book a batch was priced by, and when it was read: a turn re-reads it only when it is older than the cache's life (engine/money/priceCache.ts). */
-  #book: { rates: ClipPrices; readAtMs: number; live: boolean } | null = null;
+  #book: PriceBook | null = null;
   /** 5b.2: what the next batch's members play, one entry per member, taken when a member's first reserve is made (its POST is about to leave). */
   #batchScripts: Script[] | null = null;
+  /** The scripts of the batch that is being played: taken from the armed ones when it starts, so what one batch left unused never reaches the next, and a restart drops them. */
+  #batchPlay: Script[] = [];
   #lastWriteMs = Number.NEGATIVE_INFINITY;
   #restartedAtMs = Number.NEGATIVE_INFINITY;
   #exportQueue: Job[] = [];
@@ -742,6 +756,26 @@ export class MockClips {
   }
 
   // ---------- money, as the engine's #moneyStatus and #reconcile read it ----------
+
+  /** What the batches hold of the month for members that have not reserved yet (`Budget.status().heldMicros`): every other paid command counts it (spent + open + held). */
+  heldMicros(): number {
+    let held = 0;
+    for (const micros of this.#monthHolds.values()) held += micros;
+    return held;
+  }
+
+  /**
+   * The live caps as the autopilot's room reads them (autopilot/room.ts `monthRoom`): each clip's cap and what its scope has committed (settled at cost, open at worst, held), so the room subtracts
+   * `max(0, cap - committed)` for each.
+   */
+  liveCaps(): { capMicros: number; committedMicros: number }[] {
+    return [...this.#caps].map(([clipId, capMicros]) => {
+      let committedMicros = 0;
+      for (const line of this.#lines) if (line.clipId === clipId) committedMicros += line.state === "open" ? line.worstMicros : line.costMicros;
+      for (const [attemptId, micros] of this.#monthHolds) if (attemptId.startsWith(`${clipId}:`)) committedMicros += micros;
+      return { capMicros, committedMicros };
+    });
+  }
 
   /** The one clip money unit is held (a single clip, or a batch with members still to be made): a reconcile is refused IN_FLIGHT, as the engine's paid-command count refuses it. */
   paidOpen(): boolean {
@@ -965,16 +999,24 @@ export class MockClips {
     return facts.bold && this.#boldClips !== "with-fallback" ? "none" : this.#mode;
   }
 
-  /** `book`: a price book already read (a batch's: the cache's, which a listing that has since lost a price does not change); without it the listing is read now, fresh, as a single clip does. */
-  #estimate(parts: Omit<ClipPriceParts, "prices" | "mode" | "boldClips">, book?: ClipPrices): Estimate | null {
-    if (book === undefined && this.#prices === "missing") return null;
-    const full: ClipPriceParts = { ...parts, mode: this.#mode, boldClips: this.#boldClips, prices: book ?? this.#rates };
-    return {
-      expectedMicros: clipExpectedMicros(full),
-      worstMicros: clipWorstMicros(full),
-      prices: this.#prices === "missing" ? "live" : this.#prices,
-      pricesAsOf: this.#prices === "fallback" ? FALLBACK_DATE : this.#host.pricesAsOf(),
-    };
+  /** An estimate from a price book already read: the rates, and where they came from and the day (the book's own, not the listing's mode now). */
+  #estimate(parts: Omit<ClipPriceParts, "prices" | "mode" | "boldClips">, book: PriceBook): Estimate {
+    const full: ClipPriceParts = { ...parts, mode: this.#mode, boldClips: this.#boldClips, prices: book.rates };
+    return { expectedMicros: clipExpectedMicros(full), worstMicros: clipWorstMicros(full), prices: book.source, pricesAsOf: book.asOf };
+  }
+
+  /**
+   * The video price book, from the ONE cache every clip command reads (engine.ts `#prices`, a `PriceCache`: 10 minutes for a live listing, a minute for the dated table). A listing that moved, or lost a
+   * price, a moment ago is not seen yet; once the cache is older than its life the listing is read again, and `null` is a listing that reads and lacks a price (PRICE_UNAVAILABLE `video`).
+   */
+  #readBook(): PriceBook | null {
+    const now = this.#host.clockMs();
+    const cached = this.#book;
+    if (cached !== null && now - cached.readAtMs < (cached.source === "live" ? 10 * MINUTE : MINUTE)) return cached;
+    if (this.#prices === "missing") return null;
+    const source = this.#prices === "live" ? "live" : "fallback";
+    this.#book = { rates: this.#rates, readAtMs: now, source, asOf: source === "fallback" ? FALLBACK_DATE : this.#host.pricesAsOf() };
+    return this.#book;
   }
 
   /** What the month has committed: spent, open at worst, and (5b.2) held for the members of a batch that have not reserved yet, less `exceptHold`'s own hold, which its reserve replaces (`Budget.tryReserve`). */
@@ -1006,23 +1048,16 @@ export class MockClips {
     if (!found.ok) return found;
     const read = this.#read(found.result.photo);
     if (read.kind === "refused") return good({ suitable: false, photoId: payload.photoId, reason: read.reason });
-    if (this.#prices === "missing") return bad(this.#unavailable());
-    return good(this.#suitableOptions(payload.photoId, read.facts, read.motions, (worstMicros) => this.#fits(worstMicros)));
+    const book = this.#readBook();
+    if (book === null) return bad(this.#unavailable());
+    return good(this.#suitableOptions(payload.photoId, read.facts, read.motions, (worstMicros) => this.#fits(worstMicros), book));
   }
 
   /** The sheet of one suitable photo (`ClipOptions`): its prices from one book, and whether the month (`fits`, one yes-or-no on a worst case) takes each option. */
-  #suitableOptions(photoId: string, facts: Facts, motions: readonly ClipMotionChoice[], fits: (worstMicros: number) => boolean, book?: ClipPrices): Extract<ClipOptions, { suitable: true }> {
+  #suitableOptions(photoId: string, facts: Facts, motions: readonly ClipMotionChoice[], fits: (worstMicros: number) => boolean, book: PriceBook): Extract<ClipOptions, { suitable: true }> {
     const fallback = this.#fallbackOf(facts);
-    const kling = (quality: ClipQuality, seconds: ClipSeconds, withFallback: "auto" | "none"): Estimate => {
-      const estimate = this.#estimate({ model: "kling", quality, seconds, fallback: withFallback, bold: facts.bold }, book);
-      if (estimate === null) throw new Error("unreachable");
-      return estimate;
-    };
-    const grok = (seconds: ClipSeconds): Estimate => {
-      const estimate = this.#estimate({ model: "grok", quality: "std", seconds, fallback: "none", bold: facts.bold }, book);
-      if (estimate === null) throw new Error("unreachable");
-      return estimate;
-    };
+    const kling = (quality: ClipQuality, seconds: ClipSeconds, withFallback: "auto" | "none"): Estimate => this.#estimate({ model: "kling", quality, seconds, fallback: withFallback, bold: facts.bold }, book);
+    const grok = (seconds: ClipSeconds): Estimate => this.#estimate({ model: "grok", quality: "std", seconds, fallback: "none", bold: facts.bold }, book);
     const set = (withFallback: "auto" | "none") => ({ std5: kling("std", 5, withFallback), pro5: kling("pro", 5, withFallback), std10: kling("std", 10, withFallback), pro10: kling("pro", 10, withFallback) });
     const prices = set("auto");
     const noFallbackPrices = set("none");
@@ -1068,14 +1103,16 @@ export class MockClips {
     if (!active.ok) return active;
     const reads = payload.photoIds.map((photoId) => this.#readItem(payload.avatarId, photoId));
     // The price goes through the cache, as the engine's does (10 minutes for a live listing): a listing that lost a price a minute ago is not seen yet.
-    const book = this.#turnBook();
-    if (book === null) return bad(this.#unavailable());
-    const room = this.#monthRoom();
-    const fits = (worstMicros: number): boolean => worstMicros <= room;
+    const priced = this.#readBook();
+    if (priced === null) return bad(this.#unavailable());
+    const book = priced.rates;
+    // A ledger that cannot be read has no month to count by: no room, nothing fits (the engine's `budget === null`).
+    const room = this.#host.ledgerReadable() ? this.#monthRoom() : 0;
+    const fits = (worstMicros: number): boolean => this.#host.ledgerReadable() && worstMicros <= room;
     const items = reads.map((read, i): ClipOptions => {
       const photoId = payload.photoIds[i] ?? "";
       if (read.kind === "refused") return { suitable: false, photoId, reason: read.reason };
-      return this.#suitableOptions(photoId, read.facts, read.motions, fits, book);
+      return this.#suitableOptions(photoId, read.facts, read.motions, fits, priced);
     });
     const members = reads.flatMap((read) => (read.kind === "suitable" ? [{ bold: read.facts.bold }] : []));
     const anyFallback = items.some((item) => item.suitable && item.fallback === "auto");
@@ -1125,8 +1162,9 @@ export class MockClips {
     const photoFallback = this.#fallbackOf(read.facts);
     if (payload.model === "grok" && (this.#mode !== "offer" || photoFallback === "none")) return bad({ code: "VALIDATION", clipReason: "grok-not-offered", detail: "Grok is not offered for this clip" });
     const request: ClipRequest = { model: payload.model, quality: payload.quality, seconds: payload.seconds, fallback: payload.model === "grok" || photoFallback === "none" ? "none" : payload.fallback };
-    const estimate = this.#estimate({ ...request, bold: read.facts.bold });
-    if (estimate === null) return bad(this.#unavailable());
+    const book = this.#readBook();
+    if (book === null) return bad(this.#unavailable());
+    const estimate = this.#estimate({ ...request, bold: read.facts.bold }, book);
     if (estimate.worstMicros > payload.acceptedWorstMicros) return bad({ code: "PRICE_CHANGED", detail: `the worst case is now ${estimate.worstMicros} µ$, above the accepted ${payload.acceptedWorstMicros} µ$` });
     if (!this.#fits(estimate.worstMicros)) return bad({ code: "BUDGET_EXCEEDED", detail: `committed ${this.#committed()} µ$ + this job's worst case ${estimate.worstMicros} µ$ > the monthly budget ${this.#host.monthlyBudgetMicros()} µ$` });
 
@@ -1135,11 +1173,12 @@ export class MockClips {
     const job = this.#newJob(payload.avatarId, "create");
     job.facts = { photoId: payload.photoId, request, motion: { source: "code", label: motion.label }, acceptedWorstMicros: payload.acceptedWorstMicros };
     this.#unit = { kind: "clip", job };
+    this.#caps.set(job.clipId, Math.min(payload.acceptedWorstMicros, estimate.worstMicros));
     this.#fates.set(job.clipId, script);
     this.#clipAvatars.set(job.clipId, payload.avatarId);
     const createdAt = this.#host.nowIso();
-    const run: CreateRun = { job, photoId: payload.photoId, request, motion: { source: "code", label: motion.label, text: motion.text }, accepted: payload.acceptedWorstMicros, facts: read.facts, script, createdAt, mode: this.#mode, rates: this.#rates };
-    this.#clipRates.set(job.clipId, this.#rates);
+    const run: CreateRun = { job, photoId: payload.photoId, request, motion: { source: "code", label: motion.label, text: motion.text }, accepted: payload.acceptedWorstMicros, facts: read.facts, script, createdAt, mode: this.#mode, rates: book.rates };
+    this.#clipRates.set(job.clipId, book.rates);
     this.#progress(job, { phase: "preparing" });
     this.#after(job, this.#host.stepMs, () => this.#attempt(run, 1, request.model));
     return good({ jobId: job.jobId });
@@ -1171,8 +1210,9 @@ export class MockClips {
     }
 
     // The price book of the batch, and each member's share: its worst case under it (Kling-only for «Смелая», max(Kling, Grok) in `auto` with a fallback allowed).
-    const book = this.#turnBook();
-    if (book === null) return bad(this.#unavailable());
+    const priced = this.#readBook();
+    if (priced === null) return bad(this.#unavailable());
+    const book = priced.rates;
     const drafts = chosen.map((member) => {
       const fallback = this.#fallbackOf(member.facts) === "none" ? ("none" as const) : payload.fallback;
       const request: ClipRequest = { model: "kling", quality: payload.quality, seconds: payload.seconds, fallback };
@@ -1195,6 +1235,7 @@ export class MockClips {
       job.facts = { photoId: d.photoId, request: d.request, motion: { source: "code", label: d.motion.label }, acceptedWorstMicros: d.share };
       job.batch = { batchId, batchIndex: i + 1, batchSize: size };
       this.#monthHolds.set(attemptIdOf(job.clipId, 1), d.share);
+      this.#caps.set(job.clipId, d.share);
       return {
         index: i + 1,
         photoId: d.photoId,
@@ -1210,6 +1251,9 @@ export class MockClips {
       };
     });
     for (const member of members) this.#progress(this.#jobs.get(member.jobId) ?? this.#absent(member.jobId), { phase: "queued", waitReason: "turn" });
+    // The armed scripts are this batch's alone (used once): whatever an earlier batch left unplayed is gone.
+    this.#batchPlay = this.#batchScripts ?? [];
+    this.#batchScripts = null;
     const batch = new MockClipBatch<MemberPayload>(this.#batchPorts(avatarId, batchId, size), { id: batchId, avatarId, members });
     for (const member of members) {
       const job = this.#jobs.get(member.jobId);
@@ -1248,16 +1292,6 @@ export class MockClips {
     });
   }
 
-  /** The price book at a member's turn: the cache while it is fresh (10 minutes for a live listing, a minute for the dated table: engine/money/priceCache.ts), else a read; null when the listing reads and lacks a price. */
-  #turnBook(): ClipPrices | null {
-    const now = this.#host.clockMs();
-    const cached = this.#book;
-    if (cached !== null && now - cached.readAtMs < (cached.live ? 10 * MINUTE : MINUTE)) return cached.rates;
-    if (this.#prices === "missing") return null;
-    this.#book = { rates: this.#rates, readAtMs: now, live: this.#prices === "live" };
-    return this.#rates;
-  }
-
   /** A member's photo at its turn: still in the gallery of its avatar, and its file still usable as a first frame. */
   #recheck(avatarId: string, photoId: string): "ok" | "gone" | "unreadable" {
     const avatar = this.#host.avatar(avatarId);
@@ -1274,17 +1308,19 @@ export class MockClips {
       later: (ms, fn) => this.#later(ms, fn),
       timings: this.#t,
       readKey: () => host.keyGate(),
-      readPrices: () => this.#turnBook(),
+      readPrices: () => this.#readBook()?.rates ?? null,
       worstOf: (member, prices) => clipWorstMicros({ ...member.payload.request, mode: this.#mode, bold: member.bold, boldClips: this.#boldClips, prices }),
       recheck: (member) => this.#recheck(avatarId, member.photoId),
       alone: (member) => this.#alone(attemptIdOf(member.clipId, 1)),
       told: (member, reason) => this.#progress(jobOf(member), { phase: "queued", waitReason: reason }),
       cancelJob: (member, detail) => {
         const job = jobOf(member);
+        this.#caps.delete(job.clipId);
         this.#finish(job, detail === undefined ? { status: "cancelled" } : { status: "cancelled", detail });
         host.emitMoney();
       },
       failJob: (member, error) => {
+        this.#caps.delete(member.clipId);
         this.#finish(jobOf(member), { status: "failed", error });
         host.emitMoney();
       },
@@ -1294,6 +1330,7 @@ export class MockClips {
         job.facts = first.facts === undefined ? undefined : { ...first.facts };
         job.batch = { batchId, batchIndex: member.index, batchSize: size };
         this.#progress(job, { phase: "queued", waitReason: "rate-limit" });
+        this.#caps.set(job.clipId, member.share);
         const next: BatchMember<MemberPayload> = { ...member, jobId: job.jobId, clipId: job.clipId, held: false, retried: true, state: "queued", wake: null };
         job.member = { batch: first.member?.batch ?? this.#absent(member.jobId), ref: next };
         return next;
@@ -1412,6 +1449,7 @@ export class MockClips {
   #closeMoney(job: Job, end?: MockMoneyEnd): void {
     if (job.moneyClosed) return;
     job.moneyClosed = true;
+    this.#caps.delete(job.clipId);
     if (this.#unit?.kind === "clip" && this.#unit.job === job) this.#unit = null;
     this.#host.emitMoney();
     job.member?.batch.closed(job.member.ref, end);
@@ -1442,7 +1480,7 @@ export class MockClips {
     }
     // A batch member plays the batch's next script from its first reserve on: its POST is about to leave (a member that fails before it takes none, as the real provider is asked for none).
     if (n === 1 && run.takesBatchScript === true && !this.#fates.has(clipId)) {
-      run.script = this.#batchScripts?.shift() ?? { first: "ok", then: "ok", face: undefined };
+      run.script = this.#batchPlay.shift() ?? { first: "ok", then: "ok", face: undefined };
       this.#fates.set(clipId, run.script);
     }
     const scripted = n === 1 ? run.script.first : run.script.then;
@@ -1768,7 +1806,8 @@ export class MockClips {
   /** The tile's «Снять на Grok · до $0.85» (I5.47): mode `offer` only, on a Kling clip refused for free whose request kept its fallback. */
   #grokOffer(record: MockClipRecord): Estimate | null {
     if (this.#mode !== "offer" || record.outcome.status !== "failed" || record.outcome.reason !== "refused-free" || record.request.model !== "kling" || record.request.fallback !== "auto") return null;
-    return this.#estimate({ model: "grok", quality: "std", seconds: record.request.seconds, fallback: "none", bold: false });
+    const book = this.#readBook();
+    return book === null ? null : this.#estimate({ model: "grok", quality: "std", seconds: record.request.seconds, fallback: "none", bold: false }, book);
   }
 
   #fileStateOf(clipId: string, index: number, line: ClipExportLine): FileState {
@@ -2113,6 +2152,9 @@ export class MockClips {
     for (const batch of this.#batches.values()) batch.drop();
     this.#batches.clear();
     this.#monthHolds.clear();
+    this.#caps.clear();
+    this.#batchScripts = null;
+    this.#batchPlay = [];
     this.#book = null;
     this.#unit = null;
     this.#exportQueue = [];

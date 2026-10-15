@@ -259,8 +259,9 @@ describe("38: the sheet «Оживить фото»", () => {
     const h = await openNini();
     const s = await openSheet();
     expect(priceLine(s)).toBe("Обычно $0.42 · не больше $0.85");
-    // The listing moved after the sheet was read: the click accepts $0.85, the engine's worst is now higher.
+    // The listing moved after the sheet was read, and the engine's price cache (10 minutes) has run out since: the click accepts $0.85, the engine's worst is now higher.
     h.engine.setClipRates(GROK_DEARER);
+    h.engine.passClipTime(11 * 60_000);
     await animateFromSheet(s);
     expect(priceLine(sheet())).not.toContain("$0.85");
     const worst = /не больше (\$[\d.]+)/.exec(priceLine(sheet()))?.[1] ?? "";
@@ -277,6 +278,7 @@ describe("38: the sheet «Оживить фото»", () => {
     const h = await openNini();
     const s = await openSheet();
     h.engine.setClipRates(GROK_DEARER);
+    h.engine.passClipTime(11 * 60_000);
     h.engine.delayNext("clips.options", 50);
     const go = within(s).getByRole("button", { name: "Оживить · до $0.85" });
     go.focus();
@@ -308,6 +310,7 @@ describe("38: the sheet «Оживить фото»", () => {
     const s = await openSheet();
     // Grok's reserve (the auto worst case) now exceeds the month; Kling alone still fits.
     h.engine.setClipRates({ ...GROK_DEARER, grok: { perSecondMicros: 5_000_000, perInputImageMicros: 10_000 } });
+    h.engine.passClipTime(11 * 60_000);
     const go = within(s).getByRole("button", { name: "Оживить · до $0.85" });
     go.focus();
     fireEvent.click(go);
