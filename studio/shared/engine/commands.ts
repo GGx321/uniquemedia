@@ -5,7 +5,7 @@ import { AvatarDeletePreview, AvatarDeleteResult } from "./avatarDelete";
 import { AvatarBody } from "./body";
 import { CategoriesListResult, CategoryDescription, CategoryName, CategoryPoses, CategoryRef, CategorySummary, CustomCategoryId, MAX_RUN_CATEGORIES, SceneLevel, POOL_OUTFITS_MAX, POOL_PLACES_MAX, PoolText } from "./categories";
 import { ClipSuggestResult, ClipTranslateResult, OwnIdeaText } from "./clipMotions";
-import { ClipBatchItem, ClipBatchOptions, ClipModelChoice, ClipMotionId, ClipOptions, ClipQuality, ClipSeconds, ClipSummary, MAX_BATCH_CLIPS, MAX_LISTED_CLIPS, photoIdsUnique } from "./clips";
+import { ClipBatchItem, ClipBatchOptions, ClipBatchSummaries, ClipModelChoice, ClipMotionId, ClipOptions, ClipQuality, ClipSeconds, ClipSummary, MAX_BATCH_CLIPS, MAX_LISTED_CLIPS, photoIdsUnique } from "./clips";
 import { nonEmpty, ProtocolVersion } from "./envelope";
 import { EngineError } from "./errors";
 import { EventMessage } from "./events";
@@ -418,7 +418,12 @@ const ENGINE_SPECS = [
     }),
     z.strictObject({ jobId: Id }),
   ),
-  defineCommand("clips.list", z.strictObject({ avatarId: Id }), z.strictObject({ clips: z.array(ClipSummary).max(MAX_LISTED_CLIPS), notListedTotal: Count.min(1).optional() })),
+  // 5b.2 (S5.WB2c): `batches`, the avatar's batch summaries written by the engine (newest first, at most `MAX_LISTED_BATCHES`), absent when it has none. The «Клипы» header reads its members and its money from them.
+  defineCommand(
+    "clips.list",
+    z.strictObject({ avatarId: Id }),
+    z.strictObject({ clips: z.array(ClipSummary).max(MAX_LISTED_CLIPS), notListedTotal: Count.min(1).optional(), batches: ClipBatchSummaries.optional() }),
+  ),
   defineCommand("clips.get", z.strictObject({ avatarId: Id, clipId: Id }), z.strictObject({ clip: ClipSummary })),
   defineCommand("clips.markSeen", z.strictObject({ avatarId: Id, clipId: Id }), z.strictObject({ clipId: Id })),
   defineCommand("clips.delete", z.strictObject({ avatarId: Id, clipId: Id }), z.strictObject({ clipId: Id })),

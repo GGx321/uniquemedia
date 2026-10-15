@@ -427,11 +427,120 @@ export type ClipCancelDetail = z.infer<typeof ClipCancelDetail>;
 
 // ---------- the record as the windows see it ----------
 
+/** What a clip's money came to: `open` (a reserve still waits for the reconcile, counted at its worst), `estimated` (settled at a figure the money did not prove), `billed` (settled exact), `free` (nothing owed). */
+export const ClipCostKind = z.enum(["billed", "estimated", "open", "free"]);
+export type ClipCostKind = z.infer<typeof ClipCostKind>;
+
 /** A clip's cost, built at list time from the ledger (I5.49), never stored. `free` is only ever 0. */
 export const ClipCost = z
-  .strictObject({ micros: Micros, kind: z.enum(["billed", "estimated", "open", "free"]) })
+  .strictObject({ micros: Micros, kind: ClipCostKind })
   .refine((c) => c.kind !== "free" || c.micros === 0, { message: "a free clip cost nothing", path: ["micros"] });
 export type ClipCost = z.infer<typeof ClipCost>;
+
+// ---------- the batch's own summary (5b.2, S5.WB2c) ----------
+
+/** `clips.list` answers at most this many batch summaries of an avatar, newest first. The engine keeps this many per avatar on disk, and any older one whose money is still open. */
+export const MAX_LISTED_BATCHES = 20;
+
+/**
+ * Where a member of a batch stands, as the ENGINE wrote it at each of its transitions (never derived from the records, so a clip the owner deleted stays what it was):
+ * - queued: waits for its turn (memory-only in the engine; a restart turns it `dropped`);
+ * - running: its turn came (from `preparing` to its record, a recovery after a restart included);
+ * - ready: its clip was made;
+ * - refused: the provider refused its content (`refused-*`, or Grok had no room behind a free Kling refusal);
+ * - failed: it ended without a clip for any other reason (a failed download, a 429 for the second time, a key refused, a ledger that refused its reserve, …);
+ * - cancelled: it never ran, and `detail` says why (`ClipCancelDetail`);
+ * - dropped: it never ran because the engine stopped (a quit, a restart): free.
+ */
+export const CLIP_BATCH_OUTCOMES = ["queued", "running", "ready", "refused", "failed", "cancelled", "dropped"] as const;
+export const ClipBatchOutcome = z.enum(CLIP_BATCH_OUTCOMES);
+export type ClipBatchOutcome = z.infer<typeof ClipBatchOutcome>;
+
+/** The details that stop a batch (I5.62, I5.63): each cancels every member still queued. A photo gone or unreadable is the member's own and stops nothing. */
+export const CLIP_BATCH_STOPS = ["price-changed", "price-unavailable", "ledger-stopped", "money-uncertain", "cancelled"] as const satisfies readonly ClipCancelDetail[];
+export const ClipBatchStop = z.enum(CLIP_BATCH_STOPS);
+export type ClipBatchStop = z.infer<typeof ClipBatchStop>;
+
+/**
+ * One member of a batch: its place, where it stands, why it was cancelled (`detail`, only and always on `cancelled`), what its money came to and the clips it was made as (its first, and the one a 429 requeued it
+ * as). The cost is the ledger's figure for those clip ids (`clipCostsOf`, I5.49): the same figure the clips' tiles say, and still the same once a clip is deleted, since the ledger keeps its lines.
+ */
+export const ClipBatchMemberSummary = z
+  .strictObject({
+    batchIndex: z.number().int().min(1).max(MAX_BATCH_CLIPS),
+    outcome: ClipBatchOutcome,
+    detail: ClipCancelDetail.optional(),
+    costMicros: Micros,
+    costKind: ClipCostKind,
+    clipIds: z.array(Id).min(1).max(2),
+  })
+  .refine((m) => (m.outcome === "cancelled") === (m.detail !== undefined), { message: "a cancelled member says why, and only a cancelled one does", path: ["detail"] })
+  .refine((m) => m.costKind !== "free" || m.costMicros === 0, { message: "a free member cost nothing", path: ["costMicros"] })
+  .refine((m) => new Set(m.clipIds).size === m.clipIds.length, { message: "a member names each of its clips once", path: ["clipIds"] });
+export type ClipBatchMemberSummary = z.infer<typeof ClipBatchMemberSummary>;
+
+/**
+ * The batch's money, the ENGINE's one figure (the window adds nothing): the sum of its members' costs, `open` when any is still open, `free` at zero, `estimated` when any member was settled at a figure the
+ * money did not prove, else `billed`. The same rule `ClipCost` follows for one clip's attempts. Refuses a sum outside the safe integers.
+ */
+export function clipBatchCostOf(members: readonly Pick<ClipBatchMemberSummary, "costMicros" | "costKind">[]): ClipCost {
+  let micros = 0;
+  for (const member of members) micros = checkedFigure(micros + member.costMicros);
+  if (members.some((member) => member.costKind === "open")) return { micros, kind: "open" };
+  if (micros === 0) return { micros: 0, kind: "free" };
+  return { micros, kind: members.some((member) => member.costKind === "estimated") ? "estimated" : "billed" };
+}
+
+/** The fields a batch summary has on the wire and on disk (the engine's file adds its `schemaVersion`, the wire its total `cost`). */
+export const clipBatchFields = {
+  batchId: Id,
+  avatarId: Id,
+  size: z.number().int().min(1).max(MAX_BATCH_CLIPS),
+  createdAt: IsoDateTime,
+  members: z.array(ClipBatchMemberSummary).min(1).max(MAX_BATCH_CLIPS),
+  /** The queue ended: nothing is queued and the last member's money closed (a member may still be downloading), or a restart ended it. */
+  endedAt: IsoDateTime.optional(),
+  /** The stop that cancelled the members still queued (I5.62; the owner's `clips.cancelBatch` is `cancelled`): told only when it cancelled at least one. */
+  stop: ClipBatchStop.optional(),
+};
+
+type ClipBatchShape = { size: number; members: readonly ClipBatchMemberSummary[]; endedAt?: string | undefined; stop?: ClipBatchStop | undefined };
+
+/** The rules a batch summary keeps on the wire and on disk alike. */
+export const CLIP_BATCH_RULES: readonly { check: (s: ClipBatchShape) => boolean; message: string; path: string[] }[] = [
+  { check: (s) => s.members.length === s.size && s.members.every((m, i) => m.batchIndex === i + 1), message: "a batch has one member per place, in order from 1 to its size", path: ["members"] },
+  { check: (s) => new Set(s.members.flatMap((m) => m.clipIds)).size === s.members.reduce((n, m) => n + m.clipIds.length, 0), message: "a clip is one member's", path: ["members"] },
+  { check: (s) => s.endedAt === undefined || s.members.every((m) => m.outcome !== "queued"), message: "a batch that ended has nothing queued", path: ["endedAt"] },
+  {
+    check: (s) => s.stop === undefined || (s.members.some((m) => m.outcome === "cancelled" && m.detail === s.stop) && s.members.every((m) => m.outcome !== "queued")),
+    message: "a stop cancelled every member still queued, at least one, with its own detail",
+    path: ["stop"],
+  },
+];
+
+/**
+ * A batch «Оживить выбранные» as `clips.list` tells it (newest first, at most `MAX_LISTED_BATCHES`): the engine's own record of each member, written at every transition and never derived from the clip
+ * records, and the batch's total money (`clipBatchCostOf`). A deleted clip leaves its member as it was, its cost included.
+ */
+export const ClipBatchSummary = CLIP_BATCH_RULES.reduce(
+  (schema, rule) => schema.refine(rule.check, { message: rule.message, path: rule.path }),
+  z.strictObject({ ...clipBatchFields, cost: ClipCost }).refine(
+    (s) => {
+      const total = clipBatchCostOf(s.members);
+      return s.cost.micros === total.micros && s.cost.kind === total.kind;
+    },
+    { message: "the batch's cost is the sum of its members' costs (clipBatchCostOf)", path: ["cost"] },
+  ),
+);
+export type ClipBatchSummary = z.infer<typeof ClipBatchSummary>;
+
+/** The list of an avatar's batches: each once, newest first. */
+export const ClipBatchSummaries = z
+  .array(ClipBatchSummary)
+  .min(1)
+  .max(MAX_LISTED_BATCHES)
+  .refine((list) => new Set(list.map((s) => s.batchId)).size === list.length, { message: "a batch is listed once" })
+  .refine((list) => list.every((s, i) => i === 0 || (list[i - 1]?.createdAt ?? "") >= s.createdAt), { message: "the batches come newest first" });
 
 /** The face check marks, never decides (I5.52). `why` explains a skipped check; `p75` is the similarity of the 75th percentile of the frames with one face. */
 export const ClipFace = z

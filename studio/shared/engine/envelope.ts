@@ -191,6 +191,18 @@ import { z } from "zod";
 //    and its journal parser skips a `requested` line it cannot parse. CONSEQUENCE for a clip in flight at the rollback (made from a suggestion or an own idea): on 5b.1 its recovery finds no `requested` line, so the file is never
 //    fetched and the reserve closes at its worst case only at the reconcile. Everything else (the commands, results, `ClipFrameReading`, `MotionProblem`, the four reasons, the ids on the wire) is wire-only. Studio has no downgrade path;
 //    roll back only before the first clip is made from a suggestion or an own idea, and never with one in flight.
+// Stage 5, 5b.2, S5.WB2c (additive, no bump; one optional result field, one new on-disk store): the batch's own summary, written by the engine, so the «Клипы» header never says a money sentence the records cannot back
+// (a batch clip the owner deleted is not a member that was dropped unshot, and its cost stays in the batch's total).
+//  - `clips.list` also answers `batches` (optional; absent when the avatar has none): up to `MAX_LISTED_BATCHES` (20) `ClipBatchSummary`, each batch once, newest first. A summary is `{ batchId, avatarId, size, createdAt, members,
+//    endedAt?, stop?, cost }`, one member per place in order (`batchIndex` 1..size), each `{ batchIndex, outcome, detail?, costMicros, costKind, clipIds }`. `outcome` is `queued` | `running` | `ready` | `refused` | `failed` |
+//    `cancelled` | `dropped` (`CLIP_BATCH_OUTCOMES`); `detail` (a `ClipCancelDetail`) comes only and always with `cancelled`; `clipIds` are 1..2 (a 429 requeue adds the second), a clip in one member only; `stop` is one of
+//    `CLIP_BATCH_STOPS`, told only when it cancelled a member, and leaves nothing queued; `endedAt` comes only with nothing queued. Every money figure is integer micros with its kind (`ClipCostKind`): a member's is the
+//    ledger's for its clip ids (`clipCostsOf`, I5.49: the clips' own tile figure, which stays once a clip is deleted because the ledger keeps its lines), and `cost` is `clipBatchCostOf(members)`, the batch's ONE total.
+//  - on disk: `avatars/<id>/clips/batches/<batchId>.json` (`ClipBatchFile`, `schemaVersion` 1, strict) is a NEW store, written atomically by the engine at each member transition and when a restart ends a batch (queued
+//    members `dropped`); a clip delete never touches it. The engine keeps the newest 20 per avatar, and any older one whose money is still open.
+//  - Rollback (checked against 91adc7f0's readers): a 5b.1 build looks only at FILES directly in `clips/` (`clips.list` by `<clipId>.json`, the startup recovery and its sweep by a clip id and a known suffix, `exportNumbers`
+//    by files only, `main/media/resolve.ts` by named paths), so it ignores the `batches` folder: nothing becomes unreadable, nothing is swept, an avatar delete takes the folder with the avatar, and a 5b.2+ build reads the
+//    summaries again. `batches`, `ClipBatchSummary` and its enums are wire-only within one build (91adc7f0's `clips.list` result is strict, but the window and the engine ship together). Studio has no downgrade path.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 
