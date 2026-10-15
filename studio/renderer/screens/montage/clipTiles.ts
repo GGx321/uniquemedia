@@ -3,7 +3,8 @@ import { errorText } from "../../lib/errors";
 import { NBSP } from "../../lib/format";
 import { photoCategoryLabel } from "../photos/runForm";
 import { clipLength, readyTags } from "../clips/clipModel";
-import { type AddRefusal, type OriginOf, scenePhotoIds } from "./clipOps";
+import { type AddRefusal, framesKnown, type OriginOf, type Refusal, scenePhotoIds } from "./clipOps";
+import { actionWhyLabel, FRAMES_UNKNOWN_TITLE, VIDEO_TAG_TEXTS } from "./labels";
 import type { FillTarget } from "./mine";
 
 // 5b.2 part A (S5.WA4; plan §5.1, I5.59, I5.60; mockups 57–57d, README §S5.WAD «Состояния», «Тексты»): the editor's «Клипы» tab as pure data. The draft
@@ -11,12 +12,14 @@ import type { FillTarget } from "./mine";
 // frame): its copy is a kadr of this draft (`placed`, a click selects it); its copy is being made (`busy`, «Готовим для монтажа…», an import job read from
 // the job list); taken — the clip itself or its frame is in a finished video (`use.inVideo`), its photo is rejected or in a render, the photo or a sibling
 // clip is a kadr of this draft; this window met a file that will not prepare (`damaged`) or a try that failed (`failed`, pressable again); else `free`.
+// S5.WA4 round 2: the photo is taken too when the engine would refuse it (not eligible, or gone while every page of the photos is read: review M1), and a
+// clip that would be free waits (`unknown`) while a video of the draft is not known yet, since it may be a copy of this frame (review M3: fail closed).
 // A tile is called by its motion, its length and «Фото N» — the «Фото» tab's number — or, for a photo with none, its category.
 
 type Ready = Extract<ClipSummary, { status: "ready" }>;
 
-/** Why a frame is taken (57b), in the order the tile tells them. */
-export type TakenWhy = "used-clip" | "used-photo" | "rejected" | "reserved" | "photo-in" | "sibling-in";
+/** Why a frame is taken (57b; `photo-gone` and `ineligible`: S5.WA4 round 2), in the order the tile tells them. */
+export type TakenWhy = "used-clip" | "used-photo" | "photo-gone" | "rejected" | "ineligible" | "reserved" | "photo-in" | "sibling-in";
 
 export type ClipTileState =
   | { readonly kind: "free" }
@@ -24,7 +27,9 @@ export type ClipTileState =
   | { readonly kind: "busy" }
   | { readonly kind: "failed" }
   | { readonly kind: "damaged" }
-  | { readonly kind: "taken"; readonly why: TakenWhy };
+  | { readonly kind: "taken"; readonly why: TakenWhy }
+  /** A video of the draft is not known yet: this clip may not be placed until it is (fail closed). */
+  | { readonly kind: "unknown" };
 
 export interface ClipTile {
   readonly clip: Ready;
@@ -45,6 +50,8 @@ export interface ClipTilesInput {
   readonly originOf: OriginOf;
   /** The avatar's photos read so far, by id; null until the first answer. */
   readonly photos: ReadonlyMap<string, PhotoSummary> | null;
+  /** Every page of the avatar's photos is read: a photo `photos` does not hold is gone (a ready clip outlives its photo). */
+  readonly photosComplete: boolean;
   /** The clips whose copy is on its way: an import job of theirs is queued or running, or this window's ask is out. */
   readonly busy: ReadonlySet<string>;
   /** What this window met when it last tried a clip: a failure to tell (`failed`), or a file that will not prepare (`damaged`). */
@@ -63,7 +70,7 @@ function copiesIn(spec: MontageDraft, originOf: OriginOf): { slots: ReadonlyMap<
   spec.clips.forEach((clip, i) => {
     if (clip.kind !== "video") return;
     const origin = originOf(clip.mediaId);
-    if (origin === undefined) return;
+    if (origin === undefined || origin === null) return;
     if (!slots.has(origin.clipId)) slots.set(origin.clipId, i + 1);
     if (!framed.has(origin.photoId)) framed.set(origin.photoId, origin.clipId);
   });
@@ -74,6 +81,8 @@ function copiesIn(spec: MontageDraft, originOf: OriginOf): { slots: ReadonlyMap<
 export function clipTiles(input: ClipTilesInput): ClipTile[] {
   const { clips, spec, originOf, photos, busy, failed } = input;
   const { slots, framed } = copiesIn(spec, originOf);
+  const known = framesKnown(spec, originOf);
+  const complete = photos !== null && input.photosComplete;
   const scenes = scenePhotoIds(spec);
   const numbers = photos === null ? new Map<string, number>() : binNumbers([...photos.values()]);
   const ready = clips.filter((clip): clip is Ready => clip.status === "ready");
@@ -81,14 +90,22 @@ export function clipTiles(input: ClipTilesInput): ClipTile[] {
     const photo = photos?.get(clip.photoId);
     const n = numbers.get(clip.photoId);
     const source = n !== undefined ? `Фото ${n}` : photo !== undefined ? photoCategoryLabel(photo) : null;
-    return { clip, state: stateOf(clip, photo, { slots, framed, scenes, busy, failed }), source, length: clipLength(clip.durationMs), tags: readyTags(clip) };
+    return { clip, state: stateOf(clip, photo, { slots, framed, scenes, busy, failed, known, complete }), source, length: clipLength(clip.durationMs), tags: readyTags(clip) };
   });
 }
 
 function stateOf(
   clip: Ready,
   photo: PhotoSummary | undefined,
-  draft: { slots: ReadonlyMap<string, number>; framed: ReadonlyMap<string, string>; scenes: ReadonlySet<string>; busy: ReadonlySet<string>; failed: ReadonlyMap<string, "failed" | "damaged"> },
+  draft: {
+    slots: ReadonlyMap<string, number>;
+    framed: ReadonlyMap<string, string>;
+    scenes: ReadonlySet<string>;
+    busy: ReadonlySet<string>;
+    failed: ReadonlyMap<string, "failed" | "damaged">;
+    known: boolean;
+    complete: boolean;
+  },
 ): ClipTileState {
   const slot = draft.slots.get(clip.clipId);
   if (slot !== undefined) return { kind: "placed", slot };
@@ -96,15 +113,21 @@ function stateOf(
   const why = takenWhy(clip, photo, draft);
   if (why !== null) return { kind: "taken", why };
   const met = draft.failed.get(clip.clipId);
+  if (met === "damaged") return { kind: "damaged" };
+  // A video of the draft not known yet may be a copy of this very frame: nothing is placed until it is (fail closed).
+  if (!draft.known) return { kind: "unknown" };
   return met === undefined ? { kind: "free" } : { kind: met };
 }
 
-function takenWhy(clip: Ready, photo: PhotoSummary | undefined, draft: { framed: ReadonlyMap<string, string>; scenes: ReadonlySet<string> }): TakenWhy | null {
+function takenWhy(clip: Ready, photo: PhotoSummary | undefined, draft: { framed: ReadonlyMap<string, string>; scenes: ReadonlySet<string>; complete: boolean }): TakenWhy | null {
   // The clip list says how a finished video uses the frame; a photo the photo list already calls used marks its clips too, before the clips are read again.
   const inVideo = clip.use?.inVideo ?? (photo !== undefined && (photo.used || photo.usedIn.length > 0) ? "photo" : undefined);
   if (inVideo === "clip") return "used-clip";
   if (inVideo === "photo") return "used-photo";
+  // The engine admits only an eligible, unused photo's frame (`eligibleUnusedPhotos`): a photo gone (a ready clip outlives it) or not eligible is refused.
+  if (photo === undefined && draft.complete) return "photo-gone";
   if (photo?.rejected === true) return "rejected";
+  if (photo !== undefined && !photo.eligible) return "ineligible";
   if (photo?.reserved === true) return "reserved";
   if (draft.scenes.has(clip.photoId)) return "photo-in";
   const sibling = draft.framed.get(clip.photoId);
@@ -121,7 +144,9 @@ export const PREPARING = "Готовим для монтажа…";
 export const TAKEN_LABELS: Record<TakenWhy, string> = {
   "used-clip": "в видео",
   "used-photo": "в видео",
+  "photo-gone": "фото удалено",
   rejected: "фото отклонено",
+  ineligible: "фото не подходит",
   reserved: "в рендере",
   "photo-in": "это фото уже в ролике",
   "sibling-in": "клип этого фото уже в ролике",
@@ -134,7 +159,9 @@ export const TAKEN_BAND: ReadonlySet<TakenWhy> = new Set<TakenWhy>(["photo-in", 
 const TAKEN_TITLES: Record<TakenWhy, string | null> = {
   "used-clip": "Этот клип уже в готовом видео — второй раз не ставится",
   "used-photo": "Фото этого клипа или другой клип из него уже в готовом видео — второй раз не ставится",
+  "photo-gone": "Фото этого клипа удалено — в монтаж не ставится",
   rejected: "Фото этого клипа отклонено — в монтаж не ставится",
+  ineligible: "Фото этого клипа не подходит для монтажа",
   reserved: null,
   "photo-in": "Это фото уже в ролике",
   "sibling-in": "Клип этого фото уже в ролике",
@@ -153,6 +180,8 @@ function stateWords(state: ClipTileState): string {
       return "файл повреждён";
     case "taken":
       return TAKEN_LABELS[state.why];
+    case "unknown":
+      return "читаем видео ролика";
     case "failed":
     case "free":
       return "не использован";
@@ -164,8 +193,11 @@ export function clipTileAria(tile: ClipTile): string {
   return `${clipName(tile)}${tile.source === null ? "" : `, ${tile.source}`} · ${stateWords(tile.state)}`;
 }
 
-/** What a click does now: select the placed clip's kadr; nothing for a taken frame or a damaged file; else a kadr at the end, unless no kadr fits. */
-export type ClipAction = "select" | "taken" | "damaged" | "full" | "append";
+/**
+ * What a click does now: select the placed clip's kadr; nothing for a taken frame or a damaged file, nor while a video of the draft is not known (`wait`);
+ * else a kadr at the end, unless no kadr fits.
+ */
+export type ClipAction = "select" | "taken" | "damaged" | "wait" | "full" | "append";
 
 export function clipAction(tile: ClipTile, addBlock: AddRefusal | null): ClipAction {
   switch (tile.state.kind) {
@@ -175,6 +207,8 @@ export function clipAction(tile: ClipTile, addBlock: AddRefusal | null): ClipAct
       return "taken";
     case "damaged":
       return "damaged";
+    case "unknown":
+      return "wait";
     default:
       return addBlock === null ? "append" : "full";
   }
@@ -190,7 +224,9 @@ export function pickAria(tile: ClipTile, addBlock: AddRefusal | null): string {
         ? "уже занято"
         : action === "damaged"
           ? "не подготовить"
-          : action === "full"
+          : action === "wait"
+            ? "подождите, читаем видео ролика"
+            : action === "full"
             ? "кадров больше не добавить"
             : "добавить кадр в конец ролика";
   return `${clipName(tile)}: ${words}`;
@@ -208,6 +244,8 @@ export function clipTileTitle(tile: ClipTile, addBlock: AddRefusal | null): stri
       return PREPARING;
     case "damaged":
       return CLIP_REASONS_RU["file-damaged"];
+    case "unknown":
+      return FRAMES_UNKNOWN_TITLE;
     default:
       return addBlock === null ? `Клик — видео с начала, до 2${NBSP}с, в конец ролика` : "Кадров больше не добавить";
   }
@@ -242,11 +280,29 @@ export function copyLabeller(originOf: OriginOf, clips: readonly ClipSummary[] |
   const numbers = photos === null ? new Map<string, number>() : binNumbers([...photos.values()]);
   return (mediaId) => {
     const origin = originOf(mediaId);
-    if (origin === undefined) return null;
+    if (origin === undefined || origin === null) return null;
     const n = numbers.get(origin.photoId);
     const photo = photos?.get(origin.photoId);
     return { origin, motion: byId.get(origin.clipId)?.motion.label ?? null, source: n !== undefined ? `Фото ${n}` : photo !== undefined ? photoCategoryLabel(photo) : null };
   };
+}
+
+/**
+ * Why a copy did not go in where it was asked for (review L3: a deferred placement the draft no longer takes): the 57b words when its frame is in the draft
+ * (the photo itself, or a sibling clip), the toolbar's cap words (`actionWhyLabel`), the wait while a video is not known, and the own video's too-short words.
+ */
+export function placementRefusalText(reason: Refusal, spec: MontageDraft, photoId: string): string {
+  switch (reason) {
+    case "photo-in-draft":
+      return scenePhotoIds(spec).has(photoId) ? TAKEN_TITLES["photo-in"] ?? "" : TAKEN_TITLES["sibling-in"] ?? "";
+    case "clip-cap":
+    case "no-room":
+      return actionWhyLabel(reason);
+    case "frame-unknown":
+      return FRAMES_UNKNOWN_TITLE;
+    default:
+      return VIDEO_TAG_TEXTS["video-under-min"];
+  }
 }
 
 /** A no-break space before a dash, so a wrapped line never starts with «—» (README L3). */

@@ -206,8 +206,14 @@ export function actionWhyLabel(why: ActionBlock): string {
       return "Клип не режется: одно фото — один раз в ролике";
     case "clip-copy":
       return "Клип не копируется: одно фото — один раз в ролике";
+    // S5.WA4 round 2 (review M3): the video's record has not been read, so it may be a clip's copy: it waits (fail closed).
+    case "frame-unknown":
+      return FRAMES_UNKNOWN_TITLE;
   }
 }
+
+/** S5.WA4 round 2 (review M3): what waits while a video of the draft is not known yet (a frame may not be placed, the video not split or copied). */
+export const FRAMES_UNKNOWN_TITLE = "Читаем видео ролика — подождите";
 
 // ---------- the layer and music tracks (3d.3b) ----------
 

@@ -2,7 +2,21 @@ import { describe, expect, test } from "bun:test";
 import { CLIP_REASONS_RU, ClipSummary, type EngineError, type MediaOrigin, mediaReasonRu, type PhotoSummary } from "../../../shared/engine";
 import { scenePhoto } from "../../engine/mockEngine.testkit";
 import { NBSP } from "../../lib/format";
-import { binNumbers, clipImportFailure, clipTileAria, clipTiles, clipTileTitle, clipsHint, type ClipTile, type ClipTileState, copyLabeller, pickAria } from "./clipTiles";
+import {
+  binNumbers,
+  clipAction,
+  clipImportFailure,
+  clipTileAria,
+  clipTiles,
+  clipTileTitle,
+  clipsHint,
+  type ClipTile,
+  type ClipTileState,
+  copyLabeller,
+  pickAria,
+  placementRefusalText,
+  TAKEN_BAND,
+} from "./clipTiles";
 import type { OriginOf } from "./clipOps";
 import { draftSpec, photoClip } from "./testkit";
 
@@ -46,7 +60,8 @@ const INDEX = new Map(PHOTOS.map((p) => [p.photoId, p]));
 const COPY_3 = "media-copy-0003";
 const ORIGIN_3: MediaOrigin = { kind: "clip", avatarId: AVATAR, clipId: "clip-0000003", photoId: P(4) };
 const ORIGINS: ReadonlyMap<string, MediaOrigin> = new Map([[COPY_3, ORIGIN_3]]);
-const originOf: OriginOf = (mediaId) => ORIGINS.get(mediaId);
+/** Every video of the drafts below is known: COPY_3 is a copy, any other is the owner's own (null). */
+const originOf: OriginOf = (mediaId) => ORIGINS.get(mediaId) ?? null;
 const copyClip = (index: number, mediaId: string) => ({ clipId: `clip-${String(index + 1).padStart(3, "0")}`, durationMs: 2_000, transitionIn: "cut" as const, kind: "video" as const, mediaId, trimStartMs: 0, focus: null });
 
 /** README §S5.WAD's one library: clip 1 in a video, 2 free (photo 2 is a kadr), 3 placed, 4 its sibling, 5 a rejected photo's, 6 in a render, 7 a sibling of clip 1. */
@@ -61,7 +76,8 @@ const CLIPS: ClipSummary[] = [
   ready("clip-0000008", P(1)),
 ];
 const SPEC = draftSpec([photoClip(0, P(3)), photoClip(1, P(2)), copyClip(2, COPY_3)]);
-const NONE = { busy: new Set<string>(), failed: new Map<string, "failed" | "damaged">() };
+/** Nothing on its way, nothing met; every page of the photos read (a photo it does not hold is gone). */
+const NONE = { busy: new Set<string>(), failed: new Map<string, "failed" | "damaged">(), photosComplete: true };
 
 const states = (tiles: readonly ClipTile[]): [string, ClipTileState][] => tiles.map((t) => [t.clip.clipId, t.state]);
 
@@ -117,10 +133,65 @@ describe("the tiles (57, 57b)", () => {
     expect(clipTiles({ clips: [ready("clip-0000008", P(1))], spec: SPEC, originOf, photos: used, ...NONE })[0]?.state).toEqual({ kind: "taken", why: "used-photo" });
   });
 
-  test("no origins known yet: a copy's clip reads free and its sibling too (the engine still refuses the frame at the render)", () => {
-    const blind = clipTiles({ clips: CLIPS, spec: SPEC, originOf: () => undefined, photos: INDEX, ...NONE });
-    expect(blind[2]?.state).toEqual({ kind: "free" });
-    expect(blind[3]?.state).toEqual({ kind: "free" });
+  // S5.WA4 round 2 (review M3): this pinned the fail-OPEN rule (a draft video of unknown origin read as no copy, so a copy's clip and its sibling read free and
+  // could be placed into a draft the engine then refuses). The rule is fail-CLOSED now: while any video of the draft is not known (the media list has not
+  // answered, or could not be read), no free clip can be placed; what is known (taken, placed, on its way) stays as it is.
+  test("a draft video of unknown origin: every clip that would be free waits (`unknown`); taken and busy ones stay as they are", () => {
+    const blind = clipTiles({ clips: CLIPS, spec: SPEC, originOf: () => undefined, photos: INDEX, ...NONE, busy: new Set(["clip-0000002"]) });
+    expect(states(blind)).toEqual([
+      ["clip-0000001", { kind: "taken", why: "used-clip" }],
+      ["clip-0000002", { kind: "busy" }],
+      ["clip-0000003", { kind: "unknown" }],
+      ["clip-0000004", { kind: "unknown" }],
+      ["clip-0000005", { kind: "taken", why: "rejected" }],
+      ["clip-0000006", { kind: "taken", why: "reserved" }],
+      ["clip-0000007", { kind: "taken", why: "used-photo" }],
+      ["clip-0000008", { kind: "unknown" }],
+    ]);
+    const waiting = blind[7];
+    if (waiting === undefined) throw new Error("no tile");
+    expect(clipTileAria(waiting)).toBe("Клип «Как в сцене», 0:05, Фото 1 · читаем видео ролика");
+    expect(pickAria(waiting, null)).toBe("Клип «Как в сцене», 0:05: подождите, читаем видео ролика");
+    expect(clipTileTitle(waiting, null)).toBe("Читаем видео ролика — подождите");
+    expect(clipAction(waiting, null)).toBe("wait");
+  });
+
+  test("a draft with no video at all knows its frames whatever the origins say", () => {
+    const tiles = clipTiles({ clips: [ready("clip-0000008", P(1))], spec: draftSpec([photoClip(0, P(2))]), originOf: () => undefined, photos: INDEX, ...NONE });
+    expect(tiles[0]?.state).toEqual({ kind: "free" });
+  });
+});
+
+describe("a frame the engine refuses for its photo (S5.WA4 round 2, review M1)", () => {
+  test("a photo that is not eligible (not rejected): «фото не подходит», taken", () => {
+    const photos = new Map(INDEX).set(P(1), scenePhoto(1, { eligible: false }));
+    const [tile] = clipTiles({ clips: [ready("clip-0000008", P(1))], spec: SPEC, originOf, photos, ...NONE });
+    if (tile === undefined) throw new Error("no tile");
+    expect(tile.state).toEqual({ kind: "taken", why: "ineligible" });
+    expect(clipTileAria(tile)).toBe("Клип «Как в сцене», 0:05, Дом · фото не подходит");
+    expect(pickAria(tile, null)).toBe("Клип «Как в сцене», 0:05: уже занято");
+    expect(clipTileTitle(tile, null)).toBe("Фото этого клипа не подходит для монтажа");
+    expect(TAKEN_BAND.has("ineligible")).toBe(false);
+  });
+
+  test("a photo that is gone while every page of the photos is read: «фото удалено», taken; while pages are left, nothing is said", () => {
+    const photos = new Map(INDEX);
+    photos.delete(P(1));
+    const [gone] = clipTiles({ clips: [ready("clip-0000008", P(1))], spec: SPEC, originOf, photos, ...NONE });
+    if (gone === undefined) throw new Error("no tile");
+    expect(gone.state).toEqual({ kind: "taken", why: "photo-gone" });
+    expect(gone.source).toBeNull();
+    expect(clipTileAria(gone)).toBe("Клип «Как в сцене», 0:05 · фото удалено");
+    expect(clipTileTitle(gone, null)).toBe("Фото этого клипа удалено — в монтаж не ставится");
+    expect(clipTiles({ clips: [ready("clip-0000008", P(1))], spec: SPEC, originOf, photos, ...NONE, photosComplete: false })[0]?.state).toEqual({ kind: "free" });
+    // Not read at all: nothing is known of it.
+    expect(clipTiles({ clips: [ready("clip-0000008", P(1))], spec: SPEC, originOf, photos: null, ...NONE })[0]?.state).toEqual({ kind: "free" });
+  });
+
+  test("a used frame is told before a gone or unfit photo", () => {
+    const photos = new Map(INDEX);
+    photos.delete(P(1));
+    expect(clipTiles({ clips: [ready("clip-0000008", P(1), { use: { inVideo: "clip" } })], spec: SPEC, originOf, photos, ...NONE })[0]?.state).toEqual({ kind: "taken", why: "used-clip" });
   });
 });
 
@@ -131,6 +202,7 @@ describe("preparing, damaged and failed (57a, 57c)", () => {
       spec: SPEC,
       originOf,
       photos: INDEX,
+      photosComplete: true,
       busy: new Set(["clip-0000003", "clip-0000008", "clip-0000002"]),
       failed: new Map<string, "failed" | "damaged">([
         ["clip-0000001", "damaged"],
@@ -142,6 +214,7 @@ describe("preparing, damaged and failed (57a, 57c)", () => {
       spec: draftSpec(0),
       originOf,
       photos: INDEX,
+      photosComplete: true,
       busy: new Set(),
       failed: new Map<string, "failed" | "damaged">([
         ["clip-0000008", "damaged"],
@@ -231,6 +304,17 @@ describe("a copy as the draft calls it (57f; README M6)", () => {
     expect(copyOf("media-own-0001")).toBeNull();
     // The clip list or the photos not read yet: the copy is still a copy, its words wait.
     expect(copyLabeller(originOf, null, null)(COPY_3)).toEqual({ origin: ORIGIN_3, motion: null, source: null });
+  });
+});
+
+describe("a copy that can no longer go in where it was asked for (S5.WA4 round 2, review L3)", () => {
+  test("says why in the 57b and cap words: its photo, a sibling, the 20th kadr, the 15 s, a video not known yet", () => {
+    const spec = draftSpec([photoClip(0, P(2)), photoClip(1, P(4))]);
+    expect(placementRefusalText("photo-in-draft", spec, P(2))).toBe("Это фото уже в ролике");
+    expect(placementRefusalText("photo-in-draft", spec, P(7))).toBe("Клип этого фото уже в ролике");
+    expect(placementRefusalText("clip-cap", spec, P(7))).toBe("Не больше 20 кадров в одном видео");
+    expect(placementRefusalText("no-room", spec, P(7))).toBe("В ролике уже 15 с — укоротите кадр");
+    expect(placementRefusalText("frame-unknown", spec, P(7))).toBe("Читаем видео ролика — подождите");
   });
 });
 

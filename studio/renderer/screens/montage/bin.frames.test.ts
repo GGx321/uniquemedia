@@ -14,7 +14,7 @@ const PHOTOS: PhotoSummary[] = [scenePhoto(1), scenePhoto(2), scenePhoto(3)];
 const COPY = "media-copy-0001";
 const OWN = "media-own-0001";
 const ORIGIN: MediaOrigin = { kind: "clip", avatarId: "avatar-mia-0001", clipId: "clip-0000004", photoId: id(2) };
-const originOf: OriginOf = (mediaId) => (mediaId === COPY ? ORIGIN : undefined);
+const originOf: OriginOf = (mediaId) => (mediaId === COPY ? ORIGIN : null);
 const video = (index: number, mediaId: string): MontageDraft["clips"][number] => ({ clipId: `clip-${String(index + 1).padStart(3, "0")}`, durationMs: 2_000, transitionIn: "cut", kind: "video", mediaId, trimStartMs: 0, focus: null });
 /** Photo 1 in clip 1, the copy of photo 2's clip as clip 2, an own video as clip 3. */
 const SPEC = draftSpec([photoClip(0, id(1)), video(1, COPY), video(2, OWN)]);
@@ -45,7 +45,16 @@ describe("the photo of a clip copy in the draft (57e)", () => {
     expect(binTiles(PHOTOS, both, ALL, copyFramePhotoIds(both, originOf))[1]).toMatchObject({ n: 2, slot: 1, state: "placed" });
   });
 
-  test("no origins known yet: the photo reads free, as before 5b.2", () => {
-    expect(binTiles(PHOTOS, SPEC, ALL)[1]).toMatchObject({ n: 2, state: "free" });
+  // S5.WA4 round 2 (review M3): this pinned the fail-OPEN rule (no origin known: the photo reads free and a click places it, though it may be a copy's
+  // frame). It is fail-CLOSED now: the tile keeps the state the bin knows, but while a video of the draft is not known a click on a free photo waits.
+  test("while a video of the draft is not known, a free photo waits (`wait`); a placed one still selects, a taken one stays taken", () => {
+    const tiles = binTiles(PHOTOS, SPEC, ALL);
+    const [placed, free] = tiles;
+    if (placed === undefined || free === undefined) throw new Error("no tiles");
+    expect(free).toMatchObject({ n: 2, state: "free" });
+    expect(tileAction(free, null, null, false)).toBe("wait");
+    expect(tileAction(free, { clip: 0, cell: 0 }, null, false)).toBe("wait");
+    expect(tileAction(placed, null, null, false)).toBe("select");
+    expect(tileAction(free, null, null, true)).toBe("append");
   });
 });

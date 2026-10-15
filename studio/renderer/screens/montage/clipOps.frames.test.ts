@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type MediaOrigin, MontageDraft } from "../../../shared/engine";
-import { appendPhotoClip, appendVideoClip, duplicateClip, type Edit, framePhotoIds, insertPhotoClip, insertVideoClip, type OriginOf, setCellPhoto, splitClipAt } from "./clipOps";
+import { appendPhotoClip, appendVideoClip, duplicateClip, type Edit, framePhotoIds, framesKnown, insertPhotoClip, insertVideoClip, type OriginOf, setCellPhoto, splitClipAt } from "./clipOps";
 import { actionWhyLabel } from "./labels";
 import { duplicateSelected, selectionActions, splitSelected } from "./selection";
 import { collageClip, draftSpec, photoClip } from "./testkit";
@@ -24,7 +24,10 @@ const ORIGINS: ReadonlyMap<string, MediaOrigin> = new Map([
   [COPY_A, origin("clip-a", P3)],
   [COPY_B, origin("clip-b", P3)],
 ]);
-const originOf: OriginOf = (mediaId) => ORIGINS.get(mediaId);
+/** Every video of the drafts below is known: COPY_A and COPY_B are copies, any other is the owner's own (null). */
+const originOf: OriginOf = (mediaId) => ORIGINS.get(mediaId) ?? null;
+/** The media list has not answered (or could not be read): no video's origin is known. */
+const unknown: OriginOf = () => undefined;
 
 const copyClip = (index: number, mediaId: string, durationMs = 2_000): Extract<MontageDraft["clips"][number], { kind: "video" }> => ({
   clipId: `clip-${String(index + 1).padStart(3, "0")}`,
@@ -48,10 +51,17 @@ describe("the draft's frames (framePhotoIds)", () => {
     expect([...framePhotoIds(spec, originOf)].sort()).toEqual([P1, P2, P3]);
   });
 
-  test("without the origins (none known yet) the frames are the scene photos alone, as before", () => {
+  // S5.WA4 round 2 (review M3): this pinned the fail-OPEN reading (a video of unknown origin counted as no copy, so its frame was free to place again).
+  // Now a video's origin is a copy's, null (the owner's own, or one gone), or undefined (not known yet), and the frames are known only when no video is
+  // undefined; the default (`NO_COPIES`) is a caller saying the draft holds no copy.
+  test("the frames are known when every video's origin is (a copy, or null for an own video); one not known leaves them unknown", () => {
     const spec = draftSpec([photoClip(0, P1), copyClip(1, COPY_A)]);
+    expect(framesKnown(spec, originOf)).toBe(true);
+    expect(framesKnown(spec, unknown)).toBe(false);
+    expect(framesKnown(draftSpec([photoClip(0, P1)]), unknown)).toBe(true);
+    // The default: the caller says the draft holds no copy.
+    expect(framesKnown(spec)).toBe(true);
     expect([...framePhotoIds(spec)]).toEqual([P1]);
-    expect([...framePhotoIds(spec, () => undefined)]).toEqual([P1]);
   });
 });
 
@@ -71,7 +81,16 @@ describe("a scene photo whose clip copy is in the draft is not placed again", ()
     expect(ok(setCellPhoto(withCollage, 0, 1, P2, null, originOf)).clips[0]).toMatchObject({ cells: [{ photo: { photoId: P1 } }, { photo: { photoId: P2 } }] });
   });
 
-  test("with no origins known the old rule holds: only the scene photos are checked", () => {
+  // S5.WA4 round 2 (review M3): this pinned the fail-OPEN rule («with no origins known, only the scene photos are checked»). It is fail-CLOSED now: while a
+  // video's origin is not known, no frame is placed at all, since any photo may be that copy's frame.
+  test("while a video's origin is not known, no frame is placed (fail closed): `frame-unknown`", () => {
+    expect(appendPhotoClip(spec, P2, null, unknown)).toEqual({ ok: false, reason: "frame-unknown" });
+    expect(insertPhotoClip(spec, 0, P2, null, unknown)).toEqual({ ok: false, reason: "frame-unknown" });
+    const withCollage = draftSpec([collageClip(0, [P1, null]), copyClip(1, COPY_A)]);
+    expect(setCellPhoto(withCollage, 0, 1, P2, null, unknown)).toEqual({ ok: false, reason: "frame-unknown" });
+    // Emptying a cell places no frame.
+    expect(ok(setCellPhoto(withCollage, 0, 0, null, null, unknown)).clips[0]).toMatchObject({ cells: [{ photo: null }, { photo: null }] });
+    // The default says the draft holds no copy: the scene photos alone are checked.
     expect(ok(appendPhotoClip(spec, P3)).clips).toHaveLength(3);
   });
 });
@@ -104,6 +123,14 @@ describe("a clip copy goes in once, and never beside its frame", () => {
     expect(appendVideoClip(full, copyA, originOf)).toEqual({ ok: false, reason: "no-room" });
   });
 
+  test("while another video's origin is not known a copy is not placed (`frame-unknown`); an own video, which holds no frame, still is", () => {
+    const spec = draftSpec([photoClip(0, P1), copyClip(1, COPY_B)]);
+    expect(appendVideoClip(spec, copyA, unknown)).toEqual({ ok: false, reason: "frame-unknown" });
+    expect(ok(appendVideoClip(spec, { mediaId: OWN, durationMs: 5_000 }, unknown)).clips).toHaveLength(3);
+    // Its own origin it carries: in a draft of photos only, the frames are known.
+    expect(ok(appendVideoClip(draftSpec([photoClip(0, P1)]), copyA, unknown)).clips).toHaveLength(2);
+  });
+
   test("an own video that is no clip's copy is still placed as often as the owner likes", () => {
     const own = { mediaId: OWN, durationMs: 5_000 };
     const twice = ok(appendVideoClip(ok(appendVideoClip(draftSpec([photoClip(0, P1)]), own, originOf)), own, originOf));
@@ -129,6 +156,16 @@ describe("a clip copy is neither split nor duplicated (its frame would repeat)",
     expect(actionWhyLabel("clip-copy")).toBe("Клип не копируется: одно фото — один раз в ролике");
     // The owner's own video keeps its actions.
     expect(selectionActions(spec, { kind: "clip", clipId: "clip-003", cell: 0 }, 5_000, originOf)).toMatchObject({ split: { enabled: true }, duplicate: { enabled: true } });
+  });
+
+  test("a video whose origin is not known yet is neither split nor copied, and the toolbar says it waits (fail closed)", () => {
+    const selection = { kind: "clip", clipId: "clip-003", cell: 0 } as const;
+    expect(splitClipAt(spec, 2, 5_000, unknown)).toEqual({ ok: false, reason: "frame-unknown" });
+    expect(duplicateClip(spec, 2, unknown)).toEqual({ ok: false, reason: "frame-unknown" });
+    expect(selectionActions(spec, selection, 5_000, unknown)).toMatchObject({ split: { enabled: false, why: "frame-unknown" }, duplicate: { enabled: false, why: "frame-unknown" }, remove: { enabled: true } });
+    expect(actionWhyLabel("frame-unknown")).toBe("Читаем видео ролика — подождите");
+    // A photo clip is not a video: its copy (empty cells) holds no frame.
+    expect(selectionActions(spec, { kind: "clip", clipId: "clip-001", cell: 0 }, 0, unknown).duplicate).toEqual({ enabled: true });
   });
 
   test("the commands refuse it too", () => {

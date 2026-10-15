@@ -76,11 +76,13 @@ export interface ClipPropertiesProps {
   readonly trimPeek: TrimPeekStore;
   /** 5b.2 (57f): which own videos are clips' copies, and what to call them; by default, what the videos' records say. */
   readonly copyOf?: CopyOf;
+  /** 5b.2: what the editor knows of each draft video's origin (undefined while not known: copy waits); by default, the videos' records. */
+  readonly originOf?: OriginOf;
 }
 
-export function ClipProperties({ session, spec, index, cell, avatarId, timeline, focusPending, dragPhoto, onFillCell, videos, videoProblems, trimPeek, copyOf }: ClipPropertiesProps) {
-  // 5b.2: a clip's montage copy is neither split nor copied (Q-F = 1, 57f).
-  const originOf = useMemo<OriginOf>(() => (copyOf === undefined ? originOfVideos(videos) : (mediaId) => copyOf(mediaId)?.origin), [copyOf, videos]);
+export function ClipProperties({ session, spec, index, cell, avatarId, timeline, focusPending, dragPhoto, onFillCell, videos, videoProblems, trimPeek, copyOf, originOf: knownOrigins }: ClipPropertiesProps) {
+  // 5b.2: a clip's montage copy is neither split nor copied (Q-F = 1, 57f), nor a video not known yet (fail closed).
+  const originOf = useMemo<OriginOf>(() => knownOrigins ?? originOfVideos(videos), [knownOrigins, videos]);
   const commands = useSelectionCommands(session, timeline, originOf);
   const durationId = useId();
   // Where the playhead rests (3d.4): a playback does not re-render the panel.
@@ -91,7 +93,8 @@ export function ClipProperties({ session, spec, index, cell, avatarId, timeline,
   const layout = layoutOf(clip);
   // 5b.2 (57f): a clip's copy is «клип», called by its clip's motion and photo, never by the copy's file name.
   const copy = clip.kind === "video" ? (copyOf?.(clip.mediaId) ?? null) : null;
-  const isCopy = clip.kind === "video" && originOf(clip.mediaId) !== undefined;
+  const origin = clip.kind === "video" ? originOf(clip.mediaId) : null;
+  const isCopy = origin !== undefined && origin !== null;
   const cells = cellsOf(clip);
   const actions = selectionActions(spec, timeline.selection, restMs, originOf);
   const face = layout === null ? null : faceState(clip, cell, focusPending);
