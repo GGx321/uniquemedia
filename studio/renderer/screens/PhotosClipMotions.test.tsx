@@ -559,7 +559,7 @@ describe("63b, 63c: the idea refused", () => {
     await translate(s);
     const refusal = s.querySelector(".mc-refusal") as HTMLElement;
     expect(Array.from(refusal.querySelectorAll("p")).map((p) => plain(p.textContent))).toEqual([
-      "Так не получится: в этом кадре одежда остаётся на месте — такое движение только для кадров «Смелой».",
+      "Так не получится: здесь одежда остаётся на месте — такое движение только для кадров «Смелой».",
     ]);
     expect(plain(refusal.querySelector(".mc-paid")?.textContent)).toBe("За перевод оплачено $0.001.");
     expect(h.engine.peekMotions().lines.filter((line) => line.attemptId.includes(":idea#"))).toHaveLength(1);
