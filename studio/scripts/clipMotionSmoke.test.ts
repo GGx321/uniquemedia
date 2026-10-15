@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../testing/nativeGlobals";
 import { canaryProblems, motionLedgerProblems } from "./clipMotionSmoke";
+useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WC4: what the E2E smoke (smoke-engine.ts) checks of part C, as functions with no Electron in them. The smoke only has to call them with what its mock and the app reported; this file holds
 // them, and clipMotionSmoke.engine.test.ts runs the same steps against the real engine on loopback.
