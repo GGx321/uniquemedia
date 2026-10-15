@@ -346,7 +346,8 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
                   length={seconds === null ? null : clipLength(seconds * 1000)}
                   money={moneyLine}
                   cancelling={view.cancellingJobs.has(job.jobId)}
-                  onCancel={isActiveJob(job) ? () => void cancel(job) : null}
+                  // A batch member has no cancel of its own, even before its POST: «Отменить оставшиеся» is the header's (README decision 12).
+                  onCancel={isActiveJob(job) && job.clip.batch === undefined ? () => void cancel(job) : null}
                   place={job.clip.batch}
                   waiting={phase === "queued"}
                 />

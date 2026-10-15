@@ -339,6 +339,17 @@ describe("59: the sheet «Оживить N фото»", () => {
 });
 
 describe("60: «Клипы» while the batch runs", () => {
+  test("a member has no cancel of its own, even in `preparing` before its POST: «Отменить оставшиеся» is the header's", async () => {
+    const h = await openNini();
+    await startBatch([[1], [3]]);
+    const preparingTile = (): HTMLElement | null => Array.from(document.querySelectorAll<HTMLElement>(".clips-tab .clip-phase")).find((p) => p.textContent === "Готовим кадр")?.closest("article") ?? null;
+    await until(h, () => preparingTile() !== null, "the first member preparing");
+    const preparing = preparingTile();
+    if (preparing === null) throw new Error("no preparing tile");
+    expect(within(preparing).queryByRole("button", { name: "Отменить" })).toBeNull();
+    expect(within(batchHead()).getByRole("button", { name: "Отменить оставшиеся" })).toBeDefined();
+  });
+
   test("the header by batchIndex, the members waiting calm with their place, one sidebar row «Клип 1/4 · Nini», every member in «Очередь»", async () => {
     const h = await openNini();
     await startBatch([[1], [4, "Ночнушки и бельё"], [3], [2]]);
