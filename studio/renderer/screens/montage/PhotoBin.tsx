@@ -7,7 +7,8 @@ import type { PhotoPages } from "../photos/photoPages";
 import type { MoreState } from "../photos/usePhotoPages";
 import { binFacets, type BinFilter, binTiles, type BinTile, isBuiltInCategory, tileAction } from "./bin";
 import type { AddRefusal } from "./clipOps";
-import { addBlockedLabel, FRAMES_UNKNOWN_TITLE } from "./labels";
+import { FAILED_WORDS } from "./clipTiles";
+import { addBlockedLabel, FRAMES_FAILED_TEXT, FRAMES_UNKNOWN_TITLE } from "./labels";
 import { type FillTarget, fillWords } from "./mine";
 
 // The «Фото» tab (Editor.dc.html, EditorNew.dc.html; P6–P15). 3d.3a placed photos from it; 3d.5 adds the chips: the draft's avatar
@@ -39,6 +40,8 @@ export interface PhotoBinProps {
   readonly clipFrames?: ReadonlySet<string>;
   /** 5b.2 (S5.WA4 round 2): every video of the draft is known; while one is not, a free photo waits (it may be that video's frame). */
   readonly framesKnown?: boolean;
+  /** Round 3: that read failed (it is tried again): the waiting photo says so instead of «подождите». */
+  readonly framesFailed?: boolean;
 }
 
 /** The bin's «Показать ещё» (S4.P2): the bin is a picker of the avatar's photos, so the photos past the first 500 must be reachable too. */
@@ -80,7 +83,7 @@ function stateLabel(tile: BinTile): string {
 }
 
 /** What a click does, after the photo's name: «Фото 3: добавить кадр в конец ролика». */
-function actionLabel(tile: BinTile, fillTarget: PhotoBinProps["fillTarget"], addBlock: AddRefusal | null, framesKnown: boolean): string {
+function actionLabel(tile: BinTile, fillTarget: PhotoBinProps["fillTarget"], addBlock: AddRefusal | null, framesKnown: boolean, framesFailed: boolean): string {
   switch (tileAction(tile, fillTarget, addBlock, framesKnown)) {
     case "select":
       return `выбрать кадр ${tile.slot ?? ""}`;
@@ -93,11 +96,11 @@ function actionLabel(tile: BinTile, fillTarget: PhotoBinProps["fillTarget"], add
     case "append":
       return "добавить кадр в конец ролика";
     case "wait":
-      return "подождите, читаем видео ролика";
+      return framesFailed ? FAILED_WORDS : "подождите, читаем видео ролика";
   }
 }
 
-export function PhotoBin({ avatarName, avatarId, spec, photos, paging = null, filter, onFilter, onPick, fillTarget, addBlock, onDragPhoto, clipFrames, framesKnown = true }: PhotoBinProps) {
+export function PhotoBin({ avatarName, avatarId, spec, photos, paging = null, filter, onFilter, onPick, fillTarget, addBlock, onDragPhoto, clipFrames, framesKnown = true, framesFailed = false }: PhotoBinProps) {
   const hintId = useId();
   const categoryId = useId();
   const binRef = useRef<HTMLUListElement>(null);
@@ -210,9 +213,9 @@ export function PhotoBin({ avatarName, avatarId, spec, photos, paging = null, fi
                   type="button"
                   className="ed-bin-pick"
                   data-photo-id={photo.photoId}
-                  aria-label={`Фото ${n}: ${actionLabel(tile, fillTarget, addBlock, framesKnown)}`}
+                  aria-label={`Фото ${n}: ${actionLabel(tile, fillTarget, addBlock, framesKnown, framesFailed)}`}
                   aria-describedby={hintId}
-                  title={tile.state === "clip-in" ? CLIP_IN_TITLE : waiting ? FRAMES_UNKNOWN_TITLE : undefined}
+                  title={tile.state === "clip-in" ? CLIP_IN_TITLE : waiting ? (framesFailed ? FRAMES_FAILED_TEXT : FRAMES_UNKNOWN_TITLE) : undefined}
                   disabled={taken || does === "full"}
                   aria-disabled={waiting || undefined}
                   draggable={draggable}

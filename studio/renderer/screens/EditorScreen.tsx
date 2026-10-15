@@ -24,6 +24,8 @@ import { sameJson } from "./montage/json";
 import { LayerProperties } from "./montage/LayerProperties";
 import { addLayerRefusal } from "./montage/layerOps";
 import { type MediaTab, MediaPanel } from "./montage/MediaPanel";
+import type { RecordsRead } from "./montage/ownMedia";
+import { useBackoffRetry } from "./montage/retryBackoff";
 import { type BinDrag, dragKey, parseDragKey } from "./montage/mine";
 import { MineTab, type MineTabProps } from "./montage/MineTab";
 import { MusicProperties } from "./montage/MusicCard";
@@ -60,7 +62,7 @@ import {
 } from "./montage/clipOps";
 import { PropertiesSlot } from "./montage/EditorSlots";
 import { Preview } from "./montage/Preview";
-import { draftTitle, layerAddLabel, layerName, outputLabel, outputParts, saveLabel } from "./montage/labels";
+import { draftTitle, FRAMES_FAILED_TEXT, layerAddLabel, layerName, outputLabel, outputParts, saveLabel } from "./montage/labels";
 import { RenderControls } from "./montage/RenderControls";
 import { layerProblems, photoProblems, renderBlock, type EngineVerdict, type PhotoProblem, type UsedVideo } from "./montage/renderBlock";
 import { useDraftFlushes } from "./montage/flushes";
@@ -576,7 +578,24 @@ function DraftEditor({
   const flaggedLayers = layerProblems(verdict.spec, judged, previewRefused);
   // 3f.3b: the own videos the clips play (their records, by id), and what the render refuses each video clip for: the engine's verdict on the spec on
   // screen, else the window's guess from the records.
-  const listedVideos = useOwnVideos(client, ownVideoClips(state.spec).map((clip) => clip.mediaId), store);
+  // Round 3 (re-review): the read of the draft's videos is followed. A failed read is said (with «Повторить»), and tried again on its own — after 2 s, 5 s,
+  // 15 s, then every 30 s — and when the window comes back; while a read is out the controls say «Читаем видео ролика — подождите».
+  const [videoRead, setVideoRead] = useState<RecordsRead>("reading");
+  const [videoFailures, setVideoFailures] = useState(0);
+  const [videoAttempt, setVideoAttempt] = useState(0);
+  const onVideoRead = useCallback((read: RecordsRead) => {
+    setVideoRead(read);
+    if (read === "failed") setVideoFailures((n) => n + 1);
+    else if (read === "done") setVideoFailures(0);
+  }, []);
+  const readVideosAgain = useCallback(() => setVideoAttempt((n) => n + 1), []);
+  useBackoffRetry(videoRead === "failed" ? videoFailures : 0, readVideosAgain, realScheduler);
+  const listedVideos = useOwnVideos(
+    client,
+    ownVideoClips(state.spec).map((clip) => clip.mediaId),
+    store,
+    useMemo(() => ({ attempt: videoAttempt, onRead: onVideoRead }), [videoAttempt, onVideoRead]),
+  );
   // 5b.2: the clip copies this editor placed are known at once, before the media list answers for them: a job's copy by its record (`job.done`), a live
   // copy by the clip it copies (`media.importClip`'s answer names only its id).
   const [placedCopies, setPlacedCopies] = useState<ReadonlyMap<string, OwnVideo>>(() => new Map());
@@ -591,6 +610,14 @@ function DraftEditor({
   const originRef = useRef(originOf);
   originRef.current = originOf;
   const framesAreKnown = framesKnown(state.spec, originOf);
+  // A video not known after a FAILED read is not «being read»: the controls say the read failed, and a notice offers «Повторить».
+  const framesFailed = !framesAreKnown && videoRead === "failed";
+  // The window came back: a failed read is tried again at once.
+  const videoReadNow = useRef(videoRead);
+  videoReadNow.current = videoRead;
+  useEffect(() => {
+    if (videoReadNow.current === "failed") readVideosAgain();
+  }, [focusTick, readVideosAgain]);
   const clipVideoProblems = videoProblems(state.spec, verdict, ownVideos);
   // 3f.3b fix round 1 (L8): «Обрезка» tells the preview which frame a drag is at, without re-rendering the editor.
   const [trimPeek] = useState(() => new TrimPeekStore());
@@ -680,7 +707,7 @@ function DraftEditor({
   ]);
   // Every page of the avatar's photos read: a clip's photo they do not hold is gone (review M1).
   const photosComplete = bin.pages !== null && bin.pages.nextCursor === null;
-  const clipTileList = clipList.clips === null ? null : clipTiles({ clips: clipList.clips, spec: state.spec, originOf, photos: photoIndex, photosComplete, busy: busyClips, failed: failedClips });
+  const clipTileList = clipList.clips === null ? null : clipTiles({ clips: clipList.clips, spec: state.spec, originOf, photos: photoIndex, photosComplete, busy: busyClips, failed: failedClips, framesFailed });
   const clipsById = new Map((clipList.clips ?? []).map((clip) => [clip.clipId, clip]));
   const clipCards: ClipCard[] = [
     ...[...clipRefusals].flatMap(([clipId, text]) => {
@@ -1161,6 +1188,20 @@ function DraftEditor({
             {errorText(lost)} Черновик открыт таким, каким его хранит Studio.
           </Notice>
         )}
+        {framesFailed && (
+          // Round 3: the read of the draft's videos failed; it is tried again on its own, and «Повторить» asks now.
+          <Notice
+            tone="warn"
+            noticeKey="video-read-failed"
+            actions={
+              <button type="button" className="btn btn-s" onClick={readVideosAgain}>
+                Повторить
+              </button>
+            }
+          >
+            {FRAMES_FAILED_TEXT}
+          </Notice>
+        )}
         {verdictFailed && verdictError !== null && (
           <ErrorNotice
             error={verdictError}
@@ -1334,6 +1375,7 @@ function DraftEditor({
                 onDragPhoto={(photoId) => setDrag(photoId === null ? null : { source: "scene", photoId })}
                 clipFrames={copyFramePhotoIds(state.spec, originOf)}
                 framesKnown={framesAreKnown}
+                framesFailed={framesFailed}
               />
             ) : tab === "clips" ? (
               <ClipsTab
@@ -1343,6 +1385,7 @@ function DraftEditor({
                 onRetryList={() => rereadClips.current()}
                 cards={clipCards}
                 cardFocus={cardFocus}
+                onCardFocused={() => setCardFocus(null)}
                 onCloseCard={closeClipCard}
                 fillTarget={fillTarget}
                 addBlock={addRefusal(state.spec)}
@@ -1412,6 +1455,7 @@ function DraftEditor({
               onFillCell={fillDropped}
               videos={ownVideos}
               originOf={originOf}
+              framesFailed={framesFailed}
               copyOf={copyOf}
               videoProblems={clipVideoProblems}
               trimPeek={trimPeek}
@@ -1455,6 +1499,7 @@ function DraftEditor({
           onSelectClip={(index) => selectClipAt(index)}
           videos={ownVideos}
           originOf={originOf}
+          framesFailed={framesFailed}
           copyOf={copyOf}
           preparing={waiting.flatMap((w) => (w.boundary === null ? [] : [{ jobId: w.jobId, boundary: w.boundary }]))}
           videoProblems={clipVideoProblems}

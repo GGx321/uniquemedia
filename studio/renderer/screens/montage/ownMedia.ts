@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MediaKind, MediaSummary, MontageDraft } from "../../../shared/engine";
 import { ownPhotoCells, ownStickerCells, ownVideoClips } from "../../../shared/montage";
 import type { EngineClient } from "../../engine/client";
@@ -56,24 +56,42 @@ export function applyRecordsChange<T extends { readonly mediaId: string }>(recor
   return { held, answered: records.answered.has(id) ? records.answered : new Set(records.answered).add(id) };
 }
 
+/** Where the read of the records stands (5b.2, S5.WA4 round 3): asked and not answered, failed (refused or the engine not reached), or done. */
+export type RecordsRead = "reading" | "failed" | "done";
+
+/** A caller's hold on the read: `attempt` (a new value asks again) and `onRead` (told each time the read starts and ends). */
+export interface RecordsReadOptions {
+  readonly attempt?: number;
+  readonly onRead?: (read: RecordsRead) => void;
+}
+
 /**
- * The records of kind `kind` the draft names (`mediaIds`), asked by id and followed by the store's `media.changed`, asked for again on its `resynced`. Nothing is
- * held or answered until the answer arrives, nor when it cannot be had (a refused or failed list): every id is then unknown. Nothing is asked while the draft names
- * none; the ids are asked in sorted order, each once, so the same set in another order is not another question. `viewOf` must be a stable function (a module's own).
+ * The records of kind `kind` the draft names (`mediaIds`), asked by id and followed by the store's `media.changed`, asked for again on its `resynced` and when
+ * `read.attempt` changes. Nothing is held or answered until the answer arrives, nor when it cannot be had (a refused or failed list): every id is then unknown,
+ * and `read.onRead` says `failed` (5b.2: the editor tells it and tries again). Nothing is asked while the draft names none (`done` at once); the ids are asked
+ * in sorted order, each once, so the same set in another order is not another question. `viewOf` must be a stable function (a module's own).
  */
+
 export function useMediaRecords<T extends { readonly mediaId: string }>(
   client: Pick<EngineClient, "request">,
   kind: MediaKind,
   mediaIds: readonly string[],
   viewOf: (summary: MediaSummary) => T | null,
   store: Pick<EngineStore, "subscribeMedia">,
+  read: RecordsReadOptions = {},
 ): MediaRecords<T> {
   const [records, setRecords] = useState<MediaRecords<T>>(NO_RECORDS);
   // Bumped when the store resyncs: the effect then lists the records again.
   const [attempt, setAttempt] = useState(0);
+  const asked = read.attempt ?? 0;
+  const onRead = useRef(read.onRead);
+  onRead.current = read.onRead;
   const key = [...new Set(mediaIds)].sort().join("\n");
   useEffect(() => {
     let alive = true;
+    const tell = (state: RecordsRead): void => {
+      if (alive) onRead.current?.(state);
+    };
     const ids = key === "" ? [] : key.split("\n");
     // Events that arrive before the answer does are kept and applied after it, so none is lost to the race.
     const early: MediaChange[] = [];
@@ -95,10 +113,12 @@ export function useMediaRecords<T extends { readonly mediaId: string }>(
       else setRecords((current) => applyRecordsChange(current, signal, viewOf));
     });
     if (ids.length > 0) {
+      tell("reading");
       void client.request("media.list", { kind, mediaIds: ids }).then(
         (reply) => {
           if (!reply.ok) {
             settle(NO_RECORDS);
+            tell("failed");
             return;
           }
           const held = new Map<string, T>();
@@ -107,15 +127,19 @@ export function useMediaRecords<T extends { readonly mediaId: string }>(
             if (view !== null) held.set(view.mediaId, view);
           }
           settle({ held, answered: new Set(ids) });
+          tell("done");
         },
         // The engine could not be asked: nothing is known, and what arrived meanwhile is applied to that.
-        () => settle(NO_RECORDS),
+        () => {
+          settle(NO_RECORDS);
+          tell("failed");
+        },
       );
-    }
+    } else tell("done");
     return () => {
       alive = false;
       unsubscribe();
     };
-  }, [client, store, key, kind, viewOf, attempt]);
+  }, [client, store, key, kind, viewOf, attempt, asked]);
   return records;
 }

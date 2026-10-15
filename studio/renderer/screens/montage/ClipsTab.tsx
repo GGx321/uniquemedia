@@ -34,6 +34,8 @@ export interface ClipsTabProps {
   readonly cards: readonly ClipCard[];
   /** The card whose ✕ takes the focus now (a new `tick` asks again). */
   readonly cardFocus?: { readonly key: string; readonly tick: number } | null;
+  /** The ✕ took the focus: the request is spent, so the tab shown again (another tab and back) does not take the focus again (round 3). */
+  readonly onCardFocused?: () => void;
   readonly onCloseCard: (key: string) => void;
   /** The selected cell a photo click would fill: a clip still goes to the end (the hint says so). */
   readonly fillTarget: FillTarget;
@@ -158,12 +160,17 @@ function ClipTileView({ tile, addBlock, hintId, onPick, onDrag }: { tile: ClipTi
 }
 
 /** A refused preparation (57c): «Мои»'s card in the warning tone; its ✕ says what it closes (README L4). */
-function ClipAlert({ card, focusTick, onClose }: { card: ClipCard; focusTick: number | null; onClose: () => void }) {
+function ClipAlert({ card, focusTick, onFocused, onClose }: { card: ClipCard; focusTick: number | null; onFocused: () => void; onClose: () => void }) {
   const title = `Клип «${card.motion}»`;
   const close = useRef<HTMLButtonElement>(null);
+  const focused = useRef(onFocused);
+  focused.current = onFocused;
   // Round 2, L1: the tile that was pressed turned off (a damaged file) or the copy did not go in: the focus waits on this card's ✕, never on the page.
+  // Round 3: once, and the request is then spent.
   useEffect(() => {
-    if (focusTick !== null) close.current?.focus();
+    if (focusTick === null) return;
+    close.current?.focus();
+    focused.current();
   }, [focusTick]);
   return (
     <div className="edc-alert" role="alert">
@@ -179,7 +186,7 @@ function ClipAlert({ card, focusTick, onClose }: { card: ClipCard; focusTick: nu
   );
 }
 
-export function ClipsTab({ avatarName, tiles, listError, onRetryList, cards, cardFocus = null, onCloseCard, fillTarget, addBlock, onPick, onDrag }: ClipsTabProps) {
+export function ClipsTab({ avatarName, tiles, listError, onRetryList, cards, cardFocus = null, onCardFocused, onCloseCard, fillTarget, addBlock, onPick, onDrag }: ClipsTabProps) {
   const hintId = useId();
   // The tab's one live region, always mounted (round 2, L2): what is being prepared now.
   const preparing = (tiles ?? []).filter((tile) => tile.state.kind === "busy").map((tile) => `Клип «${tile.clip.motion.label}»: ${PREPARING}`);
@@ -194,7 +201,13 @@ export function ClipsTab({ avatarName, tiles, listError, onRetryList, cards, car
         {preparing.join(" ")}
       </p>
       {cards.map((card) => (
-        <ClipAlert key={card.key} card={card} focusTick={cardFocus?.key === card.key ? cardFocus.tick : null} onClose={() => onCloseCard(card.key)} />
+        <ClipAlert
+          key={card.key}
+          card={card}
+          focusTick={cardFocus?.key === card.key ? cardFocus.tick : null}
+          onFocused={() => onCardFocused?.()}
+          onClose={() => onCloseCard(card.key)}
+        />
       ))}
       {tiles === null ? (
         listError !== null ? (

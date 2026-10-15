@@ -448,11 +448,14 @@ describe("round 2: a placement that can no longer go in, and a draft video not k
     expect(plain(within(media()).getByRole("alert").textContent)).toContain("Клип этого фото уже в ролике");
   });
 
-  test("the draft's videos cannot be read: no clip and no free photo is placed, and a video is neither split nor copied (fail closed)", async () => {
+  // Round 3 (re-review): this used to pin a STUCK state — after a failed read nothing tried again, yet every control said «подождите». Now a failed read
+  // says so, offers «Повторить» (and is tried again on its own: retryBackoff.test.ts), and a read that then succeeds lets the tiles go.
+  test("the draft's videos cannot be read: nothing is placed, the failure is said with «Повторить»; read again, the tiles come back", async () => {
+    const gate = { failing: true };
     const failing = (base: EngineClient): EngineClient => ({
       ...base,
       request: (type, payload) => {
-        if (type === "media.list" && "mediaIds" in payload && payload.mediaIds !== undefined) return Promise.resolve({ ok: false, error: { code: "INTERNAL", detail: "the media list could not be read" } });
+        if (gate.failing && type === "media.list" && "mediaIds" in payload && payload.mediaIds !== undefined) return Promise.resolve({ ok: false, error: { code: "INTERNAL", detail: "the media list could not be read" } });
         return base.request(type, payload);
       },
     });
@@ -464,21 +467,56 @@ describe("round 2: a placement that can no longer go in, and a draft video not k
     const copy = await makeCopy(h, used);
     const free = await makeClip(h, P(3), "g-tilt");
     await openEditor(h, [photoClip(0, P(2)), copyClip(1, copy)]);
-    expect(tiles()).toEqual(["Клип «Наклоняет голову», 0:05, Фото 4 · читаем видео ролика", "Клип «Моргает и улыбается», 0:05, Фото 2 · читаем видео ролика"]);
+    expect(tiles()).toEqual(["Клип «Наклоняет голову», 0:05, Фото 4 · не удалось прочитать видео ролика", "Клип «Моргает и улыбается», 0:05, Фото 2 · не удалось прочитать видео ролика"]);
     const pick = pickOf(free);
     expect(pick.getAttribute("aria-disabled")).toBe("true");
-    expect(pick.getAttribute("title")).toBe("Читаем видео ролика — подождите");
+    expect(pick.getAttribute("title")).toBe("Не удалось прочитать видео ролика.");
+    expect(screen.getByText("Не удалось прочитать видео ролика.")).toBeDefined();
     fireEvent.click(pick);
     await flush();
     expect(callsOf(h.engine, "media.importClip").filter((call) => call.payload.clipId === free).length).toBe(0);
     // The bin's free photos wait too; the timeline's video is neither split nor copied.
     fireEvent.click(within(media()).getByRole("tab", { name: "Фото" }));
     await flush();
-    const photo1 = within(within(media()).getByRole("list", { name: "Фото аватара" })).getByRole("button", { name: "Фото 1: подождите, читаем видео ролика" });
+    const photo1 = within(within(media()).getByRole("list", { name: "Фото аватара" })).getByRole("button", { name: "Фото 1: не удалось прочитать видео ролика" });
     expect(photo1.getAttribute("aria-disabled")).toBe("true");
+    expect(photo1.getAttribute("title")).toBe("Не удалось прочитать видео ролика.");
     fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 2:/ }));
     await flush();
-    expect(within(timeline()).getByRole("button", { name: "Разрезать по плейхеду" }).getAttribute("title")).toBe("Читаем видео ролика — подождите");
-    expect(within(timeline()).getByRole("button", { name: "Дублировать выбранное" }).getAttribute("title")).toBe("Читаем видео ролика — подождите");
+    expect(within(timeline()).getByRole("button", { name: "Разрезать по плейхеду" }).getAttribute("title")).toBe("Не удалось прочитать видео ролика.");
+    expect(within(timeline()).getByRole("button", { name: "Дублировать выбранное" }).getAttribute("title")).toBe("Не удалось прочитать видео ролика.");
+
+    // The library answers again: «Повторить» reads it now.
+    gate.failing = false;
+    fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+    await flush();
+    await flush();
+    expect(screen.queryByText("Не удалось прочитать видео ролика.") === null).toBe(true);
+    fireEvent.click(within(media()).getByRole("tab", { name: "Клипы" }));
+    await flush();
+    expect(tiles()).toEqual(["Клип «Наклоняет голову», 0:05, Фото 4 · не использован", "Клип «Моргает и улыбается», 0:05, Фото 2 · в кадре 2"]);
+    expect(pickOf(free).getAttribute("aria-disabled")).toBeNull();
+  });
+
+  test("round 3: the card's ✕ takes the focus once — leaving the tab and coming back does not take it again", async () => {
+    const h = await clipsStudio();
+    const b = await makeClip(h, P(7), "g-tilt");
+    await openEditor(h, [photoClip(0, P(2)), photoClip(1, P(4))]);
+    h.engine.damageClipFile(b);
+    fireEvent.click(pickOf(b));
+    await flush();
+    const close = (): HTMLElement => within(media()).getByRole("button", { name: "Закрыть: Клип «Наклоняет голову»" });
+    expect(focusedLabel()).toBe(describeElement(close()));
+    // A pointer focuses a tab, then clicks it.
+    const photosTab = within(media()).getByRole("tab", { name: "Фото" });
+    photosTab.focus();
+    fireEvent.click(photosTab);
+    await flush();
+    const clipsTab = within(media()).getByRole("tab", { name: "Клипы" });
+    clipsTab.focus();
+    fireEvent.click(clipsTab);
+    await flush();
+    expect(focusedLabel()).toBe(describeElement(clipsTab));
+    expect(close()).toBeDefined();
   });
 });
