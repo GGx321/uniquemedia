@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../testing/nativeGlobals";
-import { startMockOpenRouter, type MockOpenRouter } from "./mockOpenRouter";
+import { DEFAULT_MOTION_TRANSLATION, startMockOpenRouter, type MockOpenRouter } from "./mockOpenRouter";
 useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WC4: the chat route of part C in the packaged smoke's mock OpenRouter, unit-tested here with no Electron. The vision writer ("motion_suggestions") and the idea translator ("motion_idea") are
@@ -66,7 +66,7 @@ describe("the idea translator's route", () => {
     const response = await chat(m, "motion_idea", { idea: "медленно поворачивает голову" });
     expect(response.status).toBe(200);
     const { content, cost } = await contentOf(response);
-    expect(content).toEqual({ text_en: "she tilts her head a little to one side and smiles" });
+    expect(content).toEqual({ text_en: DEFAULT_MOTION_TRANSLATION });
     expect(cost).toBe(0.001);
     expect(m.totalUsageUsd()).toBeCloseTo(0.001, 9);
     expect(m.motionRequests()).toHaveLength(1);

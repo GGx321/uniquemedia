@@ -65,3 +65,8 @@ export function motionLedgerProblems(lines: readonly MotionLedgerLine[], expecte
   });
   return problems;
 }
+
+/** A file's name in a report: its path below `root`, with `/` separators on every platform (Windows paths use `\`). */
+export function filePlace(root: string, path: string): string {
+  return path.slice(root.length).replaceAll("\\", "/");
+}

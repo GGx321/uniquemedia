@@ -419,13 +419,17 @@ export const DEFAULT_IMPORT_DESCRIBE_ANSWER: MockImportDescribeAnswer = {
   descriptor: "27-year-old Latina woman, tan skin, brown eyes, long wavy black hair, athletic build.",
 };
 
-/** 5b.2 (S5.WC4): the three small motions the mock's vision writer suggests, and the English text its translator answers (each passes the engine's motion check on an ordinary frame). */
+/**
+ * 5b.2 (S5.WC4): the three small motions the mock's vision writer suggests, and the English text its translator answers. BODY-ONLY on purpose: no face, no smile, no gaze, no phone, no camera. The smoke's photo is a scene
+ * photo with a plan, and a frame whose face is hidden (a mirror shot from behind, a legs shot) refuses a motion that moves her face (`face-hidden`); these pass the engine's motion check on any frame, which
+ * clipMotionSmoke.engine.test.ts holds on a face-hidden planned photo and on a face-showing one.
+ */
 export const DEFAULT_MOTION_SUGGESTIONS: readonly string[] = [
   "she slowly tucks a strand of hair behind her ear",
-  "she tilts her head a little to one side and smiles",
   "she slowly takes a breath and relaxes her shoulders",
+  "she slowly runs a hand through her hair",
 ];
-export const DEFAULT_MOTION_TRANSLATION = "she tilts her head a little to one side and smiles";
+export const DEFAULT_MOTION_TRANSLATION = "she slowly rolls her shoulders back";
 
 export interface MockOpenRouterOptions {
   /** Must match the app's settings.imageModel (default: the same default the app itself uses). */

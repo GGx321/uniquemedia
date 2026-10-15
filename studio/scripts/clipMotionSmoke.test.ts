@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../testing/nativeGlobals";
-import { canaryProblems, motionLedgerProblems } from "./clipMotionSmoke";
+import { canaryProblems, filePlace, motionLedgerProblems } from "./clipMotionSmoke";
 useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WC4: what the E2E smoke (smoke-engine.ts) checks of part C, as functions with no Electron in them. The smoke only has to call them with what its mock and the app reported; this file holds
@@ -45,6 +45,22 @@ describe("canaryProblems (I5.67: the owner's words are in the translator's reque
 
   test("refuses an idea of 40 characters or fewer: its label would be all of it, and the canary would prove nothing", () => {
     expect(canaryProblems("короткая идея", [{ where: "x", text: "y" }])).toEqual(["the idea is not longer than 40 characters, so a fragment of it cannot be told from its label"]);
+  });
+});
+
+describe("filePlace (a file's name in a report is the same on every platform)", () => {
+  test("is the path below the root with `/` separators, from a POSIX path", () => {
+    expect(filePlace("/tmp/studio-x", "/tmp/studio-x/library/avatars/a/motions/photo.json")).toBe("/library/avatars/a/motions/photo.json");
+  });
+
+  test("is the same from a Windows path: backslashes become `/`", () => {
+    expect(filePlace("C:\\Users\\runner\\studio-x", "C:\\Users\\runner\\studio-x\\planted.txt")).toBe("/planted.txt");
+    expect(filePlace("C:\\Users\\runner\\studio-x", "C:\\Users\\runner\\studio-x\\library\\a.json")).toBe("/library/a.json");
+  });
+
+  test("the report line a planted file produces starts the same on both", () => {
+    const where = (root: string, path: string) => `the file ${filePlace(root, path)}`;
+    expect(canaryProblems(IDEA, [{ where: where("C:\\t", "C:\\t\\planted.txt"), text: IDEA }])[0]?.startsWith("the file /planted.txt")).toBe(true);
   });
 });
 

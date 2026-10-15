@@ -148,7 +148,7 @@ import { BOLD_MODEL, boldRequestProblems, expectedBilledMicros, failedReasonsOf,
 import { verifyClipExport } from "../engine/clips/exportVerify";
 import { VIDEO_TIERS } from "../engine/money/prices";
 import { batchClipProblems, batchLedgerProblems, clipPostProblems, exportedCopyProblems, refusedJobProblems, type BatchLedgerLine } from "./clipSmoke";
-import { canaryProblems, motionLedgerProblems, type Haystack } from "./clipMotionSmoke";
+import { canaryProblems, filePlace, motionLedgerProblems, type Haystack } from "./clipMotionSmoke";
 import {
   copySummaryProblems,
   fixtureClipArgv,
@@ -4472,7 +4472,7 @@ async function textsUnder(root: string): Promise<Haystack[]> {
     if (!entry.isFile()) continue;
     const path = join(entry.parentPath, entry.name);
     const latin = await readFile(path, "latin1").catch(() => "");
-    found.push({ where: `the file ${path.slice(root.length)}`, text: `${latin}\n${Buffer.from(latin, "latin1").toString("utf8")}` });
+    found.push({ where: `the file ${filePlace(root, path)}`, text: `${latin}\n${Buffer.from(latin, "latin1").toString("utf8")}` });
   }
   return found;
 }
