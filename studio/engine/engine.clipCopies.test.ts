@@ -251,6 +251,27 @@ describe("a library switch and the background cleanup of a deleted avatar's copi
     stall.open();
     await eventually(async () => !(await storedFiles()).some((name) => name.startsWith(mediaA)), "the old library's copy to go");
   });
+
+  test("a clip delete whose copy removal is stalled is in the library the clip is in: a switch landing meanwhile leaves no copy behind in the old library (S5.WA5, L1)", async () => {
+    const stall = stalledUnlink();
+    const w = await world({ deps: { mediaRecords: { fs: stall.fs } } });
+    const mediaA = await copyOfPlanted(w.started, w.clipA);
+    const other = join(dir(), "other");
+    await mkdir(other, { recursive: true });
+    await openLibrary(other, { now: steppingClock(), newId: sequentialIds("other") });
+
+    const deleting = w.started.engine.handle(command("clips.delete", { avatarId: w.a.avatarId, clipId: w.clipA.clipId }));
+    await stall.entered;
+    const switched = await reply(w.started, { kind: "control", type: "library.open", callId: "call-00000009", path: other });
+    stall.open();
+    const deleted = await deleting;
+
+    expect(switched.error).toBeUndefined();
+    expect(deleted.ok).toBe(true);
+    expect(await storedFiles()).toEqual([]);
+    expect(await clipFiles(w.a.avatarId)).toEqual([]);
+    expect(removedEvents(w.started)).toEqual([mediaA]);
+  });
 });
 
 describe("avatars.pruneMissing (an avatar whose folder went to the Trash and the engine knew no delete for)", () => {

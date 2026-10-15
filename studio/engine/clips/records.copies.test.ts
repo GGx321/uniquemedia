@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { EngineFailure } from "../engineFailure";
 import { AVATAR, CLIP, clipFilePath, clipRecordPath, createRecordsRig, posterPath, readyRecord, type RecordsRig } from "./testing/recordsRig";
@@ -84,5 +85,32 @@ describe("clips.delete and the clip's copy", () => {
     const w = await world(async () => undefined);
     await expect(w.rig.records.delete({ avatarId: AVATAR, clipId: "clip-0000099" })).rejects.toMatchObject({ error: { code: "NOT_FOUND" } });
     expect(w.asked).toEqual([]);
+  });
+});
+
+describe("clips.delete asks for the copy in the library the clip is in (S5.WA5, L1)", () => {
+  test("the root is the one the clip's folder was taken from, even when the live library is another by the time the copy is asked for", async () => {
+    const roots: string[] = [];
+    let asks = 0;
+    const rig = await createRecordsRig({
+      deps: {
+        // The first look is the one that names the clip's folder; any later look finds the owner's NEW library.
+        library: () => {
+          asks += 1;
+          return { root: asks === 1 ? "/old-library" : "/new-library", hasAvatar: () => true, clipsDirOf: (id) => join(rig.dir, "avatars", id, "clips") };
+        },
+        copies: {
+          removeOf: async (_avatarId, _clipId, root) => {
+            roots.push(root);
+          },
+        },
+      },
+    });
+    rigs.push(rig);
+    await rig.put(readyRecord());
+
+    await rig.records.delete({ avatarId: AVATAR, clipId: CLIP });
+
+    expect(roots).toEqual(["/old-library"]);
   });
 });

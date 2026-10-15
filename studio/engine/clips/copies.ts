@@ -94,15 +94,19 @@ export class ClipCopies {
   }
 
   /**
-   * Removes EVERY copy of the avatar's clip (normally one): true when one was removed. IN_FLIGHT `in-use` when a render holds one (the clip stays); INTERNAL when the disk fails, so the caller
-   * deletes nothing of the clip either. A copy that vanished meanwhile is no error.
+   * Removes EVERY copy of the avatar's clip (normally one) in the library at `root`, the one the clip's folder was taken from (S5.WA5, L1): true when one was removed. A library switch that lands
+   * while the delete runs must not send the lookup to the NEW library, which holds no such copy, and leave an invisible orphan in the old one. Nothing of the live library is held (a hold would refuse the
+   * owner's switch). IN_FLIGHT `in-use` when a render holds one (the clip stays); INTERNAL when the disk fails, so the caller deletes nothing of the clip either. A copy that vanished meanwhile is no error.
    */
-  async removeOfClip(avatarId: string, clipId: string): Promise<boolean> {
+  async removeOfClip(avatarId: string, clipId: string, root: string): Promise<boolean> {
     let removed = false;
-    for (const copy of await this.#media.copiesOfClip(avatarId, clipId)) {
+    const listed = await this.#media.copies(root);
+    // A media folder that could not be read lists nothing, which says nothing: no copy is guessed at.
+    const mine = listed.readable ? listed.copies.filter((copy) => copy.origin?.clipId === clipId && copy.origin.avatarId === avatarId) : [];
+    for (const copy of mine) {
       let outcome: Awaited<ReturnType<ClipCopyMedia["deleteMedia"]>>;
       try {
-        outcome = await this.#media.deleteMedia(copy.mediaId);
+        outcome = await this.#media.deleteMedia(copy.mediaId, root);
       } catch (error) {
         if (error instanceof EngineFailure) throw error;
         this.#log(`[clip] ${clipId}: its montage copy could not be removed (${errorName(error)})`);

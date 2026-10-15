@@ -153,26 +153,26 @@ describe("which saved drafts hold a clip's copy (ClipUse.inDrafts)", () => {
 describe("removing the copy of one clip (a clips.delete)", () => {
   test("a clip with no copy removes nothing", async () => {
     const f = fake([copy("media-1", "avatar-a", "clip-other")]);
-    expect(await f.copies.removeOfClip("avatar-a", "clip-1")).toBe(false);
+    expect(await f.copies.removeOfClip("avatar-a", "clip-1", "/library")).toBe(false);
     expect(f.deleted).toEqual([]);
   });
 
   test("removes the clip's copy and only that one", async () => {
     const f = fake([copy("media-1", "avatar-a", "clip-1"), copy("media-2", "avatar-a", "clip-2")]);
-    expect(await f.copies.removeOfClip("avatar-a", "clip-1")).toBe(true);
+    expect(await f.copies.removeOfClip("avatar-a", "clip-1", "/library")).toBe(true);
     expect(f.deleted).toEqual(["media-1"]);
   });
 
   test("a copy a render holds is IN_FLIGHT in-use and stays", async () => {
     const f = fake([copy("media-1", "avatar-a", "clip-1")]);
     f.state.inUse.add("media-1");
-    expect(await refusal(f.copies.removeOfClip("avatar-a", "clip-1"))).toMatchObject({ code: "IN_FLIGHT", clipReason: "in-use" });
+    expect(await refusal(f.copies.removeOfClip("avatar-a", "clip-1", "/library"))).toMatchObject({ code: "IN_FLIGHT", clipReason: "in-use" });
     expect(f.held).toHaveLength(1);
   });
 
   test("removes EVERY copy of the clip (two copies, e.g. after a crash between a commit and the dedup)", async () => {
     const f = fake([copy("media-1", "avatar-a", "clip-1"), copy("media-2", "avatar-a", "clip-1"), copy("media-3", "avatar-a", "clip-2")]);
-    expect(await f.copies.removeOfClip("avatar-a", "clip-1")).toBe(true);
+    expect(await f.copies.removeOfClip("avatar-a", "clip-1", "/library")).toBe(true);
     expect(f.deleted.sort()).toEqual(["media-1", "media-2"]);
     expect(f.held.map((c) => c.mediaId)).toEqual(["media-3"]);
   });
@@ -180,26 +180,60 @@ describe("removing the copy of one clip (a clips.delete)", () => {
   test("a held copy among them refuses the delete in-use (the clip stays; a copy already removed is made again on demand)", async () => {
     const f = fake([copy("media-1", "avatar-a", "clip-1"), copy("media-2", "avatar-a", "clip-1")]);
     f.state.inUse.add("media-2");
-    expect((await refusal(f.copies.removeOfClip("avatar-a", "clip-1"))).clipReason).toBe("in-use");
+    expect((await refusal(f.copies.removeOfClip("avatar-a", "clip-1", "/library"))).clipReason).toBe("in-use");
     expect(f.held.map((c) => c.mediaId)).toEqual(["media-2"]);
   });
 
   test("another avatar's clip with the same id is not this clip's copy", async () => {
     const f = fake([copy("media-1", "avatar-b", "clip-1")]);
-    expect(await f.copies.removeOfClip("avatar-a", "clip-1")).toBe(false);
+    expect(await f.copies.removeOfClip("avatar-a", "clip-1", "/library")).toBe(false);
     expect(f.deleted).toEqual([]);
   });
 
   test("a copy that vanished meanwhile is not an error", async () => {
     const f = fake([copy("media-1", "avatar-a", "clip-1")]);
     f.media.deleteMedia = async () => "not-found";
-    expect(await f.copies.removeOfClip("avatar-a", "clip-1")).toBe(false);
+    expect(await f.copies.removeOfClip("avatar-a", "clip-1", "/library")).toBe(false);
   });
 
   test("a disk that fails is INTERNAL, so the clip is not deleted", async () => {
     const f = fake([copy("media-1", "avatar-a", "clip-1")]);
     f.state.throws.add("media-1");
-    expect((await refusal(f.copies.removeOfClip("avatar-a", "clip-1"))).code).toBe("INTERNAL");
+    expect((await refusal(f.copies.removeOfClip("avatar-a", "clip-1", "/library"))).code).toBe("INTERNAL");
+  });
+});
+
+describe("removing the copy of one clip in the library the clip is in (S5.WA5, L1)", () => {
+  test("lists the copies of that library and removes them there, holding nothing of the live one", async () => {
+    const f = fake([copy("media-1", "avatar-a", "clip-1"), copy("media-2", "avatar-a", "clip-2")]);
+
+    expect(await f.copies.removeOfClip("avatar-a", "clip-1", "/old-library")).toBe(true);
+
+    expect(f.listedFor).toEqual(["/old-library"]);
+    expect(f.deletedFor).toEqual(["/old-library"]);
+    expect(f.deleted).toEqual(["media-1"]);
+  });
+
+  test("another avatar's copy of a clip with the same id is not removed", async () => {
+    const f = fake([copy("media-1", "avatar-b", "clip-1")]);
+
+    expect(await f.copies.removeOfClip("avatar-a", "clip-1", "/old-library")).toBe(false);
+    expect(f.deleted).toEqual([]);
+  });
+
+  test("a library whose media cannot be read says nothing, so nothing is removed and the delete goes on as it did", async () => {
+    const f = fake([copy("media-1", "avatar-a", "clip-1")]);
+    f.state.readable = false;
+
+    expect(await f.copies.removeOfClip("avatar-a", "clip-1", "/old-library")).toBe(false);
+    expect(f.deleted).toEqual([]);
+  });
+
+  test("a copy a render holds is IN_FLIGHT in-use there too", async () => {
+    const f = fake([copy("media-1", "avatar-a", "clip-1")]);
+    f.state.inUse.add("media-1");
+
+    expect(await refusal(f.copies.removeOfClip("avatar-a", "clip-1", "/old-library"))).toMatchObject({ code: "IN_FLIGHT", clipReason: "in-use" });
   });
 });
 

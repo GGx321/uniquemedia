@@ -277,7 +277,7 @@ export class ClipService {
       clock: deps.clock,
       library: () => {
         const library = deps.currentLibrary();
-        return library === null ? null : { hasAvatar: (avatarId) => library.getAvatar(avatarId) !== undefined, clipsDirOf: (avatarId) => clipsDirOf(library, avatarId) };
+        return library === null ? null : { root: library.root, hasAvatar: (avatarId) => library.getAvatar(avatarId) !== undefined, clipsDirOf: (avatarId) => clipsDirOf(library, avatarId) };
       },
       pendingDelete: deps.pendingDelete,
       ledger: () => deps.budget()?.ledger ?? null,
@@ -298,7 +298,7 @@ export class ClipService {
       ...(copies === null
         ? {}
         : {
-            copies: { removeOf: (avatarId: string, clipId: string) => copies.removeOfClip(avatarId, clipId) },
+            copies: { removeOf: (avatarId: string, clipId: string, root: string) => copies.removeOfClip(avatarId, clipId, root) },
             // 5b.2 (Q-F = 1): what uses a ready clip: a finished video (the used index) and the saved drafts that hold its copy.
             uses: {
               videoUse: (avatarId: string, clipId: string, photoId: string) => deps.currentLibrary()?.videoUseOfClip(avatarId, clipId, photoId),
