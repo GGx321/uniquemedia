@@ -1,5 +1,6 @@
 import { CLIP_REASONS_RU, type ClipUse, type EngineError } from "../../../shared/engine";
 import { countOf, NBSP } from "../../lib/format";
+import { draftName } from "../montage/labels";
 
 // 5b.2 part A (S5.WA4; plan §6 41e, 44b; mockups 41e and 44b, README §S5.WAD «Тексты», WAD re-review N4): what the avatar's «Клипы» screen says of a ready
 // clip's use (`ClipSummary.use`, Q-F = 1). A finished video holds the clip's frame either through the clip itself (`inVideo: "clip"`) or through its photo or
@@ -30,8 +31,8 @@ export function deleteUseLines(use: ClipUse | undefined): { video: string | null
   if (drafts === undefined) return { video, draft: null };
   const { count, first } = drafts;
   if (count === 1 && first !== undefined) {
-    // The drafts screen calls a draft with no name «без названия», unquoted.
-    const name = first.name === null ? "без названия" : `«${first.name}»`;
+    // The drafts screen calls a draft with no name «без названия», unquoted (its own helper, review L9).
+    const name = first.name === null ? draftName(null) : `«${first.name}»`;
     return { video, draft: nbDash(`В черновике ${name} он в кадре ${first.frame} — кадр будет помечен, пока его не замените.`) };
   }
   if (count === 1) return { video, draft: nbDash("В одном черновике он стоит кадром — кадр будет помечен, пока его не замените.") };
