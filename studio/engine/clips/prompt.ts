@@ -2,7 +2,7 @@ import type { ClipAttemptModel, ClipMotionSource, ClipQuality, ClipSeconds, Moti
 import { MOMENT_VERBS } from "../../shared/scenes/banks/schema";
 import { contentProblems } from "../../shared/scenes/contentLine";
 import { rendersActivity } from "../../shared/scenes/custom";
-import { motionTextFindings, motionTextProblems, namesPhone, phoneInHandOrPropped, takesOffBy } from "../../shared/scenes/motionText";
+import { motionTextFindings, motionTextProblems, namesPhone, phoneInHandOrPropped, undressesBy } from "../../shared/scenes/motionText";
 import { VIDEO_TIERS } from "../money/prices";
 import type { VideoFrameImage, VideoRequest } from "../openrouter/types";
 import type { FrameFacts } from "./frameFacts";
@@ -75,21 +75,21 @@ function lyingOnHerStomach(facts: FrameFacts): boolean {
 /**
  * The clip prompt for this frame and motion in this dialect, or the problems that keep it from being sent. `source` is where the motion comes from, always named (S5.WC2
  * round 2): a vision or own text takes the grammar a scene text took at its bank's load. A motion that takes clothing off (an own idea on «Смелая», Q-H = 2) is Kling's
- * alone: its Grok prompt is never built, whatever `BOLD_CLIPS` lets the frame fall back to. «Takes clothing off» is read by the source (`takesOffBy`, S5.WC2b): an own idea
- * the clothing-verb whitelist refuses elsewhere («her robe falls open») takes it off here too.
+ * alone: its Grok prompt is never built, whatever `BOLD_CLIPS` lets the frame fall back to. It is read by the source (`undressesBy`, S5.WC2b): an own idea the
+ * clothing-verb whitelist refuses elsewhere («her robe falls open») takes clothing off here too, and so does one that bares her (exposure, the controller's decision 5).
  */
 export function clipPromptOf(facts: FrameFacts, motion: string, dialect: ClipDialect, source: ClipMotionSource): ClipPromptResult {
   const findings = motionTextFindings(motion, facts, source);
   if (findings.length > 0) return { ok: false, problems: findings.map((finding) => `${finding.problem} (${finding.rule}): ${finding.what}`) };
-  const off = takesOffBy(motion, source);
-  if (dialect === "grok" && off) return { ok: false, problems: ["takes-off (grok): a motion that takes clothing off goes to Kling alone"] };
+  const off = undressesBy(motion, source);
+  if (dialect === "grok" && off) return { ok: false, problems: ["takes-off (grok): a motion that takes clothing off or bares her goes to Kling alone"] };
   const rest = [
     poseSentenceFor(facts),
     motionSentenceOf(motion),
     lyingOnHerStomach(facts) ? PRONE_ANCHOR : null,
     facts.legs ? legsLineOf(facts.capture) : null,
     continuityLineOf(motion, facts.activity, off),
-    // Q-H = 2: a motion that takes clothing off (an own idea on «Смелая») carries no clothing clause, the legwear's included: Kling decides.
+    // Q-H = 2: a motion that takes clothing off or bares her (an own idea on «Смелая») carries no clothing clause, the legwear's included: Kling decides.
     facts.legwear === null || off ? null : legwearLineOf(facts.legwear),
     SLOW_LINE,
     LOOK_LINE,
@@ -107,13 +107,13 @@ const DIALECTS: readonly ClipDialect[] = ["kling", "grok"];
 
 /**
  * What a motion must pass before it is offered (I5.66: «every LLM motion passes that check and `clipPromptOf` in both dialects»): the one check's closed problems, else
- * `too-long` when its prompt crosses 130 words in a dialect it may go to (both; Kling alone for an accepted takes-off idea, which never goes to Grok). Empty: the motion
+ * `too-long` when its prompt crosses 130 words in a dialect it may go to (both; Kling alone for an accepted idea that undresses her, which never goes to Grok). Empty: the motion
  * can be offered on this frame.
  */
 export function clipMotionProblems(facts: FrameFacts, text: string, source: ClipMotionSource): MotionProblem[] {
   const problems = motionTextProblems(text, facts, source);
   if (problems.length > 0) return problems;
-  const dialects: readonly ClipDialect[] = takesOffBy(text, source) ? ["kling"] : DIALECTS;
+  const dialects: readonly ClipDialect[] = undressesBy(text, source) ? ["kling"] : DIALECTS;
   return dialects.every((dialect) => clipPromptOf(facts, text, dialect, source).ok) ? [] : ["too-long"];
 }
 

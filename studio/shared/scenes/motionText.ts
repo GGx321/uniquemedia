@@ -654,14 +654,25 @@ function takesOffFormsStand(text: string): boolean {
   return takesOff(rest.map((clause) => clause.join(" ")).join(", "));
 }
 
+/** The exposure words a text names: the bank's list and `EXPOSURE_MORE` for every source, and `EXPOSURE_MODEL` for a model's text. */
+function exposureIn(text: string, modelText: boolean): string[] {
+  return [
+    ...exposureWordsIn(text),
+    ...Array.from(text.matchAll(new RegExp(EXPOSURE_MORE)), (m) => m[0]),
+    ...(modelText ? Array.from(text.matchAll(new RegExp(EXPOSURE_MODEL)), (m) => m[0]) : []),
+  ];
+}
+
 /**
- * Whether a motion takes clothing off as its source is read: for a scene or code text, `takesOff` (so its prompt never moves); for a vision or own text, the takes-off forms
- * where the whitelist does not lift them, and what the whitelist reads as moving what she wears beyond it. The prompt reads this (S5.WC2b): an own idea accepted on «Смелая»
- * that only the whitelist refuses elsewhere still goes to Kling alone, with «Nothing new appears.» and no clothing clause.
+ * Whether a motion undresses her as its source is read, for the prompt (S5.WC2b). For a scene or code text, `takesOff` (so its prompt never moves). For a vision or own text:
+ * the takes-off forms where the whitelist does not lift them, what the whitelist reads as moving what she wears beyond it, and (the controller's decision 5) exposure, by
+ * the exposure lists or her body shown. Only an own idea on «Смелая» reaches a prompt with one (Q-H = 2): it goes to Kling alone, with «Nothing new appears.» and no
+ * clothing clause.
  */
-export function takesOffBy(text: string, source: ClipMotionSource): boolean {
+export function undressesBy(text: string, source: ClipMotionSource): boolean {
   if (source !== "vision" && source !== "own") return takesOff(text);
-  return takesOffFormsStand(text) || wornBreaks(text).takesOff.length > 0;
+  const breaks = wornBreaks(text);
+  return takesOffFormsStand(text) || breaks.takesOff.length > 0 || breaks.shows.length > 0 || exposureIn(text, true).length > 0;
 }
 
 const ownOnBold = (scope: Scope): boolean => scope.source === "own" && scope.frame.bold;
@@ -742,11 +753,7 @@ const RULES: readonly RuleCheck[] = [
     problem: "content",
     check: (text, scope) => {
       if (scope.source === "bank" || (scope.source === "own" && scope.frame.bold)) return null;
-      const exposure = [
-        ...exposureWordsIn(text),
-        ...Array.from(text.matchAll(new RegExp(EXPOSURE_MORE)), (m) => m[0]),
-        ...(isModelText(scope) ? Array.from(text.matchAll(new RegExp(EXPOSURE_MODEL)), (m) => m[0]) : []),
-      ];
+      const exposure = exposureIn(text, isModelText(scope));
       return exposure.length > 0 ? `names exposure (${words(exposure)})` : null;
     },
   },

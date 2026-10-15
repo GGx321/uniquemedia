@@ -201,6 +201,46 @@ describe("an own idea only the whitelist reads as taking clothing off: on «См
   });
 });
 
+describe("exposure in an accepted own idea on «Смелая» is treated as undressing in the prompt (the controller's decision 5, S5.WC2b)", () => {
+  /** Own ideas on «Смелая» that bare her (accepted there, Q-H = 2), each from a different list: the whitelist, the model's exposure verbs, the bank's exposure words. */
+  const EXPOSED = ["she slowly uncovers her chest", "she slowly shows off her cleavage", "she slowly poses nude", "she slowly adjusts her top, revealing more"];
+
+  test("they are accepted as own on «Смелая»", () => {
+    for (const motion of EXPOSED) expect([motion, clipMotionProblems(boldMirror(), motion, "own")]).toEqual([motion, []]);
+  });
+
+  test("the Kling prompt says «Nothing new appears.» alone: neither «comes off» nor the base line", () => {
+    for (const motion of EXPOSED) {
+      const result = clipPromptOf(boldMirror(), motion, "kling", "own");
+      if (!result.ok) throw new Error(result.problems.join("; "));
+      expect([motion, result.prompt.includes(`${NOTHING_NEW_LINE} ${SLOW_LINE}`)]).toEqual([motion, true]);
+      expect([motion, result.prompt.includes(COMES_OFF_LINE) || result.prompt.includes(CONTINUITY_LINE)]).toEqual([motion, false]);
+    }
+  });
+
+  test("their Grok prompt is refused", () => {
+    for (const motion of EXPOSED) {
+      const grok = clipPromptOf(boldMirror(), motion, "grok", "own");
+      expect([motion, grok.ok]).toEqual([motion, false]);
+      if (!grok.ok) expect(grok.problems.join(" ")).toContain("takes-off");
+    }
+  });
+
+  test("on a frame with legwear the legwear line goes too", () => {
+    const result = clipPromptOf(boldMirror("sheer black stockings"), "she slowly uncovers her chest", "kling", "own");
+    if (!result.ok) throw new Error(result.problems.join("; "));
+    expect(result.prompt).not.toContain("stay on her feet");
+  });
+
+  test("innocent posture is no exposure: «her chest rises a little as she breathes» keeps the base line and both dialects", () => {
+    const motion = "her chest rises a little as she breathes";
+    const kling = clipPromptOf(boldMirror(), motion, "kling", "own");
+    if (!kling.ok) throw new Error(kling.problems.join("; "));
+    expect(kling.prompt).toContain(CONTINUITY_LINE);
+    expect(clipPromptOf(boldMirror(), motion, "grok", "own").ok).toBe(true);
+  });
+});
+
 // ---------- the pins added by S5.WC2 (every existing pin stays byte for byte; prompt.sweep.test.ts holds them) ----------
 
 const PINS = join(import.meta.dir, "fixtures");
