@@ -1073,6 +1073,7 @@ export class Engine {
         return held;
       },
       ownStickers: (mediaIds) => this.#media.holding(mediaIds, "sticker"),
+      copyOrigins: () => this.#media.origins(),
       ...(deps.musicTracks === undefined ? {} : { tracks: deps.musicTracks }),
       newId: deps.newId,
       now: () => new Date(deps.clock()),
