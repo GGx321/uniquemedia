@@ -132,7 +132,7 @@ describe("58: the gallery's «Выбор: для монтажа · для кли
       const pick = pickFor("клипов", n);
       expect(pick.hasAttribute("disabled")).toBe(false);
       expect(pick.getAttribute("aria-label")).toBe(`Выбрать для клипов: фото ${n}, Дом`);
-      expect(pick.parentElement?.querySelector(".photo-held-dim")).toBeNull();
+      expect((pick.parentElement?.querySelector(".photo-held-dim") ?? null) === null).toBe(true);
     }
     expect(pickFor("клипов", 3).parentElement?.textContent).toContain("в 1 видео");
     expect(pickFor("клипов", 2).parentElement?.textContent).toContain("отклонено");
@@ -167,7 +167,7 @@ describe("58a: the bar's line", () => {
     expect(button.hasAttribute("disabled")).toBe(false);
     fireEvent.click(button);
     await flush();
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect((screen.queryByRole("dialog") ?? null) === null).toBe(true);
   });
 
   test("picks within the cap: the month's room from MoneyStatus, rounded down, over the worst clip — «В этом месяце осталось $6.20 — это примерно 7 клипов»", async () => {
@@ -210,7 +210,7 @@ describe("59: the sheet «Оживить N фото»", () => {
     const struck = rowOf(s, "Фото 5 · Дом");
     expect(struck.classList.contains("batch-row-off")).toBe(true);
     expect(struck.textContent).toContain(CLIP_REASONS_RU["no-motion"]);
-    expect(within(struck).queryByRole("combobox")).toBeNull();
+    expect((within(struck).queryByRole("combobox") ?? null) === null).toBe(true);
     expect(within(s).getByRole("combobox", { name: "Движение · Фото 1 · Дом" })).toBeDefined();
     expect(priceLine(s)).toBe("Обычно $1.68 · не больше $3.06");
     expect(s.querySelector(".batch-room")?.textContent).toBe("Осталось в месяце $6.20");
@@ -286,7 +286,7 @@ describe("59: the sheet «Оживить N фото»", () => {
     expect(focusedLabel()).toBe("button «Отмена»");
     fireEvent.click(within(s).getByRole("radio", { name: "10 секунд" }));
     await flush();
-    expect(within(s).queryByRole("alert")).toBeNull();
+    expect((within(s).queryByRole("alert") ?? null) === null).toBe(true);
   });
 
   test("59b at open: the month holds Kling alone — «Оживить 4» waits, described by the notice; «Оживить без запасной модели · до $2.02» sends fallback none", async () => {
@@ -346,7 +346,7 @@ describe("60: «Клипы» while the batch runs", () => {
     await until(h, () => preparingTile() !== null, "the first member preparing");
     const preparing = preparingTile();
     if (preparing === null) throw new Error("no preparing tile");
-    expect(within(preparing).queryByRole("button", { name: "Отменить" })).toBeNull();
+    expect((within(preparing).queryByRole("button", { name: "Отменить" }) ?? null) === null).toBe(true);
     expect(within(batchHead()).getByRole("button", { name: "Отменить оставшиеся" })).toBeDefined();
   });
 
@@ -356,7 +356,7 @@ describe("60: «Клипы» while the batch runs", () => {
     await until(h, () => document.querySelector(".clip-tile-work:not(.clip-tile-queued)") !== null, "the first member at work");
     expect(headTitle()).toBe("Пакет · снимается 1 · в очереди 3");
     expect(within(batchHead()).getByRole("button", { name: "Отменить оставшиеся" })).toBeDefined();
-    expect(within(batchHead()).queryByRole("button", { name: "Закрыть" })).toBeNull();
+    expect((within(batchHead()).queryByRole("button", { name: "Закрыть" }) ?? null) === null).toBe(true);
     const waiting = screen.getAllByRole("article", { name: /^Клип в очереди: / });
     expect(waiting).toHaveLength(3);
     const second = waiting[0];
@@ -364,10 +364,10 @@ describe("60: «Клипы» while the batch runs", () => {
     expect(second.querySelector(".batch-index")?.textContent).toBe("2/4");
     expect(second.querySelector(".batch-index")?.getAttribute("title")).toBe("Клип 2 из 4 в пакете");
     expect(second.querySelector(".clip-phase")?.textContent).toBe("В очереди");
-    expect(second.querySelector(".spin")).toBeNull();
-    expect(second.querySelector(".shim")).toBeNull();
-    expect(within(second).queryByRole("status")).toBeNull();
-    expect(within(second).queryByRole("button")).toBeNull();
+    expect((second.querySelector(".spin") ?? null) === null).toBe(true);
+    expect((second.querySelector(".shim") ?? null) === null).toBe(true);
+    expect((within(second).queryByRole("status") ?? null) === null).toBe(true);
+    expect((within(second).queryByRole("button") ?? null) === null).toBe(true);
     expect(second.textContent).toContain("до $0.51");
     expect(within(sidebarQueue()).getByText("Клип 1/4 · Nini")).toBeDefined();
     expect(within(sidebarQueue()).getByText("4 задачи")).toBeDefined();
@@ -430,7 +430,7 @@ describe("60: «Клипы» while the batch runs", () => {
     await until(h, () => firstRecord() !== undefined && retryWaiting(), "the first 429 and its retry waiting");
     const first = firstRecord()?.closest("article");
     if (first === null || first === undefined) throw new Error("no first-429 tile");
-    expect(within(first).queryByRole("button", { name: "Оживить снова…" })).toBeNull();
+    expect((within(first).queryByRole("button", { name: "Оживить снова…" }) ?? null) === null).toBe(true);
     expect(first.classList.contains("clip-fail-free")).toBe(true);
     expect(headTitle()).toBe("Пакет · в очереди 2");
     expect(within(sidebarQueue()).getByText("Пауза OpenRouter")).toBeDefined();
@@ -450,7 +450,7 @@ describe("60b–60f: the end and the stops", () => {
     expect(batchHead().classList.contains("batch-head-ok")).toBe(true);
     fireEvent.click(within(batchHead()).getByRole("button", { name: "Закрыть" }));
     await flush();
-    expect(document.querySelector(".batch-head")).toBeNull();
+    expect((document.querySelector(".batch-head") ?? null) === null).toBe(true);
     expect(document.activeElement === clipsHeading()).toBe(true);
   });
 
@@ -531,7 +531,7 @@ describe("37e: «Оживить» waits while a batch runs", () => {
     expect(whyOf(animate)).toBe(`Сейчас снимаются клипы пакета${NBSP}— дождитесь окончания или отмените оставшиеся.`);
     fireEvent.click(animate);
     await flush();
-    expect(screen.queryByRole("dialog", { name: "Оживить фото" })).toBeNull();
+    expect((screen.queryByRole("dialog", { name: "Оживить фото" }) ?? null) === null).toBe(true);
     fireEvent.click(within(viewer).getByRole("button", { name: "отмените оставшиеся" }));
     await flush();
     await flush();
