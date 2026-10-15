@@ -6,7 +6,7 @@ import { contractCategory, buildRunPlan, RunPlanSchema, type RunPlan } from "../
 import { plan } from "../scenes";
 import type { OwnPlanSlot, PlanSlot } from "../scenes/schema";
 import { openLibrary, type Library } from "../library/library";
-import type { PhotoSidecar } from "../library/schemas";
+import { PhotoSidecarSchema, type PhotoSidecar } from "../library/schemas";
 import { PLAN_FILE, RUNS_DIR } from "../library/layout";
 import { useTempDir } from "../library/testing/helpers";
 import { momentOfSlot } from "../../shared/scenes/template";
@@ -525,5 +525,43 @@ describe("the kit's photo prompt opens with the capture line a run writes (S5.WP
     const assembled = assembleSlot(descriptor, own, sentenceOf(run.runId, own), master, { runId: run.runId }).prompt;
     expect(assembled.startsWith(`${photoCaptureLineOf(run.runId, own)} `)).toBe(true);
     expect(photoPromptOf(photoOf(run, own)).startsWith(`${photoCaptureLineOf(run.runId, own)} `)).toBe(true);
+  });
+});
+
+describe("the planned capture: who the slot says took the photo, before its prompt proves it (S5.WC2, plan s5b2 §8 WC2, the WP1 review)", () => {
+  /** The pov-legs line before the C3′ fix: such a photo is really a selfie from above, the phone in her hand (C3 K1). */
+  const PRE_FIX = "A photo she took looking down along her own legs from where she lies or sits, held at her eye level; nothing in her hand can be seen.";
+
+  test("an old pov-legs photo whose prompt holds no POV line reads as unknown, and still says the slot planned pov-legs, a hand-held capture", () => {
+    const pov = pick("home", (m) => m.captures.includes("pov-legs"));
+    const run = sceneRun("run-00000025", [slotOf(pov, "pov-legs")]);
+    const slot = run.scenes.slots[0] as PlanSlot;
+    const facts = factsOf(frameFactsOf(photoOf(run, slot, { prompt: `${PRE_FIX} ${sentenceOf(run.runId, slot)}. She is an adult woman.` }), run));
+    expect({ capture: facts.capture, plannedCapture: facts.plannedCapture }).toEqual({ capture: "unknown", plannedCapture: "pov-legs" });
+  });
+
+  test("C3 K1's own photo and plan (fixtures/c3-k1.json): unknown, planned pov-legs", () => {
+    const k1 = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "c3-k1.json"), "utf8")) as { photo: unknown; plan: unknown };
+    const facts = factsOf(frameFactsOf(PhotoSidecarSchema.parse(k1.photo), RunPlanSchema.parse(k1.plan)));
+    expect({ capture: facts.capture, plannedCapture: facts.plannedCapture }).toEqual({ capture: "unknown", plannedCapture: "pov-legs" });
+  });
+
+  test("every bank moment on every capture it lists, drawn with its own line: the planned capture is the proven one", () => {
+    let checked = 0;
+    for (const picked of everyMoment()) {
+      for (const capture of picked.moment.captures) {
+        const run = sceneRun("run-00000026", [slotOf(picked, capture)]);
+        const facts = factsOf(frameFactsOf(photoOf(run, run.scenes.slots[0] as PlanSlot), run));
+        expect({ capture: facts.capture, plannedCapture: facts.plannedCapture }).toEqual({ capture, plannedCapture: capture });
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(271);
+  });
+
+  test("an own scene plans the capture of its shot; a photo with no plan plans nothing (unknown)", () => {
+    const ownRun = sceneRun("run-00000027", [{ kind: "own", shot: "selfie", pose: "front", text: "She smiles on a train." }]);
+    expect(factsOf(frameFactsOf(photoOf(ownRun, ownRun.scenes.slots[0] as OwnPlanSlot), ownRun)).plannedCapture).toBe("selfie");
+    expect(factsOf(frameFactsOf(planlessPhoto("home", { faceCos: 0.7 }), null)).plannedCapture).toBe("unknown");
   });
 });

@@ -36,6 +36,11 @@ export interface FrameFacts {
   readonly activity: string | null;
   /** Who took the photo, as far as its own prompt proves it (S5.WP1, I5.69): a slot planned as pov-legs whose photo holds no shipped POV line is `unknown`. */
   readonly capture: ClipCapture;
+  /**
+   * Who the plan says took it, before the prompt proves anything: the slot's capture, an own scene's from its shot, `unknown` with no plan (S5.WC2). The camera line reads
+   * `capture`; the phone rule reads both, because an old pov-legs photo that reads as unknown was still taken with the phone in her hand (C3 K1, a selfie from above).
+   */
+  readonly plannedCapture: ClipCapture;
   readonly pose: ScenePose;
   /** Whether her face shows (`faceVisibleOf`); without a plan, read from the photo's own face marks. */
   readonly face: FaceVisibility;
@@ -87,6 +92,7 @@ function plannedFacts(photo: PhotoSidecar, source: GeneratedSource, slot: PlanSl
   const activity = trimmed(slot.activity);
   const carried = activity !== "" && says(source.prompt, activity);
   const level = contentLevelOf(slot);
+  const planned = slot.capture ?? captureOfShot(slot.shot);
   return {
     photoId: photo.id,
     plan: "slot",
@@ -94,7 +100,8 @@ function plannedFacts(photo: PhotoSidecar, source: GeneratedSource, slot: PlanSl
     moment,
     sceneMotion: moment !== null && says(source.prompt, `she ${moment.text}`),
     activity: carried ? activity : null,
-    capture: provenCaptureOf(slot.capture ?? captureOfShot(slot.shot), source.prompt),
+    capture: provenCaptureOf(planned, source.prompt),
+    plannedCapture: planned,
     pose: slot.pose,
     face: faceVisibleOf(slot),
     faceRole: roleOf(facePoseOf(slot)),
@@ -114,6 +121,7 @@ function ownFacts(photo: PhotoSidecar, slot: OwnPlanSlot): Omit<FrameFacts, "age
     sceneMotion: false,
     activity: null,
     capture: captureOfShot(slot.shot),
+    plannedCapture: captureOfShot(slot.shot),
     pose: slot.pose,
     face: faceVisibleOf(slot),
     faceRole: roleOf(facePoseOf(slot)),
@@ -139,6 +147,7 @@ function planlessFacts(photo: PhotoSidecar, category: string): Omit<FrameFacts, 
     sceneMotion: false,
     activity: null,
     capture: "unknown",
+    plannedCapture: "unknown",
     pose: "front",
     face: judged ? "yes" : photo.qa.faceMarked === true ? "no" : "maybe",
     faceRole: judged ? "judged" : "hidden",
