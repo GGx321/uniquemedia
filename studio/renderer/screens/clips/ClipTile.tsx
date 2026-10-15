@@ -65,7 +65,8 @@ export const ReadyTile = memo(function ReadyTile({ clip, nowMs, onOpen }: { clip
   // 5b.2 (41e): the clip's frame is in a finished video, through the clip or its photo: one badge, the title tells which.
   const used = clipUsedBadge(clip.use);
   return (
-    <article className="clip-tile" aria-label={`Клип: ${clip.motion.label}`}>
+    // S5.WAR L8: the badge's reason is in the tile's name too — its title alone reaches only a pointer.
+    <article className="clip-tile" aria-label={used === null ? `Клип: ${clip.motion.label}` : `Клип: ${clip.motion.label} · ${used.title}`}>
       <div className="ph clip-tile-poster">
         <Poster clip={clip} />
         <button type="button" className="clip-open" data-clip-id={clip.clipId} aria-haspopup="dialog" aria-label={`Открыть клип «${clip.motion.label}», ${length}`} onClick={() => onOpen(clip.clipId)}>

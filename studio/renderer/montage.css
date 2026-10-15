@@ -1133,8 +1133,13 @@
   cursor: not-allowed;
 }
 
-.ed-bin-tile:hover .ed-bin-pick:not(:disabled) {
+.ed-bin-tile:hover .ed-bin-pick:not(:disabled):not([aria-disabled="true"]) {
   box-shadow: inset 0 0 0 1.5px var(--accent-ring);
+}
+
+/* S5.WAR M3: a photo that waits while the draft's videos are read — dimmed (.ed-bin-dim), the busy cursor, no hover ring. */
+.ed-bin-tile-wait .ed-bin-pick {
+  cursor: progress;
 }
 
 /* The tile (a .ph) clips what sticks out of it, its pick's own outline included: the keyboard ring is the tile's, drawn outside its border. */
@@ -5079,6 +5084,22 @@ button.drop > * {
 
 .edc-tile:hover .edc-pick:not(:disabled):not([aria-disabled="true"]) {
   box-shadow: inset 0 0 0 1.5px var(--accent-ring);
+}
+
+/* S5.WAR M3: a clip being prepared, or waiting while the draft's videos are read: the busy cursor (the waiting one is dimmed by .ed-bin-dim). */
+.edc-tile-busy .edc-pick,
+.edc-tile-wait .edc-pick {
+  cursor: progress;
+}
+
+/* S5.WAR L5: a closed card hands the focus back to its clip's tile; when the tile's button is off, the tile itself takes it — its poster wears the ring. */
+.edc-tile:focus {
+  outline: none;
+}
+
+.edc-tile:focus-visible > .edc-poster {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
 }
 
 .edc-poster:has(> .edc-pick:focus-visible) {

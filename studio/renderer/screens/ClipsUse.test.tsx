@@ -81,7 +81,8 @@ async function openClips(): Promise<void> {
   await flush();
 }
 
-const tile = (name: string): HTMLElement => screen.getByRole("article", { name: `Клип: ${name}` });
+/** A ready tile by its motion; a used one's name goes on with why (S5.WAR L8). */
+const tile = (name: string): HTMLElement => screen.getByRole("article", { name: (accessible) => accessible === `Клип: ${name}` || accessible.startsWith(`Клип: ${name} · `) });
 const viewer = (): HTMLElement => screen.getByRole("dialog", { name: /^Клип \d+ из \d+$/ });
 const ask = (): HTMLElement => screen.getByRole("alertdialog", { name: "Удалить клип?" });
 
@@ -117,8 +118,12 @@ describe("41e: «в видео» on the «Клипы» tile", () => {
     expect(byClip?.textContent).toBe("в видео");
     expect(byClip?.getAttribute("title")).toBe("Этот клип уже в готовом видео — второй раз не ставится");
     expect(byPhoto?.textContent).toBe("в видео");
-    expect(byPhoto?.getAttribute("title")).toBe("Фото этого клипа или другой клип из него уже в готовом видео — второй раз не ставится");
+    expect(byPhoto?.getAttribute("title")).toBe("Это фото или другой его клип уже в готовом видео — кадр второй раз не ставится");
     expect(tile("Медленный вдох").querySelector(".clip-used") === null).toBe(true);
+    // S5.WAR L8: the badge's reason is in the tile's name too (its title alone is the pointer's).
+    expect(tile("Моргает и улыбается").getAttribute("aria-label")).toBe("Клип: Моргает и улыбается · Этот клип уже в готовом видео — второй раз не ставится");
+    expect(tile("Наклоняет голову").getAttribute("aria-label")).toBe("Клип: Наклоняет голову · Это фото или другой его клип уже в готовом видео — кадр второй раз не ставится");
+    expect(tile("Медленный вдох").getAttribute("aria-label")).toBe("Клип: Медленный вдох");
   });
 });
 
@@ -185,6 +190,16 @@ describe("44b: «Удалить клип?» says what holds the clip", () => {
     const remove = within(still).getByRole("button", { name: "Удалить" });
     expect(remove.hasAttribute("disabled")).toBe(false);
     expect(remove.getAttribute("aria-disabled")).toBeNull();
+    // S5.WAR L7: a second «Удалить» refused the same way is said again: a new alert, the focus on «Отмена» again.
+    remove.focus();
+    fireEvent.click(remove);
+    await flush();
+    await flush();
+    expect(callsOf(h.engine, "clips.delete")).toHaveLength(2);
+    const again = within(ask()).getByRole("alert");
+    expect(again === alert).toBe(false);
+    expect(again.textContent).toBe(nb("Клип сейчас в рендере — удалите его, когда рендер закончится."));
+    expect(focusedLabel()).toBe(describeElement(within(ask()).getByRole("button", { name: "Отмена" })));
     // The viewer is still there behind it, the clip with it.
     expect(viewer()).toBeDefined();
   });

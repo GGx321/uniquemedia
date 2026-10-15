@@ -143,11 +143,15 @@ function takenWhy(clip: Ready, photo: PhotoSummary | undefined, draft: { framed:
 /** «Готовим для монтажа…» (§6 57a): the tile's one live line while its copy is made. */
 export const PREPARING = "Готовим для монтажа…";
 
+/** S5.WAR: the tab's live region — a clip being prepared, after a colon (lowercase), and where a clip just went. */
+export const preparingNews = (motion: string): string => `Клип «${motion}»: готовим для монтажа…`;
+export const placedNews = (motion: string, slot: number): string => `Клип «${motion}» — в кадре ${slot}`;
+
 /** The state's words at the tile's head (57b) and on its `li`. */
 export const TAKEN_LABELS: Record<TakenWhy, string> = {
   "used-clip": "в видео",
   "used-photo": "в видео",
-  "photo-gone": "фото удалено",
+  "photo-gone": "фото не найдено",
   rejected: "фото отклонено",
   ineligible: "фото не подходит",
   reserved: "в рендере",
@@ -161,17 +165,23 @@ export const TAKEN_BAND: ReadonlySet<TakenWhy> = new Set<TakenWhy>(["photo-in", 
 /** The titles, capitalised (README L9); a frame held by a render has none, as the bin's «в рендере». */
 const TAKEN_TITLES: Record<TakenWhy, string | null> = {
   "used-clip": "Этот клип уже в готовом видео — второй раз не ставится",
-  "used-photo": "Фото этого клипа или другой клип из него уже в готовом видео — второй раз не ставится",
-  "photo-gone": "Фото этого клипа удалено — в монтаж не ставится",
+  "used-photo": "Это фото или другой его клип уже в готовом видео — кадр второй раз не ставится",
+  "photo-gone": "Фото этого клипа нет в галерее — в монтаж не ставится",
   rejected: "Фото этого клипа отклонено — в монтаж не ставится",
-  ineligible: "Фото этого клипа не подходит для монтажа",
+  ineligible: "Фото этого клипа не подходит — в монтаж не ставится",
   reserved: null,
   "photo-in": "Это фото уже в ролике",
   "sibling-in": "Клип этого фото уже в ролике",
 };
 
 /** Round 3: the state and the action of a clip that waits after the read of the draft's videos failed. */
-export const FAILED_WORDS = "не удалось прочитать видео ролика";
+export const FAILED_WORDS = "не удалось прочитать видео в кадрах";
+
+/** S5.WAR M3: why nothing can be added now: the draft's videos are being read, or their read failed; null when they are known. */
+export type FramesWait = "reading" | "failed" | null;
+
+/** S5.WAR M3: the action of a clip or a photo that waits while the draft's videos are read. */
+export const WAIT_WORDS = "подождите, читаем видео в кадрах";
 
 /** «Клип «Поправляет прядь», 0:05»: what a tile is. */
 const clipName = (tile: ClipTile): string => `Клип «${tile.clip.motion.label}», ${tile.length}`;
@@ -187,7 +197,7 @@ function stateWords(state: ClipTileState): string {
     case "taken":
       return TAKEN_LABELS[state.why];
     case "unknown":
-      return state.failed === true ? FAILED_WORDS : "читаем видео ролика";
+      return state.failed === true ? FAILED_WORDS : "читаем видео в кадрах";
     case "failed":
     case "free":
       return "не использован";
@@ -224,7 +234,10 @@ export function clipAction(tile: ClipTile, addBlock: AddRefusal | null): ClipAct
 export function pickAria(tile: ClipTile, addBlock: AddRefusal | null): string {
   const action = clipAction(tile, addBlock);
   const words =
-    action === "select" && tile.state.kind === "placed"
+    tile.state.kind === "busy"
+      ? // S5.WAR L4: what is going on, not what a click would do.
+        "готовим для монтажа"
+      : action === "select" && tile.state.kind === "placed"
       ? `выбрать кадр ${tile.state.slot}`
       : action === "taken"
         ? "уже занято"
@@ -233,7 +246,7 @@ export function pickAria(tile: ClipTile, addBlock: AddRefusal | null): string {
           : action === "wait"
             ? tile.state.kind === "unknown" && tile.state.failed === true
               ? FAILED_WORDS
-              : "подождите, читаем видео ролика"
+              : WAIT_WORDS
             : action === "full"
             ? "кадров больше не добавить"
             : "добавить кадр в конец ролика";
@@ -263,7 +276,10 @@ export function clipTileTitle(tile: ClipTile, addBlock: AddRefusal | null): stri
  * The line under the tiles (57; `#cell`, `#full`): «Мои»'s hint for a video; with a collage cell chosen, a clip still goes to the end; at the caps, the
  * bin's words said of a clip (the 15 s one ends «…чтобы добавить клип», WAD re-review N5).
  */
-export function clipsHint(fillTarget: FillTarget, addBlock: AddRefusal | null): string {
+export function clipsHint(fillTarget: FillTarget, addBlock: AddRefusal | null, frames: FramesWait = null): string {
+  // S5.WAR M3: while the draft's videos are read (or after the read failed) nothing can be added: the line says that.
+  if (frames === "reading") return FRAMES_UNKNOWN_TITLE;
+  if (frames === "failed") return FRAMES_FAILED_TEXT;
   const drag = "Перетащите на «Кадры», чтобы вставить между кадрами.";
   if (addBlock === "clip-cap") return "Не больше 20 кадров в одном видео. Клик по клипу в панели ничего не добавит.";
   if (addBlock === "no-room") return "В ролике уже 15 с: на новый кадр нет места. Укоротите кадр, чтобы добавить клип.";

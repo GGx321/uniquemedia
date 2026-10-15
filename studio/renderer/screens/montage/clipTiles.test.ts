@@ -151,9 +151,9 @@ describe("the tiles (57, 57b)", () => {
     ]);
     const waiting = blind[7];
     if (waiting === undefined) throw new Error("no tile");
-    expect(clipTileAria(waiting)).toBe("Клип «Как в сцене», 0:05, Фото 1 · читаем видео ролика");
-    expect(pickAria(waiting, null)).toBe("Клип «Как в сцене», 0:05: подождите, читаем видео ролика");
-    expect(clipTileTitle(waiting, null)).toBe("Читаем видео ролика — подождите");
+    expect(clipTileAria(waiting)).toBe("Клип «Как в сцене», 0:05, Фото 1 · читаем видео в кадрах");
+    expect(pickAria(waiting, null)).toBe("Клип «Как в сцене», 0:05: подождите, читаем видео в кадрах");
+    expect(clipTileTitle(waiting, null)).toBe("Читаем видео в кадрах — подождите");
     expect(clipAction(waiting, null)).toBe("wait");
   });
 
@@ -161,12 +161,12 @@ describe("the tiles (57, 57b)", () => {
     const [tile] = clipTiles({ clips: [ready("clip-0000008", P(1))], spec: SPEC, originOf: () => undefined, photos: INDEX, ...NONE, framesFailed: true });
     if (tile === undefined) throw new Error("no tile");
     expect(tile.state).toEqual({ kind: "unknown", failed: true });
-    expect(clipTileAria(tile)).toBe("Клип «Как в сцене», 0:05, Фото 1 · не удалось прочитать видео ролика");
-    expect(pickAria(tile, null)).toBe("Клип «Как в сцене», 0:05: не удалось прочитать видео ролика");
-    expect(clipTileTitle(tile, null)).toBe("Не удалось прочитать видео ролика.");
+    expect(clipTileAria(tile)).toBe("Клип «Как в сцене», 0:05, Фото 1 · не удалось прочитать видео в кадрах");
+    expect(pickAria(tile, null)).toBe("Клип «Как в сцене», 0:05: не удалось прочитать видео в кадрах");
+    expect(clipTileTitle(tile, null)).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
     expect(clipAction(tile, null)).toBe("wait");
-    expect(actionWhyLabel("frame-unknown", true)).toBe("Не удалось прочитать видео ролика.");
-    expect(actionWhyLabel("frame-unknown")).toBe("Читаем видео ролика — подождите");
+    expect(actionWhyLabel("frame-unknown", true)).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
+    expect(actionWhyLabel("frame-unknown")).toBe("Читаем видео в кадрах — подождите");
   });
 
   test("a draft with no video at all knows its frames whatever the origins say", () => {
@@ -183,19 +183,19 @@ describe("a frame the engine refuses for its photo (S5.WA4 round 2, review M1)",
     expect(tile.state).toEqual({ kind: "taken", why: "ineligible" });
     expect(clipTileAria(tile)).toBe("Клип «Как в сцене», 0:05, Дом · фото не подходит");
     expect(pickAria(tile, null)).toBe("Клип «Как в сцене», 0:05: уже занято");
-    expect(clipTileTitle(tile, null)).toBe("Фото этого клипа не подходит для монтажа");
+    expect(clipTileTitle(tile, null)).toBe("Фото этого клипа не подходит — в монтаж не ставится");
     expect(TAKEN_BAND.has("ineligible")).toBe(false);
   });
 
-  test("a photo that is gone while every page of the photos is read: «фото удалено», taken; while pages are left, nothing is said", () => {
+  test("a photo that is gone while every page of the photos is read: «фото не найдено», taken; while pages are left, nothing is said", () => {
     const photos = new Map(INDEX);
     photos.delete(P(1));
     const [gone] = clipTiles({ clips: [ready("clip-0000008", P(1))], spec: SPEC, originOf, photos, ...NONE });
     if (gone === undefined) throw new Error("no tile");
     expect(gone.state).toEqual({ kind: "taken", why: "photo-gone" });
     expect(gone.source).toBeNull();
-    expect(clipTileAria(gone)).toBe("Клип «Как в сцене», 0:05 · фото удалено");
-    expect(clipTileTitle(gone, null)).toBe("Фото этого клипа удалено — в монтаж не ставится");
+    expect(clipTileAria(gone)).toBe("Клип «Как в сцене», 0:05 · фото не найдено");
+    expect(clipTileTitle(gone, null)).toBe("Фото этого клипа нет в галерее — в монтаж не ставится");
     expect(clipTiles({ clips: [ready("clip-0000008", P(1))], spec: SPEC, originOf, photos, ...NONE, photosComplete: false })[0]?.state).toEqual({ kind: "free" });
     // Not read at all: nothing is known of it.
     expect(clipTiles({ clips: [ready("clip-0000008", P(1))], spec: SPEC, originOf, photos: null, ...NONE })[0]?.state).toEqual({ kind: "free" });
@@ -276,6 +276,8 @@ describe("the words of a tile (57, 57a, 57b; README «Тексты»)", () => {
 
   test("the action on the button: «…: добавить кадр в конец ролика», «…: выбрать кадр 3», «…: уже занято», «…: не подготовить»", () => {
     expect(pickAria(free, null)).toBe("Клип «Как в сцене», 0:05: добавить кадр в конец ролика");
+    // S5.WAR L4: a preparing tile's button says what is going on, not what a click would do.
+    expect(pickAria({ ...free, state: { kind: "busy" } }, null)).toBe("Клип «Как в сцене», 0:05: готовим для монтажа");
     expect(pickAria(at(2), null)).toBe("Клип «Поправляет прядь», 0:05: выбрать кадр 3");
     expect(pickAria(at(0), null)).toBe("Клип «Как в сцене», 0:05: уже занято");
     expect(pickAria({ ...free, state: { kind: "damaged" } }, null)).toBe("Клип «Как в сцене», 0:05: не подготовить");
@@ -286,7 +288,7 @@ describe("the words of a tile (57, 57a, 57b; README «Тексты»)", () => {
 
   test("the titles, capitalised; the two «в видео» told apart by `use.inVideo`", () => {
     expect(clipTileTitle(at(0), null)).toBe("Этот клип уже в готовом видео — второй раз не ставится");
-    expect(clipTileTitle(at(6), null)).toBe("Фото этого клипа или другой клип из него уже в готовом видео — второй раз не ставится");
+    expect(clipTileTitle(at(6), null)).toBe("Это фото или другой его клип уже в готовом видео — кадр второй раз не ставится");
     expect(clipTileTitle(at(1), null)).toBe("Это фото уже в ролике");
     expect(clipTileTitle(at(3), null)).toBe("Клип этого фото уже в ролике");
     expect(clipTileTitle(at(4), null)).toBe("Фото этого клипа отклонено — в монтаж не ставится");
@@ -308,6 +310,12 @@ describe("the line under the tiles (57, `#cell`, `#full`; WAD re-review N5)", ()
     expect(clipsHint(null, "clip-cap")).toBe("Не больше 20 кадров в одном видео. Клик по клипу в панели ничего не добавит.");
     expect(clipsHint({ clip: 0, cell: 1 }, "no-room")).toBe(`В ролике уже 15 с: на новый кадр нет места. Укоротите кадр, чтобы добавить клип.`);
   });
+
+  test("S5.WAR M3: while the draft's videos are read, or after the read failed, the line says that instead of what a click would do", () => {
+    expect(clipsHint(null, null, "reading")).toBe("Читаем видео в кадрах — подождите");
+    expect(clipsHint({ clip: 0, cell: 1 }, "clip-cap", "failed")).toBe("Не удалось прочитать видео в кадрах — пока новые кадры не добавить.");
+    expect(clipsHint(null, null, null)).toBe("Клик — кадр в конец ролика. Перетащите на «Кадры», чтобы вставить между кадрами.");
+  });
 });
 
 describe("a copy as the draft calls it (57f; README M6)", () => {
@@ -327,7 +335,7 @@ describe("a copy that can no longer go in where it was asked for (S5.WA4 round 2
     expect(placementRefusalText("photo-in-draft", spec, P(7))).toBe("Клип этого фото уже в ролике");
     expect(placementRefusalText("clip-cap", spec, P(7))).toBe("Не больше 20 кадров в одном видео");
     expect(placementRefusalText("no-room", spec, P(7))).toBe("В ролике уже 15 с — укоротите кадр");
-    expect(placementRefusalText("frame-unknown", spec, P(7))).toBe("Читаем видео ролика — подождите");
+    expect(placementRefusalText("frame-unknown", spec, P(7))).toBe("Читаем видео в кадрах — подождите");
   });
 });
 
