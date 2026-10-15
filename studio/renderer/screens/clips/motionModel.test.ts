@@ -9,6 +9,9 @@ import {
   ideaNoneLine,
   insertIdeaText,
   lineText,
+  batchMotionGoneNews,
+  CLIP_BUSY,
+  IDEA_PLACEHOLDER,
   motionGoneNews,
   motionMoneyWord,
   motionRowLabel,
@@ -64,7 +67,8 @@ describe("the result lines (62b, 62c, 63a, 63b)", () => {
   test("62c: paid — even a paid answer then a moderation refusal (a cost above 0) — says what it cost; free only at 0", () => {
     expect(plain(lineText(suggestNoneLine(1_800 + 2_100)))).toBe("Не получилось предложить движения — оплачено $0.004.");
     expect(plain(lineText(suggestNoneLine(1)))).toBe("Не получилось предложить движения — оплачено $0.001.");
-    expect(plain(lineText(suggestNoneLine(0)))).toBe("Модель не стала смотреть этот кадр — бесплатно");
+    // S5.WC5b: a `none` at 0 may be `usage.cost: 0` as well as a moderation refusal — neutral words, not «Модель не стала…».
+    expect(plain(lineText(suggestNoneLine(0)))).toBe("Не получилось предложить движения — бесплатно.");
   });
 
   test("63a and 63b: a translation, a rejection's cost, and both ends of `none`", () => {
@@ -72,7 +76,7 @@ describe("the result lines (62b, 62c, 63a, 63b)", () => {
     expect(plain(lineText(rejectedPaidLine(2_000)))).toBe("За перевод оплачено $0.002.");
     expect(plain(lineText(rejectedPaidLine(0)))).toBe("Перевод — бесплатно.");
     expect(plain(lineText(ideaNoneLine(2_200)))).toBe("Не получилось перевести идею — оплачено $0.002.");
-    expect(plain(lineText(ideaNoneLine(0)))).toBe("Модель не стала переводить эту идею — бесплатно");
+    expect(plain(lineText(ideaNoneLine(0)))).toBe("Не получилось перевести идею — бесплатно.");
   });
 });
 
@@ -96,6 +100,8 @@ describe("the rows", () => {
     expect(motionRowLabel({ source: "own", label: "медленно поворачивает голову…" })).toBe("Своя идея: медленно поворачивает голову…");
     expect(motionRowLabel({ source: "vision", label: "Дует на чай" })).toBe("Дует на чай");
     expect(motionRowLabel({ source: "code", label: "Моргает и улыбается" })).toBe("Моргает и улыбается");
+    // A recovered clip whose own words are gone carries «Своя идея» alone: never «Своя идея: Своя идея».
+    expect(motionRowLabel({ source: "own", label: "Своя идея" })).toBe("Своя идея");
   });
 
   test("the English shows under what a model wrote and under the scene, not under the code", () => {
@@ -114,6 +120,8 @@ describe("the rows", () => {
 
   test("a chosen row that left the list is said with what is chosen now", () => {
     expect(plain(motionGoneNews("Дует на чай", "Как в сцене"))).toBe("Движение «Дует на чай» больше не в списке — выбрано «Как в сцене».");
+    // S5.WC5b (59d): a batch row says which photo.
+    expect(plain(batchMotionGoneNews("Фото 3 · Дом", "Дует на чай", "Как в сцене"))).toBe("Фото 3 · Дом: движение «Дует на чай» больше не в списке — выбрано «Как в сцене».");
   });
 });
 
@@ -167,5 +175,12 @@ describe("the idea field (63): the contract's `OwnIdeaText` decides", () => {
     expect(insertIdeaText(full, full.length, full.length, "ab")).toEqual({ value: `${full}a`, caret: OWN_IDEA_MAX });
     expect(insertIdeaText(full, full.length, full.length, "🙂")).toEqual({ value: full, caret: full.length });
     expect(insertIdeaText("abc", 0, 3, "xy")).toEqual({ value: "xy", caret: 2 });
+  });
+});
+
+describe("S5.WC5b strings (owner veto pending)", () => {
+  test("the field's example, and the clip-busy line of the sheet's own send", () => {
+    expect(IDEA_PLACEHOLDER).toBe("Опишите одно небольшое движение — например, «медленно поворачивает голову к окну»");
+    expect(CLIP_BUSY).toBe("Сейчас снимаются клипы — предложить или перевести движение можно, когда они закончатся.");
   });
 });

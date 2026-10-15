@@ -3,6 +3,7 @@ import {
   MOTION_PROBLEMS,
   MOTION_PROBLEMS_RU,
   motionCostShownMicros,
+  OWN_IDEA_FALLBACK_LABEL,
   OWN_IDEA_MAX,
   OwnIdeaText,
   type ClipFrameNote,
@@ -22,7 +23,7 @@ export const SUGGEST_LABEL = "Предложить движения";
 export const SUGGESTING = "Смотрим кадр…";
 export const IDEA_OPEN = "Своя идея…";
 export const IDEA_FIELD = "Своя идея";
-export const IDEA_PLACEHOLDER = "Опишите одно небольшое движение — например, «медленно поворачивает голову к окну и улыбается»";
+export const IDEA_PLACEHOLDER = "Опишите одно небольшое движение — например, «медленно поворачивает голову к окну»";
 export const IDEA_HINT = `От 1 до ${OWN_IDEA_MAX} символов. Английский текст увидите до оплаты клипа.`;
 /** SceneIdeaForm's own words for the same rule. */
 export const IDEA_INVALID = "Уберите из идеи служебные символы.";
@@ -47,8 +48,13 @@ export const FRAME_NOTES_RU = {
 } as const satisfies Record<ClipFrameNote, string>;
 /** §5.3 `motion-busy`: «Оживить» waits while a part C call runs (r2.1 N10). */
 export const MOTION_BUSY = CLIP_REASONS_RU["motion-busy"];
-/** I5.68 `clip-busy`: a part C call waits while a clip or a batch holds the clip money unit. */
-export const CLIP_BUSY = CLIP_REASONS_RU["clip-busy"];
+/**
+ * S5.WC5b: the sheet's OWN «Оживить» on its way holds the two part C buttons (owner veto). A clip or a batch that already runs is said by the sheet's footer, and the buttons point at that line instead,
+ * so the two never disagree; the engine's own refusal after a click says `CLIP_REASONS_RU["clip-busy"]`.
+ */
+export const CLIP_BUSY = "Сейчас снимаются клипы — предложить или перевести движение можно, когда они закончатся.";
+/** S5.WC5b: a motion the engine no longer knows (`unknown-motion`), in a sheet that offers another: the batch row's line and sheet 38's after its click. */
+export const MOTION_UNAVAILABLE = "Движение больше недоступно — выберите другое.";
 
 const MOTION_FORMS = ["движение", "движения", "движений"] as const;
 
@@ -90,9 +96,12 @@ export function suggestedLine(count: number, costMicros: number): MoneyLine {
   return withCost(`Предложено ${count}${NBSP}${plural(count, MOTION_FORMS)}`, costMicros);
 }
 
-/** 62c: nothing usable came out. Paid (an unusable answer, or a paid answer then a moderation refusal): «Не получилось предложить движения — оплачено $0.004.»; free: the model refused the frame. */
+/**
+ * 62c: nothing usable came out: «Не получилось предложить движения — оплачено $0.004.», or «… — бесплатно.» at 0. S5.WC5b: a free `none` is not always the model's refusal (`usage.cost: 0` gives one
+ * too), so the words name no cause.
+ */
 export function suggestNoneLine(costMicros: number): MoneyLine {
-  return costMicros === 0 ? { before: `Модель не стала смотреть этот кадр${NBSP}— бесплатно`, money: null, after: "" } : withCost("Не получилось предложить движения", costMicros);
+  return withCost("Не получилось предложить движения", costMicros);
 }
 
 /** 63a: «Идея переведена — оплачено $0.001.» */
@@ -106,9 +115,9 @@ export function rejectedPaidLine(costMicros: number): MoneyLine {
   return money === null ? { before: `Перевод${NBSP}— ${word}.`, money: null, after: "" } : { before: `За перевод ${word}`, money, after: "." };
 }
 
-/** 63b #none-paid / #none-free: `translateIdea` answered `none`. */
+/** 63b #none-paid / #none-free: `translateIdea` answered `none` — the same neutral words at 0 (S5.WC5b). */
 export function ideaNoneLine(costMicros: number): MoneyLine {
-  return costMicros === 0 ? { before: `Модель не стала переводить эту идею${NBSP}— бесплатно`, money: null, after: "" } : withCost("Не получилось перевести идею", costMicros);
+  return withCost("Не получилось перевести идею", costMicros);
 }
 
 // ---------- a rejected idea ----------
@@ -126,7 +135,8 @@ export function rejectionText(problems: readonly MotionProblem[]): string | null
 
 /** A motion's row title: an own idea is «Своя идея: <label>» (§6 63a); the others their label. */
 export function motionRowLabel(motion: Pick<ClipMotionChoice, "source" | "label">): string {
-  return motion.source === "own" ? `${OWN_PREFIX}${motion.label}` : motion.label;
+  // A recovered clip whose words are gone carries the bare «Своя идея» (`OWN_IDEA_FALLBACK_LABEL`): never «Своя идея: Своя идея».
+  return motion.source === "own" && motion.label !== OWN_IDEA_FALLBACK_LABEL ? `${OWN_PREFIX}${motion.label}` : motion.label;
 }
 
 /** Whether a row shows its English under the label: the scene's (as 38), and everything a model wrote — a suggestion and an own idea (I5.67: the English is seen before any video money). */
@@ -200,4 +210,9 @@ export function insertIdeaText(value: string, start: number, end: number, insert
   const room = Math.max(0, max - head.length - tail.length);
   const piece = cutToRoom(flattenLines(inserted), room);
   return { value: `${head}${piece}${tail}`, caret: head.length + piece.length };
+}
+
+/** S5.WC5b (59d): the same for a batch row, which names its photo: «Фото 3 · Дом: движение «…» больше не в списке — выбрано «…».» */
+export function batchMotionGoneNews(photo: string, gone: string, chosen: string): string {
+  return `${photo}: движение «${gone}» больше не в списке${NBSP}— выбрано «${chosen}».`;
 }

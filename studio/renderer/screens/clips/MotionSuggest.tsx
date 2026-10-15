@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { ClipFrameNote, ClipMotionId, ClipSuggestResult, ClipTranslateResult, EngineError, MotionProblem } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
-import { motionCallRunning, motionCallsOf, type EngineView } from "../../engine/store";
+import { motionCallRunning, motionCallsOf, type EngineView, type MotionResult } from "../../engine/store";
 import { errorText } from "../../lib/errors";
 import { nbDash } from "../../lib/format";
 import { formatUsdTiered } from "../../lib/money";
 import { Icon, Spin } from "../../ui/Icon";
 import { paidButtonState, PriceFailed } from "../photos/scenePaid";
+import { useMounted } from "../photos/shared";
 import { usePaidAction, type PaidAction } from "../photos/usePaidAction";
 import {
   checkIdea,
@@ -92,6 +93,7 @@ export interface MotionCalls {
 /** The two calls of one photo's sheet, their prices, outcomes and the guard's facts. */
 export function useMotionCalls({ avatarId, photoId, view, offered, relist, reveal, toCancel, toIdeaToggle }: MotionCallsArgs): MotionCalls {
   const { client, store } = useEngine();
+  const mounted = useMounted();
   const latest = useRef({ relist, reveal, toCancel, toIdeaToggle });
   useLayoutEffect(() => {
     latest.current = { relist, reveal, toCancel, toIdeaToggle };
@@ -125,21 +127,8 @@ export function useMotionCalls({ avatarId, photoId, view, offered, relist, revea
     },
     send: (acceptedWorstMicros) => client.request("clips.suggestMotions", { avatarId, photoId, acceptedWorstMicros }),
     onSent: (result) => {
-      if (result.outcome === "ok") {
-        const line = suggestedLine(result.motions.length, result.costMicros);
-        setStatus(line);
-        setReading(result.reading.notes);
-        const notes = frameNotesNews(result.reading.notes);
-        announce("polite", notes === null ? lineText(line) : `${lineText(line)} ${notes}`);
-        // 62b: the choice stays where the owner left it; the focus goes to the first suggestion, the group brought down to the last (README decision 4).
-        const first = result.motions[0];
-        if (first !== undefined) latest.current.reveal(first.id, false, result.motions.at(-1)?.id);
-      } else {
-        const line = suggestNoneLine(result.costMicros);
-        setSuggestNone({ line, free: result.costMicros === 0 });
-        announce(result.costMicros === 0 ? "polite" : "alert", lineText(line));
-        latest.current.toCancel();
-      }
+      if (keep("suggest", { kind: "suggest", result })) return;
+      showSuggest(result, true);
     },
     onRefused: (error) => announce("alert", errorText(error)),
     onPaidInFlightChange: (running) => inFlight("suggest", running),
@@ -154,26 +143,73 @@ export function useMotionCalls({ avatarId, photoId, view, offered, relist, revea
     // Only a text the contract takes is ever sent (`startTranslate`); the field waits meanwhile, so this is the text clicked.
     send: (acceptedWorstMicros) => client.request("clips.translateIdea", { avatarId, photoId, text: check.ok ? check.idea : ideaText, acceptedWorstMicros }),
     onSent: (result) => {
-      if (result.outcome === "ok") {
-        const line = translatedLine(result.costMicros);
+      if (keep("idea", { kind: "idea", result })) return;
+      showIdea(result, true);
+    },
+    onRefused: (error) => announce("alert", errorText(error)),
+    onPaidInFlightChange: (running) => inFlight("idea", running),
+  });
+
+  /**
+   * S5.WC5b: an answer that came after this sheet closed is kept in the window's store for its photo (the photo it was sent for, round 2 L7), to be said when the sheet opens again: a paid `none` or
+   * `rejected` is never silent. True when it was kept.
+   */
+  function keep(kind: "suggest" | "idea", result: MotionResult): boolean {
+    if (mounted.current) return false;
+    const target = sentFor.current[kind];
+    if (target !== null) store.keepMotionResult(target.avatarId, target.photoId, result);
+    return true;
+  }
+
+  /** A suggestion's answer, as it came (`live`: this sheet sent it and is open) or as a kept one said on opening (no focus is moved, no row revealed). */
+  function showSuggest(result: ClipSuggestResult, live: boolean): void {
+    if (result.outcome === "ok") {
+      const line = suggestedLine(result.motions.length, result.costMicros);
+      setStatus(line);
+      setReading(result.reading.notes);
+      const notes = frameNotesNews(result.reading.notes);
+      announce("polite", notes === null ? lineText(line) : `${lineText(line)} ${notes}`);
+      // 62b: the choice stays where the owner left it; the focus goes to the first suggestion, the group brought down to the last (README decision 4).
+      const first = result.motions[0];
+      if (live && first !== undefined) latest.current.reveal(first.id, false, result.motions.at(-1)?.id);
+      return;
+    }
+    const line = suggestNoneLine(result.costMicros);
+    setSuggestNone({ line, free: result.costMicros === 0 });
+    announce(result.costMicros === 0 ? "polite" : "alert", lineText(line));
+    if (live) latest.current.toCancel();
+  }
+
+  /** A translation's answer, as it came or as a kept one. His words are not kept anywhere (I5.67): a kept refusal opens the card on an empty field. */
+  function showIdea(result: ClipTranslateResult, live: boolean): void {
+    if (result.outcome === "ok") {
+      const line = translatedLine(result.costMicros);
+      if (live) {
         // Round 2 (M2): the focus leaves the panel before it hides, so it never falls to the page while the list is read again.
         latest.current.toIdeaToggle();
         setIdeaOpen(false);
         setIdeaText("");
         setIdeaOutcome(null);
-        setStatus(line);
-        announce("polite", lineText(line));
         // 63a: his idea is chosen — his direct intent — and the focus is on it.
         latest.current.reveal(result.item.id, true);
-        return;
       }
-      // 63b, 63c and `none`: the reason is about his text, so the focus goes into the field, which it describes (said once: no live region repeats it).
-      setIdeaOutcome(result.outcome === "rejected" ? { kind: "rejected", problems: result.problems, costMicros: result.costMicros } : { kind: "none", costMicros: result.costMicros });
-      setFocusField((n) => n + 1);
-    },
-    onRefused: (error) => announce("alert", errorText(error)),
-    onPaidInFlightChange: (running) => inFlight("idea", running),
-  });
+      setStatus(line);
+      announce("polite", lineText(line));
+      return;
+    }
+    // 63b, 63c and `none`: the reason is about his text, so the focus goes into the field, which it describes (said once: no live region repeats it).
+    setIdeaOpen(true);
+    setIdeaOutcome(result.outcome === "rejected" ? { kind: "rejected", problems: result.problems, costMicros: result.costMicros } : { kind: "none", costMicros: result.costMicros });
+    setFocusField((n) => n + 1);
+  }
+
+  // S5.WC5b: what came for this photo while no sheet of it was open is said once, now.
+  useEffect(() => {
+    const kept = store.takeMotionResult(avatarId, photoId);
+    if (kept === null) return;
+    if (kept.kind === "suggest") showSuggest(kept.result, false);
+    else showIdea(kept.result, false);
+  }, []);
 
   // PRICE_CHANGED: the fresh price is on the button and needs a new click — said once.
   const suggestChanged = suggest.previousWorst !== null && suggest.estimate !== null ? suggest.estimate.worstMicros : null;

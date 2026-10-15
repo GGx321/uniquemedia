@@ -19,6 +19,7 @@ import { clipLength, costFact, exportFailureText, exportPercent, faceBadge, face
 import type { PhotoPlace } from "./clipsContext";
 import { deleteOutcome } from "./clipUse";
 import { DeleteClipDialog } from "./DeleteClipDialog";
+import { motionRowLabel, showsEnglish } from "./motionModel";
 
 // Stage 5, 5b.1, S5.V8: the clip viewer (mockups 43, 43a, 43b, 43c; plan s5b1 §6 43, §5.13; README §S5.VD decision 7, §S5.VD2 decisions 1–3). The photo viewer's card: the clip plays muted,
 // in a loop, 9:16; beside it its facts as §6 words them (from which photo, the motion, the model, the cost, the face) and its actions. «Сохранить в папку» runs the export job (a
@@ -331,8 +332,9 @@ export function ClipViewer(props: ClipViewerProps) {
               <div className="clip-fact">
                 <dt>Движение</dt>
                 <dd>
-                  {clip.motion.label}
-                  {clip.motion.source === "scene" && (
+                  {/* S5.WC5b: the sheet's rule — an own idea is «Своя идея: …», and the English shows for the scene and for what a model wrote (a suggestion, an own idea). */}
+                  {motionRowLabel(clip.motion)}
+                  {showsEnglish(clip.motion) && (
                     <span className="clip-en" lang="en">
                       {clip.motion.text}
                     </span>
