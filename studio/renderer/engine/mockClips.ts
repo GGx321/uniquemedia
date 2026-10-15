@@ -1414,9 +1414,10 @@ export class MockClips {
   #endBatchesAfterRestart(): void {
     const at = this.#host.nowIso();
     const look = (clipId: string): MemberLook => {
-      if (this.#journals.has(clipId)) return { kind: "journal" };
+      // As the engine's `#lookAfterRestart` (WB2d, L5): a record first (a journal beside it is stale), then a journal the recovery will take (it has a `requested` line), then the ledger.
       const record = this.#records.get(clipId);
       if (record !== undefined) return { kind: "record", outcome: clipBatchOutcomeOf(record.outcome) };
+      if (this.#journals.get(clipId)?.some((line) => line.type === "requested") === true) return { kind: "journal" };
       return this.#lines.some((line) => line.clipId === clipId) ? { kind: "reserved" } : { kind: "nothing" };
     };
     for (const [batchId, state] of this.#summaries) {

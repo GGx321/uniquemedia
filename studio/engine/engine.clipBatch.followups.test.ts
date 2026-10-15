@@ -1,9 +1,16 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { ClipBatchSummary, ResponseMessage } from "../shared/engine";
 import { IDLE_STEPS } from "./autopilot/steps";
+import { BATCHES_DIR, batchSummaryPath, startBatchFile } from "./clips/batchSummary";
+import { clipAttemptId, clipJournalPath } from "./clips/journal";
+import { journalOf, writeClipRecord } from "./clips/store";
 import { batchOf, createBatch, jobsOf, plainPhotos, seedBatchAvatar } from "./clips/testing/batchKit";
-import { clipNetwork, jobEnd, startClipEngine, until, type ClipEngine } from "./clips/testing/engineClipKit";
-import { ledgerLines, useEngineDir } from "./testing/engineHarness";
+import { clipNetwork, clipsDir, command, jobEnd, startClipEngine, until, type ClipEngine } from "./clips/testing/engineClipKit";
+import { readyRecord } from "./clips/testing/recordsRig";
+import { SHORT_CLIP_TIMINGS, type ClipTimings } from "./clips/timings";
+import { NOW, ledgerLines, useEngineDir, writeLedger } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -14,6 +21,9 @@ setDefaultTimeout(60_000);
 const dir = useEngineDir("studio-engine-clip-batch-followups-");
 const libraryDir = () => join(dir(), "library");
 const BUDGET = 10_000_000;
+const MIN = 60_000;
+/** The short set, with a long give-up time (a slow machine must not turn a recovery into `late`) and holds that outlast the test's reads. */
+const TIMINGS: ClipTimings = { ...SHORT_CLIP_TIMINGS, lateGiveUpMs: 10 * MIN, holdTerminalMs: 30_000, holdUncertainMs: 30_000, holdSubmittedMs: 10 * MIN };
 
 async function started(opts: Parameters<typeof startClipEngine>[1] = {}): Promise<ClipEngine> {
   return startClipEngine(dir(), { monthlyBudgetMicros: BUDGET, deps: { launchSteps: IDLE_STEPS }, ...opts });
@@ -57,5 +67,94 @@ describe("L2: a batch does not start while a clip's money is still open", () => 
     }
     const two = batchOf(answer);
     await jobEnd(engine, two.jobIds[0] ?? "");
+  });
+});
+
+/** `clips.list` as the window reads it: the batch's summary. */
+async function summaryOf(engine: ClipEngine, avatarId: string, batchId: string): Promise<ClipBatchSummary> {
+  const response = await engine.engine.handle(command("clips.list", { avatarId }));
+  expect(ResponseMessage.safeParse(response).success).toBe(true);
+  if (!response.ok || response.type !== "clips.list") throw new Error(`expected clips.list, got ${JSON.stringify(response)}`);
+  const found = response.result.batches?.find((summary) => summary.batchId === batchId);
+  if (found === undefined) throw new Error(`clips.list carries no summary of batch ${batchId}`);
+  return found;
+}
+
+/** A batch of one member the summary still has queued (the crash took the writes that followed), in a library with one gallery photo. */
+async function crashedBatch(clipId: string): Promise<{ avatarId: string; photoId: string; folder: string; batchId: string; at: string }> {
+  const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(1));
+  const folder = clipsDir(libraryDir(), avatarId);
+  await mkdir(join(folder, BATCHES_DIR), { recursive: true });
+  const batchId = "batch-00000077";
+  const at = new Date(NOW - 2 * MIN).toISOString();
+  await writeFile(batchSummaryPath(folder, batchId), JSON.stringify(startBatchFile({ batchId, avatarId, createdAt: at, clipIds: [clipId] })));
+  return { avatarId, photoId: photoIds[0] ?? "", folder, batchId, at };
+}
+
+/** The engine after the crash, and its batch's summary once the restart's pass has ended the batch. */
+async function afterRestart(avatarId: string, batchId: string): Promise<{ engine: ClipEngine; summary: ClipBatchSummary }> {
+  const engine = await startClipEngine(dir(), { timings: TIMINGS, monthlyBudgetMicros: BUDGET, deps: { launchSteps: IDLE_STEPS } });
+  let summary = await summaryOf(engine, avatarId, batchId);
+  for (let i = 0; i < 200 && summary.endedAt === undefined; i++) {
+    await Bun.sleep(10);
+    summary = await summaryOf(engine, avatarId, batchId);
+  }
+  return { engine, summary };
+}
+
+const REQUEST = { model: "kling", quality: "std", seconds: 5, fallback: "auto" } as const;
+const MOTION = { source: "code", label: "Моргает и улыбается", text: "she slowly blinks and gives a small smile" } as const;
+
+describe("L5: a member is never left `running` by a journal that nothing will recover", () => {
+  test("a journal next to a record is stale: the member ends as the record says, not running", async () => {
+    const clipId = "clip-00000071";
+    const { avatarId, photoId, folder, batchId, at } = await crashedBatch(clipId);
+    const journal = journalOf(folder, clipId);
+    await journal.requested({ clipId, photoId, request: REQUEST, motion: MOTION, acceptedWorstMicros: 850_000, batch: { batchId, batchIndex: 1, batchSize: 1 }, at });
+    await journal.submitted({ attemptId: clipAttemptId(clipId, 1), model: "kling", providerJobId: "job-kling-1", at });
+    await writeClipRecord(folder, readyRecord({ id: clipId, avatarId, sourcePhotoId: photoId, batchId, batchIndex: 1, batchSize: 1 }));
+
+    const { engine, summary } = await afterRestart(avatarId, batchId);
+
+    expect(summary.members[0]?.outcome).toBe("ready");
+    await engine.engine.shutdown();
+  });
+
+  test("a journal with no `requested` line and a reserve in the ledger: the member failed, its money open", async () => {
+    const clipId = "clip-00000072";
+    const { avatarId, folder, batchId, at } = await crashedBatch(clipId);
+    await writeFile(clipJournalPath(folder, clipId), "{not json\n");
+    await writeLedger(dir(), [{ type: "reserve", attemptId: clipAttemptId(clipId, 1), jobId: clipId, scope: { avatarJobId: clipId }, model: "kwaivgi/kling-v3.0-std", worstMicros: 504_000, at }]);
+
+    const { engine, summary } = await afterRestart(avatarId, batchId);
+
+    expect(summary.members[0]).toMatchObject({ outcome: "failed", costMicros: 504_000, costKind: "open" });
+    await engine.engine.shutdown();
+  });
+
+  test("a journal with no `requested` line and nothing in the ledger: the member was dropped, free", async () => {
+    const clipId = "clip-00000073";
+    const { avatarId, folder, batchId } = await crashedBatch(clipId);
+    await writeFile(clipJournalPath(folder, clipId), "");
+
+    const { engine, summary } = await afterRestart(avatarId, batchId);
+
+    expect(summary.members[0]).toMatchObject({ outcome: "dropped", costMicros: 0, costKind: "free" });
+    await engine.engine.shutdown();
+  });
+
+  test("a journal with a `requested` line and no record is still the recovery's: the member ends as the recovery's record says", async () => {
+    const clipId = "clip-00000074";
+    const { avatarId, photoId, folder, batchId, at } = await crashedBatch(clipId);
+    const journal = journalOf(folder, clipId);
+    await journal.requested({ clipId, photoId, request: REQUEST, motion: MOTION, acceptedWorstMicros: 850_000, batch: { batchId, batchIndex: 1, batchSize: 1 }, at });
+    await journal.submitted({ attemptId: clipAttemptId(clipId, 1), model: "kling", providerJobId: "job-kling-1", at });
+    await writeLedger(dir(), [{ type: "reserve", attemptId: clipAttemptId(clipId, 1), jobId: clipId, scope: { avatarJobId: clipId }, model: "kwaivgi/kling-v3.0-std", worstMicros: 504_000, at }]);
+
+    const engine = await startClipEngine(dir(), { timings: TIMINGS, monthlyBudgetMicros: BUDGET, deps: { launchSteps: IDLE_STEPS } });
+    await until(() => engine.events().some((e) => e.type === "job.done" && e.payload.result.kind === "clip"), "the recovery's record");
+
+    expect((await summaryOf(engine, avatarId, batchId)).members[0]?.outcome).toBe("ready");
+    await engine.engine.shutdown();
   });
 });

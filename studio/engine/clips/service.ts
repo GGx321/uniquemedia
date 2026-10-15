@@ -1,4 +1,3 @@
-import { stat } from "node:fs/promises";
 import {
   BOLD_CLIPS,
   CLIP_OPTION_KEYS,
@@ -27,7 +26,6 @@ import type { ExportRootCheck } from "../exportRoot";
 import type { WorkerFaceGate } from "../face/worker/workerGate";
 import type { ClipBatchRef, ClipJobEnd, JobRegistry } from "../jobs";
 import type { Library } from "../library";
-import { hasErrorCode } from "../library/durableFs";
 import type { PhotoSidecar } from "../library/schemas";
 import { scopeKey, type Budget, type ReserveHandle, type ReserveRefusal, type ReserveRequest } from "../money/budget";
 import type { PricedBook, PriceModels } from "../money/priceCache";
@@ -70,14 +68,14 @@ import { checkClipFace } from "./faceCheck";
 import { clipFallbackOf, readFrameFacts, type FrameFacts } from "./frameFacts";
 import { createClipHolds, type ClipHolds, type HoldTimers } from "./holds";
 import { runClipJob, type ClipJobDeps, type ClipJobOutcome, type ClipMoneyEnd } from "./job";
-import { clipAttemptId, clipJournalPath, parseClipAttemptId } from "./journal";
+import { clipAttemptId, parseClipAttemptId, summarizeJournal } from "./journal";
 import { motionChoicesOf } from "./motion";
 import { openClipReserveMicros } from "./openReserve";
 import { ClipRecords, clipCostsOf, type ClipRecordsDeps } from "./records";
 import { clipFaceOf } from "./ready";
 import { holdsFromLedger, recoverClips, type ClipRecoveryHost } from "./recover";
 import type { ClipRecord } from "./schemas";
-import { clipsDirOf, readClipRecord } from "./store";
+import { clipsDirOf, journalOf, readClipRecord } from "./store";
 import type { ClipTimings } from "./timings";
 
 // Stage 5, 5b.1, S5.V4a1 (plan s5b1 §5.2, §5.9, I5.46-I5.50): the clip commands on the engine's service bag (the SceneSetService precedent). It owns:
@@ -1113,17 +1111,20 @@ export class ClipService {
     }
   }
 
-  /** What a restart finds of a clip, in this order: its journal (the journal goes only once the record stands), its record, a reserve of it in the ledger. Anything that cannot be read leaves the member at work. */
+  /**
+   * What a restart finds of a clip, in this order: its record (a journal beside a record is stale by definition: the recovery removes it), then its journal when it has a `requested` line (a recovery owns it and
+   * will tell its end), then a reserve of it in the ledger. A journal the recovery will not take (empty, or no `requested` line) or a record that does not read is judged by the ledger, never left at work.
+   * Anything that cannot be read at all leaves the member at work.
+   */
   async #lookAfterRestart(clipsDir: string, clipId: string): Promise<MemberLook> {
-    try {
-      await stat(clipJournalPath(clipsDir, clipId));
-      return { kind: "journal" };
-    } catch (error) {
-      if (!hasErrorCode(error, "ENOENT")) return { kind: "journal" };
-    }
     try {
       const read = await readClipRecord(clipsDir, clipId);
       if (read.kind === "record") return { kind: "record", outcome: outcomeOfRecord(read.record) };
+    } catch {
+      return { kind: "journal" };
+    }
+    try {
+      if (summarizeJournal(await journalOf(clipsDir, clipId).read()).requested !== null) return { kind: "journal" };
     } catch {
       return { kind: "journal" };
     }
