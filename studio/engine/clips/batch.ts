@@ -1,6 +1,7 @@
 import { clipWorstMicros, PROTOCOL_VERSION, type BoldClipsMode, type ClipCancelDetail, type ClipMotionChoice, type ClipPrices, type ClipRequest } from "../../shared/engine";
 import { clipAlone } from "../../shared/engine/clipAlone";
 import type { UnsequencedEvent } from "../../shared/engine/events";
+import { EngineFailure } from "../engineFailure";
 import type { JobRegistry } from "../jobs";
 import type { Budget } from "../money/budget";
 import { scopeKey } from "../money/budget";
@@ -57,6 +58,8 @@ export interface MemberRun {
   readonly bytes: Uint8Array;
   /** The price book read at this turn: the member's for all its reserves (I5.46). */
   readonly prices: ClipPrices;
+  /** The OpenRouter key as it is at this turn (a rejected or changed key reaches the later members). */
+  readonly key: string;
   /** Called exactly once when the member's money closed (or at once when it never ran), with how the money state machine ended. */
   readonly onMoneyClosed: (end?: ClipMoneyEnd) => void;
 }
@@ -64,6 +67,8 @@ export interface MemberRun {
 /** What the batch needs of the engine and of the clip service. */
 export interface BatchPorts {
   readonly clock: () => number;
+  /** The usable key now; throws (AUTH_INVALID) when there is none or OpenRouter rejected it. */
+  readonly readKey: () => string;
   readonly newId: () => string;
   readonly timings: ClipTimings;
   readonly jobs: JobRegistry;
@@ -153,6 +158,8 @@ export class ClipBatch {
 
   /** `clips.cancelBatch`: every queued member, free. A member already submitted (or preparing) is never cancelled here. The count of those cancelled. */
   cancelQueued(): number {
+    // The owner's cancel is final: nothing is requeued after it (a 429 of the member in flight ends that member, it does not start a new paid POST).
+    this.#stopped = true;
     let cancelled = 0;
     for (const member of this.#members) if (member.state === "queued" && this.#cancel(member, "cancelled")) cancelled++;
     return cancelled;
@@ -219,6 +226,16 @@ export class ClipBatch {
 
     // 3. The 429 pause, then the money to be alone.
     if (!(await this.#waitForTurn(member))) return;
+    // The key as it is now: after a rejected key the later members fail fast and free, without a POST.
+    let key: string;
+    try {
+      key = ports.readKey();
+    } catch (error) {
+      this.#failMember(member, error);
+      return;
+    }
+    // A cancel may have landed since the last check (the wait returned in a later microtask): a cancelled member never runs.
+    if (member.state !== "queued") return;
 
     // 4. 5b.1's clip job, verbatim. The next turn starts when this member's money closes.
     member.state = "running";
@@ -227,6 +244,7 @@ export class ClipBatch {
         member,
         bytes: photo.bytes,
         prices,
+        key,
         onMoneyClosed: (end) => {
           try {
             this.#closed(member, end);
@@ -300,13 +318,19 @@ export class ClipBatch {
         // The ledger refused the reserve for a reason that is not the month's room (a halt, a reconcile to do, a torn line): the rest would be refused the same way.
         if (end.refusal.reason === "RECONCILE_REQUIRED" || end.refusal.reason === "HALTED") this.#stop("ledger-stopped");
         return;
+      case "fault":
+        // A defect inside the money machine: whether anything is open is not known, so the rest is not spent blind.
+        return this.#stop("ledger-stopped");
       case "cancelled":
       case "interrupted":
         return;
     }
   }
 
-  /** A 429 at the submit: no submit for a minute, and the member goes to the tail once. */
+  /**
+   * A 429 at the submit: no submit for a minute, and the member goes to the tail once. (Backlog: a 429 on the Grok attempt behind a free Kling requeues the whole member, which starts again from Kling.)
+   * B1 walks one member at a time and assumes `MAX_CLIPS_IN_FLIGHT === 1` (pinned in batch.test.ts); B2's window comes before that constant moves.
+   */
   #rateLimited(member: BatchMember): void {
     const ports = this.#ports;
     this.#notBefore = ports.clock() + ports.timings.rateLimitPauseMs;
@@ -334,6 +358,20 @@ export class ClipBatch {
   #stop(detail: ClipCancelDetail): void {
     this.#stopped = true;
     for (const member of this.#members) if (member.state === "queued") this.#cancel(member, detail);
+  }
+
+  /** A member whose turn could not start (no usable key): its job fails, free, with the error; the batch goes on (each later member fails the same way, fast). */
+  #failMember(member: BatchMember, error: unknown): void {
+    if (member.state !== "queued") return;
+    const ports = this.#ports;
+    member.state = "ended";
+    member.wake.abort();
+    if (member.held) ports.budget.releaseHold(clipAttemptId(member.clipId, 1));
+    ports.clearCap(member.capKey);
+    const failure = error instanceof EngineFailure ? error.error : { code: "AUTH_INVALID" as const, detail: "no usable OpenRouter key" };
+    const state = ports.jobs.finishClip(member.jobId, { status: "failed", error: failure });
+    if (state !== null) ports.emit({ v: PROTOCOL_VERSION, id: ports.newId(), kind: "event", type: "job.failed", payload: { kind: "clip", jobId: member.jobId, avatarId: this.avatarId, clipId: member.clipId, error: failure } });
+    ports.emitMoney();
   }
 
   /** A queued member never runs: its job ends cancelled (with why), its month hold is released and its cap cleared. */

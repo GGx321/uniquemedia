@@ -3,6 +3,7 @@ import { JobCancelled, JobProgress, JobState, type ClipCancelDetail, type ClipPr
 import type { UnsequencedEvent } from "../../shared/engine/events";
 import { JobRegistry } from "../jobs";
 import { scopeKey, type ReserveRefusal } from "../money/budget";
+import { MAX_CLIPS_IN_FLIGHT } from "../../shared/engine";
 import { ClipBatch, type BatchMember, type BatchPorts, type MemberRun, type PhotoRecheck } from "./batch";
 import { frameFactsOf, type FrameFacts } from "./frameFacts";
 import type { ClipMoneyEnd } from "./job";
@@ -71,6 +72,13 @@ interface World {
   /** When set, `sleep` waits for its signal (a cancel) instead of moving the clock. */
   blockSleep: boolean;
   log: string[];
+  /** The OpenRouter key as the engine reads it now; a function may throw (the key was rejected). */
+  key: () => string;
+  /** The key each run was handed. */
+  keysSeen: string[];
+  /** Called with the number of `clock()` reads since the last re-check of a photo (a test cancels at an exact point of a turn). */
+  onClock: ((reads: number) => void) | null;
+  clockReads: number;
 }
 
 function newWorld(): World {
@@ -98,6 +106,10 @@ function newWorld(): World {
     stop: new AbortController(),
     blockSleep: false,
     log: [],
+    key: () => "sk-first",
+    keysSeen: [],
+    onClock: null,
+    clockReads: 0,
   };
 }
 
@@ -116,7 +128,12 @@ function closeAs(w: World, run: MemberRun, end: ClipMoneyEnd | undefined): void 
 function ports(w: World): BatchPorts {
   let ids = 100;
   return {
-    clock: () => w.now,
+    clock: () => {
+      w.clockReads++;
+      w.onClock?.(w.clockReads);
+      return w.now;
+    },
+    readKey: () => w.key(),
     newId: () => `id-${String(++ids).padStart(8, "0")}`,
     timings: SHORT_CLIP_TIMINGS,
     jobs: w.jobs,
@@ -143,9 +160,13 @@ function ports(w: World): BatchPorts {
       w.priceReads++;
       return w.prices();
     },
-    recheck: async (member) => w.recheck(member),
+    recheck: async (member) => {
+      w.clockReads = 0;
+      return w.recheck(member);
+    },
     runMember: (run) => {
       w.runs.push(run.member.jobId);
+      w.keysSeen.push(run.key);
       w.running++;
       w.maxRunning = Math.max(w.maxRunning, w.running);
       void Promise.resolve(w.script(run, w));
@@ -822,5 +843,84 @@ describe("ClipBatch: the unit's soundness", () => {
       // Every member's job ended: none is still queued or running.
       expect(w.jobs.states().every((state) => state.status !== "running")).toBe(true);
     }
+  });
+});
+
+describe("ClipBatch: a cancel is final (round 2)", () => {
+  const rateLimited = failed("rate-limited");
+
+  test("a 429 after `cancelQueued` is not requeued: the owner's cancel ends the batch, no new job, no new POST", async () => {
+    const w = newWorld();
+    const { batch } = build(w, 3);
+    w.script = (run, world) => {
+      expect(batch.cancelQueued()).toBe(2);
+      closeAs(world, run, rateLimited);
+    };
+    await runToEnd(w, batch);
+
+    expect(w.runs).toEqual(ids(3).slice(0, 1));
+    expect(w.jobs.states().filter((state) => state.kind === "clip" && state.batchIndex === 1)).toHaveLength(1);
+    expectClean(w);
+  });
+
+  test("a member cancelled between the alone check and its start does not run", async () => {
+    const w = newWorld();
+    const { batch } = build(w, 2);
+    // The clock reads of a turn: the pause, the bound, then the alone check. The owner cancels member 1 inside that third read.
+    w.onClock = (reads) => {
+      if (reads === 3 && w.runs.length === 0) batch.cancelMember(ids(2)[0] ?? "");
+    };
+    await runToEnd(w, batch);
+
+    expect(w.runs).toEqual(ids(2).slice(1));
+    expect(details(w, ids(2))).toEqual(["cancelled", undefined]);
+    expectClean(w);
+  });
+});
+
+describe("ClipBatch: a fault inside the money machine (round 2)", () => {
+  test("stops the batch: the queue ends `ledger-stopped`, free, holds and caps gone", async () => {
+    const w = newWorld();
+    w.script = (run, world) => closeAs(world, run, { kind: "fault" });
+    await build(w, 4).run();
+
+    expect(w.runs).toEqual(ids(4).slice(0, 1));
+    expect(details(w, ids(4))).toEqual([undefined, "ledger-stopped", "ledger-stopped", "ledger-stopped"]);
+    expectClean(w);
+  });
+});
+
+describe("ClipBatch: the key is read at every turn (round 2)", () => {
+  test("each member runs with the key as it is at its turn", async () => {
+    const w = newWorld();
+    let n = 0;
+    w.key = () => `sk-${++n}`;
+    await build(w, 3).run();
+    expect(w.keysSeen).toEqual(["sk-1", "sk-2", "sk-3"]);
+  });
+
+  test("a key that is rejected at a later turn fails that member and the rest fast and free: no run, hold and cap gone", async () => {
+    const w = newWorld();
+    let rejected = false;
+    w.key = () => {
+      if (rejected) throw new Error("AUTH_INVALID");
+      return "sk-first";
+    };
+    w.script = (run, world) => {
+      rejected = true;
+      closeAs(world, run, failed("key-invalid"));
+    };
+    await build(w, 3).run();
+
+    expect(w.runs).toEqual(ids(3).slice(0, 1));
+    for (const id of ids(3).slice(1)) expect(stateOf(w, id)).toMatchObject({ status: "failed", error: { code: "AUTH_INVALID" } });
+    expect(JobState.safeParse(stateOf(w, ids(3)[1] ?? "")).success).toBe(true);
+    expectClean(w);
+  });
+});
+
+describe("ClipBatch: B1 runs one member at a time", () => {
+  test("the scheduler assumes MAX_CLIPS_IN_FLIGHT is 1: raising it for B2 means building the window and touching this scheduler first", () => {
+    expect(MAX_CLIPS_IN_FLIGHT).toBe(1);
   });
 });

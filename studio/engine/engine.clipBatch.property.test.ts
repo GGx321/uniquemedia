@@ -61,12 +61,16 @@ describe("a batch on every path (fixed seeds)", () => {
       const net = clipNetwork({ klingBy: (n) => scriptFor(draws[(n - 1) % draws.length] ?? 1) });
       const engine = await startClipEngine(dir(), { net, monthlyBudgetMicros: BUDGET });
 
+      let postsAtCancel = 0;
       const { batchId } = batchOf(await createBatch(engine, { avatarId, photoIds }));
       if (cancelAfter >= 0) {
         await until(() => engine.net.posts("kling").length > cancelAfter, "the cancel point").catch(() => undefined);
         await cancelBatch(engine, avatarId, batchId);
+        // The member in flight at the cancel may still have its one POST to make; no other may follow it.
+        postsAtCancel = engine.net.posts("kling").length;
       }
       await settled(engine);
+      if (cancelAfter >= 0) expect(engine.net.posts("kling").length).toBeLessThanOrEqual(postsAtCancel + 1);
 
       const lines = ledgerLines(dir());
       for (const event of engine.events()) {

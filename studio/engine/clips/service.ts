@@ -859,7 +859,8 @@ export class ClipService {
 
   async #createBatch(payload: CreateBatchPayload, unit: ClipUnit): Promise<{ batchId: string; jobIds: string[] }> {
     const deps = this.#deps;
-    const key = deps.usableKey("bring photos to life");
+    // The key is checked here for the refusal order; each member reads it again at its turn (a rejected or changed key reaches the later members).
+    deps.usableKey("bring photos to life");
     const budget = deps.paidBudget();
     const library = await deps.liveLibrary();
     const { avatarId } = payload;
@@ -903,7 +904,10 @@ export class ClipService {
     // Each member's cap is its share, and the month is held for every member at once (all or nothing): a refusal leaves nothing held and nothing capped.
     for (const d of drafts) deps.setCap(d.capKey, d.share);
     const batchId = deps.newId();
-    let registered = false;
+    /** Set only when the batch is running: until then a failure takes everything back, the registered jobs included. */
+    let started = false;
+    const registered: { jobId: string; clipId: string }[] = [];
+    let workTaken = false;
     try {
       const hold = await budget.tryHold(drafts.map((d) => ({ attemptId: clipAttemptId(d.clipId, 1), scope: { avatarJobId: d.clipId }, worstMicros: d.share })));
       if (!hold.ok) throw new EngineFailure(holdRefusalOf(hold));
@@ -922,38 +926,50 @@ export class ClipService {
         jobId: d.jobId,
         clipId: d.clipId,
         capKey: d.capKey,
-        signal: deps.jobs.startClip(
-          d.jobId,
-          {
-            avatarId,
-            clipId: d.clipId,
-            facts: { photoId: d.photoId, request: d.request, motion: { source: d.motion.source, label: d.motion.label }, acceptedWorstMicros: d.share },
-            batch: { batchId, batchIndex: i + 1, batchSize: size, waitReason: "turn" },
-          },
-          "queued",
-        ),
+        signal: (() => {
+          const signal = deps.jobs.startClip(
+            d.jobId,
+            {
+              avatarId,
+              clipId: d.clipId,
+              facts: { photoId: d.photoId, request: d.request, motion: { source: d.motion.source, label: d.motion.label }, acceptedWorstMicros: d.share },
+              batch: { batchId, batchIndex: i + 1, batchSize: size, waitReason: "turn" },
+            },
+            "queued",
+          );
+          registered.push({ jobId: d.jobId, clipId: d.clipId });
+          return signal;
+        })(),
         wake: new AbortController(),
         held: true,
         retried: false,
         state: "queued",
       }));
-      registered = true;
       for (const member of members) {
         const progress = deps.jobs.progress(member.jobId, 0);
         if (progress !== null) deps.emit({ v: PROTOCOL_VERSION, id: deps.newId(), kind: "event", type: "job.progress", payload: progress });
       }
       // The batch's own work count: a library switch waits while any member is queued or running, and gives way when the batch is over.
       this.#work++;
-      const batch = new ClipBatch(this.#batchPorts({ key, budget, library, avatarId, batchId, size, unit }), { id: batchId, avatarId, members });
+      workTaken = true;
+      const batch = new ClipBatch(this.#batchPorts({ budget, library, avatarId, batchId, size, unit }), { id: batchId, avatarId, members });
       this.#remember(batch);
       batch.start();
+      started = true;
       return { batchId, jobIds: members.map((member) => member.jobId) };
     } finally {
-      if (!registered) {
+      if (!started) {
+        // A start that failed leaves nothing: the jobs it registered end cancelled (no zombie `queued` job to pin the sleep blocker, the quit question or an avatar delete), the holds and caps go back.
+        for (const { jobId, clipId } of registered) {
+          const state = deps.jobs.finishClip(jobId, { status: "cancelled" });
+          if (state !== null) deps.emit({ v: PROTOCOL_VERSION, id: deps.newId(), kind: "event", type: "job.cancelled", payload: { kind: "clip", jobId, avatarId, clipId } });
+        }
+        if (workTaken) this.#work--;
         for (const d of drafts) {
           budget.releaseHold(clipAttemptId(d.clipId, 1));
           deps.clearCap(d.capKey);
         }
+        deps.emitMoney();
       }
     }
   }
@@ -966,10 +982,11 @@ export class ClipService {
   }
 
   /** What a batch needs of the service: the engine's seams, the hold registry, and the clip job of one member. */
-  #batchPorts(ctx: { key: string; budget: Budget; library: Library; avatarId: string; batchId: string; size: number; unit: ClipUnit }): BatchPorts {
+  #batchPorts(ctx: { budget: Budget; library: Library; avatarId: string; batchId: string; size: number; unit: ClipUnit }): BatchPorts {
     const deps = this.#deps;
     return {
       clock: deps.clock,
+      readKey: () => deps.usableKey("bring photos to life"),
       newId: deps.newId,
       timings: deps.timings,
       jobs: deps.jobs,
@@ -996,12 +1013,12 @@ export class ClipService {
   }
 
   /** A member's turn has come: 5b.1's clip job, verbatim, under the member's own scope and cap. The batch hears of its money through `run.onMoneyClosed`. */
-  #startMember(run: MemberRun, ctx: { key: string; budget: Budget; library: Library; avatarId: string; batchId: string; size: number }): void {
+  #startMember(run: MemberRun, ctx: { budget: Budget; library: Library; avatarId: string; batchId: string; size: number }): void {
     const { member } = run;
     this.#work++;
     this.#activeClips.add(member.clipId);
     void this.#runJob({
-      key: ctx.key,
+      key: run.key,
       budget: ctx.budget,
       library: ctx.library,
       jobId: member.jobId,
@@ -1072,6 +1089,8 @@ export class ClipService {
       if (job.unit !== null) this.#releaseUnit(job.unit);
       deps.clearCap(job.capKey);
       deps.emitMoney();
+      // A batch member whose POST was refused for its key: later members must see the key as rejected at their turn, before this job's own end is announced.
+      if (job.member !== undefined && end?.kind === "failed" && end.reason === "key-invalid") deps.markKeyRejected(job.key);
       try {
         job.member?.onMoneyClosed(end);
       } catch (error) {

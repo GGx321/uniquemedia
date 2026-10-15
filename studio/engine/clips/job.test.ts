@@ -703,3 +703,17 @@ describe("runClipJob: how the money closed is told to the one who waits for it (
     expect(w.closedWith).toEqual([undefined]);
   });
 });
+
+describe("runClipJob: a fault inside the money machine (5b.2, round 2)", () => {
+  test("closes the money as a fault, so the batch stops, and the fault still reaches the caller", async () => {
+    const w = world();
+    w.deps = {
+      ...w.deps,
+      run: async () => {
+        throw new Error("the money machine broke");
+      },
+    };
+    await expect(run(w, { batch: TRIO })).rejects.toThrow("the money machine broke");
+    expect(w.closedWith).toEqual([{ kind: "fault" }]);
+  });
+});

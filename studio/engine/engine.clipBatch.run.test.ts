@@ -6,7 +6,8 @@ import { EngineReply } from "./control";
 import { openLibrary } from "./library";
 import { sequentialIds, steppingClock } from "./library/testing/helpers";
 import { IDLE_STEPS } from "./autopilot/steps";
-import { batchOf, cancelBatch, createBatch, clipJob, mostOpenClipReserves, plainPhotos, seedBatchAvatar } from "./clips/testing/batchKit";
+import { JobRegistry } from "./jobs";
+import { batchOf, cancelBatch, createBatch, clipJob, jobsOf, mostOpenClipReserves, plainPhotos, seedBatchAvatar } from "./clips/testing/batchKit";
 import { clipNetwork, clipsDir, command, create, jobEnd, jobIdOf, listing, phasesOf, startClipEngine, until, type ClipEngine, type VideoScript } from "./clips/testing/engineClipKit";
 import { ClipRecord } from "./clips/schemas";
 import { SHORT_CLIP_TIMINGS } from "./clips/timings";
@@ -563,5 +564,70 @@ describe("cancel (I5.63)", () => {
     expect(await clipJob(engine, jobIds[1] ?? "")).toMatchObject({ status: "cancelled", detail: "cancelled", batchIndex: 2 });
     engine.net.releaseNth("kling", 1);
     await jobEnd(engine, jobIds[0] ?? "");
+  });
+});
+
+describe("round 2: a cancel is final, a rejected key stops the spending, a failed start leaves nothing", () => {
+  const rateLimited: VideoScript = { submit: { status: 429, body: { error: { code: 429, message: "Rate limit exceeded" } } } };
+
+  test("`clips.cancelBatch` while the member in flight is being submitted, then its 429: no new job and exactly one POST", async () => {
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(3));
+    let engine: ClipEngine | null = null;
+    let batchId = "";
+    let cancelled: unknown = null;
+    let fired = false;
+    const net = clipNetwork({
+      klingBy: (n) => (n === 1 ? rateLimited : undefined),
+      usage: () => {
+        // The first /credits read is member 1's baseline, in `submitting`: the owner presses «Отменить оставшиеся» now.
+        const announced = engine?.events().flatMap((e) => (e.type === "job.progress" && e.payload.kind === "clip" && e.payload.batchId !== undefined ? [e.payload.batchId] : []))[0];
+        if (!fired && engine !== null && announced !== undefined) {
+          fired = true;
+          batchId = announced;
+          void cancelBatch(engine, avatarId, announced).then((r) => (cancelled = r));
+        }
+        return 5;
+      },
+    });
+    engine = await started({ net });
+    const created = batchOf(await createBatch(engine, { avatarId, photoIds }));
+    await until(() => cancelled !== null, "the cancel answer");
+    await endsOf(engine, created.jobIds);
+    // Time for a requeued member to run past the pause, if one wrongly existed.
+    await new Promise((resolve) => setTimeout(resolve, SHORT_CLIP_TIMINGS.rateLimitPauseMs * 6));
+
+    expect(engine.net.posts("kling")).toHaveLength(1);
+    expect(ledgerLines(dir()).filter((l) => l.type === "reserve")).toHaveLength(1);
+    expect(engine.events().some((e) => e.type === "job.progress" && e.payload.kind === "clip" && !created.jobIds.includes(e.payload.jobId))).toBe(false);
+    expectNothingHeld(engine);
+  });
+
+  test("a rejected key (401 on a member) fails the later members fast and free: no POST for them, nothing held", async () => {
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(3));
+    const net = clipNetwork({ klingBy: (n) => (n === 1 ? { submit: { status: 401, body: { error: { code: 401, message: "No auth credentials found" } } } } : undefined) });
+    const engine = await started({ net });
+    const { jobIds } = batchOf(await createBatch(engine, { avatarId, photoIds }));
+
+    const ends = await endsOf(engine, jobIds);
+    expect(typesOf(ends)).toEqual(["job.done", "job.failed", "job.failed"]);
+    for (const end of ends.slice(1)) expect(end).toMatchObject({ payload: { error: { code: "AUTH_INVALID" } } });
+    expect(engine.net.posts("kling")).toHaveLength(1);
+    expectNothingHeld(engine);
+  });
+
+  test("a start that fails after the jobs were registered leaves no queued job, no hold, no cap, and gives the unit back", async () => {
+    class FailingProgress extends JobRegistry {
+      override progress(): never {
+        throw new Error("boom");
+      }
+    }
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(2));
+    const engine = await started({ deps: { jobs: new FailingProgress(), launchSteps: IDLE_STEPS } });
+
+    expect(await createBatch(engine, { avatarId, photoIds })).toMatchObject({ ok: false });
+    expect((await jobsOf(engine)).filter((j) => j.kind === "clip" && j.status === "running")).toEqual([]);
+    expectNothingHeld(engine);
+    expect(await engine.engine.handle(command("money.reconcile"))).not.toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
+    expect(engine.net.posts("kling")).toHaveLength(0);
   });
 });

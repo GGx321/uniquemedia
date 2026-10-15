@@ -85,7 +85,9 @@ export type ClipMoneyEnd =
   | { kind: "late" }
   | { kind: "not-reserved"; refusal: ReserveRefusal; afterFreeRefusal: boolean }
   | { kind: "cancelled" }
-  | { kind: "interrupted" };
+  | { kind: "interrupted" }
+  /** The money state machine threw: whether a reserve is open is not known (the journal and the ledger say, at the next start). */
+  | { kind: "fault" };
 
 function moneyEndOf(result: ClipRunResult): ClipMoneyEnd {
   switch (result.kind) {
@@ -223,7 +225,13 @@ class ClipChain {
 
     // ----- the money -----
     const runDeps = this.runDeps();
-    const result = await (deps.run ?? runClip)(runDeps, this.runInput(frames), this.signal);
+    let result: ClipRunResult;
+    try {
+      result = await (deps.run ?? runClip)(runDeps, this.runInput(frames), this.signal);
+    } catch (error) {
+      this.closeMoney({ kind: "fault" });
+      throw error;
+    }
     this.closeMoney(moneyEndOf(result));
 
     switch (result.kind) {
