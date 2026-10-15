@@ -14,8 +14,13 @@ describe("the system prompts' interface", () => {
     expect(MOTION_PROMPT_TEXTS.writerSystem).not.toBe(MOTION_PROMPT_TEXTS.translatorSystem);
   });
 
+  test("the translator has a variant for a frame of «Смелая», different from the ordinary one", () => {
+    expect(MOTION_PROMPT_TEXTS.translatorSystemBold.length).toBeGreaterThan(0);
+    expect(MOTION_PROMPT_TEXTS.translatorSystemBold).not.toBe(MOTION_PROMPT_TEXTS.translatorSystem);
+  });
+
   test("are plain printable text and line breaks: no template slot, no owner word, no Cyrillic", () => {
-    for (const text of [MOTION_PROMPT_TEXTS.writerSystem, MOTION_PROMPT_TEXTS.translatorSystem]) expect(text).toMatch(/^[\x20-\x7e\n]+$/);
+    for (const text of [MOTION_PROMPT_TEXTS.writerSystem, MOTION_PROMPT_TEXTS.translatorSystem, MOTION_PROMPT_TEXTS.translatorSystemBold]) expect(text).toMatch(/^[\x20-\x7e\n]+$/);
   });
 
   test("are flagged provisional until S5.WCX writes the real texts", () => {

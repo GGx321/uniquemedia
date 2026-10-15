@@ -33,7 +33,7 @@ interface Rig {
   readonly library: Library;
   readonly avatarId: string;
   readonly photoId: string;
-  readonly state: { deleting: boolean; current: Library | null; paid: number; caps: ["set" | "clear", string, number][] };
+  readonly state: { deleting: boolean; current: Library | null; paid: number; caps: ["set" | "clear", string, number][]; timeouts: number[] };
   readonly logs: string[];
   readonly storeDir: string;
 }
@@ -41,12 +41,12 @@ interface Rig {
 const reply = (content: object, cost = 0.0034): Step => ({ status: 200, body: chatBody(JSON.stringify(content), { cost }) });
 const GOOD_ANSWER = { motions: [{ label_ru: "Поправляет прядь", text_en: GOOD_MOTION }], frame: { capture: "timer", phoneVisible: false, faceVisible: true } };
 
-async function rig(steps: (state: Rig["state"]) => Step[]): Promise<Rig> {
+async function rig(steps: (state: Rig["state"]) => Step[], extra: Partial<ClipMotionsDeps> = {}): Promise<Rig> {
   const libraryDir = join(dir(), "library");
   await mkdir(libraryDir, { recursive: true });
   const seeded = await seedClipAvatar(libraryDir);
   const { library } = await openLibrary(libraryDir);
-  const state: Rig["state"] = { deleting: false, current: library, paid: 0, caps: [] };
+  const state: Rig["state"] = { deleting: false, current: library, paid: 0, caps: [], timeouts: [] };
   const net = fakeFetch(steps(state));
   const { client } = makeClient(net.fetch);
   const logs: string[] = [];
@@ -73,12 +73,18 @@ async function rig(steps: (state: Rig["state"]) => Step[]): Promise<Rig> {
     paidEnd: () => void state.paid--,
     setCap: (key, micros) => void state.caps.push(["set", key, micros]),
     clearCap: (key) => void state.caps.push(["clear", key, 0]),
-    openRouter: () => client,
+    openRouter: (_key, timeoutMs) => {
+      state.timeouts.push(timeoutMs ?? -1);
+      return client;
+    },
+    callTimeoutMs: 60_000,
+    downscaleTimeoutMs: 30_000,
     emitMoney: () => undefined,
     markKeyRejected: () => undefined,
     pendingDelete: () => state.deleting,
     downscale: async () => JPEG,
     log: (line) => logs.push(line),
+    ...extra,
   };
   return { motions: new ClipMotions(deps), library, avatarId: seeded.avatarId, photoId: seeded.photoId, state, logs, storeDir: join(library.avatarDirPath(seeded.avatarId), "motions") };
 }
@@ -165,6 +171,45 @@ describe("the call's cap", () => {
   });
 });
 
+describe("the photo's downscale is bounded (M1)", () => {
+  test("a hung downscale ends the call free, before any reserve or chat line, and the guard frees", async () => {
+    let signalSeen: AbortSignal | undefined;
+    const r = await rig(() => [], {
+      downscaleTimeoutMs: 40,
+      downscale: (_bytes, _side, signal) => {
+        signalSeen = signal;
+        return new Promise<Uint8Array>(() => undefined);
+      },
+    });
+    await expect(r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "VALIDATION", clipReason: "photo-unreadable" } });
+    expect(signalSeen?.aborted).toBe(true);
+    expect(money.lines()).toEqual([]);
+    expect([r.motions.running(), r.motions.runningFor(r.avatarId), r.state.paid]).toEqual([0, 0, 0]);
+    expect(r.state.caps).toEqual([]);
+  });
+
+  test("the downscale gets a signal to kill ffmpeg by, and a fast one is not cut", async () => {
+    let signalSeen: AbortSignal | undefined;
+    const r = await rig(() => [reply(GOOD_ANSWER)], {
+      downscale: async (_bytes, _side, signal) => {
+        signalSeen = signal;
+        return JPEG;
+      },
+    });
+    expect(await r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 })).toMatchObject({ outcome: "ok" });
+    expect(signalSeen).toBeDefined();
+  });
+});
+
+describe("the chat client's timeout (L4)", () => {
+  test("both calls open the client with the call timeout, 60 s like the descriptor check", async () => {
+    const r = await rig(() => [reply(GOOD_ANSWER), { status: 200, body: chatBody(JSON.stringify({ text_en: GOOD_MOTION }), { cost: 0.001 }) }]);
+    await r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 });
+    await r.motions.translateIdea({ avatarId: r.avatarId, photoId: r.photoId, text: "поворачивает голову", acceptedWorstMicros: 1_000_000 });
+    expect(r.state.timeouts).toEqual([60_000, 60_000]);
+  });
+});
+
 describe("the counts", () => {
   test("running() and runningFor() count a call from its first step and go back to 0 and to the paid count's start, even when the call fails", async () => {
     const r = await rig(() => [{ status: 401, body: { error: { message: "no auth" } } }]);
@@ -230,6 +275,8 @@ async function depsOf(r: Rig): Promise<ClipMotionsDeps> {
     setCap: () => undefined,
     clearCap: () => undefined,
     openRouter: () => makeClient(fakeFetch([]).fetch).client,
+    callTimeoutMs: 60_000,
+    downscaleTimeoutMs: 30_000,
     emitMoney: () => undefined,
     markKeyRejected: () => undefined,
     pendingDelete: () => false,

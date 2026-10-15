@@ -63,11 +63,12 @@ function readAnswer(content: string): string | null {
   return parsed.success ? parsed.data.text_en : null;
 }
 
-function messagesOf(idea: string, frame: FramePayload, feedback: TranslatorFeedback, previous: string | null): ChatMessage[] {
+function messagesOf(idea: string, frame: FramePayload, feedback: TranslatorFeedback, previous: string | null, bold: boolean): ChatMessage[] {
   // The idea is a value inside JSON: whatever it holds (quotes, braces, newlines, a command) stays one string of data.
   const data = { idea, frame, ...(feedback.length === 0 ? {} : { problems: feedback }), ...(previous === null ? {} : { previous }) };
   return [
-    { role: "system", content: MOTION_PROMPT_TEXTS.translatorSystem },
+    // Q-H = 2: on a frame of «Смелая» the translator says the owner's idea as it is, an idea that takes clothing off included; the check below stays the gate.
+    { role: "system", content: bold ? MOTION_PROMPT_TEXTS.translatorSystemBold : MOTION_PROMPT_TEXTS.translatorSystem },
     { role: "user", content: JSON.stringify(data) },
   ];
 }
@@ -85,7 +86,9 @@ export function translatorPriceShape(): MotionAttemptShape {
     activity: "a".repeat(ACTIVITY_MAX_CHARS),
     phoneAllowed: false,
   };
-  return { messages: messagesOf("一".repeat(OWN_IDEA_MAX), widest, [...MOTION_PROBLEMS, "unreadable"], "a".repeat(PREVIOUS_MAX_CHARS)), jsonSchema: TRANSLATOR_JSON_SCHEMA };
+  // The longer of the two system prompts, so the price covers either frame.
+  const bold = MOTION_PROMPT_TEXTS.translatorSystemBold.length > MOTION_PROMPT_TEXTS.translatorSystem.length;
+  return { messages: messagesOf("一".repeat(OWN_IDEA_MAX), widest, [...MOTION_PROBLEMS, "unreadable"], "a".repeat(PREVIOUS_MAX_CHARS), bold), jsonSchema: TRANSLATOR_JSON_SCHEMA };
 }
 
 /** `\uXXXX` for every non-ASCII code unit. */
@@ -113,10 +116,37 @@ export function ideaScrub(idea: string): (text: string) => string {
   return (text) => ordered.reduce((scrubbed, form) => scrubbed.split(form).join(marker), text);
 }
 
+const STRING_OR_RUN = /"(?:[^"\\]|\\.)*(?:"|$)|-?\d[\d.eE+-]*|true|false|null|[{}\[\]:,\s]+|[^"{}\[\]:,\s]+/gy;
+
+/**
+ * The scrub of a saved raw body (I5.67, r2.1 N4, review L1): the JSON STRUCTURE stays (braces, keys, numbers, true/false/null) and every JSON string value becomes `[string: N chars]`, so a partial,
+ * a cut or an escaped echo of the idea cannot survive. A string that holds the whole idea in any form `ideaScrub` knows says `[owner idea omitted: N chars]` instead. A body that is not JSON at all
+ * (or is cut) is read the same way: any text outside a string that is not structure is `[text: N chars]`. The chat client runs the image-data scrub before it.
+ */
+export function rawScrub(idea: string): (text: string) => string {
+  const forms = ideaScrub(idea);
+  const marker = `[owner idea omitted: ${idea.length} chars]`;
+  return (text) => {
+    let out = "";
+    for (const match of text.matchAll(STRING_OR_RUN)) {
+      const token = match[0];
+      if (token.startsWith('"')) {
+        const closed = token.length > 1 && token.endsWith('"') && !/(?:^|[^\\])(?:\\\\)*\\"$/.test(token);
+        const body = token.slice(1, closed ? -1 : undefined);
+        const isKey = closed && /^\s*:/.test(text.slice((match.index ?? 0) + token.length));
+        out += isKey && forms(body) === body ? token : `"${forms(body) !== body ? marker : `[string: ${body.length} chars]`}"`;
+      } else if (/^[{}\[\]:,\s]+$/.test(token) || /^(?:-?\d[\d.eE+-]*|true|false|null)$/.test(token)) out += token;
+      else out += `[text: ${token.length} chars]`;
+    }
+    return out;
+  };
+}
+
 /** Asks the settings' text model to say the owner's idea as one small English motion. */
 export async function runIdeaTranslator(deps: MotionJobDeps, job: TranslatorJob): Promise<TranslatorOutcome> {
   const frame = framePayload(job.facts);
-  const scrubRaw = ideaScrub(job.idea);
+  const scrubRaw = rawScrub(job.idea);
+  const bold = job.facts.bold;
   let feedback: TranslatorFeedback = [];
   let previous: string | null = null;
   /** The closed problems of the last answer that could be read and checked. */
@@ -134,7 +164,7 @@ export async function runIdeaTranslator(deps: MotionJobDeps, job: TranslatorJob)
         budget: deps.budget,
         priceBook: deps.priceBook,
         signal: NEVER_ABORTED,
-        messages: messagesOf(job.idea, frame, feedback, previous),
+        messages: messagesOf(job.idea, frame, feedback, previous, bold),
         jsonSchema: TRANSLATOR_JSON_SCHEMA,
         maxTokens: TRANSLATE_ATTEMPT.maxTokens,
         inputTokens: TRANSLATE_ATTEMPT.inputTokens,
@@ -147,7 +177,8 @@ export async function runIdeaTranslator(deps: MotionJobDeps, job: TranslatorJob)
     if (step.kind === "no-room") {
       return attempt === 1 ? { kind: "error", error: { code: "BUDGET_EXCEEDED", detail: "the month has no room for the translator's call" }, costMicros: cost } : settled();
     }
-    if (step.kind === "error") return { kind: "error", error: step.error, costMicros: cost };
+    // L2: a first attempt that was paid, then a second that fails (a timeout, a 5xx, a 402): the owner is told what the first cost, not left with a bare error. A key that is refused is still an error.
+    if (step.kind === "error") return cost > 0 && step.error.code !== "AUTH_INVALID" ? settled() : { kind: "error", error: step.error, costMicros: cost };
     if (step.kind === "unreadable") {
       if (step.final === true) return settled();
       feedback = ["unreadable"];
@@ -166,7 +197,8 @@ export async function runIdeaTranslator(deps: MotionJobDeps, job: TranslatorJob)
     // `takes-off` gets no repair: the idea is the owner's own choice, and a repair could only make it another motion than he asked for.
     if (!repairMayHelp(problems)) return settled();
     feedback = problems;
-    previous = text.slice(0, PREVIOUS_MAX_CHARS);
+    // L3: only plain printable ASCII goes back to the model (the text is the model's own, but the check refused it).
+    previous = /^[\x20-\x7e]+$/.test(text) ? text.slice(0, PREVIOUS_MAX_CHARS) : null;
   }
   return settled();
 }

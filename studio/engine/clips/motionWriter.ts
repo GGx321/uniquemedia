@@ -86,7 +86,8 @@ export const WRITER_JSON_SCHEMA: { name: string; schema: Record<string, unknown>
 };
 
 const WriterAnswer = z.strictObject({
-  motions: z.array(z.strictObject({ label_ru: z.string(), text_en: z.string() })).max(CLIP_CHOICES_MAX.vision),
+  // L5: a paid answer is not thrown away for holding four; the first three are taken (`readAnswer`).
+  motions: z.array(z.strictObject({ label_ru: z.string(), text_en: z.string() })),
   frame: z.strictObject({
     capture: z.string().refine((name) => CAPTURE_NAMES.includes(name), "must be a capture name"),
     phoneVisible: z.boolean(),
@@ -103,7 +104,7 @@ function readAnswer(content: string): WriterAnswer | null {
     return null;
   }
   const parsed = WriterAnswer.safeParse(json);
-  return parsed.success && parsed.data.motions.length > 0 ? parsed.data : null;
+  return parsed.success && parsed.data.motions.length > 0 ? { ...parsed.data, motions: parsed.data.motions.slice(0, CLIP_CHOICES_MAX.vision) } : null;
 }
 
 function messagesOf(frame: FramePayload, feedback: WriterFeedback): ChatMessage[] {
@@ -213,7 +214,8 @@ export async function runMotionWriter(deps: MotionJobDeps, job: WriterJob): Prom
     if (step.kind === "no-room") {
       return attempt === 1 ? { kind: "error", error: { code: "BUDGET_EXCEEDED", detail: "the month has no room for the motion writer's call" }, costMicros: cost } : { kind: "none", costMicros: cost };
     }
-    if (step.kind === "error") return { kind: "error", error: step.error, costMicros: cost };
+    // L2: a first attempt that was paid, then a second that fails (a timeout, a 5xx, a 402): `none` with what was paid, so the window can say «оплачено $X». A key that is refused is still an error.
+    if (step.kind === "error") return cost > 0 && step.error.code !== "AUTH_INVALID" ? { kind: "none", costMicros: cost } : { kind: "error", error: step.error, costMicros: cost };
     if (step.kind === "unreadable") {
       if (step.final === true) return { kind: "none", costMicros: cost };
       feedback = ["unreadable"];

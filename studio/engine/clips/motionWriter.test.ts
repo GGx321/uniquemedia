@@ -161,9 +161,16 @@ describe("failing texts are dropped, never offered", () => {
     expect(outcome.kind === "ok" ? outcome.drafts.map((d) => d.text) : null).toEqual([GOOD_MOTION]);
   });
 
-  test("an answer with more than three motions is unreadable (the schema is strict)", async () => {
+  test("an answer with four motions is not thrown away: the first three are taken, one attempt, paid once", async () => {
     const four = [good(GOOD_MOTION), good(GOOD_MOTION_2, "Два"), good(GOOD_MOTION_3, "Три"), good("she slowly looks down and smiles to herself", "Четыре")];
-    const { net, result } = run([reply(answer(four)), reply(answer([good()]))]);
+    const { net, result } = run([reply(answer(four))]);
+    const outcome = await result;
+    expect(outcome.kind === "ok" ? outcome.drafts.map((d) => d.text) : null).toEqual([GOOD_MOTION, GOOD_MOTION_2, GOOD_MOTION_3]);
+    expect(net.calls).toHaveLength(1);
+  });
+
+  test("an answer with no motion at all is unreadable", async () => {
+    const { net, result } = run([reply(answer([])), reply(answer([good()]))]);
     expect((await result).kind).toBe("ok");
     expect(net.calls).toHaveLength(2);
   });
@@ -220,6 +227,16 @@ describe("the money of a refusal and of a failure", () => {
 
   test("a paid unusable answer then a moderation refusal is `none` and carries the paid amount", async () => {
     const { result } = run([reply("not json", 0.0021), { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } }]);
+    expect(await result).toEqual({ kind: "none", costMicros: 2_100 });
+  });
+
+  test("a paid first attempt then a failing second one (a 5xx) is `none` with the paid amount, never a bare error (L2)", async () => {
+    const { result } = run([reply("not json", 0.0021), { status: 503, body: { error: { message: "down" } } }, { status: 503, body: { error: { message: "down" } } }, { status: 503, body: { error: { message: "down" } } }, { status: 503, body: { error: { message: "down" } } }]);
+    expect(await result).toEqual({ kind: "none", costMicros: 2_100 });
+  });
+
+  test("a 402 on the second attempt is the same", async () => {
+    const { result } = run([reply("not json", 0.0021), { status: 402, body: { error: { message: "no credits" } } }]);
     expect(await result).toEqual({ kind: "none", costMicros: 2_100 });
   });
 

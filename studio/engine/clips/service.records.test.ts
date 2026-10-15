@@ -103,6 +103,7 @@ async function world(options: { download?: () => Promise<void>; mode?: "auto" | 
     withRootLock: (_root, work) => work(),
     exportNumbers: () => null,
     textModel: () => "x-ai/grok-4.3",
+    motionTimeoutMs: 60_000,
     ...(options.mode === undefined ? {} : { mode: options.mode }),
   };
   const service = new ClipService(deps);

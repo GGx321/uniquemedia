@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import { MOTION_SUGGEST_EXPECTED_MICROS, MOTION_SUGGEST_WORST_MICROS, MOTION_TRANSLATE_EXPECTED_MICROS, ownIdeaLabel } from "../shared/engine";
 import { JPEG } from "./openrouter/testing/fakes";
 import { clipsDir, create, jobEnd, jobIdOf } from "./clips/testing/engineClipKit";
-import { MODERATED, chatReply, errorOf, resultOf, send } from "./clips/testing/motionNet";
+import { MODERATED, chatReply, errorOf, resultOf, send, type ChatRequest } from "./clips/testing/motionNet";
+import { MOTION_PROMPT_TEXTS } from "./clips/motionPrompts";
 import { CANARY, FRAME_READING, GOOD_TEXTS, IDEA, ideaReply, motionWorld, suggestionReply } from "./clips/testing/motionWorld";
 import { MotionStoreFile } from "./clips/schemas";
 import { readClipRecord } from "./clips/store";
@@ -158,6 +159,17 @@ describe("clips.suggestMotions: the money", () => {
   });
 });
 
+describe("a hung downscale (M1)", () => {
+  test("ends the suggestion free and frees the guard: no reserve, and a clip goes through afterwards", async () => {
+    const w = await motionWorld(dir(), { engine: { deps: { clipDownscale: () => new Promise<Uint8Array>(() => undefined), clipDownscaleTimeoutMs: 60 } } });
+    expect(errorOf(await w.suggest(1_000_000)).clipReason).toBe("photo-unreadable");
+    expect(w.net.chats).toHaveLength(0);
+    expect(w.ledger()).toEqual([]);
+    const jobId = jobIdOf(await create(w.started, { avatarId: w.avatarId, photoId: w.photoId }));
+    expect((await jobEnd(w.started, jobId)).type).toBe("job.done");
+  });
+});
+
 describe("clips.suggestMotions: the photo and the store", () => {
   test("the vision writer sees the photo's downscale at most 1024 px, made from the gallery photo's bytes, never the master's", async () => {
     const seen: { length: number; maxSide: number }[] = [];
@@ -298,6 +310,22 @@ describe("clips.translateIdea", () => {
   test("the same idea on a frame of «Смелая» is accepted (Q-H = 2)", async () => {
     const w = await motionWorld(dir(), { chat: () => ideaReply(UNDRESS), seed: { category: "nightwear" }, engine: { deps: { clipSwitches: { boldClips: "kling-only" } } } });
     expect(resultOf(await w.translate())).toMatchObject({ outcome: "ok", item: { id: "o-1", text: UNDRESS } });
+  });
+
+  test("«снимает халат» on a frame of «Смелая» is translated faithfully by the bold prompt and stored under his label with the TAKES_OFF English text (M2)", async () => {
+    // A model that does what its system prompt says: the bold variant translates the idea, the ordinary one softens it.
+    const chat = (request: ChatRequest) => ideaReply(request.json().messages[0]?.content === MOTION_PROMPT_TEXTS.translatorSystemBold ? UNDRESS : GOOD_TEXTS[0] ?? "");
+    const w = await motionWorld(dir(), { chat, seed: { category: "nightwear" }, engine: { deps: { clipSwitches: { boldClips: "kling-only" } } } });
+    expect(resultOf(await w.translate("снимает халат"))).toEqual({ outcome: "ok", item: { id: "o-1", source: "own", label: "снимает халат", text: UNDRESS }, costMicros: 1_000 });
+    const file = await storeOf(w.storePath());
+    expect(file.items).toEqual([expect.objectContaining({ label: "снимает халат", text: UNDRESS })]);
+  });
+
+  test("on an ordinary frame the same idea gets the ordinary prompt and is not stored", async () => {
+    const chat = (request: ChatRequest) => ideaReply(request.json().messages[0]?.content === MOTION_PROMPT_TEXTS.translatorSystemBold ? UNDRESS : GOOD_TEXTS[0] ?? "");
+    const w = await motionWorld(dir(), { chat });
+    expect(resultOf(await w.translate("снимает халат"))).toMatchObject({ outcome: "ok", item: { text: GOOD_TEXTS[0] } });
+    expect(w.net.chats[0]?.json().messages[0]?.content).toBe(MOTION_PROMPT_TEXTS.translatorSystem);
   });
 
   test("a moderation refusal is free", async () => {

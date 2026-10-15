@@ -4,7 +4,7 @@ import { repairMayHelp } from "../../shared/scenes/motionText";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import type { Scope } from "../money/ledger";
 import { chatBody, fakeFetch, makeClient, setupMoney, withoutAt, type Money, type Step } from "../openrouter/testing/fakes";
-import { TRANSLATOR_JSON_SCHEMA, ideaScrub, runIdeaTranslator, translatorPriceShape, type TranslatorJob, type TranslatorOutcome } from "./ideaTranslator";
+import { TRANSLATOR_JSON_SCHEMA, ideaScrub, rawScrub, runIdeaTranslator, translatorPriceShape, type TranslatorJob, type TranslatorOutcome } from "./ideaTranslator";
 import { checkModelText } from "./motionCall";
 import { MOTION_PROMPT_TEXTS } from "./motionPrompts";
 import { GOOD_MOTION, UNDRESS_MOTION, boldMirrorFrame, timerFrame } from "./testing/motionKit";
@@ -18,7 +18,7 @@ const IDEA = "CANARY-7f3a медленно поворачивает голову
 const JOB: TranslatorJob = { jobId: "job-00000002", scope: SCOPE, textModel: "x-ai/grok-4.3", photoId: "photo-0001", idea: IDEA, facts: timerFrame() };
 const NOT_MOTION = "slowly she turns her head";
 
-const reply = (text: unknown, cost = 0.001): Step => ({ status: 200, body: chatBody(typeof text === "string" && text.startsWith("{") ? text : JSON.stringify({ text_en: text }), { cost }) });
+const reply = (text: unknown, cost = 0.001) => ({ status: 200, body: chatBody(typeof text === "string" && text.startsWith("{") ? text : JSON.stringify({ text_en: text }), { cost }) });
 
 let money: Money;
 beforeEach(async () => {
@@ -47,6 +47,27 @@ function userData(net: { calls: { json(): unknown }[] }, n: number): Record<stri
 }
 
 describe("the request: the owner's idea is data, and only in the user message", () => {
+  test("on a frame of «Смелая» the system prompt is the bold variant (the idea is translated faithfully); elsewhere the ordinary one (M2)", async () => {
+    const bold = run([reply(UNDRESS_MOTION)], { ...JOB, facts: boldMirrorFrame() });
+    await bold.result;
+    expect(bodyOf(bold.net, 0).messages[0]).toEqual({ role: "system", content: MOTION_PROMPT_TEXTS.translatorSystemBold });
+    const ordinary = run([reply(GOOD_MOTION)], { ...JOB, jobId: "job-00000003", scope: { avatarJobId: "job-00000003" } });
+    await ordinary.result;
+    expect(bodyOf(ordinary.net, 0).messages[0]).toEqual({ role: "system", content: MOTION_PROMPT_TEXTS.translatorSystem });
+    expect(MOTION_PROMPT_TEXTS.translatorSystemBold).not.toBe(MOTION_PROMPT_TEXTS.translatorSystem);
+  });
+
+  test("a model that follows the system prompt: «снимает халат» on «Смелая» is translated faithfully and accepted, on an ordinary frame it is not", async () => {
+    const follows = (system: string): Step => (call) => {
+      const sent = (call.json() as { messages: { content: string }[] }).messages[0]?.content;
+      return reply(sent === system ? UNDRESS_MOTION : GOOD_MOTION);
+    };
+    const bold = run([follows(MOTION_PROMPT_TEXTS.translatorSystemBold)], { ...JOB, idea: "снимает халат", facts: boldMirrorFrame() });
+    expect(await bold.result).toEqual({ kind: "ok", text: UNDRESS_MOTION, costMicros: 1_000 });
+    const ordinary = run([follows(MOTION_PROMPT_TEXTS.translatorSystemBold), follows(MOTION_PROMPT_TEXTS.translatorSystemBold)], { ...JOB, jobId: "job-00000003", scope: { avatarJobId: "job-00000003" }, idea: "снимает халат" });
+    expect(await ordinary.result).toMatchObject({ kind: "ok", text: GOOD_MOTION });
+  });
+
   test("the idea is a JSON string in the user message, the system prompt is the provisional text, and no image goes", async () => {
     const { net, result } = run([reply(GOOD_MOTION)]);
     await result;
@@ -144,6 +165,13 @@ describe("an idea that does not pass", () => {
     expect(await result).toEqual({ kind: "ok", text: GOOD_MOTION, costMicros: 2_000 });
   });
 
+  test("a previous text that is not printable ASCII is not fed back (L3)", async () => {
+    const { net, result } = run([reply("she slowly turns her head \u202e и сказала"), reply(GOOD_MOTION)]);
+    await result;
+    expect(userData(net, 1)).not.toHaveProperty("previous");
+    expect(userData(net, 1)).toMatchObject({ problems: expect.any(Array) });
+  });
+
   test("the previous text fed back is cut to a short length, whatever the model wrote", async () => {
     const long = `she ${"slowly ".repeat(60)}turns`;
     const { net, result } = run([reply(long), reply(GOOD_MOTION)]);
@@ -169,6 +197,18 @@ describe("the money of a refusal and of a failure", () => {
     expect(await result).toEqual({ kind: "none", costMicros: 1_000 });
   });
 
+  test("a rejected first answer then a failing repair (a 5xx) is `rejected` with the first problems and the paid amount (L2)", async () => {
+    const down: Step = { status: 503, body: { error: { message: "down" } } };
+    const { result } = run([reply(NOT_MOTION, 0.001), down, down, down, down]);
+    expect(await result).toEqual({ kind: "rejected", problems: checkModelText(timerFrame(), NOT_MOTION, "own").problems, costMicros: 1_000 });
+  });
+
+  test("an unreadable first answer then a failing second one is `none` with the paid amount (L2)", async () => {
+    const down: Step = { status: 503, body: { error: { message: "down" } } };
+    const { result } = run([reply("{not json", 0.001), down, down, down, down]);
+    expect(await result).toEqual({ kind: "none", costMicros: 1_000 });
+  });
+
   test("a 401 is an error with its code", async () => {
     const { result } = run([{ status: 401, body: { error: { message: "no auth" } } }]);
     expect(await result).toMatchObject({ kind: "error", error: { code: "AUTH_INVALID" } });
@@ -191,6 +231,33 @@ describe("the owner's idea leaves no copy of itself (I5.67)", () => {
     expect(raws[0]?.text).not.toContain("CANARY");
     expect(raws[0]?.text).not.toContain("поворачивает");
     expect(raws[0]?.text).toContain(`[owner idea omitted: ${IDEA.length} chars]`);
+  });
+
+  test("a saved raw body keeps its JSON structure and no string value: a partial echo, a mid-cut echo and a \\/-escaped echo leave nothing of the idea (L1)", async () => {
+    const part = IDEA.slice(0, 25);
+    const bodies: string[] = [
+      JSON.stringify({ usage: { cost: 0.001 }, note: `you asked about ${part} and more` }),
+      `{"usage":{"cost":0.001},"note":"you asked ${IDEA.slice(0, 20)}`,
+      `{"usage":{"cost":0.001},"note":"${IDEA.replaceAll(" ", "\\/")}"}`,
+      `you asked: ${part}`,
+    ];
+    for (const [i, body] of bodies.entries()) {
+      const id = `job-0000010${i}`;
+      const { raws, result } = run([{ status: 200, body }], { ...JOB, jobId: id, scope: { avatarJobId: id } });
+      await result;
+      expect(raws).toHaveLength(1);
+      const saved = raws[0]?.text ?? "";
+      expect([body.slice(0, 20), saved.includes(part.slice(0, 8)), saved.includes("поворачивает")]).toEqual([body.slice(0, 20), false, false]);
+    }
+  });
+
+  test("the structure of the raw body stays: keys, numbers, braces; every string becomes [string: N chars]", () => {
+    const scrubbed = rawScrub("идея")('{"usage":{"cost":0.001},"note":"hello there","list":["a","bb"],"ok":true}');
+    expect(JSON.parse(scrubbed)).toEqual({ usage: { cost: 0.001 }, note: "[string: 11 chars]", list: ["[string: 1 chars]", "[string: 2 chars]"], ok: true });
+  });
+
+  test("a string that holds the whole idea says so: [owner idea omitted: N chars]", () => {
+    expect(rawScrub("медленно")('{"a":"x медленно y"}')).toBe('{"a":"[owner idea omitted: 8 chars]"}');
   });
 
   test("ideaScrub removes the idea plain, JSON-escaped, \\u-escaped and doubly escaped, and leaves other text alone", () => {

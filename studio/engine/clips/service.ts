@@ -38,7 +38,7 @@ import { timeoutSignal, untilAborted } from "../money/timeoutSignal";
 import { clipOptionPrices, clipPricesOf, estimateClip } from "../money/videoEstimate";
 import type { OpenRouterClient } from "../openrouter/types";
 import type { RunPlan } from "../runs/plan";
-import { EMBEDDING_COMPUTE_TIMEOUT_MS } from "../runs/timeouts";
+import { EMBEDDING_COMPUTE_TIMEOUT_MS, REFERENCE_TIMEOUT_MS } from "../runs/timeouts";
 import type { ExportNumberLibrary } from "../videos/exportNumbers";
 import type { CommitTracker } from "../videos/live";
 import type { RootLockOptions } from "../videos/rootLock";
@@ -183,7 +183,7 @@ export interface ClipServiceDeps {
   paidEnd: () => void;
   setCap: (key: string, micros: number) => void;
   clearCap: (key: string) => void;
-  openRouter: (key: string) => OpenRouterClient;
+  openRouter: (key: string, timeoutMs?: number) => OpenRouterClient;
   jobs: JobRegistry;
   emit: (event: UnsequencedEvent) => void;
   emitMoney: () => void;
@@ -228,6 +228,10 @@ export interface ClipServiceDeps {
   drafts?: (avatarId: string) => Promise<readonly DraftView[]>;
   /** 5b.2 (S5.WC3): the settings' text model, the one the part C calls (the vision writer, the idea translator) are priced and sent on. */
   textModel: () => string;
+  /** 5b.2 (S5.WC3, review L4): one HTTP try of a part C call waits this long; the descriptor check's 60 s. */
+  motionTimeoutMs: number;
+  /** 5b.2 (S5.WC3, review M1) test seam: how long the photo's downscale may take before a part C call ends free. */
+  downscaleTimeoutMs?: number;
   /** 5b.2 (S5.WC3) test seam: the photo as a JPEG of at most `maxSide` px for the vision writer. Absent: the real ffmpeg downscale. */
   downscale?: (bytes: Uint8Array, maxSide: number, signal?: AbortSignal) => Promise<Uint8Array>;
 }
@@ -311,6 +315,8 @@ export class ClipService {
       setCap: deps.setCap,
       clearCap: deps.clearCap,
       openRouter: deps.openRouter,
+      callTimeoutMs: deps.motionTimeoutMs,
+      downscaleTimeoutMs: deps.downscaleTimeoutMs ?? REFERENCE_TIMEOUT_MS,
       emitMoney: deps.emitMoney,
       markKeyRejected: deps.markKeyRejected,
       pendingDelete: deps.pendingDelete,

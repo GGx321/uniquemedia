@@ -12,6 +12,7 @@ import { EngineFailure } from "../engineFailure";
 import type { Library } from "../library";
 import type { PhotoSidecar } from "../library/schemas";
 import { scopeKey, type Budget } from "../money/budget";
+import { timeoutSignal, untilAborted } from "../money/timeoutSignal";
 import { motionPriceModels } from "../money/motionEstimate";
 import { suggestPrice, translatePrice } from "./motionPrice";
 import type { PricedBook, PriceModels } from "../money/priceCache";
@@ -62,7 +63,11 @@ export interface ClipMotionsDeps {
   paidEnd: () => void;
   setCap: (key: string, micros: number) => void;
   clearCap: (key: string) => void;
-  openRouter: (key: string) => Pick<OpenRouterClient, "chat">;
+  openRouter: (key: string, timeoutMs?: number) => Pick<OpenRouterClient, "chat">;
+  /** How long one HTTP try of a call may wait for its answer: 60 s like the descriptor check, not the client's 180 s default (review L4). */
+  callTimeoutMs: number;
+  /** How long the photo's downscale may take before the call ends free (review M1; `REFERENCE_TIMEOUT_MS` like the check's photo load). */
+  downscaleTimeoutMs: number;
   emitMoney: () => void;
   markKeyRejected: (key: string) => void;
   pendingDelete: (avatarId: string) => boolean;
@@ -238,18 +243,22 @@ export class ClipMotions {
     deps.checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
     deps.checkMonthlyRoom(ready.budget, estimate.worstMicros);
     // The photo at most 1024 px, a JPEG: made from the gallery photo's own bytes, never the master's.
+    // Bounded (review M1): a hung ffmpeg would keep the call counted, and with it every clip, avatar delete and library switch, refused until restart. The signal kills ffmpeg.
     let image: Uint8Array;
+    const bound = timeoutSignal(deps.downscaleTimeoutMs);
     try {
-      image = await deps.downscale(ready.bytes, MOTION_IMAGE_MAX_SIDE);
+      image = await untilAborted(deps.downscale(ready.bytes, MOTION_IMAGE_MAX_SIDE, bound.signal), bound.signal);
     } catch (error) {
       deps.log(`[clip] photo ${ready.photo.id} could not be scaled for the motion writer (${error instanceof Error ? error.name : typeof error})`);
       throw new EngineFailure({ code: "VALIDATION", clipReason: "photo-unreadable", detail: `photo ${ready.photo.id} could not be read` });
+    } finally {
+      bound.clear();
     }
     this.#stillThere(ready.library, avatarId);
 
     const jobId = deps.newId();
     const scope = { avatarJobId: jobId };
-    const client = deps.openRouter(ready.key);
+    const client = deps.openRouter(ready.key, deps.callTimeoutMs);
     deps.setCap(scopeKey(scope), estimate.worstMicros);
     const linesBefore = ready.budget.ledger.lines.length;
     let outcome: Awaited<ReturnType<typeof runMotionWriter>>;
@@ -298,7 +307,7 @@ export class ClipMotions {
 
     const jobId = deps.newId();
     const scope = { avatarJobId: jobId };
-    const client = deps.openRouter(ready.key);
+    const client = deps.openRouter(ready.key, deps.callTimeoutMs);
     deps.setCap(scopeKey(scope), estimate.worstMicros);
     const linesBefore = ready.budget.ledger.lines.length;
     let outcome: Awaited<ReturnType<typeof runIdeaTranslator>>;

@@ -390,6 +390,8 @@ export interface EngineDeps {
   clipSwitches?: { mode?: "auto" | "offer"; boldClips?: BoldClipsMode; exportFps?: ExportFpsMode };
   /** 5b.2 (S5.WC3) test seam: the photo as a JPEG of at most `maxSide` px for the vision writer (the real ffmpeg downscale otherwise). */
   clipDownscale?: (bytes: Uint8Array, maxSide: number, signal?: AbortSignal) => Promise<Uint8Array>;
+  /** 5b.2 (S5.WC3, review M1) test seam: how long that downscale may take. */
+  clipDownscaleTimeoutMs?: number;
   /** Test seam of the clip records (S5.V4a2): the delete's removal of a file, so a test can hold a delete in its middle. */
   clipRecords?: Pick<ClipRecordsDeps, "remove">;
   /** Test seam: awaited before each clips folder of a library's startup walk is listed (S5.VR), so a test can hold the walk open. */
@@ -1202,7 +1204,7 @@ export class Engine {
       clearCap: (key) => {
         this.#caps.delete(key);
       },
-      openRouter: (key) => this.#openRouter(key),
+      openRouter: (key, timeoutMs) => this.#openRouter(key, undefined, timeoutMs),
       jobs: this.#jobs,
       emit: (event) => this.#emit(event),
       emitMoney: () => this.#emitMoney(),
@@ -1212,6 +1214,8 @@ export class Engine {
       readRunPlan: (library, runId) => this.#readRunPlan(library, runId),
       // 5b.2 (S5.WC3): the part C calls are priced and sent on the settings' text model; a test may replace the photo's downscale.
       textModel: () => this.#avatarModels().textModel,
+      motionTimeoutMs: this.#descriptorCheckTimeoutMs,
+      ...(deps.clipDownscaleTimeoutMs === undefined ? {} : { downscaleTimeoutMs: deps.clipDownscaleTimeoutMs }),
       ...(deps.clipDownscale === undefined ? {} : { downscale: deps.clipDownscale }),
       faceGate: () => deps.portraitFaceGate ?? null,
       timings: deps.clipTimings ?? clipTimings(),
