@@ -248,6 +248,64 @@ describe("BatchSummaryStore", () => {
     }
   });
 
+  test("a write that fails loses no transition (round 2, money): the next change builds on the state the store meant to write, and writes it whole", async () => {
+    const { clipsDir, done } = await folder();
+    try {
+      let failNext = false;
+      const summaries = new BatchSummaryStore({
+        log: (line) => void logs.push(line),
+        beforeWrite: () => {
+          if (!failNext) return;
+          failNext = false;
+          throw Object.assign(new Error("i/o error"), { code: "EIO" });
+        },
+      });
+      // Clip 2 met a 429 (its attempt closed at 0); clip 3 is its retry, shot and billed.
+      const priced = costs({ [clip(1)]: billed(), [clip(2)]: { micros: 0, kind: "free" }, [clip(3)]: billed() });
+      const step = (change: Parameters<typeof applyBatchChange>[1]): Promise<void> =>
+        summaries.change(clipsDir, BATCH, (current) => (current === null ? null : withCosts(applyBatchChange(current, change), priced)));
+      await summaries.change(clipsDir, BATCH, () => fresh(2));
+      await step({ kind: "running", index: 1, clipId: clip(1) });
+      await step({ kind: "ended", index: 1, clipId: clip(1), outcome: "ready" });
+      await step({ kind: "running", index: 2, clipId: clip(2) });
+      failNext = true;
+      await step({ kind: "requeued", index: 2, clipId: clip(3) });
+      await step({ kind: "ended", index: 2, clipId: clip(2), outcome: "failed" });
+      await step({ kind: "running", index: 2, clipId: clip(3) });
+      await step({ kind: "ended", index: 2, clipId: clip(3), outcome: "ready" });
+      await step({ kind: "over", at: LATER });
+
+      const onDisk = ClipBatchFile.parse(JSON.parse(await readFile(batchSummaryPath(clipsDir, BATCH), "utf8")));
+      expect(onDisk.members[1]).toEqual({ batchIndex: 2, outcome: "ready", costMicros: 420_000, costKind: "billed", clipIds: [clip(2), clip(3)] });
+      expect(summaryOf(onDisk, priced).cost).toEqual({ micros: 840_000, kind: "billed" });
+      expect(logs.some((line) => line.includes(BATCH) && line.includes("could not be written"))).toBe(true);
+    } finally {
+      await done();
+    }
+  });
+
+  test("while the disk lags behind a failed write, a read is the state the store meant to write", async () => {
+    const { clipsDir, done } = await folder();
+    try {
+      let fail = false;
+      const summaries = new BatchSummaryStore({
+        log: () => undefined,
+        beforeWrite: () => {
+          if (fail) throw Object.assign(new Error("no space"), { code: "ENOSPC" });
+        },
+      });
+      await summaries.change(clipsDir, BATCH, () => fresh(1));
+      fail = true;
+      await summaries.change(clipsDir, BATCH, (current) => (current === null ? null : applyBatchChange(current, { kind: "running", index: 1, clipId: clip(1) })));
+      expect(outcomes((await summaries.read(clipsDir))[0] ?? fresh())).toEqual(["running"]);
+      const other = "batch-00000002";
+      await summaries.change(clipsDir, other, () => startBatchFile({ batchId: other, avatarId: AVATAR, createdAt: AT, clipIds: [clip(9)] }));
+      expect((await summaries.read(clipsDir)).map((file) => file.batchId).sort()).toEqual([BATCH, other]);
+    } finally {
+      await done();
+    }
+  });
+
   test("changes of one batch run one after another, each on the file the one before it wrote", async () => {
     const { clipsDir, done } = await folder();
     try {

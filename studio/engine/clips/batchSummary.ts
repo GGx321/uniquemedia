@@ -62,17 +62,23 @@ function errorName(error: unknown): string {
 }
 
 /**
- * The batch summaries on disk. Every change of one batch's file runs after the one before it (read, change, check, write atomically), so the file always holds the latest of a sequence of whole summaries.
- * A change never rejects: a failure is logged, and the next change writes the whole summary again from what it reads. `settled()` waits for every change and tracked piece of work that is under way, so
- * a read after an event the engine announced sees the summary that event's transition wrote.
+ * The batch summaries on disk. Every change of one batch runs after the one before it, and builds on the last state the store MEANT to write (`#latest`), the file only when this process has not touched the
+ * batch yet; then it is checked and written atomically. A write that fails (a full disk, a volume that went away) is logged and loses nothing (round 2, money): the next change builds on the state it meant and
+ * writes it whole, and a read meanwhile answers that state. A change never rejects. `settled()` waits for every change and tracked piece of work under way, so a read after an event the engine announced sees
+ * the summary that event's transition wrote.
  */
 export class BatchSummaryStore {
   readonly #log: (line: string) => void;
+  readonly #beforeWrite: ((file: ClipBatchFile) => void | Promise<void>) | undefined;
   readonly #tails = new Map<string, Promise<void>>();
   readonly #pending = new Set<Promise<unknown>>();
+  /** The last state each change meant to write, by the file's path, whether or not the write went through. A forgotten batch leaves it. */
+  readonly #latest = new Map<string, ClipBatchFile>();
 
-  constructor(deps: { log: (line: string) => void }) {
+  /** `beforeWrite` is a test seam: awaited before each write, what it throws is what the write threw (a full disk, a volume that went away). */
+  constructor(deps: { log: (line: string) => void; beforeWrite?: (file: ClipBatchFile) => void | Promise<void> }) {
     this.#log = deps.log;
+    this.#beforeWrite = deps.beforeWrite;
   }
 
   /** Runs `work` after every earlier piece of work on this batch's file. */
@@ -88,10 +94,14 @@ export class BatchSummaryStore {
     return run;
   }
 
-  /** Changes a batch's summary: `build` gets the file as it is on disk now (null when there is none or it does not read) and returns the file it should become, or null for «nothing to write». */
+  /**
+   * Changes a batch's summary: `build` gets the state the last change meant (or, for a batch this process has not touched, the file as it is on disk now; null when there is none or it does not read) and returns
+   * the state it should become, or null for «nothing to write».
+   */
   change(clipsDir: string, batchId: string, build: (current: ClipBatchFile | null) => ClipBatchFile | null | Promise<ClipBatchFile | null>): Promise<void> {
     return this.#serial(clipsDir, batchId, async () => {
-      const current = await this.#readOne(clipsDir, batchId);
+      const path = batchSummaryPath(clipsDir, batchId);
+      const current = this.#latest.get(path) ?? (await this.#readOne(clipsDir, batchId));
       const next = await build(current);
       if (next === null) return;
       const checked = ClipBatchFile.safeParse(next);
@@ -99,6 +109,8 @@ export class BatchSummaryStore {
         this.#log(`[clip] batch ${batchId}: a change of its summary breaks the schema and is not written (${checked.error.issues[0]?.message ?? "invalid"})`);
         return;
       }
+      // Kept before the write: a write that fails costs the file a lag, never the transition.
+      this.#latest.set(path, checked.data);
       await this.#write(clipsDir, checked.data);
     });
   }
@@ -106,6 +118,7 @@ export class BatchSummaryStore {
   /** Removes a batch's summary (retention), after every earlier change of it. */
   forget(clipsDir: string, batchId: string): Promise<void> {
     return this.#serial(clipsDir, batchId, async () => {
+      this.#latest.delete(batchSummaryPath(clipsDir, batchId));
       await rm(batchSummaryPath(clipsDir, batchId), { force: true });
       await fsyncDir(batchesDirOf(clipsDir));
     });
@@ -123,24 +136,27 @@ export class BatchSummaryStore {
     while (this.#pending.size > 0) await Promise.all([...this.#pending]);
   }
 
-  /** Every summary of the avatar's clips folder that reads, in no order. A damaged file, a temp file and a name that is not a batch id are left out (a damaged one is logged). */
+  /**
+   * Every summary of the avatar's clips folder, in no order: the state each change meant for the batches this process changed (the disk may lag behind a failed write), the file for the others. A damaged file, a
+   * temp file and a name that is not a batch id are left out (a damaged one is logged).
+   */
   async read(clipsDir: string): Promise<ClipBatchFile[]> {
-    const listed = await readFolderNames(batchesDirOf(clipsDir));
-    if (!listed.ok) {
-      this.#log(`[clip] the batch summaries of ${dirname(clipsDir)} could not be listed (${errorName(listed.error)}); they are left out`);
-      return [];
-    }
-    const ids = listed.names.flatMap((name) => {
+    const dir = batchesDirOf(clipsDir);
+    const byId = new Map<string, ClipBatchFile>();
+    const listed = await readFolderNames(dir);
+    if (!listed.ok) this.#log(`[clip] the batch summaries of ${dirname(clipsDir)} could not be listed (${errorName(listed.error)}); only those this process holds are read`);
+    const ids = (listed.ok ? listed.names : []).flatMap((name) => {
       if (isTempName(name)) return [];
       const id = SUMMARY_NAME.exec(name)?.[1];
       return id !== undefined && isLibraryId(id) ? [id] : [];
     });
-    const files: ClipBatchFile[] = [];
     for (const id of ids) {
+      if (this.#latest.has(batchSummaryPath(clipsDir, id))) continue;
       const file = await this.#readOne(clipsDir, id);
-      if (file !== null) files.push(file);
+      if (file !== null) byId.set(id, file);
     }
-    return files;
+    for (const [path, file] of this.#latest) if (dirname(path) === dir) byId.set(file.batchId, file);
+    return [...byId.values()];
   }
 
   async #readOne(clipsDir: string, batchId: string): Promise<ClipBatchFile | null> {
@@ -158,6 +174,7 @@ export class BatchSummaryStore {
   }
 
   async #write(clipsDir: string, file: ClipBatchFile): Promise<void> {
+    await this.#beforeWrite?.(file);
     const dir = batchesDirOf(clipsDir);
     const made = await mkdir(dir, { recursive: true });
     // A folder made now (the batches folder, and the clips folder of an avatar that never had a clip) is flushed into its parent before the file is written into it.
@@ -168,3 +185,4 @@ export class BatchSummaryStore {
     await writeJsonAtomic(batchSummaryPath(clipsDir, file.batchId), file);
   }
 }
+

@@ -273,6 +273,40 @@ describe("a restart ends the batch it finds running (I5.63)", () => {
   });
 });
 
+describe("round 2 (the money review)", () => {
+  test("a summary write that fails loses no transition: the 429's requeue is kept, and the member's clip and money come through", async () => {
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(2));
+    const rateLimited: VideoScript = { submit: { status: 429, body: { error: { code: 429, message: "Rate limit exceeded" } } } };
+    let failed = 0;
+    const engine = await started({
+      net: clipNetwork({ klingBy: (n) => (n === 2 ? rateLimited : undefined) }),
+      timings: { ...SHORT_CLIP_TIMINGS, rateLimitPauseMs: 50 },
+      deps: {
+        launchSteps: IDLE_STEPS,
+        // The write that would first tell the member's second clip fails (a full disk for a moment).
+        clipBatchSummaryBeforeWrite: (file) => {
+          if (failed === 0 && file.members.some((member) => member.clipIds.length === 2)) {
+            failed++;
+            throw Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+          }
+        },
+      },
+    });
+    const { batchId, jobIds } = batchOf(await createBatch(engine, { avatarId, photoIds }));
+    await endsOf(engine, jobIds);
+    await until(() => engine.net.posts("kling").length === 3, "the retry's POST");
+    const retry = engine.events().flatMap((e) => (e.type === "job.progress" && e.payload.kind === "clip" && e.payload.batchIndex === 2 && !jobIds.includes(e.payload.jobId) ? [e.payload.jobId] : []))[0] ?? "";
+    await jobEnd(engine, retry);
+
+    expect(failed).toBe(1);
+    const summary = await summaryOf(engine, avatarId, batchId);
+    expect(summary.members[1]).toEqual({ batchIndex: 2, outcome: "ready", costMicros: 420_000, costKind: "billed", clipIds: [jobIds[1], retry] });
+    expect(summary.cost).toEqual({ micros: 840_000, kind: "billed" });
+    const onDisk = ClipBatchFile.parse(JSON.parse(await readFile(batchSummaryPath(clipsDir(libraryDir(), avatarId), batchId), "utf8")));
+    expect(onDisk.members[1]).toMatchObject({ outcome: "ready", clipIds: [jobIds[1], retry], costMicros: 420_000, costKind: "billed" });
+  });
+});
+
 describe("a failed download fetched again", () => {
   test("turns its member from failed to made", async () => {
     const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(1));

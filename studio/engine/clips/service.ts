@@ -213,6 +213,8 @@ export interface ClipServiceDeps {
   records?: Pick<ClipRecordsDeps, "remove">;
   /** Test seam: awaited before each clips folder of a library's startup walk is listed, so a test can hold the walk open. */
   recoveryBeforeList?: (dir: string) => void | Promise<void>;
+  /** Test seam (5b.2, S5.WB2c): awaited before each batch summary is written; what it throws is what the write threw. */
+  batchSummaryBeforeWrite?: (file: ClipBatchFile) => void | Promise<void>;
   log: (line: string) => void;
   // ----- S5.V4c's members (the export commits like a render): declared and wired here, read by the export job -----
   /** The export folder, checked now (as a render's save checks it). */
@@ -294,7 +296,7 @@ export class ClipService {
     this.#boldClips = deps.boldClips ?? BOLD_CLIPS;
     const copies = deps.media === undefined ? null : new ClipCopies({ media: deps.media, ...(deps.drafts === undefined ? {} : { drafts: deps.drafts }), log: deps.log });
     this.#copies = copies;
-    this.#summaries = new BatchSummaryStore({ log: deps.log });
+    this.#summaries = new BatchSummaryStore({ log: deps.log, ...(deps.batchSummaryBeforeWrite === undefined ? {} : { beforeWrite: deps.batchSummaryBeforeWrite }) });
     this.holds = createClipHolds({ now: deps.clock, ...(deps.holdTimers === undefined ? {} : { timers: deps.holdTimers }), onChange: () => deps.emitMoney() });
     // A job on a clip (a download retry, an export) holds the clip against its other commands and the library against a switch, until it ends.
     const host = {
