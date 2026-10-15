@@ -83,8 +83,8 @@ export interface MotionCalls {
     toggle(): void;
   };
   readonly news: { readonly polite: News; readonly alert: News };
-  /** Says `text` in a live region; `after` adds it to what that region said last (one result, read whole). */
-  announce(where: "polite" | "alert", text: string, after?: boolean): void;
+  /** Says `text` in a live region (again, if it said the same last). */
+  announce(where: "polite" | "alert", text: string): void;
   startSuggest(): void;
   startTranslate(): void;
 }
@@ -111,8 +111,7 @@ export function useMotionCalls({ avatarId, photoId, view, offered, relist, revea
   const [ideaOutcome, setIdeaOutcome] = useState<IdeaOutcome | null>(null);
   const [focusField, setFocusField] = useState(0);
   const [news, setNews] = useState<MotionCalls["news"]>({ polite: { text: "", seq: 0 }, alert: { text: "", seq: 0 } });
-  const announce = (where: "polite" | "alert", text: string, after = false): void =>
-    setNews((now) => ({ ...now, [where]: { text: after && now[where].text !== "" ? `${now[where].text} ${text}` : text, seq: now[where].seq + 1 } }));
+  const announce = (where: "polite" | "alert", text: string): void => setNews((now) => ({ ...now, [where]: { text, seq: now[where].seq + 1 } }));
 
   // The price follows the photo and the text model the call is priced with (the estimate reads the model's price; the idea's text never moves it).
   const priceKey = offered && view.settings !== null ? `${avatarId}|${photoId}|${view.settings.textModel}` : null;
