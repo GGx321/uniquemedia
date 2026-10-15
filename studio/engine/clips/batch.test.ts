@@ -575,11 +575,12 @@ describe("ClipBatch: a 429 at the submit (L11)", () => {
 
     expect(announced).toHaveLength(1);
     expect(seen).toHaveLength(1);
-    expect(seen[0]).toMatchObject({ phase: "queued", waitReason: "rate-limit", batchIndex: 1, batchSize: 2 });
+    // It waits for its turn at the tail (S5.WB2c): the pause is told only when its own turn comes inside it.
+    expect(seen[0]).toMatchObject({ phase: "queued", waitReason: "turn", batchIndex: 1, batchSize: 2 });
     expect(JobState.safeParse(seen[0]).success).toBe(true);
   });
 
-  test("announces the requeued job as queued before it runs, and the announcement parses", async () => {
+  test("announces the requeued job as queued for its turn before it runs, and the announcement parses; its own turn, inside the pause, then tells the pause", async () => {
     const w = newWorld();
     w.script = (run, world) => closeAs(world, run, run.member.index === 1 && !run.member.retried ? rateLimited : COMPLETED);
     await build(w, 1).run();
@@ -587,7 +588,22 @@ describe("ClipBatch: a 429 at the submit (L11)", () => {
     const queued = w.events.filter((e) => e.type === "job.progress" && e.payload.kind === "clip" && e.payload.phase === "queued" && e.payload.jobId !== ids(1)[0]);
     expect(queued.length).toBeGreaterThan(0);
     expect(JobProgress.safeParse(queued[0]?.payload).success).toBe(true);
-    expect(queued[0]?.payload).toMatchObject({ batchIndex: 1, batchSize: 1, waitReason: "rate-limit" });
+    expect(queued[0]?.payload).toMatchObject({ batchIndex: 1, batchSize: 1, waitReason: "turn" });
+    expect(queued.map((e) => (e.type === "job.progress" && e.payload.kind === "clip" ? e.payload.waitReason : null))).toEqual(["turn", "rate-limit"]);
+  });
+
+  test("a requeued member waits for its turn at the tail: the pause is told by the member whose turn falls inside it, not by the requeued one whose turn comes after it", async () => {
+    const w = newWorld();
+    w.script = (run, world) => closeAs(world, run, run.member.index === 2 && !run.member.retried ? rateLimited : COMPLETED);
+    await build(w, 3).run();
+
+    const reasonsOf = (jobId: string): (string | undefined)[] => w.events.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "clip" && e.payload.jobId === jobId && e.payload.phase === "queued" ? [e.payload.waitReason] : []));
+    const retry = w.runs[3] ?? "";
+    // Member 3's turn comes at once after the 429: it waits out the pause, and says so (its first `turn` is the service's announcement at create, which this world does not make).
+    expect(reasonsOf(ids(3)[2] ?? "")).toEqual(["rate-limit"]);
+    // The requeued member waits for its turn behind member 3, which has outlasted the pause: it never says `rate-limit`.
+    expect(reasonsOf(retry)).toEqual(["turn"]);
+    expectClean(w);
   });
 
   test("gives the requeued member its own cap and no month hold; the first attempt's cap is cleared", async () => {

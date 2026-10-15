@@ -1354,7 +1354,8 @@ export class MockClips {
         const job = this.#newJob(avatarId, "create", "queued");
         job.facts = first.facts === undefined ? undefined : { ...first.facts };
         job.batch = { batchId, batchIndex: member.index, batchSize: size };
-        this.#progress(job, { phase: "queued", waitReason: "rate-limit" });
+        // It waits for its turn at the tail (engine/clips/batch.ts, S5.WB2c): the pause is told only if its own turn comes inside it.
+        this.#progress(job, { phase: "queued", waitReason: "turn" });
         this.#caps.set(job.clipId, member.share);
         const next: BatchMember<MemberPayload> = { ...member, jobId: job.jobId, clipId: job.clipId, held: false, retried: true, state: "queued", wake: null };
         job.member = { batch: first.member?.batch ?? this.#absent(member.jobId), ref: next };

@@ -20,8 +20,8 @@ import type { ClipTimings } from "./timings";
 //              its share; (3) the 429 pause and the wait for the money to be alone (`clipAlone`, bounded by `aloneWaitMs`); then 5b.1's clip job runs, verbatim, through `ports.runMember`.
 //   stops      a price above the share, a price that cannot be read, a ledger that refused or halted, a member whose money is uncertain: every member still queued is cancelled for free with the matching
 //              detail, its hold released and its cap cleared. Nothing queued ever holds a reserve.
-//   a 429      a member refused at its submit is requeued once, at the tail, as a new job under a new clip id (the 429'd clip keeps its free `rate-limited` record). No member is submitted for
-//              `rateLimitPauseMs` after any 429.
+//   a 429      a member refused at its submit is requeued once, at the tail, as a new job under a new clip id (the 429'd clip keeps its free `rate-limited` record), waiting for its `turn`. No member is
+//              submitted for `rateLimitPauseMs` after any 429; the member whose turn falls inside the pause is the one that says it waits out the pause (`rate-limit`).
 //   the end    when nothing is queued and the last member's money is closed the unit goes back (`ports.finished`). A member's download and save hold the service's work count, not the unit.
 //
 // The batch never claims the avatar. It never writes the ledger itself: a member's reserves are its own job's.
@@ -351,7 +351,8 @@ export class ClipBatch {
         avatarId: this.avatarId,
         clipId,
         facts: { photoId: member.photoId, request: member.request, motion: { source: member.motion.source, label: member.motion.label }, acceptedWorstMicros: member.share },
-        batch: { batchId: this.id, batchIndex: member.index, batchSize: this.#size, waitReason: "rate-limit" },
+        // It waits for its turn at the tail (S5.WB2c): the pause after the 429 is told only if its own turn comes inside it (`#waitForTurn`), by then usually long over.
+        batch: { batchId: this.id, batchIndex: member.index, batchSize: this.#size, waitReason: "turn" },
       },
       "queued",
     );

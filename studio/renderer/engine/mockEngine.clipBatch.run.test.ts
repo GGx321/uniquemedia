@@ -412,16 +412,29 @@ describe("a 429 at the submit (L11)", () => {
     stepUntil(m, () => m.engine.peekClips().unit === null, "the end of the batch");
   });
 
-  test("a job with its place exists before the first member's job ends, and tells it waits out the pause (`rate-limit`)", async () => {
+  test("a job with its place exists before the first member's job ends, and tells it waits for its turn (`turn`); its own turn, inside the pause, then tells the pause (`rate-limit`)", async () => {
     const m = makeBatchMock(1);
     script(m, ["rate-limited", "ok"]);
     const { jobIds } = await startBatch(m, m.photoIds);
     stepUntil(m, () => endOf(m.events, jobIds[0] ?? "") !== undefined, "the first member's end");
     const doneAt = m.events.findIndex((e) => e.type === "job.done" && e.payload.jobId === jobIds[0]);
-    const queuedAt = m.events.findIndex((e) => e.type === "job.progress" && e.payload.kind === "clip" && e.payload.phase === "queued" && e.payload.batchIndex === 1 && e.payload.jobId !== jobIds[0] && e.payload.waitReason === "rate-limit");
+    const queuedAt = m.events.findIndex((e) => e.type === "job.progress" && e.payload.kind === "clip" && e.payload.phase === "queued" && e.payload.batchIndex === 1 && e.payload.jobId !== jobIds[0] && e.payload.waitReason === "turn");
     expect(queuedAt).toBeGreaterThan(-1);
     expect(queuedAt).toBeLessThan(doneAt);
     stepUntil(m, () => m.engine.peekClips().unit === null, "the end of the batch");
+    const retry = m.events.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "clip" && e.payload.batchIndex === 1 && e.payload.jobId !== jobIds[0] && e.payload.phase === "queued" ? [e.payload.waitReason] : []));
+    expect(retry).toEqual(["turn", "rate-limit"]);
+  });
+
+  test("a requeued member waits for its turn at the tail: the pause is told by the member whose turn falls inside it, not by the requeued one whose turn comes after it", async () => {
+    const m = makeBatchMock(3);
+    script(m, ["ok", "rate-limited", "ok", "ok"]);
+    const { jobIds } = await startBatch(m, m.photoIds);
+    stepUntil(m, () => m.engine.peekClips().unit === null, "the end of the batch");
+    const reasonsOf = (match: (jobId: string) => boolean, index: number): (string | undefined)[] =>
+      m.events.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "clip" && e.payload.batchIndex === index && match(e.payload.jobId) && e.payload.phase === "queued" ? [e.payload.waitReason] : []));
+    expect(reasonsOf((id) => id === jobIds[2], 3)).toEqual(["turn", "rate-limit"]);
+    expect(reasonsOf((id) => !jobIds.includes(id), 2)).toEqual(["turn"]);
   });
 
   test("a second 429 for the same photo is final: two POSTs for it, and the batch ends", async () => {

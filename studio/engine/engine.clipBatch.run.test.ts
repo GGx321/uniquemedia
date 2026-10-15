@@ -456,10 +456,10 @@ describe("a 429 at the submit (L11)", () => {
     const { jobIds } = batchOf(await createBatch(engine, { avatarId, photoIds }));
     await jobEnd(engine, jobIds[0] ?? "");
 
-    // By the time the first member's job.done was announced, the retry's queued announcement is already in the event stream.
+    // By the time the first member's job.done was announced, the retry's queued announcement is already in the event stream: it waits for its turn (S5.WB2c), and its turn, inside the pause, then tells the pause.
     const events = engine.events();
     const doneAt = events.findIndex((e) => e.type === "job.done" && e.payload.result.kind === "clip" && e.payload.jobId === jobIds[0]);
-    const queuedAt = events.findIndex((e) => e.type === "job.progress" && e.payload.kind === "clip" && e.payload.phase === "queued" && e.payload.batchIndex === 1 && e.payload.jobId !== jobIds[0] && e.payload.waitReason === "rate-limit");
+    const queuedAt = events.findIndex((e) => e.type === "job.progress" && e.payload.kind === "clip" && e.payload.phase === "queued" && e.payload.batchIndex === 1 && e.payload.jobId !== jobIds[0] && e.payload.waitReason === "turn");
     expect(doneAt).toBeGreaterThan(-1);
     expect(queuedAt).toBeGreaterThan(-1);
     expect(queuedAt).toBeLessThan(doneAt);

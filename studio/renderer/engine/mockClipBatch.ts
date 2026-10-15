@@ -9,8 +9,8 @@ import type { BatchChange } from "../../shared/engine/clipBatchSummary";
 //              share; (3) the 429 pause and the wait for the money to be alone (`clipAlone`, the very function the engine reads, bounded by `aloneWaitMs`); (4) the key; then the member's clip runs, as a single clip does.
 //   stops      a price above the share, a price that cannot be read, a ledger that refused or halted, a member whose money is uncertain: every member still queued is cancelled for free with the matching detail, its
 //              hold released. Nothing queued ever holds a reserve.
-//   a 429      a member refused at its submit is requeued once, at the tail, as a new job under a new clip id (the 429'd clip keeps its free `rate-limited` record). No member is submitted for `rateLimitPauseMs`
-//              after any 429, and a cancel by the owner (`clips.cancelBatch`) is final: nothing is requeued after it.
+//   a 429      a member refused at its submit is requeued once, at the tail, as a new job under a new clip id (the 429'd clip keeps its free `rate-limited` record), waiting for its `turn`. No member is
+//              submitted for `rateLimitPauseMs` after any 429 (the member whose turn falls inside the pause says `rate-limit`), and a cancel by the owner (`clips.cancelBatch`) is final: nothing is requeued after it.
 //   the end    when nothing is queued and the last member's money is closed the unit goes back (`ports.finished`).
 //
 // The mock's holds are in memory like the engine's (`Budget.tryHold`): a restart drops the batch (`drop`) and its members with it, and nothing is announced.
