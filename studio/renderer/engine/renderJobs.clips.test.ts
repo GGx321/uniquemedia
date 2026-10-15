@@ -81,6 +81,10 @@ describe("a batch's row in «Очередь»", () => {
     expect(rows([member(26, 10, { waitReason: "rate-limit" })])[0]).toMatchObject({ label: "Клип 10/10 · Nini", phase: "Пауза OpenRouter", quiet: true });
   });
 
+  test("the pause after a 429 holds the whole batch: a member waiting it out is the row, before one merely next in turn", () => {
+    expect(rows([member(31, 2, { waitReason: "turn" }), member(32, 1, { waitReason: "rate-limit" })])[0]).toMatchObject({ jobId: "job-00000032", label: "Клип 1/10 · Nini", phase: "Пауза OpenRouter", quiet: true });
+  });
+
   test("a late member is the batch's row, in the warning's tone (60f)", () => {
     expect(rows([member(27, 5, { phase: "late", model: "kling" })])[0]).toMatchObject({ label: "Клип 5/10 · Nini", phase: "Задерживается", warn: true });
   });

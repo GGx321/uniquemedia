@@ -135,10 +135,14 @@ export interface ClipQueueRow {
 export function clipQueueRows(jobs: readonly JobView[], avatars: readonly AvatarSummary[], ctx: { nowMs: number; seenAt: (jobId: string) => number }): ClipQueueRow[] {
   const names = new Map(avatars.map((a) => [a.avatarId, a.name]));
   const isClip = (job: JobView): boolean => job.kind === "clip" && job.clip !== undefined && isActive(job);
-  // The row each batch is drawn by: the member at work (any phase past `queued`), else the first one queued.
+  // The row each batch is drawn by: the member at work (any phase past `queued`), else one that waits for something (other money, the pause after a 429: the whole batch waits for it), else the first queued.
   const shown = new Map<string, string>();
-  for (const job of jobs) if (isClip(job) && job.clip?.batch !== undefined && job.clip.phase !== "queued" && !shown.has(job.clip.batch.batchId)) shown.set(job.clip.batch.batchId, job.jobId);
-  for (const job of jobs) if (isClip(job) && job.clip?.batch !== undefined && !shown.has(job.clip.batch.batchId)) shown.set(job.clip.batch.batchId, job.jobId);
+  const pass = (take: (job: JobView) => boolean): void => {
+    for (const job of jobs) if (isClip(job) && job.clip?.batch !== undefined && !shown.has(job.clip.batch.batchId) && take(job)) shown.set(job.clip.batch.batchId, job.jobId);
+  };
+  pass((job) => job.clip?.phase !== "queued");
+  pass((job) => job.clip?.waitReason === "alone" || job.clip?.waitReason === "rate-limit");
+  pass(() => true);
   return jobs.flatMap((job): ClipQueueRow[] => {
     const clip = job.clip;
     if (job.kind !== "clip" || clip === undefined || !isActive(job)) return [];
