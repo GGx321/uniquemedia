@@ -1170,7 +1170,8 @@ export class ClipService {
     if (!present()) return { kind: "gone" };
     let bytes: Uint8Array;
     try {
-      bytes = await library.readPhotoVerified(photoId);
+      // Bounded like the plan read (WB2d, L6): a read that never answers (a stalled volume) is an unreadable photo, free, and never holds the batch's turn.
+      bytes = await readPlanWithin(() => library.readPhotoVerified(photoId), CLIP_PLAN_READ_TIMEOUT_MS);
     } catch (error) {
       if (!present()) return { kind: "gone" };
       deps.log(`[clip] photo ${photoId} could not be read at its batch turn (${error instanceof Error ? error.name : typeof error})`);

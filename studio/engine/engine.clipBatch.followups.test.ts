@@ -7,7 +7,7 @@ import { BATCHES_DIR, batchSummaryPath, startBatchFile } from "./clips/batchSumm
 import { clipAttemptId, clipJournalPath } from "./clips/journal";
 import { journalOf, writeClipRecord } from "./clips/store";
 import { batchOf, createBatch, jobsOf, plainPhotos, seedBatchAvatar } from "./clips/testing/batchKit";
-import { clipNetwork, clipsDir, command, jobEnd, startClipEngine, until, type ClipEngine } from "./clips/testing/engineClipKit";
+import { clipNetwork, clipsDir, command, jobEnd, phasesOf, startClipEngine, until, type ClipEngine, type VideoScript } from "./clips/testing/engineClipKit";
 import { readyRecord } from "./clips/testing/recordsRig";
 import { SHORT_CLIP_TIMINGS, type ClipTimings } from "./clips/timings";
 import { NOW, ledgerLines, useEngineDir, writeLedger } from "./testing/engineHarness";
@@ -156,5 +156,29 @@ describe("L5: a member is never left `running` by a journal that nothing will re
 
     expect((await summaryOf(engine, avatarId, batchId)).members[0]?.outcome).toBe("ready");
     await engine.engine.shutdown();
+  });
+});
+
+const firstHeld = (n: number): VideoScript | undefined => (n === 1 ? { held: true } : undefined);
+
+describe("L6: a member's turn never hangs on its photo", () => {
+  test("a photo read that never answers ends its member `photo-unreadable`, free, and the batch goes on", async () => {
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(3));
+    const engine = await started({ net: clipNetwork({ klingBy: firstHeld }) });
+    const { jobIds } = batchOf(await createBatch(engine, { avatarId, photoIds }));
+    await until(() => phasesOf(engine, jobIds[0] ?? "").includes("rendering"), "member 1 rendering");
+    const library = engine.engine.library;
+    if (library === undefined || library === null) throw new Error("no library");
+    const read = library.readPhotoVerified.bind(library);
+    library.readPhotoVerified = (photoId: string) => (photoId === photoIds[1] ? new Promise<Uint8Array>(() => {}) : read(photoId));
+    engine.net.releaseNth("kling", 1);
+
+    const ends = await Promise.all(jobIds.map((id) => jobEnd(engine, id)));
+
+    expect(ends.map((end) => end.type)).toEqual(["job.done", "job.cancelled", "job.done"]);
+    expect(ends[1]?.type === "job.cancelled" && ends[1].payload.kind === "clip" ? ends[1].payload.detail : undefined).toBe("photo-unreadable");
+    expect(ledgerLines(dir()).some((line) => String(line.attemptId).startsWith(jobIds[1] ?? "-"))).toBe(false);
+    expect(engine.net.posts("kling")).toHaveLength(2);
+    expect(engine.engine.budget?.status().heldMicros).toBe(0);
   });
 });
