@@ -147,7 +147,7 @@ import { LLM_ONLY_CATEGORY_POOL } from "../engine/scenes/testing/llmOnlyFixture"
 import { BOLD_MODEL, boldRequestProblems, expectedBilledMicros, failedReasonsOf, ownerRequestProblems, type SentImageRequest } from "./boldSmoke";
 import { verifyClipExport } from "../engine/clips/exportVerify";
 import { VIDEO_TIERS } from "../engine/money/prices";
-import { clipPostProblems, exportedCopyProblems, refusedJobProblems } from "./clipSmoke";
+import { batchClipProblems, batchLedgerProblems, clipPostProblems, exportedCopyProblems, refusedJobProblems, type BatchLedgerLine } from "./clipSmoke";
 import {
   copySummaryProblems,
   fixtureClipArgv,
@@ -4324,6 +4324,139 @@ async function runClipMontageScenario(target: Target): Promise<void> {
   }
 }
 
+/**
+ * The longest a whole batch of three may take here: the first member is refused at the poll and made on Grok (about ten seconds on the E2E set), the other two follow one at a time, and a member waits
+ * for the money to be alone after a refused one (at most 6.5 s on the E2E set). A hang fails inside the step with its diagnosis, not at the step's 15 minutes.
+ */
+const CLIP_BATCH_TIMEOUT_MS = 180_000;
+
+/**
+ * «Оживить выбранные» in the packaged app (5b.2, S5.WB3): its own app instance, userData, library and mock. Three photos are drawn by an ordinary run; the mock is armed to refuse the first Kling job at the
+ * poll (free, proven by two readings of `/generation`), then a batch of the three is accepted at the sheet's sum. Asserted: the sheet takes all three and sums 3 x $0.85; the members are made one at a time
+ * (never two clip reserves open), the first by Grok behind a free Kling, and the POSTs are Kling, Grok, Kling, Kling, one per attempt id; every record tells its place in the batch; the ledger equals
+ * what the mock billed and nothing is open; a cancel of the finished batch finds nothing queued; no request reached a route the mock does not know.
+ *
+ * clipBatchSmoke.engine.test.ts plays the very same steps against the real engine on loopback, so the mock's routes and the checks are held without Electron. Needs Electron: CI only, never run locally.
+ */
+async function runClipBatchScenario(target: Target): Promise<void> {
+  const mock = await startMockOpenRouter({ descriptorText: AVATAR_DESCRIPTOR, distinctImages: true, faceFixture: true, clips: true });
+  const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-clip-batch-"));
+  const userData = join(tmp, "userData");
+  const libraryRoot = join(tmp, "clip-library");
+  const exportRoot = join(tmp, "export");
+  for (const dir of [userData, libraryRoot, exportRoot]) await mkdir(dir, { recursive: true });
+  await writeFile(join(exportRoot, EXPORT_MARKER_FILE), JSON.stringify({ schemaVersion: 1, rootId: CLIP_ROOT_ID, createdAt: new Date().toISOString() }));
+  await saveSettings(userData, { ...defaultSettings(userData), libraryPath: libraryRoot, exportPath: exportRoot });
+
+  const running = await launch(target, userData, [`--studio-openrouter-base-url=${mock.url}`, `--studio-pick-folder=${libraryRoot}`]);
+  try {
+    const { cdp } = running;
+    const keySet = await req(cdp, "settings.setApiKey", { key: SMOKE_KEY });
+    check("clip batch scenario: settings.setApiKey stores the fake key", field(keySet, "ok") === true, keySet);
+    const avatarId = await createActiveAvatarForRun(cdp, "Bea", "clip batch scenario");
+
+    // 1. Photos, from an ordinary run (a few more than the batch takes: the batch is the first three).
+    const runRequest = { avatarId, count: 4, categories: RUN_CATEGORIES, poses: RUN_POSES };
+    const runEstimate = await req(cdp, "runs.estimate", runRequest);
+    const run = await req(cdp, "runs.start", { ...runRequest, acceptedWorstMicros: field(runEstimate, "result", "estimate", "worstMicros") });
+    check("clip batch scenario: runs.start plans and launches the run that draws the photos", field(run, "ok") === true, run);
+    const runEnd = await waitFor("the run's job to end", () => endEventOf(cdp, field(run, "result", "jobId")), 120_000);
+    const drawn = field(runEnd, "payload", "result", "photoIds");
+    const photoIds = Array.isArray(drawn) ? drawn.filter((id): id is string => typeof id === "string").slice(0, 3) : [];
+    check("clip batch scenario: the run finished with at least three photos", field(runEnd, "type") === "job.done" && photoIds.length === 3, runEnd);
+
+    // 2. The sheet: all three can be made, and the batch's worst case is three clips with Grok behind each.
+    const sheet = await req(cdp, "clips.batchOptions", { avatarId, photoIds });
+    const items = field(sheet, "result", "items");
+    check(
+      "clip batch scenario: clips.batchOptions says all three photos can be brought to life, and the std 5 s worst case of the batch is $2.55 (three Kling reserves with Grok's behind each)",
+      field(sheet, "ok") === true && Array.isArray(items) && items.length === 3 && items.every((item) => field(item, "suitable") === true) && field(sheet, "result", "sums", "std5", "worst") === 3 * 850_000,
+      sheet,
+    );
+    const motionOf = (item: unknown): unknown => {
+      const motions = field(item, "motions");
+      return Array.isArray(motions) ? field(motions[0], "id") : undefined;
+    };
+
+    // 3. The batch: the first Kling job is refused at the poll, free, and Grok follows behind it.
+    mock.armVideoRefusal(VIDEO_TIERS.std.model);
+    const created = await req(cdp, "clips.createBatch", {
+      avatarId,
+      items: photoIds.map((photoId, i) => ({ photoId, motionId: motionOf(Array.isArray(items) ? items[i] : undefined) })),
+      quality: "std",
+      seconds: 5,
+      fallback: "auto",
+      acceptedWorstMicros: 3 * 850_000,
+    });
+    const batchId = field(created, "result", "batchId");
+    const jobIds = field(created, "result", "jobIds");
+    check("clip batch scenario: clips.createBatch starts the batch and answers one job per photo", field(created, "ok") === true && typeof batchId === "string" && Array.isArray(jobIds) && jobIds.length === 3, created);
+    const members = Array.isArray(jobIds) ? jobIds : [];
+    const ends: unknown[] = [];
+    for (const [i, jobId] of members.entries()) {
+      const end = await waitFor(`batch member ${i + 1}'s job to end`, () => endEventOf(cdp, jobId), CLIP_BATCH_TIMEOUT_MS, 500);
+      ends.push(end);
+    }
+    check("clip batch scenario: all three members end as job.done", ends.length === 3 && ends.every((end) => field(end, "type") === "job.done" && field(end, "payload", "result", "kind") === "clip"), ends);
+
+    // 4. One at a time: one POST per attempt id (Kling, Grok behind the refused Kling, Kling, Kling), never two clip reserves open, and the refused job asked for nothing but its polls and two 404 readings.
+    const ledgerText = await readFile(join(userData, "ledger.jsonl"), "utf8").catch(() => "");
+    const ledgerLines: BatchLedgerLine[] = ledgerText
+      .split("\n")
+      .flatMap((line) => {
+        try {
+          const parsed: unknown = JSON.parse(line);
+          const type = field(parsed, "type");
+          const attemptId = field(parsed, "attemptId");
+          return typeof type === "string" && typeof attemptId === "string" ? [{ type, attemptId }] : [];
+        } catch {
+          return [];
+        }
+      })
+      .filter((line) => /:video#[12]$/.test(line.attemptId));
+    const attemptIds = ledgerLines.filter((line) => line.type === "reserve").map((line) => line.attemptId);
+    const expectedAttempts = members.length === 3 ? [`${String(members[0])}:video#1`, `${String(members[0])}:video#2`, `${String(members[1])}:video#1`, `${String(members[2])}:video#1`] : [];
+    const postProblems = clipPostProblems(mock.videoRequests(), attemptIds, [VIDEO_TIERS.std.model, VIDEO_TIERS.grok.model, VIDEO_TIERS.std.model, VIDEO_TIERS.std.model]);
+    check("clip batch scenario: one POST /videos per attempt id (Kling, Grok, Kling, Kling), never resent", postProblems.length === 0, postProblems);
+    const ledgerProblems = batchLedgerProblems(ledgerLines, expectedAttempts);
+    check("clip batch scenario: the members were reserved in the pick order, Grok behind the first, and never two clip reserves were open at once", ledgerProblems.length === 0, { ledgerProblems, attemptIds });
+    const refusedProblems = refusedJobProblems(mock.videoCalls(), mock.videoRequests()[0]?.id ?? "");
+    check("clip batch scenario: the refused job was polled and proven free by two readings of /generation, each the API's 404, and its file was never fetched", refusedProblems.length === 0, refusedProblems);
+
+    // 5. Every record tells its place, and the first member was made by Grok behind a free Kling.
+    const listed = await req(cdp, "clips.list", { avatarId });
+    const clips = field(listed, "result", "clips");
+    const text = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined);
+    const count = (value: unknown): number | undefined => (typeof value === "number" ? value : undefined);
+    const told = Array.isArray(clips) ? clips.map((clip) => ({ clipId: String(field(clip, "clipId")), batchId: text(field(clip, "batchId")), batchIndex: count(field(clip, "batchIndex")), batchSize: count(field(clip, "batchSize")) })) : [];
+    const placeProblems = typeof batchId === "string" ? batchClipProblems(told, batchId, 3) : ["no batch id"];
+    check("clip batch scenario: every member's clip tells the batch, its place and the batch's size", placeProblems.length === 0, { placeProblems, clips });
+    const first = Array.isArray(clips) ? clips.find((clip) => field(clip, "clipId") === members[0]) : undefined;
+    check(
+      "clip batch scenario: the first member is ready, made by Grok behind a free Kling, and billed Grok's figure ($0.71)",
+      field(first, "status") === "ready" && field(first, "model") === "grok" && field(first, "fallback") === true && field(first, "cost", "micros") === 710_000 && field(first, "cost", "kind") === "billed",
+      first,
+    );
+
+    // 6. The money: the ledger is where the mock's bill is, and nothing is open.
+    const money = await req(cdp, "money.status");
+    check(
+      "clip batch scenario: money.status' ledger total equals the mock's charged costs ($1.55), no open reserves",
+      field(money, "ok") === true && field(money, "result", "spentMicros") === Math.round(mock.totalUsageUsd() * 1_000_000) && field(money, "result", "spentMicros") === 1_550_000 && field(money, "result", "unsettledMicros") === 0 && field(money, "result", "unsettledCount") === 0,
+      { money, billed: mock.totalUsageUsd() },
+    );
+
+    // 7. The batch is over: a cancel finds nothing queued, and no request left for a route the mock does not know.
+    const cancelled = await req(cdp, "clips.cancelBatch", { avatarId, batchId });
+    check("clip batch scenario: clips.cancelBatch after the batch ended cancels nothing", field(cancelled, "ok") === true && field(cancelled, "result", "cancelled") === 0, cancelled);
+    check("clip batch scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
+  } finally {
+    await quit(running);
+    await mock.stop();
+    await removeTemp(tmp);
+  }
+}
+
 function finish(): void {
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
@@ -4392,6 +4525,13 @@ async function main(): Promise<void> {
   // `--only clipmontage` runs the «Клипы в монтаже» scenario alone (5b.2, S5.WA3), for working on it.
   if (argValue("--only") === "clipmontage") {
     await runClipMontageScenario(target);
+    finish();
+    return;
+  }
+
+  // `--only clip-batch` runs the «Оживить выбранные» scenario alone (5b.2, S5.WB3), for working on it.
+  if (argValue("--only") === "clip-batch") {
+    await runClipBatchScenario(target);
     finish();
     return;
   }
@@ -4842,6 +4982,7 @@ async function main(): Promise<void> {
   await runBoldRouteScenario(target);
   await runClipScenario(target);
   await runClipMontageScenario(target);
+  await runClipBatchScenario(target);
   await runPackagedRenderScenario(target);
   await runAutopilotScenario(target);
   finish();

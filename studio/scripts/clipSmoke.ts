@@ -64,3 +64,65 @@ export function exportedCopyProblems(relPath: string | undefined, verdict: Expor
   if (!verdict.ok) problems.push(`the copy fails I5.58: ${verdict.reasons.map((r) => (r.path === undefined ? r.code : `${r.code} at ${r.path}`)).join("; ")}`);
   return problems;
 }
+
+// ---------- 5b.2, S5.WB3: a batch ----------
+
+/** A ledger line as the smoke reads it: the type and the attempt it belongs to. */
+export interface BatchLedgerLine {
+  type: string;
+  attemptId: string;
+}
+
+/**
+ * I5.61: a batch is one clip money unit at a time. The ledger's clip lines show it: the reserves are those of the attempts the batch made, in the order they ran (`attemptIds`), and no attempt was
+ * reserved while another was still open (a `settle` or a `release` closes one). Empty when it is right; otherwise one line per fault.
+ */
+export function batchLedgerProblems(lines: readonly BatchLedgerLine[], attemptIds: readonly string[]): string[] {
+  const problems: string[] = [];
+  const open = new Set<string>();
+  const reserved: string[] = [];
+  for (const line of lines) {
+    if (!CLIP_ATTEMPT.test(line.attemptId)) continue;
+    if (line.type === "reserve") {
+      const [other] = open;
+      if (other !== undefined) problems.push(`${line.attemptId} was reserved while ${other} was still open: a batch runs one clip money unit at a time`);
+      open.add(line.attemptId);
+      reserved.push(line.attemptId);
+    } else if (line.type === "settle" || line.type === "release") open.delete(line.attemptId);
+  }
+  if (reserved.join(", ") !== attemptIds.join(", ")) problems.push(`the reserves are ${reserved.join(", ")}, not ${attemptIds.join(", ")}`);
+  return problems;
+}
+
+/** A clip as `clips.list` tells it, as far as a batch's header reads it. */
+export interface BatchClip {
+  clipId: string;
+  batchId?: string | undefined;
+  batchIndex?: number | undefined;
+  batchSize?: number | undefined;
+}
+
+/**
+ * I5.63 (L9): every member's record tells the batch it was made in, its place and the batch's size, so the «Клипы» header survives the job registry. `clips` are the batch's members as `clips.list` tells
+ * them (one clip per member here: no 429 requeue). Empty when it is right; otherwise one line per fault.
+ */
+export function batchClipProblems(clips: readonly BatchClip[], batchId: string, size: number): string[] {
+  const problems: string[] = [];
+  const places: number[] = [];
+  for (const clip of clips) {
+    if (clip.batchId === undefined || clip.batchIndex === undefined || clip.batchSize === undefined) {
+      problems.push(`clip ${clip.clipId} tells no place in the batch`);
+      continue;
+    }
+    if (clip.batchId !== batchId) {
+      problems.push(`clip ${clip.clipId} belongs to batch ${clip.batchId}, not ${batchId}`);
+      continue;
+    }
+    if (clip.batchSize !== size) problems.push(`clip ${clip.clipId} says the batch has ${clip.batchSize} clips, not ${size}`);
+    places.push(clip.batchIndex);
+  }
+  const wanted = Array.from({ length: size }, (_, i) => i + 1);
+  const told = [...places].sort((a, b) => a - b);
+  if (told.join(", ") !== wanted.join(", ")) problems.push(`the places told are ${told.join(", ")}, not 1 to ${size}`);
+  return problems;
+}

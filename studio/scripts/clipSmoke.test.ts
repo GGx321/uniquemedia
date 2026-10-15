@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { clipPostProblems, exportedCopyProblems, refusedJobProblems, type VideoCall } from "./clipSmoke";
+import { batchClipProblems, batchLedgerProblems, clipPostProblems, exportedCopyProblems, refusedJobProblems, type BatchClip, type VideoCall } from "./clipSmoke";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 
 useNativeGlobals();
@@ -59,5 +59,52 @@ describe("exportedCopyProblems: «Сохранить в папку» saved a cle
     expect(exportedCopyProblems("Bea/2026-10-14_collage2_001.mp4", { ok: true, reasons: [] })).toEqual(["the copy's name Bea/2026-10-14_collage2_001.mp4 is not <avatar>/<date>_clip_<NNN>.mp4"]);
     expect(exportedCopyProblems(undefined, { ok: true, reasons: [] })).toEqual(["the export job named no copy"]);
     expect(exportedCopyProblems("Bea/2026-10-14_clip_001.mp4", { ok: false, reasons: [{ code: "METADATA_FORBIDDEN", path: "moov/udta" }] })).toEqual(["the copy fails I5.58: METADATA_FORBIDDEN at moov/udta"]);
+  });
+});
+
+// Stage 5, 5b.2, S5.WB3: what the packaged smoke checks of a batch of three, one member refused for free and made on Grok. The same functions are called by clipBatchSmoke.engine.test.ts against the real engine.
+
+describe("batchLedgerProblems: one reserve open at a time, the attempts in the batch's order", () => {
+  const ids = ["job-1:video#1", "job-2:video#1", "job-2:video#2", "job-3:video#1"];
+  const line = (type: string, attemptId: string) => ({ type, attemptId });
+  const clean = [
+    line("reserve", "job-1:video#1"),
+    line("settle", "job-1:video#1"),
+    line("reserve", "job-2:video#1"),
+    line("settle", "job-2:video#1"),
+    line("reserve", "job-2:video#2"),
+    line("settle", "job-2:video#2"),
+    line("reserve", "job-3:video#1"),
+    line("settle", "job-3:video#1"),
+  ];
+
+  test("is empty when the attempts were reserved in the expected order and each was settled before the next was reserved", () => {
+    expect(batchLedgerProblems(clean, ids)).toEqual([]);
+  });
+
+  test("names a reserve made while another was still open", () => {
+    const overlapped = [line("reserve", "job-1:video#1"), line("reserve", "job-2:video#1"), line("settle", "job-1:video#1"), line("settle", "job-2:video#1"), ...clean.slice(4)];
+    expect(batchLedgerProblems(overlapped, ids)).toEqual(["job-2:video#1 was reserved while job-1:video#1 was still open: a batch runs one clip money unit at a time"]);
+  });
+
+  test("names attempts reserved in another order, and a reserve that is missing", () => {
+    const swapped = [...clean.slice(4, 6), ...clean.slice(2, 4), ...clean.slice(0, 2), ...clean.slice(6)];
+    expect(batchLedgerProblems(swapped, ids)).toEqual(["the reserves are job-2:video#2, job-2:video#1, job-1:video#1, job-3:video#1, not job-1:video#1, job-2:video#1, job-2:video#2, job-3:video#1"]);
+    expect(batchLedgerProblems(clean.slice(0, 2), ids)).toEqual(["the reserves are job-1:video#1, not job-1:video#1, job-2:video#1, job-2:video#2, job-3:video#1"]);
+  });
+});
+
+describe("batchClipProblems: every member of the batch tells its place", () => {
+  const member = (clipId: string, batchIndex: number): BatchClip => ({ clipId, batchId: "batch-1", batchIndex, batchSize: 3 });
+
+  test("is empty when the clips tell one batch, the places 1 to 3 once each, and its size", () => {
+    expect(batchClipProblems([member("c3", 3), member("c1", 1), member("c2", 2)], "batch-1", 3)).toEqual([]);
+  });
+
+  test("names a clip with no place, another batch's clip, a place told twice, and a wrong size", () => {
+    expect(batchClipProblems([member("c1", 1), { clipId: "c2" }, member("c3", 3)], "batch-1", 3)).toEqual(["clip c2 tells no place in the batch", "the places told are 1, 3, not 1 to 3"]);
+    expect(batchClipProblems([member("c1", 1), { ...member("c2", 2), batchId: "batch-9" }, member("c3", 3)], "batch-1", 3)).toEqual(["clip c2 belongs to batch batch-9, not batch-1", "the places told are 1, 3, not 1 to 3"]);
+    expect(batchClipProblems([member("c1", 1), member("c2", 1), member("c3", 3)], "batch-1", 3)).toEqual(["the places told are 1, 1, 3, not 1 to 3"]);
+    expect(batchClipProblems([member("c1", 1), { ...member("c2", 2), batchSize: 4 }, member("c3", 3)], "batch-1", 3)).toEqual(["clip c2 says the batch has 4 clips, not 3"]);
   });
 });
