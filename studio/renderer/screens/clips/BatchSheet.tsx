@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { PRICE_SCOPES_RU, type ClipBatchOptions, type ClipMotionId, type ClipQuality, type ClipReason, type ClipSeconds, type EngineError, type PhotoSummary } from "../../../shared/engine";
+import { PRICE_SCOPES_RU, type ClipBatchOptions, type ClipMotionChoice, type ClipMotionId, type ClipQuality, type ClipReason, type ClipSeconds, type EngineError, type PhotoSummary } from "../../../shared/engine";
 import { useEngine, useEngineView } from "../../engine/react";
+import { motionCallRunning } from "../../engine/store";
 import { errorText } from "../../lib/errors";
 import { nbDash } from "../../lib/format";
 import { useNavigate } from "../../navigation";
@@ -16,11 +17,16 @@ import { AnimateWhy, useShowBatchClips } from "./AnimateButton";
 import { batchRowNote, batchSheetView, itemRefusal, itemRefusedAlert, type BatchSheetView } from "./batchModel";
 import { upUsd } from "./clipModel";
 import { AUTO_NOTE, LENGTHS, NO_FALLBACK_NOTE, PRO_NOTE, QUALITIES } from "./ClipSheet";
+import { batchTagOf, GROUP_OWN, GROUP_VISION, MOTION_BUSY } from "./motionModel";
+import { MotionGuard, MotionNews, QuietNotice, type News } from "./MotionSuggest";
 
 // 5b.2, S5.WB4: the sheet «Оживить N фото» (mockups 59, 59a, 59b, 59c and #item-refused, #after-click; plan s5b2 §5.2.1; README §S5.WBD decisions 4–6, 13–14). Nothing is paid without it: the picked photos
 // in turn order, each with its motion (the engine's list for that photo), the options for the whole batch, and the engine's sums (`clips.batchOptions`, free). «Оживить N» sends exactly the engine's worst for the
 // option on show as the accepted worst — the SUM of the members' worst cases (I5.62). A refusal after the click is said ONCE, as an alert, and the focus goes to «Отмена» so Enter never confirms a new sum:
 // PRICE_CHANGED and BUDGET_EXCEEDED ask the engine again; a refused item (VALIDATION at `["items", i]`) is struck with its own reason and the sum is asked again without it.
+// 5b.2 part C (S5.WC5; mockups 59d, 59e): a row's list holds the photo's stored suggestions and own ideas too (groups «Предложено» and «Свои идеи»), and the chosen one shows its mark and its English under
+// the photo (I5.67: seen before any video money). The batch sheet makes no paid part C call. While a part C call runs «Оживить N» waits beside the guard; a click the engine refused `motion-busy` (a call
+// this window did not know of) says so once, the focus on «Отмена», and «Оживить N» stays as it was (59e).
 
 const QUEUE_NOTE = "Клипы снимаются по очереди и появятся во вкладке «Клипы».";
 
@@ -54,10 +60,14 @@ type After =
   | { readonly kind: "price"; readonly way: "main" | "alone" }
   | { readonly kind: "budget"; readonly way: "main" | "alone" }
   | { readonly kind: "item"; readonly text: string }
-  | { readonly kind: "unpriced" };
+  | { readonly kind: "unpriced" }
+  | { readonly kind: "motion-busy" };
 
 /** S5.WB4c: the short status after a click the engine refused because the video prices did not read, when asking again read them. */
 const UNPRICED_AGAIN = "Цены видео не прочитались при отправке — запросили их снова. Подтвердите ещё раз.";
+
+/** The batch sheet says nothing politely of part C: its polite region stays empty. */
+const QUIET: News = { text: "", seq: 0 };
 
 export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }: BatchSheetProps) {
   const { client, store } = useEngine();
@@ -85,6 +95,8 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
   const [error, setError] = useState<EngineError | null>(null);
   /** The focus goes to «Отмена» once the answer that needs a new click is on show. */
   const [toCancel, setToCancel] = useState(0);
+  /** 59e: what the sheet's live region says (in the page from the start): the click's `motion-busy`, said once. */
+  const [news, setNews] = useState<News>({ text: "", seq: 0 });
 
   useEffect(() => {
     if (askedKey === "") return;
@@ -113,7 +125,9 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
   // The same words as under «Оживить» (`AnimateWhy`): one wording for a missing key, «Нужен ключ OpenRouter — Настройки.» with its link (S5.WB4c).
   const block = animateBlock(view, view.avatars.find((a) => a.avatarId === avatarId)?.status !== "archived", avatarId);
   const showBatchClips = useShowBatchClips();
-  const waiting = options.status === "loading" || refreshing || busy !== null || block !== null;
+  // r2.1 N10: a part C call runs (the window's store, any avatar): the engine would refuse the batch `motion-busy`, so «Оживить N» waits beside the guard.
+  const motionRunning = motionCallRunning(view);
+  const waiting = options.status === "loading" || refreshing || busy !== null || block !== null || motionRunning;
   const itemOf = (photoId: string) => ready?.options.items.find((item) => item.photoId === photoId);
   const motionOf = (photoId: string): ClipMotionId | null => {
     const item = itemOf(photoId);
@@ -162,6 +176,10 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
       setAfter(code === "PRICE_UNAVAILABLE" ? { kind: "unpriced" } : { kind: code === "PRICE_CHANGED" ? "price" : "budget", way });
       setOptions((now) => (now.status === "ready" ? { ...now, refreshing: true } : now));
       setAgain((n) => n + 1);
+    } else if (code === "IN_FLIGHT" && reply.error.clipReason === "motion-busy") {
+      // 59e: nothing was held or priced; once the call ends the same click goes through.
+      setAfter({ kind: "motion-busy" });
+      setNews((now) => ({ text: MOTION_BUSY, seq: now.seq + 1 }));
     } else if (item !== null) {
       // 59 #item-refused: the row is struck with its OWN reason, and the sum is asked again without it.
       const label = picks.find((p) => p.photoId === item.photoId)?.label ?? "Фото";
@@ -185,25 +203,30 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
   const budgetShown = sheet !== null && (budgetAlert || sheet.budgetNeed !== null);
   const budgetNeed = sheet === null ? "" : budgetAlert && shownAfter?.way === "alone" ? upUsd(sheet.worstNoFallbackMicros) : upUsd(sheet.main.worstMicros);
   const mainOff = sheet === null || !sheet.fits || waiting || sheet.count === 0;
+  const guardId = `${ids}-guard`;
   // S5.WB4c: a new price that leaves the way clicked over the month says so in the same alert — the month's sentence after the price's, and no «Подтвердите ещё раз» for a way that cannot be sent.
   const priceShort = shownAfter?.kind === "price" && sheet !== null && !sheet.fits && (shownAfter.way === "main" || sheet.noFallback === null);
   const priceNeed = sheet === null ? "" : shownAfter?.kind === "price" && shownAfter.way === "alone" ? upUsd(sheet.worstNoFallbackMicros) : sheet.worst;
   // One live region at a time (README decision 13): the click's answer, else the engine's error, else why paid work waits, else the month.
-  const notice: "price" | "item" | "unpriced" | "error" | "block" | "budget" | null =
+  const notice: "price" | "item" | "unpriced" | "motion" | "error" | "block" | "budget" | null =
     shownAfter?.kind === "price" && sheet !== null
       ? "price"
       : shownAfter?.kind === "item"
         ? "item"
         : shownAfter?.kind === "unpriced"
           ? "unpriced"
-          : error !== null
-            ? "error"
-            : block !== null && ready !== null
-              ? "block"
-              : budgetShown
-                ? "budget"
-                : null;
-  const mainWhy = unpriced ? whyId : notice === "block" || notice === "budget" || (notice === "price" && priceShort) ? noticeId : undefined;
+          : shownAfter?.kind === "motion-busy"
+            ? "motion"
+            : error !== null
+              ? "error"
+              : block !== null && ready !== null
+                ? "block"
+                : budgetShown
+                  ? "budget"
+                  : null;
+  const mainWhy = unpriced ? whyId : notice === "block" || notice === "budget" || (notice === "price" && priceShort) ? noticeId : motionRunning && sheet !== null ? guardId : undefined;
+  // 59d: the wider list column only when a row lists a suggestion or an idea (59 as approved otherwise).
+  const ownRows = ready?.options.items.some((item) => item.suitable && item.motions.some((m) => m.source === "vision" || m.source === "own")) === true;
   const monthShort = (need: string, room: string) => (
     <>
       Не хватает месячного бюджета: пакету нужно до <span className="mono">{need}</span>, осталось <span className="mono">{room}</span>. Уберите часть фото или поднимите бюджет в{" "}
@@ -223,6 +246,8 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
         const struck = note?.struck === true;
         const motionId = struck || bare ? null : motionOf(pick.photoId);
         const choices = item?.suitable === true ? item.motions : [];
+        const chosen = choices.find((m) => m.id === motionId);
+        const tag = chosen === undefined ? null : batchTagOf(chosen);
         return (
           <li key={pick.photoId} className={struck ? "batch-row batch-row-off" : bare || motionId === null ? "batch-row batch-row-bare" : "batch-row"}>
             <span className="ph batch-thumb" aria-hidden="true">
@@ -231,10 +256,16 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
             <span className="batch-what">
               <span className="batch-label">{pick.label}</span>
               {note !== null && <span className={note.bold ? "batch-note batch-note-bold" : "batch-note"}>{nbDash(note.text)}</span>}
+              {chosen !== undefined && tag !== null && (
+                <span className="mc-ben">
+                  <span className={chosen.source === "own" ? "tag mc-tag mc-tag-own" : "tag mc-tag"}>{tag}</span>{" "}
+                  <span lang="en">{chosen.text}</span>
+                </span>
+              )}
             </span>
             {motionId !== null && (
               <select
-                className="row-select batch-motion"
+                className="row-select batch-motion mc-bsel"
                 aria-label={`Движение · ${pick.label}`}
                 value={motionId}
                 onChange={(event) => {
@@ -242,11 +273,7 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
                   if (next !== undefined) choose(() => setMotions((now) => new Map(now).set(pick.photoId, next)));
                 }}
               >
-                {choices.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                  </option>
-                ))}
+                <MotionOptions choices={choices} />
               </select>
             )}
           </li>
@@ -259,7 +286,7 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
     <div className="cat-scrim cat-scrim-center clip-sheet-scrim" role="presentation">
       <section
         ref={dialogRef}
-        className="cat-dlg clip-sheet batch-sheet"
+        className={ownRows ? "cat-dlg clip-sheet batch-sheet mc-batch" : "cat-dlg clip-sheet batch-sheet"}
         role="dialog"
         aria-modal="true"
         aria-labelledby={`${ids}-title`}
@@ -356,6 +383,7 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
               {nbDash(UNPRICED_AGAIN)}
             </Notice>
           )}
+          {notice === "motion" && <QuietNotice tone="info">{MOTION_BUSY}</QuietNotice>}
           {notice === "error" && error !== null && <Notice tone="danger">{errorText(error)}</Notice>}
           {notice === "block" && block !== null && (
             <div id={noticeId}>
@@ -414,7 +442,14 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
               )}
             </button>
             {sheet?.noFallback != null && (
-              <button type="button" className="btn" aria-busy={busy === "alone" || undefined} aria-disabled={waiting || undefined} onClick={() => void send("alone")}>
+              <button
+                type="button"
+                className="btn"
+                aria-busy={busy === "alone" || undefined}
+                aria-disabled={waiting || undefined}
+                aria-describedby={motionRunning ? guardId : undefined}
+                onClick={() => void send("alone")}
+              >
                 {busy === "alone" && <Spin />}
                 Оживить без запасной модели · <span className="mono">{sheet.noFallback.label}</span>
               </button>
@@ -422,11 +457,34 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
             <button ref={cancelRef} type="button" className="btn" onClick={onClose}>
               Отмена
             </button>
+            <MotionGuard id={guardId} busy={motionRunning && sheet !== null} />
           </div>
+          <MotionNews news={{ polite: QUIET, alert: news }} />
         </footer>
         <FocusEdge edge="end" />
       </section>
     </div>,
     document.body,
+  );
+}
+
+/**
+ * 59d: a row's list — the scene and the code motions, then the photo's stored suggestions and own ideas in their groups, each by its label alone (≤ 40 characters, so the closed list never cuts one;
+ * which kind is chosen is said by the row's mark).
+ */
+function MotionOptions({ choices }: { choices: readonly ClipMotionChoice[] }) {
+  const option = (m: ClipMotionChoice) => (
+    <option key={m.id} value={m.id}>
+      {m.label}
+    </option>
+  );
+  const vision = choices.filter((m) => m.source === "vision");
+  const own = choices.filter((m) => m.source === "own");
+  return (
+    <>
+      {choices.filter((m) => m.source === "scene" || m.source === "code").map(option)}
+      {vision.length > 0 && <optgroup label={GROUP_VISION}>{vision.map(option)}</optgroup>}
+      {own.length > 0 && <optgroup label={GROUP_OWN}>{own.map(option)}</optgroup>}
+    </>
   );
 }

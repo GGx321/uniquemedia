@@ -315,6 +315,13 @@
 .mc-note-info > svg { color: var(--info); }
 .mc-note-warn > svg { color: var(--warn); }
 
+/* 59d: the batch rows list the stored motions — the list column wide enough for a 40-character label, the English of a chosen one under the label */
+.mc-batch .batch-row { grid-template-columns: 22px minmax(0, 1fr) 304px; }
+.mc-bsel { text-overflow: ellipsis; }
+.mc-batch .batch-rows { max-height: 330px; }
+.mc-ben { display: block; color: var(--faint); font-size: 11px; line-height: 1.35; }
+.mc-ben > .mc-tag { height: 16px; margin-right: 6px; padding: 0 6px; font-size: 10px; vertical-align: 1px; }
+.mc-tag-own { background: var(--panel-3); box-shadow: inset 0 0 0 1px var(--border-strong); color: var(--text-2); }
 
 @media (prefers-reduced-motion: reduce) {
   .clip-play, .clip-export-bar > span { transition: none; }
@@ -327,4 +334,5 @@
   /* stacked, the sheet's body scrolls as 38's does; the group is not the one scroll region then */
   .mc-sheet .mc-body { overflow-y: auto; }
   .mc-frame-col { flex-direction: row; width: auto; }
+  .mc-batch .batch-row { grid-template-columns: 22px minmax(0, 1fr) minmax(0, 220px); }
 }
