@@ -69,15 +69,22 @@ export const ClipAttemptModel = ClipModelChoice;
 export type ClipAttemptModel = z.infer<typeof ClipAttemptModel>;
 
 /**
- * A motion id on the wire: the photo's own scene motion (`scene`), a code motion (`g-<slug>`), and, since 5b.2 part C (S5.WC1), a motion the vision writer suggested (`v-<1..99>`) or one the owner's own idea made
- * (`o-<1..99>`). Never free text (I5.51, I5.67): the engine resolves a `v-` or `o-` id from the photo's motion store and checks it again.
+ * A motion id on the wire: the photo's own scene motion (`scene`), a code motion (`g-<slug>`), and, since 5b.2 part C (S5.WC1), a motion the vision writer suggested (`v-<1..999>`) or one the owner's own idea made
+ * (`o-<1..999>`). Never free text (I5.51, I5.67): the engine resolves a `v-` or `o-` id from the photo's motion store and checks it again.
  */
 export const ClipMotionId = z.union([
   z.literal("scene"),
-  z.string().max(40).regex(/^g-[a-z0-9]+(?:-[a-z0-9]+)*$/, "must be `scene`, g-<slug>, v-<1..99> or o-<1..99>"),
-  z.string().regex(/^[vo]-(?:[1-9]|[1-9][0-9])$/, "must be `scene`, g-<slug>, v-<1..99> or o-<1..99>"),
+  z.string().max(40).regex(/^g-[a-z0-9]+(?:-[a-z0-9]+)*$/, "must be `scene`, g-<slug>, v-<1..999> or o-<1..999>"),
+  z.string().regex(/^[vo]-[1-9][0-9]{0,2}$/, "must be `scene`, g-<slug>, v-<1..999> or o-<1..999>"),
 ]);
 export type ClipMotionId = z.infer<typeof ClipMotionId>;
+
+/**
+ * The highest `v-<n>` / `o-<n>` number (review round 2, L2). Ids are NEVER reused while a photo's motion store lives (`MotionStoreFile.next` keeps `max issued + 1` per source, even after FIFO trimming), because
+ * a list the owner still has open must never resolve an `o-1` to a different text than the one he read (I5.67: the English is seen before any video money). Reusing the range after 99 was the alternative; 999 is
+ * unreachable in practice (hundreds of paid calls for one photo) and a source that has issued its last id refuses with `motions-full` instead of reusing one.
+ */
+export const MOTION_ID_MAX = 999;
 
 /** Where a motion comes from: the photo's scene, the code's bank, the vision writer's suggestions, or the owner's own idea (5b.2 part C). */
 export const CLIP_MOTION_SOURCES = ["scene", "code", "vision", "own"] as const;
@@ -101,8 +108,16 @@ export const CLIP_CHOICES_MAX = { scene: 1, code: 3, vision: 3, own: 2 } as cons
 /** Nine in all: 1 + 3 + 3 + 2. */
 export const CLIP_MOTIONS_MAX = CLIP_CHOICES_MAX.scene + CLIP_CHOICES_MAX.code + CLIP_CHOICES_MAX.vision + CLIP_CHOICES_MAX.own;
 
-/** What a model's or an owner's text must be to reach a video provider: printable ASCII, as every video request is (I5.67). */
-const PRINTABLE_ASCII = /^[\x20-\x7e]+$/;
+/**
+ * What a model's or an owner's text must be to reach a video provider (I5.67, review round 2, L8): the vocabulary of the shipped motions. The 271 bank motions and the 7 code motions use lowercase letters, a space and a
+ * comma only (`engine/clips/motionCharset.test.ts` proves every one passes this); digits, `.`, `'` and `-` are allowed on top, and capitals. Nothing that could be markup, a template or an instruction to the provider.
+ */
+export const MOTION_ENGLISH = /^[A-Za-z0-9 ,.'-]+$/;
+
+/** Whether a text a model or the owner's idea made is fit for a motion: at most `MOTION_TEXT_MAX` characters of `MOTION_ENGLISH`. */
+function modelTextFits(text: string): boolean {
+  return text.length <= MOTION_TEXT_MAX && MOTION_ENGLISH.test(text);
+}
 
 /**
  * One motion the sheet offers: the Russian label, the English text the prompt carries. The id's form belongs to the source (`scene`, `g-<slug>` code, `v-<n>` vision, `o-<n>` own). A text a model or the owner's
@@ -116,19 +131,41 @@ export const ClipMotionChoice = z
     text: z.string().min(1).max(120),
   })
   .refine((m) => clipMotionIdSource(m.id) === m.source, { message: "the form of the id belongs to its source: `scene`, g-<slug> (code), v-<n> (vision), o-<n> (own)", path: ["id"] })
-  .refine((m) => (m.source !== "vision" && m.source !== "own") || (m.text.length <= MOTION_TEXT_MAX && PRINTABLE_ASCII.test(m.text)), {
-    message: "a suggested or own text is at most 60 characters of printable ASCII",
+  .refine((m) => (m.source !== "vision" && m.source !== "own") || modelTextFits(m.text), {
+    message: "a suggested or own text is at most 60 characters of letters, digits, spaces and , . ' -",
     path: ["text"],
   });
 export type ClipMotionChoice = z.infer<typeof ClipMotionChoice>;
 
-/** The motion a clip was made with, as a record and a summary keep it. */
-export const ClipMotion = z.strictObject({
+const ClipMotionFields = z.strictObject({
   source: ClipMotionSource,
   label: z.string().min(1).max(MOTION_LABEL_MAX),
   text: z.string().min(1).max(120),
 });
+
+/** The motion a clip was made with, as a record, a journal line and a summary keep it. A vision or own text is held to the same 60 characters and charset as the choice it came from; code and scene keep their 120. */
+export const ClipMotion = ClipMotionFields.refine((m) => (m.source !== "vision" && m.source !== "own") || modelTextFits(m.text), {
+  message: "a suggested or own text is at most 60 characters of letters, digits, spaces and , . ' -",
+  path: ["text"],
+});
 export type ClipMotion = z.infer<typeof ClipMotion>;
+
+// ---------- the frame reading (5b.2 part C) ----------
+
+/**
+ * What the vision writer noticed about the frame, marks only: it never refuses, changes no price and no camera line (I5.68). It comes with a suggestion and is kept in the photo's motion store, so a reopened sheet
+ * shows it again (`ClipOptions.reading`, mockup 62d).
+ * - capture-differs: «Камера в кадре не такая, как в сцене».
+ * - second-phone: «В кадре виден второй телефон — он может остаться в клипе».
+ */
+export const CLIP_FRAME_NOTES = ["capture-differs", "second-phone"] as const;
+export const ClipFrameNote = z.enum(CLIP_FRAME_NOTES);
+export type ClipFrameNote = z.infer<typeof ClipFrameNote>;
+
+export const ClipFrameReading = z
+  .strictObject({ notes: z.array(ClipFrameNote).max(CLIP_FRAME_NOTES.length) })
+  .refine((r) => new Set(r.notes).size === r.notes.length, { message: "a note appears once", path: ["notes"] });
+export type ClipFrameReading = z.infer<typeof ClipFrameReading>;
 
 /** What the owner asked for. `fallback` is the sheet's choice: `auto` lets the engine's mode decide, `none` forbids a second model. */
 export const ClipRequest = z.strictObject({
@@ -294,6 +331,8 @@ export const ClipOptions = z.discriminatedUnion("suitable", [
        * Suggestions and ideas are the photo's stored ones, checked again by the engine at this call.
        */
       motions: z.array(ClipMotionChoice).min(1).max(CLIP_MOTIONS_MAX),
+      /** 5b.2 part C (review round 2, L5): the photo's last stored frame reading, so a reopened sheet shows its notes (mockup 62d). Absent when no suggestion was ever made for this photo's current file. */
+      reading: ClipFrameReading.optional(),
       prices: KlingPrices.extend({ grok5: Estimate, grok10: Estimate }),
       /** The engine's mode, or `none`: this photo never falls back («Смелая» under `kling-only`). */
       fallback: z.enum(["auto", "offer", "none"]),
@@ -551,7 +590,7 @@ export const CLIP_JOB_STEPS = 4;
 export const clipJobRef = { kind: z.literal("clip"), jobId: Id, avatarId: Id, clipId: Id };
 
 /** The motion a clip job shows on its tile: the source and the Russian label. The English prompt text is the engine's, never the window's. */
-export const ClipJobMotion = ClipMotion.pick({ source: true, label: true });
+export const ClipJobMotion = ClipMotionFields.pick({ source: true, label: true });
 export type ClipJobMotion = z.infer<typeof ClipJobMotion>;
 
 /**

@@ -17,7 +17,7 @@ const item = (n: number, source: "vision" | "own" = "vision") => ({
   model: "x-ai/grok-4.3",
   at: "2026-10-15T10:00:00.000Z",
 });
-const file = (over: Record<string, unknown> = {}) => ({ schemaVersion: 1, photoId: "photo-0001", photoSha256: SHA, items: [item(1), item(2, "own")], ...over });
+const file = (over: Record<string, unknown> = {}) => ({ schemaVersion: 1, photoId: "photo-0001", photoSha256: SHA, next: { vision: 2, own: 3 }, items: [item(1), item(2, "own")], ...over });
 
 describe("the motion store's place", () => {
   test("lives in `motions` beside `clips`, at schema version 1", () => {
@@ -54,8 +54,46 @@ describe("MotionStoreFile", () => {
   test("keeps at most twelve items", () => {
     expect(MOTION_STORE_MAX_ITEMS).toBe(12);
     const many = (n: number) => Array.from({ length: n }, (_, i) => item(i + 1, i % 2 === 0 ? "vision" : "own")).map((it, i) => ({ ...it, id: `${it.source === "vision" ? "v" : "o"}-${i + 1}` }));
-    expect(MotionStoreFile.safeParse(file({ items: many(12) })).success).toBe(true);
-    expect(MotionStoreFile.safeParse(file({ items: many(13) })).success).toBe(false);
+    const next = { vision: 100, own: 100 };
+    expect(MotionStoreFile.safeParse(file({ items: many(12), next })).success).toBe(true);
+    expect(MotionStoreFile.safeParse(file({ items: many(13), next })).success).toBe(false);
+  });
+
+  // L2 (review round 2): ids are never reused while the store lives. `next` is the next id number to issue per source: `max issued + 1`, kept even after FIFO trimming removed the item that held the
+  // highest id, so a stale list's `o-1` can never resolve to a different text. It resets only when the photo sha changes (the whole store is emptied then). At MOTION_ID_MAX + 1 a source is exhausted.
+  test("`next` is required: the next vision and the next own id number", () => {
+    const { next: _next, ...noNext } = file();
+    expect(MotionStoreFile.safeParse(noNext).success).toBe(false);
+    expect(MotionStoreFile.safeParse(file({ next: { vision: 1 } })).success).toBe(false);
+    expect(MotionStoreFile.safeParse(file({ next: { vision: 1, own: 1, code: 1 } })).success).toBe(false);
+  });
+
+  test("`next` is from 1 to 1000: 1000 means every id of the source was issued", () => {
+    expect(MotionStoreFile.safeParse(file({ items: [], next: { vision: 1, own: 1 } })).success).toBe(true);
+    expect(MotionStoreFile.safeParse(file({ items: [], next: { vision: 1000, own: 1000 } })).success).toBe(true);
+    expect(MotionStoreFile.safeParse(file({ items: [], next: { vision: 0, own: 1 } })).success).toBe(false);
+    expect(MotionStoreFile.safeParse(file({ items: [], next: { vision: 1, own: 1001 } })).success).toBe(false);
+    expect(MotionStoreFile.safeParse(file({ items: [], next: { vision: 1.5, own: 1 } })).success).toBe(false);
+  });
+
+  test("an item's id number is below `next` of its source: an id is never issued twice", () => {
+    expect(MotionStoreFile.safeParse(file({ items: [item(2)], next: { vision: 3, own: 1 } })).success).toBe(true);
+    expect(MotionStoreFile.safeParse(file({ items: [item(2)], next: { vision: 2, own: 1 } })).success).toBe(false);
+    expect(MotionStoreFile.safeParse(file({ items: [item(1, "own")], next: { vision: 9, own: 1 } })).success).toBe(false);
+  });
+
+  test("`next` may be far above the items left: trimming removed the older ones, their ids stay spent", () => {
+    expect(MotionStoreFile.safeParse(file({ items: [item(40), item(41)], next: { vision: 42, own: 17 } })).success).toBe(true);
+  });
+
+  test("an id up to 999 is storable", () => {
+    expect(MotionStoreFile.safeParse(file({ items: [item(999)], next: { vision: 1000, own: 1 } })).success).toBe(true);
+  });
+
+  // L8: the model is an OpenRouter model id, like every other model field of the contract.
+  test("`model` looks like vendor/model", () => {
+    for (const model of ["grok", "x-ai", "X-AI/Grok", "x-ai/ grok", "a b/c"]) expect(MotionStoreFile.safeParse(file({ items: [{ ...item(1), model }] })).success).toBe(false);
+    expect(MotionStoreFile.safeParse(file({ items: [{ ...item(1), model: "openai/gpt-5.1" }] })).success).toBe(true);
   });
 
   test("an item's id and source go together", () => {
@@ -80,6 +118,7 @@ describe("MotionStoreFile", () => {
 
   test("an item names its model and its time", () => {
     expect(MotionStoreFile.safeParse(file({ items: [{ ...item(1), model: "" }] })).success).toBe(false);
+    expect(MotionStoreFile.safeParse(file({ items: [{ ...item(1), model: "x".repeat(129) }] })).success).toBe(false);
     expect(MotionStoreFile.safeParse(file({ items: [{ ...item(1), at: "yesterday" }] })).success).toBe(false);
     const { model: _model, ...noModel } = item(1);
     expect(MotionStoreFile.safeParse(file({ items: [noModel] })).success).toBe(false);

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ClipMotionChoice, MOTION_LABEL_MAX } from "./clips";
+import { ClipFrameReading, ClipMotionChoice, MOTION_LABEL_MAX } from "./clips";
 import { Micros } from "./primitives";
 import { assertMicros } from "./usd";
 
@@ -51,15 +51,15 @@ export function motionCostShownMicros(costMicros: number): number {
 // ---------- the owner's idea ----------
 
 /**
- * The owner's idea as the window sends it: 1 to 300 characters, not blank, no control character (a newline too: the window replaces line breaks with spaces before it sends), no line or paragraph separator and
- * no broken surrogate. It reaches the translator as JSON data and is never stored or logged (I5.67).
+ * The owner's idea as the window sends it: 1 to 300 characters with at least one letter (so never blank), no control character (a newline too: the window replaces line breaks with spaces before it sends), no
+ * format character (zero-width space or joiner, bidi override, BOM, soft hyphen), no line or paragraph separator and no broken surrogate. It reaches the translator as JSON data and is never stored or logged (I5.67).
  */
 export const OwnIdeaText = z
   .string()
   .min(1)
   .max(OWN_IDEA_MAX)
-  .refine((text) => text.trim().length > 0, "an idea must not be blank")
-  .refine((text) => /^[^\p{Cc}\p{Cs}\p{Zl}\p{Zp}]*$/u.test(text), "an idea must not hold control characters or broken surrogates");
+  .refine((text) => /\p{L}/u.test(text), "an idea must hold at least one letter")
+  .refine((text) => /^[^\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]*$/u.test(text), "an idea must not hold control, format (zero-width, bidi) characters or broken surrogates");
 export type OwnIdeaText = z.infer<typeof OwnIdeaText>;
 
 const LABEL_ROOM = MOTION_LABEL_MAX - 1;
@@ -103,21 +103,7 @@ export function ownIdeaLabel(text: string): string {
   return cut === "" ? `${hardCut(flat, LABEL_ROOM)}…` : `${cut}…`;
 }
 
-// ---------- the frame reading ----------
-
-/**
- * What the vision writer noticed about the frame, marks only: it never refuses, changes no price and no camera line (I5.68).
- * - capture-differs: «Камера в кадре не такая, как в сцене».
- * - second-phone: «В кадре виден второй телефон — он может остаться в клипе».
- */
-export const CLIP_FRAME_NOTES = ["capture-differs", "second-phone"] as const;
-export const ClipFrameNote = z.enum(CLIP_FRAME_NOTES);
-export type ClipFrameNote = z.infer<typeof ClipFrameNote>;
-
-export const ClipFrameReading = z
-  .strictObject({ notes: z.array(ClipFrameNote).max(CLIP_FRAME_NOTES.length) })
-  .refine((r) => new Set(r.notes).size === r.notes.length, { message: "a note appears once", path: ["notes"] });
-export type ClipFrameReading = z.infer<typeof ClipFrameReading>;
+// `ClipFrameReading` lives in `clips.ts` (the suitable `ClipOptions` carries the stored reading, and clips.ts cannot import this module).
 
 // ---------- why an idea was refused ----------
 
@@ -165,7 +151,7 @@ export type ClipSuggestResult = z.infer<typeof ClipSuggestResult>;
  * What `clips.translateIdea` answers. Every result carries `costMicros`.
  * - ok: the new own item (`o-<n>`, label of at most 40 characters = `ownIdeaLabel`, English text of at most 60), stored under the photo; the window selects it.
  * - none: no usable answer (the model refused, or nothing could be read). Free (0) after a moderation 4xx, paid otherwise.
- * - rejected: the answer failed the checks after at most one repair; `problems` is non-empty, unique and in `MOTION_PROBLEMS` order, and the call is paid (the model answered).
+ * - rejected: the answer failed the checks after at most one repair; `problems` is non-empty, unique and in `MOTION_PROBLEMS` order, and the call is normally paid (the model answered). `costMicros` can still be 0, so the window decides «бесплатно» from `costMicros === 0` and never from the outcome.
  */
 export const ClipTranslateResult = z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("ok"), item: OwnMotion, costMicros: Micros }),

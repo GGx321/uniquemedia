@@ -306,6 +306,8 @@ export const CLIP_REASONS_RU = {
   "motion-busy": "Подождите: идёт подбор движения или перевод.",
   "suggest-busy": "Движения для этого фото уже подбираются — дождитесь ответа.",
   "idea-busy": "Идея для этого фото уже переводится — дождитесь ответа.",
+  // Review round 2 (L2): every id of the source was issued for this photo; ids are never reused.
+  "motions-full": "Для этого фото больше нельзя добавить движений — выберите другое фото.",
 } as const satisfies Record<ClipReason, string>;
 
 /** «клип / клипа / клипов» for a count: 1, 21, 31 ... take the singular, 2-4 (but not 12-14) the paucal, the rest the genitive plural. */

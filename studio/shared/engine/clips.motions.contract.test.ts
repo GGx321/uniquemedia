@@ -9,6 +9,7 @@ import {
   ClipOptions,
   ClipSuggestResult,
   ClipTranslateResult,
+  MOTION_ID_MAX,
   MOTION_LABEL_MAX,
   MOTION_MAX_ATTEMPTS,
   MOTION_MIN_SHOWN_MICROS,
@@ -61,11 +62,19 @@ const optionsWith = (motions: unknown[]) => ({ suitable: true, photoId: PHOTO, m
 
 describe("ClipMotionId v-<1..99> and o-<1..99>", () => {
   test("takes the vision and own forms from 1 to 99", () => {
-    for (const id of ["v-1", "v-9", "v-10", "v-99", "o-1", "o-42", "o-99"]) expect(ClipMotionId.safeParse(id).success).toBe(true);
+    for (const id of ["v-1", "v-9", "v-10", "v-99", "o-1", "o-42", "o-99", "v-100", "o-999"]) expect(ClipMotionId.safeParse(id).success).toBe(true);
   });
 
-  test("refuses 0, 100, a leading zero, a missing number and other letters", () => {
-    for (const id of ["v-0", "o-0", "v-100", "o-100", "v-01", "o-007", "v-", "o-", "v-1a", "V-1", "x-1", "v1", "v-1-2", "v--1"]) expect(ClipMotionId.safeParse(id).success).toBe(false);
+  // L2 (review round 2): ids are never reused while a store lives, so the range is 1..999 (a photo would reach 99 after thirty-odd suggestions); see MOTION_ID_MAX.
+  test("the range is 1 to 999", () => {
+    expect(MOTION_ID_MAX).toBe(999);
+    expect(ClipMotionId.safeParse("v-999").success).toBe(true);
+    expect(ClipMotionId.safeParse("v-1000").success).toBe(false);
+    expect(ClipMotionId.safeParse("o-1000").success).toBe(false);
+  });
+
+  test("refuses 0, 1000, a leading zero, a missing number and other letters", () => {
+    for (const id of ["v-0", "o-0", "v-1000", "o-1000", "v-01", "o-007", "v-", "o-", "v-1a", "V-1", "x-1", "v1", "v-1-2", "v--1"]) expect(ClipMotionId.safeParse(id).success).toBe(false);
   });
 
   test("keeps `scene` and `g-<slug>` as they were", () => {
@@ -104,6 +113,28 @@ describe("ClipMotionChoice with the sources vision and own", () => {
       expect(ClipMotionChoice.safeParse({ ...own(1), text }).success).toBe(false);
       expect(ClipMotionChoice.safeParse({ ...vision(1), text }).success).toBe(false);
     }
+  });
+
+  // L8 (review round 2): the set is narrowed to what the 271 bank motions and the 7 code motions use (letters, a space, a comma; checked in engine/clips/motionCharset.test.ts), plus digits and `.'-`.
+  test("a vision or own text uses letters, digits, spaces and , . ' - only", () => {
+    for (const text of ["she smiles, then looks away.", "she lifts her mother's cup", "she turns her head 20 degrees", "she slowly lifts her hips - and lowers them"]) {
+      expect(ClipMotionChoice.safeParse({ ...own(1), text }).success).toBe(true);
+    }
+    for (const text of ["she smiles!", "she smiles <b>", "she says \"hi\"", "she smiles; slowly", "she smiles (a lot)", "she waves {{x}}", "she smiles / waves", "she smiles ~ slowly", "she\\ smiles"]) {
+      expect(ClipMotionChoice.safeParse({ ...own(1), text }).success).toBe(false);
+      expect(ClipMotionChoice.safeParse({ ...vision(1), text }).success).toBe(false);
+    }
+  });
+
+  test("the motion a clip was made with holds a vision or own text to the same 60 characters and charset, and a code text to 120", () => {
+    const record = (source: string, text: string) => ClipMotion.safeParse({ source, label: "Движение", text }).success;
+    expect(record("own", "a".repeat(60))).toBe(true);
+    expect(record("own", "a".repeat(61))).toBe(false);
+    expect(record("vision", "a".repeat(61))).toBe(false);
+    expect(record("own", "she smiles!")).toBe(false);
+    expect(record("vision", "она улыбается")).toBe(false);
+    expect(record("code", "a".repeat(120))).toBe(true);
+    expect(record("scene", "she smiles! Свет")).toBe(true);
   });
 
   test("a label is at most 40 characters for the new sources too", () => {
@@ -165,6 +196,18 @@ describe("ClipOptions.motions up to nine, with a limit per source", () => {
 
   test("an empty list is still refused", () => {
     expect(ClipOptions.safeParse(optionsWith([])).success).toBe(false);
+  });
+
+  // L5 (review round 2): a reopened sheet shows the stored frame notes (mockup 62d).
+  test("a suitable photo may carry the stored frame reading", () => {
+    expect(ClipOptions.safeParse({ ...optionsWith([scene]), reading }).success).toBe(true);
+    expect(ClipOptions.safeParse({ ...optionsWith([scene]), reading: { notes: [] } }).success).toBe(true);
+    expect(ClipOptions.safeParse(optionsWith([scene])).success).toBe(true);
+    expect(ClipOptions.safeParse({ ...optionsWith([scene]), reading: { notes: ["other"] } }).success).toBe(false);
+  });
+
+  test("an unsuitable photo carries no reading", () => {
+    expect(ClipOptions.safeParse({ suitable: false, photoId: PHOTO, reason: "no-motion", reading }).success).toBe(false);
   });
 });
 
@@ -232,6 +275,16 @@ describe("the owner's idea text", () => {
 
   test("holds no control character: a newline, a tab, NUL, escape and DEL are refused", () => {
     for (const bad of ["a\nb", "a\r\nb", "a\tb", "a\u0000b", "a\u001bb", "a\u007fb", "a\u0085b"]) expect(ok(bad)).toBe(false);
+  });
+
+  // L7 (review round 2): an idea needs a letter and holds no format character (zero-width, bidi override).
+  test("needs at least one letter", () => {
+    for (const bad of ["123", "!!!", "...", "😀", "​", " 5 — 6 "]) expect(ok(bad)).toBe(false);
+    for (const good of ["ё", "a", "поворачивает 2 раза", "turn 1"]) expect(ok(good)).toBe(true);
+  });
+
+  test("refuses format characters: zero-width space, joiner, bidi override, BOM", () => {
+    for (const bad of ["a​b", "​", "a‍b", "abc‮def", "a⁦b", "﻿abc", "a­b"]) expect(ok(bad)).toBe(false);
   });
 
   test("takes spaces, punctuation, Cyrillic and a quote", () => {
@@ -437,6 +490,21 @@ describe("clipReason motion-busy, suggest-busy, idea-busy and clip-busy", () => 
       expect(EngineError.safeParse({ code: "IN_FLIGHT", clipReason }).success).toBe(true);
       for (const code of ["VALIDATION", "NOT_FOUND", "INTERNAL", "BUDGET_EXCEEDED", "PRICE_CHANGED"]) expect(EngineError.safeParse({ code, clipReason }).success).toBe(false);
     }
+  });
+
+  // L2 (review round 2): ids are never reused while a store lives, so a store that has issued its last id refuses the photo free instead of reusing one.
+  test("motions-full is a VALIDATION reason with the owner-facing text", () => {
+    expect(CLIP_REASONS as readonly string[]).toContain("motions-full");
+    expect(CLIP_IN_FLIGHT_REASONS as readonly string[]).not.toContain("motions-full");
+    expect(EngineError.safeParse({ code: "VALIDATION", clipReason: "motions-full" }).success).toBe(true);
+    expect(EngineError.safeParse({ code: "IN_FLIGHT", clipReason: "motions-full" }).success).toBe(false);
+    expect(CLIP_REASONS_RU["motions-full"]).toBe("Для этого фото больше нельзя добавить движений — выберите другое фото.");
+  });
+
+  // L6: a call on a «Смелая» frame while bold clips are off refuses free with the existing reason.
+  test("bold-off stays a VALIDATION reason with its existing text, for the part C calls too", () => {
+    expect(EngineError.safeParse({ code: "VALIDATION", clipReason: "bold-off" }).success).toBe(true);
+    expect(CLIP_REASONS_RU["bold-off"]).toBe("Кадры «Смелой» пока не оживляются.");
   });
 
   test("the texts are the owner's, word for word, with a final period", () => {

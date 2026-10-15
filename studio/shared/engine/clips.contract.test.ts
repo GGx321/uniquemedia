@@ -184,7 +184,7 @@ describe("the sleep classes (S4.7)", () => {
 });
 
 describe("EngineError.clipReason", () => {
-  const VALIDATION_REASONS = ["not-a-gallery-photo", "age-unverified", "photo-unreadable", "not-vertical", "bold-off", "no-motion", "unknown-motion", "grok-not-offered", "download-expired", "not-ready", "not-exported", "file-damaged"];
+  const VALIDATION_REASONS = ["not-a-gallery-photo", "age-unverified", "photo-unreadable", "not-vertical", "bold-off", "no-motion", "unknown-motion", "grok-not-offered", "download-expired", "not-ready", "not-exported", "file-damaged", "motions-full"];
   const IN_FLIGHT_REASONS = ["one-at-a-time", "job-running", "submitted", "in-use", "batch-running", "clip-busy", "motion-busy", "suggest-busy", "idea-busy"];
 
   test("the closed set is the fourteen of §5.2's table and the seven 5b.2 adds (file-damaged, in-use, batch-running, clip-busy, motion-busy, suggest-busy, idea-busy)", () => {
@@ -266,6 +266,7 @@ describe("CLIP_REASONS_RU: one text per reason, verbatim from §5.2", () => {
     "motion-busy": "Подождите: идёт подбор движения или перевод.",
     "suggest-busy": "Движения для этого фото уже подбираются — дождитесь ответа.",
     "idea-busy": "Идея для этого фото уже переводится — дождитесь ответа.",
+    "motions-full": "Для этого фото больше нельзя добавить движений — выберите другое фото.",
   };
 
   test("every reason has its text, word for word", () => {

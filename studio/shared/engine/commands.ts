@@ -5,7 +5,7 @@ import { AvatarDeletePreview, AvatarDeleteResult } from "./avatarDelete";
 import { AvatarBody } from "./body";
 import { CategoriesListResult, CategoryDescription, CategoryName, CategoryPoses, CategoryRef, CategorySummary, CustomCategoryId, MAX_RUN_CATEGORIES, SceneLevel, POOL_OUTFITS_MAX, POOL_PLACES_MAX, PoolText } from "./categories";
 import { ClipSuggestResult, ClipTranslateResult, OwnIdeaText } from "./clipMotions";
-import { ClipBatchItem,ClipBatchOptions, ClipModelChoice, ClipMotionId, ClipOptions, ClipQuality, ClipSeconds, ClipSummary, MAX_BATCH_CLIPS, MAX_LISTED_CLIPS, photoIdsUnique } from "./clips";
+import { ClipBatchItem, ClipBatchOptions, ClipModelChoice, ClipMotionId, ClipOptions, ClipQuality, ClipSeconds, ClipSummary, MAX_BATCH_CLIPS, MAX_LISTED_CLIPS, photoIdsUnique } from "./clips";
 import { nonEmpty, ProtocolVersion } from "./envelope";
 import { EngineError } from "./errors";
 import { EventMessage } from "./events";
@@ -463,7 +463,8 @@ const ENGINE_SPECS = [
   //    sends), and it exists nowhere but this payload and the engine's memory while the call runs (I5.67). The answer is `ok` (the new `o-<n>` item, which the window selects), `none`, or `rejected` with closed
   //    `MotionProblem`s in a fixed display order. An idea that takes clothing off is accepted ONLY on a frame of «Смелая»; elsewhere it is `takes-off`; the vision writer never suggests it.
   //  - Refused free, in this order: IN_FLIGHT (`clipReason` `clip-busy` while a clip or a batch holds the clip money unit, `suggest-busy` / `idea-busy` while a call for this photo runs), AUTH_INVALID, the ledger's
-  //    refusals, LIBRARY_UNAVAILABLE, NOT_FOUND, VALIDATION with `clipReason` (`not-a-gallery-photo`, `age-unverified`, `photo-unreadable`, `not-vertical`, `no-motion`), PRICE_UNAVAILABLE, PRICE_CHANGED, BUDGET_EXCEEDED.
+  //    refusals, LIBRARY_UNAVAILABLE, NOT_FOUND, VALIDATION with `clipReason` (`not-a-gallery-photo`, `age-unverified`, `photo-unreadable`, `not-vertical`, `bold-off` (a «Смелая» frame while bold clips are off), `no-motion`, `motions-full` (every id of the source was issued for this photo; ids are never reused)), PRICE_UNAVAILABLE, PRICE_CHANGED,
+  //    BUDGET_EXCEEDED.
   //    Money is the descriptor check's pattern without its avatar claim (I5.68): at most two attempts, the scope capped at the call's worst case, an unusable answer paid, a moderation 4xx free.
   //  - The guard, both ways (r2.1 N10; the engine binds): `clips.create` and `clips.createBatch` answer IN_FLIGHT `motion-busy` while ANY part C call runs (GLOBAL: any avatar, any photo), and these two calls
   //    answer `clip-busy` while any clip money unit is in flight.

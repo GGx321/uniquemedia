@@ -180,16 +180,17 @@ import { z } from "zod";
 //    character → `ok` { `item` an `o-<n>` motion, `costMicros` } | `none` { `costMicros` } | `rejected` { `problems` non-empty, unique, in the fixed display order `MOTION_PROBLEMS`, `costMicros` }). Every result carries `costMicros`: the window
 //    says «бесплатно» only when it is 0 (a mixed paid-then-moderation `none` shows «оплачено $X»), and a cost above 0 shows as at least $0.001 (`motionCostShownMicros`). Deadlines: the estimates `PRICE_FETCH_TIMEOUT_MS` + slack; the paid
 //    calls add the library's identity and `MOTION_MAX_ATTEMPTS` (2) attempts at their slowest.
-//  - `ClipMotionId` gains `v-<1..99>` and `o-<1..99>`; `ClipMotionChoice.source` and `ClipMotion.source` gain `vision` and `own`, and the form of an id belongs to its source (`clipMotionIdSource`); a vision or own text is at most 60 characters
-//    of printable ASCII. `ClipOptions.motions` is up to 9 (`CLIP_MOTIONS_MAX`) with a limit per source (`CLIP_CHOICES_MAX`: scene 1, code 3, vision 3, own 2), in the order scene, code, vision, own.
+//  - `ClipMotionId` gains `v-<1..999>` and `o-<1..999>` (ids are never reused while a photo's store lives: `MotionStoreFile.next`; a source that issued its last id refuses with `motions-full`); `ClipMotionChoice.source` and `ClipMotion.source` gain `vision` and `own`, and the form of an id belongs to its source (`clipMotionIdSource`); a vision or own text is at most 60 characters
+//    of letters, digits, spaces and `, . ' -` (the set the 271 bank and 7 code motions use), for `ClipMotion` (record, journal, summary) too. `ClipOptions` (suitable) also carries the optional stored `reading`. `ClipOptions.motions` is up to 9 (`CLIP_MOTIONS_MAX`) with a limit per source (`CLIP_CHOICES_MAX`: scene 1, code 3, vision 3, own 2), in the order scene, code, vision, own.
 //    `ClipFrameReading` (`notes`: `capture-differs`, `second-phone`; marks only) comes with the suggestion. `MotionProblem` (nine closed codes, `MOTION_PROBLEMS_RU` texts) comes with a rejection.
 //    The micros constants `MOTION_SUGGEST_*` and `MOTION_TRANSLATE_*` and the pure `ownIdeaLabel` (the owner's words cut by word to 40 characters with a «…»; the engine makes the label) live in `shared/engine/clipMotions.ts`.
-//  - `CLIP_REASONS` gain `motion-busy`, `suggest-busy` and `idea-busy` (IN_FLIGHT only) and the Russian text of `clip-busy` is the owner's final one. The guard is two-way and GLOBAL: `clips.create` and `clips.createBatch` answer
+//  - `CLIP_REASONS` gain `motion-busy`, `suggest-busy` and `idea-busy` (IN_FLIGHT only) and `motions-full` (VALIDATION) and the Russian text of `clip-busy` is the owner's final one. The guard is two-way and GLOBAL: `clips.create` and `clips.createBatch` answer
 //    `motion-busy` while ANY part C call runs (any avatar, any photo), and the two paid calls answer `clip-busy` while any clip money unit is in flight.
 //  - on disk: `avatars/<id>/motions/<photoId>.json` (`MOTIONS_DIR`, `MotionStoreFile`, `schemaVersion` 1, strict) is a NEW store that no 5b.1 build reads (it never looks in that folder). The clip record's `motion.source` is PERSISTED and widened:
 //    a 5b.1 build has a STRICT `ClipRecord` (`ClipMotion.source` is `scene` | `code` on 91adc7f0; `engine/clips/store.ts` reads a record that fails it as `invalid`), so it would list a clip made from a suggestion or an own idea as unreadable,
-//    and its journal parser skips a `requested` line it cannot parse. Everything else (the commands, results, `ClipFrameReading`, `MotionProblem`, the three reasons, the ids on the wire) is wire-only. Studio has no downgrade path;
-//    roll back only before the first clip is made from a suggestion or an own idea.
+//    and its journal parser skips a `requested` line it cannot parse. CONSEQUENCE for a clip in flight at the rollback (made from a suggestion or an own idea): on 5b.1 its recovery finds no `requested` line, so the file is never
+//    fetched and the reserve closes at its worst case only at the reconcile. Everything else (the commands, results, `ClipFrameReading`, `MotionProblem`, the four reasons, the ids on the wire) is wire-only. Studio has no downgrade path;
+//    roll back only before the first clip is made from a suggestion or an own idea, and never with one in flight.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 

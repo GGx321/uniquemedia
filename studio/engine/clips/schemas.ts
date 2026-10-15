@@ -13,10 +13,13 @@ import {
   ClipRequest,
   Id,
   MAX_BATCH_CLIPS,
+  MOTION_ENGLISH,
+  MOTION_ID_MAX,
   MOTION_LABEL_MAX,
   MOTION_STORE_MAX_ITEMS,
   MOTION_TEXT_MAX,
   Micros,
+  ModelId,
   Sha256Hex,
   clipBatchFieldsTogether,
   clipMotionIdSource,
@@ -175,9 +178,9 @@ const MotionStoreItem = z
     id: ClipMotionId,
     source: z.enum(["vision", "own"]),
     label: z.string().min(1).max(MOTION_LABEL_MAX),
-    text: z.string().min(1).max(MOTION_TEXT_MAX).regex(/^[\x20-\x7e]+$/, "must be printable ASCII"),
+    text: z.string().min(1).max(MOTION_TEXT_MAX).regex(MOTION_ENGLISH, "must be letters, digits, spaces and , . ' -"),
     /** The OpenRouter model that wrote it. */
-    model: z.string().min(1).max(100),
+    model: ModelId,
     at: At,
   })
   .refine((item) => clipMotionIdSource(item.id) === item.source, { message: "the form of the id belongs to its source: v-<n> (vision), o-<n> (own)", path: ["id"] });
@@ -191,8 +194,15 @@ export const MotionStoreFile = z
     schemaVersion: z.literal(MOTION_STORE_SCHEMA_VERSION),
     photoId: Id,
     photoSha256: Sha256Hex,
+    /**
+     * The next id number to issue, per source (review round 2, L2): `max issued + 1`, so an id is NEVER reused while the store lives, not even after FIFO trimming removed the item that held the highest one. A list
+     * the owner still has open then never resolves its `o-1` to a different text (I5.67). It resets only with the items, when the photo's sha256 changes. `MOTION_ID_MAX + 1` means the source issued its last id:
+     * the next call on this photo is refused free with `motions-full`.
+     */
+    next: z.strictObject({ vision: z.number().int().min(1).max(MOTION_ID_MAX + 1), own: z.number().int().min(1).max(MOTION_ID_MAX + 1) }),
     items: z.array(MotionStoreItem).max(MOTION_STORE_MAX_ITEMS),
     reading: ClipFrameReading.optional(),
   })
-  .refine((file) => new Set(file.items.map((item) => item.id)).size === file.items.length, { message: "an item id appears once", path: ["items"] });
+  .refine((file) => new Set(file.items.map((item) => item.id)).size === file.items.length, { message: "an item id appears once", path: ["items"] })
+  .refine((file) => file.items.every((item) => Number(item.id.slice(2)) < file.next[item.source]), { message: "an item's id number is below `next` of its source", path: ["next"] });
 export type MotionStoreFile = z.infer<typeof MotionStoreFile>;

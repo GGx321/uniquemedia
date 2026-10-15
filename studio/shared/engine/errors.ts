@@ -338,6 +338,8 @@ export type PortraitReason = z.infer<typeof PortraitReason>;
  * - in-use (5b.2, S5.WA1): `clips.delete` while a render holds the clip's montage copy; nothing is removed.
  * - batch-running (5b.2, S5.WB1): a batch holds the clip money unit, so `clips.create`, `clips.createBatch` and the single «Оживить» wait (I5.61). `one-at-a-time` stays for a single clip holding it.
  * - clip-busy (5b.2, S5.WB1; text by S5.WC1): a paid clip or batch holds the unit, so part C's paid calls (`clips.suggestMotions`, `clips.translateIdea`) wait (I5.68).
+ * - motions-full (5b.2, S5.WC1 round 2; VALIDATION, free): `clips.suggestMotions` / `clips.translateIdea` on a photo whose motion store has issued every `v-` (or `o-`) id up to MOTION_ID_MAX; ids are never reused, so
+ *   the call is refused before any spend instead of reusing one.
  * - motion-busy (5b.2, S5.WC1; the other direction of the same guard, r2.1 N10): a part C call runs, so `clips.create` and `clips.createBatch` wait. GLOBAL: while ANY part C call runs, for any avatar and any photo.
  * - suggest-busy / idea-busy (5b.2, S5.WC1): a `clips.suggestMotions` / `clips.translateIdea` for the same photo is already running (one call per photo at a time).
  *
@@ -356,6 +358,7 @@ export const CLIP_VALIDATION_REASONS = [
   "not-ready",
   "not-exported",
   "file-damaged",
+  "motions-full",
 ] as const;
 export const CLIP_IN_FLIGHT_REASONS = ["one-at-a-time", "job-running", "submitted", "in-use", "batch-running", "clip-busy", "motion-busy", "suggest-busy", "idea-busy"] as const;
 export const CLIP_REASONS = [...CLIP_VALIDATION_REASONS, ...CLIP_IN_FLIGHT_REASONS] as const;

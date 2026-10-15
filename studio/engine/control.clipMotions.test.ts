@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { COMMAND_DEADLINE_MS } from "./control";
+import { CLIP_PLAN_READ_TIMEOUT_MS, COMMAND_DEADLINE_MS } from "./control";
+import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
 import { LIVE_LIBRARY_IDENTITY_TIMEOUT_MS } from "./videos/timeouts";
@@ -11,14 +12,18 @@ useNativeGlobals();
 // The 30 s slack is the engine's own (control.ts keeps it private; the other deadline tests spell it out the same way).
 
 describe("COMMAND_DEADLINE_MS for the part C commands", () => {
-  const paid = PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + MOTION_MAX_ATTEMPTS * MAX_ATTEMPT_MS + 30_000;
+  // L3 (review round 2): both calls read the photo's run plan first (CLIP_PLAN_READ_TIMEOUT_MS); the vision call also reads the photo and downscales it to 1024 px, which budgets REFERENCE_TIMEOUT_MS as
+  // `avatars.checkDescriptor` does for its reference.
+  const translate = PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + CLIP_PLAN_READ_TIMEOUT_MS + MOTION_MAX_ATTEMPTS * MAX_ATTEMPT_MS + 30_000;
+  const suggest = translate + REFERENCE_TIMEOUT_MS;
 
-  test("clips.suggestMotions waits for a price load, the library's identity, two attempts at their slowest and the slack", () => {
-    expect(COMMAND_DEADLINE_MS["clips.suggestMotions"]).toBe(paid);
+  test("clips.translateIdea waits for a price load, the library's identity, the plan read, two attempts at their slowest and the slack", () => {
+    expect(COMMAND_DEADLINE_MS["clips.translateIdea"]).toBe(translate);
   });
 
-  test("clips.translateIdea waits the same", () => {
-    expect(COMMAND_DEADLINE_MS["clips.translateIdea"]).toBe(paid);
+  test("clips.suggestMotions waits the same plus the photo read and downscale", () => {
+    expect(COMMAND_DEADLINE_MS["clips.suggestMotions"]).toBe(suggest);
+    expect(COMMAND_DEADLINE_MS["clips.suggestMotions"] ?? 0).toBeGreaterThan(COMMAND_DEADLINE_MS["clips.translateIdea"] ?? Infinity);
   });
 
   test("the free estimates wait for a price load and the slack, like clips.options", () => {
