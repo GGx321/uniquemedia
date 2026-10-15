@@ -172,9 +172,10 @@ describe("59e: «Оживить N» and a running part C call (r2.1 N10)", () =>
     expect(isOff(mainButton(s))).toBe(false);
     fireEvent.click(mainButton(s));
     await settle();
-    const foot = s.querySelector(".clip-sheet-foot") as HTMLElement;
-    expect(plain(foot.querySelector(".notice-info")?.textContent)).toBe(MOTION_BUSY);
-    expect(plain(s.querySelector("[data-motion-news='alert']")?.textContent)).toBe(MOTION_BUSY);
+    // One alert, as the sheet's other after-click answers say theirs (WBD-13): the only live region of the sheet.
+    expect(plain(within(s).getByRole("alert").textContent)).toBe(MOTION_BUSY);
+    expect(within(s).getByRole("alert").classList.contains("notice-info")).toBe(true);
+    expect(s.querySelector("[aria-live]") == null).toBe(true);
     expect(document.activeElement === cancelButton(s)).toBe(true);
     expect(isOff(mainButton(s))).toBe(false);
     h.engine.holdMotionCalls(false);

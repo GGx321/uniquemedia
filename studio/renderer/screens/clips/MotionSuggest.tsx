@@ -49,12 +49,14 @@ export interface MotionCallsArgs {
   readonly view: EngineView;
   /** The sheet offers part C: its photo is suitable and its options are on show. Without it no price is asked. */
   readonly offered: boolean;
-  /** Ask `clips.options` again: the photo's stored suggestions and ideas changed. */
+  /** Ask `clips.options` again: the photo's stored suggestions and ideas changed. Asked ONCE per finished call, when the call leaves the window's store. */
   readonly relist: () => void;
-  /** A new row to focus once the list holds it — and to select, for an own idea (§6 63a). */
-  readonly reveal: (id: ClipMotionId, select: boolean) => void;
+  /** A new row to focus once the list holds it — and to select, for an own idea (§6 63a); `last`, the last new row, is scrolled into view first (62b). */
+  readonly reveal: (id: ClipMotionId, select: boolean, last?: ClipMotionId) => void;
   /** 62c: the focus goes to «Отмена». */
   readonly toCancel: () => void;
+  /** 63a: the focus goes to «Своя идея…» before the panel it is in hides (round 2, M2). */
+  readonly toIdeaToggle: () => void;
 }
 
 export interface MotionCalls {
@@ -81,18 +83,26 @@ export interface MotionCalls {
     toggle(): void;
   };
   readonly news: { readonly polite: News; readonly alert: News };
-  announce(where: "polite" | "alert", text: string): void;
+  /** Says `text` in a live region; `after` adds it to what that region said last (one result, read whole). */
+  announce(where: "polite" | "alert", text: string, after?: boolean): void;
   startSuggest(): void;
   startTranslate(): void;
 }
 
 /** The two calls of one photo's sheet, their prices, outcomes and the guard's facts. */
-export function useMotionCalls({ avatarId, photoId, view, offered, relist, reveal, toCancel }: MotionCallsArgs): MotionCalls {
+export function useMotionCalls({ avatarId, photoId, view, offered, relist, reveal, toCancel, toIdeaToggle }: MotionCallsArgs): MotionCalls {
   const { client, store } = useEngine();
-  const latest = useRef({ relist, reveal, toCancel });
+  const latest = useRef({ relist, reveal, toCancel, toIdeaToggle });
   useLayoutEffect(() => {
-    latest.current = { relist, reveal, toCancel };
+    latest.current = { relist, reveal, toCancel, toIdeaToggle };
   });
+  /** Round 2 (L7): the photo each call was sent for, kept at the click, so its end clears exactly the call it started. */
+  const sentFor = useRef<{ suggest: { avatarId: string; photoId: string } | null; idea: { avatarId: string; photoId: string } | null }>({ suggest: null, idea: null });
+  const inFlight = (kind: "suggest" | "idea", running: boolean): void => {
+    const target = running ? { avatarId, photoId } : sentFor.current[kind];
+    sentFor.current[kind] = running ? target : null;
+    if (target !== null) store.setMotionCall(target.avatarId, { photoId: target.photoId, kind }, running);
+  };
   const [status, setStatus] = useState<MoneyLine | null>(null);
   const [suggestNone, setSuggestNone] = useState<MotionCalls["suggestNone"]>(null);
   const [reading, setReading] = useState<readonly ClipFrameNote[] | null>(null);
@@ -101,7 +111,8 @@ export function useMotionCalls({ avatarId, photoId, view, offered, relist, revea
   const [ideaOutcome, setIdeaOutcome] = useState<IdeaOutcome | null>(null);
   const [focusField, setFocusField] = useState(0);
   const [news, setNews] = useState<MotionCalls["news"]>({ polite: { text: "", seq: 0 }, alert: { text: "", seq: 0 } });
-  const announce = (where: "polite" | "alert", text: string): void => setNews((now) => ({ ...now, [where]: { text, seq: now[where].seq + 1 } }));
+  const announce = (where: "polite" | "alert", text: string, after = false): void =>
+    setNews((now) => ({ ...now, [where]: { text: after && now[where].text !== "" ? `${now[where].text} ${text}` : text, seq: now[where].seq + 1 } }));
 
   // The price follows the photo and the text model the call is priced with (the estimate reads the model's price; the idea's text never moves it).
   const priceKey = offered && view.settings !== null ? `${avatarId}|${photoId}|${view.settings.textModel}` : null;
@@ -121,19 +132,18 @@ export function useMotionCalls({ avatarId, photoId, view, offered, relist, revea
         setReading(result.reading.notes);
         const notes = frameNotesNews(result.reading.notes);
         announce("polite", notes === null ? lineText(line) : `${lineText(line)} ${notes}`);
-        // 62b: the choice stays where the owner left it; the focus goes to the first suggestion (README decision 4).
+        // 62b: the choice stays where the owner left it; the focus goes to the first suggestion, the group brought down to the last (README decision 4).
         const first = result.motions[0];
-        if (first !== undefined) latest.current.reveal(first.id, false);
+        if (first !== undefined) latest.current.reveal(first.id, false, result.motions.at(-1)?.id);
       } else {
         const line = suggestNoneLine(result.costMicros);
         setSuggestNone({ line, free: result.costMicros === 0 });
         announce(result.costMicros === 0 ? "polite" : "alert", lineText(line));
         latest.current.toCancel();
       }
-      latest.current.relist();
     },
     onRefused: (error) => announce("alert", errorText(error)),
-    onPaidInFlightChange: (inFlight) => store.setMotionCall(avatarId, { photoId, kind: "suggest" }, inFlight),
+    onPaidInFlightChange: (running) => inFlight("suggest", running),
   });
 
   const translate = usePaidAction<ClipTranslateResult>({
@@ -147,6 +157,8 @@ export function useMotionCalls({ avatarId, photoId, view, offered, relist, revea
     onSent: (result) => {
       if (result.outcome === "ok") {
         const line = translatedLine(result.costMicros);
+        // Round 2 (M2): the focus leaves the panel before it hides, so it never falls to the page while the list is read again.
+        latest.current.toIdeaToggle();
         setIdeaOpen(false);
         setIdeaText("");
         setIdeaOutcome(null);
@@ -154,7 +166,6 @@ export function useMotionCalls({ avatarId, photoId, view, offered, relist, revea
         announce("polite", lineText(line));
         // 63a: his idea is chosen — his direct intent — and the focus is on it.
         latest.current.reveal(result.item.id, true);
-        latest.current.relist();
         return;
       }
       // 63b, 63c and `none`: the reason is about his text, so the focus goes into the field, which it describes (said once: no live region repeats it).
@@ -162,7 +173,7 @@ export function useMotionCalls({ avatarId, photoId, view, offered, relist, revea
       setFocusField((n) => n + 1);
     },
     onRefused: (error) => announce("alert", errorText(error)),
-    onPaidInFlightChange: (inFlight) => store.setMotionCall(avatarId, { photoId, kind: "idea" }, inFlight),
+    onPaidInFlightChange: (running) => inFlight("idea", running),
   });
 
   // PRICE_CHANGED: the fresh price is on the button and needs a new click — said once.
@@ -175,7 +186,7 @@ export function useMotionCalls({ avatarId, photoId, view, offered, relist, revea
     if (translateChanged !== null) announce("alert", priceChangedText(translateChanged));
   }, [translateChanged]);
 
-  // A call of this photo that ended — this sheet's, or one an earlier opening sent (the store) — may have stored new rows: the list is asked again.
+  // A call of this photo that ended — this sheet's, or one an earlier opening sent (the store) — may have stored new rows: the list is asked again, once per call (round 2, L3).
   const here = motionCallsOf(view, avatarId, photoId);
   const hereKey = here.join(",");
   const lastHere = useRef(hereKey);
@@ -334,17 +345,19 @@ interface MotionActionsProps {
   /** The ids the actions point at: the idea panel, the guard, the clip-busy line, the price lines. */
   readonly ids: { readonly panel: string; readonly guard: string; readonly clipBusy: string; readonly suggestPrice: string };
   readonly suggestRef: RefObject<HTMLButtonElement | null>;
+  /** «Своя идея…»: where the focus goes when the panel hides (63a). */
+  readonly toggleRef: RefObject<HTMLButtonElement | null>;
 }
 
 /**
  * Under the list: «Предложить движения · до $0.015» (the accent's quiet tint, as «Оживить» in the viewer) and «Своя идея…» (free: it opens the field), then what the suggestion left — 62c's notice, a refusal,
  * a new price — under the button it came from.
  */
-export function MotionActions({ calls, block, ids, suggestRef }: MotionActionsProps) {
+export function MotionActions({ calls, block, ids, suggestRef, toggleRef }: MotionActionsProps) {
   const { suggest, suggestRunning, ideaRunning, idea } = calls;
   // One call per sheet: while this photo's translation runs, the suggestion waits with the guard.
   const blocked = block.clipBusy || block.otherId !== null || ideaRunning;
-  const state = paidButtonState(suggest, SUGGEST_LABEL, blocked);
+  const state = paidButtonState(suggest, SUGGEST_LABEL, blocked, suggest.estimate?.worstMicros === 0);
   const suggestWhy = suggestRunning || ideaRunning ? ids.guard : block.clipBusy ? ids.clipBusy : (block.otherId ?? (suggest.priceError !== null ? ids.suggestPrice : undefined));
   const toggleWaits = suggestRunning || ideaRunning;
   // The new price is said until the next click's answer: a refusal of that click says its own words instead.
@@ -378,6 +391,7 @@ export function MotionActions({ calls, block, ids, suggestRef }: MotionActionsPr
           )}
         </button>
         <button
+          ref={toggleRef}
           type="button"
           className={idea.open ? "btn btn-s mc-idea-open mc-on" : "btn btn-s mc-idea-open"}
           aria-expanded={idea.open}

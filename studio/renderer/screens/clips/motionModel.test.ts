@@ -9,10 +9,11 @@ import {
   ideaNoneLine,
   insertIdeaText,
   lineText,
+  motionGoneNews,
   motionMoneyWord,
   motionRowLabel,
   rejectedPaidLine,
-  rejectionTexts,
+  rejectionText,
   showsEnglish,
   suggestedLine,
   suggestNoneLine,
@@ -69,7 +70,7 @@ describe("the result lines (62b, 62c, 63a, 63b)", () => {
   test("63a and 63b: a translation, a rejection's cost, and both ends of `none`", () => {
     expect(plain(lineText(translatedLine(1_000)))).toBe("Идея переведена — оплачено $0.001.");
     expect(plain(lineText(rejectedPaidLine(2_000)))).toBe("За перевод оплачено $0.002.");
-    expect(plain(lineText(rejectedPaidLine(0)))).toBe("За перевод бесплатно.");
+    expect(plain(lineText(rejectedPaidLine(0)))).toBe("Перевод — бесплатно.");
     expect(plain(lineText(ideaNoneLine(2_200)))).toBe("Не получилось перевести идею — оплачено $0.002.");
     expect(plain(lineText(ideaNoneLine(0)))).toBe("Модель не стала переводить эту идею — бесплатно");
   });
@@ -77,14 +78,16 @@ describe("the result lines (62b, 62c, 63a, 63b)", () => {
 
 describe("a rejected idea (63b, 63c)", () => {
   test("each code says the contract's own text", () => {
-    for (const problem of MOTION_PROBLEMS) expect(rejectionTexts([problem])).toEqual([MOTION_PROBLEMS_RU[problem]]);
-    expect(rejectionTexts(["two-movements"])).toEqual(["Так не получится: два движения сразу — оставьте одно."]);
-    expect(rejectionTexts(["takes-off"])).toEqual(["Так не получится: в этом кадре одежда остаётся на месте — такое движение только для кадров «Смелой»."]);
+    for (const problem of MOTION_PROBLEMS) expect(rejectionText([problem])).toBe(MOTION_PROBLEMS_RU[problem]);
+    expect(rejectionText(["two-movements"])).toBe("Так не получится: два движения сразу — оставьте одно.");
+    expect(rejectionText(["takes-off"])).toBe("Так не получится: в этом кадре одежда остаётся на месте — такое движение только для кадров «Смелой».");
   });
 
-  test("several are said in the contract's display order, whatever order they came in; `takes-off` is said whenever it is among them", () => {
+  test("one text per refusal: the first problem in the contract's display order, whatever order they came in", () => {
     const shuffled: MotionProblem[] = ["too-long", "takes-off", "content"];
-    expect(rejectionTexts(shuffled)).toEqual([MOTION_PROBLEMS_RU.content, MOTION_PROBLEMS_RU["takes-off"], MOTION_PROBLEMS_RU["too-long"]]);
+    expect(rejectionText(shuffled)).toBe(MOTION_PROBLEMS_RU.content);
+    expect(rejectionText(["too-long", "two-movements"])).toBe(MOTION_PROBLEMS_RU["two-movements"]);
+    expect(rejectionText([])).toBeNull();
   });
 });
 
@@ -103,9 +106,14 @@ describe("the rows", () => {
     expect([batchTagOf({ source: "scene" }), batchTagOf({ source: "code" }), batchTagOf({ source: "vision" }), batchTagOf({ source: "own" })]).toEqual([null, null, "предложено", "своя идея"]);
   });
 
-  test("62d: the frame's notes are said as one line, none says nothing", () => {
-    expect(frameNotesNews(["capture-differs", "second-phone"])).toBe("Заметки о кадре: Камера в кадре не такая, как в сцене; В кадре виден второй телефон — он может остаться в клипе.");
+  test("62d: the frame's notes are said as one sentence, in lower case after «:» and «;»; none says nothing", () => {
+    expect(frameNotesNews(["capture-differs", "second-phone"])).toBe("Заметки о кадре: камера в кадре не такая, как в сцене; в кадре виден второй телефон — он может остаться в клипе.");
+    expect(frameNotesNews(["second-phone"])).toBe("Заметки о кадре: в кадре виден второй телефон — он может остаться в клипе.");
     expect(frameNotesNews([])).toBeNull();
+  });
+
+  test("a chosen row that left the list is said with what is chosen now", () => {
+    expect(plain(motionGoneNews("Дует на чай", "Как в сцене"))).toBe("Движение «Дует на чай» больше не в списке — выбрано «Как в сцене».");
   });
 });
 
