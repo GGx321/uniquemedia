@@ -12,6 +12,7 @@ import { Portrait } from "../../ui/Portrait";
 import { useModalDialog } from "../../ui/useModalDialog";
 import { useMounted } from "../photos/shared";
 import { animateBlock } from "./animate";
+import { AnimateWhy, useShowBatchClips } from "./AnimateButton";
 import { batchRowNote, batchSheetView, itemRefusal, itemRefusedAlert, type BatchSheetView } from "./batchModel";
 import { upUsd } from "./clipModel";
 import { AUTO_NOTE, LENGTHS, NO_FALLBACK_NOTE, PRO_NOTE, QUALITIES } from "./ClipSheet";
@@ -45,8 +46,18 @@ type Options =
   | { readonly status: "ready"; readonly options: ClipBatchOptions; readonly asked: string; readonly refreshing: boolean }
   | { readonly status: "failed"; readonly error: EngineError };
 
-/** What the last click was answered, said once as an alert until the choice changes. */
-type After = { readonly kind: "price"; readonly way: "main" | "alone" } | { readonly kind: "budget"; readonly way: "main" | "alone" } | { readonly kind: "item"; readonly text: string };
+/**
+ * What the last click was answered, said once until the choice changes: as an alert, or — `unpriced`, the video prices that did not read at the click and read again when asked — as a status (S5.WB4c), so
+ * the sheet that looks the same is never silent about why the click did nothing.
+ */
+type After =
+  | { readonly kind: "price"; readonly way: "main" | "alone" }
+  | { readonly kind: "budget"; readonly way: "main" | "alone" }
+  | { readonly kind: "item"; readonly text: string }
+  | { readonly kind: "unpriced" };
+
+/** S5.WB4c: the short status after a click the engine refused because the video prices did not read, when asking again read them. */
+const UNPRICED_AGAIN = "Цены видео не прочитались при отправке — запросили их снова. Подтвердите ещё раз.";
 
 export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }: BatchSheetProps) {
   const { client, store } = useEngine();
@@ -99,9 +110,10 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
   // Every row refused after the click: there is nothing left to ask the engine about, nor to send.
   const sheet: BatchSheetView | null = askedKey === "" || ready === null || ready.options.items.every((item) => !item.suitable) ? null : batchSheetView(ready.options, { quality, seconds });
   const unpriced = options.status === "failed" && options.error.code === "PRICE_UNAVAILABLE" && options.error.priceScope === "video";
-  const block = animateBlock(view, view.avatars.find((a) => a.avatarId === avatarId)?.status !== "archived");
-  const blockText = block === null ? null : block.kind === "nokey" ? "Нужен ключ OpenRouter — добавьте его в Настройках." : block.text;
-  const waiting = options.status === "loading" || refreshing || busy !== null || blockText !== null;
+  // The same words as under «Оживить» (`AnimateWhy`): one wording for a missing key, «Нужен ключ OpenRouter — Настройки.» with its link (S5.WB4c).
+  const block = animateBlock(view, view.avatars.find((a) => a.avatarId === avatarId)?.status !== "archived", avatarId);
+  const showBatchClips = useShowBatchClips();
+  const waiting = options.status === "loading" || refreshing || busy !== null || block !== null;
   const itemOf = (photoId: string) => ready?.options.items.find((item) => item.photoId === photoId);
   const motionOf = (photoId: string): ClipMotionId | null => {
     const item = itemOf(photoId);
@@ -147,7 +159,7 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
     );
     if (code === "PRICE_CHANGED" || code === "BUDGET_EXCEEDED" || (code === "PRICE_UNAVAILABLE" && reply.error.priceScope === "video")) {
       // 59a, 59b #after-click: the engine's figures are asked again (the remaining room, the Kling-only sum, L12) and need a new click. A price that stopped reading turns the sheet into 59c.
-      if (code !== "PRICE_UNAVAILABLE") setAfter({ kind: code === "PRICE_CHANGED" ? "price" : "budget", way });
+      setAfter(code === "PRICE_UNAVAILABLE" ? { kind: "unpriced" } : { kind: code === "PRICE_CHANGED" ? "price" : "budget", way });
       setOptions((now) => (now.status === "ready" ? { ...now, refreshing: true } : now));
       setAgain((n) => n + 1);
     } else if (item !== null) {
@@ -173,20 +185,34 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
   const budgetShown = sheet !== null && (budgetAlert || sheet.budgetNeed !== null);
   const budgetNeed = sheet === null ? "" : budgetAlert && shownAfter?.way === "alone" ? upUsd(sheet.worstNoFallbackMicros) : upUsd(sheet.main.worstMicros);
   const mainOff = sheet === null || !sheet.fits || waiting || sheet.count === 0;
+  // S5.WB4c: a new price that leaves the way clicked over the month says so in the same alert — the month's sentence after the price's, and no «Подтвердите ещё раз» for a way that cannot be sent.
+  const priceShort = shownAfter?.kind === "price" && sheet !== null && !sheet.fits && (shownAfter.way === "main" || sheet.noFallback === null);
+  const priceNeed = sheet === null ? "" : shownAfter?.kind === "price" && shownAfter.way === "alone" ? upUsd(sheet.worstNoFallbackMicros) : sheet.worst;
   // One live region at a time (README decision 13): the click's answer, else the engine's error, else why paid work waits, else the month.
-  const notice: "price" | "item" | "error" | "block" | "budget" | null =
+  const notice: "price" | "item" | "unpriced" | "error" | "block" | "budget" | null =
     shownAfter?.kind === "price" && sheet !== null
       ? "price"
       : shownAfter?.kind === "item"
         ? "item"
-        : error !== null
-          ? "error"
-          : blockText !== null && ready !== null
-            ? "block"
-            : budgetShown
-              ? "budget"
-              : null;
-  const mainWhy = unpriced ? whyId : notice === "block" || notice === "budget" ? noticeId : undefined;
+        : shownAfter?.kind === "unpriced"
+          ? "unpriced"
+          : error !== null
+            ? "error"
+            : block !== null && ready !== null
+              ? "block"
+              : budgetShown
+                ? "budget"
+                : null;
+  const mainWhy = unpriced ? whyId : notice === "block" || notice === "budget" || (notice === "price" && priceShort) ? noticeId : undefined;
+  const monthShort = (need: string, room: string) => (
+    <>
+      Не хватает месячного бюджета: пакету нужно до <span className="mono">{need}</span>, осталось <span className="mono">{room}</span>. Уберите часть фото или поднимите бюджет в{" "}
+      <button type="button" className="viewer-why-link" onClick={() => navigate({ name: "settings", focus: "money" })}>
+        Настройках
+      </button>
+      .
+    </>
+  );
 
   const rows = (
     <ul className="batch-rows" aria-label="Фото пакета">
@@ -312,32 +338,42 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
         </div>
 
         <footer className="clip-sheet-foot">
-          {notice === "price" && shownAfter?.kind === "price" && sheet !== null && (
-            <Notice tone="warn" role="alert">
-              Цена изменилась: теперь не больше <span className="mono">{shownAfter.way === "alone" ? upUsd(sheet.worstNoFallbackMicros) : sheet.worst}</span>. Подтвердите ещё раз.
-            </Notice>
+          {notice === "price" && sheet !== null && (
+            <div id={noticeId}>
+              <Notice tone="warn" role="alert">
+                Цена изменилась: теперь не больше <span className="mono">{priceNeed}</span>.{" "}
+                {priceShort ? monthShort(priceNeed, sheet.room) : "Подтвердите ещё раз."}
+              </Notice>
+            </div>
           )}
           {notice === "item" && shownAfter?.kind === "item" && (
             <Notice tone="warn" role="alert">
               {shownAfter.text}
             </Notice>
           )}
+          {notice === "unpriced" && (
+            <Notice tone="warn" role="status">
+              {nbDash(UNPRICED_AGAIN)}
+            </Notice>
+          )}
           {notice === "error" && error !== null && <Notice tone="danger">{errorText(error)}</Notice>}
-          {notice === "block" && blockText !== null && (
+          {notice === "block" && block !== null && (
             <div id={noticeId}>
               <Notice tone="warn" role="status">
-                {nbDash(blockText)}
+                <AnimateWhy
+                  why={block}
+                  onShowClips={(batchAvatarId) => {
+                    onClose();
+                    showBatchClips(batchAvatarId);
+                  }}
+                />
               </Notice>
             </div>
           )}
           {notice === "budget" && sheet !== null && (
             <div id={noticeId}>
               <Notice tone="warn" role={budgetAlert ? "alert" : "status"}>
-                Не хватает месячного бюджета: пакету нужно до <span className="mono">{budgetNeed}</span>, осталось <span className="mono">{sheet.room}</span>. Уберите часть фото или поднимите бюджет в{" "}
-                <button type="button" className="viewer-why-link" onClick={() => navigate({ name: "settings", focus: "money" })}>
-                  Настройках
-                </button>
-                .
+                {monthShort(budgetNeed, sheet.room)}
               </Notice>
             </div>
           )}
