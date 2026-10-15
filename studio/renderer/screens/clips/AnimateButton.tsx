@@ -1,15 +1,17 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { CLIP_REASONS_RU, type ClipUnsuitableReason, type PhotoSummary } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
+import { NBSP } from "../../lib/format";
 import { useNavigate } from "../../navigation";
 import { Icon } from "../../ui/Icon";
-import { animateBlock } from "./animate";
+import { animateBlock, type AnimateBlock } from "./animate";
 import { useClips } from "./clipsContext";
 import { ClipSheet } from "./ClipSheet";
 
 // Stage 5, 5b.1, S5.V8 (mockups 37, 37a–37d; plan s5b1 §6, R-10): «Оживить» in the photo viewer — the one way from a photo to a paid clip, and only through the sheet. It waits, with the
 // reason under it (`.viewer-why`, its `aria-describedby`), while the account stops paid work (37c), another clip holds the paid slot (37b), or the engine finds the photo unsuitable (37a,
 // 37d: its free `clips.options` answers the reason). A photo whose prices cannot be read opens the sheet anyway, which says so (38f).
+// 5b.2 (S5.WB4, mockup 37e): while a batch runs it waits too, but stays a control (`aria-disabled`): it keeps the focus and reads its reason, whose «отмените оставшиеся» leads to «Клипы».
 
 interface AnimateButtonProps {
   readonly photo: PhotoSummary;
@@ -20,10 +22,44 @@ interface AnimateButtonProps {
   readonly onSheet: (open: boolean) => void;
 }
 
+/**
+ * What a waiting «Оживить» (or «Оживить выбранные») says under it: the reason's text; 37c's «Нужен ключ OpenRouter — Настройки.» with «Настройки» a link; 37e's batch reason with «отмените оставшиеся»
+ * a link to the «Клипы» tab.
+ */
+export function AnimateWhy({ why, onShowClips }: { why: AnimateBlock; onShowClips: () => void }) {
+  const navigate = useNavigate();
+  if (why.kind === "nokey") {
+    return (
+      <>
+        Нужен ключ OpenRouter —{" "}
+        <button type="button" className="viewer-why-link" onClick={() => navigate({ name: "settings", focus: "key" })}>
+          Настройки
+        </button>
+        .
+      </>
+    );
+  }
+  if (why.kind === "batch") {
+    // The contract's words (`batch-running`), the way out made a link: «…дождитесь окончания или [отмените оставшиеся].»
+    const link = "отмените оставшиеся";
+    const at = why.text.lastIndexOf(link);
+    if (at < 0) return <>{why.text}</>;
+    return (
+      <>
+        {why.text.slice(0, at).replace(/ —/g, `${NBSP}—`)}
+        <button type="button" className="viewer-why-link" onClick={onShowClips}>
+          {link}
+        </button>
+        {why.text.slice(at + link.length)}
+      </>
+    );
+  }
+  return <>{why.text}</>;
+}
+
 export function AnimateButton({ photo, subtitle, frameLabel, onSheet }: AnimateButtonProps) {
   const clips = useClips();
   const { client } = useEngine();
-  const navigate = useNavigate();
   const whyId = useId();
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -47,7 +83,9 @@ export function AnimateButton({ photo, subtitle, frameLabel, onSheet }: AnimateB
   if (clips === null) return null;
   const block = animateBlock(clips.view, clips.avatar.status === "active");
   const reason = unsuitable !== null && unsuitable.photoId === photo.photoId ? unsuitable.reason : null;
-  const why = block !== null ? block : reason !== null ? ({ kind: "text", text: CLIP_REASONS_RU[reason] } as const) : null;
+  const why: AnimateBlock | null = block !== null ? block : reason !== null ? { kind: "text", text: CLIP_REASONS_RU[reason] } : null;
+  // 37e: a batch's wait is aria-disabled (the button keeps the focus and reads its reason); every other wait is as built (`disabled`).
+  const batch = why?.kind === "batch";
 
   const show = (next: boolean): void => {
     setOpen(next);
@@ -62,25 +100,18 @@ export function AnimateButton({ photo, subtitle, frameLabel, onSheet }: AnimateB
         className="btn btn-s viewer-animate"
         aria-haspopup="dialog"
         aria-describedby={why === null ? undefined : whyId}
-        disabled={why !== null}
-        onClick={() => show(true)}
+        disabled={why !== null && !batch}
+        aria-disabled={batch || undefined}
+        onClick={() => {
+          if (!batch) show(true);
+        }}
       >
         <Icon name="sparkle" size={14} strokeWidth={2} />
         Оживить
       </button>
       {why !== null && (
         <p id={whyId} className="viewer-why">
-          {why.kind === "nokey" ? (
-            <>
-              Нужен ключ OpenRouter —{" "}
-              <button type="button" className="viewer-why-link" onClick={() => navigate({ name: "settings", focus: "key" })}>
-                Настройки
-              </button>
-              .
-            </>
-          ) : (
-            why.text
-          )}
+          <AnimateWhy why={why} onShowClips={clips.showClips} />
         </p>
       )}
       {open && (

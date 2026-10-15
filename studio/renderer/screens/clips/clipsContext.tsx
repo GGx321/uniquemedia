@@ -29,6 +29,27 @@ export function dismissClipJob(store: EngineStore, jobId: string): void {
   }
 }
 
+const BATCH_DISMISSALS = new WeakMap<EngineStore, Set<string>>();
+
+/** 5b.2 (S5.WB4, 60b–60f): the batches whose header the owner closed (✕), for the window's life; a new window shows the newest batch's header again. */
+export function batchDismissals(store: EngineStore): ReadonlySet<string> {
+  return BATCH_DISMISSALS.get(store) ?? new Set();
+}
+
+/** Puts a batch's header away; bounded like the dismissed clip jobs, the oldest forgotten first. */
+export function dismissBatch(store: EngineStore, batchId: string): void {
+  let set = BATCH_DISMISSALS.get(store);
+  if (set === undefined) {
+    set = new Set();
+    BATCH_DISMISSALS.set(store, set);
+  }
+  set.add(batchId);
+  for (const old of set) {
+    if (set.size <= MAX_DISMISSED_CLIP_JOBS) break;
+    set.delete(old);
+  }
+}
+
 /** Where a gallery photo stands in the pages read: its place newest first, and the gallery's size. */
 export interface PhotoPlace {
   readonly photo: PhotoSummary;
@@ -50,6 +71,10 @@ export interface ClipsControl {
   readonly started: (jobId: string) => void;
   /** Show a photo in the «Фото» tab's viewer («Из фото»). */
   readonly showPhoto: (photoId: string) => void;
+  /** 5b.2 (37e): «отмените оставшиеся» — the «Клипы» tab, where the batch's header has the button; the tab's heading takes the focus. */
+  readonly showClips: () => void;
+  /** 5b.2 (60e «Отметить их снова», 58 #again): «Фото» in «для клипов» with these photos picked, in this order. */
+  readonly pickAgain: (photoIds: readonly string[]) => void;
 }
 
 const ClipsContext = createContext<ClipsControl | null>(null);

@@ -10,6 +10,11 @@ export function plural(n: number, forms: readonly [one: string, few: string, man
   return forms[2];
 }
 
+/** A dash never starts a line (5b.2, README §S5.WBD): the space before «—» becomes a no-break one, so a line of the engine's words wraps after the dash, not before it. */
+export function nbDash(text: string): string {
+  return text.replace(/ —/g, `${NBSP}—`);
+}
+
 /** "4 варианта", the number bound to its word by a no-break space. */
 export function countOf(n: number, forms: readonly [string, string, string]): string {
   return `${n}${NBSP}${plural(n, forms)}`;

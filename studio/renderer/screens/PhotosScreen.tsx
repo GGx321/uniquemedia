@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
-import { bodyPhrase, MAX_CLIPS, type AvatarSummary, type EngineError, type Estimate, type PhotoSummary, type RunSummary } from "../../shared/engine";
+import { bodyPhrase, MAX_BATCH_CLIPS, MAX_CLIPS, type AvatarSummary, type EngineError, type Estimate, type PhotoSummary, type RunSummary } from "../../shared/engine";
 import { useCategoryLibrary, useEngine, useEngineView, useSceneSet } from "../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
+import { NBSP, nbDash } from "../lib/format";
 import { useNavigate, type LookLanding, type PhotosTab } from "../navigation";
 import { AccountBanner } from "../ui/AccountBanner";
+import { animateBlock } from "./clips/animate";
+import { AnimateWhy } from "./clips/AnimateButton";
+import { monthLine } from "./clips/batchModel";
+import { BatchSheet } from "./clips/BatchSheet";
 import { ClipsProvider, unseenCount, useClipList, type ClipsControl } from "./clips/clipsContext";
 import { ClipsTab } from "./clips/ClipsTab";
 import { EngineOffline } from "../ui/EngineOffline";
@@ -17,8 +22,8 @@ import { useLookCheck, useReadFromPhoto } from "./look/useLookCheck";
 import { usePortraits } from "./look/usePortraits";
 import { Gallery, type PendingSlots } from "./photos/Gallery";
 import { GenerateCard } from "./photos/GenerateCard";
-import type { MarkControl, MarkFailure } from "./photos/photoState";
-import { listedPicks, usablePicks, useMontagePicks } from "./photos/picks";
+import { clipPickRefusal, type MarkControl, type MarkFailure } from "./photos/photoState";
+import { listedPicks, usablePicks, useMontagePicks, type PickMode } from "./photos/picks";
 import { arrangeCategories, categoriesAt, DEFAULT_RUN_FORM, paidBlockedReason, photoCategoryLabel, sceneWriters, type RunForm } from "./photos/runForm";
 import { readLegs, writeLegs } from "./photos/legs";
 import { readLevel, writeLevel } from "./photos/level";
@@ -157,6 +162,25 @@ function AvatarPhotos({
   const picks = useMontagePicks();
   const [picked, setPicked] = useState<ReadonlySet<string>>(() => picks.get(avatarId));
   useEffect(() => picks.set(avatarId, picked), [picks, avatarId, picked]);
+  /**
+   * 5b.2 (S5.WB4, Q-J = 1; mockup 58): «Выбор: для монтажа · для клипов». The photos picked for a batch of clips are a set of their own, in the order picked (the batch's turn order), kept by the window
+   * like the montage's; the mode on show is kept per avatar too.
+   */
+  const [pickMode, setPickModeState] = useState<PickMode>(() => picks.mode(avatarId));
+  const setPickMode = (mode: PickMode): void => {
+    setPickModeState(mode);
+    picks.setMode(avatarId, mode);
+  };
+  const [clipPicked, setClipPicked] = useState<ReadonlySet<string>>(() => picks.get(avatarId, "clips"));
+  useEffect(() => picks.set(avatarId, clipPicked, "clips"), [picks, avatarId, clipPicked]);
+  /** «Оживить выбранные · N» opened the sheet «Оживить N фото». */
+  const [batchOpen, setBatchOpen] = useState(false);
+  const batchButton = useRef<HTMLButtonElement>(null);
+  /** 60e «Отметить их снова»: the bar's button takes the focus once «Фото» is back with the photos picked. */
+  const [focusBatchButton, setFocusBatchButton] = useState(0);
+  useEffect(() => {
+    if (focusBatchButton > 0) batchButton.current?.focus();
+  }, [focusBatchButton]);
   const picksChecked = useRef(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<EngineError | null>(null);
@@ -218,14 +242,21 @@ function AvatarPhotos({
       // The picks the window kept from an earlier visit are checked once, against the first answer (review r1 LOW-6) — against the
       // photos it lists: one picked on a later page is kept until its own page comes in with «Показать ещё», and checked then. Once
       // the last page is in, a pick on none of them is of a photo gone meanwhile, and goes (review MEDIUM-2).
-      if (added !== null) setPicked((current) => (list.nextCursor === null ? listedPicks(usablePicks(current, added, true), list.photos) : usablePicks(current, added, true)));
-      else {
+      // 5b.2: the clips' picks are checked the same way, by their own predicate (a photo in a video or a rejected one stays picked; one gone from the library goes).
+      if (added !== null) {
+        setPicked((current) => (list.nextCursor === null ? listedPicks(usablePicks(current, added, true), list.photos) : usablePicks(current, added, true)));
+        setClipPicked((current) => (list.nextCursor === null ? listedPicks(usablePicks(current, added, true, clipPickRefusal), list.photos) : usablePicks(current, added, true, clipPickRefusal)));
+      } else {
         if (!picksChecked.current) {
           picksChecked.current = true;
           setPicked((current) => usablePicks(current, list.photos, list.nextCursor !== null));
+          setClipPicked((current) => usablePicks(current, list.photos, list.nextCursor !== null, clipPickRefusal));
         }
         // A re-read that reaches the end of the gallery lists every photo there is: a pick on none of them is of a photo gone meanwhile (LOW-C).
-        if (list.nextCursor === null) setPicked((current) => listedPicks(current, list.photos));
+        if (list.nextCursor === null) {
+          setPicked((current) => listedPicks(current, list.photos));
+          setClipPicked((current) => listedPicks(current, list.photos));
+        }
       }
     },
   });
@@ -261,6 +292,16 @@ function AvatarPhotos({
   }
 
   function togglePick(photoId: string): void {
+    // «для клипов»: a new pick goes to the end of the batch's turn order, an unpicked one leaves it and the others move up (mockup 58).
+    if (pickMode === "clips") {
+      setClipPicked((current) => {
+        const next = new Set(current);
+        if (next.has(photoId)) next.delete(photoId);
+        else next.add(photoId);
+        return next;
+      });
+      return;
+    }
     setPicked((current) => {
       const next = new Set(current);
       if (next.has(photoId)) next.delete(photoId);
@@ -380,7 +421,44 @@ function AvatarPhotos({
       setOpenPhoto(photoId);
       setTab("photos");
     },
+    showClips: () => {
+      setTab("clips");
+      setClipArrived((n) => n + 1);
+    },
+    pickAgain: (photoIds) => {
+      setClipPicked(new Set(photoIds));
+      setPickMode("clips");
+      setTab("photos");
+      setFocusBatchButton((n) => n + 1);
+    },
   };
+
+  /** 5b.2: a batch the engine took — its picks are done with, each member is tracked queued in its place, and «Клипы» shows it with its heading focused. */
+  const batchStarted = (batchId: string, jobIds: readonly string[]): void => {
+    setBatchOpen(false);
+    setClipPicked(new Set());
+    jobIds.forEach((jobId, i) => store.trackClipJob(jobId, avatarId, jobId, "queued", { batchId, index: i + 1, size: jobIds.length }));
+    setTab("clips");
+    setClipArrived((n) => n + 1);
+  };
+
+  // 5b.2 (58a, 37e #bar): «Оживить выбранные · N» and the line under it — the hint, why paid clips wait (a batch running, the key, the account), the cap, else the month's room.
+  const clipBlock = animateBlock(view, avatar.status === "active");
+  const month = monthLine(view.money);
+  const clipWhy =
+    clipPicked.size === 0 ? (
+      "Отметьте фото, чтобы оживить их"
+    ) : clipBlock !== null ? (
+      <AnimateWhy why={clipBlock} onShowClips={clipsControl.showClips} />
+    ) : clipPicked.size > MAX_BATCH_CLIPS ? (
+      nbDash(`Не больше ${MAX_BATCH_CLIPS} клипов в одном пакете — снимите лишние`)
+    ) : month !== null ? (
+      <>
+        В этом месяце осталось <span className="mono">{month.room}</span>
+        {NBSP}— {month.tail}
+      </>
+    ) : null;
+  const clipsBlocked = !ready || clipPicked.size === 0 || clipBlock !== null || clipPicked.size > MAX_BATCH_CLIPS;
 
   const tabIds: Record<PhotosTab, string> = { photos: photosTabId, clips: clipsTabId, videos: videosTabId, look: lookTabId };
   // ← and → move between the tabs that work, round the ends («История сцен» is not built yet).
@@ -486,7 +564,30 @@ function AvatarPhotos({
             Внешность
           </button>
         </div>
-        {tab === "look" || tab === "clips" ? null : tab === "photos" ? (
+        {tab === "look" || tab === "clips" ? null : tab === "photos" && pickMode === "clips" ? (
+          // The line goes under the button at every width (README decision 1): a button that waits stays a control (`aria-disabled`) and reads its reason (decision 14).
+          <div className="photos-montage pick-bar" data-mode="clips">
+            {clipWhy !== null && (
+              <span id={whyId} className="faint photos-montage-why">
+                {clipWhy}
+              </span>
+            )}
+            <button
+              ref={batchButton}
+              type="button"
+              className="btn btn-p"
+              aria-haspopup="dialog"
+              aria-describedby={clipWhy !== null ? whyId : undefined}
+              aria-disabled={clipsBlocked || undefined}
+              onClick={() => {
+                if (!clipsBlocked) setBatchOpen(true);
+              }}
+            >
+              <Icon name="sparkle" size={16} />
+              Оживить выбранные · {clipPicked.size}
+            </button>
+          </div>
+        ) : tab === "photos" ? (
           <div className="photos-montage">
             {montageWhy !== null && (
               <span id={whyId} className="faint photos-montage-why">
@@ -607,8 +708,10 @@ function AvatarPhotos({
                   error={gallery.error}
                   more={{ state: gallery.more, added: gallery.added, onMore: gallery.loadMore }}
                   pending={pending}
-                  picked={picked}
-                  refused={refused}
+                  pickMode={pickMode}
+                  onPickMode={setPickMode}
+                  picked={pickMode === "clips" ? clipPicked : picked}
+                  refused={pickMode === "clips" ? undefined : refused}
                   onToggle={onTogglePick}
                   onRetry={() => setGalleryRetry((n) => n + 1)}
                   filter={filter}
@@ -626,6 +729,18 @@ function AvatarPhotos({
           <VideosTab avatar={avatar} view={view} />
         )}
       </div>
+      {batchOpen && (
+        <BatchSheet
+          avatarId={avatarId}
+          picks={[...clipPicked].map((photoId) => {
+            const place = clipsControl.photoInfo(photoId);
+            return { photoId, label: place === null ? "Фото" : `Фото ${place.position} · ${place.label}`, photo: place?.photo ?? null };
+          })}
+          onClose={() => setBatchOpen(false)}
+          returnFocus={() => batchButton.current}
+          onStarted={batchStarted}
+        />
+      )}
       </ClipsProvider>
     </div>
   );

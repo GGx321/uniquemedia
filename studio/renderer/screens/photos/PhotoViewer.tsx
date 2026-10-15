@@ -11,7 +11,8 @@ import { useAnnouncer } from "../../ui/useAnnouncer";
 import { AnimateButton } from "../clips/AnimateButton";
 import { useMediaRetry } from "../../ui/useMediaRetry";
 import { useBackdropClose, useModalDialog } from "../../ui/useModalDialog";
-import { montagePickRefusal, PhotoBadges, type MarkControl } from "./photoState";
+import { clipPickRefusal, montagePickRefusal, PhotoBadges, type MarkControl } from "./photoState";
+import type { PickMode } from "./picks";
 import { photoCategoryLabel } from "./runForm";
 import { ROUTE_TAG_TITLE } from "./sceneReview";
 import { viewerStep, type ViewerPlace } from "./viewerModel";
@@ -31,6 +32,8 @@ const VIEWER_ROUTE_TITLE = ROUTE_TAG_TITLE;
 
 interface PhotoViewerProps {
   readonly place: ViewerPlace;
+  /** 5b.2 (37e, round 2 M1): the gallery's pick mode — in «для клипов» the pick is «Выбрать для клипов» (the clips' set, refusing nothing). */
+  readonly pickMode?: PickMode;
   readonly picked: boolean;
   /** `montages.create` just refused the photo (K11): marked as on its tile. */
   readonly refused: boolean;
@@ -50,7 +53,7 @@ function refusedElsewhere(position: number | null): string {
   return position === null ? "Отметка другого фото не сохранена" : `Отметка фото ${position} не сохранена`;
 }
 
-export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, onClose, returnFocus, positionOf }: PhotoViewerProps) {
+export function PhotoViewer({ place, pickMode = "montage", picked, refused, onToggle, mark, onShow, onClose, returnFocus, positionOf }: PhotoViewerProps) {
   const { photo, index, total, prevId, nextId } = place;
   const titleId = useId();
   const pickWhyId = useId();
@@ -135,7 +138,7 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
   });
 
   // A photo picked before it became unusable can still be unpicked, as on its tile.
-  const why = montagePickRefusal(photo);
+  const why = pickMode === "clips" ? clipPickRefusal(photo) : montagePickRefusal(photo);
   const marking = mark.marking.has(photo.photoId);
   const failure = mark.failure;
   const failedHere = failure !== null && failure.photoId === photo.photoId ? errorText(failure.error) : null;
@@ -206,7 +209,7 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
                 <span className="viewer-check" aria-hidden="true">
                   {picked && <Icon name="check" size={12} strokeWidth={3} />}
                 </span>
-                Выбрать для монтажа
+                {pickMode === "clips" ? "Выбрать для клипов" : "Выбрать для монтажа"}
               </button>
               {why !== null && (
                 <p id={pickWhyId} className="viewer-why">

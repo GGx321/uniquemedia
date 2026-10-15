@@ -159,8 +159,97 @@
 .del-note-warn > svg, .del-note-alert > svg { color: var(--warn); }
 .del-note-alert { color: var(--text); }
 
+/* ── 5b.2 (S5.WB4): «Оживить выбранные» — mockups 58–60f, 37e (NEW_CSS_WBD), on the app's tokens ── */
+
+/* 58: the gallery's «Выбор» row under its head — what a tile's square means; each mode keeps its own picks (Q-J = 1) */
+.pick-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: -4px 0 12px; }
+/* a clip pick shows its turn in the batch (members go in pick order); an unpicked square is dashed in this mode */
+.photo-pick-n { font-size: 12px; font-weight: 500; line-height: 1; }
+.photo-pick-clip[aria-pressed="false"] { border-style: dashed; }
+/* the head's bar in «для клипов»: the line under the button at every width, so the month line reads in one or two lines */
+.pick-bar[data-mode="clips"] { flex-direction: column-reverse; align-items: flex-end; gap: 4px; }
+.pick-bar[data-mode="clips"] .photos-montage-why { max-width: 340px; text-wrap: balance; }
+.pick-bar .photos-montage-why .mono { font-size: 11px; }
+.pick-bar .btn[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+@media (max-width: 1279px) {
+  .pick-bar[data-mode="clips"] .photos-montage-why { max-width: 240px; }
+}
+
+/* 59: the sheet — the picked photos in turn order, each with its motion; the options for the whole batch under them. The list scrolls, the sheet does not */
+.batch-sheet { width: 680px; max-height: calc(100vh - 32px); }
+.batch-sheet-body { flex-direction: column; gap: 14px; padding-top: 14px; min-height: 0; overflow: hidden; }
+.batch-rows { display: flex; flex: 0 1 auto; flex-direction: column; gap: 6px; max-height: 282px; min-height: 104px; margin: 0; padding: 0 2px 0 0; overflow-y: auto; list-style: none; }
+.batch-row { display: grid; flex-shrink: 0; grid-template-columns: 22px minmax(0, 1fr) 204px; align-items: center; gap: 12px; min-height: 51px; padding: 5px 8px 5px 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--input); }
+.batch-thumb { width: 22px; height: 39px; border-radius: 5px; }
+.batch-thumb > .portrait { position: absolute; inset: 0; }
+.batch-thumb .portrait-silhouette { height: 74%; }
+.batch-what { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.batch-label { color: var(--text); font-size: 12.5px; font-weight: 600; line-height: 1.35; }
+.batch-note { color: var(--muted); font-size: 11.5px; line-height: 1.35; }
+.batch-note-bold { color: var(--accent-text); }
+.batch-motion { width: 100%; max-width: none; }
+/* a photo that will not be a clip: struck, its reason in place of the motion — it costs nothing and is not counted */
+.batch-row-off { border-style: dashed; background: transparent; }
+.batch-row-off .batch-what, .batch-row-bare .batch-what { grid-column: 2 / 4; }
+.batch-row-off .batch-label { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--faint); }
+.batch-row-off .batch-thumb { opacity: 0.4; }
+.batch-opts { flex-shrink: 0; padding-top: 2px; }
+.batch-room { margin: -6px 0 0; color: var(--muted); font-size: 11.5px; text-align: right; }
+.batch-room .mono { color: var(--text-2); font-size: 11px; }
+.batch-unpriced { display: flex; flex-direction: column; }
+.batch-sheet .clip-sheet-btns .btn[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+
+/* 60: the batch's header over the tiles — the line, the members' photos in turn order, the one action; the tone by the money */
+.batch-head { display: flex; align-items: center; gap: 14px; padding: 12px 12px 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+.batch-head-run { border-color: var(--accent-35); }
+.batch-head-ok { border-color: var(--ok-35); background: var(--ok-08); }
+.batch-head-info { border-color: var(--info-28); background: var(--info-08); }
+.batch-head-warn { border-color: var(--warn-35); background: var(--warn-08); }
+.batch-head-ic { display: flex; flex-shrink: 0; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 9px; background: var(--panel-3); color: var(--accent); }
+.batch-head-ok .batch-head-ic { color: var(--ok); }
+.batch-head-info .batch-head-ic { color: var(--info); }
+.batch-head-warn .batch-head-ic { color: var(--warn); }
+.batch-head-text { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.batch-title { margin: 0; color: var(--text); font-size: 13.5px; font-weight: 600; line-height: 1.35; }
+.batch-title .mono { font-size: 12.5px; font-weight: 500; }
+.batch-title:focus { outline: none; }
+.batch-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.batch-line { margin: 0; color: var(--text-2); font-size: 12.5px; line-height: 1.4; }
+.batch-strip { display: flex; flex-shrink: 0; gap: 4px; }
+.batch-cell { position: relative; width: 18px; height: 32px; overflow: hidden; border-radius: 4px; background: var(--photo-queued); }
+.batch-cell > .portrait { position: absolute; inset: 0; }
+.batch-cell .portrait-silhouette { height: 72%; }
+.batch-cell-done { box-shadow: inset 0 -3px 0 var(--accent); }
+.batch-cell-run { box-shadow: 0 0 0 1.5px var(--accent); }
+.batch-cell-wait > .portrait, .batch-cell-refused > .portrait { opacity: 0.32; }
+.batch-cell-refused { box-shadow: inset 0 0 0 1px var(--border-strong); }
+.batch-cell-late { box-shadow: 0 0 0 1.5px var(--warn); }
+.batch-cell-off { border: 1px dashed var(--border-strong); background: transparent; }
+.batch-cancel, .batch-again { flex-shrink: 0; }
+.batch-close { flex-shrink: 0; align-self: flex-start; }
+/* round 2, L13: a row of the batch's tiles is one height — a longer wait line pushes its tile's steps and money down with its neighbours' */
+.clips-grid-batch { align-items: stretch; }
+.clips-grid-batch > .clip-slot { display: flex; flex-direction: column; }
+.clips-grid-batch > .clip-slot > .clip-tile { flex: 1; }
+.clips-grid-batch .clip-tile-work .clip-cap { flex: 1; }
+.clips-grid-batch .clip-tile-work .clip-cap > .clip-steps { margin-top: auto; }
+/* a member waiting its turn: the photo dimmed, no accent ring, no shimmer and no spinner — nothing is spent while it waits */
+.clip-tile-queued .clip-tile-poster { box-shadow: 0 0 0 1px var(--border-strong); }
+.batch-index { position: absolute; top: 8px; right: 8px; font-size: 10.5px; color: var(--text-2); pointer-events: none; }
+.clip-phase-wait { color: var(--muted); font-weight: 500; }
+.wait-dot { flex-shrink: 0; width: 10px; height: 10px; margin-top: 3px; border: 1.5px solid var(--muted); border-radius: 50%; }
+/* the queue: one row per batch; a long avatar name ends in «…» rather than widening the box, the phase goes under it to the right (round 2, L7) */
+.side-clip-batch .side-meter-row { flex-wrap: wrap; column-gap: 8px; row-gap: 1px; min-width: 0; }
+.side-clip-batch .side-meter-row > span:first-child { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-clip-batch .side-meter-row > span:last-child { margin-left: auto; text-align: right; }
+.side-clip-quiet { color: var(--muted); }
+
+/* 37e: «Оживить» waits while a batch runs; it keeps the focus and says why (aria-disabled) */
+.viewer-animate[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+
 @media (prefers-reduced-motion: reduce) {
   .clip-play, .clip-export-bar > span { transition: none; }
+  .batch-cell .shim { animation: none; }
 }
 
 @media (max-width: 720px) {

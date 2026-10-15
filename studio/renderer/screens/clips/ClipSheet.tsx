@@ -19,17 +19,18 @@ import { sheetView, type SuitableOptions } from "./sheetModel";
 // engine again and needs a new click (38b). The month's fit is the engine's (`monthFits`): when it holds Kling alone, «Оживить» waits beside «Оживить без запасной модели» (38c). A
 // dialog over the photo viewer (or the «Клипы» tab), with its own focus and Escape; the viewer under it waits.
 
-const AUTO_NOTE = "Если Kling откажет бесплатно, клип снимет Grok — поэтому «не больше». Оплаченный отказ сам не переснимается.";
+// 5b.2 (S5.WB4): the batch sheet (59) says the same lines and offers the same options.
+export const AUTO_NOTE = "Если Kling откажет бесплатно, клип снимет Grok — поэтому «не больше». Оплаченный отказ сам не переснимается.";
 const BOLD_NOTE = "Для кадров «Смелой» запасной модели нет: если Kling откажет, клип не снимется — отказ бесплатный.";
 const SOUND_NOTE = "Звука нет. Клип появится во вкладке «Клипы» через 1–3 минуты.";
-const PRO_NOTE = "Запасная модель (Grok) снимает в 720p";
-const NO_FALLBACK_NOTE = "Если Kling откажет, Grok снимать не будем";
+export const PRO_NOTE = "Запасная модель (Grok) снимает в 720p";
+export const NO_FALLBACK_NOTE = "Если Kling откажет, Grok снимать не будем";
 
-const QUALITIES: readonly [ClipQuality, string][] = [
+export const QUALITIES: readonly [ClipQuality, string][] = [
   ["std", "Обычное · 720p"],
   ["pro", "Чётче · 1080p"],
 ];
-const LENGTHS: readonly [ClipSeconds, string][] = [
+export const LENGTHS: readonly [ClipSeconds, string][] = [
   [5, "5 секунд"],
   [10, "10 секунд"],
 ];

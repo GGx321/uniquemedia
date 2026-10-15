@@ -7,7 +7,8 @@ import { Portrait, Silhouette } from "../../ui/Portrait";
 import { MorePhotos } from "./MorePhotos";
 import type { PhotoPages } from "./photoPages";
 import { PhotoViewer } from "./PhotoViewer";
-import { heldLabel, montagePickRefusal, PhotoBadges, type MarkControl } from "./photoState";
+import { clipPickRefusal, heldLabel, montagePickRefusal, PhotoBadges, type MarkControl } from "./photoState";
+import type { PickMode } from "./picks";
 import { photoCategoryLabel } from "./runForm";
 import { viewerPhotos, viewerPlace } from "./viewerModel";
 import type { MoreState } from "./usePhotoPages";
@@ -27,10 +28,25 @@ const FILTERS: readonly { id: GalleryFilter; label: string }[] = [
   { id: "rejected", label: "Отклонённые" },
 ];
 
+/** 5b.2 (S5.WB4, Q-J = 1; mockup 58): what a pick on the gallery is for. */
+const PICK_MODES: readonly { id: PickMode; label: string }[] = [
+  { id: "montage", label: "для монтажа" },
+  { id: "clips", label: "для клипов" },
+];
+
+/** A photo's pick refusal in the mode on show: the montage's (one photo, one video) or the clips' (nothing a summary can tell). */
+export function pickRefusal(photo: PhotoSummary, mode: PickMode): string | null {
+  return mode === "clips" ? clipPickRefusal(photo) : montagePickRefusal(photo);
+}
+
 interface PhotoTileProps {
   photo: PhotoSummary;
   position: number;
+  /** 5b.2: the mode the pick is for. */
+  pickMode: PickMode;
   picked: boolean;
+  /** 5b.2: in «для клипов», the photo's place in the batch's turn order (1-based, the pick order); null when not picked. */
+  order: number | null;
   refused: boolean;
   onToggle: (photoId: string) => void;
   /** This photo's mark is being set now. */
@@ -44,18 +60,21 @@ interface PhotoTileProps {
 
 // Memoized: a tile is handed only values that are equal from one render to the next unless its own data moved, so a photo landing
 // draws the new tile and the ones that changed, not every tile on screen.
-const PhotoTile = memo(function PhotoTile({ photo, position, picked, refused, onToggle, marking, blocked, onMark, onOpen }: PhotoTileProps) {
+const PhotoTile = memo(function PhotoTile({ photo, position, pickMode, picked, order, refused, onToggle, marking, blocked, onMark, onOpen }: PhotoTileProps) {
   const label = photoCategoryLabel(photo);
+  const clips = pickMode === "clips";
   // A photo picked before it became unusable can still be unpicked.
-  const why = montagePickRefusal(photo);
-  // One photo, one video (Q1): a photo a video or a render holds is dimmed with how it is held, as in the editor's bin.
+  const why = pickRefusal(photo, pickMode);
+  // One photo, one video (Q1): a photo a video or a render holds is dimmed with how it is held, as in the editor's bin. For clips it is not (Q-J = 1): it can be picked like any
+  // other, and its badges still say how it is held (README §S5.WBD decision 3).
   const held = heldLabel(photo);
+  const dimmed = !clips && (held !== null || photo.rejected);
   const classes = [
     "ph",
     "photo-tile",
     picked ? "photo-tile-on" : "",
     refused ? "photo-tile-refused" : "",
-    held !== null ? "photo-tile-used" : "",
+    held !== null && !clips ? "photo-tile-used" : "",
     photo.rejected ? "photo-tile-rejected" : "",
   ]
     .filter(Boolean)
@@ -66,17 +85,18 @@ const PhotoTile = memo(function PhotoTile({ photo, position, picked, refused, on
       <button type="button" className="photo-open" data-photo-id={photo.photoId} aria-label={`Открыть фото ${position}: ${label}`} aria-haspopup="dialog" onClick={() => onOpen(photo.photoId)}>
         <Portrait avatarId={photo.avatarId} photoId={photo.photoId} label={`Фото ${position}: ${label}`} />
       </button>
-      {(held !== null || photo.rejected) && <span className="photo-held-dim" aria-hidden="true" />}
+      {dimmed && <span className="photo-held-dim" aria-hidden="true" />}
+      {/* «для клипов»: the pick shows the photo's turn in the batch (members go in pick order, §5.2.1); unpicked, its square is dashed (README decision 2). */}
       <button
         type="button"
-        className="photo-pick"
+        className={clips ? "photo-pick photo-pick-clip" : "photo-pick"}
         aria-pressed={picked}
-        aria-label={`Выбрать для монтажа: фото ${position}, ${label}${why === null ? "" : ` · ${why}`}`}
+        aria-label={`${clips ? "Выбрать для клипов" : "Выбрать для монтажа"}: фото ${position}, ${label}${why === null ? "" : ` · ${why}`}`}
         title={why ?? undefined}
         disabled={why !== null && !picked}
         onClick={() => onToggle(photo.photoId)}
       >
-        {picked && <Icon name="check" size={16} strokeWidth={3} />}
+        {picked && (clips ? <span className="mono photo-pick-n">{order}</span> : <Icon name="check" size={16} strokeWidth={3} />)}
       </button>
       {refused && <span className="pill photo-refused">недоступно</span>}
       <div className="photo-badges">
@@ -158,6 +178,9 @@ interface GalleryProps {
   error: EngineError | null;
   more: GalleryMore;
   pending: PendingSlots | null;
+  /** 5b.2 (S5.WB4, Q-J = 1): «Выбор: для монтажа · для клипов» — what a pick is for now; `picked` is that mode's own set, in the order picked. */
+  pickMode?: PickMode;
+  onPickMode?: (mode: PickMode) => void;
   picked: ReadonlySet<string>;
   /** Photos `montages.create` just refused (`PHOTO_UNAVAILABLE` at `["photoIds", i]`, K11): marked on their tiles. */
   refused?: ReadonlySet<string>;
@@ -182,8 +205,11 @@ interface GalleryProps {
  * tile's photo opens it in the viewer (PhotoViewer), which steps through the
  * photos as the filter shows them.
  */
-export function Gallery({ gallery, error, more, pending, picked, refused, onToggle, onRetry, filter, onFilter, usage, mark, initialViewing = null }: GalleryProps) {
+export function Gallery({ gallery, error, more, pending, pickMode = "montage", onPickMode, picked, refused, onToggle, onRetry, filter, onFilter, usage, mark, initialViewing = null }: GalleryProps) {
   const titleId = useId(); // L12: was the hardcoded "gallery-title"
+  const modeId = useId();
+  /** «для клипов»: each picked photo's place in the batch's turn order. */
+  const order = pickMode === "clips" ? new Map([...picked].map((photoId, i) => [photoId, i + 1])) : null;
   const sectionRef = useRef<HTMLElement>(null);
   /** The photo open in the viewer, by id: a list that changes under it moves its number, never what it shows. */
   const [viewing, setViewing] = useState<string | null>(initialViewing);
@@ -255,6 +281,21 @@ export function Gallery({ gallery, error, more, pending, picked, refused, onTogg
           ))}
         </div>
       </div>
+      {/* 5b.2 (mockup 58, README decision 1): under the gallery's head, where the picks are made — it changes what a tile's square means; each mode keeps its own picks. */}
+      {onPickMode !== undefined && (
+        <div className="pick-mode" role="group" aria-labelledby={modeId}>
+          <span id={modeId} className="lbl">
+            Выбор
+          </span>
+          <div className="seg pick-mode-seg">
+            {PICK_MODES.map((m) => (
+              <button key={m.id} type="button" className={pickMode === m.id ? "on" : undefined} aria-pressed={pickMode === m.id} onClick={() => onPickMode(m.id)}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {error && (
         <ErrorNotice
@@ -289,7 +330,9 @@ export function Gallery({ gallery, error, more, pending, picked, refused, onTogg
                 key={photo.photoId}
                 photo={photo}
                 position={positions.get(photo.photoId) ?? 0}
+                pickMode={pickMode}
                 picked={picked.has(photo.photoId)}
+                order={order?.get(photo.photoId) ?? null}
                 refused={refused?.has(photo.photoId) ?? false}
                 onToggle={onToggle}
                 marking={mark.marking.has(photo.photoId)}
@@ -323,6 +366,7 @@ export function Gallery({ gallery, error, more, pending, picked, refused, onTogg
       {place !== null && (
         <PhotoViewer
           place={place}
+          pickMode={pickMode}
           picked={picked.has(place.photo.photoId)}
           refused={refused?.has(place.photo.photoId) ?? false}
           onToggle={onToggle}
