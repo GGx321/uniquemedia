@@ -94,7 +94,8 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
 
   const ready = options.status === "ready" ? options : null;
   // The options on show were asked for other rows (a row refused after the click, before the effect that asks again has run): they wait, so nothing is sent or said on them.
-  const refreshing = ready !== null && (ready.refreshing || ready.asked !== askedKey);
+  // With every row refused after the click there is nothing left to ask about: nothing refreshes, and the alert stands (review L7).
+  const refreshing = askedKey !== "" && ready !== null && (ready.refreshing || ready.asked !== askedKey);
   // Every row refused after the click: there is nothing left to ask the engine about, nor to send.
   const sheet: BatchSheetView | null = askedKey === "" || ready === null || ready.options.items.every((item) => !item.suitable) ? null : batchSheetView(ready.options, { quality, seconds });
   const unpriced = options.status === "failed" && options.error.code === "PRICE_UNAVAILABLE" && options.error.priceScope === "video";
@@ -165,11 +166,12 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
   const whyId = `${ids}-why`;
   const noticeId = `${ids}-notice`;
   const title = `Оживить ${picks.length} фото`;
-  const shownAfter = after !== null && !refreshing && options.status === "ready" ? after : null;
+  const shownAfter = after !== null && !refreshing && (options.status === "ready" || askedKey === "") ? after : null;
   // The month's notice: a status when `monthFits` says it at open, an alert when `tryHold` said it after the click (59b #after-click) — while the way clicked still does not fit the room asked again.
+  // The figure is what the way clicked needs: Kling alone for «без запасной модели», whether that button is still offered or not (review L6).
   const budgetAlert = shownAfter?.kind === "budget" && sheet !== null && !sheet.fits && (shownAfter.way === "main" || sheet.noFallback === null);
-  const budgetShown = sheet !== null && (shownAfter?.kind === "budget" ? budgetAlert : sheet.budgetNeed !== null);
-  const budgetNeed = sheet === null ? "" : shownAfter?.kind === "budget" && shownAfter.way === "alone" && sheet.noFallback !== null ? upUsd(sheet.noFallback.worstMicros) : upUsd(sheet.main.worstMicros);
+  const budgetShown = sheet !== null && (budgetAlert || sheet.budgetNeed !== null);
+  const budgetNeed = sheet === null ? "" : budgetAlert && shownAfter?.way === "alone" ? upUsd(sheet.worstNoFallbackMicros) : upUsd(sheet.main.worstMicros);
   const mainOff = sheet === null || !sheet.fits || waiting || sheet.count === 0;
   // One live region at a time (README decision 13): the click's answer, else the engine's error, else why paid work waits, else the month.
   const notice: "price" | "item" | "error" | "block" | "budget" | null =
@@ -312,7 +314,7 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
         <footer className="clip-sheet-foot">
           {notice === "price" && shownAfter?.kind === "price" && sheet !== null && (
             <Notice tone="warn" role="alert">
-              Цена изменилась: теперь не больше <span className="mono">{shownAfter.way === "alone" && sheet.noFallback !== null ? upUsd(sheet.noFallback.worstMicros) : sheet.worst}</span>. Подтвердите ещё раз.
+              Цена изменилась: теперь не больше <span className="mono">{shownAfter.way === "alone" ? upUsd(sheet.worstNoFallbackMicros) : sheet.worst}</span>. Подтвердите ещё раз.
             </Notice>
           )}
           {notice === "item" && shownAfter?.kind === "item" && (
