@@ -219,3 +219,42 @@ export const CLIP_MONTAGE_SCENARIOS: readonly Scenario[] = [
     },
   },
 ];
+
+// S5.WA5 (M2, APPENDED after every other story: the golden is append-only): a draft is judged by the frames of its copies as a render is.
+export const CLIP_FRAME_DRAFT_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "clips in the montage: a draft's copy whose frame went into a video is told at the clip, on the copy's own draft and on a sibling's",
+    rig: { clips: true, ownMedia: true },
+    async run(t, world, control) {
+      const w = clipsOf(world);
+      const clipId = await makeClip(t, w, control);
+      const sibling = await makeClip(t, w, control);
+      const bold = await makeClip(t, w, control, w.photos.bold);
+      const copy = await importCopy(t, w, clipId);
+      const siblingCopy = await importCopy(t, w, sibling);
+      const boldCopy = await importCopy(t, w, bold);
+      const saved = async (name: string, mediaId: string): Promise<string> => {
+        const draft = resultOf(await t.call("montages.create", { avatarId: w.avatarId, photoIds: [] })).montage;
+        const montageId = typeof draft === "object" && draft !== null && "montageId" in draft && typeof draft.montageId === "string" ? draft.montageId : "";
+        await t.call("montages.save", { montageId, spec: specOf(w.avatarId, [sceneClip(1, w.photos.landscape), copyClip(2, mediaId)]), name });
+        return montageId;
+      };
+      t.note("two drafts hold copies of clips of one photo and a third the copy of another photo's clip: every frame is free, so none has an issue");
+      const first = await saved("Первый", copy);
+      const second = await saved("Второй", siblingCopy);
+      const third = await saved("Третий", boldCopy);
+      await t.call("montages.get", { montageId: first });
+      await t.call("montages.get", { montageId: second });
+      t.note("a video of the first copy is made from another draft: the frame is used, so BOTH drafts that hold a clip of it are told at the clip, and the third is not");
+      await t.call("videos.render", { spec: specOf(w.avatarId, [sceneClip(1, w.photos.hidden), copyClip(2, copy)]) });
+      await t.settle();
+      await t.call("montages.get", { montageId: first });
+      await t.call("montages.get", { montageId: second });
+      await t.call("montages.get", { montageId: third });
+      await t.call("montages.list", { avatarId: w.avatarId });
+      t.note("a rejected photo is told the same way");
+      await photoState(t, w, w.photos.bold, true);
+      await t.call("montages.get", { montageId: third });
+    },
+  },
+];

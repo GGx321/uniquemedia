@@ -3830,6 +3830,8 @@ export class MockEngine implements EngineBridge {
       if (clip.kind === "photo") judge(clip.cell.photo, ["clips", i, "cell"]);
       else if (clip.kind === "collage") clip.cells.forEach((cell, j) => judge(cell.photo, ["clips", i, "cells", j]));
     });
+    // 5b.2 (I5.60, Q-F = 1): a clip copy's photo is a frame of the draft, judged as a scene photo is and told at the clip.
+    for (const frame of this.clipFrameCells(spec)) if (!this.photoUsable(spec.avatarId, frame.photoId)) referential.push({ code: "photo-unavailable", path: frame.path });
     // An own video clip (3f.3b) is judged by the engine's own function against what the mock holds as videos: media-unavailable, then video-too-short.
     referential.push(...ownVideoIssues(spec, (mediaId) => this.ownMedia.holdsVideo(mediaId)));
     // The set is in the build: the engine's own function, so the mock and the engine name the same stickers.

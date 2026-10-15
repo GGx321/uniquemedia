@@ -324,3 +324,39 @@ describe("ClipSummary.use", () => {
     expect(listed !== undefined && listed.status === "ready" ? listed.use : "not listed").toEqual(await useOf(m, clipId));
   });
 });
+
+describe("a draft's copy whose frame went into another draft's video (S5.WA5, M2)", () => {
+  const savedDraft = async (m: ClipMock, spec: ReturnType<typeof specOf>) => {
+    const draft = (await unwrap(m.client.request("montages.create", { avatarId: AVATAR, photoIds: [] }))).montage;
+    await unwrap(m.client.request("montages.save", { montageId: draft.montageId, spec, name: null }));
+    return draft.montageId;
+  };
+
+  test("montages.get tells photo-unavailable at the copy's clip, as the engine does", async () => {
+    const m = makeCopyMock();
+    const a = await copyOfNewClip(m);
+    const b = await copyOfNewClip(m);
+    await renderedVideoId(m, withScene(a.mediaId));
+    const montageId = await savedDraft(m, specOf([photoClip(1, CLIP_PHOTOS.hidden.photoId), videoClip(2, b.mediaId)]));
+    const { issues } = await unwrap(m.client.request("montages.get", { montageId }));
+    expect(issues).toEqual([{ code: "photo-unavailable", path: ["clips", 1] }]);
+  });
+
+  test("montages.list tells it too, and a draft of a free frame has no issue", async () => {
+    const m = makeCopyMock();
+    const a = await copyOfNewClip(m);
+    const b = await copyOfNewClip(m);
+    await renderedVideoId(m, withScene(a.mediaId));
+    const montageId = await savedDraft(m, specOf([photoClip(1, CLIP_PHOTOS.hidden.photoId), videoClip(2, b.mediaId)]));
+    const listed = await unwrap(m.client.request("montages.list", { avatarId: AVATAR }));
+    expect(listed.items.find((item) => item.montage.montageId === montageId)?.issues).toEqual([{ code: "photo-unavailable", path: ["clips", 1] }]);
+  });
+
+  test("a copy of a free frame is no issue", async () => {
+    const m = makeCopyMock();
+    const a = await copyOfNewClip(m);
+    const montageId = await savedDraft(m, withScene(a.mediaId));
+    const { issues } = await unwrap(m.client.request("montages.get", { montageId }));
+    expect(issues).toEqual([]);
+  });
+});
