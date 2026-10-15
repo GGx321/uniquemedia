@@ -4336,7 +4336,9 @@ const CLIP_BATCH_TIMEOUT_MS = 180_000;
  * (never two clip reserves open), the first by Grok behind a free Kling, and the POSTs are Kling, Grok, Kling, Kling, one per attempt id; every record tells its place in the batch; the ledger equals
  * what the mock billed and nothing is open; a cancel of the finished batch finds nothing queued; no request reached a route the mock does not know.
  *
- * clipBatchSmoke.engine.test.ts plays the very same steps against the real engine on loopback, so the mock's routes and the checks are held without Electron. Needs Electron: CI only, never run locally.
+ * clipBatchSmoke.engine.test.ts plays the batch's steps (steps 3 to 7 here) against the real engine on loopback, so the mock's routes and the batch checks are held without Electron. It differs on purpose: its
+ * three photos are seeded in a library instead of drawn by a run, it starts from a ledger with nothing in it (so it asserts totals, where this scenario asserts the change over the batch, the avatar and the
+ * run before it having been paid too), and it has no sheet step or export folder. Needs Electron: CI only, never run locally.
  */
 async function runClipBatchScenario(target: Target): Promise<void> {
   const mock = await startMockOpenRouter({ descriptorText: AVATAR_DESCRIPTOR, distinctImages: true, faceFixture: true, clips: true });
@@ -4380,6 +4382,8 @@ async function runClipBatchScenario(target: Target): Promise<void> {
 
     // 3. The batch: the first Kling job is refused at the poll, free, and Grok follows behind it.
     mock.armVideoRefusal(VIDEO_TIERS.std.model);
+    const spentBefore = Number(field(await req(cdp, "money.status"), "result", "spentMicros"));
+    const usageBefore = mock.totalUsageUsd();
     const created = await req(cdp, "clips.createBatch", {
       avatarId,
       items: photoIds.map((photoId, i) => ({ photoId, motionId: motionOf(Array.isArray(items) ? items[i] : undefined) })),
@@ -4439,11 +4443,14 @@ async function runClipBatchScenario(target: Target): Promise<void> {
     );
 
     // 6. The money: the ledger is where the mock's bill is, and nothing is open.
+    // The avatar and the run before the batch were paid too: what the batch spent is the change from just before it, on the ledger and on the mock's meter alike.
     const money = await req(cdp, "money.status");
+    const spentDelta = Number(field(money, "result", "spentMicros")) - spentBefore;
+    const usageDelta = Math.round((mock.totalUsageUsd() - usageBefore) * 1_000_000);
     check(
-      "clip batch scenario: money.status' ledger total equals the mock's charged costs ($1.55), no open reserves",
-      field(money, "ok") === true && field(money, "result", "spentMicros") === Math.round(mock.totalUsageUsd() * 1_000_000) && field(money, "result", "spentMicros") === 1_550_000 && field(money, "result", "unsettledMicros") === 0 && field(money, "result", "unsettledCount") === 0,
-      { money, billed: mock.totalUsageUsd() },
+      "clip batch scenario: the ledger's change over the batch equals the mock's charged costs over it ($1.55: Grok $0.71 and two Kling $0.42), no open reserves",
+      field(money, "ok") === true && spentDelta === usageDelta && spentDelta === 1_550_000 && field(money, "result", "unsettledMicros") === 0 && field(money, "result", "unsettledCount") === 0,
+      { money, spentBefore, spentDelta, usageDelta },
     );
 
     // 7. The batch is over: a cancel finds nothing queued, and no request left for a route the mock does not know.
