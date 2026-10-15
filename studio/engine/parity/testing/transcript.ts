@@ -885,13 +885,13 @@ export class Transcript {
   }
 
   /**
-   * 5b.2 (S5.WB3): lets the rig move until the batch is over: the unit is free again (read quietly with `probe`, a `clips.createBatch` that breaks the first rule it meets after the unit, so it is
+   * 5b.2 (S5.WB3): lets the rig move until the batch is over: the unit is free again (read quietly with `probe`, a `clips.create` that breaks the first rule it meets after the unit, so it is
    * refused `IN_FLIGHT` while a batch or a clip holds the unit and is refused by its own fault, free, once it does not) and every member job has ended. A retry exists before the unit is free, so a
    * member requeued after a 429 is waited for. `ms` of wall time fail the scenario.
    */
   async untilBatchEnds(probe: unknown, ms = 45_000): Promise<void> {
     await this.#pumpUntil(async () => {
-      const answer = await this.#rig.send("clips.createBatch", probe);
+      const answer = await this.#rig.send("clips.create", probe);
       if (!answer.ok && answer.error.code === "IN_FLIGHT") return false;
       this.#drain();
       return [...this.#memberJobs.values()].every((member) => member.end !== null);

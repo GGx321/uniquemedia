@@ -63,9 +63,12 @@ function createPayload(w: ClipWorld, batch: Batch) {
   };
 }
 
-/** A `clips.createBatch` that breaks the first rule it meets after the unit (the item's own reason), so it is refused IN_FLIGHT while a batch holds the unit and by its own fault, free, once the unit is free. */
+/**
+ * A `clips.create` that breaks the first rule it meets after the unit (the master is no gallery photo), so it is refused IN_FLIGHT while a batch or a clip holds the unit and by its own fault, free, once the unit
+ * is free. (Not a `clips.createBatch`: since WB2d a batch is also refused while a clip's money stays open, an uncertain member's reserve for one, which says nothing of the unit.)
+ */
 function probe(w: ClipWorld): unknown {
-  return createPayload(w, { photoIds: [w.masterPhotoId] });
+  return { avatarId: w.avatarId, photoId: w.masterPhotoId, motionId: "g-blink", model: "kling", quality: "std", seconds: 5, fallback: "auto", acceptedWorstMicros: STD_5 };
 }
 
 function posts(t: Telling, control: Control): void {
