@@ -152,8 +152,9 @@ describe("the continuity line of an own idea that takes clothing off, on a frame
   test("the line is written in clips/videoLook.ts alone (I5.1): no other engine or shared module holds it as a string", () => {
     const studio = join(import.meta.dir, "..", "..");
     const holds = (path: string): boolean => /["'`]Nothing new appears\.["'`]/.test(readFileSync(join(studio, path), "utf8"));
-    const sources = [...new Bun.Glob("{engine,shared}/**/*.ts").scanSync(studio)].filter((path) => !/\.test\.ts$|testkit\.ts$|\/testing\//.test(path));
-    expect(sources.filter(holds)).toEqual(["engine/clips/videoLook.ts"]);
+    // Windows scans with backslashes: compare and filter on forward slashes, read by the native path.
+    const sources = [...new Bun.Glob("{engine,shared}/**/*.ts").scanSync(studio)].filter((path) => !/\.test\.ts$|testkit\.ts$|\/testing\//.test(path.replaceAll("\\", "/")));
+    expect(sources.filter(holds).map((path) => path.replaceAll("\\", "/"))).toEqual(["engine/clips/videoLook.ts"]);
   });
 });
 
