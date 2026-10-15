@@ -374,14 +374,14 @@ describe("the stops (I5.62): the rest is cancelled for free, every hold released
     expect([...m.engine.peekClips().monthHolds]).toEqual([]);
   });
 
-  test("after an uncertain submit a new batch is refused `one-at-a-time`, free, while the clip's reserve is open (WB2d, L2)", async () => {
+  test("after an uncertain submit a new batch is refused RECONCILE_REQUIRED, free, while the clip's reserve is open (WB2d, L2)", async () => {
     const m = makeBatchMock(3);
     script(m, ["uncertain"]);
     const { jobIds } = await startBatch(m, m.photoIds.slice(0, 1));
     runUntilEnds(m, jobIds);
     const posts = m.engine.peekClips().posts.length;
 
-    expect(await refusal(createBatch(m, m.photoIds.slice(1)))).toMatchObject({ code: "IN_FLIGHT", clipReason: "one-at-a-time" });
+    expect(await refusal(createBatch(m, m.photoIds.slice(1)))).toMatchObject({ code: "RECONCILE_REQUIRED" });
     expect(m.engine.peekClips().posts).toHaveLength(posts);
     expect([...m.engine.peekClips().monthHolds]).toEqual([]);
     expect((await money(m)).unsettledMicros).toBe(504_000);

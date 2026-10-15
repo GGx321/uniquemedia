@@ -83,11 +83,11 @@ describe("a batch on every path (fixed seeds)", () => {
       expect(status?.heldMicros).toBe(0);
       const open = status?.openReserveMicros ?? 0;
       expect(engine.engine.monthRoom()?.freeMicros).toBe(BUDGET - (status?.spentThisMonthMicros ?? 0) - open);
-      // No member sits queued, and the unit is free: the next batch is refused for anything but IN_FLIGHT, unless a clip's money is still open (WB2d, L2): then it is refused `one-at-a-time`, free.
+      // No member sits queued, and the unit is free: the next batch is refused for anything but IN_FLIGHT, unless a clip's money is still open (WB2d, L2): then it is refused RECONCILE_REQUIRED, free.
       expect((await jobsOf(engine)).some((job) => job.kind === "clip" && job.status === "running")).toBe(false);
       const moneyOpen = (engine.engine.budget?.ledger.openReserves().length ?? 0) > 0;
       const next = await createBatch(engine, { avatarId, photoIds: photoIds.slice(0, 1) });
-      if (moneyOpen) expect(next).toMatchObject({ ok: false, error: { code: "IN_FLIGHT", clipReason: "one-at-a-time" } });
+      if (moneyOpen) expect(next).toMatchObject({ ok: false, error: { code: "RECONCILE_REQUIRED" } });
       else if (!next.ok) expect(next.error.code).not.toBe("IN_FLIGHT");
       await settled(engine);
     });

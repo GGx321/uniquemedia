@@ -1209,10 +1209,10 @@ export class MockClips {
 
   // ---------- clips.createBatch (5b.2, S5.WB3) ----------
 
-  /** WB2d (L2), as the engine's `#openClipMoneyRefusal`: a batch does not start while any clip reserve is open; the closest existing reason is `one-at-a-time`. */
+  /** WB2d (L2, R2), as the engine's `#openClipMoneyRefusal`: a batch does not start while any clip reserve is open; the ledger's own refusal, checked after the key and the ledger gate. */
   #openClipMoneyRefusal(): EngineError | null {
-    const open = [...this.#host.reserves.keys()].some((attemptId) => attemptId.includes(":video#"));
-    return open ? { code: "IN_FLIGHT", clipReason: "one-at-a-time", detail: "another clip's money is still open; wait for it to close (or for the reconcile) before a batch" } : null;
+    const open = [...this.#host.reserves.keys()].filter((attemptId) => attemptId.includes(":video#")).length;
+    return open > 0 ? { code: "RECONCILE_REQUIRED", detail: `${open} open clip attempt(s); reconcile before a batch; nothing was held` } : null;
   }
 
   /**
@@ -1220,10 +1220,12 @@ export class MockClips {
    * reason with its path), the price, the sum the owner accepted, and the month hold. Every refusal is free and leaves nothing behind: no hold, no job, no unit.
    */
   createBatch(payload: CommandPayload<"clips.createBatch">): Out<{ batchId: string; jobIds: string[] }> {
-    const held = this.unitRefusal() ?? this.#openClipMoneyRefusal();
+    const held = this.unitRefusal();
     if (held !== null) return bad(held);
     const gated = this.#host.gate();
     if (gated !== null) return bad(gated);
+    const openMoney = this.#openClipMoneyRefusal();
+    if (openMoney !== null) return bad(openMoney);
     const { avatarId } = payload;
     const active = this.#activeAvatar(avatarId);
     if (!active.ok) return active;

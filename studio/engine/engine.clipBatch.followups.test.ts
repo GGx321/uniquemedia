@@ -46,7 +46,7 @@ describe("L2: a batch does not start while a clip's money is still open", () => 
       answer = await createBatch(engine, { avatarId, photoIds: photoIds.slice(1) });
     }
 
-    expect(answer).toMatchObject({ ok: false, error: { code: "IN_FLIGHT", clipReason: "one-at-a-time" } });
+    expect(answer).toMatchObject({ ok: false, error: { code: "RECONCILE_REQUIRED" } });
     expect((await jobsOf(engine)).length).toBe(jobsBefore);
     expect(ledgerLines(dir())).toHaveLength(linesBefore);
     expect(engine.net.posts("kling")).toHaveLength(1);

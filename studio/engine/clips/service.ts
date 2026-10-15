@@ -769,12 +769,13 @@ export class ClipService {
   }
 
   /**
-   * WB2d (L2): a batch does not start while any clip reserve is open (an uncertain submit, a late clip, a restart's recovery): every member would wait out the whole alone-bound and then submit blind, and a
-   * refusal of it would be `net-uncounted`, settled at worst. The closest existing reason is `one-at-a-time` («another clip is being made, wait»); the contract has no word for «its money is still open».
+   * WB2d (L2, R2): a batch does not start while any clip reserve is open (an uncertain submit, a late clip, a restart's recovery): every member would wait out the whole alone-bound and then submit blind, and
+   * a refusal of it would be `net-uncounted`, settled at worst. It is the ledger's own refusal, RECONCILE_REQUIRED, whose text names the real remedy; checked right after `paidBudget()`, so the contract's
+   * order holds (IN_FLIGHT, AUTH_INVALID, the ledger's refusals).
    */
-  #openClipMoneyRefusal(): EngineFailure | null {
-    const open = this.#deps.budget()?.ledger.openReserves().some((reserve) => parseClipAttemptId(reserve.attemptId) !== null) ?? false;
-    return open ? new EngineFailure({ code: "IN_FLIGHT", clipReason: "one-at-a-time", detail: "another clip's money is still open; wait for it to close (or for the reconcile) before a batch" }) : null;
+  #openClipMoneyRefusal(budget: Budget): EngineFailure | null {
+    const open = budget.ledger.openReserves().filter((reserve) => parseClipAttemptId(reserve.attemptId) !== null).length;
+    return open > 0 ? new EngineFailure({ code: "RECONCILE_REQUIRED", detail: `${open} open clip attempt(s); reconcile before a batch; nothing was held` }) : null;
   }
 
   /** Takes the unit and the paid count, synchronously (5b.1's order: before the first await). */
@@ -884,7 +885,7 @@ export class ClipService {
    * closes. Every refusal below is free and leaves nothing behind: no hold, no cap, no job, no unit.
    */
   async createBatch(payload: CreateBatchPayload): Promise<{ batchId: string; jobIds: string[] }> {
-    const refusal = this.unitRefusal() ?? this.#openClipMoneyRefusal();
+    const refusal = this.unitRefusal();
     if (refusal !== null) throw refusal;
     const unit = this.#claimUnit("batch");
     let started = false;
@@ -902,6 +903,8 @@ export class ClipService {
     // The key is checked here for the refusal order; each member reads it again at its turn (a rejected or changed key reaches the later members).
     deps.usableKey("bring photos to life");
     const budget = deps.paidBudget();
+    const openMoney = this.#openClipMoneyRefusal(budget);
+    if (openMoney !== null) throw openMoney;
     const library = await deps.liveLibrary();
     const { avatarId } = payload;
     // NOT_FOUND is the avatar's alone: a photo that is missing or another avatar's is that item's own VALIDATION.
