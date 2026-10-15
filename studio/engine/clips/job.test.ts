@@ -23,6 +23,7 @@ import { SHORT_CLIP_TIMINGS } from "./timings";
 import type { ClipColour, ValidClip } from "./validate";
 import { MoneyError } from "../money/errors";
 import { FfmpegError, FfmpegTimeoutError } from "../../node/runFfmpeg";
+import { boldContentLevel } from "../../shared/scenes/contentLine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -715,5 +716,54 @@ describe("runClipJob: a fault inside the money machine (5b.2, round 2)", () => {
     };
     await expect(run(w, { batch: TRIO })).rejects.toThrow("the money machine broke");
     expect(w.closedWith).toEqual([{ kind: "fault" }]);
+  });
+});
+
+describe("runClipJob: the last prompt build reads the motion's source (S5.WC2 round 2)", () => {
+  const attemptPlan = (n: 1 | 2, model: "kling" | "grok"): AttemptPlan => {
+    const tier = model === "grok" ? "grok" : "std";
+    return { n, attemptId: `${CLIP}:video#${n}`, model, tier, modelId: VIDEO_TIERS[tier].model, resolution: VIDEO_TIERS[tier].resolution, seconds: 5, reserveMicros: 1 };
+  };
+
+  /** Each plan's POST body, or the message of the defect its build throws. */
+  async function builds(overrides: Partial<ClipJobInput>, plans: AttemptPlan[]): Promise<(VideoRequest | string)[]> {
+    const out: (VideoRequest | string)[] = [];
+    const w = world({
+      during: async (_deps, runInput) => {
+        for (const p of plans) {
+          try {
+            out.push(await runInput.buildRequest(p));
+          } catch (error) {
+            out.push(error instanceof Error ? error.message : String(error));
+          }
+        }
+      },
+    });
+    await run(w, { acceptedWorstMicros: 1_550_000, ...overrides });
+    return out;
+  }
+
+  const own = (text: string): ClipMotionChoice => ({ id: "o-1", source: "own", label: "Своя идея", text });
+  const vision = (text: string): ClipMotionChoice => ({ id: "v-1", source: "vision", label: "Предложение", text });
+
+  test("a vision or own text that fails the bank's grammar makes no body in either dialect, though a scene text of the same words would", async () => {
+    // Within the contract's 60 characters of motion English (the record and the journal hold a longer one out themselves), but neither small nor slow.
+    const big = "she turns her head toward the window";
+    for (const motion of [own(big), vision(big)]) {
+      const out = await builds({ motion }, [attemptPlan(1, "kling"), attemptPlan(2, "grok")]);
+      expect(out).toHaveLength(2);
+      for (const answer of out) expect(answer).toEqual(expect.stringContaining("the clip's prompt cannot be built"));
+    }
+    const scene = await builds({ motion: { id: "scene", source: "scene", label: "Как в сцене", text: big } }, [attemptPlan(1, "kling")]);
+    expect(typeof scene[0]).toBe("object");
+  });
+
+  test("an own idea that takes clothing off, on a frame of «Смелая»: Kling's body carries «Nothing new appears.»; a Grok body is never built", async () => {
+    const bold = facts({ bold: true, level: boldContentLevel(), capture: "mirror", plannedCapture: "mirror", category: "nightwear" });
+    const out = await builds({ facts: bold, photoId: bold.photoId, motion: own("she slowly takes off her robe") }, [attemptPlan(1, "kling"), attemptPlan(2, "grok")]);
+    const kling = out[0];
+    if (typeof kling === "string") throw new Error(kling);
+    expect(kling.prompt).toContain("Over the whole clip she slowly takes off her robe. Nothing new appears.");
+    expect(out[1]).toEqual(expect.stringContaining("the clip's prompt cannot be built"));
   });
 });

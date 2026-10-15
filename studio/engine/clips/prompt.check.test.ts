@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { PhotoSidecarSchema } from "../library/schemas";
 import { RunPlanSchema } from "../runs/plan";
 import type { PlanSlot } from "../scenes/schema";
-import { frameFactsOf, type FrameFacts, type FrameFactsResult } from "./frameFacts";
+import { clipFallbackOf, frameFactsOf, type FrameFacts, type FrameFactsResult } from "./frameFacts";
 import { clipMotionProblems, clipPromptOf, poseSentenceFor } from "./prompt";
 import { CLIP_CAPTURES, COMES_OFF_LINE, CONTINUITY_LINE, LOOK_LINE, NOTHING_NEW_LINE, PROMPT_WORDS_MAX, SLOW_LINE, cameraLineOf, continuityLineOf, wordCount, type ClipDialect } from "./videoLook";
 import { photoOf, pick, sceneRun, slotOf } from "./testing/frameFixtures";
@@ -40,9 +40,9 @@ const K1 = ((): FrameFacts => {
 const SIXTY_ONE = "she slowly turns her head a little toward the window and back";
 
 describe("the prompt takes the text's source (I5.66)", () => {
-  test("a scene call (no source) keeps 5b.1's checks: a 61-character text still makes a prompt", () => {
+  test("a scene text keeps 5b.1's checks: a 61-character text still makes a prompt", () => {
     expect(SIXTY_ONE.length).toBe(61);
-    expect(clipPromptOf(TIMER, SIXTY_ONE, "kling").ok).toBe(true);
+    expect(clipPromptOf(TIMER, SIXTY_ONE, "kling", "scene").ok).toBe(true);
   });
 
   test("the same text as a vision or an own motion takes the bank's grammar and makes no prompt, in either dialect", () => {
@@ -127,6 +127,26 @@ describe("the continuity line of an own idea that takes clothing off, on a frame
 
   test("a motion that only moves what she wears keeps «comes off», whatever its source", () => {
     expect(continuityLineOf("she slowly tugs the strap a little", null)).toBe(COMES_OFF_LINE);
+  });
+
+  test("round 2: the garments a model names take «comes off» when they are only moved; «her top knee» is no garment", () => {
+    for (const motion of ["she slowly smooths her dress", "she slowly adjusts her top a little", "she slowly straightens her robe", "she slowly tugs her shirt a little", "she slowly smooths her skirt"]) {
+      expect([motion, continuityLineOf(motion, null)]).toEqual([motion, COMES_OFF_LINE]);
+    }
+    expect(continuityLineOf("she slides her top knee forward a little", null)).toBe(CONTINUITY_LINE);
+  });
+
+  test("round 2: an accepted takes-off idea goes to Kling alone: its Grok prompt is refused, whatever BOLD_CLIPS says of the frame", () => {
+    const facts = boldMirror();
+    expect(clipPromptOf(facts, ROBE, "kling", "own").ok).toBe(true);
+    const grok = clipPromptOf(facts, ROBE, "grok", "own");
+    expect(grok.ok).toBe(false);
+    if (!grok.ok) expect(grok.problems.join(" ")).toContain("takes-off");
+    // Were «Смелая» frames ever let fall back to Grok, the prompt still is not built for it.
+    expect(clipFallbackOf(facts, "with-fallback", "auto")).toBe("auto");
+    expect(clipMotionProblems(facts, ROBE, "own")).toEqual([]);
+    // A motion that keeps her clothes on builds in both dialects as before.
+    expect(clipPromptOf(facts, "she slowly turns her hips a little", "grok", "own").ok).toBe(true);
   });
 
   test("the line is written in clips/videoLook.ts alone (I5.1): no other engine or shared module holds it as a string", () => {

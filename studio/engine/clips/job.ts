@@ -317,7 +317,8 @@ class ClipChain {
   /** One attempt's POST body: the prompt in the attempt's dialect, its first frame, the priced model. A prompt that cannot be built is a defect (`clips.create` checked the motion in both). */
   private body(plan: AttemptPlan, frames: { first: Uint8Array; grok: Uint8Array }) {
     const { input } = this;
-    const prompt = clipPromptOf(input.facts, input.motion.text, plan.model);
+    // S5.WC2 round 2: the motion is checked as what it is (scene, code, vision, own) in the very last build before the POST.
+    const prompt = clipPromptOf(input.facts, input.motion.text, plan.model, input.motion.source);
     if (!prompt.ok) throw new Error(`the clip's prompt cannot be built: ${prompt.problems.join("; ")}`);
     const frame = plan.model === "grok" ? frames.grok : frames.first;
     return clipRequestBody({ prompt: prompt.prompt, model: plan.model, quality: input.request.quality, seconds: input.request.seconds, firstFrame: jpegDataUrl(frame, "the clip's first frame") });

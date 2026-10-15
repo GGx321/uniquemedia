@@ -73,12 +73,14 @@ function lyingOnHerStomach(facts: FrameFacts): boolean {
 }
 
 /**
- * The clip prompt for this frame and motion in this dialect, or the problems that keep it from being sent. `source` is where the motion comes from; a call that names none is
- * a scene motion's (5b.1's callers), which never takes the grammar a code, vision or own text takes.
+ * The clip prompt for this frame and motion in this dialect, or the problems that keep it from being sent. `source` is where the motion comes from, always named (S5.WC2
+ * round 2): a vision or own text takes the grammar a scene text took at its bank's load. A motion that takes clothing off (an own idea on «Смелая», Q-H = 2) is Kling's
+ * alone: its Grok prompt is never built, whatever `BOLD_CLIPS` lets the frame fall back to.
  */
-export function clipPromptOf(facts: FrameFacts, motion: string, dialect: ClipDialect, source: ClipMotionSource = "scene"): ClipPromptResult {
+export function clipPromptOf(facts: FrameFacts, motion: string, dialect: ClipDialect, source: ClipMotionSource): ClipPromptResult {
   const findings = motionTextFindings(motion, facts, source);
   if (findings.length > 0) return { ok: false, problems: findings.map((finding) => `${finding.problem} (${finding.rule}): ${finding.what}`) };
+  if (dialect === "grok" && takesOff(motion)) return { ok: false, problems: ["takes-off (grok): a motion that takes clothing off goes to Kling alone"] };
   const rest = [
     poseSentenceFor(facts),
     motionSentenceOf(motion),
@@ -103,12 +105,14 @@ const DIALECTS: readonly ClipDialect[] = ["kling", "grok"];
 
 /**
  * What a motion must pass before it is offered (I5.66: «every LLM motion passes that check and `clipPromptOf` in both dialects»): the one check's closed problems, else
- * `too-long` when its prompt crosses 130 words in either dialect. Empty: the motion can be offered on this frame.
+ * `too-long` when its prompt crosses 130 words in a dialect it may go to (both; Kling alone for an accepted takes-off idea, which never goes to Grok). Empty: the motion
+ * can be offered on this frame.
  */
 export function clipMotionProblems(facts: FrameFacts, text: string, source: ClipMotionSource): MotionProblem[] {
   const problems = motionTextProblems(text, facts, source);
   if (problems.length > 0) return problems;
-  return DIALECTS.every((dialect) => clipPromptOf(facts, text, dialect, source).ok) ? [] : ["too-long"];
+  const dialects: readonly ClipDialect[] = takesOff(text) ? ["kling"] : DIALECTS;
+  return dialects.every((dialect) => clipPromptOf(facts, text, dialect, source).ok) ? [] : ["too-long"];
 }
 
 /** Grok's listing has no audio flag (`generate_audio: null`), so its body carries none (plan §5.5); Kling's says `false`. */

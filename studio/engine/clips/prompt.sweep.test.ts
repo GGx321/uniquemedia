@@ -83,7 +83,7 @@ function sweep(): Swept[] {
         if (choices[0]?.id !== "scene" && !dropped.has(frame)) throw new Error(`${where}: «Как в сцене» is not offered`);
         for (const choice of choices) {
           for (const dialect of DIALECTS) {
-            const result = clipPromptOf(facts, choice.text, dialect);
+            const result = clipPromptOf(facts, choice.text, dialect, choice.source);
             if (!result.ok) throw new Error(`${where} (${choice.id}, ${dialect}): ${result.problems.join("; ")}`);
             out.push({ where: `${where} (${choice.id})`, facts, motion: choice.text, dialect, prompt: result.prompt, words: result.words });
           }
@@ -209,7 +209,7 @@ describe("no outfit in a video prompt (I5.51, I5.57): every slot of the two «С
         const facts = factsOf(frameFactsOf(photoOf(run, slot), run));
         for (const choice of motionChoicesOf(facts)) {
           for (const dialect of DIALECTS) {
-            const result = clipPromptOf(facts, choice.text, dialect);
+            const result = clipPromptOf(facts, choice.text, dialect, choice.source);
             if (!result.ok) throw new Error(`${slot.location}/«${slot.activity}»: ${result.problems.join("; ")}`);
             expect(result.prompt.toLowerCase()).not.toContain(slot.outfit.toLowerCase());
             for (const coverage of coverages) expect(result.prompt).not.toContain(coverage);
@@ -259,7 +259,7 @@ describe("an old pov-legs photo with no POV line takes the unknown camera line (
         for (const text of [facts.activity ?? "", ...choices.map((choice) => choice.text)]) expect(PHONE_WORDS.test(text) || SELFIE_WORDS.test(text)).toBe(false);
         for (const choice of choices) {
           for (const dialect of DIALECTS) {
-            const result = clipPromptOf(facts, choice.text, dialect);
+            const result = clipPromptOf(facts, choice.text, dialect, choice.source);
             if (!result.ok) throw new Error(`${picked.place.name}/«${picked.moment.text}» (${choice.id}, ${dialect}): ${result.problems.join("; ")}`);
             expect(result.prompt.startsWith(`${UNKNOWN_LINE} `)).toBe(true);
             expect(result.prompt).toContain(LEGS_LINE);
@@ -298,7 +298,7 @@ function firstOn(capture: Capture): Picked {
 }
 
 function promptFor(facts: FrameFacts, motion: string, dialect: ClipDialect): string {
-  const result = clipPromptOf(facts, motion, dialect);
+  const result = clipPromptOf(facts, motion, dialect, "scene");
   if (!result.ok) throw new Error(result.problems.join("; "));
   return result.prompt;
 }

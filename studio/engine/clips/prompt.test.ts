@@ -29,7 +29,7 @@ function factsFor(slot: PlanSlot, prompt?: string): FrameFacts {
 }
 
 function promptOf(facts: FrameFacts, motion: string, dialect: ClipDialect = "kling"): string {
-  const result = clipPromptOf(facts, motion, dialect);
+  const result = clipPromptOf(facts, motion, dialect, "scene");
   if (!result.ok) throw new Error(`no prompt: ${result.problems.join("; ")}`);
   return result.prompt;
 }
@@ -161,7 +161,7 @@ describe("the content level follows the category (I5.51, I5.57)", () => {
     for (const category of ["home", "beach"] as const) {
       const slot = { ...slotOf(beach, "friend"), category, activity: youthful, level: undefined };
       expect(poseSentenceFor(factsFor(slot, `On the beach, she ${youthful}, wearing a sundress.`))).toBeNull();
-      expect(clipPromptOf(factsFor(slot, `On the beach, she ${youthful}, wearing a sundress.`), "she sits like a teen a little", "kling").ok).toBe(false);
+      expect(clipPromptOf(factsFor(slot, `On the beach, she ${youthful}, wearing a sundress.`), "she sits like a teen a little", "kling", "scene").ok).toBe(false);
     }
   });
 });
@@ -235,35 +235,35 @@ describe("checks before any money (I5.51)", () => {
   const facts = factsFor(slotOf(pick("home", (m) => m.captures.includes("timer") && m.legs === undefined), "timer"));
 
   test("a motion must open with «she» or «her»", () => {
-    expect(clipPromptOf(facts, "slowly she turns", "kling").ok).toBe(false);
+    expect(clipPromptOf(facts, "slowly she turns", "kling", "scene").ok).toBe(false);
   });
 
   test("a motion with a staging or video word is refused", () => {
-    expect(clipPromptOf(facts, "she turns as the camera zooms in slowly", "kling").ok).toBe(false);
-    expect(clipPromptOf(facts, "she turns slowly in a cinematic orbit", "kling").ok).toBe(false);
+    expect(clipPromptOf(facts, "she turns as the camera zooms in slowly", "kling", "scene").ok).toBe(false);
+    expect(clipPromptOf(facts, "she turns slowly in a cinematic orbit", "kling", "scene").ok).toBe(false);
   });
 
   test("a revealing word is refused on an ordinary frame", () => {
-    expect(clipPromptOf(facts, "she adjusts her bra strap slowly", "kling").ok).toBe(false);
+    expect(clipPromptOf(facts, "she adjusts her bra strap slowly", "kling", "scene").ok).toBe(false);
   });
 
   test("a motion that names a phone on a propped capture is refused", () => {
-    expect(clipPromptOf(facts, "she checks her phone slowly", "kling").ok).toBe(false);
+    expect(clipPromptOf(facts, "she checks her phone slowly", "kling", "scene").ok).toBe(false);
   });
 
   test("a motion that moves her face is refused where the photo does not show it (the face cover, a legs frame), and kept where it does", () => {
     const hidden = factsFor(slotOf(pick("home", (m) => m.captures.includes("mirror-hidden") && m.legs === undefined), "mirror-hidden"));
     const legs = factsFor(slotOf(pick("photoshoot", (m) => m.captures.includes("low-feet")), "low-feet"));
     for (const motion of ["she sips and smiles a little", "she slowly blinks and smiles", "she presses her lips together a bit", "she laughs a little"]) {
-      expect(clipPromptOf(hidden, motion, "kling").ok).toBe(false);
-      expect(clipPromptOf(legs, motion, "kling").ok).toBe(false);
-      expect(clipPromptOf(facts, motion, "kling").ok).toBe(true);
+      expect(clipPromptOf(hidden, motion, "kling", "scene").ok).toBe(false);
+      expect(clipPromptOf(legs, motion, "kling", "scene").ok).toBe(false);
+      expect(clipPromptOf(facts, motion, "kling", "scene").ok).toBe(true);
     }
-    expect(clipPromptOf(hidden, "she turns her head a little", "kling").ok).toBe(true);
+    expect(clipPromptOf(hidden, "she turns her head a little", "kling", "scene").ok).toBe(true);
   });
 
   test("every prompt carries the pacing line and ends with the adult line, within the cap", () => {
-    const result = clipPromptOf(facts, sceneMotion(facts), "kling");
+    const result = clipPromptOf(facts, sceneMotion(facts), "kling", "scene");
     if (!result.ok) throw new Error(result.problems.join("; "));
     expect(result.prompt).toContain(SLOW_LINE);
     expect(result.prompt.endsWith(ADULT_LINE)).toBe(true);
@@ -275,7 +275,7 @@ describe("checks before any money (I5.51)", () => {
     const legs = pick("home", (m) => m.captures.includes("pov-legs") && m.noLegwear !== true && !/\b(socks?|socked|bare)\b/.test(m.text));
     const long = factsFor(slotOf(legs, "pov-legs", "front", { legwear: "white lace-top stockings" }));
     const motion = "she stretches her toes toward the far end of the bed a little";
-    const result = clipPromptOf(long, motion, "kling");
+    const result = clipPromptOf(long, motion, "kling", "scene");
     if (!result.ok) throw new Error(result.problems.join("; "));
     expect(result.words).toBeLessThanOrEqual(PROMPT_WORDS_MAX);
     expect(result.prompt).toContain(LEGS_LINE);

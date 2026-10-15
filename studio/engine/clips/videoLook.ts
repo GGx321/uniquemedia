@@ -1,5 +1,5 @@
 import { CAPTURES, type Capture } from "../../shared/scenes/captures";
-import { takesOff } from "../../shared/scenes/motionText";
+import { GARMENT, takesOff } from "../../shared/scenes/motionText";
 import { FACE_COVER, captureLineOf } from "../scenes/phoneLook";
 
 // Stage 5, 5b.1, S5.V5 (plan s5b1 §5.5, I5.51): the video look. Every line a clip prompt carries lives here and nowhere else (I5.1, one module per medium; the photo's
@@ -160,9 +160,14 @@ export const NOTHING_NEW_LINE = "Nothing new appears.";
  * What she wears that a motion moves (r2.2 and the controller's round 2): a garment or a cover (strap, sheet, blanket, duvet, waistband, hem, laces, zip, coat), an accessory
  * (earring, sunglasses), or a sleeve she puts on («she slides one arm in slowly»: a coat or a jacket going on, matched as that phrase, never by «arm», which a stretch says
  * too). A held object (a cup, a glass, a mug, her keys, her phone, a fork, a weight) is not one: «nothing she holds … changes» holds it, and «shifts her weight» is her body.
- * The window «glass» she leans on is not a drink and not worn. The sweep over all 7 banks pins exactly which motions take it.
+ * The window «glass» she leans on is not a drink and not worn. The sweep over all 7 banks pins exactly which motions take it. S5.WC2 round 2: every garment the one motion
+ * check names (`GARMENT`: a robe, a top, a dress, a towel, a bra …, never «her top knee») is one too, so a model's text that only moves it takes «comes off»; no bank motion
+ * names one the list did not already hold.
  */
-export const WORN_OR_HELD = /\b(?:straps?|sheets?|blankets?|duvets?|waistbands?|hems?|laces|zip(?:s|ped|ping|per|pers)?|coats?|earrings?|sunglasses|slides one arm in)\b/i;
+export const WORN_OR_HELD = new RegExp(
+  String.raw`\b(?:straps?|sheets?|blankets?|duvets?|waistbands?|hems?|laces|zip(?:s|ped|ping|per|pers)?|coats?|earrings?|sunglasses|slides one arm in)\b|${GARMENT.source}`,
+  "i",
+);
 
 /**
  * A bag she holds (round 2): its strap or its zip moves a held object, so the base line keeps it (K09 lost its bag), whether the motion or the moment names the bag. «bag»,
