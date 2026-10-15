@@ -56,7 +56,7 @@ export interface MockBatchPorts<P> {
   /** The price book now: the cache while it is fresh (10 minutes), else a read; `null` when the listing reads and lacks a price (PRICE_UNAVAILABLE). */
   readonly readPrices: () => ClipPrices | null;
   readonly worstOf: (member: BatchMember<P>, prices: ClipPrices) => number;
-  readonly recheck: (member: BatchMember<P>) => "ok" | "gone" | "unreadable";
+  readonly recheck: (member: BatchMember<P>) => "ok" | "gone" | "unreadable" | "library-lost";
   readonly alone: (member: BatchMember<P>) => boolean;
   /** WB2d (L1): whether a faulted member can have left money open: a reserve of either attempt is in the ledger, or the ledger is halted (engine/clips/batch.ts `#moneyMayBeOpen`). */
   readonly moneyMayBeOpen: (member: BatchMember<P>) => boolean;
@@ -209,6 +209,11 @@ export class MockClipBatch<P> {
 
     // 1. The photo, read again: it may have been deleted or damaged since the sheet.
     const photo = ports.recheck(member);
+    if (photo === "library-lost") {
+      // WB2d (L7), as the engine's batch: the whole library is gone, not this photo.
+      this.#stop("cancelled");
+      return;
+    }
     if (photo !== "ok") {
       this.#cancel(member, photo === "gone" ? "photo-gone" : "photo-unreadable");
       return;

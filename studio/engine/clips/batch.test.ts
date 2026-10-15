@@ -347,6 +347,17 @@ describe("ClipBatch: the turn", () => {
     expectClean(w);
   });
 
+  test("a library that is no longer the current one stops the batch `cancelled`, free: the members are not called `photo-gone` one by one (WB2d, L7)", async () => {
+    const w = newWorld();
+    w.recheck = (member) => (member.index === 2 ? { kind: "library-lost" } : { kind: "ok", bytes: new Uint8Array([1]) });
+    await build(w, 4).run();
+
+    expect(w.runs).toEqual([ids(4)[0]]);
+    expect(details(w, ids(4))).toEqual([undefined, "cancelled", "cancelled", "cancelled"]);
+    expect(w.notes).toContainEqual({ kind: "stop", detail: "cancelled" });
+    expectClean(w);
+  });
+
   test("the cancelled member's end event carries its reason and parses", async () => {
     const w = newWorld();
     w.recheck = () => ({ kind: "gone" });

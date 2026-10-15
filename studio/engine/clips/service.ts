@@ -1167,16 +1167,20 @@ export class ClipService {
   async #recheck(library: Library, avatarId: string, photoId: string): Promise<PhotoRecheck> {
     const deps = this.#deps;
     const present = (): boolean => deps.currentLibrary() === library && !deps.pendingDelete(avatarId) && library.getAvatar(avatarId) !== undefined && library.getPhoto(photoId)?.avatarId === avatarId;
+    // WB2d (L7): a library that is no longer the open one (a lost volume) is not a deleted photo: the batch stops.
+    if (deps.currentLibrary() !== library) return { kind: "library-lost" };
     if (!present()) return { kind: "gone" };
     let bytes: Uint8Array;
     try {
       // Bounded like the plan read (WB2d, L6): a read that never answers (a stalled volume) is an unreadable photo, free, and never holds the batch's turn.
       bytes = await readPlanWithin(() => library.readPhotoVerified(photoId), CLIP_PLAN_READ_TIMEOUT_MS);
     } catch (error) {
+      if (deps.currentLibrary() !== library) return { kind: "library-lost" };
       if (!present()) return { kind: "gone" };
       deps.log(`[clip] photo ${photoId} could not be read at its batch turn (${error instanceof Error ? error.name : typeof error})`);
       return { kind: "unreadable" };
     }
+    if (deps.currentLibrary() !== library) return { kind: "library-lost" };
     if (!present()) return { kind: "gone" };
     return firstFrameRefusalOf(bytes) === null ? { kind: "ok", bytes } : { kind: "unreadable" };
   }

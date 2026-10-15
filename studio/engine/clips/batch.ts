@@ -51,7 +51,12 @@ export interface BatchMember {
 }
 
 /** What `ports.recheck` finds of a member's photo at its turn. */
-export type PhotoRecheck = { kind: "ok"; bytes: Uint8Array } | { kind: "gone" } | { kind: "unreadable" };
+export type PhotoRecheck =
+  | { kind: "ok"; bytes: Uint8Array }
+  | { kind: "gone" }
+  | { kind: "unreadable" }
+  /** The library the batch was made in is no longer the open one (a lost volume): no photo of it can be read, so the batch stops instead of calling each member's photo deleted. */
+  | { kind: "library-lost" };
 
 /** What the service hands the batch to start a member's clip job. */
 export interface MemberRun {
@@ -198,6 +203,12 @@ export class ClipBatch {
     // 1. The photo, read again: it may have been deleted or damaged since the sheet.
     const photo = await ports.recheck(member);
     if (member.state !== "queued") return;
+    if (photo.kind === "library-lost") {
+      // WB2d (L7): the whole library is gone, not this photo: every member still queued ends `cancelled`, free (the closest existing word; the contract has none for a lost library).
+      ports.log(`[clip] batch ${this.id}: the library is no longer the open one at member ${member.index}'s turn; the queue was cancelled`);
+      this.#stop("cancelled");
+      return;
+    }
     if (photo.kind !== "ok") {
       this.#cancel(member, photo.kind === "gone" ? "photo-gone" : "photo-unreadable");
       return;

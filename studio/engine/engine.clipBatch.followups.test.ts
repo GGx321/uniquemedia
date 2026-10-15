@@ -182,3 +182,24 @@ describe("L6: a member's turn never hangs on its photo", () => {
     expect(engine.engine.budget?.status().heldMicros).toBe(0);
   });
 });
+
+describe("L7: a lost library is not a deleted photo", () => {
+  test("a library that is no longer the open one at a member's turn stops the batch `cancelled`, free: no member is called `photo-gone`", async () => {
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(3));
+    const engine = await started({ net: clipNetwork({ klingBy: firstHeld }) });
+    const { jobIds } = batchOf(await createBatch(engine, { avatarId, photoIds }));
+    await until(() => phasesOf(engine, jobIds[0] ?? "").includes("rendering"), "member 1 rendering");
+    // The volume goes away while member 1 renders: the engine has no open library for the next turn (its getter is what the clip service reads).
+    Object.defineProperty(engine.engine, "library", { configurable: true, get: () => null });
+    engine.net.releaseNth("kling", 1);
+
+    const ends = await Promise.all(jobIds.map((id) => jobEnd(engine, id)));
+    Reflect.deleteProperty(engine.engine, "library");
+
+    expect(ends.map((end) => end.type)).toEqual(["job.done", "job.cancelled", "job.cancelled"]);
+    const details = ends.map((end) => (end.type === "job.cancelled" && end.payload.kind === "clip" ? end.payload.detail : undefined));
+    expect(details).toEqual([undefined, "cancelled", "cancelled"]);
+    expect(engine.net.posts("kling")).toHaveLength(1);
+    expect(engine.engine.budget?.status().heldMicros).toBe(0);
+  });
+});
