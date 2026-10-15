@@ -3,7 +3,7 @@ import { PROTOCOL_VERSION, type CommandMessage, type UnsequencedEvent } from "..
 import { createEngineClient } from "./client";
 import { MockEngine, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
-import { EngineStore, motionCallRunning, motionCallsOf } from "./store";
+import { EngineStore, motionCallRunning, motionCallsOf, type MotionResult } from "./store";
 
 // 5b.2 part C, S5.WC5 (plan s5b2 §5.3, I5.68; README §S5.WCD «Для WC1 / WC3 / WC5»): the window remembers the vision and translator calls it sent until they are answered, avatar → {photo, kind}. A sheet opened
 // again while its photo's call runs says so, and «Оживить» of any sheet waits while any call runs (the engine's `motion-busy` is GLOBAL). It is NOT the avatar's paid lock: a photo run goes on meanwhile.
@@ -119,4 +119,34 @@ test("an avatar deleted for good takes its calls with it; another avatar's stay"
   const view = store.getView();
   expect(view.motionCalls.has(ZOE)).toBe(false);
   expect(motionCallsOf(view, MIA, "photo-9")).toEqual(["idea"]);
+});
+
+// S5.WC5b: a result that came while no sheet of its photo was open is kept for that photo, the last one only, and handed out once.
+const NONE_PAID: MotionResult = { kind: "suggest", result: { outcome: "none", costMicros: 3_900 } };
+const REJECTED: MotionResult = { kind: "idea", result: { outcome: "rejected", problems: ["two-movements"], costMicros: 2_000 } };
+
+test("a kept result is handed out once, for its own photo only", async () => {
+  const { store } = await rawHost();
+  store.keepMotionResult(ZOE, "photo-1", NONE_PAID);
+  expect(store.takeMotionResult(ZOE, "photo-2")).toBeNull();
+  expect(store.takeMotionResult(MIA, "photo-1")).toBeNull();
+  expect(store.takeMotionResult(ZOE, "photo-1")).toEqual(NONE_PAID);
+  expect(store.takeMotionResult(ZOE, "photo-1")).toBeNull();
+});
+
+test("the last result of a photo replaces the one before", async () => {
+  const { store } = await rawHost();
+  store.keepMotionResult(ZOE, "photo-1", NONE_PAID);
+  store.keepMotionResult(ZOE, "photo-1", REJECTED);
+  expect(store.takeMotionResult(ZOE, "photo-1")).toEqual(REJECTED);
+  expect(store.takeMotionResult(ZOE, "photo-1")).toBeNull();
+});
+
+test("an avatar deleted for good takes its kept results with it", async () => {
+  const { store, emit } = await rawHost();
+  store.keepMotionResult(ZOE, "photo-1", NONE_PAID);
+  store.keepMotionResult(MIA, "photo-9", REJECTED);
+  await emit({ type: "avatar.removed", payload: { avatarId: ZOE } });
+  expect(store.takeMotionResult(ZOE, "photo-1")).toBeNull();
+  expect(store.takeMotionResult(MIA, "photo-9")).toEqual(REJECTED);
 });
