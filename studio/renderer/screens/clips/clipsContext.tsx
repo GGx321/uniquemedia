@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import type { AvatarSummary, ClipBatchSummary, ClipSummary, CommandResult, EngineError, PhotoSummary } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import { isActiveJob, type EngineStore, type EngineView, type JobView } from "../../engine/store";
+import { viewerStorage } from "../photos/sceneReview";
 
 // Stage 5, 5b.1, S5.V8: what the avatar's screen shares with its clips — the «Клипы» tab, the photo viewer's «Оживить» and the sheet. The clips are listed on demand (`clips.list`,
 // plan s5b1 §5.2: no event of their own) and read again when a clip job of the avatar ends and when the export folder's state moves (every export is judged against it).
@@ -29,14 +30,48 @@ export function dismissClipJob(store: EngineStore, jobId: string): void {
   }
 }
 
-const BATCH_DISMISSALS = new WeakMap<EngineStore, Set<string>>();
+/**
+ * 5b.2 (S5.WB4b, review L10): the batch headers the owner closed (✕) are remembered on this machine, per batch id, so the next window does not bring a closed header back. A per-viewer convenience:
+ * a storage that cannot be read or written (a private window, blocked site data) closes the header for this window only, and never throws.
+ */
+export const CLOSED_BATCHES_KEY = "studio.clips.closedBatches";
+/** How many closed batches are remembered: the newest; an older one can only be a header nobody would show again anyway (the header is the newest batch's). */
+export const MAX_CLOSED_BATCHES = 50;
 
-/** 5b.2 (S5.WB4, 60b–60f): the batches whose header the owner closed (✕), for the window's life; a new window shows the newest batch's header again. */
-export function batchDismissals(store: EngineStore): ReadonlySet<string> {
-  return BATCH_DISMISSALS.get(store) ?? new Set();
+/** The batch ids closed on this machine, oldest first; whatever else the key holds is ignored. */
+function readClosed(storage: Pick<Storage, "getItem"> | null): string[] {
+  if (storage === null) return [];
+  try {
+    const raw = storage.getItem(CLOSED_BATCHES_KEY);
+    const parsed: unknown = raw === null ? [] : JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
-/** Puts a batch's header away; bounded like the dismissed clip jobs, the oldest forgotten first. */
+export function closedBatches(storage: Pick<Storage, "getItem"> | null): ReadonlySet<string> {
+  return new Set(readClosed(storage));
+}
+
+export function closeBatch(storage: Pick<Storage, "getItem" | "setItem"> | null, batchId: string): void {
+  if (storage === null) return;
+  const ids = [...readClosed(storage).filter((id) => id !== batchId), batchId].slice(-MAX_CLOSED_BATCHES);
+  try {
+    storage.setItem(CLOSED_BATCHES_KEY, JSON.stringify(ids));
+  } catch {
+    // Not kept on this machine: the window still remembers it (`dismissBatch`).
+  }
+}
+
+const BATCH_DISMISSALS = new WeakMap<EngineStore, Set<string>>();
+
+/** 5b.2 (60b–60f): the batches whose header the owner closed (✕): this window's own, and those closed on this machine before. */
+export function batchDismissals(store: EngineStore): ReadonlySet<string> {
+  return new Set([...(BATCH_DISMISSALS.get(store) ?? []), ...closedBatches(viewerStorage())]);
+}
+
+/** Puts a batch's header away, in this window and on this machine; the window's own set is bounded like the dismissed clip jobs, the oldest forgotten first. */
 export function dismissBatch(store: EngineStore, batchId: string): void {
   let set = BATCH_DISMISSALS.get(store);
   if (set === undefined) {
@@ -48,6 +83,7 @@ export function dismissBatch(store: EngineStore, batchId: string): void {
     if (set.size <= MAX_DISMISSED_CLIP_JOBS) break;
     set.delete(old);
   }
+  closeBatch(viewerStorage(), batchId);
 }
 
 /** Where a gallery photo stands in the pages read: its place newest first, and the gallery's size. */

@@ -4,6 +4,7 @@ import type { CommandMessage, CommandType } from "../shared/engine";
 import { App } from "./App";
 import { MockEngine, type MockEngineOptions, mockEngineClient } from "./engine/mockEngine";
 import { ManualScheduler } from "./engine/scheduler";
+import { CLOSED_BATCHES_KEY } from "./screens/clips/clipsContext";
 import { LEGS_KEY_PREFIX } from "./screens/photos/legs";
 import { LEVEL_KEY_PREFIX } from "./screens/photos/level";
 import { SCENE_REVIEW_KEY } from "./screens/photos/sceneReview";
@@ -22,6 +23,8 @@ export interface SetupOptions extends MockEngineOptions {
 
 export function setup({ sceneReview, pagesScheduler, keepLevels = false, ...options }: SetupOptions = {}) {
   try {
+    // 5b.2: a batch header closed in an earlier test is another library's batch (the mock's ids repeat): every setup starts with none closed.
+    localStorage.removeItem(CLOSED_BATCHES_KEY);
     if (sceneReview === undefined) localStorage.removeItem(SCENE_REVIEW_KEY);
     else localStorage.setItem(SCENE_REVIEW_KEY, sceneReview);
     if (!keepLevels) {

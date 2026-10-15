@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { MockEngine, mockEngineClient } from "../../engine/mockEngine";
 import { ManualScheduler } from "../../engine/scheduler";
 import { EngineStore } from "../../engine/store";
-import { clipDismissals, clipListStateOf, dismissClipJob, MAX_DISMISSED_CLIP_JOBS } from "./clipsContext";
+import { CLOSED_BATCHES_KEY, clipDismissals, clipListStateOf, closeBatch, closedBatches, dismissClipJob, MAX_CLOSED_BATCHES, MAX_DISMISSED_CLIP_JOBS } from "./clipsContext";
 
 const storeOf = (): EngineStore => new EngineStore(mockEngineClient(new MockEngine({ scheduler: new ManualScheduler(), latencyMs: 0 })));
 
@@ -20,6 +20,40 @@ describe("the put-away clip job tiles", () => {
     expect(clipDismissals(store).size).toBe(MAX_DISMISSED_CLIP_JOBS);
     expect(clipDismissals(store).has("job-0")).toBe(false);
     expect(clipDismissals(store).has(`job-${MAX_DISMISSED_CLIP_JOBS}`)).toBe(true);
+  });
+});
+
+describe("the batch headers the owner closed (5b.2, S5.WB4b review L10: a per-viewer convenience, kept on this machine)", () => {
+  const memory = (): { getItem: (key: string) => string | null; setItem: (key: string, value: string) => void; raw: Map<string, string> } => {
+    const raw = new Map<string, string>();
+    return { raw, getItem: (key) => raw.get(key) ?? null, setItem: (key, value) => void raw.set(key, value) };
+  };
+  const broken = { getItem: (): string | null => { throw new Error("denied"); }, setItem: (): void => { throw new Error("denied"); } };
+
+  test("a closed batch stays closed for the next window on this machine", () => {
+    const storage = memory();
+    closeBatch(storage, "batch-0000001");
+    expect(closedBatches(storage).has("batch-0000001")).toBe(true);
+    expect(closedBatches(storage).has("batch-0000002")).toBe(false);
+  });
+
+  test("only the newest closed batches are kept", () => {
+    const storage = memory();
+    for (let i = 0; i <= MAX_CLOSED_BATCHES; i++) closeBatch(storage, `batch-${i}`);
+    expect(closedBatches(storage).size).toBe(MAX_CLOSED_BATCHES);
+    expect(closedBatches(storage).has("batch-0")).toBe(false);
+    expect(closedBatches(storage).has(`batch-${MAX_CLOSED_BATCHES}`)).toBe(true);
+  });
+
+  test("a storage that refuses, or holds something else, closes nothing and throws nothing", () => {
+    expect(() => closeBatch(broken, "batch-0000001")).not.toThrow();
+    expect(closedBatches(broken).size).toBe(0);
+    const storage = memory();
+    storage.raw.set(CLOSED_BATCHES_KEY, "{not json");
+    expect(closedBatches(storage).size).toBe(0);
+    storage.raw.set(CLOSED_BATCHES_KEY, JSON.stringify(["batch-1", 7, null, { a: 1 }]));
+    expect([...closedBatches(storage)]).toEqual(["batch-1"]);
+    expect(closedBatches(null).size).toBe(0);
   });
 });
 
