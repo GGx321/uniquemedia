@@ -1004,6 +1004,7 @@ export class MockEngine implements EngineBridge {
     this.ownMedia = new MockOwnMedia({ scheduler: this.scheduler, stepMs: this.stepMs, nextId: (prefix) => this.nextId(prefix), nowIso: () => this.nowIso(), emit: (event) => this.emit(event) });
     this.clipCopies = new MockClipCopies(this.clips, this.ownMedia, {
       libraryGate: () => this.libraryGate(),
+      writeGate: () => this.writeLibraryGate(),
       mediaHeld: (mediaId) => this.mediaHeldByRender(mediaId),
       videosOf: (avatarId) => this.videos.filter((v) => v.summary.avatarId === avatarId).map((v) => ({ clipIds: v.clipIds ?? [], photoIds: v.photoIds })),
       draftsOf: (avatarId) => [...this.montages.values()].filter((m) => m.spec.avatarId === avatarId).map((m) => ({ name: m.name, clips: m.spec.clips.map((clip) => ({ kind: clip.kind, ...(clip.kind === "video" ? { mediaId: clip.mediaId } : {}) })) })),
@@ -1784,7 +1785,7 @@ export class MockEngine implements EngineBridge {
   /**
    * A library switch is being surveyed (the engine's `#switching`): every write of the library's records waits with IN_FLIGHT until it ends: `media.list` and
    * `media.delete`, `scenes.compose/edit/write/discard`, `runs.startFromScenes` and `categories.create/regenerate/update/delete/dismissInterrupted` (CS.7).
-   * The photo-run and montage commands do not model it.
+   * The photo-run and montage commands do not model it, except 5b.2's clip copies: `media.importClip` is refused IN_FLIGHT after its `not-ready` check (the engine looks the copy up through `#withLiveLibrary`), and `ClipSummary.use` withholds `inDrafts` meanwhile.
    */
   setLibrarySwitching(switching: boolean): void {
     this.librarySwitching = switching;
@@ -3618,7 +3619,9 @@ export class MockEngine implements EngineBridge {
    */
   private deleteBusyReason(avatarId: string): string | null {
     const heldByIntent = this.photos.some((p) => p.avatarId === avatarId && this.pendingVideoPhotos.has(p.photoId));
-    if (this.jobRunningFor(avatarId) || this.renderJobs.some((j) => isActive(j) && j.avatarId === avatarId) || this.clips.liveFor(avatarId) || heldByIntent) return "a photo run, a candidate job or a video render of this avatar is running";
+    if (this.jobRunningFor(avatarId) || this.renderJobs.some((j) => isActive(j) && j.avatarId === avatarId) || heldByIntent) return "a photo run, a candidate job or a video render of this avatar is running";
+    // 5b.1 (I5.50): a clip job of the avatar is waited for too, in its own words (the engine's `#deleteBusy`).
+    if (this.clips.liveFor(avatarId)) return "a clip of this avatar is being made";
     if (this.clipCopies.importingFor(avatarId)) return "a clip of this avatar is being prepared for a montage";
     if (this.clipCopies.holdsCopy(avatarId)) return "a video render holds a copy of a clip of this avatar";
     return null;
@@ -3648,7 +3651,7 @@ export class MockEngine implements EngineBridge {
     const busy = this.deleteBusyReason(avatarId);
     if (busy !== null) return this.fail(c, { code: "IN_FLIGHT", detail: `${busy}; delete the avatar when it ends` });
     this.checkExport();
-    const found =this.videos.filter((v) => v.summary.avatarId === avatarId && this.fileStateOf(v) === "present").length;
+    const found = this.videos.filter((v) => v.summary.avatarId === avatarId && this.fileStateOf(v) === "present").length;
     const counts = this.deleteCounts(avatarId);
     return this.ok(c, { avatarId, ...counts, videoFilesFound: found, videoFilesUnchecked: 0 });
   }
@@ -3661,7 +3664,7 @@ export class MockEngine implements EngineBridge {
     const busy = this.deleteBusyReason(avatarId);
     if (busy !== null) return this.fail(c, { code: "IN_FLIGHT", detail: `${busy}; delete the avatar when it ends` });
     this.checkExport();
-    const present =this.videos.filter((v) => v.summary.avatarId === avatarId && this.fileStateOf(v) === "present");
+    const present = this.videos.filter((v) => v.summary.avatarId === avatarId && this.fileStateOf(v) === "present");
     for (const video of present) this.exportFiles.delete(video.summary.relPath);
     for (const video of this.videos) if (video.summary.avatarId === avatarId) this.removedVideoIds.set(video.summary.videoId, { avatarId, mark: video.summary.publishedAt ?? null });
     const mine = new Set(this.photos.filter((p) => p.avatarId === avatarId).map((p) => p.photoId));

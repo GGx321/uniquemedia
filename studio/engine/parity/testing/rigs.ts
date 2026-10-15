@@ -271,8 +271,7 @@ const PARITY_PREPARE = { total: 60, steps: 3, judged: { hdrToSdr: true, fromFps:
 export const PARITY_VIDEO_BYTES = 200;
 /** What the real rig's video importer says of a clip it takes, and what the mock is told to say. */
 export const PARITY_VIDEO_FACTS = { width: 1080, height: 1920, durationMs: 6400, sourceFps: 29.97, hdrToSdr: true, loopFrames: null, delayFrames: null } as const;
-/** 5b.2 (S5.WA3): a clip's montage copy is named «Клип <date> <time>.mp4»; the rig's stand-in importer knows it by the prefix, and says what the real one would of the rig's 5 s 720 x 1280 clip at 24 fps. */
-const PARITY_COPY_PREFIX = "Клип ";
+/** 5b.2 (S5.WA3): in a rig with `clips` every video import is a clip's montage copy (no story there picks a video file); the stand-in importer says what the real one would of the rig's 5 s 720 x 1280 clip at 24 fps. */
 const PARITY_COPY_FRAMES = 150;
 const PARITY_COPY_FACTS = { width: 720, height: 1280, durationMs: 5000, sourceFps: 24, hdrToSdr: false, loopFrames: null, delayFrames: null } as const;
 /** A clip with this in its first bytes is the one the real rig's video importer refuses as a `codec`. */
@@ -958,7 +957,7 @@ let captionRenderer: Promise<ReturnType<typeof createCaptionRenderer>> | null = 
 /** The REAL caption renderer (resvg-wasm, the five fonts, the emoji font) in this process, made once: the rules, the layout and the PNG are the engine's own. */
 function realCaptionRenderer(): Promise<ReturnType<typeof createCaptionRenderer>> {
   captionRenderer ??= (async () => {
-    const rasteriser = createTextRasteriser({ wasmPath: join(STUDIO_DIR, "..", "node_modules", "@resvg", "resvg-wasm", RASTER_WASM.file), fontDir: join(STUDIO_DIR, "assets", "fonts") });
+    const rasteriser = createTextRasteriser({ wasmPath: Bun.resolveSync(`@resvg/resvg-wasm/${RASTER_WASM.file}`, STUDIO_DIR), fontDir: join(STUDIO_DIR, "assets", "fonts") });
     await rasteriser.init();
     return createCaptionRenderer({ rasteriser, emoji: openEmojiFont(await loadPinnedEmojiFont()) });
   })();
@@ -1251,7 +1250,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   const parityVideoImporter: MediaImporter = async ({ staged, name, workFile, prepare }) => {
     // 5b.2 (S5.WA3): a clip's montage copy («Клип <date> <time>.mp4»). The real importer would probe the clip (a 5 s 720 x 1280 clip at 24 fps in this rig) and encode its 150 output frames; the stand-in
     // says the same and reports a quarter of the frames at a time, as `preparedVideo` does. The mock is told the same facts by the clip's own record.
-    if (name.startsWith(PARITY_COPY_PREFIX)) {
+    if (clipRig !== null) {
       prepare?.begin(PARITY_COPY_FRAMES, { hdrToSdr: false, fromFps: 24 });
       for (const done of [37, 75, 112]) prepare?.report(done);
       const copy = await workFile();

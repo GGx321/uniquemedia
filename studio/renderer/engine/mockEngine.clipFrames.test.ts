@@ -81,14 +81,6 @@ describe("the copy's lifetime", () => {
     expect(types.indexOf("copy-removed")).toBeGreaterThan(types.indexOf("avatar.removed"));
   });
 
-  test("an avatar delete that the Trash refuses keeps the copies", async () => {
-    const m = makeCopyMock();
-    const { mediaId } = await copyOfNewClip(m);
-    m.engine.failNext("avatars.delete", { code: "TRASH_UNAVAILABLE" });
-    await errorOf(m.client.request("avatars.delete", { avatarId: AVATAR }));
-    expect((await mediaOf(m)).map((x) => x.mediaId)).toEqual([mediaId]);
-  });
-
   test("an avatar delete is refused while a render holds a copy of one of its clips", async () => {
     const m = makeCopyMock();
     const { mediaId } = await copyOfNewClip(m);

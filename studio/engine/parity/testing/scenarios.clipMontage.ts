@@ -1,19 +1,18 @@
 import type { ClipWorld } from "./clipWorld";
 import type { Control, World } from "./rigs";
+import { KLING_ONLY_5, STD_5 } from "./scenarios.clips";
 import type { Scenario } from "./scenarios";
 import type { Answer, Transcript } from "./transcript";
 
 // Stage 5, 5b.2, S5.WA3 (APPENDED; the golden is append-only): «Клипы в монтаже» told against both engines. A ready clip becomes the editor's own video as its own copy (`media.importClip`); a montage
 // that holds a copy renders; a photo and every clip made from it are ONE frame. The rig is the clips rig with `ownMedia`: the real rig plays the video provider by the fake (the clip is a real small mp4),
 // the video importer by the rig's stand-in (which says what the real one would of a 5 s 720 x 1280 clip at 24 fps), and the render by the rig's fake ffmpeg: NO ffmpeg renders in parity. The real render of
-// copies is the engine smoke's (scripts/clipSmoke.ts). The mock plays the same facts from the clip's own record.
+// copies is the engine smoke's (scripts/clipMontageSmoke.engine.test.ts). The mock plays the same facts from the clip's own record.
 //
 // A story waits on what it is about: the end of a job (`untilJobEnds`). It never counts settles and never sleeps, so a slow machine tells the same story.
 
 type Telling = Transcript;
 
-const STD_5 = 850_000;
-const KLING_ONLY_5 = 504_000;
 
 function clipsOf(world: World): ClipWorld {
   if (world.clipWorld === undefined) throw new Error("the rig has no clip world: the story needs `rig: { clips: true, ownMedia: true }`");
@@ -196,6 +195,26 @@ export const CLIP_MONTAGE_SCENARIOS: readonly Scenario[] = [
       await photoState(t, w, w.photos.landscape, true);
       t.note("a clip with no render on its copy is deleted with its copy");
       await t.call("clips.delete", { avatarId: w.avatarId, clipId: bold });
+      await t.call("media.list", { kind: "video" });
+    },
+  },
+  {
+    name: "clips in the montage: a copy whose import is cancelled leaves no record and gives the clip back",
+    rig: { clips: true, ownMedia: true },
+    async run(t, world, control) {
+      const w = clipsOf(world);
+      const clipId = await makeClip(t, w, control);
+      control.holdImports(true);
+      const jobId = stringOf(await t.call("media.importClip", { avatarId: w.avatarId, clipId }), "jobId");
+      t.note("the owner cancels the import while the copy is being made");
+      await t.call("media.cancelImport", { jobId });
+      control.holdImports(false);
+      await t.untilJobEnds(jobId);
+      await t.call("media.list", { kind: "video" });
+      t.note("the clip is free again: the import can be asked for once more, and the clip can be deleted");
+      const again = stringOf(await t.call("media.importClip", { avatarId: w.avatarId, clipId }), "jobId");
+      await t.untilJobEnds(again);
+      await t.call("clips.delete", { avatarId: w.avatarId, clipId });
       await t.call("media.list", { kind: "video" });
     },
   },

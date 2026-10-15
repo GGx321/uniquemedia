@@ -14,8 +14,8 @@ import type { Answer, Transcript } from "./transcript";
 
 type Telling = Transcript;
 
-const STD_5 = 850_000;
-const KLING_ONLY_5 = 504_000;
+export const STD_5 = 850_000;
+export const KLING_ONLY_5 = 504_000;
 
 function clipsOf(world: World): ClipWorld {
   if (world.clipWorld === undefined) throw new Error("the rig has no clip world: the story needs `rig: { clips: true }`");

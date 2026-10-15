@@ -161,7 +161,7 @@ export class Normalizer {
       const walked = Object.fromEntries(Object.entries(value).map(([k, v]) => [k, this.value(v, k)]));
       // 5b.2 (S5.WA3): the display name of a clip's montage copy («Клип <date> <time>.mp4») is made from the clip's creation instant in the owner's local time: a clock and a time zone, each rig's own.
       // A copy says where it comes from (`origin`), in a media summary and in an import job's ref alike.
-      if ("origin" in walked && typeof walked.name === "string" && typeof walked.origin === "object" && walked.origin !== null && "kind" in walked.origin && walked.origin.kind === "clip") return { ...walked, name: "<copy name>" };
+      if ("origin" in walked && typeof walked.name === "string" && COPY_NAME.test(walked.name) && typeof walked.origin === "object" && walked.origin !== null && "kind" in walked.origin && walked.origin.kind === "clip") return { ...walked, name: "<copy name>" };
       return walked;
     }
     return value;
@@ -169,6 +169,9 @@ export class Normalizer {
 }
 
 const compact = (value: unknown): string => JSON.stringify(value);
+
+/** The display name of a clip's montage copy: only a name of this shape is masked, so a change of the format shows in parity. */
+const COPY_NAME = /^Клип \d{4}-\d{2}-\d{2} \d{2}-\d{2}\.mp4$/;
 
 function objectOf(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("expected an object");

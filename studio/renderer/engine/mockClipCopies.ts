@@ -29,12 +29,15 @@ export function mockCopyNameOf(createdAt: string): string {
   return `Клип ${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())} ${two(at.getHours())}-${two(at.getMinutes())}.mp4`;
 }
 
-/** The size inside 1080 x 1920 without upscale, even sides (the importer's plan). */
-function fitted(width: number, height: number): { width: number; height: number } {
+/** The even size a picture is fitted to: inside 1080 x 1920, never bigger than it is, never under 2; floored to even when not scaled, to the nearest even when scaled (engine/media/video/videoPlan.ts `fit`). */
+export function mockFitted(width: number, height: number): { width: number; height: number } {
   const scale = Math.min(1, FRAME_W / width, FRAME_H / height);
-  const even = (n: number): number => Math.max(2, Math.floor((n * scale) / 2) * 2);
-  return scale === 1 ? { width, height } : { width: even(width), height: even(height) };
+  const even = (value: number): number => Math.max(2, scale === 1 ? Math.floor(value / 2) * 2 : Math.round(value / 2) * 2);
+  return { width: Math.min(FRAME_W, even(width * scale)), height: Math.min(FRAME_H, even(height * scale)) };
 }
+
+/** `media.import`'s text for a full queue (engine/media/service.ts). */
+const TOO_MANY_DETAIL = "too many imports are waiting; add the file when some have ended";
 
 /** A saved draft as the draft uses of a clip need it: its name and, per clip, the media an own video clip names. */
 export interface MockDraftView {
@@ -46,6 +49,8 @@ export interface MockDraftView {
 export interface MockCopiesHost {
   /** The library gate of a command that reads the library (`libraryGate`). */
   libraryGate(): EngineError | null;
+  /** The gate of a command that goes through `#withLiveLibrary`: a library switch under way is IN_FLIGHT, no library is LIBRARY_UNAVAILABLE (`writeLibraryGate`). */
+  writeGate(): EngineError | null;
   /** A queued or running render holds this media (the render queue's reserved set). */
   mediaHeld(mediaId: string): boolean;
   /** The finished videos of an avatar, as far as frames go: the clips whose copies each holds, and the photos it uses. */
@@ -95,6 +100,9 @@ export class MockClipCopies {
     if (!source.ok) return source;
     const { ready } = source.result;
     if (ready === null) return bad({ code: "VALIDATION", clipReason: "not-ready", detail: `clip ${clipId} is not ready, so it has no file to prepare` });
+    // The copy is looked up through the live library (`#withLiveLibrary`): a library switch under way refuses IN_FLIGHT here.
+    const switching = this.#host.writeGate();
+    if (switching !== null) return bad(switching);
     // One copy per clip: a live copy is answered at once, whoever else works on the clip.
     const live = this.#media.copyOfClip(avatarId, clipId);
     if (live !== undefined) return good({ mediaId: live.mediaId });
@@ -106,12 +114,12 @@ export class MockClipCopies {
     this.#scripted = null;
     // The importer turns the call away before a job exists: a full disk keeps its reason, every other outcome is one INTERNAL.
     if (scripted?.at === "start") {
-      return bad(scripted.reason === "no-space" ? { code: "MEDIA_UNSUPPORTED", mediaReason: "no-space", detail: "the library's disk has no room for the copy" } : { code: "INTERNAL", detail: `the import was refused: ${scripted.reason}` });
+      return bad(scripted.reason === "no-space" ? { code: "MEDIA_UNSUPPORTED", mediaReason: "no-space", detail: "the library's disk has no room for the copy" } : { code: "INTERNAL", detail: scripted.reason === "too-many" ? TOO_MANY_DETAIL : `the import was refused: ${scripted.reason}` });
     }
 
     const release = this.#clips.holdForImport(avatarId, clipId);
     const origin: MediaOrigin = { kind: "clip", avatarId, clipId, photoId: source.result.photoId };
-    const size = fitted(ready.width, ready.height);
+    const size = mockFitted(ready.width, ready.height);
     const accept: MockMediaAccept = {
       kind: "video" satisfies MediaKind,
       bytes: Math.round((ready.durationMs / 1000) * CLIP_BYTES_PER_SECOND),
@@ -123,12 +131,14 @@ export class MockClipCopies {
     const jobId = this.#media.startImport(mockCopyNameOf(source.result.createdAt), accept, clip);
     if (jobId === null) {
       release();
-      return bad({ code: "INTERNAL", detail: "too many imports are waiting" });
+      return bad({ code: "INTERNAL", detail: TOO_MANY_DETAIL });
     }
     return good({ jobId });
   }
 
   #stillReady(avatarId: string, clipId: string): boolean {
+    // The engine's `#wanted` locates the clip first: no library is LIBRARY_UNAVAILABLE, which cancels the import.
+    if (this.#host.libraryGate() !== null) return false;
     const source = this.#clips.copySource(avatarId, clipId);
     return source.ok && source.result.ready !== null;
   }
@@ -141,8 +151,11 @@ export class MockClipCopies {
   removeOfClip(avatarId: string, clipId: string): "none" | "removed" | "in-use" {
     const copies = this.#media.copiesOfClip(avatarId, clipId);
     if (copies.length === 0) return "none";
-    if (copies.some((copy) => this.#host.mediaHeld(copy.mediaId))) return "in-use";
-    for (const copy of copies) this.#media.delete(copy.mediaId);
+    // The engine's loop: one copy at a time, until one is held by a render (the ones before it are already gone).
+    for (const copy of copies) {
+      if (this.#host.mediaHeld(copy.mediaId)) return "in-use";
+      this.#media.delete(copy.mediaId);
+    }
     return "removed";
   }
 
@@ -166,8 +179,10 @@ export class MockClipCopies {
   /** `ClipSummary.use` of a ready clip: how a finished video uses its frame, and the saved drafts that hold its copy. Undefined when nothing does. */
   use(avatarId: string, clipId: string, photoId: string): ClipUse | undefined {
     const videos = this.#host.videosOf(avatarId);
+    // The drafts are read through the live library: during a library switch they are withheld (the warning is a help, not a gate), `inVideo` stays.
+    const drafts = this.#host.writeGate() === null;
     const inVideo = videos.some((video) => video.clipIds.includes(clipId)) ? ("clip" as const) : videos.some((video) => video.photoIds.includes(photoId)) ? ("photo" as const) : undefined;
-    const inDrafts = this.#draftUse(avatarId, clipId);
+    const inDrafts = drafts ? this.#draftUse(avatarId, clipId) : undefined;
     if (inVideo === undefined && inDrafts === undefined) return undefined;
     return { ...(inVideo === undefined ? {} : { inVideo }), ...(inDrafts === undefined ? {} : { inDrafts }) };
   }
