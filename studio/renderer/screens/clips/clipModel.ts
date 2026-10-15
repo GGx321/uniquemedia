@@ -308,8 +308,9 @@ export interface PhaseLine {
   readonly cancel: boolean;
 }
 
+/** 40 #late, and 60f's late member (S5.WB4c: a no-break space before «—», so the dash never starts a line). */
 const lateText = (ctx: PhaseContext): string =>
-  ctx.lateUntilMs === null ? "Задерживается — потом понадобится сверка расходов." : `Задерживается. Клип ещё может прийти до ${clockLabel(ctx.lateUntilMs)} — потом понадобится сверка расходов.`;
+  ctx.lateUntilMs === null ? "Задерживается — потом понадобится сверка расходов." : `Задерживается. Клип ещё может прийти до ${clockLabel(ctx.lateUntilMs)} — потом понадобится сверка расходов.`;
 
 /** The running tile's line (§6 40, verbatim): «Готовим кадр» … «Восстанавливаем после перезапуска». */
 export function phaseLine(p: ClipProgress, ctx: PhaseContext): PhaseLine {

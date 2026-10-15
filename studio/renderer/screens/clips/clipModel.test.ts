@@ -304,7 +304,7 @@ describe("a clip at work: its tile's phase (§6 40) and its queue row (README S5
     const until = new Date(NOW + 30 * 60_000);
     const hhmm = `${String(until.getHours()).padStart(2, "0")}:${String(until.getMinutes()).padStart(2, "0")}`;
     expect(line("late", { model: "kling" }, { lateUntilMs: until.getTime() })).toEqual({
-      text: `Задерживается. Клип ещё может прийти до ${hhmm} — потом понадобится сверка расходов.`,
+      text: `Задерживается. Клип ещё может прийти до ${hhmm} — потом понадобится сверка расходов.`,
       tone: "warn",
       pill: "задерживается",
       cancel: false,

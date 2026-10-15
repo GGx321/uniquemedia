@@ -434,7 +434,7 @@ describe("40–42: the tiles", () => {
       await flush();
     }
     const work = tile("Клип в работе: Моргает и улыбается");
-    expect(within(work).getByRole("status").textContent).toMatch(/^Задерживается\. Клип ещё может прийти до \d\d:\d\d — потом понадобится сверка расходов\.$/);
+    expect(within(work).getByRole("status").textContent).toMatch(/^Задерживается\. Клип ещё может прийти до \d\d:\d\d — потом понадобится сверка расходов\.$/);
     expect(within(work).getByText("задерживается")).toBeDefined();
     expect(within(sidebarQueue()).getByText("Задерживается")).toBeDefined();
   });
