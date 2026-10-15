@@ -18,6 +18,7 @@ import {
   TAKEN_BAND,
 } from "./clipTiles";
 import type { OriginOf } from "./clipOps";
+import { actionWhyLabel } from "./labels";
 import { draftSpec, photoClip } from "./testkit";
 
 // 5b.2 part A (S5.WA4; plan §5.1, I5.60; mockups 57–57d, README §S5.WAD): the editor's «Клипы» tab as pure data. The draft avatar's READY clips, newest
@@ -154,6 +155,18 @@ describe("the tiles (57, 57b)", () => {
     expect(pickAria(waiting, null)).toBe("Клип «Как в сцене», 0:05: подождите, читаем видео ролика");
     expect(clipTileTitle(waiting, null)).toBe("Читаем видео ролика — подождите");
     expect(clipAction(waiting, null)).toBe("wait");
+  });
+
+  test("round 3: once the read of the draft's videos has FAILED, the waiting tile says so instead of «подождите»", () => {
+    const [tile] = clipTiles({ clips: [ready("clip-0000008", P(1))], spec: SPEC, originOf: () => undefined, photos: INDEX, ...NONE, framesFailed: true });
+    if (tile === undefined) throw new Error("no tile");
+    expect(tile.state).toEqual({ kind: "unknown", failed: true });
+    expect(clipTileAria(tile)).toBe("Клип «Как в сцене», 0:05, Фото 1 · не удалось прочитать видео ролика");
+    expect(pickAria(tile, null)).toBe("Клип «Как в сцене», 0:05: не удалось прочитать видео ролика");
+    expect(clipTileTitle(tile, null)).toBe("Не удалось прочитать видео ролика.");
+    expect(clipAction(tile, null)).toBe("wait");
+    expect(actionWhyLabel("frame-unknown", true)).toBe("Не удалось прочитать видео ролика.");
+    expect(actionWhyLabel("frame-unknown")).toBe("Читаем видео ролика — подождите");
   });
 
   test("a draft with no video at all knows its frames whatever the origins say", () => {

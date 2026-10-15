@@ -4,7 +4,7 @@ import { NBSP } from "../../lib/format";
 import { photoCategoryLabel } from "../photos/runForm";
 import { clipLength, readyTags } from "../clips/clipModel";
 import { type AddRefusal, framesKnown, type OriginOf, type Refusal, scenePhotoIds } from "./clipOps";
-import { actionWhyLabel, FRAMES_UNKNOWN_TITLE, VIDEO_TAG_TEXTS } from "./labels";
+import { actionWhyLabel, FRAMES_FAILED_TEXT, FRAMES_UNKNOWN_TITLE, VIDEO_TAG_TEXTS } from "./labels";
 import type { FillTarget } from "./mine";
 
 // 5b.2 part A (S5.WA4; plan §5.1, I5.59, I5.60; mockups 57–57d, README §S5.WAD «Состояния», «Тексты»): the editor's «Клипы» tab as pure data. The draft
@@ -28,8 +28,8 @@ export type ClipTileState =
   | { readonly kind: "failed" }
   | { readonly kind: "damaged" }
   | { readonly kind: "taken"; readonly why: TakenWhy }
-  /** A video of the draft is not known yet: this clip may not be placed until it is (fail closed). */
-  | { readonly kind: "unknown" };
+  /** A video of the draft is not known yet: this clip may not be placed until it is (fail closed); `failed`: its read failed (round 3). */
+  | { readonly kind: "unknown"; readonly failed?: true };
 
 export interface ClipTile {
   readonly clip: Ready;
@@ -56,6 +56,8 @@ export interface ClipTilesInput {
   readonly busy: ReadonlySet<string>;
   /** What this window met when it last tried a clip: a failure to tell (`failed`), or a file that will not prepare (`damaged`). */
   readonly failed: ReadonlyMap<string, "failed" | "damaged">;
+  /** Round 3: the read of the draft's videos failed (a video not known is then not «being read»: it is tried again). */
+  readonly framesFailed?: boolean;
 }
 
 /** «Фото N»: each eligible photo's place among the bin's photos, as `binTiles` numbers them (the list's order). */
@@ -90,7 +92,8 @@ export function clipTiles(input: ClipTilesInput): ClipTile[] {
     const photo = photos?.get(clip.photoId);
     const n = numbers.get(clip.photoId);
     const source = n !== undefined ? `Фото ${n}` : photo !== undefined ? photoCategoryLabel(photo) : null;
-    return { clip, state: stateOf(clip, photo, { slots, framed, scenes, busy, failed, known, complete }), source, length: clipLength(clip.durationMs), tags: readyTags(clip) };
+    const state = stateOf(clip, photo, { slots, framed, scenes, busy, failed, known, complete });
+    return { clip, state: state.kind === "unknown" && input.framesFailed === true ? { kind: "unknown", failed: true } : state, source, length: clipLength(clip.durationMs), tags: readyTags(clip) };
   });
 }
 
@@ -167,6 +170,9 @@ const TAKEN_TITLES: Record<TakenWhy, string | null> = {
   "sibling-in": "Клип этого фото уже в ролике",
 };
 
+/** Round 3: the state and the action of a clip that waits after the read of the draft's videos failed. */
+export const FAILED_WORDS = "не удалось прочитать видео ролика";
+
 /** «Клип «Поправляет прядь», 0:05»: what a tile is. */
 const clipName = (tile: ClipTile): string => `Клип «${tile.clip.motion.label}», ${tile.length}`;
 
@@ -181,7 +187,7 @@ function stateWords(state: ClipTileState): string {
     case "taken":
       return TAKEN_LABELS[state.why];
     case "unknown":
-      return "читаем видео ролика";
+      return state.failed === true ? FAILED_WORDS : "читаем видео ролика";
     case "failed":
     case "free":
       return "не использован";
@@ -225,7 +231,9 @@ export function pickAria(tile: ClipTile, addBlock: AddRefusal | null): string {
         : action === "damaged"
           ? "не подготовить"
           : action === "wait"
-            ? "подождите, читаем видео ролика"
+            ? tile.state.kind === "unknown" && tile.state.failed === true
+              ? FAILED_WORDS
+              : "подождите, читаем видео ролика"
             : action === "full"
             ? "кадров больше не добавить"
             : "добавить кадр в конец ролика";
@@ -245,7 +253,7 @@ export function clipTileTitle(tile: ClipTile, addBlock: AddRefusal | null): stri
     case "damaged":
       return CLIP_REASONS_RU["file-damaged"];
     case "unknown":
-      return FRAMES_UNKNOWN_TITLE;
+      return state.failed === true ? FRAMES_FAILED_TEXT : FRAMES_UNKNOWN_TITLE;
     default:
       return addBlock === null ? `Клик — видео с начала, до 2${NBSP}с, в конец ролика` : "Кадров больше не добавить";
   }

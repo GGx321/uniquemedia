@@ -78,9 +78,11 @@ export interface ClipPropertiesProps {
   readonly copyOf?: CopyOf;
   /** 5b.2: what the editor knows of each draft video's origin (undefined while not known: copy waits); by default, the videos' records. */
   readonly originOf?: OriginOf;
+  /** Round 3: the read of the draft's videos failed: a video not known says so instead of «подождите». */
+  readonly framesFailed?: boolean;
 }
 
-export function ClipProperties({ session, spec, index, cell, avatarId, timeline, focusPending, dragPhoto, onFillCell, videos, videoProblems, trimPeek, copyOf, originOf: knownOrigins }: ClipPropertiesProps) {
+export function ClipProperties({ session, spec, index, cell, avatarId, timeline, focusPending, dragPhoto, onFillCell, videos, videoProblems, trimPeek, copyOf, originOf: knownOrigins, framesFailed = false }: ClipPropertiesProps) {
   // 5b.2: a clip's montage copy is neither split nor copied (Q-F = 1, 57f), nor a video not known yet (fail closed).
   const originOf = useMemo<OriginOf>(() => knownOrigins ?? originOfVideos(videos), [knownOrigins, videos]);
   const commands = useSelectionCommands(session, timeline, originOf);
@@ -139,7 +141,7 @@ export function ClipProperties({ session, spec, index, cell, avatarId, timeline,
           </span>
         </div>
         <div className="ed-props-actions">
-          <button type="button" className="ibtn" aria-label="Дублировать" disabled={!actions.duplicate.enabled} title={actions.duplicate.enabled ? (layout === null ? "Копия этого видео" : "Копия без фото: одно фото — один раз в ролике") : actionWhyLabel(actions.duplicate.why)} onClick={() => void commands.duplicate()}>
+          <button type="button" className="ibtn" aria-label="Дублировать" disabled={!actions.duplicate.enabled} title={actions.duplicate.enabled ? (layout === null ? "Копия этого видео" : "Копия без фото: одно фото — один раз в ролике") : actionWhyLabel(actions.duplicate.why, framesFailed)} onClick={() => void commands.duplicate()}>
             <Icon name="copy" size={14} />
           </button>
           <button type="button" className="ibtn" aria-label="Удалить" onClick={() => void commands.remove()}>

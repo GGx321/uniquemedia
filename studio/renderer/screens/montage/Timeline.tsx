@@ -40,9 +40,9 @@ const FALLBACK_LANES_PX = 1048;
 
 const pct = (ms: number): string => `${(ms / TIMELINE_MS) * 100}%`;
 
-function ToolButton({ label, icon, size, state, onClick }: { label: string; icon: IconName; size: number; state: ActionState; onClick: () => void }) {
+function ToolButton({ label, icon, size, state, framesFailed = false, onClick }: { label: string; icon: IconName; size: number; state: ActionState; framesFailed?: boolean; onClick: () => void }) {
   return (
-    <button type="button" className="ibtn" aria-label={label} disabled={!state.enabled} title={state.enabled ? label : actionWhyLabel(state.why)} onClick={onClick}>
+    <button type="button" className="ibtn" aria-label={label} disabled={!state.enabled} title={state.enabled ? label : actionWhyLabel(state.why, framesFailed)} onClick={onClick}>
       <Icon name={icon} size={size} strokeWidth={icon === "scissors" ? 1.9 : 2} />
     </button>
   );
@@ -171,6 +171,8 @@ export interface TimelineProps {
   readonly copyOf?: CopyOf;
   /** 5b.2: what the editor knows of each draft video's origin (undefined while not known: split and copy wait); by default, the videos' records. */
   readonly originOf?: OriginOf;
+  /** Round 3: the read of the draft's videos failed: a video not known says so instead of «подождите». */
+  readonly framesFailed?: boolean;
   /** 5b.2 (57a `#drop`): the clips dropped on «Кадры» whose copies are being made, at the boundary each goes in at. */
   readonly preparing?: readonly { readonly jobId: string; readonly boundary: number }[];
 }
@@ -196,6 +198,7 @@ export function Timeline({
   videoProblems,
   copyOf,
   originOf: knownOrigins,
+  framesFailed = false,
   preparing = [],
 }: TimelineProps) {
   // 5b.2: a clip's montage copy (its record names the clip) is neither split nor copied (Q-F = 1), nor a video not known yet (fail closed).
@@ -535,8 +538,8 @@ export function Timeline({
         <PlayButton timeline={timeline} empty={empty} />
         <TimelineClock timeline={timeline} total={total} />
         <span className="ed-tl-sep" aria-hidden="true" />
-        <ToolButton label="Разрезать по плейхеду" icon="scissors" size={15} state={actions.split} onClick={() => void commands.split()} />
-        <ToolButton label="Дублировать выбранное" icon="copy" size={14} state={actions.duplicate} onClick={() => void commands.duplicate()} />
+        <ToolButton label="Разрезать по плейхеду" icon="scissors" size={15} state={actions.split} framesFailed={framesFailed} onClick={() => void commands.split()} />
+        <ToolButton label="Дублировать выбранное" icon="copy" size={14} state={actions.duplicate} framesFailed={framesFailed} onClick={() => void commands.duplicate()} />
         <ToolButton label="Удалить выбранное" icon="trash" size={14} state={actions.remove} onClick={() => void commands.remove()} />
         <ToolButton label="Слой выше" icon="layerUp" size={15} state={actions.raise} onClick={() => void commands.raise()} />
         <ToolButton label="Слой ниже" icon="layerDown" size={15} state={actions.lower} onClick={() => void commands.lower()} />

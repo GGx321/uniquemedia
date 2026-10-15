@@ -176,8 +176,8 @@ export function videoRoomLabel(totalMs: number, roomMs: number, growMs: number, 
   return growMs < roomMs ? `${head} · кадр можно удлинить ещё на ${secondsLabel(growMs)} — дальше видео заканчивается` : `${head} · кадр можно удлинить ещё на ${secondsLabel(growMs)}`;
 }
 
-/** Why a toolbar action is off, in its tooltip. */
-export function actionWhyLabel(why: ActionBlock): string {
+/** Why a toolbar action is off, in its tooltip; `framesFailed` (5b.2, round 3): the read of the draft's videos failed, so a video not known says that. */
+export function actionWhyLabel(why: ActionBlock, framesFailed = false): string {
   switch (why) {
     case "nothing-selected":
       return "Сначала выберите кадр, текст или стикер на таймлайне";
@@ -208,12 +208,15 @@ export function actionWhyLabel(why: ActionBlock): string {
       return "Клип не копируется: одно фото — один раз в ролике";
     // S5.WA4 round 2 (review M3): the video's record has not been read, so it may be a clip's copy: it waits (fail closed).
     case "frame-unknown":
-      return FRAMES_UNKNOWN_TITLE;
+      return framesFailed ? FRAMES_FAILED_TEXT : FRAMES_UNKNOWN_TITLE;
   }
 }
 
-/** S5.WA4 round 2 (review M3): what waits while a video of the draft is not known yet (a frame may not be placed, the video not split or copied). */
+/** S5.WA4 round 2 (review M3): what waits while a video of the draft is being read (a frame may not be placed, the video not split or copied). */
 export const FRAMES_UNKNOWN_TITLE = "Читаем видео ролика — подождите";
+
+/** S5.WA4 round 3: the read of the draft's videos failed: it is tried again on its own, and «Повторить» asks now; nothing promises it will pass by itself. */
+export const FRAMES_FAILED_TEXT = "Не удалось прочитать видео ролика.";
 
 // ---------- the layer and music tracks (3d.3b) ----------
 

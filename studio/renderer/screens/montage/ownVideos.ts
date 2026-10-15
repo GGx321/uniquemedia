@@ -4,7 +4,7 @@ import type { EngineClient } from "../../engine/client";
 import type { EngineStore } from "../../engine/store";
 import type { OriginOf } from "./clipOps";
 import { sameJson } from "./json";
-import { type MediaRecords, useMediaRecords } from "./ownMedia";
+import { type MediaRecords, type RecordsReadOptions, useMediaRecords } from "./ownMedia";
 import type { EngineVerdict } from "./renderBlock";
 
 // 3f.3b: what the editor knows of the own videos its draft's clips play, from their records (K28): the name and facts the properties show (R19), the stored
@@ -91,8 +91,8 @@ export function videoLookup(videos: OwnVideos, mediaId: string): VideoLookup {
 }
 
 /** The own videos the draft's clips play, by media id: asked by id, followed by `media.changed`. */
-export function useOwnVideos(client: Pick<EngineClient, "request">, mediaIds: readonly string[], store: Pick<EngineStore, "subscribeMedia">): OwnVideos {
-  return useMediaRecords(client, "video", mediaIds, ownVideoOf, store);
+export function useOwnVideos(client: Pick<EngineClient, "request">, mediaIds: readonly string[], store: Pick<EngineStore, "subscribeMedia">, read: RecordsReadOptions = {}): OwnVideos {
+  return useMediaRecords(client, "video", mediaIds, ownVideoOf, store, read);
 }
 
 const VIDEO_PROBLEMS: ReadonlySet<string> = new Set<VideoProblem>(["media-unavailable", "video-too-short"]);
