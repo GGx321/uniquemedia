@@ -82,7 +82,7 @@ describe("the batch constants", () => {
         if (entry.isDirectory()) return entry.name === "node_modules" || entry.name === ".cache" ? [] : walk(path);
         return /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path] : [];
       });
-    const sources = walk(STUDIO).map((file) => ({ file: file.slice(STUDIO.length + 1), text: readFileSync(file, "utf8") }));
+    const sources = walk(STUDIO).map((file) => ({ file: file.slice(STUDIO.length + 1).replaceAll("\\", "/"), text: readFileSync(file, "utf8") }));
     const declaring = (name: string): string[] => sources.filter((s) => new RegExp(`\\b(?:const|let|var)\\s+${name}\\b`).test(s.text)).map((s) => s.file);
 
     test("MAX_BATCH_CLIPS", () => {
