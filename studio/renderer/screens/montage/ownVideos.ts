@@ -55,9 +55,16 @@ export function ownVideoOf(summary: MediaSummary): OwnVideo | null {
   };
 }
 
-/** 5b.2 (I5.60): which of the draft's own videos are clips' montage copies, as their records say; the frame rule (`clipOps.ts`) reads it. */
+/**
+ * 5b.2 (I5.60): which of the draft's own videos are clips' montage copies, as their records say; the frame rule (`clipOps.ts`) reads it. A held video's
+ * origin (null for the owner's own); null for one the list answered for and does not hold (gone, it holds no frame); undefined for one not answered.
+ */
 export function originOfVideos(videos: OwnVideos): OriginOf {
-  return (mediaId) => videos.held.get(mediaId)?.origin ?? undefined;
+  return (mediaId) => {
+    const held = videos.held.get(mediaId);
+    if (held !== undefined) return held.origin;
+    return videos.answered.has(mediaId) ? null : undefined;
+  };
 }
 
 /**

@@ -30,9 +30,24 @@ export type Resolved =
  * - `music`: the one track is neither split nor copied;
  * - `not-a-layer`: only a text or a sticker has a place in the z-order;
  * - `top` / `bottom`: no layer on screen at the same time is above / below it (`raiseLayer`, `lowerLayer`);
- * - `clip-split` / `clip-copy` (5b.2, Q-F = 1): a clip's montage copy is neither split nor copied, either would repeat its frame.
+ * - `clip-split` / `clip-copy` (5b.2, Q-F = 1): a clip's montage copy is neither split nor copied, either would repeat its frame;
+ * - `frame-unknown` (5b.2, S5.WA4 round 2): the selected video's origin is not known yet, so it may be a copy: it waits.
  */
-export type ActionBlock = "nothing-selected" | "photo-split" | "playhead-outside" | "too-short" | "clip-cap" | "no-room" | "layer-cap" | "music" | "not-a-layer" | "top" | "bottom" | "clip-split" | "clip-copy";
+export type ActionBlock =
+  | "nothing-selected"
+  | "photo-split"
+  | "playhead-outside"
+  | "too-short"
+  | "clip-cap"
+  | "no-room"
+  | "layer-cap"
+  | "music"
+  | "not-a-layer"
+  | "top"
+  | "bottom"
+  | "clip-split"
+  | "clip-copy"
+  | "frame-unknown";
 
 export type ActionState = { readonly enabled: true } | { readonly enabled: false; readonly why: ActionBlock };
 
@@ -117,7 +132,12 @@ export function selectionActions(spec: MontageDraft, selection: Selection | null
     };
   }
   const { clip, index } = item;
-  if (clip.kind === "video" && originOf?.(clip.mediaId) !== undefined) return { split: off("clip-split"), duplicate: off("clip-copy"), remove: ON, raise: flat, lower: flat };
+  if (clip.kind === "video" && originOf !== undefined) {
+    const origin = originOf(clip.mediaId);
+    // 5b.2: a clip's copy repeats its frame if split or copied; a video not known yet may be one (S5.WA4 round 2: fail closed).
+    if (origin === undefined) return { split: off("frame-unknown"), duplicate: off("frame-unknown"), remove: ON, raise: flat, lower: flat };
+    if (origin !== null) return { split: off("clip-split"), duplicate: off("clip-copy"), remove: ON, raise: flat, lower: flat };
+  }
   const start = clipStartMs(spec, index);
   const split = clip.kind === "video" ? splitState(start, start + clip.durationMs, playheadMs, MIN_CLIP_MS) : off("photo-split");
   const cap = addRefusal(spec);

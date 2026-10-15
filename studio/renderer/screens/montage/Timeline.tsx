@@ -169,6 +169,8 @@ export interface TimelineProps {
   readonly videoProblems: ReadonlyMap<string, VideoProblem>;
   /** 5b.2 (57f): which own videos are clips' copies, and what to call them («▶ клип»); by default, what the videos' records say. */
   readonly copyOf?: CopyOf;
+  /** 5b.2: what the editor knows of each draft video's origin (undefined while not known: split and copy wait); by default, the videos' records. */
+  readonly originOf?: OriginOf;
   /** 5b.2 (57a `#drop`): the clips dropped on «Кадры» whose copies are being made, at the boundary each goes in at. */
   readonly preparing?: readonly { readonly jobId: string; readonly boundary: number }[];
 }
@@ -193,10 +195,11 @@ export function Timeline({
   videos,
   videoProblems,
   copyOf,
+  originOf: knownOrigins,
   preparing = [],
 }: TimelineProps) {
-  // 5b.2: a clip's montage copy (its record names the clip) is neither split nor copied (Q-F = 1).
-  const originOf = useMemo<OriginOf>(() => (copyOf === undefined ? originOfVideos(videos) : (mediaId) => copyOf(mediaId)?.origin), [copyOf, videos]);
+  // 5b.2: a clip's montage copy (its record names the clip) is neither split nor copied (Q-F = 1), nor a video not known yet (fail closed).
+  const originOf = useMemo<OriginOf>(() => knownOrigins ?? originOfVideos(videos), [knownOrigins, videos]);
   const commands = useSelectionCommands(session, timeline, originOf);
   const lanesRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -634,7 +637,8 @@ export function Timeline({
                     // 3f.3b: an own video clip the render refuses (its video gone, or shorter than the clip asks) is flagged as a refused photo is.
                     const known = clip.kind === "video" ? videoLookup(videos, clip.mediaId) : null;
                     // 5b.2 (57f): a clip's copy is «▶ клип», called by its clip's motion, never by the copy's file name.
-                    const copy = clip.kind === "video" ? (copyOf?.(clip.mediaId) ?? (originOf(clip.mediaId) === undefined ? null : { motion: null })) : null;
+                    const origin = clip.kind === "video" ? originOf(clip.mediaId) : null;
+                    const copy = clip.kind === "video" && origin !== undefined && origin !== null ? (copyOf?.(clip.mediaId) ?? { motion: null }) : null;
                     const engineProblem = clip.kind === "video" ? (videoProblems.get(clip.clipId) ?? null) : null;
                     // A video under the shortest clip is told apart (fix round 1, L3): no trim can help it.
                     const videoProblem = engineProblem === null ? null : videoTag(engineProblem, known?.state === "known" ? known.video.durationMs : null);
@@ -734,7 +738,7 @@ export function Timeline({
                 return (
                   <span key={jobId}>
                     <span className="ed-insert" aria-hidden="true" style={{ left: pct(boundaryMs(durations, at)) }} />
-                    <span className="ctag edc-drop" style={{ left: `calc(${pct(boundaryMs(durations, at))} + 6px)`, maxWidth: `calc(${pct(room)} - 12px)` }}>
+                    <span className="ctag edc-drop" style={{ left: `calc(${pct(boundaryMs(durations, at))} + 6px)`, maxWidth: `max(0px, calc(${pct(room)} - 12px))` }}>
                       <span className="spin" aria-hidden="true" />
                       <span className="edc-drop-label">{PREPARING}</span>
                     </span>

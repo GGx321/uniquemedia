@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useEffect, useId, useRef } from "react";
 import type { EngineError } from "../../../shared/engine";
 import { errorText } from "../../lib/errors";
 import { NBSP } from "../../lib/format";
@@ -12,8 +12,10 @@ import type { BinDrag, FillTarget } from "./mine";
 // the 5b.1 poster and pills («0:05», «1080p» / «Grok»), the frame's state at the poster's head, the motion and «Фото N» under it. A click (or a drag onto
 // «Кадры») places the clip's own copy as an own video — made first when there is none («Готовим для монтажа…», an import job from the job list, so it
 // outlives a window reload; no cancel). A taken frame (Q-F = 1) is dimmed and never placed. The state is on the `li`, what a click does on its button
-// (README L5); a preparing tile stays focusable but does nothing (`aria-disabled`, `aria-busy`, L6), and its line is the tile's one live text (L7). A
-// refused preparation is a card over the tiles, one text per reason (57c). The tab has no delete: a copy lives and dies with its clip.
+// (README L5); a preparing tile stays focusable but does nothing (`aria-disabled`, `aria-busy`, L6), as does a clip that waits while a video of the draft
+// is not known (S5.WA4 round 2). The tab's one live region is always there and is filled with what is being prepared (L7; round 2, L2). A refused
+// preparation is a card over the tiles, one text per reason (57c); after a damaged file or a placement the draft no longer takes, the focus goes to the
+// card's ✕ (round 2, L1). The tab has no delete: a copy lives and dies with its clip.
 
 /** A refused preparation (57c): its card's key, the clip's motion for the title, and the reason's text. */
 export interface ClipCard {
@@ -30,6 +32,8 @@ export interface ClipsTabProps {
   readonly listError: EngineError | null;
   readonly onRetryList: () => void;
   readonly cards: readonly ClipCard[];
+  /** The card whose ✕ takes the focus now (a new `tick` asks again). */
+  readonly cardFocus?: { readonly key: string; readonly tick: number } | null;
   readonly onCloseCard: (key: string) => void;
   /** The selected cell a photo click would fill: a clip still goes to the end (the hint says so). */
   readonly fillTarget: FillTarget;
@@ -68,12 +72,10 @@ function TileHead({ tile }: { tile: ClipTile }) {
       <>
         <span className="ed-bin-dim" aria-hidden="true" />
         <div className="shim" />
-        {/* The tile's one live line (README L7): the `li` and the button do not repeat it as news. */}
-        <span className="mine-busy edc-busy">
-          <span className="spin" aria-hidden="true" />
-          <span className="edc-busy-label" role="status">
-            {PREPARING}
-          </span>
+        {/* Said as news by the tab's one live region (round 2, L2); the `li` and the button name the state. */}
+        <span className="mine-busy edc-busy" aria-hidden="true">
+          <span className="spin" />
+          <span className="edc-busy-label">{PREPARING}</span>
         </span>
       </>
     );
@@ -85,6 +87,8 @@ function ClipTileView({ tile, addBlock, hintId, onPick, onDrag }: { tile: ClipTi
   const { clip, state } = tile;
   const action = clipAction(tile, addBlock);
   const busy = state.kind === "busy";
+  // A preparing tile, and one that waits while a video of the draft is not known, keep the focus and do nothing (README L6).
+  const waiting = busy || action === "wait";
   const off = action === "taken" || action === "damaged" || action === "full";
   const draggable = (state.kind === "free" || state.kind === "failed") && addBlock === null;
   const title = clipTileTitle(tile, addBlock);
@@ -108,11 +112,11 @@ function ClipTileView({ tile, addBlock, hintId, onPick, onDrag }: { tile: ClipTi
           title={title ?? undefined}
           // A preparing tile keeps the focus and says it is busy, but does nothing (README L6); a taken frame or a damaged file is off, as the bin's taken photo.
           disabled={off}
-          aria-disabled={busy || undefined}
+          aria-disabled={waiting || undefined}
           aria-busy={busy || undefined}
           draggable={draggable}
           onClick={() => {
-            if (!busy) onPick(tile);
+            if (!waiting) onPick(tile);
           }}
           onDragStart={(e) => {
             if (!draggable) return;
@@ -154,8 +158,13 @@ function ClipTileView({ tile, addBlock, hintId, onPick, onDrag }: { tile: ClipTi
 }
 
 /** A refused preparation (57c): «Мои»'s card in the warning tone; its ✕ says what it closes (README L4). */
-function ClipAlert({ card, onClose }: { card: ClipCard; onClose: () => void }) {
+function ClipAlert({ card, focusTick, onClose }: { card: ClipCard; focusTick: number | null; onClose: () => void }) {
   const title = `Клип «${card.motion}»`;
+  const close = useRef<HTMLButtonElement>(null);
+  // Round 2, L1: the tile that was pressed turned off (a damaged file) or the copy did not go in: the focus waits on this card's ✕, never on the page.
+  useEffect(() => {
+    if (focusTick !== null) close.current?.focus();
+  }, [focusTick]);
   return (
     <div className="edc-alert" role="alert">
       <Icon name="alert" size={16} strokeWidth={2} />
@@ -163,15 +172,17 @@ function ClipAlert({ card, onClose }: { card: ClipCard; onClose: () => void }) {
         <span className="edc-alert-title">{title}</span>
         <span className="edc-alert-text">{card.text}</span>
       </span>
-      <button type="button" className="mine-x mine-x-card" aria-label={`Закрыть: ${title}`} onClick={onClose}>
+      <button ref={close} type="button" className="mine-x mine-x-card" aria-label={`Закрыть: ${title}`} onClick={onClose}>
         <Icon name="close" size={11} strokeWidth={2.6} />
       </button>
     </div>
   );
 }
 
-export function ClipsTab({ avatarName, tiles, listError, onRetryList, cards, onCloseCard, fillTarget, addBlock, onPick, onDrag }: ClipsTabProps) {
+export function ClipsTab({ avatarName, tiles, listError, onRetryList, cards, cardFocus = null, onCloseCard, fillTarget, addBlock, onPick, onDrag }: ClipsTabProps) {
   const hintId = useId();
+  // The tab's one live region, always mounted (round 2, L2): what is being prepared now.
+  const preparing = (tiles ?? []).filter((tile) => tile.state.kind === "busy").map((tile) => `Клип «${tile.clip.motion.label}»: ${PREPARING}`);
   return (
     <>
       <div className="ed-chips">
@@ -179,8 +190,11 @@ export function ClipsTab({ avatarName, tiles, listError, onRetryList, cards, onC
           {avatarName}
         </span>
       </div>
+      <p className="sr-only" role="status">
+        {preparing.join(" ")}
+      </p>
       {cards.map((card) => (
-        <ClipAlert key={card.key} card={card} onClose={() => onCloseCard(card.key)} />
+        <ClipAlert key={card.key} card={card} focusTick={cardFocus?.key === card.key ? cardFocus.tick : null} onClose={() => onCloseCard(card.key)} />
       ))}
       {tiles === null ? (
         listError !== null ? (

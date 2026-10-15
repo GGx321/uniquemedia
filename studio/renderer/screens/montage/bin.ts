@@ -102,11 +102,16 @@ export function binFacets(photos: readonly PhotoSummary[], filter: BinFilter): {
  * one `fill`s the empty cell waiting for it, or is `append`ed as a new clip, unless the draft is `full` (20 clips, or nothing
  * left of the 15 s).
  */
-export type TileAction = "select" | "fill" | "append" | "taken" | "full";
+export type TileAction = "select" | "fill" | "append" | "taken" | "full" | "wait";
 
-export function tileAction(tile: BinTile, fillTarget: { readonly clip: number; readonly cell: number } | null, addBlock: AddRefusal | null): TileAction {
+/**
+ * `framesKnown` (5b.2, S5.WA4 round 2): every video of the draft is known (`clipOps.framesKnown`); while one is not, a free photo `wait`s, since it may be
+ * that video's frame (the rule fails closed).
+ */
+export function tileAction(tile: BinTile, fillTarget: { readonly clip: number; readonly cell: number } | null, addBlock: AddRefusal | null, framesKnown = true): TileAction {
   if (tile.state === "placed") return "select";
   if (tile.state !== "free") return "taken";
+  if (!framesKnown) return "wait";
   if (fillTarget !== null) return "fill";
   return addBlock === null ? "append" : "full";
 }

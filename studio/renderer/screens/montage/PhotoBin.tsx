@@ -7,7 +7,7 @@ import type { PhotoPages } from "../photos/photoPages";
 import type { MoreState } from "../photos/usePhotoPages";
 import { binFacets, type BinFilter, binTiles, type BinTile, isBuiltInCategory, tileAction } from "./bin";
 import type { AddRefusal } from "./clipOps";
-import { addBlockedLabel } from "./labels";
+import { addBlockedLabel, FRAMES_UNKNOWN_TITLE } from "./labels";
 import { type FillTarget, fillWords } from "./mine";
 
 // The «Фото» tab (Editor.dc.html, EditorNew.dc.html; P6–P15). 3d.3a placed photos from it; 3d.5 adds the chips: the draft's avatar
@@ -37,6 +37,8 @@ export interface PhotoBinProps {
   readonly onDragPhoto: (photoId: string | null) => void;
   /** 5b.2 (Q-F = 1, mockup 57e): the photos whose clip copies the draft holds: their frame is taken. */
   readonly clipFrames?: ReadonlySet<string>;
+  /** 5b.2 (S5.WA4 round 2): every video of the draft is known; while one is not, a free photo waits (it may be that video's frame). */
+  readonly framesKnown?: boolean;
 }
 
 /** The bin's «Показать ещё» (S4.P2): the bin is a picker of the avatar's photos, so the photos past the first 500 must be reachable too. */
@@ -78,8 +80,8 @@ function stateLabel(tile: BinTile): string {
 }
 
 /** What a click does, after the photo's name: «Фото 3: добавить кадр в конец ролика». */
-function actionLabel(tile: BinTile, fillTarget: PhotoBinProps["fillTarget"], addBlock: AddRefusal | null): string {
-  switch (tileAction(tile, fillTarget, addBlock)) {
+function actionLabel(tile: BinTile, fillTarget: PhotoBinProps["fillTarget"], addBlock: AddRefusal | null, framesKnown: boolean): string {
+  switch (tileAction(tile, fillTarget, addBlock, framesKnown)) {
     case "select":
       return `выбрать кадр ${tile.slot ?? ""}`;
     case "taken":
@@ -90,10 +92,12 @@ function actionLabel(tile: BinTile, fillTarget: PhotoBinProps["fillTarget"], add
       return "кадров больше не добавить";
     case "append":
       return "добавить кадр в конец ролика";
+    case "wait":
+      return "подождите, читаем видео ролика";
   }
 }
 
-export function PhotoBin({ avatarName, avatarId, spec, photos, paging = null, filter, onFilter, onPick, fillTarget, addBlock, onDragPhoto, clipFrames }: PhotoBinProps) {
+export function PhotoBin({ avatarName, avatarId, spec, photos, paging = null, filter, onFilter, onPick, fillTarget, addBlock, onDragPhoto, clipFrames, framesKnown = true }: PhotoBinProps) {
   const hintId = useId();
   const categoryId = useId();
   const binRef = useRef<HTMLUListElement>(null);
@@ -195,21 +199,26 @@ export function PhotoBin({ avatarName, avatarId, spec, photos, paging = null, fi
         <ul ref={binRef} className="ed-bin" aria-label="Фото аватара">
           {tiles.map((tile) => {
             const { photo, n, slot } = tile;
-            const does = tileAction(tile, fillTarget, addBlock);
+            const does = tileAction(tile, fillTarget, addBlock, framesKnown);
             const taken = does === "taken";
-            const draggable = tile.state === "free";
+            // A free photo waits while a video of the draft is not known: it keeps the focus, says so, and does nothing (fail closed).
+            const waiting = does === "wait";
+            const draggable = tile.state === "free" && !waiting;
             return (
               <li key={photo.photoId} className={slot !== null ? "ph ed-bin-tile ed-bin-tile-in" : "ph ed-bin-tile"} aria-label={`Фото ${n}${stateLabel(tile)}`}>
                 <button
                   type="button"
                   className="ed-bin-pick"
                   data-photo-id={photo.photoId}
-                  aria-label={`Фото ${n}: ${actionLabel(tile, fillTarget, addBlock)}`}
+                  aria-label={`Фото ${n}: ${actionLabel(tile, fillTarget, addBlock, framesKnown)}`}
                   aria-describedby={hintId}
-                  title={tile.state === "clip-in" ? CLIP_IN_TITLE : undefined}
+                  title={tile.state === "clip-in" ? CLIP_IN_TITLE : waiting ? FRAMES_UNKNOWN_TITLE : undefined}
                   disabled={taken || does === "full"}
+                  aria-disabled={waiting || undefined}
                   draggable={draggable}
-                  onClick={() => onPick(photo.photoId)}
+                  onClick={() => {
+                    if (!waiting) onPick(photo.photoId);
+                  }}
                   onDragStart={(e) => {
                     if (!draggable) return;
                     if (e.dataTransfer) {

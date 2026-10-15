@@ -32,9 +32,12 @@ describe("the origin of the draft's own videos", () => {
     const copy = ownVideoOf(summary("media-copy-0001", ORIGIN));
     const own = ownVideoOf(summary("media-own-0001"));
     if (copy === null || own === null) throw new Error("no view");
-    const originOf = originOfVideos({ held: new Map([[copy.mediaId, copy], [own.mediaId, own]]), answered: new Set([copy.mediaId, own.mediaId]) });
+    const originOf = originOfVideos({ held: new Map([[copy.mediaId, copy], [own.mediaId, own]]), answered: new Set([copy.mediaId, own.mediaId, "media-asked-0001"]) });
     expect(originOf("media-copy-0001")).toEqual(ORIGIN);
-    expect(originOf("media-own-0001")).toBeUndefined();
+    // S5.WA4 round 2 (review M3): an origin is three-valued now — a copy's, null (an own video, or one the list answered for and does not hold), or
+    // undefined (not answered: not known, and the frame rule fails closed on it). This used to read undefined for the own video.
+    expect(originOf("media-own-0001")).toBeNull();
+    expect(originOf("media-asked-0001")).toBeNull();
     expect(originOf("media-gone-0001")).toBeUndefined();
   });
 

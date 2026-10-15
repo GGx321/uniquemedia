@@ -19,7 +19,7 @@ import { type BinFilter, isFreePhoto } from "./montage/bin";
 import { ClipPlacements, copyFactsOf, importAnswerOf, placeBoundary, readyCopyFacts } from "./montage/clipImport";
 import { ClipProperties } from "./montage/ClipProperties";
 import { type ClipCard, ClipsTab } from "./montage/ClipsTab";
-import { clipImportFailure, type ClipTile, clipTiles, copyLabeller } from "./montage/clipTiles";
+import { clipImportFailure, type ClipTile, clipTiles, copyLabeller, placementRefusalText } from "./montage/clipTiles";
 import { sameJson } from "./montage/json";
 import { LayerProperties } from "./montage/LayerProperties";
 import { addLayerRefusal } from "./montage/layerOps";
@@ -32,7 +32,7 @@ import { MusicTab } from "./montage/MusicTab";
 import { useTrackSummary } from "./montage/MusicTrack";
 import { changeTouches, draftMediaIds } from "./montage/ownMedia";
 import { MediaStandIn } from "./montage/PanelSplitter";
-import { originOfVideos, type OwnVideo, ownVideoOf, useOwnVideos, videoProblems, withPlaced } from "./montage/ownVideos";
+import { type OwnVideo, ownVideoOf, type OwnVideos, useOwnVideos, videoProblems, withPlaced } from "./montage/ownVideos";
 import { TrimPeekStore } from "./montage/trimPeek";
 import { PhotoBin } from "./montage/PhotoBin";
 import { replaceSticker } from "./montage/stickerOps";
@@ -48,6 +48,7 @@ import {
   clipStartMs,
   copyFramePhotoIds,
   type Edit,
+  framesKnown,
   insertOwnPhotoClip,
   insertPhotoClip,
   insertVideoClip,
@@ -95,6 +96,19 @@ const CHANGING_RETRIES = 2;
 const CHANGING_PAUSE_MS = 150;
 /** How long a render whose answer never came waits for its job to show up in the events and the snapshot before the owner is told. */
 const NO_ANSWER_GRACE_MS = 2_000;
+
+/**
+ * 5b.2: what the editor knows of a draft video's origin (`OriginOf`): a held record's (null for the owner's own); null for one the list answered for and
+ * does not hold (gone, it holds no frame); a copy this editor placed before the list answered for it; undefined for anything else (not known yet).
+ */
+function originFrom(videos: OwnVideos, placed: ReadonlyMap<string, MediaOrigin>): OriginOf {
+  return (mediaId) => {
+    const held = videos.held.get(mediaId);
+    if (held !== undefined) return held.origin;
+    if (videos.answered.has(mediaId)) return null;
+    return placed.get(mediaId);
+  };
+}
 
 /** «2026-09-30_collage3_001»: a video's file name without its folder and extension, as the owner sees it in «Готовые видео». */
 function fileLabel(video: VideoSummary): string {
@@ -566,16 +580,17 @@ function DraftEditor({
   // 5b.2: the clip copies this editor placed are known at once, before the media list answers for them: a job's copy by its record (`job.done`), a live
   // copy by the clip it copies (`media.importClip`'s answer names only its id).
   const [placedCopies, setPlacedCopies] = useState<ReadonlyMap<string, OwnVideo>>(() => new Map());
+  // The ref is written synchronously as a copy is placed (review M3): two placements in one React batch see each other; the state draws it.
+  const placedOriginsRef = useRef(new Map<string, MediaOrigin>());
   const [placedOrigins, setPlacedOrigins] = useState<ReadonlyMap<string, MediaOrigin>>(() => new Map());
   const ownVideos = useMemo(() => withPlaced(listedVideos, placedCopies), [listedVideos, placedCopies]);
   // 5b.2 (I5.60, Q-F = 1): which own videos are clips' montage copies: a photo and its clips are one frame, placed once. A copy the list answered for and
-  // does not hold is gone (deleted with its clip): it holds no frame.
-  const originOf = useMemo<OriginOf>(() => {
-    const listed = originOfVideos(ownVideos);
-    return (mediaId) => listed(mediaId) ?? (ownVideos.answered.has(mediaId) ? undefined : placedOrigins.get(mediaId));
-  }, [ownVideos, placedOrigins]);
+  // does not hold is gone (deleted with its clip): it holds no frame. A video neither answered nor placed here is NOT known (undefined): while one is, no
+  // frame is placed (S5.WA4 round 2, review M3: fail closed — a list that cannot be read keeps it so).
+  const originOf = useMemo(() => originFrom(ownVideos, placedOrigins), [ownVideos, placedOrigins]);
   const originRef = useRef(originOf);
   originRef.current = originOf;
+  const framesAreKnown = framesKnown(state.spec, originOf);
   const clipVideoProblems = videoProblems(state.spec, verdict, ownVideos);
   // 3f.3b fix round 1 (L8): «Обрезка» tells the preview which frame a drag is at, without re-rendering the editor.
   const [trimPeek] = useState(() => new TrimPeekStore());
@@ -653,6 +668,8 @@ function DraftEditor({
   /** What `media.importClip` refused for a clip (57c), until the card is closed or the clip tried again; and the clips whose file will not prepare. */
   const [clipRefusals, setClipRefusals] = useState<ReadonlyMap<string, string>>(() => new Map());
   const [damagedClips, setDamagedClips] = useState<ReadonlySet<string>>(() => new Set());
+  /** The card whose ✕ takes the focus (review L1): after a damaged file or a placement the draft no longer takes. */
+  const [cardFocus, setCardFocus] = useState<{ key: string; tick: number } | null>(null);
   // The avatar's clip copies being made, from the job list (they outlive a window reload); the failed ones say why on a card until closed.
   const clipImports = view.imports.filter((job) => job.origin !== undefined && job.origin.avatarId === avatarId);
   const failedClipImports = clipImports.filter((job) => job.status === "failed" && job.error !== null);
@@ -661,7 +678,9 @@ function DraftEditor({
     ...[...clipRefusals.keys(), ...failedClipImports.flatMap((job) => (job.origin === undefined ? [] : [job.origin.clipId]))].map((clipId): [string, "failed"] => [clipId, "failed"]),
     ...[...damagedClips].map((clipId): [string, "damaged"] => [clipId, "damaged"]),
   ]);
-  const clipTileList = clipList.clips === null ? null : clipTiles({ clips: clipList.clips, spec: state.spec, originOf, photos: photoIndex, busy: busyClips, failed: failedClips });
+  // Every page of the avatar's photos read: a clip's photo they do not hold is gone (review M1).
+  const photosComplete = bin.pages !== null && bin.pages.nextCursor === null;
+  const clipTileList = clipList.clips === null ? null : clipTiles({ clips: clipList.clips, spec: state.spec, originOf, photos: photoIndex, photosComplete, busy: busyClips, failed: failedClips });
   const clipsById = new Map((clipList.clips ?? []).map((clip) => [clip.clipId, clip]));
   const clipCards: ClipCard[] = [
     ...[...clipRefusals].flatMap(([clipId, text]) => {
@@ -849,12 +868,18 @@ function DraftEditor({
   /**
    * A clip's copy into the montage (`clipImport.ts`): a copy the draft holds already is selected; else a new clip at the end, or at the boundary a drop
    * named, by the own video's rule and the frame rule (Q-F = 1). `media`, the copy's record when a job brought it, is known at once (its origin, its facts).
+   * The copy's origin is written to the ref BEFORE the edit, so a second placement in the same React batch sees this one (review M3). A copy that can no
+   * longer go in (its photo or a sibling placed meanwhile, the 20th kadr, the 15 s) says why on its card instead of failing silently (review L3); `owned`:
+   * the owner's own click asked for it, so the focus goes to that card's ✕ (review L1).
    */
-  function placeClipCopy(facts: OwnVideoFacts, boundary: number | null, media?: MediaSummary): void {
+  function placeClipCopy(facts: OwnVideoFacts, boundary: number | null, media?: MediaSummary, owned = false): void {
     const seen = media === undefined ? null : ownVideoOf(media);
     if (seen !== null) setPlacedCopies((now) => new Map(now).set(seen.mediaId, seen));
     const { origin } = facts;
-    if (origin !== undefined) setPlacedOrigins((now) => new Map(now).set(facts.mediaId, origin));
+    if (origin !== undefined) {
+      placedOriginsRef.current.set(facts.mediaId, origin);
+      setPlacedOrigins(new Map(placedOriginsRef.current));
+    }
     const spec = session.state.spec;
     const at = spec.clips.findIndex((c) => c.kind === "video" && c.mediaId === facts.mediaId);
     if (at >= 0) {
@@ -862,7 +887,20 @@ function DraftEditor({
       return;
     }
     const where = placeBoundary(spec, boundary);
-    placeOwn(where === undefined ? appendVideoClip(spec, facts, originRef.current) : insertVideoClip(spec, where, facts, originRef.current));
+    const live = originFrom(ownVideos, placedOriginsRef.current);
+    const result = where === undefined ? appendVideoClip(spec, facts, live) : insertVideoClip(spec, where, facts, live);
+    if (!result.ok) {
+      if (origin !== undefined) tellClipRefusal(origin.clipId, placementRefusalText(result.reason, spec, origin.photoId), owned);
+      return;
+    }
+    placeOwn(result);
+  }
+
+  /** A clip's refusal on its card (57c); the focus goes to the card's ✕ when the owner's click met it, or when the focus would otherwise be lost (review L1). */
+  function tellClipRefusal(clipId: string, text: string, owned: boolean): void {
+    setClipRefusals((now) => new Map(now).set(clipId, text));
+    const active = document.activeElement;
+    if (owned || active === null || active === document.body) setCardFocus((now) => ({ key: `clip:${clipId}`, tick: (now?.tick ?? 0) + 1 }));
   }
 
   /**
@@ -876,7 +914,8 @@ function DraftEditor({
       if (at >= 0) selectClipAt(at);
       return;
     }
-    if (tileState.kind === "busy" || tileState.kind === "taken" || tileState.kind === "damaged" || asking.current.has(clip.clipId)) return;
+    // Only a free clip, or one whose last try failed, is asked for (busy, taken, damaged, or waiting for the draft's videos to be known: nothing).
+    if ((tileState.kind !== "free" && tileState.kind !== "failed") || asking.current.has(clip.clipId)) return;
     // A new try: what the last one met is put away.
     forgetClipFailure(clip.clipId);
     asking.current.add(clip.clipId);
@@ -886,20 +925,21 @@ function DraftEditor({
     if (!mounted.current) return;
     setAskingClips(new Set(asking.current));
     const answer = importAnswerOf(reply);
-    if (answer.kind === "place") placeClipCopy(readyCopyFacts(clip, answer.mediaId), boundary);
+    if (answer.kind === "place") placeClipCopy(readyCopyFacts(clip, answer.mediaId), boundary, undefined, true);
     else if (answer.kind === "wait") {
       const now = placements.wait(answer.jobId, { clipId: clip.clipId, boundary });
-      if (now.kind === "place") placeClipCopy(copyFactsOf(now.media), boundary, now.media);
+      if (now.kind === "place") placeClipCopy(copyFactsOf(now.media), boundary, now.media, true);
       else if (now.kind === "cancelled") rereadClips.current();
       setWaiting(placements.pending);
     } else {
       const failure = clipImportFailure(answer.error);
       // NOT_FOUND: the clip is gone; its tile goes with the list read again.
       if (failure === null) rereadClips.current();
-      else {
-        setClipRefusals((now) => new Map(now).set(clip.clipId, failure.text));
-        if (failure.damaged) setDamagedClips((now) => new Set(now).add(clip.clipId));
-      }
+      else if (failure.damaged) {
+        // The tile turns off: the focus goes to the card's ✕, never to the page (review L1).
+        setDamagedClips((now) => new Set(now).add(clip.clipId));
+        tellClipRefusal(clip.clipId, failure.text, true);
+      } else setClipRefusals((now) => new Map(now).set(clip.clipId, failure.text));
     }
   }
 
@@ -1293,6 +1333,7 @@ function DraftEditor({
                 addBlock={addRefusal(state.spec)}
                 onDragPhoto={(photoId) => setDrag(photoId === null ? null : { source: "scene", photoId })}
                 clipFrames={copyFramePhotoIds(state.spec, originOf)}
+                framesKnown={framesAreKnown}
               />
             ) : tab === "clips" ? (
               <ClipsTab
@@ -1301,6 +1342,7 @@ function DraftEditor({
                 listError={clipList.error}
                 onRetryList={() => rereadClips.current()}
                 cards={clipCards}
+                cardFocus={cardFocus}
                 onCloseCard={closeClipCard}
                 fillTarget={fillTarget}
                 addBlock={addRefusal(state.spec)}
@@ -1369,6 +1411,7 @@ function DraftEditor({
               dragPhoto={dragCell}
               onFillCell={fillDropped}
               videos={ownVideos}
+              originOf={originOf}
               copyOf={copyOf}
               videoProblems={clipVideoProblems}
               trimPeek={trimPeek}
@@ -1411,6 +1454,7 @@ function DraftEditor({
           onAddSticker={() => openTab("gif")}
           onSelectClip={(index) => selectClipAt(index)}
           videos={ownVideos}
+          originOf={originOf}
           copyOf={copyOf}
           preparing={waiting.flatMap((w) => (w.boundary === null ? [] : [{ jobId: w.jobId, boundary: w.boundary }]))}
           videoProblems={clipVideoProblems}
