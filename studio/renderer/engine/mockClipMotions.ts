@@ -1,0 +1,720 @@
+import {
+  CLIP_CHOICES_MAX,
+  MOTION_ENGLISH,
+  MOTION_ID_MAX,
+  MOTION_LABEL_MAX,
+  MOTION_MAX_ATTEMPTS,
+  MOTION_PROBLEMS,
+  MOTION_STORE_MAX_ITEMS,
+  MOTION_TEXT_MAX,
+  ownIdeaLabel,
+  type ClipFrameNote,
+  type ClipFrameReading,
+  type ClipMotionChoice,
+  type ClipMotionSource,
+  type ClipSuggestResult,
+  type ClipTranslateResult,
+  type CommandPayload,
+  type EngineError,
+  type Estimate,
+  type MotionProblem,
+} from "../../shared/engine";
+import { CAPTURES } from "../../shared/scenes/captures";
+import type { ContentLevel } from "../../shared/scenes/contentLine";
+import { motionTextProblems, repairMayHelp } from "../../shared/scenes/motionText";
+
+// Stage 5, 5b.2, S5.WC4 (plan s5b2 §5.3, §5.6 «C», I5.66-I5.68; Q-H = 2): the vision motion writer and «Своя идея» of the mock engine, the mirror of engine/clips/{motionService,motionWriter,ideaTranslator,motionStore}.ts.
+// The mock plays the model's answers from a script (`MockModelReply`: what OpenRouter would answer, in the words the transport reads), and does with each one what the engine does: the same parsing, the SAME shared motion check
+// (`shared/scenes/motionText.ts`, imported, not copied), the same second attempt with closed problem codes, the same money (a reserve per attempt before it is sent, a settle by the answer, the cost of every result), the same
+// guard (both ways, global) and the same store (ids from `next`, never reused, twelve FIFO, a changed photo empties it).
+//
+// HELD to the engine by tests that can import both: the prices and the normalising/ check (mockEngine.clipMotions.table.test.ts), the stories of parity (scenarios.clipMotions.ts).
+// The one thing the mock does not run is `clipPromptOf`'s 130-word cap: a planless frame (all the mock has) puts at most 60 characters between fixed lines, so the cap cannot bind there (the table test pins it).
+
+type Out<T> = { ok: true; result: T } | { ok: false; error: EngineError };
+const good = <T>(result: T): Out<T> => ({ ok: true, result });
+const bad = (error: EngineError): Out<never> => ({ ok: false, error });
+
+// ---------- the prices ----------
+
+/**
+ * The two estimates at the bundled price table, for the engine's PROVISIONAL system prompts: `motionPrice.suggestPrice` / `translatePrice` read the largest message a call can send, so the worst case follows the prompt text.
+ * Held to the engine by mockEngine.clipMotions.table.test.ts (it fails the day S5.WCX changes a prompt, and says which number to move here).
+ */
+export const MOCK_SUGGEST_PRICE = { expectedMicros: 3_400, worstMicros: 14_810 } as const;
+export const MOCK_TRANSLATE_PRICE = { expectedMicros: 1_000, worstMicros: 9_650 } as const;
+
+type CallKind = "suggest" | "idea";
+
+const priceOf = (kind: CallKind): { expectedMicros: number; worstMicros: number } => (kind === "suggest" ? MOCK_SUGGEST_PRICE : MOCK_TRANSLATE_PRICE);
+/** What one attempt reserves: the call's worst case is `MOTION_MAX_ATTEMPTS` of them. */
+const attemptWorst = (kind: CallKind): number => priceOf(kind).worstMicros / MOTION_MAX_ATTEMPTS;
+
+// ---------- the model's answers, scripted ----------
+
+/**
+ * What the model's HTTP answer was, one per attempt, in the order the attempts are sent.
+ * - answer: a 2xx with this content, billed `costMicros` (the call's expected figure when absent).
+ * - empty: a 2xx with no content (EMPTY_CONTENT): billed, unusable, a second attempt may follow.
+ * - unusable-body: a 2xx that is not a chat answer at all (UNUSABLE_PAID_RESPONSE): settled at the attempt's worst case, no second attempt.
+ * - refused: a 400 from content moderation: free.
+ * - http: any other final status: 401 `AUTH_INVALID`, 402 `INSUFFICIENT_CREDITS`, 429 `RATE_LIMITED`, 5xx `NETWORK`; free (a non-2xx settles at 0).
+ * - timeout, network: no answer: the reserve STAYS OPEN at its worst case (it may have been billed).
+ */
+export type MockModelReply =
+  | { kind: "answer"; content: string; costMicros?: number }
+  | { kind: "empty"; costMicros?: number }
+  | { kind: "unusable-body" }
+  | { kind: "refused" }
+  | { kind: "http"; status: 401 | 402 | 429 | 500 | 502 | 503 }
+  | { kind: "timeout" }
+  | { kind: "network" };
+
+/** The writer's answer for these texts (labels «Движение n»), as JSON. */
+export function mockSuggestionAnswer(texts: readonly string[], frame: { capture?: string; phoneVisible?: boolean; faceVisible?: boolean } = {}, costMicros?: number): MockModelReply {
+  const content = JSON.stringify({
+    motions: texts.map((text, i) => ({ label_ru: `Движение ${i + 1}`, text_en: text })),
+    frame: { capture: frame.capture ?? "unknown", phoneVisible: frame.phoneVisible ?? false, faceVisible: frame.faceVisible ?? true },
+  });
+  return { kind: "answer", content, ...(costMicros === undefined ? {} : { costMicros }) };
+}
+
+/** The translator's answer. */
+export function mockIdeaAnswer(text: string, costMicros?: number): MockModelReply {
+  return { kind: "answer", content: JSON.stringify({ text_en: text }), ...(costMicros === undefined ? {} : { costMicros }) };
+}
+
+/** What an unscripted attempt answers: three small motions, or the translation of any idea into one. Demo and tests that do not care. */
+const DEFAULT_SUGGESTIONS = ["she slowly tucks a strand of hair behind her ear", "she tilts her head a little to one side and smiles", "she slowly takes a breath and relaxes her shoulders"] as const;
+const DEFAULT_TRANSLATION = "she slowly turns her head toward the window and smiles";
+
+// ---------- the checks (mirrors of engine/clips/motionCall.ts and motionWriter.ts) ----------
+
+/** What the check reads of a frame: a planless photo (all the mock has) is taken by nobody it knows, and its face shows (a photo with no motion offers no call). */
+export interface MockMotionFrame {
+  readonly bold: boolean;
+  readonly level: ContentLevel;
+}
+
+/** engine/clips/motionCall.ts `normalizeModelText`: typographic apostrophes, one space, no final period, a leading «She» in lowercase. */
+export function normalizeModelText(raw: string): string {
+  return raw
+    .replace(/[‘’]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\.+$/, "")
+    .trim()
+    .replace(/^(She|Her)(?=\s)/, (word) => word.toLowerCase());
+}
+
+/** engine/clips/motionCall.ts `checkModelText` (the 130-word cap aside, see the header). */
+export function checkModelText(frame: MockMotionFrame, raw: string, source: Extract<ClipMotionSource, "vision" | "own">): { text: string; problems: MotionProblem[] } {
+  const text = normalizeModelText(raw);
+  const checked = { capture: "unknown" as const, plannedCapture: "unknown" as const, face: "yes" as const, level: frame.level, bold: frame.bold, moment: null };
+  const problems = motionTextProblems(text, checked, source);
+  if (problems.length > 0) return { text, problems };
+  if (text.length > MOTION_TEXT_MAX || !MOTION_ENGLISH.test(text)) return { text, problems: ["not-motion"] };
+  return { text, problems };
+}
+
+const CAPTURE_NAMES: readonly string[] = [...CAPTURES, "unknown"];
+
+interface WriterAnswer {
+  motions: { label_ru: string; text_en: string }[];
+  frame: { capture: string; phoneVisible: boolean; faceVisible: boolean };
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+const onlyKeys = (value: Record<string, unknown>, keys: readonly string[]): boolean => Object.keys(value).length === keys.length && keys.every((key) => key in value);
+
+/** The writer's answer under the strict schema the engine reads it with; the first three motions are kept. Null: unreadable. */
+function readWriterAnswer(content: string): WriterAnswer | null {
+  let json: unknown;
+  try {
+    json = JSON.parse(content);
+  } catch {
+    return null;
+  }
+  if (!isRecord(json) || !onlyKeys(json, ["motions", "frame"])) return null;
+  const { motions, frame } = json;
+  if (!Array.isArray(motions) || !isRecord(frame) || !onlyKeys(frame, ["capture", "phoneVisible", "faceVisible"])) return null;
+  const { capture, phoneVisible, faceVisible } = frame;
+  if (typeof capture !== "string" || !CAPTURE_NAMES.includes(capture) || typeof phoneVisible !== "boolean" || typeof faceVisible !== "boolean") return null;
+  const read: WriterAnswer["motions"] = [];
+  for (const motion of motions) {
+    if (!isRecord(motion) || !onlyKeys(motion, ["label_ru", "text_en"]) || typeof motion.label_ru !== "string" || typeof motion.text_en !== "string") return null;
+    read.push({ label_ru: motion.label_ru, text_en: motion.text_en });
+  }
+  return read.length === 0 ? null : { motions: read.slice(0, CLIP_CHOICES_MAX.vision), frame: { capture, phoneVisible, faceVisible } };
+}
+
+function readIdeaAnswer(content: string): string | null {
+  let json: unknown;
+  try {
+    json = JSON.parse(content);
+  } catch {
+    return null;
+  }
+  return isRecord(json) && onlyKeys(json, ["text_en"]) && typeof json.text_en === "string" ? json.text_en : null;
+}
+
+/** engine/clips/motionWriter.ts `cleanLabel`: cleaned of control and format characters, cut by word to 40 characters; null when nothing is left. */
+function cleanLabel(raw: string): string | null {
+  const flat = raw.replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu, "").replace(/\s+/g, " ").trim();
+  if (flat === "") return null;
+  const label = ownIdeaLabel(flat);
+  return label.length <= MOTION_LABEL_MAX ? label : null;
+}
+
+/** The marks the frame reading may carry: a planless frame plans no capture, so only a phone in view is a mark (marks only, never a refusal). */
+function readingOf(frame: WriterAnswer["frame"]): ClipFrameReading {
+  const notes: ClipFrameNote[] = [];
+  if (frame.phoneVisible) notes.push("second-phone");
+  return { notes };
+}
+
+// ---------- one attempt (the transport and `stepOf`) ----------
+
+type ChatStep =
+  | { kind: "answer"; content: string; costMicros: number }
+  | { kind: "unreadable"; costMicros: number; final?: true }
+  | { kind: "refused"; costMicros: number }
+  | { kind: "no-room"; costMicros: number }
+  | { kind: "error"; error: EngineError; costMicros: number; leftOpen: boolean };
+
+/** engine/clips/motionCall.ts `endsAsResult`: a later attempt's failure ends the call as a plain result with what was paid, unless it must reach the owner as it is. */
+function endsAsResult(step: Extract<ChatStep, { kind: "error" }>, paidBefore: number): boolean {
+  return paidBefore > 0 && !step.leftOpen && step.error.code !== "AUTH_INVALID" && step.error.code !== "INSUFFICIENT_CREDITS";
+}
+
+// ---------- the store (engine/clips/motionStore.ts) ----------
+
+/** A stored suggestion or idea. Mutable on purpose: a test edits the store as the owner's disk could (`tamper`). */
+export interface MockStoredItem {
+  id: string;
+  source: Extract<ClipMotionSource, "vision" | "own">;
+  label: string;
+  text: string;
+}
+type StoredItem = MockStoredItem;
+
+export interface MockMotionStore {
+  /** The photo file the items were made for: another file empties the store. */
+  sha: string;
+  next: { vision: number; own: number };
+  items: StoredItem[];
+  reading?: ClipFrameReading;
+}
+
+type Store = MockMotionStore;
+const emptyStore = (sha: string): Store => ({ sha, next: { vision: 1, own: 1 }, items: [] });
+const PREFIX = { vision: "v", own: "o" } as const;
+
+const isFull = (store: Store, source: StoredItem["source"]): boolean => store.next[source] > MOTION_ID_MAX;
+
+/** Ids issued in order from the source's counter, appended; the oldest past twelve go. A source with fewer ids left than drafts keeps the first ones. */
+function addItems(store: Store, source: StoredItem["source"], drafts: readonly { label: string; text: string }[]): StoredItem[] {
+  const made: StoredItem[] = [];
+  for (const draft of drafts) {
+    if (store.next[source] > MOTION_ID_MAX) break;
+    made.push({ id: `${PREFIX[source]}-${store.next[source]}`, source, label: draft.label, text: draft.text });
+    store.next[source] += 1;
+  }
+  const all = [...store.items, ...made];
+  store.items = all.slice(Math.max(0, all.length - MOTION_STORE_MAX_ITEMS));
+  return made;
+}
+
+const choiceOf = (item: StoredItem): ClipMotionChoice => ({ id: item.id, source: item.source, label: item.label, text: item.text });
+
+// ---------- the ports and the class ----------
+
+/** The photo as a part C call reads it: why it cannot be brought to life, or its frame and its file's identity. */
+export type MockMotionRead = Out<{ frame: MockMotionFrame; sha: string }>;
+
+/** What the mock engine hands the motions. */
+export interface MockMotionPorts {
+  /** A clip or a batch holds the clip money unit (the ONE predicate behind both directions of the guard). */
+  unitHeld(): boolean;
+  /** The key and ledger gate (`usableKey`, then `paidBudget`), or its refusal. */
+  gate(): EngineError | null;
+  /** What the budget refuses an attempt's reserve with while the ledger is halted or needs a reconcile, or null. */
+  reserveRefusal(): EngineError | null;
+  markKeyRejected(): void;
+  /** The avatar's photo exists (an active avatar, not being deleted, the photo its own): NOT_FOUND otherwise. The master is a photo. */
+  find(avatarId: string, photoId: string): Out<true>;
+  /** The photo as the clip rules read it (`find` first), in `clips.create`'s order. */
+  read(avatarId: string, photoId: string): MockMotionRead;
+  /** The usual price source of the mock's estimates. */
+  prices(): Pick<Estimate, "prices" | "pricesAsOf">;
+  /** The month's committed money (spent + open + held) and its limit. */
+  committedMicros(): number;
+  monthlyBudgetMicros(): number;
+  /** The mock's open reserves (attempt id to worst), and the settle of the cost. */
+  reserves: Map<string, number>;
+  spend(micros: number): void;
+  emitMoney(): void;
+  nextId(prefix: string): string;
+  /** A timer of the mock's scheduler: how long a call takes in the demo (never in a test, which holds or releases the answer itself). */
+  sleep(ms: number): Promise<void>;
+  /** The paid count a library switch and a reconcile wait for. */
+  paidStart(): void;
+  paidEnd(): void;
+  log(line: string): void;
+}
+
+export interface MockMotionOptions {
+  /** How long a call waits for the model's answer (0: no time passes unless the call is held). */
+  callMs?: number;
+}
+
+interface Line {
+  attemptId: string;
+  worstMicros: number;
+  state: "open" | "settled";
+  costMicros: number;
+  estimated: boolean;
+}
+
+export class MockClipMotions {
+  readonly #ports: MockMotionPorts;
+  readonly #callMs: number;
+  readonly #stores = new Map<string, Store>();
+  readonly #lines: Line[] = [];
+  readonly #caps = new Map<string, number>();
+  readonly #suggesting = new Set<string>();
+  readonly #translating = new Set<string>();
+  readonly #byAvatar = new Map<string, number>();
+  #running = 0;
+  /** A restart ends every call that was in flight: a call that wakes up in a later epoch does nothing. */
+  #epoch = 0;
+  #script: MockModelReply[] = [];
+  #held = false;
+  #door: { promise: Promise<void>; open: () => void } | null = null;
+  /** Calls waiting at the model (`hold`): a test says «the request is at the model». */
+  #atModel = 0;
+
+  constructor(ports: MockMotionPorts, options: MockMotionOptions = {}) {
+    this.#ports = ports;
+    this.#callMs = options.callMs ?? 0;
+  }
+
+  // ---------- the controls ----------
+
+  /** Arms the answers of the NEXT attempts, in the order they are sent (used up one per attempt; an attempt without one answers by default). */
+  script(replies: readonly MockModelReply[]): void {
+    this.#script = [...replies];
+  }
+
+  /** While held, a call waits at the model after its reserve: the request is out, no answer has come. Released, every waiting call goes on. */
+  hold(held: boolean): void {
+    this.#held = held;
+    if (!held) {
+      this.#door?.open();
+      this.#door = null;
+    }
+  }
+
+  /** How many calls are waiting at the model now. */
+  waiting(): number {
+    return this.#atModel;
+  }
+
+  /** A part C call runs now, any avatar, any photo: `clips.create` and `clips.createBatch` wait while this is above 0. */
+  running(): number {
+    return this.#running;
+  }
+
+  runningFor(avatarId: string): number {
+    return this.#byAvatar.get(avatarId) ?? 0;
+  }
+
+  /** The calls' ledger lines, for the tests: `<job>:motion#N` and `<job>:idea#N`. */
+  lines(): readonly Readonly<Line>[] {
+    return this.#lines.map((line) => ({ ...line }));
+  }
+
+  /** The live caps as the autopilot's room reads them: each running call's scope, its cap and what it has committed. */
+  liveCaps(): { capMicros: number; committedMicros: number }[] {
+    return [...this.#caps].map(([jobId, capMicros]) => {
+      let committedMicros = 0;
+      for (const line of this.#lines) if (line.attemptId.startsWith(`${jobId}:`)) committedMicros += line.state === "open" ? line.worstMicros : line.costMicros;
+      return { capMicros, committedMicros };
+    });
+  }
+
+  /** The store of a photo as it stands now, for the tests. */
+  storeOf(avatarId: string, photoId: string): Readonly<Store> | undefined {
+    return this.#stores.get(`${avatarId}/${photoId}`);
+  }
+
+  /** The engine process restarts: a call in flight is gone with it (no answer ever comes, nothing is counted any more); the stores are files and stay. */
+  restart(): void {
+    this.#epoch += 1;
+    this.#suggesting.clear();
+    this.#translating.clear();
+    this.#byAvatar.clear();
+    this.#caps.clear();
+    this.#running = 0;
+    this.hold(false);
+  }
+
+  /** A test changes a store as the owner's disk could. */
+  tamper(avatarId: string, photoId: string, sha: string, change: (store: Store) => void): void {
+    change(this.#read(avatarId, photoId, sha));
+  }
+
+  /** The stores as the tests read them, by photo id. */
+  stores(): Record<string, Readonly<Store>> {
+    return Object.fromEntries(
+      [...this.#stores].map(([key, store]) => [
+        key.slice(key.indexOf("/") + 1),
+        { ...store, next: { ...store.next }, items: store.items.map((i) => ({ ...i })), ...(store.reading === undefined ? {} : { reading: { notes: [...store.reading.notes] } }) },
+      ]),
+    );
+  }
+
+  /** The avatar is gone: its stores go with its folder. */
+  removeAvatar(avatarId: string): void {
+    for (const key of [...this.#stores.keys()]) if (key.startsWith(`${avatarId}/`)) this.#stores.delete(key);
+  }
+
+  // ---------- the store ----------
+
+  #read(avatarId: string, photoId: string, sha: string): Store {
+    const key = `${avatarId}/${photoId}`;
+    const found = this.#stores.get(key);
+    if (found === undefined || found.sha !== sha) {
+      const fresh = emptyStore(sha);
+      this.#stores.set(key, fresh);
+      return fresh;
+    }
+    return found;
+  }
+
+  /** `clips.options`' view (engine `ClipMotions.stored`): the newest three suggestions and the newest two ideas that pass the check made now, in the order they were made, and the last reading. Free. */
+  stored(avatarId: string, photoId: string, frame: MockMotionFrame, sha: string): { motions: ClipMotionChoice[]; reading: ClipFrameReading | undefined } {
+    const store = this.#read(avatarId, photoId, sha);
+    const newest = (source: StoredItem["source"]): StoredItem[] => {
+      const kept: StoredItem[] = [];
+      for (const item of [...store.items].reverse()) {
+        if (item.source !== source || checkModelText(frame, item.text, item.source).problems.length > 0) continue;
+        kept.push(item);
+        if (kept.length === CLIP_CHOICES_MAX[source]) break;
+      }
+      return kept.reverse();
+    };
+    return { motions: [...newest("vision"), ...newest("own")].map(choiceOf), reading: store.reading === undefined ? undefined : { notes: [...store.reading.notes] } };
+  }
+
+  /** The label of an own idea in the photo's store by its English text, for a recovered clip (I5.67); null when the store (as it reads for this file) does not hold it. */
+  ownLabelOf(avatarId: string, photoId: string, text: string, sha: string): string | null {
+    const store = this.#read(avatarId, photoId, sha);
+    return [...store.items].reverse().find((item) => item.source === "own" && item.text === text)?.label ?? null;
+  }
+
+  // ---------- the free estimates ----------
+
+  estimateSuggest(payload: CommandPayload<"clips.estimateSuggest">): Out<Estimate> {
+    return this.#estimate("suggest", payload.avatarId, payload.photoId);
+  }
+
+  estimateIdea(payload: CommandPayload<"clips.estimateIdea">): Out<Estimate> {
+    return this.#estimate("idea", payload.avatarId, payload.photoId);
+  }
+
+  #estimate(kind: CallKind, avatarId: string, photoId: string): Out<Estimate> {
+    const found = this.#ports.find(avatarId, photoId);
+    if (!found.ok) return found;
+    const { expectedMicros, worstMicros } = priceOf(kind);
+    return good({ expectedMicros, worstMicros, ...this.#ports.prices() });
+  }
+
+  // ---------- the paid calls ----------
+
+  /** The guard, all of it before the first await: a clip money unit in flight, or a call for this photo and kind. Then the call is counted. */
+  #enter(kind: CallKind, avatarId: string, photoId: string): Out<() => void> {
+    if (this.#ports.unitHeld()) return bad({ code: "IN_FLIGHT", clipReason: "clip-busy", detail: "a clip or a batch of clips is being made; a motion call waits until its money is closed" });
+    const running = kind === "suggest" ? this.#suggesting : this.#translating;
+    const key = `${avatarId}/${photoId}`;
+    if (running.has(key)) {
+      return bad({
+        code: "IN_FLIGHT",
+        clipReason: kind === "suggest" ? "suggest-busy" : "idea-busy",
+        detail: kind === "suggest" ? "motions are already being suggested for this photo" : "an idea for this photo is already being translated",
+      });
+    }
+    running.add(key);
+    this.#running += 1;
+    this.#byAvatar.set(avatarId, (this.#byAvatar.get(avatarId) ?? 0) + 1);
+    this.#ports.paidStart();
+    const epoch = this.#epoch;
+    return good(() => {
+      // A restart cleared every count already: the call that outlived it owes nothing.
+      if (epoch !== this.#epoch) return;
+      running.delete(key);
+      this.#running -= 1;
+      const left = (this.#byAvatar.get(avatarId) ?? 1) - 1;
+      if (left <= 0) this.#byAvatar.delete(avatarId);
+      else this.#byAvatar.set(avatarId, left);
+      this.#ports.paidEnd();
+    });
+  }
+
+  /** Everything a paid call checks before it spends, in the contract's order. */
+  #prepare(kind: CallKind, avatarId: string, photoId: string, acceptedWorstMicros: number): Out<{ frame: MockMotionFrame; sha: string }> {
+    const gated = this.#ports.gate();
+    if (gated !== null) return bad(gated);
+    const found = this.#ports.find(avatarId, photoId);
+    if (!found.ok) return found;
+    const read = this.#ports.read(avatarId, photoId);
+    if (!read.ok) return read;
+    const source = kind === "suggest" ? "vision" : "own";
+    if (isFull(this.#read(avatarId, photoId, read.result.sha), source)) {
+      return bad({ code: "VALIDATION", clipReason: "motions-full", detail: `every ${PREFIX[source]}- id of photo ${photoId} was issued; ids are never reused` });
+    }
+    const { worstMicros } = priceOf(kind);
+    if (worstMicros > acceptedWorstMicros) return bad({ code: "PRICE_CHANGED", detail: `the worst case is now ${worstMicros} µ$, above the accepted ${acceptedWorstMicros} µ$` });
+    const committed = this.#ports.committedMicros();
+    if (committed + worstMicros > this.#ports.monthlyBudgetMicros()) {
+      return bad({ code: "BUDGET_EXCEEDED", detail: `committed ${committed} µ$ + this job's worst case ${worstMicros} µ$ > the monthly budget ${this.#ports.monthlyBudgetMicros()} µ$` });
+    }
+    return good(read.result);
+  }
+
+  async suggestMotions(payload: CommandPayload<"clips.suggestMotions">): Promise<Out<ClipSuggestResult>> {
+    const entered = this.#enter("suggest", payload.avatarId, payload.photoId);
+    if (!entered.ok) return entered;
+    try {
+      const ready = this.#prepare("suggest", payload.avatarId, payload.photoId, payload.acceptedWorstMicros);
+      if (!ready.ok) return ready;
+      return await this.#suggest(payload.avatarId, payload.photoId, ready.result);
+    } finally {
+      entered.result();
+    }
+  }
+
+  async translateIdea(payload: CommandPayload<"clips.translateIdea">): Promise<Out<ClipTranslateResult>> {
+    const entered = this.#enter("idea", payload.avatarId, payload.photoId);
+    if (!entered.ok) return entered;
+    try {
+      const ready = this.#prepare("idea", payload.avatarId, payload.photoId, payload.acceptedWorstMicros);
+      if (!ready.ok) return ready;
+      return await this.#translate(payload.avatarId, payload.photoId, payload.text, ready.result);
+    } finally {
+      entered.result();
+    }
+  }
+
+  // ---------- one attempt ----------
+
+  /** The model's next answer: the script's, else the default of the call. */
+  #nextReply(kind: CallKind): MockModelReply {
+    const scripted = this.#script.shift();
+    if (scripted !== undefined) return scripted;
+    return kind === "suggest" ? mockSuggestionAnswer(DEFAULT_SUGGESTIONS) : mockIdeaAnswer(DEFAULT_TRANSLATION);
+  }
+
+  /** Waits for the model: the demo's time, and the test's hold. */
+  async #atTheModel(): Promise<void> {
+    if (this.#callMs > 0) await this.#ports.sleep(this.#callMs);
+    if (!this.#held) {
+      await Promise.resolve();
+      return;
+    }
+    this.#door ??= (() => {
+      let open: () => void = () => undefined;
+      const promise = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      return { promise, open };
+    })();
+    this.#atModel += 1;
+    try {
+      await this.#door.promise;
+    } finally {
+      this.#atModel -= 1;
+    }
+  }
+
+  /** One attempt as the transport runs it: reserve (the month and the ledger permitting), send, close the reserve by the settle rule. */
+  async #attempt(jobId: string, kind: CallKind, n: number): Promise<ChatStep> {
+    const ports = this.#ports;
+    const attemptId = `${jobId}:${kind === "suggest" ? "motion" : "idea"}#${n}`;
+    const worstMicros = attemptWorst(kind);
+    const refusal = ports.reserveRefusal();
+    if (refusal !== null) return { kind: "error", error: refusal, costMicros: 0, leftOpen: false };
+    if (ports.committedMicros() + worstMicros > ports.monthlyBudgetMicros()) return { kind: "no-room", costMicros: 0 };
+    const line: Line = { attemptId, worstMicros, state: "open", costMicros: 0, estimated: false };
+    this.#lines.push(line);
+    ports.reserves.set(attemptId, worstMicros);
+    ports.emitMoney();
+    const epoch = this.#epoch;
+    await this.#atTheModel();
+    // The process died while the request was out: no answer, the reserve stays as the dead process left it.
+    if (epoch !== this.#epoch) return { kind: "error", error: { code: "INTERNAL", detail: "the engine restarted" }, costMicros: 0, leftOpen: true };
+    const reply = this.#nextReply(kind);
+    const settle = (costMicros: number, estimated = false): void => {
+      line.state = "settled";
+      line.costMicros = costMicros;
+      line.estimated = estimated;
+      ports.reserves.delete(attemptId);
+      ports.spend(costMicros);
+    };
+    const expected = priceOf(kind).expectedMicros;
+    switch (reply.kind) {
+      case "answer": {
+        const costMicros = reply.costMicros ?? expected;
+        settle(costMicros);
+        return { kind: "answer", content: reply.content, costMicros };
+      }
+      case "empty": {
+        const costMicros = reply.costMicros ?? expected;
+        settle(costMicros);
+        return { kind: "unreadable", costMicros };
+      }
+      case "unusable-body":
+        // A paid body that cannot be read settles at the attempt's worst case (estimated) and ends the call: a second try would not help.
+        settle(worstMicros, true);
+        return { kind: "unreadable", costMicros: worstMicros, final: true };
+      case "refused":
+        settle(0);
+        return { kind: "refused", costMicros: 0 };
+      case "http": {
+        settle(0);
+        const code = reply.status === 401 ? "AUTH_INVALID" : reply.status === 402 ? "INSUFFICIENT_CREDITS" : reply.status === 429 ? "RATE_LIMITED" : "NETWORK";
+        return { kind: "error", error: { code, detail: `HTTP ${reply.status}` }, costMicros: 0, leftOpen: false };
+      }
+      case "timeout":
+        return { kind: "error", error: { code: "TIMEOUT", detail: "no response within 60000 ms" }, costMicros: 0, leftOpen: true };
+      case "network":
+        return { kind: "error", error: { code: "NETWORK", detail: "fetch failed" }, costMicros: 0, leftOpen: true };
+    }
+  }
+
+  /** The call's scope: capped at its worst case while it runs, in every ending. */
+  async #capped<T>(jobId: string, kind: CallKind, run: () => Promise<T>): Promise<T> {
+    const before = this.#lines.length;
+    this.#caps.set(jobId, priceOf(kind).worstMicros);
+    try {
+      return await run();
+    } finally {
+      this.#caps.delete(jobId);
+      if (this.#lines.length !== before) this.#ports.emitMoney();
+    }
+  }
+
+  // ---------- the vision writer ----------
+
+  async #suggest(avatarId: string, photoId: string, ready: { frame: MockMotionFrame; sha: string }): Promise<Out<ClipSuggestResult>> {
+    const jobId = this.#ports.nextId("job");
+    const outcome = await this.#capped(jobId, "suggest", () => this.#runWriter(jobId, photoId, ready.frame));
+    if (outcome.kind === "error") {
+      if (outcome.error.code === "AUTH_INVALID") this.#ports.markKeyRejected();
+      return bad(outcome.error);
+    }
+    if (outcome.kind === "none") return good({ outcome: "none", costMicros: outcome.costMicros });
+    const store = this.#read(avatarId, photoId, ready.sha);
+    const made = addItems(store, "vision", outcome.drafts);
+    store.reading = outcome.reading;
+    if (made.length === 0) return good({ outcome: "none", costMicros: outcome.costMicros });
+    return good({ outcome: "ok", motions: made.map(choiceOf).map((m) => ({ ...m, source: "vision" as const })), reading: outcome.reading, costMicros: outcome.costMicros });
+  }
+
+  async #runWriter(
+    jobId: string,
+    photoId: string,
+    frame: MockMotionFrame,
+  ): Promise<{ kind: "ok"; drafts: { label: string; text: string }[]; reading: ClipFrameReading; costMicros: number } | { kind: "none"; costMicros: number } | { kind: "error"; error: EngineError; costMicros: number }> {
+    let cost = 0;
+    for (let attempt = 1; attempt <= MOTION_MAX_ATTEMPTS; attempt++) {
+      const step = await this.#attempt(jobId, "suggest", attempt);
+      cost += step.costMicros;
+      if (step.kind === "refused") return { kind: "none", costMicros: cost };
+      if (step.kind === "no-room") {
+        return attempt === 1 ? { kind: "error", error: { code: "BUDGET_EXCEEDED", detail: "the month has no room for the motion writer's call" }, costMicros: cost } : { kind: "none", costMicros: cost };
+      }
+      if (step.kind === "error") return endsAsResult(step, cost - step.costMicros) ? { kind: "none", costMicros: cost } : { kind: "error", error: step.error, costMicros: cost };
+      if (step.kind === "unreadable") {
+        if (step.final === true) return { kind: "none", costMicros: cost };
+        continue;
+      }
+      const answer = readWriterAnswer(step.content);
+      if (answer === null) continue;
+      const drafts: { label: string; text: string }[] = [];
+      const seen = new Set<string>();
+      let mayHelp = false;
+      for (const [i, motion] of answer.motions.entries()) {
+        const label = cleanLabel(motion.label_ru);
+        const { text, problems } = checkModelText(frame, motion.text_en, "vision");
+        if (problems.length > 0) {
+          this.#ports.log(`[clip] photo ${photoId}: suggestion ${i + 1} of ${answer.motions.length} dropped (${problems.join(", ")})`);
+          if (repairMayHelp(problems)) mayHelp = true;
+          continue;
+        }
+        if (label === null) {
+          this.#ports.log(`[clip] photo ${photoId}: suggestion ${i + 1} of ${answer.motions.length} dropped (no label)`);
+          continue;
+        }
+        if (seen.has(text)) continue;
+        seen.add(text);
+        drafts.push({ label, text });
+      }
+      if (drafts.length > 0) return { kind: "ok", drafts, reading: readingOf(answer.frame), costMicros: cost };
+      if (!mayHelp) return { kind: "none", costMicros: cost };
+    }
+    return { kind: "none", costMicros: cost };
+  }
+
+  // ---------- the translator ----------
+
+  async #translate(avatarId: string, photoId: string, idea: string, ready: { frame: MockMotionFrame; sha: string }): Promise<Out<ClipTranslateResult>> {
+    const jobId = this.#ports.nextId("job");
+    const outcome = await this.#capped(jobId, "idea", () => this.#runTranslator(jobId, ready.frame));
+    if (outcome.kind === "error") {
+      if (outcome.error.code === "AUTH_INVALID") this.#ports.markKeyRejected();
+      return bad(outcome.error);
+    }
+    if (outcome.kind === "none") return good({ outcome: "none", costMicros: outcome.costMicros });
+    if (outcome.kind === "rejected") return good({ outcome: "rejected", problems: outcome.problems, costMicros: outcome.costMicros });
+    // The engine cuts the label from his words; the store keeps that label and the English text, never the idea.
+    const store = this.#read(avatarId, photoId, ready.sha);
+    const made = addItems(store, "own", [{ label: ownIdeaLabel(idea), text: outcome.text }])[0];
+    if (made === undefined) return good({ outcome: "none", costMicros: outcome.costMicros });
+    return good({ outcome: "ok", item: { ...choiceOf(made), source: "own" as const }, costMicros: outcome.costMicros });
+  }
+
+  async #runTranslator(
+    jobId: string,
+    frame: MockMotionFrame,
+  ): Promise<{ kind: "ok"; text: string; costMicros: number } | { kind: "rejected"; problems: MotionProblem[]; costMicros: number } | { kind: "none"; costMicros: number } | { kind: "error"; error: EngineError; costMicros: number }> {
+    let cost = 0;
+    let lastProblems: MotionProblem[] | null = null;
+    const settled = (): { kind: "rejected"; problems: MotionProblem[]; costMicros: number } | { kind: "none"; costMicros: number } =>
+      lastProblems === null ? { kind: "none", costMicros: cost } : { kind: "rejected", problems: lastProblems, costMicros: cost };
+    for (let attempt = 1; attempt <= MOTION_MAX_ATTEMPTS; attempt++) {
+      const step = await this.#attempt(jobId, "idea", attempt);
+      cost += step.costMicros;
+      if (step.kind === "refused") return settled();
+      if (step.kind === "no-room") {
+        return attempt === 1 ? { kind: "error", error: { code: "BUDGET_EXCEEDED", detail: "the month has no room for the translator's call" }, costMicros: cost } : settled();
+      }
+      if (step.kind === "error") return endsAsResult(step, cost - step.costMicros) ? settled() : { kind: "error", error: step.error, costMicros: cost };
+      if (step.kind === "unreadable") {
+        if (step.final === true) return settled();
+        continue;
+      }
+      const english = readIdeaAnswer(step.content);
+      if (english === null) continue;
+      const { text, problems } = checkModelText(frame, english, "own");
+      if (problems.length === 0) return { kind: "ok", text, costMicros: cost };
+      lastProblems = problems;
+      // `takes-off` gets no repair: the idea is the owner's own choice.
+      if (!repairMayHelp(problems)) return settled();
+    }
+    return settled();
+  }
+}
+
+/** Held to the engine's closed list by the table test: every problem a rejection can carry. */
+export const MOCK_MOTION_PROBLEMS: readonly MotionProblem[] = MOTION_PROBLEMS;

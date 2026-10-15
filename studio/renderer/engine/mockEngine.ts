@@ -986,12 +986,14 @@ export class MockEngine implements EngineBridge {
         spentMicros: () => this.spentMicros,
         monthlyBudgetMicros: () => this.settings.monthlyBudgetMicros,
         pricesAsOf: () => this.price.pricesAsOf,
+        chatPrices: () => ({ prices: this.price.prices, pricesAsOf: this.price.pricesAsOf }),
         avatar: (avatarId) => {
           const avatar = this.avatars.find((a) => a.avatarId === avatarId);
           return avatar === undefined ? undefined : { name: avatar.name, active: avatar.status === "active", masterPhotoId: avatar.masterPhotoId };
         },
         deletePending: () => false,
         photo: (avatarId, photoId) => this.photos.find((p) => p.avatarId === avatarId && p.photoId === photoId),
+        photoById: (photoId) => this.photos.find((p) => p.photoId === photoId),
         checkExport: (requiredBytes) => this.checkExport(requiredBytes),
         exportOk: () => this.exportReported.status === "ok",
         exportRootId: () => this.exportRootId,
@@ -1001,7 +1003,7 @@ export class MockEngine implements EngineBridge {
         removeCopies: (avatarId, clipId) => this.clipCopies.removeOfClip(avatarId, clipId),
         use: (avatarId, clipId, photoId) => this.clipCopies.use(avatarId, clipId, photoId),
       },
-      { ...(options.preset === "demo" ? { timings: "demo" as const } : {}), ...options.clips },
+      { ...(options.preset === "demo" ? { timings: "demo" as const, motionCallMs: 1_500 } : {}), ...options.clips },
     );
     this.ownMedia = new MockOwnMedia({ scheduler: this.scheduler, stepMs: this.stepMs, nextId: (prefix) => this.nextId(prefix), nowIso: () => this.nowIso(), emit: (event) => this.emit(event) });
     this.clipCopies = new MockClipCopies(this.clips, this.ownMedia, {
@@ -1397,10 +1399,17 @@ export class MockEngine implements EngineBridge {
       else await Promise.resolve();
       // A text preview is answered when the worker's lane has drawn it (or dropped it), not at once: the one command that waits.
       if (command.type === "montages.textPreview") return this.forcedFailure(command) ?? this.textPreview(command, command.payload.layer);
+      // 5b.2 (S5.WC4): the two paid part C calls wait for the model (the one thing a clip command does besides the batch: it answers when the model has).
+      if (command.type === "clips.suggestMotions" || command.type === "clips.translateIdea") return this.forcedFailure(command) ?? (await this.motionCall(command));
       return this.handle(command);
     } finally {
       if (claimed === "claimed") this.categories.release();
     }
+  }
+
+  /** `clips.suggestMotions` and `clips.translateIdea` (5b.2, S5.WC4): the guard and the refusals are decided at once, the answer comes when the scripted model has answered. */
+  private async motionCall(command: Extract<CommandMessage, { type: "clips.suggestMotions" | "clips.translateIdea" }>): Promise<ResponseMessage> {
+    return this.clipOut(command, command.type === "clips.suggestMotions" ? await this.clips.suggestMotions(command.payload) : await this.clips.translateIdea(command.payload));
   }
 
   /** `claimed` for a create or a regenerate that took the one paid category call, `refused` for one that found it taken, `none` for any other command. */
@@ -1607,6 +1616,33 @@ export class MockEngine implements EngineBridge {
    */
   scriptNextBatch(scripts: readonly MockClipScript[]): void {
     this.clips.nextBatch(scripts);
+  }
+
+  // ---------- 5b.2 part C (S5.WC4): append-only block. The vision writer's and the translator's answers are scripted; a call can be held at the model. ----------
+
+  /** The model's answers to the NEXT attempts of part C calls, one per attempt in the order they are sent (`MockModelReply`); an attempt without one answers by default. */
+  scriptNextMotionReplies(replies: Parameters<MockClips["scriptMotionReplies"]>[0]): void {
+    this.clips.scriptMotionReplies(replies);
+  }
+
+  /** While held, a part C call waits at the model after its reserve is written: the request is out, no answer has come. */
+  holdMotionCalls(held: boolean): void {
+    this.clips.holdMotionCalls(held);
+  }
+
+  /** What the tests look at: the calls' ledger lines, the guard's counts, the live caps and the photos' stores. */
+  peekMotions(): ReturnType<MockClips["peekMotions"]> {
+    return this.clips.peekMotions();
+  }
+
+  /** A test changes a photo's motion store as the owner's disk could (a text edited, a counter run out). */
+  tamperMotionStore(photoId: string, change: Parameters<MockClips["tamperMotionStore"]>[1]): void {
+    this.clips.tamperMotionStore(photoId, change);
+  }
+
+  /** A photo's file is replaced by another (its sha256 changes): what was stored for the old file is not its own any more. */
+  changeClipPhotoFile(photoId: string): void {
+    this.clips.changePhotoFile(photoId);
   }
 
   /** 5b.2 (S5.WB3): a photo is removed from the gallery (the owner deleted it), as a batch member's turn finds it `photo-gone`. */
@@ -2725,12 +2761,14 @@ export class MockEngine implements EngineBridge {
         return this.clipOut(c, this.clips.createBatch(c.payload));
       case "clips.cancelBatch":
         return this.clipOut(c, this.clips.cancelBatch(c.payload));
-      // ---- 5b.2 part C (S5.WC1): append-only block. The compile stubs answer as the engine's `default` branch does, word for word, until S5.WC4 builds the motion calls.
+      // ---- 5b.2 part C (S5.WC4): append-only block. The two estimates are free and answer here; the two paid calls wait for the model, so `request` serves them (`motionCall`), mirroring the engine's four handlers.
       case "clips.estimateSuggest":
-      case "clips.suggestMotions":
+        return this.clipOut(c, this.clips.estimateSuggest(c.payload));
       case "clips.estimateIdea":
+        return this.clipOut(c, this.clips.estimateIdea(c.payload));
+      case "clips.suggestMotions":
       case "clips.translateIdea":
-        return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });
+        return this.fail(c, { code: "INTERNAL", detail: `${c.type} is answered by \`motionCall\`, never by \`handle\`` });
       case "autopilot.estimate":
         // S5.8a: «Ножки» with no built-in category is refused first, for free.
         if (legsNeedsBuiltIn(c.payload.draft)) return this.fail(c, { code: "VALIDATION", launchReason: "legs-built-in-only", detail: "«Ножки» are drawn from the built-in categories only; the launch names none" });
@@ -3647,6 +3685,8 @@ export class MockEngine implements EngineBridge {
     if (this.jobRunningFor(avatarId) || this.renderJobs.some((j) => isActive(j) && j.avatarId === avatarId) || heldByIntent) return "a photo run, a candidate job or a video render of this avatar is running";
     // 5b.1 (I5.50): a clip job of the avatar is waited for too, in its own words (the engine's `#deleteBusy`).
     if (this.clips.liveFor(avatarId)) return "a clip of this avatar is being made";
+    // 5b.2 (S5.WC4, I5.68): a motion suggestion or an idea translation of the avatar is a paid call that ends in its folder (the motion store); the delete waits for it.
+    if (this.clips.motionsRunningFor(avatarId) > 0) return "a motion suggestion or an idea translation of this avatar is running";
     if (this.clipCopies.importingFor(avatarId)) return "a clip of this avatar is being prepared for a montage";
     if (this.clipCopies.holdsCopy(avatarId)) return "a video render holds a copy of a clip of this avatar";
     return null;

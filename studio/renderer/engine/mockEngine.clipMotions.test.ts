@@ -1,31 +1,354 @@
 import { describe, expect, test } from "bun:test";
-import { AVATAR, makeClipMock, refusal } from "./mockEngine.clips.testkit";
+import { ownIdeaLabel } from "../../shared/engine";
+import { MIA } from "./mockEngine.testkit";
+import {
+  GOOD_TEXTS,
+  IDEA,
+  NOT_MOTION,
+  SUGGEST,
+  SUGGEST_ATTEMPT,
+  TRANSLATE,
+  TRANSLATE_ATTEMPT,
+  UNDRESS,
+  UNREADABLE,
+  BOLD,
+  PLAIN,
+  CLIP_PHOTOS,
+  errorOf,
+  estimateIdea,
+  estimateSuggest,
+  idea,
+  makeClipMock,
+  money,
+  optionsOf,
+  suggest,
+  suggestion,
+  translate,
+  unwrap,
+} from "./mockEngine.clipMotions.testkit";
 
-// Stage 5, 5b.2, S5.WC1: the mock mirrors the engine's stub word for word, so a window built on the mock meets the same refusal until S5.WC4 builds part C.
+// Stage 5, 5b.2, S5.WC4 (plan s5b2 §5.3, I5.66-I5.68; Q-H = 2): the four part C commands in the mock, number for number and refusal for refusal as the engine's (engine.clipMotions.test.ts, clips/motionService.test.ts,
+// motionWriter.test.ts, ideaTranslator.test.ts). The model's answers are scripted (`scriptNextMotionReplies`: one per attempt, in the order the attempts are sent).
 
-const PHOTO = "photo-0001";
+const MASTER = MIA.masterPhotoId;
 
-describe("the part C commands in the mock before S5.WC4", () => {
-  const PAYLOADS = {
-    "clips.estimateSuggest": { avatarId: AVATAR, photoId: PHOTO },
-    "clips.suggestMotions": { avatarId: AVATAR, photoId: PHOTO, acceptedWorstMicros: 12_500 },
-    "clips.estimateIdea": { avatarId: AVATAR, photoId: PHOTO },
-    "clips.translateIdea": { avatarId: AVATAR, photoId: PHOTO, text: "медленно поворачивает голову", acceptedWorstMicros: 5_000 },
-  } as const;
-
-  for (const type of ["clips.estimateSuggest", "clips.suggestMotions", "clips.estimateIdea", "clips.translateIdea"] as const) {
-    test(`${type} answers INTERNAL «not implemented yet», as the engine does`, async () => {
-      const m = makeClipMock();
-      const error = await refusal(m.client.request(type, PAYLOADS[type]));
-      expect(error.code).toBe("INTERNAL");
-      expect(error.detail).toBe(`${type} is not implemented yet`);
-    });
-  }
-
-  test("a paid call starts no job", async () => {
+describe("the free estimates", () => {
+  test("estimateSuggest is the writer's two attempts at the engine's figures", async () => {
     const m = makeClipMock();
-    await refusal(m.client.request("clips.suggestMotions", PAYLOADS["clips.suggestMotions"]));
-    const snapshot = await m.client.request("engine.snapshot", {});
-    expect(snapshot.ok && snapshot.result.jobs.filter((job) => job.kind === "clip")).toEqual([]);
+    expect(await unwrap(estimateSuggest(m))).toMatchObject({ expectedMicros: SUGGEST.expectedMicros, worstMicros: SUGGEST.worstMicros });
+  });
+
+  test("estimateIdea is the translator's two attempts at the engine's figures", async () => {
+    const m = makeClipMock();
+    expect(await unwrap(estimateIdea(m))).toMatchObject({ expectedMicros: TRANSLATE.expectedMicros, worstMicros: TRANSLATE.worstMicros });
+  });
+
+  test("an estimate is free: no key needed, no ledger line, nothing spent", async () => {
+    const m = makeClipMock();
+    await unwrap(m.client.request("settings.clearApiKey", {}));
+    await unwrap(estimateSuggest(m));
+    await unwrap(estimateIdea(m));
+    expect(m.engine.peekMotions().lines).toEqual([]);
+    expect((await money(m)).spentMicros).toBe(0);
+  });
+
+  test("NOT_FOUND for a photo or an avatar the library does not have", async () => {
+    const m = makeClipMock();
+    expect((await errorOf(estimateSuggest(m, "photo-nope-0001"))).code).toBe("NOT_FOUND");
+    expect((await errorOf(m.client.request("clips.estimateIdea", { avatarId: "avatar-nope-0001", photoId: PLAIN }))).code).toBe("NOT_FOUND");
+  });
+});
+
+describe("clips.suggestMotions: the money", () => {
+  test("is reserved at one attempt's worst case under <job>:motion#1 and settled at the answer's cost, and the result carries the cost", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([suggestion(GOOD_TEXTS.slice(0, 3), 3_400)]);
+    const estimate = await unwrap(estimateSuggest(m));
+    const result = await unwrap(suggest(m, PLAIN, estimate.worstMicros));
+    expect(result).toMatchObject({ outcome: "ok", costMicros: 3_400 });
+    const [line, ...rest] = m.engine.peekMotions().lines;
+    expect(rest).toEqual([]);
+    expect(line).toMatchObject({ worstMicros: SUGGEST_ATTEMPT, state: "settled", costMicros: 3_400, estimated: false });
+    expect(line?.attemptId).toMatch(/:motion#1$/);
+    expect(SUGGEST_ATTEMPT).toBeLessThanOrEqual(estimate.worstMicros / 2);
+    const status = await money(m);
+    expect([status.spentMicros, status.unsettledMicros]).toEqual([3_400, 0]);
+  });
+
+  test("PRICE_CHANGED when the accepted worst case is below the live estimate: free, nothing sent", async () => {
+    const m = makeClipMock();
+    expect((await errorOf(suggest(m, PLAIN, SUGGEST.worstMicros - 1))).code).toBe("PRICE_CHANGED");
+    expect(m.engine.peekMotions().lines).toEqual([]);
+  });
+
+  test("the exact worst case is accepted", async () => {
+    const m = makeClipMock();
+    expect(await unwrap(suggest(m, PLAIN, SUGGEST.worstMicros))).toMatchObject({ outcome: "ok" });
+  });
+
+  test("BUDGET_EXCEEDED when the month has no room for the worst case: free, nothing sent", async () => {
+    const m = makeClipMock();
+    await unwrap(m.client.request("settings.setBudget", { monthlyBudgetMicros: SUGGEST.worstMicros - 1 }));
+    expect((await errorOf(suggest(m))).code).toBe("BUDGET_EXCEEDED");
+    expect(m.engine.peekMotions().lines).toEqual([]);
+  });
+
+  test("the month's room of exactly the worst case is enough", async () => {
+    const m = makeClipMock();
+    await unwrap(m.client.request("settings.setBudget", { monthlyBudgetMicros: SUGGEST.worstMicros }));
+    expect(await unwrap(suggest(m))).toMatchObject({ outcome: "ok" });
+  });
+
+  test("AUTH_INVALID without a key: free, nothing sent", async () => {
+    const m = makeClipMock();
+    await unwrap(m.client.request("settings.clearApiKey", {}));
+    expect((await errorOf(suggest(m))).code).toBe("AUTH_INVALID");
+    expect(m.engine.peekMotions().lines).toEqual([]);
+  });
+
+  test("an unusable answer is paid: two unreadable answers are `none` with both costs, two settles, nothing stored", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([UNREADABLE, UNREADABLE]);
+    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", costMicros: 4_000 });
+    expect(m.engine.peekMotions().lines.map((l) => [l.state, l.costMicros])).toEqual([
+      ["settled", 2_000],
+      ["settled", 2_000],
+    ]);
+    expect((await unwrap(estimateSuggest(m))).worstMicros).toBe(SUGGEST.worstMicros);
+    expect((await optionsOf(m)).motions.map((x) => x.id)).toEqual(["g-blink", "g-tilt", "g-breath"]);
+  });
+
+  test("a moderation refusal is free: `none`, cost 0, one attempt, a settle at zero", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([{ kind: "refused" }]);
+    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", costMicros: 0 });
+    expect(m.engine.peekMotions().lines.map((l) => [l.state, l.costMicros])).toEqual([["settled", 0]]);
+    expect((await money(m)).spentMicros).toBe(0);
+  });
+
+  test("a paid unusable answer then a moderation refusal is `none` and carries the paid amount", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([UNREADABLE, { kind: "refused" }]);
+    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", costMicros: 2_000 });
+  });
+
+  test("two attempts at most: both failing the check is `none`, paid for both, and a third is never sent", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([suggestion([NOT_MOTION], 3_000), suggestion([NOT_MOTION], 3_000), suggestion(GOOD_TEXTS.slice(0, 1))]);
+    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", costMicros: 6_000 });
+    expect(m.engine.peekMotions().lines).toHaveLength(2);
+  });
+
+  test("an answer that fails the check once is repaired by the second attempt, and both are paid", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([suggestion([NOT_MOTION], 3_000), suggestion(GOOD_TEXTS.slice(0, 1), 3_400)]);
+    expect(await unwrap(suggest(m))).toMatchObject({ outcome: "ok", costMicros: 6_400, motions: [{ id: "v-1", text: GOOD_TEXTS[0] }] });
+  });
+
+  test("a text that takes clothing off is dropped with no second attempt: a repair cannot help", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([suggestion([UNDRESS], 3_000), suggestion(GOOD_TEXTS.slice(0, 1))]);
+    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", costMicros: 3_000 });
+    expect(m.engine.peekMotions().lines).toHaveLength(1);
+  });
+
+  test("a four-motion answer keeps the first three", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([suggestion(GOOD_TEXTS.slice(0, 4))]);
+    const result = await unwrap(suggest(m));
+    expect(result).toMatchObject({ outcome: "ok" });
+    expect(result.outcome === "ok" && result.motions.map((x) => x.text)).toEqual(GOOD_TEXTS.slice(0, 3));
+  });
+
+  test("a good text next to a bad one: the bad one is dropped, the good one kept, one attempt", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([suggestion([NOT_MOTION, GOOD_TEXTS[1]])]);
+    const result = await unwrap(suggest(m));
+    expect(result.outcome === "ok" && result.motions.map((x) => [x.id, x.text])).toEqual([["v-1", GOOD_TEXTS[1]]]);
+    expect(m.engine.peekMotions().lines).toHaveLength(1);
+  });
+
+  test("the reading marks a second phone, and nothing else on a frame whose capture the plan does not name", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([suggestion(GOOD_TEXTS.slice(0, 1), 3_400, { capture: "timer", phoneVisible: true, faceVisible: true })]);
+    expect(await unwrap(suggest(m))).toMatchObject({ reading: { notes: ["second-phone"] } });
+  });
+});
+
+describe("clips.suggestMotions: the second attempt fails", () => {
+  test("a TIMEOUT on the first attempt is an error, free of cost to tell, and its reserve stays open at its worst case", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([{ kind: "timeout" }]);
+    expect((await errorOf(suggest(m))).code).toBe("TIMEOUT");
+    expect(m.engine.peekMotions().lines.map((l) => [l.state, l.worstMicros])).toEqual([["open", SUGGEST_ATTEMPT]]);
+    const status = await money(m);
+    expect([status.spentMicros, status.unsettledMicros, status.unsettledCount]).toEqual([0, SUGGEST_ATTEMPT, 1]);
+  });
+
+  test("a TIMEOUT on the second attempt after a paid first one is still an error (the reserve may have been billed): both stay told", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([UNREADABLE, { kind: "timeout" }]);
+    expect((await errorOf(suggest(m))).code).toBe("TIMEOUT");
+    expect(m.engine.peekMotions().lines.map((l) => l.state)).toEqual(["settled", "open"]);
+  });
+
+  test("a 5xx on the second attempt after a paid first one is `none` with what the first cost", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([UNREADABLE, { kind: "http", status: 503 }]);
+    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", costMicros: 2_000 });
+    expect((await money(m)).unsettledMicros).toBe(0);
+  });
+
+  test("a 5xx on the first attempt is an error: nothing was paid", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([{ kind: "http", status: 500 }]);
+    expect((await errorOf(suggest(m))).code).toBe("NETWORK");
+  });
+
+  test("a refused key on the second attempt is an error, and the key is marked rejected", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([UNREADABLE, { kind: "http", status: 401 }]);
+    expect((await errorOf(suggest(m))).code).toBe("AUTH_INVALID");
+    const settings = await unwrap(m.client.request("settings.get", {}));
+    expect(settings.apiKey.rejected).toBe(true);
+  });
+
+  test("no credits on the second attempt is an error too", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([UNREADABLE, { kind: "http", status: 402 }]);
+    expect((await errorOf(suggest(m))).code).toBe("INSUFFICIENT_CREDITS");
+  });
+
+  test("a paid body that is no chat answer at all ends the call at once, settled at the attempt's worst case", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([{ kind: "unusable-body" }, suggestion(GOOD_TEXTS.slice(0, 1))]);
+    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", costMicros: SUGGEST_ATTEMPT });
+    expect(m.engine.peekMotions().lines).toMatchObject([{ state: "settled", costMicros: SUGGEST_ATTEMPT, estimated: true }]);
+  });
+});
+
+describe("clips.suggestMotions: the photo", () => {
+  test("a frame of «Смелая» while bold clips are off: VALIDATION `bold-off`, free, for both calls", async () => {
+    const m = makeClipMock({ clips: { boldClips: "off" } });
+    expect(await errorOf(suggest(m, BOLD))).toMatchObject({ code: "VALIDATION", clipReason: "bold-off" });
+    expect(await errorOf(translate(m, IDEA, BOLD))).toMatchObject({ code: "VALIDATION", clipReason: "bold-off" });
+    expect(m.engine.peekMotions().lines).toEqual([]);
+  });
+
+  test("the master portrait is `not-a-gallery-photo`; an unknown photo is NOT_FOUND; both free", async () => {
+    const m = makeClipMock();
+    expect(await errorOf(suggest(m, MASTER))).toMatchObject({ code: "VALIDATION", clipReason: "not-a-gallery-photo" });
+    expect((await errorOf(suggest(m, "photo-nope-0001"))).code).toBe("NOT_FOUND");
+    expect(m.engine.peekMotions().lines).toEqual([]);
+  });
+
+  test("a photo the age check did not call adult is `age-unverified`, free", async () => {
+    const m = makeClipMock();
+    expect(await errorOf(suggest(m, CLIP_PHOTOS.aged.photoId))).toMatchObject({ clipReason: "age-unverified" });
+  });
+
+  test("a photo with no motion to offer is `no-motion`, free", async () => {
+    const m = makeClipMock();
+    expect(await errorOf(suggest(m, CLIP_PHOTOS.unknown.photoId))).toMatchObject({ clipReason: "no-motion" });
+  });
+
+  test("a photo of another avatar is NOT_FOUND", async () => {
+    const m = makeClipMock();
+    expect((await errorOf(m.client.request("clips.suggestMotions", { avatarId: "avatar-nope-0001", photoId: PLAIN, acceptedWorstMicros: 1_000_000 }))).code).toBe("NOT_FOUND");
+  });
+});
+
+describe("clips.translateIdea", () => {
+  test("is reserved under <job>:idea#1 and settled at the answer's cost; the item is o-1 with the label cut from his words and the English text", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([idea(GOOD_TEXTS[0], 1_000)]);
+    const result = await unwrap(translate(m));
+    expect(result).toEqual({ outcome: "ok", item: { id: "o-1", source: "own", label: ownIdeaLabel(IDEA), text: GOOD_TEXTS[0] }, costMicros: 1_000 });
+    expect(ownIdeaLabel(IDEA).length).toBeLessThanOrEqual(40);
+    expect(ownIdeaLabel(IDEA)).not.toContain("CANARY");
+    const [line] = m.engine.peekMotions().lines;
+    expect(line).toMatchObject({ worstMicros: TRANSLATE_ATTEMPT, state: "settled", costMicros: 1_000 });
+    expect(line?.attemptId).toMatch(/:idea#1$/);
+  });
+
+  test("an idea that fails the checks after the repair is `rejected` with the closed problems, paid for both attempts, nothing stored", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([idea(NOT_MOTION), idea(NOT_MOTION)]);
+    expect(await unwrap(translate(m))).toEqual({ outcome: "rejected", problems: ["not-motion"], costMicros: 2_000 });
+    expect((await optionsOf(m)).motions.map((x) => x.id)).toEqual(["g-blink", "g-tilt", "g-breath"]);
+  });
+
+  test("an idea repaired by the second attempt is accepted, and both attempts are paid", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([idea(NOT_MOTION), idea(GOOD_TEXTS[2])]);
+    expect(await unwrap(translate(m))).toMatchObject({ outcome: "ok", item: { id: "o-1", text: GOOD_TEXTS[2] }, costMicros: 2_000 });
+  });
+
+  test.each([
+    ["not-motion", NOT_MOTION],
+    ["two-movements", "she slowly turns her head and then she slowly sits down"],
+    ["not-small", "she jumps up and spins around fast"],
+    ["staging", "she slowly zooms in on her face"],
+    ["phone", "she slowly raises her phone and takes a photo"],
+    ["content", "she slowly adjusts her bra"],
+  ] as const)("a text with the problem %s is `rejected` with it, after one repair: two chat calls", async (problem, text) => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([idea(text), idea(text)]);
+    const result = await unwrap(translate(m));
+    expect(result).toMatchObject({ outcome: "rejected", costMicros: 2_000 });
+    expect(result.outcome === "rejected" && result.problems).toContain(problem);
+    expect(m.engine.peekMotions().lines).toHaveLength(2);
+  });
+
+  test("an idea that takes clothing off on an ordinary frame is `rejected` with takes-off at once: one chat call", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([idea(UNDRESS), idea(UNDRESS)]);
+    const result = await unwrap(translate(m));
+    expect(result).toEqual({ outcome: "rejected", problems: ["takes-off"], costMicros: 1_000 });
+    expect(m.engine.peekMotions().lines).toHaveLength(1);
+  });
+
+  test("the same idea on a frame of «Смелая» is accepted (Q-H = 2)", async () => {
+    const m = makeClipMock({ clips: { boldClips: "kling-only" } });
+    m.engine.scriptNextMotionReplies([idea(UNDRESS)]);
+    expect(await unwrap(translate(m, "снимает халат", BOLD))).toEqual({ outcome: "ok", item: { id: "o-1", source: "own", label: "снимает халат", text: UNDRESS }, costMicros: 1_000 });
+  });
+
+  test("a moderation refusal is free", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([{ kind: "refused" }]);
+    expect(await unwrap(translate(m))).toEqual({ outcome: "none", costMicros: 0 });
+  });
+
+  test("a rejected answer then a moderation refusal is `rejected` with the first problems and the paid amount", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([idea(NOT_MOTION), { kind: "refused" }]);
+    expect(await unwrap(translate(m))).toEqual({ outcome: "rejected", problems: ["not-motion"], costMicros: 1_000 });
+  });
+
+  test("an unreadable answer twice is `none`, paid twice", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([UNREADABLE, UNREADABLE]);
+    expect(await unwrap(translate(m))).toEqual({ outcome: "none", costMicros: 4_000 });
+  });
+
+  test("a 5xx on the repair after a paid answer that failed the check is `rejected` with what the first cost", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([idea(NOT_MOTION), { kind: "http", status: 500 }]);
+    expect(await unwrap(translate(m))).toEqual({ outcome: "rejected", problems: ["not-motion"], costMicros: 1_000 });
+  });
+
+  test("a timeout on the repair is an error and leaves its reserve open", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([idea(NOT_MOTION), { kind: "timeout" }]);
+    expect((await errorOf(translate(m))).code).toBe("TIMEOUT");
+    expect((await money(m)).unsettledMicros).toBe(TRANSLATE_ATTEMPT);
+  });
+
+  test("ids count on: the next idea is o-2", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([idea(GOOD_TEXTS[0]), idea(GOOD_TEXTS[1])]);
+    await unwrap(translate(m));
+    expect(await unwrap(translate(m, "вторая идея"))).toMatchObject({ outcome: "ok", item: { id: "o-2" } });
   });
 });

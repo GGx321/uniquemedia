@@ -6,6 +6,7 @@ import {
   EXPORT_FPS,
   GROK_FALLBACK,
   isBoldCategory,
+  OWN_IDEA_FALLBACK_LABEL,
   MAX_LISTED_BATCHES,
   MAX_LISTED_CLIPS,
   PROTOCOL_VERSION,
@@ -27,6 +28,7 @@ import {
   type ClipExportProfile,
   type ClipFace,
   type ClipFailReason,
+  type ClipFrameReading,
   type ClipModelUsed,
   type ClipMonthFit,
   type ClipMotion,
@@ -70,6 +72,9 @@ import {
 } from "../../shared/engine/clipBatchSummary";
 import type { UnsequencedEvent } from "../../shared/engine/events";
 import { MockClipBatch, type BatchMember, type MockBatchPorts, type MockMoneyEnd } from "./mockClipBatch";
+import { contentLevelOf, type ContentLevel } from "../../shared/scenes/contentLine";
+import { undressesBy } from "../../shared/scenes/motionText";
+import { MockClipMotions, type MockMotionRead } from "./mockClipMotions";
 import type { Scheduler } from "./scheduler";
 
 // Stage 5, 5b.1, S5.V7 (plan s5b1 §5.15): the clips of the mock engine. It answers what the ENGINE answers (engine/clips/*), number for number and state for state, so the «Клипы» tab can be built and
@@ -214,9 +219,16 @@ export type MockExportResult = "ok" | "fail" | "damaged";
 
 // ---------- the journal, as the engine writes it ----------
 
+/** engine/clips/schemas.ts `JournalMotion` (5b.2, S5.WC3, I5.67): the contract's motion, but an OWN motion has no label here; a restart takes it from the photo's motion store, else «Своя идея». */
+export type JournalMotion = Omit<ClipMotion, "label"> & { label?: string };
+
+function journalMotionOf(motion: ClipMotion): JournalMotion {
+  return motion.source === "own" ? { source: motion.source, text: motion.text } : motion;
+}
+
 /** The lines of a clip's journal (engine/clips/schemas.ts): the same shapes, so the engine's own recovery plan can read the mock's. */
 export type MockJournalLine =
-  | { type: "requested"; clipId: string; photoId: string; request: ClipRequest; motion: ClipMotion; acceptedWorstMicros: number; batch?: BatchRef; at: string }
+  | { type: "requested"; clipId: string; photoId: string; request: ClipRequest; motion: JournalMotion; acceptedWorstMicros: number; batch?: BatchRef; at: string }
   | { type: "submitted"; attemptId: string; model: "kling" | "grok"; providerJobId: string; at: string }
   | {
       type: "ended";
@@ -399,9 +411,13 @@ export interface MockClipsHost {
   spentMicros(): number;
   monthlyBudgetMicros(): number;
   pricesAsOf(): string;
+  /** 5b.2 (S5.WC4): the mock's usual price source for an estimate in dollars of the chat model (the part C calls). */
+  chatPrices(): Pick<Estimate, "prices" | "pricesAsOf">;
   avatar(avatarId: string): { name: string; active: boolean; masterPhotoId: string } | undefined;
   deletePending(avatarId: string): boolean;
   photo(avatarId: string, photoId: string): PhotoSummary | undefined;
+  /** A photo by its id alone (a test control names no avatar). */
+  photoById(photoId: string): PhotoSummary | undefined;
   /** The export folder, checked as a render's save checks it; the reason it cannot take `requiredBytes`, or null. */
   checkExport(requiredBytes?: number): ExportUnavailableReason | null;
   exportOk(): boolean;
@@ -421,6 +437,8 @@ export interface MockClipsOptions {
   boldClips?: BoldClipsMode;
   exportFps?: "interpolate" | "duplicate" | "native24";
   timings?: MockClipTimingsName;
+  /** 5b.2 (S5.WC4): how long a part C call waits for the model's answer (the demo's «Смотрим кадр…»); 0 (the default): no time passes unless a test holds the call. */
+  motionCallMs?: number;
 }
 
 // ---------- what a planless photo offers ----------
@@ -457,6 +475,8 @@ function sizeOf(model: AttemptModel, quality: ClipQuality): { width: number; hei
 /** What the facts of a planless photo make of it. */
 interface Facts {
   bold: boolean;
+  /** The level the motion is held to (`contentLevelOf`): bold for «Смелая», ordinary elsewhere. */
+  level: ContentLevel;
   judged: boolean;
   ageRefused: boolean;
 }
@@ -465,6 +485,7 @@ function factsOf(photo: PhotoSummary): Facts {
   const age = photo.qa?.age;
   return {
     bold: isBoldCategory(photo.category),
+    level: contentLevelOf({ category: photo.category }),
     judged: photo.qa?.faceCos !== undefined && photo.qa.faceMarked !== true,
     ageRefused: !(age === undefined || (age.adult === true && age.confidence >= AGE_MIN_CONFIDENCE)),
   };
@@ -473,7 +494,7 @@ function factsOf(photo: PhotoSummary): Facts {
 type Refusal = "not-a-gallery-photo" | "age-unverified" | "photo-unreadable" | "not-vertical" | "bold-off" | "no-motion";
 
 /** A photo as the clip rules read it: why it cannot be brought to life, or its facts and the motions it offers. */
-type ItemRead = { kind: "refused"; reason: Refusal } | { kind: "suitable"; facts: Facts; motions: readonly ClipMotionChoice[] };
+type ItemRead = { kind: "refused"; reason: Refusal } | { kind: "suitable"; facts: Facts; motions: readonly ClipMotionChoice[]; reading?: ClipFrameReading };
 
 interface Script {
   first: MockClipAttempt;
@@ -644,12 +665,109 @@ export class MockClips {
   #exportRunning: Job | null = null;
   #seeded = 0;
 
+  /** 5b.2 (S5.WC4): the vision writer, the idea translator and the photo's stored motions (part C; `mockClipMotions.ts`). */
+  readonly #motions: MockClipMotions;
+  /** 5b.2 (S5.WC4): how many times a photo's file was replaced, so the store made for the old file is not its own any more (the engine's `photoSha256`). */
+  readonly #photoRevision = new Map<string, number>();
+
   constructor(host: MockClipsHost, options: MockClipsOptions = {}) {
     this.#host = host;
     this.#t = MOCK_CLIP_TIMINGS[options.timings ?? "real"];
     this.#mode = options.mode ?? GROK_FALLBACK;
     this.#boldClips = options.boldClips ?? BOLD_CLIPS;
     this.#exportFps = options.exportFps ?? EXPORT_FPS;
+    this.#motions = new MockClipMotions(
+      {
+        unitHeld: () => this.#unit !== null,
+        gate: () => host.gate(),
+        reserveRefusal: () => host.reserveRefusal(),
+        markKeyRejected: () => host.markKeyRejected(),
+        find: (avatarId, photoId) => {
+          const found = this.#photoOf(avatarId, photoId);
+          return found.ok ? good(true as const) : found;
+        },
+        read: (avatarId, photoId) => this.#motionRead(avatarId, photoId),
+        prices: () => host.chatPrices(),
+        committedMicros: () => this.#committed(),
+        monthlyBudgetMicros: () => host.monthlyBudgetMicros(),
+        reserves: host.reserves,
+        spend: (micros) => host.spend(micros),
+        emitMoney: () => host.emitMoney(),
+        nextId: (prefix) => host.nextId(prefix),
+        sleep: (ms) => new Promise<void>((resolve) => host.scheduler.schedule(ms, resolve)),
+        paidStart: () => undefined,
+        paidEnd: () => undefined,
+        log: () => undefined,
+      },
+      options.motionCallMs === undefined ? {} : { callMs: options.motionCallMs },
+    );
+  }
+
+  // ---------- part C: own motions (5b.2, S5.WC4) ----------
+
+  /** The scripted answers of the model for the NEXT attempts of part C calls. */
+  scriptMotionReplies(replies: Parameters<MockClipMotions["script"]>[0]): void {
+    this.#motions.script(replies);
+  }
+
+  holdMotionCalls(held: boolean): void {
+    this.#motions.hold(held);
+  }
+
+  /** What the tests look at of part C: the calls' ledger lines, the guard's counts, the live caps and the stores. */
+  peekMotions() {
+    return { lines: this.#motions.lines(), running: this.#motions.running(), waiting: this.#motions.waiting(), caps: this.#motions.liveCaps(), stores: this.#motions.stores() };
+  }
+
+  /** A test changes the photo's store as the owner's disk could. */
+  tamperMotionStore(photoId: string, change: Parameters<MockClipMotions["tamper"]>[3]): void {
+    const photo = this.#host.photoById(photoId);
+    if (photo !== undefined) this.#motions.tamper(photo.avatarId, photoId, this.#shaOf(photoId), change);
+  }
+
+  /** A photo's file is replaced by another: what was stored for the old file is not its own any more. */
+  changePhotoFile(photoId: string): void {
+    this.#photoRevision.set(photoId, (this.#photoRevision.get(photoId) ?? 0) + 1);
+  }
+
+  /** A part C call runs now (any avatar): a library switch and a reconcile wait for it, as for any paid command. */
+  motionsRunning(): number {
+    return this.#motions.running();
+  }
+
+  /** Calls of this avatar running now: an avatar delete waits for them. */
+  motionsRunningFor(avatarId: string): number {
+    return this.#motions.runningFor(avatarId);
+  }
+
+  estimateSuggest(payload: CommandPayload<"clips.estimateSuggest">): Out<Estimate> {
+    return this.#motions.estimateSuggest(payload);
+  }
+
+  estimateIdea(payload: CommandPayload<"clips.estimateIdea">): Out<Estimate> {
+    return this.#motions.estimateIdea(payload);
+  }
+
+  suggestMotions(payload: CommandPayload<"clips.suggestMotions">): ReturnType<MockClipMotions["suggestMotions"]> {
+    return this.#motions.suggestMotions(payload);
+  }
+
+  translateIdea(payload: CommandPayload<"clips.translateIdea">): ReturnType<MockClipMotions["translateIdea"]> {
+    return this.#motions.translateIdea(payload);
+  }
+
+  /** The photo file's identity for the store: the same until `changePhotoFile`. */
+  #shaOf(photoId: string): string {
+    return fakeSha(`${photoId}#${this.#photoRevision.get(photoId) ?? 0}`);
+  }
+
+  /** What a part C call reads of a photo (the engine's `#motionFacts`): its frame and file identity, or its reason, in `clips.create`'s order. The stored motions are not read. */
+  #motionRead(avatarId: string, photoId: string): MockMotionRead {
+    const found = this.#photoOf(avatarId, photoId);
+    if (!found.ok) return found;
+    const read = this.#read(found.result.photo, false);
+    if (read.kind === "refused") return bad({ code: "VALIDATION", clipReason: read.reason, detail: `photo ${photoId} cannot be brought to life (${read.reason})` });
+    return good({ frame: { bold: read.facts.bold, level: read.facts.level }, sha: this.#shaOf(photoId) });
   }
 
   // ---------- test and rig switches ----------
@@ -700,7 +818,7 @@ export class MockClips {
   leaveStaleJournal(clipId: string): void {
     const record = this.#records.get(clipId);
     if (record === undefined) return;
-    this.#journals.set(clipId, [{ type: "requested", clipId, photoId: record.photoId, request: record.request, motion: record.motion, acceptedWorstMicros: 0, at: record.createdAt }]);
+    this.#journals.set(clipId, [{ type: "requested", clipId, photoId: record.photoId, request: record.request, motion: journalMotionOf(record.motion), acceptedWorstMicros: 0, at: record.createdAt }]);
     const files = this.#files.get(clipId);
     if (files !== undefined) files.journal = true;
   }
@@ -792,6 +910,10 @@ export class MockClips {
    * `max(0, cap - committed)` for each.
    */
   liveCaps(): { capMicros: number; committedMicros: number }[] {
+    return [...this.#motions.liveCaps(), ...this.#liveClipCaps()];
+  }
+
+  #liveClipCaps(): { capMicros: number; committedMicros: number }[] {
     return [...this.#caps].map(([clipId, capMicros]) => {
       let committedMicros = 0;
       for (const line of this.#lines) if (line.clipId === clipId) committedMicros += line.state === "open" ? line.worstMicros : line.costMicros;
@@ -802,7 +924,7 @@ export class MockClips {
 
   /** The one clip money unit is held (a single clip, or a batch with members still to be made): a reconcile is refused IN_FLIGHT, as the engine's paid-command count refuses it. */
   paidOpen(): boolean {
-    return this.#unit !== null;
+    return this.#unit !== null || this.#motions.running() > 0;
   }
 
   /** main/clipHost.ts (45, 45b): the clips between `submitting` and `proving` may bill; the batch members that are `queued` or `preparing` have cost nothing yet and will not be made if the app quits. */
@@ -819,7 +941,8 @@ export class MockClips {
 
   /** A clip job (create, retry, export) holds the library: a switch waits. */
   busy(): boolean {
-    return [...this.#jobs.values()].some((j) => j.status === "running" && j.kind !== "recovery");
+    // 5b.2 (S5.WC4, I5.68): a part C call is a paid command: a library switch waits for it from its first step.
+    return this.#motions.running() > 0 || [...this.#jobs.values()].some((j) => j.status === "running" && j.kind !== "recovery");
   }
 
   /** An export is queued or running: a pick of another export folder waits. */
@@ -840,6 +963,7 @@ export class MockClips {
       this.#journals.delete(id);
     }
     for (const [id, job] of [...this.#jobs]) if (job.avatarId === avatarId) this.#jobs.delete(id);
+    this.#motions.removeAvatar(avatarId);
   }
 
   /**
@@ -1006,7 +1130,7 @@ export class MockClips {
   }
 
   /** The engine's `#facts`, in its order: not a gallery photo, its age, its pixels, «Смелая» off, no motion. */
-  #read(photo: PhotoSummary | null): ItemRead {
+  #read(photo: PhotoSummary | null, withStored = true): ItemRead {
     if (photo === null) return { kind: "refused", reason: "not-a-gallery-photo" };
     const facts = factsOf(photo);
     if (facts.ageRefused) return { kind: "refused", reason: "age-unverified" };
@@ -1015,7 +1139,10 @@ export class MockClips {
     if (pixels === "not-vertical") return { kind: "refused", reason: "not-vertical" };
     if (facts.bold && this.#boldClips === "off") return { kind: "refused", reason: "bold-off" };
     if (!facts.judged) return { kind: "refused", reason: "no-motion" };
-    return { kind: "suitable", facts, motions: MOCK_CLIP_MOTIONS };
+    // 5b.2 (S5.WC4, I5.67): the photo's stored suggestions and ideas, checked again now, after the code's: the same list `clips.create` resolves a `v-` or an `o-` id from.
+    if (!withStored) return { kind: "suitable", facts, motions: MOCK_CLIP_MOTIONS };
+    const stored = this.#motions.stored(photo.avatarId, photo.photoId, { bold: facts.bold, level: facts.level }, this.#shaOf(photo.photoId));
+    return { kind: "suitable", facts, motions: [...MOCK_CLIP_MOTIONS, ...stored.motions], ...(stored.reading === undefined ? {} : { reading: stored.reading }) };
   }
 
   #fallbackOf(facts: Facts): "auto" | "offer" | "none" {
@@ -1073,11 +1200,11 @@ export class MockClips {
     if (read.kind === "refused") return good({ suitable: false, photoId: payload.photoId, reason: read.reason });
     const book = this.#readBook();
     if (book === null) return bad(this.#unavailable());
-    return good(this.#suitableOptions(payload.photoId, read.facts, read.motions, (worstMicros) => this.#fits(worstMicros), book));
+    return good(this.#suitableOptions(payload.photoId, read.facts, read.motions, read.reading, (worstMicros) => this.#fits(worstMicros), book));
   }
 
   /** The sheet of one suitable photo (`ClipOptions`): its prices from one book, and whether the month (`fits`, one yes-or-no on a worst case) takes each option. */
-  #suitableOptions(photoId: string, facts: Facts, motions: readonly ClipMotionChoice[], fits: (worstMicros: number) => boolean, book: PriceBook): Extract<ClipOptions, { suitable: true }> {
+  #suitableOptions(photoId: string, facts: Facts, motions: readonly ClipMotionChoice[], reading: ClipFrameReading | undefined, fits: (worstMicros: number) => boolean, book: PriceBook): Extract<ClipOptions, { suitable: true }> {
     const fallback = this.#fallbackOf(facts);
     const kling = (quality: ClipQuality, seconds: ClipSeconds, withFallback: "auto" | "none"): Estimate => this.#estimate({ model: "kling", quality, seconds, fallback: withFallback, bold: facts.bold }, book);
     const grok = (seconds: ClipSeconds): Estimate => this.#estimate({ model: "grok", quality: "std", seconds, fallback: "none", bold: facts.bold }, book);
@@ -1097,6 +1224,7 @@ export class MockClips {
       bold: facts.bold,
       noFallbackPrices,
       monthFits: { std5: fit("std5"), pro5: fit("pro5"), std10: fit("std10"), pro10: fit("pro10") },
+      ...(reading === undefined ? {} : { reading }),
     };
   }
 
@@ -1135,7 +1263,7 @@ export class MockClips {
     const items = reads.map((read, i): ClipOptions => {
       const photoId = payload.photoIds[i] ?? "";
       if (read.kind === "refused") return { suitable: false, photoId, reason: read.reason };
-      return this.#suitableOptions(photoId, read.facts, read.motions, fits, priced);
+      return this.#suitableOptions(photoId, read.facts, read.motions, read.reading, fits, priced);
     });
     const members = reads.flatMap((read) => (read.kind === "suitable" ? [{ bold: read.facts.bold }] : []));
     const anyFallback = items.some((item) => item.suitable && item.fallback === "auto");
@@ -1165,7 +1293,11 @@ export class MockClips {
    * holding the unit is `one-at-a-time`, a batch holding it is `batch-running`.
    */
   unitRefusal(): EngineError | null {
-    if (this.#unit === null) return null;
+    if (this.#unit === null) {
+      // 5b.2 (S5.WC4, r2.1 N10): the other direction of the guard, GLOBAL: while ANY part C call runs (any avatar, any photo) no clip baseline may be read, because a chat reserve is open.
+      if (this.#motions.running() > 0) return { code: "IN_FLIGHT", clipReason: "motion-busy", detail: "a motion is being suggested or an idea translated; wait for it to end" };
+      return null;
+    }
     if (this.#unit.kind === "batch") return { code: "IN_FLIGHT", clipReason: "batch-running", detail: "a batch of clips is being made; wait for it to end or cancel the rest" };
     return { code: "IN_FLIGHT", clipReason: "one-at-a-time", detail: "another clip is being made; one paid clip runs at a time" };
   }
@@ -1182,7 +1314,8 @@ export class MockClips {
     if (read.kind === "refused") return bad({ code: "VALIDATION", clipReason: read.reason, detail: `photo ${payload.photoId} cannot be brought to life (${read.reason})` });
     const motion = read.motions.find((m) => m.id === payload.motionId);
     if (motion === undefined) return bad({ code: "VALIDATION", clipReason: "unknown-motion", detail: `the motion ${payload.motionId} is not one this photo offers` });
-    const photoFallback = this.#fallbackOf(read.facts);
+    // Q-H = 2: a motion that takes clothing off or bares her (an own idea on a frame of «Смелая») is Kling's alone, whatever `BOLD_CLIPS` lets the frame fall back to: Grok never sees it.
+    const photoFallback = undressesBy(motion.text, motion.source, read.facts.bold) ? "none" : this.#fallbackOf(read.facts);
     if (payload.model === "grok" && (this.#mode !== "offer" || photoFallback === "none")) return bad({ code: "VALIDATION", clipReason: "grok-not-offered", detail: "Grok is not offered for this clip" });
     const request: ClipRequest = { model: payload.model, quality: payload.quality, seconds: payload.seconds, fallback: payload.model === "grok" || photoFallback === "none" ? "none" : payload.fallback };
     const book = this.#readBook();
@@ -1194,13 +1327,13 @@ export class MockClips {
     const script = this.#script ?? { first: "ok" as const, then: "ok" as const, face: undefined };
     this.#script = null;
     const job = this.#newJob(payload.avatarId, "create");
-    job.facts = { photoId: payload.photoId, request, motion: { source: "code", label: motion.label }, acceptedWorstMicros: payload.acceptedWorstMicros };
+    job.facts = { photoId: payload.photoId, request, motion: { source: motion.source, label: motion.label }, acceptedWorstMicros: payload.acceptedWorstMicros };
     this.#unit = { kind: "clip", job };
     this.#caps.set(job.clipId, Math.min(payload.acceptedWorstMicros, estimate.worstMicros));
     this.#fates.set(job.clipId, script);
     this.#clipAvatars.set(job.clipId, payload.avatarId);
     const createdAt = this.#host.nowIso();
-    const run: CreateRun = { job, photoId: payload.photoId, request, motion: { source: "code", label: motion.label, text: motion.text }, accepted: payload.acceptedWorstMicros, facts: read.facts, script, createdAt, mode: this.#mode, rates: book.rates };
+    const run: CreateRun = { job, photoId: payload.photoId, request, motion: { source: motion.source, label: motion.label, text: motion.text }, accepted: payload.acceptedWorstMicros, facts: read.facts, script, createdAt, mode: this.#mode, rates: book.rates };
     this.#clipRates.set(job.clipId, book.rates);
     this.#progress(job, { phase: "preparing" });
     this.#after(job, this.#host.stepMs, () => this.#attempt(run, 1, request.model));
@@ -1245,7 +1378,9 @@ export class MockClips {
     if (priced === null) return bad(this.#unavailable());
     const book = priced.rates;
     const drafts = chosen.map((member) => {
-      const fallback = this.#fallbackOf(member.facts) === "none" ? ("none" as const) : payload.fallback;
+      // Q-H = 2: a member whose motion takes clothing off is Kling's alone, as a frame kept to Kling is.
+      const kept = undressesBy(member.motion.text, member.motion.source, member.facts.bold) || this.#fallbackOf(member.facts) === "none";
+      const fallback = kept ? ("none" as const) : payload.fallback;
       const request: ClipRequest = { model: "kling", quality: payload.quality, seconds: payload.seconds, fallback };
       const share = clipWorstMicros({ ...request, mode: this.#mode, bold: member.facts.bold, boldClips: this.#boldClips, prices: book });
       return { ...member, request, share };
@@ -1254,16 +1389,19 @@ export class MockClips {
       chosen.map((member) => ({ bold: member.facts.bold })),
       { quality: payload.quality, seconds: payload.seconds, mode: this.#mode, fallback: payload.fallback, boldClips: this.#boldClips, prices: book },
     );
-    if (drafts.reduce((sum, d) => sum + d.share, 0) !== total) return bad({ code: "INTERNAL", detail: "the members' shares do not add up to the batch's worst case" });
-    if (total > payload.acceptedWorstMicros) return bad({ code: "PRICE_CHANGED", detail: `the worst case is now ${total} µ$, above the accepted ${payload.acceptedWorstMicros} µ$` });
+    // A member whose motion undresses her never falls back to Grok, so its share can be below the fallback figure the window summed; with none of them the shares add up to the batch's worst case exactly.
+    const shares = drafts.reduce((sum, d) => sum + d.share, 0);
+    const forced = chosen.some((member) => undressesBy(member.motion.text, member.motion.source, member.facts.bold));
+    if (forced ? shares > total : shares !== total) return bad({ code: "INTERNAL", detail: "the members' shares do not add up to the batch's worst case" });
+    if (shares > payload.acceptedWorstMicros) return bad({ code: "PRICE_CHANGED", detail: `the worst case is now ${shares} µ$, above the accepted ${payload.acceptedWorstMicros} µ$` });
     // The month is held for every member at once (`Budget.tryHold`): all or nothing.
-    if (!this.#fits(total)) return bad({ code: "BUDGET_EXCEEDED", detail: `committed ${this.#committed()} µ$ + the batch's ${total} µ$ > the limit ${this.#host.monthlyBudgetMicros()} µ$; nothing was held` });
+    if (!this.#fits(shares)) return bad({ code: "BUDGET_EXCEEDED", detail: `committed ${this.#committed()} µ$ + the batch's ${shares} µ$ > the limit ${this.#host.monthlyBudgetMicros()} µ$; nothing was held` });
 
     const batchId = this.#host.nextId("batch");
     const size = drafts.length;
     const members: BatchMember<MemberPayload>[] = drafts.map((d, i) => {
       const job = this.#newJob(avatarId, "create", "queued");
-      job.facts = { photoId: d.photoId, request: d.request, motion: { source: "code", label: d.motion.label }, acceptedWorstMicros: d.share };
+      job.facts = { photoId: d.photoId, request: d.request, motion: { source: d.motion.source, label: d.motion.label }, acceptedWorstMicros: d.share };
       job.batch = { batchId, batchIndex: i + 1, batchSize: size };
       this.#monthHolds.set(attemptIdOf(job.clipId, 1), d.share);
       this.#caps.set(job.clipId, d.share);
@@ -1276,7 +1414,7 @@ export class MockClips {
         clipId: job.clipId,
         held: true,
         retried: false,
-        payload: { request: d.request, motion: { source: "code", label: d.motion.label, text: d.motion.text }, facts: d.facts },
+        payload: { request: d.request, motion: { source: d.motion.source, label: d.motion.label, text: d.motion.text }, facts: d.facts },
         state: "queued",
         wake: null,
       };
@@ -1600,7 +1738,7 @@ export class MockClips {
       return;
     }
     if (n === 1) {
-      this.#journal(clipId, { type: "requested", clipId, photoId: run.photoId, request, motion: run.motion, acceptedWorstMicros: run.accepted, ...(job.batch === undefined ? {} : { batch: { ...job.batch } }), at: run.createdAt });
+      this.#journal(clipId, { type: "requested", clipId, photoId: run.photoId, request, motion: journalMotionOf(run.motion), acceptedWorstMicros: run.accepted, ...(job.batch === undefined ? {} : { batch: { ...job.batch } }), at: run.createdAt });
       this.#files.set(clipId, { journal: true, record: false, media: false });
     }
     const line = this.#reserve(clipId, n, model, reserveMicros);
@@ -2073,7 +2211,7 @@ export class MockClips {
           this.#progress(job, { phase: "saving", model, done: 3 });
           this.#after(job, step, () => {
             const size = sizeOf(model, record.request.quality);
-            record.outcome = { status: "ready", ...size, durationMs: record.request.seconds * 1_000, face: this.#faceOf({ bold: false, judged: true, ageRefused: false }, undefined, record.request.seconds) };
+            record.outcome = { status: "ready", ...size, durationMs: record.request.seconds * 1_000, face: this.#faceOf({ bold: false, level: "ordinary", judged: true, ageRefused: false }, undefined, record.request.seconds) };
             this.#files.set(clipId, { journal: false, record: true, media: true });
             this.#noteMemberRecord(record);
             this.#finish(job, { status: "done" });
@@ -2255,6 +2393,8 @@ export class MockClips {
     for (const hold of this.#holds.values()) hold.cancel();
     this.#holds.clear();
     this.#jobs.clear();
+    // 5b.2 (S5.WC4): a part C call in flight dies with the process (its reserve is the earlier process's now); the stores are files and stay.
+    this.#motions.restart();
     // 5b.2 (I5.63): the queued members of a batch are memory-only and die with the process, for free: no reserve, no journal, no record, and the month holds with them. No batch resumes after a restart.
     for (const batch of this.#batches.values()) batch.drop();
     this.#batches.clear();
@@ -2321,12 +2461,17 @@ export class MockClips {
     const job = this.#newJob(avatarId, "recovery", "recovering", CLIP_JOB_STEPS, clipId);
     const summary = summarize(lines);
     const requested = summary.requested;
+    // I5.67: an own motion's journal line has no label; the photo's motion store gives it back by the English text, else «Своя идея» (the engine's `withMotionLabel`).
+    const motion: ClipMotion | null =
+      requested === null
+        ? null
+        : { ...requested.motion, label: requested.motion.label ?? this.#motions.ownLabelOf(avatarId, requested.photoId, requested.motion.text, this.#shaOf(requested.photoId)) ?? OWN_IDEA_FALLBACK_LABEL };
     // As the engine's recovery job: the facts come from the journal's `requested` line, and a journal without one has none.
-    if (requested !== null) job.facts = { photoId: requested.photoId, request: requested.request, motion: { source: requested.motion.source, label: requested.motion.label }, acceptedWorstMicros: requested.acceptedWorstMicros };
+    if (requested !== null && motion !== null) job.facts = { photoId: requested.photoId, request: requested.request, motion: { source: motion.source, label: motion.label }, acceptedWorstMicros: requested.acceptedWorstMicros };
     // 5b.2 (I5.63): a batch member sent before the restart recovers as a single clip does, and keeps its place in the batch (the journal's `requested` line carries it), so the «Клипы» header counts it.
     if (requested?.batch !== undefined) job.batch = { ...requested.batch };
     this.#progress(job, { phase: "recovering" });
-    if (requested === null || plan.kind === "stale-journal") {
+    if (requested === null || motion === null || plan.kind === "stale-journal") {
       this.#finish(job, { status: "done" });
       return;
     }
@@ -2338,7 +2483,7 @@ export class MockClips {
         photoId: requested.photoId,
         createdAt: requested.at,
         seen: false,
-        motion: requested.motion,
+        motion,
         request,
         model: modelUsed(model, request),
         attempts,
@@ -2376,7 +2521,7 @@ export class MockClips {
     }
     const ready = (model: AttemptModel, decided: { attemptId: string; outcome: RecordAttempt["outcome"]; providerCostMicros?: number }): void => {
       const size = sizeOf(model, request.quality);
-      commit(model, { status: "ready", ...size, durationMs: request.seconds * 1_000, face: this.#faceOf({ bold: false, judged: true, ageRefused: false }, fate.face, request.seconds) }, attemptsOf(decided));
+      commit(model, { status: "ready", ...size, durationMs: request.seconds * 1_000, face: this.#faceOf({ bold: false, level: "ordinary", judged: true, ageRefused: false }, fate.face, request.seconds) }, attemptsOf(decided));
     };
     const fetchAndRecord = (p: Extract<Plan, { kind: "poll" | "download" }>, providerCostMicros: number | undefined, local: boolean): void => {
       const decided = { attemptId: p.attemptId, outcome: "completed" as const, ...(providerCostMicros === undefined ? {} : { providerCostMicros }) };
