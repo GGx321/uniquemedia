@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { PRICE_SCOPES_RU, type ClipBatchOptions, type ClipMotionChoice, type ClipMotionId, type ClipQuality, type ClipReason, type ClipSeconds, type EngineError, type PhotoSummary } from "../../../shared/engine";
 import { useEngine, useEngineView } from "../../engine/react";
-import { motionCallRunning } from "../../engine/store";
+import { motionCallRunning, motionCallsOf } from "../../engine/store";
 import { errorText } from "../../lib/errors";
 import { nbDash } from "../../lib/format";
 import { useNavigate } from "../../navigation";
@@ -17,7 +17,7 @@ import { AnimateWhy, useShowBatchClips } from "./AnimateButton";
 import { batchRowNote, batchSheetView, itemRefusal, itemRefusedAlert, type BatchSheetView } from "./batchModel";
 import { upUsd } from "./clipModel";
 import { AUTO_NOTE, LENGTHS, NO_FALLBACK_NOTE, PRO_NOTE, QUALITIES } from "./ClipSheet";
-import { batchTagOf, GROUP_OWN, GROUP_VISION, MOTION_BUSY } from "./motionModel";
+import { batchMotionGoneNews, batchTagOf, GROUP_OWN, GROUP_VISION, MOTION_BUSY, MOTION_UNAVAILABLE } from "./motionModel";
 import { MotionGuard } from "./MotionSuggest";
 
 // 5b.2, S5.WB4: the sheet «Оживить N фото» (mockups 59, 59a, 59b, 59c and #item-refused, #after-click; plan s5b2 §5.2.1; README §S5.WBD decisions 4–6, 13–14). Nothing is paid without it: the picked photos
@@ -92,6 +92,12 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
   const [error, setError] = useState<EngineError | null>(null);
   /** The focus goes to «Отмена» once the answer that needs a new click is on show. */
   const [toCancel, setToCancel] = useState(0);
+  /** S5.WC5b (M2): rows whose chosen motion the engine no longer knows (`unknown-motion`): they stay, with «Движение больше недоступно — выберите другое.», until their choice changes. */
+  const [unavailable, setUnavailable] = useState<ReadonlySet<string>>(new Set());
+  /** S5.WC5b (M2): what a list read again took from the rows (a chosen motion pushed out of the newest), said once as a status. */
+  const [dropped, setDropped] = useState<string | null>(null);
+  /** The title of each row's chosen motion while its list holds it, to say which one left. */
+  const chosenTitles = useRef(new Map<string, string>());
 
   useEffect(() => {
     if (askedKey === "") return;
@@ -124,6 +130,7 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
   const motionRunning = motionCallRunning(view);
   const waiting = options.status === "loading" || refreshing || busy !== null || block !== null || motionRunning;
   const itemOf = (photoId: string) => ready?.options.items.find((item) => item.photoId === photoId);
+  /** The row's motion: its choice while its list holds it, else the first. A choice the list lost is never dropped in silence: the effect below says it and takes it back. */
   const motionOf = (photoId: string): ClipMotionId | null => {
     const item = itemOf(photoId);
     if (item === undefined || !item.suitable) return null;
@@ -131,11 +138,54 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
     return item.motions.find((m) => m.id === chosen)?.id ?? item.motions[0]?.id ?? null;
   };
 
+  // S5.WC5b (M2): a part C call for a listed photo ended (it left the window's `motionCalls`): its stored motions may have changed, so the rows are read again; quality and length stay as chosen.
+  const callsKey = picks.map((pick) => `${pick.photoId}:${motionCallsOf(view, avatarId, pick.photoId).join("+")}`).join(",");
+  const lastCalls = useRef(callsKey);
+  useEffect(() => {
+    const before = lastCalls.current;
+    lastCalls.current = callsKey;
+    const kindsOf = (key: string): Map<string, string[]> => new Map(key.split(",").map((part) => [part.slice(0, part.indexOf(":")), part.slice(part.indexOf(":") + 1).split("+").filter((k) => k !== "")]));
+    const now = kindsOf(callsKey);
+    const ended = [...kindsOf(before)].some(([photoId, kinds]) => kinds.some((kind) => !(now.get(photoId) ?? []).includes(kind)));
+    if (ended) setAgain((n) => n + 1);
+  }, [callsKey]);
+
+  // S5.WC5b (M2): a row's chosen motion that the list read again no longer holds (only the newest suggestions and ideas are listed) goes back to the row's first motion, and that is said.
+  useEffect(() => {
+    if (ready === null || refreshing) return;
+    const said: string[] = [];
+    const lost: string[] = [];
+    for (const pick of picks) {
+      const chosen = motions.get(pick.photoId);
+      const item = itemOf(pick.photoId);
+      if (chosen === undefined || item === undefined || !item.suitable || item.motions.some((m) => m.id === chosen)) continue;
+      lost.push(pick.photoId);
+      const gone = chosenTitles.current.get(pick.photoId);
+      const first = item.motions[0];
+      if (gone !== undefined && first !== undefined) said.push(batchMotionGoneNews(pick.label, gone, first.label));
+    }
+    if (lost.length === 0) return;
+    setMotions((now) => {
+      const next = new Map(now);
+      for (const photoId of lost) next.delete(photoId);
+      return next;
+    });
+    if (said.length > 0) setDropped(said.join(" "));
+  }, [ready, refreshing]);
+  useEffect(() => {
+    for (const pick of picks) {
+      const item = itemOf(pick.photoId);
+      const chosen = item?.suitable === true ? item.motions.find((m) => m.id === motions.get(pick.photoId)) : undefined;
+      if (chosen !== undefined) chosenTitles.current.set(pick.photoId, chosen.label);
+    }
+  });
+
   /** A change of the choice ends what was said about the last click. */
   const choose = (change: () => void): void => {
     change();
     setAfter(null);
     setError(null);
+    setDropped(null);
   };
 
   async function send(way: "main" | "alone"): Promise<void> {
@@ -151,6 +201,7 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
     setBusy(way);
     setAfter(null);
     setError(null);
+    setDropped(null);
     store.setPaidInFlight(avatarId, true);
     const reply = await client.request("clips.createBatch", { avatarId, items, quality, seconds, fallback: way === "main" ? "auto" : "none", acceptedWorstMicros: button.worstMicros });
     store.setPaidInFlight(avatarId, false);
@@ -174,6 +225,13 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
     } else if (code === "IN_FLIGHT" && reply.error.clipReason === "motion-busy") {
       // 59e: nothing was held or priced; once the call ends the same click goes through.
       setAfter({ kind: "motion-busy" });
+    } else if (item !== null && item.reason === "unknown-motion") {
+      // S5.WC5b (M2): the photo can still be made with another motion, so its row is not struck: it says so, and the rows are read again (the lost choice goes back to the first motion).
+      const label = picks.find((p) => p.photoId === item.photoId)?.label ?? "Фото";
+      setUnavailable((now) => new Set(now).add(item.photoId));
+      setOptions((now) => (now.status === "ready" ? { ...now, refreshing: true } : now));
+      setAgain((n) => n + 1);
+      setAfter({ kind: "item", text: `${label}: ${MOTION_UNAVAILABLE.charAt(0).toLocaleLowerCase("ru")}${MOTION_UNAVAILABLE.slice(1)}` });
     } else if (item !== null) {
       // 59 #item-refused: the row is struck with its OWN reason, and the sum is asked again without it.
       const label = picks.find((p) => p.photoId === item.photoId)?.label ?? "Фото";
@@ -202,7 +260,7 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
   const priceShort = shownAfter?.kind === "price" && sheet !== null && !sheet.fits && (shownAfter.way === "main" || sheet.noFallback === null);
   const priceNeed = sheet === null ? "" : shownAfter?.kind === "price" && shownAfter.way === "alone" ? upUsd(sheet.worstNoFallbackMicros) : sheet.worst;
   // One live region at a time (README decision 13): the click's answer, else the engine's error, else why paid work waits, else the month.
-  const notice: "price" | "item" | "unpriced" | "motion" | "error" | "block" | "budget" | null =
+  const notice: "price" | "item" | "unpriced" | "motion" | "error" | "dropped" | "block" | "budget" | null =
     shownAfter?.kind === "price" && sheet !== null
       ? "price"
       : shownAfter?.kind === "item"
@@ -213,11 +271,13 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
             ? "motion"
             : error !== null
               ? "error"
-              : block !== null && ready !== null
-                ? "block"
-                : budgetShown
-                  ? "budget"
-                  : null;
+              : dropped !== null && !refreshing
+                ? "dropped"
+                : block !== null && ready !== null
+                  ? "block"
+                  : budgetShown
+                    ? "budget"
+                    : null;
   const mainWhy = unpriced ? whyId : notice === "block" || notice === "budget" || (notice === "price" && priceShort) ? noticeId : motionRunning && sheet !== null ? guardId : undefined;
   // 59d: the wider list column only when a row lists a suggestion or an idea (59 as approved otherwise).
   const ownRows = ready?.options.items.some((item) => item.suitable && item.motions.some((m) => m.source === "vision" || m.source === "own")) === true;
@@ -236,7 +296,7 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
       {picks.map((pick) => {
         const item = itemOf(pick.photoId);
         const bare = unpriced || (options.status !== "ready" && !refused.has(pick.photoId));
-        const note = bare ? null : batchRowNote(pick.photo, item, refused.get(pick.photoId));
+        const note = bare ? null : unavailable.has(pick.photoId) ? { text: MOTION_UNAVAILABLE, struck: false, bold: false } : batchRowNote(pick.photo, item, refused.get(pick.photoId));
         const struck = note?.struck === true;
         const motionId = struck || bare ? null : motionOf(pick.photoId);
         const choices = item?.suitable === true ? item.motions : [];
@@ -264,7 +324,13 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
                 value={motionId}
                 onChange={(event) => {
                   const next = choices.find((m) => m.id === event.target.value)?.id;
-                  if (next !== undefined) choose(() => setMotions((now) => new Map(now).set(pick.photoId, next)));
+                  if (next === undefined) return;
+                  choose(() => setMotions((now) => new Map(now).set(pick.photoId, next)));
+                  setUnavailable((now) => {
+                    const rest = new Set(now);
+                    rest.delete(pick.photoId);
+                    return rest;
+                  });
                 }}
               >
                 <MotionOptions choices={choices} />
@@ -383,6 +449,11 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
             </Notice>
           )}
           {notice === "error" && error !== null && <Notice tone="danger">{errorText(error)}</Notice>}
+          {notice === "dropped" && dropped !== null && (
+            <Notice tone="info" role="status">
+              {nbDash(dropped)}
+            </Notice>
+          )}
           {notice === "block" && block !== null && (
             <div id={noticeId}>
               <Notice tone="warn" role="status">
