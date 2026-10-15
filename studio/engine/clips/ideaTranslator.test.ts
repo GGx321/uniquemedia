@@ -237,6 +237,15 @@ describe("the owner's idea leaves no copy of itself (I5.67)", () => {
     expect(logs.join("\n")).not.toContain("поворачивает");
   });
 
+  test("a provider that echoes the idea in an error leaves no copy of it in the call's error (round 3, L3)", async () => {
+    const echo: Step = { status: 422, body: { error: { message: `cannot read: ${IDEA}` } } };
+    const { result } = run([echo]);
+    const outcome = await result;
+    expect(outcome).toMatchObject({ kind: "error" });
+    expect(JSON.stringify(outcome)).not.toContain("CANARY");
+    expect(JSON.stringify(outcome)).not.toContain("поворачивает");
+  });
+
   test("an unusable paid answer that echoes the idea is saved with the idea replaced by `[owner idea omitted: N chars]`", async () => {
     const echo: Step = { status: 200, body: { usage: { cost: 0.001 }, note: `you asked: ${IDEA}`, escaped: JSON.stringify(IDEA).slice(1, -1) } };
     const { raws, result } = run([echo]);

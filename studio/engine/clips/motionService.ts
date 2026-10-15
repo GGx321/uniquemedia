@@ -85,6 +85,11 @@ function choiceOf(item: MotionItem): ClipMotionChoice {
   return { id: item.id, source: item.source, label: item.label, text: item.text };
 }
 
+/** A text as the store compares it with another: case and white space aside. */
+function sameText(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 export class ClipMotions {
   readonly #deps: ClipMotionsDeps;
   readonly #stores: MotionStores;
@@ -281,7 +286,10 @@ export class ClipMotions {
     try {
       let made: MotionItem[] = [];
       await this.#stores.update(ready.library.avatarDirPath(avatarId), ready.photo.id, ready.sha, (file) => {
-        const added = addItems(file, "vision", outcome.drafts.map((draft) => ({ label: draft.label, text: draft.text, model: textModel, at })));
+        // Round 3 L5: a suggestion the store already holds (another call wrote it) is not stored twice; the writer dedupes within one answer only.
+        const known = new Set(file.items.filter((item) => item.source === "vision").map((item) => sameText(item.text)));
+        const fresh = outcome.drafts.filter((draft) => !known.has(sameText(draft.text)));
+        const added = addItems(file, "vision", fresh.map((draft) => ({ label: draft.label, text: draft.text, model: textModel, at })));
         made = added.items;
         return { ...added.file, reading: outcome.reading };
       });
