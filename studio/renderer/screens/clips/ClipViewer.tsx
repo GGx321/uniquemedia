@@ -17,6 +17,7 @@ import { useMounted } from "../photos/shared";
 import { viewerStep } from "../photos/viewerModel";
 import { clipLength, costFact, exportFailureText, exportPercent, faceBadge, faceFact, modelFact, readyTags, savedExport } from "./clipModel";
 import type { PhotoPlace } from "./clipsContext";
+import { deleteOutcome } from "./clipUse";
 import { DeleteClipDialog } from "./DeleteClipDialog";
 
 // Stage 5, 5b.1, S5.V8: the clip viewer (mockups 43, 43a, 43b, 43c; plan s5b1 §6 43, §5.13; README §S5.VD decision 7, §S5.VD2 decisions 1–3). The photo viewer's card: the clip plays muted,
@@ -123,6 +124,8 @@ export function ClipViewer(props: ClipViewerProps) {
   const saveRef = useRef<HTMLButtonElement>(null);
   const [asking, setAsking] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  /** 5b.2 (44b): «Удалить» was refused `in-use`, a render holds the clip's copy: the open dialog says so. */
+  const [inRender, setInRender] = useState(false);
   const [refusal, setRefusal] = useState<EngineError | null>(null);
   const [revealError, setRevealError] = useState<EngineError | null>(null);
   const [revealing, setRevealing] = useState(false);
@@ -138,6 +141,7 @@ export function ClipViewer(props: ClipViewerProps) {
     setStateFor(clip.clipId);
     setRefusal(null);
     setRevealError(null);
+    setInRender(false);
     setRevealing(false);
     setPercentShown(null);
     setNews("");
@@ -249,9 +253,15 @@ export function ClipViewer(props: ClipViewerProps) {
     const reply = await client.request("clips.delete", { avatarId: clip.avatarId, clipId: clip.clipId });
     if (!mounted.current) return;
     setDeleting(false);
+    const outcome = deleteOutcome(reply);
+    // 5b.2 (44b `#in-render`): a render holds the clip's copy: the dialog stays and says so; a try after the render is harmless.
+    if (outcome.kind === "in-render") {
+      setInRender(true);
+      return;
+    }
     setAsking(false);
-    if (reply.ok) onDeleted();
-    else setRevealError(reply.error);
+    if (outcome.kind === "deleted") onDeleted();
+    else setRevealError(outcome.error);
   }
 
   const face = faceFact(clip.face);
@@ -424,7 +434,19 @@ export function ClipViewer(props: ClipViewerProps) {
           <Icon name="forward" size={20} strokeWidth={2.2} />
         </button>
         <FocusEdge edge="end" />
-        {asking && <DeleteClipDialog saved={saved !== null} busy={deleting} onCancel={() => setAsking(false)} onDelete={() => void remove()} />}
+        {asking && (
+          <DeleteClipDialog
+            saved={saved !== null}
+            busy={deleting}
+            use={clip.use}
+            inRender={inRender}
+            onCancel={() => {
+              setAsking(false);
+              setInRender(false);
+            }}
+            onDelete={() => void remove()}
+          />
+        )}
       </div>
     </div>,
     document.body,

@@ -9,6 +9,7 @@ import { Portrait, PortraitPlaceholder } from "../../ui/Portrait";
 import { useMediaRetry } from "../../ui/useMediaRetry";
 import { ClipSteps } from "./ClipSteps";
 import { clipLength, faceBadge, failedTile, readyMeta, readyTags, savedExport, type FaceBadge, type PhaseLine } from "./clipModel";
+import { clipUsedBadge } from "./clipUse";
 
 // Stage 5, 5b.1, S5.V8: the «Клипы» tab's tiles (mockups 40, 41, 42, 46; README §S5.VD decisions 4–6): the gallery's tile shape, the poster a 9:16 frame. A clip that came opens the clip
 // viewer; one at work shows its phase, its steps and the money that may still go; one that did not come says why in the tone of its money, with what can be done about it, and its trash
@@ -61,6 +62,8 @@ export function Poster({ clip }: { clip: Ready }) {
 export const ReadyTile = memo(function ReadyTile({ clip, nowMs, onOpen }: { clip: Ready; nowMs: number; onOpen: (clipId: string) => void }) {
   const length = clipLength(clip.durationMs);
   const meta = readyMeta(clip, nowMs);
+  // 5b.2 (41e): the clip's frame is in a finished video, through the clip or its photo: one badge, the title tells which.
+  const used = clipUsedBadge(clip.use);
   return (
     <article className="clip-tile" aria-label={`Клип: ${clip.motion.label}`}>
       <div className="ph clip-tile-poster">
@@ -73,6 +76,12 @@ export const ReadyTile = memo(function ReadyTile({ clip, nowMs, onOpen }: { clip
         <div className="clip-badges">
           {!clip.seen && <span className="pill clip-new">новый</span>}
           <FaceBadgeView badge={faceBadge(clip.face)} />
+          {used !== null && (
+            <span className="pill clip-used" title={used.title}>
+              <Icon name="film" size={11} strokeWidth={2.2} />
+              {used.label}
+            </span>
+          )}
         </div>
         <Pills length={length} tags={readyTags(clip)} />
       </div>
