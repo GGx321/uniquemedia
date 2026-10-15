@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { ClipSummary } from "../../shared/engine";
+import { summarizeJournal } from "../../engine/clips/journal";
+import { planRecovery } from "../../engine/clips/recover";
+import { ClipJournalLine } from "../../engine/clips/schemas";
+import { REAL_CLIP_TIMINGS } from "../../engine/clips/timings";
 import { MOCK_CLIP_TIMINGS } from "./mockClips";
 import { BOLD_FRAME, cancelBatch, createBatch, detailOf, endOf, endsOf, jobState, makeBatchMock, money, mostOpenReserves, phasesOf, refusal, runUntilEnds, script, startBatch, stepUntil, unwrap, AVATAR, clipProgress } from "./mockEngine.clipBatch.testkit";
 
@@ -601,6 +605,23 @@ describe("a restart in the middle of a batch (I5.63)", () => {
     expect(clips).toHaveLength(1);
     expect(clips[0]).toMatchObject({ clipId: jobIds[0], recovered: true, batchId, batchIndex: 1, batchSize: 3 });
     expect(m.engine.peekClips().posts).toHaveLength(1);
+  });
+
+  test("the journal a member leaves is the engine's own: its strict schema reads the batch trio, and the engine's recovery plan is the mock's", async () => {
+    const m = makeBatchMock(2);
+    const { batchId, jobIds } = await startBatch(m, m.photoIds);
+    stepUntil(m, () => phasesOf(m.events, jobIds[0] ?? "").includes("rendering"), "member 1 rendering");
+    const lines = m.engine.peekClips().journals[jobIds[0] ?? ""] ?? [];
+    const parsed = lines.map((line) => ClipJournalLine.parse(line));
+    expect(parsed[0]).toMatchObject({ type: "requested", batch: { batchId, batchIndex: 1, batchSize: 2 } });
+    const summary = summarizeJournal(parsed);
+    expect(summary.requested?.batch).toEqual({ batchId, batchIndex: 1, batchSize: 2 });
+    const reserved = new Set(m.engine.peekClips().attempts.filter((a) => a.clipId === jobIds[0]).map((a) => a.attemptId));
+    const plan = planRecovery({ summary, recordExists: false, reservedAttempts: reserved, nowMs: m.engine.peekClips().nowMs, timings: REAL_CLIP_TIMINGS });
+    expect(plan.kind).toBe("poll");
+    m.engine.restart();
+    const [recovery] = (await unwrap(m.client.request("engine.snapshot", {}))).jobs.filter((j) => j.kind === "clip");
+    expect(recovery).toMatchObject({ phase: "recovering", batchId, batchIndex: 1, batchSize: 2 });
   });
 
   test("no batch resumes after a restart without a new acceptance, and a new batch is taken", async () => {
