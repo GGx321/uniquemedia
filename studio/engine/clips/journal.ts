@@ -75,7 +75,9 @@ export function openClipJournal(path: string): ClipJournal {
       requestedWritten = true;
       try {
         if ((await readLines(path)).some((l) => l.type === "requested")) return;
-        await append({ type: "requested", ...data });
+        // I5.67: an own motion's label is the owner's own words, and the journal never holds them; a restart takes it from the photo's motion store.
+        const motion = data.motion.source === "own" ? { source: data.motion.source, text: data.motion.text } : data.motion;
+        await append({ type: "requested", ...data, motion });
       } catch (error) {
         requestedWritten = false;
         throw error;

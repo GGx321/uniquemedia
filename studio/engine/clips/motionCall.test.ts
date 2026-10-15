@@ -96,7 +96,7 @@ describe("stepOf: one chat result as the part C jobs read it", () => {
   });
 
   test("a budget refusal before the send is no room, free", () => {
-    const blocked = { status: "blocked", refusal: { reason: "RUN_CAP_EXCEEDED", committedMicros: 1, worstMicros: 2, limitMicros: 1 } } as const;
+    const blocked = { status: "blocked", refusal: { ok: false, reason: "RUN_CAP_EXCEEDED", committedMicros: 1, worstMicros: 2, limitMicros: 1 } } as const;
     expect(stepOf(blocked)).toEqual({ kind: "no-room", costMicros: 0 });
   });
 

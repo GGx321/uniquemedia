@@ -100,7 +100,7 @@ describe("a quit while a clip renders, then a new engine on the same folders", (
     for (const event of progress) {
       expect(event.photoId).toBe(photoId);
       expect(event.request).toEqual(requested.request);
-      expect(event.motion).toEqual({ source: requested.motion.source, label: requested.motion.label });
+      expect(event.motion).toEqual({ source: requested.motion.source, label: requested.motion.label ?? "" });
       expect(event.acceptedWorstMicros).toBe(requested.acceptedWorstMicros);
     }
   });

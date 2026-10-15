@@ -9,6 +9,7 @@ import {
   ClipFrameReading,
   ClipModelUsed,
   ClipMotion,
+  ClipMotionSource,
   ClipMotionId,
   ClipRequest,
   Id,
@@ -113,13 +114,31 @@ export const ClipRecord = z
   .refine((r) => r.outcome.status === "ready" || r.exports.length === 0, { message: "a clip that failed has nothing exported", path: ["exports"] });
 export type ClipRecord = z.infer<typeof ClipRecord>;
 
+/**
+ * The motion a `requested` line keeps (5b.2, S5.WC3, I5.67): the contract's `ClipMotion` fields, but an OWN motion has no label here. Its label is the owner's own words cut to 40 characters, and the
+ * journal is not a place for them: a restart takes the label from the photo's motion store, else «Своя идея». A line an earlier build wrote (an own motion WITH a label) still parses; every other source
+ * keeps its label required, as before.
+ */
+export const JournalMotion = z
+  .strictObject({
+    source: ClipMotionSource,
+    label: z.string().min(1).max(MOTION_LABEL_MAX).optional(),
+    text: z.string().min(1).max(120),
+  })
+  .refine((m) => (m.source !== "vision" && m.source !== "own") || (m.text.length <= MOTION_TEXT_MAX && MOTION_ENGLISH.test(m.text)), {
+    message: "a suggested or own text is at most 60 characters of letters, digits, spaces and , . ' -",
+    path: ["text"],
+  })
+  .refine((m) => m.label !== undefined || m.source === "own", { message: "only an own motion may have no label", path: ["label"] });
+export type JournalMotion = z.infer<typeof JournalMotion>;
+
 /** `requested`: the first line, fsynced before the clip's first reserve (I5.45). */
 const RequestedLine = z.strictObject({
   type: z.literal("requested"),
   clipId: Id,
   photoId: Id,
   request: ClipRequest,
-  motion: ClipMotion,
+  motion: JournalMotion,
   acceptedWorstMicros: Micros,
   /** 5b.2 (S5.WB2; additive, optional): the batch the clip is a member of, so the record a restart writes for it carries the trio too. A 5b.1 line has none. */
   batch: z

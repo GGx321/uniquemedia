@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { open, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { PROTOCOL_VERSION, type ClipAttemptModel, type ClipFace, type ClipFailReason, type ClipRequest, type EngineError } from "../../shared/engine";
+import { OWN_IDEA_FALLBACK_LABEL, PROTOCOL_VERSION, type ClipAttemptModel, type ClipFace, type ClipFailReason, type ClipMotion, type ClipRequest, type EngineError } from "../../shared/engine";
 import { CLIP_RETRYABLE_FAILURES } from "../../shared/engine/clips";
 import type { UnsequencedEvent } from "../../shared/engine/events";
 import { EngineFailure } from "../engineFailure";
@@ -102,6 +102,11 @@ export interface ClipRecoveryHost {
   readonly faceRoleOf: (photoId: string) => Promise<ClipFaceRole | null>;
   /** The master's embedding for a judged clip, or null when it cannot be taken. Bound to the library the recovery runs on. */
   readonly masterEmbedding: (avatarId: string, signal: AbortSignal) => Promise<Float32Array | null>;
+  /**
+   * 5b.2 (S5.WC3, I5.67): the label of an own idea, from the photo's motion store by its English text, or null when the store no longer holds it. The journal's `requested` line for an own motion has no label
+   * (the owner's words are not journalled). Absent: the label is «Своя идея».
+   */
+  readonly ownLabelOf?: (avatarId: string, photoId: string, text: string) => Promise<string | null>;
   readonly media?: Partial<RecoveryMedia>;
   /** Test seam: awaited before each clips folder of the startup walk is listed, so a test can hold the walk open (the same seam `readFolderNames` has). */
   readonly beforeList?: (dir: string) => void | Promise<void>;
@@ -403,7 +408,7 @@ export async function recoverClips(host: ClipRecoveryHost, library: RecoveryLibr
             return null;
           }
           const fresh: Candidate = { ...candidate, lines };
-          const summary = summarizeJournal(lines);
+          const summary = await withMotionLabel(host, candidate.avatarId, summarizeJournal(lines));
           const reservedAttempts = new Set([1, 2].map((n) => clipAttemptId(candidate.clipId, n as 1 | 2)).filter((id) => ledger?.reserveOf(id) !== undefined));
           const plan = planRecovery({ summary, recordExists: false, reservedAttempts, nowMs, timings: host.timings });
           if (plan.kind === "unreadable-journal" || plan.kind === "stale-journal") {
@@ -466,8 +471,29 @@ interface Job {
 
 type JobOutcome = "recorded" | "interrupted";
 
+/** What a journal says once the motion's label is whole (a record needs one): the journal's `requested` line has none for an own motion. */
+type RecoverySummary = Omit<JournalSummary, "requested"> & { readonly requested: (Omit<NonNullable<JournalSummary["requested"]>, "motion"> & { readonly motion: ClipMotion }) | null };
+
+/**
+ * The summary with the own idea's label restored (I5.67): from the photo's motion store by its English text, else «Своя идея». A store that cannot be read, or a host without one, leaves the fallback; the
+ * recovery of the clip's money never depends on a label. Any other source's label is the journal's own.
+ */
+async function withMotionLabel(host: ClipRecoveryHost, avatarId: string, summary: JournalSummary): Promise<RecoverySummary> {
+  const { requested } = summary;
+  if (requested === null) return { ...summary, requested: null };
+  const { motion } = requested;
+  if (motion.label !== undefined) return { ...summary, requested: { ...requested, motion: { ...motion, label: motion.label } } };
+  let label: string | null = null;
+  try {
+    label = (await host.ownLabelOf?.(avatarId, requested.photoId, motion.text)) ?? null;
+  } catch (error) {
+    host.log(`[clip] the label of an own idea of clip ${requested.clipId} could not be read (${error instanceof Error ? error.name : typeof error})`);
+  }
+  return { ...summary, requested: { ...requested, motion: { ...motion, label: label ?? OWN_IDEA_FALLBACK_LABEL } } };
+}
+
 /** The facts a recovery job carries, from the journal's `requested` line (the plan checked it is there): the same the first job announced. */
-function factsOf(summary: JournalSummary): ClipJobFacts | undefined {
+function factsOf(summary: RecoverySummary): ClipJobFacts | undefined {
   const { requested } = summary;
   if (requested === null) return undefined;
   return { photoId: requested.photoId, request: requested.request, motion: { source: requested.motion.source, label: requested.motion.label }, acceptedWorstMicros: requested.acceptedWorstMicros };
@@ -527,7 +553,7 @@ class Recovery {
     private readonly host: ClipRecoveryHost,
     private readonly library: RecoveryLibrary,
     private readonly candidate: Candidate,
-    private readonly summary: JournalSummary,
+    private readonly summary: RecoverySummary,
     private readonly reserved: ReadonlySet<string>,
     private readonly plan: Exclude<RecoveryPlan, { kind: "stale-journal" | "unreadable-journal" }>,
     private readonly job: Job,

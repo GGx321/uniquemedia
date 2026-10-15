@@ -185,3 +185,48 @@ describe("summarizeJournal", () => {
     expect(summarizeJournal([])).toEqual({ requested: null, attempts: [], downloaded: null });
   });
 });
+
+// ---------- 5b.2, S5.WC3 (plan s5b2 I5.67): the journal never holds the owner's words ----------
+
+const OWN_WITH_WORDS = { source: "own", label: "медленно поворачивает голову…", text: "she slowly turns her head" } as const;
+
+describe("an own motion in the journal (I5.67)", () => {
+  test("`requested` for an own motion is written without its label: the owner's words are not in the journal", async () => {
+    const path = join(dir, "clip-00001.journal.jsonl");
+    await openClipJournal(path).requested({ ...REQUESTED, motion: OWN_WITH_WORDS });
+    const text = await readFile(path, "utf8");
+    expect(text).not.toContain("медленно");
+    const line = parseClipJournalLine(JSON.parse(text.split("\n")[0] ?? ""));
+    expect(line).toMatchObject({ type: "requested", motion: { source: "own", text: "she slowly turns her head" } });
+    expect(line?.type === "requested" ? "label" in line.motion : true).toBe(false);
+  });
+
+  test("a code, vision or scene motion keeps its label in the journal", async () => {
+    for (const source of ["code", "vision", "scene"] as const) {
+      const path = join(dir, `clip-${source}.journal.jsonl`);
+      await openClipJournal(path).requested({ ...REQUESTED, motion: { source, label: "Улыбка", text: "she smiles slowly" } });
+      expect(await readFile(path, "utf8")).toContain("Улыбка");
+    }
+  });
+
+  test("a line an earlier build wrote (an own motion WITH a label) still parses", () => {
+    const line = parseClipJournalLine({ type: "requested", ...REQUESTED, motion: OWN_WITH_WORDS });
+    expect(line).toMatchObject({ type: "requested", motion: { source: "own", label: "медленно поворачивает голову…" } });
+  });
+
+  test("a line of a 5b.1 build (a code motion with a label) still parses, and a code motion WITHOUT a label is not a line", () => {
+    expect(parseClipJournalLine({ type: "requested", ...REQUESTED })).not.toBeNull();
+    expect(parseClipJournalLine({ type: "requested", ...REQUESTED, motion: { source: "code", text: "she smiles slowly" } })).toBeNull();
+    expect(parseClipJournalLine({ type: "requested", ...REQUESTED, motion: { source: "vision", text: "she smiles slowly" } })).toBeNull();
+  });
+
+  test("a `requested` line for an own motion needs no label", () => {
+    const line = parseClipJournalLine({ type: "requested", ...REQUESTED, motion: { source: "own", text: "she slowly turns her head" } });
+    expect(line).toMatchObject({ type: "requested", motion: { source: "own", text: "she slowly turns her head" } });
+  });
+
+  test("an own motion's text is still held to the model-text rule in the journal (60 characters of the contract's English)", () => {
+    const long = { source: "own", text: "she slowly turns her head a little toward the window and back" };
+    expect(parseClipJournalLine({ type: "requested", ...REQUESTED, motion: long })).toBeNull();
+  });
+});

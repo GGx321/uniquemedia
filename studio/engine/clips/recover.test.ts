@@ -96,6 +96,8 @@ interface Options {
   /** Called by `isActive` (it answers `active`): lets a test change the world in the middle of step 1. */
   onIsActive?: (clipId: string) => void;
   generation?: GenerationResult;
+  /** 5b.2 (S5.WC3): the label the photo's motion store holds for an own motion's text, by the text; absent: the host has no store seam at all. */
+  ownLabels?: Record<string, string>;
   /** How the old process already closed an attempt in the ledger (a settle it wrote before it stopped). */
   closes?: Record<string, { type: "settle"; costMicros: number; estimated: boolean } | { type: "release"; reason: string }>;
 }
@@ -191,9 +193,10 @@ function rig(options: Options = {}) {
       return options.embedding === undefined ? new Float32Array([0.1, 0.2]) : options.embedding;
     },
     media,
+    ...(options.ownLabels === undefined ? {} : { ownLabelOf: async (_avatarId: string, _photoId: string, text: string) => options.ownLabels?.[text] ?? null }),
     log: () => undefined,
   };
-  const types = (): string[] => events.map((e) => e.type);
+  const types =(): string[] => events.map((e) => e.type);
   return { host, clock, events, held, calls, active, stop, jobs, types };
 }
 
@@ -259,6 +262,50 @@ describe("a journal with only `requested`", () => {
 });
 
 // VR item 2: a restart after a POST the provider refused. The reserve was settled 0 before the `ended` line was written, so the record says what the live path would have, not `lost` with its
+// 5b.2 (S5.WC3, I5.67): the journal's `requested` line for an own motion has no label (the owner's words are not journalled), so a recovery restores it from the photo's motion store, else «Своя идея».
+describe("a recovered clip whose motion is an own idea", () => {
+  const OWN_TEXT = "she slowly turns her head";
+  const ownRequested = (): ClipJournalLine => ({ ...(requested() as Extract<ClipJournalLine, { type: "requested" }>), motion: { source: "own", text: OWN_TEXT } });
+
+  test("takes the label from the photo's motion store, in the record and in the job's facts", async () => {
+    await writeLines(CLIP, [ownRequested()]);
+    const r = rig({ ownLabels: { [OWN_TEXT]: "медленно поворачивает голову…" } });
+    const { jobs } = await recoverClips(r.host, library);
+    expect(r.jobs.states().find((s) => s.kind === "clip")).toMatchObject({ motion: { source: "own", label: "медленно поворачивает голову…" } });
+    await Promise.all(jobs);
+    expect((await recordOf()).motion).toEqual({ source: "own", label: "медленно поворачивает голову…", text: OWN_TEXT });
+  });
+
+  test("is «Своя идея» when the store no longer holds the idea", async () => {
+    await writeLines(CLIP, [ownRequested()]);
+    await recover(rig({ ownLabels: {} }));
+    expect((await recordOf()).motion).toEqual({ source: "own", label: "Своя идея", text: OWN_TEXT });
+  });
+
+  test("is «Своя идея» when the host has no store seam", async () => {
+    await writeLines(CLIP, [ownRequested()]);
+    await recover(rig());
+    expect((await recordOf()).motion.label).toBe("Своя идея");
+  });
+
+  test("a store that cannot be read leaves «Своя идея», never a failed recovery", async () => {
+    await writeLines(CLIP, [ownRequested()]);
+    const r = rig();
+    await recover({ ...r, host: { ...r.host, ownLabelOf: async () => Promise.reject(new Error("disk")) } });
+    expect((await recordOf()).motion.label).toBe("Своя идея");
+    expect((await recordOf()).outcome).toEqual({ status: "failed", reason: "lost" });
+  });
+
+  test("a code motion keeps the label the journal holds, and the store is not asked", async () => {
+    await writeLines(CLIP, [requested()]);
+    let asked = 0;
+    const r = rig();
+    await recover({ ...r, host: { ...r.host, ownLabelOf: async () => (asked++, "x") } });
+    expect((await recordOf()).motion.label).toBe("Моргает и улыбается");
+    expect(asked).toBe(0);
+  });
+});
+
 // «reconcile will settle it at worst».
 describe("a journal whose attempt ended at the POST, with no `submitted` line", () => {
   test("a moderation refusal becomes a failed `refused-free` record, with no network call", async () => {
