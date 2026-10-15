@@ -1,4 +1,4 @@
-import { MOTION_PROBLEMS, MOTION_TEXT_MAX, type ClipMotionSource, type MotionProblem } from "../engine";
+import { MOTION_ENGLISH, MOTION_PROBLEMS, MOTION_TEXT_MAX, type ClipMotionSource, type MotionProblem } from "../engine";
 import { isHandCapture, type Capture, type FaceVisibility } from "./captures";
 import { contentProblems, type ContentLevel, type ContentProblem } from "./contentLine";
 import { CAMERA_WORDS, HAIR_COLOUR_WORDS, MOTION_SMALL, MOTION_STAGING, PHONE_WORDS, SELFIE_WORDS, YOUTH_PROPS } from "./words";
@@ -10,10 +10,13 @@ import { CAMERA_WORDS, HAIR_COLOUR_WORDS, MOTION_SMALL, MOTION_STAGING, PHONE_WO
 //    text of at most 60 characters, no youth word or prop, no hair colour, no selfie word, no camera, «she» or «her» first, small or slow, one movement, no staging word, and
 //    a phone only where the moment uses one;
 //  - the FRAME's rules (prompt.ts held motions to them before): the content line at the frame's level, the video's staging words, a phone where hers is in her hand or propped,
-//    and no movement of a face the photo does not show.
+//    no movement of a face the photo does not show, and (Q-H = 2) nothing that takes clothing off unless it is an own idea on a frame of «Смелая»;
+//  - a MODEL's text (vision, own) also passes what a bank's author never needed (the WC1 review: text that passes the charset can still be an instruction): the contract's
+//    motion English, one plain clause with no final period, no second sentence, no word that talks to a model, no negation (I5.10), and at least three words.
 //
 // Which source takes what: the grammar runs on `bank`, `code`, `vision` and `own`. A `scene` text is a bank motion verbatim, held to the grammar when its bank loaded, so on a
-// frame it takes the frame's rules alone (a test proves every one of the 271 passes the grammar as well). The frame's rules run on every source but `bank`, which has no frame.
+// frame it takes the frame's rules alone (a test proves every one of the 271 passes the grammar, and a model's rules, as well). The frame's rules run on every source but `bank`,
+// which has no frame and never reads the takes-off rule (the bank is unchanged by Q-H).
 //
 // The answer is the contract's closed `MotionProblem`s (shared/engine/clipMotions.ts), each once, in its fixed display order; `motionTextFindings` keeps each finding's rule and
 // words for the bank's adapter and the engine's log. Pure: no clock, no I/O, nothing imported but modules of studio/shared (scenes/purity.test.ts).
@@ -36,17 +39,23 @@ export interface MotionFrame {
 /** The rules, in the order they are read (the bank's own order for the ones it takes). */
 export const MOTION_RULES = [
   "printable",
+  "charset",
+  "form",
   "length",
   "youth",
   "revealing",
   "youth-prop",
   "hair-colour",
+  "instruction",
+  "negation",
   "takes-off",
   "selfie",
   "camera",
   "she-her",
+  "words",
   "small",
   "one-movement",
+  "sentence",
   "staging",
   "phone-moment",
   "phone-in-hand",
@@ -162,6 +171,21 @@ export function repairMayHelp(problems: readonly MotionProblem[]): boolean {
 const PRINTABLE = /^[\x20-\x7e]+$/;
 const MOTION_START = /^(?:she|her)\s/;
 
+// ---------- a model's text (vision, own): the WC1 review's injection-ish shapes that pass the charset ----------
+
+/** One plain clause: no double space, no hyphen or apostrophe outside a word, no stray comma, no final period (the motion sentence adds its own). */
+const NOT_ONE_CLAUSE = /\s{2}|(?<![A-Za-z0-9])-|-(?![A-Za-z0-9])|(?<![A-Za-z])'|'(?![A-Za-z])|\s,|,(?!\s[A-Za-z0-9])|\.$/;
+/** A second sentence after a period. */
+const SECOND_SENTENCE = /\.\s*\S/;
+/** Words that talk to a model, never about her movement. */
+const INSTRUCTION_WORDS = /\b(?:ignor\w*|disregard\w*|instructions?|prompts?|system|assistant|overrid\w*|jailbreak\w*|uncensored|nsfw|negative|rules?)\b/i;
+/** A negation names what it negates, and so puts it into the prompt (I5.10). */
+const NEGATION = /\b(?:no|not|never|without|nothing|none|nobody|neither|nor)\b|n't\b/i;
+/** A motion is at least «she» or «her», a verb and its manner. */
+const MOTION_WORDS_MIN = 3;
+
+const isModelText = (scope: Scope): boolean => scope.source === "vision" || scope.source === "own";
+
 /** Where a rule reads: the bank at load (no frame), or a frame with the text's source. */
 type Scope = { readonly source: "bank"; readonly level: ContentLevel; readonly momentUsesPhone: boolean } | { readonly source: ClipMotionSource; readonly frame: MotionFrame };
 
@@ -189,6 +213,17 @@ const RULES: readonly RuleCheck[] = [
     problem: "content",
     check: (text, scope) => (takesGrammar(scope) && (text.trim() !== text || text.length === 0 || !PRINTABLE.test(text)) ? "must be plain printable ASCII with no edge space" : null),
   },
+  {
+    rule: "charset",
+    problem: "content",
+    check: (text, scope) => (isModelText(scope) && !MOTION_ENGLISH.test(text) ? "holds a character outside the motion English (letters, digits, spaces and , . ' -)" : null),
+  },
+  {
+    rule: "form",
+    problem: "content",
+    check: (text, scope) =>
+      isModelText(scope) && NOT_ONE_CLAUSE.test(text) ? "is not one plain clause (a double space, a hyphen or an apostrophe outside a word, a stray comma or a final period)" : null,
+  },
   { rule: "length", problem: "too-long", check: (text, scope) => (takesGrammar(scope) && text.length > MOTION_TEXT_MAX ? `must be at most ${MOTION_TEXT_MAX} characters` : null) },
   {
     rule: "youth",
@@ -209,6 +244,8 @@ const RULES: readonly RuleCheck[] = [
   },
   { rule: "youth-prop", problem: "content", check: (text, scope) => (takesGrammar(scope) && YOUTH_PROPS.test(text) ? "names a youth prop" : null) },
   { rule: "hair-colour", problem: "content", check: (text, scope) => (takesGrammar(scope) && HAIR_COLOUR_WORDS.test(text) ? "names a hair colour or a dye" : null) },
+  { rule: "instruction", problem: "content", check: (text, scope) => (isModelText(scope) && INSTRUCTION_WORDS.test(text) ? "talks to a model, not about her movement" : null) },
+  { rule: "negation", problem: "content", check: (text, scope) => (isModelText(scope) && NEGATION.test(text) ? "negates, which puts what it negates into the prompt" : null) },
   {
     // Q-H = 2: only an own idea on a frame of «Смелая» may take clothing off. The bank never reads this rule (the bank is unchanged); a vision text never passes it.
     rule: "takes-off",
@@ -220,6 +257,11 @@ const RULES: readonly RuleCheck[] = [
   { rule: "camera", problem: "staging", check: (text, scope) => (takesGrammar(scope) && CAMERA_WORDS.test(text) ? "names a camera or a lens" : null) },
   { rule: "she-her", problem: "not-motion", check: (text) => (MOTION_START.test(text) ? null : "opens with «she» or «her»") },
   {
+    rule: "words",
+    problem: "not-motion",
+    check: (text, scope) => (isModelText(scope) && text.split(/\s+/).filter((word) => word !== "").length < MOTION_WORDS_MIN ? "is too short to say a movement" : null),
+  },
+  {
     rule: "small",
     problem: "not-small",
     check: (text, scope) => (takesGrammar(scope) && !MOTION_SMALL.test(text) ? "is small or slow: «slowly», «a little», «a bit», «slightly», «gently» or «small»" : null),
@@ -229,6 +271,7 @@ const RULES: readonly RuleCheck[] = [
     problem: "two-movements",
     check: (text, scope) => (takesGrammar(scope) && (/\bthen\b|;/.test(text) || (text.match(/\band\b/g) ?? []).length > 1) ? "is one movement (at most a there-and-back with one «and»)" : null),
   },
+  { rule: "sentence", problem: "two-movements", check: (text, scope) => (isModelText(scope) && SECOND_SENTENCE.test(text) ? "holds a second sentence" : null) },
   {
     rule: "staging",
     problem: "staging",
