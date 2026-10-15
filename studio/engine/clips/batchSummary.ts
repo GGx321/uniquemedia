@@ -3,8 +3,9 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 import { CLIP_BATCH_RULES, clipBatchFields, type ClipBatchSummary, type ClipCost } from "../../shared/engine";
 import { batchSummaryOf, clipBatchOutcomeOf, startBatchState } from "../../shared/engine/clipBatchSummary";
-import { fsyncDir, isTempName, readFolderNames, readRecordFile, writeJsonAtomic } from "../library/durableFs";
+import { fsyncDir, hasErrorCode, isTempName, readFolderNames, readRecordFile, writeJsonAtomic } from "../library/durableFs";
 import { isLibraryId } from "../library/ids";
+import type { ClipJobOutcome } from "./job";
 import type { ClipRecord } from "./schemas";
 
 // Stage 5, 5b.2, S5.WB2c (plan s5b2 §5.2, I5.62, I5.63): the batch's OWN summary, so the «Клипы» header never derives a money sentence from the clip records. A record says what one clip is now; a batch member is
@@ -53,6 +54,26 @@ export function summaryOf(file: ClipBatchFile, costs: ReadonlyMap<string, ClipCo
 /** How a member ended, by its clip's record: made, refused for its content, or failed for any other reason. */
 export function outcomeOfRecord(record: Pick<ClipRecord, "outcome">): "ready" | "refused" | "failed" {
   return clipBatchOutcomeOf(record.outcome);
+}
+
+/** How a batch member's clip job ended, for its summary. */
+export type MemberEnd = { readonly kind: "ended"; readonly outcome: "ready" | "refused" | "failed" } | { readonly kind: "cancelled"; readonly detail: "cancelled" };
+
+/**
+ * A member's end by its job's outcome: as its record says; failed when it ended with no record; cancelled by the owner before its POST. A stop of the engine tells nothing, in `preparing` too, where its job ends
+ * `cancelled` (round 2): nobody cancelled it, and the restart decides from its clip.
+ */
+export function memberEndOf(outcome: ClipJobOutcome, engineStopping: boolean): MemberEnd | null {
+  switch (outcome.kind) {
+    case "recorded":
+      return { kind: "ended", outcome: outcomeOfRecord(outcome.record) };
+    case "refused":
+      return { kind: "ended", outcome: "failed" };
+    case "cancelled":
+      return engineStopping ? null : { kind: "cancelled", detail: "cancelled" };
+    case "interrupted":
+      return null;
+  }
 }
 
 // ---------- the store ----------
@@ -175,14 +196,22 @@ export class BatchSummaryStore {
 
   async #write(clipsDir: string, file: ClipBatchFile): Promise<void> {
     await this.#beforeWrite?.(file);
+    // One level at a time, inside the avatar's folder that is there (round 2): an avatar folder that went (a delete) is never made again, the write fails. A folder made now is flushed into its parent before
+    // the file is written into it.
+    if (await makeFolder(clipsDir)) await fsyncDir(dirname(clipsDir));
     const dir = batchesDirOf(clipsDir);
-    const made = await mkdir(dir, { recursive: true });
-    // A folder made now (the batches folder, and the clips folder of an avatar that never had a clip) is flushed into its parent before the file is written into it.
-    if (made !== undefined) {
-      await fsyncDir(dirname(made));
-      if (made !== dir) await fsyncDir(clipsDir);
-    }
+    if (await makeFolder(dir)) await fsyncDir(clipsDir);
     await writeJsonAtomic(batchSummaryPath(clipsDir, file.batchId), file);
   }
 }
 
+/** Makes one folder inside a parent that must exist; false when it was there already. */
+async function makeFolder(path: string): Promise<boolean> {
+  try {
+    await mkdir(path);
+    return true;
+  } catch (error) {
+    if (hasErrorCode(error, "EEXIST")) return false;
+    throw error;
+  }
+}

@@ -165,7 +165,7 @@ export class ClipBatch {
     this.#stopped = true;
     let cancelled = 0;
     for (const member of this.#members) if (member.state === "queued" && this.#cancel(member, "cancelled")) cancelled++;
-    if (cancelled > 0) this.#ports.note({ kind: "stop", detail: "cancelled" });
+    if (cancelled > 0) this.#note({ kind: "stop", detail: "cancelled" });
     return cancelled;
   }
 
@@ -185,7 +185,7 @@ export class ClipBatch {
       this.#stopped = true;
       for (const member of this.#members) if (member.state === "queued") this.#cancel(member, undefined);
       this.#finished = true;
-      this.#ports.note({ kind: "over", at: new Date(this.#ports.clock()).toISOString() });
+      this.#note({ kind: "over", at: new Date(this.#ports.clock()).toISOString() });
       this.#ports.finished();
     }
   }
@@ -244,7 +244,7 @@ export class ClipBatch {
 
     // 4. 5b.1's clip job, verbatim. The next turn starts when this member's money closes.
     member.state = "running";
-    ports.note({ kind: "running", index: member.index, clipId: member.clipId });
+    this.#note({ kind: "running", index: member.index, clipId: member.clipId });
     await new Promise<void>((resolve) => {
       ports.runMember({
         member,
@@ -293,6 +293,15 @@ export class ClipBatch {
   #alone(member: BatchMember): boolean {
     const ports = this.#ports;
     return clipAlone({ ledger: ports.budget.ledger, holds: ports.holds, attemptId: clipAttemptId(member.clipId, 1), nowMs: ports.clock() });
+  }
+
+  /** A transition, told to the batch's summary. Never throws (round 2): a summary that cannot be told is logged, and never leaves a member's job, a hold or the money unit behind. */
+  #note(change: BatchChange): void {
+    try {
+      this.#ports.note(change);
+    } catch (error) {
+      this.#ports.log(`[clip] batch ${this.id}: its summary could not be told a change (${error instanceof Error ? error.name : typeof error})`);
+    }
   }
 
   /** The member's wait is told to the window (`queued` with the reason). */
@@ -357,7 +366,7 @@ export class ClipBatch {
       "queued",
     );
     this.#members.push({ ...member, jobId, clipId, capKey, signal, wake: new AbortController(), held: false, retried: true, state: "queued" });
-    ports.note({ kind: "requeued", index: member.index, clipId });
+    this.#note({ kind: "requeued", index: member.index, clipId });
     const progress = ports.jobs.progress(jobId, 0);
     if (progress !== null) ports.emit({ v: PROTOCOL_VERSION, id: ports.newId(), kind: "event", type: "job.progress", payload: progress });
   }
@@ -367,7 +376,7 @@ export class ClipBatch {
     this.#stopped = true;
     let cancelled = 0;
     for (const member of this.#members) if (member.state === "queued" && this.#cancel(member, detail)) cancelled++;
-    if (cancelled > 0) this.#ports.note({ kind: "stop", detail });
+    if (cancelled > 0) this.#note({ kind: "stop", detail });
   }
 
   /** A member whose turn could not start (no usable key): its job fails, free, with the error; the batch goes on (each later member fails the same way, fast). */
@@ -379,7 +388,7 @@ export class ClipBatch {
     if (member.held) ports.budget.releaseHold(clipAttemptId(member.clipId, 1));
     ports.clearCap(member.capKey);
     const failure = error instanceof EngineFailure ? error.error : { code: "AUTH_INVALID" as const, detail: "no usable OpenRouter key" };
-    ports.note({ kind: "ended", index: member.index, clipId: member.clipId, outcome: "failed" });
+    this.#note({ kind: "ended", index: member.index, clipId: member.clipId, outcome: "failed" });
     const state = ports.jobs.finishClip(member.jobId, { status: "failed", error: failure });
     if (state !== null) ports.emit({ v: PROTOCOL_VERSION, id: ports.newId(), kind: "event", type: "job.failed", payload: { kind: "clip", jobId: member.jobId, avatarId: this.avatarId, clipId: member.clipId, error: failure } });
     ports.emitMoney();
@@ -393,7 +402,7 @@ export class ClipBatch {
     member.wake.abort();
     if (member.held) ports.budget.releaseHold(clipAttemptId(member.clipId, 1));
     ports.clearCap(member.capKey);
-    ports.note(detail === undefined ? { kind: "dropped", index: member.index, clipId: member.clipId } : { kind: "cancelled", index: member.index, clipId: member.clipId, detail });
+    this.#note(detail === undefined ? { kind: "dropped", index: member.index, clipId: member.clipId } : { kind: "cancelled", index: member.index, clipId: member.clipId, detail });
     const state = ports.jobs.finishClip(member.jobId, detail === undefined ? { status: "cancelled" } : { status: "cancelled", detail });
     if (state !== null) {
       ports.emit({

@@ -64,7 +64,7 @@ export interface MockBatchPorts<P> {
   readonly cancelJob: (member: BatchMember<P>, detail: ClipCancelDetail | undefined) => void;
   /** A member whose turn could not start (no usable key): its job fails, free, with the error. */
   readonly failJob: (member: BatchMember<P>, error: EngineError) => void;
-  /** A member requeued after a 429: a new job with a new id for the same place in the batch, announced `queued` under `rate-limit`. */
+  /** A member requeued after a 429: a new job with a new id for the same place in the batch, announced `queued` waiting for its `turn` (its own turn, inside the pause, then says `rate-limit`). */
   readonly requeue: (member: BatchMember<P>) => BatchMember<P>;
   /** The member's turn has come: the mock's clip, as a single clip runs. The batch hears of its money through `ports.closed`. */
   readonly runMember: (member: BatchMember<P>, prices: ClipPrices) => void;
@@ -140,7 +140,7 @@ export class MockClipBatch<P> {
     this.#stopped = true;
     let cancelled = 0;
     for (const member of this.#members) if (member.state === "queued" && this.#cancel(member, "cancelled")) cancelled++;
-    if (cancelled > 0) this.#ports.note({ kind: "stop", detail: "cancelled" });
+    if (cancelled > 0) this.#note({ kind: "stop", detail: "cancelled" });
     return cancelled;
   }
 
@@ -151,6 +151,15 @@ export class MockClipBatch<P> {
     for (const member of this.#members) {
       member.wake?.();
       member.wake = null;
+    }
+  }
+
+  /** A transition, told to the batch's summary; never throws (engine/clips/batch.ts `#note`, round 2): a summary that cannot be told never leaves a job or the unit behind. */
+  #note(change: BatchChange): void {
+    try {
+      this.#ports.note(change);
+    } catch {
+      this.#ports.log(`[clip] batch ${this.id}: its summary could not be told a change`);
     }
   }
 
@@ -173,7 +182,7 @@ export class MockClipBatch<P> {
       // The end: nothing queued and the last member's money is closed.
       this.#stopped = true;
       this.#finished = true;
-      this.#ports.note({ kind: "over", at: new Date(this.#ports.clock()).toISOString() });
+      this.#note({ kind: "over", at: new Date(this.#ports.clock()).toISOString() });
       this.#ports.finished();
       return;
     }
@@ -224,7 +233,7 @@ export class MockClipBatch<P> {
       }
       member.state = "running";
       member.wake = null;
-      ports.note({ kind: "running", index: member.index, clipId: member.clipId });
+      this.#note({ kind: "running", index: member.index, clipId: member.clipId });
       ports.runMember(member, prices);
     });
   }
@@ -307,7 +316,7 @@ export class MockClipBatch<P> {
     if (member.retried || this.#stopped) return;
     const next = ports.requeue(member);
     this.#members.push(next);
-    ports.note({ kind: "requeued", index: next.index, clipId: next.clipId });
+    this.#note({ kind: "requeued", index: next.index, clipId: next.clipId });
   }
 
   /** Every member still queued ends cancelled for free with `detail`; nothing is requeued after it. */
@@ -315,7 +324,7 @@ export class MockClipBatch<P> {
     this.#stopped = true;
     let cancelled = 0;
     for (const member of this.#members) if (member.state === "queued" && this.#cancel(member, detail)) cancelled++;
-    if (cancelled > 0) this.#ports.note({ kind: "stop", detail });
+    if (cancelled > 0) this.#note({ kind: "stop", detail });
   }
 
   /** A member whose turn could not start (no usable key): its job fails, free, with the error; the batch goes on (each later member fails the same way, fast). */
@@ -325,7 +334,7 @@ export class MockClipBatch<P> {
     member.wake?.();
     member.wake = null;
     if (member.held) this.#ports.releaseHold(member);
-    this.#ports.note({ kind: "ended", index: member.index, clipId: member.clipId, outcome: "failed" });
+    this.#note({ kind: "ended", index: member.index, clipId: member.clipId, outcome: "failed" });
     this.#ports.failJob(member, error);
     this.#next(member);
   }
@@ -337,7 +346,7 @@ export class MockClipBatch<P> {
     member.wake?.();
     member.wake = null;
     if (member.held) this.#ports.releaseHold(member);
-    this.#ports.note(detail === undefined ? { kind: "dropped", index: member.index, clipId: member.clipId } : { kind: "cancelled", index: member.index, clipId: member.clipId, detail });
+    this.#note(detail === undefined ? { kind: "dropped", index: member.index, clipId: member.clipId } : { kind: "cancelled", index: member.index, clipId: member.clipId, detail });
     this.#ports.cancelJob(member, detail);
     this.#next(member);
     return true;

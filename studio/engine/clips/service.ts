@@ -48,6 +48,7 @@ import {
   afterRestart,
   applyBatchChange,
   clipIdsToLook,
+  memberEndOf,
   moneyOpen,
   outcomeOfRecord,
   startBatchFile,
@@ -56,6 +57,7 @@ import {
   KEEP_BATCHES,
   type BatchChange,
   type ClipBatchFile,
+  type MemberEnd,
   type MemberLook,
 } from "./batchSummary";
 import { ClipExports } from "./export";
@@ -123,23 +125,6 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 /** A Kling clip refused for free whose request kept its fallback: what mode `offer` offers on Grok. */
 function offersGrok(record: ClipRecord): boolean {
   return record.outcome.status === "failed" && record.outcome.reason === "refused-free" && record.request.model === "kling" && record.request.fallback === "auto";
-}
-
-/** How a batch member's clip job ended, for its summary (5b.2, S5.WB2c). */
-type MemberEnd = { kind: "ended"; outcome: "ready" | "refused" | "failed" } | { kind: "cancelled"; detail: "cancelled" };
-
-/** A member's end by its job's outcome: as its record says; failed when it ended with no record; cancelled by the owner before its POST; nothing for a stop of the engine (the restart decides). */
-function memberEndOf(outcome: ClipJobOutcome): MemberEnd | null {
-  switch (outcome.kind) {
-    case "recorded":
-      return { kind: "ended", outcome: outcomeOfRecord(outcome.record) };
-    case "refused":
-      return { kind: "ended", outcome: "failed" };
-    case "cancelled":
-      return { kind: "cancelled", detail: "cancelled" };
-    case "interrupted":
-      return null;
-  }
 }
 
 /** A refusal of the batch's month hold, as the command's error: the codes map one to one (the batch is refused whole, and nothing was held). */
@@ -1073,9 +1058,13 @@ export class ClipService {
     return ledger === undefined ? file : withCosts(file, clipCostsOf(ledger));
   }
 
-  /** A transition of a batch, written to its summary in the background, in the order told. */
+  /** A transition of a batch, written to its summary in the background, in the order told. Never throws: a summary that cannot be told never holds a member's job or the money unit (round 2). */
   #noteBatch(clipsDir: string, batchId: string, change: BatchChange): void {
-    void this.#summaries.change(clipsDir, batchId, (current) => (current === null ? null : this.#priced(applyBatchChange(current, change))));
+    try {
+      void this.#summaries.change(clipsDir, batchId, (current) => (current === null ? null : this.#priced(applyBatchChange(current, change))));
+    } catch (error) {
+      this.#deps.log(`[clip] batch ${batchId}: its summary could not be told a change (${error instanceof Error ? error.name : typeof error})`);
+    }
   }
 
   /** A batch member's record was committed (a recovery's, or a download fetched again): its member ends as the record says. */
@@ -1271,13 +1260,13 @@ export class ClipService {
         signal,
       );
       end = this.#endOf(outcome, job.key, job.member !== undefined);
-      // 5b.2 (S5.WB2c): the member's end, told before the job's own end is announced (a list that follows the event reads it). A stop of the engine tells nothing: the restart decides.
-      const memberEnd = memberEndOf(outcome);
-      if (memberEnd !== null) job.member?.ended(memberEnd);
+      // 5b.2 (S5.WB2c): the member's end, told before the job's own end is announced (a list that follows the event reads it). A stop of the engine tells nothing, in `preparing` too: the restart decides.
+      const memberEnd = memberEndOf(outcome, this.#stop.signal.aborted);
+      if (memberEnd !== null) this.#tellMemberEnd(job, memberEnd);
     } catch (error) {
       deps.log(`[clip] ${job.clipId}: the job failed (${error instanceof Error ? error.name : typeof error})`);
       end = { status: "failed", error: this.#errorOf(error) };
-      job.member?.ended({ kind: "ended", outcome: "failed" });
+      this.#tellMemberEnd(job, { kind: "ended", outcome: "failed" });
     } finally {
       // A fault before the chain ran (the client, the gate) still gives the slot and the paid count back: nothing of the clip's money can be open then.
       closeMoney();
@@ -1292,6 +1281,15 @@ export class ClipService {
       else if (end.status === "cancelled") deps.emit({ v, id: deps.newId(), kind: "event", type: "job.cancelled", payload: end.detail === undefined ? ref : { ...ref, detail: end.detail } });
     } catch (error) {
       deps.log(`[clip] the end of job ${job.jobId} could not be announced (${error instanceof Error ? error.name : typeof error})`);
+    }
+  }
+
+  /** A batch member's end, told to its summary; a summary that cannot be told is logged and never changes how the job ends (round 2). */
+  #tellMemberEnd(job: { clipId: string; member?: { ended: (change: MemberEnd) => void } }, change: MemberEnd): void {
+    try {
+      job.member?.ended(change);
+    } catch (error) {
+      this.#deps.log(`[clip] ${job.clipId}: its batch's summary could not be told how it ended (${error instanceof Error ? error.name : typeof error})`);
     }
   }
 

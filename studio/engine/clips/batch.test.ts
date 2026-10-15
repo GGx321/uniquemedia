@@ -82,6 +82,8 @@ interface World {
   clockReads: number;
   /** 5b.2 (S5.WB2c): what the batch told its summary, in order. */
   readonly notes: BatchChange[];
+  /** Round 2: the summary port throws (a defect behind it): the batch must not leave a job, a hold or the unit behind. */
+  noteThrows: boolean;
 }
 
 function newWorld(): World {
@@ -114,6 +116,7 @@ function newWorld(): World {
     onClock: null,
     clockReads: 0,
     notes: [],
+    noteThrows: false,
   };
 }
 
@@ -176,7 +179,10 @@ function ports(w: World): BatchPorts {
       void Promise.resolve(w.script(run, w));
     },
     finished: () => void w.finished++,
-    note: (change) => void w.notes.push(change),
+    note: (change) => {
+      if (w.noteThrows) throw new Error("the summary could not be told");
+      w.notes.push(change);
+    },
     sleep: (ms, signal) => {
       w.sleeps.push(ms);
       if (signal.aborted) return Promise.resolve();
@@ -1021,5 +1027,32 @@ describe("ClipBatch: what it tells the batch's summary (5b.2, S5.WB2c)", () => {
     w.recheck = (member) => (member.index === 2 ? { kind: "gone" } : { kind: "ok", bytes: new Uint8Array([1]) });
     await build(w, 3).run();
     expect(kinds(w)).toEqual(["running:1", "cancelled:2", "running:3", "over"]);
+  });
+});
+
+describe("ClipBatch: a summary that cannot be told (round 2)", () => {
+  test("a summary port that throws leaves no job queued or open, no hold and no cap behind, and gives the unit back once", async () => {
+    const w = newWorld();
+    w.noteThrows = true;
+    await build(w, 3).run();
+
+    expect(w.runs).toEqual(ids(3));
+    for (const id of ids(3)) expect(stateOf(w, id)?.status).toBe("done");
+    expectClean(w);
+  });
+
+  test("a stop's cancels and the owner's cancel finish their jobs even when the summary cannot be told", async () => {
+    const w = newWorld();
+    w.noteThrows = true;
+    let close: () => void = () => undefined;
+    w.script = (run, world) => new Promise<void>((resolve) => (close = () => (closeAs(world, run, COMPLETED), resolve())));
+    const { batch } = build(w, 3);
+    batch.start();
+    await flush();
+    expect(batch.cancelQueued()).toBe(2);
+    close();
+    await until(() => w.finished > 0, "the end");
+    expect(details(w, ids(3))).toEqual([undefined, "cancelled", "cancelled"]);
+    expectClean(w);
   });
 });

@@ -11,6 +11,7 @@ import {
   applyBatchChange,
   batchSummaryPath,
   clipIdsToLook,
+  memberEndOf,
   moneyOpen,
   outcomeOfRecord,
   startBatchFile,
@@ -172,6 +173,21 @@ describe("outcomeOfRecord", () => {
   });
 });
 
+describe("memberEndOf: how a member's clip job ended, for its summary", () => {
+  test("as its record says; failed with no record; the owner's cancel before its POST", () => {
+    expect(memberEndOf({ kind: "recorded", record: readyRecord() }, false)).toEqual({ kind: "ended", outcome: "ready" });
+    expect(memberEndOf({ kind: "recorded", record: failedRecord("refused-free", undefined) }, false)).toEqual({ kind: "ended", outcome: "refused" });
+    expect(memberEndOf({ kind: "refused", error: { code: "BUDGET_EXCEEDED" } }, false)).toEqual({ kind: "ended", outcome: "failed" });
+    expect(memberEndOf({ kind: "cancelled" }, false)).toEqual({ kind: "cancelled", detail: "cancelled" });
+  });
+
+  test("a stop of the engine tells nothing, even in `preparing` where the job ends `cancelled` (round 2): the restart decides, and nobody cancelled it", () => {
+    expect(memberEndOf({ kind: "cancelled" }, true)).toBeNull();
+    expect(memberEndOf({ kind: "interrupted" }, false)).toBeNull();
+    expect(memberEndOf({ kind: "interrupted" }, true)).toBeNull();
+  });
+});
+
 describe("afterRestart: no batch resumes after a restart (I5.63)", () => {
   const look = (entries: Record<string, MemberLook>): ReadonlyMap<string, MemberLook> => new Map(Object.entries(entries));
   const midBatch = (): ClipBatchFile => applyBatchChange(fresh(3), { kind: "running", index: 1, clipId: clip(1) });
@@ -316,6 +332,17 @@ describe("BatchSummaryStore", () => {
       expect((await summaries.read(clipsDir)).map((file) => file.batchId).sort()).toEqual([BATCH, other]);
     } finally {
       await done();
+    }
+  });
+
+  test("never brings back the folder of an avatar that is gone (round 2): the write fails, is logged, and creates nothing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "studio-batch-summary-"));
+    try {
+      const gone = join(root, "avatar-gone", "clips");
+      await store().change(gone, BATCH, () => fresh(1));
+      expect(await readdir(root)).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 
