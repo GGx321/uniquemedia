@@ -123,10 +123,12 @@ export interface WorkTileProps {
   readonly place?: { readonly index: number; readonly size: number };
   /** 5b.2 (60): a member waiting its turn — calm: no shimmer, no spinner, no step under way; nothing is spent while it waits (README decision 10). */
   readonly waiting?: boolean;
+  /** 5b.2 (README decision 13, review L5): the tab's one live region — false for a second clip at work (a member saving its file while the next one prepares). */
+  readonly live?: boolean;
 }
 
 /** A clip at work (§6 40): the source photo dimmed, the phase with a spinner, the steps, the money that may still go; «Отменить» only before the POST. */
-export function WorkTile({ motion, avatarId, photoId, clip, line, done, total, length, money, cancelling, onCancel, place, waiting = false }: WorkTileProps) {
+export function WorkTile({ motion, avatarId, photoId, clip, line, done, total, length, money, cancelling, onCancel, place, waiting = false, live = true }: WorkTileProps) {
   const grok = clip.model === "grok";
   return (
     <article className={waiting ? "clip-tile clip-tile-work clip-tile-queued" : "clip-tile clip-tile-work"} aria-label={`${waiting ? "Клип в очереди" : "Клип в работе"}: ${motion}`} aria-busy={waiting ? undefined : "true"}>
@@ -157,7 +159,7 @@ export function WorkTile({ motion, avatarId, photoId, clip, line, done, total, l
             <span>{line.text}</span>
           </p>
         ) : (
-          <p className={line.tone === "warn" ? "clip-phase clip-phase-warn" : line.tone === "quiet" ? "clip-phase clip-phase-quiet" : "clip-phase"} role="status">
+          <p className={line.tone === "warn" ? "clip-phase clip-phase-warn" : line.tone === "quiet" ? "clip-phase clip-phase-quiet" : "clip-phase"} role={live ? "status" : undefined}>
             <span className="spin" aria-hidden="true" />
             <span>{line.text}</span>
           </p>

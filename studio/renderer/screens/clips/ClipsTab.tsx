@@ -109,8 +109,14 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
   const pendingJob = (job: JobView): boolean => job.kind === "clip" && job.clip !== undefined && job.status === "done" && behind(job) && !recordOf.has(job.clip.clipId);
   const avatarJobs = view.jobs.filter((job) => job.avatarId === avatarId);
   const roles = batchRecordRoles(records, avatarJobs, pendingJob);
-  const batchId = list.clips === null ? null : latestBatchId(records, avatarJobs);
-  const batch = batchId === null || batchDismissals(store).has(batchId) ? null : batchView(batchId, { records, jobs: avatarJobs, pending: pendingJob, cancelled });
+  const summaries = list.batches ?? [];
+  const batchId = list.clips === null ? null : latestBatchId(records, avatarJobs, summaries);
+  // The engine's own summary of the batch, when listed (S5.WB2c): its members and every money word of the header come from it.
+  const summary = batchId === null ? null : (summaries.find((s) => s.batchId === batchId) ?? null);
+  const batch = batchId === null || batchDismissals(store).has(batchId) ? null : batchView(batchId, { records, jobs: avatarJobs, summary, pending: pendingJob, cancelled });
+  // One live region on the tab (README decision 13, review L5): the phase of the one clip at work — the member in its paid phases if there is one, else the first at work.
+  const atWork = work.filter((job) => isActiveJob(job) && job.clip.phase !== "queued");
+  const liveJobId = (atWork.find((job) => ["preparing", "submitting", "rendering", "proving"].includes(job.clip.phase ?? "")) ?? atWork[0])?.jobId ?? null;
   // The cancel this window sent is answered: the button goes at once, whatever the members' own events still have to say.
   const header = batch !== null && cancelled?.batchId === batch.batchId ? { ...batch, cancel: false } : batch;
   const shownRecords = records.filter((clip) => roles.get(clip.clipId) !== "hidden");
@@ -350,6 +356,7 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
                   onCancel={isActiveJob(job) && job.clip.batch === undefined ? () => void cancel(job) : null}
                   place={job.clip.batch}
                   waiting={phase === "queued"}
+                  live={job.jobId === liveJobId}
                 />
               </div>
             );

@@ -31,9 +31,8 @@ const REMAINING: Record<string, string[]> = {
   "autopilot/planModel.ts": ["committedMicros + expectedMicros", "worstMicros - expectedMicros"],
   // 5b.2, S5.WB4: the pick bar's «В этом месяце осталось $6.20 — это примерно 7 клипов» is, by the plan (s5b2 §5.2.1, §6 58a), «from MoneyStatus and the budget setting»: budget − spent − open,
   // rounded DOWN, only a hint before any engine call. The sheet that follows shows the engine's own room (`clips.batchOptions.monthRoomMicros`). Open for the engine: a room figure in MoneyStatus.
-  // And 60b's «Пакет готов: … · $3.78» (and #worst's «Отказы учтены по максимуму $X») add the batch's records' ledger costs (`ClipCost`, each the engine's own): no engine figure sums a batch.
-  // Open for the engine: a batch total in `clips.list`.
-  "clips/batchModel.ts": ["money.monthlyBudgetMicros - money.spentMicros", "totalMicros + record.cost.micros", "worstMicros + record.cost.micros"],
+  // (The batch's own total, 60b, is the engine's `ClipBatchSummary.cost` since S5.WB2c: the window adds nothing there.)
+  "clips/batchModel.ts": ["money.monthlyBudgetMicros - money.spentMicros"],
   // Open for the engine (plan §33): the strip's totals «Весь запуск» / «Дальше» add the images' figure to the write's. The engine has no combined price of a write and a draw.
   "photos/SceneStrip.tsx": [
     "images.expectedMicros + note.price.expectedMicros",
