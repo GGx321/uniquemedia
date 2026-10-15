@@ -214,6 +214,32 @@ describe("clips.suggestMotions: the photo and the store", () => {
     expect(file).toMatchObject({ next: { vision: 4, own: 1 }, reading: { notes: [] }, photoId: w.photoId });
   });
 
+  test("a text the store already holds is not stored again, compared after normalising (round 3, L5)", async () => {
+    const w = await motionWorld(dir());
+    await w.suggestOk(GOOD_TEXTS.slice(0, 2));
+    const again = (GOOD_TEXTS[0] ?? "").replace(/^she /, "She ");
+    w.net.setChat(() => suggestionReply([`${again}.`, GOOD_TEXTS[2] ?? ""]));
+    const second = resultOf(await w.suggest());
+    expect(second).toMatchObject({ outcome: "ok", motions: [{ id: "v-3", text: GOOD_TEXTS[2] }] });
+    const file = await storeOf(w.storePath());
+    expect(file.items.map((i) => [i.id, i.text])).toEqual([["v-1", GOOD_TEXTS[0]], ["v-2", GOOD_TEXTS[1]], ["v-3", GOOD_TEXTS[2]]]);
+  });
+
+  test("when every text is already stored the call is `none`, paid, and the store and its ids are untouched", async () => {
+    const w = await motionWorld(dir());
+    await w.suggestOk(GOOD_TEXTS.slice(0, 2));
+    const before = await readFile(w.storePath(), "utf8");
+    const second = resultOf(await w.suggest());
+    expect(second).toEqual({ outcome: "none", costMicros: 3_400 });
+    expect(await readFile(w.storePath(), "utf8")).toBe(before);
+  });
+
+  test("an own idea with the same English as a stored suggestion is its own item (the sources are separate)", async () => {
+    const w = await motionWorld(dir());
+    await w.suggestOk(GOOD_TEXTS.slice(0, 1));
+    expect(await w.translateOk(GOOD_TEXTS[0] ?? "")).toMatchObject({ outcome: "ok", item: { id: "o-1" } });
+  });
+
   test("a second suggestion continues the ids and replaces the reading", async () => {
     const w = await motionWorld(dir());
     await w.suggestOk(GOOD_TEXTS.slice(0, 2));
@@ -227,7 +253,10 @@ describe("clips.suggestMotions: the photo and the store", () => {
 
   test("the store keeps twelve (FIFO) and an id is never reused", async () => {
     const w = await motionWorld(dir());
-    for (let n = 0; n < 5; n++) await w.suggestOk(GOOD_TEXTS.slice(0, 3));
+    const sha = w.started.engine.library?.getPhoto(w.photoId)?.sha256 ?? "";
+    const items = Array.from({ length: 12 }, (_, i) => ({ id: `v-${i + 1}`, source: "vision", label: `Старое ${i + 1}`, text: `she slowly waits ${i + 1}`, model: "x-ai/grok-4.3", at: "2026-10-15T10:00:00.000Z" }));
+    await w.writeStore({ schemaVersion: 1, photoId: w.photoId, photoSha256: sha, next: { vision: 13, own: 1 }, items });
+    await w.suggestOk(GOOD_TEXTS.slice(0, 3));
     const file = await storeOf(w.storePath());
     expect(file.items).toHaveLength(12);
     expect(file.items[0]?.id).toBe("v-4");
