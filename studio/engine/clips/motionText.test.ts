@@ -659,8 +659,9 @@ describe("an exposure verb with a body part is exposure (round 3): content, but 
     });
   }
 
-  test("her shoulders stay allowed", () => {
-    expect(motionTextProblems("she slowly bares her shoulders", FRIEND, "own")).toEqual([]);
+  test("her shoulders bared are no exposure; since S5.WC2b round 2 the motion grammar reads shoulders only with a verb that does not bare them: a repairable not-motion", () => {
+    // The controller's grammar decision: «shoulder(s) (only with non-exposing verbs)». Stricter than round 3's [], never content.
+    expect(motionTextProblems("she slowly bares her shoulders", FRIEND, "own")).toEqual(["not-motion"]);
   });
 });
 
@@ -730,9 +731,10 @@ describe("the exposure verbs a model reaches for (S5.WC2b): show, display, uncov
     });
   }
 
-  test("what only looks like it stays a motion: her shoulders, her face, over her sunglasses, her back as she turns, her hand", () => {
-    for (const text of ["she slowly bares her shoulders", "she slowly uncovers her face", "she slowly peeks over her sunglasses", "she slowly turns to show her back", "she slowly shows her hand"]) {
-      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, []]);
+  test("what only looks like it is never exposure: her shoulders, her face, over her sunglasses, her back as she turns, her hand (round 2: what the grammar does not read is a repairable not-motion)", () => {
+    expect(motionTextProblems("she slowly peeks over her sunglasses", FRIEND, "vision")).toEqual([]);
+    for (const text of ["she slowly bares her shoulders", "she slowly uncovers her face", "she slowly turns to show her back", "she slowly shows her hand"]) {
+      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, ["not-motion"]]);
     }
   });
 
@@ -798,14 +800,22 @@ describe("the clothing-verb whitelist (S5.WC2b): what she wears may be adjusted,
     });
   }
 
-  /** Her body (cleavage, chest, midriff, stomach, belly, thighs, bare skin) with a verb the whitelist does not name: a body part shown, content. */
-  const BODY = ["she slowly runs her hand along her thigh", "she slowly slides a hand over her stomach", "her midriff slowly comes into view", "she slowly pushes her chest out a little"];
+  /**
+   * Her body with a verb that is no motion's: refused. Round 2 (the grammar): a body word it never reads (a thigh, her midriff) is content; her chest or stomach, which a
+   * motion may rest a hand on or breathe with, is a repairable not-motion (the review's F1: «rubs her belly», «places a hand on her chest» are innocent).
+   */
+  const BODY: readonly (readonly [string, MotionProblem])[] = [
+    ["she slowly runs her hand along her thigh", "content"],
+    ["she slowly slides a hand over her stomach", "not-motion"],
+    ["her midriff slowly comes into view", "content"],
+    ["she slowly pushes her chest out a little", "not-motion"],
+  ];
 
-  for (const text of BODY) {
-    test(`content as vision and own on an ordinary frame and as vision on «Смелая»; accepted as own on «Смелая»: «${text}»`, () => {
-      expect(motionTextProblems(text, FRIEND, "vision")).toEqual(["content"]);
-      expect(motionTextProblems(text, FRIEND, "own")).toEqual(["content"]);
-      expect(motionTextProblems(text, BOLD, "vision")).toEqual(["content"]);
+  for (const [text, problem] of BODY) {
+    test(`${problem} as vision and own on an ordinary frame and as vision on «Смелая»; accepted as own on «Смелая»: «${text}»`, () => {
+      expect(motionTextProblems(text, FRIEND, "vision")).toEqual([problem]);
+      expect(motionTextProblems(text, FRIEND, "own")).toEqual([problem]);
+      expect(motionTextProblems(text, BOLD, "vision")).toEqual([problem]);
       expect(motionTextProblems(text, BOLD, "own")).toEqual([]);
     });
   }
@@ -818,7 +828,6 @@ describe("the clothing-verb whitelist (S5.WC2b): what she wears may be adjusted,
     "she slowly parts her lips",
     "she slowly spreads her fingers",
     "she slowly lifts the cup a little",
-    "she slowly bares her shoulders",
     "she slowly pulls up her jeans a little",
     "she slowly adjusts her top a little",
     "she slowly smooths her dress",
@@ -832,18 +841,12 @@ describe("the clothing-verb whitelist (S5.WC2b): what she wears may be adjusted,
     "she slowly fixes the strap of her dress",
     "she slowly tucks in her shirt",
     "she slowly tucks her shirt into her jeans",
-    "she slowly brushes the sand off her skirt",
-    "she slowly brushes off her skirt",
-    "she slowly brushes off her jeans",
     "she slowly tugs at her sleeve a little",
     "she slowly pulls the hem down a little",
     "she slowly pulls her socks up a little",
     "she slowly buttons up her coat",
     "she slowly zips her jacket up",
-    "she slowly smooths her skirt over her thighs",
     "she slowly pulls the sheet a little higher",
-    "she slowly pulls the sheet up to her chest",
-    "she slowly pulls her sweatshirt down a little",
     "she slowly pulls her robe tighter",
     "she slowly slides the strap back up",
     "she slowly lets the strap settle on her shoulder",
@@ -857,8 +860,27 @@ describe("the clothing-verb whitelist (S5.WC2b): what she wears may be adjusted,
     "she slowly taps her dress shoes together",
   ];
 
+  /**
+   * Round 2 (the grammar, the controller's decision after the review): forms the whitelist read that the grammar does not, each refused with its code. Brushing what she
+   * wears and a sheet up to her chest are no dressing form (a repairable not-motion); a skirt smoothed over her thighs names her thighs (content); «bares her shoulders»
+   * bares them (shoulders only with a verb that does not).
+   */
+  const NO_LONGER_READ: readonly (readonly [string, MotionProblem])[] = [
+    ["she slowly bares her shoulders", "not-motion"],
+    ["she slowly brushes the sand off her skirt", "not-motion"],
+    ["she slowly brushes off her skirt", "not-motion"],
+    ["she slowly brushes off her jeans", "not-motion"],
+    ["she slowly smooths her skirt over her thighs", "content"],
+    ["she slowly pulls the sheet up to her chest", "not-motion"],
+    ["she slowly pulls her sweatshirt down a little", "not-motion"],
+  ];
+
   test("the documented motions pass as vision and own on an ordinary frame", () => {
     for (const text of DOCUMENTED) for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, []]);
+  });
+
+  test("round 2: what the grammar does not read is refused with its code (a repairable not-motion unless it shows her body)", () => {
+    for (const [text, problem] of NO_LONGER_READ) for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, [problem]]);
   });
 
   test("the whitelist's own forms pass as vision and own on an ordinary frame", () => {
@@ -885,25 +907,32 @@ describe("the controller's decisions on the whitelist (S5.WC2b): covering verbs,
     expect([text, "own on «Смелая»", motionTextProblems(text, BOLD, "own")]).toEqual([text, "own on «Смелая»", []]);
   };
 
-  /** Decision 1: what covers her or dresses her more. */
+  /** Decision 1, as the grammar keeps it (round 2: the closed dressing forms): what covers her or dresses her more. */
   const COVERING = [
     "she slowly closes her robe",
+    "she slowly fastens her jacket",
+    "she slowly holds her coat closed",
+    "she slowly pulls the blanket up to her chin",
+    "she slowly pulls her jacket over her shoulders",
+    "she slowly rolls up her sleeves",
+    "she slowly pushes up her sleeves",
+    "she slowly tugs at her sleeve",
+  ];
+  /**
+   * Decision 1's other forms, which the grammar's closed dressing list no longer names (round 2: wraps, ties, belts, drapes, holds to her chest, picks up): a repairable
+   * not-motion, never takes-off. Holding a sheet to her chest and picking up her jacket say she is not wearing them (the review's «holds her top to her chest», «picks up
+   * her jacket from her shoulders»).
+   */
+  const COVERING_NOT_READ = [
     "she slowly wraps her towel tighter",
     "she slowly wraps herself in the blanket",
     "she slowly ties her robe tighter",
     "she slowly ties the belt of her robe",
     "she slowly belts her robe",
-    "she slowly fastens her jacket",
     "she slowly drapes her shawl over her shoulders",
     "she slowly drapes the blanket around her",
     "she slowly holds the sheet to her chest",
-    "she slowly holds her coat closed",
-    "she slowly pulls the blanket up to her chin",
-    "she slowly pulls her jacket over her shoulders",
     "she slowly picks up her jacket",
-    "she slowly rolls up her sleeves",
-    "she slowly pushes up her sleeves",
-    "she slowly tugs at her sleeve",
   ];
   /** Decision 1's limit: the same verbs where what she wears ends less covered. */
   const UNCOVERING = [
@@ -937,24 +966,28 @@ describe("the controller's decisions on the whitelist (S5.WC2b): covering verbs,
     for (const text of COVERING) passes(text);
   });
 
-  test("decision 1: the same verbs that leave what she wears less covered stay takes-off", () => {
-    for (const text of UNCOVERING) refused(text, "takes-off");
+  test("decision 1, round 2: the forms the closed dressing list does not name are a repairable not-motion", () => {
+    for (const text of COVERING_NOT_READ) refused(text, "not-motion");
+  });
+
+  test("decision 1: the same verbs that leave what she wears less covered are refused: takes-off where they name it, else not-motion (a hem tugged at, a dress draped)", () => {
+    for (const text of UNCOVERING) refused(text, text === "she slowly tugs at her hem" || text === "she slowly drapes her dress over her shoulders" ? "not-motion" : "takes-off");
   });
 
   test("decision 2: innocent posture and breathing with her chest, stomach or belly pass", () => {
     for (const text of POSTURE) passes(text);
   });
 
-  test("decision 2: her body shown, touched or pushed out stays content (exposure verbs, a hand along her thigh, a heaving chest)", () => {
-    for (const text of [
-      "she slowly shows her stomach",
-      "she slowly slides a hand over her stomach",
-      "she slowly pushes her chest out a little",
-      "her chest heaves a little",
-      "she slowly rests a hand on her thigh",
-      "she slowly crosses her arms over her chest, pushing it up",
-    ]) {
-      refused(text, "content");
+  test("decision 2: her body shown, touched or pushed out stays refused: content for exposure and a thigh; her chest or stomach a repairable not-motion (round 2)", () => {
+    for (const [text, problem] of [
+      ["she slowly shows her stomach", "content"],
+      ["she slowly slides a hand over her stomach", "not-motion"],
+      ["she slowly pushes her chest out a little", "not-motion"],
+      ["her chest heaves a little", "not-motion"],
+      ["she slowly rests a hand on her thigh", "content"],
+      ["she slowly crosses her arms over her chest, pushing it up", "not-motion"],
+    ] as const) {
+      refused(text, problem);
     }
   });
 
@@ -963,15 +996,15 @@ describe("the controller's decisions on the whitelist (S5.WC2b): covering verbs,
     passes("she slowly adjusts her outfit a little");
   });
 
-  test("decision 6: where the whitelist reads it kept on, the old forms' false refusals are lifted", () => {
-    passes("she slowly pulls her top down a little");
-    passes("she slowly pulls the towel up to her chest");
+  test("decision 6, as the grammar keeps it (round 2): a strap pulled up is read; a top pulled down or a towel pulled up is no dressing form (the review's #TOP regression)", () => {
     for (const source of sources) expect(motionTextProblems("she slowly pulls up her bra strap a little", FRIEND, source)).toEqual(["content"]);
     expect(motionTextProblems("she slowly pulls up her bra strap a little", BOLD, "vision")).toEqual([]);
+    for (const text of ["she slowly pulls her top down a little", "she slowly pulls the towel up to her chest"]) refused(text, "takes-off");
   });
 
-  test("decision 6: what the whitelist does not read as kept on stays refused (a dress, a skirt or a camisole pulled down; a bag's strap lifted, which only the old forms read)", () => {
-    for (const text of ["she slowly pulls her dress down a little", "she slowly pulls her skirt down a little", "she slowly pulls her camisole down a little", "she slowly lifts the strap of her bag"]) {
+  test("decision 6, round 2: a skirt pulled down and a bag's strap lifted pass (the review's F1); a dress or a camisole pulled down stays takes-off", () => {
+    for (const text of ["she slowly pulls her skirt down a little", "she slowly lifts the strap of her bag"]) passes(text);
+    for (const text of ["she slowly pulls her dress down a little", "she slowly pulls her camisole down a little"]) {
       for (const source of sources) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, ["takes-off"]]);
     }
   });

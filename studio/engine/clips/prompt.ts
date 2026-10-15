@@ -81,7 +81,7 @@ function lyingOnHerStomach(facts: FrameFacts): boolean {
 export function clipPromptOf(facts: FrameFacts, motion: string, dialect: ClipDialect, source: ClipMotionSource): ClipPromptResult {
   const findings = motionTextFindings(motion, facts, source);
   if (findings.length > 0) return { ok: false, problems: findings.map((finding) => `${finding.problem} (${finding.rule}): ${finding.what}`) };
-  const off = undressesBy(motion, source);
+  const off = undressesBy(motion, source, facts.bold);
   if (dialect === "grok" && off) return { ok: false, problems: ["takes-off (grok): a motion that takes clothing off or bares her goes to Kling alone"] };
   const rest = [
     poseSentenceFor(facts),
@@ -113,7 +113,7 @@ const DIALECTS: readonly ClipDialect[] = ["kling", "grok"];
 export function clipMotionProblems(facts: FrameFacts, text: string, source: ClipMotionSource): MotionProblem[] {
   const problems = motionTextProblems(text, facts, source);
   if (problems.length > 0) return problems;
-  const dialects: readonly ClipDialect[] = undressesBy(text, source) ? ["kling"] : DIALECTS;
+  const dialects: readonly ClipDialect[] = undressesBy(text, source, facts.bold) ? ["kling"] : DIALECTS;
   return dialects.every((dialect) => clipPromptOf(facts, text, dialect, source).ok) ? [] : ["too-long"];
 }
 
