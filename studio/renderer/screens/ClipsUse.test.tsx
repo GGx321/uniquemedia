@@ -118,7 +118,7 @@ describe("41e: «в видео» on the «Клипы» tile", () => {
     expect(byClip?.getAttribute("title")).toBe("Этот клип уже в готовом видео — второй раз не ставится");
     expect(byPhoto?.textContent).toBe("в видео");
     expect(byPhoto?.getAttribute("title")).toBe("Фото этого клипа или другой клип из него уже в готовом видео — второй раз не ставится");
-    expect(tile("Медленный вдох").querySelector(".clip-used")).toBeNull();
+    expect(tile("Медленный вдох").querySelector(".clip-used") === null).toBe(true);
   });
 });
 
@@ -172,7 +172,7 @@ describe("44b: «Удалить клип?» says what holds the clip", () => {
     await startRender(h, [photoClip(0, P(6)), copyClip(1, copy)]);
     await openClips();
     const dialog = await askDelete("Моргает и улыбается");
-    expect(within(dialog).queryByRole("alert")).toBeNull();
+    expect(within(dialog).queryByRole("alert") === null).toBe(true);
     fireEvent.click(within(dialog).getByRole("button", { name: "Удалить" }));
     await flush();
     await flush();

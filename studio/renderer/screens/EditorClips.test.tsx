@@ -121,7 +121,7 @@ describe("57: the «Клипы» tab", () => {
     expect(plain(tileOf(a).querySelector(".edc-src")?.textContent)).toBe("Фото 2");
     expect(plain(media().querySelector(".ed-bin-hint")?.textContent)).toBe("Клик — кадр в конец ролика. Перетащите на «Кадры», чтобы вставить между кадрами.");
     expect(within(media()).getByText("Mia").getAttribute("title")).toBe("Аватар черновика не меняется");
-    expect(within(media()).queryAllByRole("button", { name: /Удалить/ })).toEqual([]);
+    expect(within(media()).queryAllByRole("button", { name: /Удалить/ }).length).toBe(0);
   });
 
   test("no room left of the 15 s: the hint says so of a clip (WAD re-review N5), and a free clip cannot be added", async () => {
@@ -206,7 +206,7 @@ describe("57a: a click makes the clip's copy and places it", () => {
     expect(plain(timeline().querySelector(".edc-drop")?.textContent)).toBe("Готовим для монтажа…");
     runJob(h, importJobOf(h, b));
     await flush();
-    expect(timeline().querySelector(".edc-drop")).toBeNull();
+    expect(timeline().querySelector(".edc-drop") === null).toBe(true);
     expect(kadrs()[0]).toBe("Кадр 1: клип «Наклоняет голову», 2.0 с");
   });
 
@@ -298,7 +298,7 @@ describe("57c: a refused preparation, one text per reason", () => {
     fireEvent.click(pickOf(clip));
     await flush();
     await flush();
-    expect(within(media()).queryByRole("alert")).toBeNull();
+    expect(within(media()).queryByRole("alert") === null).toBe(true);
     expect(within(media()).getByText("Клипов пока нет.")).toBeDefined();
   });
 
@@ -319,11 +319,11 @@ describe("57c: a refused preparation, one text per reason", () => {
     expect(kadrs()).toHaveLength(2);
     fireEvent.click(within(card).getByRole("button", { name: "Закрыть: Клип «Наклоняет голову»" }));
     await flush();
-    expect(within(media()).queryByRole("alert")).toBeNull();
+    expect(within(media()).queryByRole("alert") === null).toBe(true);
     // «Мои» never shows a clip import's failure.
     fireEvent.click(within(media()).getByRole("tab", { name: "Мои" }));
     await flush();
-    expect(within(media()).queryByRole("alert")).toBeNull();
+    expect(within(media()).queryByRole("alert") === null).toBe(true);
   });
 
   test("a full disk: the video's no-space text; the tile pressable again", async () => {
@@ -380,7 +380,7 @@ describe("57e, 57f: the copy in the draft", () => {
     expect(props().querySelector(".ed-video-name")?.textContent).toBe("Наклоняет голову");
     expect(props().querySelector(".edc-card-src")?.textContent).toBe("Фото 4");
     expect(props().querySelector(".ed-video-tags .tag")?.textContent).toBe("клип");
-    expect(within(props()).queryByText("свой файл")).toBeNull();
+    expect(within(props()).queryByText("свой файл") === null).toBe(true);
     const duplicate = within(props()).getByRole("button", { name: "Дублировать" });
     expect(duplicate.hasAttribute("disabled")).toBe(true);
     expect(duplicate.getAttribute("title")).toBe("Клип не копируется: одно фото — один раз в ролике");
@@ -408,6 +408,6 @@ describe("«Мои» never lists a clip's copy", () => {
     fireEvent.click(within(media()).getByRole("tab", { name: "Мои" }));
     await flush();
     expect(within(media()).getByText("Своих файлов пока нет")).toBeDefined();
-    expect(within(media()).queryByRole("status")).toBeNull();
+    expect(within(media()).queryByRole("status") === null).toBe(true);
   });
 });
