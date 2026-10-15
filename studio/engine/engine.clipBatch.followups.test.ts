@@ -173,6 +173,8 @@ describe("L6: a member's turn never hangs on its photo", () => {
     library.readPhotoVerified = (photoId: string) => (photoId === photoIds[1] ? new Promise<Uint8Array>(() => {}) : read(photoId));
     engine.net.releaseNth("kling", 1);
 
+    // The turn's photo read is bounded at 25 s (R4): wait past it.
+    await until(() => engine.events().some((e) => e.type === "job.cancelled" && "jobId" in e.payload && e.payload.jobId === jobIds[1]), "member 2's end", 40_000);
     const ends = await Promise.all(jobIds.map((id) => jobEnd(engine, id)));
 
     expect(ends.map((end) => end.type)).toEqual(["job.done", "job.cancelled", "job.done"]);
@@ -180,6 +182,28 @@ describe("L6: a member's turn never hangs on its photo", () => {
     expect(ledgerLines(dir()).some((line) => String(line.attemptId).startsWith(jobIds[1] ?? "-"))).toBe(false);
     expect(engine.net.posts("kling")).toHaveLength(2);
     expect(engine.engine.budget?.status().heldMicros).toBe(0);
+  });
+});
+
+describe("R4: the turn's photo read has room for a slow disk", () => {
+  test("a photo read that answers after 6 s (a busy external disk) is still the member's photo: it is made, not `photo-unreadable`", async () => {
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(2));
+    const engine = await started({ net: clipNetwork({ klingBy: firstHeld }) });
+    const { jobIds } = batchOf(await createBatch(engine, { avatarId, photoIds }));
+    await until(() => phasesOf(engine, jobIds[0] ?? "").includes("rendering"), "member 1 rendering");
+    const library = engine.engine.library;
+    if (library === null) throw new Error("no library");
+    const read = library.readPhotoVerified.bind(library);
+    library.readPhotoVerified = async (photoId: string) => {
+      if (photoId === photoIds[1]) await Bun.sleep(6_000);
+      return read(photoId);
+    };
+    engine.net.releaseNth("kling", 1);
+
+    const ends = await Promise.all(jobIds.map((id) => jobEnd(engine, id)));
+
+    expect(ends.map((end) => end.type)).toEqual(["job.done", "job.done"]);
+    expect(engine.net.posts("kling")).toHaveLength(2);
   });
 });
 

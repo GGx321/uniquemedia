@@ -96,6 +96,9 @@ const MASTER_EMBEDDING_TIMEOUT_MS = EMBEDDING_COMPUTE_TIMEOUT_MS;
 /** What a reconcile refused for the startup walk is told to wait before it tries again. */
 const WALK_RETRY_MS = 2_000;
 
+/** A batch member's photo read at its turn: a full JPEG read and its hash on a busy external disk, so more room than a plan read (R4). */
+export const BATCH_PHOTO_READ_TIMEOUT_MS = 25_000;
+
 /** `read()`, or a rejection once `ms` passed: a plan that does not answer in time is no plan (the caller logs it and goes on without one). */
 export async function readPlanWithin<T>(read: () => Promise<T>, ms: number): Promise<T> {
   const bound = timeoutSignal(ms);
@@ -1176,7 +1179,7 @@ export class ClipService {
     let bytes: Uint8Array;
     try {
       // Bounded like the plan read (WB2d, L6): a read that never answers (a stalled volume) is an unreadable photo, free, and never holds the batch's turn.
-      bytes = await readPlanWithin(() => library.readPhotoVerified(photoId), CLIP_PLAN_READ_TIMEOUT_MS);
+      bytes = await readPlanWithin(() => library.readPhotoVerified(photoId), BATCH_PHOTO_READ_TIMEOUT_MS);
     } catch (error) {
       if (deps.currentLibrary() !== library) return { kind: "library-lost" };
       if (!present()) return { kind: "gone" };
