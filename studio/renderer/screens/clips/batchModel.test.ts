@@ -381,7 +381,7 @@ describe("the end (60b): «бесплатно» only for a refusal proven free",
 
 // ---------- the sheet (59–59c) ----------
 
-const EST = (expectedMicros: number, worstMicros: number) => ({ expectedMicros, worstMicros, source: "live" as const });
+const EST = (expectedMicros: number, worstMicros: number) => ({ expectedMicros, worstMicros, prices: "live" as const, pricesAsOf: "2026-10-15T11:00:00.000Z" });
 
 function suitable(photoId: string, o: { bold?: boolean; fallback?: "auto" | "offer" | "none" } = {}): ClipOptions {
   const k = EST(420_000, 504_000);
@@ -394,7 +394,7 @@ function suitable(photoId: string, o: { bold?: boolean; fallback?: "auto" | "off
     bold: o.bold ?? false,
     noFallbackPrices: { std5: k, pro5: k, std10: k, pro10: k },
     monthFits: { std5: "with-fallback", pro5: "with-fallback", std10: "with-fallback", pro10: "with-fallback" },
-  } as ClipOptions;
+  };
 }
 
 function batchOptions(o: { worst?: number; noFallback?: number; expected?: number; room?: number; fit?: "with-fallback" | "without-fallback" | "none"; items?: ClipOptions[] } = {}): ClipBatchOptions {
