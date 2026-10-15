@@ -2,7 +2,7 @@ import type { ClipAttemptModel, ClipMotionSource, ClipQuality, ClipSeconds, Moti
 import { MOMENT_VERBS } from "../../shared/scenes/banks/schema";
 import { contentProblems } from "../../shared/scenes/contentLine";
 import { rendersActivity } from "../../shared/scenes/custom";
-import { motionTextFindings, motionTextProblems, namesPhone, phoneInHandOrPropped } from "../../shared/scenes/motionText";
+import { motionTextFindings, motionTextProblems, namesPhone, phoneInHandOrPropped, takesOff } from "../../shared/scenes/motionText";
 import { VIDEO_TIERS } from "../money/prices";
 import type { VideoFrameImage, VideoRequest } from "../openrouter/types";
 import type { FrameFacts } from "./frameFacts";
@@ -85,7 +85,8 @@ export function clipPromptOf(facts: FrameFacts, motion: string, dialect: ClipDia
     lyingOnHerStomach(facts) ? PRONE_ANCHOR : null,
     facts.legs ? legsLineOf(facts.capture) : null,
     continuityLineOf(motion, facts.activity),
-    facts.legwear === null ? null : legwearLineOf(facts.legwear),
+    // Q-H = 2: a motion that takes clothing off (an own idea on «Смелая») carries no clothing clause, the legwear's included: Kling decides.
+    facts.legwear === null || takesOff(motion) ? null : legwearLineOf(facts.legwear),
     SLOW_LINE,
     LOOK_LINE,
     ADULT_LINE,

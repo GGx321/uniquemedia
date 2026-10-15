@@ -1,4 +1,5 @@
 import { CAPTURES, type Capture } from "../../shared/scenes/captures";
+import { takesOff } from "../../shared/scenes/motionText";
 import { FACE_COVER, captureLineOf } from "../scenes/phoneLook";
 
 // Stage 5, 5b.1, S5.V5 (plan s5b1 §5.5, I5.51): the video look. Every line a clip prompt carries lives here and nowhere else (I5.1, one module per medium; the photo's
@@ -150,6 +151,12 @@ export const CONTINUITY_LINE = "Nothing new appears, and nothing she holds or we
 export const COMES_OFF_LINE = "Nothing new appears, and nothing she wears comes off.";
 
 /**
+ * The continuity line of a motion that takes clothing off (Q-H = 2, the owner 2026-10-14; plan s5b2 §5.3): only an own idea on a frame of «Смелая» gets there (the one motion
+ * check refuses it everywhere else), and its prompt says «Nothing new appears.» alone, with no clothing clause: Kling decides, and its refusal is free.
+ */
+export const NOTHING_NEW_LINE = "Nothing new appears.";
+
+/**
  * What she wears that a motion moves (r2.2 and the controller's round 2): a garment or a cover (strap, sheet, blanket, duvet, waistband, hem, laces, zip, coat), an accessory
  * (earring, sunglasses), or a sleeve she puts on («she slides one arm in slowly»: a coat or a jacket going on, matched as that phrase, never by «arm», which a stretch says
  * too). A held object (a cup, a glass, a mug, her keys, her phone, a fork, a weight) is not one: «nothing she holds … changes» holds it, and «shifts her weight» is her body.
@@ -169,10 +176,12 @@ const HELD_BAG = new RegExp(
 );
 
 /**
- * The continuity line for a motion: «comes off» when it moves what she wears, the base line otherwise, and always the base line for a bag she holds. `activity` is the
- * slot's moment as the photo carries it (null when it does not): «adjusts the strap of her bag» makes «she tugs the strap a little» a bag's strap.
+ * The continuity line for a motion: «Nothing new appears.» alone when it takes clothing off (Q-H = 2: only an own idea on a frame of «Смелая» passes the check with one), «comes
+ * off» when it moves what she wears, the base line otherwise, and always the base line for a bag she holds. `activity` is the slot's moment as the photo carries it (null when
+ * it does not): «adjusts the strap of her bag» makes «she tugs the strap a little» a bag's strap.
  */
 export function continuityLineOf(motion: string, activity: string | null): string {
+  if (takesOff(motion)) return NOTHING_NEW_LINE;
   if (HELD_BAG.test(motion) || (activity !== null && HELD_BAG.test(activity))) return CONTINUITY_LINE;
   return WORN_OR_HELD.test(motion) ? COMES_OFF_LINE : CONTINUITY_LINE;
 }
