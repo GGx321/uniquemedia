@@ -84,6 +84,11 @@ interface World {
   readonly notes: BatchChange[];
   /** Round 2: the summary port throws (a defect behind it): the batch must not leave a job, a hold or the unit behind. */
   noteThrows: boolean;
+  /** WB2d (L1): the attempts the ledger has a reserve line for (open or closed). */
+  reserved: Set<string>;
+  /** WB2d (L1): the ledger refused a write, or the budget is halted. */
+  ledgerFailed: boolean;
+  budgetHalted: boolean;
 }
 
 function newWorld(): World {
@@ -117,6 +122,9 @@ function newWorld(): World {
     clockReads: 0,
     notes: [],
     noteThrows: false,
+    reserved: new Set(),
+    ledgerFailed: false,
+    budgetHalted: false,
   };
 }
 
@@ -153,7 +161,12 @@ function ports(w: World): BatchPorts {
       ledger: {
         openReserves: () => w.openReserves.map((attemptId) => ({ attemptId })),
         closeOf: (id: string) => w.closes.get(id),
+        reserveOf: (id: string) => (w.reserved.has(id) || w.openReserves.includes(id) ? { attemptId: id } : undefined),
+        get failed() {
+          return w.ledgerFailed;
+        },
       } as unknown as BatchPorts["budget"]["ledger"],
+      status: () => ({ state: w.budgetHalted ? "halted" : "ok" }) as ReturnType<BatchPorts["budget"]["status"]>,
       // Like the budget's: a hold that is not there (consumed by a reserve) is left as it is, and only a real release is counted.
       releaseHold: (id) => {
         if (w.holds.delete(id)) w.released.push(id);
@@ -905,15 +918,58 @@ describe("ClipBatch: a cancel is final (round 2)", () => {
   });
 });
 
-describe("ClipBatch: a fault inside the money machine (round 2)", () => {
-  test("stops the batch: the queue ends `ledger-stopped`, free, holds and caps gone", async () => {
+describe("ClipBatch: a fault inside the money machine (round 2, WB2d L1)", () => {
+  test("stops the batch `ledger-stopped` when the faulted member has a reserve: money is open, holds and caps gone", async () => {
     const w = newWorld();
-    w.script = (run, world) => closeAs(world, run, { kind: "fault" });
+    w.script = (run, world) => {
+      world.reserved.add(clipAttemptId(run.member.clipId, 1));
+      closeAs(world, run, { kind: "fault" });
+    };
     await build(w, 4).run();
 
     expect(w.runs).toEqual(ids(4).slice(0, 1));
     expect(details(w, ids(4))).toEqual([undefined, "ledger-stopped", "ledger-stopped", "ledger-stopped"]);
     expectClean(w);
+  });
+
+  test("stops the batch `ledger-stopped` when the faulted member had a Grok reserve only", async () => {
+    const w = newWorld();
+    w.script = (run, world) => {
+      world.reserved.add(clipAttemptId(run.member.clipId, 2));
+      closeAs(world, run, { kind: "fault" });
+    };
+    await build(w, 3).run();
+
+    expect(details(w, ids(3))).toEqual([undefined, "ledger-stopped", "ledger-stopped"]);
+  });
+
+  test("stops the batch `cancelled`, not `ledger-stopped`, when the fault came before any reserve: nothing is open, so no reconcile is asked for", async () => {
+    const w = newWorld();
+    w.script = (run, world) => closeAs(world, run, { kind: "fault" });
+    await build(w, 4).run();
+
+    expect(w.runs).toEqual(ids(4).slice(0, 1));
+    expect(details(w, ids(4))).toEqual([undefined, "cancelled", "cancelled", "cancelled"]);
+    expect(w.notes).toContainEqual({ kind: "stop", detail: "cancelled" });
+    expectClean(w);
+  });
+
+  test("keeps `ledger-stopped` for a fault before any reserve when the ledger is halted", async () => {
+    const w = newWorld();
+    w.budgetHalted = true;
+    w.script = (run, world) => closeAs(world, run, { kind: "fault" });
+    await build(w, 3).run();
+
+    expect(details(w, ids(3))).toEqual([undefined, "ledger-stopped", "ledger-stopped"]);
+  });
+
+  test("keeps `ledger-stopped` for a fault before any reserve when the ledger's write failed", async () => {
+    const w = newWorld();
+    w.ledgerFailed = true;
+    w.script = (run, world) => closeAs(world, run, { kind: "fault" });
+    await build(w, 3).run();
+
+    expect(details(w, ids(3))).toEqual([undefined, "ledger-stopped", "ledger-stopped"]);
   });
 });
 

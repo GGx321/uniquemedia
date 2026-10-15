@@ -78,7 +78,7 @@ export interface BatchPorts {
   readonly setCap: (key: string, micros: number) => void;
   readonly clearCap: (key: string) => void;
   readonly log: (line: string) => void;
-  readonly budget: Pick<Budget, "ledger" | "releaseHold">;
+  readonly budget: Pick<Budget, "ledger" | "releaseHold" | "status">;
   readonly holds: Pick<ClipHolds, "entries" | "isCompleted">;
   readonly mode: "auto" | "offer";
   readonly boldClips: BoldClipsMode;
@@ -334,12 +334,20 @@ export class ClipBatch {
         if (end.refusal.reason === "RECONCILE_REQUIRED" || end.refusal.reason === "HALTED") this.#stop("ledger-stopped");
         return;
       case "fault":
-        // A defect inside the money machine: whether anything is open is not known, so the rest is not spent blind.
-        return this.#stop("ledger-stopped");
+        // A defect inside the money machine. «Needs a reconcile» is told only when it is true: the member has a reserve in the ledger, or the ledger is halted or could not write. A fault before the reserve
+        // (the journal's first line, a prompt that did not build) leaves nothing open: the rest still does not run, and the stop is the plain `cancelled`.
+        return this.#stop(this.#moneyMayBeOpen(member) ? "ledger-stopped" : "cancelled");
       case "cancelled":
       case "interrupted":
         return;
     }
+  }
+
+  /** Whether a faulted member can have left money open: a reserve of either of its attempts is in the ledger, or the ledger is halted or its write failed. */
+  #moneyMayBeOpen(member: BatchMember): boolean {
+    const { ledger, status } = this.#ports.budget;
+    if (ledger.failed || status().state === "halted") return true;
+    return ledger.reserveOf(clipAttemptId(member.clipId, 1)) !== undefined || ledger.reserveOf(clipAttemptId(member.clipId, 2)) !== undefined;
   }
 
   /**
