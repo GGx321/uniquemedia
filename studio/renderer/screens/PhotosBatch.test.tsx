@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { act, fireEvent, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { CLIP_REASONS_RU, type AvatarSummary, type PhotoSummary } from "../../shared/engine";
+import { App } from "../App";
 import { type MockEngineOptions } from "../engine/mockEngine";
 import { MIA, scenePhoto } from "../engine/mockEngine.testkit";
 import { callsOf, flush, focusedLabel, setup, tick } from "../testing";
@@ -527,6 +528,83 @@ describe("60b–60f: the end and the stops", () => {
     expect(headLine()).toBe(`Оставшийся 1 клип не снимался${NBSP}— бесплатно.`);
     expect(batchHead().classList.contains("batch-head-info")).toBe(true);
     expect(screen.queryAllByRole("article", { name: /^Клип в очереди: / })).toHaveLength(0);
+  });
+});
+
+describe("round 2 (S5.WB4b): the header from the engine's summary", () => {
+  test("M1: a made clip of the batch the owner deletes stays «готов», its money stays in the total — the tile goes", async () => {
+    const h = await openNini();
+    await startBatch([[1], [3]]);
+    await until(h, () => headTitle().startsWith("Пакет готов"), "the batch's end");
+    expect(headTitle()).toBe("Пакет готов: 2 клипа · $0.84");
+    const listed = await h.client.request("clips.list", { avatarId: NINI.avatarId });
+    const clip = listed.ok ? listed.result.clips[0] : undefined;
+    if (clip === undefined) throw new Error("no clip listed");
+    await act(async () => {
+      await h.client.request("clips.delete", { avatarId: NINI.avatarId, clipId: clip.clipId });
+    });
+    // Deleted elsewhere (another window): the avatar's screen opened again lists the clips afresh.
+    fireEvent.click(screen.getByRole("button", { name: "Аватары" }));
+    await flush();
+    fireEvent.click(await screen.findByRole("button", { name: "Nini" }));
+    await screen.findByRole("heading", { level: 1, name: "Nini" });
+    await flush();
+    fireEvent.click(screen.getByRole("tab", { name: /^Клипы/ }));
+    await flush();
+    await flush();
+    expect(screen.getAllByRole("article", { name: /^Клип: / })).toHaveLength(1);
+    expect(headTitle()).toBe("Пакет готов: 2 клипа · $0.84");
+    expect(headTitle()).not.toContain("не снимал");
+  });
+
+  test("L5: «снимается» is at most one and the tab has at most one live region, all through a batch", async () => {
+    const h = await openNini();
+    await startBatch([[1], [3], [6]]);
+    let twoAtWork = false;
+    for (let i = 0; i < 200 && !headTitle().startsWith("Пакет готов"); i++) {
+      tick(h.scheduler);
+      await flush();
+      const tab = document.querySelector<HTMLElement>(".clips-tab");
+      if (tab === null) continue;
+      if (tab.querySelectorAll(".clip-tile-work:not(.clip-tile-queued)").length > 1) twoAtWork = true;
+      expect(within(tab).queryAllByRole("status").length).toBeLessThanOrEqual(1);
+      expect(headTitle()).not.toMatch(/снимается [2-9]/);
+    }
+    expect(twoAtWork).toBe(true);
+    expect(headTitle()).toStartWith("Пакет готов");
+  });
+
+  test("L7: every row refused after the click — the alert still says why, and nothing can be sent", async () => {
+    const h = await openNini();
+    await clipsMode();
+    await pickClips([1]);
+    const s = await openBatchSheet();
+    h.engine.setClipPhotoPixels(PLAIN.photoId, "unreadable");
+    fireEvent.click(mainButton(s));
+    await flush();
+    await flush();
+    expect(within(s).getByRole("alert").textContent).toBe(`Фото 1 · Дом не оживить: файл не читается. Сумма пересчитана${NBSP}— подтвердите ещё раз.`);
+    expect(mainButton(s).getAttribute("aria-disabled")).toBe("true");
+    expect(priceLine(s)).toBe("—");
+    expect(focusedLabel()).toBe("button «Отмена»");
+  });
+
+  test("L10: a closed header stays closed in the next window on this machine", async () => {
+    const h = await openNini();
+    await startBatch([[1], [3]]);
+    await until(h, () => headTitle().startsWith("Пакет готов"), "the batch's end");
+    fireEvent.click(within(batchHead()).getByRole("button", { name: "Закрыть" }));
+    await flush();
+    h.unmount();
+    render(<App client={h.client} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Nini" }));
+    await screen.findByRole("heading", { level: 1, name: "Nini" });
+    await flush();
+    fireEvent.click(screen.getByRole("tab", { name: /^Клипы/ }));
+    await flush();
+    await flush();
+    expect(clipsHeading()).toBeDefined();
+    expect((document.querySelector(".batch-head") ?? null) === null).toBe(true);
   });
 });
 
