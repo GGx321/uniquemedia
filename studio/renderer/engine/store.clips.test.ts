@@ -216,3 +216,66 @@ test("a clip job listed in the snapshot with an open reserve gives the job view 
 
   expect(store.getView().jobs.find((j) => j.jobId === "job-00000084")?.clip?.openReserveMicros).toBe(504_000);
 });
+
+// ---------- 5b.2, S5.WB4: a batch member's place, its wait and why it never ran ----------
+
+const MEMBER = { kind: "clip", avatarId: AVATAR, total: 4, done: 0 } as const;
+const TRIO = { batchId: "batch-0000001", batchIndex: 6, batchSize: 10 } as const;
+
+test("a batch member's job.progress gives the job view its place in the batch and what it waits for", async () => {
+  const { store, emit } = await rawHost();
+  await emit({ type: "job.progress", payload: { ...MEMBER, jobId: "job-00000100", clipId: "job-00000100", phase: "queued", waitReason: "alone", ...TRIO } });
+
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000100")?.clip).toMatchObject({ phase: "queued", waitReason: "alone", batch: { batchId: "batch-0000001", index: 6, size: 10 } });
+});
+
+test("the place in the batch is kept once told; the wait is the latest event's and goes when an event stops telling it", async () => {
+  const { store, emit } = await rawHost();
+  const ref = { ...MEMBER, jobId: "job-00000101", clipId: "job-00000101" };
+  await emit({ type: "job.progress", payload: { ...ref, phase: "queued", waitReason: "rate-limit", ...TRIO } });
+  await emit({ type: "job.progress", payload: { ...ref, phase: "submitting", model: "kling" } });
+
+  const clip = store.getView().jobs.find((j) => j.jobId === "job-00000101")?.clip;
+  expect(clip?.batch).toEqual({ batchId: "batch-0000001", index: 6, size: 10 });
+  expect(clip?.waitReason).toBeUndefined();
+});
+
+test("a batch member listed in the snapshot keeps its place, its wait and, cancelled, why it never ran", async () => {
+  const { store } = await rawHost([
+    { kind: "clip", jobId: "job-00000102", avatarId: AVATAR, clipId: "job-00000102", status: "running", done: 0, total: 4, phase: "queued", waitReason: "turn", ...TRIO },
+    { kind: "clip", jobId: "job-00000103", avatarId: AVATAR, clipId: "job-00000103", status: "cancelled", done: 0, total: 4, phase: "queued", detail: "price-changed", ...TRIO, batchIndex: 7 },
+  ]);
+
+  const jobs = store.getView().jobs;
+  expect(jobs.find((j) => j.jobId === "job-00000102")?.clip).toMatchObject({ phase: "queued", waitReason: "turn", batch: { index: 6, size: 10 } });
+  expect(jobs.find((j) => j.jobId === "job-00000103")?.clip).toMatchObject({ detail: "price-changed", batch: { index: 7 } });
+});
+
+test("a cancelled member's job.cancelled gives the job view why it never ran; a single clip's cancel names nothing", async () => {
+  const { store, emit } = await rawHost();
+  const ref = { kind: "clip", jobId: "job-00000104", avatarId: AVATAR, clipId: "job-00000104" } as const;
+  await emit({ type: "job.progress", payload: { ...ref, total: 4, done: 0, phase: "queued", waitReason: "turn", ...TRIO } });
+  await emit({ type: "job.cancelled", payload: { ...ref, detail: "cancelled" } });
+  await emit({ type: "job.cancelled", payload: { kind: "clip", jobId: "job-00000105", avatarId: AVATAR, clipId: "job-00000105" } });
+
+  const jobs = store.getView().jobs;
+  expect(jobs.find((j) => j.jobId === "job-00000104")).toMatchObject({ status: "cancelled", clip: { detail: "cancelled", batch: { index: 6 } } });
+  expect(jobs.find((j) => j.jobId === "job-00000105")?.clip?.detail).toBeUndefined();
+});
+
+test("a batch this window just started lists each member at once, queued, in its place", async () => {
+  const { store } = await rawHost();
+  store.trackClipJob("job-00000106", AVATAR, "job-00000106", "queued", { batchId: "batch-0000002", index: 2, size: 4 });
+
+  expect(store.getView().jobs.find((j) => j.jobId === "job-00000106")).toMatchObject({ kind: "clip", status: "queued", total: 4, clip: { phase: "queued", batch: { batchId: "batch-0000002", index: 2, size: 4 } } });
+});
+
+test("a single clip's job view says nothing of a batch", async () => {
+  const { store, emit } = await rawHost();
+  await emit({ type: "job.progress", payload: { ...MEMBER, jobId: "job-00000107", clipId: "job-00000107", phase: "preparing" } });
+
+  const clip = store.getView().jobs.find((j) => j.jobId === "job-00000107")?.clip;
+  expect(clip?.batch).toBeUndefined();
+  expect(clip?.waitReason).toBeUndefined();
+  expect(clip?.detail).toBeUndefined();
+});

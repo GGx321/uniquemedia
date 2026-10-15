@@ -4,6 +4,7 @@ import {
   type ApiKeyStatus,
   type AvatarSummary,
   type ClipAttemptModel,
+  type ClipCancelDetail,
   type ClipPhase,
   type ClipMotionSource,
   type ClipRequest,
@@ -98,6 +99,27 @@ export interface ClipJobInfo {
   readonly recovery: boolean;
   /** An export job («Сохранить в папку», phase `exporting`). */
   readonly export: boolean;
+  /** 5b.2 (S5.WB4): a batch member's place in its batch («Клип 3/10»), kept once told; absent for a single clip and an export. */
+  readonly batch?: ClipBatchPlace;
+  /** 5b.2 (S5.WB4): what a `queued` (or `proving`) member waits for, as its latest event told it; absent when it waits for nothing. */
+  readonly waitReason?: ClipWaitReason;
+  /** 5b.2 (S5.WB4): why a batch member that never ran was cancelled (`job.cancelled`'s detail, `clipCancelDetailRu`); absent otherwise. */
+  readonly detail?: ClipCancelDetail;
+}
+
+/** A batch member's place (5b.2): its batch, its 1-based place in the pick order (the same for a member requeued after a 429), and the batch's size. */
+export interface ClipBatchPlace {
+  readonly batchId: string;
+  readonly index: number;
+  readonly size: number;
+}
+
+export type ClipWaitReason = NonNullable<Extract<JobState, { kind: "clip" }>["waitReason"]>;
+
+/** The batch trio a job snapshot or event carries, all three or none. */
+function batchOf(job: { batchId?: string; batchIndex?: number; batchSize?: number }): ClipBatchPlace | undefined {
+  const { batchId, batchIndex, batchSize } = job;
+  return batchId === undefined || batchIndex === undefined || batchSize === undefined ? undefined : { batchId, index: batchIndex, size: batchSize };
 }
 
 /** The engine's facts of a clip create job (S5.V8b): the photo, the request, the motion's source and label, and the worst case the owner accepted. */
@@ -114,12 +136,25 @@ function factsOf(job: { photoId?: string; request?: ClipRequest; motion?: { sour
   return photoId === undefined || request === undefined || motion === undefined || acceptedWorstMicros === undefined ? undefined : { photoId, request, motion, acceptedWorstMicros };
 }
 
-/** How a clip job this window starts begins: a create in `preparing`, an export in `exporting`, a `retryDownload` in `downloading` (§5.1). */
-export type ClipJobStart = "create" | "export" | "retry";
+/** How a clip job this window starts begins: a create in `preparing`, an export in `exporting`, a `retryDownload` in `downloading` (§5.1), a batch member in `queued` (5b.2). */
+export type ClipJobStart = "create" | "export" | "retry" | "queued";
 
-const CLIP_START_PHASE: Record<ClipJobStart, ClipPhase> = { create: "preparing", export: "exporting", retry: "downloading" };
+const CLIP_START_PHASE: Record<ClipJobStart, ClipPhase> = { create: "preparing", export: "exporting", retry: "downloading", queued: "queued" };
 
-function clipInfo(clipId: string, phase: ClipPhase | null, more: { model?: ClipAttemptModel; submittedAt?: string; proveUntil?: string; facts?: ClipJobFacts; openReserveMicros?: number } = {}, before?: ClipJobInfo): ClipJobInfo {
+interface ClipInfoMore {
+  readonly model?: ClipAttemptModel;
+  readonly submittedAt?: string;
+  readonly proveUntil?: string;
+  readonly facts?: ClipJobFacts;
+  readonly openReserveMicros?: number;
+  readonly batch?: ClipBatchPlace;
+  readonly waitReason?: ClipWaitReason;
+  readonly detail?: ClipCancelDetail;
+}
+
+function clipInfo(clipId: string, phase: ClipPhase | null, more: ClipInfoMore = {}, before?: ClipJobInfo): ClipJobInfo {
+  const batch = more.batch ?? before?.batch;
+  const detail = more.detail ?? before?.detail;
   return {
     clipId,
     phase: phase ?? before?.phase ?? null,
@@ -130,6 +165,10 @@ function clipInfo(clipId: string, phase: ClipPhase | null, more: { model?: ClipA
     ...(more.openReserveMicros === undefined ? {} : { openReserveMicros: more.openReserveMicros }),
     recovery: (before?.recovery ?? false) || phase === "recovering",
     export: (before?.export ?? false) || phase === "exporting",
+    // 5b.2: the place is kept once told (a later event may not repeat it); the wait is the latest event's alone, as the model is.
+    ...(batch === undefined ? {} : { batch }),
+    ...(more.waitReason === undefined ? {} : { waitReason: more.waitReason }),
+    ...(detail === undefined ? {} : { detail }),
   };
 }
 
@@ -271,7 +310,16 @@ export function jobFromState(j: Exclude<JobState, { kind: "import" }>): JobView 
     ...(j.kind === "clip"
       ? {
           clip: {
-            ...clipInfo(j.clipId, j.phase, { model: j.model, submittedAt: j.submittedAt, proveUntil: j.proveUntil, facts: factsOf(j), openReserveMicros: j.openReserveMicros }),
+            ...clipInfo(j.clipId, j.phase, {
+              model: j.model,
+              submittedAt: j.submittedAt,
+              proveUntil: j.proveUntil,
+              facts: factsOf(j),
+              openReserveMicros: j.openReserveMicros,
+              batch: batchOf(j),
+              waitReason: j.waitReason,
+              detail: j.detail,
+            }),
             export: j.phase === "exporting" || j.result?.exported !== undefined,
           },
         }
@@ -658,11 +706,16 @@ export class EngineStore {
   }
 
   /**
-   * S5.V8: records a clip job this window just started — a create (`clips.create`, its clip its own id), an export (`clips.export`) or a `retryDownload` — in its first phase, so
+   * S5.V8: records a clip job this window just started — a create (`clips.create`, its clip its own id), an export (`clips.export`), a `retryDownload` or (5b.2) a batch member with its place — in its first phase, so
    * the tile and the queue row show it before the first event; a create counts its four steps until a job.progress says otherwise. Merges with any events that beat the reply.
    */
-  trackClipJob(jobId: string, avatarId: string, clipId: string, start: ClipJobStart): void {
-    this.patchJob({ kind: "clip", jobId, avatarId, clipId, start: CLIP_START_PHASE[start] }, (job) => ({ ...job, total: job.total || (start === "export" ? 0 : CLIP_JOB_STEPS) }));
+  trackClipJob(jobId: string, avatarId: string, clipId: string, start: ClipJobStart, batch?: ClipBatchPlace): void {
+    this.patchJob({ kind: "clip", jobId, avatarId, clipId, start: CLIP_START_PHASE[start] }, (job) => ({
+      ...job,
+      total: job.total || (start === "export" ? 0 : CLIP_JOB_STEPS),
+      // 5b.2: a batch member started from this window knows its place from the reply, before (or without) its first event.
+      ...(batch !== undefined && job.clip !== undefined && job.clip.batch === undefined ? { clip: { ...job.clip, batch } } : {}),
+    }));
   }
 
   /**
@@ -1117,7 +1170,14 @@ export class EngineStore {
         // S5.V8: a clip's event says where it stands (its phase, and the model and submit time of the attempt on its way).
         const progress = event.payload;
         const clip = (job: JobView): ClipJobInfo | undefined =>
-          progress.kind === "clip" ? clipInfo(progress.clipId, progress.phase, { model: progress.model, submittedAt: progress.submittedAt, proveUntil: progress.proveUntil, facts: factsOf(progress), openReserveMicros: progress.openReserveMicros }, job.clip) : job.clip;
+          progress.kind === "clip"
+            ? clipInfo(
+                progress.clipId,
+                progress.phase,
+                { model: progress.model, submittedAt: progress.submittedAt, proveUntil: progress.proveUntil, facts: factsOf(progress), openReserveMicros: progress.openReserveMicros, batch: batchOf(progress), waitReason: progress.waitReason },
+                job.clip,
+              )
+            : job.clip;
         this.patchJob(
           event.payload,
           (job) =>
@@ -1218,7 +1278,15 @@ export class EngineStore {
           this.update({ lastSeq, imports: this.withAsks(applyImportCancelled(this.view.imports, event.payload)) });
           return;
         }
-        this.patchJob(event.payload, (job) => (isActiveJob(job) ? { ...job, status: "cancelled", saving: false } : job), lastSeq);
+        {
+          // 5b.2 (S5.WB4): a batch member that never ran says why; the «Клипы» header reads it.
+          const detail = event.payload.kind === "clip" ? event.payload.detail : undefined;
+          this.patchJob(
+            event.payload,
+            (job) => (isActiveJob(job) ? { ...job, status: "cancelled", saving: false, ...(detail !== undefined && job.clip !== undefined ? { clip: { ...job.clip, detail } } : {}) } : job),
+            lastSeq,
+          );
+        }
         return;
       case "settings.changed": {
         const { settings, librarySwitchGeneration } = event.payload;
