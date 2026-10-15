@@ -81,6 +81,8 @@ export interface AttemptSpec<T> {
   interpret: (body: unknown) => Interpretation<T>;
   /** Applied to an unusable paid body before it is saved, after the key is redacted (image data must not be kept). */
   scrubRaw?: (text: string) => string;
+  /** 5b.2 (S5.WC3, round 3 L3): a scrub of the provider's words in a non-2xx answer, which reach the retry log line and the result's message. Absent: they are kept as they come (the redaction of keys aside). */
+  scrubDetail?: (text: string) => string;
   /** This attempt's own cap on a saved raw body (rawStore's `keepBytes`): image.ts passes RAW_KEEP_BYTES_IMAGE, chat.ts passes RAW_KEEP_BYTES_CHAT. Omitted (no caller here does), the store's own larger default applies. */
   rawKeepBytes?: number;
 }
@@ -237,7 +239,9 @@ async function sendAttempt<T>(ctx: ClientContext, spec: AttemptSpec<T>, finish: 
     lastStatus = status;
     if (exchange.stoppedBy === "abort") continue;
     const body = text ?? "";
-    const detail = errorDetail(body);
+    // 5b.2 (S5.WC3, round 3 L3): a call that carries `scrubDetail` (the owner's idea is in its request) lets the provider's words reach neither the retry log line nor the result's message unscrubbed: a provider
+    // that echoes the request in its error would otherwise put the idea into stderr and into the error's detail.
+    const detail = spec.scrubDetail === undefined ? errorDetail(body) : spec.scrubDetail(errorDetail(body));
     const retryAfterMs = parseRetryAfter(exchange.retryAfter, ctx.clock());
     const hintTooLong = retryAfterMs !== null && retryAfterMs > MAX_RETRY_AFTER_MS;
     if (RETRYABLE.has(status) && retry < MAX_TRANSPORT_RETRIES && !hintTooLong) {
