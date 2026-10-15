@@ -1,15 +1,15 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { readdir, rm } from "node:fs/promises";
+import { readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { ownIdeaLabel } from "../shared/engine";
 import { OWN_IDEA_FALLBACK_LABEL } from "../shared/engine";
 import { SHORT_CLIP_TIMINGS, type ClipTimings } from "./clips/timings";
 import { clipsDir, create, jobEnd, jobIdOf, options, optionsOf, phasesOf, startClipEngine, until, type ClipEngine } from "./clips/testing/engineClipKit";
-import { motionNetwork } from "./clips/testing/motionNet";
-import { GOOD_TEXTS, IDEA, ideaReply, motionWorld } from "./clips/testing/motionWorld";
+import { errorOf, gate, motionNetwork, resultOf, send } from "./clips/testing/motionNet";
+import { GOOD_TEXTS, IDEA, ideaReply, motionWorld, suggestionReply } from "./clips/testing/motionWorld";
 import { readClipRecord } from "./clips/store";
-import { useEngineDir } from "./testing/engineHarness";
+import { command, ledgerLines, useEngineDir } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 setDefaultTimeout(60_000);
@@ -78,5 +78,69 @@ describe("the survey ignores the `motions` folder", () => {
     expect(listed.suitable && listed.motions.map((m) => m.id)).toContain("o-1");
     expect(existsSync(join(w.libraryDir, "quarantine"))).toBe(false);
     expect((await readdir(join(w.libraryDir, "avatars", w.avatarId, "motions"))).sort()).toEqual([`${w.photoId}.json`]);
+  });
+});
+
+// ---------- round 3, L4: a crash in the middle of a part C call ----------
+
+/** A part C call whose answer is held when the process stops: its chat reserve is on disk, nothing else is. */
+async function quitMidCall(kind: "suggest" | "translate"): Promise<{ avatarId: string; photoId: string; libraryDir: string; storePath: string }> {
+  const door = gate();
+  const w = await motionWorld(dir(), {
+    chat: async () => {
+      await door.promise;
+      return kind === "suggest" ? suggestionReply([GOOD_TEXTS[0] ?? ""]) : ideaReply(GOOD_TEXTS[0] ?? "");
+    },
+    engine: { timings: TIMINGS },
+  });
+  const accepted = kind === "suggest" ? (await w.estimateSuggest()).worstMicros : (await w.estimateIdea()).worstMicros;
+  void (kind === "suggest" ? send(w.started, "clips.suggestMotions", { avatarId: w.avatarId, photoId: w.photoId, acceptedWorstMicros: accepted }) : send(w.started, "clips.translateIdea", { avatarId: w.avatarId, photoId: w.photoId, text: IDEA, acceptedWorstMicros: accepted }));
+  await until(() => w.net.chats.length === 1, "the chat request");
+  await w.started.engine.shutdown();
+  return { avatarId: w.avatarId, photoId: w.photoId, libraryDir: w.libraryDir, storePath: w.storePath() };
+}
+
+/** The test kit counts ids from 1 in every engine; a real engine's ids are random, so a second engine never reuses the first one's. */
+function freshIds(): () => string {
+  let n = 50_000_000;
+  return () => `id-${String(++n)}`;
+}
+
+describe.each(["suggest", "translate"] as const)("a quit in the middle of a %s call, then a new engine on the same folders", (kind) => {
+  const attempt = kind === "suggest" ? ":motion#1" : ":idea#1";
+  const net = () => motionNetwork({ chat: () => (kind === "suggest" ? suggestionReply([GOOD_TEXTS[1] ?? ""]) : ideaReply(GOOD_TEXTS[1] ?? "")) });
+  const call = (engine: ClipEngine, avatarId: string, photoId: string) =>
+    kind === "suggest"
+      ? send(engine, "clips.suggestMotions", { avatarId, photoId, acceptedWorstMicros: 1_000_000 })
+      : send(engine, "clips.translateIdea", { avatarId, photoId, text: IDEA, acceptedWorstMicros: 1_000_000 });
+
+  test("leaves one open reserve of the call and no store; clips.create and the call itself answer RECONCILE_REQUIRED, free", async () => {
+    const { avatarId, photoId, storePath } = await quitMidCall(kind);
+    const open = ledgerLines(dir());
+    expect(open.map((l) => l.type)).toEqual(["reserve"]);
+    expect(String(open[0]?.attemptId)).toMatch(new RegExp(`${attempt}$`));
+
+    const second = await startClipEngine(dir(), { net: net(), timings: TIMINGS });
+    expect(errorOf(await create(second, { avatarId, photoId })).code).toBe("RECONCILE_REQUIRED");
+    expect(errorOf(await call(second, avatarId, photoId)).code).toBe("RECONCILE_REQUIRED");
+    expect(second.net.posts()).toHaveLength(0);
+    await expect(readFile(storePath, "utf8")).rejects.toThrow();
+    expect(ledgerLines(dir())).toHaveLength(1);
+  });
+
+  test("the reconcile closes the reserve at its worst case (estimated), and then a new call works", async () => {
+    const { avatarId, photoId } = await quitMidCall(kind);
+    const reserve = ledgerLines(dir())[0];
+    const second = await startClipEngine(dir(), { net: net(), timings: TIMINGS, deps: { newId: freshIds() } });
+    second.clocks.skew(20 * MIN);
+    const done = await second.engine.handle(command("money.reconcile"));
+    expect(done.ok && done.type === "money.reconcile" ? done.result : done).toMatchObject({ status: "done", closedReserves: 1 });
+    const lines = ledgerLines(dir());
+    expect(lines.map((l) => l.type)).toEqual(["reserve", "settle", "reconcile"]);
+    expect(lines[1]).toMatchObject({ attemptId: reserve?.attemptId, costMicros: reserve?.worstMicros, estimated: true });
+
+    const fresh = resultOf(await call(second, avatarId, photoId));
+    expect(fresh).toMatchObject({ outcome: "ok" });
+    expect(ledgerLines(dir()).at(-1)).toMatchObject({ type: "settle", estimated: false });
   });
 });
