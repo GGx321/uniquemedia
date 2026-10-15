@@ -1,4 +1,4 @@
-import { useId, type Ref } from "react";
+import { useId, useLayoutEffect, useRef, type RefObject } from "react";
 import { nbDash } from "../../lib/format";
 import { Icon, Spin } from "../../ui/Icon";
 import { Portrait } from "../../ui/Portrait";
@@ -20,7 +20,7 @@ export interface BatchHeaderProps {
   readonly batch: BatchView;
   /** «Отменить оставшиеся» was clicked and the engine has not answered yet: «Отменяем…». */
   readonly cancelling: boolean;
-  readonly titleRef: Ref<HTMLHeadingElement>;
+  readonly titleRef: RefObject<HTMLHeadingElement | null>;
   readonly onCancel: () => void;
   readonly onClose: () => void;
   readonly onAgain: (photoIds: readonly string[]) => void;
@@ -34,6 +34,29 @@ function Title({ text }: { text: string }) {
     <>
       {text.slice(0, at)} · <span className="mono">{text.slice(at + 3)}</span>
     </>
+  );
+}
+
+/**
+ * «Отменить оставшиеся». It goes the moment nothing waits any more (a cancel answered, the last member's turn): if it had the focus, the focus goes to the header's line rather than to the page
+ * (S5.WB4c) — read while the button is still in the page, handed on once it is gone.
+ */
+function CancelRest({ cancelling, onCancel, titleRef }: { cancelling: boolean; onCancel: () => void; titleRef: RefObject<HTMLHeadingElement | null> }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(
+    () => () => {
+      if (ref.current === null || ref.current !== document.activeElement) return;
+      queueMicrotask(() => {
+        if (document.activeElement === null || document.activeElement === document.body) titleRef.current?.focus();
+      });
+    },
+    [titleRef],
+  );
+  return (
+    <button ref={ref} type="button" className="btn btn-s batch-cancel" aria-busy={cancelling || undefined} aria-disabled={cancelling || undefined} onClick={() => !cancelling && onCancel()}>
+      {cancelling ? <Spin /> : <Icon name="close" size={13} strokeWidth={2.2} />}
+      {cancelling ? "Отменяем…" : "Отменить оставшиеся"}
+    </button>
   );
 }
 
@@ -64,12 +87,7 @@ export function BatchHeader({ avatarId, batch, cancelling, titleRef, onCancel, o
           </span>
         ))}
       </div>
-      {batch.cancel && (
-        <button type="button" className="btn btn-s batch-cancel" aria-busy={cancelling || undefined} aria-disabled={cancelling || undefined} onClick={() => !cancelling && onCancel()}>
-          {cancelling ? <Spin /> : <Icon name="close" size={13} strokeWidth={2.2} />}
-          {cancelling ? "Отменяем…" : "Отменить оставшиеся"}
-        </button>
-      )}
+      {batch.cancel && <CancelRest cancelling={cancelling} onCancel={onCancel} titleRef={titleRef} />}
       {again !== null && (
         <button type="button" className="btn btn-s batch-again" onClick={() => onAgain(again)}>
           <Icon name="sparkle" size={13} strokeWidth={2} />

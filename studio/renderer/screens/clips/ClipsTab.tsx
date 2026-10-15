@@ -7,7 +7,7 @@ import { ErrorNotice } from "../../ui/Notice";
 import { BatchHeader } from "./BatchHeader";
 import { batchRecordRoles, batchView, latestBatchId } from "./batchModel";
 import { clipLength, phaseLine, upUsd } from "./clipModel";
-import { batchDismissals, clipDismissals, dismissBatch, dismissClipJob, type ClipsControl } from "./clipsContext";
+import { batchDismissals, clipDismissals, dismissBatch, dismissClipJob, type ClipList, type ClipsControl } from "./clipsContext";
 import { ClipSheet } from "./ClipSheet";
 import { FailedJobTile, FailedTile, ReadyTile, WorkTile } from "./ClipTile";
 import { ClipViewer } from "./ClipViewer";
@@ -69,10 +69,16 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
   const [cancellingBatch, setCancellingBatch] = useState(false);
   const [cancelled, setCancelled] = useState<{ batchId: string; count: number } | null>(null);
   const batchTitle = useRef<HTMLHeadingElement>(null);
-  const [focusBatch, setFocusBatch] = useState(0);
+  /**
+   * S5.WB4c: after «Отменить оставшиеся» the focus goes to the header's line once the list read after the cancel is in — the summary that says what was cancelled — so what it reads is the
+   * outcome, not the header as it stood before. Holds the batch summaries on show when the cancel was answered; null when nothing waits to be focused.
+   */
+  const focusAfterRead = useRef<ClipList["batches"] | undefined>(undefined);
   useEffect(() => {
-    if (focusBatch > 0) batchTitle.current?.focus();
-  }, [focusBatch]);
+    if (focusAfterRead.current === undefined || list.batches === focusAfterRead.current) return;
+    focusAfterRead.current = undefined;
+    batchTitle.current?.focus();
+  }, [list.batches]);
 
   // A clip just started from the sheet: the tab's heading takes the focus, the new tile right under it. One-shot: the screen is told, so a later visit to the tab (→ from «Фото»)
   // leaves the focus on the tab.
@@ -161,7 +167,8 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
       return;
     }
     setCancelled({ batchId: id, count: reply.result.cancelled });
-    setFocusBatch((n) => n + 1);
+    focusAfterRead.current = list.batches;
+    list.reread();
   }
 
   async function remove(clip: Failed): Promise<void> {
@@ -337,7 +344,7 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
             );
             const heldOpen = phase === "late" || phase === "recovering";
             const figure = heldOpen ? job.clip.openReserveMicros : facts?.acceptedWorstMicros;
-            const moneyLine = record !== undefined ? "бесплатно" : figure === undefined ? null : heldOpen ? `до ${upUsd(figure)} — спишется при сверке` : `до ${upUsd(figure)}`;
+            const moneyLine = record !== undefined ? "бесплатно" : figure === undefined ? null : heldOpen ? `до ${upUsd(figure)} — спишется при сверке` : `до ${upUsd(figure)}`;
             const seconds = facts?.request.seconds ?? record?.request.seconds ?? null;
             return (
               <div key={job.jobId} className="clip-slot">
