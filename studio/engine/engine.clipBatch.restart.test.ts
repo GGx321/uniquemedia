@@ -4,6 +4,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { batchOf, createBatch, jobsOf, plainPhotos, seedBatchAvatar } from "./clips/testing/batchKit";
 import { clipNetwork, clipsDir, jobEnd, phasesOf, startClipEngine, until, type ClipEngine } from "./clips/testing/engineClipKit";
+import { BATCHES_DIR } from "./clips/batchSummary";
 import { readClipRecord } from "./clips/store";
 import { SHORT_CLIP_TIMINGS, type ClipTimings } from "./clips/timings";
 import { ledgerLines, useEngineDir } from "./testing/engineHarness";
@@ -40,12 +41,14 @@ async function clipJobDone(engine: ClipEngine): Promise<void> {
 
 describe("a quit in the middle of a batch", () => {
   test("drops the queued members for free: no record, no journal, no reserve, and no hold or cap is left", async () => {
-    const { avatarId, jobIds, first } = await quitMidBatch(3);
+    const { avatarId, batchId, jobIds, first } = await quitMidBatch(3);
 
     const ends = jobIds.map((id) => first.events().find((e) => (e.type === "job.cancelled" || e.type === "job.done") && "jobId" in e.payload && e.payload.jobId === id));
     expect(ends.map((e) => e?.type)).toEqual(["job.cancelled", "job.cancelled", "job.cancelled"]);
-    // Only the member that was sent left anything on disk; the other two were memory-only.
-    expect((await readdir(clipsDir(libraryDir(), avatarId))).sort()).toEqual([`${jobIds[0]}.journal.jsonl`]);
+    // Only the member that was sent left anything of its own on disk; the other two were memory-only. (5b.2, S5.WB2c: beside the clips, the batch's own summary is in `batches/`; it is the batch's, not a member's.)
+    expect((await readdir(clipsDir(libraryDir(), avatarId))).filter((name) => name !== BATCHES_DIR).sort()).toEqual([`${jobIds[0]}.journal.jsonl`]);
+    await until(() => existsSync(join(clipsDir(libraryDir(), avatarId), BATCHES_DIR, `${batchId}.json`)), "the batch's summary");
+    expect(await readdir(join(clipsDir(libraryDir(), avatarId), BATCHES_DIR))).toEqual([`${batchId}.json`]);
     expect(ledgerLines(dir()).map((l) => [l.type, l.attemptId])).toEqual([["reserve", `${jobIds[0]}:video#1`]]);
     expect(first.engine.budget?.status().heldMicros).toBe(0);
     expect(first.net.posts("kling")).toHaveLength(1);

@@ -1,10 +1,11 @@
-import { clipWorstMicros, PROTOCOL_VERSION, type BoldClipsMode, type ClipCancelDetail, type ClipMotionChoice, type ClipPrices, type ClipRequest } from "../../shared/engine";
+import { clipWorstMicros, PROTOCOL_VERSION, type BoldClipsMode, type ClipBatchStop, type ClipCancelDetail, type ClipMotionChoice, type ClipPrices, type ClipRequest } from "../../shared/engine";
 import { clipAlone } from "../../shared/engine/clipAlone";
 import type { UnsequencedEvent } from "../../shared/engine/events";
 import { EngineFailure } from "../engineFailure";
 import type { JobRegistry } from "../jobs";
 import type { Budget } from "../money/budget";
 import { scopeKey } from "../money/budget";
+import type { BatchChange } from "./batchSummary";
 import type { ClipHolds } from "./holds";
 import type { FrameFacts } from "./frameFacts";
 import { clipAttemptId } from "./journal";
@@ -91,6 +92,8 @@ export interface BatchPorts {
   readonly finished: () => void;
   /** `setTimeout` that ends early on `signal`; a test seam. */
   readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** 5b.2 (S5.WB2c): a transition of the batch, for its summary (`batchSummary.ts`). Synchronous: the summary is written in the background, in the order told. */
+  readonly note: (change: BatchChange) => void;
 }
 
 export interface BatchInit {
@@ -162,6 +165,7 @@ export class ClipBatch {
     this.#stopped = true;
     let cancelled = 0;
     for (const member of this.#members) if (member.state === "queued" && this.#cancel(member, "cancelled")) cancelled++;
+    if (cancelled > 0) this.#ports.note({ kind: "stop", detail: "cancelled" });
     return cancelled;
   }
 
@@ -181,6 +185,7 @@ export class ClipBatch {
       this.#stopped = true;
       for (const member of this.#members) if (member.state === "queued") this.#cancel(member, undefined);
       this.#finished = true;
+      this.#ports.note({ kind: "over", at: new Date(this.#ports.clock()).toISOString() });
       this.#ports.finished();
     }
   }
@@ -239,6 +244,7 @@ export class ClipBatch {
 
     // 4. 5b.1's clip job, verbatim. The next turn starts when this member's money closes.
     member.state = "running";
+    ports.note({ kind: "running", index: member.index, clipId: member.clipId });
     await new Promise<void>((resolve) => {
       ports.runMember({
         member,
@@ -350,14 +356,17 @@ export class ClipBatch {
       "queued",
     );
     this.#members.push({ ...member, jobId, clipId, capKey, signal, wake: new AbortController(), held: false, retried: true, state: "queued" });
+    ports.note({ kind: "requeued", index: member.index, clipId });
     const progress = ports.jobs.progress(jobId, 0);
     if (progress !== null) ports.emit({ v: PROTOCOL_VERSION, id: ports.newId(), kind: "event", type: "job.progress", payload: progress });
   }
 
   /** Every member still queued ends cancelled for free with `detail`; nothing is requeued after it. */
-  #stop(detail: ClipCancelDetail): void {
+  #stop(detail: ClipBatchStop): void {
     this.#stopped = true;
-    for (const member of this.#members) if (member.state === "queued") this.#cancel(member, detail);
+    let cancelled = 0;
+    for (const member of this.#members) if (member.state === "queued" && this.#cancel(member, detail)) cancelled++;
+    if (cancelled > 0) this.#ports.note({ kind: "stop", detail });
   }
 
   /** A member whose turn could not start (no usable key): its job fails, free, with the error; the batch goes on (each later member fails the same way, fast). */
@@ -369,6 +378,7 @@ export class ClipBatch {
     if (member.held) ports.budget.releaseHold(clipAttemptId(member.clipId, 1));
     ports.clearCap(member.capKey);
     const failure = error instanceof EngineFailure ? error.error : { code: "AUTH_INVALID" as const, detail: "no usable OpenRouter key" };
+    ports.note({ kind: "ended", index: member.index, clipId: member.clipId, outcome: "failed" });
     const state = ports.jobs.finishClip(member.jobId, { status: "failed", error: failure });
     if (state !== null) ports.emit({ v: PROTOCOL_VERSION, id: ports.newId(), kind: "event", type: "job.failed", payload: { kind: "clip", jobId: member.jobId, avatarId: this.avatarId, clipId: member.clipId, error: failure } });
     ports.emitMoney();
@@ -382,6 +392,7 @@ export class ClipBatch {
     member.wake.abort();
     if (member.held) ports.budget.releaseHold(clipAttemptId(member.clipId, 1));
     ports.clearCap(member.capKey);
+    ports.note(detail === undefined ? { kind: "dropped", index: member.index, clipId: member.clipId } : { kind: "cancelled", index: member.index, clipId: member.clipId, detail });
     const state = ports.jobs.finishClip(member.jobId, detail === undefined ? { status: "cancelled" } : { status: "cancelled", detail });
     if (state !== null) {
       ports.emit({

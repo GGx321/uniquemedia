@@ -142,6 +142,11 @@ export function summaryOf(file: ClipBatchFile, costs: ReadonlyMap<string, ClipCo
   return { ...fields, cost: clipBatchCostOf(fields.members) };
 }
 
+/** Whether any member's money is still open as the ledger has it now (not as the file kept it): a batch the reconcile has not closed yet is never forgotten. */
+export function moneyOpen(file: ClipBatchFile, costs: ReadonlyMap<string, ClipCost>): boolean {
+  return file.members.some((m) => memberCostOf(costs, m.clipIds).costKind === "open");
+}
+
 /** The content refusals of a clip (Kling's, and Grok's behind it, and Grok with no room behind a free one). */
 const REFUSED: ReadonlySet<ClipFailReason> = new Set<ClipFailReason>(["refused-free", "refused-both", "refused-paid", "refused-unknown", "grok-no-room"]);
 

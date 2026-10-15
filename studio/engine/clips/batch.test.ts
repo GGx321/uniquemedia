@@ -5,6 +5,7 @@ import { JobRegistry } from "../jobs";
 import { scopeKey, type ReserveRefusal } from "../money/budget";
 import { MAX_CLIPS_IN_FLIGHT } from "../../shared/engine";
 import { ClipBatch, type BatchMember, type BatchPorts, type MemberRun, type PhotoRecheck } from "./batch";
+import type { BatchChange } from "./batchSummary";
 import { frameFactsOf, type FrameFacts } from "./frameFacts";
 import type { ClipMoneyEnd } from "./job";
 import { clipAttemptId } from "./journal";
@@ -79,6 +80,8 @@ interface World {
   /** Called with the number of `clock()` reads since the last re-check of a photo (a test cancels at an exact point of a turn). */
   onClock: ((reads: number) => void) | null;
   clockReads: number;
+  /** 5b.2 (S5.WB2c): what the batch told its summary, in order. */
+  readonly notes: BatchChange[];
 }
 
 function newWorld(): World {
@@ -110,6 +113,7 @@ function newWorld(): World {
     keysSeen: [],
     onClock: null,
     clockReads: 0,
+    notes: [],
   };
 }
 
@@ -172,6 +176,7 @@ function ports(w: World): BatchPorts {
       void Promise.resolve(w.script(run, w));
     },
     finished: () => void w.finished++,
+    note: (change) => void w.notes.push(change),
     sleep: (ms, signal) => {
       w.sleeps.push(ms);
       if (signal.aborted) return Promise.resolve();
@@ -922,5 +927,83 @@ describe("ClipBatch: the key is read at every turn (round 2)", () => {
 describe("ClipBatch: B1 runs one member at a time", () => {
   test("the scheduler assumes MAX_CLIPS_IN_FLIGHT is 1: raising it for B2 means building the window and touching this scheduler first", () => {
     expect(MAX_CLIPS_IN_FLIGHT).toBe(1);
+  });
+});
+
+describe("ClipBatch: what it tells the batch's summary (5b.2, S5.WB2c)", () => {
+  const kinds = (w: World): string[] => w.notes.map((n) => ("index" in n ? `${n.kind}:${n.index}` : n.kind === "stop" ? `stop:${n.detail}` : n.kind));
+
+  test("each turn as it comes, and the end of the queue once, after the last member's money closed", async () => {
+    const w = newWorld();
+    await build(w, 3).run();
+    expect(kinds(w)).toEqual(["running:1", "running:2", "running:3", "over"]);
+    expect(w.notes.slice(0, 3).map((n) => ("clipId" in n ? n.clipId : null))).toEqual(ids(3));
+  });
+
+  test("a stop: each member it cancelled with why, then the stop once", async () => {
+    const w = newWorld();
+    w.script = (run, world) => closeAs(world, run, run.member.index === 1 ? failed("submit-uncertain") : COMPLETED);
+    await build(w, 3).run();
+    expect(kinds(w)).toEqual(["running:1", "cancelled:2", "cancelled:3", "stop:money-uncertain", "over"]);
+    expect(w.notes.filter((n) => n.kind === "cancelled").map((n) => (n.kind === "cancelled" ? n.detail : null))).toEqual(["money-uncertain", "money-uncertain"]);
+  });
+
+  test("a stop that finds nothing queued tells no stop", async () => {
+    const w = newWorld();
+    w.script = (run, world) => closeAs(world, run, failed("submit-uncertain"));
+    await build(w, 1).run();
+    expect(kinds(w)).toEqual(["running:1", "over"]);
+  });
+
+  test("a 429 requeues the member under its new clip id", async () => {
+    const w = newWorld();
+    w.script = (run, world) => closeAs(world, run, run.member.index === 2 && !run.member.retried ? failed("rate-limited") : COMPLETED);
+    await build(w, 2).run();
+    const retry = w.runs[2] ?? "";
+    expect(kinds(w)).toEqual(["running:1", "running:2", "requeued:2", "running:2", "over"]);
+    expect(w.notes[2]).toEqual({ kind: "requeued", index: 2, clipId: retry });
+    expect(w.notes[3]).toEqual({ kind: "running", index: 2, clipId: retry });
+  });
+
+  test("the owner's cancel: the members it cancelled, then the stop `cancelled`; one member cancelled alone is no stop", async () => {
+    const w = newWorld();
+    let close: () => void = () => undefined;
+    w.script = (run, world) => new Promise<void>((resolve) => (close = () => (closeAs(world, run, COMPLETED), resolve())));
+    const { batch } = build(w, 4);
+    batch.start();
+    await flush();
+    batch.cancelMember(ids(4)[1] ?? "");
+    batch.cancelQueued();
+    close();
+    await until(() => w.finished > 0, "the end");
+    expect(kinds(w)).toEqual(["running:1", "cancelled:2", "cancelled:3", "cancelled:4", "stop:cancelled", "over"]);
+  });
+
+  test("a stopping engine drops the queued members without a why", async () => {
+    const w = newWorld();
+    w.script = (run, world) =>
+      new Promise<void>((resolve) => {
+        world.stop.abort();
+        closeAs(world, run, { kind: "interrupted" });
+        resolve();
+      });
+    await build(w, 3).run();
+    expect(kinds(w)).toEqual(["running:1", "dropped:2", "dropped:3", "over"]);
+  });
+
+  test("a member whose turn finds no usable key ended failed", async () => {
+    const w = newWorld();
+    w.key = () => {
+      throw new Error("AUTH_INVALID");
+    };
+    await build(w, 1).run();
+    expect(w.notes[0]).toEqual({ kind: "ended", index: 1, clipId: ids(1)[0] ?? "", outcome: "failed" });
+  });
+
+  test("a photo gone at its turn is cancelled `photo-gone`, and stops nothing", async () => {
+    const w = newWorld();
+    w.recheck = (member) => (member.index === 2 ? { kind: "gone" } : { kind: "ok", bytes: new Uint8Array([1]) });
+    await build(w, 3).run();
+    expect(kinds(w)).toEqual(["running:1", "cancelled:2", "running:3", "over"]);
   });
 });

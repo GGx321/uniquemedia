@@ -3,8 +3,10 @@ import { basename } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   CLIP_RETRYABLE_FAILURES,
+  MAX_LISTED_BATCHES,
   MAX_LISTED_CLIPS,
   PROTOCOL_VERSION,
+  type ClipBatchSummary,
   type ClipCost,
   type ClipExport,
   type ClipExportLine,
@@ -24,6 +26,7 @@ import type { ClipJobEnd, ClipPhaseUpdate, JobRegistry } from "../jobs";
 import { fsyncDir, readFolderNames } from "../library/durableFs";
 import type { Ledger } from "../money/ledger";
 import type { OpenRouterClient } from "../openrouter/types";
+import { newestFirst, summaryOf, type ClipBatchFile } from "./batchSummary";
 import type { DraftUse } from "./copies";
 import { downloadClip, type ClipDownload, type DownloadClipOptions } from "./download";
 import type { CheckClipFaceOptions } from "./faceCheck";
@@ -179,6 +182,13 @@ export interface ClipRecordsDeps {
     videoUse: (avatarId: string, clipId: string, photoId: string) => "clip" | "photo" | undefined;
     draftsOf: (avatarId: string) => Promise<ReadonlyMap<string, DraftUse>>;
   };
+  /**
+   * 5b.2 (S5.WB2c): the batch summaries the engine writes (`BatchSummaryStore`): `clips.list` waits for the summary changes under way, reads the avatar's, and answers each with the ledger's money for its members.
+   * Absent: no list has `batches`.
+   */
+  batches?: { settled: () => Promise<void>; read: (clipsDir: string) => Promise<ClipBatchFile[]> };
+  /** 5b.2 (S5.WB2c): a committed record was rewritten (I5.53), after the write: a batch member's download fetched again turns its member ready. */
+  rewritten?: (avatarId: string, clipsDir: string, record: ClipRecord, rewrite: ClipRewrite) => void;
 }
 
 type Payload<T extends "clips.list" | "clips.get" | "clips.markSeen" | "clips.delete" | "clips.retryDownload"> = CommandPayload<T>;
@@ -263,8 +273,10 @@ export class ClipRecords {
 
   // ---------- clips.list ----------
 
-  async list(payload: Payload<"clips.list">, options: ClipListOptions = {}): Promise<{ clips: ClipSummary[]; notListedTotal?: number }> {
+  async list(payload: Payload<"clips.list">, options: ClipListOptions = {}): Promise<{ clips: ClipSummary[]; notListedTotal?: number; batches?: ClipBatchSummary[] }> {
     const clipsDir = this.#dirOf(payload.avatarId);
+    // 5b.2 (S5.WB2c): a summary change told before an event the window reacts to (a member's end) is on disk before the list reads it.
+    await this.#deps.batches?.settled();
     const listed = await readFolderNames(clipsDir);
     if (!listed.ok) throw listed.error;
     const journals = new Set(listed.names.flatMap((name) => JOURNAL_NAME.exec(name)?.[1] ?? []));
@@ -283,8 +295,13 @@ export class ClipRecords {
       for (const record of batch) if (record !== null) records.push(record);
     }
     records.sort((a, b) => (a.createdAt === b.createdAt ? (a.id < b.id ? 1 : -1) : a.createdAt < b.createdAt ? 1 : -1));
-    const ledger = records.length === 0 ? null : this.#ledger();
+    const files = this.#deps.batches === undefined ? [] : (await this.#deps.batches.read(clipsDir)).filter((file) => file.avatarId === payload.avatarId);
+    const ledger = records.length === 0 && files.length === 0 ? null : this.#ledger();
     const costs = ledger === null ? new Map<string, ClipCost>() : clipCostsOf(ledger);
+    // Each batch's members with the ledger's money for their clip ids NOW (a reserve the reconcile has settled since reads as settled), and the batch's one total: the window computes no money.
+    const batches = newestFirst(files)
+      .slice(0, MAX_LISTED_BATCHES)
+      .map((file) => summaryOf(file, costs));
     const offers = records.length === 0 || options.grokOffers === undefined ? new Map<string, Estimate>() : await options.grokOffers(records);
     const uses = await this.#usesOf(payload.avatarId, records);
     const clips = records.map((record) => clipSummaryOf(record, costs.get(record.id) ?? FREE, record.exports, offers.get(record.id), uses.get(record.id)));
@@ -293,7 +310,7 @@ export class ClipRecords {
       if (!journals.has(record.id) || this.#deps.host.busy(record.id)) continue;
       await removeJournal(clipsDir, record.id).catch((error: unknown) => this.#deps.log(`[clip] ${record.id}: a stale journal could not be removed (${errorName(error)})`));
     }
-    return notListedTotal === 0 ? { clips } : { clips, notListedTotal };
+    return { clips, ...(notListedTotal === 0 ? {} : { notListedTotal }), ...(batches.length === 0 ? {} : { batches }) };
   }
 
   async #readForList(clipsDir: string, clipId: string): Promise<ClipRecord | null> {
@@ -379,7 +396,9 @@ export class ClipRecords {
    */
   async rewrite(avatarId: string, clipId: string, build: (current: ClipRecord) => ClipRecord | null): Promise<{ record: ClipRecord; rewrite: ClipRewrite } | null> {
     const clipsDir = this.#dirOf(avatarId);
-    return this.withClipLock(clipId, () => this.#rewriteLocked(clipsDir, clipId, build));
+    const done = await this.withClipLock(clipId, () => this.#rewriteLocked(clipsDir, clipId, build));
+    if (done !== null) this.#deps.rewritten?.(avatarId, clipsDir, done.record, done.rewrite);
+    return done;
   }
 
   async #rewriteLocked(clipsDir: string, clipId: string, build: (current: ClipRecord) => ClipRecord | null): Promise<{ record: ClipRecord; rewrite: ClipRewrite } | null> {

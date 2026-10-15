@@ -105,6 +105,8 @@ export interface ClipRecoveryHost {
   readonly media?: Partial<RecoveryMedia>;
   /** Test seam: awaited before each clips folder of the startup walk is listed, so a test can hold the walk open (the same seam `readFolderNames` has). */
   readonly beforeList?: (dir: string) => void | Promise<void>;
+  /** 5b.2 (S5.WB2c): a recovery committed a clip's record (told after the write, before the journal goes): a batch member's summary hears how it ended. */
+  readonly recorded?: (avatarId: string, record: ClipRecord) => void;
   readonly log: (line: string) => void;
 }
 
@@ -802,6 +804,7 @@ class Recovery {
   private async commit(record: ClipRecord): Promise<JobOutcome> {
     const { candidate, host } = this;
     await writeClipRecord(candidate.clipsDir, record);
+    host.recorded?.(candidate.avatarId, record);
     try {
       await removeJournal(candidate.clipsDir, candidate.clipId);
     } catch (error) {

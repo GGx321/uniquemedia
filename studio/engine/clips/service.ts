@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import {
   BOLD_CLIPS,
   CLIP_OPTION_KEYS,
@@ -26,6 +27,7 @@ import type { ExportRootCheck } from "../exportRoot";
 import type { WorkerFaceGate } from "../face/worker/workerGate";
 import type { ClipBatchRef, ClipJobEnd, JobRegistry } from "../jobs";
 import type { Library } from "../library";
+import { hasErrorCode } from "../library/durableFs";
 import type { PhotoSidecar } from "../library/schemas";
 import { scopeKey, type Budget, type ReserveHandle, type ReserveRefusal, type ReserveRequest } from "../money/budget";
 import type { PricedBook, PriceModels } from "../money/priceCache";
@@ -41,6 +43,21 @@ import type { CommitTracker } from "../videos/live";
 import type { RootLockOptions } from "../videos/rootLock";
 import type { ClipRunDeps } from "./attempt";
 import { ClipBatch, type BatchMember, type BatchPorts, type MemberRun, type PhotoRecheck } from "./batch";
+import {
+  BatchSummaryStore,
+  afterRestart,
+  applyBatchChange,
+  moneyOpen,
+  outcomeOfRecord,
+  runningClipIds,
+  startBatchFile,
+  toForget,
+  withCosts,
+  KEEP_BATCHES,
+  type BatchChange,
+  type ClipBatchFile,
+  type MemberLook,
+} from "./batchSummary";
 import { ClipExports } from "./export";
 import { ClipCopies, type ClipCopyMedia, type DraftView, type KnownAvatars } from "./copies";
 import { ClipImports, type ClipMediaPort } from "./importClip";
@@ -51,14 +68,14 @@ import { checkClipFace } from "./faceCheck";
 import { clipFallbackOf, readFrameFacts, type FrameFacts } from "./frameFacts";
 import { createClipHolds, type ClipHolds, type HoldTimers } from "./holds";
 import { runClipJob, type ClipJobDeps, type ClipJobOutcome, type ClipMoneyEnd } from "./job";
-import { clipAttemptId, parseClipAttemptId } from "./journal";
+import { clipAttemptId, clipJournalPath, parseClipAttemptId } from "./journal";
 import { motionChoicesOf } from "./motion";
 import { openClipReserveMicros } from "./openReserve";
-import { ClipRecords, type ClipRecordsDeps } from "./records";
+import { ClipRecords, clipCostsOf, type ClipRecordsDeps } from "./records";
 import { clipFaceOf } from "./ready";
 import { holdsFromLedger, recoverClips, type ClipRecoveryHost } from "./recover";
 import type { ClipRecord } from "./schemas";
-import { clipsDirOf } from "./store";
+import { clipsDirOf, readClipRecord } from "./store";
 import type { ClipTimings } from "./timings";
 
 // Stage 5, 5b.1, S5.V4a1 (plan s5b1 §5.2, §5.9, I5.46-I5.50): the clip commands on the engine's service bag (the SceneSetService precedent). It owns:
@@ -106,6 +123,23 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 /** A Kling clip refused for free whose request kept its fallback: what mode `offer` offers on Grok. */
 function offersGrok(record: ClipRecord): boolean {
   return record.outcome.status === "failed" && record.outcome.reason === "refused-free" && record.request.model === "kling" && record.request.fallback === "auto";
+}
+
+/** How a batch member's clip job ended, for its summary (5b.2, S5.WB2c). */
+type MemberEnd = { kind: "ended"; outcome: "ready" | "refused" | "failed" } | { kind: "cancelled"; detail: "cancelled" };
+
+/** A member's end by its job's outcome: as its record says; failed when it ended with no record; cancelled by the owner before its POST; nothing for a stop of the engine (the restart decides). */
+function memberEndOf(outcome: ClipJobOutcome): MemberEnd | null {
+  switch (outcome.kind) {
+    case "recorded":
+      return { kind: "ended", outcome: outcomeOfRecord(outcome.record) };
+    case "refused":
+      return { kind: "ended", outcome: "failed" };
+    case "cancelled":
+      return { kind: "cancelled", detail: "cancelled" };
+    case "interrupted":
+      return null;
+  }
 }
 
 /** A refusal of the batch's month hold, as the command's error: the codes map one to one (the batch is refused whole, and nothing was held). */
@@ -251,6 +285,8 @@ export class ClipService {
   readonly #imports: ClipImports | null;
   /** 5b.2 (S5.WA2): how long a clip's montage copy lives (a clip delete, an avatar delete, the library-open sweep); absent without the media service. */
   readonly #copies: ClipCopies | null;
+  /** 5b.2 (S5.WB2c): each batch's own summary on disk, written at every member transition, read by `clips.list`. */
+  readonly #summaries: BatchSummaryStore;
 
   constructor(deps: ClipServiceDeps) {
     this.#deps = deps;
@@ -258,6 +294,7 @@ export class ClipService {
     this.#boldClips = deps.boldClips ?? BOLD_CLIPS;
     const copies = deps.media === undefined ? null : new ClipCopies({ media: deps.media, ...(deps.drafts === undefined ? {} : { drafts: deps.drafts }), log: deps.log });
     this.#copies = copies;
+    this.#summaries = new BatchSummaryStore({ log: deps.log });
     this.holds = createClipHolds({ now: deps.clock, ...(deps.holdTimers === undefined ? {} : { timers: deps.holdTimers }), onChange: () => deps.emitMoney() });
     // A job on a clip (a download retry, an export) holds the clip against its other commands and the library against a switch, until it ends.
     const host = {
@@ -295,6 +332,11 @@ export class ClipService {
       faceOf: (input) => this.#faceOf(input),
       log: deps.log,
       ...(deps.records?.remove === undefined ? {} : { remove: deps.records.remove }),
+      // 5b.2 (S5.WB2c): the batch summaries `clips.list` carries, and a member's download fetched again.
+      batches: { settled: () => this.#summaries.settled(), read: (clipsDir: string) => this.#summaries.read(clipsDir) },
+      rewritten: (_avatarId, clipsDir, record, rewrite) => {
+        if (rewrite === "retried") this.#noteMemberRecord(clipsDir, record);
+      },
       ...(copies === null
         ? {}
         : {
@@ -577,8 +619,12 @@ export class ClipService {
       faceRoleOf: (photoId) => this.#faceRoleOf(library, photoId),
       masterEmbedding: (avatarId, signal) => this.#masterEmbedding(library, avatarId, deps.faceGate(), signal),
       ...(deps.recoveryBeforeList === undefined ? {} : { beforeList: deps.recoveryBeforeList }),
+      // 5b.2 (S5.WB2c): a recovered batch member's record tells its batch's summary how it ended.
+      recorded: (avatarId, record) => this.#noteMemberRecord(clipsDirOf(library, avatarId), record),
       log: deps.log,
     };
+    // 5b.2 (S5.WB2c, I5.63): no batch resumes after a restart: every batch this library's summaries still have running ends now (`clips.list` waits for it).
+    this.#summaries.track(this.#endBatchesAfterRestart(library));
     const walkId = ++this.#walkSeq;
     this.#walks.set(walkId, deps.clock());
     recoverClips(host, library)
@@ -952,7 +998,11 @@ export class ClipService {
       // The batch's own work count: a library switch waits while any member is queued or running, and gives way when the batch is over.
       this.#work++;
       workTaken = true;
-      const batch = new ClipBatch(this.#batchPorts({ budget, library, avatarId, batchId, size, unit }), { id: batchId, avatarId, members });
+      // 5b.2 (S5.WB2c): the batch's summary, every member queued, written before its first turn; then the avatar's oldest summaries past the kept ones go.
+      const clipsDir = clipsDirOf(library, avatarId);
+      const first = startBatchFile({ batchId, avatarId, createdAt: new Date(deps.clock()).toISOString(), clipIds: members.map((member) => member.clipId) });
+      this.#summaries.track(this.#summaries.change(clipsDir, batchId, () => first).then(() => this.#forgetOldBatches(clipsDir)));
+      const batch = new ClipBatch(this.#batchPorts({ budget, library, avatarId, batchId, size, unit, clipsDir }), { id: batchId, avatarId, members });
       this.#remember(batch);
       batch.start();
       started = true;
@@ -982,7 +1032,7 @@ export class ClipService {
   }
 
   /** What a batch needs of the service: the engine's seams, the hold registry, and the clip job of one member. */
-  #batchPorts(ctx: { budget: Budget; library: Library; avatarId: string; batchId: string; size: number; unit: ClipUnit }): BatchPorts {
+  #batchPorts(ctx: { budget: Budget; library: Library; avatarId: string; batchId: string; size: number; unit: ClipUnit; clipsDir: string }): BatchPorts {
     const deps = this.#deps;
     return {
       clock: deps.clock,
@@ -1009,11 +1059,81 @@ export class ClipService {
         deps.emitMoney();
       },
       sleep: abortableSleep,
+      note: (change) => this.#noteBatch(ctx.clipsDir, ctx.batchId, change),
     };
   }
 
+  // ---------- the batch summaries (5b.2, S5.WB2c) ----------
+
+  /** The file with each member's money as the ledger has it now; a ledger that cannot be read leaves the figures the file kept (the list reads the ledger again). */
+  #priced(file: ClipBatchFile): ClipBatchFile {
+    const ledger = this.#deps.budget()?.ledger;
+    return ledger === undefined ? file : withCosts(file, clipCostsOf(ledger));
+  }
+
+  /** A transition of a batch, written to its summary in the background, in the order told. */
+  #noteBatch(clipsDir: string, batchId: string, change: BatchChange): void {
+    void this.#summaries.change(clipsDir, batchId, (current) => (current === null ? null : this.#priced(applyBatchChange(current, change))));
+  }
+
+  /** A batch member's record was committed (a recovery's, or a download fetched again): its member ends as the record says. */
+  #noteMemberRecord(clipsDir: string, record: ClipRecord): void {
+    if (record.batchId === undefined || record.batchIndex === undefined) return;
+    this.#noteBatch(clipsDir, record.batchId, { kind: "ended", index: record.batchIndex, clipId: record.id, outcome: outcomeOfRecord(record) });
+  }
+
+  /** Past the kept ones (`KEEP_BATCHES`), an avatar's batch summaries whose queue ended and whose money is closed go. With no ledger to read, nothing goes (an open cost cannot be told). */
+  async #forgetOldBatches(clipsDir: string): Promise<void> {
+    const files = await this.#summaries.read(clipsDir);
+    if (files.length <= KEEP_BATCHES) return;
+    const ledger = this.#deps.budget()?.ledger;
+    if (ledger === undefined) return;
+    const costs = clipCostsOf(ledger);
+    for (const batchId of toForget(files, (file) => moneyOpen(file, costs))) await this.#summaries.forget(clipsDir, batchId);
+  }
+
+  /**
+   * The restart's pass over a library's batch summaries (I5.63): a batch the summaries still have running ends. Its queued members are dropped; a member at work ends as its record says, stays at work while its
+   * journal waits for the recovery (which tells its end), failed when only the ledger says it moved money, dropped when nothing of it is anywhere. A batch of this process that still runs is left alone.
+   */
+  async #endBatchesAfterRestart(library: Library): Promise<void> {
+    const at = new Date(this.#deps.clock()).toISOString();
+    for (const avatar of library.listAvatars()) {
+      const clipsDir = clipsDirOf(library, avatar.id);
+      for (const file of await this.#summaries.read(clipsDir)) {
+        if (file.endedAt !== undefined && runningClipIds(file).length === 0) continue;
+        if (this.#batches.get(file.batchId)?.over === false) continue;
+        await this.#summaries.change(clipsDir, file.batchId, async (current) => {
+          if (current === null) return null;
+          const looks = new Map<string, MemberLook>();
+          for (const clipId of runningClipIds(current)) looks.set(clipId, await this.#lookAfterRestart(clipsDir, clipId));
+          return this.#priced(afterRestart(current, looks, at));
+        });
+      }
+    }
+  }
+
+  /** What a restart finds of a clip, in this order: its journal (the journal goes only once the record stands), its record, a reserve of it in the ledger. Anything that cannot be read leaves the member at work. */
+  async #lookAfterRestart(clipsDir: string, clipId: string): Promise<MemberLook> {
+    try {
+      await stat(clipJournalPath(clipsDir, clipId));
+      return { kind: "journal" };
+    } catch (error) {
+      if (!hasErrorCode(error, "ENOENT")) return { kind: "journal" };
+    }
+    try {
+      const read = await readClipRecord(clipsDir, clipId);
+      if (read.kind === "record") return { kind: "record", outcome: outcomeOfRecord(read.record) };
+    } catch {
+      return { kind: "journal" };
+    }
+    const ledger = this.#deps.budget()?.ledger;
+    if (ledger === undefined) return { kind: "journal" };
+    return ledger.lines.some((line) => line.type === "reserve" && line.jobId === clipId) ? { kind: "reserved" } : { kind: "nothing" };
+  }
+
   /** A member's turn has come: 5b.1's clip job, verbatim, under the member's own scope and cap. The batch hears of its money through `run.onMoneyClosed`. */
-  #startMember(run: MemberRun, ctx: { budget: Budget; library: Library; avatarId: string; batchId: string; size: number }): void {
+  #startMember(run: MemberRun, ctx: { budget: Budget; library: Library; avatarId: string; batchId: string; size: number; clipsDir: string }): void {
     const { member } = run;
     this.#work++;
     this.#activeClips.add(member.clipId);
@@ -1034,7 +1154,11 @@ export class ClipService {
       capKey: member.capKey,
       cancel: member.signal,
       unit: null,
-      member: { ref: { batchId: ctx.batchId, batchIndex: member.index, batchSize: ctx.size }, onMoneyClosed: run.onMoneyClosed },
+      member: {
+        ref: { batchId: ctx.batchId, batchIndex: member.index, batchSize: ctx.size },
+        onMoneyClosed: run.onMoneyClosed,
+        ended: (change) => this.#noteBatch(ctx.clipsDir, ctx.batchId, { ...change, index: member.index, clipId: member.clipId }),
+      },
     });
   }
 
@@ -1075,8 +1199,8 @@ export class ClipService {
     cancel: AbortSignal;
     /** A single clip's unit token: only this clip gives the unit back, when its money closes. A batch member holds none: the batch gives the unit back when its last member's money closes. */
     unit: ClipUnit | null;
-    /** 5b.2: the batch this clip is a member of, and what to tell it when the money closed. */
-    member?: { ref: ClipBatchRef; onMoneyClosed: (end?: ClipMoneyEnd) => void };
+    /** 5b.2: the batch this clip is a member of, what to tell it when the money closed, and (S5.WB2c) how the member ended, for its summary. */
+    member?: { ref: ClipBatchRef; onMoneyClosed: (end?: ClipMoneyEnd) => void; ended: (change: MemberEnd) => void };
   }): Promise<void> {
     const deps = this.#deps;
     const signal = eitherSignal(job.cancel, this.#stop.signal);
@@ -1145,9 +1269,13 @@ export class ClipService {
         signal,
       );
       end = this.#endOf(outcome, job.key, job.member !== undefined);
+      // 5b.2 (S5.WB2c): the member's end, told before the job's own end is announced (a list that follows the event reads it). A stop of the engine tells nothing: the restart decides.
+      const memberEnd = memberEndOf(outcome);
+      if (memberEnd !== null) job.member?.ended(memberEnd);
     } catch (error) {
       deps.log(`[clip] ${job.clipId}: the job failed (${error instanceof Error ? error.name : typeof error})`);
       end = { status: "failed", error: this.#errorOf(error) };
+      job.member?.ended({ kind: "ended", outcome: "failed" });
     } finally {
       // A fault before the chain ran (the client, the gate) still gives the slot and the paid count back: nothing of the clip's money can be open then.
       closeMoney();

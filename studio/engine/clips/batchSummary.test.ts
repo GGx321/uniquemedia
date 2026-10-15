@@ -10,6 +10,7 @@ import {
   afterRestart,
   applyBatchChange,
   batchSummaryPath,
+  moneyOpen,
   outcomeOfRecord,
   runningClipIds,
   startBatchFile,
@@ -210,6 +211,13 @@ describe("toForget: the newest 20 of an avatar are kept, and any whose money is 
 
   test("twenty or fewer: nothing goes", () => {
     expect(toForget(Array.from({ length: 20 }, (_, i) => nth(i + 1)), () => false)).toEqual([]);
+  });
+
+  test("a batch's money is open when any member's clip has a reserve the ledger still holds open, whatever the file kept", () => {
+    const file = applyBatchChange(fresh(2), { kind: "requeued", index: 2, clipId: clip(3) });
+    expect(moneyOpen(file, costs({ [clip(1)]: billed(), [clip(3)]: { micros: 504_000, kind: "open" } }))).toBe(true);
+    expect(moneyOpen(withCosts(file, costs({ [clip(1)]: { micros: 504_000, kind: "open" } })), costs({ [clip(1)]: { micros: 504_000, kind: "estimated" } }))).toBe(false);
+    expect(moneyOpen(file, costs({}))).toBe(false);
   });
 
   test("an old batch whose money is still open, or whose queue has not ended, is kept", () => {
