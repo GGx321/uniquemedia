@@ -16,8 +16,21 @@ export function clipSlotTaken(view: EngineView): boolean {
   });
 }
 
+/**
+ * 5b.2 (S5.WB4; I5.61, mockup 37e): a batch holds the clip money unit, so a single clip and a second batch are refused `batch-running`. It holds it from its start until its last member's money closes: while
+ * a member waits its turn (`queued`), and while one is between its dispatch and its money's close (the slot phases). A last member downloading or saving holds nothing.
+ */
+export function batchHoldsUnit(view: EngineView): boolean {
+  return view.jobs.some((job) => {
+    const clip = job.clip;
+    if (job.kind !== "clip" || clip === undefined || clip.batch === undefined || !isActiveJob(job) || clip.export || clip.recovery) return false;
+    const phase = clip.phase ?? "queued";
+    return phase === "queued" || SLOT_PHASES.has(phase);
+  });
+}
+
 /** Why «Оживить» waits: a text, or `nokey` (37c #nokey: «Нужен ключ OpenRouter — Настройки.», «Настройки» a link); null when the sheet may open. */
-export type AnimateBlock = { readonly kind: "text"; readonly text: string } | { readonly kind: "nokey" };
+export type AnimateBlock = { readonly kind: "text"; readonly text: string } | { readonly kind: "nokey" } | { readonly kind: "batch"; readonly text: string };
 
 /** The new string of this slice for an archived avatar, whose clips the engine no longer makes (it answers NOT_FOUND). */
 export const ARCHIVED_CLIP_TEXT = "Аватар в архиве — новые клипы для него не снимаются.";
@@ -33,6 +46,8 @@ export function animateBlock(view: EngineView, active: boolean): AnimateBlock | 
   if (stop?.kind === "reconcile") return { kind: "text", text: "Сначала сверка расходов" };
   if (stop?.kind === "restart") return { kind: "text", text: restartStopText(stop.code) };
   if (!active) return { kind: "text", text: ARCHIVED_CLIP_TEXT };
+  // 37e: «отмените оставшиеся» is a link to the «Клипы» tab, where the batch's header has the button.
+  if (batchHoldsUnit(view)) return { kind: "batch", text: CLIP_REASONS_RU["batch-running"] };
   if (clipSlotTaken(view)) return { kind: "text", text: CLIP_REASONS_RU["one-at-a-time"] };
   return null;
 }
