@@ -27,7 +27,8 @@ const EXPLICIT = new RegExp(
     String.raw`|\bspread\s+(?:her\s+)?legs\b|\blegs\s+(?:spread|apart|wide open)\b` +
     String.raw`|\bon\s+all\s+fours\b` +
     String.raw`|\b(?:doggy|missionary|cowgirl|straddl\w*|sex|sexual\w*|intercourse|orgasm\w*)\b` +
-    String.raw`|\b(?:bend|bends|bending|bent)\s+over\b[^.;]*?\btowards?\s+(?:the\s+)?(?:camera|lens|phone|viewer)\b`,
+    // S5.WC2b round 3 (the re-review's M4): toward the mirror too, which on a mirror frame is the camera.
+    String.raw`|\b(?:bend|bends|bending|bent)\s+over\b[^.;]*?\btowards?\s+(?:the\s+)?(?:camera|lens|phone|viewer|mirror)\b`,
   "gi",
 );
 

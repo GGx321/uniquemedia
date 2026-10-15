@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { BANK_VERBS, CURATED_VERBS, readMotion } from "../../shared/scenes/motionGrammar";
 import { motionTextFindings, motionTextProblems } from "../../shared/scenes/motionText";
 import type { BankCategory } from "../../shared/scenes/banks/types";
 import type { Capture } from "../../shared/scenes/captures";
@@ -6,7 +7,7 @@ import type { PlanSlot } from "../scenes/schema";
 import { frameFactsOf, type FrameFacts, type FrameFactsResult } from "./frameFacts";
 import { clipPromptOf } from "./prompt";
 import { photoOf, pick, sceneRun, slotOf } from "./testing/frameFixtures";
-import { OWN_ON_BOLD, PROBE_BOLD, PROBE_CONTROLS, PROBE_INNOCENT, PROBE_LEAKS } from "./testing/motionProbes";
+import { OWN_ON_BOLD, PROBE_BOLD, PROBE_CONTROLS, PROBE_INNOCENT, PROBE_LEAKS, PROBE_LEAKS_R2 } from "./testing/motionProbes";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -94,5 +95,102 @@ describe("an own idea on «Смелая» keeps today's path: the same problems,
     });
     expect(moved).toEqual([]);
     expect(PROBE_BOLD.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------- S5.WC2b round 3: the re-review (2 HIGH, 4 MEDIUM, LOW) ----------
+
+const where = (text: string): string[] =>
+  [
+    ["ordinary vision", motionTextProblems(text, FRIEND, "vision")],
+    ["ordinary own", motionTextProblems(text, FRIEND, "own")],
+    ["«Смелая» vision", motionTextProblems(text, BOLD, "vision")],
+  ].flatMap(([at, problems]) => ((problems as string[]).length === 0 ? [`${String(at)}: ${text}`] : []));
+
+describe("the re-review's leaks are refused as vision and own on an ordinary frame and as vision on «Смелая» (round 3)", () => {
+  test("every r2 probe", () => {
+    expect(PROBE_LEAKS_R2.flatMap(where)).toEqual([]);
+  });
+
+  test("H1, M1: a towel, a sheet, a blanket or the covers taken, pulled, slipped or kicked off stays what she wears or lies under: takes-off", () => {
+    for (const text of ["she slowly takes off her towel", "she slowly pulls off her towel", "she slowly slips off her towel", "she slowly kicks off the sheet", "she slowly pulls off the blanket", "she slowly takes off the covers"]) {
+      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, ["takes-off"]]);
+    }
+  });
+
+  test("H1: the towel or the blanket stays a place she moves on, off or from (steps, rolls, rises, sits, lies, gets up)", () => {
+    for (const text of ["she slowly steps off the towel", "she slowly rises from the blanket", "she slowly gets up off the towel", "she slowly rolls off the towel onto the sand"]) {
+      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, []]);
+    }
+  });
+
+  test("H2: «it» and «them» are what they stand for: legs or knees spread, opened or parted by a pronoun are an explicit act, content on every frame and source", () => {
+    for (const text of ["she slowly lifts her legs and spreads them", "she slowly bends her knees and opens them", "she slowly crosses her legs and opens them", "she slowly raises her knees and parts them a little"]) {
+      for (const source of ["vision", "own", "scene", "code"] as const) {
+        for (const frame of [FRIEND, BOLD]) expect([text, source, motionTextProblems(text, frame, source).includes("content")]).toEqual([text, source, true]);
+      }
+    }
+  });
+
+  test("M2: a garment held closed, then her hands dropped, lowered or relaxed: takes-off", () => {
+    for (const text of ["she slowly holds her robe closed and drops her hands", "she slowly holds her robe closed, relaxing her hands", "she slowly closes her robe and drops her hands"]) {
+      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, ["takes-off"]]);
+    }
+  });
+
+  test("M4: bending over toward the mirror is the explicit list's own, content on every frame and source", () => {
+    for (const source of ["vision", "own", "scene", "code"] as const) expect(motionTextProblems("she slowly bends over toward the mirror", BOLD, source)).toContain("content");
+  });
+
+  test("the bank's own «toward the mirror» stays: her head and her hips turned toward it", () => {
+    for (const text of ["she slowly turns her head a little toward the mirror", "she turns her hips a little toward the mirror and back"]) expect(motionTextProblems(text, FRIEND, "vision")).toEqual([]);
+  });
+
+  test("the re-review's sweep: every verb × particle × garment the grammar reads and the check passes ends more covered (or names bedding as a place)", () => {
+    const VERBS = [...BANK_VERBS, ...CURATED_VERBS];
+    const PARTS = ["off", "from", "out from", "down", "away", "aside", "open", "up", "out of", "under", "into", "across", "onto", "on"];
+    const OBJS = ["her towel", "the towel", "the sheet", "the blanket", "her robe", "her top", "her dress", "her skirt", "her shorts", "her bra", "her bikini", "her strap", "her straps", "her neckline", "her sleeve", "her jeans", "her panties", "her shirt", "the covers", "her outfit", "her clothes", "her jacket", "her hem", "her waistband", "her belt", "her duvet"];
+    /** What may pass: bedding or a towel as a place; leaving it; a cover pulled up; what covers her legs, a strap or a neckline pulled up; a sleeve; a skirt or a hem down; an outer layer on; zipped up; smoothed. */
+    const COVERED = [
+      / (?:under|into|across|onto|on) (?:her towel|the towel|the sheet|the blanket|the covers|her duvet)$/,
+      /^she slowly (?:lies|gets|rolls|rises|sits|stands|steps) (?:off|from|out from) the (?:towel|sheet|blanket|covers)$/,
+      /^she slowly (?:pulls|tugs|draws) (?:up )?(?:the sheet|the blanket|the covers|her duvet)(?: up)?(?: a little)?$/,
+      /^she slowly (?:pulls|tugs|slides) (?:up )?her (?:jeans|waistband|strap|straps|neckline)(?: up)?(?: a little)?$/,
+      /^she slowly (?:pulls|tugs|rolls|pushes) (?:up |down )?her sleeve(?: up| down)?(?: a little)?$/,
+      /^she slowly (?:pulls|tugs|holds|keeps) (?:down )?her (?:skirt|hem)(?: down)?(?: a little)?$/,
+      /^she slowly (?:puts|slips|pulls) (?:on )?her (?:jacket|robe)(?: on)?(?: a little)?$/,
+      /^she slowly slips into her (?:jacket|robe)$/,
+      /^she slowly zips (?:up )?her (?:clothes|dress|hem|jacket|outfit|robe|shirt|skirt|top)(?: up)?(?: a little)?$/,
+      /^she slowly smooths (?:down |out )?(?:her|the) (?:dress|hem|skirt|shirt|top|outfit|clothes|sheet|blanket|covers|duvet)(?: down| out)?(?: a little)?$/,
+    ];
+    const loose: string[] = [];
+    for (const v of VERBS) {
+      for (const p of PARTS) {
+        for (const o of OBJS) {
+          for (const t of [`she slowly ${v} ${p} ${o}`, `she slowly ${v} ${o} ${p}`, `she slowly ${v} ${o} ${p} a little`]) {
+            if (!readMotion(t).ok) continue;
+            if (motionTextProblems(t, FRIEND, "vision").length > 0 && motionTextProblems(t, BOLD, "vision").length > 0) continue;
+            if (!COVERED.some((shape) => shape.test(t))) loose.push(t);
+          }
+        }
+      }
+    }
+    expect(loose).toEqual([]);
+  }, 120_000);
+
+  test("the café vocabulary reads (a repair would otherwise spin)", () => {
+    for (const text of [
+      "she slowly sets her cup down",
+      "she slowly brings the cup to her lips",
+      "she slowly stirs her latte",
+      "she slowly stirs her coffee",
+      "she slowly turns a page of her book",
+      "she slowly looks out the window",
+      "she slowly rests her hand on her knee",
+      "she slowly wraps her arms around her knees",
+      "she slowly digs her toes into the sand",
+    ]) {
+      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, []]);
+    }
   });
 });

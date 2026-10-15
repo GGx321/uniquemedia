@@ -303,9 +303,15 @@ const EXPOSURE_MORE =
  */
 const EXPOSURE_MODEL =
   /\b(?:(?:uncover\w*|show\w*|display\w*|peek\w*|flash\w*|reveal\w*|expos\w*|bar(?:e|es|ed|ing))\s+(?:[a-z'-]+\s+){0,3}?(?:skin|chest|cleavage|breasts?|stomach|belly|midriff|navel|bottom|butt|buttocks|thighs?|body|bust|bare\s+back)|(?:uncover\w*|show\w*|display\w*|flash\w*|reveal\w*|expos\w*|bar(?:e|es|ed|ing))\s+(?:(?:a little|a bit|a lot|much|even|slightly|some|far)\s+)?(?:more|everything|it all|herself)|cleavage|underboob|sideboob)\b/gi;
+/**
+ * S5.WC2b round 3 (the re-review's H2): her legs or knees spread, opened or parted through a pronoun («lifts her legs and spreads them»): an explicit act on every frame and
+ * for every source, an own idea on «Смелая» included (explicit acts are a hard line).
+ */
+const LEGS_NAMED = /\b(?:legs?|knees?|thighs?)\b/i;
+const SPREADS_THEM = /\b(?:spread|open|part)\w*\s+(?:them|it)\b/i;
 /** Explicit acts and words a model says beyond the bank's list. */
 const EXPLICIT_MORE =
-  /\b(?:spread(?:s|ing)?\s+(?:her\s+)?(?:legs|thighs)|touch(?:es|ing)?\s+herself|strok(?:e|es|ing)\s+herself|masturbat\w*|porn\w*|xxx|hentai|erotic\w*|explicit|moan\w*|grop\w*|horny|aroused)\b/gi;
+  /\b(?:spread(?:s|ing)?\s+(?:her\s+)?(?:legs|thighs)|(?:open|part)(?:s|ing)?\s+(?:her\s+)?(?:legs|knees|thighs)|spread(?:s|ing)?\s+(?:her\s+)?knees|touch(?:es|ing)?\s+herself|strok(?:e|es|ing)\s+herself|masturbat\w*|porn\w*|xxx|hentai|erotic\w*|explicit|moan\w*|grop\w*|horny|aroused)\b/gi;
 /** Someone or something new in the clip: another person, or something that appears, enters or joins («…, a man walks in», «…, a second woman appears»). */
 const NEW_SUBJECT =
   /\b(?:man|men|woman|women|guy|guys|person|people|stranger|someone|somebody|anyone|anybody|boyfriend|girlfriend|husband|crowd|another|second|new|he|him|his|appears?|appearing|enters?|entering|arriv\w*|joins?|joining|emerg\w*|walks?\s+in|comes?\s+in|shows?\s+up)\b/i;
@@ -685,16 +691,28 @@ const EXPOSURE_GRAMMAR =
   /\b(?:(?:uncover|show|display|peek|flash|reveal|expos|glimps|flaunt|bar(?:e|es|ed|ing))\w*\s+(?:[a-z'-]+\s+){0,3}?(?:hips?|tummy|waist|torso|abs|bum|bottom|butt|curves|figure|body|belly|chest|leg|decolletage|bosom|collarbones?|stomach|midriff|navel|skin|cleavage|thighs?|bust|breasts?)|flaunt\w*|on (?:display|view|show)|into view|glimpse|show(?:s|ing)? off(?=\s*(?:,|$))|(?:chest|cleavage|stomach|tummy|midriff|body|skin|belly) (?:show(?:s|ing)?|on view))\b/i;
 
 /**
+ * Whether the old takes-off forms (`takesOff`) still refuse a text the grammar reads (the re-review's round-3 decision): they are lifted only where every clause they hit was
+ * read by a form of what she wears (dressing, covering, laid out) or by a verb whose object is an accessory or something she holds («takes off her sunglasses», «lifts the
+ * strap of her bag»); a generic form keeps their veto (the review's sweep: take, pull, slip, kick or push off a towel or a sheet).
+ */
+function takesOffVeto(text: string, reading: MotionReading): boolean {
+  if (!takesOff(text)) return false;
+  const lifted = (route: string): boolean => route === "kept" || route === "held";
+  const hit = reading.clauses.filter((clause) => takesOff(clause.text));
+  return hit.length === 0 ? !reading.clauses.every((clause) => lifted(clause.route)) : !hit.every((clause) => lifted(clause.route));
+}
+
+/**
  * The code of a text the grammar refuses: `takes-off` where it names undressing (the takes-off forms, or what she wears with a verb or a direction that takes it off, opens,
- * lifts or lowers it; final), `content` where it shows her body (exposure, an explicit act, a body word the grammar never reads), else `not-motion` (a repair may fix it).
+ * lifts or lowers it, or her hands letting go of what they held closed; final), `content` where it shows or poses her body (exposure, an explicit act, a body word the
+ * grammar never reads, a pose toward the mirror), else `not-motion` (a repair may fix it). A text it reads is refused only by the old forms' veto (`takes-off`).
  */
 function grammarCode(text: string): MotionProblem | null {
   const reading = readingOf(text);
-  if (reading.ok) return null;
+  if (reading.ok) return takesOffVeto(text, reading) ? "takes-off" : null;
   if (takesOff(text) || reading.undresses) return "takes-off";
-  if (exposureIn(text, true).length > 0 || explicitActsIn(text).length > 0 || new RegExp(EXPLICIT_MORE).test(text) || reading.bodyShown.length > 0 || EXPOSURE_GRAMMAR.test(text)) {
-    return "content";
-  }
+  const explicit = explicitActsIn(text).length > 0 || new RegExp(EXPLICIT_MORE).test(text) || (LEGS_NAMED.test(text) && SPREADS_THEM.test(text));
+  if (exposureIn(text, true).length > 0 || explicit || reading.bodyShown.length > 0 || reading.poses || EXPOSURE_GRAMMAR.test(text)) return "content";
   return "not-motion";
 }
 
@@ -706,7 +724,7 @@ function grammarCode(text: string): MotionProblem | null {
  */
 export function undressesBy(text: string, source: ClipMotionSource, bold: boolean): boolean {
   if (source !== "vision" && source !== "own") return takesOff(text);
-  if (grammarHolds(source, bold) && readingOf(text).ok) return false;
+  if (grammarHolds(source, bold) && grammarCode(text) === null) return false;
   const breaks = wornBreaks(text);
   return takesOffFormsStand(text) || breaks.takesOff.length > 0 || breaks.shows.length > 0 || exposureIn(text, true).length > 0;
 }
@@ -799,7 +817,11 @@ const RULES: readonly RuleCheck[] = [
     problem: "content",
     check: (text, scope) => {
       if (scope.source === "bank") return null;
-      const acts = [...explicitActsIn(text), ...Array.from(text.matchAll(new RegExp(EXPLICIT_MORE)), (m) => m[0])];
+      const acts = [
+        ...explicitActsIn(text),
+        ...Array.from(text.matchAll(new RegExp(EXPLICIT_MORE)), (m) => m[0]),
+        ...(LEGS_NAMED.test(text) ? (SPREADS_THEM.exec(text)?.slice(0, 1) ?? []) : []),
+      ];
       return acts.length > 0 ? `names an explicit act (${words(acts)})` : null;
     },
   },
