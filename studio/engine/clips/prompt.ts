@@ -1,9 +1,8 @@
-import type { ClipAttemptModel, ClipQuality, ClipSeconds } from "../../shared/engine";
+import type { ClipAttemptModel, ClipMotionSource, ClipQuality, ClipSeconds, MotionProblem } from "../../shared/engine";
 import { MOMENT_VERBS } from "../../shared/scenes/banks/schema";
-import { isHandCapture } from "../../shared/scenes/captures";
 import { contentProblems } from "../../shared/scenes/contentLine";
 import { rendersActivity } from "../../shared/scenes/custom";
-import { PHONE_WORDS, SELFIE_WORDS } from "../../shared/scenes/words";
+import { motionTextFindings, motionTextProblems, namesPhone, phoneInHandOrPropped } from "../../shared/scenes/motionText";
 import { VIDEO_TIERS } from "../money/prices";
 import type { VideoFrameImage, VideoRequest } from "../openrouter/types";
 import type { FrameFacts } from "./frameFacts";
@@ -22,51 +21,29 @@ import {
   poseSentenceOf,
   shortCameraLineOf,
   wordCount,
-  type ClipCapture,
   type ClipDialect,
 } from "./videoLook";
 
 // Stage 5, 5b.1, S5.V5 (plan s5b1 §5.5, I5.51, I5.57): the clip prompt and the request body. No LLM: the prompt is code that places videoLook's lines around two texts that
-// are data, the slot's activity and the motion (the bank's, verbatim, or a code motion). In order: the camera line, the pose sentence, the motion sentence, the prone anchor,
-// the legs line, the continuity line, the legwear line, the pacing, the look, and «She is an adult woman.». No outfit text and no coverage sentence, ever: the continuity line
-// keeps what she wears, and the slot's legwear is named only by the legwear line.
+// are data, the slot's activity and the motion (the bank's, verbatim, a code motion, and since 5b.2 a vision suggestion or the owner's own idea). In order: the camera line, the
+// pose sentence, the motion sentence, the prone anchor, the legs line, the continuity line, the legwear line, the pacing, the look, and «She is an adult woman.». No outfit text
+// and no coverage sentence, ever: the continuity line keeps what she wears, and the slot's legwear is named only by the legwear line.
 //
-// The checks run before any money (I5.51): the motion opens with «she» or «her»; the motion and the activity pass the content line at the slot's own level (a frame of «Смелая»
-// at bold, everything else at ordinary); neither stages the camera or the edit; on a capture where her phone is in her hand or propped, neither names a phone; on a frame
-// whose face does not show, the motion moves no part of her face (no prompt contradicts its photo); and the prompt is at most 130 words. A prompt over the cap takes the
-// capture's short camera line (pov-legs), never losing an anchor.
+// The checks run before any money (I5.51). S5.WC2 (plan s5b2 I5.66): the motion takes the ONE motion check (shared/scenes/motionText.ts) as what it is: a scene motion the
+// frame's rules (its grammar ran when its bank loaded), a code, vision or own motion the bank's grammar as well. The frame's rules: the content line at the slot's own level (a
+// frame of «Смелая» at bold, everything else at ordinary), no staging of the camera or the edit, no phone where hers is in her hand or propped (on the capture the photo proves
+// or the one its plan names), no movement of a face the photo does not show. The activity takes the content line, the staging words and the same phone rule. The prompt is at
+// most 130 words; a prompt over the cap takes the capture's short camera line (pov-legs), never losing an anchor.
 
 export type ClipPromptResult = { readonly ok: true; readonly prompt: string; readonly words: number } | { readonly ok: false; readonly problems: readonly string[] };
 
-const MOTION_START = /^(?:she|her)\s/;
 const ON_HER_STOMACH = /\bon her stomach\b/i;
 
-/** Her phone is in her hand (a selfie or a mirror) or propped (a timer): a text that names a phone there draws a second one. */
-function phoneRuleHolds(capture: ClipCapture): boolean {
-  return capture !== "unknown" && (isHandCapture(capture) || capture === "timer");
-}
-
-const namesPhone = (text: string): boolean => PHONE_WORDS.test(text) || SELFIE_WORDS.test(text);
-
-/** What a text breaks of the checks every motion and activity takes (I5.51), at the frame's level and on its capture. */
-function textProblems(facts: FrameFacts, text: string): string[] {
-  const problems = contentProblems(text, facts.level).map((p) => `${p.reason}: ${p.words.join(", ")}`);
-  if (hasVideoStagingWord(text)) problems.push("stages the camera or the edit");
-  if (phoneRuleHolds(facts.capture) && namesPhone(text)) problems.push(`names a phone on a ${facts.capture} capture`);
-  return problems;
-}
-
-/**
- * A motion of her mouth, her eyes or her expression. On a frame whose face does not show (the phone over it from her eyebrows to her chin, her legs filling the frame) it
- * would contradict the photo: the clip would have to uncover her face to play it.
- */
-const FACE_ACTION = /\b(?:smil\w*|blink\w*|laugh\w*|grin\w*|wink\w*|pout\w*|kiss\w*|lips?|eyes?|sips?|sipping)\b/i;
-
-/** What a motion breaks: it opens with «she» or «her», takes every check of a text, and moves no face the photo does not show. */
-export function motionProblems(facts: FrameFacts, motion: string): string[] {
-  const problems = textProblems(facts, motion);
-  if (!MOTION_START.test(motion)) problems.unshift("opens with neither «she» nor «her»");
-  if (facts.face !== "yes" && FACE_ACTION.test(motion)) problems.push("moves her face, which the photo does not show");
+/** What an activity breaks of the frame's rules (I5.51): the content line at the frame's level, a staging word, a phone where hers is in her hand or propped. */
+function activityProblems(facts: FrameFacts, activity: string): string[] {
+  const problems = contentProblems(activity, facts.level).map((p) => `${p.reason}: ${p.words.join(", ")}`);
+  if (hasVideoStagingWord(activity)) problems.push("stages the camera or the edit");
+  if (namesPhone(activity) && phoneInHandOrPropped(facts)) problems.push(`names a phone where hers is in her hand or propped (${facts.capture}, planned ${facts.plannedCapture})`);
   return problems;
 }
 
@@ -86,7 +63,7 @@ export function poseSentenceFor(facts: FrameFacts): string | null {
   const activity = facts.activity;
   if (activity === null) return null;
   const form = activityForm(activity);
-  if (form === null || textProblems(facts, activity).length > 0) return null;
+  if (form === null || activityProblems(facts, activity).length > 0) return null;
   return poseSentenceOf(activity, form);
 }
 
@@ -95,10 +72,13 @@ function lyingOnHerStomach(facts: FrameFacts): boolean {
   return facts.capture === "prone" || facts.capture === "over-shoulder" || ON_HER_STOMACH.test(facts.activity ?? "");
 }
 
-/** The clip prompt for this frame and motion in this dialect, or the problems that keep it from being sent. */
-export function clipPromptOf(facts: FrameFacts, motion: string, dialect: ClipDialect): ClipPromptResult {
-  const problems = motionProblems(facts, motion);
-  if (problems.length > 0) return { ok: false, problems };
+/**
+ * The clip prompt for this frame and motion in this dialect, or the problems that keep it from being sent. `source` is where the motion comes from; a call that names none is
+ * a scene motion's (5b.1's callers), which never takes the grammar a code, vision or own text takes.
+ */
+export function clipPromptOf(facts: FrameFacts, motion: string, dialect: ClipDialect, source: ClipMotionSource = "scene"): ClipPromptResult {
+  const findings = motionTextFindings(motion, facts, source);
+  if (findings.length > 0) return { ok: false, problems: findings.map((finding) => `${finding.problem} (${finding.rule}): ${finding.what}`) };
   const rest = [
     poseSentenceFor(facts),
     motionSentenceOf(motion),
@@ -116,6 +96,18 @@ export function clipPromptOf(facts: FrameFacts, motion: string, dialect: ClipDia
   const words = wordCount(prompt);
   if (words > PROMPT_WORDS_MAX) return { ok: false, problems: [`${words} words, over the cap of ${PROMPT_WORDS_MAX}`] };
   return { ok: true, prompt, words };
+}
+
+const DIALECTS: readonly ClipDialect[] = ["kling", "grok"];
+
+/**
+ * What a motion must pass before it is offered (I5.66: «every LLM motion passes that check and `clipPromptOf` in both dialects»): the one check's closed problems, else
+ * `too-long` when its prompt crosses 130 words in either dialect. Empty: the motion can be offered on this frame.
+ */
+export function clipMotionProblems(facts: FrameFacts, text: string, source: ClipMotionSource): MotionProblem[] {
+  const problems = motionTextProblems(text, facts, source);
+  if (problems.length > 0) return problems;
+  return DIALECTS.every((dialect) => clipPromptOf(facts, text, dialect, source).ok) ? [] : ["too-long"];
 }
 
 /** Grok's listing has no audio flag (`generate_audio: null`), so its body carries none (plan §5.5); Kling's says `false`. */

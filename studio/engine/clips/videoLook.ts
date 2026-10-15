@@ -1,5 +1,4 @@
 import { CAPTURES, type Capture } from "../../shared/scenes/captures";
-import { MOTION_STAGING } from "../../shared/scenes/words";
 import { FACE_COVER, captureLineOf } from "../scenes/phoneLook";
 
 // Stage 5, 5b.1, S5.V5 (plan s5b1 §5.5, I5.51): the video look. Every line a clip prompt carries lives here and nowhere else (I5.1, one module per medium; the photo's
@@ -192,13 +191,11 @@ export const LOOK_LINE = "Vertical phone video, slight noise, everything in focu
 /** I5.13: every clip prompt ends with it. */
 export const ADULT_LINE = "She is an adult woman.";
 
-/** I5.51: camera and edit words of a video, beyond the bank's own staging list. Read on a motion and an activity only, never on these lines (the legs line says «frame»). */
-const VIDEO_STAGING = /\b(?:dolly|crane|drone|gimbal|orbit\w*|push-?ins?|cinematic\w*|film\w*|colou?r grading|lens flares?|transitions?)\b/i;
-
-/** Whether a motion or an activity stages the camera or the edit: the bank's MOTION_STAGING, or a video word. */
-export function hasVideoStagingWord(text: string): boolean {
-  return MOTION_STAGING.test(text) || VIDEO_STAGING.test(text);
-}
+/**
+ * Whether a motion or an activity stages the camera or the edit: the bank's MOTION_STAGING, or a video word (I5.51). Read on a motion and an activity only, never on these lines
+ * (the legs line says «frame»). Since S5.WC2 its one definition is the one motion check's (shared/scenes/motionText.ts).
+ */
+export { hasVideoStagingWord } from "../../shared/scenes/motionText";
 
 /** The words of a prompt, counted on whitespace (the cap's measure). */
 export function wordCount(text: string): number {

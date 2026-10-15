@@ -68,10 +68,10 @@ export function codeMotionsFor(facts: FrameFacts): CodeMotion[] {
 
 const DIALECTS: readonly ClipDialect[] = ["kling", "grok"];
 
-/** Why a motion cannot be sent for this photo in either dialect (Kling first, Grok the fallback), or an empty list. */
-function sendProblems(facts: FrameFacts, text: string): string[] {
+/** Why a motion cannot be sent for this photo in either dialect (Kling first, Grok the fallback), or an empty list. The one motion check reads it as its source (S5.WC2). */
+function sendProblems(facts: FrameFacts, text: string, source: "scene" | "code"): string[] {
   return DIALECTS.flatMap((dialect) => {
-    const result = clipPromptOf(facts, text, dialect);
+    const result = clipPromptOf(facts, text, dialect, source);
     return result.ok ? [] : result.problems.map((problem) => `${dialect}: ${problem}`);
   });
 }
@@ -81,12 +81,12 @@ export function motionChoicesOf(facts: FrameFacts, log: (line: string) => void =
   const choices: ClipMotionChoice[] = [];
   if (facts.sceneMotion && facts.moment !== null) {
     const text = facts.moment.motion;
-    const problems = sendProblems(facts, text);
+    const problems = sendProblems(facts, text, "scene");
     if (problems.length === 0) choices.push({ id: "scene", source: "scene", label: "Как в сцене", text });
     else log(`[clip] photo ${facts.photoId}: the scene motion «${text}» is not offered (${problems.join("; ")})`);
   }
   for (const motion of codeMotionsFor(facts)) {
-    const problems = sendProblems(facts, motion.text);
+    const problems = sendProblems(facts, motion.text, "code");
     if (problems.length === 0) choices.push({ id: motion.id, source: "code", label: motion.label, text: motion.text });
     else log(`[clip] photo ${facts.photoId}: the code motion ${motion.id} is not offered (${problems.join("; ")})`);
   }
