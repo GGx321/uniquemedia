@@ -46,8 +46,11 @@ function Pills({ length, tags }: { length: string | null; tags: readonly string[
   );
 }
 
-/** A ready clip's poster (the frame at 0.5 s, through main's `clipposter` route), or the placeholder: in the dev mock (no files), and when the file will not load — a poster gone from the library included. */
-function Poster({ clip }: { clip: Ready }) {
+/**
+ * A ready clip's poster (the frame at 0.5 s, through main's `clipposter` route), or the placeholder: in the dev mock (no files), and when the file will not load — a poster gone from the library included.
+ * 5b.2 (S5.WA4): the editor's «Клипы» tab draws the same poster.
+ */
+export function Poster({ clip }: { clip: Ready }) {
   const { client } = useEngine();
   const src = clipPosterUrl(clip.avatarId, clip.clipId);
   const retry = useMediaRetry(src);

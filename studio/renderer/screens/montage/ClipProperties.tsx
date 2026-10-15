@@ -3,9 +3,10 @@ import type { Clip, MontageDraft, Motion } from "../../../shared/engine";
 import { MAX_TOTAL_MS } from "../../../shared/montage";
 import { Icon } from "../../ui/Icon";
 import { OwnPortrait, Portrait } from "../../ui/Portrait";
-import { type ClipLayout, cellsOf, type Edit, clipStartMs, layoutOf, maxDurationMs, roomMs, setDuration, setLayout, setMotion, setStagger, totalMs } from "./clipOps";
+import { type ClipLayout, cellsOf, type Edit, clipStartMs, layoutOf, maxDurationMs, type OriginOf, roomMs, setDuration, setLayout, setMotion, setStagger, totalMs } from "./clipOps";
+import type { CopyOf } from "./clipTiles";
 import { ownsKeys } from "./keys";
-import { actionWhyLabel, clipKindLabel, rangeLabel, secondsLabel, staggerRowLabel } from "./labels";
+import { actionWhyLabel, clipKindLabel, COPY_KIND, rangeLabel, secondsLabel, staggerRowLabel } from "./labels";
 import { originOfVideos, type OwnVideos, type VideoProblem, videoLookup } from "./ownVideos";
 import { selectClip, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
@@ -73,11 +74,13 @@ export interface ClipPropertiesProps {
   readonly videoProblems: ReadonlyMap<string, VideoProblem>;
   /** Where «Обрезка» tells the preview which frame a drag is at (fix round 1, L8). */
   readonly trimPeek: TrimPeekStore;
+  /** 5b.2 (57f): which own videos are clips' copies, and what to call them; by default, what the videos' records say. */
+  readonly copyOf?: CopyOf;
 }
 
-export function ClipProperties({ session, spec, index, cell, avatarId, timeline, focusPending, dragPhoto, onFillCell, videos, videoProblems, trimPeek }: ClipPropertiesProps) {
+export function ClipProperties({ session, spec, index, cell, avatarId, timeline, focusPending, dragPhoto, onFillCell, videos, videoProblems, trimPeek, copyOf }: ClipPropertiesProps) {
   // 5b.2: a clip's montage copy is neither split nor copied (Q-F = 1, 57f).
-  const originOf = useMemo(() => originOfVideos(videos), [videos]);
+  const originOf = useMemo<OriginOf>(() => (copyOf === undefined ? originOfVideos(videos) : (mediaId) => copyOf(mediaId)?.origin), [copyOf, videos]);
   const commands = useSelectionCommands(session, timeline, originOf);
   const durationId = useId();
   // Where the playhead rests (3d.4): a playback does not re-render the panel.
@@ -86,6 +89,9 @@ export function ClipProperties({ session, spec, index, cell, avatarId, timeline,
   if (clip === undefined) return null;
   const start = clipStartMs(spec, index);
   const layout = layoutOf(clip);
+  // 5b.2 (57f): a clip's copy is «клип», called by its clip's motion and photo, never by the copy's file name.
+  const copy = clip.kind === "video" ? (copyOf?.(clip.mediaId) ?? null) : null;
+  const isCopy = clip.kind === "video" && originOf(clip.mediaId) !== undefined;
   const cells = cellsOf(clip);
   const actions = selectionActions(spec, timeline.selection, restMs, originOf);
   const face = layout === null ? null : faceState(clip, cell, focusPending);
@@ -126,7 +132,7 @@ export function ClipProperties({ session, spec, index, cell, avatarId, timeline,
             Кадр {index + 1} из {spec.clips.length}
           </span>
           <span className="mono faint ed-props-sub">
-            {clipKindLabel(clip)} · {rangeLabel(start, start + clip.durationMs)}
+            {isCopy ? COPY_KIND : clipKindLabel(clip)} · {rangeLabel(start, start + clip.durationMs)}
           </span>
         </div>
         <div className="ed-props-actions">
@@ -253,7 +259,15 @@ export function ClipProperties({ session, spec, index, cell, avatarId, timeline,
       )}
 
       {clip.kind === "video" ? (
-        <VideoClipBody session={session} spec={spec} index={index} video={videoLookup(videos, clip.mediaId)} problem={videoProblems.get(clip.clipId) ?? null} trimPeek={trimPeek} />
+        <VideoClipBody
+          session={session}
+          spec={spec}
+          index={index}
+          video={videoLookup(videos, clip.mediaId)}
+          problem={videoProblems.get(clip.clipId) ?? null}
+          trimPeek={trimPeek}
+          copy={copy ?? (isCopy ? { motion: null, source: null } : null)}
+        />
       ) : (
         <div className="ed-pgroup ed-pgroup-tight">
           <div className="ed-prow ed-duration">

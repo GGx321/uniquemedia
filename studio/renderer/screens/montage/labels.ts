@@ -116,13 +116,26 @@ export function videoTag(problem: VideoProblem, sourceMs: number | null): VideoT
 
 const isVideoTag = (problem: PhotoProblem | VideoTag): problem is VideoTag => problem === "video-too-short" || problem === "media-unavailable" || problem === "video-under-min";
 
+/** 5b.2 (57f): what a clip's montage copy is called on a kadr: «клип», never the copy's file name (README M6). */
+export const COPY_KIND = "клип";
+
 /**
  * A clip block's accessible name: «Кадр 2: коллаж 3, 3.2 с», «Кадр 1: фото отклонено, 2.4 с», «Кадр 3: видео latte-pour.mov, 2.0 с» (an own video by its
- * file's name once its record is known), «Кадр 3: видео короче кадра, 2.0 с».
+ * file's name once its record is known), «Кадр 3: видео короче кадра, 2.0 с». 5b.2 (57f): a clip's copy by its clip's motion, «Кадр 3: клип «Поправляет
+ * прядь», 2.0 с» (`copyMotion`; «клип» alone while the motion is not known), never by the copy's file name.
  */
-export function clipAria(index: number, clip: Clip, problem: PhotoProblem | VideoTag | null, videoName: string | null = null): string {
+export function clipAria(index: number, clip: Clip, problem: PhotoProblem | VideoTag | null, videoName: string | null = null, copy: { readonly motion: string | null } | null = null): string {
   const tag = problem === null ? null : isVideoTag(problem) ? VIDEO_PROBLEM_TAGS[problem] : PHOTO_PROBLEM_TAGS[problem];
-  const what = tag !== null ? tag.replace(/^⚠\s*/, "") : clip.kind === "video" && videoName !== null ? `видео ${videoName}` : clipKindLabel(clip);
+  const what =
+    tag !== null
+      ? tag.replace(/^⚠\s*/, "")
+      : clip.kind === "video" && copy !== null
+        ? copy.motion === null
+          ? COPY_KIND
+          : `${COPY_KIND} «${copy.motion}»`
+        : clip.kind === "video" && videoName !== null
+          ? `видео ${videoName}`
+          : clipKindLabel(clip);
   return `Кадр ${index + 1}: ${what}, ${secondsLabel(clip.durationMs)}`;
 }
 

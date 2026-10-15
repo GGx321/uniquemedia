@@ -6,10 +6,11 @@ import { useEngine } from "../../engine/react";
 import { ownPhotoUrl, photoUrl, placeholderGradient } from "../../lib/media";
 import { NBSP } from "../../lib/format";
 import { Icon, type IconName, PauseIcon, PlayIcon } from "../../ui/Icon";
-import { addRefusal, cellsOf, clipStartMs, isEven, maxDurationMs, moveClip, setDuration, totalMs } from "./clipOps";
+import { addRefusal, cellsOf, clipStartMs, isEven, maxDurationMs, moveClip, type OriginOf, setDuration, totalMs } from "./clipOps";
+import { type CopyOf, PREPARING } from "./clipTiles";
 import { DRAG_THRESHOLD_PX, type GestureKit, SNAP_PX, trackPointer } from "./gesture";
 import { isTextEntry, ownsKeys } from "./keys";
-import { actionWhyLabel, clipAria, clockLabel, layerAddLabel, PHOTO_PROBLEM_TAGS, secondsLabel, VIDEO_PROBLEM_TAGS, videoTag } from "./labels";
+import { actionWhyLabel, clipAria, clockLabel, COPY_KIND, layerAddLabel, PHOTO_PROBLEM_TAGS, secondsLabel, VIDEO_PROBLEM_TAGS, videoTag } from "./labels";
 import { addLayerRefusal, layerCap, layerCount } from "./layerOps";
 import { laneHeight, laneLayout, LayerTracks } from "./LayerTracks";
 import type { TrackVerdict } from "./musicOps";
@@ -166,11 +167,36 @@ export interface TimelineProps {
   /** 3f.3b: the own videos the clips play (a clip's name and how long its video lets it get), and what the render refuses each video clip for. */
   readonly videos: OwnVideos;
   readonly videoProblems: ReadonlyMap<string, VideoProblem>;
+  /** 5b.2 (57f): which own videos are clips' copies, and what to call them («▶ клип»); by default, what the videos' records say. */
+  readonly copyOf?: CopyOf;
+  /** 5b.2 (57a `#drop`): the clips dropped on «Кадры» whose copies are being made, at the boundary each goes in at. */
+  readonly preparing?: readonly { readonly jobId: string; readonly boundary: number }[];
 }
 
-export function Timeline({ session, spec, avatarId, flagged, highlighted, flaggedLayers, musicLookup, musicListVersion, musicVerdict, timeline, dragPhoto, onInsertPhoto, onAddClip, onAddMusic, onAddSticker, onSelectClip, videos, videoProblems }: TimelineProps) {
+export function Timeline({
+  session,
+  spec,
+  avatarId,
+  flagged,
+  highlighted,
+  flaggedLayers,
+  musicLookup,
+  musicListVersion,
+  musicVerdict,
+  timeline,
+  dragPhoto,
+  onInsertPhoto,
+  onAddClip,
+  onAddMusic,
+  onAddSticker,
+  onSelectClip,
+  videos,
+  videoProblems,
+  copyOf,
+  preparing = [],
+}: TimelineProps) {
   // 5b.2: a clip's montage copy (its record names the clip) is neither split nor copied (Q-F = 1).
-  const originOf = useMemo(() => originOfVideos(videos), [videos]);
+  const originOf = useMemo<OriginOf>(() => (copyOf === undefined ? originOfVideos(videos) : (mediaId) => copyOf(mediaId)?.origin), [copyOf, videos]);
   const commands = useSelectionCommands(session, timeline, originOf);
   const lanesRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -607,6 +633,8 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
                     const problem = flagged.get(i) ?? null;
                     // 3f.3b: an own video clip the render refuses (its video gone, or shorter than the clip asks) is flagged as a refused photo is.
                     const known = clip.kind === "video" ? videoLookup(videos, clip.mediaId) : null;
+                    // 5b.2 (57f): a clip's copy is «▶ клип», called by its clip's motion, never by the copy's file name.
+                    const copy = clip.kind === "video" ? (copyOf?.(clip.mediaId) ?? (originOf(clip.mediaId) === undefined ? null : { motion: null })) : null;
                     const engineProblem = clip.kind === "video" ? (videoProblems.get(clip.clipId) ?? null) : null;
                     // A video under the shortest clip is told apart (fix round 1, L3): no trim can help it.
                     const videoProblem = engineProblem === null ? null : videoTag(engineProblem, known?.state === "known" ? known.video.durationMs : null);
@@ -619,7 +647,9 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
                           : clip.kind === "collage"
                             ? `коллаж ${clip.cells.length}`
                             : clip.kind === "video"
-                              ? "▶ видео"
+                              ? copy !== null
+                                ? `▶ ${COPY_KIND}`
+                                : "▶ видео"
                               : null;
                     const refused = problem !== null || videoProblem !== null;
                     const classes = ["ed-clip-slot", selected ? "ed-clip-on" : "", refused ? "ed-clip-flagged" : highlighted.includes(i) ? "ed-clip-warn" : "", lifted ? "ed-clip-lifted" : ""].filter(Boolean).join(" ");
@@ -660,7 +690,7 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
                           className="ed-clip"
                           data-clip-id={clip.clipId}
                           aria-pressed={selected}
-                          aria-label={clipAria(i, clip, problem ?? videoProblem, known?.state === "known" ? known.video.name : null)}
+                          aria-label={clipAria(i, clip, problem ?? videoProblem, known?.state === "known" ? known.video.name : null, copy)}
                           aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Delete"
                           onPointerDown={(e) => pressClip(e, clip.clipId)}
                           onClick={() => {
@@ -697,6 +727,20 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
                 </button>
               )}
               {insertAt !== null && !empty && <span className="ed-insert" aria-hidden="true" style={{ left: pct(boundaryMs(durations, Math.min(insertAt, durations.length))) }} />}
+              {preparing.map(({ jobId, boundary }) => {
+                // 57a `#drop`: a clip let go here is being prepared; the line stays where its copy goes in, its words cut to the next kadr (WAD re-review N1).
+                const at = Math.min(boundary, durations.length);
+                const room = at < durations.length ? (durations[at] ?? 0) : TIMELINE_MS - total;
+                return (
+                  <span key={jobId}>
+                    <span className="ed-insert" aria-hidden="true" style={{ left: pct(boundaryMs(durations, at)) }} />
+                    <span className="ctag edc-drop" style={{ left: `calc(${pct(boundaryMs(durations, at))} + 6px)`, maxWidth: `calc(${pct(room)} - 12px)` }}>
+                      <span className="spin" aria-hidden="true" />
+                      <span className="edc-drop-label">{PREPARING}</span>
+                    </span>
+                  </span>
+                );
+              })}
             </div>
             <div className="trk ed-lane-music" onPointerDown={(e) => e.target === e.currentTarget && timeline.select(null)}>
               <MusicTrack

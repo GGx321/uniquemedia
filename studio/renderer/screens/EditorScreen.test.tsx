@@ -903,9 +903,10 @@ describe("the shell's slots", () => {
     const made = await makeDraft(client, MIA.avatarId, [P1]);
     await openEditor();
     const tabs = within(screen.getByRole("tablist", { name: "Тип медиа" })).getAllByRole("tab");
-    expect(tabs.map((t) => t.textContent)).toEqual(["Фото", "Мои", "Музыка", "GIF", "Текст"]);
+    // 5b.2 (plan s5b2 §5.1, mockup 57): «Клипы» after «Фото».
+    expect(tabs.map((t) => t.textContent)).toEqual(["Фото", "Клипы", "Мои", "Музыка", "GIF", "Текст"]);
     // 3d.5 opened «Музыка», «GIF» and «Текст»; 3f.6 «Мои». None says «Скоро» any more.
-    expect(tabs.map((t) => t.hasAttribute("disabled"))).toEqual([false, false, false, false, false]);
+    expect(tabs.map((t) => t.hasAttribute("disabled"))).toEqual([false, false, false, false, false, false]);
     expect(tabs.some((t) => t.getAttribute("title") === "Свои файлы — скоро")).toBe(false);
     const bin = await screen.findByRole("list", { name: "Фото аватара" });
     expect(within(bin).getAllByRole("listitem")).toHaveLength(6);

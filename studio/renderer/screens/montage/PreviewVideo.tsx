@@ -49,13 +49,16 @@ export interface PreviewVideoProps {
   readonly sourceFrame: number;
   /** A frame «Обрезка» is dragging to (fix round 1, L8): shown at rest while the drag lasts, whatever the playhead. */
   readonly peekFrame: number | null;
+  /** 5b.2 (57f; README M6): a clip's copy is named by its clip's motion on the stand-in, never by the copy's file name. */
+  readonly copyName?: string | null;
 }
 
-export function PreviewVideo({ spec, playhead, mediaId, video, window, sourceFrame, peekFrame }: PreviewVideoProps) {
+export function PreviewVideo({ spec, playhead, mediaId, video, window, sourceFrame, peekFrame, copyName = null }: PreviewVideoProps) {
   const { client } = useEngine();
   const url = ownVideoUrl(client, mediaId);
   const [failed, setFailed] = useState<string | null>(null);
   const known = video.state === "known" ? video.video : null;
+  const name = copyName ?? known?.name ?? null;
   const source: Size | null = known === null ? null : { w: known.width, h: known.height };
   const placed = window !== null && source !== null ? sourceStyle(window, source) : undefined;
   const playable = url !== null && known !== null && failed !== url;
@@ -68,12 +71,12 @@ export function PreviewVideo({ spec, playhead, mediaId, video, window, sourceFra
       ) : video.state === "gone" ? (
         <VideoCard tone="warn" title="Файла больше нет" note="Это видео удалили из «Моих» — уберите этот кадр." />
       ) : failed !== null && failed === url ? (
-        <VideoCard tone="warn" title="Видео не открылось" note={known?.name ?? null} />
+        <VideoCard tone="warn" title="Видео не открылось" note={name} />
       ) : (
         known !== null && (
           <VideoCard
             tone="plain"
-            title={known.name}
+            title={name ?? known.name}
             facts={`${known.width}×${known.height} · ${sourceClock(sourceFrame)}`}
             note="Картинка видео — только в приложении"
           />

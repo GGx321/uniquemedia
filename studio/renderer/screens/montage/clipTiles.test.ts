@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { CLIP_REASONS_RU, ClipSummary, type EngineError, type MediaOrigin, mediaReasonRu, type PhotoSummary } from "../../../shared/engine";
 import { scenePhoto } from "../../engine/mockEngine.testkit";
 import { NBSP } from "../../lib/format";
-import { binNumbers, clipImportFailure, clipTileAria, clipTiles, clipTileTitle, clipsHint, type ClipTile, type ClipTileState, pickAria } from "./clipTiles";
+import { binNumbers, clipImportFailure, clipTileAria, clipTiles, clipTileTitle, clipsHint, type ClipTile, type ClipTileState, copyLabeller, pickAria } from "./clipTiles";
 import type { OriginOf } from "./clipOps";
 import { draftSpec, photoClip } from "./testkit";
 
@@ -44,7 +44,8 @@ const PHOTOS: PhotoSummary[] = [scenePhoto(1), scenePhoto(2), scenePhoto(3), sce
 const INDEX = new Map(PHOTOS.map((p) => [p.photoId, p]));
 
 const COPY_3 = "media-copy-0003";
-const ORIGINS: ReadonlyMap<string, MediaOrigin> = new Map([[COPY_3, { kind: "clip", avatarId: AVATAR, clipId: "clip-0000003", photoId: P(4) }]]);
+const ORIGIN_3: MediaOrigin = { kind: "clip", avatarId: AVATAR, clipId: "clip-0000003", photoId: P(4) };
+const ORIGINS: ReadonlyMap<string, MediaOrigin> = new Map([[COPY_3, ORIGIN_3]]);
 const originOf: OriginOf = (mediaId) => ORIGINS.get(mediaId);
 const copyClip = (index: number, mediaId: string) => ({ clipId: `clip-${String(index + 1).padStart(3, "0")}`, durationMs: 2_000, transitionIn: "cut" as const, kind: "video" as const, mediaId, trimStartMs: 0, focus: null });
 
@@ -220,6 +221,16 @@ describe("the line under the tiles (57, `#cell`, `#full`; WAD re-review N5)", ()
     expect(clipsHint({ clip: 0, cell: 1, replace: true }, null)).toBe("Клик — клип в конец ролика, в ячейку коллажа — только фото. Перетащите на «Кадры», чтобы вставить между кадрами.");
     expect(clipsHint(null, "clip-cap")).toBe("Не больше 20 кадров в одном видео. Клик по клипу в панели ничего не добавит.");
     expect(clipsHint({ clip: 0, cell: 1 }, "no-room")).toBe(`В ролике уже 15 с: на новый кадр нет места. Укоротите кадр, чтобы добавить клип.`);
+  });
+});
+
+describe("a copy as the draft calls it (57f; README M6)", () => {
+  test("by its clip's motion and its photo («Фото N», else the category), never by the copy's file name; an own video is no copy", () => {
+    const copyOf = copyLabeller(originOf, CLIPS, INDEX);
+    expect(copyOf(COPY_3)).toEqual({ origin: ORIGIN_3, motion: "Поправляет прядь", source: "Фото 4" });
+    expect(copyOf("media-own-0001")).toBeNull();
+    // The clip list or the photos not read yet: the copy is still a copy, its words wait.
+    expect(copyLabeller(originOf, null, null)(COPY_3)).toEqual({ origin: ORIGIN_3, motion: null, source: null });
   });
 });
 
