@@ -58,6 +58,11 @@ export interface MontageServiceDeps {
    * (`media-unavailable`, `video-too-short`). One question per `get` and per `list`. Absent: no own video is held, as a render with none says.
    */
   readonly ownVideos?: (mediaIds: readonly string[]) => Promise<ReadonlyMap<string, { readonly durationMs: number }>>;
+  /**
+   * Where every clip copy of the library comes from, by media id (5b.2, I5.60, Q-F = 1): a draft's video clip that is a copy is judged by its photo (`photo-unavailable` at the clip), as admission
+   * judges it. One question per `get` and per `list`, asked only when a draft holds a video clip. Absent, or `readable: false`, or a failure: no frame is judged (the copy's own verdict stands).
+   */
+  readonly copyOrigins?: () => Promise<{ readonly readable: boolean; readonly origins: ReadonlyMap<string, { readonly photoId: string }> }>;
   /** The same for own STICKERS (3f.5): a draft's own-sticker layers are judged against it (`media-unavailable` at the layer's sticker). Absent: none is held. */
   readonly ownStickers?: (mediaIds: readonly string[]) => Promise<ReadonlySet<string>>;
   /** What the track store holds (3c.5): a draft's trending track is judged against it. Absent: no track is held. */
@@ -243,6 +248,7 @@ export class MontageService {
     const heldStickers = await this.#heldOwnStickers([montage.spec]);
     const tracks = await this.#heldOwnTracks([montage.spec]);
     const videos = await this.#heldOwnVideos([montage.spec]);
+    const frames = await this.#clipFrames([montage.spec]);
     return {
       montage,
       issues: draftIssues(
@@ -255,6 +261,7 @@ export class MontageService {
         (mediaId) => heldStickers.has(mediaId),
         (mediaId) => tracks.get(mediaId) ?? null,
         (mediaId) => videos.get(mediaId) ?? null,
+        (mediaId) => frames.get(mediaId),
       ),
     };
   }
@@ -272,6 +279,19 @@ export class MontageService {
       this.#deps.log(`the own videos of a draft could not be looked up (${kindOf(error)})`);
       return new Map();
     }
+  }
+
+  /** The clip copies' photos for `specs`, from ONE question to the media list, and only when a draft holds a video clip. Unreadable, unwired or failing: nothing is judged (the log says why). */
+  async #clipFrames(specs: readonly MontageDraft[]): Promise<ReadonlyMap<string, { readonly photoId: string }>> {
+    if (this.#deps.copyOrigins === undefined || !specs.some((spec) => ownVideoClips(spec).length > 0)) return new Map();
+    try {
+      const read = await this.#deps.copyOrigins();
+      if (read.readable) return read.origins;
+      this.#deps.log("the clip copies of a draft could not be looked up (the media list is unreadable)");
+    } catch (error) {
+      this.#deps.log(`the clip copies of a draft could not be looked up (${kindOf(error)})`);
+    }
+    return new Map();
   }
 
   /**
@@ -337,6 +357,7 @@ export class MontageService {
     const heldStickers = await this.#heldOwnStickers(shown.map((montage) => montage.spec));
     const tracks = await this.#heldOwnTracks(shown.map((montage) => montage.spec));
     const videos = await this.#heldOwnVideos(shown.map((montage) => montage.spec));
+    const frames = await this.#clipFrames(shown.map((montage) => montage.spec));
     const items = shown.map((montage) => {
       const owner = montage.spec.avatarId;
       let known = availability.get(owner);
@@ -346,7 +367,7 @@ export class MontageService {
       }
       return {
         montage,
-        issues: draftIssues(library, montage.spec, this.#deps.log, known, this.#deps.tracks, (mediaId) => held.has(mediaId), (mediaId) => heldStickers.has(mediaId), (mediaId) => tracks.get(mediaId) ?? null, (mediaId) => videos.get(mediaId) ?? null),
+        issues: draftIssues(library, montage.spec, this.#deps.log, known, this.#deps.tracks, (mediaId) => held.has(mediaId), (mediaId) => heldStickers.has(mediaId), (mediaId) => tracks.get(mediaId) ?? null, (mediaId) => videos.get(mediaId) ?? null, (mediaId) => frames.get(mediaId)),
         videoCount: library.videoCountForMontage(owner, montage.montageId),
       };
     });

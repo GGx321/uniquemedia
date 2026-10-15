@@ -26,7 +26,8 @@ import { draftCaptionIssues } from "../../shared/text/draftCaptionIssues";
 //   track-unavailable    DONE  a trending track that is not in the track store (`music`), by `trackIssues`, the function the mock uses
 //                        too; with no store wired no track is held. TODO(3f.4) for an own track.
 //   video-too-short      DONE  an own video clip that asks for more than its stored video has: `trimStartMs` plus the clip's length past the video's end (`clips.i`, 3f.3b).
-//   track-too-short      DONE  a track (trending or own) shorter than `startMs` plus the montage's total (`music`).
+//   photo-unavailable    DONE  (5b.2) a clip copy whose frame (its origin's photo) is not usable, at the clip (`clips.i`).
+//   track-too-short    DONE  a track (trending or own) shorter than `startMs` plus the montage's total (`music`).
 
 /** One photo cell of a draft, scene or own, and where it is (the issue's path). */
 interface PhotoCell {
@@ -63,6 +64,7 @@ export function referentialIssues(
   holdsOwnSticker?: (mediaId: string) => boolean,
   ownTrack?: (mediaId: string) => { readonly durationMs: number } | null,
   ownVideo?: (mediaId: string) => { readonly durationMs: number } | null,
+  frameOf?: (mediaId: string) => { readonly photoId: string } | undefined,
 ): MontageIssue[] {
   const issues: MontageIssue[] = [];
   for (const cell of photoCells(spec)) {
@@ -72,6 +74,11 @@ export function referentialIssues(
       issues.push({ code: "media-unavailable", path: cell.path });
     }
   }
+  // 5b.2 (I5.60, Q-F = 1): a clip copy's photo is a frame of the draft, judged by the rule a scene photo is and told at the clip, as admission tells it.
+  spec.clips.forEach((clip, i) => {
+    const frame = clip.kind === "video" ? frameOf?.(clip.mediaId) : undefined;
+    if (frame !== undefined && !availability.usable(frame.photoId)) issues.push({ code: "photo-unavailable", path: ["clips", i] });
+  });
   issues.push(...ownVideoIssues(spec, (mediaId) => ownVideo?.(mediaId) ?? null));
   issues.push(...stickerIssues(spec));
   issues.push(...ownStickerIssues(spec, (mediaId) => holdsOwnSticker?.(mediaId) ?? false));
@@ -94,7 +101,8 @@ export function draftIssues(
   holdsOwnSticker?: (mediaId: string) => boolean,
   ownTrack?: (mediaId: string) => { readonly durationMs: number } | null,
   ownVideo?: (mediaId: string) => { readonly durationMs: number } | null,
+  frameOf?: (mediaId: string) => { readonly photoId: string } | undefined,
 ): MontageIssue[] {
   const known = availability ?? photoAvailability(library, spec.avatarId, log);
-  return [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...referentialIssues(spec, known, tracks, holdsOwnPhoto, holdsOwnSticker, ownTrack, ownVideo)].slice(0, MAX_MONTAGE_ISSUES);
+  return [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...referentialIssues(spec, known, tracks, holdsOwnPhoto, holdsOwnSticker, ownTrack, ownVideo, frameOf)].slice(0, MAX_MONTAGE_ISSUES);
 }

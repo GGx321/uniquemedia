@@ -471,3 +471,75 @@ describe("draftIssues: an own track against the library's media (3f.4)", () => {
     expect(withOwnTrack(w, spec, holdsOwn(8_000)).map((i) => i.code)).toEqual(["photo-unavailable", "media-unavailable"]);
   });
 });
+
+describe("draftIssues: a clip copy whose frame is no longer free (5b.2, I5.60, Q-F = 1)", () => {
+  const copyClip = (n: number, mediaId: string) => ({ clipId: `clip-${String(n).padStart(3, "0")}`, kind: "video" as const, mediaId, trimStartMs: 0, focus: null, durationMs: 4_000, transitionIn: "cut" as const });
+  const holdsVideo = () => ({ durationMs: 60_000 });
+  const framesOf = (frames: Record<string, string>) => (mediaId: string) => (mediaId in frames ? { photoId: frames[mediaId] ?? "" } : undefined);
+  const judge = (w: World, spec: MontageDraft, frames: Record<string, string>) =>
+    draftIssues(w.library, spec, () => undefined, undefined, undefined, undefined, undefined, undefined, holdsVideo, framesOf(frames));
+
+  test("a copy whose photo is in a finished video is photo-unavailable at the clip", async () => {
+    const w = world();
+    await writeVideoRecord(w.libraryRoot, "video-0000001", sceneSpec(w.avatar.id, [photoId(w, 0)]));
+    await w.library.reloadVideoRecords(w.avatar.id);
+
+    const issues = judge(w, draftOf(w, { clips: [photoClip(1, photoId(w, 1)), copyClip(2, "media-0000001")] }), { "media-0000001": photoId(w, 0) });
+
+    expect(issues).toEqual([{ code: "photo-unavailable", path: ["clips", 1] }]);
+  });
+
+  test("a copy whose photo is rejected is photo-unavailable at the clip", async () => {
+    const w = world();
+    await w.library.setRejected(w.avatar.id, photoId(w, 0), true);
+
+    const issues = judge(w, draftOf(w, { clips: [photoClip(1, photoId(w, 1)), copyClip(2, "media-0000001")] }), { "media-0000001": photoId(w, 0) });
+
+    expect(issues).toEqual([{ code: "photo-unavailable", path: ["clips", 1] }]);
+  });
+
+  test("a copy whose photo a queued or running render holds is photo-unavailable at the clip", async () => {
+    const w = world();
+    const { library } = await openLibrary(w.libraryRoot, { reservedPhotos: () => new Set([photoId(w, 0)]) });
+    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 1)), copyClip(2, "media-0000001")] });
+
+    const issues = draftIssues(library, spec, () => undefined, undefined, undefined, undefined, undefined, undefined, holdsVideo, framesOf({ "media-0000001": photoId(w, 0) }));
+
+    expect(issues).toEqual([{ code: "photo-unavailable", path: ["clips", 1] }]);
+  });
+
+  test("a copy whose photo the library no longer has is photo-unavailable at the clip", () => {
+    const w = world();
+
+    const issues = judge(w, draftOf(w, { clips: [photoClip(1, photoId(w, 1)), copyClip(2, "media-0000001")] }), { "media-0000001": "photo-nobody-1" });
+
+    expect(issues).toEqual([{ code: "photo-unavailable", path: ["clips", 1] }]);
+  });
+
+  test("a copy of a free photo is no issue", () => {
+    const w = world();
+
+    expect(judge(w, draftOf(w, { clips: [photoClip(1, photoId(w, 1)), copyClip(2, "media-0000001")] }), { "media-0000001": photoId(w, 0) })).toEqual([]);
+  });
+
+  test("a video clip that is no clip's copy is not judged as a frame", async () => {
+    const w = world();
+    await w.library.setRejected(w.avatar.id, photoId(w, 0), true);
+
+    expect(judge(w, draftOf(w, { clips: [photoClip(1, photoId(w, 1)), copyClip(2, "media-0000001")] }), {})).toEqual([]);
+  });
+
+  test("two copies of one used photo are each photo-unavailable at their own clip", async () => {
+    const w = world();
+    await writeVideoRecord(w.libraryRoot, "video-0000001", sceneSpec(w.avatar.id, [photoId(w, 0)]));
+    await w.library.reloadVideoRecords(w.avatar.id);
+    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 1)), copyClip(2, "media-0000001"), copyClip(3, "media-0000002")] });
+
+    const issues = judge(w, spec, { "media-0000001": photoId(w, 0), "media-0000002": photoId(w, 0) });
+
+    expect(issues).toEqual([
+      { code: "photo-unavailable", path: ["clips", 1] },
+      { code: "photo-unavailable", path: ["clips", 2] },
+    ]);
+  });
+});
