@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, type AvatarSummary, type EngineError, type MediaSummary, type Montage, type MontageIssue, type VideoSummary } from "../../shared/engine";
+import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, type AvatarSummary, type EngineError, type MediaOrigin, type MediaSummary, type Montage, type MontageIssue, type VideoSummary } from "../../shared/engine";
 import { ownVideoClips } from "../../shared/montage";
 import { useEngine, useEngineView } from "../engine/react";
 import { realScheduler } from "../engine/scheduler";
 import { onFlushRequest, quitWithoutSaving } from "../engine/windowStudio";
 import { classifyAnswer, foundAfterSubmit, latestRenderOf, renderControl, type RenderControl } from "../engine/renderJobs";
+import { isActiveImport } from "../engine/importJobs";
 import { isActiveJob, type EngineView } from "../engine/store";
 import { errorText } from "../lib/errors";
 import { type Route, useLeaveGuard, useNavigate } from "../navigation";
@@ -13,8 +14,12 @@ import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice, Notice } from "../ui/Notice";
 import { DockMore, InDock, useNoticeDock } from "../ui/NoticeDock";
 import { ScreenTitle } from "../ui/ScreenTitle";
+import { useClipList } from "./clips/clipsContext";
 import { type BinFilter, isFreePhoto } from "./montage/bin";
+import { ClipPlacements, copyFactsOf, importAnswerOf, placeBoundary, readyCopyFacts } from "./montage/clipImport";
 import { ClipProperties } from "./montage/ClipProperties";
+import { type ClipCard, ClipsTab } from "./montage/ClipsTab";
+import { clipImportFailure, type ClipTile, clipTiles, copyLabeller } from "./montage/clipTiles";
 import { sameJson } from "./montage/json";
 import { LayerProperties } from "./montage/LayerProperties";
 import { addLayerRefusal } from "./montage/layerOps";
@@ -27,7 +32,7 @@ import { MusicTab } from "./montage/MusicTab";
 import { useTrackSummary } from "./montage/MusicTrack";
 import { changeTouches, draftMediaIds } from "./montage/ownMedia";
 import { MediaStandIn } from "./montage/PanelSplitter";
-import { originOfVideos, useOwnVideos, videoProblems } from "./montage/ownVideos";
+import { originOfVideos, type OwnVideo, ownVideoOf, useOwnVideos, videoProblems, withPlaced } from "./montage/ownVideos";
 import { TrimPeekStore } from "./montage/trimPeek";
 import { PhotoBin } from "./montage/PhotoBin";
 import { replaceSticker } from "./montage/stickerOps";
@@ -46,6 +51,7 @@ import {
   insertOwnPhotoClip,
   insertPhotoClip,
   insertVideoClip,
+  type OriginOf,
   type OwnVideoFacts,
   setCellOwnPhoto,
   setCellPhoto,
@@ -556,9 +562,20 @@ function DraftEditor({
   const flaggedLayers = layerProblems(verdict.spec, judged, previewRefused);
   // 3f.3b: the own videos the clips play (their records, by id), and what the render refuses each video clip for: the engine's verdict on the spec on
   // screen, else the window's guess from the records.
-  const ownVideos = useOwnVideos(client, ownVideoClips(state.spec).map((clip) => clip.mediaId), store);
-  // 5b.2 (I5.60, Q-F = 1): which own videos are clips' montage copies: a photo and its clips are one frame, placed once.
-  const originOf = useMemo(() => originOfVideos(ownVideos), [ownVideos]);
+  const listedVideos = useOwnVideos(client, ownVideoClips(state.spec).map((clip) => clip.mediaId), store);
+  // 5b.2: the clip copies this editor placed are known at once, before the media list answers for them: a job's copy by its record (`job.done`), a live
+  // copy by the clip it copies (`media.importClip`'s answer names only its id).
+  const [placedCopies, setPlacedCopies] = useState<ReadonlyMap<string, OwnVideo>>(() => new Map());
+  const [placedOrigins, setPlacedOrigins] = useState<ReadonlyMap<string, MediaOrigin>>(() => new Map());
+  const ownVideos = useMemo(() => withPlaced(listedVideos, placedCopies), [listedVideos, placedCopies]);
+  // 5b.2 (I5.60, Q-F = 1): which own videos are clips' montage copies: a photo and its clips are one frame, placed once. A copy the list answered for and
+  // does not hold is gone (deleted with its clip): it holds no frame.
+  const originOf = useMemo<OriginOf>(() => {
+    const listed = originOfVideos(ownVideos);
+    return (mediaId) => listed(mediaId) ?? (ownVideos.answered.has(mediaId) ? undefined : placedOrigins.get(mediaId));
+  }, [ownVideos, placedOrigins]);
+  const originRef = useRef(originOf);
+  originRef.current = originOf;
   const clipVideoProblems = videoProblems(state.spec, verdict, ownVideos);
   // 3f.3b fix round 1 (L8): «Обрезка» tells the preview which frame a drag is at, without re-rendering the editor.
   const [trimPeek] = useState(() => new TrimPeekStore());
@@ -569,7 +586,8 @@ function DraftEditor({
    */
   const [drag, setDrag] = useState<BinDrag | null>(null);
   const dragAny = drag === null ? null : dragKey(drag);
-  const dragCell = drag !== null && (drag.source === "scene" || drag.kind === "photo") ? dragAny : null;
+  // A video (an own one, a clip's copy) never goes into a cell.
+  const dragCell = drag !== null && (drag.source === "scene" || (drag.source === "own" && drag.kind === "photo")) ? dragAny : null;
   const selected = resolveSelection(state.spec, timeline.selection);
   const selectedCell = selected?.kind === "clip" ? cellsOf(selected.clip)[selected.cell] : undefined;
   /**
@@ -612,6 +630,79 @@ function DraftEditor({
   useEffect(() => {
     if (replacing !== null && !replaceLive) setReplacing(null);
   }, [replacing, replaceLive]);
+
+  // 5b.2 part A: the «Клипы» tab. The avatar's clips (`clips.list`) are read when the editor opens and when a clip job of the avatar ends, and again when the
+  // avatar changes (a render ended: a clip's `use` moves) or the window comes back.
+  const clipList = useClipList(avatarId, view);
+  const rereadClips = useRef(clipList.reread);
+  rereadClips.current = clipList.reread;
+  const clipsAsked = useRef(false);
+  useEffect(() => {
+    if (!clipsAsked.current) {
+      clipsAsked.current = true;
+      return;
+    }
+    rereadClips.current();
+  }, [avatar, focusTick]);
+  /** The copies this editor waits for, to place them where they were asked for; `waiting` is what it holds now (the drop marks, 57a `#drop`). */
+  const [placements] = useState(() => new ClipPlacements());
+  const [waiting, setWaiting] = useState<ClipPlacements["pending"]>([]);
+  /** The clips whose `media.importClip` is out (the answer not come yet): the ref guards a second click, the state draws the tile busy. */
+  const asking = useRef(new Set<string>());
+  const [askingClips, setAskingClips] = useState<ReadonlySet<string>>(() => new Set());
+  /** What `media.importClip` refused for a clip (57c), until the card is closed or the clip tried again; and the clips whose file will not prepare. */
+  const [clipRefusals, setClipRefusals] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const [damagedClips, setDamagedClips] = useState<ReadonlySet<string>>(() => new Set());
+  // The avatar's clip copies being made, from the job list (they outlive a window reload); the failed ones say why on a card until closed.
+  const clipImports = view.imports.filter((job) => job.origin !== undefined && job.origin.avatarId === avatarId);
+  const failedClipImports = clipImports.filter((job) => job.status === "failed" && job.error !== null);
+  const busyClips = new Set<string>([...askingClips, ...waiting.map((w) => w.clipId), ...clipImports.filter(isActiveImport).flatMap((job) => (job.origin === undefined ? [] : [job.origin.clipId]))]);
+  const failedClips = new Map<string, "failed" | "damaged">([
+    ...[...clipRefusals.keys(), ...failedClipImports.flatMap((job) => (job.origin === undefined ? [] : [job.origin.clipId]))].map((clipId): [string, "failed"] => [clipId, "failed"]),
+    ...[...damagedClips].map((clipId): [string, "damaged"] => [clipId, "damaged"]),
+  ]);
+  const clipTileList = clipList.clips === null ? null : clipTiles({ clips: clipList.clips, spec: state.spec, originOf, photos: photoIndex, busy: busyClips, failed: failedClips });
+  const clipsById = new Map((clipList.clips ?? []).map((clip) => [clip.clipId, clip]));
+  const clipCards: ClipCard[] = [
+    ...[...clipRefusals].flatMap(([clipId, text]) => {
+      const clip = clipsById.get(clipId);
+      return clip === undefined ? [] : [{ key: `clip:${clipId}`, motion: clip.motion.label, text }];
+    }),
+    ...failedClipImports.flatMap((job) => {
+      const clip = job.origin === undefined ? undefined : clipsById.get(job.origin.clipId);
+      const failure = job.error === null ? null : clipImportFailure(job.error);
+      return clip === undefined || failure === null ? [] : [{ key: `job:${job.jobId}`, motion: clip.motion.label, text: failure.text }];
+    }),
+  ];
+  // 57f: a copy in the draft is called by its clip's motion and its photo, never by the copy's file name.
+  const copyOf = useMemo(() => copyLabeller(originOf, clipList.clips, photoIndex), [originOf, clipList.clips, photoIndex]);
+
+  // A clip copy's job ended: a copy this editor waits for is placed where it was asked for; a failed one is told by its card (the job list keeps it).
+  const placeRef = useRef(placeClipCopy);
+  placeRef.current = placeClipCopy;
+  useEffect(
+    () =>
+      client.subscribe((event) => {
+        if (event.type === "job.done" && event.payload.result.kind === "import" && event.payload.result.media.origin !== undefined) {
+          const done = placements.done(event.payload.jobId, event.payload.result.media);
+          if (done !== null) placeRef.current(copyFactsOf(done.media), done.placement.boundary, done.media);
+        } else if (event.type === "job.failed" && event.payload.kind === "import" && event.payload.origin !== undefined) {
+          placements.failed(event.payload.jobId, event.payload.error);
+        } else if (event.type === "job.cancelled" && event.payload.kind === "import" && event.payload.origin !== undefined) {
+          // The engine cancels a copy whose clip or avatar went meanwhile: the list says what is left.
+          placements.cancelled(event.payload.jobId);
+          rereadClips.current();
+        } else return;
+        setWaiting(placements.pending);
+      }),
+    [client, placements],
+  );
+  // Another engine, or another library: the jobs this editor waited for never end here.
+  const libraryKey = `${view.bootId ?? ""}\n${view.settings?.libraryPath ?? ""}`;
+  useEffect(() => {
+    placements.clear();
+    setWaiting([]);
+  }, [placements, libraryKey]);
 
   function openTab(next: MediaTab): void {
     setTab(next);
@@ -733,12 +824,15 @@ function DraftEditor({
     selectAfterFill(result.spec, clipIndex, cell);
   }
 
-  /** A drag from the media panel dropped on «Кадры» at `boundary`: a scene photo, an own photo or an own video as a new clip there. */
+  /** A drag from the media panel dropped on «Кадры» at `boundary`: a scene photo, an own photo or video, or (5b.2) a clip's copy as a new clip there. */
   function insertDropped(key: string, boundary: number): void {
     const dropped = parseDragKey(key);
     if (dropped === null) return;
     if (dropped.source === "scene") placePhoto(dropped.photoId, boundary);
-    else if (dropped.kind === "photo") placeOwnPhoto(dropped.mediaId, boundary);
+    else if (dropped.source === "clip") {
+      const tile = clipTileList?.find((t) => t.clip.clipId === dropped.clipId);
+      if (tile !== undefined) void pickClip(tile, boundary);
+    } else if (dropped.kind === "photo") placeOwnPhoto(dropped.mediaId, boundary);
     else placeOwnVideo(dropped, boundary);
   }
 
@@ -747,7 +841,82 @@ function DraftEditor({
     const dropped = parseDragKey(key);
     if (dropped === null) return;
     if (dropped.source === "scene") fillCell(clipIndex, cell, dropped.photoId);
-    else if (dropped.kind === "photo") fillOwnCell(clipIndex, cell, dropped.mediaId);
+    else if (dropped.source === "own" && dropped.kind === "photo") fillOwnCell(clipIndex, cell, dropped.mediaId);
+  }
+
+  // ---------- «Клипы» (5b.2 part A): the avatar's ready clips, placed as their own copies (I5.59) ----------
+
+  /**
+   * A clip's copy into the montage (`clipImport.ts`): a copy the draft holds already is selected; else a new clip at the end, or at the boundary a drop
+   * named, by the own video's rule and the frame rule (Q-F = 1). `media`, the copy's record when a job brought it, is known at once (its origin, its facts).
+   */
+  function placeClipCopy(facts: OwnVideoFacts, boundary: number | null, media?: MediaSummary): void {
+    const seen = media === undefined ? null : ownVideoOf(media);
+    if (seen !== null) setPlacedCopies((now) => new Map(now).set(seen.mediaId, seen));
+    const { origin } = facts;
+    if (origin !== undefined) setPlacedOrigins((now) => new Map(now).set(facts.mediaId, origin));
+    const spec = session.state.spec;
+    const at = spec.clips.findIndex((c) => c.kind === "video" && c.mediaId === facts.mediaId);
+    if (at >= 0) {
+      selectClipAt(at);
+      return;
+    }
+    const where = placeBoundary(spec, boundary);
+    placeOwn(where === undefined ? appendVideoClip(spec, facts, originRef.current) : insertVideoClip(spec, where, facts, originRef.current));
+  }
+
+  /**
+   * A click on a clip (or a drop of one on «Кадры» at `boundary`): a placed one selects its kadr; a free one asks `media.importClip`. A live copy is placed at
+   * once; a job's copy when its `job.done` comes (the tile reads «Готовим для монтажа…» from the job list meanwhile); a refusal is told on a card (57c).
+   */
+  async function pickClip(tile: ClipTile, boundary: number | null = null): Promise<void> {
+    const { clip, state: tileState } = tile;
+    if (tileState.kind === "placed") {
+      const at = session.state.spec.clips.findIndex((c) => c.kind === "video" && originRef.current(c.mediaId)?.clipId === clip.clipId);
+      if (at >= 0) selectClipAt(at);
+      return;
+    }
+    if (tileState.kind === "busy" || tileState.kind === "taken" || tileState.kind === "damaged" || asking.current.has(clip.clipId)) return;
+    // A new try: what the last one met is put away.
+    forgetClipFailure(clip.clipId);
+    asking.current.add(clip.clipId);
+    setAskingClips(new Set(asking.current));
+    const reply = await client.request("media.importClip", { avatarId, clipId: clip.clipId });
+    asking.current.delete(clip.clipId);
+    if (!mounted.current) return;
+    setAskingClips(new Set(asking.current));
+    const answer = importAnswerOf(reply);
+    if (answer.kind === "place") placeClipCopy(readyCopyFacts(clip, answer.mediaId), boundary);
+    else if (answer.kind === "wait") {
+      const now = placements.wait(answer.jobId, { clipId: clip.clipId, boundary });
+      if (now.kind === "place") placeClipCopy(copyFactsOf(now.media), boundary, now.media);
+      else if (now.kind === "cancelled") rereadClips.current();
+      setWaiting(placements.pending);
+    } else {
+      const failure = clipImportFailure(answer.error);
+      // NOT_FOUND: the clip is gone; its tile goes with the list read again.
+      if (failure === null) rereadClips.current();
+      else {
+        setClipRefusals((now) => new Map(now).set(clip.clipId, failure.text));
+        if (failure.damaged) setDamagedClips((now) => new Set(now).add(clip.clipId));
+      }
+    }
+  }
+
+  /** The failure a clip's last try met, put away (its card, its mark): this window's refusal, and the failed import jobs of the clip. */
+  function forgetClipFailure(clipId: string): void {
+    setClipRefusals((now) => {
+      if (!now.has(clipId)) return now;
+      const next = new Map(now);
+      next.delete(clipId);
+      return next;
+    });
+    for (const job of failedClipImports) if (job.origin?.clipId === clipId) store.dismissImport(job.jobId);
+  }
+
+  function closeClipCard(key: string): void {
+    if (key.startsWith("job:")) store.dismissImport(key.slice("job:".length));
+    else if (key.startsWith("clip:")) forgetClipFailure(key.slice("clip:".length));
   }
 
   /** A click on a photo or video tile of «Мои»: a placed one selects its clip; a photo goes into the target cell (`fillTarget`); else a new clip at the end. */
@@ -1125,6 +1294,19 @@ function DraftEditor({
                 onDragPhoto={(photoId) => setDrag(photoId === null ? null : { source: "scene", photoId })}
                 clipFrames={copyFramePhotoIds(state.spec, originOf)}
               />
+            ) : tab === "clips" ? (
+              <ClipsTab
+                avatarName={avatar?.name ?? "Аватар"}
+                tiles={clipTileList}
+                listError={clipList.error}
+                onRetryList={() => rereadClips.current()}
+                cards={clipCards}
+                onCloseCard={closeClipCard}
+                fillTarget={fillTarget}
+                addBlock={addRefusal(state.spec)}
+                onPick={(tile) => void pickClip(tile)}
+                onDrag={setDrag}
+              />
             ) : tab === "mine" ? (
               <MineTabAtPlayhead
                 timeline={timeline}
@@ -1172,6 +1354,7 @@ function DraftEditor({
             }}
             onSelectCell={(clip, cell) => selectClipAt(clip, cell)}
             videos={ownVideos}
+            copyOf={copyOf}
             trimPeek={trimPeek}
           />
           {selected?.kind === "clip" ? (
@@ -1186,6 +1369,7 @@ function DraftEditor({
               dragPhoto={dragCell}
               onFillCell={fillDropped}
               videos={ownVideos}
+              copyOf={copyOf}
               videoProblems={clipVideoProblems}
               trimPeek={trimPeek}
             />
@@ -1227,6 +1411,8 @@ function DraftEditor({
           onAddSticker={() => openTab("gif")}
           onSelectClip={(index) => selectClipAt(index)}
           videos={ownVideos}
+          copyOf={copyOf}
+          preparing={waiting.flatMap((w) => (w.boundary === null ? [] : [{ jobId: w.jobId, boundary: w.boundary }]))}
           videoProblems={clipVideoProblems}
         />
       </div>

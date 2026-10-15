@@ -10,8 +10,9 @@ import { Icon, PauseIcon, PlayIcon } from "../../ui/Icon";
 import { Silhouette } from "../../ui/Portrait";
 import { useDevicePixelRatio } from "../../ui/useDevicePixelRatio";
 import { useMediaRetry } from "../../ui/useMediaRetry";
+import type { CopyOf } from "./clipTiles";
 import { DRAG_THRESHOLD_PX, trackPointer } from "./gesture";
-import { captionLine, layerName, stickerName } from "./labels";
+import { captionLine, COPY_KIND, layerName, stickerName } from "./labels";
 import { type CellView, clipViewAt, stickerFrameOf, stickerLayerBox, textLayerBox, visibleLayers } from "./previewFrame";
 import { dragFocus, dragLayerCentre, placeLayer, type Point, resizeFactor, setCellFocus, setVideoFocus } from "./previewDrag";
 import { PreviewAudio } from "./PreviewAudio";
@@ -194,9 +195,11 @@ export interface PreviewProps {
   readonly videos: OwnVideos;
   /** 3f.3b fix round 1 (L8): the frame «Обрезка» is dragging to, shown while the drag lasts. */
   readonly trimPeek: TrimPeekStore;
+  /** 5b.2 (57f): which own videos are clips' copies: a copy's cell is «клип», its pill «клип 9:16 · весь кадр». */
+  readonly copyOf?: CopyOf;
 }
 
-export function Preview({ dock, session, spec, timeline, focusPending, dragPhoto, onFillCell, onSelectCell, videos, trimPeek }: PreviewProps) {
+export function Preview({ dock, session, spec, timeline, focusPending, dragPhoto, onFillCell, onSelectCell, videos, trimPeek, copyOf }: PreviewProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const areaRef = useRef<HTMLElement>(null);
   const hintsRef = useRef<HTMLDivElement>(null);
@@ -239,6 +242,7 @@ export function Preview({ dock, session, spec, timeline, focusPending, dragPhoto
             onSelectCell={onSelectCell}
             videos={videos}
             trimPeek={trimPeek}
+            copyOf={copyOf}
           />
         )}
       </div>
@@ -278,10 +282,19 @@ interface StageProps {
   readonly onSelectCell: (clip: number, cell: number) => void;
   readonly videos: OwnVideos;
   readonly trimPeek: TrimPeekStore;
+  readonly copyOf: CopyOf | undefined;
 }
 
 /** The frame at the playhead: the one part of the editor that re-renders on every frame of a playback. */
-function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, focusPending, dragPhoto, onFillCell, onSelectCell, videos, trimPeek }: StageProps) {
+function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, focusPending, dragPhoto, onFillCell, onSelectCell, videos, trimPeek, copyOf }: StageProps) {
+  /** 5b.2 (57f): a cell that plays a clip's copy (its record, or the editor, says so). */
+  const isCopy = (cell: CellView): boolean => cell.content.kind === "video" && (copyOf !== undefined ? copyOf(cell.content.mediaId) !== null : (videos.held.get(cell.content.mediaId)?.origin ?? null) !== null);
+  /** A copy's name on the video's stand-in: its clip's motion («Клип» while it is not known); null for an own video, named by its file. */
+  const copyNameOf = (mediaId: string): string | null => {
+    const copy = copyOf?.(mediaId);
+    if (copy === undefined || copy === null) return (videos.held.get(mediaId)?.origin ?? null) !== null ? "Клип" : null;
+    return copy.motion ?? "Клип";
+  };
   const { client, store } = useEngine();
   const textPreviews = useTextPreviews();
   // The owner's own stickers by media id (3f.5): the record each own-sticker layer is drawn from.
@@ -535,6 +548,7 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
           window={videoCell.window}
           sourceFrame={peekFrame ?? videoSourceFrame(live, view.index, view.localFrame, videos)}
           peekFrame={peekFrame}
+          copyName={copyNameOf(videoCell.content.mediaId)}
         />
       )}
       {view?.cells.map((cell) => (
@@ -543,6 +557,7 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
           clipNumber={view.index + 1}
           cellCount={view.cells.length}
           cell={cell}
+          copy={isCopy(cell)}
           pictureUrl={cell.content.kind === "scene" ? (mock ? null : photoUrl(spec.avatarId, cell.content.photoId)) : cell.content.kind === "ownPhoto" ? ownPhotoUrl(client, cell.content.mediaId) : null}
           selected={selectedCell === cell.index}
           dropping={takesPhoto(cell)}
@@ -592,7 +607,7 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
       })}
       {zones && <ReelsZones />}
       {bars && <SlideBars spec={live} frame={frame} />}
-      {hinted !== undefined && <CellHint cell={hinted} pending={isPending(hinted.content, focusPending)} />}
+      {hinted !== undefined && <CellHint cell={hinted} pending={isPending(hinted.content, focusPending)} copy={isCopy(hinted)} />}
     </div>
   );
 }
@@ -730,6 +745,8 @@ interface CellProps {
   readonly clipNumber: number;
   readonly cellCount: number;
   readonly cell: CellView;
+  /** 5b.2 (57f): the cell plays a clip's copy: «Кадр 3: клип». */
+  readonly copy: boolean;
   /** The photo's picture: a scene photo's or an own photo's through main's media route; null in the dev mock (its stand-in is drawn). */
   readonly pictureUrl: string | null;
   readonly selected: boolean;
@@ -746,9 +763,9 @@ interface CellProps {
   readonly onDrop: (event: DragEvent<HTMLElement>) => void;
 }
 
-function cellLabel(clipNumber: number, cellCount: number, cell: CellView): string {
+function cellLabel(clipNumber: number, cellCount: number, cell: CellView, copy: boolean): string {
   const where = cellCount > 1 ? `Кадр ${clipNumber}, ячейка ${cell.index + 1}` : `Кадр ${clipNumber}`;
-  const what: Record<CellView["content"]["kind"], string | null> = { empty: "пустая", video: "своё видео", ownPhoto: "своё фото", scene: null };
+  const what: Record<CellView["content"]["kind"], string | null> = { empty: "пустая", video: copy ? COPY_KIND : "своё видео", ownPhoto: "своё фото", scene: null };
   const said = what[cell.content.kind];
   return said === null ? where : `${where}: ${said}`;
 }
@@ -781,7 +798,7 @@ function OwnPhotoPicture({ url, mediaId, window, source }: { url: string | null;
   return <img key={retry.key} className="pv-photo" src={url} alt="" draggable={false} style={pictureStyle(window, source)} onError={retry.onError} />;
 }
 
-function PreviewCell({ clipNumber, cellCount, cell, pictureUrl: url, selected, dropping, onSize, onPointerDown, onSelect, onKeyDown, onKeyUp, onBlur, onDragOver, onDrop }: CellProps) {
+function PreviewCell({ clipNumber, cellCount, cell, copy, pictureUrl: url, selected, dropping, onSize, onPointerDown, onSelect, onKeyDown, onKeyUp, onBlur, onDragOver, onDrop }: CellProps) {
   const { content, window, source } = cell;
   const classes = ["pv-cell", content.kind === "video" ? "pv-cell-video" : "", selected ? "pv-cell-on" : "", dropping ? "pv-cell-drop" : ""].filter(Boolean).join(" ");
   const style: CSSProperties = { ...boxStyle(cell.rect), opacity: cell.alphaPermille / 1000 };
@@ -790,7 +807,7 @@ function PreviewCell({ clipNumber, cellCount, cell, pictureUrl: url, selected, d
       type="button"
       className={classes}
       style={style}
-      aria-label={cellLabel(clipNumber, cellCount, cell)}
+      aria-label={cellLabel(clipNumber, cellCount, cell, copy)}
       aria-pressed={selected}
       // The arrows move only what can move (fix round 1, L9: never on an own video already 9:16).
       aria-keyshortcuts={selected && framedOf(cell) !== null ? "ArrowLeft ArrowRight ArrowUp ArrowDown Escape" : undefined}
@@ -840,14 +857,16 @@ function PreviewCell({ clipNumber, cellCount, cell, pictureUrl: url, selected, d
  * The selected cell's face point (an own video's focus) and what dragging it does (V13), drawn OVER the layers and the hints (fix round 1, L6: a
  * caption across the cell never covers it), in the cell's place on the frame; it takes no pointer.
  */
-function CellHint({ cell, pending }: { cell: CellView; pending: boolean }) {
+function CellHint({ cell, pending, copy }: { cell: CellView; pending: boolean; copy: boolean }) {
   const { content, window, source } = cell;
   if (content.kind === "empty") return null;
   if (window === null || source === null) return null;
   // Where the point sits in the cell on this frame (the crop follows it until it meets the picture's edge). A photo's always can.
   const moves = content.kind !== "video" || cropMoves(window, source);
   const ring = moves ? ringAt(content.focus, window, source) : null;
-  const pill = content.kind === "video" ? (moves ? "тяните, чтобы сдвинуть" : "видео 9:16 · весь кадр") : pending ? "ищем лицо…" : content.focus === null ? "лицо не найдено · тяните" : "по лицу · тяните";
+  // 5b.2 (57f): a clip's copy fills the 9:16 frame as «клип».
+  const still = copy ? `${COPY_KIND} 9:16 · весь кадр` : "видео 9:16 · весь кадр";
+  const pill = content.kind === "video" ? (moves ? "тяните, чтобы сдвинуть" : still) : pending ? "ищем лицо…" : content.focus === null ? "лицо не найдено · тяните" : "по лицу · тяните";
   return (
     <span className="pv-cell-hint" aria-hidden="true" style={boxStyle(cell.rect)}>
       {ring !== null ? (

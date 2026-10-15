@@ -1,4 +1,4 @@
-import { CLIP_REASONS_RU, type ClipSummary, type EngineError, mediaReasonRu, type MontageDraft, type PhotoSummary } from "../../../shared/engine";
+import { CLIP_REASONS_RU, type ClipSummary, type EngineError, type MediaOrigin, mediaReasonRu, type MontageDraft, type PhotoSummary } from "../../../shared/engine";
 import { errorText } from "../../lib/errors";
 import { NBSP } from "../../lib/format";
 import { photoCategoryLabel } from "../photos/runForm";
@@ -223,6 +223,30 @@ export function clipsHint(fillTarget: FillTarget, addBlock: AddRefusal | null): 
   if (addBlock === "no-room") return "В ролике уже 15 с: на новый кадр нет места. Укоротите кадр, чтобы добавить клип.";
   if (fillTarget !== null) return `Клик — клип в конец ролика, в ячейку коллажа — только фото. ${drag}`;
   return `Клик — кадр в конец ролика. ${drag}`;
+}
+
+/** A clip's copy as the draft calls it (57f; README M6): its clip's motion and its photo, never the copy's file name. */
+export interface CopyLabel {
+  readonly origin: MediaOrigin;
+  /** The clip's motion; null while the clip list is not read (or no longer holds the clip). */
+  readonly motion: string | null;
+  /** «Фото N», or the photo's category; null while the photo is not among those read. */
+  readonly source: string | null;
+}
+
+/** Whether an own video is a clip's copy, and what to call it; null for the owner's own video. */
+export type CopyOf = (mediaId: string) => CopyLabel | null;
+
+export function copyLabeller(originOf: OriginOf, clips: readonly ClipSummary[] | null, photos: ReadonlyMap<string, PhotoSummary> | null): CopyOf {
+  const byId = new Map((clips ?? []).map((clip) => [clip.clipId, clip]));
+  const numbers = photos === null ? new Map<string, number>() : binNumbers([...photos.values()]);
+  return (mediaId) => {
+    const origin = originOf(mediaId);
+    if (origin === undefined) return null;
+    const n = numbers.get(origin.photoId);
+    const photo = photos?.get(origin.photoId);
+    return { origin, motion: byId.get(origin.clipId)?.motion.label ?? null, source: n !== undefined ? `Фото ${n}` : photo !== undefined ? photoCategoryLabel(photo) : null };
+  };
 }
 
 /** A no-break space before a dash, so a wrapped line never starts with «—» (README L3). */

@@ -2,17 +2,19 @@ import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef } from "re
 import { Icon, type IconName } from "../../ui/Icon";
 import { PanelSplitter, useMediaWidth } from "./PanelSplitter";
 
-// 3d.5: the editor's left panel (Editor.dc.html and its tab artboards; the reconciliation's P1–P5): the five tabs and the panel of
-// the one chosen. «Фото» (the bin), «Мои» (the owner's own files, 3f.6), «Музыка» (the trending list), «GIF» (the built-in stickers)
-// and «Текст» (the presets and the text layers). The tab is renderer state: choosing an item on the timeline never switches it (as on
+// 3d.5: the editor's left panel (Editor.dc.html and its tab artboards; the reconciliation's P1–P5): the tabs and the panel of
+// the one chosen. «Фото» (the bin), «Клипы» (the avatar's ready clips, 5b.2), «Мои» (the owner's own files, 3f.6), «Музыка» (the trending
+// list), «GIF» (the built-in stickers) and «Текст» (the presets and the text layers). The tab is renderer state: choosing an item on the timeline never switches it (as on
 // the artboard), but the timeline's «+» and the properties' «Заменить…» open the tab they need.
 // The owner's feedback (2026-10-05): the panel's width is the viewer's, set by the splitter on its border with the stage (PanelSplitter.tsx).
 // The width lives here, below the editor, so a drag re-renders the panel and the splitter, never the whole editor.
 
-export type MediaTab = "photos" | "mine" | "music" | "gif" | "text";
+export type MediaTab = "photos" | "clips" | "mine" | "music" | "gif" | "text";
 
+// 5b.2 (S5.WA4, mockup 57): «Клипы» after «Фото» — a clip is a frame of the same avatar — with a clip's film icon («GIF» keeps the sparkle).
 const TABS: readonly { id: MediaTab; label: string; icon: IconName }[] = [
   { id: "photos", label: "Фото", icon: "image" },
+  { id: "clips", label: "Клипы", icon: "film" },
   { id: "mine", label: "Мои", icon: "folder" },
   { id: "music", label: "Музыка", icon: "music" },
   { id: "gif", label: "GIF", icon: "sparkle" },

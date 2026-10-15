@@ -1024,9 +1024,11 @@
   }
 }
 
+/* 5b.2 (S5.WAD L1): six tabs «Фото · Клипы · Мои · Музыка · GIF · Текст», a column never narrower than its 10.5 px label; they fit the narrowest 252 px
+   panel with 4 px gaps («Музыка» takes its 40 px, the rest 38.2 px each). */
 .ed-tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(min-content, 1fr));
   gap: 4px;
   flex-shrink: 0;
 }
@@ -5015,4 +5017,234 @@ button.drop > * {
   padding: 16px 5px 5px;
   background: linear-gradient(180deg, transparent 0%, var(--scrim) 42%);
   font-size: 10px;
+}
+
+/* The «Клипы» tab (57): the bin's scrolling list, two clips to a row at the 280 px panel (more in a wider one): a clip needs its pills and its name. */
+.ed-bin.edc-grid {
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 12px 8px;
+}
+
+.edc-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.edc-poster {
+  height: 160px;
+  flex-shrink: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: var(--photo-queued);
+}
+
+.edc-poster .portrait-silhouette {
+  height: 70%;
+}
+
+.edc-tile-in .edc-poster {
+  border-color: var(--accent);
+}
+
+/* The whole poster is the button: a click places the clip's copy (or selects its kadr), a drag carries it to «Кадры». */
+.edc-pick {
+  position: absolute;
+  inset: 0;
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.edc-pick > .clip-poster-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.edc-pick[draggable="true"] {
+  cursor: grab;
+}
+
+.edc-pick:disabled,
+.edc-pick[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+.edc-tile:hover .edc-pick:not(:disabled):not([aria-disabled="true"]) {
+  box-shadow: inset 0 0 0 1.5px var(--accent-ring);
+}
+
+.edc-poster:has(> .edc-pick:focus-visible) {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+.edc-pick:focus-visible {
+  outline: none;
+}
+
+/* 5b.1's pills at the poster's foot (clips.css loads later: held here by the poster). */
+.edc-poster > .edc-pills {
+  right: 6px;
+  bottom: 6px;
+  left: 6px;
+}
+
+.edc-cap {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  padding: 0 2px;
+}
+
+.edc-name {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.edc-src {
+  font-size: 10px;
+}
+
+.edc-tile-taken .edc-name {
+  color: var(--muted);
+}
+
+/* A frame taken (57b): the bin's dim; the state at the tile's head — the bin's pill when it fits, the band when it is longer. */
+.edc-poster > .edc-state {
+  top: 6px;
+  bottom: auto;
+  left: 6px;
+}
+
+/* Preparing (57a): the import's spinner over the dimmed poster, in the accent's ring of a job in flight. */
+.edc-tile-busy .edc-poster {
+  box-shadow: 0 0 0 2px var(--accent-35);
+}
+
+.mine-busy.edc-busy {
+  gap: 7px;
+  padding: 0 10px;
+}
+
+.edc-busy .spin {
+  width: 16px;
+  height: 16px;
+}
+
+.edc-busy-label {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: center;
+}
+
+/* 57a #drop: the copy is made where the clip was let go; the line is cut short so it never covers the kadr after the next one (WAD re-review N1). */
+.ctag.edc-drop {
+  top: 4px;
+  z-index: 6;
+  height: 18px;
+  padding: 0 7px;
+  gap: 5px;
+  color: var(--link);
+  font-family: var(--font-body);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.edc-drop .spin {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+}
+
+.edc-drop-label {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
+/* A refused preparation (57c): «Мои»'s card at the top of the tab, in the warning tone — nothing is lost, the file in Studio is as it was. */
+.edc-alert {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 8px 10px 12px;
+  border: 1px solid var(--warn-35);
+  border-radius: 12px;
+  background: var(--warn-08);
+}
+
+.edc-alert > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--warn);
+}
+
+.edc-alert-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.edc-alert-title {
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.edc-alert-text {
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.edc-tile-failed .edc-poster {
+  border-color: var(--warn-45);
+}
+
+.edc-mark {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--scrim-72);
+  color: var(--warn);
+  pointer-events: none;
+}
+
+/* Empty (57d): the «Мои» tab's empty card. */
+.mine-empty.edc-empty {
+  margin-top: 2px;
+}
+
+/* 57f: the copy's photo under its motion in the video card. */
+.edc-card-src {
+  margin-top: -4px;
+  font-size: 11.5px;
 }

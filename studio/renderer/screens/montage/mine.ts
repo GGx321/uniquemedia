@@ -532,11 +532,14 @@ export function installFileDropGuard(target: Pick<EventTarget, "addEventListener
 export type BinDrag =
   | { readonly source: "scene"; readonly photoId: string }
   | { readonly source: "own"; readonly kind: "photo"; readonly mediaId: string }
-  | { readonly source: "own"; readonly kind: "video"; readonly mediaId: string; readonly durationMs: number };
+  | { readonly source: "own"; readonly kind: "video"; readonly mediaId: string; readonly durationMs: number }
+  /** 5b.2 (57a `#drop`): a clip of the «Клипы» tab; its copy is made (or found) when it is let go on «Кадры». */
+  | { readonly source: "clip"; readonly clipId: string };
 
-/** The drag's key: a scene photo's id as it is (an `Id` has no colon), an own file as `own-photo:<id>` / `own-video:<id>:<ms>`. */
+/** The drag's key: a scene photo's id as it is (an `Id` has no colon), an own file as `own-photo:<id>` / `own-video:<id>:<ms>`, a clip as `clip:<id>`. */
 export function dragKey(drag: BinDrag): string {
   if (drag.source === "scene") return drag.photoId;
+  if (drag.source === "clip") return `clip:${drag.clipId}`;
   return drag.kind === "photo" ? `own-photo:${drag.mediaId}` : `own-video:${drag.mediaId}:${drag.durationMs}`;
 }
 
@@ -546,6 +549,7 @@ export function parseDragKey(key: string): BinDrag | null {
   const [head, id, ms] = parts;
   if (parts.length === 1 && head !== undefined && Id.safeParse(head).success) return { source: "scene", photoId: head };
   if (head === "own-photo" && parts.length === 2 && id !== undefined && Id.safeParse(id).success) return { source: "own", kind: "photo", mediaId: id };
+  if (head === "clip" && parts.length === 2 && id !== undefined && Id.safeParse(id).success) return { source: "clip", clipId: id };
   if (head === "own-video" && parts.length === 3 && id !== undefined && Id.safeParse(id).success && ms !== undefined && /^\d{1,9}$/.test(ms)) {
     return { source: "own", kind: "video", mediaId: id, durationMs: Number(ms) };
   }

@@ -4,7 +4,7 @@ import { MAX_TOTAL_MS, STEP_MS, videoClipCrop } from "../../../shared/montage";
 import { Icon } from "../../ui/Icon";
 import { roomMs, totalMs } from "./clipOps";
 import { DRAG_THRESHOLD_PX, trackPointer } from "./gesture";
-import { secondsLabel, trimOfLabel, trimRangeLabel, VIDEO_TAG_TEXTS, videoFactsLabel, videoRoomLabel, videoTag } from "./labels";
+import { COPY_KIND, secondsLabel, trimOfLabel, trimRangeLabel, VIDEO_TAG_TEXTS, videoFactsLabel, videoRoomLabel, videoTag } from "./labels";
 import type { OwnVideo, VideoLookup, VideoProblem } from "./ownVideos";
 import type { DraftSession } from "./session";
 import { type TrimPeekStore, trimPeekFrame } from "./trimPeek";
@@ -52,9 +52,14 @@ export interface VideoClipBodyProps {
   readonly problem: VideoProblem | null;
   /** Where «Обрезка» tells the preview which frame a drag is at (fix round 1, L8). */
   readonly trimPeek: TrimPeekStore;
+  /**
+   * 5b.2 (57f; README M6): the video is a clip's montage copy: the card names the clip's motion and photo (null while not known) and its tag is «клип»;
+   * the copy's file name is never shown.
+   */
+  readonly copy?: { readonly motion: string | null; readonly source: string | null } | null;
 }
 
-export function VideoClipBody({ session, spec, index, video, problem, trimPeek }: VideoClipBodyProps) {
+export function VideoClipBody({ session, spec, index, video, problem, trimPeek, copy = null }: VideoClipBodyProps) {
   const clip = spec.clips[index];
   if (clip?.kind !== "video") return null;
   const known = video.state === "known" ? video.video : null;
@@ -99,10 +104,19 @@ export function VideoClipBody({ session, spec, index, video, problem, trimPeek }
       )}
 
       <div className="ed-video-card">
-        <span className="ed-video-name">{known?.name ?? (video.state === "gone" ? "Файла больше нет" : "Своё видео")}</span>
+        {copy !== null ? (
+          <>
+            <span className="ed-video-name" title={copy.motion ?? undefined}>
+              {copy.motion ?? (video.state === "gone" ? "Файла больше нет" : "Клип")}
+            </span>
+            {copy.source !== null && <span className="faint edc-card-src">{copy.source}</span>}
+          </>
+        ) : (
+          <span className="ed-video-name">{known?.name ?? (video.state === "gone" ? "Файла больше нет" : "Своё видео")}</span>
+        )}
         {known !== null && <span className="mono muted ed-video-facts">{videoFactsLabel(known)}</span>}
         <span className="ed-video-tags">
-          <span className="tag">свой файл</span>
+          <span className="tag">{copy !== null ? COPY_KIND : "свой файл"}</span>
           {known?.hdrToSdr === true && <span className="tag tag-o">HDR → SDR</span>}
         </span>
         <span className="faint ed-video-mute">
