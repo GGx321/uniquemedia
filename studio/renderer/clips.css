@@ -251,11 +251,80 @@
 /* 37e: «Оживить» waits while a batch runs; it keeps the focus and says why (aria-disabled) */
 .viewer-animate[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
 
+/* 5b.2 part C, S5.WC5 (mockups 62–63c, 59d, 59e; NEW_CSS_WCD, the artboard-only list of 59d #list left out): the «Движение» group grows the stored suggestions and own ideas, two actions under
+   the list, the idea field and the result lines; the frame column takes the frame notes. The group is the sheet's one scroll region, so the options, the price and the buttons stay in view. */
+.mc-sheet .mc-body { overflow: hidden; }
+/* a little tighter than 38 (rows 7 px, gaps 5–9 px): seven motions, the actions and the result fit 1440 × 900 without a scroll (README §S5.WCD decision 5, for the owner's veto) */
+.mc-sheet .clip-sheet-form { gap: 12px; }
+.mc-sheet .clip-group { gap: 5px; }
+.mc-sheet .clip-rows { gap: 9px; }
+.mc-sheet .clip-opts { gap: 5px; }
+.mc-sheet .clip-opt { padding-top: 7px; padding-bottom: 7px; }
+/* the group's head: «Движение», and the line a call that gave something leaves (beside it, so the group does not grow) */
+.mc-group-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; }
+.mc-frame-col { display: flex; flex-shrink: 0; flex-direction: column; gap: 12px; width: 132px; }
+.mc-form { min-height: 0; }
+.mc-form > .clip-rows { flex-shrink: 0; }
+.mc-group { flex: 0 1 auto; min-height: 0; }
+.mc-scroll { display: flex; flex-direction: column; gap: 6px; min-height: 150px; margin: -4px -6px 0; padding: 4px 6px 4px; overflow-y: auto; scrollbar-color: var(--border-strong) transparent; scrollbar-width: thin; }
+.mc-scroll > .clip-opts { flex-shrink: 0; }
+.mc-scroll > .notice, .mc-scroll > .price-failed { flex-shrink: 0; }
+.mc-scroll.mc-more { mask-image: linear-gradient(to bottom, black calc(100% - 22px), transparent); }
+.mc-scroll.mc-less { mask-image: linear-gradient(to top, black calc(100% - 22px), transparent); }
+.mc-scroll.mc-more.mc-less { mask-image: linear-gradient(to bottom, transparent, black 22px, black calc(100% - 22px), transparent); }
+/* a suggestion and an own idea: the label, the «предложено» mark, the English under them */
+.mc-opt-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; min-width: 0; }
+.mc-opt-head > b { font-weight: 600; }
+.mc-tag { height: 18px; padding: 0 7px; background: var(--accent-08); box-shadow: inset 0 0 0 1px var(--accent-35); color: var(--accent-text); font-size: 10.5px; }
+/* the two actions under the list: the paid one in the accent's quiet tint (as «Оживить» in the viewer), the field's toggle plain */
+.mc-actions { display: flex; flex-shrink: 0; flex-wrap: wrap; gap: 8px; }
+.mc-suggest { border-color: var(--accent-35); color: var(--accent-text); }
+.mc-suggest > svg { color: var(--accent); }
+.mc-suggest:hover:not([aria-disabled="true"]) { border-color: var(--accent-45); background: var(--accent-08); color: var(--accent-text); }
+.mc-suggest .mono, .mc-translate .mono { font-size: 11.5px; font-weight: 500; }
+.mc-on { border-color: var(--accent-45); background: var(--accent-08); }
+.mc-sheet .btn[aria-disabled="true"]:not([aria-busy="true"]) { opacity: 0.45; cursor: not-allowed; }
+.mc-sheet .btn[aria-busy="true"] .spin { width: 12px; height: 12px; border-width: 1.8px; }
+.mc-why { flex-shrink: 0; margin: -2px 0 0; color: var(--muted); }
+/* the call's end: a quiet line when it gave something, a notice when it gave nothing */
+.mc-status { display: flex; align-items: center; gap: 5px; margin: 0; color: var(--text-2); font-size: 11.5px; line-height: 1.35; }
+.mc-status > svg { flex-shrink: 0; color: var(--ok); }
+.mc-status .mono, .mc-paid .mono { font-size: 11px; }
+/* 63: the idea field — SceneIdeaForm's parts (label and count, the field, its reason) in a card under the actions */
+.mc-idea { display: flex; flex-shrink: 0; flex-direction: column; gap: 7px; padding: 10px 12px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); }
+.mc-idea[hidden] { display: none; }
+.mc-ta { height: auto; min-height: 66px; max-height: 136px; field-sizing: content; font-size: 12.5px; }
+.mc-idea-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.mc-hint { flex: 1; min-width: 0; line-height: 1.4; }
+.mc-translate { flex-shrink: 0; }
+.mc-refusal { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 7px; font-size: 12px; line-height: 1.4; }
+.mc-refusal > svg { margin-top: 2px; }
+.mc-refusal p { margin: 0; }
+.mc-refusal-warn { color: var(--warn); }
+.mc-refusal-info { color: var(--text-2); }
+.mc-refusal-info > svg { color: var(--info); }
+.mc-paid { display: block; margin-top: 2px; color: var(--muted); font-size: 11.5px; }
+/* the guard (§5.3 motion-busy) beside the buttons it holds: no new height in the footer; empty, it takes no room but stays a live region */
+.mc-guard { display: flex; flex: 1 1 200px; align-items: center; gap: 7px; align-self: center; margin: 0; color: var(--muted); font-size: 11.5px; line-height: 1.35; }
+.mc-guard:empty { flex: 0 0 0; }
+.mc-guard .spin { width: 11px; height: 11px; border-width: 1.6px; color: var(--link); }
+/* 62d: the frame reading's marks under the frame — they mark, they never refuse */
+.mc-notes { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 0 0; border-top: 1px solid var(--line); list-style: none; }
+.mc-note { display: grid; grid-template-columns: 13px minmax(0, 1fr); gap: 6px; color: var(--text-2); font-size: 11px; line-height: 1.4; }
+.mc-note > svg { margin-top: 2px; }
+.mc-note-info > svg { color: var(--info); }
+.mc-note-warn > svg { color: var(--warn); }
+
+
 @media (prefers-reduced-motion: reduce) {
   .clip-play, .clip-export-bar > span { transition: none; }
   .batch-cell .shim { animation: none; }
+  .mc-sheet .spin, .mc-guard .spin { animation: none; }
 }
 
 @media (max-width: 720px) {
   .clip-sheet-body { flex-direction: column; }
+  /* stacked, the sheet's body scrolls as 38's does; the group is not the one scroll region then */
+  .mc-sheet .mc-body { overflow-y: auto; }
+  .mc-frame-col { flex-direction: row; width: auto; }
 }

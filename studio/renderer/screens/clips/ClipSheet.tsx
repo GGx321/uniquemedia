@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { PRICE_SCOPES_RU, type ClipMotionId, type ClipOptions, type ClipQuality, type ClipSeconds, type EngineError } from "../../../shared/engine";
 import { useEngine, useEngineView } from "../../engine/react";
@@ -10,14 +10,20 @@ import { Notice } from "../../ui/Notice";
 import { Portrait } from "../../ui/Portrait";
 import { useModalDialog } from "../../ui/useModalDialog";
 import { useMounted } from "../photos/shared";
-import { animateBlock } from "./animate";
+import { animateBlock, batchHoldsUnit, clipSlotTaken } from "./animate";
 import { upUsd } from "./clipModel";
+import { frameNotesNews, MOTION_BUSY, motionRowLabel, showsEnglish, SUGGESTED_TAG } from "./motionModel";
+import { FrameNotes, MotionActions, MotionGuard, MotionNews, MotionStatus, QuietNotice, useMotionCalls, type MotionBlock } from "./MotionSuggest";
+import { OwnIdea } from "./OwnIdea";
 import { sheetView, type SuitableOptions } from "./sheetModel";
 
 // Stage 5, 5b.1, S5.V8: the sheet «Оживить фото» (mockups 38, 38b, 38c, 38e, 38f; plan s5b1 §6, §5.14 «Before money»). Nothing is paid without it: it shows the frame, the motion, the
 // quality, the length, the model and the price line, and «Оживить» sends exactly the engine's worst for the option on show as the accepted worst (I5.46), once. PRICE_CHANGED asks the
 // engine again and needs a new click (38b). The month's fit is the engine's (`monthFits`): when it holds Kling alone, «Оживить» waits beside «Оживить без запасной модели» (38c). A
 // dialog over the photo viewer (or the «Клипы» tab), with its own focus and Escape; the viewer under it waits.
+// 5b.2 part C (S5.WC5; mockups 62–63c): the «Движение» group grows the photo's stored suggestions («предложено») and own ideas («Своя идея: …»), each with its English muted (I5.67: seen before any video
+// money), «Предложить движения» and «Своя идея…» under the list (MotionSuggest.tsx, OwnIdea.tsx), and the frame's notes under the frame. The group is the sheet's one scroll region and the sheet is a
+// little denser than 38 (README §S5.WCD decision 5). While a part C call runs «Оживить» waits beside the guard; a click the engine refused `motion-busy` says so once, the focus on «Отмена» (62a #after-click).
 
 // 5b.2 (S5.WB4): the batch sheet (59) says the same lines and offers the same options.
 export const AUTO_NOTE = "Если Kling откажет бесплатно, клип снимет Grok — поэтому «не больше». Оплаченный отказ сам не переснимается.";
@@ -64,7 +70,10 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   const dialogRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const mainRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const suggestRef = useRef<HTMLButtonElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   useModalDialog({ dialog: dialogRef, initialFocus: closeRef, onClose, returnFocus });
 
   const [asked, setAsked] = useState(0);
@@ -78,6 +87,11 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   /** 38b: the way whose price the engine refused as changed, until the choice changes. */
   const [priceChanged, setPriceChanged] = useState<"main" | "alone" | null>(null);
   const [error, setError] = useState<EngineError | null>(null);
+  /** 62a #after-click: the engine refused the click `motion-busy` (a part C call this window did not know of); said once, until the next click or choice. */
+  const [motionBusyAfter, setMotionBusyAfter] = useState(false);
+  /** 62b, 63a: a new row to focus — and select, an own idea — once the list holds it. */
+  const [pending, setPending] = useState<{ readonly id: ClipMotionId; readonly select: boolean } | null>(null);
+  const [toCancel, setToCancel] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -98,7 +112,17 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   const block = animateBlock(view, view.avatars.find((a) => a.avatarId === avatarId)?.status !== "archived");
   const blockText = block === null ? null : block.kind === "nokey" ? "Нужен ключ OpenRouter — добавьте его в Настройках." : block.text;
   const refreshing = options.status === "ready" && options.refreshing;
-  const waiting = options.status === "loading" || refreshing || busy !== null || blockText !== null;
+
+  const calls = useMotionCalls({
+    avatarId,
+    photoId,
+    view,
+    offered: suitable !== null,
+    relist: () => setAsked((n) => n + 1),
+    reveal: (id, select) => setPending({ id, select }),
+    toCancel: () => setToCancel((n) => n + 1),
+  });
+  const waiting = options.status === "loading" || refreshing || busy !== null || blockText !== null || calls.anyRunning;
 
   // The new options are in: a button that had the focus and is gone or turned off (Chromium drops the focus of a control that turns disabled to the page) hands it to the main button, else
   // to the sheet's heading, so the next key is never typed into the page.
@@ -113,11 +137,49 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     (main !== null && !main.disabled ? main : titleRef.current)?.focus();
   }, [refreshing, priceChanged, options]);
 
+  // 62b / 63a: the row the call made is in the list now — focused (and chosen, for his idea), the group scrolled to it.
+  useEffect(() => {
+    if (pending === null || suitable === null || refreshing) return;
+    const input = dialogRef.current?.querySelector<HTMLInputElement>(`input[name="${ids}-motion-choice"][value="${pending.id}"]`);
+    if (input === null || input === undefined) return;
+    setPending(null);
+    if (pending.select) choose(() => setMotionId(pending.id));
+    input.focus();
+  }, [pending, suitable, refreshing]);
+
+  useEffect(() => {
+    if (toCancel > 0) cancelRef.current?.focus();
+  }, [toCancel]);
+
+  // 62d: the frame's notes of an earlier suggestion are said once the sheet has read them (with a new suggestion they are said with its result).
+  const notes = calls.reading ?? suitable?.reading?.notes ?? [];
+  const notesSaid = useRef(false);
+  useEffect(() => {
+    if (notesSaid.current || suitable === null || refreshing) return;
+    notesSaid.current = true;
+    const said = frameNotesNews(suitable.reading?.notes ?? []);
+    if (said !== null) calls.announce("polite", said);
+  }, [suitable, refreshing]);
+
+  // The group's edges fade where it goes on (README §S5.WCD decision 5).
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (el === null) return;
+    const edges = (): void => {
+      el.classList.toggle("mc-less", el.scrollTop > 2);
+      el.classList.toggle("mc-more", el.scrollTop + el.clientHeight < el.scrollHeight - 2);
+    };
+    edges();
+    el.addEventListener("scroll", edges);
+    return () => el.removeEventListener("scroll", edges);
+  });
+
   /** A change of the choice ends what was said about the last price. */
   const choose = (change: () => void): void => {
     change();
     setPriceChanged(null);
     setError(null);
+    setMotionBusyAfter(false);
   };
 
   async function send(way: "main" | "alone"): Promise<void> {
@@ -127,6 +189,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     sending.current = true;
     setBusy(way);
     setError(null);
+    setMotionBusyAfter(false);
     store.setPaidInFlight(avatarId, true);
     const reply = await client.request("clips.create", {
       avatarId,
@@ -154,17 +217,30 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
       setAsked((n) => n + 1);
       return;
     }
+    if (reply.error.code === "IN_FLIGHT" && reply.error.clipReason === "motion-busy") {
+      // 62a #after-click: a part C call runs that this window did not know of. One alert, the focus on «Отмена»; «Оживить» stays — once the call ends, the same click goes through.
+      setMotionBusyAfter(true);
+      calls.announce("alert", MOTION_BUSY);
+      setToCancel((n) => n + 1);
+      return;
+    }
     setError(reply.error);
   }
 
   const unpriced = options.status === "failed" && options.error.code === "PRICE_UNAVAILABLE" && options.error.priceScope === "video";
   const whyId = `${ids}-why`;
+  const guardId = `${ids}-guard`;
+  const blockId = `${ids}-block`;
+  const unitHeld = clipSlotTaken(view) || batchHoldsUnit(view);
+  const motionBlock: MotionBlock = { clipBusy: unitHeld, otherId: blockText !== null && !unitHeld ? blockId : null };
+  const actionIds = { panel: `${ids}-idea`, guard: guardId, clipBusy: `${ids}-clip-busy`, suggestPrice: `${ids}-suggest-price` };
+  const goWhy = suitable !== null && calls.anyRunning ? guardId : undefined;
 
   return createPortal(
     <div className="cat-scrim cat-scrim-center clip-sheet-scrim" role="presentation">
       <section
         ref={dialogRef}
-        className="cat-dlg clip-sheet"
+        className={suitable !== null ? "cat-dlg clip-sheet mc-sheet" : "cat-dlg clip-sheet"}
         role="dialog"
         aria-modal="true"
         aria-labelledby={`${ids}-title`}
@@ -185,14 +261,17 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
           </button>
         </header>
 
-        <div className="cat-dlg-body clip-sheet-body">
-          <figure className="clip-sheet-frame">
-            <div className="ph clip-sheet-photo">
-              <Portrait avatarId={avatarId} photoId={photoId} label={frameLabel} />
-              <span className="pill clip-frame-pill">первый кадр</span>
-            </div>
-            <figcaption className="faint clip-sheet-cap">Фото станет первым кадром клипа · 9:16</figcaption>
-          </figure>
+        <div className={suitable !== null ? "cat-dlg-body clip-sheet-body mc-body" : "cat-dlg-body clip-sheet-body"}>
+          <div className="mc-frame-col">
+            <figure className="clip-sheet-frame">
+              <div className="ph clip-sheet-photo">
+                <Portrait avatarId={avatarId} photoId={photoId} label={frameLabel} />
+                <span className="pill clip-frame-pill">первый кадр</span>
+              </div>
+              <figcaption className="faint clip-sheet-cap">Фото станет первым кадром клипа · 9:16</figcaption>
+            </figure>
+            {suitable !== null && <FrameNotes notes={notes} />}
+          </div>
 
           {options.status === "failed" ? (
             <div className="clip-sheet-form clip-sheet-unpriced" id={whyId}>
@@ -218,29 +297,44 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
               </Notice>
             </div>
           ) : (
-            <div className="clip-sheet-form">
-              <div className="clip-group" role="radiogroup" aria-labelledby={`${ids}-motion`}>
-                <span id={`${ids}-motion`} className="lbl">
-                  Движение
-                </span>
-                <div className="clip-opts">
-                  {(suitable?.motions ?? []).map((m) => {
-                    const on = motion?.id === m.id;
-                    return (
-                      <label key={m.id} className={on ? "ap-opt clip-opt ap-opt-on" : "ap-opt clip-opt"}>
-                        <input type="radio" className="choice-input" name={`${ids}-motion-choice`} value={m.id} checked={on} onChange={() => choose(() => setMotionId(m.id))} />
-                        <span className="ap-radio" aria-hidden="true" />
-                        <span className="ap-opt-text">
-                          <b>{m.label}</b>
-                          {m.source === "scene" && (
-                            <span className="ap-opt-sub clip-en" lang="en">
-                              {m.text}
+            <div className="clip-sheet-form mc-form">
+              <div className="clip-group mc-group">
+                <div className="mc-group-head">
+                  <span id={`${ids}-motion`} className="lbl">
+                    Движение
+                  </span>
+                  <MotionStatus line={calls.status} />
+                </div>
+                <div ref={scrollRef} className="mc-scroll">
+                  <div className="clip-opts" role="radiogroup" aria-labelledby={`${ids}-motion`}>
+                    {(suitable?.motions ?? []).map((m) => {
+                      const on = motion?.id === m.id;
+                      const mine = m.source === "vision" || m.source === "own";
+                      return (
+                        <label key={m.id} className={["ap-opt", "clip-opt", on ? "ap-opt-on" : "", mine ? "mc-opt" : ""].filter((c) => c !== "").join(" ")}>
+                          <input type="radio" className="choice-input" name={`${ids}-motion-choice`} value={m.id} checked={on} onChange={() => choose(() => setMotionId(m.id))} />
+                          <span className="ap-radio" aria-hidden="true" />
+                          <span className="ap-opt-text">
+                            <span className="mc-opt-head">
+                              <b>{motionRowLabel(m)}</b>
+                              {m.source === "vision" && <span className="tag mc-tag">{SUGGESTED_TAG}</span>}
                             </span>
-                          )}
-                        </span>
-                      </label>
-                    );
-                  })}
+                            {showsEnglish(m) && (
+                              <span className="ap-opt-sub clip-en" lang="en">
+                                {m.text}
+                              </span>
+                            )}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {suitable !== null && (
+                    <>
+                      <MotionActions calls={calls} block={motionBlock} ids={actionIds} suggestRef={suggestRef} />
+                      <OwnIdea calls={calls} block={motionBlock} ids={actionIds} />
+                    </>
+                  )}
                 </div>
               </div>
               <div className="clip-rows">
@@ -296,10 +390,13 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
             </Notice>
           )}
           {error !== null && <Notice tone="danger">{errorText(error)}</Notice>}
+          {motionBusyAfter && <QuietNotice tone="info">{MOTION_BUSY}</QuietNotice>}
           {blockText !== null && suitable !== null && (
-            <Notice tone="warn" role="status">
-              {blockText}
-            </Notice>
+            <div id={blockId}>
+              <Notice tone="warn" role="status">
+                {blockText}
+              </Notice>
+            </div>
           )}
           <div className="clip-price">
             <span className="lbl">Цена</span>
@@ -329,6 +426,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
                 disabled={!sheet.fits || blockText !== null}
                 aria-busy={busy === "main" || undefined}
                 aria-disabled={(sheet.fits && blockText === null && waiting) || undefined}
+                aria-describedby={goWhy}
                 onClick={() => void send("main")}
               >
                 {busy === "main" && <Spin />}
@@ -342,16 +440,20 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
                 disabled={blockText !== null}
                 aria-busy={busy === "alone" || undefined}
                 aria-disabled={(blockText === null && waiting) || undefined}
+                aria-describedby={goWhy}
                 onClick={() => void send("alone")}
               >
                 {busy === "alone" && <Spin />}
                 Оживить без запасной модели · <span className="mono">{sheet.noFallback.label}</span>
               </button>
             )}
-            <button type="button" className="btn" onClick={onClose}>
+            <button ref={cancelRef} type="button" className="btn" onClick={onClose}>
               Отмена
             </button>
+            <MotionGuard id={guardId} busy={suitable !== null && calls.anyRunning} />
+
           </div>
+          <MotionNews news={calls.news} />
         </footer>
         <FocusEdge edge="end" />
       </section>
