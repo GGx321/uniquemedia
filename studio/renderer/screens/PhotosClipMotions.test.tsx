@@ -332,6 +332,23 @@ describe("62c: no suggestion came", () => {
     await settle();
     expect(plain(s.querySelector(".mc-scroll .notice")?.textContent)).toBe("Не получилось предложить движения — оплачено $0.002.");
   });
+
+  test("the model repeated what the sheet lists (`reason: \"repeated\"`, S5.WC3c): «Модель повторила уже предложенные движения — оплачено $0.003.», warm, said as an alert", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    const texts = ["she slowly tucks a strand of hair behind her ear", "she slowly lifts her chin and smiles softly", "she slowly turns toward the window and smiles"];
+    h.engine.scriptNextMotionReplies([mockSuggestionAnswer(texts, {}, 3_400), mockSuggestionAnswer(texts, {}, 3_400)]);
+    fireEvent.click(suggestButton(s));
+    await settle();
+    const rows = rowTexts(s);
+    fireEvent.click(suggestButton(s));
+    await settle();
+    const notice = s.querySelector(".mc-scroll .notice") as HTMLElement;
+    expect(plain(notice.textContent)).toBe("Модель повторила уже предложенные движения — оплачено $0.003.");
+    expect(notice.classList.contains("notice-warn")).toBe(true);
+    expect(news("alert", s)).toBe("Модель повторила уже предложенные движения — оплачено $0.003.");
+    expect(rowTexts(s)).toEqual(rows);
+  });
 });
 
 describe("62d: the frame's notes", () => {

@@ -175,7 +175,7 @@ export function useMotionCalls({ avatarId, photoId, view, offered, relist, revea
       if (live && first !== undefined) latest.current.reveal(first.id, false, result.motions.at(-1)?.id);
       return;
     }
-    const line = suggestNoneLine(result.costMicros);
+    const line = suggestNoneLine(result.costMicros, result.reason);
     setSuggestNone({ line, free: result.costMicros === 0 });
     announce(result.costMicros === 0 ? "polite" : "alert", lineText(line));
     if (live) latest.current.toCancel();
