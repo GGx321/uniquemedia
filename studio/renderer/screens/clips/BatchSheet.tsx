@@ -259,7 +259,10 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
   // S5.WB4c: a new price that leaves the way clicked over the month says so in the same alert — the month's sentence after the price's, and no «Подтвердите ещё раз» for a way that cannot be sent.
   const priceShort = shownAfter?.kind === "price" && sheet !== null && !sheet.fits && (shownAfter.way === "main" || sheet.noFallback === null);
   const priceNeed = sheet === null ? "" : shownAfter?.kind === "price" && shownAfter.way === "alone" ? upUsd(sheet.worstNoFallbackMicros) : sheet.worst;
-  // One live region at a time (README decision 13): the click's answer, else the engine's error, else why paid work waits, else the month.
+  // S5.WC5b: what a list read again took from the rows, said once it is in.
+  const dropShown = dropped !== null && !refreshing ? dropped : null;
+  // One live region at a time (README decision 13): the click's answer, else the engine's error, else why paid work waits, else the month — a drop said in that same status, after the reason it never
+  // replaces (round 2, M-2) — else the drop alone.
   const notice: "price" | "item" | "unpriced" | "motion" | "error" | "dropped" | "block" | "budget" | null =
     shownAfter?.kind === "price" && sheet !== null
       ? "price"
@@ -271,12 +274,12 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
             ? "motion"
             : error !== null
               ? "error"
-              : dropped !== null && !refreshing
-                ? "dropped"
-                : block !== null && ready !== null
-                  ? "block"
-                  : budgetShown
-                    ? "budget"
+              : block !== null && ready !== null
+                ? "block"
+                : budgetShown
+                  ? "budget"
+                  : dropShown !== null
+                    ? "dropped"
                     : null;
   const mainWhy = unpriced ? whyId : notice === "block" || notice === "budget" || (notice === "price" && priceShort) ? noticeId : motionRunning && sheet !== null ? guardId : undefined;
   // 59d: the wider list column only when a row lists a suggestion or an idea (59 as approved otherwise).
@@ -449,14 +452,15 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
             </Notice>
           )}
           {notice === "error" && error !== null && <Notice tone="danger">{errorText(error)}</Notice>}
-          {notice === "dropped" && dropped !== null && (
+          {notice === "dropped" && dropShown !== null && (
             <Notice tone="info" role="status">
-              {nbDash(dropped)}
+              {nbDash(dropShown)}
             </Notice>
           )}
+          {/* The buttons are described by the reason alone (`noticeId`), never by the drop said after it. */}
           {notice === "block" && block !== null && (
-            <div id={noticeId}>
-              <Notice tone="warn" role="status">
+            <Notice tone="warn" role="status">
+              <span id={noticeId}>
                 <AnimateWhy
                   why={block}
                   onShowClips={(batchAvatarId) => {
@@ -464,15 +468,15 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
                     showBatchClips(batchAvatarId);
                   }}
                 />
-              </Notice>
-            </div>
+              </span>
+              {dropShown !== null && <> {nbDash(dropShown)}</>}
+            </Notice>
           )}
           {notice === "budget" && sheet !== null && (
-            <div id={noticeId}>
-              <Notice tone="warn" role={budgetAlert ? "alert" : "status"}>
-                {monthShort(budgetNeed, sheet.room)}
-              </Notice>
-            </div>
+            <Notice tone="warn" role={budgetAlert ? "alert" : "status"}>
+              <span id={noticeId}>{monthShort(budgetNeed, sheet.room)}</span>
+              {dropShown !== null && <> {nbDash(dropShown)}</>}
+            </Notice>
           )}
           <div className="clip-price">
             <span className="lbl">Цена</span>

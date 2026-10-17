@@ -271,3 +271,45 @@ describe("S5.WC5b (M2): the batch rows follow the photo's stored motions", () =>
     ]);
   });
 });
+
+describe("S5.WC5b round 2 (M-2): a drop never hides why «Оживить 2» waits", () => {
+  test("the month does not fit and a call ends that drops the chosen motion: the month line stays, the drop added to it; «Оживить 2» still points at the month line", async () => {
+    const h = await openNini({ money: { spentMicros: 9_600_000, monthlyBudgetMicros: 10_000_000 } });
+    h.engine.scriptNextMotionReplies([FIRST_THREE]);
+    await h.client.request("clips.suggestMotions", { avatarId: NINI.avatarId, photoId: PLAIN.photoId, acceptedWorstMicros: MOCK_SUGGEST_PRICE.worstMicros });
+    // A sheet of Фото 3 asks for three more and is closed while the call runs.
+    fireEvent.click(screen.getByRole("button", { name: "Открыть фото 3: Дом" }));
+    await flush();
+    fireEvent.click(within(screen.getByRole("dialog", { name: /^Фото \d+ из \d+$/ })).getByRole("button", { name: "Оживить" }));
+    await settle();
+    const clipSheet = screen.getByRole("dialog", { name: "Оживить фото" });
+    h.engine.holdMotionCalls(true);
+    h.engine.scriptNextMotionReplies([NEXT_THREE]);
+    fireEvent.click(within(clipSheet).getByRole("button", { name: /^Предложить движения/ }));
+    await settle();
+    fireEvent.click(within(clipSheet).getByRole("button", { name: "Отмена" }));
+    await flush();
+    fireEvent.click(within(screen.getByRole("dialog", { name: /^Фото \d+ из \d+$/ })).getByRole("button", { name: "Закрыть" }));
+    await flush();
+    const s = await openBatch();
+    fireEvent.change(selectOf(rowOf(s, "Фото 3 · Дом")), { target: { value: "v-1" } });
+    await flush();
+    const footNotices = (): string[] => Array.from(s.querySelectorAll(".clip-sheet-foot .notice")).map((n) => plain(n.textContent));
+    const [month] = footNotices();
+    expect(month?.startsWith("Не хватает месячного бюджета: пакету нужно до ")).toBe(true);
+    h.engine.holdMotionCalls(false);
+    await settle();
+    expect(selectOf(rowOf(s, "Фото 3 · Дом")).value).toBe("g-blink");
+    // One status: the month line (its room read again, the call's reserve settled), then the drop.
+    const drop = " Фото 3 · Дом: движение «Дует на чай» больше не в списке — выбрано «Моргает и улыбается».";
+    const after = footNotices();
+    expect(after).toHaveLength(1);
+    const [both = ""] = after;
+    expect(both.startsWith("Не хватает месячного бюджета: пакету нужно до ")).toBe(true);
+    expect(both.endsWith(drop)).toBe(true);
+    expect(plain(within(s).getByRole("status").textContent)).toBe(both);
+    // «Оживить 2» waits, described by the month line alone.
+    expect(isOff(mainButton(s))).toBe(true);
+    expect(describedText(mainButton(s))).toBe(both.slice(0, both.length - drop.length));
+  });
+});
