@@ -21,12 +21,14 @@ async function rawHost() {
   const base = await mockEngineClient(new MockEngine({ scheduler: new ManualScheduler() })).request("engine.snapshot", {});
   if (!base.ok) throw new Error(`expected ok, got ${base.error.code}`);
   const snapshot = { ...base.result, bootId: RAW_BOOT, lastSeq: 0, jobs: [] };
+  /** The engine's boot now: a restarted engine answers the snapshot, and stamps its events, with a new one. */
+  let boot = RAW_BOOT;
   let seq = 0;
   const listeners = new Set<(e: unknown) => void>();
   const bridge = {
     async request(cmd: CommandMessage): Promise<unknown> {
       const head = { v: PROTOCOL_VERSION, id: cmd.id, kind: "response" as const, type: cmd.type };
-      if (cmd.type === "engine.snapshot") return { ...head, ok: true, result: { ...snapshot, lastSeq: seq } };
+      if (cmd.type === "engine.snapshot") return { ...head, ok: true, result: { ...snapshot, bootId: boot, lastSeq: seq } };
       return { ...head, ok: false, error: { code: "INTERNAL" as const } };
     },
     subscribe(l: (e: unknown) => void): () => void {
@@ -41,9 +43,14 @@ async function rawHost() {
     store,
     emit: async (event: Omit<UnsequencedEvent, "v" | "id" | "kind">) => {
       seq += 1;
-      const message = { v: PROTOCOL_VERSION, id: `evt-${String(seq).padStart(8, "0")}`, kind: "event" as const, seq, bootId: RAW_BOOT, ...event };
+      const message = { v: PROTOCOL_VERSION, id: `evt-${String(seq).padStart(8, "0")}`, kind: "event" as const, seq, bootId: boot, ...event };
       for (const l of [...listeners]) l(message);
       await settle();
+    },
+    /** The engine restarts: its numbering starts again under a new boot. */
+    restart: (next: string) => {
+      boot = next;
+      seq = 0;
     },
   };
 }
@@ -149,4 +156,35 @@ test("an avatar deleted for good takes its kept results with it", async () => {
   await emit({ type: "avatar.removed", payload: { avatarId: ZOE } });
   expect(store.takeMotionResult(ZOE, "photo-1")).toBeNull();
   expect(store.takeMotionResult(MIA, "photo-9")).toEqual(REJECTED);
+});
+
+// Round 2 (L2): a kept answer belongs to the library and the engine run it came from.
+test("a library switch drops every kept result", async () => {
+  const { store, emit } = await rawHost();
+  const settings = store.getView().settings;
+  if (settings === null) throw new Error("expected settings");
+  store.keepMotionResult(ZOE, "photo-1", NONE_PAID);
+  store.keepMotionResult(MIA, "photo-9", REJECTED);
+  await emit({ type: "settings.changed", payload: { settings: { ...settings, libraryPath: "/Users/studio/Other/library" }, librarySwitchGeneration: 1 } });
+  expect(store.takeMotionResult(ZOE, "photo-1")).toBeNull();
+  expect(store.takeMotionResult(MIA, "photo-9")).toBeNull();
+});
+
+test("a settings change that is no library switch keeps them", async () => {
+  const { store, emit } = await rawHost();
+  const settings = store.getView().settings;
+  if (settings === null) throw new Error("expected settings");
+  store.keepMotionResult(ZOE, "photo-1", NONE_PAID);
+  await emit({ type: "settings.changed", payload: { settings: { ...settings, monthlyBudgetMicros: 20_000_000 }, librarySwitchGeneration: 0 } });
+  expect(store.takeMotionResult(ZOE, "photo-1")).toEqual(NONE_PAID);
+});
+
+test("an engine that restarted (a new bootId) drops every kept result", async () => {
+  const { store, emit, restart } = await rawHost();
+  store.keepMotionResult(ZOE, "photo-1", NONE_PAID);
+  restart("boot-raw-motions-2");
+  // Any event of the new boot makes the window read the snapshot again (an avatar it never knew, so the event itself takes nothing).
+  await emit({ type: "avatar.removed", payload: { avatarId: "avatar-none-0001" } });
+  expect(store.getView().bootId).toBe("boot-raw-motions-2");
+  expect(store.takeMotionResult(ZOE, "photo-1")).toBeNull();
 });

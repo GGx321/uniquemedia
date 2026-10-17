@@ -845,7 +845,8 @@ export class EngineStore {
 
   /**
    * 5b.2 part C (S5.WC5b): the last answer of a call whose sheet was closed before it came, by avatar and photo — memory only, never the owner's idea text — so the sheet opened again says it
-   * once (a paid `none` or `rejected` would else be lost). Not part of the view: nothing on screen changes until a sheet takes it.
+   * once (a paid `none` or `rejected` would else be lost). Not part of the view: nothing on screen changes until a sheet takes it. They go with their avatar, on a library switch and when the engine
+   * restarts (round 2, L2): an answer is about one library's photo in one engine run.
    */
   private readonly motionResults = new Map<string, MotionResult>();
 
@@ -1179,6 +1180,8 @@ export class EngineStore {
     this.unconfirmedBoots.clear();
     // The engine that was replaced may still have events in flight.
     if (this.view.bootId !== null && this.view.bootId !== s.bootId) this.markStale(this.view.bootId);
+    // 5b.2 part C (S5.WC5b round 2, L2): a kept answer is about the library and the engine run it came from — a new engine, or a library switched while the window was away, ends them all.
+    if ((this.view.bootId !== null && this.view.bootId !== s.bootId) || (this.listsLibraryGeneration !== null && s.librarySwitchGeneration !== this.listsLibraryGeneration)) this.motionResults.clear();
     this.staleBoots.delete(s.bootId);
     const again = this.view.bootId !== null;
     this.listsLibraryGeneration = s.librarySwitchGeneration;
@@ -1364,6 +1367,8 @@ export class EngineStore {
           const finished = this.view.imports.filter((i) => !isActiveImport(i));
           for (const done of finished) rememberCapped(this.dismissedImports, done.jobId);
           if (finished.length > 0) this.update({ imports: this.view.imports.filter(isActiveImport) });
+          // S5.WC5b round 2 (L2): the kept part C answers were about the old library's photos.
+          this.motionResults.clear();
           void this.resync("snapshot", this.generation, "user");
         }
         return;
