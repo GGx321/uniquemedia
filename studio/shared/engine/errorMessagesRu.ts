@@ -466,12 +466,13 @@ export const USAGE_UNKNOWN_REASONS_RU = {
 
 /**
  * Why the translator refused an owner's idea (5b.2 part C, S5.WC1; mockups 63b-63c): one text per closed `MotionProblem`, the owner's wording (veto). The window shows the text of the FIRST problem of a
- * rejection (they come in the fixed display order). Each ends with a period. `takes-off` is told only on a frame that is not «Смелая» (Q-H = 2).
+ * rejection (they come in the fixed display order). Each ends with a period. S5.WC2c: `content` names no frame rule (what it refuses is the age guard, a number, words that talk
+ * to a model), and `takes-off` is told nowhere (no check produces it; its text stays because the code does).
  */
 export const MOTION_PROBLEMS_RU = {
   "not-motion": "Так не получится: в идее нет движения — опишите, что она делает в кадре.",
-  content: "Так не получится: такие слова не подходят для клипа этого кадра — опишите движение иначе.",
-  "takes-off": "Так не получится: здесь одежда остаётся на месте — такое движение только для кадров «Смелой».",
+  content: "Так не получится: такие слова не подходят для клипа — опишите движение иначе.",
+  "takes-off": "Так не получится: опишите движение иначе.",
   staging: "Так не получится: камера и монтаж в клипе не меняются — опишите, что делает она.",
   phone: "Так не получится: телефон в этом кадре не трогаем — уберите его из идеи.",
   "face-hidden": "Так не получится: лица в этом кадре не видно — опишите движение тела, а не лица.",

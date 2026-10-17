@@ -90,7 +90,8 @@ describe("a rejected idea (63b, 63c)", () => {
   test("each code says the contract's own text", () => {
     for (const problem of MOTION_PROBLEMS) expect(rejectionText([problem])).toBe(MOTION_PROBLEMS_RU[problem]);
     expect(rejectionText(["two-movements"])).toBe("Так не получится: два движения сразу — оставьте одно.");
-    expect(rejectionText(["takes-off"])).toBe("Так не получится: здесь одежда остаётся на месте — такое движение только для кадров «Смелой».");
+    // S5.WC2c: no check produces `takes-off` any more; its text names no frame rule.
+    expect(rejectionText(["takes-off"])).toBe("Так не получится: опишите движение иначе.");
   });
 
   test("one text per refusal: the first problem in the contract's display order, whatever order they came in", () => {

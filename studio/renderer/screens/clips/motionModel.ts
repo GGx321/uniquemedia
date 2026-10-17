@@ -130,7 +130,7 @@ export function ideaNoneLine(costMicros: number): MoneyLine {
 
 /**
  * The refusal of an idea: ONE text, the first problem's in the contract's display order (`MOTION_PROBLEMS`; contract `clipMotions.ts`, README §S5.WCD «Один текст на отказ», mockup 63b), in the owner's
- * wording (`MOTION_PROBLEMS_RU`). `takes-off` is only ever told on a frame that is not «Смелая» (Q-H = 2).
+ * wording (`MOTION_PROBLEMS_RU`). `takes-off` is no longer produced (S5.WC2c).
  */
 export function rejectionText(problems: readonly MotionProblem[]): string | null {
   const first = MOTION_PROBLEMS.find((problem) => problems.includes(problem));

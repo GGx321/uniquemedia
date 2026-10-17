@@ -466,7 +466,7 @@ const ENGINE_SPECS = [
   //    `v-<n>` motions, stored under the photo, and the `ClipFrameReading`) or `none`. Every answer carries `costMicros`.
   //  - `translateIdea` is paid, held and accepted the same way. `text` is the owner's idea: 1-300 characters, no control character (a newline is refused here; the window replaces line breaks with spaces before it
   //    sends), and it exists nowhere but this payload and the engine's memory while the call runs (I5.67). The answer is `ok` (the new `o-<n>` item, which the window selects), `none`, or `rejected` with closed
-  //    `MotionProblem`s in a fixed display order. An idea that takes clothing off is accepted ONLY on a frame of «Смелая»; elsewhere it is `takes-off`; the vision writer never suggests it.
+  //    `MotionProblem`s in a fixed display order. S5.WC2c: an idea or a suggestion that takes clothing off is refused on no frame (`takes-off` is no longer produced); an age is `content`, at once.
   //  - Refused free, in this order: IN_FLIGHT (`clipReason` `clip-busy` while a clip or a batch holds the clip money unit, `suggest-busy` / `idea-busy` while a call for this photo runs), AUTH_INVALID, the ledger's
   //    refusals, LIBRARY_UNAVAILABLE, NOT_FOUND, VALIDATION with `clipReason` (`not-a-gallery-photo`, `age-unverified`, `photo-unreadable`, `not-vertical`, `bold-off` (a «Смелая» frame while bold clips are off), `no-motion`, `motions-full` (every id of the source was issued for this photo; ids are never reused)), PRICE_UNAVAILABLE, PRICE_CHANGED,
   //    BUDGET_EXCEEDED.
