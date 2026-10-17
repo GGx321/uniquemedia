@@ -49,10 +49,10 @@ export const FRAME_NOTES_RU = {
 /** §5.3 `motion-busy`: «Оживить» waits while a part C call runs (r2.1 N10). */
 export const MOTION_BUSY = CLIP_REASONS_RU["motion-busy"];
 /**
- * S5.WC5b: the sheet's OWN «Оживить» on its way holds the two part C buttons (owner veto). A clip or a batch that already runs is said by the sheet's footer, and the buttons point at that line instead,
- * so the two never disagree; the engine's own refusal after a click says `CLIP_REASONS_RU["clip-busy"]`.
+ * S5.WC5b: the sheet's OWN «Оживить» on its way holds the two part C buttons (owner veto) — ONE clip, the one this sheet sends (round 2, L-4). A clip or a batch that already runs is said by the sheet's
+ * footer, and the buttons point at that line instead, so the two never disagree; the engine's own refusal after a click says `CLIP_REASONS_RU["clip-busy"]`.
  */
-export const CLIP_BUSY = "Сейчас снимаются клипы — предложить или перевести движение можно, когда они закончатся.";
+export const CLIP_BUSY = "Клип отправляется — предложить или перевести движение можно после него.";
 /** S5.WC5b: a motion the engine no longer knows (`unknown-motion`), in a sheet that offers another: the batch row's line and sheet 38's after its click. */
 export const MOTION_UNAVAILABLE = "Движение больше недоступно — выберите другое.";
 

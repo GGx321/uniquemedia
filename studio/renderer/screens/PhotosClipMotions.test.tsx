@@ -878,14 +878,14 @@ describe("round 2: the smaller points", () => {
     expect(callsOf(h.engine, "clips.suggestMotions")).toHaveLength(1);
   });
 
-  test("L4: the sheet's own «Оживить» on its way holds both part C buttons with the sheet's own clip-busy line", async () => {
+  test("L4: the sheet's own «Оживить» on its way holds both part C buttons with the sheet's own clip-busy line (round 2, L-4: about that ONE clip)", async () => {
     const h = await openNini();
     const s = await openSheet();
     await typeIdea(s, "медленно поворачивает голову");
     h.engine.delayNext("clips.create", 1_000);
     fireEvent.click(goButton(s));
     await flush();
-    const text = "Сейчас снимаются клипы — предложить или перевести движение можно, когда они закончатся.";
+    const text = "Клип отправляется — предложить или перевести движение можно после него.";
     expect(isOff(suggestButton(s))).toBe(true);
     expect(describedText(suggestButton(s))).toBe(text);
     expect(isOff(translateButton(s))).toBe(true);

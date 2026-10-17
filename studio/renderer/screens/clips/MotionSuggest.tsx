@@ -31,7 +31,8 @@ import {
 //  - Each button shows the engine's LIVE estimate (`clips.estimateSuggest` / `clips.estimateIdea`, free) and sends exactly it as `acceptedWorstMicros`, once (`usePaidAction`): PRICE_CHANGED asks again and needs a
 //    new click; a refusal says why under the button.
 //  - The guard, both ways (r2.1 N10; the engine binds, the sheet mirrors): while any call runs (the window's store, `motionCalls`, any avatar) «Оживить» waits beside «Подождите: идёт подбор движения или
-//    перевод.»; while a clip or a batch holds the clip money unit the two buttons wait with `clip-busy`'s words. One call per sheet: while this photo's call runs, its other action waits too.
+//    перевод.»; while a clip or a batch holds the clip money unit the two buttons wait, described by the reason the sheet's footer shows (S5.WC5b, M1), and while the sheet's own «Оживить» is on its way
+//    by `CLIP_BUSY` (that one clip); the engine's `clip-busy` words are said only for a refusal after a click. One call per sheet: while this photo's call runs, its other action waits too.
 //  - NOT the avatar's paid lock: a call claims no avatar (I5.68), so `paidInFlightAvatars` is left alone and a photo run goes on.
 //  - The live regions are mounted with the sheet; a result is said once — by them, or by the focus moving to the field it is about (63b), never both.
 
