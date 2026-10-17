@@ -8,7 +8,7 @@ import {
   type CommandPayload,
   type Estimate,
 } from "../../shared/engine";
-import { freshDrafts, sameText } from "../../shared/engine/motionKnown";
+import { freshDrafts, sameText, sheetVisionTexts } from "../../shared/engine/motionKnown";
 import { EngineFailure } from "../engineFailure";
 import type { Library } from "../library";
 import type { PhotoSidecar } from "../library/schemas";
@@ -283,11 +283,11 @@ export class ClipMotions {
     try {
       let made: MotionItem[] = [];
       let repeated = false;
-      // Known: the photo's stored suggestions and the frame's own scene and code motions (the sheet lists them already). An own idea is a separate source and does not count (S5.WC3c).
+      // Known: the suggestions ON THE SHEET (the newest three; an older one has left it, and a model that suggests it again brings it back as a new item) and the frame's own scene and code motions (the sheet lists them already). An own idea is a separate source and does not count (S5.WC3c).
       const frameTexts = motionChoicesOf(ready.facts).map((choice) => sameText(choice.text));
       await this.#stores.update(ready.library.avatarDirPath(avatarId), ready.photo.id, ready.sha, (file) => {
         // Round 3 L5: a suggestion the store already holds (another call wrote it) is not stored twice; the writer dedupes within one answer only.
-        const known = [...frameTexts, ...file.items.filter((item) => item.source === "vision").map((item) => sameText(item.text))];
+        const known = [...frameTexts, ...sheetVisionTexts(file.items, (item) => clipMotionProblems(ready.facts, item.text, item.source).length === 0)];
         const { fresh, repeated: allKnown } = freshDrafts(outcome.drafts, known);
         // Nothing new: nothing is written, the reading of the last stored call stays.
         if (fresh.length === 0) {

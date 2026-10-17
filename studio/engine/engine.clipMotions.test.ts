@@ -267,6 +267,26 @@ describe("clips.suggestMotions: the photo and the store", () => {
     expect(resultOf(await w.suggest())).not.toHaveProperty("reason");
   });
 
+  test("a suggestion that left the sheet (older than the newest three) can be suggested again: it is stored as a new item and shows", async () => {
+    const w = await motionWorld(dir());
+    const sha = w.started.engine.library?.getPhoto(w.photoId)?.sha256 ?? "";
+    const items = GOOD_TEXTS.map((text, i) => ({ id: `v-${i + 1}`, source: "vision", label: `Старое ${i + 1}`, text, model: "x-ai/grok-4.3", at: "2026-10-15T10:00:00.000Z" }));
+    await w.writeStore({ schemaVersion: 1, photoId: w.photoId, photoSha256: sha, next: { vision: 6, own: 1 }, items });
+    w.net.setChat(() => suggestionReply([GOOD_TEXTS[0]]));
+    expect(resultOf(await w.suggest())).toMatchObject({ outcome: "ok", motions: [{ id: "v-6", text: GOOD_TEXTS[0] }] });
+    const listed = await w.options();
+    expect(listed.suitable ? listed.motions.filter((m) => m.source === "vision").map((m) => m.id) : []).toEqual(["v-4", "v-5", "v-6"]);
+  });
+
+  test("a suggestion that is still on the sheet is `repeated`, as before", async () => {
+    const w = await motionWorld(dir());
+    const sha = w.started.engine.library?.getPhoto(w.photoId)?.sha256 ?? "";
+    const items = GOOD_TEXTS.map((text, i) => ({ id: `v-${i + 1}`, source: "vision", label: `Старое ${i + 1}`, text, model: "x-ai/grok-4.3", at: "2026-10-15T10:00:00.000Z" }));
+    await w.writeStore({ schemaVersion: 1, photoId: w.photoId, photoSha256: sha, next: { vision: 6, own: 1 }, items });
+    w.net.setChat(() => suggestionReply([GOOD_TEXTS[4]]));
+    expect(resultOf(await w.suggest())).toEqual({ outcome: "none", reason: "repeated", costMicros: 3_400 });
+  });
+
   test("an own idea with the same English that came BEFORE a suggestion does not hide the suggestion (the sources are separate)", async () => {
     const w = await motionWorld(dir());
     expect(await w.translateOk(TUCK)).toMatchObject({ outcome: "ok", item: { id: "o-1" } });

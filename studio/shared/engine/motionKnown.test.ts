@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { freshDrafts, sameText } from "./motionKnown";
+import { freshDrafts, sameText, sheetVisionTexts } from "./motionKnown";
 
 describe("sameText", () => {
   test("ignores case anywhere in the text, not only at its start", () => {
@@ -38,5 +38,26 @@ describe("freshDrafts", () => {
     const known = new Set<string>();
     freshDrafts([draft("a b c")], known);
     expect(known.size).toBe(0);
+  });
+});
+
+describe("sheetVisionTexts", () => {
+  const item = (n: number, source: string = "vision") => ({ id: `${source[0]}-${n}`, source, text: `She Does ${n}` });
+  const always = () => true;
+
+  test("is the newest three suggestions, compared with sameText", () => {
+    const items = [1, 2, 3, 4, 5].map((n) => item(n));
+    expect(sheetVisionTexts(items, always)).toEqual(["she does 3", "she does 4", "she does 5"]);
+  });
+
+  test("leaves out an own idea and counts only suggestions toward the three", () => {
+    const items = [item(1), item(2), item(3), item(1, "own"), item(2, "own")];
+    expect(sheetVisionTexts(items, always)).toEqual(["she does 1", "she does 2", "she does 3"]);
+  });
+
+  test("takes an older suggestion in the place of one that no longer passes the check (the sheet's rule)", () => {
+    const items = [1, 2, 3, 4].map((n) => item(n));
+    expect(sheetVisionTexts(items, (i) => i.id !== "v-4")).toEqual(["she does 1", "she does 2", "she does 3"]);
+    expect(sheetVisionTexts(items, (i) => i.id !== "v-3")).toEqual(["she does 1", "she does 2", "she does 4"]);
   });
 });
