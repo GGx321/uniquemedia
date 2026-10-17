@@ -138,17 +138,16 @@ describe("the continuity line of an own idea that takes clothing off, on a frame
     expect(continuityLineOf("she slides her top knee forward a little", null)).toBe(CONTINUITY_LINE);
   });
 
-  test("round 2: an accepted takes-off idea goes to Kling alone: its Grok prompt is refused, whatever BOLD_CLIPS says of the frame", () => {
+  test("S5.WC2c: the frame decides which model runs, never the motion: an idea that takes clothing off builds its Grok prompt too, with the same line", () => {
     const facts = boldMirror();
     expect(clipPromptOf(facts, ROBE, "kling", "own").ok).toBe(true);
     const grok = clipPromptOf(facts, ROBE, "grok", "own");
-    expect(grok.ok).toBe(false);
-    if (!grok.ok) expect(grok.problems.join(" ")).toContain("takes-off");
-    // Were «Смелая» frames ever let fall back to Grok, the prompt still is not built for it.
+    if (!grok.ok) throw new Error(grok.problems.join("; "));
+    expect(grok.prompt).toContain(`Over the whole clip ${ROBE}. Nothing new appears. ${SLOW_LINE}`);
+    // Whether Grok runs is the frame's: «Смелая» is Kling's alone by default, and falls back only when BOLD_CLIPS lets every motion of it.
+    expect(clipFallbackOf(facts)).toBe("none");
     expect(clipFallbackOf(facts, "with-fallback", "auto")).toBe("auto");
     expect(clipMotionProblems(facts, ROBE, "own")).toEqual([]);
-    // A motion that keeps her clothes on builds in both dialects as before.
-    expect(clipPromptOf(facts, "she slowly turns her hips a little", "grok", "own").ok).toBe(true);
   });
 
   test("the line is written in clips/videoLook.ts alone (I5.1): no other engine or shared module holds it as a string", () => {
@@ -175,11 +174,11 @@ describe("an own idea only the whitelist reads as taking clothing off: on «См
     }
   });
 
-  test("its Grok prompt is refused, and it is offered (Kling alone)", () => {
+  test("S5.WC2c: its Grok prompt is built with the same line, and it is offered", () => {
     for (const motion of OPENS) {
       const grok = clipPromptOf(boldMirror(), motion, "grok", "own");
-      expect([motion, grok.ok]).toEqual([motion, false]);
-      if (!grok.ok) expect(grok.problems.join(" ")).toContain("takes-off");
+      if (!grok.ok) throw new Error(grok.problems.join("; "));
+      expect([motion, grok.prompt.includes(`${NOTHING_NEW_LINE} ${SLOW_LINE}`)]).toEqual([motion, true]);
       expect([motion, clipMotionProblems(boldMirror(), motion, "own")]).toEqual([motion, []]);
     }
   });
@@ -223,11 +222,11 @@ describe("exposure in an accepted own idea on «Смелая» is treated as und
     }
   });
 
-  test("their Grok prompt is refused", () => {
+  test("S5.WC2c: their Grok prompt is built with the same line", () => {
     for (const motion of EXPOSED) {
       const grok = clipPromptOf(boldMirror(), motion, "grok", "own");
-      expect([motion, grok.ok]).toEqual([motion, false]);
-      if (!grok.ok) expect(grok.problems.join(" ")).toContain("takes-off");
+      if (!grok.ok) throw new Error(grok.problems.join("; "));
+      expect([motion, grok.prompt.includes(`${NOTHING_NEW_LINE} ${SLOW_LINE}`)]).toEqual([motion, true]);
     }
   });
 

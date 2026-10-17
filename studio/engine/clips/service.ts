@@ -73,7 +73,6 @@ import { ClipMotions, type MotionFactsRead } from "./motionService";
 import { createClipHolds, type ClipHolds, type HoldTimers } from "./holds";
 import { runClipJob, type ClipJobDeps, type ClipJobOutcome, type ClipMoneyEnd } from "./job";
 import { clipAttemptId, parseClipAttemptId, summarizeJournal } from "./journal";
-import { undressesBy } from "../../shared/scenes/motionText";
 import { motionChoicesOf } from "./motion";
 import { openClipReserveMicros } from "./openReserve";
 import { ClipRecords, clipCostsOf, type ClipRecordsDeps } from "./records";
@@ -905,8 +904,8 @@ export class ClipService {
     const { facts, bytes } = read;
     const motion = read.motions.find((choice) => choice.id === payload.motionId);
     if (motion === undefined) throw new EngineFailure({ code: "VALIDATION", clipReason: "unknown-motion", detail: `the motion ${payload.motionId} is not one this photo offers` });
-    // Q-H = 2: a motion that takes clothing off or bares her (an own idea on a frame of «Смелая») is Kling's alone, whatever `BOLD_CLIPS` lets the frame fall back to: Grok never sees it.
-    const photoFallback = undressesBy(motion.text, motion.source, facts.bold) ? "none" : clipFallbackOf(facts, this.#boldClips, this.#mode);
+    // The frame decides the fallback, never the motion (S5.WC2c: a motion that undresses her goes where any other motion of the frame goes).
+    const photoFallback = clipFallbackOf(facts, this.#boldClips, this.#mode);
     // I5.47: a Grok clip is the offer of mode `offer`, on a photo that allows a fallback; anywhere else it is refused.
     if (payload.model === "grok" && (this.#mode !== "offer" || photoFallback === "none")) {
       throw new EngineFailure({ code: "VALIDATION", clipReason: "grok-not-offered", detail: "Grok is not offered for this clip" });
@@ -1022,7 +1021,7 @@ export class ClipService {
     const priced = await deps.prices(CLIP_PRICE_MODELS);
     const book = clipPricesOf(priced);
     const drafts = chosen.map((member) => {
-      const kept = undressesBy(member.motion.text, member.motion.source, member.facts.bold) || clipFallbackOf(member.facts, this.#boldClips, this.#mode) === "none";
+      const kept = clipFallbackOf(member.facts, this.#boldClips, this.#mode) === "none";
       const fallback = kept ? "none" : payload.fallback;
       const request: ClipRequest = { model: "kling", quality: payload.quality, seconds: payload.seconds, fallback };
       const share = clipWorstMicros({ ...request, mode: this.#mode, bold: member.facts.bold, boldClips: this.#boldClips, prices: book });
@@ -1033,10 +1032,9 @@ export class ClipService {
       chosen.map((member) => ({ bold: member.facts.bold })),
       { quality: payload.quality, seconds: payload.seconds, mode: this.#mode, fallback: payload.fallback, boldClips: this.#boldClips, prices: book },
     );
-    // A member whose motion undresses her never falls back to Grok, so its share can be below the fallback figure the window summed; with none of them the shares add up to the batch's worst case exactly.
+    // The shares add up to the batch's worst case exactly (the frame alone decides a member's fallback, as the window's figure does).
     const shares = drafts.reduce((sum, d) => sum + d.share, 0);
-    const forced = chosen.some((member) => undressesBy(member.motion.text, member.motion.source, member.facts.bold));
-    if (forced ? shares > total : shares !== total) throw new EngineFailure({ code: "INTERNAL", detail: "the members' shares do not add up to the batch's worst case" });
+    if (shares !== total) throw new EngineFailure({ code: "INTERNAL", detail: "the members' shares do not add up to the batch's worst case" });
     deps.checkAccepted(shares, payload.acceptedWorstMicros);
 
     // Each member's cap is its share, and the month is held for every member at once (all or nothing): a refusal leaves nothing held and nothing capped.

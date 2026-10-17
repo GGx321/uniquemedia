@@ -433,4 +433,21 @@ export const CLIP_MOTION_SCENARIOS: readonly Scenario[] = [
       await options(t, w, w.photos.bold);
     },
   },
+  {
+    // Appended in S5.WC2c: routing follows the frame, never the motion. An idea that takes clothing off on an ordinary frame is accepted, and its clip keeps the frame's Grok
+    // fallback: the window's fallback figure is its worst case, as for any motion of the frame (its prompt, «Nothing new appears.» alone, is the engines' own unit tests').
+    name: "clip motions: an idea that takes clothing off on an ordinary frame is accepted, and its clip keeps the frame's Grok fallback",
+    rig: RIG,
+    async run(t, world, control) {
+      const w = clipsOf(world);
+      await translate(t, w, control, [translation(UNDRESS)], "снимает халат");
+      await options(t, w);
+      t.note("the Kling-only figure is not enough: the fallback stays the frame's");
+      await t.call("clips.create", createPayload(w, w.photos.plain, "o-1", { fallback: "auto", acceptedWorstMicros: KLING_ONLY_5 }));
+      const created = await t.call("clips.create", createPayload(w, w.photos.plain, "o-1", { fallback: "auto" }));
+      await t.untilJobEnds(jobIdOf(created));
+      await t.call("clips.list", { avatarId: w.avatarId });
+      t.note("the POSTs that left: " + (control.clips.posts().join(", ") || "none"));
+    },
+  },
 ];

@@ -758,12 +758,12 @@ describe("runClipJob: the last prompt build reads the motion's source (S5.WC2 ro
     expect(typeof scene[0]).toBe("object");
   });
 
-  test("an own idea that takes clothing off, on a frame of «Смелая»: Kling's body carries «Nothing new appears.»; a Grok body is never built", async () => {
+  test("S5.WC2c: an own idea that takes clothing off: Kling's body and Grok's carry «Nothing new appears.» (the frame decides whether a Grok attempt runs, never the motion)", async () => {
     const bold = facts({ bold: true, level: boldContentLevel(), capture: "mirror", plannedCapture: "mirror", category: "nightwear" });
     const out = await builds({ facts: bold, photoId: bold.photoId, motion: own("she slowly takes off her robe") }, [attemptPlan(1, "kling"), attemptPlan(2, "grok")]);
-    const kling = out[0];
-    if (typeof kling === "string") throw new Error(kling);
-    expect(kling.prompt).toContain("Over the whole clip she slowly takes off her robe. Nothing new appears.");
-    expect(out[1]).toEqual(expect.stringContaining("the clip's prompt cannot be built"));
+    for (const body of out) {
+      if (typeof body === "string") throw new Error(body);
+      expect(body.prompt).toContain("Over the whole clip she slowly takes off her robe. Nothing new appears.");
+    }
   });
 });

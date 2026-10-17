@@ -210,16 +210,40 @@ describe("clips.create and clips.createBatch resolve v- and o- ids", () => {
   });
 });
 
-describe("an own idea that takes clothing off goes to Kling alone (Q-H = 2)", () => {
-  async function undressWorld(clips: NonNullable<Parameters<typeof makeClipMock>[0]>["clips"]) {
+describe("S5.WC2c: an own idea that takes clothing off is routed by its frame, never by its motion (the engine's rule)", () => {
+  async function undressWorld(clips: NonNullable<Parameters<typeof makeClipMock>[0]>["clips"], photoId: string) {
     const m = makeClipMock({ clips });
     m.engine.scriptNextMotionReplies([idea(UNDRESS)]);
-    expect(await unwrap(translate(m, "снимает халат", BOLD))).toMatchObject({ outcome: "ok" });
+    expect(await unwrap(translate(m, "снимает халат", photoId))).toMatchObject({ outcome: "ok" });
     return m;
   }
 
-  test("with BOLD_CLIPS `with-fallback` and an automatic fallback the clip runs on Kling alone: the request says fallback none, the sheet's Kling-only figure is enough", async () => {
-    const m = await undressWorld({ boldClips: "with-fallback" });
+  test("on an ordinary frame its clip keeps the Grok fallback: the window's fallback figure is the worst case, the request says fallback auto", async () => {
+    const m = await undressWorld({}, PLAIN);
+    const { jobId } = await unwrap(create(m, { photoId: PLAIN, motionId: "o-1", fallback: "auto", acceptedWorstMicros: 850_000 }));
+    runUntilEnd(m, jobId);
+    expect(endOf(m.events, jobId)?.type).toBe("job.done");
+    expect((await listClips(m))[0]?.request.fallback).toBe("auto");
+  });
+
+  test("on an ordinary frame in mode `offer` a Grok clip of it is offered", async () => {
+    const m = await undressWorld({ mode: "offer" }, PLAIN);
+    const { jobId } = await unwrap(create(m, { photoId: PLAIN, motionId: "o-1", model: "grok", fallback: "none", acceptedWorstMicros: 850_000 }));
+    runUntilEnd(m, jobId);
+    expect(endOf(m.events, jobId)?.type).toBe("job.done");
+    expect(m.engine.peekClips().posts).toEqual(["grok"]);
+  });
+
+  test("on «Смелая» with BOLD_CLIPS `with-fallback` the frame's mode decides: the request keeps fallback auto", async () => {
+    const m = await undressWorld({ boldClips: "with-fallback" }, BOLD);
+    const { jobId } = await unwrap(create(m, { photoId: BOLD, motionId: "o-1", fallback: "auto", acceptedWorstMicros: 850_000 }));
+    runUntilEnd(m, jobId);
+    expect(endOf(m.events, jobId)?.type).toBe("job.done");
+    expect((await listClips(m))[0]?.request.fallback).toBe("auto");
+  });
+
+  test("on «Смелая» with BOLD_CLIPS `kling-only` (the default) it runs on Kling alone, as every clip of «Смелая» does", async () => {
+    const m = await undressWorld({ boldClips: "kling-only" }, BOLD);
     const { jobId } = await unwrap(create(m, { photoId: BOLD, motionId: "o-1", fallback: "auto", acceptedWorstMicros: 504_000 }));
     runUntilEnd(m, jobId);
     expect(endOf(m.events, jobId)?.type).toBe("job.done");
@@ -227,14 +251,10 @@ describe("an own idea that takes clothing off goes to Kling alone (Q-H = 2)", ()
     expect((await listClips(m))[0]?.request.fallback).toBe("none");
   });
 
-  test("a Grok clip for it is refused `grok-not-offered` even in mode `offer`", async () => {
-    const m = await undressWorld({ boldClips: "with-fallback", mode: "offer" });
-    expect(await errorOf(create(m, { photoId: BOLD, motionId: "o-1", model: "grok", fallback: "none", acceptedWorstMicros: 850_000 }))).toMatchObject({ code: "VALIDATION", clipReason: "grok-not-offered" });
-  });
-
-  test("a batch of it is priced by the member's share, Kling alone, and runs", async () => {
-    const m = await undressWorld({ boldClips: "with-fallback" });
-    const made = await unwrap(m.client.request("clips.createBatch", { avatarId: AVATAR, items: [{ photoId: BOLD, motionId: "o-1" }], quality: "std", seconds: 5, fallback: "auto", acceptedWorstMicros: 504_000 }));
+  test("a batch of it on an ordinary frame is priced at the fallback figure the window sums, and runs", async () => {
+    const m = await undressWorld({}, PLAIN);
+    expect(await errorOf(m.client.request("clips.createBatch", { avatarId: AVATAR, items: [{ photoId: PLAIN, motionId: "o-1" }], quality: "std", seconds: 5, fallback: "auto", acceptedWorstMicros: 504_000 }))).toMatchObject({ code: "PRICE_CHANGED" });
+    const made = await unwrap(m.client.request("clips.createBatch", { avatarId: AVATAR, items: [{ photoId: PLAIN, motionId: "o-1" }], quality: "std", seconds: 5, fallback: "auto", acceptedWorstMicros: 850_000 }));
     expect(made.jobIds).toHaveLength(1);
   });
 
