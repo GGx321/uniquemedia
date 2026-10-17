@@ -455,7 +455,7 @@ describe("clips.translateIdea answers ok, none or rejected", () => {
 // ---------- MotionProblem and its texts ----------
 
 describe("MotionProblem", () => {
-  test("is the nine closed codes, in the display order of the mockups", () => {
+  test("is the nine closed codes, in the display order of the mockups (S5.WC2c: `takes-off` stays defined, additive, though no check produces it)", () => {
     expect([...MOTION_PROBLEMS]).toEqual(["not-motion", "content", "takes-off", "staging", "phone", "face-hidden", "two-movements", "not-small", "too-long"]);
     for (const code of MOTION_PROBLEMS) expect(MotionProblem.safeParse(code).success).toBe(true);
     expect(MotionProblem.safeParse("too-big").success).toBe(false);
@@ -469,8 +469,9 @@ describe("MotionProblem", () => {
       staging: "Так не получится: камера и монтаж в клипе не меняются — опишите, что делает она.",
       phone: "Так не получится: телефон в этом кадре не трогаем — уберите его из идеи.",
       "face-hidden": "Так не получится: лица в этом кадре не видно — опишите движение тела, а не лица.",
-      content: "Так не получится: такие слова не подходят для клипа этого кадра — опишите движение иначе.",
-      "takes-off": "Так не получится: здесь одежда остаётся на месте — такое движение только для кадров «Смелой».",
+      // S5.WC2c: what `content` refuses is no frame's any more (the age guard, a number, words that talk to a model), and `takes-off` is told nowhere: both say no frame rule.
+      content: "Так не получится: такие слова не подходят для клипа — опишите движение иначе.",
+      "takes-off": "Так не получится: опишите движение иначе.",
       "not-motion": "Так не получится: в идее нет движения — опишите, что она делает в кадре.",
     } as const;
     for (const problem of MOTION_PROBLEMS) {

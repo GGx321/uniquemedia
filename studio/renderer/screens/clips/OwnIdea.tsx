@@ -25,7 +25,7 @@ import { errorTone, MoneyText, QuietNotice, type MotionBlock, type MotionCalls }
 // («Перевести · до $0.010», the engine's live estimate). SceneIdeaForm's parts: the label and the count against the limit, the field, the reason a text cannot be sent, the limits line, the button.
 //  - The text is the contract's `OwnIdeaText` (1–300 characters, a letter, no control or format character — a ZWJ emoji included): «Перевести» waits until the text is one, and says why.
 //  - Enter and pasted line breaks become spaces (the contract refuses a newline; Enter never buys anything).
-//  - Q-H = 2: an idea that takes clothing off is accepted on a frame of «Смелая» like any other, and refused `takes-off` elsewhere; the window shows what the engine answered and decides nothing itself.
+//  - S5.WC2c: an idea that takes clothing off is accepted on every frame like any other (63c's refusal is gone); the window shows what the engine answered and decides nothing itself.
 //  - A refusal is a line of the field, about its text (63b): ONE text, the first problem's in the contract's order. The focus goes into the field, which it describes — said once — and an edit ends it.
 //    His full text never leaves the field and this call (I5.67).
 

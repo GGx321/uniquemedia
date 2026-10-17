@@ -7,7 +7,8 @@ import { assertMicros } from "./usd";
 //
 //  - `clips.estimateSuggest` / `clips.suggestMotions`: the vision writer looks at ONE photo (at most 1024 px, never the master) and suggests up to three small motions, each already checked like a bank motion.
 //  - `clips.estimateIdea` / `clips.translateIdea`: the owner writes one idea in Russian (1-300 characters, no control character); the translator turns it into an English motion of at most 60 characters or
-//    refuses it with closed `MotionProblem`s. On a frame of «Смелая» only (Q-H = 2) an idea that takes clothing off is accepted; its prompt then carries «Nothing new appears.» alone. Elsewhere it is `takes-off`.
+//    refuses it with closed `MotionProblem`s. S5.WC2c (the owner, 2026-10-17): an idea or a suggestion that takes clothing off, bares her or says explicit words is refused on no frame; its prompt
+//    carries «Nothing new appears.» alone. The minor-age guard stays: an age, a youth word or a number is `content`, with no repair attempt.
 //  - the owner's idea text exists only in the `translateIdea` payload and in the engine's memory while the call runs (I5.67). The clip commands carry motion ids only.
 //
 // The guard, both ways (r2.1 N10; the engine binds, the sheet only mirrors it):
@@ -109,7 +110,8 @@ export function ownIdeaLabel(text: string): string {
 
 /**
  * The closed reasons the translator refuses an idea, IN THE ORDER the window shows them: a rejection lists its problems in this order and the window shows the text of the first (mockups 63b-63c).
- * - not-motion: the idea holds no movement. - content: words not fit for this frame. - takes-off: it takes clothing off, and the frame is not «Смелая» (Q-H = 2). - staging: it changes the camera or the cut.
+ * - not-motion: the idea holds no movement. - content: words not fit for a clip (an age, a youth word or a number: the minor-age guard; words that talk to a model; someone new in the clip).
+ * - takes-off: NO LONGER PRODUCED (S5.WC2c, 2026-10-17: taking clothing off is refused on no frame); it stays defined, the contract being additive only. - staging: it changes the camera or the cut.
  * - phone: it names a phone the frame does not allow. - face-hidden: it acts with a face the frame does not show. - two-movements: more than one movement. - not-small: a big or fast movement.
  * - too-long: too detailed for a clip (more than 60 characters, or a prompt over 130 words). The Russian texts are `MOTION_PROBLEMS_RU`.
  */
