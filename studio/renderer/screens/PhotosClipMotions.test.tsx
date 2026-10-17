@@ -1018,7 +1018,7 @@ describe("S5.WC5b: the review's follow-ups in sheet 38", () => {
     expect(field(s).value).toBe("");
   });
 
-  test("`unknown-motion` after «Оживить»: the list is read again, the drop is said and the first row chosen, «Движение больше недоступно — выберите другое.» on show", async () => {
+  test("`unknown-motion` after «Оживить»: the list is read again, the drop is said ONCE (the alert) and the first row chosen, «Движение больше недоступно — выберите другое.» on show", async () => {
     const h = await openNini();
     const s = await openSheet();
     fireEvent.click(suggestButton(s));
@@ -1030,13 +1030,24 @@ describe("S5.WC5b: the review's follow-ups in sheet 38", () => {
       store.items = store.items.filter((item) => item.id !== "v-1");
     });
     const before = callsOf(h.engine, "clips.options").length;
+    const politeBefore = news("polite", s);
+    const alerts: string[] = [];
+    const watch = new MutationObserver(() => {
+      const now = news("alert");
+      if (now !== "" && alerts.at(-1) !== now) alerts.push(now);
+    });
+    watch.observe(document.body, { childList: true, subtree: true, characterData: true });
     fireEvent.click(goButton(s));
     await settle();
+    watch.disconnect();
+    if (news("alert") !== "" && alerts.at(-1) !== news("alert")) alerts.push(news("alert"));
     expect(callsOf(h.engine, "clips.options").length).toBe(before + 1);
     expect(radios(s).some((r) => r.value === "v-1")).toBe(false);
     const first = rowTitles(s)[0] ?? "";
     expect(checkedRow(s).startsWith(first)).toBe(true);
-    expect(news("polite", s)).toBe(`Движение «Движение 1» больше не в списке — выбрано «${first}».`);
+    // Round 2 (L-3): one message — the drop line, in the alert; the polite region keeps what it said before the click.
+    expect(alerts).toEqual([`Движение «Движение 1» больше не в списке — выбрано «${first}».`]);
+    expect(news("polite", s)).toBe(politeBefore);
     expect(plain(s.querySelector(".clip-sheet-foot .notice")?.textContent)).toBe("Движение больше недоступно — выберите другое.");
     expect(plain(s.textContent)).not.toContain("откройте «Оживить» заново");
   });

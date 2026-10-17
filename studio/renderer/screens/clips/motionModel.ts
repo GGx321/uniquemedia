@@ -56,6 +56,11 @@ export const CLIP_BUSY = "Сейчас снимаются клипы — пре�
 /** S5.WC5b: a motion the engine no longer knows (`unknown-motion`), in a sheet that offers another: the batch row's line and sheet 38's after its click. */
 export const MOTION_UNAVAILABLE = "Движение больше недоступно — выберите другое.";
 
+/** S5.WC5b round 2 (L-3): the batch row's line once its list read again put it on another motion: what it is on now, not a request to choose. */
+export function motionUnavailableNote(chosen: string): string {
+  return `Движение больше недоступно — выбрано «${chosen}».`;
+}
+
 const MOTION_FORMS = ["движение", "движения", "движений"] as const;
 
 // ---------- the money words ----------

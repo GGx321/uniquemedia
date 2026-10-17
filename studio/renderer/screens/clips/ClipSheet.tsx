@@ -96,6 +96,8 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   const [motionBusyAfter, setMotionBusyAfter] = useState(false);
   /** S5.WC5b: the engine refused the click `unknown-motion` (the chosen row is gone from the photo's store); the list is read again and the line stays until the next click or choice. */
   const [motionGoneAfter, setMotionGoneAfter] = useState(false);
+  /** S5.WC5b round 2 (L-3): the ask before the list read again for an `unknown-motion` refusal — what that list drops is the refusal's one alert; null when no such refusal waits to be said. */
+  const goneAlert = useRef<number | null>(null);
   /**
    * 62b, 63a: a new row to focus — and select, an own idea — once the list read AFTER the call (`after`: the last ask before it) holds it; `last`, the last new row, is scrolled into view first.
    */
@@ -156,13 +158,17 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
 
   // Round 2 (L1): the row the owner chose left the list read again (only the newest suggestions and ideas are listed) — the first row is chosen, and the drop alone is said (round 3, R2:
   // the call's result line was said already), never a silent jump.
+  // S5.WC5b round 2 (L-3): after an `unknown-motion` refusal the drop is the refusal's one message, said as the alert.
   const picked = motionId === null || suitable === null ? undefined : suitable.motions.find((m) => m.id === motionId);
+  const afterGone = options.status === "ready" && goneAlert.current !== null && options.asked > goneAlert.current;
   const dropGone = (): void => {
     if (suitable === null || motionId === null || picked !== undefined) return;
     const first = suitable.motions[0];
     const gone = chosen.current !== null && chosen.current.id === motionId ? chosen.current.title : null;
     setMotionId(null);
-    if (gone !== null && first !== undefined) calls.announce("polite", motionGoneNews(gone, motionRowLabel(first)));
+    if (gone === null || first === undefined) return;
+    calls.announce(afterGone ? "alert" : "polite", motionGoneNews(gone, motionRowLabel(first)));
+    if (afterGone) goneAlert.current = null;
   };
 
   // 62b / 63a: the list read after the call is in — the row the call made is focused (and chosen, for his idea), the group brought down to the last new row first (62b). A row the list
@@ -194,6 +200,14 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     if (pending?.select === true) return;
     dropGone();
   }, [suitable, refreshing]);
+
+  // S5.WC5b round 2 (L-3): the list read after an `unknown-motion` refusal dropped nothing it could name (the refused row was the default, not a choice): the refusal's own words are its one alert. A list
+  // that failed says its failure instead.
+  useEffect(() => {
+    if (refreshing || options.status === "loading" || goneAlert.current === null || options.asked <= goneAlert.current) return;
+    goneAlert.current = null;
+    if (options.status === "ready") calls.announce("alert", MOTION_UNAVAILABLE);
+  }, [options, refreshing]);
 
   // Round 3 (R1): the list read again failed, or the photo is no longer one to bring to life: the form is gone, and with it a focus it held — it goes to what the sheet offers now.
   const formGone = options.status === "failed" || (options.status === "ready" && !options.options.suitable);
@@ -250,6 +264,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     setError(null);
     setMotionBusyAfter(false);
     setMotionGoneAfter(false);
+    goneAlert.current = null;
   };
 
   async function send(way: "main" | "alone"): Promise<void> {
@@ -261,6 +276,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     setError(null);
     setMotionBusyAfter(false);
     setMotionGoneAfter(false);
+    goneAlert.current = null;
     store.setPaidInFlight(avatarId, true);
     const reply = await client.request("clips.create", {
       avatarId,
@@ -297,9 +313,9 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     }
     if (reply.error.code === "VALIDATION" && reply.error.clipReason === "unknown-motion") {
       // S5.WC5b: the row the owner chose is gone from the photo's store. The list is read again (the drop is then said and the first row chosen, `dropGone`), and the sheet says what to do — not
-      // «откройте «Оживить» заново», which the sheet itself makes needless.
+      // «откройте «Оживить» заново», which the sheet itself makes needless. S5.WC5b round 2 (L-3): said once — the drop, as the alert, when the list read again is in (the effect after `dropGone`'s).
       setMotionGoneAfter(true);
-      calls.announce("alert", MOTION_UNAVAILABLE);
+      goneAlert.current = askedRef.current;
       setAsked((n) => n + 1);
       return;
     }
