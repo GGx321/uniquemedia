@@ -28,6 +28,8 @@ const GOOD = [
   "she slowly takes a breath and relaxes her shoulders",
   "she slowly looks down and smiles to herself",
 ] as const;
+/** GOOD with the two texts that equal the code motions `g-tilt` and `g-breath` replaced (S5.WC3c: a suggestion equal to a frame's code motion is not stored). For suggestions only; GOOD stays for ideas. */
+const SUGGESTED = [GOOD[0], "she slowly lifts her chin and smiles softly", "she slowly turns toward the window and smiles", GOOD[3]] as const;
 const NOT_MOTION = "slowly she turns her head";
 const TWO_MOVEMENTS = "she slowly turns her head and then she slowly sits down";
 const UNDRESS = "she slowly takes off her robe";
@@ -113,7 +115,7 @@ export const CLIP_MOTION_SCENARIOS: readonly Scenario[] = [
       await t.call("clips.estimateIdea", photoOf(w));
       await status(t);
       t.note("the owner accepts the worst case; the model suggests three motions at $0.0034");
-      await suggest(t, w, control, [suggestion(GOOD.slice(0, 3))]);
+      await suggest(t, w, control, [suggestion(SUGGESTED.slice(0, 3))]);
       await status(t);
       t.note("the sheet after: the suggestions after the code's, the frame reading and no chat call");
       await options(t, w);
@@ -147,7 +149,7 @@ export const CLIP_MOTION_SCENARIOS: readonly Scenario[] = [
     rig: RIG,
     async run(t, world, control) {
       const w = clipsOf(world);
-      await suggest(t, w, control, [suggestion([NOT_MOTION], 3_000), suggestion(GOOD.slice(0, 4))]);
+      await suggest(t, w, control, [suggestion([NOT_MOTION], 3_000), suggestion(SUGGESTED.slice(0, 4))]);
       await options(t, w);
       t.note("a second suggestion: the ids go on, the oldest of the three listed drop out of the sheet");
       await suggest(t, w, control, [suggestion([GOOD[3] ?? ""])]);
@@ -160,7 +162,7 @@ export const CLIP_MOTION_SCENARIOS: readonly Scenario[] = [
     rig: RIG,
     async run(t, world, control) {
       const w = clipsOf(world);
-      await suggest(t, w, control, [suggestion(GOOD.slice(0, 3))]);
+      await suggest(t, w, control, [suggestion(SUGGESTED.slice(0, 3))]);
       await translate(t, w, control, [translation(GOOD[3] ?? "")]);
       await status(t);
       await options(t, w);
