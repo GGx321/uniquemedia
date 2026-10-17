@@ -71,6 +71,12 @@ describe("the result lines (62b, 62c, 63a, 63b)", () => {
     expect(plain(lineText(suggestNoneLine(0)))).toBe("Не получилось предложить движения — бесплатно.");
   });
 
+  test("62c: a repeated answer says the model repeated, paid with its cost and free at 0, and never «Не получилось»", () => {
+    expect(plain(lineText(suggestNoneLine(3_400, "repeated")))).toBe("Модель повторила уже предложенные движения — оплачено $0.003.");
+    expect(plain(lineText(suggestNoneLine(0, "repeated")))).toBe("Модель повторила уже предложенные движения — бесплатно.");
+    expect(suggestNoneLine(3_400, "repeated").money).toBe("$0.003");
+  });
+
   test("63a and 63b: a translation, a rejection's cost, and both ends of `none`", () => {
     expect(plain(lineText(translatedLine(1_000)))).toBe("Идея переведена — оплачено $0.001.");
     expect(plain(lineText(rejectedPaidLine(2_000)))).toBe("За перевод оплачено $0.002.");

@@ -138,12 +138,14 @@ const OwnMotion = ClipMotionChoice.refine((m) => m.source === "own", { message: 
  * What `clips.suggestMotions` answers. Every result carries `costMicros`, what the call cost (0 = free).
  * - ok: one to three checked suggestions (also stored under the photo; `v-<n>` ids, unique) and the frame reading (marks only).
  * - none: nothing usable came out. Free when the model refused the frame (a moderation 4xx), paid after an unusable answer; a mixed case shows the paid sum.
+ *   `reason: "repeated"` (additive, protocol 5; S5.WC3c) is the one other case: the model answered usable motions and every one is already known (stored, or a code or scene motion of the frame).
+ *   Nothing is stored; the call is paid as it was billed. Absent: the plain «nothing usable».
  */
 export const ClipSuggestResult = z.discriminatedUnion("outcome", [
   z
     .strictObject({ outcome: z.literal("ok"), motions: z.array(SuggestedMotion).min(1).max(3), reading: ClipFrameReading, costMicros: Micros })
     .refine((r) => new Set(r.motions.map((m) => m.id)).size === r.motions.length, { message: "a motion id must not repeat", path: ["motions"] }),
-  z.strictObject({ outcome: z.literal("none"), costMicros: Micros }),
+  z.strictObject({ outcome: z.literal("none"), reason: z.literal("repeated").optional(), costMicros: Micros }),
 ]);
 export type ClipSuggestResult = z.infer<typeof ClipSuggestResult>;
 
