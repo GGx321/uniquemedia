@@ -6347,4 +6347,17 @@ export const GOLDEN: Record<string, string[]> = {
     "> clips.create {\"avatarId\":\"avatar#4\",\"photoId\":\"photo#25\",\"motionId\":\"g-blink\",\"model\":\"kling\",\"quality\":\"std\",\"seconds\":5,\"fallback\":\"auto\",\"acceptedWorstMicros\":850000}",
     "< error SETTLE_ABOVE_WORST {}",
   ],
+  "clip motions: a model that repeats what is already stored is paid for and told `repeated`, nothing is stored twice, and the sheet is as it was": [
+    "# the model suggests two motions",
+    "> clips.suggestMotions {\"avatarId\":\"avatar#4\",\"photoId\":\"photo#25\",\"acceptedWorstMicros\":14810}",
+    "< ok {\"outcome\":\"ok\",\"motions\":[{\"id\":\"v-1\",\"source\":\"vision\",\"label\":\"Движение 1\",\"text\":\"she slowly tucks a strand of hair behind her ear\"},{\"id\":\"v-2\",\"source\":\"vision\",\"label\":\"Движение 2\",\"text\":\"she slowly looks down and smiles to herself\"}],\"reading\":{\"notes\":[]},\"costMicros\":3400}",
+    "# the same answer again: paid, `none` with the reason `repeated`",
+    "> clips.suggestMotions {\"avatarId\":\"avatar#4\",\"photoId\":\"photo#25\",\"acceptedWorstMicros\":14810}",
+    "< ok {\"outcome\":\"none\",\"reason\":\"repeated\",\"costMicros\":3400}",
+    "> money.status {}",
+    "< ok {\"reconcileNeeded\":false,\"reconcileReasons\":[],\"held\":false,\"spentMicros\":6800,\"unsettledMicros\":0,\"unsettledCount\":0}",
+    "# the sheet: the two suggestions once",
+    "> clips.options {\"avatarId\":\"avatar#4\",\"photoId\":\"photo#25\"}",
+    "< ok {\"suitable\":true,\"photoId\":\"photo#25\",\"motions\":[{\"id\":\"g-blink\",\"source\":\"code\",\"label\":\"Моргает и улыбается\",\"text\":\"she slowly blinks and gives a small smile\"},{\"id\":\"g-tilt\",\"source\":\"code\",\"label\":\"Наклоняет голову\",\"text\":\"she tilts her head a little to one side and smiles\"},{\"id\":\"g-breath\",\"source\":\"code\",\"label\":\"Медленный вдох\",\"text\":\"she slowly takes a breath and relaxes her shoulders\"},{\"id\":\"v-1\",\"source\":\"vision\",\"label\":\"Движение 1\",\"text\":\"she slowly tucks a strand of hair behind her ear\"},{\"id\":\"v-2\",\"source\":\"vision\",\"label\":\"Движение 2\",\"text\":\"she slowly looks down and smiles to herself\"}],\"fallback\":\"auto\",\"bold\":false,\"source\":\"live\",\"prices\":{\"std5\":[420000,850000],\"pro5\":[560000,850000],\"std10\":[840000,1550000],\"pro10\":[1120000,1550000],\"grok5\":[710000,850000],\"grok10\":[1410000,1550000]},\"noFallbackPrices\":{\"std5\":[420000,504000],\"pro5\":[560000,672000],\"std10\":[840000,924000],\"pro10\":[1120000,1232000]},\"monthFits\":{\"std5\":\"with-fallback\",\"pro5\":\"with-fallback\",\"std10\":\"with-fallback\",\"pro10\":\"with-fallback\"},\"reading\":{\"notes\":[]}}",
+  ],
 };

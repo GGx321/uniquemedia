@@ -268,8 +268,8 @@ describe("62b: the suggestions are in", () => {
     expect(tagged.map((row) => plain(row.querySelector("b")?.textContent))).toEqual(["Движение 1", "Движение 2", "Движение 3"]);
     expect(tagged.map((row) => row.querySelector(".clip-en")?.textContent)).toEqual([
       "she slowly tucks a strand of hair behind her ear",
-      "she tilts her head a little to one side and smiles",
-      "she slowly takes a breath and relaxes her shoulders",
+      "she slowly lifts her chin and smiles softly",
+      "she slowly turns toward the window and smiles",
     ]);
     expect(checkedRow(s)).toBe(chosen);
     expect(document.activeElement === tagged[0]?.querySelector("input")).toBe(true);
@@ -728,8 +728,8 @@ describe("round 2: where the focus goes after 63a, and a chosen row that leaves 
     h.engine.scriptNextMotionReplies([
       labelled([
         ["Дует на чай", "she slowly tucks a strand of hair behind her ear"],
-        ["Прячет улыбку", "she tilts her head a little to one side and smiles"],
-        ["Глубоко вдыхает", "she slowly takes a breath and relaxes her shoulders"],
+        ["Прячет улыбку", "she slowly lifts her chin and smiles softly"],
+        ["Глубоко вдыхает", "she slowly turns toward the window and smiles"],
       ]),
     ]);
     fireEvent.click(suggestButton(s));
@@ -938,6 +938,14 @@ describe("a11y: the live regions are in the sheet from the start", () => {
     fireEvent.click(suggestButton(s));
     await settle();
     const first = s.querySelector("[data-motion-news='polite'] > span");
+    // Three other texts: the same answer again would be a repeat (`none`, S5.WC3c); the line said twice is the same three-motion line.
+    h.engine.scriptNextMotionReplies([
+      labelled([
+        ["Один", "she slowly looks down and smiles to herself"],
+        ["Два", "she slowly glances to the side and looks back"],
+        ["Три", "she slowly brushes her hair back with one hand"],
+      ]),
+    ]);
     fireEvent.click(suggestButton(s));
     await settle();
     const second = s.querySelector("[data-motion-news='polite'] > span");

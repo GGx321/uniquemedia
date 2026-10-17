@@ -67,10 +67,13 @@ describe("the store", () => {
 
   test("the store keeps twelve (FIFO) and an id is never reused", async () => {
     const m = makeClipMock();
-    for (let n = 0; n < 5; n++) {
-      m.engine.scriptNextMotionReplies([suggestion(GOOD_TEXTS.slice(0, 3))]);
-      await unwrap(suggest(m));
-    }
+    // Twelve stored already (as the engine's test seeds its file): the same texts are not stored twice (S5.WC3c), so the cut is told by new ones.
+    m.engine.tamperMotionStore(PLAIN, (seeded) => {
+      seeded.items = Array.from({ length: 12 }, (_, i) => ({ id: `v-${i + 1}`, source: "vision" as const, label: `Старое ${i + 1}`, text: `she slowly waits ${i + 1}` }));
+      seeded.next.vision = 13;
+    });
+    m.engine.scriptNextMotionReplies([suggestion(GOOD_TEXTS.slice(0, 3))]);
+    await unwrap(suggest(m));
     const store = m.engine.peekMotions().stores[PLAIN];
     expect(store?.items).toHaveLength(12);
     expect(store?.items[0]?.id).toBe("v-4");

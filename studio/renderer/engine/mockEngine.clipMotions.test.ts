@@ -12,6 +12,7 @@ import {
   UNDRESS,
   UNREADABLE,
   BOLD,
+  CODE_TEXT,
   PLAIN,
   CLIP_PHOTOS,
   errorOf,
@@ -180,6 +181,54 @@ describe("clips.suggestMotions: the money", () => {
     const m = makeClipMock();
     m.engine.scriptNextMotionReplies([suggestion(GOOD_TEXTS.slice(0, 1), 3_400, { capture: "timer", phoneVisible: true, faceVisible: true })]);
     expect(await unwrap(suggest(m))).toMatchObject({ reading: { notes: ["second-phone"] } });
+  });
+});
+
+describe("clips.suggestMotions: a text that is already known (S5.WC3c, as the engine's)", () => {
+  test("every text stored already: `none` with the reason `repeated`, paid, ids and store untouched", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([suggestion(GOOD_TEXTS.slice(0, 2)), suggestion(GOOD_TEXTS.slice(0, 2))]);
+    await unwrap(suggest(m));
+    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", reason: "repeated", costMicros: 3_400 });
+    expect((await optionsOf(m)).motions.filter((x) => x.source === "vision").map((x) => x.id)).toEqual(["v-1", "v-2"]);
+  });
+
+  test("a stored text met again with a capital letter inside it is the same text; one new text next to it gets the next id", async () => {
+    const m = makeClipMock();
+    const first = GOOD_TEXTS[0];
+    m.engine.scriptNextMotionReplies([suggestion([first]), suggestion([first.replace("hair", "Hair"), GOOD_TEXTS[3]])]);
+    await unwrap(suggest(m));
+    const second = await unwrap(suggest(m));
+    expect(second.outcome === "ok" && second.motions.map((x) => [x.id, x.text])).toEqual([["v-2", GOOD_TEXTS[3]]]);
+  });
+
+  test("two texts of one answer that differ only by a capital letter inside are kept once", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([suggestion([GOOD_TEXTS[0], GOOD_TEXTS[0].replace("hair", "Hair")])]);
+    const result = await unwrap(suggest(m));
+    expect(result.outcome === "ok" && result.motions.map((x) => x.id)).toEqual(["v-1"]);
+  });
+
+  test("a text equal to a code motion of the frame is not stored; an answer of nothing else is `repeated`", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([suggestion([CODE_TEXT.replace("head", "Head"), GOOD_TEXTS[0]]), suggestion([CODE_TEXT])]);
+    const first = await unwrap(suggest(m));
+    expect(first.outcome === "ok" && first.motions.map((x) => x.text)).toEqual([GOOD_TEXTS[0]]);
+    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", reason: "repeated", costMicros: 3_400 });
+  });
+
+  test("an own idea with the same English that came first does not hide the suggestion", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([idea(GOOD_TEXTS[0]), suggestion([GOOD_TEXTS[0]])]);
+    await unwrap(translate(m));
+    const result = await unwrap(suggest(m));
+    expect(result.outcome === "ok" && result.motions.map((x) => [x.id, x.text])).toEqual([[ "v-1", GOOD_TEXTS[0]]]);
+  });
+
+  test("an unusable answer is `none` without a reason", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([UNREADABLE, UNREADABLE]);
+    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", costMicros: 4_000 });
   });
 });
 

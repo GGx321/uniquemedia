@@ -783,7 +783,7 @@ export class MockClips {
     if (!found.ok) return found;
     const read = this.#read(found.result.photo, false);
     if (read.kind === "refused") return bad({ code: "VALIDATION", clipReason: read.reason, detail: `photo ${photoId} cannot be brought to life (${read.reason})` });
-    return good({ frame: { bold: read.facts.bold, level: read.facts.level }, sha: this.#shaOf(photoId) });
+    return good({ frame: { bold: read.facts.bold, level: read.facts.level, offered: read.motions.filter((m) => m.source === "scene" || m.source === "code").map((m) => m.text) }, sha: this.#shaOf(photoId) });
   }
 
   // ---------- test and rig switches ----------
@@ -1157,7 +1157,7 @@ export class MockClips {
     if (!facts.judged) return { kind: "refused", reason: "no-motion" };
     // 5b.2 (S5.WC4, I5.67): the photo's stored suggestions and ideas, checked again now, after the code's: the same list `clips.create` resolves a `v-` or an `o-` id from.
     if (!withStored) return { kind: "suitable", facts, motions: MOCK_CLIP_MOTIONS };
-    const stored = this.#motions.stored(photo.avatarId, photo.photoId, { bold: facts.bold, level: facts.level }, this.#shaOf(photo.photoId));
+    const stored = this.#motions.stored(photo.avatarId, photo.photoId, { bold: facts.bold, level: facts.level, offered: MOCK_CLIP_MOTIONS.map((m) => m.text) }, this.#shaOf(photo.photoId));
     return { kind: "suitable", facts, motions: [...MOCK_CLIP_MOTIONS, ...stored.motions], ...(stored.reading === undefined ? {} : { reading: stored.reading }) };
   }
 

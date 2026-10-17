@@ -377,4 +377,20 @@ export const CLIP_MOTION_SCENARIOS: readonly Scenario[] = [
       await status(t);
     },
   },
+  {
+    // Appended in S5.WC3c: the same answer twice. The second call is a paid `none` with the reason `repeated`; nothing is stored, the ids go on from where they were, and the sheet is as the first call left it.
+    name: "clip motions: a model that repeats what is already stored is paid for and told `repeated`, nothing is stored twice, and the sheet is as it was",
+    rig: RIG,
+    async run(t, world, control) {
+      const w = clipsOf(world);
+      const again = [suggestion([GOOD[0], GOOD[3]])];
+      t.note("the model suggests two motions");
+      await suggest(t, w, control, again);
+      t.note("the same answer again: paid, `none` with the reason `repeated`");
+      await suggest(t, w, control, again);
+      await status(t);
+      t.note("the sheet: the two suggestions once");
+      await options(t, w);
+    },
+  },
 ];
