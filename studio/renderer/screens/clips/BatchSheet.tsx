@@ -17,7 +17,7 @@ import { AnimateWhy, useShowBatchClips } from "./AnimateButton";
 import { batchRowNote, batchSheetView, itemRefusal, itemRefusedAlert, type BatchSheetView } from "./batchModel";
 import { upUsd } from "./clipModel";
 import { AUTO_NOTE, LENGTHS, NO_FALLBACK_NOTE, PRO_NOTE, QUALITIES } from "./ClipSheet";
-import { batchMotionGoneNews, batchTagOf, GROUP_OWN, GROUP_VISION, MOTION_BUSY, MOTION_UNAVAILABLE } from "./motionModel";
+import { batchMotionGoneNews, batchTagOf, GROUP_OWN, GROUP_VISION, MOTION_BUSY, MOTION_UNAVAILABLE, motionUnavailableNote } from "./motionModel";
 import { MotionGuard } from "./MotionSuggest";
 
 // 5b.2, S5.WB4: the sheet «Оживить N фото» (mockups 59, 59a, 59b, 59c and #item-refused, #after-click; plan s5b2 §5.2.1; README §S5.WBD decisions 4–6, 13–14). Nothing is paid without it: the picked photos
@@ -92,7 +92,10 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
   const [error, setError] = useState<EngineError | null>(null);
   /** The focus goes to «Отмена» once the answer that needs a new click is on show. */
   const [toCancel, setToCancel] = useState(0);
-  /** S5.WC5b (M2): rows whose chosen motion the engine no longer knows (`unknown-motion`): they stay, with «Движение больше недоступно — выберите другое.», until their choice changes. */
+  /**
+   * S5.WC5b (M2): rows whose chosen motion the engine no longer knows (`unknown-motion`): they stay, with «Движение больше недоступно…», until their choice changes — «выберите другое» while the row
+   * still shows the lost one, what it is on now once the list read again put it on its first (round 2, L-3).
+   */
   const [unavailable, setUnavailable] = useState<ReadonlySet<string>>(new Set());
   /** S5.WC5b (M2): what a list read again took from the rows (a chosen motion pushed out of the newest), said once as a status. */
   const [dropped, setDropped] = useState<string | null>(null);
@@ -299,10 +302,12 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
       {picks.map((pick) => {
         const item = itemOf(pick.photoId);
         const bare = unpriced || (options.status !== "ready" && !refused.has(pick.photoId));
-        const note = bare ? null : unavailable.has(pick.photoId) ? { text: MOTION_UNAVAILABLE, struck: false, bold: false } : batchRowNote(pick.photo, item, refused.get(pick.photoId));
+        const choices = item?.suitable === true ? item.motions : [];
+        const onFirst = motions.get(pick.photoId) === undefined ? choices.find((m) => m.id === motionOf(pick.photoId)) : undefined;
+        const lostNote = onFirst === undefined ? MOTION_UNAVAILABLE : motionUnavailableNote(onFirst.label);
+        const note = bare ? null : unavailable.has(pick.photoId) ? { text: lostNote, struck: false, bold: false } : batchRowNote(pick.photo, item, refused.get(pick.photoId));
         const struck = note?.struck === true;
         const motionId = struck || bare ? null : motionOf(pick.photoId);
-        const choices = item?.suitable === true ? item.motions : [];
         const chosen = choices.find((m) => m.id === motionId);
         const tag = chosen === undefined ? null : batchTagOf(chosen);
         return (

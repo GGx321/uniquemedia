@@ -240,7 +240,7 @@ describe("S5.WC5b (M2): the batch rows follow the photo's stored motions", () =>
     expect((within(s).getByRole("radio", { name: "Чётче · 1080p" }) as HTMLInputElement).checked).toBe(true);
   });
 
-  test("`unknown-motion` after «Оживить 2»: the row stays (not struck) with «Движение больше недоступно — выберите другое.», one alert, the rows read again; the next click goes", async () => {
+  test("`unknown-motion` after «Оживить 2»: the row stays (not struck) and says what it is on now, one alert, the rows read again; the next click goes", async () => {
     const h = await openNini();
     await seedStores(h);
     const s = await openBatch();
@@ -254,7 +254,8 @@ describe("S5.WC5b (M2): the batch rows follow the photo's stored motions", () =>
     await settle();
     const row = rowOf(s, "Фото 3 · Дом");
     expect(row.classList.contains("batch-row-off")).toBe(false);
-    expect(plain(row.querySelector(".batch-note")?.textContent)).toBe("Движение больше недоступно — выберите другое.");
+    // Round 2 (L-3): the row is on its first motion already, so its line says which — it does not ask to choose.
+    expect(plain(row.querySelector(".batch-note")?.textContent)).toBe("Движение больше недоступно — выбрано «Моргает и улыбается».");
     expect(plain(within(s).getByRole("alert").textContent)).toBe("Фото 3 · Дом: движение больше недоступно — выберите другое.");
     expect(callsOf(h.engine, "clips.batchOptions").length).toBe(asked + 1);
     expect(selectOf(row).value).toBe("g-blink");
