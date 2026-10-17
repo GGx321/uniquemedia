@@ -188,20 +188,20 @@ describe("59e: «Оживить N» and a running part C call (r2.1 N10)", () =>
   });
 });
 
-/** The writer's answer with these labels and texts (the mock's own helper numbers its labels). */
+/** The writer's answer with these labels and texts (the mock's own helper numbers its labels). The texts are neither the frame's code motions nor each other's, so the part C dedupe (S5.WC3c) keeps them all. */
 function labelled(pairs: readonly [string, string][]): MockModelReply {
   const content = JSON.stringify({ motions: pairs.map(([label_ru, text_en]) => ({ label_ru, text_en })), frame: { capture: "unknown", phoneVisible: false, faceVisible: true } });
   return { kind: "answer", content, costMicros: 3_400 };
 }
 const FIRST_THREE = labelled([
   ["Дует на чай", "she slowly tucks a strand of hair behind her ear"],
-  ["Прячет улыбку", "she tilts her head a little to one side and smiles"],
-  ["Глубоко вдыхает", "she slowly takes a breath and relaxes her shoulders"],
+  ["Прячет улыбку", "she slowly lifts her chin and smiles softly"],
+  ["Глубоко вдыхает", "she slowly turns toward the window and smiles"],
 ]);
 const NEXT_THREE = labelled([
   ["Смотрит вниз", "she slowly looks down and smiles to herself"],
   ["Смотрит в сторону", "she slowly glances to the side and looks back"],
-  ["Поправляет волосы", "she slowly tucks a strand of hair behind her ear"],
+  ["Поправляет волосы", "she slowly runs a hand through her hair"],
 ]);
 
 describe("S5.WC5b (M2): the batch rows follow the photo's stored motions", () => {
