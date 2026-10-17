@@ -151,9 +151,8 @@ export const CONTINUITY_LINE = "Nothing new appears, and nothing she holds or we
 export const COMES_OFF_LINE = "Nothing new appears, and nothing she wears comes off.";
 
 /**
- * The continuity line of a motion that takes clothing off (Q-H = 2, the owner 2026-10-14; plan s5b2 §5.3), or bares her (S5.WC2b, the controller's decision 5): only an own
- * idea on a frame of «Смелая» gets there (the one motion check refuses it everywhere else), and its prompt says «Nothing new appears.» alone, with no clothing clause: Kling
- * decides, and its refusal is free.
+ * The continuity line of a motion that takes clothing off (Q-H = 2, the owner 2026-10-14; plan s5b2 §5.3), or bares her (S5.WC2b, the controller's decision 5): since S5.WC2c
+ * (the owner, 2026-10-17) a vision suggestion or an own idea on any frame may, and its prompt says «Nothing new appears.» alone, with no clothing clause: the video model decides.
  */
 export const NOTHING_NEW_LINE = "Nothing new appears.";
 
@@ -182,10 +181,10 @@ const HELD_BAG = new RegExp(
 );
 
 /**
- * The continuity line for a motion: «Nothing new appears.» alone when it takes clothing off (Q-H = 2: only an own idea on a frame of «Смелая» passes the check with one), «comes
- * off» when it moves what she wears, the base line otherwise, and always the base line for a bag she holds. `activity` is the slot's moment as the photo carries it (null when
+ * The continuity line for a motion: «Nothing new appears.» alone when it takes clothing off (S5.WC2c: a vision or own motion on any frame may), «comes off» when it moves what
+ * she wears, the base line otherwise, and always the base line for a bag she holds. `activity` is the slot's moment as the photo carries it (null when
  * it does not): «adjusts the strap of her bag» makes «she tugs the strap a little» a bag's strap. `takesClothingOff` is the prompt's reading of the motion by its source
- * (`undressesBy`, S5.WC2b: taking clothing off or, for an own idea on «Смелая», baring her); by itself the motion is read with `takesOff`.
+ * (`undressesBy`: taking clothing off or baring her, as the grammar reads it, S5.WC2c); by itself the motion is read with `takesOff`.
  */
 export function continuityLineOf(motion: string, activity: string | null, takesClothingOff: boolean = takesOff(motion)): string {
   if (takesClothingOff) return NOTHING_NEW_LINE;

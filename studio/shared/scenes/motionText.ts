@@ -1,7 +1,7 @@
 import { ageMentions, ageUpperBounds, MOTION_ENGLISH, MOTION_PROBLEMS, MOTION_TEXT_MAX, type ClipMotionSource, type MotionProblem } from "../engine";
 import { isHandCapture, type Capture, type FaceVisibility } from "./captures";
 import { contentProblems, type ContentLevel, type ContentProblem } from "./contentLine";
-import { explicitActsIn, exposureWordsIn } from "./explicitWords";
+import { exposureWordsIn } from "./explicitWords";
 import { readMotion, type MotionReading } from "./motionGrammar";
 import { CAMERA_WORDS, HAIR_COLOUR_WORDS, MOTION_SMALL, MOTION_STAGING, PHONE_WORDS, SELFIE_WORDS, YOUTH_PROPS } from "./words";
 
@@ -11,14 +11,19 @@ import { CAMERA_WORDS, HAIR_COLOUR_WORDS, MOTION_SMALL, MOTION_STAGING, PHONE_WO
 //  - the bank's GRAMMAR (banks/schema.ts held motions to it before; its loader now calls this module through a thin adapter that keeps its rule ids and words): plain printable
 //    text of at most 60 characters, no youth word or prop, no hair colour, no selfie word, no camera, «she» or «her» first, small or slow, one movement, no staging word, and
 //    a phone only where the moment uses one;
-//  - the FRAME's rules (prompt.ts held motions to them before): the content line at the frame's level, the video's staging words, a phone where hers is in her hand or propped,
-//    no movement of a face the photo does not show, and (Q-H = 2) nothing that takes clothing off unless it is an own idea on a frame of «Смелая»;
+//  - the FRAME's rules (prompt.ts held motions to them before): an age or a youth word on no frame, the video's staging words, a phone where hers is in her hand or propped, no
+//    movement of a face the photo does not show;
 //  - a MODEL's text (vision, own) also passes what a bank's author never needed (the WC1 review: text that passes the charset can still be an instruction): the contract's
-//    motion English, one plain clause with no final period, no second sentence, no word that talks to a model, no negation (I5.10), and at least three words.
+//    motion English, one plain clause with no final period, no second sentence, no word that talks to a model, no negation (I5.10), no one new in the clip, no number (an age
+//    hides in one), at least three words, and the positive motion grammar (scenes/motionGrammar.ts) where it holds.
+//
+// S5.WC2c (the owner, 2026-10-17: «убери ограничения везде»): nothing a motion shows or says is refused, on any frame and for any source: undressing, exposure and explicit
+// words pass (the content line's revealing words, the exposure and explicit lists, the takes-off forms and the clothing-verb whitelist refuse nothing any more). What stays is
+// the minor-age guard, a hard line (`youth`, `number`), and the technical and quality rules above. A motion that undresses or bares her is still READ as one, for its prompt
+// alone (`undressesBy`: «Nothing new appears.» with no clothing clause). The contract's `takes-off` problem is no longer produced.
 //
 // Which source takes what: the grammar runs on `bank`, `code`, `vision` and `own`. A `scene` text is a bank motion verbatim, held to the grammar when its bank loaded, so on a
-// frame it takes the frame's rules alone (a test proves every one of the 271 passes the grammar, and a model's rules, as well). The frame's rules run on every source but `bank`,
-// which has no frame and never reads the takes-off rule (the bank is unchanged by Q-H).
+// frame it takes the frame's rules alone (a test proves every one of the 271 passes the grammar, and a model's rules, as well). The frame's rules run on every source but `bank`.
 //
 // The answer is the contract's closed `MotionProblem`s (shared/engine/clipMotions.ts), each once, in its fixed display order; `motionTextFindings` keeps each finding's rule and
 // words for the bank's adapter and the engine's log. Pure: no clock, no I/O, nothing imported but modules of studio/shared (scenes/purity.test.ts).
@@ -46,17 +51,11 @@ export const MOTION_RULES = [
   "length",
   "youth",
   "number",
-  "revealing",
-  "exposure",
-  "explicit",
   "youth-prop",
   "hair-colour",
   "instruction",
   "negation",
   "new-subject",
-  "takes-off",
-  "grammar-off",
-  "grammar-body",
   "selfie",
   "camera",
   "she-her",
@@ -118,6 +117,9 @@ export function phoneInHandOrPropped(frame: Pick<MotionFrame, "capture" | "plann
 }
 
 // ---------- TAKES_OFF (Q-H = 2, the owner 2026-10-14; plan s5b2 §5.3) ----------
+//
+// S5.WC2c: these forms refuse nothing any more. They READ a motion that takes clothing off, for its prompt (`undressesBy`, prompt.ts: «Nothing new appears.» alone), and
+// videoLook's default continuity line reads a scene or code text with them (no bank or code motion says one: motionText.test.ts sweeps them).
 
 /** The plan's pinned list: what a motion that takes clothing off says. Each is read in its inflections and with its particle split («takes her robe off»). */
 export const TAKES_OFF_PHRASES = ["takes off", "pulls off", "removes her", "unbuttons", "unzips her", "slips out of", "lets … fall"] as const;
@@ -230,18 +232,6 @@ export function takesOff(text: string): boolean {
   );
 }
 
-/**
- * The problems a repair attempt cannot help (S5.WC2, for WC3): an own idea that takes clothing off on a frame that is not «Смелая» is the owner's own choice, and a repair could
- * only make it into another motion than he asked for, so it is rejected at once with `takes-off` (its text says the idea is for frames of «Смелая»); a vision text that takes
- * clothing off is dropped.
- */
-export const NO_REPAIR_PROBLEMS: readonly MotionProblem[] = ["takes-off"];
-
-/** Whether a second attempt may help a text with these problems: never when one of them is `NO_REPAIR_PROBLEMS`. */
-export function repairMayHelp(problems: readonly MotionProblem[]): boolean {
-  return !problems.some((problem) => NO_REPAIR_PROBLEMS.includes(problem));
-}
-
 const PRINTABLE = /^[\x20-\x7e]+$/;
 const MOTION_START = /^(?:she|her)\s/;
 
@@ -289,10 +279,13 @@ function contentIn(text: string, level: ContentLevel): readonly ContentProblem[]
   return read(text);
 }
 
-/** Every number word but «one», which the bank's own motions say («she swings one foot a little») and which `ageText` too never reads alone as an age. */
+/**
+ * Every number word but «one», which the bank's own motions say («she swings one foot a little») and which `ageText` too never reads alone as an age. S5.WC2c: kept, because
+ * the age readers alone miss an age said as a bare number («…, sixteen», «…, 18», «…, 15»: motionText.lifted.test.ts holds the evidence).
+ */
 const NUMBER_WORDS =
   /\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|dozen)\b/i;
-/** Exposure a model says beyond the bank's list (scenes/explicitWords.ts). */
+/** Exposure a model says beyond the bank's list (scenes/explicitWords.ts). S5.WC2c: it refuses nothing; it reads a motion that bares her, for its prompt (`undressesBy`). */
 const EXPOSURE_MORE =
   /\b(?:bare[- ](?:breasts?|chest(?:ed)?|bottom|butt)|breasts?|unclothed|undressed|in the nude|birthday suit|au naturel|wearing nothing|nothing on|without clothes|sans clothes|(?:flash|reveal|expos|bare)\w*\s+(?:(?:her|a|an|some|little|bit|of|more|bare)\s+){0,4}(?:skin|chest|cleavage|breasts?|stomach|belly|midriff|bottom|butt|thighs?|body))\b/gi;
 /**
@@ -303,15 +296,6 @@ const EXPOSURE_MORE =
  */
 const EXPOSURE_MODEL =
   /\b(?:(?:uncover\w*|show\w*|display\w*|peek\w*|flash\w*|reveal\w*|expos\w*|bar(?:e|es|ed|ing))\s+(?:[a-z'-]+\s+){0,3}?(?:skin|chest|cleavage|breasts?|stomach|belly|midriff|navel|bottom|butt|buttocks|thighs?|body|bust|bare\s+back)|(?:uncover\w*|show\w*|display\w*|flash\w*|reveal\w*|expos\w*|bar(?:e|es|ed|ing))\s+(?:(?:a little|a bit|a lot|much|even|slightly|some|far)\s+)?(?:more|everything|it all|herself)|cleavage|underboob|sideboob)\b/gi;
-/**
- * S5.WC2b round 3 (the re-review's H2): her legs or knees spread, opened or parted through a pronoun («lifts her legs and spreads them»): an explicit act on every frame and
- * for every source, an own idea on «Смелая» included (explicit acts are a hard line).
- */
-const LEGS_NAMED = /\b(?:legs?|knees?|thighs?)\b/i;
-const SPREADS_THEM = /\b(?:spread|open|part)\w*\s+(?:them|it)\b/i;
-/** Explicit acts and words a model says beyond the bank's list. */
-const EXPLICIT_MORE =
-  /\b(?:spread(?:s|ing)?\s+(?:her\s+)?(?:legs|thighs)|(?:open|part)(?:s|ing)?\s+(?:her\s+)?(?:legs|knees|thighs)|spread(?:s|ing)?\s+(?:her\s+)?knees|touch(?:es|ing)?\s+herself|strok(?:e|es|ing)\s+herself|masturbat\w*|porn\w*|xxx|hentai|erotic\w*|explicit|moan\w*|grop\w*|horny|aroused)\b/gi;
 /** Someone or something new in the clip: another person, or something that appears, enters or joins («…, a man walks in», «…, a second woman appears»). */
 const NEW_SUBJECT =
   /\b(?:man|men|woman|women|guy|guys|person|people|stranger|someone|somebody|anyone|anybody|boyfriend|girlfriend|husband|crowd|another|second|new|he|him|his|appears?|appearing|enters?|entering|arriv\w*|joins?|joining|emerg\w*|walks?\s+in|comes?\s+in|shows?\s+up)\b/i;
@@ -319,6 +303,9 @@ const NEW_SUBJECT =
 const FAST = /\b(?:fast|faster|quick|quickly|rapid|rapidly|abrupt|abruptly|sudden|suddenly|wild|wildly|jerk\w*|frantic\w*|vigorous\w*|energetic\w*|swift\w*|hurried\w*|brisk\w*)\b/i;
 
 // ---------- S5.WC2b: the clothing-verb whitelist (a vision or own text; the three review rounds' leaks) ----------
+//
+// S5.WC2c: the whitelist refuses nothing any more. It READS an own idea on a frame of «Смелая» that the motion grammar cannot read, for its prompt alone (`undressesBy`: what it
+// reads as moving what she wears beyond keeping it on, or as showing her body, takes «Nothing new appears.»). What follows is its reading as S5.WC2b wrote it.
 //
 // The takes-off forms above are a blacklist, and each review round found paraphrases it missed («works her skirt up», «her robe falls open», «loosens the tie of her robe»).
 // A model's text is held to a whitelist instead: where it names what she wears (a garment, a part of one, its fabric, a cover she lies under) or her body (cleavage, chest,
@@ -650,7 +637,7 @@ export const wornBreaks = keptBy((text: string): WornBreaks => {
 });
 
 /**
- * Whether the takes-off forms (`takesOff`, a blacklist) still refuse a model's text once the whitelist has read it (the controller's decision 6): their hit is lifted where
+ * Whether the takes-off forms (`takesOff`, a blacklist) still read undressing in a model's text once the whitelist has read it (the controller's decision 6): their hit is lifted where
  * it falls only in clauses the whitelist reads as kept on («pulls her top down a little», «pulls up her bra strap», «pulls the towel up to her chest»), and stands anywhere
  * else, a text with no clothing word in it included («she slowly undresses»).
  */
@@ -678,22 +665,16 @@ const readingOf = keptBy((text: string): MotionReading => readMotion(text));
 
 /**
  * Whether the grammar holds a text from this source on this frame (the controller's decision after the adversarial review): a vision text on any frame, an own idea on an
- * ordinary one. An own idea on «Смелая» keeps its own path (Q-H = 2: undressing and exposure accepted; ages, numbers, explicit acts, instructions, staging and two movements
- * still refused); a scene, code or bank text keeps the rules above (the sweeps hold all 271 and all 7).
+ * ordinary one. An own idea on «Смелая» keeps its own path: the bold translator says the owner's idea faithfully, and the grammar would refuse (as a repairable `not-motion`) an
+ * idea it was let say before the grammar, so S5.WC2c, which lifts refusals and adds none, leaves it there. A scene, code or bank text keeps the rules above (the sweeps hold all
+ * 271 and all 7).
  */
 export const grammarHolds = (source: ClipMotionSource, bold: boolean): boolean => source === "vision" || (source === "own" && !bold);
 
 /**
- * The exposure a refused model text names beyond the exposure rule's lists, for its code alone: showing, flaunting or putting on display her hips, waist, curves, figure or
- * body; «on display», «on view», «into view»; «show off» with nothing after it; her chest or her body that shows.
- */
-const EXPOSURE_GRAMMAR =
-  /\b(?:(?:uncover|show|display|peek|flash|reveal|expos|glimps|flaunt|bar(?:e|es|ed|ing))\w*\s+(?:[a-z'-]+\s+){0,3}?(?:hips?|tummy|waist|torso|abs|bum|bottom|butt|curves|figure|body|belly|chest|leg|decolletage|bosom|collarbones?|stomach|midriff|navel|skin|cleavage|thighs?|bust|breasts?)|flaunt\w*|on (?:display|view|show)|into view|glimpse|show(?:s|ing)? off(?=\s*(?:,|$))|(?:chest|cleavage|stomach|tummy|midriff|body|skin|belly) (?:show(?:s|ing)?|on view))\b/i;
-
-/**
- * Whether the old takes-off forms (`takesOff`) still refuse a text the grammar reads (the re-review's round-3 decision): they are lifted only where every clause they hit was
- * read by a form of what she wears (dressing, covering, laid out) or by a verb whose object is an accessory or something she holds («takes off her sunglasses», «lifts the
- * strap of her bag»); a generic form keeps their veto (the review's sweep: take, pull, slip, kick or push off a towel or a sheet).
+ * Whether the takes-off forms (`takesOff`) read undressing in a text the grammar reads (the re-review's round-3 rule, S5.WC2c: for the prompt alone): not where every clause they
+ * hit was read by a form of what she wears (dressing, covering, laid out) or by a verb whose object is an accessory or something she holds («takes off her sunglasses», «lifts the
+ * strap of her bag»); yes where a generic form read it (take, pull, slip, kick or push off a towel or a sheet).
  */
 function takesOffVeto(text: string, reading: MotionReading): boolean {
   if (!takesOff(text)) return false;
@@ -703,33 +684,21 @@ function takesOffVeto(text: string, reading: MotionReading): boolean {
 }
 
 /**
- * The code of a text the grammar refuses: `takes-off` where it names undressing (the takes-off forms, or what she wears with a verb or a direction that takes it off, opens,
- * lifts or lowers it, or her hands letting go of what they held closed; final), `content` where it shows or poses her body (exposure, an explicit act, a body word the
- * grammar never reads, a pose toward the mirror), else `not-motion` (a repair may fix it). A text it reads is refused only by the old forms' veto (`takes-off`).
- */
-function grammarCode(text: string): MotionProblem | null {
-  const reading = readingOf(text);
-  if (reading.ok) return takesOffVeto(text, reading) ? "takes-off" : null;
-  if (takesOff(text) || reading.undresses) return "takes-off";
-  const explicit = explicitActsIn(text).length > 0 || new RegExp(EXPLICIT_MORE).test(text) || (LEGS_NAMED.test(text) && SPREADS_THEM.test(text));
-  if (exposureIn(text, true).length > 0 || explicit || reading.bodyShown.length > 0 || reading.poses || EXPOSURE_GRAMMAR.test(text)) return "content";
-  return "not-motion";
-}
-
-/**
- * Whether a motion undresses her as its source is read, for the prompt (S5.WC2b). For a scene or code text, `takesOff` (so its prompt never moves). A text the grammar holds
- * and reads reaches a prompt as a plain motion: it undresses nothing. For an own idea on «Смелая» (today's path): the takes-off forms where the whitelist does not lift
- * them, what the whitelist reads as moving what she wears beyond it, and (the controller's decision 5) exposure, by the exposure lists or her body shown; it goes to Kling
- * alone, with «Nothing new appears.» and no clothing clause.
+ * Whether a motion undresses or bares her as its source is read, for the prompt (S5.WC2c: it refuses nothing): its prompt then says «Nothing new appears.»
+ * with no clothing clause, on any frame. For a scene or code text, `takesOff` (no bank or code motion says one, so their prompts never move). A model's text the grammar reads:
+ * an undressing or baring form of the grammar, the takes-off forms where a generic form read them, or an exposure word. An own idea on «Смелая» the grammar cannot read (its own
+ * path, `grammarHolds`): the takes-off forms where the clothing-verb whitelist does not lift them, what the whitelist reads as moving what she wears beyond it or showing her body,
+ * and exposure.
  */
 export function undressesBy(text: string, source: ClipMotionSource, bold: boolean): boolean {
   if (source !== "vision" && source !== "own") return takesOff(text);
-  if (grammarHolds(source, bold) && grammarCode(text) === null) return false;
+  const exposed = exposureIn(text, true).length > 0;
+  const reading = readingOf(text);
+  if (reading.ok) return reading.undresses || takesOffVeto(text, reading) || exposed;
+  if (grammarHolds(source, bold)) return false;
   const breaks = wornBreaks(text);
-  return takesOffFormsStand(text) || breaks.takesOff.length > 0 || breaks.shows.length > 0 || exposureIn(text, true).length > 0;
+  return takesOffFormsStand(text) || breaks.takesOff.length > 0 || breaks.shows.length > 0 || exposed;
 }
-
-const ownOnBold = (scope: Scope): boolean => scope.source === "own" && scope.frame.bold;
 
 const isModelText = (scope: Scope): boolean => scope.source === "vision" || scope.source === "own";
 
@@ -741,7 +710,7 @@ const takesGrammar = (scope: Scope): boolean => scope.source !== "scene";
 
 const levelOf = (scope: Scope): ContentLevel => (scope.source === "bank" ? scope.level : scope.frame.level);
 
-/** The content line's answer for the text at the scope's level, read once per text (the youth and the revealing rules share it). */
+/** The content line's answer for the text at the scope's level, read once per text (the youth rule reads its youth words). */
 type ContentRead = () => readonly ContentProblem[];
 
 interface RuleCheck {
@@ -786,44 +755,10 @@ const RULES: readonly RuleCheck[] = [
   },
   {
     // Round 2: a model's text holds no number at all, a digit or a number word but «one» (the bank says «she swings one foot a little»): a motion never needs one, and an age
-    // hides in one («sixteen») where `ageMentions` reads no context.
+    // hides in one («sixteen») where `ageMentions` reads no context. S5.WC2c: kept for the age guard (see `NUMBER_WORDS`).
     rule: "number",
     problem: "content",
     check: (text, scope) => (isModelText(scope) && (/\d/.test(text) || NUMBER_WORDS.test(text)) ? "names a number" : null),
-  },
-  {
-    rule: "revealing",
-    problem: "content",
-    check: (_text, scope, content) => {
-      if (scope.source === "bank") return null;
-      const revealing = contentWordsOf(content, "revealing-word");
-      return revealing.length > 0 ? `names a revealing word at this frame's level (${words(revealing)})` : null;
-    },
-  },
-  {
-    // Round 2 (the controller's decision on explicit content): exposure is the owner's own idea's alone on a frame of «Смелая», as undressing is (Q-H = 2); refused for
-    // every other source and on every other frame. The bank's sweeps hold its own texts to the same lists. S5.WC2b: a model's text also takes `EXPOSURE_MODEL`.
-    rule: "exposure",
-    problem: "content",
-    check: (text, scope) => {
-      if (scope.source === "bank" || (scope.source === "own" && scope.frame.bold)) return null;
-      const exposure = exposureIn(text, isModelText(scope));
-      return exposure.length > 0 ? `names exposure (${words(exposure)})` : null;
-    },
-  },
-  {
-    // Round 2: an explicit act is refused on every frame, for every source.
-    rule: "explicit",
-    problem: "content",
-    check: (text, scope) => {
-      if (scope.source === "bank") return null;
-      const acts = [
-        ...explicitActsIn(text),
-        ...Array.from(text.matchAll(new RegExp(EXPLICIT_MORE)), (m) => m[0]),
-        ...(LEGS_NAMED.test(text) ? (SPREADS_THEM.exec(text)?.slice(0, 1) ?? []) : []),
-      ];
-      return acts.length > 0 ? `names an explicit act (${words(acts)})` : null;
-    },
   },
   { rule: "youth-prop", problem: "content", check: (text, scope) => (takesGrammar(scope) && YOUTH_PROPS.test(text) ? "names a youth prop" : null) },
   { rule: "hair-colour", problem: "content", check: (text, scope) => (takesGrammar(scope) && HAIR_COLOUR_WORDS.test(text) ? "names a hair colour or a dye" : null) },
@@ -833,29 +768,6 @@ const RULES: readonly RuleCheck[] = [
     rule: "new-subject",
     problem: "content",
     check: (text, scope) => (isModelText(scope) && NEW_SUBJECT.test(text) ? "brings someone or something new into the clip" : null),
-  },
-  {
-    // Q-H = 2: only an own idea on a frame of «Смелая» may take clothing off. The bank never reads this rule (the bank is unchanged); a vision text never passes it. S5.WC2b
-    // round 2: a text the grammar holds is read by it instead (its refusal names undressing as «grammar-off»), so this rule reads a scene or code text alone.
-    rule: "takes-off",
-    problem: "takes-off",
-    check: (text, scope) => (scope.source !== "bank" && !isModelText(scope) && takesOff(text) ? "takes clothing off, which only an own idea on a frame of «Смелая» may" : null),
-  },
-  {
-    // S5.WC2b round 2: a text the grammar holds and cannot read, naming undressing: takes-off (final, Q-H = 2).
-    rule: "grammar-off",
-    problem: "takes-off",
-    check: (text, scope) =>
-      scope.source !== "bank" && grammarHolds(scope.source, scope.frame.bold) && grammarCode(text) === "takes-off"
-        ? `takes clothing off, which only an own idea on a frame of «Смелая» may (${words(readingOf(text).unread)})`
-        : null,
-  },
-  {
-    // S5.WC2b round 2: a text the grammar holds and cannot read, showing her body: content.
-    rule: "grammar-body",
-    problem: "content",
-    check: (text, scope) =>
-      scope.source !== "bank" && grammarHolds(scope.source, scope.frame.bold) && grammarCode(text) === "content" ? `shows her body (${words(readingOf(text).unread)})` : null,
   },
   { rule: "selfie", problem: "phone", check: (text, scope) => (takesGrammar(scope) && SELFIE_WORDS.test(text) ? "says selfie or front camera, which draws a phone" : null) },
   { rule: "camera", problem: "staging", check: (text, scope) => (takesGrammar(scope) && CAMERA_WORDS.test(text) ? "names a camera or a lens" : null) },
@@ -909,9 +821,9 @@ function findingsIn(text: string, scope: Scope): MotionFinding[] {
     const what = check(text, scope, content);
     return what === null ? [] : [{ rule, problem, what }];
   });
-  // S5.WC2b round 2: a text the grammar holds and cannot read, that no other rule refuses and that names neither undressing nor her body, is no motion it knows: a repair may
-  // say it in the grammar's words. (Where another rule refuses it, that rule's code says why.)
-  if (findings.length === 0 && scope.source !== "bank" && grammarHolds(scope.source, scope.frame.bold) && grammarCode(text) === "not-motion") {
+  // S5.WC2b round 2: a text the grammar holds and cannot read, that no other rule refuses, is no motion it knows: a repair may say it in the grammar's words. (Where another
+  // rule refuses it, that rule's code says why.) S5.WC2c: whatever it shows or says, its code is `not-motion`.
+  if (findings.length === 0 && scope.source !== "bank" && grammarHolds(scope.source, scope.frame.bold) && !readingOf(text).ok) {
     findings.push({ rule: "grammar", problem: "not-motion", what: `says what the motion grammar does not read (${words(readingOf(text).unread)})` });
   }
   return findings;
@@ -920,6 +832,18 @@ function findingsIn(text: string, scope: Scope): MotionFinding[] {
 /** Every rule a motion text breaks on a frame, with its words, in rule order. */
 export function motionTextFindings(text: string, frame: MotionFrame, source: ClipMotionSource): MotionFinding[] {
   return findingsIn(text, { source, frame });
+}
+
+/** The rules of the minor-age guard, a hard line: an age, an age bound or a youth word (`youth`), and a number, where an age hides (`number`). */
+export const AGE_GUARD_RULES: readonly MotionRule[] = ["youth", "number"];
+
+/**
+ * Whether a second attempt may help a text the check refused on this frame (WC3 reads it): never when the age guard refused it (S5.WC2c): a repair could only take out the age
+ * the idea or the suggestion said, so the refusal is final, on every frame. (S5.WC2b's final code was `takes-off`, which is no longer produced: it made an undressing idea that
+ * named an age final on an ordinary frame, and this keeps it so.)
+ */
+export function repairMayHelp(text: string, frame: MotionFrame, source: ClipMotionSource): boolean {
+  return !motionTextFindings(text, frame, source).some((finding) => AGE_GUARD_RULES.includes(finding.rule));
 }
 
 /** The closed problems of findings: each once, in the contract's display order (`MOTION_PROBLEMS`). */

@@ -5,7 +5,7 @@ import type { Scope } from "../money/ledger";
 import { chatBody, fakeFetch, JPEG, makeClient, setupMoney, withoutAt, type Money, type Step } from "../openrouter/testing/fakes";
 import { MOTION_PROMPT_TEXTS } from "./motionPrompts";
 import { WRITER_JSON_SCHEMA, runMotionWriter, writerPriceShape, type WriterJob, type WriterOutcome } from "./motionWriter";
-import { GOOD_MOTION, GOOD_MOTION_2, GOOD_MOTION_3, UNDRESS_MOTION, boldMirrorFrame, timerFrame } from "./testing/motionKit";
+import { GOOD_MOTION, GOOD_MOTION_2, GOOD_MOTION_3, UNDER_AGE_MOTION, UNDRESS_MOTION, boldMirrorFrame, timerFrame } from "./testing/motionKit";
 useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WC3 (plan s5b2 §5.3 «The vision writer», I5.66, I5.68): the wiring of the writer over the real chat client, the real budget and a fake HTTP. The wording of the system prompt is
@@ -155,10 +155,12 @@ describe("failing texts are dropped, never offered", () => {
     expect(line).not.toContain("slowly she turns");
   });
 
-  test("a vision text that takes clothing off is dropped, even on a frame of «Смелая»", async () => {
-    const { result } = run([reply(answer([good(UNDRESS_MOTION, "Снимает халат"), good(GOOD_MOTION)])) ], { ...JOB, facts: boldMirrorFrame() });
-    const outcome = await result;
-    expect(outcome.kind === "ok" ? outcome.drafts.map((d) => d.text) : null).toEqual([GOOD_MOTION]);
+  test("S5.WC2c: a vision text that takes clothing off is offered, on an ordinary frame and on «Смелая»; one the age guard refuses is dropped", async () => {
+    for (const [i, facts] of [timerFrame(), boldMirrorFrame()].entries()) {
+      const { result } = run([reply(answer([good(UNDRESS_MOTION, "Снимает халат"), good(UNDER_AGE_MOTION, "Снимает халат"), good(GOOD_MOTION)]))], { ...JOB, jobId: `job-0000010${i}`, facts });
+      const outcome = await result;
+      expect(outcome.kind === "ok" ? outcome.drafts.map((d) => d.text) : null).toEqual([UNDRESS_MOTION, GOOD_MOTION]);
+    }
   });
 
   test("an answer with four motions is not thrown away: the first three are taken, one attempt, paid once", async () => {
@@ -205,14 +207,14 @@ describe("the second attempt", () => {
     expect(money.ledger.openReserves()).toEqual([]);
   });
 
-  test("when every failed text takes clothing off, no repair is asked for: one attempt, `none`, paid", async () => {
-    const { net, result } = run([reply(answer([good(UNDRESS_MOTION, "Снимает халат")]), 0.003)]);
+  test("S5.WC2c: when every failed text was refused by the age guard, no repair is asked for: one attempt, `none`, paid", async () => {
+    const { net, result } = run([reply(answer([good(UNDER_AGE_MOTION, "Снимает халат")]), 0.003)]);
     expect(await result).toEqual({ kind: "none", costMicros: 3_000 });
     expect(net.calls).toHaveLength(1);
   });
 
-  test("a text that takes clothing off beside one a repair can fix still gets the repair, and the code `takes-off` is not fed back", async () => {
-    const { net, result } = run([reply(answer([good(UNDRESS_MOTION, "Снимает халат"), good("slowly she turns her head", "Поворот")])), reply(answer([good()]))]);
+  test("S5.WC2c: a text the age guard refused beside one a repair can fix still gets the repair, and its `content` is not fed back", async () => {
+    const { net, result } = run([reply(answer([good(UNDER_AGE_MOTION, "Снимает халат"), good("slowly she turns her head", "Поворот")])), reply(answer([good()]))]);
     expect((await result).kind).toBe("ok");
     expect(userMessage(net, 1)).toEqual(expect.objectContaining({ problems: ["not-motion"] }));
   });

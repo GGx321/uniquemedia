@@ -33,6 +33,8 @@ const SUGGESTED = [GOOD[0], "she slowly lifts her chin and smiles softly", "she 
 const NOT_MOTION = "slowly she turns her head";
 const TWO_MOVEMENTS = "she slowly turns her head and then she slowly sits down";
 const UNDRESS = "she slowly takes off her robe";
+/** S5.WC2c: the same with an age, which the minor-age guard refuses on every frame, at once (no repair could take the age out). */
+const UNDER_AGE = "she slowly takes off her robe, aged sixteen";
 /** The owner's idea: long enough that the label (his first words, cut to 40 characters) leaves the rest of it out. */
 const IDEA = "медленно поворачивает голову к окну и улыбается, CANARY-9c41";
 
@@ -138,8 +140,8 @@ export const CLIP_MOTION_SCENARIOS: readonly Scenario[] = [
       t.note("an answer whose texts all fail the check is repaired once, and not twice: paid for both");
       await suggest(t, w, control, [suggestion([NOT_MOTION], 3_000), suggestion([NOT_MOTION], 3_000)]);
       await status(t);
-      t.note("a text that takes clothing off is dropped, with no second attempt");
-      await suggest(t, w, control, [suggestion([UNDRESS], 3_000)]);
+      t.note("a text the age guard refuses is dropped, with no second attempt");
+      await suggest(t, w, control, [suggestion([UNDER_AGE], 3_000)]);
       await status(t);
       await options(t, w);
     },
@@ -178,14 +180,14 @@ export const CLIP_MOTION_SCENARIOS: readonly Scenario[] = [
     },
   },
   {
-    name: "clip motions: an idea that fails the checks is rejected with its closed problems, paid for the repair too; one that takes clothing off on an ordinary frame is rejected at once",
+    name: "clip motions: an idea that fails the checks is rejected with its closed problems, paid for the repair too; one the age guard refuses is rejected at once",
     rig: RIG,
     async run(t, world, control) {
       const w = clipsOf(world);
       t.note("two movements: rejected after one repair, two chat calls");
       await translate(t, w, control, [translation(TWO_MOVEMENTS), translation(TWO_MOVEMENTS)]);
-      t.note("takes clothing off on an ordinary frame: rejected at once, one chat call");
-      await translate(t, w, control, [translation(UNDRESS)]);
+      t.note("an age: rejected at once by the age guard, one chat call");
+      await translate(t, w, control, [translation(UNDER_AGE)]);
       t.note("not a motion, then the model refuses the repair: rejected with the paid amount");
       await translate(t, w, control, [translation(NOT_MOTION), REFUSED]);
       t.note("an idea the model answers badly twice is `none`, paid; one it refuses is `none`, free");
@@ -208,7 +210,7 @@ export const CLIP_MOTION_SCENARIOS: readonly Scenario[] = [
       await t.untilJobEnds(jobIdOf(created));
       await t.call("clips.list", { avatarId: w.avatarId });
       t.note("the POSTs that left: " + (control.clips.posts().join(", ") || "none"));
-      t.note("the same idea on an ordinary frame is rejected");
+      t.note("the same idea on an ordinary frame is accepted too (S5.WC2c)");
       await translate(t, w, control, [translation(UNDRESS)], "снимает халат");
     },
   },
@@ -410,6 +412,25 @@ export const CLIP_MOTION_SCENARIOS: readonly Scenario[] = [
       t.note("one that is on the sheet: repeated, paid");
       await suggest(t, w, control, [suggestion([SUGGESTED[0]])]);
       await status(t);
+    },
+  },
+  {
+    // Appended in S5.WC2c (the owner, 2026-10-17): every content refusal is lifted but the minor-age guard, a hard line. An age, a youth word or a bare number is refused at once on an
+    // ordinary frame and on «Смелая», for a suggestion and for an idea: no second attempt, so no repair can take the age out.
+    name: "clip motions: the age guard refuses a suggestion and an idea that name an age at once, on an ordinary frame and on «Смелая», with no second attempt",
+    rig: { clips: { batch: 4, budgetMicros: BUDGET, boldClips: "kling-only" } },
+    async run(t, world, control) {
+      const w = clipsOf(world);
+      for (const photoId of [w.photos.plain, w.photos.bold]) {
+        t.note(photoId === w.photos.plain ? "an ordinary frame" : "a frame of «Смелая»");
+        await suggest(t, w, control, [suggestion([UNDER_AGE], 3_000), suggestion(GOOD.slice(0, 1))], photoId);
+        await translate(t, w, control, [translation("she slowly undresses, a young girl"), translation(UNDRESS)], "снимает халат", photoId);
+        await translate(t, w, control, [translation("she slowly undresses, sixteen"), translation(UNDRESS)], "снимает халат", photoId);
+        await status(t);
+      }
+      t.note("nothing was stored");
+      await options(t, w);
+      await options(t, w, w.photos.bold);
     },
   },
 ];

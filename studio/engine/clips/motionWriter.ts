@@ -166,7 +166,8 @@ function evaluate(answer: WriterAnswer, job: WriterJob, log: (line: string) => v
     const { text, problems } = checkModelText(job.facts, motion.text_en, "vision");
     if (problems.length > 0) {
       log(`[clip] photo ${job.photoId}: suggestion ${i + 1} of ${answer.motions.length} dropped (${problems.join(", ")})`);
-      if (repairMayHelp(problems)) {
+      // The age guard's refusal is final (S5.WC2c): a repair could only take the age out.
+      if (repairMayHelp(text, job.facts, "vision")) {
         mayHelp = true;
         for (const problem of problems) repairable.add(problem);
       }

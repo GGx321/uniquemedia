@@ -119,10 +119,12 @@ describe("the continuity line of an own idea that takes clothing off, on a frame
     expect(result.prompt).toContain(`Nothing new appears. ${SLOW_LINE}`);
   });
 
-  test("never elsewhere: a vision text on «Смелая», an own idea on any other frame, make no prompt", () => {
-    expect(clipPromptOf(boldMirror(), ROBE, "kling", "vision").ok).toBe(false);
-    expect(clipPromptOf(FRIEND, ROBE, "kling", "own").ok).toBe(false);
-    expect(clipPromptOf(TIMER, ROBE, "kling", "own").ok).toBe(false);
+  test("S5.WC2c: everywhere: a vision text on «Смелая» and an own idea on an ordinary frame make the same Kling prompt line, «Nothing new appears.» alone", () => {
+    for (const [facts, source] of [[boldMirror(), "vision"], [FRIEND, "own"], [TIMER, "own"], [FRIEND, "vision"]] as const) {
+      const result = clipPromptOf(facts, ROBE, "kling", source);
+      if (!result.ok) throw new Error(result.problems.join("; "));
+      expect([source, result.prompt.includes(`Over the whole clip ${ROBE}. Nothing new appears. ${SLOW_LINE}`)]).toEqual([source, true]);
+    }
   });
 
   test("a motion that only moves what she wears keeps «comes off», whatever its source", () => {
@@ -188,12 +190,15 @@ describe("an own idea only the whitelist reads as taking clothing off: on «См
     expect(result.prompt).not.toContain("stay on her feet");
   });
 
-  test("the controller's decision 6: an own idea the whitelist reads as kept on («pulls her top down a little») is no undressing: «comes off», both dialects", () => {
+  test("S5.WC2c: the grammar reads a top pulled down as undressing (the review's #TOP decision; the whitelist read it as kept on), on «Смелая» too: «Nothing new appears.»", () => {
     const motion = "she slowly pulls her top down a little";
     const kling = clipPromptOf(boldMirror(), motion, "kling", "own");
     if (!kling.ok) throw new Error(kling.problems.join("; "));
-    expect(kling.prompt).toContain(`${COMES_OFF_LINE} ${SLOW_LINE}`);
-    expect(clipPromptOf(boldMirror(), motion, "grok", "own").ok).toBe(true);
+    expect(kling.prompt).toContain(`${NOTHING_NEW_LINE} ${SLOW_LINE}`);
+    // What the grammar reads as kept on keeps «comes off»: a skirt pulled down a little.
+    const skirt = clipPromptOf(boldMirror(), "she slowly pulls her skirt down a little", "kling", "own");
+    if (!skirt.ok) throw new Error(skirt.problems.join("; "));
+    expect(skirt.prompt).toContain(`${COMES_OFF_LINE} ${SLOW_LINE}`);
   });
 
   test("a scene or code text keeps the takes-off forms alone (no bank or code motion says these): the continuity line of the motion by itself does not move", () => {

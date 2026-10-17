@@ -29,8 +29,10 @@ export function boldMirrorFrame(): FrameFacts {
 export const GOOD_MOTION = "she slowly tucks a strand of hair behind her ear";
 export const GOOD_MOTION_2 = "she tilts her head a little to one side and smiles";
 export const GOOD_MOTION_3 = "she slowly takes a breath and relaxes her shoulders";
-/** Takes clothing off: `takes-off` on an ordinary frame; accepted as an OWN idea on a frame of «Смелая» (Q-H = 2). */
+/** Takes clothing off: accepted on every frame, for vision and own (S5.WC2c, the owner 2026-10-17; it was `takes-off` but for an own idea on «Смелая»). */
 export const UNDRESS_MOTION = "she slowly takes off her robe";
+/** The same with an age: the minor-age guard refuses it (`content`) on every frame, and no repair is asked for. */
+export const UNDER_AGE_MOTION = "she slowly takes off her robe, aged sixteen";
 
 export interface PaidOk {
   readonly content: string;

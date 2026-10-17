@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { MOTION_ENGLISH, MOTION_TEXT_MAX } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { checkModelText, framePayload, normalizeModelText, stepOf } from "./motionCall";
-import { GOOD_MOTION, UNDRESS_MOTION, authAnswer, boldMirrorFrame, emptyAnswer, okAnswer, refusedAnswer, timerFrame } from "./testing/motionKit";
+import { GOOD_MOTION, UNDER_AGE_MOTION, UNDRESS_MOTION, authAnswer, boldMirrorFrame, emptyAnswer, okAnswer, refusedAnswer, timerFrame } from "./testing/motionKit";
 useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WC3 (plan s5b2 §5.3, I5.66): what the writer and the translator share. A model's text is normalised in the CODE path before the one motion check (models write «she’s…» and a
@@ -37,14 +37,12 @@ describe("checkModelText", () => {
     expect(checkModelText(timerFrame(), GOOD_MOTION, "own").problems).toEqual([]);
   });
 
-  test("a text that takes clothing off is takes-off for a vision text on any frame", () => {
-    expect(checkModelText(timerFrame(), UNDRESS_MOTION, "vision").problems).toContain("takes-off");
-    expect(checkModelText(boldMirrorFrame(), UNDRESS_MOTION, "vision").problems).toContain("takes-off");
+  test("S5.WC2c: a text that takes clothing off passes for vision and own, on an ordinary frame and on «Смелая»", () => {
+    for (const facts of [timerFrame(), boldMirrorFrame()]) for (const source of ["vision", "own"] as const) expect(checkModelText(facts, UNDRESS_MOTION, source).problems).toEqual([]);
   });
 
-  test("an own idea that takes clothing off is takes-off on an ordinary frame and accepted on a frame of «Смелая» (Q-H = 2)", () => {
-    expect(checkModelText(timerFrame(), UNDRESS_MOTION, "own").problems).toContain("takes-off");
-    expect(checkModelText(boldMirrorFrame(), UNDRESS_MOTION, "own").problems).toEqual([]);
+  test("S5.WC2c: the same text with an age is refused by the age guard (content), on every frame and for every source", () => {
+    for (const facts of [timerFrame(), boldMirrorFrame()]) for (const source of ["vision", "own"] as const) expect(checkModelText(facts, UNDER_AGE_MOTION, source).problems).toEqual(["content"]);
   });
 
   test("a text over 60 characters is refused, whatever else it is", () => {

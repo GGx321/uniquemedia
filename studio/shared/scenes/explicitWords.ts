@@ -1,6 +1,7 @@
 // 5a.3 (S5.9b2, plan s5a3 §5.2, I5.37, K-36): what the «Смелая» banks are designed never to say, swept over OUR bank text and the sentences the template makes from it
-// (banks/boldDesign.testkit.ts re-exports these for the sweeps). Since 5b.2 (S5.WC2 round 2, the controller's decision on explicit content) the one motion check
-// (scenes/motionText.ts) also reads them on a motion text: an explicit act is refused on every frame, exposure everywhere but in the owner's own idea on a frame of «Смелая».
+// (banks/boldDesign.testkit.ts re-exports these for the sweeps). Since 5b.2 (S5.WC2 round 2) the one motion check (scenes/motionText.ts) also read them on a motion text,
+// to refuse it; since S5.WC2c (the owner, 2026-10-17: «убери ограничения везде») it refuses nothing by them, and reads exposure only to give a motion that bares her the
+// prompt line «Nothing new appears.» alone.
 // They stay off the owner's own scene text (answer (c): «Если будет голая прям голая — окей, не страшно»). Moved here from the test kit, the two lists verbatim; pure.
 
 /**
