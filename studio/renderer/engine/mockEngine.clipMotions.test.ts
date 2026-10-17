@@ -217,6 +217,19 @@ describe("clips.suggestMotions: a text that is already known (S5.WC3c, as the en
     expect(await unwrap(suggest(m))).toEqual({ outcome: "none", reason: "repeated", costMicros: 3_400 });
   });
 
+  test("a suggestion that left the sheet can be suggested again: stored as a new item with the next id, and it shows", async () => {
+    const m = makeClipMock();
+    m.engine.tamperMotionStore(PLAIN, (seeded) => {
+      seeded.items = GOOD_TEXTS.map((text, i) => ({ id: `v-${i + 1}`, source: "vision" as const, label: `Старое ${i + 1}`, text }));
+      seeded.next.vision = 6;
+    });
+    m.engine.scriptNextMotionReplies([suggestion([GOOD_TEXTS[0]]), suggestion([GOOD_TEXTS[4]])]);
+    const again = await unwrap(suggest(m));
+    expect(again.outcome === "ok" && again.motions.map((x) => [x.id, x.text])).toEqual([["v-6", GOOD_TEXTS[0]]]);
+    expect((await optionsOf(m)).motions.filter((x) => x.source === "vision").map((x) => x.id)).toEqual(["v-4", "v-5", "v-6"]);
+    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", reason: "repeated", costMicros: 3_400 });
+  });
+
   test("an own idea with the same English that came first does not hide the suggestion", async () => {
     const m = makeClipMock();
     m.engine.scriptNextMotionReplies([idea(GOOD_TEXTS[0]), suggestion([GOOD_TEXTS[0]])]);

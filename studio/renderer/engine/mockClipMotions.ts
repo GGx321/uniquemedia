@@ -19,7 +19,7 @@ import {
   type Estimate,
   type MotionProblem,
 } from "../../shared/engine";
-import { freshDrafts, sameText } from "../../shared/engine/motionKnown";
+import { freshDrafts, sameText, sheetVisionTexts } from "../../shared/engine/motionKnown";
 import { CAPTURES } from "../../shared/scenes/captures";
 import type { ContentLevel } from "../../shared/scenes/contentLine";
 import { motionTextProblems, repairMayHelp } from "../../shared/scenes/motionText";
@@ -666,8 +666,8 @@ export class MockClipMotions {
     }
     if (outcome.kind === "none") return good({ outcome: "none", costMicros: outcome.costMicros });
     const store = this.#read(avatarId, photoId, ready.sha);
-    // The engine's rule (clips/motionService.ts): known = the frame's scene and code motions and the stored suggestions (an own idea is another source); nothing new writes nothing, the reading included.
-    const known = [...ready.frame.offered.map(sameText), ...store.items.filter((item) => item.source === "vision").map((item) => sameText(item.text))];
+    // The engine's rule (clips/motionService.ts): known = the frame's scene and code motions and the suggestions on the sheet (the newest three; an own idea is another source); nothing new writes nothing, the reading included.
+    const known = [...ready.frame.offered.map(sameText), ...sheetVisionTexts(store.items, (item) => checkModelText(ready.frame, item.text, "vision").problems.length === 0)];
     const { fresh, repeated } = freshDrafts(outcome.drafts, known);
     if (fresh.length === 0) return good(repeated ? { outcome: "none", reason: "repeated", costMicros: outcome.costMicros } : { outcome: "none", costMicros: outcome.costMicros });
     const made = addItems(store, "vision", fresh);
