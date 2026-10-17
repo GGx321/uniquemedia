@@ -151,8 +151,8 @@ export function useMotionCalls({ avatarId, photoId, view, offered, relist, revea
   });
 
   /**
-   * S5.WC5b: an answer that came after this sheet closed is kept in the window's store for its photo (the photo it was sent for, round 2 L7), to be said when the sheet opens again: a paid `none` or
-   * `rejected` is never silent. True when it was kept.
+   * S5.WC5b: an answer that came after this sheet closed is kept in the window's store for its photo (the photo it was sent for, round 2 L7), to be said by the sheet of that photo — the one open when
+   * the call ends (`hereKey` below), else the next opening: a paid `none` or `rejected` is never silent. True when it was kept.
    */
   function keep(kind: "suggest" | "idea", result: MotionResult): boolean {
     if (mounted.current) return false;
@@ -203,13 +203,16 @@ export function useMotionCalls({ avatarId, photoId, view, offered, relist, revea
     setFocusField((n) => n + 1);
   }
 
-  // S5.WC5b: what came for this photo while no sheet of it was open is said once, now.
-  useEffect(() => {
+  /** S5.WC5b: the answer kept for this photo while no sheet of it was open, said once (no focus moved, no row revealed). */
+  function sayKept(): void {
     const kept = store.takeMotionResult(avatarId, photoId);
     if (kept === null) return;
     if (kept.kind === "suggest") showSuggest(kept.result, false);
     else showIdea(kept.result, false);
-  }, []);
+  }
+
+  // S5.WC5b: what came for this photo while no sheet of it was open is said once, now.
+  useEffect(sayKept, []);
 
   // PRICE_CHANGED: the fresh price is on the button and needs a new click — said once.
   const suggestChanged = suggest.previousWorst !== null && suggest.estimate !== null ? suggest.estimate.worstMicros : null;
@@ -221,14 +224,17 @@ export function useMotionCalls({ avatarId, photoId, view, offered, relist, revea
     if (translateChanged !== null) announce("alert", priceChangedText(translateChanged));
   }, [translateChanged]);
 
-  // A call of this photo that ended — this sheet's, or one an earlier opening sent (the store) — may have stored new rows: the list is asked again, once per call (round 2, L3).
+  // A call of this photo that ended — this sheet's, or one an earlier opening sent (the store) — may have stored new rows: the list is asked again, once per call (round 2, L3). An earlier opening's
+  // call left its answer in the store before it left the store's calls (`usePaidAction`: `onSent`, then the in-flight end), so this open sheet says it now (S5.WC5b round 2, M-1).
   const here = motionCallsOf(view, avatarId, photoId);
   const hereKey = here.join(",");
   const lastHere = useRef(hereKey);
   useEffect(() => {
     const before = lastHere.current.split(",").filter((kind) => kind !== "");
     lastHere.current = hereKey;
-    if (before.some((kind) => !hereKey.split(",").includes(kind))) latest.current.relist();
+    if (!before.some((kind) => !hereKey.split(",").includes(kind))) return;
+    latest.current.relist();
+    sayKept();
   }, [hereKey]);
 
   const suggestRunning = suggest.sending || here.includes("suggest");

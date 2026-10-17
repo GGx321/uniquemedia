@@ -1060,3 +1060,73 @@ describe("S5.WC5b: the review's follow-ups in sheet 38", () => {
     expect(motion.querySelector(".clip-en[lang='en']")?.textContent).toBe("she slowly turns her head toward the window");
   });
 });
+
+describe("S5.WC5b round 2 (M-1): the sheet reopened before the answer came says it when it comes", () => {
+  /** «Предложить» or «Перевести» sent, «Отмена», and the sheet opened again while the call still runs. */
+  async function reopenedWhileRunning(h: Harness, send: (s: HTMLElement) => Promise<void>): Promise<HTMLElement> {
+    const s = await openSheet();
+    h.engine.holdMotionCalls(true);
+    await send(s);
+    await settle();
+    fireEvent.click(cancelButton(s));
+    await flush();
+    return reopenSheet();
+  }
+
+  test("a paid `none`: the open sheet shows and alerts it; the next opening says nothing again", async () => {
+    const h = await openNini();
+    h.engine.scriptNextMotionReplies([UNREADABLE, UNREADABLE]);
+    let s = await reopenedWhileRunning(h, async (sheetNow) => {
+      fireEvent.click(suggestButton(sheetNow));
+    });
+    expect(suggestButton(s).textContent).toBe("Смотрим кадр…");
+    h.engine.holdMotionCalls(false);
+    await settle();
+    expect(plain(s.querySelector(".mc-scroll .notice")?.textContent)).toBe("Не получилось предложить движения — оплачено $0.004.");
+    expect(news("alert", s)).toBe("Не получилось предложить движения — оплачено $0.004.");
+    fireEvent.click(cancelButton(s));
+    await flush();
+    s = await reopenSheet();
+    expect(s.querySelector(".mc-scroll .notice") == null).toBe(true);
+    expect(news("alert", s)).toBe("");
+  });
+
+  test("an `ok`: the open sheet shows its line and the new rows; the next opening says nothing again", async () => {
+    const h = await openNini();
+    let s = await reopenedWhileRunning(h, async (sheetNow) => {
+      fireEvent.click(suggestButton(sheetNow));
+    });
+    h.engine.holdMotionCalls(false);
+    await settle();
+    const line = plain(s.querySelector(".mc-status")?.textContent);
+    expect(line.startsWith("Предложено 3 движения — оплачено $")).toBe(true);
+    expect(news("polite", s)).toBe(line);
+    expect(rowTitles(s)).toEqual(await optionsLabels(h));
+    fireEvent.click(cancelButton(s));
+    await flush();
+    s = await reopenSheet();
+    expect(s.querySelector(".mc-status") == null).toBe(true);
+  });
+
+  test("a rejected idea: the open sheet opens the card with its reason and its cost, the focus in the field; the next opening says nothing again", async () => {
+    const h = await openNini();
+    const twice = "she slowly sips her tea and then tucks her hair behind her ear";
+    h.engine.scriptNextMotionReplies([mockIdeaAnswer(twice), mockIdeaAnswer(twice)]);
+    let s = await reopenedWhileRunning(h, async (sheetNow) => {
+      await typeIdea(sheetNow, "отпивает чай, а потом поправляет волосы");
+      fireEvent.click(translateButton(sheetNow));
+    });
+    h.engine.holdMotionCalls(false);
+    await settle();
+    expect(ideaToggle(s).getAttribute("aria-expanded")).toBe("true");
+    const refusal = s.querySelector(".mc-refusal") as HTMLElement;
+    expect(plain(refusal.querySelector("p")?.textContent)).toBe(plain(MOTION_PROBLEMS_RU["two-movements"]));
+    expect(plain(refusal.querySelector(".mc-paid")?.textContent)).toBe("За перевод оплачено $0.002.");
+    expect(document.activeElement === field(s)).toBe(true);
+    fireEvent.click(cancelButton(s));
+    await flush();
+    s = await reopenSheet();
+    expect(s.querySelector(".mc-refusal") == null).toBe(true);
+    expect(ideaToggle(s).getAttribute("aria-expanded")).toBe("false");
+  });
+});
