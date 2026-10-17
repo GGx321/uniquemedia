@@ -421,12 +421,12 @@ export const DEFAULT_IMPORT_DESCRIBE_ANSWER: MockImportDescribeAnswer = {
 
 /**
  * 5b.2 (S5.WC4): the three small motions the mock's vision writer suggests, and the English text its translator answers. BODY-ONLY on purpose: no face, no smile, no gaze, no phone, no camera. The smoke's photo is a scene
- * photo with a plan, and a frame whose face is hidden (a mirror shot from behind, a legs shot) refuses a motion that moves her face (`face-hidden`); these pass the engine's motion check on any frame, which
- * clipMotionSmoke.engine.test.ts holds on a face-hidden planned photo and on a face-showing one.
+ * photo with a plan, and a frame whose face is hidden (a mirror shot from behind, a legs shot) refuses a motion that moves her face (`face-hidden`); these pass the engine's motion check on any frame and equal no code or scene motion (the engine drops a suggestion that does), which
+ * mockOpenRouter.motionDefaults.test.ts pins and clipMotionSmoke.engine.test.ts holds on a face-hidden planned photo and on a face-showing one.
  */
 export const DEFAULT_MOTION_SUGGESTIONS: readonly string[] = [
-  "she slowly tucks a strand of hair behind her ear",
-  "she slowly takes a breath and relaxes her shoulders",
+  "she slowly shifts her weight from one foot to the other",
+  "she slowly stretches her arms up and lowers them",
   "she slowly runs a hand through her hair",
 ];
 export const DEFAULT_MOTION_TRANSLATION = "she slowly rolls her shoulders back";
