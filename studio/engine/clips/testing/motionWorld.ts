@@ -7,10 +7,11 @@ import { chatReply, errorOf, motionNetwork, resultOf, send, type ChatHandler, ty
 
 // Test-only (S5.WC3): a real engine over a real library with one gallery photo and the chat route of the fake OpenRouter, and the four part C commands as functions.
 
+/** Four of them differ from every code motion of a frame (S5.WC3c: a suggestion equal to a code motion is not stored). */
 export const GOOD_TEXTS = [
   "she slowly tucks a strand of hair behind her ear",
-  "she tilts her head a little to one side and smiles",
-  "she slowly takes a breath and relaxes her shoulders",
+  "she slowly lifts her chin and smiles softly",
+  "she slowly turns toward the window and smiles",
   "she slowly looks down and smiles to herself",
   "she slowly glances to the side and looks back",
 ] as const;

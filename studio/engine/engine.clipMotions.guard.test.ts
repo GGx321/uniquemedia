@@ -161,8 +161,9 @@ describe("one call per photo and kind", () => {
     expect(w.net.chats).toHaveLength(1);
     held.open();
     expect(resultOf(await first)).toMatchObject({ outcome: "ok" });
-    // The next call is no longer refused; its one text is already stored, so it is `none` (paid), not `suggest-busy`.
-    expect(resultOf(await w.suggest())).toMatchObject({ outcome: "none" });
+    // The next call is no longer refused: it answers a text of its own, so it is `ok` whatever the store holds.
+    w.net.setChat(() => suggestionReply([GOOD_TEXTS[3] ?? ""]));
+    expect(resultOf(await w.suggest())).toMatchObject({ outcome: "ok", motions: [{ text: GOOD_TEXTS[3] }] });
   });
 
   test("a second translateIdea for the same photo answers `idea-busy`", async () => {

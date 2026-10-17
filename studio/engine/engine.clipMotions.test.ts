@@ -20,6 +20,9 @@ const dir = useEngineDir("studio-engine-clip-motions-");
 const UNREADABLE = chatReply("I cannot see the photo", 0.002);
 const NOT_MOTION = "slowly she turns her head";
 const UNDRESS = "she slowly takes off her robe";
+const TUCK = GOOD_TEXTS[0];
+/** The code motion `g-tilt`, which the test photo offers. */
+const CODE_TEXT = "she tilts her head a little to one side and smiles";
 
 async function storeOf(path: string): Promise<MotionStoreFile> {
   return MotionStoreFile.parse(JSON.parse(await readFile(path, "utf8")));
@@ -225,13 +228,49 @@ describe("clips.suggestMotions: the photo and the store", () => {
     expect(file.items.map((i) => [i.id, i.text])).toEqual([["v-1", GOOD_TEXTS[0]], ["v-2", GOOD_TEXTS[1]], ["v-3", GOOD_TEXTS[2]]]);
   });
 
-  test("when every text is already stored the call is `none`, paid, and the store and its ids are untouched", async () => {
+  test("when every text is already stored the call is `none` with the reason `repeated`, paid, and the store file is not written, a CHANGED reading included", async () => {
     const w = await motionWorld(dir());
     await w.suggestOk(GOOD_TEXTS.slice(0, 2));
     const before = await readFile(w.storePath(), "utf8");
+    w.net.setChat(() => suggestionReply(GOOD_TEXTS.slice(0, 2), 0.0034, { ...FRAME_READING, phoneVisible: true }));
     const second = resultOf(await w.suggest());
-    expect(second).toEqual({ outcome: "none", costMicros: 3_400 });
+    expect(second).toEqual({ outcome: "none", reason: "repeated", costMicros: 3_400 });
     expect(await readFile(w.storePath(), "utf8")).toBe(before);
+  });
+
+  test("a stored text met again with a capital letter inside it is still the same text", async () => {
+    const w = await motionWorld(dir());
+    await w.suggestOk([TUCK]);
+    w.net.setChat(() => suggestionReply([TUCK.replace("hair", "Hair")]));
+    expect(resultOf(await w.suggest())).toEqual({ outcome: "none", reason: "repeated", costMicros: 3_400 });
+  });
+
+  test("two texts of one answer that differ only by a capital letter inside are stored once", async () => {
+    const w = await motionWorld(dir());
+    w.net.setChat(() => suggestionReply([TUCK, TUCK.replace("hair", "Hair"), GOOD_TEXTS[3] ?? ""]));
+    expect(resultOf(await w.suggest())).toMatchObject({ outcome: "ok", motions: [{ id: "v-1", text: TUCK }, { id: "v-2", text: GOOD_TEXTS[3] }] });
+  });
+
+  test("a suggestion equal to one of the frame's code motions is not stored, and an answer of nothing else is `repeated`", async () => {
+    const w = await motionWorld(dir());
+    const options = await w.options();
+    const listed = options.suitable ? options.motions.filter((m) => m.source === "code").map((m) => m.text) : [];
+    expect(listed).toContain(CODE_TEXT);
+    w.net.setChat(() => suggestionReply([CODE_TEXT.replace("head", "Head"), TUCK]));
+    expect(resultOf(await w.suggest())).toMatchObject({ outcome: "ok", motions: [{ id: "v-1", text: TUCK }] });
+    w.net.setChat(() => suggestionReply([CODE_TEXT]));
+    expect(resultOf(await w.suggest())).toEqual({ outcome: "none", reason: "repeated", costMicros: 3_400 });
+  });
+
+  test("an unusable answer is `none` without the reason `repeated`", async () => {
+    const w = await motionWorld(dir(), { chat: () => chatReply({ motions: [], frame: FRAME_READING }, 0.0034) });
+    expect(resultOf(await w.suggest())).not.toHaveProperty("reason");
+  });
+
+  test("an own idea with the same English that came BEFORE a suggestion does not hide the suggestion (the sources are separate)", async () => {
+    const w = await motionWorld(dir());
+    expect(await w.translateOk(TUCK)).toMatchObject({ outcome: "ok", item: { id: "o-1" } });
+    expect(await w.suggestOk([TUCK])).toMatchObject({ outcome: "ok", motions: [{ id: "v-1", text: TUCK }] });
   });
 
   test("an own idea with the same English as a stored suggestion is its own item (the sources are separate)", async () => {
