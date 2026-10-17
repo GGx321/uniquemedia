@@ -11,7 +11,7 @@ import { DEFAULT_MOTION_SUGGESTIONS, DEFAULT_MOTION_TRANSLATION, startMockOpenRo
 import { pick, sceneRun, slotOf } from "../engine/clips/testing/frameFixtures";
 import { openLibrary } from "../engine/library";
 import { RunPlanSchema } from "../engine/runs/plan";
-import { posesFor } from "../shared/scenes/captures";
+import { posesFor, type Capture } from "../shared/scenes/captures";
 useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WC4: the packaged smoke's part C scenario, without Electron. The REAL engine (a real library, the real photo downscale) talks HTTP to the smoke's mock OpenRouter on loopback, and the checks the smoke
@@ -52,10 +52,10 @@ function towards(m: MockOpenRouter): OpenRouterFetch {
  * The photo the packaged smoke makes, as the smoke makes it: a SCENE photo with a run plan on disk, taken in a mirror with her face hidden (`mirror-hidden`: the planned face is `no`, the face role `hidden`). Its facts come
  * from the plan, not from the sidecar's face marks, so a motion that moves her face (a smile, a gaze) is refused `face-hidden` on it; the planless photo of `seedClipAvatar` alone would let it through.
  */
-async function seedHiddenFaceScenePhoto(libraryDir: string): Promise<{ avatarId: string; photoId: string }> {
+async function seedHiddenFaceScenePhoto(libraryDir: string, capture: Capture = "mirror-hidden"): Promise<{ avatarId: string; photoId: string }> {
   const seeded = await seedClipAvatar(libraryDir);
-  const picked = pick("home", (m) => m.captures.includes("mirror-hidden") && m.legs === undefined && m.angle === undefined);
-  const run = sceneRun("run-00000099", [slotOf(picked, "mirror-hidden", posesFor("mirror-hidden")[0] ?? "front")]);
+  const picked = pick("home", (m) => m.captures.includes(capture) && m.legs === undefined && m.angle === undefined);
+  const run = sceneRun("run-00000099", [slotOf(picked, capture, posesFor(capture)[0] ?? "front")]);
   const { library } = await openLibrary(libraryDir);
   await library.createRun("run-00000099", run, RunPlanSchema);
   return { avatarId: seeded.avatarId, photoId: seeded.photoId };
@@ -151,6 +151,18 @@ describe("the smoke's part C scenario, against the real engine", () => {
       console.warn = warn;
       console.error = error;
     }
+  });
+
+  test("on a face-showing frame that offers g-blink, g-tilt and g-breath, the three defaults are all answered (none equals a code motion the engine would drop)", async () => {
+    mock = await startMockOpenRouter({ descriptorText: "A woman.", motions: true });
+    // The packaged smoke's frame offers these three code motions; the mirror-hidden frame above offers only g-hips, which is why it never caught a default equal to g-breath.
+    const { avatarId, photoId } = await seedHiddenFaceScenePhoto(join(dir(), "library"), "above");
+    const engine = await startClipEngine(dir(), { deps: { fetch: towards(mock) } });
+    const before = await answer(engine, "clips.options", { avatarId, photoId });
+    expect((before.motions as { id: string }[]).map((m) => m.id).filter((id) => id.startsWith("g-"))).toEqual(["g-blink", "g-tilt", "g-breath"]);
+    const estimate = await answer(engine, "clips.estimateSuggest", { avatarId, photoId });
+    const suggested = await answer(engine, "clips.suggestMotions", { avatarId, photoId, acceptedWorstMicros: estimate.worstMicros });
+    expect(suggested).toMatchObject({ outcome: "ok", motions: [{ id: "v-1" }, { id: "v-2" }, { id: "v-3" }] });
   });
 
   test("the canary bites: the same scan finds the idea in the one place it is allowed to be", async () => {
