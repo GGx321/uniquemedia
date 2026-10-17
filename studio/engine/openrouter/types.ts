@@ -233,6 +233,8 @@ export interface ChatParams extends AttemptParams {
   /**
    * 5b.2 (S5.WC3, I5.67): a caller's own scrub of a saved raw body, run AFTER the image-data scrub (`omitByPattern`). A paid answer that cannot be used is saved on disk; a caller whose request held text
    * that must not outlive the call (the owner's idea) removes it from the saved body here. Absent: only the image-data scrub runs, as before.
+   * A caller that passes it also gets the provider's message of a failed (non-2xx) answer replaced AS A WHOLE by `[provider message: N chars]` in the retry log line and the result's message; this function
+   * does not run over it (S5.WC3c: it finds only the forms it knows, and a partial echo would survive).
    */
   scrubRaw?: (text: string) => string;
 }

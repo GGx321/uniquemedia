@@ -252,9 +252,19 @@ test("a call's scrubRaw also runs over the retry log lines and the final error m
 
   expect(result).toMatchObject({ status: "error", kind: "HTTP_ERROR" });
   expect(result.status === "error" ? result.message : "").not.toContain("the secret idea");
-  expect(result.status === "error" ? result.message : "").toContain("[omitted]");
   expect(logs.length).toBeGreaterThan(0);
   expect(logs.join("\n")).not.toContain("the secret idea");
+});
+
+test("a call's scrubRaw replaces the provider's whole message with its length: no digit and no word of it survives, in the result or the log (round 2 trust)", async () => {
+  const words = "echo 4815162342 alpha-bravo secret 7";
+  const steps: Step[] = Array.from({ length: 5 }, () => ({ status: 503, body: { error: { message: words } } }));
+  const { result, logs } = await run(steps, { scrubRaw: (text: string) => text });
+
+  const message = result.status === "error" ? result.message : "";
+  expect(message).toBe(`HTTP 503: [provider message: ${words.length} chars]`);
+  expect(logs.join("\n")).not.toContain("4815162342");
+  expect(logs.join("\n")).toContain(`[provider message: ${words.length} chars]`);
 });
 
 test("a moderation refusal's message is scrubbed the same way", async () => {
