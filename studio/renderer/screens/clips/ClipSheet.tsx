@@ -211,12 +211,14 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
     if (toCancel > 0) cancelRef.current?.focus();
   }, [toCancel]);
 
-  // 62d: the frame's notes of an earlier suggestion are said once the sheet has read them (with a new suggestion they are said with its result).
+  // 62d: the frame's notes of an earlier suggestion are said once the sheet has read them (with a new suggestion they are said with its result). A suggestion this opening already said — a kept
+  // answer said on open (S5.WC5b round 2, L-1) — said its notes with its line: they are not said again over it.
   const notes = calls.reading ?? suitable?.reading?.notes ?? [];
   const notesSaid = useRef(false);
   useEffect(() => {
     if (notesSaid.current || suitable === null || refreshing) return;
     notesSaid.current = true;
+    if (calls.reading !== null) return;
     const said = frameNotesNews(suitable.reading?.notes ?? []);
     if (said !== null) calls.announce("polite", said);
   }, [suitable, refreshing]);
