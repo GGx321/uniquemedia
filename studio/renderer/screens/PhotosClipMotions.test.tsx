@@ -1130,3 +1130,41 @@ describe("S5.WC5b round 2 (M-1): the sheet reopened before the answer came says 
     expect(ideaToggle(s).getAttribute("aria-expanded")).toBe("false");
   });
 });
+
+describe("S5.WC5b round 2: one announcement per answer", () => {
+  test("L-1: a kept `ok` with frame notes is said once, its line with its notes — the sheet's own notes line on open does not replace it", async () => {
+    const h = await openNini();
+    let s = await openSheet();
+    h.engine.holdMotionCalls(true);
+    h.engine.scriptNextMotionReplies([mockSuggestionAnswer(["she slowly tucks a strand of hair behind her ear"], { phoneVisible: true })]);
+    fireEvent.click(suggestButton(s));
+    await settle();
+    fireEvent.click(cancelButton(s));
+    await flush();
+    h.engine.holdMotionCalls(false);
+    await settle();
+    const said: string[] = [];
+    const watch = new MutationObserver(() => {
+      const now = news("polite");
+      if (now !== "" && said.at(-1) !== now) said.push(now);
+    });
+    watch.observe(document.body, { childList: true, subtree: true, characterData: true });
+    s = await reopenSheet();
+    await settle();
+    watch.disconnect();
+    const line = plain(s.querySelector(".mc-status")?.textContent);
+    expect(line.startsWith("Предложено 1 движение — оплачено $")).toBe(true);
+    const full = `${line} Заметки о кадре: в кадре виден второй телефон — он может остаться в клипе.`;
+    expect(news("polite", s)).toBe(full);
+    expect(said).toEqual([full]);
+  });
+
+  test("L-1: with nothing kept, the stored notes are still said on open", async () => {
+    const h = await openNini();
+    h.engine.scriptNextMotionReplies([mockSuggestionAnswer(["she slowly tucks a strand of hair behind her ear"], { phoneVisible: true })]);
+    await h.client.request("clips.suggestMotions", { avatarId: NINI.avatarId, photoId: PLAIN.photoId, acceptedWorstMicros: MOCK_SUGGEST_PRICE.worstMicros });
+    const s = await openSheet();
+    await settle();
+    expect(news("polite", s)).toBe("Заметки о кадре: в кадре виден второй телефон — он может остаться в клипе.");
+  });
+});
