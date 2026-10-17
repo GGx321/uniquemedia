@@ -104,13 +104,16 @@ export class MotionStores {
     return { file: parsed.data.photoSha256 === sha ? parsed.data : emptyStore(photoId, sha), writable: true };
   }
 
-  /** Reads, applies `change`, checks the result under the strict schema and writes it atomically; one at a time per photo. Rejects for a store from a newer build (nothing is written). */
-  update(avatarDir: string, photoId: string, sha: string, change: (file: MotionStoreFile) => MotionStoreFile): Promise<MotionStoreFile> {
+  /** Reads, applies `change`, checks the result under the strict schema and writes it atomically (a `null` from `change` writes nothing); one at a time per photo. Rejects for a store from a newer build (nothing is written). */
+  update(avatarDir: string, photoId: string, sha: string, change: (file: MotionStoreFile) => MotionStoreFile | null): Promise<MotionStoreFile> {
     const path = MotionStores.path(avatarDir, photoId);
     const run = async (): Promise<MotionStoreFile> => {
       const current = await this.read(avatarDir, photoId, sha);
       if (!current.writable) throw new Error(`the motion store of photo ${photoId} is from a newer build`);
-      const next = MotionStoreFile.parse(change(current.file));
+      const changed = change(current.file);
+      // `null`: nothing to write (a suggestion that added nothing must not even replace the reading); the file stays as it is on disk.
+      if (changed === null) return current.file;
+      const next = MotionStoreFile.parse(changed);
       const folder = dirname(path);
       const made = await mkdir(folder, { recursive: true });
       if (made !== undefined) await fsyncDir(dirname(folder));

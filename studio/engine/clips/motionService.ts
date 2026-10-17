@@ -8,6 +8,7 @@ import {
   type CommandPayload,
   type Estimate,
 } from "../../shared/engine";
+import { freshDrafts, sameText } from "../../shared/engine/motionKnown";
 import { EngineFailure } from "../engineFailure";
 import type { Library } from "../library";
 import type { PhotoSidecar } from "../library/schemas";
@@ -19,6 +20,7 @@ import type { PricedBook, PriceModels } from "../money/priceCache";
 import type { OpenRouterClient } from "../openrouter/types";
 import type { FrameFacts } from "./frameFacts";
 import { runIdeaTranslator } from "./ideaTranslator";
+import { motionChoicesOf } from "./motion";
 import { clipMotionProblems } from "./prompt";
 import { addItems, isFull, listedItems, MotionStores, type MotionItem } from "./motionStore";
 import { runMotionWriter } from "./motionWriter";
@@ -83,11 +85,6 @@ const MODEL_SOURCES = ["vision", "own"] as const;
 
 function choiceOf(item: MotionItem): ClipMotionChoice {
   return { id: item.id, source: item.source, label: item.label, text: item.text };
-}
-
-/** A text as the store compares it with another: case and white space aside. */
-function sameText(text: string): string {
-  return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
 export class ClipMotions {
@@ -285,15 +282,23 @@ export class ClipMotions {
     const at = deps.now();
     try {
       let made: MotionItem[] = [];
+      let repeated = false;
+      // Known: the photo's stored suggestions and the frame's own scene and code motions (the sheet lists them already). An own idea is a separate source and does not count (S5.WC3c).
+      const frameTexts = motionChoicesOf(ready.facts).map((choice) => sameText(choice.text));
       await this.#stores.update(ready.library.avatarDirPath(avatarId), ready.photo.id, ready.sha, (file) => {
         // Round 3 L5: a suggestion the store already holds (another call wrote it) is not stored twice; the writer dedupes within one answer only.
-        const known = new Set(file.items.filter((item) => item.source === "vision").map((item) => sameText(item.text)));
-        const fresh = outcome.drafts.filter((draft) => !known.has(sameText(draft.text)));
+        const known = [...frameTexts, ...file.items.filter((item) => item.source === "vision").map((item) => sameText(item.text))];
+        const { fresh, repeated: allKnown } = freshDrafts(outcome.drafts, known);
+        // Nothing new: nothing is written, the reading of the last stored call stays.
+        if (fresh.length === 0) {
+          repeated = allKnown;
+          return null;
+        }
         const added = addItems(file, "vision", fresh.map((draft) => ({ label: draft.label, text: draft.text, model: textModel, at })));
         made = added.items;
         return { ...added.file, reading: outcome.reading };
       });
-      if (made.length === 0) return { outcome: "none", costMicros: outcome.costMicros };
+      if (made.length === 0) return repeated ? { outcome: "none", reason: "repeated", costMicros: outcome.costMicros } : { outcome: "none", costMicros: outcome.costMicros };
       return { outcome: "ok", motions: made.map(choiceOf), reading: outcome.reading, costMicros: outcome.costMicros };
     } catch (error) {
       // The call is paid; the owner is told so. Only ids are logged.

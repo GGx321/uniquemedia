@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CLIP_CHOICES_MAX, MOTION_LABEL_MAX, MOTION_MAX_ATTEMPTS, MOTION_PROBLEMS, ownIdeaLabel, type ClipFrameNote, type ClipFrameReading, type EngineError, type MotionProblem } from "../../shared/engine";
+import { sameText } from "../../shared/engine/motionKnown";
 import { repairMayHelp } from "../../shared/scenes/motionText";
 import { SUGGEST_ATTEMPT } from "../money/motionEstimate";
 import type { Budget } from "../money/budget";
@@ -158,7 +159,7 @@ interface Evaluated {
 function evaluate(answer: WriterAnswer, job: WriterJob, log: (line: string) => void): Evaluated {
   const drafts: SuggestedDraft[] = [];
   const repairable = new Set<MotionProblem>();
-  const seen = new Set<string>();
+  const known = new Set<string>();
   let mayHelp = false;
   for (const [i, motion] of answer.motions.entries()) {
     const label = cleanLabel(motion.label_ru);
@@ -175,8 +176,10 @@ function evaluate(answer: WriterAnswer, job: WriterJob, log: (line: string) => v
       log(`[clip] photo ${job.photoId}: suggestion ${i + 1} of ${answer.motions.length} dropped (no label)`);
       continue;
     }
-    if (seen.has(text)) continue;
-    seen.add(text);
+    // The same normalisation as the store's (shared/engine/motionKnown.ts): a text that differs by case or spacing is the same one.
+    const key = sameText(text);
+    if (known.has(key)) continue;
+    known.add(key);
     drafts.push({ label, text });
   }
   const codes: WriterFeedback = MOTION_PROBLEMS.filter((problem) => repairable.has(problem));
