@@ -224,6 +224,14 @@ describe("the prompt line of an undressing motion on an ordinary frame: «Nothin
     }
   });
 
+  test("Grok, the ordinary frame's fallback, gets the same line: there is no motion-based routing", () => {
+    for (const source of MODEL_SOURCES) {
+      const result = clipPromptOf(FRIEND, "she slowly takes off her robe", "grok", source);
+      if (!result.ok) throw new Error(result.problems.join("; "));
+      expect([source, result.prompt.includes(`${NOTHING_NEW_LINE} ${SLOW_LINE}`)]).toEqual([source, true]);
+    }
+  });
+
   test("on a frame with legwear the legwear line goes too; a motion that keeps her dressed keeps it", () => {
     const kept = clipPromptOf(HOME_TIGHTS, "she slowly turns her head a little", "kling", "own");
     if (!kept.ok) throw new Error(kept.problems.join("; "));

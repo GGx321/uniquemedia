@@ -517,30 +517,50 @@ describe("clips.options and the clip commands resolve the stored motions", () =>
   });
 });
 
-describe("an own idea that takes clothing off goes to Kling alone (Q-H = 2)", () => {
-  async function undressWorld(engine: NonNullable<Parameters<typeof motionWorld>[1]>["engine"]) {
-    const w = await motionWorld(dir(), { chat: () => ideaReply(UNDRESS), seed: { category: "nightwear" }, engine });
+describe("S5.WC2c: an own idea that takes clothing off is routed by its frame, never by its motion", () => {
+  async function undressWorld(engine: NonNullable<Parameters<typeof motionWorld>[1]>["engine"], category?: string) {
+    const w = await motionWorld(dir(), { chat: () => ideaReply(UNDRESS), ...(category === undefined ? {} : { seed: { category } }), engine });
     expect(resultOf(await w.translate())).toMatchObject({ outcome: "ok" });
     return w;
   }
 
-  test("with BOLD_CLIPS `with-fallback` and an automatic fallback the clip runs on Kling alone: no Grok request, the request says fallback none", async () => {
-    const w = await undressWorld({ deps: { clipSwitches: { boldClips: "with-fallback" } } });
-    const jobId = jobIdOf(await create(w.started, { avatarId: w.avatarId, photoId: w.photoId, motionId: "o-1", fallback: "auto", acceptedWorstMicros: 504_000 }));
+  test("on an ordinary frame its clip keeps the Grok fallback: the window's fallback figure is the worst case, the request says fallback auto", async () => {
+    const w = await undressWorld({});
+    const jobId = jobIdOf(await create(w.started, { avatarId: w.avatarId, photoId: w.photoId, motionId: "o-1", fallback: "auto", acceptedWorstMicros: 850_000 }));
     expect((await jobEnd(w.started, jobId)).type).toBe("job.done");
-    expect(w.net.posts("grok")).toHaveLength(0);
     const record = await readClipRecord(clipsDir(w.libraryDir, w.avatarId), jobId);
-    expect(record.kind === "record" && record.record.request.fallback).toBe("none");
+    expect(record.kind === "record" && record.record.request.fallback).toBe("auto");
+    const prompt = (JSON.parse(w.net.posts("kling")[0]?.body ?? "{}") as { prompt: string }).prompt;
+    expect(prompt).toContain("Nothing new appears. Slow,");
   });
 
-  test("a Grok clip for it is refused `grok-not-offered` even in mode `offer`", async () => {
-    const w = await undressWorld({ deps: { clipSwitches: { boldClips: "with-fallback", mode: "offer" } } });
-    const refused = errorOf(await create(w.started, { avatarId: w.avatarId, photoId: w.photoId, motionId: "o-1", model: "grok", fallback: "none", acceptedWorstMicros: 850_000 }));
-    expect(refused).toMatchObject({ code: "VALIDATION", clipReason: "grok-not-offered" });
+  test("on an ordinary frame in mode `offer` a Grok clip of it is offered, and its prompt says «Nothing new appears.» alone", async () => {
+    const w = await undressWorld({ deps: { clipSwitches: { mode: "offer" } } });
+    const jobId = jobIdOf(await create(w.started, { avatarId: w.avatarId, photoId: w.photoId, motionId: "o-1", model: "grok", fallback: "none", acceptedWorstMicros: 850_000 }));
+    expect((await jobEnd(w.started, jobId)).type).toBe("job.done");
+    const prompt = (JSON.parse(w.net.posts("grok")[0]?.body ?? "{}") as { prompt: string }).prompt;
+    expect(prompt).toContain("Nothing new appears. Slow,");
+    expect(prompt).not.toContain("nothing she wears comes off");
   });
 
-  test("the prompt carries «Nothing new appears.» and no clothing clause", async () => {
-    const w = await undressWorld({ deps: { clipSwitches: { boldClips: "kling-only" } } });
+  test("a batch of it on an ordinary frame is priced at the fallback figure the window sums: the Kling-only figure is refused, the fallback figure runs", async () => {
+    const w = await undressWorld({});
+    const payload = (acceptedWorstMicros: number) => ({ avatarId: w.avatarId, items: [{ photoId: w.photoId, motionId: "o-1" }], quality: "std", seconds: 5, fallback: "auto", acceptedWorstMicros });
+    expect(errorOf(await send(w.started, "clips.createBatch", payload(504_000)))).toMatchObject({ code: "PRICE_CHANGED" });
+    const made = resultOf(await send(w.started, "clips.createBatch", payload(850_000))) as { jobIds: string[] };
+    expect((await jobEnd(w.started, made.jobIds[0] ?? "")).type).toBe("job.done");
+  });
+
+  test("on «Смелая» with BOLD_CLIPS `with-fallback` the frame's mode decides: the request keeps fallback auto", async () => {
+    const w = await undressWorld({ deps: { clipSwitches: { boldClips: "with-fallback" } } }, "nightwear");
+    const jobId = jobIdOf(await create(w.started, { avatarId: w.avatarId, photoId: w.photoId, motionId: "o-1", fallback: "auto", acceptedWorstMicros: 850_000 }));
+    expect((await jobEnd(w.started, jobId)).type).toBe("job.done");
+    const record = await readClipRecord(clipsDir(w.libraryDir, w.avatarId), jobId);
+    expect(record.kind === "record" && record.record.request.fallback).toBe("auto");
+  });
+
+  test("on «Смелая» with BOLD_CLIPS `kling-only` (the default) it runs on Kling alone, as every clip of «Смелая» does; the prompt carries «Nothing new appears.» and no clothing clause", async () => {
+    const w = await undressWorld({ deps: { clipSwitches: { boldClips: "kling-only" } } }, "nightwear");
     const jobId = jobIdOf(await create(w.started, { avatarId: w.avatarId, photoId: w.photoId, motionId: "o-1", fallback: "none", acceptedWorstMicros: 504_000 }));
     await jobEnd(w.started, jobId);
     const prompt = (JSON.parse(w.net.posts("kling")[0]?.body ?? "{}") as { prompt: string }).prompt;

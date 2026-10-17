@@ -73,7 +73,6 @@ import {
 import type { UnsequencedEvent } from "../../shared/engine/events";
 import { MockClipBatch, type BatchMember, type MockBatchPorts, type MockMoneyEnd } from "./mockClipBatch";
 import { contentLevelOf, type ContentLevel } from "../../shared/scenes/contentLine";
-import { undressesBy } from "../../shared/scenes/motionText";
 import { MockClipMotions, type MockMotionRead } from "./mockClipMotions";
 import type { Scheduler } from "./scheduler";
 
@@ -1330,8 +1329,8 @@ export class MockClips {
     if (read.kind === "refused") return bad({ code: "VALIDATION", clipReason: read.reason, detail: `photo ${payload.photoId} cannot be brought to life (${read.reason})` });
     const motion = read.motions.find((m) => m.id === payload.motionId);
     if (motion === undefined) return bad({ code: "VALIDATION", clipReason: "unknown-motion", detail: `the motion ${payload.motionId} is not one this photo offers` });
-    // Q-H = 2: a motion that takes clothing off or bares her (an own idea on a frame of «Смелая») is Kling's alone, whatever `BOLD_CLIPS` lets the frame fall back to: Grok never sees it.
-    const photoFallback = undressesBy(motion.text, motion.source, read.facts.bold) ? "none" : this.#fallbackOf(read.facts);
+    // The frame decides the fallback, never the motion (S5.WC2c, as the engine).
+    const photoFallback = this.#fallbackOf(read.facts);
     if (payload.model === "grok" && (this.#mode !== "offer" || photoFallback === "none")) return bad({ code: "VALIDATION", clipReason: "grok-not-offered", detail: "Grok is not offered for this clip" });
     const request: ClipRequest = { model: payload.model, quality: payload.quality, seconds: payload.seconds, fallback: payload.model === "grok" || photoFallback === "none" ? "none" : payload.fallback };
     const book = this.#readBook();
@@ -1394,8 +1393,7 @@ export class MockClips {
     if (priced === null) return bad(this.#unavailable());
     const book = priced.rates;
     const drafts = chosen.map((member) => {
-      // Q-H = 2: a member whose motion takes clothing off is Kling's alone, as a frame kept to Kling is.
-      const kept = undressesBy(member.motion.text, member.motion.source, member.facts.bold) || this.#fallbackOf(member.facts) === "none";
+      const kept = this.#fallbackOf(member.facts) === "none";
       const fallback = kept ? ("none" as const) : payload.fallback;
       const request: ClipRequest = { model: "kling", quality: payload.quality, seconds: payload.seconds, fallback };
       const share = clipWorstMicros({ ...request, mode: this.#mode, bold: member.facts.bold, boldClips: this.#boldClips, prices: book });
@@ -1405,10 +1403,9 @@ export class MockClips {
       chosen.map((member) => ({ bold: member.facts.bold })),
       { quality: payload.quality, seconds: payload.seconds, mode: this.#mode, fallback: payload.fallback, boldClips: this.#boldClips, prices: book },
     );
-    // A member whose motion undresses her never falls back to Grok, so its share can be below the fallback figure the window summed; with none of them the shares add up to the batch's worst case exactly.
+    // The shares add up to the batch's worst case exactly (the frame alone decides a member's fallback).
     const shares = drafts.reduce((sum, d) => sum + d.share, 0);
-    const forced = chosen.some((member) => undressesBy(member.motion.text, member.motion.source, member.facts.bold));
-    if (forced ? shares > total : shares !== total) return bad({ code: "INTERNAL", detail: "the members' shares do not add up to the batch's worst case" });
+    if (shares !== total) return bad({ code: "INTERNAL", detail: "the members' shares do not add up to the batch's worst case" });
     if (shares > payload.acceptedWorstMicros) return bad({ code: "PRICE_CHANGED", detail: `the worst case is now ${shares} µ$, above the accepted ${payload.acceptedWorstMicros} µ$` });
     // The month is held for every member at once (`Budget.tryHold`): all or nothing.
     if (!this.#fits(shares)) return bad({ code: "BUDGET_EXCEEDED", detail: `committed ${this.#committed()} µ$ + the batch's ${shares} µ$ > the limit ${this.#host.monthlyBudgetMicros()} µ$; nothing was held` });

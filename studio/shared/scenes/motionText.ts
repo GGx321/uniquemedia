@@ -684,7 +684,7 @@ function takesOffVeto(text: string, reading: MotionReading): boolean {
 }
 
 /**
- * Whether a motion undresses or bares her as its source is read, for the prompt (S5.WC2c: it refuses nothing): its prompt then says «Nothing new appears.»
+ * Whether a motion undresses or bares her as its source is read, for the prompt alone (S5.WC2c: it refuses nothing, routes nothing): its prompt then says «Nothing new appears.»
  * with no clothing clause, on any frame. For a scene or code text, `takesOff` (no bank or code motion says one, so their prompts never move). A model's text the grammar reads:
  * an undressing or baring form of the grammar, the takes-off forms where a generic form read them, or an exposure word. An own idea on «Смелая» the grammar cannot read (its own
  * path, `grammarHolds`): the takes-off forms where the clothing-verb whitelist does not lift them, what the whitelist reads as moving what she wears beyond it or showing her body,
