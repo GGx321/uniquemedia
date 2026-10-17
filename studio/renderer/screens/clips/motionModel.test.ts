@@ -179,8 +179,8 @@ describe("the idea field (63): the contract's `OwnIdeaText` decides", () => {
 });
 
 describe("S5.WC5b strings (owner veto pending)", () => {
-  test("the field's example, and the clip-busy line of the sheet's own send", () => {
+  test("the field's example, and the clip-busy line of the sheet's own send (one clip: round 2, L-4)", () => {
     expect(IDEA_PLACEHOLDER).toBe("Опишите одно небольшое движение — например, «медленно поворачивает голову к окну»");
-    expect(CLIP_BUSY).toBe("Сейчас снимаются клипы — предложить или перевести движение можно, когда они закончатся.");
+    expect(CLIP_BUSY).toBe("Клип отправляется — предложить или перевести движение можно после него.");
   });
 });
