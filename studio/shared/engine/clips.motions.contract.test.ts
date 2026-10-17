@@ -392,6 +392,13 @@ describe("clips.suggestMotions answers ok or none", () => {
     expect(answers("clips.suggestMotions", { outcome: "none", costMicros: 0, motions: [] })).toBe(false);
   });
 
+  test("none may say `repeated` (the model answered usable motions and every one is known); any other reason is refused", () => {
+    expect(answers("clips.suggestMotions", { outcome: "none", reason: "repeated", costMicros: 3_400 })).toBe(true);
+    expect(answers("clips.suggestMotions", { outcome: "none", reason: "repeated", costMicros: 0 })).toBe(true);
+    expect(answers("clips.suggestMotions", { outcome: "none", reason: "unusable", costMicros: 3_400 })).toBe(false);
+    expect(answers("clips.suggestMotions", { outcome: "none", reason: "repeated" })).toBe(false);
+  });
+
   test("there is no `rejected` answer to a suggestion", () => {
     expect(answers("clips.suggestMotions", { outcome: "rejected", problems: ["content"], costMicros: 1_000 })).toBe(false);
   });

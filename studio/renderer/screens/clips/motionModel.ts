@@ -103,9 +103,10 @@ export function suggestedLine(count: number, costMicros: number): MoneyLine {
 
 /**
  * 62c: nothing usable came out: «Не получилось предложить движения — оплачено $0.004.», or «… — бесплатно.» at 0. S5.WC5b: a free `none` is not always the model's refusal (`usage.cost: 0` gives one
- * too), so the words name no cause.
+ * too), so the words name no cause. `reason: "repeated"` (S5.WC3c): the model answered, and every motion was already on the sheet: «Модель повторила уже предложенные движения — оплачено $X.»
  */
-export function suggestNoneLine(costMicros: number): MoneyLine {
+export function suggestNoneLine(costMicros: number, reason?: "repeated"): MoneyLine {
+  if (reason === "repeated") return withCost("Модель повторила уже предложенные движения", costMicros);
   return withCost("Не получилось предложить движения", costMicros);
 }
 
