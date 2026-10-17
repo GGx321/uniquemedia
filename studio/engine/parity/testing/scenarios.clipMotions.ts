@@ -385,14 +385,31 @@ export const CLIP_MOTION_SCENARIOS: readonly Scenario[] = [
     rig: RIG,
     async run(t, world, control) {
       const w = clipsOf(world);
-      const again = [suggestion([GOOD[0], GOOD[3]])];
       t.note("the model suggests two motions");
-      await suggest(t, w, control, again);
-      t.note("the same answer again: paid, `none` with the reason `repeated`");
-      await suggest(t, w, control, again);
+      await suggest(t, w, control, [suggestion([GOOD[0], GOOD[3]])]);
+      t.note("the same texts again, with another frame reading: paid, `none` with the reason `repeated`, and the reading stays the first call's");
+      await suggest(t, w, control, [mockSuggestionAnswer([GOOD[0], GOOD[3]], { phoneVisible: true }, 3_400)]);
       await status(t);
-      t.note("the sheet: the two suggestions once");
+      t.note("the sheet: the two suggestions once, the first reading");
       await options(t, w);
+    },
+  },
+  {
+    // Appended in S5.WC3c round 3: a suggestion older than the newest three has left the sheet; suggesting it again brings it back as a new item, while one still on the sheet is `repeated`.
+    name: "clip motions: a model that suggests a motion which left the sheet gets it stored again as a new item, and one still on the sheet is `repeated`",
+    rig: RIG,
+    async run(t, world, control) {
+      const w = clipsOf(world);
+      t.note("four suggestions in two calls: the first one drops out of the newest three");
+      await suggest(t, w, control, [suggestion(SUGGESTED.slice(0, 3))]);
+      await suggest(t, w, control, [suggestion([SUGGESTED[3]])]);
+      await options(t, w);
+      t.note("the model suggests the first one again: it is stored as v-5 and shows");
+      await suggest(t, w, control, [suggestion([SUGGESTED[0]])]);
+      await options(t, w);
+      t.note("one that is on the sheet: repeated, paid");
+      await suggest(t, w, control, [suggestion([SUGGESTED[0]])]);
+      await status(t);
     },
   },
 ];
