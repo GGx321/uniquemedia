@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BANK_VERBS, CURATED_VERBS, readMotion } from "../../shared/scenes/motionGrammar";
-import { motionTextFindings, motionTextProblems } from "../../shared/scenes/motionText";
+import { motionTextFindings, motionTextProblems, undressesBy } from "../../shared/scenes/motionText";
 import type { BankCategory } from "../../shared/scenes/banks/types";
 import type { Capture } from "../../shared/scenes/captures";
 import type { PlanSlot } from "../scenes/schema";
@@ -12,8 +12,11 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WC2b round 2 (the controller's decision after the adversarial review): a vision text on any frame and an own text on an ordinary frame are held to a
-// POSITIVE motion grammar (shared/scenes/motionGrammar.ts). Every probe of the review is a case here: the leaks are refused, the covering controls and the innocent texts
-// pass or come back as a repairable `not-motion` (never `takes-off`), and an own idea on «Смелая» keeps today's answer, byte for byte.
+// POSITIVE motion grammar (shared/scenes/motionGrammar.ts). Every probe of the review is a case here.
+//
+// S5.WC2c (the owner, 2026-10-17: «убери ограничения везде»): the review's leak probes were refused for what they show; nothing is now. Each one passes, or comes back as a
+// repairable `not-motion` (a text the grammar does not read as one motion of hers) or with a quality problem; the grammar reads undressing and baring as such, so the prompt
+// says «Nothing new appears.» alone for it. The counts below pin how far the grammar reads; a change to them is a change to the grammar, made on purpose.
 
 function factsOf(result: FrameFactsResult): FrameFacts {
   if (result.kind !== "gallery") throw new Error(`expected a gallery photo, got ${result.kind}`);
@@ -27,35 +30,58 @@ function planned(category: BankCategory, t: Parameters<typeof pick>[1], capture:
 const FRIEND = planned("travel", (m) => m.captures.includes("friend") && m.legs === undefined && m.phone !== true && m.angle === undefined, "friend");
 const BOLD = planned("nightwear", (m) => m.captures.includes("mirror") && m.legs === undefined && m.angle === undefined, "mirror");
 
-describe("the review's leaks are refused as vision and own on an ordinary frame and as vision on «Смелая»", () => {
-  test("every leak probe", () => {
-    const passed = PROBE_LEAKS.flatMap((text) =>
-      [
-        ["ordinary vision", motionTextProblems(text, FRIEND, "vision")],
-        ["ordinary own", motionTextProblems(text, FRIEND, "own")],
-        ["«Смелая» vision", motionTextProblems(text, BOLD, "vision")],
-      ].flatMap(([where, problems]) => ((problems as string[]).length === 0 ? [`${String(where)}: ${text}`] : [])),
-    );
-    expect(passed).toEqual([]);
+/** The problems a probe may still get where the grammar holds: no content rule of what it shows, never takes-off. */
+const QUALITY = new Set(["not-motion", "staging", "phone", "face-hidden", "two-movements", "not-small", "too-long"]);
+/** The content rules that stay: the age guard and a model's text's shapes. */
+const KEPT_CONTENT = new Set(["printable", "charset", "form", "youth", "number", "youth-prop", "hair-colour", "instruction", "negation", "new-subject"]);
+
+/** What a probe gets as vision and own on an ordinary frame and as vision on «Смелая»: a problem the rules no longer give, or nothing. */
+const wrongly = (text: string): string[] =>
+  ([
+    ["ordinary vision", FRIEND, "vision"],
+    ["ordinary own", FRIEND, "own"],
+    ["«Смелая» vision", BOLD, "vision"],
+  ] as const).flatMap(([where, frame, source]) =>
+    motionTextFindings(text, frame, source)
+      .filter((finding) => !(QUALITY.has(finding.problem) || (finding.problem === "content" && KEPT_CONTENT.has(finding.rule))))
+      .map((finding) => `${where}: ${text} → ${finding.problem} (${finding.rule})`),
+  );
+
+/** How many of a probe file pass as vision on an ordinary frame, and how many of those its prompt reads as undressing. */
+function reach(texts: readonly string[]): { passed: number; undressing: number; of: number } {
+  const passed = texts.filter((text) => motionTextProblems(text, FRIEND, "vision").length === 0);
+  return { passed: passed.length, undressing: passed.filter((text) => undressesBy(text, "vision", false)).length, of: texts.length };
+}
+
+describe("S5.WC2c: the review's leak probes are refused for nothing they show", () => {
+  test("every leak probe (r1, r2, r3): no takes-off, and no content but by a rule that stays", () => {
+    expect([...PROBE_LEAKS, ...PROBE_LEAKS_R2, ...PROBE_LEAKS_R3].flatMap(wrongly)).toEqual([]);
+  });
+
+  test("how far the grammar reads them: the passes, and the passes read as undressing (pinned)", () => {
+    expect({ r1: reach(PROBE_LEAKS), r2: reach(PROBE_LEAKS_R2), r3: reach(PROBE_LEAKS_R3) }).toEqual({
+      r1: { passed: 157, undressing: 134, of: 206 },
+      r2: { passed: 109, undressing: 75, of: 112 },
+      r3: { passed: 52, undressing: 31, of: 65 },
+    });
   });
 });
 
 /**
- * What an innocent text may still get from the rules that were there before the grammar, never from it: the content line's revealing word at an ordinary frame («poses in
- * her bikini») and the new-subject rule's «walks in» («walks in her bikini along the shore»). Both are repairable `content`.
+ * What an innocent text may still get from the rules that were there before the grammar, never from it: the new-subject rule's «walks in» («walks in her bikini along the
+ * shore»), repairable `content`. (S5.WC2c: the content line's revealing words refuse nothing any more.)
  */
-const OLDER_CONTENT_RULES = new Set(["revealing", "new-subject"]);
+const OLDER_CONTENT_RULES = new Set(["new-subject"]);
 const notTheGrammars = (text: string, source: "vision" | "own"): string[] =>
   motionTextFindings(text, FRIEND, source)
     .filter((finding) => !(finding.problem === "not-motion" || (finding.problem === "content" && OLDER_CONTENT_RULES.has(finding.rule))))
     .map((finding) => `${source}: ${text} → ${finding.problem} (${finding.rule})`);
 
 describe("the covering controls among them pass (they end more covered)", () => {
-  test("every control, as vision and own on an ordinary frame (the content line's own revealing word aside: «her bikini strap»)", () => {
+  test("every control, as vision and own on an ordinary frame (S5.WC2c: «her bikini strap» is no revealing word any more), and none undresses her", () => {
     for (const text of PROBE_CONTROLS) {
-      for (const source of ["vision", "own"] as const) {
-        expect([text, source, motionTextFindings(text, FRIEND, source).filter((finding) => finding.rule !== "revealing")]).toEqual([text, source, []]);
-      }
+      for (const source of ["vision", "own"] as const) expect([text, source, motionTextFindings(text, FRIEND, source)]).toEqual([text, source, []]);
+      expect([text, undressesBy(text, "vision", false)]).toEqual([text, false]);
     }
   });
 });
@@ -63,6 +89,10 @@ describe("the covering controls among them pass (they end more covered)", () => 
 describe("the innocent probes pass, or come back as a repairable not-motion: never takes-off, never a content of the grammar's (F1)", () => {
   test("every innocent probe, as vision and own on an ordinary frame (the older content rules aside)", () => {
     expect(PROBE_INNOCENT.flatMap((text) => (["vision", "own"] as const).flatMap((source) => notTheGrammars(text, source)))).toEqual([]);
+  });
+
+  test("none that passes is read as undressing: the prompt keeps its clothing clause", () => {
+    expect(PROBE_INNOCENT.filter((text) => motionTextProblems(text, FRIEND, "vision").length === 0 && undressesBy(text, "vision", false))).toEqual([]);
   });
 
   test("the prone, dressing and twirling cases the controller names pass outright", () => {
@@ -83,8 +113,8 @@ describe("the innocent probes pass, or come back as a repairable not-motion: nev
   });
 });
 
-describe("an own idea on «Смелая» keeps today's path: the same problems, the same Kling and Grok prompts, for every probe", () => {
-  test("every probe's own-on-«Смелая» answer is the one recorded before the grammar", () => {
+describe("an own idea on «Смелая» keeps its own path (no grammar): the recorded problems and Kling and Grok prompts, for every probe", () => {
+  test("every probe's own-on-«Смелая» answer is the recorded one (re-recorded by S5.WC2c, see OWN_ON_BOLD)", () => {
     const moved = Object.entries(OWN_ON_BOLD).flatMap(([text, was]) => {
       const problems = motionTextProblems(text, BOLD, "own").join("+");
       const k = clipPromptOf(BOLD, text, "kling", "own");
@@ -98,98 +128,79 @@ describe("an own idea on «Смелая» keeps today's path: the same problems,
   });
 });
 
-// ---------- S5.WC2b round 3: the re-review (2 HIGH, 4 MEDIUM, LOW) ----------
+// ---------- S5.WC2b round 3: the re-review (2 HIGH, 4 MEDIUM, LOW), as S5.WC2c reads it ----------
 
-const where = (text: string): string[] =>
-  [
-    ["ordinary vision", motionTextProblems(text, FRIEND, "vision")],
-    ["ordinary own", motionTextProblems(text, FRIEND, "own")],
-    ["«Смелая» vision", motionTextProblems(text, BOLD, "vision")],
-  ].flatMap(([at, problems]) => ((problems as string[]).length === 0 ? [`${String(at)}: ${text}`] : []));
-
-describe("the re-review's leaks are refused as vision and own on an ordinary frame and as vision on «Смелая» (round 3)", () => {
-  test("every r2 probe", () => {
-    expect(PROBE_LEAKS_R2.flatMap(where)).toEqual([]);
-  });
-
-  test("H1, M1: a towel, a sheet, a blanket or the covers taken, pulled, slipped or kicked off stays what she wears or lies under: takes-off", () => {
+describe("the re-review's cases (round 3), now accepted: undressing is read as undressing, a place stays a place", () => {
+  test("H1, M1: a towel, a sheet, a blanket or the covers taken, pulled, slipped or kicked off pass, read as undressing", () => {
     for (const text of ["she slowly takes off her towel", "she slowly pulls off her towel", "she slowly slips off her towel", "she slowly kicks off the sheet", "she slowly pulls off the blanket", "she slowly takes off the covers"]) {
-      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, ["takes-off"]]);
+      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source), undressesBy(text, source, false)]).toEqual([text, source, [], true]);
     }
   });
 
-  test("H1: the towel or the blanket stays a place she moves on, off or from (steps, rolls, rises, sits, lies, gets up)", () => {
+  test("H1: the towel or the blanket stays a place she moves on, off or from (steps, rolls, rises, sits, lies, gets up): no undressing", () => {
     for (const text of ["she slowly steps off the towel", "she slowly rises from the blanket", "she slowly gets up off the towel", "she slowly rolls off the towel onto the sand"]) {
-      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, []]);
+      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source), undressesBy(text, source, false)]).toEqual([text, source, [], false]);
     }
   });
 
-  test("H2: «it» and «them» are what they stand for: legs or knees spread, opened or parted by a pronoun are an explicit act, content on every frame and source", () => {
+  test("H2: «it» and «them» are what they stand for: legs or knees spread, opened or parted by a pronoun pass on every frame and source (an explicit act is no refusal now)", () => {
     for (const text of ["she slowly lifts her legs and spreads them", "she slowly bends her knees and opens them", "she slowly crosses her legs and opens them", "she slowly raises her knees and parts them a little"]) {
       for (const source of ["vision", "own", "scene", "code"] as const) {
-        for (const frame of [FRIEND, BOLD]) expect([text, source, motionTextProblems(text, frame, source).includes("content")]).toEqual([text, source, true]);
+        for (const frame of [FRIEND, BOLD]) expect([text, source, motionTextProblems(text, frame, source)]).toEqual([text, source, []]);
       }
     }
   });
 
-  test("M2: a garment held closed, then her hands dropped, lowered or relaxed: takes-off", () => {
-    for (const text of ["she slowly holds her robe closed and drops her hands", "she slowly holds her robe closed, relaxing her hands", "she slowly closes her robe and drops her hands"]) {
-      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, ["takes-off"]]);
+  test("M2, M-B: a garment held closed, then her hands or arms moved, lets it go: it passes, read as undressing", () => {
+    for (const text of [
+      "she slowly holds her robe closed and drops her hands",
+      "she slowly holds her robe closed, relaxing her hands",
+      "she slowly closes her robe and drops her hands",
+      "she slowly holds her robe closed and lifts her hands",
+      "she slowly holds her robe closed and stretches",
+      "she slowly wraps her robe tighter and reaches up",
+    ]) {
+      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source), undressesBy(text, source, false)]).toEqual([text, source, [], true]);
     }
+    // Her face after it is no letting go: «… and lifts her chin» keeps the robe closed.
+    expect(undressesBy("she slowly wraps her coat tighter and lifts her chin", "vision", false)).toBe(false);
   });
 
-  test("M4: bending over toward the mirror is the explicit list's own, content on every frame and source", () => {
-    for (const source of ["vision", "own", "scene", "code"] as const) expect(motionTextProblems("she slowly bends over toward the mirror", BOLD, source)).toContain("content");
+  test("M4, M-C: bending over toward, in front of or at the mirror, her hips or her back posed there: they pass on every frame and source", () => {
+    for (const text of ["she slowly bends over toward the mirror", "she slowly bends over in front of the mirror", "she slowly bends over at the mirror", "she slowly lifts her hips in front of the mirror", "she slowly arches her back in front of the mirror", "she slowly leans forward in front of the mirror"]) {
+      for (const source of ["vision", "own", "scene", "code"] as const) expect([text, source, motionTextProblems(text, BOLD, source)]).toEqual([text, source, []]);
+    }
   });
 
   test("the bank's own «toward the mirror» stays: her head and her hips turned toward it", () => {
     for (const text of ["she slowly turns her head a little toward the mirror", "she turns her hips a little toward the mirror and back"]) expect(motionTextProblems(text, FRIEND, "vision")).toEqual([]);
   });
 
-  test("the re-review's sweep: every verb × particle × garment the grammar reads and the check passes ends more covered (or names bedding as a place)", () => {
+  test("the re-review's sweep, as a consistency of the one check: every verb × particle × garment text the grammar reads passes as vision on an ordinary frame (no rule refuses what the grammar reads)", () => {
     const VERBS = [...BANK_VERBS, ...CURATED_VERBS];
     const PARTS = ["off", "from", "out from", "down", "away", "aside", "open", "up", "out of", "under", "into", "across", "onto", "on"];
-    // The final touch adds garment parts said as phrases (a cup, a clip, laces, a ring, a hood of what she wears), which read as props before.
     const OBJS = [
       ...["her towel", "the towel", "the sheet", "the blanket", "her robe", "her top", "her dress", "her skirt", "her shorts", "her bra", "her bikini", "her strap", "her straps", "her neckline"],
       ...["her sleeve", "her jeans", "her panties", "her shirt", "the covers", "her outfit", "her clothes", "her jacket", "her hem", "her waistband", "her belt", "her duvet"],
       ...["her bra cup", "the clip of her bra", "the laces of her dress", "the laces of her corset", "the ring of her bikini top", "the hood of her robe", "her bikini cup"],
     ];
-    /** What may pass: bedding or a towel as a place; leaving it; a cover pulled up; what covers her legs, a strap or a neckline pulled up; a sleeve; a skirt or a hem down; an outer layer on; zipped up; smoothed. */
-    const COVERED = [
-      / (?:under|into|across|onto|on) (?:her towel|the towel|the sheet|the blanket|the covers|her duvet)$/,
-      /^she slowly (?:lies|gets|rolls|rises|sits|stands|steps) (?:off|from|out from) the (?:towel|sheet|blanket|covers)$/,
-      /^she slowly (?:pulls|tugs|draws) (?:up )?(?:the sheet|the blanket|the covers|her duvet)(?: up)?(?: a little)?$/,
-      /^she slowly (?:pulls|tugs|slides) (?:up )?her (?:jeans|waistband|strap|straps|neckline)(?: up)?(?: a little)?$/,
-      /^she slowly (?:pulls|tugs|rolls|pushes) (?:up |down )?her sleeve(?: up| down)?(?: a little)?$/,
-      /^she slowly (?:pulls|tugs|holds|keeps) (?:down )?her (?:skirt|hem)(?: down)?(?: a little)?$/,
-      /^she slowly (?:puts|slips|pulls) (?:on )?her (?:jacket|robe)(?: on)?(?: a little)?$/,
-      /^she slowly slips into her (?:jacket|robe)$/,
-      /^she slowly zips (?:up )?her (?:clothes|dress|hem|jacket|outfit|robe|shirt|skirt|top)(?: up)?(?: a little)?$/,
-      /^she slowly smooths (?:down |out )?(?:her|the) (?:dress|hem|skirt|shirt|top|outfit|clothes|sheet|blanket|covers|duvet)(?: down| out)?(?: a little)?$/,
-    ];
-    const loose: string[] = [];
+    const refused: string[] = [];
+    let read = 0;
     for (const v of VERBS) {
       for (const p of PARTS) {
         for (const o of OBJS) {
           for (const t of [`she slowly ${v} ${p} ${o}`, `she slowly ${v} ${o} ${p}`, `she slowly ${v} ${o} ${p} a little`]) {
-            if (!readMotion(t).ok) continue;
-            if (motionTextProblems(t, FRIEND, "vision").length > 0 && motionTextProblems(t, BOLD, "vision").length > 0) continue;
-            if (!COVERED.some((shape) => shape.test(t))) loose.push(t);
+            // Within the length the one check allows (a longer one is `too-long`, a rule of its own).
+            if (t.length > 60 || !readMotion(t).ok) continue;
+            read++;
+            const problems = motionTextProblems(t, FRIEND, "vision");
+            if (problems.length > 0) refused.push(`${t} → ${problems.join("+")}`);
           }
         }
       }
     }
-    // Two clauses (the final touch's M-B and M-D): a garment held closed, then any movement of her hands or arms; a hand on her knee or at her lips, then slid higher or
-    // brought lower; a strap adjusted, then a bare «lower» (the strap again).
-    const passes = (t: string): boolean => readMotion(t).ok && (motionTextProblems(t, FRIEND, "vision").length === 0 || motionTextProblems(t, BOLD, "vision").length === 0);
-    for (const first of ["she slowly holds her robe closed", "she slowly pulls her robe closed", "she slowly wraps her robe tighter"]) {
-      for (const then of ["lifts her hands", "raises her arms", "stretches", "reaches up", "waves both hands", "lower", "drops her hands", "spreads her arms"]) if (passes(`${first} and ${then}`)) loose.push(`${first} and ${then}`);
-    }
-    for (const first of ["she slowly rests her hand on her knee", "she slowly brings her hand to her lips", "she slowly adjusts her strap"]) {
-      for (const then of ["slides it higher", "slides it up", "lower"]) if (passes(`${first} and ${then}`)) loose.push(`${first} and ${then}`);
-    }
-    expect(loose).toEqual([]);
+    expect(refused).toEqual([]);
+    expect(read).toBeGreaterThan(0);
   }, 120_000);
 
   test("the café vocabulary reads (a repair would otherwise spin)", () => {
@@ -209,58 +220,40 @@ describe("the re-review's leaks are refused as vision and own on an ordinary fra
   });
 });
 
-// ---------- S5.WC2b final touch: the last re-check ----------
+// ---------- S5.WC2b final touch: the last re-check, as S5.WC2c reads it ----------
 
-describe("the last re-check's leaks are refused as vision and own on an ordinary frame and as vision on «Смелая» (final touch)", () => {
-  test("every r3 probe", () => {
-    expect(PROBE_LEAKS_R3.flatMap(where)).toEqual([]);
-  });
-
-  test("M-A: a cup, a clip, laces or a ring of what she wears is part of it, never a prop: lowered or taken off, takes-off", () => {
-    // «bra» and «bikini» are the content line's revealing words at an ordinary frame too: the grammar's code is takes-off.
+describe("the last re-check's cases (final touch), now accepted", () => {
+  test("M-A: a cup, a clip, laces or a ring of what she wears is part of it, never a prop: lowered or taken off, it passes, read as undressing", () => {
     for (const text of ["she slowly lowers her bra cup", "she slowly removes the clip of her bra", "she slowly pulls the laces of her dress down", "she slowly pulls the ring of her bikini top"]) {
-      for (const source of ["vision", "own"] as const) expect([text, source, motionTextFindings(text, FRIEND, source).filter((f) => f.rule === "grammar-off").length]).toEqual([text, source, 1]);
+      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source), undressesBy(text, source, false)]).toEqual([text, source, [], true]);
     }
   });
 
-  test("M-B: a garment held closed, then any movement of her hands or arms: takes-off", () => {
-    // The last is 61 characters (too-long too): its grammar code is still takes-off.
-    for (const text of ["she slowly holds her robe closed and lifts her hands", "she slowly holds her robe closed and stretches", "she slowly wraps her robe tighter and reaches up", "she slowly holds her robe closed and puts her hands on her hips"]) {
-      for (const source of ["vision", "own"] as const) expect([text, source, motionTextFindings(text, FRIEND, source).filter((f) => f.rule === "grammar-off").length]).toEqual([text, source, 1]);
-    }
-  });
-
-  test("M-C: bending over in front of, at or facing the mirror is the explicit list's own; her hips, her arched back or leaning forward there pose her: content", () => {
-    for (const source of ["vision", "own", "scene", "code"] as const) {
-      for (const text of ["she slowly bends over in front of the mirror", "she slowly bends over at the mirror"]) expect([text, source, motionTextProblems(text, BOLD, source).includes("content")]).toEqual([text, source, true]);
-    }
-    for (const text of ["she slowly lifts her hips in front of the mirror", "she slowly arches her back in front of the mirror", "she slowly leans forward in front of the mirror"]) {
-      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, ["content"]]);
-    }
-  });
-
-  test("M-D: a hand slid up her knee or brought lower is no motion it reads: content", () => {
+  test("M-D: a hand slid up her knee or brought lower passes, and undresses nothing", () => {
     for (const text of ["she slowly rests her hand on her knee and slides it higher", "she slowly rests a hand on her knee, sliding it up", "she slowly brings her hand to her lips and lower"]) {
-      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, ["content"]]);
+      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source), undressesBy(text, source, false)]).toEqual([text, source, [], false]);
     }
   });
 
-  test("LOW: undressing said in a way the grammar does not read is still named: takes-off; knees swayed side to side are refused", () => {
-    for (const text of ["she slowly steps out from her towel", "she slowly zips her hoodie down a little", "her chest slowly rises out of her top", "she slowly stands, the towel at her feet"]) {
-      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, ["takes-off"]]);
+  test("LOW: undressing said in the words of the final touch passes, read as undressing; what the grammar still cannot read is a repairable not-motion", () => {
+    for (const text of ["she slowly steps out from her towel", "she slowly zips her hoodie down a little"]) {
+      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source), undressesBy(text, source, false)]).toEqual([text, source, [], true]);
     }
-    expect(motionTextProblems("she slowly sways her knees side to side", FRIEND, "vision")).toEqual(["content"]);
+    for (const text of ["her chest slowly rises out of her top", "she slowly stands, the towel at her feet"]) {
+      for (const source of ["vision", "own"] as const) expect([text, source, motionTextProblems(text, FRIEND, source)]).toEqual([text, source, ["not-motion"]]);
+    }
+    expect(motionTextProblems("she slowly sways her knees side to side", FRIEND, "vision")).toEqual([]);
   });
 
-  test("knees or legs named, then «them» moved aside, apart or open, whatever noun came last (the r3 probe is refused only by its length otherwise): content", () => {
+  test("knees named, then «them» lowered aside, pass", () => {
     const text = "she slowly lifts her knees over a book, lowering them aside";
     expect(text.length).toBeLessThanOrEqual(60);
-    for (const source of ["vision", "own"] as const) expect([source, motionTextProblems(text, FRIEND, source)]).toEqual([source, ["content"]]);
+    for (const source of ["vision", "own"] as const) expect([source, motionTextProblems(text, FRIEND, source)]).toEqual([source, []]);
   });
 
-  test("what the final touch leaves alone still reads: her hand on her knee, the cup to her lips, a skirt held down in the wind, a strap pulled up, the beach towel stepped off", () => {
+  test("what the final touch left alone still reads: her hand on her knee, the cup to her lips, a skirt held down in the wind, a strap pulled up, the beach towel stepped off", () => {
     for (const text of ["she slowly rests her hand on her knee", "she slowly brings the cup to her lips", "she slowly holds her skirt down in the wind", "she slowly pulls up her strap a little", "she slowly steps off the towel", "she slowly lowers her hand slowly and smiles"]) {
-      expect([text, motionTextProblems(text, FRIEND, "vision")]).toEqual([text, []]);
+      expect([text, motionTextProblems(text, FRIEND, "vision"), undressesBy(text, "vision", false)]).toEqual([text, [], false]);
     }
   });
 });

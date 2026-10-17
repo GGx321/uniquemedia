@@ -243,8 +243,8 @@ describe("checks before any money (I5.51)", () => {
     expect(clipPromptOf(facts, "she turns slowly in a cinematic orbit", "kling", "scene").ok).toBe(false);
   });
 
-  test("a revealing word is refused on an ordinary frame", () => {
-    expect(clipPromptOf(facts, "she adjusts her bra strap slowly", "kling", "scene").ok).toBe(false);
+  test("S5.WC2c: a revealing word in a motion is refused no more, on an ordinary frame too (the bank says none at its frame's level: motionText.test.ts sweeps all 271)", () => {
+    expect(clipPromptOf(facts, "she adjusts her bra strap slowly", "kling", "scene").ok).toBe(true);
   });
 
   test("a motion that names a phone on a propped capture is refused", () => {

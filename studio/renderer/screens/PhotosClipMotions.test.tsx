@@ -568,16 +568,26 @@ describe("63b, 63c: the idea refused", () => {
     }
   });
 
-  test("63c (Q-H = 2): on a frame that is not «Смелая» an idea that takes clothing off is refused `takes-off` in the owner's words, after one paid attempt", async () => {
+  test("S5.WC2c (63c retired): on a frame that is not «Смелая» an idea that takes clothing off is translated like any other: no refusal, it joins the list chosen", async () => {
     const h = await openNini();
     const s = await openSheet();
     await typeIdea(s, "медленно снимает кардиган");
-    h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly takes off her robe")]);
+    h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly takes off her cardigan")]);
+    await translate(s);
+    expect(s.querySelector(".mc-refusal") == null).toBe(true);
+    expect(plain(s.querySelector(".mc-status")?.textContent)).toBe("Идея переведена — оплачено $0.001.");
+    expect(checkedRow(s)).toBe("Своя идея: медленно снимает кардиганshe slowly takes off her cardigan");
+    expect(h.engine.peekMotions().lines.filter((line) => line.attemptId.includes(":idea#"))).toHaveLength(1);
+  });
+
+  test("S5.WC2c: an idea the age guard refuses is refused at once with the content text, after one paid attempt", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    await typeIdea(s, "медленно снимает халат, ей шестнадцать");
+    h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly takes off her robe, aged sixteen"), mockIdeaAnswer("she slowly takes off her robe")]);
     await translate(s);
     const refusal = s.querySelector(".mc-refusal") as HTMLElement;
-    expect(Array.from(refusal.querySelectorAll("p")).map((p) => plain(p.textContent))).toEqual([
-      "Так не получится: здесь одежда остаётся на месте — такое движение только для кадров «Смелой».",
-    ]);
+    expect(Array.from(refusal.querySelectorAll("p")).map((p) => plain(p.textContent))).toEqual([plain(MOTION_PROBLEMS_RU.content)]);
     expect(plain(refusal.querySelector(".mc-paid")?.textContent)).toBe("За перевод оплачено $0.001.");
     expect(h.engine.peekMotions().lines.filter((line) => line.attemptId.includes(":idea#"))).toHaveLength(1);
     expect(rowTexts(s).some((row) => row.startsWith("Своя идея"))).toBe(false);
@@ -929,8 +939,9 @@ describe("round 2: the smaller points", () => {
   test("a rejection that cost nothing says «Перевод — бесплатно.»", async () => {
     const h = await openNini();
     const s = await openSheet();
-    await typeIdea(s, "медленно снимает кардиган");
-    h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly takes off her robe", 0)]);
+    // S5.WC2c: an idea the age guard refuses (an undressing one is no refusal any more), final at once.
+    await typeIdea(s, "медленно снимает халат, ей шестнадцать");
+    h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly takes off her robe, aged sixteen", 0)]);
     await translate(s);
     expect(plain(s.querySelector(".mc-refusal .mc-paid")?.textContent)).toBe("Перевод — бесплатно.");
   });

@@ -7,7 +7,7 @@ import { chatBody, fakeFetch, makeClient, setupMoney, withoutAt, type Money, typ
 import { TRANSLATOR_JSON_SCHEMA, ideaScrub, rawScrub, runIdeaTranslator, translatorPriceShape, type TranslatorJob, type TranslatorOutcome } from "./ideaTranslator";
 import { checkModelText } from "./motionCall";
 import { MOTION_PROMPT_TEXTS } from "./motionPrompts";
-import { GOOD_MOTION, UNDRESS_MOTION, boldMirrorFrame, timerFrame } from "./testing/motionKit";
+import { GOOD_MOTION, UNDER_AGE_MOTION, UNDRESS_MOTION, boldMirrorFrame, timerFrame } from "./testing/motionKit";
 useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WC3 (plan s5b2 §5.3 «The translator», I5.67, I5.68): the owner's idea becomes one English motion, or is refused with closed problems. The idea is JSON DATA in the user message and
@@ -139,18 +139,24 @@ describe("an idea that does not pass", () => {
     const { net, result } = run([reply(NOT_MOTION), reply(NOT_MOTION)]);
     const problems = checkModelText(timerFrame(), NOT_MOTION, "own").problems;
     expect(problems.length).toBeGreaterThan(0);
-    expect(repairMayHelp(problems)).toBe(true);
+    expect(repairMayHelp(NOT_MOTION, timerFrame(), "own")).toBe(true);
     expect(await result).toEqual({ kind: "rejected", problems, costMicros: 2_000 });
     expect(net.calls).toHaveLength(2);
     expect(money.ledger.openReserves()).toEqual([]);
   });
 
-  test("an idea that takes clothing off on an ordinary frame is rejected `takes-off` at once, with no repair attempt (the owner's own choice)", async () => {
+  test("S5.WC2c: an idea that takes clothing off on an ordinary frame is accepted, at once", async () => {
     const { net, result } = run([reply(UNDRESS_MOTION)]);
-    const outcome = await result;
-    expect(outcome).toMatchObject({ kind: "rejected", costMicros: 1_000 });
-    expect(outcome.kind === "rejected" ? outcome.problems : []).toContain("takes-off");
+    expect(await result).toEqual({ kind: "ok", text: UNDRESS_MOTION, costMicros: 1_000 });
     expect(net.calls).toHaveLength(1);
+  });
+
+  test("S5.WC2c: an idea the age guard refuses is rejected `content` at once, with no repair attempt (a repair could only take the age out)", async () => {
+    for (const [i, facts] of [timerFrame(), boldMirrorFrame()].entries()) {
+      const { net, result } = run([reply(UNDER_AGE_MOTION), reply(UNDRESS_MOTION)], { ...JOB, jobId: `job-0000010${i}`, facts });
+      expect(await result).toEqual({ kind: "rejected", problems: ["content"], costMicros: 1_000 });
+      expect(net.calls).toHaveLength(1);
+    }
   });
 
   test("an answer that is not the JSON asked for is asked once more with `unreadable`; unreadable twice is `none`, paid for both", async () => {

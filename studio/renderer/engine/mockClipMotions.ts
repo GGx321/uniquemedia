@@ -22,7 +22,7 @@ import {
 import { freshDrafts, sameText, sheetVisionTexts } from "../../shared/engine/motionKnown";
 import { CAPTURES } from "../../shared/scenes/captures";
 import type { ContentLevel } from "../../shared/scenes/contentLine";
-import { motionTextProblems, repairMayHelp } from "../../shared/scenes/motionText";
+import { motionTextProblems, repairMayHelp, type MotionFrame } from "../../shared/scenes/motionText";
 
 // Stage 5, 5b.2, S5.WC4 (plan s5b2 §5.3, §5.6 «C», I5.66-I5.68; Q-H = 2): the vision motion writer and «Своя идея» of the mock engine, the mirror of engine/clips/{motionService,motionWriter,ideaTranslator,motionStore}.ts.
 // The mock plays the model's answers from a script (`MockModelReply`: what OpenRouter would answer, in the words the transport reads), and does with each one what the engine does: the same parsing, the SAME shared motion check
@@ -154,11 +154,20 @@ export function normalizeModelText(raw: string): string {
 /** engine/clips/motionCall.ts `checkModelText` (the 130-word cap aside, see the header). */
 export function checkModelText(frame: Pick<MockMotionFrame, "bold" | "level">, raw: string, source: Extract<ClipMotionSource, "vision" | "own">): { text: string; problems: MotionProblem[] } {
   const text = normalizeModelText(raw);
-  const checked = { capture: "unknown" as const, plannedCapture: "unknown" as const, face: "yes" as const, level: frame.level, bold: frame.bold, moment: null };
-  const problems = motionTextProblems(text, checked, source);
+  const problems = motionTextProblems(text, checkedFrame(frame), source);
   if (problems.length > 0) return { text, problems };
   if (text.length > MOTION_TEXT_MAX || !MOTION_ENGLISH.test(text)) return { text, problems: ["not-motion"] };
   return { text, problems };
+}
+
+/** What the shared check reads of the mock's frame (a planless photo, her face showing). */
+function checkedFrame(frame: Pick<MockMotionFrame, "bold" | "level">): MotionFrame {
+  return { capture: "unknown", plannedCapture: "unknown", face: "yes", level: frame.level, bold: frame.bold, moment: null };
+}
+
+/** engine/clips/motionWriter.ts and ideaTranslator.ts: a refusal of the age guard gets no repair (the shared `repairMayHelp`, S5.WC2c). */
+function mayRepair(frame: Pick<MockMotionFrame, "bold" | "level">, text: string, source: Extract<ClipMotionSource, "vision" | "own">): boolean {
+  return repairMayHelp(text, checkedFrame(frame), source);
 }
 
 const CAPTURE_NAMES: readonly string[] = [...CAPTURES, "unknown"];
@@ -712,7 +721,7 @@ export class MockClipMotions {
         const { text, problems } = checkModelText(frame, motion.text_en, "vision");
         if (problems.length > 0) {
           this.#ports.log(`[clip] photo ${photoId}: suggestion ${i + 1} of ${answer.motions.length} dropped (${problems.join(", ")})`);
-          if (repairMayHelp(problems)) {
+          if (mayRepair(frame, text, "vision")) {
             mayHelp = true;
             for (const problem of problems) repairable.add(problem);
           }
@@ -788,8 +797,8 @@ export class MockClipMotions {
       const { text, problems } = checkModelText(frame, english, "own");
       if (problems.length === 0) return { kind: "ok", text, costMicros: cost };
       lastProblems = problems;
-      // `takes-off` gets no repair: the idea is the owner's own choice.
-      if (!repairMayHelp(problems)) return settled();
+      // The age guard's refusal gets no repair (S5.WC2c).
+      if (!mayRepair(frame, text, "own")) return settled();
       feedback = problems;
       previous = MOTION_ENGLISH.test(text) ? text.slice(0, PREVIOUS_MAX_CHARS) : null;
     }

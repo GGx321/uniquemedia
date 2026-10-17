@@ -35,6 +35,8 @@ export const CANARY = "CANARY-9c41";
 export const CODE_TEXT = "she tilts her head a little to one side and smiles";
 export const NOT_MOTION = "slowly she turns her head";
 export const UNDRESS = "she slowly takes off her robe";
+/** The same with an age: the minor-age guard refuses it on every frame, and no repair is asked for (S5.WC2c). */
+export const UNDER_AGE = "she slowly takes off her robe, aged sixteen";
 
 /** The writer's answer for these texts (labels «Движение n»). */
 export function suggestion(texts: readonly string[], costMicros = 3_400, frame: Record<string, unknown> = { capture: "unknown", phoneVisible: false, faceVisible: true }): MockModelReply {

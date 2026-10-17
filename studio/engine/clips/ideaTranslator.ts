@@ -12,7 +12,7 @@ import type { MotionJobDeps } from "./motionWriter";
 // Stage 5, 5b.2, S5.WC3 (plan s5b2 §5.3 «The translator», I5.67, I5.68): «Своя идея». The owner's idea (1-300 characters) becomes one English motion of at most 60 characters, or is refused with closed
 // `MotionProblem`s. The idea is JSON DATA in the user message and exists nowhere else: not in the system prompt, not in a log line, not in the saved raw body of an unusable answer (the call's own
 // `scrubRaw`), not in the store (the engine keeps its label and the English text only). The translator sees no image. One repair at most: a second attempt with the closed codes and the previous English
-// text (never a free-text reason); `takes-off` gets none (`repairMayHelp`). Two attempts at most (`MOTION_MAX_ATTEMPTS`), ids `<jobId>:idea#N`.
+// text (never a free-text reason); a refusal of the age guard gets none (`repairMayHelp`, S5.WC2c). Two attempts at most (`MOTION_MAX_ATTEMPTS`), ids `<jobId>:idea#N`.
 //
 // The wiring only: the system prompt is `MOTION_PROMPT_TEXTS.translatorSystem` (S5.WCX writes it).
 
@@ -200,8 +200,8 @@ export async function runIdeaTranslator(deps: MotionJobDeps, job: TranslatorJob)
     const { text, problems } = checkModelText(job.facts, english, "own");
     if (problems.length === 0) return { kind: "ok", text, costMicros: cost };
     lastProblems = problems;
-    // `takes-off` gets no repair: the idea is the owner's own choice, and a repair could only make it another motion than he asked for.
-    if (!repairMayHelp(problems)) return settled();
+    // The age guard's refusal gets no repair (S5.WC2c, a hard line): a repair could only take out the age the idea said.
+    if (!repairMayHelp(text, job.facts, "own")) return settled();
     feedback = problems;
     // L3, LOW-b: only text in the contract's motion English goes back to the model (letters, digits, spaces and , . ' -): no quote, bracket or semicolon that could carry an instruction.
     previous = MOTION_ENGLISH.test(text) ? text.slice(0, PREVIOUS_MAX_CHARS) : null;

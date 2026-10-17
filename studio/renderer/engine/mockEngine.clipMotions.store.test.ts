@@ -6,6 +6,7 @@ import {
   BOLD,
   GOOD_TEXTS,
   PLAIN,
+  UNDER_AGE,
   UNDRESS,
   create,
   endOf,
@@ -134,22 +135,24 @@ describe("clips.options lists the stored motions", () => {
   test("checks the stored items again: one edited into a text that no longer passes is not listed, and an older one takes its place", async () => {
     const m = await filled();
     m.engine.tamperMotionStore(PLAIN, (store) => {
-      for (const item of store.items) if (item.id === "v-5") item.text = UNDRESS;
+      for (const item of store.items) if (item.id === "v-5") item.text = UNDER_AGE;
     });
     const listed = await optionsOf(m);
     expect(listed.motions.filter((x) => x.source === "vision").map((x) => x.id)).toEqual(["v-2", "v-3", "v-4"]);
   });
 
-  test("a frame of «Смелая» lists an undressing idea; an ordinary frame does not", async () => {
+  test("S5.WC2c: a frame of «Смелая» and an ordinary frame both list an undressing idea; neither lists one the age guard refuses", async () => {
     const m = makeClipMock({ clips: { boldClips: "kling-only" } });
     m.engine.scriptNextMotionReplies([idea(UNDRESS)]);
     await unwrap(translate(m, "снимает халат", BOLD));
     expect((await optionsOf(m, BOLD)).motions.map((x) => x.id)).toContain("o-1");
     m.engine.tamperMotionStore(PLAIN, (store) => {
-      store.items.push({ id: "o-1", source: "own", label: "снимает халат", text: UNDRESS });
-      store.next.own = 2;
+      store.items.push({ id: "o-1", source: "own", label: "снимает халат", text: UNDRESS }, { id: "o-2", source: "own", label: "снимает халат", text: UNDER_AGE });
+      store.next.own = 3;
     });
-    expect((await optionsOf(m, PLAIN)).motions.map((x) => x.id)).not.toContain("o-1");
+    const plain = (await optionsOf(m, PLAIN)).motions.map((x) => x.id);
+    expect(plain).toContain("o-1");
+    expect(plain).not.toContain("o-2");
   });
 
   test("a photo with nothing stored lists the code motions and no reading", async () => {

@@ -20,6 +20,8 @@ const dir = useEngineDir("studio-engine-clip-motions-");
 const UNREADABLE = chatReply("I cannot see the photo", 0.002);
 const NOT_MOTION = "slowly she turns her head";
 const UNDRESS = "she slowly takes off her robe";
+/** The same with an age: the minor-age guard refuses it on every frame, at once (S5.WC2c). */
+const UNDER_AGE = "she slowly takes off her robe, aged sixteen";
 const TUCK = GOOD_TEXTS[0];
 /** The code motion `g-tilt`, which the test photo offers. */
 const CODE_TEXT = "she tilts her head a little to one side and smiles";
@@ -387,12 +389,17 @@ describe("clips.translateIdea", () => {
     await expect(readFile(w.storePath(), "utf8")).rejects.toThrow();
   });
 
-  test("an idea that takes clothing off on an ordinary frame is `rejected` with takes-off at once: one chat call", async () => {
+  test("S5.WC2c: an idea that takes clothing off on an ordinary frame is accepted and stored: one chat call", async () => {
     const w = await motionWorld(dir(), { chat: () => ideaReply(UNDRESS) });
-    const result = resultOf(await w.translate());
-    expect(result).toMatchObject({ outcome: "rejected", costMicros: 1_000 });
-    expect((result as { problems: string[] }).problems).toContain("takes-off");
+    expect(resultOf(await w.translate("снимает халат"))).toEqual({ outcome: "ok", item: { id: "o-1", source: "own", label: "снимает халат", text: UNDRESS }, costMicros: 1_000 });
     expect(w.net.chats).toHaveLength(1);
+  });
+
+  test("S5.WC2c: an idea the age guard refuses is `rejected` content at once (no repair could take the age out), nothing stored", async () => {
+    const w = await motionWorld(dir(), { chat: () => ideaReply(UNDER_AGE) });
+    expect(resultOf(await w.translate())).toEqual({ outcome: "rejected", problems: ["content"], costMicros: 1_000 });
+    expect(w.net.chats).toHaveLength(1);
+    await expect(readFile(w.storePath(), "utf8")).rejects.toThrow();
   });
 
   test("the same idea on a frame of «Смелая» is accepted (Q-H = 2)", async () => {
@@ -452,7 +459,7 @@ describe("clips.options and the clip commands resolve the stored motions", () =>
   test("checks the stored items again: one edited into a text that no longer passes is not listed, and an older one takes its place", async () => {
     const w = await filled();
     const file = await storeOf(w.storePath());
-    await w.writeStore({ ...file, items: file.items.map((item) => (item.id === "v-5" ? { ...item, text: UNDRESS } : item)) });
+    await w.writeStore({ ...file, items: file.items.map((item) => (item.id === "v-5" ? { ...item, text: UNDER_AGE } : item)) });
     const listed = await w.options();
     expect(listed.suitable && listed.motions.filter((m) => m.source === "vision").map((m) => m.id)).toEqual(["v-2", "v-3", "v-4"]);
   });
