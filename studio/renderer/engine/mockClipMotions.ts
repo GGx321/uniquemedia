@@ -19,6 +19,7 @@ import {
   type Estimate,
   type MotionProblem,
 } from "../../shared/engine";
+import { freshDrafts, sameText } from "../../shared/engine/motionKnown";
 import { CAPTURES } from "../../shared/scenes/captures";
 import type { ContentLevel } from "../../shared/scenes/contentLine";
 import { motionTextProblems, repairMayHelp } from "../../shared/scenes/motionText";
@@ -126,7 +127,7 @@ export function mockIdeaAnswer(text: string, costMicros?: number): MockModelRepl
 }
 
 /** What an unscripted attempt answers: three small motions, or the translation of any idea into one. Demo and tests that do not care. */
-const DEFAULT_SUGGESTIONS = ["she slowly tucks a strand of hair behind her ear", "she tilts her head a little to one side and smiles", "she slowly takes a breath and relaxes her shoulders"] as const;
+const DEFAULT_SUGGESTIONS = ["she slowly tucks a strand of hair behind her ear", "she slowly lifts her chin and smiles softly", "she slowly turns toward the window and smiles"] as const;
 const DEFAULT_TRANSLATION = "she slowly turns her head toward the window and smiles";
 
 // ---------- the checks (mirrors of engine/clips/motionCall.ts and motionWriter.ts) ----------
@@ -135,6 +136,8 @@ const DEFAULT_TRANSLATION = "she slowly turns her head toward the window and smi
 export interface MockMotionFrame {
   readonly bold: boolean;
   readonly level: ContentLevel;
+  /** The English of the scene and code motions the frame offers: a suggestion equal to one is not stored (the engine's `motionChoicesOf`, S5.WC3c). */
+  readonly offered: readonly string[];
 }
 
 /** engine/clips/motionCall.ts `normalizeModelText`: typographic apostrophes, one space, no final period, a leading «She» in lowercase. */
@@ -149,7 +152,7 @@ export function normalizeModelText(raw: string): string {
 }
 
 /** engine/clips/motionCall.ts `checkModelText` (the 130-word cap aside, see the header). */
-export function checkModelText(frame: MockMotionFrame, raw: string, source: Extract<ClipMotionSource, "vision" | "own">): { text: string; problems: MotionProblem[] } {
+export function checkModelText(frame: Pick<MockMotionFrame, "bold" | "level">, raw: string, source: Extract<ClipMotionSource, "vision" | "own">): { text: string; problems: MotionProblem[] } {
   const text = normalizeModelText(raw);
   const checked = { capture: "unknown" as const, plannedCapture: "unknown" as const, face: "yes" as const, level: frame.level, bold: frame.bold, moment: null };
   const problems = motionTextProblems(text, checked, source);
@@ -663,7 +666,11 @@ export class MockClipMotions {
     }
     if (outcome.kind === "none") return good({ outcome: "none", costMicros: outcome.costMicros });
     const store = this.#read(avatarId, photoId, ready.sha);
-    const made = addItems(store, "vision", outcome.drafts);
+    // The engine's rule (clips/motionService.ts): known = the frame's scene and code motions and the stored suggestions (an own idea is another source); nothing new writes nothing, the reading included.
+    const known = [...ready.frame.offered.map(sameText), ...store.items.filter((item) => item.source === "vision").map((item) => sameText(item.text))];
+    const { fresh, repeated } = freshDrafts(outcome.drafts, known);
+    if (fresh.length === 0) return good(repeated ? { outcome: "none", reason: "repeated", costMicros: outcome.costMicros } : { outcome: "none", costMicros: outcome.costMicros });
+    const made = addItems(store, "vision", fresh);
     store.reading = outcome.reading;
     if (made.length === 0) return good({ outcome: "none", costMicros: outcome.costMicros });
     return good({ outcome: "ok", motions: made.map(choiceOf).map((m) => ({ ...m, source: "vision" as const })), reading: outcome.reading, costMicros: outcome.costMicros });
@@ -715,8 +722,8 @@ export class MockClipMotions {
           this.#ports.log(`[clip] photo ${photoId}: suggestion ${i + 1} of ${answer.motions.length} dropped (no label)`);
           continue;
         }
-        if (seen.has(text)) continue;
-        seen.add(text);
+        if (seen.has(sameText(text))) continue;
+        seen.add(sameText(text));
         drafts.push({ label, text });
       }
       if (drafts.length > 0) return { kind: "ok", drafts, reading: readingOf(answer.frame), costMicros: cost };

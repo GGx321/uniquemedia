@@ -19,10 +19,11 @@ export const TRANSLATE = { expectedMicros: 1_000, worstMicros: 9_650 } as const;
 export const SUGGEST_ATTEMPT = 7_024;
 export const TRANSLATE_ATTEMPT = 3_184;
 
+/** None of them is a code motion of a frame (S5.WC3c: a suggestion equal to one is not stored). */
 export const GOOD_TEXTS = [
   "she slowly tucks a strand of hair behind her ear",
-  "she tilts her head a little to one side and smiles",
-  "she slowly takes a breath and relaxes her shoulders",
+  "she slowly lifts her chin and smiles softly",
+  "she slowly turns toward the window and smiles",
   "she slowly looks down and smiles to herself",
   "she slowly glances to the side and looks back",
 ] as const;
@@ -30,6 +31,8 @@ export const GOOD_TEXTS = [
 /** The owner's idea, with a canary far enough in that the first 40 characters (the label) do not hold it. */
 export const IDEA = "медленно поворачивает голову к окну и улыбается, CANARY-9c41";
 export const CANARY = "CANARY-9c41";
+/** The sheet's code motion `g-tilt` on the plain photo. */
+export const CODE_TEXT = "she tilts her head a little to one side and smiles";
 export const NOT_MOTION = "slowly she turns her head";
 export const UNDRESS = "she slowly takes off her robe";
 
