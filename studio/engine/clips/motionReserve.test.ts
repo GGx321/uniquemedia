@@ -4,7 +4,7 @@ import { SUGGEST_ATTEMPT, TRANSLATE_ATTEMPT } from "../money/motionEstimate";
 import { chatAttemptWorstMicros } from "../openrouter/chat";
 import { chatParams, fakeFetch, JPEG, makeClient, setupMoney, type Money } from "../openrouter/testing/fakes";
 import type { ChatParams } from "../openrouter/types";
-import { PROBE_USAGES, type ProbeUsage } from "./testing/probeUsages";
+import { PROBE_USAGES as RECORDED, PX_USAGES, type ProbeUsage } from "./testing/probeUsages";
 useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WCX (the reasoning overrun): every part C attempt the paid probes P-M and P-R recorded, replayed through the real chat client and budget at the part C ceilings. On grok-4.3
@@ -18,6 +18,9 @@ beforeEach(async () => {
 afterEach(async () => {
   await money.cleanup();
 });
+
+/** Every recorded attempt: P-M's and P-R's, and (round 2) P-X's under the WCX texts. */
+const PROBE_USAGES: readonly ProbeUsage[] = [...RECORDED, ...PX_USAGES];
 
 const ceilingsOf = (usage: ProbeUsage) => (usage.call === "suggest" ? SUGGEST_ATTEMPT : TRANSLATE_ATTEMPT);
 
@@ -50,13 +53,15 @@ describe("the part C attempts carry the reasoning allowance", () => {
 });
 
 describe("replaying P-M and P-R", () => {
-  test("the record holds every attempt: 9 vision and 10 translations of P-M, 29 translations of P-R", () => {
+  test("the record holds every attempt: 9 vision and 10 translations of P-M, 29 translations of P-R, 10 translations and 3 vision of P-X", () => {
     expect(PROBE_USAGES.filter((u) => u.probe === "P-M" && u.call === "suggest")).toHaveLength(9);
     expect(PROBE_USAGES.filter((u) => u.probe === "P-M" && u.call === "translate")).toHaveLength(10);
     expect(PROBE_USAGES.filter((u) => u.probe === "P-R")).toHaveLength(29);
+    expect(PROBE_USAGES.filter((u) => u.probe === "P-X" && u.call === "translate")).toHaveLength(10);
+    expect(PROBE_USAGES.filter((u) => u.probe === "P-X" && u.call === "suggest")).toHaveLength(3);
   });
 
-  test("all 48 bills settle under the reserve of their attempt: zero overruns, and the ledger never halts", async () => {
+  test("all 61 bills settle under the reserve of their attempt: zero overruns, and the ledger never halts", async () => {
     const above: number[] = [];
     for (const [n, usage] of PROBE_USAGES.entries()) {
       const net = fakeFetch([{ status: 200, body: bodyOf(usage) }]);
@@ -82,7 +87,7 @@ describe("replaying P-M and P-R", () => {
 
   test("the margin: every bill on an effort the engine sends («low», «none») uses less than half of its attempt's smallest reserve", () => {
     const sent = PROBE_USAGES.filter((usage) => usage.reasoning === "low" || usage.reasoning === "none");
-    expect(sent).toHaveLength(9 + 10 + 13 + 6);
+    expect(sent).toHaveLength(9 + 10 + 13 + 6 + 13);
     for (const usage of sent) {
       const params = chatParams(money, paramsOf(usage, 0, ceilingsOf(usage).reasoningTokens));
       const reserve = chatAttemptWorstMicros(money.priceBook, { ...params, images: params.images?.length ?? 0 });

@@ -26,10 +26,15 @@ interface ProbeFile {
   ideas: Record<string, { text: string; frame: FrameKind }>;
   suggestions: { probe: "P-M"; frame: FrameKind; answer: { motions: { label_ru: string; text_en: string }[]; frame: Record<string, unknown> } }[];
   translations: { probe: "P-M" | "P-R"; reasoning: string; idea: string; english: string; meaning: "faithful" | "substituted" | "softened" | "dropped" | "merged" }[];
+  /** Round 2: P-X, the WCX texts live. */
+  px: {
+    translations: { idea: string; frame: FrameKind; answer: { text_en: string; refusal: string } }[];
+    suggestions: { frame: FrameKind; listed: string[]; answer: { motions: { label_ru: string; text_en: string }[]; frame: Record<string, unknown> } }[];
+  };
 }
 const PROBES = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "motion-probes.json"), "utf8")) as ProbeFile;
 
-type FrameKind = "selfie" | "mirror" | "friend" | "friend-profile" | "face-hidden" | "bold";
+type FrameKind = "selfie" | "mirror" | "friend" | "friend-profile" | "candid" | "face-hidden" | "bold";
 
 function planned(category: BankCategory, capture: Capture, pose: ScenePose = "front"): FrameFacts {
   const picked = pick(category, (m) => m.captures.includes(capture) && m.legs === undefined && m.angle === undefined && m.phone !== true && m.level === undefined);
@@ -46,6 +51,7 @@ const FRAMES: Readonly<Record<FrameKind, FrameFacts>> = {
   friend: planned("travel", "friend"),
   "friend-profile": planned("photoshoot", "friend", "profile"),
   "face-hidden": planned("home", "mirror-hidden"),
+  candid: planned("photoshoot", "candid"),
   bold: boldMirrorFrame(),
 };
 
@@ -220,7 +226,55 @@ describe("the recorded translations (P-M and P-R) through the check, as own idea
   });
 });
 
-describe("the final translator's answer to each probe idea, on its frame (the text asks for these; no probe has recorded them yet)", () => {
+describe("round 2: P-X, the WCX texts live, through the parse and the checks", () => {
+  /** What each live translation comes to on its frame, as P-X saw it. */
+  const TRANSLATED: readonly { idea: string; outcome: TranslatorOutcome; calls: number }[] = [
+    { idea: "T1", outcome: { kind: "ok", text: "she slowly tucks a strand of hair behind her ear", costMicros: 1_000 }, calls: 1 },
+    { idea: "T2", outcome: { kind: "ok", text: "she slowly turns her head to the window", costMicros: 1_000 }, calls: 1 },
+    { idea: "T3", outcome: { kind: "rejected", problems: ["two-movements"], costMicros: 1_000 }, calls: 1 },
+    { idea: "T4", outcome: { kind: "rejected", problems: ["not-small"], costMicros: 1_000 }, calls: 1 },
+    { idea: "T5", outcome: { kind: "rejected", problems: ["phone", "not-small"], costMicros: 1_000 }, calls: 1 },
+    { idea: "T6", outcome: { kind: "rejected", problems: ["staging"], costMicros: 1_000 }, calls: 1 },
+    { idea: "T7", outcome: { kind: "ok", text: "she slowly takes off her hoodie", costMicros: 1_000 }, calls: 1 },
+    { idea: "T7", outcome: { kind: "ok", text: "she slowly takes off her hoodie", costMicros: 1_000 }, calls: 1 },
+    { idea: "T8", outcome: { kind: "rejected", problems: ["not-small"], costMicros: 1_000 }, calls: 1 },
+    { idea: "T9", outcome: { kind: "rejected", problems: ["face-hidden"], costMicros: 1_000 }, calls: 1 },
+  ];
+
+  test("the record holds P-X's ten translations and three suggestions", () => {
+    expect(PROBES.px.translations).toHaveLength(TRANSLATED.length);
+    expect(PROBES.px.suggestions).toHaveLength(3);
+  });
+
+  for (const [i, recorded] of PROBES.px.translations.entries()) {
+    test(`translation ${i + 1}, ${recorded.idea} on a ${recorded.frame} frame: one attempt, the outcome P-X saw`, async () => {
+      const { outcome, calls } = await translateOn(recorded.frame, [recorded.answer, { text_en: "she slowly turns her head", refusal: "none" }]);
+      expect({ idea: recorded.idea, outcome, calls }).toEqual(TRANSLATED[i] ?? { idea: "<none>", outcome: { kind: "none", costMicros: 0 }, calls: 0 });
+    });
+  }
+
+  test("9 of the 10 are what the WCX text asked for; T4, two big movements, came back not-small, which the round 2 text settles («the first code that fits»)", () => {
+    const refused = PROBES.px.translations.filter((t) => t.answer.refusal !== "none").map((t) => `${t.idea} ${t.answer.refusal}`);
+    expect(refused).toEqual(["T3 two-movements", "T4 not-small", "T6 staging", "T8 not-small"]);
+  });
+
+  for (const [i, recorded] of PROBES.px.suggestions.entries()) {
+    test(`suggestion ${i + 1} on a ${recorded.frame} frame: all three kept, none of them listed`, async () => {
+      const { outcome, dropped } = await suggestOn(recorded.frame, recorded.answer, recorded.listed);
+      expect(dropped).toEqual([]);
+      expect(outcome.kind === "ok" ? outcome.drafts.map((d) => d.text) : []).toEqual(recorded.answer.motions.map((m) => m.text_en));
+      expect(freshDrafts(recorded.answer.motions.map((m) => ({ text: m.text_en })), recorded.listed).fresh).toHaveLength(3);
+    });
+  }
+
+  test("across the three calls 9 texts, 2 of them said twice («runs her fingers through her hair», «shifts her weight to one leg»): why the writer is asked for other movements, not only other words", () => {
+    const texts = PROBES.px.suggestions.flatMap((s) => s.answer.motions.map((m) => sameText(m.text_en)));
+    expect(texts).toHaveLength(9);
+    expect(texts.filter((text, i) => texts.indexOf(text) !== i)).toEqual(["she slowly runs her fingers through her hair", "she slightly shifts her weight to one leg"]);
+  });
+});
+
+describe("the final translator's answer to each probe idea, on its frame (what the text asks for; P-X recorded all but T4's, which round 2's text settles)", () => {
   const none = (text_en: string) => ({ text_en, refusal: "none" });
   const refuse = (refusal: string) => ({ text_en: "", refusal });
 
