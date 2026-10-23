@@ -240,6 +240,22 @@ describe("the translator's own refusal (S5.WCX: never a substitute; P-R's transl
     expect(userData(missing.net, 1)).toMatchObject({ problems: ["unreadable"] });
   });
 
+  test("a faithful text the check refuses for her phone is final: rejected at once, no repair (a repair could only take the phone out)", async () => {
+    const phone = "she slowly looks at her phone and smiles";
+    expect(checkModelText(timerFrame(), phone, "own").problems).toContain("phone");
+    const { net, result } = run([reply(phone), reply(GOOD_MOTION)]);
+    expect(await result).toEqual({ kind: "rejected", problems: checkModelText(timerFrame(), phone, "own").problems, costMicros: 1_000 });
+    expect(net.calls).toHaveLength(1);
+  });
+
+  test("a faithful text the check refuses for her face, on a frame that hides it, is final too: rejected at once, no repair", async () => {
+    const hidden = { ...timerFrame(), face: "no" as const };
+    expect(checkModelText(hidden, "she winks slowly", "own").problems).toEqual(["face-hidden"]);
+    const { net, result } = run([reply("she winks slowly"), reply(GOOD_MOTION)], { ...JOB, facts: hidden });
+    expect(await result).toEqual({ kind: "rejected", problems: ["face-hidden"], costMicros: 1_000 });
+    expect(net.calls).toHaveLength(1);
+  });
+
   test("refusal «none» with a text: the text goes through the check as before", async () => {
     const { result } = run([reply(GOOD_MOTION)]);
     expect(await result).toEqual({ kind: "ok", text: GOOD_MOTION, costMicros: 1_000 });

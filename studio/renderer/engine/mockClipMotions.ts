@@ -835,8 +835,8 @@ export class MockClipMotions {
       const { text, problems } = checkModelText(frame, answer.text, "own");
       if (problems.length === 0) return { kind: "ok", text, costMicros: cost };
       lastProblems = problems;
-      // The age guard's refusal gets no repair (S5.WC2c).
-      if (!mayRepair(frame, text, "own")) return settled();
+      // The age guard's refusal gets no repair (S5.WC2c), nor her phone or her face (S5.WCX: only a change of the idea fixes those).
+      if (!mayRepair(frame, text, "own") || problems.some((problem) => problem === "phone" || problem === "face-hidden")) return settled();
       feedback = problems;
       previous = MOTION_ENGLISH.test(text) ? text.slice(0, PREVIOUS_MAX_CHARS) : null;
     }
