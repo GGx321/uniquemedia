@@ -1,4 +1,4 @@
-import { mockIdeaAnswer, mockSuggestionAnswer, type MockModelReply } from "../../../renderer/engine/mockClipMotions";
+import { mockIdeaAnswer, mockIdeaRefusal, mockSuggestionAnswer, type MockModelReply } from "../../../renderer/engine/mockClipMotions";
 import type { ClipWorld } from "./clipWorld";
 import type { Control, World } from "./rigs";
 import type { Scenario } from "./scenarios";
@@ -18,7 +18,7 @@ const STD_5 = 850_000;
 const KLING_ONLY_5 = 504_000;
 /** The two calls' worst cases at the engine's bundled prices (clips/motionPrice.ts); the mock holds the same figures (mockEngine.clipMotions.table.test.ts). */
 const SUGGEST_WORST = 29_678;
-const IDEA_WORST = 24_650;
+const IDEA_WORST = 24_914;
 
 const RIG = { clips: { batch: 4, budgetMicros: BUDGET } } as const;
 
@@ -467,6 +467,24 @@ export const CLIP_MOTION_SCENARIOS: readonly Scenario[] = [
       await status(t);
       await options(t, w);
       await options(t, w, w.photos.bold);
+    },
+  },
+  {
+    // Appended in S5.WCX: the translator never puts another motion in place of an idea it cannot say as one small motion; it answers its refusal code with no text. The code ends the call at
+    // once (no repair: a repair could only ask it to say something else), the attempt is paid, and nothing is stored. A refusal on the repair ends the call with the refusal's code.
+    name: "clip motions: an idea the translator refuses with its code is rejected at once with that code, paid, and nothing is stored",
+    rig: RIG,
+    async run(t, world, control) {
+      const w = clipsOf(world);
+      t.note("a camera move: refused `staging`, one chat call");
+      await translate(t, w, control, [mockIdeaRefusal("staging", 600)], "камера медленно приближается к её лицу");
+      t.note("two movements: refused `two-movements`, one chat call");
+      await translate(t, w, control, [mockIdeaRefusal("two-movements", 600)], "встаёт с кровати и подходит к зеркалу");
+      t.note("a fast turn said as it is, then refused on the repair: `not-small`, two chat calls");
+      await translate(t, w, control, [translation("she sharply turns her head toward the door"), mockIdeaRefusal("not-small", 600)], "резко поворачивает голову к двери");
+      await status(t);
+      t.note("nothing was stored");
+      await options(t, w);
     },
   },
 ];

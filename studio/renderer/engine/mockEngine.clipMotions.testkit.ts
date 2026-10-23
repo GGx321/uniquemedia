@@ -14,10 +14,10 @@ export const BOLD = CLIP_PHOTOS.bold.photoId;
 
 /** The prices of the two calls at the engine's bundled table with its PROVISIONAL system prompts (clips/motionPrice.ts). */
 export const SUGGEST = { expectedMicros: 3_400, worstMicros: 29_678 } as const;
-export const TRANSLATE = { expectedMicros: 550, worstMicros: 24_650 } as const;
+export const TRANSLATE = { expectedMicros: 550, worstMicros: 24_914 } as const;
 /** What the first attempt of a call on the plain frame reserves: the engine reserves for the message it really sends (chatAttemptWorstMicros), so it is below half of the widest case; mockEngine.clipMotions.money.test.ts holds it to the real ledger. */
 export const SUGGEST_ATTEMPT = 14_458;
-export const TRANSLATE_ATTEMPT = 10_828;
+export const TRANSLATE_ATTEMPT = 10_959;
 
 /** None of them is a code motion of a frame (S5.WC3c: a suggestion equal to one is not stored). */
 export const GOOD_TEXTS = [
@@ -44,7 +44,12 @@ export function suggestion(texts: readonly string[], costMicros = 3_400, frame: 
 }
 
 export function idea(text: string, costMicros = 1_000): MockModelReply {
-  return { kind: "answer", content: JSON.stringify({ text_en: text }), costMicros };
+  return { kind: "answer", content: JSON.stringify({ text_en: text, refusal: "none" }), costMicros };
+}
+
+/** S5.WCX: the translator's own refusal: no text, one closed code. */
+export function ideaRefusal(code: string, costMicros = 600): MockModelReply {
+  return { kind: "answer", content: JSON.stringify({ text_en: "", refusal: code }), costMicros };
 }
 
 /** A paid answer that is no JSON at all (the model talks): unusable, a second attempt may follow. */

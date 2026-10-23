@@ -30,7 +30,8 @@ export interface TranslatorJob {
 
 /**
  * - ok: the checked English text (accepted on this frame).
- * - rejected: the answer failed the checks after at most one repair (or at once when a repair cannot help); `problems` is non-empty, unique and in display order.
+ * - rejected: the answer failed the checks after at most one repair (or at once when a repair cannot help), or the translator refused the idea with its code (S5.WCX, at once); `problems` is
+ *   non-empty, unique and in display order.
  * - none: no usable answer (unreadable twice, or refused by the model). `costMicros` 0 = free.
  * - error: a failure that is not the model's; `costMicros` is what was paid before it.
  */
@@ -40,19 +41,35 @@ export type TranslatorOutcome =
   | { kind: "none"; costMicros: number }
   | { kind: "error"; error: EngineError; costMicros: number };
 
+/**
+ * S5.WCX: what the translator answers INSTEAD of a text when the idea cannot be said as one small motion of hers, each a closed `MotionProblem` the sheet explains. P-R found the translator replacing what
+ * it would not say (a camera move, a phone, a take-off) with an action from the frame («raises the mug»): a silent change of meaning. Now it refuses with a code, and the code ends the call (no repair:
+ * a repair could only ask it to say something else). What the motion check decides on a faithful text (a phone, her face, an age) is not the translator's to refuse.
+ */
+export const TRANSLATOR_REFUSALS = ["two-movements", "not-small", "staging", "not-motion"] as const satisfies readonly MotionProblem[];
+type TranslatorRefusal = (typeof TRANSLATOR_REFUSALS)[number];
+
 export const TRANSLATOR_JSON_SCHEMA: { name: string; schema: Record<string, unknown> } = {
   name: "motion_idea",
-  schema: { type: "object", additionalProperties: false, required: ["text_en"], properties: { text_en: { type: "string" } } },
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["text_en", "refusal"],
+    properties: { text_en: { type: "string" }, refusal: { type: "string", enum: ["none", ...TRANSLATOR_REFUSALS] } },
+  },
 };
 
-const TranslatorAnswer = z.strictObject({ text_en: z.string() });
+const TranslatorAnswer = z.strictObject({ text_en: z.string(), refusal: z.enum(["none", ...TRANSLATOR_REFUSALS]) });
+
+/** An answer as read: the English text, or the translator's own refusal (which wins over any text it also wrote). */
+type ReadAnswer = { kind: "text"; text: string } | { kind: "refusal"; code: TranslatorRefusal };
 
 /** How much of the model's own last English text is fed back to it: enough to see what to fix, never a long text. */
 const PREVIOUS_MAX_CHARS = 80;
 
 type TranslatorFeedback = readonly (MotionProblem | "unreadable")[];
 
-function readAnswer(content: string): string | null {
+function readAnswer(content: string): ReadAnswer | null {
   let json: unknown;
   try {
     json = JSON.parse(content);
@@ -60,7 +77,9 @@ function readAnswer(content: string): string | null {
     return null;
   }
   const parsed = TranslatorAnswer.safeParse(json);
-  return parsed.success ? parsed.data.text_en : null;
+  if (!parsed.success) return null;
+  const { refusal } = parsed.data;
+  return refusal === "none" ? { kind: "text", text: parsed.data.text_en } : { kind: "refusal", code: refusal };
 }
 
 function messagesOf(idea: string, frame: FramePayload, feedback: TranslatorFeedback, previous: string | null): ChatMessage[] {
@@ -191,13 +210,15 @@ export async function runIdeaTranslator(deps: MotionJobDeps, job: TranslatorJob)
       previous = null;
       continue;
     }
-    const english = readAnswer(step.content);
-    if (english === null) {
+    const answer = readAnswer(step.content);
+    if (answer === null) {
       feedback = ["unreadable"];
       previous = null;
       continue;
     }
-    const { text, problems } = checkModelText(job.facts, english, "own");
+    // S5.WCX: the translator's own refusal is final: the idea is not one small motion, and a repair could only ask it to say another one.
+    if (answer.kind === "refusal") return { kind: "rejected", problems: [answer.code], costMicros: cost };
+    const { text, problems } = checkModelText(job.facts, answer.text, "own");
     if (problems.length === 0) return { kind: "ok", text, costMicros: cost };
     lastProblems = problems;
     // The age guard's refusal gets no repair (S5.WC2c, a hard line): a repair could only take out the age the idea said.
