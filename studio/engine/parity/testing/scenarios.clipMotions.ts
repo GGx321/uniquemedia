@@ -17,8 +17,8 @@ const BUDGET = 10_000_000;
 const STD_5 = 850_000;
 const KLING_ONLY_5 = 504_000;
 /** The two calls' worst cases at the engine's bundled prices (clips/motionPrice.ts); the mock holds the same figures (mockEngine.clipMotions.table.test.ts). */
-const SUGGEST_WORST = 33_848;
-const IDEA_WORST = 28_914;
+const SUGGEST_WORST = 34_024;
+const IDEA_WORST = 29_088;
 
 const RIG = { clips: { batch: 4, budgetMicros: BUDGET } } as const;
 
