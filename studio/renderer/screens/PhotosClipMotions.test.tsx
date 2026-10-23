@@ -103,11 +103,11 @@ async function translate(s: HTMLElement): Promise<void> {
 }
 
 describe("62: the actions under the list", () => {
-  test("«Предложить движения · до $0.034» and «Перевести · до $0.029» show the engine's live estimates; «Своя идея…» opens nothing paid", async () => {
+  test("«Предложить движения · до $0.035» and «Перевести · до $0.030» show the engine's live estimates; «Своя идея…» opens nothing paid", async () => {
     const h = await openNini();
     const s = await openSheet();
-    expect(SUGGEST_CEILING).toBe("до $0.034");
-    expect(IDEA_CEILING).toBe("до $0.029");
+    expect(SUGGEST_CEILING).toBe("до $0.035");
+    expect(IDEA_CEILING).toBe("до $0.030");
     expect(suggestButton(s).textContent).toBe(`Предложить движения · ${SUGGEST_CEILING}`);
     expect(isOff(suggestButton(s))).toBe(false);
     expect(callsOf(h.engine, "clips.estimateSuggest")).toHaveLength(1);
@@ -629,7 +629,7 @@ describe("63b, 63c: the idea refused", () => {
 });
 
 describe("the paid buttons' refusals, as the other paid buttons'", () => {
-  test("PRICE_CHANGED: the fresh price on the button and «Цена изменилась: теперь не больше $0.034. Подтвердите ещё раз.» once; a new click sends the fresh price", async () => {
+  test("PRICE_CHANGED: the fresh price on the button and «Цена изменилась: теперь не больше $0.035. Подтвердите ещё раз.» once; a new click sends the fresh price", async () => {
     const h = await openNini();
     const s = await openSheet();
     h.engine.failNext("clips.suggestMotions", { code: "PRICE_CHANGED", detail: "the worst case moved" });

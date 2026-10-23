@@ -392,7 +392,7 @@ interface MotionActionsProps {
 }
 
 /**
- * Under the list: «Предложить движения · до $X», the engine's live estimate (about $0.034 at the bundled prices, S5.WCX) (the accent's quiet tint, as «Оживить» in the viewer) and «Своя идея…» (free: it opens the field), then what the suggestion left — 62c's notice, a refusal,
+ * Under the list: «Предложить движения · до $X», the engine's live estimate (about $0.035 at the bundled prices, S5.WCX) (the accent's quiet tint, as «Оживить» in the viewer) and «Своя идея…» (free: it opens the field), then what the suggestion left — 62c's notice, a refusal,
  * a new price — under the button it came from.
  */
 export function MotionActions({ calls, block, ids, suggestRef, toggleRef }: MotionActionsProps) {

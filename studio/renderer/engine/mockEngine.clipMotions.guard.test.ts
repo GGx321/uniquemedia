@@ -240,7 +240,7 @@ describe("what a running call holds", () => {
     // The process that asked is gone: its answer never comes (the mock ends the stale request with an error), and nothing it counted is left.
     expect(await running).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
     expect(m.engine.peekMotions()).toMatchObject({ running: 0, caps: [] });
-    expect(await money(m)).toMatchObject({ reconcileNeeded: true, unsettledMicros: 16_180, unsettledCount: 1 });
+    expect(await money(m)).toMatchObject({ reconcileNeeded: true, unsettledMicros: 16_268, unsettledCount: 1 });
     expect((await errorOf(create(m))).code).toBe("RECONCILE_REQUIRED");
     expect((await errorOf(suggest(m))).code).toBe("RECONCILE_REQUIRED");
   });
@@ -250,7 +250,7 @@ describe("what a running call holds", () => {
     m.engine.holdMotionCalls(true);
     const running = suggest(m);
     await flush();
-    expect(m.engine.peekMotions().caps).toEqual([{ capMicros: 33_848, committedMicros: 16_180 }]);
+    expect(m.engine.peekMotions().caps).toEqual([{ capMicros: 34_024, committedMicros: 16_268 }]);
     m.engine.holdMotionCalls(false);
     await running;
     expect(m.engine.peekMotions().caps).toEqual([]);

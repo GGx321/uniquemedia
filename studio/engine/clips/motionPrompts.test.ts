@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as prompts from "./motionPrompts";
 import { MOTION_PROMPT_TEXTS } from "./motionPrompts";
+import { MOTION_PROBLEMS } from "../../shared/engine";
 import { TRANSLATOR_REFUSALS } from "./ideaTranslator";
 import { framePayload } from "./motionCall";
 import { timerFrame } from "./testing/motionKit";
@@ -121,9 +122,11 @@ describe("the translator: faithful, or refused with its code", () => {
     expect(motionTextProblems("she slowly turns her head and smiles", FRIEND_FRAME, "own")).toEqual([]);
   });
 
-  test("round 2 (P-X T4): when more than one code fits, the first that does: an idea of two big movements is two-movements", () => {
+  test("round 3: when more than one code fits, the first that does, the codes listed in the sheet's display order (MOTION_PROBLEMS): a camera move with a smile is staging, two big movements two-movements", () => {
     expect(TRANSLATOR).toContain("When more than one code fits, give the first that does.");
-    expect(TRANSLATOR.indexOf("\n- two-movements: ")).toBeLessThan(TRANSLATOR.indexOf("\n- not-small: "));
+    const listed: string[] = [...TRANSLATOR_REFUSALS].sort((a, b) => TRANSLATOR.indexOf(`\n- ${a}: `) - TRANSLATOR.indexOf(`\n- ${b}: `));
+    expect(listed).toEqual(MOTION_PROBLEMS.filter((problem) => (TRANSLATOR_REFUSALS as readonly string[]).includes(problem)));
+    expect(listed).toEqual(["not-motion", "staging", "two-movements", "not-small"]);
   });
 
   test("never substitutes: it says never to add, drop, soften or swap a thing, never to put another motion in its place, never to make a quick idea slow (L14)", () => {
@@ -164,8 +167,8 @@ describe("the writer: varied, the frame's, and bold only on «Смелая»", (
     expect(WRITER).toContain('When frame.faceVisible is not "yes", move only her body (her head, hands, arms, hair, shoulders, hips or legs), never her face, eyes or mouth.');
   });
 
-  test("gives no example motion to copy (P-M: the provisional text's example came back in 7 of 9 calls)", () => {
-    expect(WRITER).not.toMatch(/"she [a-z]+ [a-z]/);
+  test("gives no example motion to copy (P-M: the provisional text's example came back in 7 of 9 calls), but the two forms of «blinks» and «smiles» (round 3)", () => {
+    expect(WRITER.match(/"she [^"]*"/g)).toEqual(['"she slowly blinks"', '"she gently smiles"']);
   });
 });
 
@@ -241,10 +244,21 @@ describe("the vocabulary the texts give is the check's", () => {
 
   test("what they say not to write is what the check refuses: «moves» (P-M), «blinks» with something after it (P-M; round 2: the translator too), «softly» alone (P-M)", () => {
     for (const text of BOTH) expect(text).toContain('never write "moves"');
-    for (const text of BOTH) expect(text).toContain('"blinks" and "smiles" take nothing after them.');
+    for (const text of BOTH) expect(text).toContain('"blinks" and "smiles" take nothing after them but still take a small word: "she slowly blinks", "she gently smiles".');
     expect(motionTextProblems("she moves her hand gently on the bed", FRAME, "vision")).toEqual(["not-motion"]);
     expect(motionTextProblems("she slowly blinks her eyes", FRAME, "vision")).toEqual(["not-motion"]);
     expect(motionTextProblems("she smiles softly", FRAME, "vision")).toEqual(["not-small"]);
+  });
+
+  test("round 3 (P-X2 X5: «моргает глазами» came back twice as «she blinks»): «blinks» and «smiles» alone are refused, with their small word they pass", () => {
+    for (const [bare, said] of [
+      ["she blinks", "she slowly blinks"],
+      ["she smiles", "she gently smiles"],
+    ] as const) {
+      expect([bare, motionTextProblems(bare, FRAME, "own")]).toEqual([bare, ["not-motion", "not-small"]]);
+      expect([said, motionTextProblems(said, FRAME, "own")]).toEqual([said, []]);
+      for (const text of BOTH) expect(text).toContain(`"${said}"`);
+    }
   });
 
   test("round 2 (LOW): the way back is said as «away and back», which the check reads («to the left and turns it back» it does not)", () => {
