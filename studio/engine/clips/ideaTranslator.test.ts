@@ -47,25 +47,24 @@ function userData(net: { calls: { json(): unknown }[] }, n: number): Record<stri
 }
 
 describe("the request: the owner's idea is data, and only in the user message", () => {
-  test("on a frame of «Смелая» the system prompt is the bold variant (the idea is translated faithfully); elsewhere the ordinary one (M2)", async () => {
+  test("S5.WC2c round 2 (M2): on every frame the system prompt is the one faithful translator text", async () => {
     const bold = run([reply(UNDRESS_MOTION)], { ...JOB, facts: boldMirrorFrame() });
     await bold.result;
-    expect(bodyOf(bold.net, 0).messages[0]).toEqual({ role: "system", content: MOTION_PROMPT_TEXTS.translatorSystemBold });
+    expect(bodyOf(bold.net, 0).messages[0]).toEqual({ role: "system", content: MOTION_PROMPT_TEXTS.translatorSystem });
     const ordinary = run([reply(GOOD_MOTION)], { ...JOB, jobId: "job-00000003", scope: { avatarJobId: "job-00000003" } });
     await ordinary.result;
     expect(bodyOf(ordinary.net, 0).messages[0]).toEqual({ role: "system", content: MOTION_PROMPT_TEXTS.translatorSystem });
-    expect(MOTION_PROMPT_TEXTS.translatorSystemBold).not.toBe(MOTION_PROMPT_TEXTS.translatorSystem);
   });
 
-  test("a model that follows the system prompt: «снимает халат» on «Смелая» is translated faithfully and accepted, on an ordinary frame it is not", async () => {
+  test("a model that follows the system prompt: «снимает халат» is translated faithfully and accepted, on «Смелая» and on an ordinary frame", async () => {
     const follows = (system: string): Step => (call) => {
       const sent = (call.json() as { messages: { content: string }[] }).messages[0]?.content;
       return reply(sent === system ? UNDRESS_MOTION : GOOD_MOTION);
     };
-    const bold = run([follows(MOTION_PROMPT_TEXTS.translatorSystemBold)], { ...JOB, idea: "снимает халат", facts: boldMirrorFrame() });
+    const bold = run([follows(MOTION_PROMPT_TEXTS.translatorSystem)], { ...JOB, idea: "снимает халат", facts: boldMirrorFrame() });
     expect(await bold.result).toEqual({ kind: "ok", text: UNDRESS_MOTION, costMicros: 1_000 });
-    const ordinary = run([follows(MOTION_PROMPT_TEXTS.translatorSystemBold), follows(MOTION_PROMPT_TEXTS.translatorSystemBold)], { ...JOB, jobId: "job-00000003", scope: { avatarJobId: "job-00000003" }, idea: "снимает халат" });
-    expect(await ordinary.result).toMatchObject({ kind: "ok", text: GOOD_MOTION });
+    const ordinary = run([follows(MOTION_PROMPT_TEXTS.translatorSystem)], { ...JOB, jobId: "job-00000003", scope: { avatarJobId: "job-00000003" }, idea: "снимает халат" });
+    expect(await ordinary.result).toEqual({ kind: "ok", text: UNDRESS_MOTION, costMicros: 1_000 });
   });
 
   test("the idea is a JSON string in the user message, the system prompt is the provisional text, and no image goes", async () => {

@@ -6,7 +6,8 @@
 //
 // What the provisional texts do:
 //  - the vocabulary summary of the motion grammar: one small slow movement, «she» first, lowercase, no final period, at most 60 characters, plain words;
-//  - never clothing removal, never camera or edit words, never a phone unless the facts allow one, never a number or an age;
+//  - never camera or edit words, never a phone unless the facts allow one, never a number or an age; an idea that takes off or moves her clothing translated faithfully
+//    (S5.WC2c round 2, M2: no frame keeps clothing on any more, so no text tells the model never to move it, and one translator text serves every frame);
 //  - the facts and the owner's idea are DATA in the user message (JSON), never instructions;
 //  - the JSON schema of the answer.
 
@@ -16,10 +17,8 @@ export const MOTION_PROMPTS_PROVISIONAL = true;
 export interface MotionPromptTexts {
   /** The system prompt of the vision writer (one photo, up to three motions, a frame reading). */
   readonly writerSystem: string;
-  /** The system prompt of the idea translator (the owner's idea as JSON data in, one English motion out) for an ordinary frame: clothing is never moved. */
+  /** The system prompt of the idea translator (the owner's idea as JSON data in, one English motion out), on every frame: the idea is translated FAITHFULLY, one that takes clothing off included. The check stays the gate. */
   readonly translatorSystem: string;
-  /** The same for a frame of «Смелая» (Q-H = 2): the owner's idea is translated FAITHFULLY, an idea that takes clothing off included. The check stays the gate. */
-  readonly translatorSystemBold: string;
 }
 
 const FORM = [
@@ -33,12 +32,11 @@ const FRAME_RULES = [
   "Never name a phone unless the facts say phoneAllowed is true. Never move her face when the facts say the face is not visible.",
 ].join(" ");
 
-const NO_CLOTHING = "Never write taking off, removing or moving clothing.";
-/** Q-H = 2: on a frame of «Смелая» the owner's own idea may take clothing off; the translator says it as it is. */
+/** Q-H = 2, and since S5.WC2c on every frame: the owner's own idea may take clothing off; the translator says it as it is. */
 const FAITHFUL = "This frame allows it: if the idea takes off or moves her clothing, translate that faithfully as the small slow movement it is; do not replace it with another movement.";
 
-const GRAMMAR = [FORM, NO_CLOTHING, FRAME_RULES].join(" ");
-const GRAMMAR_BOLD = [FORM, FAITHFUL, FRAME_RULES].join(" ");
+const GRAMMAR = [FORM, FRAME_RULES].join(" ");
+const TRANSLATOR_GRAMMAR = [FORM, FAITHFUL, FRAME_RULES].join(" ");
 
 const WRITER_SYSTEM = [
   "PROVISIONAL TEXT.",
@@ -61,4 +59,4 @@ function translatorSystem(grammar: string): string {
 }
 
 /** The texts the wiring reads. S5.WCX replaces the two strings above. */
-export const MOTION_PROMPT_TEXTS: MotionPromptTexts = { writerSystem: WRITER_SYSTEM, translatorSystem: translatorSystem(GRAMMAR), translatorSystemBold: translatorSystem(GRAMMAR_BOLD) };
+export const MOTION_PROMPT_TEXTS: MotionPromptTexts = { writerSystem: WRITER_SYSTEM, translatorSystem: translatorSystem(TRANSLATOR_GRAMMAR) };

@@ -14,13 +14,17 @@ describe("the system prompts' interface", () => {
     expect(MOTION_PROMPT_TEXTS.writerSystem).not.toBe(MOTION_PROMPT_TEXTS.translatorSystem);
   });
 
-  test("the translator has a variant for a frame of «Смелая», different from the ordinary one", () => {
-    expect(MOTION_PROMPT_TEXTS.translatorSystemBold.length).toBeGreaterThan(0);
-    expect(MOTION_PROMPT_TEXTS.translatorSystemBold).not.toBe(MOTION_PROMPT_TEXTS.translatorSystem);
+  test("S5.WC2c round 2 (M2): one translator text for every frame (the faithful one: no frame rule holds clothing on any more); the writer's and the translator's are all there is", () => {
+    expect(Object.keys(MOTION_PROMPT_TEXTS).sort()).toEqual(["translatorSystem", "writerSystem"]);
+    expect(MOTION_PROMPT_TEXTS.translatorSystem).toContain("translate that faithfully");
+  });
+
+  test("S5.WC2c round 2 (M2): no system text tells the model never to take clothing off", () => {
+    for (const text of Object.values(MOTION_PROMPT_TEXTS)) expect(text).not.toMatch(/never write taking off|removing or moving clothing/i);
   });
 
   test("are plain printable text and line breaks: no template slot, no owner word, no Cyrillic", () => {
-    for (const text of [MOTION_PROMPT_TEXTS.writerSystem, MOTION_PROMPT_TEXTS.translatorSystem, MOTION_PROMPT_TEXTS.translatorSystemBold]) expect(text).toMatch(/^[\x20-\x7e\n]+$/);
+    for (const text of Object.values(MOTION_PROMPT_TEXTS)) expect(text).toMatch(/^[\x20-\x7e\n]+$/);
   });
 
   test("are flagged provisional until S5.WCX writes the real texts", () => {

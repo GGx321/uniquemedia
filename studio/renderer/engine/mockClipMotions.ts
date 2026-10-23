@@ -43,7 +43,7 @@ const bad = (error: EngineError): Out<never> => ({ ok: false, error });
  * The two estimates at the bundled price table, for the engine's PROVISIONAL system prompts: `motionPrice.suggestPrice` / `translatePrice` read the largest message a call can send, so the worst case follows the prompt text.
  * Held to the engine by mockEngine.clipMotions.table.test.ts (it fails the day S5.WCX changes a prompt, and says which number to move here).
  */
-export const MOCK_SUGGEST_PRICE = { expectedMicros: 3_400, worstMicros: 14_810 } as const;
+export const MOCK_SUGGEST_PRICE = { expectedMicros: 3_400, worstMicros: 14_678 } as const;
 export const MOCK_TRANSLATE_PRICE = { expectedMicros: 1_000, worstMicros: 9_650 } as const;
 
 type CallKind = "suggest" | "idea";
@@ -54,7 +54,7 @@ const priceOf = (kind: CallKind): { expectedMicros: number; worstMicros: number 
 // micro-dollar. The engine reserves for the message it really sends (the system prompt, the user's JSON with the frame, the idea, the feedback and the previous text, the schema, and the photo's allowance), not for half
 // of the call's widest case, so the mock builds the same user JSON and counts the same bytes. The sizes of the PROVISIONAL system prompts and of the two schemas are held to the engine by
 // mockEngine.clipMotions.table.test.ts, and the whole reserve of every attempt by mockEngine.clipMotions.money.test.ts (the real ledger).
-export const MOCK_PROMPT_BYTES: { writer: number; translator: number; translatorBold: number } = { writer: 1_231, translator: 1_073, translatorBold: 1_188 };
+export const MOCK_PROMPT_BYTES: { writer: number; translator: number } = { writer: 1_178, translator: 1_188 };
 export const MOCK_SCHEMA_BYTES: { suggest: number; idea: number } = { suggest: 669, idea: 144 };
 /** The caller's ceilings of one attempt (engine/money/motionEstimate.ts). */
 const CEILINGS = { suggest: { maxTokens: 1_000, inputTokens: 3_000, images: 1 }, idea: { maxTokens: 500, inputTokens: 1_000, images: 0 } } as const;
@@ -65,8 +65,8 @@ const PROMPT_PICO = 1_250_000;
 const COMPLETION_PICO = 2_500_000;
 
 /** The user message's JSON, as the engine writes it (`messagesOf` of the writer and of the translator), and the bytes the reserve counts. */
-export function attemptWorstMicros(kind: CallKind, user: string, bold: boolean): number {
-  const system = kind === "suggest" ? MOCK_PROMPT_BYTES.writer : bold ? MOCK_PROMPT_BYTES.translatorBold : MOCK_PROMPT_BYTES.translator;
+export function attemptWorstMicros(kind: CallKind, user: string): number {
+  const system = kind === "suggest" ? MOCK_PROMPT_BYTES.writer : MOCK_PROMPT_BYTES.translator;
   const { maxTokens, inputTokens, images } = CEILINGS[kind];
   const floor = system + new TextEncoder().encode(user).length + MOCK_SCHEMA_BYTES[kind] + 2 * TEMPLATE_TOKENS_PER_MESSAGE + images * CHAT_IMAGE_TOKEN_ALLOWANCE;
   const pico = maxTokens * COMPLETION_PICO + Math.max(inputTokens, floor) * PROMPT_PICO;
@@ -593,10 +593,10 @@ export class MockClipMotions {
   }
 
   /** One attempt as the transport runs it: reserve (the month and the ledger permitting), send, close the reserve by the settle rule. */
-  async #attempt(jobId: string, kind: CallKind, n: number, user: string, bold: boolean): Promise<ChatStep> {
+  async #attempt(jobId: string, kind: CallKind, n: number, user: string): Promise<ChatStep> {
     const ports = this.#ports;
     const attemptId = `${jobId}:${kind === "suggest" ? "motion" : "idea"}#${n}`;
-    const worstMicros = attemptWorstMicros(kind, user, bold);
+    const worstMicros = attemptWorstMicros(kind, user);
     // The budget's reserve: the ledger halted or needing a reconcile first (a bill above an earlier reserve stops it), then the call's own scope cap, then the month.
     const refusal = ports.reserveRefusal();
     if (refusal !== null) return { kind: "error", error: refusal, costMicros: 0, leftOpen: false };
@@ -695,7 +695,7 @@ export class MockClipMotions {
     let feedback: Feedback = [];
     for (let attempt = 1; attempt <= MOTION_MAX_ATTEMPTS; attempt++) {
       const user = JSON.stringify({ frame: framePayloadOf(frame), ...(feedback.length === 0 ? {} : { problems: feedback }) });
-      const step = await this.#attempt(jobId, "suggest", attempt, user, frame.bold);
+      const step = await this.#attempt(jobId, "suggest", attempt, user);
       cost += step.costMicros;
       if (step.kind === "refused") return { kind: "none", costMicros: cost };
       if (step.kind === "no-room") {
@@ -775,7 +775,7 @@ export class MockClipMotions {
     for (let attempt = 1; attempt <= MOTION_MAX_ATTEMPTS; attempt++) {
       // The idea is a value inside JSON (data, never instructions); the feedback is closed codes and the previous text only when it is plain motion English.
       const user = JSON.stringify({ idea, frame: framePayloadOf(frame), ...(feedback.length === 0 ? {} : { problems: feedback }), ...(previous === null ? {} : { previous }) });
-      const step = await this.#attempt(jobId, "idea", attempt, user, frame.bold);
+      const step = await this.#attempt(jobId, "idea", attempt, user);
       cost += step.costMicros;
       if (step.kind === "refused") return settled();
       if (step.kind === "no-room") {

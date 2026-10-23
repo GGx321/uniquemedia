@@ -63,12 +63,12 @@ function readAnswer(content: string): string | null {
   return parsed.success ? parsed.data.text_en : null;
 }
 
-function messagesOf(idea: string, frame: FramePayload, feedback: TranslatorFeedback, previous: string | null, bold: boolean): ChatMessage[] {
+function messagesOf(idea: string, frame: FramePayload, feedback: TranslatorFeedback, previous: string | null): ChatMessage[] {
   // The idea is a value inside JSON: whatever it holds (quotes, braces, newlines, a command) stays one string of data.
   const data = { idea, frame, ...(feedback.length === 0 ? {} : { problems: feedback }), ...(previous === null ? {} : { previous }) };
   return [
-    // Q-H = 2: on a frame of «Смелая» the translator says the owner's idea as it is, an idea that takes clothing off included; the check below stays the gate.
-    { role: "system", content: bold ? MOTION_PROMPT_TEXTS.translatorSystemBold : MOTION_PROMPT_TEXTS.translatorSystem },
+    // S5.WC2c round 2 (M2): on every frame the translator says the owner's idea as it is, an idea that takes clothing off included; the check below stays the gate.
+    { role: "system", content: MOTION_PROMPT_TEXTS.translatorSystem },
     { role: "user", content: JSON.stringify(data) },
   ];
 }
@@ -86,9 +86,7 @@ export function translatorPriceShape(): MotionAttemptShape {
     activity: "a".repeat(ACTIVITY_MAX_CHARS),
     phoneAllowed: false,
   };
-  // The longer of the two system prompts, so the price covers either frame.
-  const bold = MOTION_PROMPT_TEXTS.translatorSystemBold.length > MOTION_PROMPT_TEXTS.translatorSystem.length;
-  return { messages: messagesOf("一".repeat(OWN_IDEA_MAX), widest, [...MOTION_PROBLEMS, "unreadable"], "a".repeat(PREVIOUS_MAX_CHARS), bold), jsonSchema: TRANSLATOR_JSON_SCHEMA };
+  return { messages: messagesOf("一".repeat(OWN_IDEA_MAX), widest, [...MOTION_PROBLEMS, "unreadable"], "a".repeat(PREVIOUS_MAX_CHARS)), jsonSchema: TRANSLATOR_JSON_SCHEMA };
 }
 
 /** `\uXXXX` for every non-ASCII code unit. */
@@ -152,7 +150,6 @@ export function rawScrub(idea: string): (text: string) => string {
 export async function runIdeaTranslator(deps: MotionJobDeps, job: TranslatorJob): Promise<TranslatorOutcome> {
   const frame = framePayload(job.facts);
   const scrubRaw = rawScrub(job.idea);
-  const bold = job.facts.bold;
   let feedback: TranslatorFeedback = [];
   let previous: string | null = null;
   /** The closed problems of the last answer that could be read and checked. */
@@ -170,7 +167,7 @@ export async function runIdeaTranslator(deps: MotionJobDeps, job: TranslatorJob)
         budget: deps.budget,
         priceBook: deps.priceBook,
         signal: NEVER_ABORTED,
-        messages: messagesOf(job.idea, frame, feedback, previous, bold),
+        messages: messagesOf(job.idea, frame, feedback, previous),
         jsonSchema: TRANSLATOR_JSON_SCHEMA,
         maxTokens: TRANSLATE_ATTEMPT.maxTokens,
         inputTokens: TRANSLATE_ATTEMPT.inputTokens,

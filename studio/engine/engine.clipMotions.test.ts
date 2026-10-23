@@ -407,19 +407,19 @@ describe("clips.translateIdea", () => {
     expect(resultOf(await w.translate())).toMatchObject({ outcome: "ok", item: { id: "o-1", text: UNDRESS } });
   });
 
-  test("«снимает халат» on a frame of «Смелая» is translated faithfully by the bold prompt and stored under his label with the TAKES_OFF English text (M2)", async () => {
-    // A model that does what its system prompt says: the bold variant translates the idea, the ordinary one softens it.
-    const chat = (request: ChatRequest) => ideaReply(request.json().messages[0]?.content === MOTION_PROMPT_TEXTS.translatorSystemBold ? UNDRESS : GOOD_TEXTS[0] ?? "");
+  test("«снимает халат» on a frame of «Смелая» is translated faithfully by the one translator prompt and stored under his label with the TAKES_OFF English text (M2)", async () => {
+    // A model that does what its system prompt says: the faithful prompt translates the idea, any other text would soften it.
+    const chat = (request: ChatRequest) => ideaReply(request.json().messages[0]?.content === MOTION_PROMPT_TEXTS.translatorSystem ? UNDRESS : GOOD_TEXTS[0] ?? "");
     const w = await motionWorld(dir(), { chat, seed: { category: "nightwear" }, engine: { deps: { clipSwitches: { boldClips: "kling-only" } } } });
     expect(resultOf(await w.translate("снимает халат"))).toEqual({ outcome: "ok", item: { id: "o-1", source: "own", label: "снимает халат", text: UNDRESS }, costMicros: 1_000 });
     const file = await storeOf(w.storePath());
     expect(file.items).toEqual([expect.objectContaining({ label: "снимает халат", text: UNDRESS })]);
   });
 
-  test("on an ordinary frame the same idea gets the ordinary prompt and is not stored", async () => {
-    const chat = (request: ChatRequest) => ideaReply(request.json().messages[0]?.content === MOTION_PROMPT_TEXTS.translatorSystemBold ? UNDRESS : GOOD_TEXTS[0] ?? "");
+  test("S5.WC2c round 2 (M2): on an ordinary frame the same idea gets the same faithful prompt, and is stored with the TAKES_OFF English text", async () => {
+    const chat = (request: ChatRequest) => ideaReply(request.json().messages[0]?.content === MOTION_PROMPT_TEXTS.translatorSystem ? UNDRESS : GOOD_TEXTS[0] ?? "");
     const w = await motionWorld(dir(), { chat });
-    expect(resultOf(await w.translate("снимает халат"))).toMatchObject({ outcome: "ok", item: { text: GOOD_TEXTS[0] } });
+    expect(resultOf(await w.translate("снимает халат"))).toMatchObject({ outcome: "ok", item: { text: UNDRESS } });
     expect(w.net.chats[0]?.json().messages[0]?.content).toBe(MOTION_PROMPT_TEXTS.translatorSystem);
   });
 
