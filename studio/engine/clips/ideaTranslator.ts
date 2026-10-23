@@ -61,6 +61,12 @@ export const TRANSLATOR_JSON_SCHEMA: { name: string; schema: Record<string, unkn
 
 const TranslatorAnswer = z.strictObject({ text_en: z.string(), refusal: z.enum(["none", ...TRANSLATOR_REFUSALS]) });
 
+/**
+ * S5.WCX: what the check refuses in a faithful translation that no re-wording can fix: her phone where she holds one, her face where the photo hides it. A repair could only take the phone or
+ * the face out, which changes the idea, so the call ends there (as for the age guard).
+ */
+const FINAL_FOR_AN_IDEA: readonly MotionProblem[] = ["phone", "face-hidden"];
+
 /** An answer as read: the English text, or the translator's own refusal (which wins over any text it also wrote). */
 type ReadAnswer = { kind: "text"; text: string } | { kind: "refusal"; code: TranslatorRefusal };
 
@@ -212,8 +218,8 @@ export async function runIdeaTranslator(deps: MotionJobDeps, job: TranslatorJob)
     const { text, problems } = checkModelText(job.facts, answer.text, "own");
     if (problems.length === 0) return { kind: "ok", text, costMicros: cost };
     lastProblems = problems;
-    // The age guard's refusal gets no repair (S5.WC2c, a hard line): a repair could only take out the age the idea said.
-    if (!repairMayHelp(text, job.facts, "own")) return settled();
+    // The age guard's refusal gets no repair (S5.WC2c, a hard line): a repair could only take out the age the idea said. Nor does her phone or her face (S5.WCX): only a change of the idea fixes those.
+    if (!repairMayHelp(text, job.facts, "own") || problems.some((problem) => FINAL_FOR_AN_IDEA.includes(problem))) return settled();
     feedback = problems;
     // L3, LOW-b: only text in the contract's motion English goes back to the model (letters, digits, spaces and , . ' -): no quote, bracket or semicolon that could carry an instruction.
     previous = MOTION_ENGLISH.test(text) ? text.slice(0, PREVIOUS_MAX_CHARS) : null;
