@@ -44,7 +44,7 @@ const bad = (error: EngineError): Out<never> => ({ ok: false, error });
  * Held to the engine by mockEngine.clipMotions.table.test.ts (it fails the day S5.WCX changes a prompt, and says which number to move here).
  */
 export const MOCK_SUGGEST_PRICE = { expectedMicros: 3_400, worstMicros: 29_678 } as const;
-export const MOCK_TRANSLATE_PRICE = { expectedMicros: 550, worstMicros: 24_650 } as const;
+export const MOCK_TRANSLATE_PRICE = { expectedMicros: 550, worstMicros: 24_914 } as const;
 
 type CallKind = "suggest" | "idea";
 
@@ -55,7 +55,7 @@ const priceOf = (kind: CallKind): { expectedMicros: number; worstMicros: number 
 // of the call's widest case, so the mock builds the same user JSON and counts the same bytes. The sizes of the PROVISIONAL system prompts and of the two schemas are held to the engine by
 // mockEngine.clipMotions.table.test.ts, and the whole reserve of every attempt by mockEngine.clipMotions.money.test.ts (the real ledger).
 export const MOCK_PROMPT_BYTES: { writer: number; translator: number } = { writer: 1_178, translator: 1_188 };
-export const MOCK_SCHEMA_BYTES: { suggest: number; idea: number } = { suggest: 669, idea: 144 };
+export const MOCK_SCHEMA_BYTES: { suggest: number; idea: number } = { suggest: 669, idea: 249 };
 /** The caller's ceilings of one attempt (engine/money/motionEstimate.ts), the reasoning allowance (S5.WCX: priced as completion on top of `maxTokens`, never sent) included. */
 const CEILINGS = {
   suggest: { maxTokens: 1_000, reasoningTokens: 3_000, inputTokens: 3_000, images: 1 },
@@ -124,9 +124,14 @@ export function mockSuggestionAnswer(texts: readonly string[], frame: { capture?
   return { kind: "answer", content, ...(costMicros === undefined ? {} : { costMicros }) };
 }
 
-/** The translator's answer. */
+/** The translator's answer: the English text, and no refusal. */
 export function mockIdeaAnswer(text: string, costMicros?: number): MockModelReply {
-  return { kind: "answer", content: JSON.stringify({ text_en: text }), ...(costMicros === undefined ? {} : { costMicros }) };
+  return { kind: "answer", content: JSON.stringify({ text_en: text, refusal: "none" }), ...(costMicros === undefined ? {} : { costMicros }) };
+}
+
+/** S5.WCX: the translator's own refusal of an idea that is not one small motion: no text, one closed code (engine/clips/ideaTranslator.ts `TRANSLATOR_REFUSALS`). */
+export function mockIdeaRefusal(code: MockTranslatorRefusal, costMicros?: number): MockModelReply {
+  return { kind: "answer", content: JSON.stringify({ text_en: "", refusal: code }), ...(costMicros === undefined ? {} : { costMicros }) };
 }
 
 /** What an unscripted attempt answers: three small motions, or the translation of any idea into one. Demo and tests that do not care. */
@@ -204,14 +209,22 @@ function readWriterAnswer(content: string): WriterAnswer | null {
   return read.length === 0 ? null : { motions: read.slice(0, CLIP_CHOICES_MAX.vision), frame: { capture, phoneVisible, faceVisible } };
 }
 
-function readIdeaAnswer(content: string): string | null {
+/** engine/clips/ideaTranslator.ts `TRANSLATOR_REFUSALS` (held to it by the table test): the codes the translator answers instead of a text. */
+export const MOCK_TRANSLATOR_REFUSALS = ["two-movements", "not-small", "staging", "not-motion"] as const satisfies readonly MotionProblem[];
+export type MockTranslatorRefusal = (typeof MOCK_TRANSLATOR_REFUSALS)[number];
+const isRefusal = (value: unknown): value is MockTranslatorRefusal => (MOCK_TRANSLATOR_REFUSALS as readonly unknown[]).includes(value);
+
+/** The translator's answer under the strict schema the engine reads it with: the text, or its own refusal (which wins). Null: unreadable. */
+function readIdeaAnswer(content: string): { kind: "text"; text: string } | { kind: "refusal"; code: MockTranslatorRefusal } | null {
   let json: unknown;
   try {
     json = JSON.parse(content);
   } catch {
     return null;
   }
-  return isRecord(json) && onlyKeys(json, ["text_en"]) && typeof json.text_en === "string" ? json.text_en : null;
+  if (!isRecord(json) || !onlyKeys(json, ["text_en", "refusal"]) || typeof json.text_en !== "string") return null;
+  if (json.refusal === "none") return { kind: "text", text: json.text_en };
+  return isRefusal(json.refusal) ? { kind: "refusal", code: json.refusal } : null;
 }
 
 /** engine/clips/motionWriter.ts `cleanLabel`: cleaned of control and format characters, cut by word to 40 characters; null when nothing is left. */
@@ -807,13 +820,15 @@ export class MockClipMotions {
         previous = null;
         continue;
       }
-      const english = readIdeaAnswer(step.content);
-      if (english === null) {
+      const answer = readIdeaAnswer(step.content);
+      if (answer === null) {
         feedback = ["unreadable"];
         previous = null;
         continue;
       }
-      const { text, problems } = checkModelText(frame, english, "own");
+      // S5.WCX: the translator's own refusal is final.
+      if (answer.kind === "refusal") return { kind: "rejected", problems: [answer.code], costMicros: cost };
+      const { text, problems } = checkModelText(frame, answer.text, "own");
       if (problems.length === 0) return { kind: "ok", text, costMicros: cost };
       lastProblems = problems;
       // The age guard's refusal gets no repair (S5.WC2c).

@@ -20,7 +20,9 @@ const IDEA = "CANARY-7f3a медленно поворачивает голову
 const JOB: TranslatorJob = { jobId: "job-00000002", scope: SCOPE, textModel: "x-ai/grok-4.3", photoId: "photo-0001", idea: IDEA, facts: timerFrame() };
 const NOT_MOTION = "slowly she turns her head";
 
-const reply = (text: unknown, cost = 0.001) => ({ status: 200, body: chatBody(typeof text === "string" && text.startsWith("{") ? text : JSON.stringify({ text_en: text }), { cost }) });
+const reply = (text: unknown, cost = 0.001) => ({ status: 200, body: chatBody(typeof text === "string" && text.startsWith("{") ? text : JSON.stringify({ text_en: text, refusal: "none" }), { cost }) });
+/** S5.WCX: the translator's refusal: no text, one closed code. */
+const refusal = (code: string, cost = 0.001) => ({ status: 200, body: chatBody(JSON.stringify({ text_en: "", refusal: code }), { cost }) });
 
 let money: Money;
 beforeEach(async () => {
@@ -193,6 +195,48 @@ describe("an idea that does not pass", () => {
   });
 });
 
+describe("the translator's own refusal (S5.WCX: never a substitute; P-R's translations replaced a camera move, a phone or a take-off with the frame's mug)", () => {
+  test("the schema asks for text_en and a refusal from a closed list, strict: none, or the codes of an idea that is not one small motion", () => {
+    const schema = TRANSLATOR_JSON_SCHEMA.schema as { required: string[]; additionalProperties: boolean; properties: Record<string, { type: string; enum?: string[] }> };
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.required).toEqual(["text_en", "refusal"]);
+    expect(schema.properties.refusal).toEqual({ type: "string", enum: ["none", "two-movements", "not-small", "staging", "not-motion"] });
+  });
+
+  for (const code of ["two-movements", "not-small", "staging", "not-motion"] as const) {
+    test(`a refusal «${code}» ends the call at once: rejected with that code, the one attempt paid, no repair`, async () => {
+      const { net, result } = run([refusal(code, 0.0006), reply(GOOD_MOTION)]);
+      expect(await result).toEqual({ kind: "rejected", problems: [code], costMicros: 600 });
+      expect(net.calls).toHaveLength(1);
+    });
+  }
+
+  test("a refusal wins over a text the model also wrote: the text is never checked or offered", async () => {
+    const { result } = run([reply(JSON.stringify({ text_en: GOOD_MOTION, refusal: "staging" }))]);
+    expect(await result).toEqual({ kind: "rejected", problems: ["staging"], costMicros: 1_000 });
+  });
+
+  test("a refusal on the repair ends the call with the refusal's code, both attempts paid", async () => {
+    const { net, result } = run([reply("she sharply turns her head toward the door"), refusal("not-small")]);
+    expect(await result).toEqual({ kind: "rejected", problems: ["not-small"], costMicros: 2_000 });
+    expect(net.calls).toHaveLength(2);
+  });
+
+  test("a refusal outside the list, or an answer without one, is unreadable and asked once more", async () => {
+    const outside = run([refusal("content"), reply(GOOD_MOTION)]);
+    expect(await outside.result).toEqual({ kind: "ok", text: GOOD_MOTION, costMicros: 2_000 });
+    expect(userData(outside.net, 1)).toMatchObject({ problems: ["unreadable"] });
+    const missing = run([reply(JSON.stringify({ text_en: GOOD_MOTION })), reply(GOOD_MOTION)], { ...JOB, jobId: "job-00000301", scope: { avatarJobId: "job-00000301" } });
+    expect(await missing.result).toEqual({ kind: "ok", text: GOOD_MOTION, costMicros: 2_000 });
+    expect(userData(missing.net, 1)).toMatchObject({ problems: ["unreadable"] });
+  });
+
+  test("refusal «none» with a text: the text goes through the check as before", async () => {
+    const { result } = run([reply(GOOD_MOTION)]);
+    expect(await result).toEqual({ kind: "ok", text: GOOD_MOTION, costMicros: 1_000 });
+  });
+});
+
 describe("the money of a refusal and of a failure", () => {
   test("a moderation refusal is free: `none`, cost 0, no second attempt", async () => {
     const { net, result } = run([{ status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } }]);
@@ -257,7 +301,7 @@ describe("the reasoning allowance (S5.WCX: grok-4.3 bills its reasoning as compl
     status: 200,
     body: {
       id: "gen-1",
-      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ text_en: GOOD_MOTION }) } }],
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ text_en: GOOD_MOTION, refusal: "none" }) } }],
       usage: { prompt_tokens: T7_USAGE.prompt, completion_tokens: T7_USAGE.completion, completion_tokens_details: { reasoning_tokens: T7_USAGE.reasoningTokens }, cost: T7_USAGE.costMicros / 1e6 },
     },
   };

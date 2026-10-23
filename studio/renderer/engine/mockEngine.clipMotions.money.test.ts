@@ -29,7 +29,9 @@ const say = (content: string, costUsd = 0.002): Answer => ({ content, costUsd })
 const UNREADABLE = say("I cannot see the photo");
 const suggestionOf = (texts: readonly string[], costUsd = 0.003): Answer =>
   say(JSON.stringify({ motions: texts.map((text, i) => ({ label_ru: `Движение ${i + 1}`, text_en: text })), frame: { capture: "unknown", phoneVisible: false, faceVisible: true } }), costUsd);
-const ideaOf = (text: string, costUsd = 0.001): Answer => say(JSON.stringify({ text_en: text }), costUsd);
+const ideaOf = (text: string, costUsd = 0.001): Answer => say(JSON.stringify({ text_en: text, refusal: "none" }), costUsd);
+/** S5.WCX: the translator's own refusal: no text, one closed code. */
+const refusalOf = (code: string, costUsd = 0.0006): Answer => say(JSON.stringify({ text_en: "", refusal: code }), costUsd);
 const TWO = "she slowly turns her head and then she slowly sits down";
 const MANY = "she slowly turns her head toward the window and smiles gently while the wind moves her hair and the curtains and then looks back at the camera";
 const LONG_IDEA = "я".repeat(300);
@@ -47,6 +49,8 @@ const CASES: readonly Case[] = [
   { name: "a suggestion billed above its reserve: the ledger stops, the repair is refused, the next call is refused", kind: "suggest", answers: [say("I cannot see the photo", 0.02), UNREADABLE] },
   { name: "a translation billed above its reserve: the ledger stops, the repair is refused, the next call is refused", kind: "idea", idea: IDEA, answers: [ideaOf(NOT_MOTION, 0.02), ideaOf(NOT_MOTION)] },
   { name: "a suggestion billed above its reserve whose answer is good: it is stored, and the next call is refused", kind: "suggest", answers: [suggestionOf(["she slowly tucks a strand of hair behind her ear"], 0.02)] },
+  { name: "S5.WCX: a translation the model refuses with its code: one attempt, rejected at once", kind: "idea", idea: IDEA, answers: [refusalOf("staging")] },
+  { name: "S5.WCX: a translation refused on the repair: both attempts, rejected with the refusal's code", kind: "idea", idea: IDEA, answers: [ideaOf(NOT_MOTION), refusalOf("two-movements")] },
 ];
 
 interface Observed {

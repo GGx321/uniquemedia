@@ -20,6 +20,7 @@ import {
   estimateIdea,
   estimateSuggest,
   idea,
+  ideaRefusal,
   makeClipMock,
   money,
   optionsOf,
@@ -335,6 +336,30 @@ describe("clips.suggestMotions: the photo", () => {
   });
 });
 
+describe("clips.translateIdea: the translator's own refusal (S5.WCX)", () => {
+  test("a refusal with a closed code is rejected at once with that code: one attempt, paid, nothing stored", async () => {
+    for (const code of ["two-movements", "not-small", "staging", "not-motion"] as const) {
+      const m = makeClipMock();
+      m.engine.scriptNextMotionReplies([ideaRefusal(code, 600), idea(GOOD_TEXTS[0])]);
+      expect(await unwrap(translate(m))).toEqual({ outcome: "rejected", problems: [code], costMicros: 600 });
+      expect(m.engine.peekMotions().lines.map((line) => line.attemptId.replace(/^.*:/, ""))).toEqual(["idea#1"]);
+      expect((await optionsOf(m)).motions.filter((motion) => motion.source === "own")).toEqual([]);
+    }
+  });
+
+  test("a refusal on the repair ends the call with the refusal's code, both attempts paid", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([idea("she sharply turns her head toward the door", 1_000), ideaRefusal("not-small", 600)]);
+    expect(await unwrap(translate(m))).toEqual({ outcome: "rejected", problems: ["not-small"], costMicros: 1_600 });
+  });
+
+  test("a refusal outside the list is unreadable and asked once more", async () => {
+    const m = makeClipMock();
+    m.engine.scriptNextMotionReplies([ideaRefusal("content", 600), idea(GOOD_TEXTS[0], 1_000)]);
+    expect(await unwrap(translate(m))).toMatchObject({ outcome: "ok", costMicros: 1_600 });
+  });
+});
+
 describe("clips.translateIdea", () => {
   test("is reserved under <job>:idea#1 and settled at the answer's cost; the item is o-1 with the label cut from his words and the English text", async () => {
     const m = makeClipMock();
@@ -440,7 +465,7 @@ describe("clips.translateIdea", () => {
     m.engine.scriptNextMotionReplies([idea(NOT_MOTION), { kind: "timeout" }]);
     expect((await errorOf(translate(m))).code).toBe("TIMEOUT");
     // The repair carries the closed codes and the previous text, so its reserve is above the first attempt's (the real ledger agrees: money.test.ts).
-    expect((await money(m)).unsettledMicros).toBe(10_909);
+    expect((await money(m)).unsettledMicros).toBe(11_040);
   });
 
   test("ids count on: the next idea is o-2", async () => {

@@ -29,7 +29,7 @@ export function suggestionReply(texts: readonly string[], cost = 0.0034, frame: 
 
 /** The translator's answer. */
 export function ideaReply(text: string, cost = 0.001) {
-  return chatReply({ text_en: text }, cost);
+  return chatReply({ text_en: text, refusal: "none" }, cost);
 }
 
 export interface MotionWorld {

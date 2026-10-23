@@ -838,7 +838,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
           return json(chatCompletion(JSON.stringify(answer), costs.motionSuggest));
         }
         if (motionOptions !== null && entry.schemaName === TRANSLATOR_JSON_SCHEMA.name) {
-          return json(chatCompletion(JSON.stringify({ text_en: motionTranslation }), costs.motionIdea));
+          return json(chatCompletion(JSON.stringify({ text_en: motionTranslation, refusal: "none" }), costs.motionIdea));
         }
         if (entry.schemaName === POOL_JSON_SCHEMA.name) {
           const basePool = /сзади|back view|from behind/i.test(poolDescriptionOf(entry.body)) ? BACK_VIEW_POOL_ANSWER : DEFAULT_POOL_ANSWER;

@@ -10,8 +10,18 @@ import { chatAttemptWorstMicros } from "../../engine/openrouter/chat";
 import { TRANSLATE_ATTEMPT, SUGGEST_ATTEMPT } from "../../engine/money/motionEstimate";
 import { MOTION_PROMPT_TEXTS } from "../../engine/clips/motionPrompts";
 import { WRITER_JSON_SCHEMA } from "../../engine/clips/motionWriter";
-import { TRANSLATOR_JSON_SCHEMA } from "../../engine/clips/ideaTranslator";
-import { attemptWorstMicros, checkModelText, MOCK_MOTION_PROBLEMS, MOCK_PROMPT_BYTES, MOCK_SCHEMA_BYTES, MOCK_SUGGEST_PRICE, MOCK_TRANSLATE_PRICE, normalizeModelText } from "./mockClipMotions";
+import { TRANSLATOR_JSON_SCHEMA, TRANSLATOR_REFUSALS } from "../../engine/clips/ideaTranslator";
+import {
+  attemptWorstMicros,
+  checkModelText,
+  MOCK_MOTION_PROBLEMS,
+  MOCK_PROMPT_BYTES,
+  MOCK_SCHEMA_BYTES,
+  MOCK_SUGGEST_PRICE,
+  MOCK_TRANSLATE_PRICE,
+  MOCK_TRANSLATOR_REFUSALS,
+  normalizeModelText,
+} from "./mockClipMotions";
 import { MOTION_PROBLEMS } from "../../shared/engine";
 useNativeGlobals();
 
@@ -61,6 +71,10 @@ describe("the prices", () => {
 
   test("the mock's closed list of problems is the contract's", () => {
     expect(MOCK_MOTION_PROBLEMS).toEqual(MOTION_PROBLEMS);
+  });
+
+  test("S5.WCX: the codes the translator may refuse with are the engine's", () => {
+    expect(MOCK_TRANSLATOR_REFUSALS).toEqual(TRANSLATOR_REFUSALS);
   });
 });
 

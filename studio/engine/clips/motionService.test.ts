@@ -110,7 +110,7 @@ describe("after the last await", () => {
     const r = await rig((state) => [
       () => {
         state.deleting = true;
-        return { status: 200, body: chatBody(JSON.stringify({ text_en: GOOD_MOTION }), { cost: 0.001 }) };
+        return { status: 200, body: chatBody(JSON.stringify({ text_en: GOOD_MOTION, refusal: "none" }), { cost: 0.001 }) };
       },
     ]);
     await expect(r.motions.translateIdea({ avatarId: r.avatarId, photoId: r.photoId, text: "поворачивает голову", acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "NOT_FOUND" } });
@@ -179,7 +179,7 @@ describe("the call's cap", () => {
   });
 
   test("the translator's scope is capped the same way", async () => {
-    const r = await rig(() => [{ status: 200, body: chatBody(JSON.stringify({ text_en: GOOD_MOTION }), { cost: 0.001 }) }]);
+    const r = await rig(() => [{ status: 200, body: chatBody(JSON.stringify({ text_en: GOOD_MOTION, refusal: "none" }), { cost: 0.001 }) }]);
     await r.motions.translateIdea({ avatarId: r.avatarId, photoId: r.photoId, text: "поворачивает голову", acceptedWorstMicros: 1_000_000 });
     expect(r.state.caps).toEqual([
       ["set", SCOPE_KEY, translatePrice(priced(), "x-ai/grok-4.3").worstMicros],
@@ -232,7 +232,7 @@ describe("the photo's downscale is bounded (M1)", () => {
 
 describe("the chat client's timeout (L4)", () => {
   test("both calls open the client with the call timeout, 60 s like the descriptor check", async () => {
-    const r = await rig(() => [reply(GOOD_ANSWER), { status: 200, body: chatBody(JSON.stringify({ text_en: GOOD_MOTION }), { cost: 0.001 }) }]);
+    const r = await rig(() => [reply(GOOD_ANSWER), { status: 200, body: chatBody(JSON.stringify({ text_en: GOOD_MOTION, refusal: "none" }), { cost: 0.001 }) }]);
     await r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 });
     await r.motions.translateIdea({ avatarId: r.avatarId, photoId: r.photoId, text: "поворачивает голову", acceptedWorstMicros: 1_000_000 });
     expect(r.state.timeouts).toEqual([60_000, 60_000]);

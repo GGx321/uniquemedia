@@ -66,7 +66,7 @@ describe("the idea translator's route", () => {
     const response = await chat(m, "motion_idea", { idea: "медленно поворачивает голову" });
     expect(response.status).toBe(200);
     const { content, cost } = await contentOf(response);
-    expect(content).toEqual({ text_en: DEFAULT_MOTION_TRANSLATION });
+    expect(content).toEqual({ text_en: DEFAULT_MOTION_TRANSLATION, refusal: "none" });
     expect(cost).toBe(0.001);
     expect(m.totalUsageUsd()).toBeCloseTo(0.001, 9);
     expect(m.motionRequests()).toHaveLength(1);
@@ -75,7 +75,7 @@ describe("the idea translator's route", () => {
   test("answers the translation the scenario names", async () => {
     const m = await started({ translation: "she slowly looks down and smiles to herself" });
     const { content } = await contentOf(await chat(m, "motion_idea", {}));
-    expect(content).toEqual({ text_en: "she slowly looks down and smiles to herself" });
+    expect(content).toEqual({ text_en: "she slowly looks down and smiles to herself", refusal: "none" });
   });
 });
 
