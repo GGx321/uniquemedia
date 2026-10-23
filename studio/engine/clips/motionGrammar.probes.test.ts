@@ -91,8 +91,11 @@ describe("the innocent probes pass, or come back as a repairable not-motion: nev
     expect(PROBE_INNOCENT.flatMap((text) => (["vision", "own"] as const).flatMap((source) => notTheGrammars(text, source)))).toEqual([]);
   });
 
-  test("none that passes is read as undressing: the prompt keeps its clothing clause", () => {
-    expect(PROBE_INNOCENT.filter((text) => motionTextProblems(text, FRIEND, "vision").length === 0 && undressesBy(text, "vision", false))).toEqual([]);
+  test("none that passes is read as undressing, but an accessory or a hat taken off (round 2, L2: «nothing she wears comes off» would contradict it)", () => {
+    expect(PROBE_INNOCENT.filter((text) => motionTextProblems(text, FRIEND, "vision").length === 0 && undressesBy(text, "vision", false))).toEqual([
+      "she slowly takes off her sunglasses",
+      "she slowly takes off her hat",
+    ]);
   });
 
   test("the prone, dressing and twirling cases the controller names pass outright", () => {

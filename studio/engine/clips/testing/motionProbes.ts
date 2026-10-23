@@ -398,6 +398,7 @@ export const PROBE_BOLD: readonly string[] = [
  * (the owner, 2026-10-17), deliberately: the four explicit acts pass now, and the prompt line of an idea the grammar reads is the grammar's (an undressing or baring form:
  * «Nothing new appears.»; a dressing or a plain form: «comes off» or the base line), where the clothing-verb whitelist's guess was before. No answer that was `ok` is refused
  * now. Then, routing by the frame alone: an idea that undresses her builds its Grok prompt too (g:ok); whether Grok runs is the frame's (Kling alone on «Смелая» by default).
+ * Round 2 (L2): an accessory or a hat taken off says «Nothing new appears.» alone (2 entries: her sunglasses, her hat).
  */
 export const OWN_ON_BOLD: Readonly<Record<string, string>> = {
   "she slowly hitches her skirt a little higher": "ok k:nothing-new g:ok",
@@ -662,10 +663,10 @@ export const OWN_ON_BOLD: Readonly<Record<string, string>> = {
   "she slowly fixes her collar in the mirror": "ok k:base g:ok",
   "she slowly turns, her dress swaying a little": "ok k:comes-off g:ok",
   "she slowly tucks her hair behind her ear": "ok k:base g:ok",
-  "she slowly takes off her sunglasses": "ok k:comes-off g:ok",
+  "she slowly takes off her sunglasses": "ok k:nothing-new g:ok",
   "she slowly pushes her sunglasses up a little": "ok k:comes-off g:ok",
   "she slowly lowers her sunglasses a little": "ok k:comes-off g:ok",
-  "she slowly takes off her hat": "ok k:base g:ok",
+  "she slowly takes off her hat": "ok k:nothing-new g:ok",
   "she slowly adjusts her hat a little": "ok k:base g:ok",
   "she slowly pulls her hood up a little": "ok k:base g:ok",
   "she slowly pulls her beanie down a little": "ok k:base g:ok",

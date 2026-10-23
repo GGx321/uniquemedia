@@ -255,6 +255,16 @@ describe("the prompt line of an undressing motion on an ordinary frame: «Nothin
     }
   });
 
+  test("round 2 (L2): taking off an accessory, a shoe or a hat is taking something off too: «Nothing new appears.» alone, never «nothing she wears comes off»", () => {
+    for (const motion of ["she slowly takes off her sunglasses", "she slowly slips off her heels", "she slowly takes off her hat", "she slowly removes her earrings"]) {
+      for (const [frame, source] of [[FRIEND, "vision"], [FRIEND, "own"], [BOLD, "own"]] as const) {
+        const result = clipPromptOf(frame, motion, "kling", source);
+        if (!result.ok) throw new Error(`${motion}: ${result.problems.join("; ")}`);
+        expect([motion, source, result.prompt.includes(`${NOTHING_NEW_LINE} ${SLOW_LINE}`)]).toEqual([motion, source, true]);
+      }
+    }
+  });
+
   test("Grok, the ordinary frame's fallback, gets the same line: there is no motion-based routing", () => {
     for (const source of MODEL_SOURCES) {
       const result = clipPromptOf(FRIEND, "she slowly takes off her robe", "grok", source);

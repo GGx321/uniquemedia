@@ -214,13 +214,20 @@ function firstGarmentAt(words: readonly string[]): number {
 }
 
 /**
+ * The pinned phrases alone (`TAKES_OFF_PHRASES` and the same act in a model's other words): something taken, pulled, slipped or peeled off, removed, unbuttoned, unzipped,
+ * stepped out of, let fall; never her hair, her body, something she holds or a seat. S5.WC2c round 2 (L2): an accessory, a shoe or a hat taken off is taken off too.
+ */
+function takesOffByPhrase(text: string): boolean {
+  return TAKES_OFF_FORMS.some((form) => Array.from(text.matchAll(form)).some((match) => !wordsOf(match).some((word) => NOT_WORN.has(word))));
+}
+
+/**
  * Whether a motion takes clothing off: one of `TAKES_OFF_PHRASES` (and the same act in a model's other words: «peels off», «shrugs off», «slips the robe off», «undresses»,
  * «strips»), unless what comes off is her hair, her body, something she holds or a seat; or, since round 2, a garment moved off, down, away or open, undone, or stepped out
  * of. No bank motion and no code motion says one (motionText.test.ts sweeps them).
  */
 export function takesOff(text: string): boolean {
-  const phrase = TAKES_OFF_FORMS.some((form) => Array.from(text.matchAll(form)).some((match) => !wordsOf(match).some((word) => NOT_WORN.has(word))));
-  if (phrase) return true;
+  if (takesOffByPhrase(text)) return true;
   // The veto reads up to and including the first garment: «lifts her hand to her top» is her hand, «lifts her skirt above her knees» is her skirt.
   return GARMENT_FORMS.some(({ form, up }) =>
     Array.from(text.matchAll(form)).some((match) => {
@@ -674,14 +681,15 @@ export const grammarHolds = (source: ClipMotionSource, bold: boolean): boolean =
 
 /**
  * Whether the takes-off forms (`takesOff`) read undressing in a text the grammar reads (the re-review's round-3 rule, S5.WC2c: for the prompt alone): not where every clause they
- * hit was read by a form of what she wears (dressing, covering, laid out) or by a verb whose object is an accessory or something she holds («takes off her sunglasses», «lifts the
- * strap of her bag»); yes where a generic form read it (take, pull, slip, kick or push off a towel or a sheet).
+ * hit was read by a form of what she wears (dressing, covering, laid out), or by a verb whose object is something she holds that a garment form only names («lifts the strap of
+ * her bag»); yes where a generic form read it (take, pull, slip, kick or push off a towel or a sheet), and (round 2, L2) wherever a pinned phrase takes an accessory, a shoe
+ * or a hat off («takes off her sunglasses», «slips off her heels»): «nothing she wears comes off» would say the opposite of the motion.
  */
 function takesOffVeto(text: string, reading: MotionReading): boolean {
   if (!takesOff(text)) return false;
-  const lifted = (route: string): boolean => route === "kept" || route === "held";
+  const lifted = (clause: { readonly text: string; readonly route: string }): boolean => clause.route === "kept" || (clause.route === "held" && !takesOffByPhrase(clause.text));
   const hit = reading.clauses.filter((clause) => takesOff(clause.text));
-  return hit.length === 0 ? !reading.clauses.every((clause) => lifted(clause.route)) : !hit.every((clause) => lifted(clause.route));
+  return hit.length === 0 ? !reading.clauses.every(lifted) : !hit.every(lifted);
 }
 
 /**
