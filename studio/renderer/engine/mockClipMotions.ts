@@ -44,7 +44,7 @@ const bad = (error: EngineError): Out<never> => ({ ok: false, error });
  * Held to the engine by mockEngine.clipMotions.table.test.ts (it fails the day S5.WCX changes a prompt, and says which number to move here).
  */
 export const MOCK_SUGGEST_PRICE = { expectedMicros: 3_400, worstMicros: 29_678 } as const;
-export const MOCK_TRANSLATE_PRICE = { expectedMicros: 550, worstMicros: 24_914 } as const;
+export const MOCK_TRANSLATE_PRICE = { expectedMicros: 550, worstMicros: 24_016 } as const;
 
 type CallKind = "suggest" | "idea";
 
@@ -805,8 +805,8 @@ export class MockClipMotions {
     let feedback: Feedback = [];
     let previous: string | null = null;
     for (let attempt = 1; attempt <= MOTION_MAX_ATTEMPTS; attempt++) {
-      // The idea is a value inside JSON (data, never instructions); the feedback is closed codes and the previous text only when it is plain motion English.
-      const user = JSON.stringify({ idea, frame: framePayloadOf(frame), ...(feedback.length === 0 ? {} : { problems: feedback }), ...(previous === null ? {} : { previous }) });
+      // The idea is a value inside JSON (data, never instructions), alone: nothing of the frame (S5.WCX); the feedback is closed codes and the previous text only when it is plain motion English.
+      const user = JSON.stringify({ idea, ...(feedback.length === 0 ? {} : { problems: feedback }), ...(previous === null ? {} : { previous }) });
       const step = await this.#attempt(jobId, "idea", attempt, user);
       cost += step.costMicros;
       if (step.kind === "refused") return settled();

@@ -5,7 +5,7 @@ import { TRANSLATE_ATTEMPT } from "../money/motionEstimate";
 import type { Scope } from "../money/ledger";
 import type { ChatMessage } from "../openrouter/types";
 import type { FrameFacts } from "./frameFacts";
-import { ACTIVITY_MAX_CHARS, NEVER_ABORTED, type MotionAttemptShape, checkModelText, endsAsResult, framePayload, stepOf, type FramePayload } from "./motionCall";
+import { NEVER_ABORTED, type MotionAttemptShape, checkModelText, endsAsResult, stepOf } from "./motionCall";
 import { MOTION_PROMPT_TEXTS } from "./motionPrompts";
 import type { MotionJobDeps } from "./motionWriter";
 
@@ -82,9 +82,12 @@ function readAnswer(content: string): ReadAnswer | null {
   return refusal === "none" ? { kind: "text", text: parsed.data.text_en } : { kind: "refusal", code: refusal };
 }
 
-function messagesOf(idea: string, frame: FramePayload, feedback: TranslatorFeedback, previous: string | null): ChatMessage[] {
-  // The idea is a value inside JSON: whatever it holds (quotes, braces, newlines, a command) stays one string of data.
-  const data = { idea, frame, ...(feedback.length === 0 ? {} : { problems: feedback }), ...(previous === null ? {} : { previous }) };
+/**
+ * The idea is a value inside JSON: whatever it holds (quotes, braces, newlines, a command) stays one string of data. S5.WCX: the translator sees the idea ALONE, nothing of the frame. P-R found it
+ * borrowing the frame's activity («holding a ceramic coffee mug») to replace what it would not say; a faithful translation needs nothing of the frame, and the check reads the frame afterwards.
+ */
+function messagesOf(idea: string, feedback: TranslatorFeedback, previous: string | null): ChatMessage[] {
+  const data = { idea, ...(feedback.length === 0 ? {} : { problems: feedback }), ...(previous === null ? {} : { previous }) };
   return [
     // S5.WC2c round 2 (M2): on every frame the translator says the owner's idea as it is, an idea that takes clothing off included; the check below stays the gate.
     { role: "system", content: MOTION_PROMPT_TEXTS.translatorSystem },
@@ -94,18 +97,7 @@ function messagesOf(idea: string, frame: FramePayload, feedback: TranslatorFeedb
 
 /** The widest attempt the translator can send, for the estimate: an idea of 300 three-byte characters (the contract's maximum, at the most bytes), every closed code, the longest previous text. */
 export function translatorPriceShape(): MotionAttemptShape {
-  const widest: FramePayload = {
-    capture: "mirror-hidden",
-    plannedCapture: "mirror-hidden",
-    faceVisible: "maybe",
-    faceRole: "profile",
-    legsFraming: false,
-    level: "ordinary",
-    bold: false,
-    activity: "a".repeat(ACTIVITY_MAX_CHARS),
-    phoneAllowed: false,
-  };
-  return { messages: messagesOf("一".repeat(OWN_IDEA_MAX), widest, [...MOTION_PROBLEMS, "unreadable"], "a".repeat(PREVIOUS_MAX_CHARS)), jsonSchema: TRANSLATOR_JSON_SCHEMA };
+  return { messages: messagesOf("一".repeat(OWN_IDEA_MAX), [...MOTION_PROBLEMS, "unreadable"], "a".repeat(PREVIOUS_MAX_CHARS)), jsonSchema: TRANSLATOR_JSON_SCHEMA };
 }
 
 /** `\uXXXX` for every non-ASCII code unit. */
@@ -167,7 +159,6 @@ export function rawScrub(idea: string): (text: string) => string {
 
 /** Asks the settings' text model to say the owner's idea as one small English motion. */
 export async function runIdeaTranslator(deps: MotionJobDeps, job: TranslatorJob): Promise<TranslatorOutcome> {
-  const frame = framePayload(job.facts);
   const scrubRaw = rawScrub(job.idea);
   let feedback: TranslatorFeedback = [];
   let previous: string | null = null;
@@ -186,7 +177,7 @@ export async function runIdeaTranslator(deps: MotionJobDeps, job: TranslatorJob)
         budget: deps.budget,
         priceBook: deps.priceBook,
         signal: NEVER_ABORTED,
-        messages: messagesOf(job.idea, frame, feedback, previous),
+        messages: messagesOf(job.idea, feedback, previous),
         jsonSchema: TRANSLATOR_JSON_SCHEMA,
         maxTokens: TRANSLATE_ATTEMPT.maxTokens,
         reasoningTokens: TRANSLATE_ATTEMPT.reasoningTokens,
