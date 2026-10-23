@@ -843,6 +843,27 @@ export function motionTextFindings(text: string, frame: MotionFrame, source: Cli
   return findingsIn(text, { source, frame });
 }
 
+/** A number on its own in his words («, 16», «16-летняя», «18+»), never digits inside a code or a word («9c41», «4K»). */
+const STANDALONE_NUMBER = /(?<![\p{L}\p{N}])\p{N}+(?![\p{L}\p{N}])/u;
+/** A Russian number word from ten up, in any form («шестнадцать», «шестнадцатый», «двадцати»): the owner's own words for a number an age hides in. */
+const RU_NUMBER_WORD = /(?<![\p{L}])(?:десят|одиннадцат|двенадцат|тринадцат|четырнадцат|пятнадцат|шестнадцат|семнадцат|восемнадцат|девятнадцат|двадцат|тридцат)\p{L}*/iu;
+
+/**
+ * The age guard read on the owner's own idea, before it is sent (S5.WC2c round 2, M1): an age or an age bound in English or Russian («ей 16», «16-летняя», «младше 18»), a
+ * youth word in either language at the frame's level («школьница», «малышка», «подросток», «toddler»), a number on its own, or a number word («шестнадцать», «sixteen»). What the English would be refused
+ * for in any case, `content` and final; read here, the call is refused free and nothing reaches the model, so no answer can leave the age out.
+ */
+export function ownIdeaNamesAge(idea: string, level: ContentLevel): boolean {
+  return (
+    ageMentions(idea).length > 0 ||
+    ageUpperBounds(idea).length > 0 ||
+    contentIn(idea, level).some((problem) => problem.reason === "youth-word") ||
+    STANDALONE_NUMBER.test(idea) ||
+    namesNumberWord(idea) ||
+    RU_NUMBER_WORD.test(idea)
+  );
+}
+
 /** The rules of the minor-age guard, a hard line: an age, an age bound or a youth word (`youth`), and a number, where an age hides (`number`). */
 export const AGE_GUARD_RULES: readonly MotionRule[] = ["youth", "number"];
 

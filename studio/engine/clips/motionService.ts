@@ -9,6 +9,7 @@ import {
   type Estimate,
 } from "../../shared/engine";
 import { freshDrafts, sameText, sheetVisionTexts } from "../../shared/engine/motionKnown";
+import { ownIdeaNamesAge } from "../../shared/scenes/motionText";
 import { EngineFailure } from "../engineFailure";
 import type { Library } from "../library";
 import type { PhotoSidecar } from "../library/schemas";
@@ -311,6 +312,11 @@ export class ClipMotions {
     const deps = this.#deps;
     const { avatarId } = payload;
     const ready = await this.#prepare("translate an idea", "own", avatarId, payload.photoId);
+    // S5.WC2c round 2 (M1): the age guard on his own words, before any money: refused free and final, and nothing reaches the model. Only the photo's id is logged.
+    if (ownIdeaNamesAge(payload.text, ready.facts.level)) {
+      deps.log(`[clip] the idea for photo ${ready.photo.id} is refused before the call: the age guard`);
+      return { outcome: "rejected", problems: ["content"], costMicros: 0 };
+    }
     const textModel = deps.textModel();
     const priced = await deps.prices(motionPriceModels(textModel));
     const estimate = translatePrice(priced, textModel);

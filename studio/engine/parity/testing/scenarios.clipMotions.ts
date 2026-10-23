@@ -450,4 +450,23 @@ export const CLIP_MOTION_SCENARIOS: readonly Scenario[] = [
       t.note("the POSTs that left: " + (control.clips.posts().join(", ") || "none"));
     },
   },
+  {
+    // Appended in S5.WC2c round 2 (M1): the age guard reads the owner's own words before the call. An age, a youth word or a number on its own in his idea is refused FREE and final,
+    // on an ordinary frame and on «Смелая»: no attempt is reserved and nothing reaches the model (no answer is scripted: a call would show as one).
+    name: "clip motions: an idea whose own words name an age is refused before the call, free, on an ordinary frame and on «Смелая»",
+    rig: { clips: { batch: 4, budgetMicros: BUDGET, boldClips: "kling-only" } },
+    async run(t, world, control) {
+      const w = clipsOf(world);
+      for (const photoId of [w.photos.plain, w.photos.bold]) {
+        t.note(photoId === w.photos.plain ? "an ordinary frame" : "a frame of «Смелая»");
+        await translate(t, w, control, [], "медленно снимает халат, ей 16", photoId);
+        await translate(t, w, control, [], "раздевается как школьница", photoId);
+        await translate(t, w, control, [], "медленно снимает халат, шестнадцать", photoId);
+      }
+      t.note("nothing was spent, reserved or stored");
+      await status(t);
+      await options(t, w);
+      await options(t, w, w.photos.bold);
+    },
+  },
 ];

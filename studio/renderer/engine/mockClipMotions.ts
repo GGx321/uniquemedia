@@ -22,7 +22,7 @@ import {
 import { freshDrafts, sameText, sheetVisionTexts } from "../../shared/engine/motionKnown";
 import { CAPTURES } from "../../shared/scenes/captures";
 import type { ContentLevel } from "../../shared/scenes/contentLine";
-import { motionTextProblems, repairMayHelp, type MotionFrame } from "../../shared/scenes/motionText";
+import { motionTextProblems, ownIdeaNamesAge, repairMayHelp, type MotionFrame } from "../../shared/scenes/motionText";
 
 // Stage 5, 5b.2, S5.WC4 (plan s5b2 §5.3, §5.6 «C», I5.66-I5.68; Q-H = 2): the vision motion writer and «Своя идея» of the mock engine, the mirror of engine/clips/{motionService,motionWriter,ideaTranslator,motionStore}.ts.
 // The mock plays the model's answers from a script (`MockModelReply`: what OpenRouter would answer, in the words the transport reads), and does with each one what the engine does: the same parsing, the SAME shared motion check
@@ -516,8 +516,15 @@ export class MockClipMotions {
     });
   }
 
-  /** Everything a paid call checks before it spends, in the contract's order. */
+  /** Everything a paid call checks before it spends, in the contract's order: the photo's (`#photoReady`), then the money's (`#moneyReady`). */
   #prepare(kind: CallKind, avatarId: string, photoId: string, acceptedWorstMicros: number): Out<{ frame: MockMotionFrame; sha: string }> {
+    const read = this.#photoReady(kind, avatarId, photoId);
+    if (!read.ok) return read;
+    return this.#moneyReady(kind, acceptedWorstMicros, read.result);
+  }
+
+  /** The key, the ledger, the photo and its store, as the engine's `#prepare`. */
+  #photoReady(kind: CallKind, avatarId: string, photoId: string): Out<{ frame: MockMotionFrame; sha: string }> {
     const gated = this.#ports.gate();
     if (gated !== null) return bad(gated);
     const found = this.#ports.find(avatarId, photoId);
@@ -528,13 +535,18 @@ export class MockClipMotions {
     if (isFull(this.#read(avatarId, photoId, read.result.sha), source)) {
       return bad({ code: "VALIDATION", clipReason: "motions-full", detail: `every ${PREFIX[source]}- id of photo ${photoId} was issued; ids are never reused` });
     }
+    return good(read.result);
+  }
+
+  /** The accepted worst case and the month. */
+  #moneyReady(kind: CallKind, acceptedWorstMicros: number, ready: { frame: MockMotionFrame; sha: string }): Out<{ frame: MockMotionFrame; sha: string }> {
     const { worstMicros } = priceOf(kind);
     if (worstMicros > acceptedWorstMicros) return bad({ code: "PRICE_CHANGED", detail: `the worst case is now ${worstMicros} µ$, above the accepted ${acceptedWorstMicros} µ$` });
     const committed = this.#ports.committedMicros();
     if (committed + worstMicros > this.#ports.monthlyBudgetMicros()) {
       return bad({ code: "BUDGET_EXCEEDED", detail: `committed ${committed} µ$ + this job's worst case ${worstMicros} µ$ > the monthly budget ${this.#ports.monthlyBudgetMicros()} µ$` });
     }
-    return good(read.result);
+    return good(ready);
   }
 
   async suggestMotions(payload: CommandPayload<"clips.suggestMotions">): Promise<Out<ClipSuggestResult>> {
@@ -553,7 +565,11 @@ export class MockClipMotions {
     const entered = this.#enter("idea", payload.avatarId, payload.photoId);
     if (!entered.ok) return entered;
     try {
-      const ready = this.#prepare("idea", payload.avatarId, payload.photoId, payload.acceptedWorstMicros);
+      const photo = this.#photoReady("idea", payload.avatarId, payload.photoId);
+      if (!photo.ok) return photo;
+      // S5.WC2c round 2 (M1), as the engine: the age guard on his own words, before any money; refused free and final.
+      if (ownIdeaNamesAge(payload.text, photo.result.frame.level)) return good({ outcome: "rejected", problems: ["content"], costMicros: 0 });
+      const ready = this.#moneyReady("idea", payload.acceptedWorstMicros, photo.result);
       if (!ready.ok) return ready;
       return await this.#translate(payload.avatarId, payload.photoId, payload.text, ready.result);
     } finally {

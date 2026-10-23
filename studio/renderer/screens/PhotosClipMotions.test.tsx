@@ -560,8 +560,9 @@ describe("63b, 63c: the idea refused", () => {
     ];
     const h = await openNini();
     const s = await openSheet();
-    for (const [english, texts] of cases) {
-      await typeIdea(s, `идея: ${english.length}`);
+    // S5.WC2c round 2 (M1): a number on its own in his words is the age guard's, refused before the call, so each idea is told apart by a word, not a number.
+    for (const [i, [english, texts]] of cases.entries()) {
+      await typeIdea(s, `идея ${["первая", "вторая", "третья", "четвёртая"][i] ?? "ещё одна"}`);
       h.engine.scriptNextMotionReplies([mockIdeaAnswer(english), mockIdeaAnswer(english)]);
       await translate(s);
       expect(Array.from(s.querySelectorAll(".mc-refusal p")).map((p) => plain(p.textContent))).toEqual(texts.map(plain));
@@ -580,10 +581,23 @@ describe("63b, 63c: the idea refused", () => {
     expect(h.engine.peekMotions().lines.filter((line) => line.attemptId.includes(":idea#"))).toHaveLength(1);
   });
 
-  test("S5.WC2c: an idea the age guard refuses is refused at once with the content text, after one paid attempt", async () => {
+  test("S5.WC2c round 2 (M1): an idea whose own words name an age is refused before the call: the content text, «Перевод — бесплатно.», nothing sent", async () => {
     const h = await openNini();
     const s = await openSheet();
     await typeIdea(s, "медленно снимает халат, ей шестнадцать");
+    h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly takes off her robe")]);
+    await translate(s);
+    const refusal = s.querySelector(".mc-refusal") as HTMLElement;
+    expect(Array.from(refusal.querySelectorAll("p")).map((p) => plain(p.textContent))).toEqual([plain(MOTION_PROBLEMS_RU.content)]);
+    expect(plain(refusal.querySelector(".mc-paid")?.textContent)).toBe("Перевод — бесплатно.");
+    expect(h.engine.peekMotions().lines).toHaveLength(0);
+    expect(rowTexts(s).some((row) => row.startsWith("Своя идея"))).toBe(false);
+  });
+
+  test("S5.WC2c: an idea the age guard refuses only in its English is refused at once with the content text, after one paid attempt", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    await typeIdea(s, "медленно снимает халат");
     h.engine.scriptNextMotionReplies([mockIdeaAnswer("she slowly takes off her robe, aged sixteen"), mockIdeaAnswer("she slowly takes off her robe")]);
     await translate(s);
     const refusal = s.querySelector(".mc-refusal") as HTMLElement;
