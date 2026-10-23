@@ -4,9 +4,10 @@
 // - P-M (2026-10-17, .omc/stage5/harness/out/pm.md): 9 vision attempts and 10 translation attempts, reasoning effort "low". The two translation bills above their reserve
 //   (3 449 and 4 111 µ$, the second the «T7» one) stopped the ledger then.
 // - P-R (2026-10-17, out/pr.md): 29 translation attempts in four arms: A effort "low", B "none", C `reasoning.max_tokens: 256` (it RAISED reasoning), D "minimal".
+// - P-X (2026-10-23, out/px.md): the WCX texts live (c2d6ae94): 10 translation attempts on effort "none" and 3 vision attempts on "low".
 
 export interface ProbeUsage {
-  readonly probe: "P-M" | "P-R";
+  readonly probe: "P-M" | "P-R" | "P-X";
   readonly call: "suggest" | "translate";
   /** What the request sent as `reasoning`. */
   readonly reasoning: "low" | "none" | "minimal" | "max_tokens 256";
@@ -87,6 +88,33 @@ export const PROBE_USAGES: readonly ProbeUsage[] = [
   pr("low", 557, 801, 787, 2_161),
   pr("low", 538, 735, 723, 2_376),
   pr("low", 553, 1_064, 1_052, 3_217),
+];
+
+const px = (call: ProbeUsage["call"], prompt: number, completion: number, reasoningTokens: number, costMicros: number): ProbeUsage => ({
+  probe: "P-X",
+  call,
+  reasoning: call === "translate" ? "none" : "low",
+  prompt,
+  completion,
+  reasoningTokens,
+  costMicros,
+});
+
+/** P-X: the WCX texts live, the translator on «none» (T1-T9 and T7 on a second frame), the writer on «low» (a selfie, a mirror, a friend's photo). */
+export const PX_USAGES: readonly ProbeUsage[] = [
+  px("translate", 881, 21, 0, 1_019),
+  px("translate", 879, 18, 0, 1_009),
+  px("translate", 879, 12, 0, 994),
+  px("translate", 879, 10, 0, 989),
+  px("translate", 877, 15, 0, 327),
+  px("translate", 877, 9, 0, 984),
+  px("translate", 876, 16, 0, 1_001),
+  px("translate", 876, 16, 0, 1_001),
+  px("translate", 877, 10, 0, 987),
+  px("translate", 875, 14, 0, 994),
+  px("suggest", 1_616, 1_503, 1_368, 5_643),
+  px("suggest", 1_613, 1_186, 1_072, 4_847),
+  px("suggest", 1_610, 1_314, 1_178, 5_163),
 ];
 
 /** The «T7» attempt of P-M: the translation that billed 4 111 µ$ against a reserve of about 3 140. */

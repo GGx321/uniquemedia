@@ -1,5 +1,5 @@
 {
-  "about": "S5.WCX: the part C answers of the paid probes P-M (2026-10-17, the provisional prompts, reasoning low) and P-R (2026-10-17, the translator in four reasoning arms), text only: no photo id, no hash, no idea but the probes' own set. Each answer is tied to the KIND of frame it was made for. The translations are tagged with what they did to the idea's meaning (the owner's eye and pm.md / pr.md): faithful, substituted (another motion in its place), softened (made slow), dropped (a part left out) or merged (two movements said as one).",
+  "about": "S5.WCX: the part C answers of the paid probes P-M (2026-10-17, the provisional prompts, reasoning low) and P-R (2026-10-17, the translator in four reasoning arms), text only: no photo id, no hash, no idea but the probes' own set. Each answer is tied to the KIND of frame it was made for. The translations are tagged with what they did to the idea's meaning (the owner's eye and pm.md / pr.md): faithful, substituted (another motion in its place), softened (made slow), dropped (a part left out) or merged (two movements said as one). Round 2: px holds P-X (2026-10-23), the WCX texts live on grok-4.3 (the translator on effort none, the writer on low), each answer as the model gave it.",
   "ideas": {
     "T1": { "text": "медленно заправляет прядь волос за ухо", "frame": "selfie" },
     "T2": { "text": "медленно поворачивает голову к окну", "frame": "mirror" },
@@ -158,5 +158,57 @@
     { "probe": "P-R", "reasoning": "max_tokens 256", "idea": "T4", "english": "she slowly approaches the mirror holding her mug", "meaning": "substituted" },
     { "probe": "P-R", "reasoning": "max_tokens 256", "idea": "T7", "english": "she slowly sips from the ceramic coffee mug", "meaning": "substituted" },
     { "probe": "P-R", "reasoning": "max_tokens 256", "idea": "T7", "english": "she slowly lifts the ceramic coffee mug", "meaning": "substituted" }
-  ]
+  ],
+  "px": {
+    "translations": [
+      { "idea": "T1", "frame": "selfie", "answer": { "text_en": "she slowly tucks a strand of hair behind her ear", "refusal": "none" } },
+      { "idea": "T2", "frame": "mirror", "answer": { "text_en": "she slowly turns her head to the window", "refusal": "none" } },
+      { "idea": "T3", "frame": "selfie", "answer": { "text_en": "", "refusal": "two-movements" } },
+      { "idea": "T4", "frame": "mirror", "answer": { "text_en": "", "refusal": "not-small" } },
+      { "idea": "T5", "frame": "friend", "answer": { "text_en": "she smiles at her phone", "refusal": "none" } },
+      { "idea": "T6", "frame": "candid", "answer": { "text_en": "", "refusal": "staging" } },
+      { "idea": "T7", "frame": "candid", "answer": { "text_en": "she slowly takes off her hoodie", "refusal": "none" } },
+      { "idea": "T7", "frame": "mirror", "answer": { "text_en": "she slowly takes off her hoodie", "refusal": "none" } },
+      { "idea": "T8", "frame": "mirror", "answer": { "text_en": "", "refusal": "not-small" } },
+      { "idea": "T9", "frame": "face-hidden", "answer": { "text_en": "she slowly winks", "refusal": "none" } }
+    ],
+    "suggestions": [
+      {
+        "frame": "selfie",
+        "listed": ["she slowly blinks and gives a small smile", "she slowly glances to the side and looks back", "she tilts her head a little to one side and smiles"],
+        "answer": {
+          "motions": [
+            { "label_ru": "Прикусывает губу", "text_en": "she gently bites her lower lip" },
+            { "label_ru": "Проводит пальцами по волосам", "text_en": "she slowly runs her fingers through her hair" },
+            { "label_ru": "Сдвигает плечи", "text_en": "she shifts her shoulders a little on the pillow" }
+          ],
+          "frame": { "capture": "selfie", "phoneVisible": true, "faceVisible": true }
+        }
+      },
+      {
+        "frame": "mirror",
+        "listed": ["she slowly blinks and gives a small smile", "she turns her hips a little toward the mirror and back", "she slowly glances to the side and looks back"],
+        "answer": {
+          "motions": [
+            { "label_ru": "Наклоняет голову набок", "text_en": "she gently tilts her head to one side" },
+            { "label_ru": "Проводит рукой по волосам", "text_en": "she slowly runs her fingers through her hair" },
+            { "label_ru": "Переносит вес на другую ногу", "text_en": "she slightly shifts her weight to one leg" }
+          ],
+          "frame": { "capture": "mirror", "phoneVisible": true, "faceVisible": true }
+        }
+      },
+      {
+        "frame": "friend",
+        "listed": ["she slowly blinks and gives a small smile", "she slowly looks down and smiles to herself", "she slowly glances to the side and looks back"],
+        "answer": {
+          "motions": [
+            { "label_ru": "Наклон головы вбок", "text_en": "she slowly tilts her head to the side" },
+            { "label_ru": "Поглаживание волос", "text_en": "she gently tucks her hair behind her ear" },
+            { "label_ru": "Смещение веса тела", "text_en": "she slightly shifts her weight to one leg" }
+          ],
+          "frame": { "capture": "friend", "phoneVisible": false, "faceVisible": true }
+        }
+      }
+    ]
+  }
 }
