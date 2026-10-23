@@ -14,7 +14,7 @@ import type { MotionJobDeps } from "./motionWriter";
 // `scrubRaw`), not in the store (the engine keeps its label and the English text only). The translator sees no image. One repair at most: a second attempt with the closed codes and the previous English
 // text (never a free-text reason); a refusal of the age guard gets none (`repairMayHelp`, S5.WC2c). Two attempts at most (`MOTION_MAX_ATTEMPTS`), ids `<jobId>:idea#N`.
 //
-// The wiring only: the system prompt is `MOTION_PROMPT_TEXTS.translatorSystem` (S5.WCX writes it).
+// The wiring only: the system prompt is `MOTION_PROMPT_TEXTS.translatorSystem` (S5.WCX, final; motionPrompts.ts).
 
 export interface TranslatorJob {
   jobId: string;

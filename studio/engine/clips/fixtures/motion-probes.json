@@ -1,0 +1,162 @@
+{
+  "about": "S5.WCX: the part C answers of the paid probes P-M (2026-10-17, the provisional prompts, reasoning low) and P-R (2026-10-17, the translator in four reasoning arms), text only: no photo id, no hash, no idea but the probes' own set. Each answer is tied to the KIND of frame it was made for. The translations are tagged with what they did to the idea's meaning (the owner's eye and pm.md / pr.md): faithful, substituted (another motion in its place), softened (made slow), dropped (a part left out) or merged (two movements said as one).",
+  "ideas": {
+    "T1": { "text": "медленно заправляет прядь волос за ухо", "frame": "selfie" },
+    "T2": { "text": "медленно поворачивает голову к окну", "frame": "mirror" },
+    "T3": { "text": "поправляет волосы, а потом машет рукой", "frame": "selfie" },
+    "T4": { "text": "встаёт с кровати и подходит к зеркалу", "frame": "mirror" },
+    "T5": { "text": "смотрит в телефон и улыбается", "frame": "friend" },
+    "T6": { "text": "камера медленно приближается к её лицу", "frame": "friend-profile" },
+    "T7": { "text": "медленно снимает толстовку", "frame": "friend" },
+    "T8": { "text": "резко поворачивает голову к двери", "frame": "selfie" },
+    "T9": { "text": "медленно подмигивает", "frame": "face-hidden" }
+  },
+  "suggestions": [
+    {
+      "probe": "P-M",
+      "frame": "selfie",
+      "answer": {
+        "motions": [
+          { "label_ru": "поднимает кружку к губам", "text_en": "she slowly raises the mug toward her lips" },
+          { "label_ru": "слегка наклоняет голову", "text_en": "she tilts her head a little to one side" },
+          { "label_ru": "медленно моргает", "text_en": "she blinks slowly" }
+        ],
+        "frame": { "capture": "selfie", "phoneVisible": false, "faceVisible": true }
+      }
+    },
+    {
+      "probe": "P-M",
+      "frame": "mirror",
+      "answer": {
+        "motions": [
+          { "label_ru": "поправляет прядь волос", "text_en": "she slowly tucks a strand of hair behind her ear" },
+          { "label_ru": "наклоняет голову вбок", "text_en": "she tilts her head a little to one side" },
+          { "label_ru": "медленно моргает", "text_en": "she blinks slowly" }
+        ],
+        "frame": { "capture": "mirror", "phoneVisible": true, "faceVisible": true }
+      }
+    },
+    {
+      "probe": "P-M",
+      "frame": "friend-profile",
+      "answer": {
+        "motions": [
+          { "label_ru": "убирает волосы за ухо", "text_en": "she slowly tucks a strand of hair behind her ear" },
+          { "label_ru": "наклоняет голову", "text_en": "she tilts her head a little to one side" },
+          { "label_ru": "опускает взгляд", "text_en": "she lowers her gaze slowly" }
+        ],
+        "frame": { "capture": "friend", "phoneVisible": false, "faceVisible": true }
+      }
+    },
+    {
+      "probe": "P-M",
+      "frame": "friend",
+      "answer": {
+        "motions": [
+          { "label_ru": "убирает прядь волос за ухо", "text_en": "she tucks a strand of hair behind her ear" },
+          { "label_ru": "слегка наклоняет голову", "text_en": "she tilts her head a little to one side" },
+          { "label_ru": "медленно улыбается", "text_en": "she smiles softly" }
+        ],
+        "frame": { "capture": "friend", "phoneVisible": true, "faceVisible": true }
+      }
+    },
+    {
+      "probe": "P-M",
+      "frame": "selfie",
+      "answer": {
+        "motions": [
+          { "label_ru": "медленно поворачивает голову", "text_en": "she slowly turns her head a little to the side" },
+          { "label_ru": "мягко моргает", "text_en": "she blinks her eyes gently" },
+          { "label_ru": "слегка улыбается", "text_en": "she smiles a little" }
+        ],
+        "frame": { "capture": "selfie", "phoneVisible": true, "faceVisible": true }
+      }
+    },
+    {
+      "probe": "P-M",
+      "frame": "mirror",
+      "answer": {
+        "motions": [
+          { "label_ru": "Наклоняет голову", "text_en": "she tilts her head a little to one side" },
+          { "label_ru": "Опускает руку", "text_en": "she slowly lowers her hand from her ear" },
+          { "label_ru": "Легко улыбается", "text_en": "she smiles softly with a slight head tilt" }
+        ],
+        "frame": { "capture": "mirror", "phoneVisible": true, "faceVisible": true }
+      }
+    },
+    {
+      "probe": "P-M",
+      "frame": "friend",
+      "answer": {
+        "motions": [
+          { "label_ru": "наклоняет голову в сторону", "text_en": "she tilts her head a little to one side" },
+          { "label_ru": "смотрит на бумаги", "text_en": "she glances down at the papers" },
+          { "label_ru": "поправляет прядь волос", "text_en": "she tucks a strand of hair behind her ear" }
+        ],
+        "frame": { "capture": "friend", "phoneVisible": false, "faceVisible": true }
+      }
+    },
+    {
+      "probe": "P-M",
+      "frame": "selfie",
+      "answer": {
+        "motions": [
+          { "label_ru": "наклоняет голову", "text_en": "she tilts her head slightly to one side" },
+          { "label_ru": "медленно моргает", "text_en": "she slowly blinks her eyes" },
+          { "label_ru": "двигает рукой", "text_en": "she moves her hand gently on the bed" }
+        ],
+        "frame": { "capture": "selfie", "phoneVisible": true, "faceVisible": true }
+      }
+    },
+    {
+      "probe": "P-M",
+      "frame": "selfie",
+      "answer": {
+        "motions": [
+          { "label_ru": "поднимает кружку к губам", "text_en": "she slowly raises the mug to her lips" },
+          { "label_ru": "наклоняет голову в сторону", "text_en": "she tilts her head a little to one side" },
+          { "label_ru": "смотрит в сторону", "text_en": "she shifts her gaze slightly to the side" }
+        ],
+        "frame": { "capture": "selfie", "phoneVisible": false, "faceVisible": true }
+      }
+    }
+  ],
+  "translations": [
+    { "probe": "P-M", "reasoning": "low", "idea": "T1", "english": "she slowly tucks a strand of hair behind her ear", "meaning": "faithful" },
+    { "probe": "P-M", "reasoning": "low", "idea": "T2", "english": "she slowly turns her head to the window", "meaning": "faithful" },
+    { "probe": "P-M", "reasoning": "low", "idea": "T3", "english": "she slowly adjusts her hair and waves her hand", "meaning": "merged" },
+    { "probe": "P-M", "reasoning": "low", "idea": "T4", "english": "she slowly rises from the bed toward the mirror", "meaning": "merged" },
+    { "probe": "P-M", "reasoning": "low", "idea": "T5", "english": "she lowers her gaze and smiles", "meaning": "dropped" },
+    { "probe": "P-M", "reasoning": "low", "idea": "T5", "english": "she smiles gently while looking down", "meaning": "dropped" },
+    { "probe": "P-M", "reasoning": "low", "idea": "T6", "english": "she slowly turns her head toward the side", "meaning": "substituted" },
+    { "probe": "P-M", "reasoning": "low", "idea": "T7", "english": "she slowly shifts her shoulders", "meaning": "substituted" },
+    { "probe": "P-M", "reasoning": "low", "idea": "T8", "english": "she sharply turns her head toward the door", "meaning": "faithful" },
+    { "probe": "P-M", "reasoning": "low", "idea": "T8", "english": "she slowly turns her head toward the door", "meaning": "softened" },
+    { "probe": "P-R", "reasoning": "none", "idea": "T1", "english": "she slowly tucks a strand of hair behind her ear", "meaning": "faithful" },
+    { "probe": "P-R", "reasoning": "none", "idea": "T3", "english": "she slowly tucks a strand of hair behind her ear and waves her hand", "meaning": "merged" },
+    { "probe": "P-R", "reasoning": "none", "idea": "T3", "english": "she slowly fixes her hair then waves her hand", "meaning": "faithful" },
+    { "probe": "P-R", "reasoning": "none", "idea": "T6", "english": "she slowly raises the ceramic coffee mug toward her lips", "meaning": "substituted" },
+    { "probe": "P-R", "reasoning": "none", "idea": "T8", "english": "she slowly turns her head toward the door", "meaning": "softened" },
+    { "probe": "P-R", "reasoning": "low", "idea": "T1", "english": "she slowly tucks a strand of hair behind her ear", "meaning": "faithful" },
+    { "probe": "P-R", "reasoning": "low", "idea": "T2", "english": "she slowly turns her head toward the window", "meaning": "faithful" },
+    { "probe": "P-R", "reasoning": "low", "idea": "T3", "english": "she slowly adjusts her hair and waves her hand", "meaning": "merged" },
+    { "probe": "P-R", "reasoning": "low", "idea": "T4", "english": "she slowly rises from the bed holding her mug", "meaning": "substituted" },
+    { "probe": "P-R", "reasoning": "low", "idea": "T4", "english": "she slowly stands from the bed holding her mug", "meaning": "substituted" },
+    { "probe": "P-R", "reasoning": "low", "idea": "T4", "english": "she slowly rises from the bed holding the mug", "meaning": "substituted" },
+    { "probe": "P-R", "reasoning": "low", "idea": "T4", "english": "she slowly stands from the bed holding the mug", "meaning": "substituted" },
+    { "probe": "P-R", "reasoning": "low", "idea": "T5", "english": "she tilts her head slightly and smiles", "meaning": "substituted" },
+    { "probe": "P-R", "reasoning": "low", "idea": "T5", "english": "she smiles softly while holding the mug", "meaning": "substituted" },
+    { "probe": "P-R", "reasoning": "low", "idea": "T6", "english": "she slowly lifts the mug closer to her face", "meaning": "substituted" },
+    { "probe": "P-R", "reasoning": "low", "idea": "T7", "english": "she slowly raises the mug a little higher", "meaning": "substituted" },
+    { "probe": "P-R", "reasoning": "minimal", "idea": "T1", "english": "she slowly tucks a strand of hair behind her ear", "meaning": "faithful" },
+    { "probe": "P-R", "reasoning": "minimal", "idea": "T3", "english": "she slowly adjusts her hair and waves", "meaning": "merged" },
+    { "probe": "P-R", "reasoning": "minimal", "idea": "T5", "english": "she smiles softly while holding the mug", "meaning": "substituted" },
+    { "probe": "P-R", "reasoning": "minimal", "idea": "T5", "english": "she tilts her head slightly and smiles", "meaning": "substituted" },
+    { "probe": "P-R", "reasoning": "minimal", "idea": "T8", "english": "she slowly turns her head toward the door", "meaning": "softened" },
+    { "probe": "P-R", "reasoning": "max_tokens 256", "idea": "T2", "english": "she slowly turns her head to the window", "meaning": "faithful" },
+    { "probe": "P-R", "reasoning": "max_tokens 256", "idea": "T4", "english": "she slowly rises from the bed holding her mug", "meaning": "substituted" },
+    { "probe": "P-R", "reasoning": "max_tokens 256", "idea": "T4", "english": "she slowly approaches the mirror holding her mug", "meaning": "substituted" },
+    { "probe": "P-R", "reasoning": "max_tokens 256", "idea": "T7", "english": "she slowly sips from the ceramic coffee mug", "meaning": "substituted" },
+    { "probe": "P-R", "reasoning": "max_tokens 256", "idea": "T7", "english": "she slowly lifts the ceramic coffee mug", "meaning": "substituted" }
+  ]
+}

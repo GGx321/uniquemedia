@@ -28,7 +28,7 @@ import { CLIP_CAPTURES } from "./videoLook";
 // problems, never its words. When every text failed, or the answer was unreadable, a second attempt is asked with the closed problem codes (never the texts). Two attempts at most
 // (`MOTION_MAX_ATTEMPTS`), ids `<jobId>:motion#N`, each reserved before it is sent and settled by the chat client's settle rule.
 //
-// The wiring only: the system prompt is `MOTION_PROMPT_TEXTS.writerSystem` (S5.WCX writes it).
+// The wiring only: the system prompt is `MOTION_PROMPT_TEXTS.writerSystem` (S5.WCX, final; motionPrompts.ts).
 
 export interface MotionJobDeps {
   /** The OpenRouter client's chat: reserve on disk, send, settle. */

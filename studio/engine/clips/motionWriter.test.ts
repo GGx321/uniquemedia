@@ -49,7 +49,7 @@ function userMessage(net: { calls: { json(): unknown }[] }, n: number): Record<s
 }
 
 describe("the request", () => {
-  test("the photo goes as one image, the system prompt is the provisional text, the model is the settings' text model, reasoning low, a strict JSON schema", async () => {
+  test("the photo goes as one image, the system prompt is the writer text, the model is the settings' text model, reasoning low, a strict JSON schema", async () => {
     const { net, result } = run([reply(answer([good()]))]);
     await result;
     const body = net.calls[0]?.json() as Record<string, unknown> & { messages: { role: string; content: unknown }[] };
