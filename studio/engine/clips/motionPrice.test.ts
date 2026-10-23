@@ -5,7 +5,7 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { PriceBook } from "../money/prices";
 import { SUGGEST_ATTEMPT, TRANSLATE_ATTEMPT, motionPriceModels } from "../money/motionEstimate";
 import { suggestPrice as suggestEstimate, translatePrice as translateEstimate } from "./motionPrice";
-import { PROBE_USAGES } from "./testing/probeUsages";
+import { PROBE_USAGES, PX_USAGES } from "./testing/probeUsages";
 useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WC3 (plan s5b2 §5.3 «Money per call», I5.68): the two estimates of part C, on the settings' text model. The worst case is two attempts, each priced as the chat client reserves
@@ -24,27 +24,33 @@ describe("S5.WCX: the typical figures, re-measured for the final prompts", () =>
     return sorted[Math.floor(sorted.length / 2)] ?? 0;
   };
 
-  test("a suggestion answers P-M's median completion on effort «low» (859 tokens, reasoning included), not the design's 660", () => {
-    const pm = PROBE_USAGES.filter((u) => u.probe === "P-M" && u.call === "suggest");
-    expect(median(pm.map((u) => u.completion))).toBe(859);
-    expect(SUGGEST_ATTEMPT.typical.outputTokens).toBe(860);
+  // Round 2: measured live on the WCX texts (P-X), the prompts then grown by round 2's text (the writer +25 bytes, the translator +665, at P-X's 3.85 bytes a token).
+  const pxOf = (call: "suggest" | "translate") => PX_USAGES.filter((u) => u.call === call);
+
+  test("a suggestion answers P-X's median completion on the final writer text (1 314 tokens with the reasoning; P-M's 859 on the provisional one)", () => {
+    expect(median(pxOf("suggest").map((u) => u.completion))).toBe(1_314);
+    expect(median(PROBE_USAGES.filter((u) => u.probe === "P-M" && u.call === "suggest").map((u) => u.completion))).toBe(859);
+    expect(SUGGEST_ATTEMPT.typical.outputTokens).toBe(1_314);
   });
 
-  test("a suggestion's prompt is P-M's (median 1 284 tokens) plus the final text's longer system prompt and the listed motions: 1 600", () => {
-    const pm = PROBE_USAGES.filter((u) => u.probe === "P-M" && u.call === "suggest");
-    expect(median(pm.map((u) => u.prompt))).toBe(1_284);
-    expect(SUGGEST_ATTEMPT.typical.inputTokens).toBe(1_600);
+  test("a suggestion's prompt is P-X's median (1 613 tokens) plus round 2's 25 bytes: 1 620", () => {
+    expect(median(pxOf("suggest").map((u) => u.prompt))).toBe(1_613);
+    expect(SUGGEST_ATTEMPT.typical.inputTokens).toBe(1_620);
   });
 
-  test("a translation's prompt is P-R's on «none» (median 534 tokens) plus the final text's longer system prompt, less the frame it no longer sends: 780", () => {
-    const pr = PROBE_USAGES.filter((u) => u.reasoning === "none");
-    expect(median(pr.map((u) => u.prompt))).toBe(534);
-    expect(TRANSLATE_ATTEMPT.typical.inputTokens).toBe(780);
+  test("a translation's prompt is P-X's median (877 tokens) plus round 2's 665 bytes: 1 050", () => {
+    expect(median(pxOf("translate").map((u) => u.prompt))).toBe(877);
+    expect(TRANSLATE_ATTEMPT.typical.inputTokens).toBe(1_050);
   });
 
-  test("the expected figures at grok-4.3's list price: a suggestion 4 150 µ$ (about $0.004), a translation 1 025 µ$ (about $0.001)", () => {
-    expect(suggestEstimate(PRICED, MODEL).expectedMicros).toBe(4_150);
-    expect(translateEstimate(PRICED, MODEL).expectedMicros).toBe(1_025);
+  test("a translation answers about 20 tokens on «none»: P-X's median 15, P-R's at most 20", () => {
+    expect(median(pxOf("translate").map((u) => u.completion))).toBe(15);
+    expect(TRANSLATE_ATTEMPT.typical.outputTokens).toBe(20);
+  });
+
+  test("the expected figures at grok-4.3's list price: a suggestion 5 310 µ$ (about $0.005; P-X billed 4 847-5 643), a translation 1 363 µ$ (about $0.001; P-X billed about 1 000 with cached tokens)", () => {
+    expect(suggestEstimate(PRICED, MODEL).expectedMicros).toBe(5_310);
+    expect(translateEstimate(PRICED, MODEL).expectedMicros).toBe(1_363);
     expect([MOTION_SUGGEST_EXPECTED_MICROS, MOTION_TRANSLATE_EXPECTED_MICROS]).toEqual([3_400, 1_000]);
   });
 });

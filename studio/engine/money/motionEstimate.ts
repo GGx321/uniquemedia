@@ -20,16 +20,16 @@ export type AttemptCall = Omit<ChatCall, "model"> & {
 };
 
 /**
- * One vision attempt: the photo (≤ 1024 px), the frame's facts and what the sheet lists in; up to three motions, their labels and a frame reading out. Typical (S5.WCX, re-measured): P-M's median
- * completion on effort «low», 859 tokens with the reasoning; a prompt of P-M's median 1 284 tokens plus the final system text (+1 191 bytes) and the listed motions, about 1 600.
+ * One vision attempt: the photo (≤ 1024 px), the frame's facts and what the sheet lists in; up to three motions, their labels and a frame reading out. Typical (S5.WCX round 2, measured live on the
+ * final texts by P-X): a completion of 1 314 tokens with the reasoning (P-X's median; P-M's 859 was on the provisional text), a prompt of P-X's median 1 613 tokens plus round 2's 25 bytes, 1 620.
  */
-export const SUGGEST_ATTEMPT: AttemptCall = { maxTokens: 1_000, reasoningTokens: 3_000, inputTokens: 3_000, images: 1, typical: { inputTokens: 1_600, outputTokens: 860 } };
+export const SUGGEST_ATTEMPT: AttemptCall = { maxTokens: 1_000, reasoningTokens: 3_000, inputTokens: 3_000, images: 1, typical: { inputTokens: 1_620, outputTokens: 1_314 } };
 
 /**
  * One translation attempt: the owner's idea alone in (no image, no facts); one short English clause or a refusal code out. Sent on reasoning effort «none» (S5.WCX): P-R's answers were 13-20
- * completion tokens with no reasoning, so the typical answer is 20. Its prompt is P-R's median 534 tokens plus the final system text (+1 294 bytes), less the frame it no longer sends: about 780.
+ * completion tokens with no reasoning and P-X's 9-21, so the typical answer is 20. Its prompt is P-X's median 877 tokens plus round 2's 665 bytes (3.85 bytes a token), 1 050.
  */
-export const TRANSLATE_ATTEMPT: AttemptCall = { maxTokens: 500, reasoningTokens: 3_000, inputTokens: 1_000, images: 0, typical: { inputTokens: 780, outputTokens: 20 } };
+export const TRANSLATE_ATTEMPT: AttemptCall = { maxTokens: 500, reasoningTokens: 3_000, inputTokens: 1_000, images: 0, typical: { inputTokens: 1_050, outputTokens: 20 } };
 
 /** The models a part C call prices: the settings' text model alone. */
 export function motionPriceModels(textModel: string): PriceModels {

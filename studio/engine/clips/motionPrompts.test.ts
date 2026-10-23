@@ -19,6 +19,9 @@ useNativeGlobals();
 const PINS = join(import.meta.dir, "fixtures");
 const pinned = (name: string): string => readFileSync(join(PINS, name), "utf8").replace(/\n$/, "");
 
+/** An ordinary frame a friend took, her face showing, no phone moment. */
+const FRIEND_FRAME: MotionFrame = { capture: "friend", plannedCapture: "friend", face: "yes", level: "ordinary", bold: false, moment: null };
+
 const WRITER = MOTION_PROMPT_TEXTS.writerSystem;
 const TRANSLATOR = MOTION_PROMPT_TEXTS.translatorSystem;
 const BOTH = [WRITER, TRANSLATOR] as const;
@@ -95,6 +98,34 @@ describe("the translator: faithful, or refused with its code", () => {
     expect(TRANSLATOR).not.toMatch(/\bno numbers?\b|\bno ages?\b/i);
   });
 
+  test("round 2 (LOW): the age comes before every other rule, the length included, and has no refusal code", () => {
+    expect(TRANSLATOR).toContain("The age comes before every other rule here, the length included; there is no code to refuse it.");
+  });
+
+  test("round 2 (M1): an idea's manner the check does not count is said with the nearest small word, and only a fast one is refused (P-X: «плавно», «игриво» became final refusals)", () => {
+    expect(TRANSLATOR).toContain("Say the idea's own manner with the nearest of them: smoothly or calmly as slowly, tenderly or softly as gently, playfully or just a touch as a little. When it says no manner, add one.");
+    expect(TRANSLATOR).toContain("Only a fast manner (quick, sharp, sudden, abrupt, with a jerk) has no small word: refuse such an idea not-small.");
+    for (const [said, mapped] of [
+      ["she smoothly turns her head", "she slowly turns her head"],
+      ["she tenderly strokes her arm", "she gently strokes her arm"],
+      ["she playfully bites her lip", "she bites her lip a little"],
+    ] as const) {
+      expect([said, motionTextProblems(said, FRIEND_FRAME, "own")]).toEqual([said, ["not-small"]]);
+      expect([mapped, motionTextProblems(mapped, FRIEND_FRAME, "own")]).toEqual([mapped, []]);
+    }
+  });
+
+  test("round 2 (M2): two-movements is more than the one «and» allows, which a movement and a smile is not", () => {
+    expect(TRANSLATOR).toContain('\n- two-movements: more movements than the one "and" above allows.');
+    expect(TRANSLATOR).not.toContain("at once or one after another");
+    expect(motionTextProblems("she slowly turns her head and smiles", FRIEND_FRAME, "own")).toEqual([]);
+  });
+
+  test("round 2 (P-X T4): when more than one code fits, the first that does: an idea of two big movements is two-movements", () => {
+    expect(TRANSLATOR).toContain("When more than one code fits, give the first that does.");
+    expect(TRANSLATOR.indexOf("\n- two-movements: ")).toBeLessThan(TRANSLATOR.indexOf("\n- not-small: "));
+  });
+
   test("never substitutes: it says never to add, drop, soften or swap a thing, never to put another motion in its place, never to make a quick idea slow (L14)", () => {
     expect(TRANSLATOR).toContain("Never add, drop, soften or swap a thing");
     expect(TRANSLATOR).toContain("Never put another motion in its place.");
@@ -111,8 +142,10 @@ describe("the translator: faithful, or refused with its code", () => {
     for (const text of BOTH) expect(text).not.toMatch(/never write taking off|removing or moving clothing/i);
   });
 
-  test("on a repair it fixes the wording only, or refuses: never another motion", () => {
-    expect(TRANSLATOR).toContain("Fix only the wording, so that it says the same motion within the rules. If it cannot, refuse with the code that fits; if no code fits, answer the same text again.");
+  test("round 2 (M1): on a repair, the codes are the check's, about the wording, fixed by rewording; only a true two-movement, big or fast, camera or non-motion idea is refused", () => {
+    expect(TRANSLATOR).toContain("The user message may also hold problems and previous: the closed codes the app's check gave your last text, and that text.");
+    expect(TRANSLATOR).toContain("The codes are about its wording (not-small: no small word, or a fast one; not-motion: words the check does not read; too-long: over 60 characters): fix them by saying the same motion again within the rules.");
+    expect(TRANSLATOR).toContain("Refuse only an idea that truly is two movements, a big or fast movement, a camera move or no movement of hers; if no code fits, answer the same text again.");
   });
 });
 
@@ -127,8 +160,8 @@ describe("the writer: varied, the frame's, and bold only on «Смелая»", (
     expect(WRITER).toContain("When frame.bold is true, the motions may be bolder and flirty, undressing included. Otherwise suggest everyday motions.");
   });
 
-  test("body only where her face does not show", () => {
-    expect(WRITER).toContain('When frame.faceVisible is not "yes", move only her body');
+  test("body only where her face does not show: her head may turn, never her face, eyes or mouth (round 2, LOW)", () => {
+    expect(WRITER).toContain('When frame.faceVisible is not "yes", move only her body (her head, hands, arms, hair, shoulders, hips or legs), never her face, eyes or mouth.');
   });
 
   test("gives no example motion to copy (P-M: the provisional text's example came back in 7 of 9 calls)", () => {
@@ -206,17 +239,23 @@ describe("the vocabulary the texts give is the check's", () => {
     }
   });
 
-  test("what they say not to write is what the check refuses: «moves» (P-M), «blinks» with something after it (P-M), «softly» alone (P-M)", () => {
+  test("what they say not to write is what the check refuses: «moves» (P-M), «blinks» with something after it (P-M; round 2: the translator too), «softly» alone (P-M)", () => {
     for (const text of BOTH) expect(text).toContain('never write "moves"');
-    expect(WRITER).toContain('"blinks" and "smiles" take nothing after them.');
+    for (const text of BOTH) expect(text).toContain('"blinks" and "smiles" take nothing after them.');
     expect(motionTextProblems("she moves her hand gently on the bed", FRAME, "vision")).toEqual(["not-motion"]);
     expect(motionTextProblems("she slowly blinks her eyes", FRAME, "vision")).toEqual(["not-motion"]);
     expect(motionTextProblems("she smiles softly", FRAME, "vision")).toEqual(["not-small"]);
   });
 
+  test("round 2 (LOW): the way back is said as «away and back», which the check reads («to the left and turns it back» it does not)", () => {
+    for (const text of BOTH) expect(text).toContain('- At most one "and": a movement and its way back said as "away and back", or a movement and a smile.');
+    expect(motionTextProblems("she slowly turns her head away and back", FRAME, "own")).toEqual([]);
+    expect(motionTextProblems("she slowly turns her head to the left and turns it back", FRAME, "own")).toEqual(["not-motion"]);
+  });
+
   test("every small word they list is one the check counts, and «softly», which it does not, is said not to be enough", () => {
     for (const text of BOTH) {
-      const small = listAfter(text, text.includes("said with one of: ") ? "said with one of: " : "add one of: ");
+      const small = listAfter(text, "with one of: ");
       expect(small).toEqual(["slowly", "gently", "slightly", "a little", 'a bit ("softly" alone is not enough)']);
       for (const word of small.map((item) => item.replace(/\s*\(.*$/, ""))) expect({ word, small: MOTION_SMALL.test(`she ${word} turns`) }).toEqual({ word, small: true });
       expect(MOTION_SMALL.test("she softly turns")).toBe(false);

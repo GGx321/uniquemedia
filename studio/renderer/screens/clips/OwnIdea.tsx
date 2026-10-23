@@ -22,7 +22,7 @@ import {
 import { errorTone, MoneyText, QuietNotice, type MotionBlock, type MotionCalls } from "./MotionSuggest";
 
 // 5b.2 part C, S5.WC5 (plan s5b2 §5.3, §6 rows 63–63c, I5.67; mockups 63, 63a–63c and README §S5.WCD decisions 7–8): «Своя идея…» — the owner's idea in his words, translated by one paid call
-// («Перевести · до $0.010», the engine's live estimate). SceneIdeaForm's parts: the label and the count against the limit, the field, the reason a text cannot be sent, the limits line, the button.
+// («Перевести · до $X», the engine's live estimate: about $0.029 at the bundled prices, S5.WCX). SceneIdeaForm's parts: the label and the count against the limit, the field, the reason a text cannot be sent, the limits line, the button.
 //  - The text is the contract's `OwnIdeaText` (1–300 characters, a letter, no control or format character — a ZWJ emoji included): «Перевести» waits until the text is one, and says why.
 //  - Enter and pasted line breaks become spaces (the contract refuses a newline; Enter never buys anything).
 //  - S5.WC2c: an idea that takes clothing off is accepted on every frame like any other (63c's refusal is gone); the window shows what the engine answered and decides nothing itself.
