@@ -849,10 +849,11 @@ const STANDALONE_NUMBER = /(?<![\p{L}\p{N}])\p{N}+(?![\p{L}\p{N}])/u;
 const RU_NUMBER_WORD = /(?<![\p{L}])(?:десят|одиннадцат|двенадцат|тринадцат|четырнадцат|пятнадцат|шестнадцат|семнадцат|восемнадцат|девятнадцат|двадцат|тридцат)\p{L}*/iu;
 /**
  * S5.WCX round 2: a small Russian number, two to nine, in its case forms and as a collective («два», «двумя», «трёх», «пятью», «трое»), as whole words only («одной», «трёт», «пятка»
- * stay). The English check refuses every number word but «one» after the call, so reading it here spares a paid attempt.
+ * stay). The English check refuses every number word but «one» after the call, so reading it here spares a paid attempt. Round 3: «три» (also «rub!», «три глаза») and «семью» (also
+ * «the family») count only before what is counted: раз, пальцы, шаги.
  */
 const RU_SMALL_NUMBER =
-  /(?<![\p{L}])(?:два|две|двух|двум|двумя|двое|три|тр[её]х|тр[её]м|тремя|трое|четыре|четыр[её]х|четыр[её]м|четырьмя|четверо|пять|пяти|пятью|пятеро|шесть|шести|шестью|шестеро|семь|семи|семью|семеро|восемь|восьми|восемью|девять|девяти|девятью)(?![\p{L}])/iu;
+  /(?<![\p{L}])(?:два|две|двух|двум|двумя|двое|тр[её]х|тр[её]м|тремя|трое|четыре|четыр[её]х|четыр[её]м|четырьмя|четверо|пять|пяти|пятью|пятеро|шесть|шести|шестью|шестеро|семь|семи|семеро|восемь|восьми|восемью|девять|девяти|девятью|(?:три|семью)\s+(?:раз|раза|пальца|пальцев|пальцами|шага|шагов|шагами))(?![\p{L}])/iu;
 
 /**
  * The age guard read on the owner's own idea, before it is sent (S5.WC2c round 2, M1): an age or an age bound in English or Russian («ей 16», «16-летняя», «младше 18»), a
