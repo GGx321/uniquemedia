@@ -262,7 +262,7 @@ describe("round 2 (M1): the age guard on the owner's own words, before the call"
     }
   });
 
-  test("an idea with none of them is not: a plain idea, a code with digits inside it (the tests' canary), «one» in Russian, a word that only starts like a numeral", () => {
+  test("an idea with none of them is not: a plain idea, a code with digits inside it (the tests' canary), «one» in Russian, a word that only starts like a numeral, «три» as the verb (rub) and «семью» as the family (round 3)", () => {
     for (const idea of [
       "медленно снимает халат",
       "медленно поворачивает голову к окну и улыбается, CANARY-9c41",
@@ -270,6 +270,8 @@ describe("round 2 (M1): the age guard on the owner's own words, before the call"
       "поднимает одну ногу",
       "медленно трёт глаза",
       "показывает пятку",
+      "три глаза кулачками",
+      "обнимает семью",
       "she slowly turns, smiling often",
     ]) {
       for (const [where, frame] of FRAMES) expect([idea, where, ownIdeaNamesAge(idea, frame.level)]).toEqual([idea, where, false]);
@@ -290,6 +292,10 @@ describe("round 2 (M1): the age guard on the owner's own words, before the call"
       "девять раз",
       "двумя руками поправляет волосы",
       "тремя пальцами касается щеки",
+      "показывает три пальца",
+      "три раза кивает",
+      "делает три шага",
+      "машет семью пальцами",
     ]) {
       for (const [where, frame] of FRAMES) expect([idea, where, ownIdeaNamesAge(idea, frame.level)]).toEqual([idea, where, true]);
     }
