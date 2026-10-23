@@ -40,11 +40,11 @@ const bad = (error: EngineError): Out<never> => ({ ok: false, error });
 // ---------- the prices ----------
 
 /**
- * The two estimates at the bundled price table, for the engine's PROVISIONAL system prompts: `motionPrice.suggestPrice` / `translatePrice` read the largest message a call can send, so the worst case follows the prompt text.
- * Held to the engine by mockEngine.clipMotions.table.test.ts (it fails the day S5.WCX changes a prompt, and says which number to move here).
+ * The two estimates at the bundled price table, for the engine's system prompts (S5.WCX, final): `motionPrice.suggestPrice` / `translatePrice` read the largest message a call can send, so the worst case follows the prompt text.
+ * Held to the engine by mockEngine.clipMotions.table.test.ts (it fails the day a prompt changes, and says which number to move here).
  */
-export const MOCK_SUGGEST_PRICE = { expectedMicros: 3_400, worstMicros: 30_808 } as const;
-export const MOCK_TRANSLATE_PRICE = { expectedMicros: 550, worstMicros: 24_016 } as const;
+export const MOCK_SUGGEST_PRICE = { expectedMicros: 4_150, worstMicros: 33_786 } as const;
+export const MOCK_TRANSLATE_PRICE = { expectedMicros: 1_025, worstMicros: 27_250 } as const;
 
 type CallKind = "suggest" | "idea";
 
@@ -52,9 +52,9 @@ const priceOf = (kind: CallKind): { expectedMicros: number; worstMicros: number 
 
 // What ONE attempt reserves (engine/openrouter/chat.ts `chatAttemptWorstMicros`, at the bundled price of the default text model): the caller's ceilings, the prompt never below its byte floor, rounded up to a whole
 // micro-dollar. The engine reserves for the message it really sends (the system prompt, the user's JSON with the frame, the idea, the feedback and the previous text, the schema, and the photo's allowance), not for half
-// of the call's widest case, so the mock builds the same user JSON and counts the same bytes. The sizes of the PROVISIONAL system prompts and of the two schemas are held to the engine by
+// of the call's widest case, so the mock builds the same user JSON and counts the same bytes. The sizes of the system prompts and of the two schemas are held to the engine by
 // mockEngine.clipMotions.table.test.ts, and the whole reserve of every attempt by mockEngine.clipMotions.money.test.ts (the real ledger).
-export const MOCK_PROMPT_BYTES: { writer: number; translator: number } = { writer: 1_178, translator: 1_188 };
+export const MOCK_PROMPT_BYTES: { writer: number; translator: number } = { writer: 2_369, translator: 2_482 };
 export const MOCK_SCHEMA_BYTES: { suggest: number; idea: number } = { suggest: 669, idea: 249 };
 /** The caller's ceilings of one attempt (engine/money/motionEstimate.ts), the reasoning allowance (S5.WCX: priced as completion on top of `maxTokens`, never sent) included. */
 const CEILINGS = {

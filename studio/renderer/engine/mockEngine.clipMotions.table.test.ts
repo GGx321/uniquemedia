@@ -26,7 +26,7 @@ import { MOTION_PROBLEMS } from "../../shared/engine";
 useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WC4 (plan s5b2 §5.6 «C», I5.66, I5.68): the mock cannot import `engine/`, so what the engine decides with is written out in mockClipMotions.ts and HELD to the engine here, by a test that can import both:
-// the two prices (they follow the engine's PROVISIONAL system prompts: the day S5.WCX changes a prompt this test fails and says which figure to move), the normalising of a model's text, and the motion check on the frames the
+// the two prices (they follow the engine's system prompts: the day a prompt changes this test fails and says which figure to move), the normalising of a model's text, and the motion check on the frames the
 // mock plays. The SHARED check (shared/scenes/motionText.ts) is imported by both; what is compared is the wrapper around it. Fixed seed, 400 cases, well under 2 s.
 
 const PRICED = { book: PriceBook.fallback(), asOf: "2026-09-24" };

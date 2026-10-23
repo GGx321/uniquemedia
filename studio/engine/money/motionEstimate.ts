@@ -19,14 +19,17 @@ export type AttemptCall = Omit<ChatCall, "model"> & {
   readonly reasoningTokens: number;
 };
 
-/** One vision attempt: the photo (≤ 1024 px) and the frame's facts in; up to three motions, their labels and a frame reading out. */
-export const SUGGEST_ATTEMPT: AttemptCall = { maxTokens: 1_000, reasoningTokens: 3_000, inputTokens: 3_000, images: 1, typical: { inputTokens: 1_400, outputTokens: 660 } };
+/**
+ * One vision attempt: the photo (≤ 1024 px), the frame's facts and what the sheet lists in; up to three motions, their labels and a frame reading out. Typical (S5.WCX, re-measured): P-M's median
+ * completion on effort «low», 859 tokens with the reasoning; a prompt of P-M's median 1 284 tokens plus the final system text (+1 191 bytes) and the listed motions, about 1 600.
+ */
+export const SUGGEST_ATTEMPT: AttemptCall = { maxTokens: 1_000, reasoningTokens: 3_000, inputTokens: 3_000, images: 1, typical: { inputTokens: 1_600, outputTokens: 860 } };
 
 /**
- * One translation attempt: the owner's idea and the facts in (no image); one short English clause out. Sent on reasoning effort «none» (S5.WCX): P-R's answers were 13-20 completion tokens with no
- * reasoning, so the typical answer is 20.
+ * One translation attempt: the owner's idea alone in (no image, no facts); one short English clause or a refusal code out. Sent on reasoning effort «none» (S5.WCX): P-R's answers were 13-20
+ * completion tokens with no reasoning, so the typical answer is 20. Its prompt is P-R's median 534 tokens plus the final system text (+1 294 bytes), less the frame it no longer sends: about 780.
  */
-export const TRANSLATE_ATTEMPT: AttemptCall = { maxTokens: 500, reasoningTokens: 3_000, inputTokens: 1_000, images: 0, typical: { inputTokens: 400, outputTokens: 20 } };
+export const TRANSLATE_ATTEMPT: AttemptCall = { maxTokens: 500, reasoningTokens: 3_000, inputTokens: 1_000, images: 0, typical: { inputTokens: 780, outputTokens: 20 } };
 
 /** The models a part C call prices: the settings' text model alone. */
 export function motionPriceModels(textModel: string): PriceModels {

@@ -103,11 +103,11 @@ async function translate(s: HTMLElement): Promise<void> {
 }
 
 describe("62: the actions under the list", () => {
-  test("«Предложить движения · до $0.031» and «Перевести · до $0.025» show the engine's live estimates; «Своя идея…» opens nothing paid", async () => {
+  test("«Предложить движения · до $0.034» and «Перевести · до $0.028» show the engine's live estimates; «Своя идея…» opens nothing paid", async () => {
     const h = await openNini();
     const s = await openSheet();
-    expect(SUGGEST_CEILING).toBe("до $0.031");
-    expect(IDEA_CEILING).toBe("до $0.025");
+    expect(SUGGEST_CEILING).toBe("до $0.034");
+    expect(IDEA_CEILING).toBe("до $0.028");
     expect(suggestButton(s).textContent).toBe(`Предложить движения · ${SUGGEST_CEILING}`);
     expect(isOff(suggestButton(s))).toBe(false);
     expect(callsOf(h.engine, "clips.estimateSuggest")).toHaveLength(1);
@@ -274,7 +274,7 @@ describe("62b: the suggestions are in", () => {
     expect(checkedRow(s)).toBe(chosen);
     expect(document.activeElement === tagged[0]?.querySelector("input")).toBe(true);
     const status = plain(s.querySelector(".mc-status")?.textContent);
-    expect(status).toBe("Предложено 3 движения — оплачено $0.003.");
+    expect(status).toBe("Предложено 3 движения — оплачено $0.004.");
     expect(news("polite", s)).toBe(status);
     expect(isOff(goButton(s))).toBe(false);
   });
@@ -361,7 +361,7 @@ describe("62d: the frame's notes", () => {
     await settle();
     const list = within(s).getByRole("list", { name: "Заметки о кадре" });
     expect(within(list).getAllByRole("listitem").map((li) => plain(li.textContent))).toEqual(["В кадре виден второй телефон — он может остаться в клипе"]);
-    expect(news("polite", s)).toBe("Предложено 1 движение — оплачено $0.003. Заметки о кадре: в кадре виден второй телефон — он может остаться в клипе.");
+    expect(news("polite", s)).toBe("Предложено 1 движение — оплачено $0.004. Заметки о кадре: в кадре виден второй телефон — он может остаться в клипе.");
     expect(plain(s.querySelector(".clip-price-line")?.textContent)).toBe(price);
     expect(isOff(goButton(s))).toBe(false);
   });
@@ -629,7 +629,7 @@ describe("63b, 63c: the idea refused", () => {
 });
 
 describe("the paid buttons' refusals, as the other paid buttons'", () => {
-  test("PRICE_CHANGED: the fresh price on the button and «Цена изменилась: теперь не больше $0.031. Подтвердите ещё раз.» once; a new click sends the fresh price", async () => {
+  test("PRICE_CHANGED: the fresh price on the button and «Цена изменилась: теперь не больше $0.034. Подтвердите ещё раз.» once; a new click sends the fresh price", async () => {
     const h = await openNini();
     const s = await openSheet();
     h.engine.failNext("clips.suggestMotions", { code: "PRICE_CHANGED", detail: "the worst case moved" });
@@ -643,7 +643,7 @@ describe("the paid buttons' refusals, as the other paid buttons'", () => {
     fireEvent.click(suggestButton(s));
     await settle();
     expect(callsOf(h.engine, "clips.suggestMotions").map((c) => c.payload.acceptedWorstMicros)).toEqual([MOCK_SUGGEST_PRICE.worstMicros, MOCK_SUGGEST_PRICE.worstMicros]);
-    expect(plain(s.querySelector(".mc-status")?.textContent)).toBe("Предложено 3 движения — оплачено $0.003.");
+    expect(plain(s.querySelector(".mc-status")?.textContent)).toBe("Предложено 3 движения — оплачено $0.004.");
   });
 
   test("PRICE_CHANGED on «Перевести» is said in the field's card; BUDGET_EXCEEDED says the month", async () => {

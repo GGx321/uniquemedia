@@ -13,7 +13,7 @@ import { chatAttemptWorstMicros } from "../openrouter/chat";
 useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WC3 (plan s5b2 §5.3 «The translator», I5.67, I5.68): the owner's idea becomes one English motion, or is refused with closed problems. The idea is JSON DATA in the user message and
-// nowhere else; the translator sees no image. The wording of the system prompt is WCX's and is not tested here, only where the idea goes.
+// nowhere else; the translator sees no image. The wording of the system prompt is pinned by motionPrompts.test.ts, not here: only where the idea goes.
 
 const SCOPE: Scope = { avatarJobId: "job-00000002" };
 const IDEA = "CANARY-7f3a медленно поворачивает голову и улыбается";
@@ -71,7 +71,7 @@ describe("the request: the owner's idea is data, and only in the user message", 
     expect(await ordinary.result).toEqual({ kind: "ok", text: UNDRESS_MOTION, costMicros: 1_000 });
   });
 
-  test("the idea is a JSON string in the user message, the system prompt is the provisional text, and no image goes", async () => {
+  test("the idea is a JSON string in the user message, the system prompt is the translator text, and no image goes", async () => {
     const { net, result } = run([reply(GOOD_MOTION)]);
     await result;
     const body = bodyOf(net, 0);
