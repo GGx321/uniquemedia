@@ -13,11 +13,11 @@ export const PLAIN = CLIP_PHOTOS.plain.photoId;
 export const BOLD = CLIP_PHOTOS.bold.photoId;
 
 /** The prices of the two calls at the engine's bundled table with its PROVISIONAL system prompts (clips/motionPrice.ts). */
-export const SUGGEST = { expectedMicros: 3_400, worstMicros: 14_810 } as const;
+export const SUGGEST = { expectedMicros: 3_400, worstMicros: 14_678 } as const;
 export const TRANSLATE = { expectedMicros: 1_000, worstMicros: 9_650 } as const;
 /** What the first attempt of a call on the plain frame reserves: the engine reserves for the message it really sends (chatAttemptWorstMicros), so it is below half of the widest case; mockEngine.clipMotions.money.test.ts holds it to the real ledger. */
-export const SUGGEST_ATTEMPT = 7_024;
-export const TRANSLATE_ATTEMPT = 3_184;
+export const SUGGEST_ATTEMPT = 6_958;
+export const TRANSLATE_ATTEMPT = 3_328;
 
 /** None of them is a code motion of a frame (S5.WC3c: a suggestion equal to one is not stored). */
 export const GOOD_TEXTS = [

@@ -40,7 +40,7 @@ describe("the prices", () => {
 
   test("the sizes the mock counts for an attempt's reserve are the engine's prompts' and schemas' (the day S5.WCX changes a prompt, this says which number to move)", () => {
     const bytes = (text: string): number => Buffer.byteLength(text, "utf8");
-    expect(MOCK_PROMPT_BYTES).toEqual({ writer: bytes(MOTION_PROMPT_TEXTS.writerSystem), translator: bytes(MOTION_PROMPT_TEXTS.translatorSystem), translatorBold: bytes(MOTION_PROMPT_TEXTS.translatorSystemBold) });
+    expect(MOCK_PROMPT_BYTES).toEqual({ writer: bytes(MOTION_PROMPT_TEXTS.writerSystem), translator: bytes(MOTION_PROMPT_TEXTS.translatorSystem) });
     expect(MOCK_SCHEMA_BYTES).toEqual({ suggest: bytes(JSON.stringify(WRITER_JSON_SCHEMA)), idea: bytes(JSON.stringify(TRANSLATOR_JSON_SCHEMA)) });
   });
 
@@ -48,15 +48,15 @@ describe("the prices", () => {
     const system = MOTION_PROMPT_TEXTS.writerSystem;
     for (const user of ["{}", JSON.stringify({ frame: { a: 1 } }), "я".repeat(300), JSON.stringify({ idea: "я".repeat(300), problems: ["not-motion"], previous: "x".repeat(80) })]) {
       const engine = chatAttemptWorstMicros(PRICED.book, { model: MODEL, messages: [{ role: "system", content: system }, { role: "user", content: user }], jsonSchema: WRITER_JSON_SCHEMA, ...SUGGEST_ATTEMPT });
-      expect(attemptWorstMicros("suggest", user, false)).toBe(engine);
+      expect(attemptWorstMicros("suggest", user)).toBe(engine);
     }
-    const idea = MOTION_PROMPT_TEXTS.translatorSystemBold;
+    const idea = MOTION_PROMPT_TEXTS.translatorSystem;
     for (const user of ["{}", "я".repeat(900)]) {
       const engine = chatAttemptWorstMicros(PRICED.book, { model: MODEL, messages: [{ role: "system", content: idea }, { role: "user", content: user }], jsonSchema: TRANSLATOR_JSON_SCHEMA, ...TRANSLATE_ATTEMPT });
-      expect(attemptWorstMicros("idea", user, true)).toBe(engine);
+      expect(attemptWorstMicros("idea", user)).toBe(engine);
     }
     // A message under the ceiling pays the ceiling; one over it pays its own size.
-    expect(attemptWorstMicros("idea", "{}", false)).toBe(chatAttemptWorstMicros(PRICED.book, { model: MODEL, messages: [{ role: "system", content: MOTION_PROMPT_TEXTS.translatorSystem }, { role: "user", content: "{}" }], jsonSchema: TRANSLATOR_JSON_SCHEMA, ...TRANSLATE_ATTEMPT }));
+    expect(attemptWorstMicros("idea", "{}")).toBe(chatAttemptWorstMicros(PRICED.book, { model: MODEL, messages: [{ role: "system", content: MOTION_PROMPT_TEXTS.translatorSystem }, { role: "user", content: "{}" }], jsonSchema: TRANSLATOR_JSON_SCHEMA, ...TRANSLATE_ATTEMPT }));
   });
 
   test("the mock's closed list of problems is the contract's", () => {
