@@ -1,4 +1,4 @@
-import { ageMentions, ageUpperBounds, MOTION_ENGLISH, MOTION_PROBLEMS, MOTION_TEXT_MAX, type ClipMotionSource, type MotionProblem } from "../engine";
+import { ageMentions, ageUpperBounds, MOTION_ENGLISH, MOTION_PROBLEMS, MOTION_TEXT_MAX, namesNumberWord, type ClipMotionSource, type MotionProblem } from "../engine";
 import { isHandCapture, type Capture, type FaceVisibility } from "./captures";
 import { contentProblems, type ContentLevel, type ContentProblem } from "./contentLine";
 import { exposureWordsIn } from "./explicitWords";
@@ -280,11 +280,12 @@ function contentIn(text: string, level: ContentLevel): readonly ContentProblem[]
 }
 
 /**
- * Every number word but «one», which the bank's own motions say («she swings one foot a little») and which `ageText` too never reads alone as an age. S5.WC2c: kept, because
- * the age readers alone miss an age said as a bare number («…, sixteen», «…, 18», «…, 15»: motionText.lifted.test.ts holds the evidence).
+ * A number in a model's text: a digit, a number word but «one» (`namesNumberWord`, ageText.ts: the descriptor's own reader, every -teen form with its ordinals and «-ish»,
+ * «twenty» in every form, the tens, the ordinals from fourth on, spelled out or split by a space: «sixteenth», «sixteenish», «sixt een»), or a Roman numeral of two letters or
+ * more in capitals («XVI»). S5.WC2c: kept, because the age readers alone miss an age said as a bare number («…, sixteen», «…, 18», «…, 15»), and widened in round 2 (H1).
  */
-const NUMBER_WORDS =
-  /\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|dozen)\b/i;
+const ROMAN_NUMERAL = /\b[IVXLC]{2,}\b/;
+const namesNumber = (text: string): boolean => /\d/.test(text) || namesNumberWord(text) || ROMAN_NUMERAL.test(text);
 /** Exposure a model says beyond the bank's list (scenes/explicitWords.ts). S5.WC2c: it refuses nothing; it reads a motion that bares her, for its prompt (`undressesBy`). */
 const EXPOSURE_MORE =
   /\b(?:bare[- ](?:breasts?|chest(?:ed)?|bottom|butt)|breasts?|unclothed|undressed|in the nude|birthday suit|au naturel|wearing nothing|nothing on|without clothes|sans clothes|(?:flash|reveal|expos|bare)\w*\s+(?:(?:her|a|an|some|little|bit|of|more|bare)\s+){0,4}(?:skin|chest|cleavage|breasts?|stomach|belly|midriff|bottom|butt|thighs?|body))\b/gi;
@@ -755,10 +756,10 @@ const RULES: readonly RuleCheck[] = [
   },
   {
     // Round 2: a model's text holds no number at all, a digit or a number word but «one» (the bank says «she swings one foot a little»): a motion never needs one, and an age
-    // hides in one («sixteen») where `ageMentions` reads no context. S5.WC2c: kept for the age guard (see `NUMBER_WORDS`).
+    // hides in one («sixteen») where `ageMentions` reads no context. S5.WC2c: kept for the age guard, and widened (see `namesNumber`).
     rule: "number",
     problem: "content",
-    check: (text, scope) => (isModelText(scope) && (/\d/.test(text) || NUMBER_WORDS.test(text)) ? "names a number" : null),
+    check: (text, scope) => (isModelText(scope) && namesNumber(text) ? "names a number" : null),
   },
   { rule: "youth-prop", problem: "content", check: (text, scope) => (takesGrammar(scope) && YOUTH_PROPS.test(text) ? "names a youth prop" : null) },
   { rule: "hair-colour", problem: "content", check: (text, scope) => (takesGrammar(scope) && HAIR_COLOUR_WORDS.test(text) ? "names a hair colour or a dye" : null) },
