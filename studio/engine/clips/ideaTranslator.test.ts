@@ -77,7 +77,7 @@ describe("the request: the owner's idea is data, and only in the user message", 
     const body = bodyOf(net, 0);
     expect(body).toMatchObject({ model: "x-ai/grok-4.3", reasoning: { effort: "none" }, usage: { include: true }, response_format: { type: "json_schema", json_schema: { name: TRANSLATOR_JSON_SCHEMA.name, strict: true } } });
     expect(body.messages[0]).toEqual({ role: "system", content: MOTION_PROMPT_TEXTS.translatorSystem });
-    expect(userData(net, 0)).toMatchObject({ idea: IDEA, frame: { capture: "timer", bold: false } });
+    expect(userData(net, 0)).toEqual({ idea: IDEA });
     expect(JSON.stringify(body)).not.toContain("image_url");
   });
 
@@ -87,8 +87,17 @@ describe("the request: the owner's idea is data, and only in the user message", 
     await result;
     const data = userData(net, 0);
     expect(data.idea).toBe(nasty);
-    expect(data.frame).toMatchObject({ bold: false });
+    expect(Object.keys(data)).toEqual(["idea"]);
     expect(bodyOf(net, 0).messages[0]?.content).not.toContain("ignore the rules");
+  });
+
+  test("S5.WCX: the translator sees the idea alone, nothing of the frame: no activity, no capture, no phone or face fact (P-R: it borrowed the frame's «holding a ceramic coffee mug» to replace what it would not say)", async () => {
+    const facts = { ...timerFrame(), activity: "holding a ceramic coffee mug" };
+    const { net, result } = run([reply(NOT_MOTION), reply(GOOD_MOTION)], { ...JOB, facts });
+    await result;
+    expect(userData(net, 0)).toEqual({ idea: IDEA });
+    expect(Object.keys(userData(net, 1)).sort()).toEqual(["idea", "previous", "problems"]);
+    for (const n of [0, 1]) expect(JSON.stringify(bodyOf(net, n).messages)).not.toContain("mug");
   });
 
   test("the owner's words are in no message but the user's", async () => {
