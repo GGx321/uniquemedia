@@ -117,4 +117,23 @@ describe("the mock's money is the engine's ledger", () => {
     expect(await unwrap(translate(idea))).toMatchObject({ outcome: "none" });
     expect(idea.engine.peekMotions().lines[0]?.worstMicros).not.toBe(12_325);
   });
+
+  test("S5.WCX round 2: two suggestions in a row on one photo: the second attempt carries the sheet's three suggestions in `listed`, and the mock reserves it as the engine does", async () => {
+    const FIRST = ["she slowly tucks a strand of hair behind her ear", "she slowly lifts her chin and smiles softly", "she slowly turns toward the window and smiles"];
+    const SECOND = ["she slowly looks down and smiles to herself"];
+    // The same rigs as the cases above.
+    const w = await motionWorld(dir(), { chat: (request) => chatReply(suggestionOf(request.n === 1 ? FIRST : SECOND).content, 0.003), engine: { deps: { clipSwitches: { boldClips: "kling-only" } } } });
+    expect(resultOf(await w.suggest())).toMatchObject({ outcome: "ok" });
+    expect(resultOf(await w.suggest())).toMatchObject({ outcome: "ok" });
+    const engine = w.ledger().filter((l) => l.type === "reserve").map((l) => Number(l.worstMicros));
+    const m = makeClipMock({ clips: { boldClips: "kling-only" } });
+    m.engine.scriptNextMotionReplies([FIRST, SECOND].map((texts) => ({ kind: "answer" as const, content: suggestionOf(texts).content, costMicros: 3_000 })));
+    expect(await unwrap(suggest(m))).toMatchObject({ outcome: "ok" });
+    expect(await unwrap(suggest(m))).toMatchObject({ outcome: "ok" });
+    const mock = m.engine.peekMotions().lines.map((l) => l.worstMicros);
+    expect(engine).toHaveLength(2);
+    expect(mock).toEqual(engine);
+    // The second message lists the three suggestions now on the sheet: its reserve is the larger.
+    expect((engine[1] ?? 0) - (engine[0] ?? 0)).toBeGreaterThan(0);
+  });
 });
