@@ -386,6 +386,15 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
   en("nymph", "nymph\\w*"),
   en("minor", "minor(?:ly|s)?"),
   en("bambina", "bambin[ao]s?"),
+  // S5.WC2c round 2 (H1, the review): a small child or the years before adulthood, which a clip motion may say once its content rules were lifted.
+  en("toddler", "toddl\\w*"),
+  en("infant", "infant\\w*|infancy"),
+  en("newborn", "new[- ]?borns?"),
+  en("tot", "tots?"),
+  en("little one", "little[- ]ones?"),
+  en("puberty", "pubert\\w*"),
+  en("youth", "youths?"),
+  en("pupil", "pupils?"),
   // Spanish "niña" (girl) folds to "nina". A real word only: short words run together make it by chance ("tan in a").
   en("nina", "ninas?", { joins: false }),
   ru("девочка", "(?<![\\p{L}])девочк\\p{L}*"),
@@ -438,12 +447,25 @@ export function youthRuleNames(text: string, scope: AgeTextScope): string[] {
  * Two..nine are refused: a descriptor needs no count ("a mole", not "two
  * moles"), and "she is nine" would be an age.
  */
-const NUMBER_WORD = new RegExp(
-  "\\b(?:zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|(?:thir|four|fif|six|seven|eigh|nine)teen\\w*" +
-    "|twent(?:y|ie)\\w*|(?:thir|for|four|fif|six|seven|eigh|nine)t(?:y\\w*|ieth\\w*)|hundred\\w*|thousand\\w*|dozens?" +
-    "|(?:four|fif|six|seven|eigh|nin|ten|eleven|twelf)th)\\b",
-  "iu",
-);
+const NUMBER_WORDS_ALT =
+  "zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|(?:thir|four|fif|six|seven|eigh|nine)teen\\w*" +
+  "|twent(?:y|ie)\\w*|(?:thir|for|four|fif|six|seven|eigh|nine)t(?:y\\w*|ieth\\w*)|hundred\\w*|thousand\\w*|dozens?" +
+  "|(?:four|fif|six|seven|eigh|nin|ten|eleven|twelf)th";
+const NUMBER_WORD = new RegExp(`\\b(?:${NUMBER_WORDS_ALT})\\b`, "iu");
+/** One whole word that is a number word: two neighbouring words run together are held to it («sixt een», «fif teen»). */
+const WHOLE_NUMBER_WORD = new RegExp(`^(?:${NUMBER_WORDS_ALT})$`, "iu");
+
+/**
+ * Whether a text names a number word (`NUMBER_WORD`: every -teen form with its ordinals and «-ish», «twenty» in every form, the tens, the ordinals from fourth on), as the
+ * descriptor reads it (spelled out in short fragments, a letter repeated), or split by a space inside it: two neighbouring words that make one («sixt een»). A lone «one»
+ * is no number word. S5.WC2c round 2 (H1): the clip motion check's `number` rule reads it.
+ */
+export function namesNumberWord(text: string): boolean {
+  const forms = descriptorForms(text);
+  if (NUMBER_WORD.test(`${forms.text}|${forms.joined}`)) return true;
+  const words = normalise(text).match(/\p{L}+/gu) ?? [];
+  return words.some((word, i) => i + 1 < words.length && WHOLE_NUMBER_WORD.test(`${word}${words[i + 1] ?? ""}`));
+}
 
 /**
  * True when the descriptor holds a number besides its one "<age>-year-old"

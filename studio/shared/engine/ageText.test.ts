@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { perfTest } from "../../testing/bunTiers";
 import { assertBudget, medianElapsedMs } from "../../testing/tiers";
-import { adultTextProblems, ageMentions, ageUpperBounds, allYouthRuleNames, DESCRIPTOR_MAX_CHARS, hardYouthWords, nonAsciiDigits, youthRuleNames, youthWords } from "./ageText";
+import { adultTextProblems, ageMentions, ageUpperBounds, allYouthRuleNames, DESCRIPTOR_MAX_CHARS, hardYouthWords, namesNumberWord, nonAsciiDigits, youthRuleNames, youthWords } from "./ageText";
 
 describe("ageMentions", () => {
   test.each([
@@ -816,5 +816,29 @@ describe("nina is refused as a word, never as a join of short words (reviewer jo
 
   test.each(["a nina look", "a ni\u00F1a look", "ninas"])("still refuses the word in %p", (rest) => {
     expect(youthRuleNames(`${F}, ${rest}.`, "descriptor")).toContain("nina");
+  });
+});
+
+// S5.WC2c round 2 (H1, the review): the clip motion check reads numbers and youth words with these.
+describe("namesNumberWord", () => {
+  test.each(["sixteen", "sixteenth", "sixteenish", "Fifteenth", "twenty-one", "twenties", "forty", "ninetieth", "eleventh", "a dozen", "s i x t e e n", "sixt een", "fif teen", "seven teen"])(
+    "reads %p",
+    (text) => {
+      expect(namesNumberWord(`she slowly turns, ${text}`)).toBe(true);
+    },
+  );
+
+  test.each(["one", "no one", "someone", "often", "tension", "canteen", "tender", "attention", "a tent"])("never reads %p alone", (text) => {
+    expect(namesNumberWord(`she slowly turns, ${text}`)).toBe(false);
+  });
+});
+
+describe("the youth words a clip motion may say (S5.WC2c round 2)", () => {
+  test.each(["toddler", "infant", "infancy", "newborn", "new-born", "tot", "tots", "little one", "puberty", "youth", "youths", "pupil"])("%p is a youth word of the descriptor's set", (word) => {
+    expect(youthWords(`she slowly undresses like a ${word}`, "descriptor").length).toBeGreaterThan(0);
+  });
+
+  test.each(["tote", "totem", "little bag", "potato"])("%p is none", (word) => {
+    expect(youthRuleNames(`she slowly carries her ${word}`, "descriptor").filter((name) => ["toddler", "infant", "newborn", "tot", "little one", "puberty", "youth", "pupil"].includes(name))).toEqual([]);
   });
 });
