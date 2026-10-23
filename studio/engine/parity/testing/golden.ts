@@ -6051,7 +6051,7 @@ export const GOLDEN: Record<string, string[]> = {
     "> clips.estimateSuggest {\"avatarId\":\"avatar#4\",\"photoId\":\"photo#25\"}",
     "< ok {\"expectedMicros\":3400,\"worstMicros\":29678,\"source\":\"<named>\"}",
     "> clips.estimateIdea {\"avatarId\":\"avatar#4\",\"photoId\":\"photo#25\"}",
-    "< ok {\"expectedMicros\":1000,\"worstMicros\":24650,\"source\":\"<named>\"}",
+    "< ok {\"expectedMicros\":550,\"worstMicros\":24650,\"source\":\"<named>\"}",
     "> money.status {}",
     "< ok {\"reconcileNeeded\":false,\"reconcileReasons\":[],\"held\":false,\"spentMicros\":0,\"unsettledMicros\":0,\"unsettledCount\":0}",
     "# the owner accepts the worst case; the model suggests three motions at $0.0034",

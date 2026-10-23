@@ -172,7 +172,9 @@ export async function runIdeaTranslator(deps: MotionJobDeps, job: TranslatorJob)
         maxTokens: TRANSLATE_ATTEMPT.maxTokens,
         reasoningTokens: TRANSLATE_ATTEMPT.reasoningTokens,
         inputTokens: TRANSLATE_ATTEMPT.inputTokens,
-        reasoningEffort: "low",
+        // S5.WCX (P-R): no reasoning. On «none» grok-4.3 reasoned 0 tokens in 6 of 6 calls, about 4× cheaper and 7× faster than «low», and its translations were no worse. The reasoning
+        // allowance of the reserve stays (TRANSLATE_ATTEMPT): it is a reserve, not a bill.
+        reasoningEffort: "none",
         scrubRaw,
       }),
     );

@@ -529,7 +529,7 @@ describe("63b, 63c: the idea refused", () => {
     const s = await openSheet();
     await typeIdea(s, "отпивает чай, а потом поправляет волосы");
     const twice = "she slowly sips her tea and then tucks her hair behind her ear";
-    h.engine.scriptNextMotionReplies([mockIdeaAnswer(twice), mockIdeaAnswer(twice)]);
+    h.engine.scriptNextMotionReplies([mockIdeaAnswer(twice, 1_000), mockIdeaAnswer(twice, 1_000)]);
     await translate(s);
     const refusal = s.querySelector(".mc-refusal") as HTMLElement;
     // The answer broke two rules (two-movements, too-long): the first in the display order is said, alone (README «Один текст на отказ»).
@@ -1051,7 +1051,7 @@ describe("S5.WC5b: the review's follow-ups in sheet 38", () => {
     await typeIdea(s, "отпивает чай, а потом поправляет волосы");
     const twice = "she slowly sips her tea and then tucks her hair behind her ear";
     h.engine.holdMotionCalls(true);
-    h.engine.scriptNextMotionReplies([mockIdeaAnswer(twice), mockIdeaAnswer(twice)]);
+    h.engine.scriptNextMotionReplies([mockIdeaAnswer(twice, 1_000), mockIdeaAnswer(twice, 1_000)]);
     fireEvent.click(translateButton(s));
     await settle();
     fireEvent.click(cancelButton(s));
@@ -1172,7 +1172,7 @@ describe("S5.WC5b round 2 (M-1): the sheet reopened before the answer came says 
   test("a rejected idea: the open sheet opens the card with its reason and its cost, the focus in the field; the next opening says nothing again", async () => {
     const h = await openNini();
     const twice = "she slowly sips her tea and then tucks her hair behind her ear";
-    h.engine.scriptNextMotionReplies([mockIdeaAnswer(twice), mockIdeaAnswer(twice)]);
+    h.engine.scriptNextMotionReplies([mockIdeaAnswer(twice, 1_000), mockIdeaAnswer(twice, 1_000)]);
     let s = await reopenedWhileRunning(h, async (sheetNow) => {
       await typeIdea(sheetNow, "отпивает чай, а потом поправляет волосы");
       fireEvent.click(translateButton(sheetNow));

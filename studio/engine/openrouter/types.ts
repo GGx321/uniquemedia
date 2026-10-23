@@ -218,7 +218,11 @@ export interface ChatMessage {
   content: string;
 }
 
-export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+/**
+ * What the request asks of the model's reasoning, sent as `reasoning: { effort }` and nothing else. 5b.2 (S5.WCX): «none» turns grok-4.3's reasoning off (P-R: 0 reasoning tokens in 6 of 6
+ * calls). `reasoning.max_tokens` is never sent: for Grok, OpenRouter maps it to an effort and it RAISED the reasoning (P-R: 1 024-2 575 tokens).
+ */
+export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high";
 
 export interface ChatParams extends AttemptParams {
   messages: readonly ChatMessage[];

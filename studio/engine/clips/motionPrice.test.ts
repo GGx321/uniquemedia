@@ -53,10 +53,17 @@ describe("suggestEstimate", () => {
 });
 
 describe("translateEstimate", () => {
-  test("is the design figure plus the reasoning allowance for a prompt within the ceiling: about $0.001 expected, $0.005 + 2 × 3 000 reasoning tokens ($0.020) worst", () => {
+  test("is the design figure plus the reasoning allowance for a prompt within the ceiling: $0.005 + 2 × 3 000 reasoning tokens ($0.020) worst", () => {
     const tiny = { messages: [{ role: "system" as const, content: "s".repeat(300) }, { role: "user" as const, content: "u".repeat(100) }], jsonSchema: { name: "x", schema: { type: "object" } } };
-    expect(translateEstimate(PRICED, MODEL, tiny)).toMatchObject({ expectedMicros: MOTION_TRANSLATE_EXPECTED_MICROS, worstMicros: MOTION_TRANSLATE_WORST_MICROS + MOTION_MAX_ATTEMPTS * REASONING_MICROS, prices: "fallback" });
+    expect(translateEstimate(PRICED, MODEL, tiny)).toMatchObject({ worstMicros: MOTION_TRANSLATE_WORST_MICROS + MOTION_MAX_ATTEMPTS * REASONING_MICROS, prices: "fallback" });
     expect(translateEstimate(PRICED, MODEL, tiny).worstMicros).toBe(20_000);
+  });
+
+  test("S5.WCX: the expected figure is one attempt on effort «none»: P-R's answers were 13-20 completion tokens with no reasoning (the design's 200 assumed reasoning in the answer)", () => {
+    expect(TRANSLATE_ATTEMPT.typical.outputTokens).toBe(20);
+    const estimate = translateEstimate(PRICED, MODEL);
+    expect(estimate.expectedMicros).toBe(PRICED.book.chatCost({ model: MODEL, images: 0, inputTokens: TRANSLATE_ATTEMPT.typical.inputTokens, outputTokens: 20 }));
+    expect(estimate.expectedMicros).toBeLessThan(MOTION_TRANSLATE_EXPECTED_MICROS);
   });
 
   test("carries no image", () => {

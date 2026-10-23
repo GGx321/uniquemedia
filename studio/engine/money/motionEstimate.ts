@@ -22,8 +22,11 @@ export type AttemptCall = Omit<ChatCall, "model"> & {
 /** One vision attempt: the photo (≤ 1024 px) and the frame's facts in; up to three motions, their labels and a frame reading out. */
 export const SUGGEST_ATTEMPT: AttemptCall = { maxTokens: 1_000, reasoningTokens: 3_000, inputTokens: 3_000, images: 1, typical: { inputTokens: 1_400, outputTokens: 660 } };
 
-/** One translation attempt: the owner's idea and the facts in (no image); one short English clause out. */
-export const TRANSLATE_ATTEMPT: AttemptCall = { maxTokens: 500, reasoningTokens: 3_000, inputTokens: 1_000, images: 0, typical: { inputTokens: 400, outputTokens: 200 } };
+/**
+ * One translation attempt: the owner's idea and the facts in (no image); one short English clause out. Sent on reasoning effort «none» (S5.WCX): P-R's answers were 13-20 completion tokens with no
+ * reasoning, so the typical answer is 20.
+ */
+export const TRANSLATE_ATTEMPT: AttemptCall = { maxTokens: 500, reasoningTokens: 3_000, inputTokens: 1_000, images: 0, typical: { inputTokens: 400, outputTokens: 20 } };
 
 /** The models a part C call prices: the settings' text model alone. */
 export function motionPriceModels(textModel: string): PriceModels {

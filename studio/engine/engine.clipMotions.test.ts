@@ -56,7 +56,9 @@ describe("the free estimates", () => {
   test("estimateIdea is the translator's two attempts on a 300-character idea at the most bytes", async () => {
     const w = await motionWorld(dir());
     const estimate = await w.estimateIdea();
-    expect(estimate.expectedMicros).toBe(MOTION_TRANSLATE_EXPECTED_MICROS);
+    // S5.WCX: the translator runs on reasoning effort «none», so the typical answer is about 20 completion tokens (P-R), below the design's figure.
+    expect(estimate.expectedMicros).toBe(550);
+    expect(estimate.expectedMicros).toBeLessThan(MOTION_TRANSLATE_EXPECTED_MICROS);
     expect(estimate.worstMicros).toBeGreaterThanOrEqual(5_000);
   });
 
