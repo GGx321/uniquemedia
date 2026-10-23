@@ -847,10 +847,16 @@ export function motionTextFindings(text: string, frame: MotionFrame, source: Cli
 const STANDALONE_NUMBER = /(?<![\p{L}\p{N}])\p{N}+(?![\p{L}\p{N}])/u;
 /** A Russian number word from ten up, in any form («шестнадцать», «шестнадцатый», «двадцати»): the owner's own words for a number an age hides in. */
 const RU_NUMBER_WORD = /(?<![\p{L}])(?:десят|одиннадцат|двенадцат|тринадцат|четырнадцат|пятнадцат|шестнадцат|семнадцат|восемнадцат|девятнадцат|двадцат|тридцат)\p{L}*/iu;
+/**
+ * S5.WCX round 2: a small Russian number, two to nine, in its case forms and as a collective («два», «двумя», «трёх», «пятью», «трое»), as whole words only («одной», «трёт», «пятка»
+ * stay). The English check refuses every number word but «one» after the call, so reading it here spares a paid attempt.
+ */
+const RU_SMALL_NUMBER =
+  /(?<![\p{L}])(?:два|две|двух|двум|двумя|двое|три|тр[её]х|тр[её]м|тремя|трое|четыре|четыр[её]х|четыр[её]м|четырьмя|четверо|пять|пяти|пятью|пятеро|шесть|шести|шестью|шестеро|семь|семи|семью|семеро|восемь|восьми|восемью|девять|девяти|девятью)(?![\p{L}])/iu;
 
 /**
  * The age guard read on the owner's own idea, before it is sent (S5.WC2c round 2, M1): an age or an age bound in English or Russian («ей 16», «16-летняя», «младше 18»), a
- * youth word in either language at the frame's level («школьница», «малышка», «подросток», «toddler»), a number on its own, or a number word («шестнадцать», «sixteen»). What the English would be refused
+ * youth word in either language at the frame's level («школьница», «малышка», «подросток», «toddler»), a number on its own, or a number word («шестнадцать», «sixteen»; S5.WCX round 2: «два» to «девять» too). What the English would be refused
  * for in any case, `content` and final; read here, the call is refused free and nothing reaches the model, so no answer can leave the age out.
  */
 export function ownIdeaNamesAge(idea: string, level: ContentLevel): boolean {
@@ -860,7 +866,8 @@ export function ownIdeaNamesAge(idea: string, level: ContentLevel): boolean {
     contentIn(idea, level).some((problem) => problem.reason === "youth-word") ||
     STANDALONE_NUMBER.test(idea) ||
     namesNumberWord(idea) ||
-    RU_NUMBER_WORD.test(idea)
+    RU_NUMBER_WORD.test(idea) ||
+    RU_SMALL_NUMBER.test(idea)
   );
 }
 

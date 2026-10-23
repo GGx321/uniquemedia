@@ -262,10 +262,38 @@ describe("round 2 (M1): the age guard on the owner's own words, before the call"
     }
   });
 
-  test("an idea with none of them is not: a plain idea, a code with digits inside it (the tests' canary), a small Russian number", () => {
-    for (const idea of ["медленно снимает халат", "медленно поворачивает голову к окну и улыбается, CANARY-9c41", "делает два шага к окну", "she slowly turns, smiling often"]) {
+  test("an idea with none of them is not: a plain idea, a code with digits inside it (the tests' canary), «one» in Russian, a word that only starts like a numeral", () => {
+    for (const idea of [
+      "медленно снимает халат",
+      "медленно поворачивает голову к окну и улыбается, CANARY-9c41",
+      "медленно машет одной рукой",
+      "поднимает одну ногу",
+      "медленно трёт глаза",
+      "показывает пятку",
+      "she slowly turns, smiling often",
+    ]) {
       for (const [where, frame] of FRAMES) expect([idea, where, ownIdeaNamesAge(idea, frame.level)]).toEqual([idea, where, false]);
     }
+  });
+
+  test("S5.WCX round 2 (LOW): a small Russian number, two to nine in any of its forms, is read free, as the English «no number» rule would refuse it after a paid attempt", () => {
+    for (const idea of [
+      "поднимает два пальца",
+      "делает два шага к окну",
+      "поднимает две руки",
+      "кивает три раза",
+      "считает до четырёх",
+      "показывает пять пальцев",
+      "на шести фото",
+      "семь раз моргает",
+      "восемь шагов",
+      "девять раз",
+      "двумя руками поправляет волосы",
+      "тремя пальцами касается щеки",
+    ]) {
+      for (const [where, frame] of FRAMES) expect([idea, where, ownIdeaNamesAge(idea, frame.level)]).toEqual([idea, where, true]);
+    }
+    for (const english of ["she slowly raises two fingers", "she slowly takes two steps"]) expect(motionTextProblems(english, FRIEND, "own")).toContain("content");
   });
 
   test("a youth word is read at the frame's level: the garment «babydoll» is one on an ordinary frame, not on «Смелая»", () => {
