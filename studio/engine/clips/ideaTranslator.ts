@@ -170,6 +170,7 @@ export async function runIdeaTranslator(deps: MotionJobDeps, job: TranslatorJob)
         messages: messagesOf(job.idea, frame, feedback, previous),
         jsonSchema: TRANSLATOR_JSON_SCHEMA,
         maxTokens: TRANSLATE_ATTEMPT.maxTokens,
+        reasoningTokens: TRANSLATE_ATTEMPT.reasoningTokens,
         inputTokens: TRANSLATE_ATTEMPT.inputTokens,
         reasoningEffort: "low",
         scrubRaw,

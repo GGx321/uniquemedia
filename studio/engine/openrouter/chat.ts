@@ -65,6 +65,12 @@ export interface ChatPriceShape {
   /** The caller's prompt-token ceiling (money/estimate.ts). */
   inputTokens: number;
   images: number;
+  /**
+   * 5b.2 (S5.WCX): the reasoning allowance, in tokens; absent = 0. On grok-4.3's route `max_tokens` bounds the visible answer only, and the reasoning tokens come on top of it, billed as
+   * completion (P-M: up to 1 417 reasoning tokens on a 500-token translation). The allowance is PRICED as completion tokens on top of `max_tokens`; it is never sent, since no request
+   * field bounds the reasoning (P-R: `reasoning.max_tokens` raised it).
+   */
+  reasoningTokens?: number;
 }
 
 /**
@@ -81,14 +87,17 @@ export function promptTokenFloor(shape: Pick<ChatPriceShape, "messages" | "jsonS
 }
 
 /**
- * The worst case a chat attempt reserves: the caller's ceilings, the prompt
- * never below its floor. The one place it is computed, so an attempt held
- * ahead of its request (Budget.tryHold) is held at exactly what it will reserve.
+ * The worst case a chat attempt reserves: the caller's ceilings (its visible
+ * answer plus its reasoning allowance as completion), the prompt never below
+ * its floor. The one place it is computed, so an attempt held ahead of its
+ * request (Budget.tryHold) is held at exactly what it will reserve.
  */
 export function chatAttemptWorstMicros(priceBook: PriceBook, shape: ChatPriceShape): number {
+  const reasoningTokens = shape.reasoningTokens ?? 0;
+  if (!Number.isSafeInteger(reasoningTokens) || reasoningTokens < 0) throw new TypeError(`reasoningTokens must be a non-negative integer, got ${reasoningTokens}`);
   return priceBook.chatWorstCase({
     model: shape.model,
-    maxTokens: shape.maxTokens,
+    maxTokens: shape.maxTokens + reasoningTokens,
     inputTokens: Math.max(shape.inputTokens, promptTokenFloor(shape)),
     images: shape.images,
   });

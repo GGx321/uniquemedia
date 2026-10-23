@@ -10,7 +10,15 @@ import { writerPriceShape } from "./motionWriter";
 // `translatorPriceShape`): the caller's ceilings, the prompt never below its byte floor. Two attempts at most (`MOTION_MAX_ATTEMPTS`).
 
 function priceOf(priced: PricedBook, textModel: string, call: AttemptCall, shape: MotionAttemptShape): Estimate {
-  const attempt = chatAttemptWorstMicros(priced.book, { model: textModel, messages: shape.messages, jsonSchema: shape.jsonSchema, maxTokens: call.maxTokens, inputTokens: call.inputTokens, images: call.images });
+  const attempt = chatAttemptWorstMicros(priced.book, {
+    model: textModel,
+    messages: shape.messages,
+    jsonSchema: shape.jsonSchema,
+    maxTokens: call.maxTokens,
+    reasoningTokens: call.reasoningTokens,
+    inputTokens: call.inputTokens,
+    images: call.images,
+  });
   return motionEstimate(priced, textModel, call, attempt, MOTION_MAX_ATTEMPTS);
 }
 

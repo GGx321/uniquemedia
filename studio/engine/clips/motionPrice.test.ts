@@ -13,6 +13,8 @@ useNativeGlobals();
 const PRICED = { book: PriceBook.fallback(), asOf: "2026-09-24" };
 const MODEL = "x-ai/grok-4.3";
 const SMALL = { messages: [{ role: "system" as const, content: "s".repeat(600) }, { role: "user" as const, content: "u".repeat(300) }], jsonSchema: { name: "x", schema: { type: "object" } } };
+/** S5.WCX: one attempt's reasoning allowance, 3 000 tokens priced as completion at grok-4.3's $2.50/M. */
+const REASONING_MICROS = 7_500;
 const HUGE = { messages: [{ role: "system" as const, content: "s".repeat(9_000) }, { role: "user" as const, content: "u".repeat(2_000) }], jsonSchema: { name: "x", schema: { type: "object" } } };
 
 describe("motionPriceModels", () => {
@@ -22,14 +24,15 @@ describe("motionPriceModels", () => {
 });
 
 describe("suggestEstimate", () => {
-  test("is the design figure for a prompt within the ceiling: about $0.0034 expected, $0.0125 worst (two attempts)", () => {
+  test("is the design figure plus the reasoning allowance for a prompt within the ceiling: about $0.0034 expected, $0.0125 + 2 × 3 000 reasoning tokens ($0.0275) worst (two attempts)", () => {
     const estimate = suggestEstimate(PRICED, MODEL, { ...SMALL, messages: [{ role: "system", content: "s".repeat(800) }, { role: "user", content: "u".repeat(300) }] });
-    expect(estimate).toMatchObject({ expectedMicros: MOTION_SUGGEST_EXPECTED_MICROS, worstMicros: MOTION_SUGGEST_WORST_MICROS, prices: "fallback", pricesAsOf: "2026-09-24" });
+    expect(estimate).toMatchObject({ expectedMicros: MOTION_SUGGEST_EXPECTED_MICROS, worstMicros: MOTION_SUGGEST_WORST_MICROS + MOTION_MAX_ATTEMPTS * REASONING_MICROS, prices: "fallback", pricesAsOf: "2026-09-24" });
+    expect(estimate.worstMicros).toBe(27_500);
     expect(Estimate.safeParse(estimate).success).toBe(true);
   });
 
   test("the worst case is MOTION_MAX_ATTEMPTS attempts, each exactly what the chat client would reserve for that message", () => {
-    const attempt = chatAttemptWorstMicros(PRICED.book, { model: MODEL, ...HUGE, maxTokens: SUGGEST_ATTEMPT.maxTokens, inputTokens: SUGGEST_ATTEMPT.inputTokens, images: 1 });
+    const attempt = chatAttemptWorstMicros(PRICED.book, { model: MODEL, ...HUGE, maxTokens: SUGGEST_ATTEMPT.maxTokens, reasoningTokens: SUGGEST_ATTEMPT.reasoningTokens, inputTokens: SUGGEST_ATTEMPT.inputTokens, images: 1 });
     expect(suggestEstimate(PRICED, MODEL, HUGE).worstMicros).toBe(MOTION_MAX_ATTEMPTS * attempt);
   });
 
@@ -50,9 +53,10 @@ describe("suggestEstimate", () => {
 });
 
 describe("translateEstimate", () => {
-  test("is the design figure for a prompt within the ceiling: about $0.001 expected, $0.005 worst", () => {
+  test("is the design figure plus the reasoning allowance for a prompt within the ceiling: about $0.001 expected, $0.005 + 2 × 3 000 reasoning tokens ($0.020) worst", () => {
     const tiny = { messages: [{ role: "system" as const, content: "s".repeat(300) }, { role: "user" as const, content: "u".repeat(100) }], jsonSchema: { name: "x", schema: { type: "object" } } };
-    expect(translateEstimate(PRICED, MODEL, tiny)).toMatchObject({ expectedMicros: MOTION_TRANSLATE_EXPECTED_MICROS, worstMicros: MOTION_TRANSLATE_WORST_MICROS, prices: "fallback" });
+    expect(translateEstimate(PRICED, MODEL, tiny)).toMatchObject({ expectedMicros: MOTION_TRANSLATE_EXPECTED_MICROS, worstMicros: MOTION_TRANSLATE_WORST_MICROS + MOTION_MAX_ATTEMPTS * REASONING_MICROS, prices: "fallback" });
+    expect(translateEstimate(PRICED, MODEL, tiny).worstMicros).toBe(20_000);
   });
 
   test("carries no image", () => {
@@ -60,7 +64,7 @@ describe("translateEstimate", () => {
   });
 
   test("the worst case is MOTION_MAX_ATTEMPTS attempts of what the chat client would reserve", () => {
-    const attempt = chatAttemptWorstMicros(PRICED.book, { model: MODEL, ...HUGE, maxTokens: TRANSLATE_ATTEMPT.maxTokens, inputTokens: TRANSLATE_ATTEMPT.inputTokens, images: 0 });
+    const attempt = chatAttemptWorstMicros(PRICED.book, { model: MODEL, ...HUGE, maxTokens: TRANSLATE_ATTEMPT.maxTokens, reasoningTokens: TRANSLATE_ATTEMPT.reasoningTokens, inputTokens: TRANSLATE_ATTEMPT.inputTokens, images: 0 });
     expect(translateEstimate(PRICED, MODEL, HUGE).worstMicros).toBe(MOTION_MAX_ATTEMPTS * attempt);
   });
 });

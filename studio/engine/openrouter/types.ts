@@ -227,6 +227,8 @@ export interface ChatParams extends AttemptParams {
   maxTokens: number;
   /** Prompt-token ceiling, images included, for the worst case (see money/estimate.ts). */
   inputTokens: number;
+  /** 5b.2 (S5.WCX): the reasoning allowance priced on top of `maxTokens` and never sent (`ChatPriceShape.reasoningTokens`, openrouter/chat.ts); absent = 0. */
+  reasoningTokens?: number;
   reasoningEffort: ReasoningEffort;
   /** JPEGs, attached to the last user message. */
   images?: readonly Uint8Array[];

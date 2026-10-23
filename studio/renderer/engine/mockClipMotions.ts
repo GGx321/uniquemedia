@@ -43,8 +43,8 @@ const bad = (error: EngineError): Out<never> => ({ ok: false, error });
  * The two estimates at the bundled price table, for the engine's PROVISIONAL system prompts: `motionPrice.suggestPrice` / `translatePrice` read the largest message a call can send, so the worst case follows the prompt text.
  * Held to the engine by mockEngine.clipMotions.table.test.ts (it fails the day S5.WCX changes a prompt, and says which number to move here).
  */
-export const MOCK_SUGGEST_PRICE = { expectedMicros: 3_400, worstMicros: 14_678 } as const;
-export const MOCK_TRANSLATE_PRICE = { expectedMicros: 1_000, worstMicros: 9_650 } as const;
+export const MOCK_SUGGEST_PRICE = { expectedMicros: 3_400, worstMicros: 29_678 } as const;
+export const MOCK_TRANSLATE_PRICE = { expectedMicros: 1_000, worstMicros: 24_650 } as const;
 
 type CallKind = "suggest" | "idea";
 
@@ -56,8 +56,11 @@ const priceOf = (kind: CallKind): { expectedMicros: number; worstMicros: number 
 // mockEngine.clipMotions.table.test.ts, and the whole reserve of every attempt by mockEngine.clipMotions.money.test.ts (the real ledger).
 export const MOCK_PROMPT_BYTES: { writer: number; translator: number } = { writer: 1_178, translator: 1_188 };
 export const MOCK_SCHEMA_BYTES: { suggest: number; idea: number } = { suggest: 669, idea: 144 };
-/** The caller's ceilings of one attempt (engine/money/motionEstimate.ts). */
-const CEILINGS = { suggest: { maxTokens: 1_000, inputTokens: 3_000, images: 1 }, idea: { maxTokens: 500, inputTokens: 1_000, images: 0 } } as const;
+/** The caller's ceilings of one attempt (engine/money/motionEstimate.ts), the reasoning allowance (S5.WCX: priced as completion on top of `maxTokens`, never sent) included. */
+const CEILINGS = {
+  suggest: { maxTokens: 1_000, reasoningTokens: 3_000, inputTokens: 3_000, images: 1 },
+  idea: { maxTokens: 500, reasoningTokens: 3_000, inputTokens: 1_000, images: 0 },
+} as const;
 const TEMPLATE_TOKENS_PER_MESSAGE = 16;
 const CHAT_IMAGE_TOKEN_ALLOWANCE = 1_500;
 /** The text model's price in pico-dollars per token (x-ai/grok-4.3 at the bundled table). */
@@ -67,9 +70,9 @@ const COMPLETION_PICO = 2_500_000;
 /** The user message's JSON, as the engine writes it (`messagesOf` of the writer and of the translator), and the bytes the reserve counts. */
 export function attemptWorstMicros(kind: CallKind, user: string): number {
   const system = kind === "suggest" ? MOCK_PROMPT_BYTES.writer : MOCK_PROMPT_BYTES.translator;
-  const { maxTokens, inputTokens, images } = CEILINGS[kind];
+  const { maxTokens, reasoningTokens, inputTokens, images } = CEILINGS[kind];
   const floor = system + new TextEncoder().encode(user).length + MOCK_SCHEMA_BYTES[kind] + 2 * TEMPLATE_TOKENS_PER_MESSAGE + images * CHAT_IMAGE_TOKEN_ALLOWANCE;
-  const pico = maxTokens * COMPLETION_PICO + Math.max(inputTokens, floor) * PROMPT_PICO;
+  const pico = (maxTokens + reasoningTokens) * COMPLETION_PICO + Math.max(inputTokens, floor) * PROMPT_PICO;
   return Math.floor((pico + 999_999) / 1_000_000);
 }
 

@@ -440,7 +440,7 @@ describe("clips.translateIdea", () => {
     m.engine.scriptNextMotionReplies([idea(NOT_MOTION), { kind: "timeout" }]);
     expect((await errorOf(translate(m))).code).toBe("TIMEOUT");
     // The repair carries the closed codes and the previous text, so its reserve is above the first attempt's (the real ledger agrees: money.test.ts).
-    expect((await money(m)).unsettledMicros).toBe(3_409);
+    expect((await money(m)).unsettledMicros).toBe(10_909);
   });
 
   test("ids count on: the next idea is o-2", async () => {
