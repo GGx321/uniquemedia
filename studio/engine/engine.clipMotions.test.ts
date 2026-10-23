@@ -282,6 +282,26 @@ describe("clips.suggestMotions: the photo and the store", () => {
     expect(listed.suitable ? listed.motions.filter((m) => m.source === "vision").map((m) => m.id) : []).toEqual(["v-4", "v-5", "v-6"]);
   });
 
+  test("S5.WCX: the writer is told what the sheet lists: the frame's scene and code motions and the newest three suggestions on it; an older suggestion and an own idea are not listed", async () => {
+    const w = await motionWorld(dir());
+    const sha = w.started.engine.library?.getPhoto(w.photoId)?.sha256 ?? "";
+    const vision = GOOD_TEXTS.map((text, i) => ({ id: `v-${i + 1}`, source: "vision", label: `Старое ${i + 1}`, text, model: "x-ai/grok-4.3", at: "2026-10-15T10:00:00.000Z" }));
+    const own = { id: "o-1", source: "own", label: "Своя", text: UNDRESS, model: "x-ai/grok-4.3", at: "2026-10-15T10:00:00.000Z" };
+    await w.writeStore({ schemaVersion: 1, photoId: w.photoId, photoSha256: sha, next: { vision: 6, own: 2 }, items: [...vision, own] });
+    const sheet = await w.options();
+    const onSheet = sheet.suitable ? sheet.motions.filter((m) => m.source !== "own").map((m) => m.text) : [];
+    w.net.setChat(() => suggestionReply([GOOD_TEXTS[0]]));
+    await w.suggest();
+    const body = w.net.chats[0]?.json() as unknown as { messages: { role: string; content: string | { type: string; text?: string }[] }[] };
+    const user = body.messages.find((m) => m.role === "user")?.content;
+    const text = typeof user === "string" ? user : (user?.find((part) => part.type === "text")?.text ?? "");
+    const listed = (JSON.parse(text) as { listed: string[] }).listed;
+    expect(listed).toEqual(onSheet);
+    expect(listed).toContain(CODE_TEXT);
+    expect(listed.slice(-3)).toEqual(GOOD_TEXTS.slice(2));
+    expect(listed).not.toContain(UNDRESS);
+  });
+
   test("a suggestion that is still on the sheet is `repeated`, as before", async () => {
     const w = await motionWorld(dir());
     const sha = w.started.engine.library?.getPhoto(w.photoId)?.sha256 ?? "";
