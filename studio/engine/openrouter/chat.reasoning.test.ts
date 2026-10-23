@@ -75,6 +75,13 @@ describe("chat: the allowance is reserved, never sent", () => {
   });
 });
 
+describe("chat: the reasoning effort", () => {
+  test("«none» is sent as it is (grok-4.3 then reasons 0 tokens, P-R), with the effort as the only reasoning field", async () => {
+    const { net } = await send({ reasoningEffort: "none" }, reasoningBody(0.0006, { prompt: 534, completion: 16, reasoning: 0 }));
+    expect((net.calls[0]?.json() as Record<string, unknown>).reasoning).toEqual({ effort: "none" });
+  });
+});
+
 describe("chat: a bill against a reserve with the allowance (the halt stays)", () => {
   const PARAMS = { maxTokens: 500, inputTokens: 1_000, reasoningTokens: 3_000 } as const;
   /** (500 + 3 000) × 2.5 µ$ + 1 000 × 1.25 µ$ (the short message stays under the prompt ceiling): the reserve a translate-shaped attempt holds. */

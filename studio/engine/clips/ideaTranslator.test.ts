@@ -73,7 +73,7 @@ describe("the request: the owner's idea is data, and only in the user message", 
     const { net, result } = run([reply(GOOD_MOTION)]);
     await result;
     const body = bodyOf(net, 0);
-    expect(body).toMatchObject({ model: "x-ai/grok-4.3", reasoning: { effort: "low" }, usage: { include: true }, response_format: { type: "json_schema", json_schema: { name: TRANSLATOR_JSON_SCHEMA.name, strict: true } } });
+    expect(body).toMatchObject({ model: "x-ai/grok-4.3", reasoning: { effort: "none" }, usage: { include: true }, response_format: { type: "json_schema", json_schema: { name: TRANSLATOR_JSON_SCHEMA.name, strict: true } } });
     expect(body.messages[0]).toEqual({ role: "system", content: MOTION_PROMPT_TEXTS.translatorSystem });
     expect(userData(net, 0)).toMatchObject({ idea: IDEA, frame: { capture: "timer", bold: false } });
     expect(JSON.stringify(body)).not.toContain("image_url");
@@ -233,6 +233,21 @@ describe("the money of a refusal and of a failure", () => {
   test("a 401 is an error with its code", async () => {
     const { result } = run([{ status: 401, body: { error: { message: "no auth" } } }]);
     expect(await result).toMatchObject({ kind: "error", error: { code: "AUTH_INVALID" } });
+  });
+});
+
+describe("the reasoning effort (S5.WCX, P-R)", () => {
+  test("every attempt asks for no reasoning (effort «none»: 0 reasoning tokens in 6 of 6 P-R calls, about 4× cheaper and 7× faster than «low»), the repair too", async () => {
+    const { net, result } = run([reply(NOT_MOTION), reply(GOOD_MOTION)]);
+    await result;
+    expect(net.calls).toHaveLength(2);
+    for (const n of [0, 1]) expect(bodyOf(net, n).reasoning).toEqual({ effort: "none" });
+  });
+
+  test("never sends reasoning.max_tokens (P-R: for Grok it RAISED the reasoning, 1 024-2 575 tokens)", async () => {
+    const { net, result } = run([reply(GOOD_MOTION)]);
+    await result;
+    expect(Object.keys(bodyOf(net, 0).reasoning as Record<string, unknown>)).toEqual(["effort"]);
   });
 });
 

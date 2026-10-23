@@ -44,7 +44,7 @@ const bad = (error: EngineError): Out<never> => ({ ok: false, error });
  * Held to the engine by mockEngine.clipMotions.table.test.ts (it fails the day S5.WCX changes a prompt, and says which number to move here).
  */
 export const MOCK_SUGGEST_PRICE = { expectedMicros: 3_400, worstMicros: 29_678 } as const;
-export const MOCK_TRANSLATE_PRICE = { expectedMicros: 1_000, worstMicros: 24_650 } as const;
+export const MOCK_TRANSLATE_PRICE = { expectedMicros: 550, worstMicros: 24_650 } as const;
 
 type CallKind = "suggest" | "idea";
 
