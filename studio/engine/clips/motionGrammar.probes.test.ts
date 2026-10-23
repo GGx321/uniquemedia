@@ -188,22 +188,28 @@ describe("the re-review's cases (round 3), now accepted: undressing is read as u
       ...["her bra cup", "the clip of her bra", "the laces of her dress", "the laces of her corset", "the ring of her bikini top", "the hood of her robe", "her bikini cup"],
     ];
     const refused: string[] = [];
+    let generated = 0;
     let read = 0;
+    let undressing = 0;
     for (const v of VERBS) {
       for (const p of PARTS) {
         for (const o of OBJS) {
           for (const t of [`she slowly ${v} ${p} ${o}`, `she slowly ${v} ${o} ${p}`, `she slowly ${v} ${o} ${p} a little`]) {
             // Within the length the one check allows (a longer one is `too-long`, a rule of its own).
-            if (t.length > 60 || !readMotion(t).ok) continue;
+            if (t.length > 60) continue;
+            generated++;
+            if (!readMotion(t).ok) continue;
             read++;
             const problems = motionTextProblems(t, FRIEND, "vision");
             if (problems.length > 0) refused.push(`${t} → ${problems.join("+")}`);
+            if (undressesBy(t, "vision", false)) undressing++;
           }
         }
       }
     }
     expect(refused).toEqual([]);
-    expect(read).toBeGreaterThan(0);
+    // Round 2 (L4): exact, so a change to the grammar's reach shows here and is made on purpose.
+    expect({ generated, read, undressing }).toEqual({ generated: 184_065, read: 46_766, undressing: 24_063 });
   }, 120_000);
 
   test("the café vocabulary reads (a repair would otherwise spin)", () => {
