@@ -43,7 +43,7 @@ const bad = (error: EngineError): Out<never> => ({ ok: false, error });
  * The two estimates at the bundled price table, for the engine's PROVISIONAL system prompts: `motionPrice.suggestPrice` / `translatePrice` read the largest message a call can send, so the worst case follows the prompt text.
  * Held to the engine by mockEngine.clipMotions.table.test.ts (it fails the day S5.WCX changes a prompt, and says which number to move here).
  */
-export const MOCK_SUGGEST_PRICE = { expectedMicros: 3_400, worstMicros: 29_678 } as const;
+export const MOCK_SUGGEST_PRICE = { expectedMicros: 3_400, worstMicros: 30_808 } as const;
 export const MOCK_TRANSLATE_PRICE = { expectedMicros: 550, worstMicros: 24_016 } as const;
 
 type CallKind = "suggest" | "idea";
@@ -700,7 +700,10 @@ export class MockClipMotions {
 
   async #suggest(avatarId: string, photoId: string, ready: { frame: MockMotionFrame; sha: string }): Promise<Out<ClipSuggestResult>> {
     const jobId = this.#ports.nextId("job");
-    const outcome = await this.#capped(jobId, "suggest", () => this.#runWriter(jobId, photoId, ready.frame));
+    // S5.WCX, as the engine: the writer is told what the sheet lists (the frame's scene and code motions and the suggestions on the sheet), as data.
+    const passes = (item: StoredItem): boolean => checkModelText(ready.frame, item.text, "vision").problems.length === 0;
+    const listed = [...ready.frame.offered.map(sameText), ...sheetVisionTexts(this.#read(avatarId, photoId, ready.sha).items, passes)];
+    const outcome = await this.#capped(jobId, "suggest", () => this.#runWriter(jobId, photoId, ready.frame, listed));
     if (outcome.kind === "error") {
       if (outcome.error.code === "AUTH_INVALID") this.#ports.markKeyRejected();
       return bad(outcome.error);
@@ -721,12 +724,13 @@ export class MockClipMotions {
     jobId: string,
     photoId: string,
     frame: MockMotionFrame,
+    listed: readonly string[],
   ): Promise<{ kind: "ok"; drafts: { label: string; text: string }[]; reading: ClipFrameReading; costMicros: number } | { kind: "none"; costMicros: number } | { kind: "error"; error: EngineError; costMicros: number }> {
     let cost = 0;
     // What the next attempt is told: the closed codes of what was wrong with the last answer, never a text.
     let feedback: Feedback = [];
     for (let attempt = 1; attempt <= MOTION_MAX_ATTEMPTS; attempt++) {
-      const user = JSON.stringify({ frame: framePayloadOf(frame), ...(feedback.length === 0 ? {} : { problems: feedback }) });
+      const user = JSON.stringify({ frame: framePayloadOf(frame), listed, ...(feedback.length === 0 ? {} : { problems: feedback }) });
       const step = await this.#attempt(jobId, "suggest", attempt, user);
       cost += step.costMicros;
       if (step.kind === "refused") return { kind: "none", costMicros: cost };

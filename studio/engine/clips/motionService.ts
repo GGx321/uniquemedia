@@ -211,7 +211,7 @@ export class ClipMotions {
     source: (typeof MODEL_SOURCES)[number],
     avatarId: string,
     photoId: string,
-  ): Promise<{ key: string; budget: Budget; library: Library; photo: PhotoSidecar; facts: FrameFacts; bytes: Uint8Array; sha: string }> {
+  ): Promise<{ key: string; budget: Budget; library: Library; photo: PhotoSidecar; facts: FrameFacts; bytes: Uint8Array; sha: string; items: readonly MotionItem[] }> {
     const deps = this.#deps;
     const key = deps.usableKey(purpose);
     const budget = deps.paidBudget();
@@ -225,7 +225,7 @@ export class ClipMotions {
     if (isFull(store.file, source)) {
       throw new EngineFailure({ code: "VALIDATION", clipReason: "motions-full", detail: `every ${source === "vision" ? "v" : "o"}- id of photo ${photo.id} was issued; ids are never reused` });
     }
-    return { key, budget, library, photo, facts: read.facts, bytes: read.bytes, sha: photo.sha256 };
+    return { key, budget, library, photo, facts: read.facts, bytes: read.bytes, sha: photo.sha256, items: store.file.items };
   }
 
   /** After the last await: the library is the one the call began on, and the avatar is still there and not being deleted. Nothing is stored for an avatar that is going. */
@@ -262,13 +262,18 @@ export class ClipMotions {
     const jobId = deps.newId();
     const scope = { avatarJobId: jobId };
     const client = deps.openRouter(ready.key, deps.callTimeoutMs);
+    // Known: the suggestions ON THE SHEET (the newest three; an older one has left it, and a model that suggests it again brings it back as a new item) and the frame's own scene and code motions (the sheet lists them already). An own idea is a separate source and does not count (S5.WC3c).
+    // S5.WCX: the writer is told them too, as data, so that it suggests something else.
+    const frameTexts = motionChoicesOf(ready.facts).map((choice) => sameText(choice.text));
+    const passes = (item: MotionItem): boolean => clipMotionProblems(ready.facts, item.text, item.source).length === 0;
+    const listed = [...frameTexts, ...sheetVisionTexts(ready.items, passes)];
     deps.setCap(scopeKey(scope), estimate.worstMicros);
     const linesBefore = ready.budget.ledger.lines.length;
     let outcome: Awaited<ReturnType<typeof runMotionWriter>>;
     try {
       outcome = await runMotionWriter(
         { chat: (params) => client.chat(params), budget: ready.budget, priceBook: priced.book, log: deps.log },
-        { jobId, scope, textModel, photoId: ready.photo.id, image, facts: ready.facts },
+        { jobId, scope, textModel, photoId: ready.photo.id, image, facts: ready.facts, listed },
       );
     } finally {
       deps.clearCap(scopeKey(scope));
@@ -284,11 +289,10 @@ export class ClipMotions {
     try {
       let made: MotionItem[] = [];
       let repeated = false;
-      // Known: the suggestions ON THE SHEET (the newest three; an older one has left it, and a model that suggests it again brings it back as a new item) and the frame's own scene and code motions (the sheet lists them already). An own idea is a separate source and does not count (S5.WC3c).
-      const frameTexts = motionChoicesOf(ready.facts).map((choice) => sameText(choice.text));
       await this.#stores.update(ready.library.avatarDirPath(avatarId), ready.photo.id, ready.sha, (file) => {
-        // Round 3 L5: a suggestion the store already holds (another call wrote it) is not stored twice; the writer dedupes within one answer only.
-        const known = [...frameTexts, ...sheetVisionTexts(file.items, (item) => clipMotionProblems(ready.facts, item.text, item.source).length === 0)];
+        // Round 3 L5: a suggestion the store already holds (another call wrote it) is not stored twice; the writer dedupes within one answer only. The sheet is read again here: another call may
+        // have written while this one ran.
+        const known = [...frameTexts, ...sheetVisionTexts(file.items, passes)];
         const { fresh, repeated: allKnown } = freshDrafts(outcome.drafts, known);
         // Nothing new: nothing is written, the reading of the last stored call stays.
         if (fresh.length === 0) {

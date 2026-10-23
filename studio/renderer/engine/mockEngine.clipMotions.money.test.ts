@@ -111,7 +111,7 @@ describe("the mock's money is the engine's ledger", () => {
   test("the reserve of an attempt follows the message, not half the call's worst case", async () => {
     const m = makeClipMock();
     m.engine.scriptNextMotionReplies([{ kind: "unusable-body" }]);
-    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", costMicros: 14_458 });
+    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", costMicros: 14_660 });
     const idea = makeClipMock();
     idea.engine.scriptNextMotionReplies([{ kind: "unusable-body" }]);
     expect(await unwrap(translate(idea))).toMatchObject({ outcome: "none" });

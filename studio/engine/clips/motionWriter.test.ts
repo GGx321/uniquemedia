@@ -15,7 +15,7 @@ useNativeGlobals();
 const SCOPE: Scope = { avatarJobId: "job-00000001" };
 /** One attempt at its ceilings: (1 000 answer + 3 000 reasoning (S5.WCX)) × $2.50/M + 3 000 prompt × $1.25/M. */
 const ATTEMPT_WORST = 13_750;
-const JOB: WriterJob = { jobId: "job-00000001", scope: SCOPE, textModel: "x-ai/grok-4.3", photoId: "photo-0001", image: JPEG, facts: timerFrame() };
+const JOB: WriterJob = { jobId: "job-00000001", scope: SCOPE, textModel: "x-ai/grok-4.3", photoId: "photo-0001", image: JPEG, facts: timerFrame(), listed: [] };
 
 const FRAME = { capture: "timer", phoneVisible: false, faceVisible: true };
 const answer = (motions: { label_ru: string; text_en: string }[], frame: Record<string, unknown> = FRAME) => ({ motions, frame });
@@ -63,6 +63,29 @@ describe("the request", () => {
     const { net, result } = run([reply(answer([good()]))]);
     await result;
     expect(userMessage(net, 0)).toMatchObject({ frame: { capture: "timer", faceVisible: "yes", legsFraming: false, bold: false, phoneAllowed: false } });
+  });
+
+  test("S5.WCX: what the sheet already lists is JSON data in the user message (`listed`), on every attempt, and never in the system prompt", async () => {
+    const listed = ["she slowly lifts her chin a little", "she slowly crosses her ankles"];
+    const { net, result } = run([reply("{not json"), reply(answer([good()]))], { ...JOB, listed });
+    await result;
+    expect(net.calls).toHaveLength(2);
+    for (const n of [0, 1]) expect(userMessage(net, n).listed).toEqual(listed);
+    const system = (net.calls[0]?.json() as { messages: { role: string; content: unknown }[] }).messages[0]?.content;
+    for (const text of listed) expect(String(system)).not.toContain(text);
+  });
+
+  test("S5.WCX: an empty sheet is an empty list", async () => {
+    const { net, result } = run([reply(answer([good()]))]);
+    await result;
+    expect(userMessage(net, 0).listed).toEqual([]);
+  });
+
+  test("S5.WCX: the price shape counts the widest list: the scene motion, three code motions and three suggestions, each of 60 characters", () => {
+    const user = writerPriceShape().messages.find((m) => m.role === "user")?.content ?? "";
+    const data = JSON.parse(typeof user === "string" ? user : "{}") as { listed?: string[] };
+    expect(data.listed).toHaveLength(7);
+    expect(data.listed?.every((text) => text.length === 60)).toBe(true);
   });
 
   test("the first attempt is <job>:motion#1, reserved at its worst case in the call's scope", async () => {

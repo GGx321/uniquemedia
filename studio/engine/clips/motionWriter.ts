@@ -1,5 +1,16 @@
 import { z } from "zod";
-import { CLIP_CHOICES_MAX, MOTION_LABEL_MAX, MOTION_MAX_ATTEMPTS, MOTION_PROBLEMS, ownIdeaLabel, type ClipFrameNote, type ClipFrameReading, type EngineError, type MotionProblem } from "../../shared/engine";
+import {
+  CLIP_CHOICES_MAX,
+  MOTION_LABEL_MAX,
+  MOTION_MAX_ATTEMPTS,
+  MOTION_PROBLEMS,
+  MOTION_TEXT_MAX,
+  ownIdeaLabel,
+  type ClipFrameNote,
+  type ClipFrameReading,
+  type EngineError,
+  type MotionProblem,
+} from "../../shared/engine";
 import { sameText } from "../../shared/engine/motionKnown";
 import { repairMayHelp } from "../../shared/scenes/motionText";
 import { SUGGEST_ATTEMPT } from "../money/motionEstimate";
@@ -38,6 +49,11 @@ export interface WriterJob {
   /** The photo as a JPEG of at most 1024 px on its long side, never the master's bytes. */
   image: Uint8Array;
   facts: FrameFacts;
+  /**
+   * S5.WCX: what the sheet already lists for this frame, as data for the model to suggest something else (P-M: «she tilts her head a little to one side» in 7 of 9 calls): the frame's scene and
+   * code motions and the suggestions on the sheet (`sheetVisionTexts`), the same texts a repeated suggestion is compared with. At most the scene's, three code and three suggested motions.
+   */
+  listed: readonly string[];
 }
 
 export interface SuggestedDraft {
@@ -108,15 +124,18 @@ function readAnswer(content: string): WriterAnswer | null {
   return parsed.success && parsed.data.motions.length > 0 ? { ...parsed.data, motions: parsed.data.motions.slice(0, CLIP_CHOICES_MAX.vision) } : null;
 }
 
-function messagesOf(frame: FramePayload, feedback: WriterFeedback): ChatMessage[] {
-  const data = { frame, ...(feedback.length === 0 ? {} : { problems: feedback }) };
+function messagesOf(frame: FramePayload, listed: readonly string[], feedback: WriterFeedback): ChatMessage[] {
+  const data = { frame, listed, ...(feedback.length === 0 ? {} : { problems: feedback }) };
   return [
     { role: "system", content: MOTION_PROMPT_TEXTS.writerSystem },
     { role: "user", content: JSON.stringify(data) },
   ];
 }
 
-/** The largest attempt the writer can send, for the estimate: the longest facts and the longest feedback (every closed code), so the price the owner accepts never undercuts a reserve. */
+/**
+ * The largest attempt the writer can send, for the estimate: the longest facts, the longest list of what the sheet shows (the scene's, three code and three suggested motions of the longest text) and
+ * the longest feedback (every closed code), so the price the owner accepts never undercuts a reserve.
+ */
 export function writerPriceShape(): MotionAttemptShape {
   const widest: FramePayload = {
     capture: "mirror-hidden",
@@ -129,7 +148,8 @@ export function writerPriceShape(): MotionAttemptShape {
     activity: "a".repeat(ACTIVITY_MAX_CHARS),
     phoneAllowed: false,
   };
-  return { messages: messagesOf(widest, [...MOTION_PROBLEMS, "unreadable"]), jsonSchema: WRITER_JSON_SCHEMA };
+  const listed = Array.from({ length: CLIP_CHOICES_MAX.scene + CLIP_CHOICES_MAX.code + CLIP_CHOICES_MAX.vision }, () => "a".repeat(MOTION_TEXT_MAX));
+  return { messages: messagesOf(widest, listed, [...MOTION_PROBLEMS, "unreadable"]), jsonSchema: WRITER_JSON_SCHEMA };
 }
 
 /** The Russian label as it is stored: cleaned of control and format characters, cut by word to 40 characters; null when nothing is left. */
@@ -205,7 +225,7 @@ export async function runMotionWriter(deps: MotionJobDeps, job: WriterJob): Prom
         budget: deps.budget,
         priceBook: deps.priceBook,
         signal: NEVER_ABORTED,
-        messages: messagesOf(frame, feedback),
+        messages: messagesOf(frame, job.listed, feedback),
         jsonSchema: WRITER_JSON_SCHEMA,
         maxTokens: SUGGEST_ATTEMPT.maxTokens,
         reasoningTokens: SUGGEST_ATTEMPT.reasoningTokens,
