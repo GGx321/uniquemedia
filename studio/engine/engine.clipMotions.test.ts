@@ -402,6 +402,21 @@ describe("clips.translateIdea", () => {
     await expect(readFile(w.storePath(), "utf8")).rejects.toThrow();
   });
 
+  test("S5.WC2c round 2 (M1): an idea that names an age, a youth word or a number in his own words is refused FREE before any chat call: `rejected` content at 0, nothing reserved or stored", async () => {
+    for (const idea of ["медленно снимает халат, ей 16", "16-летняя медленно раздевается", "раздевается как школьница", "малышка снимает топ", "подросток медленно раздевается", "медленно снимает халат, шестнадцать", "снимает халат на свой шестнадцатый день рождения", "медленно снимает халат, 16", "младше 18, медленно раздевается", "she undresses like a toddler"]) {
+      const w = await motionWorld(dir(), { chat: () => ideaReply(UNDRESS) });
+      expect([idea, resultOf(await w.translate(idea))]).toEqual([idea, { outcome: "rejected", problems: ["content"], costMicros: 0 }]);
+      expect([idea, w.net.chats.length, w.ledger().length]).toEqual([idea, 0, 0]);
+      await expect(readFile(w.storePath(), "utf8")).rejects.toThrow();
+    }
+  });
+
+  test("S5.WC2c round 2 (M1): an idea with none of them is sent as before", async () => {
+    const w = await motionWorld(dir(), { chat: () => ideaReply(UNDRESS) });
+    expect(resultOf(await w.translate("медленно снимает халат"))).toMatchObject({ outcome: "ok", item: { text: UNDRESS } });
+    expect(w.net.chats).toHaveLength(1);
+  });
+
   test("the same idea on a frame of «Смелая» is accepted (Q-H = 2)", async () => {
     const w = await motionWorld(dir(), { chat: () => ideaReply(UNDRESS), seed: { category: "nightwear" }, engine: { deps: { clipSwitches: { boldClips: "kling-only" } } } });
     expect(resultOf(await w.translate())).toMatchObject({ outcome: "ok", item: { id: "o-1", text: UNDRESS } });
