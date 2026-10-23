@@ -49,8 +49,8 @@ describe("the free estimates", () => {
   test("estimateSuggest is the writer's two attempts: the re-measured figure for the expected, and a worst case never below the design figure (a bigger prompt raises it honestly)", async () => {
     const w = await motionWorld(dir());
     const estimate = await w.estimateSuggest();
-    // S5.WCX: re-measured for the final prompt (P-M's median answer, 860 tokens; a prompt of about 1 600), above the design's figure.
-    expect(estimate).toMatchObject({ expectedMicros: 4_150, prices: "fallback" });
+    // S5.WCX: re-measured for the final prompt (P-X's median answer, 1 314 tokens; a prompt of about 1 620), above the design's figure.
+    expect(estimate).toMatchObject({ expectedMicros: 5_310, prices: "fallback" });
     expect(estimate.expectedMicros).toBeGreaterThan(MOTION_SUGGEST_EXPECTED_MICROS);
     expect(estimate.worstMicros).toBeGreaterThanOrEqual(MOTION_SUGGEST_WORST_MICROS);
   });
@@ -58,8 +58,8 @@ describe("the free estimates", () => {
   test("estimateIdea is the translator's two attempts on a 300-character idea at the most bytes", async () => {
     const w = await motionWorld(dir());
     const estimate = await w.estimateIdea();
-    // S5.WCX: the translator runs on reasoning effort «none», so the typical answer is about 20 completion tokens (P-R); its prompt is the final text's, about 780 tokens.
-    expect(estimate.expectedMicros).toBe(1_025);
+    // S5.WCX: the translator runs on reasoning effort «none», so the typical answer is about 20 completion tokens (P-R); its prompt is the final text's, about 1 050 tokens.
+    expect(estimate.expectedMicros).toBe(1_363);
     expect(estimate.expectedMicros).toBeGreaterThan(MOTION_TRANSLATE_EXPECTED_MICROS);
     expect(estimate.worstMicros).toBeGreaterThanOrEqual(5_000);
   });
