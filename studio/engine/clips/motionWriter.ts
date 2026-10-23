@@ -208,6 +208,7 @@ export async function runMotionWriter(deps: MotionJobDeps, job: WriterJob): Prom
         messages: messagesOf(frame, feedback),
         jsonSchema: WRITER_JSON_SCHEMA,
         maxTokens: SUGGEST_ATTEMPT.maxTokens,
+        reasoningTokens: SUGGEST_ATTEMPT.reasoningTokens,
         inputTokens: SUGGEST_ATTEMPT.inputTokens,
         images: [job.image],
         reasoningEffort: "low",

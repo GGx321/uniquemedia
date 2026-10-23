@@ -6,13 +6,15 @@ import { chatBody, fakeFetch, JPEG, makeClient, setupMoney, withoutAt, type Mone
 import { MOTION_PROMPT_TEXTS } from "./motionPrompts";
 import { WRITER_JSON_SCHEMA, runMotionWriter, writerPriceShape, type WriterJob, type WriterOutcome } from "./motionWriter";
 import { GOOD_MOTION, GOOD_MOTION_2, GOOD_MOTION_3, UNDER_AGE_MOTION, UNDRESS_MOTION, boldMirrorFrame, timerFrame } from "./testing/motionKit";
+import { chatAttemptWorstMicros } from "../openrouter/chat";
 useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WC3 (plan s5b2 §5.3 «The vision writer», I5.66, I5.68): the wiring of the writer over the real chat client, the real budget and a fake HTTP. The wording of the system prompt is
 // WCX's and is not tested here, only where it goes.
 
 const SCOPE: Scope = { avatarJobId: "job-00000001" };
-const ATTEMPT_WORST = 6_250;
+/** One attempt at its ceilings: (1 000 answer + 3 000 reasoning (S5.WCX)) × $2.50/M + 3 000 prompt × $1.25/M. */
+const ATTEMPT_WORST = 13_750;
 const JOB: WriterJob = { jobId: "job-00000001", scope: SCOPE, textModel: "x-ai/grok-4.3", photoId: "photo-0001", image: JPEG, facts: timerFrame() };
 
 const FRAME = { capture: "timer", phoneVisible: false, faceVisible: true };
@@ -70,6 +72,25 @@ describe("the request", () => {
     expect(reserve).toMatchObject({ type: "reserve", attemptId: "job-00000001:motion#1", scope: SCOPE, model: "x-ai/grok-4.3" });
     expect(Number(reserve?.worstMicros)).toBeGreaterThan(0);
     expect(Number(reserve?.worstMicros)).toBeLessThanOrEqual(ATTEMPT_WORST * 2);
+  });
+
+  test("S5.WCX: each attempt reserves max_tokens plus 3 000 reasoning tokens as completion, and still sends max_tokens alone", async () => {
+    const { net, result } = run([reply(answer([good()]))]);
+    await result;
+    const sent = net.calls[0]?.json() as { max_tokens: number; reasoning: unknown };
+    const widestWithout = chatAttemptWorstMicros(money.priceBook, { model: "x-ai/grok-4.3", ...writerPriceShape(), maxTokens: 1_000, inputTokens: 3_000, images: 1 });
+    expect(Number(money.lines()[0]?.worstMicros)).toBeGreaterThan(widestWithout);
+    expect(sent.max_tokens).toBe(1_000);
+    expect(sent.reasoning).toEqual({ effort: "low" });
+  });
+
+  test("S5.WCX: a bill above any reserve the writer held before the allowance (a 4 000-token reasoning tail) closes without stopping the ledger", async () => {
+    const BILL = 12_000;
+    const widestWithout = chatAttemptWorstMicros(money.priceBook, { model: "x-ai/grok-4.3", ...writerPriceShape(), maxTokens: 1_000, inputTokens: 3_000, images: 1 });
+    expect(widestWithout).toBeLessThan(BILL);
+    const { result } = run([reply(answer([good()]), BILL / 1e6)]);
+    expect(await result).toMatchObject({ kind: "ok", costMicros: BILL });
+    expect(money.budget.aboveWorstAttempts()).toEqual([]);
   });
 
   test("the schema names the three fields of the frame reading and at most the writer's own keys (strict)", () => {

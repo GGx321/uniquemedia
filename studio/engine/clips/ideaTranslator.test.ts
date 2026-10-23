@@ -8,6 +8,8 @@ import { TRANSLATOR_JSON_SCHEMA, ideaScrub, rawScrub, runIdeaTranslator, transla
 import { checkModelText } from "./motionCall";
 import { MOTION_PROMPT_TEXTS } from "./motionPrompts";
 import { GOOD_MOTION, UNDER_AGE_MOTION, UNDRESS_MOTION, boldMirrorFrame, timerFrame } from "./testing/motionKit";
+import { T7_USAGE } from "./testing/probeUsages";
+import { chatAttemptWorstMicros } from "../openrouter/chat";
 useNativeGlobals();
 
 // Stage 5, 5b.2, S5.WC3 (plan s5b2 §5.3 «The translator», I5.67, I5.68): the owner's idea becomes one English motion, or is refused with closed problems. The idea is JSON DATA in the user message and
@@ -231,6 +233,33 @@ describe("the money of a refusal and of a failure", () => {
   test("a 401 is an error with its code", async () => {
     const { result } = run([{ status: 401, body: { error: { message: "no auth" } } }]);
     expect(await result).toMatchObject({ kind: "error", error: { code: "AUTH_INVALID" } });
+  });
+});
+
+describe("the reasoning allowance (S5.WCX: grok-4.3 bills its reasoning as completion beyond max_tokens)", () => {
+  /** P-M's «T7» answer: prompt 534, completion 1 431 of which 1 417 reasoning, billed 4 111 µ$ (it stopped the ledger then). */
+  const T7: Step = {
+    status: 200,
+    body: {
+      id: "gen-1",
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ text_en: GOOD_MOTION }) } }],
+      usage: { prompt_tokens: T7_USAGE.prompt, completion_tokens: T7_USAGE.completion, completion_tokens_details: { reasoning_tokens: T7_USAGE.reasoningTokens }, cost: T7_USAGE.costMicros / 1e6 },
+    },
+  };
+
+  test("a T7-like bill closes under the attempt's reserve: ok, and the ledger is not halted", async () => {
+    const { result } = run([T7]);
+    expect(await result).toMatchObject({ kind: "ok", costMicros: 4_111 });
+    expect(money.budget.aboveWorstAttempts()).toEqual([]);
+  });
+
+  test("each attempt reserves max_tokens plus 3 000 reasoning tokens as completion: 7 500 µ$ above the same message without the allowance", async () => {
+    const { net, result } = run([reply(GOOD_MOTION)]);
+    await result;
+    const sent = bodyOf(net, 0);
+    const shape = { model: "x-ai/grok-4.3", messages: sent.messages as { role: "system" | "user"; content: string }[], jsonSchema: TRANSLATOR_JSON_SCHEMA, maxTokens: 500, inputTokens: 1_000, images: 0 };
+    expect(Number(money.lines()[0]?.worstMicros)).toBe(chatAttemptWorstMicros(money.priceBook, shape) + 7_500);
+    expect(sent.max_tokens).toBe(500);
   });
 });
 
