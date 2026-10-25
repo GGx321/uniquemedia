@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { open, readdir, readFile, rm, type FileHandle } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, rm, type FileHandle } from "node:fs/promises";
 import { platform } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { z } from "zod";
@@ -188,6 +188,17 @@ export interface JsonlRead<T> {
 
 export function hasErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
+}
+
+/** Makes ONE folder inside a parent that must exist (never the parents: a folder that went stays gone); false when it was there already. */
+export async function makeFolder(path: string): Promise<boolean> {
+  try {
+    await mkdir(path);
+    return true;
+  } catch (error) {
+    if (hasErrorCode(error, "EEXIST")) return false;
+    throw error;
+  }
 }
 
 function isMissing(error: unknown): boolean {

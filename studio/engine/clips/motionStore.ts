@@ -1,7 +1,6 @@
-import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { CLIP_CHOICES_MAX, MOTION_ID_MAX, MOTION_STORE_MAX_ITEMS } from "../../shared/engine";
-import { fsyncDir, readRecordFile, writeJsonAtomic } from "../library/durableFs";
+import { fsyncDir, makeFolder, readRecordFile, writeJsonAtomic } from "../library/durableFs";
 import { MOTIONS_DIR, MOTION_STORE_SCHEMA_VERSION, isFromNewerVersion } from "../library/layout";
 import { MotionStoreFile } from "./schemas";
 
@@ -115,8 +114,8 @@ export class MotionStores {
       if (changed === null) return current.file;
       const next = MotionStoreFile.parse(changed);
       const folder = dirname(path);
-      const made = await mkdir(folder, { recursive: true });
-      if (made !== undefined) await fsyncDir(dirname(folder));
+      // Only the `motions/` level, inside an avatar folder that is there (S5.FU-DATA 4): an avatar that was deleted meanwhile is never made again, the write fails. A folder made now is flushed into its parent.
+      if (await makeFolder(folder)) await fsyncDir(dirname(folder));
       await writeJsonAtomic(path, next);
       return next;
     };

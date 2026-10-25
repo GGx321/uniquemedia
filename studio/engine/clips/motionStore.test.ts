@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MOTION_ID_MAX, MOTION_STORE_MAX_ITEMS } from "../../shared/engine";
 import { tempDirFor } from "../../testing/tempDir";
@@ -78,6 +79,10 @@ describe("the pure rules", () => {
 
 describe("the file", () => {
   const avatarDir = () => join(dir(), "avatar");
+  // The avatar's folder is the library's to make and to delete: the store only ever makes `motions/` inside it (S5.FU-DATA 4).
+  beforeEach(async () => {
+    await mkdir(avatarDir(), { recursive: true });
+  });
 
   test("a missing store reads as empty", async () => {
     const stores = new MotionStores(() => undefined);
@@ -104,6 +109,13 @@ describe("the file", () => {
     const updated = await stores.update(avatarDir(), "photo-0001", OTHER_SHA, (file) => addItems(file, "vision", [draft(3)]).file);
     expect(updated.items.map((i) => i.id)).toEqual(["v-1"]);
     expect(updated.photoSha256).toBe(OTHER_SHA);
+  });
+
+  test("an avatar folder that is gone is not made again: the write fails and nothing is created (S5.FU-DATA 4)", async () => {
+    await rm(avatarDir(), { recursive: true });
+    const stores = new MotionStores(() => undefined);
+    await expect(stores.update(avatarDir(), "photo-0001", SHA, (file) => addItems(file, "vision", [draft(1)]).file)).rejects.toThrow();
+    expect(existsSync(avatarDir())).toBe(false);
   });
 
   test("a corrupt file reads as empty and is replaced by the next update", async () => {

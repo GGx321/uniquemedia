@@ -1,9 +1,9 @@
-import { mkdir, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { CLIP_BATCH_RULES, clipBatchFields, type ClipBatchSummary, type ClipCost } from "../../shared/engine";
 import { batchSummaryOf, clipBatchOutcomeOf, startBatchState } from "../../shared/engine/clipBatchSummary";
-import { fsyncDir, hasErrorCode, isTempName, readFolderNames, readRecordFile, writeJsonAtomic } from "../library/durableFs";
+import { fsyncDir, isTempName, makeFolder, readFolderNames, readRecordFile, writeJsonAtomic } from "../library/durableFs";
 import { isLibraryId } from "../library/ids";
 import type { RenameRetryOptions } from "../library/renameRetry";
 import type { ClipJobOutcome } from "./job";
@@ -236,16 +236,5 @@ export class BatchSummaryStore {
       await this.#removeTemps(clipsDir, file.batchId).catch(() => undefined);
       throw error;
     }
-  }
-}
-
-/** Makes one folder inside a parent that must exist; false when it was there already. */
-async function makeFolder(path: string): Promise<boolean> {
-  try {
-    await mkdir(path);
-    return true;
-  } catch (error) {
-    if (hasErrorCode(error, "EEXIST")) return false;
-    throw error;
   }
 }
