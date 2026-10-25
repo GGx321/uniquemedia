@@ -118,6 +118,38 @@ describe("the file", () => {
     expect(existsSync(avatarDir())).toBe(false);
   });
 
+  // S5.FU-DATA 7: a crash in the middle of a write leaves `.<photoId>.json.<hex>.tmp`, which holds the owner's labels. Swept as the batch summaries' are, and removed when a write fails for good.
+  describe("temp files", () => {
+    const motionsDir = () => join(avatarDir(), MOTIONS_DIR);
+    const leftover = (photoId: string, hex = "0123456789ab") => `.${photoId}.json.${hex}.tmp`;
+
+    test("sweepTemps removes the temp siblings a crash left and nothing else", async () => {
+      await mkdir(motionsDir(), { recursive: true });
+      const stores = new MotionStores(() => undefined);
+      await stores.update(avatarDir(), "photo-0001", SHA, (file) => addItems(file, "vision", [draft(1)]).file);
+      await writeFile(join(motionsDir(), leftover("photo-0001")), "{}");
+      await writeFile(join(motionsDir(), leftover("photo-0002", "ba9876543210")), "{}");
+      await stores.sweepTemps(avatarDir());
+      expect(await readdir(motionsDir())).toEqual(["photo-0001.json"]);
+      expect((await stores.read(avatarDir(), "photo-0001", SHA)).file.items.map((i) => i.id)).toEqual(["v-1"]);
+    });
+
+    test("sweepTemps of an avatar with no motions folder is a no-op that never rejects", async () => {
+      await expect(new MotionStores(() => undefined).sweepTemps(avatarDir())).resolves.toBeUndefined();
+      expect(existsSync(motionsDir())).toBe(false);
+    });
+
+    test("a write that fails for good leaves no temp file behind, and the store on disk is as it was", async () => {
+      const stores = new MotionStores(() => undefined, {
+        beforeRename: () => {
+          throw new Error("EPERM: the rename is refused");
+        },
+      });
+      await expect(stores.update(avatarDir(), "photo-0001", SHA, (file) => addItems(file, "vision", [draft(1)]).file)).rejects.toThrow("EPERM");
+      expect(await readdir(motionsDir())).toEqual([]);
+    });
+  });
+
   // S5.FU-DATA 5: «an id is never reused». A store that does not read used to read as empty with `next` at 1, and the next write issued `o-1` again while the owner's open list could still hold the old `o-1`.
   // The simplest way to keep ids unique is the one a newer build's store already has: the file is left as it is and nothing is written over it.
   describe("a store that does not read", () => {

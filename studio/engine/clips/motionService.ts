@@ -114,6 +114,11 @@ export class ClipMotions {
     return this.#byAvatar.get(avatarId) ?? 0;
   }
 
+  /** The temp files a crash left in an avatar's `motions/` go (S5.FU-DATA 7). Never rejects. */
+  sweepTemps(avatarDir: string): Promise<void> {
+    return this.#stores.sweepTemps(avatarDir);
+  }
+
   /** The label of an own idea in the photo's store by its English text, for a recovered clip (I5.67). Null when the store does not hold it. */
   async ownLabelOf(library: Library, avatarId: string, photoId: string, text: string): Promise<string | null> {
     const photo = library.getPhoto(photoId);

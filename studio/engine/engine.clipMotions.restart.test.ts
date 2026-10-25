@@ -1,6 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { readFile, readdir, rm } from "node:fs/promises";
+import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ownIdeaLabel } from "../shared/engine";
 import { OWN_IDEA_FALLBACK_LABEL } from "../shared/engine";
@@ -78,6 +78,21 @@ describe("the survey ignores the `motions` folder", () => {
     expect(listed.suitable && listed.motions.map((m) => m.id)).toContain("o-1");
     expect(existsSync(join(w.libraryDir, "quarantine"))).toBe(false);
     expect((await readdir(join(w.libraryDir, "avatars", w.avatarId, "motions"))).sort()).toEqual([`${w.photoId}.json`]);
+  });
+});
+
+describe("a crash in the middle of a store write (S5.FU-DATA 7)", () => {
+  test("a library reopened sweeps the temp file the write left in `motions/` and keeps the store", async () => {
+    const w = await motionWorld(dir(), { chat: () => ideaReply(GOOD_TEXTS[0] ?? "") });
+    await w.translate();
+    await w.started.engine.shutdown();
+    const motionsDir = join(w.libraryDir, "avatars", w.avatarId, "motions");
+    const temp = join(motionsDir, `.${w.photoId}.json.4161ce0f2144.tmp`);
+    await writeFile(temp, JSON.stringify({ label: "a label of the owner's" }));
+    const second = await startClipEngine(dir(), { timings: TIMINGS });
+    await until(() => !existsSync(temp), "the temp file swept");
+    expect((await readdir(motionsDir)).sort()).toEqual([`${w.photoId}.json`]);
+    expect(optionsOf(await options(second, w.avatarId, w.photoId))).toMatchObject({ suitable: true });
   });
 });
 

@@ -1204,6 +1204,8 @@ export class ClipService {
       const clipsDir = clipsDirOf(library, avatar.id);
       // A temp file the last process left in the middle of a write (a quit, a crash) goes first (S5.WB2c, Windows).
       await this.#summaries.sweepTemps(clipsDir);
+      // The same for the photos' motion stores, which hold the owner's labels (S5.FU-DATA 7).
+      await this.#motions.sweepTemps(library.avatarDirPath(avatar.id));
       for (const file of await this.#summaries.read(clipsDir)) {
         if (file.endedAt !== undefined && clipIdsToLook(file).length === 0) continue;
         if (this.#batches.get(file.batchId)?.over === false) continue;

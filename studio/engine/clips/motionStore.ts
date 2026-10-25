@@ -1,6 +1,8 @@
+import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { CLIP_CHOICES_MAX, MOTION_ID_MAX, MOTION_STORE_MAX_ITEMS } from "../../shared/engine";
-import { fsyncDir, makeFolder, readRecordFile, writeJsonAtomic } from "../library/durableFs";
+import { fsyncDir, makeFolder, readFolderNames, readRecordFile, writeJsonAtomic } from "../library/durableFs";
+import { isLibraryId } from "../library/ids";
 import { MOTIONS_DIR, MOTION_STORE_SCHEMA_VERSION, isFromNewerVersion } from "../library/layout";
 import { MotionStoreFile } from "./schemas";
 
@@ -18,6 +20,9 @@ export interface MotionDraft {
   readonly model: string;
   readonly at: string;
 }
+
+/** The temp sibling the shared atomic write makes of `<photoId>.json` (`tempSiblingPath`): `.<photoId>.json.<hex>.tmp`. */
+const TEMP_NAME = /^\.(.+)\.json\.[0-9a-f]+\.tmp$/;
 
 const PREFIX: Readonly<Record<Source, "v" | "o">> = { vision: "v", own: "o" };
 
@@ -76,8 +81,12 @@ export class MotionStores {
   readonly #log: (line: string) => void;
   readonly #tails = new Map<string, Promise<unknown>>();
 
-  constructor(log: (line: string) => void) {
+  /** A test seam: awaited by the atomic write just before its rename; what it throws is what the write threw (Windows refusing a rename). */
+  readonly #beforeRename: ((path: string) => void | Promise<void>) | undefined;
+
+  constructor(log: (line: string) => void, options: { beforeRename?: (path: string) => void | Promise<void> } = {}) {
     this.#log = log;
+    this.#beforeRename = options.beforeRename;
   }
 
   static path(avatarDir: string, photoId: string): string {
@@ -110,10 +119,40 @@ export class MotionStores {
     return { file: emptyStore(photoId, sha), writable: false, why: "does-not-read" };
   }
 
+  /** Runs `work` after every earlier piece of work on this photo's file; a rejection is the caller's, and never stops the next piece. */
+  #serial<T>(path: string, work: () => Promise<T>): Promise<T> {
+    const queued = (this.#tails.get(path) ?? Promise.resolve()).then(work, work);
+    const tail = queued.catch(() => undefined);
+    this.#tails.set(path, tail);
+    void tail.then(() => {
+      if (this.#tails.get(path) === tail) this.#tails.delete(path);
+    });
+    return queued;
+  }
+
+  /** The temp files of one photo's store, removed. Called only while no write of that photo runs. */
+  async #removeTemps(avatarDir: string, photoId: string): Promise<void> {
+    const dir = join(avatarDir, MOTIONS_DIR);
+    const listed = await readFolderNames(dir);
+    if (!listed.ok) return;
+    for (const name of listed.names) if (TEMP_NAME.exec(name)?.[1] === photoId) await rm(join(dir, name), { force: true });
+  }
+
+  /**
+   * Removes the temp files a write left in the avatar's `motions/` (a quit or a crash in the middle of one; they hold the owner's labels): each photo's after every earlier write of that photo, so a write in
+   * flight never loses its own. Never rejects: what cannot be removed now is the next sweep's (S5.FU-DATA 7, as `BatchSummaryStore.sweepTemps`).
+   */
+  async sweepTemps(avatarDir: string): Promise<void> {
+    const listed = await readFolderNames(join(avatarDir, MOTIONS_DIR));
+    if (!listed.ok) return;
+    const photoIds = new Set(listed.names.flatMap((name) => TEMP_NAME.exec(name)?.[1] ?? []).filter((id) => isLibraryId(id)));
+    for (const photoId of photoIds) await this.#serial(MotionStores.path(avatarDir, photoId), () => this.#removeTemps(avatarDir, photoId)).catch(() => undefined);
+  }
+
   /** Reads, applies `change`, checks the result under the strict schema and writes it atomically (a `null` from `change` writes nothing); one at a time per photo. Rejects for a store that is not writable (a newer build's, or one that does not read; nothing is written). */
   update(avatarDir: string, photoId: string, sha: string, change: (file: MotionStoreFile) => MotionStoreFile | null): Promise<MotionStoreFile> {
     const path = MotionStores.path(avatarDir, photoId);
-    const run = async (): Promise<MotionStoreFile> => {
+    return this.#serial(path, async (): Promise<MotionStoreFile> => {
       const current = await this.read(avatarDir, photoId, sha);
       if (!current.writable) throw new Error(`the motion store of photo ${photoId} ${current.why === "does-not-read" ? "does not read" : "is from a newer build"} and is left as it is`);
       const changed = change(current.file);
@@ -123,15 +162,14 @@ export class MotionStores {
       const folder = dirname(path);
       // Only the `motions/` level, inside an avatar folder that is there (S5.FU-DATA 4): an avatar that was deleted meanwhile is never made again, the write fails. A folder made now is flushed into its parent.
       if (await makeFolder(folder)) await fsyncDir(dirname(folder));
-      await writeJsonAtomic(path, next);
+      try {
+        await writeJsonAtomic(path, next, this.#beforeRename === undefined ? {} : { beforeRename: this.#beforeRename });
+      } catch (error) {
+        // A write that failed for good (a rename Windows keeps refusing) leaves no temp file behind (S5.FU-DATA 7): it holds the owner's labels.
+        await this.#removeTemps(avatarDir, photoId).catch(() => undefined);
+        throw error;
+      }
       return next;
-    };
-    const queued = (this.#tails.get(path) ?? Promise.resolve()).then(run, run);
-    const tail = queued.catch(() => undefined);
-    this.#tails.set(path, tail);
-    void tail.then(() => {
-      if (this.#tails.get(path) === tail) this.#tails.delete(path);
     });
-    return queued;
   }
 }
