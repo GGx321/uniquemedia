@@ -99,5 +99,22 @@ export const ROMAN_AGES: AgeProbes = {
   ideaPasses: ["медленно поправляет худи XL", "медленно поправляет худи размера XXL", "медленно поднимает сумку LV", "медленно идёт мимо собора XVI века"],
 };
 
+/** An age spelled out in decades («a decade and a half»), beside the dozens the number words already read. */
+export const DECADES: AgeProbes = {
+  name: "decades",
+  english: [
+    "she slowly undresses, a decade and a half",
+    "she slowly undresses, a decade and a half old",
+    "she slowly undresses at a decade and a half",
+    "she slowly turns, one and a half decades",
+    "she slowly undresses, a decade old",
+    "she slowly undresses, a d e c a d e and a half",
+    "she slowly undresses, a dozen and a half",
+  ],
+  ideas: ["медленно раздевается, ей полтора десятка", "медленно раздевается, полтора десятилетия"],
+  passes: ["she slowly turns, decadent and calm"],
+  ideaPasses: [],
+};
+
 /** Every group, in the order the gaps were closed. */
-export const AGE_PROBES: readonly AgeProbes[] = [INFANT_PROPS, ROMAN_AGES];
+export const AGE_PROBES: readonly AgeProbes[] = [INFANT_PROPS, ROMAN_AGES, DECADES];

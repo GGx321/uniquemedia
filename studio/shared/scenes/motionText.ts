@@ -315,12 +315,24 @@ const namesRomanAge = (text: string): boolean => {
 };
 
 /**
+ * S5.FU-AGE: a decade, the unit an age is spelled out in («a decade and a half», «one and a half decades»), as `namesNumberWord` reads a dozen; read on the folded text and on
+ * its short fragments joined («d e c a d e»). «decadent» said as a word is no decade.
+ */
+const DECADE = /\bdecades?\b/i;
+/** In the joined fragments the short words after it run on («a d e c a d e and a half» joins «decadeanda»): any join that starts with it. */
+const DECADE_JOINED = /(?:^|[ |])decade/i;
+const namesDecade = (text: string): boolean => {
+  const folded = foldedForms(text);
+  return DECADE.test(folded.text) || DECADE_JOINED.test(folded.joined);
+};
+
+/**
  * A number in a model's text: a digit, a number word but «one» (`namesNumberWord`, ageText.ts: the descriptor's own reader, every -teen form with its ordinals and «-ish»,
  * «twenty» in every form, the tens, the ordinals from fourth on, spelled out or split by a space: «sixteenth», «sixteenish», «sixt een»), or an age in Roman numerals
  * (`namesRomanAge`). S5.WC2c: kept, because the age readers alone miss an age said as a bare number («…, sixteen», «…, 18», «…, 15»), and widened in round 2 (H1). S5.FU-AGE:
- * the Roman rule reads either case («aged xvi», «at xv»), but only where a numeral is an age, so «XL» is a size again.
+ * the Roman rule reads either case («aged xvi», «at xv»), but only where a numeral is an age, so «XL» is a size again; a decade is a number (`namesDecade`).
  */
-const namesNumber = (text: string): boolean => /\d/.test(text) || namesNumberWord(text) || namesRomanAge(text);
+const namesNumber = (text: string): boolean => /\d/.test(text) || namesNumberWord(text) || namesDecade(text) || namesRomanAge(text);
 /** Exposure a model says beyond the bank's list (scenes/explicitWords.ts). S5.WC2c: it refuses nothing; it reads a motion that bares her, for its prompt (`undressesBy`). */
 const EXPOSURE_MORE =
   /\b(?:bare[- ](?:breasts?|chest(?:ed)?|bottom|butt)|breasts?|unclothed|undressed|in the nude|birthday suit|au naturel|wearing nothing|nothing on|without clothes|sans clothes|(?:flash|reveal|expos|bare)\w*\s+(?:(?:her|a|an|some|little|bit|of|more|bare)\s+){0,4}(?:skin|chest|cleavage|breasts?|stomach|belly|midriff|bottom|butt|thighs?|body))\b/gi;
@@ -895,6 +907,7 @@ export function ownIdeaNamesAge(idea: string, level: ContentLevel): boolean {
     contentIn(idea, level).some((problem) => problem.reason === "youth-word") ||
     STANDALONE_NUMBER.test(idea) ||
     namesNumberWord(idea) ||
+    namesDecade(idea) ||
     namesRomanAge(idea) ||
     RU_NUMBER_WORD.test(idea) ||
     RU_SMALL_NUMBER.test(idea)
