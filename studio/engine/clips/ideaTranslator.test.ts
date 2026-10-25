@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { MOTION_PROBLEMS, OWN_IDEA_MAX } from "../../shared/engine";
+import { AGE_PROBES } from "../../shared/scenes/ageProbes.testkit";
 import { repairMayHelp } from "../../shared/scenes/motionText";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import type { Scope } from "../money/ledger";
@@ -428,4 +429,16 @@ describe("the owner's idea leaves no copy of itself (I5.67)", () => {
     expect(scrubbed).toContain(`[owner idea omitted: ${idea.length} chars]`);
   });
 
+});
+
+describe("S5.FU-AGE: the kept age guard's probes (scenes/ageProbes.testkit.ts)", () => {
+  test("an English answer the age guard refuses is rejected `content` at once, on an ordinary frame and on «Смелая»: no repair attempt", async () => {
+    for (const [i, facts] of [timerFrame(), boldMirrorFrame()].entries()) {
+      for (const [k, text] of AGE_PROBES.flatMap((probes) => probes.english).entries()) {
+        const jobId = `job-${String(10_000 + i * 1_000 + k).padStart(8, "0")}`;
+        const { net, result } = run([reply(text), reply(GOOD_MOTION)], { ...JOB, jobId, scope: { avatarJobId: jobId }, facts });
+        expect([i, text, await result, net.calls.length]).toEqual([i, text, { kind: "rejected", problems: ["content"], costMicros: 1_000 }, 1]);
+      }
+    }
+  });
 });

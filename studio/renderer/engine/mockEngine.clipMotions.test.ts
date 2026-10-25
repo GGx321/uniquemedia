@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ownIdeaLabel } from "../../shared/engine";
+import { AGE_PROBES } from "../../shared/scenes/ageProbes.testkit";
 import { MIA } from "./mockEngine.testkit";
 import {
   GOOD_TEXTS,
@@ -504,3 +505,42 @@ describe("clips.translateIdea", () => {
     expect(await unwrap(translate(m, "вторая идея"))).toMatchObject({ outcome: "ok", item: { id: "o-2" } });
   });
 });
+
+describe("S5.FU-AGE: the kept age guard's probes (scenes/ageProbes.testkit.ts), as the engine's, on an ordinary frame and on «Смелая»", () => {
+  const ENGLISH = AGE_PROBES.flatMap((probes) => probes.english);
+  const IDEAS = AGE_PROBES.flatMap((probes) => probes.ideas);
+  const PHOTOS = [
+    ["ordinary", PLAIN],
+    ["«Смелая»", BOLD],
+  ] as const;
+
+  test("each idea in his own words is refused FREE before any chat call", async () => {
+    for (const [where, photoId] of PHOTOS) {
+      const m = makeClipMock({ clips: { boldClips: "kling-only" } });
+      m.engine.scriptNextMotionReplies([idea(UNDRESS)]);
+      for (const text of IDEAS) expect([where, text, await unwrap(translate(m, text, photoId))]).toEqual([where, text, { outcome: "rejected", problems: ["content"], costMicros: 0 }]);
+      expect([where, m.engine.peekMotions().lines.length]).toEqual([where, 0]);
+    }
+  });
+
+  test("an idea whose English the age guard refuses is `rejected` content at once: one chat call, no repair", async () => {
+    for (const [where, photoId] of PHOTOS) {
+      for (const text of ENGLISH) {
+        const m = makeClipMock({ clips: { boldClips: "kling-only" } });
+        m.engine.scriptNextMotionReplies([idea(text), idea(UNDRESS)]);
+        expect([where, text, await unwrap(translate(m, "медленно снимает халат", photoId)), m.engine.peekMotions().lines.length]).toEqual([where, text, { outcome: "rejected", problems: ["content"], costMicros: 1_000 }, 1]);
+      }
+    }
+  });
+
+  test("a suggestion the age guard refuses is dropped with no second attempt", async () => {
+    for (const [where, photoId] of PHOTOS) {
+      for (const text of ENGLISH) {
+        const m = makeClipMock({ clips: { boldClips: "kling-only" } });
+        m.engine.scriptNextMotionReplies([suggestion([text], 3_000), suggestion(GOOD_TEXTS.slice(0, 1))]);
+        expect([where, text, await unwrap(suggest(m, photoId)), m.engine.peekMotions().lines.length]).toEqual([where, text, { outcome: "none", costMicros: 3_000 }, 1]);
+      }
+    }
+  });
+});
+

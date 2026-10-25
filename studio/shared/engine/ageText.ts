@@ -291,6 +291,11 @@ function ru(name: string, pattern: string): WordRule {
   return { name, pattern: new RegExp(pattern, "giu"), joins: true };
 }
 
+/** One rule in both languages, under one name: the English half in whole words (as `en`), the Russian half bounding itself (as `ru`). */
+function enRu(name: string, english: string, russian: string): WordRule {
+  return { name, pattern: new RegExp(`\\b(?:${english})\\b|${russian}`, "giu"), joins: true };
+}
+
 /** Markers of a minor in any scope. */
 const HARD_YOUTH: WordRule[] = [
   en("teen", "(?:pre-?)?teen\\w*"),
@@ -395,6 +400,14 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
   en("puberty", "pubert\\w*"),
   en("youth", "youths?"),
   en("pupil", "pupils?"),
+  // S5.FU-AGE (the review of the kept age guard): an infant's things, in English and in Russian, in their case and number forms. «Соска» shares most of its forms with
+  // «сосок» (her nipple, which the lifted content rules let through), so it counts in its own forms only: «с соской», «соска во рту», «сосёт соску», «детская соска».
+  enRu(
+    "pacifier",
+    "pacifiers?|dumm(?:y|ies)|soothers?",
+    "(?<![\\p{L}])(?:пустыш(?:к\\p{L}*|ек)|соск(?:ой|ою)|соск[ау]\\s+(?:во|в)\\s+(?:рту|рот)|сос(?:[её]т|ала|ать|ут)\\s+соску|детск\\p{L}*\\s+соск\\p{L}*)(?![\\p{L}])",
+  ),
+  enRu("diaper", "diaper\\w*|napp(?:y|ies)", "(?<![\\p{L}])(?:подгузник|памперс)\\p{L}*"),
   // Spanish "niña" (girl) folds to "nina". A real word only: short words run together make it by chance ("tan in a").
   en("nina", "ninas?", { joins: false }),
   ru("девочка", "(?<![\\p{L}])девочк\\p{L}*"),

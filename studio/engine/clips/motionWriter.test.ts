@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { MOTION_ENGLISH, MOTION_PROBLEMS } from "../../shared/engine";
+import { AGE_PROBES } from "../../shared/scenes/ageProbes.testkit";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import type { Scope } from "../money/ledger";
 import { chatBody, fakeFetch, JPEG, makeClient, setupMoney, withoutAt, type Money, type Step } from "../openrouter/testing/fakes";
@@ -329,5 +330,28 @@ describe("the frame reading (marks only)", () => {
     const { net, result } = run([reply(answer([good()], { ...FRAME, capture: "drone" })), reply(answer([good()]))]);
     expect((await result).kind).toBe("ok");
     expect(net.calls).toHaveLength(2);
+  });
+});
+
+describe("S5.FU-AGE: the kept age guard's probes (scenes/ageProbes.testkit.ts)", () => {
+  const ENGLISH = AGE_PROBES.flatMap((probes) => probes.english);
+
+  test("a suggestion the age guard refuses is dropped and no repair is asked for, on an ordinary frame and on «Смелая»: one attempt, `none`, paid", async () => {
+    for (const [i, facts] of [timerFrame(), boldMirrorFrame()].entries()) {
+      for (const [k, text] of ENGLISH.entries()) {
+        const jobId = `job-${String(10_000 + i * 1_000 + k).padStart(8, "0")}`;
+        const { net, result } = run([reply(answer([good(text, "Движение")]), 0.003), reply(answer([good()]))], { ...JOB, jobId, scope: { avatarJobId: jobId }, facts });
+        expect([i, text, await result, net.calls.length]).toEqual([i, text, { kind: "none", costMicros: 3_000 }, 1]);
+      }
+    }
+  });
+
+  test("beside a good suggestion it is dropped and the good one is offered", async () => {
+    for (const [k, text] of ENGLISH.entries()) {
+      const jobId = `job-${String(20_000 + k).padStart(8, "0")}`;
+      const { result } = run([reply(answer([good(text, "Движение"), good(GOOD_MOTION)]))], { ...JOB, jobId, scope: { avatarJobId: jobId }, facts: boldMirrorFrame() });
+      const outcome = await result;
+      expect([text, outcome.kind === "ok" ? outcome.drafts.map((d) => d.text) : null]).toEqual([text, [GOOD_MOTION]]);
+    }
   });
 });

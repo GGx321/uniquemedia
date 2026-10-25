@@ -833,6 +833,20 @@ describe("namesNumberWord", () => {
   });
 });
 
+describe("an infant's things are youth words of the descriptor's set (S5.FU-AGE)", () => {
+  test.each(["a pacifier", "pacifiers", "a dummy", "dummies", "a soother", "a diaper", "diapers", "a nappy", "nappies"])("%p", (word) => {
+    expect(youthRuleNames(`she slowly undresses with ${word}`, "descriptor").filter((name) => name === "pacifier" || name === "diaper")).toHaveLength(1);
+  });
+
+  test.each(["с соской", "с соскою", "соска во рту", "сосёт соску", "детская соска", "с пустышкой", "пустышки", "пустышек", "в подгузнике", "подгузники", "в памперсе"])("%p", (words) => {
+    expect(youthRuleNames(`медленно раздевается, ${words}`, "descriptor").filter((name) => name === "pacifier" || name === "diaper")).toHaveLength(1);
+  });
+
+  test.each(["касается соска", "проводит пальцем по соску", "показывает соски", "соскальзывает с кровати", "соскучилась"])("«сосок» and the words that start like «соска» are none: %p", (words) => {
+    expect(youthWords(`медленно ${words}`, "descriptor")).toEqual([]);
+  });
+});
+
 describe("the youth words a clip motion may say (S5.WC2c round 2)", () => {
   test.each(["toddler", "infant", "infancy", "newborn", "new-born", "tot", "tots", "little one", "puberty", "youth", "youths", "pupil"])("%p is a youth word of the descriptor's set", (word) => {
     expect(youthWords(`she slowly undresses like a ${word}`, "descriptor").length).toBeGreaterThan(0);

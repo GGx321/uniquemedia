@@ -7,6 +7,7 @@ import { MODERATED, chatReply, errorOf, resultOf, send, type ChatRequest } from 
 import { MOTION_PROMPT_TEXTS } from "./clips/motionPrompts";
 import { CANARY, FRAME_READING, GOOD_TEXTS, IDEA, ideaReply, motionWorld, suggestionReply } from "./clips/testing/motionWorld";
 import { MotionStoreFile } from "./clips/schemas";
+import { AGE_PROBES } from "../shared/scenes/ageProbes.testkit";
 import { readClipRecord } from "./clips/store";
 import { engineSettings, useEngineDir, writeLedger } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -605,5 +606,47 @@ describe("S5.WC2c: an own idea that takes clothing off is routed by its frame, n
     const prompt = (JSON.parse(w.net.posts("kling")[0]?.body ?? "{}") as { prompt: string }).prompt;
     expect(prompt).toContain("Nothing new appears.");
     expect(prompt).not.toContain("nothing she wears comes off");
+  });
+});
+
+describe("S5.FU-AGE: the kept age guard's probes on the engine's routes (scenes/ageProbes.testkit.ts), on an ordinary frame and on «Смелая»", () => {
+  const ENGLISH = AGE_PROBES.flatMap((probes) => probes.english);
+  const IDEAS = AGE_PROBES.flatMap((probes) => probes.ideas);
+  const FRAMES = [
+    ["ordinary", {}],
+    ["«Смелая»", { seed: { category: "nightwear" }, engine: { deps: { clipSwitches: { boldClips: "kling-only" } } } }],
+  ] as const;
+
+  test("each idea in his own words is refused FREE before any chat call: `rejected` content at 0, nothing reserved or stored", async () => {
+    for (const [where, opts] of FRAMES) {
+      const w = await motionWorld(dir(), { chat: () => ideaReply(UNDRESS), ...opts });
+      for (const idea of IDEAS) expect([where, idea, resultOf(await w.translate(idea))]).toEqual([where, idea, { outcome: "rejected", problems: ["content"], costMicros: 0 }]);
+      expect([where, w.net.chats.length, w.ledger().length]).toEqual([where, 0, 0]);
+      await expect(readFile(w.storePath(), "utf8")).rejects.toThrow();
+    }
+  });
+
+  test("an idea whose English the age guard refuses is `rejected` content at once: one chat call each, no repair, nothing stored", async () => {
+    for (const [where, opts] of FRAMES) {
+      const w = await motionWorld(dir(), opts);
+      for (const text of ENGLISH) {
+        w.net.setChat(() => ideaReply(text));
+        const before = w.net.chats.length;
+        expect([where, text, resultOf(await w.translate("медленно снимает халат")), w.net.chats.length - before]).toEqual([where, text, { outcome: "rejected", problems: ["content"], costMicros: 1_000 }, 1]);
+      }
+      await expect(readFile(w.storePath(), "utf8")).rejects.toThrow();
+    }
+  });
+
+  test("a vision suggestion the age guard refuses is dropped with no repair: one chat call each, `none`, paid, nothing stored", async () => {
+    for (const [where, opts] of FRAMES) {
+      const w = await motionWorld(dir(), opts);
+      for (const text of ENGLISH) {
+        w.net.setChat(() => suggestionReply([text], 0.003));
+        const before = w.net.chats.length;
+        expect([where, text, resultOf(await w.suggest()), w.net.chats.length - before]).toEqual([where, text, { outcome: "none", costMicros: 3_000 }, 1]);
+      }
+      await expect(readFile(w.storePath(), "utf8")).rejects.toThrow();
+    }
   });
 });
