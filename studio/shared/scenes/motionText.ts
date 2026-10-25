@@ -1,4 +1,4 @@
-import { ageMentions, ageUpperBounds, MOTION_ENGLISH, MOTION_PROBLEMS, MOTION_TEXT_MAX, namesNumberWord, type ClipMotionSource, type MotionProblem } from "../engine";
+import { ageMentions, ageUpperBounds, foldedForms, MOTION_ENGLISH, MOTION_PROBLEMS, MOTION_TEXT_MAX, namesNumberWord, type ClipMotionSource, type MotionProblem } from "../engine";
 import { isHandCapture, type Capture, type FaceVisibility } from "./captures";
 import { contentProblems, type ContentLevel, type ContentProblem } from "./contentLine";
 import { exposureWordsIn } from "./explicitWords";
@@ -287,12 +287,40 @@ function contentIn(text: string, level: ContentLevel): readonly ContentProblem[]
 }
 
 /**
- * A number in a model's text: a digit, a number word but «one» (`namesNumberWord`, ageText.ts: the descriptor's own reader, every -teen form with its ordinals and «-ish»,
- * «twenty» in every form, the tens, the ordinals from fourth on, spelled out or split by a space: «sixteenth», «sixteenish», «sixt een»), or a Roman numeral of two letters or
- * more in capitals («XVI»). S5.WC2c: kept, because the age readers alone miss an age said as a bare number («…, sixteen», «…, 18», «…, 15»), and widened in round 2 (H1).
+ * S5.FU-AGE: a Roman numeral from one to thirty (i … xxx), a whole word in either case: a child's age, or the tens the number words read («XXX», the round-2 pin). A size, a brand
+ * or a word that only holds the letters is none («XL», «XXL», «LV», «ill», «mix», «civil»), and neither is a letter before a hyphen («v-neck»).
  */
-const ROMAN_NUMERAL = /\b[IVXLC]{2,}\b/;
-const namesNumber = (text: string): boolean => /\d/.test(text) || namesNumberWord(text) || ROMAN_NUMERAL.test(text);
+/** «x» and «i» as he may type them on a Russian layout too: the Cyrillic «х» and «і» (it is no Russian word that holds them alone). */
+const RX = "[xх]";
+const RI = "[iі]";
+const ROMAN = `(?:${RX}{3}|${RX}{0,2}(?:${RI}${RX}|${RI}v|v${RI}{0,3}|${RI}{1,3})|${RX}{1,2})`;
+const ROMAN_END = String.raw`(?![\p{L}\p{N}'-])`;
+const RU_HEDGE = String.raw`(?:(?:всего|только|уже|почти|около)\s+)?`;
+/**
+ * Where a Roman numeral is an age: after «age», «aged», «ages» or «at» (the age of), after «she is», before «years» or «yo», on its own after a comma (or before one at the start
+ * of his idea); in his own words after «ей», «ему», «возраст» or «выглядит на», and before «лет» («XVI-летняя»). Anywhere else a numeral is a size, a century or a name.
+ */
+const ROMAN_AGE: readonly RegExp[] = [
+  new RegExp(String.raw`\b(?:aged?|ages)(?:\s+of)?\s*:?\s*${ROMAN}${ROMAN_END}`, "iu"),
+  new RegExp(String.raw`\b(?:at(?:\s+the\s+age\s+of)?|(?:she|who)(?:'s|\s+is|\s+was|\s+will\s+be))\s+(?:(?:only|just|barely|about|around|nearly|almost)\s+)?${ROMAN}${ROMAN_END}`, "iu"),
+  new RegExp(String.raw`(?<![\p{L}\p{N}])${ROMAN}\s*-?\s*(?:years?|yrs?|yo|y\.o|y\/o)(?![\p{L}])`, "iu"),
+  new RegExp(String.raw`(?:^|,)\s*${ROMAN}\s*(?=$|[.,;:!?)])`, "iu"),
+  new RegExp(String.raw`(?<![\p{L}])(?:ей|ему|им|возраст\p{L}*|(?:выгляд|смотрит)\p{L}*\s+на)\s*${RU_HEDGE}${ROMAN}${ROMAN_END}`, "iu"),
+  new RegExp(String.raw`(?<![\p{L}\p{N}])${ROMAN}\s*-?\s*(?:лет|года|год)`, "iu"),
+];
+/** Whether a text says an age in Roman numerals (`ROMAN_AGE`), read on its folded form (ageText.ts: NFKC, one dash, invisible characters dropped). */
+const namesRomanAge = (text: string): boolean => {
+  const folded = foldedForms(text).text;
+  return ROMAN_AGE.some((form) => form.test(folded));
+};
+
+/**
+ * A number in a model's text: a digit, a number word but «one» (`namesNumberWord`, ageText.ts: the descriptor's own reader, every -teen form with its ordinals and «-ish»,
+ * «twenty» in every form, the tens, the ordinals from fourth on, spelled out or split by a space: «sixteenth», «sixteenish», «sixt een»), or an age in Roman numerals
+ * (`namesRomanAge`). S5.WC2c: kept, because the age readers alone miss an age said as a bare number («…, sixteen», «…, 18», «…, 15»), and widened in round 2 (H1). S5.FU-AGE:
+ * the Roman rule reads either case («aged xvi», «at xv»), but only where a numeral is an age, so «XL» is a size again.
+ */
+const namesNumber = (text: string): boolean => /\d/.test(text) || namesNumberWord(text) || namesRomanAge(text);
 /** Exposure a model says beyond the bank's list (scenes/explicitWords.ts). S5.WC2c: it refuses nothing; it reads a motion that bares her, for its prompt (`undressesBy`). */
 const EXPOSURE_MORE =
   /\b(?:bare[- ](?:breasts?|chest(?:ed)?|bottom|butt)|breasts?|unclothed|undressed|in the nude|birthday suit|au naturel|wearing nothing|nothing on|without clothes|sans clothes|(?:flash|reveal|expos|bare)\w*\s+(?:(?:her|a|an|some|little|bit|of|more|bare)\s+){0,4}(?:skin|chest|cleavage|breasts?|stomach|belly|midriff|bottom|butt|thighs?|body))\b/gi;
@@ -867,6 +895,7 @@ export function ownIdeaNamesAge(idea: string, level: ContentLevel): boolean {
     contentIn(idea, level).some((problem) => problem.reason === "youth-word") ||
     STANDALONE_NUMBER.test(idea) ||
     namesNumberWord(idea) ||
+    namesRomanAge(idea) ||
     RU_NUMBER_WORD.test(idea) ||
     RU_SMALL_NUMBER.test(idea)
   );
