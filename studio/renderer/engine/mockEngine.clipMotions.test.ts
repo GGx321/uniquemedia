@@ -192,6 +192,28 @@ describe("clips.suggestMotions: the money", () => {
   });
 });
 
+describe("a store that cannot be written after a paid call (S5.FU-DATA 6, as the engine's)", () => {
+  test("a suggestion is `none` with the reason `not-saved`, paid, and nothing is stored; the next call is not hurt", async () => {
+    const m = makeClipMock();
+    m.engine.failMotionStoreWrites(true);
+    m.engine.scriptNextMotionReplies([suggestion(GOOD_TEXTS.slice(0, 2)), suggestion(GOOD_TEXTS.slice(0, 2))]);
+    expect(await unwrap(suggest(m))).toEqual({ outcome: "none", reason: "not-saved", costMicros: 3_400 });
+    expect((await optionsOf(m)).motions.filter((x) => x.source === "vision")).toEqual([]);
+    m.engine.failMotionStoreWrites(false);
+    expect(await unwrap(suggest(m))).toMatchObject({ outcome: "ok" });
+  });
+
+  test("an idea is `none` with the reason `not-saved`, paid, and no id was spent", async () => {
+    const m = makeClipMock();
+    m.engine.failMotionStoreWrites(true);
+    m.engine.scriptNextMotionReplies([idea(GOOD_TEXTS[0], 1_000), idea(GOOD_TEXTS[0], 1_000)]);
+    expect(await unwrap(translate(m))).toEqual({ outcome: "none", reason: "not-saved", costMicros: 1_000 });
+    m.engine.failMotionStoreWrites(false);
+    const second = await unwrap(translate(m));
+    expect(second.outcome === "ok" && second.item.id).toBe("o-1");
+  });
+});
+
 describe("clips.suggestMotions: a text that is already known (S5.WC3c, as the engine's)", () => {
   test("every text stored already: `none` with the reason `repeated`, paid, ids and store untouched", async () => {
     const m = makeClipMock();

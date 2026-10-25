@@ -719,6 +719,11 @@ export class MockClips {
     this.#motions.script(replies);
   }
 
+  /** A test makes the photo store unwritable: a paid part C call ends `none` with `not-saved`. */
+  failMotionStoreWrites(failing: boolean): void {
+    this.#motions.failStoreWrites(failing);
+  }
+
   holdMotionCalls(held: boolean): void {
     this.#motions.hold(held);
   }

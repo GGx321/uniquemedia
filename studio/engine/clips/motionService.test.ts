@@ -304,10 +304,17 @@ describe("a store that cannot be written after a paid call", () => {
     await mkdir(r.library.avatarDirPath(r.avatarId), { recursive: true });
     await writeFile(r.storeDir, "in the way");
     const result = await r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 });
-    expect(result).toEqual({ outcome: "none", costMicros: 3_400 });
+    expect(result).toEqual({ outcome: "none", reason: "not-saved", costMicros: 3_400 });
     const line = r.logs.find((l) => l.includes("could not be stored"));
     expect(line).toContain(r.photoId);
     expect(line).not.toContain(GOOD_MOTION);
+  });
+
+  test("the translator's call says `not-saved` too, with its cost (S5.FU-DATA 6)", async () => {
+    const r = await rig(() => [reply({ text_en: GOOD_MOTION, refusal: "none" }, 0.001)]);
+    await mkdir(r.library.avatarDirPath(r.avatarId), { recursive: true });
+    await writeFile(r.storeDir, "in the way");
+    expect(await r.motions.translateIdea({ avatarId: r.avatarId, photoId: r.photoId, text: "поворачивает голову", acceptedWorstMicros: 1_000_000 })).toEqual({ outcome: "none", reason: "not-saved", costMicros: 1_000 });
   });
 });
 

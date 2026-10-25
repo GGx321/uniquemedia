@@ -360,6 +360,7 @@ export class MockClipMotions {
   /** A restart ends every call that was in flight: a call that wakes up in a later epoch does nothing. */
   #epoch = 0;
   #script: MockModelReply[] = [];
+  #storeFails = false;
   #held = false;
   #door: { promise: Promise<void>; open: () => void } | null = null;
   /** Calls waiting at the model (`hold`): a test says «the request is at the model». */
@@ -378,6 +379,11 @@ export class MockClipMotions {
   }
 
   /** While held, a call waits at the model after its reserve: the request is out, no answer has come. Released, every waiting call goes on. */
+  /** A test makes the photo's store unwritable (S5.FU-DATA 6): a paid call then ends as `none` with the reason `not-saved`, and nothing is stored. */
+  failStoreWrites(failing: boolean): void {
+    this.#storeFails = failing;
+  }
+
   hold(held: boolean): void {
     this.#held = held;
     if (!held) {
@@ -714,6 +720,7 @@ export class MockClipMotions {
     const known = [...ready.frame.offered.map(sameText), ...sheetVisionTexts(store.items, (item) => checkModelText(ready.frame, item.text, "vision").problems.length === 0)];
     const { fresh, repeated } = freshDrafts(outcome.drafts, known);
     if (fresh.length === 0) return good(repeated ? { outcome: "none", reason: "repeated", costMicros: outcome.costMicros } : { outcome: "none", costMicros: outcome.costMicros });
+    if (this.#storeFails) return good({ outcome: "none", reason: "not-saved", costMicros: outcome.costMicros });
     const made = addItems(store, "vision", fresh);
     store.reading = outcome.reading;
     if (made.length === 0) return good({ outcome: "none", costMicros: outcome.costMicros });
@@ -792,6 +799,7 @@ export class MockClipMotions {
     if (outcome.kind === "rejected") return good({ outcome: "rejected", problems: outcome.problems, costMicros: outcome.costMicros });
     // The engine cuts the label from his words; the store keeps that label and the English text, never the idea.
     const store = this.#read(avatarId, photoId, ready.sha);
+    if (this.#storeFails) return good({ outcome: "none", reason: "not-saved", costMicros: outcome.costMicros });
     const made = addItems(store, "own", [{ label: ownIdeaLabel(idea), text: outcome.text }])[0];
     if (made === undefined) return good({ outcome: "none", costMicros: outcome.costMicros });
     return good({ outcome: "ok", item: { ...choiceOf(made), source: "own" as const }, costMicros: outcome.costMicros });

@@ -142,24 +142,25 @@ const OwnMotion = ClipMotionChoice.refine((m) => m.source === "own", { message: 
  * - none: nothing usable came out. Free when the model refused the frame (a moderation 4xx), paid after an unusable answer; a mixed case shows the paid sum.
  *   `reason: "repeated"` (additive, protocol 5; S5.WC3c) is the one other case: the model answered usable motions and every one is already known (stored, or a code or scene motion of the frame).
  *   Nothing is stored; the call is paid as it was billed. Absent: the plain «nothing usable».
+ *   `reason: "not-saved"` (additive, protocol 5; S5.FU-DATA 6): the model answered usable motions, the call is paid, and the photo's store could not be written, so nothing was kept (no id was spent).
  */
 export const ClipSuggestResult = z.discriminatedUnion("outcome", [
   z
     .strictObject({ outcome: z.literal("ok"), motions: z.array(SuggestedMotion).min(1).max(3), reading: ClipFrameReading, costMicros: Micros })
     .refine((r) => new Set(r.motions.map((m) => m.id)).size === r.motions.length, { message: "a motion id must not repeat", path: ["motions"] }),
-  z.strictObject({ outcome: z.literal("none"), reason: z.literal("repeated").optional(), costMicros: Micros }),
+  z.strictObject({ outcome: z.literal("none"), reason: z.enum(["repeated", "not-saved"]).optional(), costMicros: Micros }),
 ]);
 export type ClipSuggestResult = z.infer<typeof ClipSuggestResult>;
 
 /**
  * What `clips.translateIdea` answers. Every result carries `costMicros`.
  * - ok: the new own item (`o-<n>`, label of at most 40 characters = `ownIdeaLabel`, English text of at most 60), stored under the photo; the window selects it.
- * - none: no usable answer (the model refused, or nothing could be read). Free (0) after a moderation 4xx, paid otherwise.
+ * - none: no usable answer (the model refused, or nothing could be read). Free (0) after a moderation 4xx, paid otherwise. `reason: "not-saved"` (additive, protocol 5; S5.FU-DATA 6): the translation was made and paid, and the store could not be written.
  * - rejected: the answer failed the checks after at most one repair; `problems` is non-empty, unique and in `MOTION_PROBLEMS` order, and the call is normally paid (the model answered). `costMicros` can still be 0, so the window decides «бесплатно» from `costMicros === 0` and never from the outcome.
  */
 export const ClipTranslateResult = z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("ok"), item: OwnMotion, costMicros: Micros }),
-  z.strictObject({ outcome: z.literal("none"), costMicros: Micros }),
+  z.strictObject({ outcome: z.literal("none"), reason: z.literal("not-saved").optional(), costMicros: Micros }),
   z.strictObject({ outcome: z.literal("rejected"), problems: MotionProblems, costMicros: Micros }),
 ]);
 export type ClipTranslateResult = z.infer<typeof ClipTranslateResult>;

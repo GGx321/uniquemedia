@@ -77,6 +77,12 @@ describe("the result lines (62b, 62c, 63a, 63b)", () => {
     expect(suggestNoneLine(3_400, "repeated").money).toBe("$0.003");
   });
 
+  test("a store that could not be written after a paid call says so, with the cost (S5.FU-DATA 6), and is neither «Не получилось» nor «повторила»", () => {
+    expect(plain(lineText(suggestNoneLine(3_400, "not-saved")))).toBe("Не удалось сохранить предложения — оплачено $0.003.");
+    expect(suggestNoneLine(3_400, "not-saved").money).toBe("$0.003");
+    expect(plain(lineText(ideaNoneLine(2_200, "not-saved")))).toBe("Не удалось сохранить перевод идеи — оплачено $0.002.");
+  });
+
   test("63a and 63b: a translation, a rejection's cost, and both ends of `none`", () => {
     expect(plain(lineText(translatedLine(1_000)))).toBe("Идея переведена — оплачено $0.001.");
     expect(plain(lineText(rejectedPaidLine(2_000)))).toBe("За перевод оплачено $0.002.");

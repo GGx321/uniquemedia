@@ -105,8 +105,10 @@ export function suggestedLine(count: number, costMicros: number): MoneyLine {
  * 62c: nothing usable came out: «Не получилось предложить движения — оплачено $0.004.», or «… — бесплатно.» at 0. S5.WC5b: a free `none` is not always the model's refusal (`usage.cost: 0` gives one
  * too), so the words name no cause. `reason: "repeated"` (S5.WC3c): the model answered, and every motion was already on the sheet: «Модель повторила уже предложенные движения — оплачено $X.»
  */
-export function suggestNoneLine(costMicros: number, reason?: "repeated"): MoneyLine {
+export function suggestNoneLine(costMicros: number, reason?: "repeated" | "not-saved"): MoneyLine {
   if (reason === "repeated") return withCost("Модель повторила уже предложенные движения", costMicros);
+  // S5.FU-DATA 6: the call was paid and answered, and the photo's store could not be written.
+  if (reason === "not-saved") return withCost("Не удалось сохранить предложения", costMicros);
   return withCost("Не получилось предложить движения", costMicros);
 }
 
@@ -122,7 +124,8 @@ export function rejectedPaidLine(costMicros: number): MoneyLine {
 }
 
 /** 63b #none-paid / #none-free: `translateIdea` answered `none` — the same neutral words at 0 (S5.WC5b). */
-export function ideaNoneLine(costMicros: number): MoneyLine {
+export function ideaNoneLine(costMicros: number, reason?: "not-saved"): MoneyLine {
+  if (reason === "not-saved") return withCost("Не удалось сохранить перевод идеи", costMicros);
   return withCost("Не получилось перевести идею", costMicros);
 }
 

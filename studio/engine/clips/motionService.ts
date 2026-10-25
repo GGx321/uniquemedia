@@ -335,7 +335,7 @@ export class ClipMotions {
     } catch (error) {
       // The call is paid; the owner is told so. Only ids are logged.
       deps.log(`[clip] the suggestions of photo ${ready.photo.id} could not be stored (${error instanceof Error ? error.name : typeof error})`);
-      return { outcome: "none", costMicros: outcome.costMicros };
+      return { outcome: "none", reason: "not-saved", costMicros: outcome.costMicros };
     }
   }
 
@@ -391,7 +391,7 @@ export class ClipMotions {
       return { outcome: "ok", item: choiceOf(made), costMicros: outcome.costMicros };
     } catch (error) {
       deps.log(`[clip] the idea for photo ${ready.photo.id} could not be stored (${error instanceof Error ? error.name : typeof error})`);
-      return { outcome: "none", costMicros: outcome.costMicros };
+      return { outcome: "none", reason: "not-saved", costMicros: outcome.costMicros };
     }
   }
 }

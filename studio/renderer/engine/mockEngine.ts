@@ -1629,6 +1629,11 @@ export class MockEngine implements EngineBridge {
     this.clips.scriptMotionReplies(replies);
   }
 
+  /** A test makes the photo store unwritable (S5.FU-DATA 6): a paid part C call ends `none` with the reason `not-saved`. */
+  failMotionStoreWrites(failing: boolean): void {
+    this.clips.failMotionStoreWrites(failing);
+  }
+
   /** While held, a part C call waits at the model after its reserve is written: the request is out, no answer has come. */
   holdMotionCalls(held: boolean): void {
     this.clips.holdMotionCalls(held);

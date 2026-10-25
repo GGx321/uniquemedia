@@ -399,6 +399,11 @@ describe("clips.suggestMotions answers ok or none", () => {
     expect(answers("clips.suggestMotions", { outcome: "none", reason: "repeated" })).toBe(false);
   });
 
+  test("none may say `not-saved` (S5.FU-DATA 6): the call was paid and the store could not be written", () => {
+    expect(answers("clips.suggestMotions", { outcome: "none", reason: "not-saved", costMicros: 3_400 })).toBe(true);
+    expect(answers("clips.suggestMotions", { outcome: "none", reason: "not-saved" })).toBe(false);
+  });
+
   test("there is no `rejected` answer to a suggestion", () => {
     expect(answers("clips.suggestMotions", { outcome: "rejected", problems: ["content"], costMicros: 1_000 })).toBe(false);
   });
@@ -428,6 +433,12 @@ describe("clips.translateIdea answers ok, none or rejected", () => {
     expect(answers("clips.translateIdea", { outcome: "none", costMicros: 0 })).toBe(true);
     expect(answers("clips.translateIdea", { outcome: "none", costMicros: 2_200 })).toBe(true);
     expect(answers("clips.translateIdea", { outcome: "none" })).toBe(false);
+  });
+
+  test("none may say `not-saved` and no other reason (S5.FU-DATA 6)", () => {
+    expect(answers("clips.translateIdea", { outcome: "none", reason: "not-saved", costMicros: 1_000 })).toBe(true);
+    expect(answers("clips.translateIdea", { outcome: "none", reason: "repeated", costMicros: 1_000 })).toBe(false);
+    expect(answers("clips.translateIdea", { outcome: "none", reason: "not-saved" })).toBe(false);
   });
 
   test("rejected carries the problems and the cost", () => {

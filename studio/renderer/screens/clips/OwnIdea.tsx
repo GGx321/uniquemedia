@@ -150,7 +150,7 @@ export function OwnIdea({ calls, block, ids }: OwnIdeaProps) {
               </>
             ) : (
               <p>
-                <MoneyText line={ideaNoneLine(outcome.costMicros)} />
+                <MoneyText line={ideaNoneLine(outcome.costMicros, outcome.reason)} />
               </p>
             )}
           </div>

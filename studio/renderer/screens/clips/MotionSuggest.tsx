@@ -43,7 +43,7 @@ export interface News {
 }
 
 /** How a sent idea came back when it did not give a motion (63b, 63c, the two ends of `none`). */
-export type IdeaOutcome = { readonly kind: "rejected"; readonly problems: readonly MotionProblem[]; readonly costMicros: number } | { readonly kind: "none"; readonly costMicros: number };
+export type IdeaOutcome = { readonly kind: "rejected"; readonly problems: readonly MotionProblem[]; readonly costMicros: number } | { readonly kind: "none"; readonly reason?: "not-saved"; readonly costMicros: number };
 
 export interface MotionCallsArgs {
   readonly avatarId: string;
@@ -200,7 +200,7 @@ export function useMotionCalls({ avatarId, photoId, view, offered, relist, revea
     }
     // 63b, 63c and `none`: the reason is about his text, so the focus goes into the field, which it describes (said once: no live region repeats it).
     setIdeaOpen(true);
-    setIdeaOutcome(result.outcome === "rejected" ? { kind: "rejected", problems: result.problems, costMicros: result.costMicros } : { kind: "none", costMicros: result.costMicros });
+    setIdeaOutcome(result.outcome === "rejected" ? { kind: "rejected", problems: result.problems, costMicros: result.costMicros } : { kind: "none", ...(result.reason === undefined ? {} : { reason: result.reason }), costMicros: result.costMicros });
     setFocusField((n) => n + 1);
   }
 
