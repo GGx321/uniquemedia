@@ -32,6 +32,9 @@ export function settingsToOptions(s: SettingsState): CopyOptions {
     // The path alone: the thumbnail is the panel's, and main reads the file.
     coverPath: s.advanced.cover?.path ?? null,
     frame: s.advanced.frame,
+    // Video only: the CapCut mark is a MOV-container key, so it rides with the
+    // video options, not the photo ones (like `keepTrendAudio` above).
+    capcutMark: s.advanced.capcutMark,
   };
 }
 

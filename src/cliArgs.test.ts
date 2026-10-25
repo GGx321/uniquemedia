@@ -203,3 +203,11 @@ test("--frame with another value is refused with the choices named", () => {
 test("--frame with no value after it is refused", () => {
   expect(() => parseStartOptions(line("--count", "1", "--frame"), route)).toThrow(/--frame/);
 });
+
+test("--capcut-mark asks for the CapCut mark", () => {
+  expect(parseStartOptions(line("--count", "1", "--capcut-mark"), route).capcutMark).toBe(true);
+});
+
+test("an absent --capcut-mark leaves the mark off", () => {
+  expect(parseStartOptions(line("--count", "1"), route).capcutMark).toBeFalsy();
+});

@@ -124,7 +124,7 @@ test.each(["Lavf", "Lavc", "x264", "FFMP"])(
 );
 
 test("a spoofed copy carries no exiftool signature either", () => {
-  // The identity pass goes through exiftool; it must not sign the file itself.
+  // The identity pass is byte patches only; nothing may sign the file.
   expect(bytes.toString("latin1").toLowerCase()).not.toContain("exiftool");
 });
 
@@ -149,11 +149,13 @@ test("a spoofed copy still carries the Core Media handler names", () => {
   expect(audio.handler_name).toBe("Core Media Audio");
 });
 
-test("a spoofed copy still carries the Apple make and the rest of the identity", () => {
+test("a spoofed copy carries the qt brand and no handset keys, as the reference does", () => {
+  // The reference was re-exported through CapCut, which strips Make, Model,
+  // Software and GPS; the iPhone feel is in the container, not in the keys.
   const { format } = probeTags(output);
-  expect(format["com.apple.quicktime.make"]).toBe("Apple");
-  expect(format["com.apple.quicktime.model"]).toContain("iPhone");
   expect(format["major_brand"]).toBe("qt  ");
+  expect(format).not.toHaveProperty("com.apple.quicktime.make");
+  expect(format).not.toHaveProperty("com.apple.quicktime.model");
 });
 
 test("a spoofed copy decodes end to end without a decoder complaint", () => {

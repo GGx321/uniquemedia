@@ -29,6 +29,9 @@ const initial: SettingsState = {
     firstFrame: "off",
     cover: null,
     frame: false,
+    // The CapCut export mark is off by default; it is offered only for a video
+    // in iPhone mode (see AdvancedPanel).
+    capcutMark: false,
   },
 };
 

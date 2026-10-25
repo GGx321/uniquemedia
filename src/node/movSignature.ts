@@ -210,22 +210,52 @@ export async function scrubMovSignature(path: string): Promise<MovSignaturePatch
 /** Seconds between the MOV epoch (1904-01-01 UTC) and the Unix epoch. */
 const MAC_EPOCH_OFFSET = 2_082_844_800;
 
-/**
- * Writes `when` (default: now, UTC) as the creation and modification time of
- * the movie header and of every track and media header. Under `bitexact` the
- * muxer writes zeros there — a 1904 date no camera ever writes — so a clean
- * file gets the one honest value it has: the time it was exported. Nothing else
- * is invented. Version 0 headers hold 32-bit times, version 1 hold 64-bit ones.
- * Like the signature scrub, the walker refuses a file the muxer did not lay out.
- */
-export async function stampMovCreationTimes(path: string, when: Date = new Date()): Promise<void> {
-  const bytes = await readFile(path);
+/** One run of bytes to write at an absolute offset. */
+interface ByteWrite {
+  at: number;
+  bytes: Uint8Array;
+}
+
+/** The `moov` of a file the muxer laid out, or a refusal. */
+function moovOf(bytes: Uint8Array): Box {
   const top = [...boxesIn(bytes, 0, bytes.length)];
   if (!top[0] || top[0].type !== "ftyp") {
     throw new Error("MOV does not start with a ftyp box; refusing to patch it");
   }
   const moov = top.find((b) => b.type === "moov");
   if (!moov) throw new Error("MOV has no moov box; refusing to patch it");
+  return moov;
+}
+
+/** Performs every planned write, in place. Planning happens first and throws, so
+ *  a refusal never leaves a half-patched file. */
+async function applyWrites(path: string, writes: ByteWrite[]): Promise<void> {
+  const handle = await open(path, "r+");
+  try {
+    for (const w of writes) await handle.write(w.bytes, 0, w.bytes.length, w.at);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Writes `create` (default: now, UTC) and `modify` (default: `create`) as the
+ * creation and modification time of the movie header and of every track and
+ * media header. Under `bitexact` the muxer writes zeros there — a 1904 date no
+ * camera ever writes — so a clean file gets the one honest value it has: the
+ * time it was exported, and an iphone file gets its profile's capture time with
+ * a modification a moment later, as a camera finalising a clip writes it.
+ * Nothing else is invented. Version 0 headers hold 32-bit times, version 1 hold
+ * 64-bit ones. Like the signature scrub, the walker refuses a file the muxer
+ * did not lay out.
+ */
+export async function stampMovCreationTimes(
+  path: string,
+  create: Date = new Date(),
+  modify: Date = create
+): Promise<void> {
+  const bytes = await readFile(path);
+  const moov = moovOf(bytes);
 
   const headers: Box[] = [];
   const mvhd = childrenOf(bytes, moov, "mvhd")[0];
@@ -237,10 +267,10 @@ export async function stampMovCreationTimes(path: string, when: Date = new Date(
     if (mdhd) headers.push(mdhd);
   }
 
-  const seconds = BigInt(Math.floor(when.getTime() / 1000) + MAC_EPOCH_OFFSET);
-  // Every header is checked and its write planned BEFORE any byte is written,
-  // so a refusal never leaves a half-stamped file.
-  const writes = headers.map((h) => {
+  const macSeconds = (d: Date): bigint => BigInt(Math.floor(d.getTime() / 1000) + MAC_EPOCH_OFFSET);
+  const created = macSeconds(create);
+  const modified = macSeconds(modify);
+  const writes = headers.map((h): ByteWrite => {
     const version = bytes[h.body];
     if (version !== 0 && version !== 1) {
       throw new Error(`MOV '${h.type}' at byte ${h.start} has unknown version ${version}; refusing to patch it`);
@@ -251,19 +281,112 @@ export async function stampMovCreationTimes(path: string, when: Date = new Date(
     }
     const times = Buffer.alloc(2 * width);
     if (width === 8) {
-      times.writeBigUInt64BE(seconds, 0);
-      times.writeBigUInt64BE(seconds, 8);
+      times.writeBigUInt64BE(created, 0);
+      times.writeBigUInt64BE(modified, 8);
     } else {
-      times.writeUInt32BE(Number(seconds), 0);
-      times.writeUInt32BE(Number(seconds), 4);
+      times.writeUInt32BE(Number(created), 0);
+      times.writeUInt32BE(Number(modified), 4);
     }
-    return { at: h.body + 4, times };
+    return { at: h.body + 4, bytes: times };
   });
+  await applyWrites(path, writes);
+}
 
-  const handle = await open(path, "r+");
-  try {
-    for (const w of writes) await handle.write(w.times, 0, w.times.length, w.at);
-  } finally {
-    await handle.close();
+/**
+ * Where the fields the Apple marking touches sit, relative to the box `body`
+ * (the first byte after the possibly 64-bit header).
+ *
+ *  - `mdhd` is a full box. Version 0: version/flags(4) create(4) modify(4)
+ *    timescale(4) duration(4), then language(2) quality(2). Version 1 has
+ *    64-bit times and duration, which moves the language to +32.
+ *  - `hdlr`: version/flags(4) class(4) handler_type(4) component_manufacturer(4)
+ *    flags(4) flags_mask(4) name. The manufacturer is what exiftool reports as
+ *    `HandlerVendorID`.
+ *  - `vmhd`, version 0 only: version/flags(4) graphicsmode(2) opcolor(2x3).
+ */
+const MDHD_LANGUAGE_OFFSET: Record<number, number> = { 0: 20, 1: 32 };
+const HDLR_MANUFACTURER_OFFSET = 12;
+const VMHD_GRAPHICS_MODE_OFFSET = 4;
+const VMHD_BODY_LENGTH = 12;
+
+/** `und` as a packed ISO-639-2 code: three 5-bit letters, each minus 0x60. ffmpeg
+ *  writes 0x7FFF ("Unknown") when the stream has no language tag. */
+const LANGUAGE_UND = 0x55c4;
+/** The ASCII of `appl`: what an iPhone writes as the component manufacturer of
+ *  each handler box, and the only thing that spells `Apple` for exiftool. */
+const MANUFACTURER_APPLE = Buffer.from("appl", "latin1");
+/** QuickTime graphics mode `ditherCopy`, which an iPhone writes in `vmhd`
+ *  where the muxer writes `srcCopy` (0). The opcolor is 0x8000 for all three
+ *  channels, not the muxer's zeros. */
+const GRAPHICS_MODE_DITHER_COPY = 0x0040;
+const OPCOLOR_GREY = 0x8000;
+
+/**
+ * The container fields that make a MOV read as one an Apple device wrote, and
+ * that no ffmpeg flag reaches. Per track: the component manufacturer of the
+ * media handler and, when the track has one, the data handler becomes `appl`;
+ * the media language becomes `und` instead of the muxer's unset 0x7FFF; and the
+ * video track's `vmhd` takes `ditherCopy` and a mid-grey opcolor.
+ *
+ * Every field is a fixed-size value at a fixed place, written in place with no
+ * reflow. The walker refuses what it does not recognise — no `moov`, no track,
+ * a track without its media header or handler, an unknown box version, a box too
+ * short for its field — and plans every write before making any, so a refusal
+ * leaves the file as it was.
+ */
+export async function markAppleContainer(path: string): Promise<void> {
+  const bytes = await readFile(path);
+  const moov = moovOf(bytes);
+  const traks = childrenOf(bytes, moov, "trak");
+  if (traks.length === 0) throw new Error("MOV has no trak box; refusing to patch it");
+
+  const writes: ByteWrite[] = [];
+  const planHandler = (hdlr: Box): void => {
+    if (hdlr.body + HDLR_MANUFACTURER_OFFSET + 4 > hdlr.end) {
+      throw new Error(`MOV 'hdlr' at byte ${hdlr.start} is too short to hold its manufacturer`);
+    }
+    writes.push({ at: hdlr.body + HDLR_MANUFACTURER_OFFSET, bytes: MANUFACTURER_APPLE });
+  };
+
+  for (const trak of traks) {
+    const mdia = childrenOf(bytes, trak, "mdia")[0];
+    const mdhd = mdia && childrenOf(bytes, mdia, "mdhd")[0];
+    const mediaHandler = mdia && childrenOf(bytes, mdia, "hdlr")[0];
+    if (!mdia || !mdhd || !mediaHandler) {
+      throw new Error(`MOV 'trak' at byte ${trak.start} has no mdia with an mdhd and an hdlr; refusing to patch it`);
+    }
+
+    const version = bytes[mdhd.body];
+    const languageOffset = MDHD_LANGUAGE_OFFSET[version];
+    if (languageOffset === undefined) {
+      throw new Error(`MOV 'mdhd' at byte ${mdhd.start} has unknown version ${version}; refusing to patch it`);
+    }
+    if (mdhd.body + languageOffset + 2 > mdhd.end) {
+      throw new Error(`MOV 'mdhd' at byte ${mdhd.start} is too short to hold its language`);
+    }
+    const language = Buffer.alloc(2);
+    language.writeUInt16BE(LANGUAGE_UND);
+    writes.push({ at: mdhd.body + languageOffset, bytes: language });
+
+    planHandler(mediaHandler);
+    const minf = childrenOf(bytes, mdia, "minf")[0];
+    const dataHandler = minf && childrenOf(bytes, minf, "hdlr")[0];
+    if (dataHandler) planHandler(dataHandler);
+
+    const vmhd = minf && childrenOf(bytes, minf, "vmhd")[0];
+    if (vmhd) {
+      const vmhdVersion = bytes[vmhd.body];
+      if (vmhdVersion !== 0) {
+        throw new Error(`MOV 'vmhd' at byte ${vmhd.start} has unknown version ${vmhdVersion}; refusing to patch it`);
+      }
+      if (vmhd.body + VMHD_BODY_LENGTH > vmhd.end) {
+        throw new Error(`MOV 'vmhd' at byte ${vmhd.start} is too short to hold its graphics mode and opcolor`);
+      }
+      const fields = Buffer.alloc(8);
+      fields.writeUInt16BE(GRAPHICS_MODE_DITHER_COPY, 0);
+      for (let channel = 0; channel < 3; channel++) fields.writeUInt16BE(OPCOLOR_GREY, 2 + 2 * channel);
+      writes.push({ at: vmhd.body + VMHD_GRAPHICS_MODE_OFFSET, bytes: fields });
+    }
   }
+  await applyWrites(path, writes);
 }

@@ -21,6 +21,7 @@ const state: SettingsState = {
     firstFrame: "black",
     cover: null,
     frame: true,
+    capcutMark: false,
   },
 };
 
@@ -62,6 +63,7 @@ test("settingsToOptions maps every CopyOptions field", () => {
     firstFrame: "black",
     coverPath: null,
     frame: true,
+    capcutMark: false,
   });
 });
 
@@ -86,6 +88,12 @@ test("settingsToPhotoOptions maps every PhotoCopyOptions field", () => {
 
 test("settingsToPhotoOptions drops the audio flag rather than carrying a dead one", () => {
   expect("keepTrendAudio" in settingsToPhotoOptions(state)).toBe(false);
+});
+
+test("the CapCut mark rides with the video options and is dropped from the photo ones", () => {
+  const on = { ...state, advanced: { ...state.advanced, capcutMark: true } };
+  expect(settingsToOptions(on).capcutMark).toBe(true);
+  expect("capcutMark" in settingsToPhotoOptions(on)).toBe(false);
 });
 
 test("settingsToPhotoOptions drops the first-frame fields rather than carrying dead ones", () => {

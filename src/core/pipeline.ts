@@ -150,7 +150,7 @@ export async function uniquify<R, O extends UniquifyOptions>(
   async function applyIdentity(index: number, output: string): Promise<void> {
     if (!executor.applyIdentity) return;
     const profile = sampleDeviceProfile(config.seedBase + index * 1000, config.nowMs ?? Date.now());
-    await executor.applyIdentity(output, opts.identity, profile);
+    await executor.applyIdentity(output, opts.identity, profile, opts.capcutMark ?? false);
   }
 
   // Produces the best CopyResult for copy `i`, or null when aborted / no best.

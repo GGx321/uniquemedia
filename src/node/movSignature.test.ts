@@ -1,8 +1,11 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { findMovSignatureFields, scrubMovSignature, stampMovCreationTimes } from "./movSignature";
+import { join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+import ffmpegPath from "ffmpeg-static";
+import { findMovSignatureFields, markAppleContainer, scrubMovSignature, stampMovCreationTimes } from "./movSignature";
+import { makeTestClip } from "./testClip";
 
 /**
  * ffmpeg's MOV/MP4 muxer hardcodes three things no flag reaches: `minor_version`
@@ -402,4 +405,166 @@ test("a header too short for its times refuses the whole file and leaves it unto
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── modify time differing from create time ──────────────────────────────────
+
+test.each([0, 1])("stamps a modify time apart from the create time (box version %i)", async (version) => {
+  const dir = mkdtempSync(join(tmpdir(), "uniq-stamp-"));
+  try {
+    const path = join(dir, "a.mp4");
+    writeFileSync(path, movWithTimes(version));
+    await stampMovCreationTimes(path, WHEN, new Date(WHEN.getTime() + 2000));
+    const after = readFileSync(path);
+    for (const [type, nth] of [["mvhd", 0], ["tkhd", 0], ["tkhd", 1], ["mdhd", 0], ["mdhd", 1]] as const) {
+      expect(timesAt(after, type, nth)).toEqual({ created: BigInt(WHEN_MAC), modified: BigInt(WHEN_MAC + 2) });
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── Apple container fields ──────────────────────────────────────────────────
+
+/**
+ * A real MOV the way the iphone branch writes one: bitexact, so the muxer
+ * leaves the media language at 0x7FFF and the handler vendors at zero. Rendered
+ * from the test clip rather than built by hand because the offsets being
+ * patched are the muxer's own.
+ */
+function realMov(dir: string): string {
+  const src = join(dir, "src.mp4");
+  makeTestClip(src);
+  const out = join(dir, "real.mov");
+  const r = spawnSync(
+    ffmpegPath as string,
+    ["-v", "error", "-y", "-i", src, "-c", "copy", "-fflags", "+bitexact", "-f", "mov", out],
+    { encoding: "utf8" }
+  );
+  if (r.status !== 0) throw new Error(`ffmpeg failed: ${r.stderr}`);
+  return out;
+}
+
+const exiftoolBin = resolve(import.meta.dir, "../../node_modules/exiftool-vendored.pl/bin/exiftool");
+
+function tagValues(path: string, tag: string): string[] {
+  const r = spawnSync(exiftoolBin, ["-a", "-s3", `-${tag}`, path], { encoding: "utf8" });
+  return r.stdout.split("\n").filter((l) => l.length > 0);
+}
+
+test("markAppleContainer writes the Apple vendor into every handler box of every track", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "uniq-apple-"));
+  try {
+    const path = realMov(dir);
+    expect(tagValues(path, "HandlerVendorID")).not.toContain("Apple");
+    await markAppleContainer(path);
+    expect(tagValues(path, "HandlerVendorID")).toEqual(["Apple", "Apple", "Apple", "Apple"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("markAppleContainer sets the media language of every track to und", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "uniq-apple-"));
+  try {
+    const path = realMov(dir);
+    await markAppleContainer(path);
+    expect(tagValues(path, "MediaLanguageCode")).toEqual(["und", "und"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("markAppleContainer sets the video header to ditherCopy and an 0x8000 OpColor", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "uniq-apple-"));
+  try {
+    const path = realMov(dir);
+    await markAppleContainer(path);
+    expect(tagValues(path, "GraphicsMode")).toEqual(["ditherCopy"]);
+    expect(tagValues(path, "OpColor")).toEqual(["32768 32768 32768"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("markAppleContainer changes nothing but those fields: the file keeps its length and decodes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "uniq-apple-"));
+  try {
+    const path = realMov(dir);
+    const before = readFileSync(path);
+    await markAppleContainer(path);
+    const after = readFileSync(path);
+    expect(after.length).toBe(before.length);
+    let differing = 0;
+    for (let i = 0; i < before.length; i++) if (before[i] !== after[i]) differing++;
+    // 4 vendors x 4 + 2 languages x 2 + vmhd (2 + 6), as an upper bound
+    expect(differing).toBeGreaterThan(0);
+    expect(differing).toBeLessThanOrEqual(4 * 4 + 2 * 2 + 8);
+    const r = spawnSync(ffmpegPath as string, ["-v", "error", "-i", path, "-f", "null", "-"], { encoding: "utf8" });
+    expect(r.status).toBe(0);
+    expect(r.stderr.trim()).toBe("");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("markAppleContainer is idempotent", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "uniq-apple-"));
+  try {
+    const path = realMov(dir);
+    await markAppleContainer(path);
+    const once = readFileSync(path);
+    await markAppleContainer(path);
+    expect(readFileSync(path).equals(once)).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/** A track whose mdhd/hdlr/vmhd are all long enough, for the refusal tests to break one at a time. */
+function appleTrack(parts: { mdhd?: Buffer; hdlr?: Buffer; vmhd?: Buffer } = {}): Buffer {
+  const mdhd = parts.mdhd ?? box("mdhd", Buffer.alloc(24));
+  const hdlr = parts.hdlr ?? box("hdlr", Buffer.alloc(24));
+  const vmhd = parts.vmhd ?? box("vmhd", Buffer.alloc(12));
+  return box("trak", box("mdia", mdhd, hdlr, box("minf", vmhd, box("hdlr", Buffer.alloc(24)))));
+}
+
+async function refuses(file: Buffer, pattern: RegExp): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), "uniq-apple-"));
+  try {
+    const path = join(dir, "a.mov");
+    writeFileSync(path, file);
+    await expect(markAppleContainer(path)).rejects.toThrow(pattern);
+    expect(readFileSync(path).equals(file)).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("markAppleContainer refuses a file with no moov box", async () => {
+  await refuses(Buffer.concat([ftyp(), mdat()]), /moov/);
+});
+
+test("markAppleContainer refuses an mdhd of an unknown version and leaves the file as it was", async () => {
+  const bad = Buffer.alloc(24);
+  bad[0] = 2;
+  await refuses(Buffer.concat([ftyp(), box("moov", appleTrack({ mdhd: box("mdhd", bad) })), mdat()]), /version 2/);
+});
+
+test("markAppleContainer refuses an mdhd too short to hold its language", async () => {
+  await refuses(Buffer.concat([ftyp(), box("moov", appleTrack({ mdhd: box("mdhd", Buffer.alloc(20)) })), mdat()]), /too short/);
+});
+
+test("markAppleContainer refuses an hdlr too short to hold its manufacturer", async () => {
+  await refuses(Buffer.concat([ftyp(), box("moov", appleTrack({ hdlr: box("hdlr", Buffer.alloc(14)) })), mdat()]), /too short/);
+});
+
+test("markAppleContainer refuses a vmhd of an unknown version", async () => {
+  const bad = Buffer.alloc(12);
+  bad[0] = 1;
+  await refuses(Buffer.concat([ftyp(), box("moov", appleTrack({ vmhd: box("vmhd", bad) })), mdat()]), /version 1/);
+});
+
+test("markAppleContainer refuses a vmhd too short to hold its colour", async () => {
+  await refuses(Buffer.concat([ftyp(), box("moov", appleTrack({ vmhd: box("vmhd", Buffer.alloc(8)) })), mdat()]), /too short/);
 });

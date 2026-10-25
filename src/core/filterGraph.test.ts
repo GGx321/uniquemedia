@@ -133,6 +133,16 @@ test("spoof: -f mov is the last flag, plus profile/bt709/handlers", () => {
   expect(args[args.indexOf("-metadata:s:a") + 1]).toContain("Core Media Audio");
 });
 
+test("spoof: the video media timescale is 600, as the reference's", () => {
+  const args = buildArgs(spoofRecipe, info);
+  expect(args[args.indexOf("-video_track_timescale") + 1]).toBe("600");
+});
+
+test("no-spoof: the video media timescale is left to the muxer", () => {
+  expect(buildArgs(recipe, info)).not.toContain("-video_track_timescale");
+  expect(buildArgs({ ...recipe, identity: "clean" }, info)).not.toContain("-video_track_timescale");
+});
+
 test("no-spoof: no -f mov, no -profile:v, no handlers", () => {
   const args = buildArgs(recipe, info);
   expect(args.includes("-f")).toBe(false);

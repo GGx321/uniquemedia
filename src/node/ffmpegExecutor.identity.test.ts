@@ -134,7 +134,7 @@ beforeAll(async () => {
     // extension decide. Same here, so the files are what actually ships.
     const output = join(dir, `out_${identity}.mp4`);
     await exec.render(input, info, sampleRecipe({ ...baseOpts, identity }, SEED, 1), output);
-    await exec.applyIdentity(output, identity, profile);
+    await exec.applyIdentity(output, identity, profile, false);
     rendered.set(identity, { output, bytes: readFileSync(output) });
   }
 }, 120_000);
@@ -171,12 +171,12 @@ test.each([...ENCODER_STRINGS])(
   }
 );
 
-test("iphone: carries the Core Media handler names and the Apple make", () => {
+test("iphone: carries the Core Media handler names and no handset keys", () => {
   const { format, video, audio } = probeTags(fileOf("iphone").output);
   expect(video.handler_name).toBe("Core Media Video");
   expect(audio.handler_name).toBe("Core Media Audio");
-  expect(format["com.apple.quicktime.make"]).toBe("Apple");
-  expect(format["com.apple.quicktime.model"]).toContain("iPhone");
+  expect(format).not.toHaveProperty("com.apple.quicktime.make");
+  expect(format).not.toHaveProperty("com.apple.quicktime.model");
   expect(format.major_brand).toBe("qt  ");
 });
 

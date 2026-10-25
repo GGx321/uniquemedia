@@ -25,6 +25,7 @@ export interface DeviceProfile {
   software: string; // e.g. "26.4"
   creationLocal: string; // "2026-06-05T13:06:22-0800" (local time + tz, for com.apple.quicktime.creationdate)
   creationUtc: string; // "2026-06-05T21:06:22.000000Z" (for creation_time)
+  creationUtcMs: number; // the same instant as epoch milliseconds (for the MOV header times)
   gpsISO6709: string; // "+34.0522-118.2437+000.000/" (for com.apple.quicktime.location.ISO6709)
   lat: number; // decimal latitude, e.g. 34.0522
   lon: number; // decimal longitude, e.g. -118.2437
@@ -179,6 +180,7 @@ export function sampleDeviceProfile(seed: number, nowMs: number): DeviceProfile 
     software,
     creationLocal: stamp(local, tzSuffix),
     creationUtc: stamp(utc, ".000000Z"),
+    creationUtcMs: utcMs,
     gpsISO6709: signFixed(city.lat, 2, 4) + signFixed(city.lon, 3, 4) + signFixed(0, 3, 3) + "/",
     lat: city.lat,
     lon: city.lon,

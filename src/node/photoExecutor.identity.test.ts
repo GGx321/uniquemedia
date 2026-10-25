@@ -117,7 +117,7 @@ beforeAll(async () => {
   for (const identity of IDENTITY_MODES) {
     const output = join(dir, `out_${identity}.jpg`);
     await exec.render(input, info, samplePhotoRecipe({ ...OPTS, identity }, SEED, 1), output);
-    await exec.applyIdentity(output, identity, profile);
+    await exec.applyIdentity(output, identity, profile, false);
     const bytes = readFileSync(output);
     rendered.set(identity, {
       output,

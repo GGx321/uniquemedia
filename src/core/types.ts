@@ -100,6 +100,8 @@ export type FirstFrameMode = (typeof FIRST_FRAME_MODES)[number];
 export interface UniquifyOptions {
   targetDistance: number; // Hamming distance (0..256) the copy must exceed
   identity: IdentityMode;
+  /** Video `iphone` only: also stamp a CapCut/vicut export mark. Absent means off. */
+  capcutMark?: boolean;
 }
 
 /** Options shared by photo and video. */

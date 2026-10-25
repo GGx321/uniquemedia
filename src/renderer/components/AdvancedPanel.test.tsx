@@ -14,6 +14,7 @@ const base: AdvancedValue = {
   firstFrame: "off",
   cover: null,
   frame: false,
+  capcutMark: false,
 };
 
 /** The panel with the pick callback wired, for the tests that click it. */
@@ -335,4 +336,32 @@ test("switching «В рамке» on puts the frame in the settings", () => {
 test("a photo has no «В рамке» switch, the frame being a video mode", () => {
   render(<AdvancedPanel kind="photo" value={{ ...base }} onChange={() => {}} onPickCover={() => {}} />);
   expect(screen.queryByLabelText(FRAME_LABEL)).toBeNull();
+});
+
+const CAPCUT_LABEL = "Метка CapCut";
+
+test("a video in iPhone mode offers the CapCut-mark switch, off by default", () => {
+  render(<AdvancedPanel kind="video" value={{ ...base, identity: "iphone" }} onChange={() => {}} onPickCover={() => {}} />);
+  const sw = screen.getByLabelText(CAPCUT_LABEL);
+  expect(sw instanceof HTMLInputElement && sw.checked).toBe(false);
+});
+
+test("switching the CapCut mark on puts it in the settings", () => {
+  let v: AdvancedValue = { ...base, identity: "iphone" };
+  render(<AdvancedPanel kind="video" value={v} onChange={(x) => (v = x)} onPickCover={() => {}} />);
+  fireEvent.click(screen.getByLabelText(CAPCUT_LABEL));
+  expect(v.capcutMark).toBe(true);
+});
+
+test.each(["engine", "clean"] as const)(
+  "the CapCut-mark switch is hidden for a video in %s mode, where the mark means nothing",
+  (identity) => {
+    render(<AdvancedPanel kind="video" value={{ ...base, identity }} onChange={() => {}} onPickCover={() => {}} />);
+    expect(screen.queryByLabelText(CAPCUT_LABEL)).toBeNull();
+  }
+);
+
+test("the CapCut-mark switch is hidden for a photo, the mark being a video-container key", () => {
+  render(<AdvancedPanel kind="photo" value={{ ...base, identity: "iphone" }} onChange={() => {}} onPickCover={() => {}} />);
+  expect(screen.queryByLabelText(CAPCUT_LABEL)).toBeNull();
 });

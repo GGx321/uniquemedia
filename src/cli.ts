@@ -10,7 +10,8 @@ async function main() {
     console.error("usage: uniquify <input.mp4|input.jpg> --count N [--strength 1.0] " +
       "[--format original|reels|feed|square] [--edges crop|fit|auto] [--out DIR] " +
       "[--target 45] [--seed 1] [--identity engine|iphone|clean] " +
-      "[--first-frame off|black|photo] [--cover <image>] [--frame on|off]\n" +
+      "[--first-frame off|black|photo] [--cover <image>] [--frame on|off] [--capcut-mark]\n" +
+      "  --capcut-mark (video, iphone identity only) adds a CapCut/vicut export mark; off by default.\n" +
       "  --format defaults to reels for video and original for photo, so a still keeps its framing.\n" +
       "  --edges says how a still carries its shift at the frame edge: crop cuts an off-centre\n" +
       "  window out, fit shrinks the picture and pads it back so nothing is lost, auto decides\n" +

@@ -174,6 +174,7 @@ test("spoof: the encode tail is the non-spoof tail plus exactly the spoof flags"
     "-bsf:v", "filter_units=remove_types=6",
     "-metadata:s:v", "handler_name=Core Media Video",
     "-metadata:s:v", "encoder=H.264",
+    "-video_track_timescale", "600",
     "-metadata:s:a", "handler_name=Core Media Audio",
     "-f", "mov",
   ]);

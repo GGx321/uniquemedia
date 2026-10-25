@@ -306,6 +306,9 @@ export function buildArgs(recipe: Recipe, info: MediaInfo, zscale = true): strin
     args.push(
       "-metadata:s:v", "handler_name=Core Media Video",
       "-metadata:s:v", "encoder=H.264",
+      // The reference's video media timescale. The muxer otherwise derives one
+      // from the frame rate (12800 for 15 fps), which no iPhone-made file has.
+      "-video_track_timescale", "600",
     );
     if (info.hasAudio) {
       args.push("-metadata:s:a", "handler_name=Core Media Audio");

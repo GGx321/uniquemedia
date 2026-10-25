@@ -46,3 +46,10 @@ test("lat and lon are finite numbers matching a known US city", () => {
     expect(p.lon).toBeLessThan(-60);
   }
 });
+
+test("creationUtcMs is the instant creationUtc spells out, as a number", () => {
+  for (let s = 0; s < 20; s++) {
+    const p = sampleDeviceProfile(s, NOW);
+    expect(p.creationUtcMs).toBe(Date.parse(p.creationUtc));
+  }
+});

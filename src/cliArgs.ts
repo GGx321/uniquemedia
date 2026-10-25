@@ -80,5 +80,6 @@ export function parseStartOptions(argv: readonly string[], route: MediaRoute): S
     edgeMode: resolveEdgeMode(arg(argv, "edges"), "auto"),
     ...parseFirstFrame(argv),
     frame: parseFrame(argv),
+    capcutMark: flag(argv, "capcut-mark"),
   };
 }

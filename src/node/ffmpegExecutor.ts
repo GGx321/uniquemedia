@@ -3,7 +3,6 @@ import { rmSync } from "node:fs";
 import { rename, rm } from "node:fs/promises";
 import ffmpegPath from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
-import { exiftool } from "exiftool-vendored";
 import { buildArgs } from "../core/filterGraph";
 import { sourceToBt709 } from "../core/colour";
 import { parseFfprobeJson, type ProbeResult } from "./ffprobeJson";
@@ -11,7 +10,9 @@ import type { RenderExecutor } from "../core/executor";
 import type { IdentityMode, MediaInfo, Recipe } from "../core/types";
 import type { DeviceProfile } from "../core/deviceProfile";
 import { parseProgressFraction } from "./ffmpegProgress";
-import { scrubMovSignature, stampMovCreationTimes } from "./movSignature";
+import { exiftool } from "exiftool-vendored";
+import { capcutArtworkJson, capcutVideoId } from "./capcutMark";
+import { markAppleContainer, scrubMovSignature, stampMovCreationTimes } from "./movSignature";
 
 const FFMPEG = (ffmpegPath as string).replace("app.asar", "app.asar.unpacked");
 const FFPROBE = ffprobeStatic.path.replace("app.asar", "app.asar.unpacked");
@@ -213,14 +214,15 @@ export class FfmpegExecutor implements RenderExecutor {
    * turned off the encoder's signature at encode time:
    *
    *  - `engine`: nothing. The container is ffmpeg's honest MP4.
-   *  - `iphone`: the QuickTime keys of the profile's handset, then the MOV
-   *    fields the muxer hardcodes, in `applyDeviceMetadata`.
+   *  - `iphone`: no handset keys (the reference has none), but the profile's
+   *    own creation time and the MOV fields an iPhone file carries and the
+   *    muxer does not, in `applyDeviceMetadata`.
    *  - `clean`: the real export time as creation time, and only those hardcoded fields — in MP4 mode the `avc1` vendor is
    *    already zeros, so that is the `ftyp` minor version and the compressor
    *    name `Lavc libx264`, which no encode-time flag reaches.
    */
-  async applyIdentity(output: string, identity: IdentityMode, profile: DeviceProfile): Promise<void> {
-    if (identity === "iphone") await this.applyDeviceMetadata(output, profile);
+  async applyIdentity(output: string, identity: IdentityMode, profile: DeviceProfile, capcutMark: boolean): Promise<void> {
+    if (identity === "iphone") await this.applyDeviceMetadata(output, profile, capcutMark);
     else if (identity === "clean") {
       await scrubMovSignature(output);
       // The export time, UTC, in mvhd/tkhd/mdhd: bitexact leaves them at zero.
@@ -228,29 +230,31 @@ export class FfmpegExecutor implements RenderExecutor {
     }
   }
 
-  async applyDeviceMetadata(output: string, profile: DeviceProfile): Promise<void> {
-    // GPS decimal string "lat, lon, 0" — exiftool converts this to the ISO6709
-    // format that ffprobe reads back as com.apple.quicktime.location.ISO6709.
-    // Writing to Keys: produces com.apple.quicktime.location.ISO6709;
-    // writing to ItemList: additionally produces the top-level "location" tag.
-    const gpsDecimal = `${profile.lat}, ${profile.lon}, 0`;
-    await exiftool.write(
-      output,
-      {
-        "Keys:Make": profile.make,
-        "Keys:Model": profile.model,
-        "Keys:Software": profile.software,
-        "Keys:CreationDate": profile.creationLocal,
-        "Keys:GPSCoordinates": gpsDecimal,
-        "ItemList:GPSCoordinates": gpsDecimal,
-      } as Record<string, string>,
-      { writeArgs: ["-overwrite_original"] }
-    );
-    // AFTER exiftool, which rewrites the file and moves every offset: the
-    // `ftyp` minor version and the `avc1` vendor are hardcoded by the muxer
-    // (0x200 and `FFMP`), exiftool accepts a write to either and changes
-    // nothing, so they are zeroed in place here. The compressor name is
-    // `H.264` on this path (set at encode time) and is left alone.
+  async applyDeviceMetadata(output: string, profile: DeviceProfile, capcutMark = false): Promise<void> {
+    // Without the CapCut mark there is no exiftool pass: the reference this mode replicates carries no Make,
+    // Model, Software or GPS (the CapCut export stripped them), so there is
+    // nothing to write — and exiftool would add a Keys/meta box the reference
+    // does not have. With the mark, exiftool runs FIRST: it rewrites and
+    // reorders the file (and adds the Keys/meta box), so the byte patches must
+    // come after it. Everything below is an in-place byte patch with no reflow,
+    // so the three are independent of each other.
+    //
+    // The `ftyp` minor version and the `avc1` vendor are hardcoded by the muxer
+    // (0x200 and `FFMP`) and are zeroed. The compressor name is `H.264` on this
+    // path (set at encode time) and is left alone.
+    if (capcutMark) {
+      await exiftool.write(
+        output,
+        {},
+        { writeArgs: ["-overwrite_original", `-Keys:Artwork=${capcutArtworkJson(capcutVideoId(profile.creationUtcMs))}`] }
+      );
+    }
     await scrubMovSignature(output);
+    // bitexact left the header times at zero; each copy gets its own capture
+    // time, and the modification a couple of seconds after it.
+    const created = new Date(profile.creationUtcMs);
+    await stampMovCreationTimes(output, created, new Date(created.getTime() + 2000));
+    // Apple handler vendor, `und` language, ditherCopy video header.
+    await markAppleContainer(output);
   }
 }

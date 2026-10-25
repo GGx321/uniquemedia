@@ -255,7 +255,8 @@ export class PhotoExecutor implements RenderExecutor<PhotoRecipe> {
    *    the file is DQT/DHT/SOF/SOS and the scan. The spec's verified recipe;
    *    the output still decodes because none of that is needed to decode.
    */
-  async applyIdentity(output: string, identity: IdentityMode, profile: DeviceProfile): Promise<void> {
+  // `capcutMark` is ignored for stills: the CapCut mark is a video-container concern.
+  async applyIdentity(output: string, identity: IdentityMode, profile: DeviceProfile, _capcutMark: boolean): Promise<void> {
     if (identity === "iphone") {
       await this.applyDeviceMetadata(output, profile);
     } else if (identity === "clean") {

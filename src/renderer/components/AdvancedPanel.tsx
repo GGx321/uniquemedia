@@ -19,6 +19,10 @@ export interface AdvancedValue {
   cover: CoverPick | null;
   /** «В рамке»: the video is shrunk onto a random nature background. Video only. */
   frame: boolean;
+  /** «Метка CapCut»: adds the vicut/CapCut export key a file edited in CapCut
+   *  carries. Only meaningful for a video in `iphone` mode; off by default, and
+   *  the row that sets it is shown only then. */
+  capcutMark: boolean;
 }
 
 /** Reading the answer back as one of the three modes rather than casting the
@@ -177,8 +181,9 @@ function IdentityRow({
               подпись кодировщика (ffmpeg, x264).
             </p>
             <p>
-              <b>iPhone</b> — файл выглядит снятым на iPhone: модель, дата, место,
-              объектив. Следов кодировщика нет.
+              <b>iPhone</b> — файл выглядит снятым на iPhone: контейнер QuickTime,
+              дата съёмки, подписи Apple. Фото дополнительно получает модель, место
+              и объектив. Следов кодировщика нет.
             </p>
             <p>
               <b>Чисто</b> — никаких метаданных и подписей. Голый файл.
@@ -308,6 +313,21 @@ export function AdvancedPanel({
           </label>
         )}
         <IdentityRow value={value.identity} onChange={(identity) => set({ identity })} />
+        {/* The CapCut mark only means anything on a video in iPhone mode — it is
+            the vicut export key such a file carries — so the row is shown only
+            then, rather than offering a toggle that would do nothing. */}
+        {kind !== "photo" && value.identity === "iphone" && (
+          <label className="adv-row">
+            Метка CapCut
+            <input
+              className="switch"
+              aria-label="Метка CapCut"
+              type="checkbox"
+              checked={value.capcutMark}
+              onChange={(e) => set({ capcutMark: e.target.checked })}
+            />
+          </label>
+        )}
       </div>
     </details>
   );

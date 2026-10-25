@@ -24,8 +24,10 @@ export interface RenderExecutor<R = Recipe> {
    * pipeline that skipped "the mode that does nothing" would be deciding that
    * on the executor's behalf. `profile` is the device the copy would claim if
    * the mode asks for one; it is derived from the copy's slot, not the render.
+   * `capcutMark` asks a video `iphone` copy to also carry a CapCut export mark;
+   * stills ignore it.
    */
-  applyIdentity?(output: string, identity: IdentityMode, profile: DeviceProfile): Promise<void>;
+  applyIdentity?(output: string, identity: IdentityMode, profile: DeviceProfile, capcutMark: boolean): Promise<void>;
   /**
    * Moves a staged file over the path it was staged for. The inter-copy
    * post-pass renders a replacement copy to a sibling temp path and calls this
