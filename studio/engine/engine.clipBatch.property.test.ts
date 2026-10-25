@@ -1,6 +1,8 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { batchOf, cancelBatch, createBatch, jobsOf, mostOpenClipReserves, plainPhotos, seedBatchAvatar } from "./clips/testing/batchKit";
-import { clipNetwork, command, startClipEngine, until, type ClipEngine, type VideoScript } from "./clips/testing/engineClipKit";
+import { clipNetwork, command, create, startClipEngine, until, type ClipEngine, type VideoScript } from "./clips/testing/engineClipKit";
+import { chatReply, MODERATED, motionNetwork, type ChatHandler } from "./clips/testing/motionNet";
+import { GOOD_TEXTS, IDEA, motionWorld } from "./clips/testing/motionWorld";
 import { ledgerLines, useEngineDir } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { join } from "node:path";
@@ -95,5 +97,115 @@ describe("a batch on every path (fixed seeds)", () => {
 
   test("the seeds took the paths that matter: a free refusal into Grok, a 429, a cancel, an uncertain stop and a halted-ledger stop", () => {
     for (const path of ["grok", "429", "cancelled", "money-uncertain", "ledger-stopped"]) expect(seen.has(path)).toBe(true);
+  });
+});
+
+// ---------- S5.FU-DATA 8: part C calls and single clips on every path ----------
+//
+// The global guard (r2.1 N10) in both directions: a part C call (a chat reserve) and a clip (a clip reserve) are never open together; whichever comes second is refused IN_FLIGHT, free. The calls are
+// started in random groups so that they meet, over chat answers that are good, unreadable, moderated or a 5xx, and over clips that end clean or fail. On every path the paid count ends at 0 (`paidStart`
+// and `paidEnd` balance, a failed call included) and the guard is free again.
+
+/** A chat attempt of a part C call has the id `<jobId>:motion#N` or `<jobId>:idea#N`; every other reserve of this test is a clip's. */
+const isChatAttempt = (attemptId: string): boolean => /:(motion|idea)#\d+$/.test(attemptId);
+
+/** The most chat reserves and the most clip reserves open at once, and whether one of each was ever open together. */
+export function openByKind(lines: readonly Record<string, unknown>[]): { chat: number; clip: number; together: boolean } {
+  const chat = new Set<string>();
+  const clip = new Set<string>();
+  let mostChat = 0;
+  let mostClip = 0;
+  let together = false;
+  for (const line of lines) {
+    const attemptId = String(line.attemptId);
+    const open = isChatAttempt(attemptId) ? chat : clip;
+    if (line.type === "reserve") open.add(attemptId);
+    else if (line.type === "settle" || line.type === "release") open.delete(attemptId);
+    mostChat = Math.max(mostChat, chat.size);
+    mostClip = Math.max(mostClip, clip.size);
+    if (chat.size > 0 && clip.size > 0) together = true;
+  }
+  return { chat: mostChat, clip: mostClip, together };
+}
+
+const CHAT_TEXTS = [GOOD_TEXTS[0], GOOD_TEXTS[1], GOOD_TEXTS[2], GOOD_TEXTS[3]] as const;
+
+/** What the model answers to the nth chat attempt: mostly a good answer for the call asking, now and then something that ends it. */
+function chatFor(draws: readonly number[]): ChatHandler {
+  return (request) => {
+    const draw = draws[(request.n - 1) % draws.length] ?? 0;
+    if (draw < 0.15) return MODERATED;
+    if (draw < 0.3) return chatReply("I cannot see the photo", 0.002);
+    if (draw < 0.4) return { status: 502, body: { error: { message: "bad gateway" } } };
+    const schema = request.json().response_format?.json_schema?.name;
+    const text = CHAT_TEXTS[request.n % CHAT_TEXTS.length] ?? GOOD_TEXTS[0];
+    return schema === "motion_idea"
+      ? chatReply({ text_en: text, refusal: "none" }, 0.001)
+      : chatReply({ motions: [{ label_ru: "Движение", text_en: text }], frame: { capture: "unknown", phoneVisible: false, faceVisible: true } }, 0.0034);
+  };
+}
+
+/**
+ * A clip's script for this property: it ends inside its own money window (a clean render, a free refusal, a 429 that is waited out). An uncertain stop (a 502 on the submit) is left out ON PURPOSE: its reserve
+ * stays open after the clip's job has ended, waiting for the reconcile, and the guard is about the clip's proof window, which is over then; the batch property above already covers the uncertain stop.
+ */
+function endingClipScript(draw: number): VideoScript | undefined {
+  if (draw < 0.6) return undefined;
+  if (draw < 0.8) return { terminal: { status: "failed", error: RISK_CONTROL } };
+  return { submit: { status: 429, body: { error: { code: 429, message: "Rate limit exceeded" } } } };
+}
+
+const seenC = new Set<string>();
+
+describe("part C calls beside single clips on every path (fixed seeds)", () => {
+  for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+    test(`seed ${seed}: a chat reserve and a clip reserve are never open together, and the paid count ends at 0`, async () => {
+      const rand = seeded(seed * 104729);
+      const chatDraws = Array.from({ length: 10 }, () => rand());
+      const clipDraws = Array.from({ length: 6 }, () => rand());
+      const net = motionNetwork({ chat: chatFor(chatDraws), clip: { klingBy: (n) => endingClipScript(clipDraws[(n - 1) % clipDraws.length] ?? 1) } });
+      const w = await motionWorld(dir(), { net, engine: { monthlyBudgetMicros: BUDGET } });
+      const { avatarId, photoId } = w;
+      const ops = Array.from({ length: 6 }, () => rand());
+
+      const run = async (draw: number): Promise<string> => {
+        const kind = draw < 0.34 ? "suggest" : draw < 0.67 ? "translate" : "clip";
+        const answer =
+          kind === "suggest" ? await w.suggest(1_000_000) : kind === "translate" ? await w.translate(IDEA, 1_000_000) : await create(w.started, { avatarId, photoId, acceptedWorstMicros: 850_000 });
+        if (answer.ok) return `${kind}:ok`;
+        const reason = answer.error.clipReason ?? answer.error.code;
+        seenC.add(reason);
+        return `${kind}:${reason}`;
+      };
+      // Random groups of one to three, started together: the second meets the first.
+      for (let i = 0; i < ops.length; ) {
+        const size = 1 + Math.floor((ops[i] ?? 0) * 3);
+        const group = ops.slice(i, i + size);
+        i += size;
+        await Promise.all(group.map((draw) => run(draw)));
+        await settled(w.started);
+      }
+
+      const lines = ledgerLines(dir());
+      const open = openByKind(lines);
+      expect(open.together).toBe(false);
+      expect(open.chat).toBeLessThanOrEqual(1);
+      expect(open.clip).toBeLessThanOrEqual(1);
+      expect(mostOpenClipReserves(lines.filter((line) => !isChatAttempt(String(line.attemptId))))).toBeLessThanOrEqual(1);
+      // paidStart and paidEnd balance: every part C call counted itself in and out, whether it was paid, refused, failed or stopped.
+      expect(w.started.engine.paidCommandsOpen()).toBe(0);
+      expect(w.started.engine.budget?.status().heldMicros).toBe(0);
+      // The guard is free again: the next part C call is refused for no busy reason.
+      const next = await w.suggest(1_000_000);
+      if (!next.ok) expect(["motion-busy", "clip-busy", "suggest-busy", "idea-busy", "one-at-a-time", "batch-running"]).not.toContain(next.error.clipReason ?? "");
+      await settled(w.started);
+      expect(w.started.engine.paidCommandsOpen()).toBe(0);
+      for (const line of lines) if (isChatAttempt(String(line.attemptId)) && line.type === "reserve") seenC.add("chat");
+      if (lines.some((line) => !isChatAttempt(String(line.attemptId)) && line.type === "reserve")) seenC.add("clip");
+    });
+  }
+
+  test("the seeds took the paths that matter: a chat call, a clip, and both ways of the guard", () => {
+    for (const path of ["chat", "clip", "motion-busy", "clip-busy"]) expect(seenC.has(path)).toBe(true);
   });
 });

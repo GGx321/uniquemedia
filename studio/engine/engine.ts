@@ -2196,6 +2196,11 @@ export class Engine {
     }
   }
 
+  /** The paid commands counted in right now (a test reads it: every start has its end, so it is 0 when nothing paid runs). */
+  paidCommandsOpen(): number {
+    return this.#paidCommands;
+  }
+
   /** True while a job or paid command writes into the live library, a pick/archive is running, a reject mark is being written, an own-media import is running, or a render is queued or running (invariant 25): a library switch must be refused. */
   #busy(): boolean {
     return (
