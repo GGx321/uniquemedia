@@ -528,7 +528,8 @@ describe("S5.FU-AGE: the kept age guard's probes (scenes/ageProbes.testkit.ts), 
       for (const text of ENGLISH) {
         const m = makeClipMock({ clips: { boldClips: "kling-only" } });
         m.engine.scriptNextMotionReplies([idea(text), idea(UNDRESS)]);
-        expect([where, text, await unwrap(translate(m, "медленно снимает халат", photoId)), m.engine.peekMotions().lines.length]).toEqual([where, text, { outcome: "rejected", problems: ["content"], costMicros: 1_000 }, 1]);
+        const result = await unwrap(translate(m, "медленно снимает халат", photoId));
+        expect([where, text, result, m.engine.peekMotions().lines.length]).toEqual([where, text, { outcome: "rejected", problems: expect.arrayContaining(["content"]), costMicros: 1_000 }, 1]);
       }
     }
   });

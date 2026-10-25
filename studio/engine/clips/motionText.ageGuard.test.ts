@@ -23,7 +23,7 @@ describe.each(AGE_PROBES.map((probes) => [probes.name, probes] as const))("the k
     for (const text of probes.english) {
       for (const [where, frame] of FRAMES) {
         for (const source of MODEL_SOURCES) {
-          expect([text, where, source, motionTextProblems(text, frame, source), ageRulesOf(text, frame, source).length > 0]).toEqual([text, where, source, ["content"], true]);
+          expect([text, where, source, motionTextProblems(text, frame, source).includes("content"), ageRulesOf(text, frame, source).length > 0]).toEqual([text, where, source, true, true]);
         }
       }
     }

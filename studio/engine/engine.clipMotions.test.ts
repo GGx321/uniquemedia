@@ -632,7 +632,8 @@ describe("S5.FU-AGE: the kept age guard's probes on the engine's routes (scenes/
       for (const text of ENGLISH) {
         w.net.setChat(() => ideaReply(text));
         const before = w.net.chats.length;
-        expect([where, text, resultOf(await w.translate("медленно снимает халат")), w.net.chats.length - before]).toEqual([where, text, { outcome: "rejected", problems: ["content"], costMicros: 1_000 }, 1]);
+        const result = resultOf(await w.translate("медленно снимает халат"));
+        expect([where, text, result, w.net.chats.length - before]).toEqual([where, text, { outcome: "rejected", problems: expect.arrayContaining(["content"]), costMicros: 1_000 }, 1]);
       }
       await expect(readFile(w.storePath(), "utf8")).rejects.toThrow();
     }

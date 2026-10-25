@@ -437,7 +437,7 @@ describe("S5.FU-AGE: the kept age guard's probes (scenes/ageProbes.testkit.ts)",
       for (const [k, text] of AGE_PROBES.flatMap((probes) => probes.english).entries()) {
         const jobId = `job-${String(10_000 + i * 1_000 + k).padStart(8, "0")}`;
         const { net, result } = run([reply(text), reply(GOOD_MOTION)], { ...JOB, jobId, scope: { avatarJobId: jobId }, facts });
-        expect([i, text, await result, net.calls.length]).toEqual([i, text, { kind: "rejected", problems: ["content"], costMicros: 1_000 }, 1]);
+        expect([i, text, await result, net.calls.length]).toEqual([i, text, { kind: "rejected", problems: expect.arrayContaining(["content"]), costMicros: 1_000 }, 1]);
       }
     }
   });

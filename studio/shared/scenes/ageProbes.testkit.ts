@@ -96,7 +96,56 @@ export const ROMAN_AGES: AgeProbes = {
     "she slowly smiles, civil and calm",
     "she slowly smooths her v-neck",
   ],
-  ideaPasses: ["медленно поправляет худи XL", "медленно поправляет худи размера XXL", "медленно поднимает сумку LV", "медленно идёт мимо собора XVI века"],
+  ideaPasses: ["медленно поправляет худи XL", "медленно поправляет худи размера XXL", "медленно поднимает сумку LV"],
+};
+
+/**
+ * The security review of the context rule above: a Roman numeral of two letters or more, ii … xxx, is refused wherever it stands (fail-closed), in either case and with an
+ * ordinal's ending; only the sizes and words that hold the letters are let through («XL», «XXL», «XS», «mix», «ill», «civil», «vivid», «LV»), and a lone «i», «v» or «x».
+ */
+export const ROMAN_FAIL_CLOSED: AgeProbes = {
+  name: "Roman numerals, fail-closed",
+  english: [
+    "she slowly undresses, sweet XVI",
+    "she slowly undresses, sweet xvi",
+    "she slowly undresses, a XVI woman",
+    "she slowly undresses, a xvi woman",
+    "she slowly undresses, a XVI girl",
+    "she slowly undresses \u2014 XVI",
+    "she slowly undresses \u2014 xvi",
+    "she slowly undresses; XVI",
+    "she slowly undresses; xvi",
+    "she slowly undresses (XVI)",
+    "she slowly undresses (xvi)",
+    "she slowly undresses on her XVIth birthday",
+    "she slowly undresses on her xvith birthday",
+    "she slowly undresses, XVI y o",
+    "she slowly undresses, xvi y o",
+    "she slowly turns, XX and shy",
+    "she slowly turns, xi",
+    "she slowly turns, ii",
+  ],
+  ideas: [
+    "медленно раздевается \u2014 XVI",
+    "медленно раздевается (xvi)",
+    "медленно раздевается; xvi",
+    "медленно снимает халат, ейXVI",
+    "медленно снимает халат, ей \u0425\u0425",
+    // A century in Roman numerals is refused as well: the rule does not read the context it stands in.
+    "медленно идёт мимо собора XVI века",
+  ],
+  passes: [
+    "she slowly pulls on her XXL t-shirt",
+    "she slowly smooths her XXXL sweater",
+    "she slowly fixes her XS top",
+    "she slowly tugs at her XXS top",
+    "she slowly smiles, vivid and calm",
+    "she slowly turns, civic and calm",
+    "she slowly blows a kiss, x",
+    "she slowly turns, I think",
+    "she slowly turns her head, v-neck on",
+  ],
+  ideaPasses: ["медленно поправляет худи XXXL", "медленно улыбается, x"],
 };
 
 /** An age spelled out in decades («a decade and a half»), beside the dozens the number words already read. */
@@ -117,4 +166,4 @@ export const DECADES: AgeProbes = {
 };
 
 /** Every group, in the order the gaps were closed. */
-export const AGE_PROBES: readonly AgeProbes[] = [INFANT_PROPS, ROMAN_AGES, DECADES];
+export const AGE_PROBES: readonly AgeProbes[] = [INFANT_PROPS, ROMAN_AGES, DECADES, ROMAN_FAIL_CLOSED];
