@@ -305,9 +305,10 @@ const HARD_YOUTH: WordRule[] = [
   en("schoolgirl", "school[- ]?girls?"),
   en("school uniform", "school[- ]uniforms?"),
   en("high school", "high[- ]?school(?:ers?)?"),
-  en("loli", "loli\\w*"),
+  // S5.FU-AGE: «лолита», «нимфетка» beside their English (the pre-check read neither).
+  enRu("loli", "loli\\w*", "(?<![\\p{L}])лолит\\p{L}*"),
   en("jailbait", "jail[- ]?bait\\w*"),
-  en("nymphet", "nymphets?"),
+  enRu("nymphet", "nymphets?", "(?<![\\p{L}])нимфет\\p{L}*"),
   en("minor", "minors?"),
   en("underage", "under[- ]?aged?"),
   en("young-looking", "young[- ]looking"),
@@ -323,8 +324,12 @@ const HARD_YOUTH: WordRule[] = [
   ru("ученица", "(?<![\\p{L}])учениц\\p{L}*"),
   ru("тинейджер", "(?<![\\p{L}])тинейдж\\p{L}*"),
   ru("школота", "(?<![\\p{L}])школот\\p{L}*"),
-  // старшеклассница, пятиклассник, одноклассница: any "...классник/...классница" is a school pupil
-  ru("классница", "(?<![\\p{L}])\\p{L}*классни[кц]\\p{L}*"),
+  // старшеклассница, пятиклассник, одноклассница: any "...классник/...классница" is a school pupil. S5.FU-AGE: so are «первоклашка», «пятиклашка», and a grade from the
+  // third to the eleventh («в девятом классе», «девятый класс»); the first and the second stay out, where «в первом классе» is a seat on a plane.
+  ru(
+    "классница",
+    "(?<![\\p{L}])(?:\\p{L}*(?:классни[кц]|клашк)\\p{L}*|(?:трет(?:ий|ь\\p{L}{1,3})|(?:четв[её]рт|пят|шест|седьм|восьм|девят|десят|одиннадцат)(?:ый|ая|ое|ого|ому|ым|ом|ой|ую|ые|ых|ыми))\\s+класс\\p{L}*)",
+  ),
   ru("юная", "(?<![\\p{L}])юн(?:ая|ой|ую|ые|ых|ым|ыми|ое|ого|ый|ому|ом)(?![\\p{L}])"),
   ru("школьная форма", "(?<![\\p{L}])школьн\\p{L}*\\s+форм\\p{L}*"),
 ];
@@ -393,7 +398,7 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
   en("bambina", "bambin[ao]s?"),
   // S5.WC2c round 2 (H1, the review): a small child or the years before adulthood, which a clip motion may say once its content rules were lifted.
   en("toddler", "toddl\\w*"),
-  en("infant", "infant\\w*|infancy"),
+  enRu("infant", "infant\\w*|infancy", "(?<![\\p{L}])младен\\p{L}*"),
   en("newborn", "new[- ]?borns?"),
   en("tot", "tots?"),
   en("little one", "little[- ]ones?"),
