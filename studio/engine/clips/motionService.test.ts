@@ -311,6 +311,20 @@ describe("a store that cannot be written after a paid call", () => {
   });
 });
 
+describe("a store that does not read (S5.FU-DATA 5)", () => {
+  test("both calls end free before any money, and the file is left as it is: an id is never issued twice", async () => {
+    const r = await rig(() => []);
+    await mkdir(r.storeDir, { recursive: true });
+    const file = join(r.storeDir, `${r.photoId}.json`);
+    await writeFile(file, "{ not json");
+    await expect(r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "INTERNAL" } });
+    await expect(r.motions.translateIdea({ avatarId: r.avatarId, photoId: r.photoId, text: "she waves", acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "INTERNAL" } });
+    expect(money.lines()).toEqual([]);
+    expect(await Bun.file(file).text()).toBe("{ not json");
+    expect([r.motions.running(), r.state.paid]).toEqual([0, 0]);
+  });
+});
+
 /** The deps a rig was built from, for a variant of it. */
 async function depsOf(r: Rig): Promise<ClipMotionsDeps> {
   return {

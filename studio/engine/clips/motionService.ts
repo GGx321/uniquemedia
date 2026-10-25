@@ -235,7 +235,7 @@ export class ClipMotions {
     } finally {
       bound.clear();
     }
-    if (!store.writable) throw new EngineFailure({ code: "INTERNAL", detail: `the motion store of photo ${photo.id} was written by a newer build and is left as it is` });
+    if (!store.writable) throw new EngineFailure({ code: "INTERNAL", detail: `the motion store of photo ${photo.id} ${store.why === "does-not-read" ? "does not read" : "was written by a newer build"} and is left as it is` });
     if (isFull(store.file, source)) {
       throw new EngineFailure({ code: "VALIDATION", clipReason: "motions-full", detail: `every ${source === "vision" ? "v" : "o"}- id of photo ${photo.id} was issued; ids are never reused` });
     }

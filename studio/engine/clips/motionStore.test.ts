@@ -118,13 +118,29 @@ describe("the file", () => {
     expect(existsSync(avatarDir())).toBe(false);
   });
 
-  test("a corrupt file reads as empty and is replaced by the next update", async () => {
-    await mkdir(join(avatarDir(), MOTIONS_DIR), { recursive: true });
-    await writeFile(join(avatarDir(), MOTIONS_DIR, "photo-0001.json"), "{ not json");
-    const stores = new MotionStores(() => undefined);
-    expect((await stores.read(avatarDir(), "photo-0001", SHA)).file.items).toEqual([]);
-    await stores.update(avatarDir(), "photo-0001", SHA, (file) => addItems(file, "own", [draft(1)]).file);
-    expect((await stores.read(avatarDir(), "photo-0001", SHA)).file.items.map((i) => i.id)).toEqual(["o-1"]);
+  // S5.FU-DATA 5: «an id is never reused». A store that does not read used to read as empty with `next` at 1, and the next write issued `o-1` again while the owner's open list could still hold the old `o-1`.
+  // The simplest way to keep ids unique is the one a newer build's store already has: the file is left as it is and nothing is written over it.
+  describe("a store that does not read", () => {
+    const path = () => join(avatarDir(), MOTIONS_DIR, "photo-0001.json");
+    const corrupt: readonly [string, string][] = [
+      ["is not JSON", "{ not json"],
+      ["breaks the strict schema", JSON.stringify({ ...emptyStore("photo-0001", SHA), items: [{ id: "o-7", source: "own", label: "x", text: "she slowly blinks", model: "m", at: AT }], next: { vision: 1, own: 3 } })],
+      ["belongs to another photo", JSON.stringify(emptyStore("photo-9999", SHA))],
+    ];
+
+    for (const [name, body] of corrupt) {
+      test(`a file that ${name} is not writable and is left byte for byte as it is`, async () => {
+        await mkdir(join(avatarDir(), MOTIONS_DIR), { recursive: true });
+        await writeFile(path(), body);
+        const stores = new MotionStores(() => undefined);
+        const read = await stores.read(avatarDir(), "photo-0001", SHA);
+        expect(read.file.items).toEqual([]);
+        expect(read.writable).toBe(false);
+        await expect(stores.update(avatarDir(), "photo-0001", SHA, (file) => addItems(file, "own", [draft(1)]).file)).rejects.toThrow("does not read");
+        expect(await readFile(path(), "utf8")).toBe(body);
+        expect(await readdir(join(avatarDir(), MOTIONS_DIR))).toEqual(["photo-0001.json"]);
+      });
+    }
   });
 
   test("a store from a newer build reads as empty, is not writable, and is left as it is", async () => {

@@ -65,8 +65,10 @@ export function listedItems(file: MotionStoreFile, passes: (item: MotionItem) =>
 
 export interface MotionStoreRead {
   readonly file: MotionStoreFile;
-  /** False for a store written by a newer build: it reads as empty and is never written over. */
+  /** False for a store written by a newer build or one that does not read: it reads as empty and is never written over. */
   readonly writable: boolean;
+  /** Why it is not writable. */
+  readonly why?: "newer-build" | "does-not-read";
 }
 
 /** The stores on disk: reads, and serialised read-modify-writes (a suggestion and an idea of one photo may finish together). */
@@ -82,33 +84,38 @@ export class MotionStores {
     return join(avatarDir, MOTIONS_DIR, `${photoId}.json`);
   }
 
-  /** The store as it is on disk for this photo file: empty when it is missing, corrupt, from a newer build, or written for another sha256. A disk that cannot be read rejects. */
+  /**
+   * The store as it is on disk for this photo file: empty when it is missing or written for another sha256 (a new photo starts new counters). One from a newer build, or one that does not read (not JSON, breaks
+   * the schema, is another photo's), reads as empty too but is NOT writable and is left as it is (S5.FU-DATA 5): starting it again would reset `next`, and an id would be issued twice. A disk that cannot be read rejects.
+   */
   async read(avatarDir: string, photoId: string, sha: string): Promise<MotionStoreRead> {
     const path = MotionStores.path(avatarDir, photoId);
     const read = await readRecordFile(path);
     if (!read.ok) {
       if (read.reason === "io") throw read.error;
-      if (read.reason === "invalid") this.#log(`[clip] the motion store of photo ${photoId} does not read; it starts again`);
+      if (read.reason === "invalid") return this.#unreadable(photoId, sha);
       return { file: emptyStore(photoId, sha), writable: true };
     }
     if (isFromNewerVersion(read.value,MOTION_STORE_SCHEMA_VERSION)) {
       this.#log(`[clip] the motion store of photo ${photoId} is from a newer build; it is left as it is`);
-      return { file: emptyStore(photoId, sha), writable: false };
+      return { file: emptyStore(photoId, sha), writable: false, why: "newer-build" };
     }
     const parsed = MotionStoreFile.safeParse(read.value);
-    if (!parsed.success || parsed.data.photoId !== photoId) {
-      this.#log(`[clip] the motion store of photo ${photoId} does not read; it starts again`);
-      return { file: emptyStore(photoId, sha), writable: true };
-    }
+    if (!parsed.success || parsed.data.photoId !== photoId) return this.#unreadable(photoId, sha);
     return { file: parsed.data.photoSha256 === sha ? parsed.data : emptyStore(photoId, sha), writable: true };
   }
 
-  /** Reads, applies `change`, checks the result under the strict schema and writes it atomically (a `null` from `change` writes nothing); one at a time per photo. Rejects for a store from a newer build (nothing is written). */
+  #unreadable(photoId: string, sha: string): MotionStoreRead {
+    this.#log(`[clip] the motion store of photo ${photoId} does not read; it is left as it is`);
+    return { file: emptyStore(photoId, sha), writable: false, why: "does-not-read" };
+  }
+
+  /** Reads, applies `change`, checks the result under the strict schema and writes it atomically (a `null` from `change` writes nothing); one at a time per photo. Rejects for a store that is not writable (a newer build's, or one that does not read; nothing is written). */
   update(avatarDir: string, photoId: string, sha: string, change: (file: MotionStoreFile) => MotionStoreFile | null): Promise<MotionStoreFile> {
     const path = MotionStores.path(avatarDir, photoId);
     const run = async (): Promise<MotionStoreFile> => {
       const current = await this.read(avatarDir, photoId, sha);
-      if (!current.writable) throw new Error(`the motion store of photo ${photoId} is from a newer build`);
+      if (!current.writable) throw new Error(`the motion store of photo ${photoId} ${current.why === "does-not-read" ? "does not read" : "is from a newer build"} and is left as it is`);
       const changed = change(current.file);
       // `null`: nothing to write (a suggestion that added nothing must not even replace the reading); the file stays as it is on disk.
       if (changed === null) return current.file;
