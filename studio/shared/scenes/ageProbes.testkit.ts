@@ -219,5 +219,37 @@ export const PRE_CHECK_GAPS: AgeProbes = {
   ],
 };
 
+/**
+ * Words the round-2 youth list refused where they name no child: the pupils of her eyes, a tot of rum and tater tots, a youth hostel, a newborn animal. The child each word
+ * also names stays refused beside them.
+ */
+export const FALSE_POSITIVES: AgeProbes = {
+  name: "false positives",
+  english: [
+    "she slowly undresses like a pupil",
+    "she slowly undresses for her pupils",
+    "she slowly undresses, a tot",
+    "she slowly undresses like a tot",
+    "she slowly undresses, a youth",
+    "she slowly undresses at the youth club",
+    "she slowly undresses like a newborn",
+    "she slowly undresses, a newborn baby",
+  ],
+  ideas: [],
+  passes: [
+    "her pupils slowly widen a little",
+    "she slowly looks up, her pupils dilating",
+    "she slowly narrows her eyes, her dilated pupils",
+    "she slowly sips a tot of rum",
+    "she slowly eats tater tots",
+    "she slowly waves outside the youth hostel",
+    "she slowly sits in the youth hostel lobby",
+    "she slowly strokes a newborn kitten",
+    "she slowly cradles a newborn puppy",
+    "she slowly feeds a newborn lamb",
+  ],
+  ideaPasses: [],
+};
+
 /** Every group, in the order the gaps were closed. */
-export const AGE_PROBES: readonly AgeProbes[] = [INFANT_PROPS, ROMAN_AGES, DECADES, ROMAN_FAIL_CLOSED, PRE_CHECK_GAPS];
+export const AGE_PROBES: readonly AgeProbes[] = [INFANT_PROPS, ROMAN_AGES, DECADES, ROMAN_FAIL_CLOSED, PRE_CHECK_GAPS, FALSE_POSITIVES];

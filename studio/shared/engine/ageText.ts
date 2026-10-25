@@ -334,6 +334,11 @@ const HARD_YOUTH: WordRule[] = [
   ru("школьная форма", "(?<![\\p{L}])школьн\\p{L}*\\s+форм\\p{L}*"),
 ];
 
+/** S5.FU-AGE: a newborn that is an animal, never a child («a newborn kitten»). */
+const NEWBORN_ANIMALS = "kittens?|kits?|pupp(?:y|ies)|pups?|lambs?|foals?|calf|calves|chicks?|ducklings?|piglets?|bunn(?:y|ies)|cubs?|fawns?|animals?";
+/** S5.FU-AGE: what the pupils of her eyes do («her pupils slowly widen»). */
+const PUPIL_VERBS = "dilat|widen|narrow|contract|constrict|shrink|expand";
+
 /**
  * Words that are ordinary in a vibe ("girl next door", "it-girl", "kids-free",
  * "a youthful smile", "petite", "innocent") but never belong in the
@@ -399,12 +404,13 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
   // S5.WC2c round 2 (H1, the review): a small child or the years before adulthood, which a clip motion may say once its content rules were lifted.
   en("toddler", "toddl\\w*"),
   enRu("infant", "infant\\w*|infancy", "(?<![\\p{L}])младен\\p{L}*"),
-  en("newborn", "new[- ]?borns?"),
-  en("tot", "tots?"),
+  // S5.FU-AGE: the false positives of these four, each where it names no child: a newborn animal, a tot of rum or tater tots, a youth hostel, the pupils of her eyes.
+  en("newborn", `new[- ]?borns?(?![- ](?:${NEWBORN_ANIMALS})\\b)`),
   en("little one", "little[- ]ones?"),
+  en("tot", "(?<!\\btater[- ])tots?(?!\\s+(?:of|up)\\b)"),
   en("puberty", "pubert\\w*"),
-  en("youth", "youths?"),
-  en("pupil", "pupils?"),
+  en("youth", "youths?(?![- ]hostels?\\b)"),
+  en("pupil", `(?<!\\b(?:dilated|widened|wide|narrowed|constricted|eye)\\s)pupils?(?!(?:\\s+\\w+ly)?\\s+(?:${PUPIL_VERBS})\\w*|\\s+of\\s+(?:her|his|the|their)\\s+eyes?\\b)`),
   // S5.FU-AGE (the review of the kept age guard): an infant's things, in English and in Russian, in their case and number forms. «Соска» shares most of its forms with
   // «сосок» (her nipple, which the lifted content rules let through), so it counts in its own forms only: «с соской», «соска во рту», «сосёт соску», «детская соска».
   enRu(

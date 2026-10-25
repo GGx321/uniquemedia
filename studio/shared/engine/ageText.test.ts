@@ -869,6 +869,27 @@ describe("the youth words a clip motion may say (S5.WC2c round 2)", () => {
     expect(youthWords(`she slowly undresses like a ${word}`, "descriptor").length).toBeGreaterThan(0);
   });
 
+  test.each([
+    "her pupils slowly widen",
+    "her pupils dilate a little",
+    "her dilated pupils",
+    "the pupils of her eyes",
+    "a tot of rum",
+    "tater tots",
+    "it tots up",
+    "a youth hostel",
+    "the youth-hostel lobby",
+    "a newborn kitten",
+    "a newborn puppy",
+    "a new-born lamb",
+  ])("S5.FU-AGE: %p names no child", (words) => {
+    expect(youthRuleNames(`she slowly smiles at ${words}`, "descriptor").filter((name) => ["newborn", "tot", "youth", "pupil"].includes(name))).toEqual([]);
+  });
+
+  test.each(["for her pupils", "like a pupil", "a tot", "the youth club", "a newborn", "a newborn baby"])("S5.FU-AGE: %p still names one", (words) => {
+    expect(youthRuleNames(`she slowly undresses ${words}`, "descriptor").filter((name) => ["newborn", "tot", "youth", "pupil"].includes(name)).length).toBeGreaterThan(0);
+  });
+
   test.each(["tote", "totem", "little bag", "potato"])("%p is none", (word) => {
     expect(youthRuleNames(`she slowly carries her ${word}`, "descriptor").filter((name) => ["toddler", "infant", "newborn", "tot", "little one", "puberty", "youth", "pupil"].includes(name))).toEqual([]);
   });
