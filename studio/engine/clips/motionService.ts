@@ -71,6 +71,8 @@ export interface ClipMotionsDeps {
   callTimeoutMs: number;
   /** How long the photo's downscale may take before the call ends free (review M1; `REFERENCE_TIMEOUT_MS` like the check's photo load). */
   downscaleTimeoutMs: number;
+  /** How long the call's two disk reads (the photo's facts and file, then the motion store) may take before it ends free as `photo-unreadable`: a stalled disk must not keep the call counted (S5.FU-DATA 1). */
+  readTimeoutMs: number;
   emitMoney: () => void;
   markKeyRejected: (key: string) => void;
   pendingDelete: (avatarId: string) => boolean;
@@ -218,9 +220,21 @@ export class ClipMotions {
     const library = await deps.liveLibrary();
     const photo = deps.photoOf(library, avatarId, photoId);
     await deps.assertAvatarOnDisk(library, avatarId);
-    const read = await deps.facts(library, photo);
-    if (read.kind === "refused") throw new EngineFailure({ code: "VALIDATION", clipReason: read.reason, detail: `photo ${photo.id} cannot be brought to life (${read.reason})` });
-    const store = await this.#stores.read(library.avatarDirPath(avatarId), photo.id, photo.sha256);
+    // Bounded (S5.FU-DATA 1): the call is counted from its first step, and a disk that stalls would keep it counted, answering `motion-busy` to every clip, avatar delete and library switch until restart.
+    const bound = timeoutSignal(deps.readTimeoutMs);
+    let read: MotionFactsRead;
+    let store: Awaited<ReturnType<MotionStores["read"]>>;
+    try {
+      read = await untilAborted(deps.facts(library, photo), bound.signal);
+      if (read.kind === "refused") throw new EngineFailure({ code: "VALIDATION", clipReason: read.reason, detail: `photo ${photo.id} cannot be brought to life (${read.reason})` });
+      store = await untilAborted(this.#stores.read(library.avatarDirPath(avatarId), photo.id, photo.sha256), bound.signal);
+    } catch (error) {
+      if (!bound.signal.aborted) throw error;
+      deps.log(`[clip] the disk did not answer for photo ${photo.id} in time (${error instanceof Error ? error.name : typeof error})`);
+      throw new EngineFailure({ code: "VALIDATION", clipReason: "photo-unreadable", detail: `photo ${photo.id} could not be read` });
+    } finally {
+      bound.clear();
+    }
     if (!store.writable) throw new EngineFailure({ code: "INTERNAL", detail: `the motion store of photo ${photo.id} was written by a newer build and is left as it is` });
     if (isFull(store.file, source)) {
       throw new EngineFailure({ code: "VALIDATION", clipReason: "motions-full", detail: `every ${source === "vision" ? "v" : "o"}- id of photo ${photo.id} was issued; ids are never reused` });

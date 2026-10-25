@@ -316,6 +316,7 @@ export class ClipService {
       openRouter: deps.openRouter,
       callTimeoutMs: deps.motionTimeoutMs,
       downscaleTimeoutMs: deps.downscaleTimeoutMs ?? REFERENCE_TIMEOUT_MS,
+      readTimeoutMs: REFERENCE_TIMEOUT_MS,
       emitMoney: deps.emitMoney,
       markKeyRejected: deps.markKeyRejected,
       pendingDelete: deps.pendingDelete,

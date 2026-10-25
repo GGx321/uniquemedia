@@ -344,12 +344,12 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   "clips.batchOptions": PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + CLIP_BATCH_PLAN_ROUNDS * CLIP_PLAN_READ_TIMEOUT_MS + COMMAND_SLACK_MS,
   "clips.createBatch": PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + CLIP_BATCH_PLAN_ROUNDS * CLIP_PLAN_READ_TIMEOUT_MS + COMMAND_SLACK_MS + MAX_BATCH_CLIPS * CLIP_BATCH_ITEM_MS,
   // Stage 5, 5b.2 part C, S5.WC1 (plan s5b2 §5.3, I5.68): the two estimates read a price and the slack, like `clips.options`. The two paid LLM calls answer with their result, so main waits for a price load, the
-  // library's identity, the photo's run-plan read (CLIP_PLAN_READ_TIMEOUT_MS, both calls), for the vision call the photo read and its 1024-px downscale (REFERENCE_TIMEOUT_MS, as `avatars.checkDescriptor` budgets its
+  // library's identity, the photo's facts and the motion store (both disk reads together bounded by REFERENCE_TIMEOUT_MS, S5.FU-DATA 1; the plan read is inside), for the vision call its 1024-px downscale (REFERENCE_TIMEOUT_MS, as `avatars.checkDescriptor` budgets its
   // reference), up to MOTION_MAX_ATTEMPTS model attempts at their slowest, and the slack.
   "clips.estimateSuggest": PRICE_FETCH_TIMEOUT_MS + COMMAND_SLACK_MS,
   "clips.estimateIdea": PRICE_FETCH_TIMEOUT_MS + COMMAND_SLACK_MS,
-  "clips.suggestMotions": PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + CLIP_PLAN_READ_TIMEOUT_MS + REFERENCE_TIMEOUT_MS + MOTION_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
-  "clips.translateIdea": PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + CLIP_PLAN_READ_TIMEOUT_MS + MOTION_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
+  "clips.suggestMotions": PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + 2 * REFERENCE_TIMEOUT_MS + MOTION_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
+  "clips.translateIdea": PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + REFERENCE_TIMEOUT_MS + MOTION_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
   // Answers with the job id once its checks and a price load are done; the job runs on and reports by events.
   "avatars.generateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.createDraft": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,

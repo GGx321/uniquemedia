@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CLIP_PLAN_READ_TIMEOUT_MS, COMMAND_DEADLINE_MS } from "./control";
+import { COMMAND_DEADLINE_MS } from "./control";
 import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
@@ -14,10 +14,11 @@ useNativeGlobals();
 describe("COMMAND_DEADLINE_MS for the part C commands", () => {
   // L3 (review round 2): both calls read the photo's run plan first (CLIP_PLAN_READ_TIMEOUT_MS); the vision call also reads the photo and downscales it to 1024 px, which budgets REFERENCE_TIMEOUT_MS as
   // `avatars.checkDescriptor` does for its reference.
-  const translate = PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + CLIP_PLAN_READ_TIMEOUT_MS + MOTION_MAX_ATTEMPTS * MAX_ATTEMPT_MS + 30_000;
+  // S5.FU-DATA 1: the two disk reads (the photo's facts and file, the motion store) are bounded together by REFERENCE_TIMEOUT_MS; the vision call's downscale has its own.
+  const translate = PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + REFERENCE_TIMEOUT_MS + MOTION_MAX_ATTEMPTS * MAX_ATTEMPT_MS + 30_000;
   const suggest = translate + REFERENCE_TIMEOUT_MS;
 
-  test("clips.translateIdea waits for a price load, the library's identity, the plan read, two attempts at their slowest and the slack", () => {
+  test("clips.translateIdea waits for a price load, the library's identity, the bounded disk reads, two attempts at their slowest and the slack", () => {
     expect(COMMAND_DEADLINE_MS["clips.translateIdea"]).toBe(translate);
   });
 

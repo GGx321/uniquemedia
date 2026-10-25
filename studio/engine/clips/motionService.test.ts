@@ -8,6 +8,7 @@ import { chatBody, fakeFetch, JPEG, makeClient, setupMoney, type Money, type Ste
 import { EngineFailure } from "../engineFailure";
 import { scopeKey } from "../money/budget";
 import { ClipMotions, type ClipMotionsDeps } from "./motionService";
+import { MotionStores } from "./motionStore";
 import { suggestPrice, translatePrice } from "./motionPrice";
 import { GOOD_MOTION, timerFrame } from "./testing/motionKit";
 import { seedClipAvatar } from "./testing/engineClipKit";
@@ -82,6 +83,7 @@ async function rig(steps: (state: Rig["state"]) => Step[], extra: Partial<ClipMo
     },
     callTimeoutMs: 60_000,
     downscaleTimeoutMs: 30_000,
+    readTimeoutMs: 30_000,
     emitMoney: () => undefined,
     markKeyRejected: () => undefined,
     pendingDelete: () => state.deleting,
@@ -230,6 +232,37 @@ describe("the photo's downscale is bounded (M1)", () => {
   });
 });
 
+describe("the photo and store reads are bounded (S5.FU-DATA 1)", () => {
+  const never = (): Promise<never> => new Promise<never>(() => undefined);
+  const SUGGEST = (r: Rig) => r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 });
+  const TRANSLATE = (r: Rig) => r.motions.translateIdea({ avatarId: r.avatarId, photoId: r.photoId, text: "she waves", acceptedWorstMicros: 1_000_000 });
+
+  for (const [name, call] of [["the writer", SUGGEST], ["the translator", TRANSLATE]] as const) {
+    test(`a photo read that never answers ends ${name}'s call free as photo-unreadable, and the counters are released`, async () => {
+      const r = await rig(() => [], { readTimeoutMs: 40, facts: never });
+      await expect(call(r)).rejects.toMatchObject({ error: { code: "VALIDATION", clipReason: "photo-unreadable" } });
+      expect(money.lines()).toEqual([]);
+      expect([r.motions.running(), r.motions.runningFor(r.avatarId), r.state.paid]).toEqual([0, 0, 0]);
+      expect(r.state.caps).toEqual([]);
+    }, 3_000);
+
+    test(`a store read that never answers ends ${name}'s call free as photo-unreadable, and the counters are released`, async () => {
+      const r = await rig(() => []);
+      const hung = new MotionStores(() => undefined);
+      hung.read = never;
+      const motions = new ClipMotions({ ...(await depsOf(r)), readTimeoutMs: 40, paidStart: () => void r.state.paid++, paidEnd: () => void r.state.paid-- }, hung);
+      await expect(call({ ...r, motions })).rejects.toMatchObject({ error: { code: "VALIDATION", clipReason: "photo-unreadable" } });
+      expect(money.lines()).toEqual([]);
+      expect([motions.running(), motions.runningFor(r.avatarId), r.state.paid]).toEqual([0, 0, 0]);
+    }, 3_000);
+  }
+
+  test("a read that answers in time is not cut", async () => {
+    const r = await rig(() => [reply(GOOD_ANSWER)], { readTimeoutMs: 5_000 });
+    expect(await SUGGEST(r)).toMatchObject({ outcome: "ok" });
+  });
+});
+
 describe("the chat client's timeout (L4)", () => {
   test("both calls open the client with the call timeout, 60 s like the descriptor check", async () => {
     const r = await rig(() => [reply(GOOD_ANSWER), { status: 200, body: chatBody(JSON.stringify({ text_en: GOOD_MOTION, refusal: "none" }), { cost: 0.001 }) }]);
@@ -306,6 +339,7 @@ async function depsOf(r: Rig): Promise<ClipMotionsDeps> {
     openRouter: () => makeClient(fakeFetch([]).fetch).client,
     callTimeoutMs: 60_000,
     downscaleTimeoutMs: 30_000,
+    readTimeoutMs: 30_000,
     emitMoney: () => undefined,
     markKeyRejected: () => undefined,
     pendingDelete: () => false,
