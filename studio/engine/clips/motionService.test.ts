@@ -95,42 +95,42 @@ async function rig(steps: (state: Rig["state"]) => Step[], extra: Partial<ClipMo
 }
 
 describe("after the last await", () => {
-  test("an avatar delete prepared while the writer's chat runs: NOT_FOUND, nothing stored, and the paid call is settled in the ledger", async () => {
+  test("an avatar delete prepared while the writer's chat runs: `none` with the cost the owner paid, nothing stored, and the paid call is settled in the ledger (S5.FU-DATA 3)", async () => {
     const r = await rig((state) => [
       () => {
         state.deleting = true;
         return { status: 200, body: chatBody(JSON.stringify(GOOD_ANSWER), { cost: 0.0034 }) };
       },
     ]);
-    await expect(r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "NOT_FOUND" } });
+    expect(await r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 })).toEqual({ outcome: "none", costMicros: 3_400 });
     expect(existsSync(r.storeDir)).toBe(false);
     expect(money.lines().filter((l) => l.type === "settle").map((l) => l.costMicros)).toEqual([3_400]);
     expect(money.ledger.openReserves()).toEqual([]);
   });
 
-  test("the same for the translator's call", async () => {
+  test("the same for the translator's call: `none` with the cost", async () => {
     const r = await rig((state) => [
       () => {
         state.deleting = true;
         return { status: 200, body: chatBody(JSON.stringify({ text_en: GOOD_MOTION, refusal: "none" }), { cost: 0.001 }) };
       },
     ]);
-    await expect(r.motions.translateIdea({ avatarId: r.avatarId, photoId: r.photoId, text: "поворачивает голову", acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "NOT_FOUND" } });
+    expect(await r.motions.translateIdea({ avatarId: r.avatarId, photoId: r.photoId, text: "поворачивает голову", acceptedWorstMicros: 1_000_000 })).toEqual({ outcome: "none", costMicros: 1_000 });
     expect(existsSync(r.storeDir)).toBe(false);
   });
 
-  test("a library switched away while the call runs: NOT_FOUND, nothing stored", async () => {
+  test("a library switched away while the call runs: `none` with the cost, nothing stored", async () => {
     const r = await rig((state) => [
       () => {
         state.current = null;
         return { status: 200, body: chatBody(JSON.stringify(GOOD_ANSWER), { cost: 0.0034 }) };
       },
     ]);
-    await expect(r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "NOT_FOUND" } });
+    expect(await r.motions.suggestMotions({ avatarId: r.avatarId, photoId: r.photoId, acceptedWorstMicros: 1_000_000 })).toEqual({ outcome: "none", costMicros: 3_400 });
     expect(existsSync(r.storeDir)).toBe(false);
   });
 
-  test("a moderation refusal ends the same way for a deleted avatar: NOT_FOUND, never a `none` for a folder that is gone", async () => {
+  test("a free moderation refusal for a deleted avatar is still NOT_FOUND: nothing was paid, so there is no bill to tell", async () => {
     const r = await rig((state) => [
       () => {
         state.deleting = true;

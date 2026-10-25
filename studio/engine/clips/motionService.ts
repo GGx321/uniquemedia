@@ -242,12 +242,25 @@ export class ClipMotions {
     return { key, budget, library, photo, facts: read.facts, bytes: read.bytes, sha: photo.sha256, items: store.file.items };
   }
 
-  /** After the last await: the library is the one the call began on, and the avatar is still there and not being deleted. Nothing is stored for an avatar that is going. */
-  #stillThere(library: Library, avatarId: string): void {
+  /** Whether the avatar has gone or the library was switched away: it is being deleted, no longer in the library, or the library is not the open one. */
+  #gone(library: Library, avatarId: string): boolean {
     const deps = this.#deps;
-    if (deps.pendingDelete(avatarId) || library.getAvatar(avatarId) === undefined || deps.currentLibrary() !== library) {
-      throw new EngineFailure({ code: "NOT_FOUND", detail: `avatar ${avatarId} is no longer in the open library` });
-    }
+    return deps.pendingDelete(avatarId) || library.getAvatar(avatarId) === undefined || deps.currentLibrary() !== library;
+  }
+
+  /** Before the money: the avatar is still there and not being deleted, or NOT_FOUND. */
+  #stillThere(library: Library, avatarId: string): void {
+    if (this.#gone(library, avatarId)) throw new EngineFailure({ code: "NOT_FOUND", detail: `avatar ${avatarId} is no longer in the open library` });
+  }
+
+  /**
+   * After the last await: nothing is stored for an avatar that is going. A call that was BILLED ends as `none` with its cost (S5.FU-DATA 3: the owner is told what was paid, never a bare NOT_FOUND);
+   * a call that cost nothing is NOT_FOUND as before.
+   */
+  #goneAfter(library: Library, avatarId: string, costMicros: number): boolean {
+    if (!this.#gone(library, avatarId)) return false;
+    if (costMicros > 0) return true;
+    throw new EngineFailure({ code: "NOT_FOUND", detail: `avatar ${avatarId} is no longer in the open library` });
   }
 
   async #suggest(payload: CommandPayload<"clips.suggestMotions">): Promise<ClipSuggestResult> {
@@ -297,7 +310,7 @@ export class ClipMotions {
       if (outcome.error.code === "AUTH_INVALID") deps.markKeyRejected(ready.key);
       throw new EngineFailure(outcome.error);
     }
-    this.#stillThere(ready.library, avatarId);
+    if (this.#goneAfter(ready.library, avatarId, outcome.costMicros)) return { outcome: "none", costMicros: outcome.costMicros };
     if (outcome.kind === "none") return { outcome: "none", costMicros: outcome.costMicros };
     const at = deps.now();
     try {
@@ -362,7 +375,7 @@ export class ClipMotions {
       if (outcome.error.code === "AUTH_INVALID") deps.markKeyRejected(ready.key);
       throw new EngineFailure(outcome.error);
     }
-    this.#stillThere(ready.library, avatarId);
+    if (this.#goneAfter(ready.library, avatarId, outcome.costMicros)) return { outcome: "none", costMicros: outcome.costMicros };
     if (outcome.kind === "none") return { outcome: "none", costMicros: outcome.costMicros };
     if (outcome.kind === "rejected") return { outcome: "rejected", problems: outcome.problems, costMicros: outcome.costMicros };
     // The engine cuts the label from his words (`ownIdeaLabel`); the item keeps that label and the English text, never the idea.
