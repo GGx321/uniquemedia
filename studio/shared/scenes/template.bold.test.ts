@@ -42,8 +42,9 @@ describe("the legwear list follows the slot's level", () => {
     expect(templateSentence(slot("ordinary", { legwear: BLACK }), { key: KEYS[0] as string })).toBeNull();
   });
 
+  // 5a.4 (S5.BA2, 2026-10-26, Q-A2): the cotton is plain underwear now, still off the bold list.
   test("stockings on a bold slot whose outfit is cotton render nothing: the bold list goes with the satin and the lingerie", () => {
-    expect(templateSentence(slot("bold", { legwear: BLACK, outfit: "cotton pajama shorts and a tee" }), { key: KEYS[0] as string })).toBeNull();
+    expect(templateSentence(slot("bold", { legwear: BLACK, outfit: "a tee and cotton panties" }), { key: KEYS[0] as string })).toBeNull();
   });
 
   test("the ordinary list's socks on a bold slot render nothing: a bold slot reads the bold list", () => {
@@ -62,13 +63,24 @@ describe("the coverage sentence", () => {
     expect(text.split(LACE)).toHaveLength(2);
   });
 
+  // 5a.4 (S5.BA2, 2026-10-26, r2.2 P3): the sheet moment pulls the sheet up instead of holding it, and says P-BA V2's «pulled up» sentence.
   test("a moment's coverage is the one a pinned outfit with none takes", () => {
-    const text = templateSentence(slot("bold", { location: "her bed", activity: "lies holding the sheet to her chest", shot: "selfie", capture: "above", outfit: "only the white bedsheet" }), { key: KEYS[0] as string }) as string;
-    expect(text.endsWith(" The white sheet is held up to her chest and fully covers her breasts and her hips.")).toBe(true);
+    const text = templateSentence(slot("bold", { location: "her bed", activity: "lies with the sheet up to her chest", shot: "selfie", capture: "above", outfit: "only the white bedsheet" }), { key: KEYS[0] as string }) as string;
+    expect(text.endsWith(" The white sheet is pulled up to her chest and fully covers her breasts and her hips.")).toBe(true);
   });
 
+  // r2.2 P3: on `above` her near hand holds the phone and the capture line says her other hand is free and holds nothing, so the sentence names no hand holding the sheet.
+  test("the sheet moment on a frame from above says no hand that holds the sheet", () => {
+    for (const key of KEYS) {
+      const text = templateSentence(slot("bold", { location: "her bed", activity: "lies with the sheet up to her chest", shot: "selfie", capture: "above", outfit: "only the white bedsheet" }), { key }) as string;
+      expect(text).not.toBeNull();
+      expect({ key, holds: /\bhold(?:s|ing)?\b|\bher hands?\b/.test(text) }).toEqual({ key, holds: false });
+    }
+  });
+
+  // 5a.4 (Q-A2): every outfit of the nightwear bank is on Seedream with its coverage now, so the row is «Дом»'s, an outfit with no coverage on a moment with none.
   test("an outfit with no coverage and a moment with none add nothing: the sentence ends as a sentence of the template does", () => {
-    const text = templateSentence(slot("ordinary", { outfit: "cotton pajama shorts and a tee" }), { key: KEYS[0] as string }) as string;
+    const text = templateSentence({ category: "home", location: "her bedroom", activity: "sits on the edge of the bed", outfit: "a crop top and cotton pajama shorts", shot: "friend", capture: "timer", pose: "front" }, { key: KEYS[0] as string }) as string;
     expect(text.endsWith(".")).toBe(true);
     expect(text.split(". ")).toHaveLength(1);
   });
@@ -91,6 +103,6 @@ describe("the coverage sentence", () => {
 
   test("the nightwear bank has the outfits the tests above name", () => {
     const outfits = BANKS.nightwear.outfits.map((o) => o.text);
-    for (const name of [SATIN, "a black lace bra and panties", "only the white bedsheet", "cotton pajama shorts and a tee"]) expect(outfits).toContain(name);
+    for (const name of [SATIN, "a black lace bra and panties", "only the white bedsheet", "a tee and cotton panties"]) expect(outfits).toContain(name);
   });
 });

@@ -17,11 +17,8 @@ export { CUES, GAZE, HAIRSTYLES };
 
 export const BANKS: Readonly<Record<BankCategory, CategoryBank>> = { home: HOME, travel: TRAVEL, photoshoot: PHOTOSHOOT, glamour: GLAMOUR, fitness: FITNESS, nightwear: NIGHTWEAR, beach: BEACH };
 
-/**
- * 5a.4 (S5.BA2): the shipped «Смелая» banks held to the 5a.4 rules as well (banks/schema.ts `boldAnyProblems`): beach, whose places are water places. «Ночнушки и бельё» joins with its
- * always-underwear redesign (Q-A2); until then it keeps the 5a.3 rules alone.
- */
-const BOLD_ANY_KIND: Readonly<Partial<Record<BankCategory, BoldAnyKind>>> = { beach: "beach" };
+/** 5a.4 (S5.BA2): the shipped «Смелая» banks are held to the 5a.4 rules as well (banks/schema.ts `boldAnyProblems`): beach, whose places are water places, and «Ночнушки и бельё», always underwear (Q-A2). */
+const BOLD_ANY_KIND: Readonly<Partial<Record<BankCategory, BoldAnyKind>>> = { nightwear: "nightwear", beach: "beach" };
 
 /** What `validateBanks` checks; each part defaults to the shipped bank. */
 export interface BankInput {

@@ -171,7 +171,7 @@ describe("the tier table (r2.2 P6)", () => {
     ["a cotton bra and briefs", "ordinary"],
     ["a black bra and briefs", "ordinary"],
     ["a black bra and jeans", "ordinary"],
-    ["a crop top, panties and jeans", "ordinary"],
+    ["a crop top with panties and jeans", "ordinary"],
     ["a sports bra and seamless briefs", "ordinary"],
     ["a black bikini", "flirty"],
     ["bikini bottoms and a sweatshirt", "flirty"],

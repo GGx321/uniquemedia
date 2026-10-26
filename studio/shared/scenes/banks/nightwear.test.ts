@@ -1,16 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import type { Capture } from "../captures";
-import { boldWordsIn, lingerieWordsIn } from "./boldRules";
+import { lingerieWordsIn } from "./boldRules";
 import { AWAY_ACTION_WORDS, unfabricBottomsIn, WALKS_AWAY_WORDS } from "../words";
 import { NIGHTWEAR } from "./nightwear";
-import { boldBankProblems, categoryBankProblems } from "./schema";
+import { boldAnyProblems, boldBankProblems, categoryBankProblems } from "./schema";
 import type { Moment, Outfit } from "./types";
 
 // 5a.3 (S5.9b2, plan s5a3 §6.2 r3.1): «Ночнушки и бельё», a «Смелая» bank. At home she shoots herself: in the mirror (a third of the frames with the phone over her
-// face), at arm's length from above as she lies there, lying on her stomach on her bed, over her own shoulder, on a timer. Ordinary is cotton nightwear on the owner's
-// model; flirty is satin nightwear and bold is lingerie, both on Seedream at 2K, each with a positive coverage sentence. P-5a3 decided four items: the arm over her
-// chest with only lace panties was refused 6/6 and left; the bedsheet, the babydoll with stockings and the prone bra and briefs were drawn and stay; a legs frame wears
-// satin with stockings, never lingerie (#6). The bank text is the product: these rows pin it.
+// face), at arm's length from above as she lies there, lying on her stomach on her bed, over her own shoulder, on a timer. P-5a3 decided four items: the arm over her
+// chest with only lace panties was refused 6/6 and left; the bedsheet, the babydoll with stockings and the prone bra and briefs were drawn and stay; a bold legs frame
+// wears satin with stockings (#6). The bank text is the product: these rows pin it.
+// 5a.4 (S5.BA2, 2026-10-26, plan s5a4 §5.4, Q-A2): always underwear, every outfit on Seedream at 2K with its coverage sentence; the cotton nightwear on the owner's model left,
+// the tiers follow the tier table (r2.2 P6), the bedsheet is an implied cover and its moment pulls the sheet up instead of holding it (r2.2 P3), and plain underwear joins the
+// satin on a legs frame (P-BA L1). The rows below were edited for it, each named in the commit.
 
 const moments = NIGHTWEAR.places.flatMap((place) => place.moments.map((moment) => ({ place: place.name, moment })));
 const momentNamed = (text: string): { place: string; moment: Moment } | undefined => moments.find((m) => m.moment.text === text);
@@ -23,6 +25,11 @@ const SATIN_DRESS = "Her nightdress is opaque satin.";
 describe("«Ночнушки и бельё» validates as a «Смелая» bank", () => {
   test("it passes the «Смелая» schema", () => {
     expect(boldBankProblems(NIGHTWEAR)).toEqual([]);
+  });
+
+  // 5a.4 (S5.BA2): and the 5a.4 rules: always underwear (bold-floor), every outfit on Seedream, its tiers by the tier table, the bedsheet an implied cover.
+  test("it passes the 5a.4 rules", () => {
+    expect(boldAnyProblems(NIGHTWEAR, "nightwear")).toEqual([]);
   });
 
   test("the five's schema refuses it: its fields are «Смелая» only", () => {
@@ -83,7 +90,7 @@ describe("the moments and their levels (plan §6.2)", () => {
     ["her bed", "lies on her stomach, hips behind", ["prone"], "bold", "she lifts her hips a little"],
     ["her bed", "lies on her stomach, feet up", ["over-shoulder"], "bold", "her raised feet swing slowly"],
     ["her bed", "lies back with her arms up", ["above"], "bold", "she stretches slowly and smiles"],
-    ["her bed", "lies holding the sheet to her chest", ["above"], "bold", "she pulls the sheet a little higher"],
+    ["her bed", "lies with the sheet up to her chest", ["above"], "bold", "she pulls the sheet a little higher"],
     // The stand-in's variety sweep (boldBanks.sweep.test.ts): an ordinary or flirty plan needs more than one moment for each frame from above, prone and over her shoulder.
     ["her bed", "lies on her side, head on her hand", ["above", "timer"], undefined, "she smiles a little and looks away"],
     ["her bed", "rests her cheek on the pillow", ["above"], undefined, "she slowly closes her eyes"],
@@ -147,7 +154,19 @@ describe("the moments and their levels (plan §6.2)", () => {
   // bra and panties»). The covering moments pin every general outfit of the bank that is not bold, in the bank's order.
   test("a moment under the duvet or a blanket pins every general outfit but the bold ones", () => {
     const notBold = NIGHTWEAR.outfits.filter((o) => o.pinOnly !== true && o.level !== "bold").map((o) => o.text);
-    expect(notBold).toEqual(["an oversized sleep tee", "cotton pajama shorts and a tee", "a long cotton nightshirt", "silk pajamas", "a satin slip nightdress", "a satin midi nightdress", "a satin cami and satin shorts", "a short tied satin robe"]);
+    // 5a.4 (Q-A2, r2.2 P6): plain underwear in place of the cotton nightwear, and the lace sets, now flirty.
+    expect(notBold).toEqual([
+      "a tee and cotton panties",
+      "a cotton bra and briefs",
+      "a cami and cotton panties",
+      "a satin slip nightdress",
+      "a satin midi nightdress",
+      "a satin cami and satin shorts",
+      "a short tied satin robe",
+      "a black lace bra and panties",
+      "a white lace bra and panties",
+      "a cropped tee and cotton panties",
+    ]);
     for (const text of ["lies curled up under the duvet", "curls up with a blanket"]) expect(momentNamed(text)?.moment.outfits, text).toEqual(notBold);
   });
 
@@ -169,13 +188,14 @@ describe("the moments and their levels (plan §6.2)", () => {
     expect(momentNamed("opens the curtains")?.moment).toMatchObject({ twoHanded: true, gaze: "focus" });
   });
 
-  test("the prone selfies wear what drew: grey lounge shorts on the owner's model, satin or lingerie on Seedream", () => {
+  // 5a.4 (Q-A2): the tee and cotton panties on Seedream in place of the grey lounge shorts on the owner's model (Seedream drew prone lingerie: P-5a3 #4, P-NUDE C1, P-BA A1).
+  test("the prone selfies wear what drew: the tee and cotton panties, satin or lingerie, on Seedream", () => {
     for (const text of ["lies on her stomach, one arm out", "lies prone, glancing back", "lies prone, her cheek on her hand", "lies on her stomach, head tilted", "lies prone, ankles crossed behind", "lies prone, feet raised behind"]) {
-      expect(momentNamed(text)?.moment.outfits, text).toEqual(["grey jersey lounge shorts and a tee"]);
+      expect(momentNamed(text)?.moment.outfits, text).toEqual(["a tee and cotton panties"]);
     }
     expect(momentNamed("lies prone, her cheek on her hand")?.moment.handAtFace).toBe(true);
     expect(momentNamed("lies on her side, head on her hand")?.moment.handAtFace).toBe(true);
-    expect(momentNamed("lies prone, chin on her hand")?.moment).toMatchObject({ outfits: ["grey jersey lounge shorts and a tee", "a satin cami and satin shorts"], handAtFace: true });
+    expect(momentNamed("lies prone, chin on her hand")?.moment).toMatchObject({ outfits: ["a tee and cotton panties", "a satin cami and satin shorts"], handAtFace: true });
     // P-5a3 #4: Seedream drew it, and no phone in her hands.
     expect(momentNamed("lies on her stomach, hips behind")?.moment.outfits).toEqual(["a black bra and briefs"]);
     expect(momentNamed("lies on her stomach, feet up")?.moment.outfits).toEqual(["a black lace bra and panties"]);
@@ -188,14 +208,13 @@ describe("the P-5a3 decisions", () => {
     expect(texts).not.toMatch(/covers her chest with her arm|only lace panties/);
   });
 
-  test("the bedsheet stays (drawn 3/3): the moment pins it and carries the coverage", () => {
-    expect(momentNamed("lies holding the sheet to her chest")?.moment).toMatchObject({
-      outfits: ["only the white bedsheet"],
-      coverage: "The white sheet is held up to her chest and fully covers her breasts and her hips.",
-      level: "bold",
-      route: "seedream",
-    });
-    expect(outfitNamed("only the white bedsheet")).toEqual({ text: "only the white bedsheet", pinOnly: true, level: "bold", route: "seedream" });
+  // 5a.4 (r2.2 P3, P5; I5.74): an implied cover, a Studio-created avatar's only. On `above` her near hand holds the phone and her other hand is free, so the moment pulls the sheet up
+  // instead of holding it; P-BA V2 drew the sheet with the «pulled up» kept sentence, which every avatar says (no open item was probed).
+  test("the bedsheet stays (drawn 3/3): an implied cover, the moment pins it and carries the coverage, the kept one for every avatar", () => {
+    const SHEET = "The white sheet is pulled up to her chest and fully covers her breasts and her hips.";
+    expect(momentNamed("lies with the sheet up to her chest")?.moment).toMatchObject({ outfits: ["only the white bedsheet"], coverage: SHEET, openCoverage: SHEET, tier: "implied", level: "bold", route: "seedream" });
+    expect(outfitNamed("only the white bedsheet")).toEqual({ text: "only the white bedsheet", pinOnly: true, level: "bold", route: "seedream", tier: "implied" });
+    expect(moments.map((m) => m.moment.text)).not.toContain("lies holding the sheet to her chest");
   });
 
   test("the sheer babydoll over a lace set stays (drawn with thigh-high stockings), bold, with its coverage", () => {
@@ -208,13 +227,14 @@ describe("the P-5a3 decisions", () => {
     });
   });
 
-  test("a legs frame wears no lingerie (#6: stockings with lingerie on a legs frame was refused): cotton, or satin with the bold stockings", () => {
+  // 5a.4 (P-BA L1 drew the sports set on a legs frame): plain cotton underwear joins the satin; lace stays out, and the stockings still go with the satin only.
+  test("a legs frame wears no lace (#6: stockings with lingerie on a legs frame was refused): satin, the bold stockings on a bold slot, or plain cotton", () => {
     const legs = moments.filter((m) => m.moment.legs !== undefined);
     // S5.R4: 4 -> 7, so the six legs slots of a 20-photo run at «Ножки» 30 % never repeat one.
     expect(legs.length).toBe(7);
     for (const { moment } of legs) {
-      expect(moment.outfits, moment.text).toEqual(["cotton pajama shorts and a tee", "a long cotton nightshirt", "a satin cami and satin shorts", "a satin midi nightdress"]);
-      for (const outfit of moment.outfits ?? []) expect(lingerieWordsIn(outfit), outfit).toEqual([]);
+      expect(moment.outfits, moment.text).toEqual(["a satin cami and satin shorts", "a satin midi nightdress", "a short tied satin robe", "a tee and cotton panties", "a cami and cotton panties"]);
+      for (const outfit of moment.outfits ?? []) expect({ outfit, lace: /\blace\b/.test(outfit), lingerie: lingerieWordsIn(outfit).length > 0 && !/\bcotton\b/.test(outfit) }).toEqual({ outfit, lace: false, lingerie: false });
     }
   });
 });
@@ -244,49 +264,57 @@ test("no legs frame puts her feet or soles to the mirror: the composition the ow
   expect(moments.filter((m) => /\b(?:feet|soles)\b[^,]*\bmirror\b/.test(m.moment.text)).map((m) => m.moment.text)).toEqual([]);
 });
 
-describe("the outfits: cotton, satin, lingerie (plan §6.2)", () => {
-  test.each<[string, boolean, boolean]>([
-    ["an oversized sleep tee", true, false],
-    ["cotton pajama shorts and a tee", true, false],
-    ["a long cotton nightshirt", true, false],
-    ["silk pajamas", false, false],
-    ["grey jersey lounge shorts and a tee", true, true],
-  ])("ordinary, on the owner's model: «%s»", (text, showsLegs, pinOnly) => {
-    const outfit = outfitNamed(text);
-    expect(outfit).toEqual({ text, ...(showsLegs ? { showsLegs: true } : {}), ...(pinOnly ? { pinOnly: true } : {}) });
+// 5a.4 (S5.BA2, Q-A2, r2.2 P6): every outfit on Seedream with its kept coverage, in its tier by the tier table. The retags against 5a.3: the satin cami and shorts flirty -> plain;
+// the black and white lace sets bold -> flirty; the cropped tee and cotton panties, the black bra and briefs and the crop top (now «a crop top with panties and jeans») bold -> plain;
+// a new white lace bra and a thong at bold.
+describe("the outfits: plain underwear, lace and satin, the most revealing (plan s5a4 §5.4)", () => {
+  test.each<[string, string, boolean]>([
+    ["a tee and cotton panties", "Her tee covers her chest, and her panties fully cover her.", false],
+    ["a cotton bra and briefs", "Her bra fully covers her breasts and her briefs fully cover her.", false],
+    ["a cami and cotton panties", "Her cami covers her chest, and her panties fully cover her.", false],
+    ["a satin cami and satin shorts", "Her cami and shorts are opaque satin.", false],
+    ["a cropped tee and cotton panties", "Her tee covers her chest, and her panties fully cover her.", false],
+    ["a black bra and briefs", "Her bra fully covers her breasts and her briefs fully cover her.", true],
+  ])("plain, on Seedream: «%s»", (text, coverage, pinOnly) => {
+    expect(outfitNamed(text)).toEqual({ text, showsLegs: true, ...(pinOnly ? { pinOnly: true } : {}), route: "seedream", coverage });
   });
 
   test.each<[string, string]>([
     ["a satin slip nightdress", SATIN_DRESS],
     ["a satin midi nightdress", SATIN_DRESS],
-    ["a satin cami and satin shorts", "Her cami and shorts are opaque satin."],
     ["a short tied satin robe", "Her robe is tied and closed over her chest."],
-  ])("flirty, on Seedream (Grok refused satin 2/2): «%s»", (text, coverage) => {
+    ["a black lace bra and panties", LACE],
+    ["a white lace bra and panties", LACE],
+  ])("flirty, on Seedream: «%s»", (text, coverage) => {
     expect(outfitNamed(text)).toEqual({ text, showsLegs: true, level: "flirty", route: "seedream", coverage });
   });
 
-  test.each<[string, string, boolean]>([
-    ["a black lace bra and panties", LACE, false],
-    ["a white lace bra and panties", LACE, false],
-    ["a lace bodysuit", "Her bodysuit is lined and opaque over her chest and fully covers her hips.", false],
-    ["a cropped tee and cotton panties", "Her tee covers her chest, and her panties fully cover her.", false],
-    ["an open white shirt and panties", "The shirt's two edges fall over her chest and fully cover both breasts, leaving only a narrow gap of skin down the middle; her panties fully cover her.", false],
-    ["a black bra and briefs", "Her bra fully covers her breasts and her briefs fully cover her.", true],
-  ])("bold, on Seedream: «%s»", (text, coverage, pinOnly) => {
-    expect(outfitNamed(text)).toEqual({ text, showsLegs: true, ...(pinOnly ? { pinOnly: true } : {}), level: "bold", route: "seedream", coverage });
+  test.each<[string, string]>([
+    ["a lace bodysuit", "Her bodysuit is lined and opaque over her chest and fully covers her hips."],
+    ["an open white shirt and panties", "The shirt's two edges fall over her chest and fully cover both breasts, leaving only a narrow gap of skin down the middle; her panties fully cover her."],
+    ["a white lace bra and a thong", "The lace is lined and opaque: her bra fully covers her breasts and her thong fully covers her in front."],
+  ])("the most revealing, on Seedream: «%s»", (text, coverage) => {
+    expect(outfitNamed(text)).toEqual({ text, showsLegs: true, level: "bold", route: "seedream", coverage });
   });
 
-  test("pulling her jeans up over her panties pins a crop top and jeans, and the moment carries the coverage", () => {
-    expect(outfitNamed("a crop top and jeans")).toEqual({ text: "a crop top and jeans", pinOnly: true, level: "bold", route: "seedream" });
-    expect(momentNamed("pulls her jeans up over her panties")?.moment).toMatchObject({ outfits: ["a crop top and jeans"], coverage: "Her panties fully cover her bottom, and her crop top covers her chest." });
+  test("pulling her jeans up over her panties pins a crop top with panties and jeans, and the moment carries the coverage", () => {
+    expect(outfitNamed("a crop top with panties and jeans")).toEqual({ text: "a crop top with panties and jeans", pinOnly: true, route: "seedream" });
+    expect(momentNamed("pulls her jeans up over her panties")?.moment).toMatchObject({ outfits: ["a crop top with panties and jeans"], coverage: "Her panties fully cover her bottom, and her crop top covers her chest.", level: "bold" });
   });
 
-  test("no other outfit is in the bank", () => {
-    expect(NIGHTWEAR.outfits).toHaveLength(18);
+  test("no other outfit is in the bank, and the cotton nightwear on the owner's model left it", () => {
+    expect(NIGHTWEAR.outfits).toHaveLength(17);
+    const texts = NIGHTWEAR.outfits.map((o) => o.text);
+    for (const gone of ["an oversized sleep tee", "cotton pajama shorts and a tee", "a long cotton nightshirt", "silk pajamas", "grey jersey lounge shorts and a tee", "a crop top and jeans"]) expect(texts).not.toContain(gone);
   });
 
-  test("every Seedream outfit names the «Смелая» vocabulary or is bold, and the cotton ones name none of it", () => {
-    for (const outfit of NIGHTWEAR.outfits) expect({ text: outfit.text, seedream: outfit.route === "seedream" }).toEqual({ text: outfit.text, seedream: boldWordsIn(outfit.text).length > 0 || outfit.level === "bold" });
+  test("every outfit is drawn on Seedream (Q-A2), and the general draw keeps four of the most revealing", () => {
+    for (const outfit of NIGHTWEAR.outfits) expect({ text: outfit.text, route: outfit.route }).toEqual({ text: outfit.text, route: "seedream" });
+    expect(NIGHTWEAR.outfits.filter((o) => o.pinOnly !== true && o.level === "bold").map((o) => o.text)).toEqual(["a lace bodysuit", "a sheer babydoll over a lace set", "an open white shirt and panties", "a white lace bra and a thong"]);
+  });
+
+  test("no outfit says an open coverage: P-BA drew the lingerie classes without their coverage (A1, A3)", () => {
+    expect(NIGHTWEAR.outfits.filter((o) => o.openCoverage !== undefined).map((o) => o.text)).toEqual([]);
   });
 });
 
@@ -298,7 +326,7 @@ test("the stockings go with Seedream outfits only, never cotton; on a legs momen
   expect(goWith.filter((t) => /cotton/.test(t))).toEqual([]);
   for (const { moment } of moments.filter((m) => m.moment.legs !== undefined)) {
     const pinned = (moment.outfits ?? []).filter((o) => goWith.includes(o));
-    expect({ text: moment.text, pinned }).toEqual({ text: moment.text, pinned: ["a satin cami and satin shorts", "a satin midi nightdress"] });
+    expect({ text: moment.text, pinned }).toEqual({ text: moment.text, pinned: ["a satin cami and satin shorts", "a satin midi nightdress", "a short tied satin robe"] });
   }
 });
 

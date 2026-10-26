@@ -9,6 +9,9 @@ useNativeGlobals();
 // 5a.3 (S5.9c, plan s5a3 §15.4): the golden of the two «Смелая» banks' plans, in its own file beside the five's (planner.custom.test.ts, frozen to main 3a9cd498). Each entry hashes the
 // plans of a category set at a level, for six seeds, five sizes and the three legs shares, so a change to the bold draw, to a bank's order or to a stream shows up as a changed hash.
 //
+// 2026-10-26 (5a.4, S5.BA2, plan s5a4 §7.4): the six hashes that hold nightwear (nightwear and nightwear,beach at the three levels) were re-pinned for Q-A2, nightwear always
+// underwear on Seedream, its tier retags (r2.2 P6) and its reworded sheet moment (r2.2 P3); the three beach hashes are byte for byte the ones before.
+//
 // REGENERATE deliberately, never to turn a red test green: `PLANNER_BOLD_WRITE_GOLDEN=1 bun test --no-env-file studio/engine/scenes/planner.boldGolden.test.ts`, then READ the diff of
 // fixtures/planner-bold-s5-9c.json: every changed hash is a plan that moved.
 
