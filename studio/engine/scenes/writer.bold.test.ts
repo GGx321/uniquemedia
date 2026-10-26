@@ -226,7 +226,8 @@ describe("the bold system prompt (§5.3.3, r2.2 P1–P3)", () => {
 
   // S5.BA4b (P-BW): «paper bag» in 38 of 140 sentences, against the owner's «no papers»; S5.BA4c (P-BW2): napkins, receipts, tickets, cards and coasters in 34 of 152.
   test("its detail of the world varies from slot to slot, from the view, a sound, flowers or a souvenir, and is never paper of any kind", () => {
-    expect(bold()).toContain("a different one in each slot, such as the view through her window, the sound of the city below, flowers in a glass or a souvenir she brought back; no paper of any kind (no napkin, receipt, ticket, card).");
+    // S5.BA4d (P-BW3): «paper bag» came back 19 times once the list no longer named it.
+    expect(bold()).toContain("a different one in each slot, such as the view through her window, the sound of the city below, flowers in a glass or a souvenir she brought back; no paper of any kind (no paper bag, napkin, receipt, ticket or card).");
     expect(bold()).not.toContain("never a paper bag");
     expect(bold()).not.toContain("such as the view or something she brought back");
   });
@@ -1017,8 +1018,8 @@ describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the b
   // 3 961 with today's ten reasons (S5.BA4); 3 185 with every bold reason; 2 954 since label-word and public-place name the words they found (round 2);
   // 2 641 with S5.BA4b's order rule, the world join and the varied detail (P-BW); 2 542 with its outfit-missing reason and the bold re-ask; S5.BA4c (P-BW2):
   // 2 455 with the place's preposition and the time kept out of the moment; 2 432 with the hands rule; 2 304 with no paper of any kind and «tiny» / «little»;
-  // 2 166 with the bare-place reason (P-BW3).
-  const MARGIN_PRINTED = 2_166;
+  // 2 166 with the bare-place reason (P-BW3); S5.BA4d: 2 153 with the paper bag named.
+  const MARGIN_PRINTED = 2_153;
   const CEILING = WRITER_BOLD_CALL.inputTokens;
   const FIRST_INDEX = 100 - WRITER_BOLD_CALL.slotsPerCall + 1;
 
