@@ -137,6 +137,20 @@ describe("a routed custom scene", () => {
     }
   });
 
+  // Round 2, L-9. DECISION: a water scene whose category has no water place left (the category was regenerated) keeps the world it has, rather than leaving for «rooms» with underwear: the scene stays the
+  // swimwear scene the owner reviewed and nothing is swapped under him. It never takes a dry world, so swimwear is never set in a cafe.
+  test("a water scene keeps its world when the category has no water place left, and never takes a dry one", () => {
+    const water = slots.filter(waterBank);
+    expect(water.length).toBeGreaterThan(0);
+    const dry: Pool = { ...PARIS, locations: PARIS.locations.filter((l) => !isWaterPlaceName(l.name)) };
+    for (const slot of water) {
+      for (let k = 1; k <= 3; k++) {
+        const out = redrawSlot({ seed: 77, k, slot, pool: poolOfSlot(slot, true) ?? PARIS, worldPool: dry, avoid: NO_AVOID, impliedNudity: true });
+        expect({ water: waterBank(out), world: out.world }).toEqual({ water: true, world: slot.world });
+      }
+    }
+  });
+
   test("an imported avatar's redraw holds no implied cover", () => {
     for (let k = 1; k <= 20; k++) for (const slot of slots) expect(isImplied(redrawSlot({ seed: 5, k, slot, pool: poolOfSlot(slot, true) ?? PARIS, worldPool: PARIS, avoid: NO_AVOID }))).toBe(false);
   });

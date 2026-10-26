@@ -70,9 +70,9 @@ function withWorld(input: RedrawInput, drawn: PlanSlot): PlanSlot {
   if (input.worldPool === undefined) return input.slot.world === undefined ? drawn : { ...drawn, world: input.slot.world };
   const places = input.worldPool.locations.map((l) => l.name);
   const wet = input.pool.locations.some((l) => l.name === drawn.location && l.water === true);
-  const kind = wet ? places.filter(isWaterPlaceName) : places;
-  const worlds = kind.length > 0 ? kind : places;
-  if (worlds.length === 0) return drawn;
+  const worlds = wet ? places.filter(isWaterPlaceName) : places;
+  // L-9: a water scene never takes a dry world (swimwear in a cafe): with no water place left in the category it keeps the world it has.
+  if (worlds.length === 0) return input.slot.world === undefined ? drawn : { ...drawn, world: input.slot.world };
   const rng = makeRng(subSeed(input.seed, `redraw-world:${drawn.slotIndex}:${input.k}`));
   return { ...drawn, world: rngPick(rng, preferred(worlds, (w) => w, new Set<string>(), input.slot.world ?? "")) };
 }
