@@ -568,7 +568,8 @@ const WHOLE_NUMBER_WORD = new RegExp(`^(?:${NUMBER_WORDS_ALT})$`, "iu");
  */
 export function namesNumberWord(text: string): boolean {
   const forms = descriptorForms(text);
-  if (NUMBER_WORD.test(`${forms.text}|${forms.joined}`)) return true;
+  // Round 3 (N8): a word split by hyphens into parts too long for the fragment join («sixt-e-en») is read joined whole, as the youth words read it.
+  if (NUMBER_WORD.test(`${forms.text}|${forms.joined}|${dehyphenated(normalise(text))}`)) return true;
   const words = normalise(text).match(/\p{L}+/gu) ?? [];
   return words.some((word, i) => i + 1 < words.length && WHOLE_NUMBER_WORD.test(`${word}${words[i + 1] ?? ""}`));
 }

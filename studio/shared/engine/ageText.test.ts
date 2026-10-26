@@ -910,7 +910,7 @@ describe("an age in Roman numerals or in decades (S5.FU-AGE round 2, M3)", () =>
 
 // S5.WC2c round 2 (H1, the review): the clip motion check reads numbers and youth words with these.
 describe("namesNumberWord", () => {
-  test.each(["sixteen", "sixteenth", "sixteenish", "Fifteenth", "twenty-one", "twenties", "forty", "ninetieth", "eleventh", "a dozen", "s i x t e e n", "sixt een", "fif teen", "seven teen"])(
+  test.each(["sixteen", "sixteenth", "sixteenish", "Fifteenth", "twenty-one", "twenties", "forty", "ninetieth", "eleventh", "a dozen", "s i x t e e n", "sixt een", "fif teen", "seven teen", "sixt-e-en", "fif-te-en", "se-ven-teen"])(
     "reads %p",
     (text) => {
       expect(namesNumberWord(`she slowly turns, ${text}`)).toBe(true);

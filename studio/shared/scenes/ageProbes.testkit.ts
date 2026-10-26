@@ -267,6 +267,9 @@ export const DECADES: AgeProbes = {
     "she slowly undresses, a decade old",
     "she slowly undresses, a d e c a d e and a half",
     "she slowly undresses, a dozen and a half",
+    // Round 3 (N8): a number word split by hyphens into parts the neighbour join does not read.
+    "she slowly undresses, sixt-e-en",
+    "she slowly undresses, fif-te-en",
   ],
   ideas: ["медленно раздевается, ей полтора десятка", "медленно раздевается, полтора десятилетия"],
   passes: ["she slowly turns, decadent and calm"],
