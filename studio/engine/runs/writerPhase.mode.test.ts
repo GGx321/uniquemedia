@@ -230,3 +230,25 @@ describe("the writer phase asks each chunk in its own mode and reserves what the
     expect(reserves).toEqual([37_500]);
   });
 });
+
+describe("the bold mode's reasoning effort (P-BA chunk 25: effort none wrote 18 of 25 slots clean of the core faults, low 0, the default 10)", () => {
+  test("a bold chunk is sent at effort «none»; an ordinary one at today's «low», byte for byte", async () => {
+    const slots = [routed(1), unrouted(2)];
+    const { net, params } = await runPhase([answering(() => SENTENCE.routed), answering(() => SENTENCE.unrouted)], phaseOf(slots, [[1], [2]]));
+    expect(net.calls.map((c) => c.json().reasoning)).toEqual([{ effort: "none" }, { effort: "low" }]);
+    expect(params.map((p) => p.reasoningEffort)).toEqual(["none", "low"]);
+  });
+
+  test("the effort does not lower the reserve: the bold call still prices its 3 000 reasoning tokens (R stays), and sends none of them", async () => {
+    const { net, params, reserves } = await runPhase([answering(() => SENTENCE.routed)], phaseOf([routed(1)], [[1]]));
+    expect(params.map((p) => p.reasoningTokens)).toEqual([3_000]);
+    expect(reserves).toEqual([48_750]);
+    expect(net.calls.map((c) => c.json().max_tokens)).toEqual([8_000]);
+    expect(JSON.stringify(net.calls.map((c) => c.json()))).not.toContain("reasoningTokens");
+  });
+
+  test("the effort is the bold mode's, so a hand-made bold call shape cannot be sent at another effort", () => {
+    expect(plannedWriterConfig(categoryLabelOf([])).bold?.reasoningEffort).toBe("none");
+    expect("reasoningEffort" in plannedWriterConfig(categoryLabelOf([]))).toBe(false);
+  });
+});

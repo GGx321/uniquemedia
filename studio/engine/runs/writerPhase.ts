@@ -4,7 +4,7 @@ import { writerCallOf, type WriterMode } from "../money/estimate";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import { truncate } from "../openrouter/transport";
-import type { ChatMessage, ChatResult, OpenRouterClient } from "../openrouter/types";
+import type { ChatMessage, ChatResult, OpenRouterClient, ReasoningEffort } from "../openrouter/types";
 import { emptyAnswerRefusal, plainSentence, readWriterAnswer, writerRefusalText, WRITER_JSON_SCHEMA, type PlanSlot, type Pose, type ReadableSlot, type Shot, type SlotRepair, type WriterRefusal } from "../scenes";
 import type { CategoryLabelOf } from "../scenes/categories";
 import { boldReader, writerBoldMessages, writerMessages, writerModeOf } from "../scenes/writer";
@@ -93,6 +93,8 @@ export interface WriterAsking<S extends ReadableSlot> {
   call: WriterCallShape;
   messages: (slots: readonly S[], feedback: WriterRefusal | undefined) => ChatMessage[];
   read?: (content: string, slots: readonly S[]) => PhaseRead;
+  /** The reasoning effort the request is sent at (`reasoning.effort`); absent: «low», what every writer request has always been sent at. */
+  reasoningEffort?: ReasoningEffort;
 }
 
 /**
@@ -115,9 +117,20 @@ export function plannedWriterConfig(labelOf: CategoryLabelOf, impliedNudity = fa
     call: writerCallShape("ordinary"),
     messages: (slots, feedback) => writerMessages(slots, feedback, labelOf),
     plain: (slot) => plainSentence(slot, impliedNudity),
-    bold: { isBold: (slot) => writerModeOf([slot]) === "bold", call: writerCallShape("bold"), messages: (slots, feedback) => writerBoldMessages(slots, feedback), read: boldReader(impliedNudity) },
+    bold: {
+      isBold: (slot) => writerModeOf([slot]) === "bold",
+      call: writerCallShape("bold"),
+      messages: (slots, feedback) => writerBoldMessages(slots, feedback),
+      read: boldReader(impliedNudity),
+      // P-BA's 25-slot chunk (2026-10-26, one sample each): effort «none» wrote 18 of 25 slots clean of the core faults, the default 10, «low» 0 (it dropped the
+      // outfit). The call's reasoning allowance stays priced (WRITER_BOLD_CALL's 3 000), so the reserve does not move; the ordinary mode keeps «low».
+      reasoningEffort: BOLD_REASONING_EFFORT,
+    },
   };
 }
+
+/** The reasoning effort a bold-mode writer request is sent at (the probe P-BA's best of three); an ordinary one keeps today's «low». */
+export const BOLD_REASONING_EFFORT: ReasoningEffort = "none";
 
 /** A run's phase asks about its plan's slots; a scene set's review write (CS.4b) may ask about own scenes, which carry only what the answer reader needs. */
 export interface WriterPhase<S extends ReadableSlot = PlanSlot> {
@@ -253,7 +266,7 @@ async function ask<S extends ReadableSlot>(deps: WriterPhaseDeps, phase: WriterP
       maxTokens: asking.call.maxTokens,
       inputTokens: asking.call.inputTokens,
       ...(asking.call.reasoningTokens === undefined ? {} : { reasoningTokens: asking.call.reasoningTokens }),
-      reasoningEffort: "low",
+      reasoningEffort: asking.reasoningEffort ?? "low",
     });
   } finally {
     release();
