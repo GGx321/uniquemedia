@@ -581,8 +581,11 @@ export function namesNumberWord(text: string): boolean {
  */
 /** The numeral itself: two letters or more, of «i», «v» and «x» alone. */
 export const ROMAN_NUMERAL_WORD = /^[ivx]{2,}$/;
-/** An age's tail and an ordinal's or a plural's ending (round 2, the security review), taken off a word's end again and again: «xviyearsold» → xvi, «xviyo» → xvi. */
-const NUMERAL_TAIL = /(?:years|year|yrs|yr|yo|y|old|aged|age|st|nd|rd|th|s)$/;
+/**
+ * An age's tail and an ordinal's or a plural's ending (round 2, the security review; round 3, N7: «-teen», «-ish»), taken off a word's end again and again: «xviyearsold» →
+ * xvi, «xviyo» → xvi, «xviish» → xvi. Never «e»: «vie» is a word.
+ */
+const NUMERAL_TAIL = /(?:years|year|yrs|yr|yo|y|old|aged|age|teen|ish|st|nd|rd|th|s)$/;
 /** A word lower-cased with its tails taken off, as long as two letters stay: «video», «villa», «vintage» («vint»), «ivory» («ivor») are left no numeral. */
 export function romanNumeralCore(word: string): string {
   let core = word.toLowerCase();

@@ -210,6 +210,9 @@ export const ROMAN_FAIL_CLOSED: AgeProbes = {
     "she slowly undresses, VIIIIIIIIIII",
     "she slowly undresses, IIIIIIIIIIIIIIII",
     "she slowly undresses, xvixxxxx",
+    // Round 3 (N7): «-ish» and «-teen» are an age's tails too.
+    "she slowly undresses, xviish",
+    "she slowly undresses, xviteen",
   ],
   ideas: [
     "медленно раздевается \u2014 XVI",
