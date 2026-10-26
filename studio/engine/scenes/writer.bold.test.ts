@@ -224,11 +224,17 @@ describe("the bold system prompt (§5.3.3, r2.2 P1–P3)", () => {
     expect(bold()).toContain('Never join her location and the world with "at", "in" or "on" ("her room at the restaurant"): the world shows only as its city, its boat, its view or something she brought back.');
   });
 
-  // S5.BA4b (P-BW): «paper bag» in 38 of 140 sentences, against the owner's «no papers».
-  test("its detail of the world varies from slot to slot and is never a paper bag", () => {
-    expect(bold()).toContain("a different one in each slot");
-    expect(bold()).toMatch(/never a paper bag/);
+  // S5.BA4b (P-BW): «paper bag» in 38 of 140 sentences, against the owner's «no papers»; S5.BA4c (P-BW2): napkins, receipts, tickets, cards and coasters in 34 of 152.
+  test("its detail of the world varies from slot to slot, from the view, a sound, flowers or a souvenir, and is never paper of any kind", () => {
+    expect(bold()).toContain("a different one in each slot, such as the view through her window, the sound of the city below, flowers in a glass or a souvenir she brought back; no paper of any kind (no napkin, receipt, ticket, card).");
+    expect(bold()).not.toContain("never a paper bag");
     expect(bold()).not.toContain("such as the view or something she brought back");
+  });
+
+  // S5.BA4c (P-BW2): «a tiny croissant» was refused by the youth rule, which refuses the whole answer: 25 slots re-asked for one harmless word.
+  test("a bold line of its own keeps «tiny» and «little» out; the youth rule itself stays verbatim", () => {
+    expect(lines(bold())).toContain('- Never write "tiny" or "little", of her or of anything.');
+    expect(lines(bold())).toContain("- She is a grown adult woman; no children or minors anywhere in the scene, and never a word that suggests she or anyone else is not an adult.");
   });
 
   test("it says the shot, the pose and the time of day are never written, nor the light, the world or the slot (the probe's label leaks)", () => {
@@ -964,8 +970,8 @@ describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the b
   const MARGIN = 250;
   // 3 961 with today's ten reasons (S5.BA4); 3 185 with every bold reason; 2 954 since label-word and public-place name the words they found (round 2);
   // 2 641 with S5.BA4b's order rule, the world join and the varied detail (P-BW); 2 542 with its outfit-missing reason and the bold re-ask; S5.BA4c (P-BW2):
-  // 2 455 with the place's preposition and the time kept out of the moment; 2 432 with the hands rule.
-  const MARGIN_PRINTED = 2_432;
+  // 2 455 with the place's preposition and the time kept out of the moment; 2 432 with the hands rule; 2 304 with no paper of any kind and «tiny» / «little».
+  const MARGIN_PRINTED = 2_304;
   const CEILING = WRITER_BOLD_CALL.inputTokens;
   const FIRST_INDEX = 100 - WRITER_BOLD_CALL.slotsPerCall + 1;
 
