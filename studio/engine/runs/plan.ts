@@ -103,11 +103,13 @@ export function planRoute(plan: { models: { image: string; imageQuality?: ImageQ
 }
 
 /**
- * What a run hands its writer phase: the call shape (exactly money/estimate.ts's
+ * The ordinary half of a run's writer: the call shape (exactly money/estimate.ts's
  * WRITER_CALL ceilings and attempts, the one source of truth the estimate prices)
  * and the messages builder, naming each slot's category by the plan's own
- * snapshot (never the category library). Everything else of the phase is the
- * run's; a scene set (phase 2) passes its own.
+ * snapshot (never the category library).
+ *
+ * 5a.4 (S5.BA5): a run's job hands its writer phase the planned writer of both modes (runs/writerPhase.ts `plannedWriterConfig`, runs/runJob.ts), whose ordinary mode is this,
+ * byte for byte; the phase tests keep this as today's ordinary call and messages.
  */
 export function runWriterConfig(snapshots: readonly CategorySnapshot[] | undefined): Pick<WriterPhase, "call" | "messages"> {
   const labelOf = categoryLabelOf(snapshots ?? []);

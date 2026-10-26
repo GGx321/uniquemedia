@@ -104,8 +104,12 @@ function heldOf(set: StoredSceneSet): string[] {
 }
 
 /** The template's side for a write's planned slots, on the write's own key: what the job hands the writer phase, and what the estimate counts. */
-function localOf(set: StoredSceneSet, record: ReviewWriteRecord, slots: readonly PlanSlot[]): (slot: PlanSlot) => string | null {
-  return localSentences({ slots, keyOf: (slot) => `${set.sceneSetId}:${slot.slotIndex}:${record.k}`, snapshots: snapshotsFor(set, record), seen: heldOf(set), distinct: true });
+/**
+ * 5a.4 (S5.BA5, I5.74): `impliedNudity` is the avatar's origin, the coverage a «Смелая» sentence ends with: the job passes the avatar's; the counts below (which scenes go to the
+ * model, in which mode) say false, the answer being the same whatever the origin.
+ */
+function localOf(set: StoredSceneSet, record: ReviewWriteRecord, slots: readonly PlanSlot[], impliedNudity: boolean): (slot: PlanSlot) => string | null {
+  return localSentences({ slots, keyOf: (slot) => `${set.sceneSetId}:${slot.slotIndex}:${record.k}`, snapshots: snapshotsFor(set, record), seen: heldOf(set), distinct: true, impliedNudity });
 }
 
 /**
@@ -116,7 +120,7 @@ function localOf(set: StoredSceneSet, record: ReviewWriteRecord, slots: readonly
 export function modelScenesOf(set: StoredSceneSet, record: ReviewWriteRecord): number {
   const asked = askedOf(set, record);
   if (asked.kind === "ideas") return asked.slots.length;
-  const local = localOf(set, record, asked.slots);
+  const local = localOf(set, record, asked.slots, false);
   return asked.slots.filter((slot) => local(slot) === null).length;
 }
 
@@ -127,7 +131,7 @@ export function modelScenesOf(set: StoredSceneSet, record: ReviewWriteRecord): n
 export function writeModeOf(set: StoredSceneSet, record: ReviewWriteRecord): WriterMode {
   const asked = askedOf(set, record);
   if (asked.kind === "ideas") return "ordinary";
-  const local = localOf(set, record, asked.slots);
+  const local = localOf(set, record, asked.slots, false);
   return writerModeOf(asked.slots.filter((slot) => local(slot) === null));
 }
 
@@ -170,7 +174,7 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
     // 5a.2: the code template writes every scene it can, at $0; the model is asked only about the rest. The draw key is the write's own (`…:k`), and a
     // sentence another scene of the set already holds is redrawn.
     // A target's own old text counts too: a rewrite never hands back the sentence the scene already has.
-    const local = localOf(set, record, asked.slots);
+    const local = localOf(set, record, asked.slots, deps.impliedNudity === true);
     // 5a.4 (S5.BA4, r2.1 L3): the compose writer in both modes, named by the write's snapshots: a write whose scenes for the model hold a «Смелая» frame is asked,
     // priced and reserved in bold mode. S5.6d: a planned scene the model could not write in the write's two attempts takes the plain sentence of its (possibly
     // redrawn) place (`plain`).

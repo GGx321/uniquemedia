@@ -3602,6 +3602,8 @@ export class Engine {
           warn: (line) => console.warn(line),
           // 5a.2: the hair line reads the avatar's stored hair length each time the prompts are assembled.
           hairLengthOf: (avatarId) => hairLengthOf(run.library.getAvatar(avatarId)?.traits ?? {}),
+          // 5a.4 (S5.BA5, plan s5a4 I5.74): the coverage of the run's «Смелая» sentences by the avatar's origin, read when they are written.
+          impliedNudityOf: (avatarId) => run.library.studioCreated(avatarId),
         },
         { plan, jobId: run.jobId, descriptor: run.descriptor, signal: run.signal, softStop: run.softStop },
       );

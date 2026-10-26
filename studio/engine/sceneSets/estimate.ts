@@ -94,7 +94,8 @@ export function writeEstimate(priced: PricedBook, set: StoredSceneSet, ledger: L
   if (asked.length === 0) return { expectedMicros: 0, worstMicros: 0, prices: priced.book.source, pricesAsOf: priced.asOf };
   // 5a.4 (S5.BA5, r2.1 L3; BA5a review L4): each chunk in the mode its job asks it in, `writerModeOf` over the scenes it sends the model (the very `setLocal` the job's
   // phase reads, S5.BA4): a chunk with a «Смелая» frame at the bold call, any other at the ordinary one.
-  const local = setLocal(set);
+  // Which scenes go to the model is the same whatever the avatar's origin (it changes only the coverage a sentence ends with).
+  const local = setLocal(set, 0, false);
   const slotOf = new Map(set.scenes.flatMap((scene) => (scene.origin === "planned" ? [[scene.sceneId, scene.slot] as const] : [])));
   const modeOf = (sceneIds: readonly number[]): WriterMode =>
     writerModeOf(

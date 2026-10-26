@@ -124,7 +124,8 @@ export async function runSceneWrite(deps: SceneWriteDeps, request: SceneWriteReq
       signal: request.signal,
       ...(request.stop === undefined ? {} : { stop: request.stop }),
       slots,
-      local: setLocal(set),
+      // 5a.4 (S5.BA5, I5.74): the template's sentences end with the coverage of the avatar's origin, as the bold reader's do.
+      local: setLocal(set, 0, deps.impliedNudity === true),
       chunks: [{ chunk: next.chunk.chunk, slotIndexes: next.sceneIds, attemptIds: next.chunk.attemptIds }],
       sentences: new Map(),
       writerDone: new Set(),

@@ -66,7 +66,8 @@ export function pendingChunks(set: StoredSceneSet, ledger: LedgerView | null): P
     const state = chunkState(set, chunk, ledger);
     const sceneIds = requestSceneIds(set, chunk);
     if (sceneIds.length === 0) continue;
-    local ??= setLocal(set);
+    // Which scenes the template can write is the same whatever the avatar's origin (it changes only the coverage a sentence ends with).
+    local ??= setLocal(set, 0, false);
     const modelScenes = sceneIds.filter((sceneId) => {
       const scene = set.scenes.find((s) => s.sceneId === sceneId);
       return !(scene?.origin === "planned" && local?.(scene.slot) != null);

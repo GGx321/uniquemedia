@@ -756,6 +756,8 @@ export class SceneSetService {
               await this.#announce(library, await update((current) => withReviewWriteClosed(current, k)));
             },
             progress,
+            // 5a.4 (S5.BA5, plan s5a4 I5.74): the coverage its «Смелая» sentences end with, by the avatar's origin.
+            impliedNudity: library.studioCreated(avatarId),
           },
           { k, jobId, scope, signal: job.signal, ...(stop === null ? {} : { stop }) },
         );
@@ -785,6 +787,8 @@ export class SceneSetService {
               await this.#announce(library, await update((current) => withChunkGivenUp(current, chunk, by)));
             },
             progress,
+            // 5a.4 (S5.BA5, plan s5a4 I5.74): the coverage its «Смелая» sentences end with, by the avatar's origin.
+            impliedNudity: library.studioCreated(avatarId),
           },
           { jobId, scope, signal: job.signal, ...(stop === null ? {} : { stop }) },
         );

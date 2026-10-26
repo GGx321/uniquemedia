@@ -10,18 +10,19 @@ import type { PriceBook } from "../money/prices";
 import { timeoutSignal, untilAborted, type TimeoutSignal } from "../money/timeoutSignal";
 import { truncate } from "../openrouter/transport";
 import type { BoldImageParams, ImageOk, ImageParams, ImageResult, OpenRouterClient, OpenRouterFetch } from "../openrouter/types";
-import { assembleRun, hairLinesOf, isOwnSlot, photoCategoryOf, plainSentence, roomPlaceOf, slotLookOf, type AssembledSlot } from "../scenes";
+import { assembleRun, hairLinesOf, isOwnSlot, photoCategoryOf, roomPlaceOf, slotLookOf, type AssembledSlot } from "../scenes";
 import type { HairLength } from "../../shared/scenes/banks/types";
 import { localSentences } from "../scenes/localSentences";
 import { slotKeyOf } from "../scenes/phoneLook";
 import { classifyFailure } from "./failures";
 import { foldRun, isBoldSlot, nextAttemptId, paidAttempts, RunEventSchema, type AttemptOutcome, type LedgerView, type RunEvent, type RunState, type SlotEnd, type SlotState } from "./journal";
-import { BOLD_IMAGE_MODEL, boldRoute, RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, plannedSlots, planRoute, runWriterConfig, type RunPlan } from "./plan";
+import { BOLD_IMAGE_MODEL, boldRoute, RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, plannedSlots, planRoute, type RunPlan } from "./plan";
 import { boldPrompt } from "./boldPrompt";
 import type { CpuPool, NetworkPool, Release } from "./pools";
 import { withReferenceRetry } from "./faceBytes";
 import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaPrepareInput, type QaVerdict } from "./qa";
-import { runWriterPhase } from "./writerPhase";
+import { plannedWriterConfig, runWriterPhase } from "./writerPhase";
+import { categoryLabelOf } from "../scenes/categories";
 
 // T6: one job of a photo run — a fresh start or a resume, the same code.
 // It continues from the run's persisted state (journal.ts's fold of the
@@ -101,6 +102,11 @@ export interface RunJobDeps {
    * undefined for an avatar whose length is not stored: the prompts carry no hair line.
    */
   hairLengthOf?: (avatarId: string) => HairLength | undefined;
+  /**
+   * 5a.4 (S5.BA5, plan s5a4 I5.74): whether the avatar was created in Studio (the library's `studioCreated`), read when the sentences are written, so a resume reads it again. It
+   * picks the coverage every sentence of a «Смелая» frame ends with (the template's, the plain one's, the one the bold reader appends). Absent: false, the imported side.
+   */
+  impliedNudityOf?: (avatarId: string) => boolean;
   /** REFERENCE_TIMEOUT_MS unless a test says otherwise. */
   referenceTimeoutMs?: number;
   /** CANCELLED_GATE_TIMEOUT_MS unless a test says otherwise. */
@@ -389,6 +395,8 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
   const { deps, job, plan } = ctx;
   const ledger: LedgerView = { reserveOf: (id) => deps.budget.ledger.reserveOf(id), closeOf: (id) => deps.budget.ledger.closeOf(id) };
   const slots = plannedSlots(plan);
+  // 5a.4 (S5.BA5, I5.74): the avatar's origin, read now (fail-closed when the engine does not say).
+  const impliedNudity = deps.impliedNudityOf?.(plan.avatarId) === true;
   const written = await runWriterPhase(
     {
       chat: deps.chat,
@@ -408,15 +416,14 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
       // The writer only ever describes the planner's own slots; an own scene's sentence is already in the plan (and its plan has no chunks).
       slots,
       // 5a.2: the code template writes every slot whose place and moment the banks find by name; the rest go to the model at the chunk's reserved ids.
-      local: localSentences({ slots, keyOf: (slot) => slotKeyOf(plan.runId, slot.attemptIdBase), snapshots: plan.categories }),
-      // 5a.2 (S5.6d, I5.31): a slot the model could not write in the chunk's answered attempts takes the plain sentence, so a writer refusal never ends the run.
-      plain: plainSentence,
+      local: localSentences({ slots, keyOf: (slot) => slotKeyOf(plan.runId, slot.attemptIdBase), snapshots: plan.categories, impliedNudity }),
       chunks: plan.writerChunks,
       sentences: state.sentences,
       writerDone: state.writerDone,
       ledger,
-      // Today's call shape and messages, naming a custom category by the plan's own snapshot.
-      ...runWriterConfig(plan.categories),
+      // The planned writer of both modes, naming a custom category by the plan's own snapshot; with it the plain sentence (5a.2, S5.6d, I5.31: a slot the model could
+      // not write in the chunk's answered attempts takes it, so a writer refusal never ends the run), by the avatar's origin.
+      ...plannedWriterConfig(categoryLabelOf(plan.categories ?? []), impliedNudity),
     },
   );
   if (!written.ok) {
