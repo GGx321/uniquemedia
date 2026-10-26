@@ -20,7 +20,7 @@ import {
   type CategoryStyle,
 } from "../../shared/engine";
 import type { ChatMessage } from "../openrouter/types";
-import { isCleanActivity, PoolSchema, type Pool } from "./pools";
+import { isCleanActivity, PoolSchema, type Activity, type Pool } from "./pools";
 import { isTwoHanded } from "./writer";
 import { revealingWordsIn } from "./words";
 
@@ -430,13 +430,28 @@ export function readPoolAnswer(content: string): PoolAnswer {
   return { ok: true, label: label.data, style: styleOfDeck(pool.data.shotDeck), pool: pool.data, dropped: collector.dropped };
 }
 
-/** A stored custom pool as the engine's pool (the planner's and the pool schema's shape): a mirror place carries `mirror: true`, the others none. */
+/**
+ * FU-CLIP B (canary C5c, 2026-10-26; the owner on a photo of his «В домашнем»: «Чего она со стаканом воды стоит?»): a pool stored before the C3′ rule may still hold
+ * activities that only hold a thing (`isPropOnlyActivity`), which `readPlace` drops only from a new answer. They are dropped here, where a stored pool enters the
+ * planner, «Другая сцена» and the price's coverage. A place keeps its activities as stored when dropping them would leave it no free-hand activity off her phone
+ * (`isCleanActivity`, the rule every place is generated to): its selfie and mirror shots, and the place itself, stay as they were.
+ */
+function plannedActivities(activities: readonly { text: string; twoHanded: boolean }[]): Activity[] {
+  const all = activities.map((a) => ({ text: a.text, twoHanded: a.twoHanded }));
+  const kept = all.filter((a) => !isPropOnlyActivity(a.text));
+  return kept.some(isCleanActivity) ? kept : all;
+}
+
+/**
+ * A stored custom pool as the engine's pool (the planner's and the pool schema's shape): a mirror place carries `mirror: true`, the others none, and its prop-only
+ * activities are dropped (`plannedActivities`). The library and the review UI keep the stored pool as it is.
+ */
 export function poolOf(pool: CategoryPool): Pool {
   return {
     locations: pool.locations.map((place) => ({
       name: place.name,
       times: [...place.times],
-      activities: place.activities.map((a) => ({ text: a.text, twoHanded: a.twoHanded })),
+      activities: plannedActivities(place.activities),
       ...(place.mirror ? { mirror: true as const } : {}),
     })),
     outfits: [...pool.outfits],
