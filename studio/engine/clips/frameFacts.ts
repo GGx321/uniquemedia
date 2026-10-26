@@ -1,4 +1,4 @@
-import { BOLD_CLIPS, GROK_FALLBACK, isBoldCategory, type BoldClipsMode, type ScenePose } from "../../shared/engine";
+import { BOLD_CLIPS, GROK_FALLBACK, isBoldCategory, isBoldFrame, type BoldClipsMode, type ScenePose } from "../../shared/engine";
 import type { Moment } from "../../shared/scenes/banks/types";
 import { captureOfShot, faceVisibleOf, type FaceVisibility } from "../../shared/scenes/captures";
 import { contentLevelOf, type ContentLevel } from "../../shared/scenes/contentLine";
@@ -107,7 +107,7 @@ function plannedFacts(photo: PhotoSidecar, source: GeneratedSource, slot: PlanSl
     faceRole: roleOf(facePoseOf(slot)),
     legs: slot.framing === "legs",
     legwear: slot.legwear === undefined || moment?.noLegwear === true ? null : slot.legwear,
-    bold: isBoldCategory(slot.category),
+    bold: isBoldFrame({ category: slot.category, route: slot.route }),
     level,
   };
 }

@@ -296,6 +296,15 @@ describe("frames of «Смелая» (I5.57) under each BOLD_CLIPS value", () =>
     expect(factsOf(frameFactsOf(photoOf(homeRun, homeSlot), homeRun)).bold).toBe(false);
   });
 
+  // 5a.4 (S5.BA1 round 2, I5.79): a routed frame of the five is a «Смелая» frame, so its facts say bold AND the bold level together (never `bold: false` beside a bold level).
+  test("a routed slot of the five is bold, and its level is the bold line (Kling-only)", () => {
+    const routed = { ...homeSlot, level: "bold" as const, route: "seedream" as const };
+    const routedRun = { ...homeRun, scenes: { ...homeRun.scenes, slots: [routed] } } as RunPlan;
+    const facts = factsOf(frameFactsOf(photoOf(routedRun, routed), routedRun));
+    expect(facts.bold).toBe(true);
+    expect(facts.level).toBe(boldContentLevel());
+  });
+
   test("by the sidecar's category when there is no plan", () => {
     expect(factsOf(frameFactsOf(planlessPhoto("nightwear", { faceCos: 0.7 }), null)).bold).toBe(true);
     expect(factsOf(frameFactsOf(planlessPhoto("shoot", { faceCos: 0.7 }), null)).bold).toBe(false);
