@@ -179,13 +179,14 @@ describe("the bold system prompt (§5.3.3, r2.2 P1–P3)", () => {
   });
 
   test("the one-hand rule covers her own photos and the mirror selfie, the way the capture labels name them (r2.2 P2)", () => {
-    expect(bold()).toContain("In her own photo or a mirror selfie one hand holds the phone and only the other is free");
+    expect(bold()).toContain("In her own photo or a mirror selfie one hand holds the phone, which the sentence never names, and only the other is free");
   });
 
-  // S5.BA4c (P-BW2): «both hands empty on the bed» on 19 self-shots, each refused two-handed.
+  // S5.BA4c (P-BW2): «both hands empty on the bed» on 19 self-shots, each refused two-handed. S5.BA4d (P-BW3): 14 of 18 refusals were the phone the hand holds,
+  // named in a selfie («one hand holding the phone»), so the rule says the sentence never names it.
   test("it never lets a self-shot write «both hands»", () => {
     expect(lines(bold())).toContain(
-      '- In her own photo or a mirror selfie one hand holds the phone and only the other is free: describe only what that hand does, or say nothing about her hands; never write "both hands" and never an action that needs both. On a timer her hands hold nothing.',
+      '- In her own photo or a mirror selfie one hand holds the phone, which the sentence never names, and only the other is free: describe only what that hand does, or say nothing about her hands; never write "both hands" and never an action that needs both. On a timer her hands hold nothing.',
     );
     expect(bold()).not.toContain("both of her hands are empty");
   });
@@ -1018,8 +1019,8 @@ describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the b
   // 3 961 with today's ten reasons (S5.BA4); 3 185 with every bold reason; 2 954 since label-word and public-place name the words they found (round 2);
   // 2 641 with S5.BA4b's order rule, the world join and the varied detail (P-BW); 2 542 with its outfit-missing reason and the bold re-ask; S5.BA4c (P-BW2):
   // 2 455 with the place's preposition and the time kept out of the moment; 2 432 with the hands rule; 2 304 with no paper of any kind and «tiny» / «little»;
-  // 2 166 with the bare-place reason (P-BW3); S5.BA4d: 2 153 with the paper bag named.
-  const MARGIN_PRINTED = 2_153;
+  // 2 166 with the bare-place reason (P-BW3); S5.BA4d: 2 153 with the paper bag named, 2 120 with the phone never named.
+  const MARGIN_PRINTED = 2_120;
   const CEILING = WRITER_BOLD_CALL.inputTokens;
   const FIRST_INDEX = 100 - WRITER_BOLD_CALL.slotsPerCall + 1;
 
