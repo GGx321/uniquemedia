@@ -201,3 +201,11 @@ describe("allocateLaunch", () => {
     expect(allocateLaunch(launchEstimate([], UNIT), 0)).toEqual({ ok: true, avatars: [], plannedWorstMicros: 0 });
   });
 });
+
+// 5a.4 (S5.BA5 round 2, money review L-7): a unit whose table by requests (`writerTypicalByRequests`) lacks the entry a need asks for says which one: the requests and the scenes.
+describe("a writer price table without the entry a need asks for", () => {
+  test("names the requests and the scenes it was asked for", () => {
+    const short: LaunchUnitPrices = { ...UNIT, writerTypicalByRequests: [[0]] };
+    expect(() => launchEstimate([{ avatarId: "mia", photos: 30 }], short)).toThrow("the writer's price table has no entry for 2 requests carrying 30 scenes");
+  });
+});

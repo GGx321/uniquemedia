@@ -115,7 +115,7 @@ export function launchEstimate(needs: readonly AvatarNeed[], unit: LaunchUnitPri
     checkPhotos(need.photos);
     const load = writerLoadOf(unit, need.photos, need.split);
     const writerTypical = unit.writerTypicalByRequests === undefined ? unit.writerTypicalMicros[load.scenes] : unit.writerTypicalByRequests[load.chunks]?.[load.scenes];
-    if (writerTypical === undefined) throw new RangeError(`the writer's price table has no entry for ${load.scenes} scenes`);
+    if (writerTypical === undefined) throw new RangeError(`the writer's price table has no entry for ${load.chunks} requests carrying ${load.scenes} scenes`);
     checkMicros("writerTypicalMicros", writerTypical);
     const composeWorst = composeWorstMicros(unit, need.photos, need.split);
     const drawWorst = safe(need.photos * unit.photoWorstMicros);
