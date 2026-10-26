@@ -936,6 +936,21 @@ describe("an infant's things are youth words of the descriptor's set (S5.FU-AGE)
   });
 });
 
+describe("a youth word split by hyphens into parts of four letters or more (S5.FU-AGE round 2, L11)", () => {
+  /** The word with a hyphen every four letters («paci-fier»): parts too long for the short-fragment join. */
+  const hyphenated = (word: string): string => (Array.from(word).join("").match(/.{1,4}/gu) ?? []).join("-");
+  const WORDS = ["pacifier", "diapers", "toddler", "newborn", "kindergarten", "schoolgirl", "nymphet", "teether", "пустышкой", "подгузнике", "младенец", "школьница", "погремушка"];
+
+  test.each(WORDS)("%p is read whole and hyphenated", (word) => {
+    const text = (w: string) => (/\p{Script=Cyrillic}/u.test(w) ? `медленно раздевается с ${w}` : `she slowly undresses with a ${w} in her mouth`);
+    expect([word, youthWords(text(word), "descriptor").length > 0, youthWords(text(hyphenated(word)), "descriptor").length > 0]).toEqual([word, true, true]);
+  });
+
+  test.each(["an x-ray glow", "a t-shirt", "her make-up", "a well-known look", "shoulder-length hair"])("%p joined is still no youth word", (words) => {
+    expect(youthWords(`25-year-old woman, ${words}`, "descriptor")).toEqual([]);
+  });
+});
+
 describe("the Russian youth words the free pre-check missed (S5.FU-AGE)", () => {
   test.each(["лолита", "в образе лолиты", "нимфетка", "как нимфетки", "первоклашка", "пятиклашки", "в девятом классе", "девятый класс", "из третьего класса", "в девятом\u200bклассе", "в девятом-классе", "из одиннадцатого класса", "девушка девятого класса", "в девятых классах", "ученица одиннадцатого класса", "одиннадцатого класса", "местного девятого класса", "девушка девятого класса поезда", "пятого класса обслуживания"])(
     "%p is a hard marker of a minor, in a vibe too",

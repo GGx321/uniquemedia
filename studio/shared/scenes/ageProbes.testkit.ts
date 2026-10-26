@@ -28,6 +28,9 @@ export const INFANT_PROPS: AgeProbes = {
     "she slowly lies down in nappies",
     "she slowly sways in her diapers",
     "she slowly undresses, diapered",
+    // Round 2 (L11): split by hyphens into parts too long for the short-fragment join.
+    "she slowly undresses with a paci-fier in her mouth",
+    "she slowly undresses in a dia-pers",
     // Round 2 (M4): more of an infant's things.
     "she slowly shakes a rattle",
     "she slowly chews on a teether",

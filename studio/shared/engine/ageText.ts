@@ -398,7 +398,8 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
   en("coed", "co-?eds?"),
   en("freshman", "freshm[ae]n"),
   en("sophomore", "sophomores?"),
-  en("school", "(?<!old[- ])\\w*school\\w*"),
+  // «old-school» is a style; joined whole (round 2, L11) it is «oldschool», a style still.
+  en("school", "(?<!old[- ])(?!oldschool)\\w*school\\w*"),
   en("Nth grade", "(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)[- ]grade(?:rs?)?|graders?"),
   en("grade school", "grade[- ]?school\\w*"),
   en("kindergarten", "kindergart\\w*"),
@@ -478,14 +479,22 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
   ru("ребёнок", "(?<![\\p{L}])реб[её]н\\p{L}*"),
 ];
 
+/** S5.FU-AGE round 2 (L11): a text with its hyphenated words joined whole («paci-fier» → pacifier), whatever the length of their parts (the short-fragment join reads three). */
+const dehyphenated = (text: string): string => text.replace(/(?<=\p{L})-+(?=\p{L})/gu, "");
+const wordsOf = (pattern: RegExp, text: string): string[] => Array.from(text.matchAll(pattern), (m) => m[0]);
+
 function youthMatches(text: string, scope: AgeTextScope): { rule: WordRule; words: string[] }[] {
   const forms = scope === "descriptor" ? descriptorForms(text) : { text: normalise(text), joined: "" };
   const rules = scope === "descriptor" ? [...HARD_YOUTH, ...DESCRIPTOR_YOUTH] : HARD_YOUTH;
+  const base = normalise(text);
+  const whole = scope === "descriptor" && base.includes("-") ? dehyphenated(base) : "";
   return rules
-    .map((rule) => ({
-      rule,
-      words: [...forms.text.matchAll(rule.pattern), ...(rule.joins ? forms.joined.matchAll(rule.pattern) : [])].map((m) => m[0]),
-    }))
+    .map((rule) => {
+      const found = [...wordsOf(rule.pattern, forms.text), ...(rule.joins ? wordsOf(rule.pattern, forms.joined) : [])];
+      // The joined text adds only what the written one does not read, so no word is counted twice («school-girl» is read as written).
+      const read = new Set(found.map(dehyphenated));
+      return { rule, words: [...found, ...(whole === "" ? [] : wordsOf(rule.pattern, whole).filter((word) => !read.has(word)))] };
+    })
     .filter((match) => match.words.length > 0);
 }
 
