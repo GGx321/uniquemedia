@@ -258,7 +258,7 @@ describe("the scan catches what it is for (planted fixture files)", () => {
       `export const call = { maxTokens: 8_000, inputTokens: 17_000, maxAttempts: 2 } as WriterCallShape;`,
       `export const typed: WriterCallShape = { maxTokens: 8_000, inputTokens: 17_000, maxAttempts: 2 } as never;`,
     ].join("\n"),
-    "override.ts": `import { writerCallOf } from ${estimate};\nimport { writerCallShape } from ${phase};\nexport const shape = { ...writerCallShape(writerCallOf("bold")), reasoningTokens: 0 };\n`,
+    "override.ts": `import { writerCallOf } from ${estimate};\nimport { writerCallShape } from ${phase};\nexport const shape = { ...writerCallShape("bold"), reasoningTokens: 0 };\n`,
     // Aliases, re-exports, namespaces and element access, in .ts, .mts and .js.
     "alias-reexport.ts": `export { WRITER_BOLD_CALL as B } from ${estimate};\n`,
     "alias-use.ts": `import { B as Bold } from "./alias-reexport";\nexport const size = Bold.slotsPerCall;\nexport const model = Bold.model;\n`,

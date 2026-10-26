@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { WRITER_BOLD_CALL, WRITER_CALL, writerAttemptWorstMicros } from "../money/estimate";
+import { WRITER_BOLD_CALL, writerAttemptWorstMicros, writerCallOf } from "../money/estimate";
 import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
 import type { ChatParams } from "../openrouter/types";
 import { plan } from "../scenes";
@@ -88,11 +88,28 @@ async function oneChunk(call: WriterCallShape): Promise<{ params: ChatParams[]; 
 
 describe("writerCallShape", () => {
   test("the ordinary call's shape is today's three fields, with no reasoning key", () => {
-    expect<unknown>(writerCallShape(WRITER_CALL)).toStrictEqual({ maxTokens: 8_000, inputTokens: 14_000, maxAttempts: 2 });
+    expect<unknown>(writerCallShape("ordinary")).toStrictEqual({ maxTokens: 8_000, inputTokens: 14_000, maxAttempts: 2 });
   });
 
   test("the bold call's shape carries its 3 000 reasoning tokens", () => {
-    expect<unknown>(writerCallShape(WRITER_BOLD_CALL)).toStrictEqual({ maxTokens: 8_000, inputTokens: 17_000, reasoningTokens: 3_000, maxAttempts: 2 });
+    expect<unknown>(writerCallShape("bold")).toStrictEqual({ maxTokens: 8_000, inputTokens: 17_000, reasoningTokens: 3_000, maxAttempts: 2 });
+  });
+
+  // 5a.4 (S5.BA4, the BA5a review's R2-L2): a shape is made from a MODE, through writerCallOf, so a bold call can never be shaped as the ordinary one by
+  // handing over the wrong call object.
+  test("a shape is made from a mode, never from a call object", () => {
+    // @ts-expect-error writerCallShape takes a WriterMode, not a WriterCall
+    expect(() => writerCallShape(WRITER_BOLD_CALL)).toThrow(RangeError);
+    // @ts-expect-error nor a mode outside the two
+    expect(() => writerCallShape("flirty")).toThrow(RangeError);
+  });
+
+  test("each mode's shape carries exactly the ceilings writerCallOf gives that mode", () => {
+    for (const mode of ["ordinary", "bold"] as const) {
+      const call = writerCallOf(mode);
+      const shape = writerCallShape(mode);
+      expect([shape.maxTokens, shape.inputTokens, shape.reasoningTokens, shape.maxAttempts]).toEqual([call.maxTokens, call.inputTokens, call.reasoningTokens, call.maxAttempts]);
+    }
   });
 
   test("a run's writer config is the ordinary shape, byte for byte", () => {
@@ -110,25 +127,25 @@ describe("writerCallShape", () => {
   });
 
   test("the brand adds nothing at run time: the bold shape's own keys are its four fields", () => {
-    expect(Reflect.ownKeys(writerCallShape(WRITER_BOLD_CALL))).toEqual(["maxTokens", "inputTokens", "reasoningTokens", "maxAttempts"]);
-    expect(Reflect.ownKeys(writerCallShape(WRITER_CALL))).toEqual(["maxTokens", "inputTokens", "maxAttempts"]);
+    expect(Reflect.ownKeys(writerCallShape("bold"))).toEqual(["maxTokens", "inputTokens", "reasoningTokens", "maxAttempts"]);
+    expect(Reflect.ownKeys(writerCallShape("ordinary"))).toEqual(["maxTokens", "inputTokens", "maxAttempts"]);
   });
 });
 
 describe("the writer phase reserves what the estimate priced", () => {
   test("a bold-shaped attempt reserves writerAttemptWorstMicros(book, WRITER_BOLD_CALL): 48 750 µ$", async () => {
-    const { reserves } = await oneChunk(writerCallShape(WRITER_BOLD_CALL));
+    const { reserves } = await oneChunk(writerCallShape("bold"));
     expect(reserves).toEqual([writerAttemptWorstMicros(money.priceBook, WRITER_BOLD_CALL)]);
     expect(reserves).toEqual([48_750]);
   });
 
   test("a bold-shaped phase hands chat() its reasoning allowance", async () => {
-    const { params } = await oneChunk(writerCallShape(WRITER_BOLD_CALL));
+    const { params } = await oneChunk(writerCallShape("bold"));
     expect(params.map((p) => p.reasoningTokens)).toEqual([3_000]);
   });
 
   test("the reasoning allowance is priced, never sent: the request still says max_tokens 8 000", async () => {
-    const { bodies } = await oneChunk(writerCallShape(WRITER_BOLD_CALL));
+    const { bodies } = await oneChunk(writerCallShape("bold"));
     expect(bodies.map((b) => b.max_tokens)).toEqual([8_000]);
     expect(JSON.stringify(bodies)).not.toContain("reasoningTokens");
   });

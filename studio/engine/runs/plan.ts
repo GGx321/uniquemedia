@@ -112,7 +112,7 @@ export function planRoute(plan: { models: { image: string; imageQuality?: ImageQ
 export function runWriterConfig(snapshots: readonly CategorySnapshot[] | undefined): Pick<WriterPhase, "call" | "messages"> {
   const labelOf = categoryLabelOf(snapshots ?? []);
   return {
-    call: writerCallShape(writerCallOf("ordinary")),
+    call: writerCallShape("ordinary"),
     messages: (slots, feedback) => writerMessages(slots, feedback, labelOf),
   };
 }

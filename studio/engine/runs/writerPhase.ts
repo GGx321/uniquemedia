@@ -1,6 +1,6 @@
 import type { EngineError } from "../../shared/engine";
 import type { Budget } from "../money/budget";
-import type { WriterCall } from "../money/estimate";
+import { writerCallOf, type WriterMode } from "../money/estimate";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import { truncate } from "../openrouter/transport";
@@ -72,8 +72,11 @@ declare const WRITER_CALL_SHAPE: unique symbol;
  * 5a.4 (S5.BA5, plan s5a4 §5.3.4 «The reserve»): the phase's shape of a writer call (money/estimate.ts's `writerCallOf(mode)`), its reasoning allowance
  * included when it has one. The ordinary call has none, so its shape is today's three fields, byte for byte. The one maker of a `WriterCallShape`
  * (round 2, M2 b): the brand is a type with no value, so the plain object is asserted to it here and nowhere else (writerCall.static.test.ts).
+ * S5.BA4 (the BA5a review's R2-L2): it takes the MODE and reads the call through `writerCallOf` itself, so no caller can hand over the ordinary call for a
+ * bold chunk; a mode outside the two throws there.
  */
-export function writerCallShape(call: WriterCall): WriterCallShape {
+export function writerCallShape(mode: WriterMode): WriterCallShape {
+  const call = writerCallOf(mode);
   const shape = Object.freeze({
     maxTokens: call.maxTokens,
     inputTokens: call.inputTokens,

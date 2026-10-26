@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { WRITER_CALL } from "../money/estimate";
 import type { Scope } from "../money/ledger";
 import { chatBody, fakeFetch, makeClient, setupMoney, withoutAt, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
 import { plan, planWithPools, POOLS, type PlanSlot } from "../scenes";
@@ -13,7 +12,7 @@ import { buildRunPlan, plannedSlots, runWriterConfig } from "./plan";
 import { NetworkPool } from "./pools";
 import { localSentences } from "../scenes/localSentences";
 import { slotKeyOf } from "../scenes/phoneLook";
-import { runWriterPhase, writerCallShape, type WriterPhase } from "./writerPhase";
+import { runWriterPhase, type WriterCallShape, type WriterPhase } from "./writerPhase";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -325,10 +324,16 @@ describe("runWriterPhase: a built-in run sends no writer request", () => {
   });
 });
 
+/**
+ * A call shape of this test's own ceilings. Production makes a shape only from a mode (`writerCallShape(mode)`, S5.BA4 R2-L2), so these tests, which vary the
+ * ceilings and the attempts to see the phase obey them, brand their own.
+ */
+const testShape = (fields: { maxTokens: number; inputTokens: number; maxAttempts: number }): WriterCallShape => Object.freeze({ ...fields }) as WriterCallShape;
+
 describe("runWriterPhase: the call shape and the messages are the caller's", () => {
   test("the ceilings go into the request and the reserve, and the attempts a chunk may use end it", async () => {
     const base = phaseOf(3);
-    const { net, result } = start([refusedAnswer, good], { ...base, call: writerCallShape({ ...WRITER_CALL, maxTokens: 3_000, inputTokens: 5_000, maxAttempts: 1 }) });
+    const { net, result } = start([refusedAnswer, good], { ...base, call: testShape({ maxTokens: 3_000, inputTokens: 5_000, maxAttempts: 1 }) });
     const answer = await result;
 
     expect(answer).toMatchObject({ ok: false, stop: "exhausted", error: { code: "INTERNAL" } });
@@ -339,7 +344,7 @@ describe("runWriterPhase: the call shape and the messages are the caller's", () 
   });
 
   test("more attempts than today's are used when the caller allows them", async () => {
-    const { net, result } = start([refusedAnswer, refusedAnswer, good], { ...phaseOf(3), call: writerCallShape({ ...WRITER_CALL, maxTokens: 8_000, inputTokens: 14_000, maxAttempts: 3 }) });
+    const { net, result } = start([refusedAnswer, refusedAnswer, good], { ...phaseOf(3), call: testShape({ maxTokens: 8_000, inputTokens: 14_000, maxAttempts: 3 }) });
     expect((await result).ok).toBe(true);
     expect(net.calls).toHaveLength(3);
   });
