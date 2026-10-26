@@ -139,14 +139,42 @@ describe("the file", () => {
       expect(existsSync(motionsDir())).toBe(false);
     });
 
-    test("a write that fails for good leaves no temp file behind, and the store on disk is as it was", async () => {
+    test("a write that fails for good leaves no temp file behind, and the store on disk is byte for byte as it was", async () => {
+      await new MotionStores(() => undefined).update(avatarDir(), "photo-0001", SHA, (file) => addItems(file, "vision", [draft(1)]).file);
+      const path = join(motionsDir(), "photo-0001.json");
+      const before = await readFile(path, "utf8");
       const stores = new MotionStores(() => undefined, {
         beforeRename: () => {
           throw new Error("EPERM: the rename is refused");
         },
       });
+      await expect(stores.update(avatarDir(), "photo-0001", SHA, (file) => addItems(file, "vision", [draft(2)]).file)).rejects.toThrow("EPERM");
+      expect(await readdir(motionsDir())).toEqual(["photo-0001.json"]);
+      expect(await readFile(path, "utf8")).toBe(before);
+    });
+  });
+
+  describe("a folder flush that fails after the rename", () => {
+    test("the items are on disk, so the update is saved and the call is not told `not-saved` (the owner would pay again)", async () => {
+      const logs: string[] = [];
+      const stores = new MotionStores((line) => logs.push(line), {
+        afterRename: () => {
+          throw new Error("EIO: the folder flush failed");
+        },
+      });
+      const written = await stores.update(avatarDir(), "photo-0001", SHA, (file) => addItems(file, "vision", [draft(1)]).file);
+      expect(written.items.map((i) => i.id)).toEqual(["v-1"]);
+      expect((await new MotionStores(() => undefined).read(avatarDir(), "photo-0001", SHA)).file.items.map((i) => i.id)).toEqual(["v-1"]);
+      expect(logs.join("\n")).toContain("photo-0001");
+    });
+
+    test("a failure BEFORE the rename is still a failed update", async () => {
+      const stores = new MotionStores(() => undefined, {
+        beforeRename: () => {
+          throw new Error("EPERM");
+        },
+      });
       await expect(stores.update(avatarDir(), "photo-0001", SHA, (file) => addItems(file, "vision", [draft(1)]).file)).rejects.toThrow("EPERM");
-      expect(await readdir(motionsDir())).toEqual([]);
     });
   });
 

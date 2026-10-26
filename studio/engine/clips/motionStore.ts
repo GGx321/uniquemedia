@@ -68,13 +68,11 @@ export function listedItems(file: MotionStoreFile, passes: (item: MotionItem) =>
   return [...newest("vision"), ...newest("own")];
 }
 
-export interface MotionStoreRead {
-  readonly file: MotionStoreFile;
-  /** False for a store written by a newer build or one that does not read: it reads as empty and is never written over. */
-  readonly writable: boolean;
-  /** Why it is not writable. */
-  readonly why?: "newer-build" | "does-not-read";
-}
+export type MotionStoreRead =
+  /** A store this build may write. */
+  | { readonly file: MotionStoreFile; readonly writable: true }
+  /** A store from a newer build, or one that does not read: it reads as empty and is never written over. `why` says which. */
+  | { readonly file: MotionStoreFile; readonly writable: false; readonly why: "newer-build" | "does-not-read" };
 
 /** The stores on disk: reads, and serialised read-modify-writes (a suggestion and an idea of one photo may finish together). */
 export class MotionStores {
@@ -84,9 +82,13 @@ export class MotionStores {
   /** A test seam: awaited by the atomic write just before its rename; what it throws is what the write threw (Windows refusing a rename). */
   readonly #beforeRename: ((path: string) => void | Promise<void>) | undefined;
 
-  constructor(log: (line: string) => void, options: { beforeRename?: (path: string) => void | Promise<void> } = {}) {
+  /** A test seam: runs after the rename and before the folder's flush; throwing is a flush that failed with the new file already in place. */
+  readonly #afterRename: ((path: string) => void | Promise<void>) | undefined;
+
+  constructor(log: (line: string) => void, options: { beforeRename?: (path: string) => void | Promise<void>; afterRename?: (path: string) => void | Promise<void> } = {}) {
     this.#log = log;
     this.#beforeRename = options.beforeRename;
+    this.#afterRename = options.afterRename;
   }
 
   static path(avatarDir: string, photoId: string): string {
@@ -162,9 +164,21 @@ export class MotionStores {
       const folder = dirname(path);
       // Only the `motions/` level, inside an avatar folder that is there (S5.FU-DATA 4): an avatar that was deleted meanwhile is never made again, the write fails. A folder made now is flushed into its parent.
       if (await makeFolder(folder)) await fsyncDir(dirname(folder));
+      let renamed = false;
       try {
-        await writeJsonAtomic(path, next, this.#beforeRename === undefined ? {} : { beforeRename: this.#beforeRename });
+        await writeJsonAtomic(path, next, {
+          ...(this.#beforeRename === undefined ? {} : { beforeRename: this.#beforeRename }),
+          afterRename: async (finalPath) => {
+            renamed = true;
+            await this.#afterRename?.(finalPath);
+          },
+        });
       } catch (error) {
+        if (renamed) {
+          // The rename went through and only the folder's flush failed: the items ARE on disk. Telling the owner `not-saved` would have him pay again for what he already has (S5.FU-DATA round 2).
+          this.#log(`[clip] the motion store of photo ${photoId} was written; flushing its folder failed (${error instanceof Error ? error.name : typeof error})`);
+          return next;
+        }
         // A write that failed for good (a rename Windows keeps refusing) leaves no temp file behind (S5.FU-DATA 7): it holds the owner's labels.
         await this.#removeTemps(avatarDir, photoId).catch(() => undefined);
         throw error;
