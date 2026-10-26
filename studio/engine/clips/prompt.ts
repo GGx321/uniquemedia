@@ -1,76 +1,42 @@
 import type { ClipAttemptModel, ClipMotionSource, ClipQuality, ClipSeconds, MotionProblem } from "../../shared/engine";
-import { MOMENT_VERBS } from "../../shared/scenes/banks/schema";
-import { contentProblems } from "../../shared/scenes/contentLine";
-import { rendersActivity } from "../../shared/scenes/custom";
-import { motionTextFindings, motionTextProblems, namesPhone, phoneInHandOrPropped, undressesBy } from "../../shared/scenes/motionText";
+import { motionTextFindings, motionTextProblems, undressesBy } from "../../shared/scenes/motionText";
 import { VIDEO_TIERS } from "../money/prices";
 import type { VideoFrameImage, VideoRequest } from "../openrouter/types";
 import type { FrameFacts } from "./frameFacts";
 import {
   ADULT_LINE,
   LOOK_LINE,
-  PRONE_ANCHOR,
+  POSE_ANCHOR,
   PROMPT_WORDS_MAX,
   SLOW_LINE,
   cameraLineOf,
   continuityLineOf,
-  hasVideoStagingWord,
   legsLineOf,
   legwearLineOf,
   motionSentenceOf,
-  poseSentenceOf,
+  proneAnchorOf,
   shortCameraLineOf,
   wordCount,
   type ClipDialect,
 } from "./videoLook";
 
-// Stage 5, 5b.1, S5.V5 (plan s5b1 §5.5, I5.51, I5.57): the clip prompt and the request body. No LLM: the prompt is code that places videoLook's lines around two texts that
-// are data, the slot's activity and the motion (the bank's, verbatim, a code motion, and since 5b.2 a vision suggestion or the owner's own idea). In order: the camera line, the
-// pose sentence, the motion sentence, the prone anchor, the legs line, the continuity line, the legwear line, the pacing, the look, and «She is an adult woman.». No outfit text
-// and no coverage sentence, ever: the continuity line keeps what she wears, and the slot's legwear is named only by the legwear line.
+// Stage 5, 5b.1, S5.V5 (plan s5b1 §5.5, I5.51, I5.57): the clip prompt and the request body. No LLM: the prompt is code that places videoLook's lines around one text that
+// is data, the motion (the bank's, verbatim, a code motion, and since 5b.2 a vision suggestion or the owner's own idea). In order: the camera line, the pose anchor, the
+// motion sentence, the prone anchor, the legs line, the continuity line, the legwear line, the pacing, the look, and «She is an adult woman.». No outfit text and no
+// coverage sentence, ever: the continuity line keeps what she wears, and the slot's legwear is named only by the legwear line.
+//
+// FU-CLIP (canary C5c, 2026-10-26): the prompt makes no claim about her pose that only the plan makes, since the image model does not always draw the plan (C5c clip 2:
+// «lies curled under the blanket» on a photo where she sits on it, and Kling drew the blanket in). The slot's activity is never sent; the pose anchor holds her to the
+// photo. The prone anchor and the legs line read the capture alone, which proves them by construction (videoLook's `proneAnchorOf`, `legsLineOf`). The one line
+// that still reads a plan fact is the continuity line (see below).
 //
 // The checks run before any money (I5.51). S5.WC2 (plan s5b2 I5.66): the motion takes the ONE motion check (shared/scenes/motionText.ts) as what it is: a scene motion the
 // frame's rules (its grammar ran when its bank loaded), a code, vision or own motion the bank's grammar as well. The frame's rules: the content line at the slot's own level (a
 // frame of «Смелая» at bold, everything else at ordinary), no staging of the camera or the edit, no phone where hers is in her hand or propped (on the capture the photo proves
-// or the one its plan names), no movement of a face the photo does not show. The activity takes the content line, the staging words and the same phone rule. The prompt is at
-// most 130 words; a prompt over the cap takes the capture's short camera line (pov-legs), never losing an anchor.
+// or the one its plan names), no movement of a face the photo does not show. The prompt is at most 130 words; a prompt over the cap takes the capture's short camera line
+// (pov-legs), never losing an anchor.
 
 export type ClipPromptResult = { readonly ok: true; readonly prompt: string; readonly words: number } | { readonly ok: false; readonly problems: readonly string[] };
-
-const ON_HER_STOMACH = /\bon her stomach\b/i;
-
-/** What an activity breaks of the frame's rules (I5.51): the content line at the frame's level, a staging word, a phone where hers is in her hand or propped. */
-function activityProblems(facts: FrameFacts, activity: string): string[] {
-  const problems = contentProblems(activity, facts.level).map((p) => `${p.reason}: ${p.words.join(", ")}`);
-  if (hasVideoStagingWord(activity)) problems.push("stages the camera or the edit");
-  if (namesPhone(activity) && phoneInHandOrPropped(facts)) problems.push(`names a phone where hers is in her hand or propped (${facts.capture}, planned ${facts.plannedCapture})`);
-  return problems;
-}
-
-/** A finite verb phrase opens with a bank verb («lies», «sits»); an «-ing» phrase or a position reads after «is» (custom.ts's rule); anything else has no pose sentence. */
-function activityForm(activity: string): "finite" | "ing" | null {
-  const first = /^[a-z]+/i.exec(activity)?.[0]?.toLowerCase() ?? "";
-  if (MOMENT_VERBS.includes(first)) return "finite";
-  return rendersActivity(activity) ? "ing" : null;
-}
-
-/**
- * The pose sentence (§5.5 item 2) from the slot's activity, or null when it is left out: no activity the photo still carries (an own scene, no plan, an edited scene), an
- * activity that is neither a verb phrase nor an «-ing» phrase, or one that fails the checks (the content line at the slot's level, a video word, a phone on a hand-held or
- * propped capture). The camera line and the motion still carry the clip.
- */
-export function poseSentenceFor(facts: FrameFacts): string | null {
-  const activity = facts.activity;
-  if (activity === null) return null;
-  const form = activityForm(activity);
-  if (form === null || activityProblems(facts, activity).length > 0) return null;
-  return poseSentenceOf(activity, form);
-}
-
-/** The prone anchor's rule: a prone or over-the-shoulder capture, or an activity that lies on her stomach (on a mirror, say). */
-function lyingOnHerStomach(facts: FrameFacts): boolean {
-  return facts.capture === "prone" || facts.capture === "over-shoulder" || ON_HER_STOMACH.test(facts.activity ?? "");
-}
 
 /**
  * The clip prompt for this frame and motion in this dialect, or the problems that keep it from being sent. `source` is where the motion comes from, always named (S5.WC2
@@ -82,10 +48,12 @@ export function clipPromptOf(facts: FrameFacts, motion: string, dialect: ClipDia
   if (findings.length > 0) return { ok: false, problems: findings.map((finding) => `${finding.problem} (${finding.rule}): ${finding.what}`) };
   const off = undressesBy(motion, source, facts.bold);
   const rest = [
-    poseSentenceFor(facts),
+    POSE_ANCHOR,
     motionSentenceOf(motion),
-    lyingOnHerStomach(facts) ? PRONE_ANCHOR : null,
-    facts.legs ? legsLineOf(facts.capture) : null,
+    proneAnchorOf(facts.capture),
+    legsLineOf(facts.capture),
+    // Plan-based on purpose (FU-CLIP): the activity only chooses between two lines, neither of which names it or anything in it. «adjusts the strap of her bag» makes
+    // «she tugs the strap a little» a held bag's strap (the base line, which keeps what she holds: K09 lost its bag) rather than a garment's («comes off»).
     continuityLineOf(motion, facts.activity, off),
     // A motion that takes clothing off or bares her carries no clothing clause, the legwear's included: the video model decides.
     facts.legwear === null || off ? null : legwearLineOf(facts.legwear),

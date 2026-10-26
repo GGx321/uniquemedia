@@ -154,6 +154,14 @@ describe("every bank motion makes a valid clip prompt (§8 V5 sweep)", () => {
     }
   });
 
+  test("no prompt restates its slot's activity outside the motion sentence (FU-CLIP: the photo may not show what the plan says)", () => {
+    for (const s of SWEPT()) {
+      if (s.facts.activity === null) continue;
+      const rest = s.prompt.replace(`Over the whole clip ${s.motion}.`, "");
+      if (rest.includes(s.facts.activity)) throw new Error(`${s.where} ${s.dialect}: restates «${s.facts.activity}»`);
+    }
+  });
+
   test("the longest prompt is pinned: a change that lengthens it is seen", () => {
     const longest = SWEPT().reduce((a, b) => (b.words > a.words ? b : a));
     expect({ words: longest.words, where: longest.where, dialect: longest.dialect }).toEqual(LONGEST);
@@ -230,21 +238,21 @@ describe("an old pov-legs photo with no POV line takes the unknown camera line (
   const PRE_FIX = "A photo she took looking down along her own legs from where she lies or sits, held at her eye level; nothing in her hand can be seen.";
   const UNKNOWN_LINE = "The framing stays almost still, with a little natural sway.";
 
-  test("C3 K1's own photo and plan (fixtures/c3-k1.json): exactly the prompt with the unknown line, the legs line kept, in both dialects", () => {
+  test("C3 K1's own photo and plan (fixtures/c3-k1.json): exactly the prompt with the unknown line and, since FU-CLIP, no legs line (the photo was a selfie from above), in both dialects", () => {
     const k1 = JSON.parse(readFileSync(join(PINS, "c3-k1.json"), "utf8")) as { photo: unknown; plan: unknown };
     const facts = factsOf(frameFactsOf(PhotoSidecarSchema.parse(k1.photo), RunPlanSchema.parse(k1.plan)));
     expect({ capture: facts.capture, legs: facts.legs, faceRole: facts.faceRole, sceneMotion: facts.sceneMotion }).toEqual({ capture: "unknown", legs: true, faceRole: "hidden", sceneMotion: true });
     const scene = motionChoicesOf(facts)[0];
     expect(scene).toMatchObject({ id: "scene", text: "she points and flexes her toes slowly" });
     const expected =
-      "The framing stays almost still, with a little natural sway. The adult woman stretches her legs along the bed. Over the whole clip she points and flexes her toes slowly. " +
-      "Her legs fill most of the frame the whole time; the camera never turns up to her face. Nothing new appears, and nothing she holds or wears changes. " +
+      "The framing stays almost still, with a little natural sway. The adult woman keeps her pose from the photo. Over the whole clip she points and flexes her toes slowly. " +
+      "Nothing new appears, and nothing she holds or wears changes. " +
       "Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. " +
       "No text on screen. She is an adult woman.";
     for (const dialect of DIALECTS) expect(promptFor(facts, scene?.text ?? "", dialect)).toBe(expected);
   });
 
-  test("every pov-legs bank moment drawn with the pre-fix line, legwear on and off, every motion it is offered, both dialects: the unknown line, the legs line, at most 130 words", () => {
+  test("every pov-legs bank moment drawn with the pre-fix line, legwear on and off, every motion it is offered, both dialects: the unknown line, no legs line (FU-CLIP), at most 130 words", () => {
     let prompts = 0;
     for (const picked of everyMoment().filter((p) => p.moment.captures.includes("pov-legs"))) {
       for (const legwear of picked.moment.noLegwear === true ? [false] : [false, true]) {
@@ -262,7 +270,7 @@ describe("an old pov-legs photo with no POV line takes the unknown camera line (
             const result = clipPromptOf(facts, choice.text, dialect, choice.source);
             if (!result.ok) throw new Error(`${picked.place.name}/«${picked.moment.text}» (${choice.id}, ${dialect}): ${result.problems.join("; ")}`);
             expect(result.prompt.startsWith(`${UNKNOWN_LINE} `)).toBe(true);
-            expect(result.prompt).toContain(LEGS_LINE);
+            expect(result.prompt).not.toContain(LEGS_LINE);
             // The camera line is the unknown one (no «reach» in it: videoLook.test.ts); a bank motion may say «reaches» («she reaches toward her toes slowly»).
             expect(result.prompt).not.toMatch(/first-person|point-of-view/i);
             expect(result.prompt).toContain("One continuous shot, no cuts.");

@@ -1,4 +1,4 @@
-import { CAPTURES, type Capture } from "../../shared/scenes/captures";
+import { CAPTURES, LEGS_CAPTURES, type Capture } from "../../shared/scenes/captures";
 import { GARMENT, takesOff } from "../../shared/scenes/motionText";
 import { FACE_COVER, captureLineOf } from "../scenes/phoneLook";
 
@@ -14,6 +14,7 @@ import { FACE_COVER, captureLineOf } from "../scenes/phoneLook";
 //   failed in C3′; mirror-hidden says the photo's FACE_COVER, imported, so the clip hides her face exactly as the photo did;
 // - probe P-V (2026-10-13) ran the friend, above and mirror lines with the pose, motion, continuity, pacing, look and adult lines below, on three frames of «Смелая»: 3 of 3
 //   completed, and the owner accepted the clips (the friend and selfie lines have since been rewritten by the C3 polish and were re-checked 2026-10-14 (paid re-check R1–R3; owner: better));
+//   its pose sentence restated the slot's activity, and FU-CLIP (canary C5c, 2026-10-26) replaced it with the pose anchor, which says nothing the plan alone says;
 // - the prone anchor is the hips-2 take's sentence, word for word (the owner rejected a downward-dog clip);
 // - the pacing is the probes' SLOW, verbatim; the look is the probes' LOOK plus «One continuous shot, no cuts.» (C3 polish, 2026-10-14).
 //
@@ -115,33 +116,41 @@ export function shortCameraLineOf(capture: ClipCapture, _dialect: ClipDialect): 
 }
 
 /**
- * The pose sentence (§5.5 item 2): what she is doing in the photo, from the plan slot's activity. A bank moment's text is a finite verb phrase («lies on her stomach»);
- * an old pool activity that opens with an «-ing» word reads after «is».
+ * The pose anchor (FU-CLIP, new; it replaces §5.5 item 2's pose sentence): it holds her to the photo without saying what the photo shows. The pose sentence restated
+ * the plan slot's activity, and the image model does not always draw it: in canary C5c (2026-10-26) clip 2's plan said «lies curled under the blanket», the photo
+ * showed her sitting on top of it, and Kling drew the blanket in from nowhere; clip 3's «tucks one leg under her» made her rearrange her legs. One wording serves both
+ * dialects: no probe ran a dialect of its own for this line. «The adult woman» opens it, as it opened the pose sentence every probe ran.
  */
-export function poseSentenceOf(activity: string, form: "finite" | "ing"): string {
-  return form === "finite" ? `The adult woman ${activity}.` : `The adult woman is ${activity}.`;
-}
+export const POSE_ANCHOR = "The adult woman keeps her pose from the photo.";
 
 /** The motion sentence (§5.5 item 3): the motion verbatim after «Over the whole clip», so «she …» and «her …» both read. */
 export function motionSentenceOf(motion: string): string {
   return `Over the whole clip ${motion}.`;
 }
 
-/** The prone anchor (the hips-2 take, word for word): on a prone or over-the-shoulder capture, or an activity that lies on her stomach. */
+/** The prone anchor (the hips-2 take, word for word). */
 export const PRONE_ANCHOR = "She stays lying on her stomach the whole time; she never gets up on her hands or knees.";
+
+/**
+ * The prone anchor of a capture: a prone or over-the-shoulder one, which lies her on her stomach by construction (the photo's own capture line says so,
+ * engine/scenes/phoneLook.ts, and the over-shoulder camera line above says it too). FU-CLIP: never from the slot's activity alone («lies on her stomach» on a
+ * mirror-hidden or timer frame): only the plan says that, and the pose anchor holds her to whatever the photo shows.
+ */
+export function proneAnchorOf(capture: ClipCapture): string | null {
+  return capture === "prone" || capture === "over-shoulder" ? PRONE_ANCHOR : null;
+}
 
 /** The legs line (new): a «Ножки» frame keeps her legs filling the frame. «frame» is the code's own word; the staging list reads motions and activities only. */
 export const LEGS_LINE = "Her legs fill most of the frame the whole time; the camera never turns up to her face.";
 
 /**
- * The legs line by the mirror (round 2): the camera line already holds the phone in front of her face, so this one says what fills the frame and nothing of her face, as
- * the photo's own legs phrase there does (engine/scenes/assembler.ts BOLD_MIRROR_LEGS_POSE_PHRASE, S5.R4 round 3).
+ * The legs line of a capture: a legs capture (`LEGS_CAPTURES`: pov-legs, which `provenCaptureOf` has proven from the photo's own POV line, and low-feet) is a legs frame by
+ * construction (the bank schema and the renderer deal it to legs moments only), and its face was never judged, so the camera stays off it. FU-CLIP: a legs frame on any
+ * other capture (mirror-hidden, or a pov-legs photo its prompt does not prove, `unknown`) has no legs line: only the plan's framing says her legs fill that photo (C3 K1's
+ * «pov-legs» photo was a selfie from above).
  */
-const MIRROR_LEGS_LINE = "Her legs fill most of the frame the whole time.";
-
-/** The legs line of a «Ножки» frame on this capture. */
-export function legsLineOf(capture: ClipCapture): string {
-  return capture === "mirror-hidden" ? MIRROR_LEGS_LINE : LEGS_LINE;
+export function legsLineOf(capture: ClipCapture): string | null {
+  return capture !== "unknown" && LEGS_CAPTURES.includes(capture) ? LEGS_LINE : null;
 }
 
 /** The continuity line (new; spike B K05's paper card, K09's lost bag). */

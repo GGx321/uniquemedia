@@ -20,7 +20,7 @@ import { provenCaptureOf, type ClipCapture } from "./videoLook";
 // sentence did not name. A plan that cannot be read for ANY reason is no plan (logged), as for the restored marks: never a refusal of the photo.
 //
 // «Как в сцене» is offered only when the photo's own prompt still says «she {moment}» (the template writes «, she …», the plain sentence «She …»): an owner-edited scene that
-// no longer says it gets code motions only, and no pose sentence, since the photo may not show that activity.
+// no longer says it gets code motions only, since the photo may not show that activity. Since FU-CLIP (C5c) no clip prompt restates the activity at all.
 
 export interface FrameFacts {
   readonly photoId: string;
@@ -32,7 +32,10 @@ export interface FrameFacts {
   readonly moment: Moment | null;
   /** «Как в сцене» is offered: the moment exists and the photo's prompt still says «she {moment}». */
   readonly sceneMotion: boolean;
-  /** The slot's activity, when the photo's prompt still carries it: the pose sentence's source. Null for an own scene and without a plan. */
+  /**
+   * The slot's activity, when the photo's prompt still carries it. Null for an own scene and without a plan. Never sent to the video model (FU-CLIP): the vision
+   * motion call reads it as context (motionCall.ts), and the continuity line reads it to tell a held bag's strap from a garment's.
+   */
   readonly activity: string | null;
   /** Who took the photo, as far as its own prompt proves it (S5.WP1, I5.69): a slot planned as pov-legs whose photo holds no shipped POV line is `unknown`. */
   readonly capture: ClipCapture;

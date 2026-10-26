@@ -5,17 +5,19 @@ import { shotOf } from "../../shared/scenes/captures";
 import { CUSTOM_REF } from "../scenes/testing/customPool";
 import { frameFactsOf, type FrameFacts, type FrameFactsResult } from "./frameFacts";
 import { VIDEO_TIERS } from "../money/prices";
-import { clipPromptOf, clipRequestBody, poseSentenceFor } from "./prompt";
-import { ADULT_LINE, COMES_OFF_LINE, CONTINUITY_LINE, LEGS_LINE, LOOK_LINE, PRONE_ANCHOR, PROMPT_WORDS_MAX, SLOW_LINE, cameraLineOf, legwearLineOf, wordCount, type ClipDialect } from "./videoLook";
+import { clipPromptOf, clipRequestBody } from "./prompt";
+import { ADULT_LINE, COMES_OFF_LINE, CONTINUITY_LINE, LEGS_LINE, LOOK_LINE, POSE_ANCHOR, PRONE_ANCHOR, PROMPT_WORDS_MAX, SLOW_LINE, cameraLineOf, legwearLineOf, wordCount, type ClipDialect } from "./videoLook";
 import { photoOf, pick, planlessPhoto, sceneRun, slotOf } from "./testing/frameFixtures";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
-// Stage 5, 5b.1, S5.V5 (plan s5b1 §5.5, I5.51, I5.57): the clip prompt is code. In order: the camera line, the pose sentence (the slot's activity), the motion sentence, the
-// prone anchor, the legs line, the continuity line, the legwear line, the pacing, the look, and «She is an adult woman.». It carries no outfit text. The three prompts probe P-V
-// ran on frames of «Смелая» (2026-10-13, 3 of 3 completed, accepted by the owner) are pinned below, with the camera and look lines the C3 polish (2026-10-14) rewrote. What P-V ran,
-// as history: S1 opened with «Handheld by a friend who stays at the same distance, gentle sway, the framing drifts only a little.», S2 with «A selfie at arm's length: the camera
-// stays in her outstretched hand the whole time.», and all three looks were «Vertical phone video, slight noise, everything in focus. No text on screen.»
+// Stage 5, 5b.1, S5.V5 (plan s5b1 §5.5, I5.51, I5.57): the clip prompt is code. In order: the camera line, the pose anchor, the motion sentence, the prone anchor, the legs
+// line, the continuity line, the legwear line, the pacing, the look, and «She is an adult woman.». It carries no outfit text and, since FU-CLIP (canary C5c, 2026-10-26), no
+// activity of the slot. The three prompts probe P-V ran on frames of «Смелая» (2026-10-13, 3 of 3 completed, accepted by the owner) are pinned below, with the camera and look
+// lines the C3 polish (2026-10-14) rewrote and the pose anchor FU-CLIP put in place of their pose sentence. What P-V ran, as history: S1 opened with «Handheld by a friend who
+// stays at the same distance, gentle sway, the framing drifts only a little.», S2 with «A selfie at arm's length: the camera stays in her outstretched hand the whole time.»,
+// all three looks were «Vertical phone video, slight noise, everything in focus. No text on screen.», and their pose sentences were «The adult woman steps out of the water.»,
+// «The adult woman lies back, one knee up.» and «The adult woman stands with one hand on her hip.»
 
 function factsOf(result: FrameFactsResult): FrameFacts {
   if (result.kind !== "gallery") throw new Error(`expected a gallery photo, got ${result.kind}`);
@@ -45,36 +47,36 @@ const sceneMotion = (facts: FrameFacts): string => {
   return facts.moment.motion;
 };
 
-describe("the prompts probe P-V ran (2026-10-13), as the C3 polish rewrote their camera and look lines", () => {
+describe("the prompts probe P-V ran (2026-10-13), as the C3 polish rewrote their camera and look lines and FU-CLIP their pose sentence", () => {
   test("S1: «Пляж и бассейн», candid, steps out of the water", () => {
     const facts = factsFor(slotOf(pick("beach", (m) => m.text === "steps out of the water"), "candid", "front", { level: "bold" }));
     expect(promptOf(facts, sceneMotion(facts))).toBe(
-      "Handheld steadily by a friend at the same distance the whole time; the framing barely moves. The adult woman steps out of the water. Over the whole clip she keeps walking slowly. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. No text on screen. She is an adult woman.",
+      "Handheld steadily by a friend at the same distance the whole time; the framing barely moves. The adult woman keeps her pose from the photo. Over the whole clip she keeps walking slowly. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. No text on screen. She is an adult woman.",
     );
   });
 
   test("S2: «Ночнушки и бельё», a selfie from above, one knee up", () => {
     const facts = factsFor(slotOf(pick("nightwear", (m) => m.text === "lies back, one knee up"), "above"));
     expect(promptOf(facts, sceneMotion(facts))).toBe(
-      "A selfie at arm's length: the view stays at that same distance from her and the framing never changes; one arm leaves the frame at its edge the whole time. The adult woman lies back, one knee up. Over the whole clip she sways her knee a little. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. No text on screen. She is an adult woman.",
+      "A selfie at arm's length: the view stays at that same distance from her and the framing never changes; one arm leaves the frame at its edge the whole time. The adult woman keeps her pose from the photo. Over the whole clip she sways her knee a little. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. No text on screen. She is an adult woman.",
     );
   });
 
   test("S3: «Ночнушки и бельё», a mirror selfie, one hand on her hip", () => {
     const facts = factsFor(slotOf(pick("nightwear", (m) => m.text === "stands with one hand on her hip"), "mirror"));
     expect(promptOf(facts, sceneMotion(facts))).toBe(
-      "A mirror selfie: the phone stays in her raised hand the whole time and sways only a little. The adult woman stands with one hand on her hip. Over the whole clip she turns her hips a little. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. No text on screen. She is an adult woman.",
+      "A mirror selfie: the phone stays in her raised hand the whole time and sways only a little. The adult woman keeps her pose from the photo. Over the whole clip she turns her hips a little. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. No text on screen. She is an adult woman.",
     );
   });
 });
 
 describe("the prompt's shape (§5.5)", () => {
-  test("the prone example of the plan: the camera, the pose, the motion, the anchor, the continuity, the pacing, the look, the adult line", () => {
+  test("the prone example of the plan: the camera, the pose anchor, the motion, the prone anchor, the continuity, the pacing, the look, the adult line", () => {
     const facts = factsFor(slotOf(pick("home", (m) => m.captures.includes("prone") && /\bhips\b/.test(m.motion)), "prone"));
     expect(promptOf(facts, sceneMotion(facts))).toBe(
       [
         cameraLineOf("prone", "kling"),
-        `The adult woman ${facts.activity}.`,
+        POSE_ANCHOR,
         `Over the whole clip ${sceneMotion(facts)}.`,
         PRONE_ANCHOR,
         CONTINUITY_LINE,
@@ -105,73 +107,34 @@ describe("the prompt's shape (§5.5)", () => {
   });
 });
 
-describe("the pose sentence (§5.5 item 2)", () => {
-  test("a bank moment: «The adult woman {activity}.»", () => {
-    const facts = factsFor(slotOf(pick("travel", (m) => m.captures.includes("friend") && m.legs === undefined), "friend"));
-    expect(poseSentenceFor(facts)).toBe(`The adult woman ${facts.activity}.`);
-  });
-
-  test("an «-ing» pool activity of a custom category: «… is …»", () => {
-    const facts = factsFor(customSlot("friend", "reading a paperback"), "A friend took this. At a riverside cafe, she is reading a paperback, wearing a linen dress.");
-    expect(poseSentenceFor(facts)).toBe("The adult woman is reading a paperback.");
-  });
-
-  test("an activity that names her phone on an arm's-length or propped capture is left out", () => {
-    const prompt = "At a riverside cafe, she is texting on her phone, wearing a linen dress.";
-    expect(poseSentenceFor(factsFor(customSlot("selfie", "texting on her phone"), prompt))).toBeNull();
-    expect(poseSentenceFor(factsFor(customSlot("timer", "texting on her phone"), prompt))).toBeNull();
-  });
-
-  test("the same activity on a friend's photo stays", () => {
-    const prompt = "At a riverside cafe, she is texting on her phone, wearing a linen dress.";
-    expect(poseSentenceFor(factsFor(customSlot("friend", "texting on her phone"), prompt))).toBe("The adult woman is texting on her phone.");
-  });
-
-  test("an activity with a video word, or one that is neither a verb phrase nor an «-ing» phrase, is left out", () => {
-    expect(poseSentenceFor(factsFor(customSlot("friend", "posing for a film crew"), "At a riverside cafe, she is posing for a film crew, wearing a linen dress."))).toBeNull();
-    expect(poseSentenceFor(factsFor(customSlot("friend", "a picnic by the river"), "At a riverside cafe, she is enjoying a picnic by the river, wearing a linen dress."))).toBeNull();
-  });
-
-  test("an own scene and a photo with no plan have no activity, so no pose sentence", () => {
-    const run = sceneRun("run-00000202", [{ kind: "own", shot: "friend", pose: "front", text: "She waves from a boat." }]);
-    expect(poseSentenceFor(factsOf(frameFactsOf(photoOf(run, run.scenes.slots[0] as OwnPlanSlot), run)))).toBeNull();
-    expect(poseSentenceFor(factsOf(frameFactsOf(planlessPhoto("home", { faceCos: 0.7 }), null)))).toBeNull();
-  });
-});
-
 describe("the content level follows the category (I5.51, I5.57)", () => {
   const bold = pick("nightwear", (m) => m.level === "bold" && /\bpanties\b/.test(m.text));
 
-  test("a «Смелая» moment's activity passes at bold", () => {
-    const facts = factsFor(slotOf(bold, bold.moment.captures[0] ?? "mirror-hidden", bold.moment.angle ?? "front"));
-    expect(poseSentenceFor(facts)).toBe(`The adult woman ${bold.moment.text}.`);
-  });
-
-  test("the same words on a «Дом» slot fail, and leave the pose sentence out", () => {
+  test("a «Смелая» moment's words on a «Дом» slot never reach its prompt (FU-CLIP: no activity is sent at any level)", () => {
     const home = pick("home", (m) => m.captures.includes("mirror-hidden") && m.legs === undefined);
     const slot = { ...slotOf(home, "mirror-hidden"), activity: bold.moment.text };
     const facts = factsFor(slot, `In her bedroom, she ${bold.moment.text}, wearing a grey tee.`);
     expect(facts.activity).toBe(bold.moment.text);
-    expect(poseSentenceFor(facts)).toBeNull();
+    expect(promptOf(facts, "she turns her head a little")).not.toContain(bold.moment.text);
   });
 
-  test("a youth word fails everywhere, «Смелая» included", () => {
+  test("a youth word in a motion fails everywhere, «Смелая» included; one in the activity never reaches the prompt", () => {
     const beach = pick("beach", (m) => m.captures.includes("friend") && m.legs === undefined);
     const youthful = "sits like a teen on the sand";
     for (const category of ["home", "beach"] as const) {
       const slot = { ...slotOf(beach, "friend"), category, activity: youthful, level: undefined };
-      expect(poseSentenceFor(factsFor(slot, `On the beach, she ${youthful}, wearing a sundress.`))).toBeNull();
-      expect(clipPromptOf(factsFor(slot, `On the beach, she ${youthful}, wearing a sundress.`), "she sits like a teen a little", "kling", "scene").ok).toBe(false);
+      const facts = factsFor(slot, `On the beach, she ${youthful}, wearing a sundress.`);
+      expect(promptOf(facts, "she turns her head a little")).not.toMatch(/\bteen\b/);
+      expect(clipPromptOf(facts, "she sits like a teen a little", "kling", "scene").ok).toBe(false);
     }
   });
 });
 
 describe("the anchors (§5.5 items 4-6)", () => {
-  test("the prone anchor on a prone and an over-shoulder capture, and on an «on her stomach» activity elsewhere", () => {
+  test("the prone anchor on a prone and an over-shoulder capture, which lie her on her stomach by construction (an «on her stomach» activity elsewhere: FU-CLIP below)", () => {
     const prone = factsFor(slotOf(pick("home", (m) => m.captures.includes("prone")), "prone"));
     const over = factsFor(slotOf(pick("home", (m) => m.captures.includes("over-shoulder")), "over-shoulder", "three-quarter"));
-    const mirror = factsFor(slotOf(pick("home", (m) => m.captures.includes("mirror-hidden") && /on her stomach/.test(m.text)), "mirror-hidden"));
-    for (const facts of [prone, over, mirror]) expect(promptOf(facts, sceneMotion(facts))).toContain(PRONE_ANCHOR);
+    for (const facts of [prone, over]) expect(promptOf(facts, sceneMotion(facts))).toContain(PRONE_ANCHOR);
   });
 
   test("never elsewhere", () => {
@@ -179,11 +142,9 @@ describe("the anchors (§5.5 items 4-6)", () => {
     expect(promptOf(timer, sceneMotion(timer))).not.toContain(PRONE_ANCHOR);
   });
 
-  test("a «Ножки» frame by the mirror says only that her legs fill the frame: the phone already covers her face (round 2)", () => {
+  test("a «Ножки» frame by the mirror never sends the camera up to her face: the phone covers it (round 2; its legs line went with FU-CLIP)", () => {
     const legs = factsFor(slotOf(pick("home", (m) => m.captures.includes("mirror-hidden") && m.legs?.framing === "legs"), "mirror-hidden"));
     const prompt = promptOf(legs, sceneMotion(legs));
-    expect(prompt).toContain("Her legs fill most of the frame the whole time.");
-    expect(prompt).not.toContain(LEGS_LINE);
     expect(prompt).not.toMatch(/turns up to her face/);
     expect(prompt).toContain("she holds her phone right in front of her face");
   });
@@ -281,6 +242,76 @@ describe("checks before any money (I5.51)", () => {
     expect(result.prompt).toContain(LEGS_LINE);
     expect(result.prompt).toContain(legwearLineOf("white lace-top stockings"));
     expect(result.prompt).not.toContain(cameraLineOf("pov-legs", "kling"));
+  });
+});
+
+describe("FU-CLIP: the prompt makes no claim about her pose that only the plan makes (C5c, 2026-10-26)", () => {
+  // C5c clip 2: the plan said «lies curled under the blanket», the photo showed her sitting on top of it, and Kling drew the blanket in from nowhere.
+  const ANCHOR = "The adult woman keeps her pose from the photo.";
+  const curled = (): FrameFacts => factsFor(slotOf(pick("home", (m) => m.text === "lies curled under the blanket" && m.captures.includes("timer")), "timer"));
+  const visionPrompt = (facts: FrameFacts, motion: string, dialect: ClipDialect): string => {
+    const result = clipPromptOf(facts, motion, dialect, "vision");
+    if (!result.ok) throw new Error(`no prompt: ${result.problems.join("; ")}`);
+    return result.prompt;
+  };
+
+  test("a slot whose activity is «lies curled under the blanket» gives a prompt with no «blanket» and no «lies», in both dialects", () => {
+    const facts = curled();
+    expect(facts.activity).toBe("lies curled under the blanket");
+    for (const dialect of ["kling", "grok"] as const) {
+      const prompt = visionPrompt(facts, "she gently tucks her hair behind her ear", dialect);
+      expect(prompt).not.toMatch(/\bblanket\b/i);
+      expect(prompt).not.toMatch(/\blies\b/i);
+    }
+  });
+
+  test("the anchor follows the camera line in both dialects: on a planned slot, an own scene and a photo with no plan", () => {
+    const run = sceneRun("run-00000203", [{ kind: "own", shot: "friend", pose: "front", text: "She waves from a boat." }]);
+    const own = factsOf(frameFactsOf(photoOf(run, run.scenes.slots[0] as OwnPlanSlot), run));
+    const planless = factsOf(frameFactsOf(planlessPhoto("home", { faceCos: 0.7 }), null));
+    for (const facts of [curled(), own, planless]) {
+      for (const dialect of ["kling", "grok"] as const) {
+        const prompt = visionPrompt(facts, "she slowly turns her head a little", dialect);
+        expect(prompt.startsWith(`${cameraLineOf(facts.capture, dialect)} ${ANCHOR} Over the whole clip `)).toBe(true);
+        expect(prompt.split(ANCHOR)).toHaveLength(2);
+      }
+    }
+  });
+
+  test("an activity of any kind stays out of the prompt: a phone one on a friend's photo, an «-ing» pool one, a «Смелая» moment", () => {
+    const phone = factsFor(customSlot("friend", "texting on her phone"), "At a riverside cafe, she is texting on her phone, wearing a linen dress.");
+    const reading = factsFor(customSlot("friend", "reading a paperback"), "A friend took this. At a riverside cafe, she is reading a paperback, wearing a linen dress.");
+    const bold = pick("nightwear", (m) => m.level === "bold" && /\bpanties\b/.test(m.text));
+    const boldFacts = factsFor(slotOf(bold, bold.moment.captures[0] ?? "mirror-hidden", bold.moment.angle ?? "front"));
+    for (const facts of [phone, reading, boldFacts]) {
+      expect(facts.activity).not.toBeNull();
+      expect(promptOf(facts, "she slowly turns her head a little")).not.toContain(facts.activity ?? "");
+    }
+  });
+
+  test("the prone anchor never comes from the activity alone: a mirror-hidden or timer frame whose moment lies on her stomach carries none", () => {
+    const hips = factsFor(slotOf(pick("home", (m) => m.captures.includes("mirror-hidden") && /on her stomach/.test(m.text)), "mirror-hidden"));
+    const timer = factsFor(slotOf(pick("home", (m) => m.captures.includes("timer") && /on her stomach/.test(m.text)), "timer"));
+    for (const facts of [hips, timer]) {
+      expect(facts.activity ?? "").toMatch(/on her stomach/);
+      expect(promptOf(facts, sceneMotion(facts))).not.toContain(PRONE_ANCHOR);
+    }
+  });
+
+  test("the legs line only on a legs capture (pov-legs its photo proves, low-feet): a mirror-hidden legs frame says nothing of her legs", () => {
+    const mirror = factsFor(slotOf(pick("home", (m) => m.captures.includes("mirror-hidden") && m.legs?.framing === "legs"), "mirror-hidden"));
+    expect(mirror.legs).toBe(true);
+    const prompt = promptOf(mirror, sceneMotion(mirror));
+    expect(prompt).not.toMatch(/Her legs fill/);
+    const pov = factsFor(slotOf(pick("home", (m) => m.captures.includes("pov-legs")), "pov-legs"));
+    const low = factsFor(slotOf(pick("photoshoot", (m) => m.captures.includes("low-feet")), "low-feet"));
+    for (const facts of [pov, low]) expect(promptOf(facts, sceneMotion(facts))).toContain(LEGS_LINE);
+  });
+
+  test("C5c clip 2, rebuilt on its frame: the exact prompt the paid re-check sends", () => {
+    expect(visionPrompt(curled(), "she gently tucks her hair behind her ear", "kling")).toBe(
+      "The phone is propped up and does not move at all; the framing never changes. The adult woman keeps her pose from the photo. Over the whole clip she gently tucks her hair behind her ear. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. No text on screen. She is an adult woman.",
+    );
   });
 });
 

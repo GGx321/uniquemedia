@@ -14,6 +14,7 @@ import {
   CONTINUITY_LINE,
   LEGS_LINE,
   LOOK_LINE,
+  POSE_ANCHOR,
   PRONE_ANCHOR,
   PROMPT_WORDS_MAX,
   SHIPPED_POV_CAPTURE_LINES,
@@ -26,7 +27,7 @@ import {
   hasVideoStagingWord,
   legwearLineOf,
   motionSentenceOf,
-  poseSentenceOf,
+  proneAnchorOf,
   provenCaptureOf,
   shortCameraLineOf,
   wordCount,
@@ -173,9 +174,10 @@ describe("the camera lines (plan §5.5)", () => {
 });
 
 describe("the sentences of a clip prompt", () => {
-  test("the pose sentence: a finite verb phrase as it is, an «-ing» activity after «is»", () => {
-    expect(poseSentenceOf("lies on her stomach, one arm out", "finite")).toBe("The adult woman lies on her stomach, one arm out.");
-    expect(poseSentenceOf("reading by the window", "ing")).toBe("The adult woman is reading by the window.");
+  test("the pose anchor (FU-CLIP, C5c): it holds her to the photo and names no pose, place or thing; it replaced the pose sentence, which restated the slot's activity", () => {
+    expect(POSE_ANCHOR).toBe("The adult woman keeps her pose from the photo.");
+    expect(wordCount(POSE_ANCHOR)).toBe(9);
+    expect(hasVideoStagingWord(POSE_ANCHOR)).toBe(false);
   });
 
   test("the motion sentence: «she …» and «her …» both follow «Over the whole clip»", () => {
@@ -185,6 +187,11 @@ describe("the sentences of a clip prompt", () => {
 
   test("the prone anchor is the hips-2 wording, word for word", () => {
     expect(PRONE_ANCHOR).toBe("She stays lying on her stomach the whole time; she never gets up on her hands or knees.");
+  });
+
+  test("the prone anchor goes with a capture that lies her on her stomach by construction, prone or over-shoulder, and with no other (FU-CLIP)", () => {
+    for (const capture of CLIP_CAPTURES) expect([capture, proneAnchorOf(capture)]).toEqual([capture, capture === "prone" || capture === "over-shoulder" ? PRONE_ANCHOR : null]);
+    for (const capture of ["prone", "over-shoulder"] as const) expect(phoneLook.captureLineOf(capture, "run-1:slot-1")).toMatch(/lying on her stomach|lies on her stomach/);
   });
 
   test("the legs line keeps the camera on her legs", () => {
@@ -358,15 +365,12 @@ describe("the continuity sweep over all 7 banks (critic M5, r2.2; round 2)", () 
   });
 });
 
-describe("the legs line (round 2)", () => {
-  test("a legs frame keeps the camera on her legs and off her face", () => {
-    for (const capture of CLIP_CAPTURES) {
-      if (capture !== "mirror-hidden") expect(legsLineOf(capture)).toBe(LEGS_LINE);
-    }
+describe("the legs line (round 2; FU-CLIP)", () => {
+  test("a legs capture, pov-legs or low-feet, keeps the camera on her legs and off her face; no other capture has a legs line, whatever the plan's framing says", () => {
+    for (const capture of CLIP_CAPTURES) expect([capture, legsLineOf(capture)]).toEqual([capture, capture === "pov-legs" || capture === "low-feet" ? LEGS_LINE : null]);
   });
 
-  test("by the mirror the phone already covers her face, so the line says nothing of her face (the photo's own legs phrase there, S5.R4 r3)", () => {
-    expect(legsLineOf("mirror-hidden")).toBe("Her legs fill most of the frame the whole time.");
+  test("by the mirror the camera line itself keeps the phone over her face (its own legs line went with FU-CLIP)", () => {
     expect(cameraLineOf("mirror-hidden", "kling")).toContain("in front of her face");
   });
 });
@@ -477,6 +481,7 @@ describe("the video lines live in clips/videoLook.ts alone (I5.1, I5.51)", () =>
   const LINES = [
     ...new Set(Object.values(KLING_LINES).filter((line) => !line.includes("the phone covering her face"))),
     "The phone stays completely still the whole time; the framing never changes.",
+    POSE_ANCHOR,
     PRONE_ANCHOR,
     LEGS_LINE,
     CONTINUITY_LINE,

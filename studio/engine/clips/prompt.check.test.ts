@@ -5,7 +5,7 @@ import { PhotoSidecarSchema } from "../library/schemas";
 import { RunPlanSchema } from "../runs/plan";
 import type { PlanSlot } from "../scenes/schema";
 import { clipFallbackOf, frameFactsOf, type FrameFacts, type FrameFactsResult } from "./frameFacts";
-import { clipMotionProblems, clipPromptOf, poseSentenceFor } from "./prompt";
+import { clipMotionProblems, clipPromptOf } from "./prompt";
 import { CLIP_CAPTURES, COMES_OFF_LINE, CONTINUITY_LINE, LOOK_LINE, NOTHING_NEW_LINE, PROMPT_WORDS_MAX, SLOW_LINE, cameraLineOf, continuityLineOf, wordCount, type ClipDialect } from "./videoLook";
 import { photoOf, pick, sceneRun, slotOf } from "./testing/frameFixtures";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -54,13 +54,13 @@ describe("the prompt takes the text's source (I5.66)", () => {
   });
 });
 
-describe("the activity takes the same phone rule (one phone rule)", () => {
-  test("on C3 K1 an activity that names her phone is left out: the plan says the phone was in her hand", () => {
-    expect(poseSentenceFor({ ...K1, activity: "texting on her phone" })).toBeNull();
-  });
-
-  test("on a friend's photo the same activity stays (no phone in her hand there)", () => {
-    expect(poseSentenceFor({ ...FRIEND, activity: "texting on her phone" })).toBe("The adult woman is texting on her phone.");
+describe("an activity that names her phone never reaches the prompt (FU-CLIP: the slot's activity is not sent at all)", () => {
+  test("on C3 K1 (the plan says the phone was in her hand) and on a friend's photo alike", () => {
+    for (const facts of [{ ...K1, activity: "texting on her phone" }, { ...FRIEND, activity: "texting on her phone" }]) {
+      const result = clipPromptOf(facts, "she slowly turns her head a little", "kling", "vision");
+      if (!result.ok) throw new Error(result.problems.join("; "));
+      expect(result.prompt).not.toContain("texting on her phone");
+    }
   });
 });
 
@@ -74,8 +74,8 @@ describe("clipMotionProblems: what an LLM motion must pass before it is offered 
     expect(clipMotionProblems(K1, "she glances at her phone", "own")).toEqual(["phone", "not-small"]);
   });
 
-  test("a prompt over 130 words in either dialect: too-long", () => {
-    const long = { ...TIMER, activity: `lies ${"very ".repeat(110)}still` };
+  test("a prompt over 130 words in either dialect: too-long (FU-CLIP: the activity is no longer in it, so the slot's legwear makes it long)", () => {
+    const long = { ...TIMER, legwear: `${"very ".repeat(110)}long socks` };
     const result = clipPromptOf(long, "she slowly turns her head", "kling", "vision");
     expect(result.ok).toBe(false);
     expect(clipMotionProblems(long, "she slowly turns her head", "vision")).toEqual(["too-long"]);
