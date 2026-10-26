@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { CAPTURES, POOL_TEXT_MAX, POOL_TIMES } from "../../shared/engine";
+import { CUSTOM_BOLD_BANKS } from "../../shared/scenes/banks/companions";
 import { captureOfShot } from "../../shared/scenes/captures";
 import { WRITER_BOLD_CALL } from "../money/estimate";
 import { promptTokenFloor } from "../openrouter/chat";
 import type { PlanSlot } from "./schema";
-import { CAPTURE_LABEL, readWriterAnswer, SHOT_LABEL, TIME_WORD, writerBoldMessages, writerMessages, WRITER_JSON_SCHEMA, type WriterAnswer, type WriterRefusal } from "./writer";
+import { BOLD_PROBLEMS, CAPTURE_LABEL, PLACE_KEYS, readBoldWriterAnswer, readWriterAnswer, SHOT_LABEL, slotList, TIME_WORD, WATER_PLACE_KEYS, writerBoldMessages, writerMessages, writerRefusalText, WRITER_JSON_SCHEMA, type WriterAnswer, type WriterRefusal } from "./writer";
 import { worstSlotList } from "./testing/worstSlotList";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -264,6 +265,214 @@ describe("the bold slot JSON (§5.3.3, r2.2 P1, the probe's label leaks)", () =>
   });
 });
 
+describe("the bold reader: where she is, what she wears, what Seedream will not draw (§5.3.3 «The reader», r2.2 P8)", () => {
+  /** A sentence that keeps every rule of the bold reader for `routed()`: her room inside the world, the outfit as given, the moment word for word. */
+  const GOOD = "In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, smiling up at the viewer, a box of macarons from the corner bakery on the nightstand.";
+  const bold = (sentence: string, slot: PlanSlot = routed()): WriterAnswer => readBoldWriterAnswer(answer([{ slotIndex: slot.slotIndex, sentence }]), [slot]);
+
+  test("a sentence that keeps every rule passes", () => {
+    expect(bold(GOOD)).toEqual({ ok: true, sentences: new Map([[1, GOOD]]) });
+  });
+
+  test("the bold reader keeps today's rules: an answer that is not the JSON object, a missing slot, a youth word", () => {
+    expect(problemsOf(readBoldWriterAnswer("no json here", [routed()]))).toEqual(["not-json"]);
+    expect(problemsOf(readBoldWriterAnswer(answer([]), [routed()]))).toEqual(["missing-slots"]);
+    expect(problemsOf(bold(`${GOOD} She looks like a teen.`))).toContain("youth-word");
+  });
+
+  describe("place-missing: the sentence names the slot's place, or a word its world calls it (PLACE_KEYS)", () => {
+    test("the table is the one the plan pins, one row per «rooms» place, and every «by the water» place reads the water row", () => {
+      expect(PLACE_KEYS).toEqual({
+        "her room": ["room", "bedroom", "suite", "cabin", "chalet", "bed"],
+        "her bathroom": ["bathroom", "shower", "bath", "tub", "mirror"],
+        "her window": ["window", "porthole"],
+        "her balcony": ["balcony", "terrace", "deck", "veranda"],
+        "her sofa": ["sofa", "couch", "living room", "lounge"],
+      });
+      expect(WATER_PLACE_KEYS).toEqual(["water", "pool", "sea", "beach", "shore", "lake", "bay", "deck", "sundeck", "lounger"]);
+      expect(CUSTOM_BOLD_BANKS.rooms.places.map((p) => p.name).sort()).toEqual(Object.keys(PLACE_KEYS).sort());
+      expect(CUSTOM_BOLD_BANKS.water.places.every((p) => p.water === true)).toBe(true);
+    });
+
+    test("«In the cabin of the yacht, she …» passes for «her room»", () => {
+      const slot = routed({ activity: "lies on her side, half asleep", world: "the cabin of a sailing yacht" });
+      const sentence = "In the cabin of the yacht, she lies on her side, half asleep, in a white lace bra and panties, a coil of rope by the door.";
+      expect(problemsOf(bold(sentence, slot))).not.toContain("place-missing");
+    });
+
+    test("«Through the porthole …» passes for «her window»", () => {
+      const slot = routed({ location: "her window", activity: "rests her forehead on the pane", shot: "friend", capture: "timer", pose: "profile", world: "the cabin of a sailing yacht", outfit: "a black lace bra and panties" });
+      const sentence = "Through the porthole of the yacht the bay shows blue as she rests her forehead on the pane in a black lace bra and panties, her eyes on the water.";
+      expect(problemsOf(bold(sentence, slot))).not.toContain("place-missing");
+    });
+
+    test("a sentence set at «the cafe terrace» with no private word is refused", () => {
+      const slot = routed({ activity: "lies on her side, half asleep" });
+      const sentence = "At the cafe terrace in Paris, she lies on her side, half asleep, in a white lace bra and panties, a croissant on the table beside her.";
+      const read = bold(sentence, slot);
+      expect(problemsOf(read)).toContain("place-missing");
+      expect(read.ok === false && read.boldSlots?.["place-missing"]).toEqual([1]);
+    });
+
+    test("a «by the water» slot names the water or a word for it", () => {
+      const slot = routed({ location: "a sunny spot by the water", activity: "sits with her feet in the water", outfit: "a red triangle bikini", shot: "friend", capture: "friend", world: "a yacht at anchor in a bay" });
+      expect(problemsOf(bold("On the deck of the yacht, she sits with her feet in the water in a red triangle bikini, smiling at the viewer, the hills of the bay behind her.", slot))).not.toContain("place-missing");
+    });
+
+    test("a slot without a world is not held to it (an old set's slot in a bold chunk, r2.1 L3)", () => {
+      const slot = routed({ category: "nightwear", route: undefined, world: undefined, location: "her bedroom", activity: "lies back against the pillows", outfit: "a tee and cotton panties", capture: "above" });
+      const read = bold("She lies back against the pillows in a tee and cotton panties, smiling up at the viewer, a glass of water on the nightstand.", slot);
+      expect(problemsOf(read)).not.toContain("place-missing");
+    });
+  });
+
+  describe("outfit-missing: every garment of the outfit is named", () => {
+    test("a lace set that lost its panties is refused; the set as given passes", () => {
+      const read = bold("In her small hotel room in Paris, she lies back across the bed in a white lace bra, smiling up at the viewer, a box of macarons from the corner bakery on the nightstand.");
+      expect(problemsOf(read)).toEqual(["outfit-missing"]);
+      expect(read.ok === false && read.boldSlots?.["outfit-missing"]).toEqual([1]);
+      expect(problemsOf(bold(GOOD))).toEqual([]);
+    });
+
+    test("an implied cover counts as what she wears: the towel", () => {
+      const slot = routed({ location: "her bathroom", activity: "leans on the sink after a shower", outfit: "only a white bath towel", shot: "mirror", capture: "mirror-hidden" });
+      expect(problemsOf(bold("In the bathroom of her hotel room in Paris, she leans on the sink after a shower, a bottle of lotion from the corner shop by the tap.", slot))).toContain("outfit-missing");
+      expect(problemsOf(bold("In the bathroom of her hotel room in Paris, she leans on the sink after a shower in only a white bath towel, a bottle of lotion by the tap.", slot))).toEqual([]);
+    });
+
+    test("an outfit with no garment the reader knows asks nothing of the sentence", () => {
+      const slot = unrouted({ outfit: "something comfortable" });
+      expect(problemsOf(readBoldWriterAnswer(answer([{ slotIndex: 1, sentence: "At a corner cafe she sips a coffee, smiling at the viewer over the rim of her cup." }]), [slot]))).not.toContain("outfit-missing");
+    });
+  });
+
+  describe("exposure-word: what Seedream refuses to draw is never our writer's word (I5.76, M9)", () => {
+    test("«topless» on a routed slot is refused, and the correct sentence passes", () => {
+      const read = bold("In her small hotel room in Paris, she lies back across the bed topless in white lace panties and a bra, a box of macarons from the corner bakery on the nightstand.");
+      expect(problemsOf(read)).toContain("exposure-word");
+      expect(read.ok === false && read.boldSlots?.["exposure-word"]).toEqual([1]);
+      expect(problemsOf(bold(GOOD))).not.toContain("exposure-word");
+    });
+
+    test("«see-through» lace is refused too", () => {
+      expect(problemsOf(bold("In her small hotel room in Paris, she lies back across the bed in a see-through lace bra and panties, a box of macarons on the nightstand."))).toContain("exposure-word");
+    });
+  });
+
+  test("each problem marks its slot alone: the next attempt asks only it, and the others are kept", () => {
+    const read = readBoldWriterAnswer(
+      answer([
+        { slotIndex: 1, sentence: GOOD },
+        { slotIndex: 2, sentence: "At the cafe terrace in Paris, she lies back across the bed in a white lace bra, a croissant on the table beside her." },
+      ]),
+      [routed({ slotIndex: 1 }), routed({ slotIndex: 2 })],
+    );
+    expect(read.ok).toBe(false);
+    if (read.ok) return;
+    expect(read.repair?.marked).toEqual([2]);
+    expect([...(read.repair?.accepted ?? new Map())]).toEqual([[1, GOOD]]);
+  });
+
+  test("a refusal never quotes the model's sentence: each bold reason is a fixed text with its slot numbers", () => {
+    const sentence = "At the zanzibarquux cafe in Paris, she lies on the rug topless, a croissant on the table.";
+    const read = bold(sentence);
+    expect(read.ok).toBe(false);
+    if (read.ok) return;
+    const told = writerRefusalText(read);
+    expect(told).not.toContain("zanzibarquux");
+    expect(told).not.toContain("topless");
+    expect(told).not.toContain("croissant");
+    expect(told).toContain("slot(s) 1");
+  });
+});
+
+describe("the bold reader: what the paid probe P-BA found (label leaks, public places, a split moment)", () => {
+  const bold = (sentence: string, slot: PlanSlot = routed()): WriterAnswer => readBoldWriterAnswer(answer([{ slotIndex: slot.slotIndex, sentence }]), [slot]);
+  const GOOD = "In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, smiling up at the viewer, a box of macarons from the corner bakery on the nightstand.";
+
+  describe("label-word: the camera, the photo, the light and the slot's labels never reach the prose", () => {
+    test.each([
+      ["captured in her own photo from above", "In her hotel room in Paris, captured in her own photo from above, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
+      ["morning daylight", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties as morning daylight fills the room, a box of macarons on the nightstand."],
+      ["set in the world of", "Set in the world of a cafe terrace, in her hotel room she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
+      ["a selfie", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties for a selfie, a box of macarons on the nightstand."],
+      ["the camera", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties, smiling into the camera, a box of macarons on the nightstand."],
+      ["a timer", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties while the timer counts down, a box of macarons on the nightstand."],
+      ["a three-quarter view", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties in a three-quarter view, a box of macarons on the nightstand."],
+    ])("%s is refused", (_, sentence) => {
+      const read = bold(sentence);
+      expect(problemsOf(read)).toContain("label-word");
+      expect(read.ok === false && read.boldSlots?.["label-word"]).toEqual([1]);
+    });
+
+    test("a word the slot's own texts say is not held against it (an old custom slot whose activity takes a photo)", () => {
+      const slot = unrouted({ activity: "takes a photo of the view" });
+      const read = readBoldWriterAnswer(answer([{ slotIndex: 1, sentence: "At a corner cafe she takes a photo of the view in a beige trench coat and jeans, smiling to herself." }]), [slot]);
+      expect(problemsOf(read)).not.toContain("label-word");
+    });
+
+    test("the correct sentence passes, the viewer and her phone included", () => {
+      expect(problemsOf(bold(GOOD))).toEqual([]);
+      const mirror = routed({ location: "her bathroom", activity: "fixes her hair at the mirror", shot: "mirror", capture: "mirror-hidden", outfit: "a black lace bra and panties" });
+      expect(problemsOf(bold("In the bathroom of her hotel room in Paris, she fixes her hair at the mirror in a black lace bra and panties, her phone over her face, a bottle of lotion by the tap.", mirror))).toEqual([]);
+    });
+  });
+
+  describe("public-place: a slot with a world keeps her out of the world's public places", () => {
+    test("the probe's W2:2: «in the seafood restaurant» is refused", () => {
+      const slot = routed({ location: "her window", activity: "leans on the sill, looking out", shot: "friend", capture: "timer", pose: "profile", outfit: "a black lace bra and panties", world: "a seafood restaurant in the port" });
+      const read = bold("She leans on the sill, looking out of her window in the seafood restaurant in the port, in a black lace bra and panties, her face turned to the side.", slot);
+      expect(problemsOf(read)).toContain("public-place");
+      expect(read.ok === false && read.boldSlots?.["public-place"]).toEqual([1]);
+    });
+
+    test.each(["at the cafe terrace", "on the street", "in a corner bistro", "at her office", "on the beach"])("«%s» is refused away from the water", (where) => {
+      expect(problemsOf(bold(`In her hotel room, she lies back across the bed in a white lace bra and panties, then ${where} a box of macarons sits beside her.`))).toContain("public-place");
+    });
+
+    test("something she brought back from it is no place at all", () => {
+      expect(problemsOf(bold(GOOD))).not.toContain("public-place");
+      expect(problemsOf(bold("In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, a paper bag from the cafe terrace on the nightstand."))).not.toContain("public-place");
+    });
+
+    test("by the water the beach is her place; a bar there is not", () => {
+      const slot = routed({ location: "a lounger by the water", activity: "lies back, soaking up the heat", outfit: "a white string bikini", shot: "friend", capture: "friend", world: "a beach near the harbour" });
+      expect(problemsOf(bold("On the beach near the harbour, she lies back, soaking up the heat on a lounger by the water in a white string bikini, smiling at the viewer.", slot))).toEqual([]);
+      expect(problemsOf(bold("At the beach bar near the harbour, she lies back, soaking up the heat by the water in a white string bikini, smiling at the viewer.", slot))).toContain("public-place");
+    });
+
+    test("a slot without a world keeps its location as given, a cafe included", () => {
+      const read = readBoldWriterAnswer(answer([{ slotIndex: 1, sentence: "At a corner cafe she sips a coffee in a beige trench coat and jeans, smiling at the viewer." }]), [unrouted()]);
+      expect(problemsOf(read)).not.toContain("public-place");
+    });
+  });
+
+  describe("moment-split: «she» and the moment, word for word and in one piece (the probe's W1:2 and W2:2)", () => {
+    test("W1:2: «She leans on the sink in her bathroom … after a shower» is refused", () => {
+      const slot = routed({ location: "her bathroom", activity: "leans on the sink after a shower", outfit: "only a white bath towel", shot: "mirror", capture: "mirror-hidden" });
+      const read = bold("She leans on the sink in her bathroom in Paris after a shower, in only a white bath towel, a takeaway cup from the cafe terrace beside the tap.", slot);
+      expect(problemsOf(read)).toEqual(["moment-split"]);
+      expect(read.ok === false && read.boldSlots?.["moment-split"]).toEqual([1]);
+    });
+
+    test("W2:2: a moment that lost its comma is refused (the shipped «her window» moment with a comma)", () => {
+      const slot = routed({ location: "her window", activity: "sits on the ledge, legs crossed", shot: "friend", capture: "timer", pose: "profile", outfit: "a black lace bra and panties" });
+      expect(problemsOf(bold("By the window of her hotel room in Paris, she sits on the ledge legs crossed in a black lace bra and panties, a cup of tea beside her.", slot))).toEqual(["moment-split"]);
+      expect(problemsOf(bold("By the window of her hotel room in Paris, she sits on the ledge, legs crossed, in a black lace bra and panties, a cup of tea beside her.", slot))).toEqual([]);
+    });
+
+    test("the moment kept whole passes, in any case at the start of the sentence", () => {
+      expect(problemsOf(bold(GOOD))).toEqual([]);
+      expect(problemsOf(bold("She lies back across the bed in her small hotel room in Paris in a white lace bra and panties, a box of macarons from the corner bakery on the nightstand."))).toEqual([]);
+    });
+
+    test("an activity that is no bank moment (an old custom slot) is not held to it", () => {
+      const read = readBoldWriterAnswer(answer([{ slotIndex: 1, sentence: "At a corner cafe, sipping a coffee, she smiles at the viewer in a beige trench coat and jeans." }]), [unrouted()]);
+      expect(problemsOf(read)).not.toContain("moment-split");
+    });
+  });
+});
+
 // The widest of each value the bold slot JSON sends, read from the tables themselves.
 const longestOf = (values: readonly string[]): string => values.reduce((a, b) => (b.length > a.length ? b : a));
 const WORST_CAPTURE = (Object.keys(CAPTURE_LABEL) as (keyof typeof CAPTURE_LABEL)[]).reduce((a, b) => (CAPTURE_LABEL[b].length > CAPTURE_LABEL[a].length ? b : a));
@@ -273,7 +482,7 @@ const WORST_POSE = longestOf(["front", "three-quarter", "profile", "back"]) as P
 describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the bold floor pin)", () => {
   /** What the reserve keeps clear of the ceiling, as the ordinary pins do. */
   const MARGIN = 250;
-  const MARGIN_PRINTED = 3_961;
+  const MARGIN_PRINTED = 3_185;
   const CEILING = WRITER_BOLD_CALL.inputTokens;
   const FIRST_INDEX = 100 - WRITER_BOLD_CALL.slotsPerCall + 1;
 
@@ -307,17 +516,31 @@ describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the b
   function worstRefusal(slots: readonly PlanSlot[]): WriterRefusal {
     const rest = worstSlotList(slots.map((s) => s.slotIndex));
     return {
-      problems: ["not-json", "empty", "missing-slots", "unknown-slot", "duplicate-slot", "two-handed", "youth-word", "revealing-word", "pose-contradiction", "phone-in-selfie"],
+      problems: ["not-json", "empty", "missing-slots", "unknown-slot", "duplicate-slot", "two-handed", "youth-word", "revealing-word", "pose-contradiction", "phone-in-selfie", ...BOLD_PROBLEMS],
       missingSlots: rest,
       twoHandedSlots: rest,
       wordSlots: rest,
       poseSlots: rest,
       phoneSlots: rest,
       words: hostileWords,
+      boldSlots: Object.fromEntries(BOLD_PROBLEMS.map((problem) => [problem, rest])),
     };
   }
 
   const floorOf = (slots: readonly PlanSlot[]): number => promptTokenFloor({ messages: writerBoldMessages(slots, worstRefusal(slots)), jsonSchema: WRITER_JSON_SCHEMA, images: 0 });
+
+  test("the worst refusal carries every reason: today's ten, revealing-word included, and every bold one, each with its slot list", () => {
+    const refusal = worstRefusal(worstSlots(POOL_TEXT_MAX));
+    const text = writerRefusalText(refusal);
+    expect(new Set(refusal.problems).size).toBe(10 + BOLD_PROBLEMS.length);
+    const rest = worstSlotList(worstSlots(POOL_TEXT_MAX).map((s) => s.slotIndex));
+    for (const problem of BOLD_PROBLEMS) {
+      const alone = writerRefusalText({ problems: [problem], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [], boldSlots: { [problem]: rest } });
+      expect(alone).toStartWith(`slot(s) ${slotList(rest)} `);
+      expect(text).toContain(alone);
+    }
+    expect(BOLD_PROBLEMS).toEqual(["place-missing", "outfit-missing", "exposure-word", "label-word", "public-place", "moment-split"]);
+  });
 
   test("the worst chunk's widest values are the ones the tables hold", () => {
     expect(CAPTURE_LABEL[WORST_CAPTURE].length).toBe(Math.max(...Object.values(CAPTURE_LABEL).map((l) => l.length)));
@@ -338,3 +561,4 @@ describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the b
     expect(floorOf(worstSlots(POOL_TEXT_MAX + 1))).toBeGreaterThan(floorOf(worstSlots(POOL_TEXT_MAX)));
   });
 });
+

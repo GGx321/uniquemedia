@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared/scenes/contentLine";
+import { bankPlaceOf } from "../../shared/scenes/bankLookup";
+import { boldWordsIn } from "../../shared/scenes/banks/boldRules";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
+import { exposureWordsIn } from "../../shared/scenes/explicitWords";
 import { ownerBannedOutfitWords } from "../../shared/scenes/words";
 import { WRITER_CALL, writerCallOf, writerExpectedMicros, writerWorstMicros, type Estimate } from "../money/estimate";
 import type { PriceBook } from "../money/prices";
@@ -257,7 +260,22 @@ export type WriterProblem =
   /** S5.R1 M3: a front-camera selfie's sentence names a phone, which would draw a second one. */
   | "phone-in-selfie"
   /** CS.8a: an idea write's shot or pose the model had to pick is missing, outside the vocabulary or an impossible pair (ideaWriter.ts). */
-  | "bad-angle";
+  | "bad-angle"
+  | BoldProblem;
+
+/**
+ * 5a.4 (S5.BA4, plan s5a4 §5.3.3 «The reader»): what only the bold mode's reader refuses (`readBoldWriterAnswer`). Each belongs to its slot: the slot is marked and
+ * asked again with a fixed reason, the others are kept.
+ * - `place-missing`: a slot with a world names none of its place's words (`PLACE_KEYS`): she was not set in the slot's location.
+ * - `outfit-missing`: a garment of the slot's outfit is not named: the outfit was not described as given.
+ * - `exposure-word`: an exposure word (`explicitWords.ts`): what Seedream refuses to draw, so a frame the owner would not get (I5.76).
+ * - `label-word` (P-BA): the camera, the photo, the light or a slot label pasted into the prose («captured in her own photo from above», «morning daylight», «set in
+ *   the world of …»).
+ * - `public-place` (P-BA W2:2): a slot with a world put in a public place of it («in the seafood restaurant»); by the water its beach is her place.
+ * - `moment-split` (P-BA W1:2, W2:2): «she» and the bank moment are not there word for word and in one piece, which the clip's «Как в сцене» needs (frameFacts.ts).
+ */
+export const BOLD_PROBLEMS = ["place-missing", "outfit-missing", "exposure-word", "label-word", "public-place", "moment-split"] as const;
+export type BoldProblem = (typeof BOLD_PROBLEMS)[number];
 
 /** Why an answer was refused, as the next attempt is told: fixed reasons and
  *  slot numbers, never the model's own rejected wording (the youth/revealing
@@ -274,6 +292,8 @@ export interface WriterRefusal {
   phoneSlots?: number[];
   /** CS.8a: idea-write slots whose picked shot or pose was refused (`bad-angle`). Absent in every other refusal. */
   angleSlots?: number[];
+  /** 5a.4 (S5.BA4): the slots of each bold problem, ascending. Absent in every refusal the bold reader did not make. */
+  boldSlots?: Partial<Record<BoldProblem, number[]>>;
 }
 
 export const NO_REFUSAL: WriterRefusal = { problems: [], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] };
@@ -348,6 +368,13 @@ const REASON: Partial<Record<WriterProblem, (r: WriterRefusal) => string>> = {
   // No slot list: the re-ask rewrites the whole chunk, and the floor pins hold the reason to one fixed sentence (`phoneSlots` is for the logs and the tests).
   "phone-in-selfie": () => "a selfie sentence named a phone or said selfie; name none, describe only her free hand",
   "bad-angle": (r) => `slot(s) ${slotList(r.angleSlots ?? [])} gave a shot or a pose that is missing, outside the lists the rules give, or a selfie or mirror shot not facing the camera (front or three-quarter only)`,
+  // 5a.4 (S5.BA4): the bold reader's own, each a fixed sentence with its slot numbers; never a word of the sentence it refused.
+  "place-missing": (r) => `slot(s) ${slotList(r.boldSlots?.["place-missing"] ?? [])} did not say where she is: name the slot's location, set inside its world`,
+  "outfit-missing": (r) => `slot(s) ${slotList(r.boldSlots?.["outfit-missing"] ?? [])} left out a garment of the outfit: name every garment exactly as given`,
+  "exposure-word": (r) => `slot(s) ${slotList(r.boldSlots?.["exposure-word"] ?? [])} named nudity: describe only what the outfit shows`,
+  "label-word": (r) => `slot(s) ${slotList(r.boldSlots?.["label-word"] ?? [])} wrote about the camera, the photo, the light or a label of the slot: write none of them`,
+  "public-place": (r) => `slot(s) ${slotList(r.boldSlots?.["public-place"] ?? [])} put her in a public place: keep her in the slot's location`,
+  "moment-split": (r) => `slot(s) ${slotList(r.boldSlots?.["moment-split"] ?? [])} did not write "she" and then the activity word for word, in one piece`,
 };
 
 /** Every reason a refusal happened, as fixed sentences; never the model's own rejected text. */
@@ -535,6 +562,127 @@ export interface SlotRepair {
 
 export type WriterAnswer = { ok: true; sentences: Map<number, string> } | ({ ok: false } & WriterRefusal & { repair?: SlotRepair });
 
+// ---------- the bold reader's own checks (5a.4, S5.BA4) ----------
+
+/**
+ * r2.2 P8: the words that say a slot's place, by the shared «rooms» bank's place name: the place itself, or what the world calls it (on a yacht her room is a
+ * cabin, her window a porthole, her balcony the deck). Pinned by writer.bold.test.ts, one row per «rooms» place.
+ */
+export const PLACE_KEYS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "her room": ["room", "bedroom", "suite", "cabin", "chalet", "bed"],
+  "her bathroom": ["bathroom", "shower", "bath", "tub", "mirror"],
+  "her window": ["window", "porthole"],
+  "her balcony": ["balcony", "terrace", "deck", "veranda"],
+  "her sofa": ["sofa", "couch", "living room", "lounge"],
+});
+
+/** The words that say a «by the water» place (every place of that bank is a water place, `BankPlace.water`). */
+export const WATER_PLACE_KEYS: readonly string[] = Object.freeze(["water", "pool", "sea", "beach", "shore", "lake", "bay", "deck", "sundeck", "lounger"]);
+
+/** Whether `text` says `phrase` as whole words, in any case, its plural too («beds», «porthole»s). */
+function saysWord(text: string, phrase: string): boolean {
+  const words = phrase.trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+  return new RegExp(`(?<![\\p{L}\\p{N}])${words}(?:s|es)?(?![\\p{L}\\p{N}])`, "iu").test(text);
+}
+
+/**
+ * The garments the reader knows besides the «Смелая» vocabulary (banks/boldRules.ts `boldWordsIn`: the lingerie, the swimwear, the stockings and the satin), one
+ * pattern each, singular and plural: the satin nightwear's and the covers' (the towel, the sheet, the foam), and the everyday ones an old set's unrouted slot may
+ * wear. An outfit word in neither («set», «slip», «lace») asks nothing of the sentence.
+ */
+const GARMENTS: readonly RegExp[] = [
+  /\bcamis?\b/i,
+  /\bshorts\b/i,
+  /\bnightdress(?:es)?\b/i,
+  /\brobes?\b/i,
+  /\bshirts?\b/i,
+  /\bsweatshirts?\b/i,
+  /\bt-shirts?\b/i,
+  /\btees?\b/i,
+  /\btops?\b/i,
+  /\bjeans\b/i,
+  /\bsarongs?\b/i,
+  /\bhats?\b/i,
+  /\btowels?\b/i,
+  /\b(?:bed)?sheets?\b/i,
+  /\bfoam\b/i,
+  /\bdress(?:es)?\b/i,
+  /\bskirts?\b/i,
+  /\btrousers\b/i,
+  /\bleggings\b/i,
+  /\bsweaters?\b/i,
+  /\bjumpers?\b/i,
+  /\bcardigans?\b/i,
+  /\bhoodies?\b/i,
+  /\bjackets?\b/i,
+  /\bcoats?\b/i,
+  /\bblouses?\b/i,
+];
+
+/** A «Смелая» vocabulary word in its forms: itself, with its plural «s», or without it («bras», «panty» for «panties» aside: the banks say «panties»). */
+const formsOf = (word: string): string[] => [word, `${word}s`, word.replace(/s$/, "")];
+
+/** Whether `outfit` names a garment that `sentence` does not: a «Смелая» vocabulary word, or one of `GARMENTS`. */
+function missesAGarment(outfit: string, sentence: string): boolean {
+  const said = new Set(boldWordsIn(sentence).map((word) => word.toLowerCase()));
+  if (boldWordsIn(outfit).some((word) => !formsOf(word.toLowerCase()).some((form) => said.has(form)))) return true;
+  return GARMENTS.some((garment) => garment.test(outfit) && !garment.test(sentence));
+}
+
+/**
+ * P-BA: the words of the slot's labels that the drafts pasted into the prose. Who takes the photo and how (the capture labels name a photo, a selfie, a snap, a
+ * timer), the light (the ordinary light lines said «daylight»), the pose's own name, and the slot's field names. Her phone and the viewer are not here: a mirror
+ * frame may show her phone, and «she looks at the viewer» is the gaze rule's own wording.
+ */
+const LABEL_WORDS =
+  /\b(?:cameras?|lens(?:es)?|photos?|photograph(?:s|ed|ing)?|selfies?|snap(?:s|shots?)?|shots?|framing|captured|timers?|tripods?|(?:day|sun|moon|lamp|candle)light|sunshine|three-quarter|worlds?|slots?)\b/gi;
+
+/** The label words of a sentence, as it writes them. */
+function labelWordsIn(sentence: string): string[] {
+  return Array.from(sentence.matchAll(LABEL_WORDS), (m) => m[0]);
+}
+
+/** A public place of a world, named as where she is: after «in», «at», «on», «inside», «into» or «outside», two words between at most. */
+const PUBLIC_NOUNS =
+  "caf(?:e|é)s?|coffee\\s+shops?|restaurants?|bistros?|brasseries?|bars?|pubs?|(?:night)?clubs?|streets?|sidewalks?|shops?|stores?|boutiques?|markets?|malls?|offices?|gyms?|parks?|plazas?|squares?|stations?|airports?|museums?|galler(?:y|ies)|lobb(?:y|ies)|librar(?:y|ies)|bakery|bakeries";
+/** The shore's public places: hers when the slot is by the water (its world's own water place), public anywhere else. */
+const SHORE_NOUNS = "beach(?:es)?|marinas?|harbou?rs?|piers?|promenades?|boardwalks?";
+const placeAt = (nouns: string): RegExp =>
+  new RegExp(String.raw`\b(?:in|at|on|inside|into|outside)\s+(?:(?:the|a|an|this|that|her|its|one)\s+)?(?:[\w'-]+\s+){0,2}?(?:${nouns})\b`, "i");
+const PUBLIC_PLACE = placeAt(`${PUBLIC_NOUNS}|${SHORE_NOUNS}`);
+const PUBLIC_PLACE_BY_THE_WATER = placeAt(PUBLIC_NOUNS);
+
+/** The bank moment's text without the punctuation a stored text may end with (the plain sentence's and frameFacts.ts's `trimmed`). */
+const momentText = (text: string): string => text.trim().replace(/[\s.,;:!]+$/, "");
+
+/** Whether `sentence` says «she {moment}» word for word: in any case, its commas included, as a phrase of its own (frameFacts.ts `says`). */
+function saysMoment(sentence: string, moment: string): boolean {
+  const phrase = `she ${momentText(moment)}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\p{L}\\p{N}])${phrase}(?![\\p{L}\\p{N}])`, "iu").test(sentence);
+}
+
+/**
+ * The bold problems of one slot's sentence. `place-missing` and `public-place` read only a slot with a world (an old set's slot without one keeps its location as
+ * given, r2.1 L3); `moment-split` reads a slot whose activity is a bank moment; the outfit, the exposure and the label words read every slot of the chunk. A word
+ * the slot's own texts say is never held against it.
+ */
+function boldProblemsOf(slot: PlanSlot, sentence: string): BoldProblem[] {
+  const problems: BoldProblem[] = [];
+  const own = [slot.location, slot.activity, slot.outfit, slot.world ?? ""].join(" ");
+  const hit = bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location, activity: slot.activity });
+  const water = hit?.place.water === true;
+  if (slot.world !== undefined && hit !== undefined) {
+    const keys = water ? WATER_PLACE_KEYS : (PLACE_KEYS[hit.place.name] ?? []);
+    if (keys.length > 0 && !keys.some((key) => saysWord(sentence, key))) problems.push("place-missing");
+  }
+  if (missesAGarment(slot.outfit, sentence)) problems.push("outfit-missing");
+  if (exposureWordsIn(sentence).some((word) => !saysWord(own, word))) problems.push("exposure-word");
+  if (labelWordsIn(sentence).some((word) => !saysWord(own, word))) problems.push("label-word");
+  if (slot.world !== undefined && (water ? PUBLIC_PLACE_BY_THE_WATER : PUBLIC_PLACE).test(sentence)) problems.push("public-place");
+  if (hit?.moment !== undefined && !saysMoment(sentence, hit.moment.text)) problems.push("moment-split");
+  return problems;
+}
+
 function refused(problems: WriterProblem[], extra: Partial<WriterRefusal> & { repair?: SlotRepair } = {}): WriterAnswer {
   return { ok: false, problems, missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [], ...extra };
 }
@@ -555,6 +703,21 @@ export function readWriterAnswer(content: string, slots: readonly ReadableSlot[]
  * sentences of the other slots are kept (`repair`).
  */
 export function readWriterScenes(scenes: readonly Pick<WriterScene, "slotIndex" | "sentence">[], slots: readonly ReadableSlot[]): WriterAnswer {
+  return readScenes(scenes, slots);
+}
+
+/**
+ * 5a.4 (S5.BA4, plan s5a4 §5.3.3 «The reader»): a bold-mode answer against its chunk's planned slots. Today's rules, each slot at its own content level, and the
+ * bold problems (`boldProblemsOf`), each of its slot: the slot is marked and asked again, the others are kept.
+ */
+export function readBoldWriterAnswer(content: string, slots: readonly PlanSlot[]): WriterAnswer {
+  const parsed = WriterOutputSchema.safeParse(parseJson(content));
+  if (!parsed.success) return refused(["not-json"]);
+  return readScenes(parsed.data.scenes, slots, boldProblemsOf);
+}
+
+/** `readWriterScenes`, with the bold problems of each slot when `boldOf` is given (the bold mode). */
+function readScenes<S extends ReadableSlot>(scenes: readonly Pick<WriterScene, "slotIndex" | "sentence">[], slots: readonly S[], boldOf?: (slot: S, sentence: string) => readonly BoldProblem[]): WriterAnswer {
   const known = new Map(slots.map((s) => [s.slotIndex, s]));
   const bySlot = new Map<number, string>();
   const repeated = new Set<number>();
@@ -580,6 +743,7 @@ export function readWriterScenes(scenes: readonly Pick<WriterScene, "slotIndex" 
   const words = new Set<string>();
   const poseSlots: number[] = [];
   const phoneSlots: number[] = [];
+  const boldSlots: Partial<Record<BoldProblem, number[]>> = {};
   for (const s of slots) {
     const sentence = bySlot.get(s.slotIndex);
     if (sentence === undefined) continue;
@@ -613,6 +777,10 @@ export function readWriterScenes(scenes: readonly Pick<WriterScene, "slotIndex" 
       problems.add("phone-in-selfie");
       phoneSlots.push(s.slotIndex);
     }
+    for (const problem of boldOf?.(s, sentence) ?? []) {
+      problems.add(problem);
+      (boldSlots[problem] ??= []).push(s.slotIndex);
+    }
   }
 
   if (problems.size === 0) return { ok: true, sentences: bySlot };
@@ -623,10 +791,11 @@ export function readWriterScenes(scenes: readonly Pick<WriterScene, "slotIndex" 
     words: [...words],
     poseSlots,
     ...(phoneSlots.length > 0 ? { phoneSlots } : {}),
+    ...(Object.keys(boldSlots).length > 0 ? { boldSlots } : {}),
   };
   // A youth word is the answer's, not a slot's: nothing is kept and the next attempt is the whole chunk.
   if (problems.has("youth-word")) return refused([...problems], refusal);
-  const markedSet = new Set<number>([...missingSlots, ...repeated, ...twoHandedSlots, ...revealingSlots, ...poseSlots, ...phoneSlots]);
+  const markedSet = new Set<number>([...missingSlots, ...repeated, ...twoHandedSlots, ...revealingSlots, ...poseSlots, ...phoneSlots, ...Object.values(boldSlots).flat()]);
   const marked = slots.map((s) => s.slotIndex).filter((slotIndex) => markedSet.has(slotIndex));
   const accepted = new Map<number, string>();
   for (const s of slots) {
