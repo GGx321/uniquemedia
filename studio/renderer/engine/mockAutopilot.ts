@@ -65,8 +65,11 @@ export interface MockAutopilotWorld {
   schedule(ms: number, task: () => void): () => void;
   readonly stepMs: number;
   usage(avatarId: string): AvatarUsage;
-  /** Free scene photos of the avatar in these categories: eligible, in no video, held by no render, not rejected. */
-  freePhotos(avatarId: string, categories: readonly CategoryRef[]): number;
+  /**
+   * Free scene photos of the avatar in these categories: eligible, in no video, held by no render, not rejected. 5a.4 (S5.BA5, r2.2 D2, the engine's `poolOf`): at «Смелая» only
+   * the photos drawn on the Seedream route.
+   */
+  freePhotos(avatarId: string, categories: readonly CategoryRef[], level: SceneLevel | undefined): number;
   /** Another job of the avatar's own holds it now. */
   busy(avatarId: string): boolean;
   /** The avatar has an open scene set: one of the owner's own, or the unfinished launch's (composed, not drawn from yet). A plan that needs new photos for it cannot start. */
@@ -272,7 +275,7 @@ export class MockAutopilot {
   #planAvatar(draft: LaunchDraftInput, avatarId: string): PlannedAvatar {
     const usage = this.#world.usage(avatarId);
     // An avatar whose usage cannot be trusted gives no library photos (§18.6): it is blocked for a plan that uses the library.
-    const free = usage.state === "ok" ? this.#world.freePhotos(avatarId, draft.categories) : 0;
+    const free = usage.state === "ok" ? this.#world.freePhotos(avatarId, draft.categories, draft.level) : 0;
     const wanted = shapeCounts(draft.videosPerAvatar, draft.mix);
     let pool = draft.library ? free : 0;
     const made = { single: 0, collage: 0, slides: 0 };

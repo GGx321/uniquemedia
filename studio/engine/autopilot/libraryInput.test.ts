@@ -33,6 +33,16 @@ describe("planAvatarInput", () => {
     expect(out.usage).toEqual({ state: "ok" });
   });
 
+  // 5a.4 (S5.BA5, plan s5a4 r2.2 D2): a photo drawn on the Seedream route says so, so the planner can keep a «Смелая» launch to «Смелая» photos; any other carries no route.
+  test("a photo drawn on the route comes through with it, any other with none", async () => {
+    const { library, avatar } = await fixture();
+    const onRoute = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ source: { ...SAMPLE_SOURCE, category: "home", route: "seedream" }, qa: { pdq: PDQ_A } }));
+    const off = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ source: { ...SAMPLE_SOURCE, category: "home" }, qa: { pdq: PDQ_B } }));
+    const photos = planAvatarInput(library, avatar.id, false, true).photos;
+    expect(photos.find((p) => p.id === onRoute.id)?.route).toBe("seedream");
+    expect("route" in (photos.find((p) => p.id === off.id) ?? {})).toBe(false);
+  });
+
   test("a photo the face gate marked comes through marked, so the planner can tell its likeness was never judged", async () => {
     const { library, avatar, generated } = await fixture();
     await library.addPhoto(avatar.id, PNG_1X1, generated("home", { pdq: PDQ_A, faceCos: 0.4, faceMarked: true }));

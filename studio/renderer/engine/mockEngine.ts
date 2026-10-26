@@ -1056,10 +1056,12 @@ export class MockEngine implements EngineBridge {
         schedule: (ms, task) => this.scheduler.schedule(ms, task),
         stepMs: this.stepMs,
         usage: (avatarId) => this.avatars.find((a) => a.avatarId === avatarId)?.usage ?? { state: "ok" },
-        freePhotos: (avatarId, categories) =>
+        freePhotos: (avatarId, categories, level) =>
           this.photos.filter((p) => {
             const view = this.photoView(p);
-            return p.avatarId === avatarId && categories.some((c) => c === p.category) && view.eligible && !view.used && !view.reserved && !view.rejected;
+            // 5a.4 (S5.BA5, r2.2 D2): at «Смелая» only the photos drawn on the Seedream route, as the engine's `poolOf`.
+            const onLevel = level !== "bold" || p.route === "seedream";
+            return p.avatarId === avatarId && categories.some((c) => c === p.category) && onLevel && view.eligible && !view.used && !view.reserved && !view.rejected;
           }).length,
         // The launch's own slice job holds the avatar (the owner's commands meet IN_FLIGHT), but the launch does not wait for itself.
         busy: (avatarId) => this.jobRunningFor(avatarId, { exceptLaunch: true }),

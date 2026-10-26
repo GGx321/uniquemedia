@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { RunPlanSchema } from "./runs/plan";
+import { randomPdq, rng } from "./autopilot/testing/planFixtures";
+import { openLibrary } from "./library";
+import { samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
 import { plan as planScenes } from "./scenes";
 import { ledgerLines, ok, useEngineDir } from "./testing/engineHarness";
 import { crashKit, fakeRender } from "./testing/crashKit";
@@ -208,5 +211,43 @@ describe("a «Смелая» launch of «Дом», priced by its set's routes", 
     expect(runs.map((run) => run.capMicros)).toEqual(runs.map((run) => run.scenes.slots.length * GROK_UNIT));
     const reserved = (runId: string) => ledgerLines(kit.root()).filter((l) => l.type === "reserve" && typeof l.scope === "object" && l.scope !== null && "runId" in l.scope && l.scope.runId === runId).reduce((sum, l) => sum + Number(l.worstMicros), 0);
     for (const run of runs) expect({ runId: run.runId, reserved: reserved(run.runId) > 0, within: reserved(run.runId) <= run.capMicros }).toEqual({ runId: run.runId, reserved: true, within: true });
+  });
+});
+
+// 5a.4 (S5.BA5, plan s5a4 r2.2 D2, §5.8): a launch at «Смелая» takes only «Смелая» photos from the library: the free photos drawn on the Seedream route. The preview counts its `free`
+// and its library photos from them; the avatar's ordinary «Дом» photos stay free for a launch below «Смелая».
+describe("the library of a «Смелая» launch", () => {
+  const FIXTURE_JPEGS = ["render-best-home-1.jpg", "render-median-travel-2.jpg", "render-worst-fitness-3.jpg"].map((name) => join(import.meta.dir, "face", "fixtures", "images", name));
+
+  /** Adds `n` free «Дом» photos drawn on the Seedream route (as a 5a.4 «Смелая» run leaves them), far apart in their hashes. */
+  async function addRouted(avatarId: string, n: number): Promise<void> {
+    const { library } = await openLibrary(kit.libraryDir(), { now: steppingClock(), newId: sequentialIds("routed") });
+    const base = samplePhotoMeta().source;
+    if (base.kind !== "generated") throw new Error("expected a generated sample source");
+    const next = rng(97);
+    for (let i = 0; i < n; i++) {
+      const bytes = new Uint8Array(readFileSync(FIXTURE_JPEGS[i % FIXTURE_JPEGS.length] ?? ""));
+      const source = { ...base, category: "home", attemptId: `run-00000099:slot-${i + 1}#1`, slot: `slot-${i + 1}`, route: "seedream" as const };
+      await library.addPhoto(avatarId, bytes, samplePhotoMeta({ mediaType: "image/jpeg", width: 720, height: 1280, source, qa: { pdq: randomPdq(next) } }));
+    }
+  }
+
+  async function freeOf(started: Awaited<ReturnType<typeof kit.boot>>, avatarId: string, level: "bold" | "flirty"): Promise<number> {
+    const answer = ok(await kit.call(started, "autopilot.estimate", { draft: boldDraft(avatarId, { level, categories: ["home"], library: true }) }));
+    if (answer.type !== "autopilot.estimate") throw new Error("wrong answer");
+    return answer.result.preview.avatars[0]?.free ?? -1;
+  }
+
+  test("at «Смелая» only the routed photos are free; at «Кокетливая» every one is", async () => {
+    const avatarId = await kit.seedAvatar(8, "libpool");
+    await addRouted(avatarId, 4);
+    const started = await kit.boot(network(), fakeRender());
+    expect([await freeOf(started, avatarId, "bold"), await freeOf(started, avatarId, "flirty")]).toEqual([4, 12]);
+  });
+
+  test("at «Смелая» an avatar with no routed photo has none free: every photo is drawn anew", async () => {
+    const avatarId = await kit.seedAvatar(8, "nolibpool");
+    const started = await kit.boot(network(), fakeRender());
+    expect([await freeOf(started, avatarId, "bold"), await freeOf(started, avatarId, "flirty")]).toEqual([0, 8]);
   });
 });

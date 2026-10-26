@@ -155,6 +155,41 @@ describe("planLaunch: the pool and the shapes", () => {
   });
 });
 
+// 5a.4 (S5.BA5, plan s5a4 r2.2 D2, §5.8): a launch at «Смелая» fills its videos with «Смелая» photos only: the free photos drawn on the Seedream route (`route: "seedream"`). An
+// ordinary or flirty «Дом» photo, and a nightwear photo from before 5a.4 (drawn with no route), are left out at «Смелая». At «Обычная» and «Кокетливая» the pool is today's, byte for
+// byte. The preview's `free`, `fromLibrary` and `toGenerate` read the same pool.
+describe("planLaunch: the library at «Смелая» (r2.2 D2)", () => {
+  const routed = distinctPhotos(12, { category: "home", route: "seedream" }, 71);
+  const plain = distinctPhotos(12, { category: "home" }, 72);
+  const oldNightwear = distinctPhotos(6, { category: "nightwear" }, 73);
+  const all = [...routed, ...plain, ...oldNightwear];
+
+  test("at «Смелая» the pool is the routed free photos alone", () => {
+    const mia = only(planLaunch(input({ avatars: [avatar(all)], draft: { level: "bold", categories: ["home", "nightwear"] } })));
+    expect(mia.free).toBe(routed.length);
+    const used = new Set(mia.videos.flatMap((v) => v.photoIds));
+    expect([...used].every((id) => routed.some((p) => p.id === id))).toBe(true);
+    expect(mia.fromLibrary).toBeGreaterThan(0);
+  });
+
+  test("at «Смелая» with no routed photo the whole need is generated", () => {
+    const mia = only(planLaunch(input({ avatars: [avatar([...plain, ...oldNightwear])], draft: { level: "bold", categories: ["home", "nightwear"] } })));
+    expect([mia.free, mia.fromLibrary]).toEqual([0, 0]);
+    expect(mia.toGenerate).toBe(18);
+  });
+
+  test("at «Кокетливая» and with no level the pool is today's: routed or not, the plan is the one it was", () => {
+    for (const level of [undefined, "ordinary", "flirty"] as const) {
+      const categories: CategoryRef[] = ["home", "nightwear"];
+      const asked = { categories, ...(level === undefined ? {} : { level }) };
+      const withRoutes = planLaunch(input({ avatars: [avatar(all)], draft: asked }));
+      const withoutRoutes = planLaunch(input({ avatars: [avatar(all.map(({ route: _route, ...p }) => p))], draft: asked }));
+      expect({ level, plan: withRoutes }).toEqual({ level, plan: withoutRoutes });
+      expect(only(withRoutes).free).toBe(all.length);
+    }
+  });
+});
+
 describe("planLaunch: same-category groups and the generated split", () => {
   test("a collage or slides video draws all its photos from one category", () => {
     const home = distinctPhotos(6, { category: "home" }, 11);

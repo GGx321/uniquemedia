@@ -1,6 +1,6 @@
 import { hammingDistance } from "../../../src/core/pdq/hamming";
 import type { AvatarBlockerCode, LaunchDraft, VideoShape } from "../../shared/engine/autopilot";
-import { orderCategories, type CategoryPoses, type CategoryRef, type ScenePose } from "../../shared/engine/categories";
+import { orderCategories, type CategoryPoses, type CategoryRef, type ScenePose, type SceneRoute } from "../../shared/engine/categories";
 import { MAX_COMPOSE_SCENES } from "../../shared/engine/scenes";
 import type { AvatarUsage } from "../../shared/engine/state";
 import { defaultQaConfig } from "../runs/config";
@@ -20,6 +20,8 @@ export interface PlanPhoto {
   faceCos: number | undefined;
   /** S5.7a: the face gate marked the frame, so `faceCos` was kept and never judged: it ranks as unverified. */
   faceMarked?: true;
+  /** 5a.4 (S5.BA5, plan s5a4 r2.2 D2): `source.route` of a photo drawn on the Seedream route; absent for every other photo. A launch at «Смелая» takes only these. */
+  route?: SceneRoute;
   eligible: boolean;
   rejected: boolean;
   reserved: boolean;
@@ -229,6 +231,8 @@ function posesFor(category: CategoryRef, input: PlanInput): readonly ScenePose[]
 /**
  * The avatar's FREE library photos in the launch's categories (§5.1): the planner's pool, and, with the launch's own photos marked `reserved`, the candidates of every later pick of the
  * free steps. One definition (A7): eligible, not rejected, not used, not reserved, not held by a saved draft, of the avatar, with a category the launch chose.
+ * 5a.4 (S5.BA5, plan s5a4 r2.2 D2): at «Смелая» only the photos drawn on the Seedream route, so a «Смелая» launch never fills a video with an ordinary, a flirty or a pre-5a.4 photo
+ * (an old «Смелая» photo of the five, or of nightwear's cotton, has no route). Below «Смелая» the pool is today's.
  */
 export function poolOf(avatar: PlanAvatarInput, input: Pick<PlanInput, "draft" | "draftHeldPhotoIds">): PlanPhoto[] {
   if (avatar.usage.state !== "ok" || !avatar.draftsKnown) return [];
@@ -243,7 +247,8 @@ export function poolOf(avatar: PlanAvatarInput, input: Pick<PlanInput, "draft" |
         p.usedIn.length === 0 &&
         !input.draftHeldPhotoIds.has(p.id) &&
         p.category !== undefined &&
-        chosen.has(p.category),
+        chosen.has(p.category) &&
+        (input.draft.level !== "bold" || p.route === "seedream"),
     ),
   );
 }

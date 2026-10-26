@@ -31,6 +31,8 @@ export function planAvatarInput(library: LibraryReads, avatarId: string, hasOpen
       id: sidecar.id,
       avatarId: sidecar.avatarId,
       category: sidecar.source.kind === "generated" ? sidecar.source.category : undefined,
+      // 5a.4 (S5.BA5, r2.2 D2): the route a photo was drawn on, so a «Смелая» launch can take only «Смелая» photos. Absent for every photo not on it.
+      ...(sidecar.source.kind === "generated" && sidecar.source.route !== undefined ? { route: sidecar.source.route } : {}),
       pdq: sidecar.qa.pdq,
       faceCos: sidecar.qa.faceCos,
       ...(sidecar.qa.faceMarked === true || restored.has(sidecar.id) ? { faceMarked: true as const } : {}),
