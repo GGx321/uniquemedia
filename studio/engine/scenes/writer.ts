@@ -867,14 +867,14 @@ function readScenes<S extends ReadableSlot>(scenes: readonly Pick<WriterScene, "
  * attempts, at `slotCount` × the spike's measured per-scene token counts
  * (money/estimate.ts's own WRITER_CALL, which this module only reads: it
  * never re-declares or edits it). 5a.4 (S5.BA5, r2.1 L2): the shape comes through
- * `writerCallOf("ordinary")`, the one door to the writer's money; S5.BA4 gives
- * this its mode.
+ * `writerCallOf(mode)`, the one door to the writer's money; S5.BA4 gave this its
+ * mode (a REQUIRED one: a bold run priced as an ordinary one would under-price).
  */
-export function writerRunPrice(book: PriceBook, slotCount: number): Estimate {
+export function writerRunPrice(book: PriceBook, slotCount: number, mode: WriterMode): Estimate {
   if (!Number.isInteger(slotCount) || slotCount < 0) {
     throw new RangeError(`slotCount must be a non-negative integer, got ${slotCount}`);
   }
-  const call = writerCallOf("ordinary");
+  const call = writerCallOf(mode);
   // Round 2 (M1): one attempt of each chunk at the typical tokens (`writerExpectedMicros`).
   const expectedMicros = writerExpectedMicros(book, call, Math.ceil(slotCount / call.slotsPerCall), slotCount);
   return { expectedMicros, worstMicros: writerWorstMicros(book, call, slotCount), priceSource: book.source };

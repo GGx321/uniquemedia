@@ -4,10 +4,11 @@ import { CAPTURES, POOL_TEXT_MAX, POOL_TIMES } from "../../shared/engine";
 import { CUSTOM_BOLD_BANKS } from "../../shared/scenes/banks/companions";
 import { COVER } from "../../shared/scenes/banks/companions/outfits";
 import { captureOfShot } from "../../shared/scenes/captures";
-import { WRITER_BOLD_CALL } from "../money/estimate";
+import { WRITER_BOLD_CALL, writerAttemptWorstMicros, writerCallOf, writerExpectedMicros } from "../money/estimate";
+import { PriceBook } from "../money/prices";
 import { promptTokenFloor } from "../openrouter/chat";
 import type { PlanSlot } from "./schema";
-import { BOLD_PROBLEMS, boldReader, CAPTURE_LABEL, PLACE_KEYS, readBoldWriterAnswer, readWriterAnswer, SHOT_LABEL, slotList, TIME_WORD, WATER_PLACE_KEYS, writerBoldMessages, writerMessages, writerRefusalText, WRITER_JSON_SCHEMA, type WriterAnswer, type WriterRefusal } from "./writer";
+import { BOLD_PROBLEMS, boldReader, CAPTURE_LABEL, PLACE_KEYS, readBoldWriterAnswer, readWriterAnswer, SHOT_LABEL, slotList, TIME_WORD, WATER_PLACE_KEYS, writerBoldMessages, writerMessages, writerRefusalText, writerRunPrice, WRITER_JSON_SCHEMA, type WriterAnswer, type WriterRefusal } from "./writer";
 import { worstSlotList } from "./testing/worstSlotList";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -624,3 +625,25 @@ describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the b
   });
 });
 
+describe("writerRunPrice prices the writer by its mode, through writerCallOf (r2.1 L2)", () => {
+  const book = PriceBook.fallback();
+
+  test("bold: chunks × 2 attempts × the bold attempt (48 750 µ$), the reasoning allowance included", () => {
+    expect(writerAttemptWorstMicros(book, writerCallOf("bold"))).toBe(48_750);
+    expect(writerRunPrice(book, 0, "bold").worstMicros).toBe(0);
+    expect(writerRunPrice(book, 1, "bold").worstMicros).toBe(97_500);
+    expect(writerRunPrice(book, 25, "bold").worstMicros).toBe(97_500);
+    expect(writerRunPrice(book, 26, "bold").worstMicros).toBe(195_000);
+  });
+
+  test("bold: expected at the bold call's typical tokens, one request a chunk", () => {
+    for (const slots of [1, 20, 25, 26, 100]) {
+      expect(writerRunPrice(book, slots, "bold").expectedMicros).toBe(writerExpectedMicros(book, writerCallOf("bold"), Math.ceil(slots / 25), slots));
+    }
+  });
+
+  test("ordinary: today's figures, byte for byte", () => {
+    expect(writerRunPrice(book, 25, "ordinary")).toEqual({ expectedMicros: 11_438, worstMicros: 75_000, priceSource: "fallback" });
+    expect(writerRunPrice(book, 100, "ordinary")).toEqual({ expectedMicros: 45_750, worstMicros: 300_000, priceSource: "fallback" });
+  });
+});

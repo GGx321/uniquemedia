@@ -706,29 +706,29 @@ describe("writerRunPrice", () => {
     // (WRITER_CALL.inputTokens 12_000 -> 14_000); every figure below moves
     // with it (2 * 37_500 = 75_000, etc.).
     const book = PriceBook.fallback();
-    expect(writerRunPrice(book, 0).worstMicros).toBe(0);
-    expect(writerRunPrice(book, 1).worstMicros).toBe(75_000);
-    expect(writerRunPrice(book, WRITER_CALL.slotsPerCall).worstMicros).toBe(75_000);
-    expect(writerRunPrice(book, WRITER_CALL.slotsPerCall + 1).worstMicros).toBe(150_000);
-    expect(writerRunPrice(book, 100).worstMicros).toBe(300_000);
+    expect(writerRunPrice(book, 0, "ordinary").worstMicros).toBe(0);
+    expect(writerRunPrice(book, 1, "ordinary").worstMicros).toBe(75_000);
+    expect(writerRunPrice(book, WRITER_CALL.slotsPerCall, "ordinary").worstMicros).toBe(75_000);
+    expect(writerRunPrice(book, WRITER_CALL.slotsPerCall + 1, "ordinary").worstMicros).toBe(150_000);
+    expect(writerRunPrice(book, 100, "ordinary").worstMicros).toBe(300_000);
   });
 
   test("the expected cost scales per scene, at the spike's measured per-scene tokens, unaffected by chunking or attempts", () => {
     const book = PriceBook.fallback();
-    expect(writerRunPrice(book, 0).expectedMicros).toBe(0);
-    expect(writerRunPrice(book, 1).expectedMicros).toBe(458);
-    expect(writerRunPrice(book, 25).expectedMicros).toBe(11_438);
-    expect(writerRunPrice(book, 26).expectedMicros).toBe(11_895);
-    expect(writerRunPrice(book, 100).expectedMicros).toBe(45_750);
+    expect(writerRunPrice(book, 0, "ordinary").expectedMicros).toBe(0);
+    expect(writerRunPrice(book, 1, "ordinary").expectedMicros).toBe(458);
+    expect(writerRunPrice(book, 25, "ordinary").expectedMicros).toBe(11_438);
+    expect(writerRunPrice(book, 26, "ordinary").expectedMicros).toBe(11_895);
+    expect(writerRunPrice(book, 100, "ordinary").expectedMicros).toBe(45_750);
   });
 
   test("the price source follows the book", () => {
-    expect(writerRunPrice(PriceBook.fallback(), 20).priceSource).toBe("fallback");
+    expect(writerRunPrice(PriceBook.fallback(), 20, "ordinary").priceSource).toBe("fallback");
   });
 
   test("rejects a negative or non-integer slot count", () => {
-    expect(() => writerRunPrice(PriceBook.fallback(), -1)).toThrow();
-    expect(() => writerRunPrice(PriceBook.fallback(), 1.5)).toThrow();
+    expect(() => writerRunPrice(PriceBook.fallback(), -1, "ordinary")).toThrow();
+    expect(() => writerRunPrice(PriceBook.fallback(), 1.5, "ordinary")).toThrow();
   });
 
   // Review round 3: writerRunPrice must delegate to the exact same money
@@ -745,7 +745,7 @@ describe("writerRunPrice", () => {
     for (const slotCount of [0, 1, WRITER_CALL.slotsPerCall, WRITER_CALL.slotsPerCall + 1, 100]) {
       const run: RunPlanInput = { photos: slotCount, attemptsPerSlot: 1, route: [image], writer: WRITER_CALL, ageChecks: null };
       const writerPortion = estimateRun(book, run).worstMicros - slotCount * imageOnlyPerPhoto;
-      expect(writerPortion).toBe(writerRunPrice(book, slotCount).worstMicros);
+      expect(writerPortion).toBe(writerRunPrice(book, slotCount, "ordinary").worstMicros);
     }
   });
 });
