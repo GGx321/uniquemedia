@@ -192,7 +192,27 @@ describe("the bold system prompt (§5.3.3, r2.2 P1–P3)", () => {
   });
 
   test("it says to write «she» and the activity word for word, in one piece (the probe's W1:2 and W2:2)", () => {
-    expect(bold()).toContain('Write "she" and then the activity word for word, in one piece with its commas');
+    expect(bold()).toContain('Write "she", then the activity word for word in one piece with its commas');
+  });
+
+  // S5.BA4b (the paid check P-BW): the model dropped the outfit from 23 of 25 sentences of a chunk; wherever it wrote the moment and the outfit side by side, word
+  // for word, both survived (P2#1 25/25, P1r#2 14/14, L3#2 3/3). So the order is one rule: «she», the moment, «wearing», the outfit, then the rest.
+  test("it orders each sentence: «she», the activity, «wearing» and the outfit word for word, the location before, every other detail after", () => {
+    expect(lines(bold())).toContain(
+      '- Write "she", then the activity word for word in one piece with its commas, then "wearing" and the outfit word for word: no word goes inside either; the location goes before "she", every other detail after the outfit.',
+    );
+  });
+
+  // S5.BA4b (P-BW): all 9 public-place refusals were «her room at the restaurant».
+  test("it never joins her location and the world with «at», «in» or «on»", () => {
+    expect(bold()).toContain('Never join her location and the world with "at", "in" or "on" ("her room at the restaurant"): the world shows only as its city, its boat, its view or something she brought back.');
+  });
+
+  // S5.BA4b (P-BW): «paper bag» in 38 of 140 sentences, against the owner's «no papers».
+  test("its detail of the world varies from slot to slot and is never a paper bag", () => {
+    expect(bold()).toContain("a different one in each slot");
+    expect(bold()).toMatch(/never a paper bag/);
+    expect(bold()).not.toContain("such as the view or something she brought back");
   });
 
   test("it says the shot, the pose and the time of day are never written, nor the light, the world or the slot (the probe's label leaks)", () => {
@@ -866,8 +886,9 @@ const WORST_POSE = longestOf(["front", "three-quarter", "profile", "back"]) as P
 describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the bold floor pin)", () => {
   /** What the reserve keeps clear of the ceiling, as the ordinary pins do. */
   const MARGIN = 250;
-  // 3 961 with today's ten reasons (S5.BA4); 3 185 with every bold reason; 2 954 since label-word and public-place name the words they found (round 2).
-  const MARGIN_PRINTED = 2_954;
+  // 3 961 with today's ten reasons (S5.BA4); 3 185 with every bold reason; 2 954 since label-word and public-place name the words they found (round 2);
+  // 2 641 with S5.BA4b's order rule, the world join and the varied detail (P-BW).
+  const MARGIN_PRINTED = 2_641;
   const CEILING = WRITER_BOLD_CALL.inputTokens;
   const FIRST_INDEX = 100 - WRITER_BOLD_CALL.slotsPerCall + 1;
 
