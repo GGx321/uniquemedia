@@ -918,7 +918,7 @@ describe("an infant's things are youth words of the descriptor's set (S5.FU-AGE)
 });
 
 describe("the Russian youth words the free pre-check missed (S5.FU-AGE)", () => {
-  test.each(["лолита", "в образе лолиты", "нимфетка", "как нимфетки", "первоклашка", "пятиклашки", "в девятом классе", "девятый класс", "из третьего класса", "одиннадцатого класса"])(
+  test.each(["лолита", "в образе лолиты", "нимфетка", "как нимфетки", "первоклашка", "пятиклашки", "в девятом классе", "девятый класс", "из третьего класса", "в девятом\u200bклассе", "в девятом-классе", "из одиннадцатого класса"])(
     "%p is a hard marker of a minor, in a vibe too",
     (words) => {
       expect(hardYouthWords(`медленно раздевается, ${words}`).length).toBeGreaterThan(0);
@@ -929,7 +929,7 @@ describe("the Russian youth words the free pre-check missed (S5.FU-AGE)", () => 
     expect(youthWords(`медленно раздевается, ${words}`, "descriptor").length).toBeGreaterThan(0);
   });
 
-  test.each(["в первом классе самолёта", "летит вторым классом", "пятничный класс", "это класс", "молоденькая"])("%p is none", (words) => {
+  test.each(["в первом классе самолёта", "летит вторым классом", "пятничный класс", "это класс", "молоденькая", "вагон третьего класса", "билет пятого класса", "одиннадцатого класса"])("%p is none", (words) => {
     expect(youthWords(`медленно улыбается, ${words}`, "descriptor")).toEqual([]);
   });
 });
