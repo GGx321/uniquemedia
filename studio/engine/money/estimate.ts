@@ -107,15 +107,15 @@ export interface WriterCall extends Omit<ChatCall, "typical"> {
  * `estimateRun`'s worst case below and scenes/writer.ts's `writerRunPrice`
  * read these two fields — the one place they live.
  */
-export const WRITER_CALL: WriterCall = {
+export const WRITER_CALL: Readonly<WriterCall> = Object.freeze({
   model: "x-ai/grok-4.3",
   maxTokens: 8_000,
   inputTokens: 14_000,
   images: 0,
-  typicalPerScene: { inputTokens: 106, outputTokens: 130 },
+  typicalPerScene: Object.freeze({ inputTokens: 106, outputTokens: 130 }),
   slotsPerCall: 25,
   maxAttempts: 2,
-};
+});
 /**
  * 5a.4 (S5.BA5, plan s5a4 r2.4 §5.3.4 «The decision: (c)», I5.77): the scene writer in bold mode, a custom category at «Смелая». Its prompt is larger
  * (the bold rules, each slot's `world` and capture label, the bold refusal reasons), so a full chunk of 25 does not fit WRITER_CALL's 14 000: the worst
@@ -136,17 +136,17 @@ export const WRITER_CALL: WriterCall = {
  * So one request of 2 scenes expects 1 274 / 2 060, 6 743 µ$ (bills $0.0066 and $0.0054), and a full chunk of 25 expects 2 999 / 3 509, 12 522 µ$ (bills
  * $0.0064 to $0.0083), under its 17 000 / 11 000 ceilings; 20 scenes in one request expect 11 265 µ$. C-BA re-measures it on the final prompt.
  */
-export const WRITER_BOLD_CALL: WriterCall = {
+export const WRITER_BOLD_CALL: Readonly<WriterCall> = Object.freeze({
   model: "x-ai/grok-4.3",
   maxTokens: 8_000,
   reasoningTokens: 3_000,
   inputTokens: 17_000,
   images: 0,
-  typicalPerScene: { inputTokens: 75, outputTokens: 63 },
-  typicalPerCall: { inputTokens: 1_124, outputTokens: 1_934 },
+  typicalPerScene: Object.freeze({ inputTokens: 75, outputTokens: 63 }),
+  typicalPerCall: Object.freeze({ inputTokens: 1_124, outputTokens: 1_934 }),
   slotsPerCall: 25,
   maxAttempts: 2,
-};
+});
 
 /** The scene writer's two modes: «ordinary» for every request below «Смелая» and every built-in category, «bold» for a custom category at «Смелая». */
 export type WriterMode = "ordinary" | "bold";
@@ -154,9 +154,10 @@ export type WriterMode = "ordinary" | "bold";
 /**
  * 5a.4 (S5.BA5, r2.1 L2): the ONE door to the writer's call shape. Every site that prices, reserves or bounds a writer attempt asks it for the mode's
  * shape (writerCall.static.test.ts holds every other module to `slotsPerCall` and `maxAttempts` reads alone). «ordinary» is WRITER_CALL itself, so
- * every ordinary figure stays byte-identical; a mode outside the two (untyped data) throws rather than price as the cheaper shape.
+ * every ordinary figure stays byte-identical; a mode outside the two (untyped data) throws rather than price as the cheaper shape. Both shapes are frozen,
+ * their token counts too (round 2, L2): every site shares them, so a write to one would reprice every writer attempt after it.
  */
-export function writerCallOf(mode: WriterMode): WriterCall {
+export function writerCallOf(mode: WriterMode): Readonly<WriterCall> {
   switch (mode) {
     case "ordinary":
       return WRITER_CALL;
