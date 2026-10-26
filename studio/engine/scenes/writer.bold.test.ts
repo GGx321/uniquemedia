@@ -15,7 +15,7 @@ import { WRITER_BOLD_CALL, writerAttemptWorstMicros, writerCallOf, writerExpecte
 import { PriceBook } from "../money/prices";
 import { promptTokenFloor } from "../openrouter/chat";
 import type { PlanSlot } from "./schema";
-import { BOLD_PROBLEMS, boldReader, CAPTURE_LABEL, PLACE_KEYS, readBoldWriterAnswer, readWriterAnswer, SHOT_LABEL, slotList, TIME_WORD, WATER_PLACE_KEYS, writerBoldMessages, writerMessages, writerRefusalText, writerRunPrice, WRITER_JSON_SCHEMA, type WriterAnswer, type WriterRefusal } from "./writer";
+import { BOLD_PROBLEMS, boldReader, CAPTURE_LABEL, PLACE_KEYS, readBoldWriterAnswer, readWriterAnswer, REFUSAL_WORD_BYTES_MAX, REFUSAL_WORDS_MAX, SHOT_LABEL, slotList, TIME_WORD, WATER_PLACE_KEYS, writerBoldMessages, writerMessages, writerRefusalText, writerRunPrice, WRITER_JSON_SCHEMA, type WriterAnswer, type WriterRefusal } from "./writer";
 import { worstSlotList } from "./testing/worstSlotList";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -449,6 +449,15 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
       expect(problemsOf(bold(`In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties ${words}, a box of macarons on the nightstand.`))).toContain("label-word");
     });
 
+    test("its refusal names the words it found, as our list writes them, never the sentence", () => {
+      const read = bold("In her zanzibarquux hotel room in Paris, she lies back across the bed in a white lace bra and panties as Daylight fills the room, a timer on the nightstand.");
+      expect(read.ok === false && read.boldWords?.["label-word"]).toEqual(["daylight", "timer"]);
+      const told = read.ok ? "" : writerRefusalText(read);
+      expect(told).toContain('slot(s) 1 wrote a word of the camera, the light or the slot\'s labels: "daylight", "timer"; write none of them');
+      expect(told).not.toContain("zanzibarquux");
+      expect(told).not.toContain("Daylight");
+    });
+
     test.each([
       "as sunlight falls across the sheets",
       "in the sunshine from the window",
@@ -481,6 +490,14 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
         expect(problemsOf(read)).toContain("public-place");
         expect(read.ok === false && read.boldSlots?.["public-place"]).toEqual([1]);
       }
+    });
+
+    test("its refusal names the place it found, as our list writes it, never the sentence", () => {
+      const read = bold("She leans against the frame in the Seafood Restaurant of zanzibarquux in a black lace bra and panties, her eyes on the boats.", window("a seafood restaurant in the port"));
+      expect(read.ok === false && read.boldWords?.["public-place"]).toEqual(["restaurant"]);
+      const told = read.ok ? "" : writerRefusalText(read);
+      expect(told).toContain('slot(s) 1 put her in a public place: "restaurant"; keep her in the slot\'s location');
+      expect(told).not.toContain("zanzibarquux");
     });
 
     test("«the cafe terrace» of her own world with no private word is refused", () => {
@@ -761,7 +778,8 @@ const WORST_POSE = longestOf(["front", "three-quarter", "profile", "back"]) as P
 describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the bold floor pin)", () => {
   /** What the reserve keeps clear of the ceiling, as the ordinary pins do. */
   const MARGIN = 250;
-  const MARGIN_PRINTED = 3_185;
+  // 3 961 with today's ten reasons (S5.BA4); 3 185 with every bold reason; 2 954 since label-word and public-place name the words they found (round 2).
+  const MARGIN_PRINTED = 2_954;
   const CEILING = WRITER_BOLD_CALL.inputTokens;
   const FIRST_INDEX = 100 - WRITER_BOLD_CALL.slotsPerCall + 1;
 
@@ -803,10 +821,22 @@ describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the b
       phoneSlots: rest,
       words: hostileWords,
       boldSlots: Object.fromEntries(BOLD_PROBLEMS.map((problem) => [problem, rest])),
+      // S5.BA4 round 2: label-word and public-place name the words they found, clipped as the youth and revealing words are.
+      boldWords: { "label-word": hostileWords, "public-place": hostileWords },
     };
   }
 
   const floorOf = (slots: readonly PlanSlot[]): number => promptTokenFloor({ messages: writerBoldMessages(slots, worstRefusal(slots)), jsonSchema: WRITER_JSON_SCHEMA, images: 0 });
+
+  test("the two bold reasons that name a word tell REFUSAL_WORDS_MAX of them at most, each clipped to REFUSAL_WORD_BYTES_MAX bytes", () => {
+    const text = writerRefusalText(worstRefusal(worstSlots(POOL_TEXT_MAX)));
+    for (const lead of ["of the camera, the light or the slot's labels: ", "put her in a public place: "]) {
+      const reason = text.slice(text.indexOf(lead) + lead.length).split("; ")[0] ?? "";
+      const told = [...reason.matchAll(/"([^"]*)"/g)].map((m) => m[1] ?? "");
+      expect(told).toHaveLength(REFUSAL_WORDS_MAX);
+      for (const word of told) expect(Buffer.byteLength(word, "utf8")).toBe(REFUSAL_WORD_BYTES_MAX);
+    }
+  });
 
   test("the worst refusal carries every reason: today's ten, revealing-word included, and every bold one, each with its slot list", () => {
     const refusal = worstRefusal(worstSlots(POOL_TEXT_MAX));
@@ -814,7 +844,7 @@ describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the b
     expect(new Set(refusal.problems).size).toBe(10 + BOLD_PROBLEMS.length);
     const rest = worstSlotList(worstSlots(POOL_TEXT_MAX).map((s) => s.slotIndex));
     for (const problem of BOLD_PROBLEMS) {
-      const alone = writerRefusalText({ problems: [problem], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [], boldSlots: { [problem]: rest } });
+      const alone = writerRefusalText({ problems: [problem], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [], boldSlots: { [problem]: rest }, boldWords: refusal.boldWords ?? {} });
       expect(alone).toStartWith(`slot(s) ${slotList(rest)} `);
       expect(text).toContain(alone);
     }

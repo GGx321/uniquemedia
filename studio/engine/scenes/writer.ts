@@ -289,6 +289,10 @@ export type WriterProblem =
  */
 export const BOLD_PROBLEMS = ["place-missing", "outfit-missing", "exposure-word", "label-word", "public-place", "moment-split"] as const;
 export type BoldProblem = (typeof BOLD_PROBLEMS)[number];
+/** The two bold problems whose refusal names the words it found (from our lists, never the model's sentence). */
+export type WordedBoldProblem = "label-word" | "public-place";
+/** What the bold reader finds in one slot's sentence: a problem, with the words it found for the two that name them. */
+type BoldFinding = Exclude<BoldProblem, WordedBoldProblem> | { problem: WordedBoldProblem; words: readonly string[] };
 
 /** Why an answer was refused, as the next attempt is told: fixed reasons and
  *  slot numbers, never the model's own rejected wording (the youth/revealing
@@ -307,6 +311,11 @@ export interface WriterRefusal {
   angleSlots?: number[];
   /** 5a.4 (S5.BA4): the slots of each bold problem, ascending. Absent in every refusal the bold reader did not make. */
   boldSlots?: Partial<Record<BoldProblem, number[]>>;
+  /**
+   * S5.BA4 round 2 (review LOW): the words `label-word` and `public-place` found, as our lists write them (lower case), told back the way the youth and revealing
+   * words are: at most REFUSAL_WORDS_MAX, each clipped to REFUSAL_WORD_BYTES_MAX bytes. Never the model's sentence.
+   */
+  boldWords?: Partial<Record<WordedBoldProblem, string[]>>;
 }
 
 export const NO_REFUSAL: WriterRefusal = { problems: [], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] };
@@ -352,6 +361,11 @@ function quotedList(words: readonly string[]): string {
   return toldWords(words).map((w) => `"${w}"`).join(", ");
 }
 
+/** «: "w1", "w2"» for a bold reason that found words, nothing for one that did not (a refusal built by hand). */
+function toldOf(words: readonly string[] | undefined): string {
+  return words === undefined || words.length === 0 ? "" : `: ${quotedList(words)}`;
+}
+
 /**
  * The slot numbers a reason names, in the order given. A run of consecutive numbers is told as a range («76-100»), so a refusal over a whole chunk costs a few
  * bytes: the re-ask is priced on its bytes before it is sent (S5.R1). Commas carry no space, for the same reason. The longest list over a set of numbers is not «every other
@@ -385,8 +399,8 @@ const REASON: Partial<Record<WriterProblem, (r: WriterRefusal) => string>> = {
   "place-missing": (r) => `slot(s) ${slotList(r.boldSlots?.["place-missing"] ?? [])} did not say where she is: name the slot's location, set inside its world`,
   "outfit-missing": (r) => `slot(s) ${slotList(r.boldSlots?.["outfit-missing"] ?? [])} left out a garment of the outfit: name every garment exactly as given`,
   "exposure-word": (r) => `slot(s) ${slotList(r.boldSlots?.["exposure-word"] ?? [])} named nudity: describe only what the outfit shows`,
-  "label-word": (r) => `slot(s) ${slotList(r.boldSlots?.["label-word"] ?? [])} wrote about the camera, the photo, the light or a label of the slot: write none of them`,
-  "public-place": (r) => `slot(s) ${slotList(r.boldSlots?.["public-place"] ?? [])} put her in a public place: keep her in the slot's location`,
+  "label-word": (r) => `slot(s) ${slotList(r.boldSlots?.["label-word"] ?? [])} wrote a word of the camera, the light or the slot's labels${toldOf(r.boldWords?.["label-word"])}; write none of them`,
+  "public-place": (r) => `slot(s) ${slotList(r.boldSlots?.["public-place"] ?? [])} put her in a public place${toldOf(r.boldWords?.["public-place"])}; keep her in the slot's location`,
   "moment-split": (r) => `slot(s) ${slotList(r.boldSlots?.["moment-split"] ?? [])} did not write "she" and then the activity word for word, in one piece`,
 };
 
@@ -744,8 +758,8 @@ function saysMoment(sentence: string, moment: string): boolean {
  * given, r2.1 L3); `moment-split` reads a slot whose activity is a bank moment; the outfit, the exposure and the label words read every slot of the chunk. A word
  * the slot's own texts say is never held against it.
  */
-function boldProblemsOf(slot: PlanSlot, sentence: string): BoldProblem[] {
-  const problems: BoldProblem[] = [];
+function boldProblemsOf(slot: PlanSlot, sentence: string): BoldFinding[] {
+  const problems: BoldFinding[] = [];
   const own = [slot.location, slot.activity, slot.outfit, slot.world ?? ""].join(" ");
   const hit = bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location, activity: slot.activity });
   const water = hit?.place.water === true;
@@ -753,8 +767,10 @@ function boldProblemsOf(slot: PlanSlot, sentence: string): BoldProblem[] {
   if (slot.world !== undefined && keys.length > 0 && !keys.some((key) => saysWord(sentence, key))) problems.push("place-missing");
   if (missesAGarment(slot.outfit, sentence)) problems.push("outfit-missing");
   if (exposureWordsIn(sentence).some((word) => !saysWord(own, word))) problems.push("exposure-word");
-  if (labelWordsIn(sentence).some((word) => !saysWord(own, word))) problems.push("label-word");
-  if (slot.world !== undefined && publicPlacesIn(sentence, { water, world: slot.world, keys }).length > 0) problems.push("public-place");
+  const labels = labelWordsIn(sentence).filter((word) => !saysWord(own, word));
+  if (labels.length > 0) problems.push({ problem: "label-word", words: labels.map((word) => word.toLowerCase()) });
+  const places = slot.world === undefined ? [] : publicPlacesIn(sentence, { water, world: slot.world, keys });
+  if (places.length > 0) problems.push({ problem: "public-place", words: places });
   if (hit?.moment !== undefined && !saysMoment(sentence, hit.moment.text)) problems.push("moment-split");
   return problems;
 }
@@ -822,7 +838,7 @@ const withFullStop = (sentence: string): string => {
 };
 
 /** `readWriterScenes`, with the bold problems of each slot when `boldOf` is given (the bold mode). */
-function readScenes<S extends ReadableSlot>(scenes: readonly Pick<WriterScene, "slotIndex" | "sentence">[], slots: readonly S[], boldOf?: (slot: S, sentence: string) => readonly BoldProblem[]): WriterAnswer {
+function readScenes<S extends ReadableSlot>(scenes: readonly Pick<WriterScene, "slotIndex" | "sentence">[], slots: readonly S[], boldOf?: (slot: S, sentence: string) => readonly BoldFinding[]): WriterAnswer {
   const known = new Map(slots.map((s) => [s.slotIndex, s]));
   const bySlot = new Map<number, string>();
   const repeated = new Set<number>();
@@ -849,6 +865,7 @@ function readScenes<S extends ReadableSlot>(scenes: readonly Pick<WriterScene, "
   const poseSlots: number[] = [];
   const phoneSlots: number[] = [];
   const boldSlots: Partial<Record<BoldProblem, number[]>> = {};
+  const boldWords: Partial<Record<WordedBoldProblem, Set<string>>> = {};
   for (const s of slots) {
     const sentence = bySlot.get(s.slotIndex);
     if (sentence === undefined) continue;
@@ -882,9 +899,11 @@ function readScenes<S extends ReadableSlot>(scenes: readonly Pick<WriterScene, "
       problems.add("phone-in-selfie");
       phoneSlots.push(s.slotIndex);
     }
-    for (const problem of boldOf?.(s, sentence) ?? []) {
+    for (const finding of boldOf?.(s, sentence) ?? []) {
+      const problem = typeof finding === "string" ? finding : finding.problem;
       problems.add(problem);
       (boldSlots[problem] ??= []).push(s.slotIndex);
+      if (typeof finding !== "string") for (const word of finding.words) (boldWords[finding.problem] ??= new Set()).add(word);
     }
   }
 
@@ -897,6 +916,7 @@ function readScenes<S extends ReadableSlot>(scenes: readonly Pick<WriterScene, "
     poseSlots,
     ...(phoneSlots.length > 0 ? { phoneSlots } : {}),
     ...(Object.keys(boldSlots).length > 0 ? { boldSlots } : {}),
+    ...(Object.keys(boldWords).length > 0 ? { boldWords: Object.fromEntries(Object.entries(boldWords).map(([problem, found]) => [problem, [...found]])) } : {}),
   };
   // A youth word is the answer's, not a slot's: nothing is kept and the next attempt is the whole chunk.
   if (problems.has("youth-word")) return refused([...problems], refusal);
