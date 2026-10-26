@@ -1068,6 +1068,50 @@ describe("S5.BA4d: each place's own preposition (the paid check P-BW3: «On her 
   });
 });
 
+describe("S5.BA4e: the reader's false refusals and false pass of the paid check P-BW4", () => {
+  const read = (sentence: string, slot: PlanSlot = routed()): WriterAnswer => readBoldWriterAnswer(answer([{ slotIndex: slot.slotIndex, sentence }]), [slot]);
+  const bathroom = routed({ location: "her bathroom", activity: "stands by the shower, getting ready", outfit: "a cami and cotton panties", shot: "mirror", capture: "mirror-hidden" });
+
+  // P-BW4's own sentences, each refused for a public place she is not in.
+  test.each([
+    ["1. «in from the X» is a direction: P1#1:10", routed({ activity: "lies back across the bed", outfit: "a lace bralette and briefs" }), "In her room she lies back across the bed wearing a lace bralette and briefs, one hand resting on her thigh while the faint murmur of voices drifts in from the cafe window seat below."],
+    ["2. «the towel bar» is a rail: P1#1:13", bathroom, "In her bathroom she stands by the shower, getting ready wearing a cami and cotton panties, one hand resting on the towel bar while a small Eiffel Tower souvenir sits on the counter."],
+    ["2. «a grab bar»", bathroom, "In her bathroom she stands by the shower, getting ready wearing a cami and cotton panties, one hand on the grab bar."],
+    ["2. «the soap bar»", bathroom, "In her bathroom she stands by the shower, getting ready wearing a cami and cotton panties, a lavender scent rising off the soap bar."],
+    ["3. the view's own place: P1r#1:4", routed({ location: "her sofa", activity: "curls up with her knees in", outfit: "a white lace bra and panties", world: "a bakery on a side street" }), "On her sofa she curls up with her knees in wearing a white lace bra and panties as the bakery on a side street sits quiet below the window."],
+    ["3. the view's own place: P1r#1:8", routed({ activity: "lies prone, peeking back", outfit: "a cotton bra and briefs", capture: "over-shoulder", shot: "selfie", pose: "three-quarter", world: "a bakery on a side street" }), "In her room she lies prone, peeking back wearing a cotton bra and briefs while the bakery on a side street sits dark outside the window."],
+    ["3. the market on the square below her window", routed(), "In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties while the market on the square hums below her window."],
+    ["3. the cafe at the corner across the street", routed(), "In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, the cafe at the corner lit up across the way."],
+  ])("%s passes", (_, slot, sentence) => {
+    expect(problemsOf(read(sentence, slot))).not.toContain("public-place");
+  });
+
+  // The limits: where she is stays refused, the first place counting.
+  test.each([
+    ["sitting in the cafe", "Sitting in the cafe, she lies back across the bed in a white lace bra and panties."],
+    ["in the cafe, after «in from» elsewhere", "Back in from the street, she lies back across the bed in the cafe in a white lace bra and panties."],
+    ["at the cafe on the corner", "At the cafe on the corner, she sits on the bed in a white lace bra and panties."],
+    ["in the bakery on a side street", "In the bakery on a side street, she lies back across the bed in a white lace bra and panties."],
+    ["in the bar on the corner", "She lies back across the bed in the bar on the corner in a white lace bra and panties."],
+    ["at the hotel bar", "At the hotel bar, she lies back across the bed in a white lace bra and panties."],
+    ["on the bar", "She lies back across the bed and then on the bar in a white lace bra and panties."],
+    ["at the towel shop", "At the towel shop, she lies back across the bed in a white lace bra and panties."],
+  ])("%s is still refused", (_, sentence) => {
+    expect(problemsOf(read(sentence))).toContain("public-place");
+  });
+
+  test.each([
+    ["4. «takes the midday photo»: P-BW4 W2#1:1", "she lies back across the bed in a white lace bra and panties while a friend takes the midday photo."],
+    ["4. «took the quick photo»", "she lies back across the bed in a white lace bra and panties as her friend took the quick photo."],
+  ])("%s is refused as a label leak", (_, tail) => {
+    expect(problemsOf(read(`In her small hotel room in Paris, ${tail}`))).toContain("label-word");
+  });
+
+  test.each(["beside a framed photo of the Seine", "a photo of her friend on the nightstand"])("«%s» is still no leak", (words) => {
+    expect(problemsOf(read(`In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, ${words}.`))).not.toContain("label-word");
+  });
+});
+
 // The widest of each value the bold slot JSON sends, read from the tables themselves.
 const longestOf = (values: readonly string[]): string => values.reduce((a, b) => (b.length > a.length ? b : a));
 const WORST_CAPTURE = (Object.keys(CAPTURE_LABEL) as (keyof typeof CAPTURE_LABEL)[]).reduce((a, b) => (CAPTURE_LABEL[b].length > CAPTURE_LABEL[a].length ? b : a));

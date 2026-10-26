@@ -685,10 +685,10 @@ function missesAGarment(outfit: string, sentence: string): boolean {
  * P-BA: the words of the slot's labels that the drafts pasted into the prose, and only those (review LOW, S5.BA4 round 2): who takes the photo and how (the capture
  * labels' selfie, snap and timer, «captured», the camera and its lens), the light line the ordinary writer feeds («daylight»), the pose's own name, and the slot's
  * field names; review round 3 adds the capture label's phrases («her own photo», «in the timer shot», «photo from above»), S5.BA4b the pose code («facing
- * front»), S5.BA4c who takes the photo («the friend takes the photo»). The light named by its source (sunlight, sunshine, lamplight), a frame of the view, a framed photo on the wall and a shot of espresso are not leaks;
+ * front»), S5.BA4c who takes the photo («the friend takes the photo», S5.BA4e «takes the midday photo»). The light named by its source (sunlight, sunshine, lamplight), a frame of the view, a framed photo on the wall and a shot of espresso are not leaks;
  * her phone and the viewer are the gaze rule's own words (on a timer her phone is one: `boldProblemsOf`).
  */
-const LABEL_WORDS = /\b(?:daylight|captured|selfies?|snaps?|timers?|cameras?|lens(?:es)?|three-quarter|worlds?|slots?|her own photo|(?:in|on) the (?:\w+ )?shot(?!\s+(?:glass|of)\b)|photo from above|fac(?:es|ing) front|(?:friend\s+)?(?:takes|took|taking)\s+the\s+photo)\b/gi;
+const LABEL_WORDS = /\b(?:daylight|captured|selfies?|snaps?|timers?|cameras?|lens(?:es)?|three-quarter|worlds?|slots?|her own photo|(?:in|on) the (?:\w+ )?shot(?!\s+(?:glass|of)\b)|photo from above|fac(?:es|ing) front|(?:friend\s+)?(?:takes|took|taking)\s+the\s+(?:\w+\s+)?photo)\b/gi;
 
 /** The label words of a sentence, as it writes them. */
 function labelWordsIn(sentence: string): string[] {
@@ -720,6 +720,19 @@ const placeForms = (nouns: string): RegExp[] => [
 ];
 const PUBLIC_FORMS = placeForms(`${PUBLIC_NOUNS}|${SHORE_NOUNS}`);
 const PUBLIC_FORMS_BY_THE_WATER = placeForms(`${PUBLIC_NOUNS}|${WATER_SLOT_NOUNS}`);
+/**
+ * S5.BA4e (P-BW4): a public noun phrase right before where a form found one, as the subject of the view («as the bakery on a side street sits quiet below the
+ * window»): the word before its determiner is no preposition. After a preposition it is a place again («a croissant from the bakery at the cafe terrace»).
+ */
+const viewSubject = (nouns: string): RegExp =>
+  new RegExp(String.raw`(?:^|(?<word>[\w'-]+)\s+)(?:the|a|an|this|that)\s+(?:[\w'-]+\s+){0,2}?(?:${nouns})\s*$`, "i");
+const PUBLIC_BEFORE = viewSubject(`${PUBLIC_NOUNS}|${SHORE_NOUNS}`);
+const PUBLIC_BEFORE_BY_THE_WATER = viewSubject(`${PUBLIC_NOUNS}|${WATER_SLOT_NOUNS}`);
+const A_PREPOSITION = /^(?:from|in|at|on|into|inside|onto|to|by|near|outside|of|off|with|toward|towards|past|through|across|behind|beside)$/i;
+/** S5.BA4e (P-BW4): a direction, not a place: «voices drift in from the cafe». */
+const A_DIRECTION = /^\w+\s+from\b/i;
+/** S5.BA4e (P-BW4): a bathroom rail, not a bar: «the towel bar», «a grab bar», «the soap bar». */
+const A_RAIL = /\b(?:towel|grab|soap)\s+bars?$/i;
 /** A public noun right after the one a form found («the beach club restaurant»): the place is that one, whatever excuses the first. */
 const NEXT_PUBLIC = new RegExp(String.raw`^\s+(?<next>${PUBLIC_NOUNS})\b`, "i");
 
@@ -766,12 +779,15 @@ const waterVenue = (matched: string): boolean => /\bbeach\s+clubs?$/i.test(match
  *   there as past («having spent the morning at the cafe terrace», «back from a day at the museum»), and a place named right after one of those (at a bakery on
  *   a side street); a thing she brought from it, then where it stood with «on» (a paper bag from the bakery on a side street);
  * - where the yacht lies: the harbour right after the yacht, the boat or the deck;
- * - a view: «out at the street».
+ * - a view: «out at the street», and the place of a public noun that is itself the view («the bakery on a side street sits quiet below the window»);
+ * - a direction («voices drift in from the cafe») and a bathroom rail («the towel bar»).
  * These read only where she is: a part of the place or the place's own (the restaurant's window) is public whatever comes before it. A public noun right after an
  * excused one is counted («the beach club restaurant»). By the water the beach, the marina and the beach club are her place (`water`).
  */
 function publicPlacesIn(sentence: string, place: PlaceContext): string[] {
   const found: string[] = [];
+  // Where each «where she is» match ends: a place named right after one of them is that place's, not the view's.
+  const whereEnds = new Set<number>();
   for (const [index, form] of (place.water ? PUBLIC_FORMS_BY_THE_WATER : PUBLIC_FORMS).entries()) {
     const whereSheIs = index === 0;
     let backFromEnd = -1;
@@ -781,6 +797,13 @@ function publicPlacesIn(sentence: string, place: PlaceContext): string[] {
       const end = start + match[0].length;
       const before = sentence.slice(0, start);
       const after = sentence.slice(end);
+      if (whereSheIs) whereEnds.add(end);
+      // S5.BA4e (P-BW4): a direction («drifts in from the cafe»), a bathroom rail («the towel bar»), and the place of a public noun that is no place of hers
+      // («the bakery on a side street sits quiet below the window»: the bakery is no «where she is» match, so it is the view, and its street with it).
+      if (whereSheIs && A_DIRECTION.test(match[0])) continue;
+      if (A_RAIL.test(match[0])) continue;
+      const subject = whereSheIs ? (place.water ? PUBLIC_BEFORE_BY_THE_WATER : PUBLIC_BEFORE).exec(before) : null;
+      if (subject !== null && !A_PREPOSITION.test(subject.groups?.["word"] ?? "") && !whereEnds.has(before.trimEnd().length)) continue;
       // Her own room's club or resort: excused, unless a public noun follows it («her suite at the beach club bar»).
       const club = whereSheIs && /^at\b/i.test(match[0]) && HER_ROOM_BEFORE.test(before) ? CLUB_OR_RESORT.exec(after) : null;
       const next = NEXT_PUBLIC.exec(club === null ? after : after.slice(club[0].length))?.groups?.["next"];
