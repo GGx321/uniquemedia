@@ -101,7 +101,9 @@ const INDEX_SITES: Allowed[] = [
  * the avatar's origin (`impliedNudity`), except the named sites that only COUNT what the template can write, whose answer is the same whatever the origin. `roomPlaceOf` and
  * `slotLookOf` are not here: the room phrase, the lamp and the mirror-back line are a place's and a moment's, never the origin's.
  */
-const RENDERERS = new Set(["templateSentence", "plainSentence", "localSentences", "setLocal", "localOf", "slotCoverageOf", "coverageOfWorn", "coverageOf"]);
+const RENDERERS = new Set(["templateSentence", "plainSentence", "localSentences", "setLocal", "localOf", "slotCoverageOf", "coverageOfWorn", "coverageOf", "plannedWriterConfig", "boldReader"]);
+/** A render call that names the origin only to say false (`impliedNudity: false`): on a production path that is an origin dropped, unless the site only counts (the allow-list). */
+const FALSE_ORIGIN = /\bimpliedNudity\s*[:=]\s*false\b/;
 const COUNTING_SITES: Allowed[] = [
   { file: "engine/runs/remaining.ts", count: 1, why: "a resume counts the slots the template cannot write (the writer's chunks still to ask, their mode)" },
   { file: "engine/sceneSets/reviewPlan.ts", count: 1, why: "the m1 probe: whether the template can write a rewrite's scenes at all" },
@@ -150,16 +152,28 @@ describe("the «Смелая» sites (plan s5a4 §5.1.4)", () => {
     expect(redraws.filter((r) => !/\bimpliedNudity\b/.test(r.text))).toEqual([]);
   });
 
-  test("every call that writes a «Смелая» sentence names the avatar's origin, but for the named counting sites", () => {
+  test("every call that writes a «Смелая» sentence names the avatar's origin, never a literal false, but for the named counting sites", () => {
     const silent = countsOf(
       (node) =>
         ts.isCallExpression(node) &&
         ts.isIdentifier(node.expression) &&
         RENDERERS.has(node.expression.text) &&
         !ts.isFunctionDeclaration(node.parent) &&
-        !/\bimpliedNudity\b/.test(node.getText()),
+        (!/\bimpliedNudity\b/.test(node.getText()) || FALSE_ORIGIN.test(node.getText())),
     );
     expect(silent).toEqual(expected(COUNTING_SITES));
+  });
+
+  test("the rule sees a literal false and a missing origin (it is not vacuous)", () => {
+    const flagged = (code: string): number =>
+      nodesOf(ts.createSourceFile("probe.ts", code, ts.ScriptTarget.Latest, true), (node) => ts.isCallExpression(node) && ts.isIdentifier(node.expression) && RENDERERS.has(node.expression.text)).filter(
+        (node) => !/\bimpliedNudity\b/.test(node.getText()) || FALSE_ORIGIN.test(node.getText()),
+      ).length;
+    expect(flagged("localSentences({ slots, keyOf, impliedNudity: false });")).toBe(1);
+    expect(flagged("plannedWriterConfig(labelOf, false);")).toBe(1);
+    expect(flagged("boldReader();")).toBe(1);
+    expect(flagged("localSentences({ slots, keyOf, impliedNudity });")).toBe(0);
+    expect(flagged("plannedWriterConfig(labelOf, deps.impliedNudity === true);")).toBe(0);
   });
 
   test("the engine reads the avatar's origin (studioCreated) only at the named paths", () => {

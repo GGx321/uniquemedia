@@ -110,9 +110,10 @@ export interface WriterBoldMode<S extends ReadableSlot> extends WriterAsking<S> 
  * 5a.4 (S5.BA4, plan s5a4 §5.3.3, §5.3.4; the BA5a review's R2-L2): the writer of PLANNED slots in both its modes, each through `writerCallShape(mode)`. Its own
  * call, messages and reader are the ordinary writer's, byte for byte (`labelOf` names an ordinary chunk's categories); its bold mode is the bold prompt, the bold
  * reader and the bold call, for a chunk that holds a «Смелая» frame (`writerModeOf`). `impliedNudity` is the avatar's origin (I5.74; false when unknown, the
- * fail-closed default): it picks the coverage the bold reader appends and the plain sentence ends with.
+ * fail-closed side): it picks the coverage the bold reader appends and the plain sentence ends with. Required (S5.BA5 round 2, money review L-2): a path that has not decided
+ * the origin does not compile.
  */
-export function plannedWriterConfig(labelOf: CategoryLabelOf, impliedNudity = false): Pick<WriterPhase<PlanSlot>, "call" | "messages" | "plain" | "bold"> {
+export function plannedWriterConfig(labelOf: CategoryLabelOf, impliedNudity: boolean): Pick<WriterPhase<PlanSlot>, "call" | "messages" | "plain" | "bold"> {
   return {
     call: writerCallShape("ordinary"),
     messages: (slots, feedback) => writerMessages(slots, feedback, labelOf),

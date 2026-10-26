@@ -101,7 +101,7 @@ function phaseOf(slots: PlanSlot[], chunks: number[][], over: Partial<WriterPhas
     sentences: new Map(),
     writerDone: new Set(),
     ledger: { reserveOf: (id) => money.ledger.reserveOf(id), closeOf: (id) => money.ledger.closeOf(id) },
-    ...plannedWriterConfig(categoryLabelOf([{ ref: CUSTOM, name: "Кофейни Парижа", label: LABEL, style: "phone" }])),
+    ...plannedWriterConfig(categoryLabelOf([{ ref: CUSTOM, name: "Кофейни Парижа", label: LABEL, style: "phone" }]), false),
     ...over,
   };
 }
@@ -148,13 +148,13 @@ describe("writerModeOf: the mode of the slots a chunk sends the model (r2.1 L3)"
 
 describe("plannedWriterConfig: the planned slots' writer in its two modes, through writerCallShape(mode)", () => {
   test("its own call and messages are the ordinary ones, byte for byte", () => {
-    const config = plannedWriterConfig(categoryLabelOf([{ ref: CUSTOM, name: "x", label: LABEL, style: "phone" }]));
+    const config = plannedWriterConfig(categoryLabelOf([{ ref: CUSTOM, name: "x", label: LABEL, style: "phone" }]), false);
     expect<unknown>(config.call).toStrictEqual(writerCallShape("ordinary"));
     expect(config.messages([unrouted(1)], undefined)).toEqual(writerMessages([unrouted(1)], undefined, () => LABEL));
   });
 
   test("its bold mode is the bold call and the bold messages", () => {
-    const config = plannedWriterConfig(categoryLabelOf([]));
+    const config = plannedWriterConfig(categoryLabelOf([]), false);
     expect<unknown>(config.bold?.call).toStrictEqual(writerCallShape("bold"));
     expect(config.bold?.messages([routed(1)], undefined)).toEqual(writerBoldMessages([routed(1)]));
   });
@@ -248,7 +248,7 @@ describe("the bold mode's reasoning effort (P-BA chunk 25: effort none wrote 18 
   });
 
   test("the effort is the bold mode's, so a hand-made bold call shape cannot be sent at another effort", () => {
-    expect(plannedWriterConfig(categoryLabelOf([])).bold?.reasoningEffort).toBe("none");
-    expect("reasoningEffort" in plannedWriterConfig(categoryLabelOf([]))).toBe(false);
+    expect(plannedWriterConfig(categoryLabelOf([]), false).bold?.reasoningEffort).toBe("none");
+    expect("reasoningEffort" in plannedWriterConfig(categoryLabelOf([]), false)).toBe(false);
   });
 });
