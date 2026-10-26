@@ -245,7 +245,18 @@ describe("each 5a.4 rule refuses the row that breaks it", () => {
     // bold-private (I5.72)
     ["a place at a cafe terrace in town", withPlaces([ROOM, { ...POOL, name: "the cafe terrace", at: "on a cafe terrace in town", water: undefined, moments: POOL.moments.map((m) => ({ ...m, water: undefined, text: m.text.replace(/in the water|toes in the water/, "on the step") })) }]), "nightwear", BANK_RULE.boldPrivate],
     ["a place on a park bench", withPlaces([ROOM, { ...POOL, name: "a park bench", at: "on a park bench", water: undefined, moments: POOL.moments.map((m) => ({ ...m, water: undefined, text: m.text.replace(/in the water|toes in the water/, "on the step") })) }]), "companion", BANK_RULE.boldPrivate],
-    // moment-unique
+    // Review L1: a public noun in a place's name or phrase is refused whatever its room flag says.
+    ["a room at a busy cafe counter", withPlaces([{ ...ROOM, name: "the cafe counter", at: "at a busy cafe counter" }, POOL]), "nightwear", BANK_RULE.boldPrivate],
+    ["a room named the hotel lobby", withPlaces([{ ...ROOM, name: "the hotel lobby", at: "in the lobby of her hotel" }, POOL]), "companion", BANK_RULE.boldPrivate],
+    ["a room in a gym", withPlaces([{ ...ROOM, name: "the gym changing room", at: "in the gym changing room" }, POOL]), "rooms", BANK_RULE.boldPrivate],
+    // Review L5: a water moment belongs at a water place: swimwear in her bathroom is refused.
+    [
+      "a water moment in a room",
+      { ...withRoomMoment("stands by the window", { ...(ROOM.moments[0] as Moment), text: "sits with her feet in the water", water: true, outfits: SWIMWEAR }), outfits: OUTFITS },
+      "rooms",
+      BANK_RULE.waterPlace,
+    ],
+    // moment-unique    // moment-unique
     ["a moment given twice over two places", withPlaces([ROOM, { ...POOL, moments: [...POOL.moments, { ...(ROOM.moments[3] as Moment), captures: ["timer"] }] }]), "companion", BANK_RULE.momentUnique],
     ["a moment of the beach bank", withPoolMoment("lies back on a sun lounger", { ...(POOL.moments[1] as Moment), text: "lies back on a sun lounger" }), "companion", BANK_RULE.momentUnique],
     // companion-size
@@ -260,6 +271,9 @@ describe("each 5a.4 rule refuses the row that breaks it", () => {
     ["a legs moment with fewer than three satin outfits", withRoomMoment(LEGS.text, { ...LEGS, outfits: ["a satin cami and satin shorts", "a satin midi nightdress", "a tee and cotton panties", "a black bra and briefs"] }), "nightwear", BANK_RULE.boldLegs],
     ["a legs moment with no ordinary satin outfit", withRoomMoment(LEGS.text, { ...LEGS, outfits: ["a satin midi nightdress", "a short tied satin robe", "a satin slip nightdress", "a tee and cotton panties"] }), "nightwear", BANK_RULE.boldLegs],
     ["a legs moment that pins lace (lace stays out after L1)", withRoomMoment(LEGS.text, { ...LEGS, outfits: [...LEGS_PINS, "a black lace bra and panties"] }), "nightwear", BANK_RULE.boldLegs],
+    // Review L4: only the sports set and plain cotton join the satin on a legs frame (P-BA L1): never jeans, never a plain bra and briefs.
+    ["a legs moment that pins the bra and jeans", { ...withRoomMoment(LEGS.text, { ...LEGS, outfits: [...LEGS_PINS, "a black bra and jeans"] }), outfits: [...OUTFITS, { text: "a black bra and jeans", route: "seedream" as const, coverage: "Her bra fully covers her breasts, and her jeans sit buttoned at her waist." }] }, "nightwear", BANK_RULE.boldLegs],
+    ["a legs moment that pins a black bra and briefs", { ...withRoomMoment(LEGS.text, { ...LEGS, outfits: [...LEGS_PINS, "a black bra and briefs"] }), outfits: [...OUTFITS, { text: "a black bra and briefs", showsLegs: true as const, route: "seedream" as const, coverage: "Her bra fully covers her breasts and her briefs fully cover her." }] }, "nightwear", BANK_RULE.boldLegs],
   ];
 
   test.each(ROWS)("%s", (_name, bank, kind, rule) => {

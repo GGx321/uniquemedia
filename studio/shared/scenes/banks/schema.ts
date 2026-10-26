@@ -484,6 +484,8 @@ const STRAP_ACTION = /\bstraps?\b/i;
 /** Review round 2: what is worn over swimwear, never in the water (a hat is no garment over it). */
 const OVER_SWIMWEAR = /\b(?:shirts?|sweatshirts?|sarongs?|cover-ups?|kaftans?|pareos?|skirts?|shorts|dress(?:es)?|robes?|tees?|t-shirts?|hoodies?)\b/i;
 const LEVELS: readonly Level[] = ["ordinary", "flirty", "bold"];
+/** Review L4 (P-BA L1): the underwear a legs frame may wear beside the satin, the sports set or plain cotton, with no lace, no thong and no jeans. */
+const LEGS_UNDERWEAR = /^(?!.*\b(?:lace|thongs?|jeans)\b).*\b(?:sports\s+bra|cotton)\b/i;
 /** The fewest bold outfits a «Смелая» bank's general draw holds (I5.24: a bold plan is not one outfit). */
 const BOLD_OUTFITS_MIN = 4;
 
@@ -605,9 +607,9 @@ function boldBankRules(bank: CategoryBank, add: Add): void {
       const pins = moment.outfits ?? [];
       if (pins.length < 4) add(BANK_RULE.boldLegs, where, "a legs moment pins at least 4 outfits");
       if (!bank.outfits.some((o) => pins.includes(o.text) && o.level === undefined)) add(BANK_RULE.boldLegs, where, "a legs moment pins an ordinary outfit, so a legs slot of every level has one to wear");
-      // 5a.4 (P-BA L1 drew the sports set on a legs frame): plain underwear, the sports set and plain cotton, may join; lace and every lingerie above plain stay out.
+      // 5a.4 (P-BA L1 drew the sports set on a legs frame; review L4): the sports set and plain cotton may join; lace, a thong, the jeans and every other lingerie stay out.
       for (const outfit of pins) {
-        if (lingerieWordsIn(outfit).length > 0 && tierOfGarment({ text: outfit }) !== "ordinary") add(BANK_RULE.boldLegs, where, `«${outfit}» is lingerie: a bold legs frame wears satin nightwear with stockings (P-5a3 #6), or plain underwear (P-BA L1)`);
+        if (lingerieWordsIn(outfit).length > 0 && !LEGS_UNDERWEAR.test(outfit)) add(BANK_RULE.boldLegs, where, `«${outfit}» is lingerie: a bold legs frame wears satin nightwear with stockings (P-5a3 #6), or the sports set or plain cotton (P-BA L1)`);
       }
     }
   }
@@ -759,6 +761,10 @@ const PRIVATE_AT: readonly RegExp[] = [
   /\bpool\s+of\s+(?:her|the)\s+villa\b/i,
 ];
 
+/** Review L1: the public places a «Смелая» place away from the water never names, in its name or its phrase. */
+const PUBLIC_PLACE =
+  /\b(?:cafes?|cafés?|coffee\s+shops?|bars?|pubs?|restaurants?|bistros?|diners?|canteens?|streets?|roads?|sidewalks?|pavements?|shops?|stores?|boutiques?|malls?|markets?|offices?|gyms?|parks?|lobb(?:y|ies)|clubs?|stations?|airports?|terminals?|buses|bus|trains?|metro|subway|museums?|galler(?:y|ies)|cinemas?|theat(?:er|re)s?|librar(?:y|ies)|schools?|church(?:es)?|squares?|plazas?|parking|car\s+parks?|campus|classrooms?)\b/i;
+
 /**
  * r2.2 P5: the implied covers P-BA drew with the kept sentence only, the sheet, the foam and the bare back (a towel over her hips). No open item was probed for them, so every avatar
  * says their kept sentence: their `openCoverage` is their `coverage`. (An absent `openCoverage` is a frame with no sentence, which the probe allowed for the classes it drew open.)
@@ -823,10 +829,13 @@ function boldAnyRules(bank: CategoryBank, add: Add, kind: BoldAnyKind, others: r
     }
   }
 
-  // water-place: the tag is on every place by the water and on no room.
+  // water-place: the tag is on every place by the water and on no room; (review L5) a companion's or the custom rooms' water moment stands at a water place.
   for (const place of bank.places) {
     if (place.water === true && place.room === true) add(BANK_RULE.waterPlace, place.name, "a room is never a water place");
     if (place.water !== true && WATER_AT.test(place.at)) add(BANK_RULE.waterPlace, place.name, `its phrase names the water («${place.at}»): it carries water: true`);
+    if ((kind === "companion" || kind === "rooms") && place.water !== true) {
+      for (const moment of place.moments) if (moment.water === true) add(BANK_RULE.waterPlace, `${place.name}: ${moment.text}`, "a water moment stands at a water place, never in a room or on a balcony");
+    }
   }
 
   // bold-all-seedream: every slot of a «Смелая» bank is on the route (Q-A2).
@@ -885,6 +894,9 @@ function boldAnyRules(bank: CategoryBank, add: Add, kind: BoldAnyKind, others: r
       if (place.room !== true && !PRIVATE_AT.some((pattern) => pattern.test(place.at))) {
         add(BANK_RULE.boldPrivate, place.name, `«${place.at}» is no private place: a room of her home or her hotel, her balcony, terrace or window, or the villa's own pool`);
       }
+      // Review L1: the room flag is not taken on trust; a place away from the water that names a public place is refused whatever it says.
+      const named = place.water === true ? null : PUBLIC_PLACE.exec(`${place.name} | ${place.at}`);
+      if (named !== null) add(BANK_RULE.boldPrivate, place.name, `names a public place («${named[0]}»): lingerie is never in a public place (I5.72)`);
     }
   }
 
