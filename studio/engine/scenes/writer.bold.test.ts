@@ -504,6 +504,25 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
       expect(problemsOf(bold("At the cafe terrace in Paris, she lies back across her pillows in a white lace bra and panties, a croissant on the table beside her."))).toContain("public-place");
     });
 
+    // Review round 3 (when in doubt, refuse): the world of her category is only the background; she is in her own room or the one she stays in, never at it. The
+    // moments are the shared «rooms» bank's own.
+    test.each([
+      ["her room", "a cafe terrace in Paris", "lies back across the bed", "At the cafe terrace in Paris, she lies back across the bed in a white lace bra and panties."],
+      ["her window", "a seafood restaurant in the port", "rests her forehead on the pane", "In the seafood restaurant in the port, she rests her forehead on the pane in a white lace bra and panties."],
+      ["her balcony", "a cafe terrace in Paris", "leans on the railing in the sun", "On the cafe terrace in Paris, she leans on the railing in the sun in a white lace bra and panties."],
+      ["her balcony", "a cafe terrace in Paris", "leans on the railing in the sun", "At the cafe terrace, she leans on the railing in the sun in a white lace bra and panties."],
+      ["her sofa", "a hotel lobby lounge", "curls up with her knees in", "In the hotel lobby lounge, she curls up with her knees in in a white lace bra and panties."],
+      ["her room", "a cafe terrace in Paris", "lies back across the bed", "She lies back across the bed in her hotel room in Paris in a white lace bra and panties, the morning at the cafe terrace still on her mind."],
+      ["her room", "a beach club in Ibiza", "lies back across the bed", "At the beach club, she lies back across the bed in a white lace bra and panties."],
+      ["her room", "a beach club in Ibiza", "lies back across the bed", "At the beach club bar, she lies back across the bed in a white lace bra and panties."],
+      ["her room", "a cafe terrace in Paris", "lies back across the bed", "After dark at the bar, she lies back across the bed in a white lace bra and panties."],
+      ["her room", "a cafe terrace in Paris", "lies back across the bed", "Following her friend into the bar, she lies back across the bed in a white lace bra and panties."],
+      ["her room", "a cafe terrace in Paris", "lies back across the bed", "In her hotel room, she lies back across the bed in a white lace bra and panties, waving from her table at the cafe."],
+    ])("%s in «%s»: refused, her place's word in it or not: %s / %s", (location, world, activity, sentence) => {
+      const slot = routed({ location, world, activity, shot: "friend", capture: "timer", pose: "front" });
+      expect(problemsOf(bold(sentence, slot))).toContain("public-place");
+    });
+
     test.each(["on the street", "in a corner bistro", "at her office", "on the beach", "at the bakery counter"])("«%s», no place of her world, is refused away from the water", (where) => {
       expect(problemsOf(bold(`In her hotel room, she lies back across the bed in a white lace bra and panties, then ${where} a box of macarons sits beside her.`))).toContain("public-place");
     });
@@ -523,18 +542,21 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
       ["a modifier: the beach house", "In the bedroom of the beach house she rents, she lies back across the bed in a white lace bra and panties, a shell on the nightstand."],
       ["a modifier: a market tote", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties, flowers in a market tote on the chair."],
       ["a modifier: a bakery box", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties, macarons in a bakery box on the nightstand."],
-      ["a modifier: the beach resort", "In her room at the beach resort, she lies back across the bed in a white lace bra and panties, a shell on the nightstand."],
-      ["a modifier: the beach club", "In her suite at the beach club, she lies back across the bed in a white lace bra and panties, a shell on the nightstand."],
+      ["her room right before «at the beach resort»", "In her room at the beach resort, she lies back across the bed in a white lace bra and panties, a shell on the nightstand."],
+      ["her suite right before «at the beach club»", "In her suite at the beach club, she lies back across the bed in a white lace bra and panties, a shell on the nightstand."],
+      ["her bungalow right before «at the beach club»", "In her bungalow at the beach club, she lies back across the bed in a white lace bra and panties, a shell on the nightstand."],
       ["a modifier: the hotel suite", "In the hotel suite in Paris, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
       ["a modifier with a hyphen: beach-house", "In her beach-house bedroom, she lies back across the bed in a white lace bra and panties, a shell on the nightstand."],
       ["a modifier with a hyphen: street-facing", "In her room on the street-facing side, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
-      ["back from it: after", "In her hotel room after a morning at the market, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
-      ["back from it: back from", "Back from a day at the museum, she lies back across the bed in her hotel room in a white lace bra and panties, a box of macarons on the nightstand."],
-      ["back from it: following", "In her hotel room following lunch at the bistro, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
-      ["back from it: from", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties, a paper bag from the bakery on a side street on the nightstand."],
+      ["back from it: after a morning", "In her hotel room after a morning at the market, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
+      ["back from it: after a stop", "In her hotel room after a stop at the bakery, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
+      ["back from it: following lunch", "In her hotel room following lunch at the bistro, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
+      ["time spent there: back from a day", "Back from a day at the museum, she lies back across the bed in her hotel room in a white lace bra and panties, a box of macarons on the nightstand."],
+      ["time spent there: having spent the morning", "She lies back across the bed in her hotel room in Paris in a white lace bra and panties, having spent the morning at the cafe terrace."],
+      ["time spent there: after an evening in the bar", "In her hotel room after an evening in the bar, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
+      ["a thing she brought back from it", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties, a paper bag from the bakery on a side street on the nightstand."],
       ["a view: out at the street", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties, looking out at the street from her pillow."],
       ["a view: out at the park", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties, her eyes out at the park beyond the glass."],
-      ["her own world, a private word away from it", "She lies back across the bed in her hotel room in Paris in a white lace bra and panties, the morning at the cafe terrace still on her mind."],
     ])("%s is no public place", (_, sentence) => {
       expect(problemsOf(bold(sentence))).not.toContain("public-place");
     });
@@ -542,7 +564,6 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
     // The paid probe P-BA's 25-slot chunk (2026-10-26): real sentences the earlier rule refused for a public place they only came back from.
     test.each([
       ["a2", "her bathroom", "a cafe terrace in Paris", "She leans on the sink after a shower in her bathroom following time at a cafe terrace in Paris, morning daylight filling the space, in only a white bath towel with her free hand on the counter and face hidden in the mirror selfie."],
-      ["a4", "her sofa", "a bakery on a side street", "She curls up on the sofa in her room after stopping at a bakery on a side street, the evening lamps on and the sky outside already dim, in a satin camisole and shorts with both hands empty on the timer shot in a three-quarter view."],
       ["a7", "her bathroom", "a cafe window seat at dusk", "She checks herself in the mirror in her bathroom after time at a cafe window seat at dusk, the evening lamps on and the sky outside already dim, in a white lace bra and panties in a three-quarter view with one hand free."],
       ["a8", "her room", "a corner bistro in Montmartre", "She stretches out on the covers in her room after a stop at a corner bistro in Montmartre, morning daylight coming in, in a satin camisole and shorts holding her phone above while facing the viewer in the shot from above."],
       ["a9", "her window", "a cafe window seat at dusk", "She stands by the curtain in her window after time at a cafe window seat at dusk, the evening lamps on and the sky outside already dim, in a white lace bra and panties with both hands empty on the timer shot in a three-quarter view."],
@@ -560,6 +581,26 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
       const slot = routed({ location: "a lounger by the water", activity: "lies back, soaking up the heat", outfit: "a white string bikini", shot: "friend", capture: "friend", world: "a beach near the harbour" });
       expect(problemsOf(bold("On the beach near the harbour, she lies back, soaking up the heat on a lounger by the water in a white string bikini, smiling at the viewer.", slot))).toEqual([]);
       expect(problemsOf(bold("At the beach bar near the harbour, she lies back, soaking up the heat by the water in a white string bikini, smiling at the viewer.", slot))).toContain("public-place");
+    });
+
+    // Review round 3, LOW: a water slot (the water branch, in swimwear) is at its world's water place: the beach, the beach club, the pool, the marina, the lido, the
+    // sea, the lake. Its restaurant, bar and cafe are still public; so are the harbour, the pier, the promenade and the boardwalk (when in doubt, refuse).
+    const lounger = (world: string): PlanSlot =>
+      routed({ location: "a lounger by the water", activity: "lies back, soaking up the heat", outfit: "a white string bikini", shot: "friend", capture: "friend", world });
+    test.each([
+      ["a pool at the beach club", "By the pool at the beach club, she lies back, soaking up the heat on a lounger by the water in a white string bikini."],
+      ["a marina at sunset", "At the marina, she lies back, soaking up the heat on a lounger by the water in a white string bikini."],
+      ["a lido on the lake", "At the lido, she lies back, soaking up the heat on a lounger by the water of the lake in a white string bikini."],
+      ["a yacht at anchor in a bay", "On the yacht, she lies back, soaking up the heat on a lounger by the water with the sea all around her in a white string bikini."],
+    ])("a water slot (%s) is at its own water place", (world, sentence) => {
+      expect(problemsOf(bold(sentence, lounger(world)))).not.toContain("public-place");
+    });
+    test.each([
+      ["a pool at the beach club", "At the beach club restaurant, she lies back, soaking up the heat on a lounger by the water in a white string bikini."],
+      ["a pool at the beach club", "In the cafe by the pool, she lies back, soaking up the heat on a lounger by the water in a white string bikini."],
+      ["a beach near the harbour", "On the pier at the harbour, she lies back, soaking up the heat on a lounger by the water in a white string bikini."],
+    ])("a water slot (%s) is still refused at a public place there", (world, sentence) => {
+      expect(problemsOf(bold(sentence, lounger(world)))).toContain("public-place");
     });
 
     test("something she brought back from it is no place at all", () => {

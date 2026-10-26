@@ -673,8 +673,14 @@ function labelWordsIn(sentence: string): string[] {
 /** The public places of a world: where she must never be in her underwear. */
 const PUBLIC_NOUNS =
   "caf(?:e|é)s?|coffee\\s+shops?|restaurants?|bistros?|brasseries?|bars?|pubs?|(?:night)?clubs?|streets?|sidewalks?|shops?|stores?|boutiques?|markets?|malls?|offices?|gyms?|parks?|plazas?|squares?|stations?|airports?|museums?|galler(?:y|ies)|lobb(?:y|ies)|librar(?:y|ies)|bakery|bakeries";
-/** The shore's public places: hers when the slot is by the water (its world's own water place), public anywhere else. */
+/** The shore's public places, public anywhere but a water slot's own water place (below). */
 const SHORE_NOUNS = "beach(?:es)?|marinas?|harbou?rs?|piers?|promenades?|boardwalks?";
+/**
+ * Review round 3, LOW: what a water slot (the water branch, in swimwear) is at, its world's own water place: the beach and the marina here (the pool, the lido, the
+ * sea and the lake are no public noun at all; the beach club is read apart, `waterVenue`). The harbour, the pier, the promenade and the boardwalk stay public:
+ * when in doubt, refuse.
+ */
+const WATER_SLOT_NOUNS = "harbou?rs?|piers?|promenades?|boardwalks?";
 const DETERMINER = "(?:the|a|an|this|that|her|its|one)";
 
 /**
@@ -688,40 +694,50 @@ const placeForms = (nouns: string): RegExp[] => [
   new RegExp(String.raw`\b(?:the|a|an|this|that)\s+(?:[\w'-]+\s+){0,2}?(?<noun>${nouns})(?='s\b)`, "gi"),
 ];
 const PUBLIC_FORMS = placeForms(`${PUBLIC_NOUNS}|${SHORE_NOUNS}`);
-const PUBLIC_FORMS_BY_THE_WATER = placeForms(PUBLIC_NOUNS);
+const PUBLIC_FORMS_BY_THE_WATER = placeForms(`${PUBLIC_NOUNS}|${WATER_SLOT_NOUNS}`);
+/** A public noun right after the one a form found («the beach club restaurant»): the place is that one, whatever excuses the first. */
+const NEXT_PUBLIC = new RegExp(String.raw`^\s+(?<next>${PUBLIC_NOUNS})\b`, "i");
 
 /** The heads that make a public noun before them a modifier, no place she is in: a private place of hers (the beach house, the hotel suite) or a thing she has. */
 const OWN_HEAD =
-  /^(?:'s\s+(?:[\w-]+\s+)?|\s+)(?:house|home|cottage|villa|apartment|flat|suite|room|bedroom|cabin|resort|club|box|bag|tote|basket|cup|towel|umbrella|hat|bottle|receipt|treats?|pastr(?:y|ies)|flowers|bouquet)\b/i;
-/** She is back from it: «after», «following» or «from» at most three words before where it is named. */
-const BACK_FROM = /\b(?:after|following|from)\b(?:\s+[\w'-]+){0,3}\s*$/i;
+  /^(?:'s\s+(?:[\w-]+\s+)?|\s+)(?:house|home|cottage|villa|apartment|flat|suite|room|bedroom|cabin|box|bag|tote|basket|cup|towel|umbrella|hat|bottle|receipt|treats?|pastr(?:y|ies)|flowers|bouquet)\b/i;
+/** Review round 3: a club or a resort is hers only as where her own room is: «her suite at the beach club», «her room at the beach resort». */
+const CLUB_OR_RESORT = /^\s+(?:club|resort)s?\b/i;
+const HER_ROOM_BEFORE = /\b(?:suite|room|villa|cabin|bungalow)\s+$/i;
+/** Review round 3: she is back from it, «after» or «following» a visit of hers right before it (after time at a cafe terrace, after a stop at a bakery). */
+const BACK_FROM = /\b(?:after|following)\s+(?:(?:a|her|the)\s+)?(?:time|stop|visit|lunch|dinner|drinks|swim|walk|coffee|day|evening|morning|night)\s*$/i;
+/** Review round 3: time spent there, and only as past: «spent the morning at the cafe terrace», «back from a day at the museum», «after an evening in the bar». */
+const TIME_SPENT = /\b(?:after|following|back\s+from|spent|spending)\s+(?:(?:a|an|her|the|this)\s+)?(?:morning|evening|afternoon|lunch|dinner|drinks|coffee|day)\s*$/i;
+/** Something she brought back from it: «a paper bag from the bakery on a side street». A bare «from» excuses nothing («waving from her table at the cafe»). */
+const THING_FROM =
+  /\b(?:bag|box|cup|tote|basket|bottle|receipt|treats?|pastr(?:y|ies)|flowers|bouquet|croissants?|macarons?|takeaway|shell|souvenirs?)\s+from\s+(?:(?:the|a|an)\s+)?(?:[\w'-]+\s+){0,2}$/i;
 /** A view of it: she looks «out» or «down» at it. */
 const A_VIEW = /\b(?:out|down)\s*$/i;
 
-/** What `publicPlacesIn` weighs a sentence against: whether the slot is by the water, its world, and the words of its own place (`PLACE_KEYS`). */
+/** What `publicPlacesIn` weighs a sentence against: whether the slot is by the water (the water branch). */
 interface PlaceContext {
   water: boolean;
-  world: string;
-  keys: readonly string[];
 }
 
+/** A water slot's own beach club: «by the pool at the beach club». */
+const waterVenue = (matched: string): boolean => /\bbeach\s+clubs?$/i.test(matched);
+
 /**
- * The public places a slot's sentence puts her in, the noun of each, lower-cased; none when it only names one. Not a place she is in (review M2):
- * - a modifier: a public noun before a private place or a thing (the beach house, a bakery box, a market tote, the beach resort, the beach club), or joined by a
- *   hyphen (beach-house, street-facing);
- * - where she came back from: «after», «following» or «from» just before it (after time at a cafe terrace), and a place named right after one of those (at a
- *   bakery on a side street);
- * - a view: «out at the street»;
- * - her own world named while the sentence keeps her in her own place (a word of `PLACE_KEYS`), when that word is not right before it: «her window in the seafood
- *   restaurant» (the probe's W2:2) puts her window in it, and is refused.
- * The view and her own world excuse only where she is: a part of the place or the place's own (the restaurant's window) is public whatever her place.
- * By the water the shore is her place (`water`).
+ * The public places a slot's sentence puts her in, the noun of each, lower-cased; none when it only names one. When in doubt, refuse (review round 3): a false
+ * refusal costs one re-ask, a lingerie frame in a cafe breaks the owner's first rule. The world of her category is only the background: naming it while the
+ * sentence also names her room excuses nothing. Not a place she is in:
+ * - a modifier: a public noun before a private place or a thing (the beach house, a bakery box, a market tote), or joined by a hyphen (beach-house,
+ *   street-facing); a club or a resort only right after her own room («her suite at the beach club»);
+ * - where she came back from: «after» or «following» a visit of hers just before it (after time at a cafe terrace), time spent there as past («having spent the
+ *   morning at the cafe terrace», «back from a day at the museum»), a thing she brought from it, and a place named right after one of those (at a bakery on a
+ *   side street);
+ * - a view: «out at the street».
+ * These read only where she is: a part of the place or the place's own (the restaurant's window) is public whatever comes before it. A public noun right after an
+ * excused one is counted («the beach club restaurant»). By the water the beach, the marina and the beach club are her place (`water`).
  */
 function publicPlacesIn(sentence: string, place: PlaceContext): string[] {
   const found: string[] = [];
-  const keepsHerPlace = place.keys.some((key) => saysWord(sentence, key));
   for (const [index, form] of (place.water ? PUBLIC_FORMS_BY_THE_WATER : PUBLIC_FORMS).entries()) {
-    // The view and her own world read only where she is (the first form): a part of the place, or the place's own, names it as public whatever her place.
     const whereSheIs = index === 0;
     let backFromEnd = -1;
     for (const match of sentence.matchAll(form)) {
@@ -730,14 +746,21 @@ function publicPlacesIn(sentence: string, place: PlaceContext): string[] {
       const end = start + match[0].length;
       const before = sentence.slice(0, start);
       const after = sentence.slice(end);
-      if (/^-\w/.test(after) || OWN_HEAD.test(after)) continue;
-      if (BACK_FROM.test(before) || (backFromEnd >= 0 && sentence.slice(backFromEnd, start).trim() === "")) {
+      // Her own room's club or resort: excused, unless a public noun follows it («her suite at the beach club bar»).
+      const club = whereSheIs && /^at\b/i.test(match[0]) && HER_ROOM_BEFORE.test(before) ? CLUB_OR_RESORT.exec(after) : null;
+      const next = NEXT_PUBLIC.exec(club === null ? after : after.slice(club[0].length))?.groups?.["next"];
+      if (next !== undefined) {
+        found.push(next.toLowerCase());
+        continue;
+      }
+      if (club !== null || /^-\w/.test(after) || OWN_HEAD.test(after)) continue;
+      if (whereSheIs && place.water && waterVenue(match[0])) continue;
+      const atOrIn = /^(?:at|in)\b/i.test(match[0]);
+      if (BACK_FROM.test(before) || (whereSheIs && atOrIn && TIME_SPENT.test(before)) || (whereSheIs && THING_FROM.test(before)) || (backFromEnd >= 0 && sentence.slice(backFromEnd, start).trim() === "")) {
         backFromEnd = end;
         continue;
       }
       if (whereSheIs && A_VIEW.test(before)) continue;
-      const justBefore = before.trim().split(/\s+/).slice(-3).join(" ");
-      if (whereSheIs && saysWord(place.world, noun) && keepsHerPlace && !place.keys.some((key) => saysWord(justBefore, key))) continue;
       found.push(noun.toLowerCase());
     }
   }
@@ -769,7 +792,7 @@ function boldProblemsOf(slot: PlanSlot, sentence: string): BoldFinding[] {
   if (exposureWordsIn(sentence).some((word) => !saysWord(own, word))) problems.push("exposure-word");
   const labels = labelWordsIn(sentence).filter((word) => !saysWord(own, word));
   if (labels.length > 0) problems.push({ problem: "label-word", words: labels.map((word) => word.toLowerCase()) });
-  const places = slot.world === undefined ? [] : publicPlacesIn(sentence, { water, world: slot.world, keys });
+  const places = slot.world === undefined ? [] : publicPlacesIn(sentence, { water });
   if (places.length > 0) problems.push({ problem: "public-place", words: places });
   if (hit?.moment !== undefined && !saysMoment(sentence, hit.moment.text)) problems.push("moment-split");
   return problems;
