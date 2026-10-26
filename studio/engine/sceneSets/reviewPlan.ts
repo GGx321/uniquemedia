@@ -3,7 +3,7 @@ import { EngineFailure } from "../engineFailure";
 import { snapshotOf, type StoredCategory } from "../library/categories";
 import { MAX_REVIEW_WRITES, type StoredSceneSet } from "../library/sceneSets";
 import type { LedgerView } from "../runs/journal";
-import { POOLS, type PlanSlot, type Pool } from "../scenes";
+import type { PlanSlot, Pool } from "../scenes";
 import { poolOfSlot } from "../scenes/poolAt";
 import { poolOf } from "../scenes/poolGen";
 import { drawOwnScenes, redrawSlot } from "../scenes/redraw";
@@ -179,7 +179,11 @@ async function planWrite(input: ReviewPlanInput): Promise<PlannedWrite> {
   return planRewrite(set, target, {
     of: (slot) => {
       const routed = poolOfSlot(slot, impliedNudity);
-      if (!isCustomCategory(slot.category)) return { pool: routed ?? POOLS[slot.category] };
+      // A built-in slot always has a pool (`poolOfSlot` answers for every built-in category).
+      if (!isCustomCategory(slot.category)) {
+        if (routed === undefined) throw new RangeError(`no pool for category ${slot.category}`);
+        return { pool: routed };
+      }
       const found = stored.get(slot.category);
       if (found === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no custom category ${slot.category}` });
       return routed === undefined ? { pool: poolOf(found.pool) } : { pool: routed, worldPool: poolOf(found.pool) };

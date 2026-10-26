@@ -661,8 +661,11 @@ function planCustomBold(opts: {
   });
 }
 
+const isOrdinaryBuiltIn = (category: PlannerCategory): category is (typeof ORDINARY_BUILT_INS)[number] => ORDINARY_BUILT_INS.some((c) => c === category);
+
 /**
- * `plan()`'s implementation, taking the pools as a parameter. Exported only
+ * `plan()`'s implementation, taking the pools as a parameter. 5a.4: at «Смелая» the five's companions come from the registry (`poolAt`), NOT from `pools`: the argument supplies the ordinary pools, the
+ * nightwear and beach pools and the custom categories' own stored pools (the world source). Exported only
  * for the isolation test that proves editing one category's pool cannot
  * perturb another category's slots (planner.test.ts) — production code
  * always calls `plan()`, which uses the real, validated `POOLS`.
@@ -690,7 +693,7 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
     const stored = pools[category];
     if (!atBold || stored === undefined || isCustomCategory(category)) return stored;
     // The five at «Смелая» draw their companion; nightwear and beach their own pool. An imported avatar's pool holds no implied cover.
-    return ORDINARY_BUILT_INS.some((c) => c === category) ? poolAt(category as (typeof ORDINARY_BUILT_INS)[number], "bold", impliedNudity) : impliedNudity ? stored : withoutImplied(stored);
+    return isOrdinaryBuiltIn(category) ? poolAt(category, "bold", impliedNudity) : impliedNudity ? stored : withoutImplied(stored);
   };
 
   // «Ножки» (I5.29): the legs slots of the run, shared over the built-in categories that can deal them in proportion to their slots. The categories whose remainders tie are served in
