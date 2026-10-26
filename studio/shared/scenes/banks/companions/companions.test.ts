@@ -4,7 +4,7 @@ import { faceVisibleOf, posesFor, type Capture } from "../../captures";
 import { motionTextFindings } from "../../motionText";
 import { HELD_OBJECT_WORDS } from "../../words";
 import { poseFamilyOf } from "../boldDesign.testkit";
-import { openClassOf, tierOfGarment } from "../boldRules";
+import { lingerieWordsIn, openClassOf, tierOfGarment } from "../boldRules";
 import { BANKS } from "../index";
 import { boldAnyProblems, type BoldAnyKind } from "../schema";
 import { BANK_CATEGORIES, ORDINARY_BANK_CATEGORIES, type BankPlace, type CategoryBank, type Moment } from "../types";
@@ -230,6 +230,35 @@ describe("the outfits: the tier table, the floor, the coverage by origin (§5.1.
     const home = BOLD_COMPANIONS.home;
     const bare = { ...home, outfits: home.outfits.filter((o) => o.tier !== "implied"), places: home.places.map((p) => ({ ...p, moments: p.moments.filter((m) => m.tier !== "implied") })) };
     expect(impliedItemsOf(bare)).toEqual([]);
+  });
+});
+
+// Review M2 (plan s5a4 §5.9, r2.3 L3, r2.4): the card's clothing words come from the bank data, so each bank's general draw and water places say what the caption table says:
+// «белье» (lingerie or underwear in the general draw), «атлас» (satin in the general draw; on a legs frame only, «Ножки» > 0, for «Фитнес» and «Улица»), «купальник у воды»
+// (a water place).
+describe("the caption's words, from the bank data (§5.9)", () => {
+  const satin = (text: string): boolean => /\bsatin\b/i.test(text);
+  const generalOf = (bank: CategoryBank): string[] => bank.outfits.filter((o) => o.pinOnly !== true).map((o) => o.text);
+  const wordsOf = (bank: CategoryBank) => ({
+    underwear: generalOf(bank).some((t) => lingerieWordsIn(t).length > 0),
+    satin: generalOf(bank).some(satin),
+    satinOnLegs: momentsOf(bank).some(({ moment }) => moment.legs !== undefined && (moment.outfits ?? []).some(satin)),
+    swimwearAtTheWater: bank.places.some((p) => p.water === true),
+  });
+  test.each<[string, CategoryBank, ReturnType<typeof wordsOf>]>([
+    ["«Дом»: белье, атлас", BOLD_COMPANIONS.home, { underwear: true, satin: true, satinOnLegs: true, swimwearAtTheWater: false }],
+    ["«Виды»: белье, атлас, купальник у воды", BOLD_COMPANIONS.travel, { underwear: true, satin: true, satinOnLegs: true, swimwearAtTheWater: true }],
+    ["«Улица»: белье; атлас with «Ножки»", BOLD_COMPANIONS.photoshoot, { underwear: true, satin: false, satinOnLegs: true, swimwearAtTheWater: false }],
+    ["«Гламур»: белье, атлас", BOLD_COMPANIONS.glamour, { underwear: true, satin: true, satinOnLegs: true, swimwearAtTheWater: false }],
+    ["«Фитнес»: белье; атлас with «Ножки»", BOLD_COMPANIONS.fitness, { underwear: true, satin: false, satinOnLegs: true, swimwearAtTheWater: false }],
+    ["custom «rooms»: белье", CUSTOM_BOLD_BANKS.rooms, { underwear: true, satin: false, satinOnLegs: false, swimwearAtTheWater: false }],
+    ["custom «by the water»: купальник у воды", CUSTOM_BOLD_BANKS.water, { underwear: false, satin: false, satinOnLegs: false, swimwearAtTheWater: true }],
+  ])("%s", (_name, bank, words) => {
+    expect(wordsOf(bank)).toEqual(words);
+  });
+
+  test("«Фитнес» keeps three flirty outfits in its general draw without the satin: its lace", () => {
+    expect(generalOf(BOLD_COMPANIONS.fitness).filter((t) => BOLD_COMPANIONS.fitness.outfits.find((o) => o.text === t)?.level === "flirty")).toEqual(["a black lace bra and panties", "a white lace bra and panties", "a lace bralette and briefs"]);
   });
 });
 

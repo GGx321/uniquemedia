@@ -1,17 +1,17 @@
 import type { CategoryBank, Outfit } from "../types";
 import {
-  SHEER_SET,
   BATH_TOWEL,
   BEDSHEET,
   BEDSHEET_PIN,
   BLACK_LACE,
   BLACK_THONG_SET,
   BODYSUIT,
+  CAMI_AND_PANTIES,
   COTTON_SET,
+  LACE_BRALETTE,
   LACE_THONG_SET,
-  SATIN_CAMI,
-  SATIN_ROBE,
-  SATIN_SLIP,
+  SHEER_SET,
+  TANK_AND_BRIEFS,
   TEE_AND_PANTIES,
   TOWEL_PIN,
   WHITE_LACE,
@@ -22,14 +22,15 @@ import {
 // place names are the five kinds the writer's `place-missing` keys read (S5.BA4). The writer writes every frame (no template sentence), `she {moment}` kept verbatim; a plain
 // fallback reads the place's `at`. P-BA drew «her room» in the world «a cafe terrace in Paris» without the lace set's coverage (C1), and «her bathroom» with the towel (C2).
 
+// Review M2 (§5.3.1, §5.9: a custom category is «белье»): underwear and lingerie, no satin.
 const OUTFITS: readonly Outfit[] = [
   TEE_AND_PANTIES,
   COTTON_SET,
-  SATIN_CAMI,
+  CAMI_AND_PANTIES,
+  TANK_AND_BRIEFS,
   BLACK_LACE,
   WHITE_LACE,
-  SATIN_SLIP,
-  SATIN_ROBE,
+  LACE_BRALETTE,
   SHEER_SET,
   BODYSUIT,
   LACE_THONG_SET,
@@ -38,8 +39,8 @@ const OUTFITS: readonly Outfit[] = [
   BEDSHEET,
 ];
 
-/** On her stomach: the sets, and the satin cami and shorts. */
-const PRONE = [TEE_AND_PANTIES.text, COTTON_SET.text, SATIN_CAMI.text, BLACK_LACE.text, WHITE_LACE.text, LACE_THONG_SET.text, BLACK_THONG_SET.text];
+/** On her stomach: the sets. */
+const PRONE = [TEE_AND_PANTIES.text, COTTON_SET.text, CAMI_AND_PANTIES.text, BLACK_LACE.text, WHITE_LACE.text, LACE_THONG_SET.text, BLACK_THONG_SET.text];
 
 export const CUSTOM_ROOMS: CategoryBank = {
   bold: true,

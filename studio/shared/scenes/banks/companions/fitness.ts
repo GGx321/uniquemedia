@@ -8,6 +8,7 @@ import {
   HIP_TOWEL_PIN,
   LACE_BRALETTE,
   LACE_THONG_SET,
+  pinned,
   SATIN_CAMI,
   SATIN_MIDI,
   SATIN_ROBE,
@@ -16,6 +17,7 @@ import {
   SPORTS_THONG,
   TANK_AND_BRIEFS,
   TOWEL_PIN,
+  WHITE_LACE,
 } from "./outfits";
 
 // «Фитнес» at «Смелая» (5a.4, S5.BA2, plan s5a4 §5.2): home after the workout, never the gym (I5.72). On the yoga mat in her living room, in her bedroom mirror after the
@@ -23,15 +25,17 @@ import {
 // her own shoulder on the bed. P-BA drew the sports bra and thong in the bedroom mirror without its coverage (F1), the sports set on a legs frame (L1), and the bare back on her
 // bed, a towel over her hips, with its kept sentence (F2: she looked at the camera there, so the moment keeps its own gaze on her feet). The tier table: a thong is most revealing.
 
+// Review M2 (§5.2, §5.9 «Фитнес»: белье; атлас only with «Ножки»): the satin is the legs frames' alone (pinned), so the general draw is the sports sets, plain cotton and lace.
 const OUTFITS: readonly Outfit[] = [
   SPORTS_SET,
   SPORTS_AND_PANTIES,
   TANK_AND_BRIEFS,
-  SATIN_CAMI,
+  pinned(SATIN_CAMI),
   BLACK_LACE,
+  WHITE_LACE,
   LACE_BRALETTE,
-  SATIN_MIDI,
-  SATIN_ROBE,
+  pinned(SATIN_MIDI),
+  pinned(SATIN_ROBE),
   SPORTS_THONG,
   BLACK_THONG_SET,
   LACE_THONG_SET,
@@ -41,7 +45,7 @@ const OUTFITS: readonly Outfit[] = [
 ];
 
 /** On her stomach on the bed: the sets, the sports sets included. */
-const PRONE = [SPORTS_SET.text, SPORTS_AND_PANTIES.text, TANK_AND_BRIEFS.text, SATIN_CAMI.text, BLACK_LACE.text, LACE_BRALETTE.text, SPORTS_THONG.text, BLACK_THONG_SET.text];
+const PRONE = [SPORTS_SET.text, SPORTS_AND_PANTIES.text, TANK_AND_BRIEFS.text, BLACK_LACE.text, WHITE_LACE.text, LACE_BRALETTE.text, SPORTS_THONG.text, BLACK_THONG_SET.text];
 /** A legs frame: three satin (the cami and shorts is the plain one) and the sports set P-BA L1 drew; never lace, never a mini. */
 const LEGS = [SPORTS_SET.text, SATIN_CAMI.text, SATIN_MIDI.text, SATIN_ROBE.text];
 
@@ -139,7 +143,7 @@ export const FITNESS_BOLD: CategoryBank = {
   legwear: {
     items: ["thigh-high socks"],
     share: 0.2,
-    bold: { items: ["sheer black stockings", "black thigh-high stockings"], share: 0.5, route: "seedream", outfits: [SATIN_CAMI.text, SATIN_MIDI.text, SATIN_ROBE.text, BLACK_LACE.text, LACE_BRALETTE.text, BODYSUIT.text] },
+    bold: { items: ["sheer black stockings", "black thigh-high stockings"], share: 0.5, route: "seedream", outfits: [SATIN_CAMI.text, SATIN_MIDI.text, SATIN_ROBE.text, BLACK_LACE.text, WHITE_LACE.text, LACE_BRALETTE.text, BODYSUIT.text] },
   },
   // She shoots herself: 3 timers of 11, 2 mirrors, 2 phone-over-face mirror frames, 2 from above, 1 prone, 1 over her shoulder. Never a friend.
   captureDeck: ["timer", "mirror", "mirror-hidden", "above", "timer", "prone", "mirror", "mirror-hidden", "over-shoulder", "timer", "above"],

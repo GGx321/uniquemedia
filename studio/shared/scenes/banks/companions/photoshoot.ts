@@ -11,6 +11,7 @@ import {
   LACE_BRALETTE,
   LACE_THONG_SET,
   OPEN_SHIRT,
+  pinned,
   SATIN_CAMI,
   SATIN_MIDI,
   SATIN_ROBE,
@@ -24,16 +25,17 @@ import {
 // mirror without its coverage (S1) and the white lace bra and thong prone on the hotel bed (S2). The implied cover is the towel; the bare back stays «Фитнес»'s prone bed form
 // (P-BA F2 decided that form only).
 
+// Review M2 (§5.2, §5.9 «Улица»: белье): the satin is the legs frames' alone (pinned), so the general draw is plain underwear, the jeans and lace.
 const OUTFITS: readonly Outfit[] = [
   BRA_AND_JEANS,
   TEE_AND_PANTIES,
   CAMI_AND_PANTIES,
-  SATIN_CAMI,
+  pinned(SATIN_CAMI),
   LACE_AND_JEANS,
   BLACK_LACE,
   LACE_BRALETTE,
-  SATIN_MIDI,
-  SATIN_ROBE,
+  pinned(SATIN_MIDI),
+  pinned(SATIN_ROBE),
   BODYSUIT,
   LACE_THONG_SET,
   BLACK_THONG_SET,
@@ -45,8 +47,8 @@ const OUTFITS: readonly Outfit[] = [
 const JEANS = [BRA_AND_JEANS.text, LACE_AND_JEANS.text];
 /** With her arms up or over her head she wears what stays over her chest: every general outfit but the open shirt. */
 const ARMS_UP = armsUpOutfits(OUTFITS);
-/** On her stomach on the hotel bed: the sets drawn prone, the satin cami and shorts, and the jeans she walked in. */
-const PRONE = [TEE_AND_PANTIES.text, CAMI_AND_PANTIES.text, SATIN_CAMI.text, BRA_AND_JEANS.text, BLACK_LACE.text, LACE_BRALETTE.text, LACE_THONG_SET.text, BLACK_THONG_SET.text];
+/** On her stomach on the hotel bed: the sets drawn prone, and the jeans she walked in. */
+const PRONE = [TEE_AND_PANTIES.text, CAMI_AND_PANTIES.text, BRA_AND_JEANS.text, BLACK_LACE.text, LACE_BRALETTE.text, LACE_THONG_SET.text, BLACK_THONG_SET.text];
 /** A legs frame: three satin (the cami and shorts is the plain one) and plain cotton (P-BA L1); never lace, never jeans. */
 const LEGS = [SATIN_CAMI.text, SATIN_MIDI.text, SATIN_ROBE.text, TEE_AND_PANTIES.text, CAMI_AND_PANTIES.text];
 
@@ -105,8 +107,8 @@ export const PHOTOSHOOT_BOLD: CategoryBank = {
         { text: "lies on her side, legs tucked up", motion: "she pulls her knees in a little", captures: ["above"], twoHanded: false },
         { text: "lies on her stomach, shoes off", motion: "she swings her feet slowly", captures: ["prone"], twoHanded: false, outfits: PRONE, noLegwear: true },
         { text: "sits on the edge, rubbing one foot", motion: "she rubs her heel slowly", captures: ["timer"], twoHanded: true, gaze: "focus" },
-        // P-BA S2: drawn in the white lace bra and thong without its coverage.
-        { text: "lies prone after a long walk", motion: "she sways her feet slowly behind her", captures: ["prone"], twoHanded: false, level: "flirty", outfits: [LACE_THONG_SET.text, SATIN_CAMI.text], noLegwear: true },
+        // P-BA S2: drawn in the white lace bra and thong without its coverage; a flirty slot wears the lace bralette.
+        { text: "lies prone after a long walk", motion: "she sways her feet slowly behind her", captures: ["prone"], twoHanded: false, level: "flirty", outfits: [LACE_THONG_SET.text, LACE_BRALETTE.text], noLegwear: true },
         { text: "sits back on her hands", motion: "she tips her head back a little", captures: ["timer"], twoHanded: true, level: "flirty" },
         { text: "lies back, arms above her head", motion: "she flexes her fingers a little", captures: ["above"], twoHanded: false, level: "bold", route: "seedream", outfits: ARMS_UP },
         { text: "lies prone, one heel kicked up", motion: "she bends her raised knee slowly", captures: ["prone"], twoHanded: false, level: "bold", route: "seedream", outfits: PRONE, noLegwear: true },
