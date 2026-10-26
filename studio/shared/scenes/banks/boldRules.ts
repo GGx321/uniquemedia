@@ -122,8 +122,9 @@ export function tierOfGarment(outfit: { text: string; tier?: "implied" | undefin
  * frame of one of these may say no coverage sentence; an outfit of no class here (the satin: P-BA drew none open) says its kept sentence to every avatar. The cotton tops are
  * A1's (the controller's reading). The towel (B1) is an implied cover, held by the implied rules.
  */
-const OPEN_CLASSES: readonly (readonly [string, RegExp])[] = [
-  ["A2, C3 swimwear", /\b(?:bikinis?|swimsuits?|swimwear)\b/i],
+const OPEN_CLASSES: readonly (readonly [string, RegExp | ((text: string) => boolean)])[] = [
+  // Read by the «Смелая» vocabulary's own swimwear list (the revealing-word alternation is written once, in shared/scenes/words.ts).
+  ["A2, C3 swimwear", (text) => swimwearWordsIn(text).length > 0],
   ["G2 the sheer babydoll", /\bsheer\s+babydoll\b/i],
   ["G1 the lace bodysuit", /\blace\s+bodysuit\b/i],
   ["A3 the open shirt", OPEN_SHIRT],
@@ -137,5 +138,5 @@ const OPEN_CLASSES: readonly (readonly [string, RegExp])[] = [
 
 /** The P-BA class an outfit's garment belongs to when P-BA drew that class without its kept coverage, as «probe item(s) and class»; null otherwise. */
 export function openClassOf(text: string): string | null {
-  return OPEN_CLASSES.find(([, garments]) => garments.test(text))?.[0] ?? null;
+  return OPEN_CLASSES.find(([, garments]) => (typeof garments === "function" ? garments(text) : garments.test(text)))?.[0] ?? null;
 }
