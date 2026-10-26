@@ -458,6 +458,15 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
       expect(told).not.toContain("Daylight");
     });
 
+    // Review round 3, LOW: the capture label's phrases.
+    test.each([
+      ["her own photo", "In her small hotel room in Paris, in her own photo, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
+      ["in the … shot", "In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties in the timer shot, a box of macarons on the nightstand."],
+      ["photo from above", "In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, a photo from above, a box of macarons on the nightstand."],
+    ])("the phrase «%s» is refused", (_, sentence) => {
+      expect(problemsOf(bold(sentence))).toContain("label-word");
+    });
+
     test.each([
       "as sunlight falls across the sheets",
       "in the sunshine from the window",
