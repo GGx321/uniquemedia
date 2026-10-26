@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { youthWords } from "../../shared/engine";
 import { ownerBannedOutfitWords } from "../../shared/scenes/words";
-import { WRITER_CALL, writerCallOf, writerWorstMicros, type Estimate } from "../money/estimate";
+import { WRITER_CALL, writerCallOf, writerExpectedMicros, writerWorstMicros, type Estimate } from "../money/estimate";
 import type { PriceBook } from "../money/prices";
 import type { ChatMessage } from "../openrouter/types";
 import { categoryLabelOf, type CategoryLabelOf } from "./categories";
@@ -545,11 +545,7 @@ export function writerRunPrice(book: PriceBook, slotCount: number): Estimate {
     throw new RangeError(`slotCount must be a non-negative integer, got ${slotCount}`);
   }
   const call = writerCallOf("ordinary");
-  const expectedMicros = book.chatCost({
-    model: call.model,
-    images: call.images,
-    inputTokens: call.typicalPerScene.inputTokens * slotCount,
-    outputTokens: call.typicalPerScene.outputTokens * slotCount,
-  });
+  // Round 2 (M1): one attempt of each chunk at the typical tokens (`writerExpectedMicros`).
+  const expectedMicros = writerExpectedMicros(book, call, Math.ceil(slotCount / call.slotsPerCall), slotCount);
   return { expectedMicros, worstMicros: writerWorstMicros(book, call, slotCount), priceSource: book.source };
 }

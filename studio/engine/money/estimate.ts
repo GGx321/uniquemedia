@@ -42,6 +42,12 @@ export interface ChatCall {
  */
 export interface WriterCall extends Omit<ChatCall, "typical"> {
   typicalPerScene: TokenCounts;
+  /**
+   * 5a.4 (S5.BA5a round 2, M1): the typical tokens of one request whatever its scenes (the system prompt and schema in, the reasoning out), on top of
+   * `typicalPerScene` × its scenes; absent = none. The expected figure only, never a reserve or a cap (`writerExpectedMicros`). WRITER_CALL has none:
+   * its own typical was measured on a full chunk, the fixed part shared by its 25 scenes, so every ordinary figure is unchanged.
+   */
+  typicalPerCall?: TokenCounts;
   /** The most slots one call takes; chunked past this. */
   slotsPerCall: number;
   /** Attempts per chunk before the writer job gives up on it. */
@@ -118,14 +124,17 @@ export const WRITER_CALL: WriterCall = {
  * TRANSLATE, money/motionEstimate.ts). One attempt at the fallback prices: 17 000 × $1.25/M + 11 000 × $2.50/M = 48 750 µ$; a chunk, two attempts,
  * 97 500 µ$ («до $0.098»). The chunk size and the attempts are the ordinary ones, so no chunking moves (estimate.writerCall.test.ts pins both).
  *
- * `typicalPerScene` (the expected figure only; never a reserve or a cap) is P-BA's W1/W2 (2026-10-26, two bold calls of 2 slots each, effort «low»), with
- * the reasoning in it: their billed usage was 415 prompt / 791 completion tokens (659 of them reasoning) and 431 / 600 (479).
- * - Output: the larger call's completion per slot, ⌈791 / 2⌉ = 396. Kept per slot rather than shared by the chunk, since the reasoning walks the slots
- *   one by one; a full chunk's 25 × 396 = 9 900 stays under the 11 000 it is priced at.
- * - Input: the larger call's prompt per slot, ⌈431 / 2⌉ = 216, plus the system prompt the probe did not send (its system message was the 24-byte
- *   placeholder «<writer-bold.system.txt>», not the 3 764-byte draft): ⌈3 764 / 3.85⌉ = 978 tokens at S5.WCX's measured 3.85 bytes a grok-4.3 token,
- *   shared by the 25 slots of a full chunk as WRITER_CALL's own typical was measured, ⌈978 / 25⌉ = 40. 216 + 40 = 256.
- * So 20 bold scenes expect 5 120 in and 7 920 out, 26 200 µ$. C-BA re-measures it on the final prompt.
+ * The typical tokens (the expected figure only; never a reserve or a cap; round 2, M1) come from the five bold calls measured on grok-4.3 with the real
+ * 3 764-byte system prompt (2026-10-26): two 2-slot calls at effort «low», 1 258 / 2 060 (1 935 of them reasoning) and 1 274 / 1 577 (1 460), and one
+ * 25-slot chunk three ways, 2 963 / 1 887 (435) with no reasoning field, 2 963 / 2 463 (1 018) at «low» and 2 955 / 1 123 (0) at «none». The reasoning
+ * does not grow with the slots (it is 0 to 1 935 a call), so a figure per scene alone cannot fit both sizes; the figure is a per-call term plus a
+ * per-scene term, each fitted so every measured call is expected at or above its tokens (and so its list price and its bill):
+ * - `typicalPerScene`: in, the steepest growth from a 2-slot to a 25-slot call, ⌈(2 963 − 1 258) / 23⌉ = 75 (a slot's JSON); out, the largest visible
+ *   answer a slot with the reasoning left out, ⌈(2 060 − 1 935) / 2⌉ = 63 (its sentence).
+ * - `typicalPerCall`: the largest residual over the five calls, 1 274 − 2 × 75 = 1 124 in (the system prompt and the schema) and 2 060 − 2 × 63 = 1 934
+ *   out (the reasoning).
+ * So one request of 2 scenes expects 1 274 / 2 060, 6 743 µ$ (bills $0.0066 and $0.0054), and a full chunk of 25 expects 2 999 / 3 509, 12 522 µ$ (bills
+ * $0.0064 to $0.0083), under its 17 000 / 11 000 ceilings; 20 scenes in one request expect 11 265 µ$. C-BA re-measures it on the final prompt.
  */
 export const WRITER_BOLD_CALL: WriterCall = {
   model: "x-ai/grok-4.3",
@@ -133,7 +142,8 @@ export const WRITER_BOLD_CALL: WriterCall = {
   reasoningTokens: 3_000,
   inputTokens: 17_000,
   images: 0,
-  typicalPerScene: { inputTokens: 256, outputTokens: 396 },
+  typicalPerScene: { inputTokens: 75, outputTokens: 63 },
+  typicalPerCall: { inputTokens: 1_124, outputTokens: 1_934 },
   slotsPerCall: 25,
   maxAttempts: 2,
 };
@@ -257,6 +267,26 @@ export function writerAttemptWorstMicros(book: PriceBook, call: WriterCall): num
   return book.chatWorstCase({ model: call.model, maxTokens: call.maxTokens + reasoningTokens, inputTokens: call.inputTokens, images: call.images });
 }
 
+const NO_TOKENS: TokenCounts = Object.freeze({ inputTokens: 0, outputTokens: 0 });
+
+/**
+ * 5a.4 (S5.BA5a round 2, M1): the writer's expected cost for `requests` requests carrying `scenes` scenes in all, one attempt each at the typical tokens:
+ * `typicalPerCall` once a request plus `typicalPerScene` a scene, priced in one call of the book. The one place the writer's typical tokens are read:
+ * `estimateRun`'s writer term, `writerRunPrice`, a scene set's compose, «Дописать» and write (and through them the launch unit's table) and a resume all
+ * ask it (writerCall.static.test.ts). For WRITER_CALL (no per-call term) it is today's figure exactly, whatever the requests.
+ */
+export function writerExpectedMicros(book: PriceBook, call: WriterCall, requests: number, scenes: number): number {
+  assertCount("writer requests", requests);
+  assertCount("writer scenes", scenes);
+  const perCall = call.typicalPerCall ?? NO_TOKENS;
+  return book.chatCost({
+    model: call.model,
+    images: call.images,
+    inputTokens: perCall.inputTokens * requests + call.typicalPerScene.inputTokens * scenes,
+    outputTokens: perCall.outputTokens * requests + call.typicalPerScene.outputTokens * scenes,
+  });
+}
+
 /**
  * The writer's own worst case for `slotCount` slots: chunked into calls of
  * at most `writer.slotsPerCall` (review round 2), each retried up to
@@ -324,15 +354,8 @@ export function estimateRun(book: PriceBook, plan: RunPlanInput): Estimate {
   // 5a.2: without a load every photo is a model scene (the old figure); with one, only the model's share is priced.
   const load: WriterLoad | null = writer === null ? null : (plan.writerLoad ?? { chunks: Math.ceil(plan.photos / writer.slotsPerCall), scenes: plan.photos });
   if (writer !== null && load !== null) checkWriterLoad(writer, load);
-  const writerTypical =
-    writer === null || load === null || load.scenes === 0
-      ? 0
-      : book.chatCost({
-          model: writer.model,
-          images: writer.images,
-          inputTokens: writer.typicalPerScene.inputTokens * load.scenes,
-          outputTokens: writer.typicalPerScene.outputTokens * load.scenes,
-        });
+  // Round 2 (M1): one attempt of each request the load can need, at the typical tokens.
+  const writerTypical = writer === null || load === null || load.scenes === 0 ? 0 : writerExpectedMicros(book, writer, load.chunks, load.scenes);
   const ageTypical = typicalMicros(book, plan.ageChecks);
   const ageCeiling = ceilingMicros(book, plan.ageChecks);
   // A bold photo is never priced below the dearest model of the route (the settings' model may cost more than Seedream 2K), and has no fallback attempt.

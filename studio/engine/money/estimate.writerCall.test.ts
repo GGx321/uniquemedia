@@ -6,6 +6,7 @@ import {
   writerAttemptWorstMicros,
   writerCallOf,
   writerChunksMicros,
+  writerExpectedMicros,
   writerWorstMicros,
   type ImageChoice,
   type RunPlanInput,
@@ -68,36 +69,86 @@ describe("WRITER_BOLD_CALL", () => {
   });
 });
 
-// P-BA (2026-10-26, .omc/stage5/harness/out/p-ba/result.json `writers`): two bold writer calls of 2 slots each on grok-4.3, effort «low», max_tokens 8 000.
-// Their usage, as billed: W1 415 prompt / 791 completion (659 of them reasoning), W2 431 / 600 (479 reasoning). The probe's system message was the
-// 24-byte placeholder «<writer-bold.system.txt>», not the 3 764-byte bold draft, so the prompt figures lack the system prompt; it is added at S5.WCX's
-// measured 3.85 bytes a grok-4.3 token (money/motionEstimate.ts), shared by the 25 slots of a full chunk as WRITER_CALL's own typical was measured.
-describe("WRITER_BOLD_CALL's typical tokens come from P-BA's W1/W2, reasoning included", () => {
-  const W1 = { prompt: 415, completion: 791, reasoning: 659 };
-  const W2 = { prompt: 431, completion: 600, reasoning: 479 };
-  const SLOTS = 2;
-  const UNSENT_SYSTEM_PROMPT_TOKENS = Math.ceil(3_764 / 3.85); // 978
+// S5.BA5a round 2 (M1): the bold writer's typical tokens, from the five bold calls measured on grok-4.3 with the real 3 764-byte system prompt
+// (2026-10-26; .omc/stage5/harness/out/p-ba/rerun/result.json `writers` and .omc/stage5/harness/out/p-ba/chunk25/result.json). The first P-BA W1/W2
+// carried a 24-byte placeholder instead of the prompt and are not used. The reasoning does not grow with the slots (1 935 and 1 460 tokens on 2 slots,
+// 0 to 1 018 on 25), so a per-slot figure alone would either miss the 2-slot bills or price 25 slots past the call's 11 000 completion tokens: the
+// expected figure is a per-call term (the system prompt, the schema and the reasoning) plus a per-scene term (a slot's JSON in, its sentence out).
+const MEASURED = [
+  { call: "W1 rerun, effort low", slots: 2, prompt: 1_258, completion: 2_060, reasoning: 1_935, billMicros: 6_589 },
+  { call: "W2 rerun, effort low", slots: 2, prompt: 1_274, completion: 1_577, reasoning: 1_460, billMicros: 5_401 },
+  { call: "chunk25, no reasoning field", slots: 25, prompt: 2_963, completion: 1_887, reasoning: 435, billMicros: 8_287 },
+  { call: "chunk25, effort low", slots: 25, prompt: 2_963, completion: 2_463, reasoning: 1_018, billMicros: 6_771 },
+  { call: "chunk25, effort none", slots: 25, prompt: 2_955, completion: 1_123, reasoning: 0, billMicros: 6_367 },
+] as const;
 
-  test("input per scene: the larger call's prompt per slot (216) plus the unsent system prompt shared by a full chunk (40): 256", () => {
-    const perSlot = Math.ceil(Math.max(W1.prompt, W2.prompt) / SLOTS);
-    const systemShare = Math.ceil(UNSENT_SYSTEM_PROMPT_TOKENS / WRITER_BOLD_CALL.slotsPerCall);
-    expect([perSlot, systemShare]).toEqual([216, 40]);
-    expect(WRITER_BOLD_CALL.typicalPerScene.inputTokens).toBe(perSlot + systemShare);
+describe("WRITER_BOLD_CALL's typical tokens come from the five real-prompt calls", () => {
+  const perScene = WRITER_BOLD_CALL.typicalPerScene;
+  const perCall = WRITER_BOLD_CALL.typicalPerCall ?? { inputTokens: 0, outputTokens: 0 };
+
+  test("the input a scene adds is the steepest growth from a 2-slot to a 25-slot call, rounded up: 75", () => {
+    const small = MEASURED.filter((m) => m.slots === 2);
+    const full = MEASURED.filter((m) => m.slots === 25);
+    const slopes = small.flatMap((s) => full.map((f) => (f.prompt - s.prompt) / (f.slots - s.slots)));
+    expect(perScene.inputTokens).toBe(Math.ceil(Math.max(...slopes)));
+    expect(perScene.inputTokens).toBe(75);
   });
 
-  test("output per scene: the larger call's completion per slot, its reasoning included: 396", () => {
-    expect(W1.completion - W1.reasoning).toBe(132); // the visible answer of two sentences; the rest is reasoning, billed as completion
-    expect(WRITER_BOLD_CALL.typicalPerScene.outputTokens).toBe(Math.ceil(Math.max(W1.completion, W2.completion) / SLOTS));
+  test("the output a scene adds is the largest visible answer a slot, its reasoning left out: 63", () => {
+    expect(perScene.outputTokens).toBe(Math.ceil(Math.max(...MEASURED.map((m) => (m.completion - m.reasoning) / m.slots))));
+    expect(perScene.outputTokens).toBe(63);
   });
 
-  test("a full bold chunk's typical tokens stay under its ceilings", () => {
+  test("the per-call terms are the largest residual over the five calls: 1 124 in, 1 934 out", () => {
+    expect(perCall.inputTokens).toBe(Math.max(...MEASURED.map((m) => m.prompt - m.slots * perScene.inputTokens)));
+    expect(perCall.outputTokens).toBe(Math.max(...MEASURED.map((m) => m.completion - m.slots * perScene.outputTokens)));
+    expect(perCall).toEqual({ inputTokens: 1_124, outputTokens: 1_934 });
+  });
+
+  for (const m of MEASURED) {
+    test(`${m.call}: one call of ${m.slots} scenes is expected at or above its tokens, its list price and its bill`, () => {
+      expect(perCall.inputTokens + m.slots * perScene.inputTokens).toBeGreaterThanOrEqual(m.prompt);
+      expect(perCall.outputTokens + m.slots * perScene.outputTokens).toBeGreaterThanOrEqual(m.completion);
+      const expected = writerExpectedMicros(BOOK, WRITER_BOLD_CALL, 1, m.slots);
+      expect(expected).toBeGreaterThanOrEqual(BOOK.chatCost({ model: WRITER_BOLD_CALL.model, images: 0, inputTokens: m.prompt, outputTokens: m.completion }));
+      expect(expected).toBeGreaterThanOrEqual(m.billMicros);
+    });
+  }
+
+  test("a full bold chunk's expected tokens stay under its ceilings", () => {
     const full = WRITER_BOLD_CALL.slotsPerCall;
-    expect(full * WRITER_BOLD_CALL.typicalPerScene.inputTokens).toBeLessThanOrEqual(WRITER_BOLD_CALL.inputTokens);
-    expect(full * WRITER_BOLD_CALL.typicalPerScene.outputTokens).toBeLessThanOrEqual(WRITER_BOLD_CALL.maxTokens + (WRITER_BOLD_CALL.reasoningTokens ?? 0));
+    expect(perCall.inputTokens + full * perScene.inputTokens).toBeLessThanOrEqual(WRITER_BOLD_CALL.inputTokens);
+    expect(perCall.outputTokens + full * perScene.outputTokens).toBeLessThanOrEqual(WRITER_BOLD_CALL.maxTokens + (WRITER_BOLD_CALL.reasoningTokens ?? 0));
   });
 
-  test("20 bold scenes expect 26 200 µ$ in a run's estimate: 5 120 in × $1.25/M + 7 920 out × $2.50/M", () => {
-    expect(estimateRun(BOOK, run(WRITER_BOLD_CALL)).expectedMicros - estimateRun(BOOK, run(null)).expectedMicros).toBe(26_200);
+  test("20 bold scenes, one request, expect 11 265 µ$ in a run's estimate: 2 624 in × $1.25/M + 3 194 out × $2.50/M", () => {
+    expect(estimateRun(BOOK, run(WRITER_BOLD_CALL)).expectedMicros - estimateRun(BOOK, run(null)).expectedMicros).toBe(11_265);
+  });
+});
+
+describe("writerExpectedMicros", () => {
+  test("the ordinary call's expected figure is today's, its scenes at 106 in / 130 out, whatever the requests", () => {
+    for (const scenes of [0, 1, 20, 25, 26, 100]) {
+      for (const requests of [0, 1, 2, 4]) {
+        const today = BOOK.chatCost({ model: WRITER_CALL.model, images: WRITER_CALL.images, inputTokens: 106 * scenes, outputTokens: 130 * scenes });
+        expect(writerExpectedMicros(BOOK, WRITER_CALL, requests, scenes)).toBe(today);
+      }
+    }
+  });
+
+  test("the bold call adds its per-call term once a request: 6 240 µ$ (1 124 in, 1 934 out)", () => {
+    expect(writerExpectedMicros(BOOK, WRITER_BOLD_CALL, 2, 20) - writerExpectedMicros(BOOK, WRITER_BOLD_CALL, 1, 20)).toBe(6_240);
+  });
+
+  test("no request and no scene expect nothing", () => {
+    expect([writerExpectedMicros(BOOK, WRITER_CALL, 0, 0), writerExpectedMicros(BOOK, WRITER_BOLD_CALL, 0, 0)]).toEqual([0, 0]);
+  });
+
+  test("refuses a request or scene count that is not a non-negative whole number", () => {
+    for (const bad of [-1, 1.5, Number.NaN]) {
+      expect(() => writerExpectedMicros(BOOK, WRITER_BOLD_CALL, bad, 1)).toThrow(TypeError);
+      expect(() => writerExpectedMicros(BOOK, WRITER_BOLD_CALL, 1, bad)).toThrow(TypeError);
+    }
   });
 });
 

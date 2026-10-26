@@ -1,9 +1,8 @@
 import { MAX_SCENES_PER_WRITE, type Estimate } from "../../shared/engine";
 import type { StoredSceneSet } from "../library/sceneSets";
-import { WRITER_CALL, writerAttemptWorstMicros, writerCallOf, writerChunksMicros, type WriterCall } from "../money/estimate";
+import { WRITER_CALL, writerAttemptWorstMicros, writerCallOf, writerChunksMicros, writerExpectedMicros, type WriterCall } from "../money/estimate";
 import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
 import type { PricedBook, PriceModels } from "../money/priceCache";
-import type { PriceBook } from "../money/prices";
 import type { LedgerView } from "../runs/journal";
 import { pendingChunks } from "./chunks";
 
@@ -29,15 +28,6 @@ export function writerCeilingMicros(priced: PricedBook, textModel: string): numb
   return writerAttemptWorstMicros(priced.book, writerCall(textModel));
 }
 
-function typicalOf(book: PriceBook, call: WriterCall, scenes: number): number {
-  return book.chatCost({
-    model: call.model,
-    images: call.images,
-    inputTokens: call.typicalPerScene.inputTokens * scenes,
-    outputTokens: call.typicalPerScene.outputTokens * scenes,
-  });
-}
-
 /**
  * Composing a `split` of scenes: the writer's worst case for them (`writerChunksWorst` requests of at most 25 scenes, each asked up to twice at the ceiling,
  * the very figure a run's estimate carries for its writer), expected at the writer's typical tokens for the scenes only the model can write. Since 5a.2 the
@@ -53,7 +43,8 @@ export function composeEstimate(priced: PricedBook, textModel: string, split: re
   if (chunks === 0 || scenes === 0) return free;
   const call = writerCall(textModel);
   const worstMicros = writerChunksMicros(priced.book, call, chunks);
-  return { expectedMicros: Math.min(typicalOf(priced.book, call, scenes), worstMicros), worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
+  // Round 2 (M1): one attempt of each request at the typical tokens (`writerExpectedMicros`).
+  return { expectedMicros: Math.min(writerExpectedMicros(priced.book, call, chunks, scenes), worstMicros), worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
 }
 
 /**
@@ -71,7 +62,8 @@ export function reviewWriteEstimate(priced: PricedBook, textModel: string, scene
   if (attemptsLeft === 0 || modelScenes === 0) return { expectedMicros: 0, worstMicros: 0, prices: priced.book.source, pricesAsOf: priced.asOf };
   const call = writerCall(textModel);
   const worstMicros = attemptsLeft * writerAttemptWorstMicros(priced.book, call);
-  return { expectedMicros: Math.min(typicalOf(priced.book, call, modelScenes), worstMicros), worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
+  // One request (round 2, M1: its per-call term once).
+  return { expectedMicros: Math.min(writerExpectedMicros(priced.book, call, 1, modelScenes), worstMicros), worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
 }
 
 /**
@@ -88,10 +80,13 @@ export function writeEstimate(priced: PricedBook, set: StoredSceneSet, ledger: L
   const ceiling = writerAttemptWorstMicros(priced.book, call);
   let worstMicros = 0;
   let scenes = 0;
+  let requests = 0;
   for (const pending of asked) {
     worstMicros += pending.state.attemptsLeft * ceiling;
     scenes += pending.modelScenes;
+    if (pending.state.attemptsLeft > 0) requests++;
   }
-  const expectedMicros = scenes === 0 ? 0 : Math.min(typicalOf(priced.book, call, scenes), worstMicros);
+  // Round 2 (M1): one attempt of each chunk that can still be asked, at the typical tokens (`writerExpectedMicros`).
+  const expectedMicros = scenes === 0 ? 0 : Math.min(writerExpectedMicros(priced.book, call, requests, scenes), worstMicros);
   return { expectedMicros, worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
 }

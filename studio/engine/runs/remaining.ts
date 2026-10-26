@@ -1,6 +1,6 @@
 import type { Estimate } from "../../shared/engine";
 import { scopeKey } from "../money/budget";
-import { AGE_CHECK_CALL, writerAttemptWorstMicros, writerCallOf, type ImageChoice } from "../money/estimate";
+import { AGE_CHECK_CALL, writerAttemptWorstMicros, writerCallOf, writerExpectedMicros, type ImageChoice } from "../money/estimate";
 import { MoneyError } from "../money/errors";
 import type { Ledger, Scope } from "../money/ledger";
 import type { PricedBook } from "../money/priceCache";
@@ -111,6 +111,7 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
   // 5a.4 (S5.BA5, r2.1 N1): an attempt at the one writer attempt price, its reasoning allowance included (none for the ordinary call).
   const writerCeiling = asked.length === 0 ? 0 : writerAttemptWorstMicros(book, writer);
   let unwrittenSlots = 0;
+  let writerRequests = 0;
   let writerPending = false;
   for (const chunk of asked) {
     const answered = chunk.attemptIds.filter((id) => attemptPaid(ledger, id)).length;
@@ -119,6 +120,7 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
     if (attempts <= 0) continue;
     worst += attempts * writerCeiling;
     writerPending = true;
+    writerRequests++;
     unwrittenSlots += modelSlotsOf(chunk);
   }
 
@@ -151,14 +153,8 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
     cheapestSlotAttempt = Math.min(cheapestSlotAttempt ?? Infinity, imageWorst(book, primary) + ageWorst);
   }
 
-  if (unwrittenSlots > 0) {
-    expected += book.chatCost({
-      model: writer.model,
-      images: writer.images,
-      inputTokens: writer.typicalPerScene.inputTokens * unwrittenSlots,
-      outputTokens: writer.typicalPerScene.outputTokens * unwrittenSlots,
-    });
-  }
+  // Round 2 (M1): one attempt of each chunk still to ask, at the typical tokens (`writerExpectedMicros`).
+  if (unwrittenSlots > 0) expected += writerExpectedMicros(book, writer, writerRequests, unwrittenSlots);
 
   const capRoom = Math.max(0, plan.capMicros - committedMicros);
   // A chunk out of writer attempts adds no writer term (nothing more can be asked of it) but does not block the resume (S5.6d, I5.30/I5.31): its slots take
