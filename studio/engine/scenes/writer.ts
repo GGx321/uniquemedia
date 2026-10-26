@@ -655,15 +655,79 @@ function labelWordsIn(sentence: string): string[] {
   return Array.from(sentence.matchAll(LABEL_WORDS), (m) => m[0]);
 }
 
-/** A public place of a world, named as where she is: after «in», «at», «on», «inside», «into» or «outside», two words between at most. */
+/** The public places of a world: where she must never be in her underwear. */
 const PUBLIC_NOUNS =
   "caf(?:e|é)s?|coffee\\s+shops?|restaurants?|bistros?|brasseries?|bars?|pubs?|(?:night)?clubs?|streets?|sidewalks?|shops?|stores?|boutiques?|markets?|malls?|offices?|gyms?|parks?|plazas?|squares?|stations?|airports?|museums?|galler(?:y|ies)|lobb(?:y|ies)|librar(?:y|ies)|bakery|bakeries";
 /** The shore's public places: hers when the slot is by the water (its world's own water place), public anywhere else. */
 const SHORE_NOUNS = "beach(?:es)?|marinas?|harbou?rs?|piers?|promenades?|boardwalks?";
-const placeAt = (nouns: string): RegExp =>
-  new RegExp(String.raw`\b(?:in|at|on|inside|into|outside)\s+(?:(?:the|a|an|this|that|her|its|one)\s+)?(?:[\w'-]+\s+){0,2}?(?:${nouns})\b`, "i");
-const PUBLIC_PLACE = placeAt(`${PUBLIC_NOUNS}|${SHORE_NOUNS}`);
-const PUBLIC_PLACE_BY_THE_WATER = placeAt(PUBLIC_NOUNS);
+const DETERMINER = "(?:the|a|an|this|that|her|its|one)";
+
+/**
+ * Where a sentence names a public place (S5.BA4 round 2, review M2 and its LOWs), three forms, each with the noun it names: where she is («in», «at», «on»,
+ * «inside», «into», «outside»), a part of the place («the window of the seafood restaurant», «a table of the bistro»), and the place's own («the restaurant's
+ * window»). Two words between at most.
+ */
+const placeForms = (nouns: string): RegExp[] => [
+  new RegExp(String.raw`\b(?:in|at|on|inside|into|outside)\s+(?:${DETERMINER}\s+)?(?:[\w'-]+\s+){0,2}?(?<noun>${nouns})\b`, "gi"),
+  new RegExp(String.raw`\b(?:window|table|terrace|counter|corner|door|doorway|entrance|seat|booth|patio|bar)s?\s+of\s+(?:${DETERMINER}\s+)?(?:[\w'-]+\s+){0,2}?(?<noun>${nouns})\b`, "gi"),
+  new RegExp(String.raw`\b(?:the|a|an|this|that)\s+(?:[\w'-]+\s+){0,2}?(?<noun>${nouns})(?='s\b)`, "gi"),
+];
+const PUBLIC_FORMS = placeForms(`${PUBLIC_NOUNS}|${SHORE_NOUNS}`);
+const PUBLIC_FORMS_BY_THE_WATER = placeForms(PUBLIC_NOUNS);
+
+/** The heads that make a public noun before them a modifier, no place she is in: a private place of hers (the beach house, the hotel suite) or a thing she has. */
+const OWN_HEAD =
+  /^(?:'s\s+(?:[\w-]+\s+)?|\s+)(?:house|home|cottage|villa|apartment|flat|suite|room|bedroom|cabin|resort|club|box|bag|tote|basket|cup|towel|umbrella|hat|bottle|receipt|treats?|pastr(?:y|ies)|flowers|bouquet)\b/i;
+/** She is back from it: «after», «following» or «from» at most three words before where it is named. */
+const BACK_FROM = /\b(?:after|following|from)\b(?:\s+[\w'-]+){0,3}\s*$/i;
+/** A view of it: she looks «out» or «down» at it. */
+const A_VIEW = /\b(?:out|down)\s*$/i;
+
+/** What `publicPlacesIn` weighs a sentence against: whether the slot is by the water, its world, and the words of its own place (`PLACE_KEYS`). */
+interface PlaceContext {
+  water: boolean;
+  world: string;
+  keys: readonly string[];
+}
+
+/**
+ * The public places a slot's sentence puts her in, the noun of each, lower-cased; none when it only names one. Not a place she is in (review M2):
+ * - a modifier: a public noun before a private place or a thing (the beach house, a bakery box, a market tote, the beach resort, the beach club), or joined by a
+ *   hyphen (beach-house, street-facing);
+ * - where she came back from: «after», «following» or «from» just before it (after time at a cafe terrace), and a place named right after one of those (at a
+ *   bakery on a side street);
+ * - a view: «out at the street»;
+ * - her own world named while the sentence keeps her in her own place (a word of `PLACE_KEYS`), when that word is not right before it: «her window in the seafood
+ *   restaurant» (the probe's W2:2) puts her window in it, and is refused.
+ * The view and her own world excuse only where she is: a part of the place or the place's own (the restaurant's window) is public whatever her place.
+ * By the water the shore is her place (`water`).
+ */
+function publicPlacesIn(sentence: string, place: PlaceContext): string[] {
+  const found: string[] = [];
+  const keepsHerPlace = place.keys.some((key) => saysWord(sentence, key));
+  for (const [index, form] of (place.water ? PUBLIC_FORMS_BY_THE_WATER : PUBLIC_FORMS).entries()) {
+    // The view and her own world read only where she is (the first form): a part of the place, or the place's own, names it as public whatever her place.
+    const whereSheIs = index === 0;
+    let backFromEnd = -1;
+    for (const match of sentence.matchAll(form)) {
+      const noun = match.groups?.["noun"] ?? "";
+      const start = match.index;
+      const end = start + match[0].length;
+      const before = sentence.slice(0, start);
+      const after = sentence.slice(end);
+      if (/^-\w/.test(after) || OWN_HEAD.test(after)) continue;
+      if (BACK_FROM.test(before) || (backFromEnd >= 0 && sentence.slice(backFromEnd, start).trim() === "")) {
+        backFromEnd = end;
+        continue;
+      }
+      if (whereSheIs && A_VIEW.test(before)) continue;
+      const justBefore = before.trim().split(/\s+/).slice(-3).join(" ");
+      if (whereSheIs && saysWord(place.world, noun) && keepsHerPlace && !place.keys.some((key) => saysWord(justBefore, key))) continue;
+      found.push(noun.toLowerCase());
+    }
+  }
+  return found;
+}
 
 /** The bank moment's text without the punctuation a stored text may end with (the plain sentence's and frameFacts.ts's `trimmed`). */
 const momentText = (text: string): string => text.trim().replace(/[\s.,;:!]+$/, "");
@@ -684,14 +748,12 @@ function boldProblemsOf(slot: PlanSlot, sentence: string): BoldProblem[] {
   const own = [slot.location, slot.activity, slot.outfit, slot.world ?? ""].join(" ");
   const hit = bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location, activity: slot.activity });
   const water = hit?.place.water === true;
-  if (slot.world !== undefined && hit !== undefined) {
-    const keys = water ? WATER_PLACE_KEYS : (PLACE_KEYS[hit.place.name] ?? []);
-    if (keys.length > 0 && !keys.some((key) => saysWord(sentence, key))) problems.push("place-missing");
-  }
+  const keys = hit === undefined ? [] : water ? WATER_PLACE_KEYS : (PLACE_KEYS[hit.place.name] ?? []);
+  if (slot.world !== undefined && keys.length > 0 && !keys.some((key) => saysWord(sentence, key))) problems.push("place-missing");
   if (missesAGarment(slot.outfit, sentence)) problems.push("outfit-missing");
   if (exposureWordsIn(sentence).some((word) => !saysWord(own, word))) problems.push("exposure-word");
   if (labelWordsIn(sentence).some((word) => !saysWord(own, word))) problems.push("label-word");
-  if (slot.world !== undefined && (water ? PUBLIC_PLACE_BY_THE_WATER : PUBLIC_PLACE).test(sentence)) problems.push("public-place");
+  if (slot.world !== undefined && publicPlacesIn(sentence, { water, world: slot.world, keys }).length > 0) problems.push("public-place");
   if (hit?.moment !== undefined && !saysMoment(sentence, hit.moment.text)) problems.push("moment-split");
   return problems;
 }

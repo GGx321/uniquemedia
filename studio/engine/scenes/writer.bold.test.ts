@@ -428,26 +428,86 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
   });
 
   describe("public-place: a slot with a world keeps her out of the world's public places", () => {
-    test("the probe's W2:2: «in the seafood restaurant» is refused", () => {
-      const slot = routed({ location: "her window", activity: "leans on the sill, looking out", shot: "friend", capture: "timer", pose: "profile", outfit: "a black lace bra and panties", world: "a seafood restaurant in the port" });
-      const read = bold("She leans on the sill, looking out of her window in the seafood restaurant in the port, in a black lace bra and panties, her face turned to the side.", slot);
-      expect(problemsOf(read)).toContain("public-place");
-      expect(read.ok === false && read.boldSlots?.["public-place"]).toEqual([1]);
+    const window = (world: string): PlanSlot => routed({ location: "her window", activity: "leans against the frame", shot: "friend", capture: "timer", pose: "profile", outfit: "a black lace bra and panties", world });
+
+    test("the probe's W2:2: «in the seafood restaurant» is refused, its own world or not, her window right before it", () => {
+      const slot = window("a seafood restaurant in the port");
+      const sentences = [
+        "She leans on the sill, looking out of her window in the seafood restaurant in the port, in a black lace bra and panties, her face turned to the side.",
+        "she leans on the sill looking out her window in the seafood restaurant in the port while wearing a black lace bra and panties with her face turned fully to the side in profile.",
+      ];
+      for (const sentence of sentences) {
+        const read = bold(sentence, slot);
+        expect(problemsOf(read)).toContain("public-place");
+        expect(read.ok === false && read.boldSlots?.["public-place"]).toEqual([1]);
+      }
     });
 
-    test.each(["at the cafe terrace", "on the street", "in a corner bistro", "at her office", "on the beach"])("«%s» is refused away from the water", (where) => {
+    test("«the cafe terrace» of her own world with no private word is refused", () => {
+      expect(problemsOf(bold("At the cafe terrace in Paris, she lies back across her pillows in a white lace bra and panties, a croissant on the table beside her."))).toContain("public-place");
+    });
+
+    test.each(["on the street", "in a corner bistro", "at her office", "on the beach", "at the bakery counter"])("«%s», no place of her world, is refused away from the water", (where) => {
       expect(problemsOf(bold(`In her hotel room, she lies back across the bed in a white lace bra and panties, then ${where} a box of macarons sits beside her.`))).toContain("public-place");
     });
 
-    test("something she brought back from it is no place at all", () => {
-      expect(problemsOf(bold(GOOD))).not.toContain("public-place");
-      expect(problemsOf(bold("In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, a paper bag from the cafe terrace on the nightstand."))).not.toContain("public-place");
+    // Review LOW (false passes): the place's own window, table or terrace, and its possessive.
+    test.each([
+      "By the window of the seafood restaurant in the port she leans against the frame in a black lace bra and panties, her eyes on the boats.",
+      "She leans against the frame by the restaurant's window in a black lace bra and panties, her eyes on the boats outside.",
+      "At a table of the corner bistro she leans against the frame in a black lace bra and panties, her eyes on the boats.",
+      "She leans against the frame on the cafe's terrace in a black lace bra and panties, her eyes on the street below.",
+    ])("the place's window, table or terrace, or its possessive, is refused: %s", (sentence) => {
+      expect(problemsOf(bold(sentence, window("a seafood restaurant in the port")))).toContain("public-place");
+    });
+
+    // Review M2: a public noun that is no place she is in.
+    test.each([
+      ["a modifier: the beach house", "In the bedroom of the beach house she rents, she lies back across the bed in a white lace bra and panties, a shell on the nightstand."],
+      ["a modifier: a market tote", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties, flowers in a market tote on the chair."],
+      ["a modifier: a bakery box", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties, macarons in a bakery box on the nightstand."],
+      ["a modifier: the beach resort", "In her room at the beach resort, she lies back across the bed in a white lace bra and panties, a shell on the nightstand."],
+      ["a modifier: the beach club", "In her suite at the beach club, she lies back across the bed in a white lace bra and panties, a shell on the nightstand."],
+      ["a modifier: the hotel suite", "In the hotel suite in Paris, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
+      ["a modifier with a hyphen: beach-house", "In her beach-house bedroom, she lies back across the bed in a white lace bra and panties, a shell on the nightstand."],
+      ["a modifier with a hyphen: street-facing", "In her room on the street-facing side, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
+      ["back from it: after", "In her hotel room after a morning at the market, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
+      ["back from it: back from", "Back from a day at the museum, she lies back across the bed in her hotel room in a white lace bra and panties, a box of macarons on the nightstand."],
+      ["back from it: following", "In her hotel room following lunch at the bistro, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
+      ["back from it: from", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties, a paper bag from the bakery on a side street on the nightstand."],
+      ["a view: out at the street", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties, looking out at the street from her pillow."],
+      ["a view: out at the park", "In her hotel room in Paris, she lies back across the bed in a white lace bra and panties, her eyes out at the park beyond the glass."],
+      ["her own world, a private word away from it", "She lies back across the bed in her hotel room in Paris in a white lace bra and panties, the morning at the cafe terrace still on her mind."],
+    ])("%s is no public place", (_, sentence) => {
+      expect(problemsOf(bold(sentence))).not.toContain("public-place");
+    });
+
+    // The paid probe P-BA's 25-slot chunk (2026-10-26): real sentences the earlier rule refused for a public place they only came back from.
+    test.each([
+      ["a2", "her bathroom", "a cafe terrace in Paris", "She leans on the sink after a shower in her bathroom following time at a cafe terrace in Paris, morning daylight filling the space, in only a white bath towel with her free hand on the counter and face hidden in the mirror selfie."],
+      ["a4", "her sofa", "a bakery on a side street", "She curls up on the sofa in her room after stopping at a bakery on a side street, the evening lamps on and the sky outside already dim, in a satin camisole and shorts with both hands empty on the timer shot in a three-quarter view."],
+      ["a7", "her bathroom", "a cafe window seat at dusk", "She checks herself in the mirror in her bathroom after time at a cafe window seat at dusk, the evening lamps on and the sky outside already dim, in a white lace bra and panties in a three-quarter view with one hand free."],
+      ["a8", "her room", "a corner bistro in Montmartre", "She stretches out on the covers in her room after a stop at a corner bistro in Montmartre, morning daylight coming in, in a satin camisole and shorts holding her phone above while facing the viewer in the shot from above."],
+      ["a9", "her window", "a cafe window seat at dusk", "She stands by the curtain in her window after time at a cafe window seat at dusk, the evening lamps on and the sky outside already dim, in a white lace bra and panties with both hands empty on the timer shot in a three-quarter view."],
+      ["a11", "her sofa", "a bakery on a side street", "She sits with her legs tucked under her on the sofa in her room after a stop at a bakery on a side street, a ceiling light on and a dark background, in a black lace bra and panties holding her phone above while facing the viewer."],
+      ["a12", "her bathroom", "a cafe terrace in Paris", "She sits on the edge of the tub in her bathroom after time at a cafe terrace in Paris, the evening lamps on and the sky outside already dim, in only a white bath towel with both hands empty on the timer shot in profile."],
+      ["a17", "her sofa", "a marina at sunset", "She curls up on the sofa in her room after time at a marina at sunset, a ceiling light on and a dark background, in a satin camisole and shorts with both hands empty on the timer shot in a three-quarter view."],
+      ["a19", "her balcony", "a marina at sunset", "She leans on the railing in her balcony after time at a marina at sunset, the evening lamps on and the sky outside already dim, in a tee and cotton panties with both hands empty on the timer shot and face not visible from behind."],
+      ["b4", "her sofa", "a bakery on a side street", "She curls up on the sofa in her room under the evening lamps with the sky outside already dim, her hands tucked around her knees as she turns slightly from the viewer, a paper bag from the bakery on a side street on the cushion next to her."],
+      ["b11", "her sofa", "a bakery on a side street", "She sits with her legs tucked under her on the sofa in her room under a ceiling light with a dark background, holding her phone above her as she faces the viewer, a paper bag from the bakery on a side street beside her."],
+    ])("P-BA chunk 25, %s: no public place", (_, location, world, sentence) => {
+      expect(problemsOf(bold(sentence, routed({ location, world, activity: "a moment the probe hand-picked", outfit: "a white lace bra and panties" })))).not.toContain("public-place");
     });
 
     test("by the water the beach is her place; a bar there is not", () => {
       const slot = routed({ location: "a lounger by the water", activity: "lies back, soaking up the heat", outfit: "a white string bikini", shot: "friend", capture: "friend", world: "a beach near the harbour" });
       expect(problemsOf(bold("On the beach near the harbour, she lies back, soaking up the heat on a lounger by the water in a white string bikini, smiling at the viewer.", slot))).toEqual([]);
       expect(problemsOf(bold("At the beach bar near the harbour, she lies back, soaking up the heat by the water in a white string bikini, smiling at the viewer.", slot))).toContain("public-place");
+    });
+
+    test("something she brought back from it is no place at all", () => {
+      expect(problemsOf(bold(GOOD))).not.toContain("public-place");
+      expect(problemsOf(bold("In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, a paper bag from the cafe terrace on the nightstand."))).not.toContain("public-place");
     });
 
     test("a slot without a world keeps its location as given, a cafe included", () => {
