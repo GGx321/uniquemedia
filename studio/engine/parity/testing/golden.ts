@@ -4602,7 +4602,7 @@ export const GOLDEN: Record<string, string[]> = {
     "~ settle",
     "event job.progress {\"kind\":\"scenes\",\"jobId\":\"job#1\",\"sceneSetId\":\"set#1\",\"avatarId\":\"avatar#1\",\"total\":20,\"phase\":\"mid\"}",
     "event job.done {\"jobId\":\"job#1\",\"result\":{\"kind\":\"scenes\",\"sceneSetId\":\"set#1\",\"avatarId\":\"avatar#1\",\"written\":20,\"unwritten\":0}}",
-    "# some scenes are on the route and some are not: true",
+    "# some scenes are on the route and some are not: false",
     "# every scene on the route has a coverage sentence, and its sentence ends with it: true",
     "# no scene off the route has a coverage sentence to carry: true",
   ],
