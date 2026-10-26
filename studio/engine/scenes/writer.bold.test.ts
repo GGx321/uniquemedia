@@ -15,7 +15,7 @@ import { WRITER_BOLD_CALL, writerAttemptWorstMicros, writerCallOf, writerExpecte
 import { PriceBook } from "../money/prices";
 import { promptTokenFloor } from "../openrouter/chat";
 import type { PlanSlot } from "./schema";
-import { BOLD_PROBLEMS, boldReader, CAPTURE_LABEL, PLACE_KEYS, readBoldWriterAnswer, readWriterAnswer, REFUSAL_WORD_BYTES_MAX, REFUSAL_WORDS_MAX, SHOT_LABEL, slotList, timeWordOf, WATER_PLACE_KEYS, writerBoldMessages, writerMessages, writerRefusalText, writerRunPrice, WRITER_JSON_SCHEMA, type WriterAnswer, type WriterRefusal } from "./writer";
+import { BOLD_PROBLEMS, boldReader, CAPTURE_LABEL, PLACE_KEYS, PLACE_PREPOSITIONS, readBoldWriterAnswer, readWriterAnswer, REFUSAL_WORD_BYTES_MAX, REFUSAL_WORDS_MAX, SHOT_LABEL, slotList, timeWordOf, WATER_PLACE_KEYS, writerBoldMessages, writerMessages, writerRefusalText, writerRunPrice, WRITER_JSON_SCHEMA, type WriterAnswer, type WriterRefusal } from "./writer";
 import { worstSlotList } from "./testing/worstSlotList";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -209,13 +209,14 @@ describe("the bold system prompt (§5.3.3, r2.2 P1–P3)", () => {
   // for word, both survived (P2#1 25/25, P1r#2 14/14, L3#2 3/3). So the order is one rule: «she», the moment, «wearing», the outfit, then the rest.
   test("it orders each sentence: «she», the activity, «wearing» and the outfit word for word, the location before, every other detail after", () => {
     expect(lines(bold())).toContain(
-      '- Write "she", then the activity word for word in one piece with its commas, then "wearing" and the outfit word for word: no word goes inside either, not even the time of day; the location, with its own preposition ("On her balcony", "In her room"), goes before "she", every other detail after the outfit.',
+      '- Write "she", then the activity word for word in one piece with its commas, then "wearing" and the outfit word for word: no word goes inside either, not even the time of day; the location, with its own preposition ("In her room", "In her bathroom", "On her sofa", "On her balcony", "By her window"), goes before "she", every other detail after the outfit.',
     );
   });
 
   // S5.BA4c (the paid check P-BW2): 84 of 152 sentences opened with the bare place («Her balcony she …»), and P2#1 put the time between the moment and «wearing».
   test("the location before «she» keeps its own preposition, and the time of day never goes inside the moment and the outfit", () => {
-    expect(bold()).toContain('the location, with its own preposition ("On her balcony", "In her room"), goes before "she"');
+    // S5.BA4d (P-BW3): «On her room» 6 times; the prompt names each place's own preposition.
+    expect(bold()).toContain('the location, with its own preposition ("In her room", "In her bathroom", "On her sofa", "On her balcony", "By her window"), goes before "she"');
     expect(bold()).toContain("no word goes inside either, not even the time of day");
     expect(bold()).not.toContain('the location goes before "she", every other detail');
   });
@@ -1003,8 +1004,67 @@ describe("S5.BA4c: bare-place, a sentence that opens with the place and no prepo
   test("its refusal says what to write, never quoting the sentence", () => {
     const answered = read(balcony, "Her balcony she leans on the railing in the sun wearing a cotton bra and briefs, a zanzibarquux on the table.");
     const told = answered.ok ? "" : writerRefusalText(answered);
-    expect(told).toContain('slot(s) 1 opened with the place and no preposition: write "In", "On" or "At" before it');
+    expect(told).toContain('slot(s) 1 opened with the place without its own preposition: write it as "On her balcony"');
     expect(told).not.toContain("zanzibarquux");
+  });
+});
+
+describe("S5.BA4d: each place's own preposition (the paid check P-BW3: «On her room» 6 times)", () => {
+  const read = (slot: PlanSlot, sentence: string): WriterAnswer => readBoldWriterAnswer(answer([{ slotIndex: slot.slotIndex, sentence }]), [slot]);
+  const at = (location: string, activity: string): PlanSlot => routed({ location, activity, shot: "friend", capture: "timer", pose: "front" });
+  const ROOM = at("her room", "sits up in bed, knees drawn up");
+  const SOFA = at("her sofa", "curls up with her knees in");
+  const BALCONY = at("her balcony", "sits with her feet on the rail");
+  const WINDOW = at("her window", "leans against the frame");
+  const BATHROOM = routed({ location: "her bathroom", activity: "stands by the shower, getting ready", shot: "mirror", capture: "mirror-hidden" });
+  const tail = (activity: string): string => `she ${activity} wearing a white lace bra and panties, a vase of flowers beside her.`;
+
+  test("the table names the prepositions of each «rooms» place, the first the one the re-ask is told", () => {
+    expect(PLACE_PREPOSITIONS).toEqual({
+      "her room": ["in", "inside"],
+      "her bathroom": ["in", "inside"],
+      "her window": ["by", "at", "in", "near", "beside"],
+      "her balcony": ["on", "out on"],
+      "her sofa": ["on"],
+    });
+    expect(Object.keys(PLACE_PREPOSITIONS).sort()).toEqual(Object.keys(PLACE_KEYS).sort());
+  });
+
+  test.each([
+    ["On her room", ROOM, "In her room"],
+    ["At her sofa", SOFA, "On her sofa"],
+    ["In her balcony", BALCONY, "On her balcony"],
+    ["On her bathroom", BATHROOM, "In her bathroom"],
+    ["On her window", WINDOW, "By her window"],
+  ] as const)("«%s she …» is refused as bare-place and told the place's own preposition", (opening, slot, right) => {
+    const answered = read(slot, `${opening} ${tail(slot.activity)}`);
+    expect(problemsOf(answered)).toContain("bare-place");
+    expect(answered.ok === false && answered.boldWords?.["bare-place"]).toEqual([right]);
+  });
+
+  test.each([
+    ["In her room", ROOM],
+    ["Inside her room", ROOM],
+    ["On her sofa", SOFA],
+    ["On her balcony", BALCONY],
+    ["Out on her balcony", BALCONY],
+    ["By her window", WINDOW],
+    ["At her window", WINDOW],
+    ["In her bathroom", BATHROOM],
+  ] as const)("«%s she …» passes", (opening, slot) => {
+    expect(problemsOf(read(slot, `${opening} ${tail(slot.activity)}`))).not.toContain("bare-place");
+  });
+
+  test("the bare place is told its own preposition too: «Her balcony she …» → «On her balcony»", () => {
+    const answered = read(BALCONY, `Her balcony ${tail(BALCONY.activity)}`);
+    expect(answered.ok === false && answered.boldWords?.["bare-place"]).toEqual(["On her balcony"]);
+  });
+
+  test("a place the table does not hold (by the water, an old set's) is told the plain hint", () => {
+    const lounger = routed({ location: "a lounger by the water", activity: "sits on the end, legs crossed", outfit: "a black bikini", shot: "friend", capture: "friend", world: "a yacht at anchor in a bay" });
+    const answered = read(lounger, "A lounger by the water she sits on the end, legs crossed wearing a black bikini, the bay behind her.");
+    expect(answered.ok === false && answered.boldWords?.["bare-place"]).toBeUndefined();
+    expect(answered.ok ? "" : writerRefusalText(answered)).toContain('opened with the place without its own preposition: write "In", "On" or "At" before it');
   });
 });
 
@@ -1021,8 +1081,8 @@ describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the b
   // 2 641 with S5.BA4b's order rule, the world join and the varied detail (P-BW); 2 542 with its outfit-missing reason and the bold re-ask; S5.BA4c (P-BW2):
   // 2 455 with the place's preposition and the time kept out of the moment; 2 432 with the hands rule; 2 304 with no paper of any kind and «tiny» / «little»;
   // 2 166 with the bare-place reason (P-BW3); S5.BA4d: 2 153 with the paper bag named, 2 120 with the phone never named,
-  // 2 086 with the activity's own «a little» kept.
-  const MARGIN_PRINTED = 2_086;
+  // 2 086 with the activity's own «a little» kept, 1 930 with each place's own preposition and the bare-place hint.
+  const MARGIN_PRINTED = 1_930;
   const CEILING = WRITER_BOLD_CALL.inputTokens;
   const FIRST_INDEX = 100 - WRITER_BOLD_CALL.slotsPerCall + 1;
 
@@ -1065,15 +1125,15 @@ describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the b
       words: hostileWords,
       boldSlots: Object.fromEntries(BOLD_PROBLEMS.map((problem) => [problem, rest])),
       // S5.BA4 round 2: label-word and public-place name the words they found, clipped as the youth and revealing words are.
-      boldWords: { "label-word": hostileWords, "public-place": hostileWords },
+      boldWords: { "label-word": hostileWords, "public-place": hostileWords, "bare-place": hostileWords },
     };
   }
 
   const floorOf = (slots: readonly PlanSlot[]): number => promptTokenFloor({ messages: writerBoldMessages(slots, worstRefusal(slots)), jsonSchema: WRITER_JSON_SCHEMA, images: 0 });
 
-  test("the two bold reasons that name a word tell REFUSAL_WORDS_MAX of them at most, each clipped to REFUSAL_WORD_BYTES_MAX bytes", () => {
+  test("the three bold reasons that name a word tell REFUSAL_WORDS_MAX of them at most, each clipped to REFUSAL_WORD_BYTES_MAX bytes", () => {
     const text = writerRefusalText(worstRefusal(worstSlots(POOL_TEXT_MAX)));
-    for (const lead of ["of the camera, the light or the slot's labels: ", "put her in a public place: "]) {
+    for (const lead of ["of the camera, the light or the slot's labels: ", "put her in a public place: ", "without its own preposition: write it as "]) {
       const reason = text.slice(text.indexOf(lead) + lead.length).split("; ")[0] ?? "";
       const told = [...reason.matchAll(/"([^"]*)"/g)].map((m) => m[1] ?? "");
       expect(told).toHaveLength(REFUSAL_WORDS_MAX);

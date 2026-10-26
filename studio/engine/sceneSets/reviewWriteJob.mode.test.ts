@@ -9,7 +9,7 @@ import { NetworkPool } from "../runs/pools";
 import { POOLS, type PlanSlot } from "../scenes";
 import { categoryLabelOf } from "../scenes/categories";
 import { LLM_ONLY_POOL, LLM_ONLY_REF, llmOnlySnapshot } from "../scenes/testing/llmOnlyFixture";
-import { writerBoldMessages, writerMessages } from "../scenes/writer";
+import { PLACE_PREPOSITIONS, writerBoldMessages, writerMessages } from "../scenes/writer";
 import { planSceneSet } from "./compose";
 import { beginIdea, beginRewrite, withReviewWriteAccepted, withReviewWriteClosed } from "./reviewMutations";
 import { runReviewWrite } from "./reviewWriteJob";
@@ -72,10 +72,16 @@ function askedIn(call: FetchCall): { slotIndex: number; location?: string; activ
   return JSON.parse(text.slice(text.indexOf("["), text.lastIndexOf("]") + 1));
 }
 
+/** The place with its own preposition (S5.BA4d, PLACE_PREPOSITIONS): «On her balcony», «By her window», «In her room». */
+const placed = (location: string): string => {
+  const prep = PLACE_PREPOSITIONS[location]?.[0] ?? "in";
+  return `${prep.charAt(0).toUpperCase()}${prep.slice(1)} ${location}`;
+};
+
 /** A sentence each planned slot asked about passes its reader with (its place, «she» and its activity, its outfit, no gaze). */
 const keeping: Step = (call: FetchCall): Reply => ({
   status: 200,
-  body: chatBody(JSON.stringify({ scenes: askedIn(call).map((s) => ({ slotIndex: s.slotIndex, sentence: `In ${s.location}, she ${s.activity} in ${s.outfit}, a cup of tea beside her.` })) }), { cost: 0.004 }),
+  body: chatBody(JSON.stringify({ scenes: askedIn(call).map((s) => ({ slotIndex: s.slotIndex, sentence: `${placed(s.location ?? "")}, she ${s.activity} in ${s.outfit}, a cup of tea beside her.` })) }), { cost: 0.004 }),
 });
 const ideaAnswer: Step = (call: FetchCall): Reply => ({
   status: 200,

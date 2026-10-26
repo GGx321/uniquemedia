@@ -8,7 +8,7 @@ import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money
 import { NetworkPool } from "../runs/pools";
 import { POOLS, type PlanSlot } from "../scenes";
 import { LLM_ONLY_POOL, LLM_ONLY_REF, llmOnlySnapshot } from "../scenes/testing/llmOnlyFixture";
-import { writerBoldMessages, writerMessages } from "../scenes/writer";
+import { PLACE_PREPOSITIONS, writerBoldMessages, writerMessages } from "../scenes/writer";
 import { categoryLabelOf } from "../scenes/categories";
 import { planSceneSet } from "./compose";
 import { withChunkGivenUp, withChunkWritten } from "./mutations";
@@ -65,6 +65,12 @@ function askedIn(call: FetchCall): { slotIndex: number; location: string; activi
   return JSON.parse(text.slice(text.indexOf("["), text.lastIndexOf("]") + 1));
 }
 
+/** The place with its own preposition (S5.BA4d, PLACE_PREPOSITIONS): «On her balcony», «By her window», «In her room». */
+const placed = (location: string): string => {
+  const prep = PLACE_PREPOSITIONS[location]?.[0] ?? "in";
+  return `${prep.charAt(0).toUpperCase()}${prep.slice(1)} ${location}`;
+};
+
 /** A sentence each slot asked about passes its reader with: «she» and its activity word for word, its outfit as given, its place named, no gaze; `extra` after the outfit. */
 const keeping =
   (extra = ""): Step =>
@@ -72,7 +78,7 @@ const keeping =
     status: 200,
     body: chatBody(
       JSON.stringify({
-        scenes: askedIn(call).map((s) => ({ slotIndex: s.slotIndex, sentence: `In ${s.location}${s.world === undefined ? "" : ` while staying near ${s.world.replace(/^an? /, "the ")}`}, she ${s.activity} in ${s.outfit}${extra}, a cup of tea beside her.` })),
+        scenes: askedIn(call).map((s) => ({ slotIndex: s.slotIndex, sentence: `${placed(s.location)}${s.world === undefined ? "" : ` while staying near ${s.world.replace(/^an? /, "the ")}`}, she ${s.activity} in ${s.outfit}${extra}, a cup of tea beside her.` })),
       }),
       { cost: 0.006 },
     ),

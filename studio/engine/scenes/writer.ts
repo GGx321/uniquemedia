@@ -214,7 +214,7 @@ function writerBoldSystemPrompt(): string {
     "",
     "Rules:",
     "- One full sentence per slot, about 25 to 45 words, plain present tense.",
-    '- Write "she", then the activity word for word in one piece with its commas, then "wearing" and the outfit word for word: no word goes inside either, not even the time of day; the location, with its own preposition ("On her balcony", "In her room"), goes before "she", every other detail after the outfit.',
+    '- Write "she", then the activity word for word in one piece with its commas, then "wearing" and the outfit word for word: no word goes inside either, not even the time of day; the location, with its own preposition ("In her room", "In her bathroom", "On her sofa", "On her balcony", "By her window"), goes before "she", every other detail after the outfit.',
     '- In her own photo or a mirror selfie one hand holds the phone, which the sentence never names, and only the other is free: describe only what that hand does, or say nothing about her hands; never write "both hands" and never an action that needs both. On a timer her hands hold nothing.',
     "- When her face is hidden, describe neither her face nor her gaze.",
     '- Match each slot\'s pose: "back" has her back to the viewer, she never looks at, toward or into the viewer, and her face is never described; "profile" has her face turned fully to the side, never looking at or toward the viewer; "front" and "three-quarter" may face or glance toward the viewer as the shot allows.',
@@ -293,7 +293,7 @@ export type WriterProblem =
 export const BOLD_PROBLEMS = ["place-missing", "outfit-missing", "exposure-word", "label-word", "public-place", "moment-split", "bare-place"] as const;
 export type BoldProblem = (typeof BOLD_PROBLEMS)[number];
 /** The two bold problems whose refusal names the words it found (from our lists, never the model's sentence). */
-export type WordedBoldProblem = "label-word" | "public-place";
+export type WordedBoldProblem = "label-word" | "public-place" | "bare-place";
 /** What the bold reader finds in one slot's sentence: a problem, with the words it found for the two that name them. */
 type BoldFinding = Exclude<BoldProblem, WordedBoldProblem> | { problem: WordedBoldProblem; words: readonly string[] };
 
@@ -406,7 +406,9 @@ const REASON: Partial<Record<WriterProblem, (r: WriterRefusal) => string>> = {
   "label-word": (r) => `slot(s) ${slotList(r.boldSlots?.["label-word"] ?? [])} wrote a word of the camera, the light or the slot's labels${toldOf(r.boldWords?.["label-word"])}; write none of them`,
   "public-place": (r) => `slot(s) ${slotList(r.boldSlots?.["public-place"] ?? [])} put her in a public place${toldOf(r.boldWords?.["public-place"])}; keep her in the slot's location`,
   "moment-split": (r) => `slot(s) ${slotList(r.boldSlots?.["moment-split"] ?? [])} did not write "she" and then the activity word for word, in one piece`,
-  "bare-place": (r) => `slot(s) ${slotList(r.boldSlots?.["bare-place"] ?? [])} opened with the place and no preposition: write "In", "On" or "At" before it`,
+  // S5.BA4d: told the place's own preposition when the table knows the place («write it as "On her balcony"»).
+  "bare-place": (r) =>
+    `slot(s) ${slotList(r.boldSlots?.["bare-place"] ?? [])} opened with the place without its own preposition: ${(r.boldWords?.["bare-place"] ?? []).length > 0 ? `write it as ${quotedList(r.boldWords?.["bare-place"] ?? [])}` : 'write "In", "On" or "At" before it'}`,
 };
 
 /** Every reason a refusal happened, as fixed sentences; never the model's own rejected text. */
@@ -614,6 +616,18 @@ export const PLACE_KEYS: Readonly<Record<string, readonly string[]>> = Object.fr
   "her sofa": ["sofa", "couch", "living room", "lounge", "daybed", "settee"],
 });
 
+/**
+ * S5.BA4d (P-BW3: «On her room» 6 times): the prepositions each «rooms» place opens a sentence with, one row per PLACE_KEYS place; the first is the one a
+ * re-ask is told. Another preposition before the place is `bare-place`, as the place with none is.
+ */
+export const PLACE_PREPOSITIONS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "her room": ["in", "inside"],
+  "her bathroom": ["in", "inside"],
+  "her window": ["by", "at", "in", "near", "beside"],
+  "her balcony": ["on", "out on"],
+  "her sofa": ["on"],
+});
+
 /** The words that say a «by the water» place (every place of that bank is a water place, `BankPlace.water`). */
 export const WATER_PLACE_KEYS: readonly string[] = Object.freeze(["water", "pool", "sea", "beach", "shore", "lake", "bay", "deck", "sundeck", "lounger"]);
 
@@ -802,16 +816,27 @@ function saysMoment(sentence: string, moment: string): boolean {
 
 /** A place that is its own prepositional phrase («in the water», «by her window»): it may open a sentence as it is. */
 const OPENS_WITH_PREPOSITION_PLACE = /^(?:in|on|at|by|inside|beside|near|under|over|through|into|onto|outside)\b/i;
+/** The prepositions a sentence may open a place with («out on her balcony» reads as «on»). */
+const OPENING_PREPOSITION = /^(?:out\s+)?(?<prep>in|on|at|by|inside|beside|near|under|over|through|into|onto|across|within|from)\s+/i;
 
 /**
  * S5.BA4c (P-BW2: 94 of 152 sentences, P-BW3: 10 of 107): whether the sentence opens with the slot's place as a bare noun phrase, no preposition before it
  * («Her balcony she leans …», «A lounger by the water she sits …», «Her room shows her …»). A place that is a prepositional phrase of its own opens a sentence fine.
+ * S5.BA4d (P-BW3: «On her room» 6 times): or with a preposition the place does not take (`PLACE_PREPOSITIONS`). Null when the opening is fine; else the form the
+ * re-ask is told («On her balcony»), its hint undefined for a place the table does not hold.
  */
-function opensWithBarePlace(sentence: string, location: string): boolean {
+function barePlaceOf(sentence: string, location: string): { hint: string | undefined } | null {
   const place = location.trim().toLowerCase();
-  if (place === "" || OPENS_WITH_PREPOSITION_PLACE.test(place)) return false;
+  if (place === "" || OPENS_WITH_PREPOSITION_PLACE.test(place)) return null;
+  const allowed = PLACE_PREPOSITIONS[place];
+  const hint = allowed === undefined ? undefined : `${(allowed[0] ?? "").charAt(0).toUpperCase()}${(allowed[0] ?? "").slice(1)} ${place}`;
   const opening = sentence.trim().toLowerCase();
-  return opening.startsWith(place) && !/^[\p{L}\p{N}]/u.test(opening.slice(place.length));
+  const startsWith = (text: string): boolean => text.startsWith(place) && !/^[\p{L}\p{N}]/u.test(text.slice(place.length));
+  if (startsWith(opening)) return { hint };
+  const prepared = OPENING_PREPOSITION.exec(opening);
+  if (allowed === undefined || prepared === null || !startsWith(opening.slice(prepared[0].length))) return null;
+  const prep = prepared[0].trim().replace(/\s+/g, " ");
+  return allowed.includes(prep) || allowed.includes(prepared.groups?.["prep"] ?? "") ? null : { hint };
 }
 
 /**
@@ -835,7 +860,8 @@ function boldProblemsOf(slot: PlanSlot, sentence: string): BoldFinding[] {
   const places = slot.world === undefined ? [] : publicPlacesIn(sentence, { water });
   if (places.length > 0) problems.push({ problem: "public-place", words: places });
   if (hit?.moment !== undefined && !saysMoment(sentence, hit.moment.text)) problems.push("moment-split");
-  if (opensWithBarePlace(sentence, slot.location)) problems.push("bare-place");
+  const bare = barePlaceOf(sentence, slot.location);
+  if (bare !== null) problems.push({ problem: "bare-place", words: bare.hint === undefined ? [] : [bare.hint] });
   return problems;
 }
 
@@ -967,7 +993,7 @@ function readScenes<S extends ReadableSlot>(scenes: readonly Pick<WriterScene, "
       const problem = typeof finding === "string" ? finding : finding.problem;
       problems.add(problem);
       (boldSlots[problem] ??= []).push(s.slotIndex);
-      if (typeof finding !== "string") for (const word of finding.words) (boldWords[finding.problem] ??= new Set()).add(word);
+      if (typeof finding !== "string" && finding.words.length > 0) for (const word of finding.words) (boldWords[finding.problem] ??= new Set()).add(word);
     }
   }
 
