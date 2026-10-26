@@ -64,10 +64,21 @@ describe("a «Смелая» launch", () => {
     expect(answer.result.estimate.worstMicros).toBe(answer.result.photos * BOLD_UNIT);
   });
 
-  test("a launch of the five at «Смелая» keeps the unit it had", async () => {
+  // 5a.4 (S5.BA5, 2026-10-26, plan s5a4 §5.7, §5.8, I5.77, BA3 review H-1): «Смелая» is every category's, so a launch of the five at «Смелая» draws every slot on the route and is priced at
+  // the bold unit. This row told the pre-5a.4 rule (the five at «Смелая» kept the owner's-model unit, 3 × 50 000 µ$); the unit it had is now «Кокетливая»'s, the row after it.
+  test("a launch of the five at «Смелая» is estimated at the bold unit", async () => {
     const avatarId = await kit.seedAvatar(0, "boldfive");
     const started = await kit.boot(network(), fakeRender());
     const estimate = ok(await kit.call(started, "autopilot.estimate", { draft: boldDraft(avatarId, { categories: ["home"] }) }));
+    if (estimate.type !== "autopilot.estimate") throw new Error("wrong answer");
+    expect(estimate.result.preview.totals.toGenerate).toBeGreaterThan(0);
+    expect(estimate.result.preview.estimate.worstMicros).toBe(estimate.result.preview.totals.toGenerate * BOLD_UNIT);
+  });
+
+  test("a launch of the five at «Кокетливая» keeps the unit it had", async () => {
+    const avatarId = await kit.seedAvatar(0, "flirtyfive");
+    const started = await kit.boot(network(), fakeRender());
+    const estimate = ok(await kit.call(started, "autopilot.estimate", { draft: boldDraft(avatarId, { level: "flirty", categories: ["home"] }) }));
     if (estimate.type !== "autopilot.estimate") throw new Error("wrong answer");
     expect(estimate.result.preview.estimate.worstMicros).toBe(estimate.result.preview.totals.toGenerate * 3 * 50_000);
   });

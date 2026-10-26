@@ -1818,7 +1818,9 @@ export class Engine {
   async photoWorstMicros(look?: PhotoLook): Promise<number> {
     const models = this.#avatarModels();
     const { imageAgeCheck } = this.#settings;
-    // 5a.3 (S5.9d, option B): the launch's draft says whether its photos are priced at the Seedream unit.
+    // 5a.3 (S5.9d, option B): the launch's draft says whether its photos are priced at the Seedream unit. 5a.4 (S5.BA5, plan s5a4 r2.1 L1, §5.8): any draft at «Смелая», by its
+    // level alone, accepted as is (the port gives no set here): a launch composed before 5a.4 at «Смелая» over the five, whose scenes draw on the owner's model, gets smaller
+    // slices at the bold unit, never an under-reserve.
     const bold = look !== undefined && isBoldLook(look);
     const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck, bold ? 1 : 0));
     return runEstimateFromScenes(priced, models, { count: 1, ...(bold ? { boldPhotos: 1 } : {}) }, imageAgeCheck).worstMicros;
@@ -2562,7 +2564,9 @@ export class Engine {
         const custom = await this.#customCategories(this.library, command.payload.categories);
         const models = this.#avatarModels();
         const imageAgeCheck = this.#settings.imageAgeCheck;
-        const estimate = runEstimate(await this.#prices.get(runPriceModels(models, imageAgeCheck, requestBoldPhotos(command.payload))), models, command.payload, imageAgeCheck, coversOfStored(custom));
+        // 5a.4 (S5.BA5, I5.77): the level is read by name, so a request at «Смелая» prices every photo on the route.
+        const request = { count: command.payload.count, categories: command.payload.categories, level: command.payload.level };
+        const estimate = runEstimate(await this.#prices.get(runPriceModels(models, imageAgeCheck, requestBoldPhotos(request))), models, request, imageAgeCheck, coversOfStored(custom));
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { estimate } };
       }
       case "runs.start": {
@@ -3255,9 +3259,11 @@ export class Engine {
     this.#assertAgeGate(imageAgeCheck);
     this.#assertFaceGate();
     const models = this.#avatarModels();
-    const priced = await this.#prices.get(runPriceModels(models, imageAgeCheck, requestBoldPhotos(payload)));
+    // 5a.4 (S5.BA5, I5.77): the level is read by name, so a run at «Смелая» is capped with every photo on the route, as the planner draws it.
+    const request = { count, categories, level };
+    const priced = await this.#prices.get(runPriceModels(models, imageAgeCheck, requestBoldPhotos(request)));
     // 5a.2 (S5.6c2): priced from the same read of the custom categories the planner draws from, so the cap is the writer's true worst for THESE pools.
-    const estimate = runEstimate(priced, models, payload, imageAgeCheck, coversOfStored(custom));
+    const estimate = runEstimate(priced, models, request, imageAgeCheck, coversOfStored(custom));
     Engine.#checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
     Engine.#checkMonthlyRoom(budget, estimate.worstMicros);
 
@@ -3345,7 +3351,7 @@ export class Engine {
       this.#runnableAvatar(library, payload.avatarId);
       // Round 2: for a stored set the bold share is read from its ACTIVE scenes' own routes (the path `runs.estimateFromScenes` prices by), never split from the count: the scenes
       // that were removed or gave up decide which frames are left, and a split would put a Seedream frame on the wrong scene.
-      let bold = requestBoldPhotos({ count: payload.count, categories });
+      let bold = requestBoldPhotos({ count: payload.count, categories, level: payload.level });
       if (payload.sceneSetId !== undefined) {
         const set = await library.sceneSets.get(payload.avatarId, payload.sceneSetId);
         if (set === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no scene set ${payload.sceneSetId} for avatar ${payload.avatarId}` });

@@ -10,7 +10,7 @@ import type { FetchCall, Reply } from "./openrouter/testing/fakes";
 import { plan as planScenes } from "./scenes";
 import { buildRunPlan, RunPlanSchema } from "./runs/plan";
 import type { QaGate } from "./runs/qa";
-import { command, engineSettings, failed, GOOD, network, ok, OFFLINE, portraitPng, startEngine, TRAITS, useEngineDir } from "./testing/engineHarness";
+import { command, engineSettings, failed, GOOD, jobEnd, network, ok, OFFLINE, portraitPng, startEngine, TRAITS, useEngineDir } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -46,19 +46,19 @@ function seedreamBody(edit: { pricing?: (rows: { variant?: string; cost_usd: num
 
 const livePrices = (seedream: unknown) => (call: FetchCall): Reply => (call.url.endsWith(SEEDREAM_URL) ? { status: 200, body: seedream as object } : OFFLINE);
 
-async function boot(prices?: (call: FetchCall) => Reply) {
-  const net = network(prices === undefined ? {} : { prices });
+async function boot(prices?: (call: FetchCall) => Reply, image?: (call: FetchCall, n: number) => Reply) {
+  const net = network({ ...(prices === undefined ? {} : { prices }), ...(image === undefined ? {} : { image }) });
   const settings = engineSettings(dir(), { imageAgeCheck: "off", imageModel: "x-ai/grok-imagine-image-quality", imageQuality: null });
   const started = await startEngine(dir(), { init: { settings }, net, deps: { qaGates: [faceGate()] } });
   return { ...started, net };
 }
 
-function request(avatarId: string, categories: string[], count: number) {
-  return { avatarId, count, categories, level: "bold", poses: { profile: false, back: false } };
+function request(avatarId: string, categories: string[], count: number, level = "bold") {
+  return { avatarId, count, categories, level, poses: { profile: false, back: false } };
 }
 
-async function estimateOf(engine: Awaited<ReturnType<typeof boot>>["engine"], avatarId: string, categories: string[], count: number) {
-  const answer = ok(await engine.handle(command("runs.estimate", request(avatarId, categories, count))));
+async function estimateOf(engine: Awaited<ReturnType<typeof boot>>["engine"], avatarId: string, categories: string[], count: number, level = "bold") {
+  const answer = ok(await engine.handle(command("runs.estimate", request(avatarId, categories, count, level))));
   if (answer.type !== "runs.estimate") throw new Error(`expected an estimate, got ${answer.type}`);
   return answer.result.estimate;
 }
@@ -70,10 +70,25 @@ describe("runs.estimate for «Смелая» categories", () => {
     expect(await estimateOf(engine, avatarId, ["nightwear"], 10)).toMatchObject({ worstMicros: 2_790_000, expectedMicros: 930_000 });
   });
 
-  test("«Дом» 10 + «Ночнушки и бельё» 10: worst 4 590 000 µ$", async () => {
+  // 5a.4 (S5.BA5, 2026-10-26, plan s5a4 §5.7, I5.77, BA3 review H-1): «Смелая» is every category's, so «Дом»'s 10 are on the route too and every photo is priced at the 2K attempt. This row
+  // told the pre-5a.4 figure, «Дом» on the owner's model: worst 4 590 000 µ$, expected 1 530 000 µ$.
+  test("«Дом» 10 + «Ночнушки и бельё» 10: worst 5 580 000 µ$, every photo at the 2K attempt", async () => {
     const avatarId = await seedAvatar();
     const { engine } = await boot();
-    expect(await estimateOf(engine, avatarId, ["home", "nightwear"], 20)).toMatchObject({ worstMicros: 4_590_000, expectedMicros: 1_530_000 });
+    expect(await estimateOf(engine, avatarId, ["home", "nightwear"], 20)).toMatchObject({ worstMicros: 5_580_000, expectedMicros: 1_860_000, boldAttemptMicros: 93_000 });
+  });
+
+  // 5a.4 (S5.BA5, plan s5a4 §5.7, §8 S5.BA5, BA3 review H-1): the five at «Смелая» are drawn on the route, so 20 of them are priced at 93 000 µ$ an attempt, not at the owner's 60 000.
+  test("the five 20 at «Смелая»: worst 5 580 000 µ$, expected 1 860 000 µ$, at the 2K attempt (was $3.60 / $1.20 on the owner's model)", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await boot();
+    expect(await estimateOf(engine, avatarId, ["home", "travel", "shoot", "glam", "fit"], 20)).toMatchObject({ worstMicros: 5_580_000, expectedMicros: 1_860_000, boldAttemptMicros: 93_000 });
+  });
+
+  test("«Дом» 20 at «Смелая» is priced exactly as the five 20", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await boot();
+    expect(await estimateOf(engine, avatarId, ["home"], 20)).toEqual(await estimateOf(engine, avatarId, ["home", "travel", "shoot", "glam", "fit"], 20));
   });
 
   test("«Ночнушки и бельё» 10 + «Пляж и бассейн» 10: worst 5 580 000 µ$", async () => {
@@ -88,12 +103,21 @@ describe("runs.estimate for «Смелая» categories", () => {
     expect((await estimateOf(engine, avatarId, ["beach"], 4)).boldAttemptMicros).toBe(93_000);
   });
 
-  test("a run with no «Смелая» category has no boldAttemptMicros and the figure it always had", async () => {
+  // 5a.4 (S5.BA5, 2026-10-26, BA3 review H-1): this row asked «Смелая» over «Дом» and «Виды» and told the pre-5a.4 figure (the owner's model); «Смелая» is every category's now, so the
+  // control is «Кокетливая», whose figure is the one it always had (I5.77: an ordinary or flirty money figure never moves).
+  test("a «Кокетливая» run of the five has no boldAttemptMicros and the figure it always had", async () => {
     const avatarId = await seedAvatar();
     const { engine } = await boot();
-    const estimate = await estimateOf(engine, avatarId, ["home", "travel"], 10);
+    const estimate = await estimateOf(engine, avatarId, ["home", "travel"], 10, "flirty");
     expect("boldAttemptMicros" in estimate).toBe(false);
     expect(estimate.worstMicros).toBe(10 * 3 * 60_000);
+  });
+
+  test("a «Кокетливая» run of the five 20 stays at $1.20 / $3.60", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await boot();
+    const estimate = await estimateOf(engine, avatarId, ["home", "travel", "shoot", "glam", "fit"], 20, "flirty");
+    expect({ worst: estimate.worstMicros, expected: estimate.expectedMicros, bold: "boldAttemptMicros" in estimate }).toEqual({ worst: 3_600_000, expected: 1_200_000, bold: false });
   });
 
   test("prices the 2K attempt from the live endpoint when it is listed", async () => {
@@ -121,10 +145,22 @@ describe("a Seedream price list without the 2K tier", () => {
   test.each([
     ["no 2K price line", noTier],
     ["no 2K in the supported resolutions", no2kParam],
-  ])("still estimates a run with no «Смелая» category (%s)", async (_name, body) => {
+  ])("still estimates a «Кокетливая» run (%s)", async (_name, body) => {
+    // 5a.4 (S5.BA5, 2026-10-26, BA3 review H-1): this row asked «Смелая» over «Дом», which needed no 2K price before 5a.4; «Дом» at «Смелая» is drawn on the route now (the row below),
+    // so the run that needs no 2K price is «Кокетливая».
     const avatarId = await seedAvatar();
     const { engine } = await boot(livePrices(body()));
-    expect(await estimateOf(engine, avatarId, ["home"], 4)).toMatchObject({ worstMicros: 4 * 3 * 60_000 });
+    expect(await estimateOf(engine, avatarId, ["home"], 4, "flirty")).toMatchObject({ worstMicros: 4 * 3 * 60_000 });
+  });
+
+  test.each([
+    ["no 2K price line", noTier],
+    ["no 2K in the supported resolutions", no2kParam],
+  ])("refuses «Дом» at «Смелая» (%s) with PRICE_UNAVAILABLE for the bold scope: its photos are on the route", async (_name, body) => {
+    const avatarId = await seedAvatar();
+    const { engine } = await boot(livePrices(body()));
+    const refusal = failed(await engine.handle(command("runs.estimate", request(avatarId, ["home"], 4))));
+    expect(refusal.error).toMatchObject({ code: "PRICE_UNAVAILABLE", priceScope: "bold" });
   });
 
   test("a missing 1K price has no priceScope", async () => {
@@ -276,6 +312,29 @@ describe("runs.start when the 2K price rose", () => {
   });
 });
 
+// 5a.4 (S5.BA5, plan s5a4 I5.77, BA3 review H-1): the run's cap is the estimate's worst case, so a «Смелая» run of the five accepted at the owner's-model figure (the one the estimate
+// showed before 5a.4) is refused for free, and the 2K figure starts it with that very cap.
+describe("runs.start of the five at «Смелая»", () => {
+  test("accepted at the owner's-model figure (3 × 60 000 µ$ a photo) is PRICE_CHANGED for free", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, net } = await boot();
+    const refusal = failed(await engine.handle(command("runs.start", { ...request(avatarId, ["home"], 4), acceptedWorstMicros: 4 * 3 * 60_000 })));
+    expect(refusal.error.code).toBe("PRICE_CHANGED");
+    expect(net.paidCalls()).toHaveLength(0);
+  });
+
+  test("accepted at the 2K figure starts, capped at it, every slot on the route", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await boot(undefined, () => ({ hang: true }));
+    const answer = ok(await engine.handle(command("runs.start", { ...request(avatarId, ["home"], 4), acceptedWorstMicros: 4 * 3 * 93_000 })));
+    if (answer.type !== "runs.start") throw new Error(`expected a start, got ${answer.type}`);
+    const plan = RunPlanSchema.parse(JSON.parse(readFileSync(join(dir(), "library", "runs", answer.result.runId, "plan.json"), "utf8")));
+    expect({ cap: plan.capMicros, routed: plan.scenes.slots.every((slot) => "route" in slot && slot.route === "seedream") }).toEqual({ cap: 4 * 3 * 93_000, routed: true });
+    ok(await engine.handle(command("runs.cancel", { runId: answer.result.runId })));
+    await jobEnd(events, answer.result.jobId);
+  });
+});
+
 // S5.R4-fix: the free image price of a count (`runs.estimateImages { avatarId, count }`) prices the «Смелая» share at the 2K unit when the caller names the level and the categories,
 // by the same split the run estimate uses; without them it is the figure it always was.
 describe("runs.estimateImages { avatarId, count, level, categories } for «Смелая»", () => {
@@ -293,16 +352,27 @@ describe("runs.estimateImages { avatarId, count, level, categories } for «См�
     expect(images).toEqual(await estimateOf(engine, avatarId, ["nightwear", "beach"], 20));
   });
 
-  test("only the «Смелая» share is priced at the 2K unit: «Дом» 10 + «Ночнушки и бельё» 10", async () => {
+  // 5a.4 (S5.BA5, 2026-10-26, plan s5a4 I5.77, BA3 review H-1): «Смелая» is every category's, so a count at «Смелая» is priced at the 2K unit for every photo, as the run estimate prices
+  // it. The two rows below told the pre-5a.4 rule (only the two «Смелая» categories' share: 4 590 000 µ$ for this split, and the owner's model for the five).
+  test("every photo of a «Смелая» count is priced at the 2K unit: «Дом» 10 + «Ночнушки и бельё» 10", async () => {
     const avatarId = await seedAvatar();
     const { engine } = await boot();
-    expect(await imagesFor(engine, { avatarId, count: 20, level: "bold", categories: ["home", "nightwear"] })).toMatchObject({ worstMicros: 4_590_000, expectedMicros: 1_530_000 });
+    const images = await imagesFor(engine, { avatarId, count: 20, level: "bold", categories: ["home", "nightwear"] });
+    expect(images).toMatchObject({ worstMicros: 5_580_000, expectedMicros: 1_860_000, boldAttemptMicros: 93_000 });
+    expect(images).toEqual(await estimateOf(engine, avatarId, ["home", "nightwear"], 20));
   });
 
-  test("a «Смелая» level with only ordinary categories keeps the owner's model price", async () => {
+  test("the five at «Смелая» are priced at the 2K unit", async () => {
     const avatarId = await seedAvatar();
     const { engine } = await boot();
     const images = await imagesFor(engine, { avatarId, count: 10, level: "bold", categories: ["home", "travel"] });
+    expect(images).toMatchObject({ worstMicros: 10 * 3 * 93_000, expectedMicros: 10 * 93_000, boldAttemptMicros: 93_000 });
+  });
+
+  test("the five at «Кокетливая» keep the owner's model price", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await boot();
+    const images = await imagesFor(engine, { avatarId, count: 10, level: "flirty", categories: ["home", "travel"] });
     expect(images.worstMicros).toBe(10 * 3 * 60_000);
     expect("boldAttemptMicros" in images).toBe(false);
   });

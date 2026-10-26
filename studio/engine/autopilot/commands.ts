@@ -204,7 +204,7 @@ export class AutopilotCommands {
     }
   }
 
-  /** 5a.3 (S5.9d, option B): `bold` is a draft that is «Смелая» with a «Смелая» category: every photo of the launch is priced at the Seedream 2K unit. */
+  /** 5a.3 (S5.9d, option B): `bold` is a draft at «Смелая» (5a.4, I5.77: of any category): every photo of the launch is priced at the Seedream 2K unit. */
   async #unitPrices(covers: CoversOf, bold: boolean): Promise<LaunchUnitPrices> {
     const models = this.#d.models();
     const check = this.#d.imageAgeCheck();

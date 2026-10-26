@@ -46,7 +46,7 @@ function runPlan(count: number, routed: readonly number[], age: "on" | "off" = "
   const slots: PlanSlot[] = mixedSlots(5, count, routed);
   const request = { avatarId: "avatar-0001", count, categories: ["home" as const, "nightwear" as const] };
   // The cap the owner accepted holds every photo at the 2K attempt (a «Ночнушки и бельё» request of the same size), so no remaining figure below is cut by it.
-  const worst = runEstimate(PRICED, MODELS, { ...request, categories: ["nightwear" as const] }, age, () => true).worstMicros;
+  const worst = runEstimate(PRICED, MODELS, { ...request, categories: ["nightwear" as const], level: "bold" }, age, () => true).worstMicros;
   return buildRunPlan({
     runId: RUN_ID,
     avatarId: "avatar-0001",

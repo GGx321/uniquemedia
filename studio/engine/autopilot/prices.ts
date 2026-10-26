@@ -25,7 +25,8 @@ const MODEL_ONLY_PROBE = "cat-table-probe" as const;
  * after a refusal), the three attempts per slot and the age-check toggle are priced exactly as a run prices them; the writer's ceiling, its chunk and its attempts
  * are the compose's, and its typical cost is tabulated per MODEL scene count from `composeEstimate` (a call's cost is rounded up, so it is not exactly linear).
  *
- * 5a.3 (S5.9d, option B): `bold` is a launch whose draft is «Смелая» with a «Смелая» category (`isBoldLook`). Every photo of it is priced at the Seedream 2K unit, so
+ * 5a.3 (S5.9d, option B): `bold` is a launch whose draft is «Смелая» (`isBoldLook`; 5a.4, I5.77: of any category, since the planner puts every slot of it on the route). Every
+ * photo of it is priced at the Seedream 2K unit, so
  * `launchEstimate(n) = composeEstimate(n) + runEstimateFromScenes(n, boldPhotos = n)` (A18) and the launch math itself reads a different unit and nothing else.
  *
  * 5a.2 (S5.6c2): `covers` says which custom categories the code template covers. It travels in the unit, so `launchEstimate` prices each avatar's compose from its

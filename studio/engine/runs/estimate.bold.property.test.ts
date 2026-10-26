@@ -52,7 +52,7 @@ describe("a run's plan never needs more than its estimate", () => {
       const age = next() < 0.5 ? "on" : "off";
       const categories: CategoryRef[] = next() < 0.5 ? ["nightwear"] : next() < 0.5 ? ["home", "nightwear"] : ["nightwear", "beach", "home"];
       const count = 1 + Math.floor(next() * 30);
-      const request = { avatarId: "avatar-0001", count, categories, poses: { profile: false, back: false } };
+      const request = { avatarId: "avatar-0001", count, categories, level: "bold" as const, poses: { profile: false, back: false } };
       const estimate = runEstimate(PRICED, model, request, age, COVERED);
       const slots: PlanSlot[] = planScenes({ seed: draw + 1, count, categories: categories.map(sceneCategory) }).slots.map((slot) => ((slot.category === "nightwear" || slot.category === "beach") && next() < 0.7 ? { ...slot, route: "seedream" as const } : slot));
       const run = buildRunPlan({
@@ -72,8 +72,36 @@ describe("a run's plan never needs more than its estimate", () => {
     }
   });
 
+  // 5a.4 (S5.BA5, plan s5a4 I5.77, BA3 review H-1): «Смелая» is every category's, so the planner puts a slot of the five on the route as well. The draws above route only the two
+  // «Смелая» categories; these route any slot of any built-in category, the plans 5a.4 makes, and hold the estimate of the same request above them.
+  test("over 200 draws where any slot of the five may be on the route too, the plan never needs more than its estimate", () => {
+    const next = lcg(20261026);
+    const SPLITS: CategoryRef[][] = [["home"], ["home", "travel", "shoot", "glam", "fit"], ["home", "nightwear"], ["travel", "beach", "fit"]];
+    for (let draw = 0; draw < 200; draw++) {
+      const model = MODELS[Math.floor(next() * MODELS.length)]!;
+      const age = next() < 0.5 ? "on" : "off";
+      const categories = SPLITS[Math.floor(next() * SPLITS.length)]!;
+      const count = 1 + Math.floor(next() * 30);
+      const request = { avatarId: "avatar-0001", count, categories, level: "bold" as const, poses: { profile: false, back: false } };
+      const estimate = runEstimate(PRICED, model, request, age, COVERED);
+      const slots: PlanSlot[] = planScenes({ seed: draw + 1, count, categories: categories.map(sceneCategory) }).slots.map((slot) => (next() < 0.7 ? { ...slot, route: "seedream" as const } : slot));
+      const run = buildRunPlan({ runId: "run-00000001", avatarId: "avatar-0001", createdAt: "2026-10-26T12:00:00.000Z", request, imageAgeCheck: age, models: model, capMicros: BIG_CAP, plannedWorstMicros: BIG_CAP, scenes: { version: 1, seed: draw + 1, slots } });
+      const fresh = need(run);
+      expect({ draw, ok: fresh.worstMicros <= estimate.worstMicros }).toEqual({ draw, ok: true });
+      expect({ draw, ok: fresh.expectedMicros <= estimate.expectedMicros }).toEqual({ draw, ok: true });
+    }
+  });
+
+  test("a run of «Дом» at «Смелая» with every slot routed is priced exactly at its estimate's worst case", () => {
+    const request = { avatarId: "avatar-0001", count: 10, categories: ["home" as const], level: "bold" as const, poses: { profile: false, back: false } };
+    const model = MODELS[0];
+    const slots: PlanSlot[] = planScenes({ seed: 4, count: 10, categories: ["home"] }).slots.map((slot) => ({ ...slot, route: "seedream" as const }));
+    const run = buildRunPlan({ runId: "run-00000001", avatarId: "avatar-0001", createdAt: "2026-10-26T12:00:00.000Z", request, imageAgeCheck: "off", models: model, capMicros: BIG_CAP, plannedWorstMicros: BIG_CAP, scenes: { version: 1, seed: 4, slots } });
+    expect(need(run).worstMicros).toBe(runEstimate(PRICED, model, request, "off", COVERED).worstMicros);
+  });
+
   test("a run with every «Смелая» slot routed is priced exactly at its estimate's worst case", () => {
-    const request = { avatarId: "avatar-0001", count: 10, categories: ["nightwear" as const], poses: { profile: false, back: false } };
+    const request = { avatarId: "avatar-0001", count: 10, categories: ["nightwear" as const], level: "bold" as const, poses: { profile: false, back: false } };
     const model = MODELS[0];
     const slots: PlanSlot[] = planScenes({ seed: 4, count: 10, categories: ["nightwear"] }).slots.map((slot) => ({ ...slot, route: "seedream" as const }));
     const run = buildRunPlan({ runId: "run-00000001", avatarId: "avatar-0001", createdAt: "2026-10-12T12:00:00.000Z", request, imageAgeCheck: "off", models: model, capMicros: BIG_CAP, plannedWorstMicros: BIG_CAP, scenes: { version: 1, seed: 4, slots } });

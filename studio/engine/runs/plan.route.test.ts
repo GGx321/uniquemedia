@@ -107,9 +107,22 @@ describe("routedSlots, routedScenes and requestBoldPhotos", () => {
     expect(routedScenes([...drawn.map((slot) => ({ slot })), { slot: own }])).toBe(1);
   });
 
-  test("a request's bold photos are its split's photos in «Смелая» categories", () => {
-    expect(requestBoldPhotos({ count: 7, categories: ["home", "nightwear"] })).toBe(3);
-    expect(requestBoldPhotos({ count: 10, categories: ["nightwear", "beach"] })).toBe(10);
-    expect(requestBoldPhotos({ count: 10, categories: ["home", "travel"] })).toBe(0);
+  // 5a.4 (S5.BA5, 2026-10-26, plan s5a4 I5.77, BA3 review H-1): «Смелая» is every category's, so the planner puts every slot of a «Смелая» request on the route, and a request not
+  // yet planned is priced at the 2K attempt for EVERY photo. This row told the pre-5a.4 rule («its split's photos in «Смелая» categories»: 3 of 7 for «Дом» + «Ночнушки и бельё», 0 for
+  // the five), which priced «Дом» at «Смелая» on the owner's model while the planner drew it on Seedream.
+  test("a request's bold photos are all its photos at «Смелая», whatever its categories", () => {
+    expect(requestBoldPhotos({ count: 7, categories: ["home", "nightwear"], level: "bold" })).toBe(7);
+    expect(requestBoldPhotos({ count: 10, categories: ["nightwear", "beach"], level: "bold" })).toBe(10);
+    expect(requestBoldPhotos({ count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], level: "bold" })).toBe(20);
+    expect(requestBoldPhotos({ count: 20, categories: ["cat-0123456789ab"], level: "bold" })).toBe(20);
+  });
+
+  test("a request below «Смелая» has no bold photos, whatever its categories", () => {
+    for (const level of [undefined, "ordinary", "flirty"] as const) expect({ level, bold: requestBoldPhotos({ count: 10, categories: ["home", "travel"], level }) }).toEqual({ level, bold: 0 });
+  });
+
+  test("the level is a required key: a caller that forgets it does not compile", () => {
+    // @ts-expect-error `level` is a required key (plan s5a4 M3): a caller with no level to hand says `level: undefined`
+    expect(requestBoldPhotos({ count: 10, categories: ["home"] })).toBe(0);
   });
 });

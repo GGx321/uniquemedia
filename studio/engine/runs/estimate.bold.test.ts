@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { RunRequest } from "../../shared/engine";
+import type { RunRequest, SceneLevel } from "../../shared/engine";
 import type { CoversOf } from "../../shared/scenes/writerBound";
 import { AGE_CHECK_CALL, estimateRun, type ImageChoice } from "../money/estimate";
 import { MoneyError } from "../money/errors";
 import { FALLBACK_IMAGE, PriceBook, type ImagePrice, type PriceEntry } from "../money/prices";
-import { BOLD_IMAGE_MODEL, BOLD_RESOLUTION, boldRoute, FALLBACK_IMAGE_MODEL, runEstimate, runEstimateFromScenes, runPriceModels, sceneRunPriceModels } from "./plan";
+import { BOLD_IMAGE_MODEL, BOLD_RESOLUTION, boldRoute, FALLBACK_IMAGE_MODEL, runEstimate, runEstimateFromScenes, runPriceModels, sceneRunPriceModels, type BoldRequest } from "./plan";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -23,8 +23,9 @@ function fallbackImages(): [string, PriceEntry<ImagePrice>][] {
   return [...FALLBACK_IMAGE].map(([model, price]) => [model, { price, source: "fallback" as const }]);
 }
 
-function request(categories: RunRequest["categories"], count: number): Pick<RunRequest, "count" | "categories"> {
-  return { count, categories };
+/** A request at «Смелая» unless told otherwise: the two «Смелая» categories are drawn only there (I5.42). */
+function request(categories: RunRequest["categories"], count: number, level: SceneLevel | undefined = "bold"): BoldRequest {
+  return { count, categories, level };
 }
 
 describe("the bold route", () => {
@@ -106,9 +107,21 @@ describe("the §10.3 examples (age check off, at list)", () => {
     expect([estimate.worstMicros, estimate.expectedMicros]).toEqual([2_790_000, 930_000]);
   });
 
-  test("«Дом» 10 + «Ночнушки и бельё» 10: worst 4 590 000 µ$, expected 1 530 000 µ$", () => {
+  // 5a.4 (S5.BA5, 2026-10-26, plan s5a4 §5.7, I5.77, BA3 review H-1): «Дом» at «Смелая» is on the route too, so all 20 are priced at the 2K attempt. This row told the pre-5a.4 figure
+  // («Дом» on the owner's model): worst 4 590 000 µ$, expected 1 530 000 µ$.
+  test("«Дом» 10 + «Ночнушки и бельё» 10: worst 5 580 000 µ$, expected 1 860 000 µ$", () => {
     const estimate = runEstimate(PRICED, MODELS, request(["home", "nightwear"], 20), "off", COVERED);
-    expect([estimate.worstMicros, estimate.expectedMicros]).toEqual([4_590_000, 1_530_000]);
+    expect([estimate.worstMicros, estimate.expectedMicros]).toEqual([5_580_000, 1_860_000]);
+  });
+
+  test("the five 20: worst 5 580 000 µ$, expected 1 860 000 µ$ (was 3 600 000 / 1 200 000 on the owner's model)", () => {
+    const estimate = runEstimate(PRICED, MODELS, request(["home", "travel", "shoot", "glam", "fit"], 20), "off", COVERED);
+    expect([estimate.worstMicros, estimate.expectedMicros, estimate.boldAttemptMicros]).toEqual([5_580_000, 1_860_000, BOLD_ATTEMPT]);
+  });
+
+  test("the five 20 at «Кокетливая»: 3 600 000 / 1 200 000 µ$, as they always were", () => {
+    const estimate = runEstimate(PRICED, MODELS, request(["home", "travel", "shoot", "glam", "fit"], 20, "flirty"), "off", COVERED);
+    expect([estimate.worstMicros, estimate.expectedMicros, "boldAttemptMicros" in estimate]).toEqual([3_600_000, 1_200_000, false]);
   });
 
   test("«Ночнушки и бельё» 10 + «Пляж и бассейн» 10: worst 5 580 000 µ$, expected 1 860 000 µ$", () => {
@@ -122,10 +135,11 @@ describe("the §10.3 examples (age check off, at list)", () => {
     expect(on.worstMicros - off.worstMicros).toBe(10 * 3 * AGE_CEILING);
   });
 
-  test("the bold share follows the categories' split of an odd count", () => {
+  // 5a.4 (S5.BA5, 2026-10-26, BA3 review H-1): this row told the pre-5a.4 split (7 over [home, nightwear]: home's 4 on the owner's model, nightwear's 3 on the route); every photo of a
+  // «Смелая» request is on the route now, whatever the split.
+  test("every photo of an odd count is priced at the 2K attempt, whatever the split", () => {
     const estimate = runEstimate(PRICED, MODELS, request(["home", "nightwear"], 7), "off", COVERED);
-    // 7 over [home, nightwear]: home 4, nightwear 3.
-    expect(estimate.worstMicros).toBe(4 * 3 * GROK_QUALITY + 3 * 3 * BOLD_ATTEMPT);
+    expect(estimate.worstMicros).toBe(7 * 3 * BOLD_ATTEMPT);
   });
 });
 
@@ -134,8 +148,14 @@ describe("Estimate.boldAttemptMicros", () => {
     expect(runEstimate(PRICED, MODELS, request(["home", "beach"], 10), "off", COVERED).boldAttemptMicros).toBe(BOLD_ATTEMPT);
   });
 
-  test("is absent on a run with no «Смелая» category", () => {
-    expect("boldAttemptMicros" in runEstimate(PRICED, MODELS, request(["home", "travel"], 10), "off", COVERED)).toBe(false);
+  // 5a.4 (S5.BA5, 2026-10-26, BA3 review H-1): this row asked «Смелая» over «Дом» and «Виды», priced on the owner's model before 5a.4; the run with no photo on the route is «Кокетливая» now.
+  test("is absent on a run below «Смелая»", () => {
+    expect("boldAttemptMicros" in runEstimate(PRICED, MODELS, request(["home", "travel"], 10, "flirty"), "off", COVERED)).toBe(false);
+    expect("boldAttemptMicros" in runEstimate(PRICED, MODELS, { count: 10, categories: ["home", "travel"], level: undefined }, "off", COVERED)).toBe(false);
+  });
+
+  test("is present on a run of the five at «Смелая»", () => {
+    expect(runEstimate(PRICED, MODELS, request(["home", "travel"], 10), "off", COVERED).boldAttemptMicros).toBe(BOLD_ATTEMPT);
   });
 
   test("is absent on a run from scenes with no Seedream scene", () => {

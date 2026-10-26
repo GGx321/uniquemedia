@@ -36,7 +36,7 @@ const NOTHING_COVERED: CoversOf = () => false;
 
 function runPlan(count: number, imageAgeCheck: ImageAgeCheck = "off", categories: readonly CategoryRef[] = FIXTURE): RunPlan {
   const request = { avatarId: "avatar-0001", count, categories: [...categories], poses: { profile: false, back: false } };
-  const worst = runEstimate(PRICED, { imageModel: PRIMARY, textModel: "x-ai/grok-4.3" }, request, imageAgeCheck, NOTHING_COVERED).worstMicros;
+  const worst = runEstimate(PRICED, { imageModel: PRIMARY, textModel: "x-ai/grok-4.3" }, { ...request, level: undefined }, imageAgeCheck, NOTHING_COVERED).worstMicros;
   return buildRunPlan({
     runId: RUN_ID,
     avatarId: "avatar-0001",
@@ -224,7 +224,7 @@ describe("remainingPlan's minToProgressMicros", () => {
 describe("remainingEstimate", () => {
   test("a run nothing happened to yet: its whole estimate, which is its cap", () => {
     const run = runPlan(4);
-    const whole = runEstimate(PRICED, { imageModel: PRIMARY, textModel: "x-ai/grok-4.3" }, { count: run.scenes.slots.length, categories: [...FIXTURE] }, "off", NOTHING_COVERED);
+    const whole = runEstimate(PRICED, { imageModel: PRIMARY, textModel: "x-ai/grok-4.3" }, { count: run.scenes.slots.length, categories: [...FIXTURE], level: undefined }, "off", NOTHING_COVERED);
     expect(estimateFor(run)).toEqual({ expectedMicros: whole.expectedMicros, worstMicros: run.capMicros, prices: "fallback", pricesAsOf: "2026-09-24" });
   });
 

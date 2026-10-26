@@ -37,7 +37,7 @@ describe("runEstimateFromScenes", () => {
 
   test("is exactly the whole run's estimate less its writer", () => {
     for (const count of [1, 5, 25, 26, 100]) {
-      const whole = runEstimate(PRICED, MODELS, { count, categories: [LLM_ONLY_REF] }, "off", NOTHING_COVERED);
+      const whole = runEstimate(PRICED, MODELS, { count, categories: [LLM_ONLY_REF], level: undefined }, "off", NOTHING_COVERED);
       const scenes = runEstimateFromScenes(PRICED, MODELS, { count }, "off");
       expect(whole.worstMicros - scenes.worstMicros).toBe(Math.ceil(count / 25) * 2 * WRITER_WORST);
     }
@@ -45,7 +45,7 @@ describe("runEstimateFromScenes", () => {
 
   test("twin on a built-in run: its whole estimate has no writer term, so it equals the scenes' run", () => {
     for (const count of [1, 5, 25, 26, 100]) {
-      const builtIn = runEstimate(PRICED, MODELS, { count, categories: ["home"] }, "off", NOTHING_COVERED);
+      const builtIn = runEstimate(PRICED, MODELS, { count, categories: ["home"], level: undefined }, "off", NOTHING_COVERED);
       expect(builtIn.worstMicros).toBe(runEstimateFromScenes(PRICED, MODELS, { count }, "off").worstMicros);
     }
   });
@@ -80,7 +80,7 @@ describe("runEstimateFromScenes", () => {
 });
 
 function whole(count: number, age: "on" | "off"): number {
-  return runEstimate(PRICED, MODELS, { count, categories: [LLM_ONLY_REF] }, age, NOTHING_COVERED).worstMicros;
+  return runEstimate(PRICED, MODELS, { count, categories: [LLM_ONLY_REF], level: undefined }, age, NOTHING_COVERED).worstMicros;
 }
 
 describe("sceneRunPriceModels", () => {

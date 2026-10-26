@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AttemptId, CategorySnapshot, Id, ImageAgeCheck, ImageQuality, isBoldCategory, isCustomCategory, Micros, ModelId, RunRequest, SceneId, splitCount, type CategoryRef, type Estimate } from "../../shared/engine";
+import { AttemptId, CategorySnapshot, Id, ImageAgeCheck, ImageQuality, isCustomCategory, Micros, ModelId, RunRequest, SceneId, splitCount, type CategoryRef, type Estimate, type SceneLevel } from "../../shared/engine";
 import { llmPossibleSlots, writerChunksWorst, type CoversOf } from "../../shared/scenes/writerBound";
 import { AGE_CHECK_CALL, estimateRun, MAX_ATTEMPTS_PER_SLOT, WRITER_CALL, writerCallOf, type ImageChoice, type WriterCall } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
@@ -150,13 +150,13 @@ export function sceneRunPriceModels(models: RunModels, imageAgeCheck: ImageAgeCh
  * cap. The age checks are priced now, with the toggle, so the cap the owner
  * accepts already covers T7a's age gate when it is wired.
  */
-export function runEstimate(priced: PricedBook, models: RunModels, request: Pick<RunRequest, "count" | "categories">, imageAgeCheck: ImageAgeCheck, covers: CoversOf): Estimate {
+export function runEstimate(priced: PricedBook, models: RunModels, request: BoldRequest, imageAgeCheck: ImageAgeCheck, covers: CoversOf): Estimate {
   // 5a.2 (S5.6c2, I5.30): the code template writes every slot of a built-in category and of a covered custom one, so the writer is priced for the
   // uncovered custom categories' slots alone (`writerChunksWorst`); the cap is this very figure.
   const split = splitCount(request.count, request.categories);
-  // 5a.3 (S5.9d, §10.2): every photo of a «Смелая» category is priced on the Seedream 2K route, which is the upper bound of the plan's actual need (a slot of those categories
-  // that the planner draws on the settings' model costs less); the cap is this very figure, so the plan's need never exceeds the estimate.
-  const boldPhotos = boldPhotosOf(split);
+  // 5a.4 (S5.BA5, plan s5a4 I5.77, BA3 review H-1): at «Смелая» every photo is priced on the Seedream 2K route (`requestBoldPhotos`), the upper bound of the plan's actual need: the
+  // planner puts every slot of a «Смелая» request on the route, of every category. The cap is this very figure, so the plan's need never exceeds the estimate.
+  const boldPhotos = requestBoldPhotos(request);
   const estimate = estimateRun(priced.book, {
     photos: request.count,
     attemptsPerSlot: RUN_ATTEMPTS_PER_SLOT,
@@ -170,16 +170,29 @@ export function runEstimate(priced: PricedBook, models: RunModels, request: Pick
 }
 
 /**
- * 5a.3 (S5.9d, §10.2, option B): whether a request, a set or a launch draft is «Смелая» AND names a «Смелая» category. Only then are the photos priced at the Seedream
- * unit (a launch prices EVERY photo so: the launch math reads one unit). «Смелая» with only the five draws as «Кокетливая» on the owner's model, priced as it always was.
+ * 5a.3 (S5.9d, §10.2, option B): whether a request or a launch draft not yet planned is priced at the Seedream unit (a launch prices EVERY photo so: the launch math reads one unit).
+ * 5a.4 (S5.BA5, plan s5a4 I5.77, §5.7, BA3 review H-1): «Смелая» is every category's, so it is exactly a draft at «Смелая»: the planner puts every slot it plans on the route.
+ * Before 5a.4 it also needed a «Смелая» category, and the five at «Смелая» were priced on the owner's model while the planner drew them on Seedream. Anything STORED (a set, a
+ * launch whose set exists, a resume) is priced by its own routes (`routedSlots`), never by this.
  */
-export function isBoldLook(look: { level?: string | undefined; categories: readonly string[] }): boolean {
-  return look.level === "bold" && look.categories.some(isBoldCategory);
+export function isBoldLook(look: { level?: SceneLevel | undefined }): boolean {
+  return look.level === "bold";
 }
 
-/** The photos of a run request that belong to a «Смелая» category (the figure `runEstimate` prices at the 2K route, and the one a start loads the 2K shape for). */
-export function requestBoldPhotos(request: Pick<RunRequest, "count" | "categories">): number {
-  return boldPhotosOf(splitCount(request.count, request.categories));
+/** A request not yet planned, as the money reads it: its photos, its categories and its level. `level` is a required key (plan s5a4 M3): a caller with none says `undefined`. */
+export interface BoldRequest {
+  count: number;
+  categories: readonly CategoryRef[];
+  level: SceneLevel | undefined;
+}
+
+/**
+ * The photos of a run request that are drawn on the «Смелая» route: every photo at «Смелая», none below (the figure `runEstimate` prices at the 2K route, and the one a start loads
+ * the 2K shape for). 5a.4 (S5.BA5, I5.77, BA3 review H-1): it was the split's photos in «Смелая» categories, which left the five and the custom categories at «Смелая» on the owner's
+ * model's price while the planner drew them on Seedream.
+ */
+export function requestBoldPhotos(request: BoldRequest): number {
+  return isBoldLook(request) ? request.count : 0;
 }
 
 /** The slots of a plan that are drawn on the Seedream route (exact: from each slot's own `route`). */
@@ -190,11 +203,6 @@ export function routedSlots(slots: readonly object[]): number {
 /** The scenes of a set's run that are drawn on the Seedream route (exact: from each scene's own slot). */
 export function routedScenes(scenes: readonly Pick<SceneRunSource, "slot">[]): number {
   return routedSlots(scenes.map(({ slot }) => slot));
-}
-
-/** The photos of a request's split that belong to a «Смелая» category. */
-export function boldPhotosOf(split: readonly { ref: CategoryRef; count: number }[]): number {
-  return split.reduce((sum, entry) => (isBoldCategory(entry.ref) ? sum + entry.count : sum), 0);
 }
 
 /** The contract's estimate from the money core's: `boldAttemptMicros` only when a photo is on the «Смелая» route (gap C). */

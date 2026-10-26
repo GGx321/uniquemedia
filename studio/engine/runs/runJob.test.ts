@@ -108,7 +108,7 @@ async function newRun(count: number, opts: { cap?: number; imageModel?: string; 
   const runAvatar = opts.avatar ?? avatarId;
   const refs = opts.builtIn === true ? (["home"] as const) : ([LLM_ONLY_REF] as const);
   const request = { avatarId: runAvatar, count, categories: [...refs], poses: { profile: false, back: false } };
-  const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel, imageQuality: opts.imageQuality, textModel: TEXT }, request, "off", NOTHING_COVERED).worstMicros;
+  const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel, imageQuality: opts.imageQuality, textModel: TEXT }, { ...request, level: undefined }, "off", NOTHING_COVERED).worstMicros;
   const cap = opts.cap ?? estimated;
   const run = buildRunPlan({
     runId: RUN_ID,
@@ -590,7 +590,7 @@ describe("back frames through the real face gate (S5.6f)", () => {
   /** A run whose every slot is an old back slot (a friend shot, pose back, stored before 5a.2: no capture, no legwear). */
   async function newBackRun(count: number): Promise<RunPlan> {
     const request = { avatarId, count, categories: ["home" as const], poses: { profile: false, back: true } };
-    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, request, "off", NOTHING_COVERED).worstMicros;
+    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, { ...request, level: undefined }, "off", NOTHING_COVERED).worstMicros;
     const planned = planScenes({ seed: 5, count, categories: ["home"] });
     const run = buildRunPlan({
       runId: RUN_ID,
@@ -660,7 +660,7 @@ describe("back frames through the real face gate (S5.6f)", () => {
 describe("a run with a custom category", () => {
   async function newCustomRun(count: number, style: "phone" | "editorial", categories: readonly ("home" | typeof CUSTOM_REF)[] = [CUSTOM_REF], llmOnly = false): Promise<RunPlan> {
     const request = { avatarId, count, categories: [...categories], poses: { profile: false, back: false } };
-    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, request, "off", NOTHING_COVERED).worstMicros;
+    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, { ...request, level: undefined }, "off", NOTHING_COVERED).worstMicros;
     const run = buildRunPlan({
       runId: RUN_ID,
       avatarId,
@@ -2685,7 +2685,7 @@ describe("runPhotoRun: the writer seam", () => {
     const request = { avatarId, count, categories: ["glam" as const], poses: { profile: false, back: false } };
     const drawn = planScenes({ seed: 5, count, categories: ["glamour"] });
     const slots = drawn.slots.map((slot, i) => (i < bankSlots ? { ...slot, category: "glamour" as const, shot: "friend" as const, pose: "front" as const, ...bankDraw() } : { ...slot, location: "a place no bank has" }));
-    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, { ...request, categories: [LLM_ONLY_REF] }, "off", NOTHING_COVERED).worstMicros;
+    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, { ...request, categories: [LLM_ONLY_REF], level: undefined }, "off", NOTHING_COVERED).worstMicros;
     const run = buildRunPlan({
       runId: RUN_ID,
       avatarId,

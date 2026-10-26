@@ -19,24 +19,30 @@ const GROK_UNIT = 3 * 60_000;
 const BOLD_UNIT = 3 * 93_000;
 
 describe("isBoldLook", () => {
+  /** A draft's look: its level and its categories (the categories no longer decide; they are kept to show it). */
+  const look = (level: "ordinary" | "flirty" | "bold" | undefined, categories: readonly string[]) => ({ level, categories });
+
   test("is true for «Смелая» with a «Смелая» category", () => {
-    expect(isBoldLook({ level: "bold", categories: ["home", "nightwear"] })).toBe(true);
+    expect(isBoldLook(look("bold", ["home", "nightwear"]))).toBe(true);
   });
 
   test("is true for «Смелая» with only a «Смелая» category", () => {
-    expect(isBoldLook({ level: "bold", categories: ["beach"] })).toBe(true);
+    expect(isBoldLook(look("bold", ["beach"]))).toBe(true);
   });
 
-  test("is false for «Смелая» with only the five: they draw as «Кокетливая» on the owner's model", () => {
-    expect(isBoldLook({ level: "bold", categories: ["home", "travel", "glam"] })).toBe(false);
+  // 5a.4 (S5.BA5, 2026-10-26, plan s5a4 I5.77, §5.7 «A launch before its compose», BA3 review H-1): «Смелая» is every category's, so a draft at «Смелая» plans every slot on the route
+  // and option B holds at ANY «Смелая» draft. The two rows below told the pre-5a.4 rule (the five and a custom category beside them drew as «Кокетливая» on the owner's model).
+  test("is true for «Смелая» with only the five: every slot they plan is on the route", () => {
+    expect(isBoldLook(look("bold", ["home", "travel", "glam"]))).toBe(true);
   });
 
   test("is false at any other level, whatever the categories", () => {
-    expect([undefined, "ordinary", "flirty"].map((level) => isBoldLook({ level: level as "flirty" | undefined, categories: ["nightwear"] }))).toEqual([false, false, false]);
+    expect([undefined, "ordinary", "flirty"].map((level) => isBoldLook(look(level as "flirty" | undefined, ["nightwear"])))).toEqual([false, false, false]);
+    expect([undefined, "ordinary", "flirty"].map((level) => isBoldLook(look(level as "flirty" | undefined, ["home", "cat-0123456789ab"])))).toEqual([false, false, false]);
   });
 
-  test("is false for a custom category beside the five", () => {
-    expect(isBoldLook({ level: "bold", categories: ["home", "cat-0123456789ab"] })).toBe(false);
+  test("is true for «Смелая» with a custom category beside the five", () => {
+    expect(isBoldLook(look("bold", ["home", "cat-0123456789ab"]))).toBe(true);
   });
 });
 

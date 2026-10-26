@@ -670,10 +670,12 @@ describe("runs.start", () => {
   // 5a.3 (S5.9a): «Смелая» is accepted; with no «Смелая» category (none exists yet) the run draws the flirty mix, and plan.json keeps the level it was asked at.
   // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 I5.71, §7.4): «Смелая» is every category's now, so a bold run over the five draws their companions on the route, with the request's 40 / 40 / 20
   // mix; the flirty mix this test told is the «Кокетливая» run above it, which keeps it.
+  // 5a.4 (S5.BA5, 2026-10-26, BA3 review H-1): the run is accepted at the 2K figure, three 93 000 µ$ attempts a photo, the cap its slots on the route need; the owner's-model figure this
+  // row accepted (20 × 3 × 50 000 µ$ + a writer chunk) is refused PRICE_CHANGED now (engine.bold.test.ts, «runs.start of the five at «Смелая»»).
   test("a run asked bold over the five built-ins stores the bold level and holds the companions' 40 / 40 / 20 mix, every slot on the route", async () => {
     const avatarId = await seedAvatar();
     const { engine, events } = await engineOver(runNetwork({ image: () => ({ hang: true }) }));
-    const twenty = 20 * 3 * 50_000 + 2 * 37_500;
+    const twenty = 20 * 3 * 93_000;
 
     const { runId, jobId } = started(await engine.handle(command("runs.start", { avatarId, count: 20, categories: ["home", "travel"], level: "bold", acceptedWorstMicros: twenty })));
     const stored = planOf(runId);

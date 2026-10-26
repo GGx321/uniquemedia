@@ -70,9 +70,18 @@ describe("autopilot.estimate and the Seedream unit", () => {
     expect(preview.estimate.worstMicros).toBe(preview.totals.toGenerate * BOLD_UNIT);
   });
 
-  test("«Смелая» with only the five keeps the unit it had", async () => {
+  // 5a.4 (S5.BA5, 2026-10-26, plan s5a4 §5.7 «A launch before its compose», I5.77, BA3 review H-1): «Смелая» is every category's, so a launch of the five at «Смелая» plans every slot
+  // on the route and option B holds at any «Смелая» draft. This row told the pre-5a.4 rule («Смелая» with only the five kept the owner's-model unit).
+  test("«Смелая» with only the five prices every photo at three 2K attempts", async () => {
     const started = await boot();
     const preview = await previewOf(started, draftOf(started.avatarId, { level: "bold", categories: ["home", "travel"] }));
+    expect(preview.totals.toGenerate).toBeGreaterThan(0);
+    expect(preview.estimate.worstMicros).toBe(preview.totals.toGenerate * BOLD_UNIT);
+  });
+
+  test("«Кокетливая» with the five keeps the unit it had", async () => {
+    const started = await boot();
+    const preview = await previewOf(started, draftOf(started.avatarId, { level: "flirty", categories: ["home", "travel"] }));
     expect(preview.estimate.worstMicros).toBe(preview.totals.toGenerate * GROK_UNIT);
   });
 
