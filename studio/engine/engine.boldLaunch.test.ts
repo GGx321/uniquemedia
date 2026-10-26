@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { RunPlanSchema } from "./runs/plan";
 import { plan as planScenes } from "./scenes";
-import { ok, useEngineDir } from "./testing/engineHarness";
+import { ledgerLines, ok, useEngineDir } from "./testing/engineHarness";
 import { crashKit, fakeRender } from "./testing/crashKit";
 import { draftOf, network } from "./testing/wiringKit";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -170,5 +170,43 @@ describe("a «Смелая» launch of «Дом», priced by its set's routes", 
     const drawn = slices(GROK_UNIT);
     expect(drawn.length).toBeGreaterThan(0);
     expect(drawn).toEqual(drawn.map(({ runId }) => ({ runId, cap: 0, routed: [false] })));
+  });
+
+  // 5a.4 (S5.BA5, plan s5a4 r2.1 L1, §5.8, accepted as is, no port change): a slice is SIZED by the draft's level (`photoWorstMicros`, the port has no set), so a launch accepted
+  // before 5a.4 at «Смелая» over the five, whose draw allocation holds its photos at the owner's unit, is sized at the bold unit: its slices are smaller (more of them), never more
+  // than the allocation can pay at that unit. Each slice is still CAPPED by its scenes' routes (the owner's unit for a set with none), so no reserve passes its run's cap.
+  test("a launch accepted before 5a.4 (the owner's unit, a set with no route): smaller slices, each capped at the owner's unit, no reserve above its cap", async () => {
+    const avatarId = await kit.seedAvatar(0, "l1set");
+    const first = await kit.boot(network(), fakeRender());
+    const { launchId, sceneSetId } = await inReview(first, avatarId);
+    await beforeRoutes(first, avatarId, sceneSetId);
+    const photos = (await imagesOf(first, launchId, avatarId)).photos;
+    expect(photos).toBeGreaterThan(2);
+    expect(await first.engine.photoWorstMicros({ level: "bold", categories: ["home"] })).toBe(BOLD_UNIT);
+    await kit.kill(first);
+
+    // The draw allocation as a build before 5a.4 accepted it: the photos at the owner's unit (the planned worst case follows, A2).
+    const file = kit.fileOf(launchId);
+    const row = file.avatars[0];
+    if (row === undefined) throw new Error("the launch has no avatar");
+    const drawMicros = photos * GROK_UNIT;
+    writeFileSync(kit.launchPath(launchId), JSON.stringify({ ...file, plannedWorstMicros: file.plannedWorstMicros - (row.allocation.drawMicros - drawMicros), avatars: [{ ...row, allocation: { ...row.allocation, drawMicros } }] }));
+
+    const second = await kit.boot(network(), fakeRender());
+    await kit.resumeLaunch(second, launchId);
+    const revision = (await second.engine.library?.sceneSets.get(avatarId, sceneSetId))?.revision;
+    ok(await kit.call(second, "autopilot.continueAfterReview", { launchId, avatarId, sceneSetId, revision }));
+    await kit.driveToDone(second, launchId);
+
+    const runsDir = join(kit.libraryDir(), "runs");
+    const runs = readdirSync(runsDir).map((runId) => RunPlanSchema.parse(JSON.parse(readFileSync(join(runsDir, runId, "plan.json"), "utf8"))));
+    // Sized at the bold unit: never more photos in a slice than the allocation pays at it, so the photos come in more than one slice.
+    expect(runs.length).toBeGreaterThan(1);
+    expect(runs.every((run) => run.scenes.slots.length <= Math.floor(drawMicros / BOLD_UNIT))).toBe(true);
+    expect(runs.reduce((sum, run) => sum + run.scenes.slots.length, 0)).toBe(photos);
+    // Capped by the routes: the owner's unit, and every reserve of a run within its cap.
+    expect(runs.map((run) => run.capMicros)).toEqual(runs.map((run) => run.scenes.slots.length * GROK_UNIT));
+    const reserved = (runId: string) => ledgerLines(kit.root()).filter((l) => l.type === "reserve" && typeof l.scope === "object" && l.scope !== null && "runId" in l.scope && l.scope.runId === runId).reduce((sum, l) => sum + Number(l.worstMicros), 0);
+    for (const run of runs) expect({ runId: run.runId, reserved: reserved(run.runId) > 0, within: reserved(run.runId) <= run.capMicros }).toEqual({ runId: run.runId, reserved: true, within: true });
   });
 });
