@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { CategoryPool } from "../../shared/engine";
 import { sceneCategory } from "../runs/plan";
 import { planWithPools } from "./planner";
-import { isPropOnlyActivity, poolOf } from "./poolGen";
+import { isPropOnlyActivity, poolOf, storedPoolOf } from "./poolGen";
 import { BOLD_POOLS, CUSTOM_BOLD_POOLS, POOLS, PoolSchema, type Pool } from "./pools";
 import { redrawSlot } from "./redraw";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -95,6 +95,28 @@ describe("the planner and «Другая сцена» never draw them (FU-CLIP B
     }
     expect(PROPS.filter((text) => drawn.has(text))).toEqual([]);
     expect(drawn.size).toBeGreaterThan(3);
+  });
+});
+
+describe("dropping them changes nothing but the activity (FU-CLIP round 2, LOW-3)", () => {
+  // STORED with a sixth place whose prop is its only free-hand activity off her phone: it keeps its activities as stored, so its selfie and mirror shots stay where they were.
+  const WITH_FALLBACK: CategoryPool = {
+    ...STORED,
+    locations: [...STORED.locations, { name: "a small balcony", times: ["morning"], activities: [one("holding a water glass"), one("texting on her phone")], mirror: true }],
+  };
+
+  test("200 seeds: the plan of the pool as planned and of the pool as stored agree on every field but the activity", () => {
+    const withoutActivity = (pool: Pool, seed: number) =>
+      planWithPools({ seed, count: 10, categories: [sceneCategory(REF)] }, { ...POOLS, [REF]: pool }).slots.map(({ activity: _activity, ...rest }) => rest);
+    let differ = 0;
+    for (let seed = 1; seed <= 200; seed++) {
+      const planned = withoutActivity(poolOf(WITH_FALLBACK), seed);
+      expect(planned).toEqual(withoutActivity(storedPoolOf(WITH_FALLBACK), seed));
+      const activities = (pool: Pool) => planWithPools({ seed, count: 10, categories: [sceneCategory(REF)] }, { ...POOLS, [REF]: pool }).slots.map((slot) => slot.activity);
+      if (JSON.stringify(activities(poolOf(WITH_FALLBACK))) !== JSON.stringify(activities(storedPoolOf(WITH_FALLBACK)))) differ++;
+    }
+    // The property is not vacuous: the activities themselves do differ.
+    expect(differ).toBeGreaterThan(50);
   });
 });
 
