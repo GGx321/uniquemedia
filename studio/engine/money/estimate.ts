@@ -250,7 +250,11 @@ function typicalMicros(book: PriceBook, call: ChatCall | null): number {
   return call ? book.chatCost({ model: call.model, images: call.images, ...call.typical }) : 0;
 }
 
-function ceilingMicros(book: PriceBook, call: Omit<ChatCall, "typical"> | null): number {
+/**
+ * A chat call at its ceilings, with no reasoning allowance: the age check and the descriptor. S5.BA5a round 2 (M2): it takes a `ChatCall` only, so a writer
+ * call (which has no `typical`) cannot be priced here without its reasoning; a writer attempt is `writerAttemptWorstMicros`.
+ */
+function ceilingMicros(book: PriceBook, call: ChatCall | null): number {
   return call ? book.chatWorstCase({ model: call.model, maxTokens: call.maxTokens, inputTokens: call.inputTokens, images: call.images }) : 0;
 }
 
