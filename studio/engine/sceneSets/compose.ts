@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { CategoryRef, CategorySnapshot, LegsShare, SceneLevel } from "../../shared/engine";
 import type { PlannedNewSceneSet } from "../library/sceneSets";
 import { writerAttemptIds } from "../runs/plan";
-import { planWithPools, plannerCategoryOf, type Pool } from "../scenes";
+import { planForAvatar, plannerCategoryOf, type Pool } from "../scenes";
 import { chunkSlots } from "../scenes/writer";
 
 // CS.4a: a compose plans the set with the planner a run uses, issues the set's run id and every writer chunk's attempt ids, and records the first
@@ -34,6 +34,8 @@ export interface ComposeInput {
   split?: readonly { ref: CategoryRef; count: number }[];
   /** S4.5a, internal: the batch launch the set belongs to; absent for the owner's own set. */
   launchId?: string;
+  /** 5a.4 (S5.BA3, I5.74): whether the avatar was created in Studio (the engine's `studioCreated`, S5.BA5). Default false (fail-closed): an imported avatar's set holds no implied cover. */
+  impliedNudity?: boolean | undefined;
 }
 
 /** A set's planner seed: fixed by its id (as a run's is by its own), so the plan is reproducible from the set alone. */
@@ -47,7 +49,7 @@ export function planSceneSet(input: ComposeInput): PlannedNewSceneSet {
   const slots =
     input.count === 0
       ? []
-      : planWithPools(
+      : planForAvatar(
           {
             seed: seedOfSet(input.sceneSetId),
             count: input.count,
@@ -58,6 +60,7 @@ export function planSceneSet(input: ComposeInput): PlannedNewSceneSet {
             ...(input.split === undefined ? {} : { split: input.split }),
           },
           input.pools,
+          input.impliedNudity === true,
         ).slots;
   return {
     sceneSetId: input.sceneSetId,

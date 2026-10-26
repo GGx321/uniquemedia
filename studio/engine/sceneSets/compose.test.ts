@@ -114,11 +114,27 @@ describe("planSceneSet", () => {
     expect(flirty.scenes.map((s) => s.slot)).toEqual(planWithPools({ seed: seedOfSet("set-aaaa-0001"), count: 40, categories: ["home", "travel"], level: "flirty" }, POOLS).slots);
   });
 
-  // 5a.3 (S5.9a): «Смелая» is stored as asked (the set is a «Смелая» set), and for the built-in categories that are not «Смелая» ones it draws the flirty mix.
-  test("a bold level is stored on the request, and the five ordinary built-ins draw the flirty mix", () => {
+  // 5a.3 (S5.9a): «Смелая» is stored as asked (the set is a «Смелая» set).
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 I5.71, §7.4): the five ordinary built-ins no longer draw the flirty mix at «Смелая»: every scene is planned from the category's companion, on the route, with
+  // the request's tiers counted over the whole request. The «Кокетливая» half of the old assertion is the test above, which keeps its flirty counts.
+  test("a bold level is stored on the request, and the five ordinary built-ins draw their companions on the route, 40 / 40 / 20", () => {
     const bold = planSceneSet(input({ count: 40, level: "bold" }));
     expect(bold.request.level).toBe("bold");
-    expect(bold.scenes.map((s) => s.slot)).toEqual(planSceneSet(input({ count: 40, level: "flirty" })).scenes.map((s) => s.slot));
+    expect(bold.scenes.every((s) => s.slot.route === "seedream")).toBe(true);
+    expect(bold.scenes.filter((s) => s.slot.level === "bold")).toHaveLength(16);
+    expect(bold.scenes.filter((s) => s.slot.level === "flirty")).toHaveLength(16);
+    expect(bold.scenes.map((s) => s.slot)).toEqual(planWithPools({ seed: seedOfSet("set-aaaa-0001"), count: 40, categories: ["home", "travel"], level: "bold" }, POOLS).slots);
+  });
+
+  // 5a.4 (S5.BA3): the avatar's origin rides on the compose, default false.
+  test("an imported avatar's compose holds no implied cover and a Studio-created avatar's may", () => {
+    const implied = (impliedNudity?: boolean): number =>
+      Array.from({ length: 60 }, (_, i) => planSceneSet(input({ sceneSetId: `set-aaaa-${String(i).padStart(4, "0")}`, count: 30, level: "bold", categories: ["home", "travel", "glam", "fit", "nightwear"], ...(impliedNudity === undefined ? {} : { impliedNudity }) })))
+        .flatMap((set) => set.scenes)
+        .filter((s) => /^only /.test(s.slot.outfit)).length;
+    expect(implied()).toBe(0);
+    expect(implied(false)).toBe(0);
+    expect(implied(true)).toBeGreaterThan(0);
   });
 
   // 5a.3 (S5.9c): a «Смелая» compose of the two «Смелая» categories draws the 20 / 40 / 40 mix, and a set keeps every scene's level and route through the file.

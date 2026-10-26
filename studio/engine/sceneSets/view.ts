@@ -86,7 +86,8 @@ function sceneViews(set: StoredSceneSet, states: ReadonlyMap<number, ChunkState>
       ...(slot.route === undefined ? {} : { route: slot.route }),
       ...(slot.capture === undefined ? {} : { capture: slot.capture }),
       ...(slot.framing === "legs" ? { framing: "legs" as const } : {}),
-      place: { location: slot.location, timeOfDay: slot.timeOfDay, activity: slot.activity, outfit: slot.outfit },
+      // 5a.4 (S5.BA3, r2.2 D6): a custom category's «Смелая» scene carries the world it was set in, for the review's «мир категории».
+      place: { location: slot.location, timeOfDay: slot.timeOfDay, activity: slot.activity, outfit: slot.outfit, ...(slot.world === undefined ? {} : { world: slot.world }) },
       idea: null,
       text: scene.text,
       edited: scene.edited,

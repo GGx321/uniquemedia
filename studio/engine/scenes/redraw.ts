@@ -1,8 +1,11 @@
+import { isCustomCategory } from "../../shared/engine";
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
+import { isWaterPlaceName } from "../../shared/scenes/custom";
 import { atSlotLevel, seedreamRoute } from "../../shared/scenes/level";
 import { fittingMoments, generalOutfits, kindOfDeck, legwearOfSlot, outfitInfoOf, pinnedAt, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
 import { legsCapturesAt, legsMomentsAt, legsOutfitsOf, legsPlacesOf } from "./legs";
 import { allowedActivities, hasCleanActivity, usableOutfits, type Activity, type Place, type Pool } from "./pools";
+import { withoutImplied } from "./poolAt";
 import { drawFromPoses, drawPose, NO_EXTRA_POSES } from "./poses";
 import { makeRng, rngPick, subSeed } from "./rngUtil";
 import { isPhoneInHandShot, type PlanSlot, type Pose } from "./schema";
@@ -23,6 +26,15 @@ export interface RedrawInput {
   pool: Pool;
   /** The places and outfits the set already shows. */
   avoid: { locations: ReadonlySet<string>; outfits: ReadonlySet<string> };
+  /**
+   * 5a.4 (S5.BA3, I5.74): whether the avatar was created in Studio. Default false (fail-closed): an imported avatar, or one of unknown origin, never redraws an implied cover, whatever pool it is given.
+   */
+  impliedNudity?: boolean | undefined;
+  /**
+   * 5a.4 (S5.BA3, I5.78): the custom category's own stored pool, where a routed custom scene redraws its `world` from (the water scene a water place, the rest any). `pool` is then the shared
+   * «Смелая» pool the scene is in. Absent: a routed custom scene keeps neither a world nor a route it cannot back, so none is drawn.
+   */
+  worldPool?: Pool | undefined;
 }
 
 /**
@@ -41,6 +53,29 @@ function preferred<T>(items: readonly T[], nameOf: (item: T) => string, avoid: R
  * becomes a selfie in a pool that has none, as the planner does); a selfie or mirror never gets a two-handed activity and faces the camera.
  */
 export function redrawSlot(input: RedrawInput): PlanSlot {
+  // 5a.4 (S5.BA3, I5.74): an imported avatar's pool holds no implied cover (a pool with none comes back as it is, so nothing else moves).
+  const pool = input.impliedNudity === true ? input.pool : withoutImplied(input.pool);
+  const drawn = redrawIn({ ...input, pool });
+  return withWorld(input, drawn);
+}
+
+/**
+ * 5a.4 (S5.BA3, I5.73, I5.78): a routed custom scene is redrawn inside the same «Смелая» pool (its branch), and its `world` is redrawn from the category's own stored pool, on a stream of its
+ * own: the water scene at a water place of the category, any other at any place, another than its own when there is one. A redraw that has no route has no world (the plan slot's rule), so
+ * a scene without both is returned as it was drawn.
+ */
+function withWorld(input: RedrawInput, drawn: PlanSlot): PlanSlot {
+  if (drawn.route !== "seedream" || !isCustomCategory(drawn.category) || input.worldPool === undefined) return drawn;
+  const places = input.worldPool.locations.map((l) => l.name);
+  const wet = input.pool.locations.some((l) => l.name === drawn.location && l.water === true);
+  const kind = wet ? places.filter(isWaterPlaceName) : places;
+  const worlds = kind.length > 0 ? kind : places;
+  if (worlds.length === 0) return drawn;
+  const rng = makeRng(subSeed(input.seed, `redraw-world:${drawn.slotIndex}:${input.k}`));
+  return { ...drawn, world: rngPick(rng, preferred(worlds, (w) => w, new Set<string>(), input.slot.world ?? "")) };
+}
+
+function redrawIn(input: RedrawInput): PlanSlot {
   // 5a.2 (S5.6b): a built-in pool deals captures, and its scene is redrawn the way the planner draws it.
   // 5a.2c (S5.8a): a legs scene stays a legs scene, redrawn the way the planner draws a legs slot; any other scene never draws a legs moment (a legs moment fits a legs framing only).
   if (input.pool.captureDeck !== undefined) return input.slot.framing === "legs" && legsPlacesOf(input.pool).length > 0 ? redrawLegs(input) : redrawBuiltIn(input, input.pool.captureDeck);

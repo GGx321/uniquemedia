@@ -3,7 +3,8 @@ import { EngineFailure } from "../engineFailure";
 import { snapshotOf, type StoredCategory } from "../library/categories";
 import { MAX_REVIEW_WRITES, type StoredSceneSet } from "../library/sceneSets";
 import type { LedgerView } from "../runs/journal";
-import { POOLS, type PlanSlot, type PlannerCategory, type Pool } from "../scenes";
+import { POOLS, type PlanSlot, type Pool } from "../scenes";
+import { poolOfSlot } from "../scenes/poolAt";
 import { poolOf } from "../scenes/poolGen";
 import { drawOwnScenes, redrawSlot } from "../scenes/redraw";
 import { templateSentence } from "../../shared/scenes/template";
@@ -58,7 +59,7 @@ function redrawsOf(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "r
 /** A write as the planners below decide it, before its model scenes are counted from the record it would leave (`planReviewWrite`). */
 type PlannedWrite = Omit<ReviewPlan, "modelScenes">;
 
-function planRewrite(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "rewrite" }>, pools: PoolsOf): PlannedWrite {
+function planRewrite(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "rewrite" }>, pools: PoolsOf, impliedNudity: boolean): PlannedWrite {
   const scenes = targetsOf(set, target.sceneIds);
   const planned = scenes.flatMap((s) => (s.origin === "planned" ? [s] : []));
   if (planned.length !== 0 && planned.length !== scenes.length) throw sceneRefusal("a rewrite covers planned scenes or own scenes, not both: they are written from different prompts", "mixed-kinds");
@@ -73,8 +74,8 @@ function planRewrite(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: 
       outfits: new Set(set.scenes.flatMap((s) => (s.origin === "planned" && !s.removed ? [s.slot.outfit] : []))),
     };
     for (const scene of planned) {
-      const pool = pools.of(scene.slot.category);
-      const drawn = redrawSlot({ seed: seedOfSet(set.sceneSetId), k, slot: scene.slot, pool, avoid });
+      const { pool, worldPool } = pools.of(scene.slot);
+      const drawn = redrawSlot({ seed: seedOfSet(set.sceneSetId), k, slot: scene.slot, pool, avoid, impliedNudity, worldPool });
       avoid.locations.add(drawn.location);
       avoid.outfits.add(drawn.outfit);
       draws.push(drawn);
@@ -129,10 +130,13 @@ function planResume(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "
   return { kind: "idea", k: record.k, count: record.count, attemptsLeft, begin: (current, jobId) => resumeReviewWrite(current, record.k, jobId) };
 }
 
-/** The pool a redraw draws from and the snapshot it refreshes: a built-in's own, or the custom category as the library holds it now. */
+/**
+ * The pool a redraw draws from and the snapshot it refreshes. 5a.4 (S5.BA3, §5.1.2): the pool is the slot's own by its marker (`poolOfSlot`): a routed scene of the five its companion, a routed
+ * custom scene the shared «Смелая» pool of its branch (with the category as the library holds it now as the `worldPool` its world is redrawn from), anything stored before 5a.4 the pool it was drawn in.
+ */
 interface PoolsOf {
-  of: (category: PlannerCategory) => Pool;
-  snapshotOf: (category: PlannerCategory) => CategorySnapshot | null;
+  of: (slot: PlanSlot) => { pool: Pool; worldPool?: Pool };
+  snapshotOf: (category: PlanSlot["category"]) => CategorySnapshot | null;
 }
 
 /**
@@ -154,6 +158,8 @@ interface ReviewPlanInput {
   ledger: LedgerView | null;
   /** The stored custom categories the refs name; throws NOT_FOUND for one the library lacks. */
   customCategories: (refs: readonly CategoryRef[]) => Promise<StoredCategory[]>;
+  /** 5a.4 (S5.BA3, I5.74): whether the set's avatar was created in Studio. Default false (fail-closed): an imported avatar's redraw holds no implied cover. */
+  impliedNudity?: boolean | undefined;
 }
 
 async function planWrite(input: ReviewPlanInput): Promise<PlannedWrite> {
@@ -169,16 +175,18 @@ async function planWrite(input: ReviewPlanInput): Promise<PlannedWrite> {
     );
     for (const category of await input.customCategories([...refs])) stored.set(category.categoryId, category);
   }
+  const impliedNudity = input.impliedNudity === true;
   return planRewrite(set, target, {
-    of: (category) => {
-      if (!isCustomCategory(category)) return POOLS[category];
-      const found = stored.get(category);
-      if (found === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no custom category ${category}` });
-      return poolOf(found.pool);
+    of: (slot) => {
+      const routed = poolOfSlot(slot, impliedNudity);
+      if (!isCustomCategory(slot.category)) return { pool: routed ?? POOLS[slot.category] };
+      const found = stored.get(slot.category);
+      if (found === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no custom category ${slot.category}` });
+      return routed === undefined ? { pool: poolOf(found.pool) } : { pool: routed, worldPool: poolOf(found.pool) };
     },
     snapshotOf: (category) => {
       const found = isCustomCategory(category) ? stored.get(category) : undefined;
       return found === undefined ? null : snapshotOf(found);
     },
-  });
+  }, impliedNudity);
 }
