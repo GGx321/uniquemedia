@@ -211,6 +211,12 @@ describe("avatarSummaryFrom", () => {
     expect(summary?.usage).toEqual({ state: "unknown", reasons: ["record-unreadable", "rejects-unreadable"] });
   });
 
+  // 5a.4 (S5.BA5, plan s5a4 I5.74, I5.80): the summary carries where the avatar came from, as its counts read it (`avatarCounts`, the library's `studioCreated`).
+  test("carries the origin its counts read", () => {
+    expect(avatarSummaryFrom(active, { ...NO_PHOTOS, origin: "studio" })?.origin).toBe("studio");
+    expect(avatarSummaryFrom(active, { ...NO_PHOTOS, origin: "imported" })?.origin).toBe("imported");
+  });
+
   test("keeps an archived avatar archived", () => {
     expect(avatarSummaryFrom({ ...active, status: "archived" }, NO_PHOTOS)?.status).toBe("archived");
   });
@@ -288,6 +294,25 @@ describe("libraryView over a real library", () => {
     for (const n of [1, 2]) await library.addPhoto(saved.id, PNG_1X1, samplePhotoMeta({ source: { ...generated, category: "home", attemptId: `run-00000001:slot-${n}#1`, slot: `slot-${n}` } }));
 
     expect(libraryView(library).avatars.map((a) => a.photoCount)).toEqual([2]);
+  });
+
+  // 5a.4 (S5.BA5, plan s5a4 I5.74, §5.6): a saved avatar is listed with its origin: `studio` exactly when its master is a wizard candidate and it has no imported photo.
+  test("lists a wizard avatar as made in Studio and every other one as imported", async () => {
+    const { library } = await openLibrary(root(), { now: steppingClock(), newId: sequentialIds("origin") });
+    const generated = samplePhotoMeta().source;
+    if (generated.kind !== "generated") throw new Error("expected a generated sample source");
+    const wizard = await library.createAvatar({ name: "Anna", age: 25, traits: manifestTraits(TRAITS), descriptor: DESCRIPTOR });
+    const candidate = await library.addPhoto(wizard.id, PNG_1X1, samplePhotoMeta({ source: { ...generated, slot: "candidate-4" } }));
+    await library.updateAvatar(wizard.id, { status: "active", masterPhotoId: candidate.id });
+    const plain = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: DESCRIPTOR });
+    const master = await library.addPhoto(plain.id, PNG_1X1, samplePhotoMeta());
+    await library.updateAvatar(plain.id, { status: "active", masterPhotoId: master.id });
+
+    expect(libraryView(library).avatars.map((a) => [a.name, a.origin])).toEqual([
+      ["Anna", "studio"],
+      ["Mia", "imported"],
+    ]);
+    expect([avatarCounts(library, wizard.id).origin, avatarCounts(library, plain.id).origin]).toEqual(["studio", "imported"]);
   });
 
   /** A saved avatar with three scene photos (oldest first) in a real library; the master is a promoted candidate. */

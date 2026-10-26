@@ -11,6 +11,7 @@ import {
   Draft,
   MAX_UNREADABLE_AVATARS,
   UNREADABLE_REASON_DETAIL,
+  type AvatarOrigin,
   type AvatarUsage,
   type UnreadableAvatar,
   type UnreadableReason,
@@ -124,6 +125,11 @@ export interface AvatarCounts {
   eligibleUnusedCount: number;
   /** Whether the counts can be trusted, and if not why (3e.2, K16). */
   usage: AvatarUsage;
+  /**
+   * 5a.4 (S5.BA5, plan s5a4 I5.74, I5.80): where the avatar came from, read with the counts from the library (`studioCreated`). `avatarCounts` always fills it; absent (a stand-in that
+   * does not say) leaves it out of the summary, which reads as imported, the fail-closed side.
+   */
+  origin?: AvatarOrigin;
 }
 
 /**
@@ -134,13 +140,14 @@ export interface AvatarCounts {
  * listing never fails over it), and the reasons it cannot vouch for that
  * usage (`usage`), read at the same moment.
  */
-export function avatarCounts(library: Pick<Library, "photosByAvatar" | "videoCount" | "eligibleUnusedCount" | "usageReasons">, avatarId: string): AvatarCounts {
+export function avatarCounts(library: Pick<Library, "photosByAvatar" | "videoCount" | "eligibleUnusedCount" | "usageReasons" | "studioCreated">, avatarId: string): AvatarCounts {
   const [first, ...rest] = library.usageReasons(avatarId);
   return {
     photoCount: galleryPhotoCount(library, avatarId),
     videoCount: library.videoCount(avatarId),
     eligibleUnusedCount: library.eligibleUnusedCount(avatarId),
     usage: first === undefined ? { state: "ok" } : { state: "unknown", reasons: [first, ...rest] },
+    origin: library.studioCreated(avatarId) ? "studio" : "imported",
   };
 }
 
@@ -165,6 +172,7 @@ export function avatarSummaryFrom(manifest: AvatarManifest, counts: AvatarCounts
     // Omitted, never null, when unset: an avatar without a body lists exactly as it did before (the parity transcripts).
     ...(body === undefined ? {} : { body }),
     ...(proposal === undefined ? {} : { bodyProposal: proposal }),
+    ...(counts.origin === undefined ? {} : { origin: counts.origin }),
   });
   return parsed.success ? parsed.data : null;
 }

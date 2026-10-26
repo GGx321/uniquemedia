@@ -689,6 +689,18 @@ describe("avatars.pick", () => {
     expect(engine.library?.getAvatar(draftId)).toMatchObject({ status: "active", name: "Lena", masterPhotoId: chosen });
   });
 
+  // 5a.4 (S5.BA5, plan s5a4 I5.74, §5.6): an avatar whose master is a wizard candidate is one made in Studio, and its summary says so; an avatar whose master the wizard did not
+  // draw (the seeded Mia: a generated master with no wizard slot) reads as imported, the fail-closed side.
+  test("a picked candidate makes an avatar made in Studio: the summary carries origin studio; the seeded Mia reads as imported", async () => {
+    const { engine, events, draftId, avatarId, candidates } = await draftWithCandidates();
+    const answer = ok(await engine.handle(pick(draftId, candidates[1]?.id ?? "")));
+
+    expect(answer.result).toMatchObject({ avatar: { avatarId: draftId, origin: "studio" } });
+    expect(events().at(-1)).toMatchObject({ payload: { avatar: { avatarId: draftId, origin: "studio" } } });
+    const state = await snapshot(engine);
+    expect(state.avatars.map((a) => [a.avatarId, a.origin])).toEqual(expect.arrayContaining([[draftId, "studio"], [avatarId, "imported"]]));
+  });
+
   test("the other candidates are deleted: different people never become photos or references of the avatar (invariant 9)", async () => {
     const { engine, draftId, candidates } = await draftWithCandidates();
     const chosen = candidates[0];
