@@ -500,6 +500,20 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
       expect(told).not.toContain("Daylight");
     });
 
+    // S5.BA4c (P-BW2): «while the friend takes the photo» passed once «photo» left the list; caught again as a phrase.
+    test.each([
+      ["while the friend takes the photo", "she lies back across the bed in a white lace bra and panties while the friend takes the photo."],
+      ["as her friend took the photo", "she lies back across the bed in a white lace bra and panties as her friend took the photo."],
+      ["she takes the photo", "she lies back across the bed in a white lace bra and panties and she takes the photo."],
+    ])("«%s» is refused", (_, tail) => {
+      const read = bold(`In her small hotel room in Paris, ${tail}`);
+      expect(problemsOf(read)).toContain("label-word");
+    });
+
+    test.each(["beside a framed photo of the Seine", "a photo of her friend on the nightstand"])("«%s» is no leak", (words) => {
+      expect(problemsOf(bold(`In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, ${words}.`))).not.toContain("label-word");
+    });
+
     // S5.BA4b (P-BW, LOW): the pose code pasted as «facing front» / «faces front».
     test.each(["facing front", "faces front"])("«%s» is refused", (words) => {
       expect(problemsOf(bold(`In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, ${words} on the pillows, a box of macarons on the nightstand.`))).toContain("label-word");

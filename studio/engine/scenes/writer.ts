@@ -669,10 +669,10 @@ function missesAGarment(outfit: string, sentence: string): boolean {
  * P-BA: the words of the slot's labels that the drafts pasted into the prose, and only those (review LOW, S5.BA4 round 2): who takes the photo and how (the capture
  * labels' selfie, snap and timer, «captured», the camera and its lens), the light line the ordinary writer feeds («daylight»), the pose's own name, and the slot's
  * field names; review round 3 adds the capture label's phrases («her own photo», «in the timer shot», «photo from above»), S5.BA4b the pose code («facing
- * front»). The light named by its source (sunlight, sunshine, lamplight), a frame of the view, a framed photo on the wall and a shot of espresso are not leaks;
+ * front»), S5.BA4c who takes the photo («the friend takes the photo»). The light named by its source (sunlight, sunshine, lamplight), a frame of the view, a framed photo on the wall and a shot of espresso are not leaks;
  * her phone and the viewer are the gaze rule's own words (on a timer her phone is one: `boldProblemsOf`).
  */
-const LABEL_WORDS = /\b(?:daylight|captured|selfies?|snaps?|timers?|cameras?|lens(?:es)?|three-quarter|worlds?|slots?|her own photo|(?:in|on) the (?:\w+ )?shot(?!\s+(?:glass|of)\b)|photo from above|fac(?:es|ing) front)\b/gi;
+const LABEL_WORDS = /\b(?:daylight|captured|selfies?|snaps?|timers?|cameras?|lens(?:es)?|three-quarter|worlds?|slots?|her own photo|(?:in|on) the (?:\w+ )?shot(?!\s+(?:glass|of)\b)|photo from above|fac(?:es|ing) front|(?:friend\s+)?(?:takes|took|taking)\s+the\s+photo)\b/gi;
 
 /** The label words of a sentence, as it writes them. */
 function labelWordsIn(sentence: string): string[] {
