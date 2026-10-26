@@ -38,11 +38,15 @@ function mixedSlots(seed: number, count: number, routed: readonly number[]): Pla
   });
 }
 
-/** `count` slots; those at `routed` indexes are «Ночнушки и бельё» slots on the Seedream route, the rest «Дом» slots off it. The cap is a «Ночнушки и бельё» request's, every photo bold. */
+/**
+ * `count` slots; those at `routed` indexes are «Ночнушки и бельё» slots on the Seedream route, the rest «Дом» slots off it, and the request names both (review L2, as plan.route,
+ * runJob.bold and journal.bold do).
+ */
 function runPlan(count: number, routed: readonly number[], age: "on" | "off" = "off", capMicros?: number): RunPlan {
   const slots: PlanSlot[] = mixedSlots(5, count, routed);
-  const request = { avatarId: "avatar-0001", count, categories: ["nightwear" as const] };
-  const worst = runEstimate(PRICED, MODELS, request, age, () => true).worstMicros;
+  const request = { avatarId: "avatar-0001", count, categories: ["home" as const, "nightwear" as const] };
+  // The cap the owner accepted holds every photo at the 2K attempt (a «Ночнушки и бельё» request of the same size), so no remaining figure below is cut by it.
+  const worst = runEstimate(PRICED, MODELS, { ...request, categories: ["nightwear" as const] }, age, () => true).worstMicros;
   return buildRunPlan({
     runId: RUN_ID,
     avatarId: "avatar-0001",
