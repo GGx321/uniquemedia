@@ -85,12 +85,12 @@ export const PlanSlotSchema = z
     capture: z.enum(CAPTURES).optional(),
     legwear: PoolText.optional(),
     // Additive (S5.7a): «Подача» of the slot. Absent reads as ordinary. The planner does not set it until S5.7b draws the mix.
-    // 5a.3 (S5.9c): a slot may be bold, and only a «Смелая» category's slot is (the refine below): the five ordinary built-ins under `bold` plan as flirty, so none of their slots is bold.
+    // 5a.3 (S5.9c), 5a.4 (S5.BA1): a slot may be bold when it is a «Смелая» category's or carries the route (the refine below); a slot of the five or a custom category stored before 5a.4 is never bold.
     level: SceneLevel.optional(),
     // Additive (S5.8a): «Ножки», a slot whose legs and feet fill most of the frame. Absent reads as an ordinary framing. It rides with a capture the legs banks deal.
     framing: z.literal("legs").optional(),
-    // Additive (5a.3, S5.9a): the slot is drawn on the Seedream route. Absent reads as the owner's image model. Only a «Смелая» category's slot carries it (S5.9b2,
-    // the refine below); the planner sets it with the bold draw (S5.9c).
+    // Additive (5a.3, S5.9a): the slot is drawn on the Seedream route. Absent reads as the owner's image model. Any category's slot may carry it from 5a.4 (S5.BA1, I5.73);
+    // the planner sets it with the bold draw (S5.9c, and S5.BA3 for the five and the custom categories).
     route: SceneRoute.optional(),
     // Additive (5a.4, S5.BA1, I5.78): the place a custom category's «Смелая» slot belongs to, one of the category's stored pool places, copied in so a resume or a writer chunk never reads the
     // library. Only a custom slot on the route carries it (the refine below); absent reads as no world.

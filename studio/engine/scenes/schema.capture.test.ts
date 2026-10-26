@@ -72,7 +72,7 @@ describe("a plan slot's capture and legwear (additive, I5.27)", () => {
     expect(PlanSlotSchema.safeParse({ ...baseSlot(), category: "nightwear", level: "daring" }).success).toBe(false);
   });
 
-  // 5a.3 (S5.9a): the route rides on the slot as an optional `route`. S5.9b2 (plan s5a3 §11): only on a «Смелая» category's slot, the one kind the bold route draws.
+  // 5a.3 (S5.9a): the route rides on the slot as an optional `route`. 5a.4 (S5.BA1): any category's slot may carry it (the rows for the five and a custom category are in schema.boldAny.test.ts).
   test("a «Смелая» slot's Seedream route is kept as written, and a slot without one gains none", () => {
     expect(PlanSlotSchema.parse({ ...baseSlot(), category: "nightwear", route: "seedream" }).route).toBe("seedream");
     expect(PlanSlotSchema.parse({ ...baseSlot(), category: "beach", location: "the beach", route: "seedream" }).route).toBe("seedream");

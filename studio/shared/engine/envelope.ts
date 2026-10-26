@@ -205,6 +205,13 @@ import { z } from "zod";
 //  - Rollback (checked against 91adc7f0's readers): a 5b.1 build looks only at FILES directly in `clips/` (`clips.list` by `<clipId>.json`, the startup recovery and its sweep by a clip id and a known suffix, `exportNumbers`
 //    by files only, `main/media/resolve.ts` by named paths), so it ignores the `batches` folder: nothing becomes unreadable, nothing is swept, an avatar delete takes the folder with the avatar, and a 5b.2+ build reads the
 //    summaries again. `batches`, `ClipBatchSummary` and its enums are wire-only within one build (91adc7f0's `clips.list` result is strict, but the window and the engine ship together). Studio has no downgrade path.
+// Stage 5, 5a.4, S5.BA1 (additive, no bump; no new command, no new error code): «Смелая» on every category. All optional fields:
+//  - `PlanSlot.route` is now allowed on a slot of the five and of a custom category (it was a «Смелая» category's alone), and `level: "bold"` on such a slot when it carries the route; `PlanSlot.world`
+//    (a custom category's routed slot: the place of its stored pool the day belongs to); `ScenePlace.world` (the scene review's «по месту категории», the same rule); `AvatarSummary.origin`
+//    (`studio` | `imported`, absent read as imported); the bank types' `tier: "implied"`, `openCoverage` and `BankPlace.water`, and `TemplateContext.impliedNudity`, which are engine-internal.
+//  - Rollback: an older build refuses, as a whole, a plan.json, a stored scene-set file or a writer job's slots that carry `route: "seedream"` or `level: "bold"` on a slot of the five or of a custom
+//    category, or any `world` key (its slot schema is strict, and its refines allow the route and a bold level on a «Смелая» category alone). The effect: the run cannot resume, its photos read as
+//    planless, and the set is unreadable. `AvatarSummary.origin` and `ScenePlace.world` only travel within one build (the window and the engine ship together); nothing stores them.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 
