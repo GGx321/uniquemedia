@@ -442,20 +442,33 @@ function plannedActivities(activities: readonly { text: string; twoHanded: boole
   return kept.some(isCleanActivity) ? kept : all;
 }
 
-/**
- * A stored custom pool as the engine's pool (the planner's and the pool schema's shape): a mirror place carries `mirror: true`, the others none, and its prop-only
- * activities are dropped (`plannedActivities`). The library and the review UI keep the stored pool as it is.
- */
-export function poolOf(pool: CategoryPool): Pool {
+/** A stored pool in the engine's shape, its activities as `activitiesOf` gives them: a mirror place carries `mirror: true`, the others none. */
+function enginePoolOf(pool: CategoryPool, activitiesOf: (activities: CategoryPool["locations"][number]["activities"]) => Activity[]): Pool {
   return {
     locations: pool.locations.map((place) => ({
       name: place.name,
       times: [...place.times],
-      activities: plannedActivities(place.activities),
+      activities: activitiesOf(place.activities),
       ...(place.mirror ? { mirror: true as const } : {}),
     })),
     outfits: [...pool.outfits],
     shotDeck: [...pool.shotDeck],
     ...(pool.poses === undefined ? {} : { poses: [...pool.poses] }),
   };
+}
+
+/**
+ * A stored custom pool as the engine's pool (the planner's and the pool schema's shape), its prop-only activities dropped (`plannedActivities`). The library and the
+ * review UI keep the stored pool as it is.
+ */
+export function poolOf(pool: CategoryPool): Pool {
+  return enginePoolOf(pool, plannedActivities);
+}
+
+/**
+ * A stored custom pool in the engine's shape with every activity as stored (FU-CLIP round 2, LOW-2): what the library's read holds to the pool rules beside `poolOf`, so
+ * a youth word in an activity planning drops («holding a school bag») still makes the record unreadable.
+ */
+export function storedPoolOf(pool: CategoryPool): Pool {
+  return enginePoolOf(pool, (activities) => activities.map((a) => ({ text: a.text, twoHanded: a.twoHanded })));
 }

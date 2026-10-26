@@ -154,6 +154,19 @@ describe("unreadable and newer records", () => {
     expect(await s.get("cat-paris-cafes")).toBeNull();
   });
 
+  // FU-CLIP round 2 (LOW-2): poolOf drops a prop-only activity before planning, so the rules are read on the pool as stored too: a youth word in one still makes it unreadable.
+  test("a record whose prop-only activity holds a youth word («holding a school bag») is unreadable, though planning would drop that activity", async () => {
+    const s = store();
+    const made = await s.create(input({ categoryId: "cat-paris-cafes" }));
+    const first = made.pool.locations[0];
+    if (first === undefined || first.activities.length >= 4 || !first.activities.some((a) => !a.twoHanded)) throw new Error("the fixture's first place needs room and a free-hand activity");
+    const tampered = { ...made, pool: { ...made.pool, locations: made.pool.locations.map((l, i) => (i === 0 ? { ...l, activities: [...l.activities, { text: "holding a school bag", twoHanded: false }] } : l)) } };
+    await put("cat-paris-cafes.json", JSON.stringify(tampered));
+
+    expect(await s.list()).toEqual({ categories: [], unreadable: 1, overLimit: 0 });
+    expect(await s.get("cat-paris-cafes")).toBeNull();
+  });
+
   // S5.R1 M2: the label goes to the writer in every slot, so a stored label is held to the youth check like the pool texts.
   test("a record whose label suggests a young person is unreadable, not served", async () => {
     const s = store();

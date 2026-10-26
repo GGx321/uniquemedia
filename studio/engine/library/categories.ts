@@ -17,7 +17,7 @@ import {
   type CategorySnapshot,
   type CategoryStyle,
 } from "../../shared/engine";
-import { labelSuggestsAMinor, poolOf } from "../scenes/poolGen";
+import { labelSuggestsAMinor, poolOf, storedPoolOf } from "../scenes/poolGen";
 import { PoolSchema } from "../scenes/pools";
 import { fsyncDir, hasErrorCode, readFolderNames, readRecordFile, writeJsonAtomic } from "./durableFs";
 import { CATEGORIES_DIR, CATEGORY_FILE_SCHEMA_VERSION, isFromNewerVersion } from "./layout";
@@ -127,7 +127,8 @@ function readRecord(raw: unknown, fileId: string): StoredCategory | null {
   if (!parsed.success || parsed.data.categoryId !== fileId) return null;
   // The label goes to the writer with every slot, so a label that suggests a young person makes the record unreadable like a pool text would (S5.R1 M2).
   if (labelSuggestsAMinor(parsed.data.label)) return null;
-  return PoolSchema.safeParse(poolOf(parsed.data.pool)).success ? parsed.data : null;
+  // FU-CLIP round 2 (LOW-2): the pool as stored and as planned (poolOf drops prop-only activities), so a youth word in a dropped activity still refuses the record.
+  return PoolSchema.safeParse(storedPoolOf(parsed.data.pool)).success && PoolSchema.safeParse(poolOf(parsed.data.pool)).success ? parsed.data : null;
 }
 
 /**
