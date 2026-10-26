@@ -4487,7 +4487,7 @@ export const GOLDEN: Record<string, string[]> = {
     "# the set holds 10 scenes, 6 of them flirty and 0 bold",
     "# no scene is drawn on the Seedream route yet: true",
     "# the set echoes its level: flirty",
-    "# a bold draft is previewed like a flirty one",
+    "# a bold draft plans like a flirty one and prices every photo on the route",
     "> scenes.get {\"avatarId\":\"avatar#1\"}",
     "< ok {\"sceneSet\":{\"sceneSetId\":\"set#2\",\"status\":\"ready\",\"launch\":false,\"scenes\":10,\"written\":10},\"unreadable\":0}",
     "> scenes.discard {\"sceneSetId\":\"set#2\"}",

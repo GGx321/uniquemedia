@@ -254,7 +254,9 @@ export const PRESENTATION_SCENARIOS: readonly Scenario[] = [
       t.note("the same compose flirty: the same counts");
       await t.callLaunch("scenes.compose", { avatarId: w.avatarId, count: 10, categories: ["home"], level: "flirty", acceptedWorstMicros: ENOUGH });
       facts(await settled());
-      t.note("a bold draft is previewed like a flirty one");
+      // 5a.4 (S5.BA5, 2026-10-26, plan s5a4 I5.77, BA3 review H-1 and L-2): a draft at «Смелая» plans what a flirty one plans, but every photo it draws is on the Seedream route, so the engine
+      // prices it at the bold unit (the transcript writes no price). The note said «previewed like a flirty one», true of the price before 5a.4 only; the key's one granted second flip.
+      t.note("a bold draft plans like a flirty one and prices every photo on the route");
       const flirtyFound = await t.callLaunch("scenes.get", { avatarId: w.avatarId });
       const flirtySetId = flirtyFound.ok ? record(flirtyFound.result.sceneSet)?.sceneSetId : undefined;
       if (typeof flirtySetId !== "string") throw new Error("the avatar has no scene set to discard");
