@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Capture } from "../captures";
-import { lingerieWordsIn } from "./boldRules";
+import { lingerieWordsIn, openClassOf } from "./boldRules";
 import { AWAY_ACTION_WORDS, unfabricBottomsIn, WALKS_AWAY_WORDS } from "../words";
 import { NIGHTWEAR } from "./nightwear";
 import { boldAnyProblems, boldBankProblems, categoryBankProblems } from "./schema";
@@ -320,13 +320,34 @@ describe("the outfits: plain underwear, lace and satin, the most revealing (plan
   });
 
   // Review M1: P-BA drew the lingerie classes without their coverage (A1, A3), no satin: only the satin says its kept sentence as its open one.
-  test("only the satin says an open coverage, its kept one: the lingerie and plain outfits say none for a Studio-created avatar", () => {
-    expect(NIGHTWEAR.outfits.filter((o) => o.openCoverage !== undefined).map((o) => [o.text, o.openCoverage === o.coverage])).toEqual([
-      ["a satin slip nightdress", true],
-      ["a satin midi nightdress", true],
-      ["a satin cami and satin shorts", true],
-      ["a short tied satin robe", true],
-    ]);
+  // Review M1/N1: by the table of the classes P-BA drew open (banks/boldRules.ts `openClassOf`): an outfit of such a class says no open coverage; every other one (the satin) says its
+  // kept one as its open one.
+  test.each<[string, string | null]>([
+    ["a tee and cotton panties", "A1"],
+    ["a cotton bra and briefs", "A1"],
+    ["a cami and cotton panties", "A1"],
+    ["a cropped tee and cotton panties", "A1"],
+    ["a black bra and briefs", "A1"],
+    ["a crop top with panties and jeans", "S1"],
+    ["a black lace bra and panties", "V1"],
+    ["a white lace bra and panties", "V1"],
+    ["a lace bodysuit", "G1"],
+    ["a sheer babydoll over a lace set", "G2"],
+    ["an open white shirt and panties", "A3"],
+    ["a white lace bra and a thong", "S2"],
+    ["a satin slip nightdress", null],
+    ["a satin midi nightdress", null],
+    ["a satin cami and satin shorts", null],
+    ["a short tied satin robe", null],
+  ])("«%s»: class %p, and its open coverage by it", (text, probe) => {
+    const outfit = outfitNamed(text);
+    if (probe === null) expect(openClassOf(text)).toBeNull();
+    else expect(openClassOf(text)).toStartWith(probe);
+    expect(outfit?.openCoverage).toBe(probe === null ? outfit?.coverage : undefined);
+  });
+
+  test("the table names every outfit of the bank but the implied bedsheet", () => {
+    expect(NIGHTWEAR.outfits.filter((o) => o.tier !== "implied")).toHaveLength(16);
   });
 });
 

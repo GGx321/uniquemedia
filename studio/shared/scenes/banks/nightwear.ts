@@ -12,7 +12,7 @@ import type { CategoryBank, Outfit } from "./types";
 // nightshirt, the silk pajamas, the prone grey lounge shorts) gave way to plain underwear; the tiers follow the tier table (r2.2 P6, banks/boldRules.ts `tierOfGarment`).
 // The bedsheet is an implied cover (a Studio-created avatar's only, I5.74), its moment reworded so her free hand holds nothing (r2.2 P3). P-BA drew the prone bra and
 // briefs (A1) and the open shirt (A3) without their coverage on a Studio-created avatar, so no lingerie or plain outfit here says an open coverage: such a frame says no
-// sentence. The sheet was drawn with its kept sentence only, and no satin was drawn open (review M1), so every avatar says theirs (r2.2 P5).
+// sentence. The satin is not among the classes P-BA drew open, and the sheet was drawn with its kept sentence only, so every avatar says theirs (review M1, N1; r2.2 P5).
 
 /** The plain underwear that replaced the cotton nightwear; the prone moments wear the tee and panties (Seedream drew prone lingerie: P-5a3 #4, P-NUDE C1, P-BA A1). */
 const TEE_AND_PANTIES = "a tee and cotton panties";
