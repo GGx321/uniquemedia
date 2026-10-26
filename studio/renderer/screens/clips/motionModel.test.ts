@@ -78,7 +78,7 @@ describe("the result lines (62b, 62c, 63a, 63b)", () => {
   });
 
   test("a store that could not be written after a paid call says so, with the cost (S5.FU-DATA 6), and is neither «Не получилось» nor «повторила»", () => {
-    expect(plain(lineText(suggestNoneLine(3_400, "not-saved")))).toBe("Не удалось сохранить предложения — оплачено $0.003.");
+    expect(plain(lineText(suggestNoneLine(3_400, "not-saved")))).toBe("Не удалось сохранить предложенные движения — оплачено $0.003.");
     expect(suggestNoneLine(3_400, "not-saved").money).toBe("$0.003");
     expect(plain(lineText(ideaNoneLine(2_200, "not-saved")))).toBe("Не удалось сохранить перевод идеи — оплачено $0.002.");
   });

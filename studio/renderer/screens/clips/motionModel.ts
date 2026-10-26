@@ -8,6 +8,8 @@ import {
   OwnIdeaText,
   type ClipFrameNote,
   type ClipMotionChoice,
+  type ClipSuggestResult,
+  type ClipTranslateResult,
   type MotionProblem,
 } from "../../../shared/engine";
 import { NBSP, plural } from "../../lib/format";
@@ -96,6 +98,10 @@ function withCost(lead: string, costMicros: number, period = true): MoneyLine {
   return money === null ? { before: `${lead}${NBSP}— ${word}${end}`, money: null, after: "" } : { before: `${lead}${NBSP}— ${word}`, money, after: end };
 }
 
+/** The reasons of a `none`, as the contract says them (never copied here). */
+export type SuggestNoneReason = NonNullable<Extract<ClipSuggestResult, { outcome: "none" }>["reason"]>;
+export type IdeaNoneReason = NonNullable<Extract<ClipTranslateResult, { outcome: "none" }>["reason"]>;
+
 /** 62b: «Предложено 3 движения — оплачено $0.003.» */
 export function suggestedLine(count: number, costMicros: number): MoneyLine {
   return withCost(`Предложено ${count}${NBSP}${plural(count, MOTION_FORMS)}`, costMicros);
@@ -105,10 +111,10 @@ export function suggestedLine(count: number, costMicros: number): MoneyLine {
  * 62c: nothing usable came out: «Не получилось предложить движения — оплачено $0.004.», or «… — бесплатно.» at 0. S5.WC5b: a free `none` is not always the model's refusal (`usage.cost: 0` gives one
  * too), so the words name no cause. `reason: "repeated"` (S5.WC3c): the model answered, and every motion was already on the sheet: «Модель повторила уже предложенные движения — оплачено $X.»
  */
-export function suggestNoneLine(costMicros: number, reason?: "repeated" | "not-saved"): MoneyLine {
+export function suggestNoneLine(costMicros: number, reason?: SuggestNoneReason): MoneyLine {
   if (reason === "repeated") return withCost("Модель повторила уже предложенные движения", costMicros);
   // S5.FU-DATA 6: the call was paid and answered, and the photo's store could not be written.
-  if (reason === "not-saved") return withCost("Не удалось сохранить предложения", costMicros);
+  if (reason === "not-saved") return withCost("Не удалось сохранить предложенные движения", costMicros);
   return withCost("Не получилось предложить движения", costMicros);
 }
 
@@ -124,7 +130,7 @@ export function rejectedPaidLine(costMicros: number): MoneyLine {
 }
 
 /** 63b #none-paid / #none-free: `translateIdea` answered `none` — the same neutral words at 0 (S5.WC5b). */
-export function ideaNoneLine(costMicros: number, reason?: "not-saved"): MoneyLine {
+export function ideaNoneLine(costMicros: number, reason?: IdeaNoneReason): MoneyLine {
   if (reason === "not-saved") return withCost("Не удалось сохранить перевод идеи", costMicros);
   return withCost("Не получилось перевести идею", costMicros);
 }

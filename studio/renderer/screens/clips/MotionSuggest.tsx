@@ -22,6 +22,7 @@ import {
   SUGGESTING,
   suggestedLine,
   suggestNoneLine,
+  type IdeaNoneReason,
   translatedLine,
   type MoneyLine,
 } from "./motionModel";
@@ -43,7 +44,7 @@ export interface News {
 }
 
 /** How a sent idea came back when it did not give a motion (63b, 63c, the two ends of `none`). */
-export type IdeaOutcome = { readonly kind: "rejected"; readonly problems: readonly MotionProblem[]; readonly costMicros: number } | { readonly kind: "none"; readonly reason?: "not-saved"; readonly costMicros: number };
+export type IdeaOutcome = { readonly kind: "rejected"; readonly problems: readonly MotionProblem[]; readonly costMicros: number } | { readonly kind: "none"; readonly reason?: IdeaNoneReason; readonly costMicros: number };
 
 export interface MotionCallsArgs {
   readonly avatarId: string;

@@ -378,12 +378,12 @@ export class MockClipMotions {
     this.#script = [...replies];
   }
 
-  /** While held, a call waits at the model after its reserve: the request is out, no answer has come. Released, every waiting call goes on. */
   /** A test makes the photo's store unwritable (S5.FU-DATA 6): a paid call then ends as `none` with the reason `not-saved`, and nothing is stored. */
   failStoreWrites(failing: boolean): void {
     this.#storeFails = failing;
   }
 
+  /** While held, a call waits at the model after its reserve: the request is out, no answer has come. Released, every waiting call goes on. */
   hold(held: boolean): void {
     this.#held = held;
     if (!held) {
