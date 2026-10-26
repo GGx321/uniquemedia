@@ -11,6 +11,8 @@ useNativeGlobals();
 //
 // 2026-10-26 (5a.4, S5.BA2, plan s5a4 §7.4): the six hashes that hold nightwear (nightwear and nightwear,beach at the three levels) were re-pinned for Q-A2, nightwear always
 // underwear on Seedream, its tier retags (r2.2 P6) and its reworded sheet moment (r2.2 P3); the three beach hashes are byte for byte the ones before.
+// 2026-10-26 (S5.BA2 review L5, L7): nightwear@flirty, nightwear@bold, nightwear,beach@flirty and nightwear,beach@bold re-pinned once more: the flirty «lies prone, chin on her
+// hand» pins the black lace set, and her bedroom's fairy lights became a framed print. The ordinary hashes and the three beach ones did not move.
 //
 // REGENERATE deliberately, never to turn a red test green: `PLANNER_BOLD_WRITE_GOLDEN=1 bun test --no-env-file studio/engine/scenes/planner.boldGolden.test.ts`, then READ the diff of
 // fixtures/planner-bold-s5-9c.json: every changed hash is a plan that moved.

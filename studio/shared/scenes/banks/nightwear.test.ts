@@ -69,6 +69,12 @@ describe("who takes the photo: she shoots herself (I5.32)", () => {
 });
 
 describe("the places (plan §6.2)", () => {
+  // Review L7 (2026-10-26): no detail of a teenager's room: a framed print in place of the string of fairy lights.
+  test("her bedroom's details are a framed print and a plain wall", () => {
+    expect(NIGHTWEAR.places.find((p) => p.name === "her bedroom")?.details).toEqual(["a framed print above the dresser", "a plain wall behind her"]);
+    expect(NIGHTWEAR.places.flatMap((p) => p.details).filter((d) => /fairy/.test(d))).toEqual([]);
+  });
+
   test("five rooms of her home, with their lamp, mirror, times and details", () => {
     expect(NIGHTWEAR.places.map((p) => ({ name: p.name, at: p.at, room: p.room, lamp: p.lamp, mirror: p.mirror, times: p.times }))).toEqual([
       { name: "her bed", at: "on her bed", room: true, lamp: true, mirror: true, times: ["morning", "evening", "night"] },
@@ -195,7 +201,8 @@ describe("the moments and their levels (plan §6.2)", () => {
     }
     expect(momentNamed("lies prone, her cheek on her hand")?.moment.handAtFace).toBe(true);
     expect(momentNamed("lies on her side, head on her hand")?.moment.handAtFace).toBe(true);
-    expect(momentNamed("lies prone, chin on her hand")?.moment).toMatchObject({ outfits: ["a tee and cotton panties", "a satin cami and satin shorts"], handAtFace: true });
+    // Review L5 (2026-10-26): a flirty moment, so a flirty slot wears the black lace set on it (after the retags its other pins are plain).
+    expect(momentNamed("lies prone, chin on her hand")?.moment).toMatchObject({ outfits: ["a tee and cotton panties", "a satin cami and satin shorts", "a black lace bra and panties"], handAtFace: true, level: "flirty" });
     // P-5a3 #4: Seedream drew it, and no phone in her hands.
     expect(momentNamed("lies on her stomach, hips behind")?.moment.outfits).toEqual(["a black bra and briefs"]);
     expect(momentNamed("lies on her stomach, feet up")?.moment.outfits).toEqual(["a black lace bra and panties"]);

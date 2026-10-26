@@ -111,7 +111,8 @@ export const NIGHTWEAR: CategoryBank = {
         { text: "lies prone, glancing back", motion: "she turns her head a little further", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", gaze: "own", outfits: [TEE_AND_PANTIES], noLegwear: true },
         { text: "lies prone, ankles crossed behind", motion: "she crosses her raised ankles slowly", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", outfits: [TEE_AND_PANTIES], noLegwear: true },
         { text: "lies prone, feet raised behind", motion: "her raised feet swing slowly behind her", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", outfits: [TEE_AND_PANTIES], noLegwear: true },
-        { text: "lies prone, chin on her hand", motion: "she kicks her feet slowly behind her", captures: ["prone"], twoHanded: false, level: "flirty", outfits: [TEE_AND_PANTIES, SATIN_CAMI], handAtFace: true, noLegwear: true },
+        // Review L5 (2026-10-26): a flirty moment, and after the retags its other pins are plain, so it pins the black lace set a flirty slot wears.
+        { text: "lies prone, chin on her hand", motion: "she kicks her feet slowly behind her", captures: ["prone"], twoHanded: false, level: "flirty", outfits: [TEE_AND_PANTIES, SATIN_CAMI, "a black lace bra and panties"], handAtFace: true, noLegwear: true },
         // P58 and P-5a3 #4: Seedream drew it, with no phone in her hands.
         { text: "lies on her stomach, hips behind", motion: "she lifts her hips a little", captures: ["prone"], twoHanded: false, level: "bold", route: "seedream", outfits: ["a black bra and briefs"], noLegwear: true },
         { text: "lies on her stomach, feet up", motion: "her raised feet swing slowly", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", level: "bold", route: "seedream", outfits: ["a black lace bra and panties"], noLegwear: true },
@@ -154,7 +155,8 @@ export const NIGHTWEAR: CategoryBank = {
       room: true,
       lamp: true,
       mirror: true,
-      details: ["a string of fairy lights", "a plain wall behind her"],
+      // Review L7 (2026-10-26): a framed print in place of a string of fairy lights, a teenager's room's mark.
+      details: ["a framed print above the dresser", "a plain wall behind her"],
       times: ["morning", "evening", "night"],
       moments: [
         { text: "stretches after waking up", motion: "she stretches her arms up slowly", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false, outfits: ARMS_UP_OUTFITS },
