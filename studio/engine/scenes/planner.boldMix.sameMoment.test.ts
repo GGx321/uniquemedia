@@ -53,11 +53,15 @@ describe("a mixed «Смелая» run never shows one moment text in two catego
 
   // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4, BA2 part 2 review L1): «Дом» at «Смелая» is planned from its companion with a share of the whole request's tiers, so what it holds depends on the
   // categories it is mixed with by design (r2.2 D1). The control is told on «Кокетливая», where «Дом» is still its own plan whatever it is mixed with.
-  test("the ordinary category's slots are the same with or without the bank it is mixed with, at «Кокетливая»", () => {
+  // Round 2, L-7: «Ножки» is asked again (legsShare 15) and the positions are compared. The legs slots are shared over the categories that can deal them in proportion to their slots, so the bank
+  // «Дом» is mixed with is another one that deals them too (beach, as many slots): «Дом» then gets the same legs slots, the same places and the same positions.
+  test("the ordinary category's slots are the same with or without the bank it is mixed with, at «Кокетливая», legs included", () => {
     for (const seed of SEEDS.slice(0, 40)) {
-      const mixed = plan({ seed, count: 20, categories: ["home", "nightwear"], level: "flirty" }).slots.filter((s) => s.category === "home");
-      const alone = plan({ seed, count: 10, categories: ["home"], level: "flirty" }).slots;
-      expect(mixed.map(({ location, activity, outfit }) => ({ location, activity, outfit }))).toEqual(alone.map(({ location, activity, outfit }) => ({ location, activity, outfit })));
+      const of = (other: "nightwear" | "beach") => plan({ seed, count: 20, categories: ["home", other], level: "flirty", legsShare: 15 }).slots.filter((s) => s.category === "home");
+      const withNightwear = of("nightwear");
+      expect(withNightwear.some((s) => s.framing === "legs")).toBe(true);
+      const key = ({ slotIndex, location, activity, outfit, framing }: (typeof withNightwear)[number]) => ({ slotIndex, location, activity, outfit, framing });
+      expect(withNightwear.map(key)).toEqual(of("beach").map(key));
     }
   });
 });
