@@ -171,14 +171,23 @@ describe("the bold system prompt (§5.3.3, r2.2 P1–P3)", () => {
   });
 
   test("it holds the timer, the hidden face and the phone over her face (r2.2 P1, P2)", () => {
-    expect(bold()).toContain("On a timer both of her hands are empty");
+    // S5.BA4c (P-BW2): «both of her hands are empty» became «both hands empty» on 19 self-shots; the timer now says what her hands hold.
+    expect(bold()).toContain("On a timer her hands hold nothing.");
     expect(bold()).toContain("When her face is hidden, describe neither her face nor her gaze");
     expect(bold()).toContain("nothing but her phone covers her face");
     expect(bold()).not.toContain("nothing covers her face");
   });
 
   test("the one-hand rule covers her own photos and the mirror selfie, the way the capture labels name them (r2.2 P2)", () => {
-    expect(bold()).toContain("In her own photo or a mirror selfie, only one hand is free");
+    expect(bold()).toContain("In her own photo or a mirror selfie one hand holds the phone and only the other is free");
+  });
+
+  // S5.BA4c (P-BW2): «both hands empty on the bed» on 19 self-shots, each refused two-handed.
+  test("it never lets a self-shot write «both hands»", () => {
+    expect(lines(bold())).toContain(
+      '- In her own photo or a mirror selfie one hand holds the phone and only the other is free: describe only what that hand does, or say nothing about her hands; never write "both hands" and never an action that needs both. On a timer her hands hold nothing.',
+    );
+    expect(bold()).not.toContain("both of her hands are empty");
   });
 
   test("it holds no «she holds» clause for the sheet or the towel (r2.2 P3)", () => {
@@ -955,8 +964,8 @@ describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the b
   const MARGIN = 250;
   // 3 961 with today's ten reasons (S5.BA4); 3 185 with every bold reason; 2 954 since label-word and public-place name the words they found (round 2);
   // 2 641 with S5.BA4b's order rule, the world join and the varied detail (P-BW); 2 542 with its outfit-missing reason and the bold re-ask; S5.BA4c (P-BW2):
-  // 2 455 with the place's preposition and the time kept out of the moment.
-  const MARGIN_PRINTED = 2_455;
+  // 2 455 with the place's preposition and the time kept out of the moment; 2 432 with the hands rule.
+  const MARGIN_PRINTED = 2_432;
   const CEILING = WRITER_BOLD_CALL.inputTokens;
   const FIRST_INDEX = 100 - WRITER_BOLD_CALL.slotsPerCall + 1;
 
