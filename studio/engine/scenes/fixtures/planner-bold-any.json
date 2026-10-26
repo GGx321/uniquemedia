@@ -1,0 +1,48 @@
+{
+  "seeds": [
+    1,
+    7,
+    42,
+    2026,
+    123456789,
+    4294967295
+  ],
+  "counts": [
+    1,
+    7,
+    20,
+    33,
+    100
+  ],
+  "legsShares": [
+    0,
+    15,
+    30
+  ],
+  "hashes": {
+    "home@bold/imported": "3290b0c89761fe227ef76fbfee78e80178335f46859d2a22bbfe4359f7a0e415",
+    "home@bold/studio": "e07395622bfc7ed42c3d22697d04a3665cc7abc204c416d630c73157e5c60611",
+    "travel@bold/imported": "d7a212421092f89741f5a6b29b3620045c412ba85b045bc75662d57ca0b12523",
+    "travel@bold/studio": "acda092f990083bdadc174fc110735d631b0265a4731842553806b4904cf6c54",
+    "photoshoot@bold/imported": "63150290fa683ce36af488c4f36710ee686c035ede94e5af4ef8f9726af17641",
+    "photoshoot@bold/studio": "cb73cf981297898af64bbe317ce238c254ceb09de5f04de13284d0d9d5718265",
+    "glamour@bold/imported": "8efa655537c78d0a1c2e34511ce971ffd40fd6d1554425f9ca7660f2322725d1",
+    "glamour@bold/studio": "9c550b835ebcf0e77d245f75666be69cfe9b391a2421f6fa36e19a717f93eef3",
+    "fitness@bold/imported": "5bbb459a33fc764166579ae272fa379a5243f3a40f1ada06914f8a9ce4ff8e79",
+    "fitness@bold/studio": "10c86db8ee16a175737c895edfcffd0cf95dbd408cc513788d7870ba7e31ff6b",
+    "home,travel,photoshoot,glamour,fitness@bold/imported": "dd987821911f9331ab95e6a0ee190b961fe98d3565bdba3825e4f4925c75b0dc",
+    "home,travel,photoshoot,glamour,fitness@bold/studio": "ac4a3253d84ce51f9bf8f81cd0ebf83581a3abdf6499f2eac236b4b5661623bb",
+    "nightwear@bold/imported": "e5062b06a8fca70666b9f543e936ac7725a4a1a8f970bd48c5be2f635d657eb1",
+    "nightwear@bold/studio": "255ce6aacca53c6e522d689ebd78df319107e20d3e314ee01fda7076345be665",
+    "home,nightwear,beach@bold/imported": "412c51a249d5c96ae3e1b03df903911f0abab545a35ff2d8c90f2dfa02420ab3",
+    "home,nightwear,beach@bold/studio": "6a9cd9bc4dcfa5e372484d056d6ffe5195e3ea6682a430d2734f3262770dff09",
+    "cat-paris-trip@bold/imported": "a361b918cc1c6df6a370d7af58280a6cc73812a94c0ed488f16a99f55f239889",
+    "cat-paris-trip@bold/studio": "0d4c3ce781ca1e33dca9cb02ed7d1a856478c0b4f04adddc58e19fff47a48d8a",
+    "cat-paris-trip,cat-night-market@bold/imported": "b1da02b7ea2d0e1be844cade10d084f7b02e6273a1ed8a934cfbfc5ce4e2dd5e",
+    "cat-paris-trip,cat-night-market@bold/studio": "5d3253c19b475d23156627e129f8de7ce4a530fbd563341c97ae31c471a9d2ea",
+    "home,travel,cat-paris-trip@bold/imported": "6b956b248f4d0af6f16d6fc1244042c47674ce551bc32e72450a184ced302bd9",
+    "home,travel,cat-paris-trip@bold/studio": "654df0a3d7f2d673b2f73d13f49a48ff74c52f1311f0dee8a4b4cfe4516236a3",
+    "home,travel,photoshoot,glamour,fitness,nightwear,beach,cat-paris-trip,cat-night-market@bold/imported": "850c6b18ecaeb1dec08ea480757d1f66be2ee4932e572b2e67cc39b3e086b2e0",
+    "home,travel,photoshoot,glamour,fitness,nightwear,beach,cat-paris-trip,cat-night-market@bold/studio": "c8ddf19a511876ed97e48abbde152600711e07fa7cd83b11f84d4748c96f0207"
+  }
+}
