@@ -885,7 +885,7 @@ describe("an age in Roman numerals or in decades (S5.FU-AGE round 2, M3)", () =>
     }
   });
 
-  test.each(["IIII", "XXXX", "xviiii", "XIIX"])("the additive and the malformed numeral %p stays one: no letter of it repeats five times", (word) => {
+  test.each(["IIII", "XXXX", "xviiii", "XIIX", "XIIIII", "XIIIIII", "XVIIIII", "VIIIIIIIIIII", "IIIIIIIIIIIIIIII", "xvixxxxx"])("the additive and the malformed numeral %p stays one (round 3, N2)", (word) => {
     expect(namesRomanNumeral(`she slowly turns, ${word}`)).toBe(true);
   });
 

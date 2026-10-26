@@ -195,6 +195,13 @@ export const ROMAN_FAIL_CLOSED: AgeProbes = {
     "she slowly smiles, xvi.she undresses",
     "she slowly smiles, XVI.",
     "she slowly undresses, x.v.i",
+    // Round 3 (N2): only a run of «x» alone is a filler; a run of «i» after a numeral counts on.
+    "she slowly undresses, XIIIII",
+    "she slowly undresses, XIIIIII",
+    "she slowly undresses, XVIIIII",
+    "she slowly undresses, VIIIIIIIIIII",
+    "she slowly undresses, IIIIIIIIIIIIIIII",
+    "she slowly undresses, xvixxxxx",
   ],
   ideas: [
     "медленно раздевается \u2014 XVI",
