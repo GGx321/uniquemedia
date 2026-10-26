@@ -96,7 +96,7 @@ describe("redrawing a bold nightwear scene", () => {
   });
 
   // 5a.4 (S5.BA2, 2026-10-26, Q-A2): the ordinary tier is plain underwear on Seedream now, so an ordinary nightwear scene redraws ordinary and on the route; the off-the-route control is
-  // a «Смелая» «Дом» scene, which still plans and redraws as «Кокетливая» with no route (until S5.BA3 plans its companion).
+  // a «Кокетливая» «Дом» scene below (a «Смелая» one drew as that until S5.BA3 planned its companion).
   test("an ordinary scene redraws ordinary: plain underwear on Seedream, no level, on the route", () => {
     const ordinary = slotsOf("nightwear", 0).filter((s) => s.level === undefined);
     expect(ordinary.length).toBeGreaterThan(20);
@@ -108,8 +108,10 @@ describe("redrawing a bold nightwear scene", () => {
     }
   });
 
-  test("a «Смелая» «Дом» scene redraws at its own level with no route", () => {
-    const home = slotsOf("home", 0);
+  test("a «Кокетливая» «Дом» scene redraws at its own level with no route", () => {
+    // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4, BA2 part 2 review L1): the control was a «Смелая» «Дом» plan, which drew as «Кокетливая» with no route until the five got their companions. A
+    // «Смелая» «Дом» plan is routed now (redraw.boldAny.test.ts redraws it in its companion), so the control is the «Кокетливая» plan, which is what a set stored before 5a.4 holds.
+    const home = [3, 4, 5, 6].flatMap((seed) => plan({ seed, count: 30, categories: ["home"], level: "flirty" }).slots);
     expect(home.length).toBeGreaterThan(20);
     for (const slot of home) {
       for (let k = 1; k <= 3; k++) {

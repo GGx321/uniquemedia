@@ -58,7 +58,7 @@ describe("a «Смелая» set's scenes (mockup 49)", () => {
   });
 
   // 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear scene is on Seedream now, its ordinary ones included, so scene 1 says «Seedream · 2K» and no level; the scenes on the owner's model
-  // are a «Смелая» «Дом» set's (still drawn as «Кокетливая» until S5.BA3 plans its companion).
+  // were a «Смелая» «Дом» set's.
   test("an ordinary scene says no level; an ordinary nightwear or beach scene is still on Seedream", async () => {
     await openSet(["nightwear", "beach"], "bold");
     expect(within(sceneCard(1)).queryByText("смело") === null).toBe(true);
@@ -68,8 +68,9 @@ describe("a «Смелая» set's scenes (mockup 49)", () => {
     expect(within(sceneCard(7)).queryByText("смело") === null).toBe(true);
   });
 
-  test("a scene on the owner's model has neither: a «Смелая» «Дом» set's", async () => {
-    await openSet(["home"], "bold");
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4, BA2 part 2 review L1): «Смелая» plans «Дом» on the route once the mock mirrors the engine, so the owner's-model control is a «Кокетливая» «Дом» set's.
+  test("a scene on the owner's model has neither: a «Кокетливая» «Дом» set's", async () => {
+    await openSet(["home"], "flirty");
     const cards = Array.from({ length: 12 }, (_, i) => sceneCard(i + 1));
     for (const scene of cards) {
       expect(within(scene).queryByText("смело") === null).toBe(true);

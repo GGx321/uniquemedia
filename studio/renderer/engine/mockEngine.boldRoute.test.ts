@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { EventMessage, PhotoSummary, RunRequest } from "../../shared/engine";
 import { MOCK_BOLD_IMAGE } from "./mockEngine";
-import { MIA, makeMock, unwrap, type Mock } from "./mockEngine.testkit";
+import { MIA, makeMock, mixedSetSeed, unwrap, type Mock } from "./mockEngine.testkit";
 import { runWorld, startRun, toDone } from "./mockLaunchRun.testkit";
 
 // 5a.3 (S5.9f, plan s5a3 §8, §12, gap A): a photo drawn on the Seedream route carries `route: "seedream"` (the model id alone cannot tell it from the 1K moderation fallback), and
@@ -144,16 +144,23 @@ describe("a Seedream slot the model refuses", () => {
     expect(last.payload.result.failedReasons).toEqual([{ slotIndex: 1, reason: "model-refused" }]);
   });
 
-  // 5a.4 (S5.BA2, 2026-10-26, Q-A2, as parity story 4550): every nightwear slot is on the route now, so the slots off it are a «Смелая» «Дом» run's (still drawn as «Кокетливая»).
-  test("is not met by the ordinary slots of a «Смелая» run: only the slots with a route end refused", async () => {
-    const { mock, events } = withEvents();
+  // 5a.4 (S5.BA2, 2026-10-26, Q-A2, as parity story 4550): every nightwear slot is on the route now, so the slots off it were a «Смелая» «Дом» run's (drawn as «Кокетливая»).
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4, QB-5, BA2 part 2 review L1): «Смелая» plans «Дом» on the route once the mock mirrors the engine, and the mix is the point (a run that has slots on and off the
+  // route), so the run is made from a set stored before 5a.4: seeded, then started from its scenes.
+  test("is not met by the ordinary slots of a set stored before 5a.4: only the slots with a route end refused", async () => {
+    const mock = makeMock({ sceneSets: [mixedSetSeed(MIA.avatarId, "set-old-0001", { home: 5, nightwear: 5 })] });
+    const events: EventMessage[] = [];
+    mock.client.subscribe((e) => events.push(e));
     mock.engine.refuseBoldNext(100);
-    await start(mock, boldRun(10, ["home", "nightwear"]));
+    const set = (await unwrap(mock.client.request("scenes.get", { avatarId: MIA.avatarId }))).sceneSet;
+    if (set === null) throw new Error("no seeded set");
+    await unwrap(mock.client.request("runs.startFromScenes", { sceneSetId: set.sceneSetId, revision: set.revision, acceptedWorstMicros: ENOUGH }));
     mock.scheduler.runAll();
     const result = doneOf(events);
     expect(result.photoIds.length).toBeGreaterThan(0);
     expect(result.failedSlots).toBeGreaterThan(0);
     expect(result.failedSlots + result.photoIds.length).toBe(10);
+    expect(result.photoIds).toHaveLength(5);
     expect(result.failedReasons?.every((r) => r.reason === "model-refused")).toBe(true);
   });
 

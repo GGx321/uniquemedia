@@ -1,6 +1,9 @@
 import type { AvatarSummary, EventMessage, PhotoSummary } from "../../shared/engine";
 import { DEFAULT_TRAITS } from "../lib/traits";
+import { shotOf } from "../../shared/scenes/captures";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
+import { bankDraw } from "./mockBankScenes";
+import type { MockSceneSetSeed } from "./mockSceneSets";
 import { ManualScheduler } from "./scheduler";
 
 // Test support for the mock's montage and video tests: an active avatar, scene photos of it in every state the montage
@@ -97,4 +100,20 @@ export function eventsOfJob(events: EventMessage[], jobId: string): EventMessage
 export async function renderJobsOf(mock: Mock) {
   const snapshot = await unwrap(mock.client.request("engine.snapshot", {}));
   return snapshot.jobs.flatMap((j) => (j.kind === "render" ? [j] : []));
+}
+
+/**
+ * 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4, QB-5, BA2 part 2 review L1): a set stored before 5a.4, written, that mixes «Дом» scenes drawn as «Кокетливая» (no route) with «Ночнушки и бельё» scenes
+ * on the Seedream route. «Смелая» plans «Дом» on the route now, so a test that needs scenes on and off the route in one set seeds this one instead of composing it.
+ */
+export function mixedSetSeed(avatarId: string, sceneSetId: string, counts: { home: number; nightwear: number } = { home: 5, nightwear: 5 }): MockSceneSetSeed {
+  const home = Array.from({ length: counts.home }, (_, k) => {
+    const draw = bankDraw("home", k, { level: k % 2 === 0 ? "flirty" : "ordinary" });
+    return { category: "home" as const, shot: shotOf(draw.capture), pose: draw.pose, place: draw.place, text: `A home scene (${k}).`, ...(k % 2 === 0 ? { level: "flirty" as const } : {}) };
+  });
+  const nightwear = Array.from({ length: counts.nightwear }, (_, k) => {
+    const draw = bankDraw("nightwear", k, { level: "bold" });
+    return { category: "nightwear" as const, shot: shotOf(draw.capture), pose: draw.pose, place: draw.place, text: `A nightwear scene (${k}).`, level: "bold" as const, route: "seedream" as const };
+  });
+  return { avatarId, sceneSetId, count: counts.home + counts.nightwear, written: counts.home + counts.nightwear, categories: ["home", "nightwear"], level: "bold", scenes: [...home, ...nightwear] };
 }

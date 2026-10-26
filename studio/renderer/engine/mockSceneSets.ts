@@ -89,10 +89,11 @@ export interface MockSceneSetSeed {
   textModel?: string;
   /**
    * The scenes themselves, instead of the mock's own plan (the parity rig seeds the real engine's store with the very same ones). A `text` is a written scene;
-   * an `idea` makes an own scene (written from it, with its text).
+   * an `idea` makes an own scene (written from it, with its text). 5a.4 (S5.BA3): a planned scene may name its `level` and `route`, so a set stored before 5a.4 (the five with no route next to scenes
+   * on it) can be seeded.
    */
   scenes?: readonly (
-    | { category: CategoryRef; shot: SceneView["shot"]; pose: SceneView["pose"]; place: ScenePlace; text?: string }
+    | { category: CategoryRef; shot: SceneView["shot"]; pose: SceneView["pose"]; place: ScenePlace; text?: string; level?: "flirty" | "bold"; route?: "seedream" }
     | { idea: string; shot: SceneView["shot"]; pose: SceneView["pose"]; text: string }
   )[];
   /** Writes already started (a seeded review write has a number under it). */
@@ -510,7 +511,7 @@ export class MockSceneSets {
             (s, i): Scene =>
               "idea" in s
                 ? { sceneId: i + 1, category: "own", shot: s.shot, pose: s.pose, place: null, idea: s.idea, text: s.text, edited: false, removed: false }
-                : { sceneId: i + 1, category: s.category, shot: s.shot, pose: s.pose, place: { ...s.place }, idea: null, text: s.text ?? null, edited: false, removed: false },
+                : { sceneId: i + 1, category: s.category, shot: s.shot, pose: s.pose, ...(s.level === undefined ? {} : { level: s.level }), ...(s.route === undefined ? {} : { route: s.route }), place: { ...s.place }, idea: null, text: s.text ?? null, edited: false, removed: false },
           );
     const chunks = chunksOf(seed.sceneSetId, scenes.filter((scene) => scene.place !== null));
     const written = seed.written ?? 0;

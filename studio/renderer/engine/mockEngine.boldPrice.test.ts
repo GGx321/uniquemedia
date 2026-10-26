@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { RunRequest } from "../../shared/engine";
 import { MOCK_AGE_CHECK_PER_SLOT, MOCK_BOLD_IMAGE } from "./mockEngine";
 import { IMAGE, draftOf, errorOf, runUntil, runWorld, startRun, toDone } from "./mockLaunchRun.testkit";
-import { MIA, makeMock, unwrap } from "./mockEngine.testkit";
+import { MIA, makeMock, mixedSetSeed, unwrap } from "./mockEngine.testkit";
 
 // 5a.3 (S5.9f, plan s5a3 §10, §12): the mock prices the «Смелая» route like the engine's price book: one 2K attempt is 93 000 µ$ (the engine's `high_resolution` 90 000 + the reference 3 000),
 // a photo of a «Смелая» category is priced on it (never below the settings' model), `Estimate.boldAttemptMicros` is present only when a photo is on that route, a missing 2K tier is a
@@ -86,10 +86,16 @@ describe("a run made from a set is priced by the scenes that are on the 2K route
     return { estimate, routed, total: set.scenes.length };
   }
 
-  // 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear scene is on the route now, so a set with scenes off it is «Дом» and nightwear at «Смелая» (the «Дом» scenes still drawn as
-  // «Кокетливая», no route).
-  test("«Дом» and «Ночнушки и бельё» at «Смелая»: exactly the scenes with a route are 2K, the rest stay at the mock's image", async () => {
-    const { estimate, routed, total } = await setEstimate(["home", "nightwear"], "bold");
+  // 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear scene is on the route now, so a set with scenes off it was «Дом» and nightwear at «Смелая» (the «Дом» scenes drawn as «Кокетливая», no route).
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4, QB-5, BA2 part 2 review L1): «Смелая» plans «Дом» on the route once the mock mirrors the engine, and the mix is the point here, so the set is one stored
+  // before 5a.4 (an old set keeps no route): seeded, not composed.
+  test("a set stored before 5a.4, «Дом» and «Ночнушки и бельё»: exactly the scenes with a route are 2K, the rest stay at the mock's image", async () => {
+    const mock = makeMock({ sceneSets: [mixedSetSeed(MIA.avatarId, "set-old-0001")] });
+    const set = (await unwrap(mock.client.request("scenes.get", { avatarId: MIA.avatarId }))).sceneSet;
+    if (set === null) throw new Error("no seeded set");
+    const routed = set.scenes.filter((s) => s.route === "seedream").length;
+    const total = set.scenes.length;
+    const { estimate } = await unwrap(mock.client.request("runs.estimateFromScenes", { sceneSetId: set.sceneSetId, revision: set.revision }));
     expect(routed).toBeGreaterThan(0);
     expect(routed).toBeLessThan(total);
     expect(estimate.worstMicros).toBe((total - routed) * ATTEMPTS * IMAGE + routed * ATTEMPTS * MOCK_BOLD_IMAGE);
