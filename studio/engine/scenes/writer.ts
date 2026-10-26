@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { youthWords } from "../../shared/engine";
 import { ownerBannedOutfitWords } from "../../shared/scenes/words";
-import { WRITER_CALL, writerWorstMicros, type Estimate } from "../money/estimate";
+import { WRITER_CALL, writerCallOf, writerWorstMicros, type Estimate } from "../money/estimate";
 import type { PriceBook } from "../money/prices";
 import type { ChatMessage } from "../openrouter/types";
 import { categoryLabelOf, type CategoryLabelOf } from "./categories";
@@ -536,17 +536,20 @@ export function readWriterScenes(scenes: readonly Pick<WriterScene, "slotIndex" 
  * test pins that the two agree). Expected: unaffected by chunking or
  * attempts, at `slotCount` × the spike's measured per-scene token counts
  * (money/estimate.ts's own WRITER_CALL, which this module only reads: it
- * never re-declares or edits it).
+ * never re-declares or edits it). 5a.4 (S5.BA5, r2.1 L2): the shape comes through
+ * `writerCallOf("ordinary")`, the one door to the writer's money; S5.BA4 gives
+ * this its mode.
  */
 export function writerRunPrice(book: PriceBook, slotCount: number): Estimate {
   if (!Number.isInteger(slotCount) || slotCount < 0) {
     throw new RangeError(`slotCount must be a non-negative integer, got ${slotCount}`);
   }
+  const call = writerCallOf("ordinary");
   const expectedMicros = book.chatCost({
-    model: WRITER_CALL.model,
-    images: WRITER_CALL.images,
-    inputTokens: WRITER_CALL.typicalPerScene.inputTokens * slotCount,
-    outputTokens: WRITER_CALL.typicalPerScene.outputTokens * slotCount,
+    model: call.model,
+    images: call.images,
+    inputTokens: call.typicalPerScene.inputTokens * slotCount,
+    outputTokens: call.typicalPerScene.outputTokens * slotCount,
   });
-  return { expectedMicros, worstMicros: writerWorstMicros(book, WRITER_CALL, slotCount), priceSource: book.source };
+  return { expectedMicros, worstMicros: writerWorstMicros(book, call, slotCount), priceSource: book.source };
 }

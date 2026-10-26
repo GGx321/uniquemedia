@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AttemptId, CategorySnapshot, Id, ImageAgeCheck, ImageQuality, isBoldCategory, isCustomCategory, Micros, ModelId, RunRequest, SceneId, splitCount, type CategoryRef, type Estimate } from "../../shared/engine";
 import { llmPossibleSlots, writerChunksWorst, type CoversOf } from "../../shared/scenes/writerBound";
-import { AGE_CHECK_CALL, estimateRun, MAX_ATTEMPTS_PER_SLOT, WRITER_CALL, writerCallOf, type ImageChoice } from "../money/estimate";
+import { AGE_CHECK_CALL, estimateRun, MAX_ATTEMPTS_PER_SLOT, WRITER_CALL, writerCallOf, type ImageChoice, type WriterCall } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import { BOLD_IMAGE_MODEL } from "../money/prices";
 import { categoryLabelOf, categoryRefOf, OwnPlanSlotSchema, plannerCategoryOf, PlanSlotSchema, writerMessages, type PlannerCategory, type PlanSlot, type ScenePlan } from "../scenes";
@@ -117,9 +117,9 @@ export function runWriterConfig(snapshots: readonly CategorySnapshot[] | undefin
   };
 }
 
-/** The writer's call on the settings' text model, with the one source of truth's limits (money/estimate.ts). */
-function writerCall(textModel: string): typeof WRITER_CALL {
-  return { ...WRITER_CALL, model: textModel };
+/** The writer's call on the settings' text model, with the one source of truth's limits (money/estimate.ts's `writerCallOf`, r2.1 L2). */
+function writerCall(textModel: string): WriterCall {
+  return { ...writerCallOf("ordinary"), model: textModel };
 }
 
 /**

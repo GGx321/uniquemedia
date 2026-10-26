@@ -1,6 +1,6 @@
 import { MAX_SCENES_PER_WRITE, type Estimate } from "../../shared/engine";
 import type { StoredSceneSet } from "../library/sceneSets";
-import { WRITER_CALL, writerChunksMicros, type WriterCall } from "../money/estimate";
+import { WRITER_CALL, writerAttemptWorstMicros, writerCallOf, writerChunksMicros, type WriterCall } from "../money/estimate";
 import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import type { PriceBook } from "../money/prices";
@@ -16,18 +16,17 @@ export function sceneSetPriceModels(textModel: string): PriceModels {
   return { imageModels: [], chatModels: [textModel] };
 }
 
-/** The writer's call on the settings' text model, with the one source of truth's limits (money/estimate.ts). */
+/** The writer's call on the settings' text model, with the one source of truth's limits (money/estimate.ts's `writerCallOf`, r2.1 L2). */
 function writerCall(textModel: string): WriterCall {
-  return { ...WRITER_CALL, model: textModel };
+  return { ...writerCallOf("ordinary"), model: textModel };
 }
 
-function ceilingOf(book: PriceBook, call: WriterCall): number {
-  return book.chatWorstCase({ model: call.model, maxTokens: call.maxTokens, inputTokens: call.inputTokens, images: call.images });
-}
-
-/** One writer attempt at its ceiling on the settings' text model (the figure `composeEstimate` multiplies by the attempts per chunk and the chunks). */
+/**
+ * One writer attempt at its ceiling on the settings' text model (the figure `composeEstimate` multiplies by the attempts per chunk and the chunks).
+ * 5a.4 (S5.BA5, r2.1 N1): priced by `writerAttemptWorstMicros`, the one attempt price, which adds the call's reasoning allowance (none for the ordinary call).
+ */
 export function writerCeilingMicros(priced: PricedBook, textModel: string): number {
-  return ceilingOf(priced.book, writerCall(textModel));
+  return writerAttemptWorstMicros(priced.book, writerCall(textModel));
 }
 
 function typicalOf(book: PriceBook, call: WriterCall, scenes: number): number {
@@ -71,7 +70,7 @@ export function reviewWriteEstimate(priced: PricedBook, textModel: string, scene
   // interrupted rewrite) is priced as before: its attempts left at the writer's ceiling.
   if (attemptsLeft === 0 || modelScenes === 0) return { expectedMicros: 0, worstMicros: 0, prices: priced.book.source, pricesAsOf: priced.asOf };
   const call = writerCall(textModel);
-  const worstMicros = attemptsLeft * ceilingOf(priced.book, call);
+  const worstMicros = attemptsLeft * writerAttemptWorstMicros(priced.book, call);
   return { expectedMicros: Math.min(typicalOf(priced.book, call, modelScenes), worstMicros), worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
 }
 
@@ -86,7 +85,7 @@ export function writeEstimate(priced: PricedBook, set: StoredSceneSet, ledger: L
   const asked = pendingChunks(set, ledger).filter((pending) => !pending.free);
   if (asked.length === 0) return { expectedMicros: 0, worstMicros: 0, prices: priced.book.source, pricesAsOf: priced.asOf };
   const call = writerCall(set.models.text);
-  const ceiling = ceilingOf(priced.book, call);
+  const ceiling = writerAttemptWorstMicros(priced.book, call);
   let worstMicros = 0;
   let scenes = 0;
   for (const pending of asked) {

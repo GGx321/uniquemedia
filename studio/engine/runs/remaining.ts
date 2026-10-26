@@ -1,6 +1,6 @@
 import type { Estimate } from "../../shared/engine";
 import { scopeKey } from "../money/budget";
-import { AGE_CHECK_CALL, WRITER_CALL, type ImageChoice } from "../money/estimate";
+import { AGE_CHECK_CALL, writerAttemptWorstMicros, writerCallOf, type ImageChoice } from "../money/estimate";
 import { MoneyError } from "../money/errors";
 import type { Ledger, Scope } from "../money/ledger";
 import type { PricedBook } from "../money/priceCache";
@@ -94,7 +94,7 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
   // 5a.2 (S5.6c2, I5.30): the code template writes every slot it can, so only a not-yet-journaled chunk that holds a slot the template cannot write (a null
   // slot, found with the very `local` the run's writer phase uses) is a request for the model. A chunk of template slots costs nothing here. A chunk out of
   // attempts no longer blocks the resume: its slots take the plain code sentence (S5.6d), so their images stay counted.
-  const writer = { ...WRITER_CALL, model: plan.models.text };
+  const writer = { ...writerCallOf("ordinary"), model: plan.models.text };
   const local = localSentences({
     slots: plannedSlots(plan),
     keyOf: (slot) => slotKeyOf(plan.runId, slot.attemptIdBase),
@@ -108,7 +108,8 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
     }).length;
   const asked = plan.writerChunks.filter((chunk) => !state.writerDone.has(chunk.chunk)).filter((chunk) => modelSlotsOf(chunk) > 0);
   // A run with no chunk for the model (made from a scene set, or all template) never asks the text model: it needs no price for it.
-  const writerCeiling = asked.length === 0 ? 0 : book.chatWorstCase({ model: writer.model, maxTokens: writer.maxTokens, inputTokens: writer.inputTokens, images: writer.images });
+  // 5a.4 (S5.BA5, r2.1 N1): an attempt at the one writer attempt price, its reasoning allowance included (none for the ordinary call).
+  const writerCeiling = asked.length === 0 ? 0 : writerAttemptWorstMicros(book, writer);
   let unwrittenSlots = 0;
   let writerPending = false;
   for (const chunk of asked) {
