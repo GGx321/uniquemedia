@@ -150,9 +150,16 @@ export async function planReviewWrite(input: ReviewPlanInput): Promise<ReviewPla
   const planned = await planWrite(input);
   // 5a.2 (S5.6c2): the model scenes are counted off the very record the write would leave, with the job's own `askedOf` and `local`, so the price and the
   // job agree on which scenes the template writes. (`begin` is pure: it returns the set with the write recorded; nothing is stored here.)
-  const after = planned.begin(input.set, "estimate");
-  const recorded = reviewWritesOf(after).find((r) => r.k === planned.k);
-  return { ...planned, modelScenes: recorded === undefined ? planned.count : modelScenesOf(after, recorded), mode: recorded === undefined ? "ordinary" : writeModeOf(after, recorded) };
+  return { ...planned, ...recordedWriteOf(planned.begin(input.set, "estimate"), planned.k, planned.count) };
+}
+
+/**
+ * 5a.4 (S5.BA5): what write `k` of `after` (the set with the write recorded) asks the model, and in which mode, as the job decides it (`modelScenesOf`, `writeModeOf`). A record that is
+ * not found falls to the safe side (round 2, money review L-1): every one of its `count` scenes for the model, in bold mode, so the price is never below a reserve the job could make.
+ */
+export function recordedWriteOf(after: StoredSceneSet, k: number, count: number): Pick<ReviewPlan, "modelScenes" | "mode"> {
+  const recorded = reviewWritesOf(after).find((r) => r.k === k);
+  return recorded === undefined ? { modelScenes: count, mode: "bold" } : { modelScenes: modelScenesOf(after, recorded), mode: writeModeOf(after, recorded) };
 }
 
 interface ReviewPlanInput {
