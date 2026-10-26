@@ -214,7 +214,7 @@ function writerBoldSystemPrompt(): string {
     "",
     "Rules:",
     "- One full sentence per slot, about 25 to 45 words, plain present tense.",
-    '- Write "she", then the activity word for word in one piece with its commas, then "wearing" and the outfit word for word: no word goes inside either; the location goes before "she", every other detail after the outfit.',
+    '- Write "she", then the activity word for word in one piece with its commas, then "wearing" and the outfit word for word: no word goes inside either, not even the time of day; the location, with its own preposition ("On her balcony", "In her room"), goes before "she", every other detail after the outfit.',
     "- In her own photo or a mirror selfie, only one hand is free: describe only what that hand does, or say nothing about her hands. Never describe an action that needs both hands in these shots. On a timer both of her hands are empty.",
     "- When her face is hidden, describe neither her face nor her gaze.",
     '- Match each slot\'s pose: "back" has her back to the viewer, she never looks at, toward or into the viewer, and her face is never described; "profile" has her face turned fully to the side, never looking at or toward the viewer; "front" and "three-quarter" may face or glance toward the viewer as the shot allows.',
