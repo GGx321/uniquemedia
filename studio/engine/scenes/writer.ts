@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared/scenes/contentLine";
+import { captureOfShot, type Capture } from "../../shared/scenes/captures";
 import { ownerBannedOutfitWords } from "../../shared/scenes/words";
 import { WRITER_CALL, writerCallOf, writerExpectedMicros, writerWorstMicros, type Estimate } from "../money/estimate";
 import type { PriceBook } from "../money/prices";
@@ -154,6 +155,92 @@ function slotForWriter(slot: PlanSlot, labelOf: CategoryLabelOf): Record<string,
   };
 }
 
+// ---------- the bold mode (5a.4, S5.BA4, plan s5a4 §5.3.3) ----------
+
+// A custom category's «Смелая» frames are written in a mode of their own: a sibling system prompt and slot JSON. The ordinary prompt above stays byte for byte
+// (writer.bold.test.ts pins its every byte, the floor pins its length). What the paid probe P-BA (2026-10-26) found the drafts did wrong is fixed in what the model
+// is FED, not only in what it is told: the model pasted the slot's labels into its prose («facing the viewer», «captured in her own photo from above», «set in the
+// world of …», «morning daylight»), so in this mode the pose goes out as its bare name, the time of day as a plain word with no light in it, the shot as a short
+// capture label the prompt says never to write, and the category label (which names the public world the slot must stay out of) not at all.
+
+/**
+ * r2.2 P1: what the bold writer is told of who takes the photo, one label per capture. The stored shot hides two things the sentence must know: a timer is stored
+ * on the friend shot, and a mirror-hidden frame would not say that her phone covers her face. Each label is at most 33 characters, today's longest `SHOT_LABEL`,
+ * so the worst chunk does not grow; a self-shot is «her own photo …» or a «mirror selfie», the words the one-hand rule names.
+ */
+export const CAPTURE_LABEL: Readonly<Record<Capture, string>> = Object.freeze({
+  "mirror-hidden": "mirror selfie, phone covers face",
+  mirror: "her mirror selfie",
+  above: "her own photo from above",
+  prone: "her own photo, on her stomach",
+  "over-shoulder": "her own photo over her shoulder",
+  selfie: "her own photo at arm's length",
+  "pov-legs": "her own photo down her legs",
+  timer: "her phone on a timer, no one else",
+  friend: "a phone snap a friend took",
+  candid: "a friend's snap while she is busy",
+  "low-feet": "a friend's photo low at her feet",
+});
+
+/** The stored times as the bold writer is told them: when, never how it is lit (the light lines of `lightOf` were pasted as «daylight»), and never a soft-list word. */
+const TIME_WORDS: ReadonlyMap<string, string> = new Map([
+  ["morning", "morning"],
+  ["midday", "midday"],
+  ["golden hour", "late afternoon"],
+  ["evening", "evening"],
+  ["night", "night"],
+  ["studio lighting", "indoors"],
+]);
+
+/** A stored time of day as a plain word for the bold writer; «any time» for a time the table does not know (the ordinary writer's neutral light, in words). */
+export function TIME_WORD(time: string): string {
+  return TIME_WORDS.get(time) ?? "any time";
+}
+
+function writerBoldSystemPrompt(): string {
+  return [
+    "You write one plain sentence of what an ordinary phone photo of her shows, for each of the given slots, of one recurring adult woman who posts her own photos.",
+    "Reference images supply her identity, so you never describe her face, never give her a name, and never describe her hair, eyes or body type.",
+    "",
+    "A slot with a world is a private moment of hers at home or where she is staying. The world is the place her day belongs to: set the location inside it (her hotel room in that city, the cabin of that boat, the balcony over that view) and add one ordinary detail that ties the photo to it, such as the view or something she brought back. Unless the location is by the water, she is never in a public place, such as the world's cafe, restaurant, bar, street, shop, office, gym, beach or marina. By the water she is at the world's own water place, in her swimwear. A slot without a world keeps its location as given.",
+    "",
+    "For each slot, write exactly one full English sentence (never a fragment) that uses the slot's location, world, time of day, outfit and activity, and adds natural, concrete detail: what her hands and body do, her expression, and that one ordinary detail. The shot and the pose tell you who takes the photo and how she is turned: keep to them, but never write them, and never write the words world or slot. Do not describe the light, the colours or the mood; if light comes up, name only its source.",
+    "",
+    "Rules:",
+    "- One full sentence per slot, about 25 to 45 words, plain present tense.",
+    '- Write "she" and then the activity word for word, in one piece with its commas: no word goes inside it, and the location goes before "she" or after the whole activity.',
+    "- In her own photo or a mirror selfie, only one hand is free: describe only what that hand does, or say nothing about her hands. Never describe an action that needs both hands in these shots. On a timer both of her hands are empty.",
+    "- When her face is hidden, describe neither her face nor her gaze.",
+    '- Match each slot\'s pose: "back" has her back to the viewer, she never looks at, toward or into the viewer, and her face is never described; "profile" has her face turned fully to the side, never looking at or toward the viewer; "front" and "three-quarter" may face or glance toward the viewer as the shot allows.',
+    "- In a friend's snap while she is busy, she never looks at the viewer.",
+    "- She is a grown adult woman; no children or minors anywhere in the scene, and never a word that suggests she or anyone else is not an adult.",
+    "- Describe the outfit exactly as given, in its own words: never more or less revealing, never add or remove a garment.",
+    "- Never write naked, nude, topless, nipples, see-through or transparent, and call nothing sheer the outfit does not.",
+    "- No text, logos, brand names or readable signs; nothing but her phone covers her face.",
+    "- Never write about the camera, the lens, the photo, the shot, the timer or the framing, and never say selfie or snap.",
+    "- When she looks toward whoever takes the photo, write that she looks at the viewer; never name a phone, camera or lens for her gaze. Her own phone appears only when the slot's activity uses it.",
+    "- No paper, books, magazines, documents, notebooks, menus, maps, desks or studying; no laptops or tablets: her phone is the only screen.",
+    "- Never describe mess, clutter or things lying around; the room's state is given separately.",
+    "- Never use these words: professional, photographer, photoshoot, studio, editorial, fashion, model, posing, captures, candid, cinematic, bokeh, golden hour, softly lit, soft light, glow, glowing, dramatic, moody, dreamy, elegant, luxurious, lavish, glamorous, chic, sophisticated, polished, pristine, marble, silk, satin, velvet, stunning, beautiful, perfect, flawless, gorgeous, unless the slot's own place, outfit or activity uses it.",
+    "",
+    'Return JSON matching the schema: {"scenes": [{"slotIndex", "sentence"}, ...]}, exactly one object per slot, in the given order.',
+  ].join("\n");
+}
+
+/** A slot as the bold writer is told it: no category, the world when it has one, a plain time word, the capture label, the pose's own name. */
+function boldSlotForWriter(slot: PlanSlot): Record<string, unknown> {
+  return {
+    slotIndex: slot.slotIndex,
+    location: slot.location,
+    ...(slot.world === undefined ? {} : { world: slot.world }),
+    timeOfDay: TIME_WORD(slot.timeOfDay),
+    shot: CAPTURE_LABEL[slot.capture ?? captureOfShot(slot.shot)],
+    pose: slot.pose,
+    outfit: slot.outfit,
+    activity: slot.activity,
+  };
+}
+
 // ---------- refusal / re-ask feedback ----------
 
 export type WriterProblem =
@@ -275,12 +362,24 @@ export function writerRefusalText(refusal: WriterRefusal): string {
  * sent under a made-up name); a run passes the resolver of its plan's snapshot.
  */
 export function writerMessages(slots: readonly PlanSlot[], refusal: WriterRefusal = NO_REFUSAL, labelOf: CategoryLabelOf = categoryLabelOf()): ChatMessage[] {
-  const lines = ["Slots:", JSON.stringify(slots.map((slot) => slotForWriter(slot, labelOf)))];
+  return messagesOf(writerSystemPrompt(), slots.map((slot) => slotForWriter(slot, labelOf)), refusal);
+}
+
+/**
+ * 5a.4 (S5.BA4, plan s5a4 §5.3.3): the messages of one attempt in bold mode, a chunk that holds a «Смелая» frame (`writerModeOf`). Its own system prompt and
+ * slot JSON; the refusal is fed back exactly as the ordinary one is. It needs no label resolver: the bold slot carries no category.
+ */
+export function writerBoldMessages(slots: readonly PlanSlot[], refusal: WriterRefusal = NO_REFUSAL): ChatMessage[] {
+  return messagesOf(writerBoldSystemPrompt(), slots.map(boldSlotForWriter), refusal);
+}
+
+function messagesOf(system: string, slots: readonly Record<string, unknown>[], refusal: WriterRefusal): ChatMessage[] {
+  const lines = ["Slots:", JSON.stringify(slots)];
   if (refusal.problems.length > 0) {
     lines.push("", `An earlier answer was rejected: ${writerRefusalText(refusal)}. Write a new answer that follows every rule.`);
   }
   return [
-    { role: "system", content: writerSystemPrompt() },
+    { role: "system", content: system },
     { role: "user", content: lines.join("\n") },
   ];
 }
