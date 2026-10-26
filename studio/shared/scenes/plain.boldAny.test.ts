@@ -76,3 +76,17 @@ describe("the plain sentence of nightwear and beach", () => {
     expect(plainSentence(slot, true)).not.toContain("lined and opaque");
   });
 });
+
+// Round 2, L-1: a companion place name is also an ordinary-bank place name (the same room), so a caller that loses the route is not caught by the lookup: the plain sentence silently loses the kept
+// coverage. This pins the behaviour. Making `route` a required key of the slot types was tried and not done: see the commit.
+describe("the route changes what a shared place name reads (L-1)", () => {
+  const found = BOLD_COMPANIONS.home.places.find((p) => BANKS.home.places.some((q) => q.name === p.name));
+  const moment = found?.moments[0];
+
+  test("a companion place name that the ordinary bank has too reads the kept coverage only with the route", () => {
+    if (found === undefined || moment === undefined) throw new Error("«Дом» has no place shared by the companion and the ordinary bank");
+    const base = { category: "home", location: found.name, activity: moment.text, outfit: "a black lace bra and panties", shot: "friend", capture: "timer" } as const;
+    expect(plainSentence({ ...base, route: "seedream" })).toContain(LACE);
+    expect(plainSentence({ ...base, route: undefined })).not.toContain(LACE);
+  });
+});
