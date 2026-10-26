@@ -9,7 +9,8 @@ useNativeGlobals();
 // `poolOfSlot`) and one origin door (`planForAvatar`), so the old shortcuts may live only where the plan names them:
 // - `isBoldCategory` (a «Смелая» CATEGORY, not a frame) in the named allow-list below, each file with its exact count and why;
 // - a direct index into the pools and banks (`POOLS[…]`, `BANKS[…]` and their «Смелая» registries) in the modules that own them;
-// - every engine plan through `planForAvatar`, every redraw with the avatar's `impliedNudity`.
+// - every engine plan through `planForAvatar`, every redraw with the avatar's `impliedNudity`;
+// - every call that writes a «Смелая» sentence with the avatar's origin, read by the engine at the named paths (`studioCreated`).
 // Production source only (no tests, test kits or `testing/` folders). An entry marked `until` belongs to a later task of 5a.4, which removes it when it moves the site to the marker.
 
 const STUDIO = resolve(import.meta.dir, "../..");
@@ -95,6 +96,27 @@ const INDEX_SITES: Allowed[] = [
   { file: "renderer/engine/mockBankScenes.ts", count: 2, why: "the mock's bank lookups (:46, :106), moved to the marker by S5.BA7", until: "S5.BA7" },
 ];
 
+/**
+ * The calls that write a sentence a «Смелая» frame may end with a coverage in (the template, the plain sentence, a writer chunk's template side, the coverage itself). Each names
+ * the avatar's origin (`impliedNudity`), except the named sites that only COUNT what the template can write, whose answer is the same whatever the origin. `roomPlaceOf` and
+ * `slotLookOf` are not here: the room phrase, the lamp and the mirror-back line are a place's and a moment's, never the origin's.
+ */
+const RENDERERS = new Set(["templateSentence", "plainSentence", "localSentences", "setLocal", "localOf", "slotCoverageOf", "coverageOfWorn", "coverageOf"]);
+const COUNTING_SITES: Allowed[] = [
+  { file: "engine/runs/remaining.ts", count: 1, why: "a resume counts the slots the template cannot write (the writer's chunks still to ask, their mode)" },
+  { file: "engine/sceneSets/reviewPlan.ts", count: 1, why: "the m1 probe: whether the template can write a rewrite's scenes at all" },
+  { file: "engine/sceneSets/chunks.ts", count: 1, why: "`pendingChunks`: which chunks of a set the template writes whole (`setLocal(set, 0, false)`)" },
+  { file: "engine/sceneSets/estimate.ts", count: 1, why: "«Дописать»'s price: each chunk's scenes for the model and their mode (`setLocal(set, 0, false)`)" },
+  { file: "engine/sceneSets/reviewWriteJob.ts", count: 2, why: "a rewrite's price: `modelScenesOf` and `writeModeOf` (`localOf(…, false)`); the job's own call names the origin" },
+  { file: "renderer/engine/mockBankScenes.ts", count: 2, why: "the mock's template and plain sentences, given the origin by S5.BA7", until: "S5.BA7" },
+];
+/** Where the engine reads the avatar's origin (`studioCreated`): every path that plans, redraws or writes a «Смелая» frame, and the summary. A new path is named here. */
+const ORIGIN_SOURCES: Allowed[] = [
+  { file: "engine/engine.ts", count: 2, why: "a run's plan (`planForAvatar`) and its job's sentences (`impliedNudityOf`)" },
+  { file: "engine/sceneSets/service.ts", count: 4, why: "a compose's plan, «Другая сцена», and the two write jobs' sentences" },
+  { file: "engine/avatars/records.ts", count: 1, why: "`AvatarSummary.origin`" },
+];
+
 function expected(list: readonly Allowed[]): Record<string, number> {
   return Object.fromEntries(list.filter((a) => a.count > 0).map((a) => [a.file, a.count]));
 }
@@ -128,8 +150,26 @@ describe("the «Смелая» sites (plan s5a4 §5.1.4)", () => {
     expect(redraws.filter((r) => !/\bimpliedNudity\b/.test(r.text))).toEqual([]);
   });
 
+  test("every call that writes a «Смелая» sentence names the avatar's origin, but for the named counting sites", () => {
+    const silent = countsOf(
+      (node) =>
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        RENDERERS.has(node.expression.text) &&
+        !ts.isFunctionDeclaration(node.parent) &&
+        !/\bimpliedNudity\b/.test(node.getText()),
+    );
+    expect(silent).toEqual(expected(COUNTING_SITES));
+  });
+
+  test("the engine reads the avatar's origin (studioCreated) only at the named paths", () => {
+    const reads = countsOf((node) => ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "studioCreated");
+    expect(reads).toEqual(expected(ORIGIN_SOURCES));
+  });
+
   test("an allow-list entry that waits for a later task names it", () => {
-    for (const entry of [...BOLD_CATEGORY_SITES, ...INDEX_SITES]) expect({ file: entry.file, why: entry.why.length > 10 }).toEqual({ file: entry.file, why: true });
-    expect([...BOLD_CATEGORY_SITES, ...INDEX_SITES].filter((e) => e.until !== undefined).map((e) => e.until)).toEqual(expect.arrayContaining(["S5.BA6", "S5.BA7", "S5.BA8"]));
+    const all = [...BOLD_CATEGORY_SITES, ...INDEX_SITES, ...COUNTING_SITES, ...ORIGIN_SOURCES];
+    for (const entry of all) expect({ file: entry.file, why: entry.why.length > 10 }).toEqual({ file: entry.file, why: true });
+    expect(all.filter((e) => e.until !== undefined).map((e) => e.until)).toEqual(expect.arrayContaining(["S5.BA6", "S5.BA7", "S5.BA8"]));
   });
 });
