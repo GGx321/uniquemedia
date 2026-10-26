@@ -15,7 +15,7 @@ import { WRITER_BOLD_CALL, writerAttemptWorstMicros, writerCallOf, writerExpecte
 import { PriceBook } from "../money/prices";
 import { promptTokenFloor } from "../openrouter/chat";
 import type { PlanSlot } from "./schema";
-import { BOLD_PROBLEMS, boldReader, CAPTURE_LABEL, PLACE_KEYS, readBoldWriterAnswer, readWriterAnswer, REFUSAL_WORD_BYTES_MAX, REFUSAL_WORDS_MAX, SHOT_LABEL, slotList, TIME_WORD, WATER_PLACE_KEYS, writerBoldMessages, writerMessages, writerRefusalText, writerRunPrice, WRITER_JSON_SCHEMA, type WriterAnswer, type WriterRefusal } from "./writer";
+import { BOLD_PROBLEMS, boldReader, CAPTURE_LABEL, PLACE_KEYS, readBoldWriterAnswer, readWriterAnswer, REFUSAL_WORD_BYTES_MAX, REFUSAL_WORDS_MAX, SHOT_LABEL, slotList, timeWordOf, WATER_PLACE_KEYS, writerBoldMessages, writerMessages, writerRefusalText, writerRunPrice, WRITER_JSON_SCHEMA, type WriterAnswer, type WriterRefusal } from "./writer";
 import { worstSlotList } from "./testing/worstSlotList";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -255,7 +255,7 @@ describe("the bold slot JSON (§5.3.3, r2.2 P1, the probe's label leaks)", () =>
   test("the time of day goes out as a plain time word, never a light phrase or a word of the soft list", () => {
     for (const time of [...POOL_TIMES, "a time the table does not know"]) {
       const [slot] = sentSlots(writerBoldMessages([routed({ timeOfDay: time })]));
-      expect(slot?.timeOfDay).toBe(TIME_WORD(time));
+      expect(slot?.timeOfDay).toBe(timeWordOf(time));
       expect(String(slot?.timeOfDay)).not.toMatch(/light|lamp|sun|dim|golden hour|studio/i);
     }
   });
@@ -772,7 +772,7 @@ describe("an old slot whose moment the bank renamed keeps its kept coverage (rev
 // The widest of each value the bold slot JSON sends, read from the tables themselves.
 const longestOf = (values: readonly string[]): string => values.reduce((a, b) => (b.length > a.length ? b : a));
 const WORST_CAPTURE = (Object.keys(CAPTURE_LABEL) as (keyof typeof CAPTURE_LABEL)[]).reduce((a, b) => (CAPTURE_LABEL[b].length > CAPTURE_LABEL[a].length ? b : a));
-const WORST_TIME = [...POOL_TIMES, "a time the table does not know"].reduce((a, b) => (TIME_WORD(b).length > TIME_WORD(a).length ? b : a));
+const WORST_TIME = [...POOL_TIMES, "a time the table does not know"].reduce((a, b) => (timeWordOf(b).length > timeWordOf(a).length ? b : a));
 const WORST_POSE = longestOf(["front", "three-quarter", "profile", "back"]) as PlanSlot["pose"];
 
 describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the bold floor pin)", () => {

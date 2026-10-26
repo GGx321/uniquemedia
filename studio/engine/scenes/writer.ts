@@ -198,7 +198,7 @@ const TIME_WORDS: ReadonlyMap<string, string> = new Map([
 ]);
 
 /** A stored time of day as a plain word for the bold writer; «any time» for a time the table does not know (the ordinary writer's neutral light, in words). */
-export function TIME_WORD(time: string): string {
+export function timeWordOf(time: string): string {
   return TIME_WORDS.get(time) ?? "any time";
 }
 
@@ -238,7 +238,7 @@ function boldSlotForWriter(slot: PlanSlot): Record<string, unknown> {
     slotIndex: slot.slotIndex,
     location: slot.location,
     ...(slot.world === undefined ? {} : { world: slot.world }),
-    timeOfDay: TIME_WORD(slot.timeOfDay),
+    timeOfDay: timeWordOf(slot.timeOfDay),
     shot: CAPTURE_LABEL[slot.capture ?? captureOfShot(slot.shot)],
     pose: slot.pose,
     outfit: slot.outfit,
