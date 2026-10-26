@@ -1,5 +1,5 @@
-import { isCustomCategory } from "../engine";
-import { BANKS } from "./banks";
+import { isCustomCategory, type SceneRoute } from "../engine";
+import { bankPlaceOf } from "./bankLookup";
 import { legwearAt } from "./level";
 import { BANK_CATEGORIES, type BankCategory, type BankPlace, type Moment, type Outfit } from "./banks/types";
 import { customSentence } from "./custom";
@@ -28,9 +28,14 @@ export function legwearFits(moment: Pick<Moment, "text" | "noLegwear">, outfit: 
   return outfit.showsLegs === true && moment.noLegwear !== true && !LEGWEAR_CLASH_WORDS.test(moment.text);
 }
 
-/** The positive coverage sentence a slot appends: the moment's, else the outfit's, else none. */
-export function coverageOf(moment: Pick<Moment, "coverage">, outfit: Pick<Outfit, "coverage">): string | undefined {
-  return moment.coverage ?? outfit.coverage;
+/**
+ * The positive coverage sentence a slot appends (5a.4, S5.BA3, I5.74, H3). The item that carries one is the moment, else the outfit. An imported avatar, an avatar of unknown origin and
+ * a caller that does not say (`impliedNudity` false or absent: the fail-closed default) always say that item's kept `coverage`. A Studio-created avatar says its `openCoverage`, which is
+ * absent where P-BA drew the class without a sentence: then it says none. The open sentence of a class P-BA could not draw open is its kept one (the bank's data says so).
+ */
+export function coverageOf(moment: Pick<Moment, "coverage" | "openCoverage">, outfit: Pick<Outfit, "coverage" | "openCoverage">, impliedNudity = false): string | undefined {
+  const item = moment.coverage !== undefined ? moment : outfit;
+  return impliedNudity ? item.openCoverage : item.coverage;
 }
 
 function bankCategory(category: string): BankCategory | undefined {
@@ -42,12 +47,13 @@ export interface BankSlot {
   category: string;
   location?: string | undefined;
   activity?: string | undefined;
+  /** 5a.4 (I5.73): the Seedream route; with it the five read their companion. Absent: the bank they always read. */
+  route?: SceneRoute | undefined;
 }
 
-/** The bank place of a built-in slot: its category's bank, the place by name. Undefined for a custom category, an own scene or a place the bank no longer has. */
-export function placeOfSlot(slot: Pick<BankSlot, "category" | "location">): BankPlace | undefined {
-  const category = bankCategory(slot.category);
-  return category === undefined ? undefined : BANKS[category].places.find((p) => p.name === slot.location);
+/** The bank place of a built-in slot, by the one marker-aware lookup (`bankPlaceOf`). Undefined for a custom category, an own scene or a place the bank no longer has. */
+export function placeOfSlot(slot: Pick<BankSlot, "category" | "location" | "route">): BankPlace | undefined {
+  return bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location })?.place;
 }
 
 /**
@@ -56,20 +62,20 @@ export function placeOfSlot(slot: Pick<BankSlot, "category" | "location">): Bank
  * place or moment the bank no longer has (a renamed one).
  */
 export function momentOfSlot(slot: BankSlot): Moment | undefined {
-  return placeOfSlot(slot)?.moments.find((m) => m.text === slot.activity);
+  return bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location, activity: slot.activity })?.moment;
 }
 
 /**
  * A built-in slot's sentence: its place by name in its category's bank, its moment by text in that place (taking the slot's capture and pose), its
  * outfit from the bank (one the moment pins, if it pins any), and its legwear from the bank on an outfit that may wear it.
  */
-function builtInSentence(category: BankCategory, slot: TemplateSlot, ctx: TemplateContext): string | null {
-  const bank = BANKS[category];
+function builtInSentence(slot: TemplateSlot, ctx: TemplateContext): string | null {
   const capture = captureOfSlot(slot);
-  const place = placeOfSlot(slot);
-  const moment = momentOfSlot(slot);
+  const hit = bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location, activity: slot.activity });
+  if (hit === undefined) return null;
+  const { bank, place, moment } = hit;
   const outfit = bank.outfits.find((o) => o.text === slot.outfit);
-  if (capture === null || place === undefined || moment === undefined || outfit === undefined) return null;
+  if (capture === null || moment === undefined || outfit === undefined) return null;
   // A pinning moment wears only its outfits; a pin-only outfit goes only to a moment that pins it (re-review 1).
   if (moment.outfits !== undefined && !moment.outfits.includes(outfit.text)) return null;
   if (outfit.pinOnly === true && moment.outfits === undefined) return null;
@@ -81,7 +87,7 @@ function builtInSentence(category: BankCategory, slot: TemplateSlot, ctx: Templa
     if (list === undefined || !list.items.includes(slot.legwear) || !(list.outfits?.includes(outfit.text) ?? true) || !legwearFits(moment, outfit)) return null;
     wearing = `${outfit.text} with ${slot.legwear}`;
   }
-  const coverage = coverageOf(moment, outfit);
+  const coverage = coverageOf(moment, outfit, ctx.impliedNudity === true);
   const parts: SentenceParts = {
     at: place.at,
     doing: moment.text,
@@ -100,8 +106,8 @@ function builtInSentence(category: BankCategory, slot: TemplateSlot, ctx: Templa
 export function templateSentence(slot: TemplateSlot, context: TemplateContext): string | null {
   // S5.7b: the slot's own «Подача» wins; a run mixes flirty and ordinary slots, so the level is the slot's, not the list's.
   const ctx: TemplateContext = slot.level === undefined ? context : { ...context, level: slot.level };
-  const category = bankCategory(slot.category);
-  if (category !== undefined) return builtInSentence(category, slot, ctx);
-  if (isCustomCategory(slot.category) && (ctx.snapshots ?? []).some((s) => s.ref === slot.category)) return customSentence(slot, ctx);
+  if (bankCategory(slot.category) !== undefined) return builtInSentence(slot, ctx);
+  // 5a.4 (I5.77): a custom category's «Смелая» frame is the writer's, who sets it inside the category's world; the template renders only the frames stored before 5a.4.
+  if (isCustomCategory(slot.category) && slot.route !== "seedream" && (ctx.snapshots ?? []).some((s) => s.ref === slot.category)) return customSentence(slot, ctx);
   return null;
 }

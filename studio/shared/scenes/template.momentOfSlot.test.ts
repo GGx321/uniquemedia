@@ -83,13 +83,18 @@ describe("one lookup: no production module walks a bank's moments by text but th
   const studio = join(import.meta.dir, "..", "..");
   const sources = productionSources(studio).map((path) => ({ path: relativePosix(studio, path), text: readFileSync(path, "utf8") }));
 
-  test("a moment is found by its text in exactly one production module, the template", () => {
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 I5.73, H1): the same invariant, the one lookup, with its home moved: a moment is found by its text in `bankLookup.ts`, the marker-aware lookup the
+  // template's `momentOfSlot` calls, so that the five on the route read their companion. Still exactly one production module.
+  test("a moment is found by its text in exactly one production module, the bank lookup the template's momentOfSlot calls", () => {
     const finders = sources.filter((s) => /\.moments\.find\(\s*\(\w+\)\s*=>\s*\w+\.text\s*===/.test(s.text)).map((s) => s.path);
-    expect(finders).toEqual(["shared/scenes/template.ts"]);
+    expect(finders).toEqual(["shared/scenes/bankLookup.ts"]);
+    const template = sources.find((s) => s.path === "shared/scenes/template.ts")?.text ?? "";
+    expect(template).toMatch(/\bbankPlaceOf\(/);
   });
 
-  test("the plain sentence calls the template's lookup", () => {
+  // 5a.4 (S5.BA3, 2026-10-26): the plain sentence calls the bank lookup itself (it needs the bank's outfits for the coverage), the very function `momentOfSlot` calls.
+  test("the plain sentence calls the bank lookup the template's momentOfSlot calls", () => {
     const plain = sources.find((s) => s.path === "shared/scenes/plain.ts")?.text ?? "";
-    expect(plain).toMatch(/\bmomentOfSlot\(/);
+    expect(plain).toMatch(/\bbankPlaceOf\(/);
   });
 });

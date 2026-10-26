@@ -1,10 +1,12 @@
-import type { PoolShot, ScenePose } from "../engine";
+import type { PoolShot, ScenePose, SceneRoute } from "../engine";
+import { bankPlaceOf } from "./bankLookup";
 import { BANKS, CUES } from "./banks";
+import { BOLD_COMPANIONS, CUSTOM_BOLD_BANKS } from "./banks/companions";
 import type { Level } from "./banks/types";
 import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "./captures";
 import { pick } from "./hash";
 import { locativeOf, rendersActivity } from "./custom";
-import { momentOfSlot, placeOfSlot } from "./template";
+import { coverageOf } from "./template";
 import { PHONE_WORDS, SELFIE_WORDS } from "./words";
 
 // 5a.2 (S5.6d, plan s5a2 §5.5 «After the last attempt»): the sentence a planned slot takes when the model could not write it in the two answered attempts a chunk
@@ -33,6 +35,8 @@ export interface PlainSlot {
   level?: Level | undefined;
   /** Whether her face shows reads the pose; absent: front. */
   pose?: ScenePose | undefined;
+  /** 5a.4 (S5.BA3, I5.73): the Seedream route, the marker of a «Смелая» frame of any category; with it the slot's place and moment are looked up in the companion or the shared custom banks. Absent: as before 5a.4. */
+  route?: SceneRoute | undefined;
 }
 
 /** An activity that opens with a preposition reads after «she is» («on the phone with her sister», «at the window, smiling»). */
@@ -41,7 +45,7 @@ const OPENS_WITH_PREPOSITION = /^(?:in|on|at|by|under|near|beside|behind|along|a
 const OPENS_WITH_BE = /^is\s/i;
 /** The leading words of the bank's moments («holds», «stretches»): a positive list of third-person verbs. */
 const BANK_VERBS: ReadonlySet<string> = new Set(
-  Object.values(BANKS).flatMap((bank) => bank.places.flatMap((place) => place.moments.map((moment) => /^[a-z]+/i.exec(moment.text)?.[0]?.toLowerCase() ?? ""))).filter((word) => word !== ""),
+  [...Object.values(BANKS), ...Object.values(BOLD_COMPANIONS), ...Object.values(CUSTOM_BOLD_BANKS)].flatMap((bank) => bank.places.flatMap((place) => place.moments.map((moment) => /^[a-z]+/i.exec(moment.text)?.[0]?.toLowerCase() ?? ""))).filter((word) => word !== ""),
 );
 /** A word that looks like a third-person verb («waters»). «pilates», «tennis» and «aerobics» look like one too. */
 const LOOKS_LIKE_A_THIRD_PERSON = /^[a-z]{2,}[^s\W]s$/i;
@@ -72,9 +76,14 @@ function customDoing(activity: string): string {
   return `is enjoying ${activity}`;
 }
 
-export function plainSentence(slot: PlainSlot): string {
-  const place = placeOfSlot(slot);
-  const moment = momentOfSlot(slot);
+/**
+ * @param impliedNudity whether the avatar was created in Studio (5a.4, I5.74): the coverage sentence a Seedream outfit ends with is its open one, or none; false or absent (an imported avatar, an
+ * unknown origin) is the kept, restrictive one.
+ */
+export function plainSentence(slot: PlainSlot, impliedNudity = false): string {
+  const hit = bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location, activity: slot.activity });
+  const place = hit?.place;
+  const moment = hit?.moment;
   const at = place === undefined ? locativeOf(field(slot.location)) : field(place.at);
   const activity = field(slot.activity);
   const doing = moment !== undefined ? moment.text : customDoing(activity);
@@ -91,5 +100,9 @@ export function plainSentence(slot: PlainSlot): string {
     if (cues.length > 0) clauses.push(pick(cues, `${field(slot.location)}|${activity}`, "plain-cue").text);
   }
   const sentence = clauses.join(", ");
-  return `${clauses[0] === undefined || names(at) ? capitalised(sentence) : sentence}.`;
+  const text = `${clauses[0] === undefined || names(at) ? capitalised(sentence) : sentence}.`;
+  // 5a.4 (S5.BA3, §5.3.3): a «Смелая» frame ends with the outfit's coverage sentence by the avatar's origin, as the template appends it; an ordinary bank has none to say.
+  const worn = hit?.bank.outfits.find((o) => o.text === slot.outfit);
+  const coverage = worn === undefined ? undefined : coverageOf(moment ?? {}, worn, impliedNudity);
+  return coverage === undefined ? text : `${text} ${coverage}`;
 }

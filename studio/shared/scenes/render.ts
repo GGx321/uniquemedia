@@ -1,4 +1,4 @@
-import type { PoolShot, ScenePose } from "../engine";
+import type { PoolShot, SceneRoute, ScenePose } from "../engine";
 // S5.9b2: the gaze and cue lists straight from their module, so the bank schema (banks/schema.ts) can read `momentAllowed` without an import cycle through banks/index.ts.
 import { CUES, GAZE } from "./banks/looks";
 import type { Angle, Cue, Gaze, GazeKind, Level, MomentGaze } from "./banks/types";
@@ -27,6 +27,8 @@ export interface TemplateSlot {
   framing?: "legs" | undefined;
   /** «Подача» of this slot (S5.7b): a slot's own level wins over the context's, since a run mixes flirty and ordinary slots. Absent: the context's, else ordinary. */
   level?: Level | undefined;
+  /** 5a.4 (S5.BA3, I5.73): the Seedream route, the marker of a «Смелая» frame of any category. With it the five read their companion bank; absent (a slot stored before 5a.4): the bank they always read. */
+  route?: SceneRoute | undefined;
 }
 
 export interface TemplateContext {
