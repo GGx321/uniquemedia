@@ -256,6 +256,8 @@ export const PRESENTATION_SCENARIOS: readonly Scenario[] = [
       facts(await settled());
       // 5a.4 (S5.BA5, 2026-10-26, plan s5a4 I5.77, BA3 review H-1 and L-2): a draft at «Смелая» plans what a flirty one plans, but every photo it draws is on the Seedream route, so the engine
       // prices it at the bold unit (the transcript writes no price). The note said «previewed like a flirty one», true of the price before 5a.4 only; the key's one granted second flip.
+      // Since r2.2 D2 (the key's third flip, the bold preview's line) the library differs too: at «Смелая» only routed photos are free, so the bold preview tells `free: 0` where the
+      // flirty one tells 22. «Plans like a flirty one» reads as the same videos, shapes and photos to generate; the note is a golden line, so it is kept (BA5 round 2, review L-6).
       t.note("a bold draft plans like a flirty one and prices every photo on the route");
       const flirtyFound = await t.callLaunch("scenes.get", { avatarId: w.avatarId });
       const flirtySetId = flirtyFound.ok ? record(flirtyFound.result.sceneSet)?.sceneSetId : undefined;
