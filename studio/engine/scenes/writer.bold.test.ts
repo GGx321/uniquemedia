@@ -819,6 +819,44 @@ describe("an old slot whose moment the bank renamed keeps its kept coverage (rev
   });
 });
 
+describe("the final check's five rows (S5.BA4, before the merge)", () => {
+  const bold = (sentence: string, slot: PlanSlot = routed()): WriterAnswer => readBoldWriterAnswer(answer([{ slotIndex: slot.slotIndex, sentence }]), [slot]);
+  const room = routed({ shot: "friend", capture: "timer" });
+  const yachtLounger = routed({ location: "a lounger by the water", activity: "lies back, soaking up the heat", outfit: "a white string bikini", shot: "friend", capture: "friend", world: "a yacht at anchor in the harbour" });
+
+  test.each([
+    // 1. «spending» is the present: she is there now.
+    ["1", "public-place", "Spending the evening at the bar, she lies back across the bed in a white lace bra and panties.", room],
+    ["1", "public-place", "Spending the morning at the cafe terrace, she lies back across the bed in a white lace bra and panties.", room],
+    // 2. «stopping» without «after» or «following» is the present too.
+    ["2", "public-place", "Stopping at the bar, she lies back across the bed in a white lace bra and panties.", room],
+    // 3. after a thing she brought, only «on» names where it came from; «at» and «in» name where she is.
+    ["3", "public-place", "Holding a croissant from the bakery at the cafe terrace, she lies back across the bed in a white lace bra and panties.", room],
+    ["3", "public-place", "With a cup from the cafe at the bar, she lies back across the bed in a white lace bra and panties.", room],
+    // 4. the harbour alone is public, for a water slot too.
+    ["4", "public-place", "In the harbour, she lies back, soaking up the heat on a lounger by the water in a white string bikini.", yachtLounger],
+    // 5. a shot that is the photo's is still a leak.
+    ["5", "label-word", "In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties in the wide shot, a box of macarons on the nightstand.", room],
+  ] as const)("item %s refuses (%s): %s", (_, problem, sentence, slot) => {
+    expect(problemsOf(bold(sentence, slot))).toContain(problem);
+  });
+
+  test.each([
+    // 2. «after stopping at a bakery on a side street»: the probe's chunk, row a4.
+    ["2", "public-place", "She curls up on the sofa in her room after stopping at a bakery on a side street, the evening lamps on and the sky outside already dim, in a white lace bra and panties with both hands empty on the timer shot in a three-quarter view.", routed({ location: "her sofa", world: "a bakery on a side street", activity: "a moment the probe hand-picked" })],
+    // 3. «on» after the thing: the probe's chunk, rows b4 and b11.
+    ["3", "public-place", "She curls up on the sofa in her room under the evening lamps with the sky outside already dim, her hands tucked around her knees as she turns slightly from the viewer, a paper bag from the bakery on a side street on the cushion next to her.", routed({ location: "her sofa", world: "a bakery on a side street", activity: "a moment the probe hand-picked" })],
+    ["3", "public-place", "She sits with her legs tucked under her on the sofa in her room under a ceiling light with a dark background, holding her phone above her as she faces the viewer, a paper bag from the bakery on a side street beside her.", routed({ location: "her sofa", world: "a bakery on a side street", activity: "a moment the probe hand-picked" })],
+    // 4. the harbour right after the yacht, the boat or the deck: where the yacht is.
+    ["4", "public-place", "On the deck of the yacht in the harbour, she lies back, soaking up the heat on a lounger by the water in a white string bikini.", yachtLounger],
+    // 5. a shot glass and a shot of espresso are no photo.
+    ["5", "label-word", "In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, a whisky in the shot glass on the nightstand.", room],
+    ["5", "label-word", "In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, on the shot of espresso she brought up.", room],
+  ] as const)("item %s passes (no %s): %s", (_, problem, sentence, slot) => {
+    expect(problemsOf(bold(sentence, slot))).not.toContain(problem);
+  });
+});
+
 // The widest of each value the bold slot JSON sends, read from the tables themselves.
 const longestOf = (values: readonly string[]): string => values.reduce((a, b) => (b.length > a.length ? b : a));
 const WORST_CAPTURE = (Object.keys(CAPTURE_LABEL) as (keyof typeof CAPTURE_LABEL)[]).reduce((a, b) => (CAPTURE_LABEL[b].length > CAPTURE_LABEL[a].length ? b : a));

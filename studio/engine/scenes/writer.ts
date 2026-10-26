@@ -664,7 +664,7 @@ function missesAGarment(outfit: string, sentence: string): boolean {
  * (sunlight, sunshine, lamplight), a frame of the view, a framed photo on the wall and a shot of espresso are not leaks; her phone and the viewer are the gaze
  * rule's own words.
  */
-const LABEL_WORDS = /\b(?:daylight|captured|selfies?|snaps?|timers?|cameras?|lens(?:es)?|three-quarter|worlds?|slots?|her own photo|(?:in|on) the (?:\w+ )?shot|photo from above)\b/gi;
+const LABEL_WORDS = /\b(?:daylight|captured|selfies?|snaps?|timers?|cameras?|lens(?:es)?|three-quarter|worlds?|slots?|her own photo|(?:in|on) the (?:\w+ )?shot(?!\s+(?:glass|of)\b)|photo from above)\b/gi;
 
 /** The label words of a sentence, as it writes them. */
 function labelWordsIn(sentence: string): string[] {
@@ -706,12 +706,21 @@ const OWN_HEAD =
 const CLUB_OR_RESORT = /^\s+(?:club|resort)s?\b/i;
 const HER_ROOM_BEFORE = /\b(?:suite|room|villa|cabin|bungalow)\s+$/i;
 /** Review round 3: she is back from it, «after» or «following» a visit of hers right before it (after time at a cafe terrace, after a stop at a bakery). */
-const BACK_FROM = /\b(?:after|following)\s+(?:(?:a|her|the)\s+)?(?:time|stop|visit|lunch|dinner|drinks|swim|walk|coffee|day|evening|morning|night)\s*$/i;
-/** Review round 3: time spent there, and only as past: «spent the morning at the cafe terrace», «back from a day at the museum», «after an evening in the bar». */
-const TIME_SPENT = /\b(?:after|following|back\s+from|spent|spending)\s+(?:(?:a|an|her|the|this)\s+)?(?:morning|evening|afternoon|lunch|dinner|drinks|coffee|day)\s*$/i;
-/** Something she brought back from it: «a paper bag from the bakery on a side street». A bare «from» excuses nothing («waving from her table at the cafe»). */
+const BACK_FROM = /\b(?:after|following)\s+(?:(?:a|her|the)\s+)?(?:time|stop|stopping|visit|lunch|dinner|drinks|swim|walk|coffee|day|evening|morning|night)\s*$/i;
+/**
+ * Review round 3: time spent there, and only as past: «spent the morning at the cafe terrace», «back from a day at the museum», «after an evening in the bar».
+ * «Spending the evening at the bar» is the present: she is there (the final check).
+ */
+const TIME_SPENT = /\b(?:after|following|back\s+from|spent)\s+(?:(?:a|an|her|the|this)\s+)?(?:morning|evening|afternoon|lunch|dinner|drinks|coffee|day)\s*$/i;
+/**
+ * Something she brought back from it, then where it stands, with «on» only: «a paper bag from the bakery on a side street». «At» or «in» after it name where she is
+ * («a croissant from the bakery at the cafe terrace»), and a bare «from» excuses nothing («waving from her table at the cafe»).
+ */
 const THING_FROM =
   /\b(?:bag|box|cup|tote|basket|bottle|receipt|treats?|pastr(?:y|ies)|flowers|bouquet|croissants?|macarons?|takeaway|shell|souvenirs?)\s+from\s+(?:(?:the|a|an)\s+)?(?:[\w'-]+\s+){0,2}$/i;
+/** The final check: the harbour right after the yacht, the boat or the deck is where the yacht lies («on the deck of the yacht in the harbour»), not where she is. */
+const YACHT_IN_HARBOUR = /\b(?:yachts?|boats?|decks?)\s+$/i;
+const HARBOUR = /^harbou?rs?$/i;
 /** A view of it: she looks «out» or «down» at it. */
 const A_VIEW = /\b(?:out|down)\s*$/i;
 
@@ -729,9 +738,10 @@ const waterVenue = (matched: string): boolean => /\bbeach\s+clubs?$/i.test(match
  * sentence also names her room excuses nothing. Not a place she is in:
  * - a modifier: a public noun before a private place or a thing (the beach house, a bakery box, a market tote), or joined by a hyphen (beach-house,
  *   street-facing); a club or a resort only right after her own room («her suite at the beach club»);
- * - where she came back from: «after» or «following» a visit of hers just before it (after time at a cafe terrace), time spent there as past («having spent the
- *   morning at the cafe terrace», «back from a day at the museum»), a thing she brought from it, and a place named right after one of those (at a bakery on a
- *   side street);
+ * - where she came back from: «after» or «following» a visit of hers just before it (after time at a cafe terrace, after stopping at a bakery), time spent
+ *   there as past («having spent the morning at the cafe terrace», «back from a day at the museum»), and a place named right after one of those (at a bakery on
+ *   a side street); a thing she brought from it, then where it stood with «on» (a paper bag from the bakery on a side street);
+ * - where the yacht lies: the harbour right after the yacht, the boat or the deck;
  * - a view: «out at the street».
  * These read only where she is: a part of the place or the place's own (the restaurant's window) is public whatever comes before it. A public noun right after an
  * excused one is counted («the beach club restaurant»). By the water the beach, the marina and the beach club are her place (`water`).
@@ -756,11 +766,14 @@ function publicPlacesIn(sentence: string, place: PlaceContext): string[] {
       }
       if (club !== null || /^-\w/.test(after) || OWN_HEAD.test(after)) continue;
       if (whereSheIs && place.water && waterVenue(match[0])) continue;
+      if (whereSheIs && HARBOUR.test(noun) && YACHT_IN_HARBOUR.test(before)) continue;
       const atOrIn = /^(?:at|in)\b/i.test(match[0]);
-      if (BACK_FROM.test(before) || (whereSheIs && atOrIn && TIME_SPENT.test(before)) || (whereSheIs && THING_FROM.test(before)) || (backFromEnd >= 0 && sentence.slice(backFromEnd, start).trim() === "")) {
+      if (BACK_FROM.test(before) || (whereSheIs && atOrIn && TIME_SPENT.test(before)) || (backFromEnd >= 0 && sentence.slice(backFromEnd, start).trim() === "")) {
         backFromEnd = end;
         continue;
       }
+      // A thing she brought from it excuses only where it came from, with «on», and lends that to no place after it.
+      if (whereSheIs && /^on\b/i.test(match[0]) && THING_FROM.test(before)) continue;
       if (whereSheIs && A_VIEW.test(before)) continue;
       found.push(noun.toLowerCase());
     }
