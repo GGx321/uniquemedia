@@ -56,6 +56,13 @@ export interface Moment {
   route?: "seedream";
   /** 5a.3: the positive sentence the template appends for what the moment shows («The white sheet is held up to her chest …»); it wins over the outfit's. */
   coverage?: string;
+  /**
+   * 5a.4 (S5.BA1, plan s5a4 §5.2, §5.5): the sentence a Studio-created avatar's frame says instead of `coverage` (descriptive, or none); absent: no sentence, where the probe allowed it.
+   * An imported avatar always says `coverage`. Nothing reads it before S5.BA3.
+   */
+  openCoverage?: string;
+  /** 5a.4 (S5.BA1, plan s5a4 §5.2): `implied` is a cover the model holds or wears (the sheet, the towel): planned only for a Studio-created avatar (`impliedNudity`), never for an imported one. */
+  tier?: "implied";
   /** 5a.3: in the water or at its edge: such a moment pins swimwear only («Пляж и бассейн»). */
   water?: true;
   /**
@@ -99,6 +106,8 @@ export interface BankPlace {
   room?: true;
   /** «Дом»'s lamp mood at evening and night (I5.34; the artefact variant is engine/scenes/phoneLook.ts's, S5.6b). */
   lamp?: true;
+  /** 5a.4 (S5.BA1, r2.2 N3): a water place (the sea, a pool, a lounger by it): at a water place every outfit a moment can wear is swimwear, never lingerie. Read by the S5.BA2 rules. */
+  water?: true;
   /** 2-3 ordinary things in the place, never paper or a screen. */
   details: readonly string[];
   moments: readonly Moment[];
@@ -119,6 +128,10 @@ export interface Outfit {
   route?: "seedream";
   /** 5a.3: the positive sentence the template appends for what the outfit covers («Her nightdress is opaque satin.»). */
   coverage?: string;
+  /** 5a.4 (S5.BA1): the sentence a Studio-created avatar's frame says instead of `coverage`; see `Moment.openCoverage`. */
+  openCoverage?: string;
+  /** 5a.4 (S5.BA1): an implied cover (a sheet, a towel); see `Moment.tier`. */
+  tier?: "implied";
 }
 
 /** Legwear, its own outfit slot (I5.29, K-17): drawn on about `share` of the slots whose outfit shows her legs. */

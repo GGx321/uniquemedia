@@ -49,6 +49,8 @@ export interface Place {
   at?: string;
   /** «Дом»'s lamp mood at evening and night (I5.34). */
   lamp?: true;
+  /** 5a.4 (S5.BA1, r2.2 N3): a water place; every outfit a moment there wears is swimwear. Nothing reads it before S5.BA2. */
+  water?: true;
 }
 
 // 5a.2 (S5.6b): the two word lists are the shared scene banks' own (shared/scenes/words.ts), so the banks, the template and the engine can never disagree.
@@ -145,6 +147,7 @@ export function poolOfBank(bank: CategoryBank): Pool {
       ...(place.mirror === true ? { mirror: true as const } : {}),
       ...(place.room === true ? { room: true as const } : {}),
       ...(place.lamp === true ? { lamp: true as const } : {}),
+      ...(place.water === true ? { water: true as const } : {}),
     })),
     outfits: bank.outfits.map((outfit) => outfit.text),
     shotDeck: bank.captureDeck.map(shotOf),
@@ -296,6 +299,7 @@ function builtInPlaceShape<A extends z.ZodType>(activity: A) {
     mirror: TRUE,
     room: TRUE,
     lamp: TRUE,
+    water: TRUE,
     details: z.array(BuiltInText).optional(),
     at: PlaceAt,
   };
@@ -343,9 +347,11 @@ const BoldOutfitText = BoldText.regex(/^[\x20-\x7e]+$/, "outfit text must be pla
 const Coverage = z.string().min(1).regex(/^[\x20-\x7e]+$/, "a coverage sentence is plain ASCII").refine(holdsNoYouthWord, NO_YOUTH_WORD);
 
 const BOLD_LEVEL = z.enum(["flirty", "bold"]).optional();
+// 5a.4 (S5.BA1): the implied-cover tier, and the open coverage a Studio-created avatar's frame says. Only a «Смелая» bank carries them; the five keep the built-in schema, which refuses both.
+const TIER = z.literal("implied").optional();
 const ROUTE = z.literal("seedream").optional();
 
-const BoldActivitySchema = BuiltInActivitySchema.extend({ text: BoldText, level: BOLD_LEVEL, route: ROUTE, coverage: Coverage.optional(), water: TRUE, details: z.array(BoldText).min(2).max(3).optional() });
+const BoldActivitySchema = BuiltInActivitySchema.extend({ text: BoldText, level: BOLD_LEVEL, route: ROUTE, coverage: Coverage.optional(), openCoverage: Coverage.optional(), tier: TIER, water: TRUE, details: z.array(BoldText).min(2).max(3).optional() });
 
 const BoldPlaceSchema = z.strictObject(builtInPlaceShape(BoldActivitySchema)).superRefine(builtInPlaceRules);
 
@@ -360,7 +366,7 @@ export const BoldPoolSchema = z
     shotDeck: z.array(z.enum(SHOTS)).min(1),
     poses: CategoryPoses.optional(),
     captureDeck: z.array(z.enum(CAPTURES)).min(1).optional(),
-    outfitInfo: z.array(z.strictObject({ text: BoldOutfitText, showsLegs: TRUE, pinOnly: TRUE, level: BOLD_LEVEL, route: ROUTE, coverage: Coverage.optional() })).min(1).optional(),
+    outfitInfo: z.array(z.strictObject({ text: BoldOutfitText, showsLegs: TRUE, pinOnly: TRUE, level: BOLD_LEVEL, route: ROUTE, coverage: Coverage.optional(), openCoverage: Coverage.optional(), tier: TIER })).min(1).optional(),
     legwear: z
       .strictObject({
         items: z.array(BoldOutfitText).min(1),
