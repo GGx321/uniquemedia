@@ -734,7 +734,7 @@ export type BoldAnyKind = "companion" | "rooms" | "water" | "nightwear" | "beach
  * Every problem of a «Смелая» bank under the 5a.4 rules, as `[rule] where: what`, the 5a.3 ones included; empty when it is valid. `others` are the banks its moment texts must be
  * absent from (moment-unique: every other bank, the seven and the other new ones). Never throws.
  */
-export function boldAnyProblems(bank: unknown, kind: BoldAnyKind, others: readonly CategoryBank[] = []): string[] {
+export function boldAnyProblems(bank: unknown, kind: BoldAnyKind, others: readonly unknown[] = []): string[] {
   return problemsOf(
     BoldBankShape.superRefine((parsed, ctx) => {
       const add = adder(ctx);
@@ -793,7 +793,7 @@ function checkOpenCoverage(add: Add, where: string, open: string, kept: string |
 }
 
 /** The 5a.4 rules (plan s5a4 §5.2's table), on top of the 5a.3 ones. */
-function boldAnyRules(bank: CategoryBank, add: Add, kind: BoldAnyKind, others: readonly CategoryBank[]): void {
+function boldAnyRules(bank: CategoryBank, add: Add, kind: BoldAnyKind, others: readonly unknown[]): void {
   const moments = bank.places.flatMap((place) => place.moments.map((moment) => ({ moment, where: `${place.name}: ${moment.text}`, place })));
   const general = bank.outfits.filter((o) => o.pinOnly !== true && !isOwnerBannedOutfit(o.text));
   const outfitOf = (text: string): Outfit | undefined => bank.outfits.find((o) => o.text === text);
@@ -884,7 +884,7 @@ function boldAnyRules(bank: CategoryBank, add: Add, kind: BoldAnyKind, others: r
   const seen = new Map<string, number>();
   for (const { moment } of moments) seen.set(moment.text, (seen.get(moment.text) ?? 0) + 1);
   for (const [text, count] of seen) if (count > 1) add(BANK_RULE.momentUnique, text, `the moment is given ${count} times in the bank`);
-  const elsewhere = new Set(others.flatMap((other) => other.places.flatMap((place) => place.moments.map((m) => m.text))));
+  const elsewhere = new Set(others.flatMap(momentTextsOf));
   for (const { moment, where } of moments) if (elsewhere.has(moment.text)) add(BANK_RULE.momentUnique, where, "is another bank's moment");
 
   // companion-size: what the planner needs to fill a request at every level from the bank alone.
@@ -932,6 +932,12 @@ const BankTexts = z.object({
   legwear: z.object({ items: z.array(z.string()) }).optional(),
   places: z.array(z.object({ name: z.string(), at: z.string(), details: z.array(z.string()), moments: z.array(z.object({ text: z.string(), motion: z.string(), startPose: z.string().optional() })) })).optional(),
 });
+
+/** The moment texts of a bank as far as they can be read (moment-unique reads the other banks; a malformed one is its own schema's business). */
+function momentTextsOf(bank: unknown): string[] {
+  const parsed = BankTexts.safeParse(bank);
+  return parsed.success ? (parsed.data.places ?? []).flatMap((place) => place.moments.map((m) => m.text)) : [];
+}
 
 /** bold-only-here (I5.37): an ordinary bank names none of the «Смелая» vocabulary, in any text. Never throws. */
 export function boldOnlyHereProblems(bank: unknown): string[] {

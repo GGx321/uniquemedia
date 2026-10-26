@@ -101,11 +101,13 @@ describe("the word gate has one home (static)", () => {
 
   // S5.9b2 (plan s5a3 §6.4, answer (b)): the garment itself is worn in the «Ночнушки и бельё» bank, the one production text that names it beside the rule's own home.
   // S5.WC2 round 3: the one motion check's GARMENT list names it as well, only to recognise a motion that takes it off («drops her babydoll»); the exemption stays the content line's.
-  test("the bold exemption is named only in boldRules.ts and read only by the content line, and the garment is worn only in the «Смелая» nightwear bank", () => {
+  test("the bold exemption is named only in boldRules.ts and read only by the content line, and the garment is worn only in the «Смелая» banks", () => {
     expect(filesWith(/\bBOLD_EXEMPT_YOUTH\b/)).toEqual(["shared/scenes/banks/boldRules.ts", "shared/scenes/contentLine.ts"]);
     // S5.WC2b round 2: the motion grammar's closed garment list recognises it too (a dressing form may move it, nothing else may), as motionText.ts does.
+    // 5a.4 (S5.BA2, 2026-10-26): the «Смелая» companions and the custom «rooms» bank wear it too, all through the one outfits module of the new banks.
     expect(filesWith(/babydoll/i)).toEqual([
       "shared/scenes/banks/boldRules.ts",
+      "shared/scenes/banks/companions/outfits.ts",
       "shared/scenes/banks/nightwear.ts",
       "shared/scenes/contentLine.ts",
       "shared/scenes/motionGrammar.ts",
