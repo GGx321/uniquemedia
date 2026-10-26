@@ -239,6 +239,9 @@ function byCreation(a: { createdAt: string; id: string }, b: { createdAt: string
   return a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
+/** 5a.4 (S5.BA5): the slot of a wizard candidate (`candidate-N`, N from 1, avatars/candidateJob.ts); a portrait is `portrait-N` and a run's slot is `slot-N`. */
+const WIZARD_SLOT = /^candidate-[1-9][0-9]*$/;
+
 export class Library {
   readonly root: string;
   /** The owner's own scene categories (CS.2): `<root>/categories`, library-wide, shared by every avatar. */
@@ -837,6 +840,18 @@ export class Library {
    */
   sourcePhoto(avatarId: string): PhotoSidecar | null {
     return this.photosByAvatar(avatarId).find((photo) => photo.source.kind === "imported") ?? null;
+  }
+
+  /**
+   * 5a.4 (S5.BA5, plan s5a4 I5.74, §5.6): whether the avatar was created in Studio, the ONE engine answer behind `impliedNudity` (a plan's implied covers, a render's open coverage)
+   * and `AvatarSummary.origin`. A POSITIVE wizard check: its master is its own committed, generated `candidate-N` photo (the wizard's slot, avatars/candidateJob.ts) with no scene
+   * category, and it has no imported photo. Everything else is false, the imported side (fail-closed): an imported photo or master, a `portrait-N` master, a generated master with no
+   * wizard slot (a record from before the slot was written), a run photo, a draft, an avatar the library does not hold.
+   */
+  studioCreated(avatarId: string): boolean {
+    const master = this.referencePhoto(avatarId)?.photo;
+    if (master === undefined || master.source.kind !== "generated" || master.source.category !== undefined) return false;
+    return master.source.slot !== undefined && WIZARD_SLOT.test(master.source.slot) && this.sourcePhoto(avatarId) === null;
   }
 
   /**
