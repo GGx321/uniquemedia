@@ -955,6 +955,19 @@ describe("a youth word split by hyphens into parts of four letters or more (S5.F
   });
 });
 
+describe("«old-school» is a style only as the whole word (S5.FU-AGE round 3, N1)", () => {
+  test.each(["25-year-old woman, oldschoolgirl look", "25-year-old woman, oldschooluniform", "25-year-old woman, oldschoolers"])("the descriptor %p names a youth word", (text) => {
+    expect(adultTextProblems(text, 25, "descriptor")).toContain("youth-word");
+  });
+
+  test.each(["25-year-old woman, old school glamour", "25-year-old woman, old-school glamour", "25-year-old woman, oldschool glamour", "25-year-old woman, oldschools glamour"])(
+    "the descriptor %p names none",
+    (text) => {
+      expect(adultTextProblems(text, 25, "descriptor")).toEqual([]);
+    },
+  );
+});
+
 describe("the Russian youth words the free pre-check missed (S5.FU-AGE)", () => {
   test.each(["лолита", "в образе лолиты", "нимфетка", "как нимфетки", "первоклашка", "пятиклашки", "в девятом классе", "девятый класс", "из третьего класса", "в девятом\u200bклассе", "в девятом-классе", "из одиннадцатого класса", "девушка девятого класса", "в девятых классах", "ученица одиннадцатого класса", "одиннадцатого класса", "местного девятого класса", "девушка девятого класса поезда", "пятого класса обслуживания"])(
     "%p is a hard marker of a minor, in a vibe too",

@@ -406,8 +406,8 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
   en("coed", "co-?eds?"),
   en("freshman", "freshm[ae]n"),
   en("sophomore", "sophomores?"),
-  // «old-school» is a style; joined whole (round 2, L11) it is «oldschool», a style still.
-  en("school", "(?<!old[- ])(?!oldschool)\\w*school\\w*"),
+  // «old-school» is a style; joined whole (round 2, L11) it is «oldschool», a style still, but only as the whole word (round 3, N1: «oldschoolgirl» is a schoolgirl).
+  en("school", "(?<!old[- ])(?!oldschools?\\b)\\w*school\\w*"),
   en("Nth grade", "(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth)[- ]grade(?:rs?)?|graders?"),
   en("grade school", "grade[- ]?school\\w*"),
   en("kindergarten", "kindergart\\w*"),
