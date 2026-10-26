@@ -39,11 +39,11 @@ describe("withoutImplied", () => {
 });
 
 describe("poolAt: the pool a new slot is planned from", () => {
-  test.each(ORDINARY_BUILT_INS)("%s at «Смелая» is its companion's pool", (category) => {
+  test.each([...ORDINARY_BUILT_INS])("%s at «Смелая» is its companion's pool", (category) => {
     expect(poolAt(category, "bold", true)).toBe(BOLD_POOLS[category]);
   });
 
-  test.each(ORDINARY_BUILT_INS)("%s at «Обычная», «Кокетливая» and with no level is today's pool, whoever the avatar is", (category) => {
+  test.each([...ORDINARY_BUILT_INS])("%s at «Обычная», «Кокетливая» and with no level is today's pool, whoever the avatar is", (category) => {
     for (const level of ["ordinary", "flirty", undefined] as const) for (const impliedNudity of [false, true]) expect(poolAt(category, level, impliedNudity)).toBe(POOLS[category]);
   });
 
@@ -60,11 +60,11 @@ describe("poolAt: the pool a new slot is planned from", () => {
 });
 
 describe("poolOfSlot: the pool a stored slot belongs to", () => {
-  test.each(ORDINARY_BUILT_INS)("a routed %s slot is the companion's", (category) => {
+  test.each([...ORDINARY_BUILT_INS])("a routed %s slot is the companion's", (category) => {
     expect(poolOfSlot({ category, route: "seedream" }, true)).toBe(BOLD_POOLS[category]);
   });
 
-  test.each(ORDINARY_BUILT_INS)("an unrouted %s slot, a set stored before 5a.4, is today's pool", (category) => {
+  test.each([...ORDINARY_BUILT_INS])("an unrouted %s slot, a set stored before 5a.4, is today's pool", (category) => {
     expect(poolOfSlot({ category, route: undefined }, true)).toBe(POOLS[category]);
   });
 

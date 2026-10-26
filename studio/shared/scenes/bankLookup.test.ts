@@ -10,7 +10,7 @@ import { ORDINARY_BANK_CATEGORIES } from "./banks/types";
 const CUSTOM = "cat-paris-trip";
 
 describe("bankPlaceOf (I5.73)", () => {
-  test.each(ORDINARY_BANK_CATEGORIES)("a routed %s slot finds its place and moment in the companion bank", (category) => {
+  test.each([...ORDINARY_BANK_CATEGORIES])("a routed %s slot finds its place and moment in the companion bank", (category) => {
     const bank = BOLD_COMPANIONS[category];
     const place = bank.places[0];
     const moment = place?.moments[0];
@@ -21,7 +21,7 @@ describe("bankPlaceOf (I5.73)", () => {
     expect(hit?.moment).toBe(moment);
   });
 
-  test.each(ORDINARY_BANK_CATEGORIES)("an unrouted %s slot finds its place and moment in the ordinary bank", (category) => {
+  test.each([...ORDINARY_BANK_CATEGORIES])("an unrouted %s slot finds its place and moment in the ordinary bank", (category) => {
     const bank = BANKS[category];
     const place = bank.places[0];
     const moment = place?.moments[0];

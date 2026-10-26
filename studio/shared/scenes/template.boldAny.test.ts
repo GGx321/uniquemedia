@@ -72,7 +72,7 @@ describe("the five on the route are written from their companion (I5.73)", () =>
     expect(templateSentence(slotOf("home", found, CAMI, { route: undefined }), { key: KEY })).toBeNull();
   });
 
-  test.each(ORDINARY_BANK_CATEGORIES)("every moment of the %s companion renders on every capture it lists, for either origin", (category) => {
+  test.each([...ORDINARY_BANK_CATEGORIES])("every moment of the %s companion renders on every capture it lists, for either origin", (category) => {
     const bank = BOLD_COMPANIONS[category];
     for (const place of bank.places) {
       for (const moment of place.moments) {

@@ -34,6 +34,6 @@ describe("TemplateContext.impliedNudity", () => {
     const kept = coverageOf(moment, outfit, false);
     const open = coverageOf(moment, outfit, true);
     const body = kept === undefined ? results[0] : results[0]?.slice(0, results[0].length - kept.length - 1);
-    expect(results[2]).toBe(open === undefined ? body : `${body} ${open}`);
+    expect(results[2]).toBe(open === undefined ? (body ?? null) : `${body} ${open}`);
   });
 });
