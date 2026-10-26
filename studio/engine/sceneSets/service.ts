@@ -291,7 +291,7 @@ export class SceneSetService {
     const { set } = await this.#find(library, sceneSetId);
     if (target.kind === "unwritten") return writeEstimate(await this.#deps.prices(sceneSetPriceModels(set.models.text)), set, this.#deps.ledger());
     const plan = await this.#planReview(library, set, target);
-    return reviewWriteEstimate(await this.#deps.prices(sceneSetPriceModels(set.models.text)), set.models.text, plan.count, plan.attemptsLeft, plan.modelScenes);
+    return reviewWriteEstimate(await this.#deps.prices(sceneSetPriceModels(set.models.text)), set.models.text, plan.count, plan.attemptsLeft, plan.modelScenes, plan.mode);
   }
 
   #planReview(library: Library | null, set: StoredSceneSet, target: Exclude<SceneWriteTarget, { kind: "unwritten" }>): Promise<ReviewPlan> {
@@ -605,7 +605,7 @@ export class SceneSetService {
         if (plan.sceneIds !== undefined) mine.sceneIds = plan.sceneIds;
       }
       const priced = await deps.prices(sceneSetPriceModels(set.models.text));
-      const estimate = plan === null ? writeEstimate(priced, set, ledger) : reviewWriteEstimate(priced, set.models.text, plan.count, plan.attemptsLeft, plan.modelScenes);
+      const estimate = plan === null ? writeEstimate(priced, set, ledger) : reviewWriteEstimate(priced, set.models.text, plan.count, plan.attemptsLeft, plan.modelScenes, plan.mode);
       deps.checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
       deps.checkMonthlyRoom(budget, estimate.worstMicros);
       // A cancel that came while the prices loaded ends the job before the file is touched: no write number, no marker, no reserve held.

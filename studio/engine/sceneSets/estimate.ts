@@ -4,7 +4,9 @@ import { WRITER_CALL, writerAttemptWorstMicros, writerCallOf, writerChunksMicros
 import { coversAt, llmPossibleSlots, writerChunksWorst, writerModeAt, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import type { LedgerView } from "../runs/journal";
+import { writerModeOf } from "../scenes/writer";
 import { pendingChunks } from "./chunks";
+import { setLocal } from "./local";
 
 // CS.4a: what a compose and a «Дописать» could cost, in one place: the estimate commands show it, the paid commands compare the owner's accepted
 // worst case with it and cap the job at that, and the job sends exactly these calls (the scene writer's own call shape, money/estimate.ts's WRITER_CALL),
@@ -16,7 +18,7 @@ export function sceneSetPriceModels(textModel: string): PriceModels {
 }
 
 /** The writer's call of a mode on the settings' text model, with the one source of truth's limits (money/estimate.ts's `writerCallOf`, r2.1 L2). */
-function writerCall(textModel: string, mode: WriterMode = "ordinary"): WriterCall {
+function writerCall(textModel: string, mode: WriterMode): WriterCall {
   return { ...writerCallOf(mode), model: textModel };
 }
 
@@ -65,7 +67,7 @@ export function composeEstimate(priced: PricedBook, textModel: string, split: re
  * reconciled reserve one, after a free 429/5xx two again), each at the writer's ceiling, so the worst case is exactly what the job's cap is set to. Expected
  * at the writer's typical tokens for the scenes. A write with none left costs nothing.
  */
-export function reviewWriteEstimate(priced: PricedBook, textModel: string, scenes: number, attemptsLeft: number, modelScenes: number = scenes): Estimate {
+export function reviewWriteEstimate(priced: PricedBook, textModel: string, scenes: number, attemptsLeft: number, modelScenes: number, mode: WriterMode): Estimate {
   if (!Number.isInteger(scenes) || scenes < 1 || scenes > MAX_SCENES_PER_WRITE) throw new RangeError(`a write covers 1..${MAX_SCENES_PER_WRITE} scenes, got ${scenes}`);
   if (!Number.isInteger(attemptsLeft) || attemptsLeft < 0 || attemptsLeft > WRITER_CALL.maxAttempts) throw new RangeError(`a write has 0..${WRITER_CALL.maxAttempts} attempts left, got ${attemptsLeft}`);
   if (!Number.isInteger(modelScenes) || modelScenes < 0 || modelScenes > scenes) throw new RangeError(`a write of ${scenes} scenes has 0..${scenes} for the model, got ${modelScenes}`);
@@ -73,7 +75,8 @@ export function reviewWriteEstimate(priced: PricedBook, textModel: string, scene
   // request that remains carries the model's scenes alone. A write with a scene the template cannot write (an idea, an own scene, an old-pool slot of an
   // interrupted rewrite) is priced as before: its attempts left at the writer's ceiling.
   if (attemptsLeft === 0 || modelScenes === 0) return { expectedMicros: 0, worstMicros: 0, prices: priced.book.source, pricesAsOf: priced.asOf };
-  const call = writerCall(textModel);
+  // 5a.4 (S5.BA5, r2.1 L3; BA5a review L4): in the mode the write's job asks it in (`writerModeOf` over its scenes for the model, S5.BA4), required.
+  const call = writerCall(textModel, mode);
   const worstMicros = attemptsLeft * writerAttemptWorstMicros(priced.book, call);
   // One request (round 2, M1: its per-call term once).
   return { expectedMicros: Math.min(writerExpectedMicros(priced.book, call, 1, modelScenes), worstMicros), worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
@@ -89,17 +92,27 @@ export function writeEstimate(priced: PricedBook, set: StoredSceneSet, ledger: L
   // request, whatever its attempts or its verdict, and adds nothing. A mixed chunk's request carries its model scenes alone.
   const asked = pendingChunks(set, ledger).filter((pending) => !pending.free);
   if (asked.length === 0) return { expectedMicros: 0, worstMicros: 0, prices: priced.book.source, pricesAsOf: priced.asOf };
-  const call = writerCall(set.models.text);
-  const ceiling = writerAttemptWorstMicros(priced.book, call);
+  // 5a.4 (S5.BA5, r2.1 L3; BA5a review L4): each chunk in the mode its job asks it in, `writerModeOf` over the scenes it sends the model (the very `setLocal` the job's
+  // phase reads, S5.BA4): a chunk with a «Смелая» frame at the bold call, any other at the ordinary one.
+  const local = setLocal(set);
+  const slotOf = new Map(set.scenes.flatMap((scene) => (scene.origin === "planned" ? [[scene.sceneId, scene.slot] as const] : [])));
+  const modeOf = (sceneIds: readonly number[]): WriterMode =>
+    writerModeOf(
+      sceneIds.flatMap((sceneId) => {
+        const slot = slotOf.get(sceneId);
+        return slot !== undefined && local(slot) === null ? [slot] : [];
+      }),
+    );
   let worstMicros = 0;
-  let scenes = 0;
-  let requests = 0;
+  const load = new Map<WriterMode, { requests: number; scenes: number }>();
   for (const pending of asked) {
-    worstMicros += pending.state.attemptsLeft * ceiling;
-    scenes += pending.modelScenes;
-    if (pending.state.attemptsLeft > 0) requests++;
+    const mode = modeOf(pending.sceneIds);
+    worstMicros += pending.state.attemptsLeft * writerAttemptWorstMicros(priced.book, writerCall(set.models.text, mode));
+    const sum = load.get(mode) ?? { requests: 0, scenes: 0 };
+    load.set(mode, { requests: sum.requests + (pending.state.attemptsLeft > 0 ? 1 : 0), scenes: sum.scenes + pending.modelScenes });
   }
-  // Round 2 (M1): one attempt of each chunk that can still be asked, at the typical tokens (`writerExpectedMicros`).
-  const expectedMicros = scenes === 0 ? 0 : Math.min(writerExpectedMicros(priced.book, call, requests, scenes), worstMicros);
-  return { expectedMicros, worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
+  // Round 2 (M1): one attempt of each chunk that can still be asked, at the typical tokens of its mode (`writerExpectedMicros`).
+  let expected = 0;
+  for (const [mode, { requests, scenes }] of load) if (scenes > 0) expected += writerExpectedMicros(priced.book, writerCall(set.models.text, mode), requests, scenes);
+  return { expectedMicros: Math.min(expected, worstMicros), worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
 }

@@ -139,6 +139,38 @@ describe("composeEstimate", () => {
   });
 });
 
+// 5a.4 (S5.BA5, plan s5a4 I5.77, r2.1 L3; BA5a review L4): «Дописать» prices each chunk in the mode its job asks it in (`writerModeOf` over the scenes it sends the model,
+// S5.BA4): a chunk with a «Смелая» frame (a custom category's routed scene at «Смелая», or an old nightwear scene the template no longer renders) at the bold call, 48 750 µ$ an
+// attempt, every other chunk at the ordinary one. The job reserves the same, so its first and its second attempt fit the figure the owner accepted.
+describe("writeEstimate: «Дописать» by each chunk's mode", () => {
+  const BOLD_CEILING = 48_750;
+  /** The fixture's scenes from `from` on drawn on the Seedream route, as a compose at «Смелая» draws a custom category. */
+  const routed = (set: StoredSceneSet, from = 1): StoredSceneSet => ({
+    ...set,
+    scenes: set.scenes.map((s) => (s.origin === "planned" && s.sceneId >= from ? { ...s, slot: { ...s.slot, route: "seedream" as const } } : s)),
+  });
+
+  test("a fresh routed 35-scene set: two bold chunks of two attempts, 4 × 48 750 µ$", () => {
+    expect(writeEstimate(PRICED, routed(stored(35)), fakeLedger({})).worstMicros).toBe(4 * BOLD_CEILING);
+  });
+
+  test("a set whose second chunk only is routed: one ordinary chunk and one bold chunk", () => {
+    expect(writeEstimate(PRICED, routed(stored(35), 26), fakeLedger({})).worstMicros).toBe(2 * CEILING + 2 * BOLD_CEILING);
+  });
+
+  test("a bold chunk interrupted after one attempt keeps one bold attempt", () => {
+    expect(writeEstimate(PRICED, routed(stored(20)), fakeLedger({ [id(1, 1)]: {} })).worstMicros).toBe(BOLD_CEILING);
+  });
+
+  test("a bold chunk expects the bold call's typical tokens, a request's term included", () => {
+    expect(writeEstimate(PRICED, routed(stored(20)), fakeLedger({})).expectedMicros).toBe(writerExpectedMicros(PRICED.book, { ...WRITER_BOLD_CALL, model: MODEL }, 1, 20));
+  });
+
+  test("an unrouted set keeps the ordinary call, as before", () => {
+    expect(writeEstimate(PRICED, stored(35), fakeLedger({})).worstMicros).toBe(4 * CEILING);
+  });
+});
+
 describe("writeEstimate: «Дописать»", () => {
   test("a fresh 35-scene set: 25 + 10 scenes are two chunks of two attempts, $0.15", () => {
     expect(writeEstimate(PRICED, stored(35), fakeLedger({})).worstMicros).toBe(4 * CEILING);

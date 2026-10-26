@@ -11,7 +11,8 @@ import { templateSentence } from "../../shared/scenes/template";
 import { seedOfSet } from "./compose";
 import { beginIdea, beginRewrite, resumeReviewWrite } from "./reviewMutations";
 import { sceneRefusal } from "./refusal";
-import { modelScenesOf } from "./reviewWriteJob";
+import type { WriterMode } from "../money/estimate";
+import { modelScenesOf, writeModeOf } from "./reviewWriteJob";
 import { nextSceneId, reservedIdeaScenes, reviewWriteState, reviewWritesOf } from "./reviewWrites";
 
 // CS.4b: what a rewrite, an idea write or the resume of one is, decided from the set as it is NOW and nothing else: every refusal (all free, all before a
@@ -32,6 +33,8 @@ export interface ReviewPlan {
   attemptsLeft: number;
   /** 5a.2 (S5.6c2): how many of the write's scenes the model must write; the code template writes the rest at $0, so 0 prices the write at nothing. */
   modelScenes: number;
+  /** 5a.4 (S5.BA5, r2.1 L3): the mode the write's job asks it in (`writeModeOf`, off the very record the write would leave), so the price is the reserve's. */
+  mode: WriterMode;
   /** The set with this write recorded (or resumed under `jobId`): applied under the set's lock. */
   begin: (current: StoredSceneSet, jobId: string) => StoredSceneSet;
 }
@@ -57,7 +60,7 @@ function redrawsOf(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "r
 }
 
 /** A write as the planners below decide it, before its model scenes are counted from the record it would leave (`planReviewWrite`). */
-type PlannedWrite = Omit<ReviewPlan, "modelScenes">;
+type PlannedWrite = Omit<ReviewPlan, "modelScenes" | "mode">;
 
 function planRewrite(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "rewrite" }>, pools: PoolsOf, impliedNudity: boolean): PlannedWrite {
   const scenes = targetsOf(set, target.sceneIds);
@@ -149,7 +152,7 @@ export async function planReviewWrite(input: ReviewPlanInput): Promise<ReviewPla
   // job agree on which scenes the template writes. (`begin` is pure: it returns the set with the write recorded; nothing is stored here.)
   const after = planned.begin(input.set, "estimate");
   const recorded = reviewWritesOf(after).find((r) => r.k === planned.k);
-  return { ...planned, modelScenes: recorded === undefined ? planned.count : modelScenesOf(after, recorded) };
+  return { ...planned, modelScenes: recorded === undefined ? planned.count : modelScenesOf(after, recorded), mode: recorded === undefined ? "ordinary" : writeModeOf(after, recorded) };
 }
 
 interface ReviewPlanInput {

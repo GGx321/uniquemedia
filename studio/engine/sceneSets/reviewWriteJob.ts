@@ -2,11 +2,13 @@ import type { CategorySnapshot, EngineError, SceneStoppedBy } from "../../shared
 import type { ReviewWriteRecord, StoredSceneSet } from "../library/sceneSets";
 import type { Budget } from "../money/budget";
 import type { Scope } from "../money/ledger";
+import type { WriterMode } from "../money/estimate";
 import type { PriceBook } from "../money/prices";
 import { localSentences } from "../scenes/localSentences";
 import { plannedWriterConfig, runWriterPhase, writerCallShape, type WriterPhase, type WriterPhaseDeps, type WriterPhaseResult } from "../runs/writerPhase";
 import type { PlanSlot } from "../scenes";
 import { ideaAsksOf, ideaJsonSchema, ideaMessages, readIdeaAnswer, toIdeaSlot, type IdeaAngle, type IdeaAsk } from "../scenes/ideaWriter";
+import { writerModeOf } from "../scenes/writer";
 import { categoryLabelOf } from "../scenes/categories";
 import { reviewWriteState, reviewWritesOf } from "./reviewWrites";
 import { lastAttemptWasFree, stoppedByOf } from "./writeJob";
@@ -116,6 +118,17 @@ export function modelScenesOf(set: StoredSceneSet, record: ReviewWriteRecord): n
   if (asked.kind === "ideas") return asked.slots.length;
   const local = localOf(set, record, asked.slots);
   return asked.slots.filter((slot) => local(slot) === null).length;
+}
+
+/**
+ * 5a.4 (S5.BA5, r2.1 L3; BA5a review L4): the mode the job asks the write in, decided as the job decides it: `writerModeOf` over the planned slots it sends the model
+ * (`askedOf` and the very `local` it hands the phase). An idea write, and a rewrite of own scenes, are the ordinary writer's (the idea writer has one mode).
+ */
+export function writeModeOf(set: StoredSceneSet, record: ReviewWriteRecord): WriterMode {
+  const asked = askedOf(set, record);
+  if (asked.kind === "ideas") return "ordinary";
+  const local = localOf(set, record, asked.slots);
+  return writerModeOf(asked.slots.filter((slot) => local(slot) === null));
 }
 
 export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWriteRequest): Promise<ReviewWriteEnd> {
