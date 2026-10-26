@@ -155,10 +155,12 @@ describe("no slot takes an item above its level (I5.37)", () => {
     expect(bold.filter((d) => d.outfit.level !== "bold")).toEqual([]);
   });
 
-  test("an ordinary slot of the nightwear bank is cotton nightwear on the owner's model: no satin, no lingerie, no Seedream", () => {
+  // 5a.4 (S5.BA2, 2026-10-26, Q-A2): the ordinary tier is plain underwear (and the satin cami and shorts) on Seedream now, no longer cotton nightwear on the owner's model; an ordinary
+  // slot still wears nothing above its level.
+  test("an ordinary slot of the nightwear bank is plain underwear on Seedream: nothing above ordinary, always on the route", () => {
     const ordinary = SEEDS.flatMap((seed) => boldPlan("nightwear", seed, 40)).filter((d) => levelOf(d.slot) === "ordinary");
     expect(ordinary.length).toBeGreaterThan(50);
-    expect(ordinary.filter((d) => d.outfit.level !== undefined || d.outfit.route !== undefined || d.slot.route !== undefined)).toEqual([]);
+    expect(ordinary.filter((d) => d.outfit.level !== undefined || d.outfit.route !== "seedream" || d.slot.route !== "seedream")).toEqual([]);
   });
 
   test("a beach slot wears the cut of its level: ordinary, flirty and bold swimwear stay apart", () => {
@@ -283,10 +285,19 @@ describe("a slot is on the Seedream route exactly when it drew a Seedream item (
       const frames = SEEDS.flatMap((seed) => SHARES.flatMap((legsShare) => [5, 20].flatMap((count) => boldPlan(category, seed, count, legsShare))));
       const seedream = (d: Drawn): boolean => d.moment.route === "seedream" || d.outfit.route === "seedream" || (d.slot.legwear !== undefined && stockings.has(d.slot.legwear));
       expect(frames.filter((d) => seedream(d) !== (d.slot.route === "seedream")).map((d) => `${levelOf(d.slot)} | ${d.slot.activity} | ${d.slot.outfit} | ${String(d.slot.route)}`)).toEqual([]);
-      expect(frames.some((d) => d.slot.route === undefined)).toBe(category === "nightwear");
+      // 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear outfit is on Seedream now, so neither «Смелая» bank draws a slot off the route.
+      expect(frames.some((d) => d.slot.route === undefined)).toBe(false);
       expect(frames.some((d) => d.slot.route === "seedream")).toBe(true);
     });
   }
+
+  // 5a.4 (S5.BA2, 2026-10-26, Q-A2): the off-the-route control the nightwear's ordinary slots gave is told on «Дом» at «Смелая», which still plans as «Кокетливая» and draws no
+  // Seedream item (until S5.BA3 plans its companion).
+  test("a «Смелая» plan of «Дом» draws no Seedream item, and none of its slots is on the route", () => {
+    const home = SEEDS.flatMap((seed) => plan({ seed, count: 20, categories: ["home"], level: "bold", legsShare: 15 }).slots);
+    expect(home.length).toBeGreaterThan(0);
+    expect(home.filter((s) => s.route !== undefined)).toEqual([]);
+  });
 
   test("every beach slot is on Seedream: every beach outfit is swimwear", () => {
     expect(SEEDS.flatMap((seed) => boldPlan("beach", seed, 30)).filter((d) => d.slot.route !== "seedream")).toEqual([]);

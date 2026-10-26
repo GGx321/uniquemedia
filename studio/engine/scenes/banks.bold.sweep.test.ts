@@ -110,7 +110,8 @@ describe("what the S5.8 gates refuse here is allowed through boldRules.ts only",
 
   test("the five's gates refuse the «Смелая» vocabulary of these banks: lingerie, swimwear, stockings, satin and the babydoll", () => {
     const words = new Set(refused.flatMap((t) => ordinaryRefusal(t.text).map((w) => w.toLowerCase())));
-    expect([...words].sort()).toEqual(["babydoll", "bikini", "bra", "briefs", "panties", "satin", "stockings", "swimsuit"]);
+    // 5a.4 (S5.BA2, 2026-10-26, Q-A2): nightwear's new «a white lace bra and a thong» adds the thong.
+    expect([...words].sort()).toEqual(["babydoll", "bikini", "bra", "briefs", "panties", "satin", "stockings", "swimsuit", "thong"]);
   });
 
   test("each such text passes the bold content line and the soft list minus the satin nightwear: the exemptions are the reason, nothing else", () => {
@@ -173,7 +174,8 @@ describe("a «Смелая» sentence with its coverage fits the scene text boun
   }
 
   test.each<[BoldCategory, number]>([
-    ["nightwear", 406],
+    // 5a.4 (S5.BA2, 2026-10-26, Q-A2): 406 -> 404, the longest outfit is «a crop top with panties and jeans» (33) now that «grey jersey lounge shorts and a tee» (35) left.
+    ["nightwear", 404],
     // S5.R4: 318 -> 326, the pool's «a glass of iced tea on a side table» (35) is now the longest detail.
     ["beach", 326],
   ])("%s: the longest combination is %i characters, under 600", (category, worst) => {

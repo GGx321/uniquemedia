@@ -95,13 +95,26 @@ describe("redrawing a bold nightwear scene", () => {
     expect(redrawn.filter((s) => s.legwear === undefined || !stockings.has(s.legwear) || !/\bsatin\b/.test(s.outfit)).map((s) => `${s.activity} | ${s.outfit}`)).toEqual([]);
   });
 
-  test("an ordinary scene redraws ordinary: cotton nightwear on the owner's model, no level, no route", () => {
+  // 5a.4 (S5.BA2, 2026-10-26, Q-A2): the ordinary tier is plain underwear on Seedream now, so an ordinary nightwear scene redraws ordinary and on the route; the off-the-route control is
+  // a «Смелая» «Дом» scene, which still plans and redraws as «Кокетливая» with no route (until S5.BA3 plans its companion).
+  test("an ordinary scene redraws ordinary: plain underwear on Seedream, no level, on the route", () => {
     const ordinary = slotsOf("nightwear", 0).filter((s) => s.level === undefined);
     expect(ordinary.length).toBeGreaterThan(20);
     for (const slot of ordinary) {
       for (let k = 1; k <= 3; k++) {
         const out = draw("nightwear", slot, k);
-        expect({ level: out.level, route: out.route }).toEqual({ level: undefined, route: undefined });
+        expect({ level: out.level, route: out.route }).toEqual({ level: undefined, route: "seedream" });
+      }
+    }
+  });
+
+  test("a «Смелая» «Дом» scene redraws at its own level with no route", () => {
+    const home = slotsOf("home", 0);
+    expect(home.length).toBeGreaterThan(20);
+    for (const slot of home) {
+      for (let k = 1; k <= 3; k++) {
+        const out = redrawSlot({ seed: 99, k, slot, pool: POOLS.home, avoid: NO_AVOID });
+        expect({ level: out.level, route: out.route }).toEqual({ level: slot.level, route: undefined });
       }
     }
   });

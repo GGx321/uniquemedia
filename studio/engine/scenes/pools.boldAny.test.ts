@@ -42,11 +42,15 @@ describe("tier and openCoverage on the bank types", () => {
     expect(pool.outfitInfo?.[0]).toMatchObject({ tier: "implied", openCoverage: OPEN });
   });
 
-  test("a pool of the banks on main carries neither field", () => {
-    for (const pool of Object.values(POOLS)) {
+  // 5a.4 (S5.BA2, 2026-10-26, Q-A2): the nightwear bedsheet is an implied cover with its open coverage now; the other six pools of the seven carry neither field.
+  test("of the seven pools only the nightwear's carries the fields, on its bedsheet alone", () => {
+    for (const [category, pool] of Object.entries(POOLS)) {
+      if (category === "nightwear") continue;
       expect(JSON.stringify(pool)).not.toContain("openCoverage");
       expect(JSON.stringify(pool)).not.toContain('"tier"');
     }
+    const tiered = [...POOLS.nightwear.locations.flatMap((l) => l.activities.filter((a) => a.tier !== undefined || a.openCoverage !== undefined).map((a) => a.text)), ...(POOLS.nightwear.outfitInfo ?? []).filter((o) => o.tier !== undefined || o.openCoverage !== undefined).map((o) => o.text)];
+    expect(tiered).toEqual(["lies with the sheet up to her chest", "only the white bedsheet"]);
   });
 });
 

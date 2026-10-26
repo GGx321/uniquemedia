@@ -264,9 +264,10 @@ describe("«Ночнушки и бельё»: the owner's rules on the real plan
     expect(offenders(back, (f) => f.capture !== "mirror-hidden")).toEqual(NONE);
   });
 
-  test("an ordinary plan is cotton nightwear on the owner's model; lingerie is a bold slot's only; satin is for flirty slots and above", () => {
+  // 5a.4 (S5.BA2, 2026-10-26, Q-A2): the ordinary tier is plain underwear on Seedream now (it was cotton nightwear on the owner's model); the most revealing tier stays a bold slot's.
+  test("an ordinary plan is plain underwear on Seedream, nothing above ordinary; the most revealing tier is a bold slot's only", () => {
     const lingerie = (f: Frame): boolean => f.outfit.level === "bold";
-    expect(offenders(allFrames("nightwear", "ordinary"), (f) => f.outfit.route !== undefined || f.slot.route !== undefined)).toEqual(NONE);
+    expect(offenders(allFrames("nightwear", "ordinary"), (f) => f.outfit.level !== undefined || f.outfit.route !== "seedream" || f.slot.route !== "seedream")).toEqual(NONE);
     expect(offenders(allFrames("nightwear", "flirty"), lingerie)).toEqual(NONE);
     const boldSlots = allFrames("nightwear", "bold").filter((f) => levelOf(f) === "bold");
     expect(boldSlots.filter(lingerie).length / boldSlots.length).toBeGreaterThanOrEqual(0.3);
