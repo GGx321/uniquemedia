@@ -1,3 +1,5 @@
+import type { Level } from "./types";
+
 // 5a.3 (S5.9b1, plan s5a3 §5.2 and §6.1): what the «Смелая» level is allowed that the global lists refuse. The lists in shared/scenes/words.ts and
 // shared/engine/ageText.ts stay exactly as they are, for every other level and every other path (montage captions included); the exemptions live only
 // here, and only the content-line module (contentLine.ts) and, from S5.9b2, the two «Смелая» bank schemas (banks/schema.ts, engine/scenes/pools.ts) import them.
@@ -88,3 +90,29 @@ export function swimwearWordsIn(text: string): string[] {
 export function stockingWordsIn(text: string): string[] {
   return wordsOf(text, STOCKINGS);
 }
+
+// 5a.4 (S5.BA2, plan s5a4 §5.1.1, r2.2 P6): the garment words of the tier table.
+const BOLD_GARMENT = /\bthongs?\b|\bsheer\b|\bbodysuits?\b|\bstring\s+bikinis?\b|\btriangle\s+bikinis?\b|\bbandeau\b|\bhigh-leg\b/i;
+const FLIRTY_GARMENT = /\blace\b|\bslip\s+nightdress\b|\bmidi\s+nightdress\b|\bsatin\s+robe\b/i;
+const PLAIN_SWIMWEAR = /\bone-piece\b|\bsporty\b|\bsarongs?\b|\blinen\s+shirts?\b/i;
+const PLAIN_SATIN = /\bsatin\s+cami\b/i;
+
+/**
+ * 5a.4 (S5.BA2, plan s5a4 §5.1.1, r2.2 P6): the tier table. The garment decides how revealing an outfit is, in every «Смелая» bank (the tier-table rule holds each outfit to it).
+ * Null: a garment the table does not know.
+ */
+export function tierOfGarment(outfit: { text: string; tier?: "implied" | undefined }): Level | null {
+  const text = outfit.text;
+  // Every implied cover (the sheet, the towel, the foam, the bare back) is the most revealing tier.
+  if (outfit.tier === "implied") return "bold";
+  // A thong (any set with one), sheer, the lace bodysuit, the open shirt; at the water the string, triangle and bandeau bikinis and the high-leg swimsuit.
+  if (BOLD_GARMENT.test(text) || OPEN_SHIRT.test(text)) return "bold";
+  // Lace sets, the satin slip and midi nightdresses, the short tied satin robe.
+  if (FLIRTY_GARMENT.test(text)) return "flirty";
+  // At the water: the one-piece, a sporty bikini, a bikini under a sarong or a linen shirt are plain; the plain bikinis, a bikini and a straw hat, bikini bottoms and a sweatshirt flirty.
+  if (swimwearWordsIn(text).length > 0) return PLAIN_SWIMWEAR.test(text) ? "ordinary" : "flirty";
+  // Plain underwear: cotton, a plain bra or bra and briefs, the sports set with briefs or panties; and the satin cami and satin shorts.
+  if (PLAIN_SATIN.test(text) || lingerieWordsIn(text).length > 0) return "ordinary";
+  return null;
+}
+

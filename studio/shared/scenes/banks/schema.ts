@@ -33,8 +33,9 @@ import {
   WALKS_AWAY_WORDS,
   YOUTH_PROPS,
 } from "../words";
-import { boldWordsIn, COVERS_HER, lingerieWordsIn, NO_STRAPS, OPENS_WITH_ARMS_UP, stockingWordsIn, swimwearWordsIn } from "./boldRules";
-import { MOMENT_HAIRS, type BankCategory, type CategoryBank, type Level, type Moment } from "./types";
+import { exposureWordsIn } from "../explicitWords";
+import { BOLD_EXEMPT_LOOK, boldWordsIn, COVERS_HER, lingerieWordsIn, NO_STRAPS, OPENS_WITH_ARMS_UP, stockingWordsIn, swimwearWordsIn, tierOfGarment } from "./boldRules";
+import { MOMENT_HAIRS, type BankCategory, type CategoryBank, type Level, type Moment, type Outfit } from "./types";
 
 // 5a.2 (S5.6a, I5.21, I5.35; plan s5a2 r1.2): the banks' zod schemas. The shape is zod; every rule the plan names runs in a superRefine and reports
 // `[rule] where: what`, so a test can name the rule a bad item breaks (banks/schema.test.ts) and a malformed bank fails loudly at load
@@ -116,6 +117,16 @@ export const BANK_RULE = {
   boldCovered: "bold-covered",
   water: "water",
   strap: "strap",
+  // 5a.4 (S5.BA2): «Смелая» on every category.
+  boldFloor: "bold-floor",
+  waterPlace: "water-place",
+  boldAllSeedream: "bold-all-seedream",
+  openCoverage: "open-coverage",
+  boldPrivate: "bold-private",
+  implied: "implied",
+  momentUnique: "moment-unique",
+  companionSize: "companion-size",
+  tierTable: "tier-table",
 } as const;
 type Rule = (typeof BANK_RULE)[keyof typeof BANK_RULE];
 
@@ -495,6 +506,35 @@ function checkRoute(add: Add, where: string, item: { text: string; level?: "flir
   if (!needs && item.route !== undefined) add(BANK_RULE.boldRoute, where, "only an item that names lingerie, swimwear, stockings or satin, or is bold, is drawn on Seedream");
 }
 
+/**
+ * bold-levels: every deck capture, at every pose it can take and at every level, has a moment and an outfit a slot can draw (the 0-null rule's data side). `said` names the bank read
+ * (5a.4: the bank without its implied items, which an imported avatar never draws).
+ */
+function boldLevelsRules(bank: CategoryBank, add: Add, said: string): void {
+  const moments = bank.places.flatMap((place) => place.moments.map((moment) => ({ moment, where: `${place.name}: ${moment.text}` })));
+  const general = bank.outfits.filter((o) => o.pinOnly !== true && !isOwnerBannedOutfit(o.text));
+  const wearable = (moment: Moment, level: Level): boolean =>
+    moment.outfits !== undefined ? bank.outfits.some((o) => moment.outfits?.includes(o.text) === true && atOrBelow(o.level, level)) : general.some((o) => atOrBelow(o.level, level));
+  for (const capture of new Set(bank.captureDeck)) {
+    for (const pose of posesFor(capture)) {
+      for (const level of LEVELS) {
+        // S5.R4 round 2: a bold slot takes no moment under a cover (engine/scenes/fit.ts momentFits), so such a moment is no answer for one.
+        const takes = (m: Moment): boolean => momentAllowed(m, capture, pose, level) && !(level === "bold" && (COVERS_HER.test(m.text) || COVERS_HER.test(m.motion)));
+        const found = bank.places.some((place) => (!isMirrorCapture(capture) || place.mirror === true) && place.moments.some((m) => m.legs === undefined && takes(m) && wearable(m, level)));
+        if (!found) add(BANK_RULE.boldLevels, "captureDeck", `«${capture}» at ${pose} has no moment and outfit a ${level} slot can draw${said}`);
+      }
+    }
+  }
+  // Every moment, at every level that may draw it (its own and above), has an outfit that level may wear: a moment that pins only outfits above its own level would pass the capture
+  // check above and then throw at compose (`pinnedAt` in engine/scenes/fit.ts), so it fails here, at load.
+  for (const { moment, where } of moments) {
+    for (const level of LEVELS.filter((l) => atOrBelow(moment.level, l))) {
+      if (!wearable(moment, level)) add(BANK_RULE.boldLevels, where, `has no outfit a ${level} slot can wear: it pins only outfits above ${level}${said}`);
+    }
+  }
+  if (general.filter((o) => o.level === "bold").length < BOLD_OUTFITS_MIN) add(BANK_RULE.boldLevels, "outfits", `at least ${BOLD_OUTFITS_MIN} bold outfits in the general draw${said}`);
+}
+
 function boldBankRules(bank: CategoryBank, add: Add): void {
   const moments = bank.places.flatMap((place) => place.moments.map((moment) => ({ moment, where: `${place.name}: ${moment.text}`, place })));
 
@@ -565,32 +605,14 @@ function boldBankRules(bank: CategoryBank, add: Add): void {
       const pins = moment.outfits ?? [];
       if (pins.length < 4) add(BANK_RULE.boldLegs, where, "a legs moment pins at least 4 outfits");
       if (!bank.outfits.some((o) => pins.includes(o.text) && o.level === undefined)) add(BANK_RULE.boldLegs, where, "a legs moment pins an ordinary outfit, so a legs slot of every level has one to wear");
-      for (const outfit of pins) if (lingerieWordsIn(outfit).length > 0) add(BANK_RULE.boldLegs, where, `«${outfit}» is lingerie: a bold legs frame wears satin nightwear with stockings (P-5a3 #6)`);
-    }
-  }
-
-  // bold-levels: every deck capture, at every pose it can take and at every level, has a moment and an outfit a slot can draw (the 0-null rule's data side).
-  const general = bank.outfits.filter((o) => o.pinOnly !== true && !isOwnerBannedOutfit(o.text));
-  const wearable = (moment: Moment, level: Level): boolean =>
-    moment.outfits !== undefined ? bank.outfits.some((o) => moment.outfits?.includes(o.text) === true && atOrBelow(o.level, level)) : general.some((o) => atOrBelow(o.level, level));
-  for (const capture of new Set(bank.captureDeck)) {
-    for (const pose of posesFor(capture)) {
-      for (const level of LEVELS) {
-        // S5.R4 round 2: a bold slot takes no moment under a cover (engine/scenes/fit.ts momentFits), so such a moment is no answer for one.
-        const takes = (m: Moment): boolean => momentAllowed(m, capture, pose, level) && !(level === "bold" && (COVERS_HER.test(m.text) || COVERS_HER.test(m.motion)));
-        const found = bank.places.some((place) => (!isMirrorCapture(capture) || place.mirror === true) && place.moments.some((m) => m.legs === undefined && takes(m) && wearable(m, level)));
-        if (!found) add(BANK_RULE.boldLevels, "captureDeck", `«${capture}» at ${pose} has no moment and outfit a ${level} slot can draw`);
+      // 5a.4 (P-BA L1 drew the sports set on a legs frame): plain underwear, the sports set and plain cotton, may join; lace and every lingerie above plain stay out.
+      for (const outfit of pins) {
+        if (lingerieWordsIn(outfit).length > 0 && tierOfGarment({ text: outfit }) !== "ordinary") add(BANK_RULE.boldLegs, where, `«${outfit}» is lingerie: a bold legs frame wears satin nightwear with stockings (P-5a3 #6), or plain underwear (P-BA L1)`);
       }
     }
   }
-  // Every moment, at every level that may draw it (its own and above), has an outfit that level may wear: a moment that pins only outfits above its own level would pass the capture
-  // check above and then throw at compose (`pinnedAt` in engine/scenes/fit.ts), so it fails here, at load.
-  for (const { moment, where } of moments) {
-    for (const level of LEVELS.filter((l) => atOrBelow(moment.level, l))) {
-      if (!wearable(moment, level)) add(BANK_RULE.boldLevels, where, `has no outfit a ${level} slot can wear: it pins only outfits above ${level}`);
-    }
-  }
-  if (general.filter((o) => o.level === "bold").length < BOLD_OUTFITS_MIN) add(BANK_RULE.boldLevels, "outfits", `at least ${BOLD_OUTFITS_MIN} bold outfits in the general draw`);
+
+  boldLevelsRules(bank, add, "");
 
   // legwear: the stockings, on the bold legwear only.
   const boldLegwear = bank.legwear?.bold;
@@ -617,8 +639,7 @@ function boldBankRules(bank: CategoryBank, add: Add): void {
   }
 }
 
-const boldBankSchema = z
-  .strictObject({
+const BoldBankShape = z.strictObject({
     bold: z.literal(true),
     places: z.array(BoldPlaceSchema).min(1),
     outfits: z.array(z.strictObject({ ...OUTFIT_SHAPE, level: BOLD_LEVEL, route: ROUTE, coverage: z.string().optional(), openCoverage: z.string().optional(), tier: TIER })).min(1),
@@ -626,12 +647,13 @@ const boldBankSchema = z
       .strictObject({ ...LEGWEAR_SHAPE, bold: z.strictObject({ items: z.array(z.string()), share: z.number(), route: z.literal("seedream"), outfits: z.array(z.string()) }).optional() })
       .optional(),
     captureDeck: z.array(CaptureSchema).min(1),
-  })
-  .superRefine((bank, ctx) => {
-    const add = adder(ctx);
-    bankRules(bank, add, null, true);
-    boldBankRules(bank, add);
   });
+
+const boldBankSchema = BoldBankShape.superRefine((bank, ctx) => {
+  const add = adder(ctx);
+  bankRules(bank, add, null, true);
+  boldBankRules(bank, add);
+});
 
 const GazeBankSchema = z
   .array(z.strictObject({ text: z.string(), kind: z.enum(["viewer", "away", "down", "hands", "mirror"]), phone: z.literal(true).optional(), level: z.literal("flirty").optional() }))
@@ -698,6 +720,210 @@ export function categoryBankProblems(bank: unknown, category: BankCategory): str
 /** Every problem of a «Смелая» bank (`nightwear`, `beach`), as `[rule] where: what`; empty when it is valid. Never throws. */
 export function boldBankProblems(bank: unknown): string[] {
   return problemsOf(boldBankSchema.safeParse(bank));
+}
+
+// ---------- 5a.4 (S5.BA2, plan s5a4 §5.1.1, §5.2, §5.3, §5.4, §5.5, I5.71, I5.72, I5.74, I5.76): «Смелая» on every category ----------
+
+/**
+ * Which «Смелая» bank the 5a.4 rules read: a companion of the five, the custom categories' «rooms» or «by the water», or one of the two shipped banks. The size, privacy and legs rules
+ * differ by kind; the floor, water, route, coverage, implied and tier rules hold every kind.
+ */
+export type BoldAnyKind = "companion" | "rooms" | "water" | "nightwear" | "beach";
+
+/**
+ * Every problem of a «Смелая» bank under the 5a.4 rules, as `[rule] where: what`, the 5a.3 ones included; empty when it is valid. `others` are the banks its moment texts must be
+ * absent from (moment-unique: every other bank, the seven and the other new ones). Never throws.
+ */
+export function boldAnyProblems(bank: unknown, kind: BoldAnyKind, others: readonly CategoryBank[] = []): string[] {
+  return problemsOf(
+    BoldBankShape.superRefine((parsed, ctx) => {
+      const add = adder(ctx);
+      bankRules(parsed, add, null, true);
+      boldBankRules(parsed, add);
+      boldAnyRules(parsed, add, kind, others);
+    }).safeParse(bank),
+  );
+}
+
+/** A place by the water, by what its phrase names (r2.1 N3): the sea, a pool, the beach, a shore, a lake. Such a place carries `water: true`. */
+const WATER_AT = /\b(?:sea|seaside|ocean|pools?|poolside|beach|shore|shoreline|lake|lagoon|water)\b/i;
+
+/**
+ * I5.72: the private places a «Смелая» frame may be at outside a room: her own, the hotel's or the villa's balcony, terrace or window (the balcony of her hotel room), and the villa's own
+ * pool. Read on a place's `at`.
+ */
+const PRIVATE_AT: readonly RegExp[] = [
+  /\b(?:her|the hotel's|her hotel's|the villa's|her villa's)\s+(?:own\s+)?(?:balcony|terrace|window)\b/i,
+  /\b(?:balcony|terrace|window)\s+of\s+(?:her|the)\s+(?:own\s+)?(?:hotel room|hotel|villa|room|flat|home)\b/i,
+  /\b(?:the|her)\s+villa's\s+(?:own\s+)?pool\b/i,
+  /\bpool\s+of\s+(?:her|the)\s+villa\b/i,
+];
+
+/**
+ * r2.2 P5: the implied covers P-BA drew with the kept sentence only, the sheet, the foam and the bare back (a towel over her hips). No open item was probed for them, so every avatar
+ * says their kept sentence: their `openCoverage` is their `coverage`. (An absent `openCoverage` is a frame with no sentence, which the probe allowed for the classes it drew open.)
+ */
+const KEPT_COVERS = /\b(?:sheet|bedsheet|foam)\b|\bover her hips\b/i;
+
+/** The fewest of each a bank of the kind holds (plan s5a4 §5.2, §5.3.1): places, non-legs moments (the implied ones counted apart), by level, general outfits a tier, legs moments. */
+const SIZE: Readonly<Record<"companion" | "rooms" | "water", { places: number; moments: number; ordinary: number; flirty: number; bold: number; outfits: number; legs: number }>> = {
+  companion: { places: 4, moments: 24, ordinary: 10, flirty: 6, bold: 6, outfits: 3, legs: 4 },
+  rooms: { places: 4, moments: 20, ordinary: 8, flirty: 4, bold: 4, outfits: 3, legs: 0 },
+  water: { places: 3, moments: 12, ordinary: 4, flirty: 3, bold: 3, outfits: 3, legs: 0 },
+};
+
+const isSatinNightwear = (text: string): boolean => BOLD_EXEMPT_LOOK.some((phrase) => new RegExp(`\\b${phrase.replace(/ /g, "\\s+")}\\b`, "i").test(text));
+const isSwimwear = (text: string): boolean => swimwearWordsIn(text).length > 0;
+const isLingerie = (text: string): boolean => lingerieWordsIn(text).length > 0;
+
+/** An open coverage's grammar: the kept coverage's, under its own rule id, and no exposure word (I5.76: Seedream refuses them, so a frame that says one is a frame the owner does not get). */
+function checkOpenCoverage(add: Add, where: string, open: string, kept: string | undefined): void {
+  const at = `${where} (open coverage)`;
+  if (kept === undefined) add(BANK_RULE.openCoverage, at, "an open coverage replaces a kept one: the item carries its kept coverage too");
+  else if (open.length > kept.length) add(BANK_RULE.openCoverage, at, "is never longer than its kept coverage");
+  if (open.trim() !== open || !PRINTABLE.test(open)) add(BANK_RULE.openCoverage, at, "plain printable ASCII with no edge space");
+  if (open.length > COVERAGE_MAX) add(BANK_RULE.openCoverage, at, `at most ${COVERAGE_MAX} characters`);
+  if (!ONE_SENTENCE.test(open)) add(BANK_RULE.openCoverage, at, "one sentence that opens with a capital and ends with «.»");
+  if (NEGATION.test(open)) add(BANK_RULE.openCoverage, at, "says what covers her, never what does not show (no not, no, never, without)");
+  const youth = youthOf(open, true);
+  if (youth.length > 0) add(BANK_RULE.youth, at, `names a youth word (${youth.join(", ")})`);
+  if (SELFIE_WORDS.test(open) || CAMERA_WORDS.test(open)) add(BANK_RULE.camera, at, "names no camera, lens or selfie");
+  const exposed = exposureWordsIn(open);
+  if (exposed.length > 0) add(BANK_RULE.openCoverage, at, `names an exposure word (${exposed.join(", ")}): Seedream refuses it (I5.76)`);
+}
+
+/** The 5a.4 rules (plan s5a4 §5.2's table), on top of the 5a.3 ones. */
+function boldAnyRules(bank: CategoryBank, add: Add, kind: BoldAnyKind, others: readonly CategoryBank[]): void {
+  const moments = bank.places.flatMap((place) => place.moments.map((moment) => ({ moment, where: `${place.name}: ${moment.text}`, place })));
+  const general = bank.outfits.filter((o) => o.pinOnly !== true && !isOwnerBannedOutfit(o.text));
+  const outfitOf = (text: string): Outfit | undefined => bank.outfits.find((o) => o.text === text);
+  const isImplied = (text: string): boolean => outfitOf(text)?.tier === "implied";
+
+  // bold-floor (I5.71, r2.1 N3): every outfit is underwear or lingerie, satin nightwear, swimwear or an implied cover; at a water place she wears only swimwear; elsewhere none.
+  bank.outfits.forEach((outfit, i) => {
+    if (outfit.tier !== "implied" && !isLingerie(outfit.text) && !isSwimwear(outfit.text) && !isSatinNightwear(outfit.text)) {
+      add(BANK_RULE.boldFloor, `outfits[${i}] «${outfit.text}»`, "every «Смелая» outfit is underwear or lingerie, satin nightwear, swimwear or an implied cover");
+    }
+  });
+  const atTheWater = bank.places.every((place) => place.water === true);
+  if (!atTheWater) {
+    for (const outfit of general) {
+      if (isSwimwear(outfit.text)) add(BANK_RULE.boldFloor, `outfits «${outfit.text}»`, "swimwear in the general draw of a bank with a place away from the water: only the water places' moments pin it");
+    }
+  }
+  for (const { moment, where, place } of moments) {
+    if (place.water === true) {
+      const wears = moment.outfits ?? general.map((o) => o.text);
+      const dry = wears.filter((text) => !isSwimwear(text) || isLingerie(text));
+      if (dry.length > 0) {
+        add(BANK_RULE.boldFloor, where, moment.outfits === undefined ? `at a water place a moment pins its swimwear: the general draw would put «${dry.join("», «")}» by the water` : `«${dry.join("», «")}» is not swimwear: at a water place she wears only swimwear, never lingerie`);
+      }
+    } else if (moment.water !== true) {
+      for (const text of moment.outfits ?? []) if (isSwimwear(text)) add(BANK_RULE.boldFloor, where, `«${text}» is swimwear: away from the water she wears none`);
+    }
+  }
+
+  // water-place: the tag is on every place by the water and on no room.
+  for (const place of bank.places) {
+    if (place.water === true && place.room === true) add(BANK_RULE.waterPlace, place.name, "a room is never a water place");
+    if (place.water !== true && WATER_AT.test(place.at)) add(BANK_RULE.waterPlace, place.name, `its phrase names the water («${place.at}»): it carries water: true`);
+  }
+
+  // bold-all-seedream: every slot of a «Смелая» bank is on the route (Q-A2).
+  bank.outfits.forEach((outfit, i) => {
+    if (outfit.route !== "seedream") add(BANK_RULE.boldAllSeedream, `outfits[${i}] «${outfit.text}»`, "every «Смелая» outfit is drawn on Seedream (route seedream)");
+  });
+
+  // open-coverage (I5.74, §5.5): an open coverage replaces a kept one, in its grammar and never longer; an implied cover says one; the sheet, the foam and the bare back say their kept one.
+  const carriers = [
+    ...bank.outfits.map((outfit, i) => ({ where: `outfits[${i}] «${outfit.text}»`, item: outfit, covers: outfit.tier === "implied" ? [outfit.text] : [] })),
+    ...moments.map(({ moment, where }) => ({ where, item: moment, covers: (moment.outfits ?? []).filter(isImplied) })),
+  ];
+  for (const { where, item, covers } of carriers) {
+    if (item.openCoverage !== undefined) checkOpenCoverage(add, where, item.openCoverage, item.coverage);
+    if (covers.length === 0 || item.coverage === undefined) continue;
+    if (item.openCoverage === undefined) add(BANK_RULE.openCoverage, where, "an implied cover says what covers her to every avatar: it carries an open coverage (descriptive, or its kept one)");
+    else if (covers.some((text) => KEPT_COVERS.test(text)) && item.openCoverage !== item.coverage) {
+      add(BANK_RULE.openCoverage, where, "the sheet, the foam and the bare back were drawn with the kept sentence only (P-BA, r2.2 P5): every avatar says it, so its open coverage is its kept one");
+    }
+  }
+
+  // implied (I5.74): an implied cover is bold and pin-only, worn only by an implied moment, which is bold and pins only implied covers; without them the bank still draws every level.
+  bank.outfits.forEach((outfit, i) => {
+    if (outfit.tier !== "implied") return;
+    const where = `outfits[${i}] «${outfit.text}»`;
+    if (outfit.level !== "bold") add(BANK_RULE.implied, where, "an implied cover is bold");
+    if (outfit.pinOnly !== true) add(BANK_RULE.implied, where, "an implied cover is pin-only: only its own moments wear it");
+    const pins = moments.filter(({ moment }) => moment.outfits?.includes(outfit.text) === true);
+    if (pins.length === 0) add(BANK_RULE.implied, where, "an implied cover is pinned by a moment");
+  });
+  for (const { moment, where } of moments) {
+    const pins = moment.outfits ?? [];
+    if (moment.tier === "implied") {
+      if (moment.level !== "bold") add(BANK_RULE.implied, where, "an implied moment is bold");
+      if (pins.length === 0 || !pins.every(isImplied)) add(BANK_RULE.implied, where, "an implied moment pins its implied covers, and only them");
+    } else if (pins.some(isImplied)) add(BANK_RULE.implied, where, "only an implied moment wears an implied cover");
+  }
+  const withoutImplied: CategoryBank = {
+    ...bank,
+    outfits: bank.outfits.filter((o) => o.tier !== "implied"),
+    places: bank.places.map((place) => ({ ...place, moments: place.moments.filter((m) => m.tier !== "implied") })),
+  };
+  boldLevelsRules(withoutImplied, add, " (without the implied items, as an imported avatar draws it)");
+
+  // bold-private (I5.72): a companion's, the custom rooms' and the nightwear's places are her rooms, or her own or the hotel's balcony, terrace or window, or the villa's pool.
+  if (kind === "companion" || kind === "rooms" || kind === "nightwear") {
+    for (const place of bank.places) {
+      if (place.room !== true && !PRIVATE_AT.some((pattern) => pattern.test(place.at))) {
+        add(BANK_RULE.boldPrivate, place.name, `«${place.at}» is no private place: a room of her home or her hotel, her balcony, terrace or window, or the villa's own pool`);
+      }
+    }
+  }
+
+  // moment-unique: a moment is its bank's once, and no other bank's, so the claimed set and the history pairs never shift another category's draw.
+  const seen = new Map<string, number>();
+  for (const { moment } of moments) seen.set(moment.text, (seen.get(moment.text) ?? 0) + 1);
+  for (const [text, count] of seen) if (count > 1) add(BANK_RULE.momentUnique, text, `the moment is given ${count} times in the bank`);
+  const elsewhere = new Set(others.flatMap((other) => other.places.flatMap((place) => place.moments.map((m) => m.text))));
+  for (const { moment, where } of moments) if (elsewhere.has(moment.text)) add(BANK_RULE.momentUnique, where, "is another bank's moment");
+
+  // companion-size: what the planner needs to fill a request at every level from the bank alone.
+  if (kind === "companion" || kind === "rooms" || kind === "water") {
+    const size = SIZE[kind];
+    const nonLegs = moments.filter(({ moment }) => moment.legs === undefined && moment.tier !== "implied").map(({ moment }) => moment);
+    const legs = moments.filter(({ moment }) => moment.legs !== undefined);
+    const count = (level: Level): number => nonLegs.filter((m) => (m.level ?? "ordinary") === level).length;
+    const outfitsAt = (level: Level): number => general.filter((o) => o.tier !== "implied" && (o.level ?? "ordinary") === level).length;
+    if (bank.places.length < size.places) add(BANK_RULE.companionSize, "places", `at least ${size.places} places`);
+    if (nonLegs.length < size.moments) add(BANK_RULE.companionSize, "moments", `at least ${size.moments} moments that are not legs or implied ones`);
+    for (const level of LEVELS) {
+      if (count(level) < size[level]) add(BANK_RULE.companionSize, "moments", `at least ${size[level]} ${level} moments`);
+      if (outfitsAt(level) < size.outfits) add(BANK_RULE.companionSize, "outfits", `at least ${size.outfits} ${level} outfits in the general draw`);
+    }
+    if (size.legs === 0 && legs.length > 0) add(BANK_RULE.companionSize, "legs", "no legs moment: «Ножки» is the built-ins' (legs-built-in-only)");
+    if (legs.length < size.legs) add(BANK_RULE.companionSize, "legs", `at least ${size.legs} legs moments`);
+    if (kind === "water" && (bank.outfits.some((o) => o.tier === "implied") || moments.some(({ moment }) => moment.tier === "implied"))) {
+      add(BANK_RULE.companionSize, "implied", "«by the water» holds no implied cover: swimwear only");
+    }
+  }
+
+  // tier-table (r2.2 P6): an outfit's level is the tier its garment gives.
+  bank.outfits.forEach((outfit, i) => {
+    const where = `outfits[${i}] «${outfit.text}»`;
+    const tier = tierOfGarment(outfit);
+    if (tier === null) add(BANK_RULE.tierTable, where, "names no garment of the tier table");
+    else if ((outfit.level ?? "ordinary") !== tier) add(BANK_RULE.tierTable, where, `is ${tier} by the tier table, not ${outfit.level ?? "ordinary"}`);
+  });
+
+  // bold-legs (the companions and nightwear): a legs frame wears satin, at least three, one of them ordinary (the satin cami and satin shorts); plain underwear may join (P-BA L1).
+  if (kind === "companion" || kind === "nightwear") {
+    for (const { moment, where } of moments) {
+      if (moment.legs === undefined) continue;
+      const satin = (moment.outfits ?? []).filter(isSatinNightwear);
+      if (satin.length < 3) add(BANK_RULE.boldLegs, where, "a legs moment pins at least 3 satin outfits");
+      if (!satin.some((text) => outfitOf(text) !== undefined && outfitOf(text)?.level === undefined)) add(BANK_RULE.boldLegs, where, "a legs moment pins an ordinary satin outfit (the satin cami and satin shorts)");
+    }
+  }
 }
 
 /** The texts of a bank as far as they can be read (a malformed bank is its schema's business). */
