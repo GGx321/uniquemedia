@@ -42,8 +42,21 @@ describe("assembleSlot", () => {
     for (const slot of plan({ seed: 11, count: 10, categories: ["home"], level: "flirty" }).slots) expect(() => assembleSlot(DESCRIPTOR, slot, BOLD_SENTENCE, MASTER, OPTIONS)).toThrow(AssemblerRefusalError);
   });
 
-  test("a bold plan's «Дом» slots (drawn as «Кокетливая») are held to the revealing words too", () => {
-    for (const slot of plan({ seed: 11, count: 10, categories: ["home"], level: "bold" }).slots) expect(() => assembleSlot(DESCRIPTOR, slot, BOLD_SENTENCE, MASTER, OPTIONS)).toThrow(AssemblerRefusalError);
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 I5.73, §7.4, BA2 part 2 review L1): a «Смелая» «Дом» plan is routed and read at the bold content line now. The old control (a «Смелая» «Дом» slot drawn as
+  // «Кокетливая», held to the revealing words) is the slot of a set stored before 5a.4: a flirty slot with no route, which a «Смелая» request planned then.
+  test("a «Дом» slot stored before 5a.4 (drawn as «Кокетливая» at a «Смелая» request, no route) is held to the revealing words too", () => {
+    for (const slot of plan({ seed: 11, count: 10, categories: ["home"], level: "flirty" }).slots) {
+      expect(slot.route).toBeUndefined();
+      expect(() => assembleSlot(DESCRIPTOR, slot, BOLD_SENTENCE, MASTER, OPTIONS)).toThrow(AssemblerRefusalError);
+    }
+  });
+
+  test("a «Смелая» «Дом» plan is on the route and read at the bold content line: bra and panties pass, a youth word does not", () => {
+    for (const slot of plan({ seed: 11, count: 10, categories: ["home"], level: "bold" }).slots) {
+      expect(slot.route).toBe("seedream");
+      expect(() => assembleSlot(DESCRIPTOR, slot, BOLD_SENTENCE, MASTER, OPTIONS)).not.toThrow();
+      expect(() => assembleSlot(DESCRIPTOR, slot, "A teenage girl in a white string bikini.", MASTER, OPTIONS)).toThrow(AssemblerRefusalError);
+    }
   });
 
   test("the sentence the template writes for a «Смелая» slot passes the gate", () => {

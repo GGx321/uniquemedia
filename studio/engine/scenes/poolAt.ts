@@ -52,12 +52,12 @@ export function customBoldPools(impliedNudity: boolean): { rooms: Pool; water: P
  * (an old «Смелая» set of the five, drawn as «Кокетливая» with no route, redraws in the ordinary pool). Undefined for a custom slot without the route and for an own scene, whose pool is the
  * category's own stored one. An imported avatar's pool holds no implied covers.
  */
-export function poolOfSlot(slot: { category: string; route: SceneRoute | undefined; location?: string | undefined }, impliedNudity: boolean): Pool | undefined {
+export function poolOfSlot(slot: { category: string; route?: SceneRoute | undefined; location?: string | undefined }, impliedNudity: boolean): Pool | undefined {
   const pool = poolOfStored(slot);
   return pool === undefined || impliedNudity ? pool : withoutImplied(pool);
 }
 
-function poolOfStored(slot: { category: string; route: SceneRoute | undefined; location?: string | undefined }): Pool | undefined {
+function poolOfStored(slot: { category: string; route?: SceneRoute | undefined; location?: string | undefined }): Pool | undefined {
   const builtIn = CATEGORIES.find((c) => c === slot.category);
   if (builtIn !== undefined) return slot.route === "seedream" && isOrdinaryBankCategory(builtIn) ? BOLD_POOLS[builtIn] : POOLS[builtIn];
   if (isCustomCategory(slot.category) && slot.route === "seedream") return Object.values(CUSTOM_BOLD_POOLS).find((pool) => pool.locations.some((l) => l.name === slot.location));

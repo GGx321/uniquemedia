@@ -1,13 +1,15 @@
-import { isBoldCategory, orderCategories, splitCount, type CategoryRef, type LegsShare, type SceneLevel } from "../../shared/engine";
+import { isCustomCategory, orderCategories, splitCount, type CategoryRef, type LegsShare, type SceneLevel } from "../../shared/engine";
 import { categoryRefOf, plannerCategoryOf } from "./categories";
-import type { PlannerCategory, Shot } from "./types";
+import { ORDINARY_BUILT_INS, type PlannerCategory, type Shot } from "./types";
 import type { Level, Outfit } from "../../shared/scenes/banks/types";
 import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "../../shared/scenes/captures";
-import { apportionLegs, atSlotLevel, drawLevelOf, flirtyCountOf, legsCountOf, levelCountsOf, seedreamRoute } from "../../shared/scenes/level";
+import { isWaterPlaceName } from "../../shared/scenes/custom";
+import { apportionLegs, atSlotLevel, drawLevelOf, flirtyCountOf, legsCountOf, levelCountsOf, seedreamRoute, spreadLevels, tierSpreadOf, type LevelCounts } from "../../shared/scenes/level";
 import { legwearFits } from "../../shared/scenes/template";
 import { fittingMoments, generalOutfits, kindOfDeck, legwearOfSlot, outfitInfoOf, pinnedAt, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
 import { hasLegs, legsCapturesAt, legsMomentsAt, legsOutfitsOf, legsPlacesOf } from "./legs";
 import { allowedActivities, hasCleanActivity, POOLS, usableOutfits, type Activity, type Place, type Pool } from "./pools";
+import { customBoldPools, poolAt, withoutImplied } from "./poolAt";
 import { drawFromPoses, drawPose, NO_EXTRA_POSES } from "./poses";
 import { Bag, makeRng, rngPick, shuffle, subSeed, type Rng } from "./rngUtil";
 import { isPhoneInHandShot, ScenePlanSchema, type PlanSlot, type Pose, type ScenePlan } from "./schema";
@@ -59,6 +61,11 @@ export interface PlanInput {
    * category once, every one of them among `categories`; a count of 0 is allowed. The slots keep the canonical category order whatever order this lists.
    */
   split?: readonly { ref: CategoryRef; count: number }[];
+  /**
+   * 5a.4 (S5.BA3, plan s5a4 I5.74, M7): the origin input, default FALSE (fail-closed: an imported avatar, an unknown origin). True only for an avatar created in Studio: then an implied cover (the
+   * sheet, the towel, the foam, the bare back) may be planned at «Смелая». The engine passes it through `planForAvatar`; golden builders that pin Studio-created behaviour pass `true`.
+   */
+  impliedNudity?: boolean | undefined;
 }
 
 /** `split` checked against the request and put in the contract's category order. */
@@ -300,6 +307,7 @@ function planBuiltIn(
   level: Level,
   legsCount: number,
   claimed: ReadonlySet<string> = new Set(),
+  tiers?: LevelCounts,
 ): PlanSlot[] {
   const deck = new Bag(pool.captureDeck, streams.rng);
   // Polish after C4 (round 2): the moment texts, normalised, that another category's slots already hold in this run. Only a «Смелая» category is given any; with none the plan is the one it always was.
@@ -379,7 +387,9 @@ function planBuiltIn(
       return capture !== undefined && faceVisibleOf({ capture, pose: "front" }) === "yes";
     };
     // «Смелая» (5a.3, I5.36): the bold slots come first, drawn uniformly over the category on `bold:` (legs and face-hidden frames included); the flirty ones are then chosen from the rest as above.
-    const counts = level === "bold" ? levelCountsOf(n) : { bold: 0, flirty: flirtyCountOf(n, level), ordinary: 0 };
+    // 5a.4 (S5.BA3, r2.2 D1): a category planned as part of a request is given its share of the request's tiers (`tierSpreadOf`); without one it counts its own slots, which is what a request of
+    // this category alone gets as well.
+    const counts = level === "bold" ? (tiers ?? levelCountsOf(n)) : { bold: 0, flirty: flirtyCountOf(n, level), ordinary: 0 };
     if (level === "bold") for (const i of shuffle(streams.boldRng, Array.from({ length: n }, (_, k) => k)).slice(0, counts.bold)) boldAt.add(i);
     const order = shuffle(streams.levelRng, Array.from({ length: n }, (_, i) => i)).filter((i) => !boldAt.has(i));
     for (const i of [...order.filter(shows), ...order.filter((i) => !shows(i))].slice(0, counts.flirty)) flirtyAt.add(i);
@@ -563,6 +573,94 @@ function planBuiltIn(
   return slots;
 }
 
+/** The streams a built-in-style plan draws on, keyed by `key`: a built-in category's own name (so its draws are what they always were), or a custom category's branch (5a.4). */
+function streamsOf(seed: number, key: string, replan: () => readonly (Capture | null)[]): BuiltInStreams {
+  return {
+    rng: makeRng(subSeed(seed, key)),
+    poseRng: makeRng(subSeed(seed, `pose:${key}`)),
+    fixRng: makeRng(subSeed(seed, `clean:${key}`)),
+    fitRng: makeRng(subSeed(seed, `fit:${key}`)),
+    legRng: makeRng(subSeed(seed, `legwear:${key}`)),
+    boldRng: makeRng(subSeed(seed, `bold:${key}`)),
+    boldOutfitRng: makeRng(subSeed(seed, `boldOutfit:${key}`)),
+    boldLegRng: makeRng(subSeed(seed, `boldLegwear:${key}`)),
+    levelRng: makeRng(subSeed(seed, `level:${key}`)),
+    angleRng: makeRng(subSeed(seed, `angle:${key}`)),
+    awayRng: makeRng(subSeed(seed, `away:${key}`)),
+    legsRng: makeRng(subSeed(seed, `legs:${key}`)),
+    ordinaryCaptures: replan,
+  };
+}
+
+/** One pool's slots at a level, planned capture-first on streams keyed `key`; the ordinary plan the «Кокетливая» and «Смелая» slots take their captures from is planned on fresh streams. */
+function planPool(opts: {
+  seed: number;
+  key: string;
+  pool: Pool & { captureDeck: readonly Capture[] };
+  category: PlannerCategory;
+  n: number;
+  startIndex: number;
+  excluded: ReadonlySet<string>;
+  recent: ReadonlySet<string>;
+  level: Level;
+  legs: number;
+  claimed?: ReadonlySet<string>;
+  tiers?: LevelCounts;
+}): PlanSlot[] {
+  const { seed, key, pool, category, n, startIndex, excluded, recent, level, legs } = opts;
+  const streamsFor = (): BuiltInStreams =>
+    streamsOf(seed, key, () => planBuiltIn(streamsFor(), pool, category, n, startIndex, excluded, recent, "ordinary", legs).map((slot) => (slot.framing === "legs" ? null : (slot.capture ?? captureOfShot(slot.shot)))));
+  return planBuiltIn(streamsFor(), pool, category, n, startIndex, excluded, recent, level, legs, opts.claimed, opts.tiers);
+}
+
+/**
+ * 5a.4 (S5.BA3, plan s5a4 §5.3, I5.71, I5.72, I5.78): a custom category's `n` slots at «Смелая». They are drawn from the two shared custom banks (the category's own «Ракурсы» and shot deck are
+ * ignored, QB-4), and each carries a `world`, one of the category's stored pool places, which the bold writer sets the frame inside.
+ * - The split. Of the n slots, w = ⌊(n × W + ⌊P/2⌋) / P⌋ draw «by the water» with a water world (W water places of P, found by their head noun), the rest «rooms» with any world; which positions are
+ *   the water ones is drawn on `branch:${id}`.
+ * - The tiers. The category's share of the request is split between the two branches the same way the request is split between categories (`spreadLevels`), ties on `tier-spread:${id}`.
+ * - The world is drawn on `world:${id}`, a shuffle bag per kind of world, so the category's places go round before one repeats.
+ * Each branch plans on streams of its own (`${id}:rooms`, `${id}:water`), so no built-in category's draws move.
+ */
+function planCustomBold(opts: {
+  seed: number;
+  category: PlannerCategory;
+  stored: Pool;
+  n: number;
+  startIndex: number;
+  excluded: ReadonlySet<string>;
+  recent: ReadonlySet<string>;
+  share: LevelCounts;
+  impliedNudity: boolean;
+}): PlanSlot[] {
+  const { seed, category, stored, n, startIndex, excluded, recent, share } = opts;
+  if (n === 0) return [];
+  const banks = customBoldPools(opts.impliedNudity);
+  const worlds = stored.locations.map((place) => place.name);
+  const waterWorlds = worlds.filter(isWaterPlaceName);
+  const wet = worlds.length === 0 ? 0 : Math.floor((n * waterWorlds.length + Math.floor(worlds.length / 2)) / worlds.length);
+  const wetAt = new Set(shuffle(makeRng(subSeed(seed, `branch:${category}`)), Array.from({ length: n }, (_, i) => i)).slice(0, wet));
+  const [roomsShare, waterShare] = spreadLevels(share, [n - wet, wet], () => shuffle(makeRng(subSeed(seed, `tier-spread:${category}`)), [0, 1])) as [LevelCounts, LevelCounts];
+  const branch = (which: "rooms" | "water", count: number, tiers: LevelCounts): PlanSlot[] => {
+    const pool = banks[which];
+    if (count === 0 || pool.captureDeck === undefined) return [];
+    return planPool({ seed, key: `${category}:${which}`, pool: { ...pool, captureDeck: pool.captureDeck }, category, n: count, startIndex, excluded, recent, level: "bold", legs: 0, tiers });
+  };
+  const rooms = branch("rooms", n - wet, roomsShare);
+  const water = branch("water", wet, waterShare);
+  const worldRng = makeRng(subSeed(seed, `world:${category}`));
+  const anyWorld = new Bag(worlds, worldRng);
+  const waterWorld = waterWorlds.length === 0 ? null : new Bag(waterWorlds, worldRng);
+  let nextRoom = 0;
+  let nextWater = 0;
+  return Array.from({ length: n }, (_, i) => {
+    const isWet = wetAt.has(i);
+    const slot = (isWet ? water[nextWater++] : rooms[nextRoom++]) as PlanSlot;
+    const slotIndex = startIndex + i;
+    return { ...slot, slotIndex, attemptIdBase: `slot-${slotIndex}`, world: isWet && waterWorld !== null ? waterWorld.next() : anyWorld.next() };
+  });
+}
+
 /**
  * `plan()`'s implementation, taking the pools as a parameter. Exported only
  * for the isolation test that proves editing one category's pool cannot
@@ -581,14 +679,24 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
   const excluded = new Set((input.excludePairs ?? []).map((p) => pairKey(p.location, p.outfit)));
   // 5a.2: the moments the avatar used recently, by (place, moment); a history line written before it names none.
   const recent = new Set((input.excludePairs ?? []).flatMap((p) => (p.activity === undefined ? [] : [momentKey(p.location, p.activity)])));
-  // 5a.3 (S5.9a): «Смелая» draws the five ordinary built-ins as «Кокетливая» until S5.9b2 adds the banks that are bolder.
+  // 5a.4 (S5.BA3, I5.71): «Смелая» is every category's. At that level the five are planned from their companions, a custom category from the shared custom banks, and nightwear and beach as
+  // they always were; below it the five draw as the level says (`drawLevelOf`: «Обычная» or «Кокетливая») and a custom category plans as it always did.
+  const atBold = input.level === "bold";
   const level = drawLevelOf(input.level);
+  const impliedNudity = input.impliedNudity === true;
   const legsShare = input.legsShare ?? 0;
+  /** The pool a built-in category plans from at this request's level and for this avatar's origin. */
+  const poolOf = (category: PlannerCategory): Pool | undefined => {
+    const stored = pools[category];
+    if (!atBold || stored === undefined || isCustomCategory(category)) return stored;
+    // The five at «Смелая» draw their companion; nightwear and beach their own pool. An imported avatar's pool holds no implied cover.
+    return ORDINARY_BUILT_INS.some((c) => c === category) ? poolAt(category as (typeof ORDINARY_BUILT_INS)[number], "bold", impliedNudity) : impliedNudity ? stored : withoutImplied(stored);
+  };
 
   // «Ножки» (I5.29): the legs slots of the run, shared over the built-in categories that can deal them in proportion to their slots. The categories whose remainders tie are served in
   // an order drawn on `legs` (the run's own stream, never a category's).
   const legsEligible = split.map(({ ref, count: n }) => {
-    const pool = pools[plannerCategoryOf(ref)];
+    const pool = poolOf(plannerCategoryOf(ref));
     return pool !== undefined && hasLegs(pool) ? n : 0;
   });
   const legsParts =
@@ -596,50 +704,40 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
       ? split.map(() => 0)
       : apportionLegs(legsCountOf(legsShare, legsEligible.reduce((sum, n) => sum + n, 0), count), legsEligible, shuffle(makeRng(subSeed(seed, "legs")), split.map((_, i) => i)));
 
-  // Polish after C4 (round 2): the categories are planned the ordinary ones first, then the «Смелая» ones, so a «Смелая» category can yield the moment texts the others hold in the run.
-  // Every category draws on streams of its own, so the order changes no draw; the slots go back in the canonical order below.
+  // 5a.4 (S5.BA3, r2.2 D1): at «Смелая» the request's tiers are counted over the whole request and spread over its categories; the ties are broken on a `tier-spread` stream that a request of one
+  // category never reads, so its plan is `levelCountsOf(n)` exactly.
+  const shares = atBold ? tierSpreadOf(split, () => shuffle(makeRng(subSeed(seed, "tier-spread")), split.map((_, i) => i))) : null;
+
+  // Polish after C4 (round 2): a «Смелая» category can yield the moment texts the categories planned before it hold in the run. Every category draws on streams of its own, so the order changes
+  // no draw; the slots go back in the canonical order below.
   const firstIndexOf: number[] = [];
   split.reduce((next, { count: n }, entry) => ((firstIndexOf[entry] = next), next + n), 1);
-  const boldFirst = (entry: number): number => (input.level === "bold" && isBoldCategory(plannerCategoryOf(split[entry]?.ref as CategoryRef)) ? 1 : 0);
-  const planningOrder = split.map((_, entry) => entry).sort((a, b) => boldFirst(a) - boldFirst(b) || a - b);
   const slotsOf: PlanSlot[][] = split.map(() => []);
-  for (const entry of planningOrder) {
-    const { ref, count: n } = split[entry] as (typeof split)[number];
+  for (const [entry, { ref, count: n }] of split.entries()) {
     const nextIndex = firstIndexOf[entry] as number;
     const category = plannerCategoryOf(ref);
-    const pool = pools[category];
+    const pool = poolOf(category);
     if (pool === undefined) throw new RangeError(`no pool for category ${category}`);
+    const share = shares?.[entry];
+    // The texts the categories before this one already hold: at «Смелая» every category yields them.
+    const claimed = new Set(atBold ? slotsOf.flatMap((held, other) => (other === entry ? [] : held.map((slot) => textKeyOf(slot.activity)))) : []);
     // A custom category's streams are keyed by its id (never a built-in's name), so every built-in's draws for a seed stay what they were.
-    const rng = makeRng(categorySeed(seed, category));
-    const poseRng = makeRng(poseSeed(seed, category));
-    // The place redraws of S5.R1 have a stream of their own: a pool that needs none never reads it, and no other stream shifts.
-    const fixRng = makeRng(subSeed(seed, `clean:${category}`));
-    // A built-in pool carries its deck of captures and is drawn capture-first (planBuiltIn); a custom pool keeps the planner it always had.
     if (pool.captureDeck !== undefined) {
+      // A built-in pool carries its deck of captures and is drawn capture-first (planBuiltIn); a custom pool keeps the planner it always had.
       const builtInPool = { ...pool, captureDeck: pool.captureDeck };
-      const legs = legsParts[entry] ?? 0;
-      // 5a.3 (S5.9c): under «Смелая» a «Смелая» category draws the mix; every other category draws as drawLevelOf says (the five as «Кокетливая»).
-      const categoryLevel: Level = input.level === "bold" && isBoldCategory(category) ? "bold" : level;
-      const first = nextIndex;
-      const streamsFor = (): BuiltInStreams => ({
-        rng: makeRng(categorySeed(seed, category)),
-        poseRng: makeRng(poseSeed(seed, category)),
-        fixRng: makeRng(subSeed(seed, `clean:${category}`)),
-        fitRng: makeRng(subSeed(seed, `fit:${category}`)),
-        legRng: makeRng(subSeed(seed, `legwear:${category}`)),
-        boldRng: makeRng(subSeed(seed, `bold:${category}`)),
-        boldOutfitRng: makeRng(subSeed(seed, `boldOutfit:${category}`)),
-        boldLegRng: makeRng(subSeed(seed, `boldLegwear:${category}`)),
-        levelRng: makeRng(subSeed(seed, `level:${category}`)),
-        angleRng: makeRng(subSeed(seed, `angle:${category}`)),
-        awayRng: makeRng(subSeed(seed, `away:${category}`)),
-        legsRng: makeRng(subSeed(seed, `legs:${category}`)),
-        ordinaryCaptures: () => planBuiltIn(streamsFor(), builtInPool, category, n, first, excluded, recent, "ordinary", legs).map((slot) => (slot.framing === "legs" ? null : (slot.capture ?? captureOfShot(slot.shot)))),
-      });
-      // The texts the other categories already hold: only a «Смелая» category's slot yields them.
-      const claimed = new Set(categoryLevel === "bold" ? slotsOf.flatMap((held, other) => (other === entry ? [] : held.map((slot) => textKeyOf(slot.activity)))) : []);
-      slotsOf[entry] = planBuiltIn(streamsFor(), builtInPool, category, n, nextIndex, excluded, recent, categoryLevel, legs, claimed);
-    } else slotsOf[entry] = planCategory(rng, poseRng, fixRng, pool, category, n, nextIndex, excluded);
+      // 5a.3 (S5.9c), 5a.4: under «Смелая» every built-in category draws the mix; below it every category draws as drawLevelOf says (the five as «Кокетливая»).
+      const categoryLevel: Level = atBold ? "bold" : level;
+      slotsOf[entry] = planPool({ seed, key: category, pool: builtInPool, category, n, startIndex: nextIndex, excluded, recent, level: categoryLevel, legs: legsParts[entry] ?? 0, claimed, ...(share === undefined ? {} : { tiers: share }) });
+    } else if (atBold && share !== undefined) {
+      // Two custom categories share the same banks, so they hold the same moment texts by design: none yields to another, and one category's pool never moves another's slots.
+      slotsOf[entry] = planCustomBold({ seed, category, stored: pool, n, startIndex: nextIndex, excluded, recent, share, impliedNudity });
+    } else {
+      const rng = makeRng(categorySeed(seed, category));
+      const poseRng = makeRng(poseSeed(seed, category));
+      // The place redraws of S5.R1 have a stream of their own: a pool that needs none never reads it, and no other stream shifts.
+      const fixRng = makeRng(subSeed(seed, `clean:${category}`));
+      slotsOf[entry] = planCategory(rng, poseRng, fixRng, pool, category, n, nextIndex, excluded);
+    }
   }
   const slots: PlanSlot[] = slotsOf.flat();
   return ScenePlanSchema.parse({ version: 1, seed, slots });
@@ -660,4 +758,12 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
  */
 export function plan(input: PlanInput): ScenePlan {
   return planWithPools(input, POOLS);
+}
+
+/**
+ * 5a.4 (S5.BA3, plan s5a4 I5.74): the plan of one avatar. `impliedNudity` is a REQUIRED boolean here, so a caller that has not decided the avatar's origin does not compile; the planner's own
+ * default (`plan`, `planWithPools`) is false.
+ */
+export function planForAvatar(input: PlanInput, pools: Readonly<Record<string, Pool>>, impliedNudity: boolean): ScenePlan {
+  return planWithPools({ ...input, impliedNudity }, pools);
 }

@@ -15,6 +15,10 @@ useNativeGlobals();
 // 5a.3 (S5.9c, plan s5a3 §7.2, I5.36-I5.38): the real planner draws «Смелая». Inside the two «Смелая» categories the mix is 20 / 40 / 40 (exact), a bold slot draws bold
 // items and the rest draw up to their own level, never above it; stockings ride on bold slots only and only with the outfits the bank's bold legwear names; a slot is
 // drawn on Seedream exactly when one of its items is. The five ordinary built-ins under «Смелая» plan as «Кокетливая», byte for byte.
+//
+// 2026-10-26 (5a.4, S5.BA3, plan s5a4 I5.71, §7.4): that last sentence is the S5.9a rule 5a.4 replaces. The five at «Смелая» are planned from their companions (planner.boldAny.test.ts), so the
+// byte-for-byte equality with `flirty` and the two "off the route" controls that rested on it (the BA2 part 2 review, L1) are re-scoped below: every control is kept and told on a «Кокетливая»
+// request, the plan the five drew at «Смелая» before 5a.4, which has no route and no Seedream item. Every «Обычная» and «Кокетливая» assertion is kept.
 
 const BOLD_BANKS = ["nightwear", "beach"] as const satisfies readonly BankCategory[];
 const SEEDS = Array.from({ length: 24 }, (_, i) => i * 7919 + 5);
@@ -96,21 +100,26 @@ describe("the mix inside a «Смелая» category is exact (I5.36)", () => {
   });
 });
 
-describe("the five ordinary built-ins under «Смелая» are «Кокетливая», byte for byte (I5.36)", () => {
+describe("the five ordinary built-ins at «Кокетливая» are what «Смелая» drew them as before 5a.4 (I5.36)", () => {
   const seeds = Array.from({ length: 200 }, (_, i) => i * 104729 + 3);
   for (const category of ORDINARY_BUILT_INS) {
-    test(`${category}: every size from 1 to 30, 200 seeds`, () => {
-      for (const seed of seeds) for (let count = 1; count <= 30; count++) expect(plan({ seed, count, categories: [category], level: "bold" })).toEqual(plan({ seed, count, categories: [category], level: "flirty" }));
+    test(`${category}: every size from 1 to 30, 200 seeds, a «Кокетливая» plan is in the ordinary bank, flirty by the rounding, with no bold slot and no route`, () => {
+      for (const seed of seeds) {
+        for (let count = 1; count <= 30; count++) {
+          const slots = plan({ seed, count, categories: [category], level: "flirty" }).slots;
+          expect(slots.filter((s) => s.level === "flirty")).toHaveLength(Math.round(count * 0.6));
+          expect(slots.every((s) => s.level !== "bold" && s.route === undefined && BANKS[category].places.some((p) => p.name === s.location))).toBe(true);
+        }
+      }
     });
   }
 
-  test("a run of the five and the two «Смелая» categories plans the five exactly as «Кокетливая» does", () => {
+  test("a run of the five and the two «Смелая» categories at «Кокетливая» plans the five without a route", () => {
     for (const seed of SEEDS) {
-      const mixed = plan({ seed, count: 28, categories: [...ORDINARY_BUILT_INS, "nightwear", "beach"], level: "bold", legsShare: 15 });
       const flirty = plan({ seed, count: 28, categories: [...ORDINARY_BUILT_INS, "nightwear", "beach"], level: "flirty", legsShare: 15 });
-      const five = (slots: readonly PlanSlot[]): PlanSlot[] => slots.filter((s) => s.category !== "nightwear" && s.category !== "beach");
-      expect(five(mixed.slots)).toEqual(five(flirty.slots));
-      expect(five(mixed.slots).length).toBeGreaterThan(0);
+      const five = flirty.slots.filter((s) => s.category !== "nightwear" && s.category !== "beach");
+      expect(five.length).toBeGreaterThan(0);
+      expect(five.filter((s) => s.route !== undefined || s.level === "bold")).toEqual([]);
     }
   });
 });
@@ -291,10 +300,11 @@ describe("a slot is on the Seedream route exactly when it drew a Seedream item (
     });
   }
 
-  // 5a.4 (S5.BA2, 2026-10-26, Q-A2): the off-the-route control the nightwear's ordinary slots gave is told on «Дом» at «Смелая», which still plans as «Кокетливая» and draws no
-  // Seedream item (until S5.BA3 plans its companion).
-  test("a «Смелая» plan of «Дом» draws no Seedream item, and none of its slots is on the route", () => {
-    const home = SEEDS.flatMap((seed) => plan({ seed, count: 20, categories: ["home"], level: "bold", legsShare: 15 }).slots);
+  // 5a.4 (S5.BA2, 2026-10-26, Q-A2): the off-the-route control the nightwear's ordinary slots gave was told on «Дом» at «Смелая», which then planned as «Кокетливая».
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4, BA2 part 2 review L1): «Смелая» plans «Дом» from its companion on the route now, so the control is a «Кокетливая» «Дом» plan, which draws no
+  // Seedream item and none of its slots is on the route.
+  test("a «Кокетливая» plan of «Дом» draws no Seedream item, and none of its slots is on the route", () => {
+    const home = SEEDS.flatMap((seed) => plan({ seed, count: 20, categories: ["home"], level: "flirty", legsShare: 15 }).slots);
     expect(home.length).toBeGreaterThan(0);
     expect(home.filter((s) => s.route !== undefined)).toEqual([]);
   });
@@ -303,8 +313,9 @@ describe("a slot is on the Seedream route exactly when it drew a Seedream item (
     expect(SEEDS.flatMap((seed) => boldPlan("beach", seed, 30)).filter((d) => d.slot.route !== "seedream")).toEqual([]);
   });
 
-  test("the five carry no route", () => {
-    for (const seed of SEEDS) expect(plan({ seed, count: 30, categories: [...ORDINARY_BUILT_INS], level: "bold", legsShare: 15 }).slots.filter((s) => s.route !== undefined)).toEqual([]);
+  // 5a.4 (S5.BA3, 2026-10-26): told on «Кокетливая» (the five at «Смелая» carry the route now: planner.boldAny.test.ts).
+  test("the five carry no route at «Кокетливая»", () => {
+    for (const seed of SEEDS) expect(plan({ seed, count: 30, categories: [...ORDINARY_BUILT_INS], level: "flirty", legsShare: 15 }).slots.filter((s) => s.route !== undefined)).toEqual([]);
   });
 });
 

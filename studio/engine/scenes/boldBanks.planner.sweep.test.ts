@@ -41,7 +41,9 @@ interface Frame {
 
 function framesOf(category: BoldCategory, level: PlannerLevel, seed: number, count: number, legsShare: 0 | 15 | 30): Frame[] {
   const bank = BANKS[category];
-  return plan({ seed, count, categories: [category], level, legsShare }).slots.map((slot) => {
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 I5.74): this sweep pins what the bank can draw for a Studio-created avatar, implied covers included (the sheet), so its plans say so; the planner's own default is
+  // the imported avatar's, which draws none (planner.boldAny.test.ts holds that side).
+  return plan({ seed, count, categories: [category], level, legsShare, impliedNudity: true }).slots.map((slot) => {
     const moment = bank.places.find((p) => p.name === slot.location)?.moments.find((m) => m.text === slot.activity);
     const outfit = bank.outfits.find((o) => o.text === slot.outfit);
     if (moment === undefined || outfit === undefined) throw new Error(`${category}: slot ${slot.slotIndex} names an item the bank does not have`);

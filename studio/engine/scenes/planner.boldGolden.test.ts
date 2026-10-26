@@ -32,7 +32,7 @@ function hashesNow(): Record<string, string> {
     for (const level of LEVELS) {
       const all: unknown[] = [];
       for (const seed of SEEDS) {
-        for (const count of COUNTS) for (const legsShare of SHARES) all.push(plan({ seed, count, categories: [...categories], level, legsShare } satisfies PlanInput));
+        for (const count of COUNTS) for (const legsShare of SHARES) all.push(plan({ seed, count, categories: [...categories], level, legsShare, impliedNudity: true } satisfies PlanInput));
       }
       out[`${categories.join(",")}@${level}`] = sha(all);
     }
@@ -55,7 +55,7 @@ describe("the «Смелая» banks' plans are pinned (S5.9c)", () => {
       test(`${categories.join(", ")} at ${level}: every seed, size and legs share`, () => {
         const all: unknown[] = [];
         for (const seed of SEEDS) {
-          for (const count of COUNTS) for (const legsShare of SHARES) all.push(plan({ seed, count, categories: [...categories], level, legsShare }));
+          for (const count of COUNTS) for (const legsShare of SHARES) all.push(plan({ seed, count, categories: [...categories], level, legsShare, impliedNudity: true }));
         }
         expect(sha(all)).toBe(fixture.hashes[`${categories.join(",")}@${level}`]);
       });

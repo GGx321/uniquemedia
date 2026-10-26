@@ -2,8 +2,9 @@ import type { SceneLevel } from "../engine";
 import type { LegwearSlot, Level } from "./banks/types";
 
 /**
- * The level a request draws at (5a.3, S5.9a). «Смелая» is accepted everywhere a level is, but only the two «Смелая» categories (S5.9b2) have anything bolder than «Кокетливая»: the five
- * ordinary built-ins under `bold` draw exactly as `flirty`, byte for byte, so the contract never yields a half-built plan. The planner and the mock both draw at this level.
+ * The level a request draws at below «Смелая» (5a.3, S5.9a): «Смелая» draws the ordinary banks as `flirty`.
+ * 5a.4 (S5.BA3, I5.71): the planner no longer asks this at «Смелая»: every category draws «Смелая» there, the five from their companions. What is left of this rule is the plan of a set or a
+ * launch stored before 5a.4, which drew the five at «Смелая» as `flirty` with no route and keeps reading, redrawing and animating as that (QB-5); the mock's own pre-5a.4 planning reads it too.
  */
 export function drawLevelOf(level: SceneLevel | undefined): Level {
   return level === "flirty" || level === "bold" ? "flirty" : "ordinary";
