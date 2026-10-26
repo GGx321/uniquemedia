@@ -334,8 +334,8 @@ const HARD_YOUTH: WordRule[] = [
   ru("школьная форма", "(?<![\\p{L}])школьн\\p{L}*\\s+форм\\p{L}*"),
 ];
 
-/** S5.FU-AGE: a newborn that is an animal, never a child («a newborn kitten»). */
-const NEWBORN_ANIMALS = "kittens?|kits?|pupp(?:y|ies)|pups?|lambs?|foals?|calf|calves|chicks?|ducklings?|piglets?|bunn(?:y|ies)|cubs?|fawns?|animals?";
+/** S5.FU-AGE: a newborn that is an animal, never a child («a newborn kitten»). Round 2 (L2): not «chick» or «kit», which also name a girl. */
+const NEWBORN_ANIMALS = "kittens?|pupp(?:y|ies)|pups?|lambs?|foals?|calf|calves|ducklings?|piglets?|bunn(?:y|ies)|cubs?|fawns?|animals?";
 /** S5.FU-AGE round 2 (H2): a tot that is a drink names it («a tot of rum»); «a tot of her own», «a tot of three» are a child. */
 const TOT_DRINKS = "rum|whisk(?:e)?y|brandy|gin|vodka|scotch|bourbon|cognac|liquor|port|sherry";
 /** S5.FU-AGE: what the pupils of her eyes do («her pupils slowly widen»). */

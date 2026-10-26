@@ -888,7 +888,7 @@ describe("the youth words a clip motion may say (S5.WC2c round 2)", () => {
     expect(youthRuleNames(`she slowly smiles at ${words}`, "descriptor").filter((name) => ["newborn", "tot", "youth", "pupil"].includes(name))).toEqual([]);
   });
 
-  test.each(["for her pupils", "like a pupil", "a tot", "beside a tot of her own", "with a tot of three", "the youth club", "a newborn", "a newborn baby"])("S5.FU-AGE: %p still names one", (words) => {
+  test.each(["for her pupils", "like a pupil", "a tot", "beside a tot of her own", "with a tot of three", "the youth club", "a newborn", "a newborn baby", "a newborn chick", "the newborn kits"])("S5.FU-AGE: %p still names one", (words) => {
     expect(youthRuleNames(`she slowly undresses ${words}`, "descriptor").filter((name) => ["newborn", "tot", "youth", "pupil"].includes(name)).length).toBeGreaterThan(0);
   });
 

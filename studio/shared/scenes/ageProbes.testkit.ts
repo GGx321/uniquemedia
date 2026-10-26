@@ -247,6 +247,8 @@ export const FALSE_POSITIVES: AgeProbes = {
     "she slowly undresses at the youth club",
     "she slowly undresses like a newborn",
     "she slowly undresses, a newborn baby",
+    // Round 2 (L2): «chick» and «kit» also name a girl.
+    "she slowly undresses like a newborn chick",
   ],
   ideas: [],
   passes: [
