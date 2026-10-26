@@ -1,5 +1,6 @@
 import type { EngineError } from "../../shared/engine";
 import type { Budget } from "../money/budget";
+import type { WriterCall } from "../money/estimate";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import { truncate } from "../openrouter/transport";
@@ -52,7 +53,25 @@ export interface WriterPhaseDeps {
 export interface WriterCallShape {
   maxTokens: number;
   inputTokens: number;
+  /**
+   * 5a.4 (S5.BA5, r2.1 N1): the call's reasoning allowance (money/estimate.ts `WriterCall.reasoningTokens`), handed to chat(), whose reserve prices it as
+   * completion on top of `maxTokens` and never sends it. So an attempt reserves exactly what `writerAttemptWorstMicros` priced it at. Absent = 0.
+   */
+  reasoningTokens?: number;
   maxAttempts: number;
+}
+
+/**
+ * 5a.4 (S5.BA5, plan s5a4 §5.3.4 «The reserve»): the phase's shape of a writer call (money/estimate.ts's `writerCallOf(mode)`), its reasoning allowance
+ * included when it has one. The ordinary call has none, so its shape is today's three fields, byte for byte.
+ */
+export function writerCallShape(call: WriterCall): WriterCallShape {
+  return {
+    maxTokens: call.maxTokens,
+    inputTokens: call.inputTokens,
+    ...(call.reasoningTokens === undefined ? {} : { reasoningTokens: call.reasoningTokens }),
+    maxAttempts: call.maxAttempts,
+  };
 }
 
 /** A run's phase asks about its plan's slots; a scene set's review write (CS.4b) may ask about own scenes, which carry only what the answer reader needs. */
@@ -183,6 +202,7 @@ async function ask<S extends ReadableSlot>(deps: WriterPhaseDeps, phase: WriterP
       jsonSchema: phase.jsonSchema ?? WRITER_JSON_SCHEMA,
       maxTokens: phase.call.maxTokens,
       inputTokens: phase.call.inputTokens,
+      ...(phase.call.reasoningTokens === undefined ? {} : { reasoningTokens: phase.call.reasoningTokens }),
       reasoningEffort: "low",
     });
   } finally {

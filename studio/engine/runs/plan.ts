@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { AttemptId, CategorySnapshot, Id, ImageAgeCheck, ImageQuality, isBoldCategory, isCustomCategory, Micros, ModelId, RunRequest, SceneId, splitCount, type CategoryRef, type Estimate } from "../../shared/engine";
 import { llmPossibleSlots, writerChunksWorst, type CoversOf } from "../../shared/scenes/writerBound";
-import { AGE_CHECK_CALL, estimateRun, MAX_ATTEMPTS_PER_SLOT, WRITER_CALL, type ImageChoice } from "../money/estimate";
+import { AGE_CHECK_CALL, estimateRun, MAX_ATTEMPTS_PER_SLOT, WRITER_CALL, writerCallOf, type ImageChoice } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import { BOLD_IMAGE_MODEL } from "../money/prices";
 import { categoryLabelOf, categoryRefOf, OwnPlanSlotSchema, plannerCategoryOf, PlanSlotSchema, writerMessages, type PlannerCategory, type PlanSlot, type ScenePlan } from "../scenes";
 import { chunkSlots } from "../scenes/writer";
-import type { WriterPhase } from "./writerPhase";
+import { writerCallShape, type WriterPhase } from "./writerPhase";
 
 // T6: what a photo run is before anything is sent. One place for the
 // provider route, the estimate (the run's own cap: invariant 3), the attempt
@@ -112,7 +112,7 @@ export function planRoute(plan: { models: { image: string; imageQuality?: ImageQ
 export function runWriterConfig(snapshots: readonly CategorySnapshot[] | undefined): Pick<WriterPhase, "call" | "messages"> {
   const labelOf = categoryLabelOf(snapshots ?? []);
   return {
-    call: { maxTokens: WRITER_CALL.maxTokens, inputTokens: WRITER_CALL.inputTokens, maxAttempts: WRITER_CALL.maxAttempts },
+    call: writerCallShape(writerCallOf("ordinary")),
     messages: (slots, feedback) => writerMessages(slots, feedback, labelOf),
   };
 }
