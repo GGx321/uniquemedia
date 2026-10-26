@@ -47,6 +47,11 @@ import type { Scheduler } from "./scheduler";
 
 /** One writer attempt at its ceilings at the fallback prices (14K in at $1.25/M, 8K out at $2.50/M). */
 export const MOCK_SCENE_ATTEMPT_WORST = 37_500;
+/**
+ * 5a.4 (S5.BA5, plan s5a4 §5.3.4 «The mock»): one bold writer attempt (engine/money/estimate.ts's WRITER_BOLD_CALL) at the same prices: 17K in at $1.25/M,
+ * 8K out plus the 3K reasoning allowance at $2.50/M. Both figures are held to the engine's `writerAttemptWorstMicros` by mockSceneSets.attempt.table.test.ts.
+ */
+export const MOCK_BOLD_SCENE_ATTEMPT_WORST = 48_750;
 /** The writer's typical tokens per scene (106 in, 130 out) at the same prices, in micro-dollars; 20 scenes expect $0.00915. */
 const TYPICAL_PER_SCENE = 457.5;
 /** What a rejected answer cost: its tokens, paid and unusable. */
