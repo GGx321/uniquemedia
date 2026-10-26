@@ -589,9 +589,13 @@ export function romanNumeralCore(word: string): string {
  * «xi», the one other word the dictionary holds, is eleven and is refused. Each entry is pinned by a passing probe.
  */
 export const ROMAN_NOT_A_NUMERAL: ReadonlySet<string> = new Set(["xxs", "ivy", "vis", "visage", "visaged"]);
+/** A letter five times in a row: no Roman numeral writes one, the additive ones included («IIII», «XXXX»), so a run of it («xxxxxxxx», a filler) is none. */
+const FIVE_IN_A_ROW = /(\p{L})\1{4}/u;
 const isRomanNumeralWord = (word: string): boolean => {
   const lower = word.toLowerCase();
-  return !ROMAN_NOT_A_NUMERAL.has(lower) && ROMAN_NUMERAL_WORD.test(romanNumeralCore(lower));
+  if (ROMAN_NOT_A_NUMERAL.has(lower)) return false;
+  const core = romanNumeralCore(lower);
+  return ROMAN_NUMERAL_WORD.test(core) && !FIVE_IN_A_ROW.test(core);
 };
 /** The Cyrillic look-alikes he may type for the Latin letters on a Russian layout, mapped in place (their case kept) before any word is read («х-v-і», «ХVI»). */
 const LATIN_LOOK_ALIKES: Record<string, string> = { х: "x", Х: "X", і: "i", І: "I" };
