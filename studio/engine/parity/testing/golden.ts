@@ -4505,7 +4505,7 @@ export const GOLDEN: Record<string, string[]> = {
     "# beach: 10 scenes, 4 bold, 4 flirty, 2 ordinary",
     "# every scene is written: true",
     "# every beach scene is drawn on the Seedream route: true",
-    "# no ordinary scene of the nightwear is: true",
+    "# no ordinary scene of the nightwear is: false",
     "# the set echoes its level: bold",
     "# «Другая сцена» on the first five scenes, with a worst case of nothing: the code template writes them, and each keeps its level",
     "> scenes.write {\"sceneSetId\":\"set#1\",\"revision\":\"<seen>\",\"target\":{\"kind\":\"rewrite\",\"sceneIds\":[1,2,3,4,5],\"redraw\":true},\"acceptedWorstMicros\":0}",
