@@ -24,9 +24,23 @@ const AGE_WORST = PRICED.book.chatWorstCase(AGE_CHECK_CALL);
 const AGE_TYPICAL = PRICED.book.chatCost({ model: AGE_CHECK_CALL.model, images: AGE_CHECK_CALL.images, ...AGE_CHECK_CALL.typical });
 const MODELS = { imageModel: GROK_QUALITY, imageQuality: null, textModel: "x-ai/grok-4.3" } as const;
 
-/** `count` slots of «Ночнушки и бельё»; those at `routed` indexes are on the Seedream route. */
+/**
+ * 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear slot is on the Seedream route now, so a slot off the route is a «Дом» slot (it was nightwear's own cotton slot): at the `routed`
+ * indexes the planner's nightwear slot, at the others the planner's «Дом» slot.
+ */
+function mixedSlots(seed: number, count: number, routed: readonly number[]): PlanSlot[] {
+  const nightwear = plan({ seed, count, categories: ["nightwear"] }).slots;
+  return plan({ seed, count, categories: ["home"] }).slots.map((slot, i) => {
+    const bold = nightwear[i];
+    if (!routed.includes(i)) return slot;
+    if (bold?.route !== "seedream") throw new Error("a nightwear slot is off the route");
+    return { ...bold, slotIndex: slot.slotIndex, attemptIdBase: slot.attemptIdBase };
+  });
+}
+
+/** `count` slots; those at `routed` indexes are «Ночнушки и бельё» slots on the Seedream route, the rest «Дом» slots off it. The cap is a «Ночнушки и бельё» request's, every photo bold. */
 function runPlan(count: number, routed: readonly number[], age: "on" | "off" = "off", capMicros?: number): RunPlan {
-  const slots: PlanSlot[] = plan({ seed: 5, count, categories: ["nightwear"] }).slots.map((slot, i) => (routed.includes(i) ? { ...slot, route: "seedream" as const } : slot));
+  const slots: PlanSlot[] = mixedSlots(5, count, routed);
   const request = { avatarId: "avatar-0001", count, categories: ["nightwear" as const] };
   const worst = runEstimate(PRICED, MODELS, request, age, () => true).worstMicros;
   return buildRunPlan({

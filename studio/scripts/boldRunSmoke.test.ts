@@ -54,8 +54,12 @@ describe("the mock OpenRouter serves a real engine's «Смелая» run", () =
     return { ...started, avatarId: avatar.id, mock };
   }
 
-  async function runOnce(setupResult: Awaited<ReturnType<typeof setup>>) {
-    const request = { avatarId: setupResult.avatarId, count: PHOTOS, categories: ["nightwear"], level: "bold", poses: POSES };
+  /**
+   * 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear slot is on the Seedream route now, so a run that also meets the owner's model is over «Дом» and nightwear (the «Дом» slots still
+   * draw as «Кокетливая» at «Смелая»), as the packaged smoke's (smoke-engine.ts) is; the estimate of nightwear alone still prices every photo at the 2K attempt.
+   */
+  async function runOnce(setupResult: Awaited<ReturnType<typeof setup>>, categories: readonly string[] = ["home", "nightwear"]) {
+    const request = { avatarId: setupResult.avatarId, count: PHOTOS, categories: [...categories], level: "bold", poses: POSES };
     const estimate = ok(await setupResult.engine.handle(command("runs.estimate", request)));
     if (estimate.type !== "runs.estimate") throw new Error("wrong answer");
     const started = ok(await setupResult.engine.handle(command("runs.start", { ...request, acceptedWorstMicros: estimate.result.estimate.worstMicros })));
@@ -66,7 +70,7 @@ describe("the mock OpenRouter serves a real engine's «Смелая» run", () =
 
   test("the estimate names the 2K attempt and prices every photo at no less than it", async () => {
     const world = await setup();
-    const { estimate } = await runOnce(world);
+    const { estimate } = await runOnce(world, ["nightwear"]);
     expect(estimate.boldAttemptMicros).toBe(ATTEMPT);
     expect(estimate.worstMicros).toBeGreaterThanOrEqual(PHOTOS * 3 * ATTEMPT);
     // Read from the mock's endpoints, not from the engine's dated table: a Seedream endpoint the engine could not read would price the run «fallback».

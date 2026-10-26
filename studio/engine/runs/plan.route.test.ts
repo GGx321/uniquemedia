@@ -9,9 +9,19 @@ useNativeGlobals();
 const MODELS = { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-4.3" };
 const SENTENCE = "She laughs in the doorway while the evening light falls across the hall floor behind her.";
 
-/** Slots of «Ночнушки и бельё`, the ones at `routed` indexes marked as drawn on the Seedream route (what S5.9c's planner will do for a bold slot). */
+/**
+ * The slots of a plan: at the `routed` indexes a «Ночнушки и бельё» slot, drawn on the Seedream route by the planner; at the others a «Дом» slot, off the route.
+ * 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear slot is on the route now, so the slots off it are «Дом»'s (they were nightwear's own cotton slots).
+ */
 function slots(count: number, routed: readonly number[]): PlanSlot[] {
-  return plan({ seed: 7, count, categories: ["nightwear"] }).slots.map((slot, i) => (routed.includes(i) ? { ...slot, route: "seedream" as const } : slot));
+  const nightwear = plan({ seed: 7, count, categories: ["nightwear"] }).slots;
+  const home = plan({ seed: 7, count, categories: ["home"] }).slots;
+  return home.map((slot, i) => {
+    const drawn = nightwear[i];
+    if (!routed.includes(i)) return slot;
+    if (drawn?.route !== "seedream") throw new Error("a nightwear slot is off the route");
+    return { ...drawn, slotIndex: slot.slotIndex, attemptIdBase: slot.attemptIdBase };
+  });
 }
 
 function runInput(routed: readonly number[]): NewRunPlan {
@@ -20,7 +30,7 @@ function runInput(routed: readonly number[]): NewRunPlan {
     runId: "run-00000001",
     avatarId: "avatar-0001",
     createdAt: "2026-10-12T12:00:00.000Z",
-    request: { avatarId: "avatar-0001", count: 4, categories: ["nightwear"] },
+    request: { avatarId: "avatar-0001", count: 4, categories: ["home", "nightwear"] },
     imageAgeCheck: "off",
     models: MODELS,
     capMicros: 5_000_000,

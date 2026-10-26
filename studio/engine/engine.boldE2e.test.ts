@@ -73,6 +73,11 @@ function journalOf(runId: string): { type: string; status?: string; error?: { sc
 }
 
 const runRequest = (avatarId: string, count: number) => ({ avatarId, count, categories: ["nightwear"], level: "bold", poses: POSES });
+/**
+ * 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear slot is on the Seedream route now, so the slots that stay on the settings' model are «Дом»'s at «Смелая» (still drawn as «Кокетливая»
+ * until S5.BA3 plans its companion): a run over both.
+ */
+const mixedRequest = (avatarId: string, count: number) => ({ avatarId, count, categories: ["home", "nightwear"], level: "bold", poses: POSES });
 
 function estimateOf(response: ResponseMessage) {
   const answer = ok(response);
@@ -97,16 +102,20 @@ describe("(a) runs.start in «Смелая»", () => {
     const avatarId = await seedAvatar();
     const started = await boot(drawn);
     const { engine, events, net } = started;
-    const estimate = estimateOf(await engine.handle(command("runs.estimate", runRequest(avatarId, 10))));
-    expect(estimate.worstMicros).toBe(10 * 3 * BOLD_ATTEMPT);
+    // A request of «Ночнушки и бельё» alone prices every photo at the 2K attempt.
+    expect(estimateOf(await engine.handle(command("runs.estimate", runRequest(avatarId, 10)))).worstMicros).toBe(10 * 3 * BOLD_ATTEMPT);
+    const estimate = estimateOf(await engine.handle(command("runs.estimate", mixedRequest(avatarId, 10))));
 
-    const { runId, jobId } = startedOf(await engine.handle(command("runs.start", { ...runRequest(avatarId, 10), acceptedWorstMicros: estimate.worstMicros })));
+    const { runId, jobId } = startedOf(await engine.handle(command("runs.start", { ...mixedRequest(avatarId, 10), acceptedWorstMicros: estimate.worstMicros })));
     expect((await jobEnd(events, jobId)).type).toBe("job.done");
 
     const plan = planOf(runId);
     const routed = routedOf(plan);
     expect(routed).toBeGreaterThan(0);
     expect(routed).toBeLessThan(10);
+    // The nightwear photos of the split are the routed ones, each at the 2K attempt; the «Дом» ones at the settings' model.
+    expect(plan.scenes.slots.filter((s) => s.category === "nightwear").length).toBe(routed);
+    expect(estimate.worstMicros).toBe(routed * 3 * BOLD_ATTEMPT + (10 - routed) * 3 * GROK_ATTEMPT);
     expect(plan.models.bold).toBe(SEEDREAM);
     expect([plan.capMicros, plan.plannedWorstMicros]).toEqual([estimate.worstMicros, estimate.worstMicros]);
 

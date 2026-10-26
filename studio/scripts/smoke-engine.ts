@@ -4037,9 +4037,12 @@ async function runBoldRouteScenario(target: Target): Promise<void> {
     check("bold scenario: runs.estimate names the 2K attempt at 93 000 µ$ (the Seedream endpoint's 2K tier and one reference)", field(estimate, "ok") === true && field(estimate, "result", "estimate", "boldAttemptMicros") === BOLD_ATTEMPT_MICROS, estimate);
     check("bold scenario: the worst case prices every photo's three attempts at no less than the 2K attempt", worst >= BOLD_PHOTOS * 3 * BOLD_ATTEMPT_MICROS, estimate);
 
-    // 2. The first run: nothing armed.
+    // 2. The first run: nothing armed. 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear slot is on the Seedream route now, so the runs are over «Дом» and nightwear: the «Дом» slots
+    // (still drawn as «Кокетливая» at «Смелая») stay on the owner's model.
+    const mixed = { ...request, categories: ["home", "nightwear"] };
+    const mixedWorst = Number(field(await req(cdp, "runs.estimate", mixed), "result", "estimate", "worstMicros"));
     const before = mock.imageRequests().length;
-    const started = await req(cdp, "runs.start", { ...request, acceptedWorstMicros: worst });
+    const started = await req(cdp, "runs.start", { ...mixed, acceptedWorstMicros: mixedWorst });
     check("bold scenario: runs.start plans and launches the run", field(started, "ok") === true, started);
     const runId = String(field(started, "result", "runId"));
     const end = await waitFor("the bold run's job to end", () => endEventOf(cdp, field(started, "result", "jobId")), 120_000);
@@ -4054,16 +4057,21 @@ async function runBoldRouteScenario(target: Target): Promise<void> {
     check("bold scenario: every Seedream request carries 2K, 9:16, exactly one reference and no quality", seedream.length > 0 && seedream.every((r) => boldRequestProblems(sentImageOf(r)).length === 0), seedream.flatMap((r) => boldRequestProblems(sentImageOf(r))));
     check("bold scenario: every request for the owner's model stays at 1K, 9:16, and never names Seedream", owner.length > 0 && owner.every((r) => ownerRequestProblems(sentImageOf(r)).length === 0), owner.flatMap((r) => ownerRequestProblems(sentImageOf(r))));
     const photos = await req(cdp, "photos.list", { avatarId });
-    const nightwear = (field(photos, "result", "photos") as unknown[]).filter((p) => field(p, "category") === "nightwear");
-    check("bold scenario: photos.list shows the Seedream tag on exactly the photos of the Seedream slots", nightwear.length === BOLD_PHOTOS && nightwear.filter((p) => field(p, "route") === "seedream").length === routed, { photos: nightwear.length, tagged: nightwear.filter((p) => field(p, "route") === "seedream").length, routed });
+    const ofRun = (field(photos, "result", "photos") as unknown[]).filter((p) => field(p, "runId") === runId);
+    const nightwear = ofRun.filter((p) => field(p, "category") === "nightwear");
+    check(
+      "bold scenario: photos.list shows the Seedream tag on exactly the photos of the Seedream slots, every nightwear photo among them",
+      ofRun.length === BOLD_PHOTOS && ofRun.filter((p) => field(p, "route") === "seedream").length === routed && nightwear.length > 0 && nightwear.every((p) => field(p, "route") === "seedream"),
+      { photos: ofRun.length, tagged: ofRun.filter((p) => field(p, "route") === "seedream").length, routed, nightwear: nightwear.length },
+    );
 
     // 3. The second run: the model refuses one Seedream request and answers another with no image.
     mock.armRefusal(BOLD_MODEL);
     mock.armEmptyAnswer(BOLD_MODEL);
     const usageBefore = mock.totalUsageUsd();
     const beforeSecond = mock.imageRequests().length;
-    const secondEstimate = await req(cdp, "runs.estimate", request);
-    const secondStarted = await req(cdp, "runs.start", { ...request, acceptedWorstMicros: field(secondEstimate, "result", "estimate", "worstMicros") });
+    const secondEstimate = await req(cdp, "runs.estimate", mixed);
+    const secondStarted = await req(cdp, "runs.start", { ...mixed, acceptedWorstMicros: field(secondEstimate, "result", "estimate", "worstMicros") });
     check("bold scenario: the second run starts", field(secondStarted, "ok") === true, secondStarted);
     const secondId = String(field(secondStarted, "result", "runId"));
     const secondEnd = await waitFor("the second bold run's job to end", () => endEventOf(cdp, field(secondStarted, "result", "jobId")), 120_000);

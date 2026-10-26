@@ -62,11 +62,20 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-/** A run made from a set of «Ночнушки и бельё» scenes; the scenes at `routed` indexes are on the Seedream route (what S5.9c's planner will mark for a bold slot). */
+/**
+ * A run made from a set: the scenes at `routed` indexes are «Ночнушки и бельё» scenes the planner drew on the Seedream route, the others «Дом» scenes on the settings' model.
+ * 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear scene is on the route now, so the scenes off it are «Дом»'s (they were nightwear's own cotton scenes).
+ */
 async function newRun(count: number, routed: readonly number[], opts: { imageModel?: string; cameraRealism?: boolean } = {}): Promise<RunPlan> {
   const imageModel = opts.imageModel ?? GROK;
-  const planned = planScenes({ seed: 11, count, categories: ["nightwear"] }).slots;
-  const scenes: SceneRunSource[] = planned.map((slot, i) => ({ sceneId: i + 1, text: `${SENTENCE} (${i + 1})`, slot: routed.includes(i) ? { ...slot, route: "seedream" as const } : slot }));
+  const nightwear = planScenes({ seed: 11, count, categories: ["nightwear"] }).slots;
+  const home = planScenes({ seed: 11, count, categories: ["home"] }).slots;
+  const scenes: SceneRunSource[] = home.map((slot, i) => {
+    const bold = nightwear[i];
+    if (!routed.includes(i)) return { sceneId: i + 1, text: `${SENTENCE} (${i + 1})`, slot };
+    if (bold?.route !== "seedream") throw new Error("a nightwear scene is off the route");
+    return { sceneId: i + 1, text: `${SENTENCE} (${i + 1})`, slot: { ...bold, slotIndex: slot.slotIndex, attemptIdBase: slot.attemptIdBase } };
+  });
   const models = { imageModel, textModel: "x-ai/grok-4.3" };
   const cap = runEstimateFromScenes({ book: PriceBook.fallback(), asOf: "2026-10-12" }, models, { count, boldPhotos: routed.length }, "off").worstMicros;
   const run = buildSceneRunPlan({
