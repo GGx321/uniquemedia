@@ -235,7 +235,8 @@ describe("the bold system prompt (§5.3.3, r2.2 P1–P3)", () => {
 
   // S5.BA4c (P-BW2): «a tiny croissant» was refused by the youth rule, which refuses the whole answer: 25 slots re-asked for one harmless word.
   test("a bold line of its own keeps «tiny» and «little» out; the youth rule itself stays verbatim", () => {
-    expect(lines(bold())).toContain('- Never write "tiny" or "little", of her or of anything.');
+    // S5.BA4d: outside the activity's own words, which the order rule keeps word for word («lies prone, back curved a little»).
+    expect(lines(bold())).toContain('- Never write "tiny" or "little", of her or of anything, outside the activity\'s own words.');
     expect(lines(bold())).toContain("- She is a grown adult woman; no children or minors anywhere in the scene, and never a word that suggests she or anyone else is not an adult.");
   });
 
@@ -1019,8 +1020,9 @@ describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the b
   // 3 961 with today's ten reasons (S5.BA4); 3 185 with every bold reason; 2 954 since label-word and public-place name the words they found (round 2);
   // 2 641 with S5.BA4b's order rule, the world join and the varied detail (P-BW); 2 542 with its outfit-missing reason and the bold re-ask; S5.BA4c (P-BW2):
   // 2 455 with the place's preposition and the time kept out of the moment; 2 432 with the hands rule; 2 304 with no paper of any kind and «tiny» / «little»;
-  // 2 166 with the bare-place reason (P-BW3); S5.BA4d: 2 153 with the paper bag named, 2 120 with the phone never named.
-  const MARGIN_PRINTED = 2_120;
+  // 2 166 with the bare-place reason (P-BW3); S5.BA4d: 2 153 with the paper bag named, 2 120 with the phone never named,
+  // 2 086 with the activity's own «a little» kept.
+  const MARGIN_PRINTED = 2_086;
   const CEILING = WRITER_BOLD_CALL.inputTokens;
   const FIRST_INDEX = 100 - WRITER_BOLD_CALL.slotsPerCall + 1;
 

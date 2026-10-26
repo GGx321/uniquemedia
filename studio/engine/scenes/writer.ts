@@ -220,7 +220,7 @@ function writerBoldSystemPrompt(): string {
     '- Match each slot\'s pose: "back" has her back to the viewer, she never looks at, toward or into the viewer, and her face is never described; "profile" has her face turned fully to the side, never looking at or toward the viewer; "front" and "three-quarter" may face or glance toward the viewer as the shot allows.',
     "- In a friend's snap while she is busy, she never looks at the viewer.",
     "- She is a grown adult woman; no children or minors anywhere in the scene, and never a word that suggests she or anyone else is not an adult.",
-    '- Never write "tiny" or "little", of her or of anything.',
+    '- Never write "tiny" or "little", of her or of anything, outside the activity\'s own words.',
     "- Describe the outfit exactly as given, in its own words: never more or less revealing, never add or remove a garment.",
     "- Never write naked, nude, topless, nipples, see-through or transparent, and call nothing sheer the outfit does not.",
     "- No text, logos, brand names or readable signs; nothing but her phone covers her face.",
