@@ -111,7 +111,7 @@ export const PHOTOSHOOT_BOLD: CategoryBank = {
         // P-BA S2: drawn in the white lace bra and thong without its coverage; a flirty slot wears the lace bralette.
         { text: "lies prone after a long walk", motion: "she sways her feet slowly behind her", captures: ["prone"], twoHanded: false, level: "flirty", outfits: [LACE_THONG_SET.text, LACE_BRALETTE.text], noLegwear: true },
         { text: "sits back on her hands", motion: "she tips her head back a little", captures: ["timer"], twoHanded: true, level: "flirty" },
-        { text: "lies back, arms above her head", motion: "she flexes her fingers a little", captures: ["above"], twoHanded: false, level: "bold", route: "seedream", outfits: ARMS_UP },
+        { text: "lies back, one arm above her head", motion: "she flexes her fingers a little", captures: ["above"], twoHanded: false, level: "bold", route: "seedream", outfits: ARMS_UP },
         { text: "lies prone, one heel kicked up", motion: "she bends her raised knee slowly", captures: ["prone"], twoHanded: false, level: "bold", route: "seedream", outfits: PRONE, noLegwear: true },
         { text: "lies with her legs out straight", motion: "she flexes her toes slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],

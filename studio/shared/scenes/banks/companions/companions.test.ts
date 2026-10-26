@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { boldContentLevel } from "../../contentLine";
-import { faceVisibleOf, posesFor, type Capture } from "../../captures";
+import { faceVisibleOf, isHandCapture, posesFor, type Capture } from "../../captures";
 import { motionTextFindings } from "../../motionText";
 import { HELD_OBJECT_WORDS } from "../../words";
 import { poseFamilyOf } from "../boldDesign.testkit";
@@ -307,6 +307,20 @@ describe("the probe's frames are in the banks (P-BA, the owner's eye fixes)", ()
     expect(momentsOf(BOLD_COMPANIONS.glamour).some(({ moment }) => /perfume/.test(moment.text))).toBe(false);
   });
 
+  // Review L7 (G1 widened to every new bank): on a capture with her phone in one hand (a mirror, a selfie, from above, prone, over her shoulder, a look down her legs) one hand is
+  // free: the moment holds no object and needs neither both hands nor both arms, in its text or its motion.
+  test("one hand free wherever her phone is in the other: no held object, no two-handed action, in every new bank", () => {
+    const HELD_THING = /\b(?:cups?|coffee|mugs?|glass(?:es)?|bottles?|keys|clutch|bags?|perfume|brush|hairbrush|towel|phone|grapes?|hangers?)\b/i;
+    const BOTH = /\b(?:both|her)\s+(?:hands|arms)\b|\bfolded\s+arms\b|\barms\s+(?:folded|crossed|up|above|over|out)\b|\b(?:puts|pins|ties|twists|gathers)\s+her\s+hair\s+(?:up|back)\b|\bin\s+a\s+clip\b/i;
+    const busy = NEW_BANKS.flatMap(({ name, bank }) =>
+      momentsOf(bank)
+        .filter(({ moment }) => moment.captures.some(isHandCapture))
+        .filter(({ moment }) => HELD_THING.test(moment.text) || BOTH.test(moment.text) || BOTH.test(moment.motion))
+        .map(({ moment }) => `${name}: ${moment.text} | ${moment.motion}`),
+    );
+    expect(busy).toEqual([]);
+  });
+
   test("F2: her gaze stays her own, on her feet (the probe drew her looking at the camera)", () => {
     expect(momentNamed(BOLD_COMPANIONS.fitness, "lies prone, glancing at her feet")?.moment).toMatchObject({ gaze: "own", angle: "three-quarter", captures: ["over-shoulder"], tier: "implied" });
   });
@@ -329,6 +343,12 @@ describe("the legs moments («Ножки»): 4 to 7 a companion, each a pose of 
     expect(families.filter((f) => f === undefined)).toEqual([]);
     expect(new Set(families).size).toBe(families.length);
     for (const { moment } of legs) expect({ text: moment.text, captures: moment.captures.every((c) => c === "pov-legs" || c === "mirror-hidden") }).toEqual({ text: moment.text, captures: true });
+  });
+
+  // Review L8: a legs frame by the mirror after a shower read as her stepping out of it; she stands on the mat.
+  test("«Дом»'s bathroom legs frame stands on the mat, her feet together", () => {
+    expect(momentNamed(BOLD_COMPANIONS.home, "stands on the mat, feet together")?.moment).toMatchObject({ captures: ["mirror-hidden"], legs: { framing: "legs" } });
+    expect(momentNamed(BOLD_COMPANIONS.home, "steps out of the shower")).toBeUndefined();
   });
 
   test("the custom banks hold no legs moment (legs-built-in-only)", () => {

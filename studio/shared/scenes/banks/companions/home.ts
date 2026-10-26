@@ -146,10 +146,11 @@ export const HOME_BOLD: CategoryBank = {
         { text: "lies back in the bath, hair up", motion: "she sinks a little lower in the foam", captures: ["above"], twoHanded: false, hair: "own", ...FOAM_PIN },
         { text: "leans on the sink, getting ready", motion: "she leans in a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "wipes the fog off the mirror", motion: "she wipes a small circle slowly", captures: ["mirror"], twoHanded: false, gaze: "focus" },
-        { text: "puts her hair up in a clip", motion: "she pins her hair up slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "own" },
+        { text: "tucks her hair behind her ear", motion: "she tucks a strand back slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "own" },
         { text: "rests her hip on the sink", motion: "she tilts her head a little", captures: ["mirror-hidden", "mirror"], twoHanded: false, level: "flirty" },
         { text: "stands side-on by the shower", motion: "she rolls one shoulder back slowly", captures: ["mirror-hidden"], twoHanded: false, angle: "three-quarter", mirrorBack: true, level: "bold", route: "seedream" },
-        { text: "steps out of the shower", motion: "she takes a small step forward", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
+        // Review L8: on the mat, her feet together (it was «steps out of the shower»).
+        { text: "stands on the mat, feet together", motion: "she rocks onto her toes slowly", captures: ["mirror-hidden"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
     },
   ],

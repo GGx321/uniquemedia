@@ -126,9 +126,9 @@ export const FITNESS_BOLD: CategoryBank = {
       details: ["a glass of water on the nightstand", "a pair of sneakers by the bed"],
       times: ["morning", "evening"],
       moments: [
-        { text: "lies back after a long workout", motion: "she lets her arms flop out slowly", captures: ["above"], twoHanded: false, hair: "sport" },
+        { text: "lies back after a long workout", motion: "she lets one arm flop out slowly", captures: ["above"], twoHanded: false, hair: "sport" },
         { text: "lies on her side, worn out", motion: "she slowly closes her eyes", captures: ["above"], twoHanded: false },
-        { text: "lies prone, cheek on her arms", motion: "she swings her feet a little", captures: ["prone"], twoHanded: false, handAtFace: true, outfits: PRONE, noLegwear: true },
+        { text: "lies prone, cheek on one arm", motion: "she swings her feet a little", captures: ["prone"], twoHanded: false, handAtFace: true, outfits: PRONE, noLegwear: true },
         { text: "lies prone, crossing her ankles", motion: "she crosses her ankles the other way slowly", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", outfits: PRONE, noLegwear: true },
         { text: "lies back, hand on her stomach", motion: "she breathes in slowly", captures: ["above"], twoHanded: false, level: "flirty" },
         { text: "lies prone, hips to one side", motion: "she shifts her hips a little", captures: ["prone"], twoHanded: false, level: "bold", route: "seedream", outfits: PRONE, noLegwear: true },

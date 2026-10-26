@@ -102,7 +102,7 @@ export const TRAVEL_BOLD: CategoryBank = {
       moments: [
         { text: "lies on her side, facing the view", motion: "she slowly closes her eyes", captures: ["above"], twoHanded: false, gaze: "own" },
         { text: "lies diagonally, one arm out", motion: "she turns her head a little", captures: ["above"], twoHanded: false, messyOk: true },
-        { text: "lies prone, chin on her folded arms", motion: "she kicks one foot up slowly", captures: ["prone"], twoHanded: false, handAtFace: true, outfits: PRONE, noLegwear: true },
+        { text: "lies prone, chin on one hand", motion: "she kicks one foot up slowly", captures: ["prone"], twoHanded: false, handAtFace: true, outfits: PRONE, noLegwear: true },
         { text: "lies back, a hand in her hair", motion: "she runs her fingers through slowly", captures: ["above"], twoHanded: false, hair: "own", level: "flirty" },
         { text: "lies on her stomach, ankles crossed", motion: "she taps her feet together slowly", captures: ["prone"], twoHanded: false, level: "flirty", outfits: PRONE, noLegwear: true },
         { text: "lies back, one knee bent up", motion: "she lets her knee fall a little", captures: ["above"], twoHanded: false, level: "bold", route: "seedream" },

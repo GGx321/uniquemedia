@@ -60,7 +60,7 @@ export const CUSTOM_ROOMS: CategoryBank = {
         // P-BA C1: drawn in the white lace set without its coverage, the world «a cafe terrace in Paris».
         { text: "lies back across the bed", motion: "she slowly turns her head and smiles", captures: ["above"], twoHanded: false, level: "flirty" },
         { text: "lies prone, swinging her feet", motion: "her feet swing slowly behind her", captures: ["prone"], twoHanded: false, level: "flirty", outfits: PRONE, noLegwear: true },
-        { text: "lies back, arms up on the pillow", motion: "she stretches slowly and smiles", captures: ["above"], twoHanded: false, level: "bold", route: "seedream" },
+        { text: "lies back, one arm up on the pillow", motion: "she stretches slowly and smiles", captures: ["above"], twoHanded: false, level: "bold", route: "seedream" },
         { text: "lies prone, back curved a little", motion: "she lifts her heels a little", captures: ["prone"], twoHanded: false, level: "bold", route: "seedream", outfits: PRONE, noLegwear: true },
         { text: "lies back, the sheet to her chest", motion: "she pulls the sheet up a little", captures: ["above"], twoHanded: false, ...BEDSHEET_PIN },
       ],
@@ -73,7 +73,7 @@ export const CUSTOM_ROOMS: CategoryBank = {
       details: ["a bath mat on the floor", "a bottle of lotion on the shelf"],
       times: ["morning", "evening"],
       moments: [
-        { text: "fixes her hair at the mirror", motion: "she pins her hair back slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "own" },
+        { text: "fixes her hair at the mirror", motion: "she tucks a strand back slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "own" },
         { text: "stands by the shower, getting ready", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "leans close to the mirror", motion: "she leans in a little closer", captures: ["mirror"], twoHanded: false, level: "flirty" },
         // Her back to the mirror, only her reflection.
