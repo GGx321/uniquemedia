@@ -3,12 +3,10 @@ import type { ReviewWriteRecord, StoredSceneSet } from "../library/sceneSets";
 import type { Budget } from "../money/budget";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
-import { runWriterConfig } from "../runs/plan";
 import { localSentences } from "../scenes/localSentences";
-import { runWriterPhase, type WriterPhase, type WriterPhaseDeps, type WriterPhaseResult } from "../runs/writerPhase";
-import { plainSentence, type PlanSlot } from "../scenes";
+import { plannedWriterConfig, runWriterPhase, writerCallShape, type WriterPhase, type WriterPhaseDeps, type WriterPhaseResult } from "../runs/writerPhase";
+import type { PlanSlot } from "../scenes";
 import { ideaAsksOf, ideaJsonSchema, ideaMessages, readIdeaAnswer, toIdeaSlot, type IdeaAngle, type IdeaAsk } from "../scenes/ideaWriter";
-import { writerMessages } from "../scenes/writer";
 import { categoryLabelOf } from "../scenes/categories";
 import { reviewWriteState, reviewWritesOf } from "./reviewWrites";
 import { lastAttemptWasFree, stoppedByOf } from "./writeJob";
@@ -42,6 +40,11 @@ export interface ReviewWriteDeps {
   giveUp: (k: number) => Promise<void>;
   /** The scenes this job has written so far. */
   progress: (done: number) => void;
+  /**
+   * 5a.4 (S5.BA4, I5.74): whether the set's avatar was created in Studio, which picks the coverage sentence a rewritten «Смелая» scene ends with (its open one, or
+   * none). Absent or false (an imported avatar, an unknown origin): the kept, restrictive one. The engine passes `studioCreated` (S5.BA5).
+   */
+  impliedNudity?: boolean;
 }
 
 export interface ReviewWriteRequest {
@@ -149,20 +152,22 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
     // The answer is stored by the job below, once, with the sentences the reader accepted.
     onChunk: async () => {},
   };
-  const { call } = runWriterConfig(undefined);
   let result: WriterPhaseResult;
   if (asked.kind === "slots") {
     // 5a.2: the code template writes every scene it can, at $0; the model is asked only about the rest. The draw key is the write's own (`…:k`), and a
     // sentence another scene of the set already holds is redrawn.
     // A target's own old text counts too: a rewrite never hands back the sentence the scene already has.
     const local = localOf(set, record, asked.slots);
-    // S5.6d: a planned scene the model could not write in the write's two attempts takes the plain sentence of its (possibly redrawn) place.
-    const phase: WriterPhase<PlanSlot> = { ...base, call, slots: asked.slots, local, plain: plainSentence, messages: (slots, feedback) => writerMessages(slots, feedback, asked.labelOf) };
+    // 5a.4 (S5.BA4, r2.1 L3): the compose writer in both modes, named by the write's snapshots: a write whose scenes for the model hold a «Смелая» frame is asked,
+    // priced and reserved in bold mode. S5.6d: a planned scene the model could not write in the write's two attempts takes the plain sentence of its (possibly
+    // redrawn) place (`plain`).
+    const phase: WriterPhase<PlanSlot> = { ...base, ...plannedWriterConfig(asked.labelOf, deps.impliedNudity === true), slots: asked.slots, local };
     result = await runWriterPhase(phaseDeps, phase);
   } else {
     const phase: WriterPhase<IdeaAsk> = {
       ...base,
-      call,
+      // The idea writer has one mode (its «Смелая» variant is S5.BA9's, optional): the ordinary call.
+      call: writerCallShape("ordinary"),
       slots: asked.slots,
       // S5.6d: an idea (and an own scene) has no place or moment to build a plain sentence from: what the last attempt refused stays unwritten, and the scenes
       // the write accepted are kept.

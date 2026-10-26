@@ -5,7 +5,9 @@ import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import { truncate } from "../openrouter/transport";
 import type { ChatMessage, ChatResult, OpenRouterClient } from "../openrouter/types";
-import { emptyAnswerRefusal, readWriterAnswer, writerRefusalText, WRITER_JSON_SCHEMA, type PlanSlot, type Pose, type ReadableSlot, type Shot, type SlotRepair, type WriterRefusal } from "../scenes";
+import { emptyAnswerRefusal, plainSentence, readWriterAnswer, writerRefusalText, WRITER_JSON_SCHEMA, type PlanSlot, type Pose, type ReadableSlot, type Shot, type SlotRepair, type WriterRefusal } from "../scenes";
+import type { CategoryLabelOf } from "../scenes/categories";
+import { boldReader, writerBoldMessages, writerMessages, writerModeOf } from "../scenes/writer";
 import { classifyFailure } from "./failures";
 import { attemptPaid, type LedgerView } from "./journal";
 import type { Release } from "./pools";
@@ -86,6 +88,37 @@ export function writerCallShape(mode: WriterMode): WriterCallShape {
   return shape as WriterCallShape;
 }
 
+/** How a writer chunk is asked: its call shape, the messages of each attempt, and how an answer is read (the writer's own reader when absent). */
+export interface WriterAsking<S extends ReadableSlot> {
+  call: WriterCallShape;
+  messages: (slots: readonly S[], feedback: WriterRefusal | undefined) => ChatMessage[];
+  read?: (content: string, slots: readonly S[]) => PhaseRead;
+}
+
+/**
+ * 5a.4 (S5.BA4, plan s5a4 §5.3.4 «The mode», r2.1 L3): a phase's bold mode. A chunk is asked in it when a slot it sends the model is a «Смелая» frame (`isBold`):
+ * its call shape (`writerCallShape("bold")`, so its reserve is the bold call's worst case), its messages and its reader, on every attempt of that chunk.
+ */
+export interface WriterBoldMode<S extends ReadableSlot> extends WriterAsking<S> {
+  isBold: (slot: S) => boolean;
+  read: (content: string, slots: readonly S[]) => PhaseRead;
+}
+
+/**
+ * 5a.4 (S5.BA4, plan s5a4 §5.3.3, §5.3.4; the BA5a review's R2-L2): the writer of PLANNED slots in both its modes, each through `writerCallShape(mode)`. Its own
+ * call, messages and reader are the ordinary writer's, byte for byte (`labelOf` names an ordinary chunk's categories); its bold mode is the bold prompt, the bold
+ * reader and the bold call, for a chunk that holds a «Смелая» frame (`writerModeOf`). `impliedNudity` is the avatar's origin (I5.74; false when unknown, the
+ * fail-closed default): it picks the coverage the bold reader appends and the plain sentence ends with.
+ */
+export function plannedWriterConfig(labelOf: CategoryLabelOf, impliedNudity = false): Pick<WriterPhase<PlanSlot>, "call" | "messages" | "plain" | "bold"> {
+  return {
+    call: writerCallShape("ordinary"),
+    messages: (slots, feedback) => writerMessages(slots, feedback, labelOf),
+    plain: (slot) => plainSentence(slot, impliedNudity),
+    bold: { isBold: (slot) => writerModeOf([slot]) === "bold", call: writerCallShape("bold"), messages: (slots, feedback) => writerBoldMessages(slots, feedback), read: boldReader(impliedNudity) },
+  };
+}
+
 /** A run's phase asks about its plan's slots; a scene set's review write (CS.4b) may ask about own scenes, which carry only what the answer reader needs. */
 export interface WriterPhase<S extends ReadableSlot = PlanSlot> {
   /** The call's ceilings and the answered attempts a chunk may use. */
@@ -121,6 +154,11 @@ export interface WriterPhase<S extends ReadableSlot = PlanSlot> {
    * naming the others in `unwritten`; with nothing accepted it is exhausted as before. Ignored for a slot that has a `plain` sentence.
    */
   keepAccepted?: boolean;
+  /**
+   * 5a.4 (S5.BA4, r2.1 L3): the bold mode (`plannedWriterConfig`). A chunk whose slots for the model hold a «Смелая» frame is asked in it, every attempt, decided
+   * once on the slots its first attempt asks; the slots the template writes (`local`) do not count. Absent: every chunk is asked with `call`, `messages` and `read`.
+   */
+  bold?: WriterBoldMode<S>;
   /** The run job's cancel. */
   signal: AbortSignal;
   /**
@@ -186,7 +224,7 @@ function softStopped(): Extract<WriterPhaseResult, { ok: false }> {
 }
 
 /** One call under `attemptId`, inside a network slot; null when the cancel came first, "soft-stopped" when the soft stop did (before a reserve was made). */
-async function ask<S extends ReadableSlot>(deps: WriterPhaseDeps, phase: WriterPhase<S>, attemptId: string, slots: readonly S[], feedback: WriterRefusal | undefined): Promise<ChatResult | null | "soft-stopped"> {
+async function ask<S extends ReadableSlot>(deps: WriterPhaseDeps, phase: WriterPhase<S>, asking: WriterAsking<S>, attemptId: string, slots: readonly S[], feedback: WriterRefusal | undefined): Promise<ChatResult | null | "soft-stopped"> {
   let release: Release;
   try {
     // A call still queued for its slot gives way to the soft stop too: it has not started, nothing is reserved.
@@ -210,11 +248,11 @@ async function ask<S extends ReadableSlot>(deps: WriterPhaseDeps, phase: WriterP
       signal: phase.signal,
       // A stop between the reserve reaching the disk and the send releases the reserve unsent (free), never leaves it open.
       ...(phase.stop === undefined ? {} : { beforeSend: () => phase.stop?.aborted !== true }),
-      messages: phase.messages(slots, feedback),
+      messages: asking.messages(slots, feedback),
       jsonSchema: phase.jsonSchema ?? WRITER_JSON_SCHEMA,
-      maxTokens: phase.call.maxTokens,
-      inputTokens: phase.call.inputTokens,
-      ...(phase.call.reasoningTokens === undefined ? {} : { reasoningTokens: phase.call.reasoningTokens }),
+      maxTokens: asking.call.maxTokens,
+      inputTokens: asking.call.inputTokens,
+      ...(asking.call.reasoningTokens === undefined ? {} : { reasoningTokens: asking.call.reasoningTokens }),
       reasoningEffort: "low",
     });
   } finally {
@@ -242,24 +280,26 @@ async function writeChunk<S extends ReadableSlot>(
   kept: Map<number, string>,
 ): Promise<{ ok: true; sentences: Map<number, string>; angles?: Map<number, PhaseAngle>; unwritten?: number[] } | Extract<WriterPhaseResult, { ok: false }>> {
   let feedback: WriterRefusal | undefined;
+  // 5a.4 (S5.BA4, r2.1 L3): the chunk's mode, from the slots it asks the model, once: a repair that asks fewer slots stays in it.
+  const asking: WriterAsking<S> = phase.bold !== undefined && slots.some(phase.bold.isBold) ? phase.bold : phase;
   /** The slots still open (`kept` holds what earlier attempts of this job accepted). */
   const keptAngles = new Map<number, PhaseAngle>();
   let open: readonly S[] = slots;
   const done = (): { ok: true; sentences: Map<number, string>; angles?: Map<number, PhaseAngle> } => ({ ok: true, sentences: kept, ...(keptAngles.size === 0 ? {} : { angles: keptAngles }) });
   let answered = chunk.attemptIds.filter((id) => attemptPaid(phase.ledger, id)).length;
   for (const attemptId of chunk.attemptIds) {
-    if (answered >= phase.call.maxAttempts) break;
+    if (answered >= asking.call.maxAttempts) break;
     if (phase.ledger.reserveOf(attemptId) !== undefined) continue;
     if (phase.signal.aborted) return cancelled();
     if (phase.stop?.aborted === true) return softStopped();
-    const result = await ask(deps, phase, attemptId, open, feedback);
+    const result = await ask(deps, phase, asking, attemptId, open, feedback);
     if (result === "soft-stopped") return softStopped();
     if (result === null) return cancelled();
     // An abort with no hard cancel behind it is the soft stop releasing a reserve before the send.
     if (result.status === "aborted") return phase.signal.aborted ? cancelled() : softStopped();
     if (result.status === "ok" && !result.aboveWorst) {
       answered++;
-      const reader: (content: string, slots: readonly S[]) => PhaseRead = phase.read ?? readWriterAnswer;
+      const reader: (content: string, slots: readonly S[]) => PhaseRead = asking.read ?? readWriterAnswer;
       const read = reader(result.content, open);
       if (read.ok) {
         for (const [slotIndex, sentence] of read.sentences) kept.set(slotIndex, sentence);
@@ -301,8 +341,8 @@ async function writeChunk<S extends ReadableSlot>(
   }
   if (phase.keepAccepted === true && kept.size > 0) return { ...done(), unwritten: open.map((slot) => slot.slotIndex) };
   const why =
-    answered >= phase.call.maxAttempts
-      ? `the scene writer's answer for chunk ${chunk.chunk} was rejected on every one of its ${phase.call.maxAttempts} attempts; the last one for: ${feedback === undefined ? "an earlier job's answer" : writerRefusalText(feedback)}`
+    answered >= asking.call.maxAttempts
+      ? `the scene writer's answer for chunk ${chunk.chunk} was rejected on every one of its ${asking.call.maxAttempts} attempts; the last one for: ${feedback === undefined ? "an earlier job's answer" : writerRefusalText(feedback)}`
       : `every attempt id of the scene writer's chunk ${chunk.chunk} is already used`;
   return { ok: false, stop: "exhausted", error: { code: "INTERNAL", detail: truncate(why) } };
 }

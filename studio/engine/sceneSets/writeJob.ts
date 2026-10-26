@@ -3,10 +3,9 @@ import type { StoredSceneSet } from "../library/sceneSets";
 import type { Budget } from "../money/budget";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
-import { runWriterConfig } from "../runs/plan";
-import { runWriterPhase, type WriterPhase, type WriterPhaseDeps } from "../runs/writerPhase";
+import { plannedWriterConfig, runWriterPhase, type WriterPhase, type WriterPhaseDeps } from "../runs/writerPhase";
+import { categoryLabelOf } from "../scenes/categories";
 import { pendingChunks } from "./chunks";
-import { plainSentence } from "../scenes";
 import { setLocal } from "./local";
 
 // CS.4a: the scene set's writer job (a compose and a «Дописать» are the same job). It drives the run's own writer phase (`runWriterPhase`, the writer's
@@ -37,6 +36,11 @@ export interface SceneWriteDeps {
   giveUp: (chunk: number, by: "rejected" | "refused") => Promise<void>;
   /** The scenes this job has written so far. */
   progress: (done: number) => void;
+  /**
+   * 5a.4 (S5.BA4, I5.74): whether the set's avatar was created in Studio, which picks the coverage sentence a «Смелая» scene's sentence ends with (its open one,
+   * or none). Absent or false (an imported avatar, an unknown origin): the kept, restrictive one. The engine passes `studioCreated` (S5.BA5).
+   */
+  impliedNudity?: boolean;
 }
 
 export interface SceneWriteRequest {
@@ -111,7 +115,9 @@ export async function runSceneWrite(deps: SceneWriteDeps, request: SceneWriteReq
       return scene.slot;
     });
     const phase: WriterPhase = {
-      ...runWriterConfig(set.categories),
+      // 5a.4 (S5.BA4, r2.1 L3): the writer in both modes; a chunk that holds a «Смелая» frame is asked, priced and reserved in bold mode (`writerCallShape("bold")`).
+      // 5a.2 (S5.6d, I5.31): a scene the model could not write in the chunk's answered attempts takes the plain sentence (`plain`), so no chunk is given up for being rejected.
+      ...plannedWriterConfig(categoryLabelOf(set.categories ?? []), deps.impliedNudity === true),
       jobId: request.jobId,
       scope: request.scope,
       textModel: set.models.text,
@@ -119,8 +125,6 @@ export async function runSceneWrite(deps: SceneWriteDeps, request: SceneWriteReq
       ...(request.stop === undefined ? {} : { stop: request.stop }),
       slots,
       local: setLocal(set),
-      // 5a.2 (S5.6d, I5.31): a scene the model could not write in the chunk's answered attempts takes the plain sentence, so no chunk is given up for being rejected.
-      plain: plainSentence,
       chunks: [{ chunk: next.chunk.chunk, slotIndexes: next.sceneIds, attemptIds: next.chunk.attemptIds }],
       sentences: new Map(),
       writerDone: new Set(),

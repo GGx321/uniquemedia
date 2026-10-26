@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isBoldFrame } from "../../shared/engine";
 import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared/scenes/contentLine";
 import { bankPlaceOf } from "../../shared/scenes/bankLookup";
 import { boldWordsIn } from "../../shared/scenes/banks/boldRules";
@@ -6,7 +7,7 @@ import { captureOfShot, type Capture } from "../../shared/scenes/captures";
 import { exposureWordsIn } from "../../shared/scenes/explicitWords";
 import { coverageOf } from "../../shared/scenes/template";
 import { ownerBannedOutfitWords } from "../../shared/scenes/words";
-import { WRITER_CALL, writerCallOf, writerExpectedMicros, writerWorstMicros, type Estimate } from "../money/estimate";
+import { WRITER_CALL, writerCallOf, writerExpectedMicros, writerWorstMicros, type Estimate, type WriterMode } from "../money/estimate";
 import type { PriceBook } from "../money/prices";
 import type { ChatMessage } from "../openrouter/types";
 import { categoryLabelOf, type CategoryLabelOf } from "./categories";
@@ -243,6 +244,17 @@ function boldSlotForWriter(slot: PlanSlot): Record<string, unknown> {
     outfit: slot.outfit,
     activity: slot.activity,
   };
+}
+
+/**
+ * 5a.4 (S5.BA4, plan s5a4 §5.3.4 «The mode», r2.1 L3, I5.77): the mode a writer chunk is asked, priced and reserved in, from the slots it sends the model: bold
+ * when ANY of them is a «Смелая» frame (`isBoldFrame`: on the Seedream route, or of «Ночнушки и бельё» or «Пляж и бассейн»), ordinary otherwise. A new
+ * request's chunk is bold exactly at «Смелая» (its custom slots are routed); an old set's chunk is bold when it holds such a frame the template no longer writes
+ * (nightwear's cotton after Q-A2), and then every slot of it is written in bold mode, each held to its own content level. A chunk of only the five's old flirty
+ * slots or old custom slots stays ordinary.
+ */
+export function writerModeOf(slots: readonly Pick<PlanSlot, "category" | "route">[]): WriterMode {
+  return slots.some((slot) => isBoldFrame({ category: slot.category, route: slot.route })) ? "bold" : "ordinary";
 }
 
 // ---------- refusal / re-ask feedback ----------
