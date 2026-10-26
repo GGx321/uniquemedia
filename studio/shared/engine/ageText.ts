@@ -357,11 +357,12 @@ const HARD_YOUTH: WordRule[] = [
   ru("школота", "(?<![\\p{L}])школот\\p{L}*"),
   // старшеклассница, пятиклассник, одноклассница: any "...классник/...классница" is a school pupil. S5.FU-AGE: so are «первоклашка», «пятиклашка», and a grade from the
   // third to the eleventh in any case and number before «класс…» («девушка девятого класса», «в девятых классах»), a space, a hyphen or nothing between (round 2, L3 and its
-  // security review). A class of travel or service is none: after a carriage, a compartment, a ticket, a cabin or a seat («вагон третьего класса»), or before a plane, a
-  // train, a carriage or «обслуживания» («пятого класса обслуживания»); nor are the first and the second («в первом классе самолёта»).
+  // security reviews). A class of travel is none only right after a carriage, a compartment, a ticket, a cabin or a seat named as a whole word in its own case forms («вагон
+  // третьего класса», never «местного девятого класса»); nothing after «класса» spares one, as anyone could append it («девятого класса поезда»). The first and the second are
+  // none («в первом классе самолёта»).
   ru(
     "классница",
-    "(?<![\\p{L}])(?:\\p{L}*(?:классни[кц]|клашк)\\p{L}*|(?<!(?<![\\p{L}])(?:вагон|купе|билет|кают|мест)\\p{L}*\\s+)(?:трет|четв[её]рт|пят|шест|седьм|восьм|девят|десят|одиннадцат)\\p{L}{1,4}[\\s-]*класс\\p{L}*(?![\\p{L}])(?!\\s+(?:самол[её]т|поезд|вагон|обслуживани)\\p{L}*))",
+    "(?<![\\p{L}])(?:\\p{L}*(?:классни[кц]|клашк)\\p{L}*|(?<!(?<![\\p{L}])(?:вагон(?:а|е|ом|у)?|купе|билет(?:а|е|ом|у)?|кают(?:а|е|у|ы|ой)|мест(?:о|а|е|у|ом))(?![\\p{L}])\\s+)(?:трет|четв[её]рт|пят|шест|седьм|восьм|девят|десят|одиннадцат)\\p{L}{1,4}[\\s-]*класс\\p{L}*)",
   ),
   ru("юная", "(?<![\\p{L}])юн(?:ая|ой|ую|ые|ых|ым|ыми|ое|ого|ый|ому|ом)(?![\\p{L}])"),
   ru("школьная форма", "(?<![\\p{L}])школьн\\p{L}*\\s+форм\\p{L}*"),
