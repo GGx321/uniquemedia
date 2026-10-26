@@ -287,21 +287,20 @@ function contentIn(text: string, level: ContentLevel): readonly ContentProblem[]
 }
 
 /**
- * S5.FU-AGE (the security review of the context rule it replaces): a Roman numeral is refused fail-closed. A word of two numeral letters or more that is a valid numeral from
- * ii to xxx, in either case and with an ordinal's ending («XVIth»), is a number wherever it stands («sweet XVI», «(xvi)», «— XVI», «XVI y o»): a child's age, or the tens the
- * number words read («XXX», the round-2 pin). Only the sizes, a brand and the words that hold the letters are let through, by name (`NOT_A_NUMERAL`); a lone «i», «v» or «x» (the
- * pronoun, «x» as times or a kiss) is a number only where it is said as an age (`LONE_NUMERAL_AGE`).
+ * S5.FU-AGE (the security review of the context rule it replaces): a Roman numeral is refused fail-closed. A word of two letters or more made of «i», «v» and «x» alone, in either
+ * case, with an ordinal's or a plural's ending («XVIth», «XVIs»), is a number wherever it stands («sweet XVI», «(xvi)», «— XVI», «XVI y o»), the additive and the malformed ones
+ * included («XIIII», «IIII», «XIIX»): no English word is made of those letters alone. Only the words they make with an ending are let through, by name (`NOT_A_NUMERAL`); a lone
+ * «i», «v» or «x» (the pronoun, «x» as times or a kiss) is a number only where it is said as an age (`LONE_NUMERAL_AGE`).
  */
-const ROMAN_WORD = /^((?:xxx|x{0,2}(?:ix|iv|vi{0,3}|i{1,3})|xx?))(?:st|nd|rd|th)?$/;
-/** Let through by name, so a wider numeral reading can never take them back: sizes, a brand, and words that only hold the numeral letters. */
-const NOT_A_NUMERAL = new Set(["xl", "xxl", "xxxl", "xs", "xxs", "lv", "li", "liv", "mix", "ill", "civil", "civic", "vivid"]);
+const ROMAN_WORD = /^([ivx]{2,})(?:st|nd|rd|th|s)?$/;
+/** The only words `ROMAN_WORD` reads that are no numeral: the size «XXS» and «vis» (vis-a-vis). Each is pinned by a passing probe. */
+const NOT_A_NUMERAL = new Set(["xxs", "vis"]);
 /** The Latin letters of a word, with the Cyrillic «х» and «і» he may type for «x» and «i» on a Russian layout. */
 const latinNumeralOf = (word: string): string => word.toLowerCase().replace(/х/gu, "x").replace(/і/gu, "i");
 function isRomanNumeral(word: string): boolean {
   const latin = latinNumeralOf(word);
   if (NOT_A_NUMERAL.has(latin)) return false;
-  const found = ROMAN_WORD.exec(latin);
-  return found !== null && (found[1] ?? "").length >= 2;
+  return ROMAN_WORD.test(latin);
 }
 /** A lone numeral letter. */
 const LONE = String.raw`[ivxхі](?![\p{L}\p{N}'-])`;

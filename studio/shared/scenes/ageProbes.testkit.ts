@@ -124,6 +124,12 @@ export const ROMAN_FAIL_CLOSED: AgeProbes = {
     "she slowly turns, XX and shy",
     "she slowly turns, xi",
     "she slowly turns, ii",
+    // Round 2 (H1): the additive and the malformed numerals main refused.
+    "she slowly undresses, XIIII",
+    "she slowly undresses, XVIIII",
+    "she slowly undresses, IIII",
+    "she slowly undresses, XIIX",
+    "she slowly undresses, xiiii",
   ],
   ideas: [
     "медленно раздевается \u2014 XVI",
@@ -139,6 +145,8 @@ export const ROMAN_FAIL_CLOSED: AgeProbes = {
     "she slowly smooths her XXXL sweater",
     "she slowly fixes her XS top",
     "she slowly tugs at her XXS top",
+    // The only words the numeral letters make with an ending: «XXS» and «vis» (vis-a-vis), let through by name.
+    "she slowly sits vis-a-vis the window",
     "she slowly smiles, vivid and calm",
     "she slowly turns, civic and calm",
     "she slowly blows a kiss, x",
