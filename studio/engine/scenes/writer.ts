@@ -584,9 +584,10 @@ export type WriterAnswer = { ok: true; sentences: Map<number, string> } | ({ ok:
 export const PLACE_KEYS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   "her room": ["room", "bedroom", "suite", "cabin", "chalet", "bed"],
   "her bathroom": ["bathroom", "shower", "bath", "tub", "mirror"],
-  "her window": ["window", "porthole"],
+  // S5.BA4 round 2 (review LOW, the controller's amendment to P8): a window moment says the pane or the sill, a sofa may be a daybed or a settee.
+  "her window": ["window", "porthole", "pane", "sill", "windowsill"],
   "her balcony": ["balcony", "terrace", "deck", "veranda"],
-  "her sofa": ["sofa", "couch", "living room", "lounge"],
+  "her sofa": ["sofa", "couch", "living room", "lounge", "daybed", "settee"],
 });
 
 /** The words that say a «by the water» place (every place of that bank is a water place, `BankPlace.water`). */

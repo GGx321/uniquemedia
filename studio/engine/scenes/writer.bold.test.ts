@@ -294,9 +294,10 @@ describe("the bold reader: where she is, what she wears, what Seedream will not 
       expect(PLACE_KEYS).toEqual({
         "her room": ["room", "bedroom", "suite", "cabin", "chalet", "bed"],
         "her bathroom": ["bathroom", "shower", "bath", "tub", "mirror"],
-        "her window": ["window", "porthole"],
+        // S5.BA4 round 2 (review LOW, the controller's amendment to r2.2 P8): the pane, the sill and the windowsill; the daybed and the settee.
+        "her window": ["window", "porthole", "pane", "sill", "windowsill"],
         "her balcony": ["balcony", "terrace", "deck", "veranda"],
-        "her sofa": ["sofa", "couch", "living room", "lounge"],
+        "her sofa": ["sofa", "couch", "living room", "lounge", "daybed", "settee"],
       });
       expect(WATER_PLACE_KEYS).toEqual(["water", "pool", "sea", "beach", "shore", "lake", "bay", "deck", "sundeck", "lounger"]);
       expect(CUSTOM_BOLD_BANKS.rooms.places.map((p) => p.name).sort()).toEqual(Object.keys(PLACE_KEYS).sort());
@@ -312,6 +313,18 @@ describe("the bold reader: where she is, what she wears, what Seedream will not 
     test("«Through the porthole …» passes for «her window»", () => {
       const slot = routed({ location: "her window", activity: "rests her forehead on the pane", shot: "friend", capture: "timer", pose: "profile", world: "the cabin of a sailing yacht", outfit: "a black lace bra and panties" });
       const sentence = "Through the porthole of the yacht the bay shows blue as she rests her forehead on the pane in a black lace bra and panties, her eyes on the water.";
+      expect(problemsOf(bold(sentence, slot))).not.toContain("place-missing");
+    });
+
+    test.each([
+      ["her window", "she rests her forehead on the pane", "rests her forehead on the pane"],
+      ["her window", "she sits on the sill", "sits on the ledge, legs crossed"],
+      ["her window", "the windowsill", "sits on the ledge, legs crossed"],
+      ["her sofa", "the daybed", "curls up with her knees in"],
+      ["her sofa", "the settee", "curls up with her knees in"],
+    ])("«%s» is said by %s too (the amended P8)", (location, said, activity) => {
+      const slot = routed({ location, activity, shot: "friend", capture: "timer", pose: "front", world: "the cabin of a sailing yacht" });
+      const sentence = `On the yacht, ${said.startsWith("she ") ? `${said}, then she ${activity}` : `she ${activity} on ${said}`} in a white lace bra and panties, a coil of rope beside her.`;
       expect(problemsOf(bold(sentence, slot))).not.toContain("place-missing");
     });
 
