@@ -54,7 +54,7 @@ export interface FrameFacts {
   readonly faceRole: ClipFaceRole;
   /** A «Ножки» frame (`framing: "legs"`). */
   readonly legs: boolean;
-  /** The slot's own legwear, never on a `noLegwear` moment. */
+  /** The slot's own legwear, never on a `noLegwear` moment, and only when the photo's prompt names it (FU-CLIP round 2). */
   readonly legwear: string | null;
   /** A frame of «Смелая» (I5.57): the category is `nightwear` or `beach`, whatever the mix level. */
   readonly bold: boolean;
@@ -109,7 +109,8 @@ function plannedFacts(photo: PhotoSidecar, source: GeneratedSource, slot: PlanSl
     face: faceVisibleOf(slot),
     faceRole: roleOf(facePoseOf(slot)),
     legs: slot.framing === "legs",
-    legwear: slot.legwear === undefined || moment?.noLegwear === true ? null : slot.legwear,
+    // FU-CLIP round 2 (MEDIUM-2): the legwear line only for legwear the photo's own prompt names, the proof `activity` and `sceneMotion` take.
+    legwear: slot.legwear === undefined || moment?.noLegwear === true || !says(source.prompt, trimmed(slot.legwear)) ? null : slot.legwear,
     bold: isBoldFrame({ category: slot.category, route: slot.route }),
     level,
   };

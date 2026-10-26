@@ -7,7 +7,7 @@ import type { PlanSlot } from "../scenes/schema";
 import { clipFallbackOf, frameFactsOf, type FrameFacts, type FrameFactsResult } from "./frameFacts";
 import { clipMotionProblems, clipPromptOf } from "./prompt";
 import { CLIP_CAPTURES, COMES_OFF_LINE, CONTINUITY_LINE, LOOK_LINE, NOTHING_NEW_LINE, PROMPT_WORDS_MAX, SLOW_LINE, cameraLineOf, continuityLineOf, wordCount, type ClipDialect } from "./videoLook";
-import { photoOf, pick, sceneRun, slotOf } from "./testing/frameFixtures";
+import { photoOf, pick, promptNamingLegwear, sceneRun, slotOf } from "./testing/frameFixtures";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -89,7 +89,9 @@ describe("clipMotionProblems: what an LLM motion must pass before it is offered 
 function boldMirror(legwear?: string): FrameFacts {
   const picked = pick("nightwear", (m) => m.text === "stands with one hand on her hip" && m.captures.includes("mirror") && m.noLegwear !== true);
   const run = sceneRun("run-00000503", [slotOf(picked, "mirror", "front", legwear === undefined ? {} : { legwear })]);
-  return factsOf(frameFactsOf(photoOf(run, run.scenes.slots[0] as PlanSlot), run));
+  const slot = run.scenes.slots[0] as PlanSlot;
+  // The bank's list holds no «sheer black stockings», so the kit's sentence names none: the photo's prompt is made to name them (MEDIUM-2).
+  return factsOf(frameFactsOf(photoOf(run, slot, legwear === undefined ? {} : { prompt: promptNamingLegwear(run, slot) }), run));
 }
 
 const ROBE = "she slowly takes off her robe";

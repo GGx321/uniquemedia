@@ -15,7 +15,7 @@ import { clipFallbackOf, frameFactsOf, type FrameFacts, type FrameFactsResult } 
 import { motionChoicesOf } from "./motion";
 import { clipPromptOf } from "./prompt";
 import { ADULT_LINE, CLIP_CAPTURES, LEGS_LINE, PROMPT_WORDS_MAX, SLOW_LINE, hasVideoStagingWord, legwearLineOf, type ClipDialect } from "./videoLook";
-import { AVATAR, MODELS, everyMoment, photoOf, planlessPhoto, sceneRun, sentenceOf, slotOf, type Picked } from "./testing/frameFixtures";
+import { AVATAR, MODELS, everyMoment, photoOf, planlessPhoto, promptNamingLegwear, sceneRun, sentenceOf, slotOf, type Picked } from "./testing/frameFixtures";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -44,7 +44,12 @@ function poseOf(picked: Picked, capture: Capture): PlanSlot["pose"] {
 function factsFor(picked: Picked, capture: Capture, legwear: boolean): FrameFacts {
   const slot = slotOf(picked, capture, poseOf(picked, capture), legwear ? { legwear: LONGEST_LEGWEAR } : {});
   const run = sceneRun("run-00000301", [slot]);
-  return factsOf(frameFactsOf(photoOf(run, run.scenes.slots[0] as PlanSlot), run));
+  const runSlot = run.scenes.slots[0] as PlanSlot;
+  // MEDIUM-2: the legwear line needs a photo that names the legwear, and only «Дом»'s list holds the sweep's socks: every frame's photo names them, so the worst case
+  // of the line is swept on all of them (490 frames), not on «Дом»'s 51 alone.
+  const facts = factsOf(frameFactsOf(photoOf(run, runSlot, legwear ? { prompt: promptNamingLegwear(run, runSlot) } : {}), run));
+  if (legwear && facts.legwear === null) throw new Error(`${picked.place.name}/«${picked.moment.text}» on ${capture}: the photo does not name its legwear`);
+  return facts;
 }
 
 interface Swept {
@@ -259,7 +264,9 @@ describe("an old pov-legs photo with no POV line takes the unknown camera line (
         const slot = slotOf(picked, "pov-legs", poseOf(picked, "pov-legs"), legwear ? { legwear: LONGEST_LEGWEAR } : {});
         const run = sceneRun("run-00000302", [slot]);
         const runSlot = run.scenes.slots[0] as PlanSlot;
-        const facts = factsOf(frameFactsOf(photoOf(run, runSlot, { prompt: `${PRE_FIX} ${sentenceOf(run.runId, runSlot)}. She is an adult woman.` }), run));
+        const named = legwear ? `, with ${LONGEST_LEGWEAR}` : "";
+        const facts = factsOf(frameFactsOf(photoOf(run, runSlot, { prompt: `${PRE_FIX} ${sentenceOf(run.runId, runSlot)}${named}. She is an adult woman.` }), run));
+        expect(facts.legwear).toBe(legwear ? LONGEST_LEGWEAR : null);
         expect(facts.capture).toBe("unknown");
         const choices = motionChoicesOf(facts);
         expect(choices[0]?.id).toBe("scene");

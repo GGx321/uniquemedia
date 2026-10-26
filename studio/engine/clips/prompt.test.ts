@@ -7,7 +7,7 @@ import { frameFactsOf, type FrameFacts, type FrameFactsResult } from "./frameFac
 import { VIDEO_TIERS } from "../money/prices";
 import { clipPromptOf, clipRequestBody } from "./prompt";
 import { ADULT_LINE, COMES_OFF_LINE, CONTINUITY_LINE, LEGS_LINE, LOOK_LINE, POSE_ANCHOR, PRONE_ANCHOR, PROMPT_WORDS_MAX, SLOW_LINE, cameraLineOf, legwearLineOf, wordCount, type ClipDialect } from "./videoLook";
-import { everyMoment, photoOf, pick, planlessPhoto, sceneRun, slotOf } from "./testing/frameFixtures";
+import { everyMoment, photoOf, pick, planlessPhoto, promptNamingLegwear, sceneRun, slotOf } from "./testing/frameFixtures";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -241,7 +241,10 @@ describe("checks before any money (I5.51)", () => {
 
   test("a pov-legs frame over the cap takes the short camera line, never losing an anchor", () => {
     const legs = pick("home", (m) => m.captures.includes("pov-legs") && m.noLegwear !== true && !/\b(socks?|socked|bare)\b/.test(m.text));
-    const long = factsFor(slotOf(legs, "pov-legs", "front", { legwear: "white lace-top stockings" }));
+    // The bank's «Дом» list holds no stockings, so the kit's sentence names none: the photo's prompt is made to name them (MEDIUM-2).
+    const run = sceneRun("run-00000204", [slotOf(legs, "pov-legs", "front", { legwear: "white lace-top stockings" })]);
+    const slot = run.scenes.slots[0] as PlanSlot;
+    const long = factsOf(frameFactsOf(photoOf(run, slot, { prompt: promptNamingLegwear(run, slot) }), run));
     const motion = "she stretches her toes toward the far end of the bed a little";
     const result = clipPromptOf(long, motion, "kling", "scene");
     if (!result.ok) throw new Error(result.problems.join("; "));
@@ -350,6 +353,16 @@ describe("FU-CLIP: the prompt makes no claim about her pose that only the plan m
     }
     const still = curled();
     expect(promptOf(still, sceneMotion(still))).not.toContain(STARTS);
+  });
+
+  test("round 2 (MEDIUM-2): a photo whose prompt names no socks gets no line that keeps socks on her feet; one whose prompt names them keeps it", () => {
+    const picked = pick("home", (m) => m.captures.includes("timer") && m.noLegwear !== true && m.legs === undefined);
+    const slot = slotOf(picked, "timer", "front", { legwear: "white knee-high socks" });
+    const bare = factsFor(slot, `The phone is propped up. In her bedroom, she ${picked.moment.text}, wearing ${slot.outfit}. She is an adult woman.`);
+    expect(bare.legwear).toBeNull();
+    expect(promptOf(bare, "she slowly takes a breath and relaxes her shoulders")).not.toMatch(/socks stay on her feet/);
+    const socked = factsFor(slot, `The phone is propped up. In her bedroom, she ${picked.moment.text}, wearing ${slot.outfit} and white knee-high socks. She is an adult woman.`);
+    expect(promptOf(socked, "she slowly takes a breath and relaxes her shoulders")).toContain("Her white knee-high socks stay on her feet the whole time.");
   });
 
   test("C5c clip 2, rebuilt on its frame: the exact prompt the paid re-check sends", () => {

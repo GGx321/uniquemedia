@@ -95,6 +95,16 @@ export function sceneRun(runId: string, slots: readonly (PlanSlot | { kind: "own
   });
 }
 
+/**
+ * FU-CLIP round 2 (MEDIUM-2): a photo prompt that names the slot's legwear, as a template sentence does («wearing {outfit} with {legwear}»). The kit's sentence falls back to
+ * the plain one, which names no legwear, for a legwear the bank's list does not hold at the slot's level; a test of the legwear line on such a slot uses this prompt, so
+ * the photo carries what the line keeps on her feet.
+ */
+export function promptNamingLegwear(run: RunPlan, slot: PlanSlot): string {
+  if (slot.legwear === undefined) throw new Error("the slot wears no legwear");
+  return `${photoCaptureLineOf(run.runId, slot)} ${sentenceOf(run.runId, slot)}, with ${slot.legwear}. She is an adult woman.`;
+}
+
 let photoCounter = 0;
 
 /**
