@@ -461,6 +461,14 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
     `(?<![\\p{L}])(?:пустыш(?:к\\p{L}*|ек)|соск(?:ой|ою)|(?<!(?<![\\p{L}])(?:${NIPPLE_GENITIVE_BEFORE})\\s+)соск[ау]\\s+(?:во|в)\\s+(?:рту|рот)|сос(?:[её]т|ала|ать|ут)\\s+соску|детск\\p{L}*\\s+соск\\p{L}*)(?![\\p{L}])`,
   ),
   enRu("diaper", "diaper\\w*|napp(?:y|ies)", "(?<![\\p{L}])(?:подгузник|памперс)\\p{L}*"),
+  // Round 2 (M4): more of an infant's things: a rattle (the thing, never «she rattles her keys» or «a rattle of keys»), a teether, a sippy cup, a crib, a bottle of formula;
+  // «погремушка», «слюнявчик», «ползунки» (never a slider, «ползунок»), «детская кроватка» (never his own «кроватка»), «бутылочка смеси». A baby bib is «baby» already;
+  // «малыш» is a pet name for an adult and stays out.
+  enRu(
+    "infant prop",
+    "(?<=\\b(?:an?|the|her|his|baby'?s?|toy|plastic|silver|wooden)\\s)rattles?(?!\\s+of\\b)|teethers?|teething\\s+(?:rings?|toys?)|sippy[- ]?cups?|cribs?(?![- ]?(?:sheets?|notes?)\\b)|bottles?\\s+of\\s+(?:baby\\s+)?formula|formula\\s+bottles?",
+    "(?<![\\p{L}])(?:погремуш(?:к\\p{L}*|ек)|слюнявчик\\p{L}*|ползунк(?:и|ов|ам|ами|ах)|детск\\p{L}*\\s+(?:кроватк|бутылочк)\\p{L}*|бутылочк\\p{L}*\\s+(?:со\\s+)?смес\\p{L}*)(?![\\p{L}])",
+  ),
   // Spanish "niña" (girl) folds to "nina". A real word only: short words run together make it by chance ("tan in a").
   en("nina", "ninas?", { joins: false }),
   ru("девочка", "(?<![\\p{L}])девочк\\p{L}*"),

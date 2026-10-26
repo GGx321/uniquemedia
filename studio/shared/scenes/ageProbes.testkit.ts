@@ -28,6 +28,13 @@ export const INFANT_PROPS: AgeProbes = {
     "she slowly lies down in nappies",
     "she slowly sways in her diapers",
     "she slowly undresses, diapered",
+    // Round 2 (M4): more of an infant's things.
+    "she slowly shakes a rattle",
+    "she slowly chews on a teether",
+    "she slowly sips from a sippy cup",
+    "she slowly lies down in a crib",
+    "she slowly undresses in a baby bib",
+    "she slowly holds a bottle of formula",
   ],
   ideas: [
     "медленно раздевается с соской",
@@ -45,9 +52,19 @@ export const INFANT_PROPS: AgeProbes = {
     "медленно снимает подгузник",
     "в подгузниках медленно поворачивается",
     "медленно раздевается в памперсе",
+    "медленно трясёт погремушкой",
+    "в слюнявчике медленно раздевается",
+    "в ползунках медленно раздевается",
+    "медленно ложится в детскую кроватку",
+    "держит бутылочку смеси и медленно раздевается",
   ],
-  passes: [],
+  passes: ["she slowly rattles her keys", "she slowly turns at a rattle of keys"],
   ideaPasses: [
+    // Round 2 (M4): «малыш» is a common pet name for an adult, «кроватка» his own bed, «ползунок» a slider, a bottle of water no formula.
+    "малыш, медленно улыбается",
+    "медленно ложится в кроватку",
+    "медленно двигает ползунок громкости",
+    "медленно наливает бутылочку воды",
     // «сосок» (her nipple) shares most of its forms with «соска»; the content rules the owner lifted let it through, and so does the guard.
     "медленно касается соска",
     // Round 2 (M2): the genitive of «сосок» before «во рту» is her nipple.
