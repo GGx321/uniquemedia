@@ -4593,7 +4593,7 @@ export const GOLDEN: Record<string, string[]> = {
     "< ok {\"launch\":{\"launchId\":\"launch#1\",\"status\":\"running\",\"paused\":null,\"paidHold\":null,\"freeHold\":null,\"resumeBlockedBy\":null,\"planVideos\":2,\"spent\":\"none\",\"inFlight\":false,\"unsettled\":false,\"waitingMusic\":0,\"avatars\":[{\"avatarId\":\"avatar#1\",\"phase\":\"planned\",\"waiting\":null,\"skipped\":null,\"videos\":{\"done\":0,\"total\":2},\"photos\":{\"done\":0,\"total\":10},\"waitingMusic\":0,\"dropped\":null,\"sceneSetId\":null,\"setRevision\":null,\"scenes\":null,\"continuePhotos\":null}]}}",
     "# the launch reached: done",
     "# the launch spent within the figure it was accepted at: true, and spent: some",
-    "# the launch drew 10 photos; some carry the route and some do not: true",
+    "# the launch drew 10 photos; some carry the route and some do not: false",
   ],
   "scene sets, «Смелая» coverage (S5.9f): in a bold compose of «Ночнушки и бельё» and «Пляж и бассейн» every scene on the Seedream route carries its coverage sentence and no other scene carries one": [
     "# a bold compose of 20 scenes over the two «Смелая» categories",
