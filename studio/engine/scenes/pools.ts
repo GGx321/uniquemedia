@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { CategoryPoses, isBoldCategory, POOL_TEXT_MAX, youthWords } from "../../shared/engine";
 import { BANKS } from "../../shared/scenes/banks";
+import { BOLD_COMPANIONS, CUSTOM_BOLD_BANKS, type CustomBoldBranch } from "../../shared/scenes/banks/companions";
 import { withoutBoldExemptLook } from "../../shared/scenes/banks/boldRules";
-import { MOMENT_HAIRS, type CategoryBank, type LegwearSlot, type Moment, type Outfit } from "../../shared/scenes/banks/types";
+import { MOMENT_HAIRS, type CategoryBank, type LegwearSlot, type Moment, type OrdinaryBankCategory, type Outfit } from "../../shared/scenes/banks/types";
 import { CAPTURES, shotOf, type Capture } from "../../shared/scenes/captures";
 import { boldContentLevel, contentProblems } from "../../shared/scenes/contentLine";
 import { PHONE_WORDS, SELFIE_WORDS, isOwnerBannedOutfit, withoutExemptLookPhrases } from "../../shared/scenes/words";
@@ -168,6 +169,17 @@ export const POOLS: Record<Category, Pool> = {
   nightwear: poolOfBank(BANKS.nightwear),
   beach: poolOfBank(BANKS.beach),
 };
+
+/** 5a.4 (S5.BA2, plan s5a4 §5.2, §5.3.1): the «Смелая» pools of the five (their companions) and of the custom categories («rooms», «by the water»), derived as the seven are. */
+export const BOLD_POOLS: Readonly<Record<OrdinaryBankCategory, Pool>> = {
+  home: poolOfBank(BOLD_COMPANIONS.home),
+  travel: poolOfBank(BOLD_COMPANIONS.travel),
+  photoshoot: poolOfBank(BOLD_COMPANIONS.photoshoot),
+  glamour: poolOfBank(BOLD_COMPANIONS.glamour),
+  fitness: poolOfBank(BOLD_COMPANIONS.fitness),
+};
+export const CUSTOM_BOLD_POOLS: Readonly<Record<CustomBoldBranch, Pool>> = { rooms: poolOfBank(CUSTOM_BOLD_BANKS.rooms), water: poolOfBank(CUSTOM_BOLD_BANKS.water) };
+
 
 // ---------- validation ----------
 
@@ -391,3 +403,21 @@ export function validatePools(pools: Readonly<Record<Category, unknown>> = POOLS
 }
 
 validatePools();
+
+/**
+ * 5a.4 (S5.BA2): validates the companions' and the custom banks' pools against the «Смелая» pool schema and throws with every problem found, each under its pool's name. Each part
+ * defaults to the shipped pools. Called eagerly below.
+ */
+export function validateBoldAnyPools(input: { bold?: unknown; custom?: unknown } = {}): void {
+  const bold = input.bold ?? BOLD_POOLS;
+  const custom = input.custom ?? CUSTOM_BOLD_POOLS;
+  const entryOf = (pools: unknown, key: string): unknown => (typeof pools === "object" && pools !== null && key in pools ? Reflect.get(pools, key) : undefined);
+  const problems: string[] = [];
+  for (const [name, pool] of [...Object.keys(BOLD_POOLS).map((key) => [key, entryOf(bold, key)] as const), ...Object.keys(CUSTOM_BOLD_POOLS).map((key) => [key, entryOf(custom, key)] as const)]) {
+    const result = BoldPoolSchema.safeParse(pool);
+    if (!result.success) problems.push(`${name}: ${z.prettifyError(result.error)}`);
+  }
+  if (problems.length > 0) throw new Error(`Studio «Смелая» pools are invalid:\n${problems.join("\n")}`);
+}
+
+validateBoldAnyPools();

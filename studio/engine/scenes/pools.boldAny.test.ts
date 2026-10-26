@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { BANKS } from "../../shared/scenes/banks";
 import type { CategoryBank, Moment, Outfit } from "../../shared/scenes/banks/types";
-import { BoldPoolSchema, BuiltInPoolSchema, POOLS, poolOfBank, type Pool } from "./pools";
+import { BOLD_COMPANIONS, CUSTOM_BOLD_BANKS } from "../../shared/scenes/banks/companions";
+import { BOLD_POOLS, BoldPoolSchema, BuiltInPoolSchema, CUSTOM_BOLD_POOLS, POOLS, poolOfBank, validateBoldAnyPools, type Pool } from "./pools";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -114,5 +115,33 @@ describe("BuiltInPoolSchema", () => {
     const covered = { ...home, locations: [{ ...homePlace, activities: [{ ...homeMoment, openCoverage: OPEN }, ...homePlace.activities.slice(1)] }, ...home.locations.slice(1)] };
     expect(BuiltInPoolSchema.safeParse(tiered).success).toBe(false);
     expect(BuiltInPoolSchema.safeParse(covered).success).toBe(false);
+  });
+});
+
+// 5a.4 (S5.BA2): the companions' and the custom banks' pools, derived from their banks as the seven are, and held to the «Смелая» pool schema at load (the paper, screen, staging and
+// luxury words, the pool bound, the bold content line).
+describe("the 5a.4 «Смелая» pools", () => {
+  test("a pool for each companion and each custom bank, derived from its bank", () => {
+    expect(Object.keys(BOLD_POOLS)).toEqual(["home", "travel", "photoshoot", "glamour", "fitness"]);
+    for (const [category, pool] of Object.entries(BOLD_POOLS)) expect(pool).toEqual(poolOfBank(BOLD_COMPANIONS[category as keyof typeof BOLD_COMPANIONS]));
+    expect(CUSTOM_BOLD_POOLS).toEqual({ rooms: poolOfBank(CUSTOM_BOLD_BANKS.rooms), water: poolOfBank(CUSTOM_BOLD_BANKS.water) });
+  });
+
+  test("each passes the «Смелая» pool schema, and the five's schema refuses it", () => {
+    for (const pool of [...Object.values(BOLD_POOLS), ...Object.values(CUSTOM_BOLD_POOLS)]) {
+      expect(BoldPoolSchema.safeParse(pool).success).toBe(true);
+      expect(BuiltInPoolSchema.safeParse(pool).success).toBe(false);
+    }
+  });
+
+  test("validateBoldAnyPools passes the shipped pools and throws on a malformed one, naming it", () => {
+    expect(() => validateBoldAnyPools()).not.toThrow();
+    const home = BOLD_POOLS.home;
+    const first = home.locations[0];
+    if (first === undefined) throw new Error("the home companion's pool has no place");
+    const staged = { ...home, locations: [{ ...first, name: "a glamorous studio" }, ...home.locations.slice(1)] };
+    expect(() => validateBoldAnyPools({ bold: { ...BOLD_POOLS, home: staged } })).toThrow(/home:/);
+    const water = CUSTOM_BOLD_POOLS.water;
+    expect(() => validateBoldAnyPools({ custom: { ...CUSTOM_BOLD_POOLS, water: { ...water, outfits: ["a satin dress"] } } })).toThrow(/water:/);
   });
 });
