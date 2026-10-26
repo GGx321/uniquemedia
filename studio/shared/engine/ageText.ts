@@ -336,6 +336,8 @@ const HARD_YOUTH: WordRule[] = [
 
 /** S5.FU-AGE: a newborn that is an animal, never a child («a newborn kitten»). */
 const NEWBORN_ANIMALS = "kittens?|kits?|pupp(?:y|ies)|pups?|lambs?|foals?|calf|calves|chicks?|ducklings?|piglets?|bunn(?:y|ies)|cubs?|fawns?|animals?";
+/** S5.FU-AGE round 2 (H2): a tot that is a drink names it («a tot of rum»); «a tot of her own», «a tot of three» are a child. */
+const TOT_DRINKS = "rum|whisk(?:e)?y|brandy|gin|vodka|scotch|bourbon|cognac|liquor|port|sherry";
 /** S5.FU-AGE: what the pupils of her eyes do («her pupils slowly widen»). */
 const PUPIL_VERBS = "dilat|widen|narrow|contract|constrict|shrink|expand";
 
@@ -404,10 +406,11 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
   // S5.WC2c round 2 (H1, the review): a small child or the years before adulthood, which a clip motion may say once its content rules were lifted.
   en("toddler", "toddl\\w*"),
   enRu("infant", "infant\\w*|infancy", "(?<![\\p{L}])младен\\p{L}*"),
-  // S5.FU-AGE: the false positives of these four, each where it names no child: a newborn animal, a tot of rum or tater tots, a youth hostel, the pupils of her eyes.
+  // S5.FU-AGE: the false positives of these four, each where it names no child: a newborn animal, a tot of a named drink, tater tots or «tots up», a youth hostel, the pupils of her
+  // eyes.
   en("newborn", `new[- ]?borns?(?![- ](?:${NEWBORN_ANIMALS})\\b)`),
   en("little one", "little[- ]ones?"),
-  en("tot", "(?<!\\btater[- ])tots?(?!\\s+(?:of|up)\\b)"),
+  en("tot", `(?<!\\btater[- ])tots?(?!\\s+of\\s+(?:${TOT_DRINKS})\\b|\\s+up\\b)`),
   en("puberty", "pubert\\w*"),
   en("youth", "youths?(?![- ]hostels?\\b)"),
   en("pupil", `(?<!\\b(?:dilated|widened|wide|narrowed|constricted|eye)\\s)pupils?(?!(?:\\s+\\w+ly)?\\s+(?:${PUPIL_VERBS})\\w*|\\s+of\\s+(?:her|his|the|their)\\s+eyes?\\b)`),

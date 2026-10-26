@@ -238,6 +238,9 @@ export const FALSE_POSITIVES: AgeProbes = {
     "she slowly undresses for her pupils",
     "she slowly undresses, a tot",
     "she slowly undresses like a tot",
+    // Round 2 (H2): «a tot of …» is a drink only when it names one.
+    "she slowly undresses beside a tot of her own",
+    "she slowly undresses, a tot of three",
     "she slowly undresses, a youth",
     "she slowly undresses at the youth club",
     "she slowly undresses like a newborn",
@@ -249,6 +252,7 @@ export const FALSE_POSITIVES: AgeProbes = {
     "she slowly looks up, her pupils dilating",
     "she slowly narrows her eyes, her dilated pupils",
     "she slowly sips a tot of rum",
+    "she slowly pours a tot of whiskey",
     "she slowly eats tater tots",
     "she slowly waves outside the youth hostel",
     "she slowly sits in the youth hostel lobby",
