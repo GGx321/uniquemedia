@@ -228,13 +228,17 @@ function posesFor(category: CategoryRef, input: PlanInput): readonly ScenePose[]
   return BASE_POSES;
 }
 
+/** No photo of the launch's own: the pool of a plan, which has none yet. */
+const NO_PHOTOS: ReadonlySet<string> = new Set();
+
 /**
  * The avatar's FREE library photos in the launch's categories (§5.1): the planner's pool, and, with the launch's own photos marked `reserved`, the candidates of every later pick of the
  * free steps. One definition (A7): eligible, not rejected, not used, not reserved, not held by a saved draft, of the avatar, with a category the launch chose.
  * 5a.4 (S5.BA5, plan s5a4 r2.2 D2): at «Смелая» only the photos drawn on the Seedream route, so a «Смелая» launch never fills a video with an ordinary, a flirty or a pre-5a.4 photo
- * (an old «Смелая» photo of the five, or of nightwear's cotton, has no route). Below «Смелая» the pool is today's.
+ * (an old «Смелая» photo of the five, or of nightwear's cotton, has no route). Below «Смелая» the pool is today's. The filter is the LIBRARY's (round 2, money review M-1): `own` are the
+ * launch's own photos (the ones its slices brought, a video's own in a re-pick), which always pass it, routed or not: a launch begun before 5a.4 draws on the owner's model.
  */
-export function poolOf(avatar: PlanAvatarInput, input: Pick<PlanInput, "draft" | "draftHeldPhotoIds">): PlanPhoto[] {
+export function poolOf(avatar: PlanAvatarInput, input: Pick<PlanInput, "draft" | "draftHeldPhotoIds">, own: ReadonlySet<string> = NO_PHOTOS): PlanPhoto[] {
   if (avatar.usage.state !== "ok" || !avatar.draftsKnown) return [];
   const chosen = new Set<string>(input.draft.categories);
   return uniqueById(
@@ -248,7 +252,7 @@ export function poolOf(avatar: PlanAvatarInput, input: Pick<PlanInput, "draft" |
         !input.draftHeldPhotoIds.has(p.id) &&
         p.category !== undefined &&
         chosen.has(p.category) &&
-        (input.draft.level !== "bold" || p.route === "seedream"),
+        (input.draft.level !== "bold" || p.route === "seedream" || own.has(p.id)),
     ),
   );
 }

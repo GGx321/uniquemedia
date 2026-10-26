@@ -281,6 +281,56 @@ describe("repick: a video whose photo was taken meanwhile", () => {
   });
 });
 
+// 5a.4 (S5.BA5 round 2, money review M-1; plan s5a4 r2.2 D2): at «Смелая» a launch FROM THE LIBRARY takes only «Смелая» photos (drawn on the route), but a launch's OWN photos
+// always go into its videos, routed or not: a launch begun before 5a.4 draws its slices on the owner's model with no route (`drawsOnRoute` false), and its paid photos must not be
+// dropped. So the route filter applies to the library pick alone; the photos that arrived from the launch's slices, and a video's own photos in a re-pick, pass it.
+describe("a launch at «Смелая»: the library takes «Смелая» photos only, the launch's own photos always", () => {
+  const bold = { level: "bold" as const };
+  const generatedFile = (): LaunchFile => stampedFile({ library: false, generate: true, videosPerAvatar: 3, mix: { single: 100, collage: 0, slides: 0 }, ...bold });
+
+  test("assignArrived lays the arrived photos with no route into the generated videos", () => {
+    const file = generatedFile();
+    const photos = mine(3);
+    const out = assignArrived(file, A, facts(A, photos), none, new Set(photos.map((p) => p.id)), true);
+    expect(out.picks.flatMap((p) => p.photoIds).sort()).toEqual(photos.map((p) => p.id).sort());
+    expect(out.dropped).toEqual([]);
+  });
+
+  test("assignArrived takes no free photo that did not arrive, routed or not", () => {
+    const file = generatedFile();
+    const strangers = [...mine(2, {}, 11), ...mine(2, { route: "seedream" }, 12)];
+    expect(assignArrived(file, A, facts(A, strangers), none, new Set(), true).picks).toEqual([]);
+  });
+
+  test("assignLibrary takes only the routed photos of the library", () => {
+    const routed = mine(3, { route: "seedream" }, 13);
+    const plain = mine(6, {}, 14);
+    const file = libraryFile([...routed, ...plain], bold);
+    const picked = outcomeOf(assignLibrary(file, new Map([[A, facts(A, [...routed, ...plain])]]), none)).picks.flatMap((p) => p.photoIds);
+    expect(picked.length).toBeGreaterThan(0);
+    expect(picked.every((id) => routed.some((p) => p.id === id))).toBe(true);
+  });
+
+  test("repick keeps a video's own photo with no route while it is still free", () => {
+    const photos = mine(1);
+    const file = stampedFile({ library: false, generate: true, videosPerAvatar: 1, mix: { single: 100, collage: 0, slides: 0 }, ...bold });
+    const [video] = videosOf(file);
+    const own = withVideos(file, (v) => ({ ...v, state: "rendering", photoIds: [photos[0]?.id ?? ""] }));
+    expect(repick(own, A, video?.key ?? "", facts(A, photos), none).picks[0]?.photoIds).toEqual([photos[0]?.id ?? ""]);
+  });
+
+  test("repick of a video that lost its own photo takes a routed library photo, never an unrouted one", () => {
+    const [lost] = mine(1, {}, 15);
+    const plain = mine(3, {}, 16);
+    const routed = mine(1, { route: "seedream" }, 17);
+    const file = stampedFile({ library: false, generate: true, videosPerAvatar: 1, mix: { single: 100, collage: 0, slides: 0 }, ...bold });
+    const [video] = videosOf(file);
+    const taken = withVideos(file, (v) => ({ ...v, state: "rendering", photoIds: [lost?.id ?? ""] }));
+    const fresh = [{ ...(lost as PlanPhoto), usedIn: ["video-00000001"] }, ...plain, ...routed];
+    expect(repick(taken, A, video?.key ?? "", facts(A, fresh), none).picks[0]?.photoIds).toEqual([routed[0]?.id ?? ""]);
+  });
+});
+
 describe("takenPhotos", () => {
   test("lists the photos of the videos that hold them, not a dropped video's", () => {
     const photos = mine(3);

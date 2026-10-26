@@ -75,10 +75,14 @@ function inputOf(facts: AvatarFacts, taken: ReadonlySet<string>): PlanAvatarInpu
 
 const rowOf = (file: LaunchFile, avatarId: string): readonly FileVideo[] => file.avatars.find((a) => a.avatarId === avatarId)?.videos ?? [];
 
-/** The candidates for a pick: the avatar's free photos once the launch's own are set aside (and, unless `forGenerated`, the photos of its slices that generated videos are still waiting for). */
-function candidates(file: LaunchFile, facts: AvatarFacts, held: ReadonlySet<string>, taken: ReadonlySet<string>, forGenerated = false): PlanPhoto[] {
+/**
+ * The candidates for a pick: the avatar's free photos once the launch's own are set aside (and, unless `forGenerated`, the photos of its slices that generated videos are still waiting for).
+ * 5a.4 (S5.BA5 round 2, money review M-1): `own` are the launch's own photos among them (the slices' arrivals, a video's own in a re-pick), which a launch at «Смелая» takes routed or not;
+ * the route filter is the library's (`poolOf`).
+ */
+function candidates(file: LaunchFile, facts: AvatarFacts, held: ReadonlySet<string>, taken: ReadonlySet<string>, forGenerated = false, own?: ReadonlySet<string>): PlanPhoto[] {
   const set = forGenerated || facts.withheld === undefined ? taken : new Set([...taken, ...facts.withheld]);
-  return poolOf(inputOf(facts, set), { draft: file.draft, draftHeldPhotoIds: held });
+  return poolOf(inputOf(facts, set), { draft: file.draft, draftHeldPhotoIds: held }, own);
 }
 
 /**
@@ -145,7 +149,7 @@ export function assignArrived(file: LaunchFile, avatarId: string, facts: AvatarF
   const row = rowOf(file, avatarId);
   const pending = row.filter((v) => v.source === "generated" && (v.state === "planned" || v.state === "waiting-photos") && v.photoIds.length === 0).sort(byKey);
   if (pending.length === 0) return EMPTY;
-  const free = candidates(file, facts, held, takenPhotos(row), true).filter((photo) => arrived.has(photo.id));
+  const free = candidates(file, facts, held, takenPhotos(row), true, arrived).filter((photo) => arrived.has(photo.id));
   const result = assignGenerated(pending.map(plannedOf), free);
   const asked = new Map(pending.map((v) => [v.key, v.size]));
   const shaped = (v: PlannedVideo): VideoPick => ({ key: v.key, shape: v.shape, size: v.photoIds.length, category: v.category, photoIds: v.photoIds });
@@ -177,7 +181,7 @@ export function repick(file: LaunchFile, avatarId: string, key: string, facts: A
   const row = rowOf(file, avatarId);
   const video = row.find((v) => v.key === key);
   if (video === undefined) return EMPTY;
-  const free = candidates(file, facts, held, takenPhotos(row, key));
+  const free = candidates(file, facts, held, takenPhotos(row, key), false, new Set(video.photoIds));
   const result = assignGenerated([{ ...plannedOf(video), photoIds: [] }], free);
   const picks: VideoPick[] = result.videos.map((v) => ({ key: v.key, shape: v.shape, size: v.photoIds.length, category: v.category, photoIds: v.photoIds }));
   const missing = picks.reduce((sum, p) => sum + Math.max(0, video.size - p.size), 0) + (result.dropped.length > 0 ? video.size : 0);

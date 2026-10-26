@@ -173,6 +173,10 @@ describe("a «Смелая» launch of «Дом», priced by its set's routes", 
     const drawn = slices(GROK_UNIT);
     expect(drawn.length).toBeGreaterThan(0);
     expect(drawn).toEqual(drawn.map(({ runId }) => ({ runId, cap: 0, routed: [false] })));
+    // 5a.4 (S5.BA5 round 2, money review M-1): the slices' photos carry no route, and they are the launch's own: every video is made with them, none is dropped.
+    const videos = kit.fileOf(launchId).avatars[0]?.videos ?? [];
+    expect(videos.length).toBeGreaterThan(0);
+    expect(videos.map((v) => ({ key: v.key, state: v.state, photos: v.photoIds.length > 0 }))).toEqual(videos.map((v) => ({ key: v.key, state: "done", photos: true })));
   });
 
   // 5a.4 (S5.BA5, plan s5a4 r2.1 L1, §5.8, accepted as is, no port change): a slice is SIZED by the draft's level (`photoWorstMicros`, the port has no set), so a launch accepted
