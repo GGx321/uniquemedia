@@ -75,6 +75,47 @@ const DROPPED: readonly string[] = [
 
 const dropped = new Set<string>();
 
+/**
+ * Pinned (FU-CLIP round 2, MEDIUM-3): the frames whose «Как в сцене» is held back because its motion moves a worn or held thing the photo's prompt names only in the
+ * moment, the plan, which the photo may not show (C5c clip 2: no blanket under her, and «she pulls the blanket up a little» would bring it back). The sheet offers
+ * their code motions; the sweep still runs their bank motion, so every bank motion still makes a valid prompt. A new entry here is a bank motion to look at.
+ */
+const HELD_BACK: readonly string[] = [
+  "home/her bedroom/«adjusts the hem of her top» on mirror-hidden",
+  "home/her bedroom/«adjusts the hem of her top» on mirror",
+  "home/her bedroom/«adjusts the hem of her top» on timer",
+  "home/her bed/«lies curled under the blanket» on above",
+  "home/her bed/«lies curled under the blanket» on timer",
+  "photoshoot/a colourful side street/«adjusts the strap of her bag» on candid",
+  "photoshoot/a colourful side street/«adjusts the strap of her bag» on friend",
+  "photoshoot/a colourful side street/«adjusts the strap of her bag» on selfie",
+  "photoshoot/a busy road/«fixes an earring, in profile» on friend",
+  "photoshoot/a busy road/«fixes an earring, in profile» on candid",
+  "glamour/the back seat of a taxi/«adjusts an earring» on selfie",
+  "glamour/the back seat of a taxi/«pulls her coat a little closer» on selfie",
+  "glamour/her front door/«takes her coat from the rack» on mirror-hidden",
+  "glamour/her front door/«takes her coat from the rack» on selfie",
+  "fitness/a gym floor/«laces up her sneakers» on friend",
+  "fitness/a gym floor/«laces up her sneakers» on candid",
+  "fitness/the gym locker room/«packs her bag» on candid",
+  "fitness/the gym locker room/«packs her bag» on friend",
+  "fitness/the gym locker room/«pulls on a light jacket» on friend",
+  "fitness/the gym locker room/«pulls on a light jacket» on candid",
+  "nightwear/her bed/«lies curled up under the duvet» on above",
+  "nightwear/her bed/«lies curled up under the duvet» on timer",
+  "nightwear/her bedroom/«adjusts the strap on her shoulder» on mirror-hidden",
+  "nightwear/her bedroom/«adjusts the strap on her shoulder» on mirror",
+  "nightwear/her bedroom/«pulls her jeans up over her panties» on mirror-hidden",
+  "nightwear/an armchair in her bedroom/«curls up with a blanket» on mirror-hidden",
+  "nightwear/an armchair in her bedroom/«curls up with a blanket» on mirror",
+  "beach/the beach/«lowers her sunglasses a little» on selfie",
+  "beach/the beach/«lowers her sunglasses a little» on friend",
+  "beach/a rooftop pool/«adjusts the strap on her shoulder» on friend",
+  "beach/a rooftop pool/«adjusts the strap on her shoulder» on candid",
+];
+
+const heldBack = new Set<string>();
+
 /** Every bank motion × each of its captures × dialect × legwear on and off (on only where the moment may wear it), plus every code motion of those frames. */
 function sweep(): Swept[] {
   const out: Swept[] = [];
@@ -85,8 +126,15 @@ function sweep(): Swept[] {
         const frame = `${picked.category}/${picked.place.name}/«${picked.moment.text}» on ${capture}`;
         const where = `${frame}${legwear ? " with legwear" : ""}`;
         const choices = motionChoicesOf(facts, () => dropped.add(frame));
-        if (choices[0]?.id !== "scene" && !dropped.has(frame)) throw new Error(`${where}: «Как в сцене» is not offered`);
-        for (const choice of choices) {
+        if (choices[0]?.id !== "scene" && !dropped.has(frame)) {
+          if (facts.sceneMotion) throw new Error(`${where}: «Как в сцене» is not offered`);
+          // The pin reads the frame without legwear: with the sweep's socks, which most banks' lists do not hold, the kit's sentence falls back to the plain one, which names
+          // fewer things («lies with the sheet up to her chest» loses its coverage sentence, the one place outside the moment that names the sheet).
+          if (!legwear) heldBack.add(frame);
+        }
+        if (choices.length === 0) throw new Error(`${where}: no motion is offered at all`);
+        const swept = facts.sceneMotion ? choices : [{ id: "scene", source: "scene" as const, text: picked.moment.motion }, ...choices];
+        for (const choice of swept) {
           for (const dialect of DIALECTS) {
             const result = clipPromptOf(facts, choice.text, dialect, choice.source);
             if (!result.ok) throw new Error(`${where} (${choice.id}, ${dialect}): ${result.problems.join("; ")}`);
@@ -126,6 +174,11 @@ describe("every bank motion makes a valid clip prompt (§8 V5 sweep)", () => {
   test("a bank motion is dropped only where it would contradict its photo, exactly as pinned", () => {
     SWEPT();
     expect([...dropped].sort()).toEqual([...DROPPED].sort());
+  });
+
+  test("«Как в сцене» is held back only where its motion moves a thing the photo names only in the moment, exactly as pinned (FU-CLIP round 2)", () => {
+    SWEPT();
+    expect([...heldBack].sort()).toEqual([...HELD_BACK].sort());
   });
 
   test("every prompt is within 130 words, carries the pacing line and ends with the adult line", () => {

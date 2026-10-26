@@ -11,7 +11,7 @@ import { facePoseOf } from "../runs/faceGate";
 import type { RunPlan } from "../runs/plan";
 import type { OwnPlanSlot, PlanSlot } from "../scenes/schema";
 import type { ClipFaceRole } from "./faceRole";
-import { provenCaptureOf, type ClipCapture } from "./videoLook";
+import { WORN_OR_HELD, provenCaptureOf, type ClipCapture } from "./videoLook";
 
 // Stage 5, 5b.1, S5.V5 (plan s5b1 §5.4, I5.52, I5.57): what a clip knows of its photo, read from the photo's sidecar, its run's plan.json and the banks, never from pixels.
 //
@@ -30,7 +30,7 @@ export interface FrameFacts {
   readonly category: string;
   /** The bank moment of a planned built-in slot whose place and moment the bank still has. */
   readonly moment: Moment | null;
-  /** «Как в сцене» is offered: the moment exists and the photo's prompt still says «she {moment}». */
+  /** «Как в сцене» is offered: the moment exists, the photo's prompt still says «she {moment}», and it names every worn or held thing the motion moves outside the moment (FU-CLIP). */
   readonly sceneMotion: boolean;
   /**
    * The slot's activity, when the photo's prompt still carries it. Null for an own scene and without a plan. Never sent to the video model (FU-CLIP): the vision
@@ -79,6 +79,22 @@ function says(prompt: string, phrase: string): boolean {
 /** A slot's text without the punctuation a stored text may end with (the plain sentence's `field`). */
 const trimmed = (text: string): string => text.trim().replace(/[\s.,;:!]+$/, "");
 
+/** Every worn or held thing a motion moves (videoLook's WORN_OR_HELD: a strap, a blanket, a hem, laces, an earring, a coat going on …). */
+const MOVED_THINGS = new RegExp(WORN_OR_HELD.source, "gi");
+
+/**
+ * FU-CLIP round 2 (MEDIUM-3): whether the photo's prompt names every worn or held thing the motion moves outside the slot's activity. The activity is the plan, which the
+ * photo may not show: C5c clip 2's plan said «lies curled under the blanket», the photo showed her on top of it, and «Как в сцене» («she pulls the blanket up a little»)
+ * would bring the blanket back. A thing is named in its singular or its plural («straps» names «strap»).
+ */
+function namesMovedThings(prompt: string, activity: string, motion: string): boolean {
+  const outside = activity === "" ? prompt : prompt.replace(new RegExp(escaped(activity), "giu"), " ");
+  return [...motion.matchAll(MOVED_THINGS)].every(([thing]) => {
+    const one = thing.replace(/s$/i, "");
+    return says(outside, thing) || says(outside, one) || says(outside, `${one}s`);
+  });
+}
+
 /** The slot the photo was made for, in its run's plan, or null. */
 function slotOf(source: GeneratedSource, plan: RunPlan | null): PlanSlot | OwnPlanSlot | null {
   if (plan === null || source.slot === undefined) return null;
@@ -101,7 +117,7 @@ function plannedFacts(photo: PhotoSidecar, source: GeneratedSource, slot: PlanSl
     plan: "slot",
     category: slot.category,
     moment,
-    sceneMotion: moment !== null && says(source.prompt, `she ${moment.text}`),
+    sceneMotion: moment !== null && says(source.prompt, `she ${moment.text}`) && namesMovedThings(source.prompt, activity, moment.motion),
     activity: carried ? activity : null,
     capture: provenCaptureOf(planned, source.prompt),
     plannedCapture: planned,

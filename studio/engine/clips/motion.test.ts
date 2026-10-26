@@ -7,7 +7,7 @@ import { PHONE_WORDS, SELFIE_WORDS } from "../../shared/scenes/words";
 import type { PlanSlot } from "../scenes/schema";
 import { frameFactsOf, type FrameFacts, type FrameFactsResult } from "./frameFacts";
 import { CODE_MOTIONS, chosenMotion, clipSuitabilityOf, codeMotionsFor, motionChoicesOf } from "./motion";
-import { CLIP_CAPTURES, type ClipCapture } from "./videoLook";
+import { CLIP_CAPTURES, WORN_OR_HELD, type ClipCapture } from "./videoLook";
 import { photoOf, pick, planlessPhoto, sceneRun, slotOf } from "./testing/frameFixtures";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -123,7 +123,8 @@ describe("which code motions a frame gets", () => {
 });
 
 describe("the sheet's choices", () => {
-  const timer = planned("home", (m) => m.captures.includes("timer") && m.level === undefined && m.legs === undefined && m.angle === undefined, "timer");
+  // A moment whose motion moves no worn or held thing: one that does is offered only when the photo's prompt names the thing outside the moment (FU-CLIP round 2, MEDIUM-3).
+  const timer = planned("home", (m) => m.captures.includes("timer") && m.level === undefined && m.legs === undefined && m.angle === undefined && !WORN_OR_HELD.test(m.motion), "timer");
 
   test("«Как в сцене» first: the bank's motion verbatim, then the code motions; at most four, ids unique, each a valid choice", () => {
     const choices = motionChoicesOf(timer);

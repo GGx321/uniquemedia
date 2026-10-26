@@ -5,6 +5,7 @@ import { shotOf } from "../../shared/scenes/captures";
 import { CUSTOM_REF } from "../scenes/testing/customPool";
 import { frameFactsOf, type FrameFacts, type FrameFactsResult } from "./frameFacts";
 import { VIDEO_TIERS } from "../money/prices";
+import { motionChoicesOf } from "./motion";
 import { clipPromptOf, clipRequestBody } from "./prompt";
 import { ADULT_LINE, COMES_OFF_LINE, CONTINUITY_LINE, LEGS_LINE, LOOK_LINE, POSE_ANCHOR, PRONE_ANCHOR, PROMPT_WORDS_MAX, SLOW_LINE, cameraLineOf, legwearLineOf, wordCount, type ClipDialect } from "./videoLook";
 import { everyMoment, photoOf, pick, planlessPhoto, promptNamingLegwear, sceneRun, slotOf } from "./testing/frameFixtures";
@@ -363,6 +364,22 @@ describe("FU-CLIP: the prompt makes no claim about her pose that only the plan m
     expect(promptOf(bare, "she slowly takes a breath and relaxes her shoulders")).not.toMatch(/socks stay on her feet/);
     const socked = factsFor(slot, `The phone is propped up. In her bedroom, she ${picked.moment.text}, wearing ${slot.outfit} and white knee-high socks. She is an adult woman.`);
     expect(promptOf(socked, "she slowly takes a breath and relaxes her shoulders")).toContain("Her white knee-high socks stay on her feet the whole time.");
+  });
+
+  test("round 2 (MEDIUM-3): on C5c clip 2's frame «Как в сцене» («she pulls the blanket up a little») is not offered: only the activity names the blanket", () => {
+    const facts = curled();
+    expect(facts.moment?.motion).toBe("she pulls the blanket up a little");
+    const choices = motionChoicesOf(facts);
+    expect(choices.map((choice) => choice.id)).not.toContain("scene");
+    expect(choices.length).toBeGreaterThan(0);
+    for (const choice of choices) expect(choice.text).not.toMatch(/\bblanket\b/);
+  });
+
+  test("round 2 (MEDIUM-3): the same motion is offered when the photo's prompt names the blanket outside the activity", () => {
+    const picked = pick("home", (m) => m.text === "lies curled under the blanket" && m.captures.includes("timer"));
+    const slot = slotOf(picked, "timer");
+    const facts = factsFor(slot, `The phone is propped up. On her bed with a knitted blanket, she lies curled under the blanket, wearing ${slot.outfit}. She is an adult woman.`);
+    expect(motionChoicesOf(facts)[0]).toMatchObject({ id: "scene", text: "she pulls the blanket up a little" });
   });
 
   test("C5c clip 2, rebuilt on its frame: the exact prompt the paid re-check sends", () => {

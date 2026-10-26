@@ -19,6 +19,7 @@ import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { clipFallbackOf, frameFactsOf, frameRefusalOf, readFrameFacts, type FrameFacts, type FrameFactsResult } from "./frameFacts";
 import { SHIPPED_POV_CAPTURE_LINES } from "./videoLook";
 import { AVATAR, MODELS, everyMoment, photoCaptureLineOf, photoOf, pick, planlessPhoto, sceneRun, sentenceOf, slotOf } from "./testing/frameFixtures";
+import { WORN_OR_HELD } from "./videoLook";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -83,6 +84,7 @@ describe("the chain: photo → run → slot → moment (§5.4)", () => {
     const lib = await library();
     const run = ordinaryRun("run-00000001");
     await lib.createRun(run.runId, run, RunPlanSchema);
+    let offered = 0;
     for (const slot of planned(run)) {
       const facts = factsOf(await readFrameFacts(photoOf(run, slot), readerOf(lib), silent));
       expect(facts.plan).toBe("slot");
@@ -92,9 +94,14 @@ describe("the chain: photo → run → slot → moment (§5.4)", () => {
       expect(facts.capture).toBe(slot.capture ?? captureOfShot(slot.shot));
       expect(facts.pose).toBe(slot.pose);
       expect(facts.legs).toBe(slot.framing === "legs");
-      expect(facts.sceneMotion).toBe(true);
+      // A motion that moves a worn or held thing is offered only when the prompt names the thing outside the moment (FU-CLIP round 2, MEDIUM-3, pinned in prompt.test.ts).
+      if (!WORN_OR_HELD.test(facts.moment?.motion ?? "")) {
+        expect(facts.sceneMotion).toBe(true);
+        offered++;
+      }
       expect(facts.activity).toBe(slot.activity);
     }
+    expect(offered).toBeGreaterThan(20);
   });
 
   test("a scene-set run: a planned scene finds its slot; an own scene reads its shot and pose and has no moment and no activity", async () => {
@@ -207,7 +214,8 @@ describe("a plan that cannot be read is no plan (§5.4 step 5)", () => {
 });
 
 describe("«Как в сцене» only when the photo's prompt says it (§5.4 step 4)", () => {
-  const picked = pick("home", (m) => m.captures.includes("timer") && m.level === undefined && m.legs === undefined);
+  // A moment whose motion moves no worn or held thing (those need the thing named outside the moment too: FU-CLIP round 2, MEDIUM-3).
+  const picked = pick("home", (m) => m.captures.includes("timer") && m.level === undefined && m.legs === undefined && !WORN_OR_HELD.test(m.motion));
   const slot = slotOf(picked, "timer");
   const run = sceneRun("run-00000011", [slot]);
   const runSlot = run.scenes.slots[0] as PlanSlot;
