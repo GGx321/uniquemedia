@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BANKS, CUES, GAZE } from "../../shared/scenes/banks";
+import { BOLD_COMPANIONS } from "../../shared/scenes/banks/companions";
 import type { BankCategory, Moment } from "../../shared/scenes/banks/types";
 import { shotOf, type Capture } from "../../shared/scenes/captures";
 import type { TemplateSlot } from "../../shared/scenes/template";
@@ -144,5 +145,27 @@ describe("localSentences: a gaze or an expression at most twice in 20 photos", (
   test("a resume renders the same capped text", () => {
     const slots = runOf(40);
     expect(slots.map(localSentences({ slots, keyOf }))).toEqual(slots.map(localSentences({ slots, keyOf })));
+  });
+});
+
+// 5a.4 (S5.BA3, plan s5a4 I5.74, §5.1.4): the render's origin rides through the seam. `localSentences` hands it to the template, so a Studio-created avatar's lace frame says no coverage sentence and an
+// imported or unknown-origin avatar's says the kept one; the default is the imported side.
+describe("localSentences carries the avatar's origin (I5.74)", () => {
+  const LACE = "The lace is lined and opaque";
+  const place = BOLD_COMPANIONS.home.places.find((p) => p.name === "her kitchen");
+  const moment = place?.moments.find((m) => m.level === undefined && m.outfits === undefined && m.legs === undefined);
+  const capture = moment?.captures[0];
+  if (place === undefined || moment === undefined || capture === undefined) throw new Error("no «Дом» companion moment");
+  const slot: Slot = { slotIndex: 1, category: "home", location: place.name, activity: moment.text, outfit: "a black lace bra and panties", shot: shotOf(capture), capture, pose: "front", route: "seedream", level: "flirty" };
+
+  test("an imported avatar, or one of unknown origin, says the kept coverage", () => {
+    expect(localSentences({ slots: [slot], keyOf })(slot)).toContain(LACE);
+    expect(localSentences({ slots: [slot], keyOf, impliedNudity: false })(slot)).toContain(LACE);
+  });
+
+  test("a Studio-created avatar says no coverage sentence for the lace", () => {
+    const text = localSentences({ slots: [slot], keyOf, impliedNudity: true })(slot);
+    expect(text).not.toBeNull();
+    expect(text).not.toContain(LACE);
   });
 });

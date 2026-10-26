@@ -19,6 +19,8 @@ export interface LocalSentencesInput<S extends TemplateSlot & { slotIndex: numbe
   seen?: Iterable<string> | undefined;
   /** A rewrite: the sentence must differ from every `seen` one even when nothing in the slot varies (the review write's redraw); a run's own dedup leaves it off. */
   distinct?: boolean | undefined;
+  /** 5a.4 (S5.BA3, I5.74): whether the avatar was created in Studio; the coverage sentence a Seedream frame ends with follows it. Default false (fail-closed): the kept, restrictive sentence. */
+  impliedNudity?: boolean | undefined;
 }
 
 export function localSentences<S extends TemplateSlot & { slotIndex: number }>(input: LocalSentencesInput<S>): (slot: S) => string | null {
@@ -27,7 +29,7 @@ export function localSentences<S extends TemplateSlot & { slotIndex: number }>(i
   // S5.6R: a gaze or an expression at most twice in any 20 sentences in a row of the list (render.ts). The mock's `localTexts` keeps one the same way.
   const tally = new GazeCueTally();
   for (const slot of input.slots) {
-    const text = templateSentence(slot, { key: input.keyOf(slot), snapshots: input.snapshots, seen, tally, ...(input.distinct === true ? { distinct: true } : {}) });
+    const text = templateSentence(slot, { key: input.keyOf(slot), snapshots: input.snapshots, seen, tally, ...(input.distinct === true ? { distinct: true } : {}), ...(input.impliedNudity === true ? { impliedNudity: true } : {}) });
     if (text === null) continue;
     rendered.set(slot.slotIndex, text);
     seen.add(text);
