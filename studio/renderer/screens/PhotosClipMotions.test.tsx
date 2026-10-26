@@ -71,6 +71,11 @@ const rowTexts = (s: HTMLElement): string[] => radios(s).map((r) => plain(r.clos
 /** The rows' titles (the bold label, «Своя идея: …» for an own idea), without their English. */
 const rowTitles = (s: HTMLElement): string[] => Array.from(s.querySelectorAll<HTMLElement>(".clip-opts > label b")).map((b) => plain(b.textContent));
 const checkedRow = (s: HTMLElement): string => plain(radios(s).find((r) => r.checked)?.closest("label")?.textContent);
+/** The title of the row a sheet with no choice made is on (FU-CLIP round 2, `defaultMotionOf`): its first suggestion when it lists one, else its first row. */
+const defaultTitle = (s: HTMLElement): string => {
+  const at = radios(s).findIndex((r) => r.value.startsWith("v-"));
+  return rowTitles(s)[at >= 0 ? at : 0] ?? "";
+};
 const news = (where: "polite" | "alert", root: ParentNode = document): string => plain(root.querySelector(`[data-motion-news="${where}"]`)?.textContent);
 const describedText = (el: HTMLElement): string =>
   plain(
@@ -143,8 +148,9 @@ describe("62: the actions under the list", () => {
     expect(suggested.every((row) => row.querySelector(".clip-en[lang='en']") !== null)).toBe(true);
     const code = rows.filter((row) => row.querySelector(".mc-tag") === null && row !== own);
     expect(code.every((row) => row.querySelector(".clip-en") === null)).toBe(true);
-    // The owner's choice is the engine's default, the first row.
-    expect(checkedRow(s)).toBe(labels[0]);
+    // With no choice made the sheet is on its default: the first suggestion (FU-CLIP round 2), which the engine lists after the code motions.
+    expect(checkedRow(s).startsWith(defaultTitle(s))).toBe(true);
+    expect(radios(s).find((r) => r.checked)?.value).toBe("v-1");
   });
 
   test("a price the engine cannot tell leaves the button waiting with «Цену не узнать: … · Повторить», which asks again", async () => {
@@ -257,9 +263,14 @@ describe("62a: «Смотрим кадр…» — the guard holds «Оживит
 });
 
 describe("62b: the suggestions are in", () => {
-  test("three rows «предложено» with their English after the code motions; the choice stays, the focus on the first; «Предложено 3 движения — оплачено $0.003.» said politely", async () => {
+  test("three rows «предложено» with their English after the code motions; the owner's choice stays, the focus on the first; «Предложено 3 движения — оплачено $0.003.» said politely", async () => {
     const h = await openNini();
     const s = await openSheet();
+    // The owner's own choice (FU-CLIP round 2: with no choice made, the first suggestion becomes the default once it is in; see below).
+    const second = radios(s)[1];
+    if (second === undefined) throw new Error("no second row");
+    fireEvent.click(second);
+    await flush();
     const chosen = checkedRow(s);
     fireEvent.click(suggestButton(s));
     await settle();
@@ -292,6 +303,63 @@ describe("62b: the suggestions are in", () => {
     const payload = callsOf(h.engine, "clips.create")[0]?.payload as Record<string, unknown> | undefined;
     expect(payload?.motionId).toBe("v-1");
     expect(Object.keys(payload ?? {}).some((key) => /text|idea|label/i.test(key))).toBe(false);
+  });
+});
+
+describe("FU-CLIP round 2 (MEDIUM-3): a stored suggestion is the sheet's default", () => {
+  const priceLine = (s: HTMLElement): string => plain(s.querySelector(".clip-price-line")?.textContent);
+
+  test("a photo with stored suggestions opens on the first of them, and «Оживить» sends its `v-` id", async () => {
+    const h = await openNini();
+    await h.client.request("clips.suggestMotions", { avatarId: NINI.avatarId, photoId: PLAIN.photoId, acceptedWorstMicros: MOCK_SUGGEST_PRICE.worstMicros });
+    const s = await openSheet();
+    expect(radios(s).find((r) => r.checked)?.value).toBe("v-1");
+    fireEvent.click(goButton(s));
+    await settle();
+    expect((callsOf(h.engine, "clips.create")[0]?.payload as Record<string, unknown> | undefined)?.motionId).toBe("v-1");
+  });
+
+  test("with no choice made, the first suggestion becomes the choice once the call brings it", async () => {
+    await openNini();
+    const s = await openSheet();
+    expect(radios(s).find((r) => r.checked)?.value).not.toMatch(/^v-/);
+    fireEvent.click(suggestButton(s));
+    await settle();
+    expect(radios(s).find((r) => r.checked)?.value).toBe("v-1");
+  });
+
+  test("the price line does not move with the default: the suggestion and a code motion show the same figure", async () => {
+    const h = await openNini();
+    await h.client.request("clips.suggestMotions", { avatarId: NINI.avatarId, photoId: PLAIN.photoId, acceptedWorstMicros: MOCK_SUGGEST_PRICE.worstMicros });
+    const s = await openSheet();
+    const price = priceLine(s);
+    expect(price).not.toBe("");
+    const code = radios(s).find((r) => r.value.startsWith("g-"));
+    if (code === undefined) throw new Error("no code motion row");
+    fireEvent.click(code);
+    await flush();
+    expect(priceLine(s)).toBe(price);
+  });
+
+  test("a default he never chose is not his choice: a call that pushes it out moves the sheet to the new first suggestion and says its result, no drop line", async () => {
+    const h = await openNini();
+    const s = await openSheet();
+    h.engine.scriptNextMotionReplies([labelled([["Дует на чай", "she slowly tucks a strand of hair behind her ear"], ["Прячет улыбку", "she slowly lifts her chin and smiles softly"], ["Глубоко вдыхает", "she slowly turns toward the window and smiles"]])]);
+    fireEvent.click(suggestButton(s));
+    await settle();
+    expect(checkedRow(s).startsWith("Дует на чай")).toBe(true);
+    h.engine.scriptNextMotionReplies([labelled([["Смотрит вниз", "she slowly looks down and smiles to herself"], ["Смотрит в сторону", "she slowly glances to the side and looks back"], ["Поправляет волосы", "she slowly tucks a strand of hair behind her ear"]])]);
+    fireEvent.click(suggestButton(s));
+    await settle();
+    expect(rowTitles(s).includes("Дует на чай")).toBe(false);
+    expect(checkedRow(s).startsWith(defaultTitle(s))).toBe(true);
+    expect(news("polite", s)).not.toContain("больше не в списке");
+  });
+
+  test("a photo without a suggestion keeps the first row as its default", async () => {
+    await openNini();
+    const s = await openSheet();
+    expect(radios(s).find((r) => r.checked)).toBe(radios(s)[0]);
   });
 });
 
@@ -788,7 +856,8 @@ describe("round 2: where the focus goes after 63a, and a chosen row that leaves 
     fireEvent.click(suggestButton(s));
     await settle();
     expect(rowTitles(s).includes("Дует на чай")).toBe(false);
-    const first = rowTitles(s)[0] ?? "";
+    // The sheet's default takes the dropped row's place: the first suggestion still listed (FU-CLIP round 2), else the first row.
+    const first = defaultTitle(s);
     expect(checkedRow(s).startsWith(first)).toBe(true);
     // Round 3 (R2, probe P4): the drop alone — the result line was said already and is not read twice.
     expect(news("polite", s)).toBe(`Движение «Дует на чай» больше не в списке — выбрано «${first}».`);
@@ -1093,7 +1162,8 @@ describe("S5.WC5b: the review's follow-ups in sheet 38", () => {
     if (news("alert") !== "" && alerts.at(-1) !== news("alert")) alerts.push(news("alert"));
     expect(callsOf(h.engine, "clips.options").length).toBe(before + 1);
     expect(radios(s).some((r) => r.value === "v-1")).toBe(false);
-    const first = rowTitles(s)[0] ?? "";
+    // The sheet's default takes the dropped row's place: the first suggestion still listed (FU-CLIP round 2), else the first row.
+    const first = defaultTitle(s);
     expect(checkedRow(s).startsWith(first)).toBe(true);
     // Round 2 (L-3): one message — the drop line, in the alert; the polite region keeps what it said before the click.
     expect(alerts).toEqual([`Движение «Движение 1» больше не в списке — выбрано «${first}».`]);

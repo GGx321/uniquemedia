@@ -13,6 +13,7 @@ import {
   ClipFace,
   ClipFailReason,
   ClipMotionChoice,
+  defaultMotionOf,
   ClipOptions,
   ClipQuality,
   ClipSeconds,
@@ -579,5 +580,27 @@ describe("ClipSummary", () => {
 
   test("a key the contract does not know is refused", () => {
     expect(ClipSummary.safeParse({ ...ready, extra: 1 }).success).toBe(false);
+  });
+});
+
+describe("defaultMotionOf: the motion a sheet chooses before the owner does (FU-CLIP round 2, MEDIUM-3)", () => {
+  const scene: ClipMotionChoice = { id: "scene", source: "scene", label: "Как в сцене", text: "she pulls the blanket up a little" };
+  const blink: ClipMotionChoice = { id: "g-blink", source: "code", label: "Моргает и улыбается", text: "she slowly blinks and gives a small smile" };
+  const v1: ClipMotionChoice = { id: "v-1", source: "vision", label: "Убирает волосы за ухо", text: "she gently tucks her hair behind her ear" };
+  const v2: ClipMotionChoice = { id: "v-2", source: "vision", label: "Наклоняет голову", text: "she gently tilts her head" };
+  const o1: ClipMotionChoice = { id: "o-1", source: "own", label: "Своя идея", text: "she slowly adjusts her hair and smiles" };
+
+  test("a vision suggestion: the first of them, wherever the list puts it (the list keeps its order: scene, code, vision, own)", () => {
+    expect(defaultMotionOf([scene, blink, v1, v2, o1])).toBe(v1);
+    expect(defaultMotionOf([blink, v2, v1])).toBe(v2);
+  });
+
+  test("no vision suggestion: the first listed, an own idea not preferred", () => {
+    expect(defaultMotionOf([scene, blink, o1])).toBe(scene);
+    expect(defaultMotionOf([blink, o1])).toBe(blink);
+  });
+
+  test("an empty list: none", () => {
+    expect(defaultMotionOf([])).toBeUndefined();
   });
 });

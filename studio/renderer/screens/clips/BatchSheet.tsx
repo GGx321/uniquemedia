@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { PRICE_SCOPES_RU, type ClipBatchOptions, type ClipMotionChoice, type ClipMotionId, type ClipQuality, type ClipReason, type ClipSeconds, type EngineError, type PhotoSummary } from "../../../shared/engine";
+import { PRICE_SCOPES_RU, defaultMotionOf, type ClipBatchOptions, type ClipMotionChoice, type ClipMotionId, type ClipQuality, type ClipReason, type ClipSeconds, type EngineError, type PhotoSummary } from "../../../shared/engine";
 import { useEngine, useEngineView } from "../../engine/react";
 import { motionCallRunning, motionCallsOf } from "../../engine/store";
 import { errorText } from "../../lib/errors";
@@ -138,7 +138,7 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
     const item = itemOf(photoId);
     if (item === undefined || !item.suitable) return null;
     const chosen = motions.get(photoId);
-    return item.motions.find((m) => m.id === chosen)?.id ?? item.motions[0]?.id ?? null;
+    return item.motions.find((m) => m.id === chosen)?.id ?? defaultMotionOf(item.motions)?.id ?? null;
   };
 
   // S5.WC5b (M2): a part C call for a listed photo ended (it left the window's `motionCalls`): its stored motions may have changed, so the rows are read again; quality and length stay as chosen.
@@ -164,7 +164,7 @@ export function BatchSheet({ avatarId, picks, onClose, onStarted, returnFocus }:
       if (chosen === undefined || item === undefined || !item.suitable || item.motions.some((m) => m.id === chosen)) continue;
       lost.push(pick.photoId);
       const gone = chosenTitles.current.get(pick.photoId);
-      const first = item.motions[0];
+      const first = defaultMotionOf(item.motions);
       if (gone !== undefined && first !== undefined) said.push(batchMotionGoneNews(pick.label, gone, first.label));
     }
     if (lost.length === 0) return;

@@ -138,6 +138,15 @@ export const ClipMotionChoice = z
   });
 export type ClipMotionChoice = z.infer<typeof ClipMotionChoice>;
 
+/**
+ * FU-CLIP round 2 (MEDIUM-3): the motion a sheet or a batch row chooses before the owner does: the first vision suggestion when the photo has one (the model read the photo
+ * itself, where «Как в сцене» and the code motions read only its plan), else the first listed. The list keeps the contract's order (scene, code, vision, own); only the
+ * default reads it this way. The owner's own choice always wins over it.
+ */
+export function defaultMotionOf<M extends { readonly source: ClipMotionSource }>(motions: readonly M[]): M | undefined {
+  return motions.find((motion) => motion.source === "vision") ?? motions[0];
+}
+
 const ClipMotionFields = z.strictObject({
   source: ClipMotionSource,
   label: z.string().min(1).max(MOTION_LABEL_MAX),

@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { PRICE_SCOPES_RU, type ClipMotionId, type ClipOptions, type ClipQuality, type ClipSeconds, type EngineError } from "../../../shared/engine";
+import { PRICE_SCOPES_RU, defaultMotionOf, type ClipMotionId, type ClipOptions, type ClipQuality, type ClipSeconds, type EngineError } from "../../../shared/engine";
 import { useEngine, useEngineView } from "../../engine/react";
 import { errorText } from "../../lib/errors";
 import { nbDash } from "../../lib/format";
@@ -121,7 +121,8 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   }, [client, avatarId, photoId, asked]);
 
   const suitable: SuitableOptions | null = options.status === "ready" && options.options.suitable ? options.options : null;
-  const motion = suitable === null ? null : (suitable.motions.find((m) => m.id === motionId) ?? suitable.motions[0] ?? null);
+  // FU-CLIP round 2: with no choice made, the default is the first suggestion when there is one, else the first row (`defaultMotionOf`).
+  const motion = suitable === null ? null : (suitable.motions.find((m) => m.id === motionId) ?? defaultMotionOf(suitable.motions) ?? null);
   const sheet = suitable === null || motion === null ? null : sheetView(suitable, { motionId: motion.id, quality, seconds });
   // An avatar the list no longer holds (a race with a delete) is left to the engine, which refuses it on its own.
   const block = animateBlock(view, view.avatars.find((a) => a.avatarId === avatarId)?.status !== "archived");
@@ -163,7 +164,7 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
   const afterGone = options.status === "ready" && goneAlert.current !== null && options.asked > goneAlert.current;
   const dropGone = (): void => {
     if (suitable === null || motionId === null || picked !== undefined) return;
-    const first = suitable.motions[0];
+    const first = defaultMotionOf(suitable.motions);
     const gone = chosen.current !== null && chosen.current.id === motionId ? chosen.current.title : null;
     setMotionId(null);
     if (gone === null || first === undefined) return;
@@ -410,7 +411,19 @@ export function ClipSheet({ avatarId, photoId, subtitle, frameLabel, onClose, on
                         const mine = m.source === "vision" || m.source === "own";
                         return (
                           <label key={m.id} className={["ap-opt", "clip-opt", on ? "ap-opt-on" : "", mine ? "mc-opt" : ""].filter((c) => c !== "").join(" ")}>
-                            <input type="radio" className="choice-input" name={`${ids}-motion-choice`} value={m.id} checked={on} onChange={() => choose(() => setMotionId(m.id))} />
+                            {/* FU-CLIP round 2: a click or Space on the row the sheet is on by default makes it his choice (a checked radio fires no change): a suggestion, now a default, can
+                                leave the list, and only a choice's drop is said (L1). A default he never chose stays a default and may move. */}
+                            <input
+                              type="radio"
+                              className="choice-input"
+                              name={`${ids}-motion-choice`}
+                              value={m.id}
+                              checked={on}
+                              onChange={() => choose(() => setMotionId(m.id))}
+                              onClick={() => {
+                                if (on && motionId === null) choose(() => setMotionId(m.id));
+                              }}
+                            />
                             <span className="ap-radio" aria-hidden="true" />
                             <span className="ap-opt-text">
                               <span className="mc-opt-head">

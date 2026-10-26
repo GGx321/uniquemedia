@@ -58,6 +58,9 @@ const rowOf = (s: HTMLElement, label: string): HTMLElement => {
   return row;
 };
 const selectOf = (row: HTMLElement): HTMLSelectElement => row.querySelector("select") as HTMLSelectElement;
+/** The motion a row with no choice made is on (FU-CLIP round 2, `defaultMotionOf`): the first suggestion it lists, else its first; and that motion's label. */
+const defaultValueOf = (select: HTMLSelectElement): string => Array.from(select.options).find((o) => o.value.startsWith("v-"))?.value ?? select.options[0]?.value ?? "";
+const defaultLabelOf = (select: HTMLSelectElement): string => plain(Array.from(select.options).find((o) => o.value === defaultValueOf(select))?.textContent);
 const mainButton = (s: HTMLElement): HTMLElement => within(s).getByRole("button", { name: /^Оживить( \d+ · до \$[\d.]+)?$/ });
 const cancelButton = (s: HTMLElement): HTMLElement => within(s).getByRole("button", { name: "Отмена" });
 const isOff = (button: HTMLElement): boolean => button.getAttribute("aria-disabled") === "true";
@@ -97,7 +100,8 @@ describe("59d: the rows list the stored suggestions and ideas", () => {
     const s = await openBatch();
     const row = rowOf(s, "Фото 3 · Дом");
     const price = plain(s.querySelector(".clip-price-line")?.textContent);
-    expect(row.querySelector(".mc-ben") == null).toBe(true);
+    // FU-CLIP round 2 (MEDIUM-3): the row opens on its first suggestion, the default when the photo has one.
+    expect(selectOf(row).value).toBe("v-1");
     fireEvent.change(selectOf(row), { target: { value: "v-1" } });
     await flush();
     expect(plain(row.querySelector(".mc-ben .mc-tag")?.textContent)).toBe("предложено");
@@ -118,6 +122,31 @@ describe("59d: the rows list the stored suggestions and ideas", () => {
     expect(items).toEqual([
       { photoId: PLAIN.photoId, motionId: "o-1" },
       { photoId: BOLD.photoId, motionId: "o-1" },
+    ]);
+  });
+
+  test("FU-CLIP round 2 (MEDIUM-3): a row whose photo has a stored suggestion starts on the first of them, one with only an idea on its first row; «Оживить 2» sends them; the sum is the code motion's", async () => {
+    const h = await openNini();
+    await seedStores(h);
+    const s = await openBatch();
+    const plainRow = rowOf(s, "Фото 3 · Дом");
+    const boldRow = rowOf(s, "Фото 1 · Ночнушки и бельё");
+    expect(selectOf(plainRow).value).toBe("v-1");
+    expect(plain(plainRow.querySelector(".mc-ben .mc-tag")?.textContent)).toBe("предложено");
+    expect(selectOf(boldRow).value).toBe(selectOf(boldRow).options[0]?.value ?? "");
+    const price = plain(s.querySelector(".clip-price-line")?.textContent);
+    const code = Array.from(selectOf(plainRow).options).find((o) => o.value.startsWith("g-"));
+    if (code === undefined) throw new Error("no code motion");
+    fireEvent.change(selectOf(plainRow), { target: { value: code.value } });
+    await flush();
+    expect(plain(s.querySelector(".clip-price-line")?.textContent)).toBe(price);
+    fireEvent.change(selectOf(plainRow), { target: { value: "v-1" } });
+    await flush();
+    fireEvent.click(mainButton(s));
+    await settle();
+    expect(callsOf(h.engine, "clips.createBatch")[0]?.payload.items).toEqual([
+      { photoId: PLAIN.photoId, motionId: "v-1" },
+      { photoId: BOLD.photoId, motionId: selectOf(boldRow).options[0]?.value },
     ]);
   });
 
@@ -234,9 +263,11 @@ describe("S5.WC5b (M2): the batch rows follow the photo's stored motions", () =>
     expect(callsOf(h.engine, "clips.batchOptions").length).toBe(asked + 1);
     const again = rowOf(s, "Фото 3 · Дом");
     expect(listOf(selectOf(again)).includes("Дует на чай")).toBe(false);
-    expect(selectOf(again).value).toBe("g-blink");
-    expect(again.querySelector(".mc-ben") == null).toBe(true);
-    expect(plain(within(s).getByRole("status").textContent)).toBe("Фото 3 · Дом: движение «Дует на чай» больше не в списке — выбрано «Моргает и улыбается».");
+    // The row's default takes the dropped motion's place: its first suggestion still listed (FU-CLIP round 2), with its mark.
+    expect(selectOf(again).value).toBe(defaultValueOf(selectOf(again)));
+    expect(selectOf(again).value).toMatch(/^v-/);
+    expect(plain(again.querySelector(".mc-ben .mc-tag")?.textContent)).toBe("предложено");
+    expect(plain(within(s).getByRole("status").textContent)).toBe(`Фото 3 · Дом: движение «Дует на чай» больше не в списке — выбрано «${defaultLabelOf(selectOf(again))}».`);
     expect((within(s).getByRole("radio", { name: "Чётче · 1080p" }) as HTMLInputElement).checked).toBe(true);
   });
 
@@ -254,11 +285,12 @@ describe("S5.WC5b (M2): the batch rows follow the photo's stored motions", () =>
     await settle();
     const row = rowOf(s, "Фото 3 · Дом");
     expect(row.classList.contains("batch-row-off")).toBe(false);
-    // Round 2 (L-3): the row is on its first motion already, so its line says which — it does not ask to choose.
-    expect(plain(row.querySelector(".batch-note")?.textContent)).toBe("Движение больше недоступно — выбрано «Моргает и улыбается».");
+    // Round 2 (L-3): the row is on its default already (FU-CLIP round 2: its first suggestion still listed), so its line says which — it does not ask to choose.
+    expect(plain(row.querySelector(".batch-note")?.textContent)).toBe(`Движение больше недоступно — выбрано «${defaultLabelOf(selectOf(row))}».`);
     expect(plain(within(s).getByRole("alert").textContent)).toBe("Фото 3 · Дом: движение больше недоступно — выберите другое.");
     expect(callsOf(h.engine, "clips.batchOptions").length).toBe(asked + 1);
-    expect(selectOf(row).value).toBe("g-blink");
+    expect(selectOf(row).value).toBe(defaultValueOf(selectOf(row)));
+    expect(selectOf(row).value).toMatch(/^v-/);
     expect(document.activeElement === cancelButton(s)).toBe(true);
     // Another choice ends the line; the click goes.
     fireEvent.change(selectOf(row), { target: { value: "v-2" } });
@@ -300,9 +332,12 @@ describe("S5.WC5b round 2 (M-2): a drop never hides why «Оживить 2» wai
     expect(month?.startsWith("Не хватает месячного бюджета: пакету нужно до ")).toBe(true);
     h.engine.holdMotionCalls(false);
     await settle();
-    expect(selectOf(rowOf(s, "Фото 3 · Дом")).value).toBe("g-blink");
+    // The row's default takes the dropped motion's place: its first suggestion still listed (FU-CLIP round 2).
+    const dropped = selectOf(rowOf(s, "Фото 3 · Дом"));
+    expect(dropped.value).toBe(defaultValueOf(dropped));
+    expect(dropped.value).toMatch(/^v-/);
     // One status: the month line (its room read again, the call's reserve settled), then the drop.
-    const drop = " Фото 3 · Дом: движение «Дует на чай» больше не в списке — выбрано «Моргает и улыбается».";
+    const drop = ` Фото 3 · Дом: движение «Дует на чай» больше не в списке — выбрано «${defaultLabelOf(dropped)}».`;
     const after = footNotices();
     expect(after).toHaveLength(1);
     const [both = ""] = after;
