@@ -83,11 +83,7 @@ describe("a plan slot's capture and legwear (additive, I5.27)", () => {
     expect(PlanSlotSchema.safeParse({ ...baseSlot(), category: "nightwear" }).success).toBe(true);
   });
 
-  test.each(["home", "travel", "photoshoot", "glamour", "fitness", "cat-paris-cafes"])("a route on a slot of «%s» is refused: only a «Смелая» category's slot is drawn on Seedream", (category) => {
-    const result = PlanSlotSchema.safeParse({ ...baseSlot(), category, route: "seedream" });
-    expect(result.success).toBe(false);
-    expect(result.error?.issues.map((i) => i.path.join("."))).toContain("route");
-  });
+  // 5a.4 (S5.BA1, I5.73): «Смелая» is every category's, so the route is any category's; the rows for the five and a custom category are in schema.boldAny.test.ts.
 
   test("a route other than seedream is refused", () => {
     expect(PlanSlotSchema.safeParse({ ...baseSlot(), route: "grok" }).success).toBe(false);

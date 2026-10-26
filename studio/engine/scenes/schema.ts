@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CustomCategoryId, isBoldCategory, isCustomCategory, PoolText, SceneLevel, SceneRoute, SceneText, TimeOfDay } from "../../shared/engine";
+import { CustomCategoryId, isBoldFrame, isCustomCategory, PoolText, SceneLevel, SceneRoute, SceneText, TimeOfDay } from "../../shared/engine";
 import { CAPTURES, captureOfShot, shotOf } from "../../shared/scenes/captures";
 import type { FacePose } from "../face/config";
 import { CATEGORIES, SHOTS } from "./types";
@@ -92,18 +92,22 @@ export const PlanSlotSchema = z
     // Additive (5a.3, S5.9a): the slot is drawn on the Seedream route. Absent reads as the owner's image model. Only a «Смелая» category's slot carries it (S5.9b2,
     // the refine below); the planner sets it with the bold draw (S5.9c).
     route: SceneRoute.optional(),
+    // Additive (5a.4, S5.BA1, I5.78): the place a custom category's «Смелая» slot belongs to, one of the category's stored pool places, copied in so a resume or a writer chunk never reads the
+    // library. Only a custom slot on the route carries it (the refine below); absent reads as no world.
+    world: PoolText.optional(),
   })
-  // 5a.3 (S5.9b2, plan s5a3 §11, I5.38): the bold route draws a «Смелая» category's items only, so a route on a slot of the five or of a custom category is a hand-edited
-  // or a broken plan, refused rather than sent to Seedream at 2K.
-  .refine((slot) => slot.route === undefined || isBoldCategory(slot.category), {
-    message: "only a «Смелая» category's slot is drawn on the Seedream route",
-    path: ["route"],
-  })
-  // 5a.3 (S5.9c, I5.36): a bold slot is a «Смелая» category's; the five and the custom categories under «Смелая» draw as «Кокетливая» or stay ordinary, so a bold level on their slot is a hand-edited or
-  // a broken plan, refused rather than drawn.
-  .refine((slot) => slot.level !== "bold" || isBoldCategory(slot.category), {
-    message: "only a «Смелая» category's slot is bold",
+  // 5a.4 (S5.BA1, I5.71, I5.73): «Смелая» is every category's, so the Seedream route is any category's slot's: the marker the bold route draws (`isBoldFrame`). A route value other than
+  // seedream is refused by `SceneRoute` itself. A slot stored before 5a.4 has no route on the five or a custom category, and parses as it did.
+  // 5a.4 (I5.73): a bold level is a «Смелая» category's slot, or a slot of any category that carries the route; the five and the custom categories at «Смелая» are planned with the route,
+  // so a bold level without it is a hand-edited or a broken plan, refused rather than drawn.
+  .refine((slot) => slot.level !== "bold" || isBoldFrame({ category: slot.category, route: slot.route }), {
+    message: "a bold slot is a «Смелая» category's or carries the Seedream route",
     path: ["level"],
+  })
+  // 5a.4 (I5.73): a `world` rides on a custom category's routed slot and nowhere else.
+  .refine((slot) => slot.world === undefined || (isCustomCategory(slot.category) && slot.route === "seedream"), {
+    message: "only a custom category's slot on the Seedream route carries a world",
+    path: ["world"],
   })
   .refine((slot) => slot.capture === undefined || shotOf(slot.capture) === shotOf(captureOfShot(slot.shot)), {
     message: "a capture rides on the shot the slot is stored with",

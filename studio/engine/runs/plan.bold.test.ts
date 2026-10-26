@@ -59,8 +59,9 @@ describe("a plan.json with the 5a.3 fields", () => {
     expect(RunPlanSchema.safeParse(withLevel(raw())).success).toBe(false);
   });
 
-  test("refuses a route on a slot of the five (only a «Смелая» category's slot is drawn on Seedream)", () => {
-    expect(RunPlanSchema.safeParse(withRoute(raw(), "home")).success).toBe(false);
+  // 5a.4 (S5.BA1, I5.73): a route is any category's, so a routed slot of the five parses (a bold level on it needs the route; schema.boldAny.test.ts).
+  test("keeps a route on a slot of the five", () => {
+    expect(RunPlanSchema.safeParse(withRoute(raw(), "home")).success).toBe(true);
   });
 
   test("refuses a route other than seedream", () => {
