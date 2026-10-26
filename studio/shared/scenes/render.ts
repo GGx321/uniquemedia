@@ -36,6 +36,11 @@ export interface TemplateContext {
   snapshots?: readonly { ref: string }[] | undefined;
   /** «Подача» (5a.2b). Absent: ordinary. */
   level?: Level | undefined;
+  /**
+   * 5a.4 (S5.BA1, plan s5a4 I5.74, M7): the render's origin input. True only for an avatar created in Studio (`studioCreated`, S5.BA5): then an implied cover may be planned and a frame may say its
+   * `openCoverage`. Absent or false is the fail-closed default (imported): every Seedream outfit keeps its restrictive `coverage`. Nothing reads it before S5.BA3.
+   */
+  impliedNudity?: boolean | undefined;
   /** The sentences already rendered in this run: an equal one is redrawn. */
   seen?: ReadonlySet<string> | undefined;
   /**
