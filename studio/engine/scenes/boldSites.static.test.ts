@@ -92,7 +92,6 @@ const INDEX_SITES: Allowed[] = [
   { file: "engine/scenes/poolAt.ts", count: 4, why: "`poolAt` and `poolOfSlot`: the pool a new or a stored slot is drawn from" },
   { file: "shared/scenes/bankLookup.ts", count: 2, why: "`bankPlaceOf`: a slot's bank place and moment" },
   { file: "shared/scenes/banks/companions/index.ts", count: 1, why: "the companions' registry checks its banks against the shipped ones" },
-  { file: "engine/sceneSets/reviewPlan.ts", count: 1, why: "a dead `?? POOLS[slot.category]` (:182) that BA3's round 2 removes (BA3 review L-3)", until: "S5.BA3 round 2" },
   { file: "renderer/engine/mockBankScenes.ts", count: 2, why: "the mock's bank lookups (:46, :106), moved to the marker by S5.BA7", until: "S5.BA7" },
 ];
 
