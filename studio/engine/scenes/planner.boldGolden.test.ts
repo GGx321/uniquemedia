@@ -13,6 +13,10 @@ useNativeGlobals();
 // underwear on Seedream, its tier retags (r2.2 P6) and its reworded sheet moment (r2.2 P3); the three beach hashes are byte for byte the ones before.
 // 2026-10-26 (S5.BA2 review L5, L7): nightwear@flirty, nightwear@bold, nightwear,beach@flirty and nightwear,beach@bold re-pinned once more: the flirty «lies prone, chin on her
 // hand» pins the black lace set, and her bedroom's fairy lights became a framed print. The ordinary hashes and the three beach ones did not move.
+// 2026-10-26 (5a.4, S5.BA3, plan s5a4 r2.2 D1, §7.4): ONE hash re-pinned, nightwear,beach@bold. A request of two categories now counts its tiers over the whole request (tierSpreadOf), and
+// on the sizes that do not halve evenly (7, 33) the two halves no longer round alone. Proven by planning the same plans with each category's tiers counted alone: all nine hashes are then the fixture's
+// before this commit. The three beach hashes and the other five did not move. The builders pass impliedNudity: true: this golden pins what a Studio-created avatar draws (the planner's default is the imported
+// avatar's, which draws no implied cover).
 //
 // REGENERATE deliberately, never to turn a red test green: `PLANNER_BOLD_WRITE_GOLDEN=1 bun test --no-env-file studio/engine/scenes/planner.boldGolden.test.ts`, then READ the diff of
 // fixtures/planner-bold-s5-9c.json: every changed hash is a plan that moved.
