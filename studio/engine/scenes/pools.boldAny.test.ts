@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { BANKS } from "../../shared/scenes/banks";
 import type { CategoryBank, Moment, Outfit } from "../../shared/scenes/banks/types";
 import { BoldPoolSchema, BuiltInPoolSchema, POOLS, poolOfBank, type Pool } from "./pools";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -80,8 +81,14 @@ describe("BankPlace.water", () => {
     expect(poolOfBank(bank).locations[0]?.water).toBe(true);
   });
 
-  test("a pool place without it gains none, in every pool on main", () => {
-    for (const pool of Object.values(POOLS)) expect(pool.locations.some((l) => "water" in l)).toBe(false);
+  // 5a.4 (S5.BA2): beach's five places are water places now; a pool place carries the tag exactly when its bank place does, and gains none otherwise.
+  test("a pool place carries water exactly when its bank place does, in every pool", () => {
+    for (const [category, pool] of Object.entries(POOLS)) {
+      const bank = BANKS[category as keyof typeof BANKS];
+      expect(pool.locations.map((l) => [l.name, "water" in l ? l.water : "absent"])).toEqual(bank.places.map((p) => [p.name, p.water === true ? true : "absent"]));
+    }
+    expect(POOLS.beach.locations.every((l) => l.water === true)).toBe(true);
+    expect(POOLS.home.locations.some((l) => "water" in l)).toBe(false);
   });
 
   test("both pool schemas accept water on a place", () => {

@@ -3,7 +3,7 @@ import type { Capture } from "../captures";
 import { swimwearWordsIn } from "./boldRules";
 import { AWAY_ACTION_WORDS, unfabricBottomsIn, WALKS_AWAY_WORDS } from "../words";
 import { BEACH } from "./beach";
-import { boldBankProblems } from "./schema";
+import { boldAnyProblems, boldBankProblems } from "./schema";
 import type { Moment, Outfit } from "./types";
 
 // 5a.3 (S5.9b2, plan s5a3 §6.3, answer (a)): «Пляж и бассейн», a «Смелая» bank. At the beach and the pool she mostly asks someone (a friend three times in six, a
@@ -79,6 +79,16 @@ describe("the places (plan §6.3)", () => {
       { name: "a rooftop pool", at: "by a rooftop pool", times: ["midday", "golden hour"], details: ["the city skyline behind her", "a low white daybed"], room: undefined, mirror: undefined },
       { name: "the rocks by the sea", at: "on the rocks by the sea", times: ["golden hour", "evening"], details: ["the warm evening sky", "a few gulls overhead"], room: undefined, mirror: undefined },
     ]);
+  });
+
+  // 5a.4 (S5.BA2, r2.1 N3): a water place, where every outfit a moment can wear is swimwear. A tag only: the planner does not read it, so no beach plan moves.
+  test("every place is a water place", () => {
+    expect(BEACH.places.map((p) => [p.name, p.water])).toEqual(BEACH.places.map((p) => [p.name, true]));
+  });
+
+  test("the 5a.4 rules pass beach as shipped: its 12 general swimwear outfits at its five water places", () => {
+    expect(BEACH.outfits.filter((o) => o.pinOnly !== true)).toHaveLength(12);
+    expect(boldAnyProblems(BEACH, "beach")).toEqual([]);
   });
 });
 

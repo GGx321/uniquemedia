@@ -113,7 +113,7 @@ const withRoomMoment = (text: string, moment: Moment): CategoryBank => ({ ...FIX
 const withPoolMoment = (text: string, moment: Moment): CategoryBank => ({ ...FIXTURE, places: [ROOM, { ...POOL, moments: POOL.moments.map((m) => (m.text === text ? moment : m)) }] });
 const withPlaces = (places: readonly BankPlace[]): CategoryBank => ({ ...FIXTURE, places });
 
-/** Beach as shipped, with its five places tagged as water places. */
+/** Beach as shipped: its five places are water places (S5.BA2). */
 const BEACH_AT_THE_WATER: CategoryBank = { ...BANKS.beach, places: BANKS.beach.places.map((p) => ({ ...p, water: true })) };
 
 describe("the fixture and the passing rows", () => {
@@ -207,7 +207,7 @@ describe("each 5a.4 rule refuses the row that breaks it", () => {
     // water-place
     ["a place whose phrase names a pool, without the water tag", withPlaces([ROOM, { ...POOL, water: undefined }]), "nightwear", BANK_RULE.waterPlace],
     ["a room tagged as a water place", withPlaces([{ ...ROOM, water: true }, POOL]), "nightwear", BANK_RULE.waterPlace],
-    ["beach as shipped, its places without the water tag", BANKS.beach, "beach", BANK_RULE.waterPlace],
+    ["beach, its places without the water tag", { ...BANKS.beach, places: BANKS.beach.places.map((p) => ({ ...p, water: undefined })) }, "beach", BANK_RULE.waterPlace],
     // bold-all-seedream
     ["an outfit on the owner's model", withOutfits([...OUTFITS, { text: "a grey hoodie and cotton briefs", showsLegs: true }]), "nightwear", BANK_RULE.boldAllSeedream],
     // open-coverage

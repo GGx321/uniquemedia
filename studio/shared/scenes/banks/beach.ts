@@ -6,7 +6,8 @@ import type { CategoryBank, Outfit } from "./types";
 // never here. Swimwear on every frame: every outfit is swimwear, drawn on Seedream at 2K (Grok refused bikinis 2/2) with its coverage sentence, and every moment
 // in the water or at its edge pins it (M6); the level picks the cut, the pose and the gaze. The beach probe drew the compositions (4/4, «Пляж тоже хороший»):
 // waist-deep looking back, looking back over her shoulder at the rooftop pool, from behind on the rocks; P-5a3 #5 drew the waist-deep frame in a bikini and a
-// straw hat. Every moment but the legs ones is outdoors, so a cap may go to one of them.
+// straw hat. Every moment but the legs ones is outdoors, so a cap may go to one of them. 5a.4 (S5.BA2, r2.1 N3): every place is a water place (`water`), so its general draw
+// may be swimwear; a tag the planner does not read, so no beach plan moves.
 
 const BIKINI = "Her bikini top fully covers her breasts, and her bikini bottoms fully cover her.";
 const SWIMSUIT = "Her swimsuit fully covers her chest and her hips.";
@@ -48,6 +49,7 @@ export const BEACH: CategoryBank = {
   places: [
     {
       name: "the beach",
+      water: true,
       at: "on a sandy beach",
       // S5.R4: a detail is said «…, with {detail}.», so an object she could hold sits in the place, never in her hands (the owner's «зачем?» of a bag).
       details: ["a canvas tote bag beside her", "a striped umbrella planted nearby", "some small waves behind her"],
@@ -71,6 +73,7 @@ export const BEACH: CategoryBank = {
     },
     {
       name: "the water's edge",
+      water: true,
       at: "at the edge of the sea",
       // S5.R4 rounds 2 and 3: every moment here is in the water or at its edge, seen from the shore (the look down at her feet says its own details), so the details are the sea's
       // side of her: never the sand under her feet, never the beach, which is behind the camera.
@@ -101,6 +104,7 @@ export const BEACH: CategoryBank = {
     },
     {
       name: "a hotel pool",
+      water: true,
       at: "by a hotel pool",
       details: ["a folded towel on a deck chair", "two palm trees", "a glass of iced tea on a side table"],
       times: ["morning", "midday"],
@@ -115,6 +119,7 @@ export const BEACH: CategoryBank = {
     },
     {
       name: "a rooftop pool",
+      water: true,
       at: "by a rooftop pool",
       details: ["the city skyline behind her", "a low white daybed"],
       times: ["midday", "golden hour"],
@@ -132,6 +137,7 @@ export const BEACH: CategoryBank = {
     },
     {
       name: "the rocks by the sea",
+      water: true,
       at: "on the rocks by the sea",
       details: ["the warm evening sky", "a few gulls overhead"],
       times: ["golden hour", "evening"],

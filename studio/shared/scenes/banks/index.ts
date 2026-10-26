@@ -6,7 +6,7 @@ import { HOME } from "./home";
 import { NIGHTWEAR } from "./nightwear";
 import { CUES, GAZE, HAIRSTYLES } from "./looks";
 import { PHOTOSHOOT } from "./photoshoot";
-import { boldBankProblems, boldOnlyHereProblems, categoryBankProblems, cueBankProblems, gazeBankProblems, hairBankProblems } from "./schema";
+import { boldAnyProblems, boldBankProblems, boldOnlyHereProblems, categoryBankProblems, cueBankProblems, gazeBankProblems, hairBankProblems, type BoldAnyKind } from "./schema";
 import { TRAVEL } from "./travel";
 import { BANK_CATEGORIES, type BankCategory, type CategoryBank } from "./types";
 
@@ -16,6 +16,12 @@ import { BANK_CATEGORIES, type BankCategory, type CategoryBank } from "./types";
 export { CUES, GAZE, HAIRSTYLES };
 
 export const BANKS: Readonly<Record<BankCategory, CategoryBank>> = { home: HOME, travel: TRAVEL, photoshoot: PHOTOSHOOT, glamour: GLAMOUR, fitness: FITNESS, nightwear: NIGHTWEAR, beach: BEACH };
+
+/**
+ * 5a.4 (S5.BA2): the shipped «Смелая» banks held to the 5a.4 rules as well (banks/schema.ts `boldAnyProblems`): beach, whose places are water places. «Ночнушки и бельё» joins with its
+ * always-underwear redesign (Q-A2); until then it keeps the 5a.3 rules alone.
+ */
+const BOLD_ANY_KIND: Readonly<Partial<Record<BankCategory, BoldAnyKind>>> = { beach: "beach" };
 
 /** What `validateBanks` checks; each part defaults to the shipped bank. */
 export interface BankInput {
@@ -37,7 +43,12 @@ export function validateBanks(input: BankInput = {}): void {
     // «Смелая» vocabulary (bold-only-here, I5.37).
     ...BANK_CATEGORIES.flatMap((category) => {
       const bank = categoryOf(banks, category);
-      const problems = isBoldCategory(category) ? boldBankProblems(bank) : [...categoryBankProblems(bank, category), ...boldOnlyHereProblems(bank)];
+      const kind = BOLD_ANY_KIND[category];
+      const problems = !isBoldCategory(category)
+        ? [...categoryBankProblems(bank, category), ...boldOnlyHereProblems(bank)]
+        : kind === undefined
+          ? boldBankProblems(bank)
+          : boldAnyProblems(bank, kind);
       return problems.map((p) => `${category}: ${p}`);
     }),
     ...gazeBankProblems(input.gaze ?? GAZE).map((p) => `gaze: ${p}`),

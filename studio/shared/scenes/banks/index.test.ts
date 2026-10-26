@@ -24,6 +24,9 @@ describe("the banks load valid", () => {
     expect(() => validateBanks({ banks: { ...BANKS, home: BANKS.nightwear } })).toThrow(/home: \[shape\]/);
     expect(() => validateBanks({ banks: { ...BANKS, beach: BANKS.travel } })).toThrow(/beach: \[shape\]/);
     expect(() => validateBanks({ banks: { ...BANKS, nightwear: { ...BANKS.nightwear, outfits: [...BANKS.nightwear.outfits, { text: "a lace thong", level: "bold" }] } } })).toThrow(/nightwear: \[bold-route\]/);
+    // 5a.4 (S5.BA2): beach is held to the 5a.4 rules too (the water places, the floor, the tier table).
+    expect(() => validateBanks({ banks: { ...BANKS, beach: { ...BANKS.beach, places: BANKS.beach.places.map((p) => ({ ...p, water: undefined })) } } })).toThrow(/beach: \[water-place\]/);
+    expect(() => validateBanks({ banks: { ...BANKS, beach: { ...BANKS.beach, outfits: BANKS.beach.outfits.map((o) => (o.text === "a black bikini" ? { ...o, level: "bold" as const } : o)) } } })).toThrow(/beach: \[tier-table\]/);
   });
 
   test("validateBanks throws on a malformed bank, naming every problem with its category", () => {
