@@ -102,30 +102,29 @@ describe("a batch on every path (fixed seeds)", () => {
 
 // ---------- S5.FU-DATA 8: part C calls and single clips on every path ----------
 //
-// The global guard (r2.1 N10) in both directions: a part C call (a chat reserve) and a clip (a clip reserve) are never open together; whichever comes second is refused IN_FLIGHT, free. The calls are
-// started in random groups so that they meet, over chat answers that are good, unreadable, moderated or a 5xx, and over clips that end clean or fail. On every path the paid count ends at 0 (`paidStart`
-// and `paidEnd` balance, a failed call included) and the guard is free again.
+// The global guard (r2.1 N10) in both directions: a part C call (a chat reserve) and a clip (a clip reserve) are never open together; whichever comes second is refused IN_FLIGHT, free. A suggestion and an
+// idea of the SAME photo may run together (engine.clipMotions.guard.test.ts), so the chat bound is per kind: at most one suggest reserve and one idea reserve open at once (the world has one photo).
+// The calls are started in random groups so that they meet, over chat answers that are good, unreadable, moderated or a 5xx, and over clips that end clean or fail.
+// On every path: the paid count ends at 0 (`paidStart` and `paidEnd` balance, a failed call included), and NO chat reserve is left open when the calls are over. The leak is read BEFORE any reconcile,
+// because `money.reconcile` settles every open reserve at its worst case and would hide it.
 
-/** A chat attempt of a part C call has the id `<jobId>:motion#N` or `<jobId>:idea#N`; every other reserve of this test is a clip's. */
-const isChatAttempt = (attemptId: string): boolean => /:(motion|idea)#\d+$/.test(attemptId);
+/** A chat attempt of a part C call has the id `<jobId>:motion#N` (a suggestion) or `<jobId>:idea#N`; every other reserve of this test is a clip's. */
+const kindOf = (attemptId: string): "motion" | "idea" | "clip" => (/:motion#\d+$/.test(attemptId) ? "motion" : /:idea#\d+$/.test(attemptId) ? "idea" : "clip");
 
-/** The most chat reserves and the most clip reserves open at once, and whether one of each was ever open together. */
-export function openByKind(lines: readonly Record<string, unknown>[]): { chat: number; clip: number; together: boolean } {
-  const chat = new Set<string>();
-  const clip = new Set<string>();
-  let mostChat = 0;
-  let mostClip = 0;
+/** The most reserves open at once per kind, and whether a chat reserve and a clip reserve were ever open together. */
+function openByKind(lines: readonly Record<string, unknown>[]): { motion: number; idea: number; clip: number; together: boolean } {
+  const open = { motion: new Set<string>(), idea: new Set<string>(), clip: new Set<string>() };
+  const most = { motion: 0, idea: 0, clip: 0 };
   let together = false;
   for (const line of lines) {
     const attemptId = String(line.attemptId);
-    const open = isChatAttempt(attemptId) ? chat : clip;
-    if (line.type === "reserve") open.add(attemptId);
-    else if (line.type === "settle" || line.type === "release") open.delete(attemptId);
-    mostChat = Math.max(mostChat, chat.size);
-    mostClip = Math.max(mostClip, clip.size);
-    if (chat.size > 0 && clip.size > 0) together = true;
+    const set = open[kindOf(attemptId)];
+    if (line.type === "reserve") set.add(attemptId);
+    else if (line.type === "settle" || line.type === "release") set.delete(attemptId);
+    for (const kind of ["motion", "idea", "clip"] as const) most[kind] = Math.max(most[kind], open[kind].size);
+    if (open.motion.size + open.idea.size > 0 && open.clip.size > 0) together = true;
   }
-  return { chat: mostChat, clip: mostClip, together };
+  return { ...most, together };
 }
 
 const CHAT_TEXTS = [GOOD_TEXTS[0], GOOD_TEXTS[1], GOOD_TEXTS[2], GOOD_TEXTS[3]] as const;
@@ -155,11 +154,27 @@ function endingClipScript(draw: number): VideoScript | undefined {
   return { submit: { status: 429, body: { error: { code: 429, message: "Rate limit exceeded" } } } };
 }
 
-const seenC = new Set<string>();
+/** Waits until nothing paid runs: the paid count is 0 and no clip job is running. Never reconciles, so an open reserve stays visible. */
+async function quiet(engine: ClipEngine): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    const running = (await jobsOf(engine)).some((job) => job.kind === "clip" && job.status === "running");
+    if (engine.engine.paidCommandsOpen() === 0 && !running) return;
+    if (Date.now() > deadline) throw new Error("the calls did not end");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+/** The chat reserves still open in the ledger now. */
+const openChatReserves = (engine: ClipEngine): string[] =>
+  (engine.engine.budget?.ledger.openReserves() ?? []).map((reserve) => String(reserve.attemptId)).filter((attemptId) => kindOf(attemptId) !== "clip");
 
 describe("part C calls beside single clips on every path (fixed seeds)", () => {
+  /** What the seeds exercised (shared by the seeds of this block only). */
+  const seenC = new Set<string>();
+
   for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
-    test(`seed ${seed}: a chat reserve and a clip reserve are never open together, and the paid count ends at 0`, async () => {
+    test(`seed ${seed}: no chat reserve with a clip reserve, one suggest and one idea at most, the paid count at 0 and no reserve leaked`, async () => {
       const rand = seeded(seed * 104729);
       const chatDraws = Array.from({ length: 10 }, () => rand());
       const clipDraws = Array.from({ length: 6 }, () => rand());
@@ -168,14 +183,11 @@ describe("part C calls beside single clips on every path (fixed seeds)", () => {
       const { avatarId, photoId } = w;
       const ops = Array.from({ length: 6 }, () => rand());
 
-      const run = async (draw: number): Promise<string> => {
+      const run = async (draw: number): Promise<void> => {
         const kind = draw < 0.34 ? "suggest" : draw < 0.67 ? "translate" : "clip";
         const answer =
           kind === "suggest" ? await w.suggest(1_000_000) : kind === "translate" ? await w.translate(IDEA, 1_000_000) : await create(w.started, { avatarId, photoId, acceptedWorstMicros: 850_000 });
-        if (answer.ok) return `${kind}:ok`;
-        const reason = answer.error.clipReason ?? answer.error.code;
-        seenC.add(reason);
-        return `${kind}:${reason}`;
+        if (!answer.ok) seenC.add(answer.error.clipReason ?? answer.error.code);
       };
       // Random groups of one to three, started together: the second meets the first.
       for (let i = 0; i < ops.length; ) {
@@ -183,25 +195,28 @@ describe("part C calls beside single clips on every path (fixed seeds)", () => {
         const group = ops.slice(i, i + size);
         i += size;
         await Promise.all(group.map((draw) => run(draw)));
-        await settled(w.started);
+        await quiet(w.started);
+        // A leaked chat reserve is read here, before any reconcile could settle it at its worst case.
+        expect(openChatReserves(w.started)).toEqual([]);
       }
 
       const lines = ledgerLines(dir());
       const open = openByKind(lines);
       expect(open.together).toBe(false);
-      expect(open.chat).toBeLessThanOrEqual(1);
+      expect(open.motion).toBeLessThanOrEqual(1);
+      expect(open.idea).toBeLessThanOrEqual(1);
       expect(open.clip).toBeLessThanOrEqual(1);
-      expect(mostOpenClipReserves(lines.filter((line) => !isChatAttempt(String(line.attemptId))))).toBeLessThanOrEqual(1);
       // paidStart and paidEnd balance: every part C call counted itself in and out, whether it was paid, refused, failed or stopped.
       expect(w.started.engine.paidCommandsOpen()).toBe(0);
       expect(w.started.engine.budget?.status().heldMicros).toBe(0);
       // The guard is free again: the next part C call is refused for no busy reason.
       const next = await w.suggest(1_000_000);
       if (!next.ok) expect(["motion-busy", "clip-busy", "suggest-busy", "idea-busy", "one-at-a-time", "batch-running"]).not.toContain(next.error.clipReason ?? "");
-      await settled(w.started);
+      await quiet(w.started);
       expect(w.started.engine.paidCommandsOpen()).toBe(0);
-      for (const line of lines) if (isChatAttempt(String(line.attemptId)) && line.type === "reserve") seenC.add("chat");
-      if (lines.some((line) => !isChatAttempt(String(line.attemptId)) && line.type === "reserve")) seenC.add("clip");
+      expect(openChatReserves(w.started)).toEqual([]);
+      if (lines.some((line) => kindOf(String(line.attemptId)) !== "clip" && line.type === "reserve")) seenC.add("chat");
+      if (lines.some((line) => kindOf(String(line.attemptId)) === "clip" && line.type === "reserve")) seenC.add("clip");
     });
   }
 
