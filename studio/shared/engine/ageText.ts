@@ -75,6 +75,17 @@ const RU_STEM = `(?:(?:${alt(RU_STEM_TENS)})(?:${alt(RU_STEM_ONES)})?|${alt(RU_S
 /** "15-ти", "5-и", "2-х", "7-ми". */
 const RU_DIGIT_SUFFIX = "(?:\\s*-?\\s*(?:ти|и|х|ми))?";
 
+/** S5.FU-AGE round 2 (M3): the letters of a Roman numeral, with the Cyrillic «х» and «і» typed for «x» and «i» on a Russian layout. */
+const ROMAN_LETTER = "[ivxхі]";
+/** A Roman numeral of two letters or more: an age wherever an age pattern reads a number («aged XVI», «looks XVI», «ей XVI», «sweet XVI»). */
+const ROMAN_LONG = `${ROMAN_LETTER}{2,}`;
+/** Where the words themselves say an age, a lone letter too («aged x», «x years old», «ей x»), never one that opens a hyphenated word («an x-ray»). */
+const ROMAN_ANY = `(?:${ROMAN_LETTER}{2,}|${ROMAN_LETTER}(?!-\\p{L}))`;
+/** An age said in decades («a decade and a half», «one and a half decades»), never a span she looks younger or older by («a decade younger»). */
+const DECADES =
+  "(?:(?:one\\s+and\\s+a\\s+half|two|a\\s+couple\\s+of)\\s+decades|(?:an?\\s+)?decades?(?:\\s+and\\s+a\\s+half)?)" +
+  "(?!(?:\\s+and\\s+a\\s+half)?\\s+(?:younger|older|ago|later|earlier|apart|before|after)\\b)";
+
 /**
  * After a range's first number: not the tens of a compound word, so "aged
  * twenty-five" is 25, never the range "twenty" to "five".
@@ -83,8 +94,11 @@ const NOT_SPLIT_COMPOUND = `(?!(?<=(?:${alt(EN_TENS)}))[- ](?:${alt(EN_ONES)})(?
 
 const START = "(?<![\\p{L}\\p{N}])";
 const END = "(?![\\p{L}\\p{N}])";
-const NUM = `(\\d+|${EN_WORD})`;
-const RU_NUM = `(\\d+|${RU_WORD})`;
+const NUM = `(\\d+|${DECADES}|${EN_WORD}|${ROMAN_LONG})`;
+/** `NUM` where the words around it say an age: a lone Roman letter is one there. */
+const NUM_AGE = `(\\d+|${DECADES}|${EN_WORD}|${ROMAN_ANY})`;
+const RU_NUM = `(\\d+|${RU_WORD}|${ROMAN_LONG})`;
+const RU_NUM_AGE = `(\\d+|${RU_WORD}|${ROMAN_ANY})`;
 
 const EN_JUDGE_VERB =
   "(?:looks?|looking|seems?|seeming|appears?|appearing|(?:could|can|would|might)\\s+pass\\s+for|pass(?:es|ing)?\\s+for)";
@@ -108,33 +122,33 @@ const NOT_AN_AGE_AFTER =
 
 const AGE_PATTERNS: RegExp[] = [
   // 25-year-old, 17 years old, 17 yrs old, seventeen-year-old, 17 years young
-  new RegExp(`${START}${NUM}\\s*-?\\s*(?:years?|yrs?)\\s*-?\\s*(?:old|young)${END}`, "giud"),
+  new RegExp(`${START}${NUM_AGE}\\s*-?\\s*(?:years?|yrs?)\\s*-?\\s*(?:old|young)${END}`, "giud"),
   // 17 years of age
-  new RegExp(`${START}${NUM}\\s*-?\\s*years?\\s+of\\s+age${END}`, "giud"),
+  new RegExp(`${START}${NUM_AGE}\\s*-?\\s*years?\\s+of\\s+age${END}`, "giud"),
   // aged 17, age 17, age: 17, ages 17, at the age of 17
-  new RegExp(`\\bage[ds]?\\s*(?:of\\s*)?:?\\s*${NUM}${END}`, "giud"),
+  new RegExp(`\\bage[ds]?\\s*(?:of\\s*)?:?\\s*${NUM_AGE}${END}`, "giud"),
   // ages 16-18, aged 16 to 18
   new RegExp(`\\bage[ds]?\\s*:?\\s*${NUM}${NOT_SPLIT_COMPOUND}\\s*(?:-|to|or|and)\\s*${NUM}${END}`, "giud"),
   // she's 17, she is seven, he's only 16, who is sixteen, she'll be 17 (a lone "one" is too common: "she's one of a kind")
   new RegExp(
-    `\\b(?:she|he|who)(?:'s|'ll\\s+be|\\s+is|\\s+was|\\s+will\\s+be)\\s+(?:${EN_HEDGE})?(\\d+|${EN_WORD_BUT_ONE})${END}${NOT_AN_AGE_AFTER}`,
+    `\\b(?:she|he|who)(?:'s|'ll\\s+be|\\s+is|\\s+was|\\s+will\\s+be)\\s+(?:${EN_HEDGE})?(\\d+|${EN_WORD_BUT_ONE}|${ROMAN_ANY})${END}${NOT_AN_AGE_AFTER}`,
     "giud",
   ),
   // her age is 16, his age was fifteen
-  new RegExp(`\\bage\\s+(?:is|was)\\s+(?:${EN_HEDGE})?${NUM}${END}`, "giud"),
+  new RegExp(`\\bage\\s+(?:is|was)\\s+(?:${EN_HEDGE})?${NUM_AGE}${END}`, "giud"),
   // at 17, she moved; at 16 she started; at 17 years
   new RegExp(`\\bat\\s+(?:${EN_HEDGE})?${NUM}(?=\\s*,?\\s*(?:she|he|they)\\b|\\s*-?\\s*years?\\b)`, "giud"),
   // at seventeen
   new RegExp(`\\bat\\s+(?:${EN_HEDGE})?(${EN_TEEN_WORD})${END}`, "giud"),
   // 17 yo, 17yo, 17 y.o., 17 y/o, 17 yrs
-  new RegExp(`${START}${NUM}\\s*(?:yo|y\\.\\s?o\\.?|y\\/o|yrs?)${END}`, "giud"),
+  new RegExp(`${START}${NUM_AGE}\\s*(?:yo|y\\.\\s?o\\.?|y\\/o|yrs?)${END}`, "giud"),
   // looks 16, looks like she is 17, seems fifteen, could pass for 16, appears to be 15
-  new RegExp(`\\b${EN_JUDGE_VERB}\\s+${EN_JUDGE_FILLER}(\\d+|${EN_BIG_WORD})${END}`, "giud"),
+  new RegExp(`\\b${EN_JUDGE_VERB}\\s+${EN_JUDGE_FILLER}(\\d+|${DECADES}|${EN_BIG_WORD}|${ROMAN_LONG})${END}`, "giud"),
   // 15 лет, 3 года, 1 год, 15-ти лет, шестнадцать лет
   new RegExp(`${START}(\\d+)${RU_DIGIT_SUFFIX}\\s*-?\\s*(?:лет|года|год)(?![\\p{L}])`, "giud"),
-  new RegExp(`${START}(${RU_WORD})\\s*(?:лет|года|год)(?![\\p{L}])`, "giud"),
+  new RegExp(`${START}(${RU_WORD}|${ROMAN_ANY})\\s*(?:лет|года|год)(?![\\p{L}])`, "giud"),
   // 16-летняя, 15-ти летняя, 16-летка
-  new RegExp(`${START}(\\d+)${RU_DIGIT_SUFFIX}\\s*-?\\s*лет(?:н|к)`, "giud"),
+  new RegExp(`${START}(\\d+|${ROMAN_LONG})${RU_DIGIT_SUFFIX}\\s*-?\\s*лет(?:н|к)`, "giud"),
   // пятнадцатилетняя, пятнадцати летняя, пятнадцатилетка, двадцатипятилетняя
   new RegExp(`(?<![\\p{L}])(${RU_STEM})[\\s-]?лет(?:н|к)`, "giud"),
   // выглядит на пятнадцать, смотрится на 15
@@ -144,7 +158,7 @@ const AGE_PATTERNS: RegExp[] = [
   // 15 на вид
   new RegExp(`${START}${RU_NUM}\\s+на\\s+вид(?![\\p{L}])`, "giud"),
   // ей 16, ему шестнадцать, ей всего 16
-  new RegExp(`(?<![\\p{L}])(?:ей|ему|им)\\s+(?:${RU_HEDGE})?${RU_NUM}(?=\\s*(?:$|[.,;:!?)]|лет|года|год|на\\s+вид))`, "giud"),
+  new RegExp(`(?<![\\p{L}])(?:ей|ему|им)\\s+(?:${RU_HEDGE})?${RU_NUM_AGE}(?=\\s*(?:$|[.,;:!?)]|лет|года|год|на\\s+вид))`, "giud"),
   // 16 годиков, 16 годков
   new RegExp(`${START}${RU_NUM}\\s*-?\\s*год(?:ик|к)\\p{L}*`, "giud"),
   // just turned 18, turning 17
@@ -154,7 +168,7 @@ const AGE_PATTERNS: RegExp[] = [
   // 16 or 17
   new RegExp(`${START}${NUM}\\s+or\\s+${NUM}${AGE_CONTEXT_AFTER}`, "giud"),
   // sweet sixteen
-  new RegExp(`\\bsweet\\s+(sixteen|16)${END}`, "giud"),
+  new RegExp(`\\bsweet\\s+(sixteen|16|${ROMAN_LONG})${END}`, "giud"),
 ];
 
 const BOUND_PATTERNS: RegExp[] = [
@@ -171,8 +185,25 @@ const WORD_VALUES: Record<string, number> = {
   ...RU_STEM_ONES, ...RU_STEM_TEENS, ...RU_STEM_TENS,
 };
 
+const ROMAN_VALUE: Record<string, number> = { i: 1, v: 5, x: 10 };
+/** A Roman numeral's value, the additive and the malformed ones too («IIII» is 4, «XIIX» 20): each letter is added, or taken away before a greater one. */
+function romanValue(raw: string): number {
+  const values = Array.from(raw.toLowerCase().replace(/х/gu, "x").replace(/і/gu, "i"), (letter) => ROMAN_VALUE[letter] ?? Number.NaN);
+  return values.reduce((sum, value, k) => sum + (value < (values[k + 1] ?? 0) ? -value : value), 0);
+}
+/** The years an age in decades says: a decade 10, decades 20, and a half 5 more. */
+function decadesValue(raw: string): number {
+  const lower = raw.toLowerCase();
+  if (/one\s+and\s+a\s+half/.test(lower)) return 15;
+  if (/^(?:two|a\s+couple\s+of)\s/.test(lower)) return 20;
+  return (/decades/.test(lower) ? 20 : 10) + (/and\s+a\s+half/.test(lower) ? 5 : 0);
+}
+const ROMAN_ONLY = new RegExp(`^${ROMAN_LETTER}+$`, "iu");
+
 function numberValue(raw: string): number {
   if (/^\d+$/.test(raw)) return Number(raw);
+  if (/decade/i.test(raw)) return decadesValue(raw);
+  if (ROMAN_ONLY.test(raw)) return romanValue(raw);
   const lower = raw.toLowerCase();
   // Russian compound stems are written without a separator: "двадцатипяти".
   const stemTens = Object.keys(RU_STEM_TENS).find((t) => lower.startsWith(t) && lower !== t);
@@ -501,6 +532,42 @@ export function namesNumberWord(text: string): boolean {
 }
 
 /**
+ * S5.FU-AGE (moved here in round 2, M3, so the descriptor reads it too): a Roman numeral is refused fail-closed. A word of two letters or more made of «i», «v» and «x» alone,
+ * in either case, with an ordinal's or a plural's ending («XVIth», «XVIs»), is a number wherever it stands («sweet XVI», «(xvi)», «— XVI», «XVI y o»), the additive and the
+ * malformed ones included («XIIII», «IIII», «XIIX»): no English word is made of those letters alone. Only the words they make with an ending are let through, by name
+ * (`ROMAN_NOT_A_NUMERAL`). A lone «i», «v» or «x» (the pronoun, «x» as times or a kiss) is a number only where the words say an age, which `ageMentions` reads (`ROMAN_ANY`).
+ */
+export const ROMAN_NUMERAL_WORD = /^([ivx]{2,})(?:st|nd|rd|th|s)?$/;
+/** The only words `ROMAN_NUMERAL_WORD` reads that are no numeral: the size «XXS» and «vis» (vis-a-vis). Each is pinned by a passing probe. */
+export const ROMAN_NOT_A_NUMERAL: ReadonlySet<string> = new Set(["xxs", "vis"]);
+/** The Latin letters of a word, with the Cyrillic «х» and «і» he may type for «x» and «i» on a Russian layout. */
+const latinNumeralOf = (word: string): string => word.toLowerCase().replace(/х/gu, "x").replace(/і/gu, "i");
+const isRomanNumeralWord = (word: string): boolean => {
+  const latin = latinNumeralOf(word);
+  return !ROMAN_NOT_A_NUMERAL.has(latin) && ROMAN_NUMERAL_WORD.test(latin);
+};
+
+/**
+ * Whether a text names a Roman numeral (above), read on its normalised form: every run of Latin letters, so a numeral glued to a Russian word is read too («ейXVI»), and every
+ * word that holds a Cyrillic «х» or «і» («ей ХХ»).
+ */
+export function namesRomanNumeral(text: string): boolean {
+  const base = normalise(text);
+  const words = [...(base.match(/\p{Script=Latin}+/gu) ?? []), ...(base.match(/\p{L}+/gu) ?? []).filter((word) => /[хі]/iu.test(word))];
+  return words.some(isRomanNumeralWord);
+}
+
+/** S5.FU-AGE: a decade, the unit an age is spelled out in («a decade and a half»). «decadent» said as a word is none. */
+const DECADE_WORD = /\bdecades?\b/i;
+/** In the joined fragments the short words after it run on («a d e c a d e and a half» joins «decadeanda»): any join that starts with it. */
+const DECADE_JOINED = /(?:^|[ |])decade/i;
+/** Whether a text names a decade, as a word or spelled out in short fragments. */
+export function namesDecade(text: string): boolean {
+  const base = normalise(text);
+  return DECADE_WORD.test(base) || DECADE_JOINED.test(fragmentWords(base).join("|"));
+}
+
+/**
  * True when the descriptor holds a number besides its one "<age>-year-old"
  * anchor: any digit, or a number word (see NUMBER_WORD), also spelled out.
  * Closes "t33n", "18+", "of 16", "who is sixteen", "not yet 21" at once.
@@ -508,7 +575,7 @@ export function namesNumberWord(text: string): boolean {
 function hasNumberBesideAnchor(text: string, age: number): boolean {
   const rest = normalise(text).replace(new RegExp(`(?<![0-9])${age}-year-old`), " ");
   const forms = descriptorForms(rest);
-  return /[0-9]/.test(rest) || NUMBER_WORD.test(`${forms.text}|${forms.joined}`);
+  return /[0-9]/.test(rest) || NUMBER_WORD.test(`${forms.text}|${forms.joined}`) || namesRomanNumeral(rest) || namesDecade(rest);
 }
 
 const DESCRIPTOR_CHARS = /^[A-Za-z0-9 \-.,;:!?'"()/&%+]*$/;

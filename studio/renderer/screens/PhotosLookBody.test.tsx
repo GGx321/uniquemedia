@@ -286,7 +286,7 @@ describe("setBody refused", () => {
 
   test("too long with the body, seen before the click: the reason, and «Сохранить тело» waits", async () => {
     // 590 characters of description leave 8 for «; » and a phrase.
-    const long: AvatarSummary = { ...MIA, name: "Lena", descriptor: { age: 25, text: "25-year-old woman, ".padEnd(590, "x") } };
+    const long: AvatarSummary = { ...MIA, name: "Lena", descriptor: { age: 25, text: "25-year-old woman, ".padEnd(590, "z") } };
     const { engine } = await openLook(long);
     fireEvent.click(inBody().getByRole("button", { name: "Задать тело" }));
     await flush();
@@ -563,7 +563,7 @@ describe("the description beside a body phrase (L10)", () => {
     expect(counter()).toBe(`${TEXT.length} / ${LIMIT}`);
     expect(text(descCard())).toContain(`Ещё ${2 + PHRASE.length} знаков занимает фраза о теле — на текст остаётся ${LIMIT} из 600.`);
     expect(2 + PHRASE.length).toBe(25);
-    fireEvent.change(within(descCard()).getByRole("textbox", { name: "Текст описания" }), { target: { value: TEXT.padEnd(LIMIT + 1, "x") } });
+    fireEvent.change(within(descCard()).getByRole("textbox", { name: "Текст описания" }), { target: { value: TEXT.padEnd(LIMIT + 1, "z") } });
     expect(counter()).toBe(`${LIMIT + 1} / ${LIMIT}`);
     expect(descCard().querySelector(".look-desc-meta .danger-text") === null).toBe(false);
   });
@@ -579,7 +579,7 @@ describe("the description beside a body phrase (L10)", () => {
   test("a text that fits alone but not with the phrase is refused with the body's reason", async () => {
     const { engine } = await openLook(SOFIA);
     fireEvent.click(within(descCard()).getByRole("button", { name: "Изменить текст" }));
-    fireEvent.change(within(descCard()).getByRole("textbox", { name: "Текст описания" }), { target: { value: TEXT.replace(/\.$/, "").padEnd(LIMIT + 1, "x") } });
+    fireEvent.change(within(descCard()).getByRole("textbox", { name: "Текст описания" }), { target: { value: TEXT.replace(/\.$/, "").padEnd(LIMIT + 1, "z") } });
     fireEvent.click(within(descCard()).getByRole("button", { name: "Сохранить" }));
     await flush();
     expect(callsOf(engine, "avatars.editDescriptor")).toHaveLength(1);

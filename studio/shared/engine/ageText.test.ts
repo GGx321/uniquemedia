@@ -1,7 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import { perfTest } from "../../testing/bunTiers";
 import { assertBudget, medianElapsedMs } from "../../testing/tiers";
-import { adultTextProblems, ageMentions, ageUpperBounds, allYouthRuleNames, DESCRIPTOR_MAX_CHARS, hardYouthWords, namesNumberWord, nonAsciiDigits, youthRuleNames, youthWords } from "./ageText";
+import {
+  adultTextProblems,
+  ageMentions,
+  ageUpperBounds,
+  allYouthRuleNames,
+  DESCRIPTOR_MAX_CHARS,
+  hardYouthWords,
+  namesDecade,
+  namesNumberWord,
+  namesRomanNumeral,
+  nonAsciiDigits,
+  ROMAN_NOT_A_NUMERAL,
+  ROMAN_NUMERAL_WORD,
+  youthRuleNames,
+  youthWords,
+} from "./ageText";
 
 describe("ageMentions", () => {
   test.each([
@@ -816,6 +831,61 @@ describe("nina is refused as a word, never as a join of short words (reviewer jo
 
   test.each(["a nina look", "a ni\u00F1a look", "ninas"])("still refuses the word in %p", (rest) => {
     expect(youthRuleNames(`${F}, ${rest}.`, "descriptor")).toContain("nina");
+  });
+});
+
+// S5.FU-AGE round 2 (M3): the Roman and the decade readers live here, so the descriptor and the vibe read them as the clip motion check does.
+describe("an age in Roman numerals or in decades (S5.FU-AGE round 2, M3)", () => {
+  test.each([
+    ["ей XVI", [16]],
+    ["ей xvi", [16]],
+    ["выглядит на XVI", [16]],
+    ["XVI лет", [16]],
+    ["XVI-летняя", [16]],
+    ["sweet XVI vibe", [16]],
+    ["she looks a decade and a half", [15]],
+    ["25-year-old woman who looks XVI", [25, 16]],
+    ["aged xiv", [14]],
+    ["aged x", [10]],
+    ["she is v", [5]],
+    ["x years old", [10]],
+    ["ей x", [10]],
+    ["XVIyo", [16]],
+  ] as const)("%p states the age %p", (text, ages) => {
+    expect(ageMentions(text)).toEqual([...ages]);
+  });
+
+  test.each(["she slowly blows a kiss, x", "an x-ray glow", "her neckline looks like a V", "she looks a decade younger", "she looks a decade and a half younger", "Louis XIV elegance", "a decade-old scar"])(
+    "%p states no age",
+    (text) => {
+      expect(ageMentions(text)).toEqual([]);
+    },
+  );
+
+  test.each(["sweet XVI vibe", "ей XVI", "выглядит на XVI", "looks a decade and a half"])("the vibe %p is refused for its age", (vibe) => {
+    expect(adultTextProblems(vibe, 25, "vibe")).toContain("other-age");
+  });
+
+  test("a descriptor that says she looks XVI is refused for the age and for the number", () => {
+    expect(adultTextProblems("25-year-old woman who looks XVI", 25, "descriptor")).toEqual(expect.arrayContaining(["other-age", "number"]));
+  });
+
+  test.each(["25-year-old woman, XIIII", "25-year-old woman, a decade and a half", "25-year-old woman with a XVIth-century cameo"])("the descriptor %p holds a number", (text) => {
+    expect(adultTextProblems(text, 25, "descriptor")).toContain("number");
+  });
+
+  test.each(["25-year-old woman in an XXS top", "25-year-old woman, vivid green eyes", "25-year-old woman, an XL hoodie"])("the descriptor %p holds none", (text) => {
+    expect(adultTextProblems(text, 25, "descriptor")).toEqual([]);
+  });
+
+  test("every name the Roman reading lets through is one it would read without the list (no dead entry), and passes with it", () => {
+    for (const word of ROMAN_NOT_A_NUMERAL) {
+      expect([word, ROMAN_NUMERAL_WORD.test(word), namesRomanNumeral(`she slowly turns, ${word} and calm`)]).toEqual([word, true, false]);
+    }
+  });
+
+  test("the decade reader reads the word and its spelled-out letters, not «decadent»", () => {
+    expect([namesDecade("a decade and a half"), namesDecade("a d e c a d e and a half"), namesDecade("decadent and calm")]).toEqual([true, true, false]);
   });
 });
 

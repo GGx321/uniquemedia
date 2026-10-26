@@ -40,14 +40,14 @@ describe("checkDescriptorEdit", () => {
 
   test("accepts exactly 600 characters", () => {
     const base = `${GOOD}, `;
-    const exactly = base + "x".repeat(600 - base.length);
+    const exactly = base + "z".repeat(600 - base.length);
     expect(exactly).toHaveLength(600);
     expect(checkDescriptorEdit(exactly, 25)).toMatchObject({ ok: true });
   });
 
   test("refuses 601 characters as too-long", () => {
     const base = `${GOOD}, `;
-    const over = base + "x".repeat(601 - base.length);
+    const over = base + "z".repeat(601 - base.length);
     expect(over).toHaveLength(601);
     expect(checkDescriptorEdit(over, 25)).toEqual({ ok: false, reason: "too-long", words: [] });
   });
@@ -86,7 +86,7 @@ describe("checkDescriptorEdit", () => {
 describe("checkDescriptorEdit with her body phrase (Stage 5, S5.2a)", () => {
   const BODY = "tall, a full bust and long slim legs";
   /** A valid text of exactly `length` characters. */
-  const textOf = (length: number): string => `${GOOD}, `.padEnd(length - 1, "x").padEnd(length, "x");
+  const textOf = (length: number): string => `${GOOD}, `.padEnd(length - 1, "z").padEnd(length, "z");
 
   test("accepts a text whose composite with the body is exactly 600", () => {
     const text = textOf(600 - 2 - BODY.length);
@@ -109,7 +109,7 @@ describe("checkDescriptorEdit with her body phrase (Stage 5, S5.2a)", () => {
   });
 
   test("another rule is reported before the composite length", () => {
-    const text = `${GOOD}, petite, `.padEnd(601 - 2 - BODY.length, "x");
+    const text = `${GOOD}, petite, `.padEnd(601 - 2 - BODY.length, "z");
     expect(text.length + 2 + BODY.length).toBe(601);
     expect(checkDescriptorEdit(text, 25, BODY)).toMatchObject({ ok: false, reason: "youth-word" });
   });

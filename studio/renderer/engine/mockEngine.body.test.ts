@@ -33,7 +33,7 @@ async function demoAvatar(client: ReturnType<typeof makeMock>["client"]): Promis
 }
 
 /** A valid descriptor text of exactly `length` characters for an avatar of `age`. */
-const textOf = (age: number, length: number): string => `${age}-year-old woman, `.padEnd(length, "x");
+const textOf = (age: number, length: number): string => `${age}-year-old woman, `.padEnd(length, "z");
 
 test("setBody stores the body, answers the avatar with it, lists it, announces it once and spends nothing", async () => {
   const { client, events } = makeMock({ preset: "demo" });

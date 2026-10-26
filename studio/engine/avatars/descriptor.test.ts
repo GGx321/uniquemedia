@@ -258,7 +258,7 @@ describe("the descriptor beside her body phrase (Stage 5, S5.2a)", () => {
   const BODY = "tall, a full bust and long slim legs";
   const limit = 600 - 2 - BODY.length;
   /** A valid text of exactly `length` characters. */
-  const textOf = (length: number): string => `${GOOD.slice(0, -1)}, `.padEnd(length - 1, "x").padEnd(length, "x");
+  const textOf = (length: number): string => `${GOOD.slice(0, -1)}, `.padEnd(length - 1, "z").padEnd(length, "z");
 
   test("an answer whose composite with the body is exactly 600 is taken", () => {
     const text = textOf(limit);

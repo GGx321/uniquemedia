@@ -187,7 +187,7 @@ test.each([
 test("with a body (S5.2a) a text that leaves no room for her phrase is asked again with the real limit; the stored descriptor is the text alone", async () => {
   const traits: AvatarTraits = { ...TRAITS, height: "tall", bust: "full" };
   const phrase = "tall and a full bust";
-  const over = `${GOOD.slice(0, -1)}, `.padEnd(600 - 2 - phrase.length + 1, "x");
+  const over = `${GOOD.slice(0, -1)}, `.padEnd(600 - 2 - phrase.length + 1, "z");
   const { net, result } = run([reply(over), reply(GOOD)], { ...JOB, traits });
 
   expect(await result).toEqual({ ok: true, descriptor: { age: 25, text: GOOD } });
@@ -195,7 +195,7 @@ test("with a body (S5.2a) a text that leaves no room for her phrase is asked aga
 });
 
 test("without a body the same text is taken at once: one attempt", async () => {
-  const text = `${GOOD.slice(0, -1)}, `.padEnd(600 - 2 - "tall and a full bust".length + 1, "x");
+  const text = `${GOOD.slice(0, -1)}, `.padEnd(600 - 2 - "tall and a full bust".length + 1, "z");
   const { net, result } = run([reply(text)]);
 
   expect((await result).ok).toBe(true);

@@ -1,4 +1,16 @@
-import { ageMentions, ageUpperBounds, foldedForms, MOTION_ENGLISH, MOTION_PROBLEMS, MOTION_TEXT_MAX, namesNumberWord, type ClipMotionSource, type MotionProblem } from "../engine";
+import {
+  ageMentions,
+  ageUpperBounds,
+  foldedForms,
+  MOTION_ENGLISH,
+  MOTION_PROBLEMS,
+  MOTION_TEXT_MAX,
+  namesDecade,
+  namesNumberWord,
+  namesRomanNumeral,
+  type ClipMotionSource,
+  type MotionProblem,
+} from "../engine";
 import { isHandCapture, type Capture, type FaceVisibility } from "./captures";
 import { contentProblems, type ContentLevel, type ContentProblem } from "./contentLine";
 import { exposureWordsIn } from "./explicitWords";
@@ -287,59 +299,11 @@ function contentIn(text: string, level: ContentLevel): readonly ContentProblem[]
 }
 
 /**
- * S5.FU-AGE (the security review of the context rule it replaces): a Roman numeral is refused fail-closed. A word of two letters or more made of «i», «v» and «x» alone, in either
- * case, with an ordinal's or a plural's ending («XVIth», «XVIs»), is a number wherever it stands («sweet XVI», «(xvi)», «— XVI», «XVI y o»), the additive and the malformed ones
- * included («XIIII», «IIII», «XIIX»): no English word is made of those letters alone. Only the words they make with an ending are let through, by name (`NOT_A_NUMERAL`); a lone
- * «i», «v» or «x» (the pronoun, «x» as times or a kiss) is a number only where it is said as an age (`LONE_NUMERAL_AGE`).
- */
-const ROMAN_WORD = /^([ivx]{2,})(?:st|nd|rd|th|s)?$/;
-/** The only words `ROMAN_WORD` reads that are no numeral: the size «XXS» and «vis» (vis-a-vis). Each is pinned by a passing probe. */
-const NOT_A_NUMERAL = new Set(["xxs", "vis"]);
-/** The Latin letters of a word, with the Cyrillic «х» and «і» he may type for «x» and «i» on a Russian layout. */
-const latinNumeralOf = (word: string): string => word.toLowerCase().replace(/х/gu, "x").replace(/і/gu, "i");
-function isRomanNumeral(word: string): boolean {
-  const latin = latinNumeralOf(word);
-  if (NOT_A_NUMERAL.has(latin)) return false;
-  return ROMAN_WORD.test(latin);
-}
-/** A lone numeral letter. */
-const LONE = String.raw`[ivxхі](?![\p{L}\p{N}'-])`;
-const RU_HEDGE = String.raw`(?:(?:всего|только|уже|почти|около)\s+)?`;
-/** Where a lone «i», «v» or «x» is an age: after «age», «aged» or «at» (the age of), after «she is», before «years» or «yo»; in his words after «ей» or «выглядит на», before «лет». */
-const LONE_NUMERAL_AGE: readonly RegExp[] = [
-  new RegExp(String.raw`\b(?:aged?|ages)(?:\s+of)?\s*:?\s*${LONE}`, "iu"),
-  new RegExp(String.raw`\b(?:at(?:\s+the\s+age\s+of)?|(?:she|who)(?:'s|\s+is|\s+was|\s+will\s+be))\s+(?:(?:only|just|barely|about|around|nearly|almost)\s+)?${LONE}`, "iu"),
-  new RegExp(String.raw`(?<![\p{L}\p{N}])[ivxхі]\s*-?\s*(?:years?|yrs?|y\s*[./]?\s*o)(?![\p{L}])`, "iu"),
-  new RegExp(String.raw`(?<![\p{L}])(?:ей|ему|им|возраст\p{L}*|(?:выгляд|смотрит)\p{L}*\s+на)\s*${RU_HEDGE}${LONE}`, "iu"),
-  new RegExp(String.raw`(?<![\p{L}\p{N}])[ivxхі]\s*-?\s*(?:лет|года|год)`, "iu"),
-];
-/**
- * Whether a text names a Roman numeral (above), read on its folded form (ageText.ts: NFKC, one dash, invisible characters dropped): every run of Latin letters, so a numeral glued
- * to a Russian word is read too («ейXVI»), and every word that holds a Cyrillic «х» or «і» («ей ХХ»).
- */
-const namesRomanNumeral = (text: string): boolean => {
-  const folded = foldedForms(text).text;
-  const words = [...(folded.match(/\p{Script=Latin}+/gu) ?? []), ...(folded.match(/\p{L}+/gu) ?? []).filter((word) => /[хі]/iu.test(word))];
-  return words.some(isRomanNumeral) || LONE_NUMERAL_AGE.some((form) => form.test(folded));
-};
-
-/**
- * S5.FU-AGE: a decade, the unit an age is spelled out in («a decade and a half», «one and a half decades»), as `namesNumberWord` reads a dozen; read on the folded text and on
- * its short fragments joined («d e c a d e»). «decadent» said as a word is no decade.
- */
-const DECADE = /\bdecades?\b/i;
-/** In the joined fragments the short words after it run on («a d e c a d e and a half» joins «decadeanda»): any join that starts with it. */
-const DECADE_JOINED = /(?:^|[ |])decade/i;
-const namesDecade = (text: string): boolean => {
-  const folded = foldedForms(text);
-  return DECADE.test(folded.text) || DECADE_JOINED.test(folded.joined);
-};
-
-/**
  * A number in a model's text: a digit, a number word but «one» (`namesNumberWord`, ageText.ts: the descriptor's own reader, every -teen form with its ordinals and «-ish»,
  * «twenty» in every form, the tens, the ordinals from fourth on, spelled out or split by a space: «sixteenth», «sixteenish», «sixt een»), or a Roman numeral
  * (`namesRomanNumeral`). S5.WC2c: kept, because the age readers alone miss an age said as a bare number («…, sixteen», «…, 18», «…, 15»), and widened in round 2 (H1). S5.FU-AGE:
- * the Roman rule reads either case and lets the sizes through by name («XL», «XXL»); a decade is a number (`namesDecade`).
+ * a decade is a number (`namesDecade`), and a Roman numeral is one wherever it stands; both readers live in ageText.ts (round 2, M3), where the descriptor reads them too, and a
+ * lone «x» said as an age («aged x», «ей x») is an age `ageMentions` reads.
  */
 const namesNumber = (text: string): boolean => /\d/.test(text) || namesNumberWord(text) || namesDecade(text) || namesRomanNumeral(text);
 /** Exposure a model says beyond the bank's list (scenes/explicitWords.ts). S5.WC2c: it refuses nothing; it reads a motion that bares her, for its prompt (`undressesBy`). */

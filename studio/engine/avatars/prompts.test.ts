@@ -57,7 +57,7 @@ describe("the avatar in an image prompt is her descriptor, and nothing else of t
     });
 
     test("the composite over 600 characters is refused before any prompt is built", () => {
-      const text = `${GOOD} ${"x".repeat(600 - GOOD.length - 1)}`;
+      const text = `${GOOD} ${"z".repeat(600 - GOOD.length - 1)}`;
       expect(text).toHaveLength(600);
       expect(promptSubject({ age: 25, text })).toBe(text);
       expect(() => promptSubject({ age: 25, text, body: BODY })).toThrow(PromptSubjectError);
