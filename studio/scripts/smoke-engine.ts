@@ -4037,12 +4037,11 @@ async function runBoldRouteScenario(target: Target): Promise<void> {
     check("bold scenario: runs.estimate names the 2K attempt at 93 000 µ$ (the Seedream endpoint's 2K tier and one reference)", field(estimate, "ok") === true && field(estimate, "result", "estimate", "boldAttemptMicros") === BOLD_ATTEMPT_MICROS, estimate);
     check("bold scenario: the worst case prices every photo's three attempts at no less than the 2K attempt", worst >= BOLD_PHOTOS * 3 * BOLD_ATTEMPT_MICROS, estimate);
 
-    // 2. The first run: nothing armed. 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear slot is on the Seedream route now, so the runs are over «Дом» and nightwear: the «Дом» slots
-    // (still drawn as «Кокетливая» at «Смелая») stay on the owner's model.
-    const mixed = { ...request, categories: ["home", "nightwear"] };
-    const mixedWorst = Number(field(await req(cdp, "runs.estimate", mixed), "result", "estimate", "worstMicros"));
+    // 2. The first run: nothing armed. 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear slot is on the Seedream route.
+    // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4, BA2 part 2 review L1): «Смелая» plans «Дом» on the route too (it drew as «Кокетливая», off it, before), so the owner's-model control is a run of its own,
+    // a «Кокетливая» «Дом» run (2b), and the Seedream run is over nightwear alone (2a): every request of the first is Seedream's, every request of the second the owner's model. Every check is kept.
     const before = mock.imageRequests().length;
-    const started = await req(cdp, "runs.start", { ...mixed, acceptedWorstMicros: mixedWorst });
+    const started = await req(cdp, "runs.start", { ...request, acceptedWorstMicros: worst });
     check("bold scenario: runs.start plans and launches the run", field(started, "ok") === true, started);
     const runId = String(field(started, "result", "runId"));
     const end = await waitFor("the bold run's job to end", () => endEventOf(cdp, field(started, "result", "jobId")), 120_000);
@@ -4050,12 +4049,10 @@ async function runBoldRouteScenario(target: Target): Promise<void> {
     check("bold scenario: the run finished as job.done with all ten photos", field(end, "type") === "job.done" && Array.isArray(photoIds) && photoIds.length === BOLD_PHOTOS && Number(field(end, "payload", "result", "failedSlots")) === 0, end);
     const sent = mock.imageRequests().slice(before);
     const seedream = sent.filter((r) => r.model === BOLD_MODEL);
-    const owner = sent.filter((r) => r.model !== BOLD_MODEL);
     const routed = await routedSlotsOf(libraryRoot, runId);
-    check("bold scenario: the plan puts some slots on the Seedream route and not all", routed > 0 && routed < BOLD_PHOTOS, routed);
-    check("bold scenario: Seedream was asked for those slots, each at least once", seedream.length >= routed, { seedream: seedream.length, routed });
+    check("bold scenario: the plan puts every slot on the Seedream route", routed === BOLD_PHOTOS, routed);
+    check("bold scenario: Seedream was asked for those slots, each at least once, and the owner's model for none", seedream.length >= routed && seedream.length === sent.length, { seedream: seedream.length, routed, sent: sent.length });
     check("bold scenario: every Seedream request carries 2K, 9:16, exactly one reference and no quality", seedream.length > 0 && seedream.every((r) => boldRequestProblems(sentImageOf(r)).length === 0), seedream.flatMap((r) => boldRequestProblems(sentImageOf(r))));
-    check("bold scenario: every request for the owner's model stays at 1K, 9:16, and never names Seedream", owner.length > 0 && owner.every((r) => ownerRequestProblems(sentImageOf(r)).length === 0), owner.flatMap((r) => ownerRequestProblems(sentImageOf(r))));
     const photos = await req(cdp, "photos.list", { avatarId });
     const ofRun = (field(photos, "result", "photos") as unknown[]).filter((p) => field(p, "runId") === runId);
     const nightwear = ofRun.filter((p) => field(p, "category") === "nightwear");
@@ -4065,13 +4062,27 @@ async function runBoldRouteScenario(target: Target): Promise<void> {
       { photos: ofRun.length, tagged: ofRun.filter((p) => field(p, "route") === "seedream").length, routed, nightwear: nightwear.length },
     );
 
+    // 2b. The owner's-model control: a «Кокетливая» «Дом» run, no slot on the route.
+    const owned = { ...request, categories: ["home"], level: "flirty" };
+    const ownedWorst = Number(field(await req(cdp, "runs.estimate", owned), "result", "estimate", "worstMicros"));
+    const beforeOwned = mock.imageRequests().length;
+    const ownedStarted = await req(cdp, "runs.start", { ...owned, acceptedWorstMicros: ownedWorst });
+    check("bold scenario: the owner's-model run starts", field(ownedStarted, "ok") === true, ownedStarted);
+    const ownedId = String(field(ownedStarted, "result", "runId"));
+    const ownedEnd = await waitFor("the owner's-model run's job to end", () => endEventOf(cdp, field(ownedStarted, "result", "jobId")), 120_000);
+    const ownedPhotoIds = field(ownedEnd, "payload", "result", "photoIds");
+    check("bold scenario: the owner's-model run finished as job.done with all ten photos", field(ownedEnd, "type") === "job.done" && Array.isArray(ownedPhotoIds) && ownedPhotoIds.length === BOLD_PHOTOS, ownedEnd);
+    const ownedSent = mock.imageRequests().slice(beforeOwned);
+    check("bold scenario: no slot of the «Кокетливая» run is on the Seedream route, and none was asked of Seedream", (await routedSlotsOf(libraryRoot, ownedId)) === 0 && ownedSent.every((r) => r.model !== BOLD_MODEL), { sent: ownedSent.length });
+    check("bold scenario: every request for the owner's model stays at 1K, 9:16, and never names Seedream", ownedSent.length > 0 && ownedSent.every((r) => ownerRequestProblems(sentImageOf(r)).length === 0), ownedSent.flatMap((r) => ownerRequestProblems(sentImageOf(r))));
+
     // 3. The second run: the model refuses one Seedream request and answers another with no image.
     mock.armRefusal(BOLD_MODEL);
     mock.armEmptyAnswer(BOLD_MODEL);
     const usageBefore = mock.totalUsageUsd();
     const beforeSecond = mock.imageRequests().length;
-    const secondEstimate = await req(cdp, "runs.estimate", mixed);
-    const secondStarted = await req(cdp, "runs.start", { ...mixed, acceptedWorstMicros: field(secondEstimate, "result", "estimate", "worstMicros") });
+    const secondEstimate = await req(cdp, "runs.estimate", request);
+    const secondStarted = await req(cdp, "runs.start", { ...request, acceptedWorstMicros: field(secondEstimate, "result", "estimate", "worstMicros") });
     check("bold scenario: the second run starts", field(secondStarted, "ok") === true, secondStarted);
     const secondId = String(field(secondStarted, "result", "runId"));
     const secondEnd = await waitFor("the second bold run's job to end", () => endEventOf(cdp, field(secondStarted, "result", "jobId")), 120_000);

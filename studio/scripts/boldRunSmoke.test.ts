@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { manifestTraits } from "../engine/avatars/records";
 import { openLibrary } from "../engine/library";
 import { samplePhotoMeta, sequentialIds, steppingClock } from "../engine/library/testing/helpers";
+import { sampleSet } from "../engine/library/testing/sceneSetSample";
 import { OPENROUTER_API_BASE } from "../engine/money/prices";
 import type { QaGate } from "../engine/runs/qa";
 import { command, engineSettings, GOOD, jobEnd, ok, portraitPng, startEngine, TRAITS } from "../engine/testing/engineHarness";
@@ -40,12 +41,24 @@ describe("the mock OpenRouter serves a real engine's «Смелая» run", () =
     await rm(tmp, { recursive: true, force: true });
   });
 
-  async function setup() {
+  /**
+   * `mixedSet`: the avatar also holds a set stored before 5a.4, ten written scenes of «Ночнушки и бельё» on the Seedream route and «Дом» with no route (QB-5: an old set keeps none), so a run
+   * from its scenes meets the owner's model and Seedream in one run (5a.4, S5.BA3, 2026-10-26, plan s5a4 §7.4, BA2 part 2 review L1).
+   */
+  async function setup(mixedSet = false) {
     mock = await startMockOpenRouter({ descriptorText: GOOD, distinctImages: true });
     const { library } = await openLibrary(join(tmp, "library"), { now: steppingClock(), newId: sequentialIds("bsm") });
     const avatar = await library.createAvatar({ name: "Bea", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
     const master = await library.addPhoto(avatar.id, portraitPng(1), samplePhotoMeta({ width: 60, height: 80, qa: { age: { adult: true, confidence: 0.95 } } }));
     await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+    if (mixedSet) {
+      const set = sampleSet({ sceneSetId: "set-mixed-0001", avatarId: avatar.id, runId: "run-set-mixed-0001", count: PHOTOS, written: PHOTOS, categories: ["nightwear", "home"] });
+      await library.sceneSets.create({
+        ...set,
+        request: { ...set.request, level: "bold" },
+        scenes: set.scenes.map((scene) => (scene.origin === "planned" && scene.slot.category === "nightwear" ? { ...scene, slot: { ...scene.slot, route: "seedream" as const } } : scene)),
+      });
+    }
     const base = mock.url;
     const started = await startEngine(tmp, {
       init: { settings: engineSettings(tmp, { imageAgeCheck: "off" }) },
@@ -55,15 +68,28 @@ describe("the mock OpenRouter serves a real engine's «Смелая» run", () =
   }
 
   /**
-   * 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear slot is on the Seedream route now, so a run that also meets the owner's model is over «Дом» and nightwear (the «Дом» slots still
-   * draw as «Кокетливая» at «Смелая»), as the packaged smoke's (smoke-engine.ts) is; the estimate of nightwear alone still prices every photo at the 2K attempt.
+   * 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear slot is on the Seedream route, so a run over nightwear alone is all Seedream.
+   * 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4, L1): «Смелая» plans «Дом» on the route too, so the run that also meets the owner's model is `runFromSet`'s, over the set stored before 5a.4.
    */
-  async function runOnce(setupResult: Awaited<ReturnType<typeof setup>>, categories: readonly string[] = ["home", "nightwear"]) {
+  async function runOnce(setupResult: Awaited<ReturnType<typeof setup>>, categories: readonly string[] = ["nightwear"]) {
     const request = { avatarId: setupResult.avatarId, count: PHOTOS, categories: [...categories], level: "bold", poses: POSES };
     const estimate = ok(await setupResult.engine.handle(command("runs.estimate", request)));
     if (estimate.type !== "runs.estimate") throw new Error("wrong answer");
     const started = ok(await setupResult.engine.handle(command("runs.start", { ...request, acceptedWorstMicros: estimate.result.estimate.worstMicros })));
     if (started.type !== "runs.start") throw new Error("wrong answer");
+    const end = await jobEnd(setupResult.events, started.result.jobId);
+    return { estimate: estimate.result.estimate, end, runId: started.result.runId };
+  }
+
+  /** The run of the mixed set stored before 5a.4, started from its scenes. */
+  async function runFromSet(setupResult: Awaited<ReturnType<typeof setup>>) {
+    const got = ok(await setupResult.engine.handle(command("scenes.get", { avatarId: setupResult.avatarId })));
+    if (got.type !== "scenes.get" || got.result.sceneSet === null) throw new Error("no set");
+    const set = got.result.sceneSet;
+    const estimate = ok(await setupResult.engine.handle(command("runs.estimateFromScenes", { sceneSetId: set.sceneSetId, revision: set.revision })));
+    if (estimate.type !== "runs.estimateFromScenes") throw new Error("wrong answer");
+    const started = ok(await setupResult.engine.handle(command("runs.startFromScenes", { sceneSetId: set.sceneSetId, revision: set.revision, acceptedWorstMicros: estimate.result.estimate.worstMicros })));
+    if (started.type !== "runs.startFromScenes") throw new Error("wrong answer");
     const end = await jobEnd(setupResult.events, started.result.jobId);
     return { estimate: estimate.result.estimate, end, runId: started.result.runId };
   }
@@ -78,8 +104,8 @@ describe("the mock OpenRouter serves a real engine's «Смелая» run", () =
   });
 
   test("the run ends done with all ten photos, and the smoke's request checks find nothing wrong in what the engine sent", async () => {
-    const world = await setup();
-    const { end } = await runOnce(world);
+    const world = await setup(true);
+    const { end } = await runFromSet(world);
     expect(end.type).toBe("job.done");
     expect(end.type === "job.done" && end.payload.result.kind === "run" && end.payload.result.photoIds).toHaveLength(PHOTOS);
     const sent = world.mock.imageRequests();
@@ -110,8 +136,8 @@ describe("the mock OpenRouter serves a real engine's «Смелая» run", () =
   });
 
   test("the library's photos say which came from the Seedream route", async () => {
-    const world = await setup();
-    const { runId } = await runOnce(world);
+    const world = await setup(true);
+    const { runId } = await runFromSet(world);
     const listed = ok(await world.engine.handle(command("photos.list", { avatarId: world.avatarId })));
     if (listed.type !== "photos.list") throw new Error("wrong answer");
     const ofRun = listed.result.photos.filter((p) => p.runId === runId);

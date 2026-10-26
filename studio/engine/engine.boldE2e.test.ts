@@ -7,6 +7,7 @@ import type { ResponseMessage } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
 import { openLibrary } from "./library";
 import { samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
+import { sampleSet } from "./library/testing/sceneSetSample";
 import type { FetchCall, Reply } from "./openrouter/testing/fakes";
 import { RunPlanSchema, type RunPlan } from "./runs/plan";
 import type { QaGate } from "./runs/qa";
@@ -74,10 +75,23 @@ function journalOf(runId: string): { type: string; status?: string; error?: { sc
 
 const runRequest = (avatarId: string, count: number) => ({ avatarId, count, categories: ["nightwear"], level: "bold", poses: POSES });
 /**
- * 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear slot is on the Seedream route now, so the slots that stay on the settings' model are «Дом»'s at «Смелая» (still drawn as «Кокетливая»
- * until S5.BA3 plans its companion): a run over both.
+ * 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear slot is on the Seedream route, so the slots that stay on the settings' model were «Дом»'s at «Смелая» (drawn as «Кокетливая»).
+ * 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4, BA2 part 2 review L1): «Смелая» plans «Дом» from its companion, on the route, so the slots on the owner's model are told two ways, both kept: a
+ * «Кокетливая» «Дом» run (every slot on the settings' model), and a set stored before 5a.4, which mixes «Дом» slots with no route and nightwear slots on it (QB-5: an old set keeps no route),
+ * started from its scenes.
  */
-const mixedRequest = (avatarId: string, count: number) => ({ avatarId, count, categories: ["home", "nightwear"], level: "bold", poses: POSES });
+const flirtyHomeRequest = (avatarId: string, count: number) => ({ avatarId, count, categories: ["home"], level: "flirty", poses: POSES });
+
+/** A set of ten written scenes stored before 5a.4: «Ночнушки и бельё» on the Seedream route and «Дом» (drawn as «Кокетливая» then) with no route. */
+async function seedMixedSet(avatarId: string, sceneSetId: string): Promise<void> {
+  const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds(`seedset${++seeded}`) });
+  const set = sampleSet({ sceneSetId, avatarId, runId: `run-${sceneSetId}`, count: 10, written: 10, categories: ["nightwear", "home"] });
+  await library.sceneSets.create({
+    ...set,
+    request: { ...set.request, level: "bold" },
+    scenes: set.scenes.map((scene) => (scene.origin === "planned" && scene.slot.category === "nightwear" ? { ...scene, slot: { ...scene.slot, route: "seedream" as const } } : scene)),
+  });
+}
 
 function estimateOf(response: ResponseMessage) {
   const answer = ok(response);
@@ -98,15 +112,64 @@ async function photosOf(started: Booted, avatarId: string) {
 }
 
 describe("(a) runs.start in «Смелая»", () => {
-  test("plans the route, asks Seedream at 2K with one reference, leaves the other slots on the settings' model, caps at the estimate and marks the photos", async () => {
+  test("plans the route, asks Seedream at 2K with one reference for every slot, caps at the estimate and marks the photos", async () => {
     const avatarId = await seedAvatar();
     const started = await boot(drawn);
     const { engine, events, net } = started;
     // A request of «Ночнушки и бельё» alone prices every photo at the 2K attempt.
-    expect(estimateOf(await engine.handle(command("runs.estimate", runRequest(avatarId, 10)))).worstMicros).toBe(10 * 3 * BOLD_ATTEMPT);
-    const estimate = estimateOf(await engine.handle(command("runs.estimate", mixedRequest(avatarId, 10))));
+    const estimate = estimateOf(await engine.handle(command("runs.estimate", runRequest(avatarId, 10))));
+    expect(estimate.worstMicros).toBe(10 * 3 * BOLD_ATTEMPT);
 
-    const { runId, jobId } = startedOf(await engine.handle(command("runs.start", { ...mixedRequest(avatarId, 10), acceptedWorstMicros: estimate.worstMicros })));
+    const { runId, jobId } = startedOf(await engine.handle(command("runs.start", { ...runRequest(avatarId, 10), acceptedWorstMicros: estimate.worstMicros })));
+    expect((await jobEnd(events, jobId)).type).toBe("job.done");
+
+    const plan = planOf(runId);
+    expect(routedOf(plan)).toBe(10);
+    expect(plan.models.bold).toBe(SEEDREAM);
+    expect([plan.capMicros, plan.plannedWorstMicros]).toEqual([estimate.worstMicros, estimate.worstMicros]);
+
+    const bold = net.imageCalls().filter(isSeedream);
+    expect(bold).toHaveLength(10);
+    expect(net.imageCalls().filter((c) => !isSeedream(c))).toHaveLength(0);
+    for (const call of bold) {
+      const body = call.json();
+      expect({ resolution: body.resolution, aspect: body.aspect_ratio, refs: referencesOf(call), quality: "quality" in body }).toEqual({ resolution: "2K", aspect: "9:16", refs: 1, quality: false });
+    }
+
+    const photos = await photosOf(started, avatarId);
+    const ofRun = photos.filter((p) => p.runId === runId);
+    expect(ofRun).toHaveLength(10);
+    expect(ofRun.filter((p) => p.route === "seedream")).toHaveLength(10);
+  });
+
+  test("leaves the slots of a «Кокетливая» «Дом» run on the settings' model: 1K, 9:16, one reference, no route", async () => {
+    const avatarId = await seedAvatar();
+    const started = await boot(drawn);
+    const { engine, events, net } = started;
+    const estimate = estimateOf(await engine.handle(command("runs.estimate", flirtyHomeRequest(avatarId, 10))));
+    const { runId, jobId } = startedOf(await engine.handle(command("runs.start", { ...flirtyHomeRequest(avatarId, 10), acceptedWorstMicros: estimate.worstMicros })));
+    expect((await jobEnd(events, jobId)).type).toBe("job.done");
+
+    expect(routedOf(planOf(runId))).toBe(0);
+    const calls = net.imageCalls();
+    expect(calls.filter(isSeedream)).toHaveLength(0);
+    for (const call of calls) expect([call.json().model, call.json().resolution, call.json().aspect_ratio, referencesOf(call)]).toEqual([GROK, "1K", "9:16", 1]);
+    const ofRun = (await photosOf(started, avatarId)).filter((p) => p.runId === runId);
+    expect(ofRun).toHaveLength(10);
+    expect(ofRun.filter((p) => p.route === undefined)).toHaveLength(10);
+  });
+
+  test("a set stored before 5a.4 mixes the routed and the owner's-model slots: Seedream at 2K for the routed, the settings' model for the rest, the cap at the estimate", async () => {
+    const avatarId = await seedAvatar();
+    await seedMixedSet(avatarId, "set-mixed-0001");
+    const started = await boot(drawn);
+    const { engine, events, net } = started;
+    const got = ok(await engine.handle(command("scenes.get", { avatarId })));
+    if (got.type !== "scenes.get" || got.result.sceneSet === null) throw new Error("no set");
+    const set = got.result.sceneSet;
+    const estimate = estimateOf(await engine.handle(command("runs.estimateFromScenes", { sceneSetId: set.sceneSetId, revision: set.revision })));
+
+    const { runId, jobId } = startedOf(await engine.handle(command("runs.startFromScenes", { sceneSetId: set.sceneSetId, revision: set.revision, acceptedWorstMicros: estimate.worstMicros })));
     expect((await jobEnd(events, jobId)).type).toBe("job.done");
 
     const plan = planOf(runId);
