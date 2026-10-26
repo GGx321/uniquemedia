@@ -905,6 +905,33 @@ describe("S5.BA4b: the outfit kept beside the moment (the paid check P-BW)", () 
   });
 });
 
+describe("S5.BA4b: on a timer the phone is the camera (the paid check P-BW, P1r#1:17)", () => {
+  const timer = routed({ location: "her balcony", activity: "sits with her feet on the rail", outfit: "a lace bralette and briefs", shot: "friend", capture: "timer", pose: "three-quarter", world: "a hotel lobby lounge" });
+  const P1R_17 = "On her balcony in the morning she sits with her feet on the rail in a lace bralette and briefs, her free hand holding the phone and a small vase of flowers from the hotel lobby lounge beside her.";
+
+  test("the timer's label says the phone is propped up and she is alone, in 31 characters", () => {
+    expect(CAPTURE_LABEL.timer).toBe("phone propped on a timer, alone");
+    expect(CAPTURE_LABEL.timer.length).toBe(31);
+  });
+
+  test("a phone in her hand on a timer is refused as a label leak, named «phone»", () => {
+    const read = readBoldWriterAnswer(answer([{ slotIndex: 1, sentence: P1R_17 }]), [timer]);
+    expect(problemsOf(read)).toContain("label-word");
+    expect(read.ok === false && read.boldWords?.["label-word"]).toEqual(["phone"]);
+  });
+
+  test("the same sentence without the phone passes", () => {
+    const sentence = "On her balcony in the morning she sits with her feet on the rail wearing a lace bralette and briefs, both hands empty, a small vase of flowers beside her.";
+    expect(problemsOf(readBoldWriterAnswer(answer([{ slotIndex: 1, sentence }]), [timer]))).toEqual([]);
+  });
+
+  test("off the timer her phone is no leak: a mirror frame may show it", () => {
+    const mirror = routed({ location: "her bathroom", activity: "fixes her hair at the mirror", outfit: "a black lace bra and panties", shot: "mirror", capture: "mirror-hidden" });
+    const sentence = "In the bathroom of her hotel room in Paris, she fixes her hair at the mirror wearing a black lace bra and panties, her phone over her face, a bottle of lotion by the tap.";
+    expect(problemsOf(readBoldWriterAnswer(answer([{ slotIndex: 1, sentence }]), [mirror]))).toEqual([]);
+  });
+});
+
 // The widest of each value the bold slot JSON sends, read from the tables themselves.
 const longestOf = (values: readonly string[]): string => values.reduce((a, b) => (b.length > a.length ? b : a));
 const WORST_CAPTURE = (Object.keys(CAPTURE_LABEL) as (keyof typeof CAPTURE_LABEL)[]).reduce((a, b) => (CAPTURE_LABEL[b].length > CAPTURE_LABEL[a].length ? b : a));

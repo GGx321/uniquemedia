@@ -181,7 +181,8 @@ export const CAPTURE_LABEL: Readonly<Record<Capture, string>> = Object.freeze({
   "over-shoulder": "her own photo over her shoulder",
   selfie: "her own photo at arm's length",
   "pov-legs": "her own photo down her legs",
-  timer: "her phone on a timer, no one else",
+  // S5.BA4b (P-BW, P1r#1:17): the phone is propped up, so it is in neither hand.
+  timer: "phone propped on a timer, alone",
   friend: "a phone snap a friend took",
   candid: "a friend's snap while she is busy",
   "low-feet": "a friend's photo low at her feet",
@@ -811,6 +812,8 @@ function boldProblemsOf(slot: PlanSlot, sentence: string): BoldFinding[] {
   if (missesAGarment(slot.outfit, sentence)) problems.push("outfit-missing");
   if (exposureWordsIn(sentence).some((word) => !saysWord(own, word))) problems.push("exposure-word");
   const labels = labelWordsIn(sentence).filter((word) => !saysWord(own, word));
+  // S5.BA4b (P-BW, P1r#1:17): on a timer the phone is the camera, propped up; a phone in the sentence is one in her hand, unless the slot's own texts name it.
+  if ((slot.capture ?? captureOfShot(slot.shot)) === "timer" && PHONE_WORDS.test(sentence) && !PHONE_WORDS.test(own)) labels.push("phone");
   if (labels.length > 0) problems.push({ problem: "label-word", words: labels.map((word) => word.toLowerCase()) });
   const places = slot.world === undefined ? [] : publicPlacesIn(sentence, { water });
   if (places.length > 0) problems.push({ problem: "public-place", words: places });
