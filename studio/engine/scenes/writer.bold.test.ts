@@ -877,6 +877,34 @@ describe("the final check's five rows (S5.BA4, before the merge)", () => {
   });
 });
 
+describe("S5.BA4b: the outfit kept beside the moment (the paid check P-BW)", () => {
+  const refusalOf = (problem: WriterRefusal["problems"][number], slots: number[]): WriterRefusal => ({ problems: [problem], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [], boldSlots: { [problem]: slots } });
+
+  test("outfit-missing tells the re-ask where the outfit goes", () => {
+    expect(writerRefusalText(refusalOf("outfit-missing", [3, 4]))).toBe('slot(s) 3-4 left out the outfit: write "wearing" and then the outfit word for word right after the activity');
+  });
+
+  test("a bold re-ask asks for «she», the activity and the outfit word for word in every sentence", () => {
+    expect(writerBoldMessages([routed()], refusalOf("outfit-missing", [1]))[1]?.content).toEndWith(
+      '. Write a new answer that follows every rule, with "she", the activity and the outfit word for word in every sentence.',
+    );
+  });
+
+  test("an ordinary re-ask is today's, byte for byte", () => {
+    const refusal: WriterRefusal = { problems: ["two-handed"], missingSlots: [], twoHandedSlots: [1], wordSlots: [], words: [], poseSlots: [] };
+    expect(writerMessages([unrouted({ category: "home" })], refusal)[1]?.content).toEndWith(
+      "\n\nAn earlier answer was rejected: slot(s) 1 used a two-handed action in a selfie or mirror shot; only one hand is free. Write a new answer that follows every rule.",
+    );
+  });
+
+  test.each([
+    ["«wearing» right after the moment", "In her small hotel room in Paris, she lies back across the bed wearing a white lace bra and panties, a box of macarons on the nightstand."],
+    ["«in» right after the moment", "In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
+  ])("the reader takes %s", (_, sentence) => {
+    expect(readBoldWriterAnswer(answer([{ slotIndex: 1, sentence }]), [routed()]).ok).toBe(true);
+  });
+});
+
 // The widest of each value the bold slot JSON sends, read from the tables themselves.
 const longestOf = (values: readonly string[]): string => values.reduce((a, b) => (b.length > a.length ? b : a));
 const WORST_CAPTURE = (Object.keys(CAPTURE_LABEL) as (keyof typeof CAPTURE_LABEL)[]).reduce((a, b) => (CAPTURE_LABEL[b].length > CAPTURE_LABEL[a].length ? b : a));
@@ -887,8 +915,8 @@ describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the b
   /** What the reserve keeps clear of the ceiling, as the ordinary pins do. */
   const MARGIN = 250;
   // 3 961 with today's ten reasons (S5.BA4); 3 185 with every bold reason; 2 954 since label-word and public-place name the words they found (round 2);
-  // 2 641 with S5.BA4b's order rule, the world join and the varied detail (P-BW).
-  const MARGIN_PRINTED = 2_641;
+  // 2 641 with S5.BA4b's order rule, the world join and the varied detail (P-BW); 2 542 with its outfit-missing reason and the bold re-ask.
+  const MARGIN_PRINTED = 2_542;
   const CEILING = WRITER_BOLD_CALL.inputTokens;
   const FIRST_INDEX = 100 - WRITER_BOLD_CALL.slotsPerCall + 1;
 

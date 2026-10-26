@@ -397,7 +397,8 @@ const REASON: Partial<Record<WriterProblem, (r: WriterRefusal) => string>> = {
   "bad-angle": (r) => `slot(s) ${slotList(r.angleSlots ?? [])} gave a shot or a pose that is missing, outside the lists the rules give, or a selfie or mirror shot not facing the camera (front or three-quarter only)`,
   // 5a.4 (S5.BA4): the bold reader's own, each a fixed sentence with its slot numbers; never a word of the sentence it refused.
   "place-missing": (r) => `slot(s) ${slotList(r.boldSlots?.["place-missing"] ?? [])} did not say where she is: name the slot's location, set inside its world`,
-  "outfit-missing": (r) => `slot(s) ${slotList(r.boldSlots?.["outfit-missing"] ?? [])} left out a garment of the outfit: name every garment exactly as given`,
+  // S5.BA4b (P-BW): where the outfit goes, the order rule's own words.
+  "outfit-missing": (r) => `slot(s) ${slotList(r.boldSlots?.["outfit-missing"] ?? [])} left out the outfit: write "wearing" and then the outfit word for word right after the activity`,
   "exposure-word": (r) => `slot(s) ${slotList(r.boldSlots?.["exposure-word"] ?? [])} named nudity: describe only what the outfit shows`,
   "label-word": (r) => `slot(s) ${slotList(r.boldSlots?.["label-word"] ?? [])} wrote a word of the camera, the light or the slot's labels${toldOf(r.boldWords?.["label-word"])}; write none of them`,
   "public-place": (r) => `slot(s) ${slotList(r.boldSlots?.["public-place"] ?? [])} put her in a public place${toldOf(r.boldWords?.["public-place"])}; keep her in the slot's location`,
@@ -416,7 +417,7 @@ export function writerRefusalText(refusal: WriterRefusal): string {
  * sent under a made-up name); a run passes the resolver of its plan's snapshot.
  */
 export function writerMessages(slots: readonly PlanSlot[], refusal: WriterRefusal = NO_REFUSAL, labelOf: CategoryLabelOf = categoryLabelOf()): ChatMessage[] {
-  return messagesOf(writerSystemPrompt(), slots.map((slot) => slotForWriter(slot, labelOf)), refusal);
+  return messagesOf(writerSystemPrompt(), slots.map((slot) => slotForWriter(slot, labelOf)), refusal, ORDINARY_REASK);
 }
 
 /**
@@ -424,13 +425,18 @@ export function writerMessages(slots: readonly PlanSlot[], refusal: WriterRefusa
  * slot JSON; the refusal is fed back exactly as the ordinary one is. It needs no label resolver: the bold slot carries no category.
  */
 export function writerBoldMessages(slots: readonly PlanSlot[], refusal: WriterRefusal = NO_REFUSAL): ChatMessage[] {
-  return messagesOf(writerBoldSystemPrompt(), slots.map(boldSlotForWriter), refusal);
+  return messagesOf(writerBoldSystemPrompt(), slots.map(boldSlotForWriter), refusal, BOLD_REASK);
 }
 
-function messagesOf(system: string, slots: readonly Record<string, unknown>[], refusal: WriterRefusal): ChatMessage[] {
+/** What a re-ask asks for after the reasons: the ordinary writer's, byte for byte. */
+const ORDINARY_REASK = "Write a new answer that follows every rule.";
+/** S5.BA4b (P-BW): the bold re-ask broke the moment in 12 of 24 and 5 of 6 slots, so it asks for the order rule's three parts by name. */
+const BOLD_REASK = 'Write a new answer that follows every rule, with "she", the activity and the outfit word for word in every sentence.';
+
+function messagesOf(system: string, slots: readonly Record<string, unknown>[], refusal: WriterRefusal, reask: string): ChatMessage[] {
   const lines = ["Slots:", JSON.stringify(slots)];
   if (refusal.problems.length > 0) {
-    lines.push("", `An earlier answer was rejected: ${writerRefusalText(refusal)}. Write a new answer that follows every rule.`);
+    lines.push("", `An earlier answer was rejected: ${writerRefusalText(refusal)}. ${reask}`);
   }
   return [
     { role: "system", content: system },
