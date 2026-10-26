@@ -204,6 +204,9 @@ export const PRESENTATION_SCENARIOS: readonly Scenario[] = [
     },
   },
   // Stage 5, 5a.3, S5.9a (APPENDED; the golden is append-only, plan s5a3 §12): «Смелая» on the contract, before the two «Смелая» categories exist.
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4 #1, Q-P): the owner asked for «Смелая» on every category, so a bold compose over «Дом» holds the 40 / 40 / 20 mix, 4 flirty and 4 bold, every scene on the
+  // Seedream route. The name below tells the pre-5a.4 rule and is kept byte for byte, so the key does not move and its diff stays inside it; this scenario's successor is story 1 of
+  // scenarios.boldAny.ts (S5.BA7). The first compose's notes are the ones that changed; the «Кокетливая» compose and the previews are as they were.
   {
     name: "scene sets, «Смелая» (S5.9a): a bold compose over «Дом» alone holds the flirty counts of «Кокетливая», the set echoes the level it was asked at, and a bold draft is previewed",
     rig: { launch: true },
@@ -235,14 +238,15 @@ export const PRESENTATION_SCENARIOS: readonly Scenario[] = [
         if (set === undefined) throw new Error("the avatar has no scene set to read");
         return { set, scenes };
       };
-      const facts = (read: { set: Record<string, unknown>; scenes: Record<string, unknown>[] }): void => {
+      const facts = (read: { set: Record<string, unknown>; scenes: Record<string, unknown>[] }, onRoute = false): void => {
         t.note(`the set holds ${read.scenes.length} scenes, ${read.scenes.filter((s) => s.level === "flirty").length} of them flirty and ${read.scenes.filter((s) => s.level === "bold").length} bold`);
-        t.note(`no scene is drawn on the Seedream route yet: ${String(read.scenes.every((s) => !("route" in s)))}`);
+        // 5a.4 (S5.BA3): a bold compose over «Дом» draws every scene on the route; the «Кокетливая» compose below still draws none, and says it as it always did.
+        t.note(onRoute ? `every scene is drawn on the Seedream route: ${String(read.scenes.every((s) => s.route === "seedream"))}` : `no scene is drawn on the Seedream route yet: ${String(read.scenes.every((s) => !("route" in s)))}`);
         t.note(`the set echoes its level: ${String(read.set.level)}`);
       };
-      t.note("a bold compose of 10 scenes of «Дом»: no «Смелая» category is among them, so it holds the 6 flirty scenes a flirty compose holds");
+      t.note("a bold compose of 10 scenes of «Дом»: «Смелая» is every category's, so it holds the 40 / 40 / 20 mix, 4 flirty and 4 bold, every scene on the route");
       await t.callLaunch("scenes.compose", { avatarId: w.avatarId, count: 10, categories: ["home"], level: "bold", acceptedWorstMicros: ENOUGH });
-      facts(await settled());
+      facts(await settled(), true);
       const found = await t.callLaunch("scenes.get", { avatarId: w.avatarId });
       const sceneSetId = found.ok ? record(found.result.sceneSet)?.sceneSetId : undefined;
       if (typeof sceneSetId !== "string") throw new Error("the avatar has no scene set to discard");
