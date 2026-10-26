@@ -83,8 +83,10 @@ export function waterHeadNoun(name: string): string {
   return (/([A-Za-z']+)\W*$/.exec(headPart)?.[1] ?? "").toLowerCase();
 }
 
-/** The head nouns of a water place (M8, r2.2 P7): «island», «surf», «river», «pier», «marina» and «deck» are left out. Pinned (custom.test.ts). */
-const WATER_NOUNS: ReadonlySet<string> = new Set(["beach", "sea", "seaside", "ocean", "shore", "shoreline", "lagoon", "pool", "poolside", "lake", "yacht", "sundeck"]);
+/** The head nouns of a water place (M8, r2.2 P7): «island», «surf», «river», «pier», «marina» and «deck» are left out. Round 2, L-4: the plural of each is a water noun too («secluded beaches»). Pinned (custom.test.ts). */
+const WATER_NOUNS: ReadonlySet<string> = new Set(
+  ["beach", "sea", "seaside", "ocean", "shore", "shoreline", "lagoon", "pool", "poolside", "lake", "yacht", "sundeck"].flatMap((noun) => (noun.endsWith("ch") ? [noun, `${noun}es`] : [noun, `${noun}s`])),
+);
 
 /**
  * 5a.4 (S5.BA3, §5.3.2): whether a custom place is a water place, so a «Смелая» slot there is drawn from the «by the water» bank (swimwear) and never from «rooms» (lingerie). Its head

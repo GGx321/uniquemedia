@@ -317,14 +317,14 @@ describe("waterHeadNoun and isWaterPlaceName (M8, P7, P10)", () => {
     expect(waterHeadNoun(name)).toBe(head);
   });
 
-  test.each(["a hotel pool", "an infinity pool at the villa", "the shore of the lake", "the sundeck of a sailing yacht", "a yacht at anchor in a bay", "a quiet beach", "poolside", "a lagoon at dawn", "the ocean"].map((n) => [n]))(
+  test.each(["a hotel pool", "an infinity pool at the villa", "the shore of the lake", "the sundeck of a sailing yacht", "a yacht at anchor in a bay", "a quiet beach", "poolside", "a lagoon at dawn", "the ocean", "secluded beaches", "the hotel pools", "two quiet lakes", "rocky shores", "blue lagoons", "private yachts", "the seas", "sundecks at noon"].map((n) => [n]))(
     "«%s» is a water place",
     (name) => {
       expect(isWaterPlaceName(name)).toBe(true);
     },
   );
 
-  test.each(["a kitchen island", "a pool table", "a cafe with a sea view", "a surf shop", "a beach bar", "a cabin below deck", "a marina at sunset", "a river bank", "a pier", "the deck of a ship", "a bedroom", "a seaside walk", "a sea cave by the sea"].map((n) => [n]))(
+  test.each(["a kitchen island", "a pool table", "a cafe with a sea view", "a surf shop", "a beach bar", "a cabin below deck", "a marina at sunset", "a river bank", "a pier", "the deck of a ship", "a bedroom", "pool tables", "beach bars", "kitchen islands", "a seaside walk", "a sea cave by the sea"].map((n) => [n]))(
     "«%s» is not a water place",
     (name) => {
       expect(isWaterPlaceName(name)).toBe(false);
