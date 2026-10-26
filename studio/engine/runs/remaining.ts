@@ -1,12 +1,13 @@
 import type { Estimate } from "../../shared/engine";
 import { scopeKey } from "../money/budget";
-import { AGE_CHECK_CALL, writerAttemptWorstMicros, writerCallOf, writerExpectedMicros, type ImageChoice } from "../money/estimate";
+import { AGE_CHECK_CALL, writerAttemptWorstMicros, writerCallOf, writerExpectedMicros, type ImageChoice, type WriterCall, type WriterMode } from "../money/estimate";
 import { MoneyError } from "../money/errors";
 import type { Ledger, Scope } from "../money/ledger";
 import type { PricedBook } from "../money/priceCache";
 import type { PriceBook } from "../money/prices";
 import { attemptPaid, isBoldSlot, paidAttempts, type LedgerView, type RunState } from "./journal";
 import { localSentences } from "../scenes/localSentences";
+import { writerModeOf } from "../scenes/writer";
 import { slotKeyOf } from "../scenes/phoneLook";
 import { BOLD_IMAGE_MODEL, boldRoute, plannedSlots, planRoute, RUN_ATTEMPTS_PER_SLOT, type RunPlan } from "./plan";
 
@@ -94,35 +95,50 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
   // 5a.2 (S5.6c2, I5.30): the code template writes every slot it can, so only a not-yet-journaled chunk that holds a slot the template cannot write (a null
   // slot, found with the very `local` the run's writer phase uses) is a request for the model. A chunk of template slots costs nothing here. A chunk out of
   // attempts no longer blocks the resume: its slots take the plain code sentence (S5.6d), so their images stay counted.
-  const writer = { ...writerCallOf("ordinary"), model: plan.models.text };
+  // 5a.4 (S5.BA5, r2.1 L3; BA5a review L4): each chunk in its own mode, the one the run's writer phase asks it in (`writerModeOf` over the slots it sends the model, S5.BA4):
+  // a chunk with a «Смелая» frame at the bold call, any other at the ordinary one. The slots counted here are every slot of the chunk the template cannot write, a superset of a
+  // partly written chunk's open ones, so a chunk is priced bold whenever the phase could ask it bold.
+  const writerOf = (mode: WriterMode): WriterCall => ({ ...writerCallOf(mode), model: plan.models.text });
   const local = localSentences({
     slots: plannedSlots(plan),
     keyOf: (slot) => slotKeyOf(plan.runId, slot.attemptIdBase),
     snapshots: plan.categories,
   });
   const slotOf = new Map(plannedSlots(plan).map((slot) => [slot.slotIndex, slot] as const));
+  /** The chunk's slots the template cannot write (a slot the plan lacks counts too, the safe side). */
   const modelSlotsOf = (chunk: RunPlan["writerChunks"][number]): number =>
     chunk.slotIndexes.filter((slotIndex) => {
       const slot = slotOf.get(slotIndex);
       return slot === undefined || local(slot) === null;
     }).length;
+  const modeOf = (chunk: RunPlan["writerChunks"][number]): WriterMode =>
+    writerModeOf(
+      chunk.slotIndexes.flatMap((slotIndex) => {
+        const slot = slotOf.get(slotIndex);
+        return slot !== undefined && local(slot) === null ? [slot] : [];
+      }),
+    );
   const asked = plan.writerChunks.filter((chunk) => !state.writerDone.has(chunk.chunk)).filter((chunk) => modelSlotsOf(chunk) > 0);
   // A run with no chunk for the model (made from a scene set, or all template) never asks the text model: it needs no price for it.
-  // 5a.4 (S5.BA5, r2.1 N1): an attempt at the one writer attempt price, its reasoning allowance included (none for the ordinary call).
-  const writerCeiling = asked.length === 0 ? 0 : writerAttemptWorstMicros(book, writer);
-  let unwrittenSlots = 0;
-  let writerRequests = 0;
-  let writerPending = false;
+  // 5a.4 (S5.BA5, r2.1 N1): an attempt at the one writer attempt price of its mode, its reasoning allowance included (none for the ordinary call).
+  /** The ceiling of the first chunk the phase will ask (the plan's order): what a resume must be able to reserve first. */
+  let writerCeiling = 0;
+  /** Per mode: the requests still to ask and the scenes they carry, for the expected figure. */
+  const load = new Map<WriterMode, { requests: number; scenes: number }>();
   for (const chunk of asked) {
+    const mode = modeOf(chunk);
+    const writer = writerOf(mode);
     const answered = chunk.attemptIds.filter((id) => attemptPaid(ledger, id)).length;
     const unused = chunk.attemptIds.filter((id) => ledger.reserveOf(id) === undefined).length;
     const attempts = Math.min(Math.max(0, writer.maxAttempts - answered), unused);
     if (attempts <= 0) continue;
-    worst += attempts * writerCeiling;
-    writerPending = true;
-    writerRequests++;
-    unwrittenSlots += modelSlotsOf(chunk);
+    const ceiling = writerAttemptWorstMicros(book, writer);
+    worst += attempts * ceiling;
+    if (writerCeiling === 0) writerCeiling = ceiling;
+    const sum = load.get(mode) ?? { requests: 0, scenes: 0 };
+    load.set(mode, { requests: sum.requests + 1, scenes: sum.scenes + modelSlotsOf(chunk) });
   }
+  const writerPending = writerCeiling > 0;
 
   for (const slot of state.slots) {
     if (slot.end !== null || slot.fallbackUsed) continue; // a used fallback: the slot closes on resume without an attempt
@@ -153,8 +169,8 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
     cheapestSlotAttempt = Math.min(cheapestSlotAttempt ?? Infinity, imageWorst(book, primary) + ageWorst);
   }
 
-  // Round 2 (M1): one attempt of each chunk still to ask, at the typical tokens (`writerExpectedMicros`).
-  if (unwrittenSlots > 0) expected += writerExpectedMicros(book, writer, writerRequests, unwrittenSlots);
+  // Round 2 (M1): one attempt of each chunk still to ask, at the typical tokens of its mode (`writerExpectedMicros`).
+  for (const [mode, { requests, scenes }] of load) if (scenes > 0) expected += writerExpectedMicros(book, writerOf(mode), requests, scenes);
 
   const capRoom = Math.max(0, plan.capMicros - committedMicros);
   // A chunk out of writer attempts adds no writer term (nothing more can be asked of it) but does not block the resume (S5.6d, I5.30/I5.31): its slots take
