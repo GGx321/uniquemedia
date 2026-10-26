@@ -289,12 +289,35 @@ describe("FU-CLIP: the prompt makes no claim about her pose that only the plan m
     }
   });
 
-  test("the prone anchor never comes from the activity alone: a mirror-hidden or timer frame whose moment lies on her stomach carries none", () => {
-    const hips = factsFor(slotOf(pick("home", (m) => m.captures.includes("mirror-hidden") && /on her stomach/.test(m.text)), "mirror-hidden"));
-    const timer = factsFor(slotOf(pick("home", (m) => m.captures.includes("timer") && /on her stomach/.test(m.text)), "timer"));
-    for (const facts of [hips, timer]) {
-      expect(facts.activity ?? "").toMatch(/on her stomach/);
-      expect(promptOf(facts, sceneMotion(facts))).not.toContain(PRONE_ANCHOR);
+  // Round 2 (MEDIUM-1): plan-based on purpose. A hips motion on a frame the plan lies on her stomach, with no anchor, is the hips-2 take the owner rejected.
+  const G_HIPS = "she turns her hips a little toward the mirror and back";
+
+  test("«hips behind» and «on her elbows» by the mirror take the prone anchor with their scene motion and with g-hips", () => {
+    for (const text of ["lies on her stomach, hips behind", "lies on her stomach, on her elbows"]) {
+      const facts = factsFor(slotOf(pick("home", (m) => m.text === text && m.captures.includes("mirror-hidden")), "mirror-hidden"));
+      for (const [motion, source] of [[sceneMotion(facts), "scene"], [G_HIPS, "code"]] as const) {
+        const result = clipPromptOf(facts, motion, "kling", source);
+        if (!result.ok) throw new Error(result.problems.join("; "));
+        expect([text, motion, result.prompt.includes(PRONE_ANCHOR)]).toEqual([text, motion, true]);
+      }
+    }
+  });
+
+  test("«legs bent up» on a timer with «she kicks her feet slowly» takes no prone anchor: the motion moves no hips", () => {
+    const facts = factsFor(slotOf(pick("home", (m) => m.text === "lies on her stomach, legs bent up"), "timer"));
+    expect(sceneMotion(facts)).toBe("she kicks her feet slowly");
+    expect(promptOf(facts, sceneMotion(facts))).not.toContain(PRONE_ANCHOR);
+  });
+
+  test("fitness «hand on her stomach» takes no prone anchor, a hips motion included: she does not lie on her stomach", () => {
+    const mirror = factsFor(slotOf(pick("home", (m) => m.captures.includes("mirror") && m.legs === undefined && !/stomach|prone/.test(m.text)), "mirror"));
+    for (const activity of ["lies back, hand on her stomach", "turns side-on, hand on her stomach"]) {
+      const facts = { ...mirror, activity };
+      for (const motion of [G_HIPS, "she shifts her hips a little"]) {
+        const result = clipPromptOf(facts, motion, "kling", motion === G_HIPS ? "code" : "vision");
+        if (!result.ok) throw new Error(result.problems.join("; "));
+        expect([activity, motion, result.prompt.includes(PRONE_ANCHOR)]).toEqual([activity, motion, false]);
+      }
     }
   });
 

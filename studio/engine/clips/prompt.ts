@@ -27,8 +27,8 @@ import {
 //
 // FU-CLIP (canary C5c, 2026-10-26): the prompt makes no claim about her pose that only the plan makes, since the image model does not always draw the plan (C5c clip 2:
 // «lies curled under the blanket» on a photo where she sits on it, and Kling drew the blanket in). The slot's activity is never sent; the pose anchor holds her to the
-// photo. The prone anchor and the legs line read the capture alone, which proves them by construction (videoLook's `proneAnchorOf`, `legsLineOf`). The one line
-// that still reads a plan fact is the continuity line (see below).
+// photo. The prone anchor and the legs line read the capture, which proves them by construction (videoLook's `proneAnchorOf`, `legsLineOf`). Two lines still
+// read a plan fact, on purpose: the prone anchor on a hips motion over an activity that lies on her stomach (hips-2), and the continuity line (see below).
 //
 // The checks run before any money (I5.51). S5.WC2 (plan s5b2 I5.66): the motion takes the ONE motion check (shared/scenes/motionText.ts) as what it is: a scene motion the
 // frame's rules (its grammar ran when its bank loaded), a code, vision or own motion the bank's grammar as well. The frame's rules: the content line at the slot's own level (a
@@ -50,7 +50,7 @@ export function clipPromptOf(facts: FrameFacts, motion: string, dialect: ClipDia
   const rest = [
     POSE_ANCHOR,
     motionSentenceOf(motion),
-    proneAnchorOf(facts.capture),
+    proneAnchorOf(facts.capture, facts.activity, motion),
     legsLineOf(facts.capture),
     // Plan-based on purpose (FU-CLIP): the activity only chooses between two lines, neither of which names it or anything in it. «adjusts the strap of her bag» makes
     // «she tugs the strap a little» a held bag's strap (the base line, which keeps what she holds: K09 lost its bag) rather than a garment's («comes off»).

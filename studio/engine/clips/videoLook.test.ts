@@ -189,10 +189,25 @@ describe("the sentences of a clip prompt", () => {
     expect(PRONE_ANCHOR).toBe("She stays lying on her stomach the whole time; she never gets up on her hands or knees.");
   });
 
-  test("the prone anchor goes with a capture that lies her on her stomach by construction, prone or over-shoulder, and with no other (FU-CLIP)", () => {
-    for (const capture of CLIP_CAPTURES) expect([capture, proneAnchorOf(capture)]).toEqual([capture, capture === "prone" || capture === "over-shoulder" ? PRONE_ANCHOR : null]);
+  test("the prone anchor goes with a capture that lies her on her stomach by construction, prone or over-shoulder, whatever the activity and motion (FU-CLIP)", () => {
+    for (const capture of CLIP_CAPTURES) expect([capture, proneAnchorOf(capture, null, "she turns her head slowly")]).toEqual([capture, capture === "prone" || capture === "over-shoulder" ? PRONE_ANCHOR : null]);
     for (const capture of ["prone", "over-shoulder"] as const) expect(phoneLook.captureLineOf(capture, "run-1:slot-1")).toMatch(/lying on her stomach|lies on her stomach/);
   });
+
+  const HIPS_ROWS: readonly (readonly [string, string, boolean])[] = [
+    ["lies on her stomach, hips behind", "she lifts her hips a little", true],
+    ["lies on her stomach, on her elbows", "she shifts her hips a little", true],
+    ["lying prone on the mat", "she arches her back a little", true],
+    ["lies on her stomach, legs bent up", "she kicks her feet slowly", false],
+    ["lies on her stomach, legs bent up", "she slowly rolls onto her back", false],
+    ["lies back, hand on her stomach", "she shifts her hips a little", false],
+    ["turns side-on, hand on her stomach", "she turns her hips a little toward the mirror and back", false],
+  ];
+  for (const [activity, motion, anchored] of HIPS_ROWS) {
+    test(`round 2 (MEDIUM-1): «${activity}» with «${motion}» on mirror-hidden ${anchored ? "takes" : "takes no"} prone anchor`, () => {
+      expect(proneAnchorOf("mirror-hidden", activity, motion)).toBe(anchored ? PRONE_ANCHOR : null);
+    });
+  }
 
   test("the legs line keeps the camera on her legs", () => {
     expect(LEGS_LINE).toBe("Her legs fill most of the frame the whole time; the camera never turns up to her face.");

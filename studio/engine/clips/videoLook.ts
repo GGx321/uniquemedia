@@ -131,13 +131,20 @@ export function motionSentenceOf(motion: string): string {
 /** The prone anchor (the hips-2 take, word for word). */
 export const PRONE_ANCHOR = "She stays lying on her stomach the whole time; she never gets up on her hands or knees.";
 
+/** An activity that lies her on her stomach («lies on her stomach, hips behind», «lying prone»); never «a hand on her stomach» (fitness), which lies her nowhere. */
+const LIES_ON_HER_STOMACH = /\b(?:lies|lying)\s+(?:on her stomach|prone)\b/i;
+/** A motion of her hips or her bottom, or an arch of her back; never «rolls onto her back», which is no hips motion. */
+const HIPS_MOTION = /\b(?:hips?|bum|butt|bottom|arch(?:es|ing)?)\b/i;
+
 /**
- * The prone anchor of a capture: a prone or over-the-shoulder one, which lies her on her stomach by construction (the photo's own capture line says so,
- * engine/scenes/phoneLook.ts, and the over-shoulder camera line above says it too). FU-CLIP: never from the slot's activity alone («lies on her stomach» on a
- * mirror-hidden or timer frame): only the plan says that, and the pose anchor holds her to whatever the photo shows.
+ * The prone anchor: on a prone or over-the-shoulder capture, which lies her on her stomach by construction (the photo's own capture line says so,
+ * engine/scenes/phoneLook.ts, and the over-shoulder camera line above says it too); and on a frame whose activity lies her on her stomach when the motion moves her
+ * hips. FU-CLIP round 2 (MEDIUM-1): the second rule reads the plan, on purpose: a hips motion with no anchor gives the hips-2 take the owner rejected (up on her
+ * hands and knees). Any other activity that lies on her stomach («legs bent up» with «she kicks her feet slowly») is held by the pose anchor alone.
  */
-export function proneAnchorOf(capture: ClipCapture): string | null {
-  return capture === "prone" || capture === "over-shoulder" ? PRONE_ANCHOR : null;
+export function proneAnchorOf(capture: ClipCapture, activity: string | null, motion: string): string | null {
+  if (capture === "prone" || capture === "over-shoulder") return PRONE_ANCHOR;
+  return activity !== null && LIES_ON_HER_STOMACH.test(activity) && HIPS_MOTION.test(motion) ? PRONE_ANCHOR : null;
 }
 
 /** The legs line (new): a «Ножки» frame keeps her legs filling the frame. «frame» is the code's own word; the staging list reads motions and activities only. */
