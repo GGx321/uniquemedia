@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
+import { AvatarOrigin } from "./avatarOrigin";
 import { AvatarBody, BodyProposal } from "./body";
 import { CategoryName, CategoryRef, LegsShare, MAX_RUN_CATEGORIES, PhotoCategory, SceneCategory, SceneLevel, SceneRoute } from "./categories";
 import {
@@ -418,7 +419,7 @@ export const AvatarSummary = z.strictObject({
    * 5a.4 (S5.BA1, plan s5a4 I5.74, I5.80; additive, protocol 5): where the avatar came from, for the renderer and the mock: `studio` (made in Studio from a generated candidate) or `imported`.
    * OMITTED until the engine fills it (S5.BA5); an absent origin is read as imported, the fail-closed side.
    */
-  origin: z.enum(["studio", "imported"]).optional(),
+  origin: AvatarOrigin.optional(),
 });
 
 /**
