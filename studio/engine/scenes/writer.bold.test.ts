@@ -414,10 +414,37 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
       expect(read.ok === false && read.boldSlots?.["label-word"]).toEqual([1]);
     });
 
-    test("a word the slot's own texts say is not held against it (an old custom slot whose activity takes a photo)", () => {
-      const slot = unrouted({ activity: "takes a photo of the view" });
-      const read = readBoldWriterAnswer(answer([{ slotIndex: 1, sentence: "At a corner cafe she takes a photo of the view in a beige trench coat and jeans, smiling to herself." }]), [slot]);
+    test("a word the slot's own texts say is not held against it (an old custom slot whose activity is about her camera)", () => {
+      const slot = unrouted({ activity: "checks her camera settings" });
+      const read = readBoldWriterAnswer(answer([{ slotIndex: 1, sentence: "At a corner cafe she checks her camera settings in a beige trench coat and jeans, smiling to herself." }]), [slot]);
       expect(problemsOf(read)).not.toContain("label-word");
+    });
+
+    // Review LOW: only the leaks the probe saw. The light named by its source, a frame of the view, a photo on the wall and a shot of espresso are the rules' own.
+    test.each([
+      ["daylight", "as daylight fills the room"],
+      ["captured", "captured from above"],
+      ["selfie", "for a selfie"],
+      ["snap", "in a quick snap"],
+      ["timer", "while the timer counts down"],
+      ["camera", "smiling into the camera"],
+      ["lens", "close to the lens"],
+      ["three-quarter", "in a three-quarter view"],
+      ["world", "set in the world of the city"],
+      ["slot", "as the slot says"],
+    ])("«%s» is refused", (_, words) => {
+      expect(problemsOf(bold(`In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties ${words}, a box of macarons on the nightstand.`))).toContain("label-word");
+    });
+
+    test.each([
+      "as sunlight falls across the sheets",
+      "in the sunshine from the window",
+      "under the lamplight of the bedside lamp",
+      "the window framing the rooftops",
+      "beside a framed photo of the Seine",
+      "with a shot of espresso on the nightstand",
+    ])("«%s» is no label leak", (words) => {
+      expect(problemsOf(bold(`In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, ${words}.`))).not.toContain("label-word");
     });
 
     test("the correct sentence passes, the viewer and her phone included", () => {

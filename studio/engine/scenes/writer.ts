@@ -643,12 +643,12 @@ function missesAGarment(outfit: string, sentence: string): boolean {
 }
 
 /**
- * P-BA: the words of the slot's labels that the drafts pasted into the prose. Who takes the photo and how (the capture labels name a photo, a selfie, a snap, a
- * timer), the light (the ordinary light lines said «daylight»), the pose's own name, and the slot's field names. Her phone and the viewer are not here: a mirror
- * frame may show her phone, and «she looks at the viewer» is the gaze rule's own wording.
+ * P-BA: the words of the slot's labels that the drafts pasted into the prose, and only those (review LOW, S5.BA4 round 2): who takes the photo and how (the capture
+ * labels' selfie, snap and timer, «captured», the camera and its lens), the light line the ordinary writer feeds («daylight»), the pose's own name, and the slot's
+ * field names. The light named by its source (sunlight, sunshine, lamplight), a frame of the view, a photo on the wall and a shot of espresso are not leaks; her
+ * phone and the viewer are the gaze rule's own words.
  */
-const LABEL_WORDS =
-  /\b(?:cameras?|lens(?:es)?|photos?|photograph(?:s|ed|ing)?|selfies?|snap(?:s|shots?)?|shots?|framing|captured|timers?|tripods?|(?:day|sun|moon|lamp|candle)light|sunshine|three-quarter|worlds?|slots?)\b/gi;
+const LABEL_WORDS = /\b(?:daylight|captured|selfies?|snaps?|timers?|cameras?|lens(?:es)?|three-quarter|worlds?|slots?)\b/gi;
 
 /** The label words of a sentence, as it writes them. */
 function labelWordsIn(sentence: string): string[] {
