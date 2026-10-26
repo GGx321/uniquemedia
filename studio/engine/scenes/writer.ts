@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { youthWords } from "../../shared/engine";
+import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared/scenes/contentLine";
 import { ownerBannedOutfitWords } from "../../shared/scenes/words";
 import { WRITER_CALL, writerCallOf, writerExpectedMicros, writerWorstMicros, type Estimate } from "../money/estimate";
 import type { PriceBook } from "../money/prices";
@@ -341,8 +341,17 @@ export function isTwoHanded(sentence: string): boolean {
 /**
  * What the answer reader needs of a slot: its number, its shot (the phone hand) and its pose. A plan's slot has more; an own scene (CS.4b) has only these,
  * so the same rules read both.
+ *
+ * 5a.4 (S5.BA4, plan s5a4 §5.3.3 «The reader»): a planned slot also hands over its «Смелая» marker (category, level, route), so its sentence is held to its
+ * own content level (`contentLevelOf`): a «Смелая» frame to the youth words alone, everything else to today's rule. A slot without a category (an own
+ * scene) reads at ordinary, the stricter level, so a caller that leaves the marker out refuses more, never less.
  */
-export type ReadableSlot = Pick<PlanSlot, "slotIndex" | "shot" | "pose">;
+export type ReadableSlot = Pick<PlanSlot, "slotIndex" | "shot" | "pose"> & Partial<Pick<PlanSlot, "category" | "level" | "route">>;
+
+/** The content level a slot's sentence is held to: its own (`contentLevelOf`), or ordinary for a slot without a category. */
+function contentLevelOfSlot(slot: ReadableSlot): ContentLevel {
+  return slot.category === undefined ? "ordinary" : contentLevelOf({ category: slot.category, level: slot.level, route: slot.route });
+}
 
 function phoneInHand(slot: ReadableSlot): boolean {
   return slot.shot === "selfie" || slot.shot === "mirror";
@@ -475,9 +484,13 @@ export function readWriterScenes(scenes: readonly Pick<WriterScene, "slotIndex" 
   for (const s of slots) {
     const sentence = bySlot.get(s.slotIndex);
     if (sentence === undefined) continue;
-    const youth = youthWords(sentence, "descriptor");
+    // 5a.4 (S5.BA4): the content line at the slot's own level. At ordinary it is today's pair (the youth words, then the revealing words); at «Смелая» the
+    // youth words alone, its garment names exempt.
+    const content = contentProblems(sentence, contentLevelOfSlot(s));
+    const youth = content.find((p) => p.reason === "youth-word")?.words ?? [];
     // S5.6R: the owner's denim shorts and skirts are refused as a revealing word under our name for them, so the reason and the word cap are the ones the floor pins measure.
-    const revealing = [...revealingWordsIn(sentence), ...ownerBannedOutfitWords(sentence)];
+    // They are the owner's own ban, not a content line: refused at every level.
+    const revealing = [...(content.find((p) => p.reason === "revealing-word")?.words ?? []), ...ownerBannedOutfitWords(sentence)];
     if (youth.length > 0) {
       problems.add("youth-word");
       wordSlots.add(s.slotIndex);
