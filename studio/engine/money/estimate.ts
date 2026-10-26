@@ -46,6 +46,12 @@ export interface WriterCall extends Omit<ChatCall, "typical"> {
   slotsPerCall: number;
   /** Attempts per chunk before the writer job gives up on it. */
   maxAttempts: number;
+  /**
+   * 5a.4 (S5.BA5, plan s5a4 §5.3.4, r2.1 N1): the reasoning allowance, in tokens; absent = 0. grok-4.3 bills its reasoning as completion on top of
+   * `max_tokens` (S5.WCX), so an attempt is priced and reserved at `maxTokens + reasoningTokens` completion tokens (`writerAttemptWorstMicros` here,
+   * openrouter/chat.ts's `chatAttemptWorstMicros` for the reserve). Never sent. WRITER_CALL has none, so every ordinary figure is unchanged.
+   */
+  reasoningTokens?: number;
 }
 
 /**
@@ -104,6 +110,53 @@ export const WRITER_CALL: WriterCall = {
   slotsPerCall: 25,
   maxAttempts: 2,
 };
+/**
+ * 5a.4 (S5.BA5, plan s5a4 r2.4 §5.3.4 «The decision: (c)», I5.77): the scene writer in bold mode, a custom category at «Смелая». Its prompt is larger
+ * (the bold rules, each slot's `world` and capture label, the bold refusal reasons), so a full chunk of 25 does not fit WRITER_CALL's 14 000: the worst
+ * bold chunk measured 16 156 tokens with every refusal reason (S5.BAT), and the ceiling is 17 000 (r2.2 P4). `maxTokens` is the ordinary 8 000, plus a
+ * reasoning allowance of 3 000 tokens priced as completion on top of it (grok-4.3 bills its reasoning as completion, S5.WCX's figure for SUGGEST and
+ * TRANSLATE, money/motionEstimate.ts). One attempt at the fallback prices: 17 000 × $1.25/M + 11 000 × $2.50/M = 48 750 µ$; a chunk, two attempts,
+ * 97 500 µ$ («до $0.098»). The chunk size and the attempts are the ordinary ones, so no chunking moves (estimate.writerCall.test.ts pins both).
+ *
+ * `typicalPerScene` (the expected figure only; never a reserve or a cap) is P-BA's W1/W2 (2026-10-26, two bold calls of 2 slots each, effort «low»), with
+ * the reasoning in it: their billed usage was 415 prompt / 791 completion tokens (659 of them reasoning) and 431 / 600 (479).
+ * - Output: the larger call's completion per slot, ⌈791 / 2⌉ = 396. Kept per slot rather than shared by the chunk, since the reasoning walks the slots
+ *   one by one; a full chunk's 25 × 396 = 9 900 stays under the 11 000 it is priced at.
+ * - Input: the larger call's prompt per slot, ⌈431 / 2⌉ = 216, plus the system prompt the probe did not send (its system message was the 24-byte
+ *   placeholder «<writer-bold.system.txt>», not the 3 764-byte draft): ⌈3 764 / 3.85⌉ = 978 tokens at S5.WCX's measured 3.85 bytes a grok-4.3 token,
+ *   shared by the 25 slots of a full chunk as WRITER_CALL's own typical was measured, ⌈978 / 25⌉ = 40. 216 + 40 = 256.
+ * So 20 bold scenes expect 5 120 in and 7 920 out, 26 200 µ$. C-BA re-measures it on the final prompt.
+ */
+export const WRITER_BOLD_CALL: WriterCall = {
+  model: "x-ai/grok-4.3",
+  maxTokens: 8_000,
+  reasoningTokens: 3_000,
+  inputTokens: 17_000,
+  images: 0,
+  typicalPerScene: { inputTokens: 256, outputTokens: 396 },
+  slotsPerCall: 25,
+  maxAttempts: 2,
+};
+
+/** The scene writer's two modes: «ordinary» for every request below «Смелая» and every built-in category, «bold» for a custom category at «Смелая». */
+export type WriterMode = "ordinary" | "bold";
+
+/**
+ * 5a.4 (S5.BA5, r2.1 L2): the ONE door to the writer's call shape. Every site that prices, reserves or bounds a writer attempt asks it for the mode's
+ * shape (writerCall.static.test.ts holds every other module to `slotsPerCall` and `maxAttempts` reads alone). «ordinary» is WRITER_CALL itself, so
+ * every ordinary figure stays byte-identical; a mode outside the two (untyped data) throws rather than price as the cheaper shape.
+ */
+export function writerCallOf(mode: WriterMode): WriterCall {
+  switch (mode) {
+    case "ordinary":
+      return WRITER_CALL;
+    case "bold":
+      return WRITER_BOLD_CALL;
+    default:
+      throw new RangeError(`no writer call for mode ${String(mode satisfies never)}`);
+  }
+}
+
 export const AGE_CHECK_CALL: ChatCall = {
   model: "x-ai/grok-4.3",
   maxTokens: 1_000,
@@ -192,6 +245,19 @@ function ceilingMicros(book: PriceBook, call: Omit<ChatCall, "typical"> | null):
 }
 
 /**
+ * 5a.4 (S5.BA5, r2.1 N1): ONE writer attempt at its ceilings: the prompt at `inputTokens` and the completion at `maxTokens` plus the reasoning allowance
+ * (`reasoningTokens`, absent = 0), which grok-4.3 bills as completion on top of `max_tokens`. The one price of a writer attempt: `writerChunksMicros`
+ * here, a scene set's compose, «Дописать» and write (sceneSets/estimate.ts, and through it the launch unit) and a resume (runs/remaining.ts) all read it,
+ * and the reserve chat() makes for the same call (openrouter/chat.ts's `chatAttemptWorstMicros`) adds the same allowance, so the reserve equals the
+ * estimate. For WRITER_CALL (no allowance) it is today's ceiling exactly, 37 500 µ$ at the fallback prices.
+ */
+export function writerAttemptWorstMicros(book: PriceBook, call: WriterCall): number {
+  const reasoningTokens = call.reasoningTokens ?? 0;
+  if (!Number.isSafeInteger(reasoningTokens) || reasoningTokens < 0) throw new TypeError(`reasoningTokens must be a non-negative integer, got ${reasoningTokens}`);
+  return book.chatWorstCase({ model: call.model, maxTokens: call.maxTokens + reasoningTokens, inputTokens: call.inputTokens, images: call.images });
+}
+
+/**
  * The writer's own worst case for `slotCount` slots: chunked into calls of
  * at most `writer.slotsPerCall` (review round 2), each retried up to
  * `writer.maxAttempts` times before the writer job gives up on it (review
@@ -213,7 +279,7 @@ export function writerWorstMicros(book: PriceBook, writer: WriterCall, slotCount
  */
 export function writerChunksMicros(book: PriceBook, writer: WriterCall, chunkCount: number): number {
   assertCount("writer chunks", chunkCount);
-  return chunkCount === 0 ? 0 : chunkCount * writer.maxAttempts * ceilingMicros(book, writer);
+  return chunkCount === 0 ? 0 : chunkCount * writer.maxAttempts * writerAttemptWorstMicros(book, writer);
 }
 
 /** The model's share of a run's slots: the requests it can need at worst, and the scenes those requests can carry (shared/scenes' `writerChunksWorst` and `llmPossibleSlots`). */
