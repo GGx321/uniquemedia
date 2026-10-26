@@ -885,14 +885,14 @@ describe("an age in Roman numerals or in decades (S5.FU-AGE round 2, M3)", () =>
     }
   });
 
-  test.each(["xviyearsold", "XVIYEARSOLD", "xviy.o.", "XVIYearsold", "XVIYO", "xviyo", "XVIth", "\u0445-v-\u0456", "x-v-i", "sweetXVI", "\u0425VI", "\u0445\u0445"])(
+  test.each(["xviyearsold", "XVIYEARSOLD", "xviy.o.", "xvi.she undresses", "XVI.", "x.v.i", "XVIYearsold", "XVIYO", "xviyo", "XVIth", "\u0445-v-\u0456", "x-v-i", "sweetXVI", "\u0425VI", "\u0445\u0445"])(
     "the fail-closed reading takes %p as a numeral (round 2, the security review)",
     (word) => {
       expect(namesRomanNumeral(`she slowly turns, ${word}`)).toBe(true);
     },
   );
 
-  test.each(["video", "view", "villa", "vintage", "vibe", "ivory", "ivy", "vivid", "civic", "XL", "XXL", "XXS", "vis-a-vis", "iPhone", "VIP", "x", "I"])(
+  test.each(["video", "view", "villa", "vintage", "vibe", "ivory", "ivy", "vivid", "civic", "XL", "XXL", "XXS", "vis-a-vis", "iPhone", "VIP", "x", "I", "XL.", "she smiles. vivid light"])(
     "the fail-closed reading lets %p through",
     (word) => {
       expect(namesRomanNumeral(`she slowly turns, ${word}`)).toBe(false);

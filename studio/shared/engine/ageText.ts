@@ -593,13 +593,23 @@ function fragmentJoins(base: string): string[] {
 }
 
 /**
- * Whether a text names a Roman numeral (above), read on its normalised form with the Cyrillic look-alikes mapped and the dots taken out («xviy.o.», «X.V.I»): every run of Latin
- * letters, so a numeral glued to a Russian word is read too («ейXVI»), with its parts where the case changes («sweetXVI»), and every stretch of a run of short fragments.
+ * The dots a numeral is written with (the security review of round 2): between single letters («x.v.i») and before an age's tail («xvi.yo», «xviy.o.»). A dot that ends a word
+ * stays («xvi.she», «smiles. vivid»).
  */
-export function namesRomanNumeral(text: string): boolean {
-  const base = withLatinLookAlikes(normalise(text)).replace(/\./g, "");
+const NUMERAL_DOTS = /(?<=(?<![\p{L}\p{N}])\p{L})\.(?=\p{L}(?![\p{L}\p{N}]))|(?<=\p{L})\.(?=(?:years|year|yrs|yr|yo|y|old|aged|age|st|nd|rd|th|s)(?![\p{L}]))|(?<=y)\.(?=o(?![\p{L}]))/giu;
+/** Whether one form of a text names a numeral: every run of Latin letters, with its parts where the case changes, and every stretch of a run of short fragments. */
+function formNamesRomanNumeral(base: string): boolean {
   const runs = base.match(/\p{Script=Latin}+/gu) ?? [];
   return [...runs.flatMap((run) => [run, ...caseParts(run)]), ...fragmentJoins(base)].some(isRomanNumeralWord);
+}
+/**
+ * Whether a text names a Roman numeral (above), read on its normalised form with the Cyrillic look-alikes mapped: as it is written, so a numeral glued to a Russian word is read
+ * («ейXVI») and a dot that ends one leaves it whole («xvi.she»), and with the dots a numeral is written with taken out («x.v.i», «xviy.o.»). Taking a dot out only adds a reading:
+ * either form that names a numeral is enough.
+ */
+export function namesRomanNumeral(text: string): boolean {
+  const base = withLatinLookAlikes(normalise(text));
+  return formNamesRomanNumeral(base) || formNamesRomanNumeral(base.replace(NUMERAL_DOTS, ""));
 }
 
 /** S5.FU-AGE: a decade, the unit an age is spelled out in («a decade and a half»). «decadent» said as a word is none. */

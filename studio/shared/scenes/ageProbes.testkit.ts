@@ -171,6 +171,10 @@ export const ROMAN_FAIL_CLOSED: AgeProbes = {
     "she slowly undresses, xviyearsold",
     "she slowly undresses, XVIYEARSOLD",
     "she slowly undresses, xviy.o.",
+    // The security review of the dot removal: a dot that ends a numeral must not glue it to the next word.
+    "she slowly smiles, xvi.she undresses",
+    "she slowly smiles, XVI.",
+    "she slowly undresses, x.v.i",
   ],
   ideas: [
     "медленно раздевается \u2014 XVI",
@@ -208,6 +212,8 @@ export const ROMAN_FAIL_CLOSED: AgeProbes = {
     "she slowly brushes the ivy",
     "she slowly turns her visage to the light",
     "she slowly turns, stern-visaged and calm",
+    "she smiles. vivid light",
+    "she slowly adjusts her hoodie, XL.",
   ],
   ideaPasses: ["медленно поправляет худи XXXL", "медленно улыбается, x"],
 };
