@@ -5,7 +5,7 @@ import { bankPlaceOf } from "../../shared/scenes/bankLookup";
 import { boldWordsIn } from "../../shared/scenes/banks/boldRules";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
 import { exposureWordsIn } from "../../shared/scenes/explicitWords";
-import { coverageOf } from "../../shared/scenes/template";
+import { slotCoverageOf } from "../../shared/scenes/template";
 import { ownerBannedOutfitWords } from "../../shared/scenes/words";
 import { WRITER_CALL, writerCallOf, writerExpectedMicros, writerWorstMicros, type Estimate, type WriterMode } from "../money/estimate";
 import type { PriceBook } from "../money/prices";
@@ -750,13 +750,6 @@ export function boldReader(impliedNudity = false): (content: string, slots: read
     if (read.ok) return { ok: true, sentences: covered(read.sentences) };
     return read.repair === undefined ? read : { ...read, repair: { ...read.repair, accepted: covered(read.repair.accepted) } };
   };
-}
-
-/** The coverage sentence a slot's outfit ends with, by origin, as `plainSentence` finds it (shared/scenes/plain.ts): undefined for an outfit of no «Смелая» bank. */
-function slotCoverageOf(slot: PlanSlot, impliedNudity: boolean): string | undefined {
-  const hit = bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location, activity: slot.activity });
-  const worn = hit?.bank.outfits.find((outfit) => outfit.text === slot.outfit);
-  return hit === undefined || worn === undefined ? undefined : coverageOf(hit.moment ?? {}, worn, impliedNudity);
 }
 
 /** The sentence with its closing full stop (a sentence the model ended without one), so the coverage reads as the next sentence. */

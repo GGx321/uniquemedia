@@ -6,7 +6,7 @@ import type { Level } from "./banks/types";
 import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "./captures";
 import { pick } from "./hash";
 import { locativeOf, rendersActivity } from "./custom";
-import { coverageOf } from "./template";
+import { slotCoverageOf } from "./template";
 import { PHONE_WORDS, SELFIE_WORDS } from "./words";
 
 // 5a.2 (S5.6d, plan s5a2 §5.5 «After the last attempt»): the sentence a planned slot takes when the model could not write it in the two answered attempts a chunk
@@ -102,7 +102,7 @@ export function plainSentence(slot: PlainSlot, impliedNudity = false): string {
   const sentence = clauses.join(", ");
   const text = `${clauses[0] === undefined || names(at) ? capitalised(sentence) : sentence}.`;
   // 5a.4 (S5.BA3, §5.3.3): a «Смелая» frame ends with the outfit's coverage sentence by the avatar's origin, as the template appends it; an ordinary bank has none to say.
-  const worn = hit?.bank.outfits.find((o) => o.text === slot.outfit);
-  const coverage = worn === undefined ? undefined : coverageOf(moment ?? {}, worn, impliedNudity);
+  // S5.BA4 round 2 (review M1): through the helper the writer shares, so a slot whose moment the bank reworded keeps its kept sentence (fail-closed).
+  const coverage = slotCoverageOf(slot, impliedNudity);
   return coverage === undefined ? text : `${text} ${coverage}`;
 }

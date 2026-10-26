@@ -3,7 +3,14 @@ import { createHash } from "node:crypto";
 import { CAPTURES, POOL_TEXT_MAX, POOL_TIMES } from "../../shared/engine";
 import { CUSTOM_BOLD_BANKS } from "../../shared/scenes/banks/companions";
 import { COVER } from "../../shared/scenes/banks/companions/outfits";
+import { BANKS } from "../../shared/scenes/banks";
+import { BOLD_COMPANIONS } from "../../shared/scenes/banks/companions";
+import type { CategoryBank } from "../../shared/scenes/banks/types";
+import { bankPlaceOf } from "../../shared/scenes/bankLookup";
+import { plainSentence } from "../../shared/scenes/plain";
+import { coverageOfWorn, KEPT_FALLBACK, slotCoverageOf } from "../../shared/scenes/template";
 import { captureOfShot } from "../../shared/scenes/captures";
+import { exposureWordsIn } from "../../shared/scenes/explicitWords";
 import { WRITER_BOLD_CALL, writerAttemptWorstMicros, writerCallOf, writerExpectedMicros } from "../money/estimate";
 import { PriceBook } from "../money/prices";
 import { promptTokenFloor } from "../openrouter/chat";
@@ -533,6 +540,115 @@ describe("the coverage sentence is appended after the read, once, by origin (§5
   test("the reader reads the model's sentence, never the coverage: a refusal is the bold reader's own", () => {
     const bad = answer([{ slotIndex: 1, sentence: "At the cafe terrace in Paris, she lies on the rug topless." }]);
     expect(boldReader()(bad, [routed()])).toEqual(readBoldWriterAnswer(bad, [routed()]));
+  });
+});
+
+describe("an old slot whose moment the bank renamed keeps its kept coverage (review M1, I5.74, fail-closed)", () => {
+  const SHEET_KEPT = "The white sheet is pulled up to her chest and fully covers her breasts and her hips.";
+  /** A «Смелая» nightwear scene stored before r2.2 P3 reworded its moment («lies holding the sheet to her chest» is now «lies with the sheet up to her chest»). */
+  const oldSheet = (): PlanSlot => ({
+    slotIndex: 1,
+    category: "nightwear",
+    location: "her bed",
+    timeOfDay: "night",
+    activity: "lies holding the sheet to her chest",
+    outfit: "only the white bedsheet",
+    shot: "selfie",
+    pose: "front",
+    attemptIdBase: "slot-1",
+    repeatedPair: false,
+    capture: "above",
+    level: "bold",
+    route: "seedream",
+  });
+  const SAID = "She lies holding the sheet to her chest on her bed, a glass of water on the nightstand.";
+  const read = (impliedNudity: boolean, slot: PlanSlot, sentence: string): string | undefined => {
+    const answered = boldReader(impliedNudity)(answer([{ slotIndex: slot.slotIndex, sentence }]), [slot]);
+    return answered.ok ? answered.sentences.get(slot.slotIndex) : undefined;
+  };
+  const count = (text: string, part: string): number => text.split(part).length - 1;
+
+  test("the bank still has her place and the sheet, but no longer the moment", () => {
+    const slot = oldSheet();
+    const hit = bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location, activity: slot.activity });
+    expect(hit?.place.name).toBe("her bed");
+    expect(hit?.moment).toBeUndefined();
+    expect(hit?.bank.outfits.find((o) => o.text === slot.outfit)?.coverage).toBeUndefined();
+  });
+
+  test.each([false, true])("its rewrite ends with the sheet's kept sentence, once (impliedNudity %p)", (impliedNudity) => {
+    expect(read(impliedNudity, oldSheet(), SAID)).toBe(`${SAID} ${SHEET_KEPT}`);
+  });
+
+  test.each([false, true])("so does its plain sentence (impliedNudity %p)", (impliedNudity) => {
+    const plain = plainSentence(oldSheet(), impliedNudity);
+    expect(plain).toEndWith(` ${SHEET_KEPT}`);
+    expect(count(plain, SHEET_KEPT)).toBe(1);
+  });
+
+  test("an old slot always says the kept sentence, even where the open one differs (the towel, a Studio-created avatar)", () => {
+    const slot = routed({ location: "her bathroom", activity: "dries off by the basin", outfit: "only a white bath towel", shot: "mirror", capture: "mirror-hidden" });
+    expect(bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location, activity: slot.activity })?.moment).toBeUndefined();
+    const sentence = "In the bathroom of her hotel room in Paris, she dries off by the basin in only a white bath towel, a bottle of lotion by the tap.";
+    expect(read(true, slot, sentence)).toBe(`${sentence} ${COVER.towel}`);
+    expect(plainSentence(slot, true)).toEndWith(` ${COVER.towel}`);
+    expect(slotCoverageOf(slot, true)).toBe(COVER.towel);
+  });
+
+  test("a slot whose moment the bank has keeps today's rule: the open sentence for a Studio-created avatar", () => {
+    const slot = routed({ location: "her bathroom", activity: "leans on the sink after a shower", outfit: "only a white bath towel", shot: "mirror", capture: "mirror-hidden" });
+    expect(slotCoverageOf(slot, true)).toBe(COVER.towelOpen);
+    expect(slotCoverageOf(slot, false)).toBe(COVER.towel);
+    expect(slotCoverageOf(routed(), true)).toBeUndefined();
+  });
+
+  test("an outfit no «Смелая» bank holds (an old cotton outfit, an old custom slot) says none", () => {
+    expect(slotCoverageOf({ ...oldSheet(), activity: "lies back against the pillows", outfit: "an oversized sleep tee", route: undefined }, false)).toBeUndefined();
+    expect(slotCoverageOf(unrouted(), false)).toBeUndefined();
+  });
+
+  describe("fail-closed: a Seedream outfit never goes out without a sentence", () => {
+    const banks: [string, CategoryBank][] = [
+      ["nightwear", BANKS.nightwear],
+      ["beach", BANKS.beach],
+      ...Object.entries(BOLD_COMPANIONS),
+      ...Object.entries(CUSTOM_BOLD_BANKS),
+    ];
+
+    test("every Seedream outfit of every «Смелая» bank finds a kept sentence in its own bank's data, with its moment unknown", () => {
+      const missing = banks.flatMap(([name, bank]) =>
+        bank.outfits.filter((o) => o.route === "seedream").flatMap((o) => {
+          const kept = coverageOfWorn(bank, undefined, o, false);
+          return kept === undefined || kept === KEPT_FALLBACK ? [`${name}: ${o.text}`] : [];
+        }),
+      );
+      expect(missing).toEqual([]);
+      expect(banks.reduce((n, [, bank]) => n + bank.outfits.filter((o) => o.route === "seedream").length, 0)).toBeGreaterThan(40);
+    });
+
+    // A bank whose data says nothing for a Seedream outfit (a broken edit): the fail-closed sentence, for every avatar, never none.
+    const silent: CategoryBank = {
+      bold: true,
+      places: [{ name: "her room", at: "in her room", details: ["a lamp"], times: ["night"], moments: [{ text: "lies back", motion: "she turns her head a little", captures: ["above"], twoHanded: false }] }],
+      outfits: [{ text: "a lace set", route: "seedream", level: "flirty" }],
+      captureDeck: ["above"],
+    };
+
+    test.each([false, true])("a Seedream outfit its bank says nothing for gets the fail-closed kept sentence (impliedNudity %p)", (impliedNudity) => {
+      const outfit = silent.outfits[0];
+      if (outfit === undefined) throw new Error("the fixture has its outfit");
+      expect(coverageOfWorn(silent, undefined, outfit, impliedNudity)).toBe(KEPT_FALLBACK);
+      expect(coverageOfWorn(silent, silent.places[0]?.moments[0], outfit, impliedNudity)).toBe(KEPT_FALLBACK);
+    });
+
+    test("an outfit off the route says none, as before", () => {
+      expect(coverageOfWorn(silent, undefined, { text: "a cotton tee" }, false)).toBeUndefined();
+    });
+
+    test("the fail-closed sentence is restrictive and says no exposure word", () => {
+      expect(KEPT_FALLBACK).toMatch(/fully covers/);
+      expect(exposureWordsIn(KEPT_FALLBACK)).toEqual([]);
+    });
   });
 });
 

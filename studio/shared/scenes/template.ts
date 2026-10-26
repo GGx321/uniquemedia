@@ -1,7 +1,7 @@
 import { isCustomCategory, type SceneRoute } from "../engine";
 import { bankPlaceOf } from "./bankLookup";
 import { legwearAt } from "./level";
-import { BANK_CATEGORIES, type BankCategory, type BankPlace, type Moment, type Outfit } from "./banks/types";
+import { BANK_CATEGORIES, type BankCategory, type BankPlace, type CategoryBank, type Moment, type Outfit } from "./banks/types";
 import { customSentence } from "./custom";
 import { captureOfSlot, momentAllowed, renderSentence, type SentenceParts, type TemplateContext, type TemplateSlot } from "./render";
 import { LEGWEAR_CLASH_WORDS } from "./words";
@@ -36,6 +36,37 @@ export function legwearFits(moment: Pick<Moment, "text" | "noLegwear">, outfit: 
 export function coverageOf(moment: Pick<Moment, "coverage" | "openCoverage">, outfit: Pick<Outfit, "coverage" | "openCoverage">, impliedNudity = false): string | undefined {
   const item = moment.coverage !== undefined ? moment : outfit;
   return impliedNudity ? item.openCoverage : item.coverage;
+}
+
+/**
+ * 5a.4 (S5.BA4 round 2, review M1, I5.74): what a «Смелая» outfit says when its bank's data has no kept sentence for it (a broken edit): restrictive, so a Seedream
+ * outfit never goes out without one. The shipped banks never reach it (writer.bold.test.ts sweeps every Seedream outfit of every «Смелая» bank).
+ */
+export const KEPT_FALLBACK = "What she wears fully covers her breasts and her hips.";
+
+/**
+ * 5a.4 (S5.BA4 round 2, review M1, I5.74): the coverage sentence of `worn`, an outfit of `bank`, by origin. `moment` is the slot's moment, or undefined when the bank
+ * no longer has it (a moment reworded after the slot was stored: nightwear's «lies holding the sheet to her chest», r2.2 P3).
+ * - The moment found: `coverageOf`, the template's rule (the open sentence, or none, for a Studio-created avatar).
+ * - The moment gone: the KEPT sentence, for every avatar (the controller's decision: such an old slot is rewritten as it is, never redrawn, and always says the
+ *   kept one): the outfit's own, else that of the bank's moment that pins the outfit (the sheet, the towel and the foam carry theirs on their moments).
+ * - Fail-closed: a Seedream outfit its bank says no kept sentence for says KEPT_FALLBACK, never none. An outfit off the route says none, as before.
+ */
+export function coverageOfWorn(bank: CategoryBank, moment: Moment | undefined, worn: Outfit, impliedNudity = false): string | undefined {
+  const pinnedBy = bank.places.flatMap((place) => place.moments).find((m) => m.outfits?.includes(worn.text) === true && m.coverage !== undefined);
+  const kept = moment === undefined ? (worn.coverage ?? pinnedBy?.coverage) : (moment.coverage ?? worn.coverage);
+  if (kept === undefined) return worn.route === "seedream" ? KEPT_FALLBACK : undefined;
+  return moment === undefined ? kept : coverageOf(moment, worn, impliedNudity);
+}
+
+/**
+ * 5a.4 (S5.BA4 round 2, review M1): the coverage sentence a slot's sentence ends with, by origin: the one helper the writer's bold reader (appended after the read)
+ * and the plain sentence share. Undefined for an outfit no bank of the slot holds (an old cotton outfit, an unrouted custom slot, an ordinary bank's outfit).
+ */
+export function slotCoverageOf(slot: BankSlot & { outfit: string }, impliedNudity = false): string | undefined {
+  const hit = bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location, activity: slot.activity });
+  const worn = hit?.bank.outfits.find((outfit) => outfit.text === slot.outfit);
+  return hit === undefined || worn === undefined ? undefined : coverageOfWorn(hit.bank, hit.moment, worn, impliedNudity);
 }
 
 function bankCategory(category: string): BankCategory | undefined {
