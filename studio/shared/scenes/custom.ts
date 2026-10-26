@@ -69,6 +69,32 @@ export function locativeOf(name: string): string {
 }
 
 /**
+ * 5a.4 (S5.BA3, plan s5a4 §5.3.2, r2.2 P10): where the head noun of a place name ends for the WATER parse: `locativeOf`'s ends, and the words that say where something is in relation to
+ * another place («a cabin below deck», «a terrace overlooking the sea»). A parse of its own: `HEAD_END` above is not changed, so the ordinary custom sentences stay byte for byte.
+ */
+const WATER_HEAD_END = new RegExp(`${HEAD_END.source}|\\s(?:below|above|beneath|beyond|overlooking|facing)\\s`, "i");
+
+/**
+ * 5a.4 (S5.BA3, M8, r2.2 P7): the head noun of a custom place name, lower-cased: the last word before its first preposition («the sundeck of a sailing yacht» is «sundeck», «a pool table»
+ * is «table»).
+ */
+export function waterHeadNoun(name: string): string {
+  const headPart = name.trim().split(WATER_HEAD_END)[0] ?? name;
+  return (/([A-Za-z']+)\W*$/.exec(headPart)?.[1] ?? "").toLowerCase();
+}
+
+/** The head nouns of a water place (M8, r2.2 P7): «island», «surf», «river», «pier», «marina» and «deck» are left out. Pinned (custom.test.ts). */
+const WATER_NOUNS: ReadonlySet<string> = new Set(["beach", "sea", "seaside", "ocean", "shore", "shoreline", "lagoon", "pool", "poolside", "lake", "yacht", "sundeck"]);
+
+/**
+ * 5a.4 (S5.BA3, §5.3.2): whether a custom place is a water place, so a «Смелая» slot there is drawn from the «by the water» bank (swimwear) and never from «rooms» (lingerie). Its head
+ * noun decides, not any word in the name. The renderer's chip hint and caption call this one function (§5.9).
+ */
+export function isWaterPlaceName(name: string): boolean {
+  return WATER_NOUNS.has(waterHeadNoun(name));
+}
+
+/**
  * The tags an old custom activity is read with (plan s5a2 §5.2 step 2, I5.23): one that looks at the camera, the viewer, the lens or the phone (the
  * custom gaze regex) is a viewer moment (no gaze clause, never on a candid, a profile or a back); one that names her phone or whose eyes are already
  * busy (watching, looking, reading…) carries its own gaze; one that names her hair carries its own hair.

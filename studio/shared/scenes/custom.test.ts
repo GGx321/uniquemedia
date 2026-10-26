@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ScenePose } from "../engine";
 import { CUES, GAZE } from "./banks";
 import type { Capture } from "./captures";
-import { covers, customActivityAllowed, customMomentOf, locativeOf, rendersActivity, type CustomPool } from "./custom";
+import { covers, customActivityAllowed, customMomentOf, isWaterPlaceName, locativeOf, rendersActivity, waterHeadNoun, type CustomPool } from "./custom";
 import { templateSentence, type TemplateSlot } from "./template";
 
 // 5a.2 (S5.6a, plan s5a2 §5.2 step 2, K-7): today's custom pools render through a small adapter: «{At}, she is {activity}, wearing {outfit}, {gaze},
@@ -289,5 +289,51 @@ describe("a redraw of a slot with nothing to vary still reads differently from t
       held.add(text);
       last = text;
     }
+  });
+});
+
+// 5a.4 (S5.BA3, plan s5a4 §5.3.2, M8, r2.2 P7, P10): a custom place is a water place when its HEAD NOUN is in a pinned list, never when a water word merely appears in its name.
+describe("waterHeadNoun and isWaterPlaceName (M8, P7, P10)", () => {
+  test.each<[string, string]>([
+    ["a hotel pool", "pool"],
+    ["an infinity pool at the villa", "pool"],
+    ["the shore of the lake", "shore"],
+    ["the sundeck of a sailing yacht", "sundeck"],
+    ["a yacht at anchor in a bay", "yacht"],
+    ["a cabin below deck", "cabin"],
+    ["a kitchen island", "island"],
+    ["a pool table", "table"],
+    ["a cafe with a sea view", "cafe"],
+    ["a surf shop", "shop"],
+    ["a beach bar", "bar"],
+    ["a marina at sunset", "marina"],
+    ["a terrace overlooking the sea", "terrace"],
+    ["a room facing the ocean", "room"],
+    ["a bench beneath the pier", "bench"],
+    ["a villa above the lagoon", "villa"],
+    ["a hut beyond the dunes", "hut"],
+    ["Poolside.", "poolside"],
+  ])("the head noun of «%s» is %s", (name, head) => {
+    expect(waterHeadNoun(name)).toBe(head);
+  });
+
+  test.each(["a hotel pool", "an infinity pool at the villa", "the shore of the lake", "the sundeck of a sailing yacht", "a yacht at anchor in a bay", "a quiet beach", "poolside", "a lagoon at dawn", "the ocean"].map((n) => [n]))(
+    "«%s» is a water place",
+    (name) => {
+      expect(isWaterPlaceName(name)).toBe(true);
+    },
+  );
+
+  test.each(["a kitchen island", "a pool table", "a cafe with a sea view", "a surf shop", "a beach bar", "a cabin below deck", "a marina at sunset", "a river bank", "a pier", "the deck of a ship", "a bedroom", "a seaside walk", "a sea cave by the sea"].map((n) => [n]))(
+    "«%s» is not a water place",
+    (name) => {
+      expect(isWaterPlaceName(name)).toBe(false);
+    },
+  );
+
+  test("the words «below», «above», «beneath», «beyond», «overlooking» and «facing» end the head noun only for the water parse: locativeOf keeps today's output", () => {
+    expect(locativeOf("a cabin below deck")).toBe("on a cabin below deck");
+    expect(locativeOf("a terrace overlooking the sea")).toBe("in a terrace overlooking the sea");
+    expect(locativeOf("a villa above the lagoon")).toBe("in a villa above the lagoon");
   });
 });
