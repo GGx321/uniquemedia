@@ -81,6 +81,36 @@ export function levelCountsOf(slots: number): LevelCounts {
   return { ordinary: slots - notOrdinary, flirty: notOrdinary - bold, bold };
 }
 
+/**
+ * 5a.4 (S5.BA3, plan s5a4 r2.2 D1): `totals` (most revealing, flirty, plain) divided over parts of `counts` photos each. The most revealing slots go first, in proportion to the photos
+ * (largest remainder, in integers: every part is the floor or the ceiling of its exact quota and never above its photos); the flirty slots are then spread over what each part has left
+ * the same way; plain is each part's rest. Ties go in `tieOrder`, which is read (once) only when two or more parts have photos, so a lone part reads no stream. The totals must add up
+ * to the photos.
+ */
+export function spreadLevels(totals: LevelCounts, counts: readonly number[], tieOrder?: () => readonly number[]): LevelCounts[] {
+  const photos = counts.reduce((sum, n) => sum + n, 0);
+  if (totals.bold + totals.flirty + totals.ordinary !== photos) throw new RangeError(`the levels add up to ${totals.bold + totals.flirty + totals.ordinary} photos, the parts hold ${photos}`);
+  const drawing = counts.filter((n) => n > 0).length;
+  const order = drawing >= 2 ? tieOrder?.() : undefined;
+  const bold = apportionLegs(totals.bold, counts, order);
+  const flirty = apportionLegs(
+    totals.flirty,
+    counts.map((n, i) => n - (bold[i] ?? 0)),
+    order,
+  );
+  return counts.map((n, i) => ({ bold: bold[i] ?? 0, flirty: flirty[i] ?? 0, ordinary: n - (bold[i] ?? 0) - (flirty[i] ?? 0) }));
+}
+
+/**
+ * 5a.4 (S5.BA3, plan s5a4 r2.2 D1, §5.1.1): the tiers of a «Смелая» request, counted over the WHOLE request (`levelCountsOf` of all its photos: 8 / 8 / 4 of 20) and spread over its
+ * categories by `spreadLevels`, in the order of `split`. A single category gets exactly `levelCountsOf(n)`. The one rule, for the planner, the mock and the card's caption (which sums
+ * the parts, so it needs no tie order); the planner passes the order drawn on its `tier-spread` stream.
+ */
+export function tierSpreadOf(split: readonly { count: number }[], tieOrder?: () => readonly number[]): LevelCounts[] {
+  const counts = split.map(({ count }) => count);
+  return spreadLevels(levelCountsOf(counts.reduce((sum, n) => sum + n, 0)), counts, tieOrder);
+}
+
 // 5a.2c (S5.8a, plan s5a2 I5.29): «Ножки». The legs slots of a run are min(round-half-up(share × B), ⌊0.3 × count⌋): B is the run's built-in slots (a custom category draws no
 // legs), count all its slots, share the chip in whole percent. Integers only, so the rounding is (share × B + 50) div 100 and the cap (3 × count) div 10. The one rule, for
 // the planner and for the card's «{L} из {N} кадров» line.

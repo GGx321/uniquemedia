@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { LegwearSlot } from "./banks/types";
-import { atSlotLevel, flirtyCountOf, legwearAt, levelCountsOf, seedreamRoute } from "./level";
+import { atSlotLevel, flirtyCountOf, legwearAt, levelCountsOf, seedreamRoute, tierSpreadOf, type LevelCounts } from "./level";
 
 describe("flirtyCountOf (I5.28)", () => {
   test.each([
@@ -117,5 +117,91 @@ describe("seedreamRoute (I5.38)", () => {
     expect(seedreamRoute({ route: "seedream" }, {})).toBe("seedream");
     expect(seedreamRoute({}, { route: "seedream" })).toBe("seedream");
     expect(seedreamRoute({}, {}, "seedream")).toBe("seedream");
+  });
+});
+
+// 5a.4 (S5.BA3, plan s5a4 r2.2 D1): the tiers of «Смелая» are counted over the WHOLE request and then spread over its categories, so 20 photos over the five are 8 / 8 / 4 in
+// sum (what the owner was told), not 10 / 5 / 5 (each category rounded alone).
+describe("tierSpreadOf (r2.2 D1)", () => {
+  const sum = (parts: readonly LevelCounts[], key: keyof LevelCounts): number => parts.reduce((total, part) => total + part[key], 0);
+  const splitOf = (counts: readonly number[]): { count: number }[] => counts.map((count) => ({ count }));
+
+  test("20 photos over the five add up to 8 most revealing, 8 flirty and 4 plain", () => {
+    const parts = tierSpreadOf(splitOf([4, 4, 4, 4, 4]));
+    expect({ bold: sum(parts, "bold"), flirty: sum(parts, "flirty"), ordinary: sum(parts, "ordinary") }).toEqual({ bold: 8, flirty: 8, ordinary: 4 });
+  });
+
+  test("two equal halves of 20 get 4 / 4 / 2 each", () => {
+    expect(tierSpreadOf(splitOf([10, 10]))).toEqual([
+      { bold: 4, flirty: 4, ordinary: 2 },
+      { bold: 4, flirty: 4, ordinary: 2 },
+    ]);
+  });
+
+  test("a single category gets exactly levelCountsOf(n), for every n up to 100", () => {
+    for (let n = 0; n <= 100; n++) expect(tierSpreadOf(splitOf([n]))).toEqual([levelCountsOf(n)]);
+  });
+
+  test("a single category reads no tie order", () => {
+    let reads = 0;
+    tierSpreadOf(splitOf([7]), () => {
+      reads++;
+      return [0];
+    });
+    expect(reads).toBe(0);
+  });
+
+  test("a category with 0 photos does not make a second one draw", () => {
+    let reads = 0;
+    tierSpreadOf(splitOf([0, 9, 0]), () => {
+      reads++;
+      return [0, 1, 2];
+    });
+    expect(reads).toBe(0);
+  });
+
+  test("two or more categories that draw read the tie order, once", () => {
+    let reads = 0;
+    tierSpreadOf(splitOf([3, 5, 2]), () => {
+      reads++;
+      return [2, 1, 0];
+    });
+    expect(reads).toBe(1);
+  });
+
+  test("an avatar's launch compose of 18 over the five sums to levelCountsOf(18)", () => {
+    const parts = tierSpreadOf(splitOf([4, 4, 4, 3, 3]));
+    expect({ bold: sum(parts, "bold"), flirty: sum(parts, "flirty"), ordinary: sum(parts, "ordinary") }).toEqual(levelCountsOf(18));
+  });
+
+  test("1 to 7 categories over totals 1 to 100: the sums are exact, no category is over its photos, and each share is within 1 of its proportion", () => {
+    for (let categories = 1; categories <= 7; categories++) {
+      for (let total = 1; total <= 100; total++) {
+        // An uneven but deterministic split of `total` photos over `categories` categories.
+        const counts = Array.from({ length: categories }, (_, i) => Math.floor(((i + 1) * total) / categories) - Math.floor((i * total) / categories));
+        counts.reverse();
+        const parts = tierSpreadOf(splitOf(counts));
+        const want = levelCountsOf(total);
+        expect(sum(parts, "bold")).toBe(want.bold);
+        expect(sum(parts, "flirty")).toBe(want.flirty);
+        expect(sum(parts, "ordinary")).toBe(want.ordinary);
+        parts.forEach((part, i) => {
+          const n = counts[i] as number;
+          expect(part.bold + part.flirty + part.ordinary).toBe(n);
+          expect(Math.abs(part.bold - (want.bold * n) / total)).toBeLessThan(1);
+          // The flirty slots are spread over what the bold ones left: a share within 1 of its proportion of the rest.
+          const left = total - want.bold;
+          const leftHere = n - part.bold;
+          expect(Math.abs(part.flirty - (left === 0 ? 0 : (want.flirty * leftHere) / left))).toBeLessThan(1);
+        });
+      }
+    }
+  });
+
+  test("the tie order decides which category takes the extra photo, and the totals do not move", () => {
+    const first = tierSpreadOf(splitOf([4, 4, 4, 4]), () => [0, 1, 2, 3]);
+    const last = tierSpreadOf(splitOf([4, 4, 4, 4]), () => [3, 2, 1, 0]);
+    expect(sum(first, "bold")).toBe(sum(last, "bold"));
+    expect(first).not.toEqual(last);
   });
 });
