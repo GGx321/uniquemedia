@@ -7,7 +7,7 @@ import { frameFactsOf, type FrameFacts, type FrameFactsResult } from "./frameFac
 import { VIDEO_TIERS } from "../money/prices";
 import { clipPromptOf, clipRequestBody } from "./prompt";
 import { ADULT_LINE, COMES_OFF_LINE, CONTINUITY_LINE, LEGS_LINE, LOOK_LINE, POSE_ANCHOR, PRONE_ANCHOR, PROMPT_WORDS_MAX, SLOW_LINE, cameraLineOf, legwearLineOf, wordCount, type ClipDialect } from "./videoLook";
-import { photoOf, pick, planlessPhoto, sceneRun, slotOf } from "./testing/frameFixtures";
+import { everyMoment, photoOf, pick, planlessPhoto, sceneRun, slotOf } from "./testing/frameFixtures";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -42,6 +42,13 @@ function customSlot(capture: "friend" | "selfie" | "timer", activity: string): P
   return { ...base, category: CUSTOM_REF, location: "a riverside cafe", activity, outfit: "a linen dress", shot: shotOf(capture), capture };
 }
 
+/** The first bank moment (of the 7 banks) whose motion is `motion`. */
+function everyMomentWith(motion: string) {
+  const found = everyMoment().find((p) => p.moment.motion === motion);
+  if (found === undefined) throw new Error(`no bank moment moves «${motion}»`);
+  return found;
+}
+
 const sceneMotion = (facts: FrameFacts): string => {
   if (facts.moment === null) throw new Error("no bank moment");
   return facts.moment.motion;
@@ -51,7 +58,7 @@ describe("the prompts probe P-V ran (2026-10-13), as the C3 polish rewrote their
   test("S1: «Пляж и бассейн», candid, steps out of the water", () => {
     const facts = factsFor(slotOf(pick("beach", (m) => m.text === "steps out of the water"), "candid", "front", { level: "bold" }));
     expect(promptOf(facts, sceneMotion(facts))).toBe(
-      "Handheld steadily by a friend at the same distance the whole time; the framing barely moves. The adult woman keeps her pose from the photo. Over the whole clip she keeps walking slowly. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. No text on screen. She is an adult woman.",
+      "Handheld steadily by a friend at the same distance the whole time; the framing barely moves. The adult woman starts in her pose from the photo. Over the whole clip she keeps walking slowly. Nothing new appears, and nothing she holds or wears changes. Slow, gentle, unhurried, real-time speed; no fast or abrupt movements, no sudden gestures. Vertical phone video, slight noise, everything in focus. One continuous shot, no cuts. No text on screen. She is an adult woman.",
     );
   });
 
@@ -329,6 +336,20 @@ describe("FU-CLIP: the prompt makes no claim about her pose that only the plan m
     const pov = factsFor(slotOf(pick("home", (m) => m.captures.includes("pov-legs")), "pov-legs"));
     const low = factsFor(slotOf(pick("photoshoot", (m) => m.captures.includes("low-feet")), "low-feet"));
     for (const facts of [pov, low]) expect(promptOf(facts, sceneMotion(facts))).toContain(LEGS_LINE);
+  });
+
+  test("round 2 (MEDIUM-4): a bank motion that moves her across the frame starts her in the photo's pose instead of keeping her in it", () => {
+    // The 7 banks' moving motions; the companions' «she wades into the water slowly» is pinned in videoLook.test.ts.
+    const MOVING = ["she keeps walking slowly", "she walks on slowly, the water at her feet", "she takes a small step closer", "she laughs and steps back a little"];
+    const STARTS = "The adult woman starts in her pose from the photo.";
+    for (const motion of MOVING) {
+      const picked = everyMomentWith(motion);
+      const facts = factsFor(slotOf(picked, picked.moment.captures[0] ?? "friend", picked.moment.angle ?? "front"));
+      const prompt = promptOf(facts, motion);
+      expect([motion, prompt.includes(STARTS), prompt.includes(ANCHOR)]).toEqual([motion, true, false]);
+    }
+    const still = curled();
+    expect(promptOf(still, sceneMotion(still))).not.toContain(STARTS);
   });
 
   test("C5c clip 2, rebuilt on its frame: the exact prompt the paid re-check sends", () => {

@@ -123,6 +123,21 @@ export function shortCameraLineOf(capture: ClipCapture, _dialect: ClipDialect): 
  */
 export const POSE_ANCHOR = "The adult woman keeps her pose from the photo.";
 
+/**
+ * The pose anchor of a motion that moves her across the frame (FU-CLIP round 2, MEDIUM-4): «keeps her pose» would fight a walk or a step, so she only starts in it.
+ * The bank's moving motions: «she keeps walking slowly», «she walks on slowly…», «she takes a small step closer», «she laughs and steps back a little», «she wades into
+ * the water slowly».
+ */
+export const MOVING_POSE_ANCHOR = "The adult woman starts in her pose from the photo.";
+
+/** A motion that moves her across the frame: a walk, a step, a wade. */
+const MOVES_HER = /\b(?:walk(?:s|ing)?|steps?|stepping|wades?|wading)\b/i;
+
+/** The pose anchor for this motion: she starts in the photo's pose when the motion moves her across the frame, and keeps it otherwise. */
+export function poseAnchorOf(motion: string): string {
+  return MOVES_HER.test(motion) ? MOVING_POSE_ANCHOR : POSE_ANCHOR;
+}
+
 /** The motion sentence (§5.5 item 3): the motion verbatim after «Over the whole clip», so «she …» and «her …» both read. */
 export function motionSentenceOf(motion: string): string {
   return `Over the whole clip ${motion}.`;

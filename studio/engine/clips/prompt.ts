@@ -6,7 +6,6 @@ import type { FrameFacts } from "./frameFacts";
 import {
   ADULT_LINE,
   LOOK_LINE,
-  POSE_ANCHOR,
   PROMPT_WORDS_MAX,
   SLOW_LINE,
   cameraLineOf,
@@ -14,6 +13,7 @@ import {
   legsLineOf,
   legwearLineOf,
   motionSentenceOf,
+  poseAnchorOf,
   proneAnchorOf,
   shortCameraLineOf,
   wordCount,
@@ -48,7 +48,7 @@ export function clipPromptOf(facts: FrameFacts, motion: string, dialect: ClipDia
   if (findings.length > 0) return { ok: false, problems: findings.map((finding) => `${finding.problem} (${finding.rule}): ${finding.what}`) };
   const off = undressesBy(motion, source, facts.bold);
   const rest = [
-    POSE_ANCHOR,
+    poseAnchorOf(motion),
     motionSentenceOf(motion),
     proneAnchorOf(facts.capture, facts.activity, motion),
     legsLineOf(facts.capture),

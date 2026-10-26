@@ -14,6 +14,7 @@ import {
   CONTINUITY_LINE,
   LEGS_LINE,
   LOOK_LINE,
+  MOVING_POSE_ANCHOR,
   POSE_ANCHOR,
   PRONE_ANCHOR,
   PROMPT_WORDS_MAX,
@@ -27,6 +28,7 @@ import {
   hasVideoStagingWord,
   legwearLineOf,
   motionSentenceOf,
+  poseAnchorOf,
   proneAnchorOf,
   provenCaptureOf,
   shortCameraLineOf,
@@ -178,6 +180,26 @@ describe("the sentences of a clip prompt", () => {
     expect(POSE_ANCHOR).toBe("The adult woman keeps her pose from the photo.");
     expect(wordCount(POSE_ANCHOR)).toBe(9);
     expect(hasVideoStagingWord(POSE_ANCHOR)).toBe(false);
+  });
+
+  const ANCHOR_ROWS: readonly (readonly [string, boolean])[] = [
+    ["she keeps walking slowly", true],
+    ["she walks on slowly, the water at her feet", true],
+    ["she takes a small step closer", true],
+    ["she laughs and steps back a little", true],
+    ["she wades into the water slowly", true],
+    ["she gently tucks her hair behind her ear", false],
+    ["she shifts her weight a little", false],
+    ["she crosses her ankles slowly", false],
+  ];
+  for (const [motion, moving] of ANCHOR_ROWS) {
+    test(`round 2 (MEDIUM-4): «${motion}» ${moving ? "starts her in" : "keeps her in"} the photo's pose`, () => {
+      expect(poseAnchorOf(motion)).toBe(moving ? MOVING_POSE_ANCHOR : POSE_ANCHOR);
+    });
+  }
+
+  test("round 2 (MEDIUM-4): the moving anchor, word for word", () => {
+    expect(MOVING_POSE_ANCHOR).toBe("The adult woman starts in her pose from the photo.");
   });
 
   test("the motion sentence: «she …» and «her …» both follow «Over the whole clip»", () => {
@@ -497,6 +519,7 @@ describe("the video lines live in clips/videoLook.ts alone (I5.1, I5.51)", () =>
     ...new Set(Object.values(KLING_LINES).filter((line) => !line.includes("the phone covering her face"))),
     "The phone stays completely still the whole time; the framing never changes.",
     POSE_ANCHOR,
+    MOVING_POSE_ANCHOR,
     PRONE_ANCHOR,
     LEGS_LINE,
     CONTINUITY_LINE,
