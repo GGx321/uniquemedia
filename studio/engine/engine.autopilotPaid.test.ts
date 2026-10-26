@@ -662,7 +662,9 @@ describe("a launch at «Смелая» over a custom category", () => {
   const BOLD_CHUNK = 2 * 48_750;
   const ORDINARY_CHUNK = 2 * 37_500;
 
-  test("is accepted at the bold writer's figure and composes inside it, with no hold", async () => {
+  // This file's writer answers every slot with one everyday sentence, which the bold reader refuses (S5.BA4: it names neither the slot's place nor its outfit), so the compose
+  // asks its chunk twice and the plain sentence takes the slots: both bold attempts fit the allocation, and the launch goes on with no hold.
+  test("is accepted at the bold writer's figure and composes inside it, both attempts, with no hold", async () => {
     const avatarId = await seedAvatar();
     const net = network();
     const started = await boot(net);
@@ -671,7 +673,10 @@ describe("a launch at «Смелая» over a custom category", () => {
     await reachPhase(launch.launchId, "montage");
 
     expect(fileOf(launch.launchId).paidHold).toBeNull();
-    expect(net.writerCalls()).toHaveLength(1);
+    const { sceneSetId } = generationOf(launch.launchId);
+    const writerReserves = ledgerLines(dir()).flatMap((l) => (l.type === "reserve" && typeof l.attemptId === "string" && l.attemptId.startsWith(`${sceneSetId}:writer-`) ? [l.worstMicros] : []));
+    expect(net.writerCalls()).toHaveLength(2);
+    expect(writerReserves).toEqual([BOLD_CHUNK / 2, BOLD_CHUNK / 2]);
   });
 
   test("one accepted before 5a.4 at the ordinary writer's figure: the compose is refused for free, nothing is sent or reserved, and the launch holds on the price", async () => {
