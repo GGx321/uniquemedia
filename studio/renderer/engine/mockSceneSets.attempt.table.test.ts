@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { WRITER_BOLD_CALL, WRITER_CALL, writerAttemptWorstMicros, writerChunksMicros } from "../../engine/money/estimate";
+import { WRITER_BOLD_CALL, WRITER_CALL, writerAttemptWorstMicros, writerChunksMicros, writerExpectedMicros } from "../../engine/money/estimate";
 import { PriceBook } from "../../engine/money/prices";
 import { SCENE_CHUNK_ATTEMPTS } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
+import { MOCK_RUN_WRITER } from "./mockEngine";
 import { MOCK_BOLD_SCENE_ATTEMPT_WORST, MOCK_SCENE_ATTEMPT_WORST } from "./mockSceneSets";
 useNativeGlobals();
 
@@ -31,4 +32,19 @@ describe("the mock's writer attempt is the engine's", () => {
   test("the mock's chunk attempts are both shapes' maxAttempts", () => {
     expect([WRITER_CALL.maxAttempts, WRITER_BOLD_CALL.maxAttempts]).toEqual([SCENE_CHUNK_ATTEMPTS, SCENE_CHUNK_ATTEMPTS]);
   });
+});
+
+// S5.BA5a round 2 (L1): the mock photo run's own writer figures (mockEngine.ts `MOCK_RUN_WRITER`), held to the engine's ordinary writer the same way.
+describe("the mock photo run's writer is the engine's ordinary writer", () => {
+  const ROWS_RUN = [
+    { field: "worstPerCall", mock: MOCK_RUN_WRITER.worstPerCall, engine: () => writerAttemptWorstMicros(BOOK, WRITER_CALL), value: 37_500 },
+    { field: "worstPerChunk", mock: MOCK_RUN_WRITER.worstPerChunk, engine: () => writerChunksMicros(BOOK, WRITER_CALL, 1), value: 75_000 },
+    { field: "photosPerChunk", mock: MOCK_RUN_WRITER.photosPerChunk, engine: () => WRITER_CALL.slotsPerCall, value: 25 },
+    { field: "expectedPerPhoto", mock: MOCK_RUN_WRITER.expectedPerPhoto, engine: () => writerExpectedMicros(BOOK, WRITER_CALL, 1, 1), value: 458 },
+  ] as const;
+  for (const row of ROWS_RUN) {
+    test(`${row.field} is the engine's (${row.value})`, () => {
+      expect([row.mock, row.engine()]).toEqual([row.value, row.value]);
+    });
+  }
 });
