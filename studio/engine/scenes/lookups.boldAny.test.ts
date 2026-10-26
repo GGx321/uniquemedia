@@ -7,6 +7,8 @@ import { POOLS } from "./pools";
 import { roomPlaceOf, slotLookOf } from "./roomPlace";
 import type { RunSlot } from "./schema";
 import { ORDINARY_BUILT_INS } from "./types";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // 5a.4 (S5.BA3, plan s5a4 I5.73, §5.1.3, H1): the room draw, the lamp and mirror-back marks and the hair tags find a slot's place and moment through the ONE marker-aware lookup. A «Смелая»
 // slot of the five reads its companion's place (never «Дом»'s), a custom category's reads the shared bank's, and a slot stored before 5a.4 reads the ordinary pool as it always did.

@@ -668,7 +668,9 @@ describe("runs.start", () => {
   });
 
   // 5a.3 (S5.9a): «Смелая» is accepted; with no «Смелая» category (none exists yet) the run draws the flirty mix, and plan.json keeps the level it was asked at.
-  test("a run asked bold over the five built-ins stores the bold level and holds the planner's flirty mix", async () => {
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 I5.71, §7.4): «Смелая» is every category's now, so a bold run over the five draws their companions on the route, with the request's 40 / 40 / 20
+  // mix; the flirty mix this test told is the «Кокетливая» run above it, which keeps it.
+  test("a run asked bold over the five built-ins stores the bold level and holds the companions' 40 / 40 / 20 mix, every slot on the route", async () => {
     const avatarId = await seedAvatar();
     const { engine, events } = await engineOver(runNetwork({ image: () => ({ hang: true }) }));
     const twenty = 20 * 3 * 50_000 + 2 * 37_500;
@@ -677,8 +679,10 @@ describe("runs.start", () => {
     const stored = planOf(runId);
 
     expect(stored.request?.level).toBe("bold");
-    expect(stored.scenes).toEqual(planScenes({ seed: stored.scenes.seed, count: 20, categories: ["home", "travel"], level: "flirty" }));
-    expect(stored.scenes.slots.filter((s) => "level" in s)).toHaveLength(12);
+    expect(stored.scenes).toEqual(planScenes({ seed: stored.scenes.seed, count: 20, categories: ["home", "travel"], level: "bold" }));
+    expect(stored.scenes.slots.filter((s) => "level" in s && s.level === "bold")).toHaveLength(8);
+    expect(stored.scenes.slots.filter((s) => "level" in s && s.level === "flirty")).toHaveLength(8);
+    expect(stored.scenes.slots.every((s) => "route" in s && s.route === "seedream")).toBe(true);
 
     ok(await engine.handle(command("runs.cancel", { runId })));
     await jobEnd(events, jobId);

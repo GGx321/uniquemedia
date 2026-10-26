@@ -578,7 +578,9 @@ describe("«Ножки» in a scene set (S5.8a)", () => {
   });
 
   // 5a.3 (S5.9a): a set composed bold over the five built-ins stores and shows its level, and holds the flirty mix of a «Кокетливая» set.
-  test("a set composed bold over the five built-ins stores and shows the bold level and holds the flirty mix", async () => {
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 I5.71, §7.4): «Смелая» is every category's now: a bold set over the five holds the companions' 40 / 40 / 20 mix on the route; the «Кокетливая» set still
+  // holds the flirty mix and no bold scene or route, as before.
+  test("a set composed bold over the five built-ins stores and shows the bold level and holds the 40 / 40 / 20 mix on the route; a «Кокетливая» set holds the flirty mix", async () => {
     const avatarId = await seedAvatar();
     const { engine, events } = await engineOver(sceneNetwork());
 
@@ -587,14 +589,17 @@ describe("«Ножки» in a scene set (S5.8a)", () => {
     expect(JSON.parse(readFileSync(setFile(avatarId, bold.sceneSetId), "utf8")).request.level).toBe("bold");
     const view = await setOf(engine, avatarId);
     expect(view.level).toBe("bold");
+    expect(view.scenes.some((s) => s.level === "flirty")).toBe(true);
+    expect(view.scenes.some((s) => s.level === "bold")).toBe(true);
+    expect(view.scenes.every((s) => s.route === "seedream")).toBe(true);
     ok(await engine.handle(command("scenes.discard", { sceneSetId: bold.sceneSetId })));
 
     const flirty = composed(await engine.handle(legsCompose(avatarId, { legsShare: 0, level: "flirty" })));
     await jobEnd(events, flirty.jobId ?? "none");
     const flirtyView = await setOf(engine, avatarId);
-    expect(view.scenes.filter((s) => s.level === "flirty")).toHaveLength(flirtyView.scenes.filter((s) => s.level === "flirty").length);
-    expect(view.scenes.some((s) => s.level === "flirty")).toBe(true);
-    expect(view.scenes.some((s) => s.level === "bold")).toBe(false);
+    expect(flirtyView.scenes.some((s) => s.level === "flirty")).toBe(true);
+    expect(flirtyView.scenes.some((s) => s.level === "bold")).toBe(false);
+    expect(flirtyView.scenes.some((s) => s.route !== undefined)).toBe(false);
   });
 
   test("framing and capture survive a restart: a new engine over the same library shows the same legs scenes", async () => {

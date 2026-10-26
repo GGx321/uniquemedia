@@ -3,6 +3,8 @@ import { BOLD_COMPANIONS, CUSTOM_BOLD_BANKS } from "../../shared/scenes/banks/co
 import { BOLD_POOLS, CUSTOM_BOLD_POOLS, POOLS } from "./pools";
 import { poolAt, poolOfSlot, withoutImplied } from "./poolAt";
 import { ORDINARY_BUILT_INS } from "./types";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // 5a.4 (S5.BA3, plan s5a4 §5.1.2, I5.71, I5.73, I5.74): the two pool functions. `poolAt` plans NEW slots: the five at «Смелая» come from their companion, everything else from today's
 // pool. `poolOfSlot` serves STORED slots by their marker: the five or a custom category with the route, the companion or the shared custom bank; otherwise today's pool, so an old
