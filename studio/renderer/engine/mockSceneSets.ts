@@ -321,7 +321,11 @@ function planScenes(count: number, refs: readonly CategoryRef[], level: SceneLev
   for (const [entry, { ref, count: n }] of split.entries()) {
     const custom = isCustomCategory(ref) ? category(ref) : undefined;
     // 5a.2 (S5.6e): a built-in scene is a pair of its category's bank dealt a capture from the deck, so the shared template can write it.
-    if (!isCustomCategory(ref) && level === "bold" && isBoldCategory(ref)) {
+    // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4 #1): «Смелая» is every category's, so the five join the branch below. STOP-GAP until S5.BA7 mirrors the engine in full: the scenes are dealt from the
+    // ordinary bank (the engine plans the five from their companions) and only LABELLED as the engine's are, a level by the mix and the Seedream route on every scene, so the parity key 4473 (a bold
+    // compose over «Дом»: 4 flirty, 4 bold, every scene on the route) holds. BA7 deals the companions and spreads the tiers over the whole request (`tierSpreadOf`) and drops `labelled`.
+    if (!isCustomCategory(ref) && level === "bold") {
+      const labelled = !isBoldCategory(ref);
       // 5a.3 (S5.9c, I5.36): a «Смелая» category under «Смелая» draws the 20 / 40 / 40 mix, exactly (the shared `levelCountsOf`). The mock spreads the bold scenes evenly over the category, then
       // the flirty ones over the rest; every scene is a pair of the bank at its level, written by the shared template, and is on Seedream when its moment or its outfit is.
       const counts = levelCountsOf(n);
@@ -339,12 +343,12 @@ function planScenes(count: number, refs: readonly CategoryRef[], level: SceneLev
         const sceneLevel = isBold[k] === true ? ("bold" as const) : isFlirty.has(k) ? ("flirty" as const) : undefined;
         if (legsAt[k] === true) {
           const draw = legsDraw(ref, kLegs++, { level: sceneLevel ?? "ordinary" });
-          scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, framing: "legs", ...(sceneLevel === undefined ? {} : { level: sceneLevel }), ...(draw.route === undefined ? {} : { route: draw.route }), place: draw.place, idea: null, text: null, edited: false, removed: false });
+          scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, framing: "legs", ...(sceneLevel === undefined ? {} : { level: sceneLevel }), ...(draw.route === undefined && !labelled ? {} : { route: "seedream" as const }), place: draw.place, idea: null, text: null, edited: false, removed: false });
           continue;
         }
         const draw = bankDraw(ref, kOther, { level: sceneLevel ?? "ordinary", away: sceneLevel === undefined && spread(kOther, others, wantedAway) ? "prefer" : "never" });
         kOther++;
-        scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(sceneLevel === undefined ? {} : { level: sceneLevel }), ...(draw.route === undefined ? {} : { route: draw.route }), place: draw.place, idea: null, text: null, edited: false, removed: false });
+        scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(sceneLevel === undefined ? {} : { level: sceneLevel }), ...(draw.route === undefined && !labelled ? {} : { route: "seedream" as const }), place: draw.place, idea: null, text: null, edited: false, removed: false });
       }
       continue;
     }

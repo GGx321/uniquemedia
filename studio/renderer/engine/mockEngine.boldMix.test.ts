@@ -65,7 +65,9 @@ describe("a bold set of the «Смелая» categories on the mock", () => {
     }
   });
 
-  test("a mixed set holds each category's own counts, and the five among them draw the «Кокетливая» mix", async () => {
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4 #1): «Смелая» is every category's, so «Дом» in a bold mix draws the bold mix on the route, not the «Кокетливая» one (the mock's stop-gap; S5.BA7 spreads the
+  // tiers over the whole request). The «Кокетливая» mix of «Дом» is told on a «Кокетливая» set, kept.
+  test("a mixed set holds each category's own counts, the five among them draw the bold mix on the route, and a «Кокетливая» «Дом» set the flirty one", async () => {
     const { view } = await composed({ categories: ["home", "nightwear", "beach"], level: "bold" }, 30);
     for (const category of ["nightwear", "beach"]) {
       const own = view.scenes.filter((s) => s.category === category);
@@ -73,8 +75,11 @@ describe("a bold set of the «Смелая» categories on the mock", () => {
       expect(own.filter((s) => s.level === "flirty")).toHaveLength(levelCountsOf(own.length).flirty);
     }
     const home = view.scenes.filter((s) => s.category === "home");
-    expect(home.filter((s) => s.level === "flirty")).toHaveLength(6);
-    expect(home.some((s) => s.level === "bold" || s.route !== undefined)).toBe(false);
+    expect(home.some((s) => s.level === "bold")).toBe(true);
+    expect(home.every((s) => s.route === "seedream")).toBe(true);
+    const flirty = (await composed({ categories: ["home"], level: "flirty" }, 10)).view.scenes;
+    expect(flirty.filter((s) => s.level === "flirty")).toHaveLength(6);
+    expect(flirty.some((s) => s.level === "bold" || s.route !== undefined)).toBe(false);
   });
 
   test("the set shows its level, and every scene is written by the shared template", async () => {
@@ -193,8 +198,16 @@ describe("the owner's edit of a «Смелая» scene on the mock", () => {
     expect(await edit(await setOf(m), m, 2, "A teenage girl in a bikini.")).toMatchObject({ ok: true, result: { problem: { reason: "youth-word" } } });
   });
 
-  test("refuses the revealing word on a scene of «Дом»", async () => {
-    const { m, view } = await composed({ categories: ["home"], level: "bold" }, 4);
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 I5.73, §7.4 #1): a «Смелая» «Дом» scene is on the route now and is held to the bold content line (youth words only), like any «Смелая» frame; the revealing-word
+  // refusal is the «Кокетливая» «Дом» scene's, kept.
+  test("refuses the revealing word on a scene of a «Кокетливая» «Дом» set", async () => {
+    const { m, view } = await composed({ categories: ["home"], level: "flirty" }, 4);
     expect(await edit(view, m, 1, BOLD_TEXT)).toMatchObject({ ok: true, result: { problem: { reason: "revealing-word" } } });
+  });
+
+  test("lets «topless» through on a «Смелая» «Дом» scene, which is on the route, and still refuses a youth word", async () => {
+    const { m, view } = await composed({ categories: ["home"], level: "bold" }, 4);
+    expect(await edit(view, m, 1, BOLD_TEXT)).toMatchObject({ ok: true, result: { sceneSet: expect.anything() } });
+    expect(await edit(await setOf(m), m, 2, "A teenage girl in a bikini.")).toMatchObject({ ok: true, result: { problem: { reason: "youth-word" } } });
   });
 });

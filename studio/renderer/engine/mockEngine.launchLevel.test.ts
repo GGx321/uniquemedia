@@ -26,12 +26,14 @@ describe("a launch's set takes the draft's «Подача»", () => {
   });
 
   // 5a.3 (S5.9a): a bold launch over the five built-ins reviews a set that shows the bold level and holds the flirty mix.
-  test("a bold launch reviews a bold set with the flirty mix of the five built-ins", async () => {
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4 #1): «Смелая» is every category's, so the set holds the 40 / 40 / 20 mix on the route; the flirty mix is the flirty launch's, the test above, kept.
+  test("a bold launch reviews a bold set with the bold mix of the five built-ins, every scene on the route", async () => {
     const set = await launchSet({ level: "bold" });
     expect(set.level).toBe("bold");
     expect(set.scenes).toHaveLength(10);
-    expect(set.scenes.filter((s) => s.level === "flirty")).toHaveLength(flirtyCountOf(10, "flirty"));
-    expect(set.scenes.some((s) => s.level === "bold")).toBe(false);
+    expect(set.scenes.filter((s) => s.level === "flirty")).toHaveLength(4);
+    expect(set.scenes.filter((s) => s.level === "bold")).toHaveLength(4);
+    expect(set.scenes.every((s) => s.route === "seedream")).toBe(true);
   });
 
   test("an ordinary launch, with a level asked for by name or none, reviews an ordinary set", async () => {

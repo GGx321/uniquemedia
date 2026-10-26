@@ -53,14 +53,17 @@ describe("a set composed on the mock", () => {
   });
 
   // 5a.3 (S5.9a): «Смелая» over the five ordinary built-ins draws the «Кокетливая» mix, and the set shows the level it was asked at.
-  test("shows the bold level of a set composed bold, and draws the flirty mix over the five built-ins", async () => {
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4 #1): «Смелая» is every category's, so the set draws the bold mix on the route (the counts are S5.BA7's, over the whole request); the «Кокетливая» mix is
+  // told on a flirty set, kept.
+  test("shows the bold level of a set composed bold, and draws the bold mix over the five built-ins on the route", async () => {
     const bold = await composedSet({ level: "bold" });
     const flirty = await composedSet({ level: "flirty" });
     expect(bold.level).toBe("bold");
-    expect(bold.scenes.map((scene) => scene.level)).toEqual(flirty.scenes.map((scene) => scene.level));
-    expect(bold.scenes.map((scene) => scene.capture)).toEqual(flirty.scenes.map((scene) => scene.capture));
     expect(bold.scenes.some((scene) => scene.level === "flirty")).toBe(true);
-    expect(bold.scenes.some((scene) => scene.level === "bold" || scene.route !== undefined)).toBe(false);
+    expect(bold.scenes.some((scene) => scene.level === "bold")).toBe(true);
+    expect(bold.scenes.every((scene) => scene.route === "seedream")).toBe(true);
+    expect(flirty.scenes.some((scene) => scene.level === "flirty")).toBe(true);
+    expect(flirty.scenes.some((scene) => scene.level === "bold" || scene.route !== undefined)).toBe(false);
   });
 
   test("shows no level when it was composed ordinary, asked or not", async () => {

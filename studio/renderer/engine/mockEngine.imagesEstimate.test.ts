@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { MOCK_BOLD_IMAGE } from "./mockEngine";
+import { mixedSetSeed } from "./mockEngine.testkit";
 import { IMAGE, MIA, ON_THE_WRITER, runUntil, runWorld, startRun, toDone, unwrap } from "./mockLaunchRun.testkit";
 
 // S4.6p: the mock answers `runs.estimateImages` as the real engine does: the figure the draw of that many photos is priced at (the same one `runs.estimateFromScenes` answers
@@ -69,9 +70,11 @@ describe("runs.estimateImages { avatarId, count, level, categories } (S5.R4-fix)
 describe("runs.estimateImages { avatarId, count, sceneSetId } (S5.R4-fix round 2)", () => {
   const NO_POSES = { profile: false, back: false };
 
+  // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4, QB-5, BA2 part 2 review L1): the set that has scenes on and off the route is one stored before 5a.4 («Дом» with no route, «Ночнушки и бельё» on it): «Смелая»
+  // plans «Дом» on the route now, so the set is seeded, not composed.
+  const oldMixedWorld = (): ReturnType<typeof runWorld> => runWorld({ sceneSets: [mixedSetSeed(MIA.avatarId, "set-old-0001", { home: 6, nightwear: 6 })] });
+
   async function boldSet(mock: ReturnType<typeof runWorld>) {
-    await unwrap(mock.client.request("scenes.compose", { avatarId: MIA.avatarId, count: 12, categories: ["nightwear", "home"], level: "bold", poses: NO_POSES, acceptedWorstMicros: 1_000_000 }));
-    mock.scheduler.runAll();
     const { sceneSet } = await unwrap(mock.client.request("scenes.get", { avatarId: MIA.avatarId }));
     if (sceneSet === null) throw new Error("no set");
     return sceneSet;
@@ -85,7 +88,7 @@ describe("runs.estimateImages { avatarId, count, sceneSetId } (S5.R4-fix round 2
   }
 
   test("is the figure of «Отрисовать»: the active scenes on the Seedream route at the 2K unit, the rest at the mock's image", async () => {
-    const mock = runWorld();
+    const mock = oldMixedWorld();
     const set = await boldSet(mock);
     const routed = set.scenes.filter((scene) => scene.route === "seedream").length;
     expect(routed).toBeGreaterThan(0);
@@ -95,7 +98,7 @@ describe("runs.estimateImages { avatarId, count, sceneSetId } (S5.R4-fix round 2
   });
 
   test("follows what the owner removes: a scene on the owner's model and a Seedream one", async () => {
-    const mock = runWorld();
+    const mock = oldMixedWorld();
     const set = await boldSet(mock);
     const plain = set.scenes.find((scene) => scene.route !== "seedream");
     const routedScene = set.scenes.find((scene) => scene.route === "seedream");
@@ -107,7 +110,7 @@ describe("runs.estimateImages { avatarId, count, sceneSetId } (S5.R4-fix round 2
   });
 
   test("a price list with no 2K tier refuses a count with a «Смелая» share as PRICE_UNAVAILABLE for the bold scope, and a stored set the same", async () => {
-    const mock = runWorld();
+    const mock = oldMixedWorld();
     const set = await boldSet(mock);
     mock.engine.lackBoldPrice();
     const byCategories = await mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: 12, level: "bold", categories: ["nightwear"] });
