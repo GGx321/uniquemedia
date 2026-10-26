@@ -518,7 +518,11 @@ describe("S5.FU-AGE: the kept age guard's probes (scenes/ageProbes.testkit.ts), 
     for (const [where, photoId] of PHOTOS) {
       const m = makeClipMock({ clips: { boldClips: "kling-only" } });
       m.engine.scriptNextMotionReplies([idea(UNDRESS)]);
-      for (const text of IDEAS) expect([where, text, await unwrap(translate(m, text, photoId))]).toEqual([where, text, { outcome: "rejected", problems: ["content"], costMicros: 0 }]);
+      for (const text of IDEAS) {
+        // An idea that holds a format character (a zero-width space) is refused by the contract itself, before the pre-check: free too.
+        if (/\p{Cf}/u.test(text)) expect([where, text, (await errorOf(translate(m, text, photoId))).code]).toEqual([where, text, "VALIDATION"]);
+        else expect([where, text, await unwrap(translate(m, text, photoId))]).toEqual([where, text, { outcome: "rejected", problems: ["content"], costMicros: 0 }]);
+      }
       expect([where, m.engine.peekMotions().lines.length]).toEqual([where, 0]);
     }
   });

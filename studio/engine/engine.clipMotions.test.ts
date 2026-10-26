@@ -620,7 +620,12 @@ describe("S5.FU-AGE: the kept age guard's probes on the engine's routes (scenes/
   test("each idea in his own words is refused FREE before any chat call: `rejected` content at 0, nothing reserved or stored", async () => {
     for (const [where, opts] of FRAMES) {
       const w = await motionWorld(dir(), { chat: () => ideaReply(UNDRESS), ...opts });
-      for (const idea of IDEAS) expect([where, idea, resultOf(await w.translate(idea))]).toEqual([where, idea, { outcome: "rejected", problems: ["content"], costMicros: 0 }]);
+      for (const idea of IDEAS) {
+        const reply = await w.translate(idea);
+        // An idea that holds a format character (a zero-width space) is refused by the contract itself, before the pre-check: free too.
+        if (/\p{Cf}/u.test(idea)) expect([where, idea, errorOf(reply).code]).toEqual([where, idea, "VALIDATION"]);
+        else expect([where, idea, resultOf(reply)]).toEqual([where, idea, { outcome: "rejected", problems: ["content"], costMicros: 0 }]);
+      }
       expect([where, w.net.chats.length, w.ledger().length]).toEqual([where, 0, 0]);
       await expect(readFile(w.storePath(), "utf8")).rejects.toThrow();
     }
