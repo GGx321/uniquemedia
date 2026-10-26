@@ -973,6 +973,38 @@ describe("S5.BA4b: on a timer the phone is the camera (the paid check P-BW, P1r#
   });
 });
 
+describe("S5.BA4c: bare-place, a sentence that opens with the place and no preposition (the paid checks P-BW2 and P-BW3)", () => {
+  const read = (slot: PlanSlot, sentence: string): WriterAnswer => readBoldWriterAnswer(answer([{ slotIndex: slot.slotIndex, sentence }]), [slot]);
+  const balcony = routed({ location: "her balcony", activity: "leans on the railing in the sun", outfit: "a cotton bra and briefs", shot: "friend", capture: "timer", world: "a flower stall near the cafe" });
+  const lounger = routed({ location: "a lounger by the water", activity: "sits on the end, legs crossed", outfit: "a black bikini", shot: "friend", capture: "friend", world: "a yacht at anchor in a bay" });
+  const inTheWater = routed({ location: "in the water", activity: "sweeps her wet hair back", outfit: "a sporty bikini", shot: "friend", capture: "friend", world: "a yacht at anchor in a bay" });
+
+  test.each([
+    ["P-BW2 P1#1:1, «Her balcony she …»", balcony, "Her balcony she leans on the railing in the sun wearing a cotton bra and briefs, a glass of flowers on the table behind her."],
+    ["P-BW3 P2#1:20, «A lounger by the water she …»", lounger, "A lounger by the water she sits on the end, legs crossed wearing a black bikini, the bay behind her."],
+    ["P-BW2 W1#1:1, «Her room shows her …»", routed(), "Her room shows her lying back across the bed wearing a white lace bra and panties, a vase of flowers on the nightstand."],
+  ])("%s is refused", (_, slot, sentence) => {
+    const answered = read(slot, sentence);
+    expect(problemsOf(answered)).toContain("bare-place");
+    expect(answered.ok === false && answered.boldSlots?.["bare-place"]).toEqual([1]);
+  });
+
+  test.each([
+    ["the place with its preposition", balcony, "On her balcony she leans on the railing in the sun wearing a cotton bra and briefs, a glass of flowers on the table behind her."],
+    ["a place that is its own preposition («in the water»)", inTheWater, "In the water she sweeps her wet hair back wearing a sporty bikini, the hull of the yacht behind her."],
+    ["the place later in the sentence", lounger, "On the deck of the yacht she sits on the end, legs crossed wearing a black bikini, a lounger by the water beside her."],
+  ])("%s passes", (_, slot, sentence) => {
+    expect(problemsOf(read(slot, sentence))).not.toContain("bare-place");
+  });
+
+  test("its refusal says what to write, never quoting the sentence", () => {
+    const answered = read(balcony, "Her balcony she leans on the railing in the sun wearing a cotton bra and briefs, a zanzibarquux on the table.");
+    const told = answered.ok ? "" : writerRefusalText(answered);
+    expect(told).toContain('slot(s) 1 opened with the place and no preposition: write "In", "On" or "At" before it');
+    expect(told).not.toContain("zanzibarquux");
+  });
+});
+
 // The widest of each value the bold slot JSON sends, read from the tables themselves.
 const longestOf = (values: readonly string[]): string => values.reduce((a, b) => (b.length > a.length ? b : a));
 const WORST_CAPTURE = (Object.keys(CAPTURE_LABEL) as (keyof typeof CAPTURE_LABEL)[]).reduce((a, b) => (CAPTURE_LABEL[b].length > CAPTURE_LABEL[a].length ? b : a));
@@ -984,8 +1016,9 @@ describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the b
   const MARGIN = 250;
   // 3 961 with today's ten reasons (S5.BA4); 3 185 with every bold reason; 2 954 since label-word and public-place name the words they found (round 2);
   // 2 641 with S5.BA4b's order rule, the world join and the varied detail (P-BW); 2 542 with its outfit-missing reason and the bold re-ask; S5.BA4c (P-BW2):
-  // 2 455 with the place's preposition and the time kept out of the moment; 2 432 with the hands rule; 2 304 with no paper of any kind and «tiny» / «little».
-  const MARGIN_PRINTED = 2_304;
+  // 2 455 with the place's preposition and the time kept out of the moment; 2 432 with the hands rule; 2 304 with no paper of any kind and «tiny» / «little»;
+  // 2 166 with the bare-place reason (P-BW3).
+  const MARGIN_PRINTED = 2_166;
   const CEILING = WRITER_BOLD_CALL.inputTokens;
   const FIRST_INDEX = 100 - WRITER_BOLD_CALL.slotsPerCall + 1;
 
@@ -1054,7 +1087,7 @@ describe("WRITER_BOLD_CALL's ceiling covers the worst bold chunk (r2.2 P4, the b
       expect(alone).toStartWith(`slot(s) ${slotList(rest)} `);
       expect(text).toContain(alone);
     }
-    expect(BOLD_PROBLEMS).toEqual(["place-missing", "outfit-missing", "exposure-word", "label-word", "public-place", "moment-split"]);
+    expect(BOLD_PROBLEMS).toEqual(["place-missing", "outfit-missing", "exposure-word", "label-word", "public-place", "moment-split", "bare-place"]);
   });
 
   test("the worst chunk's widest values are the ones the tables hold", () => {

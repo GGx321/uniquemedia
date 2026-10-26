@@ -288,8 +288,9 @@ export type WriterProblem =
  *   the world of …»).
  * - `public-place` (P-BA W2:2): a slot with a world put in a public place of it («in the seafood restaurant»); by the water its beach is her place.
  * - `moment-split` (P-BA W1:2, W2:2): «she» and the bank moment are not there word for word and in one piece, which the clip's «Как в сцене» needs (frameFacts.ts).
+ * - `bare-place` (S5.BA4c, P-BW2 and P-BW3): the sentence opens with the slot's place and no preposition («Her balcony she …», «A lounger by the water she …»).
  */
-export const BOLD_PROBLEMS = ["place-missing", "outfit-missing", "exposure-word", "label-word", "public-place", "moment-split"] as const;
+export const BOLD_PROBLEMS = ["place-missing", "outfit-missing", "exposure-word", "label-word", "public-place", "moment-split", "bare-place"] as const;
 export type BoldProblem = (typeof BOLD_PROBLEMS)[number];
 /** The two bold problems whose refusal names the words it found (from our lists, never the model's sentence). */
 export type WordedBoldProblem = "label-word" | "public-place";
@@ -405,6 +406,7 @@ const REASON: Partial<Record<WriterProblem, (r: WriterRefusal) => string>> = {
   "label-word": (r) => `slot(s) ${slotList(r.boldSlots?.["label-word"] ?? [])} wrote a word of the camera, the light or the slot's labels${toldOf(r.boldWords?.["label-word"])}; write none of them`,
   "public-place": (r) => `slot(s) ${slotList(r.boldSlots?.["public-place"] ?? [])} put her in a public place${toldOf(r.boldWords?.["public-place"])}; keep her in the slot's location`,
   "moment-split": (r) => `slot(s) ${slotList(r.boldSlots?.["moment-split"] ?? [])} did not write "she" and then the activity word for word, in one piece`,
+  "bare-place": (r) => `slot(s) ${slotList(r.boldSlots?.["bare-place"] ?? [])} opened with the place and no preposition: write "In", "On" or "At" before it`,
 };
 
 /** Every reason a refusal happened, as fixed sentences; never the model's own rejected text. */
@@ -798,6 +800,20 @@ function saysMoment(sentence: string, moment: string): boolean {
   return new RegExp(`(?<![\\p{L}\\p{N}])${phrase}(?![\\p{L}\\p{N}])`, "iu").test(sentence);
 }
 
+/** A place that is its own prepositional phrase («in the water», «by her window»): it may open a sentence as it is. */
+const OPENS_WITH_PREPOSITION_PLACE = /^(?:in|on|at|by|inside|beside|near|under|over|through|into|onto|outside)\b/i;
+
+/**
+ * S5.BA4c (P-BW2: 94 of 152 sentences, P-BW3: 10 of 107): whether the sentence opens with the slot's place as a bare noun phrase, no preposition before it
+ * («Her balcony she leans …», «A lounger by the water she sits …», «Her room shows her …»). A place that is a prepositional phrase of its own opens a sentence fine.
+ */
+function opensWithBarePlace(sentence: string, location: string): boolean {
+  const place = location.trim().toLowerCase();
+  if (place === "" || OPENS_WITH_PREPOSITION_PLACE.test(place)) return false;
+  const opening = sentence.trim().toLowerCase();
+  return opening.startsWith(place) && !/^[\p{L}\p{N}]/u.test(opening.slice(place.length));
+}
+
 /**
  * The bold problems of one slot's sentence. `place-missing` and `public-place` read only a slot with a world (an old set's slot without one keeps its location as
  * given, r2.1 L3); `moment-split` reads a slot whose activity is a bank moment; the outfit, the exposure and the label words read every slot of the chunk. A word
@@ -819,6 +835,7 @@ function boldProblemsOf(slot: PlanSlot, sentence: string): BoldFinding[] {
   const places = slot.world === undefined ? [] : publicPlacesIn(sentence, { water });
   if (places.length > 0) problems.push({ problem: "public-place", words: places });
   if (hit?.moment !== undefined && !saysMoment(sentence, hit.moment.text)) problems.push("moment-split");
+  if (opensWithBarePlace(sentence, slot.location)) problems.push("bare-place");
   return problems;
 }
 
