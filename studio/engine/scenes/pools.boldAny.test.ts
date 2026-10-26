@@ -42,15 +42,16 @@ describe("tier and openCoverage on the bank types", () => {
     expect(pool.outfitInfo?.[0]).toMatchObject({ tier: "implied", openCoverage: OPEN });
   });
 
-  // 5a.4 (S5.BA2, 2026-10-26, Q-A2): the nightwear bedsheet is an implied cover with its open coverage now; the other six pools of the seven carry neither field.
-  test("of the seven pools only the nightwear's carries the fields, on its bedsheet alone", () => {
+  // 5a.4 (S5.BA2, 2026-10-26, Q-A2): the nightwear bedsheet is an implied cover with its open coverage now, and (review M1) its satin says its kept sentence as its open one; the
+  // other six pools of the seven carry neither field.
+  test("of the seven pools only the nightwear's carries the fields: its bedsheet and its satin", () => {
     for (const [category, pool] of Object.entries(POOLS)) {
       if (category === "nightwear") continue;
       expect(JSON.stringify(pool)).not.toContain("openCoverage");
       expect(JSON.stringify(pool)).not.toContain('"tier"');
     }
     const tiered = [...POOLS.nightwear.locations.flatMap((l) => l.activities.filter((a) => a.tier !== undefined || a.openCoverage !== undefined).map((a) => a.text)), ...(POOLS.nightwear.outfitInfo ?? []).filter((o) => o.tier !== undefined || o.openCoverage !== undefined).map((o) => o.text)];
-    expect(tiered).toEqual(["lies with the sheet up to her chest", "only the white bedsheet"]);
+    expect(tiered).toEqual(["lies with the sheet up to her chest", "a satin slip nightdress", "a satin midi nightdress", "a satin cami and satin shorts", "a short tied satin robe", "only the white bedsheet"]);
   });
 });
 

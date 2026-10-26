@@ -3,9 +3,9 @@ import { OPENS_WITH_ARMS_UP } from "../boldRules";
 import type { Outfit } from "../types";
 
 // 5a.4 (S5.BA2, plan s5a4 §5.1.1, §5.2, §5.5): the outfits the «Смелая» companions and the custom «Смелая» banks wear, one wording each, so a garment says the same coverage in
-// every bank. Every one is drawn on Seedream at 2K and carries its kept, restrictive coverage (H3): what an imported avatar's frame always says. P-BA drew every open class
-// (lingerie, the sports set, the bodysuit, the sheer set, the open shirt, swimwear) without it on a Studio-created avatar, so they carry no `openCoverage`: such a frame says no
-// sentence. The implied covers are pinned by their own moments, which carry the coverage: the towel says its descriptive open one (P-BA B1); the sheet, the foam and the bare back
+// every bank. Every one is drawn on Seedream at 2K and carries its kept, restrictive coverage (H3): what an imported avatar's frame always says. P-BA drew the open classes
+// (lingerie, the sports set, the bodysuit, the sheer set, the open shirt, swimwear; banks/boldRules.ts `openClassOf`) without it on a Studio-created avatar, so they carry no
+// `openCoverage`: such a frame says no sentence. P-BA drew no satin open, so the satin says its kept sentence to every avatar (review M1). The implied covers are pinned by their own moments, which carry the coverage: the towel says its descriptive open one (P-BA B1); the sheet, the foam and the bare back
 // were drawn with the kept sentence only, so every avatar says it (r2.2 P5). The tier is the garment's (the tier table, banks/boldRules.ts `tierOfGarment`).
 
 const LACE = "The lace is lined and opaque: her bra fully covers her breasts and her panties fully cover her.";
@@ -21,12 +21,15 @@ const seedream = (text: string, level: "flirty" | "bold" | undefined, coverage: 
   coverage,
 });
 
+/** A Seedream outfit of a class P-BA did not draw open: every avatar says its kept sentence (review M1, fail-closed). */
+const keptForEveryone = (outfit: Outfit): Outfit => ({ ...outfit, openCoverage: outfit.coverage });
+
 // ---------- plain («скромнее») ----------
 export const TEE_AND_PANTIES = seedream("a tee and cotton panties", undefined, "Her tee covers her chest, and her panties fully cover her.");
 export const COTTON_SET = seedream("a cotton bra and briefs", undefined, "Her bra fully covers her breasts and her briefs fully cover her.");
 export const TANK_AND_BRIEFS = seedream("a tank top and cotton briefs", undefined, "Her tank top covers her chest, and her briefs fully cover her.");
 export const CAMI_AND_PANTIES = seedream("a cami and cotton panties", undefined, "Her cami covers her chest, and her panties fully cover her.");
-export const SATIN_CAMI = seedream("a satin cami and satin shorts", undefined, "Her cami and shorts are opaque satin.");
+export const SATIN_CAMI = keptForEveryone(seedream("a satin cami and satin shorts", undefined, "Her cami and shorts are opaque satin."));
 /** P-BA S1 drew it (half-dressed before going out). Her legs are in the jeans: no legwear. */
 export const BRA_AND_JEANS = seedream("a black bra and jeans", undefined, "Her bra fully covers her breasts, and her jeans sit buttoned at her waist.", false);
 export const BLACK_BRA_AND_BRIEFS = seedream("a black bra and briefs", undefined, "Her bra fully covers her breasts and her briefs fully cover her.");
@@ -39,9 +42,9 @@ export const BLACK_LACE = seedream("a black lace bra and panties", "flirty", LAC
 export const WHITE_LACE = seedream("a white lace bra and panties", "flirty", LACE);
 export const LACE_BRALETTE = seedream("a lace bralette and briefs", "flirty", "The lace is lined and opaque: her bralette fully covers her breasts and her briefs fully cover her.");
 export const LACE_AND_JEANS = seedream("a lace bra and jeans", "flirty", "The lace is lined and opaque: her bra fully covers her breasts, and her jeans sit buttoned at her waist.", false);
-export const SATIN_SLIP = seedream("a satin slip nightdress", "flirty", SATIN_DRESS);
-export const SATIN_MIDI = seedream("a satin midi nightdress", "flirty", SATIN_DRESS);
-export const SATIN_ROBE = seedream("a short tied satin robe", "flirty", "Her robe is tied and closed over her chest.");
+export const SATIN_SLIP = keptForEveryone(seedream("a satin slip nightdress", "flirty", SATIN_DRESS));
+export const SATIN_MIDI = keptForEveryone(seedream("a satin midi nightdress", "flirty", SATIN_DRESS));
+export const SATIN_ROBE = keptForEveryone(seedream("a short tied satin robe", "flirty", "Her robe is tied and closed over her chest."));
 
 // ---------- most revealing («откровеннее всего») ----------
 export const SHEER_SET = seedream("a sheer babydoll over a lace set", "bold", "Under her sheer babydoll, her lace bra and panties are lined and opaque and fully cover her.");

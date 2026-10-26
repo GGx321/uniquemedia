@@ -11,8 +11,8 @@ import type { CategoryBank, Outfit } from "./types";
 // 5a.4 (S5.BA2, 2026-10-26, plan s5a4 §5.4, Q-A2): always underwear, every frame on Seedream at 2K. The cotton nightwear on the owner's model (the sleep tee, the cotton pajamas, the
 // nightshirt, the silk pajamas, the prone grey lounge shorts) gave way to plain underwear; the tiers follow the tier table (r2.2 P6, banks/boldRules.ts `tierOfGarment`).
 // The bedsheet is an implied cover (a Studio-created avatar's only, I5.74), its moment reworded so her free hand holds nothing (r2.2 P3). P-BA drew the prone bra and
-// briefs (A1) and the open shirt (A3) without their coverage on a Studio-created avatar, so no lingerie, satin or plain outfit here says an open coverage: such a frame
-// says no sentence. The sheet was drawn with its kept sentence only, so every avatar says it (r2.2 P5).
+// briefs (A1) and the open shirt (A3) without their coverage on a Studio-created avatar, so no lingerie or plain outfit here says an open coverage: such a frame says no
+// sentence. The sheet was drawn with its kept sentence only, and no satin was drawn open (review M1), so every avatar says theirs (r2.2 P5).
 
 /** The plain underwear that replaced the cotton nightwear; the prone moments wear the tee and panties (Seedream drew prone lingerie: P-5a3 #4, P-NUDE C1, P-BA A1). */
 const TEE_AND_PANTIES = "a tee and cotton panties";
@@ -28,6 +28,8 @@ const LEGS = [SATIN_CAMI, SATIN_MIDI, SATIN_ROBE, TEE_AND_PANTIES, CAMI_AND_PANT
 
 const LACE = "The lace is lined and opaque: her bra fully covers her breasts and her panties fully cover her.";
 const SATIN_DRESS = "Her nightdress is opaque satin.";
+const SATIN_SET = "Her cami and shorts are opaque satin.";
+const ROBE = "Her robe is tied and closed over her chest.";
 /** P-BA V2 drew the sheet with this sentence (P-5a3 #2 said «held up»; the moment no longer holds it). */
 const SHEET = "The white sheet is pulled up to her chest and fully covers her breasts and her hips.";
 
@@ -36,11 +38,12 @@ const OUTFITS: readonly Outfit[] = [
   { text: TEE_AND_PANTIES, showsLegs: true, route: "seedream", coverage: "Her tee covers her chest, and her panties fully cover her." },
   { text: "a cotton bra and briefs", showsLegs: true, route: "seedream", coverage: "Her bra fully covers her breasts and her briefs fully cover her." },
   { text: CAMI_AND_PANTIES, showsLegs: true, route: "seedream", coverage: "Her cami covers her chest, and her panties fully cover her." },
-  { text: "a satin slip nightdress", showsLegs: true, level: "flirty", route: "seedream", coverage: SATIN_DRESS },
-  { text: SATIN_MIDI, showsLegs: true, level: "flirty", route: "seedream", coverage: SATIN_DRESS },
+  // 5a.4 (S5.BA2 review M1): P-BA drew no satin without its coverage, so the satin says its kept sentence to every avatar (openCoverage = coverage).
+  { text: "a satin slip nightdress", showsLegs: true, level: "flirty", route: "seedream", coverage: SATIN_DRESS, openCoverage: SATIN_DRESS },
+  { text: SATIN_MIDI, showsLegs: true, level: "flirty", route: "seedream", coverage: SATIN_DRESS, openCoverage: SATIN_DRESS },
   // 5a.4 (r2.2 P6): flirty -> plain.
-  { text: SATIN_CAMI, showsLegs: true, route: "seedream", coverage: "Her cami and shorts are opaque satin." },
-  { text: SATIN_ROBE, showsLegs: true, level: "flirty", route: "seedream", coverage: "Her robe is tied and closed over her chest." },
+  { text: SATIN_CAMI, showsLegs: true, route: "seedream", coverage: SATIN_SET, openCoverage: SATIN_SET },
+  { text: SATIN_ROBE, showsLegs: true, level: "flirty", route: "seedream", coverage: ROBE, openCoverage: ROBE },
   // Spike A drew the lace set 3/3 with this coverage. 5a.4 (r2.2 P6): bold -> flirty.
   { text: "a black lace bra and panties", showsLegs: true, level: "flirty", route: "seedream", coverage: LACE },
   { text: "a white lace bra and panties", showsLegs: true, level: "flirty", route: "seedream", coverage: LACE },

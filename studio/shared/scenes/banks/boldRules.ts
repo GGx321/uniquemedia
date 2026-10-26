@@ -116,3 +116,26 @@ export function tierOfGarment(outfit: { text: string; tier?: "implied" | undefin
   return null;
 }
 
+
+/**
+ * 5a.4 (S5.BA2, review M1, plan s5a4 §5.5): the classes P-BA drew without their kept coverage on a Studio-created avatar, by garment, the first match deciding. A Studio-created avatar's
+ * frame of one of these may say no coverage sentence; an outfit of no class here (the satin: P-BA drew none open) says its kept sentence to every avatar. The cotton tops are
+ * A1's (the controller's reading). The towel (B1) is an implied cover, held by the implied rules.
+ */
+const OPEN_CLASSES: readonly (readonly [string, RegExp])[] = [
+  ["A2, C3 swimwear", /\b(?:bikinis?|swimsuits?|swimwear)\b/i],
+  ["G2 the sheer babydoll", /\bsheer\s+babydoll\b/i],
+  ["G1 the lace bodysuit", /\blace\s+bodysuit\b/i],
+  ["A3 the open shirt", OPEN_SHIRT],
+  ["F1 the sports set", /\bsports\s+bra\b/i],
+  ["S2 a bra and a thong", /\bbra\s+and\s+a\s+thong\b/i],
+  ["S1 half-dressed, in her jeans", /\b(?:bra|panties)\b[^,]*\bjeans\b/i],
+  ["V1, C1 the lace set", /\blace\s+(?:bra|bralette)\s+and\s+(?:panties|briefs)\b/i],
+  ["A1 a bra and briefs", /\bbra\s+and\s+briefs\b/i],
+  ["A1 a top and cotton underwear", /\b(?:tee|cami|tank\s+top)\s+and\s+cotton\s+(?:panties|briefs)\b/i],
+];
+
+/** The P-BA class an outfit's garment belongs to when P-BA drew that class without its kept coverage, as «probe item(s) and class»; null otherwise. */
+export function openClassOf(text: string): string | null {
+  return OPEN_CLASSES.find(([, garments]) => garments.test(text))?.[0] ?? null;
+}

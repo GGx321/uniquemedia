@@ -4,7 +4,7 @@ import { faceVisibleOf, posesFor, type Capture } from "../../captures";
 import { motionTextFindings } from "../../motionText";
 import { HELD_OBJECT_WORDS } from "../../words";
 import { poseFamilyOf } from "../boldDesign.testkit";
-import { tierOfGarment } from "../boldRules";
+import { openClassOf, tierOfGarment } from "../boldRules";
 import { BANKS } from "../index";
 import { boldAnyProblems, type BoldAnyKind } from "../schema";
 import { BANK_CATEGORIES, ORDINARY_BANK_CATEGORIES, type BankPlace, type CategoryBank, type Moment } from "../types";
@@ -144,9 +144,60 @@ describe("the outfits: the tier table, the floor, the coverage by origin (§5.1.
     }
   });
 
-  test("every outfit but an implied cover carries its kept coverage and no open one: P-BA drew every open class without it", () => {
-    for (const { bank } of NEW_BANKS) {
-      for (const outfit of bank.outfits.filter((o) => o.tier !== "implied")) expect({ text: outfit.text, kept: outfit.coverage !== undefined, open: outfit.openCoverage }).toEqual({ text: outfit.text, kept: true, open: undefined });
+  // Review M1: the classes P-BA drew without their kept coverage on a Studio-created avatar (B1 V1 S1 G1 F1 A1 A2 A3 G2 S2 C1 C3, and the cotton tops the controller reads as A1).
+  // Such an outfit says no sentence to a Studio-created avatar; every other outfit (the satin) says its kept one to every avatar.
+  const PROVEN: readonly (readonly [string, string | null])[] = [
+    ["a tee and cotton panties", "A1"],
+    ["a cotton bra and briefs", "A1"],
+    ["a tank top and cotton briefs", "A1"],
+    ["a cami and cotton panties", "A1"],
+    ["a black bra and briefs", "A1"],
+    ["a black bra and jeans", "S1"],
+    ["a lace bra and jeans", "S1"],
+    ["a sports bra and seamless briefs", "F1"],
+    ["a sports bra and cotton panties", "F1"],
+    ["a black lace bra and panties", "V1"],
+    ["a white lace bra and panties", "V1"],
+    ["a lace bralette and briefs", "V1"],
+    ["a lace bodysuit", "G1"],
+    ["a sheer babydoll over a lace set", "G2"],
+    ["a white lace bra and a thong", "S2"],
+    ["a black bra and a thong", "S2"],
+    ["a sports bra and a thong", "F1"],
+    ["an open white shirt and panties", "A3"],
+    ["a one-piece swimsuit", "A2"],
+    ["a black one-piece swimsuit", "A2"],
+    ["a sporty bikini", "A2"],
+    ["a black bikini", "A2"],
+    ["a white bikini", "A2"],
+    ["a bikini and a straw hat", "A2"],
+    ["a white string bikini", "A2"],
+    ["a red triangle bikini", "A2"],
+    ["a strapless bandeau bikini", "A2"],
+    ["a high-leg black swimsuit", "A2"],
+    ["a satin cami and satin shorts", null],
+    ["a satin slip nightdress", null],
+    ["a satin midi nightdress", null],
+    ["a short tied satin robe", null],
+  ];
+
+  test("the table names every outfit of the new banks but the implied covers", () => {
+    const texts = [...new Set(NEW_BANKS.flatMap(({ bank }) => bank.outfits.filter((o) => o.tier !== "implied").map((o) => o.text)))].sort();
+    expect(texts).toEqual(PROVEN.map(([text]) => text).filter((text) => texts.includes(text)).sort());
+    for (const text of texts) expect(PROVEN.some(([t]) => t === text), text).toBe(true);
+  });
+
+  test.each(PROVEN.map(([text, probe]) => [text, probe] as const))("«%s»: class %p", (text, probe) => {
+    if (probe === null) expect(openClassOf(text)).toBeNull();
+    else expect(openClassOf(text)).toStartWith(probe);
+  });
+
+  test("every outfit but an implied cover keeps its kept coverage; only a proven class says no sentence, the rest say the kept one to every avatar", () => {
+    for (const { name, bank } of NEW_BANKS) {
+      for (const outfit of bank.outfits.filter((o) => o.tier !== "implied")) {
+        const proven = PROVEN.find(([text]) => text === outfit.text)?.[1] ?? null;
+        expect({ name, text: outfit.text, kept: outfit.coverage !== undefined, open: outfit.openCoverage }).toEqual({ name, text: outfit.text, kept: true, open: proven === null ? outfit.coverage : undefined });
+      }
     }
   });
 

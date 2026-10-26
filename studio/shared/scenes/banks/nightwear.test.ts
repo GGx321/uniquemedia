@@ -272,21 +272,27 @@ describe("the outfits: plain underwear, lace and satin, the most revealing (plan
     ["a tee and cotton panties", "Her tee covers her chest, and her panties fully cover her.", false],
     ["a cotton bra and briefs", "Her bra fully covers her breasts and her briefs fully cover her.", false],
     ["a cami and cotton panties", "Her cami covers her chest, and her panties fully cover her.", false],
-    ["a satin cami and satin shorts", "Her cami and shorts are opaque satin.", false],
     ["a cropped tee and cotton panties", "Her tee covers her chest, and her panties fully cover her.", false],
     ["a black bra and briefs", "Her bra fully covers her breasts and her briefs fully cover her.", true],
   ])("plain, on Seedream: «%s»", (text, coverage, pinOnly) => {
     expect(outfitNamed(text)).toEqual({ text, showsLegs: true, ...(pinOnly ? { pinOnly: true } : {}), route: "seedream", coverage });
   });
 
-  test.each<[string, string]>([
-    ["a satin slip nightdress", SATIN_DRESS],
-    ["a satin midi nightdress", SATIN_DRESS],
-    ["a short tied satin robe", "Her robe is tied and closed over her chest."],
-    ["a black lace bra and panties", LACE],
-    ["a white lace bra and panties", LACE],
-  ])("flirty, on Seedream: «%s»", (text, coverage) => {
-    expect(outfitNamed(text)).toEqual({ text, showsLegs: true, level: "flirty", route: "seedream", coverage });
+  // Review M1 (2026-10-26): P-BA drew no satin without its coverage, so the satin says its kept sentence to every avatar.
+  test("plain, on Seedream, its kept sentence for every avatar: «a satin cami and satin shorts»", () => {
+    const coverage = "Her cami and shorts are opaque satin.";
+    expect(outfitNamed("a satin cami and satin shorts")).toEqual({ text: "a satin cami and satin shorts", showsLegs: true, route: "seedream", coverage, openCoverage: coverage });
+  });
+
+  test.each<[string, string, boolean]>([
+    // Review M1: the satin says its kept sentence to every avatar.
+    ["a satin slip nightdress", SATIN_DRESS, true],
+    ["a satin midi nightdress", SATIN_DRESS, true],
+    ["a short tied satin robe", "Her robe is tied and closed over her chest.", true],
+    ["a black lace bra and panties", LACE, false],
+    ["a white lace bra and panties", LACE, false],
+  ])("flirty, on Seedream: «%s»", (text, coverage, kept) => {
+    expect(outfitNamed(text)).toEqual({ text, showsLegs: true, level: "flirty", route: "seedream", coverage, ...(kept ? { openCoverage: coverage } : {}) });
   });
 
   test.each<[string, string]>([
@@ -313,8 +319,14 @@ describe("the outfits: plain underwear, lace and satin, the most revealing (plan
     expect(NIGHTWEAR.outfits.filter((o) => o.pinOnly !== true && o.level === "bold").map((o) => o.text)).toEqual(["a lace bodysuit", "a sheer babydoll over a lace set", "an open white shirt and panties", "a white lace bra and a thong"]);
   });
 
-  test("no outfit says an open coverage: P-BA drew the lingerie classes without their coverage (A1, A3)", () => {
-    expect(NIGHTWEAR.outfits.filter((o) => o.openCoverage !== undefined).map((o) => o.text)).toEqual([]);
+  // Review M1: P-BA drew the lingerie classes without their coverage (A1, A3), no satin: only the satin says its kept sentence as its open one.
+  test("only the satin says an open coverage, its kept one: the lingerie and plain outfits say none for a Studio-created avatar", () => {
+    expect(NIGHTWEAR.outfits.filter((o) => o.openCoverage !== undefined).map((o) => [o.text, o.openCoverage === o.coverage])).toEqual([
+      ["a satin slip nightdress", true],
+      ["a satin midi nightdress", true],
+      ["a satin cami and satin shorts", true],
+      ["a short tied satin robe", true],
+    ]);
   });
 });
 

@@ -23,10 +23,11 @@ const LEGS_PINS = ["a satin cami and satin shorts", "a satin midi nightdress", "
 
 const OUTFITS: readonly Outfit[] = [
   { text: "a tee and cotton panties", showsLegs: true, route: "seedream", coverage: "Her tee covers her chest, and her panties fully cover her." },
-  { text: "a satin cami and satin shorts", showsLegs: true, route: "seedream", coverage: "Her cami and shorts are opaque satin." },
+  // Review M1: P-BA drew no satin without its coverage, so the satin says its kept sentence to every avatar.
+  { text: "a satin cami and satin shorts", showsLegs: true, route: "seedream", coverage: "Her cami and shorts are opaque satin.", openCoverage: "Her cami and shorts are opaque satin." },
   { text: "a black lace bra and panties", showsLegs: true, level: "flirty", route: "seedream", coverage: LACE },
-  { text: "a satin midi nightdress", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her nightdress is opaque satin." },
-  { text: "a short tied satin robe", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her robe is tied and closed over her chest." },
+  { text: "a satin midi nightdress", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her nightdress is opaque satin.", openCoverage: "Her nightdress is opaque satin." },
+  { text: "a short tied satin robe", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her robe is tied and closed over her chest.", openCoverage: "Her robe is tied and closed over her chest." },
   { text: "a lace bodysuit", showsLegs: true, level: "bold", route: "seedream", coverage: "Her bodysuit is lined and opaque over her chest and fully covers her hips." },
   { text: "a sheer babydoll over a lace set", showsLegs: true, level: "bold", route: "seedream", coverage: "Under her sheer babydoll, her lace bra and panties are lined and opaque and fully cover her." },
   { text: "a white lace bra and a thong", showsLegs: true, level: "bold", route: "seedream", coverage: THONG },
@@ -218,6 +219,16 @@ describe("each 5a.4 rule refuses the row that breaks it", () => {
     ["an open coverage of two sentences", replacing("a lace bodysuit", { ...coverless(OUTFITS[5] as Outfit), openCoverage: "Her bodysuit is lace. It is black." }), "nightwear", BANK_RULE.openCoverage],
     ["the sheet saying a shorter open coverage (P-BA drew it with the kept one only)", withRoomMoment(SHEET_MOMENT.text, { ...SHEET_MOMENT, openCoverage: "The white sheet is pulled up to her chest." }), "nightwear", BANK_RULE.openCoverage],
     ["the sheet with no open coverage (an implied cover says what covers her to every avatar)", withRoomMoment(SHEET_MOMENT.text, { ...SHEET_MOMENT, openCoverage: undefined }), "nightwear", BANK_RULE.openCoverage],
+    // open-coverage, review M1: only a class P-BA drew open goes without its kept sentence (or says another); the rest say it to every avatar.
+    ["a satin outfit with no open coverage (P-BA drew no satin open)", replacing("a satin midi nightdress", { text: "a satin midi nightdress", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her nightdress is opaque satin." }), "nightwear", BANK_RULE.openCoverage],
+    ["a satin outfit with a shorter open coverage", replacing("a satin midi nightdress", { text: "a satin midi nightdress", showsLegs: true, level: "flirty", route: "seedream", coverage: "Her nightdress is opaque satin.", openCoverage: "Her nightdress is satin." }), "nightwear", BANK_RULE.openCoverage],
+    ["a garment of no proven class with no open coverage", withOutfits([...OUTFITS, { text: "a mesh top and boy shorts", showsLegs: true, route: "seedream", coverage: "Her top covers her chest." }]), "nightwear", BANK_RULE.openCoverage],
+    [
+      "a moment carrying a coverage with no open one over a satin pin",
+      withRoomMoment("stands by the window", { ...(ROOM.moments[0] as Moment), outfits: ["a satin cami and satin shorts"], route: "seedream", coverage: "Her cami and shorts are opaque satin." }),
+      "nightwear",
+      BANK_RULE.openCoverage,
+    ],
     // implied
     ["an implied outfit at flirty", replacing("only the white bedsheet", { text: "only the white bedsheet", pinOnly: true, level: "flirty", route: "seedream", tier: "implied" }), "nightwear", BANK_RULE.implied],
     ["an implied outfit in the general draw", replacing("only the white bedsheet", { text: "only the white bedsheet", level: "bold", route: "seedream", tier: "implied", coverage: SHEET }), "nightwear", BANK_RULE.implied],

@@ -34,7 +34,7 @@ import {
   YOUTH_PROPS,
 } from "../words";
 import { exposureWordsIn } from "../explicitWords";
-import { BOLD_EXEMPT_LOOK, boldWordsIn, COVERS_HER, lingerieWordsIn, NO_STRAPS, OPENS_WITH_ARMS_UP, stockingWordsIn, swimwearWordsIn, tierOfGarment } from "./boldRules";
+import { BOLD_EXEMPT_LOOK, boldWordsIn, COVERS_HER, lingerieWordsIn, NO_STRAPS, openClassOf, OPENS_WITH_ARMS_UP, stockingWordsIn, swimwearWordsIn, tierOfGarment } from "./boldRules";
 import { MOMENT_HAIRS, type BankCategory, type CategoryBank, type Level, type Moment, type Outfit } from "./types";
 
 // 5a.2 (S5.6a, I5.21, I5.35; plan s5a2 r1.2): the banks' zod schemas. The shape is zod; every rule the plan names runs in a superRefine and reports
@@ -841,6 +841,14 @@ function boldAnyRules(bank: CategoryBank, add: Add, kind: BoldAnyKind, others: r
   ];
   for (const { where, item, covers } of carriers) {
     if (item.openCoverage !== undefined) checkOpenCoverage(add, where, item.openCoverage, item.coverage);
+    // Review M1, fail-closed: only a class P-BA drew open may go without its kept sentence or say another; every other outfit says its kept one to every avatar (openCoverage = coverage).
+    if (covers.length === 0 && item.coverage !== undefined && item.openCoverage !== item.coverage) {
+      const garments = "outfits" in item ? (item.outfits ?? []) : [item.text];
+      const unproven = garments.length === 0 ? ["(no pinned outfit)"] : garments.filter((text) => openClassOf(text) === null);
+      if (unproven.length > 0) {
+        add(BANK_RULE.openCoverage, where, `P-BA drew no item of the class of «${unproven.join("», «")}» without its kept coverage: it says its kept sentence to every avatar (openCoverage = coverage)`);
+      }
+    }
     if (covers.length === 0 || item.coverage === undefined) continue;
     if (item.openCoverage === undefined) add(BANK_RULE.openCoverage, where, "an implied cover says what covers her to every avatar: it carries an open coverage (descriptive, or its kept one)");
     else if (covers.some((text) => KEPT_COVERS.test(text)) && item.openCoverage !== item.coverage) {
