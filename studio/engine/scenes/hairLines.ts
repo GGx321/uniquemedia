@@ -1,15 +1,14 @@
 import { HairLength as HairLengthEnum } from "../../shared/engine";
+import { bankPlaceOf } from "../../shared/scenes/bankLookup";
 import type { HairLength } from "../../shared/scenes/banks/types";
 import { hairstyleSequence, type HairSlot } from "../../shared/scenes/hair";
-import { POOLS } from "./pools";
 import { isOwnSlot, type RunSlot } from "./schema";
-import { CATEGORIES } from "./types";
 
 // 5a.2 (S5.6b, plan s5a2 §5.3): the hair line of a run's prompts. Hair varies from photo to photo (a ponytail, a claw clip, a loose braid) while its colour never
 // changes; the style is drawn once for the whole run, in slot order, by the shared `hairstyleSequence` (avoid the previous 3; tied styles on `tied` moments
 // only and at most a quarter of the run; a sporty style on 3 in 4 of the run's `sport` moments, «Фитнес»'s workouts (S5.6R); a cap outdoors only and at most
-// an eighth). Each slot's tags come from its moment in today's pools; an own scene, a
-// custom category and a renamed place have none and simply take a style.
+// an eighth). Each slot's tags come from its moment, found by the marker-aware bank lookup (5a.4, S5.BA3, I5.73: a «Смелая» slot reads its companion's or the shared bank's moment); an own
+// scene, a custom category stored before 5a.4 and a renamed place have none and simply take a style.
 
 /** The avatar's hair length from its stored traits, or undefined when it holds none we can read (such an avatar's prompts carry no hair line). */
 export function hairLengthOf(traits: Readonly<Record<string, unknown>>): HairLength | undefined {
@@ -22,8 +21,7 @@ const HAT = /\bhat\b/i;
 
 function tagsOf(slot: RunSlot): HairSlot {
   if (isOwnSlot(slot)) return {};
-  const category = CATEGORIES.find((c) => c === slot.category);
-  const moment = category === undefined ? undefined : POOLS[category].locations.find((l) => l.name === slot.location)?.activities.find((a) => a.text === slot.activity);
+  const moment = bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location, activity: slot.activity })?.moment;
   return { hair: moment?.hair, outdoor: moment?.outdoor === true, framing: slot.framing, hat: HAT.test(slot.outfit) };
 }
 
