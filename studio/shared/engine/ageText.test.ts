@@ -14,6 +14,7 @@ import {
   nonAsciiDigits,
   ROMAN_NOT_A_NUMERAL,
   ROMAN_NUMERAL_WORD,
+  romanNumeralCore,
   youthRuleNames,
   youthWords,
 } from "./ageText";
@@ -880,9 +881,23 @@ describe("an age in Roman numerals or in decades (S5.FU-AGE round 2, M3)", () =>
 
   test("every name the Roman reading lets through is one it would read without the list (no dead entry), and passes with it", () => {
     for (const word of ROMAN_NOT_A_NUMERAL) {
-      expect([word, ROMAN_NUMERAL_WORD.test(word), namesRomanNumeral(`she slowly turns, ${word} and calm`)]).toEqual([word, true, false]);
+      expect([word, ROMAN_NUMERAL_WORD.test(romanNumeralCore(word)), namesRomanNumeral(`she slowly turns, ${word} and calm`)]).toEqual([word, true, false]);
     }
   });
+
+  test.each(["xviyearsold", "XVIYEARSOLD", "xviy.o.", "XVIYearsold", "XVIYO", "xviyo", "XVIth", "\u0445-v-\u0456", "x-v-i", "sweetXVI", "\u0425VI", "\u0445\u0445"])(
+    "the fail-closed reading takes %p as a numeral (round 2, the security review)",
+    (word) => {
+      expect(namesRomanNumeral(`she slowly turns, ${word}`)).toBe(true);
+    },
+  );
+
+  test.each(["video", "view", "villa", "vintage", "vibe", "ivory", "ivy", "vivid", "civic", "XL", "XXL", "XXS", "vis-a-vis", "iPhone", "VIP", "x", "I"])(
+    "the fail-closed reading lets %p through",
+    (word) => {
+      expect(namesRomanNumeral(`she slowly turns, ${word}`)).toBe(false);
+    },
+  );
 
   test("the decade reader reads the word and its spelled-out letters, not «decadent»", () => {
     expect([namesDecade("a decade and a half"), namesDecade("a d e c a d e and a half"), namesDecade("decadent and calm")]).toEqual([true, true, false]);

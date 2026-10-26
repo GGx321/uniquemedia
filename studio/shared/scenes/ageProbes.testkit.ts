@@ -147,6 +147,13 @@ export const ROMAN_FAIL_CLOSED: AgeProbes = {
     "she slowly undresses, aged x-v-i",
     "she slowly undresses, X.V.I",
     "she slowly undresses, a x v i",
+    // Round 2, the security review of the ageText commits: Cyrillic look-alikes inside a split numeral, a case change before «Years», and an age's tail of any length.
+    "she slowly undresses, \u0445-v-\u0456",
+    "she slowly undresses, XVIYearsold",
+    "she slowly undresses, XVIYO",
+    "she slowly undresses, xviyearsold",
+    "she slowly undresses, XVIYEARSOLD",
+    "she slowly undresses, xviy.o.",
   ],
   ideas: [
     "медленно раздевается \u2014 XVI",
@@ -156,6 +163,7 @@ export const ROMAN_FAIL_CLOSED: AgeProbes = {
     "медленно снимает халат, ей \u0425\u0425",
     "медленно раздевается, ей X-V-I",
     "медленно раздевается, ей x v i",
+    "медленно раздевается, ей \u0445-v-\u0456",
     // A century in Roman numerals is refused as well: the rule does not read the context it stands in.
     "медленно идёт мимо собора XVI века",
   ],
@@ -164,7 +172,7 @@ export const ROMAN_FAIL_CLOSED: AgeProbes = {
     "she slowly smooths her XXXL sweater",
     "she slowly fixes her XS top",
     "she slowly tugs at her XXS top",
-    // The only words the numeral letters make with an ending: «XXS» and «vis» (vis-a-vis), let through by name.
+    // The only words whose core is a numeral («XXS», «vis», «ivy», «visage», «visaged»), let through by name.
     "she slowly sits vis-a-vis the window",
     "she slowly smiles, vivid and calm",
     "she slowly turns, civic and calm",
@@ -173,6 +181,16 @@ export const ROMAN_FAIL_CLOSED: AgeProbes = {
     "she slowly turns her head, v-neck on",
     "she slowly holds her iPhone up",
     "she slowly pins on her VIP badge",
+    // Words that start with the numeral letters stay words: an age's tail is taken off only where a numeral is left.
+    "she slowly films a video",
+    "she slowly takes in the view",
+    "she slowly walks to the villa",
+    "she slowly smooths her vintage dress",
+    "she slowly feels the vibe",
+    "she slowly touches the ivory keys",
+    "she slowly brushes the ivy",
+    "she slowly turns her visage to the light",
+    "she slowly turns, stern-visaged and calm",
   ],
   ideaPasses: ["медленно поправляет худи XXXL", "медленно улыбается, x"],
 };

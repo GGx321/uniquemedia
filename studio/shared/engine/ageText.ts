@@ -534,46 +534,63 @@ export function namesNumberWord(text: string): boolean {
 
 /**
  * S5.FU-AGE (moved here in round 2, M3, so the descriptor reads it too): a Roman numeral is refused fail-closed. A word of two letters or more made of «i», «v» and «x» alone,
- * in either case, with an ordinal's, a plural's or an age's ending («XVIth», «XVIs», «xviyo»), is a number wherever it stands («sweet XVI», «(xvi)», «— XVI», «XVI y o»), the additive and the
+ * in either case, with an ordinal's, a plural's or an age's tail («XVIth», «XVIs», «xviyearsold»), is a number wherever it stands («sweet XVI», «(xvi)», «— XVI», «XVI y o»), the additive and the
  * malformed ones included («XIIII», «IIII», «XIIX»): no English word is made of those letters alone. Only the words they make with an ending are let through, by name
  * (`ROMAN_NOT_A_NUMERAL`). A lone «i», «v» or «x» (the pronoun, «x» as times or a kiss) is a number only where the words say an age, which `ageMentions` reads (`ROMAN_ANY`).
  */
-export const ROMAN_NUMERAL_WORD = /^([ivx]{2,})(?:st|nd|rd|th|s|yo|yrs?|years?)?$/;
-/** The only words `ROMAN_NUMERAL_WORD` reads that are no numeral: the size «XXS» and «vis» (vis-a-vis). Each is pinned by a passing probe. */
-export const ROMAN_NOT_A_NUMERAL: ReadonlySet<string> = new Set(["xxs", "vis"]);
-/** The Latin letters of a word, with the Cyrillic «х» and «і» he may type for «x» and «i» on a Russian layout. */
-const latinNumeralOf = (word: string): string => word.toLowerCase().replace(/х/gu, "x").replace(/і/gu, "i");
+/** The numeral itself: two letters or more, of «i», «v» and «x» alone. */
+export const ROMAN_NUMERAL_WORD = /^[ivx]{2,}$/;
+/** An age's tail and an ordinal's or a plural's ending (round 2, the security review), taken off a word's end again and again: «xviyearsold» → xvi, «xviyo» → xvi. */
+const NUMERAL_TAIL = /(?:years|year|yrs|yr|yo|y|old|aged|age|st|nd|rd|th|s)$/;
+/** A word lower-cased with its tails taken off, as long as two letters stay: «video», «villa», «vintage» («vint»), «ivory» («ivor») are left no numeral. */
+export function romanNumeralCore(word: string): string {
+  let core = word.toLowerCase();
+  for (let next = core.replace(NUMERAL_TAIL, ""); next !== core && next.length >= 2; next = core.replace(NUMERAL_TAIL, "")) core = next;
+  return core;
+}
+/**
+ * The only words whose core is a numeral and that are no numeral, let through by name: the size «XXS», and the dictionary's «ivy», «vis» (vis-a-vis), «visage» and «visaged».
+ * «xi», the one other word the dictionary holds, is eleven and is refused. Each entry is pinned by a passing probe.
+ */
+export const ROMAN_NOT_A_NUMERAL: ReadonlySet<string> = new Set(["xxs", "ivy", "vis", "visage", "visaged"]);
 const isRomanNumeralWord = (word: string): boolean => {
-  const latin = latinNumeralOf(word);
-  return !ROMAN_NOT_A_NUMERAL.has(latin) && ROMAN_NUMERAL_WORD.test(latin);
+  const lower = word.toLowerCase();
+  return !ROMAN_NOT_A_NUMERAL.has(lower) && ROMAN_NUMERAL_WORD.test(romanNumeralCore(lower));
 };
+/** The Cyrillic look-alikes he may type for the Latin letters on a Russian layout, mapped in place (their case kept) before any word is read («х-v-і», «ХVI»). */
+const LATIN_LOOK_ALIKES: Record<string, string> = { х: "x", Х: "X", і: "i", І: "I" };
+const withLatinLookAlikes = (text: string): string => text.replace(/[хХіІ]/gu, (letter) => LATIN_LOOK_ALIKES[letter] ?? letter);
 
-/** A run of Latin letters split where its case changes (round 2, M1): «sweetXVI» → sweet, XVI; «XVIyo» → XVI, yo; a capitalised word («Viv») stays whole. */
-const caseParts = (run: string): string[] => run.split(/(?<=\p{Ll})(?=\p{Lu})|(?<=\p{Lu}{2})(?=\p{Ll})/u);
+/**
+ * A run of Latin letters split where its case changes (round 2, M1 and the security review): «sweetXVI» → sweet, XVI; «XVIYearsold» → XVI, Yearsold; «XVIyo» → XVI, yo; a
+ * capitalised word («Viv») stays whole.
+ */
+const caseParts = (run: string): string[] => run.split(/(?<=\p{Ll})(?=\p{Lu})|(?<=\p{Lu})(?=\p{Lu}\p{Ll})|(?<=\p{Lu}{2})(?=\p{Ll})/u);
 /** The longest stretch of fragments a numeral is joined from, and its longest join: an age's numeral is short. */
 const NUMERAL_FRAGMENTS_MAX = 8;
 const NUMERAL_JOIN_MAX = 12;
 /**
- * Round 2 (M1): a numeral split into short fragments («x-v-i», «X.V.I», «a x v i», «ей X-V-I»): in every run of short fragments (`FRAGMENTS`), each stretch of two Latin fragments
- * or more joined into one word, up to `NUMERAL_FRAGMENTS_MAX` of them, so the run's Russian or English words around it cover nothing.
+ * Round 2 (M1): a numeral split into short fragments («x-v-i», «a x v i», «ей X-V-I»): in every run of short fragments (`FRAGMENTS`), each stretch of two whole fragments or more
+ * joined into one word, up to `NUMERAL_FRAGMENTS_MAX` of them; a fragment that holds another letter («ах», «ох») joins into no numeral.
  */
-function latinFragmentJoins(base: string): string[] {
-  return Array.from(base.matchAll(FRAGMENTS), ([run]) => run.match(/\p{Script=Latin}+/gu) ?? []).flatMap((parts) =>
+function fragmentJoins(base: string): string[] {
+  return Array.from(base.matchAll(FRAGMENTS), ([run]) => run.split(/[^\p{L}]+/u).filter((part) => part !== "")).flatMap((parts) =>
     parts.flatMap((_, from) =>
-      Array.from({ length: Math.min(NUMERAL_FRAGMENTS_MAX, parts.length - from) - 1 }, (_, k) => parts.slice(from, from + k + 2).join("")).filter((join) => join.length <= NUMERAL_JOIN_MAX),
+      Array.from({ length: Math.max(0, Math.min(NUMERAL_FRAGMENTS_MAX, parts.length - from) - 1) }, (_, k) => parts.slice(from, from + k + 2).join("")).filter(
+        (join) => join.length <= NUMERAL_JOIN_MAX,
+      ),
     ),
   );
 }
 
 /**
- * Whether a text names a Roman numeral (above), read on its normalised form: every run of Latin letters, so a numeral glued to a Russian word is read too («ейXVI»), with its
- * parts where the case changes («sweetXVI»); every word that holds a Cyrillic «х» or «і» («ей ХХ»); and the numerals split into short fragments («x-v-i»).
+ * Whether a text names a Roman numeral (above), read on its normalised form with the Cyrillic look-alikes mapped and the dots taken out («xviy.o.», «X.V.I»): every run of Latin
+ * letters, so a numeral glued to a Russian word is read too («ейXVI»), with its parts where the case changes («sweetXVI»), and every stretch of a run of short fragments.
  */
 export function namesRomanNumeral(text: string): boolean {
-  const base = normalise(text);
+  const base = withLatinLookAlikes(normalise(text)).replace(/\./g, "");
   const runs = base.match(/\p{Script=Latin}+/gu) ?? [];
-  const homoglyphs = (base.match(/\p{L}+/gu) ?? []).filter((word) => /[хі]/iu.test(word));
-  return [...runs.flatMap((run) => [run, ...caseParts(run)]), ...homoglyphs, ...latinFragmentJoins(base)].some(isRomanNumeralWord);
+  return [...runs.flatMap((run) => [run, ...caseParts(run)]), ...fragmentJoins(base)].some(isRomanNumeralWord);
 }
 
 /** S5.FU-AGE: a decade, the unit an age is spelled out in («a decade and a half»). «decadent» said as a word is none. */
