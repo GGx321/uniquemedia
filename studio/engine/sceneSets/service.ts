@@ -295,7 +295,8 @@ export class SceneSetService {
   }
 
   #planReview(library: Library | null, set: StoredSceneSet, target: Exclude<SceneWriteTarget, { kind: "unwritten" }>): Promise<ReviewPlan> {
-    return planReviewWrite({ set, target, ledger: this.#deps.ledger(), customCategories: (refs) => this.#deps.customCategories(library, refs) });
+    // 5a.4 (S5.BA5, plan s5a4 I5.74): redrawn for the avatar's origin; a library that cannot answer reads as imported (fail-closed).
+    return planReviewWrite({ set, target, ledger: this.#deps.ledger(), customCategories: (refs) => this.#deps.customCategories(library, refs), impliedNudity: library?.studioCreated(set.avatarId) === true });
   }
 
   // ---------- refusals shared by the commands ----------
@@ -511,6 +512,8 @@ export class SceneSetService {
         recentPairs: recent,
         textModel,
         ...(launch === undefined ? {} : { split: launch.split, launchId: launch.launchId }),
+        // 5a.4 (S5.BA5, plan s5a4 I5.74): planned for the avatar's origin (`studioCreated`, a positive wizard check): only an avatar made in Studio may be planned an implied cover.
+        impliedNudity: library.studioCreated(avatarId),
       });
       // Live from here: an edit or a discard cannot slip in between the file and the job. (A launch's entry has been live since the start of the call.)
       if (jobId !== null && mine === null) {

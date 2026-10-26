@@ -149,7 +149,7 @@ import { FACE_GATE_NAME } from "./runs/faceGate";
 import { AGE_GATE_NAME, type QaGate } from "./runs/qa";
 import { capFundsResume, remainingPlan, remainingPlanOrNull, scopeCommitted } from "./runs/remaining";
 import { preflightMaster, reportingTo, runPhotoRun, type RunJobEnd } from "./runs/runJob";
-import { hairLengthOf, planWithPools, POOLS } from "./scenes";
+import { hairLengthOf, planForAvatar, POOLS } from "./scenes";
 import { runCategoryJob } from "./scenes/categoryJob";
 import { categoryEstimate, categoryPriceModels } from "./scenes/categoryPlan";
 import { coversOfStored } from "./scenes/coverage";
@@ -3294,7 +3294,8 @@ export class Engine {
       console.warn(`studio engine: avatar ${avatarId}'s scene history could not be read; planning without it (${messageOf(error, "unknown error")})`);
       return [];
     });
-    const scenes = planWithPools(
+    // 5a.4 (S5.BA5, plan s5a4 I5.74): planned for the avatar's origin. Only an avatar made in Studio (`studioCreated`, a positive wizard check) may be planned an implied cover.
+    const scenes = planForAvatar(
       {
         seed: seedOf(runId),
         count,
@@ -3306,6 +3307,7 @@ export class Engine {
         ...(legsShare === undefined ? {} : { legsShare }),
       },
       { ...POOLS, ...Object.fromEntries(custom.map((c) => [c.categoryId, poolOf(c.pool)])) },
+      library.studioCreated(avatarId),
     );
     const plan = buildRunPlan({
       runId,
