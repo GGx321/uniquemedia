@@ -121,9 +121,7 @@ export const TRAVEL_BOLD: CategoryBank = {
         { text: "sits on the low stone wall", motion: "she swings one foot a little", captures: ["friend", "timer", "selfie"], twoHanded: false, outdoor: true },
         { text: "stretches in the morning sun", motion: "she reaches a little higher", captures: ["friend", "timer", "candid"], twoHanded: true, outdoor: true },
         { text: "rests both hands on the wall", motion: "she leans out a little and back", captures: ["friend", "timer", "candid"], twoHanded: true, angle: "profile", outdoor: true },
-        { text: "lies on a lounger, eyes closed", motion: "she tilts her face up a little", captures: ["friend", "timer", "selfie"], twoHanded: false, gaze: "own", outdoor: true },
         { text: "picks a grape from the bunch", motion: "she lifts the grape a little", captures: ["friend", "candid"], twoHanded: false, gaze: "focus", outdoor: true },
-        { text: "sits on the edge of a lounger", motion: "she leans forward a little", captures: ["friend", "timer", "selfie"], twoHanded: false, level: "flirty", outdoor: true },
         { text: "leans back against the stone wall", motion: "she lifts her chin a little", captures: ["friend", "timer"], twoHanded: false, level: "bold", route: "seedream", outdoor: true },
         { text: "lifts one foot off the stone wall", motion: "she lowers her foot slowly", captures: ["pov-legs"], twoHanded: false, outfits: LEGS, legs: { framing: "legs" } },
       ],
@@ -138,6 +136,9 @@ export const TRAVEL_BOLD: CategoryBank = {
         { text: "sits on the edge, toes in the water", motion: "she swirls her toes slowly", captures: ["friend", "timer", "candid"], twoHanded: false, water: true, outfits: SWIMWEAR, outdoor: true },
         // r2.1 N3: a lounger by the pool is no water moment, and it still pins swimwear.
         { text: "lies back on a lounger", motion: "she lifts one knee a little", captures: ["friend", "timer", "selfie"], twoHanded: false, outfits: SWIMWEAR, outdoor: true },
+        // Review M4: the lounger moments moved here from the terrace, where Seedream drew a pool beside a lounger; in swimwear.
+        { text: "lies on a lounger, eyes closed", motion: "she tilts her face up a little", captures: ["friend", "timer", "selfie"], twoHanded: false, gaze: "own", outfits: SWIMWEAR, outdoor: true },
+        { text: "sits on the edge of a lounger", motion: "she leans forward a little", captures: ["friend", "timer", "selfie"], twoHanded: false, level: "flirty", outfits: SWIMWEAR, outdoor: true },
         { text: "leans on the side in the water", motion: "she kicks her feet slowly behind her", captures: ["friend", "timer", "candid"], twoHanded: true, water: true, outfits: SWIMWEAR, outdoor: true },
         { text: "stands waist-deep, arms on the side", motion: "she sways a little in the water", captures: ["friend", "timer"], twoHanded: true, level: "flirty", water: true, outfits: SWIMWEAR, outdoor: true },
         { text: "sits on the steps in the water", motion: "she swishes her hand slowly", captures: ["friend", "timer", "candid"], twoHanded: false, level: "flirty", water: true, outfits: SWIMWEAR, outdoor: true },

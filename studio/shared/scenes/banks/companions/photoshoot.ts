@@ -66,10 +66,11 @@ export const PHOTOSHOOT_BOLD: CategoryBank = {
       moments: [
         // P-BA S1: drawn without its coverage.
         { text: "checks her jeans before heading out", motion: "she turns a little toward the mirror", captures: ["mirror-hidden", "mirror"], twoHanded: false, outfits: JEANS },
-        { text: "stands by the door, ready to go", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
+        // Review M3: on her way out she is in her jeans, never in the general draw's thong or bodysuit.
+        { text: "stands by the door, ready to go", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror"], twoHanded: false, outfits: JEANS },
         { text: "brushes her fringe aside", motion: "she sweeps her fringe aside slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "own" },
         // Home from the walk: on a timer, both hands at her laces.
-        { text: "sits on the bench, untying her boot", motion: "she tugs the lace loose slowly", captures: ["timer"], twoHanded: true, gaze: "focus" },
+        { text: "sits on the bench, untying her boot", motion: "she tugs the lace loose slowly", captures: ["timer"], twoHanded: true, gaze: "focus", outfits: JEANS },
         { text: "leans on the front door", motion: "she leans her head back a little", captures: ["mirror-hidden", "mirror"], twoHanded: false, level: "flirty" },
         { text: "leans back against the wall", motion: "she presses her shoulders back slowly", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false, level: "flirty" },
         // Side to the mirror, only her reflection.

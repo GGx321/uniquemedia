@@ -262,6 +262,24 @@ describe("the caption's words, from the bank data (§5.9)", () => {
   });
 });
 
+// Review M3, M4: never lingerie where the frame reads as out in public.
+describe("on the way out and by the pool (review M3, M4)", () => {
+  test("«Улица»'s going-out moments in the hallway wear the bra and jeans, plain or lace: she is not on her way out in a thong or a bodysuit", () => {
+    for (const text of ["checks her jeans before heading out", "stands by the door, ready to go", "sits on the bench, untying her boot"]) {
+      expect({ text, outfits: momentNamed(BOLD_COMPANIONS.photoshoot, text)?.moment.outfits }).toEqual({ text, outfits: ["a black bra and jeans", "a lace bra and jeans"] });
+    }
+  });
+
+  test("«Виды»: no lounger on the villa's terrace (Seedream draws a pool beside it); the lounger moments are the pool's, in swimwear", () => {
+    const terrace = BOLD_COMPANIONS.travel.places.find((p) => p.name === "the villa terrace");
+    expect(terrace?.moments.filter((m) => /\blounger\b/.test(m.text)).map((m) => m.text)).toEqual([]);
+    for (const text of ["lies on a lounger, eyes closed", "sits on the edge of a lounger"]) {
+      const found = momentNamed(BOLD_COMPANIONS.travel, text);
+      expect({ text, place: found?.place.name, swimwear: (found?.moment.outfits ?? []).every((o) => /\b(?:bikini|swimsuit)\b/.test(o)) && (found?.moment.outfits ?? []).length > 0 }).toEqual({ text, place: "the villa's pool", swimwear: true });
+    }
+  });
+});
+
 describe("the probe's frames are in the banks (P-BA, the owner's eye fixes)", () => {
   test.each<[string, CategoryBank, string, string]>([
     ["B1 the towel after a shower", BOLD_COMPANIONS.home, "her bathroom", "stands by the sink after a shower"],
