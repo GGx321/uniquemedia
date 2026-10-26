@@ -32,7 +32,7 @@ export interface RedrawInput {
   impliedNudity?: boolean | undefined;
   /**
    * 5a.4 (S5.BA3, I5.78): the custom category's own stored pool, where a routed custom scene redraws its `world` from (the water scene a water place, the rest any). `pool` is then the shared
-   * «Смелая» pool the scene is in. Absent: a routed custom scene keeps neither a world nor a route it cannot back, so none is drawn.
+   * «Смелая» pool the scene is in. Absent: a routed custom scene keeps the world it has.
    */
   worldPool?: Pool | undefined;
 }
@@ -65,7 +65,9 @@ export function redrawSlot(input: RedrawInput): PlanSlot {
  * a scene without both is returned as it was drawn.
  */
 function withWorld(input: RedrawInput, drawn: PlanSlot): PlanSlot {
-  if (drawn.route !== "seedream" || !isCustomCategory(drawn.category) || input.worldPool === undefined) return drawn;
+  if (drawn.route !== "seedream" || !isCustomCategory(drawn.category)) return drawn;
+  // No pool to draw another world from: the scene keeps the one it has, so a routed custom scene never loses its world (I5.71).
+  if (input.worldPool === undefined) return input.slot.world === undefined ? drawn : { ...drawn, world: input.slot.world };
   const places = input.worldPool.locations.map((l) => l.name);
   const wet = input.pool.locations.some((l) => l.name === drawn.location && l.water === true);
   const kind = wet ? places.filter(isWaterPlaceName) : places;

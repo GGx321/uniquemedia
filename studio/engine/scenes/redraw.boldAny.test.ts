@@ -119,10 +119,20 @@ describe("a routed custom scene", () => {
     }
   });
 
-  test("drops the world when it has no world pool to draw one from", () => {
+  test("keeps its own world when it has no world pool to draw another from: a routed custom scene never loses its world", () => {
     for (const slot of slots) {
       const out = redrawSlot({ seed: 77, k: 2, slot, pool: poolOfSlot(slot, true) ?? PARIS, avoid: NO_AVOID, impliedNudity: true });
-      expect(out.world === undefined).toBe(out.route === undefined || out.world === undefined);
+      expect({ route: out.route, world: out.world }).toEqual({ route: "seedream", world: slot.world });
+      expect(PlanSlotSchema.safeParse(out).success).toBe(true);
+    }
+  });
+
+  // BA1 review hand-off: the redraw drops `world` whenever it drops the route. A routed custom scene redrawn in a pool that is not «Смелая» (here the category's own, an ordinary pool) draws no route, and
+  // then it must carry no world either: the plan slot refuses a world without the route.
+  test("drops the world whenever it drops the route", () => {
+    for (const slot of slots) {
+      const out = redrawSlot({ seed: 77, k: 2, slot, pool: PARIS, worldPool: PARIS, avoid: NO_AVOID });
+      expect({ route: out.route, world: out.world }).toEqual({ route: undefined, world: undefined });
       expect(PlanSlotSchema.safeParse(out).success).toBe(true);
     }
   });

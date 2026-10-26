@@ -10,7 +10,7 @@ import { coverageOf, templateSentence } from "../../shared/scenes/template";
 import { plan, planForAvatar, planWithPools, type PlanInput } from "./planner";
 import { POOLS, type Pool } from "./pools";
 import { makeRng, shuffle, subSeed } from "./rngUtil";
-import type { PlanSlot } from "./schema";
+import { PlanSlotSchema, type PlanSlot } from "./schema";
 import { ORDINARY_BUILT_INS, type PlannerCategory } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -78,14 +78,16 @@ describe("the five at «Смелая» (I5.71)", () => {
     }
   });
 
-  test.each([...ORDINARY_BUILT_INS])("%s: no template slot is null, at every size, either origin and the legs shares 0, 15 and 30", (category) => {
+  test.each([...ORDINARY_BUILT_INS])("%s: no template slot is null, at every level and size, either origin and the legs shares 0, 15 and 30", (category) => {
     for (const seed of SEEDS.slice(0, 8)) {
       for (const n of [1, 2, 3, 5, 8, 10, 14, 20, 30]) {
         for (const legsShare of [0, 15, 30] as const) {
-          for (const impliedNudity of [false, true]) {
-            const { slots } = planForAvatar({ seed, count: n, categories: [category], level: "bold", legsShare }, POOLS, impliedNudity);
-            const nulls = slots.filter((slot) => templateSentence(slot, { key: `run-${seed}:${slot.attemptIdBase}`, impliedNudity }) === null).map((s) => `${s.location}|${s.activity}|${s.outfit}`);
-            expect({ category, seed, n, legsShare, impliedNudity, nulls }).toEqual({ category, seed, n, legsShare, impliedNudity, nulls: [] });
+          for (const level of ["ordinary", "flirty", "bold"] as const) {
+            for (const impliedNudity of [false, true]) {
+              const { slots } = planForAvatar({ seed, count: n, categories: [category], level, legsShare }, POOLS, impliedNudity);
+              const nulls = slots.filter((slot) => templateSentence(slot, { key: `run-${seed}:${slot.attemptIdBase}`, impliedNudity }) === null).map((s) => `${s.location}|${s.activity}|${s.outfit}`);
+              expect({ category, seed, n, legsShare, level, impliedNudity, nulls }).toEqual({ category, seed, n, legsShare, level, impliedNudity, nulls: [] });
+            }
           }
         }
       }
@@ -234,6 +236,19 @@ describe("a custom category at «Смелая» (§5.3)", () => {
     const angled: Pool = { ...PARIS, poses: ["back", "profile"] };
     const { slots } = planWithPools({ seed: 3, count: 20, categories: [CUSTOM], level: "bold" }, pools({ [CUSTOM]: angled }));
     expect(slots.every((s) => bankPlaceOf({ category: s.category, route: s.route, location: s.location, activity: s.activity })?.moment !== undefined)).toBe(true);
+  });
+
+  // BA1 review hand-off (I5.71): does a routed custom slot have to carry a world? DECISION: the planner and the redraw always give it one (it is how the bold writer knows what the frame is set inside), and
+  // the schema, which only refuses a world WITHOUT the route, still reads a routed custom slot stored without one: the bold writer keeps such a slot's location as given (plan s5a4 r2.1 L3).
+  test("a routed custom slot always has its world from the planner, and the schema still reads one stored without it", () => {
+    for (const seed of SEEDS.slice(0, 12)) {
+      for (const slot of planWithPools({ seed, count: 25, categories: [CUSTOM, OTHER], level: "bold" }, pools({ [CUSTOM]: PARIS, [OTHER]: MARKET })).slots) {
+        expect({ seed, slot: slot.slotIndex, route: slot.route, world: slot.world !== undefined }).toEqual({ seed, slot: slot.slotIndex, route: "seedream", world: true });
+      }
+    }
+    const { world: _world, ...withoutWorld } = planWithPools({ seed: 1, count: 5, categories: [CUSTOM], level: "bold" }, pools({ [CUSTOM]: PARIS })).slots[0] as PlanSlot;
+    expect(PlanSlotSchema.safeParse(withoutWorld).success).toBe(true);
+    expect(PlanSlotSchema.safeParse({ ...withoutWorld, world: "a tiny bookshop", route: undefined }).success).toBe(false);
   });
 
   test("at «Обычная» a custom category plans as it always did: no route, no world", () => {
