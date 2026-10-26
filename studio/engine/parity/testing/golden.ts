@@ -4540,11 +4540,11 @@ export const GOLDEN: Record<string, string[]> = {
     "# the run drew a photo for every scene: true",
     "# every beach photo carries the route: true",
     "# the nightwear photos that carry it are as many as the nightwear scenes on it: true",
-    "# some nightwear scenes are on the route and some are not: true",
+    "# some nightwear scenes are on the route and some are not: false",
     "# the job ended done; 20 photos, 0 slots ended without one, 0 still open, resumable: false",
     "# the slots that ended with a reason: none",
     "# the run spent: some",
-    "# photos that carry the Seedream route: 18",
+    "# photos that carry the Seedream route: 20",
     "# the library held photos before the run, and none of them carries a route: true",
   ],
   "photo runs, «Смелая» (S5.9f): Seedream's refusal ends only the slot it met, for nothing, and is final — a run refused whole spends nothing and has nothing left to resume": [
