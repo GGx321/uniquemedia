@@ -478,6 +478,11 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
       expect(told).not.toContain("Daylight");
     });
 
+    // S5.BA4b (P-BW, LOW): the pose code pasted as «facing front» / «faces front».
+    test.each(["facing front", "faces front"])("«%s» is refused", (words) => {
+      expect(problemsOf(bold(`In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, ${words} on the pillows, a box of macarons on the nightstand.`))).toContain("label-word");
+    });
+
     // Review round 3, LOW: the capture label's phrases.
     test.each([
       ["her own photo", "In her small hotel room in Paris, in her own photo, she lies back across the bed in a white lace bra and panties, a box of macarons on the nightstand."],
