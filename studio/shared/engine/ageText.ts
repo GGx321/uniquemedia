@@ -415,11 +415,12 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
   en("youth", "youths?(?![- ]hostels?\\b)"),
   en("pupil", `(?<!\\b(?:dilated|widened|wide|narrowed|constricted|eye)\\s)pupils?(?!(?:\\s+\\w+ly)?\\s+(?:${PUPIL_VERBS})\\w*|\\s+of\\s+(?:her|his|the|their)\\s+eyes?\\b)`),
   // S5.FU-AGE (the review of the kept age guard): an infant's things, in English and in Russian, in their case and number forms. «Соска» shares most of its forms with
-  // «сосок» (her nipple, which the lifted content rules let through), so it counts in its own forms only: «с соской», «соска во рту», «сосёт соску», «детская соска».
+  // «сосок» (her nipple, which the lifted content rules let through), so it counts in its own forms only: «с соской», «соску в рот», «сосёт соску», «детская соска»
+  // (round 2, M2: «соска во рту» is also «кончик соска во рту», her nipple).
   enRu(
     "pacifier",
     "pacifiers?|dumm(?:y|ies)|soothers?",
-    "(?<![\\p{L}])(?:пустыш(?:к\\p{L}*|ек)|соск(?:ой|ою)|соск[ау]\\s+(?:во|в)\\s+(?:рту|рот)|сос(?:[её]т|ала|ать|ут)\\s+соску|детск\\p{L}*\\s+соск\\p{L}*)(?![\\p{L}])",
+    "(?<![\\p{L}])(?:пустыш(?:к\\p{L}*|ек)|соск(?:ой|ою)|соску\\s+в\\s+рот|сос(?:[её]т|ала|ать|ут)\\s+соску|детск\\p{L}*\\s+соск\\p{L}*)(?![\\p{L}])",
   ),
   enRu("diaper", "diaper\\w*|napp(?:y|ies)", "(?<![\\p{L}])(?:подгузник|памперс)\\p{L}*"),
   // Spanish "niña" (girl) folds to "nina". A real word only: short words run together make it by chance ("tan in a").
