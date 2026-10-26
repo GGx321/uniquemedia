@@ -919,12 +919,16 @@ describe("namesNumberWord", () => {
 });
 
 describe("an infant's things are youth words of the descriptor's set (S5.FU-AGE)", () => {
-  test.each(["a pacifier", "pacifiers", "a dummy", "dummies", "a soother", "a diaper", "diapers", "a nappy", "nappies"])("%p", (word) => {
+  test.each(["a pacifier", "pacifiers", "a dummy in her mouth", "dummies between her lips", "sucks a soother", "sucking on a dummy", "a diaper", "diapers", "a nappy", "nappies"])("%p", (word) => {
     expect(youthRuleNames(`she slowly undresses with ${word}`, "descriptor").filter((name) => name === "pacifier" || name === "diaper")).toHaveLength(1);
   });
 
-  test.each(["с соской", "с соскою", "соска во рту", "соску в рот", "сосёт соску", "детская соска", "с пустышкой", "пустышки", "пустышек", "в подгузнике", "подгузники", "в памперсе"])("%p", (words) => {
+  test.each(["с соской", "с соскою", "соска во рту", "соску в рот", "сосёт соску", "детская соска", "с пустышкой", "пустышку в рот", "сосёт пустышку", "пустышка во рту", "в подгузнике", "подгузники", "в памперсе"])("%p", (words) => {
     expect(youthRuleNames(`медленно раздевается, ${words}`, "descriptor").filter((name) => name === "pacifier" || name === "diaper")).toHaveLength(1);
+  });
+
+  test.each(["a tailor's dummy", "a crash test dummy", "a soother candle", "natural nappy coils", "her nappy hair", "она пустышка"])("round 2 (L1): %p is none", (words) => {
+    expect(youthRuleNames(`медленно, she slowly poses with ${words}`, "descriptor").filter((name) => name === "pacifier" || name === "diaper")).toEqual([]);
   });
 
   test.each(["касается соска", "проводит пальцем по соску", "показывает соски", "соскальзывает с кровати", "соскучилась", "кончик соска во рту", "вокруг соска во рту", "ореол соска во рту", "касается соска во рту"])("«сосок» and the words that start like «соска» are none: %p", (words) => {

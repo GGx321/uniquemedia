@@ -453,15 +453,17 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
   en("puberty", "pubert\\w*"),
   en("youth", "youths?(?![- ]hostels?\\b)"),
   en("pupil", `(?<!\\b(?:dilated|widened|wide|narrowed|constricted|eye)\\s)pupils?(?!(?:\\s+\\w+ly)?\\s+(?:${PUPIL_VERBS})\\w*|\\s+of\\s+(?:her|his|the|their)\\s+eyes?\\b)`),
-  // S5.FU-AGE (the review of the kept age guard): an infant's things, in English and in Russian, in their case and number forms. «Соска» shares most of its forms with
+  // S5.FU-AGE (the review of the kept age guard): an infant's things, in English and in Russian, in their case and number forms. Round 2 (L1): a dummy or a soother only
+  // sucked or in her mouth (never «a tailor's dummy», «a soother candle»), a nappy unless it is her hair («natural nappy coils»), «пустышка» only as a pacifier («с пустышкой»,
+  // «пустышку в рот», «сосёт пустышку», never «она пустышка»). «Соска» shares most of its forms with
   // «сосок» (her nipple, which the lifted content rules let through), so it counts in its own forms only: «с соской», «соску в рот», «сосёт соску», «детская соска»
   // (round 2, M2: «соска во рту» is the genitive of «сосок» after «кончик», «вокруг», «ореол», «касается» … : `NIPPLE_GENITIVE_BEFORE`).
   enRu(
     "pacifier",
-    "pacifiers?|dumm(?:y|ies)|soothers?",
-    `(?<![\\p{L}])(?:пустыш(?:к\\p{L}*|ек)|соск(?:ой|ою)|(?<!(?<![\\p{L}])(?:${NIPPLE_GENITIVE_BEFORE})\\s+)соск[ау]\\s+(?:во|в)\\s+(?:рту|рот)|сос(?:[её]т|ала|ать|ут)\\s+соску|детск\\p{L}*\\s+соск\\p{L}*)(?![\\p{L}])`,
+    "pacifiers?|(?<=\\bsuck(?:s|ing|ed)?\\s+(?:(?:on|at)\\s+)?(?:(?:a|an|the|her|his)\\s+)?)(?:dumm(?:y|ies)|soothers?)|(?:dumm(?:y|ies)|soothers?)(?=\\s+(?:in|between)\\s+(?:her|his|the|a)\\s+(?:mouth|lips))",
+    `(?<![\\p{L}])(?:с\\s+пустышк(?:ой|ою)|пустышк(?:а|у)\\s+(?:во|в)\\s+(?:рту|рот)|сос(?:[её]т|ала|ать|ут)\\s+пустышку|детск\\p{L}*\\s+пустыш\\p{L}*|соск(?:ой|ою)|(?<!(?<![\\p{L}])(?:${NIPPLE_GENITIVE_BEFORE})\\s+)соск[ау]\\s+(?:во|в)\\s+(?:рту|рот)|сос(?:[её]т|ала|ать|ут)\\s+соску|детск\\p{L}*\\s+соск\\p{L}*)(?![\\p{L}])`,
   ),
-  enRu("diaper", "diaper\\w*|napp(?:y|ies)", "(?<![\\p{L}])(?:подгузник|памперс)\\p{L}*"),
+  enRu("diaper", "diaper\\w*|napp(?:ies|y(?!\\s+(?:hair|coils?|curls?|locks|texture|roots|strands|afro|kinks?)\\b))", "(?<![\\p{L}])(?:подгузник|памперс)\\p{L}*"),
   // Round 2 (M4): more of an infant's things: a rattle (the thing, never «she rattles her keys» or «a rattle of keys»), a teether, a sippy cup, a crib, a bottle of formula;
   // «погремушка», «слюнявчик», «ползунки» (never a slider, «ползунок»), «детская кроватка» (never his own «кроватка»), «бутылочка смеси». A baby bib is «baby» already;
   // «малыш» is a pet name for an adult and stays out.
