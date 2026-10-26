@@ -169,13 +169,19 @@ export const BOLD_SCENARIOS: readonly Scenario[] = [
       await t.untilRunEnds(partial);
       const one = await endOfRun(t, w, partial);
       tellEnd(t, one);
-      t.note("a slot on the owner's model never meets a refusal: nightwear's ordinary scenes are drawn whatever Seedream said");
+      // 5a.4 (S5.BA2, 2026-10-26, plan s5a4 §7.4 #4, Q-A2): nightwear is always underwear on Seedream now, so no nightwear slot is on the owner's model; the sub-check that a slot on the
+      // owner's model never meets a refusal is told on a «Кокетливая» «Дом» run instead, with the refusal knob still on.
+      t.note("at «Смелая» nightwear has no slot on the owner's model: 10 of 10 refused, for nothing");
       control.launch.refuseSeedream(100);
-      const mixed = await startedRun(t, "runs.start", bold(w, 10, ["nightwear"]));
-      await t.untilRunEnds(mixed);
-      const rest = await endOfRun(t, w, mixed);
-      t.note(`every slot is either drawn or refused: ${String(rest.photos.length + rest.failed === 10)}, and some were drawn: ${String(rest.photos.length > 0)}, and none of them carries the route: ${String(rest.photos.every((p) => !("route" in p)))}`);
-      t.note(`the refused slots all say so: ${countsOf(rest.reasons).startsWith("model-refused") && new Set(rest.reasons).size === 1 ? "model-refused" : countsOf(rest.reasons)}`);
+      const nightwear = await startedRun(t, "runs.start", bold(w, 10, ["nightwear"]));
+      await t.untilRunEnds(nightwear);
+      const allRefused = await endOfRun(t, w, nightwear);
+      t.note(`every slot was refused: ${String(allRefused.photos.length === 0 && allRefused.failed === 10)}, the refused slots all say so: ${countsOf(allRefused.reasons) === "model-refused x10" ? "model-refused" : countsOf(allRefused.reasons)}, and the run spent: ${allRefused.spent}`);
+      t.note("a slot on the owner's model never meets a refusal: a «Кокетливая» «Дом» run with the knob still on draws every slot");
+      const flirty = await startedRun(t, "runs.start", { avatarId: w.avatarId, count: 5, categories: ["home"], level: "flirty", acceptedWorstMicros: ENOUGH });
+      await t.untilRunEnds(flirty);
+      const drawn = await endOfRun(t, w, flirty);
+      t.note(`every slot was drawn: ${String(drawn.photos.length === 5 && drawn.failed === 0)}, and none of them carries the route: ${String(drawn.photos.every((p) => !("route" in p)))}`);
     },
   },
   {
