@@ -51,8 +51,10 @@ describe("a launch's slice run takes its routes from the scenes", () => {
 });
 
 describe("a launch start and a resume meet a missing 2K tier as the engine does", () => {
+  // 5a.4 (S5.BA5, 2026-10-26, plan s5a4 r2.2 D2): a launch at «Смелая» takes only the photos drawn on the route, so the library's nightwear photos here carry it, as every nightwear photo
+  // drawn since 5a.4 does (Q-A2); without it they are no «Смелая» launch's library photos and the launch would generate them all.
   test("a launch whose draw is all from the library starts although the tier is missing", async () => {
-    const photos = freePhotos(40, MIA).map((p) => ({ ...p, category: "nightwear" as const }));
+    const photos = freePhotos(40, MIA).map((p) => ({ ...p, category: "nightwear" as const, route: "seedream" as const }));
     const mock = runWorld({ photos, avatars: [{ ...MIA, photoCount: 40, eligibleUnusedCount: 40 }] });
     mock.engine.lackBoldPrice();
     const draft = draftOf({ categories: ["nightwear"], level: "bold", library: true, generate: true, videosPerAvatar: 2 });
