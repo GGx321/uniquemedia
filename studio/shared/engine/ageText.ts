@@ -383,6 +383,11 @@ const NEWBORN_ANIMALS = "kittens?|pupp(?:y|ies)|pups?|lambs?|foals?|calf|calves|
  * genitive, or «касаться»; anywhere else «соска во рту» is a pacifier.
  */
 const NIPPLE_GENITIVE_BEFORE = "кончик\\p{L}*|кра(?:й|я|ем)|краешк\\p{L}*|ореол\\p{L}*|вокруг|возле|около|у|от|до|без|из|кас\\p{L}*|косн\\p{L}*";
+/**
+ * Round 3 (N3): up to two words may stand between those and «соска» where they are its modifiers in the genitive («кончик её соска», «кончик левого соска»): «её», «его», «их»,
+ * or an adjective in «-ого», «-его»; never a pronoun after a preposition («у меня соска во рту», «у неё», «у него» stay a pacifier).
+ */
+const NIPPLE_MODIFIER = "(?!(?:него|неё|них|меня|тебя|нас|вас)(?![\\p{L}]))(?:её|его|их|\\p{L}{2,}(?:ого|его))(?![\\p{L}])";
 /** S5.FU-AGE round 2 (H2): a tot that is a drink names it («a tot of rum»); «a tot of her own», «a tot of three» are a child. */
 const TOT_DRINKS = "rum|whisk(?:e)?y|brandy|gin|vodka|scotch|bourbon|cognac|liquor|port|sherry";
 /** S5.FU-AGE: what the pupils of her eyes do («her pupils slowly widen»). */
@@ -470,7 +475,7 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
   enRu(
     "pacifier",
     "pacifiers?|(?:dumm(?:y|ies)|soothers?)(?:(?<=\\bsuck(?:s|ing|ed)?\\s+(?:(?:on|at)\\s+)?(?:(?:a|an|the|her|his)\\s+)?(?:dumm(?:y|ies)|soothers?))|(?=\\s+(?:in|between)\\s+(?:her|his|the|a)\\s+(?:mouth|lips)))",
-    `(?<![\\p{L}])(?:с\\s+пустышк(?:ой|ою)|пустышк(?:а|у)\\s+(?:во|в)\\s+(?:рту|рот)|сос(?:[её]т|ала|ать|ут)\\s+пустышку|детск\\p{L}*\\s+пустыш\\p{L}*|соск(?:ой|ою)|соск[ау](?<!(?<![\\p{L}])(?:${NIPPLE_GENITIVE_BEFORE})\\s+соск[ау])\\s+(?:во|в)\\s+(?:рту|рот)|сос(?:[её]т|ала|ать|ут)\\s+соску|детск\\p{L}*\\s+соск\\p{L}*)(?![\\p{L}])`,
+    `(?<![\\p{L}])(?:с\\s+пустышк(?:ой|ою)|пустышк(?:а|у)\\s+(?:во|в)\\s+(?:рту|рот)|сос(?:[её]т|ала|ать|ут)\\s+пустышку|детск\\p{L}*\\s+пустыш\\p{L}*|соск(?:ой|ою)|соск[ау](?<!(?<![\\p{L}])(?:${NIPPLE_GENITIVE_BEFORE})(?:\\s+(?:${NIPPLE_MODIFIER})){0,2}\\s+соск[ау])\\s+(?:во|в)\\s+(?:рту|рот)|сос(?:[её]т|ала|ать|ут)\\s+соску|детск\\p{L}*\\s+соск\\p{L}*)(?![\\p{L}])`,
   ),
   enRu("diaper", "diaper\\w*|napp(?:ies|y(?!\\s+(?:hair|coils?|curls?|locks|texture|roots|strands|afro|kinks?)\\b))", "(?<![\\p{L}])(?:подгузник|памперс)\\p{L}*"),
   // Round 2 (M4): more of an infant's things: a rattle (the thing, never «she rattles her keys» or «a rattle of keys»), a teether, a sippy cup, a crib, a bottle of formula;
