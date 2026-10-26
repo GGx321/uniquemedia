@@ -353,8 +353,19 @@ const LEGWEAR_SHAPE = { items: z.array(z.string()), share: z.number() };
 // 5a.3 (S5.9b2): what a «Смелая» bank may carry beyond the five's shapes: a level up to bold, the Seedream route, a coverage sentence, the water tag, the bold legwear.
 const BOLD_LEVEL = z.enum(["flirty", "bold"]).optional();
 const ROUTE = z.literal("seedream").optional();
-const BoldMomentSchema = z.strictObject({ ...MOMENT_SHAPE, level: BOLD_LEVEL, route: ROUTE, coverage: z.string().optional(), water: z.literal(true).optional(), details: z.array(z.string()).optional() });
-const BoldPlaceSchema = z.strictObject({ ...PLACE_SHAPE, moments: z.array(BoldMomentSchema) });
+// 5a.4 (S5.BA2, plan s5a4 §5.2, §5.5, r2.1 N3): the fields S5.BA1 put on the bank types, a place's `water` and an item's implied `tier` and `openCoverage`; their rules are below.
+const TIER = z.literal("implied").optional();
+const BoldMomentSchema = z.strictObject({
+  ...MOMENT_SHAPE,
+  level: BOLD_LEVEL,
+  route: ROUTE,
+  coverage: z.string().optional(),
+  openCoverage: z.string().optional(),
+  tier: TIER,
+  water: z.literal(true).optional(),
+  details: z.array(z.string()).optional(),
+});
+const BoldPlaceSchema = z.strictObject({ ...PLACE_SHAPE, water: z.literal(true).optional(), moments: z.array(BoldMomentSchema) });
 
 /** The rules every bank is held to, the five's and the «Смелая» ones (`bold`: the exempt garment name is spared, and stockings belong on the bold legwear). */
 function bankRules(bank: CategoryBank, add: Add, category: BankCategory | null, bold: boolean): void {
@@ -610,7 +621,7 @@ const boldBankSchema = z
   .strictObject({
     bold: z.literal(true),
     places: z.array(BoldPlaceSchema).min(1),
-    outfits: z.array(z.strictObject({ ...OUTFIT_SHAPE, level: BOLD_LEVEL, route: ROUTE, coverage: z.string().optional() })).min(1),
+    outfits: z.array(z.strictObject({ ...OUTFIT_SHAPE, level: BOLD_LEVEL, route: ROUTE, coverage: z.string().optional(), openCoverage: z.string().optional(), tier: TIER })).min(1),
     legwear: z
       .strictObject({ ...LEGWEAR_SHAPE, bold: z.strictObject({ items: z.array(z.string()), share: z.number(), route: z.literal("seedream"), outfits: z.array(z.string()) }).optional() })
       .optional(),
