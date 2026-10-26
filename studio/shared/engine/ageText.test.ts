@@ -838,11 +838,11 @@ describe("an infant's things are youth words of the descriptor's set (S5.FU-AGE)
     expect(youthRuleNames(`she slowly undresses with ${word}`, "descriptor").filter((name) => name === "pacifier" || name === "diaper")).toHaveLength(1);
   });
 
-  test.each(["с соской", "с соскою", "соску в рот", "сосёт соску", "детская соска", "с пустышкой", "пустышки", "пустышек", "в подгузнике", "подгузники", "в памперсе"])("%p", (words) => {
+  test.each(["с соской", "с соскою", "соска во рту", "соску в рот", "сосёт соску", "детская соска", "с пустышкой", "пустышки", "пустышек", "в подгузнике", "подгузники", "в памперсе"])("%p", (words) => {
     expect(youthRuleNames(`медленно раздевается, ${words}`, "descriptor").filter((name) => name === "pacifier" || name === "diaper")).toHaveLength(1);
   });
 
-  test.each(["касается соска", "проводит пальцем по соску", "показывает соски", "соскальзывает с кровати", "соскучилась", "кончик соска во рту"])("«сосок» and the words that start like «соска» are none: %p", (words) => {
+  test.each(["касается соска", "проводит пальцем по соску", "показывает соски", "соскальзывает с кровати", "соскучилась", "кончик соска во рту", "вокруг соска во рту", "ореол соска во рту", "касается соска во рту"])("«сосок» and the words that start like «соска» are none: %p", (words) => {
     expect(youthWords(`медленно ${words}`, "descriptor")).toEqual([]);
   });
 });
