@@ -244,6 +244,9 @@ export const PRE_CHECK_GAPS: AgeProbes = {
     "медленно смотрит в экран 4K",
     // Short words that run together into a misspelt numeral («тринатот») are no number.
     "три на тот угол, медленно улыбается",
+    // Round 2 (L4): two words that run together into a misspelling («пятна тату» → «пятнатату»).
+    "медленно трогает пятна тату на плече",
+    "медленно стирает пятна томатного сока",
     "медленно улыбается, молоденькая",
   ],
 };
