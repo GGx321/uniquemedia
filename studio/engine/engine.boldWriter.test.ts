@@ -33,7 +33,7 @@ let seeded = 0;
 /** An active avatar: made in Studio (a wizard `candidate-4` master) or read as imported (a generated master with no wizard slot). */
 async function seedAvatar(studio: boolean): Promise<string> {
   const { library } = await openLibrary(libraryDir(), { now: steppingClock(), newId: sequentialIds(`boldw${++seeded}`) });
-  const avatar = await library.createAvatar({ name: studio ? "Anna" : "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
+  const avatar = await library.createAvatar({ name: studio ? "Ava" : "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
   const source = studio ? { ...SAMPLE_SOURCE, slot: "candidate-4" } : SAMPLE_SOURCE;
   const master = await library.addPhoto(avatar.id, portraitPng(1), samplePhotoMeta({ width: 60, height: 80, source, qa: { age: { adult: true, confidence: 0.95 } } }));
   await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });

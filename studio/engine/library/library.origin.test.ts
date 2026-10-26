@@ -6,7 +6,7 @@ useNativeGlobals();
 
 // 5a.4 (S5.BA5, plan s5a4 I5.74, §5.6, §8 S5.BA5): whether an avatar was created in Studio. A POSITIVE wizard check: an active avatar with no imported photo whose master is a generated
 // `candidate-N` photo (a wizard candidate, avatars/candidateJob.ts). Anything else reads as imported, the fail-closed side: an imported photo, a `portrait-N` master, a master with no
-// wizard slot (a record from before the slot was written, the parity world's Mia), a draft, an unknown avatar. The shapes of the owner's library (2026-10-26, read only) are the rows.
+// wizard slot (a record from before the slot was written, the parity world's Mia), a draft, an unknown avatar. The fixtures Ava, Bea and Cleo stand for the three shapes.
 
 const root = useTempDir("studio-origin-");
 
@@ -26,12 +26,12 @@ async function wizardAvatar(slot: string | undefined) {
 }
 
 describe("studioCreated", () => {
-  test("Anna's shape: the master is the wizard's candidate-4 and there is no imported photo", async () => {
+  test("Ava, made in the wizard: the master is its candidate-4 and there is no imported photo", async () => {
     const { library, avatar } = await wizardAvatar("candidate-4");
     expect(library.studioCreated(avatar.id)).toBe(true);
   });
 
-  test("Nini's shape: a portrait-1 master drawn from an imported photo", async () => {
+  test("Bea, imported: a portrait-1 master drawn from her imported photo", async () => {
     const { library } = await openLibrary(root(), deps());
     const { avatar } = await library.createImportedAvatar({ ...SAMPLE_AVATAR, photoBytes: JPEG_HEADER_ONLY, photoMeta: samplePhotoMeta({ mediaType: "image/jpeg", source: SAMPLE_IMPORTED_SOURCE }) });
     const portrait = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ source: { ...SAMPLE_SOURCE, slot: "portrait-1" }, qa: { faceCos: 0.8, age: { adult: true, confidence: 0.95 } } }));
@@ -40,7 +40,7 @@ describe("studioCreated", () => {
     expect(library.studioCreated(avatar.id)).toBe(false);
   });
 
-  test("Amelia's shape: the master is the imported photo itself", async () => {
+  test("Cleo, imported: the master is the imported photo itself", async () => {
     const { library } = await openLibrary(root(), deps());
     const { avatar } = await library.createImportedAvatar({ ...SAMPLE_AVATAR, photoBytes: JPEG_HEADER_ONLY, photoMeta: samplePhotoMeta({ mediaType: "image/jpeg", source: SAMPLE_IMPORTED_SOURCE }) });
     expect(library.studioCreated(avatar.id)).toBe(false);

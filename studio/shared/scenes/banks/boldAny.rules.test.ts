@@ -15,7 +15,7 @@ const SWIMSUIT = "Her swimsuit fully covers her chest and her hips.";
 /** P-BA V2 drew the sheet with this sentence; the sheet has no open item in the probe, so every avatar says it (P5). */
 const SHEET = "The white sheet is pulled up to her chest and fully covers her breasts and her hips.";
 const TOWEL = "The towel is wrapped around her and tucked in above her chest, and it fully covers her down to her thighs.";
-/** P-BA B1 drew the towel with this sentence on Anna (a Studio-created avatar). */
+/** P-BA B1 drew the towel with this sentence on an avatar made in Studio. */
 const TOWEL_OPEN = "The towel is wrapped around her, tucked in above her chest.";
 
 const SWIMWEAR = ["a one-piece swimsuit", "a black bikini", "a red triangle bikini"];

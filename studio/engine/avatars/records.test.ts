@@ -301,7 +301,7 @@ describe("libraryView over a real library", () => {
     const { library } = await openLibrary(root(), { now: steppingClock(), newId: sequentialIds("origin") });
     const generated = samplePhotoMeta().source;
     if (generated.kind !== "generated") throw new Error("expected a generated sample source");
-    const wizard = await library.createAvatar({ name: "Anna", age: 25, traits: manifestTraits(TRAITS), descriptor: DESCRIPTOR });
+    const wizard = await library.createAvatar({ name: "Ava", age: 25, traits: manifestTraits(TRAITS), descriptor: DESCRIPTOR });
     const candidate = await library.addPhoto(wizard.id, PNG_1X1, samplePhotoMeta({ source: { ...generated, slot: "candidate-4" } }));
     await library.updateAvatar(wizard.id, { status: "active", masterPhotoId: candidate.id });
     const plain = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: DESCRIPTOR });
@@ -309,7 +309,7 @@ describe("libraryView over a real library", () => {
     await library.updateAvatar(plain.id, { status: "active", masterPhotoId: master.id });
 
     expect(libraryView(library).avatars.map((a) => [a.name, a.origin])).toEqual([
-      ["Anna", "studio"],
+      ["Ava", "studio"],
       ["Mia", "imported"],
     ]);
     expect([avatarCounts(library, wizard.id).origin, avatarCounts(library, plain.id).origin]).toEqual(["studio", "imported"]);
