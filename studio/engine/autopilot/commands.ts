@@ -189,7 +189,7 @@ export class AutopilotCommands {
     // A plan that generates nothing (Σn = 0, a library-only launch) needs no price and asks for none (§19): `unitPricesOf` wants the text model's price, which such a launch has
     // no use for, and a price list that cannot be read must not refuse a launch that spends nothing. Its estimate is zero.
     let unit: LaunchUnitPrices | null = null;
-    if (generates) unit = await this.#unitPrices(await this.#coversOf(library, draft.categories), isBoldLook(draft));
+    if (generates) unit = await this.#unitPrices(await this.#coversOf(library, draft.categories, draft.level), isBoldLook(draft));
     const estimate = unit === null ? { avatars: [], worstMicros: 0, expectedMicros: 0, prices: "fallback" as const, pricesAsOf: new Date(this.#d.clock()).toISOString().slice(0, 10) } : launchEstimate(needs, unit);
     return { draft, plan, unit, estimate };
   }
@@ -211,8 +211,11 @@ export class AutopilotCommands {
     return unitPricesOf(await this.#d.prices(launchPriceModels(models, check, bold)), models, check, covers, bold);
   }
 
-  /** Which of the draft's custom categories the code template covers, from their stored pools as the library holds them now (a built-in is always covered). */
-  async #coversOf(library: Library, categories: readonly CategoryRef[]): Promise<CoversOf> {
+  /**
+   * Which of the draft's custom categories the code template covers, from their stored pools as the library holds them now (a built-in is always covered), at the draft's level:
+   * at «Смелая» none (5a.4, I5.77).
+   */
+  async #coversOf(library: Library, categories: readonly CategoryRef[], level: SceneLevel | undefined): Promise<CoversOf> {
     const stored: StoredCategory[] = [];
     for (const ref of categories) {
       if (!isCustomCategory(ref)) continue;
@@ -220,7 +223,7 @@ export class AutopilotCommands {
       if (found === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no custom category ${ref}` });
       stored.push(found);
     }
-    return coversOfStored(stored);
+    return coversOfStored(stored, level);
   }
 
   /** An avatar has an open scene set when one of its sets has no run folder yet. A set that cannot be read may be that set, so it counts (fail closed). */

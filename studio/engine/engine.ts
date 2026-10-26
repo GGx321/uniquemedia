@@ -107,7 +107,7 @@ import { AutopilotCommands } from "./autopilot/commands";
 import { LaunchGroups, launchGroupKey } from "./autopilot/groups";
 import { LaunchStores } from "./autopilot/lookup";
 import { Orchestrator, type Admission, type Prepared } from "./autopilot/orchestrator";
-import type { PhotoLook } from "./autopilot/paidPort";
+import type { LaunchComposePayload, PhotoLook } from "./autopilot/paidPort";
 import { monthRoom, type LiveScope } from "./autopilot/room";
 import { createBalanceProbe, type Balance } from "./money/balance";
 import { exportGateOf } from "./autopilot/exportGate";
@@ -1770,8 +1770,8 @@ export class Engine {
 
   // ---------- S4.6b1: what the launch's paid steps need beyond the S4.5a seam (engine-internal; there is no command for any of these) ----------
 
-  /** What composing `count` scenes could cost now: the `scenes.estimateCompose` figure, free. */
-  composeEstimate(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; split?: readonly { ref: CategoryRef; count: number }[] }): Promise<Estimate> {
+  /** What composing `count` scenes could cost now: the `scenes.estimateCompose` figure, free, at the compose's level (5a.4, I5.77). */
+  composeEstimate(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; split?: readonly { ref: CategoryRef; count: number }[] } & Pick<LaunchComposePayload, "level" | "legsShare">): Promise<Estimate> {
     return this.#sceneSets.estimateCompose(request);
   }
 
@@ -2576,7 +2576,7 @@ export class Engine {
         const imageAgeCheck = this.#settings.imageAgeCheck;
         // 5a.4 (S5.BA5, I5.77): the level is read by name, so a request at «Смелая» prices every photo on the route.
         const request = { count: command.payload.count, categories: command.payload.categories, level: command.payload.level };
-        const estimate = runEstimate(await this.#prices.get(runPriceModels(models, imageAgeCheck, requestBoldPhotos(request))), models, request, imageAgeCheck, coversOfStored(custom));
+        const estimate = runEstimate(await this.#prices.get(runPriceModels(models, imageAgeCheck, requestBoldPhotos(request))), models, request, imageAgeCheck, coversOfStored(custom, request.level));
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { estimate } };
       }
       case "runs.start": {
@@ -3273,7 +3273,7 @@ export class Engine {
     const request = { count, categories, level };
     const priced = await this.#prices.get(runPriceModels(models, imageAgeCheck, requestBoldPhotos(request)));
     // 5a.2 (S5.6c2): priced from the same read of the custom categories the planner draws from, so the cap is the writer's true worst for THESE pools.
-    const estimate = runEstimate(priced, models, request, imageAgeCheck, coversOfStored(custom));
+    const estimate = runEstimate(priced, models, request, imageAgeCheck, coversOfStored(custom, level));
     Engine.#checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
     Engine.#checkMonthlyRoom(budget, estimate.worstMicros);
 

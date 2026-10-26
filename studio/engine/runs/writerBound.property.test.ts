@@ -34,7 +34,7 @@ const STORED = [
   { categoryId: LLM_ONLY_REF, pool: LLM_ONLY_CATEGORY_POOL },
   { categoryId: COVERED, pool: COVERED_POOL },
 ];
-const coversOf = coversOfStored(STORED);
+const coversOf = coversOfStored(STORED, undefined);
 const POOL_OF = { ...POOLS, [LLM_ONLY_REF]: poolOf(LLM_ONLY_CATEGORY_POOL), [COVERED]: poolOf(COVERED_POOL) };
 const SNAPSHOTS = [llmOnlySnapshot(), COVERED_SNAPSHOT];
 
@@ -93,5 +93,37 @@ describe("the writer's money bound against the real planner and template", () =>
     expect(writerChunksWorst(splitCount(25, [LLM_ONLY_REF]), coversOf)).toBe(1);
     expect(coversOf(COVERED)).toBe(true);
     expect(coversOf(LLM_ONLY_REF)).toBe(false);
+  });
+});
+
+// 5a.4 (S5.BA5, plan s5a4 I5.77, BA3 review M-1): at «Смелая» every custom slot is on the route and the template renders none of them, so the coverage a pool has below «Смелая»
+// says nothing there: the bound is held at the request's level (`coversOfStored(…, "bold")`), against the real planner drawing at «Смелая».
+describe("the writer's money bound at «Смелая»", () => {
+  const coversBold = coversOfStored(STORED, "bold");
+
+  function drawnBold(seed: number, count: number, mix: readonly CategoryRef[]) {
+    const slots = planWithPools({ seed, count, categories: mix.map(sceneCategory), level: "bold" }, POOL_OF).slots;
+    return { slots, local: localSentences({ slots, keyOf: (slot) => slotKeyOf("run-00000001", slot.attemptIdBase), snapshots: SNAPSHOTS }) };
+  }
+
+  test("a custom category the template covers below «Смелая» goes to the model at it, every slot", () => {
+    const { slots, local } = drawnBold(1, 25, [COVERED]);
+    expect(slots.every((slot) => local(slot) === null)).toBe(true);
+    expect([coversOf(COVERED), coversBold(COVERED)]).toEqual([true, false]);
+  });
+
+  test("the chunks that need the model never exceed writerChunksWorst at «Смелая», nor its scenes llmPossibleSlots", () => {
+    for (const mix of MIXES) {
+      for (const count of COUNTS) {
+        for (let seed = 1; seed <= 6; seed++) {
+          const { slots, local } = drawnBold(seed, count, mix);
+          const split = splitCount(count, mix);
+          const needed = chunkSlots(slots).filter((chunk) => chunk.some((slot) => local(slot) === null)).length;
+          const modelScenes = slots.filter((slot) => local(slot) === null).length;
+          if (needed > writerChunksWorst(split, coversBold)) throw new Error(`seed ${seed}, ${count} × ${mix.join("+")} at «Смелая»: ${needed} chunks need the model, the bound says ${writerChunksWorst(split, coversBold)}`);
+          if (modelScenes > llmPossibleSlots(split, coversBold)) throw new Error(`seed ${seed}, ${count} × ${mix.join("+")} at «Смелая»: ${modelScenes} model scenes, the bound says ${llmPossibleSlots(split, coversBold)}`);
+        }
+      }
+    }
   });
 });

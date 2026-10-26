@@ -399,3 +399,50 @@ describe("runs.estimateImages { avatarId, count, level, categories } for «См�
     expect(refusal.error).toMatchObject({ code: "PRICE_UNAVAILABLE", priceScope: "bold" });
   });
 });
+
+// 5a.4 (S5.BA5, plan s5a4 §5.7 «a custom category, 20 photos», I5.77, BA3 review M-1): at «Смелая» a custom category's scenes are on the route and the bold writer writes every one,
+// so a category the template covers below «Смелая» is priced with its writer at it: a custom 20 is 5 580 000 µ$ of photos and one bold chunk, 97 500 µ$ («до $5.68»).
+describe("a custom category at «Смелая»", () => {
+  const CUSTOM = "cat-covered-fixture" as const;
+  const COVERED_POOL = {
+    locations: ["a quiet bookshop", "a flower stall", "a corner cafe", "a bridge over the river", "a sunny terrace"].map((name) => ({
+      name,
+      times: ["midday" as const],
+      activities: [{ text: "holding a mug", twoHanded: false }, { text: "browsing the shelves", twoHanded: false }],
+      mirror: false,
+    })),
+    outfits: ["a cozy cardigan", "jeans and a tee", "a linen dress"],
+    shotDeck: ["friend" as const, "friend" as const, "friend" as const, "friend" as const, "friend" as const],
+  };
+
+  async function seedCovered(): Promise<void> {
+    const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds(`cov${++seeded}`) });
+    await library.categories.create({ categoryId: CUSTOM, name: "Покрытая", description: "кофейни", label: "Covered cafes", style: "phone", pool: COVERED_POOL, model: "x-ai/grok-4.3", spentMicros: 5_000 });
+  }
+
+  test("runs.estimate of a covered custom 20 at «Смелая»: 5 677 500 µ$, the photos and one bold writer chunk", async () => {
+    const avatarId = await seedAvatar();
+    await seedCovered();
+    const { engine } = await boot();
+    expect((await estimateOf(engine, avatarId, [CUSTOM], 20)).worstMicros).toBe(20 * 3 * 93_000 + 2 * 48_750);
+  });
+
+  test("the same 20 at «Кокетливая»: 3 600 000 µ$, no writer, the template covers it", async () => {
+    const avatarId = await seedAvatar();
+    await seedCovered();
+    const { engine } = await boot();
+    expect((await estimateOf(engine, avatarId, [CUSTOM], 20, "flirty")).worstMicros).toBe(20 * 3 * 60_000);
+  });
+
+  test("scenes.estimateCompose of the covered custom 20 at «Смелая»: one bold chunk, 97 500 µ$; at «Кокетливая» nothing", async () => {
+    const avatarId = await seedAvatar();
+    await seedCovered();
+    const { engine } = await boot();
+    const compose = async (level: string) => {
+      const answer = ok(await engine.handle(command("scenes.estimateCompose", { avatarId, count: 20, categories: [CUSTOM], level })));
+      if (answer.type !== "scenes.estimateCompose") throw new Error(`expected a compose estimate, got ${answer.type}`);
+      return answer.result.estimate.worstMicros;
+    };
+    expect([await compose("bold"), await compose("flirty")]).toEqual([2 * 48_750, 0]);
+  });
+});

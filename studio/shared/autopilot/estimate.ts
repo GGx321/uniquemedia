@@ -16,6 +16,9 @@ export const MAX_GENERATED_PER_AVATAR = MAX_COMPOSE_SCENES;
  * - `writerCeilingMicros`, `writerChunkSlots`, `writerMaxAttempts`: the writer's call, its chunk and its attempts per chunk (the compose's worst case).
  * - `writerTypicalMicros[n]`: what the writer costs for n scenes at its typical tokens, n = 0..100. A table, not a rate: a call's cost is rounded up per call,
  *   so it is not exactly linear, and the launch's figure must equal the engine's compose estimate to the micro-dollar.
+ * - `writerTypicalByRequests[r][n]` (5a.4, S5.BA5; BA5a review R2-L1): the same for n scenes carried by r requests. The bold writer call has a per-request term
+ *   (`typicalPerCall`), so its expected cost depends on the requests too, and a split whose custom block may touch more chunks than its scenes fill is expected one term
+ *   per chunk. Read before `writerTypicalMicros` when present; the engine fills it, the mock (fixed prices, no per-request term) need not.
  */
 export interface LaunchUnitPrices {
   photoWorstMicros: number;
@@ -24,6 +27,7 @@ export interface LaunchUnitPrices {
   writerChunkSlots: number;
   writerMaxAttempts: number;
   writerTypicalMicros: readonly number[];
+  writerTypicalByRequests?: readonly (readonly number[])[];
   /**
    * 5a.2 (S5.6c2): whether the code template covers a custom category's pool, so its scenes need no writer. Absent, no custom category is covered (the safe side);
    * a built-in category is always covered. Read only for a need that names its `split`.
@@ -110,7 +114,7 @@ export function launchEstimate(needs: readonly AvatarNeed[], unit: LaunchUnitPri
   const avatars = needs.map((need): AvatarEstimate => {
     checkPhotos(need.photos);
     const load = writerLoadOf(unit, need.photos, need.split);
-    const writerTypical = unit.writerTypicalMicros[load.scenes];
+    const writerTypical = unit.writerTypicalByRequests === undefined ? unit.writerTypicalMicros[load.scenes] : unit.writerTypicalByRequests[load.chunks]?.[load.scenes];
     if (writerTypical === undefined) throw new RangeError(`the writer's price table has no entry for ${load.scenes} scenes`);
     checkMicros("writerTypicalMicros", writerTypical);
     const composeWorst = composeWorstMicros(unit, need.photos, need.split);

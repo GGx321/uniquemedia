@@ -29,7 +29,7 @@ describe("coversOfStored", () => {
   });
 
   test("says a stored category is not covered when its activities do not render", () => {
-    const coversOf = coversOfStored([{ categoryId: LLM_ONLY_REF, pool: LLM_ONLY_CATEGORY_POOL }]);
+    const coversOf = coversOfStored([{ categoryId: LLM_ONLY_REF, pool: LLM_ONLY_CATEGORY_POOL }], undefined);
 
     expect(coversOf(LLM_ONLY_REF)).toBe(false);
   });
@@ -39,11 +39,11 @@ describe("coversOfStored", () => {
 
     expect(() => CategoryPoolSchema.parse(GERUND_POOL)).not.toThrow();
     expect(covers(poolOf(GERUND_POOL))).toBe(true);
-    expect(coversOfStored([{ categoryId: ref, pool: GERUND_POOL }])(ref)).toBe(true);
+    expect(coversOfStored([{ categoryId: ref, pool: GERUND_POOL }], undefined)(ref)).toBe(true);
   });
 
   test("a custom ref the library did not return is not covered", () => {
-    expect(coversOfStored([])("cat-unknown-one")).toBe(false);
+    expect(coversOfStored([], undefined)("cat-unknown-one")).toBe(false);
   });
 
   test("answers per category", () => {
@@ -51,8 +51,27 @@ describe("coversOfStored", () => {
     const coversOf = coversOfStored([
       { categoryId: LLM_ONLY_REF, pool: LLM_ONLY_CATEGORY_POOL },
       { categoryId: other, pool: GERUND_POOL },
-    ]);
+    ], undefined);
 
     expect([coversOf(LLM_ONLY_REF), coversOf(other)]).toEqual([false, true]);
+  });
+});
+
+// 5a.4 (S5.BA5, plan s5a4 I5.77 «at «Смелая» no custom category is covered by the template», BA3 review M-1): at «Смелая» a custom category's slots are on the route and drawn
+// from the shared «Смелая» banks, which the template does not render (template.ts: a routed custom slot is the writer's), so the writer is priced for them however the pool reads.
+describe("coversOfStored at a level", () => {
+  const ref = "cat-gerund-fixture" as const;
+
+  test("at «Смелая» a category the template covers below it is not covered", () => {
+    expect(coversOfStored([{ categoryId: ref, pool: GERUND_POOL }], "bold")(ref)).toBe(false);
+  });
+
+  test("at «Обычная» and «Кокетливая» the answer is the pool's, as before", () => {
+    for (const level of [undefined, "ordinary", "flirty"] as const) expect({ level, covered: coversOfStored([{ categoryId: ref, pool: GERUND_POOL }], level)(ref) }).toEqual({ level, covered: true });
+  });
+
+  test("the level is a required argument: a caller that forgets it does not compile", () => {
+    // @ts-expect-error the level a split is priced at is required (plan s5a4 M3); below «Смелая» a caller says `undefined`
+    expect(coversOfStored([{ categoryId: ref, pool: GERUND_POOL }])(ref)).toBe(true);
   });
 });

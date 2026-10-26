@@ -1,7 +1,7 @@
-import { MAX_SCENES_PER_WRITE, type Estimate } from "../../shared/engine";
+import { MAX_SCENES_PER_WRITE, type Estimate, type SceneLevel } from "../../shared/engine";
 import type { StoredSceneSet } from "../library/sceneSets";
-import { WRITER_CALL, writerAttemptWorstMicros, writerCallOf, writerChunksMicros, writerExpectedMicros, type WriterCall } from "../money/estimate";
-import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
+import { WRITER_CALL, writerAttemptWorstMicros, writerCallOf, writerChunksMicros, writerExpectedMicros, type WriterCall, type WriterMode } from "../money/estimate";
+import { coversAt, llmPossibleSlots, writerChunksWorst, writerModeAt, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import type { LedgerView } from "../runs/journal";
 import { pendingChunks } from "./chunks";
@@ -15,17 +15,29 @@ export function sceneSetPriceModels(textModel: string): PriceModels {
   return { imageModels: [], chatModels: [textModel] };
 }
 
-/** The writer's call on the settings' text model, with the one source of truth's limits (money/estimate.ts's `writerCallOf`, r2.1 L2). */
-function writerCall(textModel: string): WriterCall {
-  return { ...writerCallOf("ordinary"), model: textModel };
+/** The writer's call of a mode on the settings' text model, with the one source of truth's limits (money/estimate.ts's `writerCallOf`, r2.1 L2). */
+function writerCall(textModel: string, mode: WriterMode = "ordinary"): WriterCall {
+  return { ...writerCallOf(mode), model: textModel };
 }
 
 /**
  * One writer attempt at its ceiling on the settings' text model (the figure `composeEstimate` multiplies by the attempts per chunk and the chunks).
- * 5a.4 (S5.BA5, r2.1 N1): priced by `writerAttemptWorstMicros`, the one attempt price, which adds the call's reasoning allowance (none for the ordinary call).
+ * 5a.4 (S5.BA5, r2.1 N1): priced by `writerAttemptWorstMicros`, the one attempt price, which adds the call's reasoning allowance (none for the ordinary call). The mode is
+ * required: the bold call's attempt is 48 750 µ$ at the fallback prices, the ordinary one's 37 500.
  */
-export function writerCeilingMicros(priced: PricedBook, textModel: string): number {
-  return writerAttemptWorstMicros(priced.book, writerCall(textModel));
+export function writerCeilingMicros(priced: PricedBook, textModel: string, mode: WriterMode): number {
+  return writerAttemptWorstMicros(priced.book, writerCall(textModel, mode));
+}
+
+/**
+ * 5a.4 (S5.BA5; BA5a review R2-L1): a compose's expected writer cost for `chunks` requests carrying `scenes` model scenes, at a mode, never above the worst case of those requests:
+ * `composeEstimate`'s own figure, and the launch unit's table by requests and scenes (autopilot/prices.ts), so the two cannot drift. Nothing to ask is nothing.
+ */
+export function composeExpectedMicros(priced: PricedBook, textModel: string, mode: WriterMode, chunks: number, scenes: number): number {
+  if (chunks === 0 || scenes === 0) return 0;
+  const call = writerCall(textModel, mode);
+  // Round 2 (M1): one attempt of each request at the typical tokens (`writerExpectedMicros`).
+  return Math.min(writerExpectedMicros(priced.book, call, chunks, scenes), writerChunksMicros(priced.book, call, chunks));
 }
 
 /**
@@ -34,17 +46,18 @@ export function writerCeilingMicros(priced: PricedBook, textModel: string): numb
  * code template writes every scene of a built-in category and of a custom one it covers (`covers`), so those cost nothing; an empty set, or one with no scene
  * for the model, costs nothing and prices nothing.
  */
-export function composeEstimate(priced: PricedBook, textModel: string, split: readonly SplitEntry[], covers: CoversOf): Estimate {
+export function composeEstimate(priced: PricedBook, textModel: string, split: readonly SplitEntry[], covers: CoversOf, level: SceneLevel | undefined): Estimate {
   const free: Estimate = { expectedMicros: 0, worstMicros: 0, prices: priced.book.source, pricesAsOf: priced.asOf };
   // 5a.2 (S5.6c2, I5.30): the code template writes every scene of a built-in category and of a covered custom one; the writer is priced for the uncovered
   // custom categories' scenes alone (`writerChunksWorst`), and a compose with none of them prices no writer, so its model needs no price.
-  const chunks = writerChunksWorst(split, covers);
-  const scenes = llmPossibleSlots(split, covers);
+  // 5a.4 (S5.BA5, I5.77, BA3 review M-1): at «Смелая» no custom category is covered (`coversAt`) and the writer is the bold call (`writerModeAt`). `level` is required (M3).
+  const coveredAt = coversAt(covers, level);
+  const chunks = writerChunksWorst(split, coveredAt);
+  const scenes = llmPossibleSlots(split, coveredAt);
   if (chunks === 0 || scenes === 0) return free;
-  const call = writerCall(textModel);
-  const worstMicros = writerChunksMicros(priced.book, call, chunks);
-  // Round 2 (M1): one attempt of each request at the typical tokens (`writerExpectedMicros`).
-  return { expectedMicros: Math.min(writerExpectedMicros(priced.book, call, chunks, scenes), worstMicros), worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
+  const mode = writerModeAt(level);
+  const worstMicros = writerChunksMicros(priced.book, writerCall(textModel, mode), chunks);
+  return { expectedMicros: composeExpectedMicros(priced, textModel, mode, chunks, scenes), worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
 }
 
 /**

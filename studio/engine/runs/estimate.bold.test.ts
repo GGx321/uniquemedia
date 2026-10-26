@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { RunRequest, SceneLevel } from "../../shared/engine";
 import type { CoversOf } from "../../shared/scenes/writerBound";
-import { AGE_CHECK_CALL, estimateRun, type ImageChoice } from "../money/estimate";
+import { AGE_CHECK_CALL, estimateRun, WRITER_BOLD_CALL, WRITER_CALL, writerExpectedMicros, type ImageChoice } from "../money/estimate";
 import { MoneyError } from "../money/errors";
 import { FALLBACK_IMAGE, PriceBook, type ImagePrice, type PriceEntry } from "../money/prices";
 import { BOLD_IMAGE_MODEL, BOLD_RESOLUTION, boldRoute, FALLBACK_IMAGE_MODEL, runEstimate, runEstimateFromScenes, runPriceModels, sceneRunPriceModels, type BoldRequest } from "./plan";
@@ -212,5 +212,40 @@ describe("the models a bold estimate needs priced", () => {
   test("always lists the Seedream model, whatever the settings' model is", () => {
     expect(runPriceModels({ ...MODELS, imageModel: BOLD_IMAGE_MODEL }, "off", 1).imageModels).toEqual([BOLD_IMAGE_MODEL]);
     expect(runPriceModels(MODELS, "off", 1).imageModels).toContain(BOLD_IMAGE_MODEL);
+  });
+});
+
+// 5a.4 (S5.BA5, plan s5a4 I5.77, §5.7 «a custom category, 20 photos», BA3 review M-1): at «Смелая» a custom category's slots are on the route and the template renders none of
+// them, so the run's estimate carries the writer for them whatever the pool's coverage below «Смелая», at the bold writer call (writerCallOf("bold"): 48 750 µ$ an attempt, two
+// attempts a chunk). A custom 20 is 5 580 000 µ$ of photos and one bold chunk, 97 500 µ$: «до $5.68».
+describe("a custom category at «Смелая»", () => {
+  const CUSTOM = "cat-covered-fixture" as const;
+  const BOLD_CHUNK = 2 * 48_750;
+  const boldExpected = (requests: number, scenes: number) => writerExpectedMicros(PRICED.book, { ...WRITER_BOLD_CALL, model: MODELS.textModel }, requests, scenes);
+
+  test("a custom 20 the template covers below «Смелая»: worst 5 677 500 µ$, the photos and one bold chunk", () => {
+    const estimate = runEstimate(PRICED, MODELS, request([CUSTOM], 20), "off", COVERED);
+    expect([estimate.worstMicros, estimate.expectedMicros]).toEqual([20 * 3 * BOLD_ATTEMPT + BOLD_CHUNK, 20 * BOLD_ATTEMPT + boldExpected(1, 20)]);
+    expect(estimate.worstMicros).toBe(5_677_500);
+  });
+
+  test("a custom 20 the template does not cover is priced the same: its writer is the bold one", () => {
+    const uncovered = runEstimate(PRICED, MODELS, request([CUSTOM], 20), "off", () => false);
+    expect(uncovered).toEqual(runEstimate(PRICED, MODELS, request([CUSTOM], 20), "off", COVERED));
+  });
+
+  test("100 photos of a custom category at «Смелая» carry four bold chunks", () => {
+    expect(runEstimate(PRICED, MODELS, request([CUSTOM], 100), "off", COVERED).worstMicros).toBe(100 * 3 * BOLD_ATTEMPT + 4 * BOLD_CHUNK);
+  });
+
+  test("«Дом» 10 beside a custom 10 at «Смелая»: the custom block may touch two chunks", () => {
+    expect(runEstimate(PRICED, MODELS, request(["home", CUSTOM], 20), "off", COVERED).worstMicros).toBe(20 * 3 * BOLD_ATTEMPT + 1 * BOLD_CHUNK);
+    expect(runEstimate(PRICED, MODELS, request(["home", CUSTOM], 40), "off", COVERED).worstMicros).toBe(40 * 3 * BOLD_ATTEMPT + 2 * BOLD_CHUNK);
+  });
+
+  test("at «Кокетливая» the covered custom 20 asks no writer and the uncovered one the ordinary chunk, as before", () => {
+    expect(runEstimate(PRICED, MODELS, request([CUSTOM], 20, "flirty"), "off", COVERED).worstMicros).toBe(20 * 3 * GROK_QUALITY);
+    const uncovered = runEstimate(PRICED, MODELS, request([CUSTOM], 20, "flirty"), "off", () => false);
+    expect([uncovered.worstMicros, uncovered.expectedMicros]).toEqual([20 * 3 * GROK_QUALITY + 2 * 37_500, 20 * GROK_QUALITY + writerExpectedMicros(PRICED.book, { ...WRITER_CALL, model: MODELS.textModel }, 1, 20)]);
   });
 });

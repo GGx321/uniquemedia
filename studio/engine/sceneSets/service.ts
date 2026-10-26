@@ -278,7 +278,8 @@ export class SceneSetService {
     const textModel = this.#deps.textModel();
     // 5a.2 (S5.6c2): the split the compose will draw (a launch's own, or the even one) and the coverage of the custom pools as the library holds them NOW.
     const split = request.split ?? splitCount(request.count, request.categories);
-    return composeEstimate(await this.#deps.prices(sceneSetPriceModels(textModel)), textModel, split, coversOfStored(custom));
+    // 5a.4 (S5.BA5, I5.77, BA3 review M-1): priced at the compose's level: at «Смелая» every custom scene is the bold writer's.
+    return composeEstimate(await this.#deps.prices(sceneSetPriceModels(textModel)), textModel, split, coversOfStored(custom, request.level), request.level);
   }
 
   /**
@@ -486,7 +487,9 @@ export class SceneSetService {
         priced = await deps.prices(sceneSetPriceModels(textModel));
         // The same split the plan below draws and the coverage of the pools read just above: a category regenerated since the owner accepted a figure that turned
         // uncovered raises this worst case, and `checkAccepted` refuses the compose (a launch holds on the price).
-        worstMicros = composeEstimate(priced, textModel, launch?.split ?? splitCount(count, categories), coversOfStored(custom)).worstMicros;
+        // 5a.4 (S5.BA5, I5.77, M-1): at the compose's level. A launch accepted before 5a.4 at «Смелая» over a custom category accepted the ordinary writer's figure: this one is
+        // higher, so `checkAccepted` refuses the compose for free and the launch holds on the price (r2.1 L4).
+        worstMicros = composeEstimate(priced, textModel, launch?.split ?? splitCount(count, categories), coversOfStored(custom, level), level).worstMicros;
         deps.checkAccepted(worstMicros, payload.acceptedWorstMicros);
         deps.checkMonthlyRoom(budget, worstMicros);
       }

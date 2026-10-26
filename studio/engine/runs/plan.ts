@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AttemptId, CategorySnapshot, Id, ImageAgeCheck, ImageQuality, isCustomCategory, Micros, ModelId, RunRequest, SceneId, splitCount, type CategoryRef, type Estimate, type SceneLevel } from "../../shared/engine";
-import { llmPossibleSlots, writerChunksWorst, type CoversOf } from "../../shared/scenes/writerBound";
-import { AGE_CHECK_CALL, estimateRun, MAX_ATTEMPTS_PER_SLOT, WRITER_CALL, writerCallOf, type ImageChoice, type WriterCall } from "../money/estimate";
+import { coversAt, llmPossibleSlots, writerChunksWorst, writerModeAt, type CoversOf } from "../../shared/scenes/writerBound";
+import { AGE_CHECK_CALL, estimateRun, MAX_ATTEMPTS_PER_SLOT, WRITER_CALL, writerCallOf, type ImageChoice, type WriterCall, type WriterMode } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import { BOLD_IMAGE_MODEL } from "../money/prices";
 import { categoryLabelOf, categoryRefOf, OwnPlanSlotSchema, plannerCategoryOf, PlanSlotSchema, writerMessages, type PlannerCategory, type PlanSlot, type ScenePlan } from "../scenes";
@@ -117,9 +117,9 @@ export function runWriterConfig(snapshots: readonly CategorySnapshot[] | undefin
   };
 }
 
-/** The writer's call on the settings' text model, with the one source of truth's limits (money/estimate.ts's `writerCallOf`, r2.1 L2). */
-function writerCall(textModel: string): WriterCall {
-  return { ...writerCallOf("ordinary"), model: textModel };
+/** The writer's call of a mode on the settings' text model, with the one source of truth's limits (money/estimate.ts's `writerCallOf`, r2.1 L2). */
+function writerCall(textModel: string, mode: WriterMode): WriterCall {
+  return { ...writerCallOf(mode), model: textModel };
 }
 
 /**
@@ -154,6 +154,8 @@ export function runEstimate(priced: PricedBook, models: RunModels, request: Bold
   // 5a.2 (S5.6c2, I5.30): the code template writes every slot of a built-in category and of a covered custom one, so the writer is priced for the
   // uncovered custom categories' slots alone (`writerChunksWorst`); the cap is this very figure.
   const split = splitCount(request.count, request.categories);
+  // 5a.4 (S5.BA5, I5.77, BA3 review M-1): at «Смелая» no custom category is covered (`coversAt`) and the writer is the bold call (`writerModeAt`): every custom slot is routed.
+  const coveredAt = coversAt(covers, request.level);
   // 5a.4 (S5.BA5, plan s5a4 I5.77, BA3 review H-1): at «Смелая» every photo is priced on the Seedream 2K route (`requestBoldPhotos`), the upper bound of the plan's actual need: the
   // planner puts every slot of a «Смелая» request on the route, of every category. The cap is this very figure, so the plan's need never exceeds the estimate.
   const boldPhotos = requestBoldPhotos(request);
@@ -161,8 +163,8 @@ export function runEstimate(priced: PricedBook, models: RunModels, request: Bold
     photos: request.count,
     attemptsPerSlot: RUN_ATTEMPTS_PER_SLOT,
     route: runRoute(models.imageModel, models.imageQuality),
-    writer: writerCall(models.textModel),
-    writerLoad: { chunks: writerChunksWorst(split, covers), scenes: llmPossibleSlots(split, covers) },
+    writer: writerCall(models.textModel, writerModeAt(request.level)),
+    writerLoad: { chunks: writerChunksWorst(split, coveredAt), scenes: llmPossibleSlots(split, coveredAt) },
     ageChecks: imageAgeCheck === "on" ? AGE_CHECK_CALL : null,
     bold: { photos: boldPhotos, image: boldRoute() },
   });

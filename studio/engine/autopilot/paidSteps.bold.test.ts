@@ -68,3 +68,23 @@ describe("the month's room for a new step", () => {
     expect(looks.at(-1)).toEqual({ level: "bold", categories: ["nightwear"] });
   });
 });
+
+// 5a.4 (S5.BA5, plan s5a4 I5.77, r2.1 L4, BA3 review M-1): a compose refused for its price is priced again, for the hold's «needs», as the compose it was refused for: at the draft's
+// level. At «Смелая» a custom category's scenes are the bold writer's, so a figure asked without the level would name the ordinary writer's price, below what the compose needs.
+describe("a compose refused for its price", () => {
+  test("is priced again at the draft's level", async () => {
+    const r = await rig();
+    const asked: unknown[] = [];
+    r.port.compose = async () => {
+      throw new EngineFailure({ code: "PRICE_CHANGED", detail: "the compose's worst case is above the accepted one" });
+    };
+    r.port.composeEstimate = async (request) => {
+      asked.push(request);
+      r.port.onActivity?.();
+      return { expectedMicros: 0, worstMicros: 97_500, prices: "fallback", pricesAsOf: "2026-10-26" };
+    };
+    await r.start({ sceneReview: false, level: "bold", categories: ["cat-0123456789ab"] });
+    await r.when(() => asked.length > 0, "the compose's price");
+    expect(asked[0]).toMatchObject({ level: "bold", categories: ["cat-0123456789ab"] });
+  });
+});

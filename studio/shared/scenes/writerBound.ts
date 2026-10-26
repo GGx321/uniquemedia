@@ -1,4 +1,4 @@
-import { isCustomCategory, SCENE_CHUNK_SIZE, type CategoryRef } from "../engine";
+import { isCustomCategory, SCENE_CHUNK_SIZE, type CategoryRef, type SceneLevel } from "../engine";
 
 // 5a.2 (S5.6c2, plan s5a2 §5.6, I5.30): the one bound on the writer's requests, read by every estimate site, `remaining`, the launch's unit prices and the
 // mock. A built-in category, and a custom category whose pool the template covers (`covers`, custom.ts), renders every slot in code and asks the model for
@@ -12,6 +12,25 @@ export interface SplitEntry {
 
 /** Whether the code template renders every slot a custom category can draw. Asked for custom categories only: a built-in always does. */
 export type CoversOf = (ref: CategoryRef) => boolean;
+
+const NONE_COVERED: CoversOf = () => false;
+
+/**
+ * 5a.4 (S5.BA5, plan s5a4 I5.77, BA3 review M-1): the covers a split is priced with at a level. At «Смелая» no custom category is covered: every slot of it is on the route,
+ * drawn from the shared «Смелая» banks, and the template renders none of them (shared/scenes/template.ts: a routed custom slot is the writer's), whatever its pool reads. A
+ * built-in is still covered (the template renders its routed slots). Below «Смелая» the covers are the pool's own.
+ */
+export function coversAt(covers: CoversOf, level: SceneLevel | undefined): CoversOf {
+  return level === "bold" ? NONE_COVERED : covers;
+}
+
+/**
+ * 5a.4 (S5.BA5, I5.77): the scene writer's mode for a request not yet planned (engine/money/estimate.ts `writerCallOf`): «bold» at «Смелая», where every slot the model writes is a
+ * custom category's routed slot, «ordinary» below it.
+ */
+export function writerModeAt(level: SceneLevel | undefined): "ordinary" | "bold" {
+  return level === "bold" ? "bold" : "ordinary";
+}
 
 function uncoveredOf(split: readonly SplitEntry[], covers: CoversOf): SplitEntry[] {
   return split.filter((entry) => entry.count > 0 && isCustomCategory(entry.ref) && !covers(entry.ref));

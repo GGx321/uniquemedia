@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { SCENE_CHUNK_SIZE, type CategoryRef } from "../engine";
-import { llmPossibleSlots, writerChunksWorst, type SplitEntry } from "./writerBound";
+import { coversAt, llmPossibleSlots, writerChunksWorst, writerModeAt, type SplitEntry } from "./writerBound";
 
 // 5a.2 (S5.6c2, plan s5a2 §5.6, I5.30): the ONE bound on how many writer requests a plan can need. A built-in category, and a custom one whose pool the
 // template covers, renders every slot in code; only the slots of an uncovered custom category can go to the model. The plan draws each category as one
@@ -133,5 +133,29 @@ describe("llmPossibleSlots", () => {
   test("never exceeds the count that the bound's chunks can hold", () => {
     const split: SplitEntry[] = [{ ref: customRef(1), count: 7 }];
     expect(llmPossibleSlots(split, () => false)).toBeLessThanOrEqual(writerChunksWorst(split, () => false) * SCENE_CHUNK_SIZE);
+  });
+});
+
+// 5a.4 (S5.BA5, plan s5a4 I5.77, BA3 review M-1): at «Смелая» every custom slot is on the route and the template renders none of them, so no custom category is covered and
+// the writer of such a request is the bold one. Below «Смелая» both are what they were.
+describe("coversAt and writerModeAt", () => {
+  const all = () => true;
+
+  test("at «Смелая» no custom category is covered, whatever the pool says", () => {
+    expect(coversAt(all, "bold")(customRef(1))).toBe(false);
+    expect(writerChunksWorst([{ ref: "home", count: 10 }, { ref: customRef(1), count: 20 }], coversAt(all, "bold"))).toBe(2);
+    expect(llmPossibleSlots([{ ref: "home", count: 10 }, { ref: customRef(1), count: 20 }], coversAt(all, "bold"))).toBe(20);
+  });
+
+  test("below «Смелая» the covers are the pool's own", () => {
+    for (const level of [undefined, "ordinary", "flirty"] as const) expect({ level, covered: coversAt(all, level)(customRef(1)) }).toEqual({ level, covered: true });
+  });
+
+  test("a built-in stays covered at «Смелая»: the template renders its routed slots", () => {
+    expect(writerChunksWorst([{ ref: "home", count: 100 }], coversAt(all, "bold"))).toBe(0);
+  });
+
+  test("the writer of a request at «Смелая» is the bold one, below it the ordinary one", () => {
+    expect([undefined, "ordinary", "flirty", "bold"].map((level) => writerModeAt(level as "bold" | undefined))).toEqual(["ordinary", "ordinary", "ordinary", "bold"]);
   });
 });

@@ -486,8 +486,9 @@ export class PaidSteps implements LaunchSteps {
         this.#startEnded();
         this.#liveSets.delete(generation.sceneSetId);
         return this.#startFailed(ctx, row, `${generation.sceneSetId}:scenes`, error, async () => {
-          // The launch's own split, not the even one: the compose it was refused for is priced by the categories it draws, covered or not (5a.2, I5.30).
-          const estimate = await port.composeEstimate({ avatarId: row.avatarId, count, categories: split.map((s) => s.ref), split });
+          // The launch's own split, not the even one: the compose it was refused for is priced by the categories it draws, covered or not (5a.2, I5.30), and at its level (5a.4,
+          // I5.77: at «Смелая» a custom category's scenes are the bold writer's).
+          const estimate = await port.composeEstimate({ avatarId: row.avatarId, count, categories: split.map((s) => s.ref), split, ...composeLookOf(ctx.file().draft, split) });
           return { stage: "compose" as const, needMicros: estimate.worstMicros, leftMicros: row.allocation.composeMicros };
         });
       }

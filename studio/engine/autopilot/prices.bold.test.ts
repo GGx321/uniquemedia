@@ -69,10 +69,15 @@ describe("unitPricesOf for a bold launch", () => {
     expect(unitPricesOf(PRICED, MODELS, "off", COVERED, false)).toEqual(unit);
   });
 
-  test("changes nothing but the photo's two prices", () => {
-    const { photoWorstMicros: _w, photoExpectedMicros: _e, ...bold } = unitPricesOf(PRICED, MODELS, "off", COVERED, true);
-    const { photoWorstMicros: _w2, photoExpectedMicros: _e2, ...plain } = unitPricesOf(PRICED, MODELS, "off", COVERED);
+  // 5a.4 (S5.BA5, 2026-10-26, plan s5a4 §5.8, I5.77, BA3 review M-1): a launch at «Смелая» composes its custom scenes on the route with the bold writer, so the bold unit moves the
+  // writer's side too (its ceiling, its typical tables, no custom category covered). This row told the pre-5a.4 unit, which moved the photo's two prices alone; the chunk, the
+  // attempts and the price source stay as they were.
+  test("changes the photo's two prices and the writer's mode, and nothing else", () => {
+    const { photoWorstMicros: _w, photoExpectedMicros: _e, writerCeilingMicros: boldCeiling, writerTypicalMicros: _t, writerTypicalByRequests: _r, covers: boldCovers, ...bold } = unitPricesOf(PRICED, MODELS, "off", COVERED, true);
+    const { photoWorstMicros: _w2, photoExpectedMicros: _e2, writerCeilingMicros: plainCeiling, writerTypicalMicros: _t2, writerTypicalByRequests: _r2, covers: plainCovers, ...plain } = unitPricesOf(PRICED, MODELS, "off", COVERED);
     expect(bold).toEqual(plain);
+    expect([plainCeiling, boldCeiling]).toEqual([37_500, 48_750]);
+    expect([plainCovers?.("cat-0123456789ab"), boldCovers?.("cat-0123456789ab")]).toEqual([true, false]);
   });
 
   test("a mixed 10 + 10 launch over-reserves only the ordinary photo, by 10 × 3 × (93 000 − 60 000) = +$0.99 worst", () => {
@@ -101,7 +106,7 @@ describe("A18 for a bold launch", () => {
         for (let n = 1; n <= MAX_GENERATED_PER_AVATAR; n++) {
           const entries = split(n).filter((entry) => entry.count > 0);
           const launch = launchEstimate([{ avatarId: "a", photos: n, split: entries }], unit);
-          const compose = composeEstimate(PRICED, MODELS.textModel, entries, COVERED);
+          const compose = composeEstimate(PRICED, MODELS.textModel, entries, COVERED, "bold");
           const draw = runEstimateFromScenes(PRICED, MODELS, { count: n, boldPhotos: n }, ageCheck);
           expect({ n, worst: launch.worstMicros, expected: launch.expectedMicros }).toEqual({ n, worst: compose.worstMicros + draw.worstMicros, expected: compose.expectedMicros + draw.expectedMicros });
         }

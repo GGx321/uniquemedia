@@ -21,7 +21,7 @@ const SEEDREAM = { imageModel: "bytedance-seed/seedream-5-0-pro", textModel: "x-
 const FALLBACK: PricedBook = { book: PriceBook.fallback(), asOf: "2026-09-24" };
 
 /** A live book at the plan's worked-example prices: an image attempt of $0.06 plus a $0.01 reference image is $0.07. */
-function liveBook(): PricedBook {
+function liveBook(seedream2k = false): PricedBook {
   const grok: ImagePrice = {
     outputs: [
       { variant: "low_1k", micros: 60_000 },
@@ -29,7 +29,8 @@ function liveBook(): PricedBook {
     ],
     inputImageMicros: 10_000,
   };
-  const seedream: ImagePrice = { outputs: [{ variant: null, micros: 45_000 }], inputImageMicros: 3_000 };
+  // 5a.4 (S5.BA5): a «Смелая» launch also prices Seedream's 2K line; only the bold A18 below asks for it.
+  const seedream: ImagePrice = { outputs: [{ variant: null, micros: 45_000 }, ...(seedream2k ? [{ variant: "high_resolution", micros: 90_000 }] : [])], inputImageMicros: 3_000 };
   const chat: ChatPrice = {
     promptPico: 1_250_000,
     completionPico: 2_500_000,
@@ -78,7 +79,7 @@ describe("A18: the launch estimate equals the engine's compose plus draw estimat
             for (let n = 1; n <= MAX_GENERATED_PER_AVATAR; n++) {
               const split = shape.split(n).filter((entry) => entry.count > 0);
               const launch = launchEstimate([{ avatarId: "a", photos: n, split }], unit);
-              const compose = composeEstimate(priced, models.textModel, split, covers);
+              const compose = composeEstimate(priced, models.textModel, split, covers, undefined);
               const draw = runEstimateFromScenes(priced, models, { count: n }, ageCheck);
               expect({ n, worst: launch.worstMicros, expected: launch.expectedMicros }).toEqual({
                 n,
@@ -106,7 +107,7 @@ describe("A18: the launch estimate equals the engine's compose plus draw estimat
 
   test("a need that names no split is priced as an all-model compose, the old figure", () => {
     const unit = unitPricesOf(FALLBACK, MODELS, "off", covers);
-    const compose = composeEstimate(FALLBACK, MODELS.textModel, [{ ref: OPEN, count: 90 }], covers);
+    const compose = composeEstimate(FALLBACK, MODELS.textModel, [{ ref: OPEN, count: 90 }], covers, undefined);
     expect(launchEstimate([{ avatarId: "a", photos: 90 }], unit).avatars[0]?.composeWorstMicros).toBe(compose.worstMicros);
   });
 
@@ -114,6 +115,50 @@ describe("A18: the launch estimate equals the engine's compose plus draw estimat
     const unit = unitPricesOf(FALLBACK, MODELS, "off", covers);
     const estimate = launchEstimate([{ avatarId: "a", photos: 90, split: [{ ref: "home", count: 90 }] }], unit);
     expect(estimate.worstMicros).toBe(90 * 3 * 50_000);
+  });
+});
+
+// 5a.4 (S5.BA5, plan s5a4 §5.8, I5.77; BA5a review R2-L1): a launch at «Смелая» prices its compose at the bold writer call, every custom scene uncovered (its slots are on the
+// route), and every photo at the bold unit. A18 holds for it over every shape of split: the bold call's per-request term (`typicalPerCall`) makes the writer's expected cost depend on
+// the requests as well as the scenes, so the unit carries it by requests (a split whose custom block may touch more chunks than its scenes fill is expected one term per chunk).
+describe("A18 for a launch at «Смелая»: the bold compose plus the bold draw", () => {
+  const BOLD_BOOKS: [string, PricedBook][] = [
+    ["the live book with Seedream's 2K line", liveBook(true)],
+    ["the fallback book", FALLBACK],
+  ];
+  for (const [name, priced] of BOLD_BOOKS) {
+    for (const models of [MODELS, SEEDREAM]) {
+      for (const ageCheck of ["off", "on"] as const) {
+        for (const shape of SHAPES) {
+          test(`on ${name}, ${models.imageModel}, age check ${ageCheck}, ${shape.name}: n = 1..100 matches to the micro-dollar`, () => {
+            const unit = unitPricesOf(priced, models, ageCheck, covers, true);
+            for (let n = 1; n <= MAX_GENERATED_PER_AVATAR; n++) {
+              const split = shape.split(n).filter((entry) => entry.count > 0);
+              const launch = launchEstimate([{ avatarId: "a", photos: n, split }], unit);
+              const compose = composeEstimate(priced, models.textModel, split, covers, "bold");
+              const draw = runEstimateFromScenes(priced, models, { count: n, boldPhotos: n }, ageCheck);
+              expect({ n, worst: launch.worstMicros, expected: launch.expectedMicros }).toEqual({ n, worst: compose.worstMicros + draw.worstMicros, expected: compose.expectedMicros + draw.expectedMicros });
+            }
+          });
+        }
+      }
+    }
+  }
+
+  test("a covered custom 20 at «Смелая» is one bold chunk in the launch: 97 500 µ$ beside its 20 bold photos", () => {
+    const unit = unitPricesOf(FALLBACK, MODELS, "off", covers, true);
+    expect(launchEstimate([{ avatarId: "a", photos: 20, split: [{ ref: COVERED, count: 20 }] }], unit).avatars[0]).toMatchObject({ composeWorstMicros: 2 * 48_750, drawWorstMicros: 20 * 3 * 93_000 });
+  });
+
+  test("the bold unit's writer is the bold call: 48 750 µ$ an attempt, the same chunk and attempts", () => {
+    const unit = unitPricesOf(FALLBACK, MODELS, "off", covers, true);
+    expect([unit.writerCeilingMicros, unit.writerChunkSlots, unit.writerMaxAttempts]).toEqual([48_750, WRITER_CALL.slotsPerCall, WRITER_CALL.maxAttempts]);
+  });
+
+  test("a launch below «Смелая» keeps today's unit: the ordinary call's ceiling and the pool's covers", () => {
+    const unit = unitPricesOf(FALLBACK, MODELS, "off", covers);
+    expect(unit.writerCeilingMicros).toBe(37_500);
+    expect(launchEstimate([{ avatarId: "a", photos: 20, split: [{ ref: COVERED, count: 20 }] }], unit).avatars[0]?.composeWorstMicros).toBe(0);
   });
 });
 

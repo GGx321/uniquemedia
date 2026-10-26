@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { LaunchView, type LaunchDraftInput, type ResponseMessage } from "../shared/engine";
@@ -652,6 +652,49 @@ describe("a covered custom category regenerated into an uncovered one between a 
 
     expect(net.writerCalls()).toHaveLength(0);
     expect(reserves().filter((id) => id.includes("writer"))).toEqual([]);
+  });
+});
+
+// 5a.4 (S5.BA5, plan s5a4 §5.8, I5.77, r2.1 L4, BA3 review M-1): a launch at «Смелая» over a custom category composes its scenes on the route with the bold writer, so it is
+// accepted at the bold writer's figure (one chunk, two attempts at 48 750 µ$) and composes inside it. A launch accepted before 5a.4 took the ordinary writer's figure (2 × 37 500
+// µ$ a chunk): its compose now needs more, and the existing guard refuses it for free (`checkAccepted`) and the launch holds on the price until the owner accepts again.
+describe("a launch at «Смелая» over a custom category", () => {
+  const BOLD_CHUNK = 2 * 48_750;
+  const ORDINARY_CHUNK = 2 * 37_500;
+
+  test("is accepted at the bold writer's figure and composes inside it, with no hold", async () => {
+    const avatarId = await seedAvatar();
+    const net = network();
+    const started = await boot(net);
+    const launch = await startLaunch(started, draftOf([avatarId], { level: "bold" }));
+    expect(fileOf(launch.launchId).avatars[0]?.allocation.composeMicros).toBe(BOLD_CHUNK);
+    await reachPhase(launch.launchId, "montage");
+
+    expect(fileOf(launch.launchId).paidHold).toBeNull();
+    expect(net.writerCalls()).toHaveLength(1);
+  });
+
+  test("one accepted before 5a.4 at the ordinary writer's figure: the compose is refused for free, nothing is sent or reserved, and the launch holds on the price", async () => {
+    const avatarId = await seedAvatar();
+    const first = await boot(network(), { steps: false });
+    const launch = await startLaunch(first, draftOf([avatarId], { level: "bold" }));
+    await kill(first);
+    // The file as a build before 5a.4 wrote it: the compose's allocation at the ordinary chunk, the planned worst case lower by the difference (A2).
+    const file = fileOf(launch.launchId);
+    const row = file.avatars[0];
+    if (row === undefined) throw new Error("the launch has no avatar");
+    expect(row.allocation.composeMicros).toBe(BOLD_CHUNK);
+    const before = { ...file, plannedWorstMicros: file.plannedWorstMicros - (row.allocation.composeMicros - ORDINARY_CHUNK), avatars: [{ ...row, allocation: { ...row.allocation, composeMicros: ORDINARY_CHUNK } }] };
+    writeFileSync(launchPath(launch.launchId), JSON.stringify(before));
+
+    const net = network();
+    const second = await boot(net);
+    await resume(second, await viewOf(second, launch.launchId));
+    await until(() => fileOf(launch.launchId).paidHold?.reason === "price", "the price hold", 30_000);
+
+    expect(fileOf(launch.launchId).paidHold).toMatchObject({ reason: "price", detail: { stage: "compose", needMicros: BOLD_CHUNK, leftMicros: ORDINARY_CHUNK } });
+    expect(net.paidCalls()).toEqual([]);
+    expect(reserves()).toEqual([]);
   });
 });
 
