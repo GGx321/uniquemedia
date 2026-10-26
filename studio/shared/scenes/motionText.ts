@@ -857,8 +857,8 @@ export function motionTextFindings(text: string, frame: MotionFrame, source: Cli
 }
 
 /**
- * A number on its own in his words («, 16», «16-летняя», «18+»), never digits inside a code or a Latin word («9c41», «4K»). S5.FU-AGE: a Russian word may touch it («ей16»):
- * no Russian word holds a digit.
+ * A number on its own in his words («, 16», «16-летняя», «18+»), never digits inside a code or a Latin word («9c41», «4K» with a Latin K). S5.FU-AGE: a Russian letter does
+ * not shield one, as no Russian word holds a digit: «ей16» is an age, and «4К» with a Cyrillic К or «в 2х словах» a number, which the English rule would refuse after a paid call.
  */
 const STANDALONE_NUMBER = /(?<![\p{Script=Latin}\p{N}])\p{N}+(?![\p{Script=Latin}\p{N}])/u;
 /** A Russian number word from ten up, in any form («шестнадцать», «шестнадцатый», «двадцати»): the owner's own words for a number an age hides in. */
