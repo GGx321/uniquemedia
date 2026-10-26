@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { RunPlanSchema } from "./runs/plan";
+import { plan as planScenes } from "./scenes";
 import { ok, useEngineDir } from "./testing/engineHarness";
 import { crashKit, fakeRender } from "./testing/crashKit";
 import { draftOf, network } from "./testing/wiringKit";
@@ -18,6 +19,9 @@ afterEach(() => kit.shutdownAll());
 const dir = useEngineDir("studio-engine-bold-launch-");
 const kit = crashKit(dir);
 beforeEach(() => kit.reset());
+
+/** An everyday sentence, as a pre-5a.4 «Кокетливая» scene of «Дом» could read. */
+const SENTENCE = "She laughs in the doorway while the evening light falls across the hall floor behind her.";
 
 /** Three 2K attempts with the master as the reference: 3 × (90 000 + 3 000) µ$ at list. */
 const BOLD_UNIT = 3 * 93_000;
@@ -81,5 +85,90 @@ describe("a «Смелая» launch", () => {
     const estimate = ok(await kit.call(started, "autopilot.estimate", { draft: boldDraft(avatarId, { level: "flirty", categories: ["home"] }) }));
     if (estimate.type !== "autopilot.estimate") throw new Error("wrong answer");
     expect(estimate.result.preview.estimate.worstMicros).toBe(estimate.result.preview.totals.toGenerate * 3 * 50_000);
+  });
+});
+
+// 5a.4 (S5.BA5, plan s5a4 I5.77 «anything stored is priced by its routes», §5.7, §5.8, r2 M2): a launch whose set exists prices its images (`runs.estimateImages`) and its slices
+// (`drawLaunchSlice`) by the set's routed scenes, never by the draft's level. A set of 5a.4 at «Смелая» over «Дом» is on the route, so the bold unit; a set composed before 5a.4 at
+// «Смелая» over the five was drawn as «Кокетливая» with no route, its photos are drawn on the owner's model, and so are priced: its slices are never sized at a unit they do not spend.
+describe("a «Смелая» launch of «Дом», priced by its set's routes", () => {
+  /** The owner's-model unit of the kit's settings: three attempts at 50 000 µ$. */
+  const GROK_UNIT = 3 * 50_000;
+
+  /** Starts the launch with the review on and waits for it: the set exists, its scenes written, nothing drawn yet. Answers the set's id. */
+  async function inReview(started: Awaited<ReturnType<typeof kit.boot>>, avatarId: string): Promise<{ launchId: string; sceneSetId: string }> {
+    const launch = await kit.startLaunch(started, boldDraft(avatarId, { categories: ["home"], sceneReview: true }));
+    const row = (await kit.waitView(started, launch.launchId, "the review wait", (v) => v.avatars[0]?.phase === "awaiting-review", 60_000)).avatars[0];
+    if (row?.sceneSetId == null) throw new Error("the launch's avatar has no set");
+    return { launchId: launch.launchId, sceneSetId: row.sceneSetId };
+  }
+
+  /**
+   * The set's scenes as a compose before 5a.4 left them: «Дом» drawn from its ordinary bank as «Кокетливая», with no route and an everyday sentence (I5.73: a stored slot reads
+   * as it did). Each scene keeps its index and ids; only what it draws is the pre-5a.4 one.
+   */
+  async function beforeRoutes(started: Awaited<ReturnType<typeof kit.boot>>, avatarId: string, sceneSetId: string): Promise<void> {
+    const library = started.engine.library;
+    if (library === null) throw new Error("no library");
+    await library.sceneSets.update(avatarId, sceneSetId, (current) => {
+      const flirty = planScenes({ seed: 11, count: current.scenes.length, categories: ["home"], level: "flirty" }).slots;
+      return {
+        ...current,
+        scenes: current.scenes.map((scene, i) => {
+          const drawn = flirty[i];
+          if (scene.origin !== "planned" || drawn === undefined) return scene;
+          return { ...scene, slot: { ...drawn, slotIndex: scene.slot.slotIndex, attemptIdBase: scene.slot.attemptIdBase }, text: SENTENCE };
+        }),
+      };
+    });
+  }
+
+  async function imagesOf(started: Awaited<ReturnType<typeof kit.boot>>, launchId: string, avatarId: string): Promise<{ photos: number; worstMicros: number }> {
+    const answer = ok(await kit.call(started, "runs.estimateImages", { launchId, avatarId }));
+    if (answer.type !== "runs.estimateImages") throw new Error("wrong answer");
+    return { photos: answer.result.photos, worstMicros: answer.result.estimate.worstMicros };
+  }
+
+  /** Every slice run's cap against its slots times `unit`, and whether its slots are on the route. */
+  function slices(unit: number): { runId: string; cap: number; routed: boolean[] }[] {
+    const runsDir = join(kit.libraryDir(), "runs");
+    return readdirSync(runsDir).map((runId) => {
+      const plan = RunPlanSchema.parse(JSON.parse(readFileSync(join(runsDir, runId, "plan.json"), "utf8")));
+      return { runId, cap: plan.capMicros - plan.scenes.slots.length * unit, routed: [...new Set(plan.scenes.slots.map((slot) => "route" in slot && slot.route === "seedream"))] };
+    });
+  }
+
+  test("a set on the route: its images and every slice run at the bold unit", async () => {
+    const avatarId = await kit.seedAvatar(0, "routedset");
+    const started = await kit.boot(network(), fakeRender());
+    const { launchId } = await inReview(started, avatarId);
+
+    const images = await imagesOf(started, launchId, avatarId);
+    expect(images.photos).toBeGreaterThan(0);
+    expect(images.worstMicros).toBe(images.photos * BOLD_UNIT);
+
+    await kit.driveToDone(started, launchId);
+    const drawn = slices(BOLD_UNIT);
+    expect(drawn.length).toBeGreaterThan(0);
+    expect(drawn).toEqual(drawn.map(({ runId }) => ({ runId, cap: 0, routed: [true] })));
+  });
+
+  test("a set from before 5a.4 (no route): its images and every slice run at the owner's-model unit", async () => {
+    const avatarId = await kit.seedAvatar(0, "plainset");
+    const started = await kit.boot(network(), fakeRender());
+    const { launchId, sceneSetId } = await inReview(started, avatarId);
+    await beforeRoutes(started, avatarId, sceneSetId);
+
+    const images = await imagesOf(started, launchId, avatarId);
+    expect(images.photos).toBeGreaterThan(0);
+    expect(images.worstMicros).toBe(images.photos * GROK_UNIT);
+
+    // The review goes on at the set's own revision (the rewrite above moved it past the one the launch's view last told).
+    const revision = (await started.engine.library?.sceneSets.get(avatarId, sceneSetId))?.revision;
+    ok(await kit.call(started, "autopilot.continueAfterReview", { launchId, avatarId, sceneSetId, revision }));
+    await kit.driveToDone(started, launchId);
+    const drawn = slices(GROK_UNIT);
+    expect(drawn.length).toBeGreaterThan(0);
+    expect(drawn).toEqual(drawn.map(({ runId }) => ({ runId, cap: 0, routed: [false] })));
   });
 });

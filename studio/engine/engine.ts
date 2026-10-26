@@ -424,6 +424,15 @@ function runPlanPriceModels(plan: RunPlan): PriceModels {
   return plan.sceneSetId === undefined ? runPriceModels(models, plan.imageAgeCheck, bold) : sceneRunPriceModels(models, plan.imageAgeCheck, bold);
 }
 
+/**
+ * 5a.4 (S5.BA5, plan s5a4 I5.77, §5.8, r2 M2): whether a stored set draws on the «Смелая» route: any of its planned scenes is routed. A launch whose set exists is priced by THIS, never
+ * by its draft's level (option B: then every photo of its slices and images at the Seedream unit). A set composed before 5a.4 at «Смелая» over the five has no route, draws on the
+ * owner's model and is priced there; a removed scene still counts, so the answer only ever leans to the bold unit (smaller slices, never an under-reserve).
+ */
+function drawsOnRoute(set: StoredSceneSet): boolean {
+  return routedSlots(set.scenes.flatMap((scene) => (scene.origin === "planned" ? [scene.slot] : []))) > 0;
+}
+
 /** A run's planner seed: fixed by its id, so the plan is reproducible from the run alone. */
 function seedOf(runId: string): number {
   return Number.parseInt(createHash("sha256").update(runId).digest("hex").slice(0, 8), 16);
@@ -1690,8 +1699,9 @@ export class Engine {
       this.#runnableAvatar(library, avatarId);
       const models = this.#avatarModels();
       const { imageAgeCheck, cameraRealism } = this.#settings;
-      // 5a.3 (S5.9d, option B): a «Смелая» launch with a «Смелая» category prices EVERY photo of its slices at the Seedream unit, so the cap is the one the launch accepted.
-      const bold = isBoldLook(set.request);
+      // 5a.3 (S5.9d, option B): a launch on the «Смелая» route prices EVERY photo of its slices at the Seedream unit, so the cap is the one the launch accepted. 5a.4 (S5.BA5, I5.77):
+      // by the set's own routes, never its level, so a set composed before 5a.4 at «Смелая» over the five (no route, drawn on the owner's model) is sliced at the owner's unit.
+      const bold = drawsOnRoute(set);
       const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck, bold ? 1 : 0));
       const statuses = await this.#sliceStatuses(library, set);
       const createdAt = new Date(this.#deps.clock()).toISOString();
@@ -3372,8 +3382,8 @@ export class Engine {
     if (row === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `launch ${launchId} holds no avatar ${avatarId}` });
     const sceneSetId = this.#orchestrator.sceneSetOf(avatarId);
     const set = sceneSetId === null ? null : await library.sceneSets.get(avatarId, sceneSetId);
-    // 5a.3 (S5.9d, option B): the set's own «Подача» and categories say whether the launch's photos are priced at the Seedream unit.
-    const bold = set !== null && isBoldLook(set.request);
+    // 5a.3 (S5.9d, option B): whether the launch's photos are priced at the Seedream unit. 5a.4 (S5.BA5, I5.77): by the set's own routes, as its slices are drawn (`drawsOnRoute`).
+    const bold = set !== null && drawsOnRoute(set);
     const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck, bold ? 1 : 0));
     // One photo's worst case at today's price, the very figure the slice sizing uses; the figure for n photos is priced as the real draw prices n.
     const photoWorst = runEstimateFromScenes(priced, models, { count: 1, ...(bold ? { boldPhotos: 1 } : {}) }, imageAgeCheck).worstMicros;
