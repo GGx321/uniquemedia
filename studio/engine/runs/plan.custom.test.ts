@@ -150,7 +150,7 @@ describe("the contract and planner names of a category", () => {
 
 describe("runWriterConfig: what a run passes its writer phase", () => {
   test("a built-in run passes exactly today's call shape", () => {
-    expect(runWriterConfig(undefined).call).toEqual({ maxTokens: WRITER_CALL.maxTokens, inputTokens: WRITER_CALL.inputTokens, maxAttempts: WRITER_CALL.maxAttempts });
+    expect<unknown>(runWriterConfig(undefined).call).toEqual({ maxTokens: WRITER_CALL.maxTokens, inputTokens: WRITER_CALL.inputTokens, maxAttempts: WRITER_CALL.maxAttempts });
   });
 
   test("its messages are the writer's own, byte for byte, with and without a refusal", () => {

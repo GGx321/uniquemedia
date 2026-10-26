@@ -51,27 +51,36 @@ export interface WriterPhaseDeps {
  * what its estimate prices; a scene set passes its own.
  */
 export interface WriterCallShape {
-  maxTokens: number;
-  inputTokens: number;
+  readonly maxTokens: number;
+  readonly inputTokens: number;
   /**
    * 5a.4 (S5.BA5, r2.1 N1): the call's reasoning allowance (money/estimate.ts `WriterCall.reasoningTokens`), handed to chat(), whose reserve prices it as
    * completion on top of `maxTokens` and never sends it. So an attempt reserves exactly what `writerAttemptWorstMicros` priced it at. Absent = 0.
    */
-  reasoningTokens?: number;
-  maxAttempts: number;
+  readonly reasoningTokens?: number;
+  readonly maxAttempts: number;
+  /**
+   * S5.BA5a round 2 (M2 b): only `writerCallShape` makes a shape, so none can be built by hand without the call's reasoning allowance (a bold shape
+   * without it reserved 41 250 µ$ under a 48 750 estimate). A type alone: nothing is added at run time.
+   */
+  readonly [WRITER_CALL_SHAPE]: true;
 }
+
+declare const WRITER_CALL_SHAPE: unique symbol;
 
 /**
  * 5a.4 (S5.BA5, plan s5a4 §5.3.4 «The reserve»): the phase's shape of a writer call (money/estimate.ts's `writerCallOf(mode)`), its reasoning allowance
- * included when it has one. The ordinary call has none, so its shape is today's three fields, byte for byte.
+ * included when it has one. The ordinary call has none, so its shape is today's three fields, byte for byte. The one maker of a `WriterCallShape`
+ * (round 2, M2 b): the brand is a type with no value, so the plain object is asserted to it here and nowhere else (writerCall.static.test.ts).
  */
 export function writerCallShape(call: WriterCall): WriterCallShape {
-  return {
+  const shape = Object.freeze({
     maxTokens: call.maxTokens,
     inputTokens: call.inputTokens,
     ...(call.reasoningTokens === undefined ? {} : { reasoningTokens: call.reasoningTokens }),
     maxAttempts: call.maxAttempts,
-  };
+  });
+  return shape as WriterCallShape;
 }
 
 /** A run's phase asks about its plan's slots; a scene set's review write (CS.4b) may ask about own scenes, which carry only what the answer reader needs. */

@@ -88,15 +88,30 @@ async function oneChunk(call: WriterCallShape): Promise<{ params: ChatParams[]; 
 
 describe("writerCallShape", () => {
   test("the ordinary call's shape is today's three fields, with no reasoning key", () => {
-    expect(writerCallShape(WRITER_CALL)).toStrictEqual({ maxTokens: 8_000, inputTokens: 14_000, maxAttempts: 2 });
+    expect<unknown>(writerCallShape(WRITER_CALL)).toStrictEqual({ maxTokens: 8_000, inputTokens: 14_000, maxAttempts: 2 });
   });
 
   test("the bold call's shape carries its 3 000 reasoning tokens", () => {
-    expect(writerCallShape(WRITER_BOLD_CALL)).toStrictEqual({ maxTokens: 8_000, inputTokens: 17_000, reasoningTokens: 3_000, maxAttempts: 2 });
+    expect<unknown>(writerCallShape(WRITER_BOLD_CALL)).toStrictEqual({ maxTokens: 8_000, inputTokens: 17_000, reasoningTokens: 3_000, maxAttempts: 2 });
   });
 
   test("a run's writer config is the ordinary shape, byte for byte", () => {
-    expect(runWriterConfig(undefined).call).toStrictEqual({ maxTokens: 8_000, inputTokens: 14_000, maxAttempts: 2 });
+    expect<unknown>(runWriterConfig(undefined).call).toStrictEqual({ maxTokens: 8_000, inputTokens: 14_000, maxAttempts: 2 });
+  });
+
+  // S5.BA5a round 2 (M2 b): a shape built by hand could leave the reasoning out and reserve 41 250 µ$ under a 48 750 estimate. Only writerCallShape
+  // makes one; the brand is a type alone, so the shape it returns is the same plain object as before.
+  test("a shape built by hand does not compile, with or without a reasoning allowance", () => {
+    // @ts-expect-error a phase call shape is made by writerCallShape only
+    const forged: WriterCallShape = { maxTokens: 8_000, inputTokens: 17_000, maxAttempts: 2 };
+    // @ts-expect-error not even one that names its reasoning
+    const named: WriterCallShape = { maxTokens: 8_000, inputTokens: 17_000, reasoningTokens: 3_000, maxAttempts: 2 };
+    expect([forged.maxAttempts, named.maxAttempts]).toEqual([2, 2]);
+  });
+
+  test("the brand adds nothing at run time: the bold shape's own keys are its four fields", () => {
+    expect(Reflect.ownKeys(writerCallShape(WRITER_BOLD_CALL))).toEqual(["maxTokens", "inputTokens", "reasoningTokens", "maxAttempts"]);
+    expect(Reflect.ownKeys(writerCallShape(WRITER_CALL))).toEqual(["maxTokens", "inputTokens", "maxAttempts"]);
   });
 });
 
