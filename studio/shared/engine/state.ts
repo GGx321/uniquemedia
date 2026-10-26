@@ -414,6 +414,11 @@ export const AvatarSummary = z.strictObject({
   body: AvatarBody.optional(),
   /** The body a photo import read and the owner has not saved or dismissed yet; omitted when there is none. */
   bodyProposal: BodyProposal.optional(),
+  /**
+   * 5a.4 (S5.BA1, plan s5a4 I5.74, I5.80; additive, protocol 5): where the avatar came from, for the renderer and the mock: `studio` (made in Studio from a generated candidate) or `imported`.
+   * OMITTED until the engine fills it (S5.BA5); an absent origin is read as imported, the fail-closed side.
+   */
+  origin: z.enum(["studio", "imported"]).optional(),
 });
 
 /**

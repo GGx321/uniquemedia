@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CAPTURES, CategoryPoses, CategoryRef, LegsShare, PhotoCategory, PoolShot, SceneLevel, SceneRoute, ScenePose, MAX_RUN_CATEGORIES } from "./categories";
+import { CAPTURES, CategoryPoses, CategoryRef, isCustomCategory, LegsShare, PhotoCategory, PoolShot, SceneLevel, SceneRoute, ScenePose, MAX_RUN_CATEGORIES } from "./categories";
 import { EngineError } from "./errors";
 import { Count, Id, LaunchId, Micros, ModelId } from "./primitives";
 
@@ -59,7 +59,14 @@ export type SceneUnwritten = z.infer<typeof SceneUnwritten>;
 const PlaceText = z.string().min(1).max(120);
 
 /** What the planner drew for a scene: where, when, doing what, wearing what. English, as they go into the prompt. */
-export const ScenePlace = z.strictObject({ location: PlaceText, timeOfDay: PlaceText, activity: PlaceText, outfit: PlaceText });
+export const ScenePlace = z.strictObject({
+  location: PlaceText,
+  timeOfDay: PlaceText,
+  activity: PlaceText,
+  outfit: PlaceText,
+  /** 5a.4 (S5.BA1, r2.2 D6, I5.78): the place a custom category's «Смелая» scene belongs to («по месту категории»), shown in the review. Only on a custom scene on the route; absent on every other. */
+  world: PlaceText.optional(),
+});
 export type ScenePlace = z.infer<typeof ScenePlace>;
 
 /** The idea an own scene was written from (CS.4b): any script, up to 500 chars. */
@@ -145,6 +152,7 @@ export const SceneView = z
   })
   .refine((s) => (s.text === null) === (s.unwritten !== null), { message: "a scene is unwritten exactly when it has no text", path: ["unwritten"] })
   .refine((s) => (s.unwritten === "gave-up") === (s.gaveUpBy !== null), { message: "a gave-up scene says by what, and only a gave-up scene does", path: ["gaveUpBy"] })
+  .refine((s) => s.place?.world === undefined || (isCustomCategory(s.category) && s.route === "seedream"), { message: "only a custom category's scene on the Seedream route carries a world", path: ["place", "world"] })
   .refine((s) => (s.origin === "planned") === (s.place !== null), { message: "a planned scene has a place and an own scene has none", path: ["place"] });
 export type SceneView = z.infer<typeof SceneView>;
 

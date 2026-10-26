@@ -339,9 +339,9 @@ describe("what S5.3a must not move", () => {
     expect(PROTOCOL_VERSION).toBe(5);
   });
 
-  test("AvatarSummary keeps exactly the keys it had", () => {
+  test("AvatarSummary keeps the keys it had, and gains the optional origin (5a.4, S5.BA1)", () => {
     expect(Object.keys(AvatarSummary.shape).sort()).toEqual(
-      ["avatarId", "body", "bodyProposal", "createdAt", "descriptor", "eligibleUnusedCount", "masterPhotoId", "name", "photoCount", "status", "usage", "videoCount"].sort(),
+      ["avatarId", "body", "bodyProposal", "createdAt", "descriptor", "eligibleUnusedCount", "masterPhotoId", "name", "origin", "photoCount", "status", "usage", "videoCount"].sort(),
     );
   });
 
