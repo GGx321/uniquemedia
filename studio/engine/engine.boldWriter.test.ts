@@ -10,7 +10,7 @@ import { RunPlanSchema, type RunPlan } from "./runs/plan";
 import type { QaGate } from "./runs/qa";
 import type { PlanSlot } from "./scenes";
 import { LLM_ONLY_REF } from "./scenes/testing/llmOnlyFixture";
-import { writerBoldMessages } from "./scenes/writer";
+import { PLACE_PREPOSITIONS, writerBoldMessages } from "./scenes/writer";
 import type { StoredSceneSet } from "./library/sceneSets";
 import { command, engineSettings, GOOD, jobEnd, ledgerLines, network, ok, portraitPng, startEngine, TRAITS, until, useEngineDir } from "./testing/engineHarness";
 import { seedLlmOnlyCategory } from "./testing/llmOnlyCategory";
@@ -50,12 +50,17 @@ function askedIn(call: FetchCall): { slotIndex: number; location: string; activi
   return JSON.parse(text.slice(text.indexOf("["), text.lastIndexOf("]") + 1));
 }
 
+/** The place opened with a preposition the bold reader takes for it (S5.BA4d): «On her balcony», «By her window»; «In» for every other place. */
+const opener = (location: string): string => {
+  const first = PLACE_PREPOSITIONS[location]?.[0] ?? "in";
+  return `${first.charAt(0).toUpperCase()}${first.slice(1)} ${location}`;
+};
 /** A sentence each asked slot passes the bold reader with: its place, «she» and its activity word for word, its outfit as given. */
 const keeping = (call: FetchCall): Reply => ({
   status: 200,
   body: chatBody(
     JSON.stringify({
-      scenes: askedIn(call).map((s) => ({ slotIndex: s.slotIndex, sentence: `In ${s.location}${s.world === undefined ? "" : ` while staying near ${s.world.replace(/^an? /, "the ")}`}, she ${s.activity} in ${s.outfit}, a cup of tea beside her.` })),
+      scenes: askedIn(call).map((s) => ({ slotIndex: s.slotIndex, sentence: `${opener(s.location)}${s.world === undefined ? "" : ` while staying near ${s.world.replace(/^an? /, "the ")}`}, she ${s.activity} in ${s.outfit}, a cup of tea beside her.` })),
     }),
     { cost: 0.006 },
   ),

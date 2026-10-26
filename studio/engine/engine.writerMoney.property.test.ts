@@ -14,6 +14,7 @@ import { chatBody, type FetchCall, type Reply } from "./openrouter/testing/fakes
 import { RunEventSchema } from "./runs/journal";
 import type { QaGate } from "./runs/qa";
 import { LLM_ONLY_REF } from "./scenes/testing/llmOnlyFixture";
+import { PLACE_PREPOSITIONS } from "./scenes/writer";
 import { command, engineSettings, GOOD, jobEnd, ledgerLines, network, ok, portraitPng, startEngine, TRAITS, until, useEngineDir } from "./testing/engineHarness";
 import { seedLlmOnlyCategory } from "./testing/llmOnlyCategory";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -58,12 +59,17 @@ function askedIn(call: FetchCall): { slotIndex: number; location?: string; activ
 
 /** An answer the reader refuses whole (no scene), so the chunk is asked again. */
 const refusing = (): Reply => ({ status: 200, body: chatBody(JSON.stringify({ scenes: [] }), { cost: 0.002 }) });
+/** The place opened with a preposition the bold reader takes for it (S5.BA4d): «On her balcony», «By her window»; «In» for every other place. */
+const opener = (location: string | undefined): string => {
+  const first = (location === undefined ? undefined : PLACE_PREPOSITIONS[location]?.[0]) ?? "in";
+  return `${first.charAt(0).toUpperCase()}${first.slice(1)} ${location}`;
+};
 /** An answer every asked slot passes with: its place, «she» and its activity word for word, its outfit as given. */
 const keeping = (call: FetchCall): Reply => ({
   status: 200,
   body: chatBody(
     JSON.stringify({
-      scenes: askedIn(call).map((s) => ({ slotIndex: s.slotIndex, sentence: `In ${s.location}${s.world === undefined ? "" : ` while staying near ${s.world.replace(/^an? /, "the ")}`}, she ${s.activity} in ${s.outfit}, a cup of tea beside her.` })),
+      scenes: askedIn(call).map((s) => ({ slotIndex: s.slotIndex, sentence: `${opener(s.location)}${s.world === undefined ? "" : ` while staying near ${s.world.replace(/^an? /, "the ")}`}, she ${s.activity} in ${s.outfit}, a cup of tea beside her.` })),
     }),
     { cost: 0.006 },
   ),
