@@ -86,13 +86,21 @@ describe("a run made from a set is priced by the scenes that are on the 2K route
     return { estimate, routed, total: set.scenes.length };
   }
 
-  test("«Ночнушки и бельё» at «Смелая»: exactly the scenes with a route are 2K, the rest stay at the mock's image", async () => {
-    const { estimate, routed, total } = await setEstimate(["nightwear"], "bold");
+  // 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear scene is on the route now, so a set with scenes off it is «Дом» and nightwear at «Смелая» (the «Дом» scenes still drawn as
+  // «Кокетливая», no route).
+  test("«Дом» and «Ночнушки и бельё» at «Смелая»: exactly the scenes with a route are 2K, the rest stay at the mock's image", async () => {
+    const { estimate, routed, total } = await setEstimate(["home", "nightwear"], "bold");
     expect(routed).toBeGreaterThan(0);
     expect(routed).toBeLessThan(total);
     expect(estimate.worstMicros).toBe((total - routed) * ATTEMPTS * IMAGE + routed * ATTEMPTS * MOCK_BOLD_IMAGE);
     expect(estimate.expectedMicros).toBe((total - routed) * IMAGE + routed * MOCK_BOLD_IMAGE);
     expect(estimate.boldAttemptMicros).toBe(MOCK_BOLD_IMAGE);
+  });
+
+  test("«Ночнушки и бельё» at «Смелая»: every scene is on 2K (Q-A2)", async () => {
+    const { estimate, routed, total } = await setEstimate(["nightwear"], "bold");
+    expect(routed).toBe(total);
+    expect(estimate.worstMicros).toBe(total * ATTEMPTS * MOCK_BOLD_IMAGE);
   });
 
   test("«Пляж и бассейн» at «Смелая»: every scene is on 2K", async () => {

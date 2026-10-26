@@ -94,10 +94,16 @@ describe("a bold set of the «Смелая» categories on the mock", () => {
     }
   });
 
-  test("the bold scenes of the nightwear are drawn on Seedream, and its ordinary scenes are not", async () => {
+  // 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear outfit is on Seedream now, so its ordinary scenes are too; the scenes off the route are a «Смелая» «Дом» set's (still drawn as
+  // «Кокетливая» until S5.BA3 plans its companion), as on the engine.
+  test("every nightwear scene is drawn on Seedream, its ordinary ones included, and a «Смелая» «Дом» scene is not", async () => {
     const { view } = await composed({ categories: ["nightwear"], level: "bold" }, 40);
     expect(view.scenes.filter((s) => s.level === "bold").every((s) => s.route === "seedream")).toBe(true);
-    expect(view.scenes.filter((s) => s.level === undefined).some((s) => s.route === undefined)).toBe(true);
+    expect(view.scenes.filter((s) => s.level === undefined).length).toBeGreaterThan(0);
+    expect(view.scenes.filter((s) => s.level === undefined).every((s) => s.route === "seedream")).toBe(true);
+    const home = await composed({ categories: ["home"], level: "bold" }, 20);
+    expect(home.view.scenes.length).toBeGreaterThan(0);
+    expect(home.view.scenes.every((s) => s.route === undefined)).toBe(true);
   });
 
   test("every beach scene is drawn on Seedream: every beach outfit is swimwear", async () => {

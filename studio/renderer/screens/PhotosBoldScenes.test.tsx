@@ -9,8 +9,8 @@ import { card, sceneCard } from "./photos/sceneScreenKit";
 // S5.9g (plan s5a3 §13.1 «Scene review», §13.3 row 49; mockup 49 of .omc/stage5/design): a «Смелая» set on review. A bold scene wears «смело» (with what
 // «Смелая» means in its title), a flirty one «кокетливо» as before; a scene on the Seedream route says «Seedream · 2K»; the strip says «Подача: смелая», its
 // models line names the bold frames' model, its price column the engine's price of one Seedream attempt; ⟳ «Другая сцена» stays free and keeps «Подача».
-// The mock composes the set as the engine does (S5.9c/f): «Ночнушки и бельё» 6 + «Пляж и бассейн» 6 → scene 1 ordinary on the owner's model, 2 flirty and 3
-// bold on Seedream, 7 an ordinary beach frame — on Seedream too, every beach outfit being swimwear.
+// The mock composes the set as the engine does (S5.9c/f): «Ночнушки и бельё» 6 + «Пляж и бассейн» 6 → scene 1 ordinary, 2 flirty and 3 bold, all on Seedream
+// (5a.4, Q-A2: every nightwear outfit is), 7 an ordinary beach frame — on Seedream too, every beach outfit being swimwear.
 
 const BOLD_TITLE = "Подача «Смелая»: бельё, ночнушки, купальники";
 const ROUTE_TITLE = "Этот кадр рисует Seedream 5 Pro в 2K";
@@ -57,13 +57,25 @@ describe("a «Смелая» set's scenes (mockup 49)", () => {
     expect(within(sceneCard(2)).queryByText("смело") === null).toBe(true);
   });
 
-  test("an ordinary scene on the owner's model has neither; an ordinary beach scene is still on Seedream", async () => {
+  // 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear scene is on Seedream now, its ordinary ones included, so scene 1 says «Seedream · 2K» and no level; the scenes on the owner's model
+  // are a «Смелая» «Дом» set's (still drawn as «Кокетливая» until S5.BA3 plans its companion).
+  test("an ordinary scene says no level; an ordinary nightwear or beach scene is still on Seedream", async () => {
     await openSet(["nightwear", "beach"], "bold");
     expect(within(sceneCard(1)).queryByText("смело") === null).toBe(true);
     expect(within(sceneCard(1)).queryByText("кокетливо") === null).toBe(true);
-    expect(within(sceneCard(1)).queryByText("Seedream · 2K") === null).toBe(true);
+    expect(within(sceneCard(1)).getByText("Seedream · 2K")).toBeDefined();
     expect(within(sceneCard(7)).getByText("Seedream · 2K")).toBeDefined();
     expect(within(sceneCard(7)).queryByText("смело") === null).toBe(true);
+  });
+
+  test("a scene on the owner's model has neither: a «Смелая» «Дом» set's", async () => {
+    await openSet(["home"], "bold");
+    const cards = Array.from({ length: 12 }, (_, i) => sceneCard(i + 1));
+    for (const scene of cards) {
+      expect(within(scene).queryByText("смело") === null).toBe(true);
+      expect(within(scene).queryByText("Seedream · 2K") === null).toBe(true);
+    }
+    expect(cards.some((scene) => within(scene).queryByText("кокетливо") === null)).toBe(true);
   });
 
   test("the strip says «Подача: смелая · Ракурс — из сцены.»", async () => {

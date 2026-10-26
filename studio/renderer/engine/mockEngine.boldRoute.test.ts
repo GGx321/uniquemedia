@@ -144,14 +144,26 @@ describe("a Seedream slot the model refuses", () => {
     expect(last.payload.result.failedReasons).toEqual([{ slotIndex: 1, reason: "model-refused" }]);
   });
 
+  // 5a.4 (S5.BA2, 2026-10-26, Q-A2, as parity story 4550): every nightwear slot is on the route now, so the slots off it are a «Смелая» «Дом» run's (still drawn as «Кокетливая»).
   test("is not met by the ordinary slots of a «Смелая» run: only the slots with a route end refused", async () => {
+    const { mock, events } = withEvents();
+    mock.engine.refuseBoldNext(100);
+    await start(mock, boldRun(10, ["home", "nightwear"]));
+    mock.scheduler.runAll();
+    const result = doneOf(events);
+    expect(result.photoIds.length).toBeGreaterThan(0);
+    expect(result.failedSlots).toBeGreaterThan(0);
+    expect(result.failedSlots + result.photoIds.length).toBe(10);
+    expect(result.failedReasons?.every((r) => r.reason === "model-refused")).toBe(true);
+  });
+
+  test("ends every slot of a nightwear run refused, for nothing: no nightwear slot is on the owner's model (Q-A2)", async () => {
     const { mock, events } = withEvents();
     mock.engine.refuseBoldNext(100);
     await start(mock, boldRun(10, ["nightwear"]));
     mock.scheduler.runAll();
     const result = doneOf(events);
-    expect(result.photoIds.length).toBeGreaterThan(0);
-    expect(result.failedSlots + result.photoIds.length).toBe(10);
+    expect([result.photoIds.length, result.failedSlots]).toEqual([0, 10]);
     expect(result.failedReasons?.every((r) => r.reason === "model-refused")).toBe(true);
   });
 
