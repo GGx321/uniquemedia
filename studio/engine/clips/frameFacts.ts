@@ -91,7 +91,7 @@ function plannedFacts(photo: PhotoSidecar, source: GeneratedSource, slot: PlanSl
   const moment = momentOfSlot(slot) ?? null;
   const activity = trimmed(slot.activity);
   const carried = activity !== "" && says(source.prompt, activity);
-  const level = contentLevelOf(slot);
+  const level = contentLevelOf({ category: slot.category, level: slot.level, route: slot.route });
   const planned = slot.capture ?? captureOfShot(slot.shot);
   return {
     photoId: photo.id,
@@ -128,7 +128,7 @@ function ownFacts(photo: PhotoSidecar, slot: OwnPlanSlot): Omit<FrameFacts, "age
     legs: false,
     legwear: null,
     bold: false,
-    level: contentLevelOf(slot),
+    level: contentLevelOf({ category: slot.category, level: undefined, route: undefined }),
   };
 }
 
@@ -138,7 +138,8 @@ function ownFacts(photo: PhotoSidecar, slot: OwnPlanSlot): Omit<FrameFacts, "age
  */
 function planlessFacts(photo: PhotoSidecar, category: string): Omit<FrameFacts, "ageRefused"> {
   const judged = photo.qa.faceCos !== undefined && photo.qa.faceMarked !== true;
-  const level = contentLevelOf({ category });
+  // S5.BA6: the photo's own route (`photo.source.route`) joins here with `frameFacts.bold`; until then a category-only reading, as before.
+  const level = contentLevelOf({ category, level: undefined, route: undefined });
   return {
     photoId: photo.id,
     plan: "none",

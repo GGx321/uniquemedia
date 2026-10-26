@@ -82,7 +82,7 @@ export async function approveLaunchSet(deps: LaunchSetDeps, input: { sceneSetId:
           throw sceneRefusal(`scene set ${sceneSetId} has ${drawn.length} scenes to draw; the launch planned ${input.plannedCount}`, "over-plan");
         }
         if (drawn.length > MAX_COMPOSE_SCENES) throw sceneRefusal(`scene set ${sceneSetId} has ${drawn.length} active scenes; a launch draws at most ${MAX_COMPOSE_SCENES}`, "too-many-active");
-        const unfit = drawn.find((s) => s.text !== null && contentProblems(s.text, s.origin === "planned" ? contentLevelOf(s.slot) : "ordinary").length > 0);
+        const unfit = drawn.find((s) => s.text !== null && contentProblems(s.text, s.origin === "planned" ? contentLevelOf({ category: s.slot.category, level: s.slot.level, route: s.slot.route }) : "ordinary").length > 0);
         if (unfit !== undefined) throw sceneRefusal(`the text of scene ${unfit.sceneId} of set ${sceneSetId} breaks today's word rules: edit or remove it first`, "scene-text-problem", unfit.sceneId);
         return { ...current, scenes, launchDraw: { launchId, sceneIds: drawn.map((s) => s.sceneId), slices: [] } };
       },

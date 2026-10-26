@@ -2,7 +2,7 @@ import { isBoldCategory, type AvatarDescriptor } from "../../shared/engine";
 import { promptSubject } from "../avatars/prompts";
 import type { LibraryReference } from "../library/media";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
-import { contentLevelOf, contentProblems, type ContentProblem } from "../../shared/scenes/contentLine";
+import { contentLevelOf, contentProblems, type ContentLevel, type ContentProblem } from "../../shared/scenes/contentLine";
 import { FEET_MOMENT_WORDS, GLANCE_BACK_WORDS, notDenimClause, unfabricBottomsIn } from "../../shared/scenes/words";
 import { artefactLine, captureLineOf, CONSTRAINTS, hairLine, imperfectionOf, isLampMood, lightOf, MIRROR_BACK_LINE, phoneHandLineOf, roomStateOf, slotKeyOf, type RoomPlace } from "./phoneLook";
 import type { SlotLook } from "./roomPlace";
@@ -225,6 +225,11 @@ export function wholeBodyOf(slot: RunSlot): boolean {
   return !isOwnSlot(slot) && (FEET_MOMENT_WORDS.test(slot.activity) || (isBoldCategory(slot.category) && BOLD_WHOLE_BODY_WORDS.test(slot.activity)));
 }
 
+/** The content level of a run's slot (5a.4, S5.BA1): an own slot has no level and no route, a planned one hands over both. */
+function contentLevelOfSlot(slot: RunSlot): ContentLevel {
+  return isOwnSlot(slot) ? contentLevelOf({ category: slot.category, level: undefined, route: undefined }) : contentLevelOf({ category: slot.category, level: slot.level, route: slot.route });
+}
+
 /**
  * Builds one slot's final image prompt, in the settled order (S5.1a, plan 6.2): the capture line, the pose phrase, the writer's sentence, the room
  * phrase (if the slot's place is a room), the reference binding and the avatar's descriptor (via `promptSubject`, the only path from the avatar
@@ -234,7 +239,7 @@ export function wholeBodyOf(slot: RunSlot): boolean {
  * since this is the last engine code to see the text before an image is paid for.
  */
 export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, sentence: string, master: LibraryReference, options: AssembleOptions): AssembledScene {
-  const [problem] = contentProblems(sentence, contentLevelOf(slot));
+  const [problem] = contentProblems(sentence, contentLevelOfSlot(slot));
   if (problem !== undefined) {
     const kind = problem.reason === "youth-word" ? "a youth word" : "a revealing word";
     throw new AssemblerRefusalError(`the sentence for slot ${slot.slotIndex} still carries ${kind}: ${problem.words.join(", ")}`);
@@ -288,7 +293,7 @@ export function assembleRun(descriptor: AvatarDescriptor, scenePlan: { readonly 
   return scenePlan.slots.map((slot): AssembledSlot => {
     const sentence = sentences.get(slot.slotIndex);
     if (sentence === undefined) throw new RangeError(`no writer sentence for slot ${slot.slotIndex}`);
-    const problems = contentProblems(sentence, contentLevelOf(slot));
+    const problems = contentProblems(sentence, contentLevelOfSlot(slot));
     if (problems.length > 0) return { ok: false, slotIndex: slot.slotIndex, reason: "slot-text-problem", problems };
     return { ok: true, ...assembleSlot(descriptor, slot, sentence, master, options) };
   });

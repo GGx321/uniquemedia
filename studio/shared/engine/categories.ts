@@ -28,6 +28,15 @@ export function isBoldCategory(ref: string): ref is BoldCategory {
   return BOLD_CATEGORIES.some((bold) => bold === ref);
 }
 
+/**
+ * 5a.4 (S5.BA1, plan s5a4 §5.1, I5.73): whether a frame is a «Смелая» frame. One marker, one predicate: its category is one of the two «Смелая» categories, or it is drawn on
+ * the Seedream route (`route`), which any category's slot may carry at «Смелая». Every site that asks «is this a «Смелая» frame» calls this, never `isBoldCategory` alone.
+ * `route` is a REQUIRED key (`SceneRoute | undefined`): a caller that has no route to hand says so with `route: undefined`, and a caller that forgets it does not compile.
+ */
+export function isBoldFrame(item: { category: string; route: SceneRoute | undefined }): boolean {
+  return isBoldCategory(item.category) || item.route === "seedream";
+}
+
 const CUSTOM_CATEGORY_ID = /^cat-[a-z0-9-]{8,59}$/;
 
 /**
@@ -58,9 +67,12 @@ export const CAPTURES = ["mirror-hidden", "mirror", "above", "prone", "over-shou
 export type Capture = (typeof CAPTURES)[number];
 
 /**
- * «Подача» (S5.7a, 5a.3): how a scene is presented. Absent means ordinary. `bold` («Смелая», 5a.3 S5.9a) is accepted wherever a level is; until the two «Смелая»
- * categories exist (S5.9b2) the five ordinary built-ins draw it exactly as `flirty`. The level picks moments; for a «Смелая» category it also picks the route
- * (`SceneRoute`) and so the price, which the estimate reads off the plan, never off the level.
+ * «Подача» (S5.7a, 5a.3): how a scene is presented. Absent means ordinary. `bold` («Смелая», 5a.3 S5.9a) is accepted wherever a level is. The level picks moments;
+ * the ROUTE (`SceneRoute`), and so the price, is what marks a «Смелая» frame, and the estimate reads it off the plan, never off the level.
+ *
+ * 5a.4 (plan s5a4 §5.1, I5.71, I5.73): «Смелая» is every category's. A slot of the five or of a custom category planned at `bold` carries the route and is a «Смелая» frame
+ * (`isBoldFrame`); a slot stored before 5a.4 (drawn as `flirty`, no route) is not, and reads, renders and animates as before. Until the later 5a.4 tasks wire the
+ * planner, the five and the custom categories still draw `bold` exactly as `flirty`, and only «Ночнушки и бельё» and «Пляж и бассейн» are «Смелая» categories.
  */
 export const SceneLevel = z.enum(["ordinary", "flirty", "bold"]);
 export type SceneLevel = z.infer<typeof SceneLevel>;

@@ -21,7 +21,8 @@ const IsoDateTime = z.iso.datetime();
 export const GROK_FALLBACK: "auto" | "offer" = "auto";
 
 /**
- * I5.57: frames of «Смелая» (a photo whose category is `nightwear` or `beach`, i.e. whose content level is bold). `kling-only`: offered, run on Kling alone with fallback `none`,
+ * I5.57: frames of «Смелая» (a photo whose category is `nightwear` or `beach`, i.e. whose content level is bold; from 5a.4 (wired by S5.BA6) also any category's photo drawn on the Seedream route, `isBoldFrame`: I5.79, every «Смелая» frame is Kling-only).
+ * `kling-only`: offered, run on Kling alone with fallback `none`,
  * never on Grok (worst is Kling's reserve). `with-fallback`: like any other frame (the code and the tests only; nothing sets it in 5b.1). `off`: not suitable, reason `bold-off`.
  * `kling-only` is FINAL: the owner's answer to Q-A (2026-10-13), confirmed by probe P-V (3 of 3 clips completed, "Норм видео").
  */

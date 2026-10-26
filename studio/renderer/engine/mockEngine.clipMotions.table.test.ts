@@ -82,8 +82,8 @@ const ordinary = frameFactsOf(planlessPhoto("home", { faceCos: 0.86 }), null);
 const bold = frameFactsOf(planlessPhoto("nightwear", { faceCos: 0.86 }), null);
 if (ordinary.kind !== "gallery" || bold.kind !== "gallery") throw new Error("the fixture photos are not gallery photos");
 const FRAMES = [
-  { name: "an ordinary frame", engine: ordinary.facts, mock: { bold: false, level: contentLevelOf({ category: "home" }) } },
-  { name: "a frame of «Смелая»", engine: bold.facts, mock: { bold: true, level: contentLevelOf({ category: "nightwear" }) } },
+  { name: "an ordinary frame", engine: ordinary.facts, mock: { bold: false, level: contentLevelOf({ category: "home", level: undefined, route: undefined }) } },
+  { name: "a frame of «Смелая»", engine: bold.facts, mock: { bold: true, level: contentLevelOf({ category: "nightwear", level: undefined, route: undefined }) } },
 ] as const;
 
 const CORPUS = [

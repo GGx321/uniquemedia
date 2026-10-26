@@ -149,23 +149,40 @@ describe("the levels", () => {
   });
 });
 
-// S5.9c (plan s5a3 §5.1): the level a slot or a scene is held to follows its CATEGORY, never its mix level.
+// S5.9c (plan s5a3 §5.1), widened by 5a.4 (S5.BA1, I5.73): the level a slot or a scene is held to follows its CATEGORY or its ROUTE, never its mix level. `level` and `route` are
+// required keys (`SceneLevel | undefined`, `SceneRoute | undefined`), so a caller that forgets one does not compile.
 describe("contentLevelOf", () => {
   test.each(["nightwear", "beach"])("a %s slot is held to the bold line, whatever its own mix level", (category) => {
-    expect(contentLevelOf({ category })).toBe(boldContentLevel());
-    expect(contentLevelOf({ category, level: "ordinary" } as { category: string })).toBe(boldContentLevel());
+    expect(contentLevelOf({ category, level: undefined, route: undefined })).toBe(boldContentLevel());
+    expect(contentLevelOf({ category, level: "ordinary", route: undefined })).toBe(boldContentLevel());
+    expect(contentLevelOf({ category, level: "bold", route: "seedream" })).toBe(boldContentLevel());
   });
 
-  test.each(["home", "travel", "photoshoot", "glamour", "fitness", "shoot", "glam", "fit", "cat-paris-cafes", "own"])("%s is held to the ordinary line", (category) => {
-    expect(contentLevelOf({ category })).toBe("ordinary");
+  test.each(["home", "travel", "photoshoot", "glamour", "fitness", "shoot", "glam", "fit", "cat-paris-cafes", "own"])("%s without the route is held to the ordinary line", (category) => {
+    expect(contentLevelOf({ category, level: undefined, route: undefined })).toBe("ordinary");
   });
 
-  test("a flirty or bold slot of the five is still ordinary: «Смелая» lifts the gate only in a «Смелая» category", () => {
-    expect(contentLevelOf({ category: "home", level: "flirty" } as { category: string })).toBe("ordinary");
+  test.each(["home", "travel", "photoshoot", "glamour", "fitness", "shoot", "glam", "fit", "cat-paris-cafes"])("%s with the route is held to the bold line", (category) => {
+    expect(contentLevelOf({ category, level: "bold", route: "seedream" })).toBe(boldContentLevel());
+    expect(contentLevelOf({ category, level: undefined, route: "seedream" })).toBe(boldContentLevel());
+  });
+
+  test("a flirty slot of the five without the route is still ordinary: the line lifts only for a «Смелая» frame", () => {
+    expect(contentLevelOf({ category: "home", level: "flirty", route: undefined })).toBe("ordinary");
   });
 
   test("the level it gives reads the texts as the bold line does", () => {
-    expect(contentProblems("a white string bikini, topless", contentLevelOf({ category: "beach" }))).toEqual([]);
-    expect(contentProblems("a white string bikini", contentLevelOf({ category: "home" })).map((p) => p.reason)).toEqual(["revealing-word"]);
+    expect(contentProblems("a white string bikini, topless", contentLevelOf({ category: "beach", level: undefined, route: undefined }))).toEqual([]);
+    expect(contentProblems("a white string bikini", contentLevelOf({ category: "home", level: undefined, route: undefined })).map((p) => p.reason)).toEqual(["revealing-word"]);
+    expect(contentProblems("a white string bikini, topless", contentLevelOf({ category: "home", level: "bold", route: "seedream" }))).toEqual([]);
+  });
+
+  test("a call without the level key, or without the route key, does not compile", () => {
+    // @ts-expect-error `level` and `route` are required keys
+    expect(contentLevelOf({ category: "home" })).toBe("ordinary");
+    // @ts-expect-error `route` is a required key
+    expect(contentLevelOf({ category: "home", level: undefined })).toBe("ordinary");
+    // @ts-expect-error `level` is a required key
+    expect(contentLevelOf({ category: "home", route: undefined })).toBe("ordinary");
   });
 });

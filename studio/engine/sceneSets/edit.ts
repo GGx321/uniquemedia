@@ -51,7 +51,7 @@ export function applyEdit(set: StoredSceneSet, op: SceneEditOp): EditOutcome {
       const scene = set.scenes.find((s) => s.sceneId === op.sceneId);
       if (scene === undefined) return invalid(`the set has no scene ${op.sceneId}`, "scene-missing", op.sceneId);
       if (scene.removed) return invalid(`scene ${op.sceneId} is removed; restore it before editing its text`, "target-removed", op.sceneId);
-      const problem = textProblem(op.text, scene.origin === "planned" ? contentLevelOf(scene.slot) : "ordinary");
+      const problem = textProblem(op.text, scene.origin === "planned" ? contentLevelOf({ category: scene.slot.category, level: scene.slot.level, route: scene.slot.route }) : "ordinary");
       if (problem !== null) return { kind: "problem", problem };
       const text = op.text.trim();
       if (scene.text === text && scene.edited) return { kind: "unchanged" };

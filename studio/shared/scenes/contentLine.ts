@@ -7,7 +7,7 @@
 // Which level a slot or a scene is at is `contentLevelOf` (S5.9c): the sites call it with the slot or the scene they check, so the gate follows the CATEGORY, not the mix level.
 
 import { youthWords } from "../engine/ageText";
-import { isBoldCategory } from "../engine/categories";
+import { isBoldFrame, type SceneLevel, type SceneRoute } from "../engine/categories";
 import { BOLD_EXEMPT_YOUTH } from "./banks/boldRules";
 import { revealingWordsIn } from "./words";
 
@@ -35,11 +35,15 @@ export function boldContentLevel(): BoldContentLevel {
 }
 
 /**
- * 5a.3 (S5.9c, plan s5a3 §5.1): the level a slot's or a scene's text is held to. A «Смелая» category is bold whatever the slot's own level in the mix (a beach frame at ordinary level is
- * still a swimwear frame, answer (a)); everything else, the five, a custom category and an own scene (it has no category), is "ordinary", which the flirty reading equals.
+ * 5a.3 (S5.9c, plan s5a3 §5.1), widened by 5a.4 (S5.BA1, plan s5a4 §5.1, I5.73): the level a slot's or a scene's text is held to. A «Смелая» FRAME (`isBoldFrame`: a «Смелая» category, or any
+ * category's slot drawn on the Seedream route) is bold whatever the slot's own level in the mix (a beach frame at ordinary level is still a swimwear frame, answer (a)); everything else, the
+ * five and a custom category without the route, and an own scene (it has no category), is "ordinary", which the flirty reading equals.
+ *
+ * `level` and `route` are REQUIRED keys (`SceneLevel | undefined`, `SceneRoute | undefined`), so a caller that forgets one does not compile and tsc lists every caller. The route decides;
+ * `level` is part of the signature so the sites hand over the whole marker, and a bold level without the route is refused by the slot schema, so it never reaches here.
  */
-export function contentLevelOf(item: { category: string }): ContentLevel {
-  return isBoldCategory(item.category) ? BOLD : "ordinary";
+export function contentLevelOf(item: { category: string; level: SceneLevel | undefined; route: SceneRoute | undefined }): ContentLevel {
+  return isBoldFrame(item) ? BOLD : "ordinary";
 }
 
 /** Every level, in the order of the mix (ordinary, flirty, bold). */

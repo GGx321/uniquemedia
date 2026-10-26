@@ -466,8 +466,8 @@ const LINE_BREAK = new RegExp(`[\\n\\r${String.fromCharCode(0x2028)}${String.fro
  * Whether a stored text breaks the assembler's word rules now (a youth word, a revealing word): the shared content line the engine calls, checked at an approval. A scene of a «Смелая»
  * category is held to the youth words only (5a.3, `contentLevelOf`); an own scene has no category and is ordinary.
  */
-function breaksWordRules(text: string, scene: Pick<Scene, "category">): boolean {
-  return contentProblems(text, contentLevelOf(scene)).length > 0;
+function breaksWordRules(text: string, scene: Pick<Scene, "category" | "level" | "route">): boolean {
+  return contentProblems(text, contentLevelOf({ category: scene.category, level: scene.level, route: scene.route })).length > 0;
 }
 
 function textProblem(text: string, level: ContentLevel = "ordinary"): SceneProblem | null {
@@ -931,7 +931,7 @@ export class MockSceneSets {
       const scene = set.scenes.find((s) => s.sceneId === op.sceneId);
       if (scene === undefined) return { error: refuse(`the set has no scene ${op.sceneId}`, "scene-missing", op.sceneId) };
       if (scene.removed) return { error: refuse(`scene ${op.sceneId} is removed; restore it before editing its text`, "target-removed", op.sceneId) };
-      const problem = textProblem(op.text, contentLevelOf(scene));
+      const problem = textProblem(op.text, contentLevelOf({ category: scene.category, level: scene.level, route: scene.route }));
       if (problem !== null) return { problem };
       const text = op.text.trim();
       if (scene.text === text && scene.edited) return { view: this.view(set) };

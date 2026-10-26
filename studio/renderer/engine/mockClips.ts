@@ -486,7 +486,8 @@ function factsOf(photo: PhotoSummary): Facts {
   const age = photo.qa?.age;
   return {
     bold: isBoldCategory(photo.category),
-    level: contentLevelOf({ category: photo.category }),
+    // S5.BA6: the photo's route joins here with `bold`; until then a category-only reading, as before.
+    level: contentLevelOf({ category: photo.category, level: undefined, route: undefined }),
     judged: photo.qa?.faceCos !== undefined && photo.qa.faceMarked !== true,
     ageRefused: !(age === undefined || (age.adult === true && age.confidence >= AGE_MIN_CONFIDENCE)),
   };
