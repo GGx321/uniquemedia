@@ -4,6 +4,7 @@ import { bankPlaceOf } from "../../shared/scenes/bankLookup";
 import { boldWordsIn } from "../../shared/scenes/banks/boldRules";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
 import { exposureWordsIn } from "../../shared/scenes/explicitWords";
+import { coverageOf } from "../../shared/scenes/template";
 import { ownerBannedOutfitWords } from "../../shared/scenes/words";
 import { WRITER_CALL, writerCallOf, writerExpectedMicros, writerWorstMicros, type Estimate } from "../money/estimate";
 import type { PriceBook } from "../money/prices";
@@ -715,6 +716,42 @@ export function readBoldWriterAnswer(content: string, slots: readonly PlanSlot[]
   if (!parsed.success) return refused(["not-json"]);
   return readScenes(parsed.data.scenes, slots, boldProblemsOf);
 }
+
+/**
+ * 5a.4 (S5.BA4, plan s5a4 §5.3.3 «After the read», I5.74): the bold mode's reader. It reads the model's sentences (`readBoldWriterAnswer`), then appends to every
+ * sentence it accepts the coverage sentence of the slot's outfit by the avatar's origin, exactly as the template and the plain sentence append it: the kept,
+ * restrictive one for an imported avatar or one of unknown origin (`impliedNudity` false, the default), the open one (or none) for a Studio-created avatar. Once:
+ * a sentence is read, and so covered, in one attempt only (a refusal's kept sentences now; a slot asked again in the next attempt).
+ */
+export function boldReader(impliedNudity = false): (content: string, slots: readonly PlanSlot[]) => WriterAnswer {
+  return (content, slots) => {
+    const read = readBoldWriterAnswer(content, slots);
+    const bySlot = new Map(slots.map((slot) => [slot.slotIndex, slot]));
+    const covered = (sentences: ReadonlyMap<number, string>): Map<number, string> =>
+      new Map(
+        [...sentences].map(([slotIndex, sentence]) => {
+          const slot = bySlot.get(slotIndex);
+          const coverage = slot === undefined ? undefined : slotCoverageOf(slot, impliedNudity);
+          return [slotIndex, coverage === undefined ? sentence : `${withFullStop(sentence)} ${coverage}`];
+        }),
+      );
+    if (read.ok) return { ok: true, sentences: covered(read.sentences) };
+    return read.repair === undefined ? read : { ...read, repair: { ...read.repair, accepted: covered(read.repair.accepted) } };
+  };
+}
+
+/** The coverage sentence a slot's outfit ends with, by origin, as `plainSentence` finds it (shared/scenes/plain.ts): undefined for an outfit of no «Смелая» bank. */
+function slotCoverageOf(slot: PlanSlot, impliedNudity: boolean): string | undefined {
+  const hit = bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location, activity: slot.activity });
+  const worn = hit?.bank.outfits.find((outfit) => outfit.text === slot.outfit);
+  return hit === undefined || worn === undefined ? undefined : coverageOf(hit.moment ?? {}, worn, impliedNudity);
+}
+
+/** The sentence with its closing full stop (a sentence the model ended without one), so the coverage reads as the next sentence. */
+const withFullStop = (sentence: string): string => {
+  const trimmed = sentence.trimEnd();
+  return /[.!?]["')\]]*$/.test(trimmed) ? trimmed : `${trimmed}.`;
+};
 
 /** `readWriterScenes`, with the bold problems of each slot when `boldOf` is given (the bold mode). */
 function readScenes<S extends ReadableSlot>(scenes: readonly Pick<WriterScene, "slotIndex" | "sentence">[], slots: readonly S[], boldOf?: (slot: S, sentence: string) => readonly BoldProblem[]): WriterAnswer {

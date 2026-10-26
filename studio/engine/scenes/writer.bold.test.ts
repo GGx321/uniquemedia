@@ -2,11 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { CAPTURES, POOL_TEXT_MAX, POOL_TIMES } from "../../shared/engine";
 import { CUSTOM_BOLD_BANKS } from "../../shared/scenes/banks/companions";
+import { COVER } from "../../shared/scenes/banks/companions/outfits";
 import { captureOfShot } from "../../shared/scenes/captures";
 import { WRITER_BOLD_CALL } from "../money/estimate";
 import { promptTokenFloor } from "../openrouter/chat";
 import type { PlanSlot } from "./schema";
-import { BOLD_PROBLEMS, CAPTURE_LABEL, PLACE_KEYS, readBoldWriterAnswer, readWriterAnswer, SHOT_LABEL, slotList, TIME_WORD, WATER_PLACE_KEYS, writerBoldMessages, writerMessages, writerRefusalText, WRITER_JSON_SCHEMA, type WriterAnswer, type WriterRefusal } from "./writer";
+import { BOLD_PROBLEMS, boldReader, CAPTURE_LABEL, PLACE_KEYS, readBoldWriterAnswer, readWriterAnswer, SHOT_LABEL, slotList, TIME_WORD, WATER_PLACE_KEYS, writerBoldMessages, writerMessages, writerRefusalText, WRITER_JSON_SCHEMA, type WriterAnswer, type WriterRefusal } from "./writer";
 import { worstSlotList } from "./testing/worstSlotList";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -470,6 +471,67 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
       const read = readBoldWriterAnswer(answer([{ slotIndex: 1, sentence: "At a corner cafe, sipping a coffee, she smiles at the viewer in a beige trench coat and jeans." }]), [unrouted()]);
       expect(problemsOf(read)).not.toContain("moment-split");
     });
+  });
+});
+
+describe("the coverage sentence is appended after the read, once, by origin (§5.3.3 «After the read», I5.74)", () => {
+  const LACE_KEPT = "The lace is lined and opaque: her bra fully covers her breasts and her panties fully cover her.";
+  const GOOD = "In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties, smiling up at the viewer, a box of macarons from the corner bakery on the nightstand.";
+  const TOWEL_SLOT = routed({ slotIndex: 2, location: "her bathroom", activity: "leans on the sink after a shower", outfit: "only a white bath towel", shot: "mirror", capture: "mirror-hidden" });
+  const TOWEL = "In the bathroom of her hotel room in Paris, she leans on the sink after a shower in only a white bath towel, a bottle of lotion by the tap.";
+  const count = (text: string, part: string): number => text.split(part).length - 1;
+  const sentencesOf = (read: WriterAnswer): Map<number, string> => (read.ok ? read.sentences : (read.repair?.accepted ?? new Map()));
+
+  test("an imported avatar, or one of unknown origin (the default), gets the outfit's kept sentence", () => {
+    const read = boldReader()(answer([{ slotIndex: 1, sentence: GOOD }]), [routed()]);
+    expect(sentencesOf(read).get(1)).toBe(`${GOOD} ${LACE_KEPT}`);
+    expect(boldReader(false)(answer([{ slotIndex: 1, sentence: GOOD }]), [routed()])).toEqual(read);
+  });
+
+  test("a Studio-created avatar gets the open one: none for lace (P-BA drew it open), the descriptive one for the towel (P-BA B1)", () => {
+    const read = boldReader(true)(
+      answer([
+        { slotIndex: 1, sentence: GOOD },
+        { slotIndex: 2, sentence: TOWEL },
+      ]),
+      [routed(), TOWEL_SLOT],
+    );
+    expect(sentencesOf(read).get(1)).toBe(GOOD);
+    expect(sentencesOf(read).get(2)).toBe(`${TOWEL} ${COVER.towelOpen}`);
+    expect(sentencesOf(boldReader(false)(answer([{ slotIndex: 2, sentence: TOWEL }]), [TOWEL_SLOT])).get(2)).toBe(`${TOWEL} ${COVER.towel}`);
+  });
+
+  test("a slot of no «Смелая» bank (an old custom slot in a bold chunk) gets none", () => {
+    const sentence = "At a corner cafe she sips a coffee in a beige trench coat and jeans, smiling at the viewer.";
+    expect(sentencesOf(boldReader()(answer([{ slotIndex: 1, sentence }]), [unrouted()])).get(1)).toBe(sentence);
+  });
+
+  test("a refused answer's kept sentences carry it too, and a slot asked again gets it once more: once each", () => {
+    const first = boldReader()(
+      answer([
+        { slotIndex: 1, sentence: GOOD },
+        { slotIndex: 2, sentence: "She leans on the sink in her bathroom after a shower in only a white bath towel." },
+      ]),
+      [routed(), TOWEL_SLOT],
+    );
+    expect(first.ok).toBe(false);
+    if (first.ok) return;
+    expect(first.repair?.marked).toEqual([2]);
+    const second = boldReader()(answer([{ slotIndex: 2, sentence: TOWEL }]), [TOWEL_SLOT]);
+    const all = new Map([...sentencesOf(first), ...sentencesOf(second)]);
+    expect(count(all.get(1) ?? "", LACE_KEPT)).toBe(1);
+    expect(count(all.get(2) ?? "", COVER.towel)).toBe(1);
+    expect(all.get(2)).toBe(`${TOWEL} ${COVER.towel}`);
+  });
+
+  test("a sentence that ends without its full stop gets one before the coverage", () => {
+    const read = boldReader()(answer([{ slotIndex: 1, sentence: GOOD.slice(0, -1) }]), [routed()]);
+    expect(sentencesOf(read).get(1)).toBe(`${GOOD} ${LACE_KEPT}`);
+  });
+
+  test("the reader reads the model's sentence, never the coverage: a refusal is the bold reader's own", () => {
+    const bad = answer([{ slotIndex: 1, sentence: "At the cafe terrace in Paris, she lies on the rug topless." }]);
+    expect(boldReader()(bad, [routed()])).toEqual(readBoldWriterAnswer(bad, [routed()]));
   });
 });
 
