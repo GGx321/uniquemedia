@@ -305,26 +305,34 @@ export function nonAsciiDigits(text: string): string[] {
  * A word the checks refuse, under a fixed name: the name (never text of the
  * checked answer) is what a retry is told to avoid.
  */
+/** One pattern of a rule, and the script it reads: S5.FU-AGE round 2 (L9) skips the Russian patterns on a text with no Cyrillic letter, and the English ones on a text with no Latin. */
+interface WordPattern {
+  readonly re: RegExp;
+  readonly cyrillic: boolean;
+}
 interface WordRule {
   name: string;
-  pattern: RegExp;
+  patterns: readonly WordPattern[];
   /** False for a word that short words run together make by chance ("in in a" → "ninina"): it is matched on real words only. */
   joins: boolean;
 }
 
+const english = (pattern: string): WordPattern => ({ re: new RegExp(`\\b(?:${pattern})\\b`, "giu"), cyrillic: false });
+const russian = (pattern: string): WordPattern => ({ re: new RegExp(pattern, "giu"), cyrillic: true });
+
 /** An English rule: whole words (ASCII word boundaries). */
 function en(name: string, pattern: string, opts: { joins?: boolean } = {}): WordRule {
-  return { name, pattern: new RegExp(`\\b(?:${pattern})\\b`, "giu"), joins: opts.joins ?? true };
+  return { name, patterns: [english(pattern)], joins: opts.joins ?? true };
 }
 
 /** A Russian rule: `\b` does not see Cyrillic, so the pattern bounds itself. */
 function ru(name: string, pattern: string): WordRule {
-  return { name, pattern: new RegExp(pattern, "giu"), joins: true };
+  return { name, patterns: [russian(pattern)], joins: true };
 }
 
 /** One rule in both languages, under one name: the English half in whole words (as `en`), the Russian half bounding itself (as `ru`). */
-function enRu(name: string, english: string, russian: string): WordRule {
-  return { name, pattern: new RegExp(`\\b(?:${english})\\b|${russian}`, "giu"), joins: true };
+function enRu(name: string, englishPattern: string, russianPattern: string): WordRule {
+  return { name, patterns: [english(englishPattern), russian(russianPattern)], joins: true };
 }
 
 /** Markers of a minor in any scope. */
@@ -450,10 +458,10 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
   // eyes.
   en("newborn", `new[- ]?borns?(?![- ](?:${NEWBORN_ANIMALS})\\b)`),
   en("little one", "little[- ]ones?"),
-  en("tot", `(?<!\\btater[- ])tots?(?!\\s+of\\s+(?:${TOT_DRINKS})\\b|\\s+up\\b)`),
+  en("tot", `tots?(?<!\\btater[- ]tots?)(?!\\s+of\\s+(?:${TOT_DRINKS})\\b|\\s+up\\b)`),
   en("puberty", "pubert\\w*"),
   en("youth", "youths?(?![- ]hostels?\\b)"),
-  en("pupil", `(?<!\\b(?:dilated|widened|wide|narrowed|constricted|eye)\\s)pupils?(?!(?:\\s+\\w+ly)?\\s+(?:${PUPIL_VERBS})\\w*|\\s+of\\s+(?:her|his|the|their)\\s+eyes?\\b)`),
+  en("pupil", `pupils?(?<!\\b(?:dilated|widened|wide|narrowed|constricted|eye)\\spupils?)(?!(?:\\s+\\w+ly)?\\s+(?:${PUPIL_VERBS})\\w*|\\s+of\\s+(?:her|his|the|their)\\s+eyes?\\b)`),
   // S5.FU-AGE (the review of the kept age guard): an infant's things, in English and in Russian, in their case and number forms. Round 2 (L1): a dummy or a soother only
   // sucked or in her mouth (never «a tailor's dummy», «a soother candle»), a nappy unless it is her hair («natural nappy coils»), «пустышка» only as a pacifier («с пустышкой»,
   // «пустышку в рот», «сосёт пустышку», never «она пустышка»). «Соска» shares most of its forms with
@@ -461,8 +469,8 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
   // (round 2, M2: «соска во рту» is the genitive of «сосок» after «кончик», «вокруг», «ореол», «касается» … : `NIPPLE_GENITIVE_BEFORE`).
   enRu(
     "pacifier",
-    "pacifiers?|(?<=\\bsuck(?:s|ing|ed)?\\s+(?:(?:on|at)\\s+)?(?:(?:a|an|the|her|his)\\s+)?)(?:dumm(?:y|ies)|soothers?)|(?:dumm(?:y|ies)|soothers?)(?=\\s+(?:in|between)\\s+(?:her|his|the|a)\\s+(?:mouth|lips))",
-    `(?<![\\p{L}])(?:с\\s+пустышк(?:ой|ою)|пустышк(?:а|у)\\s+(?:во|в)\\s+(?:рту|рот)|сос(?:[её]т|ала|ать|ут)\\s+пустышку|детск\\p{L}*\\s+пустыш\\p{L}*|соск(?:ой|ою)|(?<!(?<![\\p{L}])(?:${NIPPLE_GENITIVE_BEFORE})\\s+)соск[ау]\\s+(?:во|в)\\s+(?:рту|рот)|сос(?:[её]т|ала|ать|ут)\\s+соску|детск\\p{L}*\\s+соск\\p{L}*)(?![\\p{L}])`,
+    "pacifiers?|(?:dumm(?:y|ies)|soothers?)(?:(?<=\\bsuck(?:s|ing|ed)?\\s+(?:(?:on|at)\\s+)?(?:(?:a|an|the|her|his)\\s+)?(?:dumm(?:y|ies)|soothers?))|(?=\\s+(?:in|between)\\s+(?:her|his|the|a)\\s+(?:mouth|lips)))",
+    `(?<![\\p{L}])(?:с\\s+пустышк(?:ой|ою)|пустышк(?:а|у)\\s+(?:во|в)\\s+(?:рту|рот)|сос(?:[её]т|ала|ать|ут)\\s+пустышку|детск\\p{L}*\\s+пустыш\\p{L}*|соск(?:ой|ою)|соск[ау](?<!(?<![\\p{L}])(?:${NIPPLE_GENITIVE_BEFORE})\\s+соск[ау])\\s+(?:во|в)\\s+(?:рту|рот)|сос(?:[её]т|ала|ать|ут)\\s+соску|детск\\p{L}*\\s+соск\\p{L}*)(?![\\p{L}])`,
   ),
   enRu("diaper", "diaper\\w*|napp(?:ies|y(?!\\s+(?:hair|coils?|curls?|locks|texture|roots|strands|afro|kinks?)\\b))", "(?<![\\p{L}])(?:подгузник|памперс)\\p{L}*"),
   // Round 2 (M4): more of an infant's things: a rattle (the thing, never «she rattles her keys» or «a rattle of keys»), a teether, a sippy cup, a crib, a bottle of formula;
@@ -470,7 +478,7 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
   // «малыш» is a pet name for an adult and stays out.
   enRu(
     "infant prop",
-    "(?<=\\b(?:an?|the|her|his|baby'?s?|toy|plastic|silver|wooden)\\s)rattles?(?!\\s+of\\b)|teethers?|teething\\s+(?:rings?|toys?)|sippy[- ]?cups?|cribs?(?![- ]?(?:sheets?|notes?)\\b)|bottles?\\s+of\\s+(?:baby\\s+)?formula|formula\\s+bottles?",
+    "rattles?(?<=\\b(?:an?|the|her|his|baby'?s?|toy|plastic|silver|wooden)\\srattles?)(?!\\s+of\\b)|teethers?|teething\\s+(?:rings?|toys?)|sippy[- ]?cups?|cribs?(?![- ]?(?:sheets?|notes?)\\b)|bottles?\\s+of\\s+(?:baby\\s+)?formula|formula\\s+bottles?",
     "(?<![\\p{L}])(?:погремуш(?:к\\p{L}*|ек)|слюнявчик\\p{L}*|ползунк(?:и|ов|ам|ами|ах)|детск\\p{L}*\\s+(?:кроватк|бутылочк)\\p{L}*|бутылочк\\p{L}*\\s+(?:со\\s+)?смес\\p{L}*)(?![\\p{L}])",
   ),
   // Spanish "niña" (girl) folds to "nina". A real word only: short words run together make it by chance ("tan in a").
@@ -481,19 +489,26 @@ const DESCRIPTOR_YOUTH: WordRule[] = [
 
 /** S5.FU-AGE round 2 (L11): a text with its hyphenated words joined whole («paci-fier» → pacifier), whatever the length of their parts (the short-fragment join reads three). */
 const dehyphenated = (text: string): string => text.replace(/(?<=\p{L})-+(?=\p{L})/gu, "");
+/** Each hyphenated word with up to three words on either side (a rule may read its context: «с пус-тыш-кой», «sucks on a dum-my»), joined whole and apart by "|". */
+const HYPHENATED_IN_CONTEXT = /(?:[\p{L}\p{N}']+\s+){0,3}\p{L}+(?:-+\p{L}+)+(?:\s+[\p{L}\p{N}']+){0,3}/gu;
+const hyphenatedInContext = (base: string): string => (base.includes("-") ? Array.from(base.matchAll(HYPHENATED_IN_CONTEXT), (m) => dehyphenated(m[0])).join("|") : "");
 const wordsOf = (pattern: RegExp, text: string): string[] => Array.from(text.matchAll(pattern), (m) => m[0]);
 
 function youthMatches(text: string, scope: AgeTextScope): { rule: WordRule; words: string[] }[] {
   const forms = scope === "descriptor" ? descriptorForms(text) : { text: normalise(text), joined: "" };
   const rules = scope === "descriptor" ? [...HARD_YOUTH, ...DESCRIPTOR_YOUTH] : HARD_YOUTH;
   const base = normalise(text);
-  const whole = scope === "descriptor" && base.includes("-") ? dehyphenated(base) : "";
+  const whole = scope === "descriptor" ? hyphenatedInContext(base) : "";
+  const cyrillic = /\p{Script=Cyrillic}/u.test(base);
+  const latin = /\p{Script=Latin}/u.test(base);
   return rules
     .map((rule) => {
-      const found = [...wordsOf(rule.pattern, forms.text), ...(rule.joins ? wordsOf(rule.pattern, forms.joined) : [])];
-      // The joined text adds only what the written one does not read, so no word is counted twice («school-girl» is read as written).
+      const patterns = rule.patterns.filter((pattern) => (pattern.cyrillic ? cyrillic : latin));
+      const found = patterns.flatMap(({ re }) => [...wordsOf(re, forms.text), ...(rule.joins ? wordsOf(re, forms.joined) : [])]);
+      // The joined words add only what the written text does not read, so no word is counted twice («school-girl» is read as written).
       const read = new Set(found.map(dehyphenated));
-      return { rule, words: [...found, ...(whole === "" ? [] : wordsOf(rule.pattern, whole).filter((word) => !read.has(word)))] };
+      const added = whole === "" ? [] : patterns.flatMap(({ re }) => wordsOf(re, whole)).filter((word) => !read.has(word));
+      return { rule, words: [...found, ...added] };
     })
     .filter((match) => match.words.length > 0);
 }
