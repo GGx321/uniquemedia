@@ -10,7 +10,7 @@ useNativeGlobals();
 
 const raw = (): Record<string, unknown> => JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "plan-main-3a9cd498.json"), "utf8"));
 
-/** The plan with its first slot on the Seedream route. S5.9b2 (plan s5a3 §11): only a «Смелая» category's slot carries a route, so the slot becomes one of «Ночнушки и бельё». */
+/** The plan with its first slot on the Seedream route, as a slot of `category` (default «Ночнушки и бельё»; 5a.4: any category's slot may carry the route). */
 function withRoute(plan: Record<string, unknown>, category = "nightwear"): Record<string, unknown> {
   const scenes = plan.scenes as { slots: Record<string, unknown>[] };
   return { ...plan, scenes: { ...scenes, slots: scenes.slots.map((slot, i) => (i === 0 ? { ...slot, category, route: "seedream" } : slot)) } };
@@ -60,8 +60,9 @@ describe("a plan.json with the 5a.3 fields", () => {
   });
 
   // 5a.4 (S5.BA1, I5.73): a route is any category's, so a routed slot of the five parses (a bold level on it needs the route; schema.boldAny.test.ts).
-  test("keeps a route on a slot of the five", () => {
-    expect(RunPlanSchema.safeParse(withRoute(raw(), "home")).success).toBe(true);
+  test("keeps a route on a slot of the five, and the plan round-trips exactly", () => {
+    const routed = withRoute(raw(), "home");
+    expect<unknown>(RunPlanSchema.parse(routed)).toEqual(routed);
   });
 
   test("refuses a route other than seedream", () => {

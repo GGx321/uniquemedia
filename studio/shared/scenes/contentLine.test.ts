@@ -171,6 +171,11 @@ describe("contentLevelOf", () => {
     expect(contentLevelOf({ category: "home", level: "flirty", route: undefined })).toBe("ordinary");
   });
 
+  test("a bold level without the route is still ordinary: the route decides, never the level alone", () => {
+    expect(contentLevelOf({ category: "home", level: "bold", route: undefined })).toBe("ordinary");
+    expect(contentLevelOf({ category: "cat-paris-cafes", level: "bold", route: undefined })).toBe("ordinary");
+  });
+
   test("the level it gives reads the texts as the bold line does", () => {
     expect(contentProblems("a white string bikini, topless", contentLevelOf({ category: "beach", level: undefined, route: undefined }))).toEqual([]);
     expect(contentProblems("a white string bikini", contentLevelOf({ category: "home", level: undefined, route: undefined })).map((p) => p.reason)).toEqual(["revealing-word"]);

@@ -55,7 +55,10 @@ describe("ScenePlace.world", () => {
   test("an own scene has no place, so no world", () => {
     const own = { sceneId: 2, origin: "own", category: "own", categoryName: null, shot: "friend", pose: "front", place: null, idea: "a walk", text: "She walks.", edited: false, removed: false, unwritten: null, gaveUpBy: null, chunk: null };
     expect(SceneView.safeParse(own).success).toBe(true);
-    expect(SceneView.safeParse({ ...own, world: WORLD }).success).toBe(false);
+    // The place is not null, so the «own has no place» rule refuses it too; what is pinned here is that the world refine speaks for the world, at `place.world`.
+    const result = SceneView.safeParse({ ...own, place: place({ world: WORLD }) });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((i) => i.path.join("."))).toContain("place.world");
   });
 
   test("a set whose scene carries a world round-trips", () => {

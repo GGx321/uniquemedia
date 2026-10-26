@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { POOL_TEXT_MAX } from "../../shared/engine";
 import { plan } from "./planner";
 import { PlanSlotSchema, ScenePlanSchema } from "./schema";
@@ -103,7 +105,14 @@ describe("the world of a slot", () => {
 });
 
 describe("a plan stored before 5a.4", () => {
-  test.each(["ordinary", "flirty", "bold"] as const)("a real plan of every category at «%s» parses and round-trips", (level) => {
+  test("the frozen plan-main-3a9cd498 scenes parse to the very same document and gain no route, level or world", () => {
+    const frozen = JSON.parse(readFileSync(join(import.meta.dir, "..", "runs", "fixtures", "plan-main-3a9cd498.json"), "utf8")) as { scenes: unknown };
+    const parsed = ScenePlanSchema.parse(frozen.scenes);
+    expect<unknown>(parsed).toEqual(frozen.scenes);
+    expect(parsed.slots.every((s) => !("route" in s) && !("world" in s))).toBe(true);
+  });
+
+  test.each(["ordinary", "flirty", "bold"] as const)("today's planner over every category at «%s» parses and round-trips", (level) => {
     const original = plan({ seed: 20261026, count: 30, categories: [...FIVE, ...BOLD_TWO], level });
     expect(ScenePlanSchema.parse(JSON.parse(JSON.stringify(original)))).toEqual(original);
   });
