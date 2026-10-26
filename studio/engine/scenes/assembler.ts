@@ -1,4 +1,4 @@
-import { isBoldCategory, type AvatarDescriptor } from "../../shared/engine";
+import { isBoldFrame, type AvatarDescriptor } from "../../shared/engine";
 import { promptSubject } from "../avatars/prompts";
 import type { LibraryReference } from "../library/media";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
@@ -222,7 +222,7 @@ const BOLD_WHOLE_BODY_WORDS = /\bcrouch\w*\b/i;
  * (S5.WP1), which writes the same capture line a run does.
  */
 export function wholeBodyOf(slot: RunSlot): boolean {
-  return !isOwnSlot(slot) && (FEET_MOMENT_WORDS.test(slot.activity) || (isBoldCategory(slot.category) && BOLD_WHOLE_BODY_WORDS.test(slot.activity)));
+  return !isOwnSlot(slot) && (FEET_MOMENT_WORDS.test(slot.activity) || (isBoldFrame({ category: slot.category, route: slot.route }) && BOLD_WHOLE_BODY_WORDS.test(slot.activity)));
 }
 
 /** The content level of a run's slot (5a.4, S5.BA1): an own slot has no level and no route, a planned one hands over both. */
@@ -260,7 +260,7 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, senten
   const faceless = FACELESS_CAPTURES.includes(capture);
   const glancesBack = !isOwnSlot(slot) && DISTANT_CAPTURES.includes(capture) && GLANCE_BACK_WORDS.test(slot.activity);
   const glancePhrase = !glancesBack ? null : slot.pose === "three-quarter" ? THREE_QUARTER_BACK_POSE_PHRASE : slot.pose === "back" ? BACK_GLANCE_POSE_PHRASE : null;
-  const legsPhrase = capture === "mirror-hidden" && isBoldCategory(slot.category) ? BOLD_MIRROR_LEGS_POSE_PHRASE : LEGS_POSE_PHRASE;
+  const legsPhrase = capture === "mirror-hidden" && !isOwnSlot(slot) && isBoldFrame({ category: slot.category, route: slot.route }) ? BOLD_MIRROR_LEGS_POSE_PHRASE : LEGS_POSE_PHRASE;
   const posePhrase = legs ? legsPhrase : capture === "mirror-hidden" ? (look?.mirrorBack === true ? MIRROR_BACK_POSE_PHRASE : HIDDEN_FACE_POSE_PHRASE[slot.pose]) : (glancePhrase ?? POSE_PHRASE[slot.pose]);
   const bindingAnchor = faceless ? NO_FACE_ANCHOR : BINDING_ANCHOR[slot.pose];
   const wholeBody = wholeBodyOf(slot);
