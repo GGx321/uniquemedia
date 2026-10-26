@@ -379,15 +379,13 @@ const HARD_YOUTH: WordRule[] = [
 /** S5.FU-AGE: a newborn that is an animal, never a child («a newborn kitten»). Round 2 (L2): not «chick» or «kit», which also name a girl. */
 const NEWBORN_ANIMALS = "kittens?|pupp(?:y|ies)|pups?|lambs?|foals?|calf|calves|ducklings?|piglets?|bunn(?:y|ies)|cubs?|fawns?|animals?";
 /**
- * S5.FU-AGE round 2 (M2 and its security review): the words before «соска» that make it the genitive of «сосок» (her nipple): a part of it, a preposition that takes the
- * genitive, or «касаться»; anywhere else «соска во рту» is a pacifier.
+ * S5.FU-AGE round 2 (M2 and its security review), narrowed in round 3 (N3 and its review): the words before «соска» that make it the genitive of «сосок» (her nipple), and only
+ * those: a part of it (кончик, край, краешек, ореол) or «касаться», «коснуться». A bare preposition spares nothing («у его соска во рту» is a pacifier); anywhere else «соска во
+ * рту» is a pacifier.
  */
-const NIPPLE_GENITIVE_BEFORE = "кончик\\p{L}*|кра(?:й|я|ем)|краешк\\p{L}*|ореол\\p{L}*|вокруг|возле|около|у|от|до|без|из|кас\\p{L}*|косн\\p{L}*";
-/**
- * Round 3 (N3): up to two words may stand between those and «соска» where they are its modifiers in the genitive («кончик её соска», «кончик левого соска»): «её», «его», «их»,
- * or an adjective in «-ого», «-его»; never a pronoun after a preposition («у меня соска во рту», «у неё», «у него» stay a pacifier).
- */
-const NIPPLE_MODIFIER = "(?!(?:него|неё|них|меня|тебя|нас|вас)(?![\\p{L}]))(?:её|его|их|\\p{L}{2,}(?:ого|его))(?![\\p{L}])";
+const NIPPLE_GENITIVE_BEFORE = "кончик\\p{L}*|кра(?:й|я|ем)|краешк\\p{L}*|ореол\\p{L}*|кас\\p{L}*|косн\\p{L}*";
+/** Round 3 (N3): up to two of these may stand between («кончик её соска», «кончик левого соска»): an explicit list, never any adjective («у младшего соска»). */
+const NIPPLE_MODIFIER = "(?:её|его|своего|левого|правого|другого|второго)(?![\\p{L}])";
 /** S5.FU-AGE round 2 (H2): a tot that is a drink names it («a tot of rum»); «a tot of her own», «a tot of three» are a child. */
 const TOT_DRINKS = "rum|whisk(?:e)?y|brandy|gin|vodka|scotch|bourbon|cognac|liquor|port|sherry";
 /** S5.FU-AGE: what the pupils of her eyes do («her pupils slowly widen»). */
