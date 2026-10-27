@@ -768,6 +768,8 @@ function demoAvatars(): AvatarSummary[] {
       videoCount: 0,
       eligibleUnusedCount: photoCount,
       usage: { state: "ok" },
+      // 5a.4 (S5.BA7, I5.74): the demo's avatars were made in the wizard; the demo's imported one (Nini) says so on its own.
+      origin: "studio" as const,
     };
   });
 }
@@ -1219,8 +1221,10 @@ export class MockEngine implements EngineBridge {
       videoCount: 0,
       eligibleUnusedCount: 0,
       usage: { state: "ok" },
+      // 5a.4 (S5.BA7, I5.74): an imported avatar; Ava's master is a reference portrait drawn from her source photo, so she reads as imported too (the engine's `studioCreated`).
+      origin: "imported",
     };
-    this.avatars = this.avatars.map((a) => (a.name === "Ava" ? { ...a, masterPhotoId: "photo-demo-ava-portrait" } : a));
+    this.avatars = this.avatars.map((a) => (a.name === "Ava" ? { ...a, masterPhotoId: "photo-demo-ava-portrait", origin: "imported" as const } : a));
     this.avatars = [...this.avatars, nini];
     const ava = this.avatars.find((a) => a.name === "Ava");
     this.portraitStates.set(nini.avatarId, portraitStateOf({ avatarId: nini.avatarId, sourcePhotoId: "photo-demo-nini-source" }));
@@ -2958,6 +2962,8 @@ export class MockEngine implements EngineBridge {
           eligibleUnusedCount: 0,
           usage: { state: "ok" },
           ...(draftBody === undefined ? {} : { body: draftBody }),
+          // 5a.4 (S5.BA7, I5.74): its master is one of the wizard's generated candidates, so it is made in Studio (the engine's `studioCreated`).
+          origin: "studio",
         };
         this.drafts = this.drafts.filter((d) => d !== draft);
         this.avatars = [...this.avatars, avatar];
@@ -3196,6 +3202,8 @@ export class MockEngine implements EngineBridge {
           eligibleUnusedCount: 0,
           usage: { state: "ok" },
           ...(this.nextImportBody === null ? {} : { bodyProposal: this.nextImportBody }),
+          // 5a.4 (S5.BA7, I5.74): its master is the imported photo, so it is imported (never an implied cover, always the kept coverage).
+          origin: "imported",
         };
         this.nextImportBody = null;
         this.avatars = [...this.avatars, avatar];
