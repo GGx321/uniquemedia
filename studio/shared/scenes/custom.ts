@@ -188,7 +188,7 @@ export function covers(pool: CustomPool): boolean {
       for (const pose of poses) {
         for (const activity of activities) {
           for (const outfit of pool.outfits) {
-            if (customSentence({ category: ref, location: place.name, activity: activity.text, outfit, shot, capture, pose }, ctx) === null) return false;
+            if (customSentence({ route: undefined, category: ref, location: place.name, activity: activity.text, outfit, shot, capture, pose }, ctx) === null) return false;
           }
         }
       }

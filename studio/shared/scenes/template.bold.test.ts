@@ -12,7 +12,7 @@ const LACE = "The lace is lined and opaque: her bra fully covers her breasts and
 const SATIN = "a satin slip nightdress";
 
 function slot(level: Level, extra: Partial<TemplateSlot> = {}): TemplateSlot {
-  return { category: "nightwear", location: "her bedroom", activity: "stretches after waking up", outfit: SATIN, shot: "mirror", capture: "mirror", pose: "front", level, ...extra };
+  return { category: "nightwear", route: undefined, location: "her bedroom", activity: "stretches after waking up", outfit: SATIN, shot: "mirror", capture: "mirror", pose: "front", level, ...extra };
 }
 
 describe("a bold slot reads like a flirty one where the bank has nothing bolder to say", () => {
@@ -80,7 +80,7 @@ describe("the coverage sentence", () => {
 
   // 5a.4 (Q-A2): every outfit of the nightwear bank is on Seedream with its coverage now, so the row is «Дом»'s, an outfit with no coverage on a moment with none.
   test("an outfit with no coverage and a moment with none add nothing: the sentence ends as a sentence of the template does", () => {
-    const text = templateSentence({ category: "home", location: "her bedroom", activity: "sits on the edge of the bed", outfit: "a crop top and cotton pajama shorts", shot: "friend", capture: "timer", pose: "front" }, { key: KEYS[0] as string }) as string;
+    const text = templateSentence({ route: undefined, category: "home", location: "her bedroom", activity: "sits on the edge of the bed", outfit: "a crop top and cotton pajama shorts", shot: "friend", capture: "timer", pose: "front" }, { key: KEYS[0] as string }) as string;
     expect(text.endsWith(".")).toBe(true);
     expect(text.split(". ")).toHaveLength(1);
   });

@@ -61,7 +61,7 @@ const COUNTS = [1, 4, 9, 25];
 
 function nullSlots(pool: CategoryPool, seed: number, count: number): string[] {
   const scenes = planWithPools({ seed, count, categories: [sceneCategory(REF)] }, { ...POOLS, [REF]: poolOf(pool) });
-  const local = localSentences({ slots: scenes.slots, keyOf: (slot) => slotKeyOf("run-00000001", slot.attemptIdBase), snapshots: [{ ref: REF }] });
+  const local = localSentences({ slots: scenes.slots.map((s) => ({ ...s, route: s.route })), keyOf: (slot) => slotKeyOf("run-00000001", slot.attemptIdBase), snapshots: [{ ref: REF }] });
   return scenes.slots.filter((slot) => local(slot) === null).map((slot) => `${slot.shot}/${slot.pose} @ ${slot.location} / ${slot.activity}`);
 }
 

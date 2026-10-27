@@ -22,7 +22,7 @@ describe("a legs frame does not stage the face", () => {
     for (const category of ORDINARY_BUILT_INS) {
       for (let seed = 1; seed <= 120; seed++) {
         const slots = plan({ seed, count: 20, categories: [category], legsShare: 30, ...(seed % 2 === 0 ? { level: "flirty" as const } : {}) }).slots;
-        const local = localSentences({ slots, keyOf });
+        const local = localSentences({ slots: slots.map((s) => ({ ...s, route: s.route })), keyOf });
         for (const slot of slots) if (slot.framing === "legs") out.push({ sentence: local(slot) ?? "", capture: slot.capture ?? captureOfShot(slot.shot) });
       }
     }

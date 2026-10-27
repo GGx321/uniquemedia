@@ -113,7 +113,7 @@ describe("a crouch in a «Смелая» bank", () => {
 describe("back or side to the mirror", () => {
   test("a moment tagged mirrorBack adds the sentence straight after the capture line", () => {
     const slot = slotOf("mirror-hidden", { location: "her bathroom", activity: "sits on the counter by the mirror", outfit: "an open-back top and grey jeans", pose: "three-quarter" });
-    const prompt = assemble(slot, { lookOf: slotLookOf });
+    const prompt = assemble(slot, { lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }) });
     expect(prompt.startsWith(`${captureLineOf("mirror-hidden", keyOf(slot))} ${MIRROR_BACK_LINE}`)).toBe(true);
   });
 
@@ -125,7 +125,7 @@ describe("back or side to the mirror", () => {
     let seen = 0;
     for (let seed = 1; seed <= 40; seed++) {
       for (const slot of plan({ seed, count: 60, categories: ["home", "travel", "photoshoot", "glamour", "fitness"] }).slots) {
-        const hit = assemble(slot, { lookOf: slotLookOf }).includes(MIRROR_BACK_LINE);
+        const hit = assemble(slot, { lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }) }).includes(MIRROR_BACK_LINE);
         expect(hit, `${slot.location} / ${slot.activity}`).toBe(tags(slot.activity));
         if (hit) seen++;
       }
@@ -138,7 +138,7 @@ describe("the pose phrase of a frame seen in profile to the mirror", () => {
   const counter = slotOf("mirror-hidden", { location: "her bathroom", activity: "sits on the counter by the mirror", outfit: "an open-back top and grey jeans", pose: "three-quarter" });
 
   test("a mirrorBack moment says she is in profile to the mirror with her face behind her phone, not turned three-quarter toward it", () => {
-    const prompt = assemble(counter, { lookOf: slotLookOf });
+    const prompt = assemble(counter, { lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }) });
     expect(prompt).toContain(MIRROR_BACK_POSE_PHRASE);
     expect(prompt).not.toContain(HIDDEN_FACE_POSE_PHRASE["three-quarter"]);
     expect(prompt).not.toContain("face clearly visible");
@@ -151,7 +151,7 @@ describe("the pose phrase of a frame seen in profile to the mirror", () => {
   test("the phrase is only «Her body is in profile to the mirror»: the capture line already says the phone covers her face, and MIRROR_BACK_LINE that only her reflection shows", () => {
     expect(MIRROR_BACK_POSE_PHRASE).toBe("Her body is in profile to the mirror");
     expect(youthWords(MIRROR_BACK_POSE_PHRASE, "descriptor")).toEqual([]);
-    const prompt = assemble(counter, { lookOf: slotLookOf });
+    const prompt = assemble(counter, { lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }) });
     expect(prompt.toLowerCase().split("only her reflection").length - 1).toBe(1);
     // C3′: the capture line covers her face from her eyebrows to her chin, once (review: the side-on sentence said it a second time).
     expect(prompt.split("her face from her eyebrows to her chin").length - 1).toBe(1);
@@ -216,25 +216,25 @@ describe("the lamp mood (I5.34)", () => {
 
   test("a «Дом» lamp place at evening keeps the dim lamp light and drops «everything in focus»", () => {
     for (const cameraRealism of [true, false]) {
-      const prompt = assemble(evening, { lookOf: slotLookOf, cameraRealism });
+      const prompt = assemble(evening, { lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }), cameraRealism });
       expect(prompt).toContain(artefactLine({ cameraRealism, light: "x", imperfection: imperfectionOf(evening.shot, keyOf(evening)), lampMood: true }));
       expect(prompt).not.toContain("everything in focus");
     }
   });
 
   test("at night too; in the morning or at midday the line stays as before", () => {
-    expect(assemble(slotOf("mirror-hidden", { timeOfDay: "night" }), { lookOf: slotLookOf })).toContain("dim evening light from a bedside lamp");
+    expect(assemble(slotOf("mirror-hidden", { timeOfDay: "night" }), { lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }) })).toContain("dim evening light from a bedside lamp");
     for (const timeOfDay of ["morning", "midday"]) {
-      const prompt = assemble(slotOf("mirror-hidden", { timeOfDay }), { lookOf: slotLookOf });
+      const prompt = assemble(slotOf("mirror-hidden", { timeOfDay }), { lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }) });
       expect(prompt).toContain("everything in focus, the background as sharp as she is");
       expect(prompt).not.toContain("bedside lamp");
     }
   });
 
   test("a place without a lamp keeps the line at night too, and so does every other category", () => {
-    expect(assemble(slotOf("mirror-hidden", { location: "her hallway", timeOfDay: "night", activity: "stands with her weight on one hip" }), { lookOf: slotLookOf })).toContain("everything in focus");
+    expect(assemble(slotOf("mirror-hidden", { location: "her hallway", timeOfDay: "night", activity: "stands with her weight on one hip" }), { lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }) })).toContain("everything in focus");
     const glamour = slotOf("friend", { category: "glamour", location: "a cocktail bar", timeOfDay: "night", activity: "leans on the counter", outfit: "a navy wrap dress" });
-    expect(assemble(glamour, { lookOf: slotLookOf })).toContain("everything in focus");
+    expect(assemble(glamour, { lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }) })).toContain("everything in focus");
   });
 
   test("without the lookup nothing is lamp mood (an own scene, a custom category)", () => {

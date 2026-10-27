@@ -74,7 +74,7 @@ describe("a covered custom category with selfies never emits a null slot, whatev
           for (const activity of place.activities)
             for (const outfit of COVERED.outfits)
               for (const key of KEYS) {
-                const text = customSentence({ category: REF, location: place.name, activity: activity.text, outfit, shot: "selfie", capture, pose }, { key, snapshots: [{ ref: REF }] });
+                const text = customSentence({ route: undefined, category: REF, location: place.name, activity: activity.text, outfit, shot: "selfie", capture, pose }, { key, snapshots: [{ ref: REF }] });
                 if (text === null) nulls.push(`${capture}/${pose}/${place.name}/${activity.text}/${outfit}/${key}`);
               }
     expect(nulls).toEqual([]);
@@ -85,7 +85,7 @@ describe("a covered custom category with selfies never emits a null slot, whatev
     expect(covers(withPhone)).toBe(false);
     const place = withPhone.locations[0];
     if (place === undefined) throw new Error("no place");
-    const results = KEYS.map((key) => customSentence({ category: REF, location: place.name, activity: "holding a mug", outfit: "a phone-print hoodie", shot: "selfie", capture: "selfie", pose: "front" }, { key, snapshots: [{ ref: REF }] }));
+    const results = KEYS.map((key) => customSentence({ route: undefined, category: REF, location: place.name, activity: "holding a mug", outfit: "a phone-print hoodie", shot: "selfie", capture: "selfie", pose: "front" }, { key, snapshots: [{ ref: REF }] }));
     expect(results.every((text) => text === null)).toBe(true);
   });
 

@@ -79,7 +79,7 @@ export interface BankSlot {
   location?: string | undefined;
   activity?: string | undefined;
   /** 5a.4 (I5.73): the Seedream route; with it the five read their companion. Absent: the bank they always read. */
-  route?: SceneRoute | undefined;
+  route: SceneRoute | undefined;
 }
 
 /** The bank place of a built-in slot, by the one marker-aware lookup (`bankPlaceOf`). Undefined for a custom category, an own scene or a place the bank no longer has. */

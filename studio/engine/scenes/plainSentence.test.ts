@@ -16,43 +16,43 @@ describe("plainSentence carries «Подача» (S5.7b)", () => {
   const bar = { category: "glamour", location: "a cocktail bar", activity: "leans on the counter", outfit: "a navy wrap dress", shot: "friend" as const, capture: "friend" as const };
 
   test("a flirty slot ends with one flirty cue, before the full stop", () => {
-    const sentence = plainSentence({ ...bar, level: "flirty" });
+    const sentence = plainSentence({ route: undefined, ...bar, level: "flirty" });
     expect(FLIRTY_CUES.filter((cue) => sentence.endsWith(`, ${cue}.`))).toHaveLength(1);
   });
 
   test("an ordinary slot reads as it always did", () => {
-    expect(plainSentence(bar)).toBe("At a cocktail bar, she leans on the counter, wearing a navy wrap dress.");
+    expect(plainSentence({ ...bar, route: undefined })).toBe("At a cocktail bar, she leans on the counter, wearing a navy wrap dress.");
   });
 
   test("the same flirty slot always reads the same", () => {
-    expect(plainSentence({ ...bar, level: "flirty" })).toBe(plainSentence({ ...bar, level: "flirty" }));
+    expect(plainSentence({ route: undefined, ...bar, level: "flirty" })).toBe(plainSentence({ route: undefined, ...bar, level: "flirty" }));
   });
 
   test("a frame whose face does not show says no cue, flirty or not", () => {
     const hidden = { ...bar, shot: "mirror" as const, capture: "mirror-hidden" as const, level: "flirty" as const };
-    expect(plainSentence(hidden)).toBe(plainSentence({ ...hidden, level: undefined }));
+    expect(plainSentence({ ...hidden, route: undefined })).toBe(plainSentence({ ...hidden, level: undefined, route: undefined }));
   });
 
   test("a moment that shows its own expression gets no cue", () => {
     const laughs = { ...bar, activity: "laughs at something nearby", level: "flirty" as const };
-    expect(plainSentence(laughs)).toBe(plainSentence({ ...laughs, level: undefined }));
+    expect(plainSentence({ ...laughs, route: undefined })).toBe(plainSentence({ ...laughs, level: undefined, route: undefined }));
   });
 
   test("a self-shot slot's flirty cue names no phone and no selfie", () => {
-    const sentence = plainSentence({ ...bar, shot: "selfie", capture: "selfie", level: "flirty" });
+    const sentence = plainSentence({ route: undefined, ...bar, shot: "selfie", capture: "selfie", level: "flirty" });
     expect(sentence).not.toMatch(/phone|selfie/i);
   });
 });
 
 describe("plainSentence", () => {
   test("a custom slot reads «{place}, she is {activity}, wearing {outfit}.»", () => {
-    expect(plainSentence(SLOT)).toBe("At the riverside cafe, she is walking along the river, wearing a denim jacket and a long skirt.");
+    expect(plainSentence({ ...SLOT, route: undefined })).toBe("At the riverside cafe, she is walking along the river, wearing a denim jacket and a long skirt.");
   });
 
   test("a built-in slot whose place the bank knows by name opens with the bank's own locative phrase", () => {
     const place = BANKS.home.places[0];
     if (place === undefined) throw new Error("the home bank has no place");
-    const sentence = plainSentence({ category: "home", location: place.name, activity: "folding a blanket", outfit: "an oversized tee" });
+    const sentence = plainSentence({ route: undefined, category: "home", location: place.name, activity: "folding a blanket", outfit: "an oversized tee" });
     expect(sentence).toBe(`${place.at.charAt(0).toUpperCase()}${place.at.slice(1)}, she is folding a blanket, wearing an oversized tee.`);
     expect(sentence).not.toMatch(/^At /);
   });
@@ -66,7 +66,7 @@ describe("plainSentence", () => {
     ["a corner cafe in Paris", "takes a short break", "At a corner cafe in Paris, she takes a short break, wearing a white t-shirt."],
     ["a bright kitchen", "on her stomach, scrolling", "In a bright kitchen, she is on her stomach, scrolling, wearing a white t-shirt."],
   ])("a place the bank does not know (%j) and an activity (%j) read: %j", (location, activity, expected) => {
-    expect(plainSentence({ category: "home", location, activity, outfit: "a white t-shirt" })).toBe(expected);
+    expect(plainSentence({ route: undefined, category: "home", location, activity, outfit: "a white t-shirt" })).toBe(expected);
   });
 
   // S5.6R (LOW): a custom activity that is a noun phrase read «she morning stretches» and «she a slow walk by the water». It now reads «she is enjoying …»; one
@@ -81,7 +81,7 @@ describe("plainSentence", () => {
     ["at the window, smiling", "In her living room, she is at the window, smiling, wearing a sundress."],
     ["waters the plants", "In her living room, she waters the plants, wearing a sundress."],
   ])("a custom activity %j reads as a sentence: %j", (activity, expected) => {
-    expect(plainSentence({ category: "cat-summer-days", location: "her living room", activity, outfit: "a sundress" })).toBe(expected);
+    expect(plainSentence({ route: undefined, category: "cat-summer-days", location: "her living room", activity, outfit: "a sundress" })).toBe(expected);
   });
 
   // S5.6R (round D, LOW): a noun that ends in «s» is not a verb («pilates class», «tennis practice», «aerobics»); an activity that already opens with «is» is not wrapped again.
@@ -97,13 +97,13 @@ describe("plainSentence", () => {
     ["stretches by the window", "In her living room, she stretches by the window, wearing a sundress."],
     ["sips her coffee", "In her living room, she sips her coffee, wearing a sundress."],
   ])("a custom activity %j that a plain «-s» test took for a verb reads: %j", (activity, expected) => {
-    expect(plainSentence({ category: "cat-summer-days", location: "her living room", activity, outfit: "a sundress" })).toBe(expected);
+    expect(plainSentence({ route: undefined, category: "cat-summer-days", location: "her living room", activity, outfit: "a sundress" })).toBe(expected);
   });
 
   test("a real custom pool's activities never read «she is enjoying is», and a noun never follows «she» bare", () => {
     const activities = ["pilates class", "tennis practice", "aerobics", "is reading", "yoga flow", "gymnastics", "darts night", "waters the plants", "takes a short break"];
     for (const activity of activities) {
-      const sentence = plainSentence({ category: "cat-summer-days", location: "her living room", activity, outfit: "a sundress" });
+      const sentence = plainSentence({ route: undefined, category: "cat-summer-days", location: "her living room", activity, outfit: "a sundress" });
       expect(sentence).not.toMatch(/enjoying is\b|\bis is\b/);
       expect(sentence).not.toMatch(/\bshe (?:pilates|tennis|aerobics|gymnastics|darts)\b/);
     }
@@ -113,7 +113,7 @@ describe("plainSentence", () => {
     const place = BANKS.home.places.find((p) => p.moments.length > 0);
     const moment = place?.moments[0];
     if (place === undefined || moment === undefined) throw new Error("the home bank has no moment");
-    const sentence = plainSentence({ category: "home", location: place.name, activity: moment.text, outfit: "an oversized tee" });
+    const sentence = plainSentence({ route: undefined, category: "home", location: place.name, activity: moment.text, outfit: "an oversized tee" });
     expect(sentence).toBe(`${place.at.charAt(0).toUpperCase()}${place.at.slice(1)}, she ${moment.text}, wearing an oversized tee.`);
   });
 
@@ -121,33 +121,33 @@ describe("plainSentence", () => {
   describe("on a selfie slot", () => {
     const selfie = { category: "cat-paris-cafes", shot: "selfie" as const };
     test("an outfit that names a phone is left out", () => {
-      const sentence = plainSentence({ ...selfie, location: "the riverside cafe", activity: "walking along the river", outfit: "a phone-print hoodie" });
+      const sentence = plainSentence({ route: undefined, ...selfie, location: "the riverside cafe", activity: "walking along the river", outfit: "a phone-print hoodie" });
       expect(sentence).toBe("At the riverside cafe, she is walking along the river.");
     });
     test("a place that says selfie and an activity that names a phone are left out too", () => {
-      const sentence = plainSentence({ ...selfie, location: "a selfie wall", activity: "scrolling her phone", outfit: "a linen dress" });
+      const sentence = plainSentence({ route: undefined, ...selfie, location: "a selfie wall", activity: "scrolling her phone", outfit: "a linen dress" });
       expect(sentence).toBe("She stands there, wearing a linen dress.");
     });
     test("every capture that rides on a selfie shot is held to it", () => {
-      for (const capture of ["selfie", "above", "prone"] as const) expect(plainSentence({ ...selfie, capture, location: "a cafe", activity: "texting", outfit: "a phone case dress" })).not.toMatch(/phone|texting|selfie/i);
+      for (const capture of ["selfie", "above", "prone"] as const) expect(plainSentence({ route: undefined, ...selfie, capture, location: "a cafe", activity: "texting", outfit: "a phone case dress" })).not.toMatch(/phone|texting|selfie/i);
     });
     test("a friend's photo keeps the words: a phone in a friend's snap is fine", () => {
-      expect(plainSentence({ category: "cat-paris-cafes", shot: "friend", location: "a cafe", activity: "scrolling her phone", outfit: "a linen dress" })).toContain("phone");
+      expect(plainSentence({ route: undefined, category: "cat-paris-cafes", shot: "friend", location: "a cafe", activity: "scrolling her phone", outfit: "a linen dress" })).toContain("phone");
     });
   });
 
   test("a trailing full stop or comma in a stored text does not double the sentence's punctuation", () => {
-    expect(plainSentence({ ...SLOT, activity: "walking along the river.", outfit: "a denim jacket," })).toBe("At the riverside cafe, she is walking along the river, wearing a denim jacket.");
+    expect(plainSentence({ route: undefined, ...SLOT, activity: "walking along the river.", outfit: "a denim jacket," })).toBe("At the riverside cafe, she is walking along the river, wearing a denim jacket.");
   });
 
   test("a slot's legwear is not part of the plain sentence", () => {
-    expect(plainSentence({ ...SLOT, legwear: "white knee-high socks" } as typeof SLOT)).not.toContain("socks");
+    expect(plainSentence({ route: undefined, ...SLOT, legwear: "white knee-high socks" } as typeof SLOT & { route: undefined })).not.toContain("socks");
   });
 
   test("every slot of a planned run reads as one sentence that passes the youth and revealing word rules", () => {
     const slots = plan({ seed: 7, count: 60, categories: ["home", "travel", "photoshoot", "glamour", "fitness"] }).slots;
     for (const slot of slots) {
-      const sentence = plainSentence(slot);
+      const sentence = plainSentence({ ...slot, route: slot.route });
       expect(sentence.endsWith(".")).toBe(true);
       expect(sentence.slice(0, -1)).not.toContain(".");
       expect(sentenceProblems(sentence)).toEqual([]);

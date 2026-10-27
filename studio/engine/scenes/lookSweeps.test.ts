@@ -75,7 +75,7 @@ function assembleAll(slots: readonly PlanSlot[], runId: string, rooms: boolean, 
       if (!PlanSlotSchema.safeParse(slot).success) continue;
       const sentence = sentenceOf(slot);
       for (const realism of [true, false]) {
-        const prompt = assembleSlot(descriptor, slot, sentence, MASTER, { runId, cameraRealism: realism, lookOf: slotLookOf, hairStyleOf: (hairSlot) => hair.get(hairSlot.slotIndex) ?? null, ...(rooms ? { roomPlaceOf } : {}) }).prompt;
+        const prompt = assembleSlot(descriptor, slot, sentence, MASTER, { runId, cameraRealism: realism, lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }), hairStyleOf: (hairSlot) => hair.get(hairSlot.slotIndex) ?? null, ...(rooms ? { roomPlaceOf: (s) => roomPlaceOf({ ...s, route: "route" in s ? s.route : undefined }) } : {}) }).prompt;
         if (!prompt.includes(sentence)) throw new Error(`the sentence is not in the prompt: ${sentence}`);
         out.push({ body: descriptor.body, capture: slot.capture ?? captureOfShot(slot.shot), label: `${runId}/${slot.slotIndex}/${slot.category}/${slot.shot}/${slot.pose}/${slot.timeOfDay}/${realism ? "on" : "off"}`, slot, realism, sentence, look: prompt.replace(sentence, "").replace(descriptor.text.replace(/\.$/, ""), "").replace(descriptor.body === undefined ? "" : `; ${descriptor.body}`, ""), prompt });
       }

@@ -70,7 +70,7 @@ export function slotOf(picked: Picked, capture: Capture, pose: ScenePose = "fron
 export function sentenceOf(runId: string, slot: PlanSlot | OwnPlanSlot): string {
   if (slot.category === "own") return slot.sentence;
   if (slot.sentence !== undefined) return slot.sentence;
-  return templateSentence(slot, { key: `${runId}:${slot.attemptIdBase}`, ...(slot.level === undefined ? {} : { level: slot.level }) }) ?? plainSentence(slot);
+  return templateSentence({ ...slot, route: slot.route }, { key: `${runId}:${slot.attemptIdBase}`, ...(slot.level === undefined ? {} : { level: slot.level }) }) ?? plainSentence({ ...slot, route: slot.route });
 }
 
 /** A run made from a scene set of these slots (each with its sentence), numbered 1..M. */

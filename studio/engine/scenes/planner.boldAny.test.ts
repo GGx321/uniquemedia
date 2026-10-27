@@ -85,7 +85,7 @@ describe("the five at «Смелая» (I5.71)", () => {
           for (const level of ["ordinary", "flirty", "bold"] as const) {
             for (const impliedNudity of [false, true]) {
               const { slots } = planForAvatar({ seed, count: n, categories: [category], level, legsShare }, POOLS, impliedNudity);
-              const nulls = slots.filter((slot) => templateSentence(slot, { key: `run-${seed}:${slot.attemptIdBase}`, impliedNudity }) === null).map((s) => `${s.location}|${s.activity}|${s.outfit}`);
+              const nulls = slots.filter((slot) => templateSentence({ ...slot, route: slot.route }, { key: `run-${seed}:${slot.attemptIdBase}`, impliedNudity }) === null).map((s) => `${s.location}|${s.activity}|${s.outfit}`);
               expect({ category, seed, n, legsShare, level, impliedNudity, nulls }).toEqual({ category, seed, n, legsShare, level, impliedNudity, nulls: [] });
             }
           }
@@ -215,8 +215,8 @@ describe("a custom category at «Смелая» (§5.3)", () => {
   test("the template renders none of them (the writer sets the frame inside the world), and the plain fallback does", () => {
     const { slots } = planWithPools({ seed: 5, count: 20, categories: [CUSTOM], level: "bold" }, pools({ [CUSTOM]: PARIS }));
     for (const slot of slots) {
-      expect(templateSentence(slot, { key: `run:${slot.attemptIdBase}`, snapshots: [{ ref: CUSTOM }] })).toBeNull();
-      const plain = plainSentence(slot);
+      expect(templateSentence({ ...slot, route: slot.route }, { key: `run:${slot.attemptIdBase}`, snapshots: [{ ref: CUSTOM }] })).toBeNull();
+      const plain = plainSentence({ ...slot, route: slot.route });
       const hit = bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location, activity: slot.activity });
       expect(plain.toLowerCase()).toContain(hit?.place.at ?? "");
       expect(plain).toContain(slot.activity);
@@ -278,8 +278,8 @@ describe("the avatar's origin (I5.74)", () => {
           const hit = bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location, activity: slot.activity });
           const outfit = hit?.bank.outfits.find((o) => o.text === slot.outfit);
           const kept = hit?.moment === undefined || outfit === undefined ? undefined : coverageOf(hit.moment, outfit, false);
-          if (kept !== undefined && templateSentence(slot, { key: `run:${slot.attemptIdBase}`, snapshots: [{ ref: CUSTOM }] }) !== null) {
-            expect(templateSentence(slot, { key: `run:${slot.attemptIdBase}`, snapshots: [{ ref: CUSTOM }] })).toContain(kept);
+          if (kept !== undefined && templateSentence({ ...slot, route: slot.route }, { key: `run:${slot.attemptIdBase}`, snapshots: [{ ref: CUSTOM }] }) !== null) {
+            expect(templateSentence({ ...slot, route: slot.route }, { key: `run:${slot.attemptIdBase}`, snapshots: [{ ref: CUSTOM }] })).toContain(kept);
           }
         }
       }

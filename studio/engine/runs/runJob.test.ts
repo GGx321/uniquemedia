@@ -877,7 +877,7 @@ describe("an attempt that got no answer stops the run with its slots open", () =
     expect(reservedIds().filter((id) => id.includes(":writer-"))).toEqual([`${RUN_ID}:writer-1#1`, `${RUN_ID}:writer-2#1`]);
     const written = (await journal()).flatMap((e) => (e.type === "writer" ? e.sentences : []));
     const slots = plannedSlots(run);
-    expect(written.filter((s) => s.slotIndex <= 25).map((s) => s.sentence)).toEqual(slots.slice(0, 25).map((slot) => plainSentence(slot)));
+    expect(written.filter((s) => s.slotIndex <= 25).map((s) => s.sentence)).toEqual(slots.slice(0, 25).map((slot) => plainSentence({ ...slot, route: slot.route })));
     expect(written.filter((s) => s.slotIndex > 25).every((s) => s.sentence.startsWith(SENTENCE))).toBe(true);
     expect((await journal()).filter((e) => e.type === "slot" && e.status === "failed")).toEqual([]);
   });
@@ -2156,11 +2156,11 @@ describe("failures", () => {
     ]);
     expect(ledger.openReserves()).toEqual([]);
     const written = (await journal()).flatMap((e) => (e.type === "writer" ? e.sentences : []));
-    expect(written.map((s) => s.sentence)).toEqual(plannedSlots(run).map((slot) => plainSentence(slot)));
+    expect(written.map((s) => s.sentence)).toEqual(plannedSlots(run).map((slot) => plainSentence({ ...slot, route: slot.route })));
     const prompts = net.imageCalls().map((c) => String(c.json().prompt));
     // C3′: an outfit that names a skirt without its fabric («a midi skirt» of the fixture) is said not to be denim right after it, so the plain sentence is in the
     // prompt up to its full stop.
-    for (const slot of plannedSlots(run)) expect(prompts.some((prompt) => prompt.includes(plainSentence(slot).replace(/\.$/, "")))).toBe(true);
+    for (const slot of plannedSlots(run)) expect(prompts.some((prompt) => prompt.includes(plainSentence({ ...slot, route: slot.route }).replace(/\.$/, "")))).toBe(true);
     expect(scopeCommitted()).toBeLessThanOrEqual(run.capMicros);
   });
 

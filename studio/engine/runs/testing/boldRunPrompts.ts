@@ -40,7 +40,7 @@ export function boldRunPrompts(input: RunPromptsInput): PromptFrame[] {
   const runId = `run-${input.seed.toString(16).padStart(8, "0")}`;
   const scenes = plan({ seed: input.seed, count: input.count, categories: [input.category], level: "bold", legsShare: input.legsShare });
   const slots = scenes.slots;
-  const written = localSentences({ slots, keyOf: (slot) => slotKeyOf(runId, slot.attemptIdBase), snapshots: undefined });
+  const written = localSentences({ slots: slots.map((slot) => ({ ...slot, route: slot.route })), keyOf: (slot) => slotKeyOf(runId, slot.attemptIdBase), snapshots: undefined });
   const sentences = new Map<number, string>();
   for (const slot of slots) {
     const sentence = written(slot);
@@ -51,8 +51,8 @@ export function boldRunPrompts(input: RunPromptsInput): PromptFrame[] {
   const results = assembleRun(DESCRIPTOR, scenes, sentences, MASTER, {
     runId,
     cameraRealism: input.cameraRealism,
-    roomPlaceOf,
-    lookOf: slotLookOf,
+    roomPlaceOf: (slot) => roomPlaceOf({ ...slot, route: "route" in slot ? slot.route : undefined }),
+    lookOf: (slot) => slotLookOf({ ...slot, route: "route" in slot ? slot.route : undefined }),
     hairStyleOf: (slot) => hairLines.get(slot.slotIndex) ?? null,
   });
   const bank = BANKS[input.category];

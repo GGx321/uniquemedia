@@ -88,7 +88,7 @@ function drawableSlots(pool: CustomPool): DrawnSlot[] {
 }
 
 const REF = "cat-propertytest";
-const renders = (slot: ReturnType<typeof drawableSlots>[number], key: string): boolean => templateSentence({ category: REF, ...slot }, { key, snapshots: [{ ref: REF }] }) !== null;
+const renders = (slot: ReturnType<typeof drawableSlots>[number], key: string): boolean => templateSentence({ route: undefined, category: REF, ...slot }, { key, snapshots: [{ ref: REF }] }) !== null;
 
 describe("covers is exact (I5.22)", () => {
   const POOLS = Array.from({ length: 400 }, (_, i) => randomPool(i));

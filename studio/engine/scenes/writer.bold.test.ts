@@ -882,7 +882,7 @@ describe("an old slot whose moment the bank renamed keeps its kept coverage (rev
   });
 
   test.each([false, true])("so does its plain sentence (impliedNudity %p)", (impliedNudity) => {
-    const plain = plainSentence(oldSheet(), impliedNudity);
+    const plain = plainSentence({ ...oldSheet(), route: oldSheet().route }, impliedNudity);
     expect(plain).toEndWith(` ${SHEET_KEPT}`);
     expect(count(plain, SHEET_KEPT)).toBe(1);
   });
@@ -892,20 +892,20 @@ describe("an old slot whose moment the bank renamed keeps its kept coverage (rev
     expect(bankPlaceOf({ category: slot.category, route: slot.route, location: slot.location, activity: slot.activity })?.moment).toBeUndefined();
     const sentence = "In the bathroom of her hotel room in Paris, she dries off by the basin in only a white bath towel, a bottle of lotion by the tap.";
     expect(read(true, slot, sentence)).toBe(`${sentence} ${COVER.towel}`);
-    expect(plainSentence(slot, true)).toEndWith(` ${COVER.towel}`);
-    expect(slotCoverageOf(slot, true)).toBe(COVER.towel);
+    expect(plainSentence({ ...slot, route: slot.route }, true)).toEndWith(` ${COVER.towel}`);
+    expect(slotCoverageOf({ ...slot, route: slot.route }, true)).toBe(COVER.towel);
   });
 
   test("a slot whose moment the bank has keeps today's rule: the open sentence for a Studio-created avatar", () => {
     const slot = routed({ location: "her bathroom", activity: "leans on the sink after a shower", outfit: "only a white bath towel", shot: "mirror", capture: "mirror-hidden" });
-    expect(slotCoverageOf(slot, true)).toBe(COVER.towelOpen);
-    expect(slotCoverageOf(slot, false)).toBe(COVER.towel);
-    expect(slotCoverageOf(routed(), true)).toBeUndefined();
+    expect(slotCoverageOf({ ...slot, route: slot.route }, true)).toBe(COVER.towelOpen);
+    expect(slotCoverageOf({ ...slot, route: slot.route }, false)).toBe(COVER.towel);
+    expect(slotCoverageOf({ ...routed(), route: routed().route }, true)).toBeUndefined();
   });
 
   test("an outfit no «Смелая» bank holds (an old cotton outfit, an old custom slot) says none", () => {
     expect(slotCoverageOf({ ...oldSheet(), activity: "lies back against the pillows", outfit: "an oversized sleep tee", route: undefined }, false)).toBeUndefined();
-    expect(slotCoverageOf(unrouted(), false)).toBeUndefined();
+    expect(slotCoverageOf({ ...unrouted(), route: unrouted().route }, false)).toBeUndefined();
   });
 
   describe("fail-closed: a Seedream outfit never goes out without a sentence", () => {

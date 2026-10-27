@@ -25,7 +25,7 @@ const SLOTS = plannedSlots(RUN);
 const DESCRIPTOR: AvatarDescriptor = { age: 25, text: "25-year-old European woman, light olive skin, hazel eyes, shoulder-length wavy chestnut hair, athletic build." };
 const MASTER = asLibraryReference(JPEG);
 const SENTENCES = new Map(SLOTS.map((s) => [s.slotIndex, `She is just there for a moment (${s.slotIndex}).`]));
-const assemble = (): AssembledScene[] => assembledScenes(assembleRun(DESCRIPTOR, RUN.scenes, SENTENCES, MASTER, { runId: RUN.runId, roomPlaceOf }));
+const assemble = (): AssembledScene[] => assembledScenes(assembleRun(DESCRIPTOR, RUN.scenes, SENTENCES, MASTER, { runId: RUN.runId, roomPlaceOf: (s) => roomPlaceOf({ ...s, route: "route" in s ? s.route : undefined }) }));
 const promptOf = (index: number): string => assemble().find((a) => a.slotIndex === index)?.prompt ?? "";
 const stillThere = (slot: PlanSlot): boolean => POOLS[slot.category as keyof typeof POOLS]?.locations.some((l) => l.name === slot.location) === true;
 
@@ -77,7 +77,7 @@ describe("a resume of the plan.json written by main 3a9cd498, on the Stage 5 cod
 describe("a resume of the same plan.json with the 5a.2 look wired in", () => {
   const hair = hairLinesOf(SLOTS, "shoulder", RUN.runId);
   const assembleFull = (): AssembledScene[] =>
-    assembledScenes(assembleRun(DESCRIPTOR, RUN.scenes, SENTENCES, MASTER, { runId: RUN.runId, roomPlaceOf, lookOf: slotLookOf, hairStyleOf: (slot) => hair.get(slot.slotIndex) ?? null, cameraRealism: true }));
+    assembledScenes(assembleRun(DESCRIPTOR, RUN.scenes, SENTENCES, MASTER, { runId: RUN.runId, roomPlaceOf: (s) => roomPlaceOf({ ...s, route: "route" in s ? s.route : undefined }), lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }), hairStyleOf: (slot) => hair.get(slot.slotIndex) ?? null, cameraRealism: true }));
 
   test("its slots carry no capture and no legwear, so each reads its capture from its shot", () => {
     expect(SLOTS.every((slot) => slot.capture === undefined && slot.legwear === undefined)).toBe(true);

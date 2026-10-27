@@ -214,7 +214,7 @@ describe("scenes.write: a rewrite", () => {
     const after = await setOf(m);
     const scene = after.scenes[1];
     if (scene === undefined || scene.place === null) throw new Error("scene 2 is missing");
-    expect(scene.text).toBe(plainSentence({ category: scene.category, location: scene.place.location, activity: scene.place.activity, outfit: scene.place.outfit }));
+    expect(scene.text).toBe(plainSentence({ route: scene.route, category: scene.category, location: scene.place.location, activity: scene.place.activity, outfit: scene.place.outfit }));
     expect(after.scenes.filter((s) => s.sceneId !== 2)).toEqual(view.scenes.filter((s) => s.sceneId !== 2));
     expect(after).toMatchObject({ status: "ready" });
     expect((after.spentMicros ?? 0) - (view.spentMicros ?? 0)).toBe(4_000);
@@ -235,7 +235,7 @@ describe("scenes.write: a rewrite", () => {
     const after = await setOf(m);
     const scene = after.scenes[1];
     if (scene === undefined || scene.place === null) throw new Error("scene 2 is missing");
-    expect(scene.text).toBe(plainSentence({ category: scene.category, location: scene.place.location, activity: scene.place.activity, outfit: scene.place.outfit }));
+    expect(scene.text).toBe(plainSentence({ route: scene.route, category: scene.category, location: scene.place.location, activity: scene.place.activity, outfit: scene.place.outfit }));
     expect(after.spentMicros).toBe(view.spentMicros);
   });
 
@@ -333,7 +333,7 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
     // 5a.2 (S5.6d): the write's last attempt, rejected, ends it with the plain sentence rather than leaving the old text behind.
     const scene = after.scenes[1];
     if (scene === undefined || scene.place === null) throw new Error("scene 2 is missing");
-    expect(scene.text).toBe(plainSentence({ category: scene.category, location: scene.place.location, activity: scene.place.activity, outfit: scene.place.outfit }));
+    expect(scene.text).toBe(plainSentence({ route: scene.route, category: scene.category, location: scene.place.location, activity: scene.place.activity, outfit: scene.place.outfit }));
     expect(await codeOf(write(m, after, { kind: "resume", write: 2 }, ATTEMPT))).toBe("VALIDATION");
     expect(stopped.scenes[1]?.rewriteInterrupted).toBeDefined();
   });

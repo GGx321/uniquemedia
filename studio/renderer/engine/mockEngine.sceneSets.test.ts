@@ -72,7 +72,7 @@ async function setOf(m: Mock): Promise<SceneSetView> {
 /** The plain sentence of a planned scene, built from the texts the view shows: the very function the engine writes with (shared/scenes/plain.ts). */
 const plainOf = (scene: SceneSetView["scenes"][number]): string => {
   if (scene.place === null) throw new Error("an own scene has no plain sentence");
-  return plainSentence({ category: scene.category, location: scene.place.location, activity: scene.place.activity, outfit: scene.place.outfit });
+  return plainSentence({ route: scene.route, category: scene.category, location: scene.place.location, activity: scene.place.activity, outfit: scene.place.outfit });
 };
 
 const edit = (m: Mock, sceneSetId: string, revision: number, op: unknown) => m.client.request("scenes.edit", { sceneSetId, revision, op } as never);

@@ -346,7 +346,7 @@ describe("what the planner draws, the template renders", () => {
     for (let seed = 1; seed <= 40; seed++) {
       const seen = new Set<string>();
       for (const slot of plan({ seed, count: 30, categories: [category] }).slots) {
-        const sentence = templateSentence(slot, { key: `run-${seed}:${slot.attemptIdBase}`, seen });
+        const sentence = templateSentence({ ...slot, route: slot.route }, { key: `run-${seed}:${slot.attemptIdBase}`, seen });
         expect(sentence, `${slot.location} / ${slot.activity} / ${captureOf(slot)} / ${slot.pose}`).not.toBeNull();
         if (sentence !== null) seen.add(sentence);
       }
@@ -357,7 +357,7 @@ describe("what the planner draws, the template renders", () => {
     for (const seed of [1, 2, 3, 4, 5]) {
       const seen = new Set<string>();
       for (const slot of plan({ seed, count: 100, categories: [category] }).slots) {
-        const sentence = templateSentence(slot, { key: `run-${seed}:${slot.attemptIdBase}`, seen });
+        const sentence = templateSentence({ ...slot, route: slot.route }, { key: `run-${seed}:${slot.attemptIdBase}`, seen });
         if (sentence !== null) seen.add(sentence);
       }
       expect(seen.size, `${category} seed ${seed}`).toBeGreaterThanOrEqual(80);

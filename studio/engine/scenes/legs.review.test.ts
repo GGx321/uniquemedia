@@ -22,10 +22,10 @@ describe("variety at 30 % legs (I5.24)", () => {
       let worstDedup = 1;
       for (let seed = 1; seed <= 50; seed++) {
         const slots = plan({ seed, count: 100, categories: [category], legsShare: 30, ...(level === "flirty" ? { level } : {}) }).slots;
-        const alone = slots.map((slot) => templateSentence(slot, { key: keyOf(slot) }));
+        const alone = slots.map((slot) => templateSentence({ ...slot, route: slot.route }, { key: keyOf(slot) }));
         expect(alone.every((s) => s !== null)).toBe(true);
         worstAlone = Math.min(worstAlone, new Set(alone).size / slots.length);
-        const local = localSentences({ slots, keyOf });
+        const local = localSentences({ slots: slots.map((s) => ({ ...s, route: s.route })), keyOf });
         const deduped = slots.map((slot) => local(slot));
         expect(deduped.every((s) => s !== null)).toBe(true);
         worstDedup = Math.min(worstDedup, new Set(deduped).size / slots.length);

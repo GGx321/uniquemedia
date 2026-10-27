@@ -12,5 +12,6 @@ import { localSentences } from "../scenes/localSentences";
  */
 export function setLocal(set: StoredSceneSet, k: number, impliedNudity: boolean): (slot: PlanSlot) => string | null {
   const slots = set.scenes.flatMap((scene) => (scene.origin === "planned" && !scene.removed ? [scene.slot] : []));
-  return localSentences({ slots, keyOf: (slot) => `${set.sceneSetId}:${slot.slotIndex}:${k}`, snapshots: set.categories, impliedNudity });
+  // 5a.4 (S5.BA7, BA3 review L-1): the route is a required key of the template's slot; each slot says its own.
+  return localSentences({ slots: slots.map((slot) => ({ ...slot, route: slot.route })), keyOf: (slot) => `${set.sceneSetId}:${slot.slotIndex}:${k}`, snapshots: set.categories, impliedNudity });
 }

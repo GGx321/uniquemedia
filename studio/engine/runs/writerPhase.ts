@@ -117,7 +117,7 @@ export function plannedWriterConfig(labelOf: CategoryLabelOf, impliedNudity: boo
   return {
     call: writerCallShape("ordinary"),
     messages: (slots, feedback) => writerMessages(slots, feedback, labelOf),
-    plain: (slot) => plainSentence(slot, impliedNudity),
+    plain: (slot) => plainSentence({ ...slot, route: slot.route }, impliedNudity),
     bold: {
       isBold: (slot) => writerModeOf([slot]) === "bold",
       call: writerCallShape("bold"),

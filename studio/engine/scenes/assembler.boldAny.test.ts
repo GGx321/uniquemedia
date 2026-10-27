@@ -78,9 +78,9 @@ function slotOf(draw: Draw, timeOfDay: string): PlanSlot {
 function promptOf(draw: Draw, timeOfDay = "morning"): string {
   const slot = slotOf(draw, timeOfDay);
   const key = slotKeyOf(RUN_ID, slot.attemptIdBase);
-  const sentence = templateSentence(slot, { key, impliedNudity: true }) ?? plainSentence(slot, true);
+  const sentence = templateSentence({ ...slot, route: slot.route }, { key, impliedNudity: true }) ?? plainSentence({ ...slot, route: slot.route }, true);
   const hair = hairLinesOf([slot], "long", RUN_ID);
-  return assembleSlot(DESCRIPTOR, slot, sentence, MASTER, { runId: RUN_ID, roomPlaceOf, lookOf: slotLookOf, hairStyleOf: (s) => hair.get(s.slotIndex) ?? null }).prompt;
+  return assembleSlot(DESCRIPTOR, slot, sentence, MASTER, { runId: RUN_ID, roomPlaceOf: (s) => roomPlaceOf({ ...s, route: "route" in s ? s.route : undefined }), lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }), hairStyleOf: (s) => hair.get(s.slotIndex) ?? null }).prompt;
 }
 
 /** The details every ordinary bank place says, minus the ones the place under test says itself. */
@@ -150,7 +150,7 @@ describe("the assembled prompt of every new moment (H1)", () => {
       expect(promptOf(draw)).toContain(BOLD_MIRROR_LEGS_POSE_PHRASE);
       // The five stored before 5a.4 are held to the ordinary content line, so the unrouted control wears an ordinary outfit.
       const slot = { ...slotOf(draw, "morning"), route: undefined, outfit: "a white t-shirt and jeans" } as PlanSlot;
-      const plain = assembleSlot(DESCRIPTOR, slot, plainSentence(slot, true), MASTER, { runId: RUN_ID }).prompt;
+      const plain = assembleSlot(DESCRIPTOR, slot, plainSentence({ ...slot, route: slot.route }, true), MASTER, { runId: RUN_ID }).prompt;
       expect(plain).toContain(LEGS_POSE_PHRASE);
     }
   });

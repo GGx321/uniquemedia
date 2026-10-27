@@ -19,7 +19,7 @@ export function bankDraw(category: BankCategory = "home"): { location: string; a
         const outfit = moment.outfits?.[0] ?? bank.outfits.find((o) => o.pinOnly !== true)?.text;
         if (outfit === undefined) continue;
         const draw = { location: place.name, activity: moment.text, outfit, shot };
-        if (templateSentence({ category, pose: "front", ...draw }, { key: "probe" }) !== null) return draw;
+        if (templateSentence({ route: undefined, category, pose: "front", ...draw }, { key: "probe" }) !== null) return draw;
       }
     }
   }

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Scope } from "../money/ledger";
 import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
-import { plan, type ReadableSlot } from "../scenes";
+import { plan, type PlanSlot, type ReadableSlot } from "../scenes";
 import { ideaJsonSchema, ideaMessages, readIdeaAnswer, toIdeaSlot, type IdeaAsk } from "../scenes/ideaWriter";
 import { plainSentence } from "../scenes";
 import { buildRunPlan, plannedSlots, runWriterConfig } from "./plan";
@@ -80,7 +80,8 @@ function phaseOf(count: number, overrides: Partial<WriterPhase> = {}): WriterPha
   };
 }
 
-const plainOf = (slot: Parameters<typeof plainSentence>[0]): string => plainSentence(slot);
+// 5a.4 (S5.BA7, BA3 review L-1): the route is a required key of the template's slot; each slot says its own.
+const plainOf = (slot: PlanSlot): string => plainSentence({ ...slot, route: slot.route });
 
 function start<S extends ReadableSlot>(steps: Step[], phase: WriterPhase<S>) {
   const net = fakeFetch(steps);
@@ -229,7 +230,7 @@ describe("runWriterPhase: after the last attempt a planned slot takes the plain 
     if (!answer.ok) return;
     const slotTwo = phase.slots.find((s) => s.slotIndex === 2);
     if (slotTwo === undefined) throw new Error("no slot 2");
-    expect(answer.sentences.get(2)).toBe(plainSentence(slotTwo));
+    expect(answer.sentences.get(2)).toBe(plainSentence({ ...slotTwo, route: slotTwo.route }));
     expect([1, 3, 4].map((n) => answer.sentences.get(n))).toEqual([GOOD, GOOD, GOOD]);
   });
 
@@ -241,7 +242,7 @@ describe("runWriterPhase: after the last attempt a planned slot takes the plain 
     expect(net.calls).toHaveLength(2);
     expect(answer.ok).toBe(true);
     if (!answer.ok) return;
-    expect([...answer.sentences]).toEqual(phase.slots.map((s) => [s.slotIndex, plainSentence(s)]));
+    expect([...answer.sentences]).toEqual(phase.slots.map((s) => [s.slotIndex, plainSentence({ ...s, route: s.route })]));
   });
 
   test("the plain chunk is journaled whole and both attempts are settled with nothing left open", async () => {
@@ -271,7 +272,7 @@ describe("runWriterPhase: after the last attempt a planned slot takes the plain 
     expect(answer.sentences.get(2)).toBe("Template 2.");
     const slotThree = phase.slots.find((s) => s.slotIndex === 3);
     if (slotThree === undefined) throw new Error("no slot 3");
-    expect(answer.sentences.get(3)).toBe(plainSentence(slotThree));
+    expect(answer.sentences.get(3)).toBe(plainSentence({ ...slotThree, route: slotThree.route }));
   });
 
   test("a chunk with no answered attempt left (both were paid by earlier jobs) sends nothing and takes the plain sentence", async () => {
@@ -306,7 +307,7 @@ describe("runWriterPhase: after the last attempt a planned slot takes the plain 
     expect(net.calls).toHaveLength(1);
     expect(answer.ok).toBe(true);
     if (!answer.ok) return;
-    expect([...answer.sentences]).toEqual(phase.slots.map((s) => [s.slotIndex, plainSentence(s)]));
+    expect([...answer.sentences]).toEqual(phase.slots.map((s) => [s.slotIndex, plainSentence({ ...s, route: s.route })]));
     expect(money.ledger.openReserves()).toEqual([]);
   });
 
@@ -321,7 +322,7 @@ describe("runWriterPhase: after the last attempt a planned slot takes the plain 
     if (!answer.ok) return;
     const two = phase.slots.find((s) => s.slotIndex === 2);
     if (two === undefined) throw new Error("no slot 2");
-    expect([1, 2, 3, 4].map((n) => answer.sentences.get(n))).toEqual([GOOD, plainSentence(two), GOOD, GOOD]);
+    expect([1, 2, 3, 4].map((n) => answer.sentences.get(n))).toEqual([GOOD, plainSentence({ ...two, route: two.route }), GOOD, GOOD]);
   });
 
   test("a refusal in one chunk leaves the other chunks alone: the first is written by the model, the second takes the plain sentence", async () => {
@@ -334,7 +335,7 @@ describe("runWriterPhase: after the last attempt a planned slot takes the plain 
     expect(answer.ok).toBe(true);
     if (!answer.ok) return;
     expect(answer.sentences.get(1)).toBe(GOOD);
-    expect(answer.sentences.get(30)).toBe(plainSentence(phase.slots[29] as (typeof phase.slots)[number]));
+    expect(answer.sentences.get(30)).toBe(plainOf(phase.slots[29] as (typeof phase.slots)[number]));
   });
 
   test("an idea write (no plain sentence) is refused as before: exhausted, MODERATION_REFUSED", async () => {
@@ -381,7 +382,7 @@ describe("runWriterPhase: after the last attempt a planned slot takes the plain 
 
     expect(net.calls).toHaveLength(1);
     expect(askedSlots(net.calls[0] as FetchCall)).toEqual([1, 2, 3, 4]);
-    expect(answer.ok && answer.sentences.get(1)).toBe(plainSentence(phase.slots[0] as (typeof phase.slots)[number]));
+    expect(answer.ok && answer.sentences.get(1)).toBe(plainOf(phase.slots[0] as (typeof phase.slots)[number]));
   });
 });
 

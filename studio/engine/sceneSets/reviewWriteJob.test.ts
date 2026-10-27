@@ -501,7 +501,7 @@ describe("a write that cannot be answered", () => {
     expect(net.calls).toHaveLength(2);
     expect(reserveIds()).toEqual([id(2, 1), id(2, 2)]);
     expect(closed).toEqual([]);
-    expect((await setNow()).scenes.find((s) => s.sceneId === 2)?.text).toBe(plainSentence(slotOf(before, 2)));
+    expect((await setNow()).scenes.find((s) => s.sceneId === 2)?.text).toBe(plainSentence({ ...slotOf(before, 2), route: slotOf(before, 2).route }));
     expect((await recordOf(2)).closed).toBe(true);
     expect(JSON.stringify(net.calls[1]?.json())).toContain("An earlier answer was rejected");
   });
@@ -515,7 +515,7 @@ describe("a write that cannot be answered", () => {
 
     const after = await setNow();
     const text = after.scenes.find((s) => s.sceneId === 3)?.text;
-    expect(text).toBe(plainSentence(slot));
+    expect(text).toBe(plainSentence({ ...slot, route: slot.route }));
     expect(text).toContain("rooftop garden");
   });
 
@@ -610,7 +610,7 @@ describe("a write that got no answer stops, resumable", () => {
     expect(second.net.calls).toHaveLength(1);
     expect(reserveIds()).toEqual([id(2, 1), id(2, 2)]);
     expect(second.closed).toEqual([]);
-    expect((await setNow()).scenes.find((s) => s.sceneId === 2)?.text).toBe(plainSentence(slotOf(before, 2)));
+    expect((await setNow()).scenes.find((s) => s.sceneId === 2)?.text).toBe(plainSentence({ ...slotOf(before, 2), route: slotOf(before, 2).route }));
   });
 
   test("a stop that leaves no attempt (a rejected answer, then a dropped connection) resolves the write: nothing could be resumed", async () => {
@@ -883,7 +883,7 @@ describe("a rewrite of planned scenes: the writer seam", () => {
     const gerund = { activity: "reading a menu" };
     await seed((set) => ({ ...set, scenes: set.scenes.map((sc) => (sc.origin === "planned" && sc.sceneId === 3 ? { ...sc, slot: { ...sc.slot, ...gerund } } : sc)) }));
     const slot = { ...slotOf(await setNow(), 3) };
-    const same = localSentences({ slots: [slot], keyOf: () => `${SET}:3:2`, snapshots: [OLD_SNAPSHOT] })(slot);
+    const same = localSentences({ slots: [{ ...slot, route: slot.route }], keyOf: () => `${SET}:3:2`, snapshots: [OLD_SNAPSHOT] })(slot);
     expect(same).not.toBeNull();
     await store.update(AVATAR, SET, (s) => ({ ...s, scenes: s.scenes.map((sc) => (sc.sceneId === 3 ? { ...sc, text: same } : sc)) }) as StoredSceneSet);
     await recordRewrite([3]);
@@ -898,7 +898,7 @@ describe("a rewrite of planned scenes: the writer seam", () => {
   test("a rewrite of a custom scene seen from behind, which has nothing to vary, still returns another sentence than the one it has", async () => {
     await seed((set) => ({ ...set, scenes: set.scenes.map((sc) => (sc.origin === "planned" && sc.sceneId === 3 ? { ...sc, slot: { ...sc.slot, activity: "reading a menu", pose: "back" as const } } : sc)) }));
     const slot = { ...slotOf(await setNow(), 3) };
-    const same = localSentences({ slots: [slot], keyOf: () => `${SET}:3:2`, snapshots: [OLD_SNAPSHOT] })(slot);
+    const same = localSentences({ slots: [{ ...slot, route: slot.route }], keyOf: () => `${SET}:3:2`, snapshots: [OLD_SNAPSHOT] })(slot);
     expect(same).not.toBeNull();
     await store.update(AVATAR, SET, (s) => ({ ...s, scenes: s.scenes.map((sc) => (sc.sceneId === 3 ? { ...sc, text: same } : sc)) }) as StoredSceneSet);
     await recordRewrite([3]);

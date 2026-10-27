@@ -67,7 +67,7 @@ const allFrames = (category: BoldCategory, level: PlannerLevel): Frame[] => SHAR
 function render(frames: readonly Frame[], dedup: boolean): string[] {
   const seen = new Set<string>();
   return frames.map((f) => {
-    const sentence = templateSentence(f.slot, { key: f.key, ...(dedup ? { seen } : {}) });
+    const sentence = templateSentence({ ...f.slot, route: f.slot.route }, { key: f.key, ...(dedup ? { seen } : {}) });
     if (sentence === null) throw new Error(`${f.category}/${f.slot.location}: «${f.slot.activity}» did not render on ${f.capture} ${f.slot.pose} in ${f.slot.outfit}`);
     seen.add(sentence);
     return sentence;
@@ -79,9 +79,9 @@ function unjustifiedRepeats(frames: readonly Frame[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const f of frames) {
-    const sentence = templateSentence(f.slot, { key: f.key, seen }) ?? "";
+    const sentence = templateSentence({ ...f.slot, route: f.slot.route }, { key: f.key, seen }) ?? "";
     if (seen.has(sentence)) {
-      const variants = [f.key, ...Array.from({ length: 8 }, (_, i) => `${f.key}:dedup:${i + 1}`)].map((key) => templateSentence(f.slot, { key }));
+      const variants = [f.key, ...Array.from({ length: 8 }, (_, i) => `${f.key}:dedup:${i + 1}`)].map((key) => templateSentence({ ...f.slot, route: f.slot.route }, { key }));
       if (variants.some((v) => v !== null && !seen.has(v))) out.push(sentence);
     }
     seen.add(sentence);

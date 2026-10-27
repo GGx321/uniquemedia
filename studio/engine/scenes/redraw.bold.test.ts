@@ -76,7 +76,7 @@ describe.each([...BOLD_BANKS])("redrawing a %s scene", (category) => {
   });
 
   test("renders: a redrawn scene is never left to the writer", () => {
-    for (const slot of slotsOf(category, 15)) for (let k = 1; k <= 3; k++) expect(templateSentence(draw(category, slot, k), { key: `set:${slot.slotIndex}:${k}` })).not.toBeNull();
+    for (const slot of slotsOf(category, 15)) for (let k = 1; k <= 3; k++) expect(templateSentence({ ...draw(category, slot, k), route: draw(category, slot, k).route }, { key: `set:${slot.slotIndex}:${k}` })).not.toBeNull();
   });
 });
 

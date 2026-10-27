@@ -13,6 +13,7 @@ useNativeGlobals();
 
 const slot = (over: Partial<RoomSlotKey> = {}): RoomSlotKey => ({
   category: "home",
+  route: undefined,
   location: "her bedroom",
   activity: "adjusts the hem of her top",
   ...over,
@@ -62,7 +63,7 @@ describe("roomPlaceOf", () => {
   test("finds every room of every built-in pool by its own name", () => {
     for (const category of CATEGORIES) {
       for (const place of POOLS[category].locations) {
-        const found = roomPlaceOf({ category, location: place.name, activity: place.activities[0]?.text ?? "" });
+        const found = roomPlaceOf({ route: undefined, category, location: place.name, activity: place.activities[0]?.text ?? "" });
         expect(found === null).toBe(place.room !== true);
       }
     }
@@ -85,7 +86,7 @@ describe("the room phrase reaches the assembled prompt through roomPlaceOf", () 
     repeatedPair: false,
     ...over,
   });
-  const assemble = (s: PlanSlot, runId = "run-1") => assembleSlot(DESCRIPTOR, s, "She waits by the counter.", MASTER, { runId, roomPlaceOf }).prompt;
+  const assemble = (s: PlanSlot, runId = "run-1") => assembleSlot(DESCRIPTOR, s, "She waits by the counter.", MASTER, { runId, roomPlaceOf: (s) => roomPlaceOf({ ...s, route: "route" in s ? s.route : undefined }) }).prompt;
 
   test("a slot in a room gets a room sentence right after the writer's sentence", () => {
     expect(assemble(full({}))).toMatch(/She waits by the counter\. The room (is ordinary and fairly tidy|looks lived-in|is messy)/);

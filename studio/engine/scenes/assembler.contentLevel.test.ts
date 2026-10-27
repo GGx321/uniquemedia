@@ -6,7 +6,7 @@ import { assembleRun, assembleSlot, AssemblerRefusalError } from "./assembler";
 import { slotKeyOf } from "./phoneLook";
 import { plan } from "./planner";
 import { slotLookOf } from "./roomPlace";
-import type { PlanSlot } from "./schema";
+import type { PlanSlot, RunSlot } from "./schema";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -16,7 +16,7 @@ useNativeGlobals();
 const DESCRIPTOR: AvatarDescriptor = { age: 25, text: "25-year-old European woman, light olive skin, hazel eyes, shoulder-length wavy chestnut hair, athletic build." };
 const MASTER = asLibraryReference(JPEG);
 const RUN_ID = "run-content-1";
-const OPTIONS = { runId: RUN_ID, lookOf: slotLookOf };
+const OPTIONS = { runId: RUN_ID, lookOf: (s: RunSlot) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }) };
 
 const slotOf = (category: "nightwear" | "beach" | "home", level: "ordinary" | "flirty" | "bold" = "bold"): PlanSlot => {
   const slot = plan({ seed: 11, count: 10, categories: [category], level: category === "home" ? "flirty" : level }).slots[0] as PlanSlot;
@@ -61,7 +61,7 @@ describe("assembleSlot", () => {
 
   test("the sentence the template writes for a «Смелая» slot passes the gate", () => {
     for (const slot of boldSlots("nightwear")) {
-      const sentence = templateSentence(slot, { key: slotKeyOf(RUN_ID, slot.attemptIdBase) });
+      const sentence = templateSentence({ ...slot, route: slot.route }, { key: slotKeyOf(RUN_ID, slot.attemptIdBase) });
       expect(sentence).not.toBeNull();
       expect(() => assembleSlot(DESCRIPTOR, slot, sentence as string, MASTER, OPTIONS)).not.toThrow();
     }

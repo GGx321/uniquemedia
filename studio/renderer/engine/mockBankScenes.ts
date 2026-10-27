@@ -234,7 +234,7 @@ export function slotOf(scene: Sentenced): TemplateSlot | null {
     ...(scene.capture !== undefined && shotOf(scene.capture) === shotOf(captureOfShot(scene.shot)) ? { capture: scene.capture } : {}),
     ...(scene.level === undefined ? {} : { level: scene.level }),
     ...(scene.framing === "legs" ? { framing: "legs" as const } : {}),
-    ...(scene.route === undefined ? {} : { route: scene.route }),
+    route: scene.route,
   };
 }
 

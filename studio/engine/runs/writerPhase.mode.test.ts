@@ -204,7 +204,7 @@ describe("the writer phase asks each chunk in its own mode and reserves what the
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.sentences.get(1)).toBe(`${SENTENCE.routed} ${LACE_KEPT}`);
-    expect(result.sentences.get(2)).toBe(plainSentence(routed(2)));
+    expect(result.sentences.get(2)).toBe(plainSentence({ ...routed(2), route: routed(2).route }));
     expect(result.sentences.get(2)).toStartWith("In her room, she lies back across the bed, wearing a white lace bra and panties");
     for (const sentence of result.sentences.values()) expect(sentence.split(LACE_KEPT)).toHaveLength(2);
   });

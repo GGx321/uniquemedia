@@ -100,7 +100,8 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
   // partly written chunk's open ones, so a chunk is priced bold whenever the phase could ask it bold.
   const writerOf = (mode: WriterMode): WriterCall => ({ ...writerCallOf(mode), model: plan.models.text });
   const local = localSentences({
-    slots: plannedSlots(plan),
+    // 5a.4 (S5.BA7, BA3 review L-1): the route is a required key of the template's slot; each slot says its own.
+    slots: plannedSlots(plan).map((slot) => ({ ...slot, route: slot.route })),
     keyOf: (slot) => slotKeyOf(plan.runId, slot.attemptIdBase),
     snapshots: plan.categories,
   });

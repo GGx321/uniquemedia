@@ -948,7 +948,7 @@ export function boldReader(impliedNudity = false): (content: string, slots: read
       new Map(
         [...sentences].map(([slotIndex, sentence]) => {
           const slot = bySlot.get(slotIndex);
-          const coverage = slot === undefined ? undefined : slotCoverageOf(slot, impliedNudity);
+          const coverage = slot === undefined ? undefined : slotCoverageOf({ ...slot, route: slot.route }, impliedNudity);
           return [slotIndex, coverage === undefined ? sentence : `${withFullStop(sentence)} ${coverage}`];
         }),
       );

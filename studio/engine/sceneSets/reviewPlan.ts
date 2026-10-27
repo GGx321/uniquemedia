@@ -56,7 +56,7 @@ function targetsOf(set: StoredSceneSet, sceneIds: readonly number[]): StoredScen
 function redrawsOf(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "rewrite" }>): boolean {
   if (target.redraw) return true;
   const scenes = targetsOf(set, target.sceneIds);
-  return scenes.every((scene) => scene.origin === "planned" && !isCustomCategory(scene.slot.category) && templateSentence(scene.slot, { key: `${set.sceneSetId}:${scene.sceneId}:probe` }) !== null);
+  return scenes.every((scene) => scene.origin === "planned" && !isCustomCategory(scene.slot.category) && templateSentence({ ...scene.slot, route: scene.slot.route }, { key: `${set.sceneSetId}:${scene.sceneId}:probe` }) !== null);
 }
 
 /** A write as the planners below decide it, before its model scenes are counted from the record it would leave (`planReviewWrite`). */

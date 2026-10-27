@@ -53,7 +53,7 @@ const COUNTS = [1, 3, 7, 12, 24, 25, 26, 40, 49, 50, 51, 77, 100];
 function drawn(seed: number, count: number, mix: readonly CategoryRef[]) {
   const scenes = planWithPools({ seed, count, categories: mix.map(sceneCategory) }, POOL_OF);
   const slots = scenes.slots;
-  const local = localSentences({ slots, keyOf: (slot) => slotKeyOf("run-00000001", slot.attemptIdBase), snapshots: SNAPSHOTS });
+  const local = localSentences({ slots: slots.map((s) => ({ ...s, route: s.route })), keyOf: (slot) => slotKeyOf("run-00000001", slot.attemptIdBase), snapshots: SNAPSHOTS });
   return { slots, local };
 }
 
@@ -103,7 +103,7 @@ describe("the writer's money bound at «Смелая»", () => {
 
   function drawnBold(seed: number, count: number, mix: readonly CategoryRef[]) {
     const slots = planWithPools({ seed, count, categories: mix.map(sceneCategory), level: "bold" }, POOL_OF).slots;
-    return { slots, local: localSentences({ slots, keyOf: (slot) => slotKeyOf("run-00000001", slot.attemptIdBase), snapshots: SNAPSHOTS }) };
+    return { slots, local: localSentences({ slots: slots.map((s) => ({ ...s, route: s.route })), keyOf: (slot) => slotKeyOf("run-00000001", slot.attemptIdBase), snapshots: SNAPSHOTS }) };
   }
 
   test("a custom category the template covers below «Смелая» goes to the model at it, every slot", () => {

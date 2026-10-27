@@ -4,7 +4,7 @@ import { BOLD_COMPANIONS, CUSTOM_BOLD_BANKS } from "../../shared/scenes/banks/co
 import type { BankPlace, CategoryBank, Moment } from "../../shared/scenes/banks/types";
 import { hairLinesOf } from "./hairLines";
 import { POOLS } from "./pools";
-import { roomPlaceOf, slotLookOf } from "./roomPlace";
+import { roomPlaceOf, slotLookOf, type RoomSlotKey } from "./roomPlace";
 import type { RunSlot } from "./schema";
 import { ORDINARY_BUILT_INS } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -23,8 +23,10 @@ function find(bank: CategoryBank, wanted: (place: BankPlace, moment: Moment) => 
   throw new Error("the bank has no such moment");
 }
 
-function runSlot(category: string, found: { place: BankPlace; moment: Moment }, extra: Record<string, unknown> = {}): RunSlot {
-  return { slotIndex: 1, category, location: found.place.name, timeOfDay: "morning", activity: found.moment.text, outfit: "a tee and cotton panties", shot: "friend", pose: "front", attemptIdBase: "slot-1", repeatedPair: false, route: "seedream", ...extra } as RunSlot;
+function runSlot(category: string, found: { place: BankPlace; moment: Moment }, extra: Record<string, unknown> = {}): RunSlot & RoomSlotKey {
+  // 5a.4 (S5.BA7, BA3 review L-1): the route is a required key of the lookup's slot; this one says its own (the Seedream route unless `extra` says otherwise).
+  const slot = { slotIndex: 1, category, location: found.place.name, timeOfDay: "morning", activity: found.moment.text, outfit: "a tee and cotton panties", shot: "friend", pose: "front", attemptIdBase: "slot-1", repeatedPair: false, route: "seedream", ...extra } as RunSlot;
+  return { ...slot, route: "route" in slot ? slot.route : undefined };
 }
 
 describe("roomPlaceOf and slotLookOf follow the route (I5.73)", () => {

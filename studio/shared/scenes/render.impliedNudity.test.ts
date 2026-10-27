@@ -12,7 +12,7 @@ const place = BANKS.nightwear.places[0];
 const moment = place?.moments.find((m) => m.legs === undefined && m.level === undefined && m.outfits === undefined && m.captures[0] === "above");
 const outfit = BANKS.nightwear.outfits.find((o) => o.route === "seedream");
 if (place === undefined || moment === undefined || outfit === undefined) throw new Error("the nightwear bank has no plain above moment or no Seedream outfit");
-const SLOT: TemplateSlot = { category: "nightwear", location: place.name, activity: moment.text, outfit: outfit.text, shot: shotOf("above"), capture: "above", pose: "front", level: "bold" };
+const SLOT: TemplateSlot = { category: "nightwear", route: undefined, location: place.name, activity: moment.text, outfit: outfit.text, shot: shotOf("above"), capture: "above", pose: "front", level: "bold" };
 
 describe("TemplateContext.impliedNudity", () => {
   test("the field is optional and boolean", () => {

@@ -34,7 +34,7 @@ function deepFreeze<T>(value: T): T {
 /** Assembles every slot of the plan, the way a run does (the room lookup wired in). */
 function assemble(scenes: ScenePlan, runId: string): string[] {
   const sentences = new Map(scenes.slots.map((s) => [s.slotIndex, "She stands there for a moment."]));
-  return assembledScenes(assembleRun(DESCRIPTOR, scenes, sentences, MASTER, { runId, roomPlaceOf, cameraRealism: true })).map((a) => a.prompt);
+  return assembledScenes(assembleRun(DESCRIPTOR, scenes, sentences, MASTER, { runId, roomPlaceOf: (s) => roomPlaceOf({ ...s, route: "route" in s ? s.route : undefined }), cameraRealism: true })).map((a) => a.prompt);
 }
 
 describe("the look draws do not move the planner", () => {

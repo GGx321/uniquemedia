@@ -92,7 +92,7 @@ describe("the chain: photo → run → slot → moment (§5.4)", () => {
       const facts = factsOf(await readFrameFacts(photoOf(run, slot), readerOf(lib), silent));
       expect(facts.plan).toBe("slot");
       expect(facts.category).toBe(slot.category);
-      expect(facts.moment).toBe(momentOfSlot(slot) ?? null);
+      expect(facts.moment).toBe(momentOfSlot({ ...slot, route: slot.route }) ?? null);
       expect(facts.moment).not.toBeNull();
       expect(facts.capture).toBe(slot.capture ?? captureOfShot(slot.shot));
       expect(facts.pose).toBe(slot.pose);
@@ -117,7 +117,7 @@ describe("the chain: photo → run → slot → moment (§5.4)", () => {
       const facts = factsOf(await readFrameFacts(photoOf(run, slot), readerOf(lib), silent));
       expect(facts.plan).toBe("slot");
       if (slot.category === "own") throw new Error("a planned scene became an own scene");
-      expect(facts.moment).toBe(momentOfSlot(slot) ?? null);
+      expect(facts.moment).toBe(momentOfSlot({ ...slot, route: slot.route }) ?? null);
       expect(facts.sceneMotion).toBe(true);
     }
     const own = slots[4] as OwnPlanSlot;
@@ -136,7 +136,7 @@ describe("the chain: photo → run → slot → moment (§5.4)", () => {
     for (const [i, slot] of slots.entries()) {
       const facts = factsOf(await readFrameFacts(photoOf(slice, slot), readerOf(lib), silent));
       expect(facts.activity).toBe(([set[2], set[4], set[5]] as PlanSlot[])[i]?.activity ?? "");
-      expect(facts.moment).toBe(momentOfSlot(slot) ?? null);
+      expect(facts.moment).toBe(momentOfSlot({ ...slot, route: slot.route }) ?? null);
     }
   });
 
@@ -148,7 +148,7 @@ describe("the chain: photo → run → slot → moment (§5.4)", () => {
       const facts = factsOf(await readFrameFacts(photoOf(run, slot), readerOf(lib), silent));
       expect(facts.bold).toBe(true);
       expect(facts.level).toBe(boldContentLevel());
-      expect(facts.legwear).toBe(momentOfSlot(slot)?.noLegwear === true ? null : (slot.legwear ?? null));
+      expect(facts.legwear).toBe(momentOfSlot({ ...slot, route: slot.route })?.noLegwear === true ? null : (slot.legwear ?? null));
     }
   });
 });

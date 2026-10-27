@@ -36,9 +36,9 @@ const LOW_FEET_LINE = "A quick phone photo a friend took of her, crouching a cou
 
 const legsSlots = (category: Category, seed: number, count = 20): PlanSlot[] => plan({ seed, count, categories: [category], legsShare: 30 }).slots.filter((s) => s.framing === "legs");
 const SLOTS: PlanSlot[] = ORDINARY_BUILT_INS.flatMap((c) => [1, 2, 3, 4, 5].flatMap((seed) => legsSlots(c, seed * 31)));
-const sentenceOf = (slot: PlanSlot): string => templateSentence(slot, { key: slotKeyOf(RUN_ID, slot.attemptIdBase) }) ?? "It is a plain sentence.";
+const sentenceOf = (slot: PlanSlot): string => templateSentence({ ...slot, route: slot.route }, { key: slotKeyOf(RUN_ID, slot.attemptIdBase) }) ?? "It is a plain sentence.";
 const assemble = (slot: PlanSlot, descriptor: AvatarDescriptor = DESCRIPTOR, hair?: string): string =>
-  assembleSlot(descriptor, slot, sentenceOf(slot), MASTER, { runId: RUN_ID, lookOf: slotLookOf, ...(hair === undefined ? {} : { hairStyleOf: () => hair }) }).prompt;
+  assembleSlot(descriptor, slot, sentenceOf(slot), MASTER, { runId: RUN_ID, lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }), ...(hair === undefined ? {} : { hairStyleOf: () => hair }) }).prompt;
 const captureOf = (slot: PlanSlot): Capture => slot.capture ?? captureOfShot(slot.shot);
 
 describe("the legs lines (plan s5a2 §7.2)", () => {
@@ -142,7 +142,7 @@ describe("the binding of a legs frame", () => {
 describe("no hand artefact on a legs frame", () => {
   const ARTEFACT = "motion blur on her moving hand";
   const prompts = (slots: readonly PlanSlot[]): string[] =>
-    slots.flatMap((slot) => Array.from({ length: 6 }, (_, k) => assembleSlot(DESCRIPTOR, slot, sentenceOf(slot), MASTER, { runId: `run-art-${k}`, cameraRealism: true, lookOf: slotLookOf }).prompt));
+    slots.flatMap((slot) => Array.from({ length: 6 }, (_, k) => assembleSlot(DESCRIPTOR, slot, sentenceOf(slot), MASTER, { runId: `run-art-${k}`, cameraRealism: true, lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }) }).prompt));
 
   test("no legs prompt, low-feet or other, names the moving hand", () => {
     expect(SLOTS.filter((s) => captureOf(s) === "low-feet").length).toBeGreaterThan(10);
@@ -189,7 +189,7 @@ describe("feet render and stockings are refused", () => {
           expect(capture).toBeDefined();
           if (outfit === undefined || capture === undefined) continue;
           const slot = { category, location: place.name, activity: moment.text, outfit, shot: shotOf(capture), capture, pose: moment.angle ?? ("front" as const), framing: "legs" as const };
-          const sentence = templateSentence(slot, { key: "feet" });
+          const sentence = templateSentence({ ...slot, route: undefined }, { key: "feet" });
           expect(sentence, `${category} | ${place.name} | ${moment.text}`).not.toBeNull();
           expect(sentence).toContain(moment.text);
         }
@@ -203,8 +203,8 @@ describe("feet render and stockings are refused", () => {
     if (found === undefined) return;
     // On an outfit that shows her legs (the moment also pins pajamas that do not, and those take no legwear).
     const slot = { ...found, outfit: "a crop top and cotton pajama shorts" };
-    expect(templateSentence({ ...slot, legwear: "black stockings" }, { key: "k" })).toBeNull();
-    expect(templateSentence({ ...slot, legwear: "sheer black tights" }, { key: "k" })).not.toBeNull();
+    expect(templateSentence({ route: undefined, ...slot, legwear: "black stockings" }, { key: "k" })).toBeNull();
+    expect(templateSentence({ route: undefined, ...slot, legwear: "sheer black tights" }, { key: "k" })).not.toBeNull();
   });
 
   test("a sentence that names stockings never reaches an image: the assembler ends the slot as a word-rule problem", () => {
@@ -230,7 +230,7 @@ describe("the template writes every legs slot: no writer, $0", () => {
     for (const category of ORDINARY_BUILT_INS) {
       for (let seed = 1; seed <= 150; seed++) {
         const slots = plan({ seed, count: 20, categories: [category], legsShare: 30, ...(seed % 2 === 0 ? { level: "flirty" as const } : {}) }).slots;
-        const local = localSentences({ slots, keyOf: (s) => slotKeyOf(RUN_ID, s.attemptIdBase) });
+        const local = localSentences({ slots: slots.map((s) => ({ ...s, route: s.route })), keyOf: (s) => slotKeyOf(RUN_ID, s.attemptIdBase) });
         for (const slot of slots) {
           expect(local(slot), `${slot.category} | ${slot.location} | ${slot.activity}`).not.toBeNull();
           if (slot.framing === "legs") legs++;

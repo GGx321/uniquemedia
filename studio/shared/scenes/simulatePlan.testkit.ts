@@ -149,6 +149,8 @@ export function simulatePlan(category: BankCategory, n: number, seed: number, le
     const legwear = legwearItems.length > 0 && legwearFits(moment, outfit) && next() < (bank.legwear?.share ?? 0) ? legwearItems[Math.floor(next() * legwearItems.length)] : undefined;
     return {
       category,
+      // 5a.4 (S5.BA7, BA3 review L-1): the route is a required key; a simulated slot of the 5a.2/5a.3 banks has none.
+      route: undefined,
       location: place.name,
       activity: moment.text,
       outfit: outfit.text,

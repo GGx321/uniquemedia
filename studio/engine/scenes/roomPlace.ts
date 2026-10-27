@@ -14,7 +14,7 @@ export interface RoomSlotKey {
   location?: string | undefined;
   activity?: string | undefined;
   /** The Seedream route, the marker of a «Смелая» frame of any category (I5.73). */
-  route?: SceneRoute | undefined;
+  route: SceneRoute | undefined;
 }
 
 /** The room a slot is in as the room draw reads it, or null when it has none. */

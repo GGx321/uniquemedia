@@ -101,7 +101,7 @@ describe("customActivityAllowed (I5.23 for custom: by the regex)", () => {
 
 describe("a custom slot's sentence", () => {
   const REF = "cat-cozyhome1";
-  const slot: TemplateSlot = { category: REF, location: "a quiet bookshop", activity: "browsing the shelves", outfit: "a cozy cardigan", shot: "friend", pose: "front" };
+  const slot: TemplateSlot = { category: REF, route: undefined, location: "a quiet bookshop", activity: "browsing the shelves", outfit: "a cozy cardigan", shot: "friend", pose: "front" };
   const ctx = { key: "run-1:slot-3", snapshots: [{ ref: REF }] };
   const esc = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const anyOf = (texts: readonly string[]): string => `(${texts.map(esc).join("|")})`;
@@ -246,7 +246,7 @@ describe("covers: the template renders every slot the planner can draw from the 
 // redraw, so every dedup redraw used to equal the first text and the slot kept it: the «new» scene read exactly as the old one.
 describe("a redraw of a slot with nothing to vary still reads differently from the text it replaces", () => {
   const REF = "cat-redraw-fixture";
-  const BACK: TemplateSlot = { category: REF, location: "a quiet bookshop", activity: "browsing the shelves", outfit: "a cozy cardigan", shot: "friend", pose: "back" };
+  const BACK: TemplateSlot = { category: REF, route: undefined, location: "a quiet bookshop", activity: "browsing the shelves", outfit: "a cozy cardigan", shot: "friend", pose: "back" };
   const ctx = (key: string, seen?: ReadonlySet<string>, distinct = true) => ({ key, snapshots: [{ ref: REF }], distinct, ...(seen === undefined ? {} : { seen }) });
 
   test("the text of a slot seen from behind is the same on every draw key: nothing in it varies", () => {

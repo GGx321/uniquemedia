@@ -284,7 +284,7 @@ describe("runWriterPhase: a custom run the template cannot write is asked as bef
     money = await setupMoney();
     const run = customRun();
     const slots = plannedSlots(run);
-    const local = withSeam ? { local: localSentences({ slots, keyOf: (slot: PlanSlot) => slotKeyOf(RUN_ID, slot.attemptIdBase), snapshots: run.categories }) } : {};
+    const local = withSeam ? { local: localSentences({ slots: slots.map((s) => ({ ...s, route: s.route })), keyOf: (slot: PlanSlot) => slotKeyOf(RUN_ID, slot.attemptIdBase), snapshots: run.categories }) } : {};
     const { net, result } = start([refusedAnswer, good, good], { ...phaseOf(30), slots, chunks: run.writerChunks, ...runWriterConfig(run.categories), ...local });
     expect((await result).ok).toBe(true);
     const reserves = money.lines().flatMap((l) => (l.type === "reserve" ? [{ attemptId: l.attemptId, worstMicros: l.worstMicros, model: l.model }] : []));
@@ -312,7 +312,7 @@ describe("runWriterPhase: a built-in run sends no writer request", () => {
   test("with the seam wired to the template, 30 «Дом» slots are written with no call and no reserve", async () => {
     const run = runPlan(30);
     const slots = plannedSlots(run);
-    const local = localSentences({ slots, keyOf: (slot: PlanSlot) => slotKeyOf(RUN_ID, slot.attemptIdBase), snapshots: run.categories });
+    const local = localSentences({ slots: slots.map((s) => ({ ...s, route: s.route })), keyOf: (slot: PlanSlot) => slotKeyOf(RUN_ID, slot.attemptIdBase), snapshots: run.categories });
     const { net, result, chunks } = start([], { ...phaseOf(30), slots, chunks: run.writerChunks, ...runWriterConfig(run.categories), local });
 
     const answer = await result;

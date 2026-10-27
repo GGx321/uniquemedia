@@ -109,7 +109,8 @@ function heldOf(set: StoredSceneSet): string[] {
  * model, in which mode) say false, the answer being the same whatever the origin.
  */
 function localOf(set: StoredSceneSet, record: ReviewWriteRecord, slots: readonly PlanSlot[], impliedNudity: boolean): (slot: PlanSlot) => string | null {
-  return localSentences({ slots, keyOf: (slot) => `${set.sceneSetId}:${slot.slotIndex}:${record.k}`, snapshots: snapshotsFor(set, record), seen: heldOf(set), distinct: true, impliedNudity });
+  // 5a.4 (S5.BA7, BA3 review L-1): the route is a required key of the template's slot; each slot says its own.
+  return localSentences({ slots: slots.map((slot) => ({ ...slot, route: slot.route })), keyOf: (slot) => `${set.sceneSetId}:${slot.slotIndex}:${record.k}`, snapshots: snapshotsFor(set, record), seen: heldOf(set), distinct: true, impliedNudity });
 }
 
 /**

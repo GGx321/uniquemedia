@@ -416,7 +416,8 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
       // The writer only ever describes the planner's own slots; an own scene's sentence is already in the plan (and its plan has no chunks).
       slots,
       // 5a.2: the code template writes every slot whose place and moment the banks find by name; the rest go to the model at the chunk's reserved ids.
-      local: localSentences({ slots, keyOf: (slot) => slotKeyOf(plan.runId, slot.attemptIdBase), snapshots: plan.categories, impliedNudity }),
+      // 5a.4 (S5.BA7, BA3 review L-1): the route is a required key of the template's slot; each slot says its own.
+      local: localSentences({ slots: slots.map((slot) => ({ ...slot, route: slot.route })), keyOf: (slot) => slotKeyOf(plan.runId, slot.attemptIdBase), snapshots: plan.categories, impliedNudity }),
       chunks: plan.writerChunks,
       sentences: state.sentences,
       writerDone: state.writerDone,
@@ -438,8 +439,8 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
   const results = assembleRun(job.descriptor, { ...plan.scenes, slots: openSlots.map((s) => s.slot) }, written.sentences, master, {
     runId: plan.runId,
     cameraRealism: plan.cameraRealism === true,
-    roomPlaceOf,
-    lookOf: slotLookOf,
+    roomPlaceOf: (slot) => roomPlaceOf({ ...slot, route: "route" in slot ? slot.route : undefined }),
+    lookOf: (slot) => slotLookOf({ ...slot, route: "route" in slot ? slot.route : undefined }),
     ...(hairLines === null ? {} : { hairStyleOf: (slot) => hairLines.get(slot.slotIndex) ?? null }),
   });
   const assembled = new Map<number, string>();

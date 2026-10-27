@@ -274,7 +274,7 @@ describe("a custom category at «Смелая» on the mock is the engine's (pla
       for (const scene of view.scenes) {
         const slot = slotOfScene(scene);
         const text = scene.text ?? "";
-        const coverage = slotCoverageOf(slot, studio);
+        const coverage = slotCoverageOf({ ...slot, route: slot.route }, studio);
         const sentence = coverage === undefined ? text : text.slice(0, text.length - coverage.length - 1);
         expect({ scene: scene.sceneId, ends: coverage === undefined || text.endsWith(` ${coverage}`) }).toEqual({ scene: scene.sceneId, ends: true });
         const read = boldReader(studio)(JSON.stringify({ scenes: [{ slotIndex: slot.slotIndex, sentence }] }), [slot]);

@@ -145,7 +145,7 @@ describe("runSceneWrite: a compose", () => {
 });
 
 /** The plain sentence of every planned scene of the set, in scene order (S5.6d: what a chunk the model could not write takes). */
-const plainTextsOf = (set: StoredSceneSet): string[] => set.scenes.flatMap((s) => (s.origin === "planned" ? [plainSentence(s.slot)] : []));
+const plainTextsOf = (set: StoredSceneSet): string[] => set.scenes.flatMap((s) => (s.origin === "planned" ? [plainSentence({ ...s.slot, route: s.slot.route })] : []));
 
 describe("runSceneWrite: a chunk that cannot be written does not block the others", () => {
   // 5a.2 (S5.6d, plan s5a2 I5.31): this test used to say «a chunk rejected twice is given up (written 5, unwritten 25, gaveUp rejected)»; a planned scene the

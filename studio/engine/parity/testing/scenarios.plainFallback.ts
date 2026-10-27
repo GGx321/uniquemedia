@@ -49,7 +49,7 @@ async function scenesOf(t: Parameters<Scenario["run"]>[0], avatarId: string): Pr
     if (s === null || typeof s.sceneId !== "number") return [];
     const plain =
       place !== null && typeof s.category === "string" && typeof place.location === "string" && typeof place.activity === "string" && typeof place.outfit === "string"
-        ? plainSentence({ category: s.category, location: place.location, activity: place.activity, outfit: place.outfit, ...(typeof s.shot === "string" && (s.shot === "friend" || s.shot === "selfie" || s.shot === "mirror" || s.shot === "candid" || s.shot === "photographer") ? { shot: s.shot } : {}) })
+        ? plainSentence({ route: s.route === "seedream" ? "seedream" : undefined, category: s.category, location: place.location, activity: place.activity, outfit: place.outfit, ...(typeof s.shot === "string" && (s.shot === "friend" || s.shot === "selfie" || s.shot === "mirror" || s.shot === "candid" || s.shot === "photographer") ? { shot: s.shot } : {}) })
         : null;
     return [{ sceneId: s.sceneId, text: typeof s.text === "string" ? s.text : null, plain }];
   });

@@ -42,7 +42,7 @@ describe.each(POOLS)("%s", (_name, pool) => {
         for (const pose of posesFor(capture)) {
           for (const activity of place.activities.filter((a) => customActivityAllowed(a, capture, pose))) {
             for (const outfit of pool.outfits) {
-              const sentence = templateSentence({ category: REF, location: place.name, activity: activity.text, outfit, shot, pose }, { key: `${place.name}:${shot}:${pose}`, snapshots: [{ ref: REF }] });
+              const sentence = templateSentence({ route: undefined, category: REF, location: place.name, activity: activity.text, outfit, shot, pose }, { key: `${place.name}:${shot}:${pose}`, snapshots: [{ ref: REF }] });
               checked++;
               if (sentence === null) {
                 problems.push(`null: ${place.name} / ${activity.text} / ${shot} / ${pose}`);
@@ -72,7 +72,7 @@ describe.each(POOLS)("%s", (_name, pool) => {
         for (const pose of posesFor(capture)) {
           for (const activity of place.activities.filter((a) => customActivityAllowed(a, capture, pose))) {
             for (const outfit of pool.outfits) {
-              const sentence = templateSentence({ category: REF, location: place.name, activity: activity.text, outfit, shot, pose }, { key: `${place.name}:${shot}:${pose}`, snapshots: [{ ref: REF }] });
+              const sentence = templateSentence({ route: undefined, category: REF, location: place.name, activity: activity.text, outfit, shot, pose }, { key: `${place.name}:${shot}:${pose}`, snapshots: [{ ref: REF }] });
               if (sentence === null) continue;
               const slot: PlanSlot = { slotIndex: 1, category: REF, location: place.name, timeOfDay: place.times[0] ?? "morning", activity: activity.text, outfit, shot, pose, attemptIdBase: "slot-1", repeatedPair: false };
               const prompt = assembleSlot(DESCRIPTOR, slot, sentence, MASTER, { runId: "run-c3" }).prompt;

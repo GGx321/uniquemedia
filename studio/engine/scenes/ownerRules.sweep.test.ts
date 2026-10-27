@@ -43,13 +43,13 @@ const LENGTHS = ["bob", "shoulder", "long"] as const;
 function framesOf(category: Category, seed: number, level: "ordinary" | "flirty" = "ordinary", legsShare?: 15 | 30): Frame[] {
   const p = plan({ seed: seed * 7919 + COUNT, count: COUNT, categories: [category], ...(level === "flirty" ? { level } : {}), ...(legsShare === undefined ? {} : { legsShare }) });
   const runId = `run-${category}-${seed}`;
-  const local = localSentences({ slots: p.slots, keyOf: (s) => slotKeyOf(runId, s.attemptIdBase) });
+  const local = localSentences({ slots: p.slots.map((s) => ({ ...s, route: s.route })), keyOf: (s) => slotKeyOf(runId, s.attemptIdBase) });
   const hair = hairLinesOf(p.slots, LENGTHS[seed % LENGTHS.length] ?? "shoulder", runId);
   return p.slots.map((slot) => {
-    const sentence = local(slot) ?? plainSentence(slot);
+    const sentence = local(slot) ?? plainSentence({ ...slot, route: slot.route });
     let prompt: string | undefined;
     const assemble = (): string => {
-      prompt ??= assembleSlot(DESCRIPTOR, slot, sentence, MASTER, { runId, cameraRealism: seed % 4 !== 0, roomPlaceOf, lookOf: slotLookOf, hairStyleOf: (s) => hair.get(s.slotIndex) ?? null }).prompt;
+      prompt ??= assembleSlot(DESCRIPTOR, slot, sentence, MASTER, { runId, cameraRealism: seed % 4 !== 0, roomPlaceOf: (s) => roomPlaceOf({ ...s, route: "route" in s ? s.route : undefined }), lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }), hairStyleOf: (s) => hair.get(s.slotIndex) ?? null }).prompt;
       return prompt;
     };
     return { slot, capture: slot.capture ?? captureOfShot(slot.shot), sentence, hair: hair.get(slot.slotIndex) ?? null, prompt: assemble };
@@ -216,8 +216,8 @@ describe("a gaze or an expression is said at most twice in a run of 20", () => {
     const seed = (i + 1) * 104729;
     const p = plan({ seed, count: 20, categories: [...ORDINARY_BUILT_INS] });
     const runId = `run-mix-${seed}`;
-    const local = localSentences({ slots: p.slots, keyOf: (s) => slotKeyOf(runId, s.attemptIdBase) });
-    return p.slots.map((slot) => local(slot) ?? plainSentence(slot));
+    const local = localSentences({ slots: p.slots.map((s) => ({ ...s, route: s.route })), keyOf: (s) => slotKeyOf(runId, s.attemptIdBase) });
+    return p.slots.map((slot) => local(slot) ?? plainSentence({ ...slot, route: slot.route }));
   });
   const PLANS_OF_ONE: string[][] = ORDINARY_BUILT_INS.flatMap((c) => Array.from({ length: PLANS }, (_, i) => FRAMES[c].slice(i * COUNT, (i + 1) * COUNT).map((f) => f.sentence)));
   const over = (runs: readonly string[][], voices: readonly string[]) => runs.filter((run) => mostSaid(run, voices) > 2).length;
@@ -406,7 +406,7 @@ describe("«Ножки» plans keep the owner's rules (S5.8a)", () => {
 
   test("the body binding rides on every legs prompt when the avatar has a body", () => {
     const sample = LEGS_FRAMES.filter((_, i) => i % 40 === 0);
-    expect(offenders(sample, (f) => !assembleSlot(WITH_BODY, f.slot, f.sentence, MASTER, { runId: "run-legs", roomPlaceOf, lookOf: slotLookOf }).prompt.includes("her exact body proportions as described"))).toEqual(NONE);
+    expect(offenders(sample, (f) => !assembleSlot(WITH_BODY, f.slot, f.sentence, MASTER, { runId: "run-legs", roomPlaceOf: (s) => roomPlaceOf({ ...s, route: "route" in s ? s.route : undefined }), lookOf: (s) => slotLookOf({ ...s, route: "route" in s ? s.route : undefined }) }).prompt.includes("her exact body proportions as described"))).toEqual(NONE);
   });
 
   test("legwear goes only where the moment allows it: never on a moment that names socks, soles, bare skin or heels", () => {
@@ -481,7 +481,7 @@ describe("C3′: a face-hidden mirror frame covers her face from her eyebrows to
   // A look, her eyes or an expression would pull her face back out from behind the phone.
   const FACE_CLAUSE = /\b(?:look\w*|glanc\w*|gaz\w*|eyes?|star(?:e|es|ing)|smil\w*|grin\w*|smirk\w*|laugh\w*|pout\w*|wink\w*|lips?)\b/i;
   const hidden = C3_ALL.filter((f) => f.capture === "mirror-hidden");
-  const sideOn = hidden.filter((f) => slotLookOf(f.slot)?.mirrorBack === true);
+  const sideOn = hidden.filter((f) => slotLookOf({ ...f.slot, route: f.slot.route })?.mirrorBack === true);
 
   test("the sweep holds face-hidden frames of «Дом», «Гламур» and «Фитнес», side to the mirror and legs frames among them", () => {
     expect([...new Set(hidden.map((f) => f.slot.category))].sort()).toEqual(["fitness", "glamour", "home"]);

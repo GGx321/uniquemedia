@@ -62,7 +62,7 @@ describe("the plain sentence of a custom category's «Смелая» slot", () =
   });
 
   test("the same custom slot with no route reads the locative of its stored text, as it always did", () => {
-    expect(plainSentence({ category: "cat-paris-trip", location: "her room", activity: "walking along the river", outfit: "a denim jacket" })).toBe("In her room, she is walking along the river, wearing a denim jacket.");
+    expect(plainSentence({ route: undefined, category: "cat-paris-trip", location: "her room", activity: "walking along the river", outfit: "a denim jacket" })).toBe("In her room, she is walking along the river, wearing a denim jacket.");
   });
 });
 

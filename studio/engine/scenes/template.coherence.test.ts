@@ -42,7 +42,7 @@ function drawableCases(): Case[] {
               if (!momentAllowed(moment, capture, pose, level)) continue;
               for (const { outfit, legwear } of wardrobe(category, moment)) {
                 for (const key of KEYS) {
-                  const sentence = templateSentence({ category, location: place.name, activity: moment.text, outfit, legwear, shot: shotOf(capture), capture, pose }, { key, level });
+                  const sentence = templateSentence({ route: undefined, category, location: place.name, activity: moment.text, outfit, legwear, shot: shotOf(capture), capture, pose }, { key, level });
                   out.push({ where: `${category}/${place.name}/${moment.text}/${capture}/${pose}/${level}/${outfit}/${legwear ?? "-"}`, sentence, capture, pose });
                 }
               }

@@ -107,7 +107,7 @@ function roleOf(pose: ReturnType<typeof facePoseOf>): ClipFaceRole {
 }
 
 function plannedFacts(photo: PhotoSidecar, source: GeneratedSource, slot: PlanSlot): Omit<FrameFacts, "ageRefused"> {
-  const moment = momentOfSlot(slot) ?? null;
+  const moment = momentOfSlot({ ...slot, route: slot.route }) ?? null;
   const activity = trimmed(slot.activity);
   const carried = activity !== "" && says(source.prompt, activity);
   const level = contentLevelOf({ category: slot.category, level: slot.level, route: slot.route });

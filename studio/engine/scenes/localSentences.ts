@@ -23,7 +23,7 @@ export interface LocalSentencesInput<S extends TemplateSlot & { slotIndex: numbe
   impliedNudity?: boolean | undefined;
 }
 
-export function localSentences<S extends TemplateSlot & { slotIndex: number }>(input: LocalSentencesInput<S>): (slot: S) => string | null {
+export function localSentences<S extends TemplateSlot & { slotIndex: number }>(input: LocalSentencesInput<S>): (slot: Pick<S, "slotIndex">) => string | null {
   const rendered = new Map<number, string>();
   const seen = new Set<string>(input.seen);
   // S5.6R: a gaze or an expression at most twice in any 20 sentences in a row of the list (render.ts). The mock's `localTexts` keeps one the same way.

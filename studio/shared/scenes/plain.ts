@@ -36,7 +36,7 @@ export interface PlainSlot {
   /** Whether her face shows reads the pose; absent: front. */
   pose?: ScenePose | undefined;
   /** 5a.4 (S5.BA3, I5.73): the Seedream route, the marker of a «Смелая» frame of any category; with it the slot's place and moment are looked up in the companion or the shared custom banks. Absent: as before 5a.4. */
-  route?: SceneRoute | undefined;
+  route: SceneRoute | undefined;
 }
 
 /** An activity that opens with a preposition reads after «she is» («on the phone with her sister», «at the window, smiling»). */

@@ -116,8 +116,8 @@ const boldRunIds = (started: Awaited<ReturnType<typeof boot>>, avatarId: string)
  * not end with the other's); where they agree there is nothing to tell.
  */
 function endsByOrigin(text: string, slot: PlanSlot, studio: boolean): boolean {
-  const mine = slotCoverageOf(slot, studio);
-  const other = slotCoverageOf(slot, !studio);
+  const mine = slotCoverageOf({ ...slot, route: slot.route }, studio);
+  const other = slotCoverageOf({ ...slot, route: slot.route }, !studio);
   if (mine === other) return true;
   return mine === undefined ? other === undefined || !text.endsWith(other) : text.endsWith(mine);
 }
@@ -142,7 +142,7 @@ describe("a run straight from the card at «Смелая» over a custom categor
       const started = await boot();
       const { plan, written } = await boldRun(started, avatarId, [LLM_ONLY_REF], 4);
       const slots = plannedOf(plan);
-      expect(slots.some((slot) => slotCoverageOf(slot, true) !== slotCoverageOf(slot, false))).toBe(true);
+      expect(slots.some((slot) => slotCoverageOf({ ...slot, route: slot.route }, true) !== slotCoverageOf({ ...slot, route: slot.route }, false))).toBe(true);
       for (const slot of slots) expect({ slot: slot.slotIndex, byOrigin: endsByOrigin(written.get(slot.slotIndex) ?? "", slot, studio) }).toEqual({ slot: slot.slotIndex, byOrigin: true });
     });
   }
@@ -166,7 +166,7 @@ describe("a run's template sentences at «Смелая»", () => {
       const started = await boot();
       const { plan, written } = await boldRun(started, avatarId, ["home"], 6);
       const slots = plannedOf(plan);
-      expect(slots.some((slot) => slotCoverageOf(slot, true) !== slotCoverageOf(slot, false))).toBe(true);
+      expect(slots.some((slot) => slotCoverageOf({ ...slot, route: slot.route }, true) !== slotCoverageOf({ ...slot, route: slot.route }, false))).toBe(true);
       for (const slot of slots) expect({ slot: slot.slotIndex, byOrigin: endsByOrigin(written.get(slot.slotIndex) ?? "", slot, studio) }).toEqual({ slot: slot.slotIndex, byOrigin: true });
     });
   }
@@ -195,7 +195,7 @@ describe("a set's writes end their «Смелая» sentences with the coverage 
         const texts = textsOf(set);
         const slots = slotsOfSet(set);
         expect(texts.size).toBe(slots.length);
-        expect(slots.some((slot) => slotCoverageOf(slot, true) !== slotCoverageOf(slot, false))).toBe(true);
+        expect(slots.some((slot) => slotCoverageOf({ ...slot, route: slot.route }, true) !== slotCoverageOf({ ...slot, route: slot.route }, false))).toBe(true);
         for (const slot of slots) expect({ slot: slot.slotIndex, byOrigin: endsByOrigin(texts.get(slot.slotIndex) ?? "", slot, studio) }).toEqual({ slot: slot.slotIndex, byOrigin: true });
       });
     }
