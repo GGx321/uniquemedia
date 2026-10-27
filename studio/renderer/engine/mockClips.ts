@@ -5,7 +5,7 @@ import {
   CLIP_RETRYABLE_FAILURES,
   EXPORT_FPS,
   GROK_FALLBACK,
-  isBoldCategory,
+  isBoldFrame,
   OWN_IDEA_FALLBACK_LABEL,
   MAX_LISTED_BATCHES,
   MAX_LISTED_CLIPS,
@@ -485,9 +485,9 @@ interface Facts {
 function factsOf(photo: PhotoSummary): Facts {
   const age = photo.qa?.age;
   return {
-    bold: isBoldCategory(photo.category),
-    // S5.BA6: the photo's route joins here with `bold`; until then a category-only reading, as before.
-    level: contentLevelOf({ category: photo.category, level: undefined, route: undefined }),
+    // S5.BA6 (I5.79): the photo's own route joins its category, as in the engine's `planlessFacts`; a photo stored before 5a.4 has none and reads as before (QB-5).
+    bold: isBoldFrame({ category: photo.category, route: photo.route }),
+    level: contentLevelOf({ category: photo.category, level: undefined, route: photo.route }),
     judged: photo.qa?.faceCos !== undefined && photo.qa.faceMarked !== true,
     ageRefused: !(age === undefined || (age.adult === true && age.confidence >= AGE_MIN_CONFIDENCE)),
   };
