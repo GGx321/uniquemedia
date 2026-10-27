@@ -4,7 +4,7 @@ import { PriceBook } from "../../engine/money/prices";
 import { SCENE_CHUNK_ATTEMPTS } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { MOCK_RUN_WRITER } from "./mockEngine";
-import { MOCK_BOLD_SCENE_ATTEMPT_WORST, MOCK_SCENE_ATTEMPT_WORST } from "./mockSceneSets";
+import { MOCK_BOLD_SCENE_ATTEMPT_WORST, MOCK_SCENE_ATTEMPT_WORST, mockWriterExpected } from "./mockSceneSets";
 useNativeGlobals();
 
 // 5a.4 (S5.BA5, plan s5a4 r2.4 §5.3.4 «The mock», the S5.WC4 pattern): the mock cannot import `engine/`, so the price of one writer attempt is written out in
@@ -47,4 +47,20 @@ describe("the mock photo run's writer is the engine's ordinary writer", () => {
       expect([row.mock, row.engine()]).toEqual([row.value, row.value]);
     });
   }
+});
+
+// 5a.4 (S5.BA7, BA5 review L-5): the mock's writer expected figure by mode, held to the engine's `writerExpectedMicros` the same way: the bold call's per-request and per-scene terms
+// (MOCK_BOLD_TYPICAL_QUARTERS), rounded up once per figure; the ordinary call per scene, rounded as the book rounds one call.
+describe("the mock's expected writer cost is the engine's, by mode", () => {
+  test("bold: r requests carrying n scenes, r = 1..4, n = 1..100 (one request of 20 scenes expects 11 265 µ$, of 2 scenes 6 743 µ$)", () => {
+    const rows: { r: number; n: number; mock: number; engine: number }[] = [];
+    for (let r = 1; r <= 4; r++) for (let n = 1; n <= 100; n++) rows.push({ r, n, mock: mockWriterExpected("bold", r, n), engine: writerExpectedMicros(BOOK, WRITER_BOLD_CALL, r, n) });
+    expect(rows.filter((row) => row.mock !== row.engine)).toEqual([]);
+    expect([mockWriterExpected("bold", 1, 20), mockWriterExpected("bold", 1, 2)]).toEqual([11_265, 6_743]);
+  });
+
+  test("ordinary: one request of n scenes, n = 1..100", () => {
+    const rows = Array.from({ length: 100 }, (_, i) => ({ n: i + 1, mock: mockWriterExpected("ordinary", 1, i + 1), engine: writerExpectedMicros(BOOK, WRITER_CALL, 1, i + 1) }));
+    expect(rows.filter((row) => row.mock !== row.engine)).toEqual([]);
+  });
 });

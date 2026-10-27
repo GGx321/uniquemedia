@@ -80,10 +80,16 @@ export interface MockAutopilotWorld {
   avatarActive(avatarId: string): boolean;
   /** The library can say which of the avatar's photos are free (its usage and drafts are known). */
   libraryKnown(avatarId: string): boolean;
-  /** The unit prices; `bold` for a launch whose draft is «Смелая» with a «Смелая» category (option B: every photo is priced on the 2K route). */
+  /**
+   * The unit prices; `bold` for a launch whose draft is «Смелая» (option B: every photo is priced on the 2K route). 5a.4 (S5.BA7, I5.77): of any category, since every slot of it is routed, and
+   * its compose at the bold writer call.
+   */
   unit(bold: boolean): MockAutopilotUnit;
-  /** The writer's bound for a split of new photos (the engine's `writerChunksWorst` and `llmPossibleSlots`): the requests the compose can need and the photos that can go to the model. */
-  writerBound(split: readonly SplitEntry[]): { chunks: number; modelSlots: number };
+  /**
+   * The writer's bound for a split of new photos (the engine's `writerChunksWorst` and `llmPossibleSlots`): the requests the compose can need and the photos that can go to the model. 5a.4: at
+   * the draft's level, so at «Смелая» no custom category is covered.
+   */
+  writerBound(split: readonly SplitEntry[], level: SceneLevel | undefined): { chunks: number; modelSlots: number };
   prices(): { prices: Estimate["prices"]; pricesAsOf: string };
   /** The month's budget, and what is committed in it: spent, open, and (A21) the unspent rest of every running job's cap. */
   month(): { budgetMicros: number; committedMicros: number };
@@ -154,7 +160,8 @@ export interface MockAutopilotUnit {
   photoExpectedMicros: number;
   photoWorstMicros: number;
   writerChunkWorstMicros: number;
-  writerExpectedPerPhotoMicros: number;
+  /** 5a.4 (S5.BA7; the engine's `writerTypicalByRequests`): the compose's expected writer cost for `requests` requests carrying `scenes` model scenes, by the unit's writer mode. */
+  writerExpectedMicros(requests: number, scenes: number): number;
 }
 
 const SHAPE_ORDER = ["single", "collage", "slides"] as const;
@@ -329,9 +336,9 @@ export class MockAutopilot {
     let expected = 0;
     for (const { row, generate } of counted) {
       // 5a.2: the code template writes a built-in category and a covered custom one, so only an uncovered custom category's photos are priced for the writer (plan §5.6).
-      const bound = this.#world.writerBound(generate);
+      const bound = this.#world.writerBound(generate, draft.level);
       worst += bound.chunks * unit.writerChunkWorstMicros + row.toGenerate * unit.photoWorstMicros;
-      expected += bound.modelSlots * unit.writerExpectedPerPhotoMicros + row.toGenerate * unit.photoExpectedMicros;
+      expected += unit.writerExpectedMicros(bound.chunks, bound.modelSlots) + row.toGenerate * unit.photoExpectedMicros;
     }
     const prices = this.#world.prices();
 

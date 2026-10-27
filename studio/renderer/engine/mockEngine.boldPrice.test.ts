@@ -11,7 +11,7 @@ import { MIA, makeMock, mixedSetSeed, unwrap } from "./mockEngine.testkit";
 
 const ATTEMPTS = 3;
 const NO_POSES = { profile: false, back: false };
-const request = (count: number, categories: RunRequest["categories"], level?: "bold"): RunRequest => ({ avatarId: MIA.avatarId, count, categories, poses: NO_POSES, ...(level === undefined ? {} : { level }) });
+const request = (count: number, categories: RunRequest["categories"], level?: "flirty" | "bold"): RunRequest => ({ avatarId: MIA.avatarId, count, categories, poses: NO_POSES, ...(level === undefined ? {} : { level }) });
 const estimateOf = async (mock: ReturnType<typeof makeMock>, req: RunRequest) => (await unwrap(mock.client.request("runs.estimate", req))).estimate;
 
 describe("the bold attempt's price", () => {
@@ -30,10 +30,12 @@ describe("a run of a «Смелая» category is priced on the 2K route", () =>
     expect((await estimateOf(makeMock(), request(10, ["nightwear"], "bold"))).boldAttemptMicros).toBe(MOCK_BOLD_IMAGE);
   });
 
-  test("«Дом» 10 with «Ночнушки и бельё» 10: the ordinary photos stay at the mock's image, the bold ones are on 2K", async () => {
+  // 5a.4 (S5.BA7, 2026-10-27, plan s5a4 I5.77, §5.7; BA5 review L-5): scope edit. «Смелая» is every category's, so the «Дом» photos of the request are on the 2K route too (they stayed at
+  // the mock's image when «Дом» at «Смелая» drew as «Кокетливая»).
+  test("«Дом» 10 with «Ночнушки и бельё» 10: every photo is on 2K, «Дом» included", async () => {
     const estimate = await estimateOf(makeMock(), request(20, ["home", "nightwear"], "bold"));
-    expect(estimate.worstMicros).toBe(10 * ATTEMPTS * IMAGE + 10 * ATTEMPTS * MOCK_BOLD_IMAGE);
-    expect(estimate.expectedMicros).toBe(10 * IMAGE + 10 * MOCK_BOLD_IMAGE);
+    expect(estimate.worstMicros).toBe(20 * ATTEMPTS * MOCK_BOLD_IMAGE);
+    expect(estimate.expectedMicros).toBe(20 * MOCK_BOLD_IMAGE);
   });
 
   test("a bold photo is never priced below the settings' model: a dearer model keeps its price on the bold slots, the attempt stays the 2K one", async () => {
@@ -63,8 +65,9 @@ describe("a run of a «Смелая» category is priced on the 2K route", () =>
 });
 
 describe("a run with no photo on the 2K route", () => {
-  test("«Смелая» over the five ordinary categories is priced as it always was and names no 2K attempt", async () => {
-    const estimate = await estimateOf(makeMock(), request(10, ["home", "travel"], "bold"));
+  // 5a.4 (S5.BA7, 2026-10-27, plan s5a4 I5.77, §5.7; BA5 review L-5): scope edit. a request at «Смелая» puts every photo on the route, so the run with no photo on it is a «Кокетливая» one.
+  test("«Кокетливая» over the five ordinary categories is priced as it always was and names no 2K attempt", async () => {
+    const estimate = await estimateOf(makeMock(), request(10, ["home", "travel"], "flirty"));
     expect(estimate.worstMicros).toBe(10 * ATTEMPTS * IMAGE);
     expect("boldAttemptMicros" in estimate).toBe(false);
   });
@@ -135,11 +138,13 @@ describe("a price list with no 2K tier", () => {
     expect((await unwrap(mock.client.request("runs.list", {}))).runs).toHaveLength(0);
   });
 
-  test("still estimates a run with no «Смелая» category, at any level", async () => {
+  // 5a.4 (S5.BA7, 2026-10-27, plan s5a4 I5.77, §5.7; BA5 review L-5): scope edit. «Дом» at «Смелая» is on the route now, so it needs the tier; a run below «Смелая» still does not.
+  test("still estimates a run below «Смелая»; «Дом» at «Смелая» needs the tier", async () => {
     const mock = makeMock();
     mock.engine.lackBoldPrice();
     expect((await estimateOf(mock, request(10, ["home"]))).worstMicros).toBe(10 * ATTEMPTS * IMAGE);
-    expect((await estimateOf(mock, request(10, ["home"], "bold"))).worstMicros).toBe(10 * ATTEMPTS * IMAGE);
+    expect((await estimateOf(mock, request(10, ["home"], "flirty"))).worstMicros).toBe(10 * ATTEMPTS * IMAGE);
+    expect(await errorOf(mock.client.request("runs.estimate", request(10, ["home"], "bold")))).toMatchObject({ code: "PRICE_UNAVAILABLE", priceScope: "bold" });
   });
 
   test("a set whose scenes are on the route cannot be estimated", async () => {
@@ -152,11 +157,13 @@ describe("a price list with no 2K tier", () => {
     expect(await errorOf(mock.client.request("runs.estimateFromScenes", { sceneSetId: set.sceneSetId, revision: set.revision }))).toMatchObject({ code: "PRICE_UNAVAILABLE", priceScope: "bold" });
   });
 
-  test("a launch of the route is refused its estimate the same way, a launch of the five is not", async () => {
+  // 5a.4 (S5.BA7, 2026-10-27, plan s5a4 I5.77, §5.7; BA5 review L-5): scope edit. a launch at «Смелая» draws on the route whatever its categories; the launch that does not is a «Кокетливая» one.
+  test("a launch of the route is refused its estimate the same way, «Дом» at «Смелая» too; a «Кокетливая» launch is not", async () => {
     const mock = runWorld();
     mock.engine.lackBoldPrice();
     expect(await errorOf(mock.client.request("autopilot.estimate", { draft: draftOf({ categories: ["nightwear"], level: "bold" }) }))).toMatchObject({ code: "PRICE_UNAVAILABLE", priceScope: "bold" });
-    const plain = await unwrap(mock.client.request("autopilot.estimate", { draft: draftOf({ categories: ["home"], level: "bold" }) }));
+    expect(await errorOf(mock.client.request("autopilot.estimate", { draft: draftOf({ categories: ["home"], level: "bold" }) }))).toMatchObject({ code: "PRICE_UNAVAILABLE", priceScope: "bold" });
+    const plain = await unwrap(mock.client.request("autopilot.estimate", { draft: draftOf({ categories: ["home"], level: "flirty" }) }));
     expect(plain.preview.estimate.worstMicros).toBeGreaterThan(0);
   });
 
@@ -184,9 +191,10 @@ describe("a «Смелая» launch prices every photo at the bold unit (option 
     expect(preview.estimate.worstMicros).toBe(preview.totals.toGenerate * ATTEMPTS * MOCK_BOLD_IMAGE);
   });
 
-  test("a «Смелая» launch of the five ordinary categories keeps the mock's image price", async () => {
+  // 5a.4 (S5.BA7, 2026-10-27, plan s5a4 I5.77, §5.7; BA5 review L-5): scope edit. option B at any «Смелая» draft: the five's photos are on the route too.
+  test("a «Смелая» launch of the five ordinary categories prices every photo at the bold unit too", async () => {
     const preview = await plan(runWorld(), { categories: ["home"], level: "bold" });
-    expect(preview.estimate.worstMicros).toBe(preview.totals.toGenerate * ATTEMPTS * IMAGE);
+    expect(preview.estimate.worstMicros).toBe(preview.totals.toGenerate * ATTEMPTS * MOCK_BOLD_IMAGE);
   });
 
   test("an ordinary launch keeps the mock's image price", async () => {

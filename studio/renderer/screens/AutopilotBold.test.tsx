@@ -247,7 +247,9 @@ describe("«Запустить» refused for the 2K tier", () => {
 });
 
 describe("the plan when the 2K price is missing (gap D)", () => {
-  test("says state 55's sentence as a warning, never the general price text; without a «Смелая» category it plans as before", async () => {
+  // 5a.4 (S5.BA7, 2026-10-27, plan s5a4 I5.77, §5.7; BA5 review L-5): scope edit. a draft at «Смелая» draws on the route whatever its categories, so the plan that needs no tier is a
+  // «Кокетливая» one.
+  test("says state 55's sentence as a warning, never the general price text; below «Смелая» it plans as before", async () => {
     const { engine } = world();
     engine.lackBoldPrice();
     await openAutopilot();
@@ -258,7 +260,8 @@ describe("the plan when the 2K price is missing (gap D)", () => {
     expect(notice.closest(".notice")?.classList.contains("notice-warn")).toBe(true);
     expect(screen.queryByText(errorText({ code: "PRICE_UNAVAILABLE" })) === null).toBe(true);
     await click(categoryChip("Ночнушки и бельё"));
-    expect(screen.queryByText(PRICE_SCOPES_RU.bold) === null).toBe(true);
+    await click(level("Кокетливая"));
+    await waitFor(() => expect(screen.queryByText(PRICE_SCOPES_RU.bold) === null).toBe(true));
     expect(goButton().textContent?.startsWith("Запустить")).toBe(true);
   });
 });

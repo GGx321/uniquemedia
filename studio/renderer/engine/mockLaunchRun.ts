@@ -440,7 +440,8 @@ export class MockRun {
       if (work === undefined) continue;
       moved = true;
       if (reserve.kind === "writer") {
-        this.#close(key, this.#w.writerBound(work.generate).modelSlots * this.#w.unit(this.#bold).writerExpectedPerPhotoMicros);
+        const bound = this.#w.writerBound(work.generate, this.#launch.draft.level);
+        this.#close(key, this.#w.unit(this.#bold).writerExpectedMicros(bound.chunks, bound.modelSlots));
         if (work.phase === "composing") {
           this.#openSet(work);
           work.written = true;
@@ -570,7 +571,7 @@ export class MockRun {
 
   /** The most writer requests the avatar's compose can need: the engine's `writerChunksWorst` over the launch's categories (0 when the template writes every scene). */
   #writerChunks(work: Work): number {
-    return this.#w.writerBound(work.generate).chunks;
+    return this.#w.writerBound(work.generate, this.#launch.draft.level).chunks;
   }
 
   /** A compose the code template writes whole (5a.2): no request, no reserve, no money. The set exists and holds every sentence at once, as the engine's does. */

@@ -61,13 +61,20 @@ describe("a photo drawn on the Seedream route says so", () => {
     expect(photos.filter((p) => p.route === undefined)).toHaveLength(10 - routedScenes);
   });
 
-  test("a «Смелая» run over the five ordinary categories carries no route", async () => {
+  // 5a.4 (S5.BA7, 2026-10-27, plan s5a4 I5.77, §5.7; BA5 review L-5): scope edit. «Смелая» plans the five on the route (I5.71), so a «Смелая» run over them carries it on every photo; the run
+  // with no route is a «Кокетливая» one.
+  test("a «Смелая» run over the five ordinary categories carries the route on every photo; a «Кокетливая» one carries none", async () => {
     const { mock } = withEvents();
     const runId = await start(mock, boldRun(5, ["home", "travel"]));
     mock.scheduler.runAll();
     const photos = await photosOf(mock, runId);
     expect(photos).toHaveLength(5);
-    expect(photos.some((p) => "route" in p)).toBe(false);
+    expect(photos.every((p) => p.route === "seedream")).toBe(true);
+    const flirty = await start(mock, { ...boldRun(5, ["home", "travel"]), level: "flirty" });
+    mock.scheduler.runAll();
+    const drawn = await photosOf(mock, flirty);
+    expect(drawn).toHaveLength(5);
+    expect(drawn.some((p) => "route" in p)).toBe(false);
   });
 
   test("a run made from a set carries the route of each scene it draws", async () => {

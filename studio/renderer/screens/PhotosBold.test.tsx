@@ -110,7 +110,9 @@ describe("«Подача: Обычная · Кокетливая · Смелая
     expect(within(card()).getByText("Seedream 2K — до $0.093 за попытку по прайсу")).toBeDefined();
   });
 
-  test("47a: «Дом» 10 + «Ночнушки и бельё» 10 — «бельё» only, 10 flirty, the engine's ≈ $1.53 · до $4.59", async () => {
+  // 5a.4 (S5.BA7, 2026-10-27, plan s5a4 I5.77, §5.7; BA5 review L-5): scope edit. the mock prices «Смелая» as the engine does, so «Дом»'s photos are on the 2K unit too: §5.7's
+  // «Дом» 10 + «Ночнушки» 10 is $1.86 / $5.58, not 5a.3's $1.53 / $4.59. The caption is the card's own (S5.BA8 rewrites it).
+  test("47a: «Дом» 10 + «Ночнушки и бельё» 10 — «бельё» only, 10 flirty, the engine's ≈ $1.86 · до $5.58", async () => {
     const { engine, client } = await openPhotos();
     // §10.3's example prices «Дом» on Grok quality, 60 000 µ$ an attempt; the mock's own default is cheaper.
     engine.setRunImagePrice(60_000);
@@ -120,19 +122,21 @@ describe("«Подача: Обычная · Кокетливая · Смелая
     const estimate = await engineEstimate(client, { avatarId: MIA.avatarId, count: 20, categories: ["home", "nightwear"], level: "bold" });
     await within(card()).findByRole("button", { name: goName(20, estimate.worstMicros) });
     expect(expectedShown()).toBe(`≈ ${formatUsd(estimate.expectedMicros)}`);
-    expect(expectedShown()).toBe("≈ $1.53");
-    expect(within(card()).getByRole("button", { name: /^Сгенерировать 20 фото · до \$4\.59$/ })).toBeDefined();
+    expect(expectedShown()).toBe("≈ $1.86");
+    expect(within(card()).getByRole("button", { name: /^Сгенерировать 20 фото · до \$5\.58$/ })).toBeDefined();
   });
 
-  test("47b: only the five — they draw as «Кокетливая», the engine prices them on the owner's model, no Seedream line and no slow line", async () => {
+  // 5a.4 (S5.BA7, 2026-10-27, plan s5a4 I5.77, §5.7; BA5 review L-5): scope edit. the five at «Смелая» draw on the route (I5.71), so the engine prices them at the 2K unit and the card
+  // shows the Seedream price line; the caption and the slow line are the card's own (S5.BA8 rewrites both).
+  test("47b: only the five — the engine prices them on the 2K route and the card says the Seedream price; no slow line yet", async () => {
     const { engine, client } = await openPhotos();
     await pickLevel("Смелая");
     expect(within(card()).getByText(FIVE)).toBeDefined();
     expect(lastEstimate(engine)).toEqual({ avatarId: MIA.avatarId, count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], level: "bold" });
     const estimate = await engineEstimate(client, { avatarId: MIA.avatarId, count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], level: "bold" });
-    expect(estimate.boldAttemptMicros).toBeUndefined();
+    expect(estimate.boldAttemptMicros).toBe(93_000);
     await within(card()).findByRole("button", { name: goName(20, estimate.worstMicros) });
-    expect(within(card()).queryByText(/^Seedream 2K/) === null).toBe(true);
+    expect(within(card()).getByText("Seedream 2K — до $0.093 за попытку по прайсу")).toBeDefined();
     expect(within(card()).queryByText(SLOW) === null).toBe(true);
   });
 
@@ -291,10 +295,11 @@ describe("state 55: the 2K price is missing", () => {
     expect(screen.queryByText(PRICE_SCOPES_RU.bold) === null).toBe(true);
   });
 
-  test("the rest still works: without a «Смелая» category the card prices as before", async () => {
+  // 5a.4 (S5.BA7, 2026-10-27, plan s5a4 I5.77, §5.7; BA5 review L-5): scope edit. at «Смелая» the five need the 2K tier too, so the card that prices as before is a «Кокетливая» one.
+  test("the rest still works: below «Смелая» the card prices as before", async () => {
     const { engine } = await openPhotos();
     engine.lackBoldPrice();
-    await pickLevel("Смелая");
+    await pickLevel("Кокетливая");
     await within(card()).findByRole("button", { name: /^Сгенерировать 20 фото · до \$/ });
     expect(screen.queryByText(PRICE_SCOPES_RU.bold) === null).toBe(true);
   });

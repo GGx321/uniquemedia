@@ -62,6 +62,7 @@ import {
   OWN_MUSIC_NOT_FOUND_DETAIL,
   isCustomCategory,
   impliedNudityOf,
+  SCENE_CHUNK_ATTEMPTS,
   OWN_PHOTO_NOT_FOUND_DETAIL,
   type PhotoQaSummary,
   type PhotoUnavailableReason,
@@ -125,7 +126,7 @@ import { createEngineClient, type EngineBridge, type EngineClient } from "./clie
 import { bodyCompositeRefusal, descriptorEditOutcome } from "./mockAvatarEdit";
 import { matchingCheck, MOCK_CHECK_ESTIMATE } from "./mockDescriptorCheck";
 import { MockCategories } from "./mockCategories";
-import { MockSceneSets, MOCK_SCENE_ATTEMPT_WORST, type MockSceneAttempt, type MockSceneSetSeed } from "./mockSceneSets";
+import { MockSceneSets, MOCK_SCENE_ATTEMPT_WORST, mockWriterAttemptWorst, mockWriterExpected, type MockSceneAttempt, type MockSceneSetSeed, type MockWriterMode } from "./mockSceneSets";
 import { MockAutopilot, type MockAutopilotUnit, type PaidFault } from "./mockAutopilot";
 import { boldAttemptWorst, isBoldLook, MOCK_BOLD_IMAGE, requestBoldPhotos } from "./mockBoldRoute";
 import { MockClips, type MockClipsOptions, type MockClipScript, type MockExportResult, type MockRetryResult, type MockVideoPrices } from "./mockClips";
@@ -216,13 +217,22 @@ export const MOCK_RUN_ATTEMPTS_PER_SLOT = 3;
 /** The writer's worst case per chunk is the real engine's (money/estimate.ts: 2 attempts × $0.0375, T5c's raised ceiling), so mock and engine prices agree to the micro-dollar. */
 export const MOCK_RUN_WRITER = { expectedPerPhoto: 458, worstPerCall: 37_500, worstPerChunk: 75_000, photosPerChunk: 25 } as const;
 
-/** The model's share of a run's slots (the real `WriterLoad`): requests at worst, and the scenes they can carry. */
+/** The model's share of a run's slots (the real `WriterLoad`): requests at worst, and the scenes they can carry; 5a.4 (S5.BA7), the mode they are asked in (the request's level). */
 interface MockWriterLoad {
   chunks: number;
   scenes: number;
+  mode: MockWriterMode;
 }
 /** A run whose every sentence is written already, or that the template writes whole: it never asks the model. */
-const NO_WRITER_LOAD: MockWriterLoad = { chunks: 0, scenes: 0 };
+const NO_WRITER_LOAD: MockWriterLoad = { chunks: 0, scenes: 0, mode: "ordinary" };
+
+/** 5a.4 (S5.BA7, I5.77): a run's writer at worst (each request at its attempts) and expected (one attempt each), by mode: the ordinary figures are the mock's as they always were. */
+function runWriterWorst(load: MockWriterLoad): number {
+  return load.mode === "bold" ? load.chunks * SCENE_CHUNK_ATTEMPTS * mockWriterAttemptWorst("bold") : load.chunks * MOCK_RUN_WRITER.worstPerChunk;
+}
+function runWriterExpected(load: MockWriterLoad): number {
+  return load.mode === "bold" ? mockWriterExpected("bold", load.chunks, load.scenes) : load.scenes * MOCK_RUN_WRITER.expectedPerPhoto;
+}
 
 /** The mock gate's similarity scores, cycled over a run's slots; every fifth slot carries none (a profile or back shot, or a photo from before the gate). */
 const MOCK_FACE_COS = [0.86, 0.81, 0.71, 0.78] as const;
@@ -1075,7 +1085,7 @@ export class MockEngine implements EngineBridge {
         avatarActive: (avatarId) => this.avatars.some((a) => a.avatarId === avatarId && a.status === "active"),
         libraryKnown: (avatarId) => !this.launchLibraryLost && this.availabilityOf(avatarId).state === "known",
         unit: (bold) => this.autopilotUnit(bold),
-        writerBound: (split) => this.sceneSets.writerBoundOf(split),
+        writerBound: (split, level) => this.sceneSets.writerBoundOf(split, level),
         prices: () => ({ prices: this.price.prices, pricesAsOf: this.price.pricesAsOf }),
         month: () => this.launchMonthRoom(),
         paidGate: () => this.launchGate(),
@@ -3222,7 +3232,7 @@ export class MockEngine implements EngineBridge {
         if (boldLevelNeeded(c.payload)) return this.fail(c, BOLD_REFUSAL);
         const refusal = this.libraryOpen ? (this.runnableRefusal(c.payload.avatarId) ?? this.categoryRefusal(c.payload.categories)) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
         if (refusal) return this.fail(c, refusal);
-        return this.ok(c, { estimate: this.sceneEstimate(this.sceneSets.composePrice(c.payload.count, c.payload.categories)) });
+        return this.ok(c, { estimate: this.sceneEstimate(this.sceneSets.composePrice(c.payload.count, c.payload.categories, c.payload.level)) });
       }
       case "scenes.compose": {
         const { acceptedWorstMicros, ...request } = c.payload;
@@ -3238,7 +3248,7 @@ export class MockEngine implements EngineBridge {
           this.runnableRefusal(request.avatarId) ??
           this.categoryRefusal(request.categories) ??
           (this.sceneSets.hasOpenSet(request.avatarId) ? { code: "VALIDATION" as const, sceneReason: "open-set" as const, detail: `avatar ${request.avatarId} already has an open scene set; discard it first` } : null) ??
-          (free ? null : this.priceGate(acceptedWorstMicros, this.sceneSets.composePrice(request.count, request.categories).worst));
+          (free ? null : this.priceGate(acceptedWorstMicros, this.sceneSets.composePrice(request.count, request.categories, request.level).worst));
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, this.sceneSets.compose(request));
       }
@@ -3325,7 +3335,7 @@ export class MockEngine implements EngineBridge {
         // No library open: the engine cannot find the avatar either.
         const refusal = this.libraryOpen ? (this.runnableRefusal(c.payload.avatarId) ?? this.categoryRefusal(c.payload.categories)) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
         if (refusal) return this.fail(c, refusal);
-        const noTier = this.boldPriceGate(requestBoldPhotos(c.payload) > 0);
+        const noTier = this.boldPriceGate(requestBoldPhotos({ count: c.payload.count, level: c.payload.level }) > 0);
         if (noTier) return this.fail(c, noTier);
         return this.ok(c, { estimate: this.runPrice(c.payload) });
       }
@@ -3343,7 +3353,7 @@ export class MockEngine implements EngineBridge {
           this.categoryRefusal(request.categories) ??
           this.masterRefusal(request.avatarId) ??
           this.gateRefusal(this.settings.imageAgeCheck === "on") ??
-          this.boldPriceGate(requestBoldPhotos(request) > 0) ??
+          this.boldPriceGate(requestBoldPhotos({ count: request.count, level: request.level }) > 0) ??
           this.priceGate(acceptedWorstMicros, this.runPrice(request).worstMicros) ??
           (this.masterPreflight.get(request.avatarId) ?? null);
         if (refusal) return this.fail(c, refusal);
@@ -3389,7 +3399,7 @@ export class MockEngine implements EngineBridge {
           const refusal = this.runnableRefusal(payload.avatarId);
           if (refusal) return this.fail(c, refusal);
           // Round 2: for a stored set the bold share is its ACTIVE scenes drawn on the Seedream route (the engine's `routedSlots` over the set), not a split of the count.
-          let bold = requestBoldPhotos({ count: payload.count, categories });
+          let bold = requestBoldPhotos({ count: payload.count, level: payload.level });
           if (payload.sceneSetId !== undefined) {
             const set = this.sceneSets.find(payload.sceneSetId);
             if (set === undefined || set.avatarId !== payload.avatarId) return this.fail(c, { code: "NOT_FOUND", detail: `no scene set ${payload.sceneSetId} for avatar ${payload.avatarId}` });
@@ -3406,9 +3416,10 @@ export class MockEngine implements EngineBridge {
         if (!left.ok) return this.fail(c, left.error);
         // Only the photos the draw allocation still buys are priced (the engine's rule when a price has risen since the plan), so the figure is the count form's for the photos it names.
         // 5a.3 (S5.9f, option B): a «Смелая» launch's photos are all priced at the bold unit.
-        // The engine decides from the avatar's scene SET (`set !== null && isBoldLook(set.request)`): the file exists once the launch's compose has made it, not at the start.
+        // The engine decides from the avatar's scene SET: the file exists once the launch's compose has made it, not at the start. 5a.4 (S5.BA7, I5.77; the engine's `drawsOnRoute`): by the
+        // set's own routes, any planned scene on the route (a removed one too), never by its request's level: a set composed before 5a.4 at «Смелая» over the five draws on the owner's model.
         const set = left.result.sceneSetId === null ? undefined : this.sceneSets.find(left.result.sceneSetId);
-        const boldLaunch = set !== undefined && isBoldLook({ level: set.level, categories: set.categories.map((entry) => entry.ref) });
+        const boldLaunch = set !== undefined && set.scenes.some((scene) => scene.place !== null && scene.route === "seedream");
         const photoWorst = this.runPriceFromScenes(1, boldLaunch ? 1 : 0).worstMicros;
         const photos = photoWorst > 0 ? Math.min(left.result.photos, Math.floor(left.result.allocationMicros / photoWorst)) : left.result.photos;
         // The engine prices a launch with nothing left to draw for one photo and zeroes the sums, so a «Смелая» launch still names the 2K attempt.
@@ -4479,8 +4490,9 @@ export class MockEngine implements EngineBridge {
       attemptWorstMicros: worstImage + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.worst : 0),
       photoExpectedMicros: (bold ? boldAttemptWorst(image) : image) + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.expected : 0),
       photoWorstMicros: MOCK_RUN_ATTEMPTS_PER_SLOT * (worstImage + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.worst : 0)),
-      writerChunkWorstMicros: MOCK_RUN_WRITER.worstPerChunk,
-      writerExpectedPerPhotoMicros: MOCK_RUN_WRITER.expectedPerPhoto,
+      // 5a.4 (S5.BA7, I5.77; the engine's `unitPricesOf`): a «Смелая» launch composes at the bold writer call, its expected cost a term per request and one per scene.
+      writerChunkWorstMicros: bold ? SCENE_CHUNK_ATTEMPTS * mockWriterAttemptWorst("bold") : MOCK_RUN_WRITER.worstPerChunk,
+      writerExpectedMicros: (requests, scenes) => (bold ? mockWriterExpected("bold", requests, scenes) : scenes * MOCK_RUN_WRITER.expectedPerPhoto),
     };
   }
 
@@ -4788,9 +4800,10 @@ export class MockEngine implements EngineBridge {
   }
 
   /** The writer's bound for a run's request over the library as it is now (`writerChunksWorst`, `llmPossibleSlots`): the share of its slots that can go to the model. */
-  private writerLoadOf(request: Pick<RunRequest, "count" | "categories">): MockWriterLoad {
-    const { chunks, modelSlots } = this.sceneSets.writerBound(request.count, request.categories);
-    return { chunks, scenes: modelSlots };
+  private writerLoadOf(request: Pick<RunRequest, "count" | "categories" | "level">): MockWriterLoad {
+    // 5a.4 (S5.BA7, I5.77): at «Смелая» no custom category is covered and the writer is the bold call.
+    const { chunks, modelSlots } = this.sceneSets.writerBound(request.count, request.categories, request.level);
+    return { chunks, scenes: modelSlots, mode: request.level === "bold" ? "bold" : "ordinary" };
   }
 
   /** A whole run at today's mock prices: every slot's every attempt, the writer chunked, and the age checks when they are on. */
@@ -4803,18 +4816,18 @@ export class MockEngine implements EngineBridge {
     return this.sceneSets.plannedSlots(request).map((slot) => ({ category: slot.category, end: null, ...(slot.route === undefined ? {} : { route: slot.route }) }));
   }
 
-  private runPrice(request: Pick<RunRequest, "count" | "categories">): Estimate {
+  private runPrice(request: Pick<RunRequest, "count" | "categories" | "level">): Estimate {
     const { count } = request;
     const image = this.runImagePrice;
     const attempts = count * MOCK_RUN_ATTEMPTS_PER_SLOT;
     const ageOn = this.settings.imageAgeCheck === "on";
     // I5.30: the template writes a built-in and a covered category whole; only an uncovered custom category's slots can go to the model (the engine's `runEstimate`).
-    const { chunks, scenes } = this.writerLoadOf(request);
-    // 5a.3 (S5.9f, §10.2): every photo of a «Смелая» category is priced on the 2K route, the upper bound of the plan's need (the engine's `runEstimate`).
-    const bold = requestBoldPhotos(request);
+    const load = this.writerLoadOf(request);
+    // 5a.3 (S5.9f, §10.2), 5a.4 (S5.BA7, I5.77): every photo of a request at «Смелая» is priced on the 2K route, the upper bound of the plan's need (the engine's `runEstimate`).
+    const bold = requestBoldPhotos({ count, level: request.level });
     return {
-      expectedMicros: (count - bold) * image + bold * boldAttemptWorst(image) + scenes * MOCK_RUN_WRITER.expectedPerPhoto + (ageOn ? count * MOCK_AGE_CHECK_PER_SLOT.expected : 0),
-      worstMicros: (attempts - bold * MOCK_RUN_ATTEMPTS_PER_SLOT) * image + bold * MOCK_RUN_ATTEMPTS_PER_SLOT * boldAttemptWorst(image) + chunks * MOCK_RUN_WRITER.worstPerChunk + (ageOn ? attempts * MOCK_AGE_CHECK_PER_SLOT.worst : 0),
+      expectedMicros: (count - bold) * image + bold * boldAttemptWorst(image) + runWriterExpected(load) + (ageOn ? count * MOCK_AGE_CHECK_PER_SLOT.expected : 0),
+      worstMicros: (attempts - bold * MOCK_RUN_ATTEMPTS_PER_SLOT) * image + bold * MOCK_RUN_ATTEMPTS_PER_SLOT * boldAttemptWorst(image) + runWriterWorst(load) + (ageOn ? attempts * MOCK_AGE_CHECK_PER_SLOT.worst : 0),
       prices: this.price.prices,
       pricesAsOf: this.price.pricesAsOf,
       ...(bold === 0 ? {} : { boldAttemptMicros: MOCK_BOLD_IMAGE }),
@@ -4936,8 +4949,8 @@ export class MockEngine implements EngineBridge {
     const openSlots = this.playableSlots(run);
     const capLeft = Math.max(0, run.capMicros - this.runCommitted(run));
     // The real engine's remainingEstimate: an unwritten chunk adds the writer's ceiling (the run's `writerLoad`, fixed at its start: none for a built-in or covered run), and its typical share per scene.
-    const writerWorst = run.writerDone ? 0 : run.writerLoad.chunks * MOCK_RUN_WRITER.worstPerChunk;
-    const writerExpected = run.writerDone ? 0 : run.writerLoad.scenes * MOCK_RUN_WRITER.expectedPerPhoto;
+    const writerWorst = run.writerDone ? 0 : runWriterWorst(run.writerLoad);
+    const writerExpected = run.writerDone ? 0 : runWriterExpected(run.writerLoad);
     // 5a.3 (S5.9f): each open slot is priced on its own route; the 2K attempt is named while a Seedream slot is open.
     const prices = openSlots.map((s) => this.slotPrice(run, s.route));
     const sum = (pick: (p: { expected: number; attemptWorst: number }) => number): number => prices.reduce((total, p) => total + pick(p), 0);
@@ -4961,7 +4974,7 @@ export class MockEngine implements EngineBridge {
     const own = this.latestRunJobOf(run.runId);
     if (own !== null && own.reserveKeys.some((key) => this.reserves.has(key))) return false;
     // The real engine's minToProgress: ONE writer call's ceiling for an unwritten chunk (the writer runs first) plus one image attempt.
-    const writer = run.writerDone || run.writerLoad.chunks === 0 ? 0 : MOCK_RUN_WRITER.worstPerCall;
+    const writer = run.writerDone || run.writerLoad.chunks === 0 ? 0 : run.writerLoad.mode === "bold" ? mockWriterAttemptWorst("bold") : MOCK_RUN_WRITER.worstPerCall;
     // The cheapest next attempt of any open slot (the engine's `minToProgress`).
     // A slot with all three attempts paid sends nothing, so with none left to send there is nothing to fund (`minToProgress` null).
     const playable = this.playableSlots(run);

@@ -1,5 +1,6 @@
 import {
   ideaNamesMirror,
+  isBoldFrame,
   isCustomCategory,
   MAX_COMPOSE_SCENES,
   orderCategories,
@@ -32,7 +33,7 @@ import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared
 import { covers, isWaterPlaceName } from "../../shared/scenes/custom";
 import { apportionLegs, drawLevelOf, flirtyCountOf, legsCountOf, spreadLevels, tierSpreadOf, type LevelCounts } from "../../shared/scenes/level";
 import { slotCoverageOf } from "../../shared/scenes/template";
-import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
+import { coversAt, llmPossibleSlots, writerChunksWorst, writerModeAt, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
 import { bankDraw, customBoldDraw, legsDraw, localTexts, openedPlace, plainTextOf, type LocalScene } from "./mockBankScenes";
 import { mockAnglesOf } from "./mockCategories";
 import type { Scheduler } from "./scheduler";
@@ -57,6 +58,35 @@ export const MOCK_BOLD_SCENE_ATTEMPT_WORST = 48_750;
 const TYPICAL_PER_SCENE = 457.5;
 /** What a rejected answer cost: its tokens, paid and unusable. */
 const REJECTED_COST = 2_000;
+
+/** 5a.4 (S5.BA5, S5.BA7, plan s5a4 §5.3.4, I5.77): the scene writer's two modes, the engine's `WriterMode`: «bold» for a request at «Смелая» and a chunk that holds a «Смелая» frame. */
+export type MockWriterMode = "ordinary" | "bold";
+
+/** One writer attempt at its ceiling, by mode: the engine's `writerAttemptWorstMicros` of `writerCallOf(mode)`. */
+export function mockWriterAttemptWorst(mode: MockWriterMode): number {
+  return mode === "bold" ? MOCK_BOLD_SCENE_ATTEMPT_WORST : MOCK_SCENE_ATTEMPT_WORST;
+}
+
+/**
+ * 5a.4 (S5.BA7, BA5 review L-5): the bold writer's typical tokens (WRITER_BOLD_CALL: 1 124 in and 1 934 out a request, 75 in and 63 out a scene) at $1.25 / $2.50 per M, in quarters of a
+ * micro-dollar so no float is summed: 24 960 a request (6 240 µ$) and 1 005 a scene (251.25 µ$). Held to the engine's `writerExpectedMicros` by mockSceneSets.attempt.table.test.ts.
+ */
+export const MOCK_BOLD_TYPICAL_QUARTERS = { perRequest: 24_960, perScene: 1_005 } as const;
+
+/**
+ * What `requests` writer requests carrying `scenes` scenes are expected to cost at one attempt each, by mode (the engine's `writerExpectedMicros`): the ordinary call per scene, as the mock
+ * always priced it; the bold call a term per request and one per scene, rounded up once, as one call of the book is.
+ */
+export function mockWriterExpected(mode: MockWriterMode, requests: number, scenes: number): number {
+  if (scenes === 0) return 0;
+  if (mode === "ordinary") return Math.round(scenes * TYPICAL_PER_SCENE);
+  return Math.ceil((MOCK_BOLD_TYPICAL_QUARTERS.perRequest * requests + MOCK_BOLD_TYPICAL_QUARTERS.perScene * scenes) / 4);
+}
+
+/** The mode a request asks the writer in for the scenes it sends the model: «bold» when any of them is a «Смелая» frame (the engine's `writerModeOf`, r2.1 L3). */
+function modeOfScenes(scenes: readonly Pick<Scene, "category" | "route">[]): MockWriterMode {
+  return scenes.some((scene) => scene.category !== "own" && isBoldFrame({ category: scene.category, route: scene.route })) ? "bold" : "ordinary";
+}
 /** Writer ids per chunk: the answered attempts plus two spares for attempts that got no answer. */
 const IDS_PER_CHUNK = SCENE_CHUNK_ATTEMPTS + 2;
 const CANCEL_CONFIRM_MS = 50;
@@ -119,6 +149,8 @@ interface Attempt {
   cost: number;
   /** Reserved and not closed by the engine: counted at its worst case until a reconcile. */
   open: boolean;
+  /** 5a.4 (S5.BA7): the attempt's worst case, by the mode its request was asked in: what an open reserve holds and a reconcile closes it at. */
+  worst: number;
 }
 
 interface Chunk {
@@ -190,6 +222,8 @@ export interface MockReviewPlan {
   attemptsLeft: number;
   /** 5a.2: how many of the write's scenes the model must write; the code template writes the rest at $0, so 0 prices the write at nothing. */
   modelScenes: number;
+  /** 5a.4 (S5.BA7): the mode its request is asked in (the engine's `ReviewPlan.mode`): «bold» when a scene it sends the model is a «Смелая» frame; an idea write is ordinary. */
+  mode: MockWriterMode;
   begin: (set: MockSet) => Review;
 }
 
@@ -577,21 +611,26 @@ export class MockSceneSets {
           );
     const chunks = chunksOf(seed.sceneSetId, scenes.filter((scene) => scene.place !== null));
     const written = seed.written ?? 0;
-    if (seed.scenes === undefined) for (const scene of scenes) if (scene.sceneId <= written) scene.text = sentenceOf(scene, 0, this.#deps.impliedNudity(seed.avatarId));
+    const impliedNudity = this.#deps.impliedNudity(seed.avatarId);
+    // 5a.4 (S5.BA7): a chunk is asked in the mode of the scenes the template leaves to the model (`writerModeOf`), so its attempts are priced in that mode.
+    const local = localTexts({ sceneSetId: seed.sceneSetId, k: 0, scenes, snapshots: refs.filter(isCustomCategory).map((ref) => ({ ref })), impliedNudity });
+    const modeOf = (chunk: Chunk): MockWriterMode => modeOfScenes(scenes.filter((scene) => chunk.sceneIds.includes(scene.sceneId) && local(scene.sceneId) === null));
+    if (seed.scenes === undefined) for (const scene of scenes) if (scene.sceneId <= written) scene.text = sentenceOf(scene, 0, impliedNudity);
     // A chunk whose scenes were written was answered once.
     for (const chunk of chunks) {
-      if (chunk.sceneIds.every((id) => id <= written)) chunk.attempts.push({ key: `${seed.sceneSetId}:writer-${chunk.chunk}#1`, paid: true, cost: Math.round(chunk.sceneIds.length * TYPICAL_PER_SCENE), open: false });
+      const mode = modeOf(chunk);
+      if (chunk.sceneIds.every((id) => id <= written)) chunk.attempts.push({ key: `${seed.sceneSetId}:writer-${chunk.chunk}#1`, paid: true, cost: mockWriterExpected(mode, 1, chunk.sceneIds.length), open: false, worst: mockWriterAttemptWorst(mode) });
     }
     // A request the closed Studio cut off: its reserve stays open at the worst case and counts as answered, until the reconcile closes it there.
-    const cutOff = (key: string): Attempt => {
-      this.#deps.openReserve(key, MOCK_SCENE_ATTEMPT_WORST);
+    const cutOff = (key: string, mode: MockWriterMode): Attempt => {
+      this.#deps.openReserve(key, mockWriterAttemptWorst(mode));
       this.#deps.needReconcile();
-      return { key, paid: true, cost: 0, open: true };
+      return { key, paid: true, cost: 0, open: true, worst: mockWriterAttemptWorst(mode) };
     };
     if (seed.cutOff !== undefined) {
       const chunk = chunks.find((c) => c.chunk === seed.cutOff?.chunk);
       if (chunk === undefined) throw new Error(`the seed has no chunk ${seed.cutOff.chunk} to cut off`);
-      chunk.attempts.push(cutOff(`${seed.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`));
+      chunk.attempts.push(cutOff(`${seed.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`, modeOf(chunk)));
     }
     const stopped = seed.stopped;
     this.#sets.push({
@@ -607,7 +646,7 @@ export class MockSceneSets {
       chunks,
       write: stopped === undefined ? null : { k: 1, kind: "compose", ...(stopped === "closed" ? {} : { stoppedBy: stopped, ...(stopped === "failed" ? { stoppedError: { code: "INTERNAL" as const } } : {}) }) },
       reviews: (seed.reviewWrites ?? []).map((w): Review => {
-        const attempts = w.cutOff === true ? [cutOff(`${seed.sceneSetId}:write-${w.k}#1`)] : [];
+        const attempts = w.cutOff === true ? [cutOff(`${seed.sceneSetId}:write-${w.k}#1`, w.kind === "rewrite" ? modeOfScenes(scenes.filter((scene) => w.sceneIds.includes(scene.sceneId) && local(scene.sceneId) === null)) : "ordinary")] : [];
         const base = { k: w.k, closed: false, redraw: false, draws: new Map(), snapshots: [], attempts, ...(w.stoppedBy === undefined ? {} : { stoppedBy: w.stoppedBy }) };
         return w.kind === "rewrite"
           ? { ...base, kind: "rewrite", sceneIds: [...w.sceneIds], redraw: w.redraw === true, own: [] }
@@ -656,8 +695,9 @@ export class MockSceneSets {
     const plainChunks = new Set<number>();
     set.chunks.forEach((chunk, i) => {
       if ((asked[i] ?? 0) === 0) return;
+      const mode = this.#modeOf(set, chunk.sceneIds);
       const attempt = (cost: number, paid: boolean): void => {
-        chunk.attempts.push({ key: `${set.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`, paid, cost, open: false });
+        chunk.attempts.push({ key: `${set.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`, paid, cost, open: false, worst: mockWriterAttemptWorst(mode) });
       };
       if (this.#scripted[0] === "refused") {
         this.#scripted.shift();
@@ -670,8 +710,8 @@ export class MockSceneSets {
           this.#scripted.shift();
           attempt(REJECTED_COST, true);
           plainChunks.add(chunk.chunk);
-        } else attempt(Math.round((asked[i] ?? 0) * TYPICAL_PER_SCENE), true);
-      } else attempt(Math.round((asked[i] ?? 0) * TYPICAL_PER_SCENE), true);
+        } else attempt(mockWriterExpected(mode, 1, asked[i] ?? 0), true);
+      } else attempt(mockWriterExpected(mode, 1, asked[i] ?? 0), true);
     });
     for (const scene of set.scenes) {
       if (scene.text !== null) continue;
@@ -799,6 +839,12 @@ export class MockSceneSets {
     return localTexts({ sceneSetId: set.sceneSetId, k, scenes, snapshots: set.categories.filter((c) => isCustomCategory(c.ref)), impliedNudity: this.#deps.impliedNudity(set.avatarId) });
   }
 
+  /** 5a.4 (S5.BA7, r2.1 L3): the mode a request for these scenes is asked in: «bold» when a scene the template leaves to the model is a «Смелая» frame (the engine's `writerModeOf`). */
+  #modeOf(set: MockSet, sceneIds: readonly number[], k = 0, scenes: readonly Scene[] = set.scenes): MockWriterMode {
+    const local = this.#local(set, k, scenes);
+    return modeOfScenes(scenes.filter((scene) => sceneIds.includes(scene.sceneId) && local(scene.sceneId) === null));
+  }
+
   /**
    * The engine's `pendingChunks`: the chunks with a scene still to write. A chunk whose every scene the template writes is `free` (offered whatever its attempts, written with no
    * request); a chunk that holds a scene the template cannot write is a chunk for the model only while it has an attempt left, and asks for `modelScenes` alone.
@@ -831,14 +877,18 @@ export class MockSceneSets {
     return category !== undefined && covers(category.pool);
   };
 
-  /** The writer's bound for a plan of `count` scenes over `categories`: the requests it can need and the scenes that can go to the model (`writerChunksWorst`, `llmPossibleSlots`). */
-  writerBound(count: number, categories: readonly CategoryRef[]): { chunks: number; modelSlots: number } {
-    return this.writerBoundOf(splitCount(count, categories));
+  /**
+   * The writer's bound for a plan of `count` scenes over `categories` at `level`: the requests it can need and the scenes that can go to the model (`writerChunksWorst`, `llmPossibleSlots`).
+   * 5a.4 (S5.BA7, I5.77): at «Смелая» no custom category is covered by the template (`coversAt`): every custom scene is routed and the writer's.
+   */
+  writerBound(count: number, categories: readonly CategoryRef[], level: SceneLevel | undefined): { chunks: number; modelSlots: number } {
+    return this.writerBoundOf(splitCount(count, categories), level);
   }
 
   /** The same bound for an explicit split (the autopilot's: the engine's plan hands each category the photos of the videos it drew, not an even share). */
-  writerBoundOf(split: readonly SplitEntry[]): { chunks: number; modelSlots: number } {
-    return { chunks: writerChunksWorst(split, this.coversOf), modelSlots: llmPossibleSlots(split, this.coversOf) };
+  writerBoundOf(split: readonly SplitEntry[], level: SceneLevel | undefined): { chunks: number; modelSlots: number } {
+    const covered = coversAt(this.coversOf, level);
+    return { chunks: writerChunksWorst(split, covered), modelSlots: llmPossibleSlots(split, covered) };
   }
 
   #chunkGaveUpBy(set: MockSet, chunk: Chunk): SceneGaveUpBy | null {
@@ -847,28 +897,38 @@ export class MockSceneSets {
     return this.#attemptsLeft(chunk) === 0 && lacksText ? "no-attempts" : null;
   }
 
-  /** The price of «Дописать»: each chunk still to write at the attempts it has left. */
+  /**
+   * The price of «Дописать»: each chunk still to write at the attempts it has left. 5a.4 (S5.BA7, the engine's `writeEstimate`): each chunk in the mode its request is asked in, and the
+   * expected figure one attempt of each chunk that can still be asked, summed per mode.
+   */
   writePrice(set: MockSet): { expected: number; worst: number } {
     let worst = 0;
-    let scenes = 0;
+    const load = new Map<MockWriterMode, { requests: number; scenes: number }>();
     // 5a.2: only a chunk that holds a scene the template cannot write is a request; a free chunk adds nothing, and a mixed chunk's request carries its model scenes alone.
-    for (const { chunk, free, modelScenes } of this.#pending(set)) {
+    for (const { chunk, ids, free, modelScenes } of this.#pending(set)) {
       if (free) continue;
-      worst += this.#attemptsLeft(chunk) * MOCK_SCENE_ATTEMPT_WORST;
-      scenes += modelScenes;
+      const mode = this.#modeOf(set, ids);
+      const left = this.#attemptsLeft(chunk);
+      worst += left * mockWriterAttemptWorst(mode);
+      const sum = load.get(mode) ?? { requests: 0, scenes: 0 };
+      load.set(mode, { requests: sum.requests + (left > 0 ? 1 : 0), scenes: sum.scenes + modelScenes });
     }
-    return { expected: Math.min(Math.round(scenes * TYPICAL_PER_SCENE), worst), worst };
+    let expected = 0;
+    for (const [mode, { requests, scenes }] of load) expected += mockWriterExpected(mode, requests, scenes);
+    return { expected: Math.min(expected, worst), worst };
   }
 
   /**
    * The price of composing `count` scenes over `categories`: the writer's bound (`writerChunksWorst` requests of two attempts each), expected at the typical share of the scenes
    * only the model can write. The code template writes a built-in category and a covered custom one, so those cost nothing (plan s5a2 §5.6, I5.30).
    */
-  composePrice(count: number, categories: readonly CategoryRef[]): { expected: number; worst: number } {
-    const { chunks, modelSlots } = this.writerBound(count, categories);
+  composePrice(count: number, categories: readonly CategoryRef[], level: SceneLevel | undefined): { expected: number; worst: number } {
+    const { chunks, modelSlots } = this.writerBound(count, categories, level);
     if (count === 0 || chunks === 0 || modelSlots === 0) return { expected: 0, worst: 0 };
-    const worst = chunks * SCENE_CHUNK_ATTEMPTS * MOCK_SCENE_ATTEMPT_WORST;
-    return { expected: Math.min(Math.round(modelSlots * TYPICAL_PER_SCENE), worst), worst };
+    // 5a.4 (S5.BA7, I5.77, the engine's `composeEstimate`): at «Смелая» the writer is the bold call (`writerModeAt`).
+    const mode = writerModeAt(level);
+    const worst = chunks * SCENE_CHUNK_ATTEMPTS * mockWriterAttemptWorst(mode);
+    return { expected: Math.min(mockWriterExpected(mode, chunks, modelSlots), worst), worst };
   }
 
   // ---------- the view ----------
@@ -884,11 +944,11 @@ export class MockSceneSets {
     let open = 0;
     for (const attempt of [...set.chunks.flatMap((c) => c.attempts), ...set.reviews.flatMap((r) => r.attempts)]) {
       if (attempt.open && this.#deps.reserveOpen(attempt.key)) {
-        spent += MOCK_SCENE_ATTEMPT_WORST;
-        open += MOCK_SCENE_ATTEMPT_WORST;
+        spent += attempt.worst;
+        open += attempt.worst;
       } else if (attempt.open) {
         // The reconcile closed it at its worst case.
-        spent += MOCK_SCENE_ATTEMPT_WORST;
+        spent += attempt.worst;
       } else {
         spent += attempt.cost;
       }
@@ -1216,6 +1276,7 @@ export class MockSceneSets {
           ...(review.kind === "rewrite" ? { sceneIds: [...active] } : {}),
           attemptsLeft,
           modelScenes: review.kind === "rewrite" ? this.#modelScenes(set, review.k, active, review.draws) : review.own.length,
+          mode: review.kind === "rewrite" ? this.#rewriteMode(set, review.k, active, review.draws) : "ordinary",
           begin: () => {
             if (dropped.size > 0) {
               for (const id of dropped) review.draws.delete(id);
@@ -1252,6 +1313,7 @@ export class MockSceneSets {
           count: target.count,
           attemptsLeft: SCENE_CHUNK_ATTEMPTS,
           modelScenes: target.count,
+          mode: "ordinary",
           begin: (current) => {
             const review: Review = { k, kind: "idea", closed: false, sceneIds: own.map((o) => o.sceneId), redraw: false, draws: new Map(), idea: target.idea.trim(), shot: target.shot, own, snapshots: [], attempts: [] };
             current.reviews.push(review);
@@ -1375,6 +1437,7 @@ export class MockSceneSets {
         sceneIds: [...target.sceneIds],
         attemptsLeft: SCENE_CHUNK_ATTEMPTS,
         modelScenes: this.#modelScenes(set, k, target.sceneIds, draws),
+        mode: this.#rewriteMode(set, k, target.sceneIds, draws),
         begin: (current) => {
           this.#takeOver(current, new Set(target.sceneIds));
           const review: Review = { k, kind: "rewrite", closed: false, sceneIds: [...target.sceneIds], redraw, draws, own: [], snapshots, attempts: [] };
@@ -1390,8 +1453,9 @@ export class MockSceneSets {
   reviewPrice(plan: MockReviewPlan): { expected: number; worst: number } {
     // 5a.2: a write whose every scene the code template renders costs nothing; the request that remains carries the model's scenes alone.
     if (plan.modelScenes === 0) return { expected: 0, worst: 0 };
-    const worst = plan.attemptsLeft * MOCK_SCENE_ATTEMPT_WORST;
-    return { expected: Math.min(Math.round(plan.modelScenes * TYPICAL_PER_SCENE), worst), worst };
+    // 5a.4 (S5.BA7, the engine's `reviewWriteEstimate`): in the mode the write's request is asked in, one request.
+    const worst = plan.attemptsLeft * mockWriterAttemptWorst(plan.mode);
+    return { expected: Math.min(mockWriterExpected(plan.mode, 1, plan.modelScenes), worst), worst };
   }
 
   /**
@@ -1404,15 +1468,27 @@ export class MockSceneSets {
 
   /** The ids behind `#modelScenes`, in the write's order: the scenes the request carries. */
   #modelSceneIds(set: MockSet, k: number, sceneIds: readonly number[], draws: ReadonlyMap<number, Draw>): number[] {
-    const applied = set.scenes.map((scene): LocalScene => {
+    const applied = this.#applied(set, draws);
+    const local = this.#local(set, k, applied);
+    return sceneIds.filter((id) => local(id) === null);
+  }
+
+  /** 5a.4 (S5.BA7): the mode of a rewrite's request: its scenes for the model, as the write would leave them, «bold» when one is a «Смелая» frame. */
+  #rewriteMode(set: MockSet, k: number, sceneIds: readonly number[], draws: ReadonlyMap<number, Draw>): MockWriterMode {
+    const applied = this.#applied(set, draws);
+    const ids = this.#modelSceneIds(set, k, sceneIds, draws);
+    return modeOfScenes(applied.filter((scene) => ids.includes(scene.sceneId)));
+  }
+
+  /** The set's scenes as a write would leave them: each redrawn scene with what its redraw drew. */
+  #applied(set: MockSet, draws: ReadonlyMap<number, Draw>): LocalScene[] {
+    return set.scenes.map((scene): LocalScene => {
       const drawn = draws.get(scene.sceneId);
       if (drawn === undefined) return scene;
       // 5a.4 (S5.BA7): the route the redraw drew goes with it, as `#accept` stores it, so the template reads the bank the new scene is in.
       const { route: _kept, ...rest } = scene;
       return { ...rest, place: drawn.place, shot: drawn.shot, pose: drawn.pose, ...(drawn.capture === undefined ? {} : { capture: drawn.capture }), ...(drawn.route === undefined ? {} : { route: drawn.route }) };
     });
-    const local = this.#local(set, k, applied);
-    return sceneIds.filter((id) => local(id) === null);
   }
 
   /**
@@ -1468,6 +1544,7 @@ export class MockSceneSets {
     if (job.status !== "running") return;
     const modelIds = review.kind === "idea" ? review.own.map((o) => o.sceneId) : this.#modelSceneIds(set, review.k, review.sceneIds, review.draws);
     const modelScenes = modelIds.length;
+    const mode: MockWriterMode = review.kind === "idea" ? "ordinary" : this.#rewriteMode(set, review.k, review.sceneIds, review.draws);
     // 5a.2: every scene of the write is one the code template renders: written at once, with no request, no attempt and no cost.
     if (modelScenes === 0) {
       this.#accept(set, review);
@@ -1504,13 +1581,13 @@ export class MockSceneSets {
         }
         return;
       }
-      const attempt: Attempt = { key: `${set.sceneSetId}:write-${review.k}#${review.attempts.length + 1}`, paid: false, cost: 0, open: false };
+      const attempt: Attempt = { key: `${set.sceneSetId}:write-${review.k}#${review.attempts.length + 1}`, paid: false, cost: 0, open: false, worst: mockWriterAttemptWorst(mode) };
       review.attempts.push(attempt);
       const outcome = this.#scripted.shift() ?? "ok";
       switch (outcome) {
         case "ok": {
           attempt.paid = true;
-          attempt.cost = Math.round(open.length * TYPICAL_PER_SCENE);
+          attempt.cost = mockWriterExpected(mode, 1, open.length);
           this.#deps.spend(attempt.cost);
           for (const id of open) kept.add(id);
           finish(new Set());
@@ -1518,7 +1595,7 @@ export class MockSceneSets {
         }
         case "partial": {
           attempt.paid = true;
-          attempt.cost = Math.round(open.length * TYPICAL_PER_SCENE);
+          attempt.cost = mockWriterExpected(mode, 1, open.length);
           this.#deps.spend(attempt.cost);
           for (const id of open.slice(1)) kept.add(id);
           continue;
@@ -1547,7 +1624,7 @@ export class MockSceneSets {
         case "timeout":
           attempt.paid = true;
           attempt.open = true;
-          this.#deps.openReserve(attempt.key, MOCK_SCENE_ATTEMPT_WORST);
+          this.#deps.openReserve(attempt.key, attempt.worst);
           this.#deps.needReconcile();
           this.#end(job, set, { status: "failed", error: { code: outcome === "timeout" ? "TIMEOUT" : "NETWORK" }, stoppedBy: outcome });
           return;
@@ -1659,13 +1736,14 @@ export class MockSceneSets {
     for (;;) {
       const ids = this.#request(set, chunk);
       if (ids.length === 0 || this.#attemptsLeft(chunk) === 0) return;
-      const attempt: Attempt = { key: `${set.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`, paid: false, cost: 0, open: false };
+      const mode = this.#modeOf(set, ids);
+      const attempt: Attempt = { key: `${set.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`, paid: false, cost: 0, open: false, worst: mockWriterAttemptWorst(mode) };
       chunk.attempts.push(attempt);
       const outcome = this.#scripted.shift() ?? "ok";
       switch (outcome) {
         case "ok": {
           attempt.paid = true;
-          attempt.cost = Math.round(ids.length * TYPICAL_PER_SCENE);
+          attempt.cost = mockWriterExpected(mode, 1, ids.length);
           this.#deps.spend(attempt.cost);
           for (const scene of set.scenes) if (ids.includes(scene.sceneId) && scene.text === null) scene.text = sentenceOf(scene, 0, this.#deps.impliedNudity(set.avatarId));
           job.done += ids.length;
@@ -1677,7 +1755,7 @@ export class MockSceneSets {
         }
         case "partial": {
           attempt.paid = true;
-          attempt.cost = Math.round(ids.length * TYPICAL_PER_SCENE);
+          attempt.cost = mockWriterExpected(mode, 1, ids.length);
           this.#deps.spend(attempt.cost);
           const [wrong, ...right] = ids;
           for (const scene of set.scenes) if (right.includes(scene.sceneId) && scene.text === null) scene.text = sentenceOf(scene, 0, this.#deps.impliedNudity(set.avatarId));
@@ -1708,7 +1786,7 @@ export class MockSceneSets {
         case "gave-up":
           // A state a version before S5.6d left (the engine can no longer reach it): two rejected answers paid, the chunk given up as rejected. For the screens that show it.
           for (let i = 0; i < SCENE_CHUNK_ATTEMPTS; i++) {
-            if (i > 0) chunk.attempts.push({ key: `${set.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`, paid: false, cost: 0, open: false });
+            if (i > 0) chunk.attempts.push({ key: `${set.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`, paid: false, cost: 0, open: false, worst: mockWriterAttemptWorst(mode) });
             const spent = chunk.attempts.at(-1);
             if (spent !== undefined) {
               spent.paid = true;
@@ -1731,7 +1809,7 @@ export class MockSceneSets {
           // The request may have been billed: its reserve stays open at the worst case, and counts as an answered attempt.
           attempt.paid = true;
           attempt.open = true;
-          this.#deps.openReserve(attempt.key, MOCK_SCENE_ATTEMPT_WORST);
+          this.#deps.openReserve(attempt.key, attempt.worst);
           this.#deps.needReconcile();
           this.#end(job, set, { status: "failed", error: { code: outcome === "timeout" ? "TIMEOUT" : "NETWORK" }, stoppedBy: outcome });
           return;
@@ -1811,20 +1889,23 @@ export class MockSceneSets {
     const review = job.k === undefined ? undefined : set.reviews.find((r) => r.k === job.k);
     if (review !== undefined) {
       if (reviewLeft(review) > 0 && this.#deps.cancelHasRequestOut()) {
-        const attempt: Attempt = { key: `${set.sceneSetId}:write-${review.k}#${review.attempts.length + 1}`, paid: true, cost: 0, open: true };
+        const worst = mockWriterAttemptWorst(review.kind === "idea" ? "ordinary" : this.#rewriteMode(set, review.k, review.sceneIds, review.draws));
+        const attempt: Attempt = { key: `${set.sceneSetId}:write-${review.k}#${review.attempts.length + 1}`, paid: true, cost: 0, open: true, worst };
         review.attempts.push(attempt);
-        this.#deps.openReserve(attempt.key, MOCK_SCENE_ATTEMPT_WORST);
+        this.#deps.openReserve(attempt.key, worst);
         this.#deps.needReconcile();
         this.#deps.emitMoney();
       }
       job.timers.push(this.#deps.scheduler.schedule(CANCEL_CONFIRM_MS, () => this.#end(job, set, { status: "cancelled" })));
       return;
     }
-    const next = this.#pending(set).find((p) => !p.free)?.chunk;
-    if (next !== undefined && this.#attemptsLeft(next) > 0 && this.#deps.cancelHasRequestOut()) {
-      const attempt: Attempt = { key: `${set.sceneSetId}:writer-${next.chunk}#${next.attempts.length + 1}`, paid: true, cost: 0, open: true };
+    const pending = this.#pending(set).find((p) => !p.free);
+    const next = pending?.chunk;
+    if (pending !== undefined && next !== undefined && this.#attemptsLeft(next) > 0 && this.#deps.cancelHasRequestOut()) {
+      const worst = mockWriterAttemptWorst(this.#modeOf(set, pending.ids));
+      const attempt: Attempt = { key: `${set.sceneSetId}:writer-${next.chunk}#${next.attempts.length + 1}`, paid: true, cost: 0, open: true, worst };
       next.attempts.push(attempt);
-      this.#deps.openReserve(attempt.key, MOCK_SCENE_ATTEMPT_WORST);
+      this.#deps.openReserve(attempt.key, worst);
       this.#deps.needReconcile();
       this.#deps.emitMoney();
     }

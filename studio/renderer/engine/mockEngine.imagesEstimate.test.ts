@@ -135,11 +135,14 @@ describe("runs.estimateImages { avatarId, count, sceneSetId } (S5.R4-fix round 2
     expect(sent.estimate).toEqual(after.estimate);
   });
 
+  // 5a.4 (S5.BA7, 2026-10-27, plan s5a4 I5.77, §5.7; BA5 review L-5): scope edit. «Дом» at «Смелая» is on the route, so the count with no «Смелая» photo is a «Кокетливая» one.
   test("a price list with no 2K tier still prices a count with no «Смелая» photo", async () => {
     const mock = runWorld();
     mock.engine.lackBoldPrice();
-    const reply = await mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: 5, level: "bold", categories: ["home"] });
+    const reply = await mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: 5, level: "flirty", categories: ["home"] });
     expect(reply.ok).toBe(true);
+    const bold = await mock.client.request("runs.estimateImages", { avatarId: MIA.avatarId, count: 5, level: "bold", categories: ["home"] });
+    expect(bold).toMatchObject({ ok: false, error: { code: "PRICE_UNAVAILABLE", priceScope: "bold" } });
   });
 
   test("a set the avatar does not have is NOT_FOUND", async () => {
