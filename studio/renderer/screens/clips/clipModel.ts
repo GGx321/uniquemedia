@@ -16,7 +16,7 @@ type Failed = Extract<ClipSummary, { status: "failed" }>;
  * 5a.4 (S5.BA6, I5.79): whether a gallery photo's clip is Kling-only, read as the engine reads it (`frameFactsOf`): the photo is a frame of «Смелая» by its category or by its own
  * Seedream route (`isBoldFrame`), and `BOLD_CLIPS` has not let Grok in. A photo made before 5a.4 carries no route and keeps its category's reading.
  */
-export function klingOnlyFrame(photo: { category: string; route?: SceneRoute | undefined }, boldClips: BoldClipsMode = BOLD_CLIPS): boolean {
+export function klingOnlyFrame(photo: { category: string; route: SceneRoute | undefined }, boldClips: BoldClipsMode = BOLD_CLIPS): boolean {
   return isBoldFrame({ category: photo.category, route: photo.route }) && boldClips !== "with-fallback";
 }
 

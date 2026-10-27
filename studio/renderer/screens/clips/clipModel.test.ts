@@ -345,19 +345,19 @@ describe("klingOnlyFrame (the tab's reading of a frame of «Смелая»)", ()
   });
 
   test("an old unrouted photo of the five or of a custom category is not", () => {
-    for (const category of ["home", "travel", "shoot", "glam", "fit", "cat-testcustom01"]) expect(klingOnlyFrame({ category }, "kling-only")).toBe(false);
+    for (const category of ["home", "travel", "shoot", "glam", "fit", "cat-testcustom01"]) expect(klingOnlyFrame({ category, route: undefined }, "kling-only")).toBe(false);
   });
 
   test("a nightwear or a beach photo is, routed or not", () => {
     for (const category of ["nightwear", "beach"]) {
-      expect(klingOnlyFrame({ category }, "kling-only")).toBe(true);
+      expect(klingOnlyFrame({ category, route: undefined }, "kling-only")).toBe(true);
       expect(klingOnlyFrame({ category, route: "seedream" }, "kling-only")).toBe(true);
     }
   });
 
   test("none of them is Kling-only once `with-fallback` lets Grok in", () => {
     expect(klingOnlyFrame({ category: "home", route: "seedream" }, "with-fallback")).toBe(false);
-    expect(klingOnlyFrame({ category: "nightwear" }, "with-fallback")).toBe(false);
+    expect(klingOnlyFrame({ category: "nightwear", route: undefined }, "with-fallback")).toBe(false);
   });
 
   test("it defaults to the shipped BOLD_CLIPS switch", () => {

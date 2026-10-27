@@ -251,7 +251,7 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
   };
   const boldOf = (photoId: string): boolean => {
     const place = photoInfo(photoId);
-    return place !== null && klingOnlyFrame(place.photo);
+    return place !== null && klingOnlyFrame({ category: place.photo.category, route: place.photo.route });
   };
 
   const empty = list.clips !== null && records.length === 0 && work.length === 0 && failedJobs.length === 0 && header === null;
