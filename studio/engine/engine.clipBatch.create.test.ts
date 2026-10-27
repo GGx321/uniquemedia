@@ -114,6 +114,15 @@ describe("clips.batchOptions", () => {
     expect(ClipBatchOptions.safeParse(answer).success).toBe(true);
   });
 
+  test("a batch of a routed «Дом» photo and an old one sums Kling's reserve for the first and the fallback's worst for the second", async () => {
+    const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), [{ category: "home", route: "seedream" }, { category: "home" }]);
+    const answer = optionsOf(await batchOptions(await started(), avatarId, photoIds));
+
+    expect(answer.sums.std5.worst).toBe(504_000 + 850_000);
+    expect(answer.sums.std5.worstNoFallback).toBe(504_000 * 2);
+    expect(ClipBatchOptions.safeParse(answer).success).toBe(true);
+  });
+
   test("reads the room net of what a running batch holds and has reserved, and the answer passes the contract's own refines", async () => {
     const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(4));
     const engine = await started({ net: clipNetwork({ klingBy: (n) => (n === 1 ? { held: true } : undefined) }), monthlyBudgetMicros: 3_000_000 });

@@ -24,7 +24,7 @@ export async function seedBatchAvatar(libraryDir: string, photos: readonly SeedO
       mediaType: "image/jpeg",
       width: options.width ?? 720,
       height: options.height ?? 1280,
-      source: { ...SAMPLE_SOURCE, category: options.category ?? "home", attemptId: `run-00000099:slot-${index + 1}#1`, slot: `slot-${index + 1}` },
+      source: { ...SAMPLE_SOURCE, category: options.category ?? "home", attemptId: `run-00000099:slot-${index + 1}#1`, slot: `slot-${index + 1}`, ...(options.route === undefined ? {} : { route: options.route }) },
       qa: options.qa ?? { faceCos: 0.7 },
     });
     photoIds.push(photo.id);

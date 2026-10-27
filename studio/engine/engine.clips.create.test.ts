@@ -212,6 +212,26 @@ describe("clips.options", () => {
     expect(answer.monthFits.std5).toBe("without-fallback");
   });
 
+  // 5a.4 (S5.BA6, I5.79, QB-5): the money follows the photo's own route. A routed photo of the five is Kling's alone (its reserve 504 000, no fallback); the same category stored before 5a.4 keeps 850 000.
+  test("a routed «Дом» photo with no plan has no fallback: its worst is Kling's alone", async () => {
+    const { avatarId, photoId } = await seedClipAvatar(libraryDir(), { category: "home", route: "seedream" });
+    const engine = await started();
+    const answer = optionsOf(await options(engine, avatarId, photoId));
+    if (!answer.suitable) throw new Error("expected a suitable photo");
+    expect(answer).toMatchObject({ fallback: "none", bold: true });
+    expect(answer.prices.std5.worstMicros).toBe(504_000);
+    expect(answer.monthFits.std5).toBe("without-fallback");
+  });
+
+  test("an old «Дом» photo with no route keeps its fallback and its 850 000 worst", async () => {
+    const { avatarId, photoId } = await seedClipAvatar(libraryDir(), { category: "home" });
+    const engine = await started();
+    const answer = optionsOf(await options(engine, avatarId, photoId));
+    if (!answer.suitable) throw new Error("expected a suitable photo");
+    expect(answer).toMatchObject({ fallback: "auto", bold: false });
+    expect(answer.prices.std5.worstMicros).toBe(850_000);
+  });
+
   test("an unsuitable photo is an answer with its reason, not an error", async () => {
     const { avatarId, masterId } = await seedClipAvatar(libraryDir());
     const hidden = await seedClipAvatar(libraryDir(), { qa: {} });

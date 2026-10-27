@@ -251,6 +251,8 @@ let seeded = 0;
 export interface SeedOptions {
   /** The photo's category; `nightwear` makes it a frame of «Смелая». Default `home`. */
   category?: string;
+  /** 5a.4 (S5.BA6): the photo was drawn on the Seedream route (`source.route`), which makes a frame of any category a frame of «Смелая». */
+  route?: "seedream";
   qa?: PhotoQa;
   /** The photo's bytes; default a 720 x 1280 JPEG. */
   photo?: Uint8Array;
@@ -269,7 +271,7 @@ export async function seedClipAvatar(libraryDir: string, options: SeedOptions = 
     mediaType: "image/jpeg",
     width: options.width ?? 720,
     height: options.height ?? 1280,
-    source: { ...SAMPLE_SOURCE, category: options.category ?? "home", attemptId: "run-00000099:slot-1#1", slot: "slot-1" },
+    source: { ...SAMPLE_SOURCE, category: options.category ?? "home", attemptId: "run-00000099:slot-1#1", slot: "slot-1", ...(options.route === undefined ? {} : { route: options.route }) },
     qa: options.qa ?? { faceCos: 0.7 },
   });
   return { avatarId: avatar.id, photoId: photo.id, masterId: master.id };
