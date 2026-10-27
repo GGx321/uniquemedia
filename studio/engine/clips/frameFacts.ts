@@ -1,4 +1,4 @@
-import { BOLD_CLIPS, GROK_FALLBACK, isBoldCategory, isBoldFrame, type BoldClipsMode, type ScenePose } from "../../shared/engine";
+import { BOLD_CLIPS, GROK_FALLBACK, isBoldFrame, type BoldClipsMode, type ScenePose } from "../../shared/engine";
 import type { Moment } from "../../shared/scenes/banks/types";
 import { captureOfShot, faceVisibleOf, type FaceVisibility } from "../../shared/scenes/captures";
 import { contentLevelOf, type ContentLevel } from "../../shared/scenes/contentLine";
@@ -156,10 +156,11 @@ function ownFacts(photo: PhotoSidecar, slot: OwnPlanSlot): Omit<FrameFacts, "age
  * No plan: only the sidecar speaks. The capture is unknown and the pose front (§5.4 table). The photo was judged only when it carries a likeness and no mark (I5.52; a
  * restored legacy mark needs the plan, so there is none here); a marked photo hides her face, and one with neither is not known to show it.
  */
-function planlessFacts(photo: PhotoSidecar, category: string): Omit<FrameFacts, "ageRefused"> {
+function planlessFacts(photo: PhotoSidecar, source: GeneratedSource, category: string): Omit<FrameFacts, "ageRefused"> {
   const judged = photo.qa.faceCos !== undefined && photo.qa.faceMarked !== true;
-  // S5.BA6: the photo's own route (`photo.source.route`) joins here with `frameFacts.bold`; until then a category-only reading, as before.
-  const level = contentLevelOf({ category, level: undefined, route: undefined });
+  // S5.BA6 (I5.79): the photo's own route joins the category, so a «Смелая» frame of any category is Kling-only. A photo stored before 5a.4 carries no route and reads as before (QB-5).
+  const marker = { category, route: source.route };
+  const level = contentLevelOf({ ...marker, level: undefined });
   return {
     photoId: photo.id,
     plan: "none",
@@ -174,7 +175,7 @@ function planlessFacts(photo: PhotoSidecar, category: string): Omit<FrameFacts, 
     faceRole: judged ? "judged" : "hidden",
     legs: false,
     legwear: null,
-    bold: isBoldCategory(category),
+    bold: isBoldFrame(marker),
     level,
   };
 }
@@ -184,7 +185,7 @@ export function frameFactsOf(photo: PhotoSidecar, plan: RunPlan | null): FrameFa
   const source = photo.source;
   if (!looksLikeRunPhoto(photo) || source.kind !== "generated" || source.category === undefined) return { kind: "not-a-gallery-photo" };
   const slot = slotOf(source, plan);
-  const facts = slot === null ? planlessFacts(photo, source.category) : slot.category === "own" ? ownFacts(photo, slot) : plannedFacts(photo, source, slot);
+  const facts = slot === null ? planlessFacts(photo, source, source.category) : slot.category === "own" ? ownFacts(photo, slot) : plannedFacts(photo, source, slot);
   return { kind: "gallery", facts: { ...facts, ageRefused: !passesAgeThreshold(photo.qa.age) } };
 }
 

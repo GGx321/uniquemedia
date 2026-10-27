@@ -10,6 +10,7 @@ import { PhotoSidecarSchema, type PhotoSidecar } from "../library/schemas";
 import { PLAN_FILE, RUNS_DIR } from "../library/layout";
 import { useTempDir } from "../library/testing/helpers";
 import { momentOfSlot } from "../../shared/scenes/template";
+import { BOLD_COMPANIONS, CUSTOM_BOLD_BANKS } from "../../shared/scenes/banks/companions";
 import { boldContentLevel } from "../../shared/scenes/contentLine";
 import { captureOfShot } from "../../shared/scenes/captures";
 import { GROK_FALLBACK, isBoldCategory, type AvatarDescriptor } from "../../shared/engine";
@@ -580,5 +581,93 @@ describe("the planned capture: who the slot says took the photo, before its prom
     const ownRun = sceneRun("run-00000027", [{ kind: "own", shot: "selfie", pose: "front", text: "She smiles on a train." }]);
     expect(factsOf(frameFactsOf(photoOf(ownRun, ownRun.scenes.slots[0] as OwnPlanSlot), ownRun)).plannedCapture).toBe("selfie");
     expect(factsOf(frameFactsOf(planlessPhoto("home", { faceCos: 0.7 }), null)).plannedCapture).toBe("unknown");
+  });
+});
+
+// 5a.4 (S5.BA6, plan s5a4 §5.10, §8, I5.79, QB-5): a «Смелая» frame is the photo's own marker (`isBoldFrame`), never the category alone. A frame of the five or of a custom category
+// drawn on the Seedream route is Kling-only, with its moment found in the companion bank; the same category stored before 5a.4 (no route) reads, renders and animates as before.
+describe("frames of «Смелая» on every category (S5.BA6, I5.79, QB-5)", () => {
+  const FIVE = ["home", "travel", "photoshoot", "glamour", "fitness"] as const;
+  const SIDECAR = { home: "home", travel: "travel", photoshoot: "shoot", glamour: "glam", fitness: "fit" } as const;
+  const CUSTOM = "cat-testcustom01";
+
+  /** A routed slot of one of the five, on the first companion moment that lets a mirror photo, as the planner writes it at «Смелая». */
+  function routedHome(runId: string): { run: RunPlan; slot: PlanSlot; moment: { text: string } } {
+    const bank = BOLD_COMPANIONS.home;
+    const place = bank.places.find((p) => p.moments.some((m) => m.captures.includes("mirror")));
+    const moment = place?.moments.find((m) => m.captures.includes("mirror"));
+    if (place === undefined || moment === undefined) throw new Error("no companion moment for this fixture");
+    const base = slotOf({ category: "home", place, moment }, "mirror", "front", { route: "seedream", level: "bold", outfit: moment.outfits?.[0] ?? bank.outfits[0]?.text ?? "an outfit" });
+    const run = sceneRun(runId, [base]);
+    return { run, slot: run.scenes.slots[0] as PlanSlot, moment };
+  }
+
+  test("a routed «Дом» photo is bold, Kling-only, and its moment is found in the companion bank", () => {
+    const { run, slot, moment } = routedHome("run-00000040");
+    const facts = factsOf(frameFactsOf(photoOf(run, slot), run));
+    expect(facts.bold).toBe(true);
+    expect(facts.level).toBe(boldContentLevel());
+    expect(facts.moment?.text).toBe(moment.text);
+    expect(clipFallbackOf(facts)).toBe("none");
+  });
+
+  test("an old unrouted «Дом» photo at the flirty level is not bold and keeps today's fallback", () => {
+    const home = pick("home", (m) => m.captures.includes("mirror") && m.level === undefined);
+    const run = sceneRun("run-00000041", [slotOf(home, "mirror", "front", { level: "flirty" })]);
+    const facts = factsOf(frameFactsOf(photoOf(run, run.scenes.slots[0] as PlanSlot), run));
+    expect(facts.bold).toBe(false);
+    expect(facts.level).not.toBe(boldContentLevel());
+    expect(clipFallbackOf(facts)).toBe(GROK_FALLBACK);
+  });
+
+  test("a routed «Дом» photo with no plan is bold by its own route", () => {
+    const facts = factsOf(frameFactsOf(planlessPhoto("home", { faceCos: 0.7 }, undefined, "seedream"), null));
+    expect(facts.bold).toBe(true);
+    expect(facts.level).toBe(boldContentLevel());
+    expect(clipFallbackOf(facts)).toBe("none");
+  });
+
+  test("an unrouted «Дом» photo with no plan is not bold", () => {
+    const facts = factsOf(frameFactsOf(planlessPhoto("home", { faceCos: 0.7 }), null));
+    expect(facts.bold).toBe(false);
+    expect(clipFallbackOf(facts)).toBe(GROK_FALLBACK);
+  });
+
+  test("a nightwear or a beach photo is bold with the route, without it, and from its plan alike", () => {
+    for (const category of ["nightwear", "beach"] as const) {
+      expect(factsOf(frameFactsOf(planlessPhoto(category, { faceCos: 0.7 }), null)).bold).toBe(true);
+      expect(factsOf(frameFactsOf(planlessPhoto(category, { faceCos: 0.7 }, undefined, "seedream"), null)).bold).toBe(true);
+    }
+  });
+
+  test("a routed photo of a custom category is bold, and an unrouted one is not", () => {
+    expect(factsOf(frameFactsOf(planlessPhoto(CUSTOM, { faceCos: 0.7 }, undefined, "seedream"), null)).bold).toBe(true);
+    expect(factsOf(frameFactsOf(planlessPhoto(CUSTOM, { faceCos: 0.7 }), null)).bold).toBe(false);
+  });
+
+  test("a routed slot of a custom category is bold and its moment is found in a shared custom bank", () => {
+    const place = CUSTOM_BOLD_BANKS.rooms.places.find((p) => p.moments.some((m) => m.captures.includes("mirror")));
+    const moment = place?.moments.find((m) => m.captures.includes("mirror"));
+    if (place === undefined || moment === undefined) throw new Error("no custom moment for this fixture");
+    const base = slotOf({ category: "home", place, moment }, "mirror", "front", { category: CUSTOM, route: "seedream", level: "bold", outfit: moment.outfits?.[0] ?? CUSTOM_BOLD_BANKS.rooms.outfits[0]?.text ?? "an outfit" });
+    const run = sceneRun("run-00000042", [base]);
+    const slot = run.scenes.slots[0] as PlanSlot;
+    const facts = factsOf(frameFactsOf(photoOf(run, slot), run));
+    expect(facts.bold).toBe(true);
+    expect(facts.moment?.text).toBe(moment.text);
+    expect(clipFallbackOf(facts)).toBe("none");
+  });
+
+  test("a «Смелая» frame of the five never falls back, planned or not, in either engine mode", () => {
+    for (const category of FIVE) {
+      const planless = factsOf(frameFactsOf(planlessPhoto(SIDECAR[category], { faceCos: 0.7 }, undefined, "seedream"), null));
+      for (const mode of ["auto", "offer"] as const) {
+        expect(clipFallbackOf(planless, "kling-only", mode)).toBe("none");
+        expect(clipFallbackOf(planless, "off", mode)).toBe("none");
+      }
+    }
+    const { run, slot } = routedHome("run-00000043");
+    const planned = factsOf(frameFactsOf(photoOf(run, slot), run));
+    for (const mode of ["auto", "offer"] as const) expect(clipFallbackOf(planned, "kling-only", mode)).toBe("none");
   });
 });

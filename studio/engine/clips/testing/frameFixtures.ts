@@ -159,7 +159,7 @@ function photoCategory(category: string): string {
 }
 
 /** A gallery photo with no run plan to read (an attempt id with no run, or a deleted plan): only its sidecar speaks. */
-export function planlessPhoto(category: string, qa: PhotoSidecar["qa"], attemptId = "run-00000099:slot-1#1"): PhotoSidecar {
+export function planlessPhoto(category: string, qa: PhotoSidecar["qa"], attemptId = "run-00000099:slot-1#1", route?: "seedream"): PhotoSidecar {
   photoCounter++;
   const id = `photo-${String(photoCounter).padStart(6, "0")}`;
   return PhotoSidecarSchema.parse({
@@ -172,7 +172,7 @@ export function planlessPhoto(category: string, qa: PhotoSidecar["qa"], attemptI
     height: 1280,
     bytes: 1000,
     sha256: "c".repeat(64),
-    source: { kind: "generated", model: MODELS.imageModel, provider: "openrouter", jobId: "run-00000099", attemptId, promptSha: "d".repeat(64), prompt: "A photo.", slot: "slot-1", category, costMicros: 40_000 },
+    source: { kind: "generated", model: MODELS.imageModel, provider: "openrouter", jobId: "run-00000099", attemptId, promptSha: "d".repeat(64), prompt: "A photo.", slot: "slot-1", category, costMicros: 40_000, ...(route === undefined ? {} : { route }) },
     qa,
     createdAt: "2026-10-13T10:00:00.000Z",
   });
