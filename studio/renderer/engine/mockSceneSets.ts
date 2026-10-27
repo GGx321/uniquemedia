@@ -523,7 +523,7 @@ function sentenceOf(scene: Scene, take: number, impliedNudity: boolean): string 
     // The world is named unless its stored name says a word the content line holds against a «Смелая» frame (a youth word: «a tiny bookshop»); the place's own key words stay.
     const named = world !== undefined && contentProblems(world, contentLevelOf({ category: scene.category, level: scene.level, route: scene.route })).length === 0;
     const near = world === undefined || !named ? "" : ` while staying near ${world.replace(/^an? /i, "the ")}`;
-    // No number in it: a number is held to the minor-age guard on a «Смелая» frame. The detail turns with the take, so a rewrite says something new.
+    // No number in it: a number is held to the age rule on a «Смелая» frame. The detail turns with the take, so a rewrite says something new.
     const sentence = `${openedPlace(location)}${near}, she ${activity} in ${outfit}, ${BOLD_DETAILS[(scene.sceneId + take) % BOLD_DETAILS.length] ?? "a cup of tea beside her"}.`;
     const coverage = slotCoverageOf({ category: scene.category, route: scene.route, location, activity, outfit }, impliedNudity);
     return coverage === undefined ? sentence : `${sentence} ${coverage}`;
