@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { BOLD_CLIPS, isBoldCategory, type ClipSummary, type EngineError } from "../../../shared/engine";
+import { type ClipSummary, type EngineError } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import { isActiveJob, type JobView } from "../../engine/store";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice } from "../../ui/Notice";
 import { BatchHeader } from "./BatchHeader";
 import { batchRecordRoles, batchView, latestBatchId } from "./batchModel";
-import { clipLength, phaseLine, upUsd } from "./clipModel";
+import { clipLength, klingOnlyFrame, phaseLine, upUsd } from "./clipModel";
 import { batchDismissals, clipDismissals, dismissBatch, dismissClipJob, type ClipList, type ClipsControl } from "./clipsContext";
 import { ClipSheet } from "./ClipSheet";
 import { FailedJobTile, FailedTile, ReadyTile, WorkTile } from "./ClipTile";
@@ -251,7 +251,7 @@ export function ClipsTab({ control, arrived, onArrivalHandled }: { control: Clip
   };
   const boldOf = (photoId: string): boolean => {
     const place = photoInfo(photoId);
-    return place !== null && isBoldCategory(place.photo.category) && BOLD_CLIPS !== "with-fallback";
+    return place !== null && klingOnlyFrame(place.photo);
   };
 
   const empty = list.clips !== null && records.length === 0 && work.length === 0 && failedJobs.length === 0 && header === null;

@@ -1,4 +1,4 @@
-import { CLIP_EXPORT_FAILED_RU, CLIP_FILE_DAMAGED_DETAIL, CLIP_RETRYABLE_FAILURES, GROK_FALLBACK, type EngineError, type ClipCost, type ClipFace, type ClipFailReason, type ClipPhase, type ClipSummary } from "../../../shared/engine";
+import { BOLD_CLIPS, CLIP_EXPORT_FAILED_RU, CLIP_FILE_DAMAGED_DETAIL, CLIP_RETRYABLE_FAILURES, GROK_FALLBACK, isBoldFrame, type BoldClipsMode, type SceneRoute, type EngineError, type ClipCost, type ClipFace, type ClipFailReason, type ClipPhase, type ClipSummary } from "../../../shared/engine";
 import { CLIP_LOST_TEXT, CLIP_RECOVERED_TEXT, CLIP_RECOVERING_TEXT } from "../../../shared/engine/clipRestartTexts";
 import { errorText } from "../../lib/errors";
 import { NBSP } from "../../lib/format";
@@ -11,6 +11,14 @@ import { formatUsdTiered } from "../../lib/money";
 
 type Ready = Extract<ClipSummary, { status: "ready" }>;
 type Failed = Extract<ClipSummary, { status: "failed" }>;
+
+/**
+ * 5a.4 (S5.BA6, I5.79): whether a gallery photo's clip is Kling-only, read as the engine reads it (`frameFactsOf`): the photo is a frame of «Смелая» by its category or by its own
+ * Seedream route (`isBoldFrame`), and `BOLD_CLIPS` has not let Grok in. A photo made before 5a.4 carries no route and keeps its category's reading.
+ */
+export function klingOnlyFrame(photo: { category: string; route?: SceneRoute | undefined }, boldClips: BoldClipsMode = BOLD_CLIPS): boolean {
+  return isBoldFrame({ category: photo.category, route: photo.route }) && boldClips !== "with-fallback";
+}
 
 /** A ceiling or a maximum: up. */
 export const upUsd = (micros: number): string => formatUsdTiered(micros, "up");

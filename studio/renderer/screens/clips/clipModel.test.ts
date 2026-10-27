@@ -6,6 +6,7 @@ import {
   exportFailureText,
   faceBadge,
   faceFact,
+  klingOnlyFrame,
   failedTile,
   modelFact,
   phaseLine,
@@ -334,5 +335,32 @@ describe("a clip at work: its tile's phase (§6 40) and its queue row (README S5
     expect(q("saving").text).toBe("Сохраняем");
     expect(q("recovering").text).toBe("Восстановление");
     expect(q("exporting", { done: 60, total: 150 }).text).toBe("Сохраняем 40\u00a0%");
+  });
+});
+
+// 5a.4 (S5.BA6, plan s5a4 §5.10, I5.79): the tab's Kling-only reading of a gallery photo is the engine's `isBoldFrame` on the photo's category and its own route, not the category alone.
+describe("klingOnlyFrame (the tab's reading of a frame of «Смелая»)", () => {
+  test("a routed photo of any category is Kling-only", () => {
+    for (const category of ["home", "travel", "shoot", "glam", "fit", "cat-testcustom01"]) expect(klingOnlyFrame({ category, route: "seedream" }, "kling-only")).toBe(true);
+  });
+
+  test("an old unrouted photo of the five or of a custom category is not", () => {
+    for (const category of ["home", "travel", "shoot", "glam", "fit", "cat-testcustom01"]) expect(klingOnlyFrame({ category }, "kling-only")).toBe(false);
+  });
+
+  test("a nightwear or a beach photo is, routed or not", () => {
+    for (const category of ["nightwear", "beach"]) {
+      expect(klingOnlyFrame({ category }, "kling-only")).toBe(true);
+      expect(klingOnlyFrame({ category, route: "seedream" }, "kling-only")).toBe(true);
+    }
+  });
+
+  test("none of them is Kling-only once `with-fallback` lets Grok in", () => {
+    expect(klingOnlyFrame({ category: "home", route: "seedream" }, "with-fallback")).toBe(false);
+    expect(klingOnlyFrame({ category: "nightwear" }, "with-fallback")).toBe(false);
+  });
+
+  test("it defaults to the shipped BOLD_CLIPS switch", () => {
+    expect(klingOnlyFrame({ category: "home", route: "seedream" })).toBe(true);
   });
 });
