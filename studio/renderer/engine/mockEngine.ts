@@ -61,6 +61,7 @@ import {
   OkResponse,
   OWN_MUSIC_NOT_FOUND_DETAIL,
   isCustomCategory,
+  impliedNudityOf,
   OWN_PHOTO_NOT_FOUND_DETAIL,
   type PhotoQaSummary,
   type PhotoUnavailableReason,
@@ -956,6 +957,8 @@ export class MockEngine implements EngineBridge {
 
   constructor(options: MockEngineOptions = {}) {
     this.scheduler = options.scheduler ?? realScheduler;
+    // 5a.4 (S5.BA7): set first, so the scene sets' seeds, which are planned while the engine is built, read each avatar's origin from its summary.
+    this.avatars = options.avatars ?? (options.preset === "demo" ? demoAvatars() : []);
     this.textPreviews = new MockTextPreviews({ scheduler: this.scheduler, drawMs: options.textDrawMs ?? 0, newId: () => this.nextId("preview") });
     this.latencyMs = options.latencyMs ?? 0;
     this.stepMs = options.stepMs ?? 700;
@@ -1043,6 +1046,8 @@ export class MockEngine implements EngineBridge {
         cancelHasRequestOut: () => this.sceneCancelOutcome === "in-flight",
         launchUnfinished: (launchId) => this.autopilot.isUnfinished(launchId),
         launchSetChanged: (launchId, sceneSetId) => this.autopilot.setChanged(launchId, sceneSetId),
+        // 5a.4 (S5.BA7, I5.74): the avatar's origin as its summary says it (`impliedNudityOf`: only `origin: "studio"` is true; an avatar the mock does not hold is the imported side).
+        impliedNudity: (avatarId) => impliedNudityOf(this.avatars.find((a) => a.avatarId === avatarId)),
       },
       options.sceneSets ?? [],
       options.unreadableSceneSets ?? 0,
@@ -1149,7 +1154,6 @@ export class MockEngine implements EngineBridge {
       renderConcurrency: options.renderConcurrency ?? "auto",
     };
     this.exportFolders.set(this.settings.exportPath, this.exportRootId);
-    this.avatars = options.avatars ?? (options.preset === "demo" ? demoAvatars() : []);
     this.drafts = options.drafts ?? [];
     this.unreadable = options.unreadableAvatars ?? [];
     this.unreadableTotalOverride = options.unreadableTotal ?? null;

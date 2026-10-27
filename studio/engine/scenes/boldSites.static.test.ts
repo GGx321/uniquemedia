@@ -81,7 +81,6 @@ const BOLD_CATEGORY_SITES: Allowed[] = [
   { file: "renderer/screens/autopilot/SettingsColumn.tsx", count: 2, why: "the chip gating (:157), kept; the option-B line (:84) leaves with S5.BA8 (`optionB = boldOn`), which brings the count to 1", until: "S5.BA8" },
   { file: "renderer/screens/photos/level.ts", count: 2, why: "the caption's category words (`BOLD_WORD`, :52) and `launchLevelCaption` (:161, S5.BA8 counts every category)", until: "S5.BA8" },
   { file: "renderer/engine/mockBoldRoute.ts", count: 2, why: "the mock's price rule (`isBoldLook`, `requestBoldPhotos`), mirrored by S5.BA7", until: "S5.BA7" },
-  { file: "renderer/engine/mockSceneSets.ts", count: 1, why: "the mock's five-at-«Смелая» relabel stub (:328), S5.BA7", until: "S5.BA7" },
 ];
 
 /** The pools and the banks, and their «Смелая» registries: indexed only where a slot's pool or bank place is decided. */
@@ -90,7 +89,6 @@ const INDEX_SITES: Allowed[] = [
   { file: "engine/scenes/poolAt.ts", count: 4, why: "`poolAt` and `poolOfSlot`: the pool a new or a stored slot is drawn from" },
   { file: "shared/scenes/bankLookup.ts", count: 2, why: "`bankPlaceOf`: a slot's bank place and moment" },
   { file: "shared/scenes/banks/companions/index.ts", count: 1, why: "the companions' registry checks its banks against the shipped ones" },
-  { file: "renderer/engine/mockBankScenes.ts", count: 2, why: "the mock's bank lookups (:46, :106), moved to the marker by S5.BA7", until: "S5.BA7" },
 ];
 
 /**
@@ -107,7 +105,6 @@ const COUNTING_SITES: Allowed[] = [
   { file: "engine/sceneSets/chunks.ts", count: 1, why: "`pendingChunks`: which chunks of a set the template writes whole (`setLocal(set, 0, false)`)" },
   { file: "engine/sceneSets/estimate.ts", count: 1, why: "«Дописать»'s price: each chunk's scenes for the model and their mode (`setLocal(set, 0, false)`)" },
   { file: "engine/sceneSets/reviewWriteJob.ts", count: 2, why: "a rewrite's price: `modelScenesOf` and `writeModeOf` (`localOf(…, false)`); the job's own call names the origin" },
-  { file: "renderer/engine/mockBankScenes.ts", count: 2, why: "the mock's template and plain sentences, given the origin by S5.BA7", until: "S5.BA7" },
 ];
 /** Where the engine reads the avatar's origin (`studioCreated`): every path that plans, redraws or writes a «Смелая» frame, and the summary. A new path is named here. */
 const ORIGIN_SOURCES: Allowed[] = [

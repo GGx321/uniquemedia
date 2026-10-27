@@ -1,6 +1,5 @@
 import {
   ideaNamesMirror,
-  isBoldCategory,
   isCustomCategory,
   MAX_COMPOSE_SCENES,
   orderCategories,
@@ -30,7 +29,7 @@ import {
 import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "../../shared/scenes/captures";
 import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared/scenes/contentLine";
 import { covers } from "../../shared/scenes/custom";
-import { apportionLegs, drawLevelOf, flirtyCountOf, legsCountOf, levelCountsOf } from "../../shared/scenes/level";
+import { apportionLegs, drawLevelOf, flirtyCountOf, legsCountOf, tierSpreadOf, type LevelCounts } from "../../shared/scenes/level";
 import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
 import { bankDraw, legsDraw, localTexts, plainTextOf, type LocalScene } from "./mockBankScenes";
 import { mockAnglesOf } from "./mockCategories";
@@ -276,6 +275,11 @@ export interface MockSceneSetDeps {
   launchUnfinished: (launchId: string) => boolean;
   /** Stage 4 (S4.10 fix D): the owner changed a set an unfinished launch holds (an edit): the launch reads its rows again and is announced, as the engine's `onSetChanged` does. */
   launchSetChanged: (launchId: string, sceneSetId: string) => void;
+  /**
+   * 5a.4 (S5.BA7, plan s5a4 I5.74): the avatar's origin as the render reads it (`impliedNudityOf` of its summary): true only for an avatar made in Studio. It decides whether a «Смелая» plan or
+   * redraw may draw an implied cover and which coverage sentence a «Смелая» frame ends with, as the engine's `studioCreated` does. An avatar the mock cannot find is the imported side.
+   */
+  impliedNudity: (avatarId: string) => boolean;
 }
 
 /** The counters of the PLANNED scenes that are not removed, as they are now: own scenes are the owner's and are not part of what a compose wrote. */
@@ -311,44 +315,55 @@ function spread(k: number, n: number, f: number): boolean {
   return Math.floor(((k + 1) * f) / n) - Math.floor((k * f) / n) === 1;
 }
 
-function planScenes(count: number, refs: readonly CategoryRef[], level: SceneLevel, legsShare: LegsShare, category: (ref: string) => CategorySummary | undefined): Scene[] {
+/**
+ * The «Подача» of each of `n` scenes of one category at «Смелая», from its share of the request's tiers: the bold scenes spread evenly over the category, then the flirty ones over the rest
+ * (the mock's deterministic stand-in for the engine's seeded `bold:` and `level:` draws); the rest ordinary.
+ */
+function levelsAt(n: number, counts: LevelCounts): ("bold" | "flirty" | undefined)[] {
+  const isBold = Array.from({ length: n }, (_, k) => spread(k, n, counts.bold));
+  const restAt = isBold.flatMap((bold, k) => (bold ? [] : [k]));
+  const isFlirty = new Set(restAt.filter((_, j) => spread(j, restAt.length, counts.flirty)));
+  return isBold.map((bold, k) => (bold ? "bold" : isFlirty.has(k) ? "flirty" : undefined));
+}
+
+function planScenes(count: number, refs: readonly CategoryRef[], level: SceneLevel, legsShare: LegsShare, category: (ref: string) => CategorySummary | undefined, impliedNudity: boolean): Scene[] {
   const scenes: Scene[] = [];
   let index = 0;
   const split = splitCount(count, refs);
   // «Ножки» (I5.29): the run's legs scenes are min(round-half-up(share × B), ⌊0.3 × count⌋), B the built-in scenes, shared over the built-in categories by largest remainder.
   const builtIn = split.map(({ ref, count: n }) => (isCustomCategory(ref) ? 0 : n));
   const legsParts = legsShare === 0 ? builtIn.map(() => 0) : apportionLegs(legsCountOf(legsShare, builtIn.reduce((a, b) => a + b, 0), count), builtIn);
+  // 5a.4 (S5.BA7, plan s5a4 r2.2 D1, I5.71): at «Смелая» the tiers are counted over the WHOLE request, 40 / 40 / 20, and spread over its categories by the shared `tierSpreadOf`. Where two
+  // categories' remainders tie, the mock serves them in the request's own order and the engine in the order of its seeded `tier-spread` stream, so a category's share may then differ by one
+  // between the two; the totals never do, and a single category's share is exactly `levelCountsOf(n)` in both.
+  const shares = level === "bold" ? tierSpreadOf(split) : null;
   for (const [entry, { ref, count: n }] of split.entries()) {
     const custom = isCustomCategory(ref) ? category(ref) : undefined;
+    const share = shares?.[entry];
     // 5a.2 (S5.6e): a built-in scene is a pair of its category's bank dealt a capture from the deck, so the shared template can write it.
-    // 5a.4 (S5.BA3, 2026-10-26, plan s5a4 §7.4 #1): «Смелая» is every category's, so the five join the branch below. STOP-GAP until S5.BA7 mirrors the engine in full: the scenes are dealt from the
-    // ordinary bank (the engine plans the five from their companions) and only LABELLED as the engine's are, a level by the mix and the Seedream route on every scene, so the parity key 4473 (a bold
-    // compose over «Дом»: 4 flirty, 4 bold, every scene on the route) holds. BA7 deals the companions and spreads the tiers over the whole request (`tierSpreadOf`) and drops `labelled`.
-    if (!isCustomCategory(ref) && level === "bold") {
-      const labelled = !isBoldCategory(ref);
-      // 5a.3 (S5.9c, I5.36): a «Смелая» category under «Смелая» draws the 20 / 40 / 40 mix, exactly (the shared `levelCountsOf`). The mock spreads the bold scenes evenly over the category, then
-      // the flirty ones over the rest; every scene is a pair of the bank at its level, written by the shared template, and is on Seedream when its moment or its outfit is.
-      const counts = levelCountsOf(n);
+    // 5a.4 (S5.BA7, I5.71, I5.73, I5.74): at «Смелая» every built-in category draws «Смелая»: the five from their companion bank on the route, nightwear and beach from their own bank, each at its
+    // share of the request's tiers. An imported avatar's banks hold no implied cover. Every scene is a pair of the bank at its level, written by the shared template, and is on Seedream when
+    // its moment or its outfit is (every item of a «Смелая» bank is, `bold-all-seedream`), never by a label of the mock's own.
+    if (share !== undefined && !isCustomCategory(ref)) {
+      const drawFor = { route: "seedream" as const, impliedNudity };
       const legs = legsParts[entry] ?? 0;
       const legsAt = Array.from({ length: n }, (_, k) => spread(k, n, legs));
-      const isBold = Array.from({ length: n }, (_, k) => spread(k, n, counts.bold));
-      const restAt = isBold.flatMap((bold, k) => (bold ? [] : [k]));
-      const isFlirty = new Set(restAt.filter((_, j) => spread(j, restAt.length, counts.flirty)));
+      const levels = levelsAt(n, share);
       const others = n - legs;
       const wantedAway = Math.min(Math.ceil(n / 10), Math.floor(n / 5));
       let kOther = 0;
       let kLegs = 0;
       for (let k = 0; k < n; k++) {
         index += 1;
-        const sceneLevel = isBold[k] === true ? ("bold" as const) : isFlirty.has(k) ? ("flirty" as const) : undefined;
+        const sceneLevel = levels[k];
         if (legsAt[k] === true) {
-          const draw = legsDraw(ref, kLegs++, { level: sceneLevel ?? "ordinary" });
-          scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, framing: "legs", ...(sceneLevel === undefined ? {} : { level: sceneLevel }), ...(draw.route === undefined && !labelled ? {} : { route: "seedream" as const }), place: draw.place, idea: null, text: null, edited: false, removed: false });
+          const draw = legsDraw(ref, kLegs++, { ...drawFor, level: sceneLevel ?? "ordinary" });
+          scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, framing: "legs", ...(sceneLevel === undefined ? {} : { level: sceneLevel }), ...(draw.route === undefined ? {} : { route: draw.route }), place: draw.place, idea: null, text: null, edited: false, removed: false });
           continue;
         }
-        const draw = bankDraw(ref, kOther, { level: sceneLevel ?? "ordinary", away: sceneLevel === undefined && spread(kOther, others, wantedAway) ? "prefer" : "never" });
+        const draw = bankDraw(ref, kOther, { ...drawFor, level: sceneLevel ?? "ordinary", away: sceneLevel === undefined && spread(kOther, others, wantedAway) ? "prefer" : "never" });
         kOther++;
-        scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(sceneLevel === undefined ? {} : { level: sceneLevel }), ...(draw.route === undefined && !labelled ? {} : { route: "seedream" as const }), place: draw.place, idea: null, text: null, edited: false, removed: false });
+        scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(sceneLevel === undefined ? {} : { level: sceneLevel }), ...(draw.route === undefined ? {} : { route: draw.route }), place: draw.place, idea: null, text: null, edited: false, removed: false });
       }
       continue;
     }
@@ -510,7 +525,7 @@ export class MockSceneSets {
     const refs = seed.categories ?? ["home"];
     const scenes: Scene[] =
       seed.scenes === undefined
-        ? planScenes(seed.count, refs, seed.level ?? "ordinary", seed.legsShare ?? 0, this.#deps.category)
+        ? planScenes(seed.count, refs, seed.level ?? "ordinary", seed.legsShare ?? 0, this.#deps.category, this.#deps.impliedNudity(seed.avatarId))
         : seed.scenes.map(
             (s, i): Scene =>
               "idea" in s
@@ -618,7 +633,7 @@ export class MockSceneSets {
     for (const scene of set.scenes) {
       if (scene.text !== null) continue;
       const chunk = set.chunks.find((c) => c.sceneIds.includes(scene.sceneId));
-      scene.text = local(scene.sceneId) ?? (chunk !== undefined && plainChunks.has(chunk.chunk) ? plainTextOf(scene) : null) ?? sentenceOf(scene);
+      scene.text = local(scene.sceneId) ?? (chunk !== undefined && plainChunks.has(chunk.chunk) ? plainTextOf(scene, this.#deps.impliedNudity(set.avatarId)) : null) ?? sentenceOf(scene);
     }
     const job = this.#liveJob(sceneSetId);
     if (job === undefined) {
@@ -737,7 +752,8 @@ export class MockSceneSets {
 
   /** The engine's `setLocal`: the code template's sentence for each planned scene it can write (`k` is 0 for the set's own writes, the write's number for a review write). */
   #local(set: MockSet, k = 0, scenes: readonly LocalScene[] = set.scenes): (sceneId: number) => string | null {
-    return localTexts({ sceneSetId: set.sceneSetId, k, scenes, snapshots: set.categories.filter((c) => isCustomCategory(c.ref)) });
+    // 5a.4 (S5.BA7, I5.74): rendered for the set's avatar's origin, as the engine's write jobs render it (which scenes the template writes is the same either way: only the coverage differs).
+    return localTexts({ sceneSetId: set.sceneSetId, k, scenes, snapshots: set.categories.filter((c) => isCustomCategory(c.ref)), impliedNudity: this.#deps.impliedNudity(set.avatarId) });
   }
 
   /**
@@ -1054,16 +1070,16 @@ export class MockSceneSets {
    * 5a.3 (S5.9f): the slots of a run request that is «Смелая» with a «Смелая» category, as the planner deals them: the very scenes `compose` would plan for the same request, each with its
    * category and the route it is drawn on. A run and a set of one request therefore agree on which slots are on Seedream.
    */
-  plannedSlots(request: { count: number; categories: readonly CategoryRef[]; level?: SceneLevel; legsShare?: LegsShare }): { category: Scene["category"]; route?: "seedream" }[] {
+  plannedSlots(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; level?: SceneLevel; legsShare?: LegsShare }): { category: Scene["category"]; route?: "seedream" }[] {
     const refs = orderCategories(request.categories);
-    return planScenes(request.count, refs, request.level ?? "ordinary", request.legsShare ?? 0, this.#deps.category).map((scene) => ({ category: scene.category, ...(scene.route === undefined ? {} : { route: scene.route }) }));
+    return planScenes(request.count, refs, request.level ?? "ordinary", request.legsShare ?? 0, this.#deps.category, this.#deps.impliedNudity(request.avatarId)).map((scene) => ({ category: scene.category, ...(scene.route === undefined ? {} : { route: scene.route }) }));
   }
 
   /** A compose that passed the engine's gates: plans and stores the set, launches its job (none for an empty set). */
   compose(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; poses?: { profile: boolean; back: boolean }; level?: SceneLevel; legsShare?: LegsShare }): { sceneSetId: string; jobId: string | null } {
     const sceneSetId = this.#deps.nextId("set");
     const refs = orderCategories(request.categories);
-    const scenes = request.count === 0 ? [] : planScenes(request.count, refs, request.level ?? "ordinary", request.legsShare ?? 0, this.#deps.category);
+    const scenes = request.count === 0 ? [] : planScenes(request.count, refs, request.level ?? "ordinary", request.legsShare ?? 0, this.#deps.category, this.#deps.impliedNudity(request.avatarId));
     const set: MockSet = {
       sceneSetId,
       avatarId: request.avatarId,
@@ -1230,11 +1246,15 @@ export class MockSceneSets {
     if (redraw) {
       const shown = new Set(set.scenes.flatMap((s) => (s.place !== null && !s.removed ? [s.place.location] : [])));
       const shownOutfits = new Set(set.scenes.flatMap((s) => (s.place !== null && !s.removed ? [s.place.outfit] : [])));
+      // 5a.4 (S5.BA7, plan s5a4 §5.1.2, I5.73, I5.74): a stored scene redraws in the bank its route names (`poolOfSlot`): a routed scene of the five in its companion, an old «Смелая» scene of
+      // the five (stored before 5a.4 with no route) in the ordinary bank at its flirty level; an imported avatar never redraws an implied cover.
+      const impliedNudity = this.#deps.impliedNudity(set.avatarId);
       for (const scene of planned) {
         const ref = scene.category === "own" ? "home" : scene.category;
+        const drawFor = { route: scene.route, impliedNudity };
         if (!isCustomCategory(ref) && scene.framing === "legs") {
           // S5.8a: a legs scene is drawn anew among the bank's legs moments, away from the places and outfits the set already shows; the framing stays.
-          const draw = legsDraw(ref, k + scene.sceneId, { avoid: { locations: shown, outfits: shownOutfits }, level: scene.level ?? "ordinary", ...(scene.place === null ? {} : { leaving: scene.place.location, activity: scene.place.activity }) });
+          const draw = legsDraw(ref, k + scene.sceneId, { ...drawFor, avoid: { locations: shown, outfits: shownOutfits }, level: scene.level ?? "ordinary", ...(scene.place === null ? {} : { leaving: scene.place.location, activity: scene.place.activity }) });
           shown.add(draw.place.location);
           shownOutfits.add(draw.place.outfit);
           draws.set(scene.sceneId, { place: draw.place, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(draw.route === undefined ? {} : { route: draw.route }) });
@@ -1244,6 +1264,7 @@ export class MockSceneSets {
           // A built-in scene is drawn anew among the bank's pairs for the capture it keeps (who takes the photo), away from the places and outfits the set already shows.
           // The scene keeps its level; a scene facing the camera never turns away (the set keeps its cap), one that faces away may stay so.
           const draw = bankDraw(ref, k + scene.sceneId, {
+            ...drawFor,
             avoid: { locations: shown, outfits: shownOutfits },
             capture: scene.capture ?? captureOfShot(scene.shot),
             level: scene.level ?? "ordinary",
@@ -1318,9 +1339,12 @@ export class MockSceneSets {
 
   /** The ids behind `#modelScenes`, in the write's order: the scenes the request carries. */
   #modelSceneIds(set: MockSet, k: number, sceneIds: readonly number[], draws: ReadonlyMap<number, Draw>): number[] {
-    const applied = set.scenes.map((scene) => {
+    const applied = set.scenes.map((scene): LocalScene => {
       const drawn = draws.get(scene.sceneId);
-      return drawn === undefined ? scene : { ...scene, place: drawn.place, shot: drawn.shot, pose: drawn.pose, ...(drawn.capture === undefined ? {} : { capture: drawn.capture }) };
+      if (drawn === undefined) return scene;
+      // 5a.4 (S5.BA7): the route the redraw drew goes with it, as `#accept` stores it, so the template reads the bank the new scene is in.
+      const { route: _kept, ...rest } = scene;
+      return { ...rest, place: drawn.place, shot: drawn.shot, pose: drawn.pose, ...(drawn.capture === undefined ? {} : { capture: drawn.capture }), ...(drawn.route === undefined ? {} : { route: drawn.route }) };
     });
     const local = this.#local(set, k, applied);
     return sceneIds.filter((id) => local(id) === null);
@@ -1498,7 +1522,7 @@ export class MockSceneSets {
         const scene = set.scenes.find((s) => s.sceneId === sceneId);
         if (scene === undefined) continue;
         if (opts.only !== undefined && !opts.only.has(sceneId)) continue;
-        scene.text = local(sceneId) ?? (opts.plain?.has(sceneId) === true ? plainTextOf(scene) : null) ?? sentenceOf(scene, review.k);
+        scene.text = local(sceneId) ?? (opts.plain?.has(sceneId) === true ? plainTextOf(scene, this.#deps.impliedNudity(set.avatarId)) : null) ?? sentenceOf(scene, review.k);
         scene.edited = false;
       }
     }
@@ -1655,7 +1679,7 @@ export class MockSceneSets {
     let written = 0;
     for (const scene of set.scenes) {
       if (!ids.includes(scene.sceneId) || scene.text !== null) continue;
-      scene.text = plainTextOf(scene) ?? sentenceOf(scene);
+      scene.text = plainTextOf(scene, this.#deps.impliedNudity(set.avatarId)) ?? sentenceOf(scene);
       written += 1;
     }
     job.done += written;

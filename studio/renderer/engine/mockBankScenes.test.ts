@@ -31,13 +31,13 @@ function scenes(n: number): LocalScene[] {
 describe("the mock's scene texts (localTexts)", () => {
   test("a 20-scene set says no gaze and no expression three times", () => {
     const set = scenes(20);
-    const text = localTexts({ sceneSetId: SET_ID, k: 0, scenes: set, snapshots: [] });
+    const text = localTexts({ sceneSetId: SET_ID, k: 0, scenes: set, snapshots: [], impliedNudity: false });
     expect(mostSaid(set.map((s) => text(s.sceneId)))).toBeLessThanOrEqual(2);
   });
 
   test("are the engine's texts for the same scenes and keys", () => {
     const set = scenes(40);
-    const text = localTexts({ sceneSetId: SET_ID, k: 0, scenes: set, snapshots: [] });
+    const text = localTexts({ sceneSetId: SET_ID, k: 0, scenes: set, snapshots: [], impliedNudity: false });
     const slots = set.flatMap((s) => {
       const slot = slotOf(s);
       return slot === null ? [] : [{ ...slot, slotIndex: s.sceneId }];

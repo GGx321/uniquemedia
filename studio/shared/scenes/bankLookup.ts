@@ -39,10 +39,18 @@ export function bankPlaceOf(slot: BankLookupSlot): BankHit | undefined {
   return { bank, place, moment: place.moments.find((m) => m.text === slot.activity) };
 }
 
+/**
+ * 5a.4 (S5.BA7, plan s5a4 §5.11): the bank a built-in category's slot is drawn from: the five plus the route → their companion; nightwear, beach, and the five without the route → their own
+ * bank. The mock plans and redraws from it (it cannot read the engine's `poolAt` / `poolOfSlot`), and `bankPlaceOf` reads it, so the two cannot disagree.
+ */
+export function builtInBankOf(category: BankCategory, route: SceneRoute | undefined): CategoryBank {
+  return route === "seedream" && ordinaryBankOf(category) ? BOLD_COMPANIONS[category] : BANKS[category];
+}
+
 /** The bank a slot is drawn from (see `bankPlaceOf`); a routed custom slot needs its place's name to tell the two custom banks apart. */
 function bankOfSlot(slot: BankLookupSlot): CategoryBank | undefined {
   const category = bankCategoryOf(slot.category);
-  if (category !== undefined) return slot.route === "seedream" && ordinaryBankOf(category) ? BOLD_COMPANIONS[category] : BANKS[category];
+  if (category !== undefined) return builtInBankOf(category, slot.route);
   if (isCustomCategory(slot.category) && slot.route === "seedream") return Object.values(CUSTOM_BOLD_BANKS).find((bank) => bank.places.some((p) => p.name === slot.location));
   return undefined;
 }

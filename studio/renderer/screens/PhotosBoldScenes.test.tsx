@@ -11,6 +11,8 @@ import { card, sceneCard } from "./photos/sceneScreenKit";
 // models line names the bold frames' model, its price column the engine's price of one Seedream attempt; ⟳ «Другая сцена» stays free and keeps «Подача».
 // The mock composes the set as the engine does (S5.9c/f): «Ночнушки и бельё» 6 + «Пляж и бассейн» 6 → scene 1 ordinary, 2 flirty and 3 bold, all on Seedream
 // (5a.4, Q-A2: every nightwear outfit is), 7 an ordinary beach frame — on Seedream too, every beach outfit being swimwear.
+// 5a.4 (S5.BA7, 2026-10-27, plan s5a4 r2.2 D1): the tiers are counted over the whole request now (5 / 5 / 2 of the 12, the tie of 2.5 bold each served in the request's order), so nightwear
+// holds 3 bold, 2 flirty and 1 ordinary: scene 1 ordinary, 2 bold and 3 flirty. The cards below follow; what each card must say is unchanged.
 
 const BOLD_TITLE = "Подача «Смелая»: бельё, ночнушки, купальники";
 const ROUTE_TITLE = "Этот кадр рисует Seedream 5 Pro в 2K";
@@ -43,18 +45,18 @@ function modelsLine(): string {
 describe("a «Смелая» set's scenes (mockup 49)", () => {
   test("a bold scene: «смело» after its other tags, with its title; then «Seedream · 2K» with its own", async () => {
     await openSet(["nightwear", "beach"], "bold");
-    const badge = within(sceneCard(3)).getByText("смело");
+    const badge = within(sceneCard(2)).getByText("смело");
     expect(badge.getAttribute("title")).toBe(BOLD_TITLE);
     expect(badge.classList.contains("scene-tag-bold")).toBe(true);
-    const route = within(sceneCard(3)).getByText("Seedream · 2K");
+    const route = within(sceneCard(2)).getByText("Seedream · 2K");
     expect(route.getAttribute("title")).toBe(ROUTE_TITLE);
-    expect(tags(3).slice(-2)).toEqual(["смело", "Seedream · 2K"]);
+    expect(tags(2).slice(-2)).toEqual(["смело", "Seedream · 2K"]);
   });
 
   test("a flirty scene keeps «кокетливо»; on Seedream it says so too", async () => {
     await openSet(["nightwear", "beach"], "bold");
-    expect(tags(2).slice(-2)).toEqual(["кокетливо", "Seedream · 2K"]);
-    expect(within(sceneCard(2)).queryByText("смело") === null).toBe(true);
+    expect(tags(3).slice(-2)).toEqual(["кокетливо", "Seedream · 2K"]);
+    expect(within(sceneCard(3)).queryByText("смело") === null).toBe(true);
   });
 
   // 5a.4 (S5.BA2, 2026-10-26, Q-A2): every nightwear scene is on Seedream now, its ordinary ones included, so scene 1 says «Seedream · 2K» and no level; the scenes on the owner's model
@@ -102,16 +104,16 @@ describe("a «Смелая» set's scenes (mockup 49)", () => {
 
   test("⟳ on a bold scene: free, and «Подача та же — смелая.»; on an ordinary one no «Подача»", async () => {
     await openSet(["nightwear", "beach"], "bold");
-    const redo = within(sceneCard(3)).getByRole("button", { name: "Другая сцена вместо 03" });
+    const redo = within(sceneCard(2)).getByRole("button", { name: "Другая сцена вместо 02" });
     fireEvent.click(redo);
-    await within(sceneCard(3)).findByRole("button", { name: "Заменить · бесплатно" });
+    await within(sceneCard(2)).findByRole("button", { name: "Заменить · бесплатно" });
     // Once priced (the app's template writes it), ⟳ itself says so too, as on every built-in scene (the column learns it from the popover's price).
-    await waitFor(() => expect(within(sceneCard(3)).getByRole("button", { name: "Другая сцена вместо 03" }).getAttribute("title")).toBe("Другая сцена — бесплатно"));
-    expect(within(sceneCard(3)).getByRole("dialog").querySelector(".scene-pop-head")?.textContent).toBe("Другая сценабесплатно");
-    expect(within(sceneCard(3)).getByRole("dialog").querySelector(".scene-pop-text")?.textContent).toBe(
-      "Новое место, наряд, действие, время дня и ракурс из категории «Ночнушки и бельё» и новый текст — его пишет приложение, поэтому бесплатно. Подача та же — смелая. Сцена 03 заменится сразу.",
+    await waitFor(() => expect(within(sceneCard(2)).getByRole("button", { name: "Другая сцена вместо 02" }).getAttribute("title")).toBe("Другая сцена — бесплатно"));
+    expect(within(sceneCard(2)).getByRole("dialog").querySelector(".scene-pop-head")?.textContent).toBe("Другая сценабесплатно");
+    expect(within(sceneCard(2)).getByRole("dialog").querySelector(".scene-pop-text")?.textContent).toBe(
+      "Новое место, наряд, действие, время дня и ракурс из категории «Ночнушки и бельё» и новый текст — его пишет приложение, поэтому бесплатно. Подача та же — смелая. Сцена 02 заменится сразу.",
     );
-    fireEvent.click(within(sceneCard(3)).getByRole("button", { name: "Отмена" }));
+    fireEvent.click(within(sceneCard(2)).getByRole("button", { name: "Отмена" }));
     await flush();
     fireEvent.click(within(sceneCard(1)).getByRole("button", { name: "Другая сцена вместо 01" }));
     await within(sceneCard(1)).findByRole("button", { name: "Заменить · бесплатно" });
