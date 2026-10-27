@@ -1117,8 +1117,9 @@ export class MockEngine implements EngineBridge {
         balance: () => (this.settings.apiKey.stored && !this.settings.apiKey.rejected ? { micros: 12_400_000, asOf: new Date(this.clock).toISOString() } : null),
         recordsOf: (_avatarId, videoIds) => (this.recordsUnreadable ? undefined : new Set(videoIds.filter((id) => this.videos.some((v) => v.summary.videoId === id)))),
         marksOf: (avatarId) => this.publishedMarksOf(avatarId),
-        claimPhotos: (avatarId, categories, n, taken) => {
-          const free = this.photos.filter((p) => p.avatarId === avatarId && categories.some((c) => c === p.category) && !taken.has(p.photoId) && this.photoUsable(avatarId, p.photoId) && !p.rejected);
+        claimPhotos: (avatarId, categories, n, taken, level) => {
+          // 5a.4 (S5.BA7, r2.2 D2; the engine's `poolOf`): at «Смелая» a library video takes only the photos drawn on the Seedream route, as the plan counted them free.
+          const free = this.photos.filter((p) => p.avatarId === avatarId && categories.some((c) => c === p.category) && (level !== "bold" || p.route === "seedream") && !taken.has(p.photoId) && this.photoUsable(avatarId, p.photoId) && !p.rejected);
           return free.length < n ? null : free.slice(0, n).map((p) => p.photoId);
         },
         holdPhotos: (photoIds, held) => {

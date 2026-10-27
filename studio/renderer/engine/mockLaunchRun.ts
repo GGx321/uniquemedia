@@ -919,7 +919,7 @@ export class MockRun {
     const taken = new Set(this.#work.flatMap((w) => w.slots.flatMap((s) => s.photoIds)));
     for (const slot of work.slots) {
       if (slot.source !== "library" || slot.state !== "planned") continue;
-      const ids = this.#w.claimPhotos(work.avatarId, this.#categories, slot.size, taken);
+      const ids = this.#w.claimPhotos(work.avatarId, this.#categories, slot.size, taken, this.#launch.draft.level);
       moved = true;
       if (ids === null) {
         slot.state = "dropped";

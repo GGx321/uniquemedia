@@ -122,7 +122,7 @@ export interface MockAutopilotWorld {
   /** S4.6g: the avatar's «Опубликовано» marks as its log reads (`absent` before the first mark, `unknown` while it is torn). */
   marksOf(avatarId: string): MarksRead;
   /** The library photos a library video takes: `n` free photos of the avatar in these categories that are not in `taken`, or null when there are not enough. */
-  claimPhotos(avatarId: string, categories: readonly CategoryRef[], n: number, taken: ReadonlySet<string>): string[] | null;
+  claimPhotos(avatarId: string, categories: readonly CategoryRef[], n: number, taken: ReadonlySet<string>, level: SceneLevel | undefined): string[] | null;
   /** The photos a launch's videos hold are reserved (not free) until their record lands. */
   holdPhotos(photoIds: readonly string[], held: boolean): void;
   /**
