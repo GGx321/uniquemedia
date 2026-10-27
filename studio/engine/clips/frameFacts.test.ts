@@ -17,6 +17,8 @@ import { GROK_FALLBACK, isBoldCategory, type AvatarDescriptor } from "../../shar
 import { assembleSlot } from "../scenes/assembler";
 import { captureLineOf, slotKeyOf } from "../scenes/phoneLook";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
+import { photoSummaryFrom } from "../library/photoRecords";
+import { klingOnlyFrame } from "../../renderer/screens/clips/clipModel";
 import { clipFallbackOf, frameFactsOf, frameRefusalOf, readFrameFacts, type FrameFacts, type FrameFactsResult } from "./frameFacts";
 import { SHIPPED_POV_CAPTURE_LINES } from "./videoLook";
 import { AVATAR, MODELS, everyMoment, photoCaptureLineOf, photoOf, pick, planlessPhoto, sceneRun, sentenceOf, slotOf } from "./testing/frameFixtures";
@@ -669,5 +671,33 @@ describe("frames of «Смелая» on every category (S5.BA6, I5.79, QB-5)", (
     const { run, slot } = routedHome("run-00000043");
     const planned = factsOf(frameFactsOf(photoOf(run, slot), run));
     for (const mode of ["auto", "offer"] as const) expect(clipFallbackOf(planned, "kling-only", mode)).toBe("none");
+  });
+
+  // The renderer reads the gallery's `PhotoSummary`, the engine the sidecar and its plan: a photo a run wrote must give the same answer to both (S5.BA6 review, LOW-1).
+  test("the clip tab's reading of a run's photo summary equals the engine's facts, for each kind of frame", () => {
+    const { run: routedRun, slot: routedSlot } = routedHome("run-00000044");
+    const oldHome = pick("home", (m) => m.captures.includes("mirror") && m.level === undefined);
+    const oldRun = sceneRun("run-00000045", [slotOf(oldHome, "mirror", "front", { level: "flirty" })]);
+    const night = pick("nightwear", (m) => m.captures.includes("mirror") && m.level === "bold");
+    const nightRun = sceneRun("run-00000046", [slotOf(night, "mirror")]);
+    const customPlace = CUSTOM_BOLD_BANKS.rooms.places.find((p) => p.moments.some((m) => m.captures.includes("mirror")));
+    const customMoment = customPlace?.moments.find((m) => m.captures.includes("mirror"));
+    if (customPlace === undefined || customMoment === undefined) throw new Error("no custom moment for this fixture");
+    const customRun = sceneRun("run-00000047", [
+      slotOf({ category: "home", place: customPlace, moment: customMoment }, "mirror", "front", { category: CUSTOM, route: "seedream", level: "bold", outfit: customMoment.outfits?.[0] ?? CUSTOM_BOLD_BANKS.rooms.outfits[0]?.text ?? "an outfit" }),
+    ]);
+    const cases: [string, RunPlan, PlanSlot, boolean][] = [
+      ["a routed «Дом»", routedRun, routedSlot, true],
+      ["an old «Дом»", oldRun, oldRun.scenes.slots[0] as PlanSlot, false],
+      ["nightwear", nightRun, nightRun.scenes.slots[0] as PlanSlot, true],
+      ["a routed custom category", customRun, customRun.scenes.slots[0] as PlanSlot, true],
+    ];
+    for (const [name, planRun, planSlot, bold] of cases) {
+      const sidecar = photoOf(planRun, planSlot);
+      const summary = photoSummaryFrom(sidecar, { eligible: true, rejected: false, reserved: false, usedIn: [] });
+      if (summary === null) throw new Error(`${name}: no summary`);
+      const facts = factsOf(frameFactsOf(sidecar, planRun));
+      expect({ name, engine: facts.bold, tab: klingOnlyFrame({ category: summary.category, route: summary.route }, "kling-only") }).toEqual({ name, engine: bold, tab: bold });
+    }
   });
 });

@@ -146,6 +146,8 @@ export function photoOf(run: RunPlan, slot: PlanSlot | OwnPlanSlot, extra: { pro
       slot: slot.attemptIdBase,
       category: extra.category ?? photoCategory(slot.category),
       costMicros: 40_000,
+      // As the run writes it (runJob.ts, `isBoldSlot`): a slot planned on the Seedream route leaves its photo the route.
+      ...("route" in slot && slot.route === "seedream" ? { route: "seedream" as const } : {}),
     },
     qa: extra.qa ?? { faceCos: 0.71 },
     createdAt: "2026-10-13T10:00:00.000Z",
