@@ -271,3 +271,26 @@ export function localTexts(input: { sceneSetId: string; k: number; scenes: reado
   }
   return (sceneId) => rendered.get(sceneId) ?? null;
 }
+
+/**
+ * 5a.4 (S5.BA7, plan s5a4 §5.3.3, S5.BA4d): the preposition the mock's writer opens a custom «Смелая» sentence with, by the shared banks' place: for each «rooms» place the first one the
+ * engine's bold reader takes for it (engine/scenes/writer.ts `PLACE_PREPOSITIONS`; the mock cannot import it, so mockSceneSets.boldAny.test.ts holds the two equal); for a «by the water» place,
+ * which the reader takes with any preposition, the one that reads as English. A place that opens with its own preposition («in the water») opens the sentence as it is.
+ */
+export const MOCK_PLACE_OPENERS: Readonly<Record<string, string>> = Object.freeze({
+  "her room": "in",
+  "her bathroom": "in",
+  "her window": "by",
+  "her balcony": "on",
+  "her sofa": "on",
+  "a lounger by the water": "on",
+  "a sunny spot by the water": "in",
+  "a railing over the water": "at",
+});
+
+/** A place opened as the sentence's first clause: «In her room», «On a lounger by the water», «In the water». */
+export function openedPlace(location: string): string {
+  const own = /^(?:in|on|at|by|inside|beside|near|under|over|through|into|onto|outside)\b/i.test(location);
+  const opened = own ? location : `${MOCK_PLACE_OPENERS[location] ?? "in"} ${location}`;
+  return `${opened.charAt(0).toUpperCase()}${opened.slice(1)}`;
+}

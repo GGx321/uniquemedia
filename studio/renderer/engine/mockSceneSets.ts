@@ -26,12 +26,14 @@ import {
   type SceneView,
   type UnsequencedEvent,
 } from "../../shared/engine";
+import { bankPlaceOf } from "../../shared/scenes/bankLookup";
 import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "../../shared/scenes/captures";
 import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared/scenes/contentLine";
-import { covers } from "../../shared/scenes/custom";
-import { apportionLegs, drawLevelOf, flirtyCountOf, legsCountOf, tierSpreadOf, type LevelCounts } from "../../shared/scenes/level";
+import { covers, isWaterPlaceName } from "../../shared/scenes/custom";
+import { apportionLegs, drawLevelOf, flirtyCountOf, legsCountOf, spreadLevels, tierSpreadOf, type LevelCounts } from "../../shared/scenes/level";
+import { slotCoverageOf } from "../../shared/scenes/template";
 import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
-import { bankDraw, legsDraw, localTexts, plainTextOf, type LocalScene } from "./mockBankScenes";
+import { bankDraw, customBoldDraw, legsDraw, localTexts, openedPlace, plainTextOf, type LocalScene } from "./mockBankScenes";
 import { mockAnglesOf } from "./mockCategories";
 import type { Scheduler } from "./scheduler";
 
@@ -315,6 +317,8 @@ function spread(k: number, n: number, f: number): boolean {
   return Math.floor(((k + 1) * f) / n) - Math.floor((k * f) / n) === 1;
 }
 
+const NO_TIERS: LevelCounts = { bold: 0, flirty: 0, ordinary: 0 };
+
 /**
  * The «Подача» of each of `n` scenes of one category at «Смелая», from its share of the request's tiers: the bold scenes spread evenly over the category, then the flirty ones over the rest
  * (the mock's deterministic stand-in for the engine's seeded `bold:` and `level:` draws); the rest ordinary.
@@ -364,6 +368,29 @@ function planScenes(count: number, refs: readonly CategoryRef[], level: SceneLev
         const draw = bankDraw(ref, kOther, { ...drawFor, level: sceneLevel ?? "ordinary", away: sceneLevel === undefined && spread(kOther, others, wantedAway) ? "prefer" : "never" });
         kOther++;
         scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(sceneLevel === undefined ? {} : { level: sceneLevel }), ...(draw.route === undefined ? {} : { route: draw.route }), place: draw.place, idea: null, text: null, edited: false, removed: false });
+      }
+      continue;
+    }
+    if (share !== undefined) {
+      // 5a.4 (S5.BA7, plan s5a4 §5.3, I5.71, I5.72, I5.78): a custom category at «Смелая» draws from the two shared custom banks, never its own pool (its «Ракурсы» and deck are not asked,
+      // QB-4), and each scene carries a `world`, one of the category's stored places, which the writer sets the frame inside. Of its n scenes w = ⌊(n × W + ⌊P/2⌋) / P⌋ (W water places of
+      // P, by their head noun) are «by the water» with a water world, the rest «rooms» with any world, and the category's share of the tiers is split between the two the same way the request
+      // is split between categories. The mock spreads the water scenes and deals the worlds round the places (the engine draws both on seeded streams); the counts are the engine's.
+      const worlds = tablesOf(custom).map((t) => t.place);
+      const waterWorlds = worlds.filter(isWaterPlaceName);
+      const wet = worlds.length === 0 ? 0 : Math.floor((n * waterWorlds.length + Math.floor(worlds.length / 2)) / worlds.length);
+      const wetAt = Array.from({ length: n }, (_, k) => spread(k, n, wet));
+      const [roomsShare, waterShare] = spreadLevels(share, [n - wet, wet]);
+      const levels = { rooms: levelsAt(n - wet, roomsShare ?? NO_TIERS), water: levelsAt(wet, waterShare ?? NO_TIERS) };
+      const dealt = { rooms: 0, water: 0 };
+      for (let k = 0; k < n; k++) {
+        index += 1;
+        const branch = wetAt[k] === true ? ("water" as const) : ("rooms" as const);
+        const j = dealt[branch]++;
+        const sceneLevel = levels[branch][j];
+        const draw = customBoldDraw(branch, j, { level: sceneLevel ?? "ordinary", impliedNudity });
+        const world = branch === "water" ? waterWorlds[j % Math.max(1, waterWorlds.length)] : worlds[j % Math.max(1, worlds.length)];
+        scenes.push({ sceneId: index, category: ref, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(sceneLevel === undefined ? {} : { level: sceneLevel }), ...(draw.route === undefined ? {} : { route: draw.route }), place: { ...draw.place, ...(world === undefined ? {} : { world }) }, idea: null, text: null, edited: false, removed: false });
       }
       continue;
     }
@@ -447,10 +474,26 @@ function ideaAngle(idea: string): "back" | "profile" | undefined {
   return angles.includes("back") ? "back" : angles.includes("profile") ? "profile" : undefined;
 }
 
-/** The sentence the mock's writer gives a scene; a write's number makes a rewrite say something new (the compose's own sentence is take 0, as before). */
-function sentenceOf(scene: Scene, take = 0): string {
+/**
+ * The sentence the mock's writer gives a scene; a write's number makes a rewrite say something new (the compose's own sentence is take 0, as before). 5a.4 (S5.BA7, plan s5a4 §5.3.3): a custom
+ * category's «Смелая» scene is written as the bold writer must write it: what the engine's bold reader accepts (its place opened with the place's own preposition, its world named, «she» and
+ * its moment word for word, its outfit as given), then the coverage sentence by the avatar's origin, appended as the engine's `boldReader` appends it.
+ */
+const BOLD_DETAILS = ["a cup of tea beside her", "a book beside her", "a scarf beside her"] as const;
+
+function sentenceOf(scene: Scene, take: number, impliedNudity: boolean): string {
   const mark = take === 0 ? `${scene.sceneId}` : `${scene.sceneId}, take ${take}`;
   if (scene.place === null) return `She enjoys ${scene.idea ?? "a quiet moment"}, caught by a friend in the afternoon light (${mark}).`;
+  if (scene.route === "seedream" && scene.category !== "own" && isCustomCategory(scene.category)) {
+    const { location, activity, outfit, world } = scene.place;
+    // The world is named unless its stored name says a word the content line holds against a «Смелая» frame (a youth word: «a tiny bookshop»); the place's own key words stay.
+    const named = world !== undefined && contentProblems(world, contentLevelOf({ category: scene.category, level: scene.level, route: scene.route })).length === 0;
+    const near = world === undefined || !named ? "" : ` while staying near ${world.replace(/^an? /i, "the ")}`;
+    // No number in it: a number is held to the minor-age guard on a «Смелая» frame. The detail turns with the take, so a rewrite says something new.
+    const sentence = `${openedPlace(location)}${near}, she ${activity} in ${outfit}, ${BOLD_DETAILS[(scene.sceneId + take) % BOLD_DETAILS.length] ?? "a cup of tea beside her"}.`;
+    const coverage = slotCoverageOf({ category: scene.category, route: scene.route, location, activity, outfit }, impliedNudity);
+    return coverage === undefined ? sentence : `${sentence} ${coverage}`;
+  }
   return `A friend catches her ${scene.place.activity} at ${scene.place.location} in the ${scene.place.timeOfDay}, wearing ${scene.place.outfit} (${mark}).`;
 }
 
@@ -534,7 +577,7 @@ export class MockSceneSets {
           );
     const chunks = chunksOf(seed.sceneSetId, scenes.filter((scene) => scene.place !== null));
     const written = seed.written ?? 0;
-    if (seed.scenes === undefined) for (const scene of scenes) if (scene.sceneId <= written) scene.text = sentenceOf(scene);
+    if (seed.scenes === undefined) for (const scene of scenes) if (scene.sceneId <= written) scene.text = sentenceOf(scene, 0, this.#deps.impliedNudity(seed.avatarId));
     // A chunk whose scenes were written was answered once.
     for (const chunk of chunks) {
       if (chunk.sceneIds.every((id) => id <= written)) chunk.attempts.push({ key: `${seed.sceneSetId}:writer-${chunk.chunk}#1`, paid: true, cost: Math.round(chunk.sceneIds.length * TYPICAL_PER_SCENE), open: false });
@@ -633,7 +676,7 @@ export class MockSceneSets {
     for (const scene of set.scenes) {
       if (scene.text !== null) continue;
       const chunk = set.chunks.find((c) => c.sceneIds.includes(scene.sceneId));
-      scene.text = local(scene.sceneId) ?? (chunk !== undefined && plainChunks.has(chunk.chunk) ? plainTextOf(scene, this.#deps.impliedNudity(set.avatarId)) : null) ?? sentenceOf(scene);
+      scene.text = local(scene.sceneId) ?? (chunk !== undefined && plainChunks.has(chunk.chunk) ? plainTextOf(scene, this.#deps.impliedNudity(set.avatarId)) : null) ?? sentenceOf(scene, 0, this.#deps.impliedNudity(set.avatarId));
     }
     const job = this.#liveJob(sceneSetId);
     if (job === undefined) {
@@ -1276,6 +1319,28 @@ export class MockSceneSets {
           draws.set(scene.sceneId, { place: draw.place, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(draw.route === undefined ? {} : { route: draw.route }) });
           continue;
         }
+        if (scene.route === "seedream" && scene.place !== null) {
+          // 5a.4 (S5.BA7, plan s5a4 I5.73, I5.78; the engine's `redrawSlot` with its `worldPool`): a custom scene on the route is drawn anew in its own shared bank («rooms» or «by the
+          // water»), keeps its level, and takes another world of the category's places (a water scene a water place); with none left to take it keeps the world it has.
+          const place = scene.place;
+          const branch = bankPlaceOf({ category: ref, route: scene.route, location: place.location })?.place.water === true ? ("water" as const) : ("rooms" as const);
+          const draw = customBoldDraw(branch, k + scene.sceneId, {
+            impliedNudity,
+            avoid: { locations: shown, outfits: shownOutfits },
+            capture: scene.capture ?? captureOfShot(scene.shot),
+            level: scene.level ?? "ordinary",
+            leaving: place.location,
+          });
+          const places = tablesOf(this.#deps.category(ref)).map((t) => t.place);
+          const worlds = branch === "water" ? places.filter(isWaterPlaceName) : places;
+          const others = worlds.filter((w) => w !== place.world);
+          const pick = others.length > 0 ? others : worlds;
+          const world = this.#deps.category(ref) === undefined ? place.world : (pick[(k + scene.sceneId) % Math.max(1, pick.length)] ?? place.world);
+          shown.add(draw.place.location);
+          shownOutfits.add(draw.place.outfit);
+          draws.set(scene.sceneId, { place: { ...draw.place, ...(world === undefined ? {} : { world }) }, shot: shotOf(draw.capture), capture: draw.capture, pose: draw.pose, ...(draw.route === undefined ? {} : { route: draw.route }) });
+          continue;
+        }
         const custom = this.#deps.category(ref);
         let tables = tablesOf(custom);
         // CS.8a: a category with `poses` redraws its pose from them, and a phone that would turn away gives way to another shot of the deck.
@@ -1499,7 +1564,7 @@ export class MockSceneSets {
       for (const own of review.own) {
         if (opts.only !== undefined && !opts.only.has(own.sceneId)) continue;
         const scene: Scene = { sceneId: own.sceneId, category: "own", shot: own.shot, pose: own.pose, place: null, idea: review.idea ?? null, text: null, edited: false, removed: false };
-        scene.text = sentenceOf(scene, review.k);
+        scene.text = sentenceOf(scene, review.k, this.#deps.impliedNudity(set.avatarId));
         set.scenes.push(scene);
       }
     } else {
@@ -1522,7 +1587,7 @@ export class MockSceneSets {
         const scene = set.scenes.find((s) => s.sceneId === sceneId);
         if (scene === undefined) continue;
         if (opts.only !== undefined && !opts.only.has(sceneId)) continue;
-        scene.text = local(sceneId) ?? (opts.plain?.has(sceneId) === true ? plainTextOf(scene, this.#deps.impliedNudity(set.avatarId)) : null) ?? sentenceOf(scene, review.k);
+        scene.text = local(sceneId) ?? (opts.plain?.has(sceneId) === true ? plainTextOf(scene, this.#deps.impliedNudity(set.avatarId)) : null) ?? sentenceOf(scene, review.k, this.#deps.impliedNudity(set.avatarId));
         scene.edited = false;
       }
     }
@@ -1602,7 +1667,7 @@ export class MockSceneSets {
           attempt.paid = true;
           attempt.cost = Math.round(ids.length * TYPICAL_PER_SCENE);
           this.#deps.spend(attempt.cost);
-          for (const scene of set.scenes) if (ids.includes(scene.sceneId) && scene.text === null) scene.text = sentenceOf(scene);
+          for (const scene of set.scenes) if (ids.includes(scene.sceneId) && scene.text === null) scene.text = sentenceOf(scene, 0, this.#deps.impliedNudity(set.avatarId));
           job.done += ids.length;
           job.written += ids.length;
           set.revision += 1;
@@ -1615,7 +1680,7 @@ export class MockSceneSets {
           attempt.cost = Math.round(ids.length * TYPICAL_PER_SCENE);
           this.#deps.spend(attempt.cost);
           const [wrong, ...right] = ids;
-          for (const scene of set.scenes) if (right.includes(scene.sceneId) && scene.text === null) scene.text = sentenceOf(scene);
+          for (const scene of set.scenes) if (right.includes(scene.sceneId) && scene.text === null) scene.text = sentenceOf(scene, 0, this.#deps.impliedNudity(set.avatarId));
           job.done += right.length;
           job.written += right.length;
           set.revision += 1;
@@ -1679,7 +1744,7 @@ export class MockSceneSets {
     let written = 0;
     for (const scene of set.scenes) {
       if (!ids.includes(scene.sceneId) || scene.text !== null) continue;
-      scene.text = plainTextOf(scene, this.#deps.impliedNudity(set.avatarId)) ?? sentenceOf(scene);
+      scene.text = plainTextOf(scene, this.#deps.impliedNudity(set.avatarId)) ?? sentenceOf(scene, 0, this.#deps.impliedNudity(set.avatarId));
       written += 1;
     }
     job.done += written;

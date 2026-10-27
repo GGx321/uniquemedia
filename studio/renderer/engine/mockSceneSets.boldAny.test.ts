@@ -1,17 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { planForAvatar } from "../../engine/scenes/planner";
+import { poolOf } from "../../engine/scenes/poolGen";
 import { POOLS } from "../../engine/scenes/pools";
-import type { PlanSlot } from "../../engine/scenes/schema";
+import { PlanSlotSchema, type PlanSlot } from "../../engine/scenes/schema";
 import type { PlannerCategory } from "../../engine/scenes/types";
-import { splitCount, type AvatarSummary, type CategoryRef, type SceneSetView, type SceneView } from "../../shared/engine";
+import { boldReader, PLACE_PREPOSITIONS } from "../../engine/scenes/writer";
+import { splitCount, type AvatarSummary, type CategoryPool, type CategoryRef, type CategorySummary, type SceneSetView, type SceneView } from "../../shared/engine";
 import { bankPlaceOf } from "../../shared/scenes/bankLookup";
 import { BANKS } from "../../shared/scenes/banks";
-import { BOLD_COMPANIONS } from "../../shared/scenes/banks/companions";
+import { BOLD_COMPANIONS, CUSTOM_BOLD_BANKS } from "../../shared/scenes/banks/companions";
 import type { BankCategory } from "../../shared/scenes/banks/types";
+import { isWaterPlaceName } from "../../shared/scenes/custom";
 import { levelCountsOf, tierSpreadOf, type LevelCounts } from "../../shared/scenes/level";
 import { slotCoverageOf } from "../../shared/scenes/template";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import { BANK_OF } from "./mockBankScenes";
+import { BANK_OF, MOCK_PLACE_OPENERS } from "./mockBankScenes";
 import { MIA, makeMock, unwrap, type Mock } from "./mockEngine.testkit";
 useNativeGlobals();
 
@@ -28,8 +31,25 @@ const FIVE = ["home", "travel", "shoot", "glam", "fit"] as const;
 const PLANNER: Readonly<Record<(typeof FIVE)[number] | "nightwear" | "beach", PlannerCategory>> = { home: "home", travel: "travel", shoot: "photoshoot", glam: "glamour", fit: "fitness", nightwear: "nightwear", beach: "beach" };
 const SEEDS = Array.from({ length: 12 }, (_, i) => 3 + i * 7_919);
 
+/** A custom category with two water places of five (the world a custom «Смелая» scene is set in), as a library stores it. */
+const TRIP = "cat-trip-fixture";
+const TRIP_POOL: CategoryPool = {
+  locations: [
+    { name: "a corner cafe in Paris", times: ["morning"], activities: [{ text: "reading a menu", twoHanded: false }], mirror: false },
+    { name: "a hotel pool in Nice", times: ["midday"], activities: [{ text: "floating on her back", twoHanded: false }], mirror: false },
+    { name: "a bridge over the Seine", times: ["evening"], activities: [{ text: "leaning on the railing", twoHanded: false }], mirror: false },
+    { name: "the sundeck of a sailing yacht", times: ["golden hour"], activities: [{ text: "watching the waves", twoHanded: false }], mirror: false },
+    { name: "a tiny bookshop", times: ["midday"], activities: [{ text: "browsing a shelf", twoHanded: false }], mirror: true },
+  ],
+  outfits: ["a beige trench coat and jeans", "a long cardigan and trousers"],
+  shotDeck: ["friend", "selfie", "mirror", "candid", "friend"],
+};
+const TRIP_CATEGORY: CategorySummary = { categoryId: TRIP, name: "Поездка", description: "поездка", label: "Trip", style: "phone", pool: TRIP_POOL, model: "x-ai/grok-4.3", spentMicros: 0, createdAt: "2026-10-27T10:00:00.000Z", updatedAt: "2026-10-27T10:00:00.000Z" };
+const WORLDS = TRIP_POOL.locations.map((l) => l.name);
+const WATER_WORLDS = WORLDS.filter(isWaterPlaceName);
+
 function mockOf(): Mock {
-  return makeMock({ avatars: [MIA, STUDIO], photos: [] });
+  return makeMock({ avatars: [MIA, STUDIO], photos: [], categories: [TRIP_CATEGORY] });
 }
 
 async function composed(m: Mock, avatar: AvatarSummary, count: number, categories: readonly CategoryRef[]): Promise<SceneSetView> {
@@ -51,8 +71,8 @@ const tiersOf = (rows: readonly { level?: string | undefined }[]): LevelCounts =
 
 /** The bank name of a contract ref (the mock's `BANK_OF`). */
 const bankNameOf = (scene: SceneView): BankCategory => BANK_OF[scene.category as keyof typeof BANK_OF];
-/** A scene as the bank lookup reads it. */
-const lookupOf = (scene: SceneView) => ({ category: bankNameOf(scene), route: scene.route, location: scene.place?.location, activity: scene.place?.activity });
+/** A scene as the bank lookup reads it: a built-in by its bank's name, a custom category by its id. */
+const lookupOf = (scene: SceneView) => ({ category: scene.category in BANK_OF ? bankNameOf(scene) : scene.category, route: scene.route, location: scene.place?.location, activity: scene.place?.activity });
 
 /** Whether a scene (mock) or a slot (engine) drew an implied cover: its moment, or its outfit, is `tier: "implied"`. */
 function drewImplied(item: { category: string; route: "seedream" | undefined; location: string | undefined; activity: string | undefined; outfit: string | undefined }): boolean {
@@ -172,5 +192,152 @@ describe("below «Смелая» nothing moves", () => {
       expect(scene.route).toBeUndefined();
       expect(BANKS.home.places.some((p) => p.name === scene.place?.location && p.moments.some((mo) => mo.text === scene.place?.activity))).toBe(true);
     }
+  });
+});
+
+/** The engine's plan slot of a mock scene (what its bold reader reads). */
+function slotOfScene(scene: SceneView): PlanSlot {
+  const place = scene.place;
+  if (place === null) throw new Error("an own scene has no slot");
+  return PlanSlotSchema.parse({
+    slotIndex: scene.sceneId,
+    category: scene.category,
+    location: place.location,
+    timeOfDay: place.timeOfDay,
+    activity: place.activity,
+    outfit: place.outfit,
+    shot: scene.shot,
+    pose: scene.pose,
+    attemptIdBase: `slot-${scene.sceneId}`,
+    repeatedPair: false,
+    ...(scene.capture === undefined ? {} : { capture: scene.capture }),
+    ...(scene.level === undefined ? {} : { level: scene.level }),
+    ...(scene.route === undefined ? {} : { route: scene.route }),
+    ...(place.world === undefined ? {} : { world: place.world }),
+  });
+}
+
+const branchOf = (scene: { location: string | undefined }): "rooms" | "water" | undefined =>
+  CUSTOM_BOLD_BANKS.water.places.some((p) => p.name === scene.location) ? "water" : CUSTOM_BOLD_BANKS.rooms.places.some((p) => p.name === scene.location) ? "rooms" : undefined;
+
+describe("a custom category at «Смелая» on the mock is the engine's (plan s5a4 §5.3)", () => {
+  const pools = { ...POOLS, [TRIP]: poolOf(TRIP_POOL) };
+  const engineCustom = (seed: number, n: number, studio: boolean): PlanSlot[] => planForAvatar({ seed, count: n, categories: [TRIP], level: "bold" }, pools, studio).slots;
+  /** w = ⌊(n × W + ⌊P/2⌋) / P⌋: the scenes «by the water» of n (W water places of P). */
+  const wetOf = (n: number): number => Math.floor((n * WATER_WORLDS.length + Math.floor(WORLDS.length / 2)) / WORLDS.length);
+
+  test("1 to 30 scenes: every scene is on the route with a world of the category's own; the split, the water worlds and the tiers are the engine's", async () => {
+    const m = mockOf();
+    expect(WATER_WORLDS).toEqual(["a hotel pool in Nice", "the sundeck of a sailing yacht"]);
+    for (let n = 1; n <= 30; n++) {
+      const view = await composed(m, MIA, n, [TRIP]);
+      const scenes = view.scenes;
+      const wet = scenes.filter((s) => branchOf({ location: s.place?.location }) === "water");
+      expect({ n, routed: scenes.every((s) => s.route === "seedream"), branched: scenes.every((s) => branchOf({ location: s.place?.location }) !== undefined), wet: wet.length, tiers: tiersOf(scenes) }).toEqual({ n, routed: true, branched: true, wet: wetOf(n), tiers: levelCountsOf(n) });
+      expect({ n, worlds: scenes.every((s) => WORLDS.includes(s.place?.world ?? "")), waterWorlds: wet.every((s) => WATER_WORLDS.includes(s.place?.world ?? "")) }).toEqual({ n, worlds: true, waterWorlds: true });
+      for (const seed of SEEDS.slice(0, 3)) {
+        const slots = engineCustom(seed, n, false);
+        const engineWet = slots.filter((s) => branchOf({ location: s.location }) === "water");
+        expect({ n, seed, routed: slots.every((s) => s.route === "seedream"), wet: engineWet.length, tiers: tiersOf(slots), waterWorlds: engineWet.every((s) => WATER_WORLDS.includes(s.world ?? "")) }).toEqual({ n, seed, routed: true, wet: wetOf(n), tiers: levelCountsOf(n), waterWorlds: true });
+      }
+    }
+  });
+
+  test("a «by the water» scene wears swimwear, never lingerie: every one of its outfits is the water bank's", async () => {
+    const view = await composed(mockOf(), MIA, 30, [TRIP]);
+    const wet = view.scenes.filter((s) => branchOf({ location: s.place?.location }) === "water");
+    expect(wet.length).toBeGreaterThan(0);
+    expect(wet.every((s) => CUSTOM_BOLD_BANKS.water.outfits.some((o) => o.text === s.place?.outfit))).toBe(true);
+  });
+
+  test("the set's view echoes each custom scene's world in its place (ScenePlace.world), and no other scene has one", async () => {
+    const view = await composed(mockOf(), MIA, 30, ["home", TRIP]);
+    const custom = view.scenes.filter((s) => s.category === TRIP);
+    expect(custom.length).toBeGreaterThan(0);
+    expect(custom.every((s) => typeof s.place?.world === "string")).toBe(true);
+    expect(view.scenes.filter((s) => s.category !== TRIP).every((s) => s.place !== null && !("world" in s.place))).toBe(true);
+  });
+
+  test("an imported avatar draws no implied cover in the custom banks; a Studio-created one can", async () => {
+    const m = mockOf();
+    const imported = await composed(m, MIA, 100, [TRIP]);
+    expect(imported.scenes.filter(sceneImplied)).toHaveLength(0);
+    const studio = await composed(m, STUDIO, 100, [TRIP]);
+    expect(studio.scenes.some(sceneImplied)).toBe(true);
+  });
+
+  test("every custom scene is the writer's, and its sentence passes the engine's bold reader, opens with its place's own preposition and ends with the coverage by origin", async () => {
+    const m = mockOf();
+    for (const avatar of [MIA, STUDIO]) {
+      const studio = avatar.origin === "studio";
+      const view = await composed(m, avatar, 40, [TRIP]);
+      for (const scene of view.scenes) {
+        const slot = slotOfScene(scene);
+        const text = scene.text ?? "";
+        const coverage = slotCoverageOf(slot, studio);
+        const sentence = coverage === undefined ? text : text.slice(0, text.length - coverage.length - 1);
+        expect({ scene: scene.sceneId, ends: coverage === undefined || text.endsWith(` ${coverage}`) }).toEqual({ scene: scene.sceneId, ends: true });
+        const read = boldReader(studio)(JSON.stringify({ scenes: [{ slotIndex: slot.slotIndex, sentence }] }), [slot]);
+        expect({ scene: scene.sceneId, location: slot.location, read: read.ok ? "ok" : `${read.problems.join(",")}: ${sentence}` }).toEqual({ scene: scene.sceneId, location: slot.location, read: "ok" });
+        if (read.ok) expect(read.sentences.get(slot.slotIndex)).toBe(text);
+        const own = PLACE_PREPOSITIONS[slot.location]?.[0];
+        if (own !== undefined) expect(sentence.toLowerCase().startsWith(`${own} ${slot.location}`)).toBe(true);
+      }
+    }
+  });
+
+  test("the mock's openers are the engine's: each «rooms» place opens with the first preposition PLACE_PREPOSITIONS gives it", () => {
+    for (const place of CUSTOM_BOLD_BANKS.rooms.places) expect({ place: place.name, opener: MOCK_PLACE_OPENERS[place.name] }).toEqual({ place: place.name, opener: PLACE_PREPOSITIONS[place.name]?.[0] });
+    expect(Object.keys(PLACE_PREPOSITIONS).every((name) => MOCK_PLACE_OPENERS[name] !== undefined)).toBe(true);
+  });
+
+  test("«Другая сцена» keeps a custom scene on the route in its branch and redraws its world; an old custom scene (no route) redraws with neither", async () => {
+    const m = mockOf();
+    const made = await m.client.request("scenes.compose", { avatarId: MIA.avatarId, count: 10, categories: [TRIP], level: "bold", acceptedWorstMicros: WORST });
+    expect(made.ok).toBe(true);
+    m.scheduler.runAll();
+    const before = (await unwrap(m.client.request("scenes.get", { avatarId: MIA.avatarId }))).sceneSet;
+    if (before === null) throw new Error("no set");
+    const ids = before.scenes.slice(0, 5).map((s) => s.sceneId);
+    const sent = await m.client.request("scenes.write", { sceneSetId: before.sceneSetId, revision: before.revision, target: { kind: "rewrite", sceneIds: ids, redraw: true }, acceptedWorstMicros: WORST });
+    expect(sent.ok).toBe(true);
+    m.scheduler.runAll();
+    const after = (await unwrap(m.client.request("scenes.get", { avatarId: MIA.avatarId }))).sceneSet;
+    for (const id of ids) {
+      const was = before.scenes.find((s) => s.sceneId === id);
+      const now = after?.scenes.find((s) => s.sceneId === id);
+      const wasBranch = branchOf({ location: was?.place?.location });
+      expect({ id, route: now?.route, branch: branchOf({ location: now?.place?.location }), world: WORLDS.includes(now?.place?.world ?? ""), wetWorld: wasBranch !== "water" || WATER_WORLDS.includes(now?.place?.world ?? "") }).toEqual({ id, route: "seedream", branch: wasBranch, world: true, wetWorld: true });
+    }
+  });
+
+  test("a scene stored before 5a.4 (no route) redraws in the category's own pool with neither a route nor a world, and a routed one keeps both", async () => {
+    const m = makeMock({
+      avatars: [MIA],
+      photos: [],
+      categories: [TRIP_CATEGORY],
+      sceneSets: [
+        {
+          avatarId: MIA.avatarId,
+          sceneSetId: "set-old-0001",
+          count: 2,
+          level: "bold",
+          categories: [TRIP],
+          scenes: [
+            { category: TRIP, shot: "friend", pose: "front", place: { location: "a corner cafe in Paris", timeOfDay: "morning", activity: "reading a menu", outfit: "a beige trench coat and jeans" }, text: "An old sentence of the cafe." },
+            { category: TRIP, shot: "friend", pose: "front", level: "bold", route: "seedream", place: { location: "her room", timeOfDay: "evening", activity: "sits up in bed, knees drawn up", outfit: "a sheer babydoll over a lace set", world: "a corner cafe in Paris" }, text: "In her room, she sits up in bed, knees drawn up." },
+          ],
+        },
+      ],
+    });
+    const before = (await unwrap(m.client.request("scenes.get", { avatarId: MIA.avatarId }))).sceneSet;
+    if (before === null) throw new Error("no set");
+    const sent = await m.client.request("scenes.write", { sceneSetId: before.sceneSetId, revision: before.revision, target: { kind: "rewrite", sceneIds: [1, 2], redraw: true }, acceptedWorstMicros: WORST });
+    expect(sent.ok).toBe(true);
+    m.scheduler.runAll();
+    const after = (await unwrap(m.client.request("scenes.get", { avatarId: MIA.avatarId }))).sceneSet;
+    const [old, routed] = after?.scenes ?? [];
+    expect({ route: old?.route, world: old?.place?.world, own: TRIP_POOL.locations.some((l) => l.name === old?.place?.location) }).toEqual({ route: undefined, world: undefined, own: true });
+    expect({ route: routed?.route, branch: branchOf({ location: routed?.place?.location }), world: WORLDS.includes(routed?.place?.world ?? "") }).toEqual({ route: "seedream", branch: "rooms", world: true });
   });
 });
