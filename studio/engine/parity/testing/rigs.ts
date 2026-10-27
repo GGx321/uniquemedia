@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { CommandMessage, EventMessage, MEDIA_BYTE_CAPS, ResponseMessage, type AvatarSummary, type CategoryInterrupted, type CategorySummary, type PhotoSummary } from "../../../shared/engine";
+import { CommandMessage, EventMessage, MEDIA_BYTE_CAPS, ResponseMessage, type AvatarSummary, type CategoryInterrupted, type CategorySummary, type PhotoSummary, type SceneView } from "../../../shared/engine";
 import { handleExportFolderCommand, isExportFolderCommand, type ExportFolderFlowDeps } from "../../../main/exportFolderFlow";
 import { handleMediaPickCommand, isMediaPickCommand, type MediaImportFlowDeps } from "../../../main/mediaImportFlow";
 import { handleSettingsCommand, isSettingsCommand, type SettingsFlowDeps } from "../../../main/settingsFlow";
@@ -41,7 +41,10 @@ import type { MockModelReply } from "../../../renderer/engine/mockClipMotions";
 import type { MockClipScript } from "../../../renderer/engine/mockClips";
 import type { BoldClipsMode } from "../../../shared/engine";
 import { clipProvider, type ClipProvider } from "./clipProvider";
-import { CLIP_AVATAR_NAME, CLIP_PHOTO_KINDS, CLIP_PHOTO_SPEC, clipPhotoMap, MOCK_CLIP_AVATAR_ID, MOCK_CLIP_MASTER_ID, mockBatchPhotoId, mockClipPhotoId, type ClipPhotoKind, type ClipWorld } from "./clipWorld";
+import { CLIP_AVATAR_NAME, CLIP_PHOTO_KINDS, CLIP_PHOTO_SPEC, clipPhotoMap, MOCK_BOLD_HOME_PHOTO_ID, MOCK_CLIP_AVATAR_ID, MOCK_CLIP_MASTER_ID, mockBatchPhotoId, mockClipPhotoId, type ClipPhotoKind, type ClipWorld } from "./clipWorld";
+import { bankDraw, openedPlace } from "../../../renderer/engine/mockBankScenes";
+import { captureOfShot, shotOf } from "../../../shared/scenes/captures";
+import { writerBoldMessages } from "../../scenes/writer";
 
 /** The options of a rig with `clips`, or null for a rig without. */
 function clipRigOf(options: RigOptions): ClipRigOptions | null {
@@ -272,6 +275,8 @@ export interface ClipRigOptions {
   readonly budgetMicros?: number;
   /** 5b.2 (S5.WB3): this many more ordinary frames for Lia (`ClipWorld.batch`), for the batch stories. Absent: none, so no older story's line moves. */
   readonly batch?: number;
+  /** 5a.4 (S5.BA7): one more frame for Lia, a «Дом» photo on the Seedream route (`ClipWorld.boldHome`). Absent: none, so no older story's line moves. */
+  readonly boldHome?: boolean;
 }
 
 /**
@@ -573,8 +578,64 @@ export interface RigOptions {
    * master has no slot, so she reads as imported in both engines). No older story asks for it, so their lines are unchanged.
    */
   readonly studioAvatar?: boolean;
+  /**
+   * 5a.4 (S5.BA7, plan s5a4 §5.11 story 2, §5.3): the library holds `PARITY_BOLD_CATEGORY`, a custom category with two water places of five, and the real rig's fake OpenRouter answers a
+   * request in the writer's bold mode the way its bold reader accepts (each slot's place opened with its preposition, its world, «she» and the activity word for word, its outfit as given),
+   * as the mock's writer does. No older story asks for it, so their lines are unchanged.
+   */
+  readonly boldCustom?: boolean;
+  /**
+   * 5a.4 (S5.BA7, plan s5a4 §5.11 story 6, QB-5; BA2 review L4): Mia holds `PARITY_PRE_BOLD_SET_ID`, a «Смелая» set stored before 5a.4 and not yet written: «Дом» scenes drawn as «Кокетливая»
+   * (flirty or ordinary, no route) beside «Ночнушки и бельё» scenes on the route. The real rig writes it through the library's own store; the mock is seeded with the same scenes.
+   */
+  readonly preBoldSet?: boolean;
 }
 
+/** 5a.4 (S5.BA7): the custom category of a rig with `boldCustom`: two of its five places are water places by their head noun (a pool, a sundeck). */
+export const PARITY_BOLD_CATEGORY: Omit<CategorySummary, "createdAt" | "updatedAt"> = {
+  categoryId: "cat-parity-0003",
+  name: "Поездка к морю",
+  description: "поездка к морю",
+  label: "Sea trip",
+  style: "phone",
+  pool: {
+    locations: [
+      { name: "a corner cafe in Nice", times: ["morning", "midday"], activities: [{ text: "reading a menu", twoHanded: false }, { text: "stirring a cappuccino", twoHanded: true }], mirror: false },
+      { name: "a hotel pool in Nice", times: ["midday"], activities: [{ text: "floating on her back", twoHanded: false }, { text: "sitting on the edge", twoHanded: false }], mirror: false },
+      { name: "a bridge over the river", times: ["evening"], activities: [{ text: "leaning on the railing", twoHanded: false }, { text: "watching the boats", twoHanded: false }], mirror: false },
+      { name: "the sundeck of a sailing yacht", times: ["golden hour"], activities: [{ text: "watching the waves", twoHanded: false }, { text: "stretching in the sun", twoHanded: false }], mirror: false },
+      { name: "a quiet bookshop", times: ["midday"], activities: [{ text: "browsing a shelf", twoHanded: false }, { text: "holding a book open", twoHanded: false }], mirror: true },
+    ],
+    outfits: ["a beige trench coat and jeans", "a long cardigan and trousers", "a striped tee and a skirt"],
+    shotDeck: ["friend", "selfie", "mirror", "candid", "friend"],
+  },
+  model: "x-ai/grok-4.3",
+  spentMicros: 5_000,
+};
+
+/** 5a.4 (S5.BA7): the system prompt of the writer's bold mode, by which the real rig's fake OpenRouter tells a bold request (`boldCustom`). */
+const BOLD_SYSTEM: string = writerBoldMessages([])[0]?.content ?? "";
+
+/** 5a.4 (S5.BA7): Mia's set of a rig with `preBoldSet`. */
+export const PARITY_PRE_BOLD_SET_ID = "set-parity-0002";
+
+/**
+ * The scenes of that set, dealt by the mock's own bank draw (each at the capture its stored shot says, so the template writes it the same way on both engines): four «Дом» scenes as a
+ * set composed before 5a.4 at «Смелая» stored them (the ordinary bank at «Кокетливая», flirty or ordinary, no route), then four «Ночнушки и бельё» scenes on the route, bold or flirty.
+ */
+export const PARITY_PRE_BOLD_SCENES: readonly { category: "home" | "nightwear"; shot: SceneView["shot"]; pose: SceneView["pose"]; place: { location: string; timeOfDay: string; activity: string; outfit: string }; level?: "flirty" | "bold"; route?: "seedream" }[] = (() => {
+  const take = (ref: "home" | "nightwear", levels: readonly ("ordinary" | "flirty" | "bold")[], route: "seedream" | undefined) => {
+    const out: (typeof PARITY_PRE_BOLD_SCENES)[number][] = [];
+    for (let k = 0; out.length < levels.length && k < 200; k++) {
+      const level = levels[out.length] ?? "ordinary";
+      const draw = bankDraw(ref, k, { level, ...(route === undefined ? {} : { route }) });
+      if (draw.capture !== captureOfShot(shotOf(draw.capture))) continue;
+      out.push({ category: ref, shot: shotOf(draw.capture), pose: draw.pose, place: draw.place, ...(level === "ordinary" ? {} : { level }), ...(route === undefined ? {} : { route }) });
+    }
+    return out;
+  };
+  return [...take("home", ["flirty", "ordinary", "flirty", "ordinary"], undefined), ...take("nightwear", ["bold", "flirty", "bold", "flirty"], "seedream")];
+})();
 /** 5a.4 (S5.BA7): the Studio-created avatar of a rig with `studioAvatar`, as the mock lists her. */
 export const PARITY_STUDIO_AVATAR_NAME = "Iris";
 const MOCK_STUDIO_AVATAR_ID = "avatar-iris-0008";
@@ -725,13 +786,16 @@ export function mockRig(options: RigOptions = {}): ParityRig {
   const clipRig = clipRigOf(options);
   // 5b.2 (S5.WB3): the batch rig's extra ordinary frames, after the seven kinds (none in any older rig).
   const batchExtra = clipRig?.batch ?? 0;
-  const lia: AvatarSummary = { ...MIA, avatarId: MOCK_CLIP_AVATAR_ID, name: CLIP_AVATAR_NAME, masterPhotoId: MOCK_CLIP_MASTER_ID, photoCount: CLIP_PHOTO_KINDS.length + batchExtra, eligibleUnusedCount: CLIP_PHOTO_KINDS.length - 1 + batchExtra };
+  // 5a.4 (S5.BA7): the routed «Дом» frame of a rig with `clips: { boldHome: true }`, after the batch (none in any older rig).
+  const boldHome = clipRig?.boldHome === true ? 1 : 0;
+  const lia: AvatarSummary = { ...MIA, avatarId: MOCK_CLIP_AVATAR_ID, name: CLIP_AVATAR_NAME, masterPhotoId: MOCK_CLIP_MASTER_ID, photoCount: CLIP_PHOTO_KINDS.length + batchExtra + boldHome, eligibleUnusedCount: CLIP_PHOTO_KINDS.length - 1 + batchExtra + boldHome };
   const liaPhotos: PhotoSummary[] =
     clipRig === null
       ? []
       : [
           ...CLIP_PHOTO_KINDS.map((kind, i) => ({ ...scenePhoto(i + 1, { category: CLIP_PHOTO_SPEC[kind].category, qa: { ...CLIP_PHOTO_SPEC[kind].qa } }, lia), photoId: mockClipPhotoId(kind), ...(kind === "unknown" ? { eligible: false } : {}) })),
           ...Array.from({ length: batchExtra }, (_, i) => ({ ...scenePhoto(CLIP_PHOTO_KINDS.length + i + 1, { category: CLIP_PHOTO_SPEC.plain.category, qa: { ...CLIP_PHOTO_SPEC.plain.qa } }, lia), photoId: mockBatchPhotoId(i + 1) })),
+          ...Array.from({ length: boldHome }, () => ({ ...scenePhoto(CLIP_PHOTO_KINDS.length + batchExtra + 1, { category: "home", qa: { ...CLIP_PHOTO_SPEC.plain.qa }, route: "seedream" }, lia), photoId: MOCK_BOLD_HOME_PHOTO_ID })),
         ];
   const avatars: AvatarSummary[] = [
     options.usage === undefined
@@ -758,12 +822,13 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     // The S4.1 stories are bound to the mock's canned launch; a rig that asks for a running launch gets the mock that runs one.
     launchRun: options.launch === true ? "timers" : "canned",
     ...(options.faceMarks === true ? { launchFaceMarks: { marked: PARITY_MARKED_COS, match: PARITY_MATCH_COS } } : {}),
-    ...(options.categories === true || options.llmOnlyFixture === true
+    ...(options.categories === true || options.llmOnlyFixture === true || options.boldCustom === true
       ? {
           categories: [
             ...(options.categories === true ? [{ ...PARITY_CATEGORY, createdAt: "2026-10-05T10:00:00.000Z", updatedAt: "2026-10-05T10:00:00.000Z" }] : []),
             ...(options.categories === true && options.secondCategory === true ? [{ ...PARITY_SECOND_CATEGORY, createdAt: "2026-10-05T10:01:00.000Z", updatedAt: "2026-10-05T10:01:00.000Z" }] : []),
             ...(options.llmOnlyFixture === true ? [{ ...LLM_ONLY_CATEGORY_RECORD, createdAt: "2026-10-05T10:02:00.000Z", updatedAt: "2026-10-05T10:02:00.000Z" }] : []),
+            ...(options.boldCustom === true ? [{ ...PARITY_BOLD_CATEGORY, createdAt: "2026-10-05T10:03:00.000Z", updatedAt: "2026-10-05T10:03:00.000Z" }] : []),
           ],
           ...(options.categories === true ? { unreadableCategories: 1, interruptedCategories: [{ ...PARITY_INTERRUPTED }] } : {}),
         }
@@ -786,6 +851,9 @@ export function mockRig(options: RigOptions = {}): ParityRig {
           ],
           unreadableSceneSets: 1,
         }
+      : {}),
+    ...(options.preBoldSet === true
+      ? { sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: PARITY_PRE_BOLD_SET_ID, count: PARITY_PRE_BOLD_SCENES.length, stopped: "closed" as const, categories: ["home", "nightwear"] as const, level: "bold" as const, scenes: PARITY_PRE_BOLD_SCENES.map((s) => ({ ...s, place: { ...s.place } })) }] }
       : {}),
   });
   const events: EventMessage[] = [];
@@ -811,6 +879,7 @@ export function mockRig(options: RigOptions = {}): ParityRig {
             masterPhotoId: MOCK_CLIP_MASTER_ID,
             photos: clipPhotoMap(mockClipPhotoId),
             ...(batchExtra === 0 ? {} : { batch: Array.from({ length: batchExtra }, (_, i) => mockBatchPhotoId(i + 1)) }),
+            ...(boldHome === 0 ? {} : { boldHome: MOCK_BOLD_HOME_PHOTO_ID }),
           },
         }),
   };
@@ -1036,7 +1105,7 @@ async function seedImportedAvatar(library: Awaited<ReturnType<typeof openLibrary
  * Stage 5 (5b.1, S5.V7): Lia and a photo of each kind the clip rules tell apart, real JPEGs of the sizes a clip reads (the first frame is 9:16). None has a run plan on disk, so each is judged by its own
  * face marks, as the mock plays them. The photo that is «unreadable» has a file that no longer matches its sidecar.
  */
-async function seedClipWorld(library: Awaited<ReturnType<typeof openLibrary>>["library"], batchExtra = 0): Promise<ClipWorld> {
+async function seedClipWorld(library: Awaited<ReturnType<typeof openLibrary>>["library"], batchExtra = 0, boldHome = false): Promise<ClipWorld> {
   if (FIXTURE_BASE.kind !== "generated") throw new Error("expected a generated sample source");
   const avatarId = await seedAvatar(library, CLIP_AVATAR_NAME, TINY_MASTER);
   const masterPhotoId = library.getAvatar(avatarId)?.masterPhotoId;
@@ -1067,6 +1136,19 @@ async function seedClipWorld(library: Awaited<ReturnType<typeof openLibrary>>["l
     });
     batch.push(photo.id);
   }
+  // 5a.4 (S5.BA7): the routed «Дом» frame, after the batch: a «Смелая» frame of the five, judged by its own route (it has no run plan on disk).
+  let boldHomeId: string | undefined;
+  if (boldHome) {
+    const slot = CLIP_PHOTO_KINDS.length + batchExtra + 1;
+    const photo = await library.addPhoto(avatarId, await photoJpeg(720, 1280), {
+      mediaType: "image/jpeg",
+      width: 720,
+      height: 1280,
+      source: { ...FIXTURE_BASE, category: "home", attemptId: `run-00000099:slot-${slot}#1`, slot: `slot-${slot}`, route: "seedream" },
+      qa: { ...CLIP_PHOTO_SPEC.plain.qa },
+    });
+    boldHomeId = photo.id;
+  }
   return {
     avatarId,
     masterPhotoId,
@@ -1076,6 +1158,7 @@ async function seedClipWorld(library: Awaited<ReturnType<typeof openLibrary>>["l
       return id;
     }),
     ...(batch.length === 0 ? {} : { batch }),
+    ...(boldHomeId === undefined ? {} : { boldHome: boldHomeId }),
   };
 }
 
@@ -1189,7 +1272,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   const archivedAvatarId = await seedAvatar(library, "Nora", master);
   // Stage 5 (5b.1, S5.V7): Lia and her photos, real JPEGs; the video provider is a fake, the face gate a script, the clock one that moves (the short timing set is real milliseconds).
   const clipRig = clipRigOf(options);
-  const clipWorld = clipRig === null ? undefined : await seedClipWorld(library, clipRig.batch ?? 0);
+  const clipWorld = clipRig === null ? undefined : await seedClipWorld(library, clipRig.batch ?? 0, clipRig.boldHome === true);
   const provider: ClipProvider | null = clipRig === null ? null : clipProvider();
   type FaceScript = "match" | "mismatch" | "few-faces" | "worker";
   let armedFace: FaceScript = "match";
@@ -1239,6 +1322,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   }
 
   if (options.llmOnlyFixture === true) await library.categories.create(LLM_ONLY_CATEGORY_RECORD);
+  if (options.boldCustom === true) await library.categories.create(PARITY_BOLD_CATEGORY);
 
   if (options.sceneSets === true) {
     await library.sceneSets.create({
@@ -1260,6 +1344,28 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       writes: 1,
     });
     await writeFile(join(dir, "library", "avatars", avatarId, "scenes", "set-parity-broken.json"), "{not json");
+  }
+
+  if (options.preBoldSet === true) {
+    // 5a.4 (S5.BA7): a «Смелая» set stored before 5a.4, not yet written: its compose was cut off, as `sceneSets` leaves one.
+    await library.sceneSets.create({
+      sceneSetId: PARITY_PRE_BOLD_SET_ID,
+      avatarId,
+      runId: "run-parity-0002",
+      request: { count: PARITY_PRE_BOLD_SCENES.length, categories: ["home", "nightwear"], level: "bold", poses: { profile: false, back: false } },
+      models: { text: "x-ai/grok-4.3" },
+      scenes: PARITY_PRE_BOLD_SCENES.map((scene, i) => ({
+        sceneId: i + 1,
+        origin: "planned" as const,
+        slot: { slotIndex: i + 1, category: scene.category, ...scene.place, shot: scene.shot, pose: scene.pose, attemptIdBase: `slot-${i + 1}`, repeatedPair: false, ...(scene.level === undefined ? {} : { level: scene.level }), ...(scene.route === undefined ? {} : { route: scene.route }) },
+        text: null,
+        edited: false,
+        removed: false,
+      })),
+      chunks: [{ chunk: 1, sceneIds: PARITY_PRE_BOLD_SCENES.map((_, i) => i + 1), attemptIds: [1, 2, 3, 4].map((n) => `${PARITY_PRE_BOLD_SET_ID}:writer-1#${n}`) }],
+      write: { k: 1, kind: "compose", jobId: "job-parity-0004" },
+      writes: 1,
+    });
   }
 
   if (options.reviewWrites === true) {
@@ -1459,6 +1565,25 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   /** How far the launching engines' clock has moved on (ms): the owner was away. */
   let shifted = 0;
   const failureOf = (cause: "credits" | "key"): Reply => (cause === "credits" ? { status: 402, body: { error: { message: "Insufficient credits" } } } : { status: 401, body: { error: { message: "No auth credentials found" } } });
+  /**
+   * 5a.4 (S5.BA7, a rig with `boldCustom`): the writer's bold mode answered as its bold reader accepts it, as the mock's writer writes: each slot's place opened with its preposition, its
+   * world, «she» and the activity word for word, and its outfit as given. The engine appends the coverage by the avatar's origin.
+   */
+  const boldWriterReply = (call: Parameters<typeof writerReply>[0]): Reply | null => {
+    if (options.boldCustom !== true) return null;
+    const messages = call.json().messages;
+    const system: unknown = Array.isArray(messages) ? messages[0] : undefined;
+    if (typeof system !== "object" || system === null || !("content" in system) || system.content !== BOLD_SYSTEM) return null;
+    const user: unknown = Array.isArray(messages) ? messages.find((m: unknown) => typeof m === "object" && m !== null && "role" in m && m.role === "user") : undefined;
+    const text = typeof user === "object" && user !== null && "content" in user && typeof user.content === "string" ? user.content : "";
+    const slots: unknown = JSON.parse(text.slice(text.indexOf("["), text.lastIndexOf("]") + 1));
+    const asked = Array.isArray(slots) ? slots.flatMap((slot: unknown) => (typeof slot === "object" && slot !== null && "slotIndex" in slot && "location" in slot && "activity" in slot && "outfit" in slot ? [slot] : [])) : [];
+    const sentence = (slot: { location: unknown; activity: unknown; outfit: unknown; world?: unknown }): string => {
+      const near = typeof slot.world === "string" ? ` while staying near ${slot.world.replace(/^an? /i, "the ")}` : "";
+      return `${openedPlace(String(slot.location))}${near}, she ${String(slot.activity)} in ${String(slot.outfit)}, a cup of tea beside her.`;
+    };
+    return { status: 200, body: chatBody(JSON.stringify({ scenes: asked.map((slot) => ({ slotIndex: slot.slotIndex, sentence: sentence(slot) })) }), { cost: 0.006 }) };
+  };
   const rejectedWriterReply = (): Reply => {
     writerRejects -= 1;
     return { status: 200, body: chatBody(JSON.stringify({ scenes: [] }), { cost: 0.002 }) };
@@ -1471,7 +1596,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   };
   const launchNet = launching
     ? launchNetwork({
-        writer: (call) => meetFault() ?? (writerHung ? new Promise<Reply>(() => undefined) : writerRejects > 0 ? rejectedWriterReply() : writerReply(call)),
+        writer: (call) => meetFault() ?? (writerHung ? new Promise<Reply>(() => undefined) : writerRejects > 0 ? rejectedWriterReply() : (boldWriterReply(call) ?? writerReply(call))),
         image: (call, n) => meetFault() ?? imageReplyFor(call, n, seedreamFaultFor(call)),
       })
     : undefined;

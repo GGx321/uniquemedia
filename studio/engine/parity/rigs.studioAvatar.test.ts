@@ -47,3 +47,37 @@ describe("the parity world's origins (studioAvatar)", () => {
     }
   });
 });
+
+// 5a.4 (S5.BA7): the other options the «Смелая»-everywhere stories ask for seed the same world in both rigs.
+describe("the parity world of the «Смелая»-everywhere stories", () => {
+  test.each(["mock", "real"] as const)("%s: boldCustom lists the water category and preBoldSet holds Mia's unwritten set", async (which) => {
+    const options = { launch: true, boldCustom: true, preBoldSet: true } as const;
+    const rig = which === "mock" ? mockRig(options) : await realRig(dir(), options);
+    try {
+      const listed = await rig.send("categories.list", {});
+      const categories: unknown[] = listed.ok && Array.isArray(listed.result.categories) ? listed.result.categories : [];
+      expect(categories.some((c) => typeof c === "object" && c !== null && "categoryId" in c && c.categoryId === "cat-parity-0003")).toBe(true);
+      const got = await rig.send("scenes.get", { avatarId: rig.world.avatarId });
+      const set = got.ok ? got.result.sceneSet : null;
+      const scenes: unknown[] = typeof set === "object" && set !== null && "scenes" in set && Array.isArray(set.scenes) ? set.scenes : [];
+      const routed = scenes.filter((s) => typeof s === "object" && s !== null && "route" in s && s.route === "seedream").length;
+      expect({ scenes: scenes.length, routed, written: scenes.filter((s) => typeof s === "object" && s !== null && "text" in s && s.text !== null).length }).toEqual({ scenes: 8, routed: 4, written: 0 });
+    } finally {
+      await rig.stop();
+    }
+  });
+
+  test.each(["mock", "real"] as const)("%s: clips.boldHome seeds Lia a «Дом» frame on the Seedream route", async (which) => {
+    const clips = which === "mock" ? mockRig({ clips: { boldHome: true } }) : await realRig(dir(), { clips: { boldHome: true } });
+    try {
+      const boldHome = clips.world.clipWorld?.boldHome;
+      if (boldHome === undefined) throw new Error("no routed «Дом» frame");
+      const photos = await clips.send("photos.list", { avatarId: clips.world.clipWorld?.avatarId });
+      const listed: unknown[] = photos.ok && Array.isArray(photos.result.photos) ? photos.result.photos : [];
+      const photo = listed.find((p) => typeof p === "object" && p !== null && "photoId" in p && p.photoId === boldHome);
+      expect(typeof photo === "object" && photo !== null && "route" in photo && "category" in photo ? { route: photo.route, category: photo.category } : null).toEqual({ route: "seedream", category: "home" });
+    } finally {
+      await clips.stop();
+    }
+  });
+});

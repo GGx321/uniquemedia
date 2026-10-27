@@ -36,7 +36,12 @@ export interface ClipWorld {
   readonly photos: Readonly<Record<ClipPhotoKind, string>>;
   /** 5b.2 (S5.WB3), a rig with `clips: { batch: n }`: n more ordinary frames of Lia (each a `plain` one: a likeness, three code motions), in the order a batch picks them. */
   readonly batch?: readonly string[];
+  /** 5a.4 (S5.BA7), a rig with `clips: { boldHome: true }`: one more frame of Lia, a «Дом» photo drawn on the Seedream route (a «Смелая» frame of the five), after the batch. */
+  readonly boldHome?: string;
 }
+
+/** 5a.4 (S5.BA7): the mock's id of the routed «Дом» frame of a rig with `clips: { boldHome: true }`. */
+export const MOCK_BOLD_HOME_PHOTO_ID = "photo-lia-bold-home";
 
 /** The id of the n-th (1-based) extra frame of a batch rig, as the mock names it. */
 export function mockBatchPhotoId(n: number): string {
