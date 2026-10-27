@@ -56,7 +56,7 @@ export interface FrameFacts {
   readonly legs: boolean;
   /** The slot's own legwear, never on a `noLegwear` moment, and only when the photo's prompt names it (FU-CLIP round 2). */
   readonly legwear: string | null;
-  /** A frame of «Смелая» (I5.57): the category is `nightwear` or `beach`, whatever the mix level. */
+  /** A frame of «Смелая» (I5.57, I5.79): `isBoldFrame` — the category is `nightwear` or `beach`, or the frame is drawn on the Seedream route (any category), whatever the mix level. */
   readonly bold: boolean;
   /** The level the motion and the activity are held to (`contentLevelOf`): bold for «Смелая», ordinary for everything else. */
   readonly level: ContentLevel;
