@@ -29,7 +29,7 @@ import { createTextRasteriser, RASTER_WASM } from "../../text/rasteriser";
 import type { CaptionCallOptions, GateCaption } from "../../text/worker/textGate";
 import type { PreviewGate } from "../../text/preview";
 import { parityDecodedMs, parityListTracks, parityMockSeeds, parityPeaks } from "./tracks";
-import { PNG_1X1, SAMPLE_IMPORTED_SOURCE, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/helpers";
+import { PNG_1X1, SAMPLE_IMPORTED_SOURCE, SAMPLE_SOURCE, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/helpers";
 import { RenderFailure } from "../../renderQueue/queue";
 import { command, engineSettings, GOOD, MODERATION, NOW, network as portraitNetwork, portraitPng, portraitReply, startEngine, TRAITS, until } from "../../testing/engineHarness";
 import { fakeGate, match } from "../../testing/portraitKit";
@@ -82,6 +82,8 @@ export interface World {
   readonly portraitAvatars?: PortraitAvatars;
   /** Stage 5 (5b.1, S5.V7), a rig with `clips`: Lia and her photos, one of each kind the clip rules tell apart (`clipWorld.ts`). */
   readonly clipWorld?: ClipWorld;
+  /** 5a.4 (S5.BA7), a rig with `studioAvatar`: Iris, an avatar made in Studio (her master a wizard candidate), beside Mia, who reads as imported. */
+  readonly studioAvatarId?: string;
 }
 
 /**
@@ -565,7 +567,17 @@ export interface RigOptions {
    * plays the same short set. Nothing else of the world changes, so no older story's line moves. `true`: the engine's own switches.
    */
   readonly clips?: boolean | ClipRigOptions;
+  /**
+   * 5a.4 (S5.BA7, plan s5a4 §5.11 story 7, r2.1 N2, I5.74): a second active avatar made in Studio (`World.studioAvatarId`): the real rig seeds her master as a wizard candidate (`slot:
+   * "candidate-1"`, no imported photo), so the engine's `studioCreated` reads her as Studio-created; the mock lists her with `origin: "studio"`. Mia's seed is untouched (her `SAMPLE_SOURCE`
+   * master has no slot, so she reads as imported in both engines). No older story asks for it, so their lines are unchanged.
+   */
+  readonly studioAvatar?: boolean;
 }
+
+/** 5a.4 (S5.BA7): the Studio-created avatar of a rig with `studioAvatar`, as the mock lists her. */
+export const PARITY_STUDIO_AVATAR_NAME = "Iris";
+const MOCK_STUDIO_AVATAR_ID = "avatar-iris-0008";
 
 /** The body proposal of a rig with `bodyProposal`: what a photo import read (a bust and a height it could not see), kept on Mia until the owner saves or dismisses it. */
 export const PARITY_BODY_PROPOSAL = {
@@ -729,6 +741,7 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     { ...NORA, photoCount: 0, eligibleUnusedCount: 0 },
     ...portraitAvatars,
     ...(clipRig === null ? [] : [lia]),
+    ...(options.studioAvatar === true ? [{ ...MIA, avatarId: MOCK_STUDIO_AVATAR_ID, name: PARITY_STUDIO_AVATAR_NAME, masterPhotoId: "photo-iris-master", photoCount: 0, eligibleUnusedCount: 0, origin: "studio" as const }] : []),
   ];
   const engine = new MockEngine({
     scheduler,
@@ -789,6 +802,7 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     archivedAvatarId: NORA.avatarId,
     scored: scored(photoIds),
     ...(options.portraits === true ? { portraitAvatars: { imported: "avatar-nini-0004", pending: "avatar-ava-0005", crowded: "avatar-lena-0006" } } : {}),
+    ...(options.studioAvatar === true ? { studioAvatarId: MOCK_STUDIO_AVATAR_ID } : {}),
     ...(clipRig === null
       ? {}
       : {
@@ -1065,6 +1079,14 @@ async function seedClipWorld(library: Awaited<ReturnType<typeof openLibrary>>["l
   };
 }
 
+/** 5a.4 (S5.BA7): an active avatar made in Studio: her master is a generated wizard candidate (`slot: "candidate-1"`) and she has no imported photo (`Library.studioCreated`). */
+async function seedStudioAvatar(library: Awaited<ReturnType<typeof openLibrary>>["library"], name: string, seed: SeedMaster): Promise<string> {
+  const avatar = await library.createAvatar({ name, age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
+  const master = await library.addPhoto(avatar.id, seed.bytes, samplePhotoMeta({ width: seed.width, height: seed.height, source: { ...SAMPLE_SOURCE, slot: "candidate-1" }, qa: { age: { adult: true, confidence: 0.95 } } }));
+  await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+  return avatar.id;
+}
+
 async function seedAvatar(library: Awaited<ReturnType<typeof openLibrary>>["library"], name: string, seed: SeedMaster = TINY_MASTER): Promise<string> {
   const avatar = await library.createAvatar({ name, age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
   const master = await library.addPhoto(avatar.id, seed.bytes, samplePhotoMeta({ width: seed.width, height: seed.height, qa: { age: { adult: true, confidence: 0.95 } } }));
@@ -1281,7 +1303,19 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     await writeFile(join(dir, "library", "avatars", avatarId, "scenes", "set-parity-broken.json"), "{not json");
   }
 
-  const world: World = { avatarId, photoIds, otherAvatarId, otherPhotoIds, archivedAvatarId, scored: scored(photoIds), ...(portraitAvatars === undefined ? {} : { portraitAvatars }), ...(clipWorld === undefined ? {} : { clipWorld }) };
+  // 5a.4 (S5.BA7): seeded last, so every other id of the rig is what it was.
+  const studioAvatarId = options.studioAvatar === true ? await seedStudioAvatar(library, PARITY_STUDIO_AVATAR_NAME, master) : undefined;
+  const world: World = {
+    avatarId,
+    photoIds,
+    otherAvatarId,
+    otherPhotoIds,
+    archivedAvatarId,
+    scored: scored(photoIds),
+    ...(portraitAvatars === undefined ? {} : { portraitAvatars }),
+    ...(clipWorld === undefined ? {} : { clipWorld }),
+    ...(studioAvatarId === undefined ? {} : { studioAvatarId }),
+  };
   const gate = new Gate();
   /** Renders standing at the gate now: their ffmpeg held, or their commit held at its claim. */
   let parked = 0;
