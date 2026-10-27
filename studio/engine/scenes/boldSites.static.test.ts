@@ -80,9 +80,6 @@ const BOLD_CATEGORY_SITES: Allowed[] = [
   { file: "renderer/screens/photos/runForm.ts", count: 1, why: "the chip gating: `categoriesAt` drops the two «Смелая» categories below «Смелая»" },
   { file: "renderer/screens/autopilot/SettingsColumn.tsx", count: 2, why: "the chip gating (:157), kept; the option-B line (:84) leaves with S5.BA8 (`optionB = boldOn`), which brings the count to 1", until: "S5.BA8" },
   { file: "renderer/screens/photos/level.ts", count: 2, why: "the caption's category words (`BOLD_WORD`, :52) and `launchLevelCaption` (:161, S5.BA8 counts every category)", until: "S5.BA8" },
-  { file: "engine/clips/frameFacts.ts", count: 1, why: "a stub of the clip facts (:157) that S5.BA6 moves to `isBoldFrame`", until: "S5.BA6" },
-  { file: "renderer/screens/clips/ClipsTab.tsx", count: 1, why: "the clip tab's Kling-only check (:254), S5.BA6", until: "S5.BA6" },
-  { file: "renderer/engine/mockClips.ts", count: 1, why: "the mock's clip facts (:488), S5.BA6", until: "S5.BA6" },
   { file: "renderer/engine/mockBoldRoute.ts", count: 2, why: "the mock's price rule (`isBoldLook`, `requestBoldPhotos`), mirrored by S5.BA7", until: "S5.BA7" },
   { file: "renderer/engine/mockSceneSets.ts", count: 1, why: "the mock's five-at-«Смелая» relabel stub (:328), S5.BA7", until: "S5.BA7" },
 ];
@@ -184,6 +181,9 @@ describe("the «Смелая» sites (plan s5a4 §5.1.4)", () => {
   test("an allow-list entry that waits for a later task names it", () => {
     const all = [...BOLD_CATEGORY_SITES, ...INDEX_SITES, ...COUNTING_SITES, ...ORIGIN_SOURCES];
     for (const entry of all) expect({ file: entry.file, why: entry.why.length > 10 }).toEqual({ file: entry.file, why: true });
-    expect(all.filter((e) => e.until !== undefined).map((e) => e.until)).toEqual(expect.arrayContaining(["S5.BA6", "S5.BA7", "S5.BA8"]));
+    const waiting = all.filter((e) => e.until !== undefined).map((e) => e.until);
+    expect(waiting).toEqual(expect.arrayContaining(["S5.BA7", "S5.BA8"]));
+    // S5.BA6 moved the clip facts, the clip tab and the mock's clip facts to `isBoldFrame`: nothing waits for it any more.
+    expect(waiting).not.toContain("S5.BA6");
   });
 });
