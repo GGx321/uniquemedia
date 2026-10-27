@@ -1,5 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { endpointsAcceptPhotoRequest, imageWorstCase, parseImageEndpoints } from "../engine/money/prices";
+import type { PlanSlot } from "../engine/scenes/schema";
+import { boldReader, WRITER_JSON_SCHEMA, writerBoldMessages, writerMessages } from "../engine/scenes/writer";
+import { CUSTOM_BOLD_BANKS } from "../shared/scenes/banks/companions";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { startMockOpenRouter, type MockOpenRouter } from "./mockOpenRouter";
 useNativeGlobals();
@@ -155,5 +158,35 @@ describe("what an image is billed", () => {
     expect(await costOf(await postBody(m, bold()))).toBe(0.045);
     expect(await costOf(await postBody(m, grok()))).toBe(0.04);
     expect(m.totalUsageUsd()).toBeCloseTo(0.085, 10);
+  });
+});
+
+// 5a.4 (S5.BA7, plan s5a4 §5.11 «Smoke»; brief item 6): the headless smoke's «Смелая» run of a custom category asks the writer in its bold mode. The mock answers a bold-mode request with a
+// sentence per slot that the engine's bold reader accepts (the place opened with its own preposition, the world, «she» and the activity word for word, the outfit as given), so the run's
+// custom scenes are the writer's, not the plain fallback's. An ordinary request is answered as before.
+describe("the scene writer in its bold mode", () => {
+  const slots: PlanSlot[] = [
+    { slotIndex: 1, category: "cat-smoke-trip", location: "her room", timeOfDay: "morning", activity: "sits up in bed, knees drawn up", outfit: "a sheer babydoll over a lace set", shot: "friend", capture: "above", pose: "front", attemptIdBase: "slot-1", repeatedPair: false, level: "bold", route: "seedream", world: "a corner cafe in Nice" },
+    { slotIndex: 2, category: "cat-smoke-trip", location: "her window", timeOfDay: "evening", activity: "stands with one hip on the ledge", outfit: "a lace bodysuit", shot: "friend", capture: "timer", pose: "front", attemptIdBase: "slot-2", repeatedPair: false, level: "flirty", route: "seedream", world: "a bridge over the river" },
+    { slotIndex: 3, category: "cat-smoke-trip", location: "a lounger by the water", timeOfDay: "midday", activity: CUSTOM_BOLD_BANKS.water.places[0]?.moments[0]?.text ?? "", outfit: CUSTOM_BOLD_BANKS.water.outfits[0]?.text ?? "", shot: "friend", pose: "front", attemptIdBase: "slot-3", repeatedPair: false, route: "seedream", world: "a hotel pool in Nice" },
+  ];
+  const post = (m: MockOpenRouter, bold: boolean) =>
+    nativeFetch(`${m.url}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "x-ai/grok-4.3", messages: bold ? writerBoldMessages(slots) : writerMessages(slots, undefined, () => "Trip"), response_format: { type: "json_schema", json_schema: WRITER_JSON_SCHEMA } }),
+    });
+  const contentOf = async (response: Response): Promise<string> => ((await response.json()) as { choices: { message: { content: string } }[] }).choices[0]?.message.content ?? "";
+
+  test("answers every slot with a sentence the engine's bold reader accepts", async () => {
+    const m = await started();
+    const read = boldReader(false)(await contentOf(await post(m, true)), slots);
+    expect(read.ok ? [...read.sentences.keys()] : read.problems).toEqual([1, 2, 3]);
+  });
+
+  test("an ordinary request is answered as it always was", async () => {
+    const m = await started();
+    const content = await contentOf(await post(m, false));
+    expect(content).toContain("She spends a quiet moment at her room");
   });
 });

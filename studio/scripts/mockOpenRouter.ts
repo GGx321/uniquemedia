@@ -55,7 +55,7 @@ import { DESCRIPTOR_CHECK_JSON_SCHEMA } from "../engine/avatars/descriptorCheck"
 import { TRANSLATOR_JSON_SCHEMA } from "../engine/clips/ideaTranslator";
 import { WRITER_JSON_SCHEMA as MOTION_WRITER_JSON_SCHEMA } from "../engine/clips/motionWriter";
 import { IDEA_JSON_SCHEMA } from "../engine/scenes/ideaWriter";
-import { SHOT_LABEL } from "../engine/scenes/writer";
+import { PLACE_PREPOSITIONS, SHOT_LABEL, writerBoldMessages } from "../engine/scenes/writer";
 import { POOL_JSON_SCHEMA } from "../engine/scenes/poolGen";
 import { DEFAULT_IMAGE_MODEL } from "../main/settingsStore";
 import { ffmpegPath } from "../node/ffmpegBinary";
@@ -202,6 +202,33 @@ function ideaSentenceFor(slot: z.infer<typeof IdeaRequestSlot>): string {
  */
 function writerSentenceFor(slot: z.infer<typeof WriterRequestSlot>): string {
   return `She spends a quiet moment at ${slot.location}, lit by ${slot.timeOfDay}, wearing ${slot.outfit}, calm and unhurried.`;
+}
+
+/** 5a.4 (S5.BA7): the system prompt of the writer's bold mode (`writerBoldMessages`), by which a scene writer request is told to be one of that mode. */
+const BOLD_WRITER_SYSTEM = writerBoldMessages([])[0]?.content;
+
+/** A slot of a bold-mode request (`boldSlotForWriter`): its place, its world (a custom category's routed slot), its activity and its outfit. */
+const BoldWriterSlot = z.object({ slotIndex: z.number().int(), location: z.string(), activity: z.string(), outfit: z.string(), world: z.string().optional() }).loose();
+
+/** The slots of a bold-mode scene writer request, or null for an ordinary one. */
+function boldWriterSlotsOf(body: unknown): z.infer<typeof BoldWriterSlot>[] | null {
+  const parsed = WriterChatBody.parse(body);
+  if (BOLD_WRITER_SYSTEM === undefined || parsed.messages.find((m) => m.role === "system")?.content !== BOLD_WRITER_SYSTEM) return null;
+  const user = parsed.messages.find((m) => m.role === "user");
+  if (user === undefined) throw new Error("the scene writer request has no user message");
+  const json = (user.content.split("\n\n")[0] ?? "").replace(/^Slots:\n/, "");
+  return z.array(BoldWriterSlot).parse(JSON.parse(json));
+}
+
+/**
+ * 5a.4 (S5.BA7, plan s5a4 §5.3.3, S5.BA4d): one sentence per slot that the engine's bold reader accepts: the place opened with its own preposition (`PLACE_PREPOSITIONS`, else «in»; a
+ * place that is a prepositional phrase opens the sentence as it is), the world it is set in, «she» and the activity word for word, the outfit as given. The engine appends the coverage.
+ */
+function boldWriterSentenceFor(slot: z.infer<typeof BoldWriterSlot>): string {
+  const opensItself = /^(?:in|on|at|by|inside|beside|near|under|over|through|into|onto|outside)\b/i.test(slot.location);
+  const opened = opensItself ? slot.location : `${PLACE_PREPOSITIONS[slot.location]?.[0] ?? "in"} ${slot.location}`;
+  const near = slot.world === undefined ? "" : ` while staying near ${slot.world.replace(/^an? /i, "the ")}`;
+  return `${opened.charAt(0).toUpperCase()}${opened.slice(1)}${near}, she ${slot.activity} in ${slot.outfit}, a cup of tea beside her.`;
 }
 
 /**
@@ -823,10 +850,14 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
         if (entry.schemaName === WRITER_JSON_SCHEMA.name || entry.schemaName === IDEA_JSON_SCHEMA.name) {
           if (writerDelayMs > 0) await Bun.sleep(writerDelayMs);
           const ideas = ideaSlotsOf(entry.body);
+          // 5a.4 (S5.BA7): a request in the writer's bold mode gets sentences its bold reader accepts; every other one is answered as before.
+          const boldSlots = ideas === null ? boldWriterSlotsOf(entry.body) : null;
           const answer =
             ideas !== null
               ? { scenes: ideas.map((s) => ({ slotIndex: s.slotIndex, sentence: ideaSentenceFor(s), ...ideaAngleFor(s) })) }
-              : { scenes: writerSlotsOf(entry.body).map((s) => ({ slotIndex: s.slotIndex, sentence: writerSentenceFor(s) })) };
+              : boldSlots !== null
+                ? { scenes: boldSlots.map((s) => ({ slotIndex: s.slotIndex, sentence: boldWriterSentenceFor(s) })) }
+                : { scenes: writerSlotsOf(entry.body).map((s) => ({ slotIndex: s.slotIndex, sentence: writerSentenceFor(s) })) };
           return json(chatCompletion(JSON.stringify(answer), costs.writer));
         }
         // 5b.2 (S5.WC4): part C. The vision writer looks at one photo and suggests small motions (strict JSON: motions with a Russian label and an English text, and a frame reading); the translator says the owner's idea as one English motion.

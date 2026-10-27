@@ -110,6 +110,7 @@ import { pathToFileURL } from "node:url";
 import { FACE_MODELS } from "../engine/face/modelSource";
 import { openLibrary } from "../engine/library";
 import { SAMPLE_AVATAR, SAMPLE_SOURCE, samplePhotoMeta } from "../engine/library/testing/sampleData";
+import { sampleSet } from "../engine/library/testing/sceneSetSample";
 import { sceneSpec, videoRecordJson } from "../engine/library/testing/videoRecords";
 import { probeVideo } from "../engine/render/ffmpeg.testkit";
 import { FIXTURES } from "../engine/media/video/testing/fixtures/index";
@@ -4010,6 +4011,8 @@ async function attemptsOfEndedSlots(libraryRoot: string, runId: string): Promise
  * Seedream request carries "2K", "9:16", exactly one reference and no quality, every request for the owner's model stays at "1K", the photos of the Seedream slots say so and the others do not.
  * A second run with one refusal and one empty answer armed at the Seedream model: the refused slot ends `model-refused`, the empty one `model-empty`, nothing is sent twice for them, the run goes
  * on to done with the other eight, the refusal costs nothing and the empty answer is billed, and the ledger ends where the mock's bill does.
+ * 5a.4 (S5.BA7, BA3 review L-8): and a MIXED job again. «Смелая» puts every slot it plans on the route now, so a run that meets Seedream and the owner's model at once is a run from a set stored
+ * before 5a.4 (nightwear on the route, «Дом» with none, QB-5). The app is quit, the set is written into the library through its own store, and the app is launched again on the same userData.
  *
  * Its own app instance, temp userData and library, and mock server, kept apart from every other scenario's money and events. Needs Electron: CI only, never run locally.
  */
@@ -4021,7 +4024,8 @@ async function runBoldRouteScenario(target: Target): Promise<void> {
   await mkdir(userData, { recursive: true });
   await mkdir(libraryRoot, { recursive: true });
 
-  const running = await launch(target, userData, [`--studio-openrouter-base-url=${mock.url}`, `--studio-pick-folder=${libraryRoot}`]);
+  const appArgs = [`--studio-openrouter-base-url=${mock.url}`, `--studio-pick-folder=${libraryRoot}`];
+  let running = await launch(target, userData, appArgs);
   try {
     const { cdp } = running;
     const keySet = await req(cdp, "settings.setApiKey", { key: SMOKE_KEY });
@@ -4102,6 +4106,50 @@ async function runBoldRouteScenario(target: Target): Promise<void> {
     const money = await req(cdp, "money.status");
     check("bold scenario: money.status has no open reserve, and the ledger's total is what the mock billed", field(money, "result", "unsettledMicros") === 0 && Math.abs(Number(field(money, "result", "spentMicros")) - Math.round(mock.totalUsageUsd() * 1_000_000)) <= 1, money);
     check("bold scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
+
+    // 5. 5a.4 (S5.BA7, BA3 review L-8): the mixed job. A set stored before 5a.4 at «Смелая»: ten written scenes, «Ночнушки и бельё» on the Seedream route and «Дом» with none (an old set
+    // keeps no route, QB-5). Its run meets Seedream and the owner's model at once, each with its own request shape.
+    await quit(running);
+    const mixedSetId = "set-smoke-mixed-0001";
+    const stored = sampleSet({ sceneSetId: mixedSetId, avatarId: String(avatarId), runId: "run-smoke-mixed-0001", count: BOLD_PHOTOS, written: BOLD_PHOTOS, categories: ["nightwear", "home"] });
+    const { library } = await openLibrary(libraryRoot);
+    await library.sceneSets.create({
+      ...stored,
+      request: { ...stored.request, level: "bold" },
+      scenes: stored.scenes.map((scene) => (scene.origin === "planned" && scene.slot.category === "nightwear" ? { ...scene, slot: { ...scene.slot, route: "seedream" as const } } : scene)),
+    });
+    running = await launchWithRetry(target, userData, 3, appArgs);
+    const again = running.cdp;
+    const got = await req(again, "scenes.get", { avatarId });
+    const storedView = field(got, "result", "sceneSet");
+    check("bold scenario: after the relaunch the avatar's set is the one stored before 5a.4, its nightwear on the route and its «Дом» off it", field(storedView, "sceneSetId") === mixedSetId, got);
+    const revision = field(storedView, "revision");
+    const mixedEstimate = await req(again, "runs.estimateFromScenes", { sceneSetId: mixedSetId, revision });
+    check("bold scenario: the mixed set's run names the 2K attempt", field(mixedEstimate, "result", "estimate", "boldAttemptMicros") === BOLD_ATTEMPT_MICROS, mixedEstimate);
+    const usageBeforeMixed = mock.totalUsageUsd();
+    const beforeMixed = mock.imageRequests().length;
+    const mixedStarted = await req(again, "runs.startFromScenes", { sceneSetId: mixedSetId, revision, acceptedWorstMicros: field(mixedEstimate, "result", "estimate", "worstMicros") });
+    check("bold scenario: the mixed run starts from the set", field(mixedStarted, "ok") === true, mixedStarted);
+    const mixedId = String(field(mixedStarted, "result", "runId"));
+    const mixedEnd = await waitFor("the mixed run's job to end", () => endEventOf(again, field(mixedStarted, "result", "jobId")), 120_000);
+    const mixedPhotos = field(mixedEnd, "payload", "result", "photoIds");
+    check("bold scenario: the mixed run finished as job.done with all ten photos", field(mixedEnd, "type") === "job.done" && Array.isArray(mixedPhotos) && mixedPhotos.length === BOLD_PHOTOS, mixedEnd);
+    const mixedSent = mock.imageRequests().slice(beforeMixed);
+    const mixedSeedream = mixedSent.filter((r) => r.model === BOLD_MODEL);
+    const mixedOwner = mixedSent.filter((r) => r.model !== BOLD_MODEL);
+    const mixedRouted = await routedSlotsOf(libraryRoot, mixedId);
+    check(
+      "bold scenario: the one run asked Seedream for its routed slots and the owner's model for the others",
+      mixedRouted > 0 && mixedRouted < BOLD_PHOTOS && mixedSeedream.length >= mixedRouted && mixedOwner.length >= BOLD_PHOTOS - mixedRouted,
+      { routed: mixedRouted, seedream: mixedSeedream.length, owner: mixedOwner.length },
+    );
+    check("bold scenario: each of the mixed run's Seedream requests is a clean 2K one", mixedSeedream.every((r) => boldRequestProblems(sentImageOf(r)).length === 0), mixedSeedream.flatMap((r) => boldRequestProblems(sentImageOf(r))));
+    check("bold scenario: each of the mixed run's owner's-model requests stays at 1K and never names Seedream", mixedOwner.every((r) => ownerRequestProblems(sentImageOf(r)).length === 0), mixedOwner.flatMap((r) => ownerRequestProblems(sentImageOf(r))));
+    const mixedListed = (field(await req(again, "photos.list", { avatarId }), "result", "photos") as unknown[]).filter((p) => field(p, "runId") === mixedId);
+    check("bold scenario: the mixed run's photos carry the route exactly where their slot did", mixedListed.length === BOLD_PHOTOS && mixedListed.filter((p) => field(p, "route") === "seedream").length === mixedRouted, { photos: mixedListed.length, tagged: mixedListed.filter((p) => field(p, "route") === "seedream").length, routed: mixedRouted });
+    const mixedMoney = await req(again, "money.status");
+    check("bold scenario: after the mixed run no reserve is open and the ledger's total is what the mock billed", field(mixedMoney, "result", "unsettledMicros") === 0 && Math.abs(Number(field(mixedMoney, "result", "spentMicros")) - Math.round(mock.totalUsageUsd() * 1_000_000)) <= 1, { money: mixedMoney, billedSinceRelaunch: mock.totalUsageUsd() - usageBeforeMixed });
+    check("bold scenario: no request of the mixed run was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
   } finally {
     await quit(running);
     await mock.stop();

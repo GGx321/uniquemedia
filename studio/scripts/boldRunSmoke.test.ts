@@ -14,6 +14,7 @@ import { useNativeGlobals } from "../testing/nativeGlobals";
 import { nativeFetch, useNativeHttp } from "../testing/nativeHttp";
 import { BOLD_MODEL, boldRequestProblems, expectedBilledMicros, failedReasonsOf, ownerRequestProblems, type SentImageRequest } from "./boldSmoke";
 import { startMockOpenRouter, type MockOpenRouter, type MockRequest } from "./mockOpenRouter";
+import type { CategoryPool } from "../shared/engine";
 useNativeGlobals();
 useNativeHttp();
 
@@ -26,6 +27,24 @@ const POSES = { profile: false, back: false };
 const ATTEMPT = 93_000;
 
 const faceGate = (): QaGate => ({ name: "face", paid: false, check: async () => ({ verdict: "pass" }) });
+const TRIP = "cat-smoke-trip";
+const TRIP_POOL: CategoryPool = {
+  locations: [
+    { name: "a corner cafe in Nice", times: ["morning", "midday"], activities: [{ text: "reading a menu", twoHanded: false }, { text: "stirring a cappuccino", twoHanded: true }], mirror: false },
+    { name: "a hotel pool in Nice", times: ["midday"], activities: [{ text: "floating on her back", twoHanded: false }, { text: "sitting on the edge", twoHanded: false }], mirror: false },
+    { name: "a bridge over the river", times: ["evening"], activities: [{ text: "leaning on the railing", twoHanded: false }, { text: "watching the boats", twoHanded: false }], mirror: false },
+    { name: "a quiet bookshop", times: ["midday"], activities: [{ text: "browsing a shelf", twoHanded: false }, { text: "holding a book open", twoHanded: false }], mirror: true },
+    { name: "a flower stall", times: ["morning"], activities: [{ text: "smelling the roses", twoHanded: false }, { text: "choosing tulips", twoHanded: false }], mirror: false },
+  ],
+  outfits: ["a beige trench coat and jeans", "a long cardigan and trousers", "a striped tee and a skirt"],
+  shotDeck: ["friend", "selfie", "mirror", "candid", "friend"],
+};
+/** The run's plan, as the library holds it. */
+function planSlotsOf(tmpDir: string, runId: string): Record<string, unknown>[] {
+  const plan: unknown = JSON.parse(readFileSync(join(tmpDir, "library", "runs", runId, "plan.json"), "utf8"));
+  const slots: unknown = typeof plan === "object" && plan !== null && "scenes" in plan && typeof plan.scenes === "object" && plan.scenes !== null && "slots" in plan.scenes ? plan.scenes.slots : [];
+  return Array.isArray(slots) ? slots.filter((slot): slot is Record<string, unknown> => typeof slot === "object" && slot !== null) : [];
+}
 const sentOf = (request: MockRequest): SentImageRequest => ({ model: request.model, resolution: request.resolution, body: typeof request.body === "object" && request.body !== null ? Object.fromEntries(Object.entries(request.body)) : {} });
 
 describe("the mock OpenRouter serves a real engine's «Смелая» run", () => {
@@ -48,6 +67,8 @@ describe("the mock OpenRouter serves a real engine's «Смелая» run", () =
   async function setup(mixedSet = false) {
     mock = await startMockOpenRouter({ descriptorText: GOOD, distinctImages: true });
     const { library } = await openLibrary(join(tmp, "library"), { now: steppingClock(), newId: sequentialIds("bsm") });
+    // 5a.4 (S5.BA7): a custom category with a water place, for the «Смелая» run of a custom category (the writer's bold mode).
+    await library.categories.create({ categoryId: TRIP, name: "Поездка", description: "поездка к морю", label: "Sea trip", style: "phone", pool: TRIP_POOL, model: "x-ai/grok-4.3", spentMicros: 0 });
     const avatar = await library.createAvatar({ name: "Bea", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
     const master = await library.addPhoto(avatar.id, portraitPng(1), samplePhotoMeta({ width: 60, height: 80, qa: { age: { adult: true, confidence: 0.95 } } }));
     await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
@@ -148,5 +169,35 @@ describe("the mock OpenRouter serves a real engine's «Смелая» run", () =
     expect(routed).toBeGreaterThan(0);
     expect(routed).toBeLessThan(PHOTOS);
     expect(ofRun.filter((p) => p.route === "seedream")).toHaveLength(routed);
+  });
+
+  // 5a.4 (S5.BA7, plan s5a4 §5.11 «Smoke»): «Смелая» is every category's. A run of the five draws every slot on the Seedream route; a run of a custom category draws every slot there too, inside
+  // a world of its own places, and the writer's bold mode writes them on its first attempt (the mock answers that mode as its bold reader accepts).
+  test("a «Смелая» run of the five ends done, every slot on the Seedream route and every request a clean 2K one", async () => {
+    const world = await setup();
+    const { estimate, end, runId } = await runOnce(world, ["home", "travel", "shoot", "glam", "fit"]);
+    expect(estimate.boldAttemptMicros).toBe(ATTEMPT);
+    expect(end.type === "job.done" && end.payload.result.kind === "run" && end.payload.result.photoIds).toHaveLength(PHOTOS);
+    expect(planSlotsOf(tmp, runId).filter((slot) => slot.route === "seedream")).toHaveLength(PHOTOS);
+    const sent = world.mock.imageRequests();
+    expect(sent.length).toBeGreaterThanOrEqual(PHOTOS);
+    expect(sent.every((r) => r.model === BOLD_MODEL)).toBe(true);
+    expect(sent.flatMap((r) => boldRequestProblems(sentOf(r)))).toEqual([]);
+    expect(world.mock.unexpected).toEqual([]);
+  });
+
+  test("a «Смелая» run of a custom category ends done, every slot routed in a world of its own, written by the bold writer at its first attempt", async () => {
+    const world = await setup();
+    const { estimate, end, runId } = await runOnce(world, [TRIP]);
+    expect(estimate.boldAttemptMicros).toBe(ATTEMPT);
+    expect(end.type).toBe("job.done");
+    expect(end.type === "job.done" && end.payload.result.kind === "run" && end.payload.result.photoIds).toHaveLength(PHOTOS);
+    const slots = planSlotsOf(tmp, runId);
+    const places = TRIP_POOL.locations.map((l) => l.name);
+    expect(slots.filter((slot) => slot.route === "seedream" && places.includes(String(slot.world)))).toHaveLength(PHOTOS);
+    // One chunk of ten, one attempt: the answer was accepted whole, so no slot fell back to the plain sentence.
+    expect(world.mock.sceneWriterRequests()).toHaveLength(1);
+    expect(world.mock.imageRequests().flatMap((r) => boldRequestProblems(sentOf(r)))).toEqual([]);
+    expect(world.mock.unexpected).toEqual([]);
   });
 });
