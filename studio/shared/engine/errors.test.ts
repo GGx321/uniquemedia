@@ -321,7 +321,7 @@ describe("CAPTION_ISSUES_RU", () => {
 describe("ERROR_MESSAGES_RU", () => {
   test("every code, caption issue, montage issue, export reason and usage reason has a non-empty message", () => {
     const tables: Record<string, string>[] = [ERROR_MESSAGES_RU, CAPTION_ISSUES_RU, MONTAGE_ISSUE_MESSAGES_RU, EXPORT_UNAVAILABLE_REASONS_RU, USAGE_UNKNOWN_REASONS_RU];
-    for (const table of tables) for (const text of Object.values(table)) expect(text.length).toBeGreaterThan(0);
+    for (const table of tables) for (const text of Object.values(table)) expect(text.trim().length).toBeGreaterThan(0);
   });
 
   test("has a message for exactly the error codes, no more, no less", () => {
