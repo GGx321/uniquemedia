@@ -56,7 +56,8 @@ describe("the month line (§5.9 row 20)", () => {
     [12, "≈ 12 таких фото;"],
     [35, "≈ 35 таких фото;"],
   ] as const)("%i photos: «%s»", (photos, words) => {
-    expect(monthLine({ unitMicros: 279_000, budgetMicros: photos * 279_000, ageCheck: false })).toContain(words);
+    // Any unit will do: the words follow the count alone (a round one, not the bold unit, which no renderer module may hold).
+    expect(monthLine({ unitMicros: 100_000, budgetMicros: photos * 100_000, ageCheck: false })).toContain(words);
   });
 
   test("a budget that holds no whole photo claims no count", () => {
