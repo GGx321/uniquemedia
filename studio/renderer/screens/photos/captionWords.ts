@@ -16,6 +16,13 @@ export type PlaceWord = "home" | "room" | "balcony" | "water";
 /** The covers a frame of a Studio-created avatar may draw, in the clause's fixed order. */
 export type ImpliedWord = "sheet" | "towel" | "foam";
 
+/** The banks the caption reads: each built-in category's «Смелая» bank and the custom categories' two. Injectable, so a bank fixture proves the words follow the data. */
+export interface CaptionBanks {
+  readonly builtIn: Readonly<Record<SceneCategory, CategoryBank>>;
+  readonly rooms: CategoryBank;
+  readonly water: CategoryBank;
+}
+
 export interface CaptionWords {
   readonly clothing: readonly ClothingWord[];
   readonly places: readonly PlaceWord[];
@@ -26,15 +33,19 @@ const CLOTHING_ORDER: readonly ClothingWord[] = ["underwear", "satin", "swim"];
 const PLACE_ORDER: readonly PlaceWord[] = ["home", "room", "balcony", "water"];
 const IMPLIED_ORDER: readonly ImpliedWord[] = ["sheet", "towel", "foam"];
 
-/** The bank each built-in category draws at «Смелая»: the five from their companion, the two «Смелая» categories from their own. */
-const BANK_OF: Readonly<Record<SceneCategory, CategoryBank>> = {
-  home: BOLD_COMPANIONS.home,
-  travel: BOLD_COMPANIONS.travel,
-  shoot: BOLD_COMPANIONS.photoshoot,
-  glam: BOLD_COMPANIONS.glamour,
-  fit: BOLD_COMPANIONS.fitness,
-  nightwear: BANKS.nightwear,
-  beach: BANKS.beach,
+/** The banks the shipped app draws at ««Смелая»»: the five from their companion, nightwear and beach from their own, a custom category from the rooms bank and, at the water, the water bank. */
+export const SHIPPED_CAPTION_BANKS: CaptionBanks = {
+  builtIn: {
+    home: BOLD_COMPANIONS.home,
+    travel: BOLD_COMPANIONS.travel,
+    shoot: BOLD_COMPANIONS.photoshoot,
+    glam: BOLD_COMPANIONS.glamour,
+    fit: BOLD_COMPANIONS.fitness,
+    nightwear: BANKS.nightwear,
+    beach: BANKS.beach,
+  },
+  rooms: CUSTOM_BOLD_BANKS.rooms,
+  water: CUSTOM_BOLD_BANKS.water,
 };
 
 /**
@@ -69,7 +80,8 @@ function wordsOfBank(bank: CategoryBank): { underwear: boolean; satin: boolean; 
 }
 
 /** The words of the chosen `categories` at «Смелая»: the union over them, in the caption's fixed orders. `legs` is the run's «Ножки» share: it adds the satin that only legs frames wear. */
-export function captionWordsOf(categories: readonly CategoryRef[], context: { legs: LegsShare; customs: readonly CategorySummary[] }): CaptionWords {
+export function captionWordsOf(categories: readonly CategoryRef[], context: { legs: LegsShare; customs: readonly CategorySummary[]; banks?: CaptionBanks }): CaptionWords {
+  const banks = context.banks ?? SHIPPED_CAPTION_BANKS;
   const clothing = new Set<ClothingWord>();
   const places = new Set<PlaceWord>();
   const implied = new Set<ImpliedWord>();
@@ -82,7 +94,7 @@ export function captionWordsOf(categories: readonly CategoryRef[], context: { le
   };
   for (const ref of categories) {
     if (!isCustomCategory(ref)) {
-      const bank = BANK_OF[ref];
+      const bank = banks.builtIn[ref];
       take(bank, context.legs !== 0);
       for (const place of PLACES_OF[ref]) places.add(place);
       if (ref !== "beach" && wordsOfBank(bank).water) places.add("water");
@@ -90,10 +102,10 @@ export function captionWordsOf(categories: readonly CategoryRef[], context: { le
     }
     const custom = context.customs.find((c) => c.categoryId === ref);
     if (custom === undefined) continue;
-    take(CUSTOM_BOLD_BANKS.rooms, false);
+    take(banks.rooms, false);
     for (const place of CUSTOM_PLACES) places.add(place);
     if (custom.pool.locations.some((place) => isWaterPlaceName(place.name))) {
-      take(CUSTOM_BOLD_BANKS.water, false);
+      take(banks.water, false);
       places.add("water");
     }
   }
@@ -134,10 +146,10 @@ export function impliedText(items: readonly ImpliedWord[]): string | null {
  * Whether any of the chosen `categories` draws lingerie or an implied cover, from the bank data: what an imported avatar's line («без простыни, полотенца и пены; в промпте бельё плотное»)
  * has something to say about. A custom category always has its «rooms» bank, so it does; «Пляж и бассейн» alone does not (r2.3 L1, r2.4 N2).
  */
-export function drawsLingerie(categories: readonly CategoryRef[]): boolean {
+export function drawsLingerie(categories: readonly CategoryRef[], banks: CaptionBanks = SHIPPED_CAPTION_BANKS): boolean {
   return categories.some((ref) => {
     if (isCustomCategory(ref)) return true;
-    const bank = BANK_OF[ref];
+    const bank = banks.builtIn[ref];
     return wordsOfBank(bank).underwear || impliedItemsOf(bank).length > 0;
   });
 }

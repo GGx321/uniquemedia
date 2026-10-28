@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { CategoryRef, LegsShare } from "../../../shared/engine";
 import { BED_POOL, category, PARIS_POOL } from "./categoryScreenKit";
-import { captionWordsOf, clothingText, drawsLingerie, impliedText, placesText } from "./captionWords";
+import { BANKS } from "../../../shared/scenes/banks";
+import { BOLD_COMPANIONS, CUSTOM_BOLD_BANKS } from "../../../shared/scenes/banks/companions";
+import type { CategoryBank } from "../../../shared/scenes/banks/types";
+import { captionWordsOf, clothingText, drawsLingerie, impliedText, placesText, SHIPPED_CAPTION_BANKS } from "./captionWords";
 
 // 5a.4 (S5.BA8a, plan s5a4 §5.9 «Caption rules», r2.3 L3, r2.4 N1): the card's and the autopilot's caption words follow the chosen categories, from one per-category table. The clothing words
 // and the cover items are READ from the bank data (a bank edit visibly changes the caption); BA2's table test pins the data, these rows pin what the caption makes of it.
@@ -126,5 +129,40 @@ describe("drawsLingerie: whether a chosen category has lingerie or a cover to sa
     ["«Пляж и бассейн» beside a custom category", ["beach", "cat-paris-cafes"], true],
   ])("%s", (_name, categories, expected) => {
     expect(drawsLingerie(categories)).toBe(expected);
+  });
+});
+
+// r2.3 M2 (plan s5a4 §8 BA8): the cover items are computed from the bank data, so a bank fixture without implied covers gives none, and a card of it names no cover and says nothing about an imported avatar.
+describe("the cover items follow the bank given (not a table of the caption's own)", () => {
+  const withoutImplied = (bank: CategoryBank): CategoryBank => ({
+    ...bank,
+    outfits: bank.outfits.filter((outfit) => outfit.tier !== "implied"),
+    places: bank.places.map((place) => ({ ...place, moments: place.moments.filter((moment) => moment.tier !== "implied") })),
+  });
+  const bare = { ...SHIPPED_CAPTION_BANKS, builtIn: { ...SHIPPED_CAPTION_BANKS.builtIn, home: withoutImplied(BOLD_COMPANIONS.home) } };
+
+  test("the shipped banks are the five companions, nightwear and beach, and the custom rooms and water banks", () => {
+    expect(SHIPPED_CAPTION_BANKS.builtIn.home).toBe(BOLD_COMPANIONS.home);
+    expect(SHIPPED_CAPTION_BANKS.builtIn.nightwear).toBe(BANKS.nightwear);
+    expect(SHIPPED_CAPTION_BANKS.builtIn.beach).toBe(BANKS.beach);
+    expect(SHIPPED_CAPTION_BANKS.rooms).toBe(CUSTOM_BOLD_BANKS.rooms);
+    expect(SHIPPED_CAPTION_BANKS.water).toBe(CUSTOM_BOLD_BANKS.water);
+  });
+
+  test("a «Дом» bank without implied covers names none, and still dresses her in underwear", () => {
+    expect(captionWordsOf(["home"], { legs: 0, customs: [], banks: bare })).toMatchObject({ implied: [], clothing: ["underwear", "satin"] });
+  });
+
+  test("the other categories keep the shipped banks' covers", () => {
+    expect(captionWordsOf(["home", "fit"], { legs: 0, customs: [], banks: bare }).implied).toEqual(["towel"]);
+  });
+
+  test("the imported-avatar line has lingerie to speak of while a bank still dresses her in underwear", () => {
+    expect(drawsLingerie(["home"], bare)).toBe(true);
+  });
+
+  test("a bank with neither underwear nor covers gives the imported line nothing to say", () => {
+    const swimOnly: CategoryBank = { ...BANKS.beach };
+    expect(drawsLingerie(["home"], { ...SHIPPED_CAPTION_BANKS, builtIn: { ...SHIPPED_CAPTION_BANKS.builtIn, home: swimOnly } })).toBe(false);
   });
 });
