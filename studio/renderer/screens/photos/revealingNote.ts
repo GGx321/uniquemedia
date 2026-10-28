@@ -1,15 +1,29 @@
+import { CUSTOM_BOLD_BANKS, impliedItemsOf } from "../../../shared/scenes/banks/companions";
+import { impliedText, type ImpliedWord } from "./captionWords";
+
 // S5.5: the pool generator draws no lingerie, swimwear or nudity in the owner's own categories (engine/scenes/poolGen.ts), so a custom category whose description asks for them comes out in
 // everyday clothes. The swap used to be silent; the sheet says so, before «Создать» and on the category's card. Renderer-only: the engine's own word list (scenes/words.ts) is not imported
 // here, this one also reads Russian and the description rather than an outfit. 5a.4 (S5.BA8b, plan s5a4 §5.9 rows 15, 16; r2.2 D4, r2.3 M5; mockup 66): «Смелая» draws every category, a
 // custom one included, so the note says what it gives there instead of sending the owner to the two built-ins. It promises nothing «в духе описания»: the engine never draws an outfit
 // from the description (I5.78).
 
+/** The covers a custom category's «Смелая» frames may draw for a Studio-created avatar, read from its two banks (r2.4 N1: the sheet and the towel), in the clause's fixed order. */
+const CUSTOM_COVERS: readonly ImpliedWord[] = (["sheet", "towel", "foam"] as const).filter((item) =>
+  [CUSTOM_BOLD_BANKS.rooms, CUSTOM_BOLD_BANKS.water].some((bank) => impliedItemsOf(bank).includes(item)),
+);
+
+/**
+ * BA8b round 2 (owner question 1, the controller's default (b)): Seedream draws no full nudity, and a Studio-created avatar's most revealing frames may be an implied cover — named as the
+ * custom banks give them. With no cover in the banks, the plain «Голой Seedream не рисует.»
+ */
+const COVERS_CLAUSE = impliedText(CUSTOM_COVERS);
+const NUDITY_TAIL = COVERS_CLAUSE === null ? "Голой Seedream не рисует." : `Полностью голой Seedream не рисует; у аватара из Studio часть кадров — ${COVERS_CLAUSE}.`;
+
 /** What the owner is told before «Создать» when his description asks for what the category's own outfits will not have. Neutral: a fact and where to find it, not a reproach. */
-export const REVEALING_NOTE =
-  "Бельё и купальники даёт подача «Смелая»: с ней она выйдет в белье дома или в номере, в мире категории, а у воды — в купальнике. Голой Seedream не рисует.";
+export const REVEALING_NOTE = `Бельё и купальники даёт подача «Смелая»: с ней она выйдет в белье дома или в номере, в мире категории, а у воды — в купальнике. ${NUDITY_TAIL}`;
 
 /** The note on the card of a category that is already created: its own outfits are ordinary, and what «Смелая» gives. */
-export const REVEALING_NOTE_DONE = "Наряды категории — обычные. С подачей «Смелая» она выйдет в белье дома или в номере, а у воды — в купальнике. Голой Seedream не рисует.";
+export const REVEALING_NOTE_DONE = `Наряды категории — обычные. С подачей «Смелая» она выйдет в белье дома или в номере, а у воды — в купальнике. ${NUDITY_TAIL}`;
 
 // A word is a run of letters: `\b` knows only ASCII, so the edges are lookarounds over Unicode letters and digits. Text is lowercased and ё is read as е before matching,
 // so every pattern below is written in lowercase with е. A Russian stem is followed by the endings it really takes (not by «any letters»), so «белый» and «бельгийский»

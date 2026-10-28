@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { CUSTOM_BOLD_BANKS, impliedItemsOf } from "../../../shared/scenes/banks/companions";
 import { asksForRevealing, REVEALING_NOTE, REVEALING_NOTE_DONE } from "./revealingNote";
 
 // S5.5: the pool generator draws no lingerie, swimwear or nudity until the «Смелая» level ships (poolGen.ts), so a custom category that asks for it comes out in
@@ -188,17 +189,24 @@ describe("asksForRevealing: the boundaries", () => {
 // 5a.4 (S5.BA8b, plan s5a4 §5.9 rows 15, 16; r2.2 D4, r2.3 M5; mockup 66): «Смелая» draws every category now, a custom one included, so the note says what it gives
 // there — lingerie at home or in a room, in the category's world, swimwear at the water — and what nothing gives. «в духе описания» is gone: the engine never draws
 // an outfit from the description (I5.78). The two notes are no longer one sentence in two tenses: the created card says the category's outfits are ordinary.
+// BA8b round 2 (owner question 1, the controller's default (b)): «Голой Seedream не рисует» was not the whole truth — a Studio-created avatar's most revealing frames may be an implied
+// cover — so the notes say «Полностью голой …» and which covers. The covers are a custom category's own, read from its banks (r2.4 N1): the sheet and the towel, no foam.
 describe("REVEALING_NOTE", () => {
-  test("before «Создать» (row 15, mockup 66): what «Смелая» gives a custom category, and that Seedream draws no nudity", () => {
+  test("before «Создать» (row 15, mockup 66): what «Смелая» gives a custom category, and what a Studio-created avatar may get besides", () => {
     expect(REVEALING_NOTE).toBe(
-      "Бельё и купальники даёт подача «Смелая»: с ней она выйдет в белье дома или в номере, в мире категории, а у воды — в купальнике. Голой Seedream не рисует.",
+      "Бельё и купальники даёт подача «Смелая»: с ней она выйдет в белье дома или в номере, в мире категории, а у воды — в купальнике. Полностью голой Seedream не рисует; у аватара из Studio часть кадров — только простыня или полотенце.",
     );
   });
 
   test("on a created category's card (row 16, mockup 66#created): its own outfits are ordinary, and what «Смелая» gives", () => {
     expect(REVEALING_NOTE_DONE).toBe(
-      "Наряды категории — обычные. С подачей «Смелая» она выйдет в белье дома или в номере, а у воды — в купальнике. Голой Seedream не рисует.",
+      "Наряды категории — обычные. С подачей «Смелая» она выйдет в белье дома или в номере, а у воды — в купальнике. Полностью голой Seedream не рисует; у аватара из Studio часть кадров — только простыня или полотенце.",
     );
+  });
+
+  test("the covers named are the custom banks' own: the rooms bank has the sheet and the towel, the water bank none (a bank edit changes the notes)", () => {
+    expect([...impliedItemsOf(CUSTOM_BOLD_BANKS.rooms), ...impliedItemsOf(CUSTOM_BOLD_BANKS.water)]).toEqual(["sheet", "towel"]);
+    for (const note of [REVEALING_NOTE, REVEALING_NOTE_DONE]) expect(note).not.toContain("пена");
   });
 
   test("neither note sends the owner to the two built-ins any more, nor promises an outfit «в духе описания»", () => {
