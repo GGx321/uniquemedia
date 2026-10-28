@@ -12,6 +12,7 @@ import {
 } from "../../shared/engine";
 import type { MockTrackSeed } from "./mockMusicStore";
 import { PAID_FAULTS } from "./mockLaunchRun";
+import { heavyTest, sweepTest } from "../../testing/bunTiers";
 import { draftOf, LLM_ONLY_REF, MIA, runWorld, SOFIA, track, unwrap, type Mock } from "./mockLaunchRun.testkit";
 
 // Stage 4, S4.8: the mock's view must pass the SAME contract refines as the engine's, in every state it can reach. The S4.6v review fuzzed the engine's view; this does the same to the
@@ -271,13 +272,14 @@ async function fuzzOne(seed: number, steps: number): Promise<void> {
 
 describe("fuzz: the mock's view meets the contract in every state it reaches", () => {
   const SEEDS = Array.from({ length: 80 }, (_, i) => 1_000 + i * 37);
-  for (const seed of SEEDS) {
-    test(`seed ${seed}`, async () => {
-      await fuzzOne(seed, 60);
-    });
-  }
+  // Push: every tenth seed (8 of the 80). Heavy: all 80 seeds, as before. The seeds a push skips are heavy tests of their own.
+  SEEDS.forEach((seed, i) => {
+    if (i % 10 === 0) sweepTest(`seed ${seed}`, { push: { seed }, heavy: { seed } }, async (params) => fuzzOne(params.seed, 60));
+    else heavyTest(`seed ${seed}`, async () => fuzzOne(seed, 60));
+  });
 
-  test("the runs between them reached every status, hold, wait, phase and reason the mock claims to reach", () => {
+  // The coverage of the whole vocabulary needs every seed, so it runs in the heavy run, after the 80 seeds above.
+  heavyTest("the runs between them reached every status, hold, wait, phase and reason the mock claims to reach", () => {
     expect([...seen.statuses].sort()).toEqual([...LAUNCH_STATUSES].sort());
     expect([...seen.holds].sort()).toEqual([...PAID_HOLD_REASONS].sort());
     expect([...seen.waits].sort()).toEqual([...WaitingReason.options].sort());
