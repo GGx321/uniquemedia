@@ -225,9 +225,9 @@ export function wholeBodyOf(slot: RunSlot): boolean {
   return !isOwnSlot(slot) && (FEET_MOMENT_WORDS.test(slot.activity) || (isBoldFrame({ category: slot.category, route: slot.route }) && BOLD_WHOLE_BODY_WORDS.test(slot.activity)));
 }
 
-/** The content level of a run's slot (5a.4, S5.BA1): an own slot has no level and no route, a planned one hands over both. */
+/** The content level of a run's slot (5a.4, S5.BA1): an own slot has no level, and (S5.BA9) its route when its set was «Смелая»; a planned one hands over both. */
 function contentLevelOfSlot(slot: RunSlot): ContentLevel {
-  return isOwnSlot(slot) ? contentLevelOf({ category: slot.category, level: undefined, route: undefined }) : contentLevelOf({ category: slot.category, level: slot.level, route: slot.route });
+  return isOwnSlot(slot) ? contentLevelOf({ category: slot.category, level: undefined, route: slot.route }) : contentLevelOf({ category: slot.category, level: slot.level, route: slot.route });
 }
 
 /**
