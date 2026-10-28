@@ -1,7 +1,7 @@
 import { formatUsd, formatUsdTiered, isFree, limitUsd } from "../../lib/money";
 import { countOf, NBSP, plural } from "../../lib/format";
 import type { SettingsFocus } from "../../navigation";
-import type { LaunchPreview, LaunchPreviewAvatar, LaunchStatus, LaunchView, MonthFit } from "../../../shared/engine";
+import type { LaunchPreview, LaunchPreviewAvatar, LaunchStatus, LaunchView, MonthFit, SceneLevel } from "../../../shared/engine";
 
 // S4.9a: the «Автопилот» plan card and the avatar rows worded from the engine's own figures (AutopilotS4.dc.html, LaunchStates «Бюджет месяца», «Почему не
 // собрать», «Музыка»). The renderer computes no money (plan §4.2): every sum here is `autopilot.estimate`'s, only formatted («Деньги на экране»: below $0.10
@@ -428,6 +428,14 @@ export function avatarRow(name: string, planned: LaunchPreviewAvatar | undefined
   if (unknown) return { ...base, tag: { text: "нет данных", tone: "warn", title: `Не читается, какие фото ${name} заняты` } };
   if (row.busy) return { ...base, tag: { text: "занята", tone: "warn", title: "Идёт ваша генерация на «Фото» — запуск её подождёт" } };
   return { ...base, tag: null };
+}
+
+/**
+ * The avatar list's legend of «N своб.» (§5.9 row 22a, r2.3 M3): at «Смелая» the library offers only the routed frames (r2.2 D2), so what is free is the «Смелая» frames of the chosen
+ * categories, not any photo of them.
+ */
+export function freeCaption(level: SceneLevel): string {
+  return level === "bold" ? "своб. — свободные кадры «Смелой» в выбранных категориях" : "своб. — свободные фото в выбранных категориях";
 }
 
 // ---------- a launch that runs ----------

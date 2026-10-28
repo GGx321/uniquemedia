@@ -3,6 +3,7 @@ import { raiseBudgetToMicros } from "../../../shared/autopilot/money";
 import { LaunchPreview, LaunchView, type LaunchAvatarView, type LaunchPreviewAvatar } from "../../../shared/engine";
 import {
   avatarRow,
+  freeCaption,
   diskLine,
   figuresOf,
   GO_WHY,
@@ -426,5 +427,16 @@ describe("a launch that runs", () => {
     expect(sidebarMark(done, null)).toEqual({ text: "готово", tone: "done", description: "запуск завершён" });
     expect(sidebarMark(done, done.launchId)).toBeNull();
     expect(sidebarMark(launch({ status: "stopped", endedAt: "2026-10-08T14:09:00.000Z" }), null)).toBeNull();
+  });
+});
+
+// 5a.4 (S5.BA8a, plan s5a4 §5.9 row 22a, r2.3 M3, r2.2 D2): at «Смелая» the library offers only the «Смелая» frames, so the avatar list's «своб.» legend says that.
+describe("freeCaption: the avatar list's «своб.» legend", () => {
+  test.each(["ordinary", "flirty"] as const)("at %s: free photos in the chosen categories, as it always said", (level) => {
+    expect(freeCaption(level)).toBe("своб. — свободные фото в выбранных категориях");
+  });
+
+  test("at «Смелая»: free frames of «Смелой» in the chosen categories", () => {
+    expect(freeCaption("bold")).toBe("своб. — свободные кадры «Смелой» в выбранных категориях");
   });
 });
