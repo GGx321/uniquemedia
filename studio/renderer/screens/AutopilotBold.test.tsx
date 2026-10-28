@@ -167,6 +167,23 @@ describe("«Категории сцен» with the two «Смелая» chips (m
     expect(screen.queryByText("своб. — свободные фото в выбранных категориях") === null).toBe(true);
   });
 
+  // 5a.4 (S5.BA8b, §5.9 row 22, r2.2 D2): at «Смелая» the library offers only the routed frames, so its switch says so; the other levels keep their line.
+  test("«Сначала свободные фото из библиотеки» says only «Смелая» frames are taken at «Смелая», and only there", async () => {
+    world();
+    await openAutopilot();
+    const sub = (): string => {
+      const row = within(settings()).getByText("Сначала свободные фото из библиотеки").closest(".rl");
+      return row?.querySelector("span")?.textContent ?? "";
+    };
+    expect(sub()).toBe("не отклонённые и не занятые черновиками");
+    await click(level("Смелая"));
+    expect(sub()).toBe("не отклонённые и не занятые черновиками; на «Смелой» — только кадры «Смелой»");
+    const libSwitch = within(settings()).getByRole("switch", { name: "Сначала свободные фото из библиотеки" });
+    expect(described(libSwitch)).toEqual(["не отклонённые и не занятые черновиками; на «Смелой» — только кадры «Смелой»"]);
+    await click(level("Кокетливая"));
+    expect(sub()).toBe("не отклонённые и не занятые черновиками");
+  });
+
   // 5a.4 (S5.BA8a, §5.9 row 20, r2.3 M1): the month line divides the budget by the plan's own unit; the window computes no price.
   test("the month line at «Смелая» is the plan's unit over the month's budget, and only there", async () => {
     const { engine, client } = world();
