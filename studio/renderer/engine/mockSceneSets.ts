@@ -33,6 +33,7 @@ import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared
 import { covers, isWaterPlaceName } from "../../shared/scenes/custom";
 import { apportionLegs, drawLevelOf, flirtyCountOf, legsCountOf, spreadLevels, tierSpreadOf, type LevelCounts } from "../../shared/scenes/level";
 import { slotCoverageOf } from "../../shared/scenes/template";
+import { ownCoverageOf, ownSceneMarkerOf, ownSceneRouteOf } from "../../shared/scenes/ownScene";
 import { coversAt, llmPossibleSlots, writerChunksWorst, writerModeAt, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
 import { bankDraw, customBoldDraw, legsDraw, localTexts, openedPlace, plainTextOf, type LocalScene } from "./mockBankScenes";
 import { mockAnglesOf } from "./mockCategories";
@@ -83,9 +84,17 @@ export function mockWriterExpected(mode: MockWriterMode, requests: number, scene
   return Math.ceil((MOCK_BOLD_TYPICAL_QUARTERS.perRequest * requests + MOCK_BOLD_TYPICAL_QUARTERS.perScene * scenes) / 4);
 }
 
-/** The mode a request asks the writer in for the scenes it sends the model: «bold» when any of them is a «Смелая» frame (the engine's `writerModeOf`, r2.1 L3). */
+/**
+ * The mode a request asks the writer in for the scenes it sends the model: «bold» when any of them is a «Смелая» frame (the engine's `writerModeOf`, r2.1 L3). 5a.4 (S5.BA9): an own scene
+ * of a «Смелая» set carries the route, so a rewrite of it is asked in the bold mode (the engine's `writeModeOf`).
+ */
 function modeOfScenes(scenes: readonly Pick<Scene, "category" | "route">[]): MockWriterMode {
-  return scenes.some((scene) => scene.category !== "own" && isBoldFrame({ category: scene.category, route: scene.route })) ? "bold" : "ordinary";
+  return scenes.some((scene) => isBoldFrame({ category: scene.category, route: scene.route })) ? "bold" : "ordinary";
+}
+
+/** 5a.4 (S5.BA9): the mode an idea write of a set at `level` is asked in (the engine's `writeModeOf` of an idea): «bold» when its own scenes are «Смелая» frames. */
+function ideaModeOf(level: SceneLevel | undefined): MockWriterMode {
+  return isBoldFrame(ownSceneMarkerOf(level)) ? "bold" : "ordinary";
 }
 /** Writer ids per chunk: the answered attempts plus two spares for attempts that got no answer. */
 const IDS_PER_CHUNK = SCENE_CHUNK_ATTEMPTS + 2;
@@ -170,7 +179,7 @@ interface Scene {
   pose: SceneView["pose"];
   /** «Подача» of the scene (S5.7b): only a built-in scene of a flirty set can be flirty; 5a.3: a «Смелая» category's scene of a bold set may be bold. */
   level?: "flirty" | "bold";
-  /** 5a.3: the scene is drawn on Seedream, exactly when its moment or its outfit is. */
+  /** 5a.3: the scene is drawn on Seedream, exactly when its moment or its outfit is. 5a.4 (S5.BA9): an own scene of a «Смелая» set is too (the engine's `ownSceneRouteOf`; never shown). */
   route?: "seedream";
   /** «Ножки» (S5.8a): a legs scene. */
   framing?: "legs";
@@ -222,7 +231,7 @@ export interface MockReviewPlan {
   attemptsLeft: number;
   /** 5a.2: how many of the write's scenes the model must write; the code template writes the rest at $0, so 0 prices the write at nothing. */
   modelScenes: number;
-  /** 5a.4 (S5.BA7): the mode its request is asked in (the engine's `ReviewPlan.mode`): «bold» when a scene it sends the model is a «Смелая» frame; an idea write is ordinary. */
+  /** 5a.4 (S5.BA7): the mode its request is asked in (the engine's `ReviewPlan.mode`): «bold» when a scene it sends the model is a «Смелая» frame; an idea write is its set's (S5.BA9). */
   mode: MockWriterMode;
   begin: (set: MockSet) => Review;
 }
@@ -520,7 +529,14 @@ const BOLD_DETAILS = ["a cup of tea beside her", "a book beside her", "a scarf b
 
 function sentenceOf(scene: Scene, take: number, impliedNudity: boolean): string {
   const mark = take === 0 ? `${scene.sceneId}` : `${scene.sceneId}, take ${take}`;
-  if (scene.place === null) return `She enjoys ${scene.idea ?? "a quiet moment"}, caught by a friend in the afternoon light (${mark}).`;
+  if (scene.place === null) {
+    // 5a.4 (S5.BA9): an own scene of a «Смелая» set is written as the idea writer's bold variant writes it: in lingerie, with no number (a number is held to the age rule on a «Смелая»
+    // frame), then the coverage by the avatar's origin, appended as the engine's reader appends it.
+    if (scene.route !== "seedream") return `She enjoys ${scene.idea ?? "a quiet moment"}, caught by a friend in the afternoon light (${mark}).`;
+    const sentence = `She enjoys ${scene.idea ?? "a quiet moment"} in black lingerie in her bedroom, ${BOLD_DETAILS[(scene.sceneId + take) % BOLD_DETAILS.length] ?? "a cup of tea beside her"}.`;
+    const coverage = ownCoverageOf(impliedNudity);
+    return coverage === undefined ? sentence : `${sentence} ${coverage}`;
+  }
   if (scene.route === "seedream" && scene.category !== "own" && isCustomCategory(scene.category)) {
     const { location, activity, outfit, world } = scene.place;
     // The world is named unless its stored name says a word the content line holds against a «Смелая» frame (a youth word: «a tiny bookshop»); the place's own key words stay.
@@ -532,6 +548,11 @@ function sentenceOf(scene: Scene, take: number, impliedNudity: boolean): string 
     return coverage === undefined ? sentence : `${sentence} ${coverage}`;
   }
   return `A friend catches her ${scene.place.activity} at ${scene.place.location} in the ${scene.place.timeOfDay}, wearing ${scene.place.outfit} (${mark}).`;
+}
+
+/** 5a.4 (S5.BA9): the route an own scene of a set at `level` carries (the engine's `ownSceneRouteOf`), as a spread. */
+function ownRouteOf(level: SceneLevel | undefined): { route?: "seedream" } {
+  return ownSceneRouteOf(level) === "seedream" ? { route: "seedream" } : {};
 }
 
 /** The pose of a redrawn custom scene with no angles of its own: it faces the camera (S5.7b: the set's toggles are gone). */
@@ -609,7 +630,7 @@ export class MockSceneSets {
         : seed.scenes.map(
             (s, i): Scene =>
               "idea" in s
-                ? { sceneId: i + 1, category: "own", shot: s.shot, pose: s.pose, place: null, idea: s.idea, text: s.text, edited: false, removed: false }
+                ? { sceneId: i + 1, category: "own", shot: s.shot, pose: s.pose, ...ownRouteOf(seed.level), place: null, idea: s.idea, text: s.text, edited: false, removed: false }
                 : { sceneId: i + 1, category: s.category, shot: s.shot, pose: s.pose, ...(s.level === undefined ? {} : { level: s.level }), ...(s.route === undefined ? {} : { route: s.route }), place: { ...s.place }, idea: null, text: s.text ?? null, edited: false, removed: false },
           );
     const chunks = chunksOf(seed.sceneSetId, scenes.filter((scene) => scene.place !== null));
@@ -649,7 +670,7 @@ export class MockSceneSets {
       chunks,
       write: stopped === undefined ? null : { k: 1, kind: "compose", ...(stopped === "closed" ? {} : { stoppedBy: stopped, ...(stopped === "failed" ? { stoppedError: { code: "INTERNAL" as const } } : {}) }) },
       reviews: (seed.reviewWrites ?? []).map((w): Review => {
-        const attempts = w.cutOff === true ? [cutOff(`${seed.sceneSetId}:write-${w.k}#1`, w.kind === "rewrite" ? modeOfScenes(scenes.filter((scene) => w.sceneIds.includes(scene.sceneId) && local(scene.sceneId) === null)) : "ordinary")] : [];
+        const attempts = w.cutOff === true ? [cutOff(`${seed.sceneSetId}:write-${w.k}#1`, w.kind === "rewrite" ? modeOfScenes(scenes.filter((scene) => w.sceneIds.includes(scene.sceneId) && local(scene.sceneId) === null)) : ideaModeOf(seed.level))] : [];
         const base = { k: w.k, closed: false, redraw: false, draws: new Map(), snapshots: [], attempts, ...(w.stoppedBy === undefined ? {} : { stoppedBy: w.stoppedBy }) };
         return w.kind === "rewrite"
           ? { ...base, kind: "rewrite", sceneIds: [...w.sceneIds], redraw: w.redraw === true, own: [] }
@@ -1279,7 +1300,7 @@ export class MockSceneSets {
           ...(review.kind === "rewrite" ? { sceneIds: [...active] } : {}),
           attemptsLeft,
           modelScenes: review.kind === "rewrite" ? this.#modelScenes(set, review.k, active, review.draws) : review.own.length,
-          mode: review.kind === "rewrite" ? this.#rewriteMode(set, review.k, active, review.draws) : "ordinary",
+          mode: review.kind === "rewrite" ? this.#rewriteMode(set, review.k, active, review.draws) : ideaModeOf(set.level),
           begin: () => {
             if (dropped.size > 0) {
               for (const id of dropped) review.draws.delete(id);
@@ -1316,7 +1337,7 @@ export class MockSceneSets {
           count: target.count,
           attemptsLeft: SCENE_CHUNK_ATTEMPTS,
           modelScenes: target.count,
-          mode: "ordinary",
+          mode: ideaModeOf(set.level),
           begin: (current) => {
             const review: Review = { k, kind: "idea", closed: false, sceneIds: own.map((o) => o.sceneId), redraw: false, draws: new Map(), idea: target.idea.trim(), shot: target.shot, own, snapshots: [], attempts: [] };
             current.reviews.push(review);
@@ -1547,7 +1568,7 @@ export class MockSceneSets {
     if (job.status !== "running") return;
     const modelIds = review.kind === "idea" ? review.own.map((o) => o.sceneId) : this.#modelSceneIds(set, review.k, review.sceneIds, review.draws);
     const modelScenes = modelIds.length;
-    const mode: MockWriterMode = review.kind === "idea" ? "ordinary" : this.#rewriteMode(set, review.k, review.sceneIds, review.draws);
+    const mode: MockWriterMode = review.kind === "idea" ? ideaModeOf(set.level) : this.#rewriteMode(set, review.k, review.sceneIds, review.draws);
     // 5a.2: every scene of the write is one the code template renders: written at once, with no request, no attempt and no cost.
     if (modelScenes === 0) {
       this.#accept(set, review);
@@ -1643,7 +1664,7 @@ export class MockSceneSets {
     if (review.kind === "idea") {
       for (const own of review.own) {
         if (opts.only !== undefined && !opts.only.has(own.sceneId)) continue;
-        const scene: Scene = { sceneId: own.sceneId, category: "own", shot: own.shot, pose: own.pose, place: null, idea: review.idea ?? null, text: null, edited: false, removed: false };
+        const scene: Scene = { sceneId: own.sceneId, category: "own", shot: own.shot, pose: own.pose, ...ownRouteOf(set.level), place: null, idea: review.idea ?? null, text: null, edited: false, removed: false };
         scene.text = sentenceOf(scene, review.k, this.#deps.impliedNudity(set.avatarId));
         set.scenes.push(scene);
       }
