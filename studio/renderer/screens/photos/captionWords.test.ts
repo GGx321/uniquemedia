@@ -124,11 +124,13 @@ describe("drawsLingerie: whether a chosen category has lingerie or a cover to sa
     ["«Дом»", ["home"], true],
     ["«Ночнушки и бельё»", ["nightwear"], true],
     ["«Фитнес»", ["fit"], true],
-    ["a custom category", ["cat-paris-cafes"], true],
+    ["a custom category the library holds", [PARIS.categoryId], true],
+    ["a custom category the library does not hold (not loaded, or deleted)", ["cat-gone-for-good"], false],
     ["«Пляж и бассейн» beside «Улица»", ["beach", "shoot"], true],
-    ["«Пляж и бассейн» beside a custom category", ["beach", "cat-paris-cafes"], true],
+    ["«Пляж и бассейн» beside a custom category", ["beach", PARIS.categoryId], true],
+    ["«Пляж и бассейн» beside a custom category that is gone", ["beach", "cat-gone-for-good"], false],
   ])("%s", (_name, categories, expected) => {
-    expect(drawsLingerie(categories)).toBe(expected);
+    expect(drawsLingerie(categories, [PARIS, POOL_BY_THE_WATER, BED])).toBe(expected);
   });
 });
 
@@ -158,11 +160,11 @@ describe("the cover items follow the bank given (not a table of the caption's ow
   });
 
   test("the imported-avatar line has lingerie to speak of while a bank still dresses her in underwear", () => {
-    expect(drawsLingerie(["home"], bare)).toBe(true);
+    expect(drawsLingerie(["home"], [], bare)).toBe(true);
   });
 
   test("a bank with neither underwear nor covers gives the imported line nothing to say", () => {
     const swimOnly: CategoryBank = { ...BANKS.beach };
-    expect(drawsLingerie(["home"], { ...SHIPPED_CAPTION_BANKS, builtIn: { ...SHIPPED_CAPTION_BANKS.builtIn, home: swimOnly } })).toBe(false);
+    expect(drawsLingerie(["home"], [], { ...SHIPPED_CAPTION_BANKS, builtIn: { ...SHIPPED_CAPTION_BANKS.builtIn, home: swimOnly } })).toBe(false);
   });
 });

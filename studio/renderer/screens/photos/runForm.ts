@@ -13,6 +13,7 @@ import {
   type SceneLevel,
 } from "../../../shared/engine";
 import { covers } from "../../../shared/scenes/custom";
+import { coversAt } from "../../../shared/scenes/writerBound";
 import type { EngineView } from "../../engine/store";
 import { paidStop, restartStopText } from "../../lib/paidStop";
 import { hasBuiltIn } from "./legs";
@@ -107,8 +108,8 @@ export function sceneWriters(count: number, categories: readonly RunCategory[], 
     }
     const custom = customs.find((c) => c.categoryId === ref);
     if (custom === undefined) continue;
-    // 5a.4 (QB-4): at «Смелая» a custom category's scenes are written by the model whatever the table covers: they carry a world, and the writer sets the frame inside it.
-    if (level !== "bold" && covers(custom.pool)) app = true;
+    // 5a.4 (QB-4): at «Смелая» a custom category's scenes are written by the model whatever the table covers: the shared `coversAt` says none is covered there.
+    if (coversAt(() => covers(custom.pool), level)(ref)) app = true;
     else model.push(custom.name);
   }
   return { app, model };

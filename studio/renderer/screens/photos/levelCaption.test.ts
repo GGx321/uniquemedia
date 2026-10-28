@@ -30,6 +30,7 @@ if (firstPlace === undefined) throw new Error("the fixture pool has no place");
 const BY_THE_POOL = category(2, "У бассейна", { ...PARIS_POOL, locations: [...PARIS_POOL.locations.slice(0, 5), { ...firstPlace, name: "hotel pool" }] });
 const BED = category(3, "Постель", BED_POOL);
 
+const CUSTOMS = [PARIS, BY_THE_POOL, BED];
 const card = (avatar: CardCaptionContext["avatar"], legs: LegsShare = 0): CardCaptionContext => ({ avatar, legs, customs: [PARIS, BY_THE_POOL, BED] });
 const launch = (avatars: LaunchCaptionContext["avatars"], legs: LegsShare = 0): LaunchCaptionContext => ({ avatars, legs, customs: [PARIS, BY_THE_POOL, BED] });
 const avatar = (toGenerate: number, blocked: "open-set" | null = null) => ({ toGenerate, blocked });
@@ -239,29 +240,34 @@ describe("«Автопилот»'s caption at «Смелая» (§5.9 rows 19, 1
 
 describe("«Автопилот»'s imported-avatar line (§5.9 row 19b, r2.4 N2, N3)", () => {
   test("one imported avatar: «Аватар из фото (Bea) — …»", () => {
-    expect(launchImportedLine("bold", ["home"], [AVA, BEA])).toBe(`Аватар из фото (Bea) — ${IMPORTED_TAIL}`);
+    expect(launchImportedLine("bold", ["home"], [AVA, BEA], CUSTOMS)).toBe(`Аватар из фото (Bea) — ${IMPORTED_TAIL}`);
   });
 
   test("several: «Аватары из фото (Bea, Cleo) — …», in the order they were picked", () => {
-    expect(launchImportedLine("bold", ["home"], [BEA, AVA, CLEO])).toBe(`Аватары из фото (Bea, Cleo) — ${IMPORTED_TAIL}`);
+    expect(launchImportedLine("bold", ["home"], [BEA, AVA, CLEO], CUSTOMS)).toBe(`Аватары из фото (Bea, Cleo) — ${IMPORTED_TAIL}`);
   });
 
   test("only Studio-created avatars, or none: no line", () => {
-    expect(launchImportedLine("bold", ["home"], [AVA])).toBe(null);
-    expect(launchImportedLine("bold", ["home"], [])).toBe(null);
+    expect(launchImportedLine("bold", ["home"], [AVA], CUSTOMS)).toBe(null);
+    expect(launchImportedLine("bold", ["home"], [], CUSTOMS)).toBe(null);
   });
 
   test("not shown when «Пляж и бассейн» is the only category (N2)", () => {
-    expect(launchImportedLine("bold", ["beach"], [BEA])).toBe(null);
-    expect(launchImportedLine("bold", ["beach", "home"], [BEA])).not.toBe(null);
+    expect(launchImportedLine("bold", ["beach"], [BEA], CUSTOMS)).toBe(null);
+    expect(launchImportedLine("bold", ["beach", "home"], [BEA], CUSTOMS)).not.toBe(null);
+  });
+
+  test("a custom category the library does not hold (not loaded, deleted) gives no lingerie to speak of", () => {
+    expect(launchImportedLine("bold", ["cat-gone-for-good"], [BEA], CUSTOMS)).toBe(null);
+    expect(cardImportedLine("bold", 20, ["cat-gone-for-good"], card(BEA))).toBe(null);
   });
 
   test("an avatar nobody could read is imported", () => {
-    expect(launchImportedLine("bold", ["home"], [{ name: "Dee" }])).toBe(`Аватар из фото (Dee) — ${IMPORTED_TAIL}`);
+    expect(launchImportedLine("bold", ["home"], [{ name: "Dee" }], CUSTOMS)).toBe(`Аватар из фото (Dee) — ${IMPORTED_TAIL}`);
   });
 
   test("below «Смелая»: no line", () => {
-    expect(launchImportedLine("flirty", ["home"], [BEA])).toBe(null);
-    expect(launchImportedLine("ordinary", ["home"], [BEA])).toBe(null);
+    expect(launchImportedLine("flirty", ["home"], [BEA], CUSTOMS)).toBe(null);
+    expect(launchImportedLine("ordinary", ["home"], [BEA], CUSTOMS)).toBe(null);
   });
 });

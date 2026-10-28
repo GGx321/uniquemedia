@@ -53,7 +53,7 @@ export interface SettingsColumnProps {
   readonly onMixReset: () => void;
   readonly onCategory: (ref: CategoryRef) => void;
   readonly onLevel: (level: SceneLevel) => void;
-  /** «Кокетливая»'s count of flirty new frames (mockup 30), «Смелая»'s of bold and flirty ones (mockup 52), or null while «Обычная» is on. */
+  /** «Кокетливая»'s count of flirty new frames (mockup 30), «Смелая»'s caption of the clothing, the places and the tiers over the plan (§5.9 rows 19, 19a), or null while «Обычная» is on. */
   readonly levelCaption: string | null;
   /** §5.9 row 19b: the line of its own for the chosen avatars made from a photo, or null. */
   readonly importedLine: string | null;

@@ -193,12 +193,12 @@ export function cardLevelCaption(level: SceneLevel, count: number, categories: r
 /** The card's line of its own for an avatar made from a photo (§5.9 row 2, r2.4 N2, N3): «Аватар из фото — …», only at «Смелая» and only when a chosen category draws lingerie or a cover. */
 export function cardImportedLine(level: SceneLevel, count: number, categories: readonly CategoryRef[], context: CardCaptionContext): string | null {
   if (level !== "bold" || count === 0 || impliedNudityOf(context.avatar)) return null;
-  return drawsLingerie(levelFrames(count, categories, level).drawing) ? `Аватар из фото — ${IMPORTED_TAIL}` : null;
+  return drawsLingerie(levelFrames(count, categories, level).drawing, context.customs) ? `Аватар из фото — ${IMPORTED_TAIL}` : null;
 }
 
 /**
- * Whether the card's run draws Seedream frames: «Смелая» with a «Смелая» category that gets photos (the slow-frames line follows it). Not the bold count: Seedream also
- * draws every «Пляж и бассейн» frame and the flirty satin in «Ночнушки», so a run of one photo with 0 bold frames is still slow.
+ * Whether the card's run draws Seedream frames: «Смелая» with any category that gets a photo (the slow-frames line follows it): every «Смелая» frame is Seedream (5a.4, r2.2). Not the
+ * bold count: a run of one photo with 0 bold frames is still slow.
  */
 export function drawsBoldFrames(level: SceneLevel, count: number, categories: readonly CategoryRef[]): boolean {
   return level === "bold" && count > 0 && levelFrames(count, categories, level).drawing.length > 0;
@@ -243,8 +243,8 @@ export function launchLevelCaption(level: SceneLevel, plan: LaunchPlanCounts | n
 }
 
 /** «Автопилот»'s line for the avatars made from a photo (§5.9 row 19b, r2.4 N2, N3): «Аватар из фото (Bea) — …», «Аватары из фото (Bea, Cleo) — …»; not shown when «Пляж и бассейн» is the only category. */
-export function launchImportedLine(level: SceneLevel, categories: readonly CategoryRef[], avatars: LaunchCaptionContext["avatars"]): string | null {
-  if (level !== "bold" || !drawsLingerie(categories)) return null;
+export function launchImportedLine(level: SceneLevel, categories: readonly CategoryRef[], avatars: LaunchCaptionContext["avatars"], customs: readonly CategorySummary[]): string | null {
+  if (level !== "bold" || !drawsLingerie(categories, customs)) return null;
   const names = avatars.filter((avatar) => !impliedNudityOf(avatar)).map((avatar) => avatar.name);
   if (names.length === 0) return null;
   return `${names.length === 1 ? "Аватар" : "Аватары"} из фото (${names.join(", ")}) — ${IMPORTED_TAIL}`;

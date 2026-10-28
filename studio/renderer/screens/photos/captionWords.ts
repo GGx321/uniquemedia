@@ -149,11 +149,12 @@ export function impliedText(items: readonly ImpliedWord[]): string | null {
 
 /**
  * Whether any of the chosen `categories` draws lingerie or an implied cover, from the bank data: what an imported avatar's line («без простыни, полотенца и пены; в промпте бельё плотное»)
- * has something to say about. A custom category always has its «rooms» bank, so it does; «Пляж и бассейн» alone does not (r2.3 L1, r2.4 N2).
+ * has something to say about. A custom category the library holds has its «rooms» bank, so it does; one it does not hold (not loaded yet, deleted) has no words, as in `captionWordsOf`;
+ * «Пляж и бассейн» alone does not (r2.3 L1, r2.4 N2).
  */
-export function drawsLingerie(categories: readonly CategoryRef[], banks: CaptionBanks = SHIPPED_CAPTION_BANKS): boolean {
+export function drawsLingerie(categories: readonly CategoryRef[], customs: readonly CategorySummary[], banks: CaptionBanks = SHIPPED_CAPTION_BANKS): boolean {
   return categories.some((ref) => {
-    if (isCustomCategory(ref)) return true;
+    if (isCustomCategory(ref)) return customs.some((c) => c.categoryId === ref);
     const bank = banks.builtIn[ref];
     return wordsOfBank(bank).underwear || impliedItemsOf(bank).length > 0;
   });

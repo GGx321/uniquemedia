@@ -11,8 +11,8 @@ import { launchMonthLine } from "./autopilot/monthLine";
 
 // S5.9g (plan s5a3 §13.1 «Autopilot», §10.2 option B; mockups 52 and 53 of .omc/stage5/design): «Автопилот» gets «Смелая» too. «Ночнушки и бельё» and «Пляж и
 // бассейн» join «Категории сцен» with the card's gating (they work only under «Смелая»; a pick is kept, off, under another «Подача»); the caption counts the
-// plan's new frames from the shared rules; «Предел запуска» says that every new photo is priced at the Seedream 2K unit only while a «Смелая» category is on
-// under «Смелая»; the launch's page says «Подача: смелая».
+// plan's new frames from the shared rules; «Предел запуска» says that every new photo is priced at the Seedream 2K unit at any «Смелая» launch (5a.4, I5.77); the launch's
+// page says «Подача: смелая».
 
 /** A caption as testing-library reads text: its spaces plain. The words are pinned in `photos/levelCaption.test.ts`; here the screen is held to saying them. */
 const plain = (text: string | null): string => {

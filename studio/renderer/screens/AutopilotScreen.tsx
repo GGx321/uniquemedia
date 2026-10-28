@@ -328,7 +328,7 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
           onCategory={toggleCategory}
           onLevel={(level) => edit({ ...form, level })}
           levelCaption={launchLevelCaption(shownForm.level, running ? runningCounts(launch) : plan.shown, levelCategories, { avatars: levelAvatars, legs: shownForm.legs, customs: customs ?? [] })}
-          importedLine={launchImportedLine(shownForm.level, levelCategories, levelAvatars)}
+          importedLine={launchImportedLine(shownForm.level, levelCategories, levelAvatars, customs ?? [])}
           monthLine={running || plan.estimating ? null : launchMonthLine(shownForm.level, plan.shown, view.settings?.imageAgeCheck === "on")}
           legs={launchLegsRow(shownForm.legs, running ? null : plan.shown, running ? shownForm.categories : (settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder))), shownForm.generate)}
           onLegs={(legs) => edit({ ...form, legs })}
