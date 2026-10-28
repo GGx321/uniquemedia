@@ -3,7 +3,8 @@ import { ScenePose } from "../../shared/engine";
 import type { ChatMessage } from "../openrouter/types";
 import { isPhoneInHandShot, type Pose } from "./schema";
 import type { Shot } from "./types";
-import { NO_REFUSAL, POSE_LABEL, readWriterScenes, SHOT_LABEL, writerRefusalText, type ReadableSlot, type SlotRepair, type WriterRefusal } from "./writer";
+import { ownCoverageOf } from "../../shared/scenes/ownScene";
+import { NO_REFUSAL, POSE_LABEL, readOwnBoldScenes, readWriterScenes, SHOT_LABEL, withFullStop, writerRefusalText, type ReadableSlot, type SlotRepair, type WriterRefusal } from "./writer";
 
 // CS.4b: the idea variant of the scene writer. «+ Своя сцена» gives the writer the owner's idea (any language, up to 500 chars) and a shot and a pose for each
 // scene, and it writes one English sentence per scene. Its system prompt is its own: the compose prompt (writer.ts) is byte-pinned and never changes. What the
@@ -77,7 +78,36 @@ export function toIdeaSlot(ask: IdeaAsk): IdeaSlot {
   return { slotIndex: ask.slotIndex, idea: ask.idea, shot: ask.askShot ? null : ask.shot, pose: ask.askPose ? null : ask.pose };
 }
 
-export function ideaSystemPrompt(mirrorAllowed = false): string {
+/**
+ * 5a.4 (S5.BA9, plan s5a4 §8 BA9, Q-F → 1): the idea writer's «Смелая» variant, for an own scene of a «Смелая» set. `impliedNudity` is the avatar's origin (I5.74; false for an imported
+ * avatar or one of unknown origin, the fail-closed side): it decides whether the idea may be drawn under an implied cover and whether the accepted sentence ends with the kept coverage.
+ * Absent (every write below «Смелая») the idea writer is the one it always was, byte for byte.
+ */
+export interface IdeaBold {
+  readonly impliedNudity: boolean;
+}
+
+/** The ordinary variant's clothing rule: the one line the bold variant replaces. */
+const COVERING_RULE =
+  "- No revealing clothing (no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie): whatever the idea says, describe her clothing as covering and non-revealing.";
+
+/**
+ * The bold variant's rules in place of the covering one (S5.BA9): what she wears (lingerie or underwear, a nightdress, swimwear by the water; for an imported avatar lingerie at most, for one
+ * made in Studio an implied cover when the idea asks for less), where she is (a private place of hers, I5.72), and the words Seedream refuses (I5.76) or the age rule holds against
+ * lingerie («tiny»).
+ */
+function boldRules(bold: IdeaBold): string[] {
+  const cover = bold.impliedNudity
+    ? " When the idea asks for less, she may wear only a towel wrapped around her, a sheet pulled up to her chest or bath foam, never less."
+    : " She wears lingerie at most, whatever the idea says: never only a towel, a sheet, bath foam or her hands over her.";
+  return [
+    `- This photo is a bold one: she wears lingerie or underwear, a short nightdress or, by the water, swimwear. Keep what the idea names; anything else it names (a shirt, a robe) she wears open over lingerie, and when it names no outfit she wears a lingerie set.${cover}`,
+    "- She is somewhere private of hers: her home, her hotel room, her own balcony or terrace, or by the water. When the idea names a public place, set the moment in her room nearby, before or after it.",
+    '- Never write naked, nude, topless, nipples, see-through, transparent or sheer, and never "tiny" or "little", of her or of anything.',
+  ];
+}
+
+export function ideaSystemPrompt(mirrorAllowed = false, bold?: IdeaBold): string {
   return [
     "You write one plain sentence of what an ordinary phone photo of her shows, for each of the given slots, of one recurring adult woman who posts her own photos.",
     "Reference images supply her identity, so you never describe her face, never give her a name, and never describe her hair, eyes or body type.",
@@ -91,7 +121,7 @@ export function ideaSystemPrompt(mirrorAllowed = false): string {
     '- Match each slot\'s pose: for pose "from behind, her face not visible" write the scene from behind — she never looks at, toward or into the viewer, and her face is never described; for pose "in profile, her face turned fully to the side" write her in profile — her face turned to the side, never looking at or toward the viewer. For any other pose she may face or glance toward the viewer as the shot allows.',
     `- When a slot's "shot" or "pose" is "choose", pick it from the idea and return it in that slot's "shot" or "pose": the shot is ${mirrorAllowed ? "friend, selfie, mirror or candid" : "friend, selfie or candid"}; the pose is front, three-quarter, profile or back. Use "back" when the idea asks for a view from behind and "profile" for a side view. A selfie always faces the camera, and so does a mirror shot (front or three-quarter), so for a view from behind or from the side pick friend or candid. ${mirrorAllowed ? "The idea names a mirror, so you may pick the mirror shot, only for a mirror selfie." : "Never choose the mirror shot."} Then write the scene for what you picked. A shot or a pose the slot gives is kept as given: never return it.`,
     "- She is a grown adult woman; no children or minors anywhere in the scene, and never a word that suggests she or anyone else is not an adult.",
-    "- No revealing clothing (no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie): whatever the idea says, describe her clothing as covering and non-revealing.",
+    ...(bold === undefined ? [COVERING_RULE] : boldRules(bold)),
     "- No text, logos, brand names or readable signs; nothing covers her face.",
     "- Never write about the camera, the lens, the photo, the shot or the framing.",
     "- When she looks toward whoever takes the photo, write that she looks at the viewer; never name a phone, camera or lens for her gaze. Her own phone appears only when the slot's activity uses it.",
@@ -107,7 +137,7 @@ export function ideaSystemPrompt(mirrorAllowed = false): string {
 const CHOOSE = "choose";
 
 /** The messages of one attempt of an idea write; `refusal` is why the previous answer was rejected, told in the compose prompt's own words. */
-export function ideaMessages(slots: readonly IdeaSlot[], refusal: WriterRefusal = NO_REFUSAL, mirrorAllowed = false): ChatMessage[] {
+export function ideaMessages(slots: readonly IdeaSlot[], refusal: WriterRefusal = NO_REFUSAL, mirrorAllowed = false, bold?: IdeaBold): ChatMessage[] {
   const items = slots.map((slot) => ({
     slotIndex: slot.slotIndex,
     idea: slot.idea,
@@ -119,7 +149,7 @@ export function ideaMessages(slots: readonly IdeaSlot[], refusal: WriterRefusal 
     lines.push("", `An earlier answer was rejected: ${writerRefusalText(refusal)}. Write a new answer that follows every rule.`);
   }
   return [
-    { role: "system", content: ideaSystemPrompt(mirrorAllowed) },
+    { role: "system", content: ideaSystemPrompt(mirrorAllowed, bold) },
     { role: "user", content: lines.join("\n") },
   ];
 }
@@ -198,12 +228,24 @@ function settle(slot: IdeaSlot, scene: { shot?: unknown; pose?: unknown }, mirro
 }
 
 /**
+ * 5a.4 (S5.BA9, I5.74): every sentence a bold read accepts (an answer's, or a refusal's kept ones) with the coverage of the avatar's origin appended (`ownCoverageOf`: the kept one for an
+ * imported avatar or one of unknown origin, none for one made in Studio), once: a sentence is read, and so covered, in one attempt only. An ordinary read is handed back as it is.
+ */
+function covered(read: ReturnType<typeof readWriterScenes>, bold: IdeaBold | undefined): ReturnType<typeof readWriterScenes> {
+  const coverage = bold === undefined ? undefined : ownCoverageOf(bold.impliedNudity);
+  if (coverage === undefined) return read;
+  const cover = (sentences: ReadonlyMap<number, string>): Map<number, string> => new Map([...sentences].map(([slotIndex, sentence]) => [slotIndex, `${withFullStop(sentence)} ${coverage}`]));
+  if (read.ok) return { ok: true, sentences: cover(read.sentences) };
+  return read.repair === undefined ? read : { ...read, repair: { ...read.repair, accepted: cover(read.repair.accepted) } };
+}
+
+/**
  * The model's answer to an idea write: one sentence per scene, read by the writer's own rules (`readWriterScenes`) against the angle each scene settled on, and
  * that angle. A shot or a pose the slot gave is kept whatever the answer says; one it left to the model must be a real pick, and a selfie or a mirror shot must
  * face the camera. A pick that fails either is a `bad-angle` refusal naming the slot; the sentence rules still run for it on the angle it was given, so one
  * retry is told everything that was wrong. The mirror is a real pick only when `mirrorAllowed` (the idea names a mirror, tested before the call).
  */
-export function readIdeaAnswer(content: string, slots: readonly IdeaSlot[], mirrorAllowed = false): IdeaAnswer {
+export function readIdeaAnswer(content: string, slots: readonly IdeaSlot[], mirrorAllowed = false, bold?: IdeaBold): IdeaAnswer {
   const parsed = IdeaOutputSchema.safeParse(parseJson(content));
   if (!parsed.success) return { ok: false, problems: ["not-json"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] };
 
@@ -222,7 +264,8 @@ export function readIdeaAnswer(content: string, slots: readonly IdeaSlot[], mirr
     return { slotIndex: slot.slotIndex, shot: angle.shot, pose: angle.pose };
   });
 
-  const read = readWriterScenes(parsed.data.scenes, readable);
+  // 5a.4 (S5.BA9): the bold variant's answer is read at the «Смелая» content line, with its exposure words, and every sentence it accepts ends with the coverage of the avatar's origin.
+  const read = covered(bold === undefined ? readWriterScenes(parsed.data.scenes, readable) : readOwnBoldScenes(parsed.data.scenes, readable), bold);
   if (read.ok && angleSlots.length === 0) return { ok: true, sentences: read.sentences, angles };
   const { repair: sentenceRepair, ...refusal }: WriterRefusal & { repair?: SlotRepair } = read.ok
     ? { problems: [], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] }
