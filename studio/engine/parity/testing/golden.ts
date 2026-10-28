@@ -6586,8 +6586,8 @@ export const GOLDEN: Record<string, string[]> = {
     "# five «Дом» photos are drawn at «Смелая», on the route; the library held «Дом» photos off it before",
     "# the run ended",
     "# «Дом» photos on the route: 5; off it: 22",
-    "# at «Смелая» the library's free photos are the routed ones: true; the plan takes from it no more than those: true",
-    "# at «Кокетливая» it gives the photos off the route too: true; the plan takes from it no more than it gives: true",
+    "# at «Смелая» the library's free photos are the routed ones: true; the plan takes every one of them: true",
+    "# at «Кокетливая» it gives the photos off the route too: true; the plan takes more than the routed ones: true",
   ],
   "scene sets, «Смелая» everywhere (S5.BA7, BA2 L4): in a «Смелая» set stored before 5a.4 every scene on the route ends with its coverage sentence and no other scene ends with one": [
     "# Mia's set stored before 5a.4, written by «Дописать»: «Дом» drawn as «Кокетливая» with no route, nightwear on the route",

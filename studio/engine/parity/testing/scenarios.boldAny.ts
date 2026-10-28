@@ -282,9 +282,9 @@ export const BOLD_ANY_SCENARIOS: readonly Scenario[] = [
         return { free: Number(row?.free), fromLibrary: Number(row?.fromLibrary) };
       };
       const atBold = await freeAt("bold");
-      t.note(`at «Смелая» the library's free photos are the routed ones: ${String(atBold.free === routed)}; the plan takes from it no more than those: ${String(atBold.fromLibrary <= atBold.free)}`);
+      t.note(`at «Смелая» the library's free photos are the routed ones: ${String(atBold.free === routed)}; the plan takes every one of them: ${String(atBold.fromLibrary === atBold.free && atBold.fromLibrary > 0)}`);
       const atFlirty = await freeAt("flirty");
-      t.note(`at «Кокетливая» it gives the photos off the route too: ${String(atFlirty.free > routed)}; the plan takes from it no more than it gives: ${String(atFlirty.fromLibrary <= atFlirty.free)}`);
+      t.note(`at «Кокетливая» it gives the photos off the route too: ${String(atFlirty.free > routed)}; the plan takes more than the routed ones: ${String(atFlirty.fromLibrary > routed)}`);
     },
   },
   {
