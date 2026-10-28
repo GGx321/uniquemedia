@@ -43,6 +43,10 @@ const failures = (texts: readonly PoolText[], check: (text: string) => string | 
   });
 
 describe("the built-in pools: the hard lists", () => {
+  test("the sweep reads some text, so the scans below are not run on nothing", () => {
+    expect(BUILT_IN.length).toBeGreaterThan(0);
+  });
+
 
   test("no text carries a youth word (the engine's own check, descriptor scope)", () => {
     expect(failures(BUILT_IN, (t) => youthWords(t, "descriptor")[0] ?? null)).toEqual([]);

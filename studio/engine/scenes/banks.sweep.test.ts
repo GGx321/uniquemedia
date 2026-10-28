@@ -63,6 +63,10 @@ const failures = (texts: readonly BankText[], check: (text: string) => string | 
 const rule = (name: string): ((text: string) => string | null) => ENGINE_RULES.find(([n]) => n === name)?.[1] ?? (() => "no such rule");
 
 describe("the bank sweep: the engine's word lists", () => {
+  test("the sweep reads some text, so the scans below are not run on nothing", () => {
+    expect(BANK_TEXTS.length).toBeGreaterThan(0);
+  });
+
 
   test.each(ENGINE_RULES)("no bank text breaks the %s rule", (_name, check) => {
     expect(failures(BANK_TEXTS, check)).toEqual([]);

@@ -63,6 +63,10 @@ const failures = (texts: readonly BankText[], check: (text: string) => string | 
   });
 
 describe("the «Смелая» banks' sweep: the engine's word lists", () => {
+  test("the sweep reads some text, so the scans below are not run on nothing", () => {
+    expect(TEXTS.length).toBeGreaterThan(0);
+  });
+
 
   test("no text breaks the bold content line: no youth word (the exempt garment name spared)", () => {
     expect(failures(TEXTS, (t) => contentProblems(t, boldContentLevel())[0]?.words.join(", ") ?? null)).toEqual([]);
