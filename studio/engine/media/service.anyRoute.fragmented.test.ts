@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstat, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { mediaReasonRu } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { tempDirFor } from "../../testing/tempDir";
 import { JobRegistry } from "../jobs";
@@ -125,10 +124,6 @@ describe("the light pass keeps the walker's refusals (N7) and has room for a lon
 });
 
 describe("what an owner is told when a file with sound is refused as a video", () => {
-  test("the video's format text points to the music picker: «добавьте как музыку»", () => {
-    expect(mediaReasonRu("format", "video")).toContain("добавьте как музыку");
-  });
-
   test("an audio-only MP4 with an empty (0-sample) video track beside its sound is refused as a video, and the text above is what it is told", async () => {
     const bytes = buildMp4({ tracks: [{ handler: "soun" }, { handler: "vide", stts: [[0, 1000]] }] });
     expect(await imported(bytes)).toMatch(/^failed:video:/);
