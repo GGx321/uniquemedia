@@ -53,6 +53,8 @@ export function buildLaunchPreview(input: PreviewInput): LaunchPreview {
     totals: plan.totals,
     estimate: { expectedMicros: estimate.expectedMicros, worstMicros: estimate.worstMicros, prices: estimate.prices, pricesAsOf: estimate.pricesAsOf },
     perShapeExpectedMicros: { single: photo, collage: 3 * photo, slides: 5 * photo },
+    // 5a.4 (S5.BA8a): the unit the launch math reads for one new photo at the draft's level; none when the plan draws no new photo (no unit is priced then).
+    ...(unit === null ? {} : { unitPhotoWorstMicros: unit.photoWorstMicros }),
     month: { ...month, fit: monthFit(month.freeMicros, estimate.expectedMicros, estimate.worstMicros), raiseToMicros: raiseBudgetToMicros(month, estimate.worstMicros) },
     balance: input.balance,
     music: input.music,
