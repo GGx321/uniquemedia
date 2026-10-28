@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import type { Clip } from "../../shared/engine/montage";
+import { heavyTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
+import { tierOf } from "../../testing/tiers";
 import { probeVideo, type Probed } from "./ffmpeg.testkit";
 import { buildPass1 } from "./pass1";
 import { makeWorkDir, removeDir, runPass1 } from "./render.testkit";
@@ -11,6 +13,8 @@ useNativeGlobals();
 // REAL ffmpeg (the bundled build), pass 1 only: every clip kind renders to an
 // intermediate with exactly the frames the spec asks for. SLOW: it renders
 // nine 0.5 to 2 s clips (S14: clips of at most 2 s) at 1080x1920 (about 15 s in all).
+// A push renders three of them (a photo, a staggered collage 4, the shortest): each invariant (frames, 1080x1920 at 30 fps, BT.709)
+// still has a witness. The other six (every motion and layout) render in the heavy run.
 
 const FIXTURES = join(import.meta.dir, "../face/fixtures/images");
 const PHOTO_FILES = ["render-best-home-1.jpg", "render-median-travel-2.jpg", "render-worst-fitness-3.jpg", "master.jpg"].map((n) => join(FIXTURES, n));
@@ -47,16 +51,21 @@ const CASES: Array<{ name: string; clip: Clip; frames: number }> = [
   { name: "the shortest collage 4, 500 ms, staggered", clip: collage("c4-short", "collage4", 500, "kenburns", true), frames: 15 },
 ];
 
+const PUSH_NAMES = new Set(["photo, Ken Burns", "collage 4, Ken Burns, staggered", "the shortest collage 4, 500 ms, staggered"]);
+const PUSH_CASES = CASES.filter((c) => PUSH_NAMES.has(c.name));
+const HEAVY_CASES = CASES.filter((c) => !PUSH_NAMES.has(c.name));
+const RENDERED = tierOf() === "heavy" ? HEAVY_CASES : PUSH_CASES;
+
 let dir: string;
 const probes = new Map<string, Probed>();
 const counts = new Map<string, number>();
 
 beforeAll(async () => {
   dir = makeWorkDir("pass1");
-  const jobs = buildPass1({ seed: 5, clips: CASES.map((c) => c.clip), resolvePhoto, clipDir: dir });
+  const jobs = buildPass1({ seed: 5, clips: RENDERED.map((c) => c.clip), resolvePhoto, clipDir: dir });
   await runPass1(jobs);
   for (const [i, job] of jobs.entries()) {
-    const name = CASES[i]?.name ?? "";
+    const name = RENDERED[i]?.name ?? "";
     const p = await probeVideo(job.output);
     probes.set(name, p);
     counts.set(name, Number(p.streams.find((s) => s.codec_type === "video")?.nb_read_frames));
@@ -67,20 +76,30 @@ afterAll(() => removeDir(dir));
 
 const videoOf = (name: string) => probes.get(name)?.streams.find((s) => s.codec_type === "video");
 
+const FRAMES = "holds exactly the frames its duration asks for";
+const FORMAT = "is 1080x1920 at a constant 30 fps in yuv420p";
+const TAGGED = "is tagged BT.709 limited range";
+
+const expectFrames = (name: string, frames: number) => expect(counts.get(name)).toBe(frames);
+const expectFormat = (name: string) => {
+  const v = videoOf(name);
+  expect({ w: v?.width, h: v?.height, fps: v?.r_frame_rate, avg: v?.avg_frame_rate, pix: v?.pix_fmt }).toEqual({ w: 1080, h: 1920, fps: "30/1", avg: "30/1", pix: "yuv420p" });
+};
+const expectTagged = (name: string) => {
+  const v = videoOf(name);
+  expect({ range: v?.color_range, space: v?.color_space, trc: v?.color_transfer, prim: v?.color_primaries }).toEqual({ range: "tv", space: "bt709", trc: "bt709", prim: "bt709" });
+};
+
 describe("pass 1 on real ffmpeg: exact frame counts", () => {
-  test.each(CASES)("$name: holds exactly the frames its duration asks for", ({ name, frames }) => {
-    expect(counts.get(name)).toBe(frames);
-  });
+  test.each(PUSH_CASES)(`$name: ${FRAMES}`, ({ name, frames }) => expectFrames(name, frames));
+  for (const { name, frames } of HEAVY_CASES) heavyTest(`${name}: ${FRAMES}`, () => expectFrames(name, frames));
 });
 
 describe("pass 1 on real ffmpeg: the intermediate's format", () => {
-  test.each(CASES)("$name: is 1080x1920 at a constant 30 fps in yuv420p", ({ name }) => {
-    const v = videoOf(name);
-    expect({ w: v?.width, h: v?.height, fps: v?.r_frame_rate, avg: v?.avg_frame_rate, pix: v?.pix_fmt }).toEqual({ w: 1080, h: 1920, fps: "30/1", avg: "30/1", pix: "yuv420p" });
-  });
-
-  test.each(CASES)("$name: is tagged BT.709 limited range", ({ name }) => {
-    const v = videoOf(name);
-    expect({ range: v?.color_range, space: v?.color_space, trc: v?.color_transfer, prim: v?.color_primaries }).toEqual({ range: "tv", space: "bt709", trc: "bt709", prim: "bt709" });
-  });
+  test.each(PUSH_CASES)(`$name: ${FORMAT}`, ({ name }) => expectFormat(name));
+  test.each(PUSH_CASES)(`$name: ${TAGGED}`, ({ name }) => expectTagged(name));
+  for (const { name } of HEAVY_CASES) {
+    heavyTest(`${name}: ${FORMAT}`, () => expectFormat(name));
+    heavyTest(`${name}: ${TAGGED}`, () => expectTagged(name));
+  }
 });
