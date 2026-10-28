@@ -6600,4 +6600,12 @@ export const GOLDEN: Record<string, string[]> = {
     "# every scene on the route ends with its kept coverage: true",
     "# no other scene ends with a coverage sentence of any bank: true",
   ],
+  "scene sets, «Своя сцена» at «Смелая» (S5.BA9, story 9): an own scene of a «Смелая» set is asked in the bold mode, drawn on the route at the 2K unit, and Mia's (imported) ends with the kept coverage": [
+    "# a bold compose of 2 «Дом» scenes for Mia, read as imported, then «+ Своя сцена» «в белье на кровати»: one scene, a friend's photo",
+    "# the idea write is priced as the bold writer call, two attempts of 48750: true",
+    "# the own scene is written: true; it ends with the kept coverage: true; it names a towel, a sheet or foam: false",
+    "# a run from the set: the 2K attempt is 93000; its 3 scenes, the own one with them, are each priced at three 2K attempts: true",
+    "# the run ended",
+    "# the own scene's photo is drawn on the Seedream route: true",
+  ],
 };

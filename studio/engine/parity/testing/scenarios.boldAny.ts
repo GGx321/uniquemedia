@@ -5,6 +5,7 @@ import type { BankCategory, CategoryBank } from "../../../shared/scenes/banks/ty
 import { isWaterPlaceName } from "../../../shared/scenes/custom";
 import { plainSentence } from "../../../shared/scenes/plain";
 import { slotCoverageOf } from "../../../shared/scenes/template";
+import { OWN_BOLD_COVERAGE } from "../../../shared/scenes/ownScene";
 import { ENOUGH, begin, isDone, record, type Telling } from "./scenarios.autopilotRun";
 import type { Scenario } from "./scenarios";
 import { PARITY_BOLD_CATEGORY, PARITY_PRE_BOLD_SET_ID, type World } from "./rigs";
@@ -115,6 +116,20 @@ const studioOf = (w: World): string => {
 };
 
 const bold = (w: World, count: number, categories: readonly string[], avatarId = w.avatarId) => ({ avatarId, count, categories: [...categories], level: "bold", acceptedWorstMicros: ENOUGH });
+
+/** 5a.4 (S5.BA9): `work` run quietly (nothing it does is written), its value handed back: a story whose every fact is a note. */
+async function silently<T>(t: Telling, work: () => Promise<T>): Promise<T> {
+  const values: T[] = [];
+  await t.quiet(async () => {
+    values.push(await work());
+  });
+  const [value] = values;
+  if (value === undefined) throw new Error("the quiet work gave nothing");
+  return value;
+}
+
+/** 5a.4 (S5.BA9): one attempt of the bold writer call at the fallback prices (the engine's `writerAttemptWorstMicros` of `writerCallOf("bold")`). */
+const BOLD_WRITER_ATTEMPT_MICROS = 48_750;
 
 export const BOLD_ANY_SCENARIOS: readonly Scenario[] = [
   {
@@ -304,6 +319,40 @@ export const BOLD_ANY_SCENARIOS: readonly Scenario[] = [
       t.note(`some scenes are on the route and some are not: ${String(routed.length > 0 && others.length > 0)}`);
       t.note(`every scene on the route ends with its kept coverage: ${String(routed.every((s) => slotCoverageOf(slotOf(s), false) !== undefined && endsByOrigin(s, false)))}`);
       t.note(`no other scene ends with a coverage sentence of any bank: ${String(others.every((s) => !endsWithAnyCoverage(s)))}`);
+    },
+  },
+  {
+    name: "scene sets, «Своя сцена» at «Смелая» (S5.BA9, story 9): an own scene of a «Смелая» set is asked in the bold mode, drawn on the route at the 2K unit, and Mia's (imported) ends with the kept coverage",
+    rig: { launch: true },
+    async run(t, w, control) {
+      await control.musicTracks();
+      t.note("a bold compose of 2 «Дом» scenes for Mia, read as imported, then «+ Своя сцена» «в белье на кровати»: one scene, a friend's photo");
+      const composed = await silently(t, async () => {
+        await t.callLaunch("scenes.compose", bold(w, 2, ["home"]));
+        return settledSet(t, w.avatarId);
+      });
+      const target = { kind: "idea", idea: "в белье на кровати", count: 1, shot: "friend" };
+      const priced = await quietly(t, "scenes.estimateWrite", { sceneSetId: composed.set.sceneSetId, target });
+      const worst = priced.ok ? record(priced.result.estimate)?.worstMicros : undefined;
+      t.note(`the idea write is priced as the bold writer call, two attempts of ${BOLD_WRITER_ATTEMPT_MICROS}: ${String(worst === 2 * BOLD_WRITER_ATTEMPT_MICROS)}`);
+      const written = await silently(t, async () => {
+        await t.callLaunch("scenes.write", { sceneSetId: composed.set.sceneSetId, revision: composed.set.revision, target, acceptedWorstMicros: ENOUGH });
+        return settledSet(t, w.avatarId);
+      });
+      const own = written.scenes.find((s) => s.origin === "own");
+      const text = typeof own?.text === "string" ? own.text : "";
+      t.note(`the own scene is written: ${String(text !== "")}; it ends with the kept coverage: ${String(text.endsWith(OWN_BOLD_COVERAGE))}; it names a towel, a sheet or foam: ${String(/\b(?:towels?|sheets?|foam)\b/i.test(text))}`);
+      const estimate = await quietly(t, "runs.estimateFromScenes", { sceneSetId: written.set.sceneSetId, revision: written.set.revision });
+      const money = estimate.ok ? record(estimate.result.estimate) : null;
+      t.note(`a run from the set: the 2K attempt is ${String(money?.boldAttemptMicros)}; its 3 scenes, the own one with them, are each priced at three 2K attempts: ${String(money?.worstMicros === 3 * ATTEMPTS_PER_PHOTO * BOLD_ATTEMPT_MICROS)}`);
+      const started = await quietly(t, "runs.startFromScenes", { sceneSetId: written.set.sceneSetId, revision: written.set.revision, acceptedWorstMicros: ENOUGH });
+      const runId = started.ok ? started.result.runId : undefined;
+      if (typeof runId !== "string") throw new Error("the run did not start");
+      t.norm.register("run", runId);
+      await t.untilRunEnds(runId);
+      const gallery = await quietly(t, "photos.list", { avatarId: w.avatarId });
+      const ownPhotos = gallery.ok ? rowsOf(gallery.result.photos).filter((p) => p.runId === runId && p.category === "own") : [];
+      t.note(`the own scene's photo is drawn on the Seedream route: ${String(ownPhotos.length === 1 && ownPhotos.every((p) => p.route === "seedream"))}`);
     },
   },
 ];

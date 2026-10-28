@@ -45,6 +45,7 @@ import { CLIP_AVATAR_NAME, CLIP_PHOTO_KINDS, CLIP_PHOTO_SPEC, clipPhotoMap, MOCK
 import { bankDraw, openedPlace } from "../../../renderer/engine/mockBankScenes";
 import { captureOfShot, shotOf } from "../../../shared/scenes/captures";
 import { writerBoldMessages } from "../../scenes/writer";
+import { ideaSystemPrompt } from "../../scenes/ideaWriter";
 
 /** The options of a rig with `clips`, or null for a rig without. */
 function clipRigOf(options: RigOptions): ClipRigOptions | null {
@@ -615,6 +616,8 @@ export const PARITY_BOLD_CATEGORY: Omit<CategorySummary, "createdAt" | "updatedA
 
 /** 5a.4 (S5.BA7): the system prompt of the writer's bold mode, by which the real rig's fake OpenRouter tells a bold request (`boldCustom`). */
 const BOLD_SYSTEM: string = writerBoldMessages([])[0]?.content ?? "";
+/** 5a.4 (S5.BA9): the idea writer's «Смелая» variant, for either origin, with and without the mirror: what the rig's idea answer reads a bold own scene by. */
+const BOLD_IDEA_SYSTEMS: ReadonlySet<string> = new Set([false, true].flatMap((mirrorAllowed) => [false, true].map((impliedNudity) => ideaSystemPrompt(mirrorAllowed, { impliedNudity }))));
 
 /** 5a.4 (S5.BA7): Mia's set of a rig with `preBoldSet`. */
 export const PARITY_PRE_BOLD_SET_ID = "set-parity-0002";
@@ -1584,6 +1587,25 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     };
     return { status: 200, body: chatBody(JSON.stringify({ scenes: asked.map((slot) => ({ slotIndex: slot.slotIndex, sentence: sentence(slot) })) }), { cost: 0.006 }) };
   };
+  /**
+   * 5a.4 (S5.BA9): an idea write's answer (an own scene), as the mock's writer writes one: in the «Смелая» variant she is in lingerie in her bedroom, with no number in the sentence (a number is
+   * held to the age rule on a «Смелая» frame), otherwise a covered moment on a balcony. An angle the write leaves to the model is a friend's photo facing the camera. The engine appends the
+   * coverage by the avatar's origin.
+   */
+  const ideaReply = (call: Parameters<typeof writerReply>[0]): Reply => {
+    const messages = call.json().messages;
+    const system: unknown = Array.isArray(messages) ? messages[0] : undefined;
+    const bold = typeof system === "object" && system !== null && "content" in system && typeof system.content === "string" && BOLD_IDEA_SYSTEMS.has(system.content);
+    const user: unknown = Array.isArray(messages) ? messages.find((m: unknown) => typeof m === "object" && m !== null && "role" in m && m.role === "user") : undefined;
+    const text = typeof user === "object" && user !== null && "content" in user && typeof user.content === "string" ? user.content : "";
+    const items: unknown = JSON.parse(text.slice(text.indexOf("["), text.lastIndexOf("]") + 1));
+    const asked = Array.isArray(items)
+      ? items.flatMap((item: unknown) => (typeof item === "object" && item !== null && "slotIndex" in item ? [{ slotIndex: item.slotIndex, shot: "shot" in item ? item.shot : undefined, pose: "pose" in item ? item.pose : undefined }] : []))
+      : [];
+    const sentence = bold ? "She lies across her bed in black lingerie, propped on one elbow, a cup of tea on the nightstand." : "She sips coffee on a sunny balcony, one hand on the railing.";
+    const scenes = asked.map((slot) => ({ slotIndex: slot.slotIndex, sentence, ...(slot.shot === "choose" ? { shot: "friend" } : {}), ...(slot.pose === "choose" ? { pose: "front" } : {}) }));
+    return { status: 200, body: chatBody(JSON.stringify({ scenes }), { cost: 0.004 }) };
+  };
   const rejectedWriterReply = (): Reply => {
     writerRejects -= 1;
     return { status: 200, body: chatBody(JSON.stringify({ scenes: [] }), { cost: 0.002 }) };
@@ -1598,6 +1620,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     ? launchNetwork({
         writer: (call) => meetFault() ?? (writerHung ? new Promise<Reply>(() => undefined) : writerRejects > 0 ? rejectedWriterReply() : (boldWriterReply(call) ?? writerReply(call))),
         image: (call, n) => meetFault() ?? imageReplyFor(call, n, seedreamFaultFor(call)),
+        idea: (call) => meetFault() ?? ideaReply(call),
       })
     : undefined;
   // Stage 5 (S5.3c): a rig with `portraits` tells the batch by the mock's outcome table. One slot at a time, so the n-th image the fake OpenRouter is asked for is slot n: the model refuses the
