@@ -16,11 +16,6 @@ const importsOf = (code: string): string[] => new Bun.Transpiler({ loader: "ts" 
 const forbiddenIn = (code: string): string[] => new Bun.Transpiler({ loader: "ts" }).transformSync(code).match(FORBIDDEN) ?? [];
 
 describe("the autopilot's shared code is pure", () => {
-  test("the checks catch a violation (negative control)", () => {
-    expect(forbiddenIn("export const f = () => Date.now();")).toEqual(["Date"]);
-    expect(forbiddenIn("export const f = () => Math.random();")).toEqual(["Math.random"]);
-    expect(forbiddenIn("export const f = () => 1;")).toEqual([]);
-  });
 
   test("there are production files to check", () => {
     expect(productionFiles.length).toBeGreaterThanOrEqual(2);

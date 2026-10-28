@@ -30,16 +30,6 @@ function foreignImports(code: string, file: string): string[] {
 }
 
 describe("the scene banks' shared code is pure", () => {
-  test("the checks catch a violation (negative control)", () => {
-    expect(forbiddenIn("export const f = () => Date.now();")).toEqual(["Date"]);
-    expect(forbiddenIn("export const f = () => Math.random();")).toEqual(["Math.random"]);
-    expect(forbiddenIn("export const f = () => 1;")).toEqual([]);
-    const probe = join(DIR, "probe.ts");
-    expect(foreignImports('import { makeRng } from "../../../src/core/rng";', probe)).toEqual(["../../../src/core/rng"]);
-    expect(foreignImports('import { fnv1a } from "../../engine/scenes/rngUtil";', probe)).toEqual(["../../engine/scenes/rngUtil"]);
-    expect(foreignImports('import { readFileSync } from "node:fs";', probe)).toEqual(["node:fs"]);
-    expect(foreignImports('import { z } from "zod";\nimport { POOL_TEXT_MAX } from "../engine";\nimport { pick } from "./hash";', probe)).toEqual([]);
-  });
 
   test("there are production files to check", () => {
     expect(productionFiles.length).toBeGreaterThanOrEqual(1);

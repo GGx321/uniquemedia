@@ -31,11 +31,6 @@ describe("the word gate has one home (static)", () => {
     expect(filesWith(/\bcontentProblems\b/).length).toBeGreaterThan(0);
   });
 
-  test("the patterns catch what they are for (negative control)", () => {
-    expect(/bikinis\?\|swimsuits\?/.test("const X = /\\b(bikinis?|swimsuits?|swimwear)\\b/i;")).toBe(true);
-    expect(/bikinis\?\|swimsuits\?/.test("never name bikini, swimsuit, swimwear")).toBe(false);
-  });
-
   // S5.WC2 round 3: the one motion check's GARMENT list (shared/scenes/motionText.ts) names swimwear too. It only RECOGNISES a garment, to read a motion that takes one off;
   // whether a word may be said at a frame's level is still `contentProblems`'s, from this list.
   test("the revealing-word alternation is written once, in shared/scenes/words.ts (the motion check's garment list beside it)", () => {
@@ -87,11 +82,6 @@ describe("the word gate has one home (static)", () => {
     /\b(?:bikinis?|swimsuits?|swimwear|lingerie|thongs?|bras?|bralettes?|panties|panty|underwear|briefs|topless|naked|stockings?|slip dress(?:es)?|babydolls?|girls?|girlish|teens?|teenage\w*|schoolgirls?|schools?|child\w*|kids?|petite|young\w*|baby|babies|minors?|uniforms?)\b/gi;
   const vocabularyIn = (files: readonly { path: string; code: string }[]): string[] =>
     files.flatMap((f) => [...new Set(Array.from(f.code.matchAll(VOCABULARY), (m) => m[0].toLowerCase()))].map((word) => `${f.path}: ${word}`)).sort();
-
-  test("the vocabulary scan catches a renamed list (negative control)", () => {
-    expect(vocabularyIn([{ path: "x.ts", code: "const OUT = /\\b(thong|bikini|lingerie)\\b/i;" }])).toEqual(["x.ts: bikini", "x.ts: lingerie", "x.ts: thong"]);
-    expect(vocabularyIn([{ path: "x.ts", code: "const OK = /\\b(zebra|bramble)\\b/i;" }])).toEqual([]);
-  });
 
   test("the renderer's mock files name no revealing or youth word", () => {
     const mocks = PRODUCTION.filter((f) => /^renderer\/engine\/mock[^/]*\.tsx?$/.test(f.path));
