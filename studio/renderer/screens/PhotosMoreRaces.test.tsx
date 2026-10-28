@@ -6,6 +6,7 @@ import { MIA } from "../engine/mockEngine.testkit";
 import { asAnotherWindow } from "./montage/screenKit";
 import { library, meterPhotosList, moreButton, openGallery, press, tileOf, tiles } from "./photos/moreScreenKit";
 import { ManualScheduler } from "../engine/scheduler";
+import { heavyTest } from "../../testing/bunTiers";
 import { describeElement, flush, focusedLabel, openSection, runAll, tick } from "../testing";
 
 // S4.P2 fix round: the gallery's reads under load and in each other's way. One read of photos.list at a time; a reason to read again
@@ -31,7 +32,7 @@ const elapse = (pagesScheduler: ManualScheduler): void => runAll(pagesScheduler)
 const isRejected = (n: number): boolean => tileOf(`photo-mia-${String(n).padStart(4, "0")}`)?.closest(".photo-tile")?.classList.contains("photo-tile-rejected") === true;
 
 describe("under load (MEDIUM-1)", () => {
-  test("a run of 25 photos landing one by one with 3 pages open: one read at a time, each reads only the top, none goes deep", async () => {
+  heavyTest("a run of 25 photos landing one by one with 3 pages open: one read at a time, each reads only the top, none goes deep", async () => {
     const { engine, scheduler, pagesScheduler } = await openOnManualClock(library(1050));
     await press(moreButton());
     await waitFor(() => expect(tiles()).toHaveLength(1000));

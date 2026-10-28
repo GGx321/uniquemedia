@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, spyOn } from "bun:test";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { PhotoSummary } from "../../shared/engine";
 import { flush, tick } from "../testing";
 import * as runForm from "./photos/runForm";
 import { library, moreButton, openGallery, press, tileOf, tiles } from "./photos/moreScreenKit";
+import { heavyTest } from "../../testing/bunTiers";
 
 // What a screen redraws when one photo lands in a big gallery. Every tile is drawn once: a new photo in front moves the number of each
 // photo after it («Фото 5» becomes «Фото 6»). What must not happen is a second drawing of a tile for the same landing (it was two each
@@ -13,7 +14,7 @@ const spies: { mockRestore: () => void }[] = [];
 afterEach(() => spies.splice(0).forEach((spy) => spy.mockRestore()));
 
 describe("one photo landing in a gallery of 1 050", () => {
-  test("draws each tile once, not twice", async () => {
+  heavyTest("draws each tile once, not twice", async () => {
     const { scheduler } = await openGallery(library(1050));
     await press(moreButton());
     await waitFor(() => expect(tiles()).toHaveLength(1000));
@@ -70,7 +71,7 @@ describe("one photo landing in a gallery of 1 050", () => {
   }
 
   // The held answer brings the first page again as new objects with the same content: no tile may be drawn for it.
-  test("a re-read asked when the run started answers late and changes nothing: it draws no tile", async () => {
+  heavyTest("a re-read asked when the run started answers late and changes nothing: it draws no tile", async () => {
     const { scheduler, spy, release } = await startRunWithHeldRead();
     await release(); // the slow answer comes now
     expect(spy.mock.calls.length).toBeLessThanOrEqual(10);
@@ -84,7 +85,7 @@ describe("one photo landing in a gallery of 1 050", () => {
   });
 
   // The other side of the same rule: a photo the re-read DID change is a new object, so its tile is drawn again, and only its tile.
-  test("a re-read that changes one photo draws that photo's tile and no other", async () => {
+  heavyTest("a re-read that changes one photo draws that photo's tile and no other", async () => {
     const changed = "photo-mia-0700";
     const { spy, release } = await startRunWithHeldRead((photo) => (photo.photoId === changed ? { ...photo, category: "own", categoryName: "Rooftop" } : photo));
     await release();
