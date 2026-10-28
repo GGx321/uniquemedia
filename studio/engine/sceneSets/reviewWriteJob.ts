@@ -1,4 +1,5 @@
-import type { CategorySnapshot, EngineError, SceneStoppedBy } from "../../shared/engine";
+import { isBoldFrame, type CategorySnapshot, type EngineError, type SceneStoppedBy } from "../../shared/engine";
+import { ownSceneMarkerOf } from "../../shared/scenes/ownScene";
 import type { ReviewWriteRecord, StoredSceneSet } from "../library/sceneSets";
 import type { Budget } from "../money/budget";
 import type { Scope } from "../money/ledger";
@@ -7,7 +8,7 @@ import type { PriceBook } from "../money/prices";
 import { localSentences } from "../scenes/localSentences";
 import { plannedWriterConfig, runWriterPhase, writerCallShape, type WriterPhase, type WriterPhaseDeps, type WriterPhaseResult } from "../runs/writerPhase";
 import type { PlanSlot } from "../scenes";
-import { ideaAsksOf, ideaJsonSchema, ideaMessages, readIdeaAnswer, toIdeaSlot, type IdeaAngle, type IdeaAsk } from "../scenes/ideaWriter";
+import { ideaAsksOf, ideaJsonSchema, ideaMessages, readIdeaAnswer, toIdeaSlot, type IdeaAngle, type IdeaAsk, type IdeaBold } from "../scenes/ideaWriter";
 import { writerModeOf } from "../scenes/writer";
 import { categoryLabelOf } from "../scenes/categories";
 import { reviewWriteState, reviewWritesOf } from "./reviewWrites";
@@ -126,12 +127,21 @@ export function modelScenesOf(set: StoredSceneSet, record: ReviewWriteRecord): n
 }
 
 /**
+ * 5a.4 (S5.BA9, plan s5a4 §8 BA9): the mode an own scene of the set is written in: «bold» when the set is «Смелая», so its own scenes are «Смелая» frames (`isBoldFrame` of their marker,
+ * `ownSceneMarkerOf`), else «ordinary», as every idea write was before.
+ */
+function ideaModeOf(set: StoredSceneSet): WriterMode {
+  return isBoldFrame(ownSceneMarkerOf(set.request.level)) ? "bold" : "ordinary";
+}
+
+/**
  * 5a.4 (S5.BA5, r2.1 L3; BA5a review L4): the mode the job asks the write in, decided as the job decides it: `writerModeOf` over the planned slots it sends the model
- * (`askedOf` and the very `local` it hands the phase). An idea write, and a rewrite of own scenes, are the ordinary writer's (the idea writer has one mode).
+ * (`askedOf` and the very `local` it hands the phase). An idea write, and a rewrite of own scenes, are in the mode of the set's own scenes (S5.BA9, `ideaModeOf`): the idea writer's bold
+ * variant in a «Смелая» set, priced and reserved as the bold call; the ordinary writer's in any other.
  */
 export function writeModeOf(set: StoredSceneSet, record: ReviewWriteRecord): WriterMode {
   const asked = askedOf(set, record);
-  if (asked.kind === "ideas") return "ordinary";
+  if (asked.kind === "ideas") return ideaModeOf(set);
   const local = localOf(set, record, asked.slots, false);
   return writerModeOf(asked.slots.filter((slot) => local(slot) === null));
 }
@@ -182,17 +192,20 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
     const phase: WriterPhase<PlanSlot> = { ...base, ...plannedWriterConfig(asked.labelOf, deps.impliedNudity === true), slots: asked.slots, local };
     result = await runWriterPhase(phaseDeps, phase);
   } else {
+    // 5a.4 (S5.BA9, plan s5a4 §8 BA9): an own scene of a «Смелая» set is written by the idea writer's bold variant, for the avatar's origin (I5.74: false when unknown, the fail-closed
+    // side), and asked, priced and reserved as the bold call (`writeModeOf`, so the estimate and the reserve agree); any other idea write is the one it always was.
+    const mode = ideaModeOf(set);
+    const bold: IdeaBold | undefined = mode === "bold" ? { impliedNudity: deps.impliedNudity === true } : undefined;
     const phase: WriterPhase<IdeaAsk> = {
       ...base,
-      // The idea writer has one mode (its «Смелая» variant is S5.BA9's, optional): the ordinary call.
-      call: writerCallShape("ordinary"),
+      call: writerCallShape(mode),
       slots: asked.slots,
       // S5.6d: an idea (and an own scene) has no place or moment to build a plain sentence from: what the last attempt refused stays unwritten, and the scenes
       // the write accepted are kept.
       keepAccepted: true,
       jsonSchema: ideaJsonSchema(asked.mirrorAllowed, ideaAsksOf(asked.slots)),
-      read: (content, slots) => readIdeaAnswer(content, slots.map(toIdeaSlot), asked.mirrorAllowed),
-      messages: (slots, feedback) => ideaMessages(slots.map(toIdeaSlot), feedback, asked.mirrorAllowed),
+      read: (content, slots) => readIdeaAnswer(content, slots.map(toIdeaSlot), asked.mirrorAllowed, bold),
+      messages: (slots, feedback) => ideaMessages(slots.map(toIdeaSlot), feedback, asked.mirrorAllowed, bold),
     };
     result = await runWriterPhase(phaseDeps, phase);
   }
