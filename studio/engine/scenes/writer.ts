@@ -957,14 +957,38 @@ export function boldReader(impliedNudity = false): (content: string, slots: read
   };
 }
 
+/** 5a.4 (S5.BA9): the content level an own scene of a «Смелая» set is held to: its marker's, an own scene on the Seedream route (`contentLevelOf`). */
+const OWN_BOLD_LEVEL: ContentLevel = contentLevelOf({ category: "own", level: undefined, route: "seedream" });
+
+/** 5a.4 (S5.BA9, I5.76): what only the idea writer's «Смелая» variant refuses: an exposure word, which Seedream refuses to draw (its idea names no outfit to exempt one). */
+function ownBoldProblemsOf(_slot: ReadableSlot, sentence: string): BoldFinding[] {
+  return exposureWordsIn(sentence).length > 0 ? ["exposure-word"] : [];
+}
+
+/**
+ * 5a.4 (S5.BA9, plan s5a4 §8 BA9): the answer's scenes of an own scene of a «Смелая» set (the idea writer's bold variant, ideaWriter.ts). Today's rules, each sentence held to the
+ * «Смелая» content line (the youth words alone, the garment names exempt; the owner's denim ban stays), and an exposure word refused for its scene as the bold compose reader refuses it.
+ */
+export function readOwnBoldScenes(scenes: readonly Pick<WriterScene, "slotIndex" | "sentence">[], slots: readonly ReadableSlot[]): WriterAnswer {
+  return readScenes(scenes, slots, ownBoldProblemsOf, () => OWN_BOLD_LEVEL);
+}
+
 /** The sentence with its closing full stop (a sentence the model ended without one), so the coverage reads as the next sentence. */
-const withFullStop = (sentence: string): string => {
+export const withFullStop = (sentence: string): string => {
   const trimmed = sentence.trimEnd();
   return /[.!?]["')\]]*$/.test(trimmed) ? trimmed : `${trimmed}.`;
 };
 
-/** `readWriterScenes`, with the bold problems of each slot when `boldOf` is given (the bold mode). */
-function readScenes<S extends ReadableSlot>(scenes: readonly Pick<WriterScene, "slotIndex" | "sentence">[], slots: readonly S[], boldOf?: (slot: S, sentence: string) => readonly BoldFinding[]): WriterAnswer {
+/**
+ * `readWriterScenes`, with the bold problems of each slot when `boldOf` is given (the bold mode). `levelOf` is the content level a slot's sentence is held to: its own marker's by
+ * default; an own scene of a «Смелая» set (S5.BA9) has no category to carry one, and its reader names the level.
+ */
+function readScenes<S extends ReadableSlot>(
+  scenes: readonly Pick<WriterScene, "slotIndex" | "sentence">[],
+  slots: readonly S[],
+  boldOf?: (slot: S, sentence: string) => readonly BoldFinding[],
+  levelOf: (slot: S) => ContentLevel = contentLevelOfSlot,
+): WriterAnswer {
   const known = new Map(slots.map((s) => [s.slotIndex, s]));
   const bySlot = new Map<number, string>();
   const repeated = new Set<number>();
@@ -997,7 +1021,7 @@ function readScenes<S extends ReadableSlot>(scenes: readonly Pick<WriterScene, "
     if (sentence === undefined) continue;
     // 5a.4 (S5.BA4): the content line at the slot's own level. At ordinary it is today's pair (the youth words, then the revealing words); at «Смелая» the
     // youth words alone, its garment names exempt.
-    const content = contentProblems(sentence, contentLevelOfSlot(s));
+    const content = contentProblems(sentence, levelOf(s));
     const youth = content.find((p) => p.reason === "youth-word")?.words ?? [];
     // S5.6R: the owner's denim shorts and skirts are refused as a revealing word under our name for them, so the reason and the word cap are the ones the floor pins measure.
     // They are the owner's own ban, not a content line: refused at every level.
