@@ -93,10 +93,10 @@ export interface SceneWriters {
 
 /**
  * Who writes the scenes of `count` photos over `categories` (S5.7c, mockup 26): the app's template writes a built-in category and a custom one whose pool
- * it covers (`covers`, the engine's own test, I5.30); the model writes the others. A category with no photo in the split writes nothing; one the library
+ * it covers (`covers`, the engine's own test, I5.30); the model writes the others, and at «Смелая» every custom one. A category with no photo in the split writes nothing; one the library
  * does not hold is nobody's (the run would not ask for it).
  */
-export function sceneWriters(count: number, categories: readonly RunCategory[], customs: readonly CategorySummary[]): SceneWriters {
+export function sceneWriters(count: number, categories: readonly RunCategory[], customs: readonly CategorySummary[], level: SceneLevel): SceneWriters {
   let app = false;
   const model: string[] = [];
   for (const [ref, n] of photosPerCategory(count, categories)) {
@@ -107,7 +107,8 @@ export function sceneWriters(count: number, categories: readonly RunCategory[], 
     }
     const custom = customs.find((c) => c.categoryId === ref);
     if (custom === undefined) continue;
-    if (covers(custom.pool)) app = true;
+    // 5a.4 (QB-4): at «Смелая» a custom category's scenes are written by the model whatever the table covers: they carry a world, and the writer sets the frame inside it.
+    if (level !== "bold" && covers(custom.pool)) app = true;
     else model.push(custom.name);
   }
   return { app, model };

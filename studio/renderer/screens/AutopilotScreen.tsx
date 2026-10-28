@@ -30,7 +30,7 @@ import { SettingsColumn } from "./autopilot/SettingsColumn";
 import { probeWorldKey, useLaunchPlan, worldKey } from "./autopilot/useLaunchPlan";
 import { launchLegsRow } from "./photos/legs";
 import type { LaunchPlanCounts } from "./photos/launchPlanCounts";
-import { launchLevelCaption } from "./photos/level";
+import { launchImportedLine, launchLevelCaption } from "./photos/level";
 import { readSceneReview, viewerStorage } from "./photos/sceneReview";
 import { arrangeCategories, categoriesAt } from "./photos/runForm";
 
@@ -269,6 +269,12 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
   const launches = history.state === "ready" ? history.launches : null;
   const last = launches?.[0] ?? null;
   const knownName = (avatarId: string): string | null => names.get(avatarId) ?? null;
+  // 5a.4 (S5.BA8): what the «Смелая» caption and the imported-avatar line read: the categories the launch draws and the avatars it is for, with their origin (a Studio-created avatar's only can be a cover).
+  const levelCategories = running ? categoriesAt(shownForm.level, shownForm.categories) : (settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder)));
+  const levelAvatars = shownForm.avatarIds.flatMap((id) => {
+    const avatar = view.avatars.find((a) => a.avatarId === id);
+    return avatar === undefined ? [] : [{ name: avatar.name, origin: avatar.origin }];
+  });
 
   return (
     <div className="page ap-page">
@@ -294,6 +300,7 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
           readOnly={locked}
           running={running}
           showFree={!running}
+          level={shownForm.level}
           onToggle={(id) => edit(toggleAvatar(form, id, activeIds))}
           onAll={() => edit(selectAll(form, activeIds))}
           onNone={() => edit(selectNone(form))}
@@ -318,7 +325,8 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
           }}
           onCategory={toggleCategory}
           onLevel={(level) => edit({ ...form, level })}
-          levelCaption={launchLevelCaption(shownForm.level, running ? runningCounts(launch) : plan.shown, running ? categoriesAt(shownForm.level, shownForm.categories) : (settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder))))}
+          levelCaption={launchLevelCaption(shownForm.level, running ? runningCounts(launch) : plan.shown, levelCategories, { avatars: levelAvatars, legs: shownForm.legs, customs: customs ?? [] })}
+          importedLine={launchImportedLine(shownForm.level, levelCategories, levelAvatars)}
           legs={launchLegsRow(shownForm.legs, running ? null : plan.shown, running ? shownForm.categories : (settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder))), shownForm.generate)}
           onLegs={(legs) => edit({ ...form, legs })}
           onSwitch={(which) => edit({ ...form, [which]: !form[which] })}

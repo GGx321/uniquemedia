@@ -1,7 +1,8 @@
-import { isBoldCategory, isCustomCategory, splitCount, type BoldCategory, type CategoryRef, type SceneLevel } from "../../../shared/engine";
+import { impliedNudityOf, isCustomCategory, splitCount, type CategoryRef, type CategorySummary, type LegsShare, type SceneLevel } from "../../../shared/engine";
 import { flirtyCountOf, levelCountsOf, tierSpreadOf } from "../../../shared/scenes/level";
 import { countOf } from "../../lib/format";
 import { formatUsdTiered } from "../../lib/money";
+import { captionWordsOf, clothingText, drawsLingerie, impliedText, placesText } from "./captionWords";
 import type { LaunchPlanCounts } from "./launchPlanCounts";
 
 // S5.7c (plan s5a2 §6.3, I5.28; mockups 24–25, 30): «Подача» on the window's side. The angle no longer has a control: it comes from the scene, and «Ракурсы»
@@ -90,15 +91,6 @@ export function launchFlirtyCaption(plan: LaunchPlanCounts | null, categories: r
 
 // ---------- «Смелая» (S5.9g; plan s5a3 §13.1, mockups 47–48, 52) ----------
 
-/** The word each «Смелая» category gives the caption (mockups 47, 47a: the words of the chosen categories, README «5a.3», item 13). */
-const BOLD_WORD: Readonly<Record<BoldCategory, string>> = { nightwear: "бельё", beach: "купальники" };
-
-/** The caption's tail: which model draws the bold frames (mockup 47; README «5a.3», item 13). */
-const BOLD_TAIL = "Смелые кадры рисует Seedream 5 Pro · 2K.";
-
-/** «Смелая» with only the five ordinary built-ins on (mockup 47b, plan §13.1): they draw as «Кокетливая». */
-export const BOLD_FIVE = "Смелые кадры — только в «Ночнушки и бельё» и «Пляж и бассейн». Остальные категории — как «Кокетливая».";
-
 /** Under the caption while Seedream frames are planned (plan §13.1, r3.1: P-5a3 measured 43–108 s a 2K frame). */
 export const BOLD_SLOW = "Кадры «Смелой» рисуются дольше — около минуты каждый.";
 
@@ -112,32 +104,93 @@ export function gatedNote(kept: readonly string[]): string {
   return `${BOLD_ONLY}: выбранные вернутся вместе с ней.`;
 }
 
-/** «{B} из {N} кадров — смелые: бельё, купальники; {F} — кокетливые. Смелые кадры рисует Seedream 5 Pro · 2K.» (mockup 47), `total` already worded. */
-function boldCaption(frames: LevelFrames, total: string): string {
-  return `${frames.bold} из ${total} — смелые: ${frames.drawing.filter(isBoldCategory).map((ref) => BOLD_WORD[ref]).join(", ")}; ${frames.flirty} — кокетливые. ${BOLD_TAIL}`;
+/** Where the model is named: its words joined by non-breaking spaces (§5.9). */
+const MODEL_NAME = "Seedream 5 Pro · 2K";
+
+/** What an avatar made from a photo cannot be drawn with, and what its prompt says instead (r2.4 N3): one wording on the card and in «Автопилот». */
+const IMPORTED_TAIL = "без простыни, полотенца и пены; в промпте бельё плотное.";
+
+/** What the card needs of the run beyond its categories: the avatar's origin (the cover clause is a Studio-created avatar's only), «Ножки» and the library's own categories. */
+export interface CardCaptionContext {
+  /** The run's avatar; null while it cannot be read (the imported side, fail-closed, I5.74). */
+  readonly avatar: { readonly name?: string; readonly origin?: unknown } | null;
+  readonly legs: LegsShare;
+  readonly customs: readonly CategorySummary[];
+}
+
+/** What «Автопилот» needs: the avatars the launch is for (in the order they were picked), «Ножки» and the library's own categories. */
+export interface LaunchCaptionContext {
+  readonly avatars: readonly { readonly name: string; readonly origin?: unknown }[];
+  readonly legs: LegsShare;
+  readonly customs: readonly CategorySummary[];
+}
+
+/** A sentence's first letter, capitalised. */
+const capitalised = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+
+/** «откровеннее всего — 8, кокетливо — 8, скромнее — 4», a tier whose count is 0 left out; «≈» in place of the dash for «Автопилот». */
+function tiersText(frames: { readonly bold: number; readonly flirty: number; readonly ordinary: number }, sign: "—" | "≈"): string {
+  const tiers: readonly (readonly [string, number])[] = [
+    ["откровеннее всего", frames.bold],
+    ["кокетливо", frames.flirty],
+    ["скромнее", frames.ordinary],
+  ];
+  return tiers
+    .filter(([, n]) => n !== 0)
+    .map(([label, n]) => `${label} ${sign} ${n}`)
+    .join(", ");
+}
+
+interface BoldCaptionInput {
+  /** «Все 20 кадров», «Кадр», «Новые кадры»: what the caption is about. */
+  readonly lead: string;
+  /** The sentence about the tiers, without its full stop and in its final case («Откровеннее всего — 8, …», «Из каждых 10: откровеннее всего ≈ 4, …»). */
+  readonly tiers: string;
+  readonly categories: readonly CategoryRef[];
+  readonly context: { readonly legs: LegsShare; readonly customs: readonly CategorySummary[] };
+  /** Whether a Studio-created avatar is in the run: only then can a frame be a sheet, a towel or foam (r2.3 M2). */
+  readonly studio: boolean;
+  /** One frame: «Рисует его», not «Рисует их». */
+  readonly single: boolean;
+}
+
+/** §5.9 rows 1, 19, 19a: «{lead} — {одежда}{; часть смелых — …}. {tiers}. Места — {места}. Рисует их Seedream 5 Pro · 2K.»; null when the categories have nothing to say. */
+function boldCaption(input: BoldCaptionInput): string | null {
+  const words = captionWordsOf(input.categories, input.context);
+  if (words.clothing.length === 0) return null;
+  const clause = input.studio ? impliedText(words.implied) : null;
+  const places = placesText(words.places);
+  return [
+    `${input.lead} — ${clothingText(words.clothing)}${clause === null ? "" : `; часть смелых — ${clause}`}.`,
+    `${input.tiers}.`,
+    ...(places === null ? [] : [`Места — ${places}.`]),
+    `${input.single ? "Рисует его" : "Рисует их"} ${MODEL_NAME}.`,
+  ].join(" ");
 }
 
 /**
- * «Смелая» with no «Смелая» category to count: the five draw as «Кокетливая», custom categories as ever. With no category picked at all neither sentence names the
- * cause, and no other string fits: nothing is said.
+ * The card's «Подача» caption (§5.9 row 1; mockups 25, 47): none at «Обычная» or with nothing to draw; «Кокетливая»'s count of flirty frames; at «Смелая» what every category of the request
+ * draws — the clothing, the cover clause for a Studio-created avatar, the tiers over the whole request, the places — all read from the bank data. `categories` are the request's.
  */
-function boldWithout(categories: readonly CategoryRef[]): string | null {
-  if (categories.length === 0) return null;
-  return categories.some((ref) => !isCustomCategory(ref)) ? BOLD_FIVE : FLIRTY_BUILTIN_ONLY;
-}
-
-/**
- * The card's «Подача» caption (mockups 25, 47, 47a, 47b): none at «Обычная» or with nothing to draw; «Кокетливая»'s count of flirty frames; at «Смелая» the
- * bold and flirty frames with the words of the «Смелая» categories that draw any, or what the others do without them. `categories` are the request's.
- */
-export function cardLevelCaption(level: SceneLevel, count: number, categories: readonly CategoryRef[]): string | null {
+export function cardLevelCaption(level: SceneLevel, count: number, categories: readonly CategoryRef[], context: CardCaptionContext): string | null {
   if (level === "ordinary" || count === 0) return null;
   const frames = levelFrames(count, categories, level);
-  const total = countOf(count, ["кадра", "кадров", "кадров"]);
   if (level === "flirty") return frames.flirty === 0 && categories.length > 0 ? FLIRTY_BUILTIN_ONLY : flirtyCaption(frames.flirty, count);
-  if (!frames.drawing.some(isBoldCategory)) return boldWithout(categories);
-  // A «Смелая» category that gets photos but no bold frame (one photo): «0 из N» would read as a fault, and no other string fits.
-  return frames.bold > 0 ? boldCaption(frames, total) : null;
+  if (frames.drawing.length === 0) return null;
+  return boldCaption({
+    lead: count === 1 ? "Кадр" : `Все ${countOf(count, ["кадр", "кадра", "кадров"])}`,
+    tiers: capitalised(tiersText(frames, "—")),
+    categories: frames.drawing,
+    context,
+    studio: impliedNudityOf(context.avatar),
+    single: count === 1,
+  });
+}
+
+/** The card's line of its own for an avatar made from a photo (§5.9 row 2, r2.4 N2, N3): «Аватар из фото — …», only at «Смелая» and only when a chosen category draws lingerie or a cover. */
+export function cardImportedLine(level: SceneLevel, count: number, categories: readonly CategoryRef[], context: CardCaptionContext): string | null {
+  if (level !== "bold" || count === 0 || impliedNudityOf(context.avatar)) return null;
+  return drawsLingerie(levelFrames(count, categories, level).drawing) ? `Аватар из фото — ${IMPORTED_TAIL}` : null;
 }
 
 /**
@@ -148,35 +201,50 @@ export function drawsBoldFrames(level: SceneLevel, count: number, categories: re
   return level === "bold" && count > 0 && levelFrames(count, categories, level).drawing.length > 0;
 }
 
-/** The share «Автопилот» says before its plan has new photos to count: a «Смелая» category's ten frames (as «Кокетливая» says its 6 of 10). */
+/** The new frames «Автопилот» says the share of before its plan has any to count: ten (as «Кокетливая» says its 6 of 10). */
 const SHARE_PHOTOS = 10;
 
 /**
- * «Автопилот»'s «Подача» caption (mockups 30, 52): «Кокетливая» as before; at «Смелая» «≈ {B} из {M} новых кадров — смелые: …; {F} — кокетливые. …», B and F
- * summed per avatar that is not blocked over its new photos; with no plan yet, «≈» the share of a «Смелая» category's ten frames; with no new frame to draw,
- * nothing (no bold frame to speak of).
+ * «Автопилот»'s «Подача» caption (§5.9 rows 19, 19a; mockups 30, 52, 67): «Кокетливая» as before; at «Смелая» «Все {N} новых кадров — {одежда}…. Откровеннее всего ≈ {B}, кокетливо ≈ {F},
+ * скромнее ≈ {O}. …», the tiers summed per avatar that is not blocked over its new photos (each avatar's compose is one request, r2.2 D1); with no plan yet, «Новые кадры — … Из каждых 10: …»;
+ * with no new frame to draw, nothing. The cover clause is there only if a Studio-created avatar is in the launch (r2.3 M2).
  */
-export function launchLevelCaption(level: SceneLevel, plan: LaunchPlanCounts | null, categories: readonly CategoryRef[]): string | null {
+export function launchLevelCaption(level: SceneLevel, plan: LaunchPlanCounts | null, categories: readonly CategoryRef[], context: LaunchCaptionContext): string | null {
   if (level === "ordinary") return null;
   if (level === "flirty") return launchFlirtyCaption(plan, categories);
-  const bolds = categories.filter((ref): ref is BoldCategory => isBoldCategory(ref));
-  if (bolds.length === 0) return boldWithout(categories);
-  if (plan !== null && plan.totals.toGenerate === 0) return null;
+  if (categories.length === 0) return null;
+  const studio = context.avatars.some((avatar) => impliedNudityOf(avatar));
   if (plan === null) {
-    const share = levelCountsOf(SHARE_PHOTOS);
-    return `≈ ${boldCaption({ bold: share.bold, flirty: share.flirty, ordinary: share.ordinary, drawing: bolds }, countOf(SHARE_PHOTOS, ["нового кадра", "новых кадров", "новых кадров"]))}`;
+    return boldCaption({ lead: "Новые кадры", tiers: `Из каждых ${SHARE_PHOTOS}: ${tiersText(levelCountsOf(SHARE_PHOTOS), "≈")}`, categories, context, studio, single: false });
   }
-  let bold = 0;
-  let flirty = 0;
+  const total = plan.totals.toGenerate;
+  if (total === 0) return null;
+  const sum = { bold: 0, flirty: 0, ordinary: 0 };
+  const drawing = new Set<CategoryRef>();
   for (const avatar of plan.avatars) {
     if (avatar.blocked !== null) continue;
     const frames = levelFrames(avatar.toGenerate, categories, "bold");
-    bold += frames.bold;
-    flirty += frames.flirty;
+    sum.bold += frames.bold;
+    sum.flirty += frames.flirty;
+    sum.ordinary += frames.ordinary;
+    for (const ref of frames.drawing) drawing.add(ref);
   }
-  // No bold frame among the new photos (one per avatar): «≈ 0 из N» would read as a fault, and no other string fits.
-  if (bold === 0) return null;
-  return `≈ ${boldCaption({ bold, flirty, ordinary: 0, drawing: bolds }, countOf(plan.totals.toGenerate, ["нового кадра", "новых кадров", "новых кадров"]))}`;
+  return boldCaption({
+    lead: total === 1 ? "Новый кадр" : `Все ${countOf(total, ["новый кадр", "новых кадра", "новых кадров"])}`,
+    tiers: capitalised(tiersText(sum, "≈")),
+    categories: categories.filter((ref) => drawing.has(ref)),
+    context,
+    studio,
+    single: total === 1,
+  });
+}
+
+/** «Автопилот»'s line for the avatars made from a photo (§5.9 row 19b, r2.4 N2, N3): «Аватар из фото (Bea) — …», «Аватары из фото (Bea, Cleo) — …»; not shown when «Пляж и бассейн» is the only category. */
+export function launchImportedLine(level: SceneLevel, categories: readonly CategoryRef[], avatars: LaunchCaptionContext["avatars"]): string | null {
+  if (level !== "bold" || !drawsLingerie(categories)) return null;
+  const names = avatars.filter((avatar) => !impliedNudityOf(avatar)).map((avatar) => avatar.name);
+  if (names.length === 0) return null;
+  return `${names.length === 1 ? "Аватар" : "Аватары"} из фото (${names.join(", ")}) — ${IMPORTED_TAIL}`;
 }
 
 /**

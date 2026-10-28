@@ -226,21 +226,46 @@ describe("sceneWriters: the app's template writes the built-ins and the custom c
   const uncovered = category(2, "Кофейни Парижа", PARIS_POOL);
 
   test("the built-ins alone: the app", () => {
-    expect(sceneWriters(20, ["home", "glam"], [])).toEqual({ app: true, model: [] });
+    expect(sceneWriters(20, ["home", "glam"], [], "ordinary")).toEqual({ app: true, model: [] });
   });
 
   test("a covered custom category is the app's too, an uncovered one the model's by name", () => {
     expect(covers(covered.pool)).toBe(true);
     expect(covers(uncovered.pool)).toBe(false);
-    expect(sceneWriters(20, ["home", covered.categoryId, uncovered.categoryId], [covered, uncovered])).toEqual({ app: true, model: ["Кофейни Парижа"] });
-    expect(sceneWriters(20, [uncovered.categoryId], [covered, uncovered])).toEqual({ app: false, model: ["Кофейни Парижа"] });
+    expect(sceneWriters(20, ["home", covered.categoryId, uncovered.categoryId], [covered, uncovered], "ordinary")).toEqual({ app: true, model: ["Кофейни Парижа"] });
+    expect(sceneWriters(20, [uncovered.categoryId], [covered, uncovered], "ordinary")).toEqual({ app: false, model: ["Кофейни Парижа"] });
   });
 
   test("a category with no photo of the run writes nothing; one the library does not hold is nobody's", () => {
     // 1 photo over two categories: the custom one gets none.
-    expect(sceneWriters(1, ["home", uncovered.categoryId], [uncovered])).toEqual({ app: true, model: [] });
-    expect(sceneWriters(20, ["cat-gone-for-good"], [])).toEqual({ app: false, model: [] });
-    expect(sceneWriters(0, ["home"], [])).toEqual({ app: false, model: [] });
+    expect(sceneWriters(1, ["home", uncovered.categoryId], [uncovered], "ordinary")).toEqual({ app: true, model: [] });
+    expect(sceneWriters(20, ["cat-gone-for-good"], [], "ordinary")).toEqual({ app: false, model: [] });
+    expect(sceneWriters(0, ["home"], [], "ordinary")).toEqual({ app: false, model: [] });
+  });
+});
+
+// 5a.4 (S5.BA8a, plan s5a4 §5.9 row 6, QB-4): at «Смелая» a custom category is written by the model, covered by the app's table or not: its scenes carry a world and the writer sets the frame inside it.
+describe("sceneWriters at «Смелая»: the model writes every custom category", () => {
+  const covered = category(1, "Домашнее у кровати", BED_POOL);
+  const uncovered = category(2, "Кофейни Парижа", PARIS_POOL);
+
+  test("a covered custom category is the model's by name", () => {
+    expect(covers(covered.pool)).toBe(true);
+    expect(sceneWriters(20, [covered.categoryId], [covered], "bold")).toEqual({ app: false, model: ["Домашнее у кровати"] });
+  });
+
+  test("the built-ins stay the app's, the custom categories the model's, in the run's order", () => {
+    expect(sceneWriters(20, ["home", covered.categoryId, uncovered.categoryId], [covered, uncovered], "bold")).toEqual({ app: true, model: ["Домашнее у кровати", "Кофейни Парижа"] });
+  });
+
+  test("below «Смелая» the covered one is still the app's (unchanged)", () => {
+    expect(sceneWriters(20, [covered.categoryId], [covered], "flirty")).toEqual({ app: true, model: [] });
+    expect(sceneWriters(20, [covered.categoryId], [covered], "ordinary")).toEqual({ app: true, model: [] });
+  });
+
+  test("a category with no photo of the run, or one the library does not hold, is still nobody's", () => {
+    expect(sceneWriters(1, ["home", covered.categoryId], [covered], "bold")).toEqual({ app: true, model: [] });
+    expect(sceneWriters(20, ["cat-gone-for-good"], [], "bold")).toEqual({ app: false, model: [] });
   });
 });
 

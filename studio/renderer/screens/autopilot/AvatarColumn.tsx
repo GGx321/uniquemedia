@@ -1,9 +1,9 @@
 import { useId } from "react";
-import type { AvatarSummary, LaunchPreviewAvatar } from "../../../shared/engine";
+import type { AvatarSummary, LaunchPreviewAvatar, SceneLevel } from "../../../shared/engine";
 import { useNavigate } from "../../navigation";
 import { Icon } from "../../ui/Icon";
 import { Portrait } from "../../ui/Portrait";
-import { avatarRow } from "./planModel";
+import { avatarRow, freeCaption } from "./planModel";
 
 // S4.9a: column 1 of «Автопилот» (AutopilotS4.dc.html): the active avatars, each a button with aria-pressed, «Все» / «Никого», «N своб.» (free photos in
 // the chosen categories, from the engine's plan) and a tag that says why an avatar will not go or will wait. While a launch runs the list is that launch's,
@@ -22,6 +22,8 @@ export interface AvatarColumnProps {
   readonly running: boolean;
   /** Whether «своб.» can be shown at all (the counts are a plan's, and nothing is planned while a launch runs). */
   readonly showFree: boolean;
+  /** The launch's «Подача»: at «Смелая» the free count is of the «Смелая» frames (the library offers no other, r2.2 D2). */
+  readonly level: SceneLevel;
   readonly onToggle: (avatarId: string) => void;
   readonly onAll: () => void;
   readonly onNone: () => void;
@@ -32,7 +34,7 @@ export interface AvatarColumnProps {
   readonly fromMain?: { readonly count: number; readonly held: boolean } | null;
 }
 
-export function AvatarColumn({ avatars, chosen, planned, probed, readOnly, running, showFree, onToggle, onAll, onNone, fromMain = null }: AvatarColumnProps) {
+export function AvatarColumn({ avatars, chosen, planned, probed, readOnly, running, showFree, level, onToggle, onAll, onNone, fromMain = null }: AvatarColumnProps) {
   const navigate = useNavigate();
   const ids = useId();
   const headId = `${ids}-head`;
@@ -58,7 +60,7 @@ export function AvatarColumn({ avatars, chosen, planned, probed, readOnly, runni
           </div>
         )}
       </div>
-      {showFree && avatars !== null && avatars.length > 0 && <span className="faint ap-avatars-hint">своб. — свободные фото в выбранных категориях</span>}
+      {showFree && avatars !== null && avatars.length > 0 && <span className="faint ap-avatars-hint">{freeCaption(level)}</span>}
       {fromMain !== null && !fromMain.held && !running && (
         <p className="ap-from-main" role="status">
           <Icon name="info" size={13} />

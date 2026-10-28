@@ -223,7 +223,7 @@ function AvatarPhotos({
   // S5.7c (mockup 26): the scenes column says both writers when the run mixes the app's template and the model. S5.9g: over what the run asks for — a
   // «Смелая» category kept under another «Подача» (mockup 48#kept) writes nothing.
   const { view: categoryView } = useCategoryLibrary();
-  const appWrites = sceneWriters(form.count, categoriesAt(form.level, form.categories), categoryView.list.status === "ready" ? categoryView.list.categories : []).app;
+  const appWrites = sceneWriters(form.count, categoriesAt(form.level, form.categories), categoryView.list.status === "ready" ? categoryView.list.categories : [], form.level).app;
 
   // The gallery: on open, and again whenever this avatar's run reports a
   // slot done or ends — each photo lands in the library before its progress

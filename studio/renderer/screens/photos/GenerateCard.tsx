@@ -11,14 +11,14 @@ import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
 import { OwnAnglesNote } from "./AnglesLines";
 import { CategoryCreateDialog, type CreateDialogClose, type CreateDialogStart } from "./CategoryCreateDialog";
-import { ownAnglesLine } from "./categoryText";
+import { ownAnglesAt } from "./categoryText";
 import { CategoryCardNotices } from "./CategoryNotices";
 import { CategoryRow } from "./CategoryRow";
 import { CategorySheet } from "./CategorySheet";
 import type { LaunchLink } from "./launchSet";
 import { cardLegsLine, hasBuiltIn } from "./legs";
 import { LegsChips } from "./LegsChips";
-import { ANGLE_FROM_SCENE, BOLD_SLOW, cardLevelCaption, drawsBoldFrames, LEVEL_OPTIONS } from "./level";
+import { ANGLE_FROM_SCENE, BOLD_SLOW, cardImportedLine, cardLevelCaption, drawsBoldFrames, LEVEL_OPTIONS } from "./level";
 import { BoldAttemptLine, BoldPriceNotice, isBoldPriceMissing } from "./boldPrice";
 import { LaunchSetStrip } from "./LaunchSetStrip";
 import { RecomposeDialog } from "./RecomposeDialog";
@@ -351,7 +351,7 @@ export function GenerateCard({
   // S5.9g: the split of what the run asks for — a «Смелая» category kept under another «Подача» (mockup 48#kept) takes no photo and writes no scene.
   const perCategory = photosPerCategory(form.count, request.categories);
   // S5.7c (mockup 26): who writes the scenes, under their price — the app, or the model for the categories its template does not cover.
-  const writers = sceneWriters(form.count, request.categories, customs ?? []);
+  const writers = sceneWriters(form.count, request.categories, customs ?? [], form.level);
   const scenesSub =
     form.count === 0 || compose.estimate === null
       ? null
@@ -477,9 +477,13 @@ export function GenerateCard({
   // S5.7c (mockup 25): «Кокетливая» says how many of the frames it makes flirty; with nothing to draw (an empty set) it says nothing. With only custom
   // categories on, no frame can be flirty: it says where «Подача» works rather than «0 из N». S5.9g (mockups 47, 47a, 47b): «Смелая» counts its bold and
   // flirty frames from the shared rules, or says what the others draw without a «Смелая» category; under it, that Seedream frames take longer.
-  const caption = cardLevelCaption(form.level, form.count, request.categories);
+  // 5a.4 (S5.BA8): every category draws «Смелая»; its words, its cover clause (a Studio-created avatar's only) and the imported avatar's line come from the bank data and the avatar's origin.
+  const captionContext = { avatar, legs: form.legs, customs: customs ?? [] };
+  const caption = cardLevelCaption(form.level, form.count, request.categories, captionContext);
+  const importedLine = cardImportedLine(form.level, form.count, request.categories, captionContext);
+  const importedCaption = `${ids}-level-imported`;
   const slow = drawsBoldFrames(form.level, form.count, request.categories);
-  const levelDescribedBy = [caption !== null && levelCaption, slow && slowCaption].filter(Boolean).join(" ") || undefined;
+  const levelDescribedBy = [caption !== null && levelCaption, importedLine !== null && importedCaption, slow && slowCaption].filter(Boolean).join(" ") || undefined;
   // State 55 (gap D): the 2K tier's price is missing — said in place of today's general price failure, and the retry is described by it.
   const boldPriceMissing = isBoldPriceMissing(error);
   // S5.8b (mockups 33, 34#card): «Ножки» draw from the built-in categories only. With none on the chips are off on «Нет» and say why; the pick stays in the
@@ -491,7 +495,8 @@ export function GenerateCard({
   const shownLegs = legsOff ? 0 : form.legs;
   const legsLine = cardLegsLine(form.legs, form.count, request.categories);
   // CS.8, S5.7c (mockup 27): the run's custom categories whose pool keeps angles of its own — the angle note above does not speak for them.
-  const ownAngles = ownAnglesLine((customs ?? []).flatMap((c) => (categories.includes(c.categoryId) && c.pool.poses !== undefined ? [{ name: c.name, poses: c.pool.poses }] : [])));
+  // 5a.4 (r2.3 M6): none at «Смелая», where the run's toggles decide a custom category's angles.
+  const ownAngles = ownAnglesAt(form.level, customs, categories);
   const countLabel = `${ids}-count`;
   const imageModel = view.settings ? modelName(view.settings.imageModel) : null;
   // The engine's own route (runs/plan.ts's runRoute) sends the settings' image quality (null for a model with no quality knob) to the
@@ -628,6 +633,11 @@ export function GenerateCard({
               {caption !== null && (
                 <p id={levelCaption} className="gen-cap">
                   {caption}
+                </p>
+              )}
+              {importedLine !== null && (
+                <p id={importedCaption} className="gen-cap">
+                  {importedLine}
                 </p>
               )}
               {slow && (

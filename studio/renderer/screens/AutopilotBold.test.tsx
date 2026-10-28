@@ -6,15 +6,18 @@ import { freePhotos, MIA, SOFIA } from "../engine/mockEngine.testkit";
 import { errorText } from "../lib/errors";
 import { callsOf, flush, openSection, setup } from "../testing";
 import { historyLibrary, octAt } from "./autopilot/historyTestkit";
-import { levelFrames } from "./photos/level";
+import { launchLevelCaption } from "./photos/level";
 
 // S5.9g (plan s5a3 §13.1 «Autopilot», §10.2 option B; mockups 52 and 53 of .omc/stage5/design): «Автопилот» gets «Смелая» too. «Ночнушки и бельё» and «Пляж и
 // бассейн» join «Категории сцен» with the card's gating (they work only under «Смелая»; a pick is kept, off, under another «Подача»); the caption counts the
 // plan's new frames from the shared rules; «Предел запуска» says that every new photo is priced at the Seedream 2K unit only while a «Смелая» category is on
 // under «Смелая»; the launch's page says «Подача: смелая».
 
-/** The no-break space between a count and its word, as testing-library's text matching normalises it: a plain space. */
-const NB = " ";
+/** A caption as testing-library reads text: its spaces plain. The words are pinned in `photos/levelCaption.test.ts`; here the screen is held to saying them. */
+const plain = (text: string | null): string => {
+  if (text === null) throw new Error("the launch has something to say here");
+  return text.replace(/\s+/g, " ");
+};
 const GATED = "Только со «Смелой»: «Ночнушки и бельё» и «Пляж и бассейн».";
 const LIMIT_PLAIN = "худшая цена: до 3 попыток на фото — дороже не выйдет";
 const LIMIT_BOLD = "худшая цена: до 3 попыток на фото — дороже не выйдет; со «Смелой» каждое новое фото считается по цене Seedream 2K";
@@ -104,7 +107,8 @@ describe("«Категории сцен» with the two «Смелая» chips (m
     await choose("Mia");
     await click(level("Смелая"));
     expect(within(settings()).queryByText(GATED) === null).toBe(true);
-    expect(limitSub()).toBe(LIMIT_PLAIN);
+    // 5a.4 (r2.2 I5.77, §5.9 row 21): option B holds at any «Смелая» launch, the five included.
+    expect(limitSub()).toBe(LIMIT_BOLD);
     await only("Ночнушки и бельё", "Пляж и бассейн");
     expect(within(settings()).getByText("2 из 7")).toBeDefined();
     const draft = planCalls(engine).at(-1)?.payload.draft;
@@ -114,12 +118,10 @@ describe("«Категории сцен» with the two «Смелая» chips (m
     const reply = await client.request("autopilot.estimate", { draft });
     if (!reply.ok) throw new Error("estimate refused");
     const { preview } = reply.result;
-    const counted = preview.avatars.filter((a) => a.blocked === null).map((a) => levelFrames(a.toGenerate, draft.categories, "bold"));
-    const bold = counted.reduce((sum, c) => sum + c.bold, 0);
-    const flirty = counted.reduce((sum, c) => sum + c.flirty, 0);
     expect(preview.totals.toGenerate).toBeGreaterThan(0);
-    const words = preview.totals.toGenerate % 10 === 1 && preview.totals.toGenerate % 100 !== 11 ? "нового кадра" : "новых кадров";
-    expect(within(settings()).getByText(`≈ ${bold} из ${preview.totals.toGenerate}${NB}${words} — смелые: бельё, купальники; ${flirty} — кокетливые. Смелые кадры рисует Seedream 5 Pro · 2K.`)).toBeDefined();
+    // The caption sums the engine's own plan, avatar by avatar (Mia is read as imported: no cover clause).
+    const caption = launchLevelCaption("bold", preview, draft.categories, { avatars: [{ name: MIA.name, origin: MIA.origin }], legs: 0, customs: [] });
+    expect(within(settings()).getByText(plain(caption))).toBeDefined();
     expect(limitSub()).toBe(LIMIT_BOLD);
     // The launch starts: the plan's button gives way to the live card, so this click waits for nothing on it.
     fireEvent.click(goButton());
@@ -151,6 +153,17 @@ describe("«Категории сцен» with the two «Смелая» chips (m
     expect(draft?.categories).toEqual(["home", "travel", "shoot", "fit"]);
     await click(level("Смелая"));
     expect(planCalls(engine).at(-1)?.payload.draft.categories).toEqual(["home", "travel", "shoot", "fit", "nightwear"]);
+  });
+
+  // 5a.4 (S5.BA8a, §5.9 row 22a, r2.3 M3): the avatar list's «своб.» legend says whose frames are free.
+  test("the avatar list's «своб.» legend names the «Смелая» frames at «Смелая» only", async () => {
+    world();
+    await openAutopilot();
+    await choose("Mia");
+    expect(screen.getByText("своб. — свободные фото в выбранных категориях")).toBeDefined();
+    await click(level("Смелая"));
+    expect(screen.getByText("своб. — свободные кадры «Смелой» в выбранных категориях")).toBeDefined();
+    expect(screen.queryByText("своб. — свободные фото в выбранных категориях") === null).toBe(true);
   });
 
   test("guard: no draft the screen asks for names a «Смелая» category without `level: \"bold\"`", async () => {
@@ -191,8 +204,9 @@ describe("a running «Смелая» launch's caption", () => {
     });
     await flush();
     expect(level("Смелая").checked).toBe(true);
-    expect(within(settings()).getByText(`≈ 4 из 10${NB}новых кадров — смелые: бельё, купальники; 4 — кокетливые. Смелые кадры рисует Seedream 5 Pro · 2K.`)).toBeDefined();
-    expect(within(settings()).queryByText(/^Смелые кадры — только в/) === null).toBe(true);
+    // A running launch has no plan to count (its photos are drawing): the share of ten, as before.
+    const running = launchLevelCaption("bold", null, ["nightwear", "beach"], { avatars: [{ name: SOFIA.name, origin: SOFIA.origin }], legs: 0, customs: [] });
+    expect(within(settings()).getByText(plain(running))).toBeDefined();
   });
 
   // Round 3 (LOW): the launch says how many new photos each avatar draws (`photos.total`; 0 is «только библиотека»): with none at all, there is no bold frame to speak of.
@@ -221,11 +235,11 @@ describe("a running «Смелая» launch's caption", () => {
     await flush();
     const base = got.launch;
     if (base === null) throw new Error("no launch");
-    expect(within(settings()).getByText(/^≈ 4 из 10\sновых кадров — смелые/)).toBeDefined();
+    expect(within(settings()).getByText(/^Новые кадры — /)).toBeDefined();
     const libraryOnly = LaunchView.parse({ ...base, avatars: base.avatars.map((row) => ({ ...row, photos: { done: 0, total: 0 } })) });
     act(() => engine.announceLaunch(libraryOnly));
     await flush();
-    expect(within(settings()).queryByText(/новых кадров — смелые/) === null).toBe(true);
+    expect(within(settings()).queryByText(/^Новые кадры — /) === null).toBe(true);
   });
 });
 

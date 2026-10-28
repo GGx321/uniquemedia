@@ -2,17 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { ORDINARY_SCENE_CATEGORIES, splitCount, type CategoryRef } from "../../../shared/engine";
 import { flirtyCountOf, levelCountsOf, tierSpreadOf } from "../../../shared/scenes/level";
 import {
-  BOLD_FIVE,
   BOLD_ONLY,
   BOLD_SLOW,
   boldAttemptLine,
-  cardLevelCaption,
   drawsBoldFrames,
   flirtyCaption,
   flirtyFrames,
   gatedNote,
   launchFlirtyCaption,
-  launchLevelCaption,
   LEVEL_KEY_PREFIX,
   LEVEL_OPTIONS,
   levelFrames,
@@ -177,9 +174,6 @@ describe("«Подача» remembered per avatar", () => {
 
 // ---------- 5a.3 «Смелая» (S5.9g; plan s5a3 §13.1, I5.36; mockups 47, 47a, 47b, 48, 52 of .omc/stage5/design) ----------
 
-const NB = " ";
-const SEEDREAM_TAIL = "Смелые кадры рисует Seedream 5 Pro · 2K.";
-
 describe("«Подача» offers all three faces now", () => {
   test("«Обычная · Кокетливая · Смелая», in that order, none of them held back", () => {
     expect(LEVEL_OPTIONS.map((o) => [o.value, o.label])).toEqual([
@@ -263,76 +257,6 @@ describe("drawsBoldFrames: «Смелая» with photos in any category", () => 
   });
 });
 
-describe("the card's «Подача» caption (mockups 47, 47a, 47b, 48#kept)", () => {
-  test("«Обычная» says nothing; nor does a run of no photos", () => {
-    expect(cardLevelCaption("ordinary", 20, ["home"])).toBe(null);
-    expect(cardLevelCaption("bold", 0, ["nightwear"])).toBe(null);
-    expect(cardLevelCaption("flirty", 0, ["home"])).toBe(null);
-  });
-
-  test("47: «Ночнушки и бельё» 10 + «Пляж и бассейн» 10 → 8 of 20 bold, 8 flirty, the words of both categories", () => {
-    expect(cardLevelCaption("bold", 20, ["nightwear", "beach"])).toBe(`8 из 20${NB}кадров — смелые: бельё, купальники; 8 — кокетливые. ${SEEDREAM_TAIL}`);
-  });
-
-  test("47a: «Дом» 10 + «Ночнушки и бельё» 10 → 8 bold, 8 flirty over the whole request (r2.2 D1), no «купальники»", () => {
-    expect(cardLevelCaption("bold", 20, ["home", "nightwear"])).toBe(`8 из 20${NB}кадров — смелые: бельё; 8 — кокетливые. ${SEEDREAM_TAIL}`);
-  });
-
-  test("48#kept, back on «Смелая»: 7 + 7 + 6 → 8 bold, 8 flirty (r2.2 D1); the count follows the stepper (25 → 10 and 10)", () => {
-    expect(cardLevelCaption("bold", 20, ["home", "travel", "nightwear"])).toBe(`8 из 20${NB}кадров — смелые: бельё; 8 — кокетливые. ${SEEDREAM_TAIL}`);
-    expect(cardLevelCaption("bold", 25, ["nightwear", "beach"])).toBe(`10 из 25${NB}кадров — смелые: бельё, купальники; 10 — кокетливые. ${SEEDREAM_TAIL}`);
-  });
-
-  test("47b: only the five → the plan's line; only custom categories → «Подача — только во встроенных категориях»", () => {
-    expect(BOLD_FIVE).toBe("Смелые кадры — только в «Ночнушки и бельё» и «Пляж и бассейн». Остальные категории — как «Кокетливая».");
-    expect(cardLevelCaption("bold", 20, ORDINARY_SCENE_CATEGORIES)).toBe(BOLD_FIVE);
-    expect(cardLevelCaption("bold", 20, ["home", "cat-paris-cafes"])).toBe(BOLD_FIVE);
-    expect(cardLevelCaption("bold", 20, ["cat-paris-cafes"])).toBe("Подача — только во встроенных категориях");
-  });
-
-  test("«Кокетливая» says what it always said", () => {
-    expect(cardLevelCaption("flirty", 20, ["home", "travel", "glam"])).toBe(flirtyCaption(12, 20));
-    expect(cardLevelCaption("flirty", 20, ["cat-paris-cafes"])).toBe("Подача — только во встроенных категориях");
-  });
-});
-
-// No existing string fits these cases, so each says nothing: «Подача — только во встроенных категориях» names a cause that is not theirs, and «0 из N» bold reads as a fault.
-describe("«Смелая» with nothing bold to count says nothing", () => {
-  const avatar = (toGenerate: number) => ({ toGenerate, blocked: null });
-
-  test("no category picked: no caption, and no slow-frames line (no «Смелая» category is selected)", () => {
-    expect(cardLevelCaption("bold", 20, [])).toBe(null);
-    expect(drawsBoldFrames("bold", 20, [])).toBe(false);
-  });
-
-  // Seedream draws more than the bold frames (every «Пляж и бассейн» frame, flirty satin in «Ночнушки»), so the slow-frames line follows the category, not the bold count.
-  test("one photo in a «Смелая» category (0 bold of 1): no «0 из 1» caption, but the slow-frames line stays", () => {
-    expect(levelFrames(1, ["nightwear"], "bold").bold).toBe(0);
-    expect(cardLevelCaption("bold", 1, ["nightwear"])).toBe(null);
-    expect(drawsBoldFrames("bold", 1, ["nightwear"])).toBe(true);
-  });
-
-  test("one photo in «Пляж и бассейн»: no «0 из 1» caption, but the slow-frames line stays", () => {
-    expect(levelFrames(1, ["beach"], "bold").bold).toBe(0);
-    expect(cardLevelCaption("bold", 1, ["beach"])).toBe(null);
-    expect(drawsBoldFrames("bold", 1, ["beach"])).toBe(true);
-  });
-
-  test("two photos in a «Смелая» category (1 bold of 2): the caption and the line stay", () => {
-    expect(cardLevelCaption("bold", 2, ["nightwear"])).toBe(`1 из 2${NB}кадров — смелые: бельё; 1 — кокетливые. ${SEEDREAM_TAIL}`);
-    expect(drawsBoldFrames("bold", 2, ["nightwear"])).toBe(true);
-  });
-
-  test("a launch with no category picked says nothing", () => {
-    expect(launchLevelCaption("bold", null, [])).toBe(null);
-    expect(launchLevelCaption("bold", { avatars: [avatar(5)], totals: { toGenerate: 5 } }, [])).toBe(null);
-  });
-
-  test("a launch whose new photos hold no bold frame (one per avatar) says nothing", () => {
-    expect(launchLevelCaption("bold", { avatars: [avatar(1)], totals: { toGenerate: 1 } }, ["nightwear"])).toBe(null);
-  });
-});
-
 describe("the lines around «Смелая»", () => {
   test("the slow-frames line is the plan's (r3.1), word for word", () => {
     expect(BOLD_SLOW).toBe("Кадры «Смелой» рисуются дольше — около минуты каждый.");
@@ -349,40 +273,5 @@ describe("the lines around «Смелая»", () => {
     expect(boldAttemptLine(93_000)).toBe("Seedream 2K — до $0.093 за попытку по прайсу");
     expect(boldAttemptLine(90_001)).toBe("Seedream 2K — до $0.091 за попытку по прайсу");
     expect(boldAttemptLine(120_000)).toBe("Seedream 2K — до $0.12 за попытку по прайсу");
-  });
-});
-
-// Mockup 52: three avatars with 5, 6 and 7 new photos over the two «Смелая» categories → ≈ 7 bold and 8 flirty of 18 (each avatar's request is counted whole, r2.2 D1).
-describe("the launch's «Подача» caption at «Смелая» (mockup 52)", () => {
-  const avatar = (toGenerate: number, blocked: "open-set" | null = null) => ({ toGenerate, blocked });
-  const plan = { avatars: [avatar(5), avatar(6), avatar(7)], totals: { toGenerate: 18 } };
-
-  test("sums each avatar's bold and flirty frames over its new photos: ≈ 7 and 8 of 18", () => {
-    expect(launchLevelCaption("bold", plan, ["nightwear", "beach"])).toBe(`≈ 7 из 18${NB}новых кадров — смелые: бельё, купальники; 8 — кокетливые. ${SEEDREAM_TAIL}`);
-  });
-
-  test("leaves a blocked avatar out, as the plan's totals do", () => {
-    const blocked = { avatars: [avatar(5), avatar(6, "open-set")], totals: { toGenerate: 5 } };
-    expect(launchLevelCaption("bold", blocked, ["nightwear", "beach"])).toBe(`≈ 2 из 5${NB}новых кадров — смелые: бельё, купальники; 2 — кокетливые. ${SEEDREAM_TAIL}`);
-  });
-
-  test("with only the five on, says they draw as «Кокетливая»; with only custom ones, where «Подача» works", () => {
-    expect(launchLevelCaption("bold", plan, ["home", "fit"])).toBe(BOLD_FIVE);
-    expect(launchLevelCaption("bold", null, ["home", "fit"])).toBe(BOLD_FIVE);
-    expect(launchLevelCaption("bold", plan, ["cat-paris-cafes"])).toBe("Подача — только во встроенных категориях");
-  });
-
-  // 2026-10-12, S5.9g round 2: «≈» like mockup 52's caption, and nothing at all when the plan draws no new frame (no bold frame to speak of).
-  test("with no plan yet, says the share of a «Смелая» category's ten frames with «≈», as mockup 52 words its caption", () => {
-    expect(launchLevelCaption("bold", null, ["home", "nightwear"])).toBe(`≈ 4 из 10${NB}новых кадров — смелые: бельё; 4 — кокетливые. ${SEEDREAM_TAIL}`);
-  });
-
-  test("with nothing new to draw, says nothing", () => {
-    expect(launchLevelCaption("bold", { avatars: [avatar(0)], totals: { toGenerate: 0 } }, ["home", "nightwear"])).toBe(null);
-  });
-
-  test("«Кокетливая» says what it always said, «Обычная» nothing", () => {
-    expect(launchLevelCaption("flirty", plan, ["home", "shoot"])).toBe(launchFlirtyCaption(plan, ["home", "shoot"]));
-    expect(launchLevelCaption("ordinary", plan, ["home"])).toBe(null);
   });
 });

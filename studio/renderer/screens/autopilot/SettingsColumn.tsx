@@ -12,7 +12,7 @@ import {
 } from "../../../shared/engine";
 import { Icon } from "../../ui/Icon";
 import { OwnAnglesNote } from "../photos/AnglesLines";
-import { ownAnglesLine } from "../photos/categoryText";
+import { ownAnglesAt } from "../photos/categoryText";
 import { LEGS_ROW_HINT, type LegsRow } from "../photos/legs";
 import { LegsChips } from "../photos/LegsChips";
 import { ANGLE_FROM_SCENE_SHORT, gatedNote, LEVEL_OPTIONS } from "../photos/level";
@@ -51,6 +51,8 @@ export interface SettingsColumnProps {
   readonly onLevel: (level: SceneLevel) => void;
   /** «Кокетливая»'s count of flirty new frames (mockup 30), «Смелая»'s of bold and flirty ones (mockup 52), or null while «Обычная» is on. */
   readonly levelCaption: string | null;
+  /** §5.9 row 19b: the line of its own for the chosen avatars made from a photo, or null. */
+  readonly importedLine: string | null;
   /** S5.8b: the «Ножки» row as the form and the plan make it (mockups 34, 34#few). */
   readonly legs: LegsRow;
   readonly onLegs: (legs: LegsShare) => void;
@@ -81,8 +83,10 @@ export function SettingsColumn(props: SettingsColumnProps) {
   const asked = categoriesAt(form.level, form.categories);
   const chosen = chips.filter((c) => asked.includes(c.ref)).length;
   const kept = BOLD_CATEGORIES.filter((ref) => !boldOn && form.categories.includes(ref)).map((ref) => CATEGORY_LABEL[ref]);
-  const optionB = boldOn && asked.some((ref) => isBoldCategory(ref));
-  const ownAngles = ownAnglesLine((customs ?? []).flatMap((c) => (form.categories.includes(c.categoryId) && c.pool.poses !== undefined ? [{ name: c.name, poses: c.pool.poses }] : [])));
+  // 5a.4 (r2.2 I5.77, §5.9 row 21): every photo of any «Смелая» launch is priced at the Seedream 2K unit, whatever the categories.
+  const optionB = boldOn;
+  // r2.3 M6: none at «Смелая», where the run's toggles decide a custom category's angles.
+  const ownAngles = ownAnglesAt(form.level, customs, form.categories);
   const off = readOnly || undefined;
   const reviewOff = readOnly || !form.generate || undefined;
 
@@ -188,7 +192,7 @@ export function SettingsColumn(props: SettingsColumnProps) {
                 className="seg choice-options gen-seg"
                 role="radiogroup"
                 aria-labelledby={id("lvl")}
-                aria-describedby={props.levelCaption !== null ? `${id("lvl-hint")} ${id("lvl-cap")}` : id("lvl-hint")}
+                aria-describedby={[id("lvl-hint"), props.levelCaption !== null && id("lvl-cap"), props.importedLine !== null && id("lvl-imported")].filter(Boolean).join(" ")}
               >
                 {LEVEL_OPTIONS.map((option) => {
                   const on = form.level === option.value;
@@ -213,6 +217,11 @@ export function SettingsColumn(props: SettingsColumnProps) {
               {props.levelCaption !== null && (
                 <span id={id("lvl-cap")} className="ap-row-note gen-cap">
                   {props.levelCaption}
+                </span>
+              )}
+              {props.importedLine !== null && (
+                <span id={id("lvl-imported")} className="ap-row-note gen-cap">
+                  {props.importedLine}
                 </span>
               )}
               {ownAngles !== null && <OwnAnglesNote line={ownAngles} className="ap-row-note" />}

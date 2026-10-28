@@ -6,7 +6,8 @@ import { errorText } from "../lib/errors";
 import { formatUsd } from "../lib/money";
 import { callsOf, flush, openSection, setup } from "../testing";
 import { chipsGroup, MIA, openPhotos, PARIS } from "./photos/categoryScreenKit";
-import { LEVEL_KEY_PREFIX } from "./photos/level";
+import { cardImportedLine, cardLevelCaption, LEVEL_KEY_PREFIX } from "./photos/level";
+import type { CategoryRef, CategorySummary } from "../../shared/engine";
 import { column, FIXTURE } from "./photos/sceneScreenKit";
 
 // S5.9g (plan s5a3 §13.1, §13.2, §14 «S5.9g», gaps C and D; mockups 47, 47a, 47b, 48, 48a and 55 of .omc/stage5/design): «Смелая» on the generate card. All three
@@ -14,11 +15,20 @@ import { column, FIXTURE } from "./photos/sceneScreenKit";
 // made under «Смелая» stays in the form, off, and comes back with it; the caption counts from the shared rules; the price line reads the engine's
 // `boldAttemptMicros`; a missing 2K price says so (state 55) and nothing else does.
 
-/** The no-break space between a count and its word, as testing-library's text matching normalises it: a plain space. */
-const NB = " ";
-const SEEDREAM_TAIL = "Смелые кадры рисует Seedream 5 Pro · 2K.";
 const SLOW = "Кадры «Смелой» рисуются дольше — около минуты каждый.";
-const FIVE = "Смелые кадры — только в «Ночнушки и бельё» и «Пляж и бассейн». Остальные категории — как «Кокетливая».";
+
+/**
+ * What the card says at «Смелая» for `count` photos over `categories`, as testing-library reads text (its spaces plain): the caption and the imported-avatar line of Mia, whom the fixtures
+ * read as imported. The words are pinned in `photos/levelCaption.test.ts`; here the screen is held to saying them, with the avatar and the library it has.
+ */
+function said(count: number, categories: readonly CategoryRef[], customs: readonly CategorySummary[] = []): { caption: string; imported: string } {
+  const context = { avatar: MIA, legs: 0 as const, customs };
+  const plain = (text: string | null): string => {
+    if (text === null) throw new Error("the card has something to say here");
+    return text.replace(/\s+/g, " ");
+  };
+  return { caption: plain(cardLevelCaption("bold", count, categories, context)), imported: plain(cardImportedLine("bold", count, categories, context)) };
+}
 const GATED = "Только со «Смелой»: «Ночнушки и бельё» и «Пляж и бассейн».";
 const HINT = {
   nightwear: "Ночнушки и бельё — дома у зеркала и в кровати: ночнушки, бельё, чулки; в части кадров лицо закрыто телефоном.",
@@ -93,10 +103,11 @@ describe("«Подача: Обычная · Кокетливая · Смелая
     await only("Ночнушки и бельё", "Пляж и бассейн");
     expect(chip("Ночнушки и бельё").getAttribute("aria-label")).toBe("Ночнушки и бельё: 10 фото");
     expect(chip("Пляж и бассейн").getAttribute("aria-label")).toBe("Пляж и бассейн: 10 фото");
-    const caption = `8 из 20${NB}кадров — смелые: бельё, купальники; 8 — кокетливые. ${SEEDREAM_TAIL}`;
+    const { caption, imported } = said(20, ["nightwear", "beach"]);
     expect(within(card()).getByText(caption)).toBeDefined();
+    expect(within(card()).getByText(imported)).toBeDefined();
     expect(within(card()).getByText(SLOW)).toBeDefined();
-    expect(described(within(card()).getByRole("radiogroup", { name: "Подача" }))).toEqual([caption, SLOW]);
+    expect(described(within(card()).getByRole("radiogroup", { name: "Подача" }))).toEqual([caption, imported, SLOW]);
     // The figures are the engine's own answer to this very request: nothing is worked out here.
     const request: RunRequest = { avatarId: MIA.avatarId, count: 20, categories: ["nightwear", "beach"], level: "bold" };
     expect(lastEstimate(engine)).toEqual(request);
@@ -111,14 +122,14 @@ describe("«Подача: Обычная · Кокетливая · Смелая
   });
 
   // 5a.4 (S5.BA7, 2026-10-27, plan s5a4 I5.77, §5.7; BA5 review L-5): scope edit. the mock prices «Смелая» as the engine does, so «Дом»'s photos are on the 2K unit too: §5.7's
-  // «Дом» 10 + «Ночнушки» 10 is $1.86 / $5.58, not 5a.3's $1.53 / $4.59. The caption is the card's own (S5.BA8 rewrites it).
-  test("47a: «Дом» 10 + «Ночнушки и бельё» 10 — «бельё» only, 10 flirty, the engine's ≈ $1.86 · до $5.58", async () => {
+  // «Дом» 10 + «Ночнушки» 10 is $1.86 / $5.58, not 5a.3's $1.53 / $4.59.
+  test("47a: «Дом» 10 + «Ночнушки и бельё» 10 — the tiers over the whole request, the engine's ≈ $1.86 · до $5.58", async () => {
     const { engine, client } = await openPhotos();
     // §10.3's example prices «Дом» on Grok quality, 60 000 µ$ an attempt; the mock's own default is cheaper.
     engine.setRunImagePrice(60_000);
     await pickLevel("Смелая");
     await only("Дом", "Ночнушки и бельё");
-    expect(within(card()).getByText(`4 из 20${NB}кадров — смелые: бельё; 10 — кокетливые. ${SEEDREAM_TAIL}`)).toBeDefined();
+    expect(within(card()).getByText(said(20, ["home", "nightwear"]).caption)).toBeDefined();
     const estimate = await engineEstimate(client, { avatarId: MIA.avatarId, count: 20, categories: ["home", "nightwear"], level: "bold" });
     await within(card()).findByRole("button", { name: goName(20, estimate.worstMicros) });
     expect(expectedShown()).toBe(`≈ ${formatUsd(estimate.expectedMicros)}`);
@@ -127,34 +138,37 @@ describe("«Подача: Обычная · Кокетливая · Смелая
   });
 
   // 5a.4 (S5.BA7, 2026-10-27, plan s5a4 I5.77, §5.7; BA5 review L-5): scope edit. the five at «Смелая» draw on the route (I5.71), so the engine prices them at the 2K unit and the card
-  // shows the Seedream price line; the caption and the slow line are the card's own (S5.BA8 rewrites both).
-  test("47b: only the five — the engine prices them on the 2K route and the card says the Seedream price; no slow line yet", async () => {
+  // shows the Seedream price line; 5a.4 (S5.BA8a): every category draws «Смелая», so the card captions the five and says the frames are slow.
+  test("47b: only the five — the engine prices them on the 2K route, the card captions them and says the Seedream price and that the frames are slow", async () => {
     const { engine, client } = await openPhotos();
     await pickLevel("Смелая");
-    expect(within(card()).getByText(FIVE)).toBeDefined();
+    const five: CategoryRef[] = ["home", "travel", "shoot", "glam", "fit"];
+    expect(within(card()).getByText(said(20, five).caption)).toBeDefined();
     expect(lastEstimate(engine)).toEqual({ avatarId: MIA.avatarId, count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], level: "bold" });
     const estimate = await engineEstimate(client, { avatarId: MIA.avatarId, count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], level: "bold" });
     expect(estimate.boldAttemptMicros).toBe(93_000);
     await within(card()).findByRole("button", { name: goName(20, estimate.worstMicros) });
     expect(within(card()).getByText("Seedream 2K — до $0.093 за попытку по прайсу")).toBeDefined();
-    expect(within(card()).queryByText(SLOW) === null).toBe(true);
+    expect(within(card()).getByText(SLOW)).toBeDefined();
   });
 
-  test("47b#own: only custom categories — «Подача — только во встроенных категориях», unchanged", async () => {
+  // 5a.4 (S5.BA8a, QB-4, r2.2): a custom category draws «Смелая» like the rest, so it has a caption and the slow line; «Подача — только во встроенных категориях» is «Кокетливая»'s.
+  test("47b#own: only a custom category — captioned like the rest, with the slow line", async () => {
     await openPhotos({ categories: [PARIS] });
     await pickLevel("Смелая");
     await only();
     await click(chip("Кофейни Парижа"));
-    expect(within(card()).getByText("Подача — только во встроенных категориях")).toBeDefined();
-    expect(within(card()).queryByText(SLOW) === null).toBe(true);
+    expect(within(card()).getByText(said(20, [PARIS.categoryId], [PARIS]).caption)).toBeDefined();
+    expect(within(card()).queryByText("Подача — только во встроенных категориях") === null).toBe(true);
+    expect(within(card()).getByText(SLOW)).toBeDefined();
   });
 
-  test("the caption follows the stepper: 25 → 10 bold and 10 flirty", async () => {
+  test("the caption follows the stepper: 25 photos → 10 and 10 of them bold and flirty", async () => {
     await openPhotos();
     await pickLevel("Смелая");
     await only("Ночнушки и бельё", "Пляж и бассейн");
     await click(within(card()).getByRole("button", { name: "Больше" }));
-    expect(within(card()).getByText(`10 из 25${NB}кадров — смелые: бельё, купальники; 10 — кокетливые. ${SEEDREAM_TAIL}`)).toBeDefined();
+    expect(within(card()).getByText(said(25, ["nightwear", "beach"]).caption)).toBeDefined();
   });
 });
 
@@ -200,7 +214,7 @@ describe("the two chips under another «Подача» (mockup 48)", () => {
     await pickLevel("Смелая");
     await only("Дом", "Виды", "Ночнушки и бельё");
     expect(chip("Ночнушки и бельё").getAttribute("aria-label")).toBe("Ночнушки и бельё: 6 фото");
-    expect(within(card()).getByText(`2 из 20${NB}кадров — смелые: бельё; 11 — кокетливые. ${SEEDREAM_TAIL}`)).toBeDefined();
+    expect(within(card()).getByText(said(20, ["home", "travel", "nightwear"]).caption)).toBeDefined();
 
     await pickLevel("Кокетливая");
     const kept = chip("Ночнушки и бельё");
