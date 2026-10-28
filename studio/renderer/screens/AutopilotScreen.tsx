@@ -31,6 +31,7 @@ import { probeWorldKey, useLaunchPlan, worldKey } from "./autopilot/useLaunchPla
 import { launchLegsRow } from "./photos/legs";
 import type { LaunchPlanCounts } from "./photos/launchPlanCounts";
 import { launchImportedLine, launchLevelCaption } from "./photos/level";
+import { launchMonthLine } from "./autopilot/monthLine";
 import { readSceneReview, viewerStorage } from "./photos/sceneReview";
 import { arrangeCategories, categoriesAt } from "./photos/runForm";
 
@@ -327,6 +328,7 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
           onLevel={(level) => edit({ ...form, level })}
           levelCaption={launchLevelCaption(shownForm.level, running ? runningCounts(launch) : plan.shown, levelCategories, { avatars: levelAvatars, legs: shownForm.legs, customs: customs ?? [] })}
           importedLine={launchImportedLine(shownForm.level, levelCategories, levelAvatars)}
+          monthLine={running || plan.estimating ? null : launchMonthLine(shownForm.level, plan.shown, view.settings?.imageAgeCheck === "on")}
           legs={launchLegsRow(shownForm.legs, running ? null : plan.shown, running ? shownForm.categories : (settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder))), shownForm.generate)}
           onLegs={(legs) => edit({ ...form, legs })}
           onSwitch={(which) => edit({ ...form, [which]: !form[which] })}

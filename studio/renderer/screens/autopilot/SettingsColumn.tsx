@@ -53,6 +53,8 @@ export interface SettingsColumnProps {
   readonly levelCaption: string | null;
   /** §5.9 row 19b: the line of its own for the chosen avatars made from a photo, or null. */
   readonly importedLine: string | null;
+  /** §5.9 row 20: the month line at «Смелая», from the plan's own photo unit and the month's budget, or null. */
+  readonly monthLine: string | null;
   /** S5.8b: the «Ножки» row as the form and the plan make it (mockups 34, 34#few). */
   readonly legs: LegsRow;
   readonly onLegs: (legs: LegsShare) => void;
@@ -192,7 +194,7 @@ export function SettingsColumn(props: SettingsColumnProps) {
                 className="seg choice-options gen-seg"
                 role="radiogroup"
                 aria-labelledby={id("lvl")}
-                aria-describedby={[id("lvl-hint"), props.levelCaption !== null && id("lvl-cap"), props.importedLine !== null && id("lvl-imported")].filter(Boolean).join(" ")}
+                aria-describedby={[id("lvl-hint"), props.levelCaption !== null && id("lvl-cap"), props.importedLine !== null && id("lvl-imported"), props.monthLine !== null && id("lvl-month")].filter(Boolean).join(" ")}
               >
                 {LEVEL_OPTIONS.map((option) => {
                   const on = form.level === option.value;
@@ -222,6 +224,11 @@ export function SettingsColumn(props: SettingsColumnProps) {
               {props.importedLine !== null && (
                 <span id={id("lvl-imported")} className="ap-row-note gen-cap">
                   {props.importedLine}
+                </span>
+              )}
+              {props.monthLine !== null && (
+                <span id={id("lvl-month")} className="ap-row-note gen-cap">
+                  {props.monthLine}
                 </span>
               )}
               {ownAngles !== null && <OwnAnglesNote line={ownAngles} className="ap-row-note" />}

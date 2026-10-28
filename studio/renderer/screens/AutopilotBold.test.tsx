@@ -7,6 +7,7 @@ import { errorText } from "../lib/errors";
 import { callsOf, flush, openSection, setup } from "../testing";
 import { historyLibrary, octAt } from "./autopilot/historyTestkit";
 import { launchLevelCaption } from "./photos/level";
+import { launchMonthLine } from "./autopilot/monthLine";
 
 // S5.9g (plan s5a3 §13.1 «Autopilot», §10.2 option B; mockups 52 and 53 of .omc/stage5/design): «Автопилот» gets «Смелая» too. «Ночнушки и бельё» and «Пляж и
 // бассейн» join «Категории сцен» with the card's gating (they work only under «Смелая»; a pick is kept, off, under another «Подача»); the caption counts the
@@ -164,6 +165,26 @@ describe("«Категории сцен» with the two «Смелая» chips (m
     await click(level("Смелая"));
     expect(screen.getByText("своб. — свободные кадры «Смелой» в выбранных категориях")).toBeDefined();
     expect(screen.queryByText("своб. — свободные фото в выбранных категориях") === null).toBe(true);
+  });
+
+  // 5a.4 (S5.BA8a, §5.9 row 20, r2.3 M1): the month line divides the budget by the plan's own unit; the window computes no price.
+  test("the month line at «Смелая» is the plan's unit over the month's budget, and only there", async () => {
+    const { engine, client } = world();
+    await openAutopilot();
+    await choose("Mia");
+    expect(within(settings()).queryByText(/^Каждое фото «Смелой»/) === null).toBe(true);
+    await click(level("Смелая"));
+    const draft = planCalls(engine).at(-1)?.payload.draft;
+    if (draft === undefined) throw new Error("no plan was asked");
+    const reply = await client.request("autopilot.estimate", { draft });
+    if (!reply.ok) throw new Error("estimate refused");
+    const { preview } = reply.result;
+    if (preview.unitPhotoWorstMicros === undefined) throw new Error("the plan names no unit");
+    const line = launchMonthLine("bold", preview, false);
+    expect(within(settings()).getByText(plain(line))).toBeDefined();
+    expect(plain(line)).toMatch(/^Каждое фото «Смелой» — до \$\d/);
+    await click(level("Кокетливая"));
+    expect(within(settings()).queryByText(/^Каждое фото «Смелой»/) === null).toBe(true);
   });
 
   test("guard: no draft the screen asks for names a «Смелая» category without `level: \"bold\"`", async () => {

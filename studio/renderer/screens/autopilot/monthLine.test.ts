@@ -6,7 +6,7 @@ import { composeEstimate } from "../../../engine/sceneSets/estimate";
 import { MICROS_PER_DOLLAR } from "../../../shared/engine/usd";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { formatUsdTiered } from "../../lib/money";
-import { monthLine } from "./monthLine";
+import { launchMonthLine, monthLine } from "./monthLine";
 useNativeGlobals();
 
 // 5a.4 (S5.BA8a, plan s5a4 §5.9 row 20, r2.3 M1, r2.2 D5): the month line under «Подача» at «Смелая». The photo's worst case is the launch math's own unit, `unitPricesOf(…, bold = true).photo`
@@ -60,5 +60,27 @@ describe("the figures the screens say with the app's rounding (r2.2 D5)", () => 
   test("a bold writer chunk or redraw reads «до $0.098»", () => {
     const chunk = composeEstimate(PRICED, MODELS.textModel, [{ ref: "cat-0123456789ab", count: 1 }], () => false, "bold").worstMicros;
     expect(formatUsdTiered(chunk, "up")).toBe("$0.098");
+  });
+});
+
+// 5a.4 (S5.BA8a): the screen's line is the preview's own unit and budget; with no unit (the plan draws no new photo, or an older engine) there is no line, and the window computes none.
+describe("launchMonthLine: the line a plan shows", () => {
+  const plan = { unitPhotoWorstMicros: photoUnit("off"), month: { budgetMicros: BUDGET } };
+
+  test("at «Смелая» with a unit: the month line over the preview's unit and budget", () => {
+    expect(launchMonthLine("bold", plan, false)).toBe(monthLine({ unitMicros: photoUnit("off"), budgetMicros: BUDGET, ageCheck: false }));
+  });
+
+  test("says the age checks when the age check is on", () => {
+    expect(launchMonthLine("bold", { ...plan, unitPhotoWorstMicros: photoUnit("on") }, true)).toContain("проверки возраста");
+  });
+
+  test.each(["ordinary", "flirty"] as const)("at %s: none", (level) => {
+    expect(launchMonthLine(level, plan, false)).toBe(null);
+  });
+
+  test("with no plan, or a plan without a unit: none", () => {
+    expect(launchMonthLine("bold", null, false)).toBe(null);
+    expect(launchMonthLine("bold", { month: { budgetMicros: BUDGET } }, false)).toBe(null);
   });
 });

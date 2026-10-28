@@ -1,3 +1,4 @@
+import type { SceneLevel } from "../../../shared/engine";
 import { formatUsdTiered } from "../../lib/money";
 import { wholeUsd } from "./planModel";
 
@@ -24,4 +25,10 @@ export function monthLine({ unitMicros, budgetMicros, ageCheck }: MonthLineInput
   return photos === 0
     ? `${first} Месячный бюджет ${budget} не вмещает ни одного такого фото.`
     : `${first} Месячный бюджет ${budget} вмещает ≈ ${photos} таких фото; больше автопилот рисует частями, пока хватает остатка.`;
+}
+
+/** The line a launch plan shows under «Подача»: at «Смелая» only, from the plan's own unit and budget; none when the plan names no unit (it draws no new photo). */
+export function launchMonthLine(level: SceneLevel, plan: { readonly unitPhotoWorstMicros?: number; readonly month: { readonly budgetMicros: number } } | null, ageCheck: boolean): string | null {
+  if (level !== "bold" || plan === null || plan.unitPhotoWorstMicros === undefined) return null;
+  return monthLine({ unitMicros: plan.unitPhotoWorstMicros, budgetMicros: plan.month.budgetMicros, ageCheck });
 }
