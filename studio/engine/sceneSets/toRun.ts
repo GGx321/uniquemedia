@@ -56,7 +56,7 @@ export function approvalRefusal(set: StoredSceneSet, ctx: ApprovalContext): Appr
  * The content level a scene's text is held to (`contentLevelOf`): a planned scene's by its slot's marker; 5a.4 (S5.BA9) an own scene's by its own marker in the set (`ownSceneMarkerOf`), so an
  * own scene of a «Смелая» set is held to the «Смелая» line and one of any other set to the ordinary line, as before.
  */
-export function sceneContentLevel(set: Pick<StoredSceneSet, "request">, scene: SceneRecord): ContentLevel {
+function sceneContentLevel(set: Pick<StoredSceneSet, "request">, scene: SceneRecord): ContentLevel {
   return scene.origin === "planned" ? contentLevelOf({ category: scene.slot.category, level: scene.slot.level, route: scene.slot.route }) : contentLevelOf(ownSceneMarkerOf(set.request.level));
 }
 

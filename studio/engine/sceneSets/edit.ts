@@ -1,9 +1,9 @@
 import { SCENE_TEXT_MAX, type SceneEditOp, type SceneProblem, type SceneReason } from "../../shared/engine";
 import type { RewriteWriteRecord, StoredSceneSet } from "../library/sceneSets";
-import { contentProblems, type ContentLevel } from "../../shared/scenes/contentLine";
+import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared/scenes/contentLine";
+import { ownSceneMarkerOf } from "../../shared/scenes/ownScene";
 import { withReviewWriteClosed, withoutScenes } from "./reviewMutations";
 import { reviewWritesOf } from "./reviewWrites";
-import { sceneContentLevel } from "./toRun";
 
 // CS.4a: the owner's free edits of a set, as pure changes of its record. Nothing here reads the disk, the ledger or a job: the engine checks that the
 // set may be edited at all (no job runs, it is not used, the revision is the one the window shows) and writes the result under the set's lock.
@@ -53,7 +53,7 @@ export function applyEdit(set: StoredSceneSet, op: SceneEditOp): EditOutcome {
       if (scene === undefined) return invalid(`the set has no scene ${op.sceneId}`, "scene-missing", op.sceneId);
       if (scene.removed) return invalid(`scene ${op.sceneId} is removed; restore it before editing its text`, "target-removed", op.sceneId);
       // 5a.4 (S5.BA9): an own scene of a «Смелая» set is a «Смелая» frame, so the owner's edit of it is held to the «Смелая» line, as a planned one on the route is.
-      const problem = textProblem(op.text, sceneContentLevel(set, scene));
+      const problem = textProblem(op.text, contentLevelOf(scene.origin === "planned" ? { category: scene.slot.category, level: scene.slot.level, route: scene.slot.route } : ownSceneMarkerOf(set.request.level)));
       if (problem !== null) return { kind: "problem", problem };
       const text = op.text.trim();
       if (scene.text === text && scene.edited) return { kind: "unchanged" };
