@@ -51,7 +51,7 @@ export function tierTag(tier: Tier): string {
 export function tierMarkers(tier: Tier): readonly string[] {
   const helpers: Record<Tier, readonly string[]> = {
     perf: ["perfTest(", "perfOnlyTest("],
-    heavy: ["heavyTest("],
+    heavy: ["heavyTest(", "sweepTest("],
     quarantine: ["quarantinedTest(", "inQuarantineRun("],
   };
   return [tierTag(tier), ...helpers[tier]];

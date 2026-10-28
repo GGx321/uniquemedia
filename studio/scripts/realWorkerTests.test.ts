@@ -163,6 +163,12 @@ describe("sharding the suite", () => {
     expect(await shardedTestArgs(["./studio"], 2, root)).toEqual([["./studio/a.test.ts"], ["./studio/c.test.ts"]]);
   });
 
+  test("a sweepTest counts as a heavy test: a *.heavy.test.* file made of sweeps is accepted, and the blocking run leaves it out", async () => {
+    const root = await tree(["studio/a.test.ts", "studio/c.test.ts"]);
+    await writeFile(join(root, "studio", "b.heavy.test.ts"), 'sweepTest("seeds", { push: 1, heavy: 2 }, () => {});');
+    expect(await shardedTestArgs(["./studio"], 2, root)).toEqual([["./studio/a.test.ts"], ["./studio/c.test.ts"]]);
+  });
+
   test("shardedTestArgs refuses a *.heavy.test.* file with a test outside the heavy tier, or with no heavy test at all: that test would run nowhere", async () => {
     for (const source of ['test("plain", () => {});', 'heavyTest("slow", () => {});\ntest("plain", () => {});', ""]) {
       const root = await tree(["studio/a.test.ts"]);
@@ -188,6 +194,12 @@ describe("tierTestArgs (STUDIO_TEST_TIER)", () => {
     }
     return root;
   }
+
+  test("opens a file whose only marker is a sweepTest in the heavy run, and not in the perf run", async () => {
+    const root = await treeWith({ "studio/a.test.ts": 'sweepTest("seeds", { push: 1, heavy: 2 }, () => {});', "studio/b.test.ts": 'test("plain", () => {});' });
+    expect(await tierTestArgs(["./studio"], "heavy", root)).toEqual([["--test-name-pattern=\\[heavy\\]", "./studio/a.test.ts"]]);
+    expect(await tierTestArgs(["./studio"], "perf", root)).toEqual([]);
+  });
 
   test("is one process holding the flags, the tier's name pattern and only the files that carry a marker of the tier", async () => {
     const root = await treeWith({

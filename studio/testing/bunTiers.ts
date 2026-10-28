@@ -32,6 +32,38 @@ export function heavyTest(name: string, fn: Body, timeout?: Timeout): void {
   test.skipIf(tierOf() !== "heavy")(named("heavy", name), fn, timeout);
 }
 
+/** The two parameter sets of a sweep: what a push runs (small, still a real sample) and what the heavy run runs (the full sweep, as it was before the diet). */
+export interface SweepParams<T> {
+  push: T;
+  heavy: T;
+}
+
+export interface SweepVariant<T> {
+  name: string;
+  params: T;
+  enabled: boolean;
+}
+
+/** The two tests a sweep registers in the run of `tier`: the push variant under the plain name, the heavy one tagged `[heavy]` and enabled only in the heavy run. */
+export function sweepVariants<T>(name: string, params: SweepParams<T>, tier: Tier | undefined): [SweepVariant<T>, SweepVariant<T>] {
+  return [
+    { name, params: params.push, enabled: true },
+    { name: named("heavy", name), params: params.heavy, enabled: tier === "heavy" },
+  ];
+}
+
+/**
+ * A sweep (seeds x sizes x categories, a fuzz, a brute force) written once and run at two sizes: a push runs `fn(params.push)` under the plain
+ * name, the scheduled heavy run runs `fn(params.heavy)` under a `[heavy]` name. The heavy parameters are the sweep as it was before it was
+ * made cheaper for a push, so nothing is dropped, only moved. Keep the push set a real sample (a few seeds, the sizes 1, 2, 12 and 30) and
+ * under about a second; a sweep that guards money or data integrity keeps its full set in `push` too.
+ */
+export function sweepTest<T>(name: string, params: SweepParams<T>, fn: (params: T) => void | Promise<void>, timeout?: Timeout): void {
+  const [push, heavy] = sweepVariants(name, params, tierOf());
+  test(push.name, () => fn(push.params), timeout);
+  test.skipIf(!heavy.enabled)(heavy.name, () => fn(heavy.params), timeout);
+}
+
 /** A test that flaked: it runs in the quarantine run only. `id` must have an entry in quarantine.ts, or this throws when the file loads. */
 export function quarantinedTest(id: string, name: string, fn: Body, timeout?: Timeout): void {
   test.skipIf(!inQuarantineRun(id))(`${tierTag("quarantine")} ${id}: ${name}`, fn, timeout);
