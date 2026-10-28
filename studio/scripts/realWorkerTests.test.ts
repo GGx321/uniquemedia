@@ -291,6 +291,25 @@ describe("the Electron-Node steps' bounds", () => {
     expect(Object.entries(jobs).filter(([, job]) => JSON.stringify(job.permissions ?? {}).includes("write")).map(([name]) => name)).toEqual([]);
   });
 
+  test("no cache step holds node_modules or ffmpeg", async () => {
+    for (const [name, job] of Object.entries(await workflowJobs())) {
+      for (const step of (job.steps ?? []) as { uses?: string; with?: { path?: unknown } }[]) {
+        if (step.uses?.startsWith("actions/cache")) expect([name, String(step.with?.path)]).toEqual([name, expect.not.stringMatching(/node_modules|ffmpeg/i)]);
+      }
+    }
+  });
+
+  test("the packaging never publishes: electron-builder runs with --publish never, no other --publish value exists, and the config has publish: null", async () => {
+    const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
+    expect(workflow).toMatch(/bunx electron-builder --config electron-builder\.studio\.yml --publish never\r?$/m);
+    // `-p` is electron-builder's short form of --publish: look at both, on the lines that run electron-builder.
+    const values = workflow.split(/\r?\n/).filter((line) => line.includes("electron-builder")).flatMap((line) => [...line.matchAll(/(?<![\w-])(?:--publish|-p)[ =](\S+)/g)].map((m) => m[1]));
+    expect(values.length).toBeGreaterThan(0);
+    for (const value of values) expect(value).toBe("never");
+    const config = await readFile(join(ROOT, "electron-builder.studio.yml"), "utf8");
+    expect(config).toMatch(/^publish: null\r?$/m);
+  });
+
   // Nothing restored from a cache is executed: the one cache the workflow has holds the face models (hash-checked on every run), and a cache of
   // node_modules or of the ffmpeg binary is how an unchecked binary would come back.
 
