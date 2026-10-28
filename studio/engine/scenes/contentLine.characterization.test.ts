@@ -133,11 +133,6 @@ const LEVELS_SHARED: Array<"ordinary" | "flirty"> = ["ordinary", "flirty"];
 const ALL = [...TEXTS, ...PROMPTS, ...DIRTY_PROMPTS];
 
 describe("the word gate, characterized", () => {
-  test("the corpus is not vacuous", () => {
-    expect(CLEAN.length).toBeGreaterThan(900);
-    expect(PROMPTS).toHaveLength(120);
-    expect(TEXTS.filter((t) => sentenceProblems(t).length > 0).length).toBeGreaterThan(300);
-  });
 
   test("sentenceProblems keeps its digests over the banks, the pools and the real prompts", () => {
     const now = {

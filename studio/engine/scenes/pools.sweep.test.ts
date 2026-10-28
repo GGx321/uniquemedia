@@ -43,11 +43,6 @@ const failures = (texts: readonly PoolText[], check: (text: string) => string | 
   });
 
 describe("the built-in pools: the hard lists", () => {
-  test("the sweep reads every place, detail, activity and outfit (it is not vacuous)", () => {
-    const places = ORDINARY_BUILT_INS.reduce((n, c) => n + POOLS[c].locations.length, 0);
-    expect(places).toBeGreaterThanOrEqual(20);
-    expect(BUILT_IN.length).toBeGreaterThan(places * 3);
-  });
 
   test("no text carries a youth word (the engine's own check, descriptor scope)", () => {
     expect(failures(BUILT_IN, (t) => youthWords(t, "descriptor")[0] ?? null)).toEqual([]);

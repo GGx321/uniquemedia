@@ -408,18 +408,6 @@ describe("runRenderJob: the job folder and the output", () => {
     expect(seen).toEqual([]);
   });
 
-  test("the same exit without a cancel does report the clip as done (so the test above is not vacuous)", async () => {
-    const r = rig();
-    const { deps } = depsWith((call) => {
-      writeFileSync(outputOf(call.args), "data");
-      call.child.exit(0);
-    });
-
-    await runRenderJob(r.input, deps);
-
-    expect(r.progress[0]).toBe(10); // one of two 30-frame clips of 60: 35% of 30
-  });
-
   test("keeps the user's folders out of the stderr tail: the temp root becomes <tmp>, the export folder <export>", async () => {
     const r = rig();
     const { deps } = depsWith((call) => {

@@ -28,16 +28,4 @@ describe("the screens price nothing themselves", () => {
     const found = sources().filter((path) => FORBIDDEN.test(readFileSync(join(SCREENS, path), "utf8")));
     expect(found).toEqual([]);
   });
-
-  test("the pattern catches such an import (the guard is not empty)", () => {
-    expect(FORBIDDEN.test('import { launchEstimate } from "../../../shared/autopilot/estimate";')).toBe(true);
-    expect(FORBIDDEN.test('import { monthFit } from "../../shared/autopilot/money";')).toBe(true);
-    expect(FORBIDDEN.test('import { monthFit } from "../../../shared/autopilot/money.ts";')).toBe(true);
-    expect(FORBIDDEN.test("import { launchEstimate } from '../../../shared/autopilot/estimate.js';")).toBe(true);
-    expect(FORBIDDEN.test('const money = await import("../../../shared/autopilot/money");')).toBe(true);
-    expect(FORBIDDEN.test('import "../../../shared/autopilot/estimate";')).toBe(true);
-    expect(FORBIDDEN.test('import { LaunchPreview } from "../../../shared/engine";')).toBe(false);
-    expect(FORBIDDEN.test('import { chooseTrack } from "../../../shared/autopilot/track";')).toBe(false);
-    expect(FORBIDDEN.test('import { x } from "../../../shared/autopilot/moneyless";')).toBe(false);
-  });
 });

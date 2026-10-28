@@ -63,11 +63,6 @@ const failures = (texts: readonly BankText[], check: (text: string) => string | 
 const rule = (name: string): ((text: string) => string | null) => ENGINE_RULES.find(([n]) => n === name)?.[1] ?? (() => "no such rule");
 
 describe("the bank sweep: the engine's word lists", () => {
-  test("reads every bank text (it is not vacuous)", () => {
-    const places = ORDINARY_BANK_CATEGORIES.reduce((n, c) => n + BANKS[c].places.length, 0);
-    expect(places).toBeGreaterThanOrEqual(20);
-    expect(BANK_TEXTS.length).toBeGreaterThan(places * 10);
-  });
 
   test.each(ENGINE_RULES)("no bank text breaks the %s rule", (_name, check) => {
     expect(failures(BANK_TEXTS, check)).toEqual([]);

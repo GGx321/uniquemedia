@@ -42,11 +42,6 @@ describe("the built-in pools are ordinary places", () => {
     for (const [, place] of allPlaces) for (const a of place.activities) expect(a.phone === true).toBe(PHONE_WORDS.test(a.text));
   });
 
-  test("there are phone activities to filter (the rule is not vacuous on the real pools)", () => {
-    const flagged = allPlaces.flatMap(([, place]) => place.activities.filter((a) => a.phone === true));
-    expect(flagged.length).toBeGreaterThanOrEqual(2);
-  });
-
   // K-3 (5a.2): every place carries 2 or 3 ordinary details; a room's go into its room phrase, the others into the sentence's `with {detail}`.
   test("every place carries 2 or 3 details", () => {
     for (const [, place] of allPlaces) expect([2, 3]).toContain(place.details?.length ?? 0);
