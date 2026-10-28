@@ -332,9 +332,10 @@ describe("CS.8: a category's angles", () => {
 
   // 2026-10-12, S5.9g (mockup 54#create, README «Тексты — черновики», approved with the mockups): two built-ins are revealing now, so the hint says «как во
   // всех своих категориях» where it said «как во всех категориях».
-  test("the description hint names the pose and the angle (CatCreate)", () => {
+  // 5a.4 (S5.BA8b, plan s5a4 §5.9 row 17; mockup 66): «Смелая» dresses a custom category too, so the tail says where lingerie and swimwear come from.
+  test("the description hint names the pose and the angle (CatCreate), and that «Смелая» adds lingerie and swimwear to ordinary outfits", () => {
     expect(DESCRIPTION_HINT).toBe(
-      "Где она бывает, что там делает и в какой позе, во что одета, с какого ракурса снимать («вид сзади», «в профиль»). Модель составит 5–7 мест, 3–6 нарядов и набор кадров. Наряды — только неоткровенные, как во всех своих категориях.",
+      "Где она бывает, что там делает и в какой позе, во что одета, с какого ракурса снимать («вид сзади», «в профиль»). Модель составит 5–7 мест, 3–6 нарядов и набор кадров. Наряды — обычные; бельё и купальники добавит подача «Смелая».",
     );
   });
 

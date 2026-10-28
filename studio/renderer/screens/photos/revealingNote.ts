@@ -1,15 +1,15 @@
-// S5.5: the pool generator draws no lingerie, swimwear or nudity in the owner's own categories (engine/scenes/poolGen.ts; «Смелая» stays out of custom categories in
-// 5a.3, answer (f)), so a custom category whose description asks for them comes out in everyday clothes. The swap used to be silent; the sheet now says so, before
-// «Создать» and on the category's card. Renderer-only: the engine's own word list (scenes/words.ts) is not imported here, this one also reads Russian and the
-// description rather than an outfit. S5.9g (mockup 54): «Смелая» shipped, so the note says where those frames are drawn instead of promising them.
+// S5.5: the pool generator draws no lingerie, swimwear or nudity in the owner's own categories (engine/scenes/poolGen.ts), so a custom category whose description asks for them comes out in
+// everyday clothes. The swap used to be silent; the sheet says so, before «Создать» and on the category's card. Renderer-only: the engine's own word list (scenes/words.ts) is not imported
+// here, this one also reads Russian and the description rather than an outfit. 5a.4 (S5.BA8b, plan s5a4 §5.9 rows 15, 16; r2.2 D4, r2.3 M5; mockup 66): «Смелая» draws every category, a
+// custom one included, so the note says what it gives there instead of sending the owner to the two built-ins. It promises nothing «в духе описания»: the engine never draws an outfit
+// from the description (I5.78).
 
-/** What the owner is told when his description asks for what is not drawn. Neutral: a fact and where to find it, not a reproach. */
+/** What the owner is told before «Создать» when his description asks for what the category's own outfits will not have. Neutral: a fact and where to find it, not a reproach. */
 export const REVEALING_NOTE =
-  "Бельё и купальники в своих категориях не рисуем — категория выйдет в обычной одежде. Бельё, ночнушки и пляж — во встроенных «Ночнушки и бельё» и «Пляж и бассейн» с подачей «Смелая».";
+  "Бельё и купальники даёт подача «Смелая»: с ней она выйдет в белье дома или в номере, в мире категории, а у воды — в купальнике. Голой Seedream не рисует.";
 
-/** The same note on the card of a category that is already created: it did come out in everyday clothes. */
-export const REVEALING_NOTE_DONE =
-  "Бельё и купальники в своих категориях не рисуем — категория вышла в обычной одежде. Бельё, ночнушки и пляж — во встроенных «Ночнушки и бельё» и «Пляж и бассейн» с подачей «Смелая».";
+/** The note on the card of a category that is already created: its own outfits are ordinary, and what «Смелая» gives. */
+export const REVEALING_NOTE_DONE = "Наряды категории — обычные. С подачей «Смелая» она выйдет в белье дома или в номере, а у воды — в купальнике. Голой Seedream не рисует.";
 
 // A word is a run of letters: `\b` knows only ASCII, so the edges are lookarounds over Unicode letters and digits. Text is lowercased and ё is read as е before matching,
 // so every pattern below is written in lowercase with е. A Russian stem is followed by the endings it really takes (not by «any letters»), so «белый» and «бельгийский»

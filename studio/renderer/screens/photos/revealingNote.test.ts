@@ -184,19 +184,28 @@ describe("asksForRevealing: the boundaries", () => {
   });
 });
 
-// 2026-10-12, S5.9g (plan s5a3 §13.1 «Мои категории»; mockup 54): «Смелая» shipped, so the note no longer promises it («Это появится с уровнем «Смелая».»);
-// it says where those frames are drawn now. Both tenses stay, as before.
+// 2026-10-12, S5.9g (plan s5a3 §13.1 «Мои категории»; mockup 54): «Смелая» shipped, so the note no longer promised it; it said where those frames were drawn.
+// 5a.4 (S5.BA8b, plan s5a4 §5.9 rows 15, 16; r2.2 D4, r2.3 M5; mockup 66): «Смелая» draws every category now, a custom one included, so the note says what it gives
+// there — lingerie at home or in a room, in the category's world, swimwear at the water — and what nothing gives. «в духе описания» is gone: the engine never draws
+// an outfit from the description (I5.78). The two notes are no longer one sentence in two tenses: the created card says the category's outfits are ordinary.
 describe("REVEALING_NOTE", () => {
-  test("is the neutral sentence of mockup 54: not in the owner's own categories, but in the two built-in «Смелая» ones", () => {
+  test("before «Создать» (row 15, mockup 66): what «Смелая» gives a custom category, and that Seedream draws no nudity", () => {
     expect(REVEALING_NOTE).toBe(
-      "Бельё и купальники в своих категориях не рисуем — категория выйдет в обычной одежде. Бельё, ночнушки и пляж — во встроенных «Ночнушки и бельё» и «Пляж и бассейн» с подачей «Смелая».",
+      "Бельё и купальники даёт подача «Смелая»: с ней она выйдет в белье дома или в номере, в мире категории, а у воды — в купальнике. Голой Seedream не рисует.",
     );
   });
 
-  test("on a created category's card it speaks in the past tense and is otherwise the same sentence", () => {
+  test("on a created category's card (row 16, mockup 66#created): its own outfits are ordinary, and what «Смелая» gives", () => {
     expect(REVEALING_NOTE_DONE).toBe(
-      "Бельё и купальники в своих категориях не рисуем — категория вышла в обычной одежде. Бельё, ночнушки и пляж — во встроенных «Ночнушки и бельё» и «Пляж и бассейн» с подачей «Смелая».",
+      "Наряды категории — обычные. С подачей «Смелая» она выйдет в белье дома или в номере, а у воды — в купальнике. Голой Seedream не рисует.",
     );
-    expect(REVEALING_NOTE_DONE.replace("вышла", "выйдет")).toBe(REVEALING_NOTE);
+  });
+
+  test("neither note sends the owner to the two built-ins any more, nor promises an outfit «в духе описания»", () => {
+    for (const note of [REVEALING_NOTE, REVEALING_NOTE_DONE]) {
+      expect(note).not.toContain("во встроенных");
+      expect(note).not.toContain("не рисуем");
+      expect(note).not.toContain("в духе описания");
+    }
   });
 });
