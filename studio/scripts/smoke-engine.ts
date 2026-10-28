@@ -4120,6 +4120,12 @@ async function runBoldRouteScenario(target: Target): Promise<void> {
     });
     running = await launchWithRetry(target, userData, 3, appArgs);
     const again = running.cdp;
+    // Main decrypts the stored key and hands it to the new engine after the engine is up; on Windows that lands after the first commands
+    // (CI 40716998569: AUTH_INVALID on the run's start). The run needs the key, so wait for it as the key scenario does after its restart.
+    await waitFor("the relaunched engine to hold the key", async () => {
+      const s = await req(again, "settings.get");
+      return field(s, "result", "apiKey", "last4") === "7q3z" ? s : null;
+    });
     const got = await req(again, "scenes.get", { avatarId });
     const storedView = field(got, "result", "sceneSet");
     check("bold scenario: after the relaunch the avatar's set is the one stored before 5a.4, its nightwear on the route and its «Дом» off it", field(storedView, "sceneSetId") === mixedSetId, got);
