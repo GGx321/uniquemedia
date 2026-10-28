@@ -3,6 +3,7 @@ import { BANKS } from "../../shared/scenes/banks";
 import { captureOfShot, type Capture } from "../../shared/scenes/captures";
 import { plan } from "./planner";
 import type { PlanSlot } from "./schema";
+import { countTo, PUSH_SIZES, sweepTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -16,9 +17,10 @@ const captureOf = (slot: PlanSlot): Capture => slot.capture ?? captureOfShot(slo
 const isAway = (slot: PlanSlot): boolean => slot.pose === "profile" || slot.pose === "back";
 
 describe.each(["nightwear", "beach"] as const)("%s: the deck and the angles", (category) => {
-  test("a category plan of 1 to 30 holds at most ⌊n/5⌋ frames that face away", () => {
-    for (const seed of SEEDS.slice(0, 40)) {
-      for (let count = 1; count <= 30; count++) expect({ count, away: plan({ seed, count, categories: [category], level: "bold" }).slots.filter(isAway).length <= Math.floor(count / 5) }).toEqual({ count, away: true });
+  // Push: 4 of the 40 seeds, the sizes 1, 2, 12 and 30. Heavy: the 40 seeds, every size from 1 to 30 (as before).
+  sweepTest("a category plan of 1 to 30 holds at most ⌊n/5⌋ frames that face away", { push: { seeds: SEEDS.slice(0, 4), sizes: PUSH_SIZES }, heavy: { seeds: SEEDS.slice(0, 40), sizes: countTo(30) } }, ({ seeds, sizes }) => {
+    for (const seed of seeds) {
+      for (const count of sizes) expect({ count, away: plan({ seed, count, categories: [category], level: "bold" }).slots.filter(isAway).length <= Math.floor(count / 5) }).toEqual({ count, away: true });
     }
   });
 

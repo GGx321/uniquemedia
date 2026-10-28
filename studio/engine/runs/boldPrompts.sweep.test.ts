@@ -5,6 +5,7 @@ import { ARMS_UP, looksElsewhere } from "../../shared/scenes/banks/schema";
 import { countInFamily, FEET_IN_THE_WATER, FEET_IN_THE_WATER_MAX, poseFamilyOf } from "../../shared/scenes/banks/boldDesign.testkit";
 import { HELD_OBJECT_WORDS } from "../../shared/scenes/words";
 import { boldPromptMatrix, boldRunPrompts, type PromptFrame } from "./testing/boldRunPrompts";
+import { sweepTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -124,20 +125,24 @@ function sceneDetailOf(f: PromptFrame): string | undefined {
 // Item 3 (MEDIUM): at 20 photos and «Ножки» 30 % a run holds 6 legs slots. With 4 legs moments a bank, two of them came twice in every run, and the same scene (place, moment and
 // outfit: «her bed | lies with her legs crossed | a satin cami and satin shorts») was paid for twice in 16 of 40 «Ночнушки» runs and 14 of 40 beach runs.
 describe("a 20-photo run with «Ножки» 30 % never pays for the same scene twice", () => {
-  const RUN_SEEDS = Array.from({ length: 60 }, (_, i) => i + 1);
-  const runsOf = (category: "nightwear" | "beach"): PromptFrame[][] => RUN_SEEDS.map((seed) => boldRunPrompts({ category, seed, count: 20, legsShare: 30, cameraRealism: false }));
+  // Push: the runs of seeds 1 to 6. Heavy: seeds 1 to 60 (as before). These are variety checks (no repeated scene, legs moment or pose family); the bans of the file run on the whole matrix.
+  const RUNS = { push: { runs: 6 }, heavy: { runs: 60 } };
+  const seedsOf = (runs: number): number[] => Array.from({ length: runs }, (_, i) => i + 1);
+  const runsOf = (category: "nightwear" | "beach", RUN_SEEDS: readonly number[]): PromptFrame[][] => RUN_SEEDS.map((seed) => boldRunPrompts({ category, seed, count: 20, legsShare: 30, cameraRealism: false }));
   const repeated = (keys: readonly string[]): string[] => keys.filter((key, i) => keys.indexOf(key) !== i);
 
-  test.each(["nightwear", "beach"] as const)("%s: 6 legs slots a run, and no legs moment twice", (category) => {
-    const runs = runsOf(category);
+  for (const category of ["nightwear", "beach"] as const) sweepTest(`${category}: 6 legs slots a run, and no legs moment twice`, RUNS, ({ runs: runCount }) => {
+    const RUN_SEEDS = seedsOf(runCount);
+    const runs = runsOf(category, RUN_SEEDS);
     for (const frames of runs) expect(frames.filter((f) => f.slot.framing === "legs")).toHaveLength(6);
     const twice = runs.flatMap((frames, i) => repeated(frames.filter((f) => f.slot.framing === "legs").map((f) => `${f.slot.location} | ${f.slot.activity}`)).map((key) => `seed ${RUN_SEEDS[i]}: ${key}`));
     expect(twice.slice(0, 5)).toEqual([]);
   });
 
   // S5.R4 round 2: the legs moments differed in words, not in pose: «legs stretched out» was 3 of 6 legs frames in 30 of 45 «Ночнушки» and 29 of 45 beach runs.
-  test.each(["nightwear", "beach"] as const)("%s: no pose family twice among a run's legs frames (her feet in the water: at most two)", (category) => {
-    const legsOf = runsOf(category).map((frames) => frames.filter((f) => f.slot.framing === "legs").map((f) => f.slot.activity ?? ""));
+  for (const category of ["nightwear", "beach"] as const) sweepTest(`${category}: no pose family twice among a run's legs frames (her feet in the water: at most two)`, RUNS, ({ runs: runCount }) => {
+    const RUN_SEEDS = seedsOf(runCount);
+    const legsOf = runsOf(category, RUN_SEEDS).map((frames) => frames.filter((f) => f.slot.framing === "legs").map((f) => f.slot.activity ?? ""));
     const families = legsOf.map((list) => list.map((activity) => poseFamilyOf(activity) ?? `none: ${activity}`));
     const twice = families.flatMap((list, i) => repeated(list.filter((family) => family !== FEET_IN_THE_WATER)).map((family) => `seed ${RUN_SEEDS[i]}: ${family}`));
     expect(twice.slice(0, 5)).toEqual([]);
@@ -149,8 +154,9 @@ describe("a 20-photo run with «Ножки» 30 % never pays for the same scene 
 
   // With the legs moments apart, a beach run still drew one scene twice in about 2 % of runs (a moment its level's slots share, an outfit list of two to four): «a rooftop pool |
   // looks back over her shoulder | a high-leg black swimsuit» at seed 33, «the water's edge | stretches her arms out, knee-deep | a black bikini» at seed 37.
-  test.each(["nightwear", "beach"] as const)("%s: no place, moment and outfit twice in any of the runs", (category) => {
-    const twice = runsOf(category).flatMap((frames, i) => repeated(frames.map((f) => `${f.slot.location} | ${f.slot.activity} | ${f.slot.outfit}`)).map((key) => `seed ${RUN_SEEDS[i]}: ${key}`));
+  for (const category of ["nightwear", "beach"] as const) sweepTest(`${category}: no place, moment and outfit twice in any of the runs`, RUNS, ({ runs: runCount }) => {
+    const RUN_SEEDS = seedsOf(runCount);
+    const twice = runsOf(category, RUN_SEEDS).flatMap((frames, i) => repeated(frames.map((f) => `${f.slot.location} | ${f.slot.activity} | ${f.slot.outfit}`)).map((key) => `seed ${RUN_SEEDS[i]}: ${key}`));
     expect(twice.slice(0, 5)).toEqual([]);
   });
 });
