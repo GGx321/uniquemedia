@@ -34,7 +34,7 @@ interface World {
 }
 
 /** A launch with «Сцены на проверку» (Sofia's scenes wait for the owner), her set seeded with `written` of its scenes written, the launch paused if asked. */
-async function launchWithSet({ paused = false, written }: { paused?: boolean; written?: number } = {}): Promise<World> {
+async function launchWithSet({ paused = false, written, level, who = SOFIA }: { paused?: boolean; written?: number; level?: "bold"; who?: AvatarSummary } = {}): Promise<World> {
   // This machine's own switch is OFF: a launch's set shows on «Фото» whatever it says.
   // S4.8: written against the mock's CANNED launch (a mid-run state that moves only by clicks); the mock now runs one by default.
   const { engine, client } = setup({ ...library(), sceneReview: "off", launchRun: "canned" });
@@ -50,6 +50,7 @@ async function launchWithSet({ paused = false, written }: { paused?: boolean; wr
     generate: true,
     sceneReview: true,
     stickers: false,
+    ...(level === undefined ? {} : { level }),
   };
   let launch: LaunchView | null = null;
   await act(async () => {
@@ -65,22 +66,24 @@ async function launchWithSet({ paused = false, written }: { paused?: boolean; wr
   });
   if (launch === null) throw new Error("no launch");
   const started: LaunchView = launch;
-  const row = started.avatars.find((a) => a.avatarId === SOFIA.avatarId);
-  if (row === undefined || row.sceneSetId === null || row.scenes === null) throw new Error("Sofia has no set in the launch");
-  act(() => engine.seedSceneSet({ avatarId: SOFIA.avatarId, sceneSetId: row.sceneSetId ?? "", count: row.scenes ?? 0, written: written ?? row.scenes ?? 0, categories: ["home"], launchId: started.launchId }));
+  const row = started.avatars.find((a) => a.avatarId === who.avatarId);
+  if (row === undefined || row.sceneSetId === null || row.scenes === null) throw new Error(`${who.name} has no set in the launch`);
+  act(() =>
+    engine.seedSceneSet({ avatarId: who.avatarId, sceneSetId: row.sceneSetId ?? "", count: row.scenes ?? 0, written: written ?? row.scenes ?? 0, categories: ["home"], launchId: started.launchId, ...(level === undefined ? {} : { level }) }),
+  );
   return { engine, client, launch: started, row };
 }
 
-/** From the launch card's row, as the owner goes: «Открыть «Фото»» of Sofia. */
-async function openFromAutopilot(): Promise<void> {
+/** From the launch card's row, as the owner goes: «Открыть «Фото»» of Sofia (or of the avatar named). */
+async function openFromAutopilot(name = "Sofia"): Promise<void> {
   await openSection("Автопилот");
   await screen.findByRole("heading", { level: 1, name: "Автопилот" });
   await flush();
   const live = document.getElementById("ap-live");
   if (live === null) throw new Error("no live card");
-  fireEvent.click(within(live).getByRole("button", { name: "Открыть «Фото» · Sofia" }));
+  fireEvent.click(within(live).getByRole("button", { name: `Открыть «Фото» · ${name}` }));
   await flush();
-  await screen.findByRole("heading", { level: 1, name: "Sofia" });
+  await screen.findByRole("heading", { level: 1, name });
   await screen.findByRole("region", { name: "Набор сцен запуска" });
   await flush();
 }
@@ -167,6 +170,27 @@ describe("a launch's set on «Фото» (PhotoLaunchReview)", () => {
     const notice = await screen.findByText(PRICE_SCOPES_RU.bold);
     expect(notice.closest(".notice")?.classList.contains("notice-warn")).toBe(true);
     expect(screen.queryByText(errorText({ code: "PRICE_UNAVAILABLE" })) === null).toBe(true);
+  });
+
+  // 5a.4 (S5.BA8b round 2, MEDIUM-2; §5.9 row 24): a «Смелая» launch's set is drawn on the route, every scene of it by Seedream 5 Pro in 2K whatever the settings' model; its strip
+  // names that model, as the owner's own set's strip does, and the settings' model only for a set off the route.
+  test("a «Смелая» launch's set: the models line names Seedream 5 Pro · 2K alone, and says the settings do not change it", async () => {
+    // At «Смелая» the library gives none of the old photos (r2.2 D2), so the canned launch has Mia's scenes waiting for the review.
+    await launchWithSet({ level: "bold", who: MIA });
+    await openFromAutopilot("Mia");
+    const line = strip().querySelector(".scene-strip-models");
+    expect(line?.textContent?.replace(/\s+/g, " ")).toBe("Seedream 5 Pro · 2K · 9:16 · референс — мастер-портрет · текст grok-4.3");
+    expect(line?.getAttribute("title")).toBe(
+      "Картинки — Seedream 5 Pro в 2K: так рисуется каждый кадр «Смелой», Настройки его не меняют. Текст — модель этого набора: ею написаны его сцены.",
+    );
+  });
+
+  test("an ordinary launch's set: the settings' model, as before", async () => {
+    await launchWithSet();
+    await openFromAutopilot();
+    const line = strip().querySelector(".scene-strip-models");
+    expect(line?.textContent?.startsWith("Seedream")).toBe(false);
+    expect(line?.textContent).toMatch(/· 9:16 · референс — мастер-портрет · текст grok-4\.3$/);
   });
 
   test("the set moved (SCENES_CHANGED): told, nothing drawn, the focus stays on the button", async () => {

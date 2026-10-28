@@ -12,8 +12,8 @@ import { bandText, launchGo, launchSetMeta, overPlanText, type LaunchLink } from
 import { drawStepText, focusLost, useLaunchDrawPrice } from "./scenePaid";
 import { focusSceneCard } from "./SceneSetPanel";
 import { setCategoryTags } from "./sceneReview";
-import { modelSegments, setMetaText, Step } from "./SceneStrip";
-import { MODELS_LINE_TITLE, priceSourceText, SCENES_CHANGED_APPROVE, stepScenes, stripLookText } from "./sceneText";
+import { setMetaText, setModels, Step } from "./SceneStrip";
+import { priceSourceText, SCENES_CHANGED_APPROVE, stepScenes, stripLookText } from "./sceneText";
 import { useMounted } from "./shared";
 
 // S4.9b: the strip of a launch's scene set on «Фото» (PhotosS4.dc.html: review, review-paused, overplan, drawing; README decision 10). Over it, the launch's
@@ -142,7 +142,8 @@ export function LaunchSetStrip({ avatar, view, set, link, focusGo }: LaunchSetSt
 
   const tags = setCategoryTags(set);
   const meta = launchSetMeta(setMetaText(set));
-  const models = modelSegments(view, set.textModel);
+  // 5a.4 (§5.9 row 24): a «Смелая» launch's set, every scene on the route, names Seedream alone, as the owner's own set's strip does.
+  const { segments: models, title: modelsTitle } = setModels(view, set);
   const step1 = stepScenes(set);
   const allocation = row.drawAllocationMicros;
   const drawing = go.kind === "in-launch" && row.photos.done > 0;
@@ -187,7 +188,7 @@ export function LaunchSetStrip({ avatar, view, set, link, focusGo }: LaunchSetSt
                 </span>
               </p>
               {models.length > 0 && (
-                <p className="faint scene-strip-models" title={MODELS_LINE_TITLE}>
+                <p className="faint scene-strip-models" title={modelsTitle}>
                   {models.map((segment, i) => (
                     <span key={segment}>
                       <span className="nowrap">{segment}</span>
