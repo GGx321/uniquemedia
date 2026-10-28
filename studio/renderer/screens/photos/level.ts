@@ -107,6 +107,9 @@ export function gatedNote(kept: readonly string[]): string {
 /** Where the model is named: its words joined by non-breaking spaces (§5.9). */
 const MODEL_NAME = "Seedream 5 Pro · 2K";
 
+/** The line under «Тип кадра» at «Смелая» (§5.9 row 23; mockup 65): Seedream draws every «Смелая» frame in 2K (Q-A2), whatever the settings' image model. */
+export const BOLD_SHOT_LINE = `${MODEL_NAME} · 9:16 · референс — мастер-портрет`;
+
 /** What an avatar made from a photo cannot be drawn with, and what its prompt says instead (r2.4 N3): one wording on the card and in «Автопилот». */
 const IMPORTED_TAIL = "без простыни, полотенца и пены; в промпте бельё плотное.";
 

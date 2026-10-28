@@ -18,7 +18,7 @@ import { CategorySheet } from "./CategorySheet";
 import type { LaunchLink } from "./launchSet";
 import { cardLegsLine, hasBuiltIn } from "./legs";
 import { LegsChips } from "./LegsChips";
-import { ANGLE_FROM_SCENE, BOLD_SLOW, cardImportedLine, cardLevelCaption, drawsBoldFrames, LEVEL_OPTIONS } from "./level";
+import { ANGLE_FROM_SCENE, BOLD_SHOT_LINE, BOLD_SLOW, cardImportedLine, cardLevelCaption, drawsBoldFrames, LEVEL_OPTIONS } from "./level";
 import { BoldAttemptLine, BoldPriceNotice, isBoldPriceMissing } from "./boldPrice";
 import { LaunchSetStrip } from "./LaunchSetStrip";
 import { RecomposeDialog } from "./RecomposeDialog";
@@ -605,10 +605,15 @@ export function GenerateCard({
                   </li>
                 ))}
               </ul>
-              {imageModel && (
-                <span className="faint photos-note photos-shot-caption">
-                  {imageModel} · {imageQuality}9:16 · референс — мастер-портрет
-                </span>
+              {/* 5a.4 (§5.9 row 23): at «Смелая» every frame is Seedream's in 2K, whatever the settings' model. */}
+              {form.level === "bold" ? (
+                <span className="faint photos-note photos-shot-caption">{BOLD_SHOT_LINE}</span>
+              ) : (
+                imageModel && (
+                  <span className="faint photos-note photos-shot-caption">
+                    {imageModel} · {imageQuality}9:16 · референс — мастер-портрет
+                  </span>
+                )
               )}
             </div>
           </div>

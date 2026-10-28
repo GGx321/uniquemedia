@@ -279,6 +279,23 @@ describe("the scenes column's writers with a kept «Смелая» pick", () => 
   });
 });
 
+// 5a.4 (S5.BA8b, plan s5a4 §5.9 row 23; mockup 65): at «Смелая» Seedream 5 Pro draws every frame in 2K (Q-A2), whatever the settings' image model, so the line under «Тип кадра»
+// says so; the other levels name the settings' model, as before.
+describe("the model line under «Тип кадра»", () => {
+  const shotLine = (): string => card().querySelector(".photos-shot-caption")?.textContent?.replace(/\s+/g, " ") ?? "";
+
+  test("«Смелая»: «Seedream 5 Pro · 2K · 9:16 · референс — мастер-портрет»; «Обычная» and «Кокетливая»: the settings' model", async () => {
+    await openPhotos();
+    await waitFor(() => expect(shotLine()).toMatch(/· low · 9:16 · референс — мастер-портрет$/));
+    const ordinary = shotLine();
+    expect(ordinary.startsWith("Seedream")).toBe(false);
+    await pickLevel("Смелая");
+    expect(shotLine()).toBe("Seedream 5 Pro · 2K · 9:16 · референс — мастер-портрет");
+    await pickLevel("Кокетливая");
+    expect(shotLine()).toBe(ordinary);
+  });
+});
+
 describe("the two chips' hints (mockup 48a)", () => {
   test("«Ночнушки и бельё» under the pointer, «Пляж и бассейн» in focus — under «Смелая» and while they wait for it", async () => {
     await openPhotos();
