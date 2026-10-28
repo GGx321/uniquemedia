@@ -147,8 +147,9 @@ function ownFacts(photo: PhotoSidecar, slot: OwnPlanSlot): Omit<FrameFacts, "age
     faceRole: roleOf(facePoseOf(slot)),
     legs: false,
     legwear: null,
-    bold: false,
-    level: contentLevelOf({ category: slot.category, level: undefined, route: undefined }),
+    // 5a.4 (S5.BA9, I5.79): an own scene of a «Смелая» set carries the route, so it is a «Смелая» frame (Kling-only) at the «Смелая» level; one stored before it reads as before.
+    bold: isBoldFrame({ category: slot.category, route: slot.route }),
+    level: contentLevelOf({ category: slot.category, level: undefined, route: slot.route }),
   };
 }
 
