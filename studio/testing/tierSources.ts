@@ -82,6 +82,30 @@ export function quarantineIds(source: string, fileName = "test.ts"): string[] {
   });
 }
 
+/** The calls that register one test: `test`, `it` and the tier helpers (a `describe` only groups them). */
+const TEST_CALLEES = new Set(["test", "it", "perfTest", "perfOnlyTest", "heavyTest", "quarantinedTest"]);
+
+/**
+ * The lines of the tests in `source` that the run of `tier` does not select: neither a call of the tier's helper, nor named with its tag,
+ * nor inside a suite named with it. realWorkerTests.ts leaves a `*.heavy.test.*` file out of the blocking run by its name, so such a test
+ * there would run nowhere. The head of a curried call (`test.each(rows)` in `test.each(rows)("name", fn)`) is not a test of its own.
+ */
+export function untieredTests(source: string, tier: Tier, fileName = "test.ts"): number[] {
+  const file = parse(source, fileName);
+  const found: number[] = [];
+  const visit = (node: ts.Node, inTier: boolean): void => {
+    let tagged = inTier;
+    if (ts.isCallExpression(node) && !(ts.isCallExpression(node.parent) && node.parent.expression === node)) {
+      const callee = calleeName(node);
+      if (callee !== undefined && (HELPER_CALLEES[tier].includes(callee) || (NAMING_CALLEES.has(callee) && (nameStart(node) ?? "").startsWith(tierTag(tier))))) tagged = true;
+      else if (!inTier && callee !== undefined && TEST_CALLEES.has(callee)) found.push(file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1);
+    }
+    ts.forEachChild(node, (child) => visit(child, tagged));
+  };
+  visit(file, false);
+  return found;
+}
+
 /** The `assertBudget(...)` calls in `source` that do not sit inside a test the perf run selects (a `perfTest`/`perfOnlyTest`, or a test named `[perf] ...`). */
 export function budgetsOutsidePerfTests(source: string, fileName = "test.ts"): number[] {
   const file = parse(source, fileName);

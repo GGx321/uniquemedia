@@ -5,15 +5,19 @@ import { join } from "node:path";
 import {
   ATTEMPT_TIMEOUT_MS,
   childEnv,
+  HEAVY_TEST_FILE,
   isBunCrashOnly,
   listTestFiles,
+  loadFileTimes,
   MAX_ATTEMPTS,
   commandLineLength,
   DEFAULT_TEST_TIMEOUT_MS,
+  parseFileTimes,
   runOnce,
   runShards,
   runWithCrashRetry,
   selectShard,
+  selectTierShard,
   shardedTestArgs,
   WINDOWS_COMMAND_LINE_LIMIT,
   shardFiles,
@@ -299,25 +303,61 @@ describe("running one shard of N", () => {
     expect(lines[at + 1]).toContain("./b.test.ts");
   });
 
-  // The proof that no file is skipped or run twice: every job's selection, for the real ./studio tree, together is exactly the file list.
-  for (const count of [3, 4, 5, 6, 8, 12]) {
-    test(`the ${count} jobs' shards of the real ./studio tree together run every test file exactly once`, async () => {
-      const all = await listTestFiles(["./studio"], ROOT);
-      const plan = await shardedTestArgs(["./studio", "--randomize"], count, ROOT);
-      const picked: string[] = [];
-      for (let index = 1; index <= count; index++) {
-        const [args] = selectShard(plan, { index, of: count });
-        const files = (args ?? []).filter((arg) => !arg.startsWith("-"));
-        expect(files.length).toBeGreaterThan(0);
-        picked.push(...files);
-      }
-      expect(new Set(picked).size).toBe(picked.length);
-      expect([...picked].sort()).toEqual(all);
-    });
+  // The proof that no file is skipped or run twice: for either table (Windows' and macOS's times), every job's selection of the real
+  // ./studio tree together is exactly its blocking file list: every test file but the *.heavy.test.* ones, which the heavy tier runs.
+  for (const platform of ["win32", "darwin"] as const) {
+    for (const count of [3, 4, 5, 6, 8, 12]) {
+      test(`the ${count} jobs' shards of the real ./studio tree, dealt by ${platform}'s times, together run every blocking test file exactly once`, async () => {
+        const all = (await listTestFiles(["./studio"], ROOT)).filter((file) => !HEAVY_TEST_FILE.test(file));
+        const plan = await shardedTestArgs(["./studio", "--randomize"], count, ROOT, await loadFileTimes(platform));
+        const picked: string[] = [];
+        for (let index = 1; index <= count; index++) {
+          const [args] = selectShard(plan, { index, of: count });
+          const files = (args ?? []).filter((arg) => !arg.startsWith("-"));
+          expect(files.length).toBeGreaterThan(0);
+          picked.push(...files);
+        }
+        expect(new Set(picked).size).toBe(picked.length);
+        expect([...picked].sort()).toEqual(all);
+      });
+    }
   }
 
   test("two independent computations of the partition (two jobs) agree", async () => {
-    expect(await shardedTestArgs(["./studio"], 4, ROOT)).toEqual(await shardedTestArgs(["./studio"], 4, ROOT));
+    const times = await loadFileTimes("win32");
+    expect(await shardedTestArgs(["./studio"], 12, ROOT, times)).toEqual(await shardedTestArgs(["./studio"], 12, ROOT, times));
+  });
+
+  // The measured times are what the balance is for: Windows' 12 shards ran from 115 to 601 s and macOS's 4 from 468 to 761 s when the
+  // files were dealt round-robin by name. A table whose paths no longer match the tree's (a moved tree, a key format that drifted) would
+  // quietly fall back to dealing by count: nine files in ten must be known.
+  test("dealt by the committed table, no shard of the real tree is over a tenth above an even share (or the slowest file), and the table knows nine files in ten", async () => {
+    for (const [platform, count] of [["win32", 12], ["darwin", 4]] as const) {
+      const times = await loadFileTimes(platform);
+      const plan = await shardedTestArgs(["./studio"], count, ROOT, times);
+      const files = plan.flat();
+      const ms = (file: string): number => times[file.replace(/^\.\//, "")] ?? 0;
+      expect([platform, files.filter((file) => times[file.replace(/^\.\//, "")] !== undefined).length / files.length >= 0.9]).toEqual([platform, true]);
+      const total = files.reduce((sum, file) => sum + ms(file), 0);
+      const bound = 1.1 * Math.max(...files.map(ms), total / count);
+      for (const args of plan) expect([platform, args.reduce((sum, file) => sum + ms(file), 0) <= bound]).toEqual([platform, true]);
+    }
+  });
+
+  test("every *.heavy.test.* file of the real tree, which the blocking run leaves out, is in the heavy tier's run", async () => {
+    const named = (await listTestFiles(["./studio"], ROOT)).filter((file) => HEAVY_TEST_FILE.test(file));
+    const [heavyRun] = await tierTestArgs(["./studio"], "heavy", ROOT);
+    for (const file of named) expect([file, heavyRun?.includes(file)]).toEqual([file, true]);
+  });
+
+  test("the heavy tier's 3 jobs' shards of the real ./studio tree together run every file of the heavy tier exactly once", async () => {
+    const [whole] = await tierTestArgs(["./studio"], "heavy", ROOT);
+    const files = (whole ?? []).filter((arg) => !arg.startsWith("-"));
+    expect(files.length).toBeGreaterThan(0);
+    const plan = await tierTestArgs(["./studio"], "heavy", ROOT, 3);
+    const picked = [1, 2, 3].flatMap((index) => selectTierShard(plan, { index, of: 3 }).flatMap((args) => args.filter((arg) => !arg.startsWith("-"))));
+    expect(new Set(picked).size).toBe(picked.length);
+    expect([...picked].sort()).toEqual([...files].sort());
   });
 });
 
@@ -395,6 +435,69 @@ describe("sharding the suite", () => {
     ]);
     expect(groups.flat().sort()).toEqual([...files].sort());
     expect(shardFiles(["a", "b"], 5)).toEqual([["a"], ["b"]]);
+  });
+
+  test("shardFiles deals the measured files slowest first, each to the group with the least time so far", () => {
+    // Round-robin would give 10 + 8 + 2 = 20 against 9 + 3 + 1 = 13; by time it is 16 against 17.
+    expect(shardFiles(["a", "b", "c", "d", "e", "f"], 2, { a: 10, b: 9, c: 8, d: 3, e: 2, f: 1 })).toEqual([
+      ["a", "d", "e", "f"],
+      ["b", "c"],
+    ]);
+  });
+
+  test("shardFiles deals the files the table does not know (new since it was measured) by count, lightest group first", () => {
+    // b's group is the lighter of the two, so it takes the first and the third of the new files.
+    expect(shardFiles(["a", "b", "n1", "n2", "n3"], 2, { a: 100, b: 40 })).toEqual([
+      ["a", "n2"],
+      ["b", "n1", "n3"],
+    ]);
+  });
+
+  test("shardFiles leaves no group empty when every time is zero, and gives the same groups whatever order the files come in", () => {
+    expect(shardFiles(["a", "b", "c"], 3, { a: 0, b: 0, c: 0 })).toEqual([["a"], ["b"], ["c"]]);
+    const times = { a: 5, b: 5, c: 7, d: 1 };
+    expect(shardFiles(["d", "c", "b", "a"], 2, times)).toEqual(shardFiles(["a", "b", "c", "d"], 2, times));
+  });
+
+  test("shardedTestArgs balances by the times it is given, read by the file's path from the root without ./", async () => {
+    const root = await tree(["studio/a.test.ts", "studio/b.test.ts", "studio/c.test.ts", "studio/d.test.ts"]);
+    const times = { "studio/a.test.ts": 50, "studio/b.test.ts": 40, "studio/c.test.ts": 30, "studio/d.test.ts": 20 };
+    // Round-robin: a + c = 80 against b + d = 60. By time: 70 and 70.
+    expect(await shardedTestArgs(["./studio", "--randomize"], 2, root, times)).toEqual([
+      ["--randomize", "./studio/a.test.ts", "./studio/d.test.ts"],
+      ["--randomize", "./studio/b.test.ts", "./studio/c.test.ts"],
+    ]);
+  });
+
+  test("shardedTestArgs leaves the *.heavy.test.* files out of the blocking run (the heavy tier runs them), whatever the case or extension", async () => {
+    const root = await tree(["studio/a.test.ts", "studio/c.test.ts"]);
+    await writeFile(join(root, "studio", "b.heavy.test.ts"), 'heavyTest("slow", () => {});');
+    await writeFile(join(root, "studio", "d.HEAVY.spec.tsx"), 'describe("[heavy] all of it", () => { test("x", () => {}); });');
+    expect(await shardedTestArgs(["./studio"], 2, root)).toEqual([["./studio/a.test.ts"], ["./studio/c.test.ts"]]);
+  });
+
+  test("shardedTestArgs refuses a *.heavy.test.* file with a test outside the heavy tier, or with no heavy test at all: that test would run nowhere", async () => {
+    for (const source of ['test("plain", () => {});', 'heavyTest("slow", () => {});\ntest("plain", () => {});', ""]) {
+      const root = await tree(["studio/a.test.ts"]);
+      await writeFile(join(root, "studio", "b.heavy.test.ts"), source);
+      await expect(shardedTestArgs(["./studio"], 2, root)).rejects.toThrow(/b\.heavy\.test\.ts .*run nowhere/);
+    }
+  });
+
+  test("shardedTestArgs refuses a tree whose only test files are *.heavy.test.*: the blocking run would run nothing", async () => {
+    const root = await tree(["studio/helper.ts"]);
+    await writeFile(join(root, "studio", "b.heavy.test.ts"), 'heavyTest("slow", () => {});');
+    await expect(shardedTestArgs(["./studio"], 2, root)).rejects.toThrow(/no test files .*outside/);
+  });
+
+  test("parseFileTimes takes Windows' map on Windows and macOS's anywhere else, and refuses a table that is not whole milliseconds in both", () => {
+    const table = { about: "measured", windows: { "studio/a.test.ts": 10 }, macos: { "studio/a.test.ts": 4 } };
+    expect(parseFileTimes(table, "win32")).toEqual({ "studio/a.test.ts": 10 });
+    expect(parseFileTimes(table, "darwin")).toEqual({ "studio/a.test.ts": 4 });
+    expect(parseFileTimes(table, "linux")).toEqual({ "studio/a.test.ts": 4 });
+    for (const bad of [null, [], { windows: {} }, { windows: { a: -1 }, macos: {} }, { windows: { a: 1.5 }, macos: {} }, { windows: {}, macos: { a: "1" } }]) {
+      expect(() => parseFileTimes(bad, "win32")).toThrow(/testFileTimes\.json/);
+    }
   });
 
   test("shardedTestArgs with one shard hands the arguments over unchanged, with no file search", async () => {
@@ -480,6 +583,32 @@ describe("tierTestArgs (STUDIO_TEST_TIER)", () => {
   test("is an empty plan when no file carries the tier (the quarantine list is empty most of the time)", async () => {
     const root = await treeWith({ "studio/a.test.ts": 'test("plain", () => {});' });
     expect(await tierTestArgs(["./studio"], "quarantine", root)).toEqual([]);
+  });
+
+  // The heavy tier runs as a matrix (`--shard=I/N`, CI): its files are dealt by count, since the table measures the blocking run, not the tier.
+  test("split for a matrix, a tier run deals its files by count, each shard with the flags and the pattern, every file in exactly one", async () => {
+    const root = await treeWith({
+      "studio/a.test.ts": 'heavyTest("1", () => {});',
+      "studio/b.test.ts": 'heavyTest("2", () => {});',
+      "studio/c.test.ts": 'test("plain", () => {});',
+      "studio/d.test.ts": 'heavyTest("3", () => {});',
+      "studio/e.heavy.test.ts": 'heavyTest("4", () => {});',
+    });
+    expect(await tierTestArgs(["./studio", "--randomize"], "heavy", root, 3)).toEqual([
+      ["--randomize", "--test-name-pattern=\\[heavy\\]", "./studio/a.test.ts", "./studio/e.heavy.test.ts"],
+      ["--randomize", "--test-name-pattern=\\[heavy\\]", "./studio/b.test.ts"],
+      ["--randomize", "--test-name-pattern=\\[heavy\\]", "./studio/d.test.ts"],
+    ]);
+  });
+
+  test("a tier shard the plan does not have (a tier with fewer files than shards) is empty, which is a pass, not an error", () => {
+    const plan = [
+      ["--test-name-pattern=x", "./a.test.ts"],
+      ["--test-name-pattern=x", "./b.test.ts"],
+    ];
+    expect(selectTierShard(plan, { index: 2, of: 3 })).toEqual([["--test-name-pattern=x", "./b.test.ts"]]);
+    expect(selectTierShard(plan, { index: 3, of: 3 })).toEqual([]);
+    expect(selectTierShard([], { index: 1, of: 3 })).toEqual([]);
   });
 
   test("still refuses a path that does not exist, so a tier run never quietly runs nothing", async () => {

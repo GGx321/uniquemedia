@@ -4,7 +4,7 @@ import { join, relative, resolve } from "node:path";
 import { NODE_TEST_SUITES } from "../scripts/electronNodeTests";
 import { tierTestArgs } from "../scripts/realWorkerTests";
 import { inQuarantineRun, QUARANTINE, quarantineEntry, type QuarantineEntry } from "./quarantine";
-import { budgetsOutsidePerfTests, holdsTierTests, nameTags, quarantineIds } from "./tierSources";
+import { budgetsOutsidePerfTests, holdsTierTests, nameTags, quarantineIds, untieredTests } from "./tierSources";
 import { assertBudget, BLOCKING_FLOOR_MS, budgetBound, inTier, medianElapsedMs, TIERS, tierMarkers, tierOf, tierPattern, tierTag } from "./tiers";
 
 const ROOT = resolve(import.meta.dir, "..", "..");
@@ -175,6 +175,15 @@ describe("tierSources", () => {
       { line: 1, tag: "pref" },
       { line: 3, tag: "heavy" },
     ]);
+  });
+
+  // A *.heavy.test.* file is left out of the blocking run by its name (realWorkerTests.ts), so a test in it that the heavy run does not
+  // select would run nowhere.
+  test("untieredTests names the tests a tier's run would not select: neither a helper of the tier, nor tagged, nor inside a tagged suite", () => {
+    expect(untieredTests('heavyTest("a", () => {});\ntest("[heavy] b", () => {});', "heavy")).toEqual([]);
+    expect(untieredTests('describe.skipIf(x)(`[heavy] c ${n}`, () => {\n  test("d", () => {});\n  it.each(rows)("e %s", () => {});\n});', "heavy")).toEqual([]);
+    const mixed = 'describe("plain", () => {\n  heavyTest("a", () => {});\n  test("b", () => {});\n});\ntest.each(rows)("c %s", () => {});\nit("d", () => {});\nperfTest("e", () => {});';
+    expect(untieredTests(mixed, "heavy")).toEqual([3, 5, 6, 7]);
   });
 
   test("budgetsOutsidePerfTests flags an assertBudget in a plain test, and not one in a perf test", () => {

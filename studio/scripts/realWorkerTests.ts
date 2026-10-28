@@ -27,9 +27,10 @@
  * Bun, not a slow legitimate run, and the suite on Windows grows with every stage (7.5, 7.6, 9.9 and over 10
  * minutes in four consecutive CI runs; the last one was killed by a 10-minute bound). One bound for the whole
  * suite would have to grow with it, and one Bun crash would rerun all of it. So the test files are found, sorted
- * and dealt round-robin into N groups (the heavy real-ffmpeg files sit next to each other in the sort order,
- * so round-robin spreads them), each group is its own `bun test` process with its own bound and its own
- * crash retry, and a retry reruns one shard. Shards run one after another, never in parallel (the suite has
+ * and dealt into N groups by their measured time (testFileTimes.json, see shardFiles; dealt round-robin by name, the
+ * 12 Windows shards of run 40742666274 took 115 to 601 s), each group is its own `bun test` process with its own bound and its own
+ * crash retry, and a retry reruns one shard. A `*.heavy.test.*` file is not dealt at all: it holds only `[heavy]` tests, and
+ * leaving it out spares the blocking run its imports and hooks too (the heavy tier runs it). Shards run one after another, never in parallel (the suite has
  * timing-sensitive tests). Every shard runs even after one has failed, so a red run shows all its failures;
  * the exit code is the first failing shard's, and the failing shard's test files are printed under an `::error::`.
  * With STUDIO_TEST_TIER set (perf, heavy or quarantine; studio/testing/tiers.ts) the same script runs that tier's
@@ -39,14 +40,15 @@
  * `--flag=value` (a value in its own argument would be read as a path), and paths to test directories or files.
  *
  * `--shard=I/N` (instead of `--shards=N`) runs ONLY shard I of N, with the same partition, retry, bound, slow-test warnings and
- * `::error::` as that shard has in the sequential run: the job of a parallel CI matrix (the Windows suite, CI-5). Every job computes the
- * whole plan itself, so the partition has to be a pure function of the sorted file list; the N jobs together run each file exactly once
- * (realWorkerTests.test.ts proves it on the real tree). A tier run (STUDIO_TEST_TIER) is never sharded.
+ * `::error::` as that shard has in the sequential run: the job of a parallel CI matrix (the Windows and macOS suites). Every job computes the
+ * whole plan itself, so the partition has to be a pure function of the sorted file list and the committed table; the N jobs together run
+ * each file exactly once (realWorkerTests.test.ts proves it on the real tree). A tier run (STUDIO_TEST_TIER) is one process, except under
+ * `--shard=I/N` (the heavy tier's matrix): then its files are dealt by count and a shard with none is an empty pass, like an empty tier.
  */
 import { existsSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
-import { holdsTierTests } from "../testing/tierSources";
+import { holdsTierTests, untieredTests } from "../testing/tierSources";
 import { type Tier, tierOf, tierPattern, tierTag } from "../testing/tiers";
 
 export const MAX_ATTEMPTS = 3;
@@ -202,11 +204,60 @@ export async function listTestFiles(paths: readonly string[], cwd: string): Prom
   return [...found].map((file) => `./${file.split(sep).join("/")}`).sort();
 }
 
-/** Deals `files` round-robin into `count` groups, none empty (there are never more groups than files). */
-export function shardFiles(files: readonly string[], count: number): string[][] {
-  const groups: string[][] = Array.from({ length: Math.min(count, files.length) }, () => []);
-  files.forEach((file, index) => groups[index % groups.length]?.push(file));
-  return groups;
+/** Measured wall times of test files in milliseconds, by the file's path from the repository root (`studio/x.test.ts`, no `./`). */
+export type FileTimes = Readonly<Record<string, number>>;
+
+/**
+ * Deals `files` into `count` groups, none empty (there are never more groups than files), each group in name order. The files `times`
+ * knows go first, slowest first, each to the group with the least time so far (then the fewest files, then the lowest number); the files
+ * it does not know (new since the table was measured) are then dealt by count, round-robin from the lightest group. With no times at all
+ * that is plain round-robin. A pure function of the files and the table, whatever order the files come in: every job of a matrix deals alike.
+ */
+export function shardFiles(files: readonly string[], count: number, times: FileTimes = {}): string[][] {
+  const groups = Array.from({ length: Math.min(count, files.length) }, (): { files: string[]; ms: number } => ({ files: [], ms: 0 }));
+  const timeOf = (file: string): number | undefined => times[file.replace(/^\.\//, "")];
+  const byName = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+  const timed = files.filter((file) => timeOf(file) !== undefined).sort((a, b) => (timeOf(b) ?? 0) - (timeOf(a) ?? 0) || byName(a, b));
+  for (const file of timed) {
+    const lightest = groups.reduce((best, group) => (group.ms < best.ms || (group.ms === best.ms && group.files.length < best.files.length) ? group : best));
+    lightest.files.push(file);
+    lightest.ms += timeOf(file) ?? 0;
+  }
+  // A stable sort: groups of equal time and count keep their order.
+  const lightestFirst = [...groups].sort((a, b) => a.ms - b.ms || a.files.length - b.files.length);
+  [...files].filter((file) => timeOf(file) === undefined).sort(byName).forEach((file, index) => lightestFirst[index % lightestFirst.length]?.files.push(file));
+  return groups.map((group) => group.files.sort(byName));
+}
+
+/** A test file that holds only `[heavy]` tests, named so: the blocking run leaves it out whole, imports and hooks included (shardedTestArgs). */
+export const HEAVY_TEST_FILE = /\.heavy\.(test|spec)\.[cm]?[jt]sx?$/i;
+
+const FILE_TIMES = join(import.meta.dir, "testFileTimes.json");
+
+/**
+ * The file times of testFileTimes.json for `platform`: Windows' on Windows, macOS's anywhere else (a Linux runner is closer to macOS). Both
+ * maps must be whole milliseconds, or this throws: a table that cannot be read must stop the run, not deal by count unseen.
+ */
+export function parseFileTimes(table: unknown, platform: NodeJS.Platform): FileTimes {
+  const maps = new Map(typeof table === "object" && table !== null && !Array.isArray(table) ? Object.entries(table) : []);
+  const read = (column: string): Record<string, number> => {
+    const map: unknown = maps.get(column);
+    if (typeof map !== "object" || map === null || Array.isArray(map)) throw new Error(`realWorkerTests: testFileTimes.json has no "${column}" map`);
+    const times: Record<string, number> = {};
+    for (const [file, ms] of Object.entries(map)) {
+      if (typeof ms !== "number" || !Number.isSafeInteger(ms) || ms < 0) throw new Error(`realWorkerTests: testFileTimes.json: ${column} ${file}: ${String(ms)} is not a whole number of milliseconds`);
+      times[file] = ms;
+    }
+    return times;
+  };
+  const windows = read("windows");
+  const macos = read("macos");
+  return platform === "win32" ? windows : macos;
+}
+
+/** The committed file times (testFileTimes.json) for `platform`. */
+export async function loadFileTimes(platform: NodeJS.Platform): Promise<FileTimes> {
+  return parseFileTimes(JSON.parse(await readFile(FILE_TIMES, "utf8")), platform);
 }
 
 /** What Windows' CreateProcess accepts for one command line, in characters. */
@@ -219,14 +270,30 @@ export function commandLineLength(args: readonly string[]): number {
 
 /**
  * The `bun test` argument lists of a run: the arguments as they are for one shard, otherwise one list per group of
- * files (the flags, then its files). Every file is on the command line, so a shard whose line would pass Windows'
+ * files (the flags, then its files), dealt by `times` (shardFiles). Every file is on the command line, so a shard whose line would pass Windows'
  * limit throws here, in the plan, and not as a spawn error on the Windows runner after the other shards ran.
+ * The `*.heavy.test.*` files are left out (HEAVY_TEST_FILE); one that holds a test the heavy run does not select, or no heavy test at all,
+ * throws here, since that test would run nowhere.
  */
-export async function shardedTestArgs(testArgs: readonly string[], shards: number, cwd: string): Promise<string[][]> {
+export async function shardedTestArgs(testArgs: readonly string[], shards: number, cwd: string, times: FileTimes = {}): Promise<string[][]> {
   if (shards <= 1) return [[...testArgs]];
   const flags = testArgs.filter((arg) => arg.startsWith("-"));
   const paths = testArgs.filter((arg) => !arg.startsWith("-"));
-  const plan = shardFiles(await listTestFiles(paths, cwd), shards).map((group) => [...flags, ...group]);
+  const files: string[] = [];
+  for (const file of await listTestFiles(paths, cwd)) {
+    if (!HEAVY_TEST_FILE.test(file)) {
+      files.push(file);
+      continue;
+    }
+    const source = await readFile(resolve(cwd, file), "utf8");
+    const untiered = untieredTests(source, "heavy", file);
+    if (untiered.length > 0 || !holdsTierTests(source, "heavy", file)) {
+      const what = untiered.length > 0 ? `the tests at line ${untiered.join(", ")} are not [heavy]` : "it holds no [heavy] test";
+      throw new Error(`realWorkerTests: ${file} is left out of the blocking run by its name, but ${what}: they would run nowhere`);
+    }
+  }
+  if (files.length === 0) throw new Error(`realWorkerTests: no test files under ${paths.join(" ")} outside *.heavy.test.* files`);
+  const plan = shardFiles(files, shards, times).map((group) => [...flags, ...group]);
   for (const [index, args] of plan.entries()) {
     const length = commandLineLength(args);
     if (length > WINDOWS_COMMAND_LINE_LIMIT) {
@@ -248,14 +315,15 @@ export function selectShard(plan: readonly (readonly string[])[], shard: { index
 }
 
 /**
- * The `bun test` argument lists of a TIER run (STUDIO_TEST_TIER set, see studio/testing/tiers.ts): one list, never
- * sharded (a tier run is a few files), holding only the test files that call one of the tier's helpers or register a test named
+ * The `bun test` argument lists of a TIER run (STUDIO_TEST_TIER set, see studio/testing/tiers.ts): one list (a tier run is a few files),
+ * or `shards` lists for a matrix (`--shard=I/N`: the heavy tier), its files dealt by count (the measured times are the blocking run's,
+ * not the tier's), holding only the test files that call one of the tier's helpers or register a test named
  * with its tag (holdsTierTests: by call site, so a fixture that merely mentions a helper does not count), and a
  * `--test-name-pattern` that selects only the tagged tests inside them. No such file: an empty plan, which is a pass (the quarantine
  * list is empty most of the time); tiers.test.ts holds that `perf` and `heavy` are never empty. A file that does hold the tier's
  * calls but matches no test (a helper call that is skipped by name) makes bun answer "matched 0 tests": `tierRunMatchedNothing`.
  */
-export async function tierTestArgs(testArgs: readonly string[], tier: Tier, cwd: string): Promise<string[][]> {
+export async function tierTestArgs(testArgs: readonly string[], tier: Tier, cwd: string, shards = 1): Promise<string[][]> {
   const flags = testArgs.filter((arg) => arg.startsWith("-"));
   const paths = testArgs.filter((arg) => !arg.startsWith("-"));
   const tagged: string[] = [];
@@ -265,7 +333,16 @@ export async function tierTestArgs(testArgs: readonly string[], tier: Tier, cwd:
   }
   if (tagged.length === 0) return [];
   const pattern = flags.some((flag) => flag === "--test-name-pattern" || flag.startsWith("--test-name-pattern=")) ? [] : [`--test-name-pattern=${tierPattern(tier)}`];
-  return [[...flags, ...pattern, ...tagged]];
+  return shardFiles(tagged, shards).map((group) => [...flags, ...pattern, ...group]);
+}
+
+/**
+ * Keeps only shard `shard.index` of a tier run's plan made for `shard.of` shards. Unlike the blocking suite's (selectShard), a shard the
+ * plan does not have is empty, which is a pass: a tier has few files, and may have fewer than its matrix has jobs.
+ */
+export function selectTierShard(plan: readonly (readonly string[])[], shard: { index: number; of: number }): string[][] {
+  const args = plan[shard.index - 1];
+  return args === undefined ? [] : [[...args]];
 }
 
 /** Bun's answer when a name pattern selects no test at all (exit code 1): in a tier run that is an empty tier, not a failure. */
@@ -445,12 +522,17 @@ if (import.meta.main) {
   try {
     target = testTarget(process.argv.slice(2));
     const tier = tierOf(process.env);
-    const lists = tier === undefined ? await shardedTestArgs(target.testArgs, target.shards, process.cwd()) : await tierTestArgs(target.testArgs, tier, process.cwd());
-    // A tier run is never sharded, so `--shard` only applies to the suite itself.
-    const own = tier === undefined && target.shard !== undefined ? selectShard(lists, target.shard) : lists;
+    const { shard } = target;
+    // A tier run is split only for a matrix job (`--shard=I/N`); `--shards=N` keeps it one process.
+    const lists =
+      tier === undefined
+        ? await shardedTestArgs(target.testArgs, target.shards, process.cwd(), await loadFileTimes(process.platform))
+        : await tierTestArgs(target.testArgs, tier, process.cwd(), shard?.of ?? 1);
+    const own = shard === undefined ? lists : tier === undefined ? selectShard(lists, shard) : selectTierShard(lists, shard);
     plan = own.map(withDefaultTimeout);
     if (tier !== undefined && plan.length === 0) {
-      console.log(`::notice::realWorkerTests: no test carries the ${tierTag(tier)} tag, so there is nothing to run in this tier`);
+      const why = lists.length === 0 ? `no test carries the ${tierTag(tier)} tag` : `shard ${shard?.index} of ${shard?.of} of the ${tier} tier has no test files (the tier has fewer files than shards)`;
+      console.log(`::notice::realWorkerTests: ${why}, so there is nothing to run in this tier`);
       process.exit(0);
     }
   } catch (error) {
@@ -458,7 +540,7 @@ if (import.meta.main) {
     process.exit(2);
   }
   const { knownCrashesOnly } = target;
-  const numbering = tierOf(process.env) === undefined && target.shard !== undefined ? { first: target.shard.index, of: target.shard.of } : undefined;
+  const numbering = target.shard !== undefined ? { first: target.shard.index, of: target.shard.of } : undefined;
   const exitCode = await runShards(plan, async (args, label) => {
     let hung = false;
     const attempt = async (): Promise<AttemptResult> => {
