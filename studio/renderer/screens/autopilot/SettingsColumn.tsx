@@ -232,7 +232,7 @@ export function SettingsColumn(props: SettingsColumnProps) {
                 </span>
               )}
               {props.monthLine !== null && (
-                <span id={id("lvl-month")} className="ap-row-note gen-cap">
+                <span id={id("lvl-month")} className="ap-row-note gen-cap gen-cap-quiet">
                   {props.monthLine}
                 </span>
               )}

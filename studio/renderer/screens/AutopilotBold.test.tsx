@@ -198,8 +198,10 @@ describe("«Категории сцен» with the two «Смелая» chips (m
     const { preview } = reply.result;
     if (preview.unitPhotoWorstMicros === undefined) throw new Error("the plan names no unit");
     const line = launchMonthLine("bold", preview, false);
-    expect(within(settings()).getByText(plain(line))).toBeDefined();
+    const shown = within(settings()).getByText(plain(line));
     expect(plain(line)).toMatch(/^Каждое фото «Смелой» — до \$\d/);
+    // Mockup 67: a quiet note under the caption, as the card's slow-frames line is (S5.BA8a review).
+    expect(shown.className).toBe("ap-row-note gen-cap gen-cap-quiet");
     await click(level("Кокетливая"));
     expect(within(settings()).queryByText(/^Каждое фото «Смелой»/) === null).toBe(true);
   });
