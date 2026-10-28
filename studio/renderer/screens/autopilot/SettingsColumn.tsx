@@ -26,8 +26,7 @@ import type { MusicLine } from "./planModel";
 // owner's own), «Подача» (S5.7c, mockup 30: it replaced «Ракурсы» — the angle comes from the scene), «Ножки» (S5.8b, mockup 34), the library and
 // generation switches, «Сцены на проверку», «Музыка», «GIF-стикеры» and «Предел запуска». No «Текст на видео» (owner decision 8). While a launch runs
 // these are its settings, read only, under a line that says so. S5.9g (plan s5a3 §13.1; mockup 52): «Смелая» is live, and «Ночнушки и бельё» and «Пляж и
-// бассейн» follow the five with the card's gating. 5a.4 (S5.BA8): every category draws «Смелая», so «Предел запуска» says option B at any «Смелая» launch, and the library's switch
-// says it takes only «Смелая» frames there.
+// бассейн» follow the five with the card's gating; «Предел запуска» says option B while a «Смелая» category is on under «Смелая».
 
 /** «Предел запуска»'s sub-line, and its longer form while every new photo of the launch is priced at the Seedream 2K unit (plan §10.2, option B; mockup 52). */
 const LIMIT_SUB = "худшая цена: до 3 попыток на фото — дороже не выйдет";
