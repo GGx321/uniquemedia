@@ -161,9 +161,10 @@ describe("a scene card", () => {
     expect(ideaLine("Утренний кофе на балконе с видом на море, в пижаме, а потом прогулка по пляжу с собакой")).toBe("по описанию: «Утренний кофе на балконе с видом на море…»");
   });
 
+  // 5a.4 (S5.BA8b, plan s5a4 §5.9 row 18): «Смелая» dresses every category, so a revealing word is refused with where such outfits come from, not «in no category».
   test("the edit's problem, in the design's words", () => {
-    expect(problemText({ reason: "revealing-word", words: ["bikini"] })).toBe("Слово «bikini» не пройдёт в промпт — замените его. Откровенных нарядов нет ни в одной категории.");
-    expect(problemText({ reason: "revealing-word", words: ["bikini", "thong"] })).toBe("Слова «bikini», «thong» не пройдут в промпт — замените их. Откровенных нарядов нет ни в одной категории.");
+    expect(problemText({ reason: "revealing-word", words: ["bikini"] })).toBe("Слово «bikini» не пройдёт в промпт — замените его. Откровенные наряды — только с подачей «Смелая».");
+    expect(problemText({ reason: "revealing-word", words: ["bikini", "thong"] })).toBe("Слова «bikini», «thong» не пройдут в промпт — замените их. Откровенные наряды — только с подачей «Смелая».");
     expect(problemText({ reason: "youth-word", words: ["teen"] })).toBe("Слово «teen» не пройдёт в промпт — замените его: в сценах только взрослый человек.");
     expect(problemText({ reason: "empty", words: [] })).toBe("Пустой текст не сохранить — напишите сцену или уберите её.");
     expect(problemText({ reason: "too-long", words: [] })).toBe("Не больше 600 знаков.");

@@ -62,7 +62,7 @@ describe("the pencil", () => {
     expect(within(sceneCard(3)).getByText(/^\d+\/600 · бесплатно$/)).toBeDefined();
     fireEvent.click(within(sceneCard(3)).getByRole("button", { name: "Сохранить" }));
     await flush();
-    expect(within(sceneCard(3)).getByText("Слово «bikini» не пройдёт в промпт — замените его. Откровенных нарядов нет ни в одной категории.")).toBeDefined();
+    expect(within(sceneCard(3)).getByText("Слово «bikini» не пройдёт в промпт — замените его. Откровенные наряды — только с подачей «Смелая».")).toBeDefined();
     expect(field.getAttribute("aria-invalid")).toBe("true");
     expect(isDisabled(within(sceneCard(3)).getByRole("button", { name: "Сохранить" }))).toBe(true);
     fireEvent.change(field, { target: { value: "Sunny beach in Nice at midday, white linen dress, holding a paper cup of iced coffee." } });

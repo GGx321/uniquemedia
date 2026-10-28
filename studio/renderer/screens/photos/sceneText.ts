@@ -192,7 +192,8 @@ export function problemText(problem: SceneProblem): string {
   const word = many ? `Слова ${quoted(problem.words)} не пройдут в промпт — замените их` : `Слово ${quoted(problem.words)} не пройдёт в промпт — замените его`;
   switch (problem.reason) {
     case "revealing-word":
-      return `${word}. Откровенных нарядов нет ни в одной категории.`;
+      // 5a.4 (§5.9 row 18): «Смелая» dresses every category, so the refusal says where such outfits come from.
+      return `${word}. Откровенные наряды — только с подачей «Смелая».`;
     case "youth-word":
       return `${word}: в сценах только взрослый человек.`;
     case "empty":
