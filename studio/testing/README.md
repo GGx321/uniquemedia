@@ -40,6 +40,14 @@ holds under half of it in the perf run (`loopFree.ts`).
 Keep a bound blocking when it guards a product guarantee and is generous: "an aborted request ends before the 20 s timer",
 the 768 MiB RSS gate in the packaged smoke. Move it when it measures how fast the machine is.
 
+## A sweep: `sweepTest`
+
+A sweep (seeds x sizes x categories, a fuzz, a brute force) is written once with `sweepTest(name, { push, heavy }, fn)` (bun). `fn` receives
+the parameter set of the run: a push (the blocking run) runs `fn(push)` under the plain name, the heavy run runs `fn(heavy)` under the
+`[heavy] name`. The heavy set is the sweep in full, as it was before it was made cheap for a push; the push set is a real sample of it
+(a tenth of the seeds, the sizes 1, 2, 12 and 30), about a second at most. A sweep that guards money, data integrity, the age words, denim,
+the face, the bold mode or public places keeps its full set in `push` as well. To the guard of `untieredTests` a `sweepTest` is a heavy marker.
+
 ## Quarantine
 
 A test that flakes ONCE goes into `quarantine.ts`: its `id`, the `runId` of the failing GitHub Actions run, the `date`, and what

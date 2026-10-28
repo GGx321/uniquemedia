@@ -8,12 +8,12 @@ import { type Tier, tierMarkers, tierTag } from "./tiers";
  */
 
 /** The functions that register a test (or a suite) with the name as their first argument. */
-const NAMING_CALLEES = new Set(["test", "it", "describe", "perfTest", "perfOnlyTest", "heavyTest"]);
+const NAMING_CALLEES = new Set(["test", "it", "describe", "perfTest", "perfOnlyTest", "heavyTest", "sweepTest"]);
 
-/** The helper names (bunTiers.ts, quarantine.ts) that put a test into a tier, by tier. */
+/** The helper names (bunTiers.ts, quarantine.ts) that put a test into a tier, by tier. `sweepTest` registers a heavy variant (and a push one under a plain name), so it marks a file as holding heavy tests. */
 const HELPER_CALLEES: Readonly<Record<Tier, readonly string[]>> = {
   perf: ["perfTest", "perfOnlyTest"],
-  heavy: ["heavyTest"],
+  heavy: ["heavyTest", "sweepTest"],
   quarantine: ["quarantinedTest", "inQuarantineRun"],
 };
 
@@ -83,7 +83,7 @@ export function quarantineIds(source: string, fileName = "test.ts"): string[] {
 }
 
 /** The calls that register one test: `test`, `it` and the tier helpers (a `describe` only groups them). */
-const TEST_CALLEES = new Set(["test", "it", "perfTest", "perfOnlyTest", "heavyTest", "quarantinedTest"]);
+const TEST_CALLEES = new Set(["test", "it", "perfTest", "perfOnlyTest", "heavyTest", "sweepTest", "quarantinedTest"]);
 
 /**
  * The lines of the tests in `source` that the run of `tier` does not select: neither a call of the tier's helper, nor named with its tag,
