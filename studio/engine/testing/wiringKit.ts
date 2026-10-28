@@ -31,6 +31,11 @@ function isWriter(call: FetchCall): boolean {
   return call.url.endsWith("/chat/completions") && JSON.stringify(call.json().response_format ?? {}).includes("scene_sentences");
 }
 
+/** 5a.4 (S5.BA9): an idea write's request (an own scene, `scenes/ideaWriter.ts`): answered only by a network given an `idea` handler; any other network still refuses it. */
+function isIdeaWriter(call: FetchCall): boolean {
+  return call.url.endsWith("/chat/completions") && JSON.stringify(call.json().response_format ?? {}).includes("scene_ideas");
+}
+
 function slotsAskedFor(call: FetchCall): number[] {
   const body = call.json();
   const messages = Array.isArray(body.messages) ? body.messages : [];
@@ -77,11 +82,15 @@ export function imageReplyFor(call: FetchCall, n: number, fault: SeedreamFault |
 /**
  * A fake OpenRouter: the writer, the images and the credits answer; prices are offline (the dated fallback table). Any other request throws.
  * `writer` and `image` replace the default answer of those two kinds (S4.6d: a request that never returns is how a test kills the engine mid-request); `writerGate` holds the default writer answer until it resolves.
+ * `idea` (5a.4, S5.BA9) answers an idea write's request, which has no default answer.
  */
-export function network(opts: { writer?: WireHandler; image?: WireHandler; writerGate?: Promise<void> } = {}) {
+export function network(opts: { writer?: WireHandler; image?: WireHandler; writerGate?: Promise<void>; idea?: WireHandler } = {}) {
   let images = 0;
   let writes = 0;
+  let ideas = 0;
   const route = async (call: FetchCall): Promise<Reply> => {
+    // 5a.4 (S5.BA9): an idea write is answered by the network's `idea` handler when it has one (the parity rig's own scenes); without it, it is still an unexpected request.
+    if (opts.idea !== undefined && isIdeaWriter(call)) return opts.idea(call, ++ideas);
     if (isWriter(call)) {
       const n = ++writes;
       if (opts.writer !== undefined) return opts.writer(call, n);
