@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { MAX_LAUNCH_AVATARS, type CategoryRef, type EngineError, type LaunchMix, type LaunchPreview, type LaunchPreviewAvatar, type LaunchView } from "../../../shared/engine";
+import { MAX_LAUNCH_AVATARS, type CategoryRef, type EngineError, type LaunchMix, type LaunchPreview, type LaunchPreviewAvatar, type LaunchView, type SceneLevel } from "../../../shared/engine";
 import type { EngineClient } from "../../engine/client";
 import { isActiveJob, type EngineView } from "../../engine/store";
 import { useMounted } from "../photos/shared";
@@ -55,6 +55,8 @@ export interface LaunchPlanInput {
   readonly activeIds: readonly string[];
   /** The form's categories, for the probe. */
   readonly categories: readonly CategoryRef[];
+  /** The form's «Подача»: the probe counts the free photos at it (at «Смелая» only the routed ones are free, r2.2 D2). */
+  readonly level: SceneLevel;
   /** Everything outside the form the plan depends on (`worldKey`). */
   readonly world: string;
   /** Everything outside the form the probe depends on (`probeWorldKey`): no money, no models. */
@@ -145,7 +147,7 @@ interface Keyed<T> {
   readonly value: T;
 }
 
-export function useLaunchPlan({ client, settings, activeIds, categories, world, probeWorld, enabled, onStarted }: LaunchPlanInput): LaunchPlan {
+export function useLaunchPlan({ client, settings, activeIds, categories, level, world, probeWorld, enabled, onStarted }: LaunchPlanInput): LaunchPlan {
   const form = settings === null ? null : settingsKey(settings);
   const key = form === null ? null : `${form}|${world}`;
   const probeIds = activeIds.slice(0, MAX_LAUNCH_AVATARS);
@@ -157,6 +159,7 @@ export function useLaunchPlan({ client, settings, activeIds, categories, world, 
           videosPerAvatar: 1,
           mix: { ...DEFAULT_MIX },
           categories: [...categories],
+          ...(level === "ordinary" ? {} : { level }),
           library: true,
           generate: false,
           sceneReview: false,

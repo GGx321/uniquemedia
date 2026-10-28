@@ -184,6 +184,19 @@ describe("«Категории сцен» with the two «Смелая» chips (m
     expect(sub()).toBe("не отклонённые и не занятые черновиками");
   });
 
+  // Review M-1: the probe that counts the «своб.» of the avatars not chosen asks at the form's level, so at «Смелая» their number is of the routed frames only, like the plan's.
+  test("an avatar not chosen with only unrouted free photos shows «0 своб.» at «Смелая», and its real count below it", async () => {
+    world();
+    await openAutopilot();
+    await choose("Mia");
+    const sofia = (): string => described(within(screen.getByRole("group", { name: /^Аватары/ })).getByRole("button", { name: /Sofia/ })).join(" ");
+    await waitFor(() => expect(sofia()).toContain("2 своб."));
+    await click(level("Смелая"));
+    await waitFor(() => expect(sofia()).toContain("0 своб."));
+    await click(level("Кокетливая"));
+    await waitFor(() => expect(sofia()).toContain("2 своб."));
+  });
+
   // 5a.4 (S5.BA8a, §5.9 row 20, r2.3 M1): the month line divides the budget by the plan's own unit; the window computes no price.
   test("the month line at «Смелая» is the plan's unit over the month's budget, and only there", async () => {
     const { engine, client } = world();

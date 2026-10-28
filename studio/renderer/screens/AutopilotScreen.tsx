@@ -204,6 +204,7 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
     settings: ready ? settings : null,
     activeIds,
     categories: settings?.categories ?? categoriesAt(form.level, arrangeCategories(form.categories, customOrder)),
+    level: form.level,
     // An own track marked or unmarked in the music window moves the plan's tracks: the plan is asked again.
     world: `${worldKey(view, customOrder)}:${musicMarks}`,
     probeWorld: probeWorldKey(view, customOrder),
