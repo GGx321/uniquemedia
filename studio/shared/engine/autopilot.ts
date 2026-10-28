@@ -596,6 +596,11 @@ export const LaunchPreview = z
     estimate: Estimate,
     /** What a video of each shape costs when its photos are new: 1, 3 and 5 times the expected price of a photo. */
     perShapeExpectedMicros: z.strictObject({ single: Micros, collage: Micros, slides: Micros }),
+    /**
+     * Additive (5a.4, S5.BA8a): the worst price of ONE new photo at the draft's level (`unitPricesOf(…, bold).photoWorstMicros`), the unit the launch math reads; at «Смелая» it carries the
+     * Seedream 2K attempts and the age check. Absent when the plan draws no new photo. The window divides the month's budget by it and computes nothing else.
+     */
+    unitPhotoWorstMicros: Micros.optional(),
     month: z.strictObject({
       budgetMicros: Micros,
       committedMicros: Micros,

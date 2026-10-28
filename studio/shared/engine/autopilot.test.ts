@@ -744,6 +744,16 @@ describe("LaunchPreview", () => {
     expect(answers("autopilot.estimate", { preview })).toBe(true);
   });
 
+  // 5a.4 (S5.BA8a): the worst price of one new photo at the draft's level, which the «Смелая» month line divides the budget by. Additive: an older preview has none.
+  test("unitPhotoWorstMicros is optional: a preview without it parses, one with it parses and keeps it, a negative or fractional one is refused", () => {
+    expect("unitPhotoWorstMicros" in preview).toBe(false);
+    expect(LaunchPreview.safeParse(preview).success).toBe(true);
+    const withUnit = LaunchPreview.parse(previewWith({ unitPhotoWorstMicros: 279_000 }));
+    expect(withUnit.unitPhotoWorstMicros).toBe(279_000);
+    expect(LaunchPreview.safeParse(previewWith({ unitPhotoWorstMicros: -1 })).success).toBe(false);
+    expect(LaunchPreview.safeParse(previewWith({ unitPhotoWorstMicros: 0.5 })).success).toBe(false);
+  });
+
   test("the fixed pieces of the estimate: price source and its date", () => {
     expect(LaunchPreview.safeParse(previewWith({ estimate: { ...preview.estimate, prices: "fallback" } })).success).toBe(true);
     expect(LaunchPreview.safeParse(previewWith({ estimate: { ...preview.estimate, prices: "guess" } })).success).toBe(false);
