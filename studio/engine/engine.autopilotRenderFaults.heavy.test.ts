@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout } from "bun:test";
 import { existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
+import { heavyTest } from "../testing/bunTiers";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import type { EngineDeps } from "./engine";
 import { useEngineDir } from "./testing/engineHarness";
@@ -67,7 +68,7 @@ async function classified(started: Awaited<ReturnType<typeof kit.boot>>, launchI
 }
 
 describe("an export folder that vanishes mid-render (S4.6r)", () => {
-  test(
+  heavyTest(
     "holds the launch on the folder without dropping a video, again and again, and every video finishes once the folder is back",
     async () => {
       const net = network();

@@ -11,6 +11,7 @@ import { clipNetwork, clipsDir, command, create, jobEnd, phasesOf, startClipEngi
 import { readyRecord } from "./clips/testing/recordsRig";
 import { SHORT_CLIP_TIMINGS, type ClipTimings } from "./clips/timings";
 import { NOW, ledgerLines, useEngineDir, writeLedger } from "./testing/engineHarness";
+import { heavyTest } from "../testing/bunTiers";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -162,7 +163,7 @@ describe("L5: a member is never left `running` by a journal that nothing will re
 const firstHeld = (n: number): VideoScript | undefined => (n === 1 ? { held: true } : undefined);
 
 describe("L6: a member's turn never hangs on its photo", () => {
-  test("a photo read that never answers ends its member `photo-unreadable`, free, and the batch goes on", async () => {
+  heavyTest("a photo read that never answers ends its member `photo-unreadable`, free, and the batch goes on", async () => {
     const { avatarId, photoIds } = await seedBatchAvatar(libraryDir(), plainPhotos(3));
     const engine = await started({ net: clipNetwork({ klingBy: firstHeld }) });
     const { jobIds } = batchOf(await createBatch(engine, { avatarId, photoIds }));
