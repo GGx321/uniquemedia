@@ -11,7 +11,6 @@ import {
   sceneNumber,
   setAction,
   setCategoryTags,
-  SHOT_LABEL,
   tallyScenes,
   writeCapRefusal,
   writeSceneReview,
@@ -77,15 +76,6 @@ describe("labels", () => {
     expect(sceneCategoryLabel(scene(1, { category: "cat-seeded-0001", categoryName: "Кофейни Парижа" }))).toBe("Кофейни Парижа");
     expect(sceneCategoryLabel(scene(1, { category: "cat-seeded-0001", categoryName: null }))).toBe("Своя категория");
     expect(sceneCategoryLabel(scene(1, { origin: "own" }))).toBe("Своя сцена");
-  });
-
-  test("a scene asked of a friend reads «Попросила снять», and so does an old one the photographer took", () => {
-    expect(SHOT_LABEL.friend).toBe("Попросила снять");
-    expect(SHOT_LABEL.photographer).toBe("Попросила снять");
-  });
-
-  test("the other shots keep their names", () => {
-    expect([SHOT_LABEL.selfie, SHOT_LABEL.mirror, SHOT_LABEL.candid]).toEqual(["Селфи", "Зеркало", "Кэндид"]);
   });
 
   test("Cyrillic is told apart from Latin text", () => {

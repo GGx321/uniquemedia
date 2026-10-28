@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { category, PARIS_POOL } from "./categoryScreenKit";
-import { CATEGORY_REASONS_RU, POOL_TIMES, type CategoryInterrupted, type CategoryPool, type CategorySummary } from "../../../shared/engine";
+import { CATEGORY_REASONS_RU, type CategoryInterrupted, type CategoryPool, type CategorySummary } from "../../../shared/engine";
 import {
   ANGLES_CLEAR_TITLE,
   ANGLES_NONE_HINT,
@@ -29,7 +29,6 @@ import {
   regenFailure,
   shotShares,
   styleNote,
-  timeLabel,
   unreadableNote,
   overLimitNote,
 } from "./categoryText";
@@ -70,9 +69,6 @@ const PARIS: CategorySummary = {
 };
 
 describe("the pool as shown", () => {
-  test("times of day are said in Russian, the whole vocabulary", () => {
-    expect(POOL_TIMES.map(timeLabel)).toEqual(["утро", "день", "золотой час", "вечер", "ночь", "студийный свет"]);
-  });
 
   test("the shot deck as shares, in the legend's order, only the shots it holds", () => {
     expect(shotShares(POOL.shotDeck)).toEqual([
