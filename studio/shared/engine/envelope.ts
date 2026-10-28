@@ -212,6 +212,7 @@ import { z } from "zod";
 //  - Rollback: an older build refuses, as a whole, a plan.json, a stored scene-set file or a writer job's slots that carry `route: "seedream"` or `level: "bold"` on a slot of the five or of a custom
 //    category, or any `world` key (its slot schema is strict, and its refines allow the route and a bold level on a «Смелая» category alone). The effect: the run cannot resume, its photos read as
 //    planless, and the set is unreadable. `AvatarSummary.origin` and `ScenePlace.world` only travel within one build (the window and the engine ship together); nothing stores them.
+//  - S5.BA8a: `LaunchPreview.unitPhotoWorstMicros` (optional, additive): the worst price of one new photo at the draft's level, which the autopilot's month line divides the budget by. Only within one build, never stored.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 
