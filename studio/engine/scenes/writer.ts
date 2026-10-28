@@ -234,12 +234,28 @@ function writerBoldSystemPrompt(): string {
   ].join("\n");
 }
 
+/**
+ * The world as the model is told it: without «tiny» and «little». The model copies the world into its sentence, and the youth-word line (which stays as it is) refuses
+ * both words outside the activity's own, so a custom place like «a tiny bookshop» sank every slot it drew. The article follows the word that is left («a tiny
+ * apartment» is «an apartment»). The stored world is not touched.
+ */
+export function worldForWriter(world: string): string {
+  return world
+    .replace(/\b(an?)(\s+)(?:tiny|little)\b,?\s*(?=([a-z]?))/gi, (_, article: string, _gap: string, next: string) => {
+      const chosen = /^[aeiou]/i.test(next) ? "an" : "a";
+      return `${article.startsWith("A") ? chosen.toUpperCase() : chosen} `;
+    })
+    .replace(/\b(?:tiny|little)\b,?\s*/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 /** A slot as the bold writer is told it: no category, the world when it has one, a plain time word, the capture label, the pose's own name. */
 function boldSlotForWriter(slot: PlanSlot): Record<string, unknown> {
   return {
     slotIndex: slot.slotIndex,
     location: slot.location,
-    ...(slot.world === undefined ? {} : { world: slot.world }),
+    ...(slot.world === undefined ? {} : { world: worldForWriter(slot.world) }),
     timeOfDay: timeWordOf(slot.timeOfDay),
     shot: CAPTURE_LABEL[slot.capture ?? captureOfShot(slot.shot)],
     pose: slot.pose,

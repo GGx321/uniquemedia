@@ -262,6 +262,60 @@ describe("the bold slot JSON (§5.3.3, r2.2 P1, the probe's label leaks)", () =>
     ]);
   });
 
+  describe("the world's size words (a custom category's own place, «a tiny bookshop»)", () => {
+    const sentWorld = (world: string): unknown => sentSlots(writerBoldMessages([routed({ world })]))[0]?.world;
+
+    test("«tiny» and «little» are not handed to the model: «a tiny bookshop in Paris» goes out as «a bookshop in Paris»", () => {
+      expect(sentWorld("a tiny bookshop in Paris")).toBe("a bookshop in Paris");
+      expect(sentWorld("the little cafe by the river")).toBe("the cafe by the river");
+    });
+
+    test("the article follows the word that is left: «a tiny apartment» goes out as «an apartment»", () => {
+      expect(sentWorld("a tiny apartment in Lisbon")).toBe("an apartment in Lisbon");
+      expect(sentWorld("an itty bitty little garden")).toBe("an itty bitty garden");
+      expect(sentWorld("a little old bookshop")).toBe("an old bookshop");
+    });
+
+    test("a size word in the middle of a list leaves no stray comma or double space", () => {
+      expect(sentWorld("a tiny, cosy bookshop")).toBe("a cosy bookshop");
+      expect(sentWorld("a quiet little bookshop")).toBe("a quiet bookshop");
+      expect(sentWorld("Tiny Tim's bookshop")).toBe("Tim's bookshop");
+    });
+
+    test("a world with neither word goes out exactly as stored", () => {
+      expect(sentWorld("a cafe terrace in Paris")).toBe("a cafe terrace in Paris");
+      expect(sentWorld("a flower stall near the cafe")).toBe("a flower stall near the cafe");
+    });
+
+    test("the stored world is not changed by being sent", () => {
+      const slot = routed({ world: "a tiny bookshop in Paris" });
+      writerBoldMessages([slot]);
+      expect(slot.world).toBe("a tiny bookshop in Paris");
+    });
+
+    test("a sentence that copies the world as it was sent passes the reader, where the stored world would be refused as a youth word", () => {
+      const slot = routed({ world: "a tiny bookshop in Paris", location: "her room", activity: "lies back across the bed" });
+      const copied = String(sentWorld("a tiny bookshop in Paris"));
+      const sentence = `In her room above ${copied}, she lies back across the bed in a white lace bra and panties, a cup of tea beside her.`;
+      expect(readBoldWriterAnswer(answer([{ slotIndex: 1, sentence }]), [slot])).toEqual({ ok: true, sentences: new Map([[1, sentence]]) });
+      const stored = sentence.replace(copied, "a tiny bookshop in Paris");
+      expect(problemsOf(readBoldWriterAnswer(answer([{ slotIndex: 1, sentence: stored }]), [slot]))).toEqual(["youth-word"]);
+    });
+
+    test("no other field the model copies carries the words: not a place or an outfit of the shared banks (a moment's «a little» is the activity's own word, and allowed)", () => {
+      for (const [branch, bank] of Object.entries(CUSTOM_BOLD_BANKS)) {
+        for (const text of [...bank.places.map((place) => place.name), ...bank.outfits.map((outfit) => outfit.text)]) {
+          expect({ branch, text, size: /\b(?:tiny|little)\b/i.test(text) }).toEqual({ branch, text, size: false });
+        }
+      }
+    });
+
+    test("the ordinary writer's slot is not touched: its location carries a size word as stored", () => {
+      const slot = unrouted({ location: "a little corner cafe", world: undefined });
+      expect(sentSlots(writerMessages([slot], undefined, () => "Paris cafes"))[0]?.location).toBe("a little corner cafe");
+    });
+  });
+
   test("a slot without a world (an old set's slot in a bold chunk, r2.1 L3) carries no world key", () => {
     const [slot] = sentSlots(writerBoldMessages([routed({ category: "nightwear", route: undefined, world: undefined, location: "her bedroom" })]));
     expect(slot).not.toHaveProperty("world");
