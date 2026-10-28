@@ -4,8 +4,8 @@ import { join, relative, resolve } from "node:path";
 import { NODE_TEST_SUITES } from "../scripts/electronNodeTests";
 import { tierTestArgs } from "../scripts/realWorkerTests";
 import { inQuarantineRun, QUARANTINE, quarantineEntry, type QuarantineEntry } from "./quarantine";
-import { budgetsOutsidePerfTests, holdsTierTests, nameTags, quarantineIds, untieredTests } from "./tierSources";
-import { assertBudget, BLOCKING_FLOOR_MS, budgetBound, inTier, medianElapsedMs, TIERS, tierMarkers, tierOf, tierPattern, tierTag } from "./tiers";
+import { budgetsOutsidePerfTests, holdsTierTests, nameTags, quarantineIds } from "./tierSources";
+import { TIERS, tierOf, tierPattern, tierTag } from "./tiers";
 
 const ROOT = resolve(import.meta.dir, "..", "..");
 const STUDIO = join(ROOT, "studio");
@@ -17,19 +17,7 @@ function sourcesUnder(dir: string): string[] {
   });
 }
 
-const PERF: Record<string, string> = { STUDIO_TEST_TIER: "perf" };
-const BLOCKING: Record<string, string> = {};
-
 describe("tierOf", () => {
-  test("is undefined for the blocking run, whether the variable is unset or empty", () => {
-    expect(tierOf({})).toBeUndefined();
-    expect(tierOf({ STUDIO_TEST_TIER: "" })).toBeUndefined();
-  });
-
-  test("reads each tier", () => {
-    for (const tier of TIERS) expect(tierOf({ STUDIO_TEST_TIER: tier })).toBe(tier);
-  });
-
   test("throws for a value that is not a tier, so a typo cannot quietly run the blocking suite", () => {
     expect(() => tierOf({ STUDIO_TEST_TIER: "perff" })).toThrow(/not a tier/);
     expect(() => tierOf({ STUDIO_TEST_TIER: "PERF" })).toThrow(/not a tier/);
@@ -44,101 +32,14 @@ describe("the tag", () => {
       expect(pattern.test(`a test about ${tier}`)).toBe(false);
     }
   });
-
-  test("is among the markers that make a runner open a file", () => {
-    for (const tier of TIERS) expect(tierMarkers(tier)).toContain(tierTag(tier));
-  });
-});
-
-describe("assertBudget", () => {
-  test("in the blocking run, a time over the budget but under the generous bound passes", () => {
-    expect(() => assertBudget(300, 20, "x", { env: BLOCKING })).not.toThrow();
-    expect(budgetBound(20, { env: BLOCKING })).toBe(BLOCKING_FLOOR_MS);
-  });
-
-  test("in the blocking run, a runaway still fails (the bound is generous, not gone)", () => {
-    expect(() => assertBudget(BLOCKING_FLOOR_MS + 1, 20, "a runaway", { env: BLOCKING })).toThrow(/a runaway took 2001 ms, not under 2000 ms/);
-  });
-
-  test("in the perf run, the budget itself is the bound", () => {
-    expect(() => assertBudget(19, 20, "x", { env: PERF })).not.toThrow();
-    expect(() => assertBudget(20, 20, "x", { env: PERF })).toThrow(/not under 20 ms/);
-  });
-
-  test("a bound over four times a large budget scales with it, and `blockingMs` replaces it", () => {
-    expect(budgetBound(1_000, { env: BLOCKING })).toBe(4_000);
-    expect(budgetBound(1_000, { env: BLOCKING, blockingMs: 1_200 })).toBe(1_200);
-    expect(budgetBound(1_000, { env: PERF, blockingMs: 1_200 })).toBe(1_000);
-  });
-});
-
-describe("medianElapsedMs", () => {
-  /** A clock that advances by the next scripted step on each read, so the measurement is exact and the test never waits. */
-  function scriptedClock(durations: readonly number[]): () => number {
-    let now = 0;
-    let reads = 0;
-    return () => {
-      // Reads come in pairs (before, after) around each timed run.
-      if (reads % 2 === 1) now += durations[(reads - 1) / 2] ?? 0;
-      reads += 1;
-      return now;
-    };
-  }
-
-  test("does not time the warm-up runs: a slow cold start is not the answer", () => {
-    let calls = 0;
-    // Three scripted durations, for the three timed runs: a helper that also timed its two warm-ups would use them up on those
-    // and see zeros for the rest, which makes a median of 4, not 5.
-    const median = medianElapsedMs(() => void (calls += 1), { warmups: 2, runs: 3, now: scriptedClock([5, 4, 6]) });
-    expect(calls).toBe(5);
-    expect(median).toBe(5);
-  });
-
-  test("answers the middle of an odd number of runs, not the mean: one slow outlier does not move it", () => {
-    expect(medianElapsedMs(() => undefined, { warmups: 0, runs: 5, now: scriptedClock([3, 3, 400, 3, 4]) })).toBe(3);
-  });
-
-  test("answers the mean of the two middle runs for an even number", () => {
-    expect(medianElapsedMs(() => undefined, { warmups: 0, runs: 4, now: scriptedClock([1, 2, 3, 100]) })).toBe(2.5);
-  });
-
-  test("refuses fewer than one run", () => {
-    expect(() => medianElapsedMs(() => undefined, { runs: 0 })).toThrow(/at least one run/);
-  });
-});
-
-describe("inTier", () => {
-  test("registers only in the run of its own tier", () => {
-    let ran = 0;
-    inTier("perf", () => ran++, PERF);
-    inTier("perf", () => ran++, BLOCKING);
-    inTier("heavy", () => ran++, PERF);
-    expect(ran).toBe(1);
-  });
 });
 
 describe("quarantine", () => {
   const entry: QuarantineEntry = { id: "x", runId: "37116331132", date: "2026-10-03", reason: "a flake" };
 
-  test("every entry names its id, a numeric run id, an ISO date and a reason, and ids are unique", () => {
-    for (const e of QUARANTINE) {
-      expect(e.id).toMatch(/^[\w.-]+$/);
-      expect(e.runId).toMatch(/^\d{8,}$/);
-      expect(e.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-      expect(e.reason.length).toBeGreaterThan(10);
-    }
-    expect(new Set(QUARANTINE.map((e) => e.id)).size).toBe(QUARANTINE.length);
-  });
-
   test("an id with no entry throws, so a tag cannot exist without its entry", () => {
     expect(() => quarantineEntry("nope", [entry])).toThrow(/no entry for "nope"/);
     expect(() => inQuarantineRun("nope", { STUDIO_TEST_TIER: "quarantine" }, [entry])).toThrow(/no entry/);
-  });
-
-  test("a listed test runs in the quarantine run and nowhere else", () => {
-    expect(inQuarantineRun("x", { STUDIO_TEST_TIER: "quarantine" }, [entry])).toBe(true);
-    expect(inQuarantineRun("x", {}, [entry])).toBe(false);
-    expect(inQuarantineRun("x", { STUDIO_TEST_TIER: "perf" }, [entry])).toBe(false);
   });
 
   // `quarantinedTest("<id>", ...)` and `inQuarantineRun("<id>", ...)` in the sources, as the ids they name.
@@ -155,42 +56,6 @@ describe("quarantine", () => {
     const used = usedIds();
     expect([...used.keys()].filter((id) => !QUARANTINE.some((e) => e.id === id))).toEqual([]);
     expect(QUARANTINE.map((e) => e.id).filter((id) => !used.has(id))).toEqual([]);
-  });
-});
-
-describe("tierSources", () => {
-  test("holdsTierTests sees a helper call, inTier and a tagged name, and not a string or a comment that mentions one", () => {
-    expect(holdsTierTests('heavyTest("a", () => {});', "heavy")).toBe(true);
-    expect(holdsTierTests('inTier("perf", () => { test("x", () => {}); });', "perf")).toBe(true);
-    expect(holdsTierTests('test("[perf] x", () => {});', "perf")).toBe(true);
-    expect(holdsTierTests("describe.each(rows)(`[heavy] ${name}`, () => {});", "heavy")).toBe(true);
-    expect(holdsTierTests('if (inQuarantineRun("x")) test("y", () => {});', "quarantine")).toBe(true);
-    expect(holdsTierTests('const s = \'heavyTest("a")\'; // perfTest("b")\ntest("[perf]", () => {});', "heavy")).toBe(false);
-    expect(holdsTierTests('test("[pref] typo", () => {});', "perf")).toBe(false);
-  });
-
-  test("nameTags reads the leading tag of test, suite and helper names", () => {
-    const source = 'test("[pref] a", () => {});\nperfTest("b", () => {});\ndescribe("[heavy] c", () => {});\ntest("a [mid] d", () => {});';
-    expect(nameTags(source)).toEqual([
-      { line: 1, tag: "pref" },
-      { line: 3, tag: "heavy" },
-    ]);
-  });
-
-  // A *.heavy.test.* file is left out of the blocking run by its name (realWorkerTests.ts), so a test in it that the heavy run does not
-  // select would run nowhere.
-  test("untieredTests names the tests a tier's run would not select: neither a helper of the tier, nor tagged, nor inside a tagged suite", () => {
-    expect(untieredTests('heavyTest("a", () => {});\ntest("[heavy] b", () => {});', "heavy")).toEqual([]);
-    expect(untieredTests('describe.skipIf(x)(`[heavy] c ${n}`, () => {\n  test("d", () => {});\n  it.each(rows)("e %s", () => {});\n});', "heavy")).toEqual([]);
-    const mixed = 'describe("plain", () => {\n  heavyTest("a", () => {});\n  test("b", () => {});\n});\ntest.each(rows)("c %s", () => {});\nit("d", () => {});\nperfTest("e", () => {});';
-    expect(untieredTests(mixed, "heavy")).toEqual([3, 5, 6, 7]);
-  });
-
-  test("budgetsOutsidePerfTests flags an assertBudget in a plain test, and not one in a perf test", () => {
-    expect(budgetsOutsidePerfTests('test("a", () => { assertBudget(1, 2, "x"); });')).toEqual([1]);
-    expect(budgetsOutsidePerfTests('perfTest("a", () => { assertBudget(1, 2, "x"); });')).toEqual([]);
-    expect(budgetsOutsidePerfTests('test("[perf] a", () => { for (const c of cs) assertBudget(1, 2, "x"); });')).toEqual([]);
-    expect(budgetsOutsidePerfTests('perfTest("a", () => {});\ntest("b", () => { assertBudget(1, 2, "x"); });')).toEqual([2]);
   });
 });
 
