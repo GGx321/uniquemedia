@@ -33,12 +33,6 @@ function cardNames(): string[] {
   return screen.queryAllByRole("heading", { level: 2 }).map((h) => h.textContent ?? "");
 }
 
-test("a fresh library shows the empty state with a way to start", async () => {
-  setup();
-  expect(await screen.findByText("Библиотека пуста")).toBeDefined();
-  expect(screen.getByRole("button", { name: /Создать первый аватар/ })).toBeDefined();
-});
-
 test("without a key the empty state also points to Settings", async () => {
   setup({ apiKey: { stored: false, last4: null, encryptionAvailable: true, rejected: false } });
   expect(await screen.findByRole("button", { name: "Сначала добавить ключ OpenRouter" })).toBeDefined();

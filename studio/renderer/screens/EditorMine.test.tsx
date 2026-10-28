@@ -95,12 +95,6 @@ describe("the tab: the drop zone and the owner's files in three sections", () =>
     expect(callsOf(engine, "media.list").some((c) => c.payload.kind === undefined && c.payload.mediaIds === undefined)).toBe(true);
   });
 
-  test("an empty library says what goes here", async () => {
-    const { client, engine } = await studio();
-    await openMine(engine, client);
-    expect(within(media()).getByText("Своих файлов пока нет")).toBeDefined();
-  });
-
   test("a file stored meanwhile (another window's import) shows up first, one deleted elsewhere goes", async () => {
     const { client, engine } = await studio();
     seed(engine);

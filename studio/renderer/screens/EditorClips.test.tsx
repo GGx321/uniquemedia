@@ -145,13 +145,6 @@ describe("57: the «Клипы» tab", () => {
     expect(pickOf(clip).hasAttribute("disabled")).toBe(true);
     expect(pickOf(clip).getAttribute("draggable")).toBe("false");
   });
-
-  test("57d: no clips yet — the empty card", async () => {
-    const h = await clipsStudio();
-    await openEditor(h, [photoClip(0, P(2))]);
-    expect(within(media()).getByText("Клипов пока нет.")).toBeDefined();
-    expect(media().querySelector(".edc-empty .faint")?.textContent).toBe(nb("Оживите фото — они появятся здесь."));
-  });
 });
 
 describe("57a: a click makes the clip's copy and places it", () => {

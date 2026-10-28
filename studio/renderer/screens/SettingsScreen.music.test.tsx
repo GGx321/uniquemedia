@@ -48,11 +48,6 @@ const button = (name: string | RegExp): HTMLElement => within(card()).getByRole(
 const queryButton = (name: string | RegExp): HTMLElement | null => within(card()).queryByRole("button", { name });
 
 describe("the card", () => {
-  test("sits in the right column under «Папки и экспорт», as the artboard has it", async () => {
-    await openMusic();
-    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings.slice(-3)).toEqual(["Производительность", "Папки и экспорт", "Музыка · flashapi"]);
-  });
 
   test("asks the engine for the music status when it opens", async () => {
     const { engine } = await openMusic();

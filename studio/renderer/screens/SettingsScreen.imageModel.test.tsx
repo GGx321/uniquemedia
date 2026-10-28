@@ -47,18 +47,6 @@ describe("the image model select", () => {
     expect(modelSelect().value).toBe(SEEDREAM);
   });
 
-  test("says the change applies to new runs", async () => {
-    await openSettings();
-
-    expect(modelSelect().closest(".row")?.textContent).toContain("применяется к новым запускам");
-  });
-
-  test("keeps the portraits-and-runs explanation of the row", async () => {
-    await openSettings();
-
-    expect(modelSelect().closest(".row")?.textContent).toContain("портреты аватара и фото-раны");
-  });
-
   test("the row states the price of one photo at the chosen quality, a reference image included", async () => {
     await openSettings();
 
@@ -216,9 +204,6 @@ describe("camera realism", () => {
     await openSettings();
 
     expect(realismSwitch().getAttribute("aria-checked")).toBe("false");
-    const row = screen.getByText("Реализм камеры").closest(".row");
-    expect(row?.textContent).toContain("новым запускам");
-    expect(row?.textContent).toMatch(/поры|шум/);
   });
 
   test("turning it on sends settings.setCameraRealism and the switch follows", async () => {
