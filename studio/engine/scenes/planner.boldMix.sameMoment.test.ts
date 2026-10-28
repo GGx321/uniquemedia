@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { plan, type PlanInput } from "./planner";
+import { sweepTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -8,6 +9,8 @@ useNativeGlobals();
 // already holds in the run, while another fitting moment exists. The five ordinary categories never yield, so their plans do not move.
 
 const SEEDS = Array.from({ length: 200 }, (_, i) => i + 1);
+// Push: seeds 1 to 20. Heavy: the 200 seeds (as before).
+const SWEEP = { push: { seeds: SEEDS.slice(0, 20) }, heavy: { seeds: SEEDS } };
 const COUNTS = [10, 20];
 const SHARES = [0, 15, 30] as const;
 const MIXES = [
@@ -34,9 +37,9 @@ function sharedTexts(input: PlanInput): string[] {
 describe("a mixed «Смелая» run never shows one moment text in two categories", () => {
   for (const categories of MIXES) {
     for (const count of COUNTS) {
-      test(`${categories.join(" + ")}, ${count} photos: 0 of ${SEEDS.length} seeds x 3 legs shares share a text, and no slot is empty`, () => {
+      sweepTest(`${categories.join(" + ")}, ${count} photos: 0 of ${SEEDS.length} seeds x 3 legs shares share a text, and no slot is empty`, SWEEP, ({ seeds }) => {
         const repeats: string[] = [];
-        for (const seed of SEEDS) {
+        for (const seed of seeds) {
           for (const legsShare of SHARES) {
             const input: PlanInput = { seed, count, categories: [...categories], level: "bold", legsShare };
             const shared = sharedTexts(input);

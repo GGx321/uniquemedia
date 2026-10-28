@@ -12,6 +12,7 @@ import { POOLS, type Pool } from "./pools";
 import { makeRng, shuffle, subSeed } from "./rngUtil";
 import { PlanSlotSchema, type PlanSlot } from "./schema";
 import { ORDINARY_BUILT_INS, type PlannerCategory } from "./types";
+import { countTo, PUSH_SIZES, sweepTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -62,9 +63,10 @@ const isImplied = (slot: PlanSlot): boolean => {
 };
 
 describe("the five at «Смелая» (I5.71)", () => {
-  test.each([...ORDINARY_BUILT_INS])("%s: 40 seeds × sizes 1 to 30, every slot is routed and in its companion, and the tiers are levelCountsOf(n)", (category) => {
-    for (const seed of SEEDS) {
-      for (let n = 1; n <= 30; n++) {
+  // Push: 4 of the 40 seeds, the sizes 1, 2, 12 and 30. Heavy: the 40 seeds, every size from 1 to 30 (as before).
+  for (const category of ORDINARY_BUILT_INS) sweepTest(`${category}: 40 seeds × sizes 1 to 30, every slot is routed and in its companion, and the tiers are levelCountsOf(n)`, { push: { seeds: SEEDS.slice(0, 4), sizes: PUSH_SIZES }, heavy: { seeds: SEEDS, sizes: countTo(30) } }, ({ seeds, sizes }) => {
+    for (const seed of seeds) {
+      for (const n of sizes) {
         const { slots } = plan({ seed, count: n, categories: [category], level: "bold" });
         expect(slots).toHaveLength(n);
         expect(tiersOf(slots)).toEqual(levelCountsOf(n));

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { plan } from "./planner";
 import { ORDINARY_BUILT_INS } from "./types";
+import { PUSH_SIZES, sweepTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 // 2026-10-12, S5.9b2 (plan s5a3 §6.4 r3): scoped to the five ordinary built-ins (ORDINARY_BUILT_INS), every assertion kept. The «Смелая» banks run their own sweeps.
@@ -17,9 +18,10 @@ const SIZES = Array.from({ length: 30 }, (_, i) => i + 1);
 
 describe("«Кокетливая» on the five ordinary built-ins is the plan they drew at «Смелая» before 5a.4", () => {
   for (const category of ORDINARY_BUILT_INS) {
-    test(`${category}: every size from 1 to 30 holds round(0.6 × n) flirty slots, none bold, none on the route`, () => {
-      for (const seed of SEEDS) {
-        for (const count of SIZES) {
+    // Push: 4 of the 40 seeds, the sizes 1, 2, 12 and 30. Heavy: the 40 seeds, every size from 1 to 30 (as before).
+    sweepTest(`${category}: every size from 1 to 30 holds round(0.6 × n) flirty slots, none bold, none on the route`, { push: { seeds: SEEDS.slice(0, 4), sizes: PUSH_SIZES }, heavy: { seeds: SEEDS, sizes: SIZES } }, (params) => {
+      for (const seed of params.seeds) {
+        for (const count of params.sizes) {
           const slots = plan({ seed, count, categories: [category], level: "flirty" }).slots;
           expect(slots.filter((s) => s.level === "flirty")).toHaveLength(Math.round(count * 0.6));
           expect(slots.every((s) => s.level !== "bold" && s.route === undefined)).toBe(true);
