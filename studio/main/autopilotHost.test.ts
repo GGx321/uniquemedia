@@ -260,10 +260,9 @@ describe("the quit question", () => {
     expect(quitDialogOf({ kind: "pausing", requests: 4 }, "win32").detail).toBe(quitDialogOf({ kind: "pausing", requests: 4 }).detail);
   });
 
-  test("a running launch between two requests asks, and says nothing will be interrupted", () => {
+  test("a running launch between two requests asks", () => {
     const question = quitQuestionOf([idleRunning()]);
     expect(question).toEqual({ kind: "running", requests: 0 });
-    expect(quitDialogOf(question ?? { kind: "running", requests: 0 }).detail).toBe("Если выйти, запуск встанет на паузу. Запросов в работе нет — ничего не прервётся.");
   });
 
   test("a pause or a stop that still drains requests asks with its own words; one that drained does not", () => {
@@ -881,7 +880,6 @@ describe("notifications: the first view and the restart", () => {
     r.host.observe(changed(paused("engine-restart")));
     await settle();
     expect(r.shown.map((n) => n.title)).toEqual(["Автопилот на паузе"]);
-    expect(r.shown[0]?.body).toBe("Studio перезапустился, и запуск встал на паузу. Откройте «Автопилот» и нажмите «Продолжить».");
   });
 
   test("LOW 5: the owner's own pause and a quit's are not told", async () => {

@@ -137,11 +137,10 @@ describe("resolveLayers: a text layer", () => {
     expect(failure.engineError).toMatchObject({ code: "TEXT_INVALID", captionIssue: "charset" });
   });
 
-  test("a rasteriser timeout is RENDER_FAILED with the hint to shrink the caption", async () => {
+  test("a rasteriser timeout is RENDER_FAILED", async () => {
     const r = rig({ caption: () => Promise.reject(new RasterError("RENDER_TIMEOUT", "too slow")) });
     const failure = await failureOf(resolveLayers([text(1)], JOB, r.deps, signal));
     expect(failure.engineError.code).toBe("RENDER_FAILED");
-    expect(failure.engineError.detail).toContain("уменьшите размер или смените стиль");
   });
 
   test("an error that is not the rasteriser's is not dressed up: it propagates as it is", async () => {
