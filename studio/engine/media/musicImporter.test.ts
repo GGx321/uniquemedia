@@ -60,17 +60,23 @@ async function dumpOf(path: string): Promise<string> {
   return probeDump({ path, demuxer: "mov", whitelist: "aac", signal: signal() });
 }
 
-describe("the formats the importer takes", () => {
-  const FORMATS: MusicFixtureName[] = ["mp3", "m4a", "aac", "wav", "flac", "alac", "ogg", "opus", "isomMp4"];
+/** A push runs the rows in `onPush` (one witness per codec family); the other rows of `rows` run in the heavy run. */
+function eachRow<R extends readonly [string, ...unknown[]]>(rows: readonly R[], onPush: readonly string[], title: (row: R) => string, body: (...row: R) => Promise<void>): void {
+  for (const row of rows) (onPush.includes(row[0]) ? test : heavyTest)(title(row), () => body(...row));
+}
 
-  test.each(FORMATS)("%s becomes AAC-LC, 48 kHz, stereo, one stream, in an m4a", async (name) => {
+describe("the formats the importer takes", () => {
+  const FORMATS = (["mp3", "m4a", "aac", "wav", "flac", "alac", "ogg", "opus", "isomMp4"] as const satisfies readonly MusicFixtureName[]).map((name) => [name] as const);
+  const PUSH_FORMATS = ["mp3", "m4a", "flac", "opus"];
+
+  eachRow(FORMATS, PUSH_FORMATS, ([name]) => `${name} becomes AAC-LC, 48 kHz, stereo, one stream, in an m4a`, async (name) => {
     const stored = await accepted(await runFixture(name));
     expect(judgeStoredDump(await dumpOf(stored.path))).toMatchObject({ ok: true });
     // The brand says it is an M4A, so the boundary's own sniff reads the stored file as music.
     expect(Buffer.from(stored.bytes.subarray(4, 12)).toString("latin1")).toBe("ftypM4A ");
   });
 
-  test.each(FORMATS)("%s keeps its length, as decoded, and gives one waveform value per 50 ms", async (name) => {
+  eachRow(FORMATS, PUSH_FORMATS, ([name]) => `${name} keeps its length, as decoded, and gives one waveform value per 50 ms`, async (name) => {
     const stored = await accepted(await runFixture(name));
     expect(Math.abs(stored.durationMs - musicFixtures[name].durationMs)).toBeLessThanOrEqual(80);
     expect(Math.abs(stored.waveform.length - Math.ceil(stored.durationMs / 50))).toBeLessThanOrEqual(1);
@@ -334,7 +340,7 @@ describe("ffmpeg is pinned to what was judged", () => {
     expect(decode.slice(inputAt)).toEqual(expect.arrayContaining(["-c:a", "aac"]));
   });
 
-  test.each<[MusicFixtureName, string, string]>([
+  eachRow<readonly [MusicFixtureName, string, string]>([
     ["m4a", "mov", "aac"],
     ["alac", "mov", "alac"],
     ["aac", "aac", "aac"],
@@ -342,7 +348,7 @@ describe("ffmpeg is pinned to what was judged", () => {
     ["ogg", "ogg", "vorbis"],
     ["opus", "ogg", "opus"],
     ["wav", "wav", "pcm_s16le"],
-  ])("%s is decoded by the %s demuxer with the %s decoder, from the sniffed container and the probe's codec", async (name, demuxer, decoder) => {
+  ], ["m4a", "ogg", "wav"], ([name, demuxer, decoder]) => `${name} is decoded by the ${demuxer} demuxer with the ${decoder} decoder, from the sniffed container and the probe's codec`, async (name, demuxer, decoder) => {
     const recorded = recordingSpawner();
     await accepted(await runFixture(name, { spawner: recorded.spawner }));
     const decode = recorded.argvs.find((argv) => argv.includes("-frames:a")) ?? [];
@@ -500,7 +506,7 @@ describe("a file that forges the probe's reading is refused (3f.4 review H1)", (
     expect(real.argvs[0]?.[real.argvs[0].indexOf("-map") + 1]).toBe("0:a:1");
   });
 
-  test.each<MusicFixtureName>(["ogg", "opus", "mp3", "m4a", "flac", "wav", "taggedMp3", "taggedM4a"])("an honest %s passes the selection check and is imported", async (name) => {
+  eachRow((["ogg", "opus", "mp3", "m4a", "flac", "wav", "taggedMp3", "taggedM4a"] as const satisfies readonly MusicFixtureName[]).map((name) => [name] as const), ["ogg", "mp3", "taggedM4a"], ([name]) => `an honest ${name} passes the selection check and is imported`, async (name) => {
     const recorded = recordingSpawner();
     await accepted(await runFixture(name, { spawner: recorded.spawner }));
     const maps = recorded.argvs.filter((argv) => argv.includes("-t") && argv.includes("null")).map((argv) => argv[argv.indexOf("-map") + 1]);
