@@ -1,10 +1,11 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { heavyTest } from "../../../testing/bunTiers";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { openEmojiFont, type EmojiFont } from "../emoji/emojiFont";
 import { loadPinnedEmojiFont } from "../emoji/emojiFont.testkit";
 import { TextWorkerResponseSchema } from "../worker/protocol";
-import { TEXT_FONT_KEYS, type TextFontKey } from "../fonts";
+import { TEXT_FONT_KEYS } from "../fonts";
 import { createTextRasteriser, RASTER_WASM, type TextRasteriser } from "../rasteriser";
 import { decodePng, type Rgba } from "./png.testkit";
 import { measureSvg } from "./template";
@@ -52,16 +53,18 @@ const request = (over: Partial<CaptionRequest>): CaptionRequest => ({ value: "hi
 describe("no ink reaches the box's edge", () => {
   const ENDS = ["chef", "brief", "of", "if", "stuff off", "Hey [", "[", "jump", "j", "[jj]", "quiz_", "fjord", "f", "x [ ]"];
 
-  test.each([...TEXT_FONT_KEYS])("%s, every style, both ends of the scale: captions that start with j or end in [ or f are whole", async (font: TextFontKey) => {
-    for (const style of STYLES) {
-      for (const scale of [1, 2]) {
-        for (const value of ENDS) {
-          const { png } = await renderer().render(request({ value, font, style, scale, color: style === "plaque" ? "#ffd166" : "#ffffff" }));
-          expect(edgeInk(decodePng(png), style), `${font}/${style} x${scale} ${JSON.stringify(value)}`).toBe(0);
+  for (const font of TEXT_FONT_KEYS) {
+    heavyTest(`${font}, every style, both ends of the scale: captions that start with j or end in [ or f are whole`, async () => {
+      for (const style of STYLES) {
+        for (const scale of [1, 2]) {
+          for (const value of ENDS) {
+            const { png } = await renderer().render(request({ value, font, style, scale, color: style === "plaque" ? "#ffd166" : "#ffffff" }));
+            expect(edgeInk(decodePng(png), style), `${font}/${style} x${scale} ${JSON.stringify(value)}`).toBe(0);
+          }
         }
       }
-    }
-  });
+    });
+  }
 
   test("Caveat's bracket is not cut in a two-line caption either", async () => {
     for (const style of STYLES) {
@@ -78,7 +81,7 @@ describe("no ink reaches the box's edge", () => {
     }
   });
 
-  test("every printable character, at each end of a caption, in every font at the largest scale, leaves the outline whole", async () => {
+  heavyTest("every printable character, at each end of a caption, in every font at the largest scale, leaves the outline whole", async () => {
     const chars: string[] = [];
     for (let c = 0x21; c <= 0x7e; c++) chars.push(String.fromCharCode(c));
     chars.push("’", "‘", "“", "”", "–", "—", "…");
