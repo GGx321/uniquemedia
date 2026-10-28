@@ -94,6 +94,8 @@ describe("a «Смелая» set's scenes (mockup 49)", () => {
   test("every scene on the route: the line names Seedream 5 Pro · 2K alone, with the set's text model", async () => {
     await openSet(["nightwear", "beach"], "bold");
     expect(modelsLine()).toBe("Seedream 5 Pro · 2K · 9:16 · референс — мастер-портрет · текст grok-4.3");
+    // BA8b round 2 (LOW-4): the model and its resolution are one segment, never broken apart, as mockup 66a and the bold segment have them.
+    expect(card().querySelector(".scene-strip-models .nowrap")?.textContent).toBe("Seedream 5 Pro · 2K");
     expect(card().querySelector(".scene-strip-models")?.getAttribute("title")).toBe(
       "Картинки — Seedream 5 Pro в 2K: так рисуется каждый кадр «Смелой», Настройки его не меняют. Текст — модель этого набора: ею написаны его сцены.",
     );

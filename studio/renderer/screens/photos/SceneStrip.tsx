@@ -77,7 +77,7 @@ export function setModels(view: EngineView, set: SceneSetView): { segments: stri
   const routed = kept.filter((s) => s.route === "seedream").length;
   if (routed > 0 && routed === kept.length && view.settings !== null) {
     return {
-      segments: ["Seedream 5 Pro", "2K", "9:16", "референс — мастер-портрет", ...(view.settings.cameraRealism ? ["реализм камеры"] : []), `текст ${modelName(set.textModel)}`],
+      segments: ["Seedream 5 Pro · 2K", "9:16", "референс — мастер-портрет", ...(view.settings.cameraRealism ? ["реализм камеры"] : []), `текст ${modelName(set.textModel)}`],
       title: SEEDREAM_MODELS_LINE_TITLE,
     };
   }
