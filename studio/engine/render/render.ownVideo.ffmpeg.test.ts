@@ -3,6 +3,7 @@ import { copyFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Clip, Focus } from "../../shared/engine/montage";
 import { ownVideoIssues } from "../../shared/montage";
+import { heavyTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { RAMP } from "../videos/testing/fixtures/index";
 import { firstFrameMeans, flatFrames, gradientFrames, importAsMezzanine, frameNumbersOf, lumaGrid, mezzanineOf, rampFrames, type Mezzanine } from "../videos/testing/mezzanineKit";
@@ -66,15 +67,24 @@ describe("an own video clip on real ffmpeg: which frames it plays", () => {
   test.each([
     { trimStartMs: 0, durationMs: 500, from: 0, frames: 15 },
     { trimStartMs: 1_100, durationMs: 500, from: 33, frames: 15 },
-    { trimStartMs: 300, durationMs: 1_500, from: 9, frames: 45 },
     { trimStartMs: 1_000, durationMs: 1_000, from: 30, frames: 30 },
-    { trimStartMs: 0, durationMs: 3_000, from: 0, frames: 90 },
   ])("a clip of $durationMs ms from $trimStartMs ms plays exactly frames $from to $from + $frames of the mezzanine, in order", async ({ trimStartMs, durationMs, from, frames }) => {
     const { output } = await render(ramp, videoClip(ramp, durationMs, trimStartMs));
     expect(frameNumbersOf(output)).toEqual(Array.from({ length: frames }, (_, i) => from + i));
   });
 
-  test("a trim of 0 starts at the mezzanine's very first frame", async () => {
+  // The other offsets and lengths of the same rule, and the one-frame edges, run in the heavy run.
+  heavyTest("a clip of 1500 ms from 300 ms plays exactly frames 9 to 9 + 45 of the mezzanine, in order", async () => {
+    const { output } = await render(ramp, videoClip(ramp, 1_500, 300));
+    expect(frameNumbersOf(output)).toEqual(Array.from({ length: 45 }, (_, i) => 9 + i));
+  });
+
+  heavyTest("a clip of 3000 ms from 0 ms plays exactly frames 0 to 0 + 90 of the mezzanine, in order", async () => {
+    const { output } = await render(ramp, videoClip(ramp, 3_000, 0));
+    expect(frameNumbersOf(output)).toEqual(Array.from({ length: 90 }, (_, i) => i));
+  });
+
+  heavyTest("a trim of 0 starts at the mezzanine's very first frame", async () => {
     const { output } = await render(ramp, videoClip(ramp, 500, 0));
     expect(frameNumbersOf(output)[0]).toBe(0);
   });
@@ -88,7 +98,7 @@ describe("an own video clip on real ffmpeg: which frames it plays", () => {
     expect(played).toHaveLength(30);
   });
 
-  test("a clip never plays frames from before its trim: the first frame is the trim's, whatever keyframe it was cut from", async () => {
+  heavyTest("a clip never plays frames from before its trim: the first frame is the trim's, whatever keyframe it was cut from", async () => {
     // The mezzanine's keyframes are every 30 frames, so a trim of frame 33 is 3 frames after a keyframe.
     const { output } = await render(ramp, videoClip(ramp, 500, 1_100));
     expect(frameNumbersOf(output)[0]).toBe(33);
@@ -96,16 +106,21 @@ describe("an own video clip on real ffmpeg: which frames it plays", () => {
 });
 
 describe("an own video clip on real ffmpeg: an exact frame count", () => {
-  test.each([
-    { durationMs: 500, frames: 15 },
-    { durationMs: 15_000, frames: 450 },
-    { durationMs: 4_700, frames: 141 },
-  ])("a clip of $durationMs ms is $frames frames, to the frame, at 1080 x 1920 and a constant 30 fps", async ({ durationMs, frames }) => {
+  async function expectExactFrames(durationMs: number, frames: number): Promise<void> {
     const { output } = await render(get("flat-long"), videoClip(get("flat-long"), durationMs, 1_000));
     const probed = await probeVideo(output);
     const video = probed.streams.find((s) => s.codec_type === "video");
     expect({ w: video?.width, h: video?.height, fps: video?.r_frame_rate, frames: Number(video?.nb_read_frames) }).toEqual({ w: 1080, h: 1920, fps: "30/1", frames });
+  }
+
+  test.each([
+    { durationMs: 500, frames: 15 },
+    { durationMs: 4_700, frames: 141 },
+  ])("a clip of $durationMs ms is $frames frames, to the frame, at 1080 x 1920 and a constant 30 fps", async ({ durationMs, frames }) => {
+    await expectExactFrames(durationMs, frames);
   });
+
+  heavyTest("a clip of 15000 ms is 450 frames, to the frame, at 1080 x 1920 and a constant 30 fps", () => expectExactFrames(15_000, 450));
 
   test("a clip that starts deep into a long mezzanine is still exact", async () => {
     const mezzanine = get("flat-long");
@@ -145,13 +160,18 @@ describe("an own video clip on real ffmpeg: cover-crop with focus", () => {
 
   test.each([
     { name: "left edge", focus: { x: 0, y: 0.5 }, x0: 0 },
-    { name: "centre", focus: { x: 0.5, y: 0.5 }, x0: 380 },
     { name: "right edge", focus: { x: 1, y: 0.5 }, x0: 760 },
   ])("a short landscape 1080 x 570 mezzanine with the focus at its $name shows the slice that starts at $x0", async ({ focus, x0 }) => {
     const wide = get("landscape");
     const { output } = await render(wide, videoClip(wide, 500, 0, focus));
     const got = columns(output);
     got.forEach((luma, c) => expect(Math.abs(luma - expectedAt(x0, c))).toBeLessThanOrEqual(3));
+  });
+
+  heavyTest("a short landscape 1080 x 570 mezzanine with the focus at its centre shows the slice that starts at 380", async () => {
+    const wide = get("landscape");
+    const { output } = await render(wide, videoClip(wide, 500, 0, { x: 0.5, y: 0.5 }));
+    columns(output).forEach((luma, c) => expect(Math.abs(luma - expectedAt(380, c))).toBeLessThanOrEqual(3));
   });
 
   test("with no focus the face-less fallback is used: the same slice as the centre, since the fallback is centred", async () => {
