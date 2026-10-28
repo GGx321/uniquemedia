@@ -12,6 +12,7 @@ import { templateSentence } from "../../shared/scenes/template";
 import { isOwnerBannedOutfit } from "../../shared/scenes/words";
 import { plan } from "./planner";
 import type { PlanSlot } from "./schema";
+import { countTo, PUSH_SIZES, sweepTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -121,15 +122,21 @@ const NONE = { count: 0, sample: [] };
 const levelOf = (f: Frame): Level => f.slot.level ?? "ordinary";
 
 describe.each([...BOLD_CATEGORIES])("%s: the real planner's plans (I5.24, I5.37)", (category) => {
-  test.each([...PLANNER_LEVELS])("at %s: no slot is left to the writer: every slot of 1 to 30 renders, at every legs share (0 null slots)", (level) => {
-    for (const legsShare of SHARES) {
-      for (let seed = 1; seed <= 40; seed++) for (let count = 1; count <= 30; count++) render(framesOf(category, level, seed, count, legsShare), true);
-    }
-  }, 60_000);
+  // Push: seeds 1 to 4, the sizes 1, 2, 12 and 30. Heavy: seeds 1 to 40, every size from 1 to 30 (as before).
+  for (const level of PLANNER_LEVELS) {
+    sweepTest(`at ${level}: no slot is left to the writer: every slot of 1 to 30 renders, at every legs share (0 null slots)`, { push: { seeds: 4, sizes: PUSH_SIZES }, heavy: { seeds: 40, sizes: countTo(30) } }, ({ seeds, sizes }) => {
+      for (const legsShare of SHARES) {
+        for (let seed = 1; seed <= seeds; seed++) for (const count of sizes) render(framesOf(category, level, seed, count, legsShare), true);
+      }
+    }, 60_000);
+  }
 
-  test.each([...PLANNER_LEVELS])("at %s: a wide sweep of 3000 seeds renders every slot of a 12-slot plan with legs", (level) => {
-    for (let seed = 1; seed <= 3000; seed++) render(framesOf(category, level, seed * 31, 12, 15), false);
-  }, 60_000);
+  // Push: 300 of the 3000 seeds. Heavy: the 3000 seeds.
+  for (const level of PLANNER_LEVELS) {
+    sweepTest(`at ${level}: a wide sweep of 3000 seeds renders every slot of a 12-slot plan with legs`, { push: { seeds: 300 }, heavy: { seeds: 3000 } }, ({ seeds }) => {
+      for (let seed = 1; seed <= seeds; seed++) render(framesOf(category, level, seed * 31, 12, 15), false);
+    }, 60_000);
+  }
 
   test.each([...PLANNER_LEVELS])("at %s: the coverage of what a slot shows is said once, and no sentence outgrows the scene bound", (level) => {
     const frames = allFrames(category, level);

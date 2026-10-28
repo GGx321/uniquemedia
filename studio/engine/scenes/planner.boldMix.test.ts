@@ -9,6 +9,7 @@ import { POOLS } from "./pools";
 import { redrawSlot } from "./redraw";
 import type { PlanSlot } from "./schema";
 import { ORDINARY_BUILT_INS } from "./types";
+import { countTo, PUSH_SIZES, sweepTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -46,10 +47,11 @@ const boldPlan = (category: BankCategory, seed: number, count: number, legsShare
 
 describe("the mix inside a «Смелая» category is exact (I5.36)", () => {
   for (const category of BOLD_BANKS) {
-    test(`${category}: 1 to 40 slots hold levelCountsOf(n) bold, flirty and ordinary slots, at every legs share`, () => {
-      for (const seed of SEEDS.slice(0, 8)) {
+    // Push: 2 of the 8 seeds, the sizes 1, 2, 12 and 30. Heavy: the 8 seeds, every size from 1 to 40 (as before).
+    sweepTest(`${category}: 1 to 40 slots hold levelCountsOf(n) bold, flirty and ordinary slots, at every legs share`, { push: { seeds: SEEDS.slice(0, 2), sizes: PUSH_SIZES }, heavy: { seeds: SEEDS.slice(0, 8), sizes: countTo(40) } }, ({ seeds, sizes }) => {
+      for (const seed of seeds) {
         for (const legsShare of SHARES) {
-          for (let count = 1; count <= 40; count++) {
+          for (const count of sizes) {
             const levels = boldPlan(category, seed, count, legsShare).map((d) => levelOf(d.slot));
             const got = { ordinary: levels.filter((l) => l === "ordinary").length, flirty: levels.filter((l) => l === "flirty").length, bold: levels.filter((l) => l === "bold").length };
             expect({ count, legsShare, got }).toEqual({ count, legsShare, got: levelCountsOf(count) });
@@ -103,9 +105,10 @@ describe("the mix inside a «Смелая» category is exact (I5.36)", () => {
 describe("the five ordinary built-ins at «Кокетливая» are what «Смелая» drew them as before 5a.4 (I5.36)", () => {
   const seeds = Array.from({ length: 200 }, (_, i) => i * 104729 + 3);
   for (const category of ORDINARY_BUILT_INS) {
-    test(`${category}: every size from 1 to 30, 200 seeds, a «Кокетливая» plan is in the ordinary bank, flirty by the rounding, with no bold slot and no route`, () => {
-      for (const seed of seeds) {
-        for (let count = 1; count <= 30; count++) {
+    // Push: 20 of the 200 seeds, the sizes 1, 2, 12 and 30. Heavy: the 200 seeds, every size from 1 to 30 (as before).
+    sweepTest(`${category}: every size from 1 to 30, 200 seeds, a «Кокетливая» plan is in the ordinary bank, flirty by the rounding, with no bold slot and no route`, { push: { seeds: seeds.slice(0, 20), sizes: PUSH_SIZES }, heavy: { seeds, sizes: countTo(30) } }, (params) => {
+      for (const seed of params.seeds) {
+        for (const count of params.sizes) {
           const slots = plan({ seed, count, categories: [category], level: "flirty" }).slots;
           expect(slots.filter((s) => s.level === "flirty")).toHaveLength(Math.round(count * 0.6));
           expect(slots.every((s) => s.level !== "bold" && s.route === undefined && BANKS[category].places.some((p) => p.name === s.location))).toBe(true);
@@ -136,10 +139,11 @@ describe("no slot takes an item above its level (I5.37)", () => {
     });
   }
 
-  test("a wide sweep: 10 000 seeds of 12 slots, nothing above its level", () => {
+  // Push: seeds 1 to 1 000 (the narrower test above holds the same rule on 24 seeds at three sizes and every share). Heavy: the 10 000 seeds.
+  sweepTest("a wide sweep: 10 000 seeds of 12 slots, nothing above its level", { push: { seeds: 1000 }, heavy: { seeds: 10_000 } }, ({ seeds }) => {
     for (const category of BOLD_BANKS) {
       let above = 0;
-      for (let seed = 1; seed <= 10_000; seed++) for (const d of boldPlan(category, seed, 12, seed % 2 === 0 ? 15 : 0)) if (!atOrBelow(d.moment.level, levelOf(d.slot)) || !atOrBelow(d.outfit.level, levelOf(d.slot))) above++;
+      for (let seed = 1; seed <= seeds; seed++) for (const d of boldPlan(category, seed, 12, seed % 2 === 0 ? 15 : 0)) if (!atOrBelow(d.moment.level, levelOf(d.slot)) || !atOrBelow(d.outfit.level, levelOf(d.slot))) above++;
       expect({ category, above }).toEqual({ category, above: 0 });
     }
   }, 60_000);
@@ -253,9 +257,10 @@ describe("a «Смелая» run never draws one scene twice while the slot has 
   };
 
   for (const category of BOLD_BANKS) {
-    test(`${category}: no scene twice in a run of 10 or 20, at every legs share, over 300 seeds`, () => {
+    // Push: seeds 1 to 30. Heavy: the 300 seeds.
+    sweepTest(`${category}: no scene twice in a run of 10 or 20, at every legs share, over 300 seeds`, { push: { seeds: 30 }, heavy: { seeds: 300 } }, ({ seeds }) => {
       const twice: string[] = [];
-      for (let seed = 1; seed <= 300; seed++) {
+      for (let seed = 1; seed <= seeds; seed++) {
         for (const count of [10, 20]) {
           for (const legsShare of SHARES) {
             const scenes = boldPlan(category, seed, count, legsShare).map(sceneOf);
@@ -331,10 +336,11 @@ describe("the owner's rules hold in the mix", () => {
     expect(back.filter((d) => d.capture !== "mirror-hidden")).toEqual([]);
   });
 
-  test("a category holds at most ⌊n/5⌋ frames that face away, at any size", () => {
+  // Push: 3 of the 10 seeds, the sizes 1, 2, 12 and 30. Heavy: the 10 seeds, every size from 1 to 40.
+  sweepTest("a category holds at most ⌊n/5⌋ frames that face away, at any size", { push: { seeds: SEEDS.slice(0, 3), sizes: PUSH_SIZES }, heavy: { seeds: SEEDS.slice(0, 10), sizes: countTo(40) } }, ({ seeds, sizes }) => {
     for (const category of BOLD_BANKS) {
-      for (const seed of SEEDS.slice(0, 10)) {
-        for (let count = 1; count <= 40; count++) {
+      for (const seed of seeds) {
+        for (const count of sizes) {
           const away = boldPlan(category, seed, count).filter((d) => d.slot.pose === "profile" || d.slot.pose === "back").length;
           expect({ category, count, ok: away <= Math.floor(count / 5) }).toEqual({ category, count, ok: true });
         }

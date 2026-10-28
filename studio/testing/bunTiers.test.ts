@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sweepVariants } from "./bunTiers";
+import { countTo, PUSH_SIZES, sweepVariants } from "./bunTiers";
 import { TIER_ENV, tierPattern } from "./tiers";
 
 describe("sweepVariants", () => {
@@ -27,6 +27,15 @@ describe("sweepVariants", () => {
 
   test("the perf and quarantine runs do not enable the heavy variant", () => {
     for (const tier of ["perf", "quarantine"] as const) expect(sweepVariants("x", params, tier)[1]?.enabled).toBe(false);
+  });
+});
+
+describe("the sweep sizes", () => {
+  test("a push samples the sizes 1, 2, 12 and 30, and countTo walks every size up to its limit", () => {
+    expect([...PUSH_SIZES]).toEqual([1, 2, 12, 30]);
+    expect(countTo(30)).toHaveLength(30);
+    expect([countTo(3), countTo(0)]).toEqual([[1, 2, 3], []]);
+    expect(countTo(30)).toEqual(expect.arrayContaining([...PUSH_SIZES]));
   });
 });
 

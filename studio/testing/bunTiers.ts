@@ -44,6 +44,14 @@ export interface SweepVariant<T> {
   enabled: boolean;
 }
 
+/** The sizes (photos in a run) a push samples in a sweep: one, two, a usual run, and the largest. The heavy run sweeps them all. */
+export const PUSH_SIZES: readonly number[] = [1, 2, 12, 30];
+
+/** `[1, 2, ..., n]`: the sizes a heavy sweep walks (`countTo(30)`). */
+export function countTo(n: number): number[] {
+  return Array.from({ length: n }, (_, i) => i + 1);
+}
+
 /** The two tests a sweep registers in the run of `tier`: the push variant under the plain name, the heavy one tagged `[heavy]` and enabled only in the heavy run. */
 export function sweepVariants<T>(name: string, params: SweepParams<T>, tier: Tier | undefined): [SweepVariant<T>, SweepVariant<T>] {
   return [
