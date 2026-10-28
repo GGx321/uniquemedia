@@ -365,6 +365,8 @@ export class MockAutopilot {
       totals,
       estimate: { expectedMicros: expected, worstMicros: worst, prices: prices.prices, pricesAsOf: prices.pricesAsOf },
       perShapeExpectedMicros: { single: SIZE.single * unit.photoExpectedMicros, collage: SIZE.collage * unit.photoExpectedMicros, slides: SIZE.slides * unit.photoExpectedMicros },
+      // 5a.4 (S5.BA8a): the engine's `unitPhotoWorstMicros`, present exactly when the plan draws a new photo.
+      ...(totals.toGenerate > 0 ? { unitPhotoWorstMicros: unit.photoWorstMicros } : {}),
       month: { budgetMicros: month.budgetMicros, committedMicros, freeMicros, fit, raiseToMicros: raiseBudgetToMicros({ budgetMicros: month.budgetMicros, committedMicros, freeMicros }, worst) },
       balance: this.#world.balance(),
       music: this.#world.music(),

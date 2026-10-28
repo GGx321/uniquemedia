@@ -85,6 +85,15 @@ describe("autopilot.estimate: the mock's launch figure is the engine's (the unit
     const unit = unitPricesOf(PRICED, MODELS, "off", covers, level === "bold");
     const engine = money(launchEstimate([{ avatarId: MIA.avatarId, photos: 20, split: [{ ref: categories[0], count: 20 }] }], unit));
     expect({ mock: money(preview.estimate) }).toEqual({ mock: engine });
+    // 5a.4 (S5.BA8a): the unit for one new photo, which the month line divides the budget by, is the launch math's own.
+    expect(preview.unitPhotoWorstMicros).toBe(unit.photoWorstMicros);
+  });
+
+  test("a launch that draws no new photo carries no unit, as the engine's", async () => {
+    const m = mockOf();
+    const draft = { avatarIds: [MIA.avatarId], videosPerAvatar: 4, mix: { single: 0, collage: 0, slides: 100 }, categories: ["home"] as CategoryRef[], level: "bold" as SceneLevel, poses: NO_POSES, library: true, generate: false, sceneReview: false, stickers: false };
+    const preview = (await unwrap(m.client.request("autopilot.estimate", { draft }))).preview;
+    expect("unitPhotoWorstMicros" in preview).toBe(false);
   });
 });
 
