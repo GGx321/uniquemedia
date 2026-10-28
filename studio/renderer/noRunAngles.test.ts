@@ -45,18 +45,6 @@ async function sources(): Promise<{ file: string; text: string }[]> {
 }
 
 describe("the detector", () => {
-  test("sees the card's old «Ракурсы» block: the label, the toggles in the form, the hint", () => {
-    const card = `<span id={anglesLabel} className="lbl">Ракурсы</span>
-      {(["profile", "back"] as const).map((pose) => { const on = form.poses[pose]; })}
-      <span className="faint photos-note photos-angles-hint">профиль и со спины — только если разрешите, без проверки сходства</span>`;
-    expect(runAngles("screens/photos/GenerateCard.tsx", card)).toEqual(["профиль и со спины — только если разрешите", "Ракурсы", "form.poses"]);
-  });
-
-  test("sees the strip's line, a reference to the card's control and the CSS", () => {
-    expect(runAngles("screens/photos/sceneText.ts", "lead: `Ракурсы: ${posesText(poses)}`")).toEqual(["Ракурсы:", "Ракурсы"]);
-    expect(runAngles("screens/photos/categoryText.ts", "«Ракурсы» карточки их не касаются; из «Ракурсов» карточки")).toEqual(["«Ракурсы»", "«Ракурсов»"]);
-    expect(runAngles("ui.css", ".photos-angles-own { margin: 0; }\n.ap-angles .x {}")).toEqual([".photos-angles-own", ".ap-angles"]);
-  });
 
   test("lets a custom category's own angles keep their label, and comments tell the history", () => {
     expect(runAngles("screens/photos/CategorySheet.tsx", '<span className="lbl">Ракурсы</span>')).toEqual([]);

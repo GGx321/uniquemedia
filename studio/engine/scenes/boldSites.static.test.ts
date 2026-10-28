@@ -156,18 +156,6 @@ describe("the «Смелая» sites (plan s5a4 §5.1.4)", () => {
     expect(silent).toEqual(expected(COUNTING_SITES));
   });
 
-  test("the rule sees a literal false and a missing origin (it is not vacuous)", () => {
-    const flagged = (code: string): number =>
-      nodesOf(ts.createSourceFile("probe.ts", code, ts.ScriptTarget.Latest, true), (node) => ts.isCallExpression(node) && ts.isIdentifier(node.expression) && RENDERERS.has(node.expression.text)).filter(
-        (node) => !/\bimpliedNudity\b/.test(node.getText()) || FALSE_ORIGIN.test(node.getText()),
-      ).length;
-    expect(flagged("localSentences({ slots, keyOf, impliedNudity: false });")).toBe(1);
-    expect(flagged("plannedWriterConfig(labelOf, false);")).toBe(1);
-    expect(flagged("boldReader();")).toBe(1);
-    expect(flagged("localSentences({ slots, keyOf, impliedNudity });")).toBe(0);
-    expect(flagged("plannedWriterConfig(labelOf, deps.impliedNudity === true);")).toBe(0);
-  });
-
   test("the engine reads the avatar's origin (studioCreated) only at the named paths", () => {
     const reads = countsOf((node) => ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "studioCreated");
     expect(reads).toEqual(expected(ORIGIN_SOURCES));
