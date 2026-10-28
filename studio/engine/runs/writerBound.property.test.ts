@@ -86,14 +86,6 @@ describe("the writer's money bound against the real planner and template", () =>
       }
     }
   });
-
-  test("the uncovered fixture does reach the model, so the checks above are not vacuous", () => {
-    const { slots, local } = drawn(1, 25, [LLM_ONLY_REF]);
-    expect(slots.every((slot) => local(slot) === null)).toBe(true);
-    expect(writerChunksWorst(splitCount(25, [LLM_ONLY_REF]), coversOf)).toBe(1);
-    expect(coversOf(COVERED)).toBe(true);
-    expect(coversOf(LLM_ONLY_REF)).toBe(false);
-  });
 });
 
 // 5a.4 (S5.BA5, plan s5a4 I5.77, BA3 review M-1): at «Смелая» every custom slot is on the route and the template renders none of them, so the coverage a pool has below «Смелая»

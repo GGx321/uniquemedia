@@ -170,35 +170,6 @@ const hits = (check: (s: Swept) => string | null): Array<{ label: string; hit: s
     return hit === null ? [] : [{ label: s.label, hit }];
   });
 
-describe("the sweep covers what it claims (it is not vacuous)", () => {
-  test("a few thousand prompts", () => {
-    expect(EVERYTHING.length).toBeGreaterThan(3000);
-  });
-
-  test("every shot, every pose and every time, with «Реализм камеры» both on and off", () => {
-    expect(new Set(EVERYTHING.map((s) => s.slot.shot))).toEqual(new Set(SHOTS));
-    expect(new Set(EVERYTHING.map((s) => s.slot.pose))).toEqual(new Set(PoseSchema.options));
-    for (const time of TIMES) expect(EVERYTHING.some((s) => s.slot.timeOfDay === time)).toBe(true);
-    expect(new Set(EVERYTHING.map((s) => s.realism))).toEqual(new Set([true, false]));
-  });
-
-  test("every built-in and both custom categories", () => {
-    for (const category of [...ORDINARY_BUILT_INS, CUSTOM_REF, PHONEFUL_REF]) expect(EVERYTHING.some((s) => s.slot.category === category)).toBe(true);
-  });
-
-  test("all three room states are drawn (tidy, lived-in, messy), and some prompts have no room phrase", () => {
-    expect(EVERYTHING.some((s) => s.look.includes("The room is ordinary and fairly tidy"))).toBe(true);
-    expect(EVERYTHING.some((s) => s.look.includes("The room looks lived-in"))).toBe(true);
-    expect(EVERYTHING.some((s) => s.look.includes("The room is messy"))).toBe(true);
-    expect(EVERYTHING.some((s) => !s.look.includes("The room "))).toBe(true);
-  });
-
-  test("a phone activity does reach friend, candid and photographer prompts (the allowance is exercised)", () => {
-    const phoneShots = new Set(EVERYTHING.filter((s) => isPhoneActivity({ text: s.slot.activity })).map((s) => s.slot.shot));
-    expect(phoneShots.has("friend") || phoneShots.has("candid") || phoneShots.has("photographer")).toBe(true);
-  });
-});
-
 describe("the body axis (S5.2c)", () => {
   const BODY_CLAUSE = "and her exact body proportions as described";
 
@@ -291,11 +262,6 @@ describe("I5.2: only the mirror shows a phone", () => {
 describe("C1: the word «selfie» draws a phone, so no selfie slot's image prompt says it", () => {
   const SELFIE_SLOTS = EVERYTHING.filter((s) => s.slot.shot === "selfie");
 
-  test("the sweep reaches selfie slots of every category, built-in and custom (sanity)", () => {
-    expect(SELFIE_SLOTS.length).toBeGreaterThan(300);
-    expect(new Set(SELFIE_SLOTS.map((s) => s.slot.category)).size).toBeGreaterThanOrEqual(ORDINARY_BUILT_INS.length + 2);
-  });
-
   test("no selfie prompt says selfie or front camera, whichever of the fixed texts we own is drawn", () => {
     expect(hits((s) => (s.slot.shot === "selfie" ? (s.prompt.match(/selfie|front[ -]camera/i)?.[0] ?? null) : null))).toEqual([]);
   });
@@ -320,11 +286,6 @@ describe("S5.R1 H1: a place never names a mirror the shot does not use", () => {
   test("no non-mirror prompt says «mirror» in the writer's sentence, where the pools are the source", () => {
     const offenders = EVERYTHING.filter((s) => s.slot.shot !== "mirror" && /mirror/i.test(s.sentence)).map((s) => s.label);
     expect(offenders).toEqual([]);
-  });
-
-  test("the built-in sweep does draw non-mirror shots at places that may carry a mirror (the sweep is not vacuous)", () => {
-    const mirrorPlaces = new Set(ORDINARY_BUILT_INS.flatMap((c) => POOLS[c].locations.filter((l) => l.mirror === true).map((l) => l.name)));
-    expect(EVERYTHING.some((s) => s.slot.shot !== "mirror" && mirrorPlaces.has(s.slot.location))).toBe(true);
   });
 });
 

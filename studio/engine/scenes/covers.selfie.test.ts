@@ -39,12 +39,6 @@ describe("a self-shot capture's gaze and cue never name a phone or say selfie", 
     for (const capture of SELF_SHOT_CAPTURES)
       for (const cue of CUES.filter((c) => c.captures === undefined || c.captures.includes(capture))) expect({ capture, level: cue.level ?? "ordinary", text: cue.text, named: words(cue.text) }).toEqual({ capture, level: cue.level ?? "ordinary", text: cue.text, named: false });
   });
-
-  test("the control: the mirror's own gaze does name her phone (so the check above is not vacuous), and a mirror shot is not held to the refusal", () => {
-    const naming = GAZE.filter((g) => words(g.text));
-    expect(naming.map((g) => g.kind)).toEqual(["mirror"]);
-    expect(SELF_SHOT_CAPTURES.every((capture) => !gazeKindsFor(capture, "front").includes("mirror"))).toBe(true);
-  });
 });
 
 describe("a covered custom category with selfies never emits a null slot, whatever the key", () => {

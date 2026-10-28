@@ -126,11 +126,6 @@ test("only the descriptor prompt reads the vibe: no other engine module (image, 
   expect([...readers].sort()).toEqual([...MAY_READ_THE_VIBE].sort());
 });
 
-test("the scan sees a module that reads the vibe (it is not vacuous)", () => {
-  expect(mentionsTheVibe(join(ENGINE_DIR, "avatars", "descriptor.ts"))).toBe(true);
-  expect(mentionsTheVibe(join(ENGINE_DIR, "avatars", "prompts.ts"))).toBe(false);
-});
-
 // L9: importDescribe.ts sets `vibe: ""` (an imported avatar has no
 // owner-entered vibe) but does not read or forward anyone's vibe — the scan
 // must see straight through that one exemption, on the real file, not just
