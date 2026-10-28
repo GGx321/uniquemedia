@@ -9,7 +9,9 @@ import { isDisabled, openReview } from "./photos/sceneScreenKit";
 
 // S5.7c (mockup 35): the card has no «Ракурсы» any more, so the sheet no longer measures a category's angles against them.
 const BED_NOTE = "Её сцены — поровну в этих ракурсах. Селфи станет меньше: только три четверти; со спины — без проверки сходства.";
-const NONE_HINT = "Без своих ракурсов: анфас и три четверти. Профиль и со спины — только если отметить их здесь.";
+// 5a.4 (S5.BA8b, plan s5a4 §5.9 row 4b; mockup 66#created): the sheet's hint ends with «Смелая»'s own rule for a custom category's angles.
+const BOLD_TAIL = "На «Смелой» ракурс берётся из сцены.";
+const NONE_HINT = `Без своих ракурсов: анфас и три четверти. Профиль и со спины — только если отметить их здесь. ${BOLD_TAIL}`;
 
 function sheet(): HTMLElement {
   return screen.getByRole("dialog", { name: "Мои категории" });
@@ -94,7 +96,7 @@ describe("«Мои категории»: the «Ракурсы» block (CatSheet,
     expect(["Анфас", "Три четверти", "Профиль", "Со спины"].map((name) => chip(name).getAttribute("aria-pressed"))).toEqual(["false", "true", "false", "true"]);
     const clear = within(sheet()).getByRole("button", { name: "Убрать свои ракурсы" });
     expect(clear.getAttribute("title")).toBe("Сцены этой категории будут в анфас и три четверти");
-    expect(hintText()).toBe(BED_NOTE);
+    expect(hintText()).toBe(`${BED_NOTE} ${BOLD_TAIL}`);
     const hint = document.getElementById(anglesGroup().getAttribute("aria-describedby") ?? "");
     expect(hint?.getAttribute("aria-live")).toBe("polite");
   });
@@ -123,7 +125,7 @@ describe("«Мои категории»: the «Ракурсы» block (CatSheet,
     expect(chip("Анфас").className.includes("cat-angle-implied")).toBe(false);
     expect(describeElement(document.activeElement)).toBe(describeElement(chip("Со спины")));
     // Paris's deck holds a selfie and a mirror shot.
-    expect(hintText()).toBe("Её сцены — поровну в этих ракурсах. Селфи и кадров в зеркале станет меньше: только анфас или три четверти; со спины — без проверки сходства.");
+    expect(hintText()).toBe(`Её сцены — поровну в этих ракурсах. Селфи и кадров в зеркале станет меньше: только анфас или три четверти; со спины — без проверки сходства. ${BOLD_TAIL}`);
     expect(within(sheet()).getByRole("button", { name: "Убрать свои ракурсы" })).toBeDefined();
   });
 
@@ -204,7 +206,7 @@ describe("«Мои категории»: the «Ракурсы» block (CatSheet,
   test("an open set holding the category's scenes: the hint adds that an edit moves «Другая сцена» there", async () => {
     await openReview({ categories: [BED], sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 3, written: 3, categories: [BED.categoryId] }] });
     await openSheet();
-    expect(hintText()).toBe(`${BED_NOTE} Правка меняет и «Другую сцену» в открытом наборе; уже составленные сцены остаются как были.`);
+    expect(hintText()).toBe(`${BED_NOTE} Правка меняет и «Другую сцену» в открытом наборе; уже составленные сцены остаются как были. ${BOLD_TAIL}`);
   });
 
   test("the regenerate box and its outcome name the angles and what ⟳ takes (CatSheetRegen, CatSheetRegenDone)", async () => {

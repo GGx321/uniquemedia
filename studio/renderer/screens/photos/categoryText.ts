@@ -327,10 +327,16 @@ export function anglesNote(poses: readonly ScenePose[], deck: readonly PoolShot[
   return consequences === "" ? what : `${what} ${consequences}`;
 }
 
-/** The sheet's hint under the chips; `openSetScenes` (the category's scenes in the open set) adds that an edit also moves ⟳ there. */
+/** 5a.4 (§5.9 row 4b, r2.3 M6, QB-4): at «Смелая» the run's toggles decide a custom category's angles, not its own list. */
+export const ANGLES_BOLD_TAIL = "На «Смелой» ракурс берётся из сцены.";
+
+/**
+ * The sheet's hint under the chips; `openSetScenes` (the category's scenes in the open set) adds that an edit also moves ⟳ there. «Смелая»'s rule comes last: it qualifies both what the
+ * list draws and what an edit moves.
+ */
 export function anglesHint(poses: readonly ScenePose[] | undefined, deck: readonly PoolShot[], openSetScenes: number): string {
   const hint = poses === undefined ? ANGLES_NONE_HINT : anglesNote(poses, deck);
-  return openSetScenes > 0 ? `${hint} ${ANGLES_OPEN_SET}` : hint;
+  return `${openSetScenes > 0 ? `${hint} ${ANGLES_OPEN_SET}` : hint} ${ANGLES_BOLD_TAIL}`;
 }
 
 /** The title of a dimmed-on chip (no angles of its own): what the category takes now, and what a press does (mockup 35#home). */

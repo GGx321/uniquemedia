@@ -362,13 +362,16 @@ describe("CS.8: a category's angles", () => {
     expect(anglesNote(["profile", "back"], NO_PHONE)).toBe(`${WHAT_MANY} В профиль и со спины — без проверки сходства.`);
   });
 
-  test("the sheet's hint: the same lines with own angles, front and three-quarter without; an open set holding the category's scenes adds that ⟳ there follows an edit", () => {
+  // 5a.4 (S5.BA8b, plan s5a4 §5.9 row 4b, r2.3 M6; mockup 66#created): at «Смелая» a custom category's angles do not apply (the run's toggles decide, QB-4), so the sheet's hint ends
+  // by saying so, after everything it says about the angles and ⟳ («Смелая» qualifies both).
+  test("the sheet's hint: the same lines with own angles, front and three-quarter without; an open set holding the category's scenes adds that ⟳ there follows an edit; «Смелая» last", () => {
+    const bold = "На «Смелой» ракурс берётся из сцены.";
     expect(ANGLES_NONE_HINT).toBe("Без своих ракурсов: анфас и три четверти. Профиль и со спины — только если отметить их здесь.");
-    expect(anglesHint(undefined, PHONES, 0)).toBe(ANGLES_NONE_HINT);
-    expect(anglesHint(["back", "three-quarter"], BED_DECK, 0)).toBe(anglesNote(["three-quarter", "back"], BED_DECK));
+    expect(anglesHint(undefined, PHONES, 0)).toBe(`${ANGLES_NONE_HINT} ${bold}`);
+    expect(anglesHint(["back", "three-quarter"], BED_DECK, 0)).toBe(`${anglesNote(["three-quarter", "back"], BED_DECK)} ${bold}`);
     const opened = "Правка меняет и «Другую сцену» в открытом наборе; уже составленные сцены остаются как были.";
-    expect(anglesHint(undefined, PHONES, 3)).toBe(`${ANGLES_NONE_HINT} ${opened}`);
-    expect(anglesHint(["front"], PHONES, 1)).toBe(`${WHAT_ONE} ${opened}`);
+    expect(anglesHint(undefined, PHONES, 3)).toBe(`${ANGLES_NONE_HINT} ${opened} ${bold}`);
+    expect(anglesHint(["front"], PHONES, 1)).toBe(`${WHAT_ONE} ${opened} ${bold}`);
   });
 
   test("the sheet's chips and buttons say what they do", () => {
