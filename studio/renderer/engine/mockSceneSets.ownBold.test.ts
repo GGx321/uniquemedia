@@ -6,6 +6,7 @@ import { boldContentLevel, contentProblems } from "../../shared/scenes/contentLi
 import { OWN_BOLD_COVERAGE } from "../../shared/scenes/ownScene";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { MIA, makeMock, unwrap, type Mock } from "./mockEngine.testkit";
+import { MOCK_OWN_BOLD_OUTFIT } from "./mockSceneSets";
 useNativeGlobals();
 
 // 5a.4 (S5.BA9, plan s5a4 §8 BA9, §5.11): the mock's «Своя сцена» at «Смелая» is the engine's. An idea write on a «Смелая» set is priced in the bold mode (the engine's
@@ -72,10 +73,14 @@ describe("an idea write on the mock is priced in its set's mode (S5.BA9)", () =>
 });
 
 describe("the own scene of a «Смелая» set on the mock (S5.BA9)", () => {
-  test("an imported avatar's is written in lingerie, held to the «Смелая» line, and ends with the kept coverage", async () => {
+  test("the mock's «Смелая» outfit is one the ordinary line refuses (a garment the bold variant draws)", () => {
+    expect(contentProblems(MOCK_OWN_BOLD_OUTFIT, "ordinary").map((p) => p.reason)).toEqual(["revealing-word"]);
+  });
+
+  test("an imported avatar's is written in a «Смелая» outfit, held to the «Смелая» line, and ends with the kept coverage", async () => {
     const m = mockOf();
     const own = ownOf(await withOwn(m, MIA.avatarId, "bold"));
-    expect(own.text).toContain("lingerie");
+    expect(own.text).toContain(MOCK_OWN_BOLD_OUTFIT);
     expect(own.text?.endsWith(OWN_BOLD_COVERAGE)).toBe(true);
     expect(contentProblems(own.text ?? "", boldContentLevel())).toEqual([]);
   });
@@ -83,14 +88,14 @@ describe("the own scene of a «Смелая» set on the mock (S5.BA9)", () => {
   test("an avatar made in Studio's ends with no coverage", async () => {
     const m = mockOf();
     const own = ownOf(await withOwn(m, STUDIO.avatarId, "bold"));
-    expect(own.text).toContain("lingerie");
+    expect(own.text).toContain(MOCK_OWN_BOLD_OUTFIT);
     expect(own.text?.endsWith(OWN_BOLD_COVERAGE)).toBe(false);
   });
 
   test("at «Кокетливая» it is written as before, with no coverage", async () => {
     const m = mockOf();
     const own = ownOf(await withOwn(m, MIA.avatarId, "flirty"));
-    expect(own.text).not.toContain("lingerie");
+    expect(own.text).not.toContain(MOCK_OWN_BOLD_OUTFIT);
     expect(own.text?.endsWith(OWN_BOLD_COVERAGE)).toBe(false);
   });
 

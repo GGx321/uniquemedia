@@ -28,6 +28,7 @@ import {
   type UnsequencedEvent,
 } from "../../shared/engine";
 import { bankPlaceOf } from "../../shared/scenes/bankLookup";
+import { BANKS } from "../../shared/scenes/banks";
 import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "../../shared/scenes/captures";
 import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared/scenes/contentLine";
 import { covers, isWaterPlaceName } from "../../shared/scenes/custom";
@@ -527,13 +528,20 @@ function ideaAngle(idea: string): "back" | "profile" | undefined {
  */
 const BOLD_DETAILS = ["a cup of tea beside her", "a book beside her", "a scarf beside her"] as const;
 
+/**
+ * 5a.4 (S5.BA9): what the mock's own scene of a «Смелая» set wears: the first general «Смелая» outfit of «Ночнушки и бельё» that the ordinary line refuses as revealing alone (bank data, so the mock names no
+ * garment of its own: contentLine.static.test.ts), which is what the idea writer's bold variant is asked to draw.
+ */
+export const MOCK_OWN_BOLD_OUTFIT: string =
+  BANKS.nightwear.outfits.find((o) => o.level === "bold" && o.tier !== "implied" && o.pinOnly !== true && contentProblems(o.text, "ordinary").map((p) => p.reason).join() === "revealing-word")?.text ?? "a nightdress";
+
 function sentenceOf(scene: Scene, take: number, impliedNudity: boolean): string {
   const mark = take === 0 ? `${scene.sceneId}` : `${scene.sceneId}, take ${take}`;
   if (scene.place === null) {
-    // 5a.4 (S5.BA9): an own scene of a «Смелая» set is written as the idea writer's bold variant writes it: in lingerie, with no number (a number is held to the age rule on a «Смелая»
-    // frame), then the coverage by the avatar's origin, appended as the engine's reader appends it.
+    // 5a.4 (S5.BA9): an own scene of a «Смелая» set is written as the idea writer's bold variant writes it: in a «Смелая» outfit (`MOCK_OWN_BOLD_OUTFIT`), with no number (a number is held
+    // to the age rule on a «Смелая» frame), then the coverage by the avatar's origin, appended as the engine's reader appends it.
     if (scene.route !== "seedream") return `She enjoys ${scene.idea ?? "a quiet moment"}, caught by a friend in the afternoon light (${mark}).`;
-    const sentence = `She enjoys ${scene.idea ?? "a quiet moment"} in black lingerie in her bedroom, ${BOLD_DETAILS[(scene.sceneId + take) % BOLD_DETAILS.length] ?? "a cup of tea beside her"}.`;
+    const sentence = `She enjoys ${scene.idea ?? "a quiet moment"} in ${MOCK_OWN_BOLD_OUTFIT} in her bedroom, ${BOLD_DETAILS[(scene.sceneId + take) % BOLD_DETAILS.length] ?? "a cup of tea beside her"}.`;
     const coverage = ownCoverageOf(impliedNudity);
     return coverage === undefined ? sentence : `${sentence} ${coverage}`;
   }
