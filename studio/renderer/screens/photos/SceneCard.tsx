@@ -2,7 +2,7 @@ import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState 
 import { SCENE_TEXT_MAX, type SceneProblem, type SceneView } from "../../../shared/engine";
 import { Icon, Spin } from "../../ui/Icon";
 import { BOLD_TAG, BOLD_TAG_TITLE, hasCyrillic, LEVEL_TAG, LEVEL_TAG_TITLE, OWN_SCENE_LABEL, ROUTE_TAG, ROUTE_TAG_TITLE, sceneCategoryLabel, sceneNumber, shotTagLabel } from "./sceneReview";
-import { cyrillicHint, gaveUpText, ideaLine, poseTag, problemText } from "./sceneText";
+import { cyrillicHint, gaveUpText, ideaLine, poseTag, problemText, WORLD_LINE_LEAD } from "./sceneText";
 
 // CS.6: one scene of the «Сцены» column (the design's .photos-scene card): its number, its category and shot tags, its status, its free and paid actions
 // (✎ edit, ⟳ another scene / rewrite, × remove; «Вернуть» when removed), its text whole — or a skeleton while it is written, or why it was given up on —
@@ -159,6 +159,12 @@ export function SceneCard({ scene, number, readOnly, actionsOff, writing, fresh,
           <p className="photos-scene-text scene-text-dim">без текста</p>
         )}
         {own && scene.idea !== null && editing === null && <span className="faint scene-idea">{ideaLine(scene.idea)}</span>}
+        {/* 5a.4 (§5.9 row 26; mockup 66a): the world a custom «Смелая» scene was set in — the engine's `place.world`, in the writer's English. */}
+        {scene.place?.world !== undefined && editing === null && (
+          <span className="faint scene-idea scene-world">
+            {WORLD_LINE_LEAD} «<span lang="en">{scene.place.world}</span>»
+          </span>
+        )}
       </div>
       {popover}
     </article>

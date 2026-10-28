@@ -120,7 +120,9 @@ export function ScenePopover({ set, scene, view, blocked, onPaidInFlightChange, 
   const titleId = `${ids}-title`;
   const whyId = `${ids}-why`;
   const label = sceneCategoryLabel(scene);
-  const poses = anglesNow(scene, set, categories.list);
+  // 5a.4 (§5.9 row 25): a custom category's scene on the route is redrawn inside its world; at «Смелая» its own angles do not apply.
+  const inWorld = scene.category !== "own" && isCustomCategory(scene.category) && scene.route === "seedream";
+  const poses = inWorld ? undefined : anglesNow(scene, set, categories.list);
   const stop = paidStop(view);
   const settingsLink =
     stopped === null ? null : stop?.kind === "reconcile" ? (
@@ -174,7 +176,7 @@ export function ScenePopover({ set, scene, view, blocked, onPaidInFlightChange, 
       <p className="scene-pop-text">
         {own
           ? ownRewriteText(scene.idea ?? "")
-          : redrawText(label, scene.sceneId, poses === undefined ? undefined : { poses, shot: scene.shot }, { free: replaceFree, flirty: scene.level === "flirty", bold: scene.level === "bold" })}
+          : redrawText(label, scene.sceneId, poses === undefined ? undefined : { poses, shot: scene.shot }, { free: replaceFree, flirty: scene.level === "flirty", bold: scene.level === "bold", world: inWorld })}
       </p>
       {marker !== undefined && <p className="scene-pop-text scene-pop-marker">{interruptedChoiceText(scene.origin)}</p>}
       {!offline && replace.estimate !== null && !replaceFree && <p className="mono faint scene-pop-cap">{writeCapLine(replace.estimate.worstMicros)}</p>}

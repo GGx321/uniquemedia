@@ -184,6 +184,9 @@ export function ideaLine(idea: string): string {
   return `по описанию: «${cut(idea, 48)}»`;
 }
 
+/** 5a.4 (§5.9 row 26, r2.3 L6; mockup 66a): the words before the world a custom category's «Смелая» scene belongs to (`ScenePlace.world`, the writer's English, shown whole). */
+export const WORLD_LINE_LEAD = "мир категории:";
+
 const quoted = (words: readonly string[]): string => words.map((w) => `«${w}»`).join(", ");
 
 /** Why an edit did not go through (the assembler's own rule, checked for free): nothing changed. */
@@ -222,6 +225,8 @@ export interface RedrawLook {
   readonly flirty: boolean;
   /** S5.9g (mockup 49): a bold scene keeps «Смелая». */
   readonly bold?: boolean;
+  /** 5a.4 (§5.9 row 25): a custom category's scene on the Seedream route — the model draws the new one inside the category's world, and it stays «Смелая» whatever its tier. */
+  readonly world?: boolean;
 }
 
 /**
@@ -240,6 +245,8 @@ export function redrawText(category: string, sceneId: number, angles?: { readonl
     return `Новое место, наряд, действие, время дня и ракурс из категории «${category}» и новый текст — его пишет приложение, поэтому бесплатно.${cannot}${kept} Сцена ${sceneNumber(sceneId)} заменится сразу.`;
   }
   const tail = `Сцена ${sceneNumber(sceneId)} заменится, когда новая будет готова; если не выйдет — останется как есть.`;
+  // 5a.4 (§5.9 row 25; mockup 66a): a custom «Смелая» scene. The angle is not the category's at «Смелая» (QB-4), so none is named.
+  if (look.world === true) return `Новое место, наряд, действие и время дня — в мире «${category}» — и новый текст. Подача та же — смелая. ${tail}`;
   if (angles === undefined) return `Новое место, наряд, действие и время дня из «${category}» и новый текст.${kept} ${tail}`;
   return `Новое место, наряд, действие, время дня и ракурс из «${category}» и новый текст${turn === null ? "" : `; ${turn}`}.${kept} ${tail}`;
 }
@@ -607,6 +614,10 @@ export function priceSourceText(prices: "live" | "fallback" | null, asOf: string
 /** The strip's models line, hovered: the image side is today's Settings, the text model is the set's own (CS.7). */
 export const MODELS_LINE_TITLE =
   "Картинки — по текущим Настройкам: модель и качество можно сменить до «Отрисовать», цена пересчитается. Текст — модель этого набора: ею написаны его сцены.";
+
+/** 5a.4 (§5.9 row 24): the same title when every scene of the set is on the Seedream route: the settings' model does not draw any of it. */
+export const SEEDREAM_MODELS_LINE_TITLE =
+  "Картинки — Seedream 5 Pro в 2K: так рисуется каждый кадр «Смелой», Настройки его не меняют. Текст — модель этого набора: ею написаны его сцены.";
 
 /** CS.7 M3: why «Сцены на проверку» cannot be turned off now — off would hide the running write and its «Отменить». */
 export const SWITCH_WAITS = "Пока модель пишет сцены, проверку не выключить — дождитесь конца или отмените запись.";

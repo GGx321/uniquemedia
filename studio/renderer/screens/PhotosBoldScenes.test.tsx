@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { PRICE_SCOPES_RU, type CategoryRef, type SceneLevel } from "../../shared/engine";
+import { PRICE_SCOPES_RU, type CategoryRef, type CategorySummary, type SceneLevel } from "../../shared/engine";
+import type { MockSceneSetSeed } from "../engine/mockSceneSets";
 import { flush, openSection, setup } from "../testing";
-import { MIA } from "./photos/categoryScreenKit";
+import { MIA, PARIS } from "./photos/categoryScreenKit";
 import { boldAttemptLine } from "./photos/level";
 import { card, sceneCard } from "./photos/sceneScreenKit";
 
@@ -17,16 +18,18 @@ import { card, sceneCard } from "./photos/sceneScreenKit";
 const BOLD_TITLE = "Подача «Смелая»: бельё, ночнушки, купальники";
 const ROUTE_TITLE = "Этот кадр рисует Seedream 5 Pro в 2K";
 
-async function openSet(categories: readonly CategoryRef[], level?: SceneLevel) {
+async function openSet(categories: readonly CategoryRef[], level?: SceneLevel, more: { customs?: readonly CategorySummary[]; scenes?: MockSceneSetSeed["scenes"] } = {}) {
+  const count = more.scenes?.length ?? 12;
   const harness = setup({
     avatars: [MIA],
     sceneReview: "on",
-    sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-0001", count: 12, written: 12, categories, ...(level === undefined ? {} : { level }) }],
+    categories: [...(more.customs ?? [])],
+    sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-0001", count, written: count, categories, ...(level === undefined ? {} : { level }), ...(more.scenes === undefined ? {} : { scenes: more.scenes }) }],
   });
   await screen.findByRole("heading", { level: 2, name: "Mia" });
   await openSection("Фото");
   await screen.findByRole("region", { name: "Генерация фото · набор сцен" });
-  await waitFor(() => expect(sceneCard(12)).toBeDefined());
+  await waitFor(() => expect(sceneCard(count)).toBeDefined());
   await flush();
   return harness;
 }
@@ -86,9 +89,29 @@ describe("a «Смелая» set's scenes (mockup 49)", () => {
     expect(lockLine()).toBe("Подача: смелая · Ракурс — из сцены. Настройки набора не меняются — Пересоставить… начнёт заново.");
   });
 
-  test("the models line names the bold frames' model last; an ordinary set's does not", async () => {
+  // 5a.4 (S5.BA8b, plan s5a4 §5.9 row 24; mockup 66a): every scene of the set on the route — Seedream draws all of it, so the line names it alone, with the set's text model, and its
+  // title says the settings do not change it. A set with a scene off the route (an old one, an own scene) keeps the settings' model and names the bold frames' last.
+  test("every scene on the route: the line names Seedream 5 Pro · 2K alone, with the set's text model", async () => {
     await openSet(["nightwear", "beach"], "bold");
-    expect(modelsLine().endsWith(" · смелые кадры — Seedream 5 Pro · 2K")).toBe(true);
+    expect(modelsLine()).toBe("Seedream 5 Pro · 2K · 9:16 · референс — мастер-портрет · текст grok-4.3");
+    expect(card().querySelector(".scene-strip-models")?.getAttribute("title")).toBe(
+      "Картинки — Seedream 5 Pro в 2K: так рисуется каждый кадр «Смелой», Настройки его не меняют. Текст — модель этого набора: ею написаны его сцены.",
+    );
+  });
+
+  test("a scene off the route keeps the settings' model, the bold frames' named last", async () => {
+    const place = (location: string, outfit: string) => ({ location, timeOfDay: "evening", activity: "fixing her hair", outfit });
+    await openSet(["nightwear", "home"], "bold", {
+      scenes: [
+        { category: "nightwear", shot: "mirror", pose: "front", place: place("bedroom mirror", "a black lace bra and briefs"), text: "Mirror, lace.", level: "bold", route: "seedream" },
+        { category: "home", shot: "friend", pose: "front", place: place("living room sofa", "a cream knit sweater"), text: "Sofa, sweater." },
+      ],
+    });
+    expect(modelsLine().startsWith("Seedream")).toBe(false);
+    expect(modelsLine()).toMatch(/· 9:16 · референс — мастер-портрет · текст grok-4\.3 · смелые кадры — Seedream 5 Pro · 2K$/);
+    expect(card().querySelector(".scene-strip-models")?.getAttribute("title")).toBe(
+      "Картинки — по текущим Настройкам: модель и качество можно сменить до «Отрисовать», цена пересчитается. Текст — модель этого набора: ею написаны его сцены.",
+    );
   });
 
   test("the price column reads the engine's price of one Seedream attempt under «Ожидаемая»", async () => {
@@ -141,5 +164,53 @@ describe("a set with no Seedream scene", () => {
     for (let n = 1; n <= 12; n++) expect(within(sceneCard(n)).queryByText("Seedream · 2K") === null).toBe(true);
     expect(modelsLine().includes("Seedream 5 Pro")).toBe(false);
     expect(within(card()).queryByText(/^Seedream 2K/) === null).toBe(true);
+  });
+});
+
+// 5a.4 (S5.BA8b, plan s5a4 §5.9 rows 24–26; mockup 66a): a «Смелая» set of a custom category. The writer sets each scene in the category's world (r2.2 D6): the card says which under
+// its text, «мир категории: «…»»; ⟳ draws a new scene in that world with a new text, at the bold writer's price («до $0.098», r2.2 D5); every scene is Seedream's, so the models line
+// names it alone.
+describe("a custom category's «Смелая» set (mockup 66a)", () => {
+  async function openCustom() {
+    const harness = await openSet([PARIS.categoryId], "bold", { customs: [PARIS] });
+    const reply = await harness.client.request("scenes.get", { avatarId: MIA.avatarId });
+    if (!reply.ok || reply.result.sceneSet === null) throw new Error("no set");
+    return { ...harness, set: reply.result.sceneSet };
+  }
+
+  test("every card says the world its scene belongs to under its text, in English as the writer gave it", async () => {
+    const { set } = await openCustom();
+    for (const scene of set.scenes) {
+      const world = scene.place?.world;
+      if (world === undefined) throw new Error(`scene ${scene.sceneId} has no world`);
+      const line = sceneCard(scene.sceneId).querySelector(".scene-world");
+      expect(line?.textContent).toBe(`мир категории: «${world}»`);
+      // The world is the writer's English, read as such.
+      expect(line?.querySelector("[lang='en']")?.textContent).toBe(world);
+      // Under the text, not among the tags.
+      expect(line?.previousElementSibling?.classList.contains("photos-scene-text")).toBe(true);
+    }
+  });
+
+  test("the models line names Seedream 5 Pro · 2K alone", async () => {
+    await openCustom();
+    expect(modelsLine()).toBe("Seedream 5 Pro · 2K · 9:16 · референс — мастер-портрет · текст grok-4.3");
+  });
+
+  test("⟳ «Другая сцена»: a new place, outfit, action and time in the category's world, a new text, «Подача» kept; at the bold writer's «до $0.098»", async () => {
+    await openCustom();
+    fireEvent.click(within(sceneCard(1)).getByRole("button", { name: "Другая сцена вместо 01" }));
+    const pop = await within(sceneCard(1)).findByRole("dialog", { name: "Другая сцена" });
+    await within(pop).findByRole("button", { name: "Заменить · до $0.098" });
+    expect(pop.querySelector(".scene-pop-text")?.textContent).toBe(
+      "Новое место, наряд, действие и время дня — в мире «Кофейни Парижа» — и новый текст. Подача та же — смелая. Сцена 01 заменится, когда новая будет готова; если не выйдет — останется как есть.",
+    );
+  });
+});
+
+describe("a scene with no world says none", () => {
+  test("a built-in «Смелая» scene and a «Кокетливая» one have no «мир категории» line", async () => {
+    await openSet(["nightwear", "beach"], "bold");
+    expect(card().ownerDocument.querySelectorAll(".scene-world")).toHaveLength(0);
   });
 });

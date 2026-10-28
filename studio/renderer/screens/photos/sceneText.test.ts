@@ -226,6 +226,16 @@ describe("the ⟳ price popover", () => {
       "Новое место, наряд, действие, время дня и ракурс из категории «Ночнушки и бельё» и новый текст — его пишет приложение, поэтому бесплатно. Подача та же — смелая. Сцена 03 заменится сразу.",
     );
   });
+
+  // 5a.4 (S5.BA8b, plan s5a4 §5.9 row 25; mockup 66a): a custom category's «Смелая» scene is redrawn by the model inside the category's world; it stays «Смелая» whatever its tier, and
+  // names no angle (at «Смелая» the category's own do not apply).
+  test("a custom «Смелая» scene: a new scene in the category's world, «Подача» kept, no angle", () => {
+    const text =
+      "Новое место, наряд, действие и время дня — в мире «Кофейни Парижа» — и новый текст. Подача та же — смелая. Сцена 04 заменится, когда новая будет готова; если не выйдет — останется как есть.";
+    expect(redrawText("Кофейни Парижа", 4, undefined, { free: false, flirty: false, bold: true, world: true })).toBe(text);
+    expect(redrawText("Кофейни Парижа", 4, undefined, { free: false, flirty: false, world: true })).toBe(text);
+    expect(redrawText("Кофейни Парижа", 4, { poses: ["back"], shot: "selfie" }, { free: false, flirty: true, world: true })).toBe(text);
+  });
 });
 
 describe("CS.8, S5.7c: «Подача» and angles on the review screen", () => {

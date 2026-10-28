@@ -12,7 +12,7 @@ import { modelName, paidBlockedReason } from "./runForm";
 import { BoldPriceNotice, isBoldPriceMissing } from "./boldPrice";
 import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, setPriceKey, StackButton, useImagesPriceState, Why } from "./scenePaid";
 import { setAction, setCategoryTags, tallyScenes } from "./sceneReview";
-import { approveReason, approveTitle, continueTitle, MODELS_LINE_TITLE, priceSourceText, SCENES_CHANGED_APPROVE, stepScenes, STRIP_ANGLE, stripLook } from "./sceneText";
+import { approveReason, approveTitle, continueTitle, MODELS_LINE_TITLE, priceSourceText, SCENES_CHANGED_APPROVE, SEEDREAM_MODELS_LINE_TITLE, stepScenes, STRIP_ANGLE, stripLook } from "./sceneText";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL } from "./shared";
 import { usePaidAction } from "./usePaidAction";
 import { BoldAttemptLine } from "./boldPrice";
@@ -65,6 +65,23 @@ export function modelSegments(view: EngineView, textModel: string): string[] {
   if (s === null) return [];
   const quality = s.imageQuality !== null && s.imageModel !== SEEDREAM_FALLBACK_IMAGE_MODEL ? [s.imageQuality] : [];
   return [modelName(s.imageModel), ...quality, "9:16", "референс — мастер-портрет", ...(s.cameraRealism ? ["реализм камеры"] : []), `текст ${modelName(textModel)}`];
+}
+
+/**
+ * The set's models line and its title. 5a.4 (§5.9 row 24; mockup 66a): when every scene left in the set is on the Seedream route (the engine's `route`, never guessed), Seedream 5 Pro
+ * draws all of it in 2K whatever the settings' model, so the line names it alone: «Seedream 5 Pro · 2K · 9:16 · референс — мастер-портрет · текст grok-4.3». A set with a scene off the
+ * route (stored before 5a.4, or an own scene) keeps the settings' model and names the bold frames' last (S5.9g, mockup 49).
+ */
+export function setModels(view: EngineView, set: SceneSetView): { segments: string[]; title: string } {
+  const kept = set.scenes.filter((s) => !s.removed);
+  const routed = kept.filter((s) => s.route === "seedream").length;
+  if (routed > 0 && routed === kept.length && view.settings !== null) {
+    return {
+      segments: ["Seedream 5 Pro", "2K", "9:16", "референс — мастер-портрет", ...(view.settings.cameraRealism ? ["реализм камеры"] : []), `текст ${modelName(set.textModel)}`],
+      title: SEEDREAM_MODELS_LINE_TITLE,
+    };
+  }
+  return { segments: [...modelSegments(view, set.textModel), ...(routed > 0 ? [BOLD_MODELS_SEGMENT] : [])], title: MODELS_LINE_TITLE };
 }
 
 interface SceneStripProps {
@@ -264,8 +281,8 @@ export function SceneStrip({
   // their own, own scenes.
   const angles = stripLook(set);
   const owners = useOwnersDisclosure();
-  // S5.9g (mockup 49): a set with scenes on the Seedream route names their model last; the owner's image model draws the rest.
-  const models = [...modelSegments(view, set.textModel), ...(set.scenes.some((s) => s.route === "seedream" && !s.removed) ? [BOLD_MODELS_SEGMENT] : [])];
+  // S5.9g (mockup 49): a set with scenes on the Seedream route names their model last; the owner's image model draws the rest. 5a.4 (§5.9 row 24): all of it on the route, Seedream alone.
+  const { segments: models, title: modelsTitle } = setModels(view, set);
   const switchLabel = `${ids}-sw`;
   const reasonShown = reason !== null && !button.busy;
   // M2: the button's own free price could not be had («Дописать», or «Отрисовать» when it can be priced): why, and «Повторить».
@@ -354,7 +371,7 @@ export function SceneStrip({
             </p>
             {angles.more > 0 && <OwnersList id={owners.listId} open={owners.open} rows={angles.rows} />}
             {models.length > 0 && (
-              <p className="faint scene-strip-models" title={MODELS_LINE_TITLE}>
+              <p className="faint scene-strip-models" title={modelsTitle}>
                 {models.map((segment, i) => (
                   <span key={segment}>
                     <span className="nowrap">{segment}</span>
