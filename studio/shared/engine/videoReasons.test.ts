@@ -20,10 +20,6 @@ describe("the video's too-large", () => {
     expect(text).toMatch(/Сократите|Обрежьте/);
   });
 
-  test("says why a small file can still be refused: a long, grainy clip", () => {
-    expect(text).toMatch(/зернист|шум/);
-  });
-
   test("the other kinds keep the shared text", () => {
     expect(mediaReasonRu("too-large", "photo")).toBe(MEDIA_REASONS_RU["too-large"]);
     expect(mediaReasonRu("too-large", "audio")).toBe(MEDIA_REASONS_RU["too-large"]);

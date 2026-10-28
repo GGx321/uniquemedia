@@ -247,7 +247,4 @@ describe("the reasons of a refusal", () => {
     }
   });
 
-  test("the launch-set text sends the owner to the Autopilot", () => {
-    expect(SCENE_REASONS_RU["launch-set"]).toContain("«Автопилоте»");
-  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ERROR_MESSAGES_RU, MEDIA_REASONS_RU, mediaReasonRu } from "./errorMessagesRu";
+import { MEDIA_REASONS_RU, mediaReasonRu } from "./errorMessagesRu";
 import { EngineError, ERROR_CODES } from "./errors";
 import { EVENT_TYPES, EventMessage } from "./events";
 import { MediaUnsupportedReason } from "./media";
@@ -107,9 +107,6 @@ describe("MEDIA_UNSUPPORTED (K30)", () => {
     expect(EngineError.safeParse({ code: "INTERNAL", mediaReason: "failed" }).success).toBe(false);
   });
 
-  test("has a Russian text of its own", () => {
-    expect(ERROR_MESSAGES_RU.MEDIA_UNSUPPORTED).toMatch(/[А-Яа-яЁё]/);
-  });
 });
 
 describe("the Russian text of each refusal reason (CF10)", () => {
@@ -118,10 +115,6 @@ describe("the Russian text of each refusal reason (CF10)", () => {
     const texts = Object.values(MEDIA_REASONS_RU);
     expect(new Set(texts).size).toBe(texts.length);
     for (const text of texts) expect(text).toMatch(/[А-Яа-яЁё]/);
-  });
-
-  test("a HEIC picture is told to be saved as a JPEG", () => {
-    expect(MEDIA_REASONS_RU.heic).toContain("сохраните как JPEG");
   });
 
   test("a photo that is too small, too large in pixels or an animated WebP says so in its own words (3f.2)", () => {

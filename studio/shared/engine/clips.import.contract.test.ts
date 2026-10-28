@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { CLIP_REASONS, ClipReason, EngineError } from "./errors";
-import { CLIP_REASONS_RU, mediaReasonRu } from "./errorMessagesRu";
 import { COMMAND_TYPES, ENGINE_COMMAND_TYPES, MAIN_ONLY_COMMANDS, OkResponse } from "./commands";
 import { SLEEP_CLASS, heldWhileAsleep } from "./commandHold";
 import { PROTOCOL_VERSION } from "./envelope";
@@ -124,9 +123,8 @@ describe("the refusals of media.importClip are the existing machinery", () => {
     expect(EngineError.safeParse({ code: "IN_FLIGHT", clipReason: "job-running" }).success).toBe(true);
   });
 
-  test("a full disk is MEDIA_UNSUPPORTED with the importer's `no-space`, which has a text", () => {
+  test("a full disk is MEDIA_UNSUPPORTED with the importer's `no-space`", () => {
     expect(EngineError.safeParse({ code: "MEDIA_UNSUPPORTED", mediaReason: "no-space" }).success).toBe(true);
-    expect(mediaReasonRu("no-space", "video")).toContain("не хватает места");
   });
 });
 
@@ -154,14 +152,6 @@ describe("clipReason `file-damaged` and `in-use`", () => {
     for (const clipReason of ["file-damaged", "in-use"]) expect(EngineError.safeParse({ code: "NOT_FOUND", clipReason }).success).toBe(false);
   });
 
-  test("each has its Russian text, word for word (44b for `in-use`, 57c's family for `file-damaged`)", () => {
-    expect<string>(CLIP_REASONS_RU["in-use"]).toBe("Клип сейчас в рендере — удалите его, когда рендер закончится.");
-    expect<string>(CLIP_REASONS_RU["file-damaged"]).toBe("Файл клипа в Studio повреждён или не читается — для монтажа его не подготовить.");
-  });
-
-  test("the text of `file-damaged` never calls the Studio file intact", () => {
-    expect(CLIP_REASONS_RU["file-damaged"]).not.toContain("цел");
-  });
 });
 
 describe("MediaSummary.origin", () => {

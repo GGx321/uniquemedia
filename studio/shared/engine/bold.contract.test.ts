@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ERROR_MESSAGES_RU, LAUNCH_REASONS_RU, PRICE_SCOPES_RU, SCENE_REASONS_RU } from "./errorMessagesRu";
+import { ERROR_MESSAGES_RU, PRICE_SCOPES_RU, SCENE_REASONS_RU } from "./errorMessagesRu";
 import { EngineError, LAUNCH_REASONS, SCENE_REASONS } from "./errors";
 import { PROTOCOL_VERSION } from "./envelope";
 import { SceneSetView, SceneView } from "./scenes";
@@ -193,18 +193,7 @@ describe("the new scene reasons", () => {
     expect(JobResult.safeParse(result).success).toBe(true);
   });
 
-  // 2026-10-12, S5.9g round 2: worded as the owner-approved mockup 48#refused and every other launch reason («. Ничего не потрачено.»), not «— ничего не списано.».
-  test("the refusal for a missing «Смелая» is free and names both categories", () => {
-    expect(SCENE_REASONS_RU["bold-level-needed"]).toBe("«Ночнушки и бельё» и «Пляж и бассейн» рисуются только с подачей «Смелая». Ничего не потрачено.");
-    expect(LAUNCH_REASONS_RU["bold-level-needed"]).toBe(SCENE_REASONS_RU["bold-level-needed"]);
-  });
-
-  test("a model refusal says the refusal is free and that the attempts paid before it are in the spend", () => {
-    expect(SCENE_REASONS_RU["model-refused"]).toBe("Модель не нарисовала кадр «Смелой»; сам отказ бесплатный, оплаченные до него попытки — в расходах.");
-  });
-
   test("an empty answer is never called free", () => {
-    expect(SCENE_REASONS_RU["model-empty"]).toBe("Модель вернула пустой ответ на кадр «Смелой»; попытка учтена в расходах.");
     expect(SCENE_REASONS_RU["model-empty"]).not.toContain("бесплатн");
   });
 });

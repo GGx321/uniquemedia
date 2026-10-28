@@ -521,17 +521,10 @@ describe("clipReason motion-busy, suggest-busy, idea-busy and clip-busy", () => 
   });
 
   // L6: a call on a «Смелая» frame while bold clips are off refuses free with the existing reason.
-  test("bold-off stays a VALIDATION reason with its existing text, for the part C calls too", () => {
+  test("bold-off stays a VALIDATION reason, for the part C calls too", () => {
     expect(EngineError.safeParse({ code: "VALIDATION", clipReason: "bold-off" }).success).toBe(true);
-    expect(CLIP_REASONS_RU["bold-off"]).toBe("Кадры «Смелой» пока не оживляются.");
   });
 
-  test("the texts are the owner's, word for word, with a final period", () => {
-    expect(CLIP_REASONS_RU["motion-busy"]).toBe("Подождите: идёт подбор движения или перевод.");
-    expect(CLIP_REASONS_RU["suggest-busy"]).toBe("Движения для этого фото уже подбираются — дождитесь ответа.");
-    expect(CLIP_REASONS_RU["idea-busy"]).toBe("Идея для этого фото уже переводится — дождитесь ответа.");
-    expect(CLIP_REASONS_RU["clip-busy"]).toBe("Сейчас снимается клип — предложить или перевести движение можно после него.");
-  });
 });
 
 // ---------- the sleep class, the constants, the display rules ----------

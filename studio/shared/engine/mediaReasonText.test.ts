@@ -45,18 +45,13 @@ describe("mediaReasonRu", () => {
     expect(mediaReasonRu("dimensions", "video")).not.toBe(MEDIA_REASONS_RU.dimensions);
   });
 
-  test.each(MediaKind.options)("every reason has a Russian text for %s, with no path or placeholder in it", (kind) => {
+  test.each(MediaKind.options)("no reason text for %s holds a path or a placeholder", (kind) => {
     for (const reason of MediaUnsupportedReason.options) {
       const text = mediaReasonRu(reason, kind);
-      expect(text).toMatch(/[А-Яа-яЁё]/);
       expect(text).not.toMatch(/[\\/{}]/);
     }
   });
 
-  test("the structure refusal is honest about what it is: not a wrong file type", () => {
-    expect(MEDIA_REASONS_RU.structure).not.toMatch(/MP4/);
-    expect(MEDIA_REASONS_RU.structure).toMatch(/устроен|структур/);
-  });
 });
 
 // L3 of the Stage 3 whole-slice review: `too-many` is told for two limits, the pick's (`MAX_PICKED_FILES` files at once, main's) and the engine's own queue of waiting

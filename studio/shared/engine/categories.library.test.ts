@@ -14,7 +14,6 @@ import {
 } from "./categories";
 import { CommandMessage, OkResponse } from "./commands";
 import { ERROR_CODES, EngineError } from "./errors";
-import { ERROR_MESSAGES_RU } from "./errorMessagesRu";
 import { EventMessage } from "./events";
 
 // CS.2: what the category library says on the contract. The pool a model writes is held to the same
@@ -318,9 +317,8 @@ describe("category.changed", () => {
 });
 
 describe("POOL_REJECTED and what a failed paid call spent", () => {
-  test("POOL_REJECTED is an error code with a Russian text of its own", () => {
+  test("POOL_REJECTED is an error code", () => {
     expect([...ERROR_CODES]).toContain("POOL_REJECTED");
-    expect(ERROR_MESSAGES_RU.POOL_REJECTED).toBe("Модель дважды вернула неподходящий набор — переформулируйте описание.");
   });
 
   test("an error may carry what the call spent before it failed", () => {

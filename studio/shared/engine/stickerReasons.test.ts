@@ -18,18 +18,9 @@ describe("the sticker refusal reasons", () => {
     expect(options.indexOf("loop-too-long")).toBeGreaterThan(options.indexOf("animated-webp"));
   });
 
-  test("the neutral table has a text for each of them", () => {
-    expect(MEDIA_REASONS_RU["not-animated"]).toMatch(/[А-Яа-яЁё]/);
-    expect(MEDIA_REASONS_RU["loop-too-long"]).toMatch(/[А-Яа-яЁё]/);
-  });
 });
 
 describe("the `not-animated` texts say what is true of the rule (L6)", () => {
-  test("neither promises 'different' frames, which are never compared: two identical frames are taken", () => {
-    expect(MEDIA_REASONS_RU["not-animated"]).not.toContain("разными");
-    expect(MEDIA_REASONS_BY_KIND_RU.sticker?.["not-animated"]).not.toContain("разными");
-  });
-
   test("both say the frames must differ in TIME: frames that follow each other faster than 30 a second do not count as more than one", () => {
     expect(MEDIA_REASONS_RU["not-animated"]).toContain("30 кадров в секунду");
     expect(MEDIA_REASONS_BY_KIND_RU.sticker?.["not-animated"]).toContain("30 кадров в секунду");

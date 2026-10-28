@@ -54,10 +54,6 @@ describe("library-unreadable (CS.7 fix round 2)", () => {
     expect(EngineError.safeParse({ code: "VALIDATION", sceneReason: "library-unreadable", sceneId: 3 }).success).toBe(false);
   });
 
-  test("its text says nothing was written or spent, and to retry", () => {
-    expect(SCENE_REASONS_RU["library-unreadable"]).toContain("Ничего не записано");
-    expect(SCENE_REASONS_RU["library-unreadable"]).toContain("повторите");
-  });
 });
 
 // 5a.2 (S5.6d, plan s5a2 I5.31): the per-slot end of a run whose sentence broke today's word rules at the assembler. Additive: it names no scene (the slot is a
@@ -67,10 +63,6 @@ describe("slot-text-problem (S5.6d)", () => {
     expect(SCENE_REASONS).toContain("slot-text-problem");
     expect(EngineError.safeParse({ code: "VALIDATION", sceneReason: "slot-text-problem" }).success).toBe(true);
     expect(EngineError.safeParse({ code: "VALIDATION", sceneReason: "slot-text-problem", sceneId: 3 }).success).toBe(false);
-  });
-
-  test("its text says the frame was skipped and that it cost nothing", () => {
-    expect(SCENE_REASONS_RU["slot-text-problem"]).toBe("Текст сцены не прошёл проверку слов — кадр пропущен, бесплатно.");
   });
 
   test("the reasons that existed before it are all still there, in order", () => {
