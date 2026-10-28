@@ -1,0 +1,64 @@
+import { describe, expect, test } from "bun:test";
+import { unitPricesOf } from "../../../engine/autopilot/prices";
+import { PriceBook } from "../../../engine/money/prices";
+import type { PricedBook } from "../../../engine/money/priceCache";
+import { composeEstimate } from "../../../engine/sceneSets/estimate";
+import { MICROS_PER_DOLLAR } from "../../../shared/engine/usd";
+import { useNativeGlobals } from "../../../testing/nativeGlobals";
+import { formatUsdTiered } from "../../lib/money";
+import { monthLine } from "./monthLine";
+useNativeGlobals();
+
+// 5a.4 (S5.BA8a, plan s5a4 §5.9 row 20, r2.3 M1, r2.2 D5): the month line under «Подача» at «Смелая». The photo's worst case is the launch math's own unit, `unitPricesOf(…, bold = true).photo`
+// (three Seedream 2K attempts, plus the age check's call on each when it is on), never a figure of the UI's own. The fixtures read the engine; the expected strings are the plan's.
+
+const MODELS = { imageModel: "x-ai/grok-imagine-image-quality", imageQuality: null, textModel: "x-ai/grok-4.3" } as const;
+const PRICED: PricedBook = { book: PriceBook.fallback(), asOf: "2026-10-12" };
+const photoUnit = (check: "off" | "on"): number => unitPricesOf(PRICED, MODELS, check, () => false, true).photoWorstMicros;
+const BUDGET = 10 * MICROS_PER_DOLLAR;
+
+describe("the month line (§5.9 row 20)", () => {
+  test("with the age check off: «до $0.28», about 35 photos of a $10 month", () => {
+    expect(monthLine({ unitMicros: photoUnit("off"), budgetMicros: BUDGET, ageCheck: false })).toBe(
+      "Каждое фото «Смелой» — до $0.28 (3 попытки Seedream 2K по прайсу). Месячный бюджет $10 вмещает ≈ 35 таких фото; больше автопилот рисует частями, пока хватает остатка.",
+    );
+  });
+
+  test("with the age check on: «до $0.30», about 33 photos, and the parenthesis names the age checks", () => {
+    expect(monthLine({ unitMicros: photoUnit("on"), budgetMicros: BUDGET, ageCheck: true })).toBe(
+      "Каждое фото «Смелой» — до $0.30 (3 попытки Seedream 2K и проверки возраста по прайсу). Месячный бюджет $10 вмещает ≈ 33 таких фото; больше автопилот рисует частями, пока хватает остатка.",
+    );
+  });
+
+  test("reads the unit it is given: the same unit and budget give the same line whatever the check says about the words", () => {
+    const unit = photoUnit("off");
+    expect(monthLine({ unitMicros: unit, budgetMicros: BUDGET, ageCheck: false })).toContain(`до ${formatUsdTiered(unit, "up")} (`);
+    expect(monthLine({ unitMicros: unit, budgetMicros: BUDGET, ageCheck: false })).toContain(`≈ ${Math.floor(BUDGET / unit)} таких фото`);
+  });
+
+  test("the count is the whole photos the budget holds: one micro-dollar under a whole photo is one photo fewer", () => {
+    const unit = photoUnit("off");
+    expect(monthLine({ unitMicros: unit, budgetMicros: 2 * unit, ageCheck: false })).toContain("≈ 2 таких фото");
+    expect(monthLine({ unitMicros: unit, budgetMicros: 2 * unit - 1, ageCheck: false })).toContain("≈ 1 таких фото");
+  });
+
+  test("a budget that holds no whole photo claims no count", () => {
+    const line = monthLine({ unitMicros: photoUnit("off"), budgetMicros: 100_000, ageCheck: false });
+    expect(line).toBe("Каждое фото «Смелой» — до $0.28 (3 попытки Seedream 2K по прайсу). Месячный бюджет $0.10 не вмещает ни одного такого фото.");
+  });
+
+  test("refuses a unit that is not a positive whole number of micro-dollars: a zero or a fraction would divide into nonsense", () => {
+    for (const unitMicros of [0, -1, 0.5, Number.NaN]) expect(() => monthLine({ unitMicros, budgetMicros: BUDGET, ageCheck: false })).toThrow(RangeError);
+  });
+});
+
+describe("the figures the screens say with the app's rounding (r2.2 D5)", () => {
+  test("the age check adds its call to the unit: 3 attempts at $0.093 and at $0.098", () => {
+    expect([photoUnit("off"), photoUnit("on")]).toEqual([3 * 93_000, 3 * 98_250]);
+  });
+
+  test("a bold writer chunk or redraw reads «до $0.098»", () => {
+    const chunk = composeEstimate(PRICED, MODELS.textModel, [{ ref: "cat-0123456789ab", count: 1 }], () => false, "bold").worstMicros;
+    expect(formatUsdTiered(chunk, "up")).toBe("$0.098");
+  });
+});
