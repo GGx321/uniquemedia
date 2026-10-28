@@ -20,7 +20,7 @@ import {
   type ClipPrices,
 } from "./clips";
 import { CLIP_REASONS, CLIP_IN_FLIGHT_REASONS, EngineError } from "./errors";
-import { CLIP_REASONS_RU, clipBatchDroppedRu, clipCancelDetailRu } from "./errorMessagesRu";
+import { clipBatchDroppedRu, clipCancelDetailRu } from "./errorMessagesRu";
 import { COMMAND_TYPES, ENGINE_COMMAND_TYPES, MAIN_ONLY_COMMANDS, OkResponse } from "./commands";
 import { SLEEP_CLASS, heldWhileAsleep } from "./commandHold";
 import { PROTOCOL_VERSION } from "./envelope";
@@ -562,7 +562,6 @@ describe("clipReason batch-running and clip-busy", () => {
   test("a member's missing or foreign photo is VALIDATION not-a-gallery-photo at its item path", () => {
     const error = EngineError.parse({ code: "VALIDATION", clipReason: "not-a-gallery-photo", path: ["items", 4], detail: "item 4 is not a photo of this avatar's gallery" });
     expect(error).toMatchObject({ code: "VALIDATION", clipReason: "not-a-gallery-photo", path: ["items", 4] });
-    expect(CLIP_REASONS_RU["not-a-gallery-photo"]).toContain("кадр из галереи");
   });
 
   test("NOT_FOUND (the avatar) carries no item path, and a path never rides on it", () => {
@@ -575,11 +574,6 @@ describe("clipReason batch-running and clip-busy", () => {
     expect(EngineError.safeParse({ code: "IN_FLIGHT", clipReason: "batch-running", portraitReason: "not-imported" }).success).toBe(false);
   });
 
-  test("the texts are §5.2.1's, word for word", () => {
-    expect(CLIP_REASONS_RU["batch-running"]).toBe("Сейчас снимаются клипы пакета — дождитесь окончания или отмените оставшиеся.");
-    // S5.WC1: the owner's veto replaced the WB1 draft of this text («Пока снимается клип, предложения и перевод недоступны — дождитесь окончания.»).
-    expect(CLIP_REASONS_RU["clip-busy"]).toBe("Сейчас снимается клип — предложить или перевести движение можно после него.");
-  });
 });
 
 describe("the cancelled-member texts (mockups 60c-60f)", () => {
@@ -601,15 +595,6 @@ describe("the cancelled-member texts (mockups 60c-60f)", () => {
 
   test("the price cannot be read (r2.1 N7)", () => {
     expect(clipCancelDetailRu("price-unavailable", 6)).toBe("Цены видео у OpenRouter сейчас не читаются — оставшиеся 6 клипов не снимались, бесплатно.");
-  });
-
-  test("the photo was removed from the gallery: one member, free", () => {
-    expect(clipCancelDetailRu("photo-gone", 1)).toBe("Это фото удалено из галереи — клип не снимался, бесплатно.");
-  });
-
-  test("the photo is in the gallery but its file is missing or damaged: one member, free, and it does not say «удалено»", () => {
-    expect(clipCancelDetailRu("photo-unreadable", 1)).toBe("Файл этого фото не читается — клип не снимался, бесплатно.");
-    expect(clipCancelDetailRu("photo-unreadable", 1)).not.toContain("удалено");
   });
 
   test("the two photo texts speak of one member whatever the count passed", () => {

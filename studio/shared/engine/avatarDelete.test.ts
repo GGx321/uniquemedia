@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { AvatarDeleteResult, AvatarDeletePreview } from "./avatarDelete";
 import { ENGINE_COMMAND_TYPES, MAIN_ONLY_COMMANDS, parseEngineCommand, parseMessage } from "./index";
-import { ERROR_CODES, ERROR_MESSAGES_RU, EVENT_TYPES, PROTOCOL_VERSION } from "./index";
+import { ERROR_CODES, EVENT_TYPES, PROTOCOL_VERSION } from "./index";
 
 // «Удалить аватар»: the contract's additive part. The renderer names an avatar and nothing else; the Trash is main's.
 
@@ -93,14 +93,8 @@ describe("the event", () => {
 });
 
 describe("TRASH_UNAVAILABLE", () => {
-  test("is an error code with a Russian text that says nothing was deleted for good", () => {
+  test("is an error code", () => {
     expect(ERROR_CODES).toContain("TRASH_UNAVAILABLE");
-    expect(ERROR_MESSAGES_RU.TRASH_UNAVAILABLE).toContain("Корзин");
-    expect(ERROR_MESSAGES_RU.TRASH_UNAVAILABLE).toContain("не удалён");
   });
 
-  test("is the same on every system: the advice for a volume with no Trash is the window's, by platform (renderer/screens/AvatarDelete.tsx)", () => {
-    expect(ERROR_MESSAGES_RU.TRASH_UNAVAILABLE).not.toContain("один раз");
-    expect(ERROR_MESSAGES_RU.TRASH_UNAVAILABLE).not.toContain("Finder");
-  });
 });

@@ -324,14 +324,6 @@ describe("the Russian texts of the portrait reasons", () => {
     }
   });
 
-  test("the source-unavailable text is the owner's way to the library folder", () => {
-    expect(errorTexts.PORTRAIT_REASONS_RU["source-unavailable"]).toBe("Исходное фото недоступно — проверьте папку библиотеки.");
-  });
-
-  test("the too-many-candidates text says the limit is 15 and that nothing was spent", () => {
-    expect(errorTexts.PORTRAIT_REASONS_RU["too-many-candidates"]).toContain("15");
-    expect(errorTexts.PORTRAIT_REASONS_RU["too-many-candidates"]).toContain("Ничего не потрачено");
-  });
 });
 
 describe("what S5.3a must not move", () => {

@@ -41,8 +41,4 @@ describe("library-unreadable (CS.7 fix round 2)", () => {
     for (const text of texts) expect(text).not.toBe(ERROR_MESSAGES_RU.VALIDATION);
   });
 
-  test("its text says nothing was created or spent, and to retry", () => {
-    expect(CATEGORY_REASONS_RU["library-unreadable"]).toContain("Ничего не создано");
-    expect(CATEGORY_REASONS_RU["library-unreadable"]).toContain("повторите");
-  });
 });

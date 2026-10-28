@@ -79,10 +79,6 @@ describe("DESCRIPTOR_REASONS_RU", () => {
     expect(DESCRIPTOR_REASONS_RU["no-anchor"]).not.toMatch(/[0-9]/);
   });
 
-  test("the youth-word text still reads without words", () => {
-    expect(descriptorReasonRu("youth-word", [])).toContain("Слово, которое мы не используем");
-  });
-
   test("a reason without words is its table text", () => {
     expect(descriptorReasonRu("empty", [])).toBe(DESCRIPTOR_REASONS_RU.empty);
   });

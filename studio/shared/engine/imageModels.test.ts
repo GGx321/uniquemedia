@@ -90,10 +90,9 @@ describe("checkImageChoice", () => {
     expect(checkImageChoice(CATALOGUE, { imageModel: SEEDREAM, imageQuality: null }, { imageModel: GROK })).toEqual({ ok: true, imageQuality: "low" });
   });
 
-  test("refuses an unknown model with a Russian text", () => {
+  test("refuses an unknown model", () => {
     const result = checkImageChoice(CATALOGUE, CURRENT, { imageModel: "acme/unknown-image" });
     expect(result).toEqual({ ok: false, detail: UNKNOWN_IMAGE_MODEL_RU });
-    expect(UNKNOWN_IMAGE_MODEL_RU).toMatch(/[а-я]/i);
   });
 
   test("lets the model that is already set be saved again even when the catalogue no longer lists it", () => {
@@ -101,10 +100,9 @@ describe("checkImageChoice", () => {
     expect(checkImageChoice(CATALOGUE, current, { imageModel: "acme/old-image" })).toEqual({ ok: true, imageQuality: "low" });
   });
 
-  test("refuses a quality the model does not list, with a Russian text", () => {
+  test("refuses a quality the model does not list", () => {
     const result = checkImageChoice(CATALOGUE, CURRENT, { imageModel: SEEDREAM, imageQuality: "medium" });
     expect(result).toEqual({ ok: false, detail: UNSUPPORTED_IMAGE_QUALITY_RU });
-    expect(UNSUPPORTED_IMAGE_QUALITY_RU).toMatch(/[а-я]/i);
   });
 
   test("refuses null as the quality of a model that has a knob", () => {

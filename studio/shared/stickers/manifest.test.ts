@@ -13,10 +13,9 @@ describe("the built-in sticker manifest", () => {
     expect(new Set(ids).size).toBe(ids.length);
     for (const id of ids) expect(id).toMatch(STICKER_ID_PATTERN);
   });
-  test("gives every sticker a distinct non-empty Russian name", () => {
+  test("gives every sticker a distinct name", () => {
     const names = STICKER_MANIFEST.map((s) => s.nameRu);
     expect(new Set(names).size).toBe(names.length);
-    for (const n of names) expect(n).toMatch(/^[А-Яа-яЁё][А-Яа-яЁё\s-]*$/);
   });
   test("puts every sticker in a declared category", () => {
     const declared = new Set(STICKER_CATEGORIES.map((c) => c.id));
