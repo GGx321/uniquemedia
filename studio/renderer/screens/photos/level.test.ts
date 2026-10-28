@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { ORDINARY_SCENE_CATEGORIES, splitCount } from "../../../shared/engine";
-import { flirtyCountOf, levelCountsOf } from "../../../shared/scenes/level";
+import { ORDINARY_SCENE_CATEGORIES, splitCount, type CategoryRef } from "../../../shared/engine";
+import { flirtyCountOf, levelCountsOf, tierSpreadOf } from "../../../shared/scenes/level";
 import {
   BOLD_FIVE,
   BOLD_ONLY,
@@ -190,32 +190,76 @@ describe("«Подача» offers all three faces now", () => {
   });
 });
 
-describe("levelFrames: the bold and flirty frames of a run, from the shared rules (never re-derived here)", () => {
-  test("is levelCountsOf in each «Смелая» category and flirtyCountOf(·, flirty) in each of the five, over the planner's own split", () => {
-    for (const count of [5, 10, 20, 25, 37, 100]) {
-      const categories = ["home", "glam", "nightwear", "beach", "cat-paris-cafes"] as const;
-      let bold = 0;
-      let flirty = 0;
-      for (const { ref, count: n } of splitCount(count, categories)) {
-        if (ref === "nightwear" || ref === "beach") {
-          bold += levelCountsOf(n).bold;
-          flirty += levelCountsOf(n).flirty;
-        } else if (ref === "home" || ref === "glam") flirty += flirtyCountOf(n, "flirty");
-      }
-      expect(levelFrames(count, categories, "bold")).toMatchObject({ bold, flirty });
+describe("levelFrames: the tiers of a request, from the shared rules (never re-derived here)", () => {
+  /** The tiers `tierSpreadOf` gives the planner's own split, summed: what the card and the autopilot say. */
+  const spread = (count: number, categories: readonly CategoryRef[]) => {
+    const parts = tierSpreadOf(splitCount(count, categories));
+    return { bold: sum(parts.map((p) => p.bold)), flirty: sum(parts.map((p) => p.flirty)), ordinary: sum(parts.map((p) => p.ordinary)) };
+  };
+  const sum = (values: readonly number[]) => values.reduce((a, b) => a + b, 0);
+  const FIVE_BEACH_CUSTOM: readonly CategoryRef[] = ["home", "travel", "shoot", "glam", "fit", "beach", "cat-paris-cafes"];
+
+  // r2.2 D1: at «Смелая» the tiers are counted over the whole request, 8 / 8 / 4 of 20, not rounded inside each category (that gave 10 / 5 / 5).
+  test("is 8 / 8 / 4 for 20 photos over the five", () => {
+    expect(levelFrames(20, ORDINARY_SCENE_CATEGORIES, "bold")).toMatchObject({ bold: 8, flirty: 8, ordinary: 4 });
+  });
+
+  test.each([5, 10, 20, 25, 37, 100])("is the sum of tierSpreadOf over the planner's split for %i photos over the five, «Пляж и бассейн» and a custom category", (count) => {
+    expect(levelFrames(count, FIVE_BEACH_CUSTOM, "bold")).toMatchObject(spread(count, FIVE_BEACH_CUSTOM));
+  });
+
+  test("keeps the totals of levelCountsOf over the whole request, whatever the categories", () => {
+    for (const categories of [["home"], ["beach", "cat-paris-cafes"], ["nightwear", "beach"], FIVE_BEACH_CUSTOM] as const) {
+      const { bold, flirty, ordinary } = levelFrames(20, categories, "bold");
+      expect({ bold, flirty, ordinary }).toEqual(levelCountsOf(20));
     }
   });
 
-  test("names the «Смелая» categories that get photos, in the run's order", () => {
-    expect(levelFrames(20, ["nightwear", "beach"], "bold").boldCategories).toEqual(["nightwear", "beach"]);
-    expect(levelFrames(20, ["home", "nightwear"], "bold").boldCategories).toEqual(["nightwear"]);
-    // Five photos over seven categories: the last two get none, so no frame of theirs is bold.
-    expect(levelFrames(5, ["home", "travel", "shoot", "glam", "fit", "nightwear", "beach"], "bold")).toMatchObject({ bold: 0, boldCategories: [] });
+  test("a single category gets exactly levelCountsOf of its photos", () => {
+    expect(levelFrames(7, ["travel"], "bold")).toMatchObject({ bold: levelCountsOf(7).bold, flirty: levelCountsOf(7).flirty, ordinary: levelCountsOf(7).ordinary });
   });
 
-  test("is «Кокетливая»'s count at «Кокетливая», and nothing at «Обычная»", () => {
+  test("counts a custom category's photos too: it draws «Смелая» like the rest", () => {
+    expect(levelFrames(20, ["cat-paris-cafes"], "bold")).toMatchObject({ bold: 8, flirty: 8, ordinary: 4 });
+  });
+
+  test("names every category that gets a photo, in the run's order", () => {
+    expect(levelFrames(20, ["nightwear", "beach"], "bold").drawing).toEqual(["nightwear", "beach"]);
+    expect(levelFrames(20, ["home", "nightwear", "cat-paris-cafes"], "bold").drawing).toEqual(["home", "nightwear", "cat-paris-cafes"]);
+    // Five photos over seven categories: the last two get none, so they are not named.
+    expect(levelFrames(5, ["home", "travel", "shoot", "glam", "fit", "nightwear", "beach"], "bold").drawing).toEqual(["home", "travel", "shoot", "glam", "fit"]);
+  });
+
+  test("is «Кокетливая»'s count at «Кокетливая» (unchanged), and nothing at «Обычная»", () => {
     expect(levelFrames(20, ["home", "travel", "glam"], "flirty")).toMatchObject({ bold: 0, flirty: 12 });
-    expect(levelFrames(20, ["home", "nightwear"], "ordinary")).toMatchObject({ bold: 0, flirty: 0, boldCategories: [] });
+    expect(levelFrames(20, ["home", "nightwear"], "ordinary")).toMatchObject({ bold: 0, flirty: 0, drawing: [] });
+  });
+
+  test("counts nothing with no category", () => {
+    expect(levelFrames(20, [], "bold")).toMatchObject({ bold: 0, flirty: 0, drawing: [] });
+  });
+});
+
+// r2.2: every «Смелая» frame is Seedream, whatever the category, so the slow-frames line follows "«Смелая» with photos", not the two categories that used to be «Смелая».
+describe("drawsBoldFrames: «Смелая» with photos in any category", () => {
+  test.each<[string, readonly CategoryRef[]]>([
+    ["the five", ORDINARY_SCENE_CATEGORIES],
+    ["«Дом» alone", ["home"]],
+    ["a custom category alone", ["cat-paris-cafes"]],
+    ["«Пляж и бассейн» alone", ["beach"]],
+  ])("is true for %s", (_name, categories) => {
+    expect(drawsBoldFrames("bold", 20, categories)).toBe(true);
+  });
+
+  test("is true for one photo in «Дом»: no bold frame among it, but Seedream still draws it", () => {
+    expect(drawsBoldFrames("bold", 1, ["home"])).toBe(true);
+  });
+
+  test("is false with no photo, with no category, and below «Смелая»", () => {
+    expect(drawsBoldFrames("bold", 0, ["home"])).toBe(false);
+    expect(drawsBoldFrames("bold", 20, [])).toBe(false);
+    expect(drawsBoldFrames("flirty", 20, ["home"])).toBe(false);
+    expect(drawsBoldFrames("ordinary", 20, ["nightwear"])).toBe(false);
   });
 });
 
@@ -230,12 +274,12 @@ describe("the card's «Подача» caption (mockups 47, 47a, 47b, 48#kept)", 
     expect(cardLevelCaption("bold", 20, ["nightwear", "beach"])).toBe(`8 из 20${NB}кадров — смелые: бельё, купальники; 8 — кокетливые. ${SEEDREAM_TAIL}`);
   });
 
-  test("47a: «Дом» 10 + «Ночнушки и бельё» 10 → 4 bold, 10 flirty, no «купальники»", () => {
-    expect(cardLevelCaption("bold", 20, ["home", "nightwear"])).toBe(`4 из 20${NB}кадров — смелые: бельё; 10 — кокетливые. ${SEEDREAM_TAIL}`);
+  test("47a: «Дом» 10 + «Ночнушки и бельё» 10 → 8 bold, 8 flirty over the whole request (r2.2 D1), no «купальники»", () => {
+    expect(cardLevelCaption("bold", 20, ["home", "nightwear"])).toBe(`8 из 20${NB}кадров — смелые: бельё; 8 — кокетливые. ${SEEDREAM_TAIL}`);
   });
 
-  test("48#kept, back on «Смелая»: 7 + 7 + 6 → 2 bold, 11 flirty; the count follows the stepper (25 → 10 and 10)", () => {
-    expect(cardLevelCaption("bold", 20, ["home", "travel", "nightwear"])).toBe(`2 из 20${NB}кадров — смелые: бельё; 11 — кокетливые. ${SEEDREAM_TAIL}`);
+  test("48#kept, back on «Смелая»: 7 + 7 + 6 → 8 bold, 8 flirty (r2.2 D1); the count follows the stepper (25 → 10 and 10)", () => {
+    expect(cardLevelCaption("bold", 20, ["home", "travel", "nightwear"])).toBe(`8 из 20${NB}кадров — смелые: бельё; 8 — кокетливые. ${SEEDREAM_TAIL}`);
     expect(cardLevelCaption("bold", 25, ["nightwear", "beach"])).toBe(`10 из 25${NB}кадров — смелые: бельё, купальники; 10 — кокетливые. ${SEEDREAM_TAIL}`);
   });
 
@@ -308,13 +352,13 @@ describe("the lines around «Смелая»", () => {
   });
 });
 
-// Mockup 52: three avatars with 5, 6 and 7 new photos over the two «Смелая» categories → ≈ 7 bold and 6 flirty of 18.
+// Mockup 52: three avatars with 5, 6 and 7 new photos over the two «Смелая» categories → ≈ 7 bold and 8 flirty of 18 (each avatar's request is counted whole, r2.2 D1).
 describe("the launch's «Подача» caption at «Смелая» (mockup 52)", () => {
   const avatar = (toGenerate: number, blocked: "open-set" | null = null) => ({ toGenerate, blocked });
   const plan = { avatars: [avatar(5), avatar(6), avatar(7)], totals: { toGenerate: 18 } };
 
-  test("sums each avatar's bold and flirty frames over its new photos: ≈ 7 and 6 of 18", () => {
-    expect(launchLevelCaption("bold", plan, ["nightwear", "beach"])).toBe(`≈ 7 из 18${NB}новых кадров — смелые: бельё, купальники; 6 — кокетливые. ${SEEDREAM_TAIL}`);
+  test("sums each avatar's bold and flirty frames over its new photos: ≈ 7 and 8 of 18", () => {
+    expect(launchLevelCaption("bold", plan, ["nightwear", "beach"])).toBe(`≈ 7 из 18${NB}новых кадров — смелые: бельё, купальники; 8 — кокетливые. ${SEEDREAM_TAIL}`);
   });
 
   test("leaves a blocked avatar out, as the plan's totals do", () => {

@@ -1,5 +1,5 @@
 import { isBoldCategory, isCustomCategory, splitCount, type BoldCategory, type CategoryRef, type SceneLevel } from "../../../shared/engine";
-import { flirtyCountOf, levelCountsOf } from "../../../shared/scenes/level";
+import { flirtyCountOf, levelCountsOf, tierSpreadOf } from "../../../shared/scenes/level";
 import { countOf } from "../../lib/format";
 import { formatUsdTiered } from "../../lib/money";
 import type { LaunchPlanCounts } from "./launchPlanCounts";
@@ -29,38 +29,39 @@ export function flirtyFrames(count: number, categories: readonly CategoryRef[]):
   return levelFrames(count, categories, "flirty").flirty;
 }
 
-/** The bold and flirty frames of a run, and the «Смелая» categories that draw any photo of it. */
+/** The tiers of a run, and the categories that draw any photo of it at «Смелая». */
 export interface LevelFrames {
+  /** «Смелая»'s most revealing frames (0 below «Смелая»). */
   readonly bold: number;
   readonly flirty: number;
-  /** The «Смелая» categories the split gives a photo, in the run's order. */
-  readonly boldCategories: readonly BoldCategory[];
+  /** The plain frames of a «Смелая» run (0 below «Смелая», where this card does not count them). */
+  readonly ordinary: number;
+  /** At «Смелая», every category the split gives a photo, in the run's order (any category draws «Смелая», r2.2); empty at the other levels. */
+  readonly drawing: readonly CategoryRef[];
 }
 
 /**
- * S5.9g (I5.36): how `count` photos over `categories` divide at `level`, by the planner's own rules over the planner's own split (`splitCount`): in a «Смелая»
- * category at «Смелая», `levelCountsOf` (20 / 40 / 40); in one of the five at «Кокетливая» or «Смелая», `flirtyCountOf` at «Кокетливая» (the five draw «Смелая»
- * as «Кокетливая»); a custom category stays ordinary. Nothing is counted here that the shared rules do not count.
+ * How `count` photos over `categories` divide at `level`, by the planner's own rules over the planner's own split (`splitCount`). At «Смелая» (5a.4, r2.2 D1) the tiers are counted over the
+ * whole request and spread over its categories, `tierSpreadOf` (8 / 8 / 4 of 20), the very function the planner and the mock call; every category draws, a custom one too. At «Кокетливая»
+ * each built-in category's `flirtyCountOf`, a custom category staying ordinary. Nothing is counted here that the shared rules do not count.
  */
 export function levelFrames(count: number, categories: readonly CategoryRef[], level: SceneLevel): LevelFrames {
-  let bold = 0;
-  let flirty = 0;
-  const boldCategories: BoldCategory[] = [];
-  if (level === "ordinary" || categories.length === 0) return { bold, flirty, boldCategories };
-  for (const { ref, count: n } of splitCount(count, categories)) {
-    if (isCustomCategory(ref)) continue;
-    if (isBoldCategory(ref)) {
-      // A «Смелая» category under «Кокетливая» is never asked for (the window leaves it out of the request): it draws nothing to count.
-      if (level !== "bold") continue;
-      const counts = levelCountsOf(n);
-      bold += counts.bold;
-      flirty += counts.flirty;
-      if (n > 0) boldCategories.push(ref);
-      continue;
-    }
-    flirty += flirtyCountOf(n, "flirty");
+  if (level === "ordinary" || categories.length === 0) return { bold: 0, flirty: 0, ordinary: 0, drawing: [] };
+  const split = splitCount(count, categories);
+  if (level === "bold") {
+    const parts = tierSpreadOf(split);
+    return {
+      bold: parts.reduce((sum, part) => sum + part.bold, 0),
+      flirty: parts.reduce((sum, part) => sum + part.flirty, 0),
+      ordinary: parts.reduce((sum, part) => sum + part.ordinary, 0),
+      drawing: split.filter(({ count: n }) => n > 0).map(({ ref }) => ref),
+    };
   }
-  return { bold, flirty, boldCategories };
+  let flirty = 0;
+  for (const { ref, count: n } of split) {
+    if (!isCustomCategory(ref)) flirty += flirtyCountOf(n, "flirty");
+  }
+  return { bold: 0, flirty, ordinary: 0, drawing: [] };
 }
 
 /** What «Кокетливая» says when the run has only custom categories: no frame can be flirty, and «0 из N» would read as a fault. */
@@ -113,7 +114,7 @@ export function gatedNote(kept: readonly string[]): string {
 
 /** «{B} из {N} кадров — смелые: бельё, купальники; {F} — кокетливые. Смелые кадры рисует Seedream 5 Pro · 2K.» (mockup 47), `total` already worded. */
 function boldCaption(frames: LevelFrames, total: string): string {
-  return `${frames.bold} из ${total} — смелые: ${frames.boldCategories.map((ref) => BOLD_WORD[ref]).join(", ")}; ${frames.flirty} — кокетливые. ${BOLD_TAIL}`;
+  return `${frames.bold} из ${total} — смелые: ${frames.drawing.filter(isBoldCategory).map((ref) => BOLD_WORD[ref]).join(", ")}; ${frames.flirty} — кокетливые. ${BOLD_TAIL}`;
 }
 
 /**
@@ -134,7 +135,7 @@ export function cardLevelCaption(level: SceneLevel, count: number, categories: r
   const frames = levelFrames(count, categories, level);
   const total = countOf(count, ["кадра", "кадров", "кадров"]);
   if (level === "flirty") return frames.flirty === 0 && categories.length > 0 ? FLIRTY_BUILTIN_ONLY : flirtyCaption(frames.flirty, count);
-  if (frames.boldCategories.length === 0) return boldWithout(categories);
+  if (!frames.drawing.some(isBoldCategory)) return boldWithout(categories);
   // A «Смелая» category that gets photos but no bold frame (one photo): «0 из N» would read as a fault, and no other string fits.
   return frames.bold > 0 ? boldCaption(frames, total) : null;
 }
@@ -144,7 +145,7 @@ export function cardLevelCaption(level: SceneLevel, count: number, categories: r
  * draws every «Пляж и бассейн» frame and the flirty satin in «Ночнушки», so a run of one photo with 0 bold frames is still slow.
  */
 export function drawsBoldFrames(level: SceneLevel, count: number, categories: readonly CategoryRef[]): boolean {
-  return level === "bold" && count > 0 && levelFrames(count, categories, level).boldCategories.length > 0;
+  return level === "bold" && count > 0 && levelFrames(count, categories, level).drawing.length > 0;
 }
 
 /** The share «Автопилот» says before its plan has new photos to count: a «Смелая» category's ten frames (as «Кокетливая» says its 6 of 10). */
@@ -163,7 +164,7 @@ export function launchLevelCaption(level: SceneLevel, plan: LaunchPlanCounts | n
   if (plan !== null && plan.totals.toGenerate === 0) return null;
   if (plan === null) {
     const share = levelCountsOf(SHARE_PHOTOS);
-    return `≈ ${boldCaption({ bold: share.bold, flirty: share.flirty, boldCategories: bolds }, countOf(SHARE_PHOTOS, ["нового кадра", "новых кадров", "новых кадров"]))}`;
+    return `≈ ${boldCaption({ bold: share.bold, flirty: share.flirty, ordinary: share.ordinary, drawing: bolds }, countOf(SHARE_PHOTOS, ["нового кадра", "новых кадров", "новых кадров"]))}`;
   }
   let bold = 0;
   let flirty = 0;
@@ -175,7 +176,7 @@ export function launchLevelCaption(level: SceneLevel, plan: LaunchPlanCounts | n
   }
   // No bold frame among the new photos (one per avatar): «≈ 0 из N» would read as a fault, and no other string fits.
   if (bold === 0) return null;
-  return `≈ ${boldCaption({ bold, flirty, boldCategories: bolds }, countOf(plan.totals.toGenerate, ["нового кадра", "новых кадров", "новых кадров"]))}`;
+  return `≈ ${boldCaption({ bold, flirty, ordinary: 0, drawing: bolds }, countOf(plan.totals.toGenerate, ["нового кадра", "новых кадров", "новых кадров"]))}`;
 }
 
 /**
