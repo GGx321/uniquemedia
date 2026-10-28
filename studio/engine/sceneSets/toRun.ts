@@ -2,7 +2,8 @@ import { isCustomCategory, MAX_COMPOSE_SCENES, type CategorySnapshot, type Engin
 import { reasonFields } from "./refusal";
 import type { SceneRecord, StoredSceneSet } from "../library/sceneSets";
 import type { SceneRunSource } from "../runs/plan";
-import { contentLevelOf, contentProblems } from "../../shared/scenes/contentLine";
+import { contentLevelOf, contentProblems, type ContentLevel } from "../../shared/scenes/contentLine";
+import { ownSceneMarkerOf, ownSceneRouteOf } from "../../shared/scenes/ownScene";
 
 // CS.5: what a reviewed scene set must be before it may become a run, and what it hands the run. Pure: the engine owns the money and the library.
 // A run draws every ACTIVE scene (not removed), so `M` is the active scenes, each of which must have its text.
@@ -44,11 +45,19 @@ export function approvalRefusal(set: StoredSceneSet, ctx: ApprovalContext): Appr
   if (firstEmpty !== undefined) return { code: "VALIDATION", detail: `scene(s) ${namedScenes(empty)} of set ${set.sceneSetId} have no text: write, type or remove them first`, ...reasonFields("scene-without-text", firstEmpty) };
   if (active.length === 0) return { code: "VALIDATION", detail: `scene set ${set.sceneSetId} has no scene to draw: every scene is removed`, ...reasonFields("no-active-scenes") };
   if (active.length > MAX_COMPOSE_SCENES) return { code: "VALIDATION", detail: `scene set ${set.sceneSetId} has ${active.length} active scenes; a run draws at most ${MAX_COMPOSE_SCENES}`, ...reasonFields("too-many-active") };
-  const unfit = active.find((scene) => scene.text !== null && contentProblems(scene.text, scene.origin === "planned" ? contentLevelOf({ category: scene.slot.category, level: scene.slot.level, route: scene.slot.route }) : "ordinary").length > 0);
+  const unfit = active.find((scene) => scene.text !== null && contentProblems(scene.text, sceneContentLevel(set, scene)).length > 0);
   if (unfit !== undefined) return { code: "VALIDATION", detail: `the text of scene ${unfit.sceneId} of set ${set.sceneSetId} breaks today's word rules: edit or remove it first`, ...reasonFields("scene-text-problem", unfit.sceneId) };
   if (ctx.live) return { code: "IN_FLIGHT", detail: `scene set ${set.sceneSetId} is being written; wait for that to end (or cancel it)` };
   if (ctx.used) return { code: "VALIDATION", detail: `scene set ${set.sceneSetId} is already used by run ${set.runId}`, ...reasonFields("set-used") };
   return null;
+}
+
+/**
+ * The content level a scene's text is held to (`contentLevelOf`): a planned scene's by its slot's marker; 5a.4 (S5.BA9) an own scene's by its own marker in the set (`ownSceneMarkerOf`), so an
+ * own scene of a «Смелая» set is held to the «Смелая» line and one of any other set to the ordinary line, as before.
+ */
+export function sceneContentLevel(set: Pick<StoredSceneSet, "request">, scene: SceneRecord): ContentLevel {
+  return scene.origin === "planned" ? contentLevelOf({ category: scene.slot.category, level: scene.slot.level, route: scene.slot.route }) : contentLevelOf(ownSceneMarkerOf(set.request.level));
 }
 
 /** What the run is made of: each active scene's text and its slot, in the set's order. A scene with no text is a bug of the caller (`approvalRefusal` first). */
@@ -59,8 +68,11 @@ export function runSources(set: StoredSceneSet): SceneRunSource[] {
     switch (scene.origin) {
       case "planned":
         return { sceneId: scene.sceneId, text: scene.text, slot: scene.slot };
-      case "own":
-        return { sceneId: scene.sceneId, text: scene.text, slot: { kind: "own", shot: scene.shot, pose: scene.pose } };
+      case "own": {
+        // 5a.4 (S5.BA9): an own scene of a «Смелая» set is drawn on the Seedream route, as every «Смелая» frame is.
+        const route = ownSceneRouteOf(set.request.level);
+        return { sceneId: scene.sceneId, text: scene.text, slot: { kind: "own", shot: scene.shot, pose: scene.pose, ...(route === undefined ? {} : { route }) } };
+      }
     }
   });
 }
