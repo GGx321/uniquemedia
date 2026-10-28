@@ -279,7 +279,22 @@ describe("the bold slot JSON (§5.3.3, r2.2 P1, the probe's label leaks)", () =>
     test("a size word in the middle of a list leaves no stray comma or double space", () => {
       expect(sentWorld("a tiny, cosy bookshop")).toBe("a cosy bookshop");
       expect(sentWorld("a quiet little bookshop")).toBe("a quiet bookshop");
-      expect(sentWorld("Tiny Tim's bookshop")).toBe("Tim's bookshop");
+    });
+
+    test("the article keeps its case: «A tiny apartment» goes out as «An apartment»", () => {
+      expect(sentWorld("A tiny apartment in Lisbon")).toBe("An apartment in Lisbon");
+      expect(sentWorld("A little bookshop")).toBe("A bookshop");
+    });
+
+    test("a capitalised word is part of a name and stays: «Little Italy cafe», «Tiny Tim's bar»", () => {
+      expect(sentWorld("Little Italy cafe")).toBe("Little Italy cafe");
+      expect(sentWorld("Tiny Tim's bar")).toBe("Tiny Tim's bar");
+      expect(sentWorld("a cafe in Little Italy")).toBe("a cafe in Little Italy");
+    });
+
+    test("a hyphenated word stays: «a tiny-house village», «a little-known cafe»", () => {
+      expect(sentWorld("a tiny-house village")).toBe("a tiny-house village");
+      expect(sentWorld("a little-known cafe")).toBe("a little-known cafe");
     });
 
     test("a world with neither word goes out exactly as stored", () => {

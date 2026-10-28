@@ -241,11 +241,8 @@ function writerBoldSystemPrompt(): string {
  */
 export function worldForWriter(world: string): string {
   return world
-    .replace(/\b(an?)(\s+)(?:tiny|little)\b,?\s*(?=([a-z]?))/gi, (_, article: string, _gap: string, next: string) => {
-      const chosen = /^[aeiou]/i.test(next) ? "an" : "a";
-      return `${article.startsWith("A") ? chosen.toUpperCase() : chosen} `;
-    })
-    .replace(/\b(?:tiny|little)\b,?\s*/gi, "")
+    .replace(/\b([Aa])(n?)(\s+)(?:tiny|little)(?![-\w]),?\s*(?=([a-z]?))/g, (_, a: string, _n: string, _gap: string, next: string) => `${a}${/^[aeiou]/i.test(next) ? "n" : ""} `)
+    .replace(/\b(?:tiny|little)(?![-\w]),?\s*/g, "")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
