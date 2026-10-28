@@ -250,7 +250,8 @@ export const BOLD_ANY_SCENARIOS: readonly Scenario[] = [
       t.note("a bold compose of 100 scenes over «Дом» and «Ночнушки и бельё», 50 each, for the avatar made in Studio");
       await t.callLaunch("scenes.compose", bold(w, 100, ["home", "nightwear"], studio));
       const iris = await settledSet(t, studio);
-      t.note(`she draws implied covers: ${String(iris.scenes.some(drewImplied))}`);
+      // Plan s5a4 §5.11 story 7: the implied cover is reachable in nightwear (its sheet), not only somewhere in the set.
+      t.note(`she draws an implied cover in nightwear: ${String(iris.scenes.some((s) => s.category === "nightwear" && drewImplied(s)))}`);
       t.note(`every scene ends with a Studio-created avatar's coverage (the open one, or none where the probe drew it without one), never the kept one where they differ: ${String(iris.scenes.every((s) => endsByOrigin(s, true)))}`);
       t.note("the same compose for Mia, imported");
       await t.callLaunch("scenes.compose", bold(w, 100, ["home", "nightwear"]));

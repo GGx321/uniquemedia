@@ -6568,7 +6568,7 @@ export const GOLDEN: Record<string, string[]> = {
     "~ settle",
     "event job.progress {\"kind\":\"scenes\",\"jobId\":\"job#1\",\"sceneSetId\":\"set#1\",\"avatarId\":\"avatar#4\",\"total\":100,\"phase\":\"mid\"}",
     "event job.done {\"jobId\":\"job#1\",\"result\":{\"kind\":\"scenes\",\"sceneSetId\":\"set#1\",\"avatarId\":\"avatar#4\",\"written\":100,\"unwritten\":0}}",
-    "# she draws implied covers: true",
+    "# she draws an implied cover in nightwear: true",
     "# every scene ends with a Studio-created avatar's coverage (the open one, or none where the probe drew it without one), never the kept one where they differ: true",
     "# the same compose for Mia, imported",
     "> scenes.compose {\"avatarId\":\"avatar#1\",\"count\":100,\"categories\":[\"home\",\"nightwear\"],\"level\":\"bold\",\"acceptedWorstMicros\":10000000}",
