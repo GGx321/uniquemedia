@@ -270,9 +270,9 @@ export function createdLine(setOpen: boolean): string {
 // evenly, and a selfie or a mirror shot that would turn away becomes another shot of its deck. S5.7c (mockup 35): the card has no angle toggles any more
 // (the angle comes from the scene), so a category without its own takes front and three-quarter, and the copy no longer points at the card.
 
-/** The create form's hint under «Описание»: it names the pose and the angle, so the owner learns they can be set in words; its tail says «Смелая» adds lingerie and swimwear (5a.4, §5.9 row 17). */
+/** The create form's hint under «Описание»: it names the pose and the angle, so the owner learns they can be set in words; its tail says «Смелая» adds lingerie and swimwear (5a.4, §5.9 row 17) and reads no angle from it (BA8b round 2, the owner's provisional Q-G). */
 export const DESCRIPTION_HINT =
-  "Где она бывает, что там делает и в какой позе, во что одета, с какого ракурса снимать («вид сзади», «в профиль»). Модель составит 5–7 мест, 3–6 нарядов и набор кадров. Наряды — обычные; бельё и купальники добавит подача «Смелая».";
+  "Где она бывает, что там делает и в какой позе, во что одета, с какого ракурса снимать («вид сзади», «в профиль»). Модель составит 5–7 мест, 3–6 нарядов и набор кадров. Наряды — обычные; бельё и купальники добавит подача «Смелая». На «Смелой» ракурсы из описания не учитываются.";
 
 /** The regenerate box's hint (CatSheetRegen): the angles are re-read from the new description, and ⟳ in an open set takes the new pool. */
 export const REGEN_HINT =
