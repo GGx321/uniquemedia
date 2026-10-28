@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { JobState } from "../../shared/engine";
 import { runFfmpegArgv } from "../../node/runFfmpeg";
-import { perfOnlyTest } from "../../testing/bunTiers";
+import { heavyTest, perfOnlyTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { openFileSource } from "../media/video/fileSource";
 import { probeVideo, type VideoInfo } from "../media/video/videoProbe";
@@ -73,18 +73,21 @@ function expectDelivered(info: VideoInfo, fps: number): void {
 }
 
 describe("each EXPORT_FPS mode on a Kling std clip (720 x 1280, 24 fps)", () => {
-  test.each([
-    ["interpolate", "1080p30-interp", 30],
-    ["duplicate", "1080p30-dup", 30],
-    ["native24", "1080p24", 24],
-  ] as const)("%s exports H.264 High 1080 x 1920 at a constant %s, faststart, BT.709, no sound", async (mode, profile, fps) => {
+  const exportsAt = async (mode: ExportFpsMode, profile: "1080p30-interp" | "1080p30-dup" | "1080p24", fps: number): Promise<void> => {
     const { r, file } = await exportOf(await fixtures.kling(), mode);
 
     expectDelivered(await infoOf(file), fps);
     expect((await topLevel(file)).filter((type) => type === "moov" || type === "mdat")).toEqual(["moov", "mdat"]);
     expect((await r.record(CLIP)).exports.map((line) => line.profile)).toEqual([profile]);
     expect((await verifyClipExport(file, { createdAt: new Date(NOW) })).ok).toBe(true);
-  });
+  };
+
+  // A push runs the two cheap modes (a 30 fps and a 24 fps profile); the minterpolate mode costs 8 s and runs in the heavy run.
+  test.each([
+    ["duplicate", "1080p30-dup", 30],
+    ["native24", "1080p24", 24],
+  ] as const)("%s exports H.264 High 1080 x 1920 at a constant %s, faststart, BT.709, no sound", exportsAt);
+  heavyTest("interpolate exports H.264 High 1080 x 1920 at a constant 1080p30-interp, faststart, BT.709, no sound", () => exportsAt("interpolate", "1080p30-interp", 30));
 });
 
 describe("the other sources", () => {
@@ -155,17 +158,18 @@ describe("a source whose video track carries a DASH role", () => {
     expect(Buffer.from(await readFile(await roleSource())).includes("urn:mpeg:dash:role:2011")).toBe(true);
   });
 
-  test.each([
-    ["interpolate", 30],
-    ["duplicate", 30],
-    ["native24", 24],
-  ] as const)("%s exports it, passes the verifier and writes no kind box", async (mode, fps) => {
+  const exportsClean = async (mode: ExportFpsMode, fps: number): Promise<void> => {
     const { file } = await exportOf(await roleSource(), mode);
 
     expectDelivered(await infoOf(file), fps);
     expect(Buffer.from(await readFile(file)).includes("urn:mpeg:dash:role:2011")).toBe(false);
     expect((await verifyClipExport(file, { createdAt: new Date(NOW) })).ok).toBe(true);
-  });
+  };
+
+  // The role box is dropped by the muxer flags, whatever the mode: one cheap mode on a push, the other two in the heavy run.
+  test("duplicate exports it, passes the verifier and writes no kind box", () => exportsClean("duplicate", 30));
+  heavyTest("interpolate exports it, passes the verifier and writes no kind box", () => exportsClean("interpolate", 30));
+  heavyTest("native24 exports it, passes the verifier and writes no kind box", () => exportsClean("native24", 24));
 });
 
 // The «as built» numbers (plan s5b1 §5.13): what minterpolate costs against plain duplication on a 5 s 720p clip on this machine. A measurement, so it runs in the perf tier only.
