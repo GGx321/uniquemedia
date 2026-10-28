@@ -7,13 +7,17 @@ One environment variable, `STUDIO_TEST_TIER`, is read by both runners (`bun test
 
 | `STUDIO_TEST_TIER` | Runs in CI                                         | Blocks | What runs                                                                    |
 | ------------------ | -------------------------------------------------- | ------ | ---------------------------------------------------------------------------- |
-| unset              | `build` (macOS, Windows), every push to main, tags | yes    | every ordinary test; tagged tests of other tiers are skipped (or not registered) |
+| unset              | `test-windows` (12 shards), `test-macos` (4 shards), every push to main, tags | yes    | every ordinary test; tagged tests of other tiers are skipped (or not registered); `*.heavy.test.*` files are not loaded |
 | `perf`             | `perf` (ubuntu per push; Windows too in the weekly run) | no (yes on a release tag) | the `[perf]` tests, with their tight wall-clock budgets enforced and printed |
 | `quarantine`       | `quarantine` (macOS, Windows), every push to main  | no     | the `[quarantine]` tests; the job is skipped while the list is empty         |
-| `heavy`            | `heavy` (ubuntu), weekly cron, release tags, manual dispatch; also on `bun latest` in the weekly canary | weekly and tags | the `[heavy]` tests: the slow ones a push does not need |
+| `heavy`            | `heavy` (ubuntu, 3 shards), nightly cron, release tags, manual dispatch (tier `heavy` or `scheduled`); also on `bun latest` in the weekly canary | nightly and tags | the `[heavy]` tests: the slow ones a push does not need |
 
 Locally: `STUDIO_TEST_TIER=perf bun run test:studio:suite ./studio` and `STUDIO_TEST_TIER=perf bun run test:studio:electron-node`
 (PowerShell: `$env:STUDIO_TEST_TIER = "perf"`). A tier run opens only the files that can hold its tests. An unknown value throws.
+
+A file whose tests are all `[heavy]` can be named `*.heavy.test.ts`: the blocking run then does not load it at all (no imports, no
+`beforeAll`), and the heavy run picks it up as usual. The runner refuses such a file if any test in it is not `[heavy]` (a `heavyTest`, a
+`[heavy]` name, or inside a `[heavy]` suite): that test would run nowhere.
 
 The helpers are in `tiers.ts` (runtime-neutral), `bunTiers.ts` (for `bun:test`) and `quarantine.ts`.
 

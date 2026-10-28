@@ -3,10 +3,11 @@
 # One environment variable, STUDIO_TEST_TIER, read by both runners (`bun test` through studio/scripts/realWorkerTests.ts,
 # `node --test` under Electron's Node through studio/scripts/electronNodeTests.ts); the rules are in studio/testing/README.md.
 #
-#   blocking    `build` (macOS + Windows, every push to main and every tag): the whole suite, correctness only. A wall-clock
-#               budget in it has a generous bound that only a runaway trips (assertBudget in studio/testing/tiers.ts).
-#               On Windows the bun suite is not in `build` but in `test-windows` (CI-5): the same suite as 4 parallel jobs,
-#               one shard each, so the Windows wall time is the slowest shard, not the sum of three. macOS keeps it in `build`.
+#   blocking    `test-windows` and `test-macos` (every push to main and every tag): the whole bun suite, correctness only, as
+#               parallel jobs of one shard each (12 on Windows, 4 on macOS), dealt by measured file time, so the wall time is
+#               the slowest shard, not the sum. `build` (macOS + Windows) runs the typechecks, the Electron-Node suites and, on a
+#               tag or a manual run, the packaging and its smokes. A wall-clock budget in the suite has a generous bound that only a
+#               runaway trips (assertBudget in studio/testing/tiers.ts).
 #   perf        `perf` (every push to main, never blocks): the `[perf]` tests with their tight wall-clock budgets enforced and
 #               the numbers printed: deadline headroom, the event-loop gap, "stays fast on the worst input". ubuntu per push;
 #               Windows joins in the scheduled tier.
@@ -14,20 +15,23 @@
 #               A test that flakes ONCE is added to studio/testing/quarantine.ts with the failing run id and the date, and
 #               tagged in the same change, so main stops going red on it and the signal stays. It leaves the list when it
 #               is fixed. Quarantine is never a fix.
-#   scheduled   `heavy`, `canary` and the Windows leg of `perf` (the weekly cron, or a manual run with tier "scheduled"; ubuntu
-#               except that leg): the `[heavy]` tests (the font byte-mutation fuzz, the sticker script in a fresh process),
-#               the randomized suite on `bun latest`, and the perf numbers on Windows's coarse timers. Not per push: they cost
-#               minutes and say nothing a push could have changed.
+#   heavy       `heavy` (the nightly cron, a manual run with tier "heavy" or "scheduled", and every tag; ubuntu, 3 shards): the
+#               `[heavy]` tests (the font byte-mutation fuzz, the sticker script in a fresh process) and the `*.heavy.test.*`
+#               files, which the blocking suite leaves out whole. Not per push: they cost minutes and say nothing a push could
+#               have changed.
+#   scheduled   `canary` and the Windows leg of `perf` (the weekly cron, or a manual run with tier "scheduled"; ubuntu except
+#               that leg): the randomized suite and the heavy tier on `bun latest`, and the perf numbers on Windows's coarse timers.
 name: studio
 on:
   workflow_dispatch:
     inputs:
       tier:
-        description: "default: what a push to main runs (build, perf, quarantine). scheduled: the weekly tier only (heavy tests, canary)."
+        description: "default: what a push to main runs (build, tests, perf, quarantine). heavy: the heavy tier only. scheduled: the weekly tier (canary, perf on Windows) and the heavy tier."
         type: choice
         options:
           - default
           - scheduled
+          - heavy
         default: default
   push:
     # Studio releases are disabled while the repo is public; see owner decision 2026-10-05. A `studio-v*` tag still runs the
@@ -53,10 +57,12 @@ on:
       - ".github/workflows/studio.yml"
       - ".github/actions/studio-install/**"
   # Weekly, so a `latest`-Bun regression (like the one the canary job guards
-  # against) is caught even on a week with no studio push, and the heavy tier
-  # (see the tiers above) runs on a timer instead of on every push.
+  # against) is caught even on a week with no studio push; nightly, so the heavy
+  # tier (see the tiers above) runs on a timer instead of on every push. A job
+  # tells the two apart by github.event.schedule.
   schedule:
     - cron: "17 6 * * 1"
+    - cron: "17 2 * * *"
 # Read-only for every job. Nothing in this workflow publishes: no Release, and no installer is uploaded as an artifact.
 permissions:
   contents: read
@@ -70,10 +76,10 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 jobs:
   build:
-    # The schedule trigger (and a manual run of the scheduled tier) is only for the
+    # The schedule trigger (and a manual run of the scheduled or the heavy tier) is only for the
     # heavy and canary jobs below; the full (optionally packaging) build has
     # nothing to do on a timer.
-    if: github.event_name != 'schedule' && inputs.tier != 'scheduled'
+    if: github.event_name != 'schedule' && inputs.tier != 'scheduled' && inputs.tier != 'heavy'
     strategy:
       # One OS failing must not cancel the other: each has its own smoke to report.
       fail-fast: false
@@ -161,32 +167,10 @@ jobs:
       # Bun or DOM types (its own tsconfig sets `types: []`), which the step above (Node types included) does not prove. Moved
       # here from two tests that each spawned this same tsc (CI-4: 4 and 3 s on Windows).
       - run: bunx tsc --noEmit -p studio/shared/tsconfig.json
-      # Bounded so a future hang (like the Windows one an unref'd
-      # AbortSignal.timeout() timer caused here — fixed by timeoutSignal.ts's
-      # ref'd replacement) fails in minutes, not by holding a runner for
-      # hours until GitHub's own job-level limit kicks in: each attempt is
-      # killed after 15 minutes by the script itself (a hang is never
-      # retried), and this step's limit is the bound of every attempt it may
-      # take (4 shards x 3 attempts x 15 minutes) plus slack. The suite runs
-      # as 4 shards, each its own bun process with its own bound and retry
-      # (see realWorkerTests.ts): Windows needs 7.5 to 10+ minutes for all of
-      # it, and it grows, so one bound for the whole suite would have to keep
-      # growing too.
+      # The bun suite is not here: it runs in `test-windows` and `test-macos` below, as parallel jobs of one shard each. On macOS it
+      # used to run here, its 4 shards one after another: 494.7 + 468.2 + 760.8 + 573.5 s of bun in a 40-minute job (run 40742666274),
+      # and in run 40760733699 one shard ran past its 900 s bound in each attempt (exit 137) while its tests were still passing.
       #
-      # Run through studio/scripts/realWorkerTests.ts: Bun itself segfaults
-      # while tearing down a terminated WASM worker (right after
-      # workerGate.test.ts's interruption test, on macOS), which takes the
-      # whole suite down with no failed test. The script retries — at most 3
-      # attempts — ONLY on a Bun crash with no failed test (a failed test,
-      # a load error or a hang is never retried), and prints a ::warning::
-      # on every retry.
-      #
-      # CI-5: not on Windows. There the same shard-equivalent suite runs in the `test-windows` job below, as parallel jobs (every
-      # test file in exactly one of them: realWorkerTests.test.ts proves the partition). macOS stays
-      # here: its whole suite is about 2.5 minutes, and a macOS minute bills 10x, so splitting it would cost more than it saves.
-      - run: bun run test:studio:suite ./studio
-        timeout-minutes: 195
-        if: runner.os != 'Windows'
       # The real workers' tests (the face worker's, the text worker's) run under ELECTRON'S NODE, the product's own
       # runtime (studio/scripts/electronNodeTests.ts: bun bundles them, the Electron binary runs them as plain Node).
       # Not under Bun: there `worker.terminate()` does not interrupt running wasm (the text deadline test would
@@ -286,14 +270,15 @@ jobs:
           fi
           bun studio/scripts/smoke-engine.ts --app "$app"
 
-  # The Windows bun suite (CI-5), as parallel jobs: the suite `build` runs on macOS (`bun run test:studio:suite ./studio`, 4 shards one
+  # The Windows bun suite (CI-5), as parallel jobs: the suite (`bun run test:studio:suite ./studio` runs it as 4 shards one
   # after another) is here one shard per job, 12 in all (8 until run 38682892855, whose shard 7 of 8 reached the 15-minute bound with no failing test; 6 until run 38106625177, whose shard 2 of 6 reached the 15-minute bound; 4 until run 38036567315, whose shard 1 of 4 reached it
   # at 900 s on 195 files, parity.test.ts alone 175 s). Before, `build (windows-latest)` ran the three shards in sequence (4.5, 6.2 and
   # 8.1 minutes in run 37193353642, 21 minutes with setup); now the wall time is the slowest shard plus the setup, and the typecheck,
   # the Electron-Node suites and the packaging (`build (windows-latest)`) run beside the shards, not before them. Every job computes
-  # the partition of the sorted test files on its own (realWorkerTests.ts `--shard=I/N`: round-robin, deterministic, the same checkout),
-  # and realWorkerTests.test.ts proves the N shards together run every test file exactly once; the matrix below and the `/12` in the
-  # command are guarded to agree. Each job keeps its own 15-minute attempt bound and its own crash retry (a retry reruns one shard);
+  # the partition of the sorted test files on its own (realWorkerTests.ts `--shard=I/N`: deterministic, the same checkout), dealt by each
+  # file's measured time (studio/scripts/testFileTimes.json; round-robin by name, the shards of run 40742666274 took 114.6 to 600.7 s of
+  # bun), and realWorkerTests.test.ts proves the N shards together run every blocking test file exactly once; the matrix below and the
+  # `/12` in the command are guarded to agree. Each job keeps its own 15-minute attempt bound and its own crash retry (a retry reruns one shard);
   # the step's limit is attempts x bound plus slack. fail-fast is off: every shard reports, as the sequential run did. Each job repeats
   # the install and the models fetch (about a minute: the price of the parallelism). Caching bun's package cache was measured and
   # dropped: a warm run (run 37196927344) spent 31 s restoring it and 10 s installing, against 47 to 55 s for a cold install, so it
@@ -301,7 +286,7 @@ jobs:
   # fetch the ffmpeg and electron binaries). No secret is available to, or cached by, these jobs (read-only token, no secrets context).
   test-windows:
     name: test (windows-latest, shard ${{ matrix.shard }}/12)
-    if: github.event_name != 'schedule' && inputs.tier != 'scheduled'
+    if: github.event_name != 'schedule' && inputs.tier != 'scheduled' && inputs.tier != 'heavy'
     strategy:
       fail-fast: false
       matrix:
@@ -332,6 +317,39 @@ jobs:
         run: bun run test:studio:suite:shard --shard=${{ matrix.shard }}/12 --suite ./studio
         timeout-minutes: 60
 
+  # The macOS bun suite, as parallel jobs like the Windows one above (same steps, same bounds, same partition rule, macOS's own measured
+  # times). It ran in `build (macos-latest)`, 4 shards one after another (see the note there). 4 jobs, not more: with `build (macos-latest)`
+  # they are 5 macOS jobs at once, GitHub's free-plan limit for macOS, so a fifth shard would queue behind them.
+  test-macos:
+    name: test (macos-latest, shard ${{ matrix.shard }}/4)
+    if: github.event_name != 'schedule' && inputs.tier != 'scheduled' && inputs.tier != 'heavy'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: macos-latest
+    # 75 = the suite step's 60 plus the setup, as on Windows.
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      # Same pin as the build job (see the comment there).
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: ./.github/actions/studio-install
+      # parity.test.ts and the face tests need the two models (same cache key, same step as the build job).
+      - name: Cache face gate models
+        uses: actions/cache@v4
+        with:
+          path: .cache/studio-face-models
+          key: face-models-${{ hashFiles('studio/engine/face/modelSource.ts') }}
+      - name: Fetch face gate models
+        run: bun run models:face
+      # One shard of 4, its own bun process with its own 15-minute bound and crash retry: 3 attempts x 15 minutes is 45, 60 leaves slack.
+      - name: Suite, shard ${{ matrix.shard }} of 4
+        run: bun run test:studio:suite:shard --shard=${{ matrix.shard }}/4 --suite ./studio
+        timeout-minutes: 60
+
   # The perf tier (see TEST TIERS at the top): the tests tagged `[perf]`, with
   # their tight wall-clock budgets ENFORCED and their numbers printed. These are
   # measurements of the runner as much as of the code (deadline headroom, the
@@ -341,11 +359,12 @@ jobs:
   # reference (1x, not the 2x of Windows or the 10x of macOS in the private
   # repo's minutes). On the weekly schedule (and a manual run of the scheduled
   # tier) Windows joins: its coarse timers are why these bounds flaked, so its
-  # numbers are worth having, just not on every push. The blocking `build` job
-  # still runs every one of these tests, with a generous bound.
+  # numbers are worth having, just not on every push (nor on the nightly heavy
+  # schedule, nor on a manual run of the heavy tier). The blocking test jobs
+  # still run every one of these tests, with a generous bound.
   perf:
     name: perf (${{ matrix.os }})
-    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || (github.event_name == 'workflow_dispatch' && inputs.tier != 'heavy') || github.event.schedule == '17 6 * * 1'
     strategy:
       fail-fast: false
       matrix:
@@ -389,7 +408,7 @@ jobs:
   # is something to run.
   quarantine-list:
     name: quarantine list
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.tier != 'scheduled')
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.tier != 'scheduled' && inputs.tier != 'heavy')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -448,15 +467,25 @@ jobs:
   # The heavy tier (see TEST TIERS at the top): `[heavy]` tests, the slow ones a
   # push does not need: the font byte-mutation fuzz and the sticker script run
   # in a fresh process. Platform-independent, so ubuntu only (1x of the private
-  # repo's minutes; macOS bills 10x, Windows 2x). On the weekly schedule and on a
-  # `studio-v*` tag a failure turns the run red (GitHub only emails a failed scheduled
-  # run, and a tag must not pass over a regression); on a manual run of the
-  # scheduled tier it does not.
+  # repo's minutes; macOS bills 10x, Windows 2x). Nightly (the "17 2" cron), on a
+  # manual run of the heavy or the scheduled tier, and on every tag; on the nightly
+  # schedule and on a `studio-v*` tag a failure turns the run red (GitHub only emails
+  # a failed scheduled run, and a tag must not pass over a regression); on a manual run
+  # it does not. 3 jobs of one shard each (realWorkerTests.ts `--shard=I/3`: the tier's
+  # files dealt by count; a shard with none passes), so the tier can grow past one
+  # process's 15-minute bound; the models are fetched as in the build job, for the
+  # face and parity tests that move here.
   heavy:
-    name: heavy
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.tier == 'scheduled') || startsWith(github.ref, 'refs/tags/')
+    name: heavy (shard ${{ matrix.shard }}/3)
+    if: github.event.schedule == '17 2 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.tier == 'scheduled' || inputs.tier == 'heavy')) || startsWith(github.ref, 'refs/tags/')
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     runs-on: ubuntu-latest
     continue-on-error: ${{ github.event_name != 'schedule' && !startsWith(github.ref, 'refs/tags/') }}
+    # 75 = the step's 60 plus the setup, as in the suite jobs.
+    timeout-minutes: 75
     permissions:
       contents: read
     env:
@@ -467,8 +496,15 @@ jobs:
         with:
           bun-version-file: .bun-version
       - uses: ./.github/actions/studio-install
-      - name: Heavy tests (bun)
-        run: bun run test:studio:suite ./studio
+      - name: Cache face gate models
+        uses: actions/cache@v4
+        with:
+          path: .cache/studio-face-models
+          key: face-models-${{ hashFiles('studio/engine/face/modelSource.ts') }}
+      - name: Fetch face gate models
+        run: bun run models:face
+      - name: Heavy tests (bun), shard ${{ matrix.shard }} of 3
+        run: bun run test:studio:suite:shard --shard=${{ matrix.shard }}/3 --suite ./studio
         timeout-minutes: 60
 
   # Early warning for the next Bun release breaking studio: the `build` job
@@ -504,7 +540,7 @@ jobs:
   # and cannot find them.
   canary:
     name: canary (bun latest)
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.tier == 'scheduled')
+    if: github.event.schedule == '17 6 * * 1' || (github.event_name == 'workflow_dispatch' && inputs.tier == 'scheduled')
     runs-on: ubuntu-latest
     continue-on-error: ${{ github.event_name != 'schedule' }}
     permissions:

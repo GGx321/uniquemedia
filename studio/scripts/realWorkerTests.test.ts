@@ -627,15 +627,18 @@ describe("the bounds", () => {
     expect(ATTEMPT_TIMEOUT_MS).toBeLessThanOrEqual(30 * 60 * 1000);
   });
 
-  test("each workflow step that runs the sharded suite has a timeout-minutes above shards x attempts x bound, and every suite script shards", async () => {
+  // A tier job (STUDIO_TEST_TIER) runs one process, or one shard: its own guard below. Every other step that runs a suite script runs its
+  // shards one after another (the canary; the blocking suite runs as matrix jobs, one shard each, guarded further down).
+  test("each workflow step outside a tier job that runs the sequential sharded suite has a timeout-minutes above shards x attempts x bound, and every suite script shards", async () => {
     const scripts = scriptsOf(JSON.parse(await readFile(join(ROOT, "package.json"), "utf8")));
     const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
-    for (const name of ["test:studio:suite", "test:studio:suite:canary"]) {
-      const shards = Number(/--shards=(\d+)/.exec(scripts[name] ?? "")?.[1]);
-      expect(shards).toBeGreaterThan(1);
-      const step = new RegExp(`run: bun run ${name} .*\\r?\\n\\s+timeout-minutes: (\\d+)`).exec(workflow);
-      expect(step).not.toBeNull();
-      expect(Number(step?.[1])).toBeGreaterThan((shards * MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000);
+    for (const name of ["test:studio:suite", "test:studio:suite:canary"]) expect(Number(/--shards=(\d+)/.exec(scripts[name] ?? "")?.[1])).toBeGreaterThan(1);
+    const untiered = workflow.split(/^ {2}(?=[\w-]+:\r?\n)/m).filter((block) => !/STUDIO_TEST_TIER: \w+/.test(block));
+    const steps = untiered.flatMap((block) => [...block.matchAll(/run: bun run (test:studio:suite(?::canary)?) .*\r?\n\s+timeout-minutes: (\d+)/g)]);
+    expect(steps.length).toBeGreaterThan(0);
+    for (const [, name, minutes] of steps) {
+      const shards = Number(/--shards=(\d+)/.exec(scripts[name ?? ""] ?? "")?.[1]);
+      expect([name, shards > 1 && Number(minutes) > (shards * MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000]).toEqual([name, true]);
     }
   });
 });
@@ -696,14 +699,14 @@ describe("the Electron-Node steps' bounds", () => {
     expect(await readFile(join(ROOT, "studio", "shared", "tsconfig.json"), "utf8")).toContain('"types": []');
   });
 
-  // A tier run (STUDIO_TEST_TIER, studio/testing/tiers.ts) is one `bun test` process: it may crash and retry like a shard, so its step
-  // needs attempts x bound, and a tier job must set the variable for the steps that run it.
+  // A tier run (STUDIO_TEST_TIER, studio/testing/tiers.ts) is one `bun test` process, or one shard of a matrix (the heavy tier): it may
+  // crash and retry like a shard, so its step needs attempts x bound, and a tier job must set the variable for the steps that run it.
   test("every workflow step that runs a tier's bun tests has a timeout-minutes above attempts x bound, in a job that sets STUDIO_TEST_TIER", async () => {
     const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
     const jobs = workflow.split(/^ {2}(?=[\w-]+:\r?\n)/m).filter((block) => /STUDIO_TEST_TIER: \w+/.test(block));
     expect(jobs.map((job) => /STUDIO_TEST_TIER: (\w+)/.exec(job)?.[1]).sort()).toEqual(["heavy", "perf", "quarantine"]);
     for (const job of jobs) {
-      const step = /run: bun run test:studio:suite \.\/studio\r?\n\s+timeout-minutes: (\d+)/.exec(job);
+      const step = /run: bun run test:studio:suite(?::shard --shard=\$\{\{ matrix\.shard \}\}\/\d+ --suite)? \.\/studio\r?\n\s+timeout-minutes: (\d+)/.exec(job);
       expect(step).not.toBeNull();
       expect(Number(step?.[1])).toBeGreaterThan((MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000);
     }
@@ -720,39 +723,40 @@ describe("the Electron-Node steps' bounds", () => {
     return Object.fromEntries(Object.entries(parsed.jobs).map(([name, job]) => [name, typeof job === "object" && job !== null ? Object.fromEntries(Object.entries(job)) : {}]));
   }
 
-  // CI-5: Windows runs the bun suite as parallel jobs, one shard each. Nothing may go missing in the move: macOS keeps its three
-  // sequential shards in `build`, Windows' `build` leg skips that step, and the matrix of `test-windows` is exactly the shards 1..N of
-  // the `--shard=I/N` its command line passes (together with realWorkerTests' own partition tests this is "every file once").
-  test("the Windows suite job runs shards 1..N of N, one per matrix entry, bounded, on the same trigger as build; the build job skips the bun suite on Windows only", async () => {
+  // The bun suite runs as parallel jobs, one shard each: Windows (CI-5) and macOS (B0), and the heavy tier too. Nothing may go missing in
+  // the move: `build` runs no bun suite, the blocking jobs run on build's trigger, and each job's matrix is exactly the shards 1..N of the
+  // `--shard=I/N` its command line passes (together with realWorkerTests' own partition tests this is "every file once").
+  test("each suite job (Windows, macOS, heavy) runs shards 1..N of N, one per matrix entry, bounded; the blocking ones on the same trigger as build, which runs no bun suite", async () => {
     const jobs = await workflowJobs();
-    const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
-    const job = jobs["test-windows"];
-    expect(job).toBeDefined();
-    expect(job?.if).toBe(jobs.build?.if);
-    expect(job?.["runs-on"]).toBe("windows-latest");
-    const matrix = (job?.strategy as { "fail-fast"?: unknown; matrix?: { shard?: unknown } } | undefined) ?? {};
-    expect(matrix["fail-fast"]).toBe(false);
-    const shards = matrix.matrix?.shard;
-    if (!Array.isArray(shards)) throw new Error("test-windows has no shard matrix");
-    const command = /run: bun run test:studio:suite:shard --shard=\$\{\{ matrix\.shard \}\}\/(\d+) --suite \.\/studio\r?\n\s+timeout-minutes: (\d+)/.exec(workflow);
-    expect(command).not.toBeNull();
-    const count = Number(command?.[1]);
-    expect(count).toBeGreaterThan(1);
-    expect(shards).toEqual(Array.from({ length: count }, (_, i) => i + 1));
-    expect(String(job?.name)).toContain(`/${count})`);
-    // One shard per job: its step covers every attempt of one shard, not of all of them.
-    expect(Number(command?.[2])).toBeGreaterThan((MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000);
-    // The job itself is bounded too, above the suite step's own limit, so a hung install cannot hold a job for GitHub's 360 minutes.
-    expect(Number(job?.["timeout-minutes"])).toBeGreaterThan(Number(command?.[2]));
-    expect(Number(job?.["timeout-minutes"])).toBeLessThanOrEqual(120);
-    // The same suite, the same models: the jobs hold the steps a shard needs.
-    const steps = (job?.steps ?? []) as { run?: string; uses?: string }[];
-    expect(steps.some((step) => step.uses === "./.github/actions/studio-install")).toBe(true);
-    expect(steps.some((step) => step.run === "bun run models:face")).toBe(true);
-    // The one place the bun suite is skipped is the Windows leg of build; macOS still runs it there, whole.
-    const suite = ((jobs.build?.steps ?? []) as { run?: string; if?: string }[]).filter((step) => step.run === "bun run test:studio:suite ./studio");
-    expect(suite).toHaveLength(1);
-    expect(suite[0]?.if).toBe("runner.os != 'Windows'");
+    for (const [name, os] of [["test-windows", "windows-latest"], ["test-macos", "macos-latest"], ["heavy", "ubuntu-latest"]] as const) {
+      const job = jobs[name];
+      expect([name, job !== undefined]).toEqual([name, true]);
+      if (name !== "heavy") expect([name, job?.if]).toEqual([name, jobs.build?.if]);
+      expect([name, job?.["runs-on"]]).toEqual([name, os]);
+      const matrix = (job?.strategy as { "fail-fast"?: unknown; matrix?: { shard?: unknown } } | undefined) ?? {};
+      expect([name, matrix["fail-fast"]]).toEqual([name, false]);
+      const shards = matrix.matrix?.shard;
+      if (!Array.isArray(shards)) throw new Error(`${name} has no shard matrix`);
+      const steps = (job?.steps ?? []) as { run?: string; uses?: string; "timeout-minutes"?: unknown }[];
+      const suite = steps.filter((step) => step.run?.startsWith("bun run test:studio:suite"));
+      expect([name, suite.length]).toEqual([name, 1]);
+      const command = /^bun run test:studio:suite:shard --shard=\$\{\{ matrix\.shard \}\}\/(\d+) --suite \.\/studio$/.exec(suite[0]?.run ?? "");
+      expect([name, command !== null]).toEqual([name, true]);
+      const count = Number(command?.[1]);
+      expect(count).toBeGreaterThan(1);
+      expect([name, shards]).toEqual([name, Array.from({ length: count }, (_, i) => i + 1)]);
+      expect(String(job?.name)).toContain(`/${count})`);
+      // One shard per job: its step covers every attempt of one shard, not of all of them.
+      const minutes = Number(suite[0]?.["timeout-minutes"]);
+      expect([name, minutes > (MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000]).toEqual([name, true]);
+      // The job itself is bounded too, above the suite step's own limit, so a hung install cannot hold a job for GitHub's 360 minutes.
+      expect([name, Number(job?.["timeout-minutes"]) > minutes && Number(job?.["timeout-minutes"]) <= 120]).toEqual([name, true]);
+      // The same suite, the same models: the jobs hold the steps a shard needs.
+      expect([name, steps.some((step) => step.uses === "./.github/actions/studio-install")]).toEqual([name, true]);
+      expect([name, steps.some((step) => step.run === "bun run models:face")]).toEqual([name, true]);
+    }
+    // build keeps the typechecks, the Electron-Node suites and the packaging; the bun suite is in the jobs above only.
+    expect(((jobs.build?.steps ?? []) as { run?: string }[]).filter((step) => step.run?.includes("test:studio:suite"))).toEqual([]);
     // The package script behind the job is the same runner with the shard flag only, so it cannot drift from the suite's own flags.
     const scripts = scriptsOf(JSON.parse(await readFile(join(ROOT, "package.json"), "utf8")));
     expect(scripts["test:studio:suite:shard"]).toBe("bun studio/scripts/realWorkerTests.ts");
