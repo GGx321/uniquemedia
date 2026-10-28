@@ -95,15 +95,18 @@ async function boldRun(started: Awaited<ReturnType<typeof boot>>, avatarId: stri
   let events: RunEvent[] = [];
   const poll = setInterval(() => void writerEvents().then((found) => (events = found)), 5);
   try {
-    await until(() => events.length === plan.writerChunks.length, "the writer's chunks in the journal", 15_000);
+    try {
+      await until(() => events.length === plan.writerChunks.length, "the writer's chunks in the journal", 15_000);
+    } finally {
+      clearInterval(poll);
+    }
+    const written = new Map(events.flatMap((e) => (e.type === "writer" ? e.sentences.map((s): [number, string] => [s.slotIndex, s.sentence]) : [])));
+    return { plan, written, runId: answer.result.runId };
   } finally {
-    clearInterval(poll);
+    // The run's job is still writing its journal, even when the wait above failed: cancel it and wait for its end, so the teardown never removes the library under it.
+    ok(await started.engine.handle(command("runs.cancel", { runId: answer.result.runId })));
+    await jobEnd(started.events, answer.result.jobId);
   }
-  const written = new Map(events.flatMap((e) => (e.type === "writer" ? e.sentences.map((s): [number, string] => [s.slotIndex, s.sentence]) : [])));
-  // The run's job is still writing its journal: cancel it and wait for its end, so the teardown never removes the library under it.
-  ok(await started.engine.handle(command("runs.cancel", { runId: answer.result.runId })));
-  await jobEnd(started.events, answer.result.jobId);
-  return { plan, written, runId: answer.result.runId };
 }
 
 const boldRunIds = (started: Awaited<ReturnType<typeof boot>>, avatarId: string) => boldRun(started, avatarId, [LLM_ONLY_REF], 4);
