@@ -39,7 +39,24 @@ describe("the month line (§5.9 row 20)", () => {
   test("the count is the whole photos the budget holds: one micro-dollar under a whole photo is one photo fewer", () => {
     const unit = photoUnit("off");
     expect(monthLine({ unitMicros: unit, budgetMicros: 2 * unit, ageCheck: false })).toContain("≈ 2 таких фото");
-    expect(monthLine({ unitMicros: unit, budgetMicros: 2 * unit - 1, ageCheck: false })).toContain("≈ 1 таких фото");
+    expect(monthLine({ unitMicros: unit, budgetMicros: 2 * unit - 1, ageCheck: false })).toContain("≈ 1 такое фото;");
+  });
+
+  // S5.BA8a review: the count agrees with its words — «≈ 1 такое фото» where n % 10 = 1 and n % 100 ≠ 11, «таких фото» everywhere else.
+  test.each([
+    [1, "≈ 1 такое фото;"],
+    [21, "≈ 21 такое фото;"],
+    [31, "≈ 31 такое фото;"],
+    [101, "≈ 101 такое фото;"],
+    [11, "≈ 11 таких фото;"],
+    [111, "≈ 111 таких фото;"],
+    [2, "≈ 2 таких фото;"],
+    [4, "≈ 4 таких фото;"],
+    [5, "≈ 5 таких фото;"],
+    [12, "≈ 12 таких фото;"],
+    [35, "≈ 35 таких фото;"],
+  ] as const)("%i photos: «%s»", (photos, words) => {
+    expect(monthLine({ unitMicros: 279_000, budgetMicros: photos * 279_000, ageCheck: false })).toContain(words);
   });
 
   test("a budget that holds no whole photo claims no count", () => {
@@ -47,8 +64,10 @@ describe("the month line (§5.9 row 20)", () => {
     expect(line).toBe("Каждое фото «Смелой» — до $0.28 (3 попытки Seedream 2K по прайсу). Месячный бюджет $0.10 не вмещает ни одного такого фото.");
   });
 
-  test("refuses a unit that is not a positive whole number of micro-dollars: a zero or a fraction would divide into nonsense", () => {
-    for (const unitMicros of [0, -1, 0.5, Number.NaN]) expect(() => monthLine({ unitMicros, budgetMicros: BUDGET, ageCheck: false })).toThrow(RangeError);
+  // S5.BA8a review: a unit the line cannot divide by (zero — the contract allows it —, or anything not a positive whole number of micro-dollars) says nothing rather than throw:
+  // a throw here took «Автопилот» down.
+  test("a unit that is not a positive whole number of micro-dollars gives no line, never a throw", () => {
+    for (const unitMicros of [0, -1, 0.5, Number.NaN]) expect(monthLine({ unitMicros, budgetMicros: BUDGET, ageCheck: false })).toBe(null);
   });
 });
 
@@ -82,5 +101,9 @@ describe("launchMonthLine: the line a plan shows", () => {
   test("with no plan, or a plan without a unit: none", () => {
     expect(launchMonthLine("bold", null, false)).toBe(null);
     expect(launchMonthLine("bold", { month: { budgetMicros: BUDGET } }, false)).toBe(null);
+  });
+
+  test("a plan whose unit is 0: none, and no throw", () => {
+    expect(launchMonthLine("bold", { ...plan, unitPhotoWorstMicros: 0 }, false)).toBe(null);
   });
 });

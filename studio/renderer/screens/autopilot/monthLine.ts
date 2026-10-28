@@ -1,4 +1,5 @@
 import type { SceneLevel } from "../../../shared/engine";
+import { plural } from "../../lib/format";
 import { formatUsdTiered } from "../../lib/money";
 import { wholeUsd } from "./planModel";
 
@@ -14,17 +15,18 @@ export interface MonthLineInput {
 
 /**
  * «Каждое фото «Смелой» — до {X} (3 попытки Seedream 2K по прайсу). Месячный бюджет ${budget} вмещает ≈ {k} таких фото; больше автопилот рисует частями, пока хватает остатка.»
- * X = the unit rounded up (the app's `до`), k = ⌊budget / unit⌋. A budget that holds no whole photo claims no count.
+ * X = the unit rounded up (the app's `до`), k = ⌊budget / unit⌋, its words agreeing with it («≈ 1 такое фото», «≈ 21 такое фото»). A budget that holds no whole photo claims no count.
+ * A unit the line cannot divide by (0, which the contract allows, or anything but a positive whole number of micro-dollars) gives no line: the screen says nothing rather than fall.
  */
-export function monthLine({ unitMicros, budgetMicros, ageCheck }: MonthLineInput): string {
-  if (!Number.isInteger(unitMicros) || unitMicros <= 0) throw new RangeError(`a photo's unit is a positive whole number of micro-dollars, got ${unitMicros}`);
+export function monthLine({ unitMicros, budgetMicros, ageCheck }: MonthLineInput): string | null {
+  if (!Number.isSafeInteger(unitMicros) || unitMicros <= 0) return null;
   const photos = Math.floor(budgetMicros / unitMicros);
   const how = ageCheck ? "3 попытки Seedream 2K и проверки возраста по прайсу" : "3 попытки Seedream 2K по прайсу";
   const first = `Каждое фото «Смелой» — до ${formatUsdTiered(unitMicros, "up")} (${how}).`;
   const budget = wholeUsd(budgetMicros);
   return photos === 0
     ? `${first} Месячный бюджет ${budget} не вмещает ни одного такого фото.`
-    : `${first} Месячный бюджет ${budget} вмещает ≈ ${photos} таких фото; больше автопилот рисует частями, пока хватает остатка.`;
+    : `${first} Месячный бюджет ${budget} вмещает ≈ ${photos} ${plural(photos, ["такое фото", "таких фото", "таких фото"])}; больше автопилот рисует частями, пока хватает остатка.`;
 }
 
 /** The line a launch plan shows under «Подача»: at «Смелая» only, from the plan's own unit and budget; none when the plan names no unit (it draws no new photo). */
