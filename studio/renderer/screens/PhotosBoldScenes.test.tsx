@@ -3,7 +3,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { PRICE_SCOPES_RU, type CategoryRef, type CategorySummary, type SceneLevel } from "../../shared/engine";
 import type { MockSceneSetSeed } from "../engine/mockSceneSets";
 import { flush, openSection, setup } from "../testing";
-import { MIA, PARIS } from "./photos/categoryScreenKit";
+import { category, MIA, PARIS, PARIS_POOL } from "./photos/categoryScreenKit";
 import { boldAttemptLine } from "./photos/level";
 import { card, sceneCard } from "./photos/sceneScreenKit";
 
@@ -214,5 +214,33 @@ describe("a scene with no world says none", () => {
   test("a built-in «Смелая» scene and a «Кокетливая» one have no «мир категории» line", async () => {
     await openSet(["nightwear", "beach"], "bold");
     expect(card().ownerDocument.querySelectorAll(".scene-world")).toHaveLength(0);
+  });
+});
+
+// 5a.4 (S5.BA8b round 2, MEDIUM-1; r2.3 M6, QB-4): at «Смелая» a custom category's own angles do not apply — its scenes on the route take the angle from the scene — so the strip names
+// no «у «…» — свои» for it. The rule is the scenes' route, not the set's level: a «Смелая» set stored before 5a.4 drew its custom scenes off the route, with their own angles.
+describe("the strip's own-angles words for a custom category with angles of its own", () => {
+  const ANGLED = category(5, "Балкон со спины", { ...PARIS_POOL, poses: ["three-quarter", "back"] });
+
+  test("a «Смелая» set of it, on the route: «Подача: смелая · Ракурс — из сцены», no «— свои»", async () => {
+    await openSet([ANGLED.categoryId], "bold", { customs: [ANGLED] });
+    expect(lockLine()).toBe("Подача: смелая · Ракурс — из сцены. Настройки набора не меняются — Пересоставить… начнёт заново.");
+  });
+
+  test("a «Смелая» set stored before 5a.4, its scenes off the route: «у «Балкон со спины» — свои» as before", async () => {
+    const place = { location: "hotel balcony", timeOfDay: "evening", activity: "leaning on the rail", outfit: "a linen dress" };
+    await openSet([ANGLED.categoryId], "bold", {
+      customs: [ANGLED],
+      scenes: [
+        { category: ANGLED.categoryId, shot: "friend", pose: "back", place, text: "Balcony, from behind." },
+        { category: ANGLED.categoryId, shot: "friend", pose: "three-quarter", place, text: "Balcony, three-quarter." },
+      ],
+    });
+    expect(lockLine()).toBe("Подача: смелая · Ракурс — из сцены; у «Балкон со спины» — свои. Настройки набора не меняются — Пересоставить… начнёт заново.");
+  });
+
+  test("below «Смелая» it is named as before", async () => {
+    await openSet([ANGLED.categoryId], "flirty", { customs: [ANGLED] });
+    expect(lockLine()).toBe("Подача: кокетливая · Ракурс — из сцены; у «Балкон со спины» — свои. Настройки набора не меняются — Пересоставить… начнёт заново.");
   });
 });

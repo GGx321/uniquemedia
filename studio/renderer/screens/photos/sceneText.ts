@@ -282,7 +282,13 @@ export const STRIP_ANGLE = "Ракурс — из сцены";
  * model takes from the idea (an idea write running counts).
  */
 export function stripLook(set: SceneSetView): StripLook {
-  const rows = set.categories.flatMap((c) => (c.poses === undefined ? [] : [{ name: c.name ?? CUSTOM_FALLBACK, list: posesText(c.poses) }]));
+  // 5a.4 (BA8b round 2; r2.3 M6, QB-4): a custom category whose scenes are on the Seedream route («Смелая») takes the angle from the scene, its own do not apply — so it is not named.
+  // The route decides, not the set's level: a «Смелая» set stored before 5a.4 drew its custom scenes off the route, with their own angles.
+  const onRoute = (ref: string): boolean => {
+    const scenes = set.scenes.filter((s) => s.category === ref);
+    return scenes.length > 0 && scenes.every((s) => s.route === "seedream");
+  };
+  const rows = set.categories.flatMap((c) => (c.poses === undefined || onRoute(c.ref) ? [] : [{ name: c.name ?? CUSTOM_FALLBACK, list: posesText(c.poses) }]));
   const legs = set.scenes.filter((s) => s.framing === "legs" && !s.removed).length;
   return {
     level: set.level === "bold" ? "Подача: смелая" : set.level === "flirty" ? "Подача: кокетливая" : set.poses === undefined ? "Подача: обычная" : null,
