@@ -65,6 +65,11 @@ const PLACES_OF: Readonly<Record<SceneCategory, readonly PlaceWord[]>> = {
 /** A custom category's frames are in a room or at home, and at the water when one of its places is a water place. */
 const CUSTOM_PLACES: readonly PlaceWord[] = ["home", "room"];
 
+/** Whether a custom category has a place by the water, by the planner's own rule (`isWaterPlaceName`): its frames there are in swimwear at «Смелая». */
+export function hasWaterPlace(custom: CategorySummary): boolean {
+  return custom.pool.locations.some((place) => isWaterPlaceName(place.name));
+}
+
 const isSatin = (text: string): boolean => /\bsatin\b/i.test(text);
 
 /** What a bank says of itself, read from its data: the underwear and the satin of its general draw, the satin of its legs frames, and its water places. */
@@ -104,7 +109,7 @@ export function captionWordsOf(categories: readonly CategoryRef[], context: { le
     if (custom === undefined) continue;
     take(banks.rooms, false);
     for (const place of CUSTOM_PLACES) places.add(place);
-    if (custom.pool.locations.some((place) => isWaterPlaceName(place.name))) {
+    if (hasWaterPlace(custom)) {
       take(banks.water, false);
       places.add("water");
     }

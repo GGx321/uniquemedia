@@ -1,8 +1,9 @@
 import { type RefObject, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { BOLD_CATEGORIES, isBoldCategory, MAX_CUSTOM_CATEGORIES, ORDINARY_SCENE_CATEGORIES, type CategorySummary } from "../../../shared/engine";
+import { BOLD_CATEGORIES, isBoldCategory, isCustomCategory, MAX_CUSTOM_CATEGORIES, ORDINARY_SCENE_CATEGORIES, type CategorySummary } from "../../../shared/engine";
 import type { CategoryCall, CategoryList, CategoryOutcome } from "../../engine/categoryLibrary";
 import { errorText } from "../../lib/errors";
 import { Icon } from "../../ui/Icon";
+import { hasWaterPlace } from "./captionWords";
 import { libraryHeld } from "./categoryText";
 import { BOLD_ONLY, gatedNote } from "./level";
 import { CATEGORY_LABEL, type RunCategory } from "./runForm";
@@ -14,15 +15,47 @@ import { CATEGORY_LABEL, type RunCategory } from "./runForm";
 // S5.9g (plan s5a3 §13.1; mockups 47, 48, 48a): «Ночнушки и бельё» and «Пляж и бассейн» follow the five. They work only under «Смелая»: under another
 // «Подача» they wait, dimmed and unpressable, a note under the row says so, and a pick made under «Смелая» stays drawn (dashed) and comes back with it.
 
+/** «Ночнушки и бельё» draws only at «Смелая», always underwear (5a.4, Q-A2; §5.9 row 12, r2.2 D3): it says what it draws there at every «Подача». */
+const NIGHTWEAR_HINT = "Ночнушки и бельё — дома у зеркала и в кровати: бельё, атлас, чулки; в части кадров лицо закрыто телефоном.";
+/** «Пляж и бассейн» is the same at «Смелая» (§5.9 row 13). */
+const BEACH_HINT = "Пляж и бассейн — пляж, море и бассейн; снимает подруга или прохожий, иногда телефон на таймере; купальники.";
+
 /** What a built-in chip says about itself (mockups 24a, 48a); Фитнес has no hint of its own. */
 const CHIP_HINT: Partial<Record<RunCategory, string>> = {
   home: "Дом — зеркало, кровать, свет лампы; в части кадров лицо закрыто телефоном.",
   shoot: "Улица — снимает подруга или прохожий, иногда телефон на таймере; город днём и ночью.",
   travel: "Виды — балкон над городом, сад, горы, набережная.",
   glam: "Гламур — вечер выхода: бар, ресторан, такси и сборы дома.",
-  nightwear: "Ночнушки и бельё — дома у зеркала и в кровати: ночнушки, бельё, чулки; в части кадров лицо закрыто телефоном.",
-  beach: "Пляж и бассейн — пляж, море и бассейн; снимает подруга или прохожий, иногда телефон на таймере; купальники.",
+  nightwear: NIGHTWEAR_HINT,
+  beach: BEACH_HINT,
 };
+
+/**
+ * The same at «Смелая» (5a.4, plan s5a4 §5.9 rows 7–13; mockup 65c): every category draws lingerie, so each chip says where and in what. No towel: the hint is per category, and an
+ * imported avatar never gets one. Фитнес has one here.
+ */
+const BOLD_CHIP_HINT: Partial<Record<RunCategory, string>> = {
+  home: "Дом — в белье: кухня утром, диван, зеркало, ванная после душа.",
+  travel: "Виды — номер или вилла с видом: балкон, окно, кровать, свой бассейн.",
+  shoot: "Улица — до и после прогулки: сборы у зеркала, номер в отеле, окно с огнями города.",
+  glam: "Гламур — сборы перед вечером и номер после: бельё, чулки, туфли сняты.",
+  fit: "Фитнес — дома после тренировки: коврик, зеркало, ванная после душа.",
+  nightwear: NIGHTWEAR_HINT,
+  beach: BEACH_HINT,
+};
+
+/** A custom chip at «Смелая» (§5.9 row 14): lingerie in a room or at home, in the category's world; swimwear at the water when it has a water place (the planner's own rule). */
+function customBoldHint(custom: CategorySummary): string {
+  return `${custom.name} — в белье в номере или дома, в мире категории${hasWaterPlace(custom) ? "; у воды — в купальнике" : ""}.`;
+}
+
+/** What a chip says about itself at the run's «Подача»; undefined for a chip with none (Фитнес and a custom chip below «Смелая», a custom one the list no longer holds). */
+function chipHint(ref: RunCategory, boldOn: boolean, customs: readonly CategorySummary[]): string | undefined {
+  if (!boldOn) return CHIP_HINT[ref];
+  if (!isCustomCategory(ref)) return BOLD_CHIP_HINT[ref];
+  const custom = customs.find((c) => c.categoryId === ref);
+  return custom === undefined ? undefined : customBoldHint(custom);
+}
 
 /** Custom chips the row always shows, in creation order, besides every one turned on. */
 const CUSTOM_SHOWN = 4;
@@ -95,8 +128,8 @@ export function CategoryRow({
   const held = list.status === "ready" ? libraryHeld(list) : null;
   const full = held !== null && held >= MAX_CUSTOM_CATEGORIES;
   const on = new Set<string>(categories);
-  // A chip with no hint of its own (Фитнес, a custom one) leaves the line as it was: Гламур's, while Гламур is on.
-  const hint = (hinted !== null ? CHIP_HINT[hinted] : undefined) ?? (on.has("glam") ? CHIP_HINT.glam : undefined);
+  // A chip with no hint of its own (Фитнес, a custom one, below «Смелая») leaves the line as it was: Гламур's, while Гламур is on.
+  const hint = (hinted !== null ? chipHint(hinted, boldOn, customs) : undefined) ?? (on.has("glam") ? chipHint("glam", boldOn, customs) : undefined);
 
   const visible = expanded ? customs : customs.filter((c, i) => i < CUSTOM_SHOWN || on.has(c.categoryId));
   const hidden = customs.length - customs.filter((c, i) => i < CUSTOM_SHOWN || on.has(c.categoryId)).length;
