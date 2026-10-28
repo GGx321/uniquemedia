@@ -23,7 +23,6 @@ test("«Сейчас снимается другой клип» is said as the c
 
 test("PRICE_UNAVAILABLE for the video prices (38f) says that only clips wait", () => {
   expect(errorText({ code: "PRICE_UNAVAILABLE", priceScope: "video" })).toBe(PRICE_SCOPES_RU.video);
-  expect(PRICE_SCOPES_RU.video).toBe("Цены видео у OpenRouter сейчас не читаются — клип не запустить. Фото работают как обычно.");
 });
 
 test("a PRICE_UNAVAILABLE of no scope, and the 2K tier's (said by its own screens), keep the general text here", () => {

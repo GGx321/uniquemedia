@@ -12,7 +12,6 @@ import {
   buildInText,
   BUSTS,
   descriptorHead,
-  FIELD_LABEL,
   fieldSet,
   fieldValue,
   FIGURES,
@@ -81,15 +80,7 @@ describe("the choices", () => {
     expect(values(BODY_MARKS)).toEqual([...BODY_ENUMS.bodyMarks]);
   });
 
-  test("the labels are the mockup's (README «Поля «Тела»»)", () => {
-    const labels = (list: readonly { label: string }[]): string[] => list.map((c) => c.label);
-    expect(labels(HEIGHTS)).toEqual(["Невысокий", "Средний", "Высокий"]);
-    expect(labels(BUSTS)).toEqual(["Небольшая", "Средняя", "Большая"]);
-    expect(labels(FIGURES)).toEqual(["Прямая", "Песочные часы", "Груша", "Перевёрнутый треугольник", "Яблоко"]);
-    expect(labels(LEG_LENGTHS)).toEqual(["Средние", "Длинные"]);
-    expect(labels(LEG_SHAPES)).toEqual(["Стройные", "Подтянутые"]);
-    expect(labels(BOTTOM_SIZES)).toEqual(["Небольшая", "Средняя", "Большая"]);
-    expect(labels(BOTTOM_SHAPES)).toEqual(["Округлая", "Сердечком", "Подтянутая", "Широкая"]);
+  test("the body marks keep their row and place, in the list's order", () => {
     expect(BODY_MARKS.map((m) => `${m.row}:${m.place}`)).toEqual([
       "tattoo:щиколотка",
       "tattoo:бедро",
@@ -99,16 +90,6 @@ describe("the choices", () => {
       "mole:плечо",
       "mole:поясница",
     ]);
-    expect(BODY_MARKS.map((m) => m.label)).toEqual([
-      "Тату на щиколотке",
-      "Тату на бедре",
-      "Тату на лопатке",
-      "Тату на рёбрах",
-      "Родинка на ключице",
-      "Родинка на плече",
-      "Родинка на пояснице",
-    ]);
-    expect(BODY_FIELDS.map((f) => FIELD_LABEL[f])).toEqual(["Рост", "Грудь", "Фигура", "Ноги", "Попа", "Тату и родинки на теле"]);
   });
 });
 

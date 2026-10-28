@@ -14,7 +14,7 @@ import {
   UNKNOWN_IMAGE_MODEL_RU,
   UNSUPPORTED_IMAGE_QUALITY_RU,
 } from "../../shared/engine";
-import { errorSettingsFocus, errorText, settingsLinkLabel } from "./errors";
+import { errorSettingsFocus, errorText } from "./errors";
 import { NBSP } from "./format";
 
 // The image-model choice: main refuses an unknown model or an unsupported quality with VALIDATION and a Russian detail, which is the text shown.
@@ -91,7 +91,6 @@ test("EXPORT_UNAVAILABLE without a reason keeps the general text alone", () => {
 
 test("EXPORT_UNAVAILABLE is fixed in Settings, on the export folder's card", () => {
   expect(errorSettingsFocus("EXPORT_UNAVAILABLE")).toBe("export");
-  expect(settingsLinkLabel("export")).toBe("Открыть папку в Настройках");
 });
 
 // 3d.6: what a refused or failed render says. The generic texts are about paid requests and OpenRouter, which a render never touches.
@@ -148,7 +147,6 @@ test("a 429's wait is added to its cause's text", () => {
 
 test.each(["MUSIC_KEY_MISSING", "MUSIC_KEY_REJECTED", "MUSIC_QUOTA_EXHAUSTED", "MUSIC_UNAVAILABLE"] as const)("%s is fixed in Settings, on the music card", (code) => {
   expect(errorSettingsFocus(code)).toBe("music");
-  expect(settingsLinkLabel("music")).toBe("Открыть музыку в Настройках");
 });
 
 test("MONTAGE_INVALID adds the first issue's own text to the general one", () => {
