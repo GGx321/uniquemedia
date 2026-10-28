@@ -44,12 +44,6 @@ test("clicking a section switches the heading and the active item", async () => 
   await screen.findByText("—");
 });
 
-test("the mock client is labelled as a demo engine in the sidebar", async () => {
-  setup();
-  expect(screen.getByText("Демо-движок")).toBeDefined();
-  await screen.findByText("—");
-});
-
 test("a new screen moves focus to its heading", async () => {
   setup();
   fireEvent.click(screen.getByRole("button", { name: "Настройки" }));

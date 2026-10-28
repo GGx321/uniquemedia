@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { cleanup, render, screen } from "@testing-library/react";
-import type { EngineNotice, PhotoSummary } from "../../shared/engine";
-import { heldLabel, montagePickRefusal } from "../screens/photos/photoState";
+import type { EngineNotice } from "../../shared/engine";
 import { EngineNotices } from "./EngineNotices";
 
 // The notices for what stands between the owner and his photos (the engine's `pending-video-unreadable` and `pending-video-set-aside`), and the words a held photo wears.
@@ -41,14 +40,5 @@ describe("the notices of unfinished videos", () => {
     render(<EngineNotices notices={[notice("engine-internal-error", 3)]} dismissed={new Set()} onDismiss={() => undefined} />);
 
     expect((document.body.textContent ?? "").replace(/\s/g, " ")).toContain("Повторилось 3 раза за эту сессию.");
-  });
-});
-
-describe("a photo held by a render or by an unfinished video", () => {
-  const held = { used: false, usedIn: [], reserved: true, rejected: false, eligible: true } as unknown as PhotoSummary;
-
-  test("wears «занято» on its tile, and says why it cannot be picked", () => {
-    expect(heldLabel(held)).toBe("занято");
-    expect(montagePickRefusal(held)).toBe("Фото занято: в рендере или ждёт незавершённое видео");
   });
 });

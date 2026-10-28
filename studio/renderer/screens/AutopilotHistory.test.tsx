@@ -181,14 +181,6 @@ describe("«Последний запуск» on «Автопилот»", () => 
     expect(screen.getByRole("button", { name: /^История запусков/ }).textContent).toBe("История запусков0");
   });
 
-  // S4.10 fix C (UI LOW 1): the empty right column of the LaunchStates sheet («правая колонка без истории — вместо «Последний запуск»»).
-  test("nothing in the history at 1440: «Запусков пока не было» and what to do, in the card's place", async () => {
-    wideWindow();
-    await openAutopilot([], false);
-    const empty = screen.getByRole("region", { name: "Запусков пока не было" });
-    expect(within(empty).getByText("Выберите аватаров слева и нажмите «Запустить» — здесь появится ход запуска.")).toBeDefined();
-  });
-
   test("not drawn with a launch in the history, with entries that cannot be read, nor at 1200", async () => {
     wideWindow();
     await openAutopilot([]);

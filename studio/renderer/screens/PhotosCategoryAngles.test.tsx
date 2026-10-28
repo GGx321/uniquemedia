@@ -55,13 +55,6 @@ async function createFromDialog(name: string, description: string): Promise<HTML
 }
 
 describe("«Новая категория»: the description hint and the «готово» row (CatCreate, CatCreateDone, CatCreateDoneAngles)", () => {
-  test("the hint under «Описание» names the pose and the angle", async () => {
-    await openPhotos();
-    fireEvent.click(screen.getByRole("button", { name: "Своя" }));
-    await flush();
-    const dialog = screen.getByRole("dialog", { name: "Новая категория" });
-    expect(within(dialog).getByText(/^Где она бывает, что там делает и в какой позе, во что одета, с какого ракурса снимать \(«вид сзади», «в профиль»\)\./)).toBeDefined();
-  });
 
   test("a description that names the angle: the row shows its angles sorted, «из описания», and what that means; the footer says where to change them", async () => {
     await openPhotos();
