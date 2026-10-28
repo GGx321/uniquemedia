@@ -186,7 +186,9 @@ describe("every writer attempt reserves its mode's worst case, and both attempts
       const avatarId = await seedAvatar();
       const started = await boot([() => ({ hang: true }), ...twice(1)]);
       const { sceneSetId, jobId } = await compose(started, avatarId, level, [LLM_ONLY_REF], 4);
-      await until(() => writerReserves(sceneSetId).length === 1, "the compose's first writer request", 15_000);
+      // The reserve is made BEFORE the request reaches `fetch`, and a cancel that lands between the two stops the attempt unsent, leaving the hanging answer in the queue for «Дописать» to take.
+      // So wait for the fetch to have taken that answer, not only for the reserve.
+      await until(() => writerReserves(sceneSetId).length === 1 && started.net.paidCalls().length === 1, "the compose's first writer request, received by the network", 15_000);
       ok(await started.engine.handle(command("scenes.cancel", { sceneSetId })));
       await jobEnd(started.events, jobId);
       const set = await started.engine.library?.sceneSets.get(avatarId, sceneSetId);
