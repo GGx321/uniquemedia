@@ -8,6 +8,7 @@ import { frameFactsOf, type FrameFacts, type FrameFactsResult } from "./frameFac
 import { clipPromptOf } from "./prompt";
 import { photoOf, pick, sceneRun, slotOf } from "./testing/frameFixtures";
 import { OWN_ON_BOLD, PROBE_BOLD, PROBE_CONTROLS, PROBE_INNOCENT, PROBE_LEAKS, PROBE_LEAKS_R2, PROBE_LEAKS_R3 } from "./testing/motionProbes";
+import { heavyTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -179,7 +180,7 @@ describe("the re-review's cases (round 3), now accepted: undressing is read as u
     for (const text of ["she slowly turns her head a little toward the mirror", "she turns her hips a little toward the mirror and back"]) expect(motionTextProblems(text, FRIEND, "vision")).toEqual([]);
   });
 
-  test("the re-review's sweep, as a consistency of the one check: every verb × particle × garment text the grammar reads passes as vision on an ordinary frame (no rule refuses what the grammar reads)", () => {
+  heavyTest("the re-review's sweep, as a consistency of the one check: every verb × particle × garment text the grammar reads passes as vision on an ordinary frame (no rule refuses what the grammar reads)", () => {
     const VERBS = [...BANK_VERBS, ...CURATED_VERBS];
     const PARTS = ["off", "from", "out from", "down", "away", "aside", "open", "up", "out of", "under", "into", "across", "onto", "on"];
     const OBJS = [
