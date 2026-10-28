@@ -162,7 +162,12 @@ export const DESCRIPTOR = { expected: 2_000, worst: 3_000 };
  * (owner's decision, 2026-09-27: off by default). Subtracted from the
  * baseline whenever `settings.imageAgeCheck` is "off" — see `#currentPrice`.
  */
-export const MOCK_AGE_CHECK_PER_SLOT = { expected: 1_400, worst: 2_000 };
+export const MOCK_CANDIDATE_AGE_CHECK = { expected: 1_400, worst: 2_000 };
+/**
+ * 5a.4 (S5.BA8a review M-2): the age check of a PHOTO attempt, as the engine prices it: `AGE_CHECK_CALL` (2 200 in, 1 000 out at the ceiling: 5 250 µ$; 658 in, 335 out typical: 1 660 µ$)
+ * at the fallback prices of grok-4.3. The photo and launch estimates, the reserve and the settle of a run read this one.
+ */
+export const MOCK_AGE_CHECK_PER_SLOT = { expected: 1_660, worst: 5_250 };
 /** The attempt a mock settle-above-worst halt names. */
 const MOCK_ABOVE_WORST_ATTEMPT = "mock-attempt#1";
 export const MOCK_ESTIMATE: Readonly<Estimate> = {
@@ -1546,8 +1551,8 @@ export class MockEngine implements EngineBridge {
    */
   private currentPrice(): Estimate {
     if (this.settings.imageAgeCheck === "on") return this.price;
-    const expectedMicros = Math.max(0, this.price.expectedMicros - CANDIDATES_PER_JOB * MOCK_AGE_CHECK_PER_SLOT.expected);
-    const worstMicros = Math.max(0, this.price.worstMicros - CANDIDATES_PER_JOB * MOCK_AGE_CHECK_PER_SLOT.worst);
+    const expectedMicros = Math.max(0, this.price.expectedMicros - CANDIDATES_PER_JOB * MOCK_CANDIDATE_AGE_CHECK.expected);
+    const worstMicros = Math.max(0, this.price.worstMicros - CANDIDATES_PER_JOB * MOCK_CANDIDATE_AGE_CHECK.worst);
     return { ...this.price, expectedMicros, worstMicros };
   }
 

@@ -186,8 +186,8 @@ test("a settings change that moves the price (the age check) prices the run agai
   await act(async () => {
     await client.request("settings.setImageAgeCheck", { imageAgeCheck: "on" });
   });
-  // Every attempt gains an age check: 60 × $0.002 more.
-  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.12"));
+  // Every attempt gains an age check: 60 × $0.00525 more (the engine's price of the call).
+  await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.32"));
   expect(screen.getByText("вкл.")).toBeDefined();
 });
 
@@ -401,7 +401,7 @@ test("PRICE_CHANGED reads «Цена изменилась», not «выросл�
 test("PRICE_CHANGED for a stale key must not clobber a fresher price the key's own re-estimate already landed", async () => {
   // K1: age check off, до $3.00. Clicking accepts K1's price; while runs.start
   // is in flight, another window turns the age check on — a genuinely new key
-  // (K2) whose own estimate effect fires and lands ($3.12) before runs.start
+  // (K2) whose own estimate effect fires and lands ($3.32) before runs.start
   // answers PRICE_CHANGED for the (now stale) K1 request it was sent with.
   const { engine, scheduler, client } = await openPhotos();
   const button = await priced();
@@ -425,7 +425,7 @@ test("PRICE_CHANGED for a stale key must not clobber a fresher price the key's o
   // K2's price must still be the one shown — not clobbered by the stale
   // re-price the PRICE_CHANGED path asks for K1 — and the button must be
   // clickable, not stuck disabled with nothing to accept.
-  expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.12");
+  expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.32");
   expect(isDisabled(goButton())).toBe(false);
   expect(screen.queryByText("Цена выросла") === null).toBe(true);
 
@@ -433,7 +433,7 @@ test("PRICE_CHANGED for a stale key must not clobber a fresher price the key's o
   await screen.findByText(/Рисуем фото/);
   expect(callsOf(engine, "runs.start").map((c) => c.payload)).toEqual([
     { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_000_000 },
-    { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_120_000 },
+    { ...DEFAULT_REQUEST, acceptedWorstMicros: 3_315_000 },
   ]);
 });
 

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { ENGINE_GONE_DETAIL, ERROR_MESSAGES_RU, IMPORT_FALLBACK_PRICE, type AvatarSummary, type Draft } from "../../shared/engine";
 import { formatUsd } from "../lib/money";
-import { DESCRIPTOR, MOCK_AGE_CHECK_PER_SLOT, MOCK_ESTIMATE, mockDescriptor } from "../engine/mockEngine";
+import { DESCRIPTOR, MOCK_CANDIDATE_AGE_CHECK, MOCK_ESTIMATE, mockDescriptor } from "../engine/mockEngine";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { callsOf, estimateText, flush, runAll, setup, inAct, tick } from "../testing";
 
@@ -563,6 +563,6 @@ test("the new-avatar tile's price re-estimates when the age-check toggle changes
   await flush();
 
   await waitFor(() => expect(callsOf(engine, "avatars.estimate")).toHaveLength(2));
-  const worstOff = MOCK_ESTIMATE.worstMicros - 4 * MOCK_AGE_CHECK_PER_SLOT.worst;
+  const worstOff = MOCK_ESTIMATE.worstMicros - 4 * MOCK_CANDIDATE_AGE_CHECK.worst;
   await waitFor(() => expect(within(tile).getByText(`4 портрета · до ${formatUsd(worstOff, 2, "up")}`)).toBeDefined());
 });

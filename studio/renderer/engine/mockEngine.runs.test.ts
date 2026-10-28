@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AvatarSummary, CategorySummary, EventMessage, RunRequest } from "../../shared/engine";
 import { LLM_ONLY_CATEGORY_RECORD, LLM_ONLY_REF } from "../../engine/scenes/testing/llmOnlyFixture";
 import { DEFAULT_TRAITS } from "../lib/traits";
-import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
+import { MOCK_AGE_CHECK_PER_SLOT, MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
 
 // T8b: the mock's photo runs, driven through the same validating client the
@@ -73,7 +73,7 @@ test("runs.start caps the run at the chosen quality's worst case, so a price acc
 test("the age check, when on, is priced into every attempt", async () => {
   const { client } = makeMock({ imageAgeCheck: "on" });
   const { estimate } = await unwrap(client.request("runs.estimate", REQUEST));
-  expect(estimate.worstMicros).toBe(3_000_000 + 60 * 2_000);
+  expect(estimate.worstMicros).toBe(3_000_000 + 60 * MOCK_AGE_CHECK_PER_SLOT.worst);
 });
 
 test("a whole run goes through the validating client: progress per slot, job.done, and its photos listed newest first", async () => {
@@ -242,10 +242,10 @@ test("runs.list orders runs by createdAt, newest first, regardless of seed order
 
 test("a run keeps the age-check mode it started with: its resume price and reserves include the checks", async () => {
   const { scheduler, client, engine } = makeMock({ imageAgeCheck: "on" });
-  const { runId } = await unwrap(client.request("runs.start", { ...REQUEST, count: 5, acceptedWorstMicros: 15 * 52_000 }));
+  const { runId } = await unwrap(client.request("runs.start", { ...REQUEST, count: 5, acceptedWorstMicros: 15 * (50_000 + MOCK_AGE_CHECK_PER_SLOT.worst) }));
   scheduler.next();
   const during = await unwrap(client.request("money.status", {}));
-  expect(during).toMatchObject({ ledger: "open", unsettledMicros: 4 * 3 * 52_000 });
+  expect(during).toMatchObject({ ledger: "open", unsettledMicros: 4 * 3 * (50_000 + MOCK_AGE_CHECK_PER_SLOT.worst) });
   await unwrap(client.request("runs.cancel", { runId }));
   scheduler.runAll();
 
@@ -256,7 +256,8 @@ test("a run keeps the age-check mode it started with: its resume price and reser
   // ($0.78), leaving only $0.1046 more before a reconcile.
   await unwrap(client.request("settings.setImageAgeCheck", { imageAgeCheck: "off" }));
   const { estimate } = await unwrap(client.request("runs.estimateResume", { runId }));
-  expect(estimate).toMatchObject({ expectedMicros: 104_600, worstMicros: 104_600 });
+  // What the cap leaves after the open reserves; the age check at the engine's price (5 250 µ$ a try) moved it from 104 600 (S5.BA8a review M-2).
+  expect(estimate).toMatchObject({ expectedMicros: 114_090, worstMicros: 114_090 });
   expect(engine.calls.at(-1)?.type).toBe("runs.estimateResume");
 });
 

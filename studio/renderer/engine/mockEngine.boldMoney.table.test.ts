@@ -38,8 +38,8 @@ const TRIP_CATEGORY: CategorySummary = { categoryId: TRIP, name: "Поездка
 /** The template covers the fixture's pool below «Смелая» (every activity renders), so a row that reads the cover says what «Смелая» takes away. */
 const covers = (ref: string): boolean => ref === TRIP;
 
-function mockOf(): Mock {
-  const m = makeMock({ avatars: [MIA], photos: [], categories: [TRIP_CATEGORY] });
+function mockOf(check: "off" | "on" = "off"): Mock {
+  const m = makeMock({ avatars: [MIA], photos: [], categories: [TRIP_CATEGORY], imageAgeCheck: check });
   m.engine.setRunImagePrice(OWNER_IMAGE);
   return m;
 }
@@ -57,6 +57,17 @@ describe("runs.estimate: the mock's figure is the engine's", () => {
     const engine = money(runEstimate(PRICED, MODELS, request, "off", covers));
     const mock = money((await unwrap(mockOf().client.request("runs.estimate", { avatarId: MIA.avatarId, poses: NO_POSES, ...request }))).estimate);
     expect({ engine, mock }).toEqual({ engine: figure, mock: figure });
+  });
+
+  // Review M-2: with the age check on, the mock prices its call as the engine does (5 250 µ$ at the ceiling, 1 660 typical), not at 2 000 / 1 400.
+  test.each([
+    ["«Дом» × 20 at «Смелая»", ["home"], "bold"],
+    ["«Дом» × 20 at «Кокетливая»", ["home"], "flirty"],
+  ] as const)("%s, age check on", async (_name, categories, level) => {
+    const request = { count: 20, categories: [...categories] as CategoryRef[], level: level as SceneLevel };
+    const engine = money(runEstimate(PRICED, MODELS, request, "on", covers));
+    const mock = money((await unwrap(mockOf("on").client.request("runs.estimate", { avatarId: MIA.avatarId, poses: NO_POSES, ...request }))).estimate);
+    expect(mock).toEqual(engine);
   });
 });
 
@@ -78,16 +89,20 @@ describe("autopilot.estimate: the mock's launch figure is the engine's (the unit
     ["a custom category at «Смелая»", [TRIP], "bold"],
     ["«Дом» at «Кокетливая»", ["home"], "flirty"],
   ] as const)("%s, 20 new photos", async (_name, categories, level) => {
-    const m = mockOf();
+    for (const check of ["off", "on"] as const) await launchRow(categories, level, check);
+  });
+
+  async function launchRow(categories: readonly CategoryRef[], level: string, check: "off" | "on"): Promise<void> {
+    const m = mockOf(check);
     const draft = { avatarIds: [MIA.avatarId], videosPerAvatar: 4, mix: { single: 0, collage: 0, slides: 100 }, categories: [...categories] as CategoryRef[], level: level as SceneLevel, poses: NO_POSES, library: false, generate: true, sceneReview: false, stickers: false };
     const preview = (await unwrap(m.client.request("autopilot.estimate", { draft }))).preview;
     expect(preview.totals.toGenerate).toBe(20);
-    const unit = unitPricesOf(PRICED, MODELS, "off", covers, level === "bold");
+    const unit = unitPricesOf(PRICED, MODELS, check, covers, level === "bold");
     const engine = money(launchEstimate([{ avatarId: MIA.avatarId, photos: 20, split: [{ ref: categories[0], count: 20 }] }], unit));
     expect({ mock: money(preview.estimate) }).toEqual({ mock: engine });
     // 5a.4 (S5.BA8a): the unit for one new photo, which the month line divides the budget by, is the launch math's own.
     expect(preview.unitPhotoWorstMicros).toBe(unit.photoWorstMicros);
-  });
+  }
 
   test("a launch that draws no new photo carries no unit, as the engine's", async () => {
     const m = mockOf();

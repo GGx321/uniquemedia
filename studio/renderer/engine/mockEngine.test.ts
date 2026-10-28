@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { AvatarDescriptor, ImageModelCatalogue, UNKNOWN_IMAGE_MODEL_RU, UNSUPPORTED_IMAGE_QUALITY_RU, type EventMessage } from "../../shared/engine";
 import { DEFAULT_TRAITS, randomTraits } from "../lib/traits";
-import { MOCK_AGE_CHECK_PER_SLOT, MOCK_ESTIMATE, MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
+import { MOCK_CANDIDATE_AGE_CHECK, MOCK_ESTIMATE, MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
 
 function makeMock(options: ConstructorParameters<typeof MockEngine>[0] = {}) {
@@ -76,8 +76,8 @@ test("with the image age check off: the estimate excludes it, no rejections are 
   const estimate = await unwrap(client.request("avatars.estimate", { traits: DEFAULT_TRAITS }));
   expect(estimate).toEqual({
     ...MOCK_ESTIMATE,
-    expectedMicros: MOCK_ESTIMATE.expectedMicros - 4 * MOCK_AGE_CHECK_PER_SLOT.expected,
-    worstMicros: MOCK_ESTIMATE.worstMicros - 4 * MOCK_AGE_CHECK_PER_SLOT.worst,
+    expectedMicros: MOCK_ESTIMATE.expectedMicros - 4 * MOCK_CANDIDATE_AGE_CHECK.expected,
+    worstMicros: MOCK_ESTIMATE.worstMicros - 4 * MOCK_CANDIDATE_AGE_CHECK.worst,
   });
 
   // Forcing an age rejection has no effect: off mode never runs the check.

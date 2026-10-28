@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { EventMessage, RunRequest } from "../../shared/engine";
-import { MOCK_BOLD_IMAGE } from "./mockEngine";
+import { MOCK_AGE_CHECK_PER_SLOT, MOCK_BOLD_IMAGE } from "./mockEngine";
 import { MIA, freePhotos, makeMock, unwrap } from "./mockEngine.testkit";
 import { draftOf, errorOf, runUntil, runWorld, startRun, tick } from "./mockLaunchRun.testkit";
 
@@ -254,9 +254,9 @@ describe("a run's cap lets a request out only while one attempt fits", () => {
 // sets `limited`. A slot the test armed to fail goes through the same reserve, so a cap that leaves no room holds it open instead of ending it.
 describe("a run's send is decided by the image's own reserve, the age check by its own", () => {
   const failedOf = (events: readonly EventMessage[]) => events.find((e) => e.type === "job.failed");
-  const AGE_WORST = 2_000;
+  const AGE_WORST = MOCK_AGE_CHECK_PER_SLOT.worst;
   // The first slot of every run below is drawn and settles the 2K attempt plus the age check's typical price; `room` is what the cap then leaves for the second slot.
-  const FIRST_SLOT = MOCK_BOLD_IMAGE + 1_400;
+  const FIRST_SLOT = MOCK_BOLD_IMAGE + MOCK_AGE_CHECK_PER_SLOT.expected;
 
   async function resumeMidJob(room: number) {
     const mock = makeMock({ imageAgeCheck: "on" });
@@ -358,7 +358,7 @@ describe("a slot's paid attempts count on resume", () => {
 
   test("an age check with no room drops the picture but not the bill: the slot has one attempt paid", async () => {
     const mock = makeMock({ imageAgeCheck: "on" });
-    const runId = mock.engine.seedRun(boldRun(3, ["beach"]), 0, MOCK_BOLD_IMAGE + 1_400 + MOCK_BOLD_IMAGE + 1_999);
+    const runId = mock.engine.seedRun(boldRun(3, ["beach"]), 0, MOCK_BOLD_IMAGE + MOCK_AGE_CHECK_PER_SLOT.expected + MOCK_BOLD_IMAGE + MOCK_AGE_CHECK_PER_SLOT.worst - 1);
     await unwrap(mock.client.request("runs.resume", { runId, acceptedWorstMicros: ENOUGH }));
     mock.scheduler.runAll();
     const run = (mock.engine as unknown as { runs: { runId: string; slots: { end: string | null; paid?: number }[] }[] }).runs.find((r) => r.runId === runId);
