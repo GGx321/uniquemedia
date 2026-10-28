@@ -74,7 +74,7 @@ export function sentenceOf(runId: string, slot: PlanSlot | OwnPlanSlot): string 
 }
 
 /** A run made from a scene set of these slots (each with its sentence), numbered 1..M. */
-export function sceneRun(runId: string, slots: readonly (PlanSlot | { kind: "own"; shot: PlanSlot["shot"]; pose: PlanSlot["pose"]; text: string })[]): RunPlan {
+export function sceneRun(runId: string, slots: readonly (PlanSlot | { kind: "own"; shot: PlanSlot["shot"]; pose: PlanSlot["pose"]; text: string; route?: "seedream" })[]): RunPlan {
   // A custom category's slot needs the category's snapshot in the plan (RunPlanSchema): the test kit's own one, under the slot's id.
   const custom = [...new Set(slots.flatMap((slot) => ("kind" in slot || !isCustomCategory(slot.category) ? [] : [slot.category])))];
   return buildSceneRunPlan({
@@ -89,7 +89,7 @@ export function sceneRun(runId: string, slots: readonly (PlanSlot | { kind: "own
     plannedWorstMicros: 1_000_000,
     scenes: slots.map((slot, i) =>
       "kind" in slot
-        ? { sceneId: i + 1, text: slot.text, slot: { kind: "own" as const, shot: slot.shot, pose: slot.pose } }
+        ? { sceneId: i + 1, text: slot.text, slot: { kind: "own" as const, shot: slot.shot, pose: slot.pose, ...(slot.route === undefined ? {} : { route: slot.route }) } }
         : { sceneId: i + 1, text: slot.sentence ?? sentenceOf(runId, { ...slot, attemptIdBase: `slot-${i + 1}` }), slot },
     ),
   });
