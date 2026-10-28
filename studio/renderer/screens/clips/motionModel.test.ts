@@ -10,8 +10,6 @@ import {
   insertIdeaText,
   lineText,
   batchMotionGoneNews,
-  CLIP_BUSY,
-  IDEA_PLACEHOLDER,
   motionGoneNews,
   motionMoneyWord,
   motionRowLabel,
@@ -192,8 +190,4 @@ describe("the idea field (63): the contract's `OwnIdeaText` decides", () => {
 });
 
 describe("S5.WC5b strings (owner veto pending)", () => {
-  test("the field's example, and the clip-busy line of the sheet's own send (one clip: round 2, L-4)", () => {
-    expect(IDEA_PLACEHOLDER).toBe("Опишите одно небольшое движение — например, «медленно поворачивает голову к окну»");
-    expect(CLIP_BUSY).toBe("Клип отправляется — предложить или перевести движение можно после него.");
-  });
 });

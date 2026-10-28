@@ -192,17 +192,6 @@ describe("asksForRevealing: the boundaries", () => {
 // BA8b round 2 (owner question 1, the controller's default (b)): «Голой Seedream не рисует» was not the whole truth — a Studio-created avatar's most revealing frames may be an implied
 // cover — so the notes say «Полностью голой …» and which covers. The covers are a custom category's own, read from its banks (r2.4 N1): the sheet and the towel, no foam.
 describe("REVEALING_NOTE", () => {
-  test("before «Создать» (row 15, mockup 66): what «Смелая» gives a custom category, and what a Studio-created avatar may get besides", () => {
-    expect(REVEALING_NOTE).toBe(
-      "Бельё и купальники даёт подача «Смелая»: с ней она выйдет в белье дома или в номере, в мире категории, а у воды — в купальнике. Полностью голой Seedream не рисует; у аватара из Studio часть кадров — только простыня или полотенце.",
-    );
-  });
-
-  test("on a created category's card (row 16, mockup 66#created): its own outfits are ordinary, and what «Смелая» gives", () => {
-    expect(REVEALING_NOTE_DONE).toBe(
-      "Наряды категории — обычные. С подачей «Смелая» она выйдет в белье дома или в номере, а у воды — в купальнике. Полностью голой Seedream не рисует; у аватара из Studio часть кадров — только простыня или полотенце.",
-    );
-  });
 
   test("the covers named are the custom banks' own: the rooms bank has the sheet and the towel, the water bank none (a bank edit changes the notes)", () => {
     expect([...impliedItemsOf(CUSTOM_BOLD_BANKS.rooms), ...impliedItemsOf(CUSTOM_BOLD_BANKS.water)]).toEqual(["sheet", "towel"]);

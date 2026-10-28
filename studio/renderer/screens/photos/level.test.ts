@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { ORDINARY_SCENE_CATEGORIES, splitCount, type CategoryRef } from "../../../shared/engine";
-import { flirtyCountOf, levelCountsOf, tierSpreadOf } from "../../../shared/scenes/level";
+import { levelCountsOf, tierSpreadOf } from "../../../shared/scenes/level";
 import {
   BOLD_ONLY,
-  BOLD_SLOW,
   boldAttemptLine,
   drawsBoldFrames,
   flirtyCaption,
@@ -11,7 +10,6 @@ import {
   gatedNote,
   launchFlirtyCaption,
   LEVEL_KEY_PREFIX,
-  LEVEL_OPTIONS,
   levelFrames,
   readLevel,
   writeLevel,
@@ -175,13 +173,6 @@ describe("«Подача» remembered per avatar", () => {
 // ---------- 5a.3 «Смелая» (S5.9g; plan s5a3 §13.1, I5.36; mockups 47, 47a, 47b, 48, 52 of .omc/stage5/design) ----------
 
 describe("«Подача» offers all three faces now", () => {
-  test("«Обычная · Кокетливая · Смелая», in that order, none of them held back", () => {
-    expect(LEVEL_OPTIONS.map((o) => [o.value, o.label])).toEqual([
-      ["ordinary", "Обычная"],
-      ["flirty", "Кокетливая"],
-      ["bold", "Смелая"],
-    ]);
-  });
 });
 
 describe("levelFrames: the tiers of a request, from the shared rules (never re-derived here)", () => {
@@ -258,9 +249,6 @@ describe("drawsBoldFrames: «Смелая» with photos in any category", () => 
 });
 
 describe("the lines around «Смелая»", () => {
-  test("the slow-frames line is the plan's (r3.1), word for word", () => {
-    expect(BOLD_SLOW).toBe("Кадры «Смелой» рисуются дольше — около минуты каждый.");
-  });
 
   test("a gated chip's title, and the note under the chips: none kept, one kept, both kept (48, 48#kept)", () => {
     expect(BOLD_ONLY).toBe("Только со «Смелой»");

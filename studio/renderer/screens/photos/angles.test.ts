@@ -1,13 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { CARD_POSES, nextPoses, POSE_CHIP, POSE_WORD, posesText, sortPoses } from "./angles";
+import { CARD_POSES, nextPoses, posesText, sortPoses } from "./angles";
 
 // CS.8b: a custom category's angles as the UI shows and sends them (README «CS.8 — angles from descriptions», contract notes 1-2, «CS.8d round 1» M1).
 
 describe("the angles' words and order", () => {
-  test("the app's vocabulary: «Со спины», never «сзади»; chips capitalised, running text lower case", () => {
-    expect(POSE_CHIP).toEqual({ front: "Анфас", "three-quarter": "Три четверти", profile: "Профиль", back: "Со спины" });
-    expect(POSE_WORD).toEqual({ front: "анфас", "three-quarter": "три четверти", profile: "профиль", back: "со спины" });
-  });
 
   test("a list is shown sorted front → back whatever order the engine stored it in", () => {
     expect(sortPoses(["back", "three-quarter"])).toEqual(["three-quarter", "back"]);

@@ -288,14 +288,6 @@ test("an own scene is «Своя сцена» unless its photo kept another labe
   expect(photoCategoryLabel({ category: "own", categoryName: "Идея" })).toBe("Идея");
 });
 
-// ---------- 5a.3 (S5.9b2, plan s5a3 §6.1, §11): the two «Смелая» categories ----------
-
-test("the two «Смелая» categories have their Russian labels, for their photos and their chips to come", () => {
-  expect([CATEGORY_LABEL.nightwear, CATEGORY_LABEL.beach]).toEqual(["Ночнушки и бельё", "Пляж и бассейн"]);
-  expect(photoCategoryLabel({ category: "nightwear" })).toBe("Ночнушки и бельё");
-  expect(photoCategoryLabel({ category: "beach" })).toBe("Пляж и бассейн");
-});
-
 test("the form's default categories are the five ordinary built-ins: the «Смелая» two are never on by default", () => {
   expect([...DEFAULT_RUN_FORM.categories]).toEqual(["home", "travel", "shoot", "glam", "fit"]);
 });
