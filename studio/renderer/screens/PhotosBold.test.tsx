@@ -164,6 +164,19 @@ describe("«Подача: Обычная · Кокетливая · Смелая
     expect(within(card()).getByText(SLOW)).toBeDefined();
   });
 
+  // Review L-5: the cover clause is a Studio-created avatar's only, so it must reach the DOM for one (every other fixture here is imported).
+  test("a Studio-created avatar's card names the covers its frames may draw, and has no imported-avatar line", async () => {
+    await openPhotos({ avatars: [{ ...MIA, origin: "studio" }] });
+    await pickLevel("Смелая");
+    await only("Дом");
+    const studio = { ...MIA, origin: "studio" as const };
+    const caption = cardLevelCaption("bold", 20, ["home"], { avatar: studio, legs: 0, customs: [] });
+    if (caption === null) throw new Error("the card has a caption here");
+    expect(caption).toContain("часть смелых — только простыня, полотенце или пена");
+    expect(within(card()).getByText(caption.replace(/\s+/g, " "))).toBeDefined();
+    expect(within(card()).queryByText(/^Аватар из фото/) === null).toBe(true);
+  });
+
   test("the caption follows the stepper: 25 photos → 10 and 10 of them bold and flirty", async () => {
     await openPhotos();
     await pickLevel("Смелая");

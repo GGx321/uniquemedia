@@ -19,17 +19,30 @@ useNativeGlobals();
 setDefaultTimeout(30_000);
 const dir = useEngineDir("studio-engine-autopilot-unit-");
 
-async function seedAvatar(): Promise<string> {
+async function seedAvatar(withCustom: boolean): Promise<string> {
   const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds("unit") });
+  if (withCustom) await library.categories.create({ categoryId: CUSTOM, name: "Покрытая", description: "кофейни", label: "Covered cafes", style: "phone", pool: CUSTOM_POOL, model: "x-ai/grok-4.3", spentMicros: 5_000 });
   const avatar = await library.createAvatar({ name: "Ava", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
   const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
   await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
   return avatar.id;
 }
 
-async function previewOf(check: "off" | "on", over: Partial<LaunchDraftInput>) {
+const CUSTOM = "cat-unit-fixture" as const;
+const CUSTOM_POOL = {
+  locations: ["a quiet bookshop", "a flower stall", "a corner cafe", "a bridge over the river", "a sunny terrace"].map((name) => ({
+    name,
+    times: ["midday" as const],
+    activities: [{ text: "holding a mug", twoHanded: false }, { text: "browsing the shelves", twoHanded: false }],
+    mirror: false,
+  })),
+  outfits: ["a cozy cardigan", "jeans and a tee", "a linen dress"],
+  shotDeck: ["friend" as const, "friend" as const, "friend" as const, "friend" as const, "friend" as const],
+};
+
+async function previewOf(check: "off" | "on", over: Partial<LaunchDraftInput>, withCustom = false) {
   await mkdir(join(dir(), "export"), { recursive: true });
-  const avatarId = await seedAvatar();
+  const avatarId = await seedAvatar(withCustom);
   const net = fakeFetch(Array.from({ length: 64 }, () => () => ({ reject: new TypeError("fetch failed") })));
   const started = await startEngine(dir(), { key: KEY, init: { settings: engineSettings(dir(), { imageAgeCheck: check }) }, deps: { launchSteps: IDLE_STEPS, fetch: net.fetch } });
   await started.engine.settled();
@@ -56,6 +69,12 @@ describe("the launch preview's unit for one new photo", () => {
     const unit = (await previewOf("off", { level: "flirty" })).unitPhotoWorstMicros;
     expect(unit).toBe(ownerUnit("off"));
     expect(unit).not.toBe(279_000);
+  });
+
+  // Review L-5: a custom category at «Смелая» is routed like the rest, so its photo is the same unit.
+  test("«Смелая» with a custom category: the same unit as «Дом»", async () => {
+    const preview = await previewOf("off", { level: "bold", categories: [CUSTOM] }, true);
+    expect(preview.unitPhotoWorstMicros).toBe(279_000);
   });
 
   test("a launch that draws no new photo carries none", async () => {
