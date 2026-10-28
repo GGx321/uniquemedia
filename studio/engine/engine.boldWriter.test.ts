@@ -82,7 +82,7 @@ async function boot() {
 }
 
 /** Starts a run at «Смелая» at its own estimate and waits until its writer phase has journaled every chunk. */
-async function boldRun(started: Awaited<ReturnType<typeof boot>>, avatarId: string, categories: string[], count: number): Promise<{ plan: RunPlan; written: Map<number, string> }> {
+async function boldRun(started: Awaited<ReturnType<typeof boot>>, avatarId: string, categories: string[], count: number): Promise<{ plan: RunPlan; written: Map<number, string>; runId: string }> {
   const asked = { avatarId, count, categories, level: "bold" };
   const estimate = ok(await started.engine.handle(command("runs.estimate", asked)));
   if (estimate.type !== "runs.estimate") throw new Error(`expected an estimate, got ${estimate.type}`);
@@ -100,9 +100,13 @@ async function boldRun(started: Awaited<ReturnType<typeof boot>>, avatarId: stri
     clearInterval(poll);
   }
   const written = new Map(events.flatMap((e) => (e.type === "writer" ? e.sentences.map((s): [number, string] => [s.slotIndex, s.sentence]) : [])));
+  // The run's job is still writing its journal: cancel it and wait for its end, so the teardown never removes the library under it.
   ok(await started.engine.handle(command("runs.cancel", { runId: answer.result.runId })));
-  return { plan, written };
+  await jobEnd(started.events, answer.result.jobId);
+  return { plan, written, runId: answer.result.runId };
 }
+
+const boldRunIds = (started: Awaited<ReturnType<typeof boot>>, avatarId: string) => boldRun(started, avatarId, [LLM_ONLY_REF], 4);
 
 /**
  * Whether a sentence ends with the coverage of the avatar's origin and not the other one: where the two differ, it ends with its own (an origin with none says none, so it must
@@ -139,6 +143,17 @@ describe("a run straight from the card at «Смелая» over a custom categor
       for (const slot of slots) expect({ slot: slot.slotIndex, byOrigin: endsByOrigin(written.get(slot.slotIndex) ?? "", slot, studio) }).toEqual({ slot: slot.slotIndex, byOrigin: true });
     });
   }
+});
+
+describe("a run that is cancelled after its writer phase", () => {
+  test("has journaled the end of its job before the test goes on, so a teardown cannot race its writes", async () => {
+    const avatarId = await seedAvatar(false);
+    const started = await boot();
+    const { runId } = await boldRunIds(started, avatarId);
+    const journal = await started.engine.library?.readJournal(runId, RunEventSchema);
+    const jobs = (journal?.events ?? []).flatMap((e) => (e.type === "job" ? [e.status] : []));
+    expect(jobs.at(-1)).toBe("cancelled");
+  });
 });
 
 describe("a run's template sentences at «Смелая»", () => {
