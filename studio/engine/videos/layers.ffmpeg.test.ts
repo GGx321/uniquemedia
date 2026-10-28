@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Clip, Layer } from "../../shared/engine/montage";
 import { textBox } from "../../shared/montage";
 import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
+import { heavyTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { extractFrames, runFfmpegOk, videoFrames } from "../render/ffmpeg.testkit";
 import { buildLayerPass } from "../render";
@@ -220,17 +221,22 @@ describe("real captions and real stickers through the runner on real ffmpeg", ()
 
 describe("every built-in sticker goes through the layer pass under -xerror", () => {
   // ffmpeg exits 0 on a broken frame and silently shortens a loop, so the layer call stops on the first one (`-xerror`). A set that
-  // trips it would fail every render that uses it: all ten are run, each looped over a 90-frame timeline.
-  test.each(STICKER_MANIFEST.map((s) => [s.id] as const))("%s decodes without a single error and fills 90 frames", async (id) => {
-    const asset = await createStickerAssets(STICKER_DIR).read(id);
-    const path = join(dir, `${id}.apng`);
-    writeBytes(path, asset.bytes);
-    const layer = { path, format: "apng" as const, box: { x: 100, y: 200, w: 320, h: 320 }, resize: true, startFrame: 0, endFrame: 90, loopFrames: asset.loopFrames, sourceSize: { w: asset.width, h: asset.height } };
-    const [job] = buildLayerPass({ layers: [layer], totalFrames: 90, clipDir: dir }).jobs;
-    if (job === undefined) throw new Error("expected one layer call");
+  // trips it would fail every render that uses it: all ten are run, each looped over a 90-frame timeline. The first runs in every run, the rest in the nightly heavy tier.
+  STICKER_MANIFEST.forEach(({ id }, index) => {
+    const name = `${id} decodes without a single error and fills 90 frames`;
+    const body = async (): Promise<void> => {
+      const asset = await createStickerAssets(STICKER_DIR).read(id);
+      const path = join(dir, `${id}.apng`);
+      writeBytes(path, asset.bytes);
+      const layer = { path, format: "apng" as const, box: { x: 100, y: 200, w: 320, h: 320 }, resize: true, startFrame: 0, endFrame: 90, loopFrames: asset.loopFrames, sourceSize: { w: asset.width, h: asset.height } };
+      const [job] = buildLayerPass({ layers: [layer], totalFrames: 90, clipDir: dir }).jobs;
+      if (job === undefined) throw new Error("expected one layer call");
 
-    await runFfmpegOk(job.argv);
+      await runFfmpegOk(job.argv);
 
-    expect(await videoFrames(job.output)).toBe(90);
+      expect(await videoFrames(job.output)).toBe(90);
+    };
+    if (index === 0) test(name, body);
+    else heavyTest(name, body);
   });
 });

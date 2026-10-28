@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ffmpegPath, unpackAsarSegment, __setFfmpegPathOverrideForTests } from "./ffmpegBinary";
 import { runFfmpeg, FfmpegError } from "./runFfmpeg";
+import { heavyTest } from "../testing/bunTiers";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -179,7 +180,7 @@ test("aborting mid-run rejects with the exact abort reason well before the sourc
   expect(partFiles()).toEqual([]);
 }, 30000);
 
-test("aborting one concurrent run does not affect the other, which keeps progressing and completes", async () => {
+heavyTest("aborting one concurrent run does not affect the other, which keeps progressing and completes", async () => {
   const abortedOutput = join(dir, "concurrent-abort.mp4");
   const okOutput = join(dir, "concurrent-ok.mp4");
   const controller = new AbortController();

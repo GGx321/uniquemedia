@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tempDirFor } from "../../testing/tempDir";
+import { heavyTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import type { FfmpegSpawner } from "../../node/runFfmpeg";
 import { CHART, CHART_PATCHES, hlgToSdrBt709, rgbToYcbcr } from "./video/testing/chart";
@@ -347,7 +348,7 @@ async function until(condition: () => Promise<boolean>): Promise<void> {
 }
 
 describe("cancel and time (the 3f.1b review's requirement)", () => {
-  test("an abort in the middle of an encode kills ffmpeg, and nothing is written after", async () => {
+  heavyTest("an abort in the middle of an encode kills ffmpeg, and nothing is written after", async () => {
     const pids: number[] = [];
     const staged = await stage(tmp(), "h264-vfr.mp4");
     const rig = requestFor(tmp(), staged);
