@@ -142,6 +142,9 @@ export const OwnPlanSlotSchema = z
     pose: PoseSchema,
     attemptIdBase: AttemptIdBaseSchema,
     sentence: SceneText,
+    // Additive (5a.4, S5.BA9, I5.80 (D)): an own scene of a «Смелая» set is drawn on the Seedream route, as every other «Смелая» frame is. Absent reads as the owner's image model, so an
+    // own slot stored before it draws, prices and animates as it did.
+    route: SceneRoute.optional(),
   })
   .refine((slot) => !isPhoneInHandShot(slot.shot) || slot.pose === "front" || slot.pose === "three-quarter", {
     message: "a selfie or mirror shot always faces the camera: pose must be front or three-quarter",
