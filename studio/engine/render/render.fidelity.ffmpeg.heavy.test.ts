@@ -1,6 +1,7 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect } from "bun:test";
 import { join } from "node:path";
 import type { Clip } from "../../shared/engine/montage";
+import { heavyTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { runFfmpegOk } from "./ffmpeg.testkit";
 import { buildPass1 } from "./pass1";
@@ -88,16 +89,16 @@ const score = (k: string): number => {
 };
 
 describe("fidelity on real ffmpeg (invariant 36)", () => {
-  test("the final made from CRF 8 intermediates is within 0.002 SSIM of the final made from lossless ones, both against the lossless clips", () => {
+  heavyTest("the final made from CRF 8 intermediates is within 0.002 SSIM of the final made from lossless ones, both against the lossless clips", () => {
     expect(score("lossless") - score("crf8")).toBeLessThanOrEqual(BAR);
   });
 
-  test("the score is a real similarity, not a degenerate one: the lossless final is close to its clips", () => {
+  heavyTest("the score is a real similarity, not a degenerate one: the lossless final is close to its clips", () => {
     expect(score("lossless")).toBeGreaterThan(0.99);
     expect(score("lossless")).toBeLessThanOrEqual(1);
   });
 
-  test("negative control: intermediates at CRF 30 fail the same 0.002 bar", () => {
+  heavyTest("negative control: intermediates at CRF 30 fail the same 0.002 bar", () => {
     expect(score("lossless") - score("crf30")).toBeGreaterThan(BAR);
   });
 });

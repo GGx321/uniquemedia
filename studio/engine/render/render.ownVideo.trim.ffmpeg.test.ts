@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "
 import { copyFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Clip } from "../../shared/engine/montage";
+import { heavyTest } from "../../testing/bunTiers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { bandFrames, frameNumbersOf, mezzanineOf, type Mezzanine } from "../videos/testing/mezzanineKit";
 import { buildPass1 } from "./pass1";
@@ -10,8 +11,8 @@ useNativeGlobals();
 setDefaultTimeout(180_000);
 
 // EVERY trim position an own video clip may have, on real ffmpeg (3f.3b review, probe-trim2): a mezzanine of 255 frames (a real importer encode, with B-frames, over busy noise, its
-// frame number in a strip across the middle) and a clip of 15 frames from every start the 100 ms grid allows (0, 3, 6, ... 240), each read back frame by frame. The default tier
-// runs it, so Windows' ffmpeg 6.1.1 proves the seek of `-ss` half a frame early at every offset inside every group of pictures, not only at the few the other tests pick.
+// frame number in a strip across the middle) and a clip of 15 frames from every start the 100 ms grid allows (0, 3, 6, ... 240), each read back frame by frame. The nightly heavy tier
+// runs this sweep (Linux ffmpeg), and the shortest-clip test below stays in every run, so Windows' ffmpeg 6.1.1 proves the seek of `-ss` half a frame early at every offset inside every group of pictures, not only at the few the other tests pick.
 
 const FRAMES = 255;
 const CLIP_FRAMES = 15;
@@ -29,7 +30,7 @@ describe("an own video clip on real ffmpeg: every trim position", () => {
     expect(frameNumbersOf((mezzanine as Mezzanine).path, true)).toEqual(Array.from({ length: FRAMES }, (_, i) => i));
   });
 
-  test(`a clip of ${CLIP_FRAMES} frames from every start on the 100 ms grid plays exactly the frames asked for`, async () => {
+  heavyTest(`a clip of ${CLIP_FRAMES} frames from every start on the 100 ms grid plays exactly the frames asked for`, async () => {
     const m = mezzanine as Mezzanine;
     const wrong: string[] = [];
     let runs = 0;
