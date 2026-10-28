@@ -68,7 +68,7 @@ When the owner supplies real short clips (an iPhone HEVC HLG MOV, an Android H.2
 1. add each to `FIXTURES` in `index.ts` (size and sha256), a row to the table above saying what phone and what mode made it, and a "what it is" test in `fixtures.test.ts`;
 2. strip personal data first (location, serial numbers, the person's name in any `udta` or `meta` text), and say in the row that it was done and how;
 3. add the import to `videoImporter.ffmpeg.test.ts` (or a file of its own) as a plain real-file test: it must import, and keep its colours;
-4. `videoImporter.realfiles.heavy.test.ts` documents what the walker does with whatever real files a developer's machine has (macOS system videos); it skips elsewhere and never copies a file.
+4. `videoImporter.realfiles.test.ts` documents what the walker does with whatever real files a developer's machine has (macOS system videos); it skips elsewhere and never copies a file.
 
 ### Regenerating
 
