@@ -36,6 +36,19 @@ const DESCRIBE_SKIP = ["﹣ s (0.33ms) # SKIP", SUMMARY_TAIL({ tests: 0, suites:
 const WITH_TODO = ["▶ s", "  ✔ a (0.6ms)", "  ✔ b (0.06ms) # TODO", "✔ s (1.2ms)", SUMMARY_TAIL({ tests: 2, suites: 1, pass: 1, todo: 1 })].join("\n");
 
 describe("nodeTestSummaryProblem: `electron --test` exits 0 for runs that tested nothing", () => {
+  test("refuses zero tests", () => {
+    expect(nodeTestSummaryProblem(SUMMARY_TAIL({ tests: 0, suites: 0, pass: 0 }))).toMatch(/0 tests/);
+  });
+
+  test("refuses a `describe.skip` run, which reports zero tests and zero skipped", () => {
+    expect(nodeTestSummaryProblem(DESCRIBE_SKIP)).toMatch(/SKIP/);
+    expect(nodeTestSummaryProblem(SUMMARY_TAIL({ tests: 0, suites: 1, pass: 0 }))).toMatch(/0 tests/);
+  });
+
+  test("refuses an output with no summary at all, so a change of reporter fails loudly", () => {
+    expect(nodeTestSummaryProblem("ok 1 - a\n1..1\n")).toMatch(/no `ℹ tests N` summary/);
+    expect(nodeTestSummaryProblem("")).toMatch(/no `ℹ tests N` summary/);
+  });
 
   test("refuses a run with fewer tests than the suite's minimum, and accepts the minimum and more", () => {
     expect(nodeTestSummaryProblem(SUMMARY_TAIL({ tests: 9, suites: 1, pass: 9 }), 10)).toMatch(/9 tests, fewer than the 10/);
