@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { category, PARIS_POOL } from "./categoryScreenKit";
 import { CATEGORY_REASONS_RU, POOL_TIMES, type CategoryInterrupted, type CategoryPool, type CategorySummary } from "../../../shared/engine";
 import {
   ANGLES_CLEAR_TITLE,
@@ -9,6 +10,7 @@ import {
   anglesSaveFailure,
   DESCRIPTION_HINT,
   impliedChipTitle,
+  ownAnglesAt,
   ownAnglesLine,
   callFailure,
   categoryMeta,
@@ -416,5 +418,31 @@ describe("CS.8: a category's angles", () => {
     ]);
     expect(line?.title).toBe("Свои ракурсы — Домашнее у кровати: три четверти, со спины; Йога дома: профиль; Ночной город: со спины");
     expect(ownAnglesLine([{ name: "А", poses: ["back"] }, { name: "Б", poses: ["back"] }])?.moreLabel).toBe("ещё 1");
+  });
+});
+
+// 5a.4 (S5.BA8a, plan s5a4 r2.3 M6, §5.9 row 4a): a custom category's own angles do not apply at «Смелая» (the run's toggles decide, QB-4), so the card says nothing of them there.
+describe("ownAnglesAt: the card's and the autopilot's line about a custom category's own angles", () => {
+  const withAngles = { ...category(1, "Домашнее у кровати"), pool: { ...PARIS_POOL, poses: ["back", "three-quarter"] as CategoryPool["poses"] } };
+  const withoutAngles = category(2, "Кофейни Парижа");
+  const customs = [withAngles, withoutAngles];
+
+  test.each(["ordinary", "flirty"] as const)("at %s: the chosen categories that keep angles of their own, as ownAnglesLine words them", (level) => {
+    expect(ownAnglesAt(level, customs, [withAngles.categoryId, withoutAngles.categoryId])).toEqual(ownAnglesLine([{ name: "Домашнее у кровати", poses: ["back", "three-quarter"] }]));
+    expect(ownAnglesAt(level, customs, [withAngles.categoryId])?.visible).toBe("У «Домашнее у кровати» свои ракурсы: три четверти, со спины.");
+  });
+
+  test("at «Смелая»: nothing, however many of the chosen categories keep angles", () => {
+    expect(ownAnglesAt("bold", customs, [withAngles.categoryId])).toBe(null);
+    expect(ownAnglesAt("bold", customs, [withAngles.categoryId, "home"])).toBe(null);
+  });
+
+  test("a category that is not chosen, or has no angles of its own, says nothing", () => {
+    expect(ownAnglesAt("flirty", customs, [withoutAngles.categoryId])).toBe(null);
+    expect(ownAnglesAt("flirty", customs, ["home"])).toBe(null);
+  });
+
+  test("a library still loading (null) says nothing", () => {
+    expect(ownAnglesAt("ordinary", null, [withAngles.categoryId])).toBe(null);
   });
 });

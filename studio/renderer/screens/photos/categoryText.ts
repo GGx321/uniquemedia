@@ -12,7 +12,9 @@ import {
   type CategoryInterrupted,
   type CategoryPool,
   type CategoryStyle,
+  type CategoryRef,
   type CategorySummary,
+  type SceneLevel,
   type EngineError,
   type PoolShot,
   type PoolTime,
@@ -396,4 +398,13 @@ export function overLimitNote(n: number): string {
   return one
     ? `Ещё ${countOf(n, ["категория", "категории", "категорий"])} сверх ${MAX_CUSTOM_CATEGORIES} здесь не показана — она появится, когда вы удалите ненужную.`
     : `Ещё ${countOf(n, ["категория", "категории", "категорий"])} сверх ${MAX_CUSTOM_CATEGORIES} здесь не показаны — они появятся, когда вы удалите ненужные.`;
+}
+
+/**
+ * The line about the chosen custom categories that keep angles of their own, for the card and for «Автопилот». At «Смелая» there is none (5a.4, r2.3 M6, QB-4): the run's toggles
+ * decide a custom category's angles there, so «У «{имя}» свои ракурсы» would be false.
+ */
+export function ownAnglesAt(level: SceneLevel, customs: readonly CategorySummary[] | null, chosen: readonly CategoryRef[]): OwnAnglesLine | null {
+  if (level === "bold") return null;
+  return ownAnglesLine((customs ?? []).flatMap((c) => (chosen.includes(c.categoryId) && c.pool.poses !== undefined ? [{ name: c.name, poses: c.pool.poses }] : [])));
 }
