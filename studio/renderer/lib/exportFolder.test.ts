@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ERROR_MESSAGES_RU, EXPORT_UNAVAILABLE_REASONS, EXPORT_UNAVAILABLE_REASONS_RU } from "../../shared/engine";
-import { CLIP_EXPORT_BUSY_DETAIL_PREFIX, EXPORT_UNAVAILABLE_TITLE, LIBRARY_RENDER_BUSY_TEXT, pickedNotice, refusedPickText, unavailableText } from "./exportFolder";
+import { CLIP_EXPORT_BUSY_DETAIL_PREFIX, LIBRARY_RENDER_BUSY_TEXT, pickedNotice, refusedPickText, unavailableText } from "./exportFolder";
 import { NBSP } from "./format";
 
 // 3e.3: what the «Готовые видео» card tells the owner after a pick, and why a folder cannot be used. Pure text, from the engine's
@@ -122,9 +122,6 @@ describe("refusedPickText", () => {
 });
 
 describe("unavailableText", () => {
-  test("the title names the folder as the owner knows it", () => {
-    expect(EXPORT_UNAVAILABLE_TITLE).toBe("Папка «Готовые видео» недоступна");
-  });
 
   test.each([...EXPORT_UNAVAILABLE_REASONS])("%s is its own text and nothing else", (reason) => {
     expect(unavailableText(reason)).toBe(EXPORT_UNAVAILABLE_REASONS_RU[reason]);

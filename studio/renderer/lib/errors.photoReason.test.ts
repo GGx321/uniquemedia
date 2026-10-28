@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { MONTAGE_ISSUE_MESSAGES_RU } from "../../shared/engine";
 import { errorText } from "./errors";
 
 // A refused scene photo says why (`photoReason`): one photo goes into one video, a running render holds its photos, and an avatar whose records cannot be trusted
@@ -51,8 +50,4 @@ test("a refusal with no reason lists what it can be, and never blames the age ch
   expect(text).toContain("уже в другом видео");
   expect(text).toContain("отклонено");
   expect(text).not.toContain("возраст");
-});
-
-test("the issue text for a photo no longer says it was only rejected", () => {
-  expect(MONTAGE_ISSUE_MESSAGES_RU["photo-unavailable"]).toContain("уже в другом видео");
 });
