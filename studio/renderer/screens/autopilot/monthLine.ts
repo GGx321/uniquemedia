@@ -1,5 +1,5 @@
 import type { SceneLevel } from "../../../shared/engine";
-import { plural } from "../../lib/format";
+import { countOf, NBSP } from "../../lib/format";
 import { formatUsdTiered } from "../../lib/money";
 import { wholeUsd } from "./planModel";
 
@@ -26,7 +26,7 @@ export function monthLine({ unitMicros, budgetMicros, ageCheck }: MonthLineInput
   const budget = wholeUsd(budgetMicros);
   return photos === 0
     ? `${first} Месячный бюджет ${budget} не вмещает ни одного такого фото.`
-    : `${first} Месячный бюджет ${budget} вмещает ≈ ${photos} ${plural(photos, ["такое фото", "таких фото", "таких фото"])}; больше автопилот рисует частями, пока хватает остатка.`;
+    : `${first} Месячный бюджет ${budget} вмещает ≈${NBSP}${countOf(photos, ["такое фото", "таких фото", "таких фото"])}; больше автопилот рисует частями, пока хватает остатка.`;
 }
 
 /** The line a launch plan shows under «Подача»: at «Смелая» only, from the plan's own unit and budget; none when the plan names no unit (it draws no new photo). */

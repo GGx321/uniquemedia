@@ -7,6 +7,9 @@ import { MICROS_PER_DOLLAR } from "../../../shared/engine/usd";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { formatUsdTiered } from "../../lib/money";
 import { launchMonthLine, monthLine } from "./monthLine";
+
+/** BA8b round 2 (LOW-5): the count is held to its «≈» and its words by non-breaking spaces, as `countOf` holds a count to its word. */
+const NB = "\u00A0";
 useNativeGlobals();
 
 // 5a.4 (S5.BA8a, plan s5a4 §5.9 row 20, r2.3 M1, r2.2 D5): the month line under «Подача» at «Смелая». The photo's worst case is the launch math's own unit, `unitPricesOf(…, bold = true).photo`
@@ -20,41 +23,41 @@ const BUDGET = 10 * MICROS_PER_DOLLAR;
 describe("the month line (§5.9 row 20)", () => {
   test("with the age check off: «до $0.28», about 35 photos of a $10 month", () => {
     expect(monthLine({ unitMicros: photoUnit("off"), budgetMicros: BUDGET, ageCheck: false })).toBe(
-      "Каждое фото «Смелой» — до $0.28 (3 попытки Seedream 2K по прайсу). Месячный бюджет $10 вмещает ≈ 35 таких фото; больше автопилот рисует частями, пока хватает остатка.",
+      `Каждое фото «Смелой» — до $0.28 (3 попытки Seedream 2K по прайсу). Месячный бюджет $10 вмещает ≈${NB}35${NB}таких фото; больше автопилот рисует частями, пока хватает остатка.`,
     );
   });
 
   test("with the age check on: «до $0.30», about 33 photos, and the parenthesis names the age checks", () => {
     expect(monthLine({ unitMicros: photoUnit("on"), budgetMicros: BUDGET, ageCheck: true })).toBe(
-      "Каждое фото «Смелой» — до $0.30 (3 попытки Seedream 2K и проверки возраста по прайсу). Месячный бюджет $10 вмещает ≈ 33 таких фото; больше автопилот рисует частями, пока хватает остатка.",
+      `Каждое фото «Смелой» — до $0.30 (3 попытки Seedream 2K и проверки возраста по прайсу). Месячный бюджет $10 вмещает ≈${NB}33${NB}таких фото; больше автопилот рисует частями, пока хватает остатка.`,
     );
   });
 
   test("reads the unit it is given: the same unit and budget give the same line whatever the check says about the words", () => {
     const unit = photoUnit("off");
     expect(monthLine({ unitMicros: unit, budgetMicros: BUDGET, ageCheck: false })).toContain(`до ${formatUsdTiered(unit, "up")} (`);
-    expect(monthLine({ unitMicros: unit, budgetMicros: BUDGET, ageCheck: false })).toContain(`≈ ${Math.floor(BUDGET / unit)} таких фото`);
+    expect(monthLine({ unitMicros: unit, budgetMicros: BUDGET, ageCheck: false })).toContain(`≈${NB}${Math.floor(BUDGET / unit)}${NB}таких фото`);
   });
 
   test("the count is the whole photos the budget holds: one micro-dollar under a whole photo is one photo fewer", () => {
     const unit = photoUnit("off");
-    expect(monthLine({ unitMicros: unit, budgetMicros: 2 * unit, ageCheck: false })).toContain("≈ 2 таких фото");
-    expect(monthLine({ unitMicros: unit, budgetMicros: 2 * unit - 1, ageCheck: false })).toContain("≈ 1 такое фото;");
+    expect(monthLine({ unitMicros: unit, budgetMicros: 2 * unit, ageCheck: false })).toContain(`≈${NB}2${NB}таких фото`);
+    expect(monthLine({ unitMicros: unit, budgetMicros: 2 * unit - 1, ageCheck: false })).toContain(`≈${NB}1${NB}такое фото;`);
   });
 
   // S5.BA8a review: the count agrees with its words — «≈ 1 такое фото» where n % 10 = 1 and n % 100 ≠ 11, «таких фото» everywhere else.
   test.each([
-    [1, "≈ 1 такое фото;"],
-    [21, "≈ 21 такое фото;"],
-    [31, "≈ 31 такое фото;"],
-    [101, "≈ 101 такое фото;"],
-    [11, "≈ 11 таких фото;"],
-    [111, "≈ 111 таких фото;"],
-    [2, "≈ 2 таких фото;"],
-    [4, "≈ 4 таких фото;"],
-    [5, "≈ 5 таких фото;"],
-    [12, "≈ 12 таких фото;"],
-    [35, "≈ 35 таких фото;"],
+    [1, `≈${NB}1${NB}такое фото;`],
+    [21, `≈${NB}21${NB}такое фото;`],
+    [31, `≈${NB}31${NB}такое фото;`],
+    [101, `≈${NB}101${NB}такое фото;`],
+    [11, `≈${NB}11${NB}таких фото;`],
+    [111, `≈${NB}111${NB}таких фото;`],
+    [2, `≈${NB}2${NB}таких фото;`],
+    [4, `≈${NB}4${NB}таких фото;`],
+    [5, `≈${NB}5${NB}таких фото;`],
+    [12, `≈${NB}12${NB}таких фото;`],
+    [35, `≈${NB}35${NB}таких фото;`],
   ] as const)("%i photos: «%s»", (photos, words) => {
     // Any unit will do: the words follow the count alone (a round one, not the bold unit, which no renderer module may hold).
     expect(monthLine({ unitMicros: 100_000, budgetMicros: photos * 100_000, ageCheck: false })).toContain(words);
