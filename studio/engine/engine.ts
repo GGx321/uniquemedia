@@ -139,6 +139,7 @@ import { priceFetchFrom } from "./openrouter/priceFetch";
 import { ImageCatalogueCache, loadImageCatalogue } from "./imageModels/catalogue";
 import { rawFileName, saveRawBody } from "./rawStore";
 import { foldRun, RunEventSchema, type LedgerView, type RunState } from "./runs/journal";
+import { ownSceneRouteOf } from "../shared/scenes/ownScene";
 import { buildRunPlan, buildSceneRunPlan, isBoldLook, requestBoldPhotos, routedScenes, routedSlots, RunPlanSchema, runEstimate, runEstimateFromScenes, runPriceModels, sceneCategory, sceneRunPriceModels, type RunPlan } from "./runs/plan";
 import { commitApproval, findSceneSet, loadApprovable } from "./sceneSets/approve";
 import { assertBoldFit, assertLegsFit, sceneRefusal } from "./sceneSets/refusal";
@@ -3372,7 +3373,8 @@ export class Engine {
         // sends a smaller count for any other reason gets the written scenes' routes too.
         const active = set.scenes.filter((scene) => !scene.removed);
         const drawn = payload.count < active.length ? active.filter((scene) => scene.text !== null) : active;
-        bold = Math.min(payload.count, routedSlots(drawn.flatMap((scene) => (scene.origin === "planned" ? [scene.slot] : []))));
+        // 5a.4 (S5.BA9): an own scene of a «Смелая» set is drawn on the route too (`runSources` gives its slot the route), so it is counted as «Отрисовать» counts it.
+        bold = Math.min(payload.count, routedSlots(drawn.map((scene) => (scene.origin === "planned" ? scene.slot : { route: ownSceneRouteOf(set.request.level) }))));
       }
       const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck, bold));
       return { estimate: runEstimateFromScenes(priced, models, { count: payload.count, boldPhotos: bold }, imageAgeCheck), photos: payload.count };
