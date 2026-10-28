@@ -8,7 +8,7 @@ import { callsOf, flush, openSection, setup } from "../testing";
 import { chipsGroup, MIA, openPhotos, PARIS } from "./photos/categoryScreenKit";
 import { cardImportedLine, cardLevelCaption, LEVEL_KEY_PREFIX } from "./photos/level";
 import type { CategoryRef, CategorySummary } from "../../shared/engine";
-import { column, FIXTURE } from "./photos/sceneScreenKit";
+import { column, FIXTURE, priceRow } from "./photos/sceneScreenKit";
 
 // S5.9g (plan s5a3 §13.1, §13.2, §14 «S5.9g», gaps C and D; mockups 47, 47a, 47b, 48, 48a and 55 of .omc/stage5/design): «Смелая» on the generate card. All three
 // faces of «Подача» are live; «Ночнушки и бельё» and «Пляж и бассейн» are real chips that work only under «Смелая» (dimmed, «Только со «Смелой»», otherwise); a pick
@@ -276,6 +276,26 @@ describe("the scenes column's writers with a kept «Смелая» pick", () => 
     await waitFor(() => expect(column().querySelector(".scene-col-model")?.textContent).toMatch(/^20 · пишет приложение и \S*grok\S*$/));
     await pickLevel("Кокетливая");
     await waitFor(() => expect(column().querySelector(".scene-col-model")?.textContent).toMatch(/^20 · \S*grok\S*$/));
+  });
+});
+
+// 5a.4 (S5.BA8b, plan s5a4 §5.9 row 6; mockup 65a): at «Смелая» the model writes every custom category's scenes in its bold mode (the scene carries its world). The price column says
+// so, at the bold writer's price, against the ordinary writer's «до $0.075» below «Смелая». The ceiling is the plan's «до $0.098» (two attempts of 48 750 µ$, r2.2 D5). The expected
+// figure is the engine's own (`writerExpectedMicros`, the mock held to it): one request's typical 6 240 µ$ plus 251.25 µ$ a scene, so ≈ $0.007 for Paris's 2–3 scenes, not the
+// mockup's «≈ $0.002», which priced 758 µ$ a scene before BA5 measured the bold call.
+describe("«Кто пишет сцены» at «Смелая» (mockup 65a)", () => {
+  test("the five + «Пляж и бассейн» + «Кофейни Парижа»: «Сцены ≈ $0.007 · до $0.098», «для «Кофейни Парижа» текст пишет модель»", async () => {
+    await openPhotos({ categories: [PARIS] });
+    await within(chipsGroup()).findByRole("button", { name: /^Кофейни Парижа/ });
+    await click(chip("Кофейни Парижа"));
+    await waitFor(() => expect(priceRow("Сцены")).toMatch(/ · до \$0\.075$/));
+    await pickLevel("Смелая");
+    await click(chip("Пляж и бассейн"));
+    await waitFor(() => expect(priceRow("Сцены")).toBe("Сцены ≈ $0.007 · до $0.098"));
+    expect(card().querySelector(".gen-scenes-sub")?.textContent).toBe("для «Кофейни Парижа» текст пишет модель");
+    await waitFor(() => expect(column().querySelector(".scene-col-model")?.textContent).toMatch(/^20 · пишет приложение и \S*grok\S*$/));
+    await pickLevel("Обычная");
+    await waitFor(() => expect(priceRow("Сцены")).toMatch(/ · до \$0\.075$/));
   });
 });
 
