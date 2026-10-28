@@ -409,7 +409,10 @@ function planScenes(count: number, refs: readonly CategoryRef[], level: SceneLev
       // 5a.4 (S5.BA7, plan s5a4 §5.3, I5.71, I5.72, I5.78): a custom category at «Смелая» draws from the two shared custom banks, never its own pool (its «Ракурсы» and deck are not asked,
       // QB-4), and each scene carries a `world`, one of the category's stored places, which the writer sets the frame inside. Of its n scenes w = ⌊(n × W + ⌊P/2⌋) / P⌋ (W water places of
       // P, by their head noun) are «by the water» with a water world, the rest «rooms» with any world, and the category's share of the tiers is split between the two the same way the request
-      // is split between categories. The mock spreads the water scenes and deals the worlds round the places (the engine draws both on seeded streams); the counts are the engine's.
+      // is split between categories. The mock spreads the water scenes and deals the worlds round the places (the engine draws both on seeded streams). The number by the water and the
+      // category's totals by tier are the engine's; the split of the tiers between the two branches is not always: where the two branches' remainders tie, `spreadLevels` serves them here
+      // in the order given (rooms, then water) and the engine in the order of its seeded `tier-spread:${category}` stream, so a branch's count of a tier may differ by one between the two,
+      // the same kind of difference as `tierSpreadOf`'s between categories above.
       const worlds = tablesOf(custom).map((t) => t.place);
       const waterWorlds = worlds.filter(isWaterPlaceName);
       const wet = worlds.length === 0 ? 0 : Math.floor((n * waterWorlds.length + Math.floor(worlds.length / 2)) / worlds.length);
