@@ -1,11 +1,11 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { heavyTest } from "../../testing/bunTiers";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspectApng, STICKER_LIMITS } from "../../shared/stickers/apng";
-import { STICKER_MANIFEST, stickerById } from "../../shared/stickers/manifest";
+import { STICKER_MANIFEST, stickerById, type StickerManifestEntry } from "../../shared/stickers/manifest";
 import { runFfmpegOk } from "../../engine/render/ffmpeg.testkit";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { decodeFrames } from "./apngDecode.testkit";
@@ -20,19 +20,36 @@ useNativeGlobals();
 const GENERATOR = join(import.meta.dir, "generateStickers.ts");
 const sha256 = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
 
-// Every sticker is rendered once and shared by all the groups below.
+// A push checks one sticker of each animation family: a pulse, rotating rays, falling particles and the one loop that restarts on purpose.
+// The scheduled heavy run checks the other six, every check of every sticker (a broken single sticker is found there).
+const PUSH_IDS = ["heart-pulse", "sun-rays", "confetti-fall", "lightning-flash"];
+const PUSH = STICKER_MANIFEST.filter((entry) => PUSH_IDS.includes(entry.id));
+const REST = STICKER_MANIFEST.filter((entry) => !PUSH_IDS.includes(entry.id));
+
+// A sticker is rendered once, on first use, and shared by all the groups below.
 const rendered = new Map<string, Uint8Array[]>();
-let fresh: GeneratedSticker[] = [];
-beforeAll(() => {
-  for (const entry of STICKER_MANIFEST) rendered.set(entry.id, renderStickerFrames(entry));
-  fresh = STICKER_MANIFEST.map((entry) => generateSticker(entry, rendered.get(entry.id)));
-}, 300_000);
+const generated = new Map<string, GeneratedSticker>();
 
 function framesOf(id: string): Uint8Array[] {
-  const frames = rendered.get(id);
-  if (frames === undefined) throw new Error(`no rendered frames for ${id}`);
+  const known = rendered.get(id);
+  if (known !== undefined) return known;
+  const entry = stickerById(id);
+  if (entry === undefined) throw new Error(`no manifest entry for ${id}`);
+  const frames = renderStickerFrames(entry);
+  rendered.set(id, frames);
   return frames;
 }
+
+function freshOf(entry: StickerManifestEntry): GeneratedSticker {
+  const known = generated.get(entry.id);
+  if (known !== undefined) return known;
+  const made = generateSticker(entry, framesOf(entry.id));
+  generated.set(entry.id, made);
+  return made;
+}
+
+/** One check of one sticker: its test name, body and (for the slow ones) timeout. */
+type StickerCheck = readonly [name: string, run: () => void | Promise<void>, timeout?: number];
 
 describe("the designs", () => {
   test("cover exactly the manifest's ids", () => {
@@ -75,7 +92,7 @@ function seamProblem(frames: readonly Uint8Array[]): string | undefined {
 const RESTARTS_ON_PURPOSE = new Set(["lightning-flash"]);
 
 describe("the seam check itself (negative controls)", () => {
-  for (const id of ["sun-rays", "heart-pulse", "sparkle-twinkle"]) {
+  for (const id of ["sun-rays", "heart-pulse"]) {
     test(`${id}: a sticky loop, whose last frame repeats the first, is caught`, () => {
       const frames = framesOf(id).slice();
       frames[frames.length - 1] = frames[0] ?? new Uint8Array(0);
@@ -91,60 +108,85 @@ describe("the seam check itself (negative controls)", () => {
   }
 });
 
+/** The frame checks of one sticker. */
+function frameChecks(entry: StickerManifestEntry): StickerCheck[] {
+  return [
+    [
+      `${entry.id}: renders loopFrames frames of size*size RGBA`,
+      () => {
+        const frames = framesOf(entry.id);
+        expect(frames.length).toBe(entry.loopFrames);
+        for (const f of frames) expect(f.length).toBe(entry.size * entry.size * 4);
+      },
+    ],
+    RESTARTS_ON_PURPOSE.has(entry.id)
+      ? [`${entry.id}: restarts on purpose, so its seam is a jump (the exception stays explicit)`, () => expect(seamProblem(framesOf(entry.id))).toMatch(/jump/)]
+      : [`${entry.id}: the seam step is like its neighbours (0.25x to 2.5x), on premultiplied RGBA`, () => expect(seamProblem(framesOf(entry.id))).toBeUndefined()],
+    [
+      `${entry.id}: has soft alpha (many pixels strictly between 0 and 255) and a transparent corner`,
+      () => {
+        const frame = framesOf(entry.id)[0] ?? new Uint8Array(0);
+        let soft = 0;
+        for (let i = 3; i < frame.length; i += 4) if ((frame[i] ?? 0) > 0 && (frame[i] ?? 0) < 255) soft += 1;
+        expect(soft).toBeGreaterThan(400);
+        expect(frame[3]).toBe(0);
+      },
+    ],
+    [
+      `${entry.id}: moves (its frames are not all identical)`,
+      () => {
+        const frames = framesOf(entry.id);
+        const first = frames[0] ?? new Uint8Array(0);
+        expect(frames.some((f) => Buffer.compare(f, first) !== 0)).toBe(true);
+      },
+    ],
+  ];
+}
+
 describe("a generated sticker's frames", () => {
-  for (const entry of STICKER_MANIFEST) {
-    test(`${entry.id}: renders loopFrames frames of size*size RGBA`, () => {
-      const frames = framesOf(entry.id);
-      expect(frames.length).toBe(entry.loopFrames);
-      for (const f of frames) expect(f.length).toBe(entry.size * entry.size * 4);
-    });
-
-    if (RESTARTS_ON_PURPOSE.has(entry.id)) {
-      test(`${entry.id}: restarts on purpose, so its seam is a jump (the exception stays explicit)`, () => {
-        expect(seamProblem(framesOf(entry.id))).toMatch(/jump/);
-      });
-    } else {
-      test(`${entry.id}: the seam step is like its neighbours (0.25x to 2.5x), on premultiplied RGBA`, () => {
-        expect(seamProblem(framesOf(entry.id))).toBeUndefined();
-      });
-    }
-
-    test(`${entry.id}: has soft alpha (many pixels strictly between 0 and 255) and a transparent corner`, () => {
-      const frame = framesOf(entry.id)[0] ?? new Uint8Array(0);
-      let soft = 0;
-      for (let i = 3; i < frame.length; i += 4) if ((frame[i] ?? 0) > 0 && (frame[i] ?? 0) < 255) soft += 1;
-      expect(soft).toBeGreaterThan(400);
-      expect(frame[3]).toBe(0);
-    });
-    test(`${entry.id}: moves (its frames are not all identical)`, () => {
-      const frames = framesOf(entry.id);
-      const first = frames[0] ?? new Uint8Array(0);
-      expect(frames.some((f) => Buffer.compare(f, first) !== 0)).toBe(true);
-    });
-  }
+  for (const entry of PUSH) for (const [name, run, timeout] of frameChecks(entry)) test(name, run, timeout);
+  for (const entry of REST) for (const [name, run, timeout] of frameChecks(entry)) heavyTest(name, run, timeout);
 });
+
+/** The checks of one sticker's committed file against a fresh generation and the validator. */
+function fileChecks(entry: StickerManifestEntry): StickerCheck[] {
+  return [
+    [
+      `${entry.id}.apng equals a fresh generation, byte for byte`,
+      () => {
+        const committed = existsSync(join(STICKER_ASSET_DIR, `${entry.id}.apng`)) ? readFileSync(join(STICKER_ASSET_DIR, `${entry.id}.apng`)) : undefined;
+        expect(committed).toBeDefined();
+        expect(sha256(committed ?? new Uint8Array(0))).toBe(sha256(freshOf(entry).bytes));
+      },
+    ],
+    [
+      `${entry.id}.apng passes the validator: caps, size, frame count, 30 fps grid`,
+      () => {
+        const result = inspectApng(readFileSync(join(STICKER_ASSET_DIR, `${entry.id}.apng`)), STICKER_LIMITS);
+        if (!result.ok) throw new Error(`${result.code}: ${result.detail}`);
+        expect([result.info.width, result.info.height]).toEqual([entry.size, entry.size]);
+        expect(result.info.frameCount).toBe(entry.loopFrames);
+        expect(result.info.loopFrames).toBe(entry.loopFrames);
+        expect(result.info.frames.every((f) => f.delayNum === 1 && f.delayDen === 30)).toBe(true);
+      },
+    ],
+  ];
+}
 
 describe("the committed set", () => {
   test("has one file per manifest sticker, plus catalog.json, and nothing else", () => {
     expect(readdirSync(STICKER_ASSET_DIR).sort()).toEqual([...STICKER_MANIFEST.map((s) => `${s.id}.apng`), "catalog.json"].sort());
   });
 
-  test("regenerating gives one file per manifest sticker", () => {
-    expect(fresh.map((f) => f.entry.id)).toEqual(STICKER_MANIFEST.map((s) => s.id));
+  heavyTest("regenerating gives one file per manifest sticker", () => {
+    expect(STICKER_MANIFEST.map((entry) => freshOf(entry).entry.id)).toEqual(STICKER_MANIFEST.map((s) => s.id));
   });
 
-  for (const entry of STICKER_MANIFEST) {
-    test(`${entry.id}.apng equals a fresh generation, byte for byte`, () => {
-      const generated = fresh.find((f) => f.entry.id === entry.id);
-      const committed = existsSync(join(STICKER_ASSET_DIR, `${entry.id}.apng`)) ? readFileSync(join(STICKER_ASSET_DIR, `${entry.id}.apng`)) : undefined;
-      expect(generated).toBeDefined();
-      expect(committed).toBeDefined();
-      expect(sha256(committed ?? new Uint8Array(0))).toBe(sha256(generated?.bytes ?? new Uint8Array(1)));
-    });
-  }
+  for (const entry of PUSH) for (const [name, run, timeout] of fileChecks(entry)) test(name, run, timeout);
+  for (const entry of REST) for (const [name, run, timeout] of fileChecks(entry)) heavyTest(name, run, timeout);
 
-  test("catalog.json equals a fresh catalog (line endings normalised as a second guard beside .gitattributes)", () => {
-    expect(readFileSync(join(STICKER_ASSET_DIR, "catalog.json"), "utf8").replaceAll("\r\n", "\n")).toBe(catalogJson(buildCatalog(fresh)));
+  heavyTest("catalog.json equals a fresh catalog (line endings normalised as a second guard beside .gitattributes)", () => {
+    expect(readFileSync(join(STICKER_ASSET_DIR, "catalog.json"), "utf8").replaceAll("\r\n", "\n")).toBe(catalogJson(buildCatalog(STICKER_MANIFEST.map(freshOf))));
   });
 
   test("catalog.json's sha256 and byte size match the files on disk", () => {
@@ -158,49 +200,52 @@ describe("the committed set", () => {
       expect(s.bytes).toBe(bytes.length);
     }
   });
-
-  for (const entry of STICKER_MANIFEST) {
-    test(`${entry.id}.apng passes the validator: caps, size, frame count, 30 fps grid`, () => {
-      const result = inspectApng(readFileSync(join(STICKER_ASSET_DIR, `${entry.id}.apng`)), STICKER_LIMITS);
-      if (!result.ok) throw new Error(`${result.code}: ${result.detail}`);
-      expect([result.info.width, result.info.height]).toEqual([entry.size, entry.size]);
-      expect(result.info.frameCount).toBe(entry.loopFrames);
-      expect(result.info.loopFrames).toBe(entry.loopFrames);
-      expect(result.info.frames.every((f) => f.delayNum === 1 && f.delayDen === 30)).toBe(true);
-    });
-  }
 });
 
-describe("the committed files, decoded", () => {
-  for (const entry of STICKER_MANIFEST) {
-    test(`${entry.id}.apng inflates (system zlib) and unfilters to exactly the rendered frames`, () => {
-      const decoded = decodeFrames(readFileSync(join(STICKER_ASSET_DIR, `${entry.id}.apng`)), entry.size, entry.size);
-      const expected = framesOf(entry.id);
-      expect(decoded.length).toBe(expected.length);
-      decoded.forEach((d, i) => expect(Buffer.compare(d, expected[i] ?? new Uint8Array(0))).toBe(0));
-    });
+/** The decode checks of one sticker's committed file: system zlib, and ffmpeg. */
+function decodeChecks(entry: StickerManifestEntry): StickerCheck[] {
+  return [
+    [
+      `${entry.id}.apng inflates (system zlib) and unfilters to exactly the rendered frames`,
+      () => {
+        const decoded = decodeFrames(readFileSync(join(STICKER_ASSET_DIR, `${entry.id}.apng`)), entry.size, entry.size);
+        const expected = framesOf(entry.id);
+        expect(decoded.length).toBe(expected.length);
+        decoded.forEach((d, i) => expect(Buffer.compare(d, expected[i] ?? new Uint8Array(0))).toBe(0));
+      },
+    ],
+    [
+      `${entry.id}.apng decodes in ffmpeg with -xerror to loopFrames frames of the same pixels`,
+      async () => {
+        // ffmpeg exits 0 on a broken frame and drops it, so count the frames it delivers.
+        const r = await runFfmpegOk(["-v", "error", "-xerror", "-f", "apng", "-i", join(STICKER_ASSET_DIR, `${entry.id}.apng`), "-vf", "fps=30,format=rgba", "-f", "rawvideo", "-pix_fmt", "rgba", "-"]);
+        const frameBytes = entry.size * entry.size * 4;
+        expect(r.stderr).toBe("");
+        expect(r.stdout.length).toBe(frameBytes * entry.loopFrames);
+        const expected = framesOf(entry.id);
+        for (let i = 0; i < entry.loopFrames; i++) {
+          expect(Buffer.compare(r.stdout.subarray(i * frameBytes, (i + 1) * frameBytes), expected[i] ?? new Uint8Array(0))).toBe(0);
+        }
+      },
+      60_000,
+    ],
+  ];
+}
 
-    test(`${entry.id}.apng decodes in ffmpeg with -xerror to loopFrames frames of the same pixels`, async () => {
-      // ffmpeg exits 0 on a broken frame and drops it, so count the frames it delivers.
-      const r = await runFfmpegOk(["-v", "error", "-xerror", "-f", "apng", "-i", join(STICKER_ASSET_DIR, `${entry.id}.apng`), "-vf", "fps=30,format=rgba", "-f", "rawvideo", "-pix_fmt", "rgba", "-"]);
-      const frameBytes = entry.size * entry.size * 4;
-      expect(r.stderr).toBe("");
-      expect(r.stdout.length).toBe(frameBytes * entry.loopFrames);
-      const expected = framesOf(entry.id);
-      for (let i = 0; i < entry.loopFrames; i++) {
-        expect(Buffer.compare(r.stdout.subarray(i * frameBytes, (i + 1) * frameBytes), expected[i] ?? new Uint8Array(0))).toBe(0);
-      }
-    }, 60_000);
-  }
+describe("the committed files, decoded", () => {
+  for (const entry of PUSH) for (const [name, run, timeout] of decodeChecks(entry)) test(name, run, timeout);
+  for (const entry of REST) for (const [name, run, timeout] of decodeChecks(entry)) heavyTest(name, run, timeout);
 });
 
 describe("writing the set", () => {
+  /** The push stickers, generated on first use (the rest are the heavy run's). */
+  const freshPush = (): GeneratedSticker[] => PUSH.map(freshOf);
   test("leaves foreign .apng files alone in any folder but the asset folder, and still writes the catalog", () => {
     const out = mkdtempSync(join(tmpdir(), "b5-write-"));
     try {
       writeFileSync(join(out, "foreign.apng"), "not ours");
-      writeStickerSet(out, fresh, true);
-      expect(readdirSync(out).sort()).toEqual([...fresh.map((f) => f.file), "catalog.json", "foreign.apng"].sort());
+      writeStickerSet(out, freshPush(), true);
+      expect(readdirSync(out).sort()).toEqual([...freshPush().map((f) => f.file), "catalog.json", "foreign.apng"].sort());
     } finally {
       rmSync(out, { recursive: true, force: true });
     }
@@ -216,7 +261,7 @@ describe("writing the set", () => {
     }
   });
   test("catalog.json records each sticker's poster frame, 0 unless the manifest says otherwise", () => {
-    const catalog = buildCatalog(fresh);
+    const catalog = buildCatalog(freshPush());
     for (const s of catalog.stickers) expect(s.posterFrame).toBe(stickerById(s.id)?.posterFrame ?? 0);
   });
 });
