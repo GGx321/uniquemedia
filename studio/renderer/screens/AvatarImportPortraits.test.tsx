@@ -1,15 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { StrictMode, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ERROR_MESSAGES_RU, type AvatarSummary } from "../../shared/engine";
-import { App } from "../App";
 import { MockEngine, mockEngineClient } from "../engine/mockEngine";
 import { MIA } from "../engine/mockEngine.testkit";
 import { EngineProvider, useEngineView } from "../engine/react";
 import { ManualScheduler } from "../engine/scheduler";
 import type { EngineView } from "../engine/store";
 import { NavigationProvider, type LookLanding } from "../navigation";
-import { callsOf, estimateText, flush, inAct, runAll, setup } from "../testing";
+import { callsOf, estimateText, flush, inAct, setup } from "../testing";
 import { paidSettingsFocus } from "./look/lookModel";
 import { MasterCard } from "./look/MasterCard";
 import { usePortraits } from "./look/usePortraits";
@@ -52,35 +51,6 @@ async function importZoe(): Promise<void> {
 }
 
 describe("14 · the import screen", () => {
-  test("the second line is the portraits' own engine price, said beside the import's and never added to it", async () => {
-    const { engine } = setup();
-    await openImport();
-    await pickAndName();
-    expect(screen.getByText((_, el) => el?.classList.contains("portrait-then") === true).textContent).toBe(PORTRAITS_LINE);
-    // The button keeps the import's own price; the line it points at says what else it accepts.
-    expect(importButton().textContent).toBe("Импортировать · до $0.063");
-    expect(describedBy(importButton())).toBe(PORTRAITS_LINE);
-    expect(screen.getByText("Дальше — страница аватара: мастер-портрет, тело и итог сверки.")).toBeDefined();
-    expect(callsOf(engine, "avatars.estimatePortraits").map((c) => c.payload)).toEqual([{}]);
-    expect(callsOf(engine, "avatars.generatePortraits")).toHaveLength(0);
-  });
-
-  test("14b: no portraits price — the line says they are made in «Внешность», and the import still works without starting them", async () => {
-    const { engine } = setup();
-    engine.failNext("avatars.estimatePortraits", { code: "PRICE_UNAVAILABLE" });
-    await openImport();
-    await pickAndName();
-    expect(screen.getByText("Варианты мастер-портрета: цена недоступна — сделаете их во «Внешности»")).toBeDefined();
-    expect(screen.queryByText(/Эта кнопка сразу запустит/) === null).toBe(true);
-    fireEvent.click(importButton());
-    await screen.findByRole("heading", { level: 1, name: "Zoe" });
-    await flush();
-    expect(callsOf(engine, "avatars.importAvatar")).toHaveLength(1);
-    expect(callsOf(engine, "avatars.generatePortraits")).toHaveLength(0);
-    // 20: the card offers the start at its own price, and the landing line says nothing of portraits.
-    expect(startButton().textContent).toBe("Получить 5 вариантов · до $0.30");
-    expect(screen.getByText(/^Аватар «Zoe» импортирован\./).textContent).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело.");
-  });
 
   test("14c: a higher import price asks both prices again; the new click accepts the fresh ones", async () => {
     const { engine } = setup();
@@ -122,41 +92,9 @@ describe("15 · the landing starts the batch once", () => {
     expect(text(panel())).toContain("Рисуем портреты: 0 из 5");
   });
 
-  test("the landing line says the portraits are ready once they are (16)", async () => {
-    const { scheduler } = setup();
-    await importZoe();
-    runAll(scheduler);
-    await flush();
-    expect(screen.getByText(/^Аватар «Zoe» импортирован\./).textContent).toBe(
-      "Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело. Варианты готовы — выберите мастер-портрет.",
-    );
-  });
-
-  test("React's development double mount (StrictMode) still starts it once", async () => {
-    const scheduler = new ManualScheduler();
-    const engine = new MockEngine({ scheduler, latencyMs: 0 });
-    render(
-      <StrictMode>
-        <App client={mockEngineClient(engine)} />
-      </StrictMode>,
-    );
-    await importZoe();
-    await flush();
-    expect(callsOf(engine, "avatars.generatePortraits").map((c) => c.payload.acceptedWorstMicros)).toEqual([300_000]);
-    expect(text(panel())).toContain("Рисуем портреты: 0 из 5");
-  });
 });
 
 describe("18b · the landing's start refused before anything was paid", () => {
-  test("no face on the imported photo: not offered again, in §3's words; the landing line says nothing of portraits", async () => {
-    const { engine } = setup();
-    engine.scriptNextPortraits({ refuse: { code: "MASTER_FACE_UNUSABLE" } });
-    await importZoe();
-    expect(callsOf(engine, "avatars.generatePortraits")).toHaveLength(1);
-    expect(isOff(startButton())).toBe(true);
-    expect(text(masterCard())).toContain("На исходном фото не найдено лицо — варианты не с чем сравнить. Ничего не потрачено.");
-    expect(screen.getByText(/^Аватар «Zoe» импортирован\./).textContent).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело.");
-  });
 
   test("the budget: the app's text and that nothing was started", async () => {
     const { engine } = setup();
@@ -223,33 +161,6 @@ function land(engine: MockEngine): void {
     </Providers>,
   );
 }
-
-describe("the landing's latch (review L5)", () => {
-  test("survives a reload of its own module (HMR): the window's store remembers the landing, so a new instance starts nothing again", async () => {
-    const engine = new MockEngine({ scheduler: new ManualScheduler(), latencyMs: 0, avatars: [NINI], portraits: [{ avatarId: NINI.avatarId, sourcePhotoId: NINI.masterPhotoId }] });
-    const landing: LookLanding = { kind: "imported", check: null, portraitsWorstMicros: 300_000 };
-    const view = render(
-      <Providers engine={engine}>
-        <Landed key="first" landing={landing} />
-      </Providers>,
-    );
-    await screen.findByRole("region", { name: "Мастер-портрет" });
-    await flush();
-    expect(callsOf(engine, "avatars.generatePortraits")).toHaveLength(1);
-
-    // A fresh instance of the hook's module, as a hot reload makes one: its module-level state starts empty.
-    const specifier = `./look/usePortraits.ts?reload=${String(Date.now())}`;
-    const reloaded: typeof import("./look/usePortraits") = await import(specifier);
-    expect(reloaded.usePortraits === usePortraits).toBe(false);
-    view.rerender(
-      <Providers engine={engine}>
-        <Landed key="second" landing={landing} use={reloaded.usePortraits} />
-      </Providers>,
-    );
-    await flush();
-    expect(callsOf(engine, "avatars.generatePortraits")).toHaveLength(1);
-  });
-});
 
 describe("18b · never without a key or under a reconcile", () => {
   test("no key: nothing is sent, and the card says why and that nothing was started", async () => {

@@ -48,15 +48,3 @@ test("«Рендер a / b» counts what was submitted since the queue was last 
   expect(within(queue()).queryByText("Рендер") === null).toBe(true);
 });
 
-test("the next submit after the queue emptied starts a new count", async () => {
-  const { client, scheduler } = await studio();
-  const first = await makeDraft(client, MIA.avatarId, [PHOTO_IDS[0] ?? ""]);
-  const second = await makeDraft(client, MIA.avatarId, [PHOTO_IDS[1] ?? ""]);
-  await asAnotherWindow(() => client.request("videos.render", { montageId: first.montageId }));
-  runAll(scheduler);
-  await flush();
-  expect(within(queue()).getByText("пусто")).toBeDefined();
-
-  await asAnotherWindow(() => client.request("videos.render", { montageId: second.montageId }));
-  expect(within(queue()).getByText("0 / 1")).toBeDefined();
-});

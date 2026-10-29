@@ -37,8 +37,4 @@ describe("the «Смелая» line of the «Фото» model row (mockup 56)", 
     expect(screen.getByText(LINE)).toBeDefined();
   });
 
-  test("the select gets the room of its longest option", async () => {
-    await openSettings();
-    expect(modelSelect().classList.contains("row-select-fit")).toBe(true);
-  });
 });

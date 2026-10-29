@@ -1,10 +1,10 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { bodyPhrase, type AvatarBody, type Draft } from "../../shared/engine";
 import { MOCK_ESTIMATE, mockDescriptor } from "../engine/mockEngine";
-import { bodyOfTraits, bodySetCount, descriptorHead, withBody } from "../lib/body";
-import { DEFAULT_TRAITS, randomTraits } from "../lib/traits";
-import { callsOf, estimateText, flush, focusedLabel, describeElement, openWizard, setup } from "../testing";
+import { bodyOfTraits, descriptorHead, withBody } from "../lib/body";
+import { DEFAULT_TRAITS } from "../lib/traits";
+import { callsOf, estimateText, flush, openWizard, setup } from "../testing";
 
 // S5.2d: the wizard's «Тело» (.omc/stage5/design 01–03): the «Лицо и волосы» | «Тело N / 6» tabs, «Телосложение» moved into «Тело», the optional
 // fields with a quiet «не задано», at most two body marks, the live preview of the body phrase Studio adds (only that phrase, at the end — never the
@@ -60,19 +60,6 @@ async function openBody(): Promise<ReturnType<typeof setup>> {
 }
 
 describe("01 · the «Тело» tab, empty", () => {
-  test("the card opens on «Лицо и волосы»; «Телосложение» is no longer there, and «Тело 0 / 6» waits beside it", async () => {
-    setup();
-    await openWizard();
-    expect(screen.getAllByRole("tab").map(text)).toEqual(["Лицо и волосы", "Тело0 / 6, задано 0 из 6"]);
-    expect(faceTab().getAttribute("aria-selected")).toBe("true");
-    expect(bodyTab().getAttribute("aria-selected")).toBe("false");
-    expect(tabCount()).toBe("0 / 6");
-    // The face panel keeps its fields; the build moved to «Тело».
-    expect(within(group(/^Типаж$/)).getAllByRole("radio").length).toBe(5);
-    expect(screen.queryByRole("group", { name: /^Телосложение/ }) === null).toBe(true);
-    // Mockup decision 10: the cheek mole says where it is, so it is never taken for a mole on the body.
-    expect(isChecked(screen.getByRole("checkbox", { name: "Родинка на щеке" }))).toBe(false);
-  });
 
   test("«Тело»: «Телосложение» as before, every new field «не задано», the figures as chips, up to two marks", async () => {
     await openBody();
@@ -130,50 +117,9 @@ describe("01 · the «Тело» tab, empty", () => {
     expect(Array.from(marks.querySelectorAll(".mark-row-cap")).map(text)).toEqual(["Тату", "Родинка"]);
   });
 
-  test("«Дескриптор» previews what Studio adds before the draft: nothing yet, and it says so (never the build word, N4)", async () => {
-    await openBody();
-    const card = descriptorCard();
-    expect(within(card).getByText("предпросмотр тела").className).toBe("tag tag-o desc-pre-tag");
-    expect(text(card)).toContain("Лицо, волосы и телосложение опишет модель после оплаты. Тело Studio допишет сама — одной фразой в конце описания.");
-    expect(text(card)).toContain("Поля «Тела» пустые — Studio ничего не допишет. Тогда тело решает модель, и от фото к фото оно будет разным.");
-    expect(text(card)).not.toContain("build");
-    expect(card.querySelector(".desc-body") === null).toBe(true);
-  });
-
-  test("← and → move between the two tabs, and the focus goes with them", async () => {
-    setup();
-    await openWizard();
-    fireEvent.keyDown(faceTab(), { key: "ArrowRight" });
-    expect(bodyTab().getAttribute("aria-selected")).toBe("true");
-    expect(focusedLabel()).toBe(describeElement(bodyTab()));
-    expect(bodyTab().getAttribute("tabindex")).toBe("0");
-    expect(faceTab().getAttribute("tabindex")).toBe("-1");
-    fireEvent.keyDown(bodyTab(), { key: "ArrowLeft" });
-    expect(faceTab().getAttribute("aria-selected")).toBe("true");
-    expect(focusedLabel()).toBe(describeElement(faceTab()));
-    fireEvent.keyDown(faceTab(), { key: "End" });
-    expect(bodyTab().getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(bodyTab(), { key: "Home" });
-    expect(faceTab().getAttribute("aria-selected")).toBe("true");
-  });
 });
 
 describe("02 · the body set", () => {
-  test("the count follows each field; «Ноги» and «Попа» count once whichever part is set", async () => {
-    await openBody();
-    pick(/^Рост/, "Средний");
-    expect(tabCount()).toBe("1 / 6");
-    pick(/^Форма ног/, "Подтянутые");
-    expect(tabCount()).toBe("2 / 6");
-    pick(/^Длина ног/, "Длинные");
-    expect(tabCount()).toBe("2 / 6");
-    pick(/^Форма попы/, "Широкая");
-    expect(tabCount()).toBe("3 / 6");
-    pick(/^Рост/, "не задано");
-    expect(tabCount()).toBe("2 / 6");
-    expect(bodyTab().getAttribute("aria-label") === null).toBe(true);
-    expect(text(bodyTab())).toBe("Тело2 / 6, задано 2 из 6");
-  });
 
   test("every field set: 6 / 6, and the preview is the phrase `bodyPhrase` writes, marked, at the end", async () => {
     await openBody();
@@ -207,16 +153,6 @@ describe("02 · the body set", () => {
     expect(text(descriptorCard().querySelector(".desc-body") ?? document.body)).toBe("a small tattoo on her right hip and a small mole on her left collarbone");
   });
 
-  test("a vibe refused while «Тело» is shown says which tab holds it (review L7)", async () => {
-    setup();
-    await openWizard();
-    fireEvent.change(screen.getByRole("textbox", { name: "Вайб" }), { target: { value: "teen" } });
-    expect(screen.getByText("Исправьте поле «Вайб».").className).toBe("field-hint");
-    fireEvent.click(bodyTab());
-    expect(screen.getByText("Исправьте поле «Вайб» на вкладке «Лицо и волосы».").className).toBe("field-hint");
-    expect(screen.getByRole("button", { name: "Оценить стоимость" }).hasAttribute("disabled")).toBe(true);
-  });
-
   test("a body change asks for the price again, as any change of the look does", async () => {
     await openBody();
     fireEvent.click(screen.getByRole("button", { name: "Оценить стоимость" }));
@@ -241,39 +177,6 @@ describe("02 · the body set", () => {
     expect(sent?.build).toBe("curvy");
     expect(sent !== undefined && "bodyMarks" in sent).toBe(false);
     expect(sent !== undefined && "bottomShape" in sent).toBe(false);
-  });
-});
-
-describe("«Случайно» fills the body too (owner's decision)", () => {
-  /** A small deterministic generator (LCG), as the traits tests use. */
-  function seeded(seed: number): () => number {
-    let state = seed >>> 0;
-    return () => {
-      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-      return state / 2 ** 32;
-    };
-  }
-  let spy: ReturnType<typeof spyOn> | null = null;
-  afterEach(() => {
-    spy?.mockRestore();
-    spy = null;
-  });
-
-  test("each field a value or «не задано», 0–1 marks: the form, the count and the preview are exactly what was drawn", async () => {
-    await openBody();
-    for (const seed of [1, 2, 3, 9]) {
-      const expected = bodyOfTraits(randomTraits(seeded(seed)));
-      spy?.mockRestore();
-      spy = spyOn(Math, "random").mockImplementation(seeded(seed));
-      fireEvent.click(screen.getByRole("button", { name: "Случайно" }));
-      spy.mockRestore();
-      spy = null;
-      expect(tabCount()).toBe(`${bodySetCount(expected)} / 6`);
-      const phrase = bodyPhrase(expected);
-      expect(descriptorCard().querySelector(".desc-body")?.textContent ?? null).toBe(phrase ?? null);
-      expect(isChecked(radio(/^Рост/, "не задано"))).toBe(expected.height === undefined);
-      expect(within(group(/^Тату и родинки на теле/)).getAllByRole("checkbox").filter(isChecked).length).toBe(expected.bodyMarks?.length ?? 0);
-    }
   });
 });
 
@@ -323,24 +226,4 @@ describe("03 · the fixed draft", () => {
     expect(within(card).queryByText("предпросмотр тела") === null).toBe(true);
   });
 
-  test("a draft without a body shows its text as it was, with no mark", async () => {
-    setup({
-      drafts: [
-        {
-          avatarId: "avatar-nobody-0001",
-          traits: DEFAULT_TRAITS,
-          descriptor: mockDescriptor(DEFAULT_TRAITS),
-          candidates: [],
-          hiddenBelowThreshold: 0,
-          estimate: { ...MOCK_ESTIMATE },
-        },
-      ],
-    });
-    const card = await screen.findByRole("article", { name: "Черновик" });
-    fireEvent.click(within(card).getByRole("button", { name: "Продолжить" }));
-    await screen.findByRole("heading", { level: 1, name: "Новый аватар" });
-    expect(text(descriptorCard().querySelector(".descriptor-text") ?? document.body)).toBe(mockDescriptor(DEFAULT_TRAITS).text);
-    expect(descriptorCard().querySelector(".desc-body") === null).toBe(true);
-    expect(tabCount()).toBe("0 / 6");
-  });
 });

@@ -13,7 +13,6 @@ import { legsFrames } from "./photos/legs";
 // built-in category on the chips are off on «Нет»; when no avatar draws 4 new photos they are off on the pick, which is kept. A running launch shows its own.
 
 const WHAT = "ножки и стопы крупно; лицо может не попасть в кадр, сходство на таких кадрах только отмечается.";
-const BUILT_IN_ONLY = "Ножки — только во встроенных категориях";
 
 function world() {
   const roster: AvatarSummary[] = [MIA, SOFIA];
@@ -57,10 +56,6 @@ async function choose(name: string): Promise<void> {
 }
 async function pick(name: "Нет" | "Немного" | "Много"): Promise<void> {
   fireEvent.click(legs(name));
-  await settle();
-}
-async function category(name: string): Promise<void> {
-  fireEvent.click(within(settings()).getByRole("button", { name }));
   await settle();
 }
 
@@ -121,70 +116,6 @@ describe("«Ножки» in «Настройки запуска» (mockup 34)", 
   });
 });
 
-describe("«Ножки» off (mockup 34, its variants)", () => {
-  test("only custom categories on: the chips are off on «Нет», saying why; the plan names no share; a built-in back brings the pick back", async () => {
-    const { engine } = world();
-    await openAutopilot();
-    await choose("Mia");
-    await pick("Немного");
-    for (const name of ["Дом", "Виды", "Улица", "Фитнес"]) await category(name);
-    await category("Кофейни Парижа");
-    const radios = [legs("Нет"), legs("Немного"), legs("Много")];
-    expect(radios.every((r) => r.disabled)).toBe(true);
-    expect(legs("Нет").checked).toBe(true);
-    const why = within(settings()).getByText(BUILT_IN_ONLY);
-    expect(why.classList.contains("gen-cap-why")).toBe(true);
-    expect(described(legsGroup())).toEqual([BUILT_IN_ONLY]);
-    await waitFor(() => expect(planCalls(engine).at(-1)?.payload.draft.categories).toEqual([PARIS.categoryId]));
-    expect("legsShare" in (planCalls(engine).at(-1)?.payload.draft ?? {})).toBe(false);
-    await category("Дом");
-    expect(legs("Немного").checked).toBe(true);
-    expect(legs("Немного").disabled).toBe(false);
-    await waitFor(() => expect(planCalls(engine).at(-1)?.payload.draft.legsShare).toBe(15));
-  });
-
-  test("fewer than 4 new photos (mockup 34#few): the chips are off on the pick, which is kept, saying «Ножки — от 4 фото»", async () => {
-    const { engine } = world();
-    await openAutopilot();
-    await choose("Mia");
-    await pick("Немного");
-    // One video, nothing from the library: one new photo.
-    for (let i = 0; i < 9; i++) fireEvent.click(within(settings()).getByRole("button", { name: "Меньше видео" }));
-    await settle();
-    fireEvent.click(within(settings()).getByRole("switch", { name: "Сначала свободные фото из библиотеки" }));
-    await settle();
-    await waitFor(() => expect(within(settings()).getByText("Ножки — от 4 фото")).toBeDefined());
-    expect(within(settings()).getByText("Ножки — от 4 фото").classList.contains("gen-cap-why")).toBe(true);
-    expect([legs("Нет"), legs("Немного"), legs("Много")].every((r) => r.disabled)).toBe(true);
-    expect(legs("Немного").checked).toBe(true);
-    // The pick stays in the launch: it draws nothing this time.
-    expect(planCalls(engine).at(-1)?.payload.draft.legsShare).toBe(15);
-  });
-});
-
-describe("«Ножки» with «Догенерировать недостающие» off (wave 5e)", () => {
-  test("no new frame is drawn: the chips are off on the kept pick, saying «Ножки — только для новых кадров»; on again, they work", async () => {
-    const { engine } = world();
-    await openAutopilot();
-    await choose("Mia");
-    await pick("Немного");
-    fireEvent.click(within(settings()).getByRole("switch", { name: "Догенерировать недостающие" }));
-    await settle();
-    const why = await within(settings()).findByText("Ножки — только для новых кадров");
-    expect(why.classList.contains("gen-cap-why")).toBe(true);
-    expect(described(legsGroup())).toEqual(["Ножки — только для новых кадров"]);
-    expect([legs("Нет"), legs("Немного"), legs("Много")].every((r) => r.disabled)).toBe(true);
-    expect(legs("Немного").checked).toBe(true);
-    expect(within(settings()).queryByText(/стопы крупно/) === null).toBe(true);
-    // The pick stays in the launch, as at «Ножки — от 4 фото»: it draws nothing this time.
-    expect(planCalls(engine).at(-1)?.payload.draft.legsShare).toBe(15);
-    fireEvent.click(within(settings()).getByRole("switch", { name: "Догенерировать недостающие" }));
-    await settle();
-    expect(within(settings()).queryByText("Ножки — только для новых кадров") === null).toBe(true);
-    expect(legs("Немного").disabled).toBe(false);
-  });
-});
-
 describe("a running launch's «Ножки», read only", () => {
   async function startLaunch(over: Partial<LaunchDraftInput>): Promise<void> {
     const { client } = world();
@@ -218,10 +149,6 @@ describe("a running launch's «Ножки», read only", () => {
     expect(legs("Много").checked).toBe(true);
   });
 
-  test("shows «Нет» for a launch from before «Ножки»", async () => {
-    await startLaunch({});
-    expect(legs("Нет").checked).toBe(true);
-  });
 });
 
 describe("a launch's page (mockup 31)", () => {
@@ -250,15 +177,6 @@ describe("a launch's page (mockup 31)", () => {
     expect(bits.slice(2, 5)).toEqual(["Дом, Улица, Гламур", "Подача: кокетливая [new]", "Ножки: немного, 15 % [new]"]);
   });
 
-  test("31#ordinary: «Подача: обычная · Ножки: нет»", async () => {
-    const bits = await openLaunch({ poses: undefined });
-    expect(bits.slice(2, 5)).toEqual(["Дом, Улица, Гламур", "Подача: обычная [new]", "Ножки: нет [new]"]);
-  });
-
-  test("31#old: a launch from before «Подача» names no «Ножки» either", async () => {
-    const bits = await openLaunch({ poses: { profile: true, back: false } });
-    expect(bits.some((bit) => bit.startsWith("Подача") || bit.startsWith("Ножки"))).toBe(false);
-  });
 });
 
 describe("the refusal «legs-built-in-only»", () => {

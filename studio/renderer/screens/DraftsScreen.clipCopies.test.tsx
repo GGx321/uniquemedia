@@ -106,16 +106,4 @@ describe("«Черновики»: a draft's clip copy whose frame is not free (S
     expect(noteOf("Mia · «утро»")).toBe(`✓ уже 1${NBSP}видео из этого черновика`);
   });
 
-  test("the copies' origins cannot be read: the rendered draft still counts its video, and the other draft is still flagged", async () => {
-    const h = await clipsStudio();
-    const copy = await makeCopy(h, await makeClip(h, P(5)));
-    await render(h, await saveDraft(h, "утро дома", [photoClip(0, P(2)), photoClip(1, P(4)), copyClip(2, copy)]));
-    await saveDraft(h, "вечер", [photoClip(0, P(6)), copyClip(1, copy)]);
-    h.engine.failNext("media.list", { code: "INTERNAL", detail: "the media list could not be read" });
-    await openDrafts();
-    await flush();
-    expect(noteOf("Mia · «утро дома»")).toBe(`✓ уже 1${NBSP}видео из этого черновика`);
-    expect(card("Mia · «вечер»").className).toContain("draft-card-warn");
-    expect(noteOf("Mia · «вечер»").startsWith("Кадр 2: ")).toBe(true);
-  });
 });

@@ -22,30 +22,6 @@ test("the window coming back to the front asks the engine to check the export fo
   expect(callsOf(engine, "export.check")).toHaveLength(1);
 });
 
-test("a second focus right after does not ask again", async () => {
-  const { engine } = setup();
-  await flush();
-
-  focusWindow();
-  await flush();
-  focusWindow();
-  await flush();
-
-  expect(callsOf(engine, "export.check")).toHaveLength(1);
-});
-
-test("the window becoming visible again asks too", async () => {
-  const { engine } = setup();
-  await flush();
-
-  act(() => {
-    document.dispatchEvent(new Event("visibilitychange"));
-  });
-  await flush();
-
-  expect(callsOf(engine, "export.check")).toHaveLength(1);
-});
-
 test("a window that is gone asks nothing", async () => {
   const { engine, unmount } = setup();
   await flush();

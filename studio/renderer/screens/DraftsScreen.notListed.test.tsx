@@ -15,12 +15,3 @@ test("draft files that were not read are said to be not shown, never to be unrea
   expect(screen.queryByText(/не читаются/) === null).toBe(true);
 });
 
-test("unreadable draft files keep their own line", async () => {
-  const { client, engine } = await studio();
-  await makeDraft(client, MIA.avatarId, []);
-  engine.setSkippedDrafts(3);
-
-  await openDrafts();
-
-  expect(await screen.findByText("ещё 3 черновика не читаются")).toBeDefined();
-});

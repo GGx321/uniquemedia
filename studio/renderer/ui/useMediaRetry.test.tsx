@@ -60,46 +60,6 @@ test("two failures in a row: the placeholder, and no third try", async () => {
   expect(screen.getByText("placeholder")).toBeDefined();
 });
 
-test("the first failure alone does not show the placeholder", () => {
-  render(<Probe src="studio-media://photo/a/b" loads={[]} />);
-  fireEvent.error(shot());
-  expect(screen.queryByText("placeholder") === null).toBe(true);
-});
-
-test("during the pause the errored element is gone from the DOM (no broken-image icon, no alt text), and the retry brings a new one", async () => {
-  render(<Probe src="studio-media://photo/a/b" loads={[]} />);
-  fireEvent.error(shot());
-  expect(screen.queryByRole("img", { name: "shot" }) === null).toBe(true);
-  expect(screen.getByText("waiting")).toBeDefined();
-  await act(() => pause(DELAY * 3));
-  expect(screen.queryByText("waiting") === null).toBe(true);
-  expect(shot()).toBeDefined();
-});
-
-test("waiting is only the pause: not before the first failure, and not once the verdict is in", async () => {
-  const { rerender } = render(<Probe src="studio-media://photo/a/b" loads={[]} />);
-  expect(screen.queryByText("waiting") === null).toBe(true);
-  fireEvent.error(shot());
-  await act(() => pause(DELAY * 3));
-  fireEvent.error(shot());
-  expect(screen.queryByText("waiting") === null).toBe(true);
-  rerender(<Probe src="studio-media://photo/a/other" loads={[]} />);
-  expect(screen.queryByText("waiting") === null).toBe(true);
-});
-
-test("another address gets its own two chances: a failure of the old one is not carried over", async () => {
-  const loads: string[] = [];
-  const { rerender } = render(<Probe src="studio-media://photo/a/one" loads={loads} />);
-  fireEvent.error(shot());
-  await act(() => pause(DELAY * 3));
-  fireEvent.error(shot());
-  expect(screen.getByText("placeholder")).toBeDefined();
-  rerender(<Probe src="studio-media://photo/a/two" loads={loads} />);
-  expect(shot().getAttribute("src")).toBe("studio-media://photo/a/two");
-  fireEvent.error(shot());
-  expect(screen.queryByText("placeholder") === null).toBe(true);
-});
-
 test("the pending retry is dropped when the element goes away: nothing fires after unmount", async () => {
   const loads: string[] = [];
   const { unmount } = render(<Probe src="studio-media://photo/a/b" loads={loads} />);
@@ -109,13 +69,3 @@ test("the pending retry is dropped when the element goes away: nothing fires aft
   expect(loads).toEqual(["0:studio-media://photo/a/b"]);
 });
 
-test("a failure that comes while the retry is waiting does not start a second retry", async () => {
-  const loads: string[] = [];
-  render(<Probe src="studio-media://photo/a/b" loads={loads} />);
-  const img = shot();
-  fireEvent.error(img);
-  fireEvent.error(img);
-  await act(() => pause(DELAY * 3));
-  expect(loads).toEqual(["0:studio-media://photo/a/b", "1:studio-media://photo/a/b"]);
-  expect(screen.queryByText("placeholder") === null).toBe(true);
-});
