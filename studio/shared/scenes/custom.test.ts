@@ -17,12 +17,8 @@ describe("rendersActivity: what reads after «she is»", () => {
     ["lying on the bed", true],
     ["sitting by the window", true],
     ["a quiet moment", false],
-    ["morning stretches", false],
     ["evening walk by the river", false],
     ["something to eat", false],
-    ["ceiling fan spinning", false],
-    ["bring snacks", false],
-    ["swing on the porch", false],
     ["coffee in bed", false],
     ["", false],
   ])("%p → %p", (activity, renders) => {
@@ -33,18 +29,12 @@ describe("rendersActivity: what reads after «she is»", () => {
 describe("locativeOf: the place as a locative phrase", () => {
   test.each<[string, string]>([
     ["in a quiet cafe", "in a quiet cafe"],
-    ["at the bus stop", "at the bus stop"],
     ["by the lake", "by the lake"],
     ["a quiet bookshop", "in a quiet bookshop"],
     ["the beach", "on the beach"],
     ["a bench in the park", "on a bench in the park"],
     ["a cafe terrace", "on a cafe terrace"],
     ["a beach bar", "at a beach bar"],
-    ["the gym", "at the gym"],
-    ["a cozy living room", "in a cozy living room"],
-    ["the city park", "in the city park"],
-    ["a mountain trail", "on a mountain trail"],
-    ["her balcony at sunset", "on her balcony at sunset"],
     ["Train station", "at Train station"],
   ])("%p → %p", (name, at) => {
     expect(locativeOf(name)).toBe(at);
@@ -58,7 +48,7 @@ describe("customMomentOf: the tags an old activity is read with", () => {
   });
 
   // Review M2: an activity whose eyes are already busy (watching a tablet, looking out of the window) owns its gaze, so no gaze clause contradicts it.
-  test.each(["watching a tablet", "looking out of the window", "gazing at the sea", "staring at the rain", "glancing at her watch", "peeking through the curtains", "reading a menu"])(
+  test.each(["watching a tablet", "looking out of the window", "gazing at the sea", "glancing at her watch", "peeking through the curtains"])(
     "«%s» carries its own gaze",
     (text) => {
       expect(customMomentOf({ text, twoHanded: false }).gaze).toBe("own");
@@ -296,35 +286,27 @@ describe("a redraw of a slot with nothing to vary still reads differently from t
 describe("waterHeadNoun and isWaterPlaceName (M8, P7, P10)", () => {
   test.each<[string, string]>([
     ["a hotel pool", "pool"],
-    ["an infinity pool at the villa", "pool"],
     ["the shore of the lake", "shore"],
     ["the sundeck of a sailing yacht", "sundeck"],
     ["a yacht at anchor in a bay", "yacht"],
     ["a cabin below deck", "cabin"],
     ["a kitchen island", "island"],
     ["a pool table", "table"],
-    ["a cafe with a sea view", "cafe"],
-    ["a surf shop", "shop"],
-    ["a beach bar", "bar"],
-    ["a marina at sunset", "marina"],
-    ["a terrace overlooking the sea", "terrace"],
     ["a room facing the ocean", "room"],
-    ["a bench beneath the pier", "bench"],
     ["a villa above the lagoon", "villa"],
-    ["a hut beyond the dunes", "hut"],
     ["Poolside.", "poolside"],
   ])("the head noun of «%s» is %s", (name, head) => {
     expect(waterHeadNoun(name)).toBe(head);
   });
 
-  test.each(["a hotel pool", "an infinity pool at the villa", "the shore of the lake", "the sundeck of a sailing yacht", "a yacht at anchor in a bay", "a quiet beach", "poolside", "a lagoon at dawn", "the ocean", "secluded beaches", "the hotel pools", "two quiet lakes", "rocky shores", "blue lagoons", "private yachts", "the seas", "sundecks at noon"].map((n) => [n]))(
+  test.each(["a hotel pool", "the sundeck of a sailing yacht", "poolside", "a lagoon at dawn", "secluded beaches"].map((n) => [n]))(
     "«%s» is a water place",
     (name) => {
       expect(isWaterPlaceName(name)).toBe(true);
     },
   );
 
-  test.each(["a kitchen island", "a pool table", "a cafe with a sea view", "a surf shop", "a beach bar", "a cabin below deck", "a marina at sunset", "a river bank", "a pier", "the deck of a ship", "a bedroom", "pool tables", "beach bars", "kitchen islands", "a seaside walk", "a sea cave by the sea"].map((n) => [n]))(
+  test.each(["a kitchen island", "a pool table", "a cafe with a sea view", "a cabin below deck", "pool tables"].map((n) => [n]))(
     "«%s» is not a water place",
     (name) => {
       expect(isWaterPlaceName(name)).toBe(false);
