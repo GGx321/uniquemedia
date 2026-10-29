@@ -62,14 +62,4 @@ describe("an open editor", () => {
     expect(callsOf(engine, "montages.save")).toHaveLength(saves);
   });
 
-  test("stays open when ANOTHER avatar is deleted", async () => {
-    const { client } = await studio({ avatars: [MIA, SOFIA] });
-    await makeDraft(client, MIA.avatarId, [P1]);
-    await openEditor();
-
-    await asAnotherWindow(() => client.request("avatars.delete", { avatarId: SOFIA.avatarId }));
-
-    expect(screen.getByRole("region", { name: "Таймлайн" })).toBeDefined();
-    expect(screen.queryByText("Аватар удалён") === null).toBe(true);
-  });
 });

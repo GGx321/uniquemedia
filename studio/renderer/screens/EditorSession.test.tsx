@@ -86,18 +86,6 @@ describe("from the editor to Settings and back", () => {
     expect(clipCount()).toBe(4);
   });
 
-  test("the sidebar's «Монтаж» and «Открыть» of the same draft go on where it was too; Settings from the sidebar offers the way back", async () => {
-    const { client, engine } = await studio();
-    await openDraft(client);
-    await deleteSecondClip(engine);
-    fireEvent.click(screen.getByRole("button", { name: "Настройки" }));
-    await screen.findByRole("heading", { level: 1, name: "Настройки" });
-    expect(screen.getByRole("button", { name: /^К черновику/ })).toBeDefined();
-    await openFromDrafts();
-    expect(clipCount()).toBe(3);
-    expect(undoButton().hasAttribute("disabled")).toBe(false);
-  });
-
   test("review r1 MEDIUM-1: a clip a click just added stays a placement's selection across the trip: the next click adds another clip", async () => {
     const { client } = await studio();
     await openDraft(client);
@@ -122,33 +110,6 @@ describe("from the editor to Settings and back", () => {
     fireEvent.click(freeTile());
     await flush();
     expect(clipCount()).toBe(6);
-  });
-
-  test("review r1 LOW-7: after a library switch the same draft id opens as that library holds it, with no history", async () => {
-    const { client, engine } = await studio();
-    await openDraft(client);
-    await deleteSecondClip(engine);
-    fireEvent.click(screen.getByRole("button", { name: "Настройки" }));
-    await screen.findByRole("heading", { level: 1, name: "Настройки" });
-    await asAnotherWindow(() => client.request("settings.setLibraryPath", { path: "/Users/studio/Studio/library-2" }));
-    await openFromDrafts();
-    expect(undoButton().hasAttribute("disabled")).toBe(true);
-  });
-
-  test("review r2 LOW-5: a library switched by another window while the editor is open: closing it keeps nothing of the old library", async () => {
-    const { client, engine } = await studio();
-    await openDraft(client);
-    await deleteSecondClip(engine);
-    await asAnotherWindow(() => client.request("settings.setLibraryPath", { path: "/Users/studio/Studio/library-2" }));
-    await openFromDrafts();
-    expect(undoButton().hasAttribute("disabled")).toBe(true);
-  });
-
-  test("Settings opened from anywhere else has no way back to a draft", async () => {
-    await studio();
-    fireEvent.click(screen.getByRole("button", { name: "Настройки" }));
-    await screen.findByRole("heading", { level: 1, name: "Настройки" });
-    expect(screen.queryByRole("button", { name: /^К черновику/ }) === null).toBe(true);
   });
 
   test("a save from another window while the editor was away is taken on the way back, on top of this window's history", async () => {

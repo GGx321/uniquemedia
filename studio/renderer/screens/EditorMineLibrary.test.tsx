@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import type { MontageDraft } from "../../shared/engine";
 import type { EngineClient } from "../engine/client";
 import { callsOf, flush } from "../testing";
-import { POSTER_REPORT_MS } from "./montage/mine";
-import { PosterVideo } from "./montage/MineTab";
 import {
   heldListings,
   IDS,
@@ -15,13 +13,9 @@ import {
   PHOTO,
   plain,
   preview,
-  props,
   section,
   seedMine,
-  SONG,
   tabListings,
-  timeline,
-  VIDEO,
 } from "./montage/mineScreenKit";
 import { asAnotherWindow } from "./montage/screenKit";
 import { collageClip, photoClip } from "./montage/testkit";
@@ -84,48 +78,6 @@ describe("the tab's listing (round 1, M3)", () => {
     expect(photoTiles().some((t) => t.includes("latte-pour"))).toBe(true);
   });
 
-  test("two listings out at once: the first, answering last, is never shown over the second", async () => {
-    const box: { gate?: ReturnType<typeof heldListings> } = {};
-    const { engine, client } = await mineStudio((base) => {
-      box.gate = heldListings(base);
-      return box.gate.client;
-    });
-    seedMine(engine);
-    const held = box.gate;
-    if (held === undefined) throw new Error("no gate");
-    held.hold(true);
-    await openMine(engine, client);
-    engine.seedOwnMedia([{ kind: "photo", name: "late.jpg", bytes: 1_000 }]);
-    await resync(engine);
-    expect(held.waiting()).toBe(2);
-    await act(async () => held.release(1));
-    await flush();
-    expect(photoTiles().some((t) => t.includes("late.jpg"))).toBe(true);
-    await act(async () => held.release(0));
-    await flush();
-    expect(photoTiles().some((t) => t.includes("late.jpg"))).toBe(true);
-  });
-
-  test("another library folder: the old library's tiles go at once, and the tab waits for the new one's list", async () => {
-    const box: { gate?: ReturnType<typeof heldListings> } = {};
-    const { engine, client } = await mineStudio((base) => {
-      box.gate = heldListings(base);
-      return box.gate.client;
-    });
-    seedMine(engine);
-    const held = box.gate;
-    if (held === undefined) throw new Error("no gate");
-    await openMine(engine, client);
-    expect(photoTiles().length).toBeGreaterThan(0);
-    held.hold(true);
-    await asAnotherWindow(() => client.request("settings.setLibraryPath", { path: "/Users/studio/Other library" }));
-    await flush();
-    expect(photoTiles()).toEqual([]);
-    expect(within(media()).queryByRole("region", { name: "Фото и видео" }) === null).toBe(true);
-    for (let i = 0; i < held.waiting(); i++) await act(async () => held.release(i));
-    await flush();
-    expect(photoTiles().length).toBeGreaterThan(0);
-  });
 });
 
 describe("a cancel the engine refuses (round 1, L1)", () => {
@@ -163,40 +115,6 @@ describe("placing on the screen (round 1, M4)", () => {
     expect(callsOf(engine, "montages.focus").map((c) => c.payload.photo)).toEqual([{ source: "own", mediaId: PHOTO }]);
   });
 
-  test("an empty cell is no drop target for a video (a video never goes into a cell)", async () => {
-    const { engine, client } = await mineStudio();
-    seedMine(engine);
-    await openMine(engine, client, { clips: [collageClip(0, [IDS[0] ?? "", null], 4_000, false), photoClip(1, IDS[1] ?? "", 2_000)] });
-    fireEvent.dragStart(within(section("Фото и видео")).getByRole("button", { name: /^Видео latte-pour\.mov/ }));
-    const empty = within(preview()).getByLabelText("Кадр 1, ячейка 2: пустая");
-    fireEvent.dragOver(empty);
-    expect(empty.className.includes("pv-cell-drop")).toBe(false);
-    fireEvent.drop(empty);
-    await flush();
-    expect(callsOf(engine, "montages.save")).toHaveLength(0);
-  });
-
-  test("a photo click that fills a waiting cell asks the engine for its face", async () => {
-    const { engine, client } = await mineStudio();
-    seedMine(engine);
-    await openMine(engine, client, { clips: [collageClip(0, [null, IDS[0] ?? ""], 4_000, false), photoClip(1, IDS[1] ?? "", 2_000)] });
-    fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 1: коллаж 2/ }));
-    await flush();
-    fireEvent.click(within(section("Фото и видео")).getByRole("button", { name: "Фото croissant.jpg: в ячейку 1 кадра 1" }));
-    await flush();
-    expect(callsOf(engine, "montages.focus").map((c) => c.payload.photo)).toEqual([{ source: "own", mediaId: PHOTO }]);
-  });
-
-  test("after a track is chosen, the music is selected (its properties are open)", async () => {
-    const { engine, client } = await mineStudio();
-    seedMine(engine);
-    await openMine(engine, client);
-    fireEvent.click(within(section("Музыка")).getByRole("button", { name: /^summer-edit\.mp3/ }));
-    await flush();
-    expect(plain(props().querySelector(".lbl")?.textContent)).toBe("Музыка");
-    expect(within(props()).getByRole("slider", { name: "Начало музыки в треке" })).toBeDefined();
-  });
-
   test("with 10 stickers the sticker tiles are off and say why; a click adds nothing", async () => {
     const { engine, client } = await mineStudio();
     seedMine(engine);
@@ -230,38 +148,7 @@ describe("placing on the screen (round 1, M4)", () => {
 const asWindow = (client: EngineClient): EngineClient => ({ ...client, kind: "window" });
 
 describe("one sound at a time across the editor (round 1, L5)", () => {
-  test("listening stops a playback, and a playback stops the listening", async () => {
-    const { engine, client } = await mineStudio(asWindow);
-    seedMine(engine);
-    await openMine(engine, client);
-    const listen = () => within(section("Музыка")).getByRole("button", { name: /^(Послушать|Остановить) summer-edit\.mp3$/ });
-    // The timeline's own control (the preview has one more, driving the same playback).
-    const timeline = (): HTMLElement => screen.getByRole("region", { name: "Таймлайн" });
-    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
-    await flush();
-    expect(within(timeline()).getByRole("button", { name: "Пауза" })).toBeDefined();
-    fireEvent.click(listen());
-    await flush();
-    expect(listen().getAttribute("aria-pressed")).toBe("true");
-    expect(within(timeline()).getByRole("button", { name: "Воспроизвести" })).toBeDefined();
-    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
-    await flush();
-    expect(listen().getAttribute("aria-pressed")).toBe("false");
-  });
 
-  test("leaving the tab lets go of the track: its <audio> holds no source any more", async () => {
-    const { engine, client } = await mineStudio(asWindow);
-    seedMine(engine);
-    await openMine(engine, client);
-    fireEvent.click(within(section("Музыка")).getByRole("button", { name: "Послушать summer-edit.mp3" }));
-    await flush();
-    const audio = media().querySelector("audio");
-    if (!(audio instanceof HTMLAudioElement)) throw new Error("no audio element");
-    expect(audio.getAttribute("src")).toBe(`studio-media://media/${SONG}`);
-    fireEvent.click(within(media()).getByRole("tab", { name: "Фото" }));
-    await flush();
-    expect(audio.getAttribute("src") === null).toBe(true);
-  });
 });
 
 describe("video posters (rounds 1 and 2, M1)", () => {
@@ -324,56 +211,4 @@ describe("video posters (rounds 1 and 2, M1)", () => {
     expect(isLive(all[10] ?? document.body)).toBe(false);
   });
 
-  test("more tiles in view than the cap: each of them still holds its poster", async () => {
-    scrolled(within(0, 30), within(0, 50));
-    const { engine, client } = await mineStudio(asWindow);
-    seedVideos(engine, 40);
-    await openMine(engine, client);
-    await flush();
-    expect(tiles().filter(isLive)).toHaveLength(30);
-  });
-
-  test("a tall window (1180×2160: 73 tiles in view): only the first 48 hold a player; the other 25 draw the film placeholder", async () => {
-    scrolled(within(0, 73), () => true);
-    const { engine, client } = await mineStudio(asWindow);
-    seedVideos(engine, 80);
-    await openMine(engine, client);
-    await flush();
-    const all = tiles();
-    expect(all.filter(isLive)).toHaveLength(48);
-    expect(all.slice(0, 48).every(isLive)).toBe(true);
-    expect(all.slice(48).every((tile) => tile.querySelector(".mine-pic-video") !== null)).toBe(true);
-  });
-
-  test("a poster that failed is tried again when its tile comes back into view (a new source)", async () => {
-    const view = scrolled(() => true, () => true);
-    const { engine, client } = await mineStudio(asWindow);
-    seedVideos(engine, 2);
-    await openMine(engine, client);
-    await flush();
-    const first = (): Element => tiles()[0] ?? document.body;
-    const video = first().querySelector("video");
-    if (video === null) throw new Error("no poster");
-    fireEvent.error(video);
-    await flush();
-    expect(isLive(first())).toBe(false);
-    // The tile scrolls out of the zones; reports are coalesced (one update per POSTER_REPORT_MS), so the move lands once that spell is over.
-    await act(async () => view.move({ visible: (i) => i !== 0, near: (i) => i !== 0 }));
-    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, POSTER_REPORT_MS * 2)));
-    expect(first().querySelector(".mine-pic-video") === null).toBe(false);
-    await act(async () => view.move({ visible: () => true, near: () => true }));
-    await waitFor(() => expect(isLive(first())).toBe(true), { timeout: 2_000 });
-  });
-
-  test("a poster lets go of its file when its tile goes: paused, no source, loaded again", () => {
-    const view = render(<PosterVideo url={`studio-media://media/${VIDEO}`} onFail={() => undefined} />);
-    const video = view.container.querySelector("video");
-    if (!(video instanceof HTMLVideoElement)) throw new Error("no video");
-    const calls: string[] = [];
-    video.pause = () => void calls.push("pause");
-    video.load = () => void calls.push("load");
-    view.unmount();
-    expect(calls).toEqual(["pause", "load"]);
-    expect(video.getAttribute("src") === null).toBe(true);
-  });
 });

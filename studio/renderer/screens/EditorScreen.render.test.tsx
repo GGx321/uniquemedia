@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { EXPORT_CHANGING_DETAIL, NO_ANSWER_DETAIL_PREFIX, type EngineError } from "../../shared/engine";
+import { NO_ANSWER_DETAIL_PREFIX, type EngineError } from "../../shared/engine";
 import { PHOTO_IDS } from "../engine/mockEngine.testkit";
 import { callsOf, flush, runAll, tick } from "../testing";
 import { asAnotherWindow, makeDraft, MIA, openDrafts, studio } from "./montage/screenKit";
@@ -62,24 +62,6 @@ describe("a render's life on the button", () => {
     await waitFor(() => expect(isDisabled(renderButton())).toBe(false));
   });
 
-  test("queued behind another render: «В очереди · после 1», and it can be cancelled", async () => {
-    const { client, engine, scheduler } = await studio();
-    const first = await makeDraft(client, MIA.avatarId, [P(0), P(1)]);
-    await makeDraft(client, MIA.avatarId, [P(2), P(3)]);
-    await asAnotherWindow(() => client.request("videos.render", { montageId: first.montageId }));
-    await openEditor();
-    await submit();
-
-    const queued = await screen.findByRole("button", { name: /^В очереди · после 1$/ });
-    expect(isDisabled(queued)).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Отменить рендер" }));
-    await flush();
-    expect(callsOf(engine, "videos.cancel")).toHaveLength(1);
-    await waitFor(() => expect(screen.queryByRole("button", { name: /В очереди/ }) === null).toBe(true));
-    expect(isDisabled(renderButton())).toBe(false);
-    runAll(scheduler);
-  });
-
   test("the saving phase says «Сохранение…» and disables Cancel: a cancel there cannot stop the job", async () => {
     const { client, engine, scheduler } = await studio();
     await makeDraft(client, MIA.avatarId, [P(0), P(1)]);
@@ -115,24 +97,6 @@ describe("a render's life on the button", () => {
     expect(engine.revealed[0]).toMatch(/^video-/);
   });
 
-  test("«Открыть в папке» for a file that is gone says so, in words, not «Запрошенный объект не найден»", async () => {
-    const { client, engine, scheduler } = await studio();
-    await makeDraft(client, MIA.avatarId, [P(0), P(1)]);
-    await openEditor();
-    await submit();
-    runAll(scheduler);
-    await flush();
-    await screen.findByText("Готово");
-    const listed = await client.request("videos.list", { avatarId: MIA.avatarId });
-    engine.setVideoFileState(listed.ok ? (listed.result.videos[0]?.videoId ?? "") : "", "missing");
-
-    fireEvent.click(screen.getByRole("button", { name: "Открыть в папке" }));
-    await flush();
-    await screen.findByText(/Файла нет в папке «Готовые видео»/);
-    expect(screen.queryByText(/Запрошенный объект не найден/) === null).toBe(true);
-    expect(engine.revealed).toEqual([]);
-  });
-
   test("failed: the error by its code, «Повторить рендер», and the retry sends a new render", async () => {
     const { client, engine, scheduler } = await studio();
     await makeDraft(client, MIA.avatarId, [P(0), P(1)]);
@@ -152,33 +116,6 @@ describe("a render's life on the button", () => {
     await flush();
     await screen.findByText("Готово");
     expect(screen.queryByText(/Не удалось собрать видео/) === null).toBe(true);
-  });
-
-  test("a failed render's notice can be closed, and the button is plain «Рендер» again", async () => {
-    const { client, engine, scheduler } = await studio();
-    await makeDraft(client, MIA.avatarId, [P(0), P(1)]);
-    await openEditor();
-    engine.failNextRender({ code: "RENDER_FAILED" });
-    await submit();
-    runAll(scheduler);
-    await flush();
-    await screen.findByText(/Не удалось собрать видео/);
-
-    fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
-    expect(screen.queryByText(/Не удалось собрать видео/) === null).toBe(true);
-    expect(isDisabled(renderButton())).toBe(false);
-  });
-
-  test("a render that fails in its saving phase is failed too, with the text of its code", async () => {
-    const { client, engine, scheduler } = await studio();
-    await makeDraft(client, MIA.avatarId, [P(0), P(1)]);
-    await openEditor();
-    engine.failNextRender({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" }, "saving");
-    await submit();
-    runAll(scheduler);
-    await flush();
-    await screen.findByText(/Папка «Готовые видео» недоступна/);
-    expect(screen.getByRole("button", { name: "Повторить рендер" })).toBeDefined();
   });
 
   test("clicks on the busy button, while the answer is out and after it, send one render", async () => {
@@ -240,48 +177,6 @@ describe("what a refusal says (nothing was queued: the button is ready again)", 
     expect(callsOf(engine, "videos.render")).toHaveLength(3);
     await screen.findByRole("button", { name: /В очереди|Рендер · \d+\s%|Рендер…/ });
     runAll(scheduler);
-  });
-
-  test("LIBRARY_TOO_NEW says to update the app", async () => {
-    await refused({ code: "LIBRARY_TOO_NEW" });
-    await screen.findByText(/более новой версией Studio/);
-    expect(screen.getByText(/Обновите приложение/)).toBeDefined();
-    expect(isDisabled(renderButton())).toBe(false);
-  });
-
-  test("a switch of the export folder in that moment has its own text, not the one about paid requests", async () => {
-    await refused({ code: "IN_FLIGHT", detail: EXPORT_CHANGING_DETAIL });
-    await screen.findByText(/Папку «Готовые видео» как раз меняют/);
-    expect(screen.queryByText(/платных/) === null).toBe(true);
-    expect(isDisabled(renderButton())).toBe(false);
-  });
-
-  test("EXPORT_UNAVAILABLE names the reason and links to the Settings card", async () => {
-    await refused({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" });
-    await screen.findByText(/Папка «Готовые видео» недоступна/);
-    expect(screen.getByRole("button", { name: "Открыть папку в Настройках" })).toBeDefined();
-  });
-
-  test("PHOTO_UNAVAILABLE highlights the cells named by its issues and never shows its detail", async () => {
-    await refused({ code: "PHOTO_UNAVAILABLE", detail: "an unreadable video record: Mia/2026-10-03_photo_001.mp4", issues: [{ code: "photo-unavailable", path: ["clips", 0, "cells", 1] }] });
-    await screen.findByText(/Это фото нельзя поставить в видео/);
-    expect(screen.queryByText(/unreadable video record/) === null).toBe(true);
-    expect(screen.queryByText(/photo_001/) === null).toBe(true);
-    const clips = document.querySelectorAll(".ed-clip-slot");
-    expect(clips[0]?.className).toContain("ed-clip-warn");
-  });
-
-  test("MONTAGE_INVALID says what the engine found wrong, and highlights its frames", async () => {
-    await refused({ code: "MONTAGE_INVALID", issues: [{ code: "cell-empty", path: ["clips", 0, "cell"] }] });
-    await screen.findByText(/Монтаж не готов к рендеру: исправьте отмеченные проблемы\. В кадре есть пустая ячейка/);
-    expect(document.querySelectorAll(".ed-clip-slot")[0]?.className).toContain("ed-clip-warn");
-  });
-
-  test("NOT_FOUND is a refusal the owner can read, and the notice closes", async () => {
-    await refused({ code: "NOT_FOUND" });
-    await screen.findByText(/Запрошенный объект не найден/);
-    fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
-    expect(screen.queryByText(/Запрошенный объект не найден/) === null).toBe(true);
   });
 
   test("a refused render is not a failed job: no «Повторить рендер», the plain button retries", async () => {

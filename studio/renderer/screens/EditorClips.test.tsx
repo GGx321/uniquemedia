@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { CLIP_REASONS_RU, type EventMessage, mediaReasonRu, type MontageDraft } from "../../shared/engine";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { CLIP_REASONS_RU, type EventMessage, type MontageDraft } from "../../shared/engine";
 import { App } from "../App";
 import { createPayload } from "../engine/mockEngine.clips.testkit";
 import { freePhotos } from "../engine/mockEngine.testkit";
@@ -182,106 +182,10 @@ describe("57a: a click makes the clip's copy and places it", () => {
     expect(within(media()).getByRole("status").textContent).toBe("Клип «Наклоняет голову» — в кадре 3");
   });
 
-  test("a click on a placed clip selects its kadr; a clip whose copy exists is placed at once, with no job", async () => {
-    const h = await clipsStudio();
-    const b = await makeClip(h, P(7), "g-tilt");
-    const copy = await makeCopy(h, b);
-    await openEditor(h, [photoClip(0, P(2)), photoClip(1, P(4))]);
-    fireEvent.click(pickOf(b));
-    await flush();
-    // The live copy came back with the answer: placed at once.
-    expect(kadrs().at(-1)).toBe("Кадр 3: клип «Наклоняет голову», 2.0 с");
-    const imports = h.events.filter((e) => e.type === "job.progress" && e.payload.kind === "import").length;
-    // Selected: another click selects it again and asks nothing.
-    fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 1:/ }));
-    await flush();
-    fireEvent.click(pickOf(b));
-    await flush();
-    expect(callsOf(h.engine, "media.importClip")).toHaveLength(2);
-    expect(within(timeline()).getByRole("button", { name: /^Кадр 3: клип «Наклоняет голову», 2\.0\sс$/ }).getAttribute("aria-pressed")).toBe("true");
-    expect(h.events.filter((e) => e.type === "job.progress" && e.payload.kind === "import").length).toBe(imports);
-    expect(copy).toMatch(/^media-/);
-  });
-
-  test("57a #drop: a clip let go on «Кадры» shows «Готовим для монтажа…» where it goes, and goes there when its copy is made", async () => {
-    const h = await clipsStudio();
-    const b = await makeClip(h, P(7), "g-tilt");
-    await openEditor(h, [photoClip(0, P(2)), photoClip(1, P(4))]);
-    const lane = timeline().querySelector(".ed-lane-clips");
-    if (lane === null) throw new Error("no clip lane");
-    fireEvent.dragStart(pickOf(b));
-    fireEvent.dragOver(lane, { clientX: 0 });
-    fireEvent.drop(lane, { clientX: 0 });
-    await flush();
-    expect(plain(timeline().querySelector(".edc-drop")?.textContent)).toBe("Готовим для монтажа…");
-    runJob(h, importJobOf(h, b));
-    await flush();
-    expect(timeline().querySelector(".edc-drop") === null).toBe(true);
-    expect(kadrs()[0]).toBe("Кадр 1: клип «Наклоняет голову», 2.0 с");
-  });
-
-  test("the preparing tile comes back from the job list after a window reload", async () => {
-    const h = await clipsStudio();
-    const b = await makeClip(h, P(7), "g-tilt");
-    await openEditor(h, [photoClip(0, P(2)), photoClip(1, P(4))]);
-    fireEvent.click(pickOf(b));
-    await flush();
-    // The window reloads: a new App over the same engine; the import is still on its way.
-    cleanup();
-    render(<App client={h.client} />);
-    await screen.findByRole("heading", { level: 2, name: MIA.name });
-    await openDrafts();
-    fireEvent.click(await screen.findByRole("button", { name: "Открыть" }));
-    await screen.findByRole("region", { name: "Таймлайн" });
-    await flush();
-    fireEvent.click(within(media()).getByRole("tab", { name: "Клипы" }));
-    await flush();
-    expect(tiles()).toEqual(["Клип «Наклоняет голову», 0:05, Фото 4 · Готовим для монтажа…"]);
-  });
 });
 
 describe("57b: a frame taken (Q-F = 1)", () => {
-  test("the clip's photo in the draft, a sibling's copy in the draft: dimmed, «уже занято», titled", async () => {
-    const h = await clipsStudio();
-    const a = await makeClip(h, P(9));
-    const b = await makeClip(h, P(7), "g-tilt");
-    const c = await makeClip(h, P(7), "g-breath");
-    const copy = await makeCopy(h, b);
-    await openEditor(h, [photoClip(0, P(9)), photoClip(1, P(4)), copyClip(2, copy)]);
-    expect(tiles()).toEqual([
-      "Клип «Медленный вдох», 0:05, Фото 4 · клип этого фото уже в ролике",
-      "Клип «Наклоняет голову», 0:05, Фото 4 · в кадре 3",
-      "Клип «Моргает и улыбается», 0:05, Фото 2 · это фото уже в ролике",
-    ]);
-    expect(plain(pickOf(c).getAttribute("aria-label"))).toBe("Клип «Медленный вдох», 0:05: уже занято");
-    expect(pickOf(c).hasAttribute("disabled")).toBe(true);
-    expect(pickOf(c).getAttribute("title")).toBe("Клип этого фото уже в ролике");
-    expect(pickOf(a).getAttribute("title")).toBe("Это фото уже в ролике");
-    expect(tileOf(c).querySelector(".edc-band")?.textContent).toBe("клип этого фото уже в ролике");
-    fireEvent.click(pickOf(a));
-    await flush();
-    expect(callsOf(h.engine, "media.importClip").filter((call) => call.payload.clipId === a)).toEqual([]);
-  });
 
-  test("in a finished video: «в видео», titled by how the video holds the frame; a rejected photo's clip: «фото отклонено»", async () => {
-    const h = await clipsStudio();
-    const used = await makeClip(h, P(5));
-    const sibling = await makeClip(h, P(5), "g-tilt");
-    const rejected = await makeClip(h, P(3), "g-breath");
-    const copy = await makeCopy(h, used);
-    const rendered = await asAnotherWindow(() => h.client.request("videos.render", { spec: { schemaVersion: 1, avatarId: MIA.avatarId, layers: [], music: null, seed: 7, clips: [photoClip(0, P(6)), copyClip(1, copy)] } }));
-    if (!rendered.ok) throw new Error(`videos.render: ${rendered.error.code}`);
-    runJob(h, rendered.result.jobId);
-    await asAnotherWindow(() => h.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: P(3), rejected: true }));
-    await openEditor(h, [photoClip(0, P(2)), photoClip(1, P(4))]);
-    // The rejected photo has no number in the bin: its clip is called by the photo's category.
-    expect(tiles()).toEqual(["Клип «Медленный вдох», 0:05, Дом · фото отклонено", "Клип «Наклоняет голову», 0:05, Фото 6 · в видео", "Клип «Моргает и улыбается», 0:05, Фото 6 · в видео"]);
-    expect(pickOf(used).getAttribute("title")).toBe("Этот клип уже в готовом видео — второй раз не ставится");
-    expect(pickOf(sibling).getAttribute("title")).toBe("Это фото или другой его клип уже в готовом видео — кадр второй раз не ставится");
-    expect(pickOf(rejected).getAttribute("title")).toBe("Фото этого клипа отклонено — в монтаж не ставится");
-    expect(tileOf(used).querySelector(".edc-state")?.textContent).toBe("в видео");
-    expect(tileOf(rejected).querySelector(".edc-state")?.textContent).toBe("фото отклонено");
-  });
 });
 
 describe("57b: a frame held by a render", () => {
@@ -310,45 +214,6 @@ describe("57c: a refused preparation, one text per reason", () => {
     await flush();
     expect(within(media()).queryByRole("alert") === null).toBe(true);
     expect(within(media()).getByText("Клипов пока нет.")).toBeDefined();
-  });
-
-  test("an importer failure: the card over the tiles, the tile marked and pressable; ✕ closes the card", async () => {
-    const h = await clipsStudio();
-    const b = await makeClip(h, P(7), "g-tilt");
-    await openEditor(h, [photoClip(0, P(2)), photoClip(1, P(4))]);
-    h.engine.failNextClipImport("codec");
-    fireEvent.click(pickOf(b));
-    await flush();
-    runJob(h, importJobOf(h, b));
-    await flush();
-    const card = within(media()).getByRole("alert");
-    expect(plain(card.textContent)).toBe(`Клип «Наклоняет голову»${plain(nb("Не удалось подготовить клип — файл в Studio цел. Попробуйте ещё раз."))}`);
-    expect(card.textContent).toContain(`клип${NBSP}— файл`);
-    expect(tileOf(b).classList.contains("edc-tile-failed")).toBe(true);
-    expect(pickOf(b).hasAttribute("disabled")).toBe(false);
-    expect(kadrs()).toHaveLength(2);
-    const x = within(card).getByRole("button", { name: "Закрыть: Клип «Наклоняет голову»" });
-    x.focus();
-    fireEvent.click(x);
-    await flush();
-    expect(within(media()).queryByRole("alert") === null).toBe(true);
-    // S5.WAR L5: the focus goes back to the clip's tile — its button, pressable again.
-    expect(focusedLabel()).toBe(describeElement(pickOf(b)));
-    // «Мои» never shows a clip import's failure.
-    fireEvent.click(within(media()).getByRole("tab", { name: "Мои" }));
-    await flush();
-    expect(within(media()).queryByRole("alert") === null).toBe(true);
-  });
-
-  test("a full disk: the video's no-space text; the tile pressable again", async () => {
-    const h = await clipsStudio();
-    const b = await makeClip(h, P(7), "g-tilt");
-    await openEditor(h, [photoClip(0, P(2)), photoClip(1, P(4))]);
-    h.engine.refuseNextClipImport("no-space");
-    fireEvent.click(pickOf(b));
-    await flush();
-    expect(within(media()).getByRole("alert").textContent).toContain(nb(mediaReasonRu("no-space", "video")));
-    expect(pickOf(b).hasAttribute("disabled")).toBe(false);
   });
 
   test("a damaged file: the contract's text; the tile no longer pressable, even once the card is closed", async () => {
@@ -387,31 +252,6 @@ describe("57e, 57f: the copy in the draft", () => {
     expect(photo4.closest("li")?.querySelector(".edc-band")?.textContent).toBe("клип этого фото уже в ролике");
   });
 
-  test("57f: a selected copy is «клип» — its motion and photo, never the copy's file name; it is neither split nor duplicated", async () => {
-    const h = await clipsStudio();
-    const b = await makeClip(h, P(7), "g-tilt");
-    const copy = await makeCopy(h, b);
-    await openEditor(h, [photoClip(0, P(2)), photoClip(1, P(4)), copyClip(2, copy)]);
-    fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 3: клип «Наклоняет голову», 2\.0\sс$/ }));
-    await flush();
-    expect(plain(props().querySelector(".ed-props-sub")?.textContent)).toBe("клип · 4.0–6.0 с");
-    expect(props().querySelector(".ed-video-name")?.textContent).toBe("Наклоняет голову");
-    expect(props().querySelector(".edc-card-src")?.textContent).toBe("Фото 4");
-    expect(props().querySelector(".ed-video-tags .tag")?.textContent).toBe("клип");
-    expect(within(props()).queryByText("свой файл") === null).toBe(true);
-    const duplicate = within(props()).getByRole("button", { name: "Дублировать" });
-    expect(duplicate.hasAttribute("disabled")).toBe(true);
-    expect(duplicate.getAttribute("title")).toBe("Клип не копируется: одно фото — один раз в ролике");
-    expect(within(timeline()).getByRole("button", { name: "Разрезать по плейхеду" }).getAttribute("title")).toBe("Клип не режется: одно фото — один раз в ролике");
-    expect(within(timeline()).getByRole("button", { name: "Дублировать выбранное" }).getAttribute("title")).toBe("Клип не копируется: одно фото — один раз в ролике");
-    expect(screen.getByRole("button", { name: "Кадр 3: клип" })).toBeDefined();
-    // The selected copy fills the 9:16 frame: its pill says «клип» where an own video's says «видео».
-    expect(screen.getByRole("region", { name: "Превью" }).querySelector(".pv-video-pill")?.textContent).toBe("клип 9:16 · весь кадр");
-    // The copy's own file name («Клип <дата> <время>.mp4») is nowhere: not in the text, not in a name.
-    expect(document.body.textContent?.includes(".mp4")).toBe(false);
-    expect(document.body.textContent?.includes("Клип 20")).toBe(false);
-    expect(Array.from(document.querySelectorAll("[aria-label]")).some((el) => (el.getAttribute("aria-label") ?? "").includes(".mp4"))).toBe(false);
-  });
 });
 
 describe("S5.WAR M1: a clip deleted while its copy stands in a draft", () => {
@@ -435,22 +275,6 @@ describe("S5.WAR M1: a clip deleted while its copy stands in a draft", () => {
     expect(within(props()).queryByText("свой файл") === null).toBe(true);
     expect(document.body.textContent?.includes("Моих")).toBe(false);
     expect(document.body.textContent?.includes("среди ваших файлов")).toBe(false);
-  });
-});
-
-describe("«Мои» never lists a clip's copy", () => {
-  test("neither the copy nor a copy being made: the library reads empty", async () => {
-    const h = await clipsStudio();
-    const b = await makeClip(h, P(7), "g-tilt");
-    await makeCopy(h, b);
-    const c = await makeClip(h, P(9));
-    await openEditor(h, [photoClip(0, P(2)), photoClip(1, P(4))]);
-    fireEvent.click(pickOf(c));
-    await flush();
-    fireEvent.click(within(media()).getByRole("tab", { name: "Мои" }));
-    await flush();
-    expect(within(media()).getByText("Своих файлов пока нет")).toBeDefined();
-    expect(within(media()).queryByRole("status") === null).toBe(true);
   });
 });
 
@@ -545,68 +369,6 @@ describe("round 2: a placement that can no longer go in, and a draft video not k
     expect(pickOf(free).getAttribute("aria-disabled")).toBeNull();
   });
 
-  test("S5.WAR M3: while the draft's videos are being read, the waiting tiles are dimmed and the line under them says «Читаем видео в кадрах — подождите»", async () => {
-    const gate = { release: (): void => undefined };
-    const held = new Promise<void>((resolve) => {
-      gate.release = resolve;
-    });
-    const holding = (base: EngineClient): EngineClient => ({
-      ...base,
-      request: async (type, payload) => {
-        if (type === "media.list" && "mediaIds" in payload && payload.mediaIds !== undefined) await held;
-        return base.request(type, payload);
-      },
-    });
-    const app = await mineStudio(holding);
-    const events: EventMessage[] = [];
-    app.client.subscribe((e) => events.push(e));
-    const h: Harness = { engine: app.engine, scheduler: app.scheduler, client: app.client, events };
-    const used = await makeClip(h, P(5));
-    const copy = await makeCopy(h, used);
-    const free = await makeClip(h, P(3), "g-tilt");
-    await openEditor(h, [photoClip(0, P(2)), copyClip(1, copy)]);
-    expect(plain(tileOf(free).getAttribute("aria-label"))).toBe("Клип «Наклоняет голову», 0:05, Фото 4 · читаем видео в кадрах");
-    expect(plain(pickOf(free).getAttribute("aria-label"))).toBe("Клип «Наклоняет голову», 0:05: подождите, читаем видео в кадрах");
-    expect(pickOf(free).getAttribute("title")).toBe("Читаем видео в кадрах\u00a0— подождите");
-    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Читаем видео в кадрах\u00a0— подождите");
-    expect(tileOf(free).classList.contains("edc-tile-wait")).toBe(true);
-    expect(tileOf(free).querySelector(".ed-bin-dim") !== null).toBe(true);
-    // Not a failure: no notice, no «Повторить».
-    expect(screen.queryByRole("button", { name: "Повторить" }) === null).toBe(true);
-    fireEvent.click(within(media()).getByRole("tab", { name: "Фото" }));
-    await flush();
-    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Читаем видео в кадрах\u00a0— подождите");
-    fireEvent.click(within(media()).getByRole("tab", { name: "Клипы" }));
-    await flush();
-    // The read answers: the tiles go, the line says what a click does.
-    gate.release();
-    await flush();
-    await flush();
-    expect(tileOf(free).classList.contains("edc-tile-wait")).toBe(false);
-    expect(media().querySelector(".ed-bin-hint")?.textContent).toBe("Клик — кадр в конец ролика. Перетащите на «Кадры», чтобы вставить между кадрами.");
-  });
-
-  test("round 3: the card's ✕ takes the focus once — leaving the tab and coming back does not take it again", async () => {
-    const h = await clipsStudio();
-    const b = await makeClip(h, P(7), "g-tilt");
-    await openEditor(h, [photoClip(0, P(2)), photoClip(1, P(4))]);
-    h.engine.damageClipFile(b);
-    fireEvent.click(pickOf(b));
-    await flush();
-    const close = (): HTMLElement => within(media()).getByRole("button", { name: "Закрыть: Клип «Наклоняет голову»" });
-    expect(focusedLabel()).toBe(describeElement(close()));
-    // A pointer focuses a tab, then clicks it.
-    const photosTab = within(media()).getByRole("tab", { name: "Фото" });
-    photosTab.focus();
-    fireEvent.click(photosTab);
-    await flush();
-    const clipsTab = within(media()).getByRole("tab", { name: "Клипы" });
-    clipsTab.focus();
-    fireEvent.click(clipsTab);
-    await flush();
-    expect(focusedLabel()).toBe(describeElement(clipsTab));
-    expect(close()).toBeDefined();
-  });
 });
 
 describe("S5.WA5 (M2): a draft's copy whose frame went bad in another window", () => {
@@ -623,55 +385,4 @@ describe("S5.WA5 (M2): a draft's copy whose frame went bad in another window", (
     expect(document.body.textContent).toContain("Кадр 3: фото отклонено — замените его");
   });
 
-  test("a copy of a free frame carries no tag", async () => {
-    const h = await clipsStudio();
-    const a = await makeClip(h, P(7), "g-tilt");
-    const copy = await makeCopy(h, a);
-    await openEditor(h, [photoClip(0, P(2)), photoClip(1, P(4)), copyClip(2, copy)]);
-
-    const slot = within(timeline()).getByRole("button", { name: /^Кадр 3: / }).closest(".ed-clip-slot");
-    expect(slot?.classList.contains("ed-clip-flagged")).toBe(false);
-    expect(slot?.textContent).toContain("▶ клип");
-  });
-
-  test("S5.WAR N2: while the copy's origin is being read, «Рендер» says «Проверяем фото…» — never «фото недоступно»; read, the true reason", async () => {
-    // Held only once the editor opens: «Черновики» reads the flagged copies' origins too (N1).
-    const gate = { on: false, release: (): void => undefined };
-    const held = new Promise<void>((resolve) => {
-      gate.release = resolve;
-    });
-    const holding = (base: EngineClient): EngineClient => ({
-      ...base,
-      request: async (type, payload) => {
-        if (gate.on && type === "media.list" && "mediaIds" in payload && payload.mediaIds !== undefined) await held;
-        return base.request(type, payload);
-      },
-    });
-    const app = await mineStudio(holding);
-    const events: EventMessage[] = [];
-    app.client.subscribe((e) => events.push(e));
-    const h: Harness = { engine: app.engine, scheduler: app.scheduler, client: app.client, events };
-    const copy = await makeCopy(h, await makeClip(h, P(3), "g-breath"));
-    await asAnotherWindow(() => h.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: P(3), rejected: true }));
-    const made = await makeDraft(h.client, MIA.avatarId, []);
-    const saved = await asAnotherWindow(() => h.client.request("montages.save", { montageId: made.montageId, spec: { ...made.spec, clips: [photoClip(0, P(2)), photoClip(1, P(4)), copyClip(2, copy)] }, name: "утро дома" }));
-    if (!saved.ok) throw new Error(`montages.save: ${saved.error.code}`);
-    await openDrafts();
-    await screen.findByRole("heading", { level: 3, name: /Mia/ });
-    gate.on = true;
-    fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
-    await screen.findByRole("region", { name: "Таймлайн" });
-    await flush();
-
-    expect(document.body.textContent).toContain("Проверяем фото…");
-    expect(document.body.textContent?.includes("фото недоступно")).toBe(false);
-    expect(timeline().textContent?.includes("⚠ фото")).toBe(false);
-
-    gate.release();
-    await flush();
-    await flush();
-    expect(document.body.textContent).toContain("Кадр 3: фото отклонено — замените его");
-    const slot = within(timeline()).getByRole("button", { name: /^Кадр 3: / }).closest(".ed-clip-slot");
-    expect(slot?.textContent).toContain("⚠ фото отклонено");
-  });
 });

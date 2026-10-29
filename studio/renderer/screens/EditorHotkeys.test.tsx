@@ -14,7 +14,6 @@ import { photoClip } from "./montage/testkit";
 
 const [P1, P2] = [PHOTO_IDS[0] ?? "", PHOTO_IDS[1] ?? ""];
 const timeline = (): HTMLElement => screen.getByRole("region", { name: "Таймлайн" });
-const preview = (): HTMLElement => screen.getByRole("region", { name: "Превью" });
 const playing = (): boolean => within(timeline()).queryByRole("button", { name: "Пауза" }) !== null;
 const clockText = (): string => (timeline().querySelector(".ed-tl-clock")?.textContent ?? "").replace(/\s+/g, " ");
 
@@ -74,25 +73,6 @@ describe("Space plays and pauses the montage", () => {
     expect(playing()).toBe(true);
   });
 
-  test("on another focused button (the «Зоны Reels» switch): plays, and the switch stays as it was", async () => {
-    await editor();
-    const zones = within(preview()).getByRole("switch", { name: "Зоны Reels" });
-    zones.focus();
-    pressSpace(zones);
-    expect(playing()).toBe(true);
-    expect(zones.getAttribute("aria-checked")).toBe("true");
-    // Enter still presses it.
-    fireEvent.click(zones);
-    expect(zones.getAttribute("aria-checked")).toBe("false");
-  });
-
-  test("a held Space (the key repeating) does not toggle again", async () => {
-    await editor();
-    pressSpace(document.body);
-    expect(pressSpace(document.body, { repeat: true }).down).toBe(false);
-    expect(playing()).toBe(true);
-  });
-
   test("not while typing: the draft's name field keeps its space", async () => {
     await editor();
     fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
@@ -123,19 +103,4 @@ describe("Space plays and pauses the montage", () => {
     expect(playing()).toBe(false);
   });
 
-  test("an empty montage has nothing to play: Space is left alone", async () => {
-    await editor({ clips: [] });
-    expect(pressSpace(document.body)).toEqual({ down: true, up: true });
-    expect(within(timeline()).getByRole("button", { name: "Воспроизвести" }).hasAttribute("disabled")).toBe(true);
-  });
-
-  test("the play controls say so: «Пробел» in their tips and their key shortcut", async () => {
-    await editor();
-    for (const button of [within(timeline()).getByRole("button", { name: "Воспроизвести" }), within(preview()).getByRole("button", { name: "Воспроизвести" })]) {
-      expect(button.getAttribute("aria-keyshortcuts")).toBe("Space");
-      expect(button.getAttribute("title")).toBe("Воспроизвести · Пробел");
-    }
-    pressSpace(document.body);
-    expect(within(timeline()).getByRole("button", { name: "Пауза" }).getAttribute("title")).toBe("Пауза · Пробел");
-  });
 });

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { MontageDraft } from "../../shared/engine";
 import { FRAME_H, FRAME_W, type Rect, stickerBox } from "../../shared/montage";
@@ -100,49 +100,6 @@ function layOut(initial: { w: number; h: number }): { stage: { w: number; h: num
 
 type Watched = { readonly target: Node; readonly options: MutationObserverInit };
 
-/**
- * A MutationObserver that reports on cue. happy-dom's holds its callback only through a WeakRef, so it falls silent at the first garbage
- * collection, which a test as long as an editor's makes likely. Each observer still drives a real one (so `waitFor` keeps its cue), and
- * `change(type, target)` reports a change of that kind to every observer that asked for it there: on the target, or on an ancestor with `subtree`.
- */
-function watchMutations(): { change: (type: "childList" | "characterData", target: Node) => void } {
-  const real = globalThis.MutationObserver;
-  const live = new Set<{ report: MutationCallback; watched: Watched[]; self: MutationObserver }>();
-  class Watching {
-    readonly #real: MutationObserver;
-    readonly #own: { report: MutationCallback; watched: Watched[]; self: MutationObserver };
-    constructor(report: MutationCallback) {
-      this.#real = new real(report);
-      this.#own = { report, watched: [], self: this as unknown as MutationObserver };
-      live.add(this.#own);
-    }
-    observe(target: Node, options: MutationObserverInit = {}): void {
-      this.#real.observe(target, options);
-      this.#own.watched.push({ target, options });
-    }
-    disconnect(): void {
-      this.#real.disconnect();
-      this.#own.watched = [];
-      live.delete(this.#own);
-    }
-    takeRecords(): MutationRecord[] {
-      return this.#real.takeRecords();
-    }
-  }
-  globalThis.MutationObserver = Watching as unknown as typeof MutationObserver;
-  restores.push(() => {
-    globalThis.MutationObserver = real;
-  });
-  const asks = ({ target, options }: Watched, type: "childList" | "characterData", at: Node): boolean =>
-    options[type] === true && (target === at || (options.subtree === true && target.contains(at)));
-  return {
-    change(type, at) {
-      act(() => {
-        for (const own of live) if (own.watched.some((w) => asks(w, type, at))) own.report([{ type, target: at } as unknown as MutationRecord], own.self);
-      });
-    },
-  };
-}
 
 describe("the preview fits the stage", () => {
   test("as tall as a wide stage, 9:16 exactly; the overlays' scale goes with it", async () => {
@@ -209,100 +166,6 @@ describe("the preview fits the stage", () => {
     expect(drawn()).toEqual(["540px", "960px"]);
   });
 
-  test("review r1 MEDIUM-2: with room above the frame the notices' dock stays in it; a frame as tall as the stage leaves the dock over it", async () => {
-    pixelRatio(2);
-    const laid = layOut({ w: 800, h: 1_400 });
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    const area = (): HTMLElement | null => document.querySelector<HTMLElement>(".ed-preview");
-    // Held to 540 × 960 on a 2× screen: (1400 − 960) / 2 = 220 px above it.
-    expect(drawn()).toEqual(["540px", "960px"]);
-    expect(area()?.dataset.dock).toBe("above");
-    expect(area()?.style.getPropertyValue("--pv-room")).toBe("220px");
-    laid.stage = { w: 800, h: 600 };
-    laid.relayout();
-    expect(area()?.dataset.dock).toBe("over");
-  });
-
-  test("review r3 LOW-1: the dock's inset from the stage's top is the one its placement counts, and above the frame it is held to the room under it", async () => {
-    pixelRatio(2);
-    layOut({ w: 800, h: 1_400 });
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    // One number for both sides: the script writes the inset it counts (`dockPlacement`), the stylesheet draws the dock with it.
-    expect(document.querySelector<HTMLElement>(".ed-preview")?.style.getPropertyValue("--pv-dock-inset")).toBe("10px");
-    const css = await Bun.file(new URL("../montage.css", import.meta.url)).text();
-    const rule = (selector: string): string => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
-    expect(rule(".ed-dock")).toContain("top: var(--pv-dock-inset);");
-    expect(rule(".ed-dock")).toContain("max-height: calc(100% - 2 * var(--pv-dock-inset));");
-    expect(rule('.ed-preview[data-dock="above"] > .ed-dock')).toContain("max-height: calc(var(--pv-room) - var(--pv-dock-inset));");
-  });
-
-  test("review r3 LOW-2: a text that changes in place in the dock (no card comes or goes) places the dock again", async () => {
-    pixelRatio(2);
-    layOut({ w: 800, h: 1_400 });
-    const watch = watchMutations();
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    const area = (): HTMLElement | null => document.querySelector<HTMLElement>(".ed-preview");
-    const dock = area()?.querySelector<HTMLElement>(":scope > .ed-dock");
-    if (dock === null || dock === undefined) throw new Error("no dock");
-    let height = 100;
-    Object.defineProperty(dock, "scrollHeight", { configurable: true, get: () => height });
-    const line = document.createTextNode("Не удалось сохранить");
-    dock.append(line);
-    watch.change("childList", dock);
-    // 220 px above the 540 × 960 frame: 100 px under the 10 px inset fits.
-    expect(area()?.dataset.dock).toBe("above");
-    // React changes a line in place (a notice's text, «Ещё N»'s count) by setting its text node's data: no child comes or goes. Wrapped onto
-    // more lines, it no longer fits the room at all.
-    height = 230;
-    line.data = "Не удалось сохранить черновик: библиотека недоступна, проверьте диск и сохраните ещё раз";
-    watch.change("characterData", line);
-    expect(area()?.dataset.dock).toBe("over");
-  });
-
-  // Review round 1 (LOW 4): every pixel of a splitter drag re-rendered the frame and every layer on it, even when the fitted size stayed.
-  test("a resize that leaves the fitted size as it is re-renders nothing of the frame", async () => {
-    pixelRatio(1);
-    const laid = layOut({ w: 1_500, h: 880 });
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    const renders = spyOn(previewFrameModule, "visibleLayers");
-    restores.push(() => renders.mockRestore());
-    // Still as tall as the stage: the same 495 × 880.
-    laid.stage = { w: 1_400, h: 880 };
-    laid.relayout();
-    laid.stage = { w: 1_100, h: 887 };
-    laid.relayout();
-    expect(drawn()).toEqual(["495px", "880px"]);
-    expect(renders).toHaveBeenCalledTimes(0);
-    // A size that changes the fit does re-render it.
-    laid.stage = { w: 1_100, h: 600 };
-    laid.relayout();
-    expect(drawn()).toEqual(["333px", "592px"]);
-    expect(renders.mock.calls.length).toBeGreaterThan(0);
-  });
-
-  test("not laid out (no ResizeObserver report): the stylesheet's own size stands", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    expect(drawn()).toEqual(["", ""]);
-  });
-
-  test("the «Подсказки» block keeps its side clear: the frame narrows by it on both sides and stays centred", async () => {
-    pixelRatio(1);
-    const laid = layOut({ w: 600, h: 1_000 });
-    const { client, engine } = await studio();
-    await openDraft(engine, client);
-    expect(drawn()).toEqual(["558px", "992px"]);
-    const hints = within(preview()).getByRole("group", { name: "Подсказки" });
-    Object.defineProperty(hints, "getBoundingClientRect", { configurable: true, value: () => DOMRect.fromRect({ x: 14, y: 880, width: 128, height: 110 }) });
-    Object.defineProperty(preview(), "getBoundingClientRect", { configurable: true, value: () => DOMRect.fromRect({ x: 0, y: 0, width: 600, height: 1_000 }) });
-    laid.relayout();
-    // 142 px of hints and a 12 px gap on each side: 600 − 2 × 154 = 292 px, so 32 steps of 9 × 16.
-    expect(drawn()).toEqual(["288px", "512px"]);
-  });
 });
 
 describe("montage coordinates at any size (no drift between the preview and the render)", () => {

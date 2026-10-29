@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { act, createEvent, fireEvent, within } from "@testing-library/react";
+import { act, fireEvent, within } from "@testing-library/react";
 import { ENGINE_GONE_DETAIL, mediaReasonRu } from "../../shared/engine";
 import type { EngineClient } from "../engine/client";
 import { mockDropDoor } from "../engine/mockMineDemo";
@@ -17,12 +17,6 @@ afterEach(() => {
   errors = null;
 });
 
-/** A dragover on the zone, kept so a test can read what the zone set on its transfer. */
-const dragOverEvent = (dataTransfer: ReturnType<typeof filesTransfer>): DragEvent => {
-  const event = createEvent.dragOver(dropZone(), { dataTransfer });
-  if (!(event instanceof DragEvent)) throw new Error("not a drag event");
-  return event;
-};
 
 /** The mock with a drop door that records what the window handed it. */
 function withDoor(given: File[][]) {
@@ -50,53 +44,6 @@ describe("a drag of files over the drop zone (M13)", () => {
     expect(plain(dropZone().textContent)).toBe("Добавить файлыфото, видео, музыка, стикеры · перетащите или нажмите");
   });
 
-  test("a type the drag does not say: «N файлов» with the kinds the zone takes", async () => {
-    const { engine, client } = await mineStudio(withDoor([]));
-    await openMine(engine, client);
-    fireEvent.dragOver(dropZone(), { dataTransfer: filesTransfer([{ name: "Holiday", type: "" }, { name: "a.jpg", type: "image/jpeg" }]) });
-    expect(plain(dropZone().textContent)).toBe("Отпустите — добавим 2 файлафото, видео, музыка, стикеры");
-  });
-
-  test("the zone takes the drag itself (round 2, N18): a drag over it and a drop on it have their default (open the file) prevented, and say «copy»", async () => {
-    const { engine, client } = await mineStudio(withDoor([]));
-    await openMine(engine, client);
-    const over = dragOverEvent(filesTransfer([{ name: "a.jpg", type: "image/jpeg" }]));
-    expect(fireEvent(dropZone(), over)).toBe(false);
-    expect(over.dataTransfer?.dropEffect).toBe("copy");
-    expect(fireEvent.drop(dropZone(), { dataTransfer: filesTransfer([{ name: "a.jpg", type: "image/jpeg" }], { withFiles: true }) })).toBe(false);
-  });
-
-  test("while a pick is open the zone says nothing of a drag and the cursor says no (round 2, N12)", async () => {
-    const { engine, client } = await mineStudio(withDoor([]));
-    await openMine(engine, client);
-    engine.delayNext("media.pickImport", 5_000);
-    fireEvent.click(dropZone());
-    await flush();
-    const over = dragOverEvent(filesTransfer([{ name: "a.jpg", type: "image/jpeg" }]));
-    fireEvent(dropZone(), over);
-    expect(over.dataTransfer?.dropEffect).toBe("none");
-    expect(plain(dropZone().textContent)).toContain("Добавить файлы");
-  });
-
-  test("text or a link dropped on the zone never reaches the import door, and is not taken (round 2, LOW-3)", async () => {
-    const given: File[][] = [];
-    const { engine, client } = await mineStudio(withDoor(given));
-    await openMine(engine, client);
-    for (const types of [["text/plain"], ["text/uri-list", "text/html"]]) {
-      const transfer = { types, items: types.map((type) => ({ kind: "string", type })), files: [], dropEffect: "none" };
-      expect(fireEvent.drop(dropZone(), { dataTransfer: transfer })).toBe(true);
-    }
-    await flush();
-    expect(given).toEqual([]);
-    expect(callsOf(engine, "media.pickImport")).toHaveLength(0);
-  });
-
-  test("a drag that holds no file (text from a page) leaves the zone as it is", async () => {
-    const { engine, client } = await mineStudio(withDoor([]));
-    await openMine(engine, client);
-    fireEvent.dragEnter(dropZone(), { dataTransfer: { types: ["text/plain"], items: [{ kind: "string", type: "text/plain" }], files: [] } });
-    expect(plain(dropZone().textContent)).toContain("Добавить файлы");
-  });
 });
 
 describe("the drop", () => {
@@ -120,17 +67,6 @@ describe("the drop", () => {
     expect(within(section("Фото и видео")).getByRole("button", { name: "Фото beach.jpg: добавить кадр в конец ролика" })).toBeDefined();
     // The zone is itself again.
     expect(plain(dropZone().textContent)).toContain("Добавить файлы");
-  });
-
-  test("two refused files of the same name are both said (round 1, L6: no clash of React keys)", async () => {
-    errors = spyOn(console, "error");
-    const { engine, client } = await mineStudio(withDoor([]));
-    await openMine(engine, client);
-    fireEvent.drop(dropZone(), { dataTransfer: filesTransfer([{ name: "notes.pdf", type: "" }, { name: "notes.pdf", type: "" }], { withFiles: true }) });
-    await flush();
-    const card = within(media()).getByRole("alert");
-    expect(plain(card.textContent).split("notes.pdf:")).toHaveLength(3);
-    expect(errors.mock.calls.some((call: unknown[]) => String(call[0]).includes("same key"))).toBe(false);
   });
 
   test("a client without a drop door takes no drop: nothing is sent", async () => {

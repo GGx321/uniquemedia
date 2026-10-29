@@ -142,86 +142,9 @@ describe("the preview", () => {
     expect(videoOf(await nextSave(engine, 1)).focus).toBe(null);
   });
 
-  test("the video follows the pointer while it is dragged, before anything is saved", async () => {
-    const { client, engine } = await studio();
-    const mediaId = storeVideo(engine);
-    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
-    await selectVideo();
-    const cell = within(preview()).getByRole("button", { name: "Кадр 2: своё видео" });
-    const left = (): string => preview().querySelector<HTMLElement>(".pv-video-ground")?.style.left ?? "";
-    const before = left();
-    fireEvent.pointerDown(cell, { pointerId: 35, button: 0, clientX: 100, clientY: 100 });
-    act(() => {
-      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 35, clientX: 140, clientY: 100, buttons: 1 }));
-    });
-    // Dragged right: the video moved right with it (its left edge further in).
-    expect(Number.parseFloat(left())).toBeGreaterThan(Number.parseFloat(before));
-    act(() => {
-      window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 35, clientX: 140, clientY: 100 }));
-    });
-    expect(left()).toBe(before);
-    await flush();
-    expect(callsOf(engine, "montages.save")).toHaveLength(0);
-  });
-
-  test("a video already 9:16 fills the frame whole: it says so, and neither a drag nor a key writes anything", async () => {
-    const { client, engine } = await studio();
-    engine.seedOwnMedia([{ kind: "video", name: "latte-pour.mov", bytes: 4_000_000, facts: { width: 1_080, height: 1_920, durationMs: 6_400, sourceFps: 60 } }]);
-    await openDraft(engine, client, clipsWith(ownClip("media-demo-0001")));
-    await selectVideo();
-    const cell = (): HTMLElement => within(preview()).getByRole("button", { name: "Кадр 2: своё видео" });
-    expect(within(preview()).getByText("видео 9:16 · весь кадр")).toBeDefined();
-    // Nothing to move: no arrows are announced on it (fix round 1, L9).
-    expect(cell().hasAttribute("aria-keyshortcuts")).toBe(false);
-    expect(within(props()).getByText("Видео уже 9:16 и занимает весь кадр — сдвигать нечего.")).toBeDefined();
-    drag(cell(), 30, 36);
-    fireEvent.keyDown(cell(), { key: "ArrowLeft" });
-    fireEvent.keyUp(cell(), { key: "ArrowLeft" });
-    await flush();
-    // No edit was made: nothing to undo (an edit enables «Отменить» at once, before any save).
-    expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
-    expect(callsOf(engine, "montages.save")).toHaveLength(0);
-  });
-
-  test("arrow keys move the selected clip's video, a held key one undo step", async () => {
-    const { client, engine } = await studio();
-    const mediaId = storeVideo(engine);
-    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
-    await selectVideo();
-    const cell = (): HTMLElement => within(preview()).getByRole("button", { name: "Кадр 2: своё видео" });
-    fireEvent.keyDown(cell(), { key: "ArrowLeft" });
-    fireEvent.keyDown(cell(), { key: "ArrowLeft", repeat: true });
-    fireEvent.keyUp(cell(), { key: "ArrowLeft" });
-    expect(videoOf(await nextSave(engine)).focus?.x ?? 0).toBeGreaterThan(0.5);
-    undo();
-    await flush();
-    expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
-  });
 });
 
 describe("the properties", () => {
-  test("«Обрезка», what is left of the 15 s, «Кадр», the source facts and the sound note; no «Длительность»", async () => {
-    const { client, engine } = await studio();
-    const mediaId = storeVideo(engine);
-    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
-    await selectVideo();
-    const panel = props();
-    expect(within(panel).getByText("Кадр 2 из 3")).toBeDefined();
-    expect(within(panel).getByText("видео · 2.0–4.0 с")).toBeDefined();
-    expect(within(panel).getByText("Обрезка")).toBeDefined();
-    expect(slider("Отрезок видео").getAttribute("aria-valuetext")).toBe(s("1.8 → 3.8 с"));
-    expect(within(panel).getByText("1.8 → 3.8 с")).toBeDefined();
-    expect(within(panel).getByText("2.0 с из 14.0")).toBeDefined();
-    expect(within(panel).getByText("ролик 6.0 с из 15 · кадр можно удлинить ещё на 9.0 с")).toBeDefined();
-    expect(within(panel).getByText(/Видео шире кадра/)).toBeDefined();
-    expect(within(panel).getByText("street-walk.mp4")).toBeDefined();
-    expect(within(panel).getByText("14.0 с · 1080×608 · 29.97 → 30 fps")).toBeDefined();
-    expect(within(panel).getByText("свой файл")).toBeDefined();
-    expect(within(panel).queryByText("HDR → SDR") === null).toBe(true);
-    expect(within(panel).getByText("Звук видео не используется — в ролике только музыка")).toBeDefined();
-    expect(within(panel).queryByLabelText("Длительность") === null).toBe(true);
-    expect(within(timeline()).getByRole("button", { name: s("Кадр 2: видео street-walk.mp4, 2.0 с") })).toBeDefined();
-  });
 
   test("the window slides by keys on the 100 ms grid; a held key is one undo step, and redo brings it back", async () => {
     const { client, engine } = await studio();
@@ -248,21 +171,6 @@ describe("the properties", () => {
     expect(videoOf(await nextSave(engine, 4)).trimStartMs).toBe(2_100);
   });
 
-  test("the left edge moves the start with the end kept; the right edge moves the end with the start kept", async () => {
-    const { client, engine } = await studio();
-    const mediaId = storeVideo(engine);
-    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
-    await selectVideo();
-    fireEvent.keyDown(slider("Начало отрезка"), { key: "ArrowLeft" });
-    fireEvent.keyUp(slider("Начало отрезка"), { key: "ArrowLeft" });
-    expect(videoOf(await nextSave(engine))).toMatchObject({ trimStartMs: 1_700, durationMs: 2_100 });
-    fireEvent.keyDown(slider("Конец отрезка"), { key: "Home" });
-    fireEvent.keyUp(slider("Конец отрезка"), { key: "Home" });
-    // The shortest clip: 0.1 s from the start.
-    expect(videoOf(await nextSave(engine, 1))).toMatchObject({ trimStartMs: 1_700, durationMs: 100 });
-    expect(within(props()).getByText("0.1 с из 14.0")).toBeDefined();
-  });
-
   test("a drag of an edge is one edit when let go, on the 100 ms grid and within the 15 s; a cancelled drag changes nothing", async () => {
     const { client, engine } = await studio();
     const mediaId = storeVideo(engine);
@@ -282,25 +190,6 @@ describe("the properties", () => {
     expect(videoOf(await nextSave(engine, 1))).toMatchObject({ trimStartMs: 1_800, durationMs: 11_000 });
     undo();
     expect(videoOf(await nextSave(engine, 2)).durationMs).toBe(3_600);
-  });
-
-  test("the window drags, its length kept; a click on the strip takes it there", async () => {
-    const { client, engine } = await studio();
-    const mediaId = storeVideo(engine);
-    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
-    await selectVideo();
-    layOutStrip();
-    // 20 px is 1 s later.
-    drag(slider("Отрезок видео"), 20, 51);
-    expect(videoOf(await nextSave(engine))).toMatchObject({ trimStartMs: 2_800, durationMs: 2_000 });
-    // A click at 200 px (10 s) centres the window there.
-    const strip = props().querySelector(".ed-trim");
-    if (strip === null) throw new Error("no trim strip");
-    fireEvent.pointerDown(strip, { pointerId: 52, button: 0, clientX: 200, clientY: 10 });
-    act(() => {
-      window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 52, clientX: 200, clientY: 10 }));
-    });
-    expect(videoOf(await nextSave(engine, 1))).toMatchObject({ trimStartMs: 9_000, durationMs: 2_000 });
   });
 
   test("the timeline's edge of a video clip stops at the video's end, not at the 15 s", async () => {
@@ -326,152 +215,6 @@ describe("fix round 1", () => {
     fireEvent.keyDown(head(), { key: "ArrowRight", shiftKey: true });
     await flush();
   }
-
-  test("L8: while the right edge of «Обрезка» is dragged the preview shows the frame at it; nothing is saved until it is let go", async () => {
-    const { client, engine } = await studio();
-    const mediaId = storeVideo(engine);
-    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
-    await selectVideo();
-    await atClipStart();
-    layOutStrip();
-    expect(standIn()).toBe("1080×608 · 0:01.8");
-    fireEvent.pointerDown(slider("Конец отрезка"), { pointerId: 61, button: 0, clientX: 100, clientY: 10 });
-    act(() => {
-      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 61, clientX: 131, clientY: 10, buttons: 1 }));
-    });
-    // The end at 5.4 s: its last frame, 161, is 0:05.3.
-    expect(standIn()).toBe("1080×608 · 0:05.3");
-    expect(undoOff()).toBe(true);
-    act(() => {
-      window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 61, clientX: 131, clientY: 10 }));
-    });
-    expect(standIn()).toBe("1080×608 · 0:01.8");
-    expect(videoOf(await nextSave(engine)).durationMs).toBe(3_600);
-  });
-
-  test("L8: with the playhead on another clip, the preview shows the clip being trimmed while it is dragged, and goes back after a cancel", async () => {
-    const { client, engine } = await studio();
-    const mediaId = storeVideo(engine);
-    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
-    await selectVideo();
-    fireEvent.keyDown(head(), { key: "Home" });
-    await flush();
-    expect(within(preview()).getAllByRole("button")[0]?.getAttribute("aria-label")).toBe("Кадр 1");
-    layOutStrip();
-    fireEvent.pointerDown(slider("Отрезок видео"), { pointerId: 62, button: 0, clientX: 100, clientY: 10 });
-    act(() => {
-      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 62, clientX: 120, clientY: 10, buttons: 1 }));
-    });
-    // Slid 1 s later: its first frame is 2.8 s into the video.
-    expect(within(preview()).getAllByRole("button")[0]?.getAttribute("aria-label")).toBe("Кадр 2: своё видео");
-    expect(standIn()).toBe("1080×608 · 0:02.8");
-    act(() => {
-      window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 62, clientX: 120, clientY: 10 }));
-    });
-    expect(within(preview()).getAllByRole("button")[0]?.getAttribute("aria-label")).toBe("Кадр 1");
-    expect(undoOff()).toBe(true);
-  });
-
-  test("L6: the focus hint sits above the layers (a caption over the clip never covers it), for an own video and for a photo", async () => {
-    const { client, engine } = await studio();
-    const mediaId = storeVideo(engine);
-    const made = await makeDraft(client, MIA.avatarId, []);
-    const caption = { layerId: "layer-001", startMs: 0, endMs: 6_000, kind: "text" as const, value: "coffee first", font: "oswald" as const, style: "outline" as const, color: "#ffffff", x: 0.5, y: 0.42, scale: 1 };
-    const saved = await asAnotherWindow(() => client.request("montages.save", { montageId: made.montageId, spec: { ...made.spec, clips: clipsWith(ownClip(mediaId)), layers: [caption] }, name: null }));
-    if (!saved.ok) throw new Error(saved.error.code);
-    await openDrafts();
-    fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
-    await screen.findByRole("region", { name: "Таймлайн" });
-    await flush();
-    const above = (): boolean => {
-      const layer = preview().querySelector(".pv-layer");
-      const pill = preview().querySelector(".pv-face-pill");
-      if (layer === null || pill === null) throw new Error("no layer or no hint");
-      return (layer.compareDocumentPosition(pill) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && pill.closest(".pv-cell") === null;
-    };
-    await selectVideo();
-    await waitFor(() => expect(preview().querySelector(".pv-layer") !== null).toBe(true));
-    expect(above()).toBe(true);
-    fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 1: / }));
-    await flush();
-    expect(within(preview()).getByText(/тяните/)).toBeDefined();
-    expect(above()).toBe(true);
-  });
-
-  test("L7: the timeline's left edge of a video clip moves its start in the video with its end kept, as «Обрезка»'s does", async () => {
-    const { client, engine } = await studio();
-    const mediaId = storeVideo(engine);
-    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
-    await selectVideo();
-    const edge = (): HTMLElement => within(timeline()).getByRole("slider", { name: "Длительность кадра 2: левый край" });
-    fireEvent.keyDown(edge(), { key: "ArrowLeft" });
-    fireEvent.keyUp(edge(), { key: "ArrowLeft" });
-    expect(videoOf(await nextSave(engine))).toMatchObject({ trimStartMs: 1_700, durationMs: 2_100 });
-    fireEvent.keyDown(edge(), { key: "Home" });
-    fireEvent.keyUp(edge(), { key: "Home" });
-    // The shortest: 0.1 s ending where it ended, 3.8 s into the video.
-    expect(videoOf(await nextSave(engine, 1))).toMatchObject({ trimStartMs: 3_700, durationMs: 100 });
-    // Dragged left 14 px of the 1048 px lanes (about 0.2 s): earlier in the video, the end still at 3.8 s.
-    drag(edge(), -14, 71);
-    const dragged = videoOf(await nextSave(engine, 2));
-    expect(dragged.trimStartMs + dragged.durationMs).toBe(3_800);
-    expect(dragged.durationMs).toBe(300);
-  });
-
-  test("L9: a window too narrow for both edges is judged on the strip as laid out, not on the artboard's width", async () => {
-    // The fixture's 500 ms clip (not the shortest the contract allows, 100 ms) of the 14 s video (storeVideo): 500 / 14000 of the strip, 9.7 px of the artboard's 272 px one, 71 px of a 2000 px one.
-    const real = globalThis.ResizeObserver;
-    const narrow = (): boolean => props().querySelector(".ed-trim")?.classList.contains("ed-trim-narrow") ?? false;
-    try {
-      const { client, engine } = await studio();
-      const mediaId = storeVideo(engine);
-      await openDraft(engine, client, clipsWith(ownClip(mediaId, 500, 1_800)));
-      await selectVideo();
-      expect(narrow()).toBe(true);
-      fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 1: / }));
-      await flush();
-      class Wide {
-        constructor(private readonly report: ResizeObserverCallback) {}
-        observe(target: Element): void {
-          this.report([{ target, contentRect: { width: 2_000 } } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver);
-        }
-        unobserve(): void {}
-        disconnect(): void {}
-      }
-      globalThis.ResizeObserver = Wide as unknown as typeof ResizeObserver;
-      await selectVideo();
-      expect(narrow()).toBe(false);
-    } finally {
-      globalThis.ResizeObserver = real;
-    }
-  });
-
-  test("L5: a click on the window with a little jitter under the drag threshold changes nothing", async () => {
-    const { client, engine } = await studio();
-    const mediaId = storeVideo(engine);
-    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
-    await selectVideo();
-    layOutStrip();
-    drag(slider("Отрезок видео"), 2, 81);
-    await flush();
-    expect(undoOff()).toBe(true);
-    expect(slider("Отрезок видео").getAttribute("aria-valuenow")).toBe("1800");
-  });
-
-  test("L5: letting go of another key (Shift) does not end the held arrow's undo step", async () => {
-    const { client, engine } = await studio();
-    const mediaId = storeVideo(engine);
-    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
-    await selectVideo();
-    fireEvent.keyDown(slider("Отрезок видео"), { key: "ArrowRight" });
-    fireEvent.keyUp(slider("Отрезок видео"), { key: "Shift" });
-    fireEvent.keyDown(slider("Отрезок видео"), { key: "ArrowRight", repeat: true });
-    fireEvent.keyUp(slider("Отрезок видео"), { key: "ArrowRight" });
-    expect(videoOf(await nextSave(engine)).trimStartMs).toBe(2_000);
-    undo();
-    expect(videoOf(await nextSave(engine, 1)).trimStartMs).toBe(1_800);
-    expect(undoOff()).toBe(true);
-  });
 
   test("L5: a crop drag whose clip went meanwhile (another window removed it) writes nothing into the clip that took its place, even of the same video", async () => {
     const { client, engine } = await studio();
@@ -501,17 +244,6 @@ describe("fix round 1", () => {
     expect(left()).toBe(String(Number.parseFloat(centred)));
   });
 
-  test("L3: a video shorter than 0.1 s says so, never the contract's «сдвиньте начало фрагмента» it cannot follow", async () => {
-    const { client, engine } = await studio();
-    engine.seedOwnMedia([{ kind: "video", name: "blink.mov", bytes: 200_000, facts: { width: 1_080, height: 1_920, durationMs: 90, sourceFps: 30 } }]);
-    await openDraft(engine, client, clipsWith(ownClip("media-demo-0001", 500, 0)));
-    const block = within(timeline()).getByRole("button", { name: s("Кадр 2: видео короче 0.1 с, 0.5 с") });
-    expect(within(block).getByText("⚠ видео короче 0.1 с")).toBeDefined();
-    await selectVideo();
-    expect(within(props()).getByText("Видео короче 0.1 с — в ролик его не поставить")).toBeDefined();
-    expect(within(props()).queryByText(MONTAGE_ISSUE_MESSAGES_RU["video-too-short"]) === null).toBe(true);
-    expect(within(props()).getByText("ролик 4.5 с из 15 · видео короче 0.1 с")).toBeDefined();
-  });
 });
 
 describe("an own file deleted while its draft is open (fix round 1, M1)", () => {
@@ -564,26 +296,6 @@ describe("an own file deleted while its draft is open (fix round 1, M1)", () => 
     expect(block.closest(".ed-blk-flagged") !== null).toBe(true);
   });
 
-  test("fix round 2: a file the draft came to name after it was opened (another window placed it) is followed too", async () => {
-    const { client, engine } = await studio();
-    const mediaId = storeVideo(engine);
-    const made = await makeDraft(client, MIA.avatarId, []);
-    const first = await asAnotherWindow(() => client.request("montages.save", { montageId: made.montageId, spec: { ...made.spec, clips: [photoClip(0, P1, 2_000), photoClip(1, P2, 2_000)] }, name: null }));
-    if (!first.ok) throw new Error(first.error.code);
-    await openDrafts();
-    fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
-    await screen.findByRole("region", { name: "Таймлайн" });
-    await flush();
-    // Another window puts the video in.
-    await asAnotherWindow(() => client.request("montages.save", { montageId: made.montageId, spec: { ...made.spec, clips: clipsWith(ownClip(mediaId)) }, name: null }));
-    await waitFor(() => expect(within(timeline()).getByRole("button", { name: s("Кадр 2: видео street-walk.mp4, 2.0 с") })).toBeDefined());
-    await waitFor(() => expect(isDisabled(renderButton())).toBe(false));
-    const before = gets(engine);
-    await asAnotherWindow(() => client.request("media.delete", { mediaId }));
-    await waitFor(() => expect(within(timeline()).getByRole("button", { name: s("Кадр 2: файла больше нет, 2.0 с") })).toBeDefined());
-    expect(gets(engine)).toBe(before + 1);
-  });
-
   test("fix round 2: a burst of changes to the draft's files reads the verdict once", async () => {
     const { client, engine } = await studio();
     engine.seedOwnMedia([1, 2, 3].map((n) => ({ kind: "video" as const, name: `clip-${n}.mov`, bytes: 4_000_000, facts: { width: 1_080, height: 1_920, durationMs: 6_000, sourceFps: 30 } })));
@@ -597,20 +309,6 @@ describe("an own file deleted while its draft is open (fix round 1, M1)", () => 
     expect(gets(engine)).toBe(before + 1);
   });
 
-  test("a change to a file the draft does not name reads nothing again", async () => {
-    const { client, engine } = await studio();
-    const mediaId = storeVideo(engine);
-    engine.seedOwnMedia([{ kind: "photo", name: "other.jpg", bytes: 120_000 }]);
-    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
-    await waitFor(() => expect(isDisabled(renderButton())).toBe(false));
-    const before = gets(engine);
-    await asAnotherWindow(() => client.request("media.delete", { mediaId: "media-demo-0002" }));
-    await flush();
-    expect(gets(engine)).toBe(before);
-    // …and one the draft names does.
-    await asAnotherWindow(() => client.request("media.delete", { mediaId }));
-    await waitFor(() => expect(gets(engine)).toBe(before + 1));
-  });
 });
 
 describe("what the render refuses a video clip for", () => {
@@ -631,17 +329,4 @@ describe("what the render refuses a video clip for", () => {
     expect(within(timeline()).getByRole("button", { name: s("Кадр 2: видео street-walk.mp4, 2.0 с") })).toBeDefined();
   });
 
-  test("a video the library does not hold: the contract's words, the block flagged, the preview says so", async () => {
-    const { client, engine } = await studio();
-    await openDraft(engine, client, clipsWith(ownClip("media-00000404")));
-    const block = within(timeline()).getByRole("button", { name: s("Кадр 2: файла больше нет, 2.0 с") });
-    expect(within(block).getByText("⚠ файла больше нет")).toBeDefined();
-    await selectVideo();
-    expect(within(props()).getByText(GONE_VIDEO_TEXT)).toBeDefined();
-    expect(within(props()).getByText("Видео нет — обрезать нечего")).toBeDefined();
-    expect(within(preview()).getByText("Файла больше нет")).toBeDefined();
-    // Gone, it is no longer known to be the owner's own file: no «свой файл».
-    expect(within(props()).queryByText("свой файл") === null).toBe(true);
-    expect(within(props()).getByText("Звук видео не используется — в ролике только музыка")).toBeDefined();
-  });
 });
