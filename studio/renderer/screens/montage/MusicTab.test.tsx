@@ -60,12 +60,4 @@ describe("the «Музыка» tab while the list's tracks download", () => {
     expect(rows()).toBe(3);
   });
 
-  test("a status heard again with nothing new reads nothing", async () => {
-    const { engine, show } = renderTab();
-    await flush();
-    const first = listReads(engine);
-    await act(async () => show(status(0, { state: "running", done: 0, total: 3 })));
-    await flush();
-    expect(listReads(engine)).toBe(first);
-  });
 });

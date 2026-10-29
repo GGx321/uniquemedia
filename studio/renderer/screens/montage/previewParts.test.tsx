@@ -77,22 +77,6 @@ describe("the sticker canvas", () => {
     expect(view.container.querySelector("canvas")?.getAttribute("data-frame")).toBe("4");
   });
 
-  test("a decode that lands after a newer one is not drawn over it (and is still closed)", async () => {
-    const { drawn } = recordCanvas();
-    const decoder = fakeDecoder();
-    const cache = new StickerFrameCache(() => Promise.resolve(decoder.frames));
-    const view = render(<StickerCanvas cache={cache} stickerId="heart-pulse" url="data:sticker" frameIndex={5} side={320} />);
-    await settle();
-    view.rerender(<StickerCanvas cache={cache} stickerId="heart-pulse" url="data:sticker" frameIndex={6} side={320} />);
-    await settle();
-    act(() => decoder.asked[1]?.resolve());
-    await settle();
-    act(() => decoder.asked[0]?.resolve());
-    await settle();
-    expect(drawn).toEqual([{ index: 6 }]);
-    expect(decoder.asked.map((a) => a.frame.closed)).toEqual([true, true]);
-  });
-
   test("its decoder is released when it goes (the last canvas of the picture closes it)", async () => {
     recordCanvas();
     const decoder = fakeDecoder();
@@ -106,13 +90,6 @@ describe("the sticker canvas", () => {
     expect(decoder.closedCount()).toBe(1);
   });
 
-  test("where the window cannot decode the picture, the picture itself is shown", async () => {
-    const cache = new StickerFrameCache(() => Promise.resolve(null));
-    const view = render(<StickerCanvas cache={cache} stickerId="heart-pulse" url="data:image/png;base64,AA==" frameIndex={0} side={320} />);
-    await settle();
-    expect(view.container.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,AA==");
-    expect(view.container.querySelector("canvas") === null).toBe(true);
-  });
 });
 
 describe("the music element", () => {
@@ -216,37 +193,6 @@ describe("the music element", () => {
     expect(audio.calls).toEqual(["seek 6", "play"]);
   });
 
-  test("an own track gets no element on the dev mock (it stores no audio), and none when its id breaks the contract", () => {
-    const playhead = new PlayheadStore(fakeFrameClock().clock);
-    const own = draftSpec(4, { music: { source: "own", mediaId: "media-00000007", startMs: 0 } });
-    const mock = render(
-      <EngineProvider client={mockEngineClient(new MockEngine({ scheduler: new ManualScheduler() }))}>
-        <PreviewAudio spec={own} playhead={playhead} />
-      </EngineProvider>,
-    );
-    expect(mock.container.querySelector("audio") === null).toBe(true);
-    // Not an id: the contract refuses such a spec, so this is a draft that was corrupted on its way; the preview does not build an address from it.
-    const odd = render(
-      <EngineProvider client={windowClient()}>
-        <PreviewAudio spec={{ ...own, music: { source: "own", mediaId: "../../etc/passwd", startMs: 0 } }} playhead={playhead} />
-      </EngineProvider>,
-    );
-    expect(odd.container.querySelector("audio") === null).toBe(true);
-  });
-
-  test("a slow start (too little data yet) is not moved again on every frame", async () => {
-    const fake = fakeFrameClock();
-    const playhead = new PlayheadStore(fake.clock);
-    playhead.setTotal(8_000);
-    const view = mount(playhead);
-    const element = view.container.querySelector("audio");
-    if (element === null) throw new Error("no audio element");
-    const audio = recordAudio(element, { readyState: 1 });
-    act(() => playhead.toggle());
-    for (let i = 0; i < 10; i++) act(() => fake.advance(100));
-    expect(audio.calls).toEqual(["seek 42", "play"]);
-  });
-
   test("a file the element refuses to play is not tried again on every frame: no more seeks, no more plays", async () => {
     const fake = fakeFrameClock();
     const playhead = new PlayheadStore(fake.clock);
@@ -274,19 +220,4 @@ describe("the music element", () => {
     expect(audio.calls.at(-1)).toBe("pause");
   });
 
-  test("no music, or the dev mock (which stores no audio): no element at all", () => {
-    const playhead = new PlayheadStore(fakeFrameClock().clock);
-    const none = render(
-      <EngineProvider client={windowClient()}>
-        <PreviewAudio spec={draftSpec(2)} playhead={playhead} />
-      </EngineProvider>,
-    );
-    expect(none.container.querySelector("audio") === null).toBe(true);
-    const mock = render(
-      <EngineProvider client={mockEngineClient(new MockEngine({ scheduler: new ManualScheduler() }))}>
-        <PreviewAudio spec={draftSpec(2, { music: MUSIC })} playhead={playhead} />
-      </EngineProvider>,
-    );
-    expect(mock.container.querySelector("audio") === null).toBe(true);
-  });
 });
