@@ -548,10 +548,10 @@ describe("the bold reader: what the paid probe P-BA found (label leaks, public p
 
     // Review LOW: only the leaks the probe saw. The light named by its source, a frame of the view, a photo on the wall and a shot of espresso are the rules' own.
     test.each([
-      ["daylight", "as daylight fills the room"],
-      ["timer", "while the timer counts down"],
+      ["snap", "in a quick snap"],
+      ["lens", "close to the lens"],
+      ["slot", "as the slot says"],
       ["camera", "smiling into the camera"],
-      ["three-quarter", "in a three-quarter view"],
       ["world", "set in the world of the city"],
     ])("«%s» is refused", (_, words) => {
       expect(problemsOf(bold(`In her small hotel room in Paris, she lies back across the bed in a white lace bra and panties ${words}, a box of macarons on the nightstand.`))).toContain("label-word");

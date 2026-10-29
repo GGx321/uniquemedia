@@ -104,10 +104,10 @@ describe("stepDownOf (the fallback chain's capture step)", () => {
   const MIXED: PoolKind = "mixed";
 
   test.each<[PoolKind, Capture, Capture | undefined]>([
-    [SELF, "mirror-hidden", "mirror"],
     [SELF, "mirror", "selfie"],
-    [SELF, "over-shoulder", "prone"],
     [SELF, "prone", "above"],
+    [SELF, "above", "selfie"],
+    [SELF, "timer", "selfie"],
     [SELF, "selfie", undefined],
     [ASKED, "timer", "friend"],
     [ASKED, "selfie", "friend"],
