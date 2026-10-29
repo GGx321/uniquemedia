@@ -24,7 +24,7 @@ useNativeGlobals();
 //
 // PARITY_WRITE_GOLDEN=1 rewrites golden.ts from the transcripts (after requiring the two engines to agree): see golden.ts. Run it with STUDIO_TEST_TIER=heavy, the run that plays every story.
 //
-// A push plays one story of every family of commands, the money, recovery and «Смелая» ones among them; the heavy (nightly) run plays all of them (testing/pushSet.ts, parity.plan.test.ts).
+// A push plays every story except the ones testing/pushSet.ts names nightly-only (a story of every family stays, the money, recovery and «Смелая» ones among them); the heavy (nightly) run plays all of them (parity.plan.test.ts).
 
 const dir = useEngineDir("studio-parity-");
 const REAL_TIMEOUT_MS = 60_000;
