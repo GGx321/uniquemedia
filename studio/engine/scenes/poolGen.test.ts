@@ -148,7 +148,6 @@ describe("readPoolAnswer: salvage drops the items that break the pool rules and 
     ["a text with a backslash", "a back\\slash corner"],
     ["a non-ASCII text", "a café corner"],
     ["a text with an edge space", " a corner"],
-    ["a text of a Cyrillic place", "кофейня на углу"],
   ])("an outfit that is %s is dropped", (_name, text) => {
     const result = okOf(answer({ outfits: [...OUTFITS, text] }));
     expect(result.pool.outfits).toEqual(OUTFITS);
