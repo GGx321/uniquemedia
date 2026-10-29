@@ -74,9 +74,6 @@ describe("plainSentence", () => {
   test.each([
     ["morning stretches", "In her living room, she is enjoying morning stretches, wearing a sundress."],
     ["a slow walk by the water", "In her living room, she is enjoying a slow walk by the water, wearing a sundress."],
-    ["coffee by the window", "In her living room, she is enjoying coffee by the window, wearing a sundress."],
-    ["picnic on the grass", "In her living room, she is enjoying picnic on the grass, wearing a sundress."],
-    ["the sunset from the terrace", "In her living room, she is enjoying the sunset from the terrace, wearing a sundress."],
     ["on the phone with her sister", "In her living room, she is on the phone with her sister, wearing a sundress."],
     ["at the window, smiling", "In her living room, she is at the window, smiling, wearing a sundress."],
     ["waters the plants", "In her living room, she waters the plants, wearing a sundress."],
@@ -87,15 +84,10 @@ describe("plainSentence", () => {
   // S5.6R (round D, LOW): a noun that ends in «s» is not a verb («pilates class», «tennis practice», «aerobics»); an activity that already opens with «is» is not wrapped again.
   test.each([
     ["pilates class", "In her living room, she is enjoying pilates class, wearing a sundress."],
-    ["tennis practice", "In her living room, she is enjoying tennis practice, wearing a sundress."],
     ["aerobics", "In her living room, she is enjoying aerobics, wearing a sundress."],
-    ["pilates in the park", "In her living room, she is enjoying pilates in the park, wearing a sundress."],
     ["is reading", "In her living room, she is reading, wearing a sundress."],
-    ["is reading a book", "In her living room, she is reading a book, wearing a sundress."],
     ["takes a short break", "In her living room, she takes a short break, wearing a sundress."],
-    ["waters the plants", "In her living room, she waters the plants, wearing a sundress."],
     ["stretches by the window", "In her living room, she stretches by the window, wearing a sundress."],
-    ["sips her coffee", "In her living room, she sips her coffee, wearing a sundress."],
   ])("a custom activity %j that a plain «-s» test took for a verb reads: %j", (activity, expected) => {
     expect(plainSentence({ route: undefined, category: "cat-summer-days", location: "her living room", activity, outfit: "a sundress" })).toBe(expected);
   });

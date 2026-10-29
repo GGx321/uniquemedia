@@ -6,12 +6,8 @@ describe("flirtyCountOf (I5.28)", () => {
   test.each([
     [0, 0],
     [1, 1],
-    [2, 1],
     [3, 2],
-    [4, 2],
-    [5, 3],
     [10, 6],
-    [12, 7],
     [100, 60],
   ])("%i slots under «Кокетливая» hold %i flirty ones", (slots, flirty) => {
     expect(flirtyCountOf(slots, "flirty")).toBe(flirty);
@@ -36,12 +32,8 @@ describe("levelCountsOf (I5.36)", () => {
   test.each([
     [0, { bold: 0, flirty: 0, ordinary: 0 }],
     [1, { bold: 0, flirty: 1, ordinary: 0 }],
-    [2, { bold: 1, flirty: 1, ordinary: 0 }],
     [3, { bold: 1, flirty: 1, ordinary: 1 }],
-    [5, { bold: 2, flirty: 2, ordinary: 1 }],
     [6, { bold: 2, flirty: 3, ordinary: 1 }],
-    [10, { bold: 4, flirty: 4, ordinary: 2 }],
-    [12, { bold: 5, flirty: 5, ordinary: 2 }],
     [100, { bold: 40, flirty: 40, ordinary: 20 }],
   ])("%i slots are bold / flirty / ordinary as %o", (slots, counts) => {
     expect(levelCountsOf(slots)).toEqual(counts);

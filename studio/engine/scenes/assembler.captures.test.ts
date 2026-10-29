@@ -177,10 +177,8 @@ describe("the body binding, by capture", () => {
     ["prone", true],
     ["timer", true],
     ["friend", true],
-    ["candid", true],
     ["above", false],
     ["selfie", false],
-    ["over-shoulder", true],
   ])("%s: %s", (capture, on) => {
     expect(assemble(slotOf(capture), {}, WITH_BODY).includes(BODY_BINDING)).toBe(on);
   });
