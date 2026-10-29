@@ -4,7 +4,7 @@ import { join, relative, resolve } from "node:path";
 import { NODE_TEST_SUITES } from "../scripts/electronNodeTests";
 import { tierTestArgs } from "../scripts/realWorkerTests";
 import { inQuarantineRun, QUARANTINE, quarantineEntry, type QuarantineEntry } from "./quarantine";
-import { budgetsOutsidePerfTests, holdsTierTests, nameTags, quarantineIds } from "./tierSources";
+import { budgetsOutsidePerfTests, holdsTierTests, importsHeavyHelper, nameTags, quarantineIds } from "./tierSources";
 import { TIERS, tierOf, tierPattern, tierTag } from "./tiers";
 
 const ROOT = resolve(import.meta.dir, "..", "..");
@@ -86,6 +86,24 @@ describe("the tiers' sources", () => {
       expect(plan).toHaveLength(1);
       expect((plan[0] ?? []).filter((arg) => !arg.startsWith("-")).length).toBeGreaterThan(0);
     }
+  });
+
+  test("the guard sees a heavy helper passed as a value, which the heavy run's file filter would never open", () => {
+    const hidden = 'import { heavyTest } from "../testing/bunTiers";\n(c ? test : heavyTest)("x", fn);';
+    const direct = 'import { heavyTest } from "../testing/bunTiers";\nif (c) test("x", fn); else heavyTest("x", fn);';
+    expect([importsHeavyHelper(hidden), holdsTierTests(hidden, "heavy")]).toEqual([true, false]);
+    expect([importsHeavyHelper(direct), holdsTierTests(direct, "heavy")]).toEqual([true, true]);
+    expect(importsHeavyHelper('import { perfTest } from "../testing/bunTiers";')).toBe(false);
+  });
+
+  test("every test file that imports heavyTest or sweepTest is opened by the heavy run: a helper passed as a value, (c ? test : heavyTest)(...), would leave its tests running nowhere", () => {
+    const unopened: string[] = [];
+    for (const file of sourcesUnder(STUDIO)) {
+      if (file.endsWith("tiers.test.ts")) continue;
+      const source = readFileSync(file, "utf8");
+      if (importsHeavyHelper(source) && !holdsTierTests(source, "heavy", file)) unopened.push(relative(ROOT, file));
+    }
+    expect(unopened).toEqual([]);
   });
 
   test("a node suite lists a test count for a tier exactly when its source holds tests of that tier (EVERY tier: a quarantined node test must not drop out of the quarantine run)", () => {

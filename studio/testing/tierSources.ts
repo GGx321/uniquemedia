@@ -123,3 +123,14 @@ export function budgetsOutsidePerfTests(source: string, fileName = "test.ts"): n
   visit(file, false);
   return outside;
 }
+
+/** Whether `source` imports `heavyTest` or `sweepTest` from bunTiers: it then has to call one directly, or the heavy run's file filter (holdsTierTests) never opens it. */
+export function importsHeavyHelper(source: string): boolean {
+  return /import\s*\{[^}]*\b(?:heavyTest|sweepTest)\b[^}]*\}\s*from\s*["'][^"']*bunTiers["']/.test(source);
+}
+
+/** The lines of the `sweepTest(...)` calls in `source`: such a call registers a push variant too, which a `*.heavy.test.*` file (left out of the blocking run) would never run. */
+export function sweepTestLines(source: string, fileName = "test.ts"): number[] {
+  const file = parse(source, fileName);
+  return calls(file).filter((call) => calleeName(call) === "sweepTest").map((call) => file.getLineAndCharacterOfPosition(call.getStart(file)).line + 1);
+}
