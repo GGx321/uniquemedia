@@ -492,6 +492,20 @@ describe("round 3 (S5.WB4c): the links and the words around a running batch", ()
     expect(focusedLabel()).toBe("button «Отмена»");
   });
 
+
+  test("MEDIUM: Nini's batch seen on Zoe's screen names Nini, and «отмените оставшиеся» opens NINI's «Клипы», not Zoe's", async () => {
+    await ninisBatchSeenFromZoe();
+    await clipsMode();
+    fireEvent.click(pickFor("клипов", 1));
+    await flush();
+    expect(whyOf(bar())).toBe(`Сейчас снимаются клипы пакета Nini${NBSP}— дождитесь окончания или отмените оставшиеся.`);
+    fireEvent.click(screen.getByRole("button", { name: "отмените оставшиеся" }));
+    await flush();
+    await flush();
+    expect(screen.getByRole("heading", { level: 1, name: "Nini" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: /^Клипы/ }).getAttribute("aria-selected")).toBe("true");
+    expect(within(batchHead()).getByRole("button", { name: "Отменить оставшиеся" })).toBeDefined();
+  });
 });
 
 describe("37e: «Оживить» waits while a batch runs", () => {

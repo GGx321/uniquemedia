@@ -23,6 +23,24 @@ describe("the switch", () => {
     expect(within(column()).getByText(/^Модель пишет 20/).textContent).toContain("≈ $0.009");
   });
 
+  test("while a scenes job writes the set it waits and says why: «Отменить» of the job stays on screen (CS.7 M3)", async () => {
+    const { scheduler } = await openReview();
+    fireEvent.click(await screen.findByRole("button", { name: nb("Составить 20 сцен · до $0.075") }));
+    await flush();
+    expect(isDisabled(reviewSwitch())).toBe(true);
+    expect(describedText(reviewSwitch())).toBe("Пока модель пишет сцены, проверку не выключить — дождитесь конца или отмените запись.");
+    fireEvent.click(reviewSwitch());
+    await flush();
+    expect(reviewSwitch().getAttribute("aria-checked")).toBe("true");
+    expect(localStorage.getItem(SCENE_REVIEW_KEY) === "off").toBe(false);
+    expect(within(column()).getByRole("button", { name: "Отменить" })).toBeDefined();
+    expect(within(column()).queryByText("проверка выключена") === null).toBe(true);
+    runAll(scheduler);
+    await flush();
+    expect(isDisabled(reviewSwitch())).toBe(false);
+    expect(reviewSwitch().getAttribute("aria-describedby") === null).toBe(true);
+  });
+
 });
 
 describe("compose", () => {
@@ -178,4 +196,15 @@ describe("the set's read and the other paid paths", () => {
 });
 
 describe("nothing paid without a click", () => {
+  test("a restart of the engine during review: the set is read again, and no paid command is sent", async () => {
+    const { engine } = await openReview({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 20, written: 20 }] });
+    await waitFor(() => expect(goButton().textContent).toBe(nb("Отрисовать 20 фото · до $3.00")));
+    const reads = callsOf(engine, "scenes.get").length;
+    await act(async () => {
+      engine.restart();
+    });
+    await flush();
+    await waitFor(() => expect(callsOf(engine, "scenes.get").length).toBeGreaterThan(reads));
+    for (const paid of ["scenes.compose", "scenes.write", "runs.startFromScenes", "runs.start", "runs.resume"] as const) expect(callsOf(engine, paid)).toHaveLength(0);
+  });
 });

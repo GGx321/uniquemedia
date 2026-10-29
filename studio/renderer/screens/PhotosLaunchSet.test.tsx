@@ -204,6 +204,21 @@ describe("a launch's batches on «Фото»", () => {
     return bar;
   };
 
+
+  test("the owner's own run, resumed while the launch is paused: its «Отменить», no launch label, no launch limit — though the row still says it draws (M2)", async () => {
+    const { engine, client, launch } = await launchWithSet({ paused: true });
+    const runId = engine.seedRun({ avatarId: SOFIA.avatarId, count: 5, categories: ["home"], poses: { profile: false, back: false } }, 1);
+    await resumeRun(client, runId);
+    // The launch's last word still has Sofia drawing (it was, before the pause): the batch on screen is not that one.
+    const stale = launch.avatars.map((a) => (a.avatarId === SOFIA.avatarId ? { ...a, phase: "drawing" as const, slice: { index: 1, total: 1 } } : a));
+    act(() => engine.announceLaunch(LaunchView.parse({ ...launch, avatars: stale })));
+    await openSofia();
+    await waitFor(() => expect(within(column()).getByText(/^Рисуем фото: \d+ из 5$/)).toBeDefined());
+    await flush();
+    expect(within(progress()).getByRole("button", { name: "Отменить" })).toBeDefined();
+    expect(within(progress()).queryByText("в запуске автопилота") === null).toBe(true);
+    expect(within(progress()).queryByText(/^партия 1 из 1 · до/) === null).toBe(true);
+  });
 });
 
 describe("a paid click on the strip is sent once (round 1 M4), and «Стоп» on its way (L1)", () => {
