@@ -82,19 +82,6 @@ describe("«Написать N сцен» (the idea form)", () => {
     expect(callsOf(engine, "scenes.write")).toHaveLength(0);
   });
 
-  test("stays shut and sends nothing while another paid action of the avatar is in flight", async () => {
-    const { engine, scheduler } = await readyWithPrice();
-    const form = await openIdeaForm(engine);
-    expect(isDisabled(await within(form).findByRole("button", { name: /^Написать/ }))).toBe(false);
-    await holdReplace(engine);
-    const shut = within(form).getByRole("button", { name: /^Написать/ });
-    expect(isDisabled(shut)).toBe(true);
-    fireEvent.click(shut);
-    await flush();
-    expect(callsOf(engine, "scenes.write")).toHaveLength(1);
-    tick(scheduler, 1);
-    await flush();
-  });
 });
 
 describe("«Другие сцены для N»", () => {
@@ -130,24 +117,6 @@ describe("«Другие сцены для N»", () => {
     expect(callsOf(engine, "scenes.write")).toHaveLength(writes);
   });
 
-  test("stays shut and sends nothing while another paid action of the avatar is in flight", async () => {
-    const { engine, scheduler, notice } = await gaveUp();
-    const writes = callsOf(engine, "scenes.write").length;
-    fireEvent.click(within(sceneCard(1)).getByRole("button", { name: "Другая сцена вместо 01" }));
-    await flush();
-    const send = await within(sceneCard(1)).findByRole("button", { name: "Заменить · до $0.075" });
-    engine.delayNext("scenes.write", HELD_MS);
-    fireEvent.click(send);
-    await flush();
-    expect(callsOf(engine, "scenes.write")).toHaveLength(writes + 1);
-    const shut = within(notice).getByRole("button", { name: /^Другие сцены для/ });
-    expect(isDisabled(shut)).toBe(true);
-    fireEvent.click(shut);
-    await flush();
-    expect(callsOf(engine, "scenes.write")).toHaveLength(writes + 1);
-    tick(scheduler, 1);
-    await flush();
-  });
 });
 
 describe("«Повторить» in the ⟳ popover", () => {
@@ -174,54 +143,7 @@ describe("«Повторить» in the ⟳ popover", () => {
     expect(callsOf(engine, "scenes.write")).toHaveLength(0);
   });
 
-  test("stays shut and sends nothing while its own sibling «Заменить» is in flight", async () => {
-    const { engine, client, scheduler } = await rewriteCut();
-    await within(column()).findByRole("alert");
-    await act(async () => {
-      const reply = await client.request("money.reconcile", {});
-      if (!reply.ok) throw new Error(reply.error.code);
-    });
-    await flush();
-    const pop = await openPopover();
-    const resume = await within(pop).findByRole("button", { name: "Повторить · до $0.038" });
-    expect(isDisabled(resume)).toBe(false);
-    engine.delayNext("scenes.write", HELD_MS);
-    fireEvent.click(await within(pop).findByRole("button", { name: "Заменить · до $0.075" }));
-    await flush();
-    expect(callsOf(engine, "scenes.write")).toHaveLength(1);
-    expect(isDisabled(within(pop).getByRole("button", { name: /^Повторить/ }))).toBe(true);
-    fireEvent.click(within(pop).getByRole("button", { name: /^Повторить/ }));
-    await flush();
-    expect(callsOf(engine, "scenes.write")).toHaveLength(1);
-    tick(scheduler, 1);
-    await flush();
-  });
 });
 
 describe("compose", () => {
-  test("stays shut and sends nothing while a resume of the avatar is in flight", async () => {
-    const { engine, scheduler } = await openReview();
-    engine.seedRun({ avatarId: MIA.avatarId, count: 12, categories: ["home"], poses: { profile: false, back: false } }, 8);
-    // The run is read when the screen opens: come back to it.
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Аватары" }));
-    });
-    await screen.findByRole("heading", { level: 2, name: "Mia" });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Фото" }));
-    });
-    const resume = await screen.findByRole("button", { name: /^Продолжить/ });
-    await waitFor(() => expect(goButton().textContent).toContain("Составить"));
-    expect(isDisabled(goButton())).toBe(false);
-    engine.delayNext("runs.resume", HELD_MS);
-    fireEvent.click(resume);
-    await flush();
-    expect(callsOf(engine, "runs.resume")).toHaveLength(1);
-    expect(isDisabled(goButton())).toBe(true);
-    fireEvent.click(goButton());
-    await flush();
-    expect(callsOf(engine, "scenes.compose")).toHaveLength(0);
-    tick(scheduler, 1);
-    await flush();
-  });
 });

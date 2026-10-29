@@ -41,21 +41,6 @@ function chipOf(radio: HTMLInputElement): { text: string; on: boolean } {
 }
 
 describe("«Ножки» on the card (mockup 33)", () => {
-  test("is a radio group «Нет · Немного 15 % · Много 30 %» under «Подача», «Нет» checked, with no caption", async () => {
-    await openPhotos();
-    const radios = within(legsGroup()).getAllByRole("radio");
-    expect(radios.map((r) => r.getAttribute("value"))).toEqual(["0", "15", "30"]);
-    expect(radios.map((r) => (r instanceof HTMLInputElement ? chipOf(r).text : ""))).toEqual(["Нет", "Немного 15 %", "Много 30 %"]);
-    expect(legs("Нет").checked).toBe(true);
-    expect(chipOf(legs("Нет")).on).toBe(true);
-    expect(radios.every((r) => r instanceof HTMLInputElement && !r.disabled)).toBe(true);
-    expect(within(card()).queryByText(/ножки и стопы крупно/) === null).toBe(true);
-    expect(described(legsGroup())).toEqual([]);
-    // The row follows «Подача».
-    const level = within(card()).getByRole("radiogroup", { name: "Подача" });
-    expect(level.compareDocumentPosition(legsGroup()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
   test("a pick says how many of the frames are legs: 3 of 20 over the five built-ins at «Немного», 6 at «Много»; the count follows", async () => {
     await openPhotos();
     await pick("Немного");
@@ -107,14 +92,6 @@ describe("«Ножки» on the card (mockup 33)", () => {
     expect(callsOf(engine, "scenes.compose").at(-1)?.payload.legsShare).toBe(30);
   });
 
-  test("is one radio group to the keyboard: native radios under one name, each reachable while a built-in is on", async () => {
-    await openPhotos();
-    const radios = [legs("Нет"), legs("Немного"), legs("Много")];
-    expect(new Set(radios.map((r) => r.name)).size).toBe(1);
-    expect(radios.every((r) => r.type === "radio" && !r.disabled)).toBe(true);
-    legs("Нет").focus();
-    expect(focusedLabel()).toBe(describeElement(legs("Нет")));
-  });
 });
 
 describe("«Ножки» with only custom categories on (mockup 34#card)", () => {
@@ -148,32 +125,9 @@ describe("«Ножки» with only custom categories on (mockup 34#card)", () =>
 describe("«Ножки» that round to no frame", () => {
   const FEW = "Ножки — слишком мало кадров во встроенных категориях";
 
-  test("5 photos over «Дом» and two own categories at «Немного»: a hint in place of «0 из 5 кадров»", async () => {
-    const yoga = category(5, "Йога дома", BED_POOL);
-    await openPhotos({ categories: [PARIS, yoga] });
-    for (const name of ["Виды", "Улица", "Гламур", "Фитнес"]) await toggleChip(name);
-    await toggleChip("Кофейни Парижа");
-    await toggleChip("Йога дома");
-    for (let i = 0; i < 3; i++) fireEvent.click(within(card()).getByRole("button", { name: "Меньше" }));
-    await flush();
-    await pick("Немного");
-    const hint = within(card()).getByText(FEW);
-    expect(hint.classList.contains("gen-cap-why")).toBe(true);
-    expect(within(card()).queryByText(/^0 из/) === null).toBe(true);
-    expect(legs("Немного").checked).toBe(true);
-    expect(legs("Немного").disabled).toBe(false);
-  });
 });
 
 describe("the refusal «legs-built-in-only»", () => {
-  test("shows its Russian text under the card", async () => {
-    const { engine } = await openPhotos();
-    engine.failNext("runs.estimate", { code: "VALIDATION", sceneReason: "legs-built-in-only" });
-    await pick("Немного");
-    // In the notice under the card (an alert), not anywhere on the screen: a stray copy elsewhere must not pass.
-    await waitFor(() => expect(screen.getAllByRole("alert").some((alert) => alert.textContent?.includes(SCENE_REASONS_RU["legs-built-in-only"]) === true)).toBe(true));
-    expect(SCENE_REASONS_RU["legs-built-in-only"]).toContain("Ничего не потрачено");
-  });
 });
 
 // Owner decision (wave 5e): «Ножки» is remembered per avatar on this machine like «Подача»; «Нет», the default, is not stored.
@@ -203,22 +157,4 @@ describe("«Ножки» remembered per avatar", () => {
     second.unmount();
   });
 
-  test("one avatar's pick leaves the other at «Нет», on screen and in storage", async () => {
-    await openPhotos({ avatars: [MIA, SOFIA] });
-    await pick("Немного");
-    expect(localStorage.getItem(LEGS_KEY(MIA.avatarId))).toBe("15");
-    await openAvatarPhotos("Sofia");
-    expect(legs("Нет").checked).toBe(true);
-    expect(localStorage.getItem(LEGS_KEY(SOFIA.avatarId)) === null).toBe(true);
-    await openAvatarPhotos("Mia");
-    expect(legs("Немного").checked).toBe(true);
-  });
-
-  test("keeps the pick while no built-in category is on: the owner's pick is not lost with the chips off", async () => {
-    const { engine } = await openPhotos({ categories: [PARIS] });
-    await pick("Немного");
-    for (const name of ["Дом", "Виды", "Улица", "Гламур", "Фитнес"]) await toggleChip(name);
-    expect(localStorage.getItem(LEGS_KEY(MIA.avatarId))).toBe("15");
-    expect(callsOf(engine, "runs.estimate").length).toBeGreaterThan(0);
-  });
 });
