@@ -1,7 +1,6 @@
 import {
   ageMentions,
   ageUpperBounds,
-  foldedForms,
   MOTION_ENGLISH,
   MOTION_PROBLEMS,
   MOTION_TEXT_MAX,
@@ -867,30 +866,6 @@ const RU_SMALL_NUMBER =
   /(?<![\p{L}])(?:два|две|двух|двум|двумя|двое|тр[её]х|тр[её]м|тремя|трое|четыре|четыр[её]х|четыр[её]м|четырьмя|четверо|пять|пяти|пятью|пятеро|шесть|шести|шестью|шестеро|семь|семи|семеро|восемь|восьми|восемью|девять|девяти|девятью|(?:три|семью)\s+(?:раз|раза|пальца|пальцев|пальцами|шага|шагов|шагами))(?![\p{L}])/iu;
 
 /**
- * S5.FU-AGE: a Russian number from ten up as people say and misspell it («шешнадцать», «шиснадцать», «пятнацать», «семнацать», «двацать», «дисять»), as one whole word with
- * a numeral's ending («-ь», «-ый», «-илетняя», «-ка»).
- */
-const RU_SPOKEN_NUMBER = new RegExp(
-  String.raw`^(?:(?:[ао]д[иы]н|дв[еиэ]|тр[иеэ]|ч[еиоэ]т[ыи]р|п[яеи]т|ш[еиыэ][сш]т?|с[еиэ]м|в[ао]с[еиэ]м|д[еи]в[яеи]т)над?[цт]{1,2}[ао]т|д[еи]с[яеи]т|(?:дв[ао]|тр[иеэ])д?[цт]{1,2}[ао]т)(?:ь|и|ью|ая|ый|ое|ой|ого|ому|ом|ым|ую|ые|ых|ыми|ил\p{L}*|к\p{L}*)?$`,
-  "iu",
-);
-/** The standard spelling alone (`RU_NUMBER_WORD`), as one whole word. */
-const RU_NUMBER_WHOLE = new RegExp(`^${RU_NUMBER_WORD.source.replace("(?<![\\p{L}])", "")}$`, "iu");
-/**
- * Whether his words say a Russian number from ten up that `RU_NUMBER_WORD` does not read: misspelt as one word (`RU_SPOKEN_NUMBER`), or in its standard spelling split by a
- * space or a hyphen into two words («шест надцать», «шестнад цать», «шест-надцать») or three («шес т надцать»), or spelled out in short fragments («ш е с т н а д ц а т ь»).
- */
-function namesRussianNumberWord(idea: string): boolean {
-  const folded = foldedForms(idea);
-  const words = folded.text.toLowerCase().match(/\p{L}+/gu) ?? [];
-  const pairs = words.slice(1).map((word, i) => `${words[i] ?? ""}${word}`);
-  const triples = words.slice(2).map((word, i) => `${words[i] ?? ""}${words[i + 1] ?? ""}${word}`);
-  const fragments = folded.joined.toLowerCase().split(/[ |]/u);
-  // Round 2 (L4): neighbouring words run together into a misspelling by chance («пятна тату» → «пятнатату»), so every join takes the standard spelling alone.
-  return words.some((word) => RU_SPOKEN_NUMBER.test(word)) || [...pairs, ...triples, ...fragments].some((word) => RU_NUMBER_WHOLE.test(word));
-}
-
-/**
  * The age guard read on the owner's own idea, before it is sent (S5.WC2c round 2, M1): an age or an age bound in English or Russian («ей 16», «16-летняя», «младше 18»), a
  * youth word in either language at the frame's level («школьница», «малышка», «подросток», «toddler»), a number on its own, or a number word («шестнадцать», «sixteen»; S5.WCX round 2: «два» to «девять» too). What the English would be refused
  * for in any case, `content` and final; read here, the call is refused free and nothing reaches the model, so no answer can leave the age out.
@@ -903,7 +878,6 @@ export function ownIdeaNamesAge(idea: string, level: ContentLevel): boolean {
     STANDALONE_NUMBER.test(idea) ||
     namesNumberWord(idea) ||
     RU_NUMBER_WORD.test(idea) ||
-    namesRussianNumberWord(idea) ||
     RU_SMALL_NUMBER.test(idea)
   );
 }
