@@ -185,13 +185,13 @@ function audioComplex(recipe: Recipe, info: MediaInfo): string {
 const MAX_FILE_MB = 50;
 
 /**
- * Instagram re-encodes every upload, so feeding it an already heavily
- * compressed file compounds artefacts. The copy is therefore delivered at a
- * normal upload bitrate for 1080p, with larger files accepted. Constrained
- * CRF: a static scene still gets only what it needs, and the ceiling catches
- * motion. Long clips are held lower by the 50 MB file cap below.
+ * Hard ceiling on the video bitrate, in kbit/s. It was lifted to 12000 once to
+ * test whether a higher bitrate earns more views; it does not, and the files
+ * got heavier, so the ceiling is back at 4000. Constrained CRF: a static scene
+ * still gets only what it needs, and the ceiling catches motion. Long clips are
+ * held lower still by the 50 MB file cap below.
  */
-const MAX_VIDEO_KBPS = 12000;
+const MAX_VIDEO_KBPS = 4000;
 
 /** Audio bitrate used when the recipe carries none: normal stereo AAC. */
 const DEFAULT_AUDIO_KBPS = 192;
@@ -215,7 +215,7 @@ export function buildArgs(recipe: Recipe, info: MediaInfo, zscale = true): strin
 
   // Two ceilings, the lower one wins. The 50 MB bound: total bits for ~46 MB
   // (8% safety margin) minus the audio track, per second — it only binds on a
-  // clip long enough for 12000k to overflow the file cap (from roughly 30 s).
+  // clip long enough for 4000k to overflow the file cap (from roughly 90 s).
   const audioKbps = info.hasAudio ? aBitrate : 0;
   // No floor: the cap wins for any duration, or a very long clip would
   // overflow 50 MB (1 kbit/s only keeps the flag valid when audio eats it all).

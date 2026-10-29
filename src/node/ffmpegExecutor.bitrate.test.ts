@@ -10,28 +10,26 @@ import { sampleRecipe } from "../core/sampler";
 import type { ResolvedCopyOptions } from "../core/types";
 
 /**
- * Instagram re-encodes every upload, so the copy goes out at a normal upload
- * bitrate instead of a pre-squeezed one: the ceiling is 12000 kbit/s. This
- * test proves, on a real render, that the ceiling still holds and that the
- * old 3500 kbit/s squeeze is gone.
+ * The video bitrate is capped at 4000 kbit/s to keep files small. The cap was
+ * lifted once to 12000 to test whether a higher bitrate earns more views; it
+ * does not, and size does grow, so the 4 Mbit/s ceiling is back. This test
+ * proves, on real renders, that the ceiling holds and that it is the thing
+ * limiting a demanding source.
  *
  * lavfi `testsrc` is the right input precisely because it is pathological:
  * hard edges everywhere and nothing for the codec to predict, so CRF alone
- * drives it to 7-8 Mbit/s at 1080x1920 - more than the old 3500 ceiling
- * allowed, less than the new one.
+ * would drive it to 7-8 Mbit/s at 1080x1920 - the ceiling has to clamp it.
  *
  * 30 s rather than the 2 s clip the other executor tests share: the ceiling is
  * enforced through a 2 s VBV window, and x264 may spend a good part of that
  * buffer up front, so a short clip overshoots the average however well the
- * ceiling works. Over 30 s the transient amortises to well under 100 kbit/s.
+ * ceiling works. Over 30 s the transient amortises to a small allowance.
  */
-const CEILING_KBPS = 12000;
-/** The previous ceiling; a render above it proves the squeeze is gone. */
-const OLD_CEILING_KBPS = 3500;
+const CEILING_KBPS = 4000;
 /**
  * x264 may spend one VBV buffer (`-bufsize` = 2 s of ceiling) above the ceiling
- * over a clip, so the average overshoots by at most buffer / duration. It was
- * ~100 kbit/s at the old 3500 ceiling over 30 s; it scales with the ceiling.
+ * over a clip, so the average overshoots by at most buffer / duration
+ * (about 267 kbit/s at the 4000 ceiling over 30 s).
  */
 const VBV_ALLOWANCE_KBPS = (CEILING_KBPS * 2) / 30;
 const CLIP_SEC = 30;
@@ -62,7 +60,7 @@ function videoBitrateKbps(file: string): number {
   return Number(r.stdout.trim()) / 1000;
 }
 
-test("rendered reel stays within the 12 Mbit/s ceiling and is no longer squeezed to the old 3.5", async () => {
+test("rendered reel is capped at 4 Mbit/s even for a pathological source", async () => {
   const info = await exec.probe(input);
   const opts: ResolvedCopyOptions = {
     strength: 1, exportFormat: "reels", keepTrendAudio: false, allowMirror: false,
@@ -76,12 +74,9 @@ test("rendered reel stays within the 12 Mbit/s ceiling and is no longer squeezed
   console.log(`[bitrate] video=${Math.round(kbps)} kbit/s over ${CLIP_SEC}s`);
   expect(Number.isFinite(kbps)).toBe(true);
   expect(kbps).toBeLessThanOrEqual(CEILING_KBPS + VBV_ALLOWANCE_KBPS);
-  // CRF, not a ceiling, decides this render: it must land well above the old
-  // 3500 kbit/s squeeze, or the bitrate was never actually normalised.
-  expect(kbps).toBeGreaterThan(OLD_CEILING_KBPS * 1.2);
 }, 60_000);
 
-test("the 12 Mbit/s ceiling binds on a source that would exceed it", async () => {
+test("the 4 Mbit/s ceiling binds on a source that would exceed it", async () => {
   const info = await exec.probe(noisyInput);
   const opts: ResolvedCopyOptions = {
     strength: 1, exportFormat: "reels", keepTrendAudio: false, allowMirror: false,

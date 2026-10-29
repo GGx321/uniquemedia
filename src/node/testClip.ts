@@ -22,7 +22,7 @@ export function makeTestClip(path: string, durationSec = 2): void {
 /**
  * A 1080x1920 clip of animated test pattern plus temporal noise: near-white-noise
  * entropy that no codec can predict, so an uncapped CRF encode of it runs well
- * past 12 Mbit/s. Used to prove a bitrate ceiling binds. Kept low-fps and short
+ * past the 4 Mbit/s ceiling. Used to prove a bitrate ceiling binds. Kept low-fps and short
  * so generating and rendering it stays cheap.
  */
 export function makeHighEntropyClip(path: string, durationSec = 10): void {
