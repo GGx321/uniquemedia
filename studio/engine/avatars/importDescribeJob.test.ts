@@ -105,12 +105,12 @@ test("a rejected answer is asked once more under a new attempt id, with the reas
 });
 
 test("the second attempt is told which of our words to avoid, never the first answer's own text", async () => {
-  const { net, result } = run([reply({ ...GOOD_ANSWER, descriptor: "27-year-old Latina TEEENAGE girl, tan skin." }), reply(GOOD_ANSWER)]);
+  const { net, result } = run([reply({ ...GOOD_ANSWER, descriptor: "27-year-old Latina TEENAGE girl, tan skin." }), reply(GOOD_ANSWER)]);
   await result;
 
   const second = JSON.stringify(net.calls[1]?.json());
   expect(second).toContain('\\"teen\\"');
-  expect(second).not.toContain("TEEENAGE");
+  expect(second).not.toContain("TEENAGE");
 });
 
 test("an answer rejected twice fails the job with the reasons; the money of both attempts is settled", async () => {
