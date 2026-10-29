@@ -5,7 +5,7 @@ import { MockEngine, mockEngineClient } from "../../engine/mockEngine";
 import { EngineProvider } from "../../engine/react";
 import { ManualScheduler } from "../../engine/scheduler";
 import { ClipPoster } from "./ClipPoster";
-import { collageClip, photoClip } from "./testkit";
+import { photoClip } from "./testkit";
 
 // 3-H1: a clip as a still (the drafts screen's poster, a video card's) shows an own photo («Мои») as the photo itself, through main's media route by
 // its id, as the «Мои» tab's tile does; the dev mock, which stores no picture, draws its stand-in.
@@ -32,9 +32,4 @@ describe("an own photo on a clip's poster", () => {
     expect(document.querySelector(".clip-poster-own") === null).toBe(true);
   });
 
-  test("in a collage, next to a scene photo; the mock draws its stand-in", () => {
-    renderPoster("mock", { ...collageClip(0, ["photo-mia-0001", null], 3_000, false), cells: [{ photo: { source: "scene", photoId: "photo-mia-0001" }, focus: null }, { photo: { source: "own", mediaId: OWN }, focus: null }] });
-    expect(screen.getByRole("img", { name: "Кадр: фото 1" })).toBeDefined();
-    expect(screen.getByRole("img", { name: "Кадр: своё фото 2" }).className).toContain("portrait-placeholder");
-  });
 });

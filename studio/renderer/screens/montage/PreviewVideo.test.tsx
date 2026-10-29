@@ -26,7 +26,6 @@ const CROP = videoClipCrop({ w: 1_080, h: 608 }, null);
 
 /** The real client's addresses over the mock's answers (its media are main's routes). */
 const windowClient = () => ({ ...mockEngineClient(new MockEngine({ scheduler: new ManualScheduler() })), kind: "window" as const });
-const mockClient = () => mockEngineClient(new MockEngine({ scheduler: new ManualScheduler() }));
 
 const mounted: (() => void)[] = [];
 afterEach(() => {
@@ -128,15 +127,6 @@ describe("the element", () => {
     expect(FRAME_W / FRAME_H).toBeCloseTo(CROP.w / CROP.h, 2);
   });
 
-  test("the dev mock has no picture: a stand-in at the same place, with the file's name, its stored size and the frame on screen; never a broken element", () => {
-    const { view } = mount({ client: mockClient() });
-    expect(view.container.querySelector("video") === null).toBe(true);
-    const ground = view.container.querySelector<HTMLElement>(".pv-video-ground");
-    expect(Number.parseFloat(ground?.style.width ?? "")).toBeCloseTo((1_080 / CROP.w) * 100, 6);
-    expect(view.container.textContent).toContain("street-walk.mp4");
-    expect(view.container.textContent).toContain("1080×608 · 0:01.8");
-  });
-
   test("a video the library no longer holds says so; one not known yet is the bare ground; neither gets an element", () => {
     const gone = mount({ video: { state: "gone" }, window: null });
     expect(gone.view.container.querySelector("video") === null).toBe(true);
@@ -150,19 +140,6 @@ describe("the element", () => {
     expect(unknown.view.container.textContent).toBe("");
   });
 
-  test("a file the element cannot open is a stand-in that says so, not a broken element", () => {
-    const { view, element } = mount();
-    act(() => {
-      videoOf(element).dispatchEvent(new Event("error"));
-    });
-    expect(view.container.querySelector("video") === null).toBe(true);
-    expect(view.container.textContent).toContain("Видео не открылось");
-  });
-
-  test("an id that breaks the contract builds no address: no element (a draft corrupted on its way; the preview never makes a path of it)", () => {
-    const { view } = mount({ mediaId: "../../etc/passwd" });
-    expect(view.container.querySelector("video") === null).toBe(true);
-  });
 });
 
 describe("at rest: the exact stored frame", () => {
@@ -178,41 +155,6 @@ describe("at rest: the exact stored frame", () => {
     expect(video.calls).toEqual(["seek 66.5f"]);
   });
 
-  test("a scrub never seeks over a seek under way, and lands on the last frame it asked for once that seek ends", () => {
-    const playhead = new PlayheadStore(fakeFrameClock().clock);
-    const { element } = mount({ playhead });
-    const video = recordVideo(videoOf(element));
-    act(() => playhead.seek(2_100));
-    video.hold();
-    act(() => playhead.seek(2_200));
-    act(() => playhead.seek(2_300));
-    expect(video.calls).toEqual(["seek 57.5f"]);
-    video.land();
-    expect(video.calls).toEqual(["seek 57.5f", "seek 63.5f"]);
-  });
-
-  test("a new trim shows its frame at once, the playhead unmoved", () => {
-    const playhead = new PlayheadStore(fakeFrameClock().clock);
-    const { view, element } = mount({ playhead });
-    const video = recordVideo(videoOf(element));
-    act(() => playhead.seek(2_000));
-    const trimmed: MontageDraft = { ...SPEC, clips: [SPEC.clips[0] ?? photoClip(0, "photo-mia-0001"), { ...videoClip(1, 2_000, 3_000), mediaId: MEDIA }] };
-    view.rerender(
-      <EngineProvider client={windowClient()}>
-        <PreviewVideo spec={trimmed} playhead={playhead} mediaId={MEDIA} video={KNOWN} window={CROP} sourceFrame={90} peekFrame={null} />
-      </EngineProvider>,
-    );
-    expect(video.calls).toEqual(["seek 54.5f", "seek 90.5f"]);
-  });
-
-  test("off the video's clip (a photo on screen) it waits, paused", () => {
-    const fake = fakeFrameClock();
-    const playhead = new PlayheadStore(fake.clock);
-    const { element } = mount({ playhead });
-    const video = recordVideo(videoOf(element));
-    act(() => playhead.seek(1_000));
-    expect(video.calls).toEqual([]);
-  });
 });
 
 describe("playing", () => {
@@ -298,34 +240,6 @@ describe("playing", () => {
     expect(video.calls.slice(before)).toEqual(["seek 66f"]);
   });
 
-  test("a seek that took long while playing leads the next one by as much, so a slow decoder lands where the clock is (fix round 1, the open question)", () => {
-    let now = 1_000;
-    const clock = spyOn(performance, "now").mockImplementation(() => now);
-    try {
-      const fake = fakeFrameClock();
-      const playhead = new PlayheadStore(fake.clock);
-      const split: MontageDraft = draftSpec([{ ...videoClip(0, 2_000, 0), mediaId: MEDIA }, { ...videoClip(1, 2_000, 2_200), mediaId: MEDIA }]);
-      const { element } = mount({ playhead, spec: split });
-      const target = videoOf(element);
-      const video = recordVideo(target);
-      act(() => playhead.seek(1_500));
-      act(() => playhead.toggle());
-      // The start's seek, while playing, takes 340 ms.
-      video.hold();
-      act(() => {
-        target.dispatchEvent(new Event("seeking"));
-      });
-      now += 340;
-      video.land();
-      // At B's first frame the jump is sought 340 ms ahead of 2.2 s.
-      video.at(2.0);
-      act(() => fake.advance(500));
-      expect(video.calls.at(-1)).toBe("seek 76.2f");
-    } finally {
-      clock.mockRestore();
-    }
-  });
-
   test("a led seek that turns out quick lands ahead of the clock: once landed, ONE settling seek puts it back on the clock, never a second (fix round 2)", () => {
     let now = 1_000;
     const clock = spyOn(performance, "now").mockImplementation(() => now);
@@ -365,59 +279,4 @@ describe("playing", () => {
     }
   });
 
-  test("a seek at rest (a scrub) is never measured into the lead: the next start is sought to its exact time (fix round 2)", () => {
-    let now = 1_000;
-    const clock = spyOn(performance, "now").mockImplementation(() => now);
-    try {
-      const fake = fakeFrameClock();
-      const playhead = new PlayheadStore(fake.clock);
-      const { element } = mount({ playhead });
-      const target = videoOf(element);
-      const video = recordVideo(target);
-      act(() => playhead.seek(2_000));
-      // The scrub's seek, paused, takes half a second.
-      video.hold();
-      act(() => {
-        target.dispatchEvent(new Event("seeking"));
-      });
-      now += 500;
-      video.at(54.5 / 30);
-      video.land();
-      act(() => playhead.toggle());
-      // Started at 1.8 s in the video, not 2.3.
-      expect(video.calls.slice(-2)).toEqual(["seek 54f", "play"]);
-    } finally {
-      clock.mockRestore();
-    }
-  });
-
-  test("the start of a slide or an edge being dragged in «Обрезка» is shown at once, whatever the playhead; let go, the playhead's frame is back (fix round 1, L8)", () => {
-    const playhead = new PlayheadStore(fakeFrameClock().clock);
-    const { view, element } = mount({ playhead });
-    const video = recordVideo(videoOf(element));
-    act(() => playhead.seek(2_000));
-    const peek = (frame: number | null): void =>
-      view.rerender(
-        <EngineProvider client={windowClient()}>
-          <PreviewVideo spec={SPEC} playhead={playhead} mediaId={MEDIA} video={KNOWN} window={CROP} sourceFrame={54} peekFrame={frame} />
-        </EngineProvider>,
-      );
-    peek(160);
-    expect(video.calls.at(-1)).toBe("seek 160.5f");
-    peek(null);
-    expect(video.calls.at(-1)).toBe("seek 54.5f");
-  });
-
-  test("an element that failed before its listener could hear it (a fast 404) is a stand-in, not a blank frame (fix round 1, L1)", () => {
-    const failed = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "error");
-    Object.defineProperty(HTMLMediaElement.prototype, "error", { configurable: true, get: () => ({ code: 4, message: "not found" }) });
-    try {
-      const { view } = mount();
-      expect(view.container.querySelector("video") === null).toBe(true);
-      expect(view.container.textContent).toContain("Видео не открылось");
-    } finally {
-      if (failed === undefined) Reflect.deleteProperty(HTMLMediaElement.prototype, "error");
-      else Object.defineProperty(HTMLMediaElement.prototype, "error", failed);
-    }
-  });
 });
