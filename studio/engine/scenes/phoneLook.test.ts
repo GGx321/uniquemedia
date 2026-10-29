@@ -27,8 +27,8 @@ const BEDROOM: RoomPlace = { room: true, details: ["a charger cable on the bed",
 // phoneLook.captures.test.ts; these are the invariants that bind every line.
 const NOT_MIRROR_CAPTURES = CAPTURES.filter((capture) => shotOf(capture) !== "mirror");
 const lineOf = (capture: Capture, key = "run-1:slot-1"): string => captureLineOf(capture, key);
-// One capture per stored shot: the tables below are per-author rules, so each author is represented once.
-const ONE_PER_SHOT = SHOTS.flatMap((shot) => CAPTURES.filter((capture) => shotOf(capture) === shot).slice(0, 1));
+// Five captures, one per author (selfie, mirror, friend, candid) and the timer: the tables below are per-author rules.
+const ONE_PER_SHOT: Capture[] = ["selfie", "mirror", "friend", "candid", "timer"];
 
 describe("captureLineOf", () => {
   test.each(ONE_PER_SHOT)("has a line for the %s capture", (capture) => {

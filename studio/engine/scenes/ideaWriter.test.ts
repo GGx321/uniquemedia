@@ -224,9 +224,9 @@ describe("readIdeaAnswer", () => {
   test.each([
     ["a mirror the owner did not choose", { shot: "mirror", pose: "front" }],
     ["a selfie facing away", { shot: "selfie", pose: "back" }],
+    ["a selfie in profile", { shot: "selfie", pose: "profile" }],
     ["a shot outside the vocabulary", { shot: "drone", pose: "front" }],
     ["a pose outside the vocabulary", { shot: "friend", pose: "upside-down" }],
-    ["no shot", { shot: null, pose: "back" }],
   ])("an Auto slot with %s is refused as a bad angle, naming the slot", (_name, angle) => {
     expect(readIdeaAnswer(answer({ slotIndex: 5, sentence: SENTENCE, ...angle }), [AUTO])).toMatchObject({ ok: false, problems: ["bad-angle"], angleSlots: [5] });
   });

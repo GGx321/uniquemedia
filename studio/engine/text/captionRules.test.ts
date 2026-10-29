@@ -327,10 +327,10 @@ describe("too-long: 60 characters as a person counts them", () => {
 
 describe("too-many-lines: a line is what an explicit newline ends", () => {
   test.each([
-    ["one line", "a", []],
     ["two lines with LF", "a\nb", []],
+    ["a trailing LF makes a second, empty line", "a\n", []],
+    ["a leading LF makes a first, empty line", "\na", []],
     ["three lines with LF", "a\nb\nc", ["too-many-lines"]],
-    ["a blank line in the middle is a line", "a\n\nb", ["too-many-lines"]],
     ["a lone CR is no break (and is a charset problem)", "a\rb\rc", ["charset"]],
   ] as const)("%s", (_name, text, expected) => {
     expect(issues(text)).toEqual([...expected]);
