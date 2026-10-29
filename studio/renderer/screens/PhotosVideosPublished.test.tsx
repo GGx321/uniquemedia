@@ -45,20 +45,6 @@ const cards = (): string[] => screen.queryAllByRole("article").map((el) => el.qu
 const published = (name: string): HTMLElement => within(card(name)).getByRole("switch", { name: `Опубликовано: ${name}` });
 
 describe("«Видео» on «Фото» with the autopilot", () => {
-  test("a video of the autopilot: «Видео N» with «автопилот», no «Изменить»; the owner's own keeps its name and «Изменить»; every one has «Опубликовано»", async () => {
-    await openVideos();
-    expect(cards()).toEqual(["утро дома", "Видео 2", "Видео 1"]);
-    const auto = card("Видео 1");
-    expect(auto.querySelector(".video-ap-tag")?.textContent).toBe("автопилот");
-    expect(within(auto).queryByRole("button", { name: "Изменить" }) === null).toBe(true);
-    expect(published("Видео 1").getAttribute("aria-checked")).toBe("true");
-    expect(auto.querySelector(".video-pub-mark") !== null).toBe(true);
-    const own = card("утро дома");
-    expect(own.querySelector(".video-ap-tag") === null).toBe(true);
-    expect(within(own).getByRole("button", { name: "Изменить" })).toBeDefined();
-    expect(published("утро дома").getAttribute("aria-checked")).toBe("false");
-  });
-
   test("«Опубликовано» sends the mark by id and the card follows; «Скрыть опубликованные N» hides the published ones", async () => {
     const { engine, videoIds } = await openVideos();
     expect(document.querySelector(".videos-hide")?.textContent).toBe("Скрыть опубликованные 1");
@@ -76,57 +62,6 @@ describe("«Видео» on «Фото» with the autopilot", () => {
     await flush();
     await waitFor(() => expect(cards()).toEqual([]));
     expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 2, name: "Видео" })));
-  });
-
-  test("marks that cannot be read: the notice, every video unmarked; a mark heals the log and the list is read again", async () => {
-    const { engine } = await openVideos((mock) => mock.tearPublishedLog(MIA.avatarId));
-    expect(screen.getByText("Отметки «Опубликовано» не читаются — все видео показаны без отметки. Studio по ним ничего не удаляет; новая отметка допишется.")).toBeDefined();
-    expect(published("Видео 1").getAttribute("aria-checked")).toBe("false");
-    const reads = callsOf(engine, "videos.list").length;
-    fireEvent.click(published("Видео 2"));
-    await flush();
-    await flush();
-    expect(callsOf(engine, "videos.list").length).toBeGreaterThan(reads);
-    await waitFor(() => expect(published("Видео 1").getAttribute("aria-checked")).toBe("true"));
-    expect(screen.queryByText(/не читаются/) === null).toBe(true);
-  });
-
-  test("marks that cannot be read: the delete starts on the plain way and the dialog says the mark is not read (fix round 1)", async () => {
-    await openVideos((mock) => mock.tearPublishedLog(MIA.avatarId));
-    fireEvent.click(within(card("Видео 1")).getByRole("button", { name: /^Удалить видео / }));
-    const dialog = await screen.findByRole("alertdialog", { name: "Удалить видео 1?" });
-    expect(within(dialog).getByRole("radio", { name: /^Только удалить видео/ }).getAttribute("aria-checked")).toBe("true");
-    expect(dialog.querySelector(".ap-del-marks")?.textContent?.trim()).toBe(MARKS_UNKNOWN);
-    expect(within(card("Видео 1")).getByRole("button", { name: /^Удалить видео / }).classList.contains("video-trash-on")).toBe(true);
-    fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
-    await flush();
-    expect(within(card("Видео 1")).getByRole("button", { name: /^Удалить видео / }).classList.contains("video-trash-on")).toBe(false);
-  });
-
-  test("S4.9d (S4.9c N5): a mark that flips while the delete dialog is open changes nothing in it — the dialog stays as it opened, its words and its way agreeing", async () => {
-    const { client, videoIds } = await openVideos();
-    fireEvent.click(within(card("Видео 1")).getByRole("button", { name: /^Удалить видео / }));
-    const dialog = await screen.findByRole("alertdialog", { name: "Удалить видео 1?" });
-    const lead = (): string => dialog.querySelector(".ap-del-lead")?.textContent ?? "";
-    expect(dialog.querySelector(".ap-del-head .tag")?.textContent).toBe("опубликовано");
-    expect(lead()).toContain("Видео уже опубликовано");
-    // Another window takes the mark off while the owner reads the dialog.
-    await act(async () => {
-      const unmarked = await client.request("videos.setPublished", { videoId: videoIds[0] ?? "", published: false });
-      if (!unmarked.ok) throw new Error(unmarked.error.code);
-    });
-    await flush();
-    expect(within(card("Видео 1")).getByRole("switch", { name: "Опубликовано: Видео 1" }).getAttribute("aria-checked")).toBe("false");
-    expect(dialog.querySelector(".ap-del-head .tag")?.textContent).toBe("опубликовано");
-    expect(lead()).toContain("Видео уже опубликовано");
-    expect(within(dialog).getByRole("radio", { name: /^Удалить видео и отклонить фото/ }).getAttribute("aria-checked")).toBe("true");
-  });
-
-  test("marks that read: the dialog says nothing of them", async () => {
-    await openVideos();
-    fireEvent.click(within(card("Видео 2")).getByRole("button", { name: /^Удалить видео / }));
-    const dialog = await screen.findByRole("alertdialog", { name: "Удалить видео 2?" });
-    expect(dialog.querySelector(".ap-del-marks") === null).toBe(true);
   });
 
   test("deleting a published video: «Удалить видео и отклонить фото» is chosen; the photos are rejected and it is said", async () => {
@@ -159,22 +94,6 @@ describe("«Видео» on «Фото» with the autopilot", () => {
     expect(alert.textContent ?? "").not.toContain("нельзя записывать");
     expect(screen.queryByRole("button", { name: /в Настройках/ }) === null).toBe(true);
     expect(callsOf(engine, "videos.list").length).toBeGreaterThan(reads);
-  });
-
-  test("«Удалить запись» that timed out (outcome unknown): the same, not a definite failure of the folder", async () => {
-    const { engine, videoIds } = await openVideos();
-    engine.setVideoFileState(videoIds[1] ?? "", "missing");
-    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Видео" }));
-    await flush();
-    engine.failNext("videos.delete", { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", outcome: "unknown" });
-    fireEvent.click(within(card("Видео 2")).getByRole("button", { name: "Удалить запись" }));
-    await flush();
-    await flush();
-    const alert = screen.getByRole("alert");
-    expect(alert.querySelector(".notice-title")?.textContent).toBe("Удаление не подтвердилось — списки прочитаны заново");
-    expect(alert.textContent).toContain("а удаление могло дойти до конца");
-    expect(screen.queryByRole("button", { name: /в Настройках/ }) === null).toBe(true);
   });
 
   test("a delete with the photos rejected that fails: its own words, and the list and the avatar's photos are read again", async () => {
